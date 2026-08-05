@@ -17,6 +17,7 @@ const buildNativesBinaryScript = resolve(desktopRoot, "..", "..", "scripts", "bu
 const buildRipgrepResourcesScript = resolve(desktopRoot, "..", "..", "scripts", "build-ripgrep-resources.mjs");
 const buildNodeReplResourcesScript = resolve(desktopRoot, "..", "..", "scripts", "build-node-repl-resources.mjs");
 const buildDesktopHostResourcesScript = resolve(desktopRoot, "..", "..", "scripts", "build-desktop-host-resources.mjs");
+const buildOpenConnectorResourcesScript = resolve(desktopRoot, "..", "..", "scripts", "build-openconnector-resources.mjs");
 
 let child = null;
 let stopping = false;
@@ -123,6 +124,14 @@ const desktopHostResourcesResult = spawnSync("node", [buildDesktopHostResourcesS
 });
 if (desktopHostResourcesResult.status !== 0) {
   process.exit(desktopHostResourcesResult.status ?? 1);
+}
+
+const openConnectorResourcesResult = spawnSync("node", [buildOpenConnectorResourcesScript], {
+  cwd: resolve(desktopRoot, "..", ".."),
+  stdio: "inherit",
+});
+if (openConnectorResourcesResult.status !== 0) {
+  process.exit(openConnectorResourcesResult.status ?? 1);
 }
 
 child = spawn(electronBin, [desktopRoot], {

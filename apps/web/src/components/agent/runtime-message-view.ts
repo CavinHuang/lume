@@ -1,4 +1,4 @@
-import type { AgentCapabilityReferenceView, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentUserMessagePart, FileReferenceBinding, FileReferenceProtocolVersion, ImPeerKind, ImProvider, LumeRuntimeEvent, RuntimeCodingReport, ToolExecutionMetadata } from '@lume/shared'
+import type { AgentCapabilityReferenceView, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentUserMessagePart, FileReferenceBinding, FileReferenceProtocolVersion, ImPeerKind, ImProvider, LinkAuthorizationSignal, LumeRuntimeEvent, RuntimeCodingReport, ToolExecutionMetadata } from '@lume/shared'
 
 export interface RuntimeToolCallView {
   id: string
@@ -15,6 +15,7 @@ export interface RuntimeToolCallView {
   riskLevel?: 'low' | 'medium' | 'high'
   execution?: ToolExecutionMetadata
   resultRef?: ToolExecutionMetadata['resultRef']
+  linkAuthorization?: LinkAuthorizationSignal
 }
 
 export type TaskProgressViewEvent = Extract<LumeRuntimeEvent, { type: 'task.progress' }>

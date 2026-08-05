@@ -22,6 +22,7 @@ import { getPermissionDeniedSummary } from "../permissions/permission-denials";
 import type { TraceRecorder } from "../trace/trace-recorder";
 import { DEFAULT_CONTEXT_BUDGET, type ContextBudget } from "./context-budget";
 import { buildMessageAttachmentBrief } from "./message-attachments";
+import { isLinkRuntimeOnline } from "../../link/link-client";
 
 export interface ContextAssemblyInput {
   threadId: string;
@@ -266,7 +267,10 @@ export class ContextAssembler {
       : "";
     const systemPrompt = [
       agentSystemPrompt,
-      systemPromptAppend
+      systemPromptAppend,
+      isLinkRuntimeOnline()
+        ? "OpenConnector Link is available through exactly four link_* tools for connected third-party SaaS apps. Use link_search_actions, then link_inspect_actions, before link_call_action. Always use an exact named connection when the user identifies one; never fall back to another account. Treat authorization errors as a request to reconnect in Lume rather than trying alternate credentials or endpoints. Link is not a replacement for local file tools, browser tools, URL fetching, or web search."
+        : ""
     ]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");

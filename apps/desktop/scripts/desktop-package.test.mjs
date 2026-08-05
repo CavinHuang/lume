@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { assertArchiveChecksum } from '../../../scripts/openconnector-resource-integrity.mjs'
 
 const DESKTOP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO_ROOT = resolve(DESKTOP_ROOT, '..', '..')
@@ -78,6 +79,9 @@ test('packaged desktop smoke uses an isolated profile and verifies the renderer'
   assert.match(source, /--user-data-dir=/)
   assert.match(source, /DevToolsActivePort/)
   assert.match(source, /document\.readyState/)
+  assert.match(source, /connection_vault_setup/)
+  assert.match(source, /link_runtime_enable/)
+  assert.match(source, /linkRuntime\?\.phase !== "online"/)
 })
 
 test('live Chrome import smoke reports only aggregate encrypted-database compatibility', () => {
@@ -243,6 +247,26 @@ test('desktop package includes the optional desktop-host resource', () => {
   assert.match(pkg.scripts.package, /build-desktop-host-resources\.mjs/)
   assertContainsBefore(pkg.scripts.build, 'build-desktop-host-resources.mjs', 'run-electron-builder.mjs')
   assertContainsBefore(pkg.scripts.package, 'build-desktop-host-resources.mjs', 'run-electron-builder.mjs')
+})
+
+test('desktop package builds and verifies the pinned OpenConnector resource', () => {
+  assert.deepEqual(pkg.build.extraResources.find((entry) => entry.to === 'openconnector'), {
+    from: 'resources/openconnector',
+    to: 'openconnector',
+  })
+  const manifest = JSON.parse(readFileSync(resolve(REPO_ROOT, 'scripts/openconnector-resource.json'), 'utf8'))
+  assert.equal(manifest.version, '1.3.3')
+  assert.equal(manifest.commit, 'a332575d8facf09c11df91e1cc41c44b7bb8964c')
+  assert.match(manifest.archiveSha256, /^[a-f0-9]{64}$/)
+  const buildScript = readFileSync(resolve(REPO_ROOT, 'scripts/build-openconnector-resources.mjs'), 'utf8')
+  assert.match(buildScript, /runtime-.*archiveSha256/)
+  assert.match(buildScript, /"prune", "--omit=dev", "--workspaces=false"/)
+  assert.match(buildScript, /"migrations"/)
+  assertContainsBefore(pkg.scripts.package, 'build-openconnector-resources.mjs --verify', 'run-electron-builder.mjs')
+})
+
+test('OpenConnector resource verification fails closed on a checksum mismatch', () => {
+  assert.throws(() => assertArchiveChecksum(fileURLToPath(import.meta.url), '0'.repeat(64)), /checksum mismatch/)
 })
 
 test('desktop-host resource build ships the cursor reference license notice', () => {
@@ -413,4 +437,11 @@ test('desktop dev builds desktop-host resources before launching Electron', () =
   assert.match(script, /build-desktop-host-resources\.mjs/)
   assertContainsBefore(script, 'spawnSync("node", [buildDesktopHostResourcesScript]', 'spawn(electronBin')
   assert.match(script, /LUME_COMPUTER_USE_BUNDLE_VARIANT:\s*["']dev["']/)
+})
+
+test('desktop dev builds pinned OpenConnector resources before launching Electron', () => {
+  const script = readFileSync(resolve(DESKTOP_ROOT, 'scripts/dev.ts'), 'utf8')
+
+  assert.match(script, /build-openconnector-resources\.mjs/)
+  assertContainsBefore(script, 'spawnSync("node", [buildOpenConnectorResourcesScript]', 'spawn(electronBin')
 })

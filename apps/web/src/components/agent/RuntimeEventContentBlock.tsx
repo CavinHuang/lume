@@ -1206,7 +1206,7 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="mb-1 mt-1 max-h-[min(40vh,360px)] overflow-y-auto rounded-md bg-foreground/[0.03] p-2">
             <ToolExecutionDetails toolCall={toolCall} onOpenThreadFile={onOpenThreadFile} />
-            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
+            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} linkAuthorization={toolCall.linkAuthorization} />
           </div>
         </AnimatedCollapsiblePanel>
       )}
@@ -2461,7 +2461,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain border-t border-[var(--lume-border-subtle)] p-3">
             <ToolExecutionDetails toolCall={toolCall} onOpenThreadFile={onOpenThreadFile} />
-            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
+            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} linkAuthorization={toolCall.linkAuthorization} />
           </div>
         </AnimatedCollapsiblePanel>
       )}

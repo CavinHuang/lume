@@ -1,0 +1,172 @@
+import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
+import type { AgentToolPermissionRequest, LinkActionDetail, LinkAuthorizationSignal } from "@lume/shared";
+import { createHash, randomUUID } from "node:crypto";
+import { LinkApiError, isLinkRuntimeOnline, linkRuntimeRequest } from "../../../link/link-client";
+import { waitForToolPermissionDecision } from "../../interruption/tool-permission-session";
+
+const SAFE_ACTION_VERBS = new Set(["get", "list", "search", "find", "fetch", "read", "query", "lookup", "check", "describe", "count", "status"]);
+const UNSAFE_ACTION_VERBS = new Set([
+  "add", "set", "upsert", "create", "update", "replace", "delete", "remove", "send", "post", "put", "patch",
+  "write", "modify", "invite", "transfer", "pay", "publish", "execute", "run", "start", "stop", "cancel", "close",
+  "archive", "restore", "move", "rename", "upload", "submit", "approve", "merge", "enable", "disable", "grant",
+  "revoke", "reply", "comment", "commit", "deploy", "trigger", "schedule",
+]);
+const AUTH_CODES = new Set([
+  "connection_not_found", "connection_required", "credential_expired", "credential_verification_failed",
+  "oauth_client_config_required", "oauth_token_expired", "oauth_refresh_unavailable", "oauth_token_refresh_failed",
+  "authorization_failed", "scope_missing", "app_not_found", "app_not_ready",
+]);
+
+let activeCalls = 0;
+const callWaiters: Array<() => void> = [];
+
+export function createLinkTools(input: {
+  threadId: string;
+  runId?: string;
+  emitToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
+}): ToolDefinition[] {
+  if (!isLinkRuntimeOnline()) return [];
+  const inspectedActions = new Map<string, LinkActionDetail>();
+  const readMetadata = metadata(true, true);
+  return [
+    definition("link_list_apps", "List locally configured OpenConnector apps. Optionally filter by service.", {
+      type: "object", properties: { service: { type: "string" } }, additionalProperties: false,
+    }, readMetadata, async (args, context) => {
+      const service = optionalString(args.service);
+      return result(context.toolUseId, await linkRuntimeRequest(service ? `/v1/apps/services/${encodeURIComponent(service)}` : "/v1/apps", { signal: context.abortSignal }));
+    }),
+    definition("link_search_actions", "Search OpenConnector actions. Inspect an action before calling it.", {
+      type: "object",
+      properties: { query: { type: "string" }, service: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 50 } },
+      required: ["query"], additionalProperties: false,
+    }, readMetadata, async (args, context) => {
+      const query = new URLSearchParams({ q: requiredString(args.query, "query") });
+      const service = optionalString(args.service);
+      if (service) query.set("service", service);
+      query.set("limit", String(Math.max(1, Math.min(50, Number(args.limit) || 20))));
+      return result(context.toolUseId, await linkRuntimeRequest(`/v1/actions/search?${query}`, { signal: context.abortSignal }));
+    }),
+    definition("link_inspect_actions", "Inspect one or more OpenConnector action schemas and authorization requirements.", {
+      type: "object",
+      properties: {
+        actions: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 20 },
+        connectionName: { type: "string" },
+      },
+      required: ["actions"], additionalProperties: false,
+    }, readMetadata, async (args, context) => {
+      const actionIds: string[] = Array.isArray(args.actions) ? args.actions.map((value: unknown) => requiredString(value, "action")) : [];
+      if (!actionIds.length) throw new Error("actions is required");
+      const connectionName = optionalString(args.connectionName);
+      const details = await Promise.all(actionIds.map(async (actionId: string) => {
+        const detail = await linkRuntimeRequest<LinkActionDetail>(`/v1/actions/${encodeURIComponent(actionId)}`, {
+          signal: context.abortSignal,
+          headers: connectionHeaders(connectionName),
+        });
+        inspectedActions.set(inspectionKey(actionId, connectionName), detail);
+        return { ...detail, lumeRisk: classifyAction(detail) };
+      }));
+      return result(context.toolUseId, details);
+    }),
+    definition("link_call_action", "Call an inspected OpenConnector action using an exact service, action, and optional named connection.", {
+      type: "object",
+      properties: {
+        service: { type: "string" }, action: { type: "string" }, input: { type: "object" }, connectionName: { type: "string" },
+      },
+      required: ["service", "action", "input"], additionalProperties: false,
+    }, metadata(false, false), async (args, context) => {
+      const service = requiredString(args.service, "service");
+      const action = requiredString(args.action, "action");
+      const connectionName = optionalString(args.connectionName);
+      const detail = inspectedActions.get(inspectionKey(action, connectionName));
+      if (!detail) throw new Error("inspection_required");
+      if (detail.service !== service) throw new Error("link_action_service_mismatch");
+      const risk = classifyAction(detail);
+      if (risk !== "read") {
+        const request: AgentToolPermissionRequest = {
+          threadId: input.threadId,
+          ...(input.runId ? { runId: input.runId } : {}),
+          requestId: randomUUID(),
+          toolUseId: context.toolUseId ?? randomUUID(),
+          toolName: "link_call_action",
+          risk: "high",
+          reason: `OpenConnector action ${service}.${action} may change external data.`,
+          reasonCode: "link_external_write_or_unknown",
+          canAllowAlways: false,
+          input: { service, action, ...(connectionName ? { connectionName } : {}) },
+        };
+        const signal = context.abortSignal ?? new AbortController().signal;
+        const decision = await waitForToolPermissionDecision(request, signal, input.emitToolPermissionRequest);
+        if (decision !== "allow_once") throw new Error("link_action_not_approved");
+      }
+      const release = await acquireCallSlot(context.abortSignal);
+      const idempotencyKey = risk === "read" ? undefined : createIdempotencyKey(context.toolUseId);
+      const startedAt = Date.now();
+      try {
+        const data = await callWithSingleTransportRetry(action, asRecord(args.input), connectionName, idempotencyKey, context.abortSignal);
+        return result(context.toolUseId, {
+          service,
+          action,
+          ...(connectionName ? { connectionName } : {}),
+          durationMs: Date.now() - startedAt,
+          result: data,
+        });
+      } catch (error) {
+        if (error instanceof LinkApiError && AUTH_CODES.has(error.code)) {
+          const authorization: LinkAuthorizationSignal = {
+            kind: "link_authorization_required", service, actionId: action, threadId: input.threadId,
+            ...(connectionName ? { connectionName } : {}), errorCode: error.code,
+          };
+          return result(context.toolUseId, { error: error.message, authorization }, true, { link: authorization });
+        }
+        throw error;
+      } finally {
+        release();
+      }
+    }),
+  ];
+}
+
+export function classifyAction(action: LinkActionDetail): "read" | "write_or_unknown" {
+  if (action.readOnly === true) return "read";
+  const identifiers = [action.name, action.id.split(".").at(-1) ?? action.id];
+  const tokenGroups = identifiers.map(actionTokens);
+  if (tokenGroups.some((tokens) => tokens.some((token) => UNSAFE_ACTION_VERBS.has(token)))) return "write_or_unknown";
+  return tokenGroups.some((tokens) => tokens[0] && SAFE_ACTION_VERBS.has(tokens[0])) ? "read" : "write_or_unknown";
+}
+
+function actionTokens(value: string): string[] {
+  return value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+function createIdempotencyKey(toolUseId: string | undefined): string {
+  return createHash("sha256").update("lume-link:").update(toolUseId ?? randomUUID()).digest("hex");
+}
+
+function definition(name: string, description: string, inputSchema: ToolDefinition["inputSchema"], runtimeMetadata: Record<string, unknown>, call: ToolDefinition["call"]): ToolDefinition {
+  return { name, description, inputSchema, runtimeMetadata, isEnabled: () => true, isReadOnly: () => name !== "link_call_action", isConcurrencySafe: () => name !== "link_call_action", prompt: async () => description, call };
+}
+function metadata(readOnly: boolean, allowedInPlanMode: boolean): Record<string, unknown> {
+  return { source: "link", title: "OpenConnector Link", category: "network", capability: "link", riskLevel: "low", sideEffects: "external", allowedInPlanMode, isReadOnly: readOnly, isConcurrencySafe: readOnly, requiresNetwork: true, requiresApprovalByDefault: false };
+}
+function result(toolUseId: string | undefined, data: unknown, isError = false, meta?: Record<string, unknown>): ToolResult {
+  return { type: "tool_result", tool_use_id: toolUseId ?? "", content: JSON.stringify(data, null, 2), ...(isError ? { is_error: true } : {}), ...(meta ? { _meta: meta } : {}) };
+}
+function asRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
+function requiredString(value: unknown, label: string): string { const text = optionalString(value); if (!text) throw new Error(`${label} is required`); return text; }
+function optionalString(value: unknown): string { return typeof value === "string" ? value.trim() : ""; }
+function connectionHeaders(connectionName: string): Record<string, string> { return connectionName ? { "x-oo-connector-alias": connectionName } : {}; }
+function inspectionKey(action: string, connectionName: string): string { return `${action}\u0000${connectionName || "default"}`; }
+async function callWithSingleTransportRetry(action: string, input: Record<string, unknown>, connectionName: string, idempotencyKey: string | undefined, signal?: AbortSignal): Promise<unknown> {
+  const request = () => linkRuntimeRequest(`/v1/actions/${encodeURIComponent(action)}`, { method: "POST", signal, headers: { ...connectionHeaders(connectionName), ...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}) }, body: JSON.stringify({ input }) });
+  try { return await request(); } catch (error) { if (signal?.aborted || error instanceof LinkApiError) throw error; return request(); }
+}
+async function acquireCallSlot(signal?: AbortSignal): Promise<() => void> {
+  if (activeCalls >= 2) await new Promise<void>((resolve, reject) => {
+    const resume = () => { signal?.removeEventListener("abort", onAbort); resolve(); };
+    const onAbort = () => { const index = callWaiters.indexOf(resume); if (index >= 0) callWaiters.splice(index, 1); reject(new Error("link_call_aborted")); };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    callWaiters.push(resume);
+  });
+  activeCalls += 1;
+  return () => { activeCalls -= 1; callWaiters.shift()?.(); };
+}

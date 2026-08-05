@@ -6,7 +6,10 @@ import { join, resolve } from "node:path"
 if (process.platform !== "win32") throw new Error("The packaged desktop smoke currently supports Windows only")
 
 const desktopRoot = resolve(import.meta.dirname, "..")
-const executable = resolve(process.env.LUME_PACKAGED_EXE ?? join(desktopRoot, "dist-unpacked", "win-unpacked", "Lume.exe"))
+const defaultExecutable = existsSync(join(desktopRoot, "dist-release", "win-unpacked", "Lume.exe"))
+  ? join(desktopRoot, "dist-release", "win-unpacked", "Lume.exe")
+  : join(desktopRoot, "dist-unpacked", "win-unpacked", "Lume.exe")
+const executable = resolve(process.env.LUME_PACKAGED_EXE ?? defaultExecutable)
 if (!existsSync(executable)) throw new Error(`Packaged Lume executable not found: ${executable}`)
 
 const root = mkdtempSync(join(tmpdir(), "lume-packaged-desktop-smoke-"))
@@ -46,10 +49,20 @@ try {
   if (renderer?.readyState !== "complete" || !renderer.desktopBridge) {
     throw new Error(`Packaged Lume renderer did not initialize: ${JSON.stringify(renderer)}`)
   }
-  console.log(JSON.stringify({ ok: true, renderer: true, sidecarBundle: existsSync(join(desktopRoot, "dist-unpacked", "win-unpacked", "resources", "sidecar", "index.mjs")) }))
+  const resourcesRoot = join(resolve(executable, ".."), "resources")
+  const openConnectorMetadata = join(resourcesRoot, "openconnector", "lume-resource.json")
+  if (!existsSync(openConnectorMetadata)) throw new Error("Packaged OpenConnector resource metadata is missing")
+  await evaluate(target.webSocketDebuggerUrl, `globalThis.electronAPI.invoke("connection_vault_setup", { password: "packaged-smoke-password" })`)
+  const linkRuntime = await evaluate(target.webSocketDebuggerUrl, `globalThis.electronAPI.invoke("link_runtime_enable")`)
+  if (linkRuntime?.phase !== "online") throw new Error(`Packaged OpenConnector runtime did not start: ${JSON.stringify(linkRuntime)}`)
+  await evaluate(target.webSocketDebuggerUrl, `globalThis.electronAPI.invoke("link_runtime_disable")`)
+  console.log(JSON.stringify({ ok: true, renderer: true, sidecarBundle: existsSync(join(resourcesRoot, "sidecar", "index.mjs")), openConnector: JSON.parse(readFileSync(openConnectorMetadata, "utf8")).version, linkRuntime: linkRuntime.phase }))
 } finally {
-  if (child?.pid) spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" })
-  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  if (child?.pid) {
+    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" })
+    await new Promise((resolve) => setTimeout(resolve, 2_000))
+  }
+  rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
 }
 
 async function waitUntil(predicate, timeoutMs, message) {
@@ -67,7 +80,7 @@ function evaluate(webSocketUrl, expression) {
       socket.close()
       reject(new Error("Packaged renderer CDP evaluation timed out"))
     }, 5_000)
-    socket.onopen = () => socket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression, returnByValue: true } }))
+    socket.onopen = () => socket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression, returnByValue: true, awaitPromise: true } }))
     socket.onerror = () => {
       clearTimeout(timer)
       reject(new Error("Packaged renderer CDP connection failed"))
