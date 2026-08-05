@@ -13,6 +13,7 @@ import type {
   AgentQueuedMessage,
   AgentRemoveQueuedMessageInput,
   AgentReorderMessageQueueInput,
+  AgentResumeQueueInput,
   AgentRetryQueuedMessageInput,
   AgentUpdateQueuedMessageInput,
   AgentThreadMessageDispatchResult,
@@ -1561,7 +1562,8 @@ export function listAgentMessageQueue(threadId: string): AgentMessageQueueSnapsh
     threadId,
     revision: agentRuntimeKernel.getQueueRevision(threadId),
     queuedMessages: agentRuntimeKernel.listQueued(threadId).map(toQueuedMessage),
-    pendingGuidance: runGuidanceStore.listPending(threadId)
+    pendingGuidance: runGuidanceStore.listPending(threadId),
+    paused: agentRuntimeKernel.isPaused(threadId)
   };
 }
 
@@ -1592,6 +1594,19 @@ export function retryQueuedAgentMessage(input: AgentRetryQueuedMessageInput): Ag
       data: { queuedMessageId: input.queuedMessageId }
     });
   });
+}
+
+/** STOP 中断:暂停队列派发(不自动 startNextQueued)。手动 emit(pause 不改 count,不会自动推送)。 */
+export function pauseAgentQueue(threadId: string): void {
+  agentRuntimeKernel.pauseQueue(threadId);
+  emitAgentMessageQueueChanged(threadId);
+}
+
+/** Resume:解除暂停并派发队列首项。返回最新 snapshot。 */
+export function resumeAgentQueue(input: AgentResumeQueueInput): AgentMessageQueueOperationResult {
+  agentRuntimeKernel.resumeQueue(input.threadId);
+  emitAgentMessageQueueChanged(input.threadId);
+  return { ok: true, snapshot: listAgentMessageQueue(input.threadId) };
 }
 
 function removeQueuedAgentMessageUnchecked(input: AgentRemoveQueuedMessageInput): Omit<AgentMessageQueueOperationResult, "ok" | "snapshot"> {
