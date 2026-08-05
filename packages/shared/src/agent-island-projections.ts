@@ -7,7 +7,12 @@ import type {
   AgentIslandState,
 } from "./types/agent-island"
 
-const PLANNING_ATTENTION_WINDOW_MS = 60 * 60_000 // 1h
+/**
+ * Planning 注意窗：dueAt 在 now~now+1h 内的 item 视为"紧迫"，进入岛屿 compact 列表。
+ * 也用于调度 service 的 attention 定时器（item 进入窗的时刻触发 push）。
+ * 对齐 Proma agent-island-service.ts:53 PLANNING_ATTENTION_WINDOW_MS。
+ */
+export const PLANNING_ATTENTION_WINDOW_MS = 60 * 60_000 // 1h
 
 /**
  * running/idle 会话（无 terminalAt）24h 无活动视为过期，由 service.prune 剔除。
@@ -225,4 +230,44 @@ export function buildSnapshot(
     planning,
     updatedAt: now,
   }
+}
+
+/**
+ * 到下个午夜 00:00:00.150（本地时区）的毫秒数。用于 service 跨日 rollover 定时器：
+ * 触发后清 dismissedKey（解除所有 dismiss，让新一天的 planning/agent 状态重新浮现）+ force push。
+ * 150ms 偏移对齐 Proma agent-island-service.ts:674 `tomorrow.setHours(24, 0, 0, 150)`——
+ * 避开整点周边的偶发时钟漂移/批量任务峰值。
+ */
+export function msUntilNextMidnightRollover(now: number): number {
+  const d = new Date(now)
+  const next = new Date(d)
+  // setHours(24, ...) 把日期翻到次日；150ms 偏移点见上方注释。
+  next.setHours(24, 0, 0, 150)
+  return next.getTime() - now
+}
+
+/**
+ * 算下个 planning item（todo/reminder）**进入** 1h 注意窗的时刻。
+ * 已在窗内（enter < now）或逾期的 item 跳过——它们由普通 push/refreshPlanning 反映；
+ * 仅未来会进入窗的 item 才需要专门调度一次 attention push（让岛屿在到点瞬间浮现紧迫项）。
+ * 无未来进入项 → 返回 null（service 不设 attention 定时器）。
+ *
+ * 对齐 Proma agent-island-service.ts:686-707 `scheduleNextPlanningAttention`：
+ * Proma 还考虑"到点后退出"的二次 bump，本批只覆盖"进入窗"时刻（用户更易感知的浮现瞬间）。
+ *
+ * 纯函数（不修改入参），便于 TDD；service 用返回值算 setTimeout 延迟。
+ */
+export function nextPlanningAttentionTime(
+  planning: { todos: AgentIslandPlanningItem[]; reminders: AgentIslandPlanningItem[] },
+  now: number,
+  windowMs: number,
+): number | null {
+  const items = [...planning.todos, ...planning.reminders]
+  let earliest: number | null = null
+  for (const it of items) {
+    const enter = it.dueAt - windowMs // 从远期进入 1h 窗的瞬间
+    if (enter < now) continue // 已在窗内或过期——由普通 push 反映，不归 attention 调度
+    if (earliest === null || enter < earliest) earliest = enter
+  }
+  return earliest
 }

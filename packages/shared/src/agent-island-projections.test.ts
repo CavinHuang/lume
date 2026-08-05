@@ -12,6 +12,8 @@ import {
   HOVER_EXPAND_DELAY_MS,
   HOVER_COLLAPSE_DELAY_MS,
   isImmediateAgentIslandEvent,
+  msUntilNextMidnightRollover,
+  nextPlanningAttentionTime,
 } from './agent-island-projections'
 import type { IslandSessionInput } from './agent-island-projections'
 import type { AgentIslandPlanningSnapshot } from './types/agent-island'
@@ -381,5 +383,103 @@ describe('isImmediateAgentIslandEvent', () => {
     expect(
       isImmediateAgentIslandEvent('agent:runtime-event', { event: {} }),
     ).toBe(false)
+  })
+})
+
+describe('msUntilNextMidnightRollover', () => {
+  // 用本地时区构造稳定时刻：分别取 23:59:00 与 00:00:00 两个边界。
+  test('23:59:00 → 到 00:00:00.150 约 60s+150ms', () => {
+    const d = new Date()
+    d.setHours(23, 59, 0, 0)
+    const ms = msUntilNextMidnightRollover(d.getTime())
+    // 跨日仅 1 分钟，差值应恰好是 60_000 + 150 = 60_150。
+    expect(ms).toBe(60_150)
+  })
+  test('00:00:00 → 到下个午夜 00:00:00.150 约 24h', () => {
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    const ms = msUntilNextMidnightRollover(d.getTime())
+    // 24h - 150ms 偏移：差值 = 24*60*60_000 - 150 + 150 = 24h 整（因为目标含 150ms 偏移）。
+    // 实际：明天 00:00:00.150 - 今天 00:00:00.000 = 24h + 150ms。
+    expect(ms).toBe(24 * 60 * 60_000 + 150)
+  })
+  test('00:00:00.200 → 已过 150ms 偏移点 → 顺延到下个午夜（约 24h）', () => {
+    const d = new Date()
+    d.setHours(0, 0, 0, 200)
+    const ms = msUntilNextMidnightRollover(d.getTime())
+    // 明天 00:00:00.150 - 今天 00:00:00.200 = 24h - 50ms。
+    expect(ms).toBe(24 * 60 * 60_000 - 50)
+  })
+  test('始终为正数（不会返回 0 或负数）', () => {
+    for (const hour of [0, 6, 12, 18, 23]) {
+      const d = new Date()
+      d.setHours(hour, 30, 30, 500)
+      expect(msUntilNextMidnightRollover(d.getTime())).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('nextPlanningAttentionTime', () => {
+  const WINDOW = 60 * 60_000 // 1h
+  test('未来 item 进入 1h 窗 → 返回进入时刻（dueAt - window）', () => {
+    const now = 1_000_000
+    const due = now + 3 * 60 * 60_000 // 3h 后到期
+    const res = nextPlanningAttentionTime({
+      todos: [{ id: 't1', title: '写文档', kind: 'todo', dueAt: due, overdue: false }],
+      reminders: [],
+    }, now, WINDOW)
+    expect(res).toBe(due - WINDOW)
+  })
+  test('多 item 取最早进入窗的时刻', () => {
+    const now = 1_000_000
+    const res = nextPlanningAttentionTime({
+      todos: [
+        { id: 'late', title: '晚', kind: 'todo', dueAt: now + 5 * 60 * 60_000, overdue: false },
+        { id: 'early', title: '早', kind: 'todo', dueAt: now + 2 * 60 * 60_000, overdue: false },
+      ],
+      reminders: [],
+    }, now, WINDOW)
+    expect(res).toBe(now + 2 * 60 * 60_000 - WINDOW)
+  })
+  test('已进入窗的 item 跳过（由普通 push 反映，不算未来 attention）', () => {
+    const now = 1_000_000
+    const due = now + 30 * 60_000 // 30min 后到期 → 已在 1h 窗内
+    const res = nextPlanningAttentionTime({
+      todos: [{ id: 't1', title: '即将', kind: 'todo', dueAt: due, overdue: false }],
+      reminders: [],
+    }, now, WINDOW)
+    // enter = due - WINDOW = now - 30min < now → 跳过；无其他 → null。
+    expect(res).toBeNull()
+  })
+  test('同时混入 reminders 取最早', () => {
+    const now = 1_000_000
+    const res = nextPlanningAttentionTime({
+      todos: [{ id: 't', title: 'todo 4h', kind: 'todo', dueAt: now + 4 * 60 * 60_000, overdue: false }],
+      reminders: [{ id: 'r', title: 'reminder 2h', kind: 'calendar_event', dueAt: now + 2 * 60 * 60_000, overdue: false }],
+    }, now, WINDOW)
+    expect(res).toBe(now + 2 * 60 * 60_000 - WINDOW)
+  })
+  test('无未来进入窗的 item → null', () => {
+    const now = 1_000_000
+    expect(nextPlanningAttentionTime({ todos: [], reminders: [] }, now, WINDOW)).toBeNull()
+  })
+  test('逾期项（dueAt < now）被跳过 → 无未来项则 null', () => {
+    const now = 1_000_000
+    const res = nextPlanningAttentionTime({
+      todos: [{ id: 'over', title: '过期', kind: 'todo', dueAt: now - 5 * 60_000, overdue: true }],
+      reminders: [],
+    }, now, WINDOW)
+    // enter = -5min - 1h < now → 跳过 → null
+    expect(res).toBeNull()
+  })
+  test('不修改入参（纯函数）', () => {
+    const now = 1_000_000
+    const input = {
+      todos: [{ id: 't1', title: '远', kind: 'todo', dueAt: now + 5 * 60 * 60_000, overdue: false }],
+      reminders: [],
+    }
+    const before = JSON.stringify(input)
+    nextPlanningAttentionTime(input, now, WINDOW)
+    expect(JSON.stringify(input)).toBe(before)
   })
 })

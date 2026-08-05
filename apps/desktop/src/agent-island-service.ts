@@ -28,6 +28,9 @@ import {
   isImmediateAgentIslandEvent,
   isStaleSession,
   mapRuntimePhaseToIslandPhase,
+  msUntilNextMidnightRollover,
+  nextPlanningAttentionTime,
+  PLANNING_ATTENTION_WINDOW_MS,
   projectPlanning,
   pushActivityLine,
   selectHoverDelay,
@@ -106,15 +109,29 @@ export class AgentIslandService {
   /** Phase 2：native snapshot 单调版本号，Swift 据此丢弃乱序/重复快照。 */
   private revision = 0
   private planningTimer: ReturnType<typeof setInterval> | null = null
+  /**
+   * 跨日 rollover 定时器：到下个午夜 00:00:00.150 触发——清 dismissedKey
+   * （解除所有 dismiss，新一天重新浮现 planning/agent 状态）+ force push + 重排下个 rollover/attention。
+   * 对齐 Proma agent-island-service.ts:671-683 `scheduleNextPlanningRollover`。
+   */
+  private rolloverTimer: ReturnType<typeof setTimeout> | null = null
+  /**
+   * 紧迫 planning attention 定时器：未来 todo/reminder 进入 1h 注意窗的瞬间触发 force push，
+   * 让岛屿即时浮现紧迫项——而非等到下个 5min 轮询周期。refreshPlanning 后重排（planning 变了，
+   * attention 时刻可能变）。对齐 Proma agent-island-service.ts:685-707。
+   */
+  private attentionTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(private deps: AgentIslandServiceDeps) {}
 
-  /** 启动：拉取首批 planning、启动周期刷新、强制首推。 */
+  /** 启动：拉取首批 planning、启动周期刷新、强制首推、调度跨日/紧迫 planning 定时器。 */
   async start(): Promise<void> {
     await this.refreshPlanning()
     this.planningTimer = setInterval(() => {
       void this.refreshPlanning()
     }, PLANNING_REFRESH_MS)
+    this.scheduleNextPlanningRollover()
+    this.scheduleNextPlanningAttention()
     this.push(true)
   }
 
@@ -280,6 +297,8 @@ export class AgentIslandService {
     } catch {
       // 静默失败：planning 不可用时岛屿仅反映 agent 运行态。
     }
+    // planning 变了，attention 时刻可能变（新增/改期/完成 todo）——重排定时器。
+    this.scheduleNextPlanningAttention()
     this.push(false)
   }
 
@@ -364,9 +383,56 @@ export class AgentIslandService {
     }
   }
 
+  /**
+   * 调度跨日 rollover：到下个午夜 00:00:00.150 清 dismissedKey（解除所有 dismiss——
+   * 新一天重新浮现 planning/agent 状态）+ force push，并重排 rollover 与 attention
+   * （跨日后 dueAt 相对 today 的窗内位置变了，attention 时刻需重算）。
+   * 对齐 Proma agent-island-service.ts:671-683。
+   */
+  private scheduleNextPlanningRollover(): void {
+    if (this.rolloverTimer) clearTimeout(this.rolloverTimer)
+    const delay = msUntilNextMidnightRollover(Date.now())
+    this.rolloverTimer = setTimeout(() => {
+      this.rolloverTimer = null
+      this.dismissedKey = null
+      this.push(true)
+      this.scheduleNextPlanningRollover()
+      this.scheduleNextPlanningAttention()
+    }, delay)
+  }
+
+  /**
+   * 调度紧迫 planning attention：未来 todo/reminder 进入 1h 注意窗的瞬间 force push，
+   * 让岛屿即时浮现紧迫项（而非等下个 5min 轮询）。无未来进入项则不设定时器。
+   * refreshPlanning/onPlanningChanged 后重排（planning 变了，attention 时刻可能变）。
+   * 对齐 Proma agent-island-service.ts:685-707。
+   */
+  private scheduleNextPlanningAttention(): void {
+    if (this.attentionTimer) clearTimeout(this.attentionTimer)
+    const now = Date.now()
+    // 过滤无 dueAt 的 todo（mapPlanningTodo 把它设为 NO_DUE≈MAX_SAFE_INTEGER）——
+    // 它们永不进入窗，但会让 enter≈MAX_SAFE_INTEGER，导致 setTimeout 收到 28 万年的
+    // delay（Node.js 把超过 2^31ms 的 delay 截断为 1ms，会立即触发再重排，形成 busy loop）。
+    const planning = {
+      todos: this.planning.todos.filter((t) => t.dueAt !== NO_DUE),
+      reminders: this.planning.reminders,
+    }
+    const enter = nextPlanningAttentionTime(planning, now, PLANNING_ATTENTION_WINDOW_MS)
+    if (enter === null) return
+    this.attentionTimer = setTimeout(() => {
+      this.attentionTimer = null
+      this.push(true)
+      this.scheduleNextPlanningAttention()
+    }, enter - now)
+  }
+
   destroy(): void {
     if (this.planningTimer) clearInterval(this.planningTimer)
     this.planningTimer = null
+    if (this.rolloverTimer) clearTimeout(this.rolloverTimer)
+    this.rolloverTimer = null
+    if (this.attentionTimer) clearTimeout(this.attentionTimer)
+    this.attentionTimer = null
     this.clearHoverTimer()
     this.pointerHovered = false
     this.hoverExpanded = false
