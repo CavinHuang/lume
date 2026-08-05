@@ -24,7 +24,7 @@ import {
 } from '@/lib/desktop-api'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFamily, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentQueueInterruptedAtom, agentQueueInterruptedFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFamily, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentQueueInterruptedAtom, agentQueueInterruptedFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, queuedAttachmentPreviewUrlAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
 import { isEmptyDraft, prependHistory, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 import { debounce } from 'throttle-debounce'
 import {
@@ -616,6 +616,7 @@ export function AgentInput({
   const messageQueueSnapshot = messageQueues[threadId] ?? createEmptyAgentMessageQueueSnapshot(threadId)
   const queueInterrupted = useAtomValue(agentQueueInterruptedFamily(threadId)) ?? false
   const setQueueInterruptedStates = useSetAtom(agentQueueInterruptedAtom)
+  const setQueuedAttachmentPreviewUrls = useSetAtom(queuedAttachmentPreviewUrlAtom)
   const desktopContextView = resolveAgentInputDesktopContextView({
     propTarget: desktopContextTarget,
     capturedTarget: capturedDesktopContextTarget,
@@ -1305,6 +1306,17 @@ export function AgentInput({
           }
         })
       }
+      // renderer 瞬态:把 pending 图片附件的 objectURL 存入 atom,供队列行首图缩略。
+      // 不进 sidecar(messageAttachment.id === pendingAttachment.id,见构造处 id: attachment.id)。
+      const pendingImagePreviews: Record<string, string> = {}
+      for (const pending of effectivePendingAttachments) {
+        if (pending.previewUrl && isImageAttachment({ filename: pending.filename, mediaType: pending.mediaType })) {
+          pendingImagePreviews[pending.id] = pending.previewUrl
+        }
+      }
+      if (Object.keys(pendingImagePreviews).length > 0) {
+        setQueuedAttachmentPreviewUrls((prev) => ({ ...prev, ...pendingImagePreviews }))
+      }
       for (const attachment of effectiveBrowserAttachments) {
         const screenshotRef = attachment.origin === 'browser-annotation' ? attachment.screenshotRef : undefined
         if (!screenshotRef) continue
@@ -1533,6 +1545,20 @@ export function AgentInput({
   }, [messageQueueSnapshot, setMessageQueues, threadId])
 
   const handleRemoveQueuedMessage = useCallback((queuedMessageId: string) => {
+    // revoke 被删队列项的图片附件 objectURL,防泄漏
+    const removedMessage = messageQueueSnapshot.queuedMessages.find((m) => m.id === queuedMessageId)
+    const removedAttachmentIds = removedMessage?.messageAttachments?.map((a) => a.id) ?? []
+    if (removedAttachmentIds.length > 0) {
+      setQueuedAttachmentPreviewUrls((prev) => {
+        for (const id of removedAttachmentIds) {
+          const url = prev[id]
+          if (url) URL.revokeObjectURL(url)
+        }
+        const next = { ...prev }
+        for (const id of removedAttachmentIds) delete next[id]
+        return next
+      })
+    }
     removeQueuedAgentMessage({
       threadId,
       queuedMessageId,
@@ -1547,7 +1573,7 @@ export function AgentInput({
         console.error('[AgentInput] 删除排队消息失败:', error)
         toast.error('删除排队消息失败')
       })
-  }, [messageQueueSnapshot.revision, setMessageQueues, threadId])
+  }, [messageQueueSnapshot, setMessageQueues, setQueuedAttachmentPreviewUrls, threadId])
 
   const handleEditQueuedMessage = useCallback((queuedMessageId: string) => {
     if (!editor) return
