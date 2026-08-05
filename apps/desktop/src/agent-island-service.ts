@@ -25,6 +25,7 @@ import {
 import {
   buildSnapshot,
   buildVisibilityKey,
+  isStaleSession,
   mapRuntimePhaseToIslandPhase,
   projectPlanning,
   pushActivityLine,
@@ -239,7 +240,11 @@ export class AgentIslandService {
 
   private prune(now: number): void {
     for (const [id, s] of this.sessions) {
+      // 终态会话（completed/error，有 terminalAt）按 UNREAD_RETAIN_MS（10min）清；
+      // running/idle 无 terminalAt，旧逻辑永不清 → 用 isStaleSession（24h 无活动）兜底，
+      // 防止幽灵会话累积（对齐 Proma agent-island-service.ts:385 isIslandSession）。
       if (s.terminalAt && now - s.terminalAt > UNREAD_RETAIN_MS) this.sessions.delete(id)
+      else if (isStaleSession(s, now)) this.sessions.delete(id)
     }
   }
 

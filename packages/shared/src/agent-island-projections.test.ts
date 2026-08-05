@@ -6,6 +6,8 @@ import {
   projectPlanning,
   pushActivityLine,
   selectPlanningIndicator,
+  isStaleSession,
+  STALE_SESSION_MS,
 } from './agent-island-projections'
 import type { IslandSessionInput } from './agent-island-projections'
 import type { AgentIslandPlanningSnapshot } from './types/agent-island'
@@ -66,6 +68,43 @@ describe('selectPrimarySession', () => {
   })
   test('空列表返回 null primary', () => {
     expect(selectPrimarySession([]).primarySessionId).toBeNull()
+  })
+})
+
+describe('isStaleSession', () => {
+  test('running 23h 无活动 → 不过期（保留）', () => {
+    const now = 1_000_000
+    const s = session({ phase: 'running', lastActivityAt: now - (STALE_SESSION_MS - 60_000) })
+    expect(isStaleSession(s, now)).toBe(false)
+  })
+  test('running 25h 无活动 → 过期（剔除）', () => {
+    const now = 1_000_000
+    const s = session({ phase: 'running', lastActivityAt: now - (STALE_SESSION_MS + 60_000) })
+    expect(isStaleSession(s, now)).toBe(true)
+  })
+  test('idle 25h 无活动 → 过期（剔除）', () => {
+    const now = 1_000_000
+    const s = session({ phase: 'idle', lastActivityAt: now - (STALE_SESSION_MS + 60_000) })
+    expect(isStaleSession(s, now)).toBe(true)
+  })
+  test('terminalAt 非空（终态）→ 永不归 stale（归 UNREAD_RETAIN_MS 管）', () => {
+    const now = 1_000_000
+    // completed 25h 前 lastActivity，但已 terminalAt=now-100ms（10min 窗内）：不归 stale
+    const s = session({
+      phase: 'completed',
+      lastActivityAt: now - (STALE_SESSION_MS + 60_000),
+      terminalAt: now - 100,
+    })
+    expect(isStaleSession(s, now)).toBe(false)
+  })
+  test('terminalAt 非空且超过 stale 阈值 → 仍不归 stale（终态优先）', () => {
+    const now = 1_000_000
+    const s = session({
+      phase: 'error',
+      lastActivityAt: now - (STALE_SESSION_MS * 3),
+      terminalAt: now - 5 * 60_000, // UNREAD_RETAIN_MS 窗内
+    })
+    expect(isStaleSession(s, now)).toBe(false)
   })
 })
 

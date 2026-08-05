@@ -9,6 +9,12 @@ import type {
 
 const PLANNING_ATTENTION_WINDOW_MS = 60 * 60_000 // 1h
 
+/**
+ * running/idle 会话（无 terminalAt）24h 无活动视为过期，由 service.prune 剔除。
+ * 对齐 Proma agent-island-service.ts:385 `isIslandSession`（now - lastActivityAt >= 24h 剔除）。
+ */
+export const STALE_SESSION_MS = 24 * 60 * 60_000 // 24h
+
 /** 累积活动行的上限（对齐 Proma MAX_ACTIVITY_LINES）。 */
 const MAX_ACTIVITY_LINES = 4
 
@@ -33,6 +39,16 @@ export interface IslandSessionInput {
   unread: boolean
   terminalAt: number | null
   lastActivityAt: number
+}
+
+/**
+ * 判定 running/idle 会话是否过期：无 terminalAt（非终态）且 24h 无活动。
+ * 终态（completed/error，有 terminalAt）由 service `UNREAD_RETAIN_MS`（10min）管，此处返回 false。
+ * 用于 service.prune 剔除幽灵会话（running/idle 永无 terminalAt 旧逻辑下永不清）。
+ */
+export function isStaleSession(session: IslandSessionInput, now: number): boolean {
+  if (session.terminalAt !== null) return false
+  return now - session.lastActivityAt >= STALE_SESSION_MS
 }
 
 const PHASE_PRIORITY: Record<AgentIslandPhase, number> = {
