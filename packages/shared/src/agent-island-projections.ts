@@ -81,18 +81,25 @@ export function selectPrimarySession(inputs: IslandSessionInput[]): {
   return { primarySessionId: sorted[0]?.threadId ?? null, sessions: sorted.slice(0, 3) }
 }
 
+/**
+ * 构造 dismiss visibilityKey：拼全部 sessions（threadId:phase:lastActivityAt:detail）
+ * + planningKeys 含 dueAt/overdue（id:dueAt:overdue）。对齐 Proma agent-island-service.ts:558-566。
+ *
+ * key 不变的语义：用户 dismiss 后，仅当**任一** session 状态变化（含非 primary）
+ * 或**任一** planning item 的 dueAt/overdue 翻转时才解除隐藏。
+ * 仅靠 id（不含 dueAt）会导致改 dueAt 不解除 dismiss —— 与 Proma 行为不一致。
+ */
 export function buildVisibilityKey(
-  primary: IslandSessionInput | null,
-  planningKeys: string[],
+  sessions: IslandSessionInput[],
+  planning: AgentIslandPlanningSnapshot,
 ): string {
-  if (!primary) return planningKeys.join('|')
-  return [
-    primary.threadId,
-    primary.phase,
-    primary.lastActivityAt,
-    primary.detail,
-    planningKeys.join(','),
-  ].join(':')
+  const sessionsPart = sessions
+    .map((s) => `${s.threadId}:${s.phase}:${s.lastActivityAt}:${s.detail}`)
+    .join('|')
+  const planningPart = [...planning.todos, ...planning.reminders]
+    .map((p) => `${p.id}:${p.dueAt}:${p.overdue ? 1 : 0}`)
+    .join(',')
+  return `${sessionsPart}::${planningPart}`
 }
 
 export function projectPlanning(

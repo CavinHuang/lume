@@ -28,7 +28,6 @@ import {
   mapRuntimePhaseToIslandPhase,
   projectPlanning,
   pushActivityLine,
-  selectPrimarySession,
 } from '../../../packages/shared/src/agent-island-projections'
 import type { IslandSessionInput } from '../../../packages/shared/src/agent-island-projections'
 
@@ -132,7 +131,10 @@ export class AgentIslandService {
         this.hoverExpanded = intent.value === true
         break
       case 'dismiss':
-        this.dismissedKey = buildVisibilityKey(this.primaryInput(), this.planningKeys())
+        this.dismissedKey = buildVisibilityKey(
+          [...this.sessions.values()],
+          projectPlanning(this.planning, Date.now()),
+        )
         this.manuallyExpanded = false
         break
       case 'open-main':
@@ -235,18 +237,6 @@ export class AgentIslandService {
     this.push(false)
   }
 
-  private primaryInput(): IslandSessionInput | null {
-    // 复用 selectPrimarySession（phase 优先级 + lastActivityAt），保证 dismiss 构造的
-    // visibilityKey 与 buildSnapshot 显示的主导会话一致；否则二者可能选出不同 session。
-    const { primarySessionId } = selectPrimarySession([...this.sessions.values()])
-    if (!primarySessionId) return null
-    return this.sessions.get(primarySessionId) ?? null
-  }
-
-  private planningKeys(): string[] {
-    return [...this.planning.todos, ...this.planning.reminders].map((p) => p.id)
-  }
-
   private prune(now: number): void {
     for (const [id, s] of this.sessions) {
       if (s.terminalAt && now - s.terminalAt > UNREAD_RETAIN_MS) this.sessions.delete(id)
@@ -257,9 +247,11 @@ export class AgentIslandService {
     if (!this.deps.isEnabled()) return
     const now = Date.now()
     this.prune(now)
+    // 复用同一 planning 投影给 buildSnapshot 与 buildVisibilityKey（避免重复 projectPlanning）。
+    const planningSnapshot = projectPlanning(this.planning, now)
     const state: AgentIslandState = buildSnapshot(
       [...this.sessions.values()],
-      projectPlanning(this.planning, now),
+      planningSnapshot,
       now,
     )
     const expanded = this.manuallyExpanded || this.hoverExpanded
@@ -268,7 +260,7 @@ export class AgentIslandService {
     // dismiss：visibility key 不变则保持隐藏；一旦 key 变化（新会话/新 planning）自动解除。
     if (
       this.dismissedKey &&
-      buildVisibilityKey(this.primaryInput(), this.planningKeys()) === this.dismissedKey
+      buildVisibilityKey([...this.sessions.values()], planningSnapshot) === this.dismissedKey
     ) {
       state.presentation = 'hidden'
     } else {

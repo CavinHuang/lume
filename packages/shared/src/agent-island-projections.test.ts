@@ -70,14 +70,49 @@ describe('selectPrimarySession', () => {
 })
 
 describe('buildVisibilityKey', () => {
-  test('同状态同 key', () => {
+  test('同状态同 key（稳定）', () => {
     const s = session({ threadId: 't1', phase: 'running', detail: 'x', lastActivityAt: 3 })
-    expect(buildVisibilityKey(s, [])).toBe(buildVisibilityKey(s, []))
+    expect(buildVisibilityKey([s], planning())).toBe(buildVisibilityKey([s], planning()))
   })
   test('detail 变 → key 变', () => {
     const a = session({ threadId: 't1', phase: 'running', detail: 'x', lastActivityAt: 3 })
     const b = session({ threadId: 't1', phase: 'running', detail: 'y', lastActivityAt: 3 })
-    expect(buildVisibilityKey(a, [])).not.toBe(buildVisibilityKey(b, []))
+    expect(buildVisibilityKey([a], planning())).not.toBe(buildVisibilityKey([b], planning()))
+  })
+  test('todo dueAt 变（id 不变）→ key 变（解除 dismiss）', () => {
+    const s = session({ threadId: 't1', phase: 'running', detail: 'x', lastActivityAt: 3 })
+    const before = planning({
+      todos: [{ id: 'todo-1', title: '写文档', kind: 'todo', dueAt: 100, overdue: false }],
+    })
+    const after = planning({
+      todos: [{ id: 'todo-1', title: '写文档', kind: 'todo', dueAt: 200, overdue: false }],
+    })
+    expect(buildVisibilityKey([s], before)).not.toBe(buildVisibilityKey([s], after))
+  })
+  test('reminder overdue 翻转 → key 变', () => {
+    const s = session({ threadId: 't1', phase: 'running', detail: 'x', lastActivityAt: 3 })
+    const before = planning({
+      reminders: [{ id: 'r-1', title: '站会', kind: 'calendar_event', dueAt: 100, overdue: false }],
+    })
+    const after = planning({
+      reminders: [{ id: 'r-1', title: '站会', kind: 'calendar_event', dueAt: 100, overdue: true }],
+    })
+    expect(buildVisibilityKey([s], before)).not.toBe(buildVisibilityKey([s], after))
+  })
+  test('非 primary session phase 变 → key 变（解除 dismiss）', () => {
+    const primary = session({ threadId: 't1', phase: 'needs-interaction', detail: 'x', lastActivityAt: 10 })
+    const otherBefore = session({ threadId: 't2', phase: 'running', detail: '', lastActivityAt: 5 })
+    const otherAfter = session({ threadId: 't2', phase: 'completed', detail: '', lastActivityAt: 5 })
+    expect(buildVisibilityKey([primary, otherBefore], planning()))
+      .not.toBe(buildVisibilityKey([primary, otherAfter], planning()))
+  })
+  test('新增 session → key 变', () => {
+    const a = session({ threadId: 't1', phase: 'running', detail: '', lastActivityAt: 1 })
+    const b = session({ threadId: 't2', phase: 'idle', detail: '', lastActivityAt: 2 })
+    expect(buildVisibilityKey([a], planning())).not.toBe(buildVisibilityKey([a, b], planning()))
+  })
+  test('全空 → 稳定 key', () => {
+    expect(buildVisibilityKey([], planning())).toBe(buildVisibilityKey([], planning()))
   })
 })
 
