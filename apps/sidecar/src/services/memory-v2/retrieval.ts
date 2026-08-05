@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getMemoryV2ScopePaths } from "./paths";
-import { createMemoryV2Store, type MemoryV2Store } from "./markdown-store";
+import { createMemoryV2Store, readActivation, type MemoryV2Store } from "./markdown-store";
 import {
   LOCAL_ONNX_MEMORY_EMBEDDING_MODEL_REF,
   createMemoryV2EmbeddingAttempts,
@@ -66,11 +66,13 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
   });
   const queryPlan = input.queryPlan ?? await resolveMemoryV2QueryPlan(query, queryPlanner);
   const scopes = input.scopes ?? (input.workspaceSlug ? ["global", "workspace"] : ["global"]);
-  const entryCandidates = entryRecallCandidates(store.listEntries({
-    workspaceSlug: input.workspaceSlug,
-    scopes,
-    includeStatuses: ["active", "suspected_stale"]
-  }));
+  const entryCandidates = entryRecallCandidates(
+    store.listEntries({
+      workspaceSlug: input.workspaceSlug,
+      scopes,
+      includeStatuses: ["active", "suspected_stale"]
+    }).filter((entry) => readActivation(entry.frontmatter).recall)
+  );
   const scoredEntries = scoreRecallCandidates(entryCandidates, query, intent, queryPlan);
   const hasExactClaimMatch = scoredEntries.some((item) => isClaimMatchForQuery(item, queryPlan));
   const candidates = [

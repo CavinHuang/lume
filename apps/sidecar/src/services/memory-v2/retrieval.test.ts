@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { smartAddMemoryV2Candidate } from "./smart-add";
 import { searchMemoryV2 } from "./retrieval";
-import { createMemoryV2Store } from "./markdown-store";
+import { createMemoryV2Store, writeMarkdownDocument } from "./markdown-store";
+import { DEFAULT_ACTIVATION } from "./types";
 
 let root: string;
 
@@ -599,5 +600,36 @@ describe("searchMemoryV2", () => {
     });
 
     expect(results[0]?.statement).toBe("Memory architecture uses semantic reranking.");
+  });
+
+  test("activation.recall=false 的条目不参与召回", async () => {
+    const store = createMemoryV2Store();
+    const active = store.writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "recall-active preference for vanilla flavor",
+      confidence: "high",
+      tags: ["flavor"]
+    });
+    const suppressed = store.writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "recall-suppressed preference for vanilla flavor",
+      confidence: "high",
+      tags: ["flavor"]
+    });
+    writeMarkdownDocument(suppressed.path, {
+      ...suppressed.frontmatter,
+      activation: { ...DEFAULT_ACTIVATION, recall: false }
+    }, suppressed.statement);
+
+    const results = await searchMemoryV2({
+      query: "vanilla flavor preference",
+      maxResults: 5,
+      semantic: "off"
+    });
+
+    expect(results.some((item) => item.statement === active.statement)).toBe(true);
+    expect(results.some((item) => item.statement === suppressed.statement)).toBe(false);
   });
 });

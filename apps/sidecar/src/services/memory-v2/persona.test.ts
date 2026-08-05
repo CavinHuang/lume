@@ -13,7 +13,8 @@ import {
   resetPersonaStoreForTest,
   writePersona
 } from "./persona";
-import type { MemoryV2Entry } from "./types";
+import { createMemoryV2Store, writeMarkdownDocument } from "./markdown-store";
+import { DEFAULT_ACTIVATION, type MemoryV2Entry } from "./types";
 
 const mkEntry = (
   over: Partial<MemoryV2Entry["frontmatter"]> & { statement: string }
@@ -332,5 +333,35 @@ describe("ensurePersona", () => {
     const provider = async () => "# 用户画像\n## 一句话定位\n默认";
     await ensurePersona({ providerFactory: provider });
     expect(readPersonaRaw("global")).toContain("默认");
+  });
+
+  test("activation.persona=false 的条目不进 persona 生成", async () => {
+    const store = createMemoryV2Store();
+    const visible = store.writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "persona-visible prefers dark mode",
+      confidence: "high"
+    });
+    const suppressed = store.writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "persona-suppressed prefers light mode",
+      confidence: "high"
+    });
+    writeMarkdownDocument(suppressed.path, {
+      ...suppressed.frontmatter,
+      activation: { ...DEFAULT_ACTIVATION, persona: false }
+    }, suppressed.statement);
+
+    let capturedPrompt = "";
+    const provider = async (prompt: string) => {
+      capturedPrompt = prompt;
+      return "# 用户画像\n## 一句话定位\nx";
+    };
+    await ensurePersona({ scope: "global", providerFactory: provider });
+
+    expect(capturedPrompt).toContain("persona-visible");
+    expect(capturedPrompt).not.toContain("persona-suppressed");
   });
 });
