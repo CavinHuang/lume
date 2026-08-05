@@ -16,10 +16,6 @@
     "apps/desktop": {
       "name": "@lume/desktop",
       "version": "0.1.21",
-      "dependencies": {
-        "react": "18.3.1",
-        "react-dom": "18.3.1",
-      },
       "devDependencies": {
         "@types/react": "^18.3.12",
         "@types/react-dom": "^18.3.1",
@@ -28,6 +24,8 @@
         "electron-builder": "24.13.3",
         "electron-updater": "6.8.9",
         "happy-dom": "^15.11.7",
+        "react": "18.3.1",
+        "react-dom": "18.3.1",
         "typescript": "^5.9.3",
         "vite": "^6.3.0",
       },
