@@ -9,6 +9,7 @@ import type { ReactElement, MouseEvent } from 'react'
 import { useCallback } from 'react'
 import { Quote, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
 
 interface QuotedSelectionChipProps {
   /** 选中的文本（截断显示） */
@@ -67,19 +68,15 @@ export function QuotedSelectionChip({
           {sourceLabel ?? truncatePath(filePath)}
         </span>
       </div>
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="icon-xs"
         onClick={handleRemoveClick}
-        className={cn(
-          'absolute right-1 top-1 flex size-[18px] items-center justify-center rounded-full',
-          'text-[var(--text-3)] opacity-0 transition-opacity duration-200',
-          'group-hover/quote:opacity-100',
-          'hover:bg-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]',
-        )}
+        className="absolute right-1 top-1 size-5 rounded-full text-[var(--text-3)] opacity-0 transition-opacity duration-200 group-hover/quote:opacity-100 hover:text-[var(--text-1)]"
         aria-label="移除引用"
       >
         <X className="size-3" />
-      </button>
+      </Button>
     </div>
   )
 }

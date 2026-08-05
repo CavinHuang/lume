@@ -442,11 +442,12 @@ export function AgentInput({
   const quotedSelection = useAtomValue(quotedSelectionFamily(threadId)) ?? null
   const setQuotedSelectionMap = useSetAtom(quotedSelectionMapAtom)
   const jotaiStore = useStore()
-  /** 消费当前会话的划线引用（一次性，发送即删除）；capturedAt 乐观锁防发送途中误删新选区 */
-  const consumeQuotedSelection = useCallback((): QuotedSelection | null => {
-    const current = jotaiStore.get(quotedSelectionMapAtom)[threadId] ?? null
-    if (!current) return null
-    const capturedAt = current.capturedAt
+  /** 读取当前会话的划线引用快照（不删除）—— 发送构建 text 时用 */
+  const peekQuotedSelection = useCallback((): QuotedSelection | null => {
+    return jotaiStore.get(quotedSelectionMapAtom)[threadId] ?? null
+  }, [jotaiStore, threadId])
+  /** 发送成功后提交（删除）引用；capturedAt 乐观锁防发送途中用户重选导致误删新选区 */
+  const commitQuotedSelection = useCallback((capturedAt: number): void => {
     jotaiStore.set(quotedSelectionMapAtom, (prev) => {
       const existing = prev[threadId]
       if (!existing || existing.capturedAt !== capturedAt) return prev
@@ -454,7 +455,6 @@ export function AgentInput({
       delete next[threadId]
       return next
     })
-    return current
   }, [jotaiStore, threadId])
   const handleRemoveQuotedSelection = useCallback(() => {
     setQuotedSelectionMap((prev) => {
@@ -1263,9 +1263,15 @@ export function AgentInput({
     const effectiveCommentAttachments = directAttachment ? [] : commentAttachments
     const effectivePendingAttachments = directAttachment ? [] : pendingAttachments
     const baseText = directAttachment ? annotationSubmission.text : resolveBrowserAnnotationBatchText({ rawText, hasSnapshot: Boolean(batchSnapshot), hasCodeComments: commentAttachments.length > 0, hasBrowserAttachments: effectiveBrowserAttachments.length > 0 })
-    // 划线引用：prepend 引用块到消息体（仅非 directAttachment 分支；submissionIdentity 含引用块以正确防重）
-    const quotedSelectionSnapshot = directAttachment ? null : consumeQuotedSelection()
-    const text = (quotedSelectionSnapshot ? buildQuotedSelectionBlock(quotedSelectionSnapshot) : '') + baseText
+    // 划线引用：peek（不删）构建 text；删除延迟到发送成功后（commitQuotedSelection），失败时引用保留可重试
+    const quotedSelectionSnapshot = directAttachment ? null : peekQuotedSelection()
+    const quotedBlock = quotedSelectionSnapshot ? buildQuotedSelectionBlock(quotedSelectionSnapshot) : ''
+    const text = quotedBlock + baseText
+    // messageParts 须与 userMessage 一致（sidecar 校验 parts 拼接 == userMessage）；引用 prepend 为 text part
+    const hasStructuredParts = serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
+    const messageParts = quotedBlock && hasStructuredParts
+      ? [{ type: 'text' as const, text: quotedBlock }, ...serialized.messageParts]
+      : serialized.messageParts
     let sendMessageMetadata = directAttachment ? undefined : effectiveMessageMetadata
     if (!directAttachment && selectedDesktopContextTarget) {
       const state = await refreshAgentInputDesktopContextState(sidecarCall, selectedDesktopContextTarget)
@@ -1289,7 +1295,7 @@ export function AgentInput({
     }
     const submissionIdentity = JSON.stringify({
       userMessage: text,
-      messageParts: serialized.messageParts,
+      messageParts,
       attachments: effectivePendingAttachments.map(({ id, filename, mediaType, size }) => ({ id, filename, mediaType, size })),
       commentAttachments: effectiveCommentAttachments,
       browserAttachments: effectiveBrowserAttachments,
@@ -1368,7 +1374,7 @@ export function AgentInput({
             threadId,
             userMessage: text,
             clientSubmissionId,
-            ...(serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref') ? { messageParts: serialized.messageParts } : {}),
+            ...(hasStructuredParts ? { messageParts } : {}),
             thinkingLevel,
             followUpQueueMode,
             permissionMode,
@@ -1379,6 +1385,8 @@ export function AgentInput({
             ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
           })
       pendingSubmissionRef.current = null
+      // P2-2: 发送成功后才删除引用（失败/early return 时保留 chip 供重试）
+      if (quotedSelectionSnapshot) commitQuotedSelection(quotedSelectionSnapshot.capturedAt)
       if (!directAttachment) editor.commands.clearContent()
       if (!directAttachment) setEditorText('')
       if (!directAttachment) pushHistoryEntry(sentJson)
@@ -1424,8 +1432,8 @@ export function AgentInput({
           ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
           ...(effectiveCommentAttachments.length > 0 ? { commentAttachments: effectiveCommentAttachments } : {}),
           ...(effectiveBrowserAttachments.length > 0 ? { browserAttachments: effectiveBrowserAttachments } : {}),
-          ...(!directAttachment && serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
-            ? { messageParts: serialized.messageParts }
+          ...(!directAttachment && hasStructuredParts
+            ? { messageParts }
             : {}),
         }))
         setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
@@ -1468,7 +1476,8 @@ export function AgentInput({
     setStreamingStates,
     setMessageQueues,
     setCommentDrafts,
-    consumeQuotedSelection,
+    peekQuotedSelection,
+    commitQuotedSelection,
     setBrowserAttachments,
     streaming,
     thinkingLevel,
