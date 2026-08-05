@@ -25,6 +25,7 @@ import {
 import {
   buildSnapshot,
   buildVisibilityKey,
+  isImmediateAgentIslandEvent,
   isStaleSession,
   mapRuntimePhaseToIslandPhase,
   projectPlanning,
@@ -128,7 +129,10 @@ export class AgentIslandService {
       // 比 runtime-status-changed.toolName 更精确（后者仅在 phase 变化时携带）。
       this.applyRuntimeEvent(params as RuntimeEventPayload | undefined)
     }
-    this.push(false)
+    // 紧迫事件（permission/ask_user/run 终态/tool.started）提权到 80ms 桶：
+    // 即使聚合 phase 尚未翻转，事件本身也能让岛屿在 ~80ms 内浮现（不等待 2000ms）。
+    const immediate = isImmediateAgentIslandEvent(method, params)
+    this.push(false, immediate)
   }
 
   /** 处理岛屿窗口回传的用户意图。 */
@@ -276,7 +280,7 @@ export class AgentIslandService {
     }
   }
 
-  private push(force: boolean): void {
+  private push(force: boolean, immediate = false): void {
     if (!this.deps.isEnabled()) return
     const now = Date.now()
     this.prune(now)
@@ -301,8 +305,11 @@ export class AgentIslandService {
     }
     const json = JSON.stringify(state)
     if (!force && json === this.lastStateJson) return
+    // 节流：force / immediate（事件级）/ urgent（state 级）走 80ms 桶；普通 token 流走 2000ms。
+    // 去掉原先 `state.presentation !== 'hidden'` 守卫——hidden 时由上面 json 去重已足够，
+    // immediate 在 dismissed/hidden 时仍能 80ms 浮现更符合"紧迫事件即时反馈"语义。
     const throttle =
-      state.presentation !== 'hidden' && this.urgent(state)
+      force || immediate || this.urgent(state)
         ? PUSH_THROTTLE_MS
         : AGENT_STREAM_PUSH_THROTTLE_MS
     if (!force && now - this.lastPushAt < throttle) return

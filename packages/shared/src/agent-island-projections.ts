@@ -64,6 +64,44 @@ export function selectHoverDelay(hovered: boolean): number {
   return hovered ? HOVER_EXPAND_DELAY_MS : HOVER_COLLAPSE_DELAY_MS
 }
 
+/**
+ * 判定 sidecar 通知是否为"紧迫事件"——应跳过 2000ms 节流、提权到 80ms 桶。
+ * 对齐 Proma `requiresImmediateAgentIslandPush`（agent-island-service.ts:735-741）：
+ * permission_request / ask_user_request / result / assistant.error 强制 80ms。
+ *
+ * 与 service 内部 `urgent(state)`（基于已聚合 phase）互补：本函数基于**事件本身**，
+ * 即使 phase 尚未翻转（如 permission.requested 事件先到、awaiting_permission 状态后到）
+ * 也能在事件到达瞬间把推送提权到 80ms 桶，避免最多 2s 拖延。
+ *
+ * - `agent:runtime-status-changed`：phase 为 awaiting_permission/awaiting_user_answer/completed/errored
+ * - `agent:runtime-event`：tool.started（工具活动信号）/ permission.requested / ask_user.requested / run.completed / run.failed
+ *
+ * type 字面量取自 `packages/shared/src/types/runtime-event.ts` 的 `RuntimeEventType` 与
+ * `packages/shared/src/types/agent.ts` 的 `AgentRuntimePhase`，不臆测。
+ */
+export function isImmediateAgentIslandEvent(method: string, params: unknown): boolean {
+  if (method === 'agent:runtime-status-changed') {
+    const phase = (params as { status?: { phase?: string } })?.status?.phase
+    return (
+      phase === 'awaiting_permission' ||
+      phase === 'awaiting_user_answer' ||
+      phase === 'completed' ||
+      phase === 'errored'
+    )
+  }
+  if (method === 'agent:runtime-event') {
+    const type = (params as { event?: { type?: string } })?.event?.type
+    return (
+      type === 'tool.started' ||
+      type === 'permission.requested' ||
+      type === 'ask_user.requested' ||
+      type === 'run.completed' ||
+      type === 'run.failed'
+    )
+  }
+  return false
+}
+
 const PHASE_PRIORITY: Record<AgentIslandPhase, number> = {
   'needs-interaction': 0,
   error: 1,

@@ -11,6 +11,7 @@ import {
   selectHoverDelay,
   HOVER_EXPAND_DELAY_MS,
   HOVER_COLLAPSE_DELAY_MS,
+  isImmediateAgentIslandEvent,
 } from './agent-island-projections'
 import type { IslandSessionInput } from './agent-island-projections'
 import type { AgentIslandPlanningSnapshot } from './types/agent-island'
@@ -295,5 +296,90 @@ describe('selectHoverDelay', () => {
   test('离开(false) → HOVER_COLLAPSE_DELAY_MS', () => {
     expect(selectHoverDelay(false)).toBe(HOVER_COLLAPSE_DELAY_MS)
     expect(HOVER_COLLAPSE_DELAY_MS).toBe(420)
+  })
+})
+
+describe('isImmediateAgentIslandEvent', () => {
+  test('runtime-status-changed: awaiting_permission/awaiting_user_answer → true', () => {
+    expect(
+      isImmediateAgentIslandEvent('agent:runtime-status-changed', {
+        status: { phase: 'awaiting_permission' },
+      }),
+    ).toBe(true)
+    expect(
+      isImmediateAgentIslandEvent('agent:runtime-status-changed', {
+        status: { phase: 'awaiting_user_answer' },
+      }),
+    ).toBe(true)
+  })
+  test('runtime-status-changed: completed/errored → true', () => {
+    expect(
+      isImmediateAgentIslandEvent('agent:runtime-status-changed', {
+        status: { phase: 'completed' },
+      }),
+    ).toBe(true)
+    expect(
+      isImmediateAgentIslandEvent('agent:runtime-status-changed', {
+        status: { phase: 'errored' },
+      }),
+    ).toBe(true)
+  })
+  test('runtime-status-changed: streaming/compacting/idle → false', () => {
+    for (const phase of ['streaming', 'compacting', 'idle'] as const) {
+      expect(
+        isImmediateAgentIslandEvent('agent:runtime-status-changed', {
+          status: { phase },
+        }),
+      ).toBe(false)
+    }
+  })
+  test('runtime-event: tool.started → true', () => {
+    expect(
+      isImmediateAgentIslandEvent('agent:runtime-event', { event: { type: 'tool.started' } }),
+    ).toBe(true)
+  })
+  test('runtime-event: permission.requested / ask_user.requested → true', () => {
+    expect(
+      isImmediateAgentIslandEvent('agent:runtime-event', { event: { type: 'permission.requested' } }),
+    ).toBe(true)
+    expect(
+      isImmediateAgentIslandEvent('agent:runtime-event', { event: { type: 'ask_user.requested' } }),
+    ).toBe(true)
+  })
+  test('runtime-event: run.completed / run.failed → true', () => {
+    expect(
+      isImmediateAgentIslandEvent('agent:runtime-event', { event: { type: 'run.completed' } }),
+    ).toBe(true)
+    expect(
+      isImmediateAgentIslandEvent('agent:runtime-event', { event: { type: 'run.failed' } }),
+    ).toBe(true)
+  })
+  test('runtime-event: token 流 / 普通 tool 事件 → false', () => {
+    for (const type of [
+      'assistant.delta',
+      'assistant.thinking_delta',
+      'assistant.final',
+      'tool.completed',
+      'tool.failed',
+      'usage.updated',
+      'message.user.submitted',
+    ]) {
+      expect(
+        isImmediateAgentIslandEvent('agent:runtime-event', { event: { type } }),
+      ).toBe(false)
+    }
+  })
+  test('未知 method → false', () => {
+    expect(isImmediateAgentIslandEvent('agent:message-appended', {})).toBe(false)
+    expect(isImmediateAgentIslandEvent('agent:thread-list-changed', {})).toBe(false)
+  })
+  test('字段缺失 / params=undefined → false（宽松兜底）', () => {
+    expect(isImmediateAgentIslandEvent('agent:runtime-status-changed', {})).toBe(false)
+    expect(isImmediateAgentIslandEvent('agent:runtime-status-changed', undefined)).toBe(false)
+    expect(isImmediateAgentIslandEvent('agent:runtime-event', {})).toBe(false)
+    expect(isImmediateAgentIslandEvent('agent:runtime-event', undefined)).toBe(false)
+    expect(
+      isImmediateAgentIslandEvent('agent:runtime-event', { event: {} }),
+    ).toBe(false)
   })
 })
