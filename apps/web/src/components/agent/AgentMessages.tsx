@@ -17,6 +17,7 @@ import {
   type ProjectionRef,
 } from './runtime-event-message-projection'
 import { RuntimeEventContentBlock } from './RuntimeEventContentBlock'
+import { AgentHistorySelectionLayer } from './AgentHistorySelectionLayer'
 import { getExpressionActionMessageIndex } from './expression-actions'
 import { TodoPanel } from './TodoPanel'
 import { ScrollMinimap, type MinimapItem } from './ScrollMinimap'
@@ -373,7 +374,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     const msg = liveMessages[i]
     const activeStreamingMessage = streaming && i === liveMessages.length - 1
     items.push(
-      <div key={`runtime-event-${msg.id}`} data-message-id={msg.id}>
+      <div key={`runtime-event-${msg.id}`} data-message-id={msg.id} data-message-role={msg.type}>
         <RuntimeEventContentBlock
           message={msg}
           animate={activeStreamingMessage && newMessageIds.has(msg.id)}
@@ -420,6 +421,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
           )}
         </div>
       </div>
+      <AgentHistorySelectionLayer threadId={threadId} rootRef={contentRef} />
       <TodoPanel data={latestTodo} running={streaming} />
       <ScrollMinimap
         items={minimapItems}
