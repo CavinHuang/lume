@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from 'react'
 import { CalendarDays, ChevronDown, ListTodo } from 'lucide-react'
 import type { AgentIslandIntent, AgentIslandState } from '@lume/shared'
+import { selectPlanningIndicator } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import './agent-island.css'
@@ -33,6 +34,9 @@ export function AgentIslandSurface({
 }) {
   const expanded = state.presentation === 'expanded'
   const primary = state.sessions[0]
+  // compact 紧迫 planning 图标：仅在无 primary session 时计算（有会话时 dot+label 优先）。
+  // 对齐 Proma AgentIslandApp.tsx:77-87（imminent event/todo → 彩色 calendar/checklist）。
+  const planningIndicator = !primary ? selectPlanningIndicator(state.planning, Date.now()) : null
   const surfaceRef = useRef<HTMLDivElement>(null)
   const lastHeightRef = useRef(32)
 
@@ -67,6 +71,18 @@ export function AgentIslandSurface({
           data-collapsed={expanded ? 'false' : 'true'}
           onClick={() => onIntent({ name: 'set-expanded', value: !expanded })}
         >
+          {!primary && planningIndicator && (
+            <span
+              className="island-planning-indicator"
+              style={{ color: planningIndicator.color }}
+            >
+              {planningIndicator.symbol === 'calendar' ? (
+                <CalendarDays className="island-indicator-icon" />
+              ) : (
+                <ListTodo className="island-indicator-icon" />
+              )}
+            </span>
+          )}
           <span className={cn('island-dot', PHASE_DOT[primary?.phase ?? 'idle'])} />
           <span className="island-label">{state.compactLabel}</span>
           <ChevronDown className={cn('island-chevron', expanded && 'rotate-180')} />

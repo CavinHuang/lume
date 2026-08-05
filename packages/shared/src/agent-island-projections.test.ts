@@ -5,8 +5,10 @@ import {
   buildVisibilityKey,
   projectPlanning,
   pushActivityLine,
+  selectPlanningIndicator,
 } from './agent-island-projections'
 import type { IslandSessionInput } from './agent-island-projections'
+import type { AgentIslandPlanningSnapshot } from './types/agent-island'
 
 describe('mapRuntimePhaseToIslandPhase', () => {
   test('streaming/compacting → running', () => {
@@ -100,5 +102,95 @@ describe('pushActivityLine', () => {
     const next = pushActivityLine(prev, 'Write')
     expect(prev).toEqual(['Read'])
     expect(next).toEqual(['Read', 'Write'])
+  })
+})
+
+const HOUR = 60 * 60_000
+
+function planning(over: Partial<AgentIslandPlanningSnapshot> = {}): AgentIslandPlanningSnapshot {
+  return { todos: [], reminders: [], ...over }
+}
+
+describe('selectPlanningIndicator', () => {
+  test('空 planning → null', () => {
+    expect(selectPlanningIndicator(planning(), 1_000_000)).toBeNull()
+  })
+
+  test('window 内只有 reminder → calendar(accent)', () => {
+    const now = 1_000_000
+    const snap = planning({
+      reminders: [{ id: 'r1', title: '站会', kind: 'calendar_event', dueAt: now + 30 * 60_000, overdue: false }],
+    })
+    const ind = selectPlanningIndicator(snap, now)
+    expect(ind).not.toBeNull()
+    expect(ind?.symbol).toBe('calendar')
+    expect(ind?.color).toBe('var(--lume-accent)')
+  })
+
+  test('window 内只有 todo → checklist(warning)', () => {
+    const now = 1_000_000
+    const snap = planning({
+      todos: [{ id: 't1', title: '写文档', kind: 'todo', dueAt: now + 15 * 60_000, overdue: false }],
+    })
+    const ind = selectPlanningIndicator(snap, now)
+    expect(ind).not.toBeNull()
+    expect(ind?.symbol).toBe('checklist')
+    expect(ind?.color).toBe('var(--lume-warning)')
+  })
+
+  test('event 早于 todo → calendar 胜', () => {
+    const now = 1_000_000
+    const snap = planning({
+      todos: [{ id: 't1', title: '写文档', kind: 'todo', dueAt: now + 40 * 60_000, overdue: false }],
+      reminders: [{ id: 'r1', title: '站会', kind: 'calendar_event', dueAt: now + 10 * 60_000, overdue: false }],
+    })
+    expect(selectPlanningIndicator(snap, now)?.symbol).toBe('calendar')
+  })
+
+  test('todo 早于 event → checklist 胜', () => {
+    const now = 1_000_000
+    const snap = planning({
+      todos: [{ id: 't1', title: '写文档', kind: 'todo', dueAt: now + 5 * 60_000, overdue: false }],
+      reminders: [{ id: 'r1', title: '站会', kind: 'calendar_event', dueAt: now + 20 * 60_000, overdue: false }],
+    })
+    expect(selectPlanningIndicator(snap, now)?.symbol).toBe('checklist')
+  })
+
+  test('event 与 todo 同 dueAt → calendar 胜（平局倾向 event）', () => {
+    const now = 1_000_000
+    const due = now + 20 * 60_000
+    const snap = planning({
+      todos: [{ id: 't1', title: '写文档', kind: 'todo', dueAt: due, overdue: false }],
+      reminders: [{ id: 'r1', title: '站会', kind: 'calendar_event', dueAt: due, overdue: false }],
+    })
+    expect(selectPlanningIndicator(snap, now)?.symbol).toBe('calendar')
+  })
+
+  test('仅逾期项（dueAt < now）→ null（imminent 仅看未来）', () => {
+    const now = 1_000_000
+    const snap = planning({
+      todos: [{ id: 't-over', title: '过期', kind: 'todo', dueAt: now - 5 * 60_000, overdue: true }],
+      reminders: [{ id: 'r-over', title: '过期会', kind: 'calendar_event', dueAt: now - 60_000, overdue: true }],
+    })
+    expect(selectPlanningIndicator(snap, now)).toBeNull()
+  })
+
+  test('仅远期项（超出 1h window）→ null', () => {
+    const now = 1_000_000
+    const snap = planning({
+      todos: [{ id: 't-far', title: '远期', kind: 'todo', dueAt: now + 3 * HOUR, overdue: false }],
+      reminders: [{ id: 'r-far', title: '远期会', kind: 'calendar_event', dueAt: now + 2 * HOUR, overdue: false }],
+    })
+    expect(selectPlanningIndicator(snap, now)).toBeNull()
+  })
+
+  test('不修改入参 planning（纯函数）', () => {
+    const now = 1_000_000
+    const snap = planning({
+      reminders: [{ id: 'r1', title: '站会', kind: 'calendar_event', dueAt: now + 10 * 60_000, overdue: false }],
+    })
+    const before = JSON.stringify(snap)
+    selectPlanningIndicator(snap, now)
+    expect(JSON.stringify(snap)).toBe(before)
   })
 })

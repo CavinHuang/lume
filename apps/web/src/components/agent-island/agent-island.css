@@ -36,6 +36,10 @@ html.darwin .island-surface {
 .island-dot { width: 6px; height: 6px; border-radius: 9999px; flex-shrink: 0; }
 .island-label { font-size: 12px; font-weight: 500; flex: 1; text-align: left; }
 .island-chevron { width: 14px; height: 14px; transition: transform 180ms ease; }
+/* compact 紧迫 planning 图标（无 primary session 时替代 dot 充当注意力信号）：
+   颜色由 inline style 注入（var(--lume-accent) / var(--lume-warning)）。 */
+.island-planning-indicator { display: inline-flex; align-items: center; flex-shrink: 0; }
+.island-indicator-icon { width: 14px; height: 14px; }
 .island-expanded { padding: 4px 12px 12px; }
 .island-expanded-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .island-title { font-size: 13px; font-weight: 600; }

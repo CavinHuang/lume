@@ -107,6 +107,32 @@ export function projectPlanning(
   }
 }
 
+/**
+ * compact 紧迫 planning 图标：无 primary session 时，若存在 1h window 内的
+ * imminent event/todo，返回对应彩色图标（对齐 Proma AgentIslandApp.tsx:77-87）。
+ * - reminder（calendar_event）→ calendar，accent 色
+ * - todo → checklist，warning 色
+ * - 平局（同 dueAt）倾向 calendar（events 通常更具时效约束）
+ * - 仅逾期或远期项 → null（逾期已在 planning 列表红框标记，imminent 只看未来）
+ */
+export interface PlanningIndicator {
+  symbol: 'calendar' | 'checklist'
+  color: string
+}
+
+export function selectPlanningIndicator(
+  planning: AgentIslandPlanningSnapshot,
+  now: number,
+): PlanningIndicator | null {
+  const win = PLANNING_ATTENTION_WINDOW_MS
+  const nextEvent = planning.reminders.find((r) => r.dueAt >= now && r.dueAt - now <= win)
+  const nextTodo = planning.todos.find((t) => t.dueAt >= now && t.dueAt - now <= win)
+  if (nextEvent && (!nextTodo || nextEvent.dueAt <= nextTodo.dueAt))
+    return { symbol: 'calendar', color: 'var(--lume-accent)' }
+  if (nextTodo) return { symbol: 'checklist', color: 'var(--lume-warning)' }
+  return null
+}
+
 export function buildSnapshot(
   inputs: IslandSessionInput[],
   planning: AgentIslandPlanningSnapshot,
