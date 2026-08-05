@@ -982,6 +982,11 @@ export const agentQueuedMessageInputSchema = z.object({
 // retry 与 remove/promote 共用同一组字段,直接复用 agentQueuedMessageInputSchema
 export const agentRetryQueuedMessageInputSchema = agentQueuedMessageInputSchema;
 
+export const agentResumeQueueInputSchema = z.object({
+  threadId: idSchema,
+  queueOperationId: idSchema,
+});
+
 export const agentUpdateQueuedMessageInputSchema = z.object({
   threadId: idSchema,
   queuedMessageId: idSchema,

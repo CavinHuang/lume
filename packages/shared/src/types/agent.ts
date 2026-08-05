@@ -1134,6 +1134,8 @@ export interface AgentMessageQueueSnapshot {
   revision: number
   queuedMessages: AgentQueuedMessage[]
   pendingGuidance: AgentPendingGuidance[]
+  /** 队列因 STOP 中断暂停(thread 级);Resume 后清除。renderer 据此显示 Resume 横幅(刷新可恢复)。 */
+  paused?: boolean
 }
 
 export interface AgentMessageQueueInput {
@@ -1158,6 +1160,11 @@ export interface AgentRetryQueuedMessageInput {
   threadId: string
   queuedMessageId: string
   expectedRevision: number
+  queueOperationId: string
+}
+
+export interface AgentResumeQueueInput {
+  threadId: string
   queueOperationId: string
 }
 
@@ -2050,6 +2057,8 @@ export const AGENT_IPC_CHANNELS = {
   REMOVE_QUEUED_MESSAGE: 'agent:remove-queued-message',
   /** 重试一条排队消息 */
   RETRY_QUEUED_MESSAGE: 'agent:retry-queued-message',
+  /** 恢复因 STOP 中断暂停的队列 */
+  RESUME_QUEUE: 'agent:resume-queue',
   /** 以 revision/CAS 更新一条排队消息 */
   UPDATE_QUEUED_MESSAGE: 'agent:update-queued-message',
   /** 将排队消息提升为下一次工具调用前的引导 */

@@ -1346,7 +1346,8 @@ describe("agent-service", () => {
       threadId: thread.id,
       revision: expect.any(Number),
       queuedMessages: [],
-      pendingGuidance: []
+      pendingGuidance: [],
+      paused: false
     });
     expect(appended.filter((event) => event.message.role === "user").map((event) => event.message.content)).toEqual([
       "hold:first",

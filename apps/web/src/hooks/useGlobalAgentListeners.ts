@@ -227,10 +227,13 @@ export function useGlobalAgentListeners() {
         case AGENT_IPC_CHANNELS.MESSAGE_QUEUE_CHANGED: {
           const snapshot = params as AgentMessageQueueSnapshot
           setMessageQueues((prev) => ({ ...prev, [snapshot.threadId]: snapshot }))
-          // 队列已空(无非 internal 消息)时清除中断标记:Resume 后或全部处理完。
-          if (!snapshot.queuedMessages.some((item) => !item.internal)) {
-            setQueueInterrupted((prev) => (prev[snapshot.threadId] ? { ...prev, [snapshot.threadId]: false } : prev))
-          }
+          // paused 权威源在 sidecar(kernel);snapshot.paused 驱动 Resume 横幅(刷新可恢复)。
+          const nextPaused = snapshot.paused === true
+          setQueueInterrupted((prev) => {
+            const cur = prev[snapshot.threadId] === true
+            if (cur === nextPaused) return prev
+            return { ...prev, [snapshot.threadId]: nextPaused }
+          })
           break
         }
         case AGENT_IPC_CHANNELS.THREAD_LIST_CHANGED: {
