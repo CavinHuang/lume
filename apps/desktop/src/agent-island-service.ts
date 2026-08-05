@@ -27,6 +27,7 @@ import {
   buildVisibilityKey,
   mapRuntimePhaseToIslandPhase,
   projectPlanning,
+  pushActivityLine,
   selectPrimarySession,
 } from '../../../packages/shared/src/agent-island-projections'
 import type { IslandSessionInput } from '../../../packages/shared/src/agent-island-projections'
@@ -68,6 +69,15 @@ interface RuntimeStatusLike {
   updatedAt: number
 }
 
+/** sidecar `agent:runtime-event` 通知的宽松形状（只取灵动岛关心的字段）。 */
+interface RuntimeEventPayload {
+  threadId?: string
+  event?: {
+    type?: string
+    toolName?: string
+  }
+}
+
 interface PlanningCache {
   todos: AgentIslandPlanningItem[]
   reminders: AgentIslandPlanningItem[]
@@ -103,10 +113,12 @@ export class AgentIslandService {
     if (method === 'agent:runtime-status-changed') {
       const status = (params as { status?: RuntimeStatusLike })?.status
       if (status) this.applyStatus(status)
+    } else if (method === 'agent:runtime-event') {
+      // sidecar 在每次工具调用、消息追加、run 生命周期都会发 runtime-event；
+      // 这里只关心 tool.started —— 它是工具活动的权威信号（携带 toolName），
+      // 比 runtime-status-changed.toolName 更精确（后者仅在 phase 变化时携带）。
+      this.applyRuntimeEvent(params as RuntimeEventPayload | undefined)
     }
-    // 其他事件（tool/task 活动、permission/ask_user/desktop_action）目前通过
-    // runtime-status-changed 的 phase 变化（awaiting_permission / awaiting_user_answer）
-    // 间接反映；其 activityLines 富化留待后续基于真实 sidecar 事件参数形状增量补充。
     this.push(false)
   }
 
@@ -146,17 +158,42 @@ export class AgentIslandService {
     const phase = mapRuntimePhaseToIslandPhase(status.phase as AgentRuntimePhase)
     const prev = this.sessions.get(status.threadId)
     const interactionKind = this.deriveInteractionKind(phase, status)
+    const toolName = status.toolName?.trim() ?? ''
+    // 兜底：正常路径下 tool.started 事件已先于 status 把 toolName 推入 activityLines；
+    // 此分支仅在 runtime-event 未路由（或会话首次注册）且 status 携带 toolName 时，
+    // 保证 activityLines 至少有一条而非空数组——Swift/Surface 才能显示。
+    const prevActivity = prev?.activityLines ?? []
+    const activityLines =
+      toolName && prevActivity.length === 0 ? pushActivityLine(prevActivity, toolName) : prevActivity
     this.sessions.set(status.threadId, {
       threadId: status.threadId,
       title: prev?.title ?? status.threadId,
       phase,
       ...(interactionKind ? { interactionKind } : {}),
-      detail: status.toolName ?? '',
-      activityLines: prev?.activityLines ?? [],
+      detail: toolName,
+      activityLines,
       attention: phase === 'needs-interaction',
       unread: phase === 'completed' || phase === 'error',
       terminalAt: phase === 'completed' || phase === 'error' ? Date.now() : prev?.terminalAt ?? null,
       lastActivityAt: status.updatedAt ?? Date.now(),
+    })
+  }
+
+  /**
+   * 处理 sidecar `agent:runtime-event` 通知：仅在 tool.started 时累积 activityLine。
+   * 会话尚未注册（status 未到）则忽略——applyStatus 兜底分支会在 status 到达时补一条。
+   */
+  private applyRuntimeEvent(payload: RuntimeEventPayload | undefined): void {
+    const { threadId, event } = payload ?? {}
+    if (!threadId || !event || event.type !== 'tool.started') return
+    const toolName = event.toolName?.trim()
+    if (!toolName) return
+    const prev = this.sessions.get(threadId)
+    if (!prev) return
+    this.sessions.set(threadId, {
+      ...prev,
+      activityLines: pushActivityLine(prev.activityLines, toolName),
+      lastActivityAt: Date.now(),
     })
   }
 

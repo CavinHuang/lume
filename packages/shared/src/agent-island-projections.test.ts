@@ -4,6 +4,7 @@ import {
   selectPrimarySession,
   buildVisibilityKey,
   projectPlanning,
+  pushActivityLine,
 } from './agent-island-projections'
 import type { IslandSessionInput } from './agent-island-projections'
 
@@ -77,5 +78,27 @@ describe('projectPlanning', () => {
     }, now)
     expect(snap.todos.map((t) => t.id)).toEqual(['soon'])
     expect(snap.reminders.map((r) => r.id)).toEqual(['over'])
+  })
+})
+
+describe('pushActivityLine', () => {
+  test('空数组追加一条', () => {
+    expect(pushActivityLine([], 'Read')).toEqual(['Read'])
+  })
+  test('累积多条保持顺序', () => {
+    let lines: string[] = []
+    for (const l of ['Read', 'Write', 'Edit']) lines = pushActivityLine(lines, l)
+    expect(lines).toEqual(['Read', 'Write', 'Edit'])
+  })
+  test('超过 4 条丢最早一条（FIFO 截断）', () => {
+    let lines: string[] = []
+    for (const l of ['A', 'B', 'C', 'D', 'E']) lines = pushActivityLine(lines, l)
+    expect(lines).toEqual(['B', 'C', 'D', 'E'])
+  })
+  test('不修改原数组（纯函数）', () => {
+    const prev = ['Read']
+    const next = pushActivityLine(prev, 'Write')
+    expect(prev).toEqual(['Read'])
+    expect(next).toEqual(['Read', 'Write'])
   })
 })

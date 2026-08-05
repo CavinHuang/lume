@@ -44,6 +44,16 @@ html.darwin .island-surface {
 .island-session-row:hover { background: rgb(255 255 255 / 0.06); }
 .island-session-title { font-size: 12px; }
 .island-session-detail { font-size: 11px; opacity: 0.6; margin-left: auto; }
+/* session 最近一条活动行（toolName 累积末尾）：灰色小字、单行截断 */
+.island-session-activity {
+  font-size: 11px;
+  opacity: 0.5;
+  margin-left: auto;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* planning 两列（对齐 Proma）：todos + reminders */
 .island-planning {
   display: grid;

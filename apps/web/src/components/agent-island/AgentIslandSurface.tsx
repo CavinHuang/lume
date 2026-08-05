@@ -101,7 +101,13 @@ export function AgentIslandSurface({
                 >
                   <span className={cn('island-dot', PHASE_DOT[s.phase])} />
                   <span className="island-session-title">{s.title}</span>
-                  {s.detail && <span className="island-session-detail">{s.detail}</span>}
+                  {s.activityLines.length > 0 ? (
+                    <span className="island-session-activity">
+                      {s.activityLines[s.activityLines.length - 1]}
+                    </span>
+                  ) : s.detail ? (
+                    <span className="island-session-detail">{s.detail}</span>
+                  ) : null}
                 </li>
               ))}
             </ul>

@@ -9,6 +9,18 @@ import type {
 
 const PLANNING_ATTENTION_WINDOW_MS = 60 * 60_000 // 1h
 
+/** 累积活动行的上限（对齐 Proma MAX_ACTIVITY_LINES）。 */
+const MAX_ACTIVITY_LINES = 4
+
+/**
+ * 把 line 追加到 prev 末尾，超出 MAX_ACTIVITY_LINES 时丢最早一条（FIFO）。
+ * 用于 service 把 sidecar 的 tool/task 事件名累积进 session.activityLines。
+ */
+export function pushActivityLine(prev: string[], line: string): string[] {
+  const next = [...prev, line]
+  return next.slice(-MAX_ACTIVITY_LINES)
+}
+
 /** service 组装的会话输入（投影前），由 service 从事件聚合。 */
 export interface IslandSessionInput {
   threadId: string
