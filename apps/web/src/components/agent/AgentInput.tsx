@@ -1545,20 +1545,10 @@ export function AgentInput({
   }, [messageQueueSnapshot, setMessageQueues, threadId])
 
   const handleRemoveQueuedMessage = useCallback((queuedMessageId: string) => {
-    // revoke 被删队列项的图片附件 objectURL,防泄漏
+    // 仅在删除成功后才 revoke previewUrl:失败路径消息仍在队列,提前 revoke 会让缩略
+    // 在该消息剩余生命周期永久消失(objectURL 不可重建)。
     const removedMessage = messageQueueSnapshot.queuedMessages.find((m) => m.id === queuedMessageId)
     const removedAttachmentIds = removedMessage?.messageAttachments?.map((a) => a.id) ?? []
-    if (removedAttachmentIds.length > 0) {
-      setQueuedAttachmentPreviewUrls((prev) => {
-        for (const id of removedAttachmentIds) {
-          const url = prev[id]
-          if (url) URL.revokeObjectURL(url)
-        }
-        const next = { ...prev }
-        for (const id of removedAttachmentIds) delete next[id]
-        return next
-      })
-    }
     removeQueuedAgentMessage({
       threadId,
       queuedMessageId,
@@ -1567,7 +1557,27 @@ export function AgentInput({
     })
       .then((result) => {
         setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
-        if (!result.ok) toast.error('队列已发生变化，删除未执行')
+        if (!result.ok) {
+          toast.error('队列已发生变化，删除未执行')
+          return
+        }
+        // 删除成功:revoke + 清 atom(updater 保持纯净:revoke 副作用收集到外层,
+        // 无任何目标 id 时短路返回 prev,避免不必要的引用变更触发重渲染)
+        if (removedAttachmentIds.length === 0) return
+        const urlsToRevoke: string[] = []
+        setQueuedAttachmentPreviewUrls((prev) => {
+          if (!removedAttachmentIds.some((id) => id in prev)) return prev
+          const next = { ...prev }
+          for (const id of removedAttachmentIds) {
+            const url = next[id]
+            if (url) {
+              urlsToRevoke.push(url)
+              delete next[id]
+            }
+          }
+          return next
+        })
+        for (const url of urlsToRevoke) URL.revokeObjectURL(url)
       })
       .catch((error) => {
         console.error('[AgentInput] 删除排队消息失败:', error)
