@@ -336,6 +336,19 @@ describe("memory-v2 markdown store", () => {
     });
   });
 
+  test("readActivation partial 字段 → 缺失键默认 true（按键 fallback）", () => {
+    // 手编辑 YAML 产生 partial activation（仅 recall: true），缺失键以 DEFAULT_ACTIVATION 补齐
+    const fm = {
+      activation: { recall: true }
+    } as Partial<MemoryV2EntryFrontmatter> as MemoryV2EntryFrontmatter;
+    expect(readActivation(fm)).toEqual({
+      recall: true,
+      persona: true,
+      suggestion: true,
+      analyst: true
+    });
+  });
+
   test("writeEntry 新记忆默认 activation 全 true", () => {
     const entry = writeEntry({
       kind: "preference",

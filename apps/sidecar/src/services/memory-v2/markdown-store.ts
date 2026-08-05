@@ -539,9 +539,12 @@ export function writeMarkdownDocument(path: string, frontmatter: unknown, body: 
 /**
  * 读取激活开关。fail-open：frontmatter 无 activation 字段时返回 DEFAULT_ACTIVATION（全 true），
  * 以兼容 Task 1 之前写入的旧记忆。
+ *
+ * 按键 fallback：手编辑 YAML 产生 partial activation（如仅 {recall: true}）时，
+ * 缺失键以 DEFAULT_ACTIVATION 对应值补齐（默认 true），与 UI 的逐键合并行为保持一致。
  */
 export function readActivation(frontmatter: Pick<MemoryV2EntryFrontmatter, "activation">): MemoryV2Activation {
-  return frontmatter.activation ?? DEFAULT_ACTIVATION;
+  return { ...DEFAULT_ACTIVATION, ...(frontmatter.activation ?? {}) };
 }
 
 export function redactArchiveRecord(record: Record<string, unknown>): Record<string, unknown> & { redacted: boolean } {
