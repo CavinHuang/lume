@@ -1,4 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createMemoryV2Store, writeMarkdownDocument } from "../memory-v2/markdown-store";
+import { DEFAULT_ACTIVATION } from "../memory-v2/types";
 import {
   applyRules,
   automationTitleFromRaw,
@@ -16,6 +21,18 @@ import type {
   Signal,
   TodoSignal,
 } from "./signals";
+
+let root: string;
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), "lume-suggest-rules-"));
+  process.env.LUME_CONFIG_DIR = root;
+});
+
+afterEach(() => {
+  delete process.env.LUME_CONFIG_DIR;
+  rmSync(root, { recursive: true, force: true });
+});
 
 const correction = (raw: string, confidence = 0.95): CorrectionSignal => ({
   kind: "correction",
@@ -212,5 +229,79 @@ describe("loadDedupContext", () => {
     expect(Array.isArray(out.automationTitles)).toBe(true);
     expect(Array.isArray(out.correctionRules)).toBe(true);
     expect(typeof out.sopCandidateCount).toBe("number");
+  });
+});
+
+// ===== loadDedupContext: activation.suggestion 过滤（Task 3） =====
+
+describe("loadDedupContext: activation.suggestion 过滤", () => {
+  test("activation.suggestion=false 的 correction 条目不进 correctionRules", () => {
+    const store = createMemoryV2Store();
+    const visible = store.writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "rule-visible 不要用 var 声明",
+      confidence: "high",
+      tags: ["correction"],
+    });
+    const suppressed = store.writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "rule-suppressed 不要用 let 声明",
+      confidence: "high",
+      tags: ["correction"],
+    });
+    writeMarkdownDocument(suppressed.path, {
+      ...suppressed.frontmatter,
+      activation: { ...DEFAULT_ACTIVATION, suggestion: false },
+    }, suppressed.statement);
+
+    const out = loadDedupContext({});
+    expect(out.correctionRules).toContain(visible.statement);
+    expect(out.correctionRules).not.toContain(suppressed.statement);
+  });
+
+  test("activation.suggestion=false 的 state 条目不计入 sopCandidateCount", () => {
+    const store = createMemoryV2Store();
+    store.writeEntry({
+      kind: "state",
+      targetScope: "global",
+      statement: "state-visible 工作流",
+      confidence: "high",
+    });
+    const suppressed = store.writeEntry({
+      kind: "state",
+      targetScope: "global",
+      statement: "state-suppressed 工作流",
+      confidence: "high",
+    });
+    writeMarkdownDocument(suppressed.path, {
+      ...suppressed.frontmatter,
+      activation: { ...DEFAULT_ACTIVATION, suggestion: false },
+    }, suppressed.statement);
+
+    const out = loadDedupContext({});
+    // 1 条 visible state 计入；suppressed 不计
+    expect(out.sopCandidateCount).toBe(1);
+  });
+
+  test("旧条目（无 activation 字段）不受影响（fail-open）", () => {
+    const store = createMemoryV2Store();
+    const entry = store.writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "legacy-rule 不要用 var",
+      confidence: "high",
+      tags: ["correction"],
+    });
+    // 模拟旧条目：写入时移除 activation 字段
+    const legacyFrontmatter: Omit<typeof entry.frontmatter, "activation"> = {
+      ...entry.frontmatter,
+    };
+    delete (legacyFrontmatter as { activation?: unknown }).activation;
+    writeMarkdownDocument(entry.path, legacyFrontmatter, entry.statement);
+
+    const out = loadDedupContext({});
+    expect(out.correctionRules).toContain("legacy-rule 不要用 var");
   });
 });

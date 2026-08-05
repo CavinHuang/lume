@@ -1,6 +1,11 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { LLMProvider } from "@lume/agent-sdk";
 import type { PersonaProfile } from "@lume/shared";
+import { createMemoryV2Store, writeMarkdownDocument } from "../memory-v2/markdown-store";
+import { DEFAULT_ACTIVATION } from "../memory-v2/types";
 import {
   ALLOWED_KINDS,
   MAX_CANDIDATES,
@@ -25,10 +30,19 @@ mock.module("../memory-v2/persona", () => ({
   parsePersonaProfile: () => personaProfile,
 }));
 
+let root: string;
+
 beforeEach(() => {
   personaRaw = null;
   personaProfile = { preferences: [], interactionRules: [], evolution: [] };
   personaReadThrows = false;
+  root = mkdtempSync(join(tmpdir(), "lume-suggest-analyst-"));
+  process.env.LUME_CONFIG_DIR = root;
+});
+
+afterEach(() => {
+  delete process.env.LUME_CONFIG_DIR;
+  rmSync(root, { recursive: true, force: true });
 });
 
 // ===== Brief 契约：常量 =====
@@ -657,5 +671,77 @@ describe("buildAnalysisInput: persona 注入", () => {
     personaProfile = { preferences: [], interactionRules: [], evolution: [] };
     const input = buildAnalysisInput({ workspaceSlug: undefined });
     expect(input).not.toContain("用户画像（persona）");
+  });
+});
+
+// ===== buildAnalysisInput: activation.analyst 过滤（Task 3） =====
+
+describe("buildAnalysisInput: activation.analyst 过滤", () => {
+  test("activation.analyst=false 的条目不进分析输入", () => {
+    const store = createMemoryV2Store();
+    const visible = store.writeEntry({
+      kind: "fact",
+      targetScope: "global",
+      statement: "analyst-visible 每周发版前手动跑检查",
+      confidence: "high",
+    });
+    const suppressed = store.writeEntry({
+      kind: "fact",
+      targetScope: "global",
+      statement: "analyst-suppressed 每周发版前手动跑检查",
+      confidence: "high",
+    });
+    writeMarkdownDocument(suppressed.path, {
+      ...suppressed.frontmatter,
+      activation: { ...DEFAULT_ACTIVATION, analyst: false },
+    }, suppressed.statement);
+
+    const input = buildAnalysisInput({ workspaceSlug: undefined });
+    expect(input).toContain("analyst-visible");
+    expect(input).not.toContain("analyst-suppressed");
+  });
+
+  test("activation.analyst=false 的 correction 条目不进已生效行为规则段", () => {
+    const store = createMemoryV2Store();
+    const visible = store.writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "correction-visible 不要用 var",
+      confidence: "high",
+      tags: ["correction"],
+    });
+    const suppressed = store.writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "correction-suppressed 不要用 let",
+      confidence: "high",
+      tags: ["correction"],
+    });
+    writeMarkdownDocument(suppressed.path, {
+      ...suppressed.frontmatter,
+      activation: { ...DEFAULT_ACTIVATION, analyst: false },
+    }, suppressed.statement);
+
+    const input = buildAnalysisInput({ workspaceSlug: undefined });
+    expect(input).toContain("correction-visible");
+    expect(input).not.toContain("correction-suppressed");
+  });
+
+  test("旧条目（无 activation 字段）不受影响（fail-open）", () => {
+    const store = createMemoryV2Store();
+    const entry = store.writeEntry({
+      kind: "fact",
+      targetScope: "global",
+      statement: "legacy-analyst 工作流",
+      confidence: "high",
+    });
+    const legacyFrontmatter: Omit<typeof entry.frontmatter, "activation"> = {
+      ...entry.frontmatter,
+    };
+    delete (legacyFrontmatter as { activation?: unknown }).activation;
+    writeMarkdownDocument(entry.path, legacyFrontmatter, entry.statement);
+
+    const input = buildAnalysisInput({ workspaceSlug: undefined });
+    expect(input).toContain("legacy-analyst");
   });
 });
