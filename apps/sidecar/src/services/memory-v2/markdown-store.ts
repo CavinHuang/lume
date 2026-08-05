@@ -36,6 +36,7 @@ export interface MemoryV2Store {
     related?: string[];
     supersedes?: string[];
     source?: MemoryV2Source;
+    activation?: MemoryV2Activation;
   }): MemoryV2Entry;
   updateEntryStatus(input: {
     scope: MemoryV2Scope;
@@ -139,6 +140,7 @@ export function writeEntry(candidate: MemoryV2Candidate, input: {
   related?: string[];
   supersedes?: string[];
   source?: MemoryV2Source;
+  activation?: MemoryV2Activation;
 } = {}): MemoryV2Entry {
   const paths = getMemoryV2ScopePaths({
     scope: candidate.targetScope,
@@ -165,7 +167,7 @@ export function writeEntry(candidate: MemoryV2Candidate, input: {
     applies_when: candidate.appliesWhen ?? {},
     valid_from: null,
     valid_to: null,
-    activation: { ...DEFAULT_ACTIVATION },
+    activation: input.activation ? { ...input.activation } : { ...DEFAULT_ACTIVATION },
     ...(candidate.claim ? { claim: candidate.claim } : {})
   };
   const filename = `${now.slice(0, 10)}-${id}.md`;
@@ -404,15 +406,22 @@ export function resolvePending(input: {
   }
 
   const candidate = candidateFromPending(pending, input.workspaceSlug, input.candidateOverride);
+  const existingIds = pending.frontmatter.existing?.ids ?? [];
+  // 版本迁移：新版继承被 supersede 旧版的 activation（保留用户对原记忆按用途的精调）。
+  // 无旧版（纯新记忆接受低置信度等）→ writeEntry 默认 DEFAULT_ACTIVATION。
+  const supersededEntry = existingIds.length > 0
+    ? findEntryByIdAcrossScopes(existingIds[0]!, input.workspaceSlug)
+    : undefined;
   const entry = writeEntry(candidate, {
-    supersedes: pending.frontmatter.existing?.ids,
+    supersedes: existingIds,
     source: {
       type: "manual",
       run_id: pending.frontmatter.evidence?.run_id,
       record_ids: pending.frontmatter.evidence?.record_ids
-    }
+    },
+    ...(supersededEntry ? { activation: readActivation(supersededEntry.frontmatter) } : {})
   });
-  for (const existingId of pending.frontmatter.existing?.ids ?? []) {
+  for (const existingId of existingIds) {
     const existing = findEntryByIdAcrossScopes(existingId, input.workspaceSlug);
     if (!existing) continue;
     updateEntryStatus({
