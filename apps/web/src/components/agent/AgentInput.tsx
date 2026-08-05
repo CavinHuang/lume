@@ -17,6 +17,7 @@ import {
   promoteQueuedAgentMessageToGuidance,
   removeQueuedAgentMessage,
   reorderAgentMessageQueue,
+  resumeAgentQueue,
   retryQueuedAgentMessage,
   revokeBrowserReferenceGrant,
   sidecarCall,
@@ -615,7 +616,8 @@ export function AgentInput({
     workspaces,
   }), [currentWorkspaceId, thread?.workspaceId, workspaces])
   const messageQueueSnapshot = messageQueues[threadId] ?? createEmptyAgentMessageQueueSnapshot(threadId)
-  const queueInterrupted = useAtomValue(agentQueueInterruptedFamily(threadId)) ?? false
+  const queueInterrupted = (useAtomValue(agentQueueInterruptedFamily(threadId)) ?? false)
+    || messageQueueSnapshot.paused === true
   const setQueueInterruptedStates = useSetAtom(agentQueueInterruptedAtom)
   const setQueuedAttachmentPreviewUrls = useSetAtom(queuedAttachmentPreviewUrlAtom)
   const desktopContextView = resolveAgentInputDesktopContextView({
@@ -1639,13 +1641,19 @@ export function AgentInput({
   }, [messageQueueSnapshot.revision, setMessageQueues, setQueueInterruptedStates, threadId])
 
   const handleResumeFromInterrupt = useCallback(() => {
-    // Lume 的 STOP/interrupt 后 kernel(processDispatch.finally → startNextQueued)自动派发队列,
-    // 无"中断后队列暂停"语义(与 Codex 不同)。retryQueued 仅对 status==='blocked' 生效,
-    // 对 STOP 后通常为 'queued' 的首项会 conflict 报错("队列已发生变化")。
-    // 故 Resume 当前为 dismiss 横幅语义:仅清 agentQueueInterruptedAtom,不调 retry。
-    // 真正 pause/resume 需先实现 kernel 暂停队列语义(follow-up,超出本计划范围)。
-    setQueueInterruptedStates((prev) => (prev[threadId] ? { ...prev, [threadId]: false } : prev))
-  }, [setQueueInterruptedStates, threadId])
+    resumeAgentQueue({
+      threadId,
+      queueOperationId: crypto.randomUUID(),
+    })
+      .then((result) => {
+        setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
+        setQueueInterruptedStates((prev) => (prev[threadId] ? { ...prev, [threadId]: false } : prev))
+      })
+      .catch((error) => {
+        console.error('[AgentInput] 恢复队列失败:', error)
+        toast.error('恢复队列失败')
+      })
+  }, [threadId, setMessageQueues, setQueueInterruptedStates])
 
   const handleThinkingLevelChange = (value: LumeConfigThinkingLevel) => {
     setThinkingLevel(value)
