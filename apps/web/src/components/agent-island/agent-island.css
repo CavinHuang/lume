@@ -116,3 +116,6 @@ html.darwin .island-surface {
 @media (prefers-reduced-motion: reduce) {
   .island-transition-surface, .island-expanded, .island-chevron { transition: none; }
 }
+/* 窗口拖动（对齐 Proma）：drag handle 放行 native 拖动；no-drag 保留交互控件 */
+.island-drag-handle { -webkit-app-region: drag; cursor: move; }
+.island-no-drag { -webkit-app-region: no-drag; }

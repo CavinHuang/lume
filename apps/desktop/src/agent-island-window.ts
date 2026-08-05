@@ -36,7 +36,7 @@ export function createIslandWindow(deps: IslandWindowDeps): BrowserWindow {
     frame: false,
     transparent: true,
     resizable: false,
-    movable: false,
+    movable: true,
     minimizable: false,
     maximizable: false,
     skipTaskbar: true,

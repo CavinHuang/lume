@@ -60,19 +60,19 @@ export function AgentIslandSurface({
         onMouseLeave={() => onIntent({ name: 'set-hovered', value: false })}
       >
         <button
-          className="island-compact-layer"
+          className="island-compact-layer island-drag-handle"
           data-collapsed={expanded ? 'false' : 'true'}
           onClick={() => onIntent({ name: 'set-expanded', value: !expanded })}
         >
           <span className={cn('island-dot', PHASE_DOT[primary?.phase ?? 'idle'])} />
           <span className="island-label">{state.compactLabel}</span>
-          <ChevronDown className={cn('island-chevron', expanded && 'rotate-180')} />
+          <ChevronDown className={cn('island-chevron', 'island-no-drag', expanded && 'rotate-180')} />
         </button>
         {expanded && primary && (
           <div className="island-expanded">
-            <div className="island-expanded-head">
+            <div className="island-expanded-head island-drag-handle">
               <span className="island-title">{state.compactLabel.replace('Lume · ', '')}</span>
-              <div className="island-actions">
+              <div className="island-actions island-no-drag">
                 <Button size="sm" variant="ghost" onClick={() => onIntent({ name: 'open-session', threadId: primary.threadId })}>打开会话</Button>
                 <Button size="sm" variant="ghost" onClick={() => onIntent({ name: 'set-expanded', value: false })}>收起</Button>
               </div>
@@ -81,7 +81,7 @@ export function AgentIslandSurface({
               {state.sessions.map((s) => (
                 <li
                   key={s.threadId}
-                  className="island-session-row"
+                  className="island-session-row island-no-drag"
                   role="button"
                   tabIndex={0}
                   onClick={() => onIntent({ name: 'open-session', threadId: s.threadId })}
@@ -110,7 +110,7 @@ export function AgentIslandSurface({
                     {state.planning.todos.slice(0, 3).map((t) => (
                       <div
                         key={t.id}
-                        className="island-planning-row"
+                        className="island-planning-row island-no-drag"
                         data-overdue={t.overdue ? 'true' : 'false'}
                         role="button"
                         tabIndex={0}
@@ -133,7 +133,7 @@ export function AgentIslandSurface({
                     {state.planning.reminders.slice(0, 3).map((r) => (
                       <div
                         key={r.id}
-                        className="island-planning-row"
+                        className="island-planning-row island-no-drag"
                         data-overdue={r.overdue ? 'true' : 'false'}
                         role="button"
                         tabIndex={0}
