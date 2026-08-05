@@ -1,5 +1,6 @@
 import * as React from 'react'
 import {
+  AlertTriangle,
   Box,
   CheckCircle2,
   Clock3,
@@ -21,6 +22,7 @@ import {
   checkDesktopUpdate,
   downloadDesktopUpdate,
   downloadDesktopUpdateAsset,
+  getAppSignature,
   getGeneralSettings,
   getLatestGitHubRelease,
   installDesktopUpdateAndRelaunch,
@@ -33,6 +35,7 @@ import {
 import { cn } from '@/lib/utils'
 import {
   getUpdateActionState,
+  macRequiresAssetUpdateChannel,
   normalizeReleaseVersion,
   pickReleaseDownloadAsset,
   pickReleaseText,
@@ -66,6 +69,7 @@ export function VersionUpdateSettings() {
     totalBytes: null,
   })
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null)
+  const [macRequiresAssetUpdate, setMacRequiresAssetUpdate] = React.useState(false)
   const autoCheckStartedRef = React.useRef(false)
 
   const snapshot: VersionUpdateSnapshot = {
@@ -75,10 +79,15 @@ export function VersionUpdateSettings() {
     downloaded,
   }
   const actionState = getUpdateActionState(snapshot)
-  const canDownload = actionState.canDownload && desktopUpdateAvailable
+  const canDownload = actionState.canDownload && desktopUpdateAvailable && !macRequiresAssetUpdate
   const releasePlatform = detectReleaseDownloadPlatform()
   const canOpenReleaseDownload = shouldShowReleasePageAction(snapshot, desktopUpdateAvailable, releaseDownloadUrl)
-  const canDownloadMacRelease = canOpenReleaseDownload && releasePlatform === 'macos'
+  // macOS ad-hoc（无稳定 TeamID）时强制走 DMG asset 通道（issue #22）：即便 electron-updater
+  // 已报告更新可用，也不用 Squirrel 的 download+quitAndInstall（签名校验必失败），改下载 DMG。
+  const canDownloadMacRelease =
+    releasePlatform === 'macos' &&
+    Boolean(releaseDownloadUrl) &&
+    (canOpenReleaseDownload || (macRequiresAssetUpdate && actionState.canDownload))
   const canOpenReleaseDownloadLink = canOpenReleaseDownload && !canDownloadMacRelease
   const canOpenReleasePage = shouldShowReleasePageAction(snapshot, desktopUpdateAvailable, releaseUrl)
   const updateAvailable = status === 'available' || status === 'downloaded' || status === 'downloading'
@@ -97,6 +106,23 @@ export function VersionUpdateSettings() {
         toast.error('加载更新设置失败')
       })
 
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  React.useEffect(() => {
+    let cancelled = false
+    getAppSignature()
+      .then((signature) => {
+        if (cancelled) return
+        setMacRequiresAssetUpdate(
+          macRequiresAssetUpdateChannel(detectReleaseDownloadPlatform(), signature.macSignatureStable),
+        )
+      })
+      .catch((error) => {
+        console.warn('[VersionUpdateSettings] app signature unavailable:', error)
+      })
     return () => {
       cancelled = true
     }
@@ -347,6 +373,13 @@ export function VersionUpdateSettings() {
             )}
           </div>
         </div>
+
+        {macRequiresAssetUpdate && (
+          <div className="mb-4 flex items-start gap-1.5 rounded-[8px] bg-[color-mix(in_oklab,#f59e0b_10%,var(--surface-1))] px-3 py-2 text-[12px] leading-5 text-[color-mix(in_oklab,#f59e0b_85%,var(--text-1))]">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <span>当前为未签名构建，将下载完整安装包进行替换安装。更新后 macOS 系统权限（辅助功能 / 屏幕录制）可能需要重新授权。</span>
+          </div>
+        )}
 
         <div className="rounded-[8px] bg-[var(--surface-2)] p-4 text-[13px] leading-6 text-[var(--text-2)]">
           <div className="agent-message-scrollbar max-h-[360px] overflow-y-auto overscroll-contain pr-2">
