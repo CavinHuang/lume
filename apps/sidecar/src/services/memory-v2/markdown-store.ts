@@ -5,6 +5,7 @@ import YAML from "yaml";
 import { getMemoryV2ScopePaths, type MemoryV2ScopePaths } from "./paths";
 import { inferMemoryV2Claim, normalizeMemoryV2Claim } from "./claim";
 import type {
+  MemoryV2Activation,
   MemoryV2Candidate,
   MemoryV2Entry,
   MemoryV2EntryFrontmatter,
@@ -15,6 +16,7 @@ import type {
   MemoryV2Source,
   MemoryV2Status
 } from "./types";
+import { DEFAULT_ACTIVATION } from "./types";
 
 const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?/;
 const ALL_ENTRY_STATUSES: MemoryV2Status[] = [
@@ -163,6 +165,7 @@ export function writeEntry(candidate: MemoryV2Candidate, input: {
     applies_when: candidate.appliesWhen ?? {},
     valid_from: null,
     valid_to: null,
+    activation: { ...DEFAULT_ACTIVATION },
     ...(candidate.claim ? { claim: candidate.claim } : {})
   };
   const filename = `${now.slice(0, 10)}-${id}.md`;
@@ -517,6 +520,14 @@ export function parseMarkdownDocument<T extends object>(source: string): {
 export function writeMarkdownDocument(path: string, frontmatter: unknown, body: string): void {
   const yaml = YAML.stringify(frontmatter).trimEnd();
   writeFileAtomic(path, `---\n${yaml}\n---\n${body.trim()}\n`);
+}
+
+/**
+ * 读取激活开关。fail-open：frontmatter 无 activation 字段时返回 DEFAULT_ACTIVATION（全 true），
+ * 以兼容 Task 1 之前写入的旧记忆。
+ */
+export function readActivation(frontmatter: Pick<MemoryV2EntryFrontmatter, "activation">): MemoryV2Activation {
+  return frontmatter.activation ?? DEFAULT_ACTIVATION;
 }
 
 export function redactArchiveRecord(record: Record<string, unknown>): Record<string, unknown> & { redacted: boolean } {

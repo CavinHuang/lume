@@ -8,6 +8,7 @@ import {
   createMemoryV2Store,
   deleteEntry,
   listEntries,
+  readActivation,
   readEntryFile,
   readPendingFile,
   redactArchiveRecord,
@@ -15,6 +16,8 @@ import {
   updateEntry,
   writeEntry
 } from "./markdown-store";
+import type { MemoryV2EntryFrontmatter } from "./types";
+import { DEFAULT_ACTIVATION } from "./types";
 
 let root: string;
 
@@ -303,6 +306,45 @@ describe("memory-v2 markdown store", () => {
     });
     expect(aState.frontmatter.id).toBe(a.frontmatter.id);
     expect(aState.frontmatter.status).toBe("active");
+  });
+
+  test("readActivation 无字段 → 默认全 true（兼容旧记忆）", () => {
+    const fm = {
+      id: "mem_x",
+      kind: "fact",
+      scope: "global",
+      status: "active"
+    } as Partial<MemoryV2EntryFrontmatter> as MemoryV2EntryFrontmatter;
+    expect(readActivation(fm)).toEqual(DEFAULT_ACTIVATION);
+    expect(readActivation(fm)).toEqual({
+      recall: true,
+      persona: true,
+      suggestion: true,
+      analyst: true
+    });
+  });
+
+  test("readActivation 有字段 → 返回实际值", () => {
+    const fm = {
+      activation: { recall: true, persona: false, suggestion: true, analyst: false }
+    } as Partial<MemoryV2EntryFrontmatter> as MemoryV2EntryFrontmatter;
+    expect(readActivation(fm)).toEqual({
+      recall: true,
+      persona: false,
+      suggestion: true,
+      analyst: false
+    });
+  });
+
+  test("writeEntry 新记忆默认 activation 全 true", () => {
+    const entry = writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "默认激活全 true",
+      confidence: "high"
+    });
+    expect(entry.frontmatter.activation).toEqual(DEFAULT_ACTIVATION);
+    expect(readActivation(readEntryFile(entry.path).frontmatter)).toEqual(DEFAULT_ACTIVATION);
   });
 });
 
