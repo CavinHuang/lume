@@ -135,6 +135,17 @@ export class AgentIslandService {
     this.push(true)
   }
 
+  /**
+   * renderer 就绪后补推（M-6 首推竞态）：清 lastStateJson 强制下次 push 真推一次
+   * （绕过去重——即使 state 没变，新 renderer 进程也从未收到过），再 force push
+   * 绕过节流。由 main.ts 在岛屿窗口 `did-finish-load` +120ms 后调用。
+   * 对齐 Proma agent-island-service.ts:783-787。
+   */
+  repush(): void {
+    this.lastStateJson = ''
+    this.push(true)
+  }
+
   /** 由 main.ts onNotification 调用：tap sidecar 事件流。 */
   handleSidecarNotification(method: string, params: unknown): void {
     if (method === 'agent:runtime-status-changed') {

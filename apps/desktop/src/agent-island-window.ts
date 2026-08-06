@@ -24,6 +24,13 @@ export interface IslandWindowDeps {
    * 不传则不持久化（用于测试或临时窗口）。
    */
   onWindowMove?: (position: { x: number; y: number }) => void
+  /**
+   * renderer 真正就绪回调：webContents `did-finish-load` 后再 +120ms buffer
+   * （让 renderer 侧 IPC 监听器装好）触发。main 在此调 service.repush() 补推首帧，
+   * 避免 service.start() 的 push(true) 因 webContents 未就绪而 webContents.send
+   * 静默丢失（M-6 首推竞态）。对齐 Proma agent-island-window.ts:165-169。
+   */
+  onReady?: () => void
 }
 
 const MOVE_PERSIST_DEBOUNCE_MS = 300
@@ -111,6 +118,17 @@ export function createIslandWindow(deps: IslandWindowDeps): BrowserWindow {
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   }
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  // M-6 首推竞态：`did-finish-load` 是 renderer DOM/脚本就绪的权威信号（比
+  // BrowserWindow 的 ready-to-show 晚——后者只表示首帧已 paint，IPC 监听器未必
+  // 装好）。+120ms buffer 给 renderer 内 lume:event 监听器一个 tick 注册；之后
+  // 调 onReady → service.repush() 强制再推一次，绕过 webContents.send 在未就绪时
+  // 静默丢失导致的"启动后短暂空白"。对齐 Proma agent-island-window.ts:165-169。
+  if (typeof deps.onReady === 'function') {
+    const onReady = deps.onReady
+    win.webContents.once('did-finish-load', () => {
+      setTimeout(onReady, 120)
+    })
+  }
   void win.loadURL(getAgentIslandUrl({
     appIsPackaged: deps.appIsPackaged,
     appProtocolOrigin: deps.appProtocolOrigin,

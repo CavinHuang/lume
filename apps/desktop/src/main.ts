@@ -1314,6 +1314,9 @@ export function ensureIslandWindow() {
     desktopRoot: DESKTOP_ROOT,
     savedPosition: readIslandWindowPosition(),
     onWindowMove: (position) => persistIslandWindowPosition(position),
+    // M-6 首推竞态：start() 的 push(true) 可能早于 webContents 就绪 → send 静默丢失。
+    // renderer did-finish-load +120ms 后清 lastStateJson + force push 强制再推一次。
+    onReady: () => getAgentIslandService().repush(),
   })
   islandWindow = win
   win.on('closed', () => {
