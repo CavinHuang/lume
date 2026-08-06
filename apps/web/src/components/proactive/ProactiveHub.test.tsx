@@ -5,6 +5,7 @@ import { Provider, createStore } from 'jotai'
 import {
   agentWorkspacesAtom,
   currentWorkspaceIdAtom,
+  memoryCenterDeepLinkAtom,
   suggestionsVersionAtom,
 } from '@/atoms'
 import type {
@@ -39,16 +40,10 @@ const getMemorySettingsSnapshotMock = mock(
   async () => null as MemorySettingsSnapshot | null,
 )
 const resolveMemoryPendingMock = mock(async () => ({ ok: true as const }))
-mock.module('@/lib/desktop-api', () => ({
+mock.module('@/lib/desktop-api/memory-center', () => ({
   getMemorySettingsSnapshot: (...args: unknown[]) =>
     getMemorySettingsSnapshotMock(...(args as [string])),
   resolveMemoryPending: (...args: unknown[]) => resolveMemoryPendingMock(...args),
-}))
-
-mock.module('@/components/settings/MemorySettings', () => ({
-  MemoryCenterContent: () => React.createElement('div', null, '记忆库内容'),
-  MemoryActivityContent: () => React.createElement('div', null, '记忆活动内容'),
-  PersonaCard: () => React.createElement('div', null, '用户画像'),
 }))
 
 const toastSuccessMock = mock((_msg: string) => undefined)
@@ -499,7 +494,12 @@ describe('ProactiveHub', () => {
   })
 
   test('空状态：各数据源为空时渲染空提示', async () => {
-    const env = await render()
+    const store = createStore()
+    store.set(agentWorkspacesAtom, [
+      { id: 'w1', name: 'Lume', slug: 'ws', createdAt: 1, updatedAt: 2 },
+    ])
+    store.set(currentWorkspaceIdAtom, 'w1')
+    const env = await render({ store })
     try {
       const text = env.container.textContent ?? ''
       expect(text).toContain('暂无待定建议')
@@ -615,8 +615,7 @@ describe('ProactiveHub', () => {
         memorySection!.onClick()
         await flush()
       })
-      expect(env.container.textContent).toContain('记忆库内容')
-      expect(env.container.textContent).not.toContain('Proma 建议')
+      expect(env.store.get(memoryCenterDeepLinkAtom).section).toBe('memory')
     } finally {
       await unmount(env)
       env.cleanup()

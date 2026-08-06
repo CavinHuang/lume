@@ -13,7 +13,7 @@ const getPersonaMock = mock(async (_workspaceSlug?: string) => ({
   },
   updatedAt: '2026-08-01T00:00:00.000Z',
 }))
-const updatePersonaMock = mock(async (_input: { workspaceSlug?: string; markdown: string }) => ({
+const correctPersonaMock = mock(async (_input: { workspaceSlug: string; correction: string }) => ({
   ok: true as const,
 }))
 const regeneratePersonaMock = mock(async (_workspaceSlug?: string) => ({ ok: true as const }))
@@ -33,13 +33,16 @@ mock.module('sonner', () => ({
 mock.module('@/lib/desktop-api', () => ({
   // Persona — 实际被测对象
   getPersona: (...args: unknown[]) => getPersonaMock(...(args as [string?])),
-  updatePersona: (...args: unknown[]) => updatePersonaMock(...(args as [{ workspaceSlug?: string; markdown: string }])),
+  correctPersona: (...args: unknown[]) => correctPersonaMock(...(args as [{ workspaceSlug: string; correction: string }])),
   regeneratePersona: (...args: unknown[]) => regeneratePersonaMock(...(args as [string?])),
   // 其余 MemorySettings 模块加载时静态导入，但 PersonaCard 不依赖；统一 async stub。
   getMemoryRuntimeConfig: mock(async () => null),
+  cancelMemoryJob: mock(async () => null),
+  retryMemoryJob: mock(async () => null),
   getMemoryIngestJob: mock(async () => null),
   getMemoryOrganizeJob: mock(async () => null),
   getMemorySettingsSnapshot: mock(async () => null),
+  getMemoryDiagnosticsSnapshot: mock(async () => null),
   ingestMemorySources: mock(async () => null),
   openFileDialog: mock(async () => ({ files: [] })),
   openFolderDialog: mock(async () => ({ path: null })),
@@ -52,6 +55,7 @@ mock.module('@/lib/desktop-api', () => ({
   deleteMemoryEntry: mock(async () => undefined),
   resolveMemoryPending: mock(async () => undefined),
   updateMemoryEntry: mock(async () => undefined),
+  undoMemoryMutation: mock(async () => undefined),
   updateMemoryRuntimeConfig: mock(async () => null),
 }))
 
@@ -300,7 +304,7 @@ describe('PersonaCard', () => {
 
   beforeEach(() => {
     getPersonaMock.mockReset()
-    updatePersonaMock.mockReset()
+    correctPersonaMock.mockReset()
     regeneratePersonaMock.mockReset()
     toastSuccessMock.mockReset()
     toastErrorMock.mockReset()
@@ -311,7 +315,7 @@ describe('PersonaCard', () => {
       parsed: { preferences: ['简洁表达'], interactionRules: [], evolution: [] },
       updatedAt: '2026-08-01T00:00:00.000Z',
     }))
-    updatePersonaMock.mockImplementation(async () => ({ ok: true as const }))
+    correctPersonaMock.mockImplementation(async () => ({ ok: true as const }))
     regeneratePersonaMock.mockImplementation(async () => ({ ok: true as const }))
   })
 
@@ -319,7 +323,7 @@ describe('PersonaCard', () => {
     await flush()
   })
 
-  test('generated state: shows status badge, updatedAt, markdown preview, edit/regenerate buttons', async () => {
+  test('generated state: shows status badge, markdown preview, correction and regenerate actions', async () => {
     const { container, cleanup } = installFakeDom()
     let root: Root | null = createRoot(container as never)
     try {
@@ -337,8 +341,7 @@ describe('PersonaCard', () => {
       expect(container.textContent).toContain('喜欢简洁、有温度的表达。')
       // 默认折叠态：展开按钮可见
       expect(findButtonByText(container, '展开')).not.toBeNull()
-      // 编辑 / 重新生成 按钮均可见
-      expect(findButtonByText(container, '编辑')).not.toBeNull()
+      expect(findButtonByText(container, '纠正画像')).not.toBeNull()
       expect(findButtonByText(container, '重新生成')).not.toBeNull()
       // 无错误 toast
       expect(toastErrorMock).not.toHaveBeenCalled()
@@ -388,9 +391,7 @@ describe('PersonaCard', () => {
     }
   })
 
-  test('edit mode: textarea rendered with current markdown; save button initially disabled until dirty', async () => {
-    // fake DOM 下 React 受控 textarea 的 onChange 触发受 value tracker 限制，
-    // 真实输入交互由 e2e 覆盖；此处验证：编辑入口可见 → textarea 出现且预填 → 取消退出。
+  test('derived Persona cannot be edited directly and correction starts disabled', async () => {
     const { container, cleanup } = installFakeDom()
     let root: Root | null = createRoot(container as never)
     try {
@@ -399,33 +400,11 @@ describe('PersonaCard', () => {
         await flush()
       })
 
-      // 点击编辑 → 进入编辑模式
-      const editBtn = findButtonByText(container, '编辑')!
-      await act(async () => {
-        editBtn.dispatchEvent(new Event('click', { bubbles: true }))
-        await flush()
-      })
-
-      // textarea 渲染，初始值（textContent）为当前 markdown
-      const textarea = findFirstTextarea(container)!
-      expect(textarea).not.toBeNull()
-      expect(textarea.textContent).toContain('# Mason')
-      // 保存按钮可见；未修改时 disabled（isDirty=false）
-      const saveBtn = findButtonByText(container, '保存')!
-      expect(saveBtn).not.toBeNull()
-      expect(saveBtn.attributes.get('disabled')).toBeDefined()
-      // 取消按钮可见
-      expect(findButtonByText(container, '取消')).not.toBeNull()
-
-      // 点击取消 → 退出编辑模式（textarea 消失）
-      const cancelBtn = findButtonByText(container, '取消')!
-      await act(async () => {
-        cancelBtn.dispatchEvent(new Event('click', { bubbles: true }))
-        await flush()
-      })
       expect(findFirstTextarea(container)).toBeNull()
-      // 退出后回到预览态：展开按钮重新可见
-      expect(findButtonByText(container, '展开')).not.toBeNull()
+      expect(findButtonByText(container, '编辑')).toBeNull()
+      const correctionButton = findButtonByText(container, '纠正画像')!
+      expect(correctionButton).not.toBeNull()
+      expect(correctionButton.attributes.get('disabled')).toBeDefined()
     } finally {
       await act(async () => {
         root?.unmount()
@@ -435,12 +414,6 @@ describe('PersonaCard', () => {
       cleanup()
     }
   })
-
-  // NOTE: 保存路径（textarea onChange → handleSave → updatePersona）未做单测。
-  // fake DOM 下 React 受控 textarea 的 onChange 依赖原生 value tracker，
-  // 无法可靠触发；改由上方「编辑模式渲染 + 保存按钮 disabled 态」测试间接覆盖，
-  // 真实输入交互留给 e2e。曾有一个直接调用 updatePersonaMock 再断言被调用的测试，
-  // 但那是自引用（永远通过），不能验证组件逻辑，已移除。
 
   test('regenerate button calls regeneratePersona and emits loading + success toast', async () => {
     const { container, cleanup } = installFakeDom()
@@ -470,7 +443,7 @@ describe('PersonaCard', () => {
     }
   })
 
-  test('not-generated state: shows hint, hides edit button, keeps regenerate button', async () => {
+  test('not-generated state: shows hint and keeps correction/regenerate actions', async () => {
     getPersonaMock.mockImplementation(async () => ({
       markdown: '',
       parsed: { preferences: [], interactionRules: [], evolution: [] },
@@ -488,6 +461,7 @@ describe('PersonaCard', () => {
       expect(container.textContent).toContain('Lume 会基于你的长期记忆自动生成用户画像')
       expect(findButtonByText(container, '编辑')).toBeNull()
       expect(findButtonByText(container, '展开')).toBeNull()
+      expect(findButtonByText(container, '纠正画像')).not.toBeNull()
       // 未生成态仍允许立即创建
       expect(findButtonByText(container, '重新生成')).not.toBeNull()
     } finally {

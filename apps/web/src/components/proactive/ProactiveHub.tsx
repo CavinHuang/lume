@@ -20,7 +20,7 @@ import {
   memoryCenterVersionAtom,
 } from '@/atoms'
 import { Button } from '@/components/ui/button'
-import { getMemorySettingsSnapshot, resolveMemoryPending } from '@/lib/desktop-api'
+import { getMemorySettingsSnapshot, resolveMemoryPending } from '@/lib/desktop-api/memory-center'
 import {
   actOnSuggestion,
   deleteSuggestion,
