@@ -82,7 +82,6 @@ import {
   shouldReleaseAgentInputLocalSendingAfterDispatch,
   shouldSendAgentInputOnEnter,
   syncPermissionModeWithDefaultConfig,
-  syncPermissionModeWithPlanModePhase,
 } from './agent-input-state'
 import { AgentMessageQueueList } from './AgentMessageQueueList'
 import { SuggestionBanner } from './SuggestionBanner'
@@ -712,11 +711,6 @@ export function AgentInput({
   }, [threadPermissionModes])
 
   useEffect(() => {
-    autoSelectedPlanModeRef.current = false
-    setPermissionMode(threadPermissionModes[threadId] ?? defaultPermissionModeRef.current)
-  }, [threadId, threadPermissionModes])
-
-  useEffect(() => {
     listChannels()
       .then((items) => setChannels(items))
       .catch(console.error)
@@ -751,16 +745,16 @@ export function AgentInput({
     }
   }, [applyEffectiveConfig, configWorkspaceSlug])
 
+  // 权限模式统一推导：手动 override（已持久化）> plan phase 自动切换 > 全局默认。
+  // 复用 syncPermissionModeWithDefaultConfig —— 它在 stale plan phase 下仍保留手动 override
+  // （见 agent-input-state.test.ts 'keeps the thread override while a stale plan phase is active'），
+  // 并在 plan 结束或切换会话时自我纠正 autoSelectedPlan，故合并原 threadId 切换 effect（issue #28）。
   useEffect(() => {
     setPermissionMode((current) => {
-      const threadPermissionMode = threadPermissionModes[threadId]
-      if (threadPermissionMode) {
-        autoSelectedPlanModeRef.current = false
-        return threadPermissionMode
-      }
-      const next = syncPermissionModeWithPlanModePhase({
-        permissionMode: current,
-        defaultPermissionMode: defaultPermissionModeRef.current,
+      const next = syncPermissionModeWithDefaultConfig({
+        currentPermissionMode: current,
+        nextDefaultPermissionMode: defaultPermissionModeRef.current,
+        threadPermissionMode: threadPermissionModes[threadId],
         planPhase: planModePhase?.phase,
         autoSelectedPlan: autoSelectedPlanModeRef.current,
       })
