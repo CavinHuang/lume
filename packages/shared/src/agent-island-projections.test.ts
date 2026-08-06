@@ -3,7 +3,8 @@ import {
   mapRuntimePhaseToIslandPhase,
   selectPrimarySession,
   buildVisibilityKey,
-  projectPlanning,
+  buildSnapshot,
+  projectRecentSessions,
   pushActivityLine,
   selectPlanningIndicator,
   isStaleSession,
@@ -158,23 +159,6 @@ describe('buildVisibilityKey', () => {
   })
   test('全空 → 稳定 key', () => {
     expect(buildVisibilityKey([], planning())).toBe(buildVisibilityKey([], planning()))
-  })
-})
-
-describe('projectPlanning', () => {
-  test('只保留 1h 内或逾期的项', () => {
-    const now = 1_000_000
-    const snap = projectPlanning({
-      todos: [
-        { id: 'soon', title: '即将', kind: 'todo', dueAt: now + 30 * 60_000, overdue: false },
-        { id: 'later', title: '远期', kind: 'todo', dueAt: now + 3 * 3_600_000, overdue: false },
-      ],
-      reminders: [
-        { id: 'over', title: '逾期', kind: 'calendar_event', dueAt: now - 1000, overdue: true },
-      ],
-    }, now)
-    expect(snap.todos.map((t) => t.id)).toEqual(['soon'])
-    expect(snap.reminders.map((r) => r.id)).toEqual(['over'])
   })
 })
 
@@ -481,5 +465,144 @@ describe('nextPlanningAttentionTime', () => {
     const before = JSON.stringify(input)
     nextPlanningAttentionTime(input, now, WINDOW)
     expect(JSON.stringify(input)).toBe(before)
+  })
+})
+
+describe('buildSnapshot (info-density)', () => {
+  test('buildSnapshot 用全量 planning——远期 todo 不被过滤进 expanded', () => {
+    const now = 10_000
+    const farTodo = { id: 'p1', title: '下周', kind: 'todo' as const, dueAt: now + 7 * 86400_000, overdue: false }
+    const snap = buildSnapshot([], { todos: [farTodo], reminders: [] }, now, { recentSessions: [], isIdle: true })
+    expect(snap.planning.todos).toHaveLength(1) // 全量，非 0（旧 projectPlanning 会过滤掉）
+    expect(snap.planning.todos[0].id).toBe('p1')
+  })
+
+  test('buildSnapshot isIdle=true 时 presentation 不为 hidden（home surface 总显示）', () => {
+    const snap = buildSnapshot([], { todos: [], reminders: [] }, 1000, { recentSessions: [], isIdle: true })
+    expect(snap.presentation).toBe('compact') // 非隐藏，即使空
+    expect(snap.isIdle).toBe(true)
+  })
+
+  test('buildSnapshot 默认 isIdle 由 primarySessionId 推导（无 session 即 idle）', () => {
+    const snap = buildSnapshot([], { todos: [], reminders: [] }, 1000)
+    expect(snap.isIdle).toBe(true)
+    expect(snap.presentation).toBe('compact')
+    expect(snap.recentSessions).toEqual([])
+  })
+
+  test('buildSnapshot 有 session 时默认非 idle，无内容则 hidden', () => {
+    const snap = buildSnapshot(
+      [session({ threadId: 't1', phase: 'idle', lastActivityAt: 1 })],
+      { todos: [], reminders: [] },
+      1000,
+    )
+    expect(snap.isIdle).toBe(false)
+    // inputs.length > 0 → hasContent=true → compact（非 hidden）
+    expect(snap.presentation).toBe('compact')
+  })
+
+  test('buildSnapshot idle 时 compactLabel 用 "最近会话"', () => {
+    const snap = buildSnapshot([], { todos: [], reminders: [] }, 1000, { recentSessions: [], isIdle: true })
+    expect(snap.compactLabel).toBe('Lume · 最近会话')
+  })
+
+  test('buildSnapshot 透传 recentSessions（opts 提供）', () => {
+    const recent = [{ threadId: 'r1', title: 'R', updatedAt: 100 }]
+    const snap = buildSnapshot([], { todos: [], reminders: [] }, 1000, { recentSessions: recent, isIdle: true })
+    expect(snap.recentSessions).toBe(recent)
+  })
+})
+
+describe('selectPlanningIndicator (info-density 全量 planning)', () => {
+  test('selectPlanningIndicator 仍只看 1h 窗（compact 紧迫语义保留）', () => {
+    const now = 10_000
+    const far = { id: 'p1', title: '远', kind: 'todo' as const, dueAt: now + 7 * 86400_000, overdue: false }
+    const near = { id: 'p2', title: '近', kind: 'todo' as const, dueAt: now + 10 * 60_000, overdue: false }
+    expect(selectPlanningIndicator({ todos: [far], reminders: [] }, now)).toBeNull()
+    expect(selectPlanningIndicator({ todos: [near], reminders: [] }, now)?.symbol).toBe('checklist')
+  })
+})
+
+describe('buildVisibilityKey (info-density 全量 planning)', () => {
+  test('buildVisibilityKey 用全量 planning（远期 todo 改 dueAt 触发 dismiss 重显）', () => {
+    const now = 10_000
+    const far = { id: 'p1', title: 'x', kind: 'todo' as const, dueAt: now + 7 * 86400_000, overdue: false }
+    const k1 = buildVisibilityKey([], { todos: [far], reminders: [] })
+    const k2 = buildVisibilityKey([], { todos: [{ ...far, dueAt: now + 8 * 86400_000 }], reminders: [] })
+    expect(k1).not.toBe(k2)
+  })
+})
+
+describe('projectRecentSessions', () => {
+  test('排除 archived/trashed、排除 active、updatedAt desc、top3、dedup', () => {
+    const metas = [
+      { id: 'a', title: 'A', updatedAt: 100, status: 'active', workspaceId: 'w1' },
+      { id: 'b', title: 'B', updatedAt: 300, status: 'active', workspaceId: 'w1' },
+      { id: 'c', title: 'C', updatedAt: 200, status: 'archived', workspaceId: 'w1' },
+      { id: 'd', title: 'D', updatedAt: 400, status: 'trashed', workspaceId: 'w1' },
+      { id: 'e', title: 'E', updatedAt: 500, status: 'active', workspaceId: 'w1' },
+      { id: 'a', title: 'A-dup', updatedAt: 999, status: 'active', workspaceId: 'w1' }, // dedup 保留首次
+    ]
+    const ws = new Map([['w1', 'Proj']])
+    const recent = projectRecentSessions(metas as any, new Set(['e']), ws)
+    expect(recent.map((r) => r.threadId)).toEqual(['b', 'a']) // e 是 active 排除；c/d 归档/回收排除；top3 实得2
+    expect(recent[0].project).toBe('Proj')
+  })
+
+  test('无 status 字段视为 active（保留）', () => {
+    const metas = [
+      { id: 'x', title: 'X', updatedAt: 200, workspaceId: 'w1' },
+    ]
+    const recent = projectRecentSessions(metas as any, new Set(), new Map())
+    expect(recent.map((r) => r.threadId)).toEqual(['x'])
+  })
+
+  test('title 缺失/空白时 fallback 到 id', () => {
+    const metas = [
+      { id: 'k', title: '   ', updatedAt: 2, status: 'active' },
+      { id: 'm', updatedAt: 1, status: 'active' },
+    ]
+    const recent = projectRecentSessions(metas as any, new Set(), new Map())
+    expect(recent[0].title).toBe('k')
+    expect(recent[1].title).toBe('m')
+  })
+
+  test('updatedAt 缺失视为 0', () => {
+    const metas = [
+      { id: 'late', title: 'L', updatedAt: 100, status: 'active' },
+      { id: 'unk', title: 'U', status: 'active' }, // updatedAt undefined
+    ]
+    const recent = projectRecentSessions(metas as any, new Set(), new Map())
+    expect(recent.map((r) => r.threadId)).toEqual(['late', 'unk'])
+    expect(recent[1].updatedAt).toBe(0)
+  })
+
+  test('top3 截断', () => {
+    const metas = [
+      { id: '1', title: 'a', updatedAt: 100, status: 'active' },
+      { id: '2', title: 'b', updatedAt: 200, status: 'active' },
+      { id: '3', title: 'c', updatedAt: 300, status: 'active' },
+      { id: '4', title: 'd', updatedAt: 400, status: 'active' },
+      { id: '5', title: 'e', updatedAt: 500, status: 'active' },
+    ]
+    const recent = projectRecentSessions(metas as any, new Set(), new Map())
+    expect(recent.map((r) => r.threadId)).toEqual(['5', '4', '3'])
+  })
+
+  test('空 metas → 空数组', () => {
+    expect(projectRecentSessions([], new Set(), new Map())).toEqual([])
+  })
+
+  test('workspaceId 未在 workspaceNames 中 → project undefined', () => {
+    const metas = [{ id: 'x', title: 'X', updatedAt: 1, status: 'active', workspaceId: 'unknown' }]
+    const recent = projectRecentSessions(metas as any, new Set(), new Map())
+    expect(recent[0].project).toBeUndefined()
+  })
+
+  test('不修改入参 metas（纯函数）', () => {
+    const metas = [{ id: 'x', title: 'X', updatedAt: 1, status: 'active', workspaceId: 'w1' }]
+    const before = JSON.stringify(metas)
+    projectRecentSessions(metas as any, new Set(), new Map([['w1', 'P']]))
+    expect(JSON.stringify(metas)).toBe(before)
   })
 })

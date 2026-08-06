@@ -3,6 +3,8 @@ import type {
   AgentIslandPhase,
   AgentIslandPlanningItem,
   AgentIslandPlanningSnapshot,
+  AgentIslandPresentation,
+  AgentIslandRecentSession,
   AgentIslandSessionSnapshot,
   AgentIslandState,
 } from "./types/agent-island"
@@ -46,6 +48,14 @@ export interface IslandSessionInput {
   unread: boolean
   terminalAt: number | null
   lastActivityAt: number
+  /** 排队消息数（runtime-status.queuedCount，compact 徽章用）。 */
+  queuedCount?: number
+  /** 当前会话模型引用（原始 ref，渲染层解析成 label；main 不引 registry）。 */
+  modelRef?: string
+  /** 该会话生命周期累计成本（USD，来自 usage.updated.billing.totalCostUSD）。 */
+  costUSD?: number
+  /** 该会话生命周期累计 token（来自 usage.updated.billing.cumulative.totalTokens）。 */
+  tokenTotal?: number
 }
 
 /**
@@ -176,16 +186,30 @@ export function buildVisibilityKey(
   return `${sessionsPart}::${planningPart}`
 }
 
-export function projectPlanning(
-  input: { todos: AgentIslandPlanningItem[]; reminders: AgentIslandPlanningItem[] },
-  now: number,
-): AgentIslandPlanningSnapshot {
-  const within = (it: AgentIslandPlanningItem) =>
-    it.overdue || it.dueAt - now <= PLANNING_ATTENTION_WINDOW_MS
-  return {
-    todos: input.todos.filter(within),
-    reminders: input.reminders.filter(within),
+/**
+ * idle home surface 的最近会话投影：排除归档/回收、排除 active 会话、updatedAt desc、top3、dedup by id。
+ * meta 无 status 字段时视为 active（保留）；status 显式为 'archived'/'trashed' 等非 'active' 值时跳过。
+ */
+export function projectRecentSessions(
+  metas: Array<{ id: string; title?: string; updatedAt?: number; status?: string; workspaceId?: string }>,
+  activeThreadIds: Set<string>,
+  workspaceNames: Map<string, string>,
+): AgentIslandRecentSession[] {
+  const seen = new Set<string>()
+  const filtered: AgentIslandRecentSession[] = []
+  for (const m of metas) {
+    if (!m.id || seen.has(m.id)) continue
+    if (m.status && m.status !== 'active') continue // 排除 archived/trashed
+    if (activeThreadIds.has(m.id)) continue // 去重：排除仍在 sessions Map 的会话
+    seen.add(m.id)
+    filtered.push({
+      threadId: m.id,
+      title: m.title?.trim() || m.id,
+      project: m.workspaceId ? workspaceNames.get(m.workspaceId) : undefined,
+      updatedAt: m.updatedAt ?? 0,
+    })
   }
+  return filtered.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 3)
 }
 
 /**
@@ -218,18 +242,23 @@ export function buildSnapshot(
   inputs: IslandSessionInput[],
   planning: AgentIslandPlanningSnapshot,
   now: number,
+  opts?: { recentSessions?: AgentIslandRecentSession[]; isIdle?: boolean },
 ): AgentIslandState {
   const { primarySessionId, sessions } = selectPrimarySession(inputs)
   const primary = sessions.find((s) => s.threadId === primarySessionId) ?? null
-  const label = primary ? PHASE_LABEL[primary.phase] : '工作提醒'
+  const isIdle = opts?.isIdle ?? primarySessionId === null
+  const label = primary ? PHASE_LABEL[primary.phase] : '最近会话' // idle label
+  const hasContent = inputs.length > 0 || planning.todos.length > 0 || planning.reminders.length > 0
+  // idle 总显示（home surface，含全新用户空引导）；非 idle 且无内容才 hidden
+  const presentation: AgentIslandPresentation = isIdle ? 'compact' : hasContent ? 'compact' : 'hidden'
   return {
-    presentation: inputs.length > 0 || planning.todos.length > 0 || planning.reminders.length > 0
-      ? 'compact'
-      : 'hidden',
+    presentation,
     primarySessionId,
     compactLabel: `Lume · ${label}`,
     sessions: sessions.map<AgentIslandSessionSnapshot>((s) => ({ ...s })),
     planning,
+    recentSessions: opts?.recentSessions ?? [],
+    isIdle,
     updatedAt: now,
   }
 }
