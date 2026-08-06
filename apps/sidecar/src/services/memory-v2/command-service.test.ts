@@ -82,4 +82,36 @@ describe("MemoryCommandService", () => {
     expect(entries.filter((entry) => entry.frontmatter.status === "active")).toHaveLength(1);
     expect(entries.filter((entry) => entry.frontmatter.status === "superseded")).toHaveLength(1);
   });
+
+  test("updates pin and validity and moves an entry across scopes", async () => {
+    const service = new MemoryCommandService();
+    const created = await service.remember({
+      workspaceSlug: "demo",
+      content: "项目默认使用 Bun",
+      scope: "workspace",
+      actor: "user"
+    });
+    const id = created.memoryIds[0]!;
+    const validTo = "2027-01-01T23:59:59.999Z";
+    service.update({
+      workspaceSlug: "demo",
+      id,
+      scope: "workspace",
+      pinned: true,
+      validTo,
+      actor: "user"
+    });
+    service.moveScope({
+      workspaceSlug: "demo",
+      id,
+      scope: "workspace",
+      targetScope: "global"
+    });
+    const moved = createMemoryV2Store().listEntries({ scopes: ["global"] })
+      .find((entry) => entry.frontmatter.id === id);
+    expect(moved?.frontmatter.pinned).toBe(true);
+    expect(moved?.frontmatter.valid_to).toBe(validTo);
+    expect(createMemoryV2Store().listEntries({ workspaceSlug: "demo", scopes: ["workspace"] }))
+      .toHaveLength(0);
+  });
 });

@@ -292,6 +292,8 @@ export const PUBLIC_RENDERER_SIDECAR_METHODS = new Set([
   'memory:delete-entry',
   'memory:get-ingest-job',
   'memory:get-organize-job',
+  'memory:cancel-job',
+  'memory:retry-job',
   'memory:get-runtime-config',
   'memory:ingest-sources',
   'memory:list-source-files',

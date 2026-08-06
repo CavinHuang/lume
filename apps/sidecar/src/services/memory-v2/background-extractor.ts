@@ -9,7 +9,10 @@ import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import { MemoryCommandService, hasMemoryMutationForRun } from "./command-service";
 import { extractMemoryBatchCandidatesWithLlm } from "./extraction";
 import { getMemoryV2ScopePaths } from "./paths";
+import { getMemoryRuntimeConfig } from "./policy";
 import type { MemoryV2MutationReceipt } from "./types";
+import { maybeEnqueueAutoDream } from "./consolidation";
+import { memoryJobService } from "./job-service";
 
 export interface BackgroundMemoryExtractionRequest {
   threadId: string;
@@ -39,6 +42,7 @@ interface ExtractionCursor {
 const queues = new Map<string, ThreadQueueState>();
 
 export function enqueueBackgroundMemoryExtraction(input: BackgroundMemoryExtractionRequest): void {
+  if (!getMemoryRuntimeConfig().backgroundExtraction) return;
   if (input.threadType === "subagent" || input.chatType === "group" || input.chatType === "channel") return;
   const state = queues.get(input.threadId) ?? { running: false };
   if (state.running) {
@@ -53,7 +57,14 @@ export function enqueueBackgroundMemoryExtraction(input: BackgroundMemoryExtract
 
 async function runQueued(input: BackgroundMemoryExtractionRequest): Promise<void> {
   try {
-    await runExtraction(input);
+    const job = memoryJobService.start({
+      kind: "turn_extract",
+      workspaceSlug: input.workspaceSlug,
+      idempotencyKey: `turn-extract:${input.threadId}:${input.runId}`,
+      manual: false,
+      run: () => runExtraction(input)
+    });
+    await memoryJobService.waitForTerminal(input.workspaceSlug, job.jobId);
   } finally {
     const state = queues.get(input.threadId);
     if (!state) return;
@@ -119,6 +130,7 @@ async function runExtraction(input: BackgroundMemoryExtractionRequest): Promise<
     const changed = receipts.filter((receipt) => receipt.action === "created" || receipt.action === "updated" || receipt.action === "superseded" || receipt.action === "pending");
     writeCursor(input, completedCursor(cursor, input, toSequence, idempotencyKey, "completed"));
     if (changed.length > 0) notifyMemorySaved(input, changed);
+    maybeEnqueueAutoDream(input.workspaceSlug, { threadId: input.threadId, runId: input.runId });
   } catch (error) {
     writeCursor(input, {
       ...cursor,
@@ -126,6 +138,7 @@ async function runExtraction(input: BackgroundMemoryExtractionRequest): Promise<
       updatedAt: new Date().toISOString(),
       error: error instanceof Error ? error.message : String(error)
     });
+    throw error;
   }
 }
 

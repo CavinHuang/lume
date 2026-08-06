@@ -24,6 +24,8 @@ import type {
   UpdateMemoryRuntimeConfigInput,
   MemoryUndoMutationInput,
   MemoryMutationReceipt,
+  MemoryCancelJobInput,
+  MemoryJobStatus,
 } from '@lume/shared'
 import { MEMORY_IPC_CHANNELS } from '@lume/shared'
 import { sidecarCall } from './system'
@@ -55,6 +57,12 @@ export const ingestMemorySources = (input: MemoryIngestSourcesInput) =>
 
 export const getMemoryIngestJob = (input: MemoryIngestSourcesJobInput) =>
   sidecarCall<MemoryIngestSourcesJob>(MEMORY_IPC_CHANNELS.GET_INGEST_JOB, input)
+
+export const cancelMemoryJob = (input: MemoryCancelJobInput) =>
+  sidecarCall<{ status: MemoryJobStatus }>(MEMORY_IPC_CHANNELS.CANCEL_JOB, input)
+
+export const retryMemoryJob = (input: MemoryCancelJobInput) =>
+  sidecarCall<MemoryStartIngestSourcesResult>(MEMORY_IPC_CHANNELS.RETRY_JOB, input)
 
 export const listMemorySourceFiles = (input: MemoryListSourceFilesInput) =>
   sidecarCall<MemorySourceFilesPage>(MEMORY_IPC_CHANNELS.LIST_SOURCE_FILES, input)

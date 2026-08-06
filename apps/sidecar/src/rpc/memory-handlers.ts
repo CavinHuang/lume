@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   MEMORY_IPC_CHANNELS,
   type MemoryDeleteEntryInput,
@@ -14,7 +13,6 @@ import {
   type MemoryStartOrganizeJobResult,
   type MemoryUpdateEntryInput
 } from "@lume/shared";
-import { createLogger } from "../services/infra/logger";
 import {
   readMemoryTool,
   rememberMemoryTool,
@@ -29,6 +27,7 @@ import { organizeMemoryEntries } from "../services/memory-v2/entry-organizer";
 import { ingestExternalMemorySources } from "../services/memory-v2/ingestion";
 import { createMemoryV2Store } from "../services/memory-v2/markdown-store";
 import { MemoryCommandService } from "../services/memory-v2/command-service";
+import { memoryJobService } from "../services/memory-v2/job-service";
 import {
   getMemoryRuntimeConfig,
   updateMemoryRuntimeConfig
@@ -36,6 +35,7 @@ import {
 import type { MemoryV2Kind } from "../services/memory-v2/types";
 import {
   memoryDeleteEntryInputSchema,
+  memoryCancelJobInputSchema,
   memoryIngestSourcesInputSchema,
   memoryIngestSourcesJobInputSchema,
   memoryOrganizeEntriesInputSchema,
@@ -54,11 +54,6 @@ import {
 } from "./schemas";
 import type { RpcHandler } from "./types";
 import { validateInput } from "./validation";
-
-const log = createLogger("rpc.memory");
-
-const ingestJobs = new Map<string, MemoryIngestSourcesJob>();
-const organizeJobs = new Map<string, MemoryOrganizeJob>();
 
 export function createMemoryHandlers(): Record<string, RpcHandler> {
   return {
@@ -83,6 +78,7 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
     },
     [MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT]: async (params) => {
       const input = validateInput(workspaceSlugInputSchema, params, MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT);
+      memoryJobService.recoverInterrupted(input.workspaceSlug);
       return getMemoryV2SettingsSnapshot(input.workspaceSlug);
     },
     [MEMORY_IPC_CHANNELS.ORGANIZE_HISTORY]: async (params) => {
@@ -101,7 +97,12 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
         params,
         MEMORY_IPC_CHANNELS.GET_ORGANIZE_JOB
       );
-      const job = organizeJobs.get(input.jobId);
+      const workspaceSlug = input.workspaceSlug ?? memoryJobService.resolveWorkspace(input.jobId);
+      if (!workspaceSlug) throw new Error("workspaceSlug is required");
+      const job = memoryJobService.get<NonNullable<MemoryOrganizeJob["result"]>, NonNullable<MemoryOrganizeJob["progress"]>>(
+        workspaceSlug,
+        input.jobId
+      );
       if (!job) {
         throw new Error("记忆整理任务不存在");
       }
@@ -118,11 +119,30 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
         params,
         MEMORY_IPC_CHANNELS.GET_INGEST_JOB
       );
-      const job = ingestJobs.get(input.jobId);
+      const workspaceSlug = input.workspaceSlug ?? memoryJobService.resolveWorkspace(input.jobId);
+      if (!workspaceSlug) throw new Error("workspaceSlug is required");
+      const job = memoryJobService.get<NonNullable<MemoryIngestSourcesJob["result"]>, NonNullable<MemoryIngestSourcesJob["progress"]>>(
+        workspaceSlug,
+        input.jobId
+      );
       if (!job) {
         throw new Error("记忆摄取任务不存在");
       }
       return job;
+    },
+    [MEMORY_IPC_CHANNELS.CANCEL_JOB]: async (params) => {
+      const input = validateInput(memoryCancelJobInputSchema, params, MEMORY_IPC_CHANNELS.CANCEL_JOB);
+      const job = memoryJobService.cancel(input.workspaceSlug, input.jobId);
+      if (!job) throw new Error("记忆任务不存在");
+      return job;
+    },
+    [MEMORY_IPC_CHANNELS.RETRY_JOB]: async (params) => {
+      const input = validateInput(memoryCancelJobInputSchema, params, MEMORY_IPC_CHANNELS.RETRY_JOB);
+      const job = memoryJobService.get(input.workspaceSlug, input.jobId);
+      if (!job || job.kind !== "external_ingest" || !job.payload) {
+        throw new Error("该记忆任务不可重试");
+      }
+      return startMemoryIngestJob(job.payload as MemoryIngestSourcesInput);
     },
     [MEMORY_IPC_CHANNELS.OPEN_SOURCE]: async (params) => {
       return openMemoryV2Source(
@@ -165,33 +185,58 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
 }
 
 function updateMemoryEntryFromSettings(input: MemoryUpdateEntryInput): MemoryMutationResult {
-  const entry = createMemoryV2Store().updateEntry({
-    scope: input.scope,
+  const commands = new MemoryCommandService();
+  if (input.targetScope && input.targetScope !== input.scope) {
+    commands.moveScope({
+      workspaceSlug: input.workspaceSlug,
+      id: input.id,
+      scope: input.scope,
+      targetScope: input.targetScope
+    });
+  }
+  const scope = input.targetScope ?? input.scope;
+  const receipt = commands.update({
+    scope,
     workspaceSlug: input.workspaceSlug,
     id: input.id,
     statement: input.statement,
     kind: toMemoryV2Kind(input.kind),
     confidence: input.confidence,
-    tags: input.tags,
-    ...(input.activation ? { activation: input.activation } : {})
+    facets: input.tags,
+    ...(input.activation ? { activation: input.activation } : {}),
+    ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
+    ...(input.validTo !== undefined ? { validTo: input.validTo } : {}),
+    actor: "user"
   });
+  const entry = createMemoryV2Store().listEntries({
+    workspaceSlug: input.workspaceSlug,
+    scopes: [scope],
+    includeStatuses: ["active", "suspected_stale", "archived", "superseded"]
+  }).find((item) => item.frontmatter.id === input.id);
   return {
     ok: true,
-    id: entry.frontmatter.id,
-    path: entry.path
+    id: receipt.memoryIds[0] ?? input.id,
+    path: entry?.path ?? input.id
   };
 }
 
 function deleteMemoryEntryFromSettings(input: MemoryDeleteEntryInput): MemoryMutationResult {
-  return createMemoryV2Store().deleteEntry({
+  const receipt = new MemoryCommandService().archive({
     scope: input.scope,
     workspaceSlug: input.workspaceSlug,
-    id: input.id
+    id: input.id,
+    actor: "user"
   });
+  const entry = createMemoryV2Store().listEntries({
+    workspaceSlug: input.workspaceSlug,
+    scopes: [input.scope],
+    includeStatuses: ["archived"]
+  }).find((item) => item.frontmatter.id === input.id);
+  return { ok: true, id: receipt.memoryIds[0] ?? input.id, path: entry?.path ?? input.id };
 }
 
 function resolveMemoryPendingFromSettings(input: MemoryResolvePendingInput): MemoryMutationResult {
-  return createMemoryV2Store().resolvePending({
+  return new MemoryCommandService().resolvePending({
     workspaceSlug: input.workspaceSlug,
     path: input.path,
     action: input.action,
@@ -203,23 +248,23 @@ function resolveMemoryPendingFromSettings(input: MemoryResolvePendingInput): Mem
           tags: input.candidateOverride.tags
         }
       : undefined
-  });
+  }).result;
 }
 
 function startMemoryOrganizeHistoryJob(input: MemoryOrganizeHistoryInput): MemoryStartOrganizeJobResult {
-  return startMemoryOrganizeJob("history", input.workspaceSlug, async (jobId) => {
+  return startMemoryOrganizeJob("history", input.workspaceSlug, async (report) => {
     return organizeMemoryHistory({
       ...input,
-      onProgress: (progress) => updateMemoryOrganizeJobProgress(jobId, progress)
+      onProgress: report
     });
   });
 }
 
 function startMemoryOrganizeEntriesJob(input: MemoryOrganizeEntriesInput): MemoryStartOrganizeJobResult {
-  return startMemoryOrganizeJob("entries", input.workspaceSlug, async (jobId) => {
+  return startMemoryOrganizeJob("entries", input.workspaceSlug, async (report) => {
     return organizeMemoryEntries({
       ...input,
-      onProgress: (progress) => updateMemoryOrganizeJobProgress(jobId, progress)
+      onProgress: report
     });
   });
 }
@@ -227,69 +272,23 @@ function startMemoryOrganizeEntriesJob(input: MemoryOrganizeEntriesInput): Memor
 function startMemoryOrganizeJob(
   kind: MemoryOrganizeJob["kind"],
   workspaceSlug: string,
-  run: (jobId: string) => Promise<NonNullable<MemoryOrganizeJob["result"]>>
+  run: (
+    report: (progress: NonNullable<MemoryOrganizeJob["progress"]>) => void
+  ) => Promise<NonNullable<MemoryOrganizeJob["result"]>>
 ): MemoryStartOrganizeJobResult {
-  const jobId = randomUUID();
-  const startedAt = Date.now();
-  organizeJobs.set(jobId, {
-    jobId,
+  const job = memoryJobService.start({
     kind,
     workspaceSlug,
-    status: "running",
-    startedAt
+    manual: true,
+    run: ({ report }) => run(report)
   });
-  setTimeout(() => {
-    void runMemoryOrganizeJob(jobId, run);
-  }, 0);
   return {
-    jobId,
+    jobId: job.jobId,
     kind,
     workspaceSlug,
     status: "running",
-    startedAt
+    startedAt: job.startedAt ?? job.createdAt
   };
-}
-
-async function runMemoryOrganizeJob(
-  jobId: string,
-  run: (jobId: string) => Promise<NonNullable<MemoryOrganizeJob["result"]>>
-): Promise<void> {
-  const job = organizeJobs.get(jobId);
-  if (!job) return;
-  try {
-    log.info("organize job started", { jobId, kind: job.kind, workspaceSlug: job.workspaceSlug });
-    const result = await run(jobId);
-    const current = organizeJobs.get(jobId) ?? job;
-    organizeJobs.set(jobId, {
-      ...current,
-      status: "completed",
-      completedAt: Date.now(),
-      result
-    });
-    log.info("organize job completed", { jobId, kind: job.kind, workspaceSlug: job.workspaceSlug });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const current = organizeJobs.get(jobId) ?? job;
-    organizeJobs.set(jobId, {
-      ...current,
-      status: "failed",
-      completedAt: Date.now(),
-      error: message
-    });
-    log.error("organize job failed", { jobId, kind: job.kind, workspaceSlug: job.workspaceSlug, error: message });
-  }
-}
-
-function updateMemoryOrganizeJobProgress(
-  jobId: string,
-  progress: NonNullable<MemoryOrganizeJob["progress"]>
-): void {
-  const current = organizeJobs.get(jobId);
-  if (!current || current.status !== "running") return;
-  organizeJobs.set(jobId, {
-    ...current,
-    progress
-  });
 }
 
 function toMemoryV2Kind(kind?: MemoryKind): MemoryV2Kind | undefined {
@@ -304,71 +303,21 @@ function toMemoryV2Kind(kind?: MemoryKind): MemoryV2Kind | undefined {
 }
 
 function startMemoryIngestJob(input: MemoryIngestSourcesInput): MemoryStartIngestSourcesResult {
-  const jobId = randomUUID();
-  const startedAt = Date.now();
-  ingestJobs.set(jobId, {
-    jobId,
+  const job = memoryJobService.start({
+    kind: "external_ingest",
     workspaceSlug: input.workspaceSlug,
-    status: "running",
-    startedAt
-  });
-  setTimeout(() => {
-    void runMemoryIngestJob(jobId, input);
-  }, 0);
-  return {
-    jobId,
-    workspaceSlug: input.workspaceSlug,
-    status: "running",
-    startedAt
-  };
-}
-
-async function runMemoryIngestJob(jobId: string, input: MemoryIngestSourcesInput): Promise<void> {
-  const job = ingestJobs.get(jobId);
-  if (!job) return;
-  try {
-    log.info("ingest job started", { jobId, workspaceSlug: input.workspaceSlug, sourceCount: input.sources.length });
-    const result = await ingestExternalMemorySources({
+    manual: true,
+    payload: input,
+    run: ({ report, signal }) => ingestExternalMemorySources({
       ...input,
-      onProgress: (progress) => {
-        const current = ingestJobs.get(jobId);
-        if (!current || current.status !== "running") return;
-        ingestJobs.set(jobId, {
-          ...current,
-          progress
-        });
-      }
-    });
-    const current = ingestJobs.get(jobId) ?? job;
-    ingestJobs.set(jobId, {
-      ...current,
-      status: "completed",
-      completedAt: Date.now(),
-      progress: {
-        scannedSources: result.scannedSources,
-        scannedChunks: result.scannedChunks,
-        scannedBatches: result.scannedBatches,
-        processedBatches: result.scannedBatches,
-        candidateCount: result.candidateCount
-      },
-      result
-    });
-    log.info("ingest job completed", {
-      jobId,
-      workspaceSlug: input.workspaceSlug,
-      scannedSources: result.scannedSources,
-      candidateCount: result.candidateCount,
-      actions: result.actions
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const current = ingestJobs.get(jobId) ?? job;
-    ingestJobs.set(jobId, {
-      ...current,
-      status: "failed",
-      completedAt: Date.now(),
-      error: message
-    });
-    log.error("ingest job failed", { jobId, workspaceSlug: input.workspaceSlug, error: message });
-  }
+      onProgress: report,
+      signal
+    })
+  });
+  return {
+    jobId: job.jobId,
+    workspaceSlug: input.workspaceSlug,
+    status: "running",
+    startedAt: job.startedAt ?? job.createdAt
+  };
 }

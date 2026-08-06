@@ -10,6 +10,7 @@ import { createLazyConnectionLlmProvider } from "../model-runtime/connection-pro
 import { claimFromEntry, claimKey, claimObjectEquals } from "./claim";
 import { areMemoryStatementsSimilar } from "./dedupe";
 import { createMemoryV2Store } from "./markdown-store";
+import { MemoryCommandService } from "./command-service";
 import { getMemoryRuntimeConfig } from "./policy";
 import { resolveMemoryRerankModelRef } from "./rerank";
 import type {
@@ -23,6 +24,7 @@ import type {
 const log = createLogger("memory-v2.entry-organizer");
 
 const DEFAULT_ORGANIZE_BATCH_SIZE = 40;
+const MAX_ORGANIZE_AGENT_ROUNDS = 20;
 
 type MemoryEntryOrganizerProviderFactory = (input: {
   apiType: ApiType;
@@ -62,6 +64,7 @@ export interface MemoryOrganizeEntriesOptions extends MemoryOrganizeEntriesInput
 
 export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions): Promise<MemoryOrganizeEntriesResult> {
   const store = createMemoryV2Store();
+  const commands = new MemoryCommandService(store);
   const entries = store.listEntries({
     workspaceSlug: input.workspaceSlug,
     scopes: ["global", "workspace"],
@@ -92,7 +95,7 @@ export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions)
       if (!duplicate || supersededIds.has(duplicate.frontmatter.id)) continue;
       if (!canSupersedeEntry(kept, duplicate)) continue;
       markDuplicate({
-        store,
+        commands,
         workspaceSlug: input.workspaceSlug,
         kept,
         duplicate,
@@ -113,7 +116,7 @@ export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions)
       continue;
     }
     markDuplicate({
-      store,
+      commands,
       workspaceSlug: input.workspaceSlug,
       kept: duplicateOf,
       duplicate: entry,
@@ -142,7 +145,7 @@ export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions)
 }
 
 function markDuplicate(input: {
-  store: ReturnType<typeof createMemoryV2Store>;
+  commands: MemoryCommandService;
   workspaceSlug: string;
   kept: MemoryV2Entry;
   duplicate: MemoryV2Entry;
@@ -150,12 +153,11 @@ function markDuplicate(input: {
   items: MemoryOrganizeEntriesResult["items"];
   supersededIds: Set<string>;
 }): void {
-  input.store.updateEntryStatus({
+  input.commands.supersedeDuplicate({
     scope: input.duplicate.frontmatter.scope,
-    workspaceSlug: input.duplicate.frontmatter.scope === "workspace" ? input.workspaceSlug : undefined,
-    id: input.duplicate.frontmatter.id,
-    status: "superseded",
-    supersededBy: input.kept.frontmatter.id
+    workspaceSlug: input.workspaceSlug,
+    duplicateId: input.duplicate.frontmatter.id,
+    keptId: input.kept.frontmatter.id
   });
   input.supersededIds.add(input.duplicate.frontmatter.id);
   input.items.push({
@@ -197,7 +199,7 @@ async function planCandidateBatches(
   batchSize: number,
   onProgress?: (progress: MemoryOrganizeProgress) => void
 ): Promise<MemoryEntryOrganizePlanItem[]> {
-  const scannedBatches = Math.max(1, Math.ceil(candidates.length / batchSize));
+  const scannedBatches = Math.max(1, Math.min(MAX_ORGANIZE_AGENT_ROUNDS, Math.ceil(candidates.length / batchSize)));
   if (candidates.length <= batchSize) {
     const plan = await planner(candidates);
     onProgress?.({
@@ -211,7 +213,11 @@ async function planCandidateBatches(
   }
   const plans: MemoryEntryOrganizePlanItem[] = [];
   let processedBatches = 0;
-  for (let start = 0; start < candidates.length; start += batchSize) {
+  for (
+    let start = 0;
+    start < candidates.length && processedBatches < MAX_ORGANIZE_AGENT_ROUNDS;
+    start += batchSize
+  ) {
     plans.push(...await planner(candidates.slice(start, start + batchSize)));
     processedBatches += 1;
     onProgress?.({

@@ -258,6 +258,10 @@ export interface MemoryRuntimeConfig {
   version: number;
   tools: MemoryToolPolicy;
   citations: MemoryCitationsMode;
+  proactiveWrite: boolean;
+  backgroundExtraction: boolean;
+  autoDream: boolean;
+  recallNotice: "collapsed" | "off";
   sources: MemorySourceMode[];
   extraPaths: string[];
   retrieval: MemoryRetrievalConfig;
@@ -266,6 +270,10 @@ export interface MemoryRuntimeConfig {
 export interface UpdateMemoryRuntimeConfigInput {
   tools?: MemoryToolPolicy;
   citations?: MemoryCitationsMode;
+  proactiveWrite?: boolean;
+  backgroundExtraction?: boolean;
+  autoDream?: boolean;
+  recallNotice?: "collapsed" | "off";
   sources?: MemorySourceMode[];
   extraPaths?: string[];
   retrieval?: Partial<MemoryRetrievalConfig>;
@@ -332,9 +340,24 @@ export interface MemoryOrganizeEntriesResult {
   items: MemoryOrganizeEntriesItem[];
 }
 
-export type MemoryOrganizeJobKind = "history" | "entries";
+export type MemoryJobKind =
+  | "turn_extract"
+  | "history"
+  | "entries"
+  | "external_ingest"
+  | "consolidation";
 
-export type MemoryOrganizeJobStatus = "running" | "completed" | "failed";
+export type MemoryJobStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+export type MemoryOrganizeJobKind = Extract<MemoryJobKind, "history" | "entries">;
+
+export type MemoryOrganizeJobStatus = MemoryJobStatus;
 
 export interface MemoryOrganizeProgress {
   label: string;
@@ -355,6 +378,12 @@ export interface MemoryStartOrganizeJobResult {
 
 export interface MemoryOrganizeJobInput {
   jobId: string;
+  workspaceSlug?: string;
+}
+
+export interface MemoryCancelJobInput {
+  jobId: string;
+  workspaceSlug: string;
 }
 
 export interface MemoryOrganizeJob {
@@ -421,7 +450,7 @@ export interface MemoryIngestSourcesResult {
   items: MemoryIngestSourcesItem[];
 }
 
-export type MemoryIngestSourcesJobStatus = "running" | "completed" | "failed";
+export type MemoryIngestSourcesJobStatus = MemoryJobStatus;
 
 export interface MemoryStartIngestSourcesResult {
   jobId: string;
@@ -432,6 +461,7 @@ export interface MemoryStartIngestSourcesResult {
 
 export interface MemoryIngestSourcesJobInput {
   jobId: string;
+  workspaceSlug?: string;
 }
 
 export interface MemoryIngestSourcesProgress {
@@ -479,6 +509,15 @@ export interface MemorySettingsEntrySummary {
   updated: string;
   pinned: boolean;
   tags: string[];
+  semanticRole?: MemorySemanticRole;
+  facets?: string[];
+  revision?: number;
+  lastConfirmedAt?: string;
+  evidenceRefs?: MemoryEvidenceRef[];
+  supersedes?: string[];
+  supersededBy?: string;
+  validFrom?: string;
+  validTo?: string;
   claim?: MemoryClaim;
   activation?: MemoryActivation;
 }
@@ -514,6 +553,9 @@ export interface MemoryUpdateEntryInput {
   confidence?: "low" | "medium" | "high";
   tags?: string[];
   activation?: MemoryActivation;
+  pinned?: boolean;
+  validTo?: string | null;
+  targetScope?: "global" | "workspace";
 }
 
 export interface MemoryDeleteEntryInput {
@@ -565,6 +607,25 @@ export interface MemorySettingsSnapshot {
   workspaceEntries: MemorySettingsEntrySummary[];
   globalEntries: MemorySettingsEntrySummary[];
   pending: MemorySettingsPendingSummary[];
+  activity: MemoryMutationReceipt[];
+  jobs: Array<{
+    jobId: string;
+    kind: MemoryJobKind;
+    status: MemoryJobStatus;
+    createdAt: number;
+    completedAt?: number;
+    error?: string;
+    retryable: boolean;
+  }>;
+  migration: {
+    schemaVersion?: number;
+    backupPaths: string[];
+  };
+  workspaceBrief?: {
+    path: string;
+    markdown: string;
+    updatedAt?: number;
+  };
   extraction: {
     modelRef?: string;
     source: "configured" | "disabled";
@@ -631,6 +692,8 @@ export const MEMORY_IPC_CHANNELS = {
   GET_ORGANIZE_JOB: "memory:get-organize-job",
   INGEST_SOURCES: "memory:ingest-sources",
   GET_INGEST_JOB: "memory:get-ingest-job",
+  CANCEL_JOB: "memory:cancel-job",
+  RETRY_JOB: "memory:retry-job",
   LIST_SOURCE_FILES: "memory:list-source-files",
   SOURCE_FILES_CHANGED: "memory:source-files-changed",
   OPEN_SOURCE: "memory:open-source",

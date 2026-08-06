@@ -869,7 +869,7 @@ function buildRuntimeCoreTools(input: {
 }): RuntimeCoreToolset {
   const permissionMode = input.permissionMode ?? "default";
   const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
-  const includeCitations = shouldIncludeCitations(
+  const includeCitations = memoryRuntimeConfig.recallNotice !== "off" && shouldIncludeCitations(
     memoryRuntimeConfig.citationsMode,
     input.chatType ?? "direct"
   );

@@ -26,12 +26,16 @@ interface MemoryRuntimeConfigFile {
   version?: number;
   tools?: MemoryToolPolicy;
   citations?: MemoryCitationsMode;
+  proactiveWrite?: boolean;
+  backgroundExtraction?: boolean;
+  autoDream?: boolean;
+  recallNotice?: "collapsed" | "off";
   sources?: MemorySourceMode[];
   extraPaths?: string[];
   retrieval?: Partial<MemoryRetrievalConfig>;
 }
 
-export const MEMORY_CONFIG_VERSION = 2;
+export const MEMORY_CONFIG_VERSION = 3;
 const log = createLogger("memory-policy");
 
 const DEFAULT_MEMORY_CONFIG: Required<Pick<MemoryRuntimeConfigFile, "version" | "tools" | "citations">> = {
@@ -42,6 +46,12 @@ const DEFAULT_MEMORY_CONFIG: Required<Pick<MemoryRuntimeConfigFile, "version" | 
 const DEFAULT_SOURCES: MemorySourceMode[] = ["memory"];
 const DEFAULT_EXTRA_PATHS: string[] = [];
 const DEFAULT_RETRIEVAL: MemoryRetrievalConfig = { semantic: "auto" };
+const DEFAULT_AUTOMATION = {
+  proactiveWrite: true,
+  backgroundExtraction: true,
+  autoDream: true,
+  recallNotice: "collapsed" as const
+};
 
 const MEMORY_TOOL_GROUPS: Record<string, string[]> = {
   "group:memory": ["memory.search", "memory.read"],
@@ -111,6 +121,10 @@ export function parseMemoryRuntimeConfigPayload(payload: unknown): {
   sources: MemorySourceMode[];
   extraPaths: string[];
   retrieval: MemoryRetrievalConfig;
+  proactiveWrite: boolean;
+  backgroundExtraction: boolean;
+  autoDream: boolean;
+  recallNotice: "collapsed" | "off";
 } {
   const parsed = payload && typeof payload === "object" ? (payload as MemoryRuntimeConfigFile) : {};
   const citationsMode =
@@ -152,7 +166,11 @@ export function parseMemoryRuntimeConfigPayload(payload: unknown): {
     citationsMode,
     sources: sources.length > 0 ? sources : [...DEFAULT_SOURCES],
     extraPaths,
-    retrieval
+    retrieval,
+    proactiveWrite: parsed.proactiveWrite !== false,
+    backgroundExtraction: parsed.backgroundExtraction !== false,
+    autoDream: parsed.autoDream !== false,
+    recallNotice: parsed.recallNotice === "off" ? "off" : "collapsed"
   };
 }
 
@@ -163,6 +181,10 @@ function normalizeRuntimeConfig(payload: unknown): MemoryRuntimeConfig {
     version: MEMORY_CONFIG_VERSION,
     tools: parsed.toolPolicy ?? { ...DEFAULT_MEMORY_CONFIG.tools },
     citations: parsed.citationsMode,
+    proactiveWrite: parsed.proactiveWrite,
+    backgroundExtraction: parsed.backgroundExtraction,
+    autoDream: parsed.autoDream,
+    recallNotice: parsed.recallNotice,
     sources: parsed.sources,
     extraPaths: parsed.extraPaths,
     retrieval: parsed.retrieval
@@ -218,6 +240,10 @@ export function resolveMemoryRuntimeConfig(): {
   sources: MemorySourceMode[];
   extraPaths: string[];
   retrieval: MemoryRetrievalConfig;
+  proactiveWrite: boolean;
+  backgroundExtraction: boolean;
+  autoDream: boolean;
+  recallNotice: "collapsed" | "off";
 } {
   const configPath = getMemoryConfigPath();
   if (!existsSync(configPath)) {
@@ -229,7 +255,8 @@ export function resolveMemoryRuntimeConfig(): {
             ...DEFAULT_MEMORY_CONFIG,
             sources: DEFAULT_SOURCES,
             extraPaths: DEFAULT_EXTRA_PATHS,
-            retrieval: DEFAULT_RETRIEVAL
+            retrieval: DEFAULT_RETRIEVAL,
+            ...DEFAULT_AUTOMATION
           },
           null,
           2
@@ -244,12 +271,19 @@ export function resolveMemoryRuntimeConfig(): {
       citationsMode: DEFAULT_MEMORY_CONFIG.citations,
       sources: [...DEFAULT_SOURCES],
       extraPaths: [...DEFAULT_EXTRA_PATHS],
-      retrieval: { ...DEFAULT_RETRIEVAL }
+      retrieval: { ...DEFAULT_RETRIEVAL },
+      ...DEFAULT_AUTOMATION
     };
   }
   try {
     const parsed = JSON.parse(readFileSync(configPath, "utf-8")) as MemoryRuntimeConfigFile;
-    return parseMemoryRuntimeConfigPayload(parsed);
+    const resolved = parseMemoryRuntimeConfigPayload(parsed);
+    return {
+      ...resolved,
+      toolPolicy: resolved.proactiveWrite
+        ? resolved.toolPolicy
+        : denyMemoryWrites(resolved.toolPolicy)
+    };
   } catch (error) {
     log.warn("failed to read memory config; using defaults", { error });
     return {
@@ -257,9 +291,17 @@ export function resolveMemoryRuntimeConfig(): {
       citationsMode: DEFAULT_MEMORY_CONFIG.citations,
       sources: [...DEFAULT_SOURCES],
       extraPaths: [...DEFAULT_EXTRA_PATHS],
-      retrieval: { ...DEFAULT_RETRIEVAL }
+      retrieval: { ...DEFAULT_RETRIEVAL },
+      ...DEFAULT_AUTOMATION
     };
   }
+}
+
+function denyMemoryWrites(policy: MemoryToolPolicy | undefined): MemoryToolPolicy {
+  return {
+    ...(policy ?? {}),
+    deny: Array.from(new Set([...(policy?.deny ?? []), "group:memory-write"]))
+  };
 }
 
 export function getMemoryRuntimeConfig(): MemoryRuntimeConfig {
@@ -283,6 +325,10 @@ export function updateMemoryRuntimeConfig(input: UpdateMemoryRuntimeConfigInput)
     version: MEMORY_CONFIG_VERSION,
     tools: input.tools ?? current.tools,
     citations: input.citations ?? current.citations,
+    proactiveWrite: input.proactiveWrite ?? current.proactiveWrite,
+    backgroundExtraction: input.backgroundExtraction ?? current.backgroundExtraction,
+    autoDream: input.autoDream ?? current.autoDream,
+    recallNotice: input.recallNotice ?? current.recallNotice,
     sources: input.sources ?? current.sources,
     extraPaths: input.extraPaths ?? current.extraPaths,
     retrieval: {

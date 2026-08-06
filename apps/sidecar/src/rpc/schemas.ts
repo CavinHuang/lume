@@ -880,10 +880,15 @@ export const memoryIngestSourcesInputSchema = z.object({
 });
 
 export const memoryIngestSourcesJobInputSchema = z.object({
-  jobId: z.string().trim().min(1)
+  jobId: z.string().trim().min(1),
+  workspaceSlug: idSchema.optional()
 });
 
 export const memoryOrganizeJobInputSchema = memoryIngestSourcesJobInputSchema;
+export const memoryCancelJobInputSchema = z.object({
+  jobId: z.string().trim().min(1),
+  workspaceSlug: idSchema
+}).strict();
 
 export const memoryOpenSourceInputSchema = z.object({
   workspaceSlug: idSchema,
@@ -914,7 +919,10 @@ export const memoryUpdateEntryInputSchema = z.object({
   kind: memoryKindSchema.optional(),
   confidence: memoryEntryConfidenceSchema.optional(),
   tags: z.array(z.string()).optional(),
-  activation: memoryActivationSchema.optional()
+  activation: memoryActivationSchema.optional(),
+  pinned: z.boolean().optional(),
+  validTo: z.string().datetime().nullable().optional(),
+  targetScope: memoryEntryScopeSchema.optional()
 }).strict();
 
 export const memoryDeleteEntryInputSchema = z.object({
@@ -953,6 +961,10 @@ const memoryRetrievalConfigSchema = z.object({
 export const updateMemoryRuntimeConfigInputSchema = z.object({
   tools: memoryToolPolicySchema.optional(),
   citations: z.enum(["on", "off", "auto"]).optional(),
+  proactiveWrite: z.boolean().optional(),
+  backgroundExtraction: z.boolean().optional(),
+  autoDream: z.boolean().optional(),
+  recallNotice: z.enum(["collapsed", "off"]).optional(),
   sources: z.array(z.enum(["memory", "sessions"])).optional(),
   extraPaths: z.array(z.string()).optional(),
   retrieval: memoryRetrievalConfigSchema.optional()

@@ -880,6 +880,35 @@ describe('runtime-event-message-projection', () => {
       workspaceSlug: 'demo',
     })
   })
+
+  test('projects one updating AutoDream job message', () => {
+    const messages = projectRuntimeEventMessages([
+      event({
+        type: 'memory.job.progress',
+        jobId: 'job-1',
+        jobKind: 'consolidation',
+        phase: '检查近期证据',
+        scannedItems: 10,
+        processedItems: 4,
+        changedItems: 0,
+      }),
+      event({
+        type: 'memory.job.completed',
+        jobId: 'job-1',
+        jobKind: 'consolidation',
+        status: 'completed',
+        summary: '整理了 2 条记忆',
+        changedItems: 2,
+      }),
+    ])
+    expect(messages).toEqual([expect.objectContaining({
+      id: 'memory-job:job-1',
+      type: 'system',
+      variant: 'memory_job',
+      status: 'completed',
+      text: '整理了 2 条记忆',
+    })])
+  })
 })
 
 /** 模拟「事件逐个追加」的增量调用，返回最终 messages（用于与全量对比）。 */

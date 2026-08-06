@@ -369,6 +369,14 @@ function SystemMessageBlock({
   if (message.variant === 'memory_saved') {
     return <MemorySavedNotice message={message} className={className} />
   }
+  if (message.variant === 'memory_job') {
+    return (
+      <div className={cn('mx-6 flex items-center gap-2 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-3 py-2 text-[13px] text-[var(--lume-text-secondary)]', className)}>
+        {message.status === 'active' ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
+        <span>{message.text}</span>
+      </div>
+    )
+  }
   return null
 }
 

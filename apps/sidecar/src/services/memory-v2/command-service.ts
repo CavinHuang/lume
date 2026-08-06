@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { MemoryClaim, MemoryEvidenceRef, MemoryMutationReceipt } from "@lume/shared";
+import type { MemoryClaim, MemoryEvidenceRef, MemoryMutationReceipt, MemoryMutationResult } from "@lume/shared";
 import { claimFromEntry, claimKey, normalizeMemoryV2Claim } from "./claim";
 import { createMemoryV2Store, readActivation, type MemoryV2Store } from "./markdown-store";
 import { getMemoryV2ScopePaths } from "./paths";
@@ -141,6 +141,65 @@ export class MemoryCommandService {
     return this.record(input, entry.frontmatter.scope, "archived", [archived], "已归档 1 条记忆", true, [snapshot(entry)]);
   }
 
+  moveScope(input: {
+    workspaceSlug: string;
+    id: string;
+    scope: MemoryV2Scope;
+    targetScope: MemoryV2Scope;
+  }): MemoryV2MutationReceipt {
+    const entry = this.findEntry(input.workspaceSlug, input.id, input.scope);
+    if (!entry) throw new Error(`Memory entry not found: ${input.id}`);
+    const moved = this.store.moveEntryScope({
+      ...input,
+      expectedRevision: entry.frontmatter.revision
+    });
+    const receipt = this.record(
+      { actor: "user", workspaceSlug: input.workspaceSlug },
+      input.targetScope,
+      "updated",
+      [moved],
+      `已移动到${input.targetScope === "global" ? "全局" : "工作区"}记忆`,
+      false,
+      [snapshot(entry)]
+    );
+    scheduleDerivedMemoryRebuild({
+      scope: input.scope,
+      ...(input.scope === "workspace" ? { workspaceSlug: input.workspaceSlug } : {})
+    });
+    return receipt;
+  }
+
+  update(input: {
+    workspaceSlug: string;
+    id: string;
+    scope: MemoryV2Scope;
+    statement?: string;
+    kind?: MemoryV2Kind;
+    confidence?: MemoryV2Confidence;
+    facets?: string[];
+    activation?: ReturnType<typeof readActivation>;
+    pinned?: boolean;
+    validTo?: string | null;
+    actor: MemoryV2MutationActor;
+  }): MemoryV2MutationReceipt {
+    const entry = this.findEntry(input.workspaceSlug, input.id, input.scope);
+    if (!entry) throw new Error(`Memory entry not found: ${input.id}`);
+    const updated = this.store.updateEntry({
+      scope: input.scope,
+      workspaceSlug: input.workspaceSlug,
+      id: input.id,
+      expectedRevision: entry.frontmatter.revision,
+      statement: input.statement,
+      kind: input.kind,
+      confidence: input.confidence,
+      tags: input.facets,
+      activation: input.activation,
+      pinned: input.pinned,
+      validTo: input.validTo
+    });
+    return this.record(input, input.scope, "updated", [updated], "更新了 1 条记忆", false, [snapshot(entry)]);
+  }
+
   markSuspectedStale(input: {
     workspaceSlug: string;
     id: string;
@@ -159,6 +218,63 @@ export class MemoryCommandService {
       expectedRevision: entry.frontmatter.revision
     });
     return this.record({ actor: "consolidation", workspaceSlug: input.workspaceSlug }, input.scope, "updated", [updated], "已标记 1 条可能过期记忆", true, [snapshot(entry)]);
+  }
+
+  supersedeDuplicate(input: {
+    workspaceSlug: string;
+    duplicateId: string;
+    keptId: string;
+    scope: MemoryV2Scope;
+  }): MemoryV2MutationReceipt {
+    const duplicate = this.findEntry(input.workspaceSlug, input.duplicateId, input.scope);
+    if (!duplicate) throw new Error(`Memory entry not found: ${input.duplicateId}`);
+    const updated = this.store.updateEntryStatus({
+      scope: input.scope,
+      workspaceSlug: input.workspaceSlug,
+      id: input.duplicateId,
+      status: "superseded",
+      supersededBy: input.keptId,
+      expectedRevision: duplicate.frontmatter.revision
+    });
+    return this.record(
+      { actor: "consolidation", workspaceSlug: input.workspaceSlug },
+      input.scope,
+      "merged",
+      [updated],
+      "合并了 1 条重复记忆",
+      true,
+      [snapshot(duplicate)]
+    );
+  }
+
+  resolvePending(input: {
+    workspaceSlug: string;
+    path: string;
+    action: "accept" | "reject" | "resolve";
+    candidateOverride?: {
+      statement?: string;
+      kind?: MemoryV2Kind;
+      confidence?: MemoryV2Confidence;
+      tags?: string[];
+    };
+  }): { result: MemoryMutationResult; receipt: MemoryV2MutationReceipt } {
+    const pending = this.store.listPending({ workspaceSlug: input.workspaceSlug })
+      .find((item) => item.path === input.path);
+    if (!pending) throw new Error("Memory pending item not found");
+    const result = this.store.resolvePending(input);
+    const ids = result.entryId ? [result.entryId] : [];
+    const action = input.action === "accept" ? "created" : "archived";
+    return {
+      result,
+      receipt: this.recordIds(
+        { actor: "user", workspaceSlug: input.workspaceSlug },
+        pending.frontmatter.candidate.targetScope,
+        action,
+        ids,
+        input.action === "accept" ? "已接受 1 条待处理记忆" : "已处理 1 条待处理记忆",
+        input.action === "accept"
+      )
+    };
   }
 
   undo(input: { workspaceSlug: string; mutationId: string }): MemoryV2MutationReceipt {

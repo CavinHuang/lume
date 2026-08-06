@@ -119,5 +119,13 @@ export type RuntimeSystemMessageView =
       workspaceSlug: string
       details: Extract<LumeRuntimeEvent, { type: 'memory.changed' }>['details']
     }
+  | {
+      id: string
+      type: 'system'
+      variant: 'memory_job'
+      status: 'active' | 'completed'
+      text: string
+      createdAt: string
+    }
 
 export type RuntimeMessageView = RuntimeUserMessageView | RuntimeAssistantMessageView | RuntimeSystemMessageView

@@ -251,7 +251,7 @@ describe("memory handlers", () => {
     });
   });
 
-  test("settings handlers manually update and delete memory entries", async () => {
+  test("settings handlers update and recoverably archive memory entries", async () => {
     const store = createMemoryV2Store();
     const entry = store.writeEntry({
       kind: "preference",
@@ -290,7 +290,12 @@ describe("memory handlers", () => {
       id: entry.frontmatter.id,
       path: entry.path
     });
-    expect(existsSync(entry.path)).toBe(false);
+    expect(existsSync(entry.path)).toBe(true);
+    expect(createMemoryV2Store().listEntries({
+      workspaceSlug: "demo",
+      scopes: ["workspace"],
+      includeStatuses: ["archived"]
+    }).some((item) => item.frontmatter.id === entry.frontmatter.id)).toBe(true);
   });
 
   test("settings handler accepts pending conflicts without exposing an agent delete tool", async () => {

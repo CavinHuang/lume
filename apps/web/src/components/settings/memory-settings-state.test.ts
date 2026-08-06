@@ -4,7 +4,6 @@ import {
   MEMORY_TOOL_POLICY_GROUPS,
   buildEmbeddingModelOptions,
   buildMemoryLayerMetrics,
-  filterMemoryEntriesByLayer,
   filterMemoryEntriesByUserCategory,
   buildRerankModelOptions,
   buildMemoryDetailRows,
@@ -13,7 +12,6 @@ import {
   applyMemoryIngestTargetScope,
   localOnnxStatusTone,
   isMemoryToolGroupEnabled,
-  memoryEntryLayerLabel,
   memoryPendingCandidateLayerLabel,
   pendingNotice,
   setMemoryToolGroupEnabled,
@@ -30,10 +28,10 @@ import {
 describe('memory settings state', () => {
   test('memory settings views expose V2-only order', () => {
     expect(MEMORY_SETTINGS_VIEWS.map((item) => item.id)).toEqual([
-      'profile',
-      'workflow',
-      'voice',
-      'instruction',
+      'recent',
+      'about',
+      'workspace',
+      'all',
     ])
   })
 
@@ -82,7 +80,7 @@ describe('memory settings state', () => {
     expect(pendingNotice()).toBe('无待处理记忆')
   })
 
-  test('layer metrics expose Alice-style memory categories without changing storage', () => {
+  test('layer metrics expose evidence and dynamic memory layers', () => {
     const snapshot = {
       workspaceSlug: 'demo',
       counts: {
@@ -165,84 +163,11 @@ describe('memory settings state', () => {
     }
 
     expect(buildMemoryLayerMetrics(snapshot).map((item) => [item.label, item.value])).toEqual([
-      ['身份画像', '1'],
-      ['写作风格', '1'],
-      ['规则指令', '1'],
-      ['语义条目', '3'],
+      ['证据记录', '0'],
+      ['原子记忆', '3'],
+      ['开放标签', '5'],
+      ['待处理', '0'],
     ])
-  })
-
-  test('layer filters group entries by Alice-style memory categories', () => {
-    const entries = [{
-      id: 'profile-1',
-      path: 'profile.md',
-      scope: 'global' as const,
-      kind: 'preference' as const,
-      status: 'active' as const,
-      confidence: 'high' as const,
-      statement: '用户希望被称呼为 Mason',
-      updated: '2026-05-31T00:00:00.000Z',
-      pinned: false,
-      tags: ['profile', 'preferred-name'],
-      claim: {
-        subject: 'user/self',
-        predicate: 'preferred_name',
-        object: 'Mason',
-      },
-    }, {
-      id: 'voice-1',
-      path: 'voice.md',
-      scope: 'global' as const,
-      kind: 'preference' as const,
-      status: 'active' as const,
-      confidence: 'high' as const,
-      statement: '用户写作风格偏好简洁',
-      updated: '2026-05-31T00:00:00.000Z',
-      pinned: false,
-      tags: ['voice'],
-      claim: {
-        subject: 'user/self',
-        predicate: 'writing_style',
-        object: '简洁',
-      },
-    }, {
-      id: 'global-rule-1',
-      path: 'MEMORY.md',
-      scope: 'global' as const,
-      kind: 'summary' as const,
-      status: 'active' as const,
-      confidence: 'high' as const,
-      statement: '最终回复需要说明剩余风险',
-      updated: '2026-05-31T00:00:00.000Z',
-      pinned: true,
-      tags: [],
-    }, {
-      id: 'claim-1',
-      path: 'claim.md',
-      scope: 'workspace' as const,
-      kind: 'decision' as const,
-      status: 'active' as const,
-      confidence: 'high' as const,
-      statement: 'Memory V2 使用 Markdown 作为事实源',
-      updated: '2026-05-31T00:00:00.000Z',
-      pinned: false,
-      tags: [],
-      claim: {
-        subject: 'workspace/default',
-        predicate: 'source_of_truth',
-        object: 'Markdown',
-      },
-    }]
-
-    expect(filterMemoryEntriesByLayer(entries, 'profile').map((entry) => entry.id)).toEqual(['profile-1'])
-    expect(filterMemoryEntriesByLayer(entries, 'voice').map((entry) => entry.id)).toEqual(['voice-1'])
-    expect(filterMemoryEntriesByLayer(entries, 'global-memory').map((entry) => entry.id)).toEqual(['global-rule-1'])
-    expect(filterMemoryEntriesByLayer(entries, 'structured').map((entry) => entry.id)).toEqual(['claim-1'])
-    expect(filterMemoryEntriesByLayer(entries, 'all')).toHaveLength(4)
-    expect(memoryEntryLayerLabel(entries[0])).toBe('身份画像')
-    expect(memoryEntryLayerLabel(entries[1])).toBe('写作风格')
-    expect(memoryEntryLayerLabel(entries[2])).toBe('全局记忆')
-    expect(memoryEntryLayerLabel(entries[3])).toBe('结构化事实')
   })
 
   test('user memory categories keep the primary settings page approachable', () => {
@@ -257,6 +182,7 @@ describe('memory settings state', () => {
       updated: '2026-05-31T00:00:00.000Z',
       pinned: false,
       tags: ['profile', 'preferred-name'],
+      semanticRole: 'identity' as const,
       claim: {
         subject: 'user/self',
         predicate: 'preferred_name',
@@ -284,6 +210,7 @@ describe('memory settings state', () => {
       updated: '2026-05-31T00:00:00.000Z',
       pinned: false,
       tags: ['voice'],
+      semanticRole: 'preference' as const,
       claim: {
         subject: 'user/self',
         predicate: 'writing_style',
@@ -302,13 +229,13 @@ describe('memory settings state', () => {
       tags: [],
     }]
 
-    expect(filterMemoryEntriesByUserCategory(entries, 'profile').map((entry) => entry.id)).toEqual(['profile-1'])
-    expect(filterMemoryEntriesByUserCategory(entries, 'workflow').map((entry) => entry.id)).toEqual(['workflow-1'])
-    expect(filterMemoryEntriesByUserCategory(entries, 'voice').map((entry) => entry.id)).toEqual(['voice-1'])
-    expect(filterMemoryEntriesByUserCategory(entries, 'instruction').map((entry) => entry.id)).toEqual(['instruction-1'])
+    expect(filterMemoryEntriesByUserCategory(entries, 'about').map((entry) => entry.id)).toEqual(['profile-1', 'voice-1'])
+    expect(filterMemoryEntriesByUserCategory(entries, 'workspace').map((entry) => entry.id)).toEqual(['workflow-1'])
+    expect(filterMemoryEntriesByUserCategory(entries, 'recent')).toHaveLength(4)
+    expect(filterMemoryEntriesByUserCategory(entries, 'all')).toHaveLength(4)
   })
 
-  test('pending candidates use the same Alice-style layer labels as stored entries', () => {
+  test('pending candidates use dynamic scope and Claim labels', () => {
     expect(memoryPendingCandidateLayerLabel({
       scope: 'global',
       kind: 'preference',
@@ -320,7 +247,7 @@ describe('memory settings state', () => {
         predicate: 'preferred_name',
         object: 'Mason',
       },
-    })).toBe('身份画像')
+    })).toBe('结构化 Claim')
 
     expect(memoryPendingCandidateLayerLabel({
       scope: 'workspace',
@@ -333,7 +260,7 @@ describe('memory settings state', () => {
         predicate: 'writing_style',
         object: '简洁',
       },
-    })).toBe('写作风格')
+    })).toBe('结构化 Claim')
   })
 
   test('labels keep memory UI compact and localized', () => {
@@ -369,8 +296,7 @@ describe('memory settings state', () => {
       citation: '/tmp/memory/entries/mem-1.md',
     })).toEqual([
       { label: '范围', value: '工作区' },
-      { label: '类型', value: '决策' },
-      { label: '分层', value: '结构化事实' },
+      { label: '分层', value: '结构化 Claim' },
       { label: 'Claim', value: 'workspace/default.preference = show full memory content' },
       { label: '标签', value: 'memory-ui' },
       { label: '路径', value: '/tmp/memory/entries/mem-1.md' },

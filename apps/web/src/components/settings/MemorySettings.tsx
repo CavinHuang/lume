@@ -46,6 +46,8 @@ import { Switch } from '@/components/ui/switch'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   getMemoryRuntimeConfig,
+  cancelMemoryJob,
+  retryMemoryJob,
   getMemoryIngestJob,
   getMemoryOrganizeJob,
   getMemorySettingsSnapshot,
@@ -63,7 +65,7 @@ import {
   updateMemoryEntry,
   updateMemoryRuntimeConfig,
   getPersona,
-  updatePersona,
+  correctPersona,
   regeneratePersona,
 } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
@@ -71,7 +73,6 @@ import {
   MEMORY_CITATION_MODE_LABELS,
   MEMORY_CONFIDENCE_LABELS,
   MEMORY_FILE_KIND_LABELS,
-  MEMORY_KIND_LABELS,
   MEMORY_PENDING_LABELS,
   MEMORY_SETTINGS_VIEWS,
   MEMORY_STATUS_LABELS,
@@ -108,6 +109,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 function pollOrganizeJob(input: {
   jobId: string
+  workspaceSlug: string
   setJob: React.Dispatch<React.SetStateAction<MemoryOrganizeJob | null>>
   refresh: () => Promise<void>
   onCompleted: (job: MemoryOrganizeJob) => void
@@ -117,7 +119,10 @@ function pollOrganizeJob(input: {
 
   const poll = async () => {
     try {
-      const nextJob = await getMemoryOrganizeJob({ jobId: input.jobId })
+      const nextJob = await getMemoryOrganizeJob({
+        jobId: input.jobId,
+        workspaceSlug: input.workspaceSlug,
+      })
       if (disposed) return
       input.setJob(nextJob)
       if (nextJob.status === 'running') {
@@ -153,31 +158,23 @@ function pollOrganizeJob(input: {
   }
 }
 
-function manualMemoryTags(category: MemoryUserCategory): string[] {
-  if (category === 'profile') return ['profile']
-  if (category === 'voice') return ['voice', 'writing-style']
-  if (category === 'instruction') return ['instruction', 'rule']
-  return ['workflow']
-}
-
 function isUserMemoryCategory(view: MemorySettingsView): view is MemoryUserCategory {
-  return view === 'profile' || view === 'workflow' || view === 'voice' || view === 'instruction'
+  return view === 'recent' || view === 'about' || view === 'workspace' || view === 'all'
 }
 
 /**
  * Persona 卡片：展示 Lume 基于记忆自动生成的用户画像（persona.md）。
  * - 状态：已生成（emerald + updatedAt）/ 未生成（muted 提示）。
  * - 预览：可展开的 Markdown 文本。
- * - 编辑：textarea → updatePersona。
+ * - 纠正：写入底层高置信记忆，再重建派生画像。
  * - 重新生成：regeneratePersona + toast + loading。
  * 自包含组件；通过 workspaceSlug 拉取/写入。
  */
 export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
   const [persona, setPersona] = React.useState<PersonaGetResult | null>(null)
   const [loading, setLoading] = React.useState(true)
-  const [busy, setBusy] = React.useState<'save' | 'regenerate' | null>(null)
-  const [editMode, setEditMode] = React.useState(false)
-  const [draft, setDraft] = React.useState('')
+  const [busy, setBusy] = React.useState<'correct' | 'regenerate' | null>(null)
+  const [correction, setCorrection] = React.useState('')
   const [expanded, setExpanded] = React.useState(false)
 
   const refreshPersona = React.useCallback(async () => {
@@ -189,7 +186,6 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
     try {
       const result = await getPersona(workspaceSlug)
       setPersona(result)
-      setDraft(result.markdown)
     } catch (error) {
       console.error('[PersonaCard] getPersona FAILED:', error)
       toast.error(memorySettingsErrorMessage(error, '读取用户画像失败'))
@@ -203,23 +199,21 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
   }, [refreshPersona])
 
   const isGenerated = Boolean(persona?.updatedAt && persona.markdown.trim().length > 0)
-  const isDirty = draft.trim() !== (persona?.markdown ?? '')
-
-  const handleSave = async () => {
+  const handleCorrection = async () => {
     if (!workspaceSlug) return
-    if (draft.trim().length === 0) {
-      toast.error('用户画像内容不能为空')
+    if (correction.trim().length === 0) {
+      toast.error('请说明需要纠正的内容')
       return
     }
-    setBusy('save')
+    setBusy('correct')
     try {
-      await updatePersona({ workspaceSlug, markdown: draft })
+      await correctPersona({ workspaceSlug, correction: correction.trim() })
       await refreshPersona()
-      setEditMode(false)
-      toast.success('用户画像已保存')
+      setCorrection('')
+      toast.success('已修正底层记忆并更新用户画像')
     } catch (error) {
-      console.error('[PersonaCard] updatePersona FAILED:', error)
-      toast.error(memorySettingsErrorMessage(error, '保存用户画像失败'))
+      console.error('[PersonaCard] correctPersona FAILED:', error)
+      toast.error(memorySettingsErrorMessage(error, '纠正用户画像失败'))
     } finally {
       setBusy(null)
     }
@@ -241,11 +235,6 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
     }
   }
 
-  const resetDraft = () => {
-    setDraft(persona?.markdown ?? '')
-    setEditMode(false)
-  }
-
   return (
     <section className="lume-panel p-4" data-persona-card>
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
@@ -263,22 +252,11 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
           </div>
           <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
             {isGenerated
-              ? `Lume 基于记忆自动生成的稳定画像；最近更新于 ${formatDate(persona?.updatedAt)}。可手动编辑或重新生成。`
+              ? `Lume 基于全局记忆自动生成的稳定画像；最近更新于 ${formatDate(persona?.updatedAt)}。纠正会更新底层记忆。`
               : 'Lume 会基于你的长期记忆自动生成用户画像；也可点击「重新生成」立即创建。'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {isGenerated && !editMode && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy !== null}
-              onClick={() => setEditMode(true)}
-            >
-              <Pencil size={14} />
-              编辑
-            </Button>
-          )}
           <Button
             variant="outline"
             size="sm"
@@ -291,38 +269,7 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
         </div>
       </div>
 
-      {editMode ? (
-        <div className="space-y-2">
-          <Textarea
-            className="min-h-[180px] w-full resize-y rounded-[8px] border border-border bg-[var(--surface-1)] p-2 text-[12px] leading-5 text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[var(--brand)]"
-            value={draft}
-            disabled={busy !== null}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="# 用户画像&#10;例如：称呼、稳定偏好、沟通风格、长期目标..."
-          />
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy !== null || !isDirty || draft.trim().length === 0}
-              onClick={() => void handleSave()}
-            >
-              <Save size={14} />
-              {busy === 'save' ? '保存中' : '保存'}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy !== null}
-              onClick={resetDraft}
-            >
-              <XCircle size={14} />
-              取消
-            </Button>
-          </div>
-        </div>
-      ) : (
-        isGenerated && (
+      {isGenerated && (
           <div className="rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
             <pre
               className={cn(
@@ -342,8 +289,24 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
               {expanded ? '收起' : '展开'}
             </Button>
           </div>
-        )
       )}
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+        <Input
+          value={correction}
+          disabled={busy !== null}
+          onChange={(event) => setCorrection(event.target.value)}
+          placeholder="纠正画像，例如：我现在更喜欢简洁的中文回复"
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy !== null || correction.trim().length === 0}
+          onClick={() => void handleCorrection()}
+        >
+          <Pencil size={14} />
+          {busy === 'correct' ? '纠正中' : '纠正画像'}
+        </Button>
+      </div>
     </section>
   )
 }
@@ -356,7 +319,7 @@ export function MemorySettings() {
     [currentWorkspaceId, workspaces],
   )
   const workspaceSlug = workspace?.slug ?? null
-  const [view, setView] = React.useState<MemorySettingsView>('profile')
+  const [view, setView] = React.useState<MemorySettingsView>('recent')
   const [runtimeConfig, setRuntimeConfig] = React.useState<MemoryRuntimeConfig | null>(null)
   const [snapshot, setSnapshot] = React.useState<MemorySettingsSnapshot | null>(null)
   const [busyAction, setBusyAction] = React.useState<string | null>(null)
@@ -406,7 +369,10 @@ export function MemorySettings() {
 
     const poll = async () => {
       try {
-        const nextJob = await getMemoryIngestJob({ jobId: ingestJob.jobId })
+        const nextJob = await getMemoryIngestJob({
+          jobId: ingestJob.jobId,
+          workspaceSlug: ingestJob.workspaceSlug,
+        })
         if (disposed) return
         setIngestJob(nextJob)
         if (nextJob.status === 'running') {
@@ -449,6 +415,7 @@ export function MemorySettings() {
     if (!entryOrganizeJob || entryOrganizeJob.status !== 'running') return undefined
     return pollOrganizeJob({
       jobId: entryOrganizeJob.jobId,
+      workspaceSlug: entryOrganizeJob.workspaceSlug,
       setJob: setEntryOrganizeJob,
       refresh,
       onCompleted: (job) => {
@@ -464,6 +431,7 @@ export function MemorySettings() {
     if (!historyOrganizeJob || historyOrganizeJob.status !== 'running') return undefined
     return pollOrganizeJob({
       jobId: historyOrganizeJob.jobId,
+      workspaceSlug: historyOrganizeJob.workspaceSlug,
       setJob: setHistoryOrganizeJob,
       refresh,
       onCompleted: (job) => {
@@ -510,6 +478,9 @@ export function MemorySettings() {
       kind: MemoryKind
       confidence: MemorySettingsEntrySummary['confidence']
       tags: string[]
+      pinned?: boolean
+      validTo?: string | null
+      targetScope?: 'global' | 'workspace'
     },
   ) => runAction(`update-${entry.id}`, async () => {
     if (!workspaceSlug) return
@@ -521,6 +492,9 @@ export function MemorySettings() {
       kind: input.kind,
       confidence: input.confidence,
       tags: input.tags,
+      ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
+      ...(input.validTo !== undefined ? { validTo: input.validTo } : {}),
+      ...(input.targetScope ? { targetScope: input.targetScope } : {}),
     })
     const detail = await readMemory({ workspaceSlug, id: entry.id })
     setMemoryDetail(detail)
@@ -557,7 +531,7 @@ export function MemorySettings() {
       setMemoryDetail(null)
       setDetailDirty(false)
       await refresh()
-      toast.success('记忆已删除', { id: toastId })
+      toast.success('记忆已归档，可通过撤销恢复', { id: toastId })
     } catch (error) {
       console.error('[MemorySettings] delete entry FAILED:', error)
       toast.error(memorySettingsErrorMessage(error, '删除记忆失败'), { id: toastId })
@@ -573,11 +547,9 @@ export function MemorySettings() {
     }
     await rememberMemory({
       workspaceSlug,
-      scope: category === 'workflow' ? 'workspace' : 'global',
-      kind: category === 'profile' ? 'fact' : 'preference',
+      scope: category === 'workspace' ? 'workspace' : category === 'about' ? 'global' : 'auto',
       content,
       confidence: 0.85,
-      tags: manualMemoryTags(category),
     })
     setManualMemoryText('')
     await refresh()
@@ -629,6 +601,14 @@ export function MemorySettings() {
     setRuntimeConfig(nextConfig)
   })
 
+  const handleAutomationToggle = (
+    key: 'proactiveWrite' | 'backgroundExtraction' | 'autoDream',
+    enabled: boolean,
+  ) => runAction(`automation-${key}`, async () => {
+    const nextConfig = await updateMemoryRuntimeConfig({ [key]: enabled })
+    setRuntimeConfig(nextConfig)
+  })
+
   const handleSemanticMode = (semantic: MemoryRuntimeConfig['retrieval']['semantic']) => runAction(`semantic-${semantic}`, async () => {
     if (!runtimeConfig) return
     const nextConfig = await updateMemoryRuntimeConfig({
@@ -644,6 +624,22 @@ export function MemorySettings() {
   const handleReloadLocalOnnx = () => runAction('reload-local-onnx', async () => {
     await reloadLocalOnnxEmbedding()
     await refresh()
+  })
+
+  const handleCancelJob = (jobId: string) => runAction(`cancel-job-${jobId}`, async () => {
+    if (!workspaceSlug) return
+    await cancelMemoryJob({ workspaceSlug, jobId })
+    setEntryOrganizeJob((job) => job?.jobId === jobId ? { ...job, status: 'cancelled', completedAt: Date.now() } : job)
+    setHistoryOrganizeJob((job) => job?.jobId === jobId ? { ...job, status: 'cancelled', completedAt: Date.now() } : job)
+    setIngestJob((job) => job?.jobId === jobId ? { ...job, status: 'cancelled', completedAt: Date.now() } : job)
+    await refresh()
+  })
+
+  const handleRetryJob = (jobId: string) => runAction(`retry-job-${jobId}`, async () => {
+    if (!workspaceSlug) return
+    const job = await retryMemoryJob({ workspaceSlug, jobId })
+    setIngestJob(job)
+    toast.success('已重新开始资料整理')
   })
 
   const handleOrganizeHistory = () => runAction('organize-history', async () => {
@@ -727,8 +723,13 @@ export function MemorySettings() {
       .find((entry) => entry.id === selectedMemoryId) ?? null
   }, [selectedMemoryId, snapshot])
   const userMemoryEntries = React.useMemo(
-    () => [...(snapshot?.globalEntries ?? []), ...(snapshot?.workspaceEntries ?? [])],
-    [snapshot?.globalEntries, snapshot?.workspaceEntries],
+    () => {
+      const entries = [...(snapshot?.globalEntries ?? []), ...(snapshot?.workspaceEntries ?? [])]
+      const recentIds = (snapshot?.activity ?? []).flatMap((receipt) => receipt.memoryIds)
+      const rank = new Map(recentIds.map((id, index) => [id, index]))
+      return entries.sort((a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER))
+    },
+    [snapshot?.activity, snapshot?.globalEntries, snapshot?.workspaceEntries],
   )
   const userCategory = isUserMemoryCategory(view) ? view : null
 
@@ -791,7 +792,25 @@ export function MemorySettings() {
         ))}
       </div>
 
-      <PersonaCard workspaceSlug={workspaceSlug} />
+      {view === 'about' && <PersonaCard workspaceSlug={workspaceSlug} />}
+
+      {view === 'workspace' && snapshot?.workspaceBrief && (
+        <section className="lume-panel p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[14px] font-semibold text-[var(--text-1)]">Workspace Brief</div>
+              <p className="mt-1 text-[12px] text-[var(--text-3)]">项目约束、稳定决策、协作方式和已验证经验的派生视图。</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => void handleOpenMemoryFile(snapshot.workspaceBrief!.path)}>
+              <FileText size={14} />
+              打开文件
+            </Button>
+          </div>
+          <pre className="mt-3 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-[8px] border border-border bg-[var(--surface-2)] p-3 text-[12px] leading-5 text-[var(--text-1)]">
+            {snapshot.workspaceBrief.markdown}
+          </pre>
+        </section>
+      )}
 
       {userCategory && (
         <UserMemoryPanel
@@ -827,6 +846,9 @@ export function MemorySettings() {
         runtimeConfig={runtimeConfig}
         snapshot={snapshot}
         onCitationsMode={(mode) => void handleCitationsMode(mode)}
+        onAutomationToggle={(key, enabled) => void handleAutomationToggle(key, enabled)}
+        onCancelJob={(jobId) => void handleCancelJob(jobId)}
+        onRetryJob={(jobId) => void handleRetryJob(jobId)}
         onOrganizeEntries={() => void handleOrganizeEntries()}
         onOrganizeHistory={() => void handleOrganizeHistory()}
         onIngestPastedText={() => void handleIngestPastedText()}
@@ -866,6 +888,9 @@ function OverviewPanel({
   entryOrganizeResult,
   historyOrganizeJob,
   onCitationsMode,
+  onAutomationToggle,
+  onCancelJob,
+  onRetryJob,
   onExternalTextChange,
   onIngestTargetScope,
   onIngestPastedText,
@@ -893,6 +918,12 @@ function OverviewPanel({
   entryOrganizeResult: MemoryOrganizeEntriesResult | null
   historyOrganizeJob: MemoryOrganizeJob | null
   onCitationsMode: (mode: MemoryCitationsMode) => void
+  onAutomationToggle: (
+    key: 'proactiveWrite' | 'backgroundExtraction' | 'autoDream',
+    enabled: boolean,
+  ) => void
+  onCancelJob: (jobId: string) => void
+  onRetryJob: (jobId: string) => void
   onExternalTextChange: (value: string) => void
   onIngestTargetScope: (scope: MemoryIngestTargetScopeMode) => void
   onIngestPastedText: () => void
@@ -915,6 +946,8 @@ function OverviewPanel({
   const ingestRunning = ingestJob?.status === 'running'
   const entryOrganizeRunning = entryOrganizeJob?.status === 'running'
   const historyOrganizeRunning = historyOrganizeJob?.status === 'running'
+  const activeJobs = [entryOrganizeJob, historyOrganizeJob, ingestJob]
+    .filter((job): job is MemoryOrganizeJob | MemoryIngestSourcesJob => job?.status === 'running')
   return (
     <details className="lume-panel group p-4">
       <summary className="cursor-pointer list-none">
@@ -946,6 +979,22 @@ function OverviewPanel({
           </div>
         ))}
       </div>
+
+      {activeJobs.length > 0 && (
+        <div className="lume-subpanel mt-4 space-y-2 p-3">
+          <div className="text-[12px] font-semibold text-[var(--text-3)]">后台任务</div>
+          {activeJobs.map((job) => (
+            <div key={job.jobId} className="flex items-center justify-between gap-3 text-[12px]">
+              <span className="min-w-0 truncate text-[var(--text-2)]">
+                {'kind' in job ? summarizeMemoryOrganizeJob(job) : summarizeMemoryIngestSourcesJob(job)}
+              </span>
+              <Button variant="outline" size="sm" onClick={() => onCancelJob(job.jobId)}>
+                停止
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         {layerMetrics.map((metric) => (
@@ -982,6 +1031,26 @@ function OverviewPanel({
             </label>
           )
         })}
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+        {([
+          ['proactiveWrite', '主 Agent 主动记忆', '私聊中发现稳定信息时立即记住。'],
+          ['backgroundExtraction', '后台自动提取', '回答完成后异步检查遗漏的稳定记忆。'],
+          ['autoDream', 'AutoDream', '满足 24 小时和 5 个会话门槛后自动整理。'],
+        ] as const).map(([key, label, desc]) => (
+          <label key={key} className="lume-subpanel flex min-h-[84px] items-center justify-between gap-3 p-3">
+            <span>
+              <span className="text-[13px] font-semibold text-[var(--text-1)]">{label}</span>
+              <span className="mt-1 block text-[12px] leading-5 text-[var(--text-3)]">{desc}</span>
+            </span>
+            <Switch
+              checked={runtimeConfig?.[key] ?? true}
+              disabled={!runtimeConfig || busyAction !== null}
+              onCheckedChange={(enabled) => onAutomationToggle(key, enabled)}
+            />
+          </label>
+        ))}
       </div>
 
       <div className="lume-subpanel mt-4 flex flex-wrap items-center justify-between gap-3 p-3">
@@ -1263,6 +1332,34 @@ function OverviewPanel({
         ) : null}
       </div>
 
+      <div className="lume-subpanel mt-4 grid gap-3 p-3 text-[12px] text-[var(--text-3)] md:grid-cols-3">
+        <div>
+          <div className="font-semibold text-[var(--text-2)]">迁移版本</div>
+          <div className="mt-1">Memory Schema v{snapshot?.migration.schemaVersion ?? '未知'}</div>
+        </div>
+        <div>
+          <div className="font-semibold text-[var(--text-2)]">最近后台任务</div>
+          <div className="mt-1">
+            {snapshot?.jobs[0]
+              ? `${snapshot.jobs[0].kind} · ${snapshot.jobs[0].status}`
+              : '暂无任务'}
+          </div>
+          {snapshot?.jobs[0]?.retryable && (
+            <Button variant="ghost" size="sm" className="mt-1 h-auto px-0" onClick={() => onRetryJob(snapshot.jobs[0]!.jobId)}>
+              重试中断任务
+            </Button>
+          )}
+        </div>
+        <div>
+          <div className="font-semibold text-[var(--text-2)]">迁移备份</div>
+          {snapshot?.migration.backupPaths[0] ? (
+            <Button variant="ghost" size="sm" className="mt-1 h-auto px-0" onClick={() => onOpenFile(snapshot.migration.backupPaths[0]!)}>
+              打开最近备份
+            </Button>
+          ) : <div className="mt-1">无需迁移或暂无备份</div>}
+        </div>
+      </div>
+
       <details className="mt-4 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
         <summary className="cursor-pointer text-[13px] font-semibold text-[var(--text-1)]">
           原始文件
@@ -1313,6 +1410,9 @@ function UserMemoryPanel({
       kind: MemoryKind
       confidence: MemorySettingsEntrySummary['confidence']
       tags: string[]
+      pinned?: boolean
+      validTo?: string | null
+      targetScope?: 'global' | 'workspace'
     },
   ) => void
   onToggleActivation: (entry: MemorySettingsEntrySummary, activation: MemoryActivation) => void
@@ -1320,16 +1420,32 @@ function UserMemoryPanel({
   selectedEntryId: string | null
 }) {
   const meta = MEMORY_USER_CATEGORY_META[category]
-  const filteredEntries = React.useMemo(
-    () => filterMemoryEntriesByUserCategory(entries, category),
-    [category, entries],
-  )
+  const [query, setQuery] = React.useState('')
+  const [scopeFilter, setScopeFilter] = React.useState<'all' | 'global' | 'workspace'>('all')
+  const [statusFilter, setStatusFilter] = React.useState<'all' | MemorySettingsEntrySummary['status']>('all')
+  const filteredEntries = React.useMemo(() => {
+    const base = filterMemoryEntriesByUserCategory(entries, category)
+    if (category !== 'all') return base
+    const normalized = query.trim().toLowerCase()
+    return base.filter((entry) => {
+      if (scopeFilter !== 'all' && entry.scope !== scopeFilter) return false
+      if (statusFilter !== 'all' && entry.status !== statusFilter) return false
+      if (!normalized) return true
+      return [
+        entry.statement,
+        entry.semanticRole,
+        ...(entry.facets ?? []),
+        ...entry.tags,
+        ...(entry.evidenceRefs ?? []).map((ref) => ref.type),
+      ].filter(Boolean).some((value) => String(value).toLowerCase().includes(normalized))
+    })
+  }, [category, entries, query, scopeFilter, statusFilter])
   return (
     <section className="lume-panel p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-1)]">
-            {category === 'instruction' ? <ShieldCheck size={16} /> : category === 'voice' ? <Pencil size={16} /> : <FileText size={16} />}
+            {category === 'about' ? <Sparkles size={16} /> : category === 'workspace' ? <ShieldCheck size={16} /> : <FileText size={16} />}
             {meta.label}
           </div>
           <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{meta.desc}</p>
@@ -1338,6 +1454,32 @@ function UserMemoryPanel({
           {filteredEntries.length} 条
         </div>
       </div>
+      {category === 'all' && (
+        <div className="mb-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_160px_170px]">
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索内容、来源或标签"
+          />
+          <Select value={scopeFilter} onValueChange={(value) => setScopeFilter(value as typeof scopeFilter)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部作用域</SelectItem>
+              <SelectItem value="global">全局</SelectItem>
+              <SelectItem value="workspace">工作区</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as typeof statusFilter)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部状态</SelectItem>
+              {Object.entries(MEMORY_STATUS_LABELS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>{label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
       <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.3fr)]">
         <div className="space-y-3">
           <div className="lume-subpanel p-3">
@@ -1474,7 +1616,6 @@ function PendingMemoryCard({
           <div className="flex flex-wrap items-center gap-2 text-[12px] font-semibold text-[var(--text-3)]">
             候选记忆
             <StatusBadge tone="neutral">{memoryPendingCandidateLayerLabel(item.candidate)}</StatusBadge>
-            <StatusBadge tone="neutral">{MEMORY_KIND_LABELS[item.candidate.kind]}</StatusBadge>
             <StatusBadge tone="neutral">{MEMORY_CONFIDENCE_LABELS[item.candidate.confidence]}</StatusBadge>
           </div>
           {mergeMode ? (
@@ -1485,17 +1626,7 @@ function PendingMemoryCard({
                 disabled={busyAction !== null}
                 onChange={(event) => setStatement(event.target.value)}
               />
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Select value={kind} onValueChange={(value) => { if (value) setKind(value as MemoryKind) }} disabled={busyAction !== null}>
-                  <SelectTrigger className="h-8 w-full border-border bg-[var(--surface-2)] px-2 text-[12px] text-[var(--text-1)] shadow-none focus-visible:ring-0">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                  {EDITABLE_MEMORY_KINDS.map((memoryKind) => (
-                    <SelectItem key={memoryKind} value={memoryKind}>{MEMORY_KIND_LABELS[memoryKind]}</SelectItem>
-                  ))}
-                  </SelectContent>
-                </Select>
+              <div>
                 <Select value={confidence} onValueChange={(value) => { if (value) setConfidence(value as MemorySettingsEntrySummary['confidence']) }} disabled={busyAction !== null}>
                   <SelectTrigger className="h-8 w-full border-border bg-[var(--surface-2)] px-2 text-[12px] text-[var(--text-1)] shadow-none focus-visible:ring-0">
                     <SelectValue />
@@ -1677,15 +1808,13 @@ function EntryRow({
       </div>
       <p className="mt-1 line-clamp-3 text-[13px] leading-5 text-[var(--text-1)]">{entry.statement}</p>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-[var(--text-3)]">
-        <span>{MEMORY_KIND_LABELS[entry.kind]}</span>
+        <span>{entry.semanticRole ?? 'memory'}</span>
         <span>{MEMORY_CONFIDENCE_LABELS[entry.confidence]}</span>
         <span>{formatDate(entry.updated)}</span>
       </div>
     </Button>
   )
 }
-
-const EDITABLE_MEMORY_KINDS: MemoryKind[] = ['preference', 'fact', 'decision', 'lesson', 'summary']
 
 function MemoryDetailPanel({
   busyAction,
@@ -1710,6 +1839,9 @@ function MemoryDetailPanel({
       kind: MemoryKind
       confidence: MemorySettingsEntrySummary['confidence']
       tags: string[]
+      pinned?: boolean
+      validTo?: string | null
+      targetScope?: 'global' | 'workspace'
     },
   ) => void
   onToggleActivation: (entry: MemorySettingsEntrySummary, activation: MemoryActivation) => void
@@ -1719,6 +1851,8 @@ function MemoryDetailPanel({
   const [kind, setKind] = React.useState<MemoryKind>('fact')
   const [confidence, setConfidence] = React.useState<MemorySettingsEntrySummary['confidence']>('medium')
   const [tagsText, setTagsText] = React.useState('')
+  const [validTo, setValidTo] = React.useState('')
+  const [targetScope, setTargetScope] = React.useState<'global' | 'workspace'>('workspace')
   const [editMode, setEditMode] = React.useState(false)
 
   React.useEffect(() => {
@@ -1726,6 +1860,8 @@ function MemoryDetailPanel({
     setKind(entry?.kind ?? 'fact')
     setConfidence(entry?.confidence ?? 'medium')
     setTagsText(entry?.tags.join(', ') ?? '')
+    setValidTo(entry?.validTo?.slice(0, 10) ?? '')
+    setTargetScope(entry?.scope ?? 'workspace')
     setEditMode(false)
     onDirtyChange(false)
   }, [detail?.text, entry, onDirtyChange])
@@ -1733,9 +1869,10 @@ function MemoryDetailPanel({
   const tags = parseTags(tagsText)
   const isDirty = entry ? (
     statement.trim() !== entry.statement
-    || kind !== entry.kind
     || confidence !== entry.confidence
     || tags.join('|') !== entry.tags.join('|')
+    || validTo !== (entry.validTo?.slice(0, 10) ?? '')
+    || targetScope !== entry.scope
   ) : false
   React.useEffect(() => {
     onDirtyChange(isDirty)
@@ -1749,6 +1886,8 @@ function MemoryDetailPanel({
     setKind(entry?.kind ?? 'fact')
     setConfidence(entry?.confidence ?? 'medium')
     setTagsText(entry?.tags.join(', ') ?? '')
+    setValidTo(entry?.validTo?.slice(0, 10) ?? '')
+    setTargetScope(entry?.scope ?? 'workspace')
     setEditMode(false)
     onDirtyChange(false)
   }
@@ -1771,6 +1910,8 @@ function MemoryDetailPanel({
                         kind,
                         confidence,
                         tags,
+                        validTo: validTo ? new Date(`${validTo}T23:59:59.999Z`).toISOString() : null,
+                        targetScope,
                       })
                       setEditMode(false)
                       onDirtyChange(false)
@@ -1790,15 +1931,31 @@ function MemoryDetailPanel({
                   </Button>
                 </>
               ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={busyAction !== null}
-                  onClick={() => setEditMode(true)}
-                >
-                  <Pencil size={14} />
-                  编辑
-                </Button>
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busyAction !== null}
+                    onClick={() => onUpdateEntry(entry, {
+                      statement: entry.statement,
+                      kind: entry.kind,
+                      confidence: entry.confidence,
+                      tags: entry.tags,
+                      pinned: !entry.pinned,
+                    })}
+                  >
+                    {entry.pinned ? '取消置顶' : '置顶'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busyAction !== null}
+                    onClick={() => setEditMode(true)}
+                  >
+                    <Pencil size={14} />
+                    编辑
+                  </Button>
+                </>
               )}
               <Button
                 variant="outline"
@@ -1807,7 +1964,7 @@ function MemoryDetailPanel({
                 onClick={() => onDeleteEntry(entry)}
               >
                 <Trash2 size={14} />
-                删除
+                归档
               </Button>
             </>
           )}
@@ -1835,20 +1992,7 @@ function MemoryDetailPanel({
               onChange={(event) => setStatement(event.target.value)}
             />
           </label>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <label className="block">
-              <span className="text-[12px] font-medium text-[var(--text-3)]">类型</span>
-              <Select value={kind} onValueChange={(value) => { if (value) setKind(value as MemoryKind) }} disabled={busyAction !== null}>
-                <SelectTrigger className="mt-1 h-8 w-full border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)] shadow-none focus-visible:ring-0">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                {EDITABLE_MEMORY_KINDS.map((item) => (
-                  <SelectItem key={item} value={item}>{MEMORY_KIND_LABELS[item]}</SelectItem>
-                ))}
-                </SelectContent>
-              </Select>
-            </label>
+          <div>
             <label className="block">
               <span className="text-[12px] font-medium text-[var(--text-3)]">置信度</span>
               <Select value={confidence} onValueChange={(value) => { if (value) setConfidence(value as MemorySettingsEntrySummary['confidence']) }} disabled={busyAction !== null}>
@@ -1873,6 +2017,26 @@ function MemoryDetailPanel({
               placeholder="用逗号分隔"
             />
           </label>
+          <label className="block">
+            <span className="text-[12px] font-medium text-[var(--text-3)]">作用域</span>
+            <Select value={targetScope} onValueChange={(value) => setTargetScope(value as typeof targetScope)} disabled={busyAction !== null}>
+              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="global">全局</SelectItem>
+                <SelectItem value="workspace">工作区</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+          <label className="block">
+            <span className="text-[12px] font-medium text-[var(--text-3)]">有效期至</span>
+            <Input
+              type="date"
+              className="mt-1"
+              value={validTo}
+              disabled={busyAction !== null}
+              onChange={(event) => setValidTo(event.target.value)}
+            />
+          </label>
         </div>
       )}
       {rows.length > 0 && (
@@ -1883,6 +2047,32 @@ function MemoryDetailPanel({
               <dd className="min-w-0 break-words font-mono text-[var(--text-1)]">{row.value}</dd>
             </div>
           ))}
+        </dl>
+      )}
+      {entry && (
+        <dl className="mt-3 grid gap-2 text-[12px]">
+          <div className="grid gap-1 sm:grid-cols-[72px_minmax(0,1fr)]">
+            <dt className="text-[var(--text-3)]">版本</dt>
+            <dd className="text-[var(--text-1)]">revision {entry.revision ?? 1}</dd>
+          </div>
+          <div className="grid gap-1 sm:grid-cols-[72px_minmax(0,1fr)]">
+            <dt className="text-[var(--text-3)]">最后确认</dt>
+            <dd className="text-[var(--text-1)]">{formatDate(entry.lastConfirmedAt)}</dd>
+          </div>
+          <div className="grid gap-1 sm:grid-cols-[72px_minmax(0,1fr)]">
+            <dt className="text-[var(--text-3)]">证据</dt>
+            <dd className="break-words text-[var(--text-1)]">
+              {(entry.evidenceRefs ?? []).map((ref) => [ref.type, ref.id ?? ref.path].filter(Boolean).join(': ')).join(' · ') || '无可展示证据'}
+            </dd>
+          </div>
+          {(entry.supersedes?.length || entry.supersededBy) && (
+            <div className="grid gap-1 sm:grid-cols-[72px_minmax(0,1fr)]">
+              <dt className="text-[var(--text-3)]">版本链</dt>
+              <dd className="break-words text-[var(--text-1)]">
+                {[entry.supersedes?.length ? `替代 ${entry.supersedes.join(', ')}` : '', entry.supersededBy ? `被 ${entry.supersededBy} 替代` : ''].filter(Boolean).join(' · ')}
+              </dd>
+            </div>
+          )}
         </dl>
       )}
       {entry && (

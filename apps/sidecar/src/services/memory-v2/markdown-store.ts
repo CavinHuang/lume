@@ -66,6 +66,15 @@ export interface MemoryV2Store {
     tags?: string[];
     activation?: MemoryV2Activation;
     facets?: string[];
+    pinned?: boolean;
+    validTo?: string | null;
+    expectedRevision?: number;
+  }): MemoryV2Entry;
+  moveEntryScope(input: {
+    scope: MemoryV2Scope;
+    targetScope: MemoryV2Scope;
+    workspaceSlug: string;
+    id: string;
     expectedRevision?: number;
   }): MemoryV2Entry;
   deleteEntry(input: {
@@ -122,6 +131,7 @@ export function createMemoryV2Store(): MemoryV2Store {
     updateEntryStatus,
     updateEntryRelations,
     updateEntry,
+    moveEntryScope,
     deleteEntry,
     writePending,
     listEntries,
@@ -256,6 +266,8 @@ export function updateEntry(input: {
   tags?: string[];
   activation?: MemoryV2Activation;
   facets?: string[];
+  pinned?: boolean;
+  validTo?: string | null;
   expectedRevision?: number;
 }): MemoryV2Entry {
   const entry = findEntryById(input);
@@ -283,6 +295,8 @@ export function updateEntry(input: {
       ...(input.confidence ? { confidence: input.confidence } : {}),
       tags: nextTags,
       facets: input.facets ? cleanList(input.facets) : entry.frontmatter.facets,
+      pinned: input.pinned ?? entry.frontmatter.pinned,
+      valid_to: input.validTo === undefined ? entry.frontmatter.valid_to : input.validTo,
       activation: nextActivation,
       ...(nextClaim ? { claim: nextClaim } : {}),
       updated: new Date().toISOString(),
@@ -291,6 +305,43 @@ export function updateEntry(input: {
     }
   };
   writeMarkdownDocument(next.path, next.frontmatter, next.statement);
+  return next;
+}
+
+export function moveEntryScope(input: {
+  scope: MemoryV2Scope;
+  targetScope: MemoryV2Scope;
+  workspaceSlug: string;
+  id: string;
+  expectedRevision?: number;
+}): MemoryV2Entry {
+  const entry = findEntryById({
+    scope: input.scope,
+    workspaceSlug: input.workspaceSlug,
+    id: input.id
+  });
+  if (!entry) throw new Error(`Memory entry not found: ${input.id}`);
+  assertRevision(entry, input.expectedRevision);
+  if (input.scope === input.targetScope) return entry;
+  const targetPaths = getMemoryV2ScopePaths({
+    scope: input.targetScope,
+    workspaceSlug: input.targetScope === "workspace" ? input.workspaceSlug : undefined
+  });
+  const targetPath = join(targetPaths.entriesDir, basename(entry.path));
+  if (existsSync(targetPath)) throw new Error(`Memory entry already exists in target scope: ${input.id}`);
+  const next: MemoryV2Entry = {
+    ...entry,
+    path: targetPath,
+    frontmatter: {
+      ...entry.frontmatter,
+      scope: input.targetScope,
+      applies_when: input.targetScope === "workspace" ? { workspaceSlug: input.workspaceSlug } : {},
+      updated: new Date().toISOString(),
+      revision: entry.frontmatter.revision + 1
+    }
+  };
+  writeMarkdownDocument(targetPath, next.frontmatter, next.statement);
+  rmSync(entry.path, { force: true });
   return next;
 }
 

@@ -130,6 +130,26 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     return
   }
 
+  if (event.type === 'memory.job.progress' || event.type === 'memory.job.completed') {
+    flushAssistant(state.messages, state.currentAssistant)
+    state.currentAssistant = null
+    const id = `memory-job:${event.jobId}`
+    const message: RuntimeMessageView = {
+      id,
+      type: 'system',
+      variant: 'memory_job',
+      status: event.type === 'memory.job.progress' ? 'active' : 'completed',
+      text: event.type === 'memory.job.progress'
+        ? `${event.phase} · ${event.processedItems}/${event.scannedItems}`
+        : event.summary,
+      createdAt: event.createdAt,
+    }
+    const existingIndex = messages.findIndex((item) => item.id === id)
+    if (existingIndex >= 0) messages[existingIndex] = message
+    else messages.push(message)
+    return
+  }
+
   if (event.type === 'advisor.reviewed') {
     state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.blocks.push({
