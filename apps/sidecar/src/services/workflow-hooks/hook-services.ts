@@ -116,7 +116,8 @@ export function createMemoryWorkflowHookService(input: {
       workspaceSlug: contextInput.workspaceSlug,
       userMessage: contextInput.userMessage,
       sessionType: "main",
-      maxItems: 8
+      maxItems: 5,
+      contextTokenBudget: contextInput.tokenBudget
     }) as Promise<MemoryV2UserMessageContext>,
     extractCandidates: async (candidateInput) => extractCandidates({
       text: candidateInput.userMessage,

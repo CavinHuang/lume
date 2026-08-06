@@ -17,6 +17,7 @@ import type {
   MemoryV2ScopeInput,
   MemoryV2SemanticRole
 } from "./types";
+import { scheduleDerivedMemoryRebuild } from "./derived-views";
 
 export interface RememberMemoryCommand {
   workspaceSlug: string;
@@ -140,6 +141,26 @@ export class MemoryCommandService {
     return this.record(input, entry.frontmatter.scope, "archived", [archived], "已归档 1 条记忆", true, [snapshot(entry)]);
   }
 
+  markSuspectedStale(input: {
+    workspaceSlug: string;
+    id: string;
+    scope: MemoryV2Scope;
+  }): MemoryV2MutationReceipt {
+    const entry = this.findEntry(input.workspaceSlug, input.id, input.scope);
+    if (!entry) throw new Error(`Memory entry not found: ${input.id}`);
+    if (entry.frontmatter.status === "suspected_stale") {
+      return this.recordIds({ actor: "consolidation", workspaceSlug: input.workspaceSlug }, input.scope, "duplicate", [input.id], "记忆已标记为可能过期", false);
+    }
+    const updated = this.store.updateEntryStatus({
+      scope: input.scope,
+      workspaceSlug: input.workspaceSlug,
+      id: input.id,
+      status: "suspected_stale",
+      expectedRevision: entry.frontmatter.revision
+    });
+    return this.record({ actor: "consolidation", workspaceSlug: input.workspaceSlug }, input.scope, "updated", [updated], "已标记 1 条可能过期记忆", true, [snapshot(entry)]);
+  }
+
   undo(input: { workspaceSlug: string; mutationId: string }): MemoryV2MutationReceipt {
     const record = this.findJournalRecord(input.workspaceSlug, input.mutationId);
     if (!record || !record.receipt.undoable) throw new Error("该记忆变更不可撤销");
@@ -232,6 +253,9 @@ export class MemoryCommandService {
     const paths = getMemoryV2ScopePaths({ scope, workspaceSlug: scope === "workspace" ? input.workspaceSlug : undefined });
     const journalPath = join(paths.journalDir, `${receipt.createdAt.slice(0, 10)}.jsonl`);
     writeFileSync(journalPath, `${JSON.stringify({ receipt, before, after } satisfies MutationJournalRecord)}\n`, { flag: "a", encoding: "utf-8" });
+    if (["created", "updated", "superseded", "merged", "archived"].includes(action)) {
+      scheduleDerivedMemoryRebuild({ scope, workspaceSlug: scope === "workspace" ? input.workspaceSlug : undefined });
+    }
     return receipt;
   }
 

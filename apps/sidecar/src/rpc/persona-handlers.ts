@@ -18,7 +18,6 @@ import {
   getPersonaPath,
   parsePersonaProfile,
   readPersonaRaw,
-  writePersona,
 } from "../services/memory-v2/persona";
 import type { MemoryV2Scope } from "../services/memory-v2/types";
 import type { RpcHandler } from "./types";
@@ -47,6 +46,11 @@ const regenerateInputSchema = z
     workspaceSlug: z.string().trim().min(1).optional(),
   })
   .strict();
+
+const correctionInputSchema = z.object({
+  workspaceSlug: z.string().trim().min(1),
+  correction: z.string().trim().min(1)
+}).strict();
 
 /**
  * 解析 scope/workspaceSlug：与 ensurePersona 同一约定。
@@ -82,16 +86,27 @@ export function createPersonaHandlers(): Record<string, RpcHandler> {
       } satisfies PersonaGetResult;
     },
     [PERSONA_IPC_CHANNELS.UPDATE]: async (params) => {
-      const input = validateInput(updateInputSchema, params, PERSONA_IPC_CHANNELS.UPDATE);
-      const { scope, workspaceSlug } = resolveScope(input);
-      writePersona(scope, workspaceSlug, input.markdown);
-      return { ok: true as const };
+      validateInput(updateInputSchema, params, PERSONA_IPC_CHANNELS.UPDATE);
+      throw new Error("Persona 是派生视图，请使用 persona:correct 修正底层记忆");
+    },
+    [PERSONA_IPC_CHANNELS.CORRECT]: async (params) => {
+      const input = validateInput(correctionInputSchema, params, PERSONA_IPC_CHANNELS.CORRECT);
+      const { MemoryCommandService } = await import("../services/memory-v2/command-service");
+      return new MemoryCommandService().remember({
+        workspaceSlug: input.workspaceSlug,
+        content: input.correction,
+        scope: "global",
+        semanticRole: "preference",
+        facets: ["correction", "persona-correction"],
+        confidence: "high",
+        actor: "user",
+        explicitCorrection: true
+      });
     },
     [PERSONA_IPC_CHANNELS.REGENERATE]: async (params) => {
       const input = validateInput(regenerateInputSchema, params, PERSONA_IPC_CHANNELS.REGENERATE);
       await ensurePersona({
-        scope: input.scope,
-        workspaceSlug: input.workspaceSlug,
+        scope: "global"
       });
       return { ok: true as const };
     },

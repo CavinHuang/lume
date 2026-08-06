@@ -1,6 +1,7 @@
 import { invoke } from '@/lib/desktop-runtime/core'
 import {
   PERSONA_IPC_CHANNELS,
+  type PersonaCorrectionInput,
   type PersonaGetResult,
 } from '@lume/shared'
 
@@ -20,6 +21,9 @@ export const updatePersona = (input: {
   markdown: string
 }) =>
   call<{ ok: true }>(PERSONA_IPC_CHANNELS.UPDATE, input)
+
+export const correctPersona = (input: PersonaCorrectionInput) =>
+  call(PERSONA_IPC_CHANNELS.CORRECT, input)
 
 /** 触发 LLM 基于 memory 重新生成 persona */
 export const regeneratePersona = (workspaceSlug?: string) =>

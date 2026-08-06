@@ -311,6 +311,7 @@ export const PUBLIC_RENDERER_SIDECAR_METHODS = new Set([
   'model-meta:get',
   'model-meta:sync',
   'persona:get',
+  'persona:correct',
   'persona:regenerate',
   'persona:update',
   'reading:add-blur',

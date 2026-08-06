@@ -2569,7 +2569,7 @@ function FooterMemoryNotice({
         className="inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 text-[var(--lume-text-muted)] transition-colors hover:text-[var(--lume-accent)]"
       >
         <Database size={13} strokeWidth={1.8} />
-        <span>引用了 {totalCount} 条记忆</span>
+        <span>参考了 {totalCount} 条记忆</span>
         {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
       </Button>
       {expanded && (
