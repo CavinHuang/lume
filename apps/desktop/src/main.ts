@@ -460,6 +460,10 @@ const sidecarHost = createSidecarHost({
     if (method === 'planning-todo:changed') {
       void getAgentIslandService().onPlanningChanged()
     }
+    // thread 列表/标题变更：刷新 recent 投影 + title 缓存（force push 绕过节流）
+    if (method === 'agent:thread-list-changed' || method === 'agent:title-updated') {
+      void getAgentIslandService().onThreadListChanged()
+    }
     emitRendererEvent(SIDE_CAR_EVENT_CHANNEL, { method, params })
   },
 })

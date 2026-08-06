@@ -11,6 +11,7 @@ import type {
   AgentIslandInteractionKind,
   AgentIslandPhase,
   AgentIslandPlanningItem,
+  AgentIslandRecentSession,
   AgentIslandState,
   NativeAgentIslandSnapshot,
 } from '../../../packages/shared/src/types/agent-island'
@@ -31,7 +32,7 @@ import {
   msUntilNextMidnightRollover,
   nextPlanningAttentionTime,
   PLANNING_ATTENTION_WINDOW_MS,
-  projectPlanning,
+  projectRecentSessions,
   pushActivityLine,
   selectHoverDelay,
 } from '../../../packages/shared/src/agent-island-projections'
@@ -80,6 +81,10 @@ interface RuntimeEventPayload {
   event?: {
     type?: string
     toolName?: string
+    // run.started：当前会话模型（runtime-event.ts:68-79）
+    model?: { provider?: string; modelId?: string; modelRef?: string; channelId?: string; contextWindow?: number }
+    // usage.updated：sidecar 维护的累计成本/token（runtime-event.ts:855-868，覆盖不累加）
+    billing?: { totalCostUSD?: number; cumulative?: { totalTokens?: number }; records?: unknown[] }
   }
 }
 
@@ -116,6 +121,11 @@ export class AgentIslandService {
   /** workspaceId → workspace name（list-workspaces 解析，session 后小字号显示"项目"）。 */
   private workspaceNames = new Map<string, string>()
   /**
+   * 最近会话投影（无 active session 时 idle home surface 展示，top3）。
+   * 由 refreshThreadMetas 从 agent:list-threads 投影，排除 active session 与 archived/trashed。
+   */
+  private recentSessions: AgentIslandRecentSession[] = []
+  /**
    * 跨日 rollover 定时器：到下个午夜 00:00:00.150 触发——清 dismissedKey
    * （解除所有 dismiss，新一天重新浮现 planning/agent 状态）+ force push + 重排下个 rollover/attention。
    * 对齐 Proma agent-island-service.ts:671-683 `scheduleNextPlanningRollover`。
@@ -133,7 +143,7 @@ export class AgentIslandService {
   /** 启动：拉取首批 planning、启动周期刷新、强制首推、调度跨日/紧迫 planning 定时器。 */
   async start(): Promise<void> {
     await this.refreshPlanning()
-    void this.refreshThreadTitles()
+    void this.refreshThreadMetas()
     void this.refreshWorkspaces()
     this.planningTimer = setInterval(() => {
       void this.refreshPlanning()
@@ -154,20 +164,46 @@ export class AgentIslandService {
     this.push(true)
   }
 
-  /** 拉取 thread title 缓存（sidecarCall agent:list-threads），applyStatus 用它替代 raw threadId。 */
-  private async refreshThreadTitles(): Promise<void> {
+  /**
+   * 拉取 thread 元数据（sidecarCall agent:list-threads）：
+   * - 缓存 title/workspaceId（applyStatus 用 title 替代 raw threadId）
+   * - 为 active session 补初始 modelRef（run.started 后会被实时值覆盖）
+   * - 投影 recentSessions（idle home surface 用，排除 active/archived/trashed，top3）
+   */
+  private async refreshThreadMetas(): Promise<void> {
     try {
-      const threads = await this.deps.callSidecar<Array<{ id: string; title?: string; workspaceId?: string }>>('agent:list-threads')
+      const threads = await this.deps.callSidecar<
+        Array<{
+          id: string
+          title?: string
+          workspaceId?: string
+          modelRef?: string
+          updatedAt?: number
+          status?: string
+        }>
+      >('agent:list-threads')
       if (Array.isArray(threads)) {
         for (const t of threads) {
-          if (t.id && t.title) this.threadTitles.set(t.id, t.title)
-          if (t.id && t.workspaceId) this.threadWorkspaces.set(t.id, t.workspaceId)
+          if (!t.id) continue
+          if (t.title) this.threadTitles.set(t.id, t.title)
+          if (t.workspaceId) this.threadWorkspaces.set(t.id, t.workspaceId)
+          // active session 的初始 modelRef（若未收到 run.started 则用 thread meta 兜底）
+          if (t.modelRef) {
+            const prev = this.sessions.get(t.id)
+            if (prev && !prev.modelRef) this.sessions.set(t.id, { ...prev, modelRef: t.modelRef })
+          }
         }
-        this.push(false)
+        // recent 投影（排除仍在 sessions Map 的 active、archived/trashed，dedup，top3）
+        this.recentSessions = projectRecentSessions(
+          threads,
+          new Set(this.sessions.keys()),
+          this.workspaceNames,
+        )
       }
     } catch {
-      // 静默失败：title 不可用时 fallback threadId
+      // 静默失败：recent 不可用时 idle 显示空引导
     }
+    this.push(false)
   }
 
   /** 拉取 workspace name 缓存（list-workspaces），session project 显示用。 */
@@ -231,10 +267,7 @@ export class AgentIslandService {
         break
       }
       case 'dismiss':
-        this.dismissedKey = buildVisibilityKey(
-          [...this.sessions.values()],
-          projectPlanning(this.planning, Date.now()),
-        )
+        this.dismissedKey = buildVisibilityKey([...this.sessions.values()], this.planning)
         this.manuallyExpanded = false
         break
       case 'open-main':
@@ -279,25 +312,57 @@ export class AgentIslandService {
       unread: phase === 'completed' || phase === 'error',
       terminalAt: phase === 'completed' || phase === 'error' ? Date.now() : prev?.terminalAt ?? null,
       lastActivityAt: status.updatedAt ?? Date.now(),
+      // status 覆盖式 set：必须显式保留 prev 的 run/usage 写入值，否则被清空。
+      modelRef: prev?.modelRef,
+      costUSD: prev?.costUSD,
+      tokenTotal: prev?.tokenTotal,
+      queuedCount: status.queuedCount ?? prev?.queuedCount ?? 0,
     })
   }
 
   /**
-   * 处理 sidecar `agent:runtime-event` 通知：仅在 tool.started 时累积 activityLine。
+   * 处理 sidecar `agent:runtime-event` 通知：tap 3 类事件——
+   * - tool.started：累积 activityLine（工具活动信号）
+   * - run.started：记录当前模型 ref（渲染层解析 label）
+   * - usage.updated：覆盖 sidecar 维护的累计 cost/token（不累加，避免翻倍）
+   *
    * 会话尚未注册（status 未到）则忽略——applyStatus 兜底分支会在 status 到达时补一条。
+   * 解析失败一律跳过该字段、不抛（沿用 service 静默失败约定）。
    */
   private applyRuntimeEvent(payload: RuntimeEventPayload | undefined): void {
     const { threadId, event } = payload ?? {}
-    if (!threadId || !event || event.type !== 'tool.started') return
-    const toolName = event.toolName?.trim()
-    if (!toolName) return
+    if (!threadId || !event) return
     const prev = this.sessions.get(threadId)
-    if (!prev) return
-    this.sessions.set(threadId, {
-      ...prev,
-      activityLines: pushActivityLine(prev.activityLines, toolName),
-      lastActivityAt: Date.now(),
-    })
+    // tool.started：工具活动信号（保留原逻辑）
+    if (event.type === 'tool.started') {
+      const toolName = event.toolName?.trim()
+      if (!toolName) return
+      if (!prev) return
+      this.sessions.set(threadId, {
+        ...prev,
+        activityLines: pushActivityLine(prev.activityLines, toolName),
+        lastActivityAt: Date.now(),
+      })
+      return
+    }
+    // run.started：记录当前模型 ref（渲染层解析 label，不引 registry）
+    if (event.type === 'run.started') {
+      const modelRef = event.model?.modelRef
+      if (!modelRef || !prev) return
+      this.sessions.set(threadId, { ...prev, modelRef, lastActivityAt: Date.now() })
+      return
+    }
+    // usage.updated：sidecar 维护的累计值，直接覆盖（不累加，避免翻倍）
+    if (event.type === 'usage.updated') {
+      if (!prev) return
+      const costUSD = event.billing?.totalCostUSD
+      const tokenTotal = event.billing?.cumulative?.totalTokens
+      this.sessions.set(threadId, {
+        ...prev,
+        ...(typeof costUSD === 'number' && Number.isFinite(costUSD) ? { costUSD } : {}),
+        ...(typeof tokenTotal === 'number' && Number.isFinite(tokenTotal) ? { tokenTotal } : {}),
+      })
+    }
   }
 
   private deriveInteractionKind(
@@ -325,6 +390,16 @@ export class AgentIslandService {
    */
   async onPlanningChanged(): Promise<void> {
     await this.refreshPlanning()
+    this.push(true)
+  }
+
+  /**
+   * thread 列表/标题变更入口（main.ts 路由 `agent:thread-list-changed` /
+   * `agent:title-updated`）：重拉 thread metas 刷新 title/recent 投影，再 force push。
+   * title-updated 复用同一入口——标题变化也是 thread list 维度。
+   */
+  async onThreadListChanged(): Promise<void> {
+    await this.refreshThreadMetas()
     this.push(true)
   }
 
@@ -367,12 +442,13 @@ export class AgentIslandService {
     if (!this.deps.isEnabled()) return
     const now = Date.now()
     this.prune(now)
-    // 复用同一 planning 投影给 buildSnapshot 与 buildVisibilityKey（避免重复 projectPlanning）。
-    const planningSnapshot = projectPlanning(this.planning, now)
+    // planning 全量直传 buildSnapshot/buildVisibilityKey（Task 1 起 projectPlanning 已删除）；
+    // recentSessions 由 refreshThreadMetas 维护；isIdle 不显式传，由 buildSnapshot 从空 inputs 推导。
     const state: AgentIslandState = buildSnapshot(
       [...this.sessions.values()],
-      planningSnapshot,
+      this.planning,
       now,
+      { recentSessions: this.recentSessions },
     )
     const expanded = this.manuallyExpanded || this.hoverExpanded
     state.presentation =
@@ -380,7 +456,7 @@ export class AgentIslandService {
     // dismiss：visibility key 不变则保持隐藏；一旦 key 变化（新会话/新 planning）自动解除。
     if (
       this.dismissedKey &&
-      buildVisibilityKey([...this.sessions.values()], planningSnapshot) === this.dismissedKey
+      buildVisibilityKey([...this.sessions.values()], this.planning) === this.dismissedKey
     ) {
       state.presentation = 'hidden'
     } else {
