@@ -193,6 +193,7 @@ export class MemoryCommandService {
       kind: input.kind,
       confidence: input.confidence,
       tags: input.facets,
+      facets: input.facets,
       activation: input.activation,
       pinned: input.pinned,
       validTo: input.validTo

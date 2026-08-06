@@ -48,6 +48,10 @@ export interface MemoryEntryOrganizePlanItem {
   keepId: string;
   duplicateIds: string[];
   reason: string;
+  update?: {
+    confidence?: MemoryV2Entry["frontmatter"]["confidence"];
+    facets?: string[];
+  };
 }
 
 export type MemoryEntryOrganizerPlanner = (
@@ -85,12 +89,24 @@ export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions)
 
   const items: MemoryOrganizeEntriesResult["items"] = [];
   const supersededIds = new Set<string>();
+  const updatedIds = new Set<string>();
   const staleIds = markExpiredEntries(commands, input.workspaceSlug, entries);
   const planItems = await resolveOrganizePlan(input, entries);
 
   for (const planItem of planItems) {
     const kept = entries.find((entry) => entry.frontmatter.id === planItem.keepId);
     if (!kept || supersededIds.has(kept.frontmatter.id)) continue;
+    if (planItem.update && (planItem.update.confidence || planItem.update.facets)) {
+      commands.update({
+        workspaceSlug: input.workspaceSlug,
+        id: kept.frontmatter.id,
+        scope: kept.frontmatter.scope,
+        ...(planItem.update.confidence ? { confidence: planItem.update.confidence } : {}),
+        ...(planItem.update.facets ? { facets: planItem.update.facets } : {}),
+        actor: "consolidation"
+      });
+      updatedIds.add(kept.frontmatter.id);
+    }
     for (const duplicateId of planItem.duplicateIds) {
       const duplicate = entries.find((entry) => entry.frontmatter.id === duplicateId);
       if (!duplicate || supersededIds.has(duplicate.frontmatter.id)) continue;
@@ -132,7 +148,7 @@ export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions)
     scannedEntries: entries.length,
     keptEntries: entries.length - supersededIds.size,
     supersededDuplicates: items.length,
-    updated: 0,
+    updated: updatedIds.size,
     stale: staleIds.size,
     items
   };
@@ -201,7 +217,7 @@ async function resolveOrganizePlan(
   input: MemoryOrganizeEntriesOptions,
   entries: MemoryV2Entry[]
 ): Promise<MemoryEntryOrganizePlanItem[]> {
-  if (entries.length <= 1) return [];
+  if (entries.length === 0) return [];
   const candidates = entries.map(toOrganizeCandidate);
   const batchSize = normalizeOrganizeBatchSize(input.organizeBatchSize);
   if (input.planEntries) {
@@ -318,7 +334,8 @@ function buildOrganizerSystemPrompt(): string {
     "Return strict JSON only with shape {\"duplicates\":[{\"keepId\":\"entry-id\",\"duplicateIds\":[\"entry-id\"],\"reason\":\"short reason\"}]}.",
     "Only mark memories as duplicates when they express the same durable meaning, not just a related topic.",
     "Prefer the clearer, more current, more complete memory as keepId.",
-    "Do not create, rewrite, merge, or infer new memories. Only choose ids that already appear in the input.",
+    "Do not create or rewrite fact statements. Only choose ids that already appear in the input.",
+    "You may propose metadata updates for the keepId only when directly supported by its current statement: confidence and open facets. Never change scope, claim, or semantic role.",
     "Never mark entries with different scope or kind as duplicates.",
     "For structured claims, duplicate claims must have the same subject, predicate, appliesWhen, and object."
   ].join("\n");
@@ -335,7 +352,11 @@ function buildOrganizerUserPrompt(input: {
       duplicates: [{
         keepId: "id to keep",
         duplicateIds: ["ids to supersede"],
-        reason: "why these entries are the same durable memory"
+        reason: "why these entries are the same durable memory",
+        update: {
+          confidence: "low|medium|high (optional)",
+          facets: ["optional open labels"]
+        }
       }]
     }
   });
@@ -367,8 +388,24 @@ function normalizePlanItem(value: unknown): MemoryEntryOrganizePlanItem | undefi
   const reason = typeof value.reason === "string" && value.reason.trim()
     ? value.reason.trim()
     : "LLM organized this memory as a duplicate of a stronger existing memory.";
-  if (!keepId || duplicateIds.length === 0) return undefined;
-  return { keepId, duplicateIds, reason };
+  const update = normalizeOrganizeUpdate(value.update);
+  if (!keepId || (duplicateIds.length === 0 && !update)) return undefined;
+  return { keepId, duplicateIds, reason, ...(update ? { update } : {}) };
+}
+
+function normalizeOrganizeUpdate(value: unknown): MemoryEntryOrganizePlanItem["update"] | undefined {
+  if (!isRecord(value)) return undefined;
+  const confidence = value.confidence === "low" || value.confidence === "medium" || value.confidence === "high"
+    ? value.confidence
+    : undefined;
+  const facets = Array.isArray(value.facets)
+    ? Array.from(new Set(value.facets.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))).slice(0, 12)
+    : undefined;
+  if (!confidence && !facets?.length) return undefined;
+  return {
+    ...(confidence ? { confidence } : {}),
+    ...(facets?.length ? { facets } : {})
+  };
 }
 
 function sanitizeOrganizePlan(
@@ -382,12 +419,13 @@ function sanitizeOrganizePlan(
     if (!ids.has(item.keepId)) continue;
     const duplicateIds = Array.from(new Set(item.duplicateIds))
       .filter((id) => id !== item.keepId && ids.has(id) && !claimedDuplicates.has(id));
-    if (duplicateIds.length === 0) continue;
+    if (duplicateIds.length === 0 && !item.update) continue;
     duplicateIds.forEach((id) => claimedDuplicates.add(id));
     sanitized.push({
       keepId: item.keepId,
       duplicateIds,
-      reason: item.reason
+      reason: item.reason,
+      ...(item.update ? { update: item.update } : {})
     });
   }
   return sanitized;

@@ -129,6 +129,34 @@ describe("organizeMemoryEntries", () => {
     expect(listEntries({ workspaceSlug: "demo", scopes: ["workspace"], includeStatuses: ["active"] })).toHaveLength(1);
   });
 
+  test("applies only safe metadata updates through the command service", async () => {
+    const store = createMemoryV2Store();
+    const entry = store.writeEntry({
+      kind: "fact",
+      targetScope: "workspace",
+      statement: "Lume memory uses verified tool evidence.",
+      confidence: "medium",
+      tags: ["memory"],
+      appliesWhen: { workspaceSlug: "demo" }
+    });
+    const result = await organizeMemoryEntries({
+      workspaceSlug: "demo",
+      planEntries: async () => [{
+        keepId: entry.frontmatter.id,
+        duplicateIds: ["missing-duplicate"],
+        reason: "No duplicate found.",
+        update: { confidence: "high", facets: ["verified", "tool-result"] }
+      }]
+    });
+
+    expect(result.updated).toBe(1);
+    const updated = listEntries({ workspaceSlug: "demo", scopes: ["workspace"], includeStatuses: ["active"] })[0]!;
+    expect(updated.statement).toBe(entry.statement);
+    expect(updated.frontmatter.confidence).toBe("high");
+    expect(updated.frontmatter.facets).toEqual(["verified", "tool-result"]);
+    expect(updated.frontmatter.revision).toBeGreaterThan(entry.frontmatter.revision);
+  });
+
   test("splits LLM organizer input into batches", async () => {
     const store = createMemoryV2Store();
     for (const statement of [
