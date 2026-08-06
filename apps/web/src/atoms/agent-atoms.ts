@@ -58,7 +58,14 @@ export const agentPlanModePhaseFamily = createThreadSliceFamily(agentPlanModePha
 export const agentErrorMessagesAtom = atom<Record<string, string>>({})
 
 export type AgentThreadPermissionMode = NonNullable<AgentSendInput['permissionMode']>
-export const agentThreadPermissionModesAtom = atom<Record<string, AgentThreadPermissionMode>>({})
+/**
+ * 每会话手动权限模式覆盖：按 threadId 落 localStorage。
+ * 否则 renderer 重新加载后丢失，重进会话会被 plan phase 或全局默认覆盖（issue #28）。
+ */
+export const agentThreadPermissionModesAtom = atomWithStorage<Record<string, AgentThreadPermissionMode>>(
+  'agent-thread-permission-modes',
+  {},
+)
 
 export type SidePanelView = 'files' | 'task-progress' | 'trace' | null
 export const agentSidePanelViewAtom = atomWithStorage<Record<string, SidePanelView>>(
