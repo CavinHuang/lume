@@ -4,6 +4,17 @@ export type MemoryScope =
   | "global"
   | "workspace";
 
+export type MemoryScopeInput = MemoryScope | "auto";
+
+export type MemorySemanticRole =
+  | "identity"
+  | "fact"
+  | "preference"
+  | "constraint"
+  | "decision"
+  | "lesson"
+  | "state";
+
 export type MemoryKind =
   | "raw"
   | "summary"
@@ -26,7 +37,54 @@ export type MemorySource =
 export type MemoryToolName =
   | "memory.search"
   | "memory.read"
-  | "memory.remember";
+  | "memory.remember"
+  | "memory.forget";
+
+export type MemoryMutationActor =
+  | "main_agent"
+  | "background_extract"
+  | "consolidation"
+  | "user"
+  | "migration";
+
+export type MemoryMutationAction =
+  | "created"
+  | "updated"
+  | "superseded"
+  | "merged"
+  | "archived"
+  | "duplicate"
+  | "pending"
+  | "ignored";
+
+export interface MemoryMutationReceipt {
+  mutationId: string;
+  actor: MemoryMutationActor;
+  action: MemoryMutationAction;
+  memoryIds: string[];
+  runId?: string;
+  threadId?: string;
+  scope: MemoryScope;
+  revision?: number;
+  summary: string;
+  undoable: boolean;
+  createdAt: string;
+}
+
+export interface MemoryEvidenceRef {
+  type:
+    | "user_message"
+    | "assistant_message"
+    | "tool_result"
+    | "external_file"
+    | "manual"
+    | "consolidation";
+  id?: string;
+  runId?: string;
+  threadId?: string;
+  path?: string;
+  quote?: string;
+}
 
 export interface MemoryClaim {
   subject: string;
@@ -148,8 +206,9 @@ export interface MemorySearchToolInput extends MemorySearchInput {
 
 export interface MemoryRememberToolInput {
   workspaceSlug: string;
-  scope: MemoryScope;
-  kind: MemoryKind;
+  scope?: MemoryScopeInput;
+  /** @deprecated Compatibility input; semanticRole is inferred by the command service. */
+  kind?: MemoryKind;
   content: string;
   title?: string;
   importance?: 1 | 2 | 3 | 4 | 5;
@@ -158,14 +217,32 @@ export interface MemoryRememberToolInput {
   claim?: MemoryClaim;
   sourceSessionId?: string;
   sourceMessageIds?: string[];
+  sourceToolCallId?: string;
+  threadId?: string;
+  actor?: MemoryMutationActor;
+  explicitCorrection?: boolean;
+  evidenceRefs?: MemoryEvidenceRef[];
   requireReview?: boolean;
 }
 
-export interface MemoryToolWriteResult {
+export interface MemoryToolWriteResult extends MemoryMutationReceipt {
   id?: string;
   path?: string;
   kind?: MemoryKind;
+}
+
+export interface MemoryForgetToolInput {
+  workspaceSlug: string;
+  id: string;
   scope?: MemoryScope;
+  explicitUserIntent: true;
+  sourceSessionId?: string;
+  threadId?: string;
+}
+
+export interface MemoryUndoMutationInput {
+  workspaceSlug: string;
+  mutationId: string;
 }
 
 export type MemoryCitationsMode = "on" | "off" | "auto";

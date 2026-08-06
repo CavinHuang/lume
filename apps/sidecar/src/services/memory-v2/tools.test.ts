@@ -11,7 +11,7 @@ import {
 
 describe("memory-v2 tools", () => {
   test("只暴露 Memory V2 主路径工具名", () => {
-    expect(MEMORY_V2_TOOL_NAMES).toEqual(["memory.search", "memory.read", "memory.remember"]);
+    expect(MEMORY_V2_TOOL_NAMES).toEqual(["memory.search", "memory.read", "memory.remember", "memory.forget"]);
   });
 
   test("memory.search/read/remember 使用 Memory V2 主路径", async () => {
