@@ -46,4 +46,22 @@ describe("memory schema migration", () => {
     expect(readFileSync(bad, "utf-8")).toBe("not frontmatter");
     rmSync(parent, { recursive: true, force: true });
   });
+
+  test("converts heading-led legacy Markdown notes without losing their body", () => {
+    const parent = mkdtempSync(join(tmpdir(), "lume-memory-migration-note-"));
+    const root = join(parent, "memory");
+    const note = join(root, "entries", "lume-app-development.md");
+    const body = `# Lume 应用开发活动\n\n这是一个旧版连续性笔记，记录已经确认的项目背景和协作约束。\n\n## 主题定制\n\n后续工作继续维护该项目。\n`;
+    mkdirSync(dirname(note), { recursive: true });
+    writeFileSync(note, body, "utf-8");
+
+    migrateMemoryScopeRootIfNeeded(root, "workspace");
+
+    const migrated = readFileSync(note, "utf-8");
+    expect(migrated).toContain("id: lume-app-development");
+    expect(migrated).toContain("semantic_role: state");
+    expect(migrated).toContain("facets:");
+    expect(migrated).toContain("# Lume 应用开发活动");
+    rmSync(parent, { recursive: true, force: true });
+  });
 });

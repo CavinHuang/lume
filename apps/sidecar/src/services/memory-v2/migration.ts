@@ -95,7 +95,7 @@ function migrateEntries(root: string, scope: MemoryV2Scope): void {
   const entriesDir = join(root, "entries");
   if (!existsSync(entriesDir)) return;
   for (const path of listFiles(entriesDir, ".md")) {
-    const document = parseDocument(path);
+    const document = parseDocument(path, scope);
     const now = typeof document.frontmatter.updated === "string"
       ? document.frontmatter.updated
       : new Date().toISOString();
@@ -128,13 +128,61 @@ function validateEntries(root: string): void {
   }
 }
 
-function parseDocument(path: string): { frontmatter: Record<string, unknown>; body: string } {
+function parseDocument(path: string, scope?: MemoryV2Scope): { frontmatter: Record<string, unknown>; body: string } {
   const source = readFileSync(path, "utf-8");
   const match = source.match(/^---\n([\s\S]*?)\n---\n?/);
-  if (!match) throw new Error(`Missing frontmatter: ${path}`);
+  if (!match) {
+    if (scope && isLegacyMarkdownNote(source)) {
+      return legacyMarkdownDocument(path, source, scope);
+    }
+    throw new Error(`Missing frontmatter: ${path}`);
+  }
   const frontmatter = YAML.parse(match[1] ?? "") as unknown;
   if (!frontmatter || typeof frontmatter !== "object" || Array.isArray(frontmatter)) throw new Error(`Invalid frontmatter: ${path}`);
   return { frontmatter: frontmatter as Record<string, unknown>, body: source.slice(match[0].length) };
+}
+
+/**
+ * Older workspaces occasionally stored durable Markdown notes directly under
+ * entries/. Only heading-led notes are migrated implicitly; arbitrary plain
+ * text is still treated as corruption so a failed migration remains atomic.
+ */
+function isLegacyMarkdownNote(source: string): boolean {
+  const trimmed = source.trimStart();
+  return /^#{1,6}\s+\S+/.test(trimmed) && trimmed.includes("\n") && trimmed.trim().length >= 64;
+}
+
+function legacyMarkdownDocument(path: string, source: string, scope: MemoryV2Scope): { frontmatter: Record<string, unknown>; body: string } {
+  const timestamp = statSync(path).mtime.toISOString();
+  const id = basename(path, ".md");
+  return {
+    frontmatter: {
+      id,
+      kind: "state",
+      semantic_role: "state",
+      facets: ["legacy", "history"],
+      scope,
+      status: "active",
+      created: timestamp,
+      updated: timestamp,
+      last_confirmed_at: timestamp,
+      revision: 1,
+      source: { type: "manual" },
+      confidence: "medium",
+      pinned: false,
+      tags: ["legacy", "history"],
+      entities: [],
+      related: [],
+      supersedes: [],
+      superseded_by: null,
+      applies_when: {},
+      valid_from: null,
+      valid_to: null,
+      activation: { recall: true, persona: true, suggestion: true, analyst: true },
+      evidence_refs: [{ type: "manual" }]
+    },
+    body: source
+  };
 }
 
 function writeDocument(path: string, frontmatter: Record<string, unknown>, body: string): void {
