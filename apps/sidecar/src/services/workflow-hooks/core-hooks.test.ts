@@ -208,7 +208,8 @@ describe("core workflow hooks", () => {
       workspaceSlug: "demo",
       userMessage: "hello",
       sessionType: "main",
-      maxItems: 8
+      maxItems: 5,
+      contextTokenBudget: 1000
     }]);
   });
 });

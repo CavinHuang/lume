@@ -85,6 +85,7 @@ export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions)
 
   const items: MemoryOrganizeEntriesResult["items"] = [];
   const supersededIds = new Set<string>();
+  const staleIds = markExpiredEntries(commands, input.workspaceSlug, entries);
   const planItems = await resolveOrganizePlan(input, entries);
 
   for (const planItem of planItems) {
@@ -131,6 +132,8 @@ export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions)
     scannedEntries: entries.length,
     keptEntries: entries.length - supersededIds.size,
     supersededDuplicates: items.length,
+    updated: 0,
+    stale: staleIds.size,
     items
   };
 
@@ -138,10 +141,33 @@ export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions)
     workspaceSlug: input.workspaceSlug,
     scannedEntries: result.scannedEntries,
     keptEntries: result.keptEntries,
-    supersededDuplicates: result.supersededDuplicates
+    supersededDuplicates: result.supersededDuplicates,
+    stale: result.stale
   });
 
   return result;
+}
+
+function markExpiredEntries(
+  commands: MemoryCommandService,
+  workspaceSlug: string,
+  entries: MemoryV2Entry[]
+): Set<string> {
+  const staleIds = new Set<string>();
+  const now = Date.now();
+  for (const entry of entries) {
+    if (entry.frontmatter.status !== "active" || !entry.frontmatter.valid_to) continue;
+    const validTo = Date.parse(entry.frontmatter.valid_to);
+    if (!Number.isFinite(validTo) || validTo > now) continue;
+    commands.markSuspectedStale({
+      workspaceSlug,
+      id: entry.frontmatter.id,
+      scope: entry.frontmatter.scope
+    });
+    entry.frontmatter.status = "suspected_stale";
+    staleIds.add(entry.frontmatter.id);
+  }
+  return staleIds;
 }
 
 function markDuplicate(input: {

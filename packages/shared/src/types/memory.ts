@@ -337,6 +337,8 @@ export interface MemoryOrganizeEntriesResult {
   scannedEntries: number;
   keptEntries: number;
   supersededDuplicates: number;
+  updated?: number;
+  stale?: number;
   items: MemoryOrganizeEntriesItem[];
 }
 

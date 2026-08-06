@@ -158,6 +158,7 @@ export async function extractMemoryCandidatesWithLlm(input: {
 export interface MemoryBatchExtractionSource {
   sourceId: string;
   text: string;
+  role?: "user" | "assistant" | "tool_result";
 }
 
 export interface MemoryBatchExtractionCandidate {
@@ -165,21 +166,33 @@ export interface MemoryBatchExtractionCandidate {
   candidate: MemoryV2Candidate;
 }
 
+export interface MemoryBatchExtractionExistingMemory {
+  id: string;
+  statement: string;
+  claim?: MemoryV2Candidate["claim"];
+}
+
 export async function extractMemoryBatchCandidatesWithLlm(input: {
   sources: MemoryBatchExtractionSource[];
   workspaceSlug?: string;
   modelRef?: string;
   fallbackModelRefs?: string[];
+  modelVisibleMessage?: string;
+  existingMemories?: MemoryBatchExtractionExistingMemory[];
   createProvider?: MemoryExtractionProviderFactory;
 }): Promise<MemoryBatchExtractionCandidate[]> {
   const sources = input.sources
     .map((source) => ({
       sourceId: source.sourceId,
-      text: stripMemoryUserMessagePrefix(source.text).trim()
+      text: stripMemoryUserMessagePrefix(source.text).trim(),
+      role: source.role ?? "user"
     }))
     .filter((source) => source.sourceId && source.text && !DO_NOT_REMEMBER_RE.test(source.text));
   if (sources.length === 0) return [];
-  const explicitCandidates = extractExplicitBatchCandidates(sources, input.workspaceSlug);
+  const explicitCandidates = extractExplicitBatchCandidates(
+    sources.filter((source) => source.role === "user"),
+    input.workspaceSlug
+  );
 
   const config = getEffectiveLumeConfig(input.workspaceSlug);
   const modelRefs = resolveMemoryExtractionModelRefs(config, {
@@ -195,6 +208,8 @@ export async function extractMemoryBatchCandidatesWithLlm(input: {
       const parsed = await extractMemoryBatchCandidatesWithModel({
         sources,
         workspaceSlug: input.workspaceSlug,
+        modelVisibleMessage: input.modelVisibleMessage,
+        existingMemories: input.existingMemories,
         modelRef,
         createProvider: input.createProvider
       });
@@ -257,8 +272,10 @@ async function extractMemoryCandidatesWithModel(input: {
 }
 
 async function extractMemoryBatchCandidatesWithModel(input: {
-  sources: Array<{ sourceId: string; text: string }>;
+  sources: Array<{ sourceId: string; text: string; role: "user" | "assistant" | "tool_result" }>;
   workspaceSlug?: string;
+  modelVisibleMessage?: string;
+  existingMemories?: MemoryBatchExtractionExistingMemory[];
   modelRef: string;
   createProvider?: MemoryExtractionProviderFactory;
 }): Promise<MemoryBatchExtractionCandidate[] | undefined> {
@@ -275,7 +292,12 @@ async function extractMemoryBatchCandidatesWithModel(input: {
     system: buildBatchExtractionSystemPrompt(),
     messages: [{
       role: "user",
-      content: buildBatchExtractionUserPrompt(input.sources, input.workspaceSlug)
+      content: buildBatchExtractionUserPrompt(
+        input.sources,
+        input.workspaceSlug,
+        input.modelVisibleMessage,
+        input.existingMemories
+      )
     }]
   });
   return parseLlmBatchExtractionResponse(
@@ -423,8 +445,10 @@ function buildBatchExtractionSystemPrompt(): string {
     "Return only strict JSON with shape {\"shouldExtract\": boolean, \"candidates\": [...]}.",
     "Each candidate must cite exactly one sourceId from the provided sources.",
     "sourceText must be an exact substring of that source's text.",
-    "Reject candidates without a valid sourceId, without exact sourceText, or with sourceRole other than \"user\".",
+    "sourceRole must match the cited source's role. User messages are the primary authority; tool results may support verified project facts or decisions.",
+    "Never create a candidate whose only evidence is an assistant message. Assistant messages may provide context but cannot establish a fact by themselves.",
     "Do not merge multiple sources into one fact unless the cited source itself contains the full fact.",
+    "Use existingMemories as a read-only manifest: prefer the existing Claim when the new evidence confirms it, and avoid creating a duplicate statement.",
     "Reject greetings, temporary tasks, secrets, API keys, tokens, passwords, private keys, and anything the user says not to remember/save.",
     "Prefer false negatives; never invent or infer beyond the cited source.",
     "Use kind preference, fact, decision, lesson, or state.",
@@ -437,23 +461,28 @@ function buildBatchExtractionSystemPrompt(): string {
 
 function buildBatchExtractionUserPrompt(
   sources: MemoryBatchExtractionSource[],
-  workspaceSlug?: string
+  workspaceSlug?: string,
+  modelVisibleMessage?: string,
+  existingMemories?: MemoryBatchExtractionExistingMemory[]
 ): string {
   return JSON.stringify({
     workspaceSlug: workspaceSlug ?? null,
+    modelVisibleMessage: modelVisibleMessage?.trim() || undefined,
+    existingMemories: existingMemories?.slice(0, 200),
     sources: sources.map((source) => ({
       sourceId: source.sourceId,
+      role: source.role ?? "user",
       text: source.text
     })),
     output: {
       shouldExtract: true,
       candidates: [{
         sourceId: "one sourceId from sources",
+        sourceRole: "user|assistant|tool_result (must match the source)",
         kind: "preference|fact|decision|lesson|state",
         targetScope: "global|workspace",
         statement: "short standalone claim",
         confidence: "low|medium|high",
-        sourceRole: "user",
         sourceText: "exact substring from that source text",
         reason: "why this is durable",
         tags: ["optional"],
@@ -530,15 +559,18 @@ function parseLlmBatchExtractionResponse(
   const parsed = safeJsonParse(extractJsonObject(text));
   if (!isRecord(parsed) || typeof parsed.shouldExtract !== "boolean" || !Array.isArray(parsed.candidates)) return null;
   if (!parsed.shouldExtract) return [];
-  const sourceById = new Map(sources.map((source) => [source.sourceId, source.text]));
+  const sourceById = new Map(sources.map((source) => [source.sourceId, {
+    ...source,
+    role: source.role ?? "user"
+  }]));
   const candidates: MemoryBatchExtractionCandidate[] = [];
   for (const item of parsed.candidates) {
     if (!isRecord(item)) continue;
     const sourceId = normalizeOptionalString(item.sourceId);
     const sourceText = normalizeOptionalString(item.sourceText);
-    const sourceBody = sourceId ? sourceById.get(sourceId) : undefined;
-    if (!sourceId || !sourceBody || !sourceText || !sourceBody.includes(sourceText)) continue;
-    const candidate = parseCandidateItem(item, sourceBody);
+    const source = sourceId ? sourceById.get(sourceId) : undefined;
+    if (!sourceId || !source || !sourceText || !source.text.includes(sourceText)) continue;
+    const candidate = parseCandidateItem(item, source.text, source.role ?? "user");
     if (!candidate) continue;
     candidates.push({
       sourceId,
@@ -548,7 +580,11 @@ function parseLlmBatchExtractionResponse(
   return candidates;
 }
 
-function parseCandidateItem(item: Record<string, unknown>, userMessage: string): MemoryV2Candidate | undefined {
+function parseCandidateItem(
+  item: Record<string, unknown>,
+  userMessage: string,
+  expectedSourceRole: "user" | "assistant" | "tool_result" = "user"
+): MemoryV2Candidate | undefined {
   const kind = normalizeKind(item.kind);
   const targetScope = item.targetScope === "global" || item.targetScope === "workspace"
     ? item.targetScope
@@ -560,7 +596,7 @@ function parseCandidateItem(item: Record<string, unknown>, userMessage: string):
     ? item.confidence
     : "medium";
   if (!kind || !targetScope || !statement || DO_NOT_REMEMBER_RE.test(statement)) return undefined;
-  if (sourceRole !== "user" || !sourceText || !userMessage.includes(sourceText)) return undefined;
+  if (sourceRole !== expectedSourceRole || expectedSourceRole === "assistant" || !sourceText || !userMessage.includes(sourceText)) return undefined;
   const tags = normalizeStringList(item.tags);
   return {
     kind,

@@ -48,4 +48,21 @@ describe("derived memory views", () => {
     expect(existsSync(paths.capsulesDir)).toBe(true);
     expect(readFileSync(paths.memoryMd, "utf-8")).toContain("Derived index");
   });
+
+  test("does not project entries with recall disabled into derived indexes", async () => {
+    const store = createMemoryV2Store();
+    store.writeEntry({
+      targetScope: "workspace",
+      semanticRole: "fact",
+      statement: "Do not project this private recall entry",
+      confidence: "high",
+      appliesWhen: { workspaceSlug: "demo" }
+    }, {
+      activation: { recall: false, persona: false, suggestion: false, analyst: false }
+    });
+
+    await rebuildDerivedMemoryViews({ scope: "workspace", workspaceSlug: "demo" });
+    const paths = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: "demo" });
+    expect(readFileSync(paths.memoryMd, "utf-8")).not.toContain("Do not project this private recall entry");
+  });
 });

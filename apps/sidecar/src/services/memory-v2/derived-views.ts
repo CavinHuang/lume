@@ -3,7 +3,7 @@ import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSyn
 import { join } from "node:path";
 import YAML from "yaml";
 import { claimFromEntry } from "./claim";
-import { createMemoryV2Store } from "./markdown-store";
+import { createMemoryV2Store, readActivation } from "./markdown-store";
 import { ensurePersona } from "./persona";
 import { getMemoryV2ScopePaths } from "./paths";
 import type { MemoryV2Entry, MemoryV2Scope } from "./types";
@@ -29,10 +29,11 @@ export async function rebuildDerivedMemoryViews(input: { scope: MemoryV2Scope; w
     scopes: [input.scope],
     includeStatuses: ["active", "suspected_stale"]
   });
-  rebuildMemoryIndex(paths.memoryMd, input.scope, entries);
-  rebuildCapsules(paths.capsulesDir, input.scope, entries);
+  const recallableEntries = entries.filter((entry) => readActivation(entry.frontmatter).recall);
+  rebuildMemoryIndex(paths.memoryMd, input.scope, recallableEntries);
+  rebuildCapsules(paths.capsulesDir, input.scope, recallableEntries);
   if (input.scope === "workspace") {
-    rebuildWorkspaceBrief(paths.workspaceBrief, entries);
+    rebuildWorkspaceBrief(paths.workspaceBrief, recallableEntries);
   } else {
     await ensurePersona({ scope: "global" });
   }

@@ -35,6 +35,7 @@ export function createCoreMemoryHookHandlers(): LumeWorkflowHookHandlerRegistry 
           threadId: event.threadId,
           workspaceSlug: event.workspaceSlug,
           modelRef: event.modelRef,
+          modelVisibleMessage: event.modelVisibleMessage,
           threadType: event.threadType,
           chatType: event.chatType,
           items: event.runItems ?? []

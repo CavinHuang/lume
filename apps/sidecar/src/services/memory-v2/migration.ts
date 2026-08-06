@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import YAML from "yaml";
 import type { MemoryV2Scope } from "./types";
@@ -26,13 +26,22 @@ export function migrateMemoryScopeRootIfNeeded(root: string, scope: MemoryV2Scop
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
   const parent = dirname(root);
   const name = basename(root);
+  const lockPath = join(parent, `.${name}.migration.lock`);
   const backupPath = join(parent, `${name}.backup-${stamp}`);
   const tempPath = join(parent, `.${name}.migration-${stamp}`);
   const previousPath = join(parent, `.${name}.previous-${stamp}`);
-  cpSync(root, backupPath, { recursive: true, errorOnExist: true });
-  cpSync(root, tempPath, { recursive: true, errorOnExist: true });
+  let lockAcquired = false;
 
   try {
+    const lockFd = openMigrationLock(lockPath);
+    lockAcquired = true;
+    try {
+      writeFileSync(lockFd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf-8");
+    } finally {
+      closeSync(lockFd);
+    }
+    cpSync(root, backupPath, { recursive: true, errorOnExist: true });
+    cpSync(root, tempPath, { recursive: true, errorOnExist: true });
     migrateEntries(tempPath, scope);
     rmSync(join(tempPath, "persona.md"), { force: true });
     validateEntries(tempPath);
@@ -55,6 +64,30 @@ export function migrateMemoryScopeRootIfNeeded(root: string, scope: MemoryV2Scop
   } catch (error) {
     rmSync(tempPath, { recursive: true, force: true });
     throw new Error(`Memory migration failed for ${scope}: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    if (lockAcquired && existsSync(lockPath)) unlinkSync(lockPath);
+  }
+}
+
+function openMigrationLock(path: string): number {
+  try {
+    return openSync(path, "wx");
+  } catch (error) {
+    let owner: { pid?: unknown };
+    try {
+      owner = JSON.parse(readFileSync(path, "utf-8")) as { pid?: unknown };
+    } catch {
+      throw error;
+    }
+    if (typeof owner.pid !== "number") throw error;
+    try {
+      process.kill(owner.pid, 0);
+      throw error;
+    } catch (probeError) {
+      if (probeError === error) throw error;
+      try { unlinkSync(path); } catch { throw error; }
+    }
+    return openSync(path, "wx");
   }
 }
 

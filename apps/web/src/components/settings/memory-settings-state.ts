@@ -375,6 +375,8 @@ export function summarizeMemoryOrganizeEntriesResult(result: MemoryOrganizeEntri
     `扫描 ${result.scannedEntries} 条历史记忆`,
     `保留 ${result.keptEntries} 条`,
     `归并重复 ${result.supersededDuplicates} 条`,
+    ...(result.updated ? [`更新 ${result.updated} 条`] : []),
+    ...(result.stale ? [`标记过期 ${result.stale} 条`] : []),
   ].join(' · ')
 }
 

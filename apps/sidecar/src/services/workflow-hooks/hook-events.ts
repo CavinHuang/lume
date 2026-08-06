@@ -70,6 +70,7 @@ export interface LumeWorkflowRunAfterCompleteEvent extends LumeWorkflowHookBaseE
     costUSD?: number;
   };
   memoryContextUsedItems: MemoryV2RecallItem[];
+  modelVisibleMessage?: string;
   runItems?: LumeRunItem[];
 }
 

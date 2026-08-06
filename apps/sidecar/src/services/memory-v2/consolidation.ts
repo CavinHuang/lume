@@ -84,9 +84,9 @@ export function enqueueConsolidation(
       await rebuildDerivedMemoryViews({ scope: "global" });
       return {
         scannedEntries: organized.scannedEntries,
-        updated: 0,
+        updated: organized.updated ?? 0,
         merged: organized.supersededDuplicates,
-        stale: 0,
+        stale: organized.stale ?? 0,
         rebuilt: ["capsules", "workspace-brief.md", "persona.md", "MEMORY.md"]
       };
     })),

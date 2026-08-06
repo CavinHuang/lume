@@ -8,6 +8,8 @@ import { emitAgentNotification } from "../agent/agent-notification-service";
 import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import { MemoryCommandService, hasMemoryMutationForRun } from "./command-service";
 import { extractMemoryBatchCandidatesWithLlm } from "./extraction";
+import { claimFromEntry } from "./claim";
+import { createMemoryV2Store } from "./markdown-store";
 import { getMemoryV2ScopePaths } from "./paths";
 import { getMemoryRuntimeConfig } from "./policy";
 import type { MemoryV2MutationReceipt } from "./types";
@@ -19,6 +21,7 @@ export interface BackgroundMemoryExtractionRequest {
   runId: string;
   workspaceSlug: string;
   modelRef?: string;
+  modelVisibleMessage?: string;
   threadType?: string;
   chatType?: string;
   items: LumeRunItem[];
@@ -99,10 +102,24 @@ async function runExtraction(input: BackgroundMemoryExtractionRequest): Promise<
 
   try {
     const sourceRoles = new Map(sources.map((source) => [source.sourceId, source.role]));
-    const extracted = await extractMemoryBatchCandidatesWithLlm({
-      sources: sources.map(({ sourceId, text }) => ({ sourceId, text })),
+    const existingMemories = createMemoryV2Store().listEntries({
       workspaceSlug: input.workspaceSlug,
-      modelRef: input.modelRef
+      scopes: ["global", "workspace"],
+      includeStatuses: ["active", "suspected_stale"]
+    }).map((entry) => {
+      const claim = claimFromEntry(entry);
+      return {
+        id: entry.frontmatter.id,
+        statement: entry.statement,
+        ...(claim ? { claim } : {})
+      };
+    });
+    const extracted = await extractMemoryBatchCandidatesWithLlm({
+      sources: sources.map(({ sourceId, role, text }) => ({ sourceId, role, text })),
+      workspaceSlug: input.workspaceSlug,
+      modelRef: input.modelRef,
+      modelVisibleMessage: input.modelVisibleMessage,
+      existingMemories
     });
     const service = new MemoryCommandService();
     const receipts: MemoryV2MutationReceipt[] = [];

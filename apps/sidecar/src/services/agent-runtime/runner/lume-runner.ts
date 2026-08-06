@@ -107,6 +107,7 @@ export function resolveRuntimeCoreMaxTurns(input: AgentRuntimeRunParams["input"]
 export class LumeRunner {
   readonly emit: AgentRuntimeEmitter;
   private latestMemoryContextUsedItems: CreateRuntimeCoreSessionResult["memoryContextUsedItems"] = [];
+  private latestModelVisibleMessage = "";
 
   private constructor(
     private readonly observer: LumeRunObserver,
@@ -469,6 +470,9 @@ export class LumeRunner {
       processSandbox: wikiCapability.sandbox
     });
     this.latestMemoryContextUsedItems = runtimeSession.memoryContextUsedItems ?? [];
+    this.latestModelVisibleMessage = typeof runtimeSession.userMessageForModel === "string"
+      ? runtimeSession.userMessageForModel
+      : "";
 
     return this.runRuntimeSession({
       params,
@@ -513,6 +517,7 @@ export class LumeRunner {
             runId: this.observer.getRunId(),
             workspaceSlug,
             modelRef: runState.model.modelRef,
+            modelVisibleMessage: this.latestModelVisibleMessage,
             threadType: this.params.runtime.threadType,
             chatType: this.params.input.chatType,
             items: this.memoryExtractionRunItems(runState)
@@ -663,6 +668,7 @@ export class LumeRunner {
       },
       usage: runState?.usage,
       memoryContextUsedItems: this.latestMemoryContextUsedItems,
+      modelVisibleMessage: this.latestModelVisibleMessage,
       runItems: this.memoryExtractionRunItems(runState)
     });
   }

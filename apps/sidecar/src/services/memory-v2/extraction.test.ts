@@ -402,6 +402,64 @@ describe("extractExplicitMemoryCandidates", () => {
     expect(candidates).toEqual([]);
   });
 
+  test("accepts verified tool-result evidence but rejects assistant-only evidence", async () => {
+    const candidates = await extractMemoryBatchCandidatesWithLlm({
+      sources: [
+        {
+          sourceId: "tool-result-1",
+          role: "tool_result",
+          text: "Repository policy: Markdown remains the source of truth."
+        },
+        {
+          sourceId: "assistant-1",
+          role: "assistant",
+          text: "The user prefers Markdown for all projects."
+        }
+      ],
+      modelRef: "openai/gpt-5-mini",
+      createProvider: () => ({
+        apiType: "openai-completions",
+        async createMessage() {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                shouldExtract: true,
+                candidates: [
+                  {
+                  sourceId: "tool-result-1",
+                  kind: "decision",
+                  targetScope: "workspace",
+                  statement: "项目使用 Markdown 作为事实源",
+                  confidence: "high",
+                  sourceRole: "tool_result",
+                  sourceText: "Markdown remains the source of truth",
+                  reason: "Verified project evidence."
+                  },
+                  {
+                    sourceId: "assistant-1",
+                    kind: "decision",
+                    targetScope: "workspace",
+                    statement: "项目使用 Markdown 作为事实源",
+                    confidence: "high",
+                    sourceRole: "assistant",
+                    sourceText: "The user prefers Markdown for all projects.",
+                    reason: "Assistant-only inference."
+                  }
+                ]
+              })
+            }],
+            stopReason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 }
+          };
+        }
+      })
+    });
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.sourceId).toBe("tool-result-1");
+  });
+
   test("keeps explicit batch memory intent when the LLM gate misses it", async () => {
     const candidates = await extractMemoryBatchCandidatesWithLlm({
       sources: [{
