@@ -252,6 +252,29 @@ html:not(.darwin) .island-surface {
   overflow: hidden;
 }
 
+/* idle home surface：无 active session 时 expanded 切换成最近会话区（对齐 spec §1.4） */
+.island-recent-head {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgb(255 255 255 / 0.5);
+  padding: 12px 18px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.island-recent-icon {
+  color: rgb(255 255 255 / 0.35);
+  flex: 0 0 auto;
+}
+.island-recent-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  padding: 20px;
+  color: rgb(255 255 255 / 0.5);
+  font-size: 11px;
+}
+
 /* planning 两列（对齐 Proma island-planning-grid/column） */
 .island-planning {
   display: grid;

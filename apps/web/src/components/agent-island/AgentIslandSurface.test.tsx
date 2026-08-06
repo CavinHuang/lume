@@ -1,8 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { AgentIslandPlanningItem, AgentIslandSessionSnapshot, AgentIslandState } from '@lume/shared'
+import type {
+  AgentIslandPlanningItem,
+  AgentIslandRecentSession,
+  AgentIslandSessionSnapshot,
+  AgentIslandState,
+} from '@lume/shared'
 import {
   AgentIslandSurface,
+  formatRelativeTime,
   formatSessionMeta,
   resolveIslandModelLabel,
   sortIslandPlanningItems,
@@ -256,5 +262,118 @@ describe('AgentIslandSurface expanded 溢出接线（集成）', () => {
     expect(visible).toHaveLength(5)
     expect(overflow).toBe(1)
     expect(`还有 ${overflow} 条`).toBe('还有 1 条')
+  })
+})
+
+describe('formatRelativeTime（idle home surface 最近会话相对时间）', () => {
+  // 纯 helper 单测（brief 全局约束：SSR 限制时纯逻辑抽 helper 测）。
+  // 阈值契约：<1min「刚刚」、<1h「N 分钟前」、<24h「N 小时前」、否则「N 天前」。
+  test('< 1min → 「刚刚」（含 0 差值）', () => {
+    const now = 100_000
+    expect(formatRelativeTime(now, now)).toBe('刚刚')
+    expect(formatRelativeTime(now - 30_000, now)).toBe('刚刚')
+    expect(formatRelativeTime(now - 59_999, now)).toBe('刚刚')
+  })
+
+  test('未来时间（时钟偏移）→ 「刚刚」（Math.max(0, ...) 兜底，避免负分钟）', () => {
+    const now = 100_000
+    expect(formatRelativeTime(now + 5_000, now)).toBe('刚刚')
+    expect(formatRelativeTime(now + 60_000, now)).toBe('刚刚')
+  })
+
+  test('1min ≤ diff < 1h → 「N 分钟前」', () => {
+    const now = 10_000_000
+    expect(formatRelativeTime(now - 60_000, now)).toBe('1 分钟前')
+    expect(formatRelativeTime(now - 120_000, now)).toBe('2 分钟前')
+    expect(formatRelativeTime(now - 59 * 60_000, now)).toBe('59 分钟前')
+  })
+
+  test('1h ≤ diff < 24h → 「N 小时前」', () => {
+    const now = 100_000_000
+    expect(formatRelativeTime(now - 3_600_000, now)).toBe('1 小时前')
+    expect(formatRelativeTime(now - 2 * 3_600_000, now)).toBe('2 小时前')
+    expect(formatRelativeTime(now - 23 * 3_600_000, now)).toBe('23 小时前')
+  })
+
+  test('≥ 24h → 「N 天前」', () => {
+    const now = 1_000_000_000
+    expect(formatRelativeTime(now - 86_400_000, now)).toBe('1 天前')
+    expect(formatRelativeTime(now - 3 * 86_400_000, now)).toBe('3 天前')
+    expect(formatRelativeTime(now - 30 * 86_400_000, now)).toBe('30 天前')
+  })
+
+  test('边界：恰好 60000 → 「1 分钟前」（< 60_000 为假，进下一档）', () => {
+    expect(formatRelativeTime(0, 60_000)).toBe('1 分钟前')
+  })
+
+  test('边界：恰好 3600000 → 「1 小时前」', () => {
+    expect(formatRelativeTime(0, 3_600_000)).toBe('1 小时前')
+  })
+
+  test('边界：恰好 86400000 → 「1 天前」', () => {
+    expect(formatRelativeTime(0, 86_400_000)).toBe('1 天前')
+  })
+
+  test('向下取整：90 秒 → 「1 分钟前」（非「1.5 分钟前」）', () => {
+    expect(formatRelativeTime(0, 90_000)).toBe('1 分钟前')
+    expect(formatRelativeTime(0, 90 * 60_000)).toBe('1 小时前')
+    expect(formatRelativeTime(0, 90 * 86_400_000)).toBe('90 天前')
+  })
+})
+
+describe('AgentIslandSurface idle home surface 接线（集成）', () => {
+  // expanded DOM 在 SSR 不挂载（surfaceMode 状态机依赖 useEffect），用 data-flow 复现渲染决策。
+  // 渲染层 JSX 是 state.isIdle ? recent区 : active区 的 ternary（互斥），recent 区内再据
+  // recentSessions.length 决定列表 / 空引导。这里断言决策与数据消费，对应 JSX 接线。
+  test('isIdle=true + recentSessions.length>0 → recent 区（head + 各 title + relative time）', () => {
+    const now = Date.now()
+    const recent: AgentIslandRecentSession[] = [
+      { threadId: 'r1', title: '历史会话A', updatedAt: now - 120_000, project: 'proj' },
+      { threadId: 'r2', title: '历史会话B', updatedAt: now - 7_200_000 },
+    ]
+    const state = baseState({
+      isIdle: true,
+      recentSessions: recent,
+      sessions: [],
+      primarySessionId: null,
+      compactLabel: 'Lume · 最近会话',
+    })
+    // 渲染层决策（对应 JSX ternary）
+    const renderRecent = !!state.isIdle
+    const renderActive = !state.isIdle
+    const isEmpty = renderRecent && (state.recentSessions?.length ?? 0) === 0
+    expect(renderRecent).toBe(true)
+    expect(renderActive).toBe(false) // active sessions 区不渲染（互斥）
+    expect(isEmpty).toBe(false)
+    // recent 行数据消费：title + 相对时间 + project
+    const rows = (state.recentSessions ?? []).map((r) => ({
+      title: r.title,
+      relative: formatRelativeTime(r.updatedAt, now),
+      project: r.project,
+    }))
+    expect(rows).toEqual([
+      { title: '历史会话A', relative: '2 分钟前', project: 'proj' },
+      { title: '历史会话B', relative: '2 小时前', project: undefined },
+    ])
+  })
+
+  test('isIdle=true + recentSessions=[] → 空引导（「还没有会话」+「新建会话」open-main）', () => {
+    const state = baseState({
+      isIdle: true,
+      recentSessions: [],
+      sessions: [],
+      primarySessionId: null,
+    })
+    const renderRecent = !!state.isIdle
+    const isEmpty = renderRecent && (state.recentSessions?.length ?? 0) === 0
+    expect(renderRecent).toBe(true)
+    expect(isEmpty).toBe(true)
+    // 空引导文案 + open-main intent（JSX 静态接线，这里仅断言决策触发空引导分支）
+  })
+
+  test('isIdle=false → active sessions 区（不走 recent 分支）', () => {
+    const state = baseState({ isIdle: false })
+    const renderRecent = !!state.isIdle
+    expect(renderRecent).toBe(false)
   })
 })

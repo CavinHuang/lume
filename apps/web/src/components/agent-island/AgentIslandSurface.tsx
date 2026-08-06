@@ -58,6 +58,20 @@ export function formatSessionMeta(
   return parts.join(' · ')
 }
 
+/**
+ * idle home surface 最近会话的相对时间标签：Date.now() - updatedAt → 中文相对描述。
+ * 阈值：<1min「刚刚」、<1h「N 分钟前」、<24h「N 小时前」、否则「N 天前」。
+ * 抽成纯函数便于单测（无 DOM / 时钟副作用）；now 参数测试用，默认 Date.now()。
+ * 对未来时间（时钟偏移）兜底成「刚刚」，避免负数分钟。
+ */
+export function formatRelativeTime(updatedAt: number, now: number = Date.now()): string {
+  const diff = Math.max(0, now - updatedAt)
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
+  return `${Math.floor(diff / 86_400_000)} 天前`
+}
+
 type SurfaceMode = 'compact' | 'expanded' | 'collapsing'
 
 /**
@@ -165,40 +179,75 @@ export function AgentIslandSurface({
               </div>
             </div>
 
-            {state.sessions.length > 0 && (
-              <ul className="island-sessions">
-                {state.sessions.map((s) => (
-                  <li
-                    key={s.threadId}
-                    className="island-session-row island-no-drag"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onIntent({ name: 'open-session', threadId: s.threadId })}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        onIntent({ name: 'open-session', threadId: s.threadId })
-                      }
-                    }}
-                  >
-                    <span className={cn('island-dot', PHASE_DOT[s.phase])} />
-                    <div className="island-session-copy">
-                      <span className="island-session-title">{s.title}</span>
-                      {s.activityLines.length > 0 ? (
-                        <span className="island-session-activity">{s.activityLines[s.activityLines.length - 1]}</span>
-                      ) : s.detail ? (
-                        <span className="island-session-detail">{s.detail}</span>
-                      ) : null}
-                      {sessionMetaById[s.threadId] && (
-                        <span className="island-session-meta">{sessionMetaById[s.threadId]}</span>
+            {/* idle/active 互斥：isIdle 时整块替换为 recent 区（service 已去重，无需渲染层再剔）。
+                planning 区在两种状态下都保留（有才显，复用下方全量逻辑）。 */}
+            {state.isIdle ? (
+              <div className="island-recent">
+                <div className="island-recent-head">最近会话</div>
+                {state.recentSessions && state.recentSessions.length > 0 ? (
+                  <ul className="island-sessions">
+                    {state.recentSessions.map((r) => (
+                      <li
+                        key={r.threadId}
+                        className="island-session-row island-no-drag"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => onIntent({ name: 'open-session', threadId: r.threadId })}
+                      >
+                        <span className="island-recent-icon" aria-hidden="true">◌</span>
+                        <span className="island-session-copy">
+                          <span className="island-session-title">{r.title}</span>
+                          <span className="island-session-detail">{formatRelativeTime(r.updatedAt)}</span>
+                        </span>
+                        {r.project && (
+                          <span className="island-session-project">{r.project}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="island-recent-empty">
+                    <span>还没有会话</span>
+                    <Button size="sm" variant="ghost" onClick={() => onIntent({ name: 'open-main' })}>新建会话</Button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              state.sessions.length > 0 && (
+                <ul className="island-sessions">
+                  {state.sessions.map((s) => (
+                    <li
+                      key={s.threadId}
+                      className="island-session-row island-no-drag"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => onIntent({ name: 'open-session', threadId: s.threadId })}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          onIntent({ name: 'open-session', threadId: s.threadId })
+                        }
+                      }}
+                    >
+                      <span className={cn('island-dot', PHASE_DOT[s.phase])} />
+                      <div className="island-session-copy">
+                        <span className="island-session-title">{s.title}</span>
+                        {s.activityLines.length > 0 ? (
+                          <span className="island-session-activity">{s.activityLines[s.activityLines.length - 1]}</span>
+                        ) : s.detail ? (
+                          <span className="island-session-detail">{s.detail}</span>
+                        ) : null}
+                        {sessionMetaById[s.threadId] && (
+                          <span className="island-session-meta">{sessionMetaById[s.threadId]}</span>
+                        )}
+                      </div>
+                      {s.project && (
+                        <span className="island-session-project">{s.project}</span>
                       )}
-                    </div>
-                    {s.project && (
-                      <span className="island-session-project">{s.project}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
+                    </li>
+                  ))}
+                </ul>
+              )
             )}
 
             {(state.planning.todos.length > 0 || state.planning.reminders.length > 0) && (
