@@ -36,8 +36,7 @@ import {
   persistSuggestion,
 } from "./store";
 import { createAutomationJob } from "../automation/automation-manager";
-import { smartAddMemoryV2Candidate } from "../memory-v2/smart-add";
-import { ensurePersona } from "../memory-v2/persona";
+import { MemoryCommandService } from "../memory-v2/command-service";
 import { createLogger } from "../infra/logger";
 
 const log = createLogger("suggest-service");
@@ -182,25 +181,20 @@ async function dispatchAcceptedAction(record: SuggestionRecord): Promise<void> {
   const action = record.action;
   switch (action.type) {
     case "memory_correction": {
-      await smartAddMemoryV2Candidate({
-        workspaceSlug: record.workspaceSlug,
-        candidate: {
-          kind: "preference",
-          targetScope: record.workspaceSlug ? "workspace" : "global",
-          statement: action.rule,
-          confidence: "high",
-          tags: ["correction", "suggestion-derived"],
-          claim: {
-            subject: "user/self",
-            predicate: "preference",
-            object: action.rule,
-          },
+      await new MemoryCommandService().remember({
+        workspaceSlug: record.workspaceSlug ?? "global",
+        content: action.rule,
+        scope: "global",
+        semanticRole: "preference",
+        facets: ["correction", "suggestion-derived"],
+        confidence: "high",
+        claim: {
+          subject: "user/self",
+          predicate: "preference",
+          object: action.rule,
         },
-      });
-      // 回流 persona：correction 已写入 memory-v2 后，fire-and-forget 触发画像重生成
-      // （Task 9 / 周期 1 延后项）。fail-open：catch 吞错，绝不阻塞反馈流。
-      void ensurePersona({ workspaceSlug: record.workspaceSlug }).catch((error) => {
-        log.warn("ensurePersona 回流失败 (fail-open)", { error });
+        actor: "user",
+        explicitCorrection: true
       });
       return;
     }

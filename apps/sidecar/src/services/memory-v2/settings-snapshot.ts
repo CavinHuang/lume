@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type {
   MemoryKind,
   MemoryPendingCounts,
@@ -8,6 +8,7 @@ import type {
   MemorySettingsPendingSummary,
   MemorySettingsSnapshot
 } from "@lume/shared";
+import type { MemoryMutationReceipt } from "@lume/shared";
 import {
   MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_LABEL,
   MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF
@@ -21,6 +22,7 @@ import { resolveMemoryRerankModelRef } from "./rerank";
 import { getSemanticIndexStatus } from "./semantic-index";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { getMemoryRuntimeConfig } from "./policy";
+import { memoryJobService } from "./job-service";
 import type { MemoryV2Entry, MemoryV2Kind, MemoryV2PendingItem, MemoryV2Status } from "./types";
 
 export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettingsSnapshot {
@@ -81,6 +83,29 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
     workspaceEntries: workspaceEntries.map(entrySummary),
     globalEntries: globalEntries.map(entrySummary),
     pending: pending.map((item) => pendingSummary(item, entryById)),
+    activity: readRecentActivity([workspacePaths.journalDir, globalPaths.journalDir]),
+    jobs: memoryJobService.list(workspaceSlug).slice(0, 20).map((job) => ({
+      jobId: job.jobId,
+      kind: job.kind,
+      status: job.status,
+      createdAt: job.createdAt,
+      retryable: job.kind === "external_ingest"
+        && (job.status === "failed" || job.status === "cancelled" || job.status === "interrupted")
+        && job.payload !== undefined,
+      ...(job.completedAt ? { completedAt: job.completedAt } : {}),
+      ...(job.error ? { error: job.error } : {})
+    })),
+    migration: {
+      schemaVersion: readSchemaVersion(workspacePaths.schemaMarker),
+      backupPaths: listBackupPaths(workspacePaths.root)
+    },
+    ...(existsSync(workspacePaths.workspaceBrief) ? {
+      workspaceBrief: {
+        path: workspacePaths.workspaceBrief,
+        markdown: readFileSync(workspacePaths.workspaceBrief, "utf-8"),
+        updatedAt: fileUpdatedAt(workspacePaths.workspaceBrief)
+      }
+    } : {}),
     extraction: {
       ...(extractionModelRef ? { modelRef: extractionModelRef } : {}),
       source: extractionModelRef ? "configured" : "disabled",
@@ -112,6 +137,48 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
       }
     }
   };
+}
+
+function readRecentActivity(journalDirs: string[]): MemoryMutationReceipt[] {
+  const receipts: MemoryMutationReceipt[] = [];
+  for (const dir of journalDirs) {
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir).filter((item) => item.endsWith(".jsonl"))) {
+      try {
+        for (const line of readFileSync(join(dir, name), "utf-8").split(/\r?\n/).filter(Boolean)) {
+          const parsed = JSON.parse(line) as { receipt?: MemoryMutationReceipt };
+          if (parsed.receipt) receipts.push(parsed.receipt);
+        }
+      } catch {
+        // A malformed journal must not make memory settings unavailable.
+      }
+    }
+  }
+  return receipts.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100);
+}
+
+function readSchemaVersion(path: string): number | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as { version?: unknown };
+    return typeof parsed.version === "number" ? parsed.version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function listBackupPaths(root: string): string[] {
+  const parent = dirname(root);
+  const prefix = `${basename(root)}.backup-`;
+  try {
+    return readdirSync(parent)
+      .filter((name) => name.startsWith(prefix))
+      .sort()
+      .reverse()
+      .slice(0, 5)
+      .map((name) => join(parent, name));
+  } catch {
+    return [];
+  }
 }
 
 function localOnnxStatusMessage(status: ReturnType<typeof getLocalOnnxMemoryEmbeddingStatus>["status"]): string {
@@ -171,6 +238,15 @@ function entrySummary(entry: MemoryV2Entry): MemorySettingsEntrySummary {
     updated: entry.frontmatter.updated,
     pinned: entry.frontmatter.pinned,
     tags: entry.frontmatter.tags,
+    semanticRole: entry.frontmatter.semantic_role,
+    facets: entry.frontmatter.facets,
+    revision: entry.frontmatter.revision,
+    lastConfirmedAt: entry.frontmatter.last_confirmed_at,
+    evidenceRefs: entry.frontmatter.evidence_refs,
+    supersedes: entry.frontmatter.supersedes,
+    ...(entry.frontmatter.superseded_by ? { supersededBy: entry.frontmatter.superseded_by } : {}),
+    ...(entry.frontmatter.valid_from ? { validFrom: entry.frontmatter.valid_from } : {}),
+    ...(entry.frontmatter.valid_to ? { validTo: entry.frontmatter.valid_to } : {}),
     activation: readActivation(entry.frontmatter),
     ...(entry.frontmatter.claim ? { claim: entry.frontmatter.claim } : {})
   };

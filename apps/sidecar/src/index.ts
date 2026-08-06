@@ -425,6 +425,8 @@ async function boot(): Promise<void> {
       shutdownLspClients(),
       externalChromeTransport?.close() ?? Promise.resolve(),
     ]);
+    const { memoryJobService } = await import("./services/memory-v2/job-service");
+    await memoryJobService.waitForSettled(60_000);
     const { stopRoutineRunner } = require("./services/routine/routine-runner");
     stopRoutineRunner();
     imRuntimeManager.stopAll();
@@ -445,11 +447,11 @@ async function boot(): Promise<void> {
   };
   process.once("exit", () => { void stopWatcher(); });
   process.once("SIGINT", async () => {
-    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 2_000))]);
+    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 60_000))]);
     process.exit(0);
   });
   process.once("SIGTERM", async () => {
-    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 2_000))]);
+    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 60_000))]);
     process.exit(0);
   });
 

@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "@lume/agent-sdk";
-import type { MemoryClaim, MemoryKind, MemoryScope, MemorySearchResult } from "@lume/shared";
+import type { MemoryClaim, MemoryKind, MemoryScopeInput, MemorySearchResult } from "@lume/shared";
 import {
+  forgetMemoryTool,
   readMemoryTool,
   rememberMemoryTool,
   searchMemoryTool
@@ -55,8 +56,8 @@ function optionalClaim(value: unknown): MemoryClaim | undefined {
   };
 }
 
-function memoryV2RememberScope(value: unknown): MemoryScope {
-  return value === "global" ? "global" : "workspace";
+function memoryV2RememberScope(value: unknown): MemoryScopeInput {
+  return value === "global" || value === "workspace" ? value : "auto";
 }
 
 function optionalStringRecord(value: unknown): Record<string, string> | undefined {
@@ -72,6 +73,8 @@ export function createSdkMemoryTools(params: {
   workspaceSlug: string;
   enabledTools: Set<string>;
   includeCitations: boolean;
+  threadId?: string;
+  runId?: string;
 }): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
 
@@ -147,8 +150,8 @@ export function createSdkMemoryTools(params: {
       inputSchema: {
         type: "object",
         properties: {
-          scope: { type: "string", enum: ["global", "workspace"] },
-          kind: { type: "string", enum: ["raw", "summary", "fact", "preference", "decision", "episode", "lesson", "milestone", "artifact"] },
+          scope: { type: "string", enum: ["auto", "global", "workspace"], default: "auto" },
+          kind: { type: "string", enum: ["raw", "summary", "fact", "preference", "decision", "episode", "lesson", "milestone", "artifact"], description: "Deprecated compatibility hint; omit for new writes." },
           content: { type: "string", minLength: 1 },
           title: { type: "string" },
           importance: { type: "number", minimum: 1, maximum: 5 },
@@ -170,13 +173,13 @@ export function createSdkMemoryTools(params: {
           sourceMessageIds: { type: "array", items: { type: "string" } },
           requireReview: { type: "boolean" }
         },
-        required: ["scope", "kind", "content"]
+        required: ["content"]
       },
       async call(input) {
         return rememberMemoryTool({
           workspaceSlug: params.workspaceSlug,
           scope: memoryV2RememberScope(input.scope),
-          kind: String(input.kind ?? "fact") as MemoryKind,
+          kind: typeof input.kind === "string" ? input.kind as MemoryKind : undefined,
           content: String(input.content ?? ""),
           title: typeof input.title === "string" ? input.title : undefined,
           importance: optionalImportance(input.importance),
@@ -184,7 +187,35 @@ export function createSdkMemoryTools(params: {
           tags: optionalStringArray(input.tags),
           claim: optionalClaim(input.claim),
           sourceMessageIds: optionalStringArray(input.sourceMessageIds),
+          sourceSessionId: params.runId,
+          threadId: params.threadId,
           requireReview: typeof input.requireReview === "boolean" ? input.requireReview : undefined
+        });
+      }
+    }));
+  }
+
+  if (params.enabledTools.has("memory.forget")) {
+    tools.push(createSdkJsonResultTool({
+      name: "memory.forget",
+      description: "Reversibly archive one memory only when the user explicitly asks to forget that exact item. Search first to obtain its id.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", minLength: 1 },
+          scope: { type: "string", enum: ["global", "workspace"] },
+          explicitUserIntent: { type: "boolean", const: true }
+        },
+        required: ["id", "explicitUserIntent"]
+      },
+      async call(input) {
+        return forgetMemoryTool({
+          workspaceSlug: params.workspaceSlug,
+          id: String(input.id ?? ""),
+          scope: input.scope === "global" || input.scope === "workspace" ? input.scope : undefined,
+          explicitUserIntent: true,
+          sourceSessionId: params.runId,
+          threadId: params.threadId
         });
       }
     }));

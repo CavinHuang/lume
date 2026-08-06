@@ -24,7 +24,7 @@ import type {
   MemoryToolPolicy,
 } from '@lume/shared'
 
-export type MemorySettingsView = 'profile' | 'workflow' | 'voice' | 'instruction' | 'pending'
+export type MemorySettingsView = 'recent' | 'about' | 'workspace' | 'all' | 'pending'
 export type MemoryUserCategory = Exclude<MemorySettingsView, 'pending'>
 
 export interface MemoryOverviewMetric {
@@ -48,34 +48,6 @@ export interface MemoryIngestItemRow {
 
 export type MemoryIngestTargetScopeMode = 'auto' | 'workspace' | 'global'
 
-export type MemoryEntryLayerFilter =
-  | 'all'
-  | 'profile'
-  | 'voice'
-  | 'global-memory'
-  | 'structured'
-  | 'other'
-
-export const MEMORY_ENTRY_LAYER_FILTERS: Array<{
-  id: MemoryEntryLayerFilter
-  label: string
-}> = [
-  { id: 'all', label: '全部' },
-  { id: 'profile', label: '身份画像' },
-  { id: 'voice', label: '写作风格' },
-  { id: 'global-memory', label: '全局记忆' },
-  { id: 'structured', label: '结构化事实' },
-  { id: 'other', label: '其他' },
-]
-
-const MEMORY_ENTRY_LAYER_LABELS: Record<Exclude<MemoryEntryLayerFilter, 'all'>, string> = {
-  profile: '身份画像',
-  voice: '写作风格',
-  'global-memory': '全局记忆',
-  structured: '结构化事实',
-  other: '其他',
-}
-
 export interface MemoryDetailRow {
   label: string
   value: string
@@ -85,10 +57,10 @@ export const MEMORY_SETTINGS_VIEWS: Array<{
   id: MemorySettingsView
   label: string
 }> = [
-  { id: 'profile', label: '身份记忆' },
-  { id: 'workflow', label: '工作方式' },
-  { id: 'voice', label: '写作风格' },
-  { id: 'instruction', label: '用户指令' },
+  { id: 'recent', label: '最近记住' },
+  { id: 'about', label: '关于你' },
+  { id: 'workspace', label: '当前工作区' },
+  { id: 'all', label: '全部记忆' },
 ]
 
 export const MEMORY_USER_CATEGORY_META: Record<MemoryUserCategory, {
@@ -97,29 +69,29 @@ export const MEMORY_USER_CATEGORY_META: Record<MemoryUserCategory, {
   placeholder: string
   empty: string
 }> = {
-  profile: {
-    label: '身份记忆',
-    desc: '称呼、身份和稳定个人信息。',
-    placeholder: '例如：我希望你叫我 Mason',
-    empty: '暂无身份记忆。Lume 会在对话中自动提取，你也可以在下方手动添加。',
+  recent: {
+    label: '最近记住',
+    desc: '按更新时间查看最近发生变化的记忆。',
+    placeholder: '补充一条长期有用的信息',
+    empty: '最近还没有记忆变化。',
   },
-  workflow: {
-    label: '工作方式',
-    desc: '偏好、习惯、项目约定和长期工作状态。',
-    placeholder: '例如：我偏好先讨论方案，再开始改代码',
-    empty: '暂无工作方式记忆。适合保存长期偏好、项目习惯和稳定约定。',
+  about: {
+    label: '关于你',
+    desc: '全局身份与稳定偏好，以及由它们生成的用户画像。',
+    placeholder: '例如：以后默认使用中文回答',
+    empty: '暂无关于你的全局记忆。',
   },
-  voice: {
-    label: '写作风格',
-    desc: '文风、语气、表达偏好和输出格式。',
-    placeholder: '例如：我的写作风格偏好简洁、有温度',
-    empty: '暂无写作风格记忆。可以告诉 Lume 你喜欢的语气、长度和表达方式。',
+  workspace: {
+    label: '当前工作区',
+    desc: '当前项目的稳定约束、决策和已验证经验。',
+    placeholder: '例如：这个项目提交信息必须使用中文',
+    empty: '当前工作区暂无记忆。',
   },
-  instruction: {
-    label: '用户指令',
-    desc: '长期规则、事实源和希望 Lume 始终遵守的指令。',
-    placeholder: '例如：最终回复需要包含变更文件和剩余风险',
-    empty: '暂无用户指令。适合保存长期有效的规则，不适合放一次性任务。',
+  all: {
+    label: '全部记忆',
+    desc: '跨作用域查看和管理全部原子记忆。',
+    placeholder: '添加一条记忆；作用域会自动推断',
+    empty: '暂无记忆。',
   },
 }
 
@@ -326,105 +298,54 @@ export function buildMemoryLayerMetrics(snapshot: MemorySettingsSnapshot | null)
     ...(snapshot?.workspaceEntries ?? []),
     ...(snapshot?.globalEntries ?? []),
   ].filter((entry) => entry.status === 'active' || entry.status === 'suspected_stale')
-  const isProfile = (entry: MemorySettingsEntrySummary) =>
-    entry.claim?.predicate === 'preferred_name'
-    || entry.claim?.predicate === 'identity'
-    || entry.tags.some((tag) => ['profile', 'identity', 'preferred-name'].includes(tag.toLowerCase()))
-  const isVoice = (entry: MemorySettingsEntrySummary) =>
-    entry.claim?.predicate === 'writing_style'
-    || entry.tags.some((tag) => ['voice', 'writing-style'].includes(tag.toLowerCase()))
-  const isInstruction = (entry: MemorySettingsEntrySummary) =>
-    entry.tags.some((tag) => ['instruction', 'rule', 'workflow'].includes(tag.toLowerCase()))
-    || entry.claim?.predicate === 'source_of_truth'
   return [
     {
-      label: '身份画像',
-      value: String(entries.filter(isProfile).length),
-      desc: '称呼、身份和稳定个人信息',
+      label: '证据记录',
+      value: String((snapshot?.counts.daily ?? 0) + (snapshot?.counts.runs ?? 0)),
+      desc: '每日摘要与 Run 证据',
     },
     {
-      label: '写作风格',
-      value: String(entries.filter(isVoice).length),
-      desc: '文风、语气和表达偏好',
-    },
-    {
-      label: '规则指令',
-      value: String(entries.filter(isInstruction).length),
-      desc: '工作方式、事实源和项目约定',
-    },
-    {
-      label: '语义条目',
+      label: '原子记忆',
       value: String(entries.length),
-      desc: '可被召回和整理的结构化记忆',
+      desc: '可验证、可版本化的长期信息',
+    },
+    {
+      label: '开放标签',
+      value: String(new Set(entries.flatMap((entry) => entry.facets ?? entry.tags)).size),
+      desc: '用于动态查询，不是固定分类',
+    },
+    {
+      label: '待处理',
+      value: String(snapshot?.counts.pending.total ?? 0),
+      desc: '冲突、低置信与可能过期',
     },
   ]
-}
-
-export function filterMemoryEntriesByLayer(
-  entries: MemorySettingsEntrySummary[],
-  filter: MemoryEntryLayerFilter,
-): MemorySettingsEntrySummary[] {
-  if (filter === 'all') return entries
-  return entries.filter((entry) => classifyMemoryEntryLayer(entry) === filter)
 }
 
 export function filterMemoryEntriesByUserCategory(
   entries: MemorySettingsEntrySummary[],
   category: MemoryUserCategory,
 ): MemorySettingsEntrySummary[] {
-  return entries.filter((entry) => {
-    if (category === 'profile') return isProfileMemoryEntry(entry)
-    if (category === 'voice') return isVoiceMemoryEntry(entry)
-    if (category === 'instruction') return isInstructionMemoryEntry(entry)
-    return !isProfileMemoryEntry(entry)
-      && !isVoiceMemoryEntry(entry)
-      && !isInstructionMemoryEntry(entry)
-  })
-}
-
-type MemoryLayerClassifiable = Pick<MemorySettingsEntrySummary, 'scope' | 'tags' | 'claim'> & {
-  pinned?: boolean
-}
-
-export function classifyMemoryEntryLayer(entry: MemorySettingsEntrySummary): Exclude<MemoryEntryLayerFilter, 'all'> {
-  return classifyMemoryLayer(entry)
-}
-
-function classifyMemoryLayer(entry: MemoryLayerClassifiable): Exclude<MemoryEntryLayerFilter, 'all'> {
-  if (isProfileMemoryEntry(entry)) return 'profile'
-  if (isVoiceMemoryEntry(entry)) return 'voice'
-  if (isGlobalMemoryEntry(entry)) return 'global-memory'
-  if (entry.claim) return 'structured'
-  return 'other'
+  if (category === 'workspace') return entries.filter((entry) => entry.scope === 'workspace')
+  if (category === 'about') {
+    return entries.filter((entry) => entry.scope === 'global'
+      && (entry.semanticRole === 'identity' || entry.semanticRole === 'preference'))
+  }
+  if (category === 'recent') {
+    return entries.slice(0, 50)
+  }
+  return entries
 }
 
 export function memoryEntryLayerLabel(entry: MemorySettingsEntrySummary): string {
-  return MEMORY_ENTRY_LAYER_LABELS[classifyMemoryEntryLayer(entry)]
+  if (entry.semanticRole) return semanticRoleLabel(entry.semanticRole)
+  if (entry.claim) return '结构化 Claim'
+  return entry.scope === 'global' ? '全局' : '工作区'
 }
 
 export function memoryPendingCandidateLayerLabel(candidate: MemorySettingsPendingCandidateSummary): string {
-  return MEMORY_ENTRY_LAYER_LABELS[classifyMemoryLayer(candidate)]
-}
-
-function isProfileMemoryEntry(entry: MemoryLayerClassifiable): boolean {
-  return entry.claim?.predicate === 'preferred_name'
-    || entry.claim?.predicate === 'identity'
-    || entry.tags.some((tag) => ['profile', 'identity', 'preferred-name'].includes(tag.toLowerCase()))
-}
-
-function isVoiceMemoryEntry(entry: MemoryLayerClassifiable): boolean {
-  return entry.claim?.predicate === 'writing_style'
-    || entry.tags.some((tag) => ['voice', 'writing-style'].includes(tag.toLowerCase()))
-}
-
-function isInstructionMemoryEntry(entry: MemoryLayerClassifiable): boolean {
-  return entry.claim?.predicate === 'source_of_truth'
-    || entry.tags.some((tag) => ['instruction', 'rule', 'global-memory'].includes(tag.toLowerCase()))
-    || (entry.scope === 'global' && entry.pinned === true)
-}
-
-function isGlobalMemoryEntry(entry: MemoryLayerClassifiable): boolean {
-  return entry.scope === 'global' && isInstructionMemoryEntry(entry)
+  if (candidate.claim) return '结构化 Claim'
+  return candidate.scope === 'global' ? '全局' : '工作区'
 }
 
 export function pendingNotice(counts?: MemoryPendingCounts): string {
@@ -484,6 +405,9 @@ export function summarizeMemoryIngestSourcesJob(job: MemoryIngestSourcesJob): st
     ].filter(Boolean).join(' · ')
   }
   if (job.status === 'failed') return `整理失败：${job.error ?? '未知错误'}`
+  if (job.status === 'cancelled') return '整理已停止'
+  if (job.status === 'interrupted') return `整理被中断：${job.error ?? '可重试'}`
+  if (job.status === 'queued') return '等待后台整理'
   return job.result ? summarizeMemoryIngestSourcesResult(job.result) : '整理完成'
 }
 
@@ -503,6 +427,9 @@ export function summarizeMemoryOrganizeJob(job: MemoryOrganizeJob): string {
     return parts.join(' · ')
   }
   if (job.status === 'failed') return `整理失败：${job.error ?? '未知错误'}`
+  if (job.status === 'cancelled') return '整理已停止'
+  if (job.status === 'interrupted') return `整理被中断：${job.error ?? '可重试'}`
+  if (job.status === 'queued') return '等待后台整理'
   if (!job.result) return '整理完成'
   return job.kind === 'entries'
     ? summarizeMemoryOrganizeEntriesResult(job.result as MemoryOrganizeEntriesResult)
@@ -582,7 +509,26 @@ function memoryIngestActionTone(action: MemoryIngestSourcesItem['action']): Memo
 
 export function summarizeMemoryEntry(entry: MemorySettingsEntrySummary): string {
   const scope = entry.scope === 'global' ? '全局' : '工作区'
-  return `${scope} · ${MEMORY_KIND_LABELS[entry.kind]} · ${MEMORY_STATUS_LABELS[entry.status]}`
+  const role = entry.semanticRole
+    ? semanticRoleLabel(entry.semanticRole)
+    : entry.kind === 'summary' || entry.kind === 'episode' || entry.kind === 'milestone'
+    ? '状态'
+    : entry.kind === 'artifact' || entry.kind === 'raw'
+    ? '记忆'
+    : MEMORY_KIND_LABELS[entry.kind]
+  return `${scope} · ${role} · ${MEMORY_STATUS_LABELS[entry.status]}`
+}
+
+function semanticRoleLabel(role: NonNullable<MemorySettingsEntrySummary['semanticRole']>): string {
+  return ({
+    identity: '身份',
+    fact: '事实',
+    preference: '偏好',
+    constraint: '约束',
+    decision: '决策',
+    lesson: '经验',
+    state: '状态',
+  } as const)[role]
 }
 
 export function buildMemoryDetailRows(detail: MemoryReadToolResult | null): MemoryDetailRow[] {
@@ -592,7 +538,6 @@ export function buildMemoryDetailRows(detail: MemoryReadToolResult | null): Memo
     : detail.metadata?.scope === 'workspace'
     ? '工作区'
     : undefined
-  const kind = detail.metadata?.kind ? MEMORY_KIND_LABELS[detail.metadata.kind] : undefined
   const claim = detail.metadata?.claim
     ? `${detail.metadata.claim.subject}.${detail.metadata.claim.predicate} = ${detail.metadata.claim.object}`
     : undefined
@@ -601,7 +546,6 @@ export function buildMemoryDetailRows(detail: MemoryReadToolResult | null): Memo
   const layer = detailToMemoryEntryLayerLabel(detail)
   return [
     scope ? { label: '范围', value: scope } : undefined,
-    kind ? { label: '类型', value: kind } : undefined,
     layer ? { label: '分层', value: layer } : undefined,
     claim ? { label: 'Claim', value: claim } : undefined,
     tags ? { label: '标签', value: tags } : undefined,

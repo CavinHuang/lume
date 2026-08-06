@@ -309,13 +309,12 @@ describe("handleSuggestionFeedback", () => {
     spies.smartAdd.mockImplementation(async () => ({ action: "added" }));
   });
 
-  test("accepted + memory_correction → ensurePersona 回流（fire-and-forget）", async () => {
+  test("accepted + memory_correction → 由 memory mutation 失效派生画像，不直接调用 ensurePersona", async () => {
     state.records = [
       { ...correctionCandidate, id: 5, status: "suggested", createdAt: 0, workspaceSlug: "ws" },
     ];
     await handleSuggestionFeedback(5, "accepted");
-    expect(spies.ensurePersona).toHaveBeenCalledTimes(1);
-    expect(spies.ensurePersona).toHaveBeenCalledWith({ workspaceSlug: "ws" });
+    expect(spies.ensurePersona).toHaveBeenCalledTimes(0);
   });
 
   test("ignored → ensurePersona 不回流", async () => {

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import type {
   MemoryReadToolInput,
   MemoryReadToolResult,
+  MemoryForgetToolInput,
   MemoryRememberToolInput,
   MemorySearchResult,
   MemorySearchToolInput,
@@ -10,16 +11,17 @@ import type {
 } from "@lume/shared";
 import { createMemoryV2Store } from "./markdown-store";
 import { searchMemoryV2 } from "./retrieval";
-import { smartAddMemoryV2Candidate } from "./smart-add";
 import { extractExplicitMemoryCandidates } from "./extraction";
 import { claimFromEntry, inferMemoryV2Claim, normalizeMemoryV2Claim } from "./claim";
 import type { MemoryV2Candidate, MemoryV2Kind, MemoryV2Scope } from "./types";
 import { memoryFileRefForPath } from "./source-files";
+import { MemoryCommandService, toSharedMemoryReceipt } from "./command-service";
 
 export const MEMORY_V2_TOOL_NAMES = [
   "memory.search",
   "memory.read",
-  "memory.remember"
+  "memory.remember",
+  "memory.forget"
 ] as const satisfies readonly MemoryToolName[];
 
 export async function searchMemoryTool(input: MemorySearchToolInput): Promise<MemorySearchResult[]> {
@@ -97,32 +99,57 @@ function fileRefFieldForAnyScope(workspaceSlug: string, path: string) {
 }
 
 export async function rememberMemoryTool(input: MemoryRememberToolInput): Promise<MemoryToolWriteResult> {
-  const scope = toMemoryV2Scope(input.scope);
+  const scope = input.scope === "auto" || input.scope === undefined ? "workspace" : toMemoryV2Scope(input.scope);
   const kind = toMemoryV2Kind(input.kind);
   const candidate = normalizeRememberCandidate(input, scope, kind);
-  const result = await smartAddMemoryV2Candidate({
+  const receipt = await new MemoryCommandService().remember({
     workspaceSlug: input.workspaceSlug,
-    candidate
+    content: candidate.statement,
+    scope: input.scope ?? "auto",
+    legacyKind: input.kind,
+    semanticRole: candidate.semanticRole,
+    facets: candidate.facets ?? candidate.tags,
+    confidence: candidate.confidence,
+    claim: candidate.claim,
+    evidenceRefs: input.evidenceRefs,
+    actor: input.actor ?? "main_agent",
+    runId: input.sourceSessionId,
+    threadId: input.threadId,
+    explicitCorrection: input.explicitCorrection
   });
-  if (result.entry) {
-    return {
-      id: result.entry.frontmatter.id,
-      path: result.entry.path,
-      kind: fromMemoryV2Kind(result.entry.frontmatter.kind),
-      scope: result.entry.frontmatter.scope
-    };
-  }
-  if (result.pending) {
-    return {
-      id: result.pending.frontmatter.id,
-      path: result.pending.path,
-      kind: fromMemoryV2Kind(result.pending.frontmatter.candidate.kind),
-      scope: result.pending.frontmatter.candidate.targetScope
-    };
-  }
+  const entry = receipt.memoryIds.length > 0
+    ? createMemoryV2Store().listEntries({ workspaceSlug: input.workspaceSlug, includeStatuses: ["active", "suspected_stale", "superseded", "archived"] })
+      .find((item) => item.frontmatter.id === receipt.memoryIds[0])
+    : undefined;
   return {
-    kind: input.kind,
-    scope: input.scope
+    ...toSharedMemoryReceipt(receipt),
+    workspaceSlug: input.workspaceSlug,
+    ...(entry ? { id: entry.frontmatter.id, path: entry.path, kind: fromMemoryV2Kind(entry.frontmatter.kind) } : {})
+  };
+}
+
+export async function forgetMemoryTool(input: MemoryForgetToolInput): Promise<MemoryToolWriteResult> {
+  if (input.explicitUserIntent !== true) {
+    throw new Error("memory.forget 只能响应用户明确的遗忘请求");
+  }
+  const service = new MemoryCommandService();
+  const receipt = service.archive({
+    workspaceSlug: input.workspaceSlug,
+    id: input.id,
+    scope: input.scope,
+    actor: "main_agent",
+    runId: input.sourceSessionId,
+    threadId: input.threadId
+  });
+  const entry = createMemoryV2Store().listEntries({
+    workspaceSlug: input.workspaceSlug,
+    scopes: [receipt.scope],
+    includeStatuses: ["archived"]
+  }).find((item) => item.frontmatter.id === input.id);
+  return {
+    ...toSharedMemoryReceipt(receipt),
+    workspaceSlug: input.workspaceSlug,
+    ...(entry ? { id: entry.frontmatter.id, path: entry.path, kind: fromMemoryV2Kind(entry.frontmatter.kind) } : {})
   };
 }
 

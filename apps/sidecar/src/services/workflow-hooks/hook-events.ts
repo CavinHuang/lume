@@ -1,4 +1,5 @@
 import type { MemoryV2RecallItem } from "../memory-v2/types";
+import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import type { LumeWorkflowHookEffect } from "./hook-effects";
 import type { LumeWorkflowHookHandlerContext } from "./hook-services";
 
@@ -46,6 +47,7 @@ export interface LumeWorkflowHookBaseEvent {
   threadType?: string;
   chatType?: string;
   messageMetadata?: Record<string, unknown>;
+  modelRef?: string;
 }
 
 export interface LumeWorkflowRunBeforeStartEvent extends LumeWorkflowHookBaseEvent {
@@ -68,6 +70,7 @@ export interface LumeWorkflowRunAfterCompleteEvent extends LumeWorkflowHookBaseE
     costUSD?: number;
   };
   memoryContextUsedItems: MemoryV2RecallItem[];
+  runItems?: LumeRunItem[];
 }
 
 export interface LumeWorkflowRunAfterFailureEvent extends LumeWorkflowHookBaseEvent {

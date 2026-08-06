@@ -50,7 +50,7 @@ describe("createPersonaHandlers", () => {
     expect(personaMocks.parsePersonaProfile.mock.calls[0]).toEqual([""]);
   });
 
-  test("GET 有 markdown → 透传 scope/workspaceSlug + 返回 markdown+parsed", async () => {
+  test("GET 有 markdown → 始终读取 global 派生画像", async () => {
     const { createPersonaHandlers } = await import("./persona-handlers");
     const handlers = createPersonaHandlers();
     const md = "# 用户画像\n## 用户（称呼）\n小明";
@@ -67,17 +67,16 @@ describe("createPersonaHandlers", () => {
     })) as PersonaGetResult;
     expect(result.markdown).toBe(md);
     expect(result.parsed.name).toBe("小明");
-    // readPersonaRaw 透传解析后的 scope+workspaceSlug
-    expect(personaMocks.readPersonaRaw.mock.calls[0]).toEqual(["workspace", "demo"]);
+    expect(personaMocks.readPersonaRaw.mock.calls[0]).toEqual(["global"]);
     expect(personaMocks.parsePersonaProfile.mock.calls[0]).toEqual([md]);
   });
 
-  test("GET 仅传 workspaceSlug → scope 默认 workspace", async () => {
+  test("GET 仅传 workspaceSlug → 仍读取 global Persona", async () => {
     const { createPersonaHandlers } = await import("./persona-handlers");
     const handlers = createPersonaHandlers();
     personaMocks.readPersonaRaw.mockReturnValueOnce(null);
     await handlers[PERSONA_IPC_CHANNELS.GET]!({ workspaceSlug: "demo" });
-    expect(personaMocks.readPersonaRaw.mock.calls[0]).toEqual(["workspace", "demo"]);
+    expect(personaMocks.readPersonaRaw.mock.calls[0]).toEqual(["global"]);
   });
 
   test("GET 无参 → scope 默认 global、workspaceSlug undefined", async () => {
@@ -105,17 +104,15 @@ describe("createPersonaHandlers", () => {
     ).rejects.toThrow(/persona:get/);
   });
 
-  test("UPDATE 调 writePersona 透传 markdown + scope", async () => {
+  test("UPDATE 拒绝直接修改派生 persona Markdown", async () => {
     const { createPersonaHandlers } = await import("./persona-handlers");
     const handlers = createPersonaHandlers();
-    const result = await handlers[PERSONA_IPC_CHANNELS.UPDATE]!({
+    await expect(handlers[PERSONA_IPC_CHANNELS.UPDATE]!({
       scope: "workspace",
       workspaceSlug: "demo",
       markdown: "# 新画像",
-    });
-    expect(result).toEqual({ ok: true });
-    expect(personaMocks.writePersona).toHaveBeenCalledTimes(1);
-    expect(personaMocks.writePersona.mock.calls[0]).toEqual(["workspace", "demo", "# 新画像"]);
+    })).rejects.toThrow("派生视图");
+    expect(personaMocks.writePersona).toHaveBeenCalledTimes(0);
   });
 
   test("UPDATE 空 markdown → throw", async () => {
@@ -154,18 +151,14 @@ describe("createPersonaHandlers", () => {
     });
     expect(result).toEqual({ ok: true });
     expect(personaMocks.ensurePersona).toHaveBeenCalledTimes(1);
-    expect(personaMocks.ensurePersona.mock.calls[0]).toEqual([
-      { scope: "workspace", workspaceSlug: "demo" },
-    ]);
+    expect(personaMocks.ensurePersona.mock.calls[0]).toEqual([{ scope: "global" }]);
   });
 
   test("REGENERATE 无参 → 透传 undefined（ensurePersona 内部默认 global）", async () => {
     const { createPersonaHandlers } = await import("./persona-handlers");
     const handlers = createPersonaHandlers();
     await handlers[PERSONA_IPC_CHANNELS.REGENERATE]!({});
-    expect(personaMocks.ensurePersona.mock.calls[0]).toEqual([
-      { scope: undefined, workspaceSlug: undefined },
-    ]);
+    expect(personaMocks.ensurePersona.mock.calls[0]).toEqual([{ scope: "global" }]);
   });
 
   test("REGENERATE 非法 scope → throw（不调 ensurePersona）", async () => {

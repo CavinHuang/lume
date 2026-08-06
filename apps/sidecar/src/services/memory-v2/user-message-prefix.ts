@@ -12,6 +12,7 @@ import {
 } from "./claim";
 import { selectMemoryV2PromptItems } from "./context-selection";
 import type { MemoryV2RecallItem, MemoryV2Scope } from "./types";
+import { recordMemoryRecallUsage } from "./recall-usage";
 
 const MEMORY_CONTEXT_RE = /^\s*<lume_memory_context>\n[\s\S]*?<\/lume_memory_context>\n\s*/;
 
@@ -26,6 +27,7 @@ export async function buildMemoryV2UserMessageContext(input: {
   userMessage: string;
   sessionType?: "main" | "subagent" | "group" | "channel";
   maxItems?: number;
+  contextTokenBudget?: number;
 }): Promise<MemoryV2UserMessageContext> {
   if (!input.workspaceSlug || !input.userMessage.trim() || input.sessionType !== "main") {
     return {
@@ -50,7 +52,7 @@ export async function buildMemoryV2UserMessageContext(input: {
     ? directClaimItems
     : queryPlan.querySubject ? profileItems : [];
   const voiceSeed = shouldSeedVoiceMemory(input.userMessage, queryPlan.desiredPredicates) ? voiceItems : [];
-  const promptMaxItems = input.maxItems ?? 8;
+  const promptMaxItems = Math.min(input.maxItems ?? 5, 5);
   const items = await searchMemoryV2({
     workspaceSlug: input.workspaceSlug,
     query: input.userMessage,
@@ -62,9 +64,11 @@ export async function buildMemoryV2UserMessageContext(input: {
   const selected = selectMemoryV2PromptItems({
     items: merged,
     query: input.userMessage,
-    maxItems: promptMaxItems
+    maxItems: promptMaxItems,
+    tokenBudget: Math.min(1_200, Math.max(1, Math.floor((input.contextTokenBudget ?? 12_000) * 0.1)))
   });
   const prefix = buildMemoryUserMessagePrefix(selected, { workspaceSlug: input.workspaceSlug });
+  recordMemoryRecallUsage({ workspaceSlug: input.workspaceSlug, items: selected });
   return {
     prefix,
     items: selected,
@@ -185,7 +189,7 @@ function renderVoiceSection(items: MemoryV2RecallItem[]): string {
  * 与 ensurePersona 默认作用域一致。
  */
 function resolvePersonaScope(workspaceSlug?: string): { scope: MemoryV2Scope; workspaceSlug?: string } {
-  if (workspaceSlug) return { scope: "workspace", workspaceSlug };
+  void workspaceSlug;
   return { scope: "global" };
 }
 

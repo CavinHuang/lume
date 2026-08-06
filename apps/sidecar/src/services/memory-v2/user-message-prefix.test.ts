@@ -469,7 +469,7 @@ describe("memory-v2 user message prefix", () => {
   });
 
   test("persona present → renders <persona_profile> after <user_profile> with summary/prefs/rules", () => {
-    writePersona("workspace", "demo",
+    writePersona("global", undefined,
       "# 用户画像\n" +
       "## 一句话定位\n独立开发者\n" +
       "## 长期偏好\n- 用 TypeScript\n- 简洁代码\n- 测试先行\n" +
@@ -525,7 +525,7 @@ describe("memory-v2 user message prefix", () => {
   test("persona preferences truncated to 5 and interactionRules to 3", () => {
     const prefs = Array.from({ length: 7 }, (_, i) => `- 偏好${i}`).join("\n");
     const rules = Array.from({ length: 5 }, (_, i) => `- 规则${i}`).join("\n");
-    writePersona("workspace", "demo",
+    writePersona("global", undefined,
       `# 用户画像\n## 一句话定位\n开发者\n## 长期偏好\n${prefs}\n## 交互协议\n${rules}`);
 
     const prefix = buildMemoryUserMessagePrefix([recallItem], { workspaceSlug: "demo" });

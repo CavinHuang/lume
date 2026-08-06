@@ -64,7 +64,7 @@ const TOOL_GROUPS: Record<string, string[]> = {
   "group:runtime": ["bash"],
   "group:search": ["find", "grep", "ls"],
   "group:memory": ["memory.search", "memory.read"],
-  "group:memory-write": ["memory.remember"],
+  "group:memory-write": ["memory.remember", "memory.forget"],
   "group:web": ["web_search", "web_fetch"],
   "group:data": [...GUANLAN_TOOL_NAMES],
   "group:planning": ["askuserquestion", "taskcontractwrite"],
@@ -190,7 +190,8 @@ export function resolveEnabledMemoryToolNames(policy?: MemoryToolPolicy): string
     baseTools: [
       "memory.search",
       "memory.read",
-      "memory.remember"
+      "memory.remember",
+      "memory.forget"
     ],
     policy
   });

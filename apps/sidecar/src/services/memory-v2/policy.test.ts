@@ -98,6 +98,10 @@ describe("memory-v2 policy", () => {
   test("parseMemoryRuntimeConfigPayload 应兼容无 version 旧格式", () => {
     const result = parseMemoryRuntimeConfigPayload({
       citations: "on",
+      proactiveWrite: false,
+      backgroundExtraction: false,
+      autoDream: false,
+      recallNotice: "off",
       tools: { allow: ["group:memory", "memory.remember"], deny: ["memory.read"] },
       sources: ["memory", "sessions"],
       extraPaths: ["/data/memory", " docs/memory "],
@@ -107,6 +111,10 @@ describe("memory-v2 policy", () => {
       }
     });
     expect(result.citationsMode).toBe("on");
+    expect(result.proactiveWrite).toBe(false);
+    expect(result.backgroundExtraction).toBe(false);
+    expect(result.autoDream).toBe(false);
+    expect(result.recallNotice).toBe("off");
     expect(result.toolPolicy?.allow).toEqual(["group:memory", "memory.remember"]);
     expect(result.toolPolicy?.deny).toEqual(["memory.read"]);
     expect(result.sources).toEqual(["memory", "sessions"]);
@@ -131,13 +139,13 @@ describe("memory-v2 policy", () => {
     expect(result.retrieval.semantic).toBe("auto");
   });
 
-  test("默认配置应仅开放 group:memory（不含写入工具）", () => {
+  test("默认配置应开放记忆读写组", () => {
     const result = parseMemoryRuntimeConfigPayload({ version: 1 });
     const tools = applyMemoryToolPolicy({
       baseTools: ["memory.search", "memory.read", "memory.remember"],
       policy: result.toolPolicy
     });
-    expect(tools).toEqual(["memory.search", "memory.read"]);
+    expect(tools).toEqual(["memory.search", "memory.read", "memory.remember"]);
     expect(result.sources).toEqual(["memory"]);
     expect(result.extraPaths).toEqual([]);
   });
@@ -149,6 +157,10 @@ describe("memory-v2 policy", () => {
         deny: ["memory.read"]
       },
       citations: "on",
+      proactiveWrite: false,
+      backgroundExtraction: false,
+      autoDream: false,
+      recallNotice: "off",
       sources: ["memory", "sessions"],
       retrieval: {
         semantic: "off",
@@ -159,6 +171,10 @@ describe("memory-v2 policy", () => {
     expect(saved.tools.allow).toEqual(["group:memory", "group:memory-write"]);
     expect(saved.tools.deny).toEqual(["memory.read"]);
     expect(saved.citations).toBe("on");
+    expect(saved.proactiveWrite).toBe(false);
+    expect(saved.backgroundExtraction).toBe(false);
+    expect(saved.autoDream).toBe(false);
+    expect(saved.recallNotice).toBe("off");
     expect(saved.sources).toEqual(["memory", "sessions"]);
     expect(saved.retrieval).toEqual({
       semantic: "off",

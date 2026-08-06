@@ -119,13 +119,17 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     });
     return { customTools, availableToolNames: customTools.map((tool) => tool.name) };
   }
-  const enabledMemoryToolNames = resolveEnabledMemoryToolNames(input.memoryToolPolicy);
+  const writeAllowed = input.threadType !== "subagent" && input.chatType !== "group" && input.chatType !== "channel";
+  const enabledMemoryToolNames = resolveEnabledMemoryToolNames(input.memoryToolPolicy)
+    .filter((name) => writeAllowed || (name !== "memory.remember" && name !== "memory.forget"));
   const enabledMemoryTools = new Set(enabledMemoryToolNames);
   const memoryTools = input.workspaceSlug
     ? createSdkMemoryTools({
       workspaceSlug: input.workspaceSlug,
       enabledTools: enabledMemoryTools,
-      includeCitations: input.includeCitations
+      includeCitations: input.includeCitations,
+      threadId: input.threadId,
+      runId: input.runId
     })
     : [];
   const cronTools = createSdkCronTools({

@@ -220,9 +220,8 @@ export async function ensurePersona(input: {
   providerFactory?: PersonaProviderFactory;
 }): Promise<void> {
   try {
-    const scope: MemoryV2Scope =
-      input.scope ?? (input.workspaceSlug ? "workspace" : "global");
-    const workspaceSlug = scope === "workspace" ? input.workspaceSlug : undefined;
+    const scope: MemoryV2Scope = "global";
+    const workspaceSlug = undefined;
 
     const entries = listEntries({ workspaceSlug, scopes: [scope] })
       .filter((entry) => readActivation(entry.frontmatter).persona);

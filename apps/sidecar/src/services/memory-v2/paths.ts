@@ -5,6 +5,7 @@ import {
   getWorkspaceMemoryDir
 } from "../infra/config-paths";
 import type { MemoryV2Scope } from "./types";
+import { migrateMemoryScopeRootIfNeeded } from "./migration";
 
 export interface MemoryV2ScopePaths {
   root: string;
@@ -17,6 +18,12 @@ export interface MemoryV2ScopePaths {
   pendingConflictsDir: string;
   pendingStaleDir: string;
   pendingLowConfidenceDir: string;
+  capsulesDir: string;
+  jobsDir: string;
+  journalDir: string;
+  schemaMarker: string;
+  workspaceBrief: string;
+  persona: string;
 }
 
 export function getMemoryV2ScopePaths(input: {
@@ -26,6 +33,7 @@ export function getMemoryV2ScopePaths(input: {
   const root = input.scope === "global"
     ? getStructuredMemoryDir()
     : getWorkspaceMemoryDir(requireWorkspaceSlug(input.workspaceSlug));
+  migrateMemoryScopeRootIfNeeded(root, input.scope);
   return ensureMemoryV2ScopePaths(root, input.scope);
 }
 
@@ -42,6 +50,12 @@ export function ensureMemoryV2ScopePaths(root: string, scope: MemoryV2Scope): Me
     entriesDir: join(root, "entries"),
     dailyDir: join(root, "daily"),
     indexDir: join(root, "index"),
+    capsulesDir: join(root, "capsules"),
+    jobsDir: join(root, "jobs"),
+    journalDir: join(root, "journal"),
+    schemaMarker: join(root, ".memory-schema.json"),
+    workspaceBrief: join(root, "workspace-brief.md"),
+    persona: join(root, "persona.md"),
     ...(scope === "workspace" ? { runsDir: join(root, "runs") } : {}),
     pendingDir,
     pendingConflictsDir: join(pendingDir, "conflicts"),
@@ -53,6 +67,9 @@ export function ensureMemoryV2ScopePaths(root: string, scope: MemoryV2Scope): Me
     paths.entriesDir,
     paths.dailyDir,
     paths.indexDir,
+    paths.capsulesDir,
+    paths.jobsDir,
+    paths.journalDir,
     paths.runsDir,
     paths.pendingDir,
     paths.pendingConflictsDir,

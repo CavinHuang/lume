@@ -14,7 +14,7 @@ import type { RuntimeCodingFileChange, RuntimeCodingReport } from '@lume/shared'
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { AskUserQuestionBlock } from './AskUserQuestionBlock'
-import { agentSend, getThreadMessageVersions, openExternal, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
+import { agentSend, getThreadMessageVersions, openExternal, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, undoMemoryMutation, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
 import { parseMessageThreadFileReference, stripFileReferenceProtocolFromMarkdown } from './thread-file-links'
 import { MessageFileReferenceBindingProvider, useMessageFileReferenceBinding, useMessageFileReferenceProtocolVersion } from './thread-file-env'
 import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, validatePlanningTodoRefPart, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta, type AgentUserMessagePart, type FileRef } from '@lume/shared'
@@ -366,7 +366,64 @@ function SystemMessageBlock({
   if (message.variant === 'context_compaction') {
     return <ContextCompactionDivider message={message} className={className} />
   }
+  if (message.variant === 'memory_saved') {
+    return <MemorySavedNotice message={message} className={className} />
+  }
+  if (message.variant === 'memory_job') {
+    return (
+      <div className={cn('mx-6 flex items-center gap-2 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-3 py-2 text-[13px] text-[var(--lume-text-secondary)]', className)}>
+        {message.status === 'active' ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
+        <span>{message.text}</span>
+      </div>
+    )
+  }
   return null
+}
+
+function MemorySavedNotice({
+  message,
+  className,
+}: {
+  message: Extract<RuntimeMessageView, { type: 'system'; variant: 'memory_saved' }>
+  className?: string
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [undone, setUndone] = useState<Set<string>>(() => new Set())
+  const undo = async (mutationId: string) => {
+    try {
+      await undoMemoryMutation({ workspaceSlug: message.workspaceSlug, mutationId })
+      setUndone((current) => new Set(current).add(mutationId))
+      toast.success('已撤销记忆变更')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '撤销失败')
+    }
+  }
+  return (
+    <div className={cn('mx-6 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-3 py-2 text-[13px]', className)}>
+      <div className="flex items-center gap-2 text-[var(--lume-text-secondary)]">
+        <Database size={14} />
+        <span className="flex-1">{message.text}</span>
+        {message.details.length > 0 && (
+          <Button variant="ghost" size="sm" onClick={() => setExpanded((value) => !value)}>
+            {expanded ? '收起' : '查看'}
+          </Button>
+        )}
+      </div>
+      {expanded && (
+        <div className="mt-2 space-y-2 border-t border-[var(--lume-border-subtle)] pt-2">
+          {message.details.map((detail) => (
+            <div key={detail.mutationId} className="flex items-center gap-2 text-xs text-[var(--lume-text-muted)]">
+              <span className="min-w-0 flex-1 truncate">{detail.summary}</span>
+              {detail.undoable && !undone.has(detail.mutationId) && (
+                <Button variant="ghost" size="sm" onClick={() => void undo(detail.mutationId)}>撤销</Button>
+              )}
+              {undone.has(detail.mutationId) && <span>已撤销</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function ContextCompactionDivider({
@@ -1178,6 +1235,7 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({
   }
 
   const Icon = toolCall.toolName === 'Bash' ? Terminal : Wrench
+  const memoryLabel = memoryMutationLabel(toolCall)
 
   return (
     <div>
@@ -1189,7 +1247,7 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({
         className="flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60 disabled:hover:text-foreground/40"
       >
         <Icon size={12} className="shrink-0" />
-        <span className="shrink-0 font-mono font-medium">{toolCall.toolName}</span>
+        <span className="shrink-0 font-medium">{memoryLabel ?? toolCall.toolName}</span>
         {toolCall.riskLevel && <span className={cn('shrink-0', riskLevelClassName(toolCall.riskLevel))}>{riskLevelLabel(toolCall.riskLevel)}</span>}
         <span className="min-w-0 flex-1 truncate">{summarizeInput(input)}</span>
         {toolCall.status === 'failed' && <TriangleAlert size={11} className="shrink-0 text-destructive/70" />}
@@ -2395,6 +2453,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
   }
 
   const isBash = toolCall.toolName === 'Bash'
+  const memoryLabel = memoryMutationLabel(toolCall)
   const Icon = isBash ? Terminal : Wrench
   const resultOpen = !isRunning && !collapsed
   const shouldRenderResult = useDeferredUnmount(resultOpen)
@@ -2424,7 +2483,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
         className="flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
       >
         <Icon size={15} className="shrink-0 text-[var(--lume-text-muted)]" />
-        <span className="font-mono font-semibold text-[var(--lume-text-primary)]">{toolCall.toolName}</span>
+        <span className="font-semibold text-[var(--lume-text-primary)]">{memoryLabel ?? toolCall.toolName}</span>
         {toolCall.riskLevel && (
           <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', riskLevelClassName(toolCall.riskLevel))}>
             {riskLevelLabel(toolCall.riskLevel)}
@@ -2441,7 +2500,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
             ? 'bg-destructive/10 text-destructive'
             : 'bg-[var(--lume-accent-soft)] text-[var(--lume-accent)]',
         )}>
-          {isRunning ? '执行中' : toolCall.status === 'failed' ? '失败' : '已完成'}
+          {isRunning ? (toolCall.toolName === 'memory.remember' ? '正在记住…' : toolCall.toolName === 'memory.forget' ? '正在遗忘…' : '执行中') : toolCall.status === 'failed' ? '失败' : '已完成'}
         </span>
         {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
           <span className="tabular-nums text-[11px] font-medium text-[var(--lume-text-muted)]">
@@ -2472,6 +2531,19 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
 export function getToolPermissionTitleBadgeText(toolCall: RuntimeToolCallView): string | null {
   if (toolCall.permissionState === 'timeout') return '权限超时'
   return null
+}
+
+function memoryMutationLabel(toolCall: RuntimeToolCallView): string | null {
+  if (toolCall.toolName !== 'memory.remember' && toolCall.toolName !== 'memory.forget') return null
+  if (toolCall.status === 'running') return toolCall.toolName === 'memory.remember' ? '正在记住…' : '正在遗忘…'
+  let output = toolCall.output
+  if (typeof output === 'string') {
+    try { output = JSON.parse(output) } catch { return toolCall.toolName === 'memory.remember' ? '记忆已处理' : '遗忘已处理' }
+  }
+  const record = asRecord(output)
+  const data = asRecord(record.data)
+  const summary = asString(data.summary ?? record.summary)
+  return summary ?? (toolCall.toolName === 'memory.remember' ? '记忆已处理' : '遗忘已处理')
 }
 
 function riskLevelLabel(level: NonNullable<RuntimeToolCallView['riskLevel']>): string {
@@ -2505,7 +2577,7 @@ function FooterMemoryNotice({
         className="inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 text-[var(--lume-text-muted)] transition-colors hover:text-[var(--lume-accent)]"
       >
         <Database size={13} strokeWidth={1.8} />
-        <span>引用了 {totalCount} 条记忆</span>
+        <span>参考了 {totalCount} 条记忆</span>
         {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
       </Button>
       {expanded && (
