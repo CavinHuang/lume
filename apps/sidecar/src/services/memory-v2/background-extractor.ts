@@ -2,16 +2,26 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SDKMessage } from "@lume/agent-sdk";
-import { AGENT_IPC_CHANNELS, type LumeRuntimeEvent, type MemoryEvidenceRef } from "@lume/shared";
-import { appendAgentThreadSDKMessages } from "../agent/agent-thread-manager";
+import { AGENT_IPC_CHANNELS, type AgentAskUserQuestionRequest, type AgentToolPermissionRequest, type LumeRuntimeEvent, type MemoryEvidenceRef } from "@lume/shared";
+import { appendAgentThreadSDKMessages, createAgentThreadWithModelRef, getAgentThreadSDKMessages } from "../agent/agent-thread-manager";
+import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
+import { sendAgentMessage } from "../agent/agent-service";
+import { getSubagentCoordinator } from "../agent/subagents/subagent-coordinator";
 import { emitAgentNotification } from "../agent/agent-notification-service";
 import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import { MemoryCommandService, hasMemoryMutationForRun } from "./command-service";
-import { extractMemoryBatchCandidatesWithLlm } from "./extraction";
+import {
+  buildBatchExtractionUserPrompt,
+  extractMemoryBatchCandidatesWithLlm,
+  parseLlmBatchExtractionResponse,
+  resolveMemoryExtractionModelRefs
+} from "./extraction";
 import { claimFromEntry } from "./claim";
 import { createMemoryV2Store } from "./markdown-store";
 import { getMemoryV2ScopePaths } from "./paths";
 import { getMemoryRuntimeConfig } from "./policy";
+import { getEffectiveLumeConfig } from "../system/lume-config-service";
+import { resolveChannelModelBinding } from "../channel/channel-manager";
 import type { MemoryV2MutationReceipt } from "./types";
 import { maybeEnqueueAutoDream } from "./consolidation";
 import { memoryJobService } from "./job-service";
@@ -154,7 +164,15 @@ async function runExtraction(
         ...(claim ? { claim } : {})
       };
     });
-    const extracted = await extractMemoryBatchCandidatesWithLlm({
+    const extracted = await extractMemoryCandidatesInSubagent({
+      sources: sources.map(({ sourceId, role, text }) => ({ sourceId, role, text })),
+      workspaceSlug: input.workspaceSlug,
+      modelRef: input.modelRef,
+      modelVisibleMessage: input.modelVisibleMessage,
+      existingMemories,
+      threadId: input.threadId,
+      runId: input.runId
+    }) ?? await extractMemoryBatchCandidatesWithLlm({
       sources: sources.map(({ sourceId, role, text }) => ({ sourceId, role, text })),
       workspaceSlug: input.workspaceSlug,
       modelRef: input.modelRef,
@@ -208,6 +226,124 @@ async function runExtraction(
     });
     throw error;
   }
+}
+
+interface IndependentExtractionInput {
+  sources: Array<{ sourceId: string; role: "user" | "assistant" | "tool_result"; text: string }>;
+  workspaceSlug: string;
+  modelRef?: string;
+  modelVisibleMessage?: string;
+  existingMemories: Array<{ id: string; statement: string; claim?: ReturnType<typeof claimFromEntry> }>;
+  threadId: string;
+  runId: string;
+}
+
+/**
+ * Run extraction through the real persistent subagent runtime. The child thread
+ * is hidden from the parent chat and receives only memory read tools; commits
+ * remain in this Job's CommandService transaction after parsing its report.
+ */
+async function extractMemoryCandidatesInSubagent(
+  input: IndependentExtractionInput
+): Promise<Awaited<ReturnType<typeof extractMemoryBatchCandidatesWithLlm>> | undefined> {
+  const config = getEffectiveLumeConfig(input.workspaceSlug);
+  const modelRef = resolveMemoryExtractionModelRefs(config, { modelRef: input.modelRef })[0];
+  const binding = modelRef ? resolveChannelModelBinding(modelRef, "chat") : undefined;
+  const workspace = getAgentWorkspaceBySlug(input.workspaceSlug);
+  if (!modelRef || !binding || !workspace) return undefined;
+
+  const coordinator = getSubagentCoordinator();
+  let extracted: Awaited<ReturnType<typeof extractMemoryBatchCandidatesWithLlm>> = [];
+  const coordinatorResult = await coordinator.runAgentTask({
+    parentThreadId: input.threadId,
+    parentRunId: input.runId,
+    parentToolUseId: `memory-extract:${input.runId}`,
+    prompt: [
+      "You are Lume's private memory extraction subagent.",
+      "Inspect the supplied conversation and tool evidence, use memory.search/read only when needed, and return strict JSON matching the requested extraction schema.",
+      "Never write files, call external services, run shell commands, or rely on assistant-only claims.",
+      buildBatchExtractionUserPrompt(input.sources, input.workspaceSlug, input.modelVisibleMessage, input.existingMemories)
+    ].join("\n\n"),
+    description: "Private memory extraction",
+    subagentType: "memory-extractor",
+    acceptanceCriteria: ["Every candidate cites one exact user message or tool result source."],
+    createSession: ({ title }) => {
+      const child = createAgentThreadWithModelRef(
+        title,
+        modelRef,
+        binding.channel.id,
+        workspace.id,
+        input.threadId,
+        binding.modelId,
+        { fileContextMode: "newRoot" }
+      );
+      return { threadId: child.id, modelRef };
+    },
+    execute: async ({ session, run, signal }) => {
+      const emitter = createSilentAgentEmitter();
+      await sendAgentMessage({
+        threadId: session.threadId,
+        userMessage: [
+          "This is a hidden background task. Do not address the user directly.",
+          "Return only the JSON extraction result after reviewing the evidence.",
+          buildBatchExtractionUserPrompt(input.sources, input.workspaceSlug, input.modelVisibleMessage, input.existingMemories)
+        ].join("\n\n"),
+        modelRef,
+        channelId: binding.channel.id,
+        modelId: binding.modelId,
+        workspaceId: workspace.id,
+        threadType: "subagent",
+        messageMetadata: {
+          hiddenFromChat: true,
+          memoryBackground: true,
+          toolPolicy: { allow: ["memory.search", "memory.read"] }
+        }
+      }, emitter, { abortSignal: signal });
+      const text = extractAssistantText(getAgentThreadSDKMessages(session.threadId));
+      extracted = parseLlmBatchExtractionResponse(text, input.sources) ?? [];
+      getSubagentCoordinator().submitReport({
+        runId: run.runId,
+        report: { status: "submitted", summary: `Extracted ${extracted.length} memory candidates.` }
+      });
+      return { status: "completed", completionSummary: `Extracted ${extracted.length} memory candidates.` };
+    }
+  });
+  if (coordinatorResult.taskId) {
+    coordinator.finishTask({
+      taskId: coordinatorResult.taskId,
+      resolution: "accepted",
+      reason: "后台记忆提取已由 MemoryJobService 校验并提交。"
+    });
+  }
+  return extracted;
+}
+
+function extractAssistantText(messages: SDKMessage[]): string {
+  const chunks: string[] = [];
+  for (const message of messages) {
+    if (message.type === "assistant") {
+      const content = (message.message as { content?: unknown } | undefined)?.content;
+      if (Array.isArray(content)) {
+        chunks.push(...content.flatMap((block) => {
+          if (!block || typeof block !== "object") return [];
+          const text = (block as { type?: unknown; text?: unknown }).text;
+          return typeof text === "string" ? [text] : [];
+        }));
+      }
+    }
+    if (message.type === "result" && typeof message.result === "string") chunks.push(message.result);
+  }
+  return chunks.join("\n").trim();
+}
+
+function createSilentAgentEmitter() {
+  return {
+    onComplete: () => undefined,
+    onError: () => undefined,
+    onTitleUpdated: () => undefined,
+    onAskUserQuestion: (_request: AgentAskUserQuestionRequest) => undefined,
+    onToolPermissionRequest: (_request: AgentToolPermissionRequest) => undefined
+  };
 }
 
 function extractionSources(items: LumeRunItem[]): Array<{ sourceId: string; role: "user" | "assistant" | "tool_result"; text: string }> {

@@ -590,7 +590,7 @@ function buildBatchExtractionSystemPrompt(): string {
   ].join("\n");
 }
 
-function buildBatchExtractionUserPrompt(
+export function buildBatchExtractionUserPrompt(
   sources: MemoryBatchExtractionSource[],
   workspaceSlug?: string,
   modelVisibleMessage?: string,
@@ -707,7 +707,7 @@ function batchCandidateKey(item: MemoryBatchExtractionCandidate): string {
   ].join("\u0000").toLowerCase();
 }
 
-function parseLlmBatchExtractionResponse(
+export function parseLlmBatchExtractionResponse(
   text: string,
   sources: MemoryBatchExtractionSource[]
 ): MemoryBatchExtractionCandidate[] | null {

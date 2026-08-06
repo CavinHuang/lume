@@ -28,11 +28,13 @@
 
 ## 后续高风险项
 
-- [ ] 将后台提取从 provider loop 迁移到真正独立的 SubagentCoordinator 运行时；当前已具备私有持久 transcript、受限 memory tools 和独立 Job，但仍复用 extraction provider loop。
+- [x] 将后台提取接入真正独立的 `SubagentCoordinator` 运行时。子线程使用隐藏 `sendAgentMessage`、独立 transcript 和 `memory.search/read` 白名单；模型不可用时保留 provider loop 作为兼容回退。
 
 ## 验收
 
 - [x] 运行 memory-v2、runtime event、MemorySettings 和 sidecar 类型检查。
-- [ ] 提交并推送当前记忆优化 PR。
+- [x] 提交并推送当前记忆优化 PR。
+
+第二阶段验证记录：sidecar 类型检查通过；extraction/job/coordinator 相关测试 `40 pass`。
 
 验证记录：sidecar/shared/web 类型检查通过；memory extraction、command service、retrieval、user-message-prefix、organizer、job、consolidation、runtime projection 相关测试通过。
