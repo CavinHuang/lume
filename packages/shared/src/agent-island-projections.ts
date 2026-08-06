@@ -36,6 +36,8 @@ export function pushActivityLine(prev: string[], line: string): string[] {
 export interface IslandSessionInput {
   threadId: string
   title: string
+  /** 所属工作区名（service 从 AgentWorkspace.name 解析，session 后小字号显示）。 */
+  project?: string
   phase: AgentIslandPhase
   interactionKind?: AgentIslandSessionSnapshot['interactionKind']
   detail: string

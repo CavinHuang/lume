@@ -18,6 +18,8 @@ export type AgentIslandInteractionKind =
 export interface AgentIslandSessionSnapshot {
   threadId: string
   title: string
+  /** 所属工作区/项目名（小字号显示在 title 后，来自 AgentWorkspace.name）。 */
+  project?: string
   phase: AgentIslandPhase
   interactionKind?: AgentIslandInteractionKind
   detail: string
@@ -68,6 +70,8 @@ export interface AgentIslandIntent {
   name: AgentIslandIntentName
   value?: boolean
   threadId?: string
+  /** 所属工作区名（session 后小字号显示）。 */
+  project?: string
   /** 用于 'set-expanded-height'：展开内容真实高度（px），main 据此调用 clampIslandHeight。 */
   expandedHeight?: number
 }

@@ -1,89 +1,263 @@
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  color: #f5f5f7;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button {
+  font: inherit;
+}
+
 .island-root {
+  position: relative;
   display: flex;
+  width: 100%;
+  height: 100%;
   justify-content: center;
   align-items: flex-start;
-  width: 100vw;
-  height: 100vh;
-  background: transparent;
 }
+
 .island-surface {
   position: relative;
+  box-sizing: border-box;
   width: 420px;
-  height: var(--island-expanded-height, 32px);
-  background: #09090a;
-  color: #fff;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.32);
+  height: 32px;
   overflow: hidden;
-}
-/* 默认形态：浮动矩形（1px 全周边框） */
-.island-surface {
-  border-radius: 0;
-  border: 1px solid rgb(255 255 255 / 0.08);
-}
-/* mac 形态：仅底部圆角，无上边框（贴合屏幕顶部） */
-html.darwin .island-surface {
-  border-radius: 0 0 18px 18px;
+  background: #09090a;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.32);
+  /* macOS：贴顶，仅底部圆角，无上边框 */
+  border: 1px solid rgb(255 255 255 / 0.12);
   border-top: 0;
+  border-radius: 0 0 18px 18px;
 }
-.island-transition-surface { transition: height 180ms cubic-bezier(0.2, 0, 0, 1); }
-.island-expanded { transition: opacity 90ms ease-out; transition-delay: 45ms; }
+/* Windows/Linux：浮动矩形（全边框 + 直角） */
+html:not(.darwin) .island-surface {
+  border-top: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 16px;
+}
+
+.island-transition-surface {
+  transition: height 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+.island-transition-surface.expanded {
+  height: var(--island-expanded-height, 32px);
+}
+
+/* compact 层（绝对定位，与 expanded 内容叠层，对齐 Proma island-compact-layer） */
 .island-compact-layer {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; height: 32px; padding: 0 12px;
-  background: transparent; border: 0; color: inherit; cursor: pointer;
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  box-sizing: border-box;
+  width: 420px;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  background: #09090a;
+  color: #f5f5f7;
+  cursor: pointer;
+  opacity: 1;
+  transition: opacity 90ms ease-in, background 90ms ease-in;
 }
-.island-compact-layer:active { transform: scale(0.985); }
-.island-dot { width: 6px; height: 6px; border-radius: 9999px; flex-shrink: 0; }
-.island-label { font-size: 12px; font-weight: 500; flex: 1; text-align: left; }
-.island-chevron { width: 14px; height: 14px; transition: transform 180ms ease; }
-/* compact 紧迫 planning 图标（无 primary session 时替代 dot 充当注意力信号）：
-   颜色由 inline style 注入（var(--lume-accent) / var(--lume-warning)）。 */
-.island-planning-indicator { display: inline-flex; align-items: center; flex-shrink: 0; }
-.island-indicator-icon { width: 14px; height: 14px; }
-.island-expanded { padding: 4px 12px 12px; }
-.island-expanded-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.island-title { font-size: 13px; font-weight: 600; }
-.island-sessions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.island-session-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
-.island-session-row:hover { background: rgb(255 255 255 / 0.06); }
-.island-session-title { font-size: 12px; }
-.island-session-detail { font-size: 11px; opacity: 0.6; margin-left: auto; }
-/* session 最近一条活动行（toolName 累积末尾）：灰色小字、单行截断 */
-.island-session-activity {
-  font-size: 11px;
-  opacity: 0.5;
-  margin-left: auto;
-  max-width: 50%;
+.island-compact-layer:hover {
+  background: rgb(255 255 255 / 0.055);
+}
+.island-compact-layer:active {
+  transform: scale(0.985);
+}
+.island-transition-surface.expanded .island-compact-layer {
+  pointer-events: none;
+  opacity: 0;
+  transition-delay: 45ms;
+}
+
+.island-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  flex-shrink: 0;
+}
+.island-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 10.5px;
+  font-weight: 650;
+  line-height: 1;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* planning 两列（对齐 Proma）：todos + reminders */
+.island-chevron {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: rgb(255 255 255 / 0.48);
+  transition: transform 180ms ease;
+}
+.island-planning-indicator {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.island-indicator-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* expanded 内容（opacity 过渡；collapsing 态保留旧内容淡出） */
+.island-expanded {
+  position: relative;
+  z-index: 2;
+  width: 420px;
+  min-height: 1px;
+  padding-bottom: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 90ms ease-out;
+}
+.island-transition-surface.expanded .island-expanded,
+.island-transition-surface.collapsing .island-expanded {
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: 45ms;
+}
+
+.island-expanded-head {
+  display: flex;
+  height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 18px;
+}
+.island-title {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.island-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.island-sessions {
+  list-style: none;
+  margin: 0;
+  padding: 13px 14px;
+  display: grid;
+  gap: 5px;
+  border-top: 1px solid rgb(255 255 255 / 0.11);
+}
+.island-session-row {
+  display: flex;
+  width: 100%;
+  min-height: 46px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  border: 0;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 0.065);
+  cursor: pointer;
+  text-align: left;
+}
+.island-session-row:hover {
+  background: rgb(255 255 255 / 0.11);
+}
+.island-session-row:active {
+  transform: scale(0.985);
+}
+.island-session-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+.island-session-title {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.island-session-project {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  color: rgb(255 255 255 / 0.42);
+  margin-left: auto;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 0.06);
+}
+.island-session-detail,
+.island-session-activity {
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 520;
+  line-height: 1.2;
+  color: rgb(255 255 255 / 0.56);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* planning 两列（对齐 Proma island-planning-grid/column） */
 .island-planning {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  border-top: 1px solid rgb(255 255 255 / 0.11);
+  padding: 14px;
 }
 .island-planning-col {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: rgb(255 255 255 / 0.06);
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  padding: 13px;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 18px;
+  background: rgb(255 255 255 / 0.075);
   cursor: pointer;
+  text-align: left;
 }
-.island-planning-col:hover { background: rgb(255 255 255 / 0.1); }
+.island-planning-col:hover {
+  background: rgb(255 255 255 / 0.105);
+}
+.island-planning-col:active {
+  transform: scale(0.985);
+}
 .island-planning-head {
   display: flex;
+  height: 18px;
   align-items: center;
   gap: 5px;
   font-size: 11px;
-  font-weight: 600;
-  color: rgb(255 255 255 / 0.86);
+  font-weight: 720;
+  color: rgb(255 255 255 / 0.91);
 }
-.island-planning-icon { width: 13px; height: 13px; color: #9eb5ff; flex-shrink: 0; }
+.island-planning-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  color: #9eb5ff;
+}
 .island-planning-count {
   margin-left: auto;
   font-size: 10px;
@@ -96,27 +270,34 @@ html.darwin .island-surface {
   gap: 6px;
   padding: 3px 2px;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 10px;
+  font-weight: 520;
 }
-.island-planning-row:hover { background: rgb(255 255 255 / 0.06); }
+.island-planning-row:hover {
+  background: rgb(255 255 255 / 0.06);
+}
 .island-planning-check {
-  width: 10px;
-  height: 10px;
+  box-sizing: border-box;
+  width: 11px;
+  height: 11px;
   flex-shrink: 0;
-  border: 1px solid rgb(255 255 255 / 0.45);
+  border: 1px solid rgb(255 255 255 / 0.5);
   border-radius: 3px;
 }
-.island-planning-check-overdue { border-color: #ff7777; }
+.island-planning-check-overdue {
+  border-color: #ff7777;
+}
 .island-planning-text {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .island-planning-time {
   flex-shrink: 0;
-  font-size: 9.5px;
+  font-size: 9px;
   font-weight: 600;
   color: rgb(255 255 255 / 0.5);
 }
@@ -127,24 +308,25 @@ html.darwin .island-surface {
 .island-planning-row[data-overdue='true'] {
   box-shadow: inset 0 0 0 1px rgb(255 119 119 / 0.45);
 }
-@media (prefers-reduced-motion: reduce) {
-  .island-transition-surface, .island-expanded, .island-chevron { transition: none; }
+
+/* 窗口拖动 grip（对齐 Proma agent-island.css:48-72） */
+.island-drag-handle {
+  -webkit-app-region: drag;
+  cursor: move;
 }
-/* 窗口拖动（对齐 Proma agent-island.css:48-72）
-   - .island-drag-handle 通用语义：放行 native 拖动；expanded-head 也用此类（不绝对定位）
-   - .island-surface > .island-drag-handle 才是绝对定位的 grip 视觉 affordance（避免误伤嵌套 head）
-   - .island-no-drag 保留交互控件点击
-   - .island-surface button 兜底：所有 button 默认可点，drag 只走 grip / head 空白 */
-.island-drag-handle { -webkit-app-region: drag; cursor: move; }
-.island-no-drag { -webkit-app-region: no-drag; }
-.island-surface button { -webkit-app-region: no-drag; }
+.island-no-drag {
+  -webkit-app-region: no-drag;
+}
+.island-surface button {
+  -webkit-app-region: no-drag;
+}
 .island-surface > .island-drag-handle {
   position: absolute;
+  z-index: 0;
   top: 0;
   left: 0;
   width: 38px;
   height: 32px;
-  z-index: 0;
 }
 .island-surface > .island-drag-handle::after {
   content: '';
@@ -153,5 +335,16 @@ html.darwin .island-surface {
   border-left: 1px dashed rgb(255 255 255 / 0.25);
   border-right: 1px dashed rgb(255 255 255 / 0.25);
 }
-/* macOS 走 Phase 2 native 刘海，不渲染 Electron grip（仅隐藏 grip div，不影响 expanded-head） */
-html.darwin .island-surface > .island-drag-handle { display: none; }
+/* macOS 走 Phase 2 native 刘海，不渲染 Electron grip */
+html.darwin .island-surface > .island-drag-handle {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .island-transition-surface,
+  .island-compact-layer,
+  .island-expanded,
+  .island-chevron {
+    transition: none;
+  }
+}

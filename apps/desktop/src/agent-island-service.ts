@@ -109,6 +109,12 @@ export class AgentIslandService {
   /** Phase 2：native snapshot 单调版本号，Swift 据此丢弃乱序/重复快照。 */
   private revision = 0
   private planningTimer: ReturnType<typeof setInterval> | null = null
+  /** threadId → title 缓存（list-threads 获取，避免灵动岛显示 raw threadId）。 */
+  private threadTitles = new Map<string, string>()
+  /** threadId → workspaceId（list-threads 的 meta.workspaceId）。 */
+  private threadWorkspaces = new Map<string, string>()
+  /** workspaceId → workspace name（list-workspaces 解析，session 后小字号显示"项目"）。 */
+  private workspaceNames = new Map<string, string>()
   /**
    * 跨日 rollover 定时器：到下个午夜 00:00:00.150 触发——清 dismissedKey
    * （解除所有 dismiss，新一天重新浮现 planning/agent 状态）+ force push + 重排下个 rollover/attention。
@@ -127,6 +133,8 @@ export class AgentIslandService {
   /** 启动：拉取首批 planning、启动周期刷新、强制首推、调度跨日/紧迫 planning 定时器。 */
   async start(): Promise<void> {
     await this.refreshPlanning()
+    void this.refreshThreadTitles()
+    void this.refreshWorkspaces()
     this.planningTimer = setInterval(() => {
       void this.refreshPlanning()
     }, PLANNING_REFRESH_MS)
@@ -144,6 +152,37 @@ export class AgentIslandService {
   repush(): void {
     this.lastStateJson = ''
     this.push(true)
+  }
+
+  /** 拉取 thread title 缓存（sidecarCall agent:list-threads），applyStatus 用它替代 raw threadId。 */
+  private async refreshThreadTitles(): Promise<void> {
+    try {
+      const threads = await this.deps.callSidecar<Array<{ id: string; title?: string; workspaceId?: string }>>('agent:list-threads')
+      if (Array.isArray(threads)) {
+        for (const t of threads) {
+          if (t.id && t.title) this.threadTitles.set(t.id, t.title)
+          if (t.id && t.workspaceId) this.threadWorkspaces.set(t.id, t.workspaceId)
+        }
+        this.push(false)
+      }
+    } catch {
+      // 静默失败：title 不可用时 fallback threadId
+    }
+  }
+
+  /** 拉取 workspace name 缓存（list-workspaces），session project 显示用。 */
+  private async refreshWorkspaces(): Promise<void> {
+    try {
+      const workspaces = await this.deps.callSidecar<Array<{ id: string; name?: string }>>('agent:list-workspaces')
+      if (Array.isArray(workspaces)) {
+        for (const w of workspaces) {
+          if (w.id && w.name) this.workspaceNames.set(w.id, w.name)
+        }
+        this.push(false)
+      }
+    } catch {
+      // 静默失败：workspace 不可用时 project 字段为空
+    }
   }
 
   /** 由 main.ts onNotification 调用：tap sidecar 事件流。 */
@@ -230,7 +269,8 @@ export class AgentIslandService {
       toolName && prevActivity.length === 0 ? pushActivityLine(prevActivity, toolName) : prevActivity
     this.sessions.set(status.threadId, {
       threadId: status.threadId,
-      title: prev?.title ?? status.threadId,
+      title: prev?.title ?? this.threadTitles.get(status.threadId) ?? status.threadId,
+      project: prev?.project ?? this.workspaceNames.get(this.threadWorkspaces.get(status.threadId) ?? '') ?? undefined,
       phase,
       ...(interactionKind ? { interactionKind } : {}),
       detail: toolName,
