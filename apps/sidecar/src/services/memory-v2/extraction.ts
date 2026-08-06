@@ -179,6 +179,7 @@ export async function extractMemoryBatchCandidatesWithLlm(input: {
   fallbackModelRefs?: string[];
   modelVisibleMessage?: string;
   existingMemories?: MemoryBatchExtractionExistingMemory[];
+  maxRounds?: number;
   createProvider?: MemoryExtractionProviderFactory;
 }): Promise<MemoryBatchExtractionCandidate[]> {
   const sources = input.sources
@@ -210,6 +211,7 @@ export async function extractMemoryBatchCandidatesWithLlm(input: {
         workspaceSlug: input.workspaceSlug,
         modelVisibleMessage: input.modelVisibleMessage,
         existingMemories: input.existingMemories,
+        maxRounds: input.maxRounds,
         modelRef,
         createProvider: input.createProvider
       });
@@ -276,6 +278,7 @@ async function extractMemoryBatchCandidatesWithModel(input: {
   workspaceSlug?: string;
   modelVisibleMessage?: string;
   existingMemories?: MemoryBatchExtractionExistingMemory[];
+  maxRounds?: number;
   modelRef: string;
   createProvider?: MemoryExtractionProviderFactory;
 }): Promise<MemoryBatchExtractionCandidate[] | undefined> {
@@ -286,27 +289,62 @@ async function extractMemoryBatchCandidatesWithModel(input: {
     binding,
     createProvider: input.createProvider
   });
-  const response = await provider.createMessage({
-    model: binding?.modelId ?? input.modelRef.split("/").at(-1) ?? input.modelRef,
-    maxTokens: 1200,
-    system: buildBatchExtractionSystemPrompt(),
-    messages: [{
-      role: "user",
-      content: buildBatchExtractionUserPrompt(
-        input.sources,
-        input.workspaceSlug,
-        input.modelVisibleMessage,
-        input.existingMemories
-      )
-    }]
-  });
-  return parseLlmBatchExtractionResponse(
-    response.content
+  const model = binding?.modelId ?? input.modelRef.split("/").at(-1) ?? input.modelRef;
+  const maxRounds = normalizeExtractionRounds(input.maxRounds);
+  const allCandidates: MemoryBatchExtractionCandidate[] = [];
+  let messages: Array<{ role: "user" | "assistant"; content: string }> = [{
+    role: "user",
+    content: buildBatchExtractionUserPrompt(
+      input.sources,
+      input.workspaceSlug,
+      input.modelVisibleMessage,
+      input.existingMemories
+    )
+  }];
+
+  for (let round = 0; round < maxRounds; round += 1) {
+    const response = await provider.createMessage({
+      model,
+      maxTokens: 1200,
+      system: buildBatchExtractionSystemPrompt(),
+      messages
+    });
+    const text = response.content
       .map((block) => block.type === "text" ? block.text : "")
       .filter(Boolean)
-      .join("\n"),
-    input.sources
-  ) ?? undefined;
+      .join("\n");
+    const parsed = parseLlmBatchExtractionResponse(text, input.sources) ?? [];
+    allCandidates.push(...parsed);
+    const coveredSourceIds = new Set(allCandidates.map((candidate) => candidate.sourceId));
+    if (parsed.length === 0 || coveredSourceIds.size >= input.sources.length || round === maxRounds - 1) break;
+
+    const remainingSources = input.sources.filter((source) => !coveredSourceIds.has(source.sourceId));
+    messages = [
+      ...messages,
+      { role: "assistant", content: text },
+      {
+        role: "user",
+        content: buildBatchExtractionReviewPrompt(remainingSources, input.existingMemories, round + 2)
+      }
+    ];
+  }
+
+  return dedupeBatchExtractionCandidates(allCandidates);
+}
+
+function normalizeExtractionRounds(value: number | undefined): number {
+  if (!Number.isFinite(value) || !value) return 1;
+  return Math.min(5, Math.max(1, Math.floor(value)));
+}
+
+function dedupeBatchExtractionCandidates(candidates: MemoryBatchExtractionCandidate[]): MemoryBatchExtractionCandidate[] {
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const key = `${candidate.sourceId}\u0000${candidate.candidate.statement.trim().toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function createMemoryExtractionProvider(input: {
@@ -494,6 +532,30 @@ function buildBatchExtractionUserPrompt(
         }
       }]
     }
+  });
+}
+
+function buildBatchExtractionReviewPrompt(
+  sources: MemoryBatchExtractionSource[],
+  existingMemories: MemoryBatchExtractionExistingMemory[] | undefined,
+  round: number
+): string {
+  return JSON.stringify({
+    task: "Review only the remaining sources for durable memory candidates.",
+    round,
+    existingMemories: existingMemories?.slice(0, 200),
+    sources: sources.map((source) => ({
+      sourceId: source.sourceId,
+      role: source.role ?? "user",
+      text: source.text
+    })),
+    constraints: [
+      "Cite exactly one provided sourceId.",
+      "sourceText must be an exact substring of the cited source.",
+      "Assistant-only evidence is forbidden.",
+      "Return strict JSON with the same output shape as the first round.",
+      "Return an empty candidate list when no durable memory is supported."
+    ]
   });
 }
 

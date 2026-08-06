@@ -119,7 +119,8 @@ async function runExtraction(input: BackgroundMemoryExtractionRequest): Promise<
       workspaceSlug: input.workspaceSlug,
       modelRef: input.modelRef,
       modelVisibleMessage: input.modelVisibleMessage,
-      existingMemories
+      existingMemories,
+      maxRounds: 5
     });
     const service = new MemoryCommandService();
     const receipts: MemoryV2MutationReceipt[] = [];

@@ -365,6 +365,59 @@ describe("extractExplicitMemoryCandidates", () => {
     ]);
   });
 
+  test("rechecks uncovered sources for up to the configured number of rounds", async () => {
+    const calls: string[] = [];
+    const candidates = await extractMemoryBatchCandidatesWithLlm({
+      sources: [
+        { sourceId: "source-a", text: "叫我 Mason" },
+        { sourceId: "source-b", text: "我通常使用中文沟通" }
+      ],
+      modelRef: "openai/gpt-5-mini",
+      maxRounds: 5,
+      createProvider: () => ({
+        apiType: "openai-completions",
+        async createMessage(params) {
+          const prompt = String(params.messages.at(-1)?.content ?? "");
+          calls.push(prompt);
+          const isReview = calls.length > 1;
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                shouldExtract: true,
+                candidates: [isReview ? {
+                  sourceId: "source-b",
+                  kind: "preference",
+                  targetScope: "global",
+                  statement: "用户偏好默认用中文回答",
+                  confidence: "high",
+                  sourceRole: "user",
+                  sourceText: "我通常使用中文沟通",
+                  reason: "User stated a durable language preference."
+                } : {
+                  sourceId: "source-a",
+                  kind: "preference",
+                  targetScope: "global",
+                  statement: "用户希望被称呼为 Mason",
+                  confidence: "high",
+                  sourceRole: "user",
+                  sourceText: "叫我 Mason",
+                  reason: "User gave a preferred name."
+                }]
+              })
+            }],
+            stopReason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 }
+          };
+        }
+      })
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toContain("source-b");
+    expect(candidates.map((item) => item.sourceId)).toEqual(["source-a", "source-b"]);
+  });
+
   test("rejects batch candidates that cite the wrong source text", async () => {
     const candidates = await extractMemoryBatchCandidatesWithLlm({
       sources: [{
