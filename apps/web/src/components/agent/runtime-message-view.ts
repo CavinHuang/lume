@@ -99,14 +99,25 @@ export interface RuntimeUserMessageView {
   versionCount?: number
 }
 
-export interface RuntimeSystemMessageView {
-  id: string
-  type: 'system'
-  variant: 'context_compaction'
-  status: 'active' | 'completed'
-  text: string
-  summary?: string
-  createdAt: string
-}
+export type RuntimeSystemMessageView =
+  | {
+      id: string
+      type: 'system'
+      variant: 'context_compaction'
+      status: 'active' | 'completed'
+      text: string
+      summary?: string
+      createdAt: string
+    }
+  | {
+      id: string
+      type: 'system'
+      variant: 'memory_saved'
+      status: 'completed'
+      text: string
+      createdAt: string
+      workspaceSlug: string
+      details: Extract<LumeRuntimeEvent, { type: 'memory.changed' }>['details']
+    }
 
 export type RuntimeMessageView = RuntimeUserMessageView | RuntimeAssistantMessageView | RuntimeSystemMessageView

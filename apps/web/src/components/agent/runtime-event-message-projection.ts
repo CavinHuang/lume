@@ -114,6 +114,22 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     return
   }
 
+  if (event.type === 'memory.changed') {
+    flushAssistant(state.messages, state.currentAssistant)
+    state.currentAssistant = null
+    messages.push({
+      id: event.id,
+      type: 'system',
+      variant: 'memory_saved',
+      status: 'completed',
+      text: event.summary,
+      createdAt: event.createdAt,
+      workspaceSlug: event.workspaceSlug,
+      details: event.details,
+    })
+    return
+  }
+
   if (event.type === 'advisor.reviewed') {
     state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.blocks.push({

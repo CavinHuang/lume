@@ -69,6 +69,7 @@ export type SDKMessage =
   | SDKCompactBoundaryMessage
   | SDKStatusMessage
   | SDKTaskNotificationMessage
+  | SDKMemorySavedMessage
   | SDKLspDiagnosticsMessage
   | SDKRateLimitEvent
   | SDKHookStartedMessage
@@ -468,6 +469,28 @@ export interface SDKTaskNotificationMessage {
   }
   uuid?: string
   session_id: string
+}
+
+/** Persisted UI-only notification emitted by Lume's background memory worker. */
+export interface SDKMemorySavedMessage {
+  type: 'system'
+  subtype: 'memory_saved'
+  session_id: string
+  run_id: string
+  workspace_slug: string
+  mutation_ids: string[]
+  memory_ids: string[]
+  summary: string
+  created_at: string
+  details?: Array<{
+    mutationId: string
+    action: string
+    scope: 'global' | 'workspace'
+    memoryIds: string[]
+    summary: string
+    undoable: boolean
+  }>
+  uuid?: string
 }
 
 /**

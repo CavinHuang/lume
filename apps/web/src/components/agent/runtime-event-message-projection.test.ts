@@ -850,6 +850,36 @@ describe('runtime-event-message-projection', () => {
       ],
     })
   })
+
+  test('projects background memory changes after a terminal run as replayable system messages', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', text: '以后默认中文', messageId: 'user-memory' }),
+      event({ type: 'assistant.delta', delta: '好的。' }),
+      event({ type: 'run.completed' }),
+      event({
+        type: 'memory.changed',
+        actor: 'background_extract',
+        workspaceSlug: 'demo',
+        mutationIds: ['mutation-1'],
+        memoryIds: ['memory-1'],
+        summary: '后台记住了 1 条信息',
+        details: [{
+          mutationId: 'mutation-1',
+          action: 'created',
+          scope: 'global',
+          memoryIds: ['memory-1'],
+          summary: '已记住 1 条信息',
+          undoable: true,
+        }],
+      }),
+    ])
+    expect(messages.at(-1)).toMatchObject({
+      type: 'system',
+      variant: 'memory_saved',
+      text: '后台记住了 1 条信息',
+      workspaceSlug: 'demo',
+    })
+  })
 })
 
 /** 模拟「事件逐个追加」的增量调用，返回最终 messages（用于与全量对比）。 */

@@ -1,5 +1,6 @@
 import type { MemoryV2Candidate, MemoryV2RecallItem } from "../memory-v2/types";
 import { extractMemoryCandidatesWithLlm } from "../memory-v2/extraction";
+import { enqueueBackgroundMemoryExtraction } from "../memory-v2/background-extractor";
 import {
   buildMemoryV2UserMessageContext,
   type MemoryV2UserMessageContext
@@ -31,6 +32,7 @@ export interface LumeWorkflowMemoryService {
     workspaceSlug?: string;
     userMessage: string;
   }): Promise<MemoryV2Candidate[]>;
+  enqueueExtraction?(input: Parameters<typeof enqueueBackgroundMemoryExtraction>[0]): void;
 }
 
 export interface LumeWorkflowSecurityService {
@@ -119,7 +121,8 @@ export function createMemoryWorkflowHookService(input: {
     extractCandidates: async (candidateInput) => extractCandidates({
       text: candidateInput.userMessage,
       workspaceSlug: candidateInput.workspaceSlug
-    })
+    }),
+    enqueueExtraction: (candidateInput) => enqueueBackgroundMemoryExtraction(candidateInput)
   };
 }
 

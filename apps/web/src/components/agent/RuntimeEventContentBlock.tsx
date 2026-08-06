@@ -14,7 +14,7 @@ import type { RuntimeCodingFileChange, RuntimeCodingReport } from '@lume/shared'
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { AskUserQuestionBlock } from './AskUserQuestionBlock'
-import { agentSend, getThreadMessageVersions, openExternal, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
+import { agentSend, getThreadMessageVersions, openExternal, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, undoMemoryMutation, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
 import { parseMessageThreadFileReference, stripFileReferenceProtocolFromMarkdown } from './thread-file-links'
 import { MessageFileReferenceBindingProvider, useMessageFileReferenceBinding, useMessageFileReferenceProtocolVersion } from './thread-file-env'
 import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, validatePlanningTodoRefPart, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta, type AgentUserMessagePart, type FileRef } from '@lume/shared'
@@ -366,7 +366,56 @@ function SystemMessageBlock({
   if (message.variant === 'context_compaction') {
     return <ContextCompactionDivider message={message} className={className} />
   }
+  if (message.variant === 'memory_saved') {
+    return <MemorySavedNotice message={message} className={className} />
+  }
   return null
+}
+
+function MemorySavedNotice({
+  message,
+  className,
+}: {
+  message: Extract<RuntimeMessageView, { type: 'system'; variant: 'memory_saved' }>
+  className?: string
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [undone, setUndone] = useState<Set<string>>(() => new Set())
+  const undo = async (mutationId: string) => {
+    try {
+      await undoMemoryMutation({ workspaceSlug: message.workspaceSlug, mutationId })
+      setUndone((current) => new Set(current).add(mutationId))
+      toast.success('已撤销记忆变更')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '撤销失败')
+    }
+  }
+  return (
+    <div className={cn('mx-6 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-3 py-2 text-[13px]', className)}>
+      <div className="flex items-center gap-2 text-[var(--lume-text-secondary)]">
+        <Database size={14} />
+        <span className="flex-1">{message.text}</span>
+        {message.details.length > 0 && (
+          <Button variant="ghost" size="sm" onClick={() => setExpanded((value) => !value)}>
+            {expanded ? '收起' : '查看'}
+          </Button>
+        )}
+      </div>
+      {expanded && (
+        <div className="mt-2 space-y-2 border-t border-[var(--lume-border-subtle)] pt-2">
+          {message.details.map((detail) => (
+            <div key={detail.mutationId} className="flex items-center gap-2 text-xs text-[var(--lume-text-muted)]">
+              <span className="min-w-0 flex-1 truncate">{detail.summary}</span>
+              {detail.undoable && !undone.has(detail.mutationId) && (
+                <Button variant="ghost" size="sm" onClick={() => void undo(detail.mutationId)}>撤销</Button>
+              )}
+              {undone.has(detail.mutationId) && <span>已撤销</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function ContextCompactionDivider({

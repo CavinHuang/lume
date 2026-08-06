@@ -285,3 +285,26 @@ function snapshot(entry: MemoryV2Entry): MutationSnapshot {
 export function toSharedMemoryReceipt(receipt: MemoryV2MutationReceipt): MemoryMutationReceipt {
   return receipt;
 }
+
+export function hasMemoryMutationForRun(input: {
+  workspaceSlug: string;
+  runId: string;
+  actor?: MemoryV2MutationActor;
+}): boolean {
+  for (const scope of ["global", "workspace"] as const) {
+    const paths = getMemoryV2ScopePaths({ scope, workspaceSlug: scope === "workspace" ? input.workspaceSlug : undefined });
+    for (const name of readdirSync(paths.journalDir)) {
+      if (!name.endsWith(".jsonl")) continue;
+      const records = readFileSync(join(paths.journalDir, name), "utf-8").split("\n").filter(Boolean);
+      for (const line of records) {
+        try {
+          const record = JSON.parse(line) as MutationJournalRecord;
+          if (record.receipt.runId === input.runId && (!input.actor || record.receipt.actor === input.actor)) return true;
+        } catch {
+          continue;
+        }
+      }
+    }
+  }
+  return false;
+}

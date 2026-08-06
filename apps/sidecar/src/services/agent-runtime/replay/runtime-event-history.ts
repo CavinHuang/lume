@@ -30,12 +30,28 @@ export async function listThreadRuntimeEvents(input: {
       );
     })
     .filter((event): event is Extract<LumeRuntimeEvent, { type: "background.task.completed" }> => event !== null);
+  const memoryChangedEvents = getAgentThreadSDKMessages(input.threadId)
+    .filter((message) => message.type === "system" && message.subtype === "memory_saved")
+    .map((message): Extract<LumeRuntimeEvent, { type: "memory.changed" }> => ({
+      id: `${message.run_id}:memory.changed:${message.mutation_ids[0] ?? message.uuid ?? message.created_at}`,
+      type: "memory.changed",
+      threadId: input.threadId,
+      runId: message.run_id,
+      createdAt: message.created_at,
+      actor: "background_extract",
+      workspaceSlug: message.workspace_slug,
+      mutationIds: message.mutation_ids,
+      memoryIds: message.memory_ids,
+      summary: message.summary,
+      details: message.details ?? []
+    }));
 
   return {
     threadId: input.threadId,
     events: assignRunSequences(sortRuntimeEvents([
       ...runs.flatMap(projectRunStateToReplayEvents),
       ...backgroundTaskEvents,
+      ...memoryChangedEvents,
       ...taskEvents.map((event) => ({
         id: `task.progress:${event.taskListId}:${event.sequence}`,
         type: "task.progress" as const,
