@@ -306,6 +306,7 @@ export const PUBLIC_RENDERER_SIDECAR_METHODS = new Set([
   'memory:reload-local-onnx',
   'memory:resolve-pending',
   'memory:search',
+  'memory:diagnostics-snapshot',
   'memory:settings-snapshot',
   'memory:source-files-changed',
   'memory:update-entry',

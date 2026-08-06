@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF } from "@lume/shared";
 import { appendDaily, appendRunArchive, createMemoryV2Store } from "./markdown-store";
 import {
@@ -11,6 +11,7 @@ import {
 import { smartAddMemoryV2Candidate } from "./smart-add";
 import { updateMemoryRuntimeConfig } from "./policy";
 import { updateLumeConfigSection } from "../system/lume-config-service";
+import * as markdownStore from "./markdown-store";
 
 let root: string;
 
@@ -26,7 +27,11 @@ afterEach(() => {
 
 describe("memory-v2 settings snapshot", () => {
   test("diagnostics snapshot only projects status fields", () => {
+    const storeFactory = spyOn(markdownStore, "createMemoryV2Store").mockImplementation(() => {
+      throw new Error("diagnostics must not load memory entries");
+    });
     const snapshot = getMemoryV2DiagnosticsSnapshot("demo");
+    storeFactory.mockRestore();
 
     expect(snapshot).toEqual(expect.objectContaining({
       workspaceSlug: "demo",
