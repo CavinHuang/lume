@@ -193,6 +193,12 @@ export function AgentIslandSurface({
                         role="button"
                         tabIndex={0}
                         onClick={() => onIntent({ name: 'open-session', threadId: r.threadId })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            onIntent({ name: 'open-session', threadId: r.threadId })
+                          }
+                        }}
                       >
                         <span className="island-recent-icon" aria-hidden="true">◌</span>
                         <span className="island-session-copy">

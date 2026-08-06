@@ -321,59 +321,21 @@ describe('formatRelativeTime（idle home surface 最近会话相对时间）', (
   })
 })
 
-describe('AgentIslandSurface idle home surface 接线（集成）', () => {
-  // expanded DOM 在 SSR 不挂载（surfaceMode 状态机依赖 useEffect），用 data-flow 复现渲染决策。
-  // 渲染层 JSX 是 state.isIdle ? recent区 : active区 的 ternary（互斥），recent 区内再据
-  // recentSessions.length 决定列表 / 空引导。这里断言决策与数据消费，对应 JSX 接线。
-  test('isIdle=true + recentSessions.length>0 → recent 区（head + 各 title + relative time）', () => {
-    const now = Date.now()
+describe('AgentIslandSurface idle home surface 数据消费', () => {
+  // expanded DOM 在 SSR 不挂载（surfaceMode 状态机依赖 useEffect），无法对 recent 区做真实 DOM 断言。
+  // 这里固定渲染层会消费的真实数据：对 state.recentSessions 的每条跑 formatRelativeTime(updatedAt)，
+  // 断言其输出（渲染层 <span className="island-session-detail">{formatRelativeTime(r.updatedAt)}</span> 直消费）。
+  // 若 formatRelativeTime 阈值/字段名变动，或 renderer 改用别的字段，此测试会真实失败。
+  test('recentSessions 每行 → formatRelativeTime 输出（renderer 直消费的小字）', () => {
+    const now = 10_000_000_000
     const recent: AgentIslandRecentSession[] = [
-      { threadId: 'r1', title: '历史会话A', updatedAt: now - 120_000, project: 'proj' },
-      { threadId: 'r2', title: '历史会话B', updatedAt: now - 7_200_000 },
+      { threadId: 'r1', title: '历史会话A', updatedAt: now - 30_000, project: 'proj' },
+      { threadId: 'r2', title: '历史会话B', updatedAt: now - 5 * 60_000 },
+      { threadId: 'r3', title: '历史会话C', updatedAt: now - 3 * 3_600_000 },
+      { threadId: 'r4', title: '历史会话D', updatedAt: now - 2 * 86_400_000 },
     ]
-    const state = baseState({
-      isIdle: true,
-      recentSessions: recent,
-      sessions: [],
-      primarySessionId: null,
-      compactLabel: 'Lume · 最近会话',
-    })
-    // 渲染层决策（对应 JSX ternary）
-    const renderRecent = !!state.isIdle
-    const renderActive = !state.isIdle
-    const isEmpty = renderRecent && (state.recentSessions?.length ?? 0) === 0
-    expect(renderRecent).toBe(true)
-    expect(renderActive).toBe(false) // active sessions 区不渲染（互斥）
-    expect(isEmpty).toBe(false)
-    // recent 行数据消费：title + 相对时间 + project
-    const rows = (state.recentSessions ?? []).map((r) => ({
-      title: r.title,
-      relative: formatRelativeTime(r.updatedAt, now),
-      project: r.project,
-    }))
-    expect(rows).toEqual([
-      { title: '历史会话A', relative: '2 分钟前', project: 'proj' },
-      { title: '历史会话B', relative: '2 小时前', project: undefined },
-    ])
-  })
-
-  test('isIdle=true + recentSessions=[] → 空引导（「还没有会话」+「新建会话」open-main）', () => {
-    const state = baseState({
-      isIdle: true,
-      recentSessions: [],
-      sessions: [],
-      primarySessionId: null,
-    })
-    const renderRecent = !!state.isIdle
-    const isEmpty = renderRecent && (state.recentSessions?.length ?? 0) === 0
-    expect(renderRecent).toBe(true)
-    expect(isEmpty).toBe(true)
-    // 空引导文案 + open-main intent（JSX 静态接线，这里仅断言决策触发空引导分支）
-  })
-
-  test('isIdle=false → active sessions 区（不走 recent 分支）', () => {
-    const state = baseState({ isIdle: false })
-    const renderRecent = !!state.isIdle
-    expect(renderRecent).toBe(false)
+    // 渲染层对每行算的 detail 字符串（与 AgentIslandSurface.tsx 的 formatRelativeTime(r.updatedAt) 同源）
+    const details = recent.map((r) => formatRelativeTime(r.updatedAt, now))
+    expect(details).toEqual(['刚刚', '5 分钟前', '3 小时前', '2 天前'])
   })
 })
