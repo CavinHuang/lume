@@ -13,6 +13,20 @@
 //          ② NSHostingView mouseEntered 等 NSView 重写继承 @MainActor；
 //          ③ IslandModel.hovered 本地更新路径（非 snapshot 回读）；
 //          ④ ExpandedIslandView 顶部 notch 区避让（padding 是否足够）。
+//
+// 🔄 Codable/渲染已对齐 Electron 路径（Task 1-4 信息密度增强）：
+//   - AgentSession 加 project?/queuedCount?/modelRef?/costUSD?/tokenTotal?
+//   - 新增 RecentSession struct（idle home surface 用）
+//   - AgentState 加 recentSessions?/isIdle?
+//   - ExpandedIslandView 据 isIdle 切换 recent 列表 + 空引导
+//   - session 行补 model · cost · token 小字（costUSD/tokenTotal > 0 才显）
+//   - compact 加队列徽章 + attention pill（needs-interaction ≥ 2）
+//   - planning 全量前 5 + overflow（替代原 prefix(3)）
+//   偏离 Electron：① model label 直接显原始 modelRef 字符串（native 无 model registry，
+//                  不引 findModelMeta；用户 brief 已确认接受此偏离）；
+//                  ② compact planning indicator（无 primary + 紧迫 planning 图标）暂未同步，
+//                  需移植 selectPlanningIndicator，留 follow-up。
+//   仍待 macOS 26 SDK 编译 + 端到端验证（与 Phase 2 既有待验证状态一致）。
 
 import AppKit
 import SwiftUI
@@ -25,9 +39,12 @@ private let expandedBottomCornerClearance: CGFloat = 32
 // MARK: - Codable structs（严格对齐 Lume types/agent-island.ts）
 
 /// Lume AgentIslandSessionSnapshot（注意：用 threadId，非 Proma 的 sessionId）。
+/// 可选字段对齐 TS `?`：缺省由 Codable decode 自动 nil（与 Phase 2 既有 Optional 同处理）。
 struct AgentSession: Codable, Identifiable {
   let threadId: String
   let title: String
+  /// 所属工作区/项目名（小字号显示在 title 后）。
+  let project: String?
   let phase: String
   let interactionKind: String?
   let detail: String
@@ -36,6 +53,24 @@ struct AgentSession: Codable, Identifiable {
   let unread: Bool
   let terminalAt: Double?
   let lastActivityAt: Double
+  /// 排队消息数（compact 徽章用）。
+  let queuedCount: Int?
+  /// 当前会话模型引用（原始 ref；native 无 registry，直接显原始字符串）。
+  let modelRef: String?
+  /// 该会话生命周期累计成本（USD）。
+  let costUSD: Double?
+  /// 该会话生命周期累计 token。
+  let tokenTotal: Int?
+  var id: String { threadId }
+}
+
+/// Lume AgentIslandRecentSession（idle home surface 的最近会话条目，无 runtime-status）。
+struct RecentSession: Codable, Identifiable {
+  let threadId: String
+  let title: String
+  let project: String?
+  let updatedAt: Double
+  let phase: String?
   var id: String { threadId }
 }
 
@@ -55,7 +90,7 @@ struct PlanningSnapshot: Codable {
 }
 
 /// Lume AgentIslandState。
-/// 注意：无 Proma 的 pill / recentSessions / idleDashboard / planQuotas /
+/// 注意：无 Proma 的 pill / idleDashboard / planQuotas /
 /// visible / hovered / expanded 字段。presentation 单字段决定显示形态。
 struct AgentState: Codable {
   let presentation: String   // "hidden" | "compact" | "expanded"
@@ -63,6 +98,10 @@ struct AgentState: Codable {
   let compactLabel: String
   let sessions: [AgentSession]
   let planning: PlanningSnapshot
+  /// idle home surface 用（无 active session 时展示最近会话）。
+  let recentSessions: [RecentSession]?
+  /// 无 active session 标志；渲染层据它把 expanded 切换成 recent 区。
+  let isIdle: Bool?
   let updatedAt: Double
 }
 
@@ -286,6 +325,33 @@ func timeText(_ value: Double) -> String {
   return formatter.string(from: Date(timeIntervalSince1970: value / 1000))
 }
 
+/// idle home surface 最近会话相对时间：Date.now - updatedAt → 中文相对描述。
+/// 阈值（对齐 Electron formatRelativeTime）：<1min「刚刚」、<1h「N 分钟前」、<24h「N 小时前」、否则「N 天前」。
+/// 对未来时间（时钟偏移）兜底成「刚刚」，避免负数分钟。
+func relativeTimeText(updatedAt: Double, now: Double = Date().timeIntervalSince1970 * 1000) -> String {
+  let diff = max(0, now - updatedAt)
+  if diff < 60_000 { return "刚刚" }
+  if diff < 3_600_000 { return "\(Int(diff / 60_000)) 分钟前" }
+  if diff < 86_400_000 { return "\(Int(diff / 3_600_000)) 小时前" }
+  return "\(Int(diff / 86_400_000)) 天前"
+}
+
+/// 拼接会话行 model · cost · token 小字（对齐 Electron formatSessionMeta）。
+/// 仅 >0 才进 parts，避免「· $0.00」噪声。
+/// 偏离 Electron：model label 直接显原始 modelRef 字符串（native 无 model registry，
+/// 不引 findModelMeta；用户 brief 已确认接受此偏离）。
+func sessionMetaText(session: AgentSession) -> String {
+  var parts: [String] = []
+  if let ref = session.modelRef, !ref.isEmpty { parts.append(ref) }
+  if let cost = session.costUSD, cost > 0 {
+    parts.append(String(format: "$%.2f", cost))
+  }
+  if let tokens = session.tokenTotal, tokens > 0 {
+    parts.append(String(format: "%.1fk", Double(tokens) / 1000))
+  }
+  return parts.joined(separator: " · ")
+}
+
 // MARK: - CompactIslandView
 
 struct CompactIslandView: View {
@@ -294,6 +360,12 @@ struct CompactIslandView: View {
   let action: (String, [String: Any]) -> Void
 
   private var primarySession: AgentSession? { snapshot.state.sessions.first }
+  /// needs-interaction 计数（对齐 Electron compact attention pill：>=2 才显数字）。
+  private var needInteractionCount: Int {
+    snapshot.state.sessions.filter { $0.phase == "needs-interaction" }.count
+  }
+  /// 排队消息数（对齐 Electron compact queue badge：>0 才显）。
+  private var queueCount: Int { primarySession?.queuedCount ?? 0 }
 
   var body: some View {
     Button(action: { action("set-expanded", ["value": true]) }) {
@@ -303,6 +375,24 @@ struct CompactIslandView: View {
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(.white.opacity(0.65))
             .frame(width: 14)
+        }
+        // 队列徽章（对齐 Electron island-queue-badge）。
+        if queueCount > 0 {
+          Text("队列 \(queueCount)")
+            .font(.system(size: 9, weight: .bold))
+            .padding(.horizontal, 5)
+            .frame(height: 14)
+            .background(.white.opacity(0.18), in: Capsule())
+            .foregroundStyle(.white.opacity(0.92))
+        }
+        // attention 数字 pill（needs-interaction >=2 才显；对齐 Electron island-attention-pill）。
+        if needInteractionCount >= 2 {
+          Text("\(needInteractionCount)")
+            .font(.system(size: 9, weight: .bold))
+            .padding(.horizontal, 5)
+            .frame(height: 14)
+            .background(Color(red: 1, green: 0.66, blue: 0.22), in: Capsule())
+            .foregroundStyle(.white)
         }
         // Lume 主进程已算好 compactLabel（如 "Lume · 正在执行"），Swift 不再拼接品牌前缀。
         Text(snapshot.state.compactLabel)
@@ -395,26 +485,109 @@ struct ExpandedIslandView: View {
       }
       .frame(height: 46)
 
-      if !snapshot.state.sessions.isEmpty {
+      // idle/active 互斥：isIdle == true 时 sessions 区替换为 recent 列表 + 空引导
+      // （对齐 Task 4 Electron：service 已去重，无需渲染层再剔 active）。
+      // planning 区在两种状态下都保留（有才显，复用下方全量逻辑）。
+      if snapshot.state.isIdle == true {
         Divider().overlay(.white.opacity(0.11))
         VStack(alignment: .leading, spacing: 5) {
-          ForEach(snapshot.state.sessions.prefix(3)) { session in
+          HStack(spacing: 5) {
+            Image(systemName: "clock.arrow.circlepath")
+              .font(.system(size: 11, weight: .semibold))
+              .foregroundStyle(.white.opacity(0.6))
+            Text("最近会话")
+              .font(.system(size: 12, weight: .bold))
+              .foregroundStyle(.white.opacity(0.9))
+          }
+          .padding(.horizontal, 14)
+          .padding(.top, 8)
+
+          let recents = snapshot.state.recentSessions ?? []
+          if !recents.isEmpty {
+            ForEach(Array(recents.prefix(5))) { recent in
+              Button(action: { action("open-session", ["threadId": recent.threadId]) }) {
+                HStack(spacing: 10) {
+                  Text("◌")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.55))
+                  VStack(alignment: .leading, spacing: 2) {
+                    Text(recent.title)
+                      .font(.system(size: 11, weight: .semibold))
+                      .lineLimit(1)
+                      .foregroundStyle(.white.opacity(0.92))
+                    Text(relativeTimeText(updatedAt: recent.updatedAt))
+                      .font(.system(size: 9.5))
+                      .foregroundStyle(.white.opacity(0.5))
+                  }
+                  Spacer()
+                  if let project = recent.project, !project.isEmpty {
+                    Text(project)
+                      .font(.system(size: 9.5))
+                      .lineLimit(1)
+                      .foregroundStyle(.white.opacity(0.40))
+                  }
+                  Image(systemName: "arrow.up.right")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.45))
+                }
+                .padding(.horizontal, 11)
+                .frame(minHeight: 42)
+                .background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 10))
+              }.buttonStyle(.plain)
+            }
+          } else {
+            // 空引导：还没有会话 + 新建会话（对齐 Task 4 Electron island-recent-empty）。
+            VStack(spacing: 8) {
+              Text("还没有会话")
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.55))
+              Button(action: { action("open-main", [:]) }) {
+                Text("新建会话")
+                  .font(.system(size: 10, weight: .semibold))
+                  .padding(.horizontal, 12)
+                  .frame(height: 24)
+              }.buttonStyle(IslandButtonStyle())
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+          }
+        }.padding(.bottom, 6)
+      } else if !snapshot.state.sessions.isEmpty {
+        Divider().overlay(.white.opacity(0.11))
+        VStack(alignment: .leading, spacing: 5) {
+          ForEach(Array(snapshot.state.sessions.prefix(5))) { session in
             Button(action: { action("open-session", ["threadId": session.threadId]) }) {
               HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                   Text(phaseText(session.phase))
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(.white.opacity(0.98))
-                  Text(session.title)
-                    .font(.system(size: 10, weight: .medium))
-                    .lineLimit(1)
-                    .foregroundStyle(.white.opacity(0.62))
+                  HStack(spacing: 6) {
+                    Text(session.title)
+                      .font(.system(size: 10, weight: .medium))
+                      .lineLimit(1)
+                      .foregroundStyle(.white.opacity(0.62))
+                    if let project = session.project, !project.isEmpty {
+                      Text(project)
+                        .font(.system(size: 9.5))
+                        .lineLimit(1)
+                        .foregroundStyle(.white.opacity(0.40))
+                    }
+                  }
                   // 最近一行活动作为细节提示（Lume SessionSnapshot 独有字段）。
                   if let activity = session.activityLines.last, !activity.isEmpty {
                     Text(activity)
                       .font(.system(size: 9.5))
                       .lineLimit(1)
                       .foregroundStyle(.white.opacity(0.45))
+                  }
+                  // model · cost · token 小字（costUSD/tokenTotal > 0 才显；对齐 Task 3 formatSessionMeta）。
+                  let meta = sessionMetaText(session: session)
+                  if !meta.isEmpty {
+                    Text(meta)
+                      .font(.system(size: 9))
+                      .lineLimit(1)
+                      .foregroundStyle(.white.opacity(0.40))
                   }
                 }
                 Spacer()
@@ -435,26 +608,51 @@ struct ExpandedIslandView: View {
       }
 
       let planning = snapshot.state.planning
+      // 上一块（idle recent 或 active sessions）非空时，planning 前加分隔线。
+      let hasSessionsBlock = snapshot.state.isIdle == true
+        ? !(snapshot.state.recentSessions?.isEmpty ?? true)
+        : !snapshot.state.sessions.isEmpty
       if !planning.todos.isEmpty || !planning.reminders.isEmpty {
-        if !snapshot.state.sessions.isEmpty {
+        if hasSessionsBlock {
           Divider().overlay(.white.opacity(0.11))
+        }
+        // planning 全量排序：overdue 置顶 + dueAt 升序（对齐 Electron sortIslandPlanningItems）。
+        // expanded 直出前 5 条 + 「还有 N 条」overflow（对齐 Task 3 PLANNING_VISIBLE_MAX=5）。
+        let visibleMax = 5
+        let sortedTodos = planning.todos.sorted {
+          if $0.overdue != $1.overdue { return $0.overdue }
+          return $0.dueAt < $1.dueAt
+        }
+        let sortedReminders = planning.reminders.sorted {
+          if $0.overdue != $1.overdue { return $0.overdue }
+          return $0.dueAt < $1.dueAt
         }
         // 两列：todos（待办）+ reminders（提醒），都用 PlanningItem。
         HStack(alignment: .top, spacing: 12) {
-          if !planning.todos.isEmpty {
+          if !sortedTodos.isEmpty {
             Button(action: { action("open-planning", [:]) }) {
-              PlanningColumn(title: "接下来待办", symbol: "checklist", count: planning.todos.count) {
-                ForEach(planning.todos.prefix(3)) { todo in
+              PlanningColumn(title: "接下来待办", symbol: "checklist", count: sortedTodos.count) {
+                ForEach(Array(sortedTodos.prefix(visibleMax))) { todo in
                   PlanningItemRow(item: todo)
+                }
+                if sortedTodos.count > visibleMax {
+                  Text("还有 \(sortedTodos.count - visibleMax) 条")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.white.opacity(0.45))
                 }
               }
             }.buttonStyle(.plain)
           }
-          if !planning.reminders.isEmpty {
+          if !sortedReminders.isEmpty {
             Button(action: { action("open-planning", [:]) }) {
-              PlanningColumn(title: "即将提醒", symbol: "bell", count: planning.reminders.count) {
-                ForEach(planning.reminders.prefix(3)) { reminder in
+              PlanningColumn(title: "即将提醒", symbol: "bell", count: sortedReminders.count) {
+                ForEach(Array(sortedReminders.prefix(visibleMax))) { reminder in
                   PlanningItemRow(item: reminder)
+                }
+                if sortedReminders.count > visibleMax {
+                  Text("还有 \(sortedReminders.count - visibleMax) 条")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.white.opacity(0.45))
                 }
               }
             }.buttonStyle(.plain)
