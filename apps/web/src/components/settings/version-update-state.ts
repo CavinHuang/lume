@@ -137,3 +137,18 @@ export function shouldAutoCheckUpdates(
 
   return now.getTime() - lastCheck.getTime() >= 24 * 60 * 60 * 1000
 }
+
+/**
+ * macOS 未签名（ad-hoc）构建无法通过 Squirrel.Mac 的签名校验（见 issue #22）：
+ * ad-hoc 包的 designated requirement 为 cdhash，跨版本必不匹配，quitAndInstall 必失败。
+ * 此时强制改走 DMG asset 通道（scheduleMacUpdateInstall 纯文件替换，绕过校验）。
+ *
+ * 仅当 macOS + 明确检测到无稳定 TeamID（macSignatureStable === false）时返回 true；
+ * macSignatureStable === null（非 mac / 未知 / dev）不触发，保留默认 Squirrel 行为。
+ */
+export function macRequiresAssetUpdateChannel(
+  platform: ReleaseDownloadPlatform,
+  macSignatureStable: boolean | null,
+): boolean {
+  return platform === 'macos' && macSignatureStable === false
+}

@@ -18,6 +18,7 @@ import {
 } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { execFileSync } from 'node:child_process'
+import { detectMacSignatureStable } from './desktop-signature'
 import {
   appendFileSync,
   copyFileSync,
@@ -2866,6 +2867,16 @@ ipcMain.handle('lume:update:install', async (event) => {
       onError(error)
     }
   })
+})
+
+ipcMain.handle('lume:app:signature', async (event) => {
+  validateIpcSender(event, getTrustedWindows())
+  const macSignatureStable = await detectMacSignatureStable({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    execPath: process.execPath,
+  })
+  return { macSignatureStable }
 })
 
 // Windows 任务栏图标/分组依赖 AppUserModelId，必须在 ready 事件前设置；
