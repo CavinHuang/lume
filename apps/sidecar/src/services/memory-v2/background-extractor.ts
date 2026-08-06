@@ -44,6 +44,18 @@ interface ExtractionCursor {
 
 const queues = new Map<string, ThreadQueueState>();
 
+interface BackgroundExtractionProgress {
+  phase: string;
+  scannedItems: number;
+  processedItems: number;
+  changedItems: number;
+}
+
+interface BackgroundExtractionResult {
+  scannedItems: number;
+  changedItems: number;
+}
+
 export function enqueueBackgroundMemoryExtraction(input: BackgroundMemoryExtractionRequest): void {
   if (!getMemoryRuntimeConfig().backgroundExtraction) return;
   if (input.threadType === "subagent" || input.chatType === "group" || input.chatType === "channel") return;
@@ -60,12 +72,19 @@ export function enqueueBackgroundMemoryExtraction(input: BackgroundMemoryExtract
 
 async function runQueued(input: BackgroundMemoryExtractionRequest): Promise<void> {
   try {
-    const job = memoryJobService.start({
+    const job = memoryJobService.start<BackgroundExtractionResult, BackgroundExtractionProgress>({
       kind: "turn_extract",
       workspaceSlug: input.workspaceSlug,
       idempotencyKey: `turn-extract:${input.threadId}:${input.runId}`,
       manual: false,
-      run: () => runExtraction(input)
+      run: ({ report }) => runExtraction(input, report),
+      onProgress: (current) => {
+        if (current.progress?.changedItems) notifyExtractionProgress(input, current.jobId, current.progress);
+      },
+      onCompleted: (current) => {
+        const result = current.result;
+        if (result?.changedItems) notifyExtractionCompleted(input, current.jobId, result);
+      }
     });
     await memoryJobService.waitForTerminal(input.workspaceSlug, job.jobId);
   } finally {
@@ -81,23 +100,30 @@ async function runQueued(input: BackgroundMemoryExtractionRequest): Promise<void
   }
 }
 
-async function runExtraction(input: BackgroundMemoryExtractionRequest): Promise<void> {
+async function runExtraction(
+  input: BackgroundMemoryExtractionRequest,
+  report: (progress: BackgroundExtractionProgress) => void
+): Promise<BackgroundExtractionResult> {
   const sources = extractionSources(input.items);
   const cursor = readCursor(input);
-  if (cursor.lastRunId === input.runId && (cursor.status === "completed" || cursor.status === "skipped")) return;
+  if (cursor.lastRunId === input.runId && (cursor.status === "completed" || cursor.status === "skipped")) {
+    return { scannedItems: 0, changedItems: 0 };
+  }
   const fromSequence = cursor.cursor;
   const toSequence = fromSequence + sources.length;
   const idempotencyKey = `${input.threadId}:${fromSequence}:${toSequence}`;
-  if (cursor.lastIdempotencyKey === idempotencyKey && cursor.status === "completed") return;
+  if (cursor.lastIdempotencyKey === idempotencyKey && cursor.status === "completed") {
+    return { scannedItems: 0, changedItems: 0 };
+  }
   writeCursor(input, { ...cursor, status: "running", updatedAt: new Date().toISOString() });
 
   if (hasMemoryMutationForRun({ workspaceSlug: input.workspaceSlug, runId: input.runId, actor: "main_agent" })) {
     writeCursor(input, completedCursor(cursor, input, toSequence, idempotencyKey, "skipped"));
-    return;
+    return { scannedItems: sources.length, changedItems: 0 };
   }
   if (sources.length === 0) {
     writeCursor(input, completedCursor(cursor, input, toSequence, idempotencyKey, "skipped"));
-    return;
+    return { scannedItems: 0, changedItems: 0 };
   }
 
   try {
@@ -146,9 +172,16 @@ async function runExtraction(input: BackgroundMemoryExtractionRequest): Promise<
       }));
     }
     const changed = receipts.filter((receipt) => receipt.action === "created" || receipt.action === "updated" || receipt.action === "superseded" || receipt.action === "pending");
+    report({
+      phase: "提交记忆变更",
+      scannedItems: sources.length,
+      processedItems: extracted.length,
+      changedItems: changed.length
+    });
     writeCursor(input, completedCursor(cursor, input, toSequence, idempotencyKey, "completed"));
     if (changed.length > 0) notifyMemorySaved(input, changed);
     maybeEnqueueAutoDream(input.workspaceSlug, { threadId: input.threadId, runId: input.runId });
+    return { scannedItems: sources.length, changedItems: changed.length };
   } catch (error) {
     writeCursor(input, {
       ...cursor,
@@ -233,6 +266,48 @@ function notifyMemorySaved(input: BackgroundMemoryExtractionRequest, receipts: M
     memoryIds,
     summary,
     details
+  };
+  emitAgentNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
+}
+
+function notifyExtractionProgress(
+  input: BackgroundMemoryExtractionRequest,
+  jobId: string,
+  progress: BackgroundExtractionProgress
+): void {
+  const event: Extract<LumeRuntimeEvent, { type: "memory.job.progress" }> = {
+    id: `${jobId}:progress:${progress.processedItems}`,
+    type: "memory.job.progress",
+    threadId: input.threadId,
+    runId: input.runId,
+    createdAt: new Date().toISOString(),
+    jobId,
+    jobKind: "turn_extract",
+    phase: progress.phase,
+    scannedItems: progress.scannedItems,
+    processedItems: progress.processedItems,
+    changedItems: progress.changedItems
+  };
+  emitAgentNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
+}
+
+function notifyExtractionCompleted(
+  input: BackgroundMemoryExtractionRequest,
+  jobId: string,
+  result: BackgroundExtractionResult
+): void {
+  const createdAt = new Date().toISOString();
+  const event: Extract<LumeRuntimeEvent, { type: "memory.job.completed" }> = {
+    id: `${jobId}:completed`,
+    type: "memory.job.completed",
+    threadId: input.threadId,
+    runId: input.runId,
+    createdAt,
+    jobId,
+    jobKind: "turn_extract",
+    status: "completed",
+    summary: `后台提取完成，处理 ${result.scannedItems} 条来源，变更 ${result.changedItems} 条记忆`,
+    changedItems: result.changedItems
   };
   emitAgentNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
 }
