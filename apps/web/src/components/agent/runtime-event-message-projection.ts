@@ -126,6 +126,13 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       createdAt: event.createdAt,
       workspaceSlug: event.workspaceSlug,
       details: event.details,
+      target: {
+        section: 'memory',
+        workspaceSlug: event.workspaceSlug,
+        libraryView: 'recent',
+        ...(event.memoryIds[0] ? { memoryId: event.memoryIds[0] } : {}),
+        ...(event.mutationIds[0] ? { mutationId: event.mutationIds[0] } : {}),
+      },
     })
     return
   }
@@ -143,6 +150,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
         ? `${event.phase} · ${event.processedItems}/${event.scannedItems}`
         : event.summary,
       createdAt: event.createdAt,
+      target: { section: 'activity', jobId: event.jobId },
     }
     const existingIndex = messages.findIndex((item) => item.id === id)
     if (existingIndex >= 0) messages[existingIndex] = message

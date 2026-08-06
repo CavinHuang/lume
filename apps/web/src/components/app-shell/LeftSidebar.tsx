@@ -283,7 +283,7 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
     const proactiveId = '__proactive__'
     setActiveTabId(proactiveId)
     if (!tabs.find((tab) => tab.id === proactiveId)) {
-      setTabs((previous) => [...previous, { id: proactiveId, type: 'proactive', title: '主动' }])
+      setTabs((previous) => [...previous, { id: proactiveId, type: 'proactive', title: '记忆与洞察' }])
     }
   }
 

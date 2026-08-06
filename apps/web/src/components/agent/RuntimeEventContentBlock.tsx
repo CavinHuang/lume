@@ -7,7 +7,7 @@ import { DiffAwareMarkdownPre } from '@/components/markdown/DiffAwareMarkdownPre
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { activeTabIdAtom, agentThreadsAtom, capabilityDetailTargetAtom, codingReviewPanelActionAtom, generalSettingsAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, agentThreadsAtom, capabilityDetailTargetAtom, codingReviewPanelActionAtom, generalSettingsAtom, memoryCenterDeepLinkAtom, tabsAtom } from '@/atoms'
 import { codingReviewFileKey } from '@/atoms/right-panel-atoms'
 import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
 import type { RuntimeCodingFileChange, RuntimeCodingReport } from '@lume/shared'
@@ -40,6 +40,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { AgentFileReference, type OpenThreadFile } from './AgentFileReference'
 import { collectAssistantSources, type AssistantSourceReference } from './source-references'
 import { prefetchSessionCodingDiffs, requestSessionCodingDiff } from '@/components/right-panel/coding-diff-cache'
+import { MEMORY_CENTER_TAB_ID, memoryCenterTarget, upsertMemoryCenterTab } from '@/components/memory/open-memory-center'
 const MARKDOWN_STREAM_MIN_DELAY_MS = 50
 
 interface RuntimeEventContentBlockProps {
@@ -133,6 +134,14 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
   const generalSettings = useAtomValue(generalSettingsAtom)
   const useLeftAlignedMessageList = generalSettings.agentMessageListDisplayMode === 'left_aligned'
   const showMessageAvatar = generalSettings.agentMessageAvatarMode === 'visible'
+  const setTabs = useSetAtom(tabsAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
+  const setMemoryCenterDeepLink = useSetAtom(memoryCenterDeepLinkAtom)
+  const openMemoryCenter = (target?: Extract<RuntimeMessageView, { type: 'system'; variant: 'memory_saved' | 'memory_job' }>['target']) => {
+    setTabs(upsertMemoryCenterTab)
+    setMemoryCenterDeepLink(memoryCenterTarget(target))
+    setActiveTabId(MEMORY_CENTER_TAB_ID)
+  }
 
   if (message.type === 'user') {
     return (
@@ -150,7 +159,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
   }
 
   if (message.type === 'system') {
-    return <SystemMessageBlock message={message} className={cls} onOpenMemorySource={onOpenMemorySource} />
+    return <SystemMessageBlock message={message} className={cls} onOpenMemorySource={onOpenMemorySource} onOpenMemoryCenter={openMemoryCenter} />
   }
 
   const latestTaskProgressBlock = findLatestTaskProgressBlock(message.blocks)
@@ -360,22 +369,27 @@ function SystemMessageBlock({
   message,
   className,
   onOpenMemorySource,
+  onOpenMemoryCenter,
 }: {
   message: Extract<RuntimeMessageView, { type: 'system' }>
   className?: string
   onOpenMemorySource?: (path: string, fileRef?: FileRef) => void
+  onOpenMemoryCenter: (target: Extract<RuntimeMessageView, { type: 'system'; variant: 'memory_saved' | 'memory_job' }>['target']) => void
 }) {
   if (message.variant === 'context_compaction') {
     return <ContextCompactionDivider message={message} className={className} />
   }
   if (message.variant === 'memory_saved') {
-    return <MemorySavedNotice message={message} className={className} onOpenMemorySource={onOpenMemorySource} />
+    return <MemorySavedNotice message={message} className={className} onOpenMemorySource={onOpenMemorySource} onOpenMemoryCenter={onOpenMemoryCenter} />
   }
   if (message.variant === 'memory_job') {
     return (
       <div className={cn('mx-6 flex items-center gap-2 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-3 py-2 text-[13px] text-[var(--lume-text-secondary)]', className)}>
         {message.status === 'active' ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
         <span>{message.text}</span>
+        <Button variant="ghost" size="sm" onClick={() => onOpenMemoryCenter(message.target)}>
+          打开
+        </Button>
       </div>
     )
   }
@@ -386,10 +400,12 @@ function MemorySavedNotice({
   message,
   className,
   onOpenMemorySource,
+  onOpenMemoryCenter,
 }: {
   message: Extract<RuntimeMessageView, { type: 'system'; variant: 'memory_saved' }>
   className?: string
   onOpenMemorySource?: (path: string, fileRef?: FileRef) => void
+  onOpenMemoryCenter: (target: Extract<RuntimeMessageView, { type: 'system'; variant: 'memory_saved' }>['target']) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [undone, setUndone] = useState<Set<string>>(() => new Set())
@@ -407,6 +423,9 @@ function MemorySavedNotice({
       <div className="flex items-center gap-2 text-[var(--lume-text-secondary)]">
         <Database size={14} />
         <span className="flex-1">{message.text}</span>
+        <Button variant="ghost" size="sm" onClick={() => onOpenMemoryCenter(message.target)}>
+          打开
+        </Button>
         {message.details.length > 0 && (
           <Button variant="ghost" size="sm" onClick={() => setExpanded((value) => !value)}>
             {expanded ? '收起' : '查看'}

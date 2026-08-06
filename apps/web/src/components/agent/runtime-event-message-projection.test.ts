@@ -878,6 +878,13 @@ describe('runtime-event-message-projection', () => {
       variant: 'memory_saved',
       text: '后台记住了 1 条信息',
       workspaceSlug: 'demo',
+      target: {
+        section: 'memory',
+        workspaceSlug: 'demo',
+        libraryView: 'recent',
+        memoryId: 'memory-1',
+        mutationId: 'mutation-1',
+      },
     })
   })
 
@@ -907,6 +914,7 @@ describe('runtime-event-message-projection', () => {
       variant: 'memory_job',
       status: 'completed',
       text: '整理了 2 条记忆',
+      target: { section: 'activity', jobId: 'job-1' },
     })])
   })
 })

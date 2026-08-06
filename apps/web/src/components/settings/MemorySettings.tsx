@@ -26,6 +26,7 @@ import type {
   MemoryIngestSourceInput,
   MemoryIngestSourcesJob,
   MemoryIngestSourcesResult,
+  MemoryDiagnosticsSnapshot,
   MemoryKind,
   MemoryOrganizeJob,
   MemoryOrganizeEntriesResult,
@@ -43,7 +44,12 @@ import { DEFAULT_MEMORY_ACTIVATION } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import {
+  agentWorkspacesAtom,
+  currentWorkspaceIdAtom,
+  memoryCenterDeepLinkAtom,
+  memoryCenterVersionAtom,
+} from '@/atoms'
 import {
   getMemoryRuntimeConfig,
   cancelMemoryJob,
@@ -51,6 +57,7 @@ import {
   getMemoryIngestJob,
   getMemoryOrganizeJob,
   getMemorySettingsSnapshot,
+  getMemoryDiagnosticsSnapshot,
   ingestMemorySources,
   openFileDialog,
   openFolderDialog,
@@ -313,6 +320,18 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
 }
 
 export function MemorySettings() {
+  return <MemorySettingsSurface surface="advanced" />
+}
+
+export function MemoryCenterContent() {
+  return <MemorySettingsSurface surface="center" />
+}
+
+export function MemoryActivityContent() {
+  return <MemorySettingsSurface surface="activity" />
+}
+
+function MemorySettingsSurface({ surface }: { surface: 'advanced' | 'center' | 'activity' }) {
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const workspace = React.useMemo(
@@ -323,6 +342,9 @@ export function MemorySettings() {
   const [view, setView] = React.useState<MemorySettingsView>('recent')
   const [runtimeConfig, setRuntimeConfig] = React.useState<MemoryRuntimeConfig | null>(null)
   const [snapshot, setSnapshot] = React.useState<MemorySettingsSnapshot | null>(null)
+  const [diagnostics, setDiagnostics] = React.useState<MemoryDiagnosticsSnapshot | null>(null)
+  const memoryCenterVersion = useAtomValue(memoryCenterVersionAtom)
+  const deepLink = useAtomValue(memoryCenterDeepLinkAtom)
   const [busyAction, setBusyAction] = React.useState<string | null>(null)
   const [entryOrganizeJob, setEntryOrganizeJob] = React.useState<MemoryOrganizeJob | null>(null)
   const [historyOrganizeJob, setHistoryOrganizeJob] = React.useState<MemoryOrganizeJob | null>(null)
@@ -341,19 +363,31 @@ export function MemorySettings() {
   const refresh = React.useCallback(async () => {
     if (!workspaceSlug) return
     try {
-      const nextConfig = await getMemoryRuntimeConfig()
-      const nextSnapshot = await getMemorySettingsSnapshot(workspaceSlug)
-      setRuntimeConfig(nextConfig)
-      setSnapshot(nextSnapshot)
+      if (surface === 'advanced') {
+        const [nextConfig, nextDiagnostics] = await Promise.all([
+          getMemoryRuntimeConfig(),
+          getMemoryDiagnosticsSnapshot(workspaceSlug),
+        ])
+        setRuntimeConfig(nextConfig)
+        setDiagnostics(nextDiagnostics)
+      } else {
+        setSnapshot(await getMemorySettingsSnapshot(workspaceSlug))
+      }
     } catch (error) {
       console.error('[MemorySettings] refresh FAILED:', error)
       toast.error(memorySettingsErrorMessage(error))
     }
-  }, [workspaceSlug])
+  }, [surface, workspaceSlug])
 
   React.useEffect(() => {
     void refresh()
-  }, [refresh])
+  }, [refresh, memoryCenterVersion])
+
+  React.useEffect(() => {
+    if (surface !== 'center') return
+    if (deepLink.libraryView) setView(deepLink.libraryView)
+    if (deepLink.memoryId) setSelectedMemoryId(deepLink.memoryId)
+  }, [deepLink.libraryView, deepLink.memoryId, surface])
 
   React.useEffect(() => {
     const status = snapshot?.retrieval.semantic.localOnnx?.status
@@ -753,6 +787,108 @@ export function MemorySettings() {
     )
   }
 
+  if (surface === 'advanced') {
+    return (
+      <OverviewPanel
+        advancedOnly
+        busyAction={busyAction}
+        runtimeConfig={runtimeConfig}
+        snapshot={diagnostics}
+        onCitationsMode={(mode) => void handleCitationsMode(mode)}
+        onAutomationToggle={(key, enabled) => void handleAutomationToggle(key, enabled)}
+        onCancelJob={(jobId) => void handleCancelJob(jobId)}
+        onRetryJob={(jobId) => void handleRetryJob(jobId)}
+        onOrganizeEntries={() => void handleOrganizeEntries()}
+        onOrganizeHistory={() => void handleOrganizeHistory()}
+        onIngestPastedText={() => void handleIngestPastedText()}
+        onIngestLocalFiles={() => void handleIngestLocalFiles()}
+        onIngestLocalFolder={() => void handleIngestLocalFolder()}
+        onIngestWorkspaceFile={() => void handleIngestWorkspaceFile()}
+        onOpenFile={(path) => void handleOpenMemoryFile(path)}
+        onSemanticMode={(mode) => void handleSemanticMode(mode)}
+        onReloadLocalOnnx={() => void handleReloadLocalOnnx()}
+        onToggle={(groupId, enabled) => void handleTogglePolicyGroup(groupId, enabled)}
+        externalText={externalText}
+        ingestJob={ingestJob}
+        ingestResult={ingestResult}
+        ingestTargetScope={ingestTargetScope}
+        entryOrganizeJob={entryOrganizeJob}
+        entryOrganizeResult={entryOrganizeResult}
+        historyOrganizeJob={historyOrganizeJob}
+        organizeResult={organizeResult}
+        workspaceFilePath={workspaceFilePath}
+        onExternalTextChange={setExternalText}
+        onIngestTargetScope={setIngestTargetScope}
+        onWorkspaceFilePathChange={setWorkspaceFilePath}
+      />
+    )
+  }
+
+  if (surface === 'activity') {
+    return (
+      <div className="space-y-4">
+        <section className="lume-panel p-4">
+          <div className="text-[14px] font-semibold text-[var(--text-1)]">记忆变更</div>
+          <div className="mt-3 space-y-2">
+            {(snapshot?.activity ?? []).map((item) => (
+              <article key={item.mutationId} className="lume-subpanel p-3">
+                <div className="text-[13px] font-medium text-[var(--text-1)]">{item.summary}</div>
+                <div className="mt-1 text-[11px] text-[var(--text-3)]">
+                  {item.scope === 'global' ? '全局' : '工作区'} · {item.actor}
+                </div>
+              </article>
+            ))}
+            {(snapshot?.activity ?? []).length === 0 && <EmptyInline text="暂无记忆活动" />}
+          </div>
+        </section>
+        <section className="lume-panel p-4">
+          <div className="text-[14px] font-semibold text-[var(--text-1)]">后台任务</div>
+          <div className="mt-3 space-y-2">
+            {(snapshot?.jobs ?? []).map((job) => (
+              <article key={job.jobId} className="lume-subpanel flex items-center justify-between gap-3 p-3">
+                <span className="text-[13px] text-[var(--text-1)]">{job.kind}</span>
+                <span className="text-[11px] text-[var(--text-3)]">{job.status}</span>
+              </article>
+            ))}
+            {(snapshot?.jobs ?? []).length === 0 && <EmptyInline text="暂无后台任务" />}
+          </div>
+        </section>
+        <OverviewPanel
+          operationsOnly
+          busyAction={busyAction}
+          runtimeConfig={runtimeConfig}
+          snapshot={snapshot}
+          onCitationsMode={(mode) => void handleCitationsMode(mode)}
+          onAutomationToggle={(key, enabled) => void handleAutomationToggle(key, enabled)}
+          onCancelJob={(jobId) => void handleCancelJob(jobId)}
+          onRetryJob={(jobId) => void handleRetryJob(jobId)}
+          onOrganizeEntries={() => void handleOrganizeEntries()}
+          onOrganizeHistory={() => void handleOrganizeHistory()}
+          onIngestPastedText={() => void handleIngestPastedText()}
+          onIngestLocalFiles={() => void handleIngestLocalFiles()}
+          onIngestLocalFolder={() => void handleIngestLocalFolder()}
+          onIngestWorkspaceFile={() => void handleIngestWorkspaceFile()}
+          onOpenFile={(path) => void handleOpenMemoryFile(path)}
+          onSemanticMode={(mode) => void handleSemanticMode(mode)}
+          onReloadLocalOnnx={() => void handleReloadLocalOnnx()}
+          onToggle={(groupId, enabled) => void handleTogglePolicyGroup(groupId, enabled)}
+          externalText={externalText}
+          ingestJob={ingestJob}
+          ingestResult={ingestResult}
+          ingestTargetScope={ingestTargetScope}
+          entryOrganizeJob={entryOrganizeJob}
+          entryOrganizeResult={entryOrganizeResult}
+          historyOrganizeJob={historyOrganizeJob}
+          organizeResult={organizeResult}
+          workspaceFilePath={workspaceFilePath}
+          onExternalTextChange={setExternalText}
+          onIngestTargetScope={setIngestTargetScope}
+          onWorkspaceFilePathChange={setWorkspaceFilePath}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
       <section className="lume-panel p-4">
@@ -806,26 +942,6 @@ export function MemorySettings() {
         ))}
       </div>
 
-      {view === 'about' && <PersonaCard workspaceSlug={workspaceSlug} />}
-
-      {view === 'workspace' && snapshot?.workspaceBrief && (
-        <section className="lume-panel p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-[14px] font-semibold text-[var(--text-1)]">Workspace Brief</div>
-              <p className="mt-1 text-[12px] text-[var(--text-3)]">项目约束、稳定决策、协作方式和已验证经验的派生视图。</p>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => void handleOpenMemoryFile(snapshot.workspaceBrief!.path)}>
-              <FileText size={14} />
-              打开文件
-            </Button>
-          </div>
-          <pre className="mt-3 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-[8px] border border-border bg-[var(--surface-2)] p-3 text-[12px] leading-5 text-[var(--text-1)]">
-            {snapshot.workspaceBrief.markdown}
-          </pre>
-        </section>
-      )}
-
       {userCategory && (
         <UserMemoryPanel
           busyAction={busyAction}
@@ -855,42 +971,13 @@ export function MemorySettings() {
         />
       )}
 
-      <OverviewPanel
-        busyAction={busyAction}
-        runtimeConfig={runtimeConfig}
-        snapshot={snapshot}
-        onCitationsMode={(mode) => void handleCitationsMode(mode)}
-        onAutomationToggle={(key, enabled) => void handleAutomationToggle(key, enabled)}
-        onCancelJob={(jobId) => void handleCancelJob(jobId)}
-        onRetryJob={(jobId) => void handleRetryJob(jobId)}
-        onOrganizeEntries={() => void handleOrganizeEntries()}
-        onOrganizeHistory={() => void handleOrganizeHistory()}
-        onIngestPastedText={() => void handleIngestPastedText()}
-        onIngestLocalFiles={() => void handleIngestLocalFiles()}
-        onIngestLocalFolder={() => void handleIngestLocalFolder()}
-        onIngestWorkspaceFile={() => void handleIngestWorkspaceFile()}
-        onOpenFile={(path) => void handleOpenMemoryFile(path)}
-        onSemanticMode={(mode) => void handleSemanticMode(mode)}
-        onReloadLocalOnnx={() => void handleReloadLocalOnnx()}
-        onToggle={(groupId, enabled) => void handleTogglePolicyGroup(groupId, enabled)}
-        externalText={externalText}
-        ingestJob={ingestJob}
-        ingestResult={ingestResult}
-        ingestTargetScope={ingestTargetScope}
-        entryOrganizeJob={entryOrganizeJob}
-        entryOrganizeResult={entryOrganizeResult}
-        historyOrganizeJob={historyOrganizeJob}
-        organizeResult={organizeResult}
-        workspaceFilePath={workspaceFilePath}
-        onExternalTextChange={setExternalText}
-        onIngestTargetScope={setIngestTargetScope}
-        onWorkspaceFilePathChange={setWorkspaceFilePath}
-      />
     </div>
   )
 }
 
 function OverviewPanel({
+  advancedOnly,
+  operationsOnly,
   busyAction,
   runtimeConfig,
   snapshot,
@@ -921,9 +1008,11 @@ function OverviewPanel({
   workspaceFilePath,
   onWorkspaceFilePathChange,
 }: {
+  advancedOnly?: boolean
+  operationsOnly?: boolean
   busyAction: string | null
   runtimeConfig: MemoryRuntimeConfig | null
-  snapshot: MemorySettingsSnapshot | null
+  snapshot: MemorySettingsSnapshot | MemoryDiagnosticsSnapshot | null
   externalText: string
   ingestJob: MemoryIngestSourcesJob | null
   ingestResult: MemoryIngestSourcesResult | null
@@ -954,8 +1043,9 @@ function OverviewPanel({
   workspaceFilePath: string
   onWorkspaceFilePathChange: (value: string) => void
 }) {
-  const metrics = buildMemoryOverviewMetrics(snapshot)
-  const layerMetrics = buildMemoryLayerMetrics(snapshot)
+  const fullSnapshot = snapshot && 'counts' in snapshot ? snapshot : null
+  const metrics = buildMemoryOverviewMetrics(fullSnapshot)
+  const layerMetrics = buildMemoryLayerMetrics(fullSnapshot)
   const ingestItemRows = React.useMemo(() => buildMemoryIngestItemRows(ingestResult), [ingestResult])
   const ingestRunning = ingestJob?.status === 'running'
   const entryOrganizeRunning = entryOrganizeJob?.status === 'running'
@@ -963,13 +1053,19 @@ function OverviewPanel({
   const activeJobs = [entryOrganizeJob, historyOrganizeJob, ingestJob]
     .filter((job): job is MemoryOrganizeJob | MemoryIngestSourcesJob => job?.status === 'running')
   return (
-    <details className="lume-panel group p-4">
+    <details className="lume-panel group p-4" open={advancedOnly || operationsOnly || undefined}>
       <summary className="cursor-pointer list-none">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="text-[14px] font-semibold text-[var(--text-1)]">高级设置</div>
+            <div className="text-[14px] font-semibold text-[var(--text-1)]">
+              {operationsOnly ? '整理与导入' : '高级设置'}
+            </div>
             <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
-              模型、语义召回、整理记忆和外部资料导入。默认配置已经可用，通常不需要调整。
+              {operationsOnly
+                ? '整理现有记忆、从历史对话生成记忆，或导入外部资料。'
+                : advancedOnly
+                ? '管理主动记忆、后台整理、召回与迁移诊断。'
+                : '模型、语义召回、整理记忆和外部资料导入。默认配置已经可用，通常不需要调整。'}
             </p>
           </div>
           <span className="lume-subpanel px-2 py-1 text-[12px] font-medium text-[var(--text-3)]">
@@ -978,7 +1074,7 @@ function OverviewPanel({
           </span>
         </div>
       </summary>
-      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
+      {!advancedOnly && !operationsOnly && <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
         {metrics.map((metric) => (
           <div key={metric.label} className="lume-subpanel p-3">
             <div className="text-[12px] text-[var(--text-3)]">{metric.label}</div>
@@ -992,7 +1088,7 @@ function OverviewPanel({
             </div>
           </div>
         ))}
-      </div>
+      </div>}
 
       {activeJobs.length > 0 && (
         <div className="lume-subpanel mt-4 space-y-2 p-3">
@@ -1010,7 +1106,7 @@ function OverviewPanel({
         </div>
       )}
 
-      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+      {!advancedOnly && !operationsOnly && <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         {layerMetrics.map((metric) => (
           <div key={metric.label} className="lume-subpanel p-3">
             <div className="text-[12px] font-medium text-[var(--text-3)]">{metric.label}</div>
@@ -1018,8 +1114,9 @@ function OverviewPanel({
             <div className="mt-1 text-[11px] leading-4 text-[var(--text-3)]">{metric.desc}</div>
           </div>
         ))}
-      </div>
+      </div>}
 
+      {!operationsOnly && <>
       <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
         {MEMORY_TOOL_POLICY_GROUPS.map((group) => {
           const checked = isMemoryToolGroupEnabled(runtimeConfig?.tools, group.id)
@@ -1166,7 +1263,9 @@ function OverviewPanel({
           </div>
         ) : null}
       </div>
+      </>}
 
+      {!advancedOnly && <>
       <div className="lume-subpanel mt-4 flex flex-wrap items-start justify-between gap-3 p-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--text-1)]">
@@ -1346,7 +1445,9 @@ function OverviewPanel({
         ) : null}
       </div>
 
-      <div className="lume-subpanel mt-4 grid gap-3 p-3 text-[12px] text-[var(--text-3)] md:grid-cols-3">
+      </>}
+
+      {!operationsOnly && <div className="lume-subpanel mt-4 grid gap-3 p-3 text-[12px] text-[var(--text-3)] md:grid-cols-3">
         <div>
           <div className="font-semibold text-[var(--text-2)]">迁移版本</div>
           <div className="mt-1">Memory Schema v{snapshot?.migration.schemaVersion ?? '未知'}</div>
@@ -1372,19 +1473,19 @@ function OverviewPanel({
             </Button>
           ) : <div className="mt-1">无需迁移或暂无备份</div>}
         </div>
-      </div>
+      </div>}
 
-      <details className="mt-4 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+      {!advancedOnly && <details className="mt-4 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
         <summary className="cursor-pointer text-[13px] font-semibold text-[var(--text-1)]">
           原始文件
         </summary>
         <div className="mt-3 grid gap-2 md:grid-cols-2">
-          {(snapshot?.files ?? []).map((file) => (
+          {(fullSnapshot?.files ?? []).map((file) => (
             <FileRow key={file.path} file={file} onOpenFile={onOpenFile} />
           ))}
-          {(snapshot?.files ?? []).length === 0 && <EmptyInline text="暂无原始文件" />}
+          {(fullSnapshot?.files ?? []).length === 0 && <EmptyInline text="暂无原始文件" />}
         </div>
-      </details>
+      </details>}
     </details>
   )
 }

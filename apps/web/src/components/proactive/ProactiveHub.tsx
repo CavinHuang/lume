@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useAtomValue } from 'jotai'
+import { useAtom, useAtomValue } from 'jotai'
 import {
   Ban,
   Check,
@@ -8,16 +8,19 @@ import {
   Trash2,
   Wand2,
   X,
+  Brain,
+  History,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   agentWorkspacesAtom,
   currentWorkspaceIdAtom,
   suggestionsVersionAtom,
+  memoryCenterDeepLinkAtom,
+  memoryCenterVersionAtom,
 } from '@/atoms'
 import { Button } from '@/components/ui/button'
-import { listAutomationJobs } from '@/lib/desktop-api/automation'
-import { getMemorySettingsSnapshot } from '@/lib/desktop-api'
+import { getMemorySettingsSnapshot, resolveMemoryPending } from '@/lib/desktop-api'
 import {
   actOnSuggestion,
   deleteSuggestion,
@@ -26,9 +29,13 @@ import {
   runSuggestionAnalysis,
 } from '@/lib/desktop-api/suggestion'
 import { cn } from '@/lib/utils'
+import {
+  MemoryActivityContent,
+  MemoryCenterContent,
+  PersonaCard,
+} from '@/components/settings/MemorySettings'
+import { normalizeMemoryCenterLink } from '@/components/memory/memory-center-state'
 import type {
-  AutomationJob,
-  AutomationSchedule,
   MemorySettingsPendingSummary,
   MemorySettingsSnapshot,
   SuggestionFeedback,
@@ -53,12 +60,13 @@ const KIND_LABEL: Record<SuggestionKind, string> = {
  * 订阅 suggestionsVersionAtom → sidecar 推送 CHANGED 时 bump → 触发重拉。
  */
 export interface ProactiveHubProps {
-  /** 打开「设置 → 记忆」面板。由 Task 17 父组件注入；未提供时隐藏「管理记忆」按钮。 */
+  /** 兼容旧调用方；记忆管理已经收敛到当前中心。 */
   onOpenMemorySettings?: () => void
 }
 
-export function ProactiveHub({ onOpenMemorySettings }: ProactiveHubProps) {
+export function ProactiveHub(_props: ProactiveHubProps) {
   const version = useAtomValue(suggestionsVersionAtom)
+  const memoryVersion = useAtomValue(memoryCenterVersionAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const workspaceSlug =
@@ -66,14 +74,21 @@ export function ProactiveHub({ onOpenMemorySettings }: ProactiveHubProps) {
     workspaces[0]?.slug
 
   const [suggestions, setSuggestions] = useState<SuggestionRecord[]>([])
-  const [automations, setAutomations] = useState<AutomationJob[]>([])
   const [snapshot, setSnapshot] = useState<MemorySettingsSnapshot | null>(null)
   const [stats, setStats] = useState<SuggestionStats | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
+  const [busyPendingId, setBusyPendingId] = useState<string | null>(null)
+  const [deepLink, setDeepLink] = useAtom(memoryCenterDeepLinkAtom)
+  const section = deepLink.section
+
+  useEffect(() => {
+    if (!workspaceSlug || deepLink.workspaceSlug === workspaceSlug) return
+    setDeepLink(normalizeMemoryCenterLink(deepLink, workspaceSlug))
+  }, [deepLink, setDeepLink, workspaceSlug])
 
   /**
-   * 并发拉取四个独立数据源；每个源各自 catch → 失败仅降级为该 section 的空状态，
+   * 并发拉取独立数据源；每个源各自 catch → 失败仅降级为该 section 的空状态，
    * 不影响其它 section 展示（Promise.all + per-task catch 等价 allSettled 但更直白）。
    */
   const refresh = useCallback(async () => {
@@ -83,18 +98,12 @@ export function ProactiveHub({ onOpenMemorySettings }: ProactiveHubProps) {
         .catch((err) => {
           console.error('[ProactiveHub] listSuggestions failed', err)
         }),
-      listAutomationJobs()
-        .then((jobs) => setAutomations(jobs.filter((job) => job.enabled)))
-        .catch((err) => {
-          console.error('[ProactiveHub] listAutomationJobs failed', err)
-          setAutomations([])
-        }),
       getSuggestionStats()
         .then(setStats)
         .catch((err) => {
           console.error('[ProactiveHub] getSuggestionStats failed', err)
         }),
-      workspaceSlug
+      workspaceSlug && (section === 'attention' || section === 'insights')
         ? getMemorySettingsSnapshot(workspaceSlug)
             .then(setSnapshot)
             .catch((err) => {
@@ -107,11 +116,11 @@ export function ProactiveHub({ onOpenMemorySettings }: ProactiveHubProps) {
         : Promise.resolve(),
     ])
     if (!workspaceSlug) setSnapshot(null)
-  }, [workspaceSlug])
+  }, [section, workspaceSlug])
 
   useEffect(() => {
     void refresh()
-  }, [refresh, version])
+  }, [refresh, memoryVersion, version])
 
   const reloadSuggestions = useCallback(async () => {
     const [list, nextStats] = await Promise.all([
@@ -163,37 +172,73 @@ export function ProactiveHub({ onOpenMemorySettings }: ProactiveHubProps) {
     }
   }
 
+  const handlePending = async (
+    item: MemorySettingsPendingSummary,
+    action: 'accept' | 'reject',
+  ) => {
+    if (!workspaceSlug) return
+    setBusyPendingId(item.id)
+    try {
+      await resolveMemoryPending({ workspaceSlug, path: item.path, action })
+      await refresh()
+      toast.success(action === 'accept' ? '已接受候选记忆' : '已保留现有记忆')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '处理记忆失败')
+    } finally {
+      setBusyPendingId(null)
+    }
+  }
+
   const pendingItems = (snapshot?.pending ?? []).filter(
     (item) => item.status === 'open',
   )
   const pendingCount = snapshot?.counts.pending.total ?? pendingItems.length
   const memoryCount = snapshot?.counts.active ?? null
-  const focusTotal =
-    automations.length + suggestions.length + pendingCount
+  const focusTotal = suggestions.length + pendingCount
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-[var(--lume-bg-app)]">
       <header className="shrink-0 px-6 pt-3 md:px-8 lg:px-10 lg:pt-4">
         <div className="flex items-start justify-between gap-6">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">主动中心</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">记忆与洞察</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              关注 {focusTotal} 件事 + {suggestions.length} 条建议待定
+              {focusTotal > 0 ? `${focusTotal} 件事需要处理` : '当前无需处理'}
             </p>
           </div>
-          <Button onClick={analyze} disabled={analyzing} data-proactive-analyze>
+          {(section === 'attention' || section === 'insights') && <Button onClick={analyze} disabled={analyzing} data-proactive-analyze>
             <Wand2 className={analyzing ? 'animate-spin' : undefined} size={16} />
             {analyzing ? '分析中…' : '分析工作模式'}
-          </Button>
+          </Button>}
+        </div>
+        <div className="lume-segmented mt-4 grid grid-cols-4 overflow-hidden">
+          {([
+            ['attention', '需要处理', Inbox],
+            ['memory', '记忆', Brain],
+            ['insights', '洞察', Sparkles],
+            ['activity', '活动', History],
+          ] as const).map(([id, label, Icon]) => (
+            <Button
+              key={id}
+              variant="ghost"
+              className={cn('lume-segmented-item min-h-10', section === id && 'lume-segmented-item-active')}
+              onClick={() => setDeepLink({ section: id, workspaceSlug })}
+              data-memory-center-section={id}
+            >
+              <Icon size={14} />
+              {label}
+            </Button>
+          ))}
         </div>
       </header>
 
       <main className="agent-message-scrollbar w-full min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-6 pb-6 pt-4 md:px-8 lg:px-10 lg:pb-8">
+        {section === 'attention' && <>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <StatTile
-            label="主动任务"
-            value={automations.length}
-            data-proactive-stat="automation"
+            label="待确认"
+            value={pendingCount}
+            data-proactive-stat="pending"
           />
           <StatTile
             label="待定建议"
@@ -233,21 +278,6 @@ export function ProactiveHub({ onOpenMemorySettings }: ProactiveHubProps) {
           )}
         </Section>
 
-        <Section title="正在关注" icon={<Check size={15} />}>
-          {automations.length === 0 ? (
-            <EmptyState
-              text="暂无活跃的自动化任务"
-              hint="到「自动化」页面创建定时任务，让 Lume 持续跟进。"
-            />
-          ) : (
-            <div className="space-y-2">
-              {automations.map((job) => (
-                <AutomationRow key={job.id} job={job} />
-              ))}
-            </div>
-          )}
-        </Section>
-
         <Section title="需要确认" icon={<Inbox size={15} />}>
           {pendingCount === 0 ? (
             <EmptyState
@@ -259,36 +289,47 @@ export function ProactiveHub({ onOpenMemorySettings }: ProactiveHubProps) {
               {pendingItems.length === 0 ? (
                 <EmptyState
                   text={`${pendingCount} 条记忆待处理`}
-                  hint="打开记忆设置查看全部。"
+                  hint="刷新后仍未显示时，请查看记忆活动中的任务状态。"
                 />
               ) : (
                 pendingItems.map((item) => (
-                  <PendingMemoryRow key={item.id} item={item} />
+                  <PendingMemoryRow
+                    key={item.id}
+                    item={item}
+                    busy={busyPendingId === item.id}
+                    onResolve={(action) => void handlePending(item, action)}
+                  />
                 ))
-              )}
-              {onOpenMemorySettings && (
-                <div className="pt-1">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={onOpenMemorySettings}
-                    data-proactive-open-memory
-                  >
-                    <Sparkles size={14} />
-                    管理记忆
-                  </Button>
-                </div>
               )}
             </div>
           )}
         </Section>
+        </>}
 
-        <Section title="用户画像" icon={<Sparkles size={15} />}>
-          <EmptyState
-            text="用户画像即将上线"
-            hint="下一阶段会基于长期记忆生成你的工作风格画像。"
-          />
-        </Section>
+        {section === 'memory' && <MemoryCenterContent />}
+
+        {section === 'insights' && workspaceSlug && (
+          <div className="space-y-4">
+            <PersonaCard workspaceSlug={workspaceSlug} />
+            {snapshot?.workspaceBrief && (
+              <section className="lume-panel p-4">
+                <h2 className="text-sm font-semibold">当前工作区洞察</h2>
+                <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
+                  {snapshot.workspaceBrief.markdown}
+                </pre>
+              </section>
+            )}
+            <Section title="工作模式建议" icon={<Sparkles size={15} />}>
+              {suggestions.length === 0
+                ? <EmptyState text="暂无待定建议" />
+                : <div className="space-y-2">{suggestions.map((record) => (
+                    <SuggestionRow key={record.id} record={record} busy={busyId === record.id} onAct={(feedback) => handleAct(record.id, feedback)} onDelete={() => handleDelete(record.id)} />
+                  ))}</div>}
+            </Section>
+          </div>
+        )}
+
+        {section === 'activity' && <MemoryActivityContent />}
       </main>
     </div>
   )
@@ -462,25 +503,15 @@ function SuggestionButton({
   )
 }
 
-function AutomationRow({ job }: { job: AutomationJob }) {
-  return (
-    <article className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-[var(--surface-1)] px-4 py-3 shadow-sm">
-      <div className="min-w-0">
-        <div className="truncate text-sm font-semibold">{job.name}</div>
-        {job.description && (
-          <p className="mt-0.5 truncate text-[12px] text-muted-foreground">
-            {job.description}
-          </p>
-        )}
-      </div>
-      <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-        {formatSchedule(job.schedule)}
-      </span>
-    </article>
-  )
-}
-
-function PendingMemoryRow({ item }: { item: MemorySettingsPendingSummary }) {
+function PendingMemoryRow({
+  item,
+  busy,
+  onResolve,
+}: {
+  item: MemorySettingsPendingSummary
+  busy: boolean
+  onResolve: (action: 'accept' | 'reject') => void
+}) {
   return (
     <article className="rounded-xl border border-border/60 bg-[var(--surface-1)] px-4 py-3 shadow-sm">
       <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
@@ -502,6 +533,16 @@ function PendingMemoryRow({ item }: { item: MemorySettingsPendingSummary }) {
           {item.reason}
         </p>
       )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => onResolve('accept')} data-memory-pending-action="accept" data-memory-pending-id={item.id}>
+          <Check size={14} />
+          接受
+        </Button>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => onResolve('reject')} data-memory-pending-action="reject" data-memory-pending-id={item.id}>
+          <X size={14} />
+          保留现有
+        </Button>
+      </div>
     </article>
   )
 }
@@ -510,60 +551,4 @@ const PENDING_LABEL: Record<MemorySettingsPendingSummary['type'], string> = {
   conflict: '冲突',
   stale: '过期',
   'low-confidence': '低置信',
-}
-
-/**
- * 把 AutomationSchedule 渲染为人类可读的简短文案。
- * cron → 「每天 09:00」「每周一 09:00」等常见模式；非常规 cron 直接显示表达式。
- */
-export function formatSchedule(schedule: AutomationSchedule): string {
-  switch (schedule.type) {
-    case 'manual':
-      return '手动'
-    case 'once':
-      return schedule.runAt
-        ? `单次 · ${new Date(schedule.runAt).toLocaleString()}`
-        : '单次'
-    case 'interval':
-      return schedule.intervalMs
-        ? `每 ${formatInterval(schedule.intervalMs)}`
-        : '固定间隔'
-    case 'cron':
-      return describeCron(schedule.cronExpr ?? '')
-    default:
-      return '—'
-  }
-}
-
-function formatInterval(ms: number): string {
-  const minutes = Math.round(ms / 60_000)
-  if (minutes < 60) return `${minutes} 分钟`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours} 小时`
-  return `${Math.round(hours / 24)} 天`
-}
-
-/** 仅覆盖最常见 cron 模式；未识别时回退到原始表达式。 */
-function describeCron(expr: string): string {
-  const parts = expr.trim().split(/\s+/)
-  if (parts.length !== 5) return expr
-  const [minute, hour, , , weekday] = parts
-  if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour)) return expr
-  const hh = Number(hour).toString().padStart(2, '0')
-  const mm = Number(minute).toString().padStart(2, '0')
-  if (weekday === '*') return `每天 ${hh}:${mm}`
-  if (/^\d+$/.test(weekday)) return `每${WEEKDAY_LABEL[weekday] ?? weekday} ${hh}:${mm}`
-  if (weekday === '1-5') return `工作日 ${hh}:${mm}`
-  return expr
-}
-
-const WEEKDAY_LABEL: Record<string, string> = {
-  '0': '周日',
-  '1': '周一',
-  '2': '周二',
-  '3': '周三',
-  '4': '周四',
-  '5': '周五',
-  '6': '周六',
-  '7': '周日',
 }

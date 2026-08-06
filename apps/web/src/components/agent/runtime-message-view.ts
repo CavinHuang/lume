@@ -1,4 +1,5 @@
 import type { AgentCapabilityReferenceView, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentUserMessagePart, FileReferenceBinding, FileReferenceProtocolVersion, ImPeerKind, ImProvider, LumeRuntimeEvent, RuntimeCodingReport, ToolExecutionMetadata } from '@lume/shared'
+import type { MemoryCenterDeepLink } from '@/components/memory/memory-center-state'
 
 export interface RuntimeToolCallView {
   id: string
@@ -118,6 +119,7 @@ export type RuntimeSystemMessageView =
       createdAt: string
       workspaceSlug: string
       details: Extract<LumeRuntimeEvent, { type: 'memory.changed' }>['details']
+      target: MemoryCenterDeepLink
     }
   | {
       id: string
@@ -126,6 +128,7 @@ export type RuntimeSystemMessageView =
       status: 'active' | 'completed'
       text: string
       createdAt: string
+      target: MemoryCenterDeepLink
     }
 
 export type RuntimeMessageView = RuntimeUserMessageView | RuntimeAssistantMessageView | RuntimeSystemMessageView
