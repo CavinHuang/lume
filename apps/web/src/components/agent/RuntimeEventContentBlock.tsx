@@ -150,7 +150,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
   }
 
   if (message.type === 'system') {
-    return <SystemMessageBlock message={message} className={cls} />
+    return <SystemMessageBlock message={message} className={cls} onOpenMemorySource={onOpenMemorySource} />
   }
 
   const latestTaskProgressBlock = findLatestTaskProgressBlock(message.blocks)
@@ -359,15 +359,17 @@ function ImDeliveryStatusLine({
 function SystemMessageBlock({
   message,
   className,
+  onOpenMemorySource,
 }: {
   message: Extract<RuntimeMessageView, { type: 'system' }>
   className?: string
+  onOpenMemorySource?: (path: string, fileRef?: FileRef) => void
 }) {
   if (message.variant === 'context_compaction') {
     return <ContextCompactionDivider message={message} className={className} />
   }
   if (message.variant === 'memory_saved') {
-    return <MemorySavedNotice message={message} className={className} />
+    return <MemorySavedNotice message={message} className={className} onOpenMemorySource={onOpenMemorySource} />
   }
   if (message.variant === 'memory_job') {
     return (
@@ -383,9 +385,11 @@ function SystemMessageBlock({
 function MemorySavedNotice({
   message,
   className,
+  onOpenMemorySource,
 }: {
   message: Extract<RuntimeMessageView, { type: 'system'; variant: 'memory_saved' }>
   className?: string
+  onOpenMemorySource?: (path: string, fileRef?: FileRef) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [undone, setUndone] = useState<Set<string>>(() => new Set())
@@ -414,6 +418,16 @@ function MemorySavedNotice({
           {message.details.map((detail) => (
             <div key={detail.mutationId} className="flex items-center gap-2 text-xs text-[var(--lume-text-muted)]">
               <span className="min-w-0 flex-1 truncate">{detail.summary}</span>
+              {detail.entryPaths?.map((path) => (
+                <Button key={path} variant="ghost" size="sm" onClick={() => onOpenMemorySource?.(path)}>
+                  查看
+                </Button>
+              ))}
+              {detail.sourcePaths?.map((path) => (
+                <Button key={`source:${path}`} variant="ghost" size="sm" onClick={() => onOpenMemorySource?.(path)}>
+                  来源
+                </Button>
+              ))}
               {detail.undoable && !undone.has(detail.mutationId) && (
                 <Button variant="ghost" size="sm" onClick={() => void undo(detail.mutationId)}>撤销</Button>
               )}

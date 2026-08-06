@@ -230,6 +230,7 @@ export interface MemoryToolWriteResult extends MemoryMutationReceipt {
   id?: string;
   path?: string;
   kind?: MemoryKind;
+  evidenceRefs?: MemoryEvidenceRef[];
 }
 
 export interface MemoryForgetToolInput {
@@ -558,6 +559,7 @@ export interface MemoryUpdateEntryInput {
   pinned?: boolean;
   validTo?: string | null;
   targetScope?: "global" | "workspace";
+  explicitCorrection?: boolean;
 }
 
 export interface MemoryDeleteEntryInput {
@@ -584,6 +586,9 @@ export interface MemoryMutationResult {
   path: string;
   entryId?: string;
   entryPath?: string;
+  mutationId?: string;
+  summary?: string;
+  undoable?: boolean;
 }
 
 export interface MemoryPendingCounts {

@@ -1,5 +1,7 @@
 import { toApiTool, type ApiType, type LLMProvider, type NormalizedContentBlock, type NormalizedMessageParam, type ToolDefinition } from "@lume/agent-sdk";
 import type { LumeEffectiveConfig } from "@lume/shared";
+import { appendFileSync } from "node:fs";
+import { join } from "node:path";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
@@ -7,6 +9,7 @@ import { inferMemoryV2Claim, normalizeMemoryV2Claim } from "./claim";
 import { extractAssistantPreferredNameCandidate, extractPreferredNameCandidate } from "./profile";
 import type { MemoryV2Candidate } from "./types";
 import { stripMemoryUserMessagePrefix } from "./user-message-prefix";
+import { getMemoryV2ScopePaths } from "./paths";
 
 const DO_NOT_REMEMBER_RE = /\bdo not remember\b|\bdon't remember\b|\bdo not save\b|不要记住|别记住|不要保存/i;
 
@@ -304,7 +307,8 @@ async function extractMemoryBatchCandidatesWithModel(input: {
   const memoryTools = input.agentMode ? await createBackgroundMemoryTools({
     workspaceSlug: input.workspaceSlug ?? "",
     threadId: input.threadId,
-    runId: input.runId
+    runId: input.runId,
+    actor: "background_extract"
   }) : [];
   const apiTools = memoryTools.map((tool) => toApiTool(tool));
   let messages: NormalizedMessageParam[] = [{
@@ -325,6 +329,10 @@ async function extractMemoryBatchCandidatesWithModel(input: {
       messages,
       ...(apiTools.length > 0 ? { tools: apiTools } : {})
     });
+    appendBackgroundExtractionTranscript(input.workspaceSlug, input.threadId, input.runId, {
+      round: round + 1,
+      response: response.content
+    });
     const toolUses = response.content.filter((block): block is Extract<typeof block, { type: "tool_use" }> => block.type === "tool_use");
     if (toolUses.length > 0) {
       messages = [
@@ -340,6 +348,13 @@ async function extractMemoryBatchCandidatesWithModel(input: {
             const result = tool
               ? await tool.call(toolUse.input, { cwd: process.cwd(), sessionId: input.threadId, runId: input.runId, toolUseId: toolUse.id })
               : { type: "tool_result" as const, tool_use_id: toolUse.id, content: `Unknown memory tool: ${toolUse.name}`, is_error: true };
+            appendBackgroundExtractionTranscript(input.workspaceSlug, input.threadId, input.runId, {
+              round: round + 1,
+              tool: toolUse.name,
+              toolUseId: toolUse.id,
+              result: result.content,
+              isError: result.is_error === true
+            });
             return {
               type: "tool_result" as const,
               tool_use_id: toolUse.id,
@@ -374,10 +389,28 @@ async function extractMemoryBatchCandidatesWithModel(input: {
   return dedupeBatchExtractionCandidates(allCandidates);
 }
 
+function appendBackgroundExtractionTranscript(
+  workspaceSlug: string | undefined,
+  threadId: string | undefined,
+  runId: string | undefined,
+  record: Record<string, unknown>
+): void {
+  if (!workspaceSlug || !threadId || !runId) return;
+  try {
+    const paths = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug });
+    const safeThread = threadId.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const safeRun = runId.replace(/[^a-zA-Z0-9._-]/g, "_");
+    appendFileSync(join(paths.jobsDir, `extract-${safeThread}-${safeRun}.jsonl`), `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`, "utf-8");
+  } catch {
+    // Transcript persistence is diagnostic; extraction must remain usable if it fails.
+  }
+}
+
 async function createBackgroundMemoryTools(input: {
   workspaceSlug: string;
   threadId?: string;
   runId?: string;
+  actor?: "background_extract";
 }): Promise<ToolDefinition[]> {
   const { createSdkMemoryTools } = await import("../agent-runtime/tools/memory/create-memory-tools");
   return createSdkMemoryTools({
@@ -385,7 +418,8 @@ async function createBackgroundMemoryTools(input: {
     enabledTools: new Set(["memory.search", "memory.read"]),
     includeCitations: false,
     threadId: input.threadId,
-    runId: input.runId
+    runId: input.runId,
+    actor: input.actor
   });
 }
 
@@ -545,6 +579,7 @@ function buildBatchExtractionSystemPrompt(): string {
     "Do not merge multiple sources into one fact unless the cited source itself contains the full fact.",
     "Use existingMemories as a read-only manifest: prefer the existing Claim when the new evidence confirms it, and avoid creating a duplicate statement.",
     "When memory.search or memory.read tools are available, use them only to verify or disambiguate existing memories; never use tools outside the memory namespace.",
+    "When memory.remember is available, it is a controlled commit tool: call it only for a high-confidence candidate grounded in a user message or tool result, include evidenceRefs with the exact source id and type, and never write assistant-only inferences.",
     "Reject greetings, temporary tasks, secrets, API keys, tokens, passwords, private keys, and anything the user says not to remember/save.",
     "Prefer false negatives; never invent or infer beyond the cited source.",
     "Use kind preference, fact, decision, lesson, or state.",

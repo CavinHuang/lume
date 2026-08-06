@@ -77,6 +77,7 @@ async function runQueued(input: BackgroundMemoryExtractionRequest): Promise<void
       workspaceSlug: input.workspaceSlug,
       idempotencyKey: `turn-extract:${input.threadId}:${input.runId}`,
       manual: false,
+      payload: input,
       run: ({ report }) => runExtraction(input, report),
       onProgress: (current) => {
         if (current.progress?.changedItems) notifyExtractionProgress(input, current.jobId, current.progress);
@@ -98,6 +99,19 @@ async function runQueued(input: BackgroundMemoryExtractionRequest): Promise<void
     }
     queues.delete(input.threadId);
   }
+}
+
+/** Re-queue automatic extraction jobs whose process died before they reached a terminal state. */
+export function recoverBackgroundMemoryExtractionJobs(workspaceSlug: string): number {
+  let recovered = 0;
+  for (const job of memoryJobService.list(workspaceSlug)) {
+    if (job.kind !== "turn_extract" || job.status !== "interrupted" || !job.payload) continue;
+    const payload = job.payload as BackgroundMemoryExtractionRequest;
+    if (payload.workspaceSlug !== workspaceSlug || !payload.threadId || !payload.runId) continue;
+    enqueueBackgroundMemoryExtraction(payload);
+    recovered += 1;
+  }
+  return recovered;
 }
 
 async function runExtraction(
@@ -235,13 +249,25 @@ function notifyMemorySaved(input: BackgroundMemoryExtractionRequest, receipts: M
   const summary = [savedCount > 0 ? `后台记住了 ${savedCount} 条信息` : "", pendingCount > 0 ? `${pendingCount} 条等待处理` : ""]
     .filter(Boolean).join(" · ");
   const createdAt = new Date().toISOString();
+  const entriesById = new Map(createMemoryV2Store().listEntries({
+    workspaceSlug: input.workspaceSlug,
+    includeStatuses: ["active", "suspected_stale", "pending_conflict", "pending_low_confidence", "superseded", "archived"]
+  }).map((entry) => [entry.frontmatter.id, entry]));
   const details = receipts.map((receipt) => ({
     mutationId: receipt.mutationId,
     action: receipt.action,
     scope: receipt.scope,
     memoryIds: receipt.memoryIds,
     summary: receipt.summary,
-    undoable: receipt.undoable
+    undoable: receipt.undoable,
+    entryPaths: receipt.memoryIds.flatMap((id) => {
+      const entry = entriesById.get(id);
+      return entry ? [entry.path] : [];
+    }),
+    sourcePaths: receipt.memoryIds.flatMap((id) => {
+      const entry = entriesById.get(id);
+      return entry?.frontmatter.evidence_refs.flatMap((ref) => ref.path ? [ref.path] : []) ?? [];
+    })
   }));
   const message: SDKMessage = {
     type: "system",

@@ -922,7 +922,8 @@ export const memoryUpdateEntryInputSchema = z.object({
   activation: memoryActivationSchema.optional(),
   pinned: z.boolean().optional(),
   validTo: z.string().datetime().nullable().optional(),
-  targetScope: memoryEntryScopeSchema.optional()
+  targetScope: memoryEntryScopeSchema.optional(),
+  explicitCorrection: z.boolean().optional()
 }).strict();
 
 export const memoryDeleteEntryInputSchema = z.object({

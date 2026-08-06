@@ -113,7 +113,7 @@ export class MemoryCommandService {
       return this.record(input, scope, "created", [result.entry], "已记住 1 条信息", true);
     }
     if (result.pending) {
-      return this.record(input, scope, "pending", [], "产生 1 条待处理记忆", false);
+      return this.record(input, scope, "pending", [], "产生 1 条冲突，等待处理", false);
     }
     if (result.action === "duplicate") {
       return this.recordIds(input, scope, "duplicate", result.existingIds ?? [], "这条内容已经记住了", false);

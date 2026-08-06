@@ -802,6 +802,8 @@ export interface MemoryChangedRuntimeEvent extends RuntimeEventBase {
     memoryIds: string[];
     summary: string;
     undoable: boolean;
+    entryPaths?: string[];
+    sourcePaths?: string[];
   }>;
 }
 

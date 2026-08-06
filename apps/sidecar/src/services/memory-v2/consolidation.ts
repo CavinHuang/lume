@@ -44,7 +44,8 @@ export function maybeEnqueueAutoDream(
 export function enqueueConsolidation(
   workspaceSlug: string,
   manual = true,
-  context?: ConsolidationNotificationContext
+  context?: ConsolidationNotificationContext,
+  options?: { force?: boolean }
 ): MemoryJobRecord<ConsolidationResult> | undefined {
   const paths = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug });
   const globalPaths = getMemoryV2ScopePaths({ scope: "global" });
@@ -52,7 +53,7 @@ export function enqueueConsolidation(
   const completedRunCount = countRunEvidence(paths.runsDir);
   const elapsed = Date.now() - (state.lastCompletedAt ?? 0);
   const newSessions = completedRunCount - state.completedRunCount;
-  if (!manual && (elapsed < AUTO_DREAM_INTERVAL_MS || newSessions < AUTO_DREAM_MIN_NEW_SESSIONS)) {
+  if (!manual && !options?.force && (elapsed < AUTO_DREAM_INTERVAL_MS || newSessions < AUTO_DREAM_MIN_NEW_SESSIONS)) {
     return undefined;
   }
   const idempotencyKey = manual
@@ -67,6 +68,7 @@ export function enqueueConsolidation(
     workspaceSlug,
     idempotencyKey,
     manual,
+    payload: { workspaceSlug, manual, trigger: context ? "run" : "settings" },
     run: async ({ signal, report }) => withScopeLock(paths.jobsDir, () => withScopeLock(globalPaths.jobsDir, async () => {
       report({ label: "读取索引、主题摘要和近期证据", scannedItems: 0, processedItems: 0 });
       if (signal.aborted) throw new Error("记忆整理已取消");
@@ -102,6 +104,15 @@ export function enqueueConsolidation(
       if (context && job.result) notifyCompleted(context, workspaceSlug, job.jobId, job.result);
     }
   });
+}
+
+/** Re-queue an automatic consolidation interrupted by a process restart. */
+export function recoverInterruptedConsolidation(workspaceSlug: string): boolean {
+  const interrupted = memoryJobService.list(workspaceSlug).some((job) =>
+    job.kind === "consolidation" && job.status === "interrupted" && !job.manual
+  );
+  if (!interrupted) return false;
+  return Boolean(enqueueConsolidation(workspaceSlug, false, undefined, { force: true }));
 }
 
 function notifyProgress(

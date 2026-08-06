@@ -4,6 +4,7 @@ import type {
   MemoryOrganizeEntriesResult
 } from "@lume/shared";
 import { type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createLogger } from "../infra/logger";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
@@ -13,6 +14,7 @@ import { createMemoryV2Store } from "./markdown-store";
 import { MemoryCommandService } from "./command-service";
 import { getMemoryRuntimeConfig } from "./policy";
 import { resolveMemoryRerankModelRef } from "./rerank";
+import { getMemoryV2ScopePaths } from "./paths";
 import type {
   MemoryV2Claim,
   MemoryV2Entry,
@@ -303,7 +305,45 @@ function createLlmOrganizerPlanner(input: MemoryOrganizeEntriesOptions): MemoryE
     })
     : createLazyConnectionLlmProvider({ connectionId: binding!.channel.id, modelId: binding!.modelId });
   const model = binding?.modelId ?? resolved.modelRef.split("/").at(-1) ?? resolved.modelRef;
-  return async (entries) => organizeEntriesWithLlm({ provider, model, entries, workspaceSlug: input.workspaceSlug });
+  return async (entries) => organizeEntriesWithLlm({
+    provider,
+    model,
+    entries,
+    workspaceSlug: input.workspaceSlug,
+    evidence: readOrganizerEvidence(input.workspaceSlug)
+  });
+}
+
+interface OrganizerEvidence {
+  manifest: string;
+  capsules: string;
+  workspaceBrief: string;
+  persona: string;
+}
+
+function readOrganizerEvidence(workspaceSlug: string): OrganizerEvidence {
+  const workspace = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug });
+  const global = getMemoryV2ScopePaths({ scope: "global" });
+  const read = (path: string, limit = 8_000): string => {
+    try {
+      return existsSync(path) ? readFileSync(path, "utf-8").slice(0, limit) : "";
+    } catch {
+      return "";
+    }
+  };
+  const capsuleFiles = [workspace.capsulesDir, global.capsulesDir].flatMap((dir) => {
+    try {
+      return readdirSync(dir).filter((name) => name.endsWith(".md")).slice(0, 8).map((name) => read(`${dir}/${name}`, 4_000));
+    } catch {
+      return [];
+    }
+  }).filter(Boolean);
+  return {
+    manifest: [read(workspace.memoryMd, 6_000), read(global.memoryMd, 6_000)].filter(Boolean).join("\n\n"),
+    capsules: capsuleFiles.join("\n\n"),
+    workspaceBrief: read(workspace.workspaceBrief, 6_000),
+    persona: read(global.persona, 6_000)
+  };
 }
 
 async function organizeEntriesWithLlm(input: {
@@ -311,6 +351,7 @@ async function organizeEntriesWithLlm(input: {
   model: string;
   entries: MemoryEntryOrganizeCandidate[];
   workspaceSlug: string;
+  evidence: OrganizerEvidence;
 }): Promise<MemoryEntryOrganizePlanItem[]> {
   const response = await input.provider.createMessage({
     model: input.model,
@@ -344,9 +385,11 @@ function buildOrganizerSystemPrompt(): string {
 function buildOrganizerUserPrompt(input: {
   workspaceSlug: string;
   entries: MemoryEntryOrganizeCandidate[];
+  evidence: OrganizerEvidence;
 }): string {
   return JSON.stringify({
     workspaceSlug: input.workspaceSlug,
+    evidence: input.evidence,
     entries: input.entries,
     output: {
       duplicates: [{

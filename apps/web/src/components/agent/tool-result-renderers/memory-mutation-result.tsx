@@ -34,6 +34,11 @@ export function MemoryMutationResult({ result }: Props) {
         {receipt.scope === 'global' ? '全局' : '当前工作区'}
         {receipt.memoryIds.length > 0 ? ` · ${receipt.memoryIds.length} 条` : ''}
       </div>
+      {receipt.evidenceRefs && receipt.evidenceRefs.length > 0 && (
+        <div className="mt-1 truncate text-xs text-muted-foreground">
+          来源：{receipt.evidenceRefs.map((ref) => ref.path ?? ref.id ?? ref.type).join(' · ')}
+        </div>
+      )}
       {!undone && (receipt.path || receipt.undoable) && (
         <div className="mt-3 flex gap-2">
           {receipt.path && receipt.workspaceSlug && (

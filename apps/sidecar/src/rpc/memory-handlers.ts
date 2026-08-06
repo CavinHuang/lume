@@ -27,8 +27,10 @@ import { organizeMemoryEntries } from "../services/memory-v2/entry-organizer";
 import { ingestExternalMemorySources } from "../services/memory-v2/ingestion";
 import { createMemoryV2Store } from "../services/memory-v2/markdown-store";
 import { MemoryCommandService } from "../services/memory-v2/command-service";
+import { claimFromEntry } from "../services/memory-v2/claim";
 import { memoryJobService } from "../services/memory-v2/job-service";
-import { maybeEnqueueAutoDream } from "../services/memory-v2/consolidation";
+import { maybeEnqueueAutoDream, recoverInterruptedConsolidation } from "../services/memory-v2/consolidation";
+import { recoverBackgroundMemoryExtractionJobs } from "../services/memory-v2/background-extractor";
 import {
   getMemoryRuntimeConfig,
   updateMemoryRuntimeConfig
@@ -80,6 +82,8 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
     [MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT]: async (params) => {
       const input = validateInput(workspaceSlugInputSchema, params, MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT);
       memoryJobService.recoverInterrupted(input.workspaceSlug);
+      recoverBackgroundMemoryExtractionJobs(input.workspaceSlug);
+      recoverInterruptedConsolidation(input.workspaceSlug);
       maybeEnqueueAutoDream(input.workspaceSlug);
       return getMemoryV2SettingsSnapshot(input.workspaceSlug);
     },
@@ -186,7 +190,7 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
   };
 }
 
-function updateMemoryEntryFromSettings(input: MemoryUpdateEntryInput): MemoryMutationResult {
+async function updateMemoryEntryFromSettings(input: MemoryUpdateEntryInput): Promise<MemoryMutationResult> {
   const commands = new MemoryCommandService();
   if (input.targetScope && input.targetScope !== input.scope) {
     commands.moveScope({
@@ -197,6 +201,31 @@ function updateMemoryEntryFromSettings(input: MemoryUpdateEntryInput): MemoryMut
     });
   }
   const scope = input.targetScope ?? input.scope;
+  if (input.explicitCorrection && input.statement) {
+    const existing = createMemoryV2Store().listEntries({
+      workspaceSlug: input.workspaceSlug,
+      scopes: [scope],
+      includeStatuses: ["active", "suspected_stale"]
+    }).find((item) => item.frontmatter.id === input.id);
+    const receipt = await commands.remember({
+      workspaceSlug: input.workspaceSlug,
+      content: input.statement,
+      scope,
+      claim: existing ? claimFromEntry(existing) : undefined,
+      confidence: input.confidence,
+      facets: input.tags,
+      actor: "user",
+      explicitCorrection: true
+    });
+    return {
+      ok: true,
+      id: receipt.memoryIds[0] ?? input.id,
+      path: input.id,
+      mutationId: receipt.mutationId,
+      summary: receipt.summary,
+      undoable: receipt.undoable
+    };
+  }
   const receipt = commands.update({
     scope,
     workspaceSlug: input.workspaceSlug,
@@ -218,7 +247,10 @@ function updateMemoryEntryFromSettings(input: MemoryUpdateEntryInput): MemoryMut
   return {
     ok: true,
     id: receipt.memoryIds[0] ?? input.id,
-    path: entry?.path ?? input.id
+    path: entry?.path ?? input.id,
+    mutationId: receipt.mutationId,
+    summary: receipt.summary,
+    undoable: receipt.undoable
   };
 }
 
@@ -234,7 +266,14 @@ function deleteMemoryEntryFromSettings(input: MemoryDeleteEntryInput): MemoryMut
     scopes: [input.scope],
     includeStatuses: ["archived"]
   }).find((item) => item.frontmatter.id === input.id);
-  return { ok: true, id: receipt.memoryIds[0] ?? input.id, path: entry?.path ?? input.id };
+  return {
+    ok: true,
+    id: receipt.memoryIds[0] ?? input.id,
+    path: entry?.path ?? input.id,
+    mutationId: receipt.mutationId,
+    summary: receipt.summary,
+    undoable: receipt.undoable
+  };
 }
 
 function resolveMemoryPendingFromSettings(input: MemoryResolvePendingInput): MemoryMutationResult {

@@ -1,13 +1,11 @@
 import { searchMemoryV2 } from "./retrieval";
-import { createMemoryV2Store } from "./markdown-store";
 import { parsePersonaProfile, readPersonaRaw } from "./persona";
-import { isProfileEntry, isProfileRecallItem, memoryEntryToRecallItem } from "./profile";
+import { isProfileRecallItem } from "./profile";
 import {
   MEMORY_CLAIM_IDENTITY,
   MEMORY_CLAIM_PREFERRED_NAME,
   MEMORY_CLAIM_SUBJECT_USER,
   MEMORY_CLAIM_WRITING_STYLE,
-  isClaimMatchForQuery,
   planMemoryV2Query
 } from "./claim";
 import { selectMemoryV2PromptItems } from "./context-selection";
@@ -37,30 +35,19 @@ export async function buildMemoryV2UserMessageContext(input: {
     };
   }
   const queryPlan = planMemoryV2Query(input.userMessage);
-  const profileItems = createMemoryV2Store().listEntries({
-    workspaceSlug: input.workspaceSlug,
-    scopes: ["global", "workspace"],
-    includeStatuses: ["active"]
-  }).filter(isProfileEntry).map((entry) => memoryEntryToRecallItem(entry));
-  const voiceItems = createMemoryV2Store().listEntries({
-    workspaceSlug: input.workspaceSlug,
-    scopes: ["global", "workspace"],
-    includeStatuses: ["active"]
-  }).map((entry) => memoryEntryToRecallItem(entry)).filter(isVoiceRecallItem);
-  const directClaimItems = profileItems.filter((item) => isClaimMatchForQuery(item, queryPlan));
-  const profileSeed = directClaimItems.length > 0
-    ? directClaimItems
-    : queryPlan.querySubject ? profileItems : [];
-  const voiceSeed = shouldSeedVoiceMemory(input.userMessage, queryPlan.desiredPredicates) ? voiceItems : [];
   const promptMaxItems = Math.min(input.maxItems ?? 5, 5);
+  const writingTask = queryPlan.desiredPredicates.includes(MEMORY_CLAIM_WRITING_STYLE)
+    || /写|改写|润色|文案|文章|项目介绍|介绍|总结|草稿|邮件|标题|表达|语气|文风|write|draft|rewrite|polish|copy|article|email|tone|voice/i.test(input.userMessage);
+  const retrievalQuery = writingTask
+    ? `${input.userMessage} writing style voice tone 写作风格 文风 语气`
+    : input.userMessage;
   const items = await searchMemoryV2({
     workspaceSlug: input.workspaceSlug,
-    query: input.userMessage,
+    query: retrievalQuery,
     maxResults: Math.max(promptMaxItems * 3, 16),
-    ...(profileSeed.length > 0 || voiceSeed.length > 0 ? { semantic: "off" as const } : {}),
     ...(queryPlan.includeConversationHistory ? { includeRecentDaily: true } : {})
   });
-  const merged = mergeRecallItems([...profileSeed, ...voiceSeed, ...items]);
+  const merged = mergeRecallItems(items);
   const selected = selectMemoryV2PromptItems({
     items: merged,
     query: input.userMessage,
@@ -239,11 +226,6 @@ function isUserProfileClaimItem(item: MemoryV2RecallItem): boolean {
       item.claim.predicate === MEMORY_CLAIM_PREFERRED_NAME
       || item.claim.predicate === MEMORY_CLAIM_IDENTITY
     );
-}
-
-function shouldSeedVoiceMemory(query: string, desiredPredicates: string[]): boolean {
-  return desiredPredicates.includes(MEMORY_CLAIM_WRITING_STYLE)
-    || /写|改写|润色|文案|文章|项目介绍|介绍|总结|草稿|邮件|标题|表达|语气|文风|write|draft|rewrite|polish|copy|article|email|tone|voice/i.test(query);
 }
 
 function isConversationHistory(item: MemoryV2RecallItem): boolean {

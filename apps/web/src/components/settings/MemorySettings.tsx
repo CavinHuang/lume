@@ -63,6 +63,7 @@ import {
   deleteMemoryEntry,
   resolveMemoryPending,
   updateMemoryEntry,
+  undoMemoryMutation,
   updateMemoryRuntimeConfig,
   getPersona,
   correctPersona,
@@ -481,10 +482,11 @@ export function MemorySettings() {
       pinned?: boolean
       validTo?: string | null
       targetScope?: 'global' | 'workspace'
+      explicitCorrection?: boolean
     },
   ) => runAction(`update-${entry.id}`, async () => {
     if (!workspaceSlug) return
-    await updateMemoryEntry({
+    const result = await updateMemoryEntry({
       workspaceSlug,
       scope: entry.scope,
       id: entry.id,
@@ -495,12 +497,18 @@ export function MemorySettings() {
       ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
       ...(input.validTo !== undefined ? { validTo: input.validTo } : {}),
       ...(input.targetScope ? { targetScope: input.targetScope } : {}),
+      explicitCorrection: true,
     })
     const detail = await readMemory({ workspaceSlug, id: entry.id })
     setMemoryDetail(detail)
     setDetailDirty(false)
     await refresh()
-    toast.success('记忆已更新')
+    toast.success('记忆已更新', result.mutationId && result.undoable ? {
+      action: {
+        label: '撤销',
+        onClick: () => void undoMemoryMutation({ workspaceSlug, mutationId: result.mutationId! }).then(() => refresh()),
+      },
+    } : undefined)
   })
 
   const handleToggleActivation = (
@@ -522,7 +530,7 @@ export function MemorySettings() {
     if (!workspaceSlug) return
     const toastId = toast.loading('正在删除记忆...')
     try {
-      await deleteMemoryEntry({
+      const result = await deleteMemoryEntry({
         workspaceSlug,
         scope: entry.scope,
         id: entry.id,
@@ -531,7 +539,13 @@ export function MemorySettings() {
       setMemoryDetail(null)
       setDetailDirty(false)
       await refresh()
-      toast.success('记忆已归档，可通过撤销恢复', { id: toastId })
+      toast.success('记忆已归档，可通过撤销恢复', {
+        id: toastId,
+        action: result.mutationId && result.undoable ? {
+          label: '撤销',
+          onClick: () => void undoMemoryMutation({ workspaceSlug, mutationId: result.mutationId! }).then(() => refresh()),
+        } : undefined,
+      })
     } catch (error) {
       console.error('[MemorySettings] delete entry FAILED:', error)
       toast.error(memorySettingsErrorMessage(error, '删除记忆失败'), { id: toastId })
@@ -1423,6 +1437,13 @@ function UserMemoryPanel({
   const [query, setQuery] = React.useState('')
   const [scopeFilter, setScopeFilter] = React.useState<'all' | 'global' | 'workspace'>('all')
   const [statusFilter, setStatusFilter] = React.useState<'all' | MemorySettingsEntrySummary['status']>('all')
+  const [sourceFilter, setSourceFilter] = React.useState<'all' | string>('all')
+  const [facetFilter, setFacetFilter] = React.useState<'all' | string>('all')
+  const [updatedFilter, setUpdatedFilter] = React.useState<'all' | '7d' | '30d'>('all')
+  const filterOptions = React.useMemo(() => ({
+    sources: Array.from(new Set(entries.flatMap((entry) => (entry.evidenceRefs ?? []).map((ref) => ref.type)))).sort(),
+    facets: Array.from(new Set(entries.flatMap((entry) => [...(entry.facets ?? []), ...entry.tags]))).sort(),
+  }), [entries])
   const filteredEntries = React.useMemo(() => {
     const base = filterMemoryEntriesByUserCategory(entries, category)
     if (category !== 'all') return base
@@ -1430,6 +1451,14 @@ function UserMemoryPanel({
     return base.filter((entry) => {
       if (scopeFilter !== 'all' && entry.scope !== scopeFilter) return false
       if (statusFilter !== 'all' && entry.status !== statusFilter) return false
+      if (sourceFilter !== 'all' && !(entry.evidenceRefs ?? []).some((ref) => ref.type === sourceFilter)) return false
+      if (facetFilter !== 'all' && ![...(entry.facets ?? []), ...entry.tags].includes(facetFilter)) return false
+      if (updatedFilter !== 'all') {
+        const updatedAt = Date.parse(entry.updated)
+        const age = Date.now() - updatedAt
+        const maxAge = updatedFilter === '7d' ? 7 : 30
+        if (!Number.isFinite(updatedAt) || age > maxAge * 24 * 60 * 60 * 1000) return false
+      }
       if (!normalized) return true
       return [
         entry.statement,
@@ -1439,7 +1468,7 @@ function UserMemoryPanel({
         ...(entry.evidenceRefs ?? []).map((ref) => ref.type),
       ].filter(Boolean).some((value) => String(value).toLowerCase().includes(normalized))
     })
-  }, [category, entries, query, scopeFilter, statusFilter])
+  }, [category, entries, query, scopeFilter, statusFilter, sourceFilter, facetFilter, updatedFilter])
   return (
     <section className="lume-panel p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -1455,7 +1484,7 @@ function UserMemoryPanel({
         </div>
       </div>
       {category === 'all' && (
-        <div className="mb-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_160px_170px]">
+        <div className="mb-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_140px_150px_150px_150px_150px]">
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -1476,6 +1505,28 @@ function UserMemoryPanel({
               {Object.entries(MEMORY_STATUS_LABELS).map(([value, label]) => (
                 <SelectItem key={value} value={value}>{label}</SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+          <Select value={sourceFilter} onValueChange={(value) => setSourceFilter(value ?? 'all')}>
+            <SelectTrigger><SelectValue placeholder="全部来源" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部来源</SelectItem>
+              {filterOptions.sources.map((source) => <SelectItem key={source} value={source}>{source}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={facetFilter} onValueChange={(value) => setFacetFilter(value ?? 'all')}>
+            <SelectTrigger><SelectValue placeholder="全部标签" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部标签</SelectItem>
+              {filterOptions.facets.map((facet) => <SelectItem key={facet} value={facet}>{facet}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={updatedFilter} onValueChange={(value) => setUpdatedFilter(value as typeof updatedFilter)}>
+            <SelectTrigger><SelectValue placeholder="更新时间" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部时间</SelectItem>
+              <SelectItem value="7d">最近 7 天</SelectItem>
+              <SelectItem value="30d">最近 30 天</SelectItem>
             </SelectContent>
           </Select>
         </div>

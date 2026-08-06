@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "@lume/agent-sdk";
-import type { MemoryClaim, MemoryKind, MemoryScopeInput, MemorySearchResult } from "@lume/shared";
+import type { MemoryClaim, MemoryEvidenceRef, MemoryKind, MemoryMutationActor, MemoryScopeInput, MemorySearchResult } from "@lume/shared";
 import {
   forgetMemoryTool,
   readMemoryTool,
@@ -69,12 +69,30 @@ function optionalStringRecord(value: unknown): Record<string, string> | undefine
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function optionalEvidenceRefs(value: unknown): MemoryEvidenceRef[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const refs = value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    const type = record.type;
+    if (type !== "user_message" && type !== "assistant_message" && type !== "tool_result" && type !== "external_file" && type !== "manual" && type !== "consolidation") return [];
+    return [{
+      type: type as MemoryEvidenceRef["type"],
+      ...(typeof record.id === "string" ? { id: record.id } : {}),
+      ...(typeof record.quote === "string" ? { quote: record.quote } : {}),
+      ...(typeof record.path === "string" ? { path: record.path } : {})
+    }];
+  });
+  return refs.length > 0 ? refs : undefined;
+}
+
 export function createSdkMemoryTools(params: {
   workspaceSlug: string;
   enabledTools: Set<string>;
   includeCitations: boolean;
   threadId?: string;
   runId?: string;
+  actor?: MemoryMutationActor;
 }): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
 
@@ -151,7 +169,6 @@ export function createSdkMemoryTools(params: {
         type: "object",
         properties: {
           scope: { type: "string", enum: ["auto", "global", "workspace"], default: "auto" },
-          kind: { type: "string", enum: ["raw", "summary", "fact", "preference", "decision", "episode", "lesson", "milestone", "artifact"], description: "Deprecated compatibility hint; omit for new writes." },
           content: { type: "string", minLength: 1 },
           title: { type: "string" },
           importance: { type: "number", minimum: 1, maximum: 5 },
@@ -171,6 +188,20 @@ export function createSdkMemoryTools(params: {
             required: ["subject", "predicate", "object"]
           },
           sourceMessageIds: { type: "array", items: { type: "string" } },
+          evidenceRefs: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                type: { type: "string", enum: ["user_message", "assistant_message", "tool_result", "external_file", "manual", "consolidation"] },
+                id: { type: "string" },
+                path: { type: "string" },
+                quote: { type: "string" }
+              },
+              required: ["type"]
+            }
+          },
+          explicitCorrection: { type: "boolean", description: "Set true only when the user explicitly corrects an existing claim." },
           requireReview: { type: "boolean" }
         },
         required: ["content"]
@@ -179,6 +210,7 @@ export function createSdkMemoryTools(params: {
         return rememberMemoryTool({
           workspaceSlug: params.workspaceSlug,
           scope: memoryV2RememberScope(input.scope),
+          // Legacy callers may still send kind; it is intentionally absent from the public schema.
           kind: typeof input.kind === "string" ? input.kind as MemoryKind : undefined,
           content: String(input.content ?? ""),
           title: typeof input.title === "string" ? input.title : undefined,
@@ -187,8 +219,11 @@ export function createSdkMemoryTools(params: {
           tags: optionalStringArray(input.tags),
           claim: optionalClaim(input.claim),
           sourceMessageIds: optionalStringArray(input.sourceMessageIds),
+          evidenceRefs: optionalEvidenceRefs(input.evidenceRefs),
           sourceSessionId: params.runId,
           threadId: params.threadId,
+          actor: params.actor,
+          explicitCorrection: typeof input.explicitCorrection === "boolean" ? input.explicitCorrection : undefined,
           requireReview: typeof input.requireReview === "boolean" ? input.requireReview : undefined
         });
       }

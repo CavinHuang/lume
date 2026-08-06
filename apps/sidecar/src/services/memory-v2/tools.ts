@@ -102,6 +102,13 @@ export async function rememberMemoryTool(input: MemoryRememberToolInput): Promis
   const scope = input.scope === "auto" || input.scope === undefined ? "workspace" : toMemoryV2Scope(input.scope);
   const kind = toMemoryV2Kind(input.kind);
   const candidate = normalizeRememberCandidate(input, scope, kind);
+  const sourceMessageRefs = input.sourceMessageIds?.map((id) => ({
+    type: "user_message" as const,
+    id,
+    runId: input.sourceSessionId,
+    threadId: input.threadId
+  })) ?? [];
+  const evidenceRefs = [...sourceMessageRefs, ...(input.evidenceRefs ?? [])];
   const receipt = await new MemoryCommandService().remember({
     workspaceSlug: input.workspaceSlug,
     content: candidate.statement,
@@ -111,7 +118,7 @@ export async function rememberMemoryTool(input: MemoryRememberToolInput): Promis
     facets: candidate.facets ?? candidate.tags,
     confidence: candidate.confidence,
     claim: candidate.claim,
-    evidenceRefs: input.evidenceRefs,
+    evidenceRefs: evidenceRefs.length > 0 ? evidenceRefs : undefined,
     actor: input.actor ?? "main_agent",
     runId: input.sourceSessionId,
     threadId: input.threadId,
@@ -124,7 +131,12 @@ export async function rememberMemoryTool(input: MemoryRememberToolInput): Promis
   return {
     ...toSharedMemoryReceipt(receipt),
     workspaceSlug: input.workspaceSlug,
-    ...(entry ? { id: entry.frontmatter.id, path: entry.path, kind: fromMemoryV2Kind(entry.frontmatter.kind) } : {})
+    ...(entry ? {
+      id: entry.frontmatter.id,
+      path: entry.path,
+      kind: fromMemoryV2Kind(entry.frontmatter.kind),
+      evidenceRefs: entry.frontmatter.evidence_refs
+    } : {})
   };
 }
 
