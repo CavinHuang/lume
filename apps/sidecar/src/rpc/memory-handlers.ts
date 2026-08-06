@@ -28,6 +28,7 @@ import { ingestExternalMemorySources } from "../services/memory-v2/ingestion";
 import { createMemoryV2Store } from "../services/memory-v2/markdown-store";
 import { MemoryCommandService } from "../services/memory-v2/command-service";
 import { memoryJobService } from "../services/memory-v2/job-service";
+import { maybeEnqueueAutoDream } from "../services/memory-v2/consolidation";
 import {
   getMemoryRuntimeConfig,
   updateMemoryRuntimeConfig
@@ -79,6 +80,7 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
     [MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT]: async (params) => {
       const input = validateInput(workspaceSlugInputSchema, params, MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT);
       memoryJobService.recoverInterrupted(input.workspaceSlug);
+      maybeEnqueueAutoDream(input.workspaceSlug);
       return getMemoryV2SettingsSnapshot(input.workspaceSlug);
     },
     [MEMORY_IPC_CHANNELS.ORGANIZE_HISTORY]: async (params) => {

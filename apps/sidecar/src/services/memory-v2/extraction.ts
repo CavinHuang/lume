@@ -1,4 +1,4 @@
-import { type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { toApiTool, type ApiType, type LLMProvider, type NormalizedContentBlock, type NormalizedMessageParam, type ToolDefinition } from "@lume/agent-sdk";
 import type { LumeEffectiveConfig } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
@@ -180,6 +180,9 @@ export async function extractMemoryBatchCandidatesWithLlm(input: {
   modelVisibleMessage?: string;
   existingMemories?: MemoryBatchExtractionExistingMemory[];
   maxRounds?: number;
+  agentMode?: boolean;
+  threadId?: string;
+  runId?: string;
   createProvider?: MemoryExtractionProviderFactory;
 }): Promise<MemoryBatchExtractionCandidate[]> {
   const sources = input.sources
@@ -212,6 +215,9 @@ export async function extractMemoryBatchCandidatesWithLlm(input: {
         modelVisibleMessage: input.modelVisibleMessage,
         existingMemories: input.existingMemories,
         maxRounds: input.maxRounds,
+        agentMode: input.agentMode,
+        threadId: input.threadId,
+        runId: input.runId,
         modelRef,
         createProvider: input.createProvider
       });
@@ -279,6 +285,9 @@ async function extractMemoryBatchCandidatesWithModel(input: {
   modelVisibleMessage?: string;
   existingMemories?: MemoryBatchExtractionExistingMemory[];
   maxRounds?: number;
+  agentMode?: boolean;
+  threadId?: string;
+  runId?: string;
   modelRef: string;
   createProvider?: MemoryExtractionProviderFactory;
 }): Promise<MemoryBatchExtractionCandidate[] | undefined> {
@@ -292,7 +301,13 @@ async function extractMemoryBatchCandidatesWithModel(input: {
   const model = binding?.modelId ?? input.modelRef.split("/").at(-1) ?? input.modelRef;
   const maxRounds = normalizeExtractionRounds(input.maxRounds);
   const allCandidates: MemoryBatchExtractionCandidate[] = [];
-  let messages: Array<{ role: "user" | "assistant"; content: string }> = [{
+  const memoryTools = input.agentMode ? await createBackgroundMemoryTools({
+    workspaceSlug: input.workspaceSlug ?? "",
+    threadId: input.threadId,
+    runId: input.runId
+  }) : [];
+  const apiTools = memoryTools.map((tool) => toApiTool(tool));
+  let messages: NormalizedMessageParam[] = [{
     role: "user",
     content: buildBatchExtractionUserPrompt(
       input.sources,
@@ -307,8 +322,35 @@ async function extractMemoryBatchCandidatesWithModel(input: {
       model,
       maxTokens: 1200,
       system: buildBatchExtractionSystemPrompt(),
-      messages
+      messages,
+      ...(apiTools.length > 0 ? { tools: apiTools } : {})
     });
+    const toolUses = response.content.filter((block): block is Extract<typeof block, { type: "tool_use" }> => block.type === "tool_use");
+    if (toolUses.length > 0) {
+      messages = [
+        ...messages,
+        {
+          role: "assistant",
+          content: response.content.filter((block) => block.type === "text" || block.type === "tool_use") as NormalizedContentBlock[]
+        },
+        {
+          role: "user",
+          content: await Promise.all(toolUses.map(async (toolUse) => {
+            const tool = memoryTools.find((candidate) => candidate.name === toolUse.name);
+            const result = tool
+              ? await tool.call(toolUse.input, { cwd: process.cwd(), sessionId: input.threadId, runId: input.runId, toolUseId: toolUse.id })
+              : { type: "tool_result" as const, tool_use_id: toolUse.id, content: `Unknown memory tool: ${toolUse.name}`, is_error: true };
+            return {
+              type: "tool_result" as const,
+              tool_use_id: toolUse.id,
+              content: result.content,
+              ...(result.is_error ? { is_error: true } : {})
+            };
+          }))
+        }
+      ];
+      continue;
+    }
     const text = response.content
       .map((block) => block.type === "text" ? block.text : "")
       .filter(Boolean)
@@ -330,6 +372,21 @@ async function extractMemoryBatchCandidatesWithModel(input: {
   }
 
   return dedupeBatchExtractionCandidates(allCandidates);
+}
+
+async function createBackgroundMemoryTools(input: {
+  workspaceSlug: string;
+  threadId?: string;
+  runId?: string;
+}): Promise<ToolDefinition[]> {
+  const { createSdkMemoryTools } = await import("../agent-runtime/tools/memory/create-memory-tools");
+  return createSdkMemoryTools({
+    workspaceSlug: input.workspaceSlug,
+    enabledTools: new Set(["memory.search", "memory.read"]),
+    includeCitations: false,
+    threadId: input.threadId,
+    runId: input.runId
+  });
 }
 
 function normalizeExtractionRounds(value: number | undefined): number {
@@ -487,6 +544,7 @@ function buildBatchExtractionSystemPrompt(): string {
     "Never create a candidate whose only evidence is an assistant message. Assistant messages may provide context but cannot establish a fact by themselves.",
     "Do not merge multiple sources into one fact unless the cited source itself contains the full fact.",
     "Use existingMemories as a read-only manifest: prefer the existing Claim when the new evidence confirms it, and avoid creating a duplicate statement.",
+    "When memory.search or memory.read tools are available, use them only to verify or disambiguate existing memories; never use tools outside the memory namespace.",
     "Reject greetings, temporary tasks, secrets, API keys, tokens, passwords, private keys, and anything the user says not to remember/save.",
     "Prefer false negatives; never invent or infer beyond the cited source.",
     "Use kind preference, fact, decision, lesson, or state.",

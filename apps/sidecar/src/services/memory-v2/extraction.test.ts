@@ -418,6 +418,64 @@ describe("extractExplicitMemoryCandidates", () => {
     expect(candidates.map((item) => item.sourceId)).toEqual(["source-a", "source-b"]);
   });
 
+  test("runs the background extractor as a restricted memory tool agent", async () => {
+    const toolSets: string[][] = [];
+    let calls = 0;
+    const candidates = await extractMemoryBatchCandidatesWithLlm({
+      sources: [{ sourceId: "source-a", text: "我通常使用中文沟通" }],
+      workspaceSlug: "demo",
+      modelRef: "openai/gpt-5-mini",
+      agentMode: true,
+      threadId: "thread-memory-agent",
+      runId: "run-memory-agent",
+      maxRounds: 5,
+      createProvider: () => ({
+        apiType: "openai-completions",
+        async createMessage(params) {
+          calls += 1;
+          toolSets.push((params.tools ?? []).map((tool) => tool.name));
+          if (calls === 1) {
+            return {
+              content: [{
+                type: "tool_use",
+                id: "memory-search-1",
+                name: "memory.search",
+                input: { query: "中文偏好", maxResults: 3 }
+              }],
+              stopReason: "tool_use",
+              usage: { input_tokens: 1, output_tokens: 1 }
+            };
+          }
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                shouldExtract: true,
+                candidates: [{
+                  sourceId: "source-a",
+                  kind: "preference",
+                  targetScope: "global",
+                  statement: "用户偏好使用中文沟通",
+                  confidence: "high",
+                  sourceRole: "user",
+                  sourceText: "我通常使用中文沟通",
+                  reason: "User stated a durable language preference."
+                }]
+              })
+            }],
+            stopReason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 }
+          };
+        }
+      })
+    });
+
+    expect(calls).toBe(2);
+    expect(toolSets[0]).toEqual(["memory.search", "memory.read"]);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.candidate.statement).toBe("用户偏好使用中文沟通");
+  });
+
   test("rejects batch candidates that cite the wrong source text", async () => {
     const candidates = await extractMemoryBatchCandidatesWithLlm({
       sources: [{

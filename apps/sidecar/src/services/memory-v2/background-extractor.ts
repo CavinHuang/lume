@@ -146,7 +146,10 @@ async function runExtraction(
       modelRef: input.modelRef,
       modelVisibleMessage: input.modelVisibleMessage,
       existingMemories,
-      maxRounds: 5
+      maxRounds: 5,
+      agentMode: true,
+      threadId: input.threadId,
+      runId: input.runId
     });
     const service = new MemoryCommandService();
     const receipts: MemoryV2MutationReceipt[] = [];
