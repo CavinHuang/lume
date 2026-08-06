@@ -6,7 +6,8 @@ import type {
   MemorySettingsEntrySummary,
   MemorySettingsFileSummary,
   MemorySettingsPendingSummary,
-  MemorySettingsSnapshot
+  MemorySettingsSnapshot,
+  MemoryDiagnosticsSnapshot
 } from "@lume/shared";
 import type { MemoryMutationReceipt } from "@lume/shared";
 import {
@@ -42,21 +43,7 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
     workspaceSlug,
     scopes: ["workspace", "global"]
   });
-  const runtimeConfig = getMemoryRuntimeConfig();
-  const lumeConfig = getEffectiveLumeConfig(workspaceSlug);
-  const extractionModelRef = resolveMemoryExtractionModelRef(lumeConfig);
-  const embeddingModelRef = resolveMemoryEmbeddingModelRef(lumeConfig);
-  const semanticModelRef = resolveMemoryEmbeddingStatusModelRef(lumeConfig);
-  const localOnnx = getLocalOnnxMemoryEmbeddingStatus();
-  const semanticStatus = getSemanticIndexStatus({
-    workspaceSlug,
-    semantic: runtimeConfig.retrieval.semantic,
-    embeddingModelRef: semanticModelRef
-  });
-  const rerank = resolveMemoryRerankModelRef({
-    workspaceSlug,
-    explicitModelRef: runtimeConfig.retrieval.rerankModelRef
-  });
+  const diagnostics = getMemoryDiagnosticsState(workspaceSlug, workspacePaths);
   const openPending = pending.filter((item) => item.frontmatter.status === "open");
   const entryById = new Map([...workspaceEntries, ...globalEntries].map((entry) => [entry.frontmatter.id, entry]));
   const dailyFiles = listFiles(workspacePaths.dailyDir, "daily", "workspace");
@@ -84,6 +71,45 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
     globalEntries: globalEntries.map(entrySummary),
     pending: pending.map((item) => pendingSummary(item, entryById)),
     activity: readRecentActivity([workspacePaths.journalDir, globalPaths.journalDir]),
+    ...(existsSync(workspacePaths.workspaceBrief) ? {
+      workspaceBrief: {
+        path: workspacePaths.workspaceBrief,
+        markdown: readFileSync(workspacePaths.workspaceBrief, "utf-8"),
+        updatedAt: fileUpdatedAt(workspacePaths.workspaceBrief)
+      }
+    } : {}),
+    ...diagnostics
+  };
+}
+
+export function getMemoryV2DiagnosticsSnapshot(workspaceSlug: string): MemoryDiagnosticsSnapshot {
+  const workspacePaths = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug });
+  return {
+    workspaceSlug,
+    ...getMemoryDiagnosticsState(workspaceSlug, workspacePaths)
+  };
+}
+
+function getMemoryDiagnosticsState(
+  workspaceSlug: string,
+  workspacePaths: ReturnType<typeof getMemoryV2ScopePaths>
+): Omit<MemoryDiagnosticsSnapshot, "workspaceSlug"> {
+  const runtimeConfig = getMemoryRuntimeConfig();
+  const lumeConfig = getEffectiveLumeConfig(workspaceSlug);
+  const extractionModelRef = resolveMemoryExtractionModelRef(lumeConfig);
+  const embeddingModelRef = resolveMemoryEmbeddingModelRef(lumeConfig);
+  const semanticModelRef = resolveMemoryEmbeddingStatusModelRef(lumeConfig);
+  const localOnnx = getLocalOnnxMemoryEmbeddingStatus();
+  const semanticStatus = getSemanticIndexStatus({
+    workspaceSlug,
+    semantic: runtimeConfig.retrieval.semantic,
+    embeddingModelRef: semanticModelRef
+  });
+  const rerank = resolveMemoryRerankModelRef({
+    workspaceSlug,
+    explicitModelRef: runtimeConfig.retrieval.rerankModelRef
+  });
+  return {
     jobs: memoryJobService.list(workspaceSlug).slice(0, 20).map((job) => ({
       jobId: job.jobId,
       kind: job.kind,
@@ -99,13 +125,6 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
       schemaVersion: readSchemaVersion(workspacePaths.schemaMarker),
       backupPaths: listBackupPaths(workspacePaths.root)
     },
-    ...(existsSync(workspacePaths.workspaceBrief) ? {
-      workspaceBrief: {
-        path: workspacePaths.workspaceBrief,
-        markdown: readFileSync(workspacePaths.workspaceBrief, "utf-8"),
-        updatedAt: fileUpdatedAt(workspacePaths.workspaceBrief)
-      }
-    } : {}),
     extraction: {
       ...(extractionModelRef ? { modelRef: extractionModelRef } : {}),
       source: extractionModelRef ? "configured" : "disabled",

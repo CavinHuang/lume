@@ -16,6 +16,7 @@ import type {
   MemoryResolvePendingInput,
   MemoryRuntimeConfig,
   MemorySettingsSnapshot,
+  MemoryDiagnosticsSnapshot,
   MemoryToolWriteResult,
   MemoryUpdateEntryInput,
   FileRef,
@@ -42,6 +43,9 @@ export const undoMemoryMutation = (input: MemoryUndoMutationInput) =>
 
 export const getMemorySettingsSnapshot = (workspaceSlug: string) =>
   sidecarCall<MemorySettingsSnapshot>(MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT, { workspaceSlug })
+
+export const getMemoryDiagnosticsSnapshot = (workspaceSlug: string) =>
+  sidecarCall<MemoryDiagnosticsSnapshot>(MEMORY_IPC_CHANNELS.DIAGNOSTICS_SNAPSHOT, { workspaceSlug })
 
 export const organizeMemoryHistory = (input: MemoryOrganizeHistoryInput) =>
   sidecarCall<MemoryStartOrganizeJobResult>(MEMORY_IPC_CHANNELS.ORGANIZE_HISTORY, input)

@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF } from "@lume/shared";
 import { appendDaily, appendRunArchive, createMemoryV2Store } from "./markdown-store";
-import { getMemoryV2SettingsSnapshot } from "./settings-snapshot";
+import {
+  getMemoryV2DiagnosticsSnapshot,
+  getMemoryV2SettingsSnapshot
+} from "./settings-snapshot";
 import { smartAddMemoryV2Candidate } from "./smart-add";
 import { updateMemoryRuntimeConfig } from "./policy";
 import { updateLumeConfigSection } from "../system/lume-config-service";
@@ -22,6 +25,24 @@ afterEach(() => {
 });
 
 describe("memory-v2 settings snapshot", () => {
+  test("diagnostics snapshot only projects status fields", () => {
+    const snapshot = getMemoryV2DiagnosticsSnapshot("demo");
+
+    expect(snapshot).toEqual(expect.objectContaining({
+      workspaceSlug: "demo",
+      migration: expect.any(Object),
+      extraction: expect.any(Object),
+      retrieval: expect.any(Object),
+      jobs: expect.any(Array)
+    }));
+    expect(snapshot).not.toHaveProperty("counts");
+    expect(snapshot).not.toHaveProperty("files");
+    expect(snapshot).not.toHaveProperty("workspaceEntries");
+    expect(snapshot).not.toHaveProperty("globalEntries");
+    expect(snapshot).not.toHaveProperty("pending");
+    expect(snapshot).not.toHaveProperty("activity");
+  });
+
   test("summarizes files, entries, and pending review counts from Memory V2 markdown", async () => {
     const store = createMemoryV2Store();
     store.ensureMemoryFile("workspace", "demo");

@@ -18,7 +18,10 @@ import {
   rememberMemoryTool,
   searchMemoryTool
 } from "../services/memory-v2/tools";
-import { getMemoryV2SettingsSnapshot } from "../services/memory-v2/settings-snapshot";
+import {
+  getMemoryV2DiagnosticsSnapshot,
+  getMemoryV2SettingsSnapshot
+} from "../services/memory-v2/settings-snapshot";
 import { getLocalOnnxMemoryEmbeddingStatus, retryLocalOnnxMemoryEmbedding } from "../services/memory-v2/local-embedding";
 import { openMemoryV2Source } from "../services/memory-v2/source-open";
 import { listMemorySourceFiles } from "../services/memory-v2/source-files";
@@ -86,6 +89,14 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
       recoverInterruptedConsolidation(input.workspaceSlug);
       maybeEnqueueAutoDream(input.workspaceSlug);
       return getMemoryV2SettingsSnapshot(input.workspaceSlug);
+    },
+    [MEMORY_IPC_CHANNELS.DIAGNOSTICS_SNAPSHOT]: async (params) => {
+      const input = validateInput(
+        workspaceSlugInputSchema,
+        params,
+        MEMORY_IPC_CHANNELS.DIAGNOSTICS_SNAPSHOT
+      );
+      return getMemoryV2DiagnosticsSnapshot(input.workspaceSlug);
     },
     [MEMORY_IPC_CHANNELS.ORGANIZE_HISTORY]: async (params) => {
       return startMemoryOrganizeHistoryJob(

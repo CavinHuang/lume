@@ -641,6 +641,14 @@ export interface MemorySettingsSnapshot {
   retrieval: MemorySettingsRetrievalStatus;
 }
 
+export interface MemoryDiagnosticsSnapshot {
+  workspaceSlug: string;
+  migration: MemorySettingsSnapshot["migration"];
+  extraction: MemorySettingsSnapshot["extraction"];
+  retrieval: MemorySettingsSnapshot["retrieval"];
+  jobs: MemorySettingsSnapshot["jobs"];
+}
+
 export const MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF = "local-onnx/Xenova/bge-small-zh-v1.5";
 export const MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_LABEL = "本地 ONNX bge-small-zh";
 
@@ -694,6 +702,7 @@ export const MEMORY_IPC_CHANNELS = {
   REMEMBER: "memory:remember",
   UNDO_MUTATION: "memory:undo-mutation",
   SETTINGS_SNAPSHOT: "memory:settings-snapshot",
+  DIAGNOSTICS_SNAPSHOT: "memory:diagnostics-snapshot",
   ORGANIZE_HISTORY: "memory:organize-history",
   ORGANIZE_ENTRIES: "memory:organize-entries",
   GET_ORGANIZE_JOB: "memory:get-organize-job",

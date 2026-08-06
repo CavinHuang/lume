@@ -54,6 +54,27 @@ describe("memory handlers", () => {
     });
   });
 
+  test("diagnostics snapshot handler returns only lightweight status fields", async () => {
+    const handlers = createMemoryHandlers();
+    const result = await handlers[MEMORY_IPC_CHANNELS.DIAGNOSTICS_SNAPSHOT]?.({
+      workspaceSlug: "demo"
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      workspaceSlug: "demo",
+      migration: expect.any(Object),
+      extraction: expect.any(Object),
+      retrieval: expect.any(Object),
+      jobs: expect.any(Array)
+    }));
+    expect(result).not.toHaveProperty("counts");
+    expect(result).not.toHaveProperty("files");
+    expect(result).not.toHaveProperty("workspaceEntries");
+    expect(result).not.toHaveProperty("globalEntries");
+    expect(result).not.toHaveProperty("pending");
+    expect(result).not.toHaveProperty("activity");
+  });
+
   test("organize history handler extracts memories from existing thread data", async () => {
     const workspace = createAgentWorkspace("Demo", { slug: "demo" });
     const thread = createAgentThread("memory history", undefined, workspace.id);
