@@ -1,13 +1,16 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { CalendarDays, ChevronDown, ListTodo } from 'lucide-react'
-import type { AgentIslandIntent, AgentIslandState } from '@lume/shared'
-import { selectPlanningIndicator } from '@lume/shared'
+import type { AgentIslandIntent, AgentIslandPlanningItem, AgentIslandSessionSnapshot, AgentIslandState } from '@lume/shared'
+import { findModelMeta, selectPlanningIndicator } from '@lume/shared'
 import { Button } from '@/components/ui/button'
+import { useModelMetaVersion } from '@/lib/model-meta-context'
 import { cn } from '@/lib/utils'
 import './agent-island.css'
 
 const SURFACE_TRANSITION_MS = 180
 const COMPACT_HEIGHT = 32
+/** expanded planning 两列各自最多直出的条目数；超出走「还有 N 条」溢出提示。 */
+const PLANNING_VISIBLE_MAX = 5
 
 const PHASE_DOT: Record<string, string> = {
   idle: 'bg-[var(--lume-text-muted)]',
@@ -21,6 +24,38 @@ const PHASE_DOT: Record<string, string> = {
 function formatIslandTime(ts: number, overdue: boolean): string {
   const hhmm = new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   return overdue ? `逾期 · ${hhmm}` : hhmm
+}
+
+/**
+ * 解析 modelRef 为注册表里的 display label。registry 无此 ref → undefined（渲染层省略 model 段，
+ * 不显原始 ref 字符串）。复用 findModelMeta（同 ModelPicker/model-selection-state 的查询入口）。
+ */
+export function resolveIslandModelLabel(modelRef: string): string | undefined {
+  return findModelMeta(modelRef)?.displayName
+}
+
+/**
+ * 全量 planning 排序：overdue 置顶 + dueAt 升序。expanded 用它直出前 N 条 + 溢出。
+ * 抽成纯函数便于单测（无 DOM / state 依赖）。
+ */
+export function sortIslandPlanningItems<T extends AgentIslandPlanningItem>(items: readonly T[]): T[] {
+  return [...items].sort((a, b) => Number(b.overdue) - Number(a.overdue) || a.dueAt - b.dueAt)
+}
+
+/**
+ * 拼接会话行的 model · cost · token 小字。仅 >0 / 解析成功才进 parts，避免「· $0.00」噪声。
+ * 抽成纯函数便于单测；渲染层据返回是否为空决定是否渲染 <span>。
+ */
+export function formatSessionMeta(
+  session: Pick<AgentIslandSessionSnapshot, 'modelRef' | 'costUSD' | 'tokenTotal'>,
+  resolveLabel: (ref: string) => string | undefined = resolveIslandModelLabel,
+): string {
+  const parts: string[] = []
+  const modelLabel = session.modelRef ? resolveLabel(session.modelRef) : undefined
+  if (modelLabel) parts.push(modelLabel)
+  if (session.costUSD != null && session.costUSD > 0) parts.push(`$${session.costUSD.toFixed(2)}`)
+  if (session.tokenTotal != null && session.tokenTotal > 0) parts.push(`${(session.tokenTotal / 1000).toFixed(1)}k`)
+  return parts.join(' · ')
 }
 
 type SurfaceMode = 'compact' | 'expanded' | 'collapsing'
@@ -43,6 +78,22 @@ export function AgentIslandSurface({
   const primary = state.sessions[0]
   // compact 紧迫 planning 图标：仅在无 primary session 时计算（有会话时 dot+label 优先）。
   const planningIndicator = !primary ? selectPlanningIndicator(state.planning, Date.now()) : null
+  // model 注册表 version：reload 后 bump，进 useMemo 依赖强制重算 session→meta 映射。
+  // 注入由 AgentIslandApp 的 ModelMetaProvider 负责（island 子窗口唯一 mount 点）。
+  const modelMetaVersion = useModelMetaVersion()
+  // expanded 会话行的 model·cost·token 小字：sessions/version 变化或 registry reload 时重算。
+  const sessionMetaById = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const s of state.sessions) {
+      const meta = formatSessionMeta(s)
+      if (meta) map[s.threadId] = meta
+    }
+    return map
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.sessions, modelMetaVersion])
+  // compact 队列徽章 + attention 数字 pill
+  const queueCount = primary?.queuedCount ?? 0
+  const needInteractionCount = state.sessions.filter((s) => s.phase === 'needs-interaction').length
   const surfaceRef = useRef<HTMLDivElement>(null)
   const expandedContentRef = useRef<HTMLDivElement>(null)
   const lastHeightRef = useRef(COMPACT_HEIGHT)
@@ -131,15 +182,20 @@ export function AgentIslandSurface({
                     }}
                   >
                     <span className={cn('island-dot', PHASE_DOT[s.phase])} />
-                    <span className="island-session-title">{s.title}</span>
+                    <div className="island-session-copy">
+                      <span className="island-session-title">{s.title}</span>
+                      {s.activityLines.length > 0 ? (
+                        <span className="island-session-activity">{s.activityLines[s.activityLines.length - 1]}</span>
+                      ) : s.detail ? (
+                        <span className="island-session-detail">{s.detail}</span>
+                      ) : null}
+                      {sessionMetaById[s.threadId] && (
+                        <span className="island-session-meta">{sessionMetaById[s.threadId]}</span>
+                      )}
+                    </div>
                     {s.project && (
                       <span className="island-session-project">{s.project}</span>
                     )}
-                    {s.activityLines.length > 0 ? (
-                      <span className="island-session-activity">{s.activityLines[s.activityLines.length - 1]}</span>
-                    ) : s.detail ? (
-                      <span className="island-session-detail">{s.detail}</span>
-                    ) : null}
                   </li>
                 ))}
               </ul>
@@ -147,51 +203,67 @@ export function AgentIslandSurface({
 
             {(state.planning.todos.length > 0 || state.planning.reminders.length > 0) && (
               <div className="island-planning">
-                {state.planning.todos.length > 0 && (
-                  <div className="island-planning-col">
-                    <div className="island-planning-head">
-                      <ListTodo className="island-planning-icon" />
-                      <span>待办</span>
-                      <span className="island-planning-count">{state.planning.todos.length}</span>
-                    </div>
-                    {state.planning.todos.slice(0, 3).map((t) => (
-                      <div
-                        key={t.id}
-                        className="island-planning-row island-no-drag"
-                        data-overdue={t.overdue ? 'true' : 'false'}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => onIntent({ name: 'open-main' })}
-                      >
-                        <span className={cn('island-planning-check', t.overdue && 'island-planning-check-overdue')} />
-                        <span className="island-planning-text">{t.title}</span>
-                        <span className="island-planning-time">{formatIslandTime(t.dueAt, t.overdue)}</span>
+                {state.planning.todos.length > 0 && (() => {
+                  const sorted = sortIslandPlanningItems(state.planning.todos)
+                  const visible = sorted.slice(0, PLANNING_VISIBLE_MAX)
+                  const overflow = sorted.length - visible.length
+                  return (
+                    <div className="island-planning-col">
+                      <div className="island-planning-head">
+                        <ListTodo className="island-planning-icon" />
+                        <span>待办</span>
+                        <span className="island-planning-count">{sorted.length}</span>
                       </div>
-                    ))}
-                  </div>
-                )}
-                {state.planning.reminders.length > 0 && (
-                  <div className="island-planning-col">
-                    <div className="island-planning-head">
-                      <CalendarDays className="island-planning-icon" />
-                      <span>提醒</span>
-                      <span className="island-planning-count">{state.planning.reminders.length}</span>
+                      {visible.map((t) => (
+                        <div
+                          key={t.id}
+                          className="island-planning-row island-no-drag"
+                          data-overdue={t.overdue ? 'true' : 'false'}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => onIntent({ name: 'open-main' })}
+                        >
+                          <span className={cn('island-planning-check', t.overdue && 'island-planning-check-overdue')} />
+                          <span className="island-planning-text">{t.title}</span>
+                          <span className="island-planning-time">{formatIslandTime(t.dueAt, t.overdue)}</span>
+                        </div>
+                      ))}
+                      {overflow > 0 && (
+                        <div className="island-planning-overflow">{`还有 ${overflow} 条`}</div>
+                      )}
                     </div>
-                    {state.planning.reminders.slice(0, 3).map((r) => (
-                      <div
-                        key={r.id}
-                        className="island-planning-row island-no-drag"
-                        data-overdue={r.overdue ? 'true' : 'false'}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => onIntent({ name: 'open-main' })}
-                      >
-                        <span className="island-planning-time">{formatIslandTime(r.dueAt, r.overdue)}</span>
-                        <span className="island-planning-text">{r.title}</span>
+                  )
+                })()}
+                {state.planning.reminders.length > 0 && (() => {
+                  const sorted = sortIslandPlanningItems(state.planning.reminders)
+                  const visible = sorted.slice(0, PLANNING_VISIBLE_MAX)
+                  const overflow = sorted.length - visible.length
+                  return (
+                    <div className="island-planning-col">
+                      <div className="island-planning-head">
+                        <CalendarDays className="island-planning-icon" />
+                        <span>提醒</span>
+                        <span className="island-planning-count">{sorted.length}</span>
                       </div>
-                    ))}
-                  </div>
-                )}
+                      {visible.map((r) => (
+                        <div
+                          key={r.id}
+                          className="island-planning-row island-no-drag"
+                          data-overdue={r.overdue ? 'true' : 'false'}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => onIntent({ name: 'open-main' })}
+                        >
+                          <span className="island-planning-time">{formatIslandTime(r.dueAt, r.overdue)}</span>
+                          <span className="island-planning-text">{r.title}</span>
+                        </div>
+                      ))}
+                      {overflow > 0 && (
+                        <div className="island-planning-overflow">{`还有 ${overflow} 条`}</div>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
             )}
           </div>
@@ -212,7 +284,18 @@ export function AgentIslandSurface({
             </span>
           )}
           <span className={cn('island-dot', PHASE_DOT[primary?.phase ?? 'idle'])} />
+          {needInteractionCount >= 2 && (
+            <span
+              className="island-attention-pill island-no-drag"
+              data-attention-count={needInteractionCount}
+            >
+              {needInteractionCount}
+            </span>
+          )}
           <span className="island-label">{state.compactLabel}</span>
+          {queueCount > 0 && (
+            <span className="island-queue-badge island-no-drag">{`队列 ${queueCount}`}</span>
+          )}
           <ChevronDown className={cn('island-chevron', requestedExpanded && 'rotate-180')} />
         </button>
       </div>

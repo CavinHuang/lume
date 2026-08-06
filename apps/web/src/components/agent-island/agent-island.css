@@ -108,6 +108,29 @@ html:not(.darwin) .island-surface {
   color: rgb(255 255 255 / 0.48);
   transition: transform 180ms ease;
 }
+/* compact 队列徽章：queuedCount > 0 时显「队列 N」（紧贴 label 后、chevron 前） */
+.island-queue-badge {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--lume-accent);
+}
+/* compact attention 数字 pill：needs-interaction 会话 ≥2 时紧邻 dot 显数字
+   （=1 走现有 warning phase dot，保留 dot 颜色连续性） */
+.island-attention-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 9999px;
+  font-size: 9px;
+  font-weight: 750;
+  color: #1a1205;
+  background: var(--lume-warning);
+}
 .island-planning-indicator {
   display: inline-flex;
   align-items: center;
@@ -186,6 +209,7 @@ html:not(.darwin) .island-surface {
 }
 .island-session-copy {
   display: grid;
+  flex: 1 1 auto;
   min-width: 0;
   gap: 4px;
 }
@@ -216,6 +240,16 @@ html:not(.darwin) .island-surface {
   color: rgb(255 255 255 / 0.56);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* expanded 会话行 model · cost · token 小字（仅 >0 / 解析成功才渲染） */
+.island-session-meta {
+  font-size: 9px;
+  font-weight: 520;
+  line-height: 1.2;
+  color: rgb(255 255 255 / 0.42);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 /* planning 两列（对齐 Proma island-planning-grid/column） */
@@ -307,6 +341,13 @@ html:not(.darwin) .island-surface {
 }
 .island-planning-row[data-overdue='true'] {
   box-shadow: inset 0 0 0 1px rgb(255 119 119 / 0.45);
+}
+/* 全量排序后超出 PLANNING_VISIBLE_MAX（=5）的溢出提示 */
+.island-planning-overflow {
+  padding: 2px 2px;
+  font-size: 9px;
+  font-weight: 520;
+  color: rgb(255 255 255 / 0.4);
 }
 
 /* 窗口拖动 grip（对齐 Proma agent-island.css:48-72） */

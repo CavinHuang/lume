@@ -5,6 +5,7 @@ import { Toaster } from 'sonner'
 import { listen } from '@/lib/desktop-runtime/event'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { AGENT_ISLAND_IPC_CHANNELS, type AgentIslandIntent, type AgentIslandState } from '@lume/shared'
+import { ModelMetaProvider } from '@/lib/model-meta-context'
 import { AgentIslandSurface } from './AgentIslandSurface'
 
 /**
@@ -39,12 +40,14 @@ export function AgentIslandApp() {
 
   return (
     <Provider>
-      <TooltipProvider>
-        {state && state.presentation !== 'hidden' && (
-          <AgentIslandSurface state={state} onIntent={sendIntent} />
-        )}
-        <Toaster position="bottom-right" />
-      </TooltipProvider>
+      <ModelMetaProvider>
+        <TooltipProvider>
+          {state && state.presentation !== 'hidden' && (
+            <AgentIslandSurface state={state} onIntent={sendIntent} />
+          )}
+          <Toaster position="bottom-right" />
+        </TooltipProvider>
+      </ModelMetaProvider>
     </Provider>
   )
 }
