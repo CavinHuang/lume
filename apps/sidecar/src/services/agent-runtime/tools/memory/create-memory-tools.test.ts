@@ -46,7 +46,7 @@ describe("create-runtime-memory-tools", () => {
     expect(names).toEqual([]);
   });
 
-  test("memory.remember 只向 agent 暴露真实支持的全局和工作区范围", () => {
+  test("memory.remember 只要求 content 且 scope 默认 auto", () => {
     const tools = createSdkMemoryTools({
       workspaceSlug: "demo",
       enabledTools: new Set(["memory.remember"]),
@@ -56,9 +56,11 @@ describe("create-runtime-memory-tools", () => {
     expect(rememberTool?.inputSchema).toMatchObject({
       properties: {
         scope: {
-          enum: ["global", "workspace"]
+          enum: ["auto", "global", "workspace"],
+          default: "auto"
         }
-      }
+      },
+      required: ["content"]
     });
   });
 });

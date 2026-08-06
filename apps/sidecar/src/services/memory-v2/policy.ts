@@ -31,12 +31,12 @@ interface MemoryRuntimeConfigFile {
   retrieval?: Partial<MemoryRetrievalConfig>;
 }
 
-export const MEMORY_CONFIG_VERSION = 1;
+export const MEMORY_CONFIG_VERSION = 2;
 const log = createLogger("memory-policy");
 
 const DEFAULT_MEMORY_CONFIG: Required<Pick<MemoryRuntimeConfigFile, "version" | "tools" | "citations">> = {
   version: MEMORY_CONFIG_VERSION,
-  tools: { allow: ["group:memory"] },
+  tools: { allow: ["group:memory", "group:memory-write"] },
   citations: "auto"
 };
 const DEFAULT_SOURCES: MemorySourceMode[] = ["memory"];
@@ -45,7 +45,7 @@ const DEFAULT_RETRIEVAL: MemoryRetrievalConfig = { semantic: "auto" };
 
 const MEMORY_TOOL_GROUPS: Record<string, string[]> = {
   "group:memory": ["memory.search", "memory.read"],
-  "group:memory-write": ["memory.remember"]
+  "group:memory-write": ["memory.remember", "memory.forget"]
 };
 const TOOL_NAME_ALIASES: Record<string, string> = {
   "apply-patch": "apply_patch",
@@ -157,7 +157,8 @@ export function parseMemoryRuntimeConfigPayload(payload: unknown): {
 }
 
 function normalizeRuntimeConfig(payload: unknown): MemoryRuntimeConfig {
-  const parsed = parseMemoryRuntimeConfigPayload(payload);
+  const migrated = migrateLegacyDefaultToolPolicy(payload);
+  const parsed = parseMemoryRuntimeConfigPayload(migrated);
   return {
     version: MEMORY_CONFIG_VERSION,
     tools: parsed.toolPolicy ?? { ...DEFAULT_MEMORY_CONFIG.tools },
@@ -166,6 +167,24 @@ function normalizeRuntimeConfig(payload: unknown): MemoryRuntimeConfig {
     extraPaths: parsed.extraPaths,
     retrieval: parsed.retrieval
   };
+}
+
+function migrateLegacyDefaultToolPolicy(payload: unknown): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  const record = payload as MemoryRuntimeConfigFile;
+  if ((record.version ?? 1) > 1) return payload;
+  const allow = record.tools?.allow;
+  const deny = record.tools?.deny;
+  const isOldDefault = Array.isArray(allow)
+    && allow.length === 1
+    && allow[0] === "group:memory"
+    && (!deny || deny.length === 0);
+  if (!isOldDefault) return payload;
+  return {
+    ...record,
+    version: MEMORY_CONFIG_VERSION,
+    tools: { allow: ["group:memory", "group:memory-write"] }
+  } satisfies MemoryRuntimeConfigFile;
 }
 
 export function shouldIncludeCitations(mode: MemoryCitationsMode, chatType: MemoryChatType): boolean {

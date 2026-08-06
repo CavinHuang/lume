@@ -131,13 +131,13 @@ describe("memory-v2 policy", () => {
     expect(result.retrieval.semantic).toBe("auto");
   });
 
-  test("默认配置应仅开放 group:memory（不含写入工具）", () => {
+  test("默认配置应开放记忆读写组", () => {
     const result = parseMemoryRuntimeConfigPayload({ version: 1 });
     const tools = applyMemoryToolPolicy({
       baseTools: ["memory.search", "memory.read", "memory.remember"],
       policy: result.toolPolicy
     });
-    expect(tools).toEqual(["memory.search", "memory.read"]);
+    expect(tools).toEqual(["memory.search", "memory.read", "memory.remember"]);
     expect(result.sources).toEqual(["memory"]);
     expect(result.extraPaths).toEqual([]);
   });

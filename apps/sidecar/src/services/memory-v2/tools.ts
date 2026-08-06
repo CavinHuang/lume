@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import type {
   MemoryReadToolInput,
   MemoryReadToolResult,
+  MemoryForgetToolInput,
   MemoryRememberToolInput,
   MemorySearchResult,
   MemorySearchToolInput,
@@ -122,6 +123,32 @@ export async function rememberMemoryTool(input: MemoryRememberToolInput): Promis
     : undefined;
   return {
     ...toSharedMemoryReceipt(receipt),
+    workspaceSlug: input.workspaceSlug,
+    ...(entry ? { id: entry.frontmatter.id, path: entry.path, kind: fromMemoryV2Kind(entry.frontmatter.kind) } : {})
+  };
+}
+
+export async function forgetMemoryTool(input: MemoryForgetToolInput): Promise<MemoryToolWriteResult> {
+  if (input.explicitUserIntent !== true) {
+    throw new Error("memory.forget 只能响应用户明确的遗忘请求");
+  }
+  const service = new MemoryCommandService();
+  const receipt = service.archive({
+    workspaceSlug: input.workspaceSlug,
+    id: input.id,
+    scope: input.scope,
+    actor: "main_agent",
+    runId: input.sourceSessionId,
+    threadId: input.threadId
+  });
+  const entry = createMemoryV2Store().listEntries({
+    workspaceSlug: input.workspaceSlug,
+    scopes: [receipt.scope],
+    includeStatuses: ["archived"]
+  }).find((item) => item.frontmatter.id === input.id);
+  return {
+    ...toSharedMemoryReceipt(receipt),
+    workspaceSlug: input.workspaceSlug,
     ...(entry ? { id: entry.frontmatter.id, path: entry.path, kind: fromMemoryV2Kind(entry.frontmatter.kind) } : {})
   };
 }

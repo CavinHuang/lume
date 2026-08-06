@@ -33,7 +33,7 @@ export function isToolInGroup(toolName: string, groupId: string): boolean {
     case 'data':
       return ['guanlan_search', 'guanlan_read', 'guanlan_hotnews', 'guanlan_research'].includes(toolName)
     case 'memory':
-      return ['memory.search', 'memory.read', 'memory.remember'].includes(toolName)
+      return ['memory.search', 'memory.read', 'memory.remember', 'memory.forget'].includes(toolName)
     case 'agent':
       return ['agent_spawn', 'send_message', 'team_create', 'team_delete', 'skill'].includes(toolName)
     case 'task':

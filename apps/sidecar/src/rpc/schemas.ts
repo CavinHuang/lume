@@ -795,6 +795,7 @@ export const aliceReadingBookInputSchema = z.object({
 }).strict().optional();
 
 const memoryScopeSchema = z.enum(["global", "workspace"]);
+const memoryScopeInputSchema = z.enum(["auto", "global", "workspace"]);
 const memoryKindSchema = z.enum(["raw", "summary", "fact", "preference", "decision", "episode", "lesson", "milestone", "artifact"]);
 const memorySourceSchema = z.enum(["memory", "sessions", "session", "file", "tool", "manual"]);
 
@@ -823,8 +824,8 @@ export const memoryReadToolInputSchema = z.object({
 
 export const memoryRememberToolInputSchema = z.object({
   workspaceSlug: idSchema,
-  scope: memoryScopeSchema,
-  kind: memoryKindSchema,
+  scope: memoryScopeInputSchema.optional(),
+  kind: memoryKindSchema.optional(),
   content: z.string().min(1),
   title: z.string().optional(),
   tags: z.array(z.string()).optional(),
@@ -832,6 +833,10 @@ export const memoryRememberToolInputSchema = z.object({
   confidence: z.number().min(0).max(1).optional(),
   sourceSessionId: z.string().optional(),
   sourceMessageIds: z.array(z.string()).optional(),
+  sourceToolCallId: z.string().optional(),
+  threadId: z.string().optional(),
+  actor: z.enum(["main_agent", "background_extract", "consolidation", "user", "migration"]).optional(),
+  explicitCorrection: z.boolean().optional(),
   requireReview: z.boolean().optional()
 });
 
@@ -916,6 +921,11 @@ export const memoryDeleteEntryInputSchema = z.object({
   workspaceSlug: idSchema,
   scope: memoryEntryScopeSchema,
   id: z.string().trim().min(1)
+}).strict();
+
+export const memoryUndoMutationInputSchema = z.object({
+  workspaceSlug: idSchema,
+  mutationId: z.string().uuid()
 }).strict();
 
 export const memoryResolvePendingInputSchema = z.object({

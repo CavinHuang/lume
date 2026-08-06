@@ -8,10 +8,11 @@ export function buildMemorySections(ctx: {
   const hasMemorySearch = availableTools.has("memory.search");
   const hasMemoryRead = availableTools.has("memory.read");
   const hasMemoryWrite = availableTools.has("memory.remember");
+  const hasMemoryForget = availableTools.has("memory.forget");
 
   const sections: string[] = [];
 
-  if (hasMemorySearch || hasMemoryRead || hasMemoryWrite) {
+  if (hasMemorySearch || hasMemoryRead || hasMemoryWrite || hasMemoryForget) {
     const lines = [
       "## Memory",
       "",
@@ -38,18 +39,24 @@ export function buildMemorySections(ctx: {
       lines.push(
         "",
         `Write:
-Structured memory — use memory.remember:
+Structured memory — use memory.remember proactively and immediately:
 - When the user explicitly asks you to remember something
-- When a durable preference, project decision, reusable lesson, or important milestone should affect future work
-- When a mistake or correction should prevent future errors
+- When a durable identity fact, preference, project constraint, confirmed decision, or reusable lesson should affect future work
+- When a correction should replace an older memory; set explicitCorrection=true
 
 Use memory.remember when the user says "记住这个", "以后都这样", "这是我的偏好", or states a durable preference/fact/decision.
+Only content is required. Let scope default to auto; do not choose a taxonomy for the user.
 When the memory is a stable fact edge, include claim:
 - User's preferred name: claim subject=user/self, predicate=preferred_name, object=<name>
 - Assistant nickname given by the user: claim subject=assistant/self, predicate=preferred_name, object=<name>
 Assistant nickname claims are user preferences; do not treat them as product identity changes.
-Do NOT save trivial exchanges, greetings, or information already in MEMORY.md.`
+Do NOT save tasks/Todos/plans in progress, facts readily available from code/Wiki/Skills, temporary execution details, unsupported assistant guesses, secrets, sensitive personal data unless explicitly requested, or anything the user says not to remember.
+Never persist an assistant inference unless the conversation or a tool result directly supports it.`
       );
+    }
+
+    if (hasMemoryForget) {
+      lines.push("Forget: use memory.forget only after an explicit user request and only with a specific memory id. It archives reversibly; never infer a forget request.");
     }
 
     sections.push(lines.join("\n"));

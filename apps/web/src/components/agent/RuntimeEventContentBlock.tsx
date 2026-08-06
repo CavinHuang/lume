@@ -1178,6 +1178,7 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({
   }
 
   const Icon = toolCall.toolName === 'Bash' ? Terminal : Wrench
+  const memoryLabel = memoryMutationLabel(toolCall)
 
   return (
     <div>
@@ -1189,7 +1190,7 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({
         className="flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60 disabled:hover:text-foreground/40"
       >
         <Icon size={12} className="shrink-0" />
-        <span className="shrink-0 font-mono font-medium">{toolCall.toolName}</span>
+        <span className="shrink-0 font-medium">{memoryLabel ?? toolCall.toolName}</span>
         {toolCall.riskLevel && <span className={cn('shrink-0', riskLevelClassName(toolCall.riskLevel))}>{riskLevelLabel(toolCall.riskLevel)}</span>}
         <span className="min-w-0 flex-1 truncate">{summarizeInput(input)}</span>
         {toolCall.status === 'failed' && <TriangleAlert size={11} className="shrink-0 text-destructive/70" />}
@@ -2395,6 +2396,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
   }
 
   const isBash = toolCall.toolName === 'Bash'
+  const memoryLabel = memoryMutationLabel(toolCall)
   const Icon = isBash ? Terminal : Wrench
   const resultOpen = !isRunning && !collapsed
   const shouldRenderResult = useDeferredUnmount(resultOpen)
@@ -2424,7 +2426,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
         className="flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
       >
         <Icon size={15} className="shrink-0 text-[var(--lume-text-muted)]" />
-        <span className="font-mono font-semibold text-[var(--lume-text-primary)]">{toolCall.toolName}</span>
+        <span className="font-semibold text-[var(--lume-text-primary)]">{memoryLabel ?? toolCall.toolName}</span>
         {toolCall.riskLevel && (
           <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', riskLevelClassName(toolCall.riskLevel))}>
             {riskLevelLabel(toolCall.riskLevel)}
@@ -2441,7 +2443,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
             ? 'bg-destructive/10 text-destructive'
             : 'bg-[var(--lume-accent-soft)] text-[var(--lume-accent)]',
         )}>
-          {isRunning ? '执行中' : toolCall.status === 'failed' ? '失败' : '已完成'}
+          {isRunning ? (toolCall.toolName === 'memory.remember' ? '正在记住…' : toolCall.toolName === 'memory.forget' ? '正在遗忘…' : '执行中') : toolCall.status === 'failed' ? '失败' : '已完成'}
         </span>
         {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
           <span className="tabular-nums text-[11px] font-medium text-[var(--lume-text-muted)]">
@@ -2472,6 +2474,19 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
 export function getToolPermissionTitleBadgeText(toolCall: RuntimeToolCallView): string | null {
   if (toolCall.permissionState === 'timeout') return '权限超时'
   return null
+}
+
+function memoryMutationLabel(toolCall: RuntimeToolCallView): string | null {
+  if (toolCall.toolName !== 'memory.remember' && toolCall.toolName !== 'memory.forget') return null
+  if (toolCall.status === 'running') return toolCall.toolName === 'memory.remember' ? '正在记住…' : '正在遗忘…'
+  let output = toolCall.output
+  if (typeof output === 'string') {
+    try { output = JSON.parse(output) } catch { return toolCall.toolName === 'memory.remember' ? '记忆已处理' : '遗忘已处理' }
+  }
+  const record = asRecord(output)
+  const data = asRecord(record.data)
+  const summary = asString(data.summary ?? record.summary)
+  return summary ?? (toolCall.toolName === 'memory.remember' ? '记忆已处理' : '遗忘已处理')
 }
 
 function riskLevelLabel(level: NonNullable<RuntimeToolCallView['riskLevel']>): string {

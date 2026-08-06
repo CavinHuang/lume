@@ -226,6 +226,13 @@ registerToolMetadata({
   description: "保存结构化记忆"
 });
 
+registerToolMetadata({
+  name: "memory.forget",
+  category: "write",
+  riskLevel: "medium",
+  description: "按用户明确意图归档记忆"
+});
+
 // 网络工具
 registerToolMetadata({
   name: "web_search",

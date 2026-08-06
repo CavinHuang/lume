@@ -28,6 +28,7 @@ import { organizeMemoryHistory } from "../services/memory-v2/history-organizer";
 import { organizeMemoryEntries } from "../services/memory-v2/entry-organizer";
 import { ingestExternalMemorySources } from "../services/memory-v2/ingestion";
 import { createMemoryV2Store } from "../services/memory-v2/markdown-store";
+import { MemoryCommandService } from "../services/memory-v2/command-service";
 import {
   getMemoryRuntimeConfig,
   updateMemoryRuntimeConfig
@@ -47,6 +48,7 @@ import {
   memoryResolvePendingInputSchema,
   memorySearchInputSchema,
   memoryUpdateEntryInputSchema,
+  memoryUndoMutationInputSchema,
   workspaceSlugInputSchema,
   updateMemoryRuntimeConfigInputSchema
 } from "./schemas";
@@ -74,6 +76,10 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
       return rememberMemoryTool(
         validateInput(memoryRememberToolInputSchema, params, MEMORY_IPC_CHANNELS.REMEMBER)
       );
+    },
+    [MEMORY_IPC_CHANNELS.UNDO_MUTATION]: async (params) => {
+      const input = validateInput(memoryUndoMutationInputSchema, params, MEMORY_IPC_CHANNELS.UNDO_MUTATION);
+      return new MemoryCommandService().undo(input);
     },
     [MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT]: async (params) => {
       const input = validateInput(workspaceSlugInputSchema, params, MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT);

@@ -226,6 +226,7 @@ export interface MemoryRememberToolInput {
 }
 
 export interface MemoryToolWriteResult extends MemoryMutationReceipt {
+  workspaceSlug?: string;
   id?: string;
   path?: string;
   kind?: MemoryKind;
@@ -623,6 +624,7 @@ export const MEMORY_IPC_CHANNELS = {
   SEARCH: "memory:search",
   READ: "memory:read",
   REMEMBER: "memory:remember",
+  UNDO_MUTATION: "memory:undo-mutation",
   SETTINGS_SNAPSHOT: "memory:settings-snapshot",
   ORGANIZE_HISTORY: "memory:organize-history",
   ORGANIZE_ENTRIES: "memory:organize-entries",
