@@ -1,12 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { classifyAction, createLinkTools } from "./create-link-tools";
-import { installLinkRuntimeBootstrap } from "../../../link/link-client";
+import { installLinkRuntimeBootstrap, type McpLinkPayload } from "../../../link/link-client";
 import { submitToolPermissionDecision } from "../../interruption/tool-permission-session";
 
-const originalFetch = globalThis.fetch;
-
 afterEach(() => {
-  globalThis.fetch = originalFetch;
   installLinkRuntimeBootstrap({ phase: "offline" });
 });
 
@@ -30,20 +27,15 @@ describe("OpenConnector Link tools", () => {
     expect(classifyAction({ id: "vendor.do_thing", service: "vendor", name: "Do thing", readOnly: true })).toBe("read");
   });
 
-  test("requires one-shot approval and reuses an idempotency key for the single transport retry", async () => {
+  test("requires one-shot approval and routes the call through the MCP execute_action tool", async () => {
     installLinkRuntimeBootstrap({ phase: "online", origin: "http://127.0.0.1:51234", adminToken: "admin", runtimeToken: "runtime" });
-    const requests: Request[] = [];
-    let postAttempts = 0;
-    globalThis.fetch = (async (input, init) => {
-      const request = new Request(input, init);
-      requests.push(request);
-      if (request.method === "GET") {
-        return Response.json({ success: true, data: { id: "github.create_issue", service: "github", name: "Create issue" } });
-      }
-      postAttempts += 1;
-      if (postAttempts === 1) throw new TypeError("transport reset");
-      return Response.json({ success: true, data: { ok: true } });
-    }) as typeof fetch;
+    const mcpCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const mcpCaller = async (name: string, args: Record<string, unknown>): Promise<McpLinkPayload> => {
+      mcpCalls.push({ name, args });
+      if (name === "get_action_guide") return { ok: true, data: {} };
+      if (name === "execute_action") return { ok: true, data: { ok: true } };
+      return { ok: false, error: { code: "unhandled", message: `unhandled ${name}` } };
+    };
     let approvalRequest: Parameters<typeof submitToolPermissionDecision>[0] | undefined;
     const tools = createLinkTools({
       threadId: "thread",
@@ -54,31 +46,31 @@ describe("OpenConnector Link tools", () => {
         approvalRequest = { threadId: request.threadId, requestId: request.requestId, decision: "allow_once" };
         submitToolPermissionDecision(approvalRequest);
       },
+      mcpCaller,
     });
     await tools.find((tool) => tool.name === "link_inspect_actions")!.call(
       { actions: ["github.create_issue"], connectionName: "work" },
       { cwd: ".", toolUseId: "inspect-1" } as never,
     );
-    const result = await tools.find((tool) => tool.name === "link_call_action")!.call(
+    const callResult = await tools.find((tool) => tool.name === "link_call_action")!.call(
       { service: "github", action: "github.create_issue", connectionName: "work", input: { title: "A" } },
       { cwd: ".", toolUseId: "mutation-1" } as never,
     );
 
     expect(approvalRequest).toBeDefined();
-    expect(result.is_error).not.toBe(true);
-    const posts = requests.filter((request) => request.method === "POST");
-    expect(posts).toHaveLength(2);
-    const idempotencyKeys = posts.map((request) => request.headers.get("idempotency-key"));
-    expect(idempotencyKeys[0]).toMatch(/^[a-f0-9]{64}$/);
-    expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
-    expect(posts.every((request) => request.headers.get("x-oo-connector-alias") === "work")).toBe(true);
-    expect(posts.every((request) => request.headers.get("authorization") === "Bearer runtime")).toBe(true);
+    expect(callResult.is_error).not.toBe(true);
+    const executeCalls = mcpCalls.filter((call) => call.name === "execute_action");
+    expect(executeCalls).toHaveLength(1);
+    expect(executeCalls[0]!.args).toEqual({ actionId: "github.create_issue", input: { title: "A" }, connectionName: "work" });
   });
 
   test("requires inspection for the exact named account", async () => {
     installLinkRuntimeBootstrap({ phase: "online", origin: "http://127.0.0.1:51234", adminToken: "admin", runtimeToken: "runtime" });
-    globalThis.fetch = (async () => Response.json({ success: true, data: { id: "github.list_issues", service: "github", name: "List issues" } })) as unknown as typeof fetch;
-    const tools = createLinkTools({ threadId: "thread", emitToolPermissionRequest: () => {} });
+    const mcpCaller = async (name: string): Promise<McpLinkPayload> => {
+      if (name === "get_action_guide") return { ok: true, data: {} };
+      return { ok: true, data: { ok: true } };
+    };
+    const tools = createLinkTools({ threadId: "thread", emitToolPermissionRequest: () => {}, mcpCaller });
     await tools.find((tool) => tool.name === "link_inspect_actions")!.call(
       { actions: ["github.list_issues"], connectionName: "work" },
       { cwd: ".", toolUseId: "inspect-work" } as never,
@@ -93,23 +85,22 @@ describe("OpenConnector Link tools", () => {
     installLinkRuntimeBootstrap({ phase: "online", origin: "http://127.0.0.1:51234", adminToken: "admin", runtimeToken: "runtime" });
     let active = 0;
     let maximum = 0;
-    let callCount = 0;
-    globalThis.fetch = (async (input, init) => {
-      const request = new Request(input, init);
-      if (request.method === "GET") {
-        return Response.json({ success: true, data: { id: "github.list_issues", service: "github", name: "List issues" } });
+    let execCount = 0;
+    const mcpCaller = async (name: string): Promise<McpLinkPayload> => {
+      if (name === "get_action_guide") return { ok: true, data: {} };
+      if (name === "execute_action") {
+        execCount += 1;
+        const attempt = execCount;
+        active += 1;
+        maximum = Math.max(maximum, active);
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        active -= 1;
+        if (attempt === 3) return { ok: false, error: { code: "connection_not_found", message: "Connect GitHub" } };
+        return { ok: true, data: { ok: true } };
       }
-      const attempt = ++callCount;
-      active += 1;
-      maximum = Math.max(maximum, active);
-      await new Promise((resolve) => setTimeout(resolve, 15));
-      active -= 1;
-      if (attempt === 3) {
-        return Response.json({ success: false, errorCode: "connection_not_found", message: "Connect GitHub" }, { status: 401 });
-      }
-      return Response.json({ success: true, data: { ok: true } });
-    }) as typeof fetch;
-    const tools = createLinkTools({ threadId: "thread", runId: "run", emitToolPermissionRequest: () => {} });
+      return { ok: false, error: { code: "unhandled", message: `unhandled ${name}` } };
+    };
+    const tools = createLinkTools({ threadId: "thread", runId: "run", emitToolPermissionRequest: () => {}, mcpCaller });
     await tools.find((tool) => tool.name === "link_inspect_actions")!.call(
       { actions: ["github.list_issues"] },
       { cwd: ".", toolUseId: "inspect-1" } as never,

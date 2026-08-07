@@ -1,7 +1,7 @@
 import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
 import type { AgentToolPermissionRequest, LinkActionDetail, LinkAuthorizationSignal } from "@lume/shared";
-import { createHash, randomUUID } from "node:crypto";
-import { LinkApiError, isLinkRuntimeOnline, linkRuntimeRequest } from "../../../link/link-client";
+import { randomUUID } from "node:crypto";
+import { callLinkMcpTool, isLinkRuntimeOnline, LinkApiError, type McpLinkPayload } from "../../../link/link-client";
 import { waitForToolPermissionDecision } from "../../interruption/tool-permission-session";
 
 const SAFE_ACTION_VERBS = new Set(["get", "list", "search", "find", "fetch", "read", "query", "lookup", "check", "describe", "count", "status"]);
@@ -20,12 +20,16 @@ const AUTH_CODES = new Set([
 let activeCalls = 0;
 const callWaiters: Array<() => void> = [];
 
+type McpCaller = (toolName: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<McpLinkPayload>;
+
 export function createLinkTools(input: {
   threadId: string;
   runId?: string;
   emitToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
+  mcpCaller?: McpCaller;
 }): ToolDefinition[] {
   if (!isLinkRuntimeOnline()) return [];
+  const mcpCaller = input.mcpCaller ?? callLinkMcpTool;
   const inspectedActions = new Map<string, LinkActionDetail>();
   const readMetadata = metadata(true, true);
   return [
@@ -33,18 +37,23 @@ export function createLinkTools(input: {
       type: "object", properties: { service: { type: "string" } }, additionalProperties: false,
     }, readMetadata, async (args, context) => {
       const service = optionalString(args.service);
-      return result(context.toolUseId, await linkRuntimeRequest(service ? `/v1/apps/services/${encodeURIComponent(service)}` : "/v1/apps", { signal: context.abortSignal }));
+      const payload = await mcpCaller("list_apps", service ? { query: service } : {}, context.abortSignal);
+      if (!payload.ok) throw new LinkApiError(payload.error.code, payload.error.message);
+      const apps = Array.isArray(payload.data) ? payload.data : [];
+      const filtered = service ? apps.filter((app: Record<string, unknown>) => app?.service === service) : apps;
+      return result(context.toolUseId, filtered);
     }),
     definition("link_search_actions", "Search OpenConnector actions. Inspect an action before calling it.", {
       type: "object",
       properties: { query: { type: "string" }, service: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 50 } },
       required: ["query"], additionalProperties: false,
     }, readMetadata, async (args, context) => {
-      const query = new URLSearchParams({ q: requiredString(args.query, "query") });
+      const query = requiredString(args.query, "query");
       const service = optionalString(args.service);
-      if (service) query.set("service", service);
-      query.set("limit", String(Math.max(1, Math.min(50, Number(args.limit) || 20))));
-      return result(context.toolUseId, await linkRuntimeRequest(`/v1/actions/search?${query}`, { signal: context.abortSignal }));
+      const limit = Math.max(1, Math.min(50, Number(args.limit) || 20));
+      const payload = await mcpCaller("search_actions", { query, ...(service ? { service } : {}), limit }, context.abortSignal);
+      if (!payload.ok) throw new LinkApiError(payload.error.code, payload.error.message);
+      return result(context.toolUseId, payload.data);
     }),
     definition("link_inspect_actions", "Inspect one or more OpenConnector action schemas and authorization requirements.", {
       type: "object",
@@ -58,10 +67,9 @@ export function createLinkTools(input: {
       if (!actionIds.length) throw new Error("actions is required");
       const connectionName = optionalString(args.connectionName);
       const details = await Promise.all(actionIds.map(async (actionId: string) => {
-        const detail = await linkRuntimeRequest<LinkActionDetail>(`/v1/actions/${encodeURIComponent(actionId)}`, {
-          signal: context.abortSignal,
-          headers: connectionHeaders(connectionName),
-        });
+        const payload = await mcpCaller("get_action_guide", { actionId, ...(connectionName ? { connectionName } : {}) }, context.abortSignal);
+        if (!payload.ok) throw new LinkApiError(payload.error.code, payload.error.message);
+        const detail = actionDetailFromGuide(actionId, payload.data);
         inspectedActions.set(inspectionKey(actionId, connectionName), detail);
         return { ...detail, lumeRisk: classifyAction(detail) };
       }));
@@ -99,16 +107,16 @@ export function createLinkTools(input: {
         if (decision !== "allow_once") throw new Error("link_action_not_approved");
       }
       const release = await acquireCallSlot(context.abortSignal);
-      const idempotencyKey = risk === "read" ? undefined : createIdempotencyKey(context.toolUseId);
       const startedAt = Date.now();
       try {
-        const data = await callWithSingleTransportRetry(action, asRecord(args.input), connectionName, idempotencyKey, context.abortSignal);
+        const payload = await mcpCaller("execute_action", { actionId: action, input: asRecord(args.input), ...(connectionName ? { connectionName } : {}) }, context.abortSignal);
+        if (!payload.ok) throw new LinkApiError(payload.error.code, payload.error.message);
         return result(context.toolUseId, {
           service,
           action,
           ...(connectionName ? { connectionName } : {}),
           durationMs: Date.now() - startedAt,
-          result: data,
+          result: payload.data,
         });
       } catch (error) {
         if (error instanceof LinkApiError && AUTH_CODES.has(error.code)) {
@@ -126,6 +134,21 @@ export function createLinkTools(input: {
   ];
 }
 
+function actionDetailFromGuide(actionId: string, data: unknown): LinkActionDetail {
+  const record = data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {};
+  const segments = actionId.split(".");
+  const service = typeof record.service === "string" ? record.service : segments[0] ?? actionId;
+  const name = typeof record.name === "string"
+    ? record.name
+    : segments.length > 1 ? segments.slice(1).join(".") : actionId;
+  return {
+    id: typeof record.id === "string" ? record.id : actionId,
+    service,
+    name,
+    ...(record.readOnly === true ? { readOnly: true } : {}),
+  };
+}
+
 export function classifyAction(action: LinkActionDetail): "read" | "write_or_unknown" {
   if (action.readOnly === true) return "read";
   const identifiers = [action.name, action.id.split(".").at(-1) ?? action.id];
@@ -136,10 +159,6 @@ export function classifyAction(action: LinkActionDetail): "read" | "write_or_unk
 
 function actionTokens(value: string): string[] {
   return value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-}
-
-function createIdempotencyKey(toolUseId: string | undefined): string {
-  return createHash("sha256").update("lume-link:").update(toolUseId ?? randomUUID()).digest("hex");
 }
 
 function definition(name: string, description: string, inputSchema: ToolDefinition["inputSchema"], runtimeMetadata: Record<string, unknown>, call: ToolDefinition["call"]): ToolDefinition {
@@ -154,12 +173,7 @@ function result(toolUseId: string | undefined, data: unknown, isError = false, m
 function asRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function requiredString(value: unknown, label: string): string { const text = optionalString(value); if (!text) throw new Error(`${label} is required`); return text; }
 function optionalString(value: unknown): string { return typeof value === "string" ? value.trim() : ""; }
-function connectionHeaders(connectionName: string): Record<string, string> { return connectionName ? { "x-oo-connector-alias": connectionName } : {}; }
 function inspectionKey(action: string, connectionName: string): string { return `${action}\u0000${connectionName || "default"}`; }
-async function callWithSingleTransportRetry(action: string, input: Record<string, unknown>, connectionName: string, idempotencyKey: string | undefined, signal?: AbortSignal): Promise<unknown> {
-  const request = () => linkRuntimeRequest(`/v1/actions/${encodeURIComponent(action)}`, { method: "POST", signal, headers: { ...connectionHeaders(connectionName), ...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}) }, body: JSON.stringify({ input }) });
-  try { return await request(); } catch (error) { if (signal?.aborted || error instanceof LinkApiError) throw error; return request(); }
-}
 async function acquireCallSlot(signal?: AbortSignal): Promise<() => void> {
   if (activeCalls >= 2) await new Promise<void>((resolve, reject) => {
     const resume = () => { signal?.removeEventListener("abort", onAbort); resolve(); };
