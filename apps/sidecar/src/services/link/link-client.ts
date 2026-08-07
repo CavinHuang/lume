@@ -1,4 +1,5 @@
 import type { LinkRuntimePhase } from "@lume/shared";
+import { McpClientManager } from "@lume/agent-sdk";
 
 type LinkApi = "admin" | "runtime";
 type LinkRuntimeBootstrap = { phase: LinkRuntimePhase; origin?: string; adminToken?: string; runtimeToken?: string };
@@ -21,6 +22,7 @@ export function installLinkRuntimeBootstrap(value: unknown): void {
     throw new Error("invalid_link_bootstrap");
   }
   if (input.phase !== "online") {
+    void getLinkMcpClient().disconnect(LINK_MCP_SERVER_ID).catch(() => { /* best-effort cleanup on phase leave */ });
     bootstrap = { phase: input.phase };
     return;
   }
@@ -34,6 +36,13 @@ export function installLinkRuntimeBootstrap(value: unknown): void {
     adminToken: Buffer.from(input.adminToken),
     runtimeToken: Buffer.from(input.runtimeToken),
   };
+  getLinkMcpClient().register(LINK_MCP_SERVER_ID, {
+    enabled: true,
+    transport: "streamable_http",
+    url: `${input.origin}/mcp`,
+    headers: { authorization: `Bearer ${input.runtimeToken}` },
+  });
+  void getLinkMcpClient().connect(LINK_MCP_SERVER_ID).catch((e) => console.warn("[link] mcp connect failed", e));
 }
 
 export function getLinkRuntimePhase(): LinkRuntimePhase {
@@ -119,4 +128,43 @@ function isLoopbackOrigin(value: unknown): value is string {
 function clearSecrets(): void {
   bootstrap.adminToken?.fill(0);
   bootstrap.runtimeToken?.fill(0);
+}
+
+export type McpLinkPayload =
+  | { ok: true; data: unknown }
+  | { ok: false; error: { code: string; message: string } };
+
+export function extractMcpPayload(result: unknown): McpLinkPayload {
+  const r = result as { structuredContent?: unknown; content?: Array<{ text?: string }> };
+  if (r && typeof r.structuredContent === "object" && r.structuredContent !== null) {
+    const p = r.structuredContent as McpLinkPayload;
+    if (p && (p.ok === true || p.ok === false)) return p;
+  }
+  const text = r?.content?.[0]?.text;
+  if (typeof text === "string") {
+    try {
+      const parsed = JSON.parse(text) as McpLinkPayload;
+      if (parsed && (parsed.ok === true || parsed.ok === false)) return parsed;
+    } catch { /* fall through */ }
+  }
+  return { ok: false, error: { code: "link_mcp_invalid_payload", message: "OpenConnector MCP returned an incompatible payload." } };
+}
+
+const LINK_MCP_SERVER_ID = "openconnector";
+let mcpClient: McpClientManager | null = null;
+
+export function getLinkMcpClient(): McpClientManager {
+  if (!mcpClient) mcpClient = new McpClientManager();
+  return mcpClient;
+}
+
+export async function callLinkMcpTool(
+  toolName: string,
+  args: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<McpLinkPayload> {
+  const client = getLinkMcpClient();
+  await client.ensureConnected(LINK_MCP_SERVER_ID);
+  const result = await client.callTool(LINK_MCP_SERVER_ID, toolName, args, signal ? { signal } : {});
+  return extractMcpPayload(result);
 }
