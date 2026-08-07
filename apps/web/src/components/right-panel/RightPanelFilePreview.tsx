@@ -21,6 +21,8 @@ import {
   onSidecarEvent,
   writeClipboardText,
 } from '@/lib/desktop-api'
+import { DocumentViewerHost } from './document-viewer/DocumentViewerHost'
+import { isDocumentViewerKind } from './document-viewer/document-viewer-kinds'
 import { classifyFilePreview, isMissingFileError } from './file-preview-utils'
 import { RightPanelHtmlPreview } from './RightPanelHtmlPreview'
 import { RightPanelSourcePreview } from './RightPanelSourcePreview'
@@ -447,10 +449,14 @@ export function RightPanelFilePreview({
               <img src={mediaScope.url} alt={basename(fileRef.relativePath)} onError={() => setError('图片预览加载失败')} className={imageOriginalSize ? 'm-auto max-w-none' : 'm-auto max-h-full max-w-full object-contain'} />
             </FileLinkContextMenu>
           ) : null
-        ) : kind === 'pdf' && mediaScope ? (
-          <object data={mediaScope.url} type="application/pdf" className="h-full w-full">
-            <PreviewStatus>浏览器无法显示此 PDF，可使用系统应用打开。</PreviewStatus>
-          </object>
+        ) : isDocumentViewerKind(kind) && mediaScope ? (
+          <DocumentViewerHost
+            kind={kind}
+            fileRef={fileRef}
+            guardedRef={guardedRef}
+            mediaScope={mediaScope}
+            onOpenFile={onOpenFile}
+          />
         ) : kind === 'video' && mediaScope ? (
           <div className="flex h-full items-center justify-center bg-black/90 p-4">
             <video src={mediaScope.url} controls className="max-h-full max-w-full" />
