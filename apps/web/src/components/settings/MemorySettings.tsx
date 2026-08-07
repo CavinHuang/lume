@@ -1947,7 +1947,7 @@ function EntryRow({
       type="button"
       onClick={() => onInspectEntry(entry)}
       className={cn(
-        'block min-w-0 w-full whitespace-normal rounded-[8px] border border-border bg-[var(--surface-2)] p-3 text-left hover:bg-[var(--surface-3)]',
+        'block h-auto min-h-[112px] min-w-0 w-full whitespace-normal rounded-[8px] border border-border bg-[var(--surface-2)] p-3 text-left shadow-sm hover:bg-[var(--surface-3)]',
         selected && 'border-[var(--brand)] bg-[var(--surface-3)]',
       )}
     >
