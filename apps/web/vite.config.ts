@@ -51,6 +51,9 @@ export default defineConfig({
     },
   },
   server: { port: 3000, strictPort: true },
+  // @extend-ai/react-xlsx ships a worker that requires code-splitting;
+  // vite's default worker.format "iife" does not support it — use "es".
+  worker: { format: 'es' },
   build: {
     outDir: 'dist',
     rollupOptions: {
