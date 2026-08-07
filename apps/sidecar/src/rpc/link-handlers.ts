@@ -1,10 +1,11 @@
 import type { LinkConnectionSummary, LinkOAuthSession } from "@lume/shared";
 import { linkAdminRequest } from "../services/link/link-client";
+import { PersistentOAuthSessions } from "../services/link/persistent-oauth-sessions";
+import { getConfigDir } from "../services/infra/config-paths";
 import type { NotificationWriter, RpcHandler } from "./types";
 
-const pendingOAuth = new Map<string, LinkOAuthSession & { startedAt: number }>();
-
 export function createLinkHandlers(writeNotification: NotificationWriter): Record<string, RpcHandler> {
+  const pendingOAuth = new PersistentOAuthSessions((() => { try { return getConfigDir(); } catch { return undefined; } })());
   const notifyConnections = (value: unknown) => writeNotification("link:connections-changed", value);
   return {
     "link:providers-list": async (params) => {
@@ -63,7 +64,15 @@ export function createLinkHandlers(writeNotification: NotificationWriter): Recor
       return configs.map(toOAuthConfigSummary);
     },
     "link:oauth-sessions": async () => {
-      expireOAuthSessions();
+      const now = Date.now();
+      let changed = false;
+      for (const session of pendingOAuth.values()) {
+        if (session.status === "pending" && now - session.startedAt > 5 * 60_000) {
+          session.status = "timed_out";
+          changed = true;
+        }
+      }
+      if (changed) pendingOAuth.flush();
       return [...pendingOAuth.values()].map(withoutStartedAt);
     },
     "link:oauth-config-save": async (params) => {
@@ -101,19 +110,25 @@ export function createLinkHandlers(writeNotification: NotificationWriter): Recor
       const session = pendingOAuth.get(state);
       if (!session) throw new Error("link_oauth_session_not_found");
       if (session.status !== "pending") return withoutStartedAt(session);
-      if (Date.now() - session.startedAt > 5 * 60_000) session.status = "timed_out";
+      let changed = false;
+      if (Date.now() - session.startedAt > 5 * 60_000) { session.status = "timed_out"; changed = true; }
       if (session.status === "pending") {
         const connections = await linkAdminRequest<LinkConnectionSummary[]>("/api/connections");
         if (connections.some((item) => item.service === session.service && item.connectionName === session.connectionName && item.configured)) {
           session.status = "authorized";
+          changed = true;
           notifyConnections({ service: session.service, connectionName: session.connectionName });
         }
       }
+      if (changed) pendingOAuth.flush();
       return withoutStartedAt(session);
     },
     "link:oauth-cancel": async (params) => {
       const session = pendingOAuth.get(requiredString(params, "state"));
-      if (session?.status === "pending") session.status = "cancelled";
+      if (session?.status === "pending") {
+        session.status = "cancelled";
+        pendingOAuth.flush();
+      }
       return session ? withoutStartedAt(session) : { status: "cancelled" };
     },
     "link:actions-list": async (params) => {
@@ -224,10 +239,4 @@ function requiredString(value: unknown, key: string): string {
 function withoutStartedAt(session: LinkOAuthSession & { startedAt: number }): LinkOAuthSession {
   const { startedAt: _startedAt, ...result } = session;
   return result;
-}
-function expireOAuthSessions(): void {
-  const now = Date.now();
-  for (const session of pendingOAuth.values()) {
-    if (session.status === "pending" && now - session.startedAt > 5 * 60_000) session.status = "timed_out";
-  }
 }

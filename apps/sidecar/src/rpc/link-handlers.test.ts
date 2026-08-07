@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { LinkOAuthSession } from "@lume/shared";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createLinkHandlers } from "./link-handlers";
 import { installLinkRuntimeBootstrap } from "../services/link/link-client";
 
@@ -82,5 +85,29 @@ describe("Link management RPC", () => {
     expect(requestedUrl).toContain("actionId=github.list_repos");
     expect(requestedUrl).toContain("caller=http");
     expect(requestedUrl).toContain("ok=false");
+  });
+
+  test("survives sidecar restart by persisting pending OAuth sessions", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-oauth-"));
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = dir;
+    installLinkRuntimeBootstrap({ phase: "online", origin: "http://127.0.0.1:51234", adminToken: "admin", runtimeToken: "runtime" });
+    globalThis.fetch = (async (input) => {
+      const request = new Request(input);
+      if (request.url.endsWith("/api/oauth/authorizations")) return Response.json({ state: "state-1", authorizationUrl: "https://example.test/authorize" });
+      if (request.url.endsWith("/api/connections")) return Response.json([]);
+      throw new Error(`unexpected: ${request.url}`);
+    }) as typeof fetch;
+    try {
+      const first = createLinkHandlers(() => {});
+      await first["link:oauth-start"]!({ service: "github", connectionName: "work" });
+      const restarted = createLinkHandlers(() => {});
+      const sessions = await restarted["link:oauth-sessions"]!({}) as LinkOAuthSession[];
+      expect(sessions).toEqual(expect.arrayContaining([expect.objectContaining({ state: "state-1", service: "github", status: "pending" })]));
+    } finally {
+      process.env.LUME_CONFIG_DIR = previousConfigDir;
+      installLinkRuntimeBootstrap({ phase: "offline" });
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
