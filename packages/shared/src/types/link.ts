@@ -77,6 +77,7 @@ export interface LinkActionDetail extends LinkActionSummary {
   requiredScopes?: string[];
   providerPermissions?: string[];
   readOnly?: boolean;
+  markdown?: string;
 }
 
 export interface LinkRunSummary {

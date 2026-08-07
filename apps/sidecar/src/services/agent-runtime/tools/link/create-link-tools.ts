@@ -136,17 +136,31 @@ export function createLinkTools(input: {
 
 function actionDetailFromGuide(actionId: string, data: unknown): LinkActionDetail {
   const record = data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {};
+  const capability = record.capability && typeof record.capability === "object" && !Array.isArray(record.capability)
+    ? record.capability as Record<string, unknown>
+    : {};
   const segments = actionId.split(".");
   const service = typeof record.service === "string" ? record.service : segments[0] ?? actionId;
   const name = typeof record.name === "string"
     ? record.name
     : segments.length > 1 ? segments.slice(1).join(".") : actionId;
+  const requiredScopes = stringArray(capability.requiredScopes);
+  const providerPermissions = stringArray(capability.providerPermissions);
   return {
     id: typeof record.id === "string" ? record.id : actionId,
     service,
     name,
     ...(record.readOnly === true ? { readOnly: true } : {}),
+    ...(typeof record.markdown === "string" ? { markdown: record.markdown } : {}),
+    ...(requiredScopes ? { requiredScopes } : {}),
+    ...(providerPermissions ? { providerPermissions } : {}),
   };
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const filtered = value.filter((item): item is string => typeof item === "string");
+  return filtered.length ? filtered : undefined;
 }
 
 export function classifyAction(action: LinkActionDetail): "read" | "write_or_unknown" {

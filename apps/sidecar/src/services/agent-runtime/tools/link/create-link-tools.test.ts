@@ -81,6 +81,34 @@ describe("OpenConnector Link tools", () => {
     )).rejects.toThrow("inspection_required");
   });
 
+  test("inspect carries the action guide markdown and derives identity from actionId", async () => {
+    installLinkRuntimeBootstrap({ phase: "online", origin: "http://127.0.0.1:51234", adminToken: "admin", runtimeToken: "runtime" });
+    const guide = {
+      capability: { requiredScopes: ["repo:issue"], providerPermissions: ["issues:write"] },
+      markdown: "## Input Parameters\n\n| Name | Required | Type |\n| --- | --- | --- |\n| title | yes | string |\n",
+    };
+    const mcpCaller = async (name: string): Promise<McpLinkPayload> => {
+      if (name === "get_action_guide") return { ok: true, data: guide };
+      return { ok: false, error: { code: "unhandled", message: `unhandled ${name}` } };
+    };
+    const tools = createLinkTools({ threadId: "thread", emitToolPermissionRequest: () => {}, mcpCaller });
+    const inspectResult = await tools.find((tool) => tool.name === "link_inspect_actions")!.call(
+      { actions: ["github.create_issue"] },
+      { cwd: ".", toolUseId: "inspect-1" } as never,
+    );
+    const detail = JSON.parse((inspectResult as { content: string }).content)[0];
+
+    expect(detail).toMatchObject({
+      id: "github.create_issue",
+      service: "github",
+      name: "create_issue",
+      markdown: guide.markdown,
+      requiredScopes: ["repo:issue"],
+      providerPermissions: ["issues:write"],
+      lumeRisk: "write_or_unknown",
+    });
+  });
+
   test("limits action calls to two and emits a sanitized authorization signal", async () => {
     installLinkRuntimeBootstrap({ phase: "online", origin: "http://127.0.0.1:51234", adminToken: "admin", runtimeToken: "runtime" });
     let active = 0;
