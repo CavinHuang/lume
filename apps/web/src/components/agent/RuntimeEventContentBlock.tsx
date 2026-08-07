@@ -6,6 +6,7 @@ import { MermaidBlock, useSmoothStream } from '@lume/ui'
 import { DiffAwareMarkdownPre } from '@/components/markdown/DiffAwareMarkdownPre'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
+import { formatDurationLabel, formatRunningDuration, formatCompletedDuration } from '@/lib/format-duration'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { activeTabIdAtom, agentThreadsAtom, capabilityDetailTargetAtom, codingReviewPanelActionAtom, generalSettingsAtom, tabsAtom } from '@/atoms'
 import { codingReviewFileKey } from '@/atoms/right-panel-atoms'
@@ -3025,36 +3026,6 @@ function CopyMessageButton({
       {displayLabel && <span>{displayLabel}</span>}
     </Button>
   )
-}
-
-function formatDurationLabel(ms: number): string {
-  const s = ms / 1000
-  if (s < 60) return `${s.toFixed(1)}s`
-  const totalSec = Math.floor(s)
-  const mm = Math.floor(totalSec / 60)
-  const ss = totalSec % 60
-  if (s < 3600) return `${mm}:${String(ss).padStart(2, '0')}`
-  const hh = Math.floor(mm / 60)
-  return `${hh}:${String(mm % 60).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
-}
-
-/**
- * 运行态总用时格式化：<60s 取整秒（design 7.3：运行态按整秒跳动），
- * ≥60s 复用 formatDurationLabel（mm:ss / h:mm:ss）。供 RunningDurationClock 使用。
- */
-export function formatRunningDuration(ms: number): string {
-  if (ms <= 0) return ''
-  const s = ms / 1000
-  if (s < 60) return `${s.toFixed(0)}s`
-  return formatDurationLabel(ms)
-}
-
-/**
- * 完成态时长格式化：<60s 保留 1 位小数，≥60s 复用 formatDurationLabel。
- */
-export function formatCompletedDuration(ms: number): string {
-  if (ms <= 0) return ''
-  return formatDurationLabel(ms)
 }
 
 function summarizeInput(input: unknown): string {

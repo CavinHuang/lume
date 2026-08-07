@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { computeColumnCount, PROVIDER_GRID, rowCount } from "@/lib/provider-grid";
+import { formatDurationLabel } from "@/lib/format-duration";
+import { formatDateTime } from "@/lib/datetime";
+import { CheckCircle2, XCircle } from "lucide-react";
 import { ProviderCard } from "./ProviderCard";
 import { ProviderIcon } from "./ProviderIcon";
 import type {
@@ -338,18 +341,23 @@ export function LinkView() {
                     key={run.id}
                     onClick={() => void getLinkRun(run.id).then(setRunDetail).catch(() => toast.error("无法读取运行详情"))}
                   >
-                    <div>
-                      <div className="font-medium">
-                        {String(run.actionId || run.id)}
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium truncate">{String(run.actionId || run.id)}</span>
+                        {run.ok
+                          ? <CheckCircle2 className="size-4 shrink-0 text-emerald-500" />
+                          : <XCircle className="size-4 shrink-0 text-red-500" />}
                       </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {String(run.service || "")} ·{" "}
-                        {String(run.startedAt || "")}
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                        <span>{String(run.service || "")}</span>
+                        {run.caller && <span>· {run.caller}</span>}
+                        {run.connectionId && <span>· 账户 {run.connectionId}</span>}
+                        {run.startedAt && <span>· {formatDateTime(run.startedAt)}</span>}
                       </div>
                     </div>
-                    <Badge variant="secondary">
-                      {run.ok ? "成功" : "失败"} · {run.durationMs}ms
-                    </Badge>
+                    <div className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                      {formatDurationLabel(run.durationMs)}
+                    </div>
                   </Button>
                 ))}
                 {runCursor && (

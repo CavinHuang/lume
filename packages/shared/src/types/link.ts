@@ -90,6 +90,7 @@ export interface LinkRunSummary {
   completedAt: string;
   durationMs: number;
   ok: boolean;
+  connectionId?: string;
 }
 
 export interface LinkRunDetail extends LinkRunSummary {

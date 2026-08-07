@@ -189,6 +189,7 @@ function toRunSummary(value: unknown): Record<string, unknown> {
     completedAt: stringValue(input.completedAt),
     durationMs: typeof input.durationMs === "number" ? input.durationMs : 0,
     ok: input.ok === true,
+    ...(stringValue(input.connectionId) ? { connectionId: stringValue(input.connectionId) } : {}),
   };
 }
 function toRunDetail(value: unknown): Record<string, unknown> {
