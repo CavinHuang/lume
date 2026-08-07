@@ -723,7 +723,6 @@ function PDFViewerPageNumberControl({
           aria-label="Page number"
           inputMode="numeric"
           pattern="[0-9]*"
-          size="sm"
           value={draftPage}
           className="mx-1 w-14 min-w-14 rounded-md [&_[data-slot=input]]:text-center"
           onBlur={() => setIsEditing(false)}
@@ -1202,7 +1201,7 @@ function setPdfViewerRef<T>(ref: React.Ref<T> | undefined, value: T | null) {
   if (typeof ref === "function") {
     ref(value)
   } else {
-    ref.current = value
+    (ref as React.MutableRefObject<T | null>).current = value
   }
 }
 
