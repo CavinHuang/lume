@@ -174,10 +174,10 @@ function isUserMemoryCategory(view: MemorySettingsView): view is MemoryUserCateg
 }
 
 /**
- * Persona 卡片：展示 Lume 基于记忆自动生成的用户画像（persona.md）。
+ * 关于我卡片：展示 Lume 基于全局记忆自动生成的关于我信息（persona.md）。
  * - 状态：已生成（emerald + updatedAt）/ 未生成（muted 提示）。
  * - 预览：可展开的 Markdown 文本。
- * - 纠正：写入底层高置信记忆，再重建派生画像。
+ * - 纠正：写入底层高置信记忆，再重建派生内容。
  * - 重新生成：regeneratePersona + toast + loading。
  * 自包含组件；通过 workspaceSlug 拉取/写入。
  */
@@ -199,7 +199,7 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
       setPersona(result)
     } catch (error) {
       console.error('[PersonaCard] getPersona FAILED:', error)
-      toast.error(memorySettingsErrorMessage(error, '读取用户画像失败'))
+      toast.error(memorySettingsErrorMessage(error, '读取关于我失败'))
     } finally {
       setLoading(false)
     }
@@ -209,7 +209,8 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
     void refreshPersona()
   }, [refreshPersona])
 
-  const isGenerated = Boolean(persona?.updatedAt && persona.markdown.trim().length > 0)
+  const isGenerated = Boolean(persona?.updatedAt && hasAboutMeContent(persona))
+  const aboutMeMarkdown = persona?.markdown.replace(/^#\s+用户画像\s*$/m, '# 关于我') ?? ''
   const handleCorrection = async () => {
     if (!workspaceSlug) return
     if (correction.trim().length === 0) {
@@ -221,10 +222,10 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
       await correctPersona({ workspaceSlug, correction: correction.trim() })
       await refreshPersona()
       setCorrection('')
-      toast.success('已修正底层记忆并更新用户画像')
+      toast.success('已修正底层记忆并更新关于我')
     } catch (error) {
       console.error('[PersonaCard] correctPersona FAILED:', error)
-      toast.error(memorySettingsErrorMessage(error, '纠正用户画像失败'))
+      toast.error(memorySettingsErrorMessage(error, '纠正关于我失败'))
     } finally {
       setBusy(null)
     }
@@ -233,14 +234,14 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
   const handleRegenerate = async () => {
     if (!workspaceSlug) return
     setBusy('regenerate')
-    const toastId = toast.loading('正在重新生成用户画像...')
+    const toastId = toast.loading('正在重新生成关于我...')
     try {
       await regeneratePersona(workspaceSlug)
       await refreshPersona()
-      toast.success('用户画像已重新生成', { id: toastId })
+      toast.success('关于我已重新生成', { id: toastId })
     } catch (error) {
       console.error('[PersonaCard] regeneratePersona FAILED:', error)
-      toast.error(memorySettingsErrorMessage(error, '重新生成用户画像失败'), { id: toastId })
+      toast.error(memorySettingsErrorMessage(error, '重新生成关于我失败'), { id: toastId })
     } finally {
       setBusy(null)
     }
@@ -252,7 +253,7 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-1)]">
             <Sparkles size={16} />
-            用户画像
+            关于我
             {loading ? (
               <StatusBadge tone="neutral">读取中</StatusBadge>
             ) : isGenerated ? (
@@ -263,8 +264,8 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
           </div>
           <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
             {isGenerated
-              ? `Lume 基于全局记忆自动生成的稳定画像；最近更新于 ${formatDate(persona?.updatedAt)}。纠正会更新底层记忆。`
-              : 'Lume 会基于你的长期记忆自动生成用户画像；也可点击「重新生成」立即创建。'}
+              ? `Lume 基于全局记忆自动生成的稳定信息；最近更新于 ${formatDate(persona?.updatedAt)}。纠正会更新底层记忆。`
+              : 'Lume 会基于你的长期记忆自动生成关于我；也可点击「重新生成」立即创建。'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -288,7 +289,7 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
                 expanded ? 'max-h-[480px]' : 'max-h-[120px]',
               )}
             >
-              {persona?.markdown}
+              {aboutMeMarkdown}
             </pre>
             <Button
               variant="ghost"
@@ -306,7 +307,7 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
           value={correction}
           disabled={busy !== null}
           onChange={(event) => setCorrection(event.target.value)}
-          placeholder="纠正画像，例如：我现在更喜欢简洁的中文回复"
+          placeholder="纠正关于我，例如：我现在更喜欢简洁的中文回复"
         />
         <Button
           variant="outline"
@@ -315,10 +316,20 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
           onClick={() => void handleCorrection()}
         >
           <Pencil size={14} />
-          {busy === 'correct' ? '纠正中' : '纠正画像'}
+          {busy === 'correct' ? '纠正中' : '纠正关于我'}
         </Button>
       </div>
     </section>
+  )
+}
+
+function hasAboutMeContent(persona: PersonaGetResult): boolean {
+  return Boolean(
+    persona.parsed.name
+    || persona.parsed.summary
+    || persona.parsed.preferences.length > 0
+    || persona.parsed.interactionRules.length > 0
+    || persona.parsed.evolution.length > 0
   )
 }
 
@@ -2304,7 +2315,7 @@ const MEMORY_ACTIVATION_ITEMS: ReadonlyArray<{
   desc: string
 }> = [
   { key: 'recall', label: '召回', desc: '对话中通过 memory.read / 搜索调用此记忆' },
-  { key: 'persona', label: 'Persona', desc: '生成/注入 L3 用户画像时使用此记忆' },
+  { key: 'persona', label: '关于我', desc: '生成/注入 L3 关于我内容时使用此记忆' },
   { key: 'suggestion', label: '主动建议', desc: '匹配触发条件时由主动建议引用此记忆' },
   { key: 'analyst', label: '工作模式分析', desc: '周期性工作模式分析读取此记忆' },
 ]

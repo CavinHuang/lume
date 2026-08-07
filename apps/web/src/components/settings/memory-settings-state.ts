@@ -58,7 +58,7 @@ export const MEMORY_SETTINGS_VIEWS: Array<{
   label: string
 }> = [
   { id: 'recent', label: '最近记住' },
-  { id: 'about', label: '关于你' },
+  { id: 'about', label: '关于我' },
   { id: 'workspace', label: '当前工作区' },
   { id: 'all', label: '全部记忆' },
 ]
@@ -76,10 +76,10 @@ export const MEMORY_USER_CATEGORY_META: Record<MemoryUserCategory, {
     empty: '最近还没有记忆变化。',
   },
   about: {
-    label: '关于你',
-    desc: '全局身份与稳定偏好，以及由它们生成的用户画像。',
+    label: '关于我',
+    desc: '全局身份与稳定偏好，以及由它们生成的关于我信息。',
     placeholder: '例如：以后默认使用中文回答',
-    empty: '暂无关于你的全局记忆。',
+    empty: '暂无关于我的全局记忆。',
   },
   workspace: {
     label: '当前工作区',

@@ -94,7 +94,7 @@ function activationLabel(value: MemoryActivation | undefined): string | undefine
   if (!value) return undefined
   const active = [
     value.recall && '召回',
-    value.persona && '画像',
+    value.persona && '关于我',
     value.suggestion && '建议',
     value.analyst && '分析',
   ].filter(Boolean)

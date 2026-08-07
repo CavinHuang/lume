@@ -311,7 +311,7 @@ describe('PersonaCard', () => {
     toastLoadingMock.mockReset()
     toastLoadingMock.mockImplementation(() => 'toast-id')
     getPersonaMock.mockImplementation(async () => ({
-      markdown: '# Mason\n\n喜欢简洁、有温度的表达。',
+      markdown: '# 用户画像\n\n## 长期偏好\n- 喜欢简洁、有温度的表达。',
       parsed: { preferences: ['简洁表达'], interactionRules: [], evolution: [] },
       updatedAt: '2026-08-01T00:00:00.000Z',
     }))
@@ -335,13 +335,14 @@ describe('PersonaCard', () => {
       expect(getPersonaMock).toHaveBeenCalledTimes(1)
       expect(getPersonaMock).toHaveBeenCalledWith('workspace')
       expect(container.textContent).toContain('已生成')
-      expect(container.textContent).toContain('用户画像')
+      expect(container.textContent).toContain('关于我')
       // Markdown 主体可见
-      expect(container.textContent).toContain('# Mason')
+      expect(container.textContent).toContain('# 关于我')
+      expect(container.textContent).not.toContain('# 用户画像')
       expect(container.textContent).toContain('喜欢简洁、有温度的表达。')
       // 默认折叠态：展开按钮可见
       expect(findButtonByText(container, '展开')).not.toBeNull()
-      expect(findButtonByText(container, '纠正画像')).not.toBeNull()
+      expect(findButtonByText(container, '纠正关于我')).not.toBeNull()
       expect(findButtonByText(container, '重新生成')).not.toBeNull()
       // 无错误 toast
       expect(toastErrorMock).not.toHaveBeenCalled()
@@ -402,7 +403,7 @@ describe('PersonaCard', () => {
 
       expect(findFirstTextarea(container)).toBeNull()
       expect(findButtonByText(container, '编辑')).toBeNull()
-      const correctionButton = findButtonByText(container, '纠正画像')!
+      const correctionButton = findButtonByText(container, '纠正关于我')!
       expect(correctionButton).not.toBeNull()
       expect(correctionButton.attributes.get('disabled')).toBeDefined()
     } finally {
@@ -431,8 +432,8 @@ describe('PersonaCard', () => {
       })
 
       expect(regeneratePersonaMock).toHaveBeenCalledWith('workspace')
-      expect(toastLoadingMock).toHaveBeenCalledWith('正在重新生成用户画像...')
-      expect(toastSuccessMock).toHaveBeenCalledWith('用户画像已重新生成', { id: 'toast-id' })
+      expect(toastLoadingMock).toHaveBeenCalledWith('正在重新生成关于我...')
+      expect(toastSuccessMock).toHaveBeenCalledWith('关于我已重新生成', { id: 'toast-id' })
     } finally {
       await act(async () => {
         root?.unmount()
@@ -458,12 +459,38 @@ describe('PersonaCard', () => {
       })
 
       expect(container.textContent).toContain('未生成')
-      expect(container.textContent).toContain('Lume 会基于你的长期记忆自动生成用户画像')
+      expect(container.textContent).toContain('Lume 会基于你的长期记忆自动生成关于我')
       expect(findButtonByText(container, '编辑')).toBeNull()
       expect(findButtonByText(container, '展开')).toBeNull()
-      expect(findButtonByText(container, '纠正画像')).not.toBeNull()
+      expect(findButtonByText(container, '纠正关于我')).not.toBeNull()
       // 未生成态仍允许立即创建
       expect(findButtonByText(container, '重新生成')).not.toBeNull()
+    } finally {
+      await act(async () => {
+        root?.unmount()
+        root = null
+        await flush()
+      })
+      cleanup()
+    }
+  })
+
+  test('heading-only legacy markdown is not treated as generated content', async () => {
+    getPersonaMock.mockImplementation(async () => ({
+      markdown: '# 用户画像',
+      parsed: { preferences: [], interactionRules: [], evolution: [] },
+      updatedAt: '2026-08-01T00:00:00.000Z',
+    }))
+    const { container, cleanup } = installFakeDom()
+    let root: Root | null = createRoot(container as never)
+    try {
+      await act(async () => {
+        root!.render(<PersonaCard workspaceSlug="workspace" />)
+        await flush()
+      })
+
+      expect(container.textContent).toContain('未生成')
+      expect(findButtonByText(container, '展开')).toBeNull()
     } finally {
       await act(async () => {
         root?.unmount()

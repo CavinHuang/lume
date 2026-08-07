@@ -53,7 +53,7 @@ const KIND_LABEL: Record<SuggestionKind, string> = {
 }
 
 /**
- * 主动中心：聚合建议 / 自动化 / 待确认记忆 / 用户画像 的单一视图。
+ * 主动中心：聚合建议 / 自动化 / 待确认记忆 / 关于我 的单一视图。
  * Task 17 会将其挂到侧栏作为独立入口。
  *
  * 数据并发拉取（Promise.all），任一失败不阻塞其它 section；
