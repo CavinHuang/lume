@@ -51,6 +51,10 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react"
 import { createPortal } from "react-dom"
 
+// CSS 副作用：glide-data-grid 样式（@extend-ai/react-xlsx 内部依赖 glide-data-grid 但不自带 CSS）。
+// xlsx-viewer 是独立 lazy chunk，不能依赖 csv-viewer 的 CSS 导入。
+import "@glideapps/glide-data-grid/dist/index.css"
+
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {

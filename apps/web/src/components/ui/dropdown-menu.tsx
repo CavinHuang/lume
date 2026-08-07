@@ -163,6 +163,80 @@ function DropdownMenuCheckboxItem({
   )
 }
 
+type DropdownMenuRadioGroupProps = Omit<
+  Menu.RadioGroup.Props,
+  "onValueChange"
+> & {
+  className?: string
+  /** 选择回调；base-ui onValueChange（含 eventDetails 第二参）包装，简化为单参 string，类型化避免隐式 any。 */
+  onValueChange?: (value: string) => void
+}
+
+function DropdownMenuRadioGroup({
+  className,
+  onValueChange,
+  ...props
+}: DropdownMenuRadioGroupProps) {
+  return (
+    <Menu.RadioGroup
+      data-slot="dropdown-menu-radio-group"
+      className={className}
+      onValueChange={
+        onValueChange
+          ? (value) => onValueChange(value as string)
+          : undefined
+      }
+      {...props}
+    />
+  )
+}
+
+type DropdownMenuRadioItemProps = Omit<Menu.RadioItem.Props, "value"> & {
+  className?: string
+  /** 该项的值（必填）；选中时 RadioGroup 的 value 变为此值。 */
+  value: string
+}
+
+function DropdownMenuRadioItem({
+  className,
+  disabled,
+  children,
+  ...props
+}: DropdownMenuRadioItemProps) {
+  return (
+    <Menu.RadioItem
+      data-slot="dropdown-menu-radio-item"
+      disabled={disabled}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] transition-colors cursor-default",
+        "text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]",
+        disabled && "cursor-not-allowed opacity-45",
+        className
+      )}
+      {...props}
+    >
+      <span
+        className="flex size-4 shrink-0 items-center justify-center text-[var(--text-2)]"
+        aria-hidden="true"
+      >
+        <Menu.RadioItemIndicator
+          data-slot="dropdown-menu-radio-item-indicator"
+        >
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            className="size-3.5"
+            aria-hidden="true"
+          >
+            <circle cx="8" cy="8" r="3.5" fill="currentColor" />
+          </svg>
+        </Menu.RadioItemIndicator>
+      </span>
+      <span className="flex min-w-0 items-center gap-2">{children}</span>
+    </Menu.RadioItem>
+  )
+}
+
 function DropdownMenuSeparator({ className }: { className?: string }) {
   return (
     <div
@@ -214,6 +288,8 @@ export {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuCheckboxItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubTrigger,

@@ -16,6 +16,9 @@ type ScrollAreaProps = ScrollAreaPrimitive.Root.Props & {
   viewportRef?: React.Ref<HTMLDivElement>
   /** 视觉提示：启用滚动条淡入淡出（当前实现默认即淡入淡出，prop 仅作 API 兼容）。 */
   scrollFade?: boolean
+  /** CSS scrollbar-gutter：稳定布局，避免滚动条出现/消失导致内容跳动。
+   *  `true` 映射为 `"stable"`；`false`/`"auto"`/省略 = 不写入（默认行为）。 */
+  scrollbarGutter?: boolean | "auto" | "stable" | "both-edges"
 }
 
 function ScrollArea({
@@ -26,6 +29,7 @@ function ScrollArea({
   viewportProps,
   viewportRef: consumerViewportRef,
   scrollFade,
+  scrollbarGutter,
   ...props
 }: ScrollAreaProps) {
   const [scrolling, setScrolling] = React.useState(false)
@@ -80,6 +84,7 @@ function ScrollArea({
 
   const {
     className: viewportPropsClassName,
+    style: viewportPropsStyle,
     children: viewportPropsChildren,
     ...restViewportProps
   } = viewportProps ?? {}
@@ -87,6 +92,20 @@ function ScrollArea({
   // 消费者不传 children 到 viewportProps（应通过 ScrollArea 的 children 传入）；
   // 忽略 viewportPropsChildren 以避免覆盖。
   void viewportPropsChildren
+
+  // scrollbarGutter 映射：true → "stable"，false/"auto"/省略 → 不写入。
+  const gutterCssValue: React.CSSProperties["scrollbarGutter"] | undefined =
+    scrollbarGutter === true
+      ? "stable"
+      : scrollbarGutter === false ||
+        scrollbarGutter === undefined ||
+        scrollbarGutter === "auto"
+        ? undefined
+        : scrollbarGutter
+  const mergedViewportStyle: React.CSSProperties | undefined =
+    gutterCssValue || viewportPropsStyle
+      ? { ...(gutterCssValue ? { scrollbarGutter: gutterCssValue } : {}), ...viewportPropsStyle }
+      : undefined
 
   return (
     <ScrollAreaPrimitive.Root
@@ -104,6 +123,7 @@ function ScrollArea({
           viewportClassName,
           viewportPropsClassName
         )}
+        style={mergedViewportStyle}
         {...restViewportProps}
       >
         {children}
