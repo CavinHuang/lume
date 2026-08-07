@@ -127,7 +127,7 @@ export function RightPanelFilePreview({
     if (kind === 'image' || kind === 'pdf' || kind === 'video'
       || kind === 'docx' || kind === 'xlsx' || kind === 'pptx' || kind === 'csv') {
       if (!isDesktopRuntime()) {
-        setError('浏览器环境不支持本地图片预览')
+        setError('浏览器环境不支持本地文件预览')
         return
       }
       setLoading(true)
