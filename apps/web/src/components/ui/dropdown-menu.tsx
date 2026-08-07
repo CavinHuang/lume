@@ -70,6 +70,99 @@ function DropdownMenuItem({
   )
 }
 
+type DropdownMenuCheckboxItemProps = Omit<
+  Menu.CheckboxItem.Props,
+  "onCheckedChange"
+> & {
+  className?: string
+  /** 选择回调；base-ui onCheckedChange 包装，简化为单参 boolean。 */
+  onCheckedChange?: (checked: boolean) => void
+  /** 视觉风格提示（switch = 右侧指示器对齐）。当前仅样式作用，不影响行为。 */
+  variant?: "default" | "switch"
+}
+
+function DropdownMenuCheckboxItem({
+  className,
+  checked,
+  defaultChecked,
+  onCheckedChange,
+  disabled,
+  variant = "default",
+  children,
+  ...props
+}: DropdownMenuCheckboxItemProps) {
+  return (
+    <Menu.CheckboxItem
+      data-slot="dropdown-menu-checkbox-item"
+      data-variant={variant}
+      checked={checked}
+      defaultChecked={defaultChecked}
+      disabled={disabled}
+      onCheckedChange={onCheckedChange}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] transition-colors cursor-default",
+        "text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]",
+        disabled && "cursor-not-allowed opacity-45",
+        variant === "switch" && "justify-between",
+        className
+      )}
+      {...props}
+    >
+      {variant === "switch" ? (
+        <>
+          <span className="flex min-w-0 items-center gap-2">{children}</span>
+          <Menu.CheckboxItemIndicator
+            data-slot="dropdown-menu-checkbox-item-indicator"
+            className="flex size-4 items-center justify-center text-[var(--text-2)]"
+          >
+            <svg
+              viewBox="0 0 16 16"
+              fill="none"
+              className="size-3.5"
+              aria-hidden="true"
+            >
+              <path
+                d="M3.5 8.5l3 3 6-6.5"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </Menu.CheckboxItemIndicator>
+        </>
+      ) : (
+        <>
+          <span
+            className="flex size-4 shrink-0 items-center justify-center text-[var(--text-2)]"
+            aria-hidden="true"
+          >
+            <Menu.CheckboxItemIndicator
+              data-slot="dropdown-menu-checkbox-item-indicator"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                className="size-3.5"
+                aria-hidden="true"
+              >
+                <path
+                  d="M3.5 8.5l3 3 6-6.5"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </Menu.CheckboxItemIndicator>
+          </span>
+          <span className="flex min-w-0 items-center gap-2">{children}</span>
+        </>
+      )}
+    </Menu.CheckboxItem>
+  )
+}
+
 function DropdownMenuSeparator({ className }: { className?: string }) {
   return (
     <div
@@ -120,6 +213,7 @@ export {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuCheckboxItem,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubTrigger,
