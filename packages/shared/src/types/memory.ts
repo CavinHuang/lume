@@ -71,6 +71,34 @@ export interface MemoryMutationReceipt {
   createdAt: string;
 }
 
+export interface MemoryMutationEntrySnapshot {
+  id: string;
+  scope: MemoryScope;
+  revision: number;
+  statement?: string;
+  status?: "active" | "suspected_stale" | "archived" | "superseded" | "pending_conflict" | "pending_low_confidence";
+  semanticRole?: MemorySemanticRole;
+  confidence?: "low" | "medium" | "high";
+  facets?: string[];
+  pinned?: boolean;
+  activation?: MemoryActivation;
+  validFrom?: string;
+  validTo?: string;
+  supersedes?: string[];
+  supersededBy?: string;
+}
+
+export interface MemoryMutationChange {
+  memoryId: string;
+  before?: MemoryMutationEntrySnapshot;
+  after?: MemoryMutationEntrySnapshot;
+  accuracy: "exact" | "current";
+}
+
+export interface MemorySettingsActivityItem extends MemoryMutationReceipt {
+  changes: MemoryMutationChange[];
+}
+
 export interface MemoryEvidenceRef {
   type:
     | "user_message"
@@ -614,7 +642,7 @@ export interface MemorySettingsSnapshot {
   workspaceEntries: MemorySettingsEntrySummary[];
   globalEntries: MemorySettingsEntrySummary[];
   pending: MemorySettingsPendingSummary[];
-  activity: MemoryMutationReceipt[];
+  activity: MemorySettingsActivityItem[];
   jobs: Array<{
     jobId: string;
     kind: MemoryJobKind;

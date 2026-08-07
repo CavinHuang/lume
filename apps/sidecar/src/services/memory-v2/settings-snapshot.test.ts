@@ -12,6 +12,8 @@ import { smartAddMemoryV2Candidate } from "./smart-add";
 import { updateMemoryRuntimeConfig } from "./policy";
 import { updateLumeConfigSection } from "../system/lume-config-service";
 import * as markdownStore from "./markdown-store";
+import { MemoryCommandService } from "./command-service";
+import { getMemoryV2ScopePaths } from "./paths";
 
 let root: string;
 
@@ -232,6 +234,66 @@ describe("memory-v2 settings snapshot", () => {
           object: "Mason"
         }
       }]
+    });
+  });
+
+  test("projects exact activity snapshots with before and after memory content", async () => {
+    const service = new MemoryCommandService();
+    const created = await service.remember({
+      workspaceSlug: "demo",
+      content: "默认使用 Bun",
+      scope: "workspace",
+      actor: "user"
+    });
+    service.update({
+      workspaceSlug: "demo",
+      id: created.memoryIds[0]!,
+      scope: "workspace",
+      statement: "默认使用 Bun 和 TypeScript",
+      actor: "user"
+    });
+
+    const snapshot = getMemoryV2SettingsSnapshot("demo");
+    const activity = snapshot.activity.find((item) => item.action === "updated")!;
+    expect(activity.changes[0]).toMatchObject({
+      memoryId: created.memoryIds[0],
+      accuracy: "exact",
+      before: { statement: "默认使用 Bun" },
+      after: { statement: "默认使用 Bun 和 TypeScript" }
+    });
+  });
+
+  test("keeps valid activity when a journal contains a malformed line and hydrates legacy records", () => {
+    const store = createMemoryV2Store();
+    const entry = store.writeEntry({
+      kind: "fact",
+      targetScope: "workspace",
+      statement: "历史活动关联的记忆",
+      confidence: "high",
+      appliesWhen: { workspaceSlug: "demo" }
+    });
+    const journalDir = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: "demo" }).journalDir;
+    const receipt = {
+      mutationId: "legacy-activity",
+      actor: "user",
+      action: "updated",
+      memoryIds: [entry.frontmatter.id],
+      scope: "workspace",
+      summary: "更新了 1 条记忆",
+      undoable: false,
+      createdAt: "2026-08-07T10:00:00.000Z"
+    };
+    writeFileSync(
+      join(journalDir, "2026-08-07.jsonl"),
+      `${JSON.stringify({ receipt, before: [{ id: entry.frontmatter.id, scope: "workspace", revision: 1 }], after: [{ id: entry.frontmatter.id, scope: "workspace", revision: 2 }] })}\nnot-json\n`,
+      "utf-8"
+    );
+
+    const snapshot = getMemoryV2SettingsSnapshot("demo");
+    const activity = snapshot.activity.find((item) => item.mutationId === "legacy-activity")!;
+    expect(activity.changes[0]).toMatchObject({
+      accuracy: "current",
+      after: { statement: "历史活动关联的记忆" }
     });
   });
 });

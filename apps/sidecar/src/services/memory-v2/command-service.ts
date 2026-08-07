@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { MemoryClaim, MemoryEvidenceRef, MemoryMutationReceipt, MemoryMutationResult } from "@lume/shared";
+import type {
+  MemoryClaim,
+  MemoryEvidenceRef,
+  MemoryMutationEntrySnapshot,
+  MemoryMutationReceipt,
+  MemoryMutationResult
+} from "@lume/shared";
 import { claimFromEntry, claimKey, normalizeMemoryV2Claim } from "./claim";
 import { createMemoryV2Store, readActivation, type MemoryV2Store } from "./markdown-store";
 import { getMemoryV2ScopePaths } from "./paths";
@@ -35,16 +41,10 @@ export interface RememberMemoryCommand {
   explicitCorrection?: boolean;
 }
 
-interface MutationSnapshot {
-  id: string;
-  scope: MemoryV2Scope;
-  revision: number;
-}
-
 interface MutationJournalRecord {
   receipt: MemoryV2MutationReceipt;
-  before: MutationSnapshot[];
-  after: MutationSnapshot[];
+  before: MemoryMutationEntrySnapshot[];
+  after: MemoryMutationEntrySnapshot[];
 }
 
 type JournalInput = Pick<RememberMemoryCommand, "actor" | "runId" | "threadId"> & { workspaceSlug?: string };
@@ -265,27 +265,41 @@ export class MemoryCommandService {
     const result = this.store.resolvePending(input);
     const ids = result.entryId ? [result.entryId] : [];
     const action = input.action === "accept" ? "created" : "archived";
+    const acceptedEntry = result.entryId
+      ? this.findEntry(input.workspaceSlug, result.entryId, pending.frontmatter.candidate.targetScope)
+      : undefined;
     return {
       result,
-      receipt: this.recordIds(
-        { actor: "user", workspaceSlug: input.workspaceSlug },
-        pending.frontmatter.candidate.targetScope,
-        action,
-        ids,
-        input.action === "accept" ? "已接受 1 条待处理记忆" : "已处理 1 条待处理记忆",
-        input.action === "accept"
-      )
+      receipt: acceptedEntry
+        ? this.record(
+          { actor: "user", workspaceSlug: input.workspaceSlug },
+          pending.frontmatter.candidate.targetScope,
+          action,
+          [acceptedEntry],
+          "已接受 1 条待处理记忆",
+          true
+        )
+        : this.recordIds(
+          { actor: "user", workspaceSlug: input.workspaceSlug },
+          pending.frontmatter.candidate.targetScope,
+          action,
+          ids,
+          input.action === "accept" ? "已接受 1 条待处理记忆" : "已处理 1 条待处理记忆",
+          input.action === "accept"
+        )
     };
   }
 
   undo(input: { workspaceSlug: string; mutationId: string }): MemoryV2MutationReceipt {
     const record = this.findJournalRecord(input.workspaceSlug, input.mutationId);
     if (!record || !record.receipt.undoable) throw new Error("该记忆变更不可撤销");
+    const beforeUndo: MemoryMutationEntrySnapshot[] = [];
     for (const expected of record.after) {
       const current = this.findEntry(input.workspaceSlug, expected.id, expected.scope);
       if (!current || current.frontmatter.revision !== expected.revision) {
         throw new Error("记忆已发生后续修改，请手动修正");
       }
+      beforeUndo.push(snapshot(current));
     }
     const restored: MemoryV2Entry[] = [];
     for (const before of record.before) {
@@ -310,7 +324,15 @@ export class MemoryCommandService {
         expectedRevision: current.frontmatter.revision
       }));
     }
-    return this.recordIds({ actor: "user", workspaceSlug: input.workspaceSlug }, record.receipt.scope, "updated", restored.map((item) => item.frontmatter.id), "已撤销记忆变更", false);
+    return this.record(
+      { actor: "user", workspaceSlug: input.workspaceSlug },
+      record.receipt.scope,
+      "updated",
+      restored,
+      "已撤销记忆变更",
+      false,
+      beforeUndo
+    );
   }
 
   private findClaimConflict(workspaceSlug: string, candidate: MemoryV2Candidate): MemoryV2Entry | undefined {
@@ -339,7 +361,7 @@ export class MemoryCommandService {
     entries: MemoryV2Entry[],
     summary: string,
     undoable: boolean,
-    before: MutationSnapshot[] = []
+    before: MemoryMutationEntrySnapshot[] = []
   ): MemoryV2MutationReceipt {
     return this.recordIds(input, scope, action, entries.map((entry) => entry.frontmatter.id), summary, undoable, before, entries.map(snapshot));
   }
@@ -351,8 +373,8 @@ export class MemoryCommandService {
     ids: string[],
     summary: string,
     undoable: boolean,
-    before: MutationSnapshot[] = [],
-    after: MutationSnapshot[] = []
+    before: MemoryMutationEntrySnapshot[] = [],
+    after: MemoryMutationEntrySnapshot[] = []
   ): MemoryV2MutationReceipt {
     const receipt: MemoryV2MutationReceipt = {
       mutationId: randomUUID(),
@@ -419,8 +441,23 @@ function containsSecret(content: string): boolean {
   return /(?:api[_-]?key|token|password|密码|验证码|secret)\s*[:=]\s*\S+|\bsk-[A-Za-z0-9_-]{16,}\b/i.test(content);
 }
 
-function snapshot(entry: MemoryV2Entry): MutationSnapshot {
-  return { id: entry.frontmatter.id, scope: entry.frontmatter.scope, revision: entry.frontmatter.revision };
+function snapshot(entry: MemoryV2Entry): MemoryMutationEntrySnapshot {
+  return {
+    id: entry.frontmatter.id,
+    scope: entry.frontmatter.scope,
+    revision: entry.frontmatter.revision,
+    statement: entry.statement,
+    status: entry.frontmatter.status,
+    semanticRole: entry.frontmatter.semantic_role,
+    confidence: entry.frontmatter.confidence,
+    facets: entry.frontmatter.facets,
+    pinned: entry.frontmatter.pinned,
+    activation: readActivation(entry.frontmatter),
+    ...(entry.frontmatter.valid_from ? { validFrom: entry.frontmatter.valid_from } : {}),
+    ...(entry.frontmatter.valid_to ? { validTo: entry.frontmatter.valid_to } : {}),
+    supersedes: entry.frontmatter.supersedes,
+    ...(entry.frontmatter.superseded_by ? { supersededBy: entry.frontmatter.superseded_by } : {})
+  };
 }
 
 export function toSharedMemoryReceipt(receipt: MemoryV2MutationReceipt): MemoryMutationReceipt {

@@ -18,7 +18,7 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
 import type {
   MemoryActivation,
@@ -115,6 +115,7 @@ import {
 
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { MemoryActivityPanel } from './MemoryActivityPanel'
 function pollOrganizeJob(input: {
   jobId: string
   workspaceSlug: string
@@ -345,6 +346,7 @@ function MemorySettingsSurface({ surface }: { surface: 'advanced' | 'center' | '
   const [diagnostics, setDiagnostics] = React.useState<MemoryDiagnosticsSnapshot | null>(null)
   const memoryCenterVersion = useAtomValue(memoryCenterVersionAtom)
   const deepLink = useAtomValue(memoryCenterDeepLinkAtom)
+  const setMemoryCenterDeepLink = useSetAtom(memoryCenterDeepLinkAtom)
   const [busyAction, setBusyAction] = React.useState<string | null>(null)
   const [entryOrganizeJob, setEntryOrganizeJob] = React.useState<MemoryOrganizeJob | null>(null)
   const [historyOrganizeJob, setHistoryOrganizeJob] = React.useState<MemoryOrganizeJob | null>(null)
@@ -388,6 +390,20 @@ function MemorySettingsSurface({ surface }: { surface: 'advanced' | 'center' | '
     if (deepLink.libraryView) setView(deepLink.libraryView)
     if (deepLink.memoryId) setSelectedMemoryId(deepLink.memoryId)
   }, [deepLink.libraryView, deepLink.memoryId, surface])
+
+  React.useEffect(() => {
+    if (surface !== 'center' || !workspaceSlug || !deepLink.memoryId || !snapshot) return
+    const entry = [...snapshot.workspaceEntries, ...snapshot.globalEntries]
+      .find((item) => item.id === deepLink.memoryId)
+    if (!entry) return
+    let disposed = false
+    void readMemory({ workspaceSlug, id: entry.id }).then((detail) => {
+      if (!disposed) setMemoryDetail(detail)
+    }).catch((error) => {
+      if (!disposed) toast.error(memorySettingsErrorMessage(error, '读取记忆详情失败'))
+    })
+    return () => { disposed = true }
+  }, [deepLink.memoryId, snapshot, surface, workspaceSlug])
 
   React.useEffect(() => {
     const status = snapshot?.retrieval.semantic.localOnnx?.status
@@ -493,6 +509,23 @@ function MemorySettingsSurface({ surface }: { surface: 'advanced' | 'center' | '
   const handleOpenMemoryFile = (path: string) => runAction(`open-${path}`, async () => {
     if (!workspaceSlug) return
     await openMemorySource({ workspaceSlug, path })
+  })
+
+  const handleOpenActivityMemory = (memoryId: string) => {
+    if (!workspaceSlug) return
+    setMemoryCenterDeepLink({
+      section: 'memory',
+      workspaceSlug,
+      libraryView: 'all',
+      memoryId,
+    })
+  }
+
+  const handleUndoActivityMutation = (mutationId: string) => runAction(`undo-${mutationId}`, async () => {
+    if (!workspaceSlug) return
+    await undoMemoryMutation({ workspaceSlug, mutationId })
+    await refresh()
+    toast.success('已撤销记忆变更')
   })
 
   const handleInspectMemoryEntry = (entry: MemorySettingsEntrySummary) => runAction(`inspect-${entry.id}`, async () => {
@@ -829,16 +862,14 @@ function MemorySettingsSurface({ surface }: { surface: 'advanced' | 'center' | '
       <div className="space-y-4">
         <section className="lume-panel p-4">
           <div className="text-[14px] font-semibold text-[var(--text-1)]">记忆变更</div>
-          <div className="mt-3 space-y-2">
-            {(snapshot?.activity ?? []).map((item) => (
-              <article key={item.mutationId} className="lume-subpanel p-3">
-                <div className="text-[13px] font-medium text-[var(--text-1)]">{item.summary}</div>
-                <div className="mt-1 text-[11px] text-[var(--text-3)]">
-                  {item.scope === 'global' ? '全局' : '工作区'} · {item.actor}
-                </div>
-              </article>
-            ))}
-            {(snapshot?.activity ?? []).length === 0 && <EmptyInline text="暂无记忆活动" />}
+          <div className="mt-3">
+            <MemoryActivityPanel
+              items={snapshot?.activity ?? []}
+              selectedMutationId={deepLink.mutationId}
+              busyAction={busyAction}
+              onOpenMemory={handleOpenActivityMemory}
+              onUndo={(mutationId) => void handleUndoActivityMutation(mutationId)}
+            />
           </div>
         </section>
         <section className="lume-panel p-4">

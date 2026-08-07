@@ -2,7 +2,10 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type {
   MemoryKind,
+  MemoryMutationChange,
+  MemoryMutationEntrySnapshot,
   MemoryPendingCounts,
+  MemorySettingsActivityItem,
   MemorySettingsEntrySummary,
   MemorySettingsFileSummary,
   MemorySettingsPendingSummary,
@@ -70,7 +73,7 @@ export function getMemoryV2SettingsSnapshot(workspaceSlug: string): MemorySettin
     workspaceEntries: workspaceEntries.map(entrySummary),
     globalEntries: globalEntries.map(entrySummary),
     pending: pending.map((item) => pendingSummary(item, entryById)),
-    activity: readRecentActivity([workspacePaths.journalDir, globalPaths.journalDir]),
+    activity: readRecentActivity([workspacePaths.journalDir, globalPaths.journalDir], entryById),
     ...(existsSync(workspacePaths.workspaceBrief) ? {
       workspaceBrief: {
         path: workspacePaths.workspaceBrief,
@@ -158,22 +161,93 @@ function getMemoryDiagnosticsState(
   };
 }
 
-function readRecentActivity(journalDirs: string[]): MemoryMutationReceipt[] {
-  const receipts: MemoryMutationReceipt[] = [];
+interface MutationJournalRecord {
+  receipt?: MemoryMutationReceipt;
+  before?: MemoryMutationEntrySnapshot[];
+  after?: MemoryMutationEntrySnapshot[];
+}
+
+function readRecentActivity(
+  journalDirs: string[],
+  entryById: Map<string, MemoryV2Entry>
+): MemorySettingsActivityItem[] {
+  const activity: MemorySettingsActivityItem[] = [];
   for (const dir of journalDirs) {
     if (!existsSync(dir)) continue;
     for (const name of readdirSync(dir).filter((item) => item.endsWith(".jsonl"))) {
       try {
         for (const line of readFileSync(join(dir, name), "utf-8").split(/\r?\n/).filter(Boolean)) {
-          const parsed = JSON.parse(line) as { receipt?: MemoryMutationReceipt };
-          if (parsed.receipt) receipts.push(parsed.receipt);
+          try {
+            const parsed = JSON.parse(line) as MutationJournalRecord;
+            if (parsed.receipt) activity.push({
+              ...parsed.receipt,
+              changes: buildMutationChanges(parsed, entryById)
+            });
+          } catch {
+            // A malformed line must not hide valid activity from the same journal.
+          }
         }
       } catch {
         // A malformed journal must not make memory settings unavailable.
       }
     }
   }
-  return receipts.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100);
+  return activity.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100);
+}
+
+function buildMutationChanges(
+  record: MutationJournalRecord,
+  entryById: Map<string, MemoryV2Entry>
+): MemoryMutationChange[] {
+  if (!record.receipt) return [];
+  const before = new Map((record.before ?? []).map((item) => [item.id, item]));
+  const after = new Map((record.after ?? []).map((item) => [item.id, item]));
+  const ids = [...new Set([
+    ...record.receipt.memoryIds,
+    ...before.keys(),
+    ...after.keys()
+  ])];
+  const exact = [...before.values(), ...after.values()].some(hasDisplaySnapshot);
+
+  return ids.map((memoryId) => {
+    if (exact) {
+      return {
+        memoryId,
+        ...(before.get(memoryId) ? { before: before.get(memoryId) } : {}),
+        ...(after.get(memoryId) ? { after: after.get(memoryId) } : {}),
+        accuracy: "exact"
+      } satisfies MemoryMutationChange;
+    }
+    const current = entryById.get(memoryId);
+    return {
+      memoryId,
+      ...(current ? { after: activitySnapshot(current) } : {}),
+      accuracy: "current"
+    } satisfies MemoryMutationChange;
+  });
+}
+
+function hasDisplaySnapshot(snapshot: MemoryMutationEntrySnapshot): boolean {
+  return typeof snapshot.statement === "string";
+}
+
+function activitySnapshot(entry: MemoryV2Entry): MemoryMutationEntrySnapshot {
+  return {
+    id: entry.frontmatter.id,
+    scope: entry.frontmatter.scope,
+    revision: entry.frontmatter.revision,
+    statement: entry.statement,
+    status: entry.frontmatter.status,
+    semanticRole: entry.frontmatter.semantic_role,
+    confidence: entry.frontmatter.confidence,
+    facets: entry.frontmatter.facets,
+    pinned: entry.frontmatter.pinned,
+    activation: readActivation(entry.frontmatter),
+    ...(entry.frontmatter.valid_from ? { validFrom: entry.frontmatter.valid_from } : {}),
+    ...(entry.frontmatter.valid_to ? { validTo: entry.frontmatter.valid_to } : {}),
+    supersedes: entry.frontmatter.supersedes,
+    ...(entry.frontmatter.superseded_by ? { supersededBy: entry.frontmatter.superseded_by } : {})
+  };
 }
 
 function readSchemaVersion(path: string): number | undefined {

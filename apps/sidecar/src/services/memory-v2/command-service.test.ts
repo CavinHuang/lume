@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { MemoryCommandService } from "./command-service";
 import { createMemoryV2Store } from "./markdown-store";
+import { getMemoryV2ScopePaths } from "./paths";
 
 let root: string;
 
@@ -113,5 +114,62 @@ describe("MemoryCommandService", () => {
     expect(moved?.frontmatter.valid_to).toBe(validTo);
     expect(createMemoryV2Store().listEntries({ workspaceSlug: "demo", scopes: ["workspace"] }))
       .toHaveLength(0);
+  });
+
+  test("records displayable before and after snapshots for updates and archives", async () => {
+    const service = new MemoryCommandService();
+    const created = await service.remember({
+      workspaceSlug: "demo",
+      content: "项目默认使用 Bun",
+      scope: "workspace",
+      actor: "user"
+    });
+    const id = created.memoryIds[0]!;
+
+    const updated = service.update({
+      workspaceSlug: "demo",
+      id,
+      scope: "workspace",
+      statement: "项目默认使用 Bun 和 TypeScript",
+      actor: "user"
+    });
+    expect(updated.action).toBe("updated");
+
+    service.archive({ workspaceSlug: "demo", id, scope: "workspace", actor: "user" });
+    const journalDir = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: "demo" }).journalDir;
+    const journal = readdirSync(journalDir).find((name) => name.endsWith(".jsonl"))!;
+    const records = readFileSync(join(journalDir, journal), "utf-8")
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { receipt: { mutationId: string }; before: Array<{ statement?: string; status?: string }>; after: Array<{ statement?: string; status?: string }> });
+    const updatedRecord = records.find((record) => record.receipt.mutationId === updated.mutationId)!;
+    const archivedRecord = records.at(-1)!;
+
+    expect(updatedRecord.before[0]?.statement).toBe("项目默认使用 Bun");
+    expect(updatedRecord.after[0]?.statement).toBe("项目默认使用 Bun 和 TypeScript");
+    expect(archivedRecord.before[0]?.statement).toBe("项目默认使用 Bun 和 TypeScript");
+    expect(archivedRecord.after[0]?.status).toBe("archived");
+  });
+
+  test("records the restored state created by an undo mutation", async () => {
+    const service = new MemoryCommandService();
+    const created = await service.remember({ workspaceSlug: "demo", content: "使用中文", scope: "global", actor: "user" });
+    const id = created.memoryIds[0]!;
+
+    const undone = service.undo({ workspaceSlug: "demo", mutationId: created.mutationId });
+    expect(undone.summary).toBe("已撤销记忆变更");
+
+    const entry = createMemoryV2Store().listEntries({ scopes: ["global"], includeStatuses: ["archived"] })
+      .find((item) => item.frontmatter.id === id)!;
+    expect(entry.frontmatter.status).toBe("archived");
+    const journalDir = getMemoryV2ScopePaths({ scope: "global" }).journalDir;
+    const journal = readdirSync(journalDir).find((name) => name.endsWith(".jsonl"))!;
+    const records = readFileSync(join(journalDir, journal), "utf-8")
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { receipt: { summary: string }; before: Array<{ status?: string }>; after: Array<{ status?: string }> });
+    const undoRecord = records.find((record) => record.receipt.summary === "已撤销记忆变更")!;
+    expect(undoRecord.before[0]?.status).toBe("active");
+    expect(undoRecord.after[0]?.status).toBe("archived");
   });
 });
