@@ -21,6 +21,7 @@
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@tanstack/react-virtual": "^3.13.6",
     "@fontsource-variable/geist": "^5.2.8",
     "@fontsource/inter": "^5.2.8",
     "@lobehub/icons": "^5.4.0",

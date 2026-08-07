@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { computeColumnCount, PROVIDER_GRID, rowCount } from "@/lib/provider-grid";
+import { ProviderCard } from "./ProviderCard";
 import type {
   LinkConnectionSummary,
   LinkCredentialField,
@@ -145,6 +148,38 @@ export function LinkView() {
     );
   });
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  // 测量网格容器宽度以计算响应式列数（对齐 BrowserShell/FilesRightPanelWorkspace 的裸 ResizeObserver 模式）
+  useEffect(() => {
+    const node = gridRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      setContainerWidth(entries[0]?.contentRect.width ?? 0);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  const columns = computeColumnCount(containerWidth);
+  const rows = rowCount(visibleProviders.length, columns);
+  const rowVirtualizer = useVirtualizer({
+    count: rows,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => PROVIDER_GRID.cardHeight + PROVIDER_GRID.gap,
+    overscan: PROVIDER_GRID.overscanRows,
+  });
+  const openProvider = (service: string) => {
+    void getLinkProvider(service)
+      .then((detail) => {
+        setSelectedConnectionName("default");
+        setSelected(detail);
+      })
+      .catch(() => toast.error("无法打开连接器详情"));
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-auto p-6">
       <div className="mb-5 flex items-start justify-between">
@@ -197,40 +232,37 @@ export function LinkView() {
                 ]}
               />
             </div>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {visibleProviders.map((provider) => (
-                <Button
-                  variant="ghost"
-                  key={provider.service}
-                  className="lume-panel h-auto justify-start p-4 text-left transition-colors hover:bg-muted/40"
-                  onClick={() =>
-                    void getLinkProvider(provider.service).then((detail) => {
-                      setSelectedConnectionName("default");
-                      setSelected(detail);
-                    }).catch(() => toast.error("无法打开连接器详情"))
-                  }
-                >
-                  <div className="w-full">
-                    <div className="flex items-center justify-between gap-2">
-                      <strong>{provider.displayName}</strong>
-                      {connections.some(
-                        (item) =>
-                          item.service === provider.service && item.configured,
-                      ) && <Badge>已连接</Badge>}
-                    </div>
-                    <p className="mt-2 line-clamp-2 whitespace-normal text-xs text-muted-foreground">
-                      {provider.description || provider.service}
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-1">
-                      {provider.categories?.slice(0, 3).map((item) => (
-                        <Badge key={item} variant="secondary">
-                          {item}
-                        </Badge>
-                      ))}
-                    </div>
+            <div ref={scrollRef} className="max-h-[calc(100vh-220px)] overflow-auto">
+              <div
+                ref={gridRef}
+                className="relative"
+                style={{ height: rows ? rowVirtualizer.getTotalSize() : 0 }}
+              >
+                {rowVirtualizer.getVirtualItems().map((vRow) => (
+                  <div
+                    key={vRow.key}
+                    className="absolute left-0 top-0 grid gap-3"
+                    style={{
+                      transform: `translateY(${vRow.start}px)`,
+                      width: "100%",
+                      gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+                    }}
+                  >
+                    {Array.from({ length: columns }).map((_, col) => {
+                      const provider = visibleProviders[vRow.index * columns + col];
+                      if (!provider) return null;
+                      return (
+                        <ProviderCard
+                          key={provider.service}
+                          provider={provider}
+                          configured={connections.some((c) => c.service === provider.service && c.configured)}
+                          onOpen={openProvider}
+                        />
+                      );
+                    })}
                   </div>
-                </Button>
-              ))}
+                ))}
+              </div>
             </div>
           </TabsContent>
           <TabsContent value="connections" className="space-y-3 pt-4">
