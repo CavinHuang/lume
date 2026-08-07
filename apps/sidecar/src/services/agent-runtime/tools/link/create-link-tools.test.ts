@@ -145,4 +145,25 @@ describe("OpenConnector Link tools", () => {
       _meta: { link: { kind: "link_authorization_required", service: "github", actionId: "github.list_issues", threadId: "thread", errorCode: "connection_not_found" } },
     });
   });
+
+  test("execute_action authorization error maps to link_authorization_required signal", async () => {
+    installLinkRuntimeBootstrap({ phase: "online", origin: "http://127.0.0.1:51234", adminToken: "admin", runtimeToken: "runtime" });
+    const mcpCaller = async (name: string): Promise<McpLinkPayload> =>
+      name === "get_action_guide"
+        ? { ok: true, data: { id: "github.list_issues", service: "github", name: "List issues" } }
+        : { ok: false, error: { code: "connection_not_found", message: "Connect GitHub" } };
+    const tools = createLinkTools({ threadId: "thread", emitToolPermissionRequest: () => {}, mcpCaller });
+    await tools.find((t) => t.name === "link_inspect_actions")!.call(
+      { actions: ["github.list_issues"] },
+      { cwd: ".", toolUseId: "inspect-auth" } as never,
+    );
+    const r = await tools.find((t) => t.name === "link_call_action")!.call(
+      { service: "github", action: "github.list_issues", input: {} },
+      { cwd: ".", toolUseId: "call-auth" } as never,
+    );
+    expect(r).toMatchObject({
+      is_error: true,
+      _meta: { link: { kind: "link_authorization_required", errorCode: "connection_not_found" } },
+    });
+  });
 });

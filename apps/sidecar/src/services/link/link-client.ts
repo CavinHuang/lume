@@ -1,7 +1,6 @@
 import type { LinkRuntimePhase } from "@lume/shared";
 import { McpClientManager } from "@lume/agent-sdk";
 
-type LinkApi = "admin" | "runtime";
 type LinkRuntimeBootstrap = { phase: LinkRuntimePhase; origin?: string; adminToken?: string; runtimeToken?: string };
 type BootstrapState = { phase: LinkRuntimePhase; origin?: string; adminToken?: Buffer; runtimeToken?: Buffer };
 
@@ -54,30 +53,24 @@ export function isLinkRuntimeOnline(): boolean {
 }
 
 export async function linkAdminRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  return linkRequest<T>("admin", path, init);
+  return linkRequest<T>(path, init);
 }
 
-export async function linkRuntimeRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  return linkRequest<T>("runtime", path, init);
-}
-
-async function linkRequest<T>(api: LinkApi, path: string, init: RequestInit = {}): Promise<T> {
+async function linkRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (bootstrap.phase !== "online" || !bootstrap.origin) throw new Error("link_runtime_offline");
-  const secret = api === "admin" ? bootstrap.adminToken : bootstrap.runtimeToken;
-  if (!secret) throw new Error("link_runtime_offline");
+  if (!bootstrap.adminToken) throw new Error("link_runtime_offline");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
   const onAbort = () => controller.abort();
   init.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     const url = new URL(path, bootstrap.origin);
-    const expectedPrefix = api === "admin" ? "/api/" : "/v1/";
-    if (url.origin !== bootstrap.origin || !url.pathname.startsWith(expectedPrefix) || url.username || url.password || url.hash) {
+    if (url.origin !== bootstrap.origin || !url.pathname.startsWith("/api/") || url.username || url.password || url.hash) {
       throw new Error("invalid_link_request_path");
     }
     const headers = new Headers(init.headers);
     if (init.body != null && !headers.has("content-type")) headers.set("content-type", "application/json");
-    headers.set("authorization", `Bearer ${secret.toString()}`);
+    headers.set("authorization", `Bearer ${bootstrap.adminToken.toString()}`);
     const response = await fetch(url, {
       ...init,
       redirect: "error",
@@ -92,7 +85,7 @@ async function linkRequest<T>(api: LinkApi, path: string, init: RequestInit = {}
         typeof body?.message === "string" ? body.message : typeof adminError?.message === "string" ? adminError.message : "OpenConnector request failed",
       );
     }
-    return (api === "runtime" && body && "data" in body ? body.data : body) as T;
+    return body as T;
   } finally {
     clearTimeout(timer);
     init.signal?.removeEventListener("abort", onAbort);
