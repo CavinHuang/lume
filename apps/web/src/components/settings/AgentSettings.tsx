@@ -19,6 +19,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { AnimatePresence, motion } from 'framer-motion'
 import type {
   Channel,
   ChannelCreateInput,
@@ -96,7 +97,7 @@ export function AgentSettings() {
   const [thinkingLevel, setThinkingLevel] = React.useState<LumeConfigThinkingLevel>('medium')
   const [activeGroup, setActiveGroup] = React.useState<ProviderGroup>('all')
   const [providerSearch, setProviderSearch] = React.useState('')
-  const [activeProvider, setActiveProvider] = React.useState<string>('anthropic')
+  const [activeProvider, setActiveProvider] = React.useState<string>('')
   const [selectedApiKey, setSelectedApiKey] = React.useState('')
   const [contextModelRef, setContextModelRef] = React.useState('')
   const [contextWindowInput, setContextWindowInput] = React.useState('')
@@ -189,26 +190,7 @@ export function AgentSettings() {
     [activeChannel, activeProvider, channels, selectedApiKey, activeProviderRow?.channelId]
   )
 
-  React.useEffect(() => {
-    if (activeDefault.channel && providerRows.some((row) => row.channelId === activeDefault.channel?.id)) {
-      setActiveProvider(activeDefault.channel.id)
-      return
-    }
-    // 如果当前连接不在列表中，选择当前分组的第一个已配置连接。
-    const groupInfo = PROVIDER_GROUPS.find(g => g.key === activeGroup)
-    const firstInGroup = providerRows.find((row) => {
-      if (activeGroup === 'custom') {
-        return row.provider === 'custom'
-      }
-      if (activeGroup === 'all') return true
-      return groupInfo?.providers.includes(row.provider)
-    })
-    if (firstInGroup && !providerRows.some((row) => (row.channelId ?? row.provider) === activeProvider)) {
-      setActiveProvider(firstInGroup.channelId ?? firstInGroup.provider)
-    }
-    // activeProvider 故意不加入依赖——用户手动切换 provider 时不应被默认值覆盖
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeDefault.channel?.provider, providerRows, activeGroup])
+  // 展开项完全由用户手动控制——不自动展开默认/首个 provider，避免数据刷新或保存时强制跳转、覆盖用户当前的展开/收起选择
 
   React.useEffect(() => {
     if (!activeChannel) {
@@ -379,22 +361,27 @@ export function AgentSettings() {
     }
   }
 
-  const handleProviderEnabledChange = async (checked: boolean) => {
-    setProviderEnabled(checked)
-    if (!activeChannel) return
-
-    setSavingProvider(true)
+  // 按 channelId 乐观切换启用状态：折叠行开关与展开态 header 开关共用此原语
+  const updateChannelEnabled = async (channelId: string, checked: boolean): Promise<boolean> => {
+    const original = channels.find((c) => c.id === channelId)
+    if (!original) return false
+    setChannels((prev) => prev.map((c) => (c.id === channelId ? { ...c, enabled: checked } : c)))
     try {
-      const updated = await updateChannel(activeChannel.id, { enabled: checked })
-      setChannels((prev) => prev.map((channel) => (channel.id === updated.id ? updated : channel)))
-      toast.success(checked ? '供应商已启用' : '供应商已停用')
+      const updated = await updateChannel(channelId, { enabled: checked })
+      setChannels((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
+      return true
     } catch (error) {
-      console.error('[AgentSettings] toggle provider FAILED:', error)
-      setProviderEnabled(activeChannel.enabled)
-      toast.error('更新供应商状态失败')
-    } finally {
-      setSavingProvider(false)
+      console.error('[AgentSettings] toggle channel enabled FAILED:', error)
+      setChannels((prev) => prev.map((c) => (c.id === channelId ? { ...c, enabled: original.enabled } : c)))
+      return false
     }
+  }
+
+  // 折叠行开关：不触碰 savingProvider，避免影响当前展开行的表单禁用态
+  const handleToggleChannelEnabled = async (channelId: string, checked: boolean) => {
+    const ok = await updateChannelEnabled(channelId, checked)
+    if (ok) toast.success(checked ? '供应商已启用' : '供应商已停用')
+    else toast.error('更新供应商状态失败')
   }
 
   const handleReset = async () => {
@@ -472,13 +459,12 @@ export function AgentSettings() {
               filteredProviderRows={filteredProviderRows}
               initialValue={providerFormInitialValue}
               activeGroup={activeGroup}
-              providerEnabled={providerEnabled}
               providerSearch={providerSearch}
               savingProvider={savingProvider}
               onActiveProviderChange={setActiveProvider}
               onActiveGroupChange={setActiveGroup}
               onProviderSearchChange={setProviderSearch}
-              onProviderEnabledChange={(checked) => void handleProviderEnabledChange(checked)}
+              onToggleChannelEnabled={handleToggleChannelEnabled}
               onProviderSubmit={persistProvider}
               onReload={reload}
             />
@@ -1316,12 +1302,11 @@ function ProviderConfigurationWorkbench({
   filteredProviderRows,
   initialValue,
   activeGroup,
-  providerEnabled,
   providerSearch,
   savingProvider,
   onActiveProviderChange,
   onActiveGroupChange,
-  onProviderEnabledChange,
+  onToggleChannelEnabled,
   onProviderSearchChange,
   onProviderSubmit,
   onReload,
@@ -1332,12 +1317,11 @@ function ProviderConfigurationWorkbench({
   filteredProviderRows: ModelProviderRow[]
   initialValue: ChannelCreateInput
   activeGroup: ProviderGroup
-  providerEnabled: boolean
   providerSearch: string
   savingProvider: boolean
   onActiveProviderChange: (id: string) => void
   onActiveGroupChange: (group: ProviderGroup) => void
-  onProviderEnabledChange: (checked: boolean) => void
+  onToggleChannelEnabled: (channelId: string, checked: boolean) => void
   onProviderSearchChange: (value: string) => void
   onProviderSubmit: (input: ChannelCreateInput) => Promise<void>
   onReload: () => void
@@ -1345,113 +1329,94 @@ function ProviderConfigurationWorkbench({
   const activeChannel = activeProviderRow?.channel ?? null
   const activeLabel = activeProviderRow?.label ?? '尚未添加连接'
 
+  const handleDelete = () => {
+    if (!activeChannel) return
+    if (!confirm(`确定直接删除“${activeLabel}”？引用该连接的模型用途会显示为不可用，凭据也会一并移除。`)) return
+    deleteChannel(activeChannel.id)
+      .then(() => {
+        toast.success('连接已删除')
+        onReload()
+      })
+      .catch((error) => {
+        console.error('[AgentSettings] delete connection FAILED:', error)
+        toast.error('删除连接失败')
+      })
+  }
+
   return (
-    <div className="lume-subpanel grid min-h-[365px] grid-cols-[276px_minmax(0,1fr)] items-stretch overflow-hidden rounded-[9px]">
-      <div className="relative min-h-0 bg-[var(--surface-2)]">
-        <div className="absolute inset-0 flex min-h-0 flex-col p-3">
-          {/* 分组标签栏 */}
-          <div className="flex flex-wrap gap-1">
-            {PROVIDER_GROUPS.map((group) => (
-              <Button
-                variant="ghost"
-                key={group.key}
-                type="button"
-                onClick={() => onActiveGroupChange(group.key)}
-                className={cn(
-                  'rounded-[5px] px-2 py-1 text-[11px] font-medium transition-colors',
-                  activeGroup === group.key
-                    ? 'bg-[color-mix(in_oklab,var(--brand)_9%,var(--surface-1))] text-[var(--brand)]'
-                    : 'text-[var(--text-2)] hover:bg-[var(--surface-2)]'
-                )}
-              >
-                {group.label}
-              </Button>
-            ))}
-          </div>
-
-          <div className="relative mt-2">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-3)]" />
-            <Input
-              value={providerSearch}
-              onChange={(event) => onProviderSearchChange(event.target.value)}
-              placeholder="搜索供应商"
-              className="h-8 w-full rounded-[7px] border border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-1)] pl-9 pr-3 text-[12px] font-medium text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))]"
-            />
-          </div>
-
-          <div className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto">
-            {filteredProviderRows.map((row) => (
-              <ProviderListItem
-                key={row.channelId ?? row.provider}
-                row={row}
-                selected={activeProvider === (row.channelId ?? row.provider)}
-                onClick={() => onActiveProviderChange(row.channelId ?? row.provider)}
-                showDelete={Boolean(row.channel)}
-                onDelete={row.channel ? () => {
-                  if (confirm(`确定直接删除“${row.label}”？引用该连接的模型用途会显示为不可用，凭据也会一并移除。`)) {
-                    deleteChannel(row.channel!.id)
-                      .then(() => { toast.success('连接已删除'); onReload() })
-                      .catch((error) => {
-                        console.error('[AgentSettings] delete connection FAILED:', error)
-                        toast.error('删除连接失败')
-                      })
-                  }
-                } : undefined}
-              />
-            ))}
-            {filteredProviderRows.length === 0 && (
-              <p className="px-2 py-6 text-center text-xs text-muted-foreground">没有匹配的已配置连接</p>
+    <div className="lume-subpanel overflow-hidden rounded-[9px] p-3">
+      {/* 分组标签栏 */}
+      <div className="flex flex-wrap gap-1">
+        {PROVIDER_GROUPS.map((group) => (
+          <Button
+            variant="ghost"
+            key={group.key}
+            type="button"
+            onClick={() => onActiveGroupChange(group.key)}
+            className={cn(
+              'rounded-[5px] px-2 py-1 text-[11px] font-medium transition-colors',
+              activeGroup === group.key
+                ? 'bg-[color-mix(in_oklab,var(--brand)_9%,var(--surface-1))] text-[var(--brand)]'
+                : 'text-[var(--text-2)] hover:bg-[var(--surface-2)]'
             )}
-          </div>
-
-        </div>
+          >
+            {group.label}
+          </Button>
+        ))}
       </div>
 
-      <div className="min-w-0 border-l border-[color:color-mix(in_oklab,var(--border)_55%,transparent)] bg-[var(--surface-1)] p-4">
-        {!activeChannel ? (
-          <div className="flex h-full min-h-[320px] items-center justify-center rounded-lg border border-dashed p-8 text-center">
-            <div><p className="text-sm font-medium">还没有连接</p><p className="mt-1 text-xs text-muted-foreground">点击右上角“添加连接”，按三步完成配置。</p></div>
-          </div>
-        ) : (
-          <>
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-[15px] font-semibold leading-5 text-[var(--text-1)]">{activeLabel}</h3>
-            <p className="mt-1 text-[12px] leading-4 text-[var(--text-3)]">
-              {activeChannel ? '已存在该供应商配置，开启后可编辑并保存。' : '尚未配置该供应商，开启后即可填写连接信息。'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 text-[12px] font-medium text-[var(--text-2)]">
-            {savingProvider && <Loader2 size={13} className="animate-spin text-[var(--text-3)]" />}
-            开启
-            <LumeSwitch
-              checked={providerEnabled}
-              disabled={savingProvider}
-              onCheckedChange={onProviderEnabledChange}
-            />
-          </div>
-        </div>
+      {/* 搜索 */}
+      <div className="relative mt-2">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-3)]" />
+        <Input
+          value={providerSearch}
+          onChange={(event) => onProviderSearchChange(event.target.value)}
+          placeholder="搜索供应商"
+          className="h-8 w-full rounded-[7px] border border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-1)] pl-9 pr-3 text-[12px] font-medium text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))]"
+        />
+      </div>
 
-        {apiKeyLoading ? (
-          <div className="flex h-[290px] items-center gap-2 rounded-[9px] bg-[var(--surface-2)] px-4 text-[13px] text-[var(--text-3)]">
-            <Loader2 size={14} className="animate-spin" />
-            加载供应商详情...
-          </div>
-        ) : (
-          <div className="rounded-[9px] bg-[var(--surface-1)]">
-            <ChannelForm
-              key={activeProviderRow?.channelId ?? activeProvider}
-              mode={activeChannel ? 'edit' : 'create'}
-              initialValue={initialValue}
-              providerLocked={activeGroup !== 'custom'}
-              disabled={!providerEnabled || savingProvider}
-              connectionId={activeChannel?.id}
-              onSubmit={onProviderSubmit}
-              onSynced={onReload}
-            />
-          </div>
-        )}
-          </>
+      {/* 手风琴列表：单列，展开即编辑 */}
+      <div className="mt-2 space-y-1.5">
+        {filteredProviderRows.map((row) => {
+          const rowKey = row.channelId ?? row.provider
+          const channelId = row.channel?.id
+          const isExpanded = activeProvider === rowKey
+          return (
+            <ProviderListItem
+              key={rowKey}
+              row={row}
+              expanded={isExpanded}
+              onClick={() => onActiveProviderChange(isExpanded ? '' : rowKey)}
+              onToggleEnabled={channelId ? (checked) => onToggleChannelEnabled(channelId, checked) : undefined}
+            >
+              {isExpanded && (
+                <div className="border-t border-[color:color-mix(in_oklab,var(--border)_55%,transparent)] bg-[var(--surface-1)] p-4">
+                  {apiKeyLoading ? (
+                    <div className="flex h-[290px] items-center gap-2 rounded-[9px] bg-[var(--surface-2)] px-4 text-[13px] text-[var(--text-3)]">
+                      <Loader2 size={14} className="animate-spin" />
+                      加载供应商详情...
+                    </div>
+                  ) : (
+                    <ChannelForm
+                      key={activeProviderRow?.channelId ?? activeProvider}
+                      mode={activeChannel ? 'edit' : 'create'}
+                      initialValue={initialValue}
+                      providerLocked={activeGroup !== 'custom'}
+                      disabled={savingProvider}
+                      connectionId={activeChannel?.id}
+                      onSubmit={onProviderSubmit}
+                      onSynced={onReload}
+                      onDelete={handleDelete}
+                    />
+                  )}
+                </div>
+              )}
+            </ProviderListItem>
+          )
+        })}
+        {filteredProviderRows.length === 0 && (
+          <p className="px-2 py-6 text-center text-xs text-muted-foreground">没有匹配的已配置连接</p>
         )}
       </div>
     </div>
@@ -1460,16 +1425,16 @@ function ProviderConfigurationWorkbench({
 
 function ProviderListItem({
   row,
-  selected,
-  showDelete,
-  onDelete,
+  expanded,
   onClick,
+  onToggleEnabled,
+  children,
 }: {
   row: ModelProviderRow
-  selected: boolean
-  showDelete?: boolean
-  onDelete?: () => void
+  expanded: boolean
   onClick: () => void
+  onToggleEnabled?: (checked: boolean) => void
+  children?: React.ReactNode
 }) {
   const configured = Boolean(row.channel)
   const connected = row.channel ? isConnectionReady(row.channel) : false
@@ -1478,54 +1443,85 @@ function ProviderListItem({
   const available = row.channel?.healthStatus === 'available'
 
   return (
-    <Button
-      variant="ghost"
-      type="button"
-      onClick={onClick}
+    <div
       className={cn(
-        'grid h-9 w-full grid-cols-[28px_minmax(0,1fr)_56px_14px] items-center gap-2 rounded-[7px] px-2 text-left transition-colors',
-        selected
-          ? 'bg-[color-mix(in_oklab,var(--brand)_9%,var(--surface-1))] text-[var(--brand)]'
-          : 'text-[var(--text-2)] hover:bg-[var(--surface-1)] hover:text-[var(--text-1)]'
+        'overflow-hidden rounded-[7px] border transition-colors',
+        expanded
+          ? 'border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_9%,var(--surface-1))]'
+          : 'border-transparent'
       )}
     >
-      <span className={cn('flex size-6 items-center justify-center rounded-[6px]', row.tone)}>
-        <ChannelProviderIcon provider={row.provider} size={14} />
-      </span>
-      <span className="truncate text-[12px] font-semibold">{row.label}</span>
-      <span className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-2)]">
-        <span className={cn(
-          'size-1.5 rounded-full',
-          unavailable
-            ? 'bg-destructive'
-            : available || connected
-              ? 'bg-[var(--lume-success)]'
-              : configured ? 'bg-[var(--text-3)]' : 'bg-[var(--border-strong)]'
-        )} />
-        {unavailable
-          ? '不可用'
-          : available
-            ? '可用'
-            : needsAuthentication
-              ? '待认证'
-              : connected
-                ? '已连接'
-                : configured ? '已配置' : '未配置'}
-      </span>
-      {showDelete && onDelete ? (
-        <span
-          role="button"
-          tabIndex={0}
-          onClick={(e) => { e.stopPropagation(); onDelete() }}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onDelete() } }}
-          className="cursor-pointer text-[var(--text-3)] hover:text-[var(--lume-danger)]"
-        >
-          <Trash2 size={14} />
+      <Button
+        variant="ghost"
+        type="button"
+        onClick={onClick}
+        className={cn(
+          'flex h-12 w-full items-center gap-2.5 rounded-[7px] px-4 text-left transition-colors',
+          expanded
+            ? 'text-[var(--brand)]'
+            : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]'
+        )}
+      >
+        <span className={cn('flex size-7 items-center justify-center rounded-[6px]', row.tone)}>
+          <ChannelProviderIcon provider={row.provider} size={15} />
         </span>
-      ) : (
-        <ChevronDown size={14} className="-rotate-90 text-[var(--text-3)]" />
-      )}
-    </Button>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-semibold leading-5">{row.label}</span>
+          <span className="block truncate text-[11px] leading-4 text-[var(--text-3)]">
+            {row.channel ? `${row.channel.models?.length ?? 0} 模型` : '未配置'}
+          </span>
+        </span>
+        <span className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-2)]">
+          <span className={cn(
+            'size-1.5 rounded-full',
+            unavailable
+              ? 'bg-destructive'
+              : available || connected
+                ? 'bg-[var(--lume-success)]'
+                : configured ? 'bg-[var(--text-3)]' : 'bg-[var(--border-strong)]'
+          )} />
+          {unavailable
+            ? '不可用'
+            : available
+              ? '可用'
+              : needsAuthentication
+                ? '待认证'
+                : connected
+                  ? '已连接'
+                  : configured ? '已配置' : '未配置'}
+        </span>
+        {configured && onToggleEnabled && (
+          <LumeSwitch
+            checked={Boolean(row.channel?.enabled)}
+            onCheckedChange={onToggleEnabled}
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            aria-label={row.channel?.enabled ? `停用 ${row.label}` : `启用 ${row.label}`}
+          />
+        )}
+        <ChevronDown
+          size={15}
+          className={cn(
+            'shrink-0 text-[var(--text-3)] transition-transform duration-200',
+            expanded && 'rotate-180'
+          )}
+        />
+      </Button>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            key="panel"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            className="overflow-hidden"
+          >
+            {children}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   )
 }
 
