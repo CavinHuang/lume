@@ -397,6 +397,16 @@ export function LinkView() {
           await refresh();
           setSelected(null);
         }}
+        onReconnect={(name) => setSelectedConnectionName(name)}
+        onRequestDelete={(name) => {
+          // deleteTarget 形状为完整 LinkConnectionSummary（ConfirmDialog 消费其 service/connectionName/profile）
+          const target = connections.find(
+            (item) =>
+              item.service === selected?.service &&
+              item.connectionName === name,
+          );
+          if (target) setDeleteTarget(target);
+        }}
       />
       <Dialog
         open={Boolean(runDetail)}
@@ -438,6 +448,8 @@ function ProviderDialog({
   connections,
   onClose,
   onSaved,
+  onReconnect,
+  onRequestDelete,
 }: {
   provider: LinkProviderDetail | null;
   initialConnectionName: string;
@@ -445,6 +457,8 @@ function ProviderDialog({
   connections: LinkConnectionSummary[];
   onClose: () => void;
   onSaved: () => Promise<void>;
+  onReconnect: (connectionName: string) => void;
+  onRequestDelete: (connectionName: string) => void;
 }) {
   const [connectionName, setConnectionName] = useState("default");
   const [authIndex, setAuthIndex] = useState(0);
@@ -638,9 +652,27 @@ function ProviderDialog({
             </div>
           )}
           {connections.length > 0 && (
-            <div className="text-xs text-muted-foreground">
-              现有连接：
-              {connections.map((item) => item.connectionName).join("、")}
+            <div className="space-y-2 border-t pt-3">
+              <div className="text-sm font-medium">已连接账户（{connections.length}）</div>
+              <div className="max-h-40 space-y-1 overflow-auto">
+                {connections.map((conn) => (
+                  <div key={conn.connectionName} className="lume-panel flex items-center justify-between gap-2 rounded p-2 text-xs">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1 font-medium">
+                        <span className="truncate">{conn.connectionName}</span>
+                        {conn.default && <Badge variant="secondary">默认</Badge>}
+                      </div>
+                      <div className="truncate text-muted-foreground">
+                        {conn.profile?.displayName || conn.profile?.accountId || authLabel(conn.authType)}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => onReconnect(conn.connectionName)}>重连</Button>
+                      <Button variant="ghost" size="sm" onClick={() => onRequestDelete(conn.connectionName)}>断开</Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
           {provider.actions && provider.actions.length > 0 && (
