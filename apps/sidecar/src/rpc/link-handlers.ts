@@ -175,6 +175,7 @@ function toProviderSummary(value: unknown): Record<string, unknown> {
     ...(stringValue(input.description) ? { description: stringValue(input.description) } : {}),
     categories: Array.isArray(input.categories) ? input.categories.map(String) : [],
     authTypes: Array.isArray(input.authTypes) ? input.authTypes.map(String) : [],
+    ...(stringValue(input.iconUrl) ? { iconUrl: stringValue(input.iconUrl) } : {}),
   };
 }
 function toRunSummary(value: unknown): Record<string, unknown> {

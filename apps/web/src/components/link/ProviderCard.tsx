@@ -1,6 +1,7 @@
 import type { LinkProviderSummary } from "@lume/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ProviderIcon } from "./ProviderIcon";
 
 interface ProviderCardProps {
   provider: LinkProviderSummary;
@@ -16,6 +17,7 @@ export function ProviderCard({ provider, configured, onOpen }: ProviderCardProps
       onClick={() => onOpen(provider.service)}
     >
       <div className="flex items-center gap-2">
+        <ProviderIcon service={provider.service} displayName={provider.displayName} iconUrl={provider.iconUrl} size={20} />
         <strong className="truncate">{provider.displayName}</strong>
         {configured && <Badge>已连接</Badge>}
       </div>

@@ -9,6 +9,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { agentSend, listLinkConnections, onLinkDataChanged } from "@/lib/desktop-api";
+import { ProviderIcon } from "@/components/link/ProviderIcon";
 import { toast } from "sonner";
 
 export function LinkResult({
@@ -69,7 +70,10 @@ export function LinkResult({
   if (signal)
     return (
       <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
-        <div className="font-medium">需要连接 {signal.service}</div>
+        <div className="font-medium flex items-center gap-2">
+          <ProviderIcon service={signal.service} size={18} />
+          需要连接 {signal.service}
+        </div>
         <p className="text-xs text-muted-foreground">
           请在 Lume 中完成授权，再由 Agent 重试原操作。
         </p>

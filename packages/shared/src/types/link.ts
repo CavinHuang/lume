@@ -28,6 +28,7 @@ export interface LinkProviderSummary {
   categories: string[];
   authTypes: string[];
   configured?: boolean;
+  iconUrl?: string;
 }
 
 export interface LinkCredentialField {

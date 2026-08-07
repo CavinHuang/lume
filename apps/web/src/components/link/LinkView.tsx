@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { computeColumnCount, PROVIDER_GRID, rowCount } from "@/lib/provider-grid";
 import { ProviderCard } from "./ProviderCard";
+import { ProviderIcon } from "./ProviderIcon";
 import type {
   LinkConnectionSummary,
   LinkCredentialField,
@@ -546,7 +547,10 @@ function ProviderDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{provider.displayName}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <ProviderIcon service={provider.service} displayName={provider.displayName} iconUrl={provider.iconUrl} size={20} />
+            {provider.displayName}
+          </DialogTitle>
           <DialogDescription>
             {provider.description || provider.service}
           </DialogDescription>
