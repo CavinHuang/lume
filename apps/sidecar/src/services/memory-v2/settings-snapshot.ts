@@ -179,10 +179,16 @@ function readRecentActivity(
         for (const line of readFileSync(join(dir, name), "utf-8").split(/\r?\n/).filter(Boolean)) {
           try {
             const parsed = JSON.parse(line) as MutationJournalRecord;
-            if (parsed.receipt) activity.push({
-              ...parsed.receipt,
-              changes: buildMutationChanges(parsed, entryById)
-            });
+            if (parsed.receipt && !["ignored", "duplicate"].includes(parsed.receipt.action)) {
+              const receipt = {
+                ...parsed.receipt,
+                summary: parsed.receipt.summary || fallbackActivitySummary(parsed.receipt.action)
+              };
+              activity.push({
+                ...receipt,
+                changes: buildMutationChanges({ ...parsed, receipt }, entryById)
+              });
+            }
           } catch {
             // A malformed line must not hide valid activity from the same journal.
           }
@@ -193,6 +199,18 @@ function readRecentActivity(
     }
   }
   return activity.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100);
+}
+
+function fallbackActivitySummary(action: MemoryMutationReceipt["action"]): string {
+  const summaries: Partial<Record<MemoryMutationReceipt["action"], string>> = {
+    created: "已记住新的信息",
+    updated: "更新了记忆",
+    superseded: "用新版本替换了旧记忆",
+    merged: "合并了重复记忆",
+    archived: "归档了记忆",
+    pending: "产生待处理记忆，等待确认"
+  };
+  return summaries[action] ?? "记忆操作已完成";
 }
 
 function buildMutationChanges(

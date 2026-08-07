@@ -296,4 +296,29 @@ describe("memory-v2 settings snapshot", () => {
       after: { statement: "历史活动关联的记忆" }
     });
   });
+
+  test("does not project ignored and duplicate receipts into memory changes", async () => {
+    const service = new MemoryCommandService();
+    await service.remember({
+      workspaceSlug: "demo",
+      content: "API token = sk-abcdefghijklmnopqrstuvwxyz",
+      actor: "user"
+    });
+    const created = await service.remember({
+      workspaceSlug: "demo",
+      content: "默认使用中文",
+      scope: "global",
+      actor: "user"
+    });
+    await service.remember({
+      workspaceSlug: "demo",
+      content: "默认使用中文",
+      scope: "global",
+      actor: "user"
+    });
+
+    const snapshot = getMemoryV2SettingsSnapshot("demo");
+    expect(snapshot.activity.every((item) => item.action !== "ignored" && item.action !== "duplicate")).toBe(true);
+    expect(snapshot.activity.some((item) => item.mutationId === created.mutationId)).toBe(true);
+  });
 });
