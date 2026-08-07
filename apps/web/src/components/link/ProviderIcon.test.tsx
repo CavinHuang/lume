@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { LOBEHUB_SERVICES } from '@/lib/provider-icon'
 import { ProviderIcon } from './ProviderIcon'
 
 // fake DOM（仿 AgentView.test.tsx / SuggestionBanner.test.tsx,仓库组件测试标准模式）。
@@ -217,6 +218,27 @@ describe('ProviderIcon', () => {
       env.cleanup()
     }
   })
+
+  // 漂移守卫:遍历权威列表 LOBEHUB_SERVICES(与 provider-icon.ts 同源)。
+  // 若未来给 LOBEHUB_SERVICES 加 service 忘了给 LOBEHUB_MAP 加 key,decideIconKind 返回
+  // "lobehub" 而 LOBEHUB_MAP[s] 得 undefined → 组件静默降级字母块(无 svg,无报错)。
+  // 同样捕获:某 @lobehub/icons 深导入路径断裂、或 Mono 组件运行时崩 → 无 svg。
+  // test.each 给出 per-service 失败归因,一眼定位哪个 service 漂移/断裂。
+  test.each(LOBEHUB_SERVICES)(
+    'lobehub service[%s]: LOBEHUB_MAP/深导入未漂移,渲染 svg 而非字母块',
+    async (service) => {
+      const { env, root } = await render(<ProviderIcon service={service} size={20} />)
+      try {
+        expect(
+          findByTag(env.container, 'svg'),
+          `${service} 应渲染 svg(走 lobehub 分支);若失败说明 LOBEHUB_MAP 缺 key 或深导入断裂`,
+        ).toBeDefined()
+      } finally {
+        await unmount(root)
+        env.cleanup()
+      }
+    },
+  )
 
   test('非 lobehub service: 走首字母分支,产出含首字母的彩色块 DOM', async () => {
     const { env, root } = await render(<ProviderIcon service="gmail" />)
