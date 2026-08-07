@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, it, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import * as filePreviewUtils from "./file-preview-utils"
@@ -155,5 +155,26 @@ describe('preview classification and race guard', () => {
     expect(htmlSource).not.toContain('allow-same-origin')
     expect(`${previewSource}\n${htmlSource}`).not.toContain('navigator.clipboard')
     expect(previewSource).toContain('writeClipboardText')
+  })
+})
+
+describe('classifyFilePreview — 文档查看器格式', () => {
+  it('识别 Office 与 CSV 文档', () => {
+    expect(classifyFilePreview('a.docx')).toBe('docx')
+    expect(classifyFilePreview('b.DOCX')).toBe('docx')
+    expect(classifyFilePreview('a.xlsx')).toBe('xlsx')
+    expect(classifyFilePreview('a.pptx')).toBe('pptx')
+    expect(classifyFilePreview('a.csv')).toBe('csv')
+    expect(classifyFilePreview('a.tsv')).toBe('csv')
+  })
+
+  it('保留既有分类不回归', () => {
+    expect(classifyFilePreview('a.pdf')).toBe('pdf')
+    expect(classifyFilePreview('a.png')).toBe('image')
+    expect(classifyFilePreview('a.md')).toBe('markdown')
+    expect(classifyFilePreview('a.html')).toBe('html')
+    expect(classifyFilePreview('a.mp4')).toBe('video')
+    expect(classifyFilePreview('a.ts')).toBe('text')
+    expect(classifyFilePreview('a.unknownext')).toBe('unsupported')
   })
 })
