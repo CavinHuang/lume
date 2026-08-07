@@ -66,9 +66,9 @@ test('Link runtime reaches health, keeps its stable port, and shuts down cleanly
   const port = address.port
   await new Promise((resolve) => portProbe.close(resolve))
   mkdirSync(join(root, 'link-runtime'), { recursive: true })
-  mkdirSync(join(resourceDir, 'src', 'server'), { recursive: true })
-  for (const directory of ['catalog', 'dist', 'migrations', 'node_modules']) mkdirSync(join(resourceDir, directory), { recursive: true })
-  writeFileSync(join(resourceDir, 'src', 'server', 'index.ts'), '')
+  // bundle 形态:对齐 link-runtime-supervisor readMetadata(检查 openconnector.mjs + catalog + migrations)。
+  for (const directory of ['catalog', 'migrations']) mkdirSync(join(resourceDir, directory), { recursive: true })
+  writeFileSync(join(resourceDir, 'openconnector.mjs'), '')
   writeFileSync(join(resourceDir, 'lume-resource.json'), JSON.stringify({ version: '1.3.3', commit: 'a332575d8facf09c11df91e1cc41c44b7bb8964c', archiveSha256: '457443253b6ea5009b0c87193073029aed1e70d7d9e98a7cdd231b915f63a9c1' }))
   writeFileSync(join(root, 'link-runtime', 'state.json'), JSON.stringify({ enabled: true, port }))
   const originalFetch = globalThis.fetch

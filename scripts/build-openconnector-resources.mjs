@@ -1,4 +1,14 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+// 下载并构建 OpenConnector 源码到 sourceDir,供 scripts/build-openconnector-bundle.mjs 打成 standalone bundle。
+//
+// 职责仅限"源码获取":下载 GitHub tarball → sha256 校验 → npm ci → build:web(前端 dist)→ npm prune
+// → 缓存到 .openconnector-cache/runtime-<sha[:12]>/。不再直接产出 resources/openconnector(由 bundle 脚本
+// 接管),避免先把 187MB node_modules 复制进 resources 再被 bundle 覆盖的浪费。
+//
+// sourceDir 含:src(原始源码,bun build 入口)+ catalog + dist/web(build:web 产物)+ migrations
+//   + node_modules(npm prune --omit=dev 后的 runtime deps,bun build 由此 inline 全部依赖)。
+// 对比改造前:不再 removeDevelopmentFiles / 不再写 resources 的 lume-resource.json / 不再复制 src 到 app。
+
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -7,58 +17,51 @@ import { assertArchiveChecksum } from "./openconnector-resource-integrity.mjs";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = join(repoRoot, "scripts", "openconnector-resource.json");
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-const resourceDir = join(repoRoot, "apps", "desktop", "resources", "openconnector");
-const cacheDir = resolve(process.env.LUME_OPENCONNECTOR_CACHE_DIR || join(repoRoot, "apps", "desktop", "resources", ".openconnector-cache"));
+const cacheDir = resolve(
+  process.env.LUME_OPENCONNECTOR_CACHE_DIR || join(repoRoot, "apps", "desktop", "resources", ".openconnector-cache"),
+);
 const archivePath = join(cacheDir, `open-connector-${manifest.version}.tar.gz`);
-const builtCacheDir = join(cacheDir, `runtime-${manifest.archiveSha256.slice(0, 12)}`);
+// sourceDir:构建好的 OpenConnector 项目根,bundle 脚本从此读取。
+const sourceDir = join(cacheDir, `runtime-${manifest.archiveSha256.slice(0, 12)}`);
 
 if (process.argv.includes("--verify")) {
-  verifyResource();
+  verifySourceDir(sourceDir);
+  console.log(`[openconnector-resources] sourceDir verified: ${sourceDir}`);
   process.exit(0);
 }
 
 mkdirSync(cacheDir, { recursive: true });
 if (!existsSync(archivePath)) await downloadArchive();
 verifyArchive(archivePath);
-if (isValidResource(builtCacheDir)) {
-  installResource(builtCacheDir);
-  verifyResource();
+if (isValidSourceDir(sourceDir)) {
+  console.log(`[openconnector-resources] sourceDir ready (cached): ${sourceDir}`);
   process.exit(0);
 }
 
+// 解压 → npm ci → build:web → prune,产出完整 sourceDir。
 const workDir = join(cacheDir, `work-${manifest.archiveSha256.slice(0, 12)}`);
-const sourceDir = join(workDir, `open-connector-${manifest.version}`);
-if (!existsSync(join(sourceDir, "package-lock.json"))) {
+const extractedRoot = join(workDir, `open-connector-${manifest.version}`);
+if (!existsSync(join(extractedRoot, "package-lock.json"))) {
   rmSync(workDir, { recursive: true, force: true });
   mkdirSync(workDir, { recursive: true });
   run("tar", ["-xzf", archivePath, "-C", workDir], repoRoot);
 }
 
 const npm = npmInvocation();
-run(npm.command, [...npm.prefixArgs, "ci"], sourceDir);
-run(npm.command, [...npm.prefixArgs, "run", "build:web"], sourceDir);
-run(npm.command, [...npm.prefixArgs, "prune", "--omit=dev", "--workspaces=false"], sourceDir);
+run(npm.command, [...npm.prefixArgs, "ci"], extractedRoot);
+run(npm.command, [...npm.prefixArgs, "run", "build:web"], extractedRoot);
+run(npm.command, [...npm.prefixArgs, "prune", "--omit=dev", "--workspaces=false"], extractedRoot);
 
-rmSync(resourceDir, { recursive: true, force: true });
-mkdirSync(resourceDir, { recursive: true });
-for (const name of ["src", "catalog", "dist", "migrations", "node_modules", "package.json", "package-lock.json"]) {
-  cpSync(join(sourceDir, name), join(resourceDir, name), { recursive: true });
-}
-cpSync(join(sourceDir, "LICENSE.txt"), join(resourceDir, "LICENSE"));
-cpSync(join(sourceDir, "NOTICE.md"), join(resourceDir, "NOTICE"));
-removeDevelopmentFiles(resourceDir);
-writeFileSync(join(resourceDir, "lume-resource.json"), `${JSON.stringify({
-  version: manifest.version,
-  tag: manifest.tag,
-  commit: manifest.commit,
-  archiveSha256: manifest.archiveSha256,
-}, null, 2)}\n`);
-verifyResource();
-const temporaryBuiltCacheDir = `${builtCacheDir}.${process.pid}.tmp`;
-rmSync(temporaryBuiltCacheDir, { recursive: true, force: true });
-cpSync(resourceDir, temporaryBuiltCacheDir, { recursive: true });
-rmSync(builtCacheDir, { recursive: true, force: true });
-renameSync(temporaryBuiltCacheDir, builtCacheDir);
+// 原子缓存 sourceDir(供 build-openconnector-bundle.mjs 与后续增量 build 复用)。
+const temporarySourceDir = `${sourceDir}.${process.pid}.tmp`;
+rmSync(temporarySourceDir, { recursive: true, force: true });
+cpSync(extractedRoot, temporarySourceDir, { recursive: true });
+rmSync(sourceDir, { recursive: true, force: true });
+renameSync(temporarySourceDir, sourceDir);
+
+verifySourceDir(sourceDir);
+console.log(`[openconnector-resources] sourceDir built -> ${sourceDir}`);
+console.log("[openconnector-resources] next: scripts/build-openconnector-bundle.mjs");
 
 async function downloadArchive() {
   const response = await fetch(manifest.archiveUrl, { redirect: "follow" });
@@ -66,7 +69,12 @@ async function downloadArchive() {
   const bytes = Buffer.from(await response.arrayBuffer());
   const temporary = `${archivePath}.${process.pid}.tmp`;
   writeFileSync(temporary, bytes);
-  try { verifyArchive(temporary); } catch (error) { rmSync(temporary, { force: true }); throw error; }
+  try {
+    verifyArchive(temporary);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
   renameSync(temporary, archivePath);
 }
 
@@ -74,33 +82,19 @@ function verifyArchive(path) {
   assertArchiveChecksum(path, manifest.archiveSha256);
 }
 
-function verifyResource(root = resourceDir) {
-  for (const path of ["src/server/index.ts", "catalog/apps", "dist/web", "migrations", "node_modules", "LICENSE", "NOTICE", "package-lock.json", "lume-resource.json"]) {
-    if (!existsSync(join(root, path))) throw new Error(`OpenConnector package input missing: ${path}`);
+function isValidSourceDir(root) {
+  try {
+    verifySourceDir(root);
+    return true;
+  } catch {
+    return false;
   }
-  const metadata = JSON.parse(readFileSync(join(root, "lume-resource.json"), "utf8"));
-  for (const key of ["version", "tag", "commit", "archiveSha256"]) {
-    if (metadata[key] !== manifest[key]) throw new Error(`OpenConnector resource metadata mismatch: ${key}`);
-  }
 }
 
-function isValidResource(root) {
-  try { verifyResource(root); return true; } catch { return false; }
-}
-
-function installResource(root) {
-  rmSync(resourceDir, { recursive: true, force: true });
-  cpSync(root, resourceDir, { recursive: true });
-}
-
-function removeDevelopmentFiles(root) {
-  const stack = [root];
-  while (stack.length) {
-    const current = stack.pop();
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      const fullPath = join(current, entry.name);
-      if (entry.isDirectory()) { stack.push(fullPath); continue; }
-      if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.name) || entry.name.endsWith(".map")) rmSync(fullPath, { force: true });
+function verifySourceDir(root) {
+  for (const p of ["src/server/index.ts", "node_modules", "catalog/apps", "migrations", "dist/web"]) {
+    if (!existsSync(join(root, p))) {
+      throw new Error(`OpenConnector sourceDir missing: ${p}`);
     }
   }
 }
@@ -110,6 +104,7 @@ function run(command, args, cwd) {
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}`);
 }
+
 function npmInvocation() {
   const bundledCli = join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
   return existsSync(bundledCli) ? { command: process.execPath, prefixArgs: [bundledCli] } : { command: "npm", prefixArgs: [] };

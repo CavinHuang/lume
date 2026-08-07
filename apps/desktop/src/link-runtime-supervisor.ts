@@ -67,7 +67,8 @@ export function createLinkRuntimeSupervisor(input: {
     const inheritedEnvironment = Object.fromEntries(
       Object.entries(process.env).filter(([name]) => !name.startsWith("OOMOL_CONNECT_")),
     );
-    const running = input.fork(join(input.resourceDir, "src", "server", "index.ts"), [], {
+    // fork bundle 产物(纯 JS,已由 scripts/build-openconnector-bundle.mjs 产出,消除 TS strip 依赖)。
+    const running = input.fork(join(input.resourceDir, "openconnector.mjs"), [], {
       cwd: input.resourceDir,
       env: {
         ...inheritedEnvironment,
@@ -201,8 +202,10 @@ export function nextLinkCrashState(previous: number[], now: number): { crashTime
 
 function readMetadata(resourceDir: string): ResourceMetadata {
   const path = join(resourceDir, "lume-resource.json");
-  const entry = join(resourceDir, "src", "server", "index.ts");
-  const requiredDirectories = ["catalog", "dist", "migrations", "node_modules"];
+  // bundle 形态:入口为 openconnector.mjs,运行时仅需 catalog(连接器目录)与 migrations(SQLite schema);
+  // dist/web(console 前端)与 node_modules 不再是启动必需——staticRoot 缺失时仅 warn,bundle 已 inline 全部依赖。
+  const entry = join(resourceDir, "openconnector.mjs");
+  const requiredDirectories = ["catalog", "migrations"];
   if (!existsSync(path) || !existsSync(entry) || requiredDirectories.some((name) => !existsSync(join(resourceDir, name)))) {
     return { version: OPENCONNECTOR_VERSION, archiveSha256: "", commit: "", available: false };
   }
