@@ -470,7 +470,7 @@ describe('ProactiveHub', () => {
       expect(text).toContain('长期记忆')
       expect(text).toContain('今日采纳')
       // suggestions section
-      expect(text).toContain('Proma 建议')
+      expect(text).toContain('Lume 建议')
       expect(text).toContain('跟进老王')
       expect(text).toContain('三天未回复')
       expect(text).not.toContain('正在关注')

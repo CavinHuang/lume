@@ -257,7 +257,7 @@ export function ProactiveHub(_props: ProactiveHubProps) {
           />
         </div>
 
-        <Section title="Proma 建议" icon={<Sparkles size={15} />}>
+        <Section title="Lume 建议" icon={<Sparkles size={15} />}>
           {suggestions.length === 0 ? (
             <EmptyState
               text="暂无待定建议"
