@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { computeColumnCount, PROVIDER_GRID, rowCount } from "@/lib/provider-grid";
 import { formatDurationLabel } from "@/lib/format-duration";
@@ -61,6 +61,9 @@ import {
   listLinkOAuthSessions,
   getLinkAction,
 } from "@/lib/desktop-api";
+
+// catalog 滚动区可视高度偏移:页头(h1+副标题)+Tabs 头+搜索/筛选栏+垂直间距之和
+const CATALOG_SCROLL_OFFSET = 220;
 
 export function LinkView() {
   const [providers, setProviders] = useState<LinkProviderSummary[]>([]);
@@ -157,9 +160,11 @@ export function LinkView() {
   const [containerWidth, setContainerWidth] = useState(0);
 
   // 测量网格容器宽度以计算响应式列数（对齐 BrowserShell/FilesRightPanelWorkspace 的裸 ResizeObserver 模式）
-  useEffect(() => {
+  // 用 useLayoutEffect + 同步首测,避免 useState(0) 首次渲染单列 → 实测宽度多列的闪烁
+  useLayoutEffect(() => {
     const node = gridRef.current;
     if (!node || typeof ResizeObserver === "undefined") return;
+    setContainerWidth(node.getBoundingClientRect().width);
     const observer = new ResizeObserver((entries) => {
       setContainerWidth(entries[0]?.contentRect.width ?? 0);
     });
@@ -236,7 +241,7 @@ export function LinkView() {
                 ]}
               />
             </div>
-            <div ref={scrollRef} className="max-h-[calc(100vh-220px)] overflow-auto">
+            <div ref={scrollRef} className="overflow-auto" style={{ maxHeight: `calc(100vh - ${CATALOG_SCROLL_OFFSET}px)` }}>
               <div
                 ref={gridRef}
                 className="relative"

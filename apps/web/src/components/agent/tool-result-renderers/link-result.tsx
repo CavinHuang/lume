@@ -72,7 +72,7 @@ export function LinkResult({
     autoResentRef.current = true;
     void agentSend({
       threadId: signal.threadId,
-      userMessage: `请重试刚才失败的 Link 操作（${signal.service}.${signal.actionId}${signal.connectionName ? `，连接 ${signal.connectionName}` : ""}）。这是重试请求，不是新的外部操作授权。`,
+      userMessage: buildRetryMessage(signal),
     }).catch((error) => toast.error(error instanceof Error ? error.message : "自动重试失败"));
   }, [authorized, signal]);
   const openProvider = () => {
@@ -107,7 +107,7 @@ export function LinkResult({
                 autoResentRef.current = true;
                 void agentSend({
                   threadId: signal.threadId,
-                  userMessage: `请重试刚才失败的 Link 操作（${signal.service}.${signal.actionId}${signal.connectionName ? `，连接 ${signal.connectionName}` : ""}）。这是重试请求，不是新的外部操作授权。`,
+                  userMessage: buildRetryMessage(signal),
                 }).catch((error) => toast.error(error instanceof Error ? error.message : "重试失败"));
               }}
             >
@@ -154,4 +154,9 @@ function readAuthorization(
     (auth as { kind?: unknown }).kind === "link_authorization_required"
     ? (auth as LinkAuthorizationSignal)
     : undefined;
+}
+
+function buildRetryMessage(signal: LinkAuthorizationSignal): string {
+  const connection = signal.connectionName ? `，连接 ${signal.connectionName}` : "";
+  return `请重试刚才失败的 Link 操作（${signal.service}.${signal.actionId}${connection}）。这是重试请求，不是新的外部操作授权。`;
 }

@@ -19,7 +19,7 @@ export function initialOf(value: string): string {
   return trimmed ? trimmed[0].toUpperCase() : "?";
 }
 
-const LETTER_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#06b6d4", "#ef4444", "#6366f1"];
+const LETTER_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#d97706", "#10b981", "#06b6d4", "#ef4444", "#6366f1"];
 
 export function colorForSeed(seed: string): string {
   let hash = 0;
