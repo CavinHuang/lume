@@ -336,7 +336,6 @@ function PptxSlideNumberControl({
           aria-label="Slide number"
           inputMode="numeric"
           pattern="[0-9]*"
-          size="sm"
           value={draftSlide}
           className="mx-1 w-14 min-w-14 rounded-md [&_[data-slot=input]]:text-center"
           onBlur={() => setIsEditing(false)}

@@ -881,10 +881,14 @@ export function CsvViewer({ className, data, search = false }: CsvViewerProps) {
                 variant="outline"
                 size="sm"
                 className="mt-4"
-                loading={isPending}
+                disabled={isPending}
                 onClick={() => inputRef.current?.click()}
               >
-                <HugeiconsIcon icon={Upload01Icon} className="size-4" />
+                {isPending ? (
+                  <Spinner className="size-4" />
+                ) : (
+                  <HugeiconsIcon icon={Upload01Icon} className="size-4" />
+                )}
                 Upload CSV
               </Button>
             </div>
