@@ -14,6 +14,7 @@ import { updateLumeConfigSection } from "../system/lume-config-service";
 import * as markdownStore from "./markdown-store";
 import { MemoryCommandService } from "./command-service";
 import { getMemoryV2ScopePaths } from "./paths";
+import { memoryJobService } from "./job-service";
 
 let root: string;
 
@@ -320,5 +321,39 @@ describe("memory-v2 settings snapshot", () => {
     const snapshot = getMemoryV2SettingsSnapshot("demo");
     expect(snapshot.activity.every((item) => item.action !== "ignored" && item.action !== "duplicate")).toBe(true);
     expect(snapshot.activity.some((item) => item.mutationId === created.mutationId)).toBe(true);
+  });
+
+  test("projects persisted background job results for settings activity", async () => {
+    const job = memoryJobService.start({
+      kind: "consolidation",
+      workspaceSlug: "demo",
+      manual: true,
+      run: async () => ({
+        scannedEntries: 12,
+        updated: 2,
+        merged: 3,
+        stale: 1,
+        rebuilt: ["capsules/runtime.md", "persona.md"]
+      })
+    });
+
+    await memoryJobService.waitForTerminal("demo", job.jobId);
+    const snapshot = getMemoryV2SettingsSnapshot("demo");
+    const projected = snapshot.jobs.find((item) => item.jobId === job.jobId);
+
+    expect(projected).toMatchObject({
+      kind: "consolidation",
+      status: "completed",
+      result: {
+        kind: "consolidation",
+        data: {
+          scannedEntries: 12,
+          updated: 2,
+          merged: 3,
+          stale: 1,
+          rebuilt: ["capsules/runtime.md", "persona.md"]
+        }
+      }
+    });
   });
 });

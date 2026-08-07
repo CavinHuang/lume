@@ -575,6 +575,24 @@ export interface MemorySettingsPendingSummary {
   existingEntries: MemorySettingsEntrySummary[];
 }
 
+export type MemorySettingsJobResult =
+  | { kind: "history"; data: MemoryOrganizeHistoryResult }
+  | { kind: "entries"; data: MemoryOrganizeEntriesResult }
+  | { kind: "external_ingest"; data: MemoryIngestSourcesResult }
+  | { kind: "turn_extract"; data: { scannedItems: number; changedItems: number } }
+  | { kind: "consolidation"; data: { scannedEntries: number; updated: number; merged: number; stale: number; rebuilt: string[] } };
+
+export interface MemorySettingsJobSummary {
+  jobId: string;
+  kind: MemoryJobKind;
+  status: MemoryJobStatus;
+  createdAt: number;
+  completedAt?: number;
+  error?: string;
+  retryable: boolean;
+  result?: MemorySettingsJobResult;
+}
+
 export interface MemoryUpdateEntryInput {
   workspaceSlug: string;
   scope: "global" | "workspace";
@@ -643,15 +661,7 @@ export interface MemorySettingsSnapshot {
   globalEntries: MemorySettingsEntrySummary[];
   pending: MemorySettingsPendingSummary[];
   activity: MemorySettingsActivityItem[];
-  jobs: Array<{
-    jobId: string;
-    kind: MemoryJobKind;
-    status: MemoryJobStatus;
-    createdAt: number;
-    completedAt?: number;
-    error?: string;
-    retryable: boolean;
-  }>;
+  jobs: MemorySettingsJobSummary[];
   migration: {
     schemaVersion?: number;
     backupPaths: string[];

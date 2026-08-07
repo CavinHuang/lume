@@ -2,12 +2,17 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type {
   MemoryKind,
+  MemoryIngestSourcesResult,
+  MemoryJobKind,
   MemoryMutationChange,
   MemoryMutationEntrySnapshot,
+  MemoryOrganizeEntriesResult,
+  MemoryOrganizeHistoryResult,
   MemoryPendingCounts,
   MemorySettingsActivityItem,
   MemorySettingsEntrySummary,
   MemorySettingsFileSummary,
+  MemorySettingsJobResult,
   MemorySettingsPendingSummary,
   MemorySettingsSnapshot,
   MemoryDiagnosticsSnapshot
@@ -122,7 +127,8 @@ function getMemoryDiagnosticsState(
         && (job.status === "failed" || job.status === "cancelled" || job.status === "interrupted")
         && job.payload !== undefined,
       ...(job.completedAt ? { completedAt: job.completedAt } : {}),
-      ...(job.error ? { error: job.error } : {})
+      ...(job.error ? { error: job.error } : {}),
+      ...(job.result !== undefined ? { result: settingsJobResult(job.kind, job.result) } : {})
     })),
     migration: {
       schemaVersion: readSchemaVersion(workspacePaths.schemaMarker),
@@ -159,6 +165,24 @@ function getMemoryDiagnosticsState(
       }
     }
   };
+}
+
+function settingsJobResult(kind: MemoryJobKind, result: unknown): MemorySettingsJobResult {
+  switch (kind) {
+    case "history":
+      return { kind, data: result as MemoryOrganizeHistoryResult };
+    case "entries":
+      return { kind, data: result as MemoryOrganizeEntriesResult };
+    case "external_ingest":
+      return { kind, data: result as MemoryIngestSourcesResult };
+    case "turn_extract":
+      return { kind, data: result as { scannedItems: number; changedItems: number } };
+    case "consolidation":
+      return {
+        kind,
+        data: result as { scannedEntries: number; updated: number; merged: number; stale: number; rebuilt: string[] }
+      };
+  }
 }
 
 interface MutationJournalRecord {

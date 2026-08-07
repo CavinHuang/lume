@@ -116,6 +116,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { MemoryActivityPanel } from './MemoryActivityPanel'
+import { MemoryJobActivityPanel } from './MemoryJobActivityPanel'
+
 function pollOrganizeJob(input: {
   jobId: string
   workspaceSlug: string
@@ -875,13 +877,11 @@ function MemorySettingsSurface({ surface }: { surface: 'advanced' | 'center' | '
         <section className="lume-panel p-4">
           <div className="text-[14px] font-semibold text-[var(--text-1)]">后台任务</div>
           <div className="mt-3 space-y-2">
-            {(snapshot?.jobs ?? []).map((job) => (
-              <article key={job.jobId} className="lume-subpanel flex items-center justify-between gap-3 p-3">
-                <span className="text-[13px] text-[var(--text-1)]">{job.kind}</span>
-                <span className="text-[11px] text-[var(--text-3)]">{job.status}</span>
-              </article>
-            ))}
-            {(snapshot?.jobs ?? []).length === 0 && <EmptyInline text="暂无后台任务" />}
+            <MemoryJobActivityPanel
+              items={snapshot?.jobs ?? []}
+              busyAction={busyAction}
+              onRetry={(jobId) => void handleRetryJob(jobId)}
+            />
           </div>
         </section>
         <OverviewPanel
