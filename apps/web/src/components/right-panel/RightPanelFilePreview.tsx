@@ -523,7 +523,7 @@ export function RightPanelFilePreview({
   )
 }
 
-function PreviewStatus({ children }: { children: React.ReactNode }) {
+export function PreviewStatus({ children }: { children: React.ReactNode }) {
   return <div className="flex h-full min-h-48 items-center justify-center px-6 text-center text-[13px] text-foreground/55">{children}</div>
 }
 
