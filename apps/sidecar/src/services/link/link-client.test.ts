@@ -46,12 +46,16 @@ describe("extractMcpPayload", () => {
     const r = extractMcpPayload({ structuredContent: { ok: true, data: { x: 1 } } });
     expect(r).toEqual({ ok: true, data: { x: 1 } });
   });
-  test("parses content[0].text JSON when no structuredContent", () => {
-    const r = extractMcpPayload({ content: [{ type: "text", text: JSON.stringify({ ok: false, error: { code: "connection_not_found", message: "Connect GitHub" } }) }] });
+  test("parses top-level text JSON (McpCallResult production shape) when no structuredContent", () => {
+    const r = extractMcpPayload({ text: JSON.stringify({ ok: false, error: { code: "connection_not_found", message: "Connect GitHub" } }) });
     expect(r).toEqual({ ok: false, error: { code: "connection_not_found", message: "Connect GitHub" } });
   });
-  test("returns unknown error on unparseable", () => {
-    const r = extractMcpPayload({ content: [{ type: "text", text: "not json" }] });
+  test("returns unknown error on unparseable top-level text", () => {
+    const r = extractMcpPayload({ text: "not json" });
     expect(r).toEqual({ ok: false, error: { code: "link_mcp_invalid_payload", message: "OpenConnector MCP returned an incompatible payload." } });
+  });
+  test("defensively parses content[0].text JSON (raw MCP result shape)", () => {
+    const r = extractMcpPayload({ content: [{ type: "text", text: JSON.stringify({ ok: true, data: { x: 1 } }) }] });
+    expect(r).toEqual({ ok: true, data: { x: 1 } });
   });
 });

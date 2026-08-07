@@ -135,15 +135,26 @@ export type McpLinkPayload =
   | { ok: false; error: { code: string; message: string } };
 
 export function extractMcpPayload(result: unknown): McpLinkPayload {
-  const r = result as { structuredContent?: unknown; content?: Array<{ text?: string }> };
+  const r = result as { structuredContent?: unknown; text?: unknown; content?: Array<{ text?: string }> };
   if (r && typeof r.structuredContent === "object" && r.structuredContent !== null) {
     const p = r.structuredContent as McpLinkPayload;
     if (p && (p.ok === true || p.ok === false)) return p;
   }
-  const text = r?.content?.[0]?.text;
-  if (typeof text === "string") {
+  // Production path: McpClientManager.callTool returns a normalized McpCallResult whose
+  // original `content` blocks are merged into a top-level `text` string. Parse it first.
+  const topText = r?.text;
+  if (typeof topText === "string") {
     try {
-      const parsed = JSON.parse(text) as McpLinkPayload;
+      const parsed = JSON.parse(topText) as McpLinkPayload;
+      if (parsed && (parsed.ok === true || parsed.ok === false)) return parsed;
+    } catch { /* fall through */ }
+  }
+  // Defensive path: raw MCP result shape with a `content[]` array (kept for callers that
+  // bypass McpClientManager normalization).
+  const contentText = r?.content?.[0]?.text;
+  if (typeof contentText === "string") {
+    try {
+      const parsed = JSON.parse(contentText) as McpLinkPayload;
       if (parsed && (parsed.ok === true || parsed.ok === false)) return parsed;
     } catch { /* fall through */ }
   }
