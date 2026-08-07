@@ -28,6 +28,8 @@ export function LinkResult({
   const setProviderTarget = useSetAtom(linkProviderTargetAtom);
   const [authorized, setAuthorized] = useState(false);
   const autoResentRef = useRef(false);
+  // 追踪"具体被授权的 signal"，防止 A→B 信号切换时自动重发 effect 用旧 authorized 闭包误发未授权的 B
+  const authorizedSignalRef = useRef<LinkAuthorizationSignal | null>(null);
   const signal = authorization ?? readAuthorization(result);
   const resultRecord = result && typeof result === "object" && !Array.isArray(result)
     ? result as Record<string, unknown>
@@ -36,6 +38,7 @@ export function LinkResult({
     if (!signal) return;
     setAuthorized(false);
     autoResentRef.current = false; // 新信号重置自动重发标记
+    authorizedSignalRef.current = null; // 新信号清空已授权标记，强制重新走授权+匹配流程
     let active = true;
     const check = () =>
       void listLinkConnections()
@@ -48,8 +51,10 @@ export function LinkResult({
                 item.configured &&
                 item.connectionName === (signal.connectionName || "default"),
             )
-          )
+          ) {
             setAuthorized(true);
+            authorizedSignalRef.current = signal; // 记录"具体被授权的 signal"，供自动重发 effect 匹配
+          }
         })
         .catch(() => undefined);
     check();
@@ -61,7 +66,9 @@ export function LinkResult({
     };
   }, [signal]);
   useEffect(() => {
-    if (!authorized || !signal || autoResentRef.current) return;
+    // 额外要求当前 signal 就是被授权的那个（authorizedSignalRef），防止 A→B 信号切换时
+    // 用渲染 N 的旧 authorized 闭包对未授权的 B 误发
+    if (!authorized || !signal || autoResentRef.current || authorizedSignalRef.current !== signal) return;
     autoResentRef.current = true;
     void agentSend({
       threadId: signal.threadId,
