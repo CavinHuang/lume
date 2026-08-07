@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { LinkAuthorizationSignal } from "@lume/shared";
 import { useSetAtom } from "jotai";
 import { activeTabIdAtom, linkProviderTargetAtom, tabsAtom } from "@/atoms";
@@ -27,6 +27,7 @@ export function LinkResult({
   const setActiveTabId = useSetAtom(activeTabIdAtom);
   const setProviderTarget = useSetAtom(linkProviderTargetAtom);
   const [authorized, setAuthorized] = useState(false);
+  const autoResentRef = useRef(false);
   const signal = authorization ?? readAuthorization(result);
   const resultRecord = result && typeof result === "object" && !Array.isArray(result)
     ? result as Record<string, unknown>
@@ -34,6 +35,7 @@ export function LinkResult({
   useEffect(() => {
     if (!signal) return;
     setAuthorized(false);
+    autoResentRef.current = false; // 新信号重置自动重发标记
     let active = true;
     const check = () =>
       void listLinkConnections()
@@ -58,6 +60,14 @@ export function LinkResult({
       unsubscribe?.();
     };
   }, [signal]);
+  useEffect(() => {
+    if (!authorized || !signal || autoResentRef.current) return;
+    autoResentRef.current = true;
+    void agentSend({
+      threadId: signal.threadId,
+      userMessage: `请重试刚才失败的 Link 操作（${signal.service}.${signal.actionId}${signal.connectionName ? `，连接 ${signal.connectionName}` : ""}）。这是重试请求，不是新的外部操作授权。`,
+    }).catch((error) => toast.error(error instanceof Error ? error.message : "自动重试失败"));
+  }, [authorized, signal]);
   const openProvider = () => {
     setProviderTarget(signal?.service ?? null);
     setTabs((tabs) =>
@@ -84,19 +94,17 @@ export function LinkResult({
           {authorized && (
             <Button
               size="sm"
-              variant="outline"
-              onClick={() =>
+              variant="ghost"
+              className="text-xs text-muted-foreground"
+              onClick={() => {
+                autoResentRef.current = true;
                 void agentSend({
                   threadId: signal.threadId,
                   userMessage: `请重试刚才失败的 Link 操作（${signal.service}.${signal.actionId}${signal.connectionName ? `，连接 ${signal.connectionName}` : ""}）。这是重试请求，不是新的外部操作授权。`,
-                }).catch((error) =>
-                  toast.error(
-                    error instanceof Error ? error.message : "重试失败",
-                  ),
-                )
-              }
+                }).catch((error) => toast.error(error instanceof Error ? error.message : "重试失败"));
+              }}
             >
-              重试刚才的操作
+              再次发送
             </Button>
           )}
         </div>
