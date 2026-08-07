@@ -1633,7 +1633,7 @@ function UserMemoryPanel({
         </div>
       )}
       <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.3fr)]">
-        <div className="space-y-3">
+        <div className="min-w-0 space-y-3">
           <div className="lume-subpanel p-3">
             <div className="flex gap-2">
               <Input
@@ -1947,19 +1947,19 @@ function EntryRow({
       type="button"
       onClick={() => onInspectEntry(entry)}
       className={cn(
-        'block w-full rounded-[8px] border border-border bg-[var(--surface-2)] p-3 text-left hover:bg-[var(--surface-3)]',
+        'block min-w-0 w-full whitespace-normal rounded-[8px] border border-border bg-[var(--surface-2)] p-3 text-left hover:bg-[var(--surface-3)]',
         selected && 'border-[var(--brand)] bg-[var(--surface-3)]',
       )}
     >
-      <div className="flex flex-wrap items-center gap-2 text-[12px] font-medium text-[var(--text-3)]">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 whitespace-normal text-[12px] font-medium text-[var(--text-3)]">
         <span>{summarizeMemoryEntry(entry)}</span>
         <StatusBadge tone="neutral">{memoryEntryLayerLabel(entry)}</StatusBadge>
         {entry.pinned && <StatusBadge tone="good">置顶</StatusBadge>}
         {entry.status === 'suspected_stale' && <StatusBadge tone="warn">{MEMORY_STATUS_LABELS.suspected_stale}</StatusBadge>}
         {busy && <StatusBadge tone="neutral">读取中</StatusBadge>}
       </div>
-      <p className="mt-1 line-clamp-3 text-[13px] leading-5 text-[var(--text-1)]">{entry.statement}</p>
-      <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-[var(--text-3)]">
+      <p className="mt-1 max-w-full line-clamp-3 break-words whitespace-normal text-[13px] leading-5 text-[var(--text-1)]">{entry.statement}</p>
+      <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 whitespace-normal text-[12px] text-[var(--text-3)]">
         <span>{entry.semanticRole ?? 'memory'}</span>
         <span>{MEMORY_CONFIDENCE_LABELS[entry.confidence]}</span>
         <span>{formatDate(entry.updated)}</span>
