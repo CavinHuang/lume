@@ -7,6 +7,11 @@ import { createSdkCronTools } from "./cron/create-cron-tools";
 import { createAutomationListTools } from "./cron/automation-list-tools";
 import { createAutomationTemplateTools } from "./cron/automation-template-tools";
 import { createSdkImTools } from "./im/create-im-tools";
+import { createSdkImCliTools } from "./im-cli/create-im-cli-tools";
+import { dingtalkCliConfig } from "./im-cli/providers/dingtalk";
+import { larkCliConfig } from "./im-cli/providers/feishu";
+import { wecomCliConfig } from "./im-cli/providers/wecom";
+import { getImCliBaseDir } from "../../infra/config-paths";
 import { resolveEnabledMemoryToolNames } from "./tool-policy-matcher";
 import { createSdkReadingTools } from "./reading/create-reading-tools";
 import { createPersonalizeUiTool } from "./ui/create-personalize-ui-tool";
@@ -142,6 +147,13 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const imTools = createSdkImTools({
     threadId: input.threadId
   });
+  const imCliBaseDir = getImCliBaseDir();
+  const imCliDeps = { userDataRoot: imCliBaseDir, platform: process.platform, arch: process.arch };
+  const imCliTools = [
+    ...createSdkImCliTools({ config: dingtalkCliConfig, ...imCliDeps }),
+    ...createSdkImCliTools({ config: larkCliConfig, ...imCliDeps }),
+    ...createSdkImCliTools({ config: wecomCliConfig, ...imCliDeps }),
+  ];
   const readingTools = createSdkReadingTools();
   const uiTools = [createPersonalizeUiTool({ threadId: input.threadId })];
   const officeTools = createSdkOfficeTools();
@@ -213,6 +225,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...automationListTools,
     ...automationTemplateTools,
     ...imTools,
+    ...imCliTools,
     ...readingTools,
     ...uiTools,
     ...officeTools,
