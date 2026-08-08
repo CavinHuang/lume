@@ -1,10 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { CalendarDays, ChevronDown, ListTodo } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { AppWindow, CalendarDays, ChevronDown, ChevronUp, ListTodo, MessageSquare, X } from 'lucide-react'
 import type { AgentIslandIntent, AgentIslandPlanningItem, AgentIslandSessionSnapshot, AgentIslandState } from '@lume/shared'
 import { findModelMeta, selectPlanningIndicator } from '@lume/shared'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useModelMetaVersion } from '@/lib/model-meta-context'
 import { cn } from '@/lib/utils'
+import { IslandMascot } from './IslandMascot'
 import './agent-island.css'
 
 const SURFACE_TRANSITION_MS = 180
@@ -20,9 +22,29 @@ const PHASE_DOT: Record<string, string> = {
   error: 'bg-[var(--lume-danger)]',
 }
 
+const PHASE_LABEL: Record<string, string> = {
+  idle: '空闲',
+  running: '执行中',
+  'needs-interaction': '待处理',
+  completed: '完成',
+  error: '出错',
+}
+
+const UUID_TITLE = /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i
+
+export function formatIslandSessionTitle(title: string, threadId: string): string {
+  const normalized = title.trim()
+  if (normalized && normalized !== threadId && !UUID_TITLE.test(normalized)) return normalized
+  const source = normalized || threadId
+  return `未命名会话 · ${source.slice(0, 6)}`
+}
+
 /** 灵动岛 planning 行的时间标签：逾期加前缀，否则仅 HH:MM。 */
-function formatIslandTime(ts: number, overdue: boolean): string {
-  const hhmm = new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+export function formatIslandTime(ts: number, overdue: boolean): string {
+  if (!Number.isFinite(ts)) return ''
+  const date = new Date(ts)
+  if (Number.isNaN(date.getTime())) return ''
+  const hhmm = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   return overdue ? `逾期 · ${hhmm}` : hhmm
 }
 
@@ -43,7 +65,7 @@ export function sortIslandPlanningItems<T extends AgentIslandPlanningItem>(items
 }
 
 /**
- * 拼接会话行的 model · cost · token 小字。仅 >0 / 解析成功才进 parts，避免「· $0.00」噪声。
+ * 拼接高密度会话行的 model · token 摘要。成本留在会话详情，不占用灵动岛横向空间。
  * 抽成纯函数便于单测；渲染层据返回是否为空决定是否渲染 <span>。
  */
 export function formatSessionMeta(
@@ -53,7 +75,6 @@ export function formatSessionMeta(
   const parts: string[] = []
   const modelLabel = session.modelRef ? resolveLabel(session.modelRef) : undefined
   if (modelLabel) parts.push(modelLabel)
-  if (session.costUSD != null && session.costUSD > 0) parts.push(`$${session.costUSD.toFixed(2)}`)
   if (session.tokenTotal != null && session.tokenTotal > 0) parts.push(`${(session.tokenTotal / 1000).toFixed(1)}k`)
   return parts.join(' · ')
 }
@@ -73,6 +94,42 @@ export function formatRelativeTime(updatedAt: number, now: number = Date.now()):
 }
 
 type SurfaceMode = 'compact' | 'expanded' | 'collapsing'
+
+function IslandActionButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={(
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            className="island-action-button island-no-drag"
+            aria-label={label}
+            onClick={onClick}
+          >
+            {children}
+          </Button>
+        )}
+      />
+      <TooltipContent
+        side="bottom"
+        sideOffset={3}
+        className="rounded-[5px] px-2 py-1 text-[9px] leading-none"
+      >
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
 
 /**
  * Agent 灵动岛纯展示组件。无 IPC、无 jotai，所有用户意图通过 onIntent 上发。
@@ -108,12 +165,18 @@ export function AgentIslandSurface({
   // compact 队列徽章 + attention 数字 pill
   const queueCount = primary?.queuedCount ?? 0
   const needInteractionCount = state.sessions.filter((s) => s.phase === 'needs-interaction').length
+  const expandedSessionCount = state.isIdle ? (state.recentSessions?.length ?? 0) : state.sessions.length
+  const expandedSummary = [
+    `${expandedSessionCount} 会话`,
+    state.planning.todos.length > 0 ? `${state.planning.todos.length} 待办` : '',
+    state.planning.reminders.length > 0 ? `${state.planning.reminders.length} 提醒` : '',
+  ].filter(Boolean).join(' · ')
+  const requestedExpanded = state.presentation === 'expanded'
   const surfaceRef = useRef<HTMLDivElement>(null)
   const expandedContentRef = useRef<HTMLDivElement>(null)
   const lastHeightRef = useRef(COMPACT_HEIGHT)
-  const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>('compact')
+  const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>(requestedExpanded ? 'expanded' : 'compact')
   const [expandedHeight, setExpandedHeight] = useState(COMPACT_HEIGHT)
-  const requestedExpanded = state.presentation === 'expanded'
 
   // surfaceMode 状态机：expanded→compact 走 collapsing（保留旧内容淡出 180ms）
   useEffect(() => {
@@ -158,24 +221,33 @@ export function AgentIslandSurface({
         onMouseLeave={() => onIntent({ name: 'set-hovered', value: false })}
         style={{ '--island-expanded-height': `${expandedHeight}px` } as CSSProperties}
       >
-        {/* 窗口拖动 grip（仅非 macOS）：独立绝对定位区，不贴到 compact button 上，
-            避免 -webkit-app-region:drag 吞掉 compact 整面 click。macOS 走 Phase 2 native 刘海 */}
-        <div className="island-drag-handle" aria-hidden="true" />
-
         {/* expanded-content：surfaceMode !== compact 时渲染，collapsing 态保留旧内容淡出 */}
         {surfaceMode !== 'compact' && (
           <div ref={expandedContentRef} className="island-expanded">
             <div className="island-expanded-head island-drag-handle">
+              <span className={cn('island-dot', PHASE_DOT[primary?.phase ?? 'idle'])} />
               <span className="island-title">{state.compactLabel.replace('Lume · ', '')}</span>
+              <span className="island-expanded-summary">{expandedSummary}</span>
               <div className="island-actions island-no-drag">
-                <Button size="sm" variant="ghost" onClick={() => onIntent({ name: 'open-main' })}>打开 Lume</Button>
+                <IslandActionButton label="打开 Lume" onClick={() => onIntent({ name: 'open-main' })}>
+                  <AppWindow />
+                </IslandActionButton>
                 {primary?.attention && (
-                  <Button size="sm" variant="ghost" onClick={() => onIntent({ name: 'dismiss' })}>关闭</Button>
+                  <IslandActionButton label="关闭" onClick={() => onIntent({ name: 'dismiss' })}>
+                    <X />
+                  </IslandActionButton>
                 )}
                 {primary && (
-                  <Button size="sm" variant="ghost" onClick={() => onIntent({ name: 'open-session', threadId: primary.threadId })}>打开会话</Button>
+                  <IslandActionButton
+                    label="打开会话"
+                    onClick={() => onIntent({ name: 'open-session', threadId: primary.threadId })}
+                  >
+                    <MessageSquare />
+                  </IslandActionButton>
                 )}
-                <Button size="sm" variant="ghost" onClick={() => onIntent({ name: 'set-expanded', value: false })}>收起</Button>
+                <IslandActionButton label="收起" onClick={() => onIntent({ name: 'set-expanded', value: false })}>
+                  <ChevronUp />
+                </IslandActionButton>
               </div>
             </div>
 
@@ -183,7 +255,10 @@ export function AgentIslandSurface({
                 planning 区在两种状态下都保留（有才显，复用下方全量逻辑）。 */}
             {state.isIdle ? (
               <div className="island-recent">
-                <div className="island-recent-head">最近会话</div>
+                <div className="island-section-head">
+                  <span>最近会话</span>
+                  <span>{state.recentSessions?.length ?? 0}</span>
+                </div>
                 {state.recentSessions && state.recentSessions.length > 0 ? (
                   <ul className="island-sessions">
                     {state.recentSessions.map((r) => (
@@ -202,7 +277,7 @@ export function AgentIslandSurface({
                       >
                         <span className="island-recent-icon" aria-hidden="true">◌</span>
                         <span className="island-session-copy">
-                          <span className="island-session-title">{r.title}</span>
+                          <span className="island-session-title">{formatIslandSessionTitle(r.title, r.threadId)}</span>
                           <span className="island-session-detail">{formatRelativeTime(r.updatedAt)}</span>
                         </span>
                         {r.project && (
@@ -214,45 +289,44 @@ export function AgentIslandSurface({
                 ) : (
                   <div className="island-recent-empty">
                     <span>还没有会话</span>
-                    <Button size="sm" variant="ghost" onClick={() => onIntent({ name: 'open-main' })}>新建会话</Button>
+                    <Button size="sm" variant="ghost" onClick={() => onIntent({ name: 'new-session' })}>新建会话</Button>
                   </div>
                 )}
               </div>
             ) : (
               state.sessions.length > 0 && (
-                <ul className="island-sessions">
-                  {state.sessions.map((s) => (
-                    <li
-                      key={s.threadId}
-                      className="island-session-row island-no-drag"
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => onIntent({ name: 'open-session', threadId: s.threadId })}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault()
-                          onIntent({ name: 'open-session', threadId: s.threadId })
-                        }
-                      }}
-                    >
-                      <span className={cn('island-dot', PHASE_DOT[s.phase])} />
-                      <div className="island-session-copy">
-                        <span className="island-session-title">{s.title}</span>
-                        {s.activityLines.length > 0 ? (
-                          <span className="island-session-activity">{s.activityLines[s.activityLines.length - 1]}</span>
-                        ) : s.detail ? (
-                          <span className="island-session-detail">{s.detail}</span>
-                        ) : null}
-                        {sessionMetaById[s.threadId] && (
-                          <span className="island-session-meta">{sessionMetaById[s.threadId]}</span>
-                        )}
-                      </div>
-                      {s.project && (
-                        <span className="island-session-project">{s.project}</span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <div className="island-section-head">
+                    <span>活跃会话</span>
+                    <span>{state.sessions.length}</span>
+                  </div>
+                  <ul className="island-sessions">
+                    {state.sessions.map((s) => (
+                      <li
+                        key={s.threadId}
+                        className="island-session-row island-no-drag"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => onIntent({ name: 'open-session', threadId: s.threadId })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            onIntent({ name: 'open-session', threadId: s.threadId })
+                          }
+                        }}
+                      >
+                        <span className={cn('island-dot', PHASE_DOT[s.phase])} />
+                        <span className="island-session-copy">
+                          <span className="island-session-title">{formatIslandSessionTitle(s.title, s.threadId)}</span>
+                          {sessionMetaById[s.threadId] && (
+                            <span className="island-session-meta">{sessionMetaById[s.threadId]}</span>
+                          )}
+                        </span>
+                        <span className="island-session-phase">{PHASE_LABEL[s.phase] ?? s.phase}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
               )
             )}
 
@@ -269,20 +343,23 @@ export function AgentIslandSurface({
                         <span>待办</span>
                         <span className="island-planning-count">{sorted.length}</span>
                       </div>
-                      {visible.map((t) => (
-                        <div
-                          key={t.id}
-                          className="island-planning-row island-no-drag"
-                          data-overdue={t.overdue ? 'true' : 'false'}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => onIntent({ name: 'open-main' })}
-                        >
-                          <span className={cn('island-planning-check', t.overdue && 'island-planning-check-overdue')} />
-                          <span className="island-planning-text">{t.title}</span>
-                          <span className="island-planning-time">{formatIslandTime(t.dueAt, t.overdue)}</span>
-                        </div>
-                      ))}
+                      {visible.map((t) => {
+                        const time = formatIslandTime(t.dueAt, t.overdue)
+                        return (
+                          <div
+                            key={t.id}
+                            className="island-planning-row island-no-drag"
+                            data-overdue={t.overdue ? 'true' : 'false'}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => onIntent({ name: 'open-todo', todoId: t.id })}
+                          >
+                            <span className={cn('island-planning-check', t.overdue && 'island-planning-check-overdue')} />
+                            <span className="island-planning-text">{t.title}</span>
+                            {time && <span className="island-planning-time">{time}</span>}
+                          </div>
+                        )
+                      })}
                       {overflow > 0 && (
                         <div className="island-planning-overflow">{`还有 ${overflow} 条`}</div>
                       )}
@@ -300,19 +377,22 @@ export function AgentIslandSurface({
                         <span>提醒</span>
                         <span className="island-planning-count">{sorted.length}</span>
                       </div>
-                      {visible.map((r) => (
-                        <div
-                          key={r.id}
-                          className="island-planning-row island-no-drag"
-                          data-overdue={r.overdue ? 'true' : 'false'}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => onIntent({ name: 'open-main' })}
-                        >
-                          <span className="island-planning-time">{formatIslandTime(r.dueAt, r.overdue)}</span>
-                          <span className="island-planning-text">{r.title}</span>
-                        </div>
-                      ))}
+                      {visible.map((r) => {
+                        const time = formatIslandTime(r.dueAt, r.overdue)
+                        return (
+                          <div
+                            key={r.id}
+                            className="island-planning-row island-no-drag"
+                            data-overdue={r.overdue ? 'true' : 'false'}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => onIntent({ name: 'open-main' })}
+                          >
+                            <span className="island-planning-text">{r.title}</span>
+                            {time && <span className="island-planning-time">{time}</span>}
+                          </div>
+                        )
+                      })}
                       {overflow > 0 && (
                         <div className="island-planning-overflow">{`还有 ${overflow} 条`}</div>
                       )}
@@ -324,11 +404,11 @@ export function AgentIslandSurface({
           </div>
         )}
 
-        <button
-          className="island-compact-layer"
+        <div
+          className="island-compact-layer island-no-drag"
           data-collapsed={requestedExpanded ? 'false' : 'true'}
-          onClick={() => onIntent({ name: 'set-expanded', value: !requestedExpanded })}
         >
+          <span className="island-compact-grip island-drag-handle" aria-hidden="true" />
           {!primary && planningIndicator && (
             <span className="island-planning-indicator" style={{ color: planningIndicator.color }}>
               {planningIndicator.symbol === 'calendar' ? (
@@ -338,7 +418,7 @@ export function AgentIslandSurface({
               )}
             </span>
           )}
-          <span className={cn('island-dot', PHASE_DOT[primary?.phase ?? 'idle'])} />
+          <IslandMascot phase={primary?.phase ?? 'idle'} />
           {needInteractionCount >= 2 && (
             <span
               className="island-attention-pill island-no-drag"
@@ -351,8 +431,8 @@ export function AgentIslandSurface({
           {queueCount > 0 && (
             <span className="island-queue-badge island-no-drag">{`队列 ${queueCount}`}</span>
           )}
-          <ChevronDown className={cn('island-chevron', requestedExpanded && 'rotate-180')} />
-        </button>
+          <ChevronDown className="island-chevron" aria-hidden="true" />
+        </div>
       </div>
     </div>
   )

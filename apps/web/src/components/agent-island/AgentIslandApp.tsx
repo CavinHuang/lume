@@ -41,7 +41,7 @@ export function AgentIslandApp() {
   return (
     <Provider>
       <ModelMetaProvider>
-        <TooltipProvider>
+        <TooltipProvider delay={600}>
           {state && state.presentation !== 'hidden' && (
             <AgentIslandSurface state={state} onIntent={sendIntent} />
           )}

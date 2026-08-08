@@ -1457,6 +1457,30 @@ function getAgentIslandService(): AgentIslandService {
           )
         })
       },
+      // 复用 tray 导航路径打开待办面板；todoId 缺省打开列表，传 id 则定位（renderer LeftSidebar openTodos 处理）。
+      openTodo: (todoId) => {
+        showMainWindowThenSend({ action: 'open-todo', todoId }).catch((error) => {
+          writeMainLog(
+            'warn',
+            'desktop.agent_island',
+            'agent_island.open_todo_failed',
+            'agent island open-todo failed',
+            { data: { error } },
+          )
+        })
+      },
+      // 复用 tray new-thread 导航：打开主窗并新建会话（聚焦 composer）。
+      newSession: () => {
+        showMainWindowThenSend({ action: 'new-thread' }).catch((error) => {
+          writeMainLog(
+            'warn',
+            'desktop.agent_island',
+            'agent_island.new_session_failed',
+            'agent island new-session failed',
+            { data: { error } },
+          )
+        })
+      },
       // 高度反馈环（spec §3.2）：renderer 测得展开高度后回传，main 调整 BrowserWindow 高度。
       setExpandedHeight: (height) => {
         const w = islandWindow

@@ -57,6 +57,10 @@ export interface AgentIslandServiceDeps {
   openMain: () => void
   /** 把主窗口切换到指定 thread（best-effort，使用与 tray 相同的导航路径）。 */
   openSession: (threadId: string) => void
+  /** 把主窗口切换到待办面板；传 todoId 则定位到该待办，否则打开列表。 */
+  openTodo: (todoId?: string) => void
+  /** 打开主窗并新建会话（复用 tray new-thread 导航）。 */
+  newSession: () => void
   /** 测得的展开内容高度回写：main 调 clampIslandHeight 调整 BrowserWindow 高度。 */
   setExpandedHeight: (height: number) => void
   /** Phase 2：若 native host ready，同步推送快照；否则忽略。 */
@@ -278,6 +282,14 @@ export class AgentIslandService {
           this.markRead(intent.threadId)
           this.deps.openSession(intent.threadId)
         }
+        break
+      case 'open-todo':
+        // 打开主窗待办面板；todoId 缺省时打开列表，传 id 则定位到该待办（renderer 端 openTodos 处理）。
+        this.deps.openTodo(intent.todoId)
+        break
+      case 'new-session':
+        // 打开主窗并新建会话（复用 tray new-thread 导航，聚焦 composer）。
+        this.deps.newSession()
         break
       case 'set-expanded-height': {
         // 高度反馈环（spec §3.2）：仅调整窗口尺寸，不触发 push（否则 renderer↔main 形成回环）。

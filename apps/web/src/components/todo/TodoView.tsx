@@ -96,6 +96,12 @@ export function TodoView({
   const [todos, setTodos] = useState<PlanningTodo[]>([])
   const [busy, setBusy] = useState(false)
   const [selectedTodoId, setSelectedTodoId] = useState(todoId)
+  // 外部（灵动岛 open-todo intent）带入 todoId 时，列表加载后滚动到该 todo（高亮由 selectedTodoId 初值自动生效）。
+  useEffect(() => {
+    if (!todoId) return
+    const el = document.querySelector(`[data-todo-row="${CSS.escape(todoId)}"]`)
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [todoId, todos])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [planningView, setPlanningView] = useState<'todos' | 'calendar'>(
     'todos',
@@ -629,6 +635,7 @@ function TodoRow({
   const trashed = todo.deletedAt !== undefined
   return (
     <div
+      data-todo-row={todo.id}
       className={cn(
         'group flex min-h-[68px] items-center gap-3 border-b border-border/50 px-4 py-3 transition-colors hover:bg-muted/30',
         selected && 'bg-primary/[0.06] hover:bg-primary/[0.08]',

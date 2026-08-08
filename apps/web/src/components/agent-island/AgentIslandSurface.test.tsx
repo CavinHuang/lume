@@ -8,6 +8,8 @@ import type {
 } from '@lume/shared'
 import {
   AgentIslandSurface,
+  formatIslandSessionTitle,
+  formatIslandTime,
   formatRelativeTime,
   formatSessionMeta,
   resolveIslandModelLabel,
@@ -53,6 +55,34 @@ function planningItem(id: string, over: Partial<AgentIslandPlanningItem>): Agent
 }
 
 const noop = () => undefined
+
+describe('高密度展开态 helper', () => {
+  test('空标题和 UUID 标题使用短 ID 兜底', () => {
+    expect(formatIslandSessionTitle('', '18bb87a0-9755')).toBe('未命名会话 · 18bb87')
+    expect(formatIslandSessionTitle('18bb87a0-9755-4d44-b951-c5bf93de304b', 't1')).toBe('未命名会话 · 18bb87')
+    expect(formatIslandSessionTitle('修复灵动岛动画', 't1')).toBe('修复灵动岛动画')
+  })
+
+  test('非法 dueAt 不渲染 Invalid Date', () => {
+    expect(formatIslandTime(Number.NaN, false)).toBe('')
+    expect(formatIslandTime(Number.POSITIVE_INFINITY, true)).toBe('')
+    expect(formatIslandTime(1, false)).not.toContain('Invalid Date')
+  })
+})
+
+describe('compact hover 与拖动契约', () => {
+  test('compact 主体响应 hover，左侧 grip 保留拖动，箭头仅作状态提示', () => {
+    const html = renderToStaticMarkup(
+      <AgentIslandSurface state={baseState({})} onIntent={noop} />,
+    )
+
+    expect(html).toContain('island-compact-layer island-no-drag')
+    expect(html).toContain('island-compact-grip island-drag-handle')
+    expect(html).toContain('island-chevron')
+    expect(html).not.toContain('aria-label="展开"')
+    expect(html).not.toContain('island-compact-toggle')
+  })
+})
 
 describe('AgentIslandSurface compact 队列徽章', () => {
   test('primary.queuedCount > 0 → compact 含「队列 N」', () => {
@@ -127,11 +157,11 @@ describe('AgentIslandSurface compact attention pill', () => {
     )
     expect(html).toMatch(/data-attention-count="2"/)
     expect(html).toContain('island-attention-pill')
-    // pill 紧邻 dot：dot 标记出现在 attention-pill 标记之前（同 button 内顺序）
-    const dotIdx = html.indexOf('island-dot')
+    // pill 紧邻 mascot：mascot 标记出现在 attention-pill 标记之前（同 compact 内顺序）
+    const mascotIdx = html.indexOf('island-mascot')
     const pillIdx = html.indexOf('island-attention-pill')
-    expect(dotIdx).toBeGreaterThan(-1)
-    expect(pillIdx).toBeGreaterThan(dotIdx)
+    expect(mascotIdx).toBeGreaterThan(-1)
+    expect(pillIdx).toBeGreaterThan(mascotIdx)
   })
 
   test('needs-interaction 会话 ==1 → 不显 pill（走 warning phase dot）', () => {
@@ -188,16 +218,16 @@ describe('sortIslandPlanningItems（expanded planning 全量排序）', () => {
   })
 })
 
-describe('formatSessionMeta（expanded 会话行 model · cost · token 小字）', () => {
-  test('三者齐全 → 「label · $X.XX · Yk」', () => {
+describe('formatSessionMeta（expanded 会话行 model · token 摘要）', () => {
+  test('模型、成本与 token 齐全时省略成本', () => {
     const meta = formatSessionMeta(
       { modelRef: 'claude-sonnet-4-5', costUSD: 0.42, tokenTotal: 12345 },
       () => 'Claude Sonnet 4.5',
     )
-    expect(meta).toBe('Claude Sonnet 4.5 · $0.42 · 12.3k')
+    expect(meta).toBe('Claude Sonnet 4.5 · 12.3k')
   })
 
-  test('cost/token 仅 >0 才显（=0 / undefined 省略，避免「· $0.00」噪声）', () => {
+  test('token 仅 >0 才显', () => {
     expect(
       formatSessionMeta(
         { modelRef: 'claude-sonnet-4-5', costUSD: 0, tokenTotal: 0 },
@@ -217,17 +247,17 @@ describe('formatSessionMeta（expanded 会话行 model · cost · token 小字�
       { modelRef: 'some-unknown-ref-xyz', costUSD: 1.5, tokenTotal: 5000 },
       () => undefined,
     )
-    expect(meta).toBe('$1.50 · 5.0k')
+    expect(meta).toBe('5.0k')
     expect(meta).not.toContain('some-unknown-ref-xyz')
   })
 
-  test('无 model 但有 cost+token → 「$X.XX · Yk」（无前导分隔符）', () => {
+  test('无 model 但有 cost+token → 仅显示 token', () => {
     expect(
       formatSessionMeta(
         { modelRef: undefined, costUSD: 0.5, tokenTotal: 2500 },
         () => undefined,
       ),
-    ).toBe('$0.50 · 2.5k')
+    ).toBe('2.5k')
   })
 
   test('token / 1000 保留 1 位小数（含 <1000 进位到 1.0k）', () => {

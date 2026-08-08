@@ -85,12 +85,16 @@ export type AgentIslandIntentName =
   | 'dismiss'
   | 'open-main'
   | 'open-session'
+  | 'open-todo'
+  | 'new-session'
   | 'set-expanded-height'
 
 export interface AgentIslandIntent {
   name: AgentIslandIntentName
   value?: boolean
   threadId?: string
+  /** 用于 'open-todo'：待办 id（不传则打开待办列表，不定位具体项）。 */
+  todoId?: string
   /** 所属工作区名（session 后小字号显示）。 */
   project?: string
   /** 用于 'set-expanded-height'：展开内容真实高度（px），main 据此调用 clampIslandHeight。 */
@@ -133,13 +137,14 @@ export function nativeEventToIntent(event: Extract<NativeAgentIslandEvent, { typ
   name: AgentIslandIntentName
   value?: boolean
   threadId?: string
+  todoId?: string
 } {
   switch (event.name) {
     case 'set-expanded': return { name: 'set-expanded', value: event.value }
     case 'set-hovered': return { name: 'set-hovered', value: event.value }
     case 'open-session': return { name: 'open-session', threadId: event.threadId }
     case 'open-main': return { name: 'open-main' }
-    case 'open-planning': return { name: 'open-main' }   // Lume 无独立 planning 窗，降级打开主窗
+    case 'open-planning': return { name: 'open-todo' }   // Lume 无独立 planning 窗：打开待办列表（native open-planning 不带 todoId）
     case 'dismiss': return { name: 'dismiss' }
   }
 }
