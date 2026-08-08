@@ -17,7 +17,7 @@ import type { SDKMessage } from "../types";
 describe("BashTool shell invocation", () => {
   test("classifies read-only shell commands dynamically for permissions and concurrency", () => {
     expect(BashTool.isReadOnly?.({ command: "git status" })).toBeTrue();
-    expect(BashTool.isConcurrencySafe?.({ command: "rg TODO src" })).toBeTrue();
+    expect(BashTool.isConcurrencySafe?.({ command: "git status" })).toBeTrue();
     expect(BashTool.isReadOnly?.({ command: "git commit -m change" })).toBeFalse();
     expect(BashTool.isReadOnly?.({ command: "rg TODO src > results.txt" })).toBeFalse();
     expect(BashTool.isReadOnly?.({ command: "powershell -Command Get-ChildItem" })).toBeTrue();
@@ -76,7 +76,7 @@ describe("BashTool shell invocation", () => {
 
   test("does not mark a no-match search as a failed tool call", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-bash-semantic-"));
-    const command = process.platform === "win32" ? "echo hello | findstr nomatch" : "printf hello | rg nomatch";
+    const command = process.platform === "win32" ? "echo hello | findstr nomatch" : "printf hello | grep nomatch";
     const result = await BashTool.call({ command, timeout: 10_000 }, { cwd: root });
     expect(result.is_error).toBeFalsy();
     expect(result.content).toContain("No matches found");
