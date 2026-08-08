@@ -212,6 +212,18 @@ export function GeneralSettings() {
                 }, '窗口行为已保存')}
               />
             </SettingsRow>
+            <SettingsRow
+              label="Agent 灵动岛"
+              desc="在所有应用之上显示 agent 运行状态悬浮岛（关闭后立即生效）"
+            >
+              <LumeSwitch
+                checked={settings.agentIsland.enabled}
+                disabled={saving}
+                onCheckedChange={(checked) => void persistSettings({
+                  agentIsland: { enabled: checked },
+                }, '灵动岛设置已保存')}
+              />
+            </SettingsRow>
           </div>
         </SettingsCard>
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { clearCacheInputSchema } from "./schemas";
+import { clearCacheInputSchema, updateGeneralSettingsInputSchema } from "./schemas";
 
 describe("clearCacheInputSchema", () => {
   test("应拒绝 legacy frontend/preview cache keys", () => {
@@ -19,5 +19,22 @@ describe("clearCacheInputSchema", () => {
     })).toEqual({
       logs: true
     });
+  });
+});
+
+describe("updateGeneralSettingsInputSchema", () => {
+  test("agentIsland 部分更新应被保留（不被静默剥除）", () => {
+    const parsed = updateGeneralSettingsInputSchema.parse({
+      agentIsland: { enabled: false }
+    });
+    expect(parsed).toEqual({ agentIsland: { enabled: false } });
+  });
+
+  test("agentIsland 可选，缺省时不出现在结果中", () => {
+    const parsed = updateGeneralSettingsInputSchema.parse({
+      agentMessageDisplayMode: "verbose"
+    });
+    expect(parsed).toEqual({ agentMessageDisplayMode: "verbose" });
+    expect(parsed).not.toHaveProperty("agentIsland");
   });
 });

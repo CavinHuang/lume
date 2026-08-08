@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Eye, EyeOff, Loader2, Plus } from 'lucide-react'
+import { Eye, EyeOff, Loader2, Plus, Trash2 } from 'lucide-react'
 import type { ChannelCreateInput, ProviderType, ChannelModel, ProviderApiFamily, OpenAiApiMode } from '@lume/shared'
 import { PROVIDER_LABELS, PROVIDER_DEFAULT_URLS, normalizeChannelModel } from '@lume/shared'
 import { decryptChannelKey, fetchChannelModels, syncChannelModels, testChannelConnection } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -24,6 +22,7 @@ interface Props {
   onSubmit: (input: ChannelFormValue) => Promise<void>
   onSynced?: () => void
   onCancel?: () => void
+  onDelete?: () => void
 }
 
 const PROVIDERS = Object.entries(PROVIDER_LABELS) as [ProviderType, string][]
@@ -104,6 +103,7 @@ export function ChannelForm({
   onSubmit,
   onCancel,
   onSynced,
+  onDelete,
 }: Props) {
   const [provider, setProvider] = useState<ProviderType>(initialValue?.provider ?? 'anthropic')
   const [name, setName] = useState(initialValue?.name ?? '')
@@ -295,136 +295,103 @@ export function ChannelForm({
   const primaryButtonClass = 'h-8 rounded-[7px] bg-[var(--brand)] px-3 text-[12px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] focus-visible:ring-0'
 
   return (
-    <form onSubmit={handleSubmit} className="max-w-none space-y-4 text-[var(--text-1)]">
-      <div>
-        <h2 className="text-[15px] font-semibold text-[var(--text-1)]">{mode === 'edit' ? '编辑渠道' : '添加渠道'}</h2>
-        <p className="mt-0.5 text-[12px] text-[var(--text-3)]">
-          {disabled ? '开启后即可填写该供应商的连接信息' : mode === 'edit' ? '更新当前渠道配置' : '配置 AI 供应商连接'}
-        </p>
+    <form onSubmit={handleSubmit} className="space-y-3 text-[var(--text-1)]">
+      {/* 供应商（含协议） / Base URL（两列）*/}
+      <div className="grid grid-cols-2 gap-3 items-start">
+        <div className="space-y-2">
+          {provider === 'custom' ? (
+            <div className="space-y-1.5">
+              <Label>协议类型</Label>
+              <Select
+                value={apiFamily === 'openai' ? `openai-${openaiApiMode}` : apiFamily}
+                onValueChange={(v) => {
+                  if (v === 'openai-chat-completions') { setApiFamily('openai'); setOpenaiApiMode('chat-completions') }
+                  else if (v === 'openai-responses') { setApiFamily('openai'); setOpenaiApiMode('responses') }
+                  else { setApiFamily(v as ProviderApiFamily); setOpenaiApiMode('chat-completions') }
+                }}
+                disabled={disabled}
+              >
+                <SelectTrigger className={selectClass}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="openai-chat-completions">OpenAI (Chat Completions)</SelectItem>
+                  <SelectItem value="openai-responses">OpenAI (Responses)</SelectItem>
+                  <SelectItem value="anthropic">Anthropic</SelectItem>
+                  <SelectItem value="google">Google Gen AI</SelectItem>
+                </SelectContent>
+              </Select>
+              <Label className="text-[11px]">标识符</Label>
+              <Input value={providerId} onChange={(e) => setProviderId(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))} placeholder="my-openai" className={cn(fieldClass, 'font-mono text-[12px]')} disabled={disabled} />
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <Label>供应商</Label>
+              <Select value={provider} onValueChange={(v) => { if (v) handleProviderChange(v as ProviderType) }} disabled={providerLocked || disabled}>
+                <SelectTrigger className={selectClass}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {PROVIDERS.map(([id, label]) => (
+                    <SelectItem key={id} value={id}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {provider === 'openai' && (
+                <div className="space-y-1.5">
+                  <Label className="text-[11px]">协议类型</Label>
+                  <Select value={`openai-${openaiApiMode}`} onValueChange={(v) => { if (v) setOpenaiApiMode(v.replace('openai-', '') as OpenAiApiMode) }} disabled={disabled}>
+                    <SelectTrigger className={selectClass}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="openai-chat-completions">Chat Completions</SelectItem>
+                      <SelectItem value="openai-responses">Responses</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="space-y-1.5">
+          <Label>Base URL</Label>
+          <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className={cn(fieldClass, 'font-mono text-[12px]')} disabled={disabled} />
+        </div>
       </div>
 
-      {provider === 'custom' && (
+      {/* API Key / 显示名称（两列）*/}
+      <div className="grid grid-cols-2 gap-3 items-start">
         <div className="space-y-1.5">
-          <Label>协议类型</Label>
-          <Select
-            value={apiFamily === 'openai' ? `openai-${openaiApiMode}` : apiFamily}
-            onValueChange={(v) => {
-              if (v === 'openai-chat-completions') {
-                setApiFamily('openai')
-                setOpenaiApiMode('chat-completions')
-              } else if (v === 'openai-responses') {
-                setApiFamily('openai')
-                setOpenaiApiMode('responses')
-              } else {
-                setApiFamily(v as ProviderApiFamily)
-                setOpenaiApiMode('chat-completions')
-              }
-            }}
-            disabled={disabled}
-          >
-            <SelectTrigger className={selectClass}><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="openai-chat-completions">OpenAI Compatible (Chat Completions)</SelectItem>
-              <SelectItem value="openai-responses">OpenAI Compatible (Responses)</SelectItem>
-              <SelectItem value="anthropic">Anthropic</SelectItem>
-              <SelectItem value="google">Google Gen AI</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
-      {provider === 'custom' && (
-        <div className="space-y-1.5">
-          <Label>标识符</Label>
-          <Input
-            value={providerId}
-            onChange={(e) => setProviderId(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
-            placeholder="my-openai"
-            className={cn(fieldClass, 'font-mono text-[12px]')}
-            disabled={disabled}
-          />
-          <p className="text-[11px] text-[var(--text-3)]">用于 modelRef 格式：标识符/模型ID</p>
-        </div>
-      )}
-
-      {provider !== 'custom' && (
-        <div className="space-y-1.5">
-          <Label>供应商</Label>
-          <Select
-            value={provider}
-            onValueChange={(v) => { if (v) handleProviderChange(v as ProviderType) }}
-            disabled={providerLocked || disabled}
-          >
-            <SelectTrigger className={selectClass}><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {PROVIDERS.map(([id, label]) => (
-                <SelectItem key={id} value={id}>{label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
-      {provider === 'openai' && (
-        <div className="space-y-1.5">
-          <Label>协议类型</Label>
-          <Select
-            value={`openai-${openaiApiMode}`}
-            onValueChange={(v) => { if (v) setOpenaiApiMode(v.replace('openai-', '') as OpenAiApiMode) }}
-            disabled={disabled}
-          >
-            <SelectTrigger className={selectClass}><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="openai-chat-completions">Chat Completions</SelectItem>
-              <SelectItem value="openai-responses">Responses</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
-      <div className="space-y-1.5">
-        <Label>名称</Label>
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={PROVIDER_LABELS[provider]} className={fieldClass} disabled={disabled} />
-      </div>
-
-      <div className="space-y-1.5">
-        <Label>Base URL</Label>
-        <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className={cn(fieldClass, 'font-mono text-[12px]')} disabled={disabled} />
-      </div>
-
-      <div className="space-y-1.5">
-        <Label>{initialValue?.authType === 'oauth' && !apiKey ? 'API Key（填写后切换）' : 'API Key'}</Label>
-        <div className="relative">
-          <Input
-            type={showApiKey ? 'text' : 'password'}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={mode === 'edit' ? '留空保持当前凭据' : apiKeyRequired ? 'sk-...' : '本地服务通常可留空'}
-            className={cn(fieldClass, (apiKey || canRevealStoredApiKey) && 'pr-9', 'font-mono text-[12px]')}
-            disabled={disabled}
-          />
-          {(apiKey || canRevealStoredApiKey) && <Button
+          <Label>{initialValue?.authType === 'oauth' && !apiKey ? 'API Key（填写后切换）' : 'API Key'}</Label>
+          <div className="relative">
+            <Input
+              type={showApiKey ? 'text' : 'password'}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={mode === 'edit' ? '留空保持当前凭据' : apiKeyRequired ? 'sk-...' : '本地服务可留空'}
+              className={cn(fieldClass, (apiKey || canRevealStoredApiKey) && 'pr-9', 'font-mono text-[12px]')}
+              disabled={disabled}
+            />
+            {(apiKey || canRevealStoredApiKey) && (
+              <Button
                 variant="ghost"
-            type="button"
-            onClick={() => {
-              if (canRevealStoredApiKey && connectionId && !apiKey) {
-                setRevealOpen(true)
-                return
-              }
-              setShowApiKey((value) => !value)
-            }}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-3)] hover:text-[var(--text-1)]"
-            tabIndex={-1}
-          >
-            {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
-          </Button>}
-        </div>
-        {mode === 'edit' && connectionId && OAUTH_PROVIDERS.has(provider) && (
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <p className="text-[11px] text-[var(--text-3)]">也可以使用供应商订阅账号登录。</p>
-            <ConnectionOAuthLogin connectionId={connectionId} onCompleted={() => void handleFetchModels()} />
+                type="button"
+                onClick={() => {
+                  if (canRevealStoredApiKey && connectionId && !apiKey) { setRevealOpen(true); return }
+                  setShowApiKey((value) => !value)
+                }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-3)] hover:text-[var(--text-1)]"
+                tabIndex={-1}
+              >
+                {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+              </Button>
+            )}
           </div>
-        )}
+          {mode === 'edit' && connectionId && OAUTH_PROVIDERS.has(provider) && (
+            <div className="flex items-center justify-end pt-1">
+              <ConnectionOAuthLogin connectionId={connectionId} onCompleted={() => void handleFetchModels()} />
+            </div>
+          )}
+        </div>
+        <div className="space-y-1.5">
+          <Label>显示名称</Label>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={PROVIDER_LABELS[provider]} className={fieldClass} disabled={disabled} />
+        </div>
       </div>
 
       <div className="space-y-2">
@@ -523,41 +490,56 @@ export function ChannelForm({
             {modelSearch.trim() && (
               <p className="text-[11px] text-[var(--text-3)]">匹配 {visibleModels.length} / {models.length} 个模型</p>
             )}
-            <ScrollArea className="max-h-48 rounded-[8px] bg-[var(--surface-2)]">
-              <div className="divide-y divide-[color:color-mix(in_oklab,var(--border)_55%,transparent)]">
-                {visibleModels.map((m) => (
-                  <label key={m.id} className="flex cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-[var(--surface-3)]">
-                    <Checkbox
-                      checked={m.enabled}
-                      disabled={disabled}
-                      onCheckedChange={(checked) => setModels((prev) => prev.map((x) => x.id === m.id ? { ...x, enabled: Boolean(checked) } : x))}
-                    />
-                    <span className="truncate font-mono text-[12px] text-[var(--text-1)]">{m.id}</span>
-                  </label>
-                ))}
-                {visibleModels.length === 0 && (
-                  <div className="px-3 py-6 text-center text-[12px] text-[var(--text-3)]">没有匹配的模型</div>
-                )}
-              </div>
-            </ScrollArea>
+            <div className="flex max-h-48 flex-wrap gap-1.5 overflow-y-auto">
+              {visibleModels.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setModels((prev) => prev.map((x) => x.id === m.id ? { ...x, enabled: !x.enabled } : x))}
+                  className={cn(
+                    'rounded-md border px-2 py-1 font-mono text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                    m.enabled
+                      ? 'border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
+                      : 'border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-2)] text-[var(--text-3)] hover:text-[var(--text-1)]'
+                  )}
+                >
+                  {m.id}
+                </button>
+              ))}
+              {visibleModels.length === 0 && (
+                <span className="py-3 text-[12px] text-[var(--text-3)]">没有匹配的模型</span>
+              )}
+            </div>
           </div>
         )}
       </div>
 
-      <div className="flex items-center gap-2 pt-2">
-        <Button type="submit" disabled={disabled || saving || (mode === 'create' && apiKeyRequired && !apiKey)} className={primaryButtonClass}>
-          {saving && <Loader2 size={13} className="animate-spin mr-1" />}
-          {mode === 'edit' ? '保存修改' : '保存'}
-        </Button>
-        {onCancel && <Button type="button" variant="ghost" onClick={onCancel} className="h-8 rounded-[7px] text-[12px] text-[var(--text-2)] hover:bg-[var(--surface-3)] hover:text-[var(--text-1)] focus-visible:ring-0">取消</Button>}
+      <div className="flex items-center justify-end gap-2 pt-2">
+        {testMessage && <p className="mr-auto text-[11px] text-[var(--text-3)]">{testMessage}</p>}
         {mode === 'edit' && connectionId && (
           <Button type="button" variant="outline" onClick={() => void handleTestConnection()} disabled={disabled || testing} className={outlineButtonClass}>
             {testing && <Loader2 size={13} className="mr-1 animate-spin" />}
             测试连接
           </Button>
         )}
+        {mode === 'edit' && connectionId && onDelete && (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onDelete}
+            className="h-8 gap-1.5 rounded-[7px] border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-transparent px-3 text-[12px] font-medium text-[var(--lume-danger)] shadow-none hover:bg-[color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))]"
+          >
+            <Trash2 size={13} />
+            删除连接
+          </Button>
+        )}
+        <Button type="submit" disabled={disabled || saving || (mode === 'create' && apiKeyRequired && !apiKey)} className={primaryButtonClass}>
+          {saving && <Loader2 size={13} className="animate-spin mr-1" />}
+          {mode === 'edit' ? '保存修改' : '保存'}
+        </Button>
+        {onCancel && <Button type="button" variant="ghost" onClick={onCancel} className="h-8 rounded-[7px] text-[12px] text-[var(--text-2)] hover:bg-[var(--surface-3)] hover:text-[var(--text-1)] focus-visible:ring-0">取消</Button>}
       </div>
-      {testMessage && <p className="text-[11px] text-[var(--text-3)]">{testMessage}</p>}
 
       <Dialog open={revealOpen} onOpenChange={setRevealOpen}>
         <DialogContent showCloseButton={!revealing}>

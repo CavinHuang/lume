@@ -174,11 +174,11 @@ async function runFallbackSearch({
   const args = buildRgArgs(input, outputMode, searchPath)
   const ripgrep = resolveRipgrepInvocation(context.sandbox)
   const rg = await runSearchProcess(ripgrep.command, [...ripgrep.args, ...args], context.abortSignal)
-  if (rg.error?.message.includes('ENOENT') && ripgrep.source === 'system' && isNativeAvailable()) {
+  if (isCommandNotFound(rg.error) && ripgrep.source === 'system' && isNativeAvailable()) {
     const native = await runNativeSearch(input, searchPath, outputMode, offset, headLimit)
     if (native) return native
   }
-  const processResult = rg.error?.message.includes('ENOENT')
+  const processResult = isCommandNotFound(rg.error)
     ? await runSearchProcess('grep', buildGrepArgs(input, outputMode, searchPath), context.abortSignal)
     : rg
   const engine = processResult === rg ? 'rg' : 'grep'
@@ -212,6 +212,13 @@ async function runFallbackSearch({
     }, null, 2),
     _meta: { search: { engine, ripgrepSource: engine === 'rg' ? ripgrep.source : undefined, offset, limit: headLimit, total, truncated, appliedOffset: offset, appliedLimit: headLimit } },
   }
+}
+
+function isCommandNotFound(error?: Error): boolean {
+  return Boolean(error && (
+    ('code' in error && error.code === 'ENOENT')
+    || error.message.includes('ENOENT')
+  ))
 }
 
 async function runNativeSearch(input: any, searchPath: string, outputMode: SearchMode, offset: number, headLimit: number): Promise<{ data: string; _meta?: Record<string, unknown> } | undefined> {

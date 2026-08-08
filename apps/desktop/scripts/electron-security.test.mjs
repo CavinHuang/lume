@@ -95,7 +95,7 @@ test("preview scopes bind unguessable tokens to one webContents owner and expire
 
 test("renderer sidecar allowlist tracks public shared IPC channels", () => {
   const sharedMethods = Object.entries(sharedIpc)
-    .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && value && typeof value === "object")
+    .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && name !== "AGENT_ISLAND_IPC_CHANNELS" && value && typeof value === "object")
     .flatMap(([, value]) => Object.entries(value))
     .filter(([key, value]) => key !== "CHANGED" && key !== "REMINDER_DUE" && typeof value === "string" && !value.includes(":privileged-") && !Object.values(BROWSER_IPC_CHANNELS).includes(value))
     .map(([, value]) => value);

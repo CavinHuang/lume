@@ -73,6 +73,7 @@ import {
   validateWereadUrl,
   writeLauncherConfigAt,
 } from './desktop-core'
+import { clampIslandHeight, createIslandWindow } from './agent-island-window'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -117,6 +118,14 @@ import {
   writeChromeNativeHostRegistration,
 } from './plugin-native-host-installer'
 import { loadOrCreateDesktopContextKey } from './desktop-context-key'
+import { AgentIslandService } from './agent-island-service'
+import { isMacOS26NativeIslandCapable } from './macos-version'
+import {
+  startMacAgentIslandNativeHost,
+  disposeMacAgentIslandNativeHost,
+  isMacAgentIslandNativeHostReady,
+  publishMacAgentIslandSnapshot,
+} from './mac-agent-island-native-host'
 import {
   autoUnlockConnectionVault,
   getConnectionVaultStatus,
@@ -131,6 +140,8 @@ import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { discoverChromeProfiles, importChromeProfile } from './browser-import'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '../../../packages/shared/src/types/logging'
+import { nativeEventToIntent } from '../../../packages/shared/src/types/agent-island'
+import type { AgentIslandIntent, NativeAgentIslandSnapshot } from '../../../packages/shared/src/types/agent-island'
 import {
   createAsyncSingleFlight,
   createEventRateLimiter,
@@ -223,6 +234,10 @@ let windowBehavior = {
 
 // 快速输入子窗口（Alt+L）；Task 5 之前始终为 null，此处仅占位以便 IPC 信任集合与事件广播先行就绪。
 let quickInputWindow = null
+// Agent 灵动岛悬浮窗：由 ensureIslandWindow() 按需创建，destroyIslandWindow() 销毁。
+let islandWindow: BrowserWindow | null = null
+// Agent 灵动岛 service（Task 6）：lazy 构造于 getAgentIslandService()；onNotification/start/quit 接线在 Task 7。
+let agentIslandService: AgentIslandService | null = null
 let actionHudWindow = null
 let actionHudHideTimer: ReturnType<typeof setTimeout> | null = null
 let actionHudGeneration = 0
@@ -336,9 +351,11 @@ function requireMainWindowSender(context, command) {
   throw new Error('main window sender required')
 }
 
-/** 当前受信任的渲染窗口集合：mainWindow 总在列；quickInputWindow 存在时纳入。 */
+/** 当前受信任的渲染窗口集合：mainWindow 总在列；quickInputWindow / islandWindow 存在时纳入。 */
 function getTrustedWindows() {
-  return [mainWindow, quickInputWindow].filter(Boolean)
+  return [mainWindow, quickInputWindow, islandWindow].filter(
+    (w): w is BrowserWindow => !!w && !w.isDestroyed(),
+  )
 }
 
 function resolveRendererTraceOrigin(ownerWebContentsId) {
@@ -435,6 +452,19 @@ const sidecarHost = createSidecarHost({
     showDesktopProposalNotification(method, params)
     showPlanningReminderNotification(method, params)
     showDesktopActionHud(method, params)
+    // Agent 灵动岛 service（Task 7）：先于 renderer 转发处理 sidecar 通知，
+    // 确保即便主窗口隐藏也能触发 intent 刷新。
+    getAgentIslandService().handleSidecarNotification(method, params)
+    // Task 6（M-3）：planning 变更即时推送——sidecar 在 todo/calendar 任意变更时
+    // 发 `planning-todo:changed`（planning-todo-handlers.ts:48-55），触发重拉 +
+    // force push 绕过 5min 轮询让岛屿内容在 ~80ms 内更新。
+    if (method === 'planning-todo:changed') {
+      void getAgentIslandService().onPlanningChanged()
+    }
+    // thread 列表/标题变更：刷新 recent 投影 + title 缓存（force push 绕过节流）
+    if (method === 'agent:thread-list-changed' || method === 'agent:title-updated') {
+      void getAgentIslandService().onThreadListChanged()
+    }
     emitRendererEvent(SIDE_CAR_EVENT_CHANNEL, { method, params })
   },
 })
@@ -1274,6 +1304,199 @@ async function createQuickInputWindow() {
   return win
 }
 
+/** 获取当前岛屿窗口（可能为 null/已销毁）。 */
+export function getIslandWindow() {
+  return islandWindow
+}
+
+/** 按需创建岛屿悬浮窗：已存在且未销毁则直接复用。窗口注册在 loadURL 之前，保证首个 IPC 可被信任。 */
+export function ensureIslandWindow() {
+  if (islandWindow && !islandWindow.isDestroyed()) return islandWindow
+  const win = createIslandWindow({
+    appIsPackaged: app.isPackaged,
+    appProtocolOrigin: APP_PROTOCOL_ORIGIN,
+    devServerUrl: getDevServerUrl(),
+    desktopRoot: DESKTOP_ROOT,
+    savedPosition: readIslandWindowPosition(),
+    onWindowMove: (position) => persistIslandWindowPosition(position),
+    // M-6 首推竞态：start() 的 push(true) 可能早于 webContents 就绪 → send 静默丢失。
+    // renderer did-finish-load +120ms 后清 lastStateJson + force push 强制再推一次。
+    onReady: () => getAgentIslandService().repush(),
+  })
+  islandWindow = win
+  win.on('closed', () => {
+    if (islandWindow === win) islandWindow = null
+  })
+  win.once('ready-to-show', () => {
+    if (islandWindow === win && !win.isDestroyed()) win.showInactive()
+  })
+  return win
+}
+
+/**
+ * 读 settings.islandWindowPosition（Windows/Linux 持久化位置）。
+ * 缺省/非有限值返回 null → window 模块走默认吸附逻辑。
+ */
+function readIslandWindowPosition(): { x: number; y: number } | null {
+  const raw = getSettingsBroker().read().generalSettings as
+    | { islandWindowPosition?: { x?: unknown; y?: unknown } | null }
+    | undefined
+  const pos = raw?.islandWindowPosition
+  if (
+    pos &&
+    typeof pos.x === 'number' && Number.isFinite(pos.x) &&
+    typeof pos.y === 'number' && Number.isFinite(pos.y)
+  ) {
+    return { x: pos.x, y: pos.y }
+  }
+  return null
+}
+
+/**
+ * 经 settings broker 把拖动后的 {x,y} 写回 generalSettings.islandWindowPosition。
+ * 与 sidecar settings-replace 是同一条 settings.json 写路径（broker.mutate → replace），
+ * 不绕过既有持久化链。值未变时跳过，避免 clampIslandHeight 等程序化 setBounds
+ * 触发的 noop move 事件频繁写盘。
+ */
+function persistIslandWindowPosition(position: { x: number; y: number }): void {
+  try {
+    const current = readIslandWindowPosition()
+    if (current && current.x === position.x && current.y === position.y) return
+    getSettingsBroker().mutate((prev) => ({
+      ...prev,
+      generalSettings: {
+        ...((prev.generalSettings as Record<string, unknown> | undefined) ?? {}),
+        islandWindowPosition: { x: position.x, y: position.y },
+      },
+    }))
+  } catch (error) {
+    writeMainLog('warn', 'desktop.agent-island', 'position.persist_failed', 'failed to persist island window position', {
+      data: { error },
+    })
+  }
+}
+
+/** 销毁岛屿窗口并清空模块级引用。 */
+export function destroyIslandWindow() {
+  if (islandWindow && !islandWindow.isDestroyed()) islandWindow.destroy()
+  islandWindow = null
+}
+
+// Phase 2：macOS 26+ 启用原生灵动岛面（NSPanel/SwiftUI）时为真。native 激活期间禁止
+// 创建 Electron 岛屿 BrowserWindow（参见 getAgentIslandService 的 deps.ensureIslandWindow 包装）。
+let nativeSurfaceActive = false
+
+/**
+ * Phase 2：macOS 26+ 优先起 native 面；4s 未 ready / fatal / exit 则回退 Electron 窗。
+ * 非 macOS 26（含 Windows/Linux 与 darwin<26）直接走 Phase 1 的 Electron 透明窗路径。
+ */
+function startAgentIslandSurface(): void {
+  if (!isMacOS26NativeIslandCapable()) {
+    ensureIslandWindow()
+    return
+  }
+  const started = startMacAgentIslandNativeHost({
+    onReady: () => {
+      nativeSurfaceActive = true
+      destroyIslandWindow()
+    },
+    onEvent: (event) => {
+      if (event.type === 'intent') {
+        agentIslandService?.handleIntent(nativeEventToIntent(event))
+      }
+    },
+    onUnavailable: () => {
+      nativeSurfaceActive = false
+      ensureIslandWindow()
+    },
+  })
+  if (!started) ensureIslandWindow()
+}
+
+/** Phase 2：停用灵动岛渲染面（native host + Electron 窗均释放）。 */
+function stopAgentIslandSurface(): void {
+  disposeMacAgentIslandNativeHost()
+  nativeSurfaceActive = false
+  destroyIslandWindow()
+}
+
+/**
+ * Lazy 构造 Agent 灵动岛 service（Task 6）。onNotification 路由、whenReady 启动、will-quit 销毁
+ * 在 Task 7 接线；此处仅保证 `agentIslandService` 符号存在，让 dispatchCommand 的
+ * `agent_island_intent` 处理与 tsc 通过。
+ */
+function getAgentIslandService(): AgentIslandService {
+  if (!agentIslandService) {
+    agentIslandService = new AgentIslandService({
+      isEnabled: () => {
+        const s = getSettingsBroker().read()
+        const enabled = (s.generalSettings as { agentIsland?: { enabled?: boolean } } | undefined)
+          ?.agentIsland?.enabled
+        return enabled !== false
+      },
+      getIslandWindow: () => islandWindow,
+      // Phase 2：native 激活时返回 null（不创建 BrowserWindow），避免 native 模式冒 Electron 窗。
+      // service push() 的 win 检查已对 null 友好（`if (win && !win.isDestroyed())`）；service
+      // 类型签名仍是 `() => BrowserWindow`，这里用 as 收窄 `BrowserWindow | null` 为合同类型。
+      ensureIslandWindow: (() => (nativeSurfaceActive ? null : ensureIslandWindow())) as () => BrowserWindow,
+      callSidecar: <T,>(method: string, params?: unknown) => sidecarHost.call(method, params ?? null) as Promise<T>,
+      openMain: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.show()
+          mainWindow.focus()
+        }
+      },
+      // 复用 tray 的导航路径（showMainWindowThenSend({action:'open-thread',threadId})）。
+      openSession: (threadId) => {
+        showMainWindowThenSend({ action: 'open-thread', threadId }).catch((error) => {
+          writeMainLog(
+            'warn',
+            'desktop.agent_island',
+            'agent_island.open_session_failed',
+            'agent island open-session failed',
+            { data: { error } },
+          )
+        })
+      },
+      // 复用 tray 导航路径打开待办面板；todoId 缺省打开列表，传 id 则定位（renderer LeftSidebar openTodos 处理）。
+      openTodo: (todoId) => {
+        showMainWindowThenSend({ action: 'open-todo', todoId }).catch((error) => {
+          writeMainLog(
+            'warn',
+            'desktop.agent_island',
+            'agent_island.open_todo_failed',
+            'agent island open-todo failed',
+            { data: { error } },
+          )
+        })
+      },
+      // 复用 tray new-thread 导航：打开主窗并新建会话（聚焦 composer）。
+      newSession: () => {
+        showMainWindowThenSend({ action: 'new-thread' }).catch((error) => {
+          writeMainLog(
+            'warn',
+            'desktop.agent_island',
+            'agent_island.new_session_failed',
+            'agent island new-session failed',
+            { data: { error } },
+          )
+        })
+      },
+      // 高度反馈环（spec §3.2）：renderer 测得展开高度后回传，main 调整 BrowserWindow 高度。
+      setExpandedHeight: (height) => {
+        const w = islandWindow
+        if (w && !w.isDestroyed()) clampIslandHeight(w, height)
+      },
+      // Phase 2：native host ready 时同步推送快照；intent 走 onEvent → handleIntent。
+      isNativeReady: () => nativeSurfaceActive && isMacAgentIslandNativeHostReady(),
+      publishNativeSnapshot: (snap: NativeAgentIslandSnapshot) => {
+        publishMacAgentIslandSnapshot(snap)
+      },
+    })
+  }
+  return agentIslandService
+}
+
 async function toggleQuickInput() {
   const exists = Boolean(quickInputWindow) && !quickInputWindow.isDestroyed()
   const action = computeToggleAction({
@@ -1493,6 +1716,10 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     }
     case 'sidecar_healthcheck':
       return sidecarHost.call('healthcheck', null)
+    case 'agent_island_intent': {
+      await agentIslandService?.handleIntent(payload as AgentIslandIntent)
+      return null
+    }
     case 'sidecar_call': {
       validateRendererSidecarMethod(payload.method)
       if (payload.method !== 'agent:send-thread-message') {
@@ -2424,6 +2651,17 @@ function createSidecarHost({ onNotification }) {
             const settings = getSettingsBroker().replace(mutationId ? payload.params.settings : payload.params)
             const logging = (settings.generalSettings as { logging?: unknown } | undefined)?.logging
             if (logging && typeof logging === 'object') getLoggingService().updateSettings(logging)
+            // Agent 灵动岛 §5.3：设置开关"关闭后立即生效"。settings-replace 是所有设置写入
+            // （含 renderer toggle → sidecar general-settings:update）的唯一汇聚点，故在此处
+            // 检测 agentIsland.enabled 翻为 false 即停整个渲染面（native host + Electron 窗）；
+            // 反向翻转（重新开启）若发现渲染面已停，重启以恢复 macOS26 原生优先语义。
+            const agentIslandEnabled = (settings.generalSettings as { agentIsland?: { enabled?: boolean } } | undefined)
+              ?.agentIsland?.enabled
+            if (agentIslandEnabled === false) {
+              stopAgentIslandSurface()
+            } else if (!nativeSurfaceActive && (!islandWindow || islandWindow.isDestroyed())) {
+              startAgentIslandSurface()
+            }
             if (mutationId) {
               runningChild.postMessage(JSON.stringify({
                 method: 'system.settings-ack',
@@ -2931,6 +3169,10 @@ app.whenReady().then(async () => {
   registerDesktopContextPowerEvents()
   await captureQuickInputContext()
   await createMainWindow()
+  // Agent 灵动岛 service（Task 7）：主窗口就绪后启动，开始响应 sidecar intent。
+  await getAgentIslandService().start()
+  // Phase 2：启动渲染面（macOS 26+ 优先 native，否则 Electron 窗）。native 4s 未 ready 由 host 回退。
+  startAgentIslandSurface()
   logDesktopStartup('main window ready')
   // 检查 Alt+L 注册结果：被系统或其他程序占用时 register 返回 false，记录但不中断启动
   const quickInputShortcutRegistered = globalShortcut.register('Alt+L', () => {
@@ -2978,6 +3220,10 @@ app.on('will-quit', async () => {
   globalShortcut.unregisterAll()
   connectionVaultKey?.fill(0)
   connectionVaultKey = null
+  // Agent 灵动岛 service（Task 7）：销毁 service 与渲染面（Phase 2 含 native host），释放资源。
+  agentIslandService?.destroy()
+  agentIslandService = null
+  stopAgentIslandSurface()
 })
 
 async function startDesktopHost(): Promise<DesktopHostState> {

@@ -711,6 +711,18 @@ export function getQuickInputUrl(opts: {
   return `${opts.devServerUrl}/?view=quick-input`
 }
 
+/** 构建岛屿窗口加载 URL：dev 走 dev server，packaged 走 app 协议入口，均带 ?view=agent-island。 */
+export function getAgentIslandUrl(opts: {
+  appIsPackaged: boolean
+  appProtocolOrigin: string
+  devServerUrl: string
+}): string {
+  if (opts.appIsPackaged) {
+    return `${opts.appProtocolOrigin}/index.html?view=agent-island`
+  }
+  return `${opts.devServerUrl}/?view=agent-island`
+}
+
 export type TrayMenuAction = 'show-window' | 'hide-window' | 'quick-input' | 'new-thread' | 'open-thread' | 'open-settings' | 'check-update' | 'quit'
 
 export interface RecentTrayThread {

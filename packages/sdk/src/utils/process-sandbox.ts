@@ -343,19 +343,20 @@ export function buildSandboxEnvironment(
   if (preferredPaths.length === 0) return source
 
   const env = { ...source }
+  const pathDelimiter = platform === 'win32' ? ';' : ':'
   const pathKeys = Object.keys(env).filter((key) => key.toLocaleLowerCase() === 'path')
   const currentPath = pathKeys.map((key) => env[key]).find(Boolean) ?? ''
   for (const key of pathKeys) delete env[key]
   const seen = new Set<string>()
   const pathValue = [
     ...preferredPaths,
-    ...currentPath.split(delimiter).filter(Boolean),
+    ...currentPath.split(pathDelimiter).filter(Boolean),
   ].filter((value) => {
     const key = platform === 'win32' ? value.toLocaleLowerCase() : value
     if (seen.has(key)) return false
     seen.add(key)
     return true
-  }).join(delimiter)
+  }).join(pathDelimiter)
   env[platform === 'win32' ? 'Path' : 'PATH'] = pathValue
   return env
 }

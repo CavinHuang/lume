@@ -15,6 +15,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { PlanningReminderRail } from '@/components/todo/PlanningReminderRail'
 import { ConnectionVaultSetupDialog } from '@/components/security/ConnectionVaultSetupDialog'
+import { AgentIslandApp } from '@/components/agent-island/AgentIslandApp'
 function AppInner() {
   useGlobalAgentListeners()
   useReadingListeners()
@@ -45,6 +46,10 @@ export function App() {
   if (isQuickInput) {
     return <QuickInputShell />
   }
+  const isAgentIsland =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('view') === 'agent-island'
+  if (isAgentIsland) return <AgentIslandApp />
 
   const [ready, setReady] = useState(false)
   const [bootDone, setBootDone] = useState(false)

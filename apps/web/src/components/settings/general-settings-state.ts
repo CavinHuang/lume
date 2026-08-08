@@ -156,6 +156,9 @@ export function mergeGeneralSettings(
           ? updates.updateSettings.lastUpdateCheckAt ?? null
           : base.updateSettings.lastUpdateCheckAt,
     },
+    agentIsland: {
+      enabled: updates.agentIsland?.enabled ?? base.agentIsland.enabled,
+    },
   }
 }
 

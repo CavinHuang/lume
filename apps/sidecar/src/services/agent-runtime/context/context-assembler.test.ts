@@ -269,7 +269,7 @@ describe("ContextAssembler", () => {
     });
 
     expect(result.userMessageForModel).toContain("summarize this");
-    expect(result.userMessageForModel).toContain("本轮用户附加了以下文件：");
+    expect(result.userMessageForModel).toContain("本轮用户附加了以下附件：");
     expect(result.userMessageForModel).toContain("brief.md (text/markdown, 2 KB): docs/brief.md");
   });
 

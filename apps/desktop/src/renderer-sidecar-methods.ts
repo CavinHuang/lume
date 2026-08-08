@@ -174,6 +174,7 @@ export const PUBLIC_RENDERER_SIDECAR_METHODS = new Set([
   'agent:restore-skill-version',
   'agent:restore-thread',
   'agent:restore-thread-from-trash',
+  'agent:resume-queue',
   'agent:resume-run',
   'agent:revert-coding-file',
   'agent:revert-coding-run',

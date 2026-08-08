@@ -1,0 +1,304 @@
+import type { AgentRuntimePhase } from "./types/agent"
+import type {
+  AgentIslandPhase,
+  AgentIslandPlanningItem,
+  AgentIslandPlanningSnapshot,
+  AgentIslandPresentation,
+  AgentIslandRecentSession,
+  AgentIslandSessionSnapshot,
+  AgentIslandState,
+} from "./types/agent-island"
+
+/**
+ * Planning 注意窗：dueAt 在 now~now+1h 内的 item 视为"紧迫"，进入岛屿 compact 列表。
+ * 也用于调度 service 的 attention 定时器（item 进入窗的时刻触发 push）。
+ * 对齐 Proma agent-island-service.ts:53 PLANNING_ATTENTION_WINDOW_MS。
+ */
+export const PLANNING_ATTENTION_WINDOW_MS = 60 * 60_000 // 1h
+
+/**
+ * running/idle 会话（无 terminalAt）24h 无活动视为过期，由 service.prune 剔除。
+ * 对齐 Proma agent-island-service.ts:385 `isIslandSession`（now - lastActivityAt >= 24h 剔除）。
+ */
+export const STALE_SESSION_MS = 24 * 60 * 60_000 // 24h
+
+/** 累积活动行的上限（对齐 Proma MAX_ACTIVITY_LINES）。 */
+const MAX_ACTIVITY_LINES = 4
+
+/**
+ * 把 line 追加到 prev 末尾，超出 MAX_ACTIVITY_LINES 时丢最早一条（FIFO）。
+ * 用于 service 把 sidecar 的 tool/task 事件名累积进 session.activityLines。
+ */
+export function pushActivityLine(prev: string[], line: string): string[] {
+  const next = [...prev, line]
+  return next.slice(-MAX_ACTIVITY_LINES)
+}
+
+/** service 组装的会话输入（投影前），由 service 从事件聚合。 */
+export interface IslandSessionInput {
+  threadId: string
+  title: string
+  /** 所属工作区名（service 从 AgentWorkspace.name 解析，session 后小字号显示）。 */
+  project?: string
+  phase: AgentIslandPhase
+  interactionKind?: AgentIslandSessionSnapshot['interactionKind']
+  detail: string
+  activityLines: string[]
+  attention: boolean
+  unread: boolean
+  terminalAt: number | null
+  lastActivityAt: number
+  /** 排队消息数（runtime-status.queuedCount，compact 徽章用）。 */
+  queuedCount?: number
+  /** 当前会话模型引用（原始 ref，渲染层解析成 label；main 不引 registry）。 */
+  modelRef?: string
+  /** 该会话生命周期累计成本（USD，来自 usage.updated.billing.totalCostUSD）。 */
+  costUSD?: number
+  /** 该会话生命周期累计 token（来自 usage.updated.billing.cumulative.totalTokens）。 */
+  tokenTotal?: number
+}
+
+/**
+ * 判定 running/idle 会话是否过期：无 terminalAt（非终态）且 24h 无活动。
+ * 终态（completed/error，有 terminalAt）由 service `UNREAD_RETAIN_MS`（10min）管，此处返回 false。
+ * 用于 service.prune 剔除幽灵会话（running/idle 永无 terminalAt 旧逻辑下永不清）。
+ */
+export function isStaleSession(session: IslandSessionInput, now: number): boolean {
+  if (session.terminalAt !== null) return false
+  return now - session.lastActivityAt >= STALE_SESSION_MS
+}
+
+/**
+ * hover 进入/离开时，service 在延迟到期后才真正翻转 hoverExpanded（防抖）。
+ * 进入展开用 HOVER_EXPAND_DELAY_MS，离开收起用 HOVER_COLLAPSE_DELAY_MS
+ * （对齐 Proma agent-island-service.ts:59-60；收起更慢以容纳鼠标短时跨岛往返）。
+ */
+export const HOVER_EXPAND_DELAY_MS = 300
+export const HOVER_COLLAPSE_DELAY_MS = 420
+
+/** 选择 hover 延迟：进入(true)→展开延迟；离开(false)→收起延迟。供 service 的 setTimeout 取值。 */
+export function selectHoverDelay(hovered: boolean): number {
+  return hovered ? HOVER_EXPAND_DELAY_MS : HOVER_COLLAPSE_DELAY_MS
+}
+
+/**
+ * 判定 sidecar 通知是否为"紧迫事件"——应跳过 2000ms 节流、提权到 80ms 桶。
+ * 对齐 Proma `requiresImmediateAgentIslandPush`（agent-island-service.ts:735-741）：
+ * permission_request / ask_user_request / result / assistant.error 强制 80ms。
+ *
+ * 与 service 内部 `urgent(state)`（基于已聚合 phase）互补：本函数基于**事件本身**，
+ * 即使 phase 尚未翻转（如 permission.requested 事件先到、awaiting_permission 状态后到）
+ * 也能在事件到达瞬间把推送提权到 80ms 桶，避免最多 2s 拖延。
+ *
+ * - `agent:runtime-status-changed`：phase 为 awaiting_permission/awaiting_user_answer/completed/errored
+ * - `agent:runtime-event`：tool.started（工具活动信号）/ permission.requested / ask_user.requested / run.completed / run.failed
+ *
+ * type 字面量取自 `packages/shared/src/types/runtime-event.ts` 的 `RuntimeEventType` 与
+ * `packages/shared/src/types/agent.ts` 的 `AgentRuntimePhase`，不臆测。
+ */
+export function isImmediateAgentIslandEvent(method: string, params: unknown): boolean {
+  if (method === 'agent:runtime-status-changed') {
+    const phase = (params as { status?: { phase?: string } })?.status?.phase
+    return (
+      phase === 'awaiting_permission' ||
+      phase === 'awaiting_user_answer' ||
+      phase === 'completed' ||
+      phase === 'errored'
+    )
+  }
+  if (method === 'agent:runtime-event') {
+    const type = (params as { event?: { type?: string } })?.event?.type
+    return (
+      type === 'tool.started' ||
+      type === 'permission.requested' ||
+      type === 'ask_user.requested' ||
+      type === 'run.completed' ||
+      type === 'run.failed'
+    )
+  }
+  return false
+}
+
+const PHASE_PRIORITY: Record<AgentIslandPhase, number> = {
+  'needs-interaction': 0,
+  error: 1,
+  completed: 2,
+  running: 3,
+  idle: 4,
+}
+
+export function mapRuntimePhaseToIslandPhase(phase: AgentRuntimePhase): AgentIslandPhase {
+  switch (phase) {
+    case "streaming":
+    case "compacting":
+      return "running"
+    case "awaiting_permission":
+    case "awaiting_user_answer":
+      return "needs-interaction"
+    case "completed":
+      return "completed"
+    case "errored":
+      return "error"
+    case "idle":
+    default:
+      return "idle"
+  }
+}
+
+const PHASE_LABEL: Record<AgentIslandPhase, string> = {
+  idle: '空闲',
+  running: '正在执行',
+  'needs-interaction': '需要你接手',
+  completed: '任务完成',
+  error: '执行出错',
+}
+
+export function selectPrimarySession(inputs: IslandSessionInput[]): {
+  primarySessionId: string | null
+  sessions: IslandSessionInput[]
+} {
+  const sorted = [...inputs].sort((a, b) => {
+    const dp = PHASE_PRIORITY[a.phase] - PHASE_PRIORITY[b.phase]
+    if (dp !== 0) return dp
+    return b.lastActivityAt - a.lastActivityAt
+  })
+  return { primarySessionId: sorted[0]?.threadId ?? null, sessions: sorted.slice(0, 3) }
+}
+
+/**
+ * 构造 dismiss visibilityKey：拼全部 sessions（threadId:phase:lastActivityAt:detail）
+ * + planningKeys 含 dueAt/overdue（id:dueAt:overdue）。对齐 Proma agent-island-service.ts:558-566。
+ *
+ * key 不变的语义：用户 dismiss 后，仅当**任一** session 状态变化（含非 primary）
+ * 或**任一** planning item 的 dueAt/overdue 翻转时才解除隐藏。
+ * 仅靠 id（不含 dueAt）会导致改 dueAt 不解除 dismiss —— 与 Proma 行为不一致。
+ */
+export function buildVisibilityKey(
+  sessions: IslandSessionInput[],
+  planning: AgentIslandPlanningSnapshot,
+): string {
+  const sessionsPart = sessions
+    .map((s) => `${s.threadId}:${s.phase}:${s.lastActivityAt}:${s.detail}`)
+    .join('|')
+  const planningPart = [...planning.todos, ...planning.reminders]
+    .map((p) => `${p.id}:${p.dueAt}:${p.overdue ? 1 : 0}`)
+    .join(',')
+  return `${sessionsPart}::${planningPart}`
+}
+
+/**
+ * idle home surface 的最近会话投影：排除归档/回收、排除 active 会话、updatedAt desc、top3、dedup by id。
+ * meta 无 status 字段时视为 active（保留）；status 显式为 'archived'/'trashed' 等非 'active' 值时跳过。
+ */
+export function projectRecentSessions(
+  metas: Array<{ id: string; title?: string; updatedAt?: number; status?: string; workspaceId?: string }>,
+  activeThreadIds: Set<string>,
+  workspaceNames: Map<string, string>,
+): AgentIslandRecentSession[] {
+  const seen = new Set<string>()
+  const filtered: AgentIslandRecentSession[] = []
+  for (const m of metas) {
+    if (!m.id || seen.has(m.id)) continue
+    if (m.status && m.status !== 'active') continue // 排除 archived/trashed
+    if (activeThreadIds.has(m.id)) continue // 去重：排除仍在 sessions Map 的会话
+    seen.add(m.id)
+    filtered.push({
+      threadId: m.id,
+      title: m.title?.trim() || m.id,
+      project: m.workspaceId ? workspaceNames.get(m.workspaceId) : undefined,
+      updatedAt: m.updatedAt ?? 0,
+    })
+  }
+  return filtered.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 3)
+}
+
+/**
+ * compact 紧迫 planning 图标：无 primary session 时，若存在 1h window 内的
+ * imminent event/todo，返回对应彩色图标（对齐 Proma AgentIslandApp.tsx:77-87）。
+ * - reminder（calendar_event）→ calendar，accent 色
+ * - todo → checklist，warning 色
+ * - 平局（同 dueAt）倾向 calendar（events 通常更具时效约束）
+ * - 仅逾期或远期项 → null（逾期已在 planning 列表红框标记，imminent 只看未来）
+ */
+export interface PlanningIndicator {
+  symbol: 'calendar' | 'checklist'
+  color: string
+}
+
+export function selectPlanningIndicator(
+  planning: AgentIslandPlanningSnapshot,
+  now: number,
+): PlanningIndicator | null {
+  const win = PLANNING_ATTENTION_WINDOW_MS
+  const nextEvent = planning.reminders.find((r) => r.dueAt >= now && r.dueAt - now <= win)
+  const nextTodo = planning.todos.find((t) => t.dueAt >= now && t.dueAt - now <= win)
+  if (nextEvent && (!nextTodo || nextEvent.dueAt <= nextTodo.dueAt))
+    return { symbol: 'calendar', color: 'var(--lume-accent)' }
+  if (nextTodo) return { symbol: 'checklist', color: 'var(--lume-warning)' }
+  return null
+}
+
+export function buildSnapshot(
+  inputs: IslandSessionInput[],
+  planning: AgentIslandPlanningSnapshot,
+  now: number,
+  opts?: { recentSessions?: AgentIslandRecentSession[]; isIdle?: boolean },
+): AgentIslandState {
+  const { primarySessionId, sessions } = selectPrimarySession(inputs)
+  const primary = sessions.find((s) => s.threadId === primarySessionId) ?? null
+  const isIdle = opts?.isIdle ?? primarySessionId === null
+  const label = primary ? PHASE_LABEL[primary.phase] : '最近会话' // idle label
+  const hasContent = inputs.length > 0 || planning.todos.length > 0 || planning.reminders.length > 0
+  // idle 总显示（home surface，含全新用户空引导）；非 idle 且无内容才 hidden
+  const presentation: AgentIslandPresentation = isIdle ? 'compact' : hasContent ? 'compact' : 'hidden'
+  return {
+    presentation,
+    primarySessionId,
+    compactLabel: `Lume · ${label}`,
+    sessions: sessions.map<AgentIslandSessionSnapshot>((s) => ({ ...s })),
+    planning,
+    recentSessions: opts?.recentSessions ?? [],
+    isIdle,
+    updatedAt: now,
+  }
+}
+
+/**
+ * 到下个午夜 00:00:00.150（本地时区）的毫秒数。用于 service 跨日 rollover 定时器：
+ * 触发后清 dismissedKey（解除所有 dismiss，让新一天的 planning/agent 状态重新浮现）+ force push。
+ * 150ms 偏移对齐 Proma agent-island-service.ts:674 `tomorrow.setHours(24, 0, 0, 150)`——
+ * 避开整点周边的偶发时钟漂移/批量任务峰值。
+ */
+export function msUntilNextMidnightRollover(now: number): number {
+  const d = new Date(now)
+  const next = new Date(d)
+  // setHours(24, ...) 把日期翻到次日；150ms 偏移点见上方注释。
+  next.setHours(24, 0, 0, 150)
+  return next.getTime() - now
+}
+
+/**
+ * 算下个 planning item（todo/reminder）**进入** 1h 注意窗的时刻。
+ * 已在窗内（enter < now）或逾期的 item 跳过——它们由普通 push/refreshPlanning 反映；
+ * 仅未来会进入窗的 item 才需要专门调度一次 attention push（让岛屿在到点瞬间浮现紧迫项）。
+ * 无未来进入项 → 返回 null（service 不设 attention 定时器）。
+ *
+ * 对齐 Proma agent-island-service.ts:686-707 `scheduleNextPlanningAttention`：
+ * Proma 还考虑"到点后退出"的二次 bump，本批只覆盖"进入窗"时刻（用户更易感知的浮现瞬间）。
+ *
+ * 纯函数（不修改入参），便于 TDD；service 用返回值算 setTimeout 延迟。
+ */
+export function nextPlanningAttentionTime(
+  planning: { todos: AgentIslandPlanningItem[]; reminders: AgentIslandPlanningItem[] },
+  now: number,
+  windowMs: number,
+): number | null {
+  const items = [...planning.todos, ...planning.reminders]
+  let earliest: number | null = null
+  for (const it of items) {
+    const enter = it.dueAt - windowMs // 从远期进入 1h 窗的瞬间
+    if (enter < now) continue // 已在窗内或过期——由普通 push 反映，不归 attention 调度
+    if (earliest === null || enter < earliest) earliest = enter
+  }
+  return earliest
+}

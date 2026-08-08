@@ -1,6 +1,7 @@
 import {
   existsSync,
   lstatSync,
+  readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -27,7 +28,8 @@ import {
   getPluginsCacheDir,
   getPluginsDataDir,
   getGlobalVectorIndexDir,
-  getAgentWorkspacesDir
+  getAgentWorkspacesDir,
+  getSettingsPath
 } from "../infra/config-paths";
 import {
   PersistedSettingsReadError,
@@ -256,6 +258,12 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
         typeof updateSettings?.lastUpdateCheckAt === "string"
           ? updateSettings.lastUpdateCheckAt
           : null
+    },
+    agentIsland: {
+      enabled:
+        typeof value.agentIsland?.enabled === "boolean"
+          ? value.agentIsland.enabled
+          : GENERAL_SETTINGS_DEFAULTS.agentIsland.enabled
     }
   };
 }
@@ -357,6 +365,40 @@ export function getPersistedGeneralSettings(): GeneralSettings {
   }
 }
 
+/**
+ * Task 6 fix round 2：bypass sidecar cache，直接从磁盘 settings.json 读
+ * `generalSettings.islandWindowPosition`。
+ *
+ * 背景：main 的 `persistIslandWindowPosition` 走 main broker.mutate 写 settings.json，
+ * 不通知 sidecar。sidecar 的 `readPersistedSettings` 在 cache hit 时永不重读 disk
+ * （settings-store.ts:42-48），因此在 sidecar 进程持续运行期间，main 写入的
+ * islandWindowPosition 不会反映到 sidecar cache。若 `updatePersistedGeneralSettings`
+ * 仍读 cache（round 1 的 best-effort 透传），live scenario 下 `next` 不含该字段 →
+ * wholesale replace 覆盖丢失。
+ *
+ * 用户改设置是低频操作；这里同步读 disk 可接受。仅在 islandWindowPosition 这一个
+ * 字段上 bypass cache，其他字段仍走 `readPersistedSettings` 既有 cache 语义。
+ */
+function readIslandWindowPositionFromDisk(): { x: number; y: number } | null | undefined {
+  try {
+    if (!existsSync(getSettingsPath())) return undefined;
+    const raw = JSON.parse(readFileSync(getSettingsPath(), "utf-8")) as
+      | { generalSettings?: { islandWindowPosition?: { x?: unknown; y?: unknown } | null } }
+      | null;
+    const pos = raw?.generalSettings?.islandWindowPosition;
+    if (pos == null) return pos ?? undefined;
+    if (
+      typeof pos.x === "number" && Number.isFinite(pos.x) &&
+      typeof pos.y === "number" && Number.isFinite(pos.y)
+    ) {
+      return { x: pos.x, y: pos.y };
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function updatePersistedGeneralSettings(input: UpdateGeneralSettingsInput): Promise<GeneralSettings> {
   const settings = readPersistedSettings() as SidecarSettings;
   const current = sanitizeGeneralSettings(settings.generalSettings);
@@ -364,6 +406,9 @@ export async function updatePersistedGeneralSettings(input: UpdateGeneralSetting
     ? current.customThemePalettes
     : sanitizeCustomThemePalettes(input.customThemePalettes);
   const requestedThemePalette = input.themePalette ?? current.themePalette;
+  // Task 6 fix round 2：bypass cache 读 disk 的 islandWindowPosition，避免 main 写
+  // 后 sidecar cache stale 导致 wholesale replace 覆盖丢失。
+  const diskIslandWindowPosition = readIslandWindowPositionFromDisk();
   const next: GeneralSettings = {
     themeMode: input.themeMode ?? current.themeMode,
     themePalette: isThemePalette(requestedThemePalette, customThemePalettes)
@@ -390,7 +435,16 @@ export async function updatePersistedGeneralSettings(input: UpdateGeneralSetting
         input.updateSettings && "lastUpdateCheckAt" in input.updateSettings
           ? input.updateSettings.lastUpdateCheckAt ?? null
           : current.updateSettings.lastUpdateCheckAt
-    }
+    },
+    agentIsland: {
+      enabled: input.agentIsland?.enabled ?? current.agentIsland.enabled
+    },
+    // Task 6 fix round 1+2：保留 main 写入的 islandWindowPosition。
+    // 仅在 disk 有有效值时带上，保持缺省时的既有 persisted 形状（不强制写 null，
+    // 避免破坏现有 toEqual 契约）。
+    ...(diskIslandWindowPosition
+      ? { islandWindowPosition: diskIslandWindowPosition }
+      : {})
   };
   settings.generalSettings = next;
   await writePersistedSettings(settings);
