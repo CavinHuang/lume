@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import {
   applyCodingDiffAction,
@@ -414,7 +414,7 @@ describe("coding-change-service", () => {
     const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
 
     await expect(getCodingFileOpenTargets(root, "src/index.ts")).resolves.toEqual({
-      absolutePath: join(root, "src", "index.ts"),
+      absolutePath: realpathSync(join(root, "src", "index.ts")),
       remoteFileUrl: `https://github.com/example/lume/blob/${head}/src/index.ts`,
       remoteProvider: "github",
       revision: head,

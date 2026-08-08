@@ -188,6 +188,7 @@ test('createDesktopHostSpawnConfig passes endpoint and session token without she
       binaryPath: 'C:/Lume/lume_desktop_host.exe',
       endpoint: '\\\\.\\pipe\\lume-desktop-123',
       sessionToken: 'secret-token',
+      platform: 'win32',
     }),
     {
       command: 'C:/Lume/lume_desktop_host.exe',

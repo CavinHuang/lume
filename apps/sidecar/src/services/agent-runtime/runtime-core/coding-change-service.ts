@@ -1606,7 +1606,7 @@ function normalizeSafePath(root: string, filePath: string): string | null {
   }
   const relativeRealPath = relative(resolvedRoot, realTarget).split(sep).join("/");
   if (!relativeRealPath || relativeRealPath === ".." || relativeRealPath.startsWith("../")) return null;
-  return relative(resolvedRoot, target).split(sep).join("/");
+  return relativeRealPath;
 }
 
 function readSafeContent(root: string, filePath: string): string {

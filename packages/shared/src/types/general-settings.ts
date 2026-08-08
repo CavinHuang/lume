@@ -36,6 +36,21 @@ export interface GeneralSettingsWindowBehavior {
   showTray: boolean
 }
 
+export interface GeneralSettingsAgentIsland {
+  enabled: boolean
+}
+
+/**
+ * 灵动岛窗口在 Windows/Linux 桌面坐标系下的持久化位置。
+ * - 缺省（undefined/null）：首次启动或 macOS 路径，由 window 模块走默认吸附逻辑。
+ * - 由 main 在窗口 `move` 事件后防抖写入；createIslandWindow 读取并按
+ *   `screen.getDisplayNearestPoint(saved)` 重定位到 saved 所属显示器。
+ */
+export interface IslandWindowPosition {
+  x: number
+  y: number
+}
+
 export interface GeneralSettingsUpdateSettings {
   autoCheckUpdates: boolean
   notifyAfterDownload: boolean
@@ -52,6 +67,11 @@ export interface GeneralSettings {
   agentMessageDisplayMode: AgentMessageDisplayMode
   agentMessageListDisplayMode: AgentMessageListDisplayMode
   agentMessageAvatarMode: AgentMessageAvatarMode
+  agentIsland: GeneralSettingsAgentIsland
+  /**
+   * Windows/Linux 灵动岛窗口位置持久化。macOS 贴刘海/原生面板，该字段无副作用。
+   */
+  islandWindowPosition?: IslandWindowPosition | null
   logging: LumeLoggingSettings
 }
 
@@ -64,6 +84,8 @@ export interface UpdateGeneralSettingsInput {
   agentMessageDisplayMode?: AgentMessageDisplayMode
   agentMessageListDisplayMode?: AgentMessageListDisplayMode
   agentMessageAvatarMode?: AgentMessageAvatarMode
+  agentIsland?: Partial<GeneralSettingsAgentIsland>
+  islandWindowPosition?: IslandWindowPosition | null
   logging?: Partial<LumeLoggingSettings>
 }
 
@@ -155,6 +177,9 @@ export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
     minimizeToTray: false,
     closeToTray: false,
     showTray: true
+  },
+  agentIsland: {
+    enabled: true
   },
   updateSettings: {
     autoCheckUpdates: true,

@@ -219,9 +219,10 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
 
   useEffect(() => {
     const electronAPI = (window as unknown as { electronAPI?: { listen?: (channel: string, listener: (payload: { action: string }) => void) => (() => void) | undefined } }).electronAPI
-    const off = electronAPI?.listen?.('tray-action', ({ action, threadId, generation }: { action: string; threadId?: string; generation?: number }) => {
+    const off = electronAPI?.listen?.('tray-action', ({ action, threadId, todoId, generation }: { action: string; threadId?: string; todoId?: string; generation?: number }) => {
       if (action === 'open-settings') openSettings()
       else if (action === 'new-thread') handleNewThread()
+      else if (action === 'open-todo') openTodos(todoId)
       else if (action === 'open-thread' && threadId && Number.isSafeInteger(generation)) {
         void confirmTrayThreadNavigation({
           threadId,
@@ -271,12 +272,18 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
     }
   }
 
-  const openTodos = () => {
-    const todoId = '__todos__'
-    setActiveTabId(todoId)
-    if (!tabs.find((tab) => tab.id === todoId)) {
-      setTabs((previous) => [...previous, { id: todoId, type: 'todo', title: '待办', workspaceId: currentWorkspaceId ?? undefined }])
-    }
+  // 打开待办面板；targetTodoId 传入时定位到该待办（TodoView 用 todoId 初始化 selectedTodoId 高亮 + scope='all' 跨工作区命中）。
+  const openTodos = (targetTodoId?: string) => {
+    const id = '__todos__'
+    setActiveTabId(id)
+    setTabs((previous) => {
+      const exists = previous.find((tab) => tab.id === id)
+      const base = { id, type: 'todo' as const, title: '待办', workspaceId: currentWorkspaceId ?? undefined }
+      if (!exists) return [...previous, targetTodoId ? { ...base, todoId: targetTodoId } : base]
+      return previous.map((tab) =>
+        tab.id === id ? { ...tab, ...(targetTodoId ? { todoId: targetTodoId } : { todoId: undefined }) } : tab,
+      )
+    })
   }
 
   const openProactive = () => {
