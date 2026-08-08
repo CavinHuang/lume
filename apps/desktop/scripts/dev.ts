@@ -85,7 +85,8 @@ const ripgrepResourcesResult = spawnSync(
   },
 );
 if (ripgrepResourcesResult.status !== 0) {
-  process.exit(ripgrepResourcesResult.status ?? 1);
+  // 临时 workaround：ripgrep 下载失败（HTTP 400）+ 系统无 rg → dev 继续（ripgrep 仅供 sidecar 搜索，灵动岛 UI 不依赖）
+  console.warn("[desktop-dev] ripgrep resources unavailable; continuing without bundled rg (dev-only, search degraded, island UI unaffected)");
 }
 
 const desktopBuildResult = spawnSync("bun", [buildDesktopRuntimeScript], {
