@@ -104,7 +104,7 @@ describe("BashTool shell invocation", () => {
   test("returns a running result and exposes terminal metadata through TaskOutput", async () => {
     clearTasks();
     const root = await mkdtemp(join(tmpdir(), "lume-bash-background-"));
-    const command = process.platform === "win32"
+    const command = /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(resolveShellInvocation("").command)
       ? "Start-Sleep -Milliseconds 500; Write-Output background"
       : "sleep 0.5; printf background";
     const events: SDKMessage[] = [];
@@ -188,7 +188,7 @@ describe("BashTool shell invocation", () => {
   test("reattaches a durable background command after the in-memory registry is cleared", async () => {
     clearTasks();
     const root = await mkdtemp(join(tmpdir(), "lume-bash-recovery-"));
-    const command = process.platform === "win32"
+    const command = /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(resolveShellInvocation("").command)
       ? "Start-Sleep -Milliseconds 300; Write-Output recovered"
       : "sleep 0.3; printf recovered";
     const context = {
