@@ -163,6 +163,7 @@ describe("general-settings-service", () => {
         agentMessageDisplayMode?: string;
         agentMessageListDisplayMode?: string;
         agentMessageAvatarMode?: string;
+        agentIsland?: { enabled?: boolean };
         logging?: typeof LUME_LOGGING_DEFAULTS;
         windowBehavior?: {
           minimizeToTray?: boolean;
