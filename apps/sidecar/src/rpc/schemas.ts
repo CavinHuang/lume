@@ -531,7 +531,7 @@ export const planningReminderSnoozeInputSchema = planningReminderIdSchema
   .strict();
 
 export const imAccountCreateInputSchema = z.object({
-  provider: z.literal("weixin"),
+  provider: z.enum(["weixin", "dingtalk", "feishu", "wecom"]),
   accountKey: z.string().optional(),
   label: z.string().optional(),
   token: z.string().trim().min(1),

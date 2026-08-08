@@ -5,10 +5,14 @@ import {
   updateImAccount,
   type ImRuntimeAccount
 } from "./im-config-manager";
-import {
-  createOpenClawWeixinWorker,
-  type OpenClawWeixinWorker
-} from "./weixin/openclaw-weixin-worker";
+import { getImProvider, type ImWorker } from "./provider-registry";
+import { routeInboundImMessage } from "./im-message-router";
+// 副作用 import：模块加载即把各 provider 注册进 provider-registry，
+// 必须早于 startEnabledAccounts()（runtime-manager 默认 createWorker 将查注册表）。
+import "./weixin/weixin-provider";
+import "./dingtalk/dingtalk-provider";
+import "./feishu/feishu-provider";
+import "./wecom/wecom-provider";
 
 export interface ImRuntimeManager {
   startEnabledAccounts(): Promise<void>;
@@ -22,7 +26,7 @@ export interface CreateImRuntimeManagerInput {
   listAccounts?: () => ImAccount[];
   getRuntimeAccount?: (id: string) => ImRuntimeAccount;
   updateAccount?: (id: string, input: ImAccountUpdateInput) => void | Promise<void>;
-  createWorker?: (account: ImRuntimeAccount) => OpenClawWeixinWorker;
+  createWorker?: (account: ImRuntimeAccount) => ImWorker;
 }
 
 function errorMessage(error: unknown): string {
@@ -30,11 +34,24 @@ function errorMessage(error: unknown): string {
 }
 
 export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}): ImRuntimeManager {
-  const workers = new Map<string, OpenClawWeixinWorker>();
+  const workers = new Map<string, ImWorker>();
   const listAccountsFn = input.listAccounts ?? listImAccounts;
   const getRuntimeAccountFn = input.getRuntimeAccount ?? getImRuntimeAccount;
   const updateAccountFn = input.updateAccount ?? updateImAccount;
-  const createWorkerFn = input.createWorker ?? ((account: ImRuntimeAccount) => createOpenClawWeixinWorker({ account }));
+  const createWorkerFn = input.createWorker ?? ((account: ImRuntimeAccount) => {
+    const def = getImProvider(account.provider);
+    return def.createWorker(account, {
+      // routeInboundImMessage 返回 Promise<{threadId}>,updateAccountFn 可能返回 ImAccount;
+      // deps 契约为 Promise<void>(worker 不消费返回值)。async 包装保留 await 顺序语义
+      // (微信长轮询 worker await routeMessage 确保串行),钉钉事件 worker 则 void 丢弃。
+      routeMessage: async (m) => {
+        await routeInboundImMessage(m);
+      },
+      updateAccount: (id, input) => {
+        void updateAccountFn(id, input);
+      },
+    });
+  });
 
   return {
     async startEnabledAccounts() {

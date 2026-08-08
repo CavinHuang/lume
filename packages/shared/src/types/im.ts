@@ -1,4 +1,4 @@
-export type ImProvider = "weixin";
+export type ImProvider = "weixin" | "dingtalk" | "feishu" | "wecom";
 
 export type ImAccountStatus = "stopped" | "starting" | "running" | "error" | "auth_required";
 
@@ -120,7 +120,10 @@ export const IM_IPC_CHANNELS = {
 } as const;
 
 export const IM_PROVIDER_LABELS: Record<ImProvider, string> = {
-  weixin: "Weixin"
+  weixin: "微信",
+  dingtalk: "钉钉",
+  feishu: "飞书",
+  wecom: "企业微信",
 };
 
 export function normalizeImAccountLabel(input: {
