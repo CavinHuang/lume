@@ -23,7 +23,7 @@ export type BrowserRuntimeMethod =
   | 'extensions:list' | 'extensions:install' | 'extensions:remove' | 'extensions:set-enabled'
   | 'find' | 'find:stop' | 'zoom:get' | 'zoom:set' | 'emulate' | 'viewport:set' | 'viewport:reset' | 'viewport:commit'
   | 'print' | 'devtools' | 'view-source' | 'site-info' | 'tweaks:start' | 'tweaks:apply' | 'tweaks:reset'
-  | 'annotation:session' | 'annotation:mode' | 'annotation:delete' | 'annotation:clear' | 'annotation:migrate' | 'annotation:preview' | 'annotation:screenshot:prepare' | 'annotation:screenshot:read' | 'annotation:submit'
+  | 'annotation:session' | 'annotation:mode' | 'annotation:delete' | 'annotation:clear' | 'annotation:migrate' | 'annotation:preview' | 'annotation:screenshot:prepare' | 'annotation:screenshot:read' | 'annotation:submit' | 'annotation:resolve' | 'annotation:mark-read'
   | 'workspace:list' | 'workspace:get' | 'workspace:activate' | 'workspace:reorder' | 'workspace:restore-closed' | 'workspace:import-legacy'
   | 'dialog:handle'
   | 'upload'

@@ -8,7 +8,7 @@ import { describe, test, expect, mock } from 'bun:test'
 import { electronMockStub } from '../../scripts/test-electron-mock'
 await mock.module('electron', () => electronMockStub)
 
-const { sanitizeSync } = await import('./guest-state')
+const { sanitizeSync, createGuestBridge } = await import('./guest-state')
 type GuestState = import('./guest-state').GuestState
 
 const validBase = {
@@ -222,5 +222,68 @@ describe('sanitizeSync - theme', () => {
   })
   test('valid hex color preserved', () => {
     expect(sanitizeSync({ ...validBase, theme: '#0b84ff' })?.theme).toBe('#0b84ff')
+  })
+})
+
+// Task 55：design 字段（对齐 Codex sync A.5，全可选向后兼容）
+describe('sanitizeSync - design 字段', () => {
+  test('activeDesignChange 透传（对象）', () => {
+    // brief 中 anchor:{...} 为占位简写（{...} 在字面量位置非合法 JS），此处替换为等价具体对象
+    const dc = { id: 'dc1', anchor: { x: 1 }, declarations: [] }
+    const r = sanitizeSync({ ...validBase, mode: 'comment', activeDesignChange: dc })
+    expect(r?.activeDesignChange).toEqual(dc)
+  })
+  test('activeDesignChange 非 object 省略', () => {
+    expect(sanitizeSync({ ...validBase, activeDesignChange: 'x' })?.activeDesignChange).toBeUndefined()
+  })
+  test('boolean design 字段默认/透传', () => {
+    expect(sanitizeSync({ ...validBase, isDesignModifierPressed: true, canUseTweaks: true })?.isDesignModifierPressed).toBe(true)
+    expect(sanitizeSync(validBase)?.isDesignModifierPressed).toBeUndefined()
+    expect(sanitizeSync({ ...validBase, canUseTweaks: true })?.canUseTweaks).toBe(true)
+  })
+  test('isOriginalViewEnabled / isTweaksEditorOpen 透传', () => {
+    expect(sanitizeSync({ ...validBase, isOriginalViewEnabled: true, isTweaksEditorOpen: false })?.isOriginalViewEnabled).toBe(true)
+  })
+})
+
+// 顶层 IPC 缓冲交付（did-navigate 早于 DOMContentLoaded）：createGuestBridge 创建时
+// 同步交付 pendingMessage，使 bridge 在 React 订阅前即持有正确状态（导航回来注释不丢）。
+describe('createGuestBridge - 顶层缓冲消息交付', () => {
+  test('pendingMessage (sync) 同步交付 → getState 反映状态', () => {
+    const bridge = createGuestBridge({ type: 'sync', tabId: 't1', generation: 1, threadId: 'th1', comments: [] })
+    const s = bridge.getState()
+    expect(s?.tabId).toBe('t1')
+    expect(s?.generation).toBe(1)
+    expect(s?.threadId).toBe('th1')
+    expect(s?.comments).toEqual([])
+  })
+
+  test('pendingMessage (restore) 同步交付 → getState 反映状态', () => {
+    const bridge = createGuestBridge({ type: 'restore', tabId: 'r1', generation: 5, threadId: 'th2' })
+    expect(bridge.getState()?.tabId).toBe('r1')
+    expect(bridge.getState()?.generation).toBe(5)
+  })
+
+  test('无 pendingMessage → getState 为 null', () => {
+    expect(createGuestBridge().getState()).toBeNull()
+  })
+
+  test('非法 pendingMessage → getState 保持 null（sanitizeSync 拒绝）', () => {
+    expect(createGuestBridge({ type: 'sync', tabId: '', generation: 1, threadId: 'th1' }).getState()).toBeNull()
+  })
+
+  test('close 作为 pendingMessage → getState 为 null', () => {
+    expect(createGuestBridge({ type: 'close' }).getState()).toBeNull()
+  })
+
+  test('subscribe 在 pending 交付后订阅 → queueMicrotask 交付当前状态', () => {
+    return new Promise<void>((resolve) => {
+      const bridge = createGuestBridge({ type: 'sync', tabId: 'late', generation: 1, threadId: 'th3' })
+      const unsub = bridge.subscribe((state) => {
+        expect(state?.tabId).toBe('late')
+        unsub()
+        resolve()
+      })
+    })
   })
 })

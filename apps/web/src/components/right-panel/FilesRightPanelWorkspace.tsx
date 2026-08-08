@@ -127,6 +127,7 @@ export function FilesRightPanelWorkspace({
           openFunctions={openFunctions}
           onWorkspaceChange={onWorkspaceChange}
           onOpenFile={openFile}
+          singleClickOpen={!wide}
         />
         {!wide && workspace.selectedRef && (
           <FileDetailsBar

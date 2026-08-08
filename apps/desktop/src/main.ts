@@ -18,6 +18,7 @@ import {
 } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { execFileSync } from 'node:child_process'
+import { detectMacSignatureStable } from './desktop-signature'
 import {
   appendFileSync,
   copyFileSync,
@@ -2945,6 +2946,23 @@ ipcMain.on('lume:browser-guest-mounted', (event, bootstrapUrl) => {
   }
 })
 
+// Task 83：Web MCP 主进程侧。
+//
+// guest-preload qe() 通过 contextBridge.exposeInMainWorld('__lumeWebMcpModelContext', shim)
+// 注入 main-world 句柄，并在 shim onToolsChanged 回调中 ipcRenderer.send
+// ('lume:browser-page-event', { type:'webmcp_changed', version:1 })。此处监听该通道，
+// 转发给 browser-runtime（反查 sender→tab，emit browser:webmcp-changed 让 agent 刷新 webmcp:list）。
+ipcMain.on('lume:browser-page-event', (event, payload) => {
+  browserRuntime?.handlePageEvent(event.sender, payload)
+})
+
+// guest-preload qe() 启动时 sendSync('lume:get-browser-webmcp-enabled') 询问开关。
+// 默认 true（BrowserRuntime.descriptor() 已默认暴露 webmcp capability；后续如需 settings
+// 开关，可在此读 browserRuntime?.getSettings()）。未注册时 sendSync 返回 undefined → qe() 视为关闭。
+ipcMain.on('lume:get-browser-webmcp-enabled', (event) => {
+  event.returnValue = true
+})
+
 ipcMain.handle('lume:invoke', async (event, command, payload) => {
   validateIpcSender(event, getTrustedWindows())
   const ownerWebContentsId = event.sender.id
@@ -2957,10 +2975,6 @@ ipcMain.handle('lume:invoke', async (event, command, payload) => {
     })
   }
   return dispatchCommand(validateRendererInvokeCommand(command), payload, { ownerWebContentsId })
-})
-ipcMain.handle('lume:browser-annotation-popup', async (event, payload) => {
-  if (!browserRuntime?.isAnnotationPopupSender(event.sender.id)) throw new Error('untrusted ipc sender')
-  return browserRuntime.handleAnnotationPopupCommand(event.sender.id, payload)
 })
 ipcMain.handle('lume:window-control', async (event, op) => {
   // 操作 sender 对应的受信任窗口（主窗口或快速输入子窗口）。
@@ -3093,6 +3107,16 @@ ipcMain.handle('lume:update:install', async (event) => {
   })
 })
 
+ipcMain.handle('lume:app:signature', async (event) => {
+  validateIpcSender(event, getTrustedWindows())
+  const macSignatureStable = await detectMacSignatureStable({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    execPath: process.execPath,
+  })
+  return { macSignatureStable }
+})
+
 // Windows 任务栏图标/分组依赖 AppUserModelId，必须在 ready 事件前设置；
 // 否则任务栏会回退到承载进程 exe 的图标——dev 下即 electron.exe 的默认图标。
 app.setAppUserModelId(DESKTOP_APP_ID)
@@ -3122,8 +3146,6 @@ app.whenReady().then(async () => {
     },
     credentialStorage: safeStorage,
     authPreloadPath: resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-auth-preload.cjs'),
-    annotationPopupPreloadPath: resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-annotation-preload.cjs'),
-    rendererUrl: () => app.isPackaged ? getPackagedAppUrl() : getDevServerUrl(),
     onInternalError: ({ method, actor, tabId, message }) => {
       writeMainLog('error', 'browser.runtime', 'runtime.dispatch_failed', 'browser runtime action failed', {
         data: { method, actor, ...(tabId ? { tabId } : {}), message },

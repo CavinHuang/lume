@@ -12,6 +12,7 @@ import {
   Globe,
   MoreHorizontal,
   MessageCirclePlus,
+  MessageCircle,
   Minus,
   Plus,
   RotateCw,
@@ -55,6 +56,7 @@ import { cn } from '@/lib/utils'
 import { normalizeUrl } from './browser-url'
 import { BrowserImportModal } from './BrowserImportModal'
 import { BrowserGuestSurface } from './BrowserWebviewPool'
+import { CommentList } from './CommentList'
 import { activeTabIdAtom, agentBrowserAttachmentsAtom, browserPageDraftsAtom, browserReviewCoachmarkSeenAtom, browserReviewSessionsAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
 import { BrowserDataManagers, type BrowserDataManagersHandle } from '@/components/settings/BrowserDataManagers'
 
@@ -129,6 +131,7 @@ export function BrowserShell({
   const [selecting, setSelecting] = useState(false)
   const [annotationMode, setAnnotationMode] = useState(false)
   const [annotationSession, setAnnotationSession] = useState<BrowserAnnotationSessionSnapshot | null>(null)
+  const [commentsPanelOpen, setCommentsPanelOpen] = useState(false)
   const [editingReviewItemId, setEditingReviewItemId] = useState<string | null>(null)
   const [discardReviewOpen, setDiscardReviewOpen] = useState(false)
   const [showingOriginal, setShowingOriginal] = useState(false)
@@ -147,6 +150,10 @@ export function BrowserShell({
   ))
   const sessionPageAnnotations = annotationSession?.comments.filter((comment) => comment.tab.tabId === tabId && comment.tab.url === descriptor.url) ?? []
   const currentAnnotationCount = new Set([...sessionPageAnnotations.map((comment) => comment.id), ...pendingPageAnnotations.map((comment) => comment.id)]).size
+  // Task 94：未读批注计数（!readAt && !isResolved）。线程整体 resolved 时由 CommentList
+  // deriveThreads 内部归零；此处用同语义的 per-comment 过滤（与徽标显示一致即可，不重复线程分组逻辑）。
+  const unreadAnnotationCount = (annotationSession?.comments ?? []).filter((comment) => !comment.readAt && !comment.isResolved).length
+  const annotationComments = annotationSession?.comments ?? []
   const hasPendingReview = reviewItems.length > 0 || currentAnnotationCount > 0 || Boolean(reviewSession?.screenshotRef)
   const staleReviewCount = reviewItems.filter((item) => item.status === 'stale').length
 
@@ -960,6 +967,22 @@ export function BrowserShell({
     void browserRuntime({ method: 'annotation:submit', params: { tabId, threadId: ownerThreadId } }).then(() => exitAnnotationMode()).catch(() => toast.error('网页批注发送失败'))
   }
 
+  // Task 94：评审面板回调 → IPC → manager store。CommentList 传线程根评论 id（root.id）作为
+  // annotationId；store resolveComment/markRead 据此翻 isResolved/readAt，deriveThreads 再以
+  // group.some 把整线显示为已解决。失败只 toast，不退出面板（用户可重试）。
+  const handleResolveThread = (annotationId: string) => {
+    if (!ownerThreadId) return
+    void browserRuntime({ method: 'annotation:resolve', params: { tabId, threadId: ownerThreadId, annotationId, resolvedBy: 'user' } })
+      .then((snapshot) => setAnnotationSession(snapshot as BrowserAnnotationSessionSnapshot))
+      .catch(() => toast.error('解决线程失败'))
+  }
+  const handleMarkThreadRead = (annotationId: string) => {
+    if (!ownerThreadId) return
+    void browserRuntime({ method: 'annotation:mark-read', params: { tabId, threadId: ownerThreadId, annotationId } })
+      .then((snapshot) => setAnnotationSession(snapshot as BrowserAnnotationSessionSnapshot))
+      .catch(() => toast.error('标记已读失败'))
+  }
+
   const applyTweaks = () => {
     if (!pageSelection?.anchor.domPath || Object.keys(tweakDraft).length === 0) return
     void browserRuntime({
@@ -1261,6 +1284,24 @@ export function BrowserShell({
           <MessageCirclePlus size={15} />
           {surface === 'right-panel' && annotationMode && <span className="text-xs font-medium">正在注释</span>}
         </ToolbarButton>
+        {surface === 'right-panel' && ownerThreadId && annotationComments.length > 0 && (
+          <ToolbarButton
+            title={commentsPanelOpen ? '隐藏评论列表' : '查看评论列表'}
+            active={commentsPanelOpen}
+            onClick={() => setCommentsPanelOpen((open) => !open)}
+            className="relative"
+          >
+            <MessageCircle size={15} />
+            {unreadAnnotationCount > 0 && (
+              <span
+                data-annotation-unread-badge="true"
+                className="absolute -top-0.5 -right-0.5 flex min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[9px] leading-3.5 font-semibold text-primary-foreground"
+              >
+                {unreadAnnotationCount > 9 ? '9+' : unreadAnnotationCount}
+              </span>
+            )}
+          </ToolbarButton>
+        )}
         <DropdownMenu onOpenChange={(open) => { if (open) setDownloadNoticeCount(0) }}>
           <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="relative size-7 shrink-0" title="更多" aria-label="更多" />}>
             <MoreHorizontal size={16} className="rotate-90" />
@@ -1325,6 +1366,30 @@ export function BrowserShell({
           </>
         )}
       </div>
+
+      {surface === 'right-panel' && ownerThreadId && commentsPanelOpen && annotationComments.length > 0 && (
+        <div
+          data-annotation-panel="true"
+          className="file-tree-scrollbar flex max-h-[280px] shrink-0 flex-col gap-1.5 overflow-y-auto border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] p-2"
+        >
+          <div className="flex h-6 shrink-0 items-center justify-between px-1 text-xs text-[var(--lume-text-muted)]">
+            <span>评论 · {annotationComments.length}</span>
+            <button
+              type="button"
+              aria-label="隐藏评论列表"
+              onClick={() => setCommentsPanelOpen(false)}
+              className="text-[var(--lume-text-muted)] hover:text-[var(--lume-text-primary)]"
+            >
+              <X size={12} />
+            </button>
+          </div>
+          <CommentList
+            comments={annotationComments}
+            onResolve={handleResolveThread}
+            onMarkRead={handleMarkThreadRead}
+          />
+        </div>
+      )}
 
       {auxiliaryPanel === 'find' && (
         <form className="flex h-11 shrink-0 items-center gap-2 border-b border-border/60 ps-4 pe-2" onSubmit={(event) => { event.preventDefault(); runFind(true) }}>

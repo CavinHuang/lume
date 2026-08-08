@@ -30,7 +30,7 @@ export function buildDirectBrowserAnnotationPayload(input: {
 }): BrowserAnnotationDirectPayload {
   return {
     threadId: input.threadId,
-    userMessage: '请处理这条网页批注。',
+    userMessage: input.annotation.body || '请处理这条网页批注。',
     browserAttachments: [input.annotation],
     ...(input.screenshot ? { messageAttachments: [input.screenshot] } : {}),
   }
@@ -69,7 +69,7 @@ export function resolveBrowserAnnotationSubmission(input: {
     return {
       attachments: [input.directAttachment],
       preserveComposer: true,
-      text: '请处理这条网页批注。',
+      text: ('body' in input.directAttachment && typeof input.directAttachment.body === 'string' && input.directAttachment.body) ? input.directAttachment.body : '请处理这条网页批注。',
     }
   }
   return {

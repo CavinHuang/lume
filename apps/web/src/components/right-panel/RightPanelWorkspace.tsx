@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import {
   activeTabIdAtom,
   agentRuntimeEventsFamily,
+  agentSideChatMapAtom,
+  agentStreamingStatesFamily,
   agentThreadsAtom,
   agentWorkspacesAtom,
   codingReviewPanelActionAtom,
@@ -40,6 +42,9 @@ import { RIGHT_PANEL_DEFAULT_WIDTH, getRightPanelDragWidth } from './right-panel
 import { RightPanelLauncher } from './RightPanelLauncher'
 import { RightPanelTabBar } from './RightPanelTabBar'
 import { PlaceholderRightPanelTab } from './PlaceholderRightPanelTab'
+import { AgentMessages } from '../agent/AgentMessages'
+import { AgentInput } from '../agent/AgentInput'
+import { ThreadFileEnvProvider } from '../agent/thread-file-env'
 import { FilesRightPanelWorkspace } from './FilesRightPanelWorkspace'
 import { BrowserRightPanelTab } from './BrowserRightPanelTab'
 import {
@@ -54,7 +59,7 @@ import { CodingReviewPanel } from './CodingReviewPanel'
 import type { CodingReviewPanelState } from '@/atoms/right-panel-atoms'
 
 const PLACEHOLDER_LABELS: Record<RightPanelFunction, string> = {
-  browser: '浏览器', files: '文件',
+  browser: '浏览器', files: '文件', chat: '问答',
 }
 
 type ThreadFileWorkspaceUpdate = ThreadFileWorkspace | ((current: ThreadFileWorkspace) => ThreadFileWorkspace)
@@ -297,6 +302,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
     || runtimeWorkspace.openTabs.length > 0
     || browserWorkspace.tabs.length > 0
     || Boolean(codingReview)
+    || (runtimeWorkspace.activeItem?.kind === 'function' && runtimeWorkspace.activeItem.type === 'chat')
 
   const action = (value: Parameters<typeof dispatch>[0]) => dispatch(value)
   const updateBrowserWorkspace = (next: ThreadBrowserWorkspace) => {
@@ -590,5 +596,25 @@ function RightPanelActiveContent({ runtime, browserWorkspace, workspaceSlug, wor
   if (active.kind === 'file' || active.type === 'files') {
     return <FilesRightPanelWorkspace threadId={threadId} workspace={runtime} workspaceSlug={workspaceSlug} workspaceProjectPath={workspaceProjectPath} fileContextId={fileContextId} openFunctions={openFunctions} onWorkspaceChange={onRuntimeChange} />
   }
+  if (active.kind === 'function' && active.type === 'chat') {
+    return <RightPanelSideChat threadId={threadId} workspaceSlug={workspaceSlug} fileContextId={fileContextId} />
+  }
   return <PlaceholderRightPanelTab label={PLACEHOLDER_LABELS[active.type]} />
+}
+
+/** 右侧面板 side-chat：基于 AgentMessages + AgentInput 组装的问答副窗口（见 #18） */
+function RightPanelSideChat({ threadId, workspaceSlug, fileContextId }: { threadId: string; workspaceSlug?: string; fileContextId?: string }) {
+  const sideChatThreadId = useAtomValue(agentSideChatMapAtom)[threadId]
+  const streaming = useAtomValue(agentStreamingStatesFamily(sideChatThreadId ?? '')) === 'streaming'
+  if (!sideChatThreadId) {
+    return <PlaceholderRightPanelTab label="选中消息文字后点击「打开右侧问答」即可开始" />
+  }
+  return (
+    <ThreadFileEnvProvider value={{ threadId: sideChatThreadId, workspaceSlug, fileContextId }}>
+      <div className="flex h-full min-h-0 flex-col">
+        <AgentMessages threadId={sideChatThreadId} streaming={streaming} />
+        <AgentInput threadId={sideChatThreadId} streaming={streaming} />
+      </div>
+    </ThreadFileEnvProvider>
+  )
 }

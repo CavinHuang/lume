@@ -264,5 +264,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   async installUpdate() {
     await ipcRenderer.invoke('lume:update:install')
   },
+  async getAppSignature() {
+    return ipcRenderer.invoke('lume:app:signature')
+  },
   window: createWindowBridge(),
 })

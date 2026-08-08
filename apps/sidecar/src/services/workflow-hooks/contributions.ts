@@ -35,6 +35,24 @@ export function createCoreWorkflowHookContributions(
       capabilities: ["context.append"],
       handlerRef: "core.plugin.skill-activation"
     },
+    {
+      id: "core.suggestion.completion",
+      pluginId: "lume-core",
+      event: "run.afterComplete",
+      phase: "observe",
+      priority: "normal",
+      capabilities: ["runtime.emit"],
+      handlerRef: "core.suggestion.completion"
+    },
+    {
+      id: "core.persona.completion",
+      pluginId: "lume-core",
+      event: "run.afterComplete",
+      phase: "observe",
+      priority: "normal",
+      capabilities: ["runtime.emit"],
+      handlerRef: "core.persona.completion"
+    },
     ...(config.security === false ? [] : [
       {
         id: "core.security.permission",

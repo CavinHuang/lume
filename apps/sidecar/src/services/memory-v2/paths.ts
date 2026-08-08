@@ -29,6 +29,11 @@ export function getMemoryV2ScopePaths(input: {
   return ensureMemoryV2ScopePaths(root, input.scope);
 }
 
+export function getPersonaPath(scope: MemoryV2Scope, workspaceSlug?: string): string {
+  const paths = getMemoryV2ScopePaths({ scope, workspaceSlug });
+  return join(paths.root, "persona.md");
+}
+
 export function ensureMemoryV2ScopePaths(root: string, scope: MemoryV2Scope): MemoryV2ScopePaths {
   const pendingDir = join(root, "pending");
   const paths: MemoryV2ScopePaths = {

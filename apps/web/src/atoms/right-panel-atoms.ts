@@ -282,8 +282,18 @@ export const rightPanelFileLayoutPreferencesAtom = atomWithStorage<RightPanelFil
 /** Runtime-only file navigation state. It intentionally never uses atomWithStorage. */
 export const rightPanelFileWorkspacesAtom = atom<Record<string, ThreadFileWorkspace>>({})
 
+/**
+ * 每个 thread 对应的右侧 side-chat 会话 id（threadId → sideChatThreadId）。
+ * 划线引用「打开右侧问答」复用或新建 side-chat 会话并挂在右栏（见 #18）。
+ */
+export const agentSideChatMapAtom = atomWithStorage<Record<string, string>>(
+  'agent-side-chat-map',
+  {},
+)
+
 type RightPanelWorkspaceAction =
   | { type: 'activate-function'; threadId: string; function: RightPanelFunction; binding?: ThreadFileWorkspace['binding'] }
+  | { type: 'activate-side-chat'; threadId: string }
   | { type: 'open-file'; threadId: string; ref: FileRef; binding?: ThreadFileWorkspace['binding']; lineSelection?: ThreadFileLineSelection; navigationRevision?: number }
   | { type: 'reveal-directory'; threadId: string; request: NonNullable<ThreadFileWorkspace['revealRequest']>; binding?: ThreadFileWorkspace['binding'] }
   | { type: 'close-function'; threadId: string; function: RightPanelFunction }
@@ -305,6 +315,15 @@ export const rightPanelWorkspaceActionAtom = atom(null, (get, set, action: Right
     set(rightPanelFileWorkspacesAtom, {
       ...runtime,
       [action.threadId]: { ...runtimeWorkspace, activeItem: { kind: 'function', type: action.function } },
+    })
+    return
+  }
+
+  if (action.type === 'activate-side-chat') {
+    // side-chat 只切到 chat 视图（runtime activeItem），不进 persisted tabs，避免污染 browser/files tab 栏（见 #18）
+    set(rightPanelFileWorkspacesAtom, {
+      ...runtime,
+      [action.threadId]: { ...runtimeWorkspace, activeItem: { kind: 'function', type: 'chat' } },
     })
     return
   }

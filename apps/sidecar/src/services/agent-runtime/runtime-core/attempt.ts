@@ -790,14 +790,23 @@ export async function runRuntimeCoreAttempt(
   options: RunRuntimeCoreAttemptOptions
 ): Promise<AgentRuntimeRunResult> {
   const { input, runtime } = params;
+  if (runtime.abortSignal?.aborted) {
+    emit.onComplete();
+    return { status: "aborted" };
+  }
 
   const mockHandler = resolveMockAttempt(input);
   const prepared = await prepareRuntimeCoreAttempt(params);
+  if (runtime.abortSignal?.aborted) {
+    emit.onComplete();
+    return { status: "aborted" };
+  }
   if ("status" in prepared) {
     return prepared;
   }
 
   const runner = await LumeRunner.create({ params, prepared, emit });
+  if (runtime.abortSignal?.aborted) return runner.abort();
 
   if (mockHandler) {
     try {
@@ -826,6 +835,7 @@ export async function runRuntimeCoreAttempt(
     enabled: pluginRuntimeConfig.enabled,
     directories: pluginRuntimeConfig.directories,
   });
+  if (runtime.abortSignal?.aborted) return runner.abort();
 
   // Phase 3c: sensitive-capability gate runtime. Stateless (state lives in the
   // FilePluginStateStore file); same state path SidecarPluginManager uses.

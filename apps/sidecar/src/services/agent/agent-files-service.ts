@@ -1943,6 +1943,17 @@ function detectImageMediaType(bytes: Buffer): string | undefined {
   if (bytes.length >= 6 && ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"))) return "image/gif";
   if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
   if (bytes.length >= 2 && bytes.subarray(0, 2).toString("ascii") === "BM") return "image/bmp";
+  // AVIF / HEIC(HEIF)\uFF1AISO BMFF\uFF0Coffset 4-8 \u4E3A "ftyp"\uFF0C8-12 \u4E3A major brand\uFF08\u89C1 #14\uFF09
+  if (bytes.length >= 12 && bytes.subarray(4, 8).toString("ascii") === "ftyp") {
+    const brand = bytes.subarray(8, 12).toString("ascii");
+    if (brand === "avif" || brand === "avis") return "image/avif";
+    if (brand === "heic" || brand === "heix" || brand === "heim" || brand === "heis" || brand === "mif1" || brand === "msf1") return "image/heic";
+  }
+  // ICO\uFF08.cur \u4E3A 00 00 02 00\uFF0C\u6B64\u5904\u4EC5\u8BA4\u56FE\u6807\uFF09
+  if (bytes.length >= 4 && bytes[0] === 0x00 && bytes[1] === 0x00 && bytes[2] === 0x01 && bytes[3] === 0x00) return "image/x-icon";
+  // TIFF\uFF08\u542B DNG/NEF \u7B49 TIFF \u884D\u751F\uFF09\uFF1A\u5C0F\u7AEF II*\0 \u6216\u5927\u7AEF MM\0*
+  if (bytes.length >= 4 && ((bytes[0] === 0x49 && bytes[1] === 0x49 && bytes[2] === 0x2a && bytes[3] === 0x00)
+    || (bytes[0] === 0x4d && bytes[1] === 0x4d && bytes[2] === 0x00 && bytes[3] === 0x2a))) return "image/tiff";
   const textPrefix = bytes.subarray(0, Math.min(bytes.length, 1024)).toString("utf8").replace(/^\uFEFF/, "").trimStart();
   if (/^(?:<\?xml[^>]*>\s*)?<svg(?:\s|>)/i.test(textPrefix)) return "image/svg+xml";
   return undefined;

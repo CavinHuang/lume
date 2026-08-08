@@ -1,6 +1,6 @@
 {
   "name": "@lume/desktop",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "private": true,
   "description": "Lume desktop shell powered by Electron",
   "author": "Lume Team",
@@ -17,7 +17,7 @@
     "build": "bun ./scripts/build-agent-island-native.ts && bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && node ../../scripts/build-ripgrep-resources.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ../../scripts/build-node-repl-resources.mjs && node ../../scripts/build-desktop-host-resources.mjs && node ./scripts/run-electron-builder.mjs --output-dir dist-unpacked --dir --publish never --config.directories.output=dist-unpacked",
     "package": "bun ./scripts/build-agent-island-native.ts && bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && node ../../scripts/build-ripgrep-resources.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ../../scripts/build-node-repl-resources.mjs && node ../../scripts/build-desktop-host-resources.mjs && node ./scripts/run-electron-builder.mjs --output-dir dist-release --publish never --config.directories.output=dist-release",
     "typecheck": "tsc -p tsconfig.json --noEmit && node --check ./scripts/electron-runtime.mjs",
-    "test": "bun test ./scripts/desktop-package.test.mjs ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs ./scripts/plugin-native-host-installer.test.mjs ./scripts/tray-window-runtime.test.mjs ./scripts/tray-manager.test.mjs ./scripts/logging-service.test.mjs ./scripts/log-digest-policy.test.mjs ./scripts/diagnostic-content-store.test.mjs ./scripts/settings-broker.test.mjs ./scripts/electron-runtime.test.mjs ./scripts/electron-security.test.mjs ./scripts/browser-audit.test.mjs ./scripts/browser-credentials.test.mjs ./scripts/browser-cursor.test.mjs ./scripts/browser-downloads.test.mjs ./scripts/browser-import.test.mjs ./scripts/browser-network-guard.test.mjs ./scripts/browser-reference-grants.test.mjs ./scripts/browser-runtime-policy.test.mjs ./scripts/browser-sharing-policy.test.mjs",
+    "test": "bun test ./scripts/desktop-package.test.mjs ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs ./scripts/plugin-native-host-installer.test.mjs ./scripts/tray-window-runtime.test.mjs ./scripts/tray-manager.test.mjs ./scripts/logging-service.test.mjs ./scripts/log-digest-policy.test.mjs ./scripts/diagnostic-content-store.test.mjs ./scripts/settings-broker.test.mjs ./scripts/electron-runtime.test.mjs ./scripts/electron-security.test.mjs ./scripts/browser-audit.test.mjs ./scripts/browser-credentials.test.mjs ./scripts/browser-cursor.test.mjs ./scripts/browser-downloads.test.mjs ./scripts/browser-import.test.mjs ./scripts/browser-network-guard.test.mjs ./scripts/browser-reference-grants.test.mjs ./scripts/browser-runtime-policy.test.mjs ./scripts/browser-sharing-policy.test.mjs ./scripts/desktop-signature.test.mjs",
     "test:unit": "bun run test",
     "test:smoke": "bun test ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs",
     "test:browser-e2e": "bun ./scripts/browser-runtime.e2e.mjs",
@@ -34,6 +34,8 @@
     "electron-builder": "24.13.3",
     "electron-updater": "6.8.9",
     "happy-dom": "^15.11.7",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "typescript": "^5.9.3",
     "vite": "^6.3.0"
   },
@@ -52,8 +54,6 @@
       "dist/preload/preload.cjs",
       "dist/preload/browser-auth-preload.cjs",
       "dist/preload/browser-guest-preload.cjs",
-      "dist/preload/browser-annotation-preload.cjs",
-      "dist/preload/browser-overlay-preload.cjs",
       "assets"
     ],
     "extraResources": [
@@ -162,8 +162,5 @@
       }
     ]
   },
-  "dependencies": {
-    "react": "18.3.1",
-    "react-dom": "18.3.1"
-  }
+  "dependencies": {}
 }

@@ -39,9 +39,7 @@ export const preloadConfig = defineConfig({
       entry: {
         preload: resolve(desktopRoot, 'src', 'preload.ts'),
         'browser-auth-preload': resolve(desktopRoot, 'src', 'browser-auth-preload.ts'),
-        'browser-guest-preload': resolve(desktopRoot, 'src', 'browser-guest-preload.ts'),
-        'browser-annotation-preload': resolve(desktopRoot, 'src', 'browser-annotation-preload.ts'),
-        'browser-overlay-preload': resolve(desktopRoot, 'src', 'browser-overlay-preload.tsx'),
+        'browser-guest-preload': resolve(desktopRoot, 'src', 'browser-guest-preload.tsx'),
       },
       formats: ['cjs'],
       fileName: (_format, entryName) => `${entryName}.cjs`,

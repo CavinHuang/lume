@@ -160,6 +160,14 @@ const agentBrowserAnchorSchema = z.object({
   }).strict()
 }).strict();
 
+// 设计变更单条声明：对齐 Codex A.6，property 限定 CSS 属性名格式，值截断参照 sanitizeStyles
+const agentBrowserDesignDeclarationSchema = z.object({
+  property: z.string().regex(/^[a-zA-Z][a-zA-Z0-9-]{0,127}$/),
+  value: z.string().max(4096),
+  previousValue: z.string().max(4096),
+  placeholderValue: z.string().max(4096).optional()
+}).strict();
+
 const agentBrowserAttachmentSchema = z.discriminatedUnion("origin", [
   agentBrowserTabAttachmentSchema,
   z.object({
@@ -179,7 +187,18 @@ const agentBrowserAttachmentSchema = z.discriminatedUnion("origin", [
       width: z.number().int().positive().optional(),
       height: z.number().int().positive().optional(),
       deviceScaleFactor: z.number().finite().positive().optional()
-    }).strict().optional()
+    }).strict().optional(),
+    // Task 91：PR diff 评审字段（对齐 Codex resolved/thread/unread/author）。全可选，向后兼容。
+    reviewThreadId: z.string().max(256).optional(),
+    inReplyToId: z.string().max(256).optional(),
+    isResolved: z.boolean().optional(),
+    resolvedAt: z.string().max(64).optional(),
+    resolvedBy: z.enum(["user", "agent"]).optional(),
+    author: z.object({
+      kind: z.enum(["user", "agent"]),
+      name: z.string().max(256).optional()
+    }).strict().optional(),
+    readAt: z.string().max(64).optional()
   }).strict(),
   z.object({
     id: z.string().trim().min(1).max(256),
@@ -188,6 +207,12 @@ const agentBrowserAttachmentSchema = z.discriminatedUnion("origin", [
     anchor: agentBrowserAnchorSchema,
     originalStyles: z.record(z.string().max(128), z.string().max(4096)),
     proposedStyles: z.record(z.string().max(128), z.string().max(4096)),
+    declarations: z.array(agentBrowserDesignDeclarationSchema).max(64).optional(),
+    groupId: z.string().max(256).optional(),
+    text: z.object({
+      previousValue: z.string().max(4096),
+      value: z.string().max(4096)
+    }).strict().optional(),
     body: z.string().trim().min(1).max(20_000).optional(),
     screenshotRef: z.string().max(4096).optional()
   }).strict()
@@ -869,6 +894,13 @@ export const memoryListSourceFilesInputSchema = z.object({
 const memoryEntryScopeSchema = z.enum(["global", "workspace"]);
 const memoryEntryConfidenceSchema = z.enum(["low", "medium", "high"]);
 
+export const memoryActivationSchema = z.object({
+  recall: z.boolean(),
+  persona: z.boolean(),
+  suggestion: z.boolean(),
+  analyst: z.boolean()
+}).strict();
+
 export const memoryUpdateEntryInputSchema = z.object({
   workspaceSlug: idSchema,
   scope: memoryEntryScopeSchema,
@@ -876,7 +908,8 @@ export const memoryUpdateEntryInputSchema = z.object({
   statement: z.string().trim().min(1).optional(),
   kind: memoryKindSchema.optional(),
   confidence: memoryEntryConfidenceSchema.optional(),
-  tags: z.array(z.string()).optional()
+  tags: z.array(z.string()).optional(),
+  activation: memoryActivationSchema.optional()
 }).strict();
 
 export const memoryDeleteEntryInputSchema = z.object({
@@ -956,6 +989,11 @@ export const agentQueuedMessageInputSchema = z.object({
 
 // retry 与 remove/promote 共用同一组字段,直接复用 agentQueuedMessageInputSchema
 export const agentRetryQueuedMessageInputSchema = agentQueuedMessageInputSchema;
+
+export const agentResumeQueueInputSchema = z.object({
+  threadId: idSchema,
+  queueOperationId: idSchema,
+});
 
 export const agentUpdateQueuedMessageInputSchema = z.object({
   threadId: idSchema,

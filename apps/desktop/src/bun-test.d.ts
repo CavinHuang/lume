@@ -2,6 +2,10 @@ declare module 'bun:test' {
   export const describe: (name: string, callback: () => void) => void
   export const test: (name: string, callback: () => void | Promise<void>) => void
   export const expect: (value: unknown) => any
+  export const beforeEach: (callback: () => void | Promise<void>) => void
+  export const afterEach: (callback: () => void | Promise<void>) => void
+  export const beforeAll: (callback: () => void | Promise<void>) => void
+  export const afterAll: (callback: () => void | Promise<void>) => void
   type MockFn = ((...args: any[]) => any) & {
     mock: { calls: any[][]; results: { type: 'return' | 'throw'; value: unknown }[] }
     toHaveBeenCalled: () => void

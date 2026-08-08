@@ -27,17 +27,24 @@ export function Marker({ comment, index, viewportSize, win, onHoverEnter, onHove
   const annotationId = String(comment.id ?? '')
   const body = String(comment.body ?? '')
   return (
-    <button
-      type="button"
-      className={`marker saved-marker${stateClass ? ` ${stateClass}` : ''}`}
-      data-selected="false"
-      style={{ left, top }}
-      aria-label={located ? `批注 ${index + 1}` : `批注 ${index + 1} 已失效`}
-      onMouseEnter={() => onHoverEnter?.(body, annotationId, { x: left, y: top, width: 24, height: 24 })}
-      onMouseLeave={() => onHoverLeave?.()}
-      onClick={(e) => { e.stopPropagation(); onClickAnchor?.(annotationId, anchor) }}
-    >
-      <span className="marker-label">{index + 1}</span>
-    </button>
+    <>
+      {/* 持久蓝色框框：标记已注释元素的位置（对齐 Codex hover-box 但持久显示） */}
+      <div
+        className={`annotation-box${stateClass ? ` ${stateClass}` : ''}`}
+        style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
+      />
+      <button
+        type="button"
+        className={`marker saved-marker${stateClass ? ` ${stateClass}` : ''}`}
+        data-selected="false"
+        style={{ left, top }}
+        aria-label={located ? `批注 ${index + 1}` : `批注 ${index + 1} 已失效`}
+        onMouseEnter={() => onHoverEnter?.(body, annotationId, { x: left, y: top, width: 24, height: 24 })}
+        onMouseLeave={() => onHoverLeave?.()}
+        onClick={(e) => { e.stopPropagation(); onClickAnchor?.(annotationId, anchor) }}
+      >
+        <span className="marker-label">{index + 1}</span>
+      </button>
+    </>
   )
 }

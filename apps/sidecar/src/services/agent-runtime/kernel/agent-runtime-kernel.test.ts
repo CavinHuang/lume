@@ -19,6 +19,33 @@ async function waitFor(condition: () => boolean): Promise<void> {
 }
 
 describe("AgentRuntimeKernel", () => {
+  test("cancelActive 应立即中止当前 dispatch 的共享信号", async () => {
+    let aborted = false;
+    const errors: string[] = [];
+    const kernel = new AgentRuntimeKernel<TestInput, TestEmitter>({
+      execute: async (dispatch) => {
+        await new Promise<void>((resolve) => {
+          dispatch.abortSignal?.addEventListener("abort", () => {
+            aborted = true;
+            resolve();
+          }, { once: true });
+        });
+      },
+      onDispatchError: (_dispatch, error) => {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+    });
+
+    kernel.dispatch({ threadId: "thread-a", userMessage: "run" }, { onError: () => undefined });
+
+    expect(kernel.cancelActive("thread-a")).toBeTrue();
+    await kernel.waitForIdleForTest();
+
+    expect(aborted).toBeTrue();
+    expect(errors).toEqual([]);
+    expect(kernel.cancelActive("thread-a")).toBeFalse();
+  });
+
   test("同一 thread 的 dispatch 应串行执行并报告 queuedCount", async () => {
     const started: string[] = [];
     const queuedCounts: number[] = [];
@@ -343,5 +370,37 @@ describe("AgentRuntimeKernel", () => {
     // first 已 sent(active 中,不在队列)
     expect(kernel.retryQueued("t-null", "not-queued", 0)).toBeNull();
     void sent;
+  });
+
+  test("pauseQueue 暂停后 startNextQueued 不派发,resumeQueue 恢复派发", async () => {
+    const releases = new Map<string, () => void>();
+    const started: string[] = [];
+    const kernel = new AgentRuntimeKernel<TestInput, TestEmitter>({
+      createQueuedDispatchId: () => `queue-${Math.random().toString(36).slice(2)}`,
+      now: () => 300,
+      execute: async (dispatch) => {
+        started.push(dispatch.input.userMessage);
+        await new Promise<void>((resolve) => { releases.set(dispatch.input.userMessage, resolve); });
+      },
+      onQueuedCountChange: () => undefined,
+      onDispatchError: () => undefined,
+    });
+
+    kernel.dispatch({ threadId: "t-pause", userMessage: "running" }, { onError: () => undefined });
+    kernel.dispatch({ threadId: "t-pause", userMessage: "next" }, { onError: () => undefined });
+    await waitFor(() => started.includes("running"));
+
+    kernel.pauseQueue("t-pause");
+    expect(kernel.isPaused("t-pause")).toBe(true);
+    releases.get("running")!();
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(started).not.toContain("next");
+
+    kernel.resumeQueue("t-pause");
+    expect(kernel.isPaused("t-pause")).toBe(false);
+    await waitFor(() => started.includes("next"));
+
+    releases.get("next")!();
   });
 });

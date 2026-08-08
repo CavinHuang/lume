@@ -12,7 +12,7 @@ import { describe, expect, mock, test } from 'bun:test'
 import { electronMockStub } from '../scripts/test-electron-mock'
 await mock.module('electron', () => electronMockStub)
 
-const { BrowserAnnotationManager } = await import('./browser-annotation-manager')
+const { BrowserAnnotationManager, sanitizeDeclarations } = await import('./browser-annotation-manager')
 // 通过 InstanceType<typeof ...> 取实例类型，再推导 onGuestMessage 第一个参数（AnnotationRuntimeTab）。
 type AnnotationRuntimeTab = Parameters<InstanceType<typeof BrowserAnnotationManager>['onGuestMessage']>[0]
 
@@ -44,9 +44,6 @@ function newManager(directory: string) {
   const emit = (method: string, params: Record<string, unknown>) => { calls.push({ method, params }) }
   const manager = new BrowserAnnotationManager({
     configDir: () => directory,
-    getParentWindow: () => null,
-    annotationPopupPreloadPath: join(directory, 'preload.js'),
-    rendererUrl: () => 'http://localhost:8080',
     emit,
     getScreenshotMode: () => 'off',
     captureScreenshot: () => Promise.resolve({ data: Buffer.alloc(0) }),
@@ -218,4 +215,702 @@ describe('BrowserAnnotationManager editor 命令', () => {
       })
     })
   }
+})
+
+// Task 103：open-editor annotation 路径切换为 overlay EditorCard（B 变体，对齐 Plan 4 editor-*
+// 模式）：setDraft 写 activeDraft → syncGuest 推 overlay 渲染 EditorCard → emitSnapshot 通知 host；
+// 不再 openPopup。tweaks 模式不变（emit browser:annotation-selection）。
+describe('BrowserAnnotationManager open-editor（Task 103）', () => {
+  test('annotation 模式：setDraft + syncGuest 推 activeDraft + emitSnapshot', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      const send = mock(() => {})
+      manager.onGuestMessage(newTab(send), {
+        type: 'open-editor',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        anchor: ANCHOR,
+      })
+
+      // setDraft 写入 activeDraft（overlay EditorCard 的数据源）
+      const after = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1)
+      expect(after.activeDraft).toBeDefined()
+      expect(after.activeDraft?.anchor).toEqual(ANCHOR)
+      // syncGuest：webContents.send 推送 sync，payload.activeDraft 即 store activeDraft
+      expect(send).toHaveBeenCalledTimes(1)
+      const syncCall = send.mock.calls[0]!
+      expect(syncCall[0]).toBe('lume:browser-annotation-guest')
+      const sentPayload = syncCall[1] as { activeDraft?: { anchor: typeof ANCHOR } }
+      expect(sentPayload.activeDraft?.anchor).toEqual(ANCHOR)
+      // emitSnapshot：annotation-state 带 activeDraft
+      const states = calls.filter((c) => c.method === 'browser:annotation-state')
+      expect(states).toHaveLength(1)
+      expect((states[0]!.params as { activeDraft?: { anchor: typeof ANCHOR } }).activeDraft?.anchor).toEqual(ANCHOR)
+    })
+  })
+
+  test('annotation 编辑模式（带 annotationId）：setDraft body/id 取自现有 comment', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      const existingId = 'browser-annotation:existing-edit'
+      manager.store.saveComment({
+        id: existingId, origin: 'browser-annotation',
+        tab: { id: 'browser-tab:tab-1:1', origin: 'browser-tab', backend: 'iab', browserId: 'lume-iab', tabId: 'tab-1', title: 'Example', url: ANCHOR.url, generation: 1, ownerThreadId: 'thread-1' },
+        anchor: ANCHOR, body: '旧文字',
+      })
+      manager.onGuestMessage(newTab(), {
+        type: 'open-editor',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        anchor: ANCHOR, annotationId: existingId,
+      })
+
+      const draft = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).activeDraft
+      expect(draft?.id).toBe(existingId)
+      expect(draft?.body).toBe('旧文字')
+    })
+  })
+
+  test('tweaks 模式：emit browser:annotation-selection（不变；不 setDraft/不 syncGuest/不 emitSnapshot）', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      const send = mock(() => {})
+      manager.onGuestMessage(newTab(send), {
+        type: 'open-editor',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        anchor: ANCHOR, purpose: 'tweaks',
+        originalStyles: { color: 'red' },
+      })
+
+      const selection = calls.filter((c) => c.method === 'browser:annotation-selection')
+      expect(selection).toHaveLength(1)
+      const params = selection[0]!.params as { purpose: string; anchor: typeof ANCHOR; originalStyles: Record<string, string> }
+      expect(params.purpose).toBe('tweaks')
+      expect(params.anchor).toEqual(ANCHOR)
+      expect(params.originalStyles).toEqual({ color: 'red' })
+      // tweaks 分支早 return：不写 activeDraft、不 syncGuest、不 emitSnapshot
+      expect(manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).activeDraft).toBeUndefined()
+      expect(send).toHaveBeenCalledTimes(0)
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(false)
+    })
+  })
+})
+
+// Task 54：manager onGuestMessage design 分支（design-overlay-update/delete/submit）+
+// sanitizeDeclarations 纯函数。design 分支由 overlay 触发（与 editor 分支对称）：
+// anchor/declarations 从 store activeDesignChange 取（Task 53 已持久化），不依赖 overlay 二次传入。
+describe('BrowserAnnotationManager design 消息', () => {
+  test('design-overlay-update：setActiveDesignChange + syncGuest + emitSnapshot', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      const send = mock(() => {})
+      manager.onGuestMessage(newTab(send), {
+        type: 'design-overlay-update',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        group: {
+          id: 'dc1', anchor: ANCHOR,
+          declarations: [{ property: 'color', value: 'red', previousValue: 'blue' }],
+        },
+      })
+
+      const snap = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1)
+      expect(snap.activeDesignChange?.id).toBe('dc1')
+      expect(snap.activeDesignChange?.declarations).toEqual([{ property: 'color', value: 'red', previousValue: 'blue' }])
+      // syncGuest 推送一次
+      expect(send).toHaveBeenCalledTimes(1)
+      // emitSnapshot 推送 annotation-state
+      const states = calls.filter((c) => c.method === 'browser:annotation-state')
+      expect(states).toHaveLength(1)
+    })
+  })
+
+  test('design-overlay-delete：clearActiveDesignChange + syncGuest + emitSnapshot', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      // 预置 activeDesignChange
+      manager.store.setActiveDesignChange({
+        threadId: 'thread-1', tabId: 'tab-1', url: ANCHOR.url, generation: 1,
+        id: 'dc1', anchor: ANCHOR,
+        declarations: [{ property: 'color', value: 'red', previousValue: 'blue' }],
+      })
+      expect(manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).activeDesignChange).toBeDefined()
+
+      const send = mock(() => {})
+      manager.onGuestMessage(newTab(send), {
+        type: 'design-overlay-delete',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1', groupId: 'dc1',
+      })
+
+      expect(manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).activeDesignChange).toBeUndefined()
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(true)
+    })
+  })
+
+  test('design-submit send：saveDesignChange(declarations) + emit direct-submit + 清空 activeDesignChange + 落盘', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      // 预置 activeDesignChange（模拟 overlay 之前的 update）
+      manager.onGuestMessage(newTab(), {
+        type: 'design-overlay-update',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        group: {
+          id: 'dc1', anchor: ANCHOR,
+          declarations: [{ property: 'color', value: 'red', previousValue: 'blue' }],
+        },
+      })
+      // 重置 calls（design-overlay-update 也 emit）
+      calls.length = 0
+
+      manager.onGuestMessage(newTab(), {
+        type: 'design-submit', action: 'send', body: '改色',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+
+      const direct = calls.filter((c) => c.method === 'browser:annotation-direct-submit')
+      expect(direct).toHaveLength(1)
+      const params = direct[0]!.params
+      expect(params.threadId).toBe('thread-1')
+      expect(params.tabId).toBe('tab-1')
+      const attachment = params.attachment as {
+        declarations: { property: string; value: string; previousValue: string }[]
+        body: string
+        groupId: string
+        id: string
+        originalStyles: Record<string, string>
+        proposedStyles: Record<string, string>
+        origin: string
+      }
+      expect(attachment.origin).toBe('browser-design-change')
+      expect(attachment.id).toBe('dc1') // groupId === designChange.id
+      expect(attachment.groupId).toBe('dc1')
+      expect(attachment.declarations).toEqual([{ property: 'color', value: 'red', previousValue: 'blue' }])
+      expect(attachment.body).toBe('改色')
+      expect(attachment.originalStyles).toEqual({ color: 'blue' })
+      expect(attachment.proposedStyles).toEqual({ color: 'red' })
+      // send 不应同时触发 added
+      expect(calls.some((c) => c.method === 'browser:annotation-added')).toBe(false)
+      // 提交后 activeDesignChange 清空
+      expect(manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).activeDesignChange).toBeUndefined()
+      // 落盘：comments 含此 designChange（按 id）
+      expect(manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).comments.map((c) => c.id)).toContain('dc1')
+    })
+  })
+
+  test('design-submit add：emit annotation-added（不触发 direct-submit）', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      manager.onGuestMessage(newTab(), {
+        type: 'design-overlay-update',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        group: { id: 'dc1', anchor: ANCHOR, declarations: [] },
+      })
+      calls.length = 0
+
+      manager.onGuestMessage(newTab(), {
+        type: 'design-submit', action: 'add', body: '备注',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+
+      const added = calls.filter((c) => c.method === 'browser:annotation-added')
+      expect(added).toHaveLength(1)
+      expect(calls.some((c) => c.method === 'browser:annotation-direct-submit')).toBe(false)
+    })
+  })
+
+  test('design-submit 无 activeDesignChange：不 emit 语义事件', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      // 不预置 activeDesignChange → 提交早 return
+      manager.onGuestMessage(newTab(), {
+        type: 'design-submit', action: 'send', body: '改色',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+      expect(calls.some((c) => c.method === 'browser:annotation-direct-submit')).toBe(false)
+      expect(calls.some((c) => c.method === 'browser:annotation-added')).toBe(false)
+    })
+  })
+
+  test('design-overlay-update 非法 group（缺 declarations）：静默 return', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      manager.onGuestMessage(newTab(), {
+        type: 'design-overlay-update',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        group: { id: 'dc1', anchor: ANCHOR }, // 缺 declarations
+      })
+      expect(manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).activeDesignChange).toBeUndefined()
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(false)
+    })
+  })
+
+  // Task 74：Alt 多选（Codex §1.3）——design-overlay-update additionalAnchors 追加（非覆盖）。
+  // host 是 additionalAnchors 单一来源；overlay 在 Alt+click 时把新 anchor 放进 group.additionalAnchors
+  // 数组，manager sanitizeAnchor 后调 setActiveDesignChange 的 appendAdditionalAnchors。
+  test('design-overlay-update 携带 additionalAnchors：sanitize + 追加到 activeDesignChange', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      // 预置 activeDesignChange（已有主 anchor）
+      manager.onGuestMessage(newTab(), {
+        type: 'design-overlay-update',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        group: { id: 'dc1', anchor: ANCHOR, declarations: [] },
+      })
+      // Alt+click → design-overlay-update 携带 additionalAnchors（新 anchor）
+      const additionalAnchor = { ...ANCHOR, selector: '#other' }
+      manager.onGuestMessage(newTab(), {
+        type: 'design-overlay-update',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        group: { id: 'dc1', anchor: ANCHOR, declarations: [], additionalAnchors: [additionalAnchor] },
+      })
+      const snap = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1)
+      // 追加而非覆盖；anchor 经 sanitizeAnchor 保留 selector
+      expect(snap.activeDesignChange?.additionalAnchors).toHaveLength(1)
+      expect(snap.activeDesignChange?.additionalAnchors?.[0]?.selector).toBe('#other')
+    })
+  })
+
+  test('design-overlay-update additionalAnchors 多次：累计追加（非覆盖）', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      manager.onGuestMessage(newTab(), {
+        type: 'design-overlay-update',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        group: { id: 'dc1', anchor: ANCHOR, declarations: [], additionalAnchors: [{ ...ANCHOR, selector: '#a' }] },
+      })
+      manager.onGuestMessage(newTab(), {
+        type: 'design-overlay-update',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        group: { id: 'dc1', anchor: ANCHOR, declarations: [], additionalAnchors: [{ ...ANCHOR, selector: '#b' }] },
+      })
+      const snap = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1)
+      // 累计两条，非覆盖
+      expect(snap.activeDesignChange?.additionalAnchors).toHaveLength(2)
+      expect(snap.activeDesignChange?.additionalAnchors?.map((a) => a.selector)).toEqual(['#a', '#b'])
+    })
+  })
+
+  test('design-overlay-update 不携带 additionalAnchors：保留现有（DesignEditor submit 不清空）', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      // 先 Alt+click 追加一条
+      manager.onGuestMessage(newTab(), {
+        type: 'design-overlay-update',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        group: { id: 'dc1', anchor: ANCHOR, declarations: [], additionalAnchors: [{ ...ANCHOR, selector: '#a' }] },
+      })
+      // 然后 DesignEditor submit（无 additionalAnchors 字段）
+      manager.onGuestMessage(newTab(), {
+        type: 'design-overlay-update',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        group: {
+          id: 'dc1', anchor: ANCHOR,
+          declarations: [{ property: 'color', value: 'red', previousValue: 'blue' }],
+        },
+      })
+      const snap = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1)
+      // additionalAnchors 仍保留
+      expect(snap.activeDesignChange?.additionalAnchors).toHaveLength(1)
+      // declarations 是新值
+      expect(snap.activeDesignChange?.declarations).toEqual([{ property: 'color', value: 'red', previousValue: 'blue' }])
+    })
+  })
+
+  test('design-overlay-update additionalAnchors 非法 anchor（url mismatch）：过滤掉，不追加', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      manager.onGuestMessage(newTab(), {
+        type: 'design-overlay-update',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        group: {
+          id: 'dc1', anchor: ANCHOR, declarations: [],
+          additionalAnchors: [{ ...ANCHOR, url: 'https://evil.test/' }], // url mismatch
+        },
+      })
+      const snap = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1)
+      // 非法 anchor 过滤，additionalAnchors 不存在
+      expect(snap.activeDesignChange?.additionalAnchors).toBeUndefined()
+    })
+  })
+
+  // Task 74：remove-annotation-selection —— manager 从 activeDesignChange.additionalAnchors 移除指定 index。
+  test('remove-annotation-selection：按 selectionIndex 移除 + syncGuest + emitSnapshot', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      const send = mock(() => {})
+      // 预置 activeDesignChange + 2 条 additionalAnchors
+      manager.onGuestMessage(newTab(), {
+        type: 'design-overlay-update',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        group: {
+          id: 'dc1', anchor: ANCHOR, declarations: [],
+          additionalAnchors: [{ ...ANCHOR, selector: '#a' }, { ...ANCHOR, selector: '#b' }],
+        },
+      })
+      calls.length = 0
+      // 移除 index=0
+      manager.onGuestMessage(newTab(send), {
+        type: 'remove-annotation-selection', selectionIndex: 0,
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+      const snap = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1)
+      expect(snap.activeDesignChange?.additionalAnchors).toHaveLength(1)
+      expect(snap.activeDesignChange?.additionalAnchors?.[0]?.selector).toBe('#b')
+      // syncGuest + emitSnapshot
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(true)
+    })
+  })
+
+  test('remove-annotation-selection 越界 index：静默 no-op', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      manager.onGuestMessage(newTab(), {
+        type: 'design-overlay-update',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        group: {
+          id: 'dc1', anchor: ANCHOR, declarations: [],
+          additionalAnchors: [{ ...ANCHOR, selector: '#a' }],
+        },
+      })
+      calls.length = 0
+      manager.onGuestMessage(newTab(), {
+        type: 'remove-annotation-selection', selectionIndex: 9,
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+      // 越界：additionalAnchors 不变；不 syncGuest/emit
+      const snap = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1)
+      expect(snap.activeDesignChange?.additionalAnchors).toHaveLength(1)
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(false)
+    })
+  })
+
+  test('remove-annotation-selection 无 activeDesignChange：静默 no-op', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      manager.onGuestMessage(newTab(), {
+        type: 'remove-annotation-selection', selectionIndex: 0,
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(false)
+    })
+  })
+})
+
+// Task 71：manager onGuestMessage 4 个交互命令（design-scrub-changed/set-design-modifier-pressed/
+// set-original-view-enabled/tweaks-open-changed）+ store.setDesignFlags + syncGuest 推送。
+// 5c 简化：design-scrub-changed 为 no-op（对齐 Codex scrub 结束不发消息，overlay 本地 scrub 状态）。
+// 其余 3 命令 → store.setDesignFlags（合并字段）+ syncGuest + emitSnapshot。syncGuest 必须把
+// 布尔 false 也推送给 guest（与 theme 不同——theme 仅 truthy 推送；这里用 !== undefined 守卫）。
+describe('BrowserAnnotationManager design 交互命令（Task 71）', () => {
+  test('set-design-modifier-pressed true：store.isDesignModifierPressed + syncGuest + emitSnapshot', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      const send = mock(() => {})
+      manager.onGuestMessage(newTab(send), {
+        type: 'set-design-modifier-pressed', pressed: true,
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+
+      // store 字段更新
+      expect(manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).isDesignModifierPressed).toBe(true)
+      // syncGuest 推送一次（payload 携带 isDesignModifierPressed=true）
+      expect(send).toHaveBeenCalledTimes(1)
+      const syncPayload = send.mock.calls[0]![1] as { isDesignModifierPressed?: boolean }
+      expect(syncPayload.isDesignModifierPressed).toBe(true)
+      // emitSnapshot
+      const states = calls.filter((c) => c.method === 'browser:annotation-state')
+      expect(states).toHaveLength(1)
+      expect((states[0]!.params as { isDesignModifierPressed?: boolean }).isDesignModifierPressed).toBe(true)
+    })
+  })
+
+  test('set-design-modifier-pressed false：store 保留 false（非 undefined）+ syncGuest 推送 false', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      const send = mock(() => {})
+      manager.onGuestMessage(newTab(send), {
+        type: 'set-design-modifier-pressed', pressed: false,
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+
+      // 关键：false 必须作为字面量保留（key released 事件），不能被 ?? undefined 吃掉
+      const after = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1)
+      expect(after.isDesignModifierPressed).toBe(false)
+      const syncPayload = send.mock.calls[0]![1] as { isDesignModifierPressed?: boolean }
+      expect(syncPayload.isDesignModifierPressed).toBe(false)
+    })
+  })
+
+  test('set-original-view-enabled：store.isOriginalViewEnabled + syncGuest + emitSnapshot', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      const send = mock(() => {})
+      manager.onGuestMessage(newTab(send), {
+        type: 'set-original-view-enabled', enabled: true,
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+
+      expect(manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).isOriginalViewEnabled).toBe(true)
+      expect(send).toHaveBeenCalledTimes(1)
+      const syncPayload = send.mock.calls[0]![1] as { isOriginalViewEnabled?: boolean }
+      expect(syncPayload.isOriginalViewEnabled).toBe(true)
+      const states = calls.filter((c) => c.method === 'browser:annotation-state')
+      expect(states).toHaveLength(1)
+      expect((states[0]!.params as { isOriginalViewEnabled?: boolean }).isOriginalViewEnabled).toBe(true)
+    })
+  })
+
+  test('tweaks-open-changed：store.isTweaksEditorOpen + syncGuest + emitSnapshot', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      const send = mock(() => {})
+      manager.onGuestMessage(newTab(send), {
+        type: 'tweaks-open-changed', open: true,
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+
+      expect(manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).isTweaksEditorOpen).toBe(true)
+      expect(send).toHaveBeenCalledTimes(1)
+      const syncPayload = send.mock.calls[0]![1] as { isTweaksEditorOpen?: boolean }
+      expect(syncPayload.isTweaksEditorOpen).toBe(true)
+      const states = calls.filter((c) => c.method === 'browser:annotation-state')
+      expect(states).toHaveLength(1)
+      expect((states[0]!.params as { isTweaksEditorOpen?: boolean }).isTweaksEditorOpen).toBe(true)
+    })
+  })
+
+  test('design-scrub-changed：no-op（不写 store、不 syncGuest、不 emitSnapshot）', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      const send = mock(() => {})
+      manager.onGuestMessage(newTab(send), {
+        type: 'design-scrub-changed', property: 'color', value: 'red',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+
+      // 5c 简化：scrub 实时值由 overlay 本地维护，manager 不存（declarations 仍在 activeDesignChange）
+      expect(send).not.toHaveBeenCalled()
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(false)
+    })
+  })
+
+  test('setDesignFlags 合并语义：多命令分次设置互不覆盖', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      // 先设 modifier
+      manager.onGuestMessage(newTab(), {
+        type: 'set-design-modifier-pressed', pressed: true,
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+      // 再设 original-view
+      manager.onGuestMessage(newTab(), {
+        type: 'set-original-view-enabled', enabled: true,
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+
+      // 两个字段都保留（合并而非覆盖）
+      const after = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1)
+      expect(after.isDesignModifierPressed).toBe(true)
+      expect(after.isOriginalViewEnabled).toBe(true)
+      // 未设置的字段仍是 undefined
+      expect(after.isTweaksEditorOpen).toBeUndefined()
+    })
+  })
+
+  test('L121 守卫对 set-design-modifier-pressed 同样生效（tabId mismatch → 早 return）', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      manager.onGuestMessage(newTab(), {
+        type: 'set-design-modifier-pressed', pressed: true,
+        tabId: 'other-tab', generation: 1, threadId: 'thread-1',
+      })
+
+      // 守卫位于 type 分派之前，mismatch 时早 return
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(false)
+      expect(manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).isDesignModifierPressed).toBeUndefined()
+    })
+  })
+})
+
+// Task 94：manager 公共 resolve/markRead 方法 + onGuestMessage resolve/mark-read 处理。
+// host 评审面板 CommentList 的回调 → IPC → browser-runtime dispatch → this.resolve/markRead；
+// overlay guest → onGuestMessage {type:'resolve'|'mark-read'} → 同样落 store。两条路径对称。
+describe('BrowserAnnotationManager resolve / mark-read', () => {
+  test('resolve：store.resolveComment 翻 isResolved + syncGuest + emitSnapshot', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      const commentId = 'browser-annotation:r1'
+      manager.store.saveComment({
+        id: commentId,
+        origin: 'browser-annotation',
+        tab: { id: 'browser-tab:tab-1:1', origin: 'browser-tab', backend: 'iab', browserId: 'lume-iab', tabId: 'tab-1', title: 'Example', url: ANCHOR.url, generation: 1, ownerThreadId: 'thread-1' },
+        anchor: ANCHOR,
+        body: '请解决',
+      })
+
+      const send = mock(() => {})
+      const snapshot = manager.resolve(newTab(send), 'thread-1', commentId, 'user')
+
+      // store 翻字段
+      const after = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1)
+      const target = after.comments.find((c) => c.id === commentId)!
+      expect(target.isResolved).toBe(true)
+      expect(target.resolvedBy).toBe('user')
+      expect(typeof target.resolvedAt).toBe('string')
+      // 返回值是同一 snapshot
+      expect(snapshot.comments.find((c) => c.id === commentId)?.isResolved).toBe(true)
+      // syncGuest + emitSnapshot 各一次
+      expect(send).toHaveBeenCalledTimes(1)
+      const states = calls.filter((c) => c.method === 'browser:annotation-state')
+      expect(states).toHaveLength(1)
+    })
+  })
+
+  test('markRead：store.markRead 写 readAt + syncGuest + emitSnapshot', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      const commentId = 'browser-annotation:r1'
+      manager.store.saveComment({
+        id: commentId,
+        origin: 'browser-annotation',
+        tab: { id: 'browser-tab:tab-1:1', origin: 'browser-tab', backend: 'iab', browserId: 'lume-iab', tabId: 'tab-1', title: 'Example', url: ANCHOR.url, generation: 1, ownerThreadId: 'thread-1' },
+        anchor: ANCHOR,
+        body: '请已读',
+      })
+
+      const send = mock(() => {})
+      manager.markRead(newTab(send), 'thread-1', commentId)
+
+      const target = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).comments.find((c) => c.id === commentId)!
+      expect(typeof target.readAt).toBe('string')
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(true)
+    })
+  })
+
+  test('resolve 默认 resolvedBy=user（host 面板触发场景）', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      const commentId = 'browser-annotation:r1'
+      manager.store.saveComment({
+        id: commentId,
+        origin: 'browser-annotation',
+        tab: { id: 'browser-tab:tab-1:1', origin: 'browser-tab', backend: 'iab', browserId: 'lume-iab', tabId: 'tab-1', title: 'Example', url: ANCHOR.url, generation: 1, ownerThreadId: 'thread-1' },
+        anchor: ANCHOR,
+        body: '默认',
+      })
+
+      manager.resolve(newTab(), 'thread-1', commentId)
+
+      const target = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).comments.find((c) => c.id === commentId)!
+      expect(target.resolvedBy).toBe('user')
+    })
+  })
+
+  test('onGuestMessage resolve：调 this.resolve + resolvedBy 收敛 user', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      const commentId = 'browser-annotation:r1'
+      manager.store.saveComment({
+        id: commentId,
+        origin: 'browser-annotation',
+        tab: { id: 'browser-tab:tab-1:1', origin: 'browser-tab', backend: 'iab', browserId: 'lume-iab', tabId: 'tab-1', title: 'Example', url: ANCHOR.url, generation: 1, ownerThreadId: 'thread-1' },
+        anchor: ANCHOR,
+        body: 'guest resolve',
+      })
+
+      manager.onGuestMessage(newTab(), {
+        type: 'resolve', annotationId: commentId,
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+
+      const target = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).comments.find((c) => c.id === commentId)!
+      expect(target.isResolved).toBe(true)
+      expect(target.resolvedBy).toBe('user') // overlay 触发也收敛 user
+    })
+  })
+
+  test('onGuestMessage mark-read：调 this.markRead', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      const commentId = 'browser-annotation:r1'
+      manager.store.saveComment({
+        id: commentId,
+        origin: 'browser-annotation',
+        tab: { id: 'browser-tab:tab-1:1', origin: 'browser-tab', backend: 'iab', browserId: 'lume-iab', tabId: 'tab-1', title: 'Example', url: ANCHOR.url, generation: 1, ownerThreadId: 'thread-1' },
+        anchor: ANCHOR,
+        body: 'guest mark-read',
+      })
+
+      manager.onGuestMessage(newTab(), {
+        type: 'mark-read', annotationId: commentId,
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+
+      const target = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).comments.find((c) => c.id === commentId)!
+      expect(typeof target.readAt).toBe('string')
+    })
+  })
+
+  test('onGuestMessage resolve 无 annotationId：no-op（不调 this.resolve，不 emit）', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      manager.onGuestMessage(newTab(), {
+        type: 'resolve',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(false)
+    })
+  })
+
+  test('onGuestMessage L121 守卫对 resolve 同样生效（tabId mismatch → 早 return）', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      manager.onGuestMessage(newTab(), {
+        type: 'resolve', annotationId: 'any',
+        tabId: 'other-tab', generation: 1, threadId: 'thread-1',
+      })
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(false)
+    })
+  })
+})
+
+describe('sanitizeDeclarations', () => {
+  test('过滤非法 property + 缺 previousValue，保留合法项', () => {
+    expect(sanitizeDeclarations([
+      { property: 'color', value: 'red', previousValue: 'blue' },
+      { property: 'bad prop', value: 'x', previousValue: 'y' }, // property 含空格，过滤
+      { property: 'ok', value: 'v' }, // 缺 previousValue，过滤
+    ])).toEqual([{ property: 'color', value: 'red', previousValue: 'blue' }])
+  })
+
+  test('非数组入参 → 空数组', () => {
+    expect(sanitizeDeclarations(undefined)).toEqual([])
+    expect(sanitizeDeclarations({})).toEqual([])
+    expect(sanitizeDeclarations('not-array')).toEqual([])
+  })
+
+  test('保留 placeholderValue（可选），截断 value/previousValue 至 4096', () => {
+    const long = 'x'.repeat(5000)
+    const result = sanitizeDeclarations([
+      { property: 'color', value: long, previousValue: 'blue', placeholderValue: long },
+    ])
+    expect(result).toHaveLength(1)
+    expect(result[0]!.value.length).toBe(4096)
+    expect(result[0]!.previousValue).toBe('blue')
+    expect(result[0]!.placeholderValue?.length).toBe(4096)
+  })
+
+  test('截断 declarations 至 64 条（cap）', () => {
+    // 正则 [a-zA-Z][a-zA-Z0-9-]{0,127} 允许首字母后接数字/字母/连字符，故 p0/p1.. 均合法
+    const valid = Array.from({ length: 70 }, (_, i) => ({ property: `p${i}`, value: 'v', previousValue: 'o' }))
+    const result = sanitizeDeclarations(valid)
+    expect(result).toHaveLength(64)
+    expect(result[0]!.property).toBe('p0')
+    expect(result[63]!.property).toBe('p63')
+    // 第 64+ 被丢
+    expect(result.some((d) => d.property === 'p64')).toBe(false)
+    // 数字开头的 property 非法，全部被滤
+    const illegal = Array.from({ length: 5 }, (_, i) => ({ property: `${i}abc`, value: 'v', previousValue: 'o' }))
+    expect(sanitizeDeclarations(illegal)).toEqual([])
+  })
 })

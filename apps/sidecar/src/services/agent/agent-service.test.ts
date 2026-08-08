@@ -1346,7 +1346,8 @@ describe("agent-service", () => {
       threadId: thread.id,
       revision: expect.any(Number),
       queuedMessages: [],
-      pendingGuidance: []
+      pendingGuidance: [],
+      paused: false
     });
     expect(appended.filter((event) => event.message.role === "user").map((event) => event.message.content)).toEqual([
       "hold:first",
@@ -1549,9 +1550,7 @@ describe("stopAgent cascade (D6)", () => {
       status: "completed"
     });
 
-    stopAgent(parent.id);
-    // 给异步 stopAgentRuntime 一点时间
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await stopAgent(parent.id);
 
     const running = getSubagentRunRegistry().get("r-cascade-1");
     const accepted = getSubagentRunRegistry().get("r-cascade-accepted");

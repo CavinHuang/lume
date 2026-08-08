@@ -37,6 +37,10 @@ export interface DesktopUpdateHandle {
   install(): Promise<void>
 }
 
+export interface DesktopAppSignature {
+  macSignatureStable: boolean | null
+}
+
 export interface DesktopBridgeWindow {
   startDragging?(): Promise<void>
   onDragDropEvent?(
@@ -60,6 +64,7 @@ export interface DesktopBridgeAPI {
   convertFileSrc?(path: string): string
   relaunch?(): Promise<void>
   checkForUpdate?(): Promise<DesktopUpdateHandle | null>
+  getAppSignature?(): Promise<DesktopAppSignature>
   downloadUpdateAsset?(url: string, onEvent?: (event: DesktopDownloadEvent) => void): Promise<void>
   installUpdate?(): Promise<void>
   window?: DesktopBridgeWindow

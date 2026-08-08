@@ -1,5 +1,5 @@
 import { convertFileSrc, invoke, isDesktopRuntime } from '@/lib/desktop-runtime/core'
-import { getDesktopBridge } from '@/lib/desktop-runtime/bridge'
+import { getDesktopBridge, type DesktopAppSignature } from '@/lib/desktop-runtime/bridge'
 import { check, type DownloadEvent, type Update } from '@/lib/desktop-runtime/updater'
 import type { FileRef, GuardedFileRef } from '@lume/shared'
 
@@ -162,4 +162,12 @@ export async function installDesktopUpdateAssetAndRelaunch(): Promise<void> {
     throw new Error('当前桌面环境不支持安装更新')
   }
   await bridge.installUpdate()
+}
+
+export async function getAppSignature(): Promise<DesktopAppSignature> {
+  const bridge = getDesktopBridge()
+  if (!bridge?.getAppSignature) {
+    return { macSignatureStable: null }
+  }
+  return bridge.getAppSignature()
 }

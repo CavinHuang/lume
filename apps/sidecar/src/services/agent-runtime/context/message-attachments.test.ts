@@ -22,9 +22,10 @@ describe("buildMessageAttachmentBrief", () => {
       threadPath: "images/screen.png"
     }]);
 
-    expect(brief).toContain("本轮用户附加了以下文件：");
+    expect(brief).toContain("本轮用户附加了以下附件：");
     expect(brief).toContain("- brief.md (text/markdown, 12 KB): docs/brief.md");
-    expect(brief).toContain("- screen.png (image/png, 410 KB): images/screen.png");
+    expect(brief).toContain("- screen.png (image/png, 410 KB)");
+    expect(brief).not.toContain("images/screen.png");
     expect(brief).toContain("使用文件读取工具访问对应路径");
     expect(brief).not.toContain("/Users/");
     expect(brief).not.toContain("base64");

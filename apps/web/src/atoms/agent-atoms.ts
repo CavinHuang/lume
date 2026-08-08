@@ -58,7 +58,14 @@ export const agentPlanModePhaseFamily = createThreadSliceFamily(agentPlanModePha
 export const agentErrorMessagesAtom = atom<Record<string, string>>({})
 
 export type AgentThreadPermissionMode = NonNullable<AgentSendInput['permissionMode']>
-export const agentThreadPermissionModesAtom = atom<Record<string, AgentThreadPermissionMode>>({})
+/**
+ * 每会话手动权限模式覆盖：按 threadId 落 localStorage。
+ * 否则 renderer 重新加载后丢失，重进会话会被 plan phase 或全局默认覆盖（issue #28）。
+ */
+export const agentThreadPermissionModesAtom = atomWithStorage<Record<string, AgentThreadPermissionMode>>(
+  'agent-thread-permission-modes',
+  {},
+)
 
 export type SidePanelView = 'files' | 'task-progress' | 'trace' | null
 export const agentSidePanelViewAtom = atomWithStorage<Record<string, SidePanelView>>(
@@ -100,3 +107,10 @@ export const agentInputHistoryAtom = atomWithStorage<Record<string, AgentInputDr
   {},
 )
 export const agentInputHistoryFamily = createThreadSliceFamily(agentInputHistoryAtom)
+
+/**
+ * 队列项图片附件的预览 URL(renderer 本地 objectURL 映射)。
+ * key = messageAttachment.id,value = objectURL。
+ * 不进 sidecar/不持久化;提交时填、队列项删除时 revoke+清。刷新丢失 → 队列行降级为无缩略。
+ */
+export const queuedAttachmentPreviewUrlAtom = atom<Record<string, string>>({})

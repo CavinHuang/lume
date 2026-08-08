@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   getUpdateActionState,
+  macRequiresAssetUpdateChannel,
   normalizeReleaseVersion,
   pickReleaseDownloadAsset,
   pickReleaseText,
@@ -112,5 +113,17 @@ describe('version update state', () => {
         { name: 'Lume_0.0.4_x64-setup.exe.sig', browser_download_url: 'https://example.com/setup.exe.sig' },
       ],
     }, 'windows')).toBeNull()
+  })
+
+  test('macOS ad-hoc 构建需改走 DMG asset 通道（issue #22）', () => {
+    // ad-hoc（无稳定 TeamID）→ 强制 DMG asset 通道，绕过 Squirrel 签名校验
+    expect(macRequiresAssetUpdateChannel('macos', false)).toBe(true)
+    // Developer ID 签名 → 保留 Squirrel 静默更新
+    expect(macRequiresAssetUpdateChannel('macos', true)).toBe(false)
+    // 签名状态未知（dev / 检测未就绪）不触发降级
+    expect(macRequiresAssetUpdateChannel('macos', null)).toBe(false)
+    // 其他平台不受影响
+    expect(macRequiresAssetUpdateChannel('windows', false)).toBe(false)
+    expect(macRequiresAssetUpdateChannel('unknown', false)).toBe(false)
   })
 })

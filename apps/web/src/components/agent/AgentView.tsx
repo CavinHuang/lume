@@ -30,6 +30,7 @@ import { abortStagedAttachment, sidecarCall } from '@/lib/desktop-api'
 import type { OpenThreadFile } from './AgentFileReference'
 import { createFileTreeRevealRequest, settleFileTreeReveal } from '@/components/right-panel/right-panel-files-state'
 import { pendingAttachmentRejectionMessage, validatePendingAttachmentBatch } from './pending-attachment-validation'
+import { ThreadImageLightbox, type ThreadImageLightboxAttachment } from './ThreadImageLightbox'
 interface AgentViewProps {
   threadId: string
   readOnly?: boolean
@@ -217,9 +218,11 @@ export function AgentView({
     }).catch((error) => toast.error(error instanceof Error ? error.message : '无法打开旧版记忆引用'))
   }, [dispatchRightPanel, reopenRightPanel, rightPanelBinding, threadId, workspaceSlug])
 
+  const [imagePreviewAttachment, setImagePreviewAttachment] = useState<ThreadImageLightboxAttachment | null>(null)
   const openThreadImagePreview = useCallback((attachment: AgentMessageAttachmentInput) => {
-    openThreadFilePreview(attachment.threadPath, attachment.fileRef)
-  }, [openThreadFilePreview])
+    // 图片附件走全屏 lightbox 预览，而非右侧文件面板（见 #16）
+    setImagePreviewAttachment({ threadPath: attachment.threadPath, filename: attachment.filename, fileRef: attachment.fileRef })
+  }, [])
 
   useEffect(() => {
     pendingAttachmentsRef.current.forEach((attachment) => {
@@ -330,6 +333,13 @@ export function AgentView({
           )}
         </div>
       </ThreadFileEnvProvider>
+
+      <ThreadImageLightbox
+        attachment={imagePreviewAttachment}
+        threadId={threadId}
+        workspaceSlug={workspaceSlug ?? undefined}
+        onClose={() => setImagePreviewAttachment(null)}
+      />
 
       {/* 拖拽覆盖层 */}
       {isDragOver && (

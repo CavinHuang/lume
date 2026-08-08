@@ -49,10 +49,12 @@ import {
   generateWelcomeSuggestions,
   getAgentSubmissionReceipt,
   listAgentMessageQueue,
+  pauseAgentQueue,
   promoteQueuedAgentMessageToGuidance,
   prepareAgentDispatchInput,
   removeQueuedAgentMessage,
   reorderAgentMessageQueue,
+  resumeAgentQueue,
   retryQueuedAgentMessage,
   updateQueuedAgentMessage,
   stopAgent,
@@ -233,6 +235,7 @@ import {
   agentRetireSubagentInputSchema,
   agentRecentThreadMessagesInputSchema,
   agentReorderMessageQueueInputSchema,
+  agentResumeQueueInputSchema,
   agentSendInputSchema,
   trustedAgentSendInputSchema,
   agentSubmissionReceiptInputSchema,
@@ -1812,11 +1815,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       generateWelcomeSuggestions(params as AgentWelcomeSuggestionInput),
     [AGENT_IPC_CHANNELS.STOP_THREAD]: async (params) => {
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.STOP_THREAD);
-      stopAgent(input.threadId);
+      // 同步设 paused:必须在 await stopAgent 之前,防止 stopAgent 内 cancelActive 触发的
+      // abort finally(kernel startNextQueued)自动派发下一条排队消息。
+      pauseAgentQueue(input.threadId);
+      const stopped = await stopAgent(input.threadId);
       if (context.planModePhaseTracker.getPhase(input.threadId) === "executing") {
         context.notifyPlanModePhaseChange(input.threadId, "awaiting_approval");
       }
-      return { ok: true };
+      return { ok: true, stopped };
     },
     [AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION]: async (params) => {
       const input = validateInput(
@@ -1997,6 +2003,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.RETRY_QUEUED_MESSAGE
       );
       return retryQueuedAgentMessage(input);
+    },
+    [AGENT_IPC_CHANNELS.RESUME_QUEUE]: async (params) => {
+      const input = validateInput(
+        agentResumeQueueInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.RESUME_QUEUE
+      );
+      return resumeAgentQueue(input);
     },
     [AGENT_IPC_CHANNELS.GET_SUBMISSION_RECEIPT]: async (params) => {
       const input = validateInput(

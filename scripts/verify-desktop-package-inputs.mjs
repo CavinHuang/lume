@@ -30,11 +30,13 @@ const nativeBinary = resolve(DESKTOP_DIR, "resources", "natives", currentNativeT
 const ripgrepBinary = resolve(DESKTOP_DIR, "resources", "ripgrep", currentNativeTargetId(), process.platform === "win32" ? "rg.exe" : "rg");
 const desktopMain = resolve(DESKTOP_DIR, "dist", "main", "main.mjs");
 const desktopPreload = resolve(DESKTOP_DIR, "dist", "preload", "preload.cjs");
-const browserOverlayPreload = resolve(DESKTOP_DIR, "dist", "preload", "browser-overlay-preload.cjs");
+const browserAuthPreload = resolve(DESKTOP_DIR, "dist", "preload", "browser-auth-preload.cjs");
+const browserGuestPreload = resolve(DESKTOP_DIR, "dist", "preload", "browser-guest-preload.cjs");
 const requiredFiles = [
   desktopMain,
   desktopPreload,
-  browserOverlayPreload,
+  browserAuthPreload,
+  browserGuestPreload,
   resolve(DESKTOP_DIR, "assets", "icon.png"),
   resolve(DESKTOP_DIR, "assets", "icon.ico"),
   resolve(DESKTOP_DIR, "assets", "icon.icns"),
@@ -80,7 +82,7 @@ for (const expected of ["../web/dist", "../web/src/assets/imgs/logo.png", "resou
 }
 
 const appFiles = pkg.build?.files ?? [];
-const expectedAppFiles = ["dist/main/main.mjs", "dist/preload/preload.cjs", "dist/preload/browser-overlay-preload.cjs", "assets"];
+const expectedAppFiles = ["dist/main/main.mjs", "dist/preload/preload.cjs", "dist/preload/browser-auth-preload.cjs", "dist/preload/browser-guest-preload.cjs", "assets"];
 if (JSON.stringify(appFiles) !== JSON.stringify(expectedAppFiles)) {
   fail(`electron-builder files must be ${JSON.stringify(expectedAppFiles)}, got ${JSON.stringify(appFiles)}`);
 }

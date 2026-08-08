@@ -18,6 +18,11 @@ test('open-design-editor-at-point 进入 design 态', () => {
   expect(next).toEqual({ type: 'editing', target: { mode: 'design' } })
 })
 
+test('open-design-editor-at-point 携带 groupId 时透传至 target', () => {
+  const next = overlayReducer(idle, { type: 'open-design-editor-at-point', groupId: 'dc1' })
+  expect(next).toEqual({ type: 'editing', target: { mode: 'design', groupId: 'dc1' } })
+})
+
 test('restore-editor 在已编辑时保持当前态', () => {
   const editing: OverlayEditorState = { type: 'editing', target: { mode: 'edit', commentId: 'c1' } }
   const next = overlayReducer(editing, { type: 'restore-editor', target: { mode: 'create' } })

@@ -12,6 +12,29 @@ export type MemoryV2Status =
 
 export type MemoryV2Confidence = "low" | "medium" | "high";
 
+/**
+ * 记忆激活开关：拆分原先被 overloaded 的 active 状态，按用途授权。
+ * - recall: 召回（query/memory_read）
+ * - persona: L3 Persona 注入
+ * - suggestion: 主动建议
+ * - analyst: 工作模式分析
+ *
+ * fail-open: 旧记忆无此字段时，readActivation 返回 DEFAULT_ACTIVATION（全 true）。
+ */
+export interface MemoryV2Activation {
+  recall: boolean;
+  persona: boolean;
+  suggestion: boolean;
+  analyst: boolean;
+}
+
+export const DEFAULT_ACTIVATION: MemoryV2Activation = {
+  recall: true,
+  persona: true,
+  suggestion: true,
+  analyst: true
+};
+
 export interface MemoryV2Source {
   type: "manual" | "micro_reflection" | "pre_compaction" | "run_completed" | "tool";
   run_id?: string;
@@ -45,6 +68,11 @@ export interface MemoryV2EntryFrontmatter {
   valid_from: string | null;
   valid_to: string | null;
   claim?: MemoryV2Claim;
+  /**
+   * 按用途授权的激活开关。可选：旧记忆未写入时，readActivation fallback 全 true。
+   * 新记忆由 writeEntry 自动写入 DEFAULT_ACTIVATION。
+   */
+  activation?: MemoryV2Activation;
 }
 
 export interface MemoryV2Entry {

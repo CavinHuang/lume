@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 export interface AgentRuntimeKernelDispatch<TInput extends { threadId: string; userMessage: string }, TEmit> {
   input: TInput;
   emit: TEmit;
+  abortSignal?: AbortSignal;
   onExecutionStarted?: () => void;
   priority?: "user" | "background";
 }
@@ -46,6 +47,8 @@ export interface AgentRuntimeKernelOptions<TInput extends { threadId: string; us
 
 export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: string }, TEmit> {
   private readonly activeThreads = new Set<string>();
+  private readonly paused = new Set<string>();
+  private readonly activeAbortControllers = new Map<string, AbortController>();
   private readonly queuedDispatches = new Map<string, Array<AgentRuntimeKernelQueuedDispatch<TInput, TEmit>>>();
   private readonly queueRevisions = new Map<string, number>();
   private readonly running = new Set<Promise<void>>();
@@ -89,6 +92,13 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
 
   listQueued(threadId: string): Array<AgentRuntimeKernelQueuedDispatch<TInput, TEmit>> {
     return [...(this.queuedDispatches.get(threadId) ?? [])];
+  }
+
+  cancelActive(threadId: string): boolean {
+    const controller = this.activeAbortControllers.get(threadId);
+    if (!controller) return false;
+    controller.abort(new Error("Agent run stopped"));
+    return true;
   }
 
   getQueueRevision(threadId: string): number {
@@ -182,6 +192,21 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
     return item;
   }
 
+  /** 暂停某线程的队列派发:startNextQueued 将跳过该线程,直到 resumeQueue。 */
+  pauseQueue(threadId: string): void {
+    this.paused.add(threadId);
+  }
+
+  /** 解除暂停并尝试派发队列首项。 */
+  resumeQueue(threadId: string): void {
+    if (!this.paused.delete(threadId)) return;
+    if (!this.activeThreads.has(threadId)) this.scheduleStartNext(threadId);
+  }
+
+  isPaused(threadId: string): boolean {
+    return this.paused.has(threadId);
+  }
+
   async waitForIdleForTest(): Promise<void> {
     while (this.running.size > 0) {
       await Promise.allSettled(Array.from(this.running));
@@ -189,7 +214,12 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
   }
 
   resetForTest(): void {
+    for (const controller of this.activeAbortControllers.values()) {
+      controller.abort(new Error("Agent runtime reset"));
+    }
     this.activeThreads.clear();
+    this.paused.clear();
+    this.activeAbortControllers.clear();
     this.queuedDispatches.clear();
     this.queueRevisions.clear();
     this.running.clear();
@@ -205,14 +235,22 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
 
   private async processDispatch(dispatch: AgentRuntimeKernelDispatch<TInput, TEmit>): Promise<void> {
     const threadId = dispatch.input.threadId;
+    const abortController = new AbortController();
+    const activeDispatch = { ...dispatch, abortSignal: abortController.signal };
     this.activeThreads.add(threadId);
+    this.activeAbortControllers.set(threadId, abortController);
     this.syncQueuedCount(threadId);
     try {
-      dispatch.onExecutionStarted?.();
-      await this.options.execute(dispatch);
+      activeDispatch.onExecutionStarted?.();
+      await this.options.execute(activeDispatch);
     } catch (error) {
-      this.options.onDispatchError(dispatch, error);
+      if (!abortController.signal.aborted) {
+        this.options.onDispatchError(activeDispatch, error);
+      }
     } finally {
+      if (this.activeAbortControllers.get(threadId) === abortController) {
+        this.activeAbortControllers.delete(threadId);
+      }
       this.activeThreads.delete(threadId);
       await this.startNextQueued(threadId);
     }
@@ -257,6 +295,7 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
 
   private async startNextQueued(threadId: string): Promise<void> {
     if (this.activeThreads.has(threadId)) return;
+    if (this.paused.has(threadId)) return;
     const queue = this.queuedDispatches.get(threadId) ?? [];
     const first = queue[0];
     const next = first?.priority === "background"

@@ -15,7 +15,6 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { PlanningReminderRail } from '@/components/todo/PlanningReminderRail'
 import { ConnectionVaultSetupDialog } from '@/components/security/ConnectionVaultSetupDialog'
-import { BrowserAnnotationPopup } from '@/components/browser/BrowserAnnotationPopup'
 import { AgentIslandApp } from '@/components/agent-island/AgentIslandApp'
 function AppInner() {
   useGlobalAgentListeners()
@@ -47,10 +46,6 @@ export function App() {
   if (isQuickInput) {
     return <QuickInputShell />
   }
-  const isBrowserAnnotationPopup =
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).get('view') === 'browser-annotation'
-  if (isBrowserAnnotationPopup) return <BrowserAnnotationPopup />
   const isAgentIsland =
     typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).get('view') === 'agent-island'

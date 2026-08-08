@@ -97,6 +97,28 @@ afterEach(() => {
 })
 
 describe("Agent runtime tool resolver", () => {
+  test("does not start a query when the parent signal is already aborted", async () => {
+    const provider = new CapturingProvider()
+    const controller = new AbortController()
+    controller.abort(new Error("stopped"))
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      provider,
+      model: "host/model-a",
+    })
+
+    const consume = async () => {
+      for await (const _event of agent.query("hello", { abortSignal: controller.signal })) {
+        // Consume the query to exercise lazy setup.
+      }
+    }
+
+    await expect(consume()).rejects.toThrow("aborted")
+    expect(provider.requests).toHaveLength(0)
+    await agent.close()
+  })
+
   test("keeps a host-provided provider when initialization and model changes refresh config", async () => {
     const provider = new CapturingProvider()
     const agent = createAgent({

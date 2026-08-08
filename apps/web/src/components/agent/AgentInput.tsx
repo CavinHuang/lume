@@ -2,7 +2,7 @@ import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react'
 import { cn } from '@/lib/utils'
 import { Send, Square, FileText, Plus, LoaderCircle, MessageSquareText, MonitorOff, Globe, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   agentSend,
@@ -17,6 +17,7 @@ import {
   promoteQueuedAgentMessageToGuidance,
   removeQueuedAgentMessage,
   reorderAgentMessageQueue,
+  resumeAgentQueue,
   retryQueuedAgentMessage,
   revokeBrowserReferenceGrant,
   sidecarCall,
@@ -24,8 +25,11 @@ import {
 } from '@/lib/desktop-api'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFamily, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentQueueInterruptedAtom, agentQueueInterruptedFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFamily, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentQueueInterruptedAtom, agentQueueInterruptedFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, queuedAttachmentPreviewUrlAtom, settingsInitialTabAtom, tabsAtom, quotedSelectionMapAtom, quotedSelectionFamily } from '@/atoms'
 import { isEmptyDraft, prependHistory, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
+import { buildQuotedSelectionBlock } from '@/lib/quoted-selection'
+import type { QuotedSelection } from '@/atoms/quoted-selection'
+import { QuotedSelectionChip } from './QuotedSelectionChip'
 import { debounce } from 'throttle-debounce'
 import {
   AGENT_IPC_CHANNELS,
@@ -78,12 +82,12 @@ import {
   shouldReleaseAgentInputLocalSendingAfterDispatch,
   shouldSendAgentInputOnEnter,
   syncPermissionModeWithDefaultConfig,
-  syncPermissionModeWithPlanModePhase,
 } from './agent-input-state'
 import { AgentMessageQueueList } from './AgentMessageQueueList'
+import { SuggestionBanner } from './SuggestionBanner'
 import {
+  applyOrderByIds,
   createEmptyAgentMessageQueueSnapshot,
-  reorderQueuedMessages,
   startEditingQueuedMessage,
   upsertAgentMessageQueueSnapshot,
 } from './agent-message-queue-state'
@@ -435,6 +439,31 @@ export function AgentInput({
   const draft = useAtomValue(agentInputDraftFamily(threadId))
   const commentAttachments: AgentDiffCommentAttachment[] = useAtomValue(agentDiffCommentDraftsFamily(threadId)) ?? []
   const setCommentDrafts = useSetAtom(agentDiffCommentDraftsAtom)
+  const quotedSelection = useAtomValue(quotedSelectionFamily(threadId)) ?? null
+  const setQuotedSelectionMap = useSetAtom(quotedSelectionMapAtom)
+  const jotaiStore = useStore()
+  /** 读取当前会话的划线引用快照（不删除）—— 发送构建 text 时用 */
+  const peekQuotedSelection = useCallback((): QuotedSelection | null => {
+    return jotaiStore.get(quotedSelectionMapAtom)[threadId] ?? null
+  }, [jotaiStore, threadId])
+  /** 发送成功后提交（删除）引用；capturedAt 乐观锁防发送途中用户重选导致误删新选区 */
+  const commitQuotedSelection = useCallback((capturedAt: number): void => {
+    jotaiStore.set(quotedSelectionMapAtom, (prev) => {
+      const existing = prev[threadId]
+      if (!existing || existing.capturedAt !== capturedAt) return prev
+      const next = { ...prev }
+      delete next[threadId]
+      return next
+    })
+  }, [jotaiStore, threadId])
+  const handleRemoveQuotedSelection = useCallback(() => {
+    setQuotedSelectionMap((prev) => {
+      if (!prev[threadId]) return prev
+      const next = { ...prev }
+      delete next[threadId]
+      return next
+    })
+  }, [setQuotedSelectionMap, threadId])
   const browserAttachments: AgentBrowserAttachment[] = useAtomValue(agentBrowserAttachmentsFamily(threadId)) ?? []
   const setBrowserAttachments = useSetAtom(agentBrowserAttachmentsAtom)
   const setDraftState = useSetAtom(agentInputDraftAtom)
@@ -614,8 +643,10 @@ export function AgentInput({
     workspaces,
   }), [currentWorkspaceId, thread?.workspaceId, workspaces])
   const messageQueueSnapshot = messageQueues[threadId] ?? createEmptyAgentMessageQueueSnapshot(threadId)
-  const queueInterrupted = useAtomValue(agentQueueInterruptedFamily(threadId)) ?? false
+  const queueInterrupted = (useAtomValue(agentQueueInterruptedFamily(threadId)) ?? false)
+    || messageQueueSnapshot.paused === true
   const setQueueInterruptedStates = useSetAtom(agentQueueInterruptedAtom)
+  const setQueuedAttachmentPreviewUrls = useSetAtom(queuedAttachmentPreviewUrlAtom)
   const desktopContextView = resolveAgentInputDesktopContextView({
     propTarget: desktopContextTarget,
     capturedTarget: capturedDesktopContextTarget,
@@ -680,11 +711,6 @@ export function AgentInput({
   }, [threadPermissionModes])
 
   useEffect(() => {
-    autoSelectedPlanModeRef.current = false
-    setPermissionMode(threadPermissionModes[threadId] ?? defaultPermissionModeRef.current)
-  }, [threadId, threadPermissionModes])
-
-  useEffect(() => {
     listChannels()
       .then((items) => setChannels(items))
       .catch(console.error)
@@ -719,16 +745,16 @@ export function AgentInput({
     }
   }, [applyEffectiveConfig, configWorkspaceSlug])
 
+  // 权限模式统一推导：手动 override（已持久化）> plan phase 自动切换 > 全局默认。
+  // 复用 syncPermissionModeWithDefaultConfig —— 它在 stale plan phase 下仍保留手动 override
+  // （见 agent-input-state.test.ts 'keeps the thread override while a stale plan phase is active'），
+  // 并在 plan 结束或切换会话时自我纠正 autoSelectedPlan，故合并原 threadId 切换 effect（issue #28）。
   useEffect(() => {
     setPermissionMode((current) => {
-      const threadPermissionMode = threadPermissionModes[threadId]
-      if (threadPermissionMode) {
-        autoSelectedPlanModeRef.current = false
-        return threadPermissionMode
-      }
-      const next = syncPermissionModeWithPlanModePhase({
-        permissionMode: current,
-        defaultPermissionMode: defaultPermissionModeRef.current,
+      const next = syncPermissionModeWithDefaultConfig({
+        currentPermissionMode: current,
+        nextDefaultPermissionMode: defaultPermissionModeRef.current,
+        threadPermissionMode: threadPermissionModes[threadId],
         planPhase: planModePhase?.phase,
         autoSelectedPlan: autoSelectedPlanModeRef.current,
       })
@@ -1233,7 +1259,16 @@ export function AgentInput({
     const effectiveBrowserAttachments = directAttachment ? [directAttachment] : annotationSubmission.attachments
     const effectiveCommentAttachments = directAttachment ? [] : commentAttachments
     const effectivePendingAttachments = directAttachment ? [] : pendingAttachments
-    const text = directAttachment ? annotationSubmission.text : resolveBrowserAnnotationBatchText({ rawText, hasSnapshot: Boolean(batchSnapshot), hasCodeComments: commentAttachments.length > 0, hasBrowserAttachments: effectiveBrowserAttachments.length > 0 })
+    const baseText = directAttachment ? annotationSubmission.text : resolveBrowserAnnotationBatchText({ rawText, hasSnapshot: Boolean(batchSnapshot), hasCodeComments: commentAttachments.length > 0, hasBrowserAttachments: effectiveBrowserAttachments.length > 0 })
+    // 划线引用：peek（不删）构建 text；删除延迟到发送成功后（commitQuotedSelection），失败时引用保留可重试
+    const quotedSelectionSnapshot = directAttachment ? null : peekQuotedSelection()
+    const quotedBlock = quotedSelectionSnapshot ? buildQuotedSelectionBlock(quotedSelectionSnapshot) : ''
+    const text = quotedBlock + baseText
+    // messageParts 须与 userMessage 一致（sidecar 校验 parts 拼接 == userMessage）；引用 prepend 为 text part
+    const hasStructuredParts = serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
+    const messageParts = quotedBlock && hasStructuredParts
+      ? [{ type: 'text' as const, text: quotedBlock }, ...serialized.messageParts]
+      : serialized.messageParts
     let sendMessageMetadata = directAttachment ? undefined : effectiveMessageMetadata
     if (!directAttachment && selectedDesktopContextTarget) {
       const state = await refreshAgentInputDesktopContextState(sidecarCall, selectedDesktopContextTarget)
@@ -1257,7 +1292,7 @@ export function AgentInput({
     }
     const submissionIdentity = JSON.stringify({
       userMessage: text,
-      messageParts: serialized.messageParts,
+      messageParts,
       attachments: effectivePendingAttachments.map(({ id, filename, mediaType, size }) => ({ id, filename, mediaType, size })),
       commentAttachments: effectiveCommentAttachments,
       browserAttachments: effectiveBrowserAttachments,
@@ -1305,6 +1340,17 @@ export function AgentInput({
           }
         })
       }
+      // renderer 瞬态:把 pending 图片附件的 objectURL 存入 atom,供队列行首图缩略。
+      // 不进 sidecar(messageAttachment.id === pendingAttachment.id,见构造处 id: attachment.id)。
+      const pendingImagePreviews: Record<string, string> = {}
+      for (const pending of effectivePendingAttachments) {
+        if (pending.previewUrl && isImageAttachment({ filename: pending.filename, mediaType: pending.mediaType })) {
+          pendingImagePreviews[pending.id] = pending.previewUrl
+        }
+      }
+      if (Object.keys(pendingImagePreviews).length > 0) {
+        setQueuedAttachmentPreviewUrls((prev) => ({ ...prev, ...pendingImagePreviews }))
+      }
       for (const attachment of effectiveBrowserAttachments) {
         const screenshotRef = attachment.origin === 'browser-annotation' ? attachment.screenshotRef : undefined
         if (!screenshotRef) continue
@@ -1336,7 +1382,7 @@ export function AgentInput({
             threadId,
             userMessage: text,
             clientSubmissionId,
-            ...(serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref') ? { messageParts: serialized.messageParts } : {}),
+            ...(hasStructuredParts ? { messageParts } : {}),
             thinkingLevel,
             followUpQueueMode,
             permissionMode,
@@ -1347,6 +1393,8 @@ export function AgentInput({
             ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
           })
       pendingSubmissionRef.current = null
+      // P2-2: 发送成功后才删除引用（失败/early return 时保留 chip 供重试）
+      if (quotedSelectionSnapshot) commitQuotedSelection(quotedSelectionSnapshot.capturedAt)
       if (!directAttachment) editor.commands.clearContent()
       if (!directAttachment) setEditorText('')
       if (!directAttachment) pushHistoryEntry(sentJson)
@@ -1392,8 +1440,8 @@ export function AgentInput({
           ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
           ...(effectiveCommentAttachments.length > 0 ? { commentAttachments: effectiveCommentAttachments } : {}),
           ...(effectiveBrowserAttachments.length > 0 ? { browserAttachments: effectiveBrowserAttachments } : {}),
-          ...(!directAttachment && serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
-            ? { messageParts: serialized.messageParts }
+          ...(!directAttachment && hasStructuredParts
+            ? { messageParts }
             : {}),
         }))
         setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
@@ -1436,6 +1484,8 @@ export function AgentInput({
     setStreamingStates,
     setMessageQueues,
     setCommentDrafts,
+    peekQuotedSelection,
+    commitQuotedSelection,
     setBrowserAttachments,
     streaming,
     thinkingLevel,
@@ -1499,22 +1549,27 @@ export function AgentInput({
   }, [threadId])
 
   const handleStop = async () => {
+    setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
     try {
       await sidecarCall(AGENT_IPC_CHANNELS.STOP_THREAD, { threadId })
     } catch (error) {
       console.error('[AgentInput] 停止失败:', error)
+      setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
       toast.error('停止失败，请重试')
     }
   }
 
-  const handleQueueReorder = useCallback((draggedId: string, targetId: string, placement: 'before' | 'after') => {
+  const handleQueueReorder = useCallback((orderedIds: string[]) => {
     const previousSnapshot = messageQueueSnapshot
-    const optimisticSnapshot = reorderQueuedMessages(previousSnapshot, draggedId, targetId, placement)
+    const optimisticSnapshot = applyOrderByIds(previousSnapshot, orderedIds)
     if (optimisticSnapshot === previousSnapshot) return
     setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, optimisticSnapshot))
     reorderAgentMessageQueue({
       threadId,
-      orderedMessageIds: optimisticSnapshot.queuedMessages.map((item) => item.id),
+      // 传完整顺序(含 internal),否则 kernel reorderQueued 会把未列出的 id 追加到末尾,
+      // 覆盖乐观更新中 internal 原位保留的语义。optimisticSnapshot 已是 applyOrderByIds
+      // 处理后的完整顺序(visible 重排 + internal 原位)。
+      orderedMessageIds: optimisticSnapshot.queuedMessages.map((m) => m.id),
       expectedRevision: previousSnapshot.revision,
       queueOperationId: crypto.randomUUID(),
     })
@@ -1530,6 +1585,10 @@ export function AgentInput({
   }, [messageQueueSnapshot, setMessageQueues, threadId])
 
   const handleRemoveQueuedMessage = useCallback((queuedMessageId: string) => {
+    // 仅在删除成功后才 revoke previewUrl:失败路径消息仍在队列,提前 revoke 会让缩略
+    // 在该消息剩余生命周期永久消失(objectURL 不可重建)。
+    const removedMessage = messageQueueSnapshot.queuedMessages.find((m) => m.id === queuedMessageId)
+    const removedAttachmentIds = removedMessage?.messageAttachments?.map((a) => a.id) ?? []
     removeQueuedAgentMessage({
       threadId,
       queuedMessageId,
@@ -1538,13 +1597,33 @@ export function AgentInput({
     })
       .then((result) => {
         setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
-        if (!result.ok) toast.error('队列已发生变化，删除未执行')
+        if (!result.ok) {
+          toast.error('队列已发生变化，删除未执行')
+          return
+        }
+        // 删除成功:revoke + 清 atom(updater 保持纯净:revoke 副作用收集到外层,
+        // 无任何目标 id 时短路返回 prev,避免不必要的引用变更触发重渲染)
+        if (removedAttachmentIds.length === 0) return
+        const urlsToRevoke: string[] = []
+        setQueuedAttachmentPreviewUrls((prev) => {
+          if (!removedAttachmentIds.some((id) => id in prev)) return prev
+          const next = { ...prev }
+          for (const id of removedAttachmentIds) {
+            const url = next[id]
+            if (url) {
+              urlsToRevoke.push(url)
+              delete next[id]
+            }
+          }
+          return next
+        })
+        for (const url of urlsToRevoke) URL.revokeObjectURL(url)
       })
       .catch((error) => {
         console.error('[AgentInput] 删除排队消息失败:', error)
         toast.error('删除排队消息失败')
       })
-  }, [messageQueueSnapshot.revision, setMessageQueues, threadId])
+  }, [messageQueueSnapshot, setMessageQueues, setQueuedAttachmentPreviewUrls, threadId])
 
   const handleEditQueuedMessage = useCallback((queuedMessageId: string) => {
     if (!editor) return
@@ -1556,7 +1635,7 @@ export function AgentInput({
       previousDraft: editor.getJSON(),
     })
     setPlusPanelOpen(false)
-    setEditorMessageParts(editor, editing.queuedMessage.messageParts, editing.draftText)
+    setEditorMessageParts(editor, stripLeadingQuotePart(editing.queuedMessage.messageParts), editing.draftText)
     setEditorText(editor.getText())
     editor.commands.focus('end')
   }, [editor, messageQueueSnapshot, setMessageQueues, threadId])
@@ -1597,13 +1676,19 @@ export function AgentInput({
   }, [messageQueueSnapshot.revision, setMessageQueues, setQueueInterruptedStates, threadId])
 
   const handleResumeFromInterrupt = useCallback(() => {
-    // Lume 的 STOP/interrupt 后 kernel(processDispatch.finally → startNextQueued)自动派发队列,
-    // 无"中断后队列暂停"语义(与 Codex 不同)。retryQueued 仅对 status==='blocked' 生效,
-    // 对 STOP 后通常为 'queued' 的首项会 conflict 报错("队列已发生变化")。
-    // 故 Resume 当前为 dismiss 横幅语义:仅清 agentQueueInterruptedAtom,不调 retry。
-    // 真正 pause/resume 需先实现 kernel 暂停队列语义(follow-up,超出本计划范围)。
-    setQueueInterruptedStates((prev) => (prev[threadId] ? { ...prev, [threadId]: false } : prev))
-  }, [setQueueInterruptedStates, threadId])
+    resumeAgentQueue({
+      threadId,
+      queueOperationId: crypto.randomUUID(),
+    })
+      .then((result) => {
+        setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
+        setQueueInterruptedStates((prev) => (prev[threadId] ? { ...prev, [threadId]: false } : prev))
+      })
+      .catch((error) => {
+        console.error('[AgentInput] 恢复队列失败:', error)
+        toast.error('恢复队列失败')
+      })
+  }, [threadId, setMessageQueues, setQueueInterruptedStates])
 
   const handleThinkingLevelChange = (value: LumeConfigThinkingLevel) => {
     setThinkingLevel(value)
@@ -1811,6 +1896,7 @@ export function AgentInput({
 
   return (
     <div className="px-3 pb-4 pt-2">
+      <SuggestionBanner threadId={threadId} workspaceSlug={configWorkspaceSlug} />
       <div className="mx-auto w-full max-w-[980px] px-4">
         <div>
           <LumeComposer
@@ -1864,6 +1950,7 @@ export function AgentInput({
               || editingQueuedMessage?.item.commentAttachments?.length
               || editingQueuedMessage?.item.browserAttachments?.length
               || (!editingQueuedMessage && (pendingAttachments.length > 0 || commentAttachments.length > 0 || browserAttachments.length > 0))
+              || (!editingQueuedMessage && quotedSelection)
                 ? (
                     <div className="space-y-2 px-3 pb-2 pt-3">
                       {editingQueuedMessage?.item.messageAttachments?.length ? (
@@ -1876,6 +1963,14 @@ export function AgentInput({
                         <PendingAttachmentList
                           attachments={pendingAttachments}
                           onRemove={onRemovePendingAttachment}
+                        />
+                      ) : null}
+                      {!editingQueuedMessage && quotedSelection ? (
+                        <QuotedSelectionChip
+                          text={quotedSelection.text}
+                          filePath={quotedSelection.filePath}
+                          sourceLabel={quotedSelection.sourceLabel}
+                          onRemove={handleRemoveQuotedSelection}
                         />
                       ) : null}
                       {(editingQueuedMessage?.item.commentAttachments ?? commentAttachments).map((comment) => (
@@ -2142,6 +2237,17 @@ export function AgentInput({
       />
     </div>
   )
+}
+
+/** 剥离 messageParts 开头的引用块 text part（编辑队列消息时不让 <quoted_*> 标签进编辑器） */
+function stripLeadingQuotePart(parts: AgentQueuedMessage['messageParts']): AgentQueuedMessage['messageParts'] {
+  if (!parts || parts.length === 0) return parts
+  const first = parts[0]
+  if (first && first.type === 'text' && first.text.startsWith('<quoted_')) {
+    const rest = parts.slice(1)
+    return rest.length > 0 ? rest : undefined
+  }
+  return parts
 }
 
 function setEditorMessageParts(

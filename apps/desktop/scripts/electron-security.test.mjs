@@ -445,13 +445,18 @@ test("connection credential reveal remains main-process privileged", () => {
 
 test("browser webview guests are one-time authorized and receive no host bridge", () => {
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
-  const guestPreloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "browser-guest-preload.ts"), "utf8");
+  const guestPreloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "browser-guest-preload.tsx"), "utf8");
   assert.match(mainSource, /will-attach-webview/);
   assert.match(mainSource, /authorizeGuestMount/);
   assert.match(mainSource, /did-attach-webview/);
   assert.match(mainSource, /browser-guest-preload\.cjs/);
   assert.match(mainSource, /ipcMain\.on\('lume:browser-guest-mounted'/);
-  assert.equal(guestPreloadSource.includes("contextBridge"), false);
+  // guest-preload 不得向 page 暴露任意 host bridge。Task 82 起唯一允许的受审例外是
+  // Web MCP shim（__lumeWebMcpModelContext，frozen、仅 registerTool/getTools/executeTool
+  // 等受限方法）。锁定 exposeInMainWorld 的所有引用键名均为 __lumeWebMcpModelContext，
+  // 防止新增未审 bridge（代码与文档注释一并检查）。
+  const exposeCalls = [...guestPreloadSource.matchAll(/exposeInMainWorld\(\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
+  assert.ok(exposeCalls.length > 0 && exposeCalls.every((k) => k === "__lumeWebMcpModelContext"), `guest-preload 仅允许暴露 __lumeWebMcpModelContext，实际暴露：${JSON.stringify(exposeCalls)}`);
   assert.match(guestPreloadSource, /ipcRenderer\.send\('lume:browser-guest-mounted'/);
 });
 

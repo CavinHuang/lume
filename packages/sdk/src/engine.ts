@@ -1046,7 +1046,7 @@ export class QueryEngine {
     const MAX_STRUCTURED_OUTPUT_RETRIES = 2
 
     while (turnsRemaining > 0) {
-      if (this.config.abortSignal?.aborted) break
+      if (this.config.abortSignal?.aborted) throw new Error('aborted')
 
       // Check budget
       if (this.config.maxBudgetUsd && this.totalCost >= this.config.maxBudgetUsd) {
@@ -1590,12 +1590,14 @@ export class QueryEngine {
 
     // Execute concurrent tools (batched by MAX_CONCURRENCY)
     for (let i = 0; i < concurrent.length; i += MAX_CONCURRENCY) {
+      if (this.config.abortSignal?.aborted) throw new Error('aborted')
       const batch = concurrent.slice(i, i + MAX_CONCURRENCY)
       const batchResults = await Promise.all(
         batch.map((item) =>
           this.executeSingleTool(item.block, item.tool, context),
         ),
       )
+      if (this.config.abortSignal?.aborted) throw new Error('aborted')
       for (const [batchIndex, batchResult] of batchResults.entries()) {
         const item = batch[batchIndex]
         if (item) {
@@ -1608,7 +1610,9 @@ export class QueryEngine {
 
     // Execute serial tools sequentially
     for (const item of serial) {
+      if (this.config.abortSignal?.aborted) throw new Error('aborted')
       const result = await this.executeSingleTool(item.block, item.tool, context)
+      if (this.config.abortSignal?.aborted) throw new Error('aborted')
       results[item.index] = result.result
       events.push(...result.events)
       toolsUsed.push(...result.toolsUsed)
@@ -1698,6 +1702,8 @@ export class QueryEngine {
       }
     }
 
+    if (toolContext.abortSignal?.aborted) throw new Error('aborted')
+
     // Check enabled
     if (tool.isEnabled && !tool.isEnabled()) {
       return {
@@ -1721,12 +1727,14 @@ export class QueryEngine {
         toolUseId: block.id,
       })
       events.push(...permissionRequestHooks.events)
+      if (toolContext.abortSignal?.aborted) throw new Error('aborted')
       try {
         const permission = await this.config.canUseTool(
           tool,
           block.input,
           await this.buildPermissionMetadata(block, tool, toolContext),
         )
+        if (toolContext.abortSignal?.aborted) throw new Error('aborted')
         if (permission.behavior === 'deny') {
           this.permissionDenials.push({
             tool_name: block.name,
@@ -1759,6 +1767,7 @@ export class QueryEngine {
           block = { ...block, input: permission.updatedInput }
         }
       } catch (err: any) {
+        if (toolContext.abortSignal?.aborted) throw new Error('aborted')
         return {
           result: {
             type: 'tool_result',
@@ -1778,6 +1787,7 @@ export class QueryEngine {
     if (tool.validateInput) {
       try {
         const validationError = await tool.validateInput(block.input, toolContext)
+        if (toolContext.abortSignal?.aborted) throw new Error('aborted')
         if (typeof validationError === 'string' && validationError.trim()) {
           return {
             result: {
@@ -1792,6 +1802,7 @@ export class QueryEngine {
           }
         }
       } catch (err: any) {
+        if (toolContext.abortSignal?.aborted) throw new Error('aborted')
         return {
           result: {
             type: 'tool_result',
@@ -1813,6 +1824,7 @@ export class QueryEngine {
       toolUseId: block.id,
     })
     events.push(...preHookResults.events)
+    if (toolContext.abortSignal?.aborted) throw new Error('aborted')
     // Check if any hook blocks this tool
     if (preHookResults.outputs.some((r) => r.block)) {
       const msg = preHookResults.outputs.find((r) => r.message)?.message || 'Blocked by PreToolUse hook'
@@ -1831,12 +1843,14 @@ export class QueryEngine {
 
     // Execute the tool
     try {
+      if (toolContext.abortSignal?.aborted) throw new Error('aborted')
       await this.config.onBeforeToolExecution?.({
         toolName: block.name,
         input: block.input,
         userMessageId: this.config.currentUserMessageId,
         cwd: toolContext.cwd,
       })
+      if (toolContext.abortSignal?.aborted) throw new Error('aborted')
       if (this.config.fileCheckpointState && this.config.currentUserMessageId) {
         const checkpointPaths = collectCheckpointPaths(block.name, block.input)
           .map((path) => resolve(toolContext.cwd, path))
@@ -1846,10 +1860,12 @@ export class QueryEngine {
           checkpointPaths,
         )
       }
+      if (toolContext.abortSignal?.aborted) throw new Error('aborted')
 
       const startedAt = performance.now()
       const eventStartIndex = events.length
       const result = await tool.call(block.input, toolContext)
+      if (toolContext.abortSignal?.aborted) throw new Error('aborted')
       toolCallActive = false
       toolContext.onToolExecution?.({
         toolName: block.name,
@@ -1916,6 +1932,7 @@ export class QueryEngine {
       }
     } catch (err: any) {
       toolCallActive = false
+      if (toolContext.abortSignal?.aborted) throw new Error('aborted')
       // Hook: PostToolUseFailure
       const postFailureHooks = await this.executeHooks('PostToolUseFailure', {
         toolName: block.name,
