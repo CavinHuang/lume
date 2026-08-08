@@ -27,8 +27,8 @@
 
 ## 交互规则
 
-- 紧凑态除右侧展开按钮外，整条为 `-webkit-app-region: drag`。
-- 右侧展开按钮为 `no-drag`，是紧凑态唯一展开入口。
+- compact 内容主体为 `no-drag`，悬停任意内容区域 `130ms` 后展开，离开 `420ms` 后收起。
+- 左侧保留窄拖动 grip；右侧箭头仅作状态提示，不再是按钮。
 - 展开态顶部空白区域可拖动，所有图标按钮为 `no-drag`。
 - 会话、待办和提醒条目继续保留现有点击与键盘行为。
 
@@ -42,18 +42,17 @@
 
 - `apps/web/src/components/agent-island/AgentIslandSurface.tsx`：结构、图标操作、摘要、标题与时间兜底。
 - `apps/web/src/components/agent-island/agent-island.css`：紧凑态拖动区、32px 顶部栏、30px 会话行、28px planning 行和无阴影。
-- `apps/web/src/components/agent-island/AgentIslandSurface.test.tsx`：标题与时间兜底、紧凑态拖动/展开按钮契约。
+- `apps/web/src/components/agent-island/AgentIslandSurface.test.tsx`：标题与时间兜底、紧凑态 hover/拖动契约。
 
 ## 验证
 
 - 新增纯 helper 测试，先确认标题和非法时间用例失败，再实现通过。
 - 运行 Agent Island 两个相关测试文件，区分本次回归与分支原有失败。
 - 运行 `@lume/web` typecheck。
-- 在 Windows Electron dev 窗口手工验证紧凑态拖动、展开按钮、无阴影和展开密度。
+- 在 Windows Electron dev 窗口手工验证左侧 grip 拖动、compact 内容区 hover 展开、无阴影和展开密度。
 
 ## 范围外与风险
 
 - 不改 sprite 动画实现；动画仍需在实际 Electron 窗口独立验证。
 - 不改 Agent Island service、shared 数据类型或原生 macOS helper。
 - 该功能分支不包含当前 `origin/main`，后续 PR 需要单独处理 Agent Island 文件已在 main 删除的历史差异。
-

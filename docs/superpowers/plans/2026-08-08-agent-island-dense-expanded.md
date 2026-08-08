@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: 锁定标题、时间和拖动契约
+### Task 1: 锁定标题、时间和 hover/拖动契约
 
 **Files:**
 - Modify: `apps/web/src/components/agent-island/AgentIslandSurface.test.tsx`
@@ -27,18 +27,20 @@ expect(formatIslandTime(Number.NaN, false)).toBe('')
 expect(formatIslandTime(1, false)).not.toContain('Invalid Date')
 ```
 
-紧凑态 SSR 断言包含可拖动容器和唯一的展开按钮：
+紧凑态 SSR 断言包含可拖动容器，箭头仅作状态提示：
 
 ```tsx
-expect(html).toContain('island-compact-layer island-drag-handle')
-expect(html).toContain('aria-label="展开"')
+expect(html).toContain('island-compact-layer island-no-drag')
+expect(html).toContain('island-compact-grip island-drag-handle')
+expect(html).toContain('island-chevron')
+expect(html).not.toContain('aria-label="展开"')
 ```
 
 - [ ] **Step 2: 运行测试确认 RED**
 
 Run: `bun test apps/web/src/components/agent-island/AgentIslandSurface.test.tsx -t "高密度展开态 helper|compact 拖动契约"`
 
-Expected: FAIL，因为 helper 尚未导出，且 compact 仍由整条 button 覆盖。
+Expected: FAIL，因为 helper 尚未导出，且 compact 仍含可点击展开按钮。
 
 - [ ] **Step 3: 实现最小 helper 和 compact 结构**
 
@@ -62,7 +64,7 @@ export function formatIslandTime(ts: number, overdue: boolean): string {
 }
 ```
 
-把 compact 根节点从全宽 `button` 改为 `div.island-compact-layer.island-drag-handle`，内部只保留一个 shadcn `Button size="icon-xs"` 触发 `set-expanded`。
+把 compact 根节点从全宽 `button` 改为 `div.island-compact-layer.island-no-drag`，左侧窄 grip 使用 `island-drag-handle`；右侧 `ChevronDown` 仅作状态提示，展开复用 surface 的 `set-hovered` intent 和 service 现有延迟。
 
 - [ ] **Step 4: 运行测试确认 GREEN**
 
@@ -132,7 +134,7 @@ Expected: PASS。
 
 - [ ] **Step 3: Windows Electron 手工验证**
 
-在现有 dev 会话中检查：紧凑态可拖动；只有右侧按钮展开；surface 无裁切阴影；展开顶部栏 32px；会话行 30px；非法 dueAt 不显示 `Invalid Date`。
+在现有 dev 会话中检查：左侧 grip 可拖动；悬停 compact 内容区展开；surface 无裁切阴影；展开顶部栏 32px；会话行 30px；非法 dueAt 不显示 `Invalid Date`。
 
 - [ ] **Step 4: 审查改动范围**
 
