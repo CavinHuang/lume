@@ -54,12 +54,36 @@ describe('MemoryJobActivityPanel', () => {
     }
 
     const html = renderToStaticMarkup(
-      <MemoryJobActivityPanel items={[job]} busyAction={null} onRetry={() => undefined} />,
+      <MemoryJobActivityPanel items={[job]} busyAction={null} onRetry={() => undefined} onCancel={() => undefined} />,
     )
 
     expect(html).toContain('历史整理')
     expect(html).toContain('扫描 4 条消息')
     expect(html).toContain('默认使用中文回答')
     expect(html).toContain('runs/run-1.jsonl')
+  })
+
+  test('renders live progress and a stop action for active jobs', () => {
+    const job: MemorySettingsJobSummary = {
+      jobId: 'job-running',
+      kind: 'consolidation',
+      status: 'running',
+      createdAt: Date.parse('2026-08-07T10:00:00.000Z'),
+      retryable: false,
+      progress: {
+        phase: '重建主题摘要',
+        scannedItems: 12,
+        processedItems: 7,
+        changedFiles: ['workspace-brief.md'],
+      },
+    }
+
+    const html = renderToStaticMarkup(
+      <MemoryJobActivityPanel items={[job]} busyAction={null} onRetry={() => undefined} onCancel={() => undefined} />,
+    )
+
+    expect(html).toContain('重建主题摘要')
+    expect(html).toContain('workspace-brief.md')
+    expect(html).toContain('停止')
   })
 })

@@ -88,7 +88,7 @@ async function runQueued(input: BackgroundMemoryExtractionRequest): Promise<void
       idempotencyKey: `turn-extract:${input.threadId}:${input.runId}`,
       manual: false,
       payload: input,
-      run: ({ report }) => runExtraction(input, report),
+      run: ({ report, signal }) => runExtraction(input, report, signal),
       onProgress: (current) => {
         if (current.progress?.changedItems) notifyExtractionProgress(input, current.jobId, current.progress);
       },
@@ -126,8 +126,10 @@ export function recoverBackgroundMemoryExtractionJobs(workspaceSlug: string): nu
 
 async function runExtraction(
   input: BackgroundMemoryExtractionRequest,
-  report: (progress: BackgroundExtractionProgress) => void
+  report: (progress: BackgroundExtractionProgress) => void,
+  signal: AbortSignal
 ): Promise<BackgroundExtractionResult> {
+  signal.throwIfAborted();
   const sources = extractionSources(input.items);
   const cursor = readCursor(input);
   if (cursor.lastRunId === input.runId && (cursor.status === "completed" || cursor.status === "skipped")) {
@@ -164,14 +166,21 @@ async function runExtraction(
         ...(claim ? { claim } : {})
       };
     });
-    const extracted = await extractMemoryCandidatesInSubagent({
+    report({
+      phase: "分析新增对话和工具证据",
+      scannedItems: sources.length,
+      processedItems: 0,
+      changedItems: 0
+    });
+    const extracted = await safeExtractMemoryCandidatesInSubagent({
       sources: sources.map(({ sourceId, role, text }) => ({ sourceId, role, text })),
       workspaceSlug: input.workspaceSlug,
       modelRef: input.modelRef,
       modelVisibleMessage: input.modelVisibleMessage,
       existingMemories,
       threadId: input.threadId,
-      runId: input.runId
+      runId: input.runId,
+      signal
     }) ?? await extractMemoryBatchCandidatesWithLlm({
       sources: sources.map(({ sourceId, role, text }) => ({ sourceId, role, text })),
       workspaceSlug: input.workspaceSlug,
@@ -183,9 +192,11 @@ async function runExtraction(
       threadId: input.threadId,
       runId: input.runId
     });
+    signal.throwIfAborted();
     const service = new MemoryCommandService();
     const receipts: MemoryV2MutationReceipt[] = [];
     for (const item of extracted) {
+      signal.throwIfAborted();
       const role = sourceRoles.get(item.sourceId);
       // Assistant text is useful context for extraction, but can never be the sole evidence.
       if (role === "assistant") continue;
@@ -215,7 +226,11 @@ async function runExtraction(
     });
     writeCursor(input, completedCursor(cursor, input, toSequence, idempotencyKey, "completed"));
     if (changed.length > 0) notifyMemorySaved(input, changed);
-    maybeEnqueueAutoDream(input.workspaceSlug, { threadId: input.threadId, runId: input.runId });
+    maybeEnqueueAutoDream(input.workspaceSlug, {
+      threadId: input.threadId,
+      runId: input.runId,
+      ...(input.modelRef ? { modelRef: input.modelRef } : {})
+    });
     return { scannedItems: sources.length, changedItems: changed.length };
   } catch (error) {
     writeCursor(input, {
@@ -236,6 +251,18 @@ interface IndependentExtractionInput {
   existingMemories: Array<{ id: string; statement: string; claim?: ReturnType<typeof claimFromEntry> }>;
   threadId: string;
   runId: string;
+  signal: AbortSignal;
+}
+
+async function safeExtractMemoryCandidatesInSubagent(
+  input: IndependentExtractionInput
+): Promise<Awaited<ReturnType<typeof extractMemoryBatchCandidatesWithLlm>> | undefined> {
+  try {
+    return await extractMemoryCandidatesInSubagent(input);
+  } catch {
+    input.signal.throwIfAborted();
+    return undefined;
+  }
 }
 
 /**
@@ -280,6 +307,7 @@ async function extractMemoryCandidatesInSubagent(
       return { threadId: child.id, modelRef };
     },
     execute: async ({ session, run, signal }) => {
+      const abortSignal = AbortSignal.any([signal, input.signal]);
       const emitter = createSilentAgentEmitter();
       await sendAgentMessage({
         threadId: session.threadId,
@@ -296,11 +324,14 @@ async function extractMemoryCandidatesInSubagent(
         messageMetadata: {
           hiddenFromChat: true,
           memoryBackground: true,
+          maxTurns: 5,
           toolPolicy: { allow: ["memory.search", "memory.read"] }
         }
-      }, emitter, { abortSignal: signal });
+      }, emitter, { abortSignal });
       const text = extractAssistantText(getAgentThreadSDKMessages(session.threadId));
-      extracted = parseLlmBatchExtractionResponse(text, input.sources) ?? [];
+      const parsed = parseLlmBatchExtractionResponse(text, input.sources);
+      if (!parsed) throw new Error("后台提取 Agent 未返回有效 JSON");
+      extracted = parsed;
       getSubagentCoordinator().submitReport({
         runId: run.runId,
         report: { status: "submitted", summary: `Extracted ${extracted.length} memory candidates.` }

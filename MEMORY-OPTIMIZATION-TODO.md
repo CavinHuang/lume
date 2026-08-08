@@ -23,12 +23,14 @@
 - [x] 整理 Agent 支持最多 20 轮 manifest、近期证据、Capsule、Brief、Persona 读取。
 - [x] 整理 Agent 通过 CommandService 完成版本合并、重复 supersede 和过期处理。
 - [x] 自动 Job 重启后按幂等键恢复，手动 external ingest 保留重试。
-- [ ] 管理 UI 展示所有后台 Job、阶段、扫描/处理/变更文件和完成详情。
+- [x] 管理 UI 展示所有后台 Job、阶段、扫描/处理/变更文件、停止操作和完成详情。
 - [x] 全部记忆补齐 source、facet、更新时间过滤；详情已有编辑、归档、版本链和 revision-safe 撤销，编辑提交按显式纠正创建新 Claim 版本。
 
 ## 后续高风险项
 
 - [x] 将后台提取接入真正独立的 `SubagentCoordinator` 运行时。子线程使用隐藏 `sendAgentMessage`、独立 transcript 和 `memory.search/read` 白名单；模型不可用时保留 provider loop 作为兼容回退。
+- [x] 后台提取独立运行时限制为最多 5 轮，整理 Agent 限制为最多 20 轮；取消信号在写入前阻止提交。
+- [x] 自动提取和 AutoDream Job 在 sidecar 启动时按持久化 payload 与幂等键恢复，不再依赖先打开设置页。
 
 ## 验收
 
@@ -38,3 +40,5 @@
 第二阶段验证记录：sidecar 类型检查通过；extraction/job/coordinator 相关测试 `40 pass`。
 
 验证记录：sidecar/shared/web 类型检查通过；memory extraction、command service、retrieval、user-message-prefix、organizer、job、consolidation、runtime projection 相关测试通过。
+
+最终收尾验证：记忆相关定向测试、后台任务 UI 测试、受限工具解析和运行时轮数测试通过；同步最新 `origin/main` 后发现既有 `SubagentDefaultModelPanel.test.ts` 单测独立失败，与本次记忆改动无关。

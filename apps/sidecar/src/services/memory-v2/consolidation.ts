@@ -2,7 +2,7 @@ import { closeSync, existsSync, openSync, readFileSync, readdirSync, renameSync,
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { SDKMessage } from "@lume/agent-sdk";
-import { AGENT_IPC_CHANNELS, type LumeRuntimeEvent } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, type LumeRuntimeEvent, type MemoryOrganizeProgress } from "@lume/shared";
 import { appendAgentThreadSDKMessages } from "../agent/agent-thread-manager";
 import { emitAgentNotification } from "../agent/agent-notification-service";
 import { organizeMemoryEntries } from "./entry-organizer";
@@ -31,6 +31,7 @@ export interface ConsolidationResult {
 interface ConsolidationNotificationContext {
   threadId: string;
   runId: string;
+  modelRef?: string;
 }
 
 export function maybeEnqueueAutoDream(
@@ -59,28 +60,35 @@ export function enqueueConsolidation(
   const idempotencyKey = manual
     ? `consolidation:manual:${randomUUID()}`
     : `consolidation:auto:${completedRunCount}`;
-  return memoryJobService.start<ConsolidationResult, {
-    label: string;
-    scannedItems: number;
-    processedItems: number;
-  }>({
+  return memoryJobService.start<ConsolidationResult, MemoryOrganizeProgress>({
     kind: "consolidation",
     workspaceSlug,
     idempotencyKey,
     manual,
-    payload: { workspaceSlug, manual, trigger: context ? "run" : "settings" },
+    payload: {
+      workspaceSlug,
+      manual,
+      trigger: context ? "run" : "settings",
+      ...(context ? { context } : {})
+    },
     run: async ({ signal, report }) => withScopeLock(paths.jobsDir, () => withScopeLock(globalPaths.jobsDir, async () => {
       report({ label: "读取索引、主题摘要和近期证据", scannedItems: 0, processedItems: 0 });
       if (signal.aborted) throw new Error("记忆整理已取消");
       const organized = await organizeMemoryEntries({
         workspaceSlug,
+        signal,
+        ...(context ? {
+          ...(context.modelRef ? { modelRef: context.modelRef } : {}),
+          agentContext: { threadId: context.threadId, runId: context.runId }
+        } : {}),
         onProgress: (progress) => report(progress)
       });
       if (signal.aborted) throw new Error("记忆整理已取消");
       report({
-        label: "重建主题摘要、工作区简报与用户画像",
+        label: "重建主题摘要、工作区简报与关于我",
         scannedItems: organized.scannedEntries,
-        processedItems: organized.keptEntries
+        processedItems: organized.keptEntries,
+        changedFiles: ["capsules", "workspace-brief.md", "persona.md", "MEMORY.md"]
       });
       await rebuildDerivedMemoryViews({ scope: "workspace", workspaceSlug });
       await rebuildDerivedMemoryViews({ scope: "global" });
@@ -108,17 +116,20 @@ export function enqueueConsolidation(
 
 /** Re-queue an automatic consolidation interrupted by a process restart. */
 export function recoverInterruptedConsolidation(workspaceSlug: string): boolean {
-  const interrupted = memoryJobService.list(workspaceSlug).some((job) =>
+  const interrupted = memoryJobService.list(workspaceSlug).find((job) =>
     job.kind === "consolidation" && job.status === "interrupted" && !job.manual
   );
   if (!interrupted) return false;
-  return Boolean(enqueueConsolidation(workspaceSlug, false, undefined, { force: true }));
+  const payload = interrupted.payload && typeof interrupted.payload === "object"
+    ? interrupted.payload as { context?: ConsolidationNotificationContext }
+    : undefined;
+  return Boolean(enqueueConsolidation(workspaceSlug, false, payload?.context, { force: true }));
 }
 
 function notifyProgress(
   context: ConsolidationNotificationContext,
   jobId: string,
-  progress: { label: string; scannedItems: number; processedItems: number }
+  progress: MemoryOrganizeProgress
 ): void {
   const event: Extract<LumeRuntimeEvent, { type: "memory.job.progress" }> = {
     id: `${jobId}:progress:${progress.processedItems}`,

@@ -32,8 +32,8 @@ import { createMemoryV2Store } from "../services/memory-v2/markdown-store";
 import { MemoryCommandService } from "../services/memory-v2/command-service";
 import { claimFromEntry } from "../services/memory-v2/claim";
 import { memoryJobService } from "../services/memory-v2/job-service";
-import { maybeEnqueueAutoDream, recoverInterruptedConsolidation } from "../services/memory-v2/consolidation";
-import { recoverBackgroundMemoryExtractionJobs } from "../services/memory-v2/background-extractor";
+import { maybeEnqueueAutoDream } from "../services/memory-v2/consolidation";
+import { recoverMemoryJobsForWorkspace } from "../services/memory-v2/job-recovery";
 import {
   getMemoryRuntimeConfig,
   updateMemoryRuntimeConfig
@@ -84,9 +84,7 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
     },
     [MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT]: async (params) => {
       const input = validateInput(workspaceSlugInputSchema, params, MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT);
-      memoryJobService.recoverInterrupted(input.workspaceSlug);
-      recoverBackgroundMemoryExtractionJobs(input.workspaceSlug);
-      recoverInterruptedConsolidation(input.workspaceSlug);
+      recoverMemoryJobsForWorkspace(input.workspaceSlug);
       maybeEnqueueAutoDream(input.workspaceSlug);
       return getMemoryV2SettingsSnapshot(input.workspaceSlug);
     },
@@ -313,9 +311,10 @@ function startMemoryOrganizeHistoryJob(input: MemoryOrganizeHistoryInput): Memor
 }
 
 function startMemoryOrganizeEntriesJob(input: MemoryOrganizeEntriesInput): MemoryStartOrganizeJobResult {
-  return startMemoryOrganizeJob("entries", input.workspaceSlug, async (report) => {
+  return startMemoryOrganizeJob("entries", input.workspaceSlug, async (report, signal) => {
     return organizeMemoryEntries({
       ...input,
+      signal,
       onProgress: report
     });
   });
@@ -325,14 +324,15 @@ function startMemoryOrganizeJob(
   kind: MemoryOrganizeJob["kind"],
   workspaceSlug: string,
   run: (
-    report: (progress: NonNullable<MemoryOrganizeJob["progress"]>) => void
+    report: (progress: NonNullable<MemoryOrganizeJob["progress"]>) => void,
+    signal: AbortSignal
   ) => Promise<NonNullable<MemoryOrganizeJob["result"]>>
 ): MemoryStartOrganizeJobResult {
   const job = memoryJobService.start({
     kind,
     workspaceSlug,
     manual: true,
-    run: ({ report }) => run(report)
+    run: ({ report, signal }) => run(report, signal)
   });
   return {
     jobId: job.jobId,

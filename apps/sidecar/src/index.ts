@@ -397,6 +397,17 @@ async function boot(): Promise<void> {
     });
   }
   startWorkspaceWatcher((method, params) => writeNotification(method, params));
+  void import("./services/memory-v2/job-recovery")
+    .then(({ recoverMemoryJobsOnStartup }) => recoverMemoryJobsOnStartup())
+    .catch((error) => {
+      writeLogRecord({
+        level: "error",
+        context: "memory-v2.job-recovery",
+        event: "memory.job_recovery_failed",
+        message: "memory jobs could not be recovered during startup",
+        error: { message: error instanceof Error ? error.message : String(error) }
+      });
+    });
   // 启动时清理过期回收站条目
   try { cleanupExpiredTrash(); } catch { /* non-critical */ }
   try { reconcilePlanningStartOperations(); } catch { /* retried on the next start or idempotent request */ }

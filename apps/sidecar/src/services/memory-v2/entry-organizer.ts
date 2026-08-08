@@ -1,9 +1,11 @@
 import type {
+  AgentAskUserQuestionRequest,
+  AgentToolPermissionRequest,
   MemoryOrganizeEntriesInput,
   MemoryOrganizeProgress,
   MemoryOrganizeEntriesResult
 } from "@lume/shared";
-import { type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { type ApiType, type LLMProvider, type SDKMessage } from "@lume/agent-sdk";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createLogger } from "../infra/logger";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
@@ -22,6 +24,10 @@ import type {
   MemoryV2Scope,
   MemoryV2Status
 } from "./types";
+import { createAgentThreadWithModelRef, getAgentThreadSDKMessages } from "../agent/agent-thread-manager";
+import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
+import { sendAgentMessage } from "../agent/agent-service";
+import { getSubagentCoordinator } from "../agent/subagents/subagent-coordinator";
 
 const log = createLogger("memory-v2.entry-organizer");
 
@@ -66,9 +72,12 @@ export interface MemoryOrganizeEntriesOptions extends MemoryOrganizeEntriesInput
   createProvider?: MemoryEntryOrganizerProviderFactory;
   planEntries?: MemoryEntryOrganizerPlanner;
   onProgress?: (progress: MemoryOrganizeProgress) => void;
+  signal?: AbortSignal;
+  agentContext?: { threadId: string; runId: string };
 }
 
 export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions): Promise<MemoryOrganizeEntriesResult> {
+  input.signal?.throwIfAborted();
   const store = createMemoryV2Store();
   const commands = new MemoryCommandService(store);
   const entries = store.listEntries({
@@ -92,10 +101,12 @@ export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions)
   const items: MemoryOrganizeEntriesResult["items"] = [];
   const supersededIds = new Set<string>();
   const updatedIds = new Set<string>();
-  const staleIds = markExpiredEntries(commands, input.workspaceSlug, entries);
   const planItems = await resolveOrganizePlan(input, entries);
+  input.signal?.throwIfAborted();
+  const staleIds = markExpiredEntries(commands, input.workspaceSlug, entries);
 
   for (const planItem of planItems) {
+    input.signal?.throwIfAborted();
     const kept = entries.find((entry) => entry.frontmatter.id === planItem.keepId);
     if (!kept || supersededIds.has(kept.frontmatter.id)) continue;
     if (planItem.update && (planItem.update.confidence || planItem.update.facets)) {
@@ -110,6 +121,7 @@ export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions)
       updatedIds.add(kept.frontmatter.id);
     }
     for (const duplicateId of planItem.duplicateIds) {
+      input.signal?.throwIfAborted();
       const duplicate = entries.find((entry) => entry.frontmatter.id === duplicateId);
       if (!duplicate || supersededIds.has(duplicate.frontmatter.id)) continue;
       if (!canSupersedeEntry(kept, duplicate)) continue;
@@ -128,6 +140,7 @@ export async function organizeMemoryEntries(input: MemoryOrganizeEntriesOptions)
   const kept: MemoryV2Entry[] = [];
 
   for (const entry of entries) {
+    input.signal?.throwIfAborted();
     if (supersededIds.has(entry.frontmatter.id)) continue;
     const duplicateOf = kept.find((candidate) => isDuplicateEntry(candidate, entry));
     if (!duplicateOf) {
@@ -228,6 +241,18 @@ async function resolveOrganizePlan(
       candidates
     );
   }
+  if (input.agentContext) {
+    try {
+      const subagentPlan = await organizeEntriesWithSubagent(input, candidates);
+      if (subagentPlan) return sanitizeOrganizePlan(subagentPlan, candidates);
+    } catch (error) {
+      input.signal?.throwIfAborted();
+      log.warn("independent memory organizer failed; using provider fallback", {
+        workspaceSlug: input.workspaceSlug,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
   const planner = safeCreateLlmOrganizerPlanner(input);
   if (!planner) return [];
   try {
@@ -278,6 +303,117 @@ async function planCandidateBatches(
 function normalizeOrganizeBatchSize(value: number | undefined): number {
   if (!Number.isFinite(value) || !value || value < 1) return DEFAULT_ORGANIZE_BATCH_SIZE;
   return Math.max(1, Math.floor(value));
+}
+
+async function organizeEntriesWithSubagent(
+  input: MemoryOrganizeEntriesOptions,
+  candidates: MemoryEntryOrganizeCandidate[]
+): Promise<MemoryEntryOrganizePlanItem[] | undefined> {
+  const runtimeConfig = getMemoryRuntimeConfig();
+  const resolved = resolveMemoryRerankModelRef({
+    workspaceSlug: input.workspaceSlug,
+    explicitModelRef: input.modelRef ?? runtimeConfig.retrieval.rerankModelRef
+  });
+  const modelRef = resolved.modelRef;
+  const binding = modelRef ? resolveChannelModelBinding(modelRef, "chat") : undefined;
+  const workspace = getAgentWorkspaceBySlug(input.workspaceSlug);
+  if (!modelRef || !binding || !workspace || !input.agentContext) return undefined;
+
+  const evidence = readOrganizerEvidence(input.workspaceSlug);
+  const prompt = [
+    "You are Lume's private memory consolidation agent.",
+    buildOrganizerSystemPrompt(),
+    "Use memory.search and memory.read to verify unclear relationships before returning the final JSON plan.",
+    "Do not write memories or files yourself. The parent MemoryCommandService validates and commits the plan.",
+    buildOrganizerUserPrompt({ workspaceSlug: input.workspaceSlug, entries: candidates, evidence })
+  ].join("\n\n");
+  const coordinator = getSubagentCoordinator();
+  let plan: MemoryEntryOrganizePlanItem[] = [];
+  const result = await coordinator.runAgentTask({
+    parentThreadId: input.agentContext.threadId,
+    parentRunId: input.agentContext.runId,
+    parentToolUseId: `memory-organize:${input.agentContext.runId}`,
+    prompt,
+    description: "Private memory consolidation",
+    subagentType: "memory-organizer",
+    acceptanceCriteria: [
+      "Every merge preserves the stronger active entry.",
+      "Every proposed change is supported by stored memory evidence."
+    ],
+    createSession: ({ title }) => {
+      const child = createAgentThreadWithModelRef(
+        title,
+        modelRef,
+        binding.channel.id,
+        workspace.id,
+        input.agentContext?.threadId,
+        binding.modelId,
+        { fileContextMode: "newRoot" }
+      );
+      return { threadId: child.id, modelRef };
+    },
+    execute: async ({ session, run, signal }) => {
+      const abortSignal = input.signal ? AbortSignal.any([signal, input.signal]) : signal;
+      await sendAgentMessage({
+        threadId: session.threadId,
+        userMessage: prompt,
+        modelRef,
+        channelId: binding.channel.id,
+        modelId: binding.modelId,
+        workspaceId: workspace.id,
+        threadType: "subagent",
+        messageMetadata: {
+          hiddenFromChat: true,
+          memoryBackground: true,
+          maxTurns: MAX_ORGANIZE_AGENT_ROUNDS,
+          toolPolicy: { allow: ["memory.search", "memory.read"] }
+        }
+      }, createSilentOrganizerEmitter(), { abortSignal });
+      input.signal?.throwIfAborted();
+      plan = parseOrganizerPlan(extractOrganizerAssistantText(getAgentThreadSDKMessages(session.threadId)));
+      coordinator.submitReport({
+        runId: run.runId,
+        report: { status: "submitted", summary: `Reviewed ${candidates.length} memories and proposed ${plan.length} consolidation actions.` }
+      });
+      return { status: "completed", completionSummary: `Proposed ${plan.length} consolidation actions.` };
+    }
+  });
+  if (result.taskId) {
+    coordinator.finishTask({
+      taskId: result.taskId,
+      resolution: "accepted",
+      reason: "整理方案已由 MemoryCommandService 校验并执行。"
+    });
+  }
+  return plan;
+}
+
+function extractOrganizerAssistantText(messages: SDKMessage[]): string {
+  const chunks: string[] = [];
+  for (const message of messages) {
+    if (message.type === "assistant") {
+      const content = (message.message as { content?: unknown } | undefined)?.content;
+      if (Array.isArray(content)) {
+        chunks.push(...content.flatMap((block) => {
+          if (!block || typeof block !== "object") return [];
+          const value = block as { type?: unknown; text?: unknown };
+          return value.type === "text" && typeof value.text === "string" ? [value.text] : [];
+        }));
+      }
+    }
+    if (message.type === "result" && typeof message.result === "string") chunks.push(message.result);
+  }
+  return chunks.join("\n").trim();
+}
+
+function createSilentOrganizerEmitter() {
+  return {
+    onComplete: () => undefined,
+    onError: () => undefined,
+    onTitleUpdated: () => undefined,
+    onAskUserQuestion: (_request: AgentAskUserQuestionRequest) => undefined,
+    onToolPermissionRequest: (_request: AgentToolPermissionRequest) => undefined
+  };
 }
 
 function safeCreateLlmOrganizerPlanner(input: MemoryOrganizeEntriesOptions): MemoryEntryOrganizerPlanner | undefined {

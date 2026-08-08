@@ -12,6 +12,7 @@ import type {
   MemorySettingsActivityItem,
   MemorySettingsEntrySummary,
   MemorySettingsFileSummary,
+  MemorySettingsJobProgress,
   MemorySettingsJobResult,
   MemorySettingsPendingSummary,
   MemorySettingsSnapshot,
@@ -118,7 +119,7 @@ function getMemoryDiagnosticsState(
     explicitModelRef: runtimeConfig.retrieval.rerankModelRef
   });
   return {
-    jobs: memoryJobService.list(workspaceSlug).slice(0, 20).map((job) => ({
+    jobs: memoryJobService.list(workspaceSlug).map((job) => ({
       jobId: job.jobId,
       kind: job.kind,
       status: job.status,
@@ -126,8 +127,12 @@ function getMemoryDiagnosticsState(
       retryable: job.kind === "external_ingest"
         && (job.status === "failed" || job.status === "cancelled" || job.status === "interrupted")
         && job.payload !== undefined,
+      ...(job.startedAt ? { startedAt: job.startedAt } : {}),
       ...(job.completedAt ? { completedAt: job.completedAt } : {}),
       ...(job.error ? { error: job.error } : {}),
+      ...(job.progress !== undefined || job.result !== undefined
+        ? { progress: settingsJobProgress(job.kind, job.progress, job.result) }
+        : {}),
       ...(job.result !== undefined ? { result: settingsJobResult(job.kind, job.result) } : {})
     })),
     migration: {
@@ -165,6 +170,56 @@ function getMemoryDiagnosticsState(
       }
     }
   };
+}
+
+function settingsJobProgress(
+  kind: MemoryJobKind,
+  progress: unknown,
+  result: unknown
+): MemorySettingsJobProgress {
+  const value = asRecord(progress);
+  const output = asRecord(result);
+  const changedFiles = Array.isArray(value.changedFiles)
+    ? value.changedFiles.filter((item): item is string => typeof item === "string")
+    : kind === "consolidation" && Array.isArray(output.rebuilt)
+      ? output.rebuilt.filter((item): item is string => typeof item === "string")
+      : [];
+  const scannedItems = readNumber(value.scannedItems)
+    ?? readNumber(value.scannedSources)
+    ?? readNumber(value.scannedChunks)
+    ?? readNumber(value.scannedBatches);
+  const processedItems = readNumber(value.processedItems) ?? readNumber(value.processedBatches);
+  const changedItems = readNumber(value.changedItems);
+  const candidateCount = readNumber(value.candidateCount);
+  return {
+    phase: readString(value.phase) ?? readString(value.label) ?? completedJobPhase(kind, result),
+    ...(scannedItems !== undefined ? { scannedItems } : {}),
+    ...(processedItems !== undefined ? { processedItems } : {}),
+    ...(changedItems !== undefined ? { changedItems } : {}),
+    ...(candidateCount !== undefined ? { candidateCount } : {}),
+    changedFiles
+  };
+}
+
+function completedJobPhase(kind: MemoryJobKind, result: unknown): string {
+  if (result !== undefined) return "任务已完成";
+  if (kind === "turn_extract") return "准备提取对话记忆";
+  if (kind === "consolidation") return "准备整理记忆";
+  return "准备后台任务";
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function settingsJobResult(kind: MemoryJobKind, result: unknown): MemorySettingsJobResult {

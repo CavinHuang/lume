@@ -426,6 +426,13 @@ function MemorySettingsSurface({ surface }: { surface: 'advanced' | 'center' | '
   }, [refresh, snapshot?.retrieval.semantic.localOnnx?.status])
 
   React.useEffect(() => {
+    const jobs = surface === 'advanced' ? diagnostics?.jobs : snapshot?.jobs
+    if (!jobs?.some((job) => job.status === 'queued' || job.status === 'running')) return undefined
+    const timer = window.setTimeout(() => void refresh(), 1200)
+    return () => window.clearTimeout(timer)
+  }, [diagnostics?.jobs, refresh, snapshot?.jobs, surface])
+
+  React.useEffect(() => {
     if (!ingestJob || ingestJob.status !== 'running') return undefined
 
     let disposed = false
@@ -892,6 +899,7 @@ function MemorySettingsSurface({ surface }: { surface: 'advanced' | 'center' | '
               items={snapshot?.jobs ?? []}
               busyAction={busyAction}
               onRetry={(jobId) => void handleRetryJob(jobId)}
+              onCancel={(jobId) => void handleCancelJob(jobId)}
             />
           </div>
         </section>

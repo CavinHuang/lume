@@ -100,7 +100,10 @@ interface PreparedRuntimeCoreRunInput {
 }
 
 export function resolveRuntimeCoreMaxTurns(input: AgentRuntimeRunParams["input"]): number | undefined {
-  void input;
+  const requested = input.messageMetadata?.maxTurns;
+  if (typeof requested === "number" && Number.isFinite(requested)) {
+    return Math.max(1, Math.min(80, Math.trunc(requested)));
+  }
   return 80;
 }
 

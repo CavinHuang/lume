@@ -328,13 +328,16 @@ describe("memory-v2 settings snapshot", () => {
       kind: "consolidation",
       workspaceSlug: "demo",
       manual: true,
-      run: async () => ({
+      run: async ({ report }) => {
+        report({ label: "分析记忆", scannedItems: 12, processedItems: 7 });
+        return ({
         scannedEntries: 12,
         updated: 2,
         merged: 3,
         stale: 1,
         rebuilt: ["capsules/runtime.md", "persona.md"]
-      })
+        });
+      }
     });
 
     await memoryJobService.waitForTerminal("demo", job.jobId);
@@ -344,6 +347,12 @@ describe("memory-v2 settings snapshot", () => {
     expect(projected).toMatchObject({
       kind: "consolidation",
       status: "completed",
+      progress: {
+        phase: "分析记忆",
+        scannedItems: 12,
+        processedItems: 7,
+        changedFiles: ["capsules/runtime.md", "persona.md"]
+      },
       result: {
         kind: "consolidation",
         data: {
@@ -355,5 +364,17 @@ describe("memory-v2 settings snapshot", () => {
         }
       }
     });
+  });
+
+  test("returns the complete persisted job history instead of truncating it", async () => {
+    const jobs = Array.from({ length: 21 }, () => memoryJobService.start({
+      kind: "turn_extract" as const,
+      workspaceSlug: "demo",
+      manual: false,
+      run: async () => ({ scannedItems: 0, changedItems: 0 })
+    }));
+    await Promise.all(jobs.map((job) => memoryJobService.waitForTerminal("demo", job.jobId)));
+
+    expect(getMemoryV2SettingsSnapshot("demo").jobs).toHaveLength(21);
   });
 });

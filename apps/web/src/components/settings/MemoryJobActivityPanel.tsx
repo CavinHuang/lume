@@ -5,7 +5,7 @@ import type {
   MemoryOrganizeHistoryResult,
   MemoryIngestSourcesResult,
 } from '@lume/shared'
-import { ChevronDown, ChevronUp, RotateCcw } from 'lucide-react'
+import { ChevronDown, ChevronUp, RotateCcw, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { cn } from '@/lib/utils'
@@ -31,9 +31,10 @@ interface MemoryJobActivityPanelProps {
   items: MemorySettingsJobSummary[]
   busyAction: string | null
   onRetry: (jobId: string) => void
+  onCancel: (jobId: string) => void
 }
 
-export function MemoryJobActivityPanel({ items, busyAction, onRetry }: MemoryJobActivityPanelProps) {
+export function MemoryJobActivityPanel({ items, busyAction, onRetry, onCancel }: MemoryJobActivityPanelProps) {
   const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set())
 
   if (items.length === 0) {
@@ -45,6 +46,7 @@ export function MemoryJobActivityPanel({ items, busyAction, onRetry }: MemoryJob
       {items.map((job) => {
         const open = expanded.has(job.jobId)
         const canRetry = job.retryable && busyAction === null
+        const canCancel = (job.status === 'queued' || job.status === 'running') && busyAction === null
         return (
           <Collapsible
             key={job.jobId}
@@ -98,6 +100,18 @@ export function MemoryJobActivityPanel({ items, busyAction, onRetry }: MemoryJob
                     重试
                   </Button>
                 )}
+                {canCancel && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    disabled={busyAction !== null}
+                    onClick={() => onCancel(job.jobId)}
+                  >
+                    <Square size={13} />
+                    停止
+                  </Button>
+                )}
               </div>
               <CollapsibleContent>
                 <div className="border-t border-border px-3 pb-3 pt-3">
@@ -117,7 +131,9 @@ function MemoryJobResultDetail({ job }: { job: MemorySettingsJobSummary }) {
     return <div className="break-words rounded-[6px] bg-red-500/5 px-3 py-2 text-[12px] leading-5 text-red-700">{job.error}</div>
   }
   if (!job.result) {
-    return <div className="text-[12px] leading-5 text-[var(--text-3)]">任务尚未产生可展示的结果。</div>
+    return job.progress
+      ? <MemoryJobProgressDetail job={job} />
+      : <div className="text-[12px] leading-5 text-[var(--text-3)]">任务尚未产生可展示的结果。</div>
   }
 
   switch (job.result.kind) {
@@ -137,6 +153,28 @@ function MemoryJobResultDetail({ job }: { job: MemorySettingsJobSummary }) {
         ['标记过期', job.result.data.stale],
       ]} extra={job.result.data.rebuilt.length > 0 ? `已重建：${job.result.data.rebuilt.join('、')}` : undefined} />
   }
+}
+
+function MemoryJobProgressDetail({ job }: { job: MemorySettingsJobSummary }) {
+  const progress = job.progress
+  if (!progress) return null
+  const metrics: Array<[string, number]> = []
+  if (progress.scannedItems !== undefined) metrics.push(['已扫描', progress.scannedItems])
+  if (progress.processedItems !== undefined) metrics.push(['已处理', progress.processedItems])
+  if (progress.changedItems !== undefined) metrics.push(['已变更', progress.changedItems])
+  if (progress.candidateCount !== undefined) metrics.push(['候选', progress.candidateCount])
+  return (
+    <div className="space-y-2">
+      <div className="text-[11px] font-medium text-[var(--text-2)]">{progress.phase}</div>
+      {metrics.length > 0 && <MetricGrid items={metrics} />}
+      {progress.changedFiles.length > 0 && (
+        <div className="rounded-[6px] bg-[var(--surface-2)] px-2.5 py-2 text-[11px] leading-5 text-[var(--text-3)]">
+          <div className="font-medium text-[var(--text-2)]">变更文件</div>
+          {progress.changedFiles.map((path) => <div key={path} className="break-all">{path}</div>)}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function HistoryResultDetail({ result }: { result: MemoryOrganizeHistoryResult }) {

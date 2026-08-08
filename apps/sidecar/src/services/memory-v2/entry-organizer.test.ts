@@ -251,4 +251,40 @@ describe("organizeMemoryEntries", () => {
       duplicate.frontmatter.id
     ]));
   });
+
+  test("does not commit a planned merge after the persistent job is cancelled", async () => {
+    const store = createMemoryV2Store();
+    const kept = store.writeEntry({
+      kind: "decision",
+      targetScope: "workspace",
+      statement: "Lume uses Markdown for memory storage.",
+      confidence: "high",
+      tags: ["memory"],
+      appliesWhen: { workspaceSlug: "demo" }
+    });
+    const duplicate = store.writeEntry({
+      kind: "decision",
+      targetScope: "workspace",
+      statement: "Markdown is Lume's memory storage.",
+      confidence: "high",
+      tags: ["memory"],
+      appliesWhen: { workspaceSlug: "demo" }
+    });
+    const controller = new AbortController();
+
+    await expect(organizeMemoryEntries({
+      workspaceSlug: "demo",
+      signal: controller.signal,
+      planEntries: async () => {
+        controller.abort();
+        return [{
+          keepId: kept.frontmatter.id,
+          duplicateIds: [duplicate.frontmatter.id],
+          reason: "Same storage decision."
+        }];
+      }
+    })).rejects.toThrow();
+
+    expect(listEntries({ workspaceSlug: "demo", scopes: ["workspace"], includeStatuses: ["active"] })).toHaveLength(2);
+  });
 });

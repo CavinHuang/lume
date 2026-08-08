@@ -397,6 +397,7 @@ export interface MemoryOrganizeProgress {
   scannedBatches?: number;
   processedBatches?: number;
   candidateCount?: number;
+  changedFiles?: string[];
 }
 
 export interface MemoryStartOrganizeJobResult {
@@ -582,14 +583,25 @@ export type MemorySettingsJobResult =
   | { kind: "turn_extract"; data: { scannedItems: number; changedItems: number } }
   | { kind: "consolidation"; data: { scannedEntries: number; updated: number; merged: number; stale: number; rebuilt: string[] } };
 
+export interface MemorySettingsJobProgress {
+  phase: string;
+  scannedItems?: number;
+  processedItems?: number;
+  changedItems?: number;
+  candidateCount?: number;
+  changedFiles: string[];
+}
+
 export interface MemorySettingsJobSummary {
   jobId: string;
   kind: MemoryJobKind;
   status: MemoryJobStatus;
   createdAt: number;
+  startedAt?: number;
   completedAt?: number;
   error?: string;
   retryable: boolean;
+  progress?: MemorySettingsJobProgress;
   result?: MemorySettingsJobResult;
 }
 
