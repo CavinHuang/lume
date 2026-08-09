@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { execCli } from "./cli-executor";
+import { execCli, buildCliEnv, spawnCli } from "./cli-executor";
 
 describe("execCli", () => {
   it("成功执行并捕获 stdout", async () => {
@@ -43,5 +43,44 @@ describe("execCli", () => {
     const res = await execCli(process.execPath, ["-e", "setTimeout(()=>{}, 60000)"], { timeoutMs: 200 });
     expect(res.timedOut).toBe(true);
     expect(res.ok).toBe(false);
+  });
+});
+
+describe("buildCliEnv", () => {
+  it("合并 env 到 process.env 基线", () => {
+    const env = buildCliEnv({ LUME_TEST_INJECTED: "yes" });
+    expect(env.LUME_TEST_INJECTED).toBe("yes");
+  });
+
+  it("denyList 优先级最高,即使在 env 中也移除", () => {
+    const env = buildCliEnv({ KEEP_ME: "y", REMOVE_ME: "x" }, ["REMOVE_ME"]);
+    expect(env.KEEP_ME).toBe("y");
+    expect(env.REMOVE_ME).toBeUndefined();
+  });
+});
+
+describe("spawnCli", () => {
+  it("返回 ChildProcess 并透传 stdout/exit", async () => {
+    const proc = spawnCli(process.execPath, ["-e", "process.stdout.write('streamed')"]);
+    let out = "";
+    proc.stdout?.on("data", (c: Buffer) => {
+      out += c.toString();
+    });
+    await new Promise<void>((resolve) => proc.on("close", () => resolve()));
+    expect(out).toBe("streamed");
+  });
+
+  it("envDenyList 在流式 spawn 中同样生效", async () => {
+    const proc = spawnCli(
+      process.execPath,
+      ["-e", "process.stdout.write(process.env.LEAK ? 'LEAKED' : 'clean')"],
+      { envDenyList: ["LEAK"], env: { LEAK: "secret" } },
+    );
+    let out = "";
+    proc.stdout?.on("data", (c: Buffer) => {
+      out += c.toString();
+    });
+    await new Promise<void>((resolve) => proc.on("close", () => resolve()));
+    expect(out).toBe("clean");
   });
 });
