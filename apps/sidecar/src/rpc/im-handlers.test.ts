@@ -137,4 +137,32 @@ describe("im-handlers", () => {
     expect(loginInputs).toEqual([{ workspaceId: "workspace-1" }]);
     expect(calls).toEqual(["start:account-1"]);
   });
+
+  test("starts, polls, and cancels CLI auth", async () => {
+    const calls: string[] = [];
+    const handlers = createImHandlers({
+      authManager: {
+        startAuth: async (config) => {
+          calls.push(`start:${config.provider}`);
+          return { sessionKey: "cli-1", authUrl: "https://login.dingtalk.com/oauth2/auth?x=1" };
+        },
+        pollAuth: (sessionKey) => {
+          calls.push(`poll:${sessionKey}`);
+          return { phase: "connected" as const, profile: "u1" };
+        },
+        cancelAuth: (sessionKey) => {
+          calls.push(`cancel:${sessionKey}`);
+        },
+        stopAll: () => {},
+      },
+    });
+
+    await expect(handlers[IM_IPC_CHANNELS.START_CLI_AUTH]?.({ provider: "dingtalk" }))
+      .resolves.toMatchObject({ sessionKey: "cli-1" });
+    await expect(handlers[IM_IPC_CHANNELS.POLL_CLI_AUTH]?.({ sessionKey: "cli-1" }))
+      .resolves.toMatchObject({ phase: "connected" });
+    await expect(handlers[IM_IPC_CHANNELS.CANCEL_CLI_AUTH]?.({ sessionKey: "cli-1" }))
+      .resolves.toEqual({ ok: true });
+    expect(calls).toEqual(["start:dingtalk", "poll:cli-1", "cancel:cli-1"]);
+  });
 });

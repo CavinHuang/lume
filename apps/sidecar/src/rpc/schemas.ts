@@ -574,6 +574,14 @@ export const imWeixinLoginPollInputSchema = z.object({
   verifyCode: z.string().optional()
 });
 
+export const cliAuthStartInputSchema = z.object({
+  provider: z.enum(["dingtalk", "feishu", "wecom"])
+});
+
+export const cliAuthSessionInputSchema = z.object({
+  sessionKey: idSchema
+});
+
 const readingSourceKindSchema = z.enum(["weread", "gutenberg", "poetry", "manual", "generated"]);
 const readingBookTrackSchema = z.enum(["lume", "co_read", "recommended"]);
 const readingBookStatusSchema = z.enum(["queued", "reading", "finished", "paused"]);

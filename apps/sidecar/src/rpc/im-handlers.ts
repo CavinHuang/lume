@@ -13,7 +13,14 @@ import {
   weixinLoginManager,
   type WeixinLoginManager
 } from "../services/im/weixin/openclaw-weixin-login";
+import { cliAuthManager, type CliAuthManager } from "../services/agent-runtime/tools/im-cli/cli-auth-manager";
+import { getImCliBaseDir } from "../services/infra/config-paths";
+import { dingtalkCliConfig, type CliProviderConfig } from "../services/agent-runtime/tools/im-cli/providers/dingtalk";
+import { larkCliConfig } from "../services/agent-runtime/tools/im-cli/providers/feishu";
+import { wecomCliConfig } from "../services/agent-runtime/tools/im-cli/providers/wecom";
 import {
+  cliAuthSessionInputSchema,
+  cliAuthStartInputSchema,
   imAccountCreateInputSchema,
   imAccountIdInputSchema,
   imAccountUpdateInputSchema,
@@ -26,11 +33,20 @@ import { validateInput } from "./validation";
 export interface CreateImHandlersInput {
   runtimeManager?: ImRuntimeManager;
   loginManager?: WeixinLoginManager;
+  authManager?: CliAuthManager;
 }
+
+/** CLI 授权是 provider 级:三企业渠道 config 映射(微信走扫码,不入此表) */
+const CLI_PROVIDER_CONFIGS: Record<string, CliProviderConfig> = {
+  dingtalk: dingtalkCliConfig,
+  feishu: larkCliConfig,
+  wecom: wecomCliConfig,
+};
 
 export function createImHandlers(input: CreateImHandlersInput = {}): Record<string, RpcHandler> {
   const runtimeManager = input.runtimeManager ?? imRuntimeManager;
   const loginManager = input.loginManager ?? weixinLoginManager;
+  const authManager = input.authManager ?? cliAuthManager;
 
   return {
     [IM_IPC_CHANNELS.LIST_ACCOUNTS]: async () => listImAccounts(),
@@ -97,6 +113,33 @@ export function createImHandlers(input: CreateImHandlersInput = {}): Record<stri
         };
       }
       return result;
+    },
+    [IM_IPC_CHANNELS.START_CLI_AUTH]: async (params) => {
+      const { provider } = validateInput(
+        cliAuthStartInputSchema,
+        params,
+        IM_IPC_CHANNELS.START_CLI_AUTH
+      ) as { provider: string };
+      const config = CLI_PROVIDER_CONFIGS[provider];
+      if (!config) return { sessionKey: "", error: `不支持的 CLI 渠道: ${provider}` };
+      return authManager.startAuth(config, getImCliBaseDir(), process.platform, process.arch);
+    },
+    [IM_IPC_CHANNELS.POLL_CLI_AUTH]: async (params) => {
+      const { sessionKey } = validateInput(
+        cliAuthSessionInputSchema,
+        params,
+        IM_IPC_CHANNELS.POLL_CLI_AUTH
+      ) as { sessionKey: string };
+      return authManager.pollAuth(sessionKey);
+    },
+    [IM_IPC_CHANNELS.CANCEL_CLI_AUTH]: async (params) => {
+      const { sessionKey } = validateInput(
+        cliAuthSessionInputSchema,
+        params,
+        IM_IPC_CHANNELS.CANCEL_CLI_AUTH
+      ) as { sessionKey: string };
+      authManager.cancelAuth(sessionKey);
+      return { ok: true };
     }
   };
 }

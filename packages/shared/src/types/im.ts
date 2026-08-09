@@ -108,6 +108,31 @@ export interface ImWeixinLoginPollResult {
   account?: ImAccount;
 }
 
+// ─── CLI Auth (企业渠道 OAuth 授权,provider 级) ───
+
+export type CliAuthPhase = "authorizing" | "connected" | "error";
+
+export interface CliAuthStartInput {
+  provider: ImProvider;
+}
+
+export interface CliAuthStartResult {
+  sessionKey: string;
+  authUrl?: string;
+  error?: string;
+}
+
+export interface CliAuthPollInput {
+  sessionKey: string;
+}
+
+export interface CliAuthPollResult {
+  phase: CliAuthPhase;
+  authUrl?: string;
+  profile?: string;
+  error?: string;
+}
+
 export const IM_IPC_CHANNELS = {
   LIST_ACCOUNTS: "im:list-accounts",
   CREATE_ACCOUNT: "im:create-account",
@@ -116,7 +141,10 @@ export const IM_IPC_CHANNELS = {
   START_ACCOUNT: "im:start-account",
   STOP_ACCOUNT: "im:stop-account",
   START_WEIXIN_LOGIN: "im:start-weixin-login",
-  POLL_WEIXIN_LOGIN: "im:poll-weixin-login"
+  POLL_WEIXIN_LOGIN: "im:poll-weixin-login",
+  START_CLI_AUTH: "im:start-cli-auth",
+  POLL_CLI_AUTH: "im:poll-cli-auth",
+  CANCEL_CLI_AUTH: "im:cancel-cli-auth"
 } as const;
 
 export const IM_PROVIDER_LABELS: Record<ImProvider, string> = {
