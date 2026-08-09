@@ -204,6 +204,14 @@ html:not(.darwin) .island-surface {
   border-radius: 5px;
   color: rgb(255 255 255 / 0.56);
 }
+.island-actions .island-action-button:hover {
+  color: rgb(255 255 255 / 0.88);
+  background: rgb(255 255 255 / 0.08);
+}
+.island-actions .island-action-button:active {
+  color: #fff;
+  background: rgb(255 255 255 / 0.12);
+}
 
 .island-section-head {
   display: flex;

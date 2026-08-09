@@ -223,8 +223,8 @@ export function AgentIslandSurface({
       >
         {/* expanded-content：surfaceMode !== compact 时渲染，collapsing 态保留旧内容淡出 */}
         {surfaceMode !== 'compact' && (
-          <div ref={expandedContentRef} className="island-expanded">
-            <div className="island-expanded-head island-drag-handle">
+          <div ref={expandedContentRef} className="island-expanded island-drag-handle">
+            <div className="island-expanded-head">
               <span className={cn('island-dot', PHASE_DOT[primary?.phase ?? 'idle'])} />
               <span className="island-title">{state.compactLabel.replace('Lume · ', '')}</span>
               <span className="island-expanded-summary">{expandedSummary}</span>
