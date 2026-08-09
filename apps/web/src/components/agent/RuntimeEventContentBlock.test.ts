@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import {
   formatCompletedDuration,
-  formatMessageAttachmentSize,
   formatRunningDuration,
+} from '@/lib/format-duration'
+import {
+  formatMessageAttachmentSize,
   getAssistantCopyText,
   getAssistantDownloadPayload,
   getCopyTextWithoutAfterglow,

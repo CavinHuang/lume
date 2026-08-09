@@ -9,6 +9,7 @@ export type LumeToolSource =
   | "task"
   | "mcp"
   | "skill"
+  | "link"
   | "plugin";
 
 export type LumeToolCategory = "read" | "write" | "execute" | "control" | "network";
@@ -23,6 +24,7 @@ export type LumeToolCapability =
   | "subagent"
   | "mcp"
   | "skill"
+  | "link"
   | "plugin"
   | "external";
 

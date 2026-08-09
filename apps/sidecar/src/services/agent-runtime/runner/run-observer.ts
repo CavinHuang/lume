@@ -761,6 +761,9 @@ function mapSdkMessageToRunItems(
       ...((message.result._meta?.execution && typeof message.result._meta.execution === "object")
         ? { execution: message.result._meta.execution as Record<string, unknown> }
         : {}),
+      ...(sanitizeLinkAuthorization(message.result._meta?.link)
+        ? { linkAuthorization: sanitizeLinkAuthorization(message.result._meta?.link)! }
+        : {}),
       parentToolCallId: metadata.parent_tool_use_id ?? undefined,
       subagentRunId: typeof metadata.subagent_run_id === "string" ? metadata.subagent_run_id : undefined,
       createdAt
@@ -805,6 +808,13 @@ function mapSdkMessageToRunItems(
     }];
   }
   return [];
+}
+
+function sanitizeLinkAuthorization(value: unknown): import("@lume/shared").LinkAuthorizationSignal | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input = value as Record<string, unknown>;
+  if (input.kind !== "link_authorization_required" || typeof input.service !== "string" || typeof input.actionId !== "string" || typeof input.threadId !== "string" || typeof input.errorCode !== "string") return null;
+  return { kind: "link_authorization_required", service: input.service, actionId: input.actionId, threadId: input.threadId, errorCode: input.errorCode, ...(typeof input.connectionName === "string" ? { connectionName: input.connectionName } : {}) };
 }
 
 function stripUserMessageContent(content: unknown): unknown {

@@ -86,6 +86,7 @@ function readRuntimeSource(definition: ToolDefinition): LumeToolSource | undefin
     source === "task" ||
     source === "mcp" ||
     source === "skill" ||
+    source === "link" ||
     source === "plugin"
   ) {
     return source;
@@ -118,6 +119,7 @@ function inferCapability(
   if (source === "plan" || source === "task") return "planning";
   if (source === "mcp") return "mcp";
   if (source === "skill") return "skill";
+  if (source === "link") return "link";
   if (source === "plugin") return "plugin";
   const normalized = toolName.trim().toLowerCase();
   if (normalized.includes("web")) return "web";
@@ -158,6 +160,7 @@ function isCapability(value: unknown): value is LumeToolCapability {
     value === "subagent" ||
     value === "mcp" ||
     value === "skill" ||
+    value === "link" ||
     value === "plugin" ||
     value === "external";
 }

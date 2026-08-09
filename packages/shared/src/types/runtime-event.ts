@@ -2,6 +2,7 @@ import type { AgentBrowserAttachment, AgentCapabilityReferenceView, AgentDiffCom
 import type { DesktopActionKind, DesktopActionStatus } from "./computer-use";
 import type { ImPeerKind, ImProvider } from "./im";
 import type { MemoryClaim } from "./memory";
+import type { LinkAuthorizationSignal } from "./link";
 
 export type RuntimeEventType =
   | "run.started"
@@ -127,6 +128,7 @@ export interface ToolCompletedRuntimeEvent extends RuntimeEventBase {
   resultPreview?: string;
   resultRef?: FileResultRef;
   execution?: ToolExecutionMetadata;
+  linkAuthorization?: LinkAuthorizationSignal;
 }
 
 export interface ModelRetryRuntimeEvent extends RuntimeEventBase {
@@ -152,6 +154,7 @@ export interface ToolFailedRuntimeEvent extends RuntimeEventBase {
   };
   resultRef?: ToolExecutionMetadata["resultRef"];
   execution?: ToolExecutionMetadata;
+  linkAuthorization?: LinkAuthorizationSignal;
 }
 
 export interface ToolPermissionTimeoutRuntimeEvent extends RuntimeEventBase {

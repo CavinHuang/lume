@@ -20,6 +20,7 @@ import type { BrowserBroker } from "../services/browser/browser-broker";
 import { getEffectivePluginRuntimeConfig } from "../services/system/lume-config-service";
 import { createPersonaHandlers } from "./persona-handlers";
 import { createPlanningTodoHandlers } from "./planning-todo-handlers";
+import { createLinkHandlers } from "./link-handlers";
 
 export interface CreateRpcHandlersContext {
   writeNotification: NotificationWriter;
@@ -83,7 +84,8 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
       notifyPlanModePhaseChange
     }),
     createPlanningTodoHandlers({ writeNotification: context.writeNotification }),
-    createPersonaHandlers()
+    createPersonaHandlers(),
+    createLinkHandlers(context.writeNotification)
   );
   if (context.renderClient) {
     handlers["render:result"] = async (params: unknown) => {

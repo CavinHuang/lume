@@ -14,6 +14,7 @@ import {
   Bot,
   ListTodo,
   Sparkles,
+  PlugZap,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type {
@@ -363,6 +364,8 @@ function renderIcon(icon: string, size: number) {
       return <ListTodo size={size} />
     case 'sparkles':
       return <Sparkles size={size} />
+    case 'plug':
+      return <PlugZap size={size} />
     case 'folder':
       return <Folder size={size} />
     case 'trash':
