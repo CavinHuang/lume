@@ -1,6 +1,27 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, afterEach } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { resolveBinaryPath, ensureBinary, manualBinaryEnvName } from "./cli-binary-manager";
-import { dingtalkCliConfig } from "./providers/dingtalk";
+import { dingtalkCliConfig, type CliProviderConfig } from "./providers/dingtalk";
+
+/** 构造最小 config,acquireBinary 注入:测 ensureBinary 的 env/cache/落盘编排,不耦合 provider 校验。 */
+function makeMockConfig(acquireBinary: CliProviderConfig["acquireBinary"]): CliProviderConfig {
+  return {
+    provider: "mock",
+    npmPackage: "mock-cli",
+    version: "1.0.0",
+    binaryName: "mock",
+    envDirs: {},
+    authCommand: [],
+    authUrlPattern: /x/,
+    statusCommand: [],
+    parseAuthStatus: () => ({ connected: false }),
+    authTimeoutMs: 1000,
+    envDenyList: [],
+    acquireBinary,
+  };
+}
 
 describe("resolveBinaryPath", () => {
   it("返回 userData 下按平台/架构组织的 binary 路径", () => {
@@ -15,30 +36,65 @@ describe("resolveBinaryPath", () => {
 describe("manualBinaryEnvName", () => {
   it("生成 LUME_<PROVIDER>_CLI_BIN", () => {
     expect(manualBinaryEnvName("dingtalk")).toBe("LUME_DINGTALK_CLI_BIN");
+    expect(manualBinaryEnvName("mock")).toBe("LUME_MOCK_CLI_BIN");
   });
 });
 
 describe("ensureBinary", () => {
-  it("LUME_<PROVIDER>_CLI_BIN env 指定已存在路径时直接返回且不下载", async () => {
-    const res = await ensureBinary(
-      dingtalkCliConfig, "/userdata", "darwin", "arm64",
-      undefined,
-      { env: { LUME_DINGTALK_CLI_BIN: process.execPath } },
-    );
-    expect(res.path).toBe(process.execPath);
-    expect(res.downloaded).toBe(false);
+  let root = "";
+  function freshRoot(): string {
+    root = mkdtempSync(join(tmpdir(), "lume-binmgr-test-"));
+    return root;
+  }
+  afterEach(() => {
+    if (root) rmSync(root, { recursive: true, force: true });
+    root = "";
   });
 
-  it("env 指定不存在的路径时不走手动分支(进入下载分支,注入 fetchTarball)", async () => {
-    // manual 不存在 → 不返回 manual;target 也不存在 → 走下载分支
-    // 用每运行唯一的 userDataRoot(进程 pid)避免跨次落盘污染
-    const uniqueRoot = `/tmp/lume-im-test-${process.pid}`;
-    const res = await ensureBinary(
-      dingtalkCliConfig, uniqueRoot, "darwin", "arm64",
-      { fetchTarball: async () => Buffer.from("fake-binary") },
-      { env: { LUME_DINGTALK_CLI_BIN: "/definitely/does/not/exist/bin" } },
-    );
+  it("env 手动路径存在 → 直接返回,不调用 acquireBinary", async () => {
+    let called = false;
+    const config = makeMockConfig(async () => {
+      called = true;
+      return Buffer.alloc(0);
+    });
+    const res = await ensureBinary(config, freshRoot(), "darwin", "arm64", undefined, {
+      env: { LUME_MOCK_CLI_BIN: process.execPath },
+    });
+    expect(res.path).toBe(process.execPath);
+    expect(res.downloaded).toBe(false);
+    expect(called).toBe(false);
+  });
+
+  it("下载分支 → 调用 acquireBinary 并落盘", async () => {
+    const config = makeMockConfig(async () => Buffer.from("BINARY"));
+    const res = await ensureBinary(config, freshRoot(), "darwin", "arm64");
     expect(res.downloaded).toBe(true);
-    expect(res.path).toContain("dws");
+    expect(existsSync(res.path)).toBe(true);
+    expect(readFileSync(res.path, "utf-8")).toBe("BINARY");
+  });
+
+  it("缓存命中 → 第二次不调用 acquireBinary", async () => {
+    let calls = 0;
+    const config = makeMockConfig(async () => {
+      calls += 1;
+      return Buffer.from("BINARY");
+    });
+    const r = freshRoot();
+    const first = await ensureBinary(config, r, "darwin", "arm64");
+    const second = await ensureBinary(config, r, "darwin", "arm64");
+    expect(first.downloaded).toBe(true);
+    expect(second.downloaded).toBe(false);
+    expect(second.path).toBe(first.path);
+    expect(calls).toBe(1);
+  });
+
+  it("acquireBinary 抛错 → 不落盘半截文件且向上抛出", async () => {
+    const config = makeMockConfig(async () => {
+      throw new Error("下载失败");
+    });
+    const r = freshRoot();
+    await expect(ensureBinary(config, r, "darwin", "arm64")).rejects.toThrow("下载失败");
+    const target = resolveBinaryPath(config, r, "darwin", "arm64");
+    expect(existsSync(target)).toBe(false);
   });
 });

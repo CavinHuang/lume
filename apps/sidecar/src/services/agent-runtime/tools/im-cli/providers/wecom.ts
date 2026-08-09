@@ -4,6 +4,8 @@
  * 注意:npm 包名按平台/架构变化(如 @wecom/cli-darwin-arm64),真实下载逻辑待 wanta 移植时按平台选包。
  * license:⚠️ 待确认(非阻塞)。
  */
+import { gunzipSync } from "node:zlib";
+import { extractFileFromTar, verifyTarballIntegrity } from "../archive-extract";
 import type { CliProviderConfig } from "./dingtalk";
 
 export const wecomCliConfig: CliProviderConfig = {
@@ -17,29 +19,78 @@ export const wecomCliConfig: CliProviderConfig = {
   },
   authCommand: ["init", "--noninteractive", "--no-open"],
   authUrlPattern: /https:\/\/[^"'\s]*work\.weixin\.qq\.com[^"'\s]*/,
+  statusCommand: ["auth", "show", "--auth-status"],
+  parseAuthStatus: parseWecomAuthStatus,
   authTimeoutMs: 5 * 60 * 1000,
   envDenyList: [],
+  acquireBinary: acquireWecomBinary,
 };
 
-/** 从授权命令输出中提取企业微信登录 URL */
-export function extractWecomAuthUrl(stdout: string): string | undefined {
-  const match = stdout.match(wecomCliConfig.authUrlPattern);
-  return match ? match[0] : undefined;
-}
-
-/** 解析 init/status 的 JSON 输出(从混合日志文本提取;兼容 connected/loggedIn/authenticated/isLogin 命名) */
+/** 解析 statusCommand 输出:优先纯文本 "authorized",其次 JSON(兼容 connected/loggedIn/authenticated/isLogin) */
 export function parseWecomAuthStatus(stdout: string): { connected: boolean; profile?: string } {
-  const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+  const trimmed = stdout.trim();
+  if (trimmed === "authorized") return { connected: true };
+  const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
   if (!jsonMatch) return { connected: false };
   try {
     const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-    const connected = Boolean(parsed.connected)
-      || parsed.loggedIn === true
-      || parsed.authenticated === true
-      || parsed.isLogin === true;
+    const connected =
+      parsed.connected === true ||
+      parsed.loggedIn === true ||
+      parsed.authenticated === true ||
+      parsed.isLogin === true;
     const profile = typeof parsed.profile === "string" ? parsed.profile : undefined;
     return { connected, profile };
   } catch {
     return { connected: false };
   }
+}
+
+/** 企微 npm 平台子包的 gitHead 锁定(数据源 wanta WECOM_CLI_GIT_HEAD)。 */
+const WECOM_GIT_HEAD = "72e14f7695f34d28f1ff23ea504ddd2210a87c13";
+
+/** platform/arch → npm 平台子包名 + 二进制名。企微 arch 用 x64/arm64(process.arch 原值,非 amd64)。 */
+function resolveWecomPackage(
+  platform: string,
+  arch: string,
+): { packageName: string; binaryName: string } {
+  const binaryName = platform === "win32" ? "wecom-cli.exe" : "wecom-cli";
+  if ((platform === "darwin" || platform === "linux") && (arch === "arm64" || arch === "x64")) {
+    return { packageName: `@wecom/cli-${platform}-${arch}`, binaryName };
+  }
+  if (platform === "win32" && arch === "x64") {
+    return { packageName: `@wecom/cli-win32-${arch}`, binaryName };
+  }
+  throw new Error(`企微 CLI 无预编译二进制: ${platform} ${arch}`);
+}
+
+/**
+ * registry 驱动下载:查 npm packument 取 dist.{tarball,integrity} + gitHead 锁定 →
+ * 下载 tarball(SRI 校验)→ gunzip+tar 取 package/bin/<exe>。无静态 sha256 表(integrity 运行时取)。
+ */
+async function acquireWecomBinary(
+  platform: string,
+  arch: string,
+  fetchImpl: (url: string) => Promise<Buffer>,
+): Promise<Buffer> {
+  const target = resolveWecomPackage(platform, arch);
+  const packumentUrl = `https://registry.npmjs.org/${target.packageName}`;
+  const packument = JSON.parse((await fetchImpl(packumentUrl)).toString("utf-8")) as {
+    gitHead?: string;
+    versions?: Record<string, { gitHead?: string; dist?: { tarball?: string; integrity?: string } }>;
+  };
+  const versionMeta = packument.versions?.[wecomCliConfig.version];
+  const dist = versionMeta?.dist;
+  if (!dist?.tarball || !dist?.integrity) {
+    throw new Error(`企微 registry 无 ${target.packageName}@${wecomCliConfig.version} 的 dist 信息`);
+  }
+  const gitHead = versionMeta?.gitHead ?? packument.gitHead;
+  if (gitHead !== WECOM_GIT_HEAD) {
+    throw new Error(`企微 CLI gitHead 不匹配: 期望 ${WECOM_GIT_HEAD}, 实际 ${gitHead ?? "<missing>"}`);
+  }
+  const tgz = await fetchImpl(dist.tarball);
+  verifyTarballIntegrity(tgz, dist.integrity, dist.tarball);
+  const binary = extractFileFromTar(gunzipSync(tgz), `package/bin/${target.binaryName}`);
+  if (!binary) throw new Error(`企微 CLI 二进制不在 tarball: package/bin/${target.binaryName}`);
+  return binary;
 }
