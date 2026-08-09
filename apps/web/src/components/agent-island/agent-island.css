@@ -63,7 +63,7 @@ html:not(.darwin) .island-surface {
   box-sizing: border-box;
   width: 420px;
   height: 32px;
-  padding: 0 4px 0 12px;
+  padding: 0 18px 0 12px;
   background: #09090a;
   color: #f5f5f7;
   cursor: default;
@@ -101,9 +101,19 @@ html:not(.darwin) .island-surface {
   transition: transform 180ms ease;
 }
 .island-compact-grip {
+  position: relative;
+  width: 20px;
+  height: 24px;
+  flex: 0 0 auto;
+  margin-right: -6px;
+}
+.island-compact-grip::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 6px;
   width: 8px;
   height: 14px;
-  flex: 0 0 auto;
   opacity: 0.48;
   background: radial-gradient(circle, rgb(255 255 255 / 0.62) 1px, transparent 1.3px) 0 0 / 4px 4px;
 }
@@ -193,6 +203,14 @@ html:not(.darwin) .island-surface {
   padding: 0;
   border-radius: 5px;
   color: rgb(255 255 255 / 0.56);
+}
+.island-actions .island-action-button:hover {
+  color: rgb(255 255 255 / 0.88);
+  background: rgb(255 255 255 / 0.08);
+}
+.island-actions .island-action-button:active {
+  color: #fff;
+  background: rgb(255 255 255 / 0.12);
 }
 
 .island-section-head {
@@ -295,10 +313,6 @@ html:not(.darwin) .island-surface {
 }
 
 /* idle home surface：无 active session 时 expanded 切换成最近会话区（对齐 spec §1.4） */
-.island-recent-icon {
-  color: rgb(255 255 255 / 0.35);
-  flex: 0 0 auto;
-}
 .island-recent-empty {
   display: flex;
   flex-direction: column;

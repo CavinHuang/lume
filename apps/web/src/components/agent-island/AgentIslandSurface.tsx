@@ -223,8 +223,8 @@ export function AgentIslandSurface({
       >
         {/* expanded-content：surfaceMode !== compact 时渲染，collapsing 态保留旧内容淡出 */}
         {surfaceMode !== 'compact' && (
-          <div ref={expandedContentRef} className="island-expanded">
-            <div className="island-expanded-head island-drag-handle">
+          <div ref={expandedContentRef} className="island-expanded island-drag-handle">
+            <div className="island-expanded-head">
               <span className={cn('island-dot', PHASE_DOT[primary?.phase ?? 'idle'])} />
               <span className="island-title">{state.compactLabel.replace('Lume · ', '')}</span>
               <span className="island-expanded-summary">{expandedSummary}</span>
@@ -275,7 +275,7 @@ export function AgentIslandSurface({
                           }
                         }}
                       >
-                        <span className="island-recent-icon" aria-hidden="true">◌</span>
+                        <span className={cn('island-dot', PHASE_DOT[r.phase ?? 'idle'])} aria-hidden="true" />
                         <span className="island-session-copy">
                           <span className="island-session-title">{formatIslandSessionTitle(r.title, r.threadId)}</span>
                           <span className="island-session-detail">{formatRelativeTime(r.updatedAt)}</span>
@@ -405,7 +405,7 @@ export function AgentIslandSurface({
         )}
 
         <div
-          className="island-compact-layer island-no-drag"
+          className="island-compact-layer"
           data-collapsed={requestedExpanded ? 'false' : 'true'}
         >
           <span className="island-compact-grip island-drag-handle" aria-hidden="true" />
