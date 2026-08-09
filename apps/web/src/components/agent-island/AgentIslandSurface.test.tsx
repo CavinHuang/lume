@@ -71,12 +71,13 @@ describe('高密度展开态 helper', () => {
 })
 
 describe('compact hover 与拖动契约', () => {
-  test('compact 主体响应 hover，左侧 grip 保留拖动，箭头仅作状态提示', () => {
+  test('compact 主体响应 hover，父级不覆盖左侧 grip 的拖动命中区，箭头仅作状态提示', () => {
     const html = renderToStaticMarkup(
       <AgentIslandSurface state={baseState({})} onIntent={noop} />,
     )
 
-    expect(html).toContain('island-compact-layer island-no-drag')
+    expect(html).toContain('class="island-compact-layer"')
+    expect(html).not.toContain('island-compact-layer island-no-drag')
     expect(html).toContain('island-compact-grip island-drag-handle')
     expect(html).toContain('island-chevron')
     expect(html).not.toContain('aria-label="展开"')

@@ -405,7 +405,7 @@ export function AgentIslandSurface({
         )}
 
         <div
-          className="island-compact-layer island-no-drag"
+          className="island-compact-layer"
           data-collapsed={requestedExpanded ? 'false' : 'true'}
         >
           <span className="island-compact-grip island-drag-handle" aria-hidden="true" />
