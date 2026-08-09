@@ -3,6 +3,8 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { computeColumnCount, PROVIDER_GRID, rowCount } from "@/lib/provider-grid";
 import { formatDurationLabel } from "@/lib/format-duration";
 import { formatDateTime } from "@/lib/datetime";
+import { previewValue, TOOL_OUTPUT_PREVIEW_LIMIT } from "@/lib/tool-output-preview";
+import { linkServicePriority } from "@/lib/provider-ranking";
 import { CheckCircle2, XCircle } from "lucide-react";
 import { ProviderCard } from "./ProviderCard";
 import { ProviderIcon } from "./ProviderIcon";
@@ -139,11 +141,12 @@ export function LinkView() {
       ].sort(),
     [providers],
   );
+  const configuredServices = useMemo(
+    () => new Set(connections.filter((connection) => connection.configured).map((connection) => connection.service)),
+    [connections],
+  );
   const visibleProviders = providers.filter((provider) => {
-    const configured = connections.some(
-      (connection) =>
-        connection.service === provider.service && connection.configured,
-    );
+    const configured = configuredServices.has(provider.service);
     return (
       (!query ||
         `${provider.displayName} ${provider.service} ${provider.description ?? ""}`
@@ -153,6 +156,13 @@ export function LinkView() {
       (connectionState === "all" ||
         (connectionState === "configured") === configured)
     );
+  }).sort((a, b) => {
+    // 已连接 → 推荐表 → 字母序（参考 wanta compareConnectionProvidersByRecommendation）
+    const configuredRank = Number(configuredServices.has(b.service)) - Number(configuredServices.has(a.service));
+    if (configuredRank !== 0) return configuredRank;
+    const priority = linkServicePriority(a.service) - linkServicePriority(b.service);
+    if (priority !== 0) return priority;
+    return a.displayName.localeCompare(b.displayName);
   });
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -430,9 +440,7 @@ export function LinkView() {
             <DialogTitle>运行详情</DialogTitle>
             <DialogDescription>{runDetail?.id}</DialogDescription>
           </DialogHeader>
-          <pre className="max-h-[55vh] overflow-auto rounded-md bg-muted p-3 text-xs">
-            {JSON.stringify(runDetail, null, 2)}
-          </pre>
+          <DetailPreview value={runDetail} bodyClass="max-h-[55vh]" />
         </DialogContent>
       </Dialog>
       <ConfirmDialog
@@ -708,7 +716,7 @@ function ProviderDialog({
                 ))}
               </div>
               {actionDetail != null && (
-                <pre className="max-h-40 overflow-auto rounded-md bg-muted p-3 text-xs">{JSON.stringify(actionDetail, null, 2)}</pre>
+                <DetailPreview value={actionDetail} bodyClass="max-h-40" />
               )}
             </div>
           )}
@@ -817,6 +825,21 @@ function Filter({
         ))}
       </SelectContent>
     </Select>
+  );
+}
+function DetailPreview({ value, bodyClass }: { value: unknown; bodyClass: string }) {
+  const preview = previewValue(value);
+  return (
+    <div className="space-y-1">
+      <pre className={`overflow-auto rounded-md border bg-background p-3 text-xs whitespace-pre-wrap ${bodyClass}`}>
+        {preview.text}
+      </pre>
+      {preview.truncated && (
+        <div className="text-xs text-muted-foreground">
+          结果过长，已截断到 {TOOL_OUTPUT_PREVIEW_LIMIT.toLocaleString()} 字符。
+        </div>
+      )}
+    </div>
   );
 }
 function Empty({ children }: { children: ReactNode }) {
