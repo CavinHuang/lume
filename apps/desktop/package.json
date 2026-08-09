@@ -106,7 +106,6 @@
         "to": "desktop-host"
       },
       {
-      {
         "from": "resources/agent-island",
         "to": "agent-island",
         "filter": ["**/*"],
