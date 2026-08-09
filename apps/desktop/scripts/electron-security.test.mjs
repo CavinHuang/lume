@@ -711,6 +711,25 @@ test("app activation pre-captures desktop context before recreating the Lume win
   assert.equal(captureIndex < createIndex, true, "desktop context must be captured before Lume receives focus");
 });
 
+test("app quit synchronously destroys the non-closable agent island surface", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  const start = mainSource.indexOf("app.on('before-quit', () => {");
+  const end = mainSource.indexOf("app.on('window-all-closed'", start);
+  assert.notEqual(start, -1, "app before-quit handler is missing");
+  assert.notEqual(end, -1, "app before-quit handler end marker is missing");
+  const body = mainSource.slice(start, end);
+  const destroyServiceIndex = body.indexOf("agentIslandService?.destroy()");
+  const destroySurfaceIndex = body.indexOf("stopAgentIslandSurface()");
+  assert.notEqual(destroyServiceIndex, -1, "before-quit does not destroy the agent island service");
+  assert.notEqual(destroySurfaceIndex, -1, "before-quit does not destroy the agent island surface");
+  assert.equal(destroyServiceIndex < destroySurfaceIndex, true, "agent island service must stop before its surface");
+  assert.match(
+    mainSource,
+    /ensureIslandWindow:\s*\(\(\)\s*=>\s*\(isQuitting\s*\|\|\s*nativeSurfaceActive\s*\?\s*null\s*:\s*ensureIslandWindow\(\)\)\)/,
+    "agent island window can be recreated while the app is quitting",
+  );
+});
+
 function extractStringSet(source, name) {
   const match = source.match(new RegExp(`const\\s+${name}\\s*=\\s*new Set\\(\\[([\\s\\S]*?)\\]\\)`));
   if (!match) throw new Error(`missing preload set: ${name}`);

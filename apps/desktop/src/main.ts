@@ -1435,10 +1435,11 @@ function getAgentIslandService(): AgentIslandService {
         return enabled !== false
       },
       getIslandWindow: () => islandWindow,
-      // Phase 2：native 激活时返回 null（不创建 BrowserWindow），避免 native 模式冒 Electron 窗。
+      // 退出中或 Phase 2 native 激活时返回 null（不创建 BrowserWindow），避免销毁后被异步推送重建，
+      // 以及 native 模式冒 Electron 窗。
       // service push() 的 win 检查已对 null 友好（`if (win && !win.isDestroyed())`）；service
       // 类型签名仍是 `() => BrowserWindow`，这里用 as 收窄 `BrowserWindow | null` 为合同类型。
-      ensureIslandWindow: (() => (nativeSurfaceActive ? null : ensureIslandWindow())) as () => BrowserWindow,
+      ensureIslandWindow: (() => (isQuitting || nativeSurfaceActive ? null : ensureIslandWindow())) as () => BrowserWindow,
       callSidecar: <T,>(method: string, params?: unknown) => sidecarHost.call(method, params ?? null) as Promise<T>,
       openMain: () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -3199,6 +3200,11 @@ app.on('activate', async () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  // Windows 灵动岛窗口设置了 closable=false，不能依赖 app.quit() 的常规 close 流程。
+  // 在同步退出阶段主动 destroy，且先停 service，避免异步推送在退出过程中重建窗口。
+  agentIslandService?.destroy()
+  agentIslandService = null
+  stopAgentIslandSurface()
 })
 
 app.on('window-all-closed', () => {
@@ -3220,10 +3226,6 @@ app.on('will-quit', async () => {
   globalShortcut.unregisterAll()
   connectionVaultKey?.fill(0)
   connectionVaultKey = null
-  // Agent 灵动岛 service（Task 7）：销毁 service 与渲染面（Phase 2 含 native host），释放资源。
-  agentIslandService?.destroy()
-  agentIslandService = null
-  stopAgentIslandSurface()
 })
 
 async function startDesktopHost(): Promise<DesktopHostState> {
