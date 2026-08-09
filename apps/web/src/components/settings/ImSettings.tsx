@@ -2,6 +2,7 @@ import * as React from 'react'
 import { useAtomValue } from 'jotai'
 import { toast } from 'sonner'
 import {
+  KeyRound,
   Loader2,
   MessageCircle,
   Play,
@@ -11,15 +12,19 @@ import {
   Square,
   Trash2,
 } from 'lucide-react'
-import { IM_PROVIDER_LABELS, type ImAccount, type ImProvider } from '@lume/shared'
+import { IM_PROVIDER_LABELS, type CliAuthPollResult, type ImAccount, type ImProvider } from '@lume/shared'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
+  cancelCliAuth,
   createImAccount,
   deleteImAccount,
   listImAccounts,
+  openExternal,
+  pollCliAuth,
   pollWeixinLogin,
-  startWeixinLogin,
+  startCliAuth,
   startImAccount,
+  startWeixinLogin,
   stopImAccount,
   updateImAccount,
 } from '@/lib/desktop-api'
@@ -40,6 +45,7 @@ import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import {
   createImAccountDraft,
+  formatCliAuthPhase,
   formatImAccountsEmptyCopy,
   formatSelectedWorkspaceName,
   formatImStatusBadge,
@@ -68,6 +74,14 @@ const PROVIDER_OPTIONS: ReadonlyArray<{ value: ImProvider; label: string; disabl
   { value: 'wecom', label: IM_PROVIDER_LABELS.wecom },
 ]
 
+/** 企业渠道:走 CLI OAuth 授权(微信走扫码,不入此列) */
+const CLI_PROVIDERS = ['dingtalk', 'feishu', 'wecom'] as const
+
+interface CliAuthSession extends CliAuthPollResult {
+  sessionKey: string
+  polling: boolean
+}
+
 export function ImSettings() {
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
@@ -92,6 +106,7 @@ export function ImSettings() {
     polling: boolean
     autoPolling: boolean
   } | null>(null)
+  const [cliAuth, setCliAuth] = React.useState<Record<string, CliAuthSession>>({})
 
   const refresh = React.useCallback(async () => {
     setLoading(true)
@@ -233,6 +248,72 @@ export function ImSettings() {
     return () => window.clearTimeout(timer)
   }, [loginSession, pollLoginOnce])
 
+  const pollCliAuthOnce = React.useCallback(async (provider: string, session: CliAuthSession) => {
+    setCliAuth((current) => {
+      const existing = current[provider]
+      return existing ? { ...current, [provider]: { ...existing, polling: true } } : current
+    })
+    try {
+      const result = await pollCliAuth({ sessionKey: session.sessionKey })
+      setCliAuth((current) => {
+        const existing = current[provider]
+        return existing ? { ...current, [provider]: { ...result, sessionKey: session.sessionKey, polling: false } } : current
+      })
+      if (result.phase === 'connected') toast.success(`${IM_PROVIDER_LABELS[provider as ImProvider]} CLI 已授权`)
+    } catch (error) {
+      console.error('[IM 设置] 轮询 CLI 授权失败:', error)
+      setCliAuth((current) => {
+        const existing = current[provider]
+        return existing
+          ? { ...current, [provider]: { ...existing, phase: 'error', error: '轮询失败', polling: false } }
+          : current
+      })
+    }
+  }, [])
+
+  const handleStartCliAuth = async (provider: string) => {
+    try {
+      const started = await startCliAuth({ provider: provider as ImProvider })
+      if (started.error || !started.sessionKey) {
+        toast.error(started.error || '启动授权失败')
+        return
+      }
+      if (started.authUrl) await openExternal(started.authUrl)
+      setCliAuth((current) => ({
+        ...current,
+        [provider]: { phase: 'authorizing', sessionKey: started.sessionKey, polling: false },
+      }))
+      toast.success('授权页面已在浏览器打开，请在系统浏览器完成登录')
+    } catch (error) {
+      console.error('[IM 设置] 启动 CLI 授权失败:', error)
+      toast.error('启动授权失败')
+    }
+  }
+
+  const handleCancelCliAuth = async (provider: string, sessionKey: string) => {
+    try {
+      await cancelCliAuth({ sessionKey })
+    } catch (error) {
+      console.error('[IM 设置] 取消 CLI 授权失败:', error)
+    }
+    setCliAuth((current) => {
+      const next = { ...current }
+      delete next[provider]
+      return next
+    })
+  }
+
+  React.useEffect(() => {
+    const pending = Object.entries(cliAuth).filter(
+      ([, session]) => session.phase === 'authorizing' && !session.polling,
+    )
+    if (pending.length === 0) return
+    const timer = window.setTimeout(() => {
+      for (const [provider, session] of pending) void pollCliAuthOnce(provider, session)
+    }, 2500)
+    return () => window.clearTimeout(timer)
+  }, [cliAuth, pollCliAuthOnce])
+
   const handleToggleEnabled = async (account: ImAccount, enabled: boolean) => {
     setBusyId(account.id)
     try {
@@ -335,6 +416,40 @@ export function ImSettings() {
               onDelete={handleDelete}
             />
           ))}
+        </div>
+      </div>
+
+      <div className="border-t border-[var(--border)] p-4">
+        <div className="mb-2 flex items-baseline gap-2">
+          <p className="text-[13px] font-semibold text-[var(--text-1)]">企业 CLI 能力</p>
+          <p className="text-[12px] text-[var(--text-3)]">通过官方 CLI 完成 OAuth 授权（provider 级）</p>
+        </div>
+        <div className="space-y-2">
+          {CLI_PROVIDERS.map((provider) => {
+            const session = cliAuth[provider]
+            const badge = formatCliAuthPhase(session?.phase)
+            const authorizing = session?.phase === 'authorizing'
+            return (
+              <div key={provider} className="lume-subpanel flex items-center justify-between gap-3 px-3 py-2.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="text-[13px] font-medium text-[var(--text-1)]">{IM_PROVIDER_LABELS[provider]}</span>
+                  <Badge variant="outline" className={cn('rounded-[6px]', toneClassName[badge.tone])}>{badge.label}</Badge>
+                  {session?.profile && <span className="truncate text-[12px] text-[var(--text-3)]">{session.profile}</span>}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => (authorizing && session
+                    ? void handleCancelCliAuth(provider, session.sessionKey)
+                    : void handleStartCliAuth(provider))}
+                  disabled={session?.polling}
+                >
+                  {session?.polling ? <Loader2 className="animate-spin" /> : authorizing ? <Square /> : <KeyRound />}
+                  {authorizing ? '取消' : session?.phase === 'connected' ? '重新授权' : '授权'}
+                </Button>
+              </div>
+            )
+          })}
         </div>
       </div>
 

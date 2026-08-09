@@ -1,4 +1,6 @@
 import type {
+  CliAuthPhase,
+  CliAuthPollResult,
   ImAccount,
   ImAccountCreateInput,
   ImAccountStatus,
@@ -119,4 +121,16 @@ export function shouldKeepPollingWeixinLogin(result: ImWeixinLoginPollResult): b
     && result.status !== 'expired'
     && result.status !== 'need_verifycode'
     && result.status !== 'verify_code_blocked'
+}
+
+/** 企业渠道 CLI 授权相位 → 徽章(与微信登录 status→badge 对称) */
+export function formatCliAuthPhase(phase?: CliAuthPhase): { label: string; tone: ImStatusTone } {
+  if (phase === 'connected') return { label: '已授权', tone: 'success' }
+  if (phase === 'error') return { label: '授权失败', tone: 'danger' }
+  if (phase === 'authorizing') return { label: '授权中', tone: 'warning' }
+  return { label: '未授权', tone: 'neutral' }
+}
+
+export function shouldKeepPollingCliAuth(result: CliAuthPollResult): boolean {
+  return result.phase === 'authorizing'
 }

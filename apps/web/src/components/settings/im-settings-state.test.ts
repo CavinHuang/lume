@@ -1,12 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import {
   createImAccountDraft,
+  formatCliAuthPhase,
   formatImAccountsEmptyCopy,
   formatSelectedWorkspaceName,
   formatWeixinQrImageSrc,
   formatWeixinLoginStatus,
   formatImStatusBadge,
   normalizeImAccountDraft,
+  shouldKeepPollingCliAuth,
   shouldKeepPollingWeixinLogin,
 } from './im-settings-state'
 
@@ -156,5 +158,18 @@ describe('im settings state', () => {
       status: 'confirmed',
       message: 'ok',
     })).toBe(false)
+  })
+
+  test('maps CLI auth phase to compact badge labels', () => {
+    expect(formatCliAuthPhase('connected')).toEqual({ label: '已授权', tone: 'success' })
+    expect(formatCliAuthPhase('error')).toEqual({ label: '授权失败', tone: 'danger' })
+    expect(formatCliAuthPhase('authorizing')).toEqual({ label: '授权中', tone: 'warning' })
+    expect(formatCliAuthPhase(undefined)).toEqual({ label: '未授权', tone: 'neutral' })
+  })
+
+  test('keeps CLI polling only while authorizing', () => {
+    expect(shouldKeepPollingCliAuth({ phase: 'authorizing' })).toBe(true)
+    expect(shouldKeepPollingCliAuth({ phase: 'connected', profile: 'u1' })).toBe(false)
+    expect(shouldKeepPollingCliAuth({ phase: 'error', error: '超时' })).toBe(false)
   })
 })
