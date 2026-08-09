@@ -275,7 +275,7 @@ export function AgentIslandSurface({
                           }
                         }}
                       >
-                        <span className="island-recent-icon" aria-hidden="true">◌</span>
+                        <span className={cn('island-dot', PHASE_DOT[r.phase ?? 'idle'])} aria-hidden="true" />
                         <span className="island-session-copy">
                           <span className="island-session-title">{formatIslandSessionTitle(r.title, r.threadId)}</span>
                           <span className="island-session-detail">{formatRelativeTime(r.updatedAt)}</span>

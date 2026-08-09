@@ -313,10 +313,6 @@ html:not(.darwin) .island-surface {
 }
 
 /* idle home surface：无 active session 时 expanded 切换成最近会话区（对齐 spec §1.4） */
-.island-recent-icon {
-  color: rgb(255 255 255 / 0.35);
-  flex: 0 0 auto;
-}
 .island-recent-empty {
   display: flex;
   flex-direction: column;
