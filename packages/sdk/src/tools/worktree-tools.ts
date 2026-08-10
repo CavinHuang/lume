@@ -18,11 +18,17 @@ export interface ManagedWorktree {
 }
 
 const activeWorktrees = new Map<string, ManagedWorktree>()
-const registryPath = join(homedir(), '.lume', 'coding-worktrees.json')
+
+function getRegistryPath(): string {
+  const configDir = process.env.LUME_CONFIG_DIR?.trim()
+  return configDir
+    ? join(resolve(configDir), 'coding-worktrees.json')
+    : join(homedir(), '.lume', 'coding-worktrees.json')
+}
 
 function loadRegistry(): ManagedWorktree[] {
   try {
-    const value = JSON.parse(readFileSync(registryPath, 'utf8'))
+    const value = JSON.parse(readFileSync(getRegistryPath(), 'utf8'))
     return Array.isArray(value) ? value.filter(isManagedWorktree) : []
   } catch {
     return []
@@ -30,6 +36,7 @@ function loadRegistry(): ManagedWorktree[] {
 }
 
 function saveRegistry(worktrees: ManagedWorktree[]): void {
+  const registryPath = getRegistryPath()
   mkdirSync(dirname(registryPath), { recursive: true })
   const temporary = `${registryPath}.${process.pid}.${Date.now()}.tmp`
   writeFileSync(temporary, JSON.stringify(worktrees, null, 2), 'utf8')
