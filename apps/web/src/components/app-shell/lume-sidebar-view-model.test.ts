@@ -64,6 +64,7 @@ describe('buildLumeSidebarViewModel', () => {
       'new-chat',
       'lume',
       'skills',
+      'connectors',
       'automations',
       'todos',
       'proactive',

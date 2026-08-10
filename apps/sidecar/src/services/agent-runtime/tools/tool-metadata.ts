@@ -549,3 +549,24 @@ registerToolMetadata({
   riskLevel: "low",
   description: "列出已配置的图像生成模型及可用性"
 });
+
+registerToolMetadata({
+  name: "dingtalk_cli",
+  category: "execute",
+  riskLevel: "high",
+  description: "执行钉钉 IM CLI(dws)子命令:发消息、查日历、读文档、查通讯录等企业 IM 操作"
+});
+
+registerToolMetadata({
+  name: "feishu_cli",
+  category: "execute",
+  riskLevel: "high",
+  description: "执行飞书 IM CLI(lark-cli)子命令:发消息、查日历、读文档、查通讯录、多维表格等企业 IM 操作"
+});
+
+registerToolMetadata({
+  name: "wecom_cli",
+  category: "execute",
+  riskLevel: "high",
+  description: "执行企业微信 IM CLI(wecom-cli)子命令:发消息、查通讯录、管理应用等企业 IM 操作"
+});

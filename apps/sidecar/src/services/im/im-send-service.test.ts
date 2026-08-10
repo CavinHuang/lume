@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sendBoundImMediaMessage } from "./im-send-service";
+import { createImAccount } from "./im-config-manager";
 import { upsertImThreadBinding } from "./im-thread-binding-store";
 
 describe("im-send-service", () => {
@@ -47,9 +48,14 @@ describe("im-send-service", () => {
   });
 
   test("sendBoundImMediaMessage rejects files over 25MB", async () => {
+    const account = createImAccount({
+      provider: "weixin",
+      token: "fake-token",
+      baseUrl: "https://ilink.example.com",
+    });
     const binding = upsertImThreadBinding({
       provider: "weixin",
-      accountId: "acct-big",
+      accountId: account.id,
       peerKind: "dm",
       peerId: "peer-big",
       threadId: "thread-big",

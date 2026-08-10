@@ -71,12 +71,13 @@ describe('高密度展开态 helper', () => {
 })
 
 describe('compact hover 与拖动契约', () => {
-  test('compact 主体响应 hover，左侧 grip 保留拖动，箭头仅作状态提示', () => {
+  test('compact 主体响应 hover，父级不覆盖左侧 grip 的拖动命中区，箭头仅作状态提示', () => {
     const html = renderToStaticMarkup(
       <AgentIslandSurface state={baseState({})} onIntent={noop} />,
     )
 
-    expect(html).toContain('island-compact-layer island-no-drag')
+    expect(html).toContain('class="island-compact-layer"')
+    expect(html).not.toContain('island-compact-layer island-no-drag')
     expect(html).toContain('island-compact-grip island-drag-handle')
     expect(html).toContain('island-chevron')
     expect(html).not.toContain('aria-label="展开"')
@@ -352,8 +353,30 @@ describe('formatRelativeTime（idle home surface 最近会话相对时间）', (
 })
 
 describe('AgentIslandSurface idle home surface 数据消费', () => {
-  // expanded DOM 在 SSR 不挂载（surfaceMode 状态机依赖 useEffect），无法对 recent 区做真实 DOM 断言。
-  // 这里固定渲染层会消费的真实数据：对 state.recentSessions 的每条跑 formatRelativeTime(updatedAt)，
+  test('recentSessions 使用 phase 状态圆点，缺省 phase 回退 idle', () => {
+    const html = renderToStaticMarkup(
+      <AgentIslandSurface
+        state={baseState({
+          presentation: 'expanded',
+          primarySessionId: null,
+          sessions: [],
+          isIdle: true,
+          recentSessions: [
+            { threadId: 'done', title: '已完成会话', updatedAt: 2, phase: 'completed' },
+            { threadId: 'idle', title: '最近会话', updatedAt: 1 },
+          ],
+        })}
+        onIntent={noop}
+      />,
+    )
+
+    expect(html).toContain('island-dot bg-[var(--lume-success)]')
+    expect(html).toContain('island-dot bg-[var(--lume-text-muted)]')
+    expect(html).not.toContain('island-recent-icon')
+    expect(html).not.toContain('>◌<')
+  })
+
+  // 相对时间格式单独固定渲染层消费的真实数据：对 state.recentSessions 的每条跑 formatRelativeTime(updatedAt)，
   // 断言其输出（渲染层 <span className="island-session-detail">{formatRelativeTime(r.updatedAt)}</span> 直消费）。
   // 若 formatRelativeTime 阈值/字段名变动，或 renderer 改用别的字段，此测试会真实失败。
   test('recentSessions 每行 → formatRelativeTime 输出（renderer 直消费的小字）', () => {

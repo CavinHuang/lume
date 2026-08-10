@@ -65,7 +65,6 @@ describe("im-runtime-manager", () => {
           }
         },
         stop() {},
-        processOnce: async () => undefined,
         isRunning: () => true
       })
     });
@@ -110,7 +109,6 @@ describe("im-runtime-manager", () => {
             running = false;
           },
           stop() {},
-          processOnce: async () => undefined,
           isRunning: () => running
         };
       }

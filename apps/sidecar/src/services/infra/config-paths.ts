@@ -72,6 +72,11 @@ export function getImThreadBindingsPath(): string {
   return join(getConfigDir(), "im-thread-bindings.json");
 }
 
+/** IM 企业渠道 CLI(dws/lark/wecom)共用根目录:binary 缓存 + 各 CLI 自管 config/keychain 子目录。 */
+export function getImCliBaseDir(): string {
+  return ensureDir(join(getConfigDir(), "im-cli"), "IM CLI 目录");
+}
+
 export function getSettingsPath(): string {
   return join(getConfigDir(), "settings.json");
 }

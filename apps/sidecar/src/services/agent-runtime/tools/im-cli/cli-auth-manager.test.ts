@@ -1,0 +1,158 @@
+import { describe, it, expect } from "bun:test";
+import { EventEmitter } from "node:events";
+import { createCliAuthManager, type CliAuthSpawnFn, type EnsureBinaryFn } from "./cli-auth-manager";
+import { dingtalkCliConfig } from "./providers/dingtalk";
+
+interface FakeProc extends EventEmitter {
+  stdout: EventEmitter;
+  stderr: EventEmitter;
+  kill: () => void;
+}
+
+/** 模拟 ChildProcess:可控 emit stdout/close;kill 异步触发 close(null)(仿信号杀死) */
+function fakeProc(): FakeProc {
+  const p = new EventEmitter() as unknown as FakeProc;
+  p.stdout = new EventEmitter();
+  p.stderr = new EventEmitter();
+  p.kill = () => setImmediate(() => p.emit("close", null));
+  return p;
+}
+
+function asSpawn(fn: (cmd: string, args: string[]) => FakeProc): CliAuthSpawnFn {
+  return fn as unknown as CliAuthSpawnFn;
+}
+
+const fakeEnsure = (async () => ({ path: "/fake/bin", downloaded: false })) as EnsureBinaryFn;
+const wait0 = () => new Promise<void>((r) => setTimeout(r, 0));
+
+describe("createCliAuthManager", () => {
+  it("扫到 authUrl 立即返回;authProc exit 0 后 statusCommand 确认 connected", async () => {
+    const authProc = fakeProc();
+    const statusProc = fakeProc();
+    let n = 0;
+    const manager = createCliAuthManager({
+      spawn: asSpawn(() => (++n === 1 ? authProc : statusProc)),
+      ensureBinary: fakeEnsure,
+      sessionId: () => "s1",
+    });
+
+    const startP = manager.startAuth(dingtalkCliConfig, "/data", "linux", "x64");
+    await wait0();
+    authProc.stdout.emit("data", Buffer.from("visit https://login.dingtalk.com/oauth2/auth?c=1 end"));
+    const start = await startP;
+
+    expect(start.sessionKey).toBe("s1");
+    expect(start.authUrl).toBe("https://login.dingtalk.com/oauth2/auth?c=1");
+    expect(manager.pollAuth("s1").phase).toBe("authorizing");
+
+    authProc.emit("close", 0);
+    statusProc.stdout.emit("data", Buffer.from(JSON.stringify({ authenticated: true, profile: "u1" })));
+    statusProc.emit("close", 0);
+
+    const poll = manager.pollAuth("s1");
+    expect(poll.phase).toBe("connected");
+    expect(poll.profile).toBe("u1");
+  });
+
+  it("authProc 非 0 退出 → error", async () => {
+    const authProc = fakeProc();
+    const manager = createCliAuthManager({
+      spawn: asSpawn(() => authProc),
+      ensureBinary: fakeEnsure,
+      sessionId: () => "s2",
+    });
+    const startP = manager.startAuth(dingtalkCliConfig, "/data", "linux", "x64");
+    await wait0();
+    authProc.emit("close", 2);
+    const start = await startP;
+    expect(start.error).toContain("退出码 2");
+    expect(manager.pollAuth("s2").phase).toBe("error");
+  });
+
+  it("ensureBinary 失败 → error,不 spawn", async () => {
+    const manager = createCliAuthManager({
+      spawn: asSpawn(() => {
+        throw new Error("不应 spawn");
+      }),
+      ensureBinary: (async () => {
+        throw new Error("下载失败");
+      }) as EnsureBinaryFn,
+      sessionId: () => "s3",
+    });
+    const start = await manager.startAuth(dingtalkCliConfig, "/data", "linux", "x64");
+    expect(start.error).toContain("CLI 未就绪");
+    expect(manager.pollAuth("s3").phase).toBe("error");
+  });
+
+  it("statusCommand 判未连接 → error", async () => {
+    const authProc = fakeProc();
+    const statusProc = fakeProc();
+    let n = 0;
+    const manager = createCliAuthManager({
+      spawn: asSpawn(() => (++n === 1 ? authProc : statusProc)),
+      ensureBinary: fakeEnsure,
+      sessionId: () => "s4",
+    });
+    const startP = manager.startAuth(dingtalkCliConfig, "/data", "linux", "x64");
+    await wait0();
+    authProc.stdout.emit("data", Buffer.from("https://login.dingtalk.com/oauth2/auth?x=1"));
+    await startP;
+    authProc.emit("close", 0);
+    statusProc.stdout.emit("data", Buffer.from(JSON.stringify({ authenticated: false })));
+    statusProc.emit("close", 0);
+    expect(manager.pollAuth("s4").phase).toBe("error");
+  });
+
+  it("cancelAuth 中止授权", async () => {
+    const authProc = fakeProc();
+    const manager = createCliAuthManager({
+      spawn: asSpawn(() => authProc),
+      ensureBinary: fakeEnsure,
+      sessionId: () => "s5",
+    });
+    const startP = manager.startAuth(dingtalkCliConfig, "/data", "linux", "x64");
+    await wait0();
+    authProc.stdout.emit("data", Buffer.from("https://login.dingtalk.com/oauth2/auth?x=1"));
+    await startP;
+    expect(manager.pollAuth("s5").phase).toBe("authorizing");
+    manager.cancelAuth("s5");
+    const poll = manager.pollAuth("s5");
+    expect(poll.phase).toBe("error");
+    expect(poll.error).toContain("取消");
+  });
+
+  it("超时 → error", async () => {
+    const authProc = fakeProc();
+    const manager = createCliAuthManager({
+      spawn: asSpawn(() => authProc),
+      ensureBinary: fakeEnsure,
+      sessionId: () => "s6",
+    });
+    const fastConfig = { ...dingtalkCliConfig, authTimeoutMs: 20 };
+    const startP = manager.startAuth(fastConfig, "/data", "linux", "x64");
+    await wait0();
+    const start = await startP;
+    expect(start.error).toContain("超时");
+    expect(manager.pollAuth("s6").phase).toBe("error");
+  });
+
+  it("pollAuth 未知 sessionKey → error", () => {
+    const manager = createCliAuthManager({ sessionId: () => "x" });
+    expect(manager.pollAuth("nope").phase).toBe("error");
+  });
+
+  it("stopAll 清理会话", async () => {
+    const authProc = fakeProc();
+    const manager = createCliAuthManager({
+      spawn: asSpawn(() => authProc),
+      ensureBinary: fakeEnsure,
+      sessionId: () => "s8",
+    });
+    const startP = manager.startAuth(dingtalkCliConfig, "/data", "linux", "x64");
+    await wait0();
+    authProc.stdout.emit("data", Buffer.from("https://login.dingtalk.com/oauth2/auth?x=1"));
+    await startP;
+    manager.stopAll();
+    expect(manager.pollAuth("s8").phase).toBe("error");
+  });
+});

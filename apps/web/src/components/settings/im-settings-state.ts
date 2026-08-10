@@ -1,20 +1,37 @@
 import type {
+  CliAuthPhase,
+  CliAuthPollResult,
   ImAccount,
   ImAccountCreateInput,
   ImAccountStatus,
+  ImProvider,
   ImWeixinLoginPollResult,
 } from '@lume/shared'
 
 export type ImStatusTone = 'neutral' | 'success' | 'warning' | 'danger'
 
 export interface ImAccountDraft {
-  provider: 'weixin'
+  provider: ImProvider
   label: string
-  token: string
+  token: string // 微信=OpenClaw Token / 钉钉=ClientSecret / 飞书=AppSecret / 企微=Secret
+  accountKey: string // 钉钉=ClientId / 飞书=AppId / 企微=BotId（微信不用）
   uin: string
   workspaceId: string
   baseUrl: string
   enabled: boolean
+}
+
+/**
+ * 凭据型渠道(非微信)的表单字段标签。微信走扫码授权,不入此表。
+ * 钉钉/飞书/企微统一用 accountKey + token 形态,仅标签与占位符不同。
+ */
+export const IM_PROVIDER_CREDENTIAL_FIELDS: Record<
+  Exclude<ImProvider, 'weixin'>,
+  { accountKey: string; token: string; placeholder: string }
+> = {
+  dingtalk: { accountKey: 'ClientId', token: 'ClientSecret', placeholder: 'dingxxxxxxxx' },
+  feishu: { accountKey: 'App ID', token: 'App Secret', placeholder: 'cli_xxxxxxxx' },
+  wecom: { accountKey: 'Bot ID', token: 'Secret', placeholder: 'xxxxxxxx' },
 }
 
 export function createImAccountDraft(workspaceId = ''): ImAccountDraft {
@@ -22,6 +39,7 @@ export function createImAccountDraft(workspaceId = ''): ImAccountDraft {
     provider: 'weixin',
     label: '',
     token: '',
+    accountKey: '',
     uin: '',
     workspaceId,
     baseUrl: 'https://ilinkai.weixin.qq.com',
@@ -31,19 +49,31 @@ export function createImAccountDraft(workspaceId = ''): ImAccountDraft {
 
 export function normalizeImAccountDraft(draft: ImAccountDraft, fallbackWorkspaceId = ''): ImAccountCreateInput {
   const workspaceId = draft.workspaceId.trim() || fallbackWorkspaceId.trim()
-  return {
-    provider: 'weixin',
+  const base = {
+    provider: draft.provider,
     label: draft.label.trim(),
+    ...(workspaceId ? { workspaceId } : {}),
+    enabled: draft.enabled,
+  }
+  if (draft.provider !== 'weixin') {
+    // 凭据型渠道(钉钉/飞书/企微):统一 accountKey + token
+    return {
+      ...base,
+      accountKey: draft.accountKey.trim(),
+      token: draft.token.trim(),
+    }
+  }
+  // 微信：沿用 token + 可选 baseUrl/uin
+  return {
+    ...base,
     token: draft.token.trim(),
     uin: draft.uin.trim(),
-    ...(workspaceId ? { workspaceId } : {}),
     baseUrl: draft.baseUrl.trim().replace(/\/+$/, ''),
-    enabled: draft.enabled,
   }
 }
 
 export function formatImAccountsEmptyCopy(accounts: ImAccount[]): string {
-  return accounts.length === 0 ? '尚未链接微信账号' : ''
+  return accounts.length === 0 ? '暂无 IM 账号' : ''
 }
 
 export function formatSelectedWorkspaceName(
@@ -91,4 +121,16 @@ export function shouldKeepPollingWeixinLogin(result: ImWeixinLoginPollResult): b
     && result.status !== 'expired'
     && result.status !== 'need_verifycode'
     && result.status !== 'verify_code_blocked'
+}
+
+/** 企业渠道 CLI 授权相位 → 徽章(与微信登录 status→badge 对称) */
+export function formatCliAuthPhase(phase?: CliAuthPhase): { label: string; tone: ImStatusTone } {
+  if (phase === 'connected') return { label: '已授权', tone: 'success' }
+  if (phase === 'error') return { label: '授权失败', tone: 'danger' }
+  if (phase === 'authorizing') return { label: '授权中', tone: 'warning' }
+  return { label: '未授权', tone: 'neutral' }
+}
+
+export function shouldKeepPollingCliAuth(result: CliAuthPollResult): boolean {
+  return result.phase === 'authorizing'
 }

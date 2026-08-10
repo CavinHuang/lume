@@ -138,6 +138,7 @@ import { DiagnosticContentStore } from './logging/diagnostic-content-store'
 import { createLogContentDigest, createSidecarLogDigestPolicy, isSafeStorageSecure } from './logging/log-digest-policy'
 import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
+import { createLinkRuntimeSupervisor } from './link-runtime-supervisor'
 import { discoverChromeProfiles, importChromeProfile } from './browser-import'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '../../../packages/shared/src/types/logging'
 import { nativeEventToIntent } from '../../../packages/shared/src/types/agent-island'
@@ -255,6 +256,7 @@ let rememberedQuickInputDesktopTarget: {
   rememberedAt: number
 } | null = null
 let desktopHostSupervisor: ReturnType<typeof createDesktopHostSupervisor> | null = null
+let linkRuntimeSupervisor: ReturnType<typeof createLinkRuntimeSupervisor> | null = null
 let desktopHostState: DesktopHostState = { available: false, reason: 'desktop host has not started' }
 let loggingService: LoggingService | null = null
 let settingsBroker: SettingsBroker | null = null
@@ -1435,10 +1437,11 @@ function getAgentIslandService(): AgentIslandService {
         return enabled !== false
       },
       getIslandWindow: () => islandWindow,
-      // Phase 2：native 激活时返回 null（不创建 BrowserWindow），避免 native 模式冒 Electron 窗。
+      // 退出中或 Phase 2 native 激活时返回 null（不创建 BrowserWindow），避免销毁后被异步推送重建，
+      // 以及 native 模式冒 Electron 窗。
       // service push() 的 win 检查已对 null 友好（`if (win && !win.isDestroyed())`）；service
       // 类型签名仍是 `() => BrowserWindow`，这里用 as 收窄 `BrowserWindow | null` 为合同类型。
-      ensureIslandWindow: (() => (nativeSurfaceActive ? null : ensureIslandWindow())) as () => BrowserWindow,
+      ensureIslandWindow: (() => (isQuitting || nativeSurfaceActive ? null : ensureIslandWindow())) as () => BrowserWindow,
       callSidecar: <T,>(method: string, params?: unknown) => sidecarHost.call(method, params ?? null) as Promise<T>,
       openMain: () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1720,6 +1723,29 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       await agentIslandService?.handleIntent(payload as AgentIslandIntent)
       return null
     }
+    case 'link_runtime_state':
+      requireMainWindowSender(context, 'link_runtime_state')
+      return linkRuntimeSupervisor?.getState() ?? { enabled: false, phase: 'disabled', port: null, origin: null, version: '1.3.3', dataDirectory: join(resolveConfigDir(), 'link-runtime', 'openconnector', 'data'), restartCount: 0 }
+    case 'link_runtime_enable':
+      requireMainWindowSender(context, 'link_runtime_enable')
+      if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
+      return linkRuntimeSupervisor.enable()
+    case 'link_runtime_disable':
+      requireMainWindowSender(context, 'link_runtime_disable')
+      if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
+      return linkRuntimeSupervisor.disable()
+    case 'link_runtime_restart':
+      requireMainWindowSender(context, 'link_runtime_restart')
+      if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
+      return linkRuntimeSupervisor.restart()
+    case 'link_runtime_diagnose':
+      requireMainWindowSender(context, 'link_runtime_diagnose')
+      if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
+      return linkRuntimeSupervisor.diagnose()
+    case 'link_runtime_change_port':
+      requireMainWindowSender(context, 'link_runtime_change_port')
+      if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
+      return linkRuntimeSupervisor.changePort(Number(payload.port))
     case 'sidecar_call': {
       validateRendererSidecarMethod(payload.method)
       if (payload.method !== 'agent:send-thread-message') {
@@ -2616,6 +2642,9 @@ function createSidecarHost({ onNotification }) {
               })
             }
           }
+          void linkRuntimeSupervisor?.syncBootstrap().catch((error) => {
+            writeMainLog('warn', 'desktop.link', 'bootstrap.delivery_failed', 'failed to deliver Link bootstrap to sidecar', { data: { error } })
+          })
           logDesktopStartup('sidecar reported system.ready', 'sidecar.ready')
           settleStart()
           return
@@ -3162,6 +3191,22 @@ app.whenReady().then(async () => {
   desktopHostState = await startDesktopHost()
   await sidecarHost.start()
   await unlockConnectionVaultStore()
+  linkRuntimeSupervisor = createLinkRuntimeSupervisor({
+    configDir,
+    resourceDir: app.isPackaged ? join(process.resourcesPath, 'openconnector') : join(DESKTOP_ROOT, 'resources', 'openconnector'),
+    getMasterKey: () => connectionVaultKey,
+    fork: (modulePath, args, options) => utilityProcess.fork(modulePath, args, options),
+    emit: (state) => emitRendererEvent('link:runtime', state),
+    installBootstrap: async (bootstrap) => { await sidecarHost.call('system.link-bootstrap', bootstrap) },
+    killProcessTree: (pid) => {
+      if (!Number.isSafeInteger(pid) || pid <= 0) return
+      if (process.platform === 'win32') spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+      else { try { process.kill(pid, 'SIGKILL') } catch {} }
+    },
+  })
+  await linkRuntimeSupervisor.initialize().catch((error) => {
+    writeMainLog('warn', 'desktop.link', 'runtime.autostart_failed', 'Link runtime autostart failed', { data: { error } })
+  })
   await sidecarHost.notifyBrowserSettings?.(browserRuntime.getSettings())
   logDesktopStartup('sidecar ready', 'sidecar.ready')
   pageRenderer = new PageRenderer()
@@ -3199,6 +3244,11 @@ app.on('activate', async () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  // Windows 灵动岛窗口设置了 closable=false，不能依赖 app.quit() 的常规 close 流程。
+  // 在同步退出阶段主动 destroy，且先停 service，避免异步推送在退出过程中重建窗口。
+  agentIslandService?.destroy()
+  agentIslandService = null
+  stopAgentIslandSurface()
 })
 
 app.on('window-all-closed', () => {
@@ -3213,6 +3263,7 @@ app.on('will-quit', async () => {
   browserRuntime?.destroy()
   browserRuntime = null
   desktopHostSupervisor?.stop()
+  await linkRuntimeSupervisor?.stop('offline')
   await sidecarHost.stop()
   writeMainLog('info', 'desktop.lifecycle', 'app.stopping', 'app stopping')
   await loggingService?.close()
@@ -3220,10 +3271,6 @@ app.on('will-quit', async () => {
   globalShortcut.unregisterAll()
   connectionVaultKey?.fill(0)
   connectionVaultKey = null
-  // Agent 灵动岛 service（Task 7）：销毁 service 与渲染面（Phase 2 含 native host），释放资源。
-  agentIslandService?.destroy()
-  agentIslandService = null
-  stopAgentIslandSurface()
 })
 
 async function startDesktopHost(): Promise<DesktopHostState> {

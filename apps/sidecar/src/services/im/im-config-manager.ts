@@ -5,6 +5,7 @@ import {
   type ImAccountCreateInput,
   type ImAccountStatus,
   type ImAccountUpdateInput,
+  type ImProvider,
   normalizeImAccountLabel
 } from "@lume/shared";
 import { getImConfigPath } from "../infra/config-paths";
@@ -28,8 +29,11 @@ export interface ImRuntimeAccount extends ImAccount {
   token: string;
 }
 
-function normalizeBaseUrl(baseUrl: string | undefined): string {
-  return (baseUrl?.trim() || DEFAULT_WEIXIN_BASE_URL).replace(/\/+$/, "");
+function normalizeBaseUrl(provider: ImProvider, baseUrl: string | undefined): string {
+  const trimmed = baseUrl?.trim().replace(/\/+$/, "");
+  if (trimmed) return trimmed;
+  // 仅微信有默认服务端地址；钉钉/飞书/企微不走 baseUrl（凭据存 accountKey/token）
+  return provider === "weixin" ? DEFAULT_WEIXIN_BASE_URL : "";
 }
 
 function normalizeOptional(value: string | undefined): string | undefined {
@@ -129,7 +133,7 @@ export function createImAccount(input: ImAccountCreateInput): ImAccount {
     label: normalizeImAccountLabel(input),
     uin: normalizeOptional(input.uin),
     workspaceId: normalizeOptional(input.workspaceId),
-    baseUrl: normalizeBaseUrl(input.baseUrl),
+    baseUrl: normalizeBaseUrl(input.provider, input.baseUrl),
     enabled: input.enabled ?? false,
     status: "stopped",
     encryptedToken: encryptSecret(input.token.trim()),
@@ -179,7 +183,7 @@ export function updateImAccount(id: string, input: ImAccountUpdateInput): ImAcco
     ...(input.label !== undefined ? { label: normalizeImAccountLabel({ provider: existing.provider, label: input.label, uin: nextUin }) } : {}),
     ...(input.uin !== undefined ? { uin: nextUin } : {}),
     ...(input.workspaceId !== undefined ? { workspaceId: normalizeOptional(input.workspaceId) } : {}),
-    ...(input.baseUrl !== undefined ? { baseUrl: normalizeBaseUrl(input.baseUrl) } : {}),
+    ...(input.baseUrl !== undefined ? { baseUrl: normalizeBaseUrl(existing.provider, input.baseUrl) } : {}),
     ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
     ...(input.status !== undefined ? { status: input.status as ImAccountStatus } : {}),
     ...(input.cursor !== undefined ? { cursor: normalizeOptional(input.cursor) } : {}),

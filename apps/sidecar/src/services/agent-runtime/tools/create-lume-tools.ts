@@ -7,6 +7,11 @@ import { createSdkCronTools } from "./cron/create-cron-tools";
 import { createAutomationListTools } from "./cron/automation-list-tools";
 import { createAutomationTemplateTools } from "./cron/automation-template-tools";
 import { createSdkImTools } from "./im/create-im-tools";
+import { createSdkImCliTools } from "./im-cli/create-im-cli-tools";
+import { dingtalkCliConfig } from "./im-cli/providers/dingtalk";
+import { larkCliConfig } from "./im-cli/providers/feishu";
+import { wecomCliConfig } from "./im-cli/providers/wecom";
+import { getImCliBaseDir } from "../../infra/config-paths";
 import { resolveEnabledMemoryToolNames } from "./tool-policy-matcher";
 import { createSdkReadingTools } from "./reading/create-reading-tools";
 import { createPersonalizeUiTool } from "./ui/create-personalize-ui-tool";
@@ -28,6 +33,7 @@ import type { TrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
 import { createPlanningTodoTools } from "./planning/create-planning-todo-tools";
 import { createSuggestionTools } from "./suggest/create-suggestion-tools";
 import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
+import { createLinkTools } from "./link/create-link-tools";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
@@ -145,6 +151,13 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const imTools = createSdkImTools({
     threadId: input.threadId
   });
+  const imCliBaseDir = getImCliBaseDir();
+  const imCliDeps = { userDataRoot: imCliBaseDir, platform: process.platform, arch: process.arch };
+  const imCliTools = [
+    ...createSdkImCliTools({ config: dingtalkCliConfig, ...imCliDeps }),
+    ...createSdkImCliTools({ config: larkCliConfig, ...imCliDeps }),
+    ...createSdkImCliTools({ config: wecomCliConfig, ...imCliDeps }),
+  ];
   const readingTools = createSdkReadingTools();
   const uiTools = [createPersonalizeUiTool({ threadId: input.threadId })];
   const officeTools = createSdkOfficeTools();
@@ -205,12 +218,18 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const computerUseTools = computerUseSurface === "mcp" && shouldExposeComputerUseTools(input)
     ? allComputerUseTools
     : [];
+  const linkTools = createLinkTools({
+    threadId: input.threadId,
+    runId: input.runId,
+    emitToolPermissionRequest: input.emitToolPermissionRequest,
+  });
   const customTools = [
     ...memoryTools,
     ...cronTools,
     ...automationListTools,
     ...automationTemplateTools,
     ...imTools,
+    ...imCliTools,
     ...readingTools,
     ...uiTools,
     ...officeTools,
@@ -222,11 +241,10 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...planningTodoTools,
     ...computerUseTools,
   ];
-  // Coding/raw-tools runs should start with the SDK's repository tools only.
-  // Product integrations remain available through their explicit capability
-  // routes instead of competing with Read/Edit/Bash in the initial schema.
+  // Coding/raw-tools runs keep the SDK repository tools plus the explicitly
+  // governed Link surface; unrelated product integrations stay hidden.
   const directToolRoute = isDirectRepositoryToolRoute(input);
-  const visibleCustomTools = directToolRoute ? [] : customTools;
+  const visibleCustomTools = directToolRoute ? linkTools : [...customTools, ...linkTools];
   const customToolNames = visibleCustomTools.map((tool) => tool.name);
 
   return {

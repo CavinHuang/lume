@@ -234,6 +234,7 @@ export function projectRunItemToRuntimeEvents(
           message: previewRuntimePayload(item.output)
         },
         ...(execution ? { execution } : {}),
+        ...(item.linkAuthorization ? { linkAuthorization: item.linkAuthorization } : {}),
         ...(resultRef ? { resultRef } : {}),
         ...subagentFields
       }];
@@ -248,6 +249,7 @@ export function projectRunItemToRuntimeEvents(
       toolName: item.toolName,
       resultPreview: previewRuntimePayload(item.output),
       ...(execution ? { execution } : {}),
+      ...(item.linkAuthorization ? { linkAuthorization: item.linkAuthorization } : {}),
       ...(resultRef ? { resultRef } : {}),
       ...subagentFields
     }];

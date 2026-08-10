@@ -13,7 +13,8 @@ import {
   type ImThreadBinding,
   type ImPeerKind,
   type ImProvider,
-  type LumeRuntimeEvent
+  type LumeRuntimeEvent,
+  IM_PROVIDER_LABELS
 } from "@lume/shared";
 import { randomUUID } from "node:crypto";
 import { emitAgentNotification } from "../agent/agent-notification-service";
@@ -88,7 +89,8 @@ interface CreateImAgentStreamEmitterOptions {
 }
 
 function titleForMessage(message: InboundImRouteMessage): string {
-  return `微信: ${message.peerName?.trim() || message.peerId}`;
+  const providerLabel = IM_PROVIDER_LABELS[message.provider];
+  return `${providerLabel}: ${message.peerName?.trim() || message.peerId}`;
 }
 
 function userMessageForMessage(message: InboundImRouteMessage): string {

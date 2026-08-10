@@ -6,6 +6,7 @@ import { MermaidBlock, useSmoothStream } from '@lume/ui'
 import { DiffAwareMarkdownPre } from '@/components/markdown/DiffAwareMarkdownPre'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
+import { formatDurationLabel, formatRunningDuration, formatCompletedDuration } from '@/lib/format-duration'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { activeTabIdAtom, agentThreadsAtom, capabilityDetailTargetAtom, codingReviewPanelActionAtom, generalSettingsAtom, memoryCenterDeepLinkAtom, tabsAtom } from '@/atoms'
 import { codingReviewFileKey } from '@/atoms/right-panel-atoms'
@@ -1297,7 +1298,7 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="mb-1 mt-1 max-h-[min(40vh,360px)] overflow-y-auto rounded-md bg-foreground/[0.03] p-2">
             <ToolExecutionDetails toolCall={toolCall} onOpenThreadFile={onOpenThreadFile} />
-            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
+            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} linkAuthorization={toolCall.linkAuthorization} />
           </div>
         </AnimatedCollapsiblePanel>
       )}
@@ -2553,7 +2554,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain border-t border-[var(--lume-border-subtle)] p-3">
             <ToolExecutionDetails toolCall={toolCall} onOpenThreadFile={onOpenThreadFile} />
-            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
+            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} linkAuthorization={toolCall.linkAuthorization} />
           </div>
         </AnimatedCollapsiblePanel>
       )}
@@ -3132,36 +3133,6 @@ function CopyMessageButton({
   )
 }
 
-function formatDurationLabel(ms: number): string {
-  const s = ms / 1000
-  if (s < 60) return `${s.toFixed(1)}s`
-  const totalSec = Math.floor(s)
-  const mm = Math.floor(totalSec / 60)
-  const ss = totalSec % 60
-  if (s < 3600) return `${mm}:${String(ss).padStart(2, '0')}`
-  const hh = Math.floor(mm / 60)
-  return `${hh}:${String(mm % 60).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
-}
-
-/**
- * 运行态总用时格式化：<60s 取整秒（design 7.3：运行态按整秒跳动），
- * ≥60s 复用 formatDurationLabel（mm:ss / h:mm:ss）。供 RunningDurationClock 使用。
- */
-export function formatRunningDuration(ms: number): string {
-  if (ms <= 0) return ''
-  const s = ms / 1000
-  if (s < 60) return `${s.toFixed(0)}s`
-  return formatDurationLabel(ms)
-}
-
-/**
- * 完成态时长格式化：<60s 保留 1 位小数，≥60s 复用 formatDurationLabel。
- */
-export function formatCompletedDuration(ms: number): string {
-  if (ms <= 0) return ''
-  return formatDurationLabel(ms)
-}
-
 function summarizeInput(input: unknown): string {
   const record = asRecord(input)
   const value = record.command
@@ -3173,9 +3144,25 @@ function summarizeInput(input: unknown): string {
     ?? record.goal
     ?? record.description
     ?? record.prompt
+    ?? linkTarget(record)
   if (typeof value === 'string') return value.length > 48 ? `${value.slice(0, 45)}...` : value
   if (value === undefined) return '正在执行工具调用'
   return JSON.stringify(value)
+}
+
+// link 工具摘要（参考 wanta connectorTarget）：
+// link_call_action→"service · action" / link_inspect_actions→actions 列表 / link_list_apps→service
+// link_search_actions 已由 record.query 命中，不进此分支
+function linkTarget(record: Record<string, unknown>): string | undefined {
+  const service = asString(record.service)
+  const action = asString(record.action)
+  if (service && action) return `${service} · ${action}`
+  if (action) return action
+  if (service) return service
+  if (Array.isArray(record.actions) && record.actions.length > 0) {
+    return record.actions.map((value) => String(value)).join(', ')
+  }
+  return undefined
 }
 
 function asRecord(input: unknown): Record<string, unknown> {

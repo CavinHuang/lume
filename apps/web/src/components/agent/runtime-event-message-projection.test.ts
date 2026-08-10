@@ -56,6 +56,14 @@ function usageEvent(outputTokens: number, scope: 'main' | 'subagent' | 'backgrou
 }
 
 describe('runtime-event-message-projection', () => {
+  test('keeps persisted Link authorization metadata on the tool card', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'tool.started', toolCallId: 'tool-link', toolName: 'link_call_action' }),
+      event({ type: 'tool.failed', toolCallId: 'tool-link', toolName: 'link_call_action', error: { code: 'tool_error', message: 'authorization required' }, linkAuthorization: { kind: 'link_authorization_required', service: 'github', actionId: 'github.create_issue', threadId: 'thread-1', errorCode: 'connection_not_found' } }),
+    ])
+    const assistant = messages.find((message) => message.type === 'assistant')
+    expect(assistant?.type === 'assistant' ? assistant.toolCalls[0]?.linkAuthorization : undefined).toMatchObject({ service: 'github', threadId: 'thread-1' })
+  })
   test('retracts a failed partial model attempt and keeps retry state temporary', () => {
     const messages = projectRuntimeEventMessages([
       event({ type: 'message.user.submitted', text: 'hello' }),

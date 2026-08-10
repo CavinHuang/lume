@@ -1,5 +1,9 @@
 import { IM_IPC_CHANNELS } from '@lume/shared'
 import type {
+  CliAuthPollInput,
+  CliAuthPollResult,
+  CliAuthStartInput,
+  CliAuthStartResult,
   ImAccount,
   ImAccountCreateInput,
   ImAccountUpdateInput,
@@ -33,3 +37,12 @@ export const startWeixinLogin = (input: ImWeixinLoginStartInput = {}) =>
 
 export const pollWeixinLogin = (input: ImWeixinLoginPollInput) =>
   sidecarCall<ImWeixinLoginPollResult>(IM_IPC_CHANNELS.POLL_WEIXIN_LOGIN, input)
+
+export const startCliAuth = (input: CliAuthStartInput) =>
+  sidecarCall<CliAuthStartResult>(IM_IPC_CHANNELS.START_CLI_AUTH, input)
+
+export const pollCliAuth = (input: CliAuthPollInput) =>
+  sidecarCall<CliAuthPollResult>(IM_IPC_CHANNELS.POLL_CLI_AUTH, input)
+
+export const cancelCliAuth = (input: CliAuthPollInput) =>
+  sidecarCall<{ ok: true }>(IM_IPC_CHANNELS.CANCEL_CLI_AUTH, input)

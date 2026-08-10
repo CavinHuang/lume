@@ -1,18 +1,20 @@
 import { describe, expect, test } from 'bun:test'
 import {
   createImAccountDraft,
+  formatCliAuthPhase,
   formatImAccountsEmptyCopy,
   formatSelectedWorkspaceName,
   formatWeixinQrImageSrc,
   formatWeixinLoginStatus,
   formatImStatusBadge,
   normalizeImAccountDraft,
+  shouldKeepPollingCliAuth,
   shouldKeepPollingWeixinLogin,
 } from './im-settings-state'
 
 describe('im settings state', () => {
   test('formats empty account list copy', () => {
-    expect(formatImAccountsEmptyCopy([])).toBe('尚未链接微信账号')
+    expect(formatImAccountsEmptyCopy([])).toBe('暂无 IM 账号')
   })
 
   test('maps account status to compact badge labels', () => {
@@ -35,6 +37,60 @@ describe('im settings state', () => {
       token: 'token-1',
       uin: '10001',
       baseUrl: 'https://ilink.example.com',
+      workspaceId: 'workspace-1',
+      enabled: true,
+    })
+  })
+
+  test('normalizes dingtalk draft into accountKey + clientSecret', () => {
+    expect(normalizeImAccountDraft({
+      ...createImAccountDraft('workspace-1'),
+      provider: 'dingtalk',
+      label: ' 钉钉机器人 ',
+      accountKey: ' dingxxxx ',
+      token: ' secret-1 ',
+      enabled: true,
+    })).toEqual({
+      provider: 'dingtalk',
+      label: '钉钉机器人',
+      accountKey: 'dingxxxx',
+      token: 'secret-1',
+      workspaceId: 'workspace-1',
+      enabled: true,
+    })
+  })
+
+  test('normalizes feishu draft into accountKey + token', () => {
+    expect(normalizeImAccountDraft({
+      ...createImAccountDraft('workspace-1'),
+      provider: 'feishu',
+      label: ' 飞书应用 ',
+      accountKey: ' cli_xxx ',
+      token: ' app-secret ',
+      enabled: true,
+    })).toEqual({
+      provider: 'feishu',
+      label: '飞书应用',
+      accountKey: 'cli_xxx',
+      token: 'app-secret',
+      workspaceId: 'workspace-1',
+      enabled: true,
+    })
+  })
+
+  test('normalizes wecom draft into accountKey + token', () => {
+    expect(normalizeImAccountDraft({
+      ...createImAccountDraft('workspace-1'),
+      provider: 'wecom',
+      label: ' 企微机器人 ',
+      accountKey: ' bot1 ',
+      token: ' sec ',
+      enabled: true,
+    })).toEqual({
+      provider: 'wecom',
+      label: '企微机器人',
+      accountKey: 'bot1',
+      token: 'sec',
       workspaceId: 'workspace-1',
       enabled: true,
     })
@@ -102,5 +158,18 @@ describe('im settings state', () => {
       status: 'confirmed',
       message: 'ok',
     })).toBe(false)
+  })
+
+  test('maps CLI auth phase to compact badge labels', () => {
+    expect(formatCliAuthPhase('connected')).toEqual({ label: '已授权', tone: 'success' })
+    expect(formatCliAuthPhase('error')).toEqual({ label: '授权失败', tone: 'danger' })
+    expect(formatCliAuthPhase('authorizing')).toEqual({ label: '授权中', tone: 'warning' })
+    expect(formatCliAuthPhase(undefined)).toEqual({ label: '未授权', tone: 'neutral' })
+  })
+
+  test('keeps CLI polling only while authorizing', () => {
+    expect(shouldKeepPollingCliAuth({ phase: 'authorizing' })).toBe(true)
+    expect(shouldKeepPollingCliAuth({ phase: 'connected', profile: 'u1' })).toBe(false)
+    expect(shouldKeepPollingCliAuth({ phase: 'error', error: '超时' })).toBe(false)
   })
 })

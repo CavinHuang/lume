@@ -263,6 +263,14 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
     }
   }
 
+  const openLink = () => {
+    const linkId = '__link__'
+    setActiveTabId(linkId)
+    if (!tabs.find((tab) => tab.id === linkId)) {
+      setTabs((previous) => [...previous, { id: linkId, type: 'link', title: '连接器' }])
+    }
+  }
+
   const openLume = () => {
     const lumeId = '__lume__'
     setActiveTabId(lumeId)
@@ -464,6 +472,9 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
         return
       case 'skills':
         openSkills()
+        return
+      case 'connectors':
+        openLink()
         return
       case 'automations':
         openAutomation()

@@ -85,6 +85,12 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'connection_vault_verify',
   'connection_vault_reveal_key',
   'agent_island_intent',
+  'link_runtime_state',
+  'link_runtime_enable',
+  'link_runtime_disable',
+  'link_runtime_restart',
+  'link_runtime_diagnose',
+  'link_runtime_change_port',
 ])
 
 export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
@@ -96,6 +102,7 @@ export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   'logs:live',
   'browser:event',
   'agent:island:state',
+  'link:runtime',
 ])
 
 export function validateRendererInvokeCommand(command) {

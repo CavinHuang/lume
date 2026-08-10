@@ -14,12 +14,12 @@
     "dev": "bun ./scripts/dev.ts",
     "build:runtime": "bun ./scripts/build.ts",
     "build:natives": "bun ../../scripts/build-natives-binary.mjs",
-    "build": "bun ./scripts/build-agent-island-native.ts && bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && node ../../scripts/build-ripgrep-resources.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ../../scripts/build-node-repl-resources.mjs && node ../../scripts/build-desktop-host-resources.mjs && node ./scripts/run-electron-builder.mjs --output-dir dist-unpacked --dir --publish never --config.directories.output=dist-unpacked",
-    "package": "bun ./scripts/build-agent-island-native.ts && bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && node ../../scripts/build-ripgrep-resources.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ../../scripts/build-node-repl-resources.mjs && node ../../scripts/build-desktop-host-resources.mjs && node ./scripts/run-electron-builder.mjs --output-dir dist-release --publish never --config.directories.output=dist-release",
+    "build": "bun ./scripts/build-agent-island-native.ts && bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && node ../../scripts/build-ripgrep-resources.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ../../scripts/build-node-repl-resources.mjs && node ../../scripts/build-desktop-host-resources.mjs && node ./scripts/build-openconnector-resources.mjs && bun ../../scripts/build-openconnector-bundle.mjs && node ../../scripts/build-openconnector-bundle.mjs --verify && node ./scripts/run-electron-builder.mjs --output-dir dist-unpacked --dir --publish never --config.directories.output=dist-unpacked",
+    "package": "bun ./scripts/build-agent-island-native.ts && bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && node ../../scripts/build-ripgrep-resources.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ../../scripts/build-node-repl-resources.mjs && node ../../scripts/build-desktop-host-resources.mjs && node ./scripts/build-openconnector-resources.mjs && bun ../../scripts/build-openconnector-bundle.mjs && node ../../scripts/build-openconnector-bundle.mjs --verify && node ./scripts/run-electron-builder.mjs --output-dir dist-release --publish never --config.directories.output=dist-release",
     "typecheck": "tsc -p tsconfig.json --noEmit && node --check ./scripts/electron-runtime.mjs",
-    "test": "bun test ./scripts/desktop-package.test.mjs ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs ./scripts/plugin-native-host-installer.test.mjs ./scripts/tray-window-runtime.test.mjs ./scripts/tray-manager.test.mjs ./scripts/logging-service.test.mjs ./scripts/log-digest-policy.test.mjs ./scripts/diagnostic-content-store.test.mjs ./scripts/settings-broker.test.mjs ./scripts/electron-runtime.test.mjs ./scripts/electron-security.test.mjs ./scripts/browser-audit.test.mjs ./scripts/browser-credentials.test.mjs ./scripts/browser-cursor.test.mjs ./scripts/browser-downloads.test.mjs ./scripts/browser-import.test.mjs ./scripts/browser-network-guard.test.mjs ./scripts/browser-reference-grants.test.mjs ./scripts/browser-runtime-policy.test.mjs ./scripts/browser-sharing-policy.test.mjs ./scripts/desktop-signature.test.mjs",
+    "test": "bun test ./scripts/link-secret-store.test.mjs ./scripts/desktop-package.test.mjs ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs ./scripts/plugin-native-host-installer.test.mjs ./scripts/tray-window-runtime.test.mjs ./scripts/tray-manager.test.mjs ./scripts/logging-service.test.mjs ./scripts/log-digest-policy.test.mjs ./scripts/diagnostic-content-store.test.mjs ./scripts/settings-broker.test.mjs ./scripts/electron-runtime.test.mjs ./scripts/electron-security.test.mjs ./scripts/browser-audit.test.mjs ./scripts/browser-credentials.test.mjs ./scripts/browser-cursor.test.mjs ./scripts/browser-downloads.test.mjs ./scripts/browser-import.test.mjs ./scripts/browser-network-guard.test.mjs ./scripts/browser-reference-grants.test.mjs ./scripts/browser-runtime-policy.test.mjs ./scripts/browser-sharing-policy.test.mjs ./scripts/desktop-signature.test.mjs",
     "test:unit": "bun run test",
-    "test:smoke": "bun test ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs",
+    "test:smoke": "bun test ./scripts/link-secret-store.test.mjs ./scripts/link-runtime-supervisor.test.mjs ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs",
     "test:browser-e2e": "bun ./scripts/browser-runtime.e2e.mjs",
     "test:browser-extension-smoke": "bun ./scripts/browser-extension-smoke.mjs",
     "test:browser-import-live-smoke": "node ./scripts/browser-import-live-smoke.mjs",
@@ -110,6 +110,10 @@
         "to": "agent-island",
         "filter": ["**/*"],
         "os": ["mac"]
+      },
+      {
+        "from": "resources/openconnector",
+        "to": "openconnector"
       }
     ],
     "mac": {
