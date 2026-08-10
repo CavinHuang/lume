@@ -82,9 +82,9 @@ describe("coding-change-service", () => {
     writeFileSync(join(snapshot, "src", "index.ts"), "export const value = 'snapshot';\n");
     writeFileSync(join(first, "src", "index.ts"), "export const value = 'first changed';\n");
     writeFileSync(join(second, "src", "index.ts"), "export const value = 'second changed';\n");
-    const canonicalFirst = realpathSync(first);
-    const canonicalSecond = realpathSync(second);
-    const canonicalSnapshot = realpathSync(snapshot);
+    const canonicalFirst = realpathSync.native(first);
+    const canonicalSecond = realpathSync.native(second);
+    const canonicalSnapshot = realpathSync.native(snapshot);
 
     const changeSet = await getCodingChangeSet(canonicalFirst, {
       roots: [canonicalSecond, canonicalSnapshot],
@@ -422,7 +422,7 @@ describe("coding-change-service", () => {
     const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
 
     await expect(getCodingFileOpenTargets(root, "src/index.ts")).resolves.toEqual({
-      absolutePath: realpathSync(join(root, "src", "index.ts")),
+      absolutePath: realpathSync.native(join(root, "src", "index.ts")),
       remoteFileUrl: `https://github.com/example/lume/blob/${head}/src/index.ts`,
       remoteProvider: "github",
       revision: head,
