@@ -88,6 +88,10 @@ const jsdomStyleReadPattern = /  var defaultStyleSheet = [A-Za-z_$][\w$]*\.readF
 const undiciFilenamePattern = /^  var __filename = ".*node_modules.*undici.*index\.js";\r?\n/m;
 const xhrWorkerResolvePattern = /  var syncWorkerFile = __require\.resolve\("[^"\r\n]*xhr-sync-worker\.js"\);/;
 const sqlJsDirnamePattern = /^  var __dirname = ".*node_modules.*sql\.js.*dist", __filename = ".*node_modules.*sql\.js.*dist.*sql-wasm\.js";\r?\n/m;
+// @larksuiteoapi/node-sdk 的 getSdkVersion() 用 __dirname 读自身 package.json 取版本号拼 User-Agent。
+// bundle 里其 package.json 不会随包发布，路径必解析失败 → 已有 try/catch 兜底返回 'unknown'。
+// 把绝对路径替换成 "."，避免可重定位性自检报错；版本号降级为 'unknown' 无功能影响。
+const larkSdkDirnamePattern = /^  var __dirname = ".*node_modules.*larksuiteoapi.*node-sdk.*lib";\r?\n/m;
 const transformersDirnamePattern = /, __dirname = "[^"]*node_modules[^\"]*transformers[^\"]*dist", __webpack_modules__/;
 const jsdomStylePath = resolve(jsdomLibDir, "jsdom", "browser", "default-stylesheet.css");
 const jsdomStyle = readFileSync(jsdomStylePath, "utf8");
@@ -118,6 +122,14 @@ if (!sqlJsDirnamePattern.test(bundleSrc)) {
 bundleSrc = bundleSrc.replace(
   sqlJsDirnamePattern,
   '  var __dirname = ".", __filename = "sql-wasm.js";',
+);
+if (!larkSdkDirnamePattern.test(bundleSrc)) {
+  console.error("[sidecar-bundle] main: Lark SDK __dirname pattern not found");
+  process.exit(1);
+}
+bundleSrc = bundleSrc.replace(
+  larkSdkDirnamePattern,
+  '  var __dirname = ".";',
 );
 if (!transformersDirnamePattern.test(localOnnxWorkerSrc)) {
   console.error("[sidecar-bundle] local ONNX worker: transformers __dirname pattern not found");
