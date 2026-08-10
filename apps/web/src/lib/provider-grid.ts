@@ -1,7 +1,7 @@
 // 多列虚拟化布局参数（与 ProviderCard 固定高度对齐）
 export const PROVIDER_GRID = {
   minCardWidth: 260, // catalog 卡片最小宽度，驱动响应式列数
-  cardHeight: 128,   // ProviderCard 固定高度（h-[128px]）
+  cardHeight: 68,    // ProviderCard 紧凑行高度（对齐 wanta 68px）
   gap: 12,           // 对应 Tailwind gap-3
   overscanRows: 4,
 } as const;
