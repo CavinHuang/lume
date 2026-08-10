@@ -2,6 +2,7 @@ import * as React from 'react'
 import { useAtomValue } from 'jotai'
 import { toast } from 'sonner'
 import {
+  KeyRound,
   Loader2,
   MessageCircle,
   Play,
@@ -11,15 +12,19 @@ import {
   Square,
   Trash2,
 } from 'lucide-react'
-import type { ImAccount } from '@lume/shared'
+import { IM_PROVIDER_LABELS, type CliAuthPollResult, type ImAccount, type ImProvider } from '@lume/shared'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
+  cancelCliAuth,
   createImAccount,
   deleteImAccount,
   listImAccounts,
+  openExternal,
+  pollCliAuth,
   pollWeixinLogin,
-  startWeixinLogin,
+  startCliAuth,
   startImAccount,
+  startWeixinLogin,
   stopImAccount,
   updateImAccount,
 } from '@/lib/desktop-api'
@@ -40,11 +45,13 @@ import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import {
   createImAccountDraft,
+  formatCliAuthPhase,
   formatImAccountsEmptyCopy,
   formatSelectedWorkspaceName,
   formatImStatusBadge,
   formatWeixinQrImageSrc,
   formatWeixinLoginStatus,
+  IM_PROVIDER_CREDENTIAL_FIELDS,
   normalizeImAccountDraft,
   shouldKeepPollingWeixinLogin,
   type ImAccountDraft,
@@ -59,6 +66,21 @@ const toneClassName: Record<ImStatusTone, string> = {
 }
 
 const NO_WORKSPACE_VALUE = '__none__'
+
+const PROVIDER_OPTIONS: ReadonlyArray<{ value: ImProvider; label: string; disabled?: boolean }> = [
+  { value: 'weixin', label: IM_PROVIDER_LABELS.weixin },
+  { value: 'dingtalk', label: IM_PROVIDER_LABELS.dingtalk },
+  { value: 'feishu', label: IM_PROVIDER_LABELS.feishu },
+  { value: 'wecom', label: IM_PROVIDER_LABELS.wecom },
+]
+
+/** 企业渠道:走 CLI OAuth 授权(微信走扫码,不入此列) */
+const CLI_PROVIDERS = ['dingtalk', 'feishu', 'wecom'] as const
+
+interface CliAuthSession extends CliAuthPollResult {
+  sessionKey: string
+  polling: boolean
+}
 
 export function ImSettings() {
   const workspaces = useAtomValue(agentWorkspacesAtom)
@@ -84,6 +106,7 @@ export function ImSettings() {
     polling: boolean
     autoPolling: boolean
   } | null>(null)
+  const [cliAuth, setCliAuth] = React.useState<Record<string, CliAuthSession>>({})
 
   const refresh = React.useCallback(async () => {
     setLoading(true)
@@ -112,6 +135,7 @@ export function ImSettings() {
   const selectedWorkspaceName = formatSelectedWorkspaceName(workspaces, selectedWorkspaceId)
   const qrImageSrc = loginSession?.qrcodeImageSrc ?? formatWeixinQrImageSrc(loginSession?.qrcodeUrl)
   const qrFallbackUrl = loginSession?.qrcodeUrl?.trim() || qrImageSrc
+  const credentialFields = draft.provider !== 'weixin' ? IM_PROVIDER_CREDENTIAL_FIELDS[draft.provider] : null
 
   const resetAddDialog = React.useCallback(() => {
     setDraft(createImAccountDraft(defaultWorkspaceId))
@@ -134,20 +158,31 @@ export function ImSettings() {
 
   const handleCreate = async () => {
     const input = normalizeImAccountDraft(draft, defaultWorkspaceId)
-    if (!input.token) {
+    const providerLabel = IM_PROVIDER_LABELS[draft.provider]
+    if (draft.provider !== 'weixin') {
+      const fields = IM_PROVIDER_CREDENTIAL_FIELDS[draft.provider]
+      if (!input.accountKey) {
+        toast.error(`${fields.accountKey} 不能为空`)
+        return
+      }
+      if (!input.token) {
+        toast.error(`${fields.token} 不能为空`)
+        return
+      }
+    } else if (!input.token) {
       toast.error('OpenClaw Token 不能为空')
       return
     }
     setSaving(true)
     try {
       await createImAccount(input)
-      toast.success('微信账号已链接')
+      toast.success(`${providerLabel} 账号已链接`)
       setAddDialogOpen(false)
       resetAddDialog()
       await refresh()
     } catch (error) {
       console.error('[IM 设置] 创建失败:', error)
-      toast.error('链接微信账号失败')
+      toast.error(`链接${providerLabel}账号失败`)
     } finally {
       setSaving(false)
     }
@@ -213,6 +248,72 @@ export function ImSettings() {
     return () => window.clearTimeout(timer)
   }, [loginSession, pollLoginOnce])
 
+  const pollCliAuthOnce = React.useCallback(async (provider: string, session: CliAuthSession) => {
+    setCliAuth((current) => {
+      const existing = current[provider]
+      return existing ? { ...current, [provider]: { ...existing, polling: true } } : current
+    })
+    try {
+      const result = await pollCliAuth({ sessionKey: session.sessionKey })
+      setCliAuth((current) => {
+        const existing = current[provider]
+        return existing ? { ...current, [provider]: { ...result, sessionKey: session.sessionKey, polling: false } } : current
+      })
+      if (result.phase === 'connected') toast.success(`${IM_PROVIDER_LABELS[provider as ImProvider]} CLI 已授权`)
+    } catch (error) {
+      console.error('[IM 设置] 轮询 CLI 授权失败:', error)
+      setCliAuth((current) => {
+        const existing = current[provider]
+        return existing
+          ? { ...current, [provider]: { ...existing, phase: 'error', error: '轮询失败', polling: false } }
+          : current
+      })
+    }
+  }, [])
+
+  const handleStartCliAuth = async (provider: string) => {
+    try {
+      const started = await startCliAuth({ provider: provider as ImProvider })
+      if (started.error || !started.sessionKey) {
+        toast.error(started.error || '启动授权失败')
+        return
+      }
+      if (started.authUrl) await openExternal(started.authUrl)
+      setCliAuth((current) => ({
+        ...current,
+        [provider]: { phase: 'authorizing', sessionKey: started.sessionKey, polling: false },
+      }))
+      toast.success('授权页面已在浏览器打开，请在系统浏览器完成登录')
+    } catch (error) {
+      console.error('[IM 设置] 启动 CLI 授权失败:', error)
+      toast.error('启动授权失败')
+    }
+  }
+
+  const handleCancelCliAuth = async (provider: string, sessionKey: string) => {
+    try {
+      await cancelCliAuth({ sessionKey })
+    } catch (error) {
+      console.error('[IM 设置] 取消 CLI 授权失败:', error)
+    }
+    setCliAuth((current) => {
+      const next = { ...current }
+      delete next[provider]
+      return next
+    })
+  }
+
+  React.useEffect(() => {
+    const pending = Object.entries(cliAuth).filter(
+      ([, session]) => session.phase === 'authorizing' && !session.polling,
+    )
+    if (pending.length === 0) return
+    const timer = window.setTimeout(() => {
+      for (const [provider, session] of pending) void pollCliAuthOnce(provider, session)
+    }, 2500)
+    return () => window.clearTimeout(timer)
+  }, [cliAuth, pollCliAuthOnce])
+
   const handleToggleEnabled = async (account: ImAccount, enabled: boolean) => {
     setBusyId(account.id)
     try {
@@ -220,7 +321,7 @@ export function ImSettings() {
       await refresh()
     } catch (error) {
       console.error('[IM 设置] 更新启用状态失败:', error)
-      toast.error('更新微信账号失败')
+      toast.error(`更新${IM_PROVIDER_LABELS[account.provider]}账号失败`)
     } finally {
       setBusyId(null)
     }
@@ -230,11 +331,11 @@ export function ImSettings() {
     setBusyId(account.id)
     try {
       await startImAccount(account.id)
-      toast.success('微信通道已启动')
+      toast.success(`${IM_PROVIDER_LABELS[account.provider]} 通道已启动`)
       await refresh()
     } catch (error) {
       console.error('[IM 设置] 启动失败:', error)
-      toast.error('启动微信通道失败')
+      toast.error(`启动${IM_PROVIDER_LABELS[account.provider]}通道失败`)
     } finally {
       setBusyId(null)
     }
@@ -244,11 +345,11 @@ export function ImSettings() {
     setBusyId(account.id)
     try {
       await stopImAccount(account.id)
-      toast.success('微信通道已停止')
+      toast.success(`${IM_PROVIDER_LABELS[account.provider]} 通道已停止`)
       await refresh()
     } catch (error) {
       console.error('[IM 设置] 停止失败:', error)
-      toast.error('停止微信通道失败')
+      toast.error(`停止${IM_PROVIDER_LABELS[account.provider]}通道失败`)
     } finally {
       setBusyId(null)
     }
@@ -258,11 +359,11 @@ export function ImSettings() {
     setBusyId(account.id)
     try {
       await deleteImAccount(account.id)
-      toast.success('微信账号已移除')
+      toast.success(`${IM_PROVIDER_LABELS[account.provider]} 账号已移除`)
       await refresh()
     } catch (error) {
       console.error('[IM 设置] 删除失败:', error)
-      toast.error('移除微信账号失败')
+      toast.error(`移除${IM_PROVIDER_LABELS[account.provider]}账号失败`)
     } finally {
       setBusyId(null)
     }
@@ -276,14 +377,14 @@ export function ImSettings() {
             <MessageCircle size={16} />
           </div>
           <div className="min-w-0">
-            <h3 className="text-[14px] font-semibold text-[var(--text-1)]">微信 IM</h3>
+            <h3 className="text-[14px] font-semibold text-[var(--text-1)]">IM 通道</h3>
             <p className="text-[12px] text-[var(--text-3)]">{accounts.length} 个账号</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => handleAddDialogOpenChange(true)}>
             <Plus />
-            链接微信
+            链接账号
           </Button>
           <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}>
             {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
@@ -318,16 +419,73 @@ export function ImSettings() {
         </div>
       </div>
 
+      <div className="border-t border-[var(--border)] p-4">
+        <div className="mb-2 flex items-baseline gap-2">
+          <p className="text-[13px] font-semibold text-[var(--text-1)]">企业 CLI 能力</p>
+          <p className="text-[12px] text-[var(--text-3)]">通过官方 CLI 完成 OAuth 授权（provider 级）</p>
+        </div>
+        <div className="space-y-2">
+          {CLI_PROVIDERS.map((provider) => {
+            const session = cliAuth[provider]
+            const badge = formatCliAuthPhase(session?.phase)
+            const authorizing = session?.phase === 'authorizing'
+            return (
+              <div key={provider} className="lume-subpanel flex items-center justify-between gap-3 px-3 py-2.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="text-[13px] font-medium text-[var(--text-1)]">{IM_PROVIDER_LABELS[provider]}</span>
+                  <Badge variant="outline" className={cn('rounded-[6px]', toneClassName[badge.tone])}>{badge.label}</Badge>
+                  {session?.profile && <span className="truncate text-[12px] text-[var(--text-3)]">{session.profile}</span>}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => (authorizing && session
+                    ? void handleCancelCliAuth(provider, session.sessionKey)
+                    : void handleStartCliAuth(provider))}
+                  disabled={session?.polling}
+                >
+                  {session?.polling ? <Loader2 className="animate-spin" /> : authorizing ? <Square /> : <KeyRound />}
+                  {authorizing ? '取消' : session?.phase === 'connected' ? '重新授权' : '授权'}
+                </Button>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
       <Dialog open={addDialogOpen} onOpenChange={handleAddDialogOpenChange}>
         <DialogContent className="sm:max-w-[520px]">
           <DialogHeader>
-            <DialogTitle>链接微信</DialogTitle>
+            <DialogTitle>链接{IM_PROVIDER_LABELS[draft.provider]}</DialogTitle>
             <DialogDescription>
-              使用微信扫码授权，确认后会自动保存账号。
+              {draft.provider === 'weixin'
+                ? '使用微信扫码授权，确认后会自动保存账号。'
+                : `录入${IM_PROVIDER_LABELS[draft.provider]}的凭据，确认后保存账号。`}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
+            <div className="grid gap-2">
+              <Label>渠道</Label>
+              <Select
+                value={draft.provider}
+                onValueChange={(value) => updateDraft({ provider: value as ImProvider, accountKey: '', token: '' })}
+              >
+                <SelectTrigger className="h-8 w-full bg-[var(--surface-1)] text-[13px]">
+                  <span className="truncate text-left">{IM_PROVIDER_LABELS[draft.provider]}</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {PROVIDER_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
+                      {option.label}
+                      {option.disabled ? '（敬请期待）' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {draft.provider === 'weixin' && (
             <div className="lume-subpanel p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
@@ -381,6 +539,7 @@ export function ImSettings() {
                 </div>
               )}
             </div>
+            )}
 
             <div className="grid gap-2">
               <Label htmlFor="im-workspace">工作区</Label>
@@ -402,6 +561,7 @@ export function ImSettings() {
               </Select>
             </div>
 
+            {draft.provider === 'weixin' && (
             <details className="lume-subpanel p-3">
               <summary className="cursor-pointer text-[13px] font-medium text-[var(--text-2)]">
                 手动链接
@@ -429,6 +589,47 @@ export function ImSettings() {
                 </Button>
               </div>
             </details>
+            )}
+
+            {credentialFields && (
+              <div className="lume-subpanel grid gap-3 p-3">
+                <div className="grid gap-2">
+                  <Label htmlFor="im-label">名称</Label>
+                  <Input
+                    id="im-label"
+                    value={draft.label}
+                    onChange={(event) => updateDraft({ label: event.target.value })}
+                    placeholder={IM_PROVIDER_LABELS[draft.provider]}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="im-account-key">{credentialFields.accountKey}</Label>
+                  <Input
+                    id="im-account-key"
+                    value={draft.accountKey}
+                    onChange={(event) => updateDraft({ accountKey: event.target.value })}
+                    placeholder={credentialFields.placeholder}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="im-token">{credentialFields.token}</Label>
+                  <Input
+                    id="im-token"
+                    type="password"
+                    value={draft.token}
+                    onChange={(event) => updateDraft({ token: event.target.value })}
+                  />
+                </div>
+                <div className="lume-panel flex items-center justify-between px-3 py-2">
+                  <span className="text-[13px] text-[var(--text-2)]">启用</span>
+                  <Switch checked={draft.enabled} onCheckedChange={(enabled) => updateDraft({ enabled })} />
+                </div>
+                <Button onClick={() => void handleCreate()} disabled={saving}>
+                  {saving ? <Loader2 className="animate-spin" /> : <Plus />}
+                  链接{IM_PROVIDER_LABELS[draft.provider]}
+                </Button>
+              </div>
+            )}
           </div>
 
           <DialogFooter>

@@ -1,0 +1,151 @@
+import { describe, it, expect, beforeEach } from "bun:test";
+import { createWecomWsWorker, parseWecomEvent } from "./wecom-ws-worker";
+import { getWecomClient, __clearWecomClientPoolForTests } from "./wecom-client-pool";
+import type { ImRuntimeAccount } from "../im-config-manager";
+
+const makeAccount = (id = "wc1"): ImRuntimeAccount =>
+  ({
+    id,
+    provider: "wecom",
+    accountKey: "bot1",
+    token: "sec1",
+    label: "企业微信",
+    enabled: true,
+    status: "stopped",
+    hasToken: true,
+    createdAt: 0,
+    updatedAt: 0,
+  }) as ImRuntimeAccount;
+
+function makeFakeClient(calls?: string[]): {
+  client: { connect(): void; disconnect(): void; on(event: string, cb: (data: unknown) => void): void };
+  getHandler: () => ((data: unknown) => void) | null;
+} {
+  let handler: ((data: unknown) => void) | null = null;
+  const client = {
+    connect() {
+      calls?.push("connect");
+    },
+    disconnect() {
+      calls?.push("disconnect");
+    },
+    on(event: string, cb: (data: unknown) => void) {
+      calls?.push(`on:${event}`);
+      handler = cb;
+    },
+  };
+  return { client, getHandler: () => handler };
+}
+
+beforeEach(() => {
+  __clearWecomClientPoolForTests();
+});
+
+describe("createWecomWsWorker", () => {
+  it("start 注册连接池 + connect + 注册回调;回调路由企微消息;stop 注销池 + disconnect", () => {
+    const calls: string[] = [];
+    const routes: unknown[] = [];
+    const account = makeAccount();
+    const { client, getHandler } = makeFakeClient(calls);
+    const worker = createWecomWsWorker({
+      account,
+      routeMessage: async (m) => {
+        routes.push(m);
+      },
+      createClient: () => client as never,
+    });
+
+    worker.start();
+    expect(calls).toEqual(["on:message.text", "connect"]);
+    expect(getWecomClient(account.id)).toBe(client as never); // 启动即入池
+    const handler = getHandler();
+    expect(handler).not.toBeNull();
+
+    handler!({
+      headers: { req_id: "r1" },
+      body: { chatid: "g1", chattype: "group", from: { userid: "u1" }, text: { content: "@bot 你好" }, msgtype: "text" },
+    });
+    expect(routes).toHaveLength(1);
+    expect((routes[0] as { text: string }).text).toBe("你好"); // 清 @bot 前缀
+    expect((routes[0] as { peerKind: string }).peerKind).toBe("group");
+    expect((routes[0] as { peerId: string }).peerId).toBe("g1");
+    expect((routes[0] as { senderId?: string }).senderId).toBe("u1");
+    expect((routes[0] as { messageId?: string }).messageId).toBe("r1");
+    expect(worker.isRunning()).toBe(true);
+
+    worker.stop();
+    expect(calls).toContain("disconnect");
+    expect(getWecomClient(account.id)).toBeUndefined(); // 停止即出池
+    expect(worker.isRunning()).toBe(false);
+  });
+
+  it("单聊无 chatid → peerId 回退 userid", () => {
+    const routes: unknown[] = [];
+    const { client, getHandler } = makeFakeClient();
+    const worker = createWecomWsWorker({
+      account: makeAccount(),
+      routeMessage: async (m) => {
+        routes.push(m);
+      },
+      createClient: () => client as never,
+    });
+    worker.start();
+    getHandler()!({
+      headers: { req_id: "r2" },
+      body: { chattype: "single", from: { userid: "u2" }, text: { content: "私聊" }, msgtype: "text" },
+    });
+    expect((routes[0] as { peerKind: string }).peerKind).toBe("dm");
+    expect((routes[0] as { peerId: string }).peerId).toBe("u2");
+  });
+
+  it("无文本内容不路由", () => {
+    const routes: unknown[] = [];
+    const { client, getHandler } = makeFakeClient();
+    const worker = createWecomWsWorker({
+      account: makeAccount(),
+      routeMessage: async (m) => {
+        routes.push(m);
+      },
+      createClient: () => client as never,
+    });
+    worker.start();
+    getHandler()!({ headers: { req_id: "r3" }, body: { chattype: "single", from: { userid: "u" }, text: { content: "  " } } });
+    getHandler()!({ headers: { req_id: "r4" } }); // 无 body
+    expect(routes).toHaveLength(0);
+  });
+
+  it("缺少凭据时不启动且标记 auth_required,不入池", () => {
+    const updated: Array<{ id: string; status?: string }> = [];
+    const account = makeAccount("wc-nocred");
+    const worker = createWecomWsWorker({
+      account: { ...account, accountKey: undefined, token: "" } as ImRuntimeAccount,
+      updateAccount: async (id, input) => {
+        updated.push({ id, ...input });
+      },
+      createClient: () => {
+        throw new Error("should not create client");
+      },
+    });
+    worker.start();
+    expect(worker.isRunning()).toBe(false);
+    expect(getWecomClient(account.id)).toBeUndefined();
+    expect(updated).toHaveLength(1);
+    expect(updated[0]?.status).toBe("auth_required");
+  });
+});
+
+describe("parseWecomEvent", () => {
+  it("清理 @ 机器人前缀", () => {
+    const msg = parseWecomEvent(
+      { headers: { req_id: "r" }, body: { chatid: "g", chattype: "group", from: { userid: "u" }, text: { content: "@机器人 hi" } } },
+      makeAccount(),
+    );
+    expect(msg?.text).toBe("hi");
+  });
+
+  it("无 body 或无文本返回 null", () => {
+    expect(parseWecomEvent({}, makeAccount())).toBeNull();
+    expect(parseWecomEvent(null, makeAccount())).toBeNull();
+    expect(parseWecomEvent({ body: { chattype: "single", from: { userid: "u" }, text: { content: "" } } }, makeAccount())).toBeNull();
+  });
+});
