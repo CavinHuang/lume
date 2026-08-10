@@ -8,7 +8,7 @@ const ISLAND_DEFAULT_HEIGHT = 32
 const ISLAND_MIN_WIDTH = 320
 const ISLAND_MAX_WIDTH = 620
 const ISLAND_MAX_HEIGHT = 640
-const ISLAND_TOP_SNAP_DISTANCE = 24
+const ISLAND_TOP_SNAP_DISTANCE = 60
 
 export interface IslandWindowDeps {
   appIsPackaged: boolean
