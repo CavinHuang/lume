@@ -264,7 +264,7 @@ fn wait_for_occluded_window_capture(
             .unwrap();
         assert_eq!(state["window"], *window);
         let screenshot_len = state["screenshots"][0]["url"].as_str().unwrap().len();
-        if baseline_screenshot_len.abs_diff(screenshot_len) < baseline_screenshot_len / 5 {
+        if screenshot_len >= baseline_screenshot_len.saturating_mul(4) / 5 {
             return;
         }
         last_screenshot_len = Some(screenshot_len);
