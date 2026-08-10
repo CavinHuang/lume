@@ -3,9 +3,9 @@
  */
 
 import { execFileSync } from 'child_process'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
-import { dirname, isAbsolute, join, relative, resolve } from 'path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'path'
 import type { ToolDefinition, ToolResult } from '../types.js'
 
 export interface ManagedWorktree {
@@ -62,8 +62,23 @@ function resolveRepositoryRoot(cwd: string): string {
   return resolve(execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, stdio: 'pipe', encoding: 'utf8' }).trim())
 }
 
+function canonicalizePath(path: string): string {
+  let existingPath = resolve(path)
+  const missingSegments: string[] = []
+  while (!existsSync(existingPath)) {
+    const parent = dirname(existingPath)
+    if (parent === existingPath) break
+    missingSegments.unshift(basename(existingPath))
+    existingPath = parent
+  }
+  const canonicalBase = existsSync(existingPath)
+    ? realpathSync.native(existingPath)
+    : existingPath
+  return resolve(canonicalBase, ...missingSegments)
+}
+
 function assertWorktreePath(repoRoot: string, worktreePath: string): void {
-  const relativePath = relative(repoRoot, worktreePath)
+  const relativePath = relative(canonicalizePath(repoRoot), canonicalizePath(worktreePath))
   if (!relativePath || (!relativePath.startsWith('..' + '\\') && !relativePath.startsWith('../') && !isAbsolute(relativePath))) {
     throw new Error('Worktree path must be outside the main repository')
   }
