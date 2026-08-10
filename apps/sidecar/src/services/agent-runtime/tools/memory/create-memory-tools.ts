@@ -75,7 +75,7 @@ function optionalEvidenceRefs(value: unknown): MemoryEvidenceRef[] | undefined {
     if (!item || typeof item !== "object" || Array.isArray(item)) return [];
     const record = item as Record<string, unknown>;
     const type = record.type;
-    if (type !== "user_message" && type !== "assistant_message" && type !== "tool_result" && type !== "external_file" && type !== "manual" && type !== "consolidation") return [];
+    if (type !== "user_message" && type !== "assistant_message" && type !== "tool_result" && type !== "external_file" && type !== "workspace_file" && type !== "manual" && type !== "consolidation") return [];
     return [{
       type: type as MemoryEvidenceRef["type"],
       ...(typeof record.id === "string" ? { id: record.id } : {}),
@@ -193,7 +193,7 @@ export function createSdkMemoryTools(params: {
             items: {
               type: "object",
               properties: {
-                type: { type: "string", enum: ["user_message", "assistant_message", "tool_result", "external_file", "manual", "consolidation"] },
+                type: { type: "string", enum: ["user_message", "assistant_message", "tool_result", "external_file", "workspace_file", "manual", "consolidation"] },
                 id: { type: "string" },
                 path: { type: "string" },
                 quote: { type: "string" }

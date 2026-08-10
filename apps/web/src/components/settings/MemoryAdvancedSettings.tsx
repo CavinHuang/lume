@@ -181,7 +181,7 @@ export function MemoryAdvancedSettings() {
         {([
           ['proactiveWrite', '主 Agent 主动记忆', '私聊中发现稳定信息时立即记住。'],
           ['backgroundExtraction', '后台自动提取', '回答完成后异步检查遗漏的稳定记忆。'],
-          ['autoDream', 'AutoDream', '满足 24 小时和 5 个会话门槛后自动整理。'],
+          ['autoDream', '自动整理', 'AutoDream 会在满足 24 小时和 5 个私聊主线程门槛后整理记忆。'],
         ] as const).map(([key, label, desc]) => (
           <label key={key} className="lume-subpanel flex min-h-[84px] items-center justify-between gap-3 p-3">
             <span>

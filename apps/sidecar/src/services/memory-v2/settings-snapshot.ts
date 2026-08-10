@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type {
   MemoryKind,
+  MemoryDreamResult,
   MemoryIngestSourcesResult,
   MemoryJobKind,
   MemoryMutationChange,
@@ -124,9 +125,9 @@ function getMemoryDiagnosticsState(
       kind: job.kind,
       status: job.status,
       createdAt: job.createdAt,
-      retryable: job.kind === "external_ingest"
+      retryable: (job.kind === "external_ingest" || job.kind === "consolidation")
         && (job.status === "failed" || job.status === "cancelled" || job.status === "interrupted")
-        && job.payload !== undefined,
+        && (job.kind === "consolidation" || job.payload !== undefined),
       ...(job.startedAt ? { startedAt: job.startedAt } : {}),
       ...(job.completedAt ? { completedAt: job.completedAt } : {}),
       ...(job.error ? { error: job.error } : {}),
@@ -191,10 +192,16 @@ function settingsJobProgress(
   const processedItems = readNumber(value.processedItems) ?? readNumber(value.processedBatches);
   const changedItems = readNumber(value.changedItems);
   const candidateCount = readNumber(value.candidateCount);
+  const reviewedSessions = readNumber(value.reviewedSessions);
+  const reviewedEvidence = readNumber(value.reviewedEvidence);
+  const proposedActions = readNumber(value.proposedActions);
   return {
     phase: readString(value.phase) ?? readString(value.label) ?? completedJobPhase(kind, result),
     ...(scannedItems !== undefined ? { scannedItems } : {}),
     ...(processedItems !== undefined ? { processedItems } : {}),
+    ...(reviewedSessions !== undefined ? { reviewedSessions } : {}),
+    ...(reviewedEvidence !== undefined ? { reviewedEvidence } : {}),
+    ...(proposedActions !== undefined ? { proposedActions } : {}),
     ...(changedItems !== undefined ? { changedItems } : {}),
     ...(candidateCount !== undefined ? { candidateCount } : {}),
     changedFiles
@@ -233,11 +240,37 @@ function settingsJobResult(kind: MemoryJobKind, result: unknown): MemorySettings
     case "turn_extract":
       return { kind, data: result as { scannedItems: number; changedItems: number } };
     case "consolidation":
-      return {
-        kind,
-        data: result as { scannedEntries: number; updated: number; merged: number; stale: number; rebuilt: string[] }
-      };
+      return { kind, data: normalizeDreamResult(result) };
   }
+}
+
+function normalizeDreamResult(result: unknown): MemoryDreamResult {
+  const value = asRecord(result);
+  const actions = asRecord(value.actions);
+  const legacyUpdated = readNumber(value.updated) ?? 0;
+  const legacyMerged = readNumber(value.merged) ?? 0;
+  const legacyStale = readNumber(value.stale) ?? 0;
+  return {
+    sessionsReviewed: readNumber(value.sessionsReviewed) ?? 0,
+    evidenceItemsReviewed: readNumber(value.evidenceItemsReviewed) ?? 0,
+    scannedEntries: readNumber(value.scannedEntries) ?? 0,
+    actions: {
+      created: readNumber(actions.created) ?? 0,
+      versioned: readNumber(actions.versioned) ?? 0,
+      updated: readNumber(actions.updated) ?? legacyUpdated,
+      merged: readNumber(actions.merged) ?? legacyMerged,
+      stale: readNumber(actions.stale) ?? legacyStale,
+      pending: readNumber(actions.pending) ?? 0,
+      ignored: readNumber(actions.ignored) ?? 0
+    },
+    items: Array.isArray(value.items) ? value.items as MemoryDreamResult["items"] : [],
+    rebuilt: Array.isArray(value.rebuilt)
+      ? value.rebuilt.filter((item): item is string => typeof item === "string")
+      : [],
+    warnings: Array.isArray(value.warnings)
+      ? value.warnings.filter((item): item is string => typeof item === "string")
+      : []
+  };
 }
 
 interface MutationJournalRecord {

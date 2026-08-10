@@ -24,7 +24,7 @@ import type {
   MemoryIngestSourcesResult,
   MemoryKind,
   MemoryOrganizeJob,
-  MemoryOrganizeEntriesResult,
+  MemoryDreamResult,
   MemoryOrganizeHistoryResult,
   MemoryReadToolResult,
   MemoryResolvePendingInput,
@@ -65,7 +65,7 @@ import {
   summarizeMemoryExtractionStatus,
   summarizeMemoryIngestSourcesJob,
   summarizeMemoryOrganizeJob,
-  summarizeMemoryOrganizeEntriesResult,
+  summarizeMemoryDreamResult,
   summarizeMemoryOrganizeResult,
   summarizeMemoryIngestSourcesResult,
   summarizeMemoryEntry,
@@ -384,7 +384,7 @@ export function MemoryOperationsPanel({
   ingestResult: MemoryIngestSourcesResult | null
   ingestTargetScope: MemoryIngestTargetScopeMode
   entryOrganizeJob: MemoryOrganizeJob | null
-  entryOrganizeResult: MemoryOrganizeEntriesResult | null
+  entryOrganizeResult: MemoryDreamResult | null
   historyOrganizeJob: MemoryOrganizeJob | null
   onCancelJob: (jobId: string) => void
   onExternalTextChange: (value: string) => void
@@ -448,8 +448,8 @@ export function MemoryOperationsPanel({
             {entryOrganizeRunning && entryOrganizeJob
               ? summarizeMemoryOrganizeJob(entryOrganizeJob)
               : entryOrganizeResult
-                ? summarizeMemoryOrganizeEntriesResult(entryOrganizeResult)
-                : '使用 LLM 分析已经写入的工作区和全局记忆数据，归并相似重复项；模型不可用时只做保守本地去重。'}
+                ? summarizeMemoryDreamResult(entryOrganizeResult)
+                : '在后台核对近期对话、工具结果和已有记忆，补充稳定信息、合并重复并处理过期内容。'}
           </p>
         </div>
         <Button

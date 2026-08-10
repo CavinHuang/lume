@@ -27,6 +27,7 @@ interface StartMemoryJobInput<TResult, TProgress> {
   manual?: boolean;
   payload?: unknown;
   run: (context: {
+    jobId: string;
     signal: AbortSignal;
     report: (progress: TProgress) => void;
   }) => Promise<TResult>;
@@ -169,6 +170,7 @@ export class MemoryJobService {
   ): Promise<void> {
     try {
       const result = await input.run({
+        jobId: job.jobId,
         signal: controller.signal,
         report: (progress) => {
           const current = this.get<TResult, TProgress>(job.workspaceSlug, job.jobId);

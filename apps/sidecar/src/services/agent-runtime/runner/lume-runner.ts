@@ -509,6 +509,8 @@ export class LumeRunner {
           record: {
             type: "run.completed",
             threadId: this.observer.getThreadId(),
+            threadType: this.params.runtime.threadType,
+            chatType: this.params.input.chatType,
             userMessage: compactMemoryHistoryText(this.observer.getUserMessage()),
             summary: historySummary
           }

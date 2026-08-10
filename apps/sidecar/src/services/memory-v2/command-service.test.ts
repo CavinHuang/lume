@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { MemoryCommandService } from "./command-service";
-import { createMemoryV2Store } from "./markdown-store";
+import { createMemoryV2Store, readActivation } from "./markdown-store";
 import { getMemoryV2ScopePaths } from "./paths";
 
 let root: string;
@@ -171,5 +171,120 @@ describe("MemoryCommandService", () => {
     const undoRecord = records.find((record) => record.receipt.summary === "已撤销记忆变更")!;
     expect(undoRecord.before[0]?.status).toBe("active");
     expect(undoRecord.after[0]?.status).toBe("archived");
+  });
+
+  test("Dream replacement preserves activation, pin and the evidence chain", async () => {
+    const service = new MemoryCommandService();
+    const created = await service.remember({
+      workspaceSlug: "demo",
+      content: "默认回答语言是英文",
+      scope: "global",
+      semanticRole: "preference",
+      claim: { subject: "user", predicate: "response_language", object: "English" },
+      evidenceRefs: [{ type: "user_message", id: "old-message" }],
+      actor: "user"
+    });
+    const id = created.memoryIds[0]!;
+    service.update({
+      workspaceSlug: "demo",
+      id,
+      scope: "global",
+      pinned: true,
+      activation: { recall: true, persona: true, suggestion: false, analyst: false },
+      actor: "user"
+    });
+    const current = createMemoryV2Store().listEntries({ scopes: ["global"] })[0]!;
+
+    const replaced = await service.replaceVersion({
+      workspaceSlug: "demo",
+      id,
+      scope: "global",
+      content: "默认回答语言是中文",
+      claim: { subject: "user", predicate: "response_language", object: "Chinese" },
+      evidenceRefs: [{ type: "user_message", id: "correction-message" }],
+      explicitCorrection: true,
+      expectedRevision: current.frontmatter.revision
+    });
+
+    expect(replaced.action).toBe("superseded");
+    const active = createMemoryV2Store().listEntries({ scopes: ["global"] })
+      .find((entry) => entry.frontmatter.id === replaced.memoryIds[0])!;
+    expect(active.frontmatter.pinned).toBe(true);
+    expect(readActivation(active.frontmatter).persona).toBe(true);
+    expect(active.frontmatter.evidence_refs.map((ref) => ref.id)).toEqual(["old-message", "correction-message"]);
+    expect(active.frontmatter.supersedes).toEqual([id]);
+  });
+
+  test("Dream duplicate merge combines metadata and revision-checks both entries", () => {
+    const store = createMemoryV2Store();
+    const service = new MemoryCommandService(store);
+    const kept = store.writeEntry({
+      targetScope: "workspace",
+      kind: "preference",
+      semanticRole: "preference",
+      statement: "默认使用中文回答",
+      confidence: "medium",
+      facets: ["language"],
+      appliesWhen: { workspaceSlug: "demo" }
+    }, { evidenceRefs: [{ type: "user_message", id: "first" }] });
+    const duplicate = store.writeEntry({
+      targetScope: "workspace",
+      kind: "preference",
+      semanticRole: "preference",
+      statement: "回答时默认使用中文",
+      confidence: "high",
+      facets: ["response"],
+      appliesWhen: { workspaceSlug: "demo" }
+    }, {
+      pinned: true,
+      activation: { recall: true, persona: false, suggestion: true, analyst: false },
+      evidenceRefs: [{ type: "user_message", id: "second" }]
+    });
+
+    const receipt = service.mergeDuplicate({
+      workspaceSlug: "demo",
+      keptId: kept.frontmatter.id,
+      duplicateId: duplicate.frontmatter.id,
+      scope: "workspace",
+      expectedKeptRevision: kept.frontmatter.revision,
+      expectedDuplicateRevision: duplicate.frontmatter.revision
+    });
+
+    expect(receipt.action).toBe("merged");
+    const entries = store.listEntries({ workspaceSlug: "demo", includeStatuses: ["active", "superseded"] });
+    const merged = entries.find((entry) => entry.frontmatter.id === kept.frontmatter.id)!;
+    const superseded = entries.find((entry) => entry.frontmatter.id === duplicate.frontmatter.id)!;
+    expect(merged.frontmatter.confidence).toBe("high");
+    expect(merged.frontmatter.facets).toEqual(["language", "response"]);
+    expect(merged.frontmatter.pinned).toBe(true);
+    expect(readActivation(merged.frontmatter).suggestion).toBe(true);
+    expect(merged.frontmatter.evidence_refs.map((ref) => ref.id)).toEqual(["first", "second"]);
+    expect(superseded.frontmatter.superseded_by).toBe(kept.frontmatter.id);
+  });
+
+  test("Dream pending candidates preserve semantic metadata and exact evidence when accepted", () => {
+    const store = createMemoryV2Store();
+    const service = new MemoryCommandService(store);
+    const receipt = service.proposePending({
+      workspaceSlug: "demo",
+      content: "用户倾向在这个工作区使用中文",
+      scope: "workspace",
+      semanticRole: "preference",
+      facets: ["language"],
+      evidenceRefs: [{ type: "user_message", id: "message-1", runId: "run-1", quote: "默认中文" }],
+      reason: "证据不足"
+    });
+    expect(receipt.action).toBe("pending");
+    const pending = store.listPending({ workspaceSlug: "demo" })[0]!;
+    expect(pending.frontmatter.candidate.semantic_role).toBe("preference");
+    expect(pending.frontmatter.candidate.facets).toEqual(["language"]);
+    expect(pending.frontmatter.evidence_refs?.[0]).toMatchObject({ type: "user_message", id: "message-1", runId: "run-1" });
+
+    const accepted = service.resolvePending({ workspaceSlug: "demo", path: pending.path, action: "accept" });
+    const entry = store.listEntries({ workspaceSlug: "demo" })
+      .find((item) => item.frontmatter.id === accepted.result.entryId)!;
+    expect(entry.frontmatter.semantic_role).toBe("preference");
+    expect(entry.frontmatter.facets).toEqual(["language"]);
+    expect(entry.frontmatter.evidence_refs[0]).toMatchObject({ type: "user_message", id: "message-1", runId: "run-1" });
   });
 });

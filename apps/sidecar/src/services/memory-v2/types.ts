@@ -18,6 +18,7 @@ export type MemoryV2EvidenceType =
   | "assistant_message"
   | "tool_result"
   | "external_file"
+  | "workspace_file"
   | "manual"
   | "consolidation";
 
@@ -123,10 +124,12 @@ export interface MemoryV2PendingFrontmatter {
   created: string;
   candidate: {
     kind: MemoryV2Kind;
+    semantic_role?: MemoryV2SemanticRole;
     targetScope: MemoryV2Scope;
     statement: string;
     confidence?: MemoryV2Confidence;
     tags?: string[];
+    facets?: string[];
     entities?: string[];
     appliesWhen?: Record<string, string>;
     claim?: MemoryV2Claim;
@@ -139,6 +142,7 @@ export interface MemoryV2PendingFrontmatter {
     run_id?: string;
     record_ids?: string[];
   };
+  evidence_refs?: MemoryV2EvidenceRef[];
   status: "open" | "resolved" | "archived";
 }
 
@@ -162,6 +166,7 @@ export interface MemoryV2Candidate {
     sourcePaths?: string[];
     quote?: string;
   };
+  evidenceRefs?: MemoryV2EvidenceRef[];
   tags?: string[];
   facets?: string[];
   entities?: string[];

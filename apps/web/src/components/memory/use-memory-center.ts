@@ -3,11 +3,11 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
 import type {
   MemoryActivation,
+  MemoryDreamResult,
   MemoryIngestSourceInput,
   MemoryIngestSourcesJob,
   MemoryIngestSourcesResult,
   MemoryKind,
-  MemoryOrganizeEntriesResult,
   MemoryOrganizeHistoryResult,
   MemoryOrganizeJob,
   MemoryReadToolResult,
@@ -40,7 +40,7 @@ import {
   applyMemoryIngestTargetScope,
   summarizeMemoryIngestSourcesJob,
   summarizeMemoryIngestSourcesResult,
-  summarizeMemoryOrganizeEntriesResult,
+  summarizeMemoryDreamResult,
   summarizeMemoryOrganizeJob,
   summarizeMemoryOrganizeResult,
   type MemoryIngestTargetScopeMode,
@@ -65,7 +65,7 @@ export interface MemoryCenterController {
   workspaceFilePath: string
   entryOrganizeJob: MemoryOrganizeJob | null
   historyOrganizeJob: MemoryOrganizeJob | null
-  entryOrganizeResult: MemoryOrganizeEntriesResult | null
+  entryOrganizeResult: MemoryDreamResult | null
   organizeResult: MemoryOrganizeHistoryResult | null
   ingestJob: MemoryIngestSourcesJob | null
   ingestResult: MemoryIngestSourcesResult | null
@@ -125,7 +125,7 @@ export function useMemoryCenter(
   const [busyAction, setBusyAction] = React.useState<string | null>(null)
   const [entryOrganizeJob, setEntryOrganizeJob] = React.useState<MemoryOrganizeJob | null>(null)
   const [historyOrganizeJob, setHistoryOrganizeJob] = React.useState<MemoryOrganizeJob | null>(null)
-  const [entryOrganizeResult, setEntryOrganizeResult] = React.useState<MemoryOrganizeEntriesResult | null>(null)
+  const [entryOrganizeResult, setEntryOrganizeResult] = React.useState<MemoryDreamResult | null>(null)
   const [organizeResult, setOrganizeResult] = React.useState<MemoryOrganizeHistoryResult | null>(null)
   const [ingestJob, setIngestJob] = React.useState<MemoryIngestSourcesJob | null>(null)
   const [ingestResult, setIngestResult] = React.useState<MemoryIngestSourcesResult | null>(null)
@@ -250,10 +250,10 @@ export function useMemoryCenter(
       setJob: setEntryOrganizeJob,
       refresh,
       onCompleted: (job) => {
-        if (job.kind !== 'entries' || !job.result) return
-        const result = job.result as MemoryOrganizeEntriesResult
+        if (job.kind !== 'consolidation' || !job.result) return
+        const result = job.result as MemoryDreamResult
         setEntryOrganizeResult(result)
-        toast.success(summarizeMemoryOrganizeEntriesResult(result))
+        toast.success(summarizeMemoryDreamResult(result))
       },
     })
   }, [entryOrganizeJob?.jobId, entryOrganizeJob?.status, refresh])
@@ -395,7 +395,15 @@ export function useMemoryCenter(
 
   const retryJob = (jobId: string) => runAction(`retry-job-${jobId}`, async () => {
     if (!workspaceSlug) return
-    setIngestJob(await retryMemoryJob({ workspaceSlug, jobId }))
+    const sourceKind = snapshot?.jobs.find((job) => job.jobId === jobId)?.kind
+    const retried = await retryMemoryJob({ workspaceSlug, jobId })
+    if (sourceKind === 'consolidation' && 'kind' in retried && retried.kind === 'consolidation') {
+      setEntryOrganizeResult(null)
+      setEntryOrganizeJob(retried)
+      toast.success('已重新开始记忆整理')
+      return
+    }
+    setIngestJob(retried as MemoryIngestSourcesJob)
     toast.success('已重新开始资料整理')
   })
 

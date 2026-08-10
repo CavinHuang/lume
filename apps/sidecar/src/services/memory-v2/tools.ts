@@ -74,6 +74,14 @@ export async function readMemoryTool(input: MemoryReadToolInput): Promise<Memory
   if (!input.path) {
     throw new Error("memory.read requires id or path");
   }
+  const fileRef = memoryFileRefForPath({
+    scope: "workspace",
+    workspaceSlug: input.workspaceSlug,
+    path: input.path
+  }) ?? memoryFileRefForPath({ scope: "global", path: input.path });
+  if (!fileRef) {
+    throw new Error("memory.read 只能读取当前工作区或全局记忆目录中的文件");
+  }
   if (!existsSync(input.path)) {
     throw new Error("记忆文件不存在");
   }
@@ -84,18 +92,13 @@ export async function readMemoryTool(input: MemoryReadToolInput): Promise<Memory
     path: input.path,
     text,
     citation: input.from ? `${input.path}#L${input.from}` : input.path,
-    ...fileRefFieldForAnyScope(input.workspaceSlug, input.path)
+    fileRef
   };
 }
 
 function fileRefField(scope: "workspace" | "global", workspaceSlug: string, path: string) {
   const fileRef = memoryFileRefForPath({ scope, workspaceSlug, path });
   return fileRef ? { fileRef } : {};
-}
-
-function fileRefFieldForAnyScope(workspaceSlug: string, path: string) {
-  const workspace = fileRefField("workspace", workspaceSlug, path);
-  return workspace.fileRef ? workspace : fileRefField("global", workspaceSlug, path);
 }
 
 export async function rememberMemoryTool(input: MemoryRememberToolInput): Promise<MemoryToolWriteResult> {

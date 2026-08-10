@@ -66,7 +66,7 @@ export const cancelMemoryJob = (input: MemoryCancelJobInput) =>
   sidecarCall<{ status: MemoryJobStatus }>(MEMORY_IPC_CHANNELS.CANCEL_JOB, input)
 
 export const retryMemoryJob = (input: MemoryCancelJobInput) =>
-  sidecarCall<MemoryStartIngestSourcesResult>(MEMORY_IPC_CHANNELS.RETRY_JOB, input)
+  sidecarCall<MemoryStartIngestSourcesResult | MemoryStartOrganizeJobResult>(MEMORY_IPC_CHANNELS.RETRY_JOB, input)
 
 export const listMemorySourceFiles = (input: MemoryListSourceFilesInput) =>
   sidecarCall<MemorySourceFilesPage>(MEMORY_IPC_CHANNELS.LIST_SOURCE_FILES, input)

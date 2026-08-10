@@ -40,13 +40,15 @@ describe("derived memory views", () => {
       appliesWhen: { workspaceSlug: "demo" }
     });
 
-    await rebuildDerivedMemoryViews({ scope: "workspace", workspaceSlug: "demo" });
+    const firstRebuild = await rebuildDerivedMemoryViews({ scope: "workspace", workspaceSlug: "demo" });
     const paths = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: "demo" });
     const brief = readFileSync(paths.workspaceBrief, "utf-8");
     expect(brief).toContain("Memory 使用 Markdown");
     expect(brief).not.toContain("下一步实现管理页面");
     expect(existsSync(paths.capsulesDir)).toBe(true);
     expect(readFileSync(paths.memoryMd, "utf-8")).toContain("Derived index");
+    expect(firstRebuild).toContain("workspace:MEMORY.md");
+    expect(await rebuildDerivedMemoryViews({ scope: "workspace", workspaceSlug: "demo" })).toEqual([]);
   });
 
   test("does not project entries with recall disabled into derived indexes", async () => {

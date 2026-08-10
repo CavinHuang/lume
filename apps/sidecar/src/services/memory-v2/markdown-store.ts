@@ -48,6 +48,7 @@ export interface MemoryV2Store {
     id: string;
     status: MemoryV2Status;
     supersededBy?: string | null;
+    evidenceRefs?: MemoryV2EvidenceRef[];
     expectedRevision?: number;
   }): MemoryV2Entry;
   updateEntryRelations(input: {
@@ -68,6 +69,8 @@ export interface MemoryV2Store {
     facets?: string[];
     pinned?: boolean;
     validTo?: string | null;
+    evidenceRefs?: MemoryV2EvidenceRef[];
+    lastConfirmedAt?: string;
     expectedRevision?: number;
   }): MemoryV2Entry;
   moveEntryScope(input: {
@@ -209,6 +212,7 @@ export function updateEntryStatus(input: {
   id: string;
   status: MemoryV2Status;
   supersededBy?: string | null;
+  evidenceRefs?: MemoryV2EvidenceRef[];
   expectedRevision?: number;
 }): MemoryV2Entry {
   const entry = findEntryById(input);
@@ -224,6 +228,9 @@ export function updateEntryStatus(input: {
       superseded_by: input.supersededBy === undefined
         ? entry.frontmatter.superseded_by
         : input.supersededBy,
+      evidence_refs: input.evidenceRefs
+        ? uniqueEvidenceRefs([...entry.frontmatter.evidence_refs, ...input.evidenceRefs])
+        : entry.frontmatter.evidence_refs,
       updated: new Date().toISOString(),
       revision: entry.frontmatter.revision + 1
     }
@@ -268,6 +275,8 @@ export function updateEntry(input: {
   facets?: string[];
   pinned?: boolean;
   validTo?: string | null;
+  evidenceRefs?: MemoryV2EvidenceRef[];
+  lastConfirmedAt?: string;
   expectedRevision?: number;
 }): MemoryV2Entry {
   const entry = findEntryById(input);
@@ -298,14 +307,27 @@ export function updateEntry(input: {
       pinned: input.pinned ?? entry.frontmatter.pinned,
       valid_to: input.validTo === undefined ? entry.frontmatter.valid_to : input.validTo,
       activation: nextActivation,
+      evidence_refs: input.evidenceRefs
+        ? uniqueEvidenceRefs([...entry.frontmatter.evidence_refs, ...input.evidenceRefs])
+        : entry.frontmatter.evidence_refs,
       ...(nextClaim ? { claim: nextClaim } : {}),
       updated: new Date().toISOString(),
-      last_confirmed_at: new Date().toISOString(),
+      last_confirmed_at: input.lastConfirmedAt ?? new Date().toISOString(),
       revision: entry.frontmatter.revision + 1
     }
   };
   writeMarkdownDocument(next.path, next.frontmatter, next.statement);
   return next;
+}
+
+function uniqueEvidenceRefs(refs: MemoryV2EvidenceRef[]): MemoryV2EvidenceRef[] {
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    const key = JSON.stringify([ref.type, ref.id, ref.runId, ref.threadId, ref.path, ref.quote]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function moveEntryScope(input: {
@@ -382,10 +404,12 @@ export function writePending(input: {
     created: now,
     candidate: {
       kind: input.candidate.kind ?? kindFromSemanticRole(input.candidate.semanticRole),
+      semantic_role: input.candidate.semanticRole,
       targetScope: input.candidate.targetScope,
       statement: input.candidate.statement.trim(),
       confidence: input.candidate.confidence,
       tags: cleanList(input.candidate.tags),
+      facets: cleanList(input.candidate.facets),
       entities: cleanList(input.candidate.entities),
       appliesWhen: input.candidate.appliesWhen,
       ...(input.candidate.claim ? { claim: input.candidate.claim } : {})
@@ -398,6 +422,7 @@ export function writePending(input: {
           record_ids: input.candidate.evidence.recordIds
         }
       : undefined,
+    evidence_refs: input.candidate.evidenceRefs,
     status: "open"
   };
   const pendingDir = pendingTypeDir(paths, input.type);
@@ -500,6 +525,7 @@ export function resolvePending(input: {
       run_id: pending.frontmatter.evidence?.run_id,
       record_ids: pending.frontmatter.evidence?.record_ids
     },
+    evidenceRefs: pending.frontmatter.evidence_refs,
     ...(supersededEntry ? { activation: readActivation(supersededEntry.frontmatter) } : {})
   });
   for (const existingId of existingIds) {
@@ -746,10 +772,12 @@ function candidateFromPending(
   }
   return {
     kind: override?.kind ?? item.frontmatter.candidate.kind,
+    semanticRole: item.frontmatter.candidate.semantic_role,
     targetScope,
     statement,
     confidence: override?.confidence ?? item.frontmatter.candidate.confidence ?? "medium",
     tags: override?.tags === undefined ? item.frontmatter.candidate.tags : cleanList(override.tags),
+    facets: item.frontmatter.candidate.facets,
     entities: item.frontmatter.candidate.entities,
     appliesWhen: targetScope === "workspace" && !appliesWhen.workspaceSlug
       ? { ...appliesWhen, workspaceSlug }
@@ -760,7 +788,8 @@ function candidateFromPending(
           runId: item.frontmatter.evidence.run_id,
           recordIds: item.frontmatter.evidence.record_ids
         }
-      : undefined
+      : undefined,
+    evidenceRefs: item.frontmatter.evidence_refs
   };
 }
 
@@ -813,12 +842,14 @@ function normalizePendingFrontmatter(raw: MemoryV2PendingFrontmatter, path: stri
     candidate: {
       ...raw.candidate,
       tags: cleanList(raw.candidate.tags),
+      facets: cleanList(raw.candidate.facets),
       entities: cleanList(raw.candidate.entities),
       appliesWhen: raw.candidate.appliesWhen ?? {},
       claim: normalizeMemoryV2Claim(raw.candidate.claim)
     },
     existing: raw.existing?.ids?.length ? { ids: cleanList(raw.existing.ids) } : undefined,
     evidence: raw.evidence ?? undefined,
+    evidence_refs: Array.isArray(raw.evidence_refs) ? raw.evidence_refs : undefined,
     status: raw.status ?? "open"
   };
 }
@@ -857,6 +888,7 @@ function memorySourceFromCandidate(candidate: MemoryV2Candidate): MemoryV2Source
 }
 
 function evidenceRefsFromCandidate(candidate: MemoryV2Candidate): MemoryV2EvidenceRef[] {
+  if (candidate.evidenceRefs?.length) return uniqueEvidenceRefs(candidate.evidenceRefs);
   const refs: MemoryV2EvidenceRef[] = [];
   for (const id of candidate.evidence?.recordIds ?? []) {
     refs.push({ type: "user_message", id, runId: candidate.evidence?.runId });

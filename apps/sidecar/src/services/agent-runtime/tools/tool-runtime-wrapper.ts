@@ -1,11 +1,12 @@
-import { access, readFile, stat } from "node:fs/promises";
+import { access, readFile, realpath, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
 import { createDiagnosticLogSummary, createLogger } from "../../infra/logger";
 import type { FileAccessLedger } from "./file-access-ledger";
 import type { LumeToolDescriptor } from "./tool-types";
 import { acquireWorkspaceWriterLease } from "./workspace-writer-lease";
+import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
 
 export interface ToolRuntimeWrapInput {
   descriptor: LumeToolDescriptor;
@@ -288,12 +289,25 @@ async function enforceFileAccessPolicy(
   rawInput: unknown,
   toolUseId: string | undefined
 ): Promise<ToolResult | null> {
+  const dream = getAgentThreadMeta(input.threadId)?.memoryProfile?.kind === "dream";
+  const name = input.descriptor.canonicalName;
   const filePath = readInputPath(rawInput);
+  if (dream && (name === "grep" || name === "find" || name === "glob") && !filePath) {
+    return errorResult(toolUseId, "Dream 搜索必须指定当前工作区内的明确路径。");
+  }
   if (!filePath) return null;
   const canonical = resolve(input.cwd, filePath);
+  if (dream) {
+    const workspaceRoot = await realpath(resolve(input.cwd)).catch(() => resolve(input.cwd));
+    const actual = await realpath(canonical).catch(() => canonical);
+    const rel = relative(workspaceRoot, actual);
+    const broadSearch = (name === "grep" || name === "find" || name === "glob") && filePath === ".";
+    if (rel.startsWith("..") || isSensitiveDreamPath(actual) || broadSearch) {
+      return errorResult(toolUseId, "Dream 只允许读取工作区内的非敏感文件；请缩小到明确的项目路径。");
+    }
+  }
   if (!(await exists(canonical))) return null;
 
-  const name = input.descriptor.canonicalName;
   if (name !== "write" && name !== "edit" && name !== "notebookedit") return null;
 
   const check = await input.fileLedger.assertCanOverwrite({
@@ -303,6 +317,10 @@ async function enforceFileAccessPolicy(
   });
   if (check.ok) return null;
   return errorResult(toolUseId, check.message);
+}
+
+function isSensitiveDreamPath(path: string): boolean {
+  return /(^|[\\/])(?:\.env(?:\.|$)|credentials?(?:\.|$)|secrets?(?:\.|$)|id_(?:rsa|dsa|ecdsa|ed25519)$)|\.(?:pem|key|p12|pfx)$/i.test(path);
 }
 
 async function recordFileRead(

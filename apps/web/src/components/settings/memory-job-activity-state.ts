@@ -5,7 +5,7 @@ export const MEMORY_JOB_KIND_LABELS: Record<MemoryJobKind, string> = {
   history: '历史整理',
   entries: '记忆整理',
   external_ingest: '外部资料',
-  consolidation: 'AutoDream 整理',
+  consolidation: '记忆整理',
 }
 
 export const MEMORY_JOB_STATUS_LABELS: Record<MemoryJobStatus, string> = {
@@ -39,7 +39,8 @@ export function summarizeMemorySettingsJob(job: MemorySettingsJobSummary): strin
       return `扫描 ${job.result.data.scannedItems} 项，变更 ${job.result.data.changedItems} 项`
     case 'consolidation': {
       const result = job.result.data
-      return `扫描 ${result.scannedEntries} 条，更新 ${result.updated} 条，合并 ${result.merged} 条，标记过期 ${result.stale} 条`
+      const changed = result.actions.created + result.actions.versioned + result.actions.updated + result.actions.merged + result.actions.stale
+      return `检查 ${result.sessionsReviewed} 个会话、${result.evidenceItemsReviewed} 条证据，整理 ${changed} 条，待处理 ${result.actions.pending} 条`
     }
   }
 }

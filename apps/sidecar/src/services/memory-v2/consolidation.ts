@@ -1,11 +1,12 @@
-import { closeSync, existsSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { SDKMessage } from "@lume/agent-sdk";
-import { AGENT_IPC_CHANNELS, type LumeRuntimeEvent, type MemoryOrganizeProgress } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, type LumeRuntimeEvent, type MemoryDreamResult, type MemoryOrganizeProgress } from "@lume/shared";
 import { appendAgentThreadSDKMessages } from "../agent/agent-thread-manager";
 import { emitAgentNotification } from "../agent/agent-notification-service";
-import { organizeMemoryEntries } from "./entry-organizer";
+import { runDreamOrganizer } from "./dream-organizer";
+import { buildDreamEvidenceWindow, type DreamEvidenceCursor } from "./dream-evidence";
 import { rebuildDerivedMemoryViews } from "./derived-views";
 import { memoryJobService, type MemoryJobRecord } from "./job-service";
 import { getMemoryV2ScopePaths } from "./paths";
@@ -15,17 +16,12 @@ const AUTO_DREAM_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 const AUTO_DREAM_MIN_NEW_SESSIONS = 5;
 
 interface ConsolidationState {
-  lastCompletedAt?: number;
-  completedRunCount: number;
+  lastSuccessfulAt?: number;
+  evidenceCursor?: number | DreamEvidenceCursor;
   lastJobId?: string;
-}
-
-export interface ConsolidationResult {
-  scannedEntries: number;
-  updated: number;
-  merged: number;
-  stale: number;
-  rebuilt: string[];
+  /** Legacy fields are read conservatively and replaced after the next success. */
+  lastCompletedAt?: number;
+  completedRunCount?: number;
 }
 
 interface ConsolidationNotificationContext {
@@ -37,7 +33,7 @@ interface ConsolidationNotificationContext {
 export function maybeEnqueueAutoDream(
   workspaceSlug: string,
   context?: ConsolidationNotificationContext
-): MemoryJobRecord<ConsolidationResult> | undefined {
+): MemoryJobRecord<MemoryDreamResult> | undefined {
   if (!getMemoryRuntimeConfig().autoDream) return undefined;
   return enqueueConsolidation(workspaceSlug, false, context);
 }
@@ -46,21 +42,29 @@ export function enqueueConsolidation(
   workspaceSlug: string,
   manual = true,
   context?: ConsolidationNotificationContext,
-  options?: { force?: boolean }
-): MemoryJobRecord<ConsolidationResult> | undefined {
+  options?: { force?: boolean; evidenceWindow?: ReturnType<typeof buildDreamEvidenceWindow> }
+): MemoryJobRecord<MemoryDreamResult> | undefined {
   const paths = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug });
   const globalPaths = getMemoryV2ScopePaths({ scope: "global" });
   const state = readState(paths.jobsDir);
-  const completedRunCount = countRunEvidence(paths.runsDir);
-  const elapsed = Date.now() - (state.lastCompletedAt ?? 0);
-  const newSessions = completedRunCount - state.completedRunCount;
-  if (!manual && !options?.force && (elapsed < AUTO_DREAM_INTERVAL_MS || newSessions < AUTO_DREAM_MIN_NEW_SESSIONS)) {
+  // Legacy state tracked only a file count, so it cannot prove which conversations were reviewed.
+  // Re-read from the beginning once, then persist the precise evidence cursor after success.
+  const evidenceCursor = state.evidenceCursor ?? 0;
+  const upperBound = Date.now();
+  const evidenceWindow = options?.evidenceWindow ?? buildDreamEvidenceWindow({
+      workspaceSlug,
+      cursor: evidenceCursor,
+      upperBound,
+      triggeringThreadId: context?.threadId
+    });
+  const elapsed = Date.now() - (state.lastSuccessfulAt ?? state.lastCompletedAt ?? 0);
+  if (!manual && !options?.force && (elapsed < AUTO_DREAM_INTERVAL_MS || evidenceWindow.sessionsAvailable < AUTO_DREAM_MIN_NEW_SESSIONS)) {
     return undefined;
   }
   const idempotencyKey = manual
     ? `consolidation:manual:${randomUUID()}`
-    : `consolidation:auto:${completedRunCount}`;
-  return memoryJobService.start<ConsolidationResult, MemoryOrganizeProgress>({
+    : `consolidation:auto:${evidenceWindow.from}:${evidenceWindow.fromRunId ?? ""}:${evidenceWindow.to}:${evidenceWindow.toRunId ?? ""}`;
+  return memoryJobService.start<MemoryDreamResult, MemoryOrganizeProgress>({
     kind: "consolidation",
     workspaceSlug,
     idempotencyKey,
@@ -69,13 +73,16 @@ export function enqueueConsolidation(
       workspaceSlug,
       manual,
       trigger: context ? "run" : "settings",
+      evidenceWindow,
       ...(context ? { context } : {})
     },
-    run: async ({ signal, report }) => withScopeLock(paths.jobsDir, () => withScopeLock(globalPaths.jobsDir, async () => {
+    run: async ({ jobId, signal, report }) => withScopeLock(paths.jobsDir, () => withScopeLock(globalPaths.jobsDir, async () => {
       report({ label: "读取索引、主题摘要和近期证据", scannedItems: 0, processedItems: 0 });
       if (signal.aborted) throw new Error("记忆整理已取消");
-      const organized = await organizeMemoryEntries({
+      const organized = await runDreamOrganizer({
         workspaceSlug,
+        jobId,
+        evidenceWindow,
         signal,
         ...(context ? {
           ...(context.modelRef ? { modelRef: context.modelRef } : {}),
@@ -87,43 +94,52 @@ export function enqueueConsolidation(
       report({
         label: "重建主题摘要、工作区简报与关于我",
         scannedItems: organized.scannedEntries,
-        processedItems: organized.keptEntries,
+        processedItems: organized.items.length,
+        changedItems: changedItemCount(organized),
         changedFiles: ["capsules", "workspace-brief.md", "persona.md", "MEMORY.md"]
       });
-      await rebuildDerivedMemoryViews({ scope: "workspace", workspaceSlug });
-      await rebuildDerivedMemoryViews({ scope: "global" });
-      return {
-        scannedEntries: organized.scannedEntries,
-        updated: organized.updated ?? 0,
-        merged: organized.supersededDuplicates,
-        stale: organized.stale ?? 0,
-        rebuilt: ["capsules", "workspace-brief.md", "persona.md", "MEMORY.md"]
-      };
+      const rebuilt = [
+        ...await rebuildDerivedMemoryViews({ scope: "workspace", workspaceSlug }),
+        ...await rebuildDerivedMemoryViews({ scope: "global" })
+      ];
+      return { ...organized, rebuilt };
     })),
     onProgress: (job) => {
       if (context && job.progress) notifyProgress(context, job.jobId, job.progress);
     },
     onCompleted: (job) => {
       writeState(paths.jobsDir, {
-        lastCompletedAt: job.completedAt ?? Date.now(),
-        completedRunCount,
+        lastSuccessfulAt: job.completedAt ?? Date.now(),
+        evidenceCursor: evidenceWindow.runIds.length > 0
+          ? { createdAt: evidenceWindow.to, runId: evidenceWindow.toRunId ?? "" }
+          : evidenceCursor,
         lastJobId: job.jobId
       });
-      if (context && job.result) notifyCompleted(context, workspaceSlug, job.jobId, job.result);
+      if (context && job.result && changedItemCount(job.result) > 0) notifyCompleted(context, workspaceSlug, job.jobId, job.result);
+      if (evidenceWindow.hasMore) enqueueConsolidation(workspaceSlug, false, context, { force: true });
     }
   });
 }
 
-/** Re-queue an automatic consolidation interrupted by a process restart. */
+/** Re-queue a consolidation interrupted by a process restart with its captured evidence bound. */
 export function recoverInterruptedConsolidation(workspaceSlug: string): boolean {
   const interrupted = memoryJobService.list(workspaceSlug).find((job) =>
-    job.kind === "consolidation" && job.status === "interrupted" && !job.manual
+    job.kind === "consolidation" && job.status === "interrupted"
   );
   if (!interrupted) return false;
   const payload = interrupted.payload && typeof interrupted.payload === "object"
-    ? interrupted.payload as { context?: ConsolidationNotificationContext }
+    ? interrupted.payload as {
+        manual?: boolean;
+        context?: ConsolidationNotificationContext;
+        evidenceWindow?: ReturnType<typeof buildDreamEvidenceWindow>;
+      }
     : undefined;
-  return Boolean(enqueueConsolidation(workspaceSlug, false, payload?.context, { force: true }));
+  return Boolean(enqueueConsolidation(
+    workspaceSlug,
+    payload?.manual ?? interrupted.manual,
+    payload?.context,
+    { force: true, evidenceWindow: payload?.evidenceWindow }
+  ));
 }
 
 function notifyProgress(
@@ -151,10 +167,10 @@ function notifyCompleted(
   context: ConsolidationNotificationContext,
   workspaceSlug: string,
   jobId: string,
-  result: ConsolidationResult
+  result: MemoryDreamResult
 ): void {
-  const changedItems = result.updated + result.merged + result.stale;
-  const summary = `整理了 ${changedItems} 条记忆 · 更新 ${result.updated} · 合并 ${result.merged} · 标记过期 ${result.stale}`;
+  const changedItems = changedItemCount(result);
+  const summary = `整理了 ${changedItems} 条记忆 · 新增 ${result.actions.created} · 更新 ${result.actions.versioned + result.actions.updated} · 合并 ${result.actions.merged} · 标记过期 ${result.actions.stale} · 待处理 ${result.actions.pending}`;
   const createdAt = new Date().toISOString();
   const message: SDKMessage = {
     type: "system",
@@ -185,9 +201,13 @@ function notifyCompleted(
   emitAgentNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: context.threadId, event });
 }
 
-function countRunEvidence(runsDir?: string): number {
-  if (!runsDir || !existsSync(runsDir)) return 0;
-  return readdirSync(runsDir).filter((name) => name.endsWith(".jsonl")).length;
+function changedItemCount(result: MemoryDreamResult): number {
+  return result.actions.created
+    + result.actions.versioned
+    + result.actions.updated
+    + result.actions.merged
+    + result.actions.stale
+    + result.actions.pending;
 }
 
 async function withScopeLock<TResult>(jobsDir: string, run: () => Promise<TResult>): Promise<TResult> {
@@ -245,7 +265,7 @@ function readState(jobsDir: string): ConsolidationState {
   try {
     return JSON.parse(readFileSync(statePath(jobsDir), "utf-8")) as ConsolidationState;
   } catch {
-    return { completedRunCount: 0 };
+    return {};
   }
 }
 

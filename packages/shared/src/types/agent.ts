@@ -184,6 +184,11 @@ export interface AgentThreadMeta {
     kind: 'ask-wiki'
     scope: WikiSearchScope
   }
+  /** Sidecar-issued capability for a private memory maintenance thread. */
+  memoryProfile?: {
+    kind: 'dream'
+    jobId: string
+  }
   /** 稳定文件上下文 ID：主/子 Agent 共享，用户分叉隔离 */
   fileContextId?: string
   /** 外部来源，用于按 IM 渠道等入口分组展示 */

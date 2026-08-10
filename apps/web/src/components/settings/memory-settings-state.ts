@@ -13,6 +13,7 @@ import type {
   MemoryKind,
   MemoryOrganizeJob,
   MemoryOrganizeEntriesResult,
+  MemoryDreamResult,
   MemoryPendingCounts,
   MemoryOrganizeHistoryResult,
   MemoryReadToolResult,
@@ -380,6 +381,16 @@ export function summarizeMemoryOrganizeEntriesResult(result: MemoryOrganizeEntri
   ].join(' · ')
 }
 
+export function summarizeMemoryDreamResult(result: MemoryDreamResult): string {
+  const changed = result.actions.created + result.actions.versioned + result.actions.updated + result.actions.merged + result.actions.stale
+  return [
+    `检查 ${result.sessionsReviewed} 个会话`,
+    `核对 ${result.evidenceItemsReviewed} 条证据`,
+    `整理 ${changed} 条`,
+    ...(result.actions.pending ? [`待处理 ${result.actions.pending} 条`] : []),
+  ].join(' · ')
+}
+
 export function summarizeMemoryIngestSourcesResult(result: MemoryIngestSourcesResult): string {
   const written = result.actions.new + result.actions.related
   const pending = result.actions.conflict + result.actions.suspected_stale + result.actions.low_confidence
@@ -433,9 +444,9 @@ export function summarizeMemoryOrganizeJob(job: MemoryOrganizeJob): string {
   if (job.status === 'interrupted') return `整理被中断：${job.error ?? '可重试'}`
   if (job.status === 'queued') return '等待后台整理'
   if (!job.result) return '整理完成'
-  return job.kind === 'entries'
-    ? summarizeMemoryOrganizeEntriesResult(job.result as MemoryOrganizeEntriesResult)
-    : summarizeMemoryOrganizeResult(job.result as MemoryOrganizeHistoryResult)
+  if (job.kind === 'entries') return summarizeMemoryOrganizeEntriesResult(job.result as MemoryOrganizeEntriesResult)
+  if (job.kind === 'consolidation') return summarizeMemoryDreamResult(job.result as MemoryDreamResult)
+  return summarizeMemoryOrganizeResult(job.result as MemoryOrganizeHistoryResult)
 }
 
 export function summarizeMemoryExtractionStatus(

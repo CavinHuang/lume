@@ -8,7 +8,7 @@ import {
 
 describe('memory job activity presentation', () => {
   test('labels background jobs and statuses in Chinese', () => {
-    expect(MEMORY_JOB_KIND_LABELS.consolidation).toBe('AutoDream 整理')
+    expect(MEMORY_JOB_KIND_LABELS.consolidation).toBe('记忆整理')
     expect(MEMORY_JOB_STATUS_LABELS.completed).toBe('已完成')
   })
 
@@ -22,16 +22,26 @@ describe('memory job activity presentation', () => {
       result: {
         kind: 'consolidation',
         data: {
+          sessionsReviewed: 5,
+          evidenceItemsReviewed: 18,
           scannedEntries: 10,
-          updated: 2,
-          merged: 1,
-          stale: 3,
+          actions: {
+            created: 0,
+            versioned: 1,
+            updated: 1,
+            merged: 1,
+            stale: 3,
+            pending: 0,
+            ignored: 0,
+          },
+          items: [],
           rebuilt: ['workspace-brief.md'],
+          warnings: [],
         },
       },
     }
 
-    expect(summarizeMemorySettingsJob(job)).toBe('扫描 10 条，更新 2 条，合并 1 条，标记过期 3 条')
+    expect(summarizeMemorySettingsJob(job)).toBe('检查 5 个会话、18 条证据，整理 6 条，待处理 0 条')
   })
 
   test('surfaces failed job errors instead of hiding the result', () => {

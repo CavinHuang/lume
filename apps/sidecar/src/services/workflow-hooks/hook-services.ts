@@ -149,7 +149,9 @@ export function createPersonaWorkflowHookService(input: {
 } = {}): LumeWorkflowPersonaService {
   const ensure = input.ensure ?? ensurePersona;
   return {
-    ensurePersona: async (ctx) => ensure(ctx)
+    ensurePersona: async (ctx) => {
+      await ensure(ctx);
+    }
   };
 }
 

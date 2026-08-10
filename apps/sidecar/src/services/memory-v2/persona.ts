@@ -31,9 +31,9 @@ export function writePersona(
   scope: MemoryV2Scope,
   workspaceSlug: string | undefined,
   markdown: string
-): void {
+): boolean {
   const path = getPersonaPath(scope, workspaceSlug);
-  writePersonaAtomic(path, markdown);
+  return writePersonaAtomic(path, markdown);
 }
 
 export function deletePersona(scope: MemoryV2Scope, workspaceSlug?: string): void {
@@ -218,7 +218,7 @@ export async function ensurePersona(input: {
   scope?: MemoryV2Scope;
   workspaceSlug?: string;
   providerFactory?: PersonaProviderFactory;
-}): Promise<void> {
+}): Promise<boolean> {
   try {
     const scope: MemoryV2Scope = "global";
     const workspaceSlug = undefined;
@@ -239,10 +239,11 @@ export async function ensurePersona(input: {
       // LLM 不可用或失败 → 规则兜底
       markdown = buildPersonaFromRules(entries);
     }
-    writePersona(scope, workspaceSlug, markdown);
+    return writePersona(scope, workspaceSlug, markdown);
   } catch (error) {
     // fail-open：persona 编排失败不得阻塞调用方
     console.warn("[ensurePersona] persona 编排失败，已忽略:", error);
+    return false;
   }
 }
 
@@ -362,13 +363,15 @@ function parseListBody(body: string): string[] {
   return out;
 }
 
-function writePersonaAtomic(path: string, content: string): void {
+function writePersonaAtomic(path: string, content: string): boolean {
   mkdirSync(dirname(path), { recursive: true });
+  if (existsSync(path) && readFileSync(path, "utf-8") === content) return false;
   const hash = createHash("sha1")
-    .update(`${path}:${content}:${Date.now()}`)
+    .update(`${path}:${content}`)
     .digest("hex")
     .slice(0, 8);
   const tempPath = `${path}.tmp.${hash}`;
   writeFileSync(tempPath, content, "utf-8");
   renameSync(tempPath, path);
+  return true;
 }

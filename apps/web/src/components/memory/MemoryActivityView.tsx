@@ -49,6 +49,8 @@ export function MemoryActivityView() {
             busyAction={busyAction}
             onRetry={(jobId) => void actions.retryJob(jobId)}
             onCancel={(jobId) => void actions.cancelJob(jobId)}
+            onOpenMemory={actions.openActivityMemory}
+            onUndo={(mutationId) => void actions.undoActivityMutation(mutationId)}
           />
         </div>
       </section>

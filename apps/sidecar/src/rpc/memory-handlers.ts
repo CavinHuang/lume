@@ -26,13 +26,12 @@ import { getLocalOnnxMemoryEmbeddingStatus, retryLocalOnnxMemoryEmbedding } from
 import { openMemoryV2Source } from "../services/memory-v2/source-open";
 import { listMemorySourceFiles } from "../services/memory-v2/source-files";
 import { organizeMemoryHistory } from "../services/memory-v2/history-organizer";
-import { organizeMemoryEntries } from "../services/memory-v2/entry-organizer";
 import { ingestExternalMemorySources } from "../services/memory-v2/ingestion";
 import { createMemoryV2Store } from "../services/memory-v2/markdown-store";
 import { MemoryCommandService } from "../services/memory-v2/command-service";
 import { claimFromEntry } from "../services/memory-v2/claim";
 import { memoryJobService } from "../services/memory-v2/job-service";
-import { maybeEnqueueAutoDream } from "../services/memory-v2/consolidation";
+import { enqueueConsolidation, maybeEnqueueAutoDream } from "../services/memory-v2/consolidation";
 import { recoverMemoryJobsForWorkspace } from "../services/memory-v2/job-recovery";
 import {
   getMemoryRuntimeConfig,
@@ -154,10 +153,27 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
     [MEMORY_IPC_CHANNELS.RETRY_JOB]: async (params) => {
       const input = validateInput(memoryCancelJobInputSchema, params, MEMORY_IPC_CHANNELS.RETRY_JOB);
       const job = memoryJobService.get(input.workspaceSlug, input.jobId);
-      if (!job || job.kind !== "external_ingest" || !job.payload) {
+      if (!job) {
         throw new Error("该记忆任务不可重试");
       }
-      return startMemoryIngestJob(job.payload as MemoryIngestSourcesInput);
+      if (job.kind === "external_ingest" && job.payload) {
+        return startMemoryIngestJob(job.payload as MemoryIngestSourcesInput);
+      }
+      if (job.kind === "consolidation") {
+        const payload = job.payload && typeof job.payload === "object"
+          ? job.payload as {
+              manual?: boolean;
+              context?: { threadId: string; runId: string; modelRef?: string };
+              evidenceWindow?: import("../services/memory-v2/dream-evidence").DreamEvidenceWindow;
+            }
+          : undefined;
+        const retried = enqueueConsolidation(input.workspaceSlug, payload?.manual ?? job.manual, payload?.context, {
+          force: true,
+          evidenceWindow: payload?.evidenceWindow
+        });
+        if (retried) return retried;
+      }
+      throw new Error("该记忆任务不可重试");
     },
     [MEMORY_IPC_CHANNELS.OPEN_SOURCE]: async (params) => {
       return openMemoryV2Source(
@@ -311,13 +327,15 @@ function startMemoryOrganizeHistoryJob(input: MemoryOrganizeHistoryInput): Memor
 }
 
 function startMemoryOrganizeEntriesJob(input: MemoryOrganizeEntriesInput): MemoryStartOrganizeJobResult {
-  return startMemoryOrganizeJob("entries", input.workspaceSlug, async (report, signal) => {
-    return organizeMemoryEntries({
-      ...input,
-      signal,
-      onProgress: report
-    });
-  });
+  const job = enqueueConsolidation(input.workspaceSlug, true);
+  if (!job) throw new Error("无法启动记忆整理任务");
+  return {
+    jobId: job.jobId,
+    kind: "consolidation",
+    workspaceSlug: input.workspaceSlug,
+    status: "running",
+    startedAt: job.startedAt ?? job.createdAt
+  };
 }
 
 function startMemoryOrganizeJob(

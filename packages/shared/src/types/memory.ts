@@ -105,6 +105,7 @@ export interface MemoryEvidenceRef {
     | "assistant_message"
     | "tool_result"
     | "external_file"
+    | "workspace_file"
     | "manual"
     | "consolidation";
   id?: string;
@@ -371,6 +372,36 @@ export interface MemoryOrganizeEntriesResult {
   items: MemoryOrganizeEntriesItem[];
 }
 
+export type MemoryDreamAction =
+  | "created"
+  | "versioned"
+  | "updated"
+  | "merged"
+  | "stale"
+  | "pending"
+  | "ignored";
+
+export interface MemoryDreamResultItem {
+  action: MemoryDreamAction;
+  memoryIds: string[];
+  mutationId?: string;
+  before?: MemoryMutationEntrySnapshot;
+  after?: MemoryMutationEntrySnapshot;
+  reason: string;
+  evidenceRefs: MemoryEvidenceRef[];
+  undoable: boolean;
+}
+
+export interface MemoryDreamResult {
+  sessionsReviewed: number;
+  evidenceItemsReviewed: number;
+  scannedEntries: number;
+  actions: Record<MemoryDreamAction, number>;
+  items: MemoryDreamResultItem[];
+  rebuilt: string[];
+  warnings: string[];
+}
+
 export type MemoryJobKind =
   | "turn_extract"
   | "history"
@@ -386,7 +417,7 @@ export type MemoryJobStatus =
   | "cancelled"
   | "interrupted";
 
-export type MemoryOrganizeJobKind = Extract<MemoryJobKind, "history" | "entries">;
+export type MemoryOrganizeJobKind = Extract<MemoryJobKind, "history" | "entries" | "consolidation">;
 
 export type MemoryOrganizeJobStatus = MemoryJobStatus;
 
@@ -397,6 +428,10 @@ export interface MemoryOrganizeProgress {
   scannedBatches?: number;
   processedBatches?: number;
   candidateCount?: number;
+  reviewedSessions?: number;
+  reviewedEvidence?: number;
+  proposedActions?: number;
+  changedItems?: number;
   changedFiles?: string[];
 }
 
@@ -426,7 +461,7 @@ export interface MemoryOrganizeJob {
   startedAt: number;
   completedAt?: number;
   progress?: MemoryOrganizeProgress;
-  result?: MemoryOrganizeHistoryResult | MemoryOrganizeEntriesResult;
+  result?: MemoryOrganizeHistoryResult | MemoryOrganizeEntriesResult | MemoryDreamResult;
   error?: string;
 }
 
@@ -581,12 +616,15 @@ export type MemorySettingsJobResult =
   | { kind: "entries"; data: MemoryOrganizeEntriesResult }
   | { kind: "external_ingest"; data: MemoryIngestSourcesResult }
   | { kind: "turn_extract"; data: { scannedItems: number; changedItems: number } }
-  | { kind: "consolidation"; data: { scannedEntries: number; updated: number; merged: number; stale: number; rebuilt: string[] } };
+  | { kind: "consolidation"; data: MemoryDreamResult };
 
 export interface MemorySettingsJobProgress {
   phase: string;
   scannedItems?: number;
   processedItems?: number;
+  reviewedSessions?: number;
+  reviewedEvidence?: number;
+  proposedActions?: number;
   changedItems?: number;
   candidateCount?: number;
   changedFiles: string[];

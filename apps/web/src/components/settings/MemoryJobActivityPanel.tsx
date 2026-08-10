@@ -1,6 +1,7 @@
 import * as React from 'react'
 import type {
   MemorySettingsJobSummary,
+  MemoryDreamResult,
   MemoryOrganizeEntriesResult,
   MemoryOrganizeHistoryResult,
   MemoryIngestSourcesResult,
@@ -8,6 +9,7 @@ import type {
 import { ChevronDown, ChevronUp, RotateCcw, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { buildMemoryMutationFieldDiffs } from './memory-activity-state'
 import { cn } from '@/lib/utils'
 import {
   formatMemoryJobTime,
@@ -32,9 +34,11 @@ interface MemoryJobActivityPanelProps {
   busyAction: string | null
   onRetry: (jobId: string) => void
   onCancel: (jobId: string) => void
+  onOpenMemory?: (memoryId: string) => void
+  onUndo?: (mutationId: string) => void
 }
 
-export function MemoryJobActivityPanel({ items, busyAction, onRetry, onCancel }: MemoryJobActivityPanelProps) {
+export function MemoryJobActivityPanel({ items, busyAction, onRetry, onCancel, onOpenMemory, onUndo }: MemoryJobActivityPanelProps) {
   const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set())
 
   if (items.length === 0) {
@@ -115,7 +119,7 @@ export function MemoryJobActivityPanel({ items, busyAction, onRetry, onCancel }:
               </div>
               <CollapsibleContent>
                 <div className="border-t border-border px-3 pb-3 pt-3">
-                  <MemoryJobResultDetail job={job} />
+                  <MemoryJobResultDetail job={job} onOpenMemory={onOpenMemory} onUndo={onUndo} />
                 </div>
               </CollapsibleContent>
             </article>
@@ -126,7 +130,7 @@ export function MemoryJobActivityPanel({ items, busyAction, onRetry, onCancel }:
   )
 }
 
-function MemoryJobResultDetail({ job }: { job: MemorySettingsJobSummary }) {
+function MemoryJobResultDetail({ job, onOpenMemory, onUndo }: { job: MemorySettingsJobSummary; onOpenMemory?: (memoryId: string) => void; onUndo?: (mutationId: string) => void }) {
   if (job.error) {
     return <div className="break-words rounded-[6px] bg-red-500/5 px-3 py-2 text-[12px] leading-5 text-red-700">{job.error}</div>
   }
@@ -146,13 +150,98 @@ function MemoryJobResultDetail({ job }: { job: MemorySettingsJobSummary }) {
     case 'turn_extract':
       return <MetricGrid items={[['扫描项目', job.result.data.scannedItems], ['产生变更', job.result.data.changedItems]]} />
     case 'consolidation':
-      return <MetricGrid items={[
-        ['扫描记忆', job.result.data.scannedEntries],
-        ['更新', job.result.data.updated],
-        ['合并', job.result.data.merged],
-        ['标记过期', job.result.data.stale],
-      ]} extra={job.result.data.rebuilt.length > 0 ? `已重建：${job.result.data.rebuilt.join('、')}` : undefined} />
+      return <DreamResultDetail result={job.result.data} onOpenMemory={onOpenMemory} onUndo={onUndo} />
   }
+}
+
+function DreamResultDetail({
+  result,
+  onOpenMemory,
+  onUndo,
+}: {
+  result: MemoryDreamResult
+  onOpenMemory?: (memoryId: string) => void
+  onUndo?: (mutationId: string) => void
+}) {
+  const actionLabels: Record<string, string> = {
+    created: '新增',
+    versioned: '生成新版本',
+    updated: '更新',
+    merged: '合并',
+    stale: '标记过期',
+    pending: '待处理',
+    ignored: '未处理',
+  }
+  return (
+    <div className="space-y-3">
+      <MetricGrid items={[
+        ['检查会话', result.sessionsReviewed],
+        ['核对证据', result.evidenceItemsReviewed],
+        ['扫描记忆', result.scannedEntries],
+        ['产生变更', result.actions.created + result.actions.versioned + result.actions.updated + result.actions.merged + result.actions.stale],
+      ]} extra={result.rebuilt.length > 0 ? `已重建：${result.rebuilt.join('、')}` : undefined} />
+      {result.items.length === 0 ? (
+        <div className="text-[12px] leading-5 text-[var(--text-3)]">记忆已经整理妥当，本次没有变更。</div>
+      ) : (
+        <div className="space-y-2">
+          <div className="text-[11px] font-medium text-[var(--text-3)]">整理明细</div>
+          {result.items.slice(0, 20).map((item, index) => {
+            const fieldDiffs = buildMemoryMutationFieldDiffs(item.before, item.after)
+            return (
+            <div key={`${item.mutationId ?? item.memoryIds.join('-')}-${index}`} className="lume-subpanel p-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] font-medium text-[var(--text-1)]">{actionLabels[item.action] ?? item.action}</span>
+                <div className="flex gap-1.5">
+                  {item.memoryIds[0] && onOpenMemory && <Button variant="ghost" size="sm" onClick={() => onOpenMemory(item.memoryIds[0]!)}>查看记忆</Button>}
+                  {item.undoable && item.mutationId && onUndo && <Button variant="ghost" size="sm" onClick={() => onUndo(item.mutationId!)}>撤销</Button>}
+                </div>
+              </div>
+              {item.before?.statement && item.after?.statement && item.before.statement !== item.after.statement ? (
+                <div className="mt-1.5 space-y-1 text-[11px] leading-4">
+                  <div className="break-words text-[var(--text-3)]">原：{item.before.statement}</div>
+                  <div className="break-words text-[var(--text-1)]">新：{item.after.statement}</div>
+                </div>
+              ) : item.after?.statement ? (
+                <div className="mt-1.5 break-words text-[12px] leading-5 text-[var(--text-1)]">{item.after.statement}</div>
+              ) : null}
+              {fieldDiffs.length > 0 && (
+                <div className="mt-1.5 space-y-1 text-[10px] leading-4 text-[var(--text-3)]">
+                  {fieldDiffs.map((diff) => (
+                    <div key={diff.key}>{diff.label}：{diff.before ?? '无'} → {diff.after ?? '无'}</div>
+                  ))}
+                </div>
+              )}
+              <div className="mt-1 break-words text-[11px] leading-4 text-[var(--text-3)]">{item.reason}</div>
+              {item.evidenceRefs.length > 0 && (
+                <div className="mt-1 space-y-0.5 text-[10px] text-[var(--text-3)]">
+                  <div>依据 {item.evidenceRefs.length} 条来源</div>
+                  {item.evidenceRefs.slice(0, 3).map((ref, refIndex) => (
+                    <div key={`${ref.type}-${ref.id ?? ref.path ?? refIndex}`} className="truncate">
+                      {dreamEvidenceLabel(ref.type)}{ref.id || ref.path ? ` · ${ref.id ?? ref.path}` : ''}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )})}
+        </div>
+      )}
+      {result.warnings.length > 0 && <div className="rounded-[6px] bg-amber-500/5 px-3 py-2 text-[11px] leading-4 text-amber-700">{result.warnings.join('；')}</div>}
+    </div>
+  )
+}
+
+function dreamEvidenceLabel(type: MemoryDreamResult['items'][number]['evidenceRefs'][number]['type']): string {
+  const labels = {
+    user_message: '用户消息',
+    assistant_message: 'Assistant 上下文',
+    tool_result: '工具结果',
+    external_file: '外部文件',
+    workspace_file: '工作区文件',
+    manual: '手动记录',
+    consolidation: '连续性摘要',
+  } satisfies Record<typeof type, string>
+  return labels[type]
 }
 
 function MemoryJobProgressDetail({ job }: { job: MemorySettingsJobSummary }) {
@@ -161,6 +250,9 @@ function MemoryJobProgressDetail({ job }: { job: MemorySettingsJobSummary }) {
   const metrics: Array<[string, number]> = []
   if (progress.scannedItems !== undefined) metrics.push(['已扫描', progress.scannedItems])
   if (progress.processedItems !== undefined) metrics.push(['已处理', progress.processedItems])
+  if (progress.reviewedSessions !== undefined) metrics.push(['检查会话', progress.reviewedSessions])
+  if (progress.reviewedEvidence !== undefined) metrics.push(['核对证据', progress.reviewedEvidence])
+  if (progress.proposedActions !== undefined) metrics.push(['整理建议', progress.proposedActions])
   if (progress.changedItems !== undefined) metrics.push(['已变更', progress.changedItems])
   if (progress.candidateCount !== undefined) metrics.push(['候选', progress.candidateCount])
   return (

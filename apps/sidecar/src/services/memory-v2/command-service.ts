@@ -75,7 +75,8 @@ export class MemoryCommandService {
         recordIds: input.evidenceRefs?.flatMap((ref) => ref.id ? [ref.id] : []),
         sourcePaths: input.evidenceRefs?.flatMap((ref) => ref.path ? [ref.path] : []),
         quote: input.evidenceRefs?.find((ref) => ref.quote)?.quote
-      }
+      },
+      evidenceRefs: input.evidenceRefs
     };
 
     const conflict = candidate.claim ? this.findClaimConflict(input.workspaceSlug, candidate) : undefined;
@@ -119,6 +120,51 @@ export class MemoryCommandService {
       return this.recordIds(input, scope, "duplicate", result.existingIds ?? [], "这条内容已经记住了", false);
     }
     return this.record(input, scope, "ignored", [], result.reason, false);
+  }
+
+  proposePending(input: {
+    workspaceSlug: string;
+    content: string;
+    scope: MemoryV2Scope;
+    semanticRole?: MemoryV2SemanticRole;
+    confidence?: MemoryV2Confidence;
+    facets?: string[];
+    claim?: MemoryClaim;
+    evidenceRefs?: MemoryEvidenceRef[];
+    existingIds?: string[];
+    reason: string;
+  }): MemoryV2MutationReceipt {
+    const candidate: MemoryV2Candidate = {
+      targetScope: input.scope,
+      semanticRole: input.semanticRole,
+      kind: legacyKindForRole(input.semanticRole ?? "fact"),
+      statement: input.content.trim(),
+      confidence: input.confidence ?? "low",
+      facets: input.facets,
+      tags: input.facets,
+      appliesWhen: input.scope === "workspace" ? { workspaceSlug: input.workspaceSlug } : {},
+      claim: normalizeMemoryV2Claim(input.claim),
+      evidence: {
+        recordIds: input.evidenceRefs?.flatMap((ref) => ref.id ? [ref.id] : []),
+        sourcePaths: input.evidenceRefs?.flatMap((ref) => ref.path ? [ref.path] : []),
+        quote: input.evidenceRefs?.find((ref) => ref.quote)?.quote
+      },
+      evidenceRefs: input.evidenceRefs
+    };
+    this.store.writePending({
+      type: input.existingIds?.length ? "conflict" : "low-confidence",
+      candidate,
+      existingIds: input.existingIds,
+      reason: input.reason
+    });
+    return this.recordIds(
+      { actor: "consolidation", workspaceSlug: input.workspaceSlug },
+      input.scope,
+      "pending",
+      [],
+      "整理产生 1 条待处理记忆",
+      false
+    );
   }
 
   archive(input: {
@@ -180,10 +226,15 @@ export class MemoryCommandService {
     activation?: ReturnType<typeof readActivation>;
     pinned?: boolean;
     validTo?: string | null;
+    evidenceRefs?: MemoryEvidenceRef[];
+    expectedRevision?: number;
     actor: MemoryV2MutationActor;
   }): MemoryV2MutationReceipt {
     const entry = this.findEntry(input.workspaceSlug, input.id, input.scope);
     if (!entry) throw new Error(`Memory entry not found: ${input.id}`);
+    if (input.expectedRevision !== undefined && entry.frontmatter.revision !== input.expectedRevision) {
+      throw new Error("记忆已发生后续修改，请重新整理");
+    }
     const updated = this.store.updateEntry({
       scope: input.scope,
       workspaceSlug: input.workspaceSlug,
@@ -196,18 +247,105 @@ export class MemoryCommandService {
       facets: input.facets,
       activation: input.activation,
       pinned: input.pinned,
-      validTo: input.validTo
+      validTo: input.validTo,
+      evidenceRefs: input.evidenceRefs
     });
-    return this.record(input, input.scope, "updated", [updated], "更新了 1 条记忆", false, [snapshot(entry)]);
+    return this.record(input, input.scope, "updated", [updated], "更新了 1 条记忆", input.actor === "consolidation", [snapshot(entry)]);
+  }
+
+  async replaceVersion(input: {
+    workspaceSlug: string;
+    id: string;
+    scope: MemoryV2Scope;
+    content: string;
+    claim?: MemoryClaim;
+    confidence?: MemoryV2Confidence;
+    facets?: string[];
+    evidenceRefs: MemoryEvidenceRef[];
+    explicitCorrection: boolean;
+    expectedRevision?: number;
+  }): Promise<MemoryV2MutationReceipt> {
+    const current = this.findEntry(input.workspaceSlug, input.id, input.scope);
+    if (!current) throw new Error(`Memory entry not found: ${input.id}`);
+    if (input.expectedRevision !== undefined && current.frontmatter.revision !== input.expectedRevision) {
+      throw new Error("记忆已发生后续修改，请重新整理");
+    }
+    const content = input.content.trim();
+    if (!content || shouldSuppressDurableMemory(content) || containsSecret(content)) {
+      return this.recordIds({ actor: "consolidation", workspaceSlug: input.workspaceSlug }, input.scope, "ignored", [input.id], "未生成新版本：内容不适合长期记忆", false);
+    }
+    const existingClaim = claimFromEntry(current);
+    const nextClaim = normalizeMemoryV2Claim(input.claim) ?? existingClaim;
+    if (
+      existingClaim
+      && nextClaim
+      && claimKey({ scope: input.scope, claim: existingClaim, appliesWhen: current.frontmatter.applies_when })
+        === claimKey({ scope: input.scope, claim: nextClaim, appliesWhen: current.frontmatter.applies_when })
+      && existingClaim.object.trim().toLowerCase() !== nextClaim.object.trim().toLowerCase()
+      && !input.explicitCorrection
+    ) {
+      return this.remember({
+        workspaceSlug: input.workspaceSlug,
+        content,
+        scope: input.scope,
+        semanticRole: current.frontmatter.semantic_role,
+        facets: input.facets ?? current.frontmatter.facets,
+        confidence: input.confidence ?? current.frontmatter.confidence,
+        claim: nextClaim,
+        evidenceRefs: input.evidenceRefs,
+        actor: "consolidation"
+      });
+    }
+    const candidate: MemoryV2Candidate = {
+      targetScope: input.scope,
+      kind: current.frontmatter.kind,
+      semanticRole: current.frontmatter.semantic_role,
+      statement: content,
+      confidence: input.confidence ?? current.frontmatter.confidence,
+      facets: input.facets ?? current.frontmatter.facets,
+      tags: input.facets ?? current.frontmatter.tags,
+      entities: current.frontmatter.entities,
+      appliesWhen: current.frontmatter.applies_when,
+      ...(nextClaim ? { claim: nextClaim } : {})
+    };
+    const next = this.store.writeEntry(candidate, {
+      supersedes: [current.frontmatter.id],
+      activation: readActivation(current.frontmatter),
+      pinned: current.frontmatter.pinned,
+      evidenceRefs: [...current.frontmatter.evidence_refs, ...input.evidenceRefs],
+      source: { type: "tool", record_ids: input.evidenceRefs.flatMap((ref) => ref.id ? [ref.id] : []) }
+    });
+    const previous = this.store.updateEntryStatus({
+      scope: input.scope,
+      workspaceSlug: input.workspaceSlug,
+      id: current.frontmatter.id,
+      status: "superseded",
+      supersededBy: next.frontmatter.id,
+      expectedRevision: current.frontmatter.revision
+    });
+    return this.record(
+      { actor: "consolidation", workspaceSlug: input.workspaceSlug },
+      input.scope,
+      "superseded",
+      [next, previous],
+      "整理生成了 1 条新版本记忆",
+      true,
+      [snapshot(current)]
+    );
   }
 
   markSuspectedStale(input: {
     workspaceSlug: string;
     id: string;
     scope: MemoryV2Scope;
+    evidenceRefs?: MemoryEvidenceRef[];
+    expectedRevision?: number;
   }): MemoryV2MutationReceipt {
     const entry = this.findEntry(input.workspaceSlug, input.id, input.scope);
     if (!entry) throw new Error(`Memory entry not found: ${input.id}`);
+    if (input.expectedRevision !== undefined && entry.frontmatter.revision !== input.expectedRevision) {
+      throw new Error("记忆已发生后续修改，请重新整理");
+    }
     if (entry.frontmatter.status === "suspected_stale") {
       return this.recordIds({ actor: "consolidation", workspaceSlug: input.workspaceSlug }, input.scope, "duplicate", [input.id], "记忆已标记为可能过期", false);
     }
@@ -216,6 +354,7 @@ export class MemoryCommandService {
       workspaceSlug: input.workspaceSlug,
       id: input.id,
       status: "suspected_stale",
+      evidenceRefs: input.evidenceRefs,
       expectedRevision: entry.frontmatter.revision
     });
     return this.record({ actor: "consolidation", workspaceSlug: input.workspaceSlug }, input.scope, "updated", [updated], "已标记 1 条可能过期记忆", true, [snapshot(entry)]);
@@ -227,9 +366,47 @@ export class MemoryCommandService {
     keptId: string;
     scope: MemoryV2Scope;
   }): MemoryV2MutationReceipt {
+    return this.mergeDuplicate(input);
+  }
+
+  mergeDuplicate(input: {
+    workspaceSlug: string;
+    duplicateId: string;
+    keptId: string;
+    scope: MemoryV2Scope;
+    expectedKeptRevision?: number;
+    expectedDuplicateRevision?: number;
+  }): MemoryV2MutationReceipt {
+    const kept = this.findEntry(input.workspaceSlug, input.keptId, input.scope);
     const duplicate = this.findEntry(input.workspaceSlug, input.duplicateId, input.scope);
+    if (!kept) throw new Error(`Memory entry not found: ${input.keptId}`);
     if (!duplicate) throw new Error(`Memory entry not found: ${input.duplicateId}`);
-    const updated = this.store.updateEntryStatus({
+    if (input.expectedKeptRevision !== undefined && kept.frontmatter.revision !== input.expectedKeptRevision) {
+      throw new Error("保留记忆已发生后续修改，请重新整理");
+    }
+    if (input.expectedDuplicateRevision !== undefined && duplicate.frontmatter.revision !== input.expectedDuplicateRevision) {
+      throw new Error("重复记忆已发生后续修改，请重新整理");
+    }
+    const activation = readActivation(kept.frontmatter);
+    const duplicateActivation = readActivation(duplicate.frontmatter);
+    const updatedKept = this.store.updateEntry({
+      scope: input.scope,
+      workspaceSlug: input.workspaceSlug,
+      id: input.keptId,
+      expectedRevision: kept.frontmatter.revision,
+      confidence: strongerConfidence(kept.frontmatter.confidence, duplicate.frontmatter.confidence),
+      facets: [...kept.frontmatter.facets, ...duplicate.frontmatter.facets],
+      tags: [...kept.frontmatter.tags, ...duplicate.frontmatter.tags],
+      pinned: kept.frontmatter.pinned || duplicate.frontmatter.pinned,
+      activation: {
+        recall: activation.recall || duplicateActivation.recall,
+        persona: activation.persona || duplicateActivation.persona,
+        suggestion: activation.suggestion || duplicateActivation.suggestion,
+        analyst: activation.analyst || duplicateActivation.analyst
+      },
+      evidenceRefs: [...kept.frontmatter.evidence_refs, ...duplicate.frontmatter.evidence_refs]
+    });
+    const updatedDuplicate = this.store.updateEntryStatus({
       scope: input.scope,
       workspaceSlug: input.workspaceSlug,
       id: input.duplicateId,
@@ -241,10 +418,10 @@ export class MemoryCommandService {
       { actor: "consolidation", workspaceSlug: input.workspaceSlug },
       input.scope,
       "merged",
-      [updated],
+      [updatedKept, updatedDuplicate],
       "合并了 1 条重复记忆",
       true,
-      [snapshot(duplicate)]
+      [snapshot(kept), snapshot(duplicate)]
     );
   }
 
@@ -439,6 +616,11 @@ function legacyKindForRole(role: MemoryV2SemanticRole): MemoryV2Kind {
 
 function containsSecret(content: string): boolean {
   return /(?:api[_-]?key|token|password|密码|验证码|secret)\s*[:=]\s*\S+|\bsk-[A-Za-z0-9_-]{16,}\b/i.test(content);
+}
+
+function strongerConfidence(left: MemoryV2Confidence, right: MemoryV2Confidence): MemoryV2Confidence {
+  const rank: Record<MemoryV2Confidence, number> = { low: 0, medium: 1, high: 2 };
+  return rank[left] >= rank[right] ? left : right;
 }
 
 function snapshot(entry: MemoryV2Entry): MemoryMutationEntrySnapshot {

@@ -356,11 +356,21 @@ describe("memory-v2 settings snapshot", () => {
       result: {
         kind: "consolidation",
         data: {
+          sessionsReviewed: 0,
+          evidenceItemsReviewed: 0,
           scannedEntries: 12,
-          updated: 2,
-          merged: 3,
-          stale: 1,
-          rebuilt: ["capsules/runtime.md", "persona.md"]
+          actions: {
+            created: 0,
+            versioned: 0,
+            updated: 2,
+            merged: 3,
+            stale: 1,
+            pending: 0,
+            ignored: 0
+          },
+          items: [],
+          rebuilt: ["capsules/runtime.md", "persona.md"],
+          warnings: []
         }
       }
     });
