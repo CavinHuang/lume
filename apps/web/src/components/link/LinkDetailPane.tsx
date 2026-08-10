@@ -26,8 +26,8 @@ export function LinkDetailPane({ provider, connections, onConnect, onClose, onRe
         <div className="flex min-w-0 items-start gap-3">
           <ProviderIcon service={provider.service} displayName={provider.displayName} iconUrl={provider.iconUrl} size={36} />
           <div className="min-w-0">
-            <h2 className="text-base font-semibold text-[var(--lume-text-1)]">{provider.displayName}</h2>
-            <p className="mt-0.5 text-xs text-[var(--lume-text-3)]">{provider.description || provider.service}</p>
+            <h2 className="text-base font-semibold text-[var(--text-1)]">{provider.displayName}</h2>
+            <p className="mt-0.5 text-xs text-[var(--text-3)]">{provider.description || provider.service}</p>
           </div>
         </div>
         <Button variant="ghost" size="icon" onClick={onClose}><X className="size-4" /></Button>
@@ -35,7 +35,7 @@ export function LinkDetailPane({ provider, connections, onConnect, onClose, onRe
       {/* 连接操作 */}
       <div className="grid gap-3 p-4">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-medium text-[var(--lume-text-1)]">{configured ? "已连接" : "未连接"}</span>
+          <span className="text-sm font-medium text-[var(--text-1)]">{configured ? "已连接" : "未连接"}</span>
           <Button size="sm" onClick={() => onConnect(provider.service)}>{configured ? "添加连接" : "连接"}</Button>
         </div>
         {authTypes.length > 0 && (
@@ -46,12 +46,12 @@ export function LinkDetailPane({ provider, connections, onConnect, onClose, onRe
         <LinkAccountsList connections={connections} onReconnect={onReconnect} onRequestDelete={onRequestDelete} />
         {/* 详情 dl */}
         <dl className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-y-1 border-t border-[var(--lume-border-subtle)] pt-3 text-xs">
-          <dt className="text-[var(--lume-text-3)]">服务</dt>
-          <dd className="truncate font-mono text-[var(--lume-text-2)]">{provider.service}</dd>
+          <dt className="text-[var(--text-3)]">服务</dt>
+          <dd className="truncate font-mono text-[var(--text-2)]">{provider.service}</dd>
           {provider.categories?.length ? (
             <>
-              <dt className="text-[var(--lume-text-3)]">分类</dt>
-              <dd className="truncate text-[var(--lume-text-2)]">{provider.categories.join("、")}</dd>
+              <dt className="text-[var(--text-3)]">分类</dt>
+              <dd className="truncate text-[var(--text-2)]">{provider.categories.join("、")}</dd>
             </>
           ) : null}
         </dl>

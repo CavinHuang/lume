@@ -43,7 +43,7 @@ export function ProviderIcon({ service, displayName, iconUrl, size = 24 }: Provi
     const icon = LINK_ICONS[service.toLowerCase()];
     if (icon) {
       return (
-        <span className="shrink-0 text-[var(--lume-text-2)]" style={{ width: size, height: size }}>
+        <span className="shrink-0 text-[var(--text-2)]" style={{ width: size, height: size }}>
           <SimpleIconGlyph path={icon.path} size={size} />
         </span>
       );

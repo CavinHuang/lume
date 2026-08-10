@@ -24,8 +24,8 @@ export function ProviderCard({ provider, configured, needsAttention, selected, o
       <span className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
         <ProviderIcon service={provider.service} displayName={provider.displayName} iconUrl={provider.iconUrl} size={20} />
         <span className="grid min-w-0 gap-0.5">
-          <span className="truncate text-sm font-medium text-[var(--lume-text-1)]">{provider.displayName}</span>
-          <span className="truncate text-[11px] text-[var(--lume-text-3)]">{provider.description || provider.service}</span>
+          <span className="truncate text-sm font-medium text-[var(--text-1)]">{provider.displayName}</span>
+          <span className="truncate text-[11px] text-[var(--text-3)]">{provider.description || provider.service}</span>
         </span>
         <StatusMark configured={configured} needsAttention={needsAttention} />
       </span>

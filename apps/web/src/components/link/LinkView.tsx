@@ -94,7 +94,7 @@ export function LinkView() {
       <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
         <Badge variant="secondary">未启用</Badge>
         <h1 className="text-xl font-semibold">连接器</h1>
-        <p className="max-w-sm text-sm text-[var(--lume-text-3)]">
+        <p className="max-w-sm text-sm text-[var(--text-3)]">
           连接器需要本机 OpenConnector Link 运行时。请在「设置 → Link 运行时」中启用。
         </p>
         <Button variant="outline" onClick={openLinkRuntimeSettings}>
@@ -109,7 +109,7 @@ export function LinkView() {
       <div className="mb-3 flex items-center justify-between px-6 pt-6">
         <div>
           <h1 className="text-xl font-semibold">连接器</h1>
-          <p className="mt-1 text-sm text-[var(--lume-text-3)]">由本机 OpenConnector Link 提供，连接凭据不会进入渲染器。</p>
+          <p className="mt-1 text-sm text-[var(--text-3)]">由本机 OpenConnector Link 提供，连接凭据不会进入渲染器。</p>
         </div>
         <Badge variant={online ? "default" : "secondary"}>{online ? "本地运行中" : "未启用"}</Badge>
       </div>

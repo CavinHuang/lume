@@ -37,7 +37,7 @@ export function LinkToolbar({ query, onQueryChange, filter, onFilterChange, coun
         {items.map((item) => (
           <ToggleGroupItem key={item.value} value={item.value}>
             {item.label}
-            <span className="tabular-nums text-[var(--lume-text-3)]">{item.count}</span>
+            <span className="tabular-nums text-[var(--text-3)]">{item.count}</span>
           </ToggleGroupItem>
         ))}
       </ToggleGroup>

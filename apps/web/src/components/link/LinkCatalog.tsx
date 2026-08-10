@@ -112,8 +112,8 @@ export function LinkCatalog({
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-3">
         {visible.length === 0 ? (
           <div className="grid gap-1 rounded-lg border border-[var(--lume-border-subtle)] bg-muted/30 px-3 py-3">
-            <div className="text-sm font-medium text-[var(--lume-text-1)]">无匹配连接器</div>
-            <div className="text-xs text-[var(--lume-text-3)]">尝试更换关键词或清除筛选。</div>
+            <div className="text-sm font-medium text-[var(--text-1)]">无匹配连接器</div>
+            <div className="text-xs text-[var(--text-3)]">尝试更换关键词或清除筛选。</div>
           </div>
         ) : null}
         {/*
