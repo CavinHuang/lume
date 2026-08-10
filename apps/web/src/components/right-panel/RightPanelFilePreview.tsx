@@ -21,6 +21,8 @@ import {
   onSidecarEvent,
   writeClipboardText,
 } from '@/lib/desktop-api'
+import { DocumentViewerHost } from './document-viewer/DocumentViewerHost'
+import { isDocumentViewerKind } from './document-viewer/document-viewer-kinds'
 import { classifyFilePreview, isMissingFileError } from './file-preview-utils'
 import { RightPanelHtmlPreview } from './RightPanelHtmlPreview'
 import { RightPanelSourcePreview } from './RightPanelSourcePreview'
@@ -122,9 +124,10 @@ export function RightPanelFilePreview({
         if (current !== requestId.current) return
         if (reportMissing(nextError)) setError(errorMessage(nextError))
       })
-    if (kind === 'image' || kind === 'pdf' || kind === 'video') {
+    if (kind === 'image' || kind === 'pdf' || kind === 'video'
+      || kind === 'docx' || kind === 'xlsx' || kind === 'pptx' || kind === 'csv') {
       if (!isDesktopRuntime()) {
-        setError('浏览器环境不支持本地图片预览')
+        setError('浏览器环境不支持本地文件预览')
         return
       }
       setLoading(true)
@@ -446,10 +449,14 @@ export function RightPanelFilePreview({
               <img src={mediaScope.url} alt={basename(fileRef.relativePath)} onError={() => setError('图片预览加载失败')} className={imageOriginalSize ? 'm-auto max-w-none' : 'm-auto max-h-full max-w-full object-contain'} />
             </FileLinkContextMenu>
           ) : null
-        ) : kind === 'pdf' && mediaScope ? (
-          <object data={mediaScope.url} type="application/pdf" className="h-full w-full">
-            <PreviewStatus>浏览器无法显示此 PDF，可使用系统应用打开。</PreviewStatus>
-          </object>
+        ) : isDocumentViewerKind(kind) && mediaScope ? (
+          <DocumentViewerHost
+            kind={kind}
+            fileRef={fileRef}
+            guardedRef={guardedRef}
+            mediaScope={mediaScope}
+            onOpenFile={onOpenFile}
+          />
         ) : kind === 'video' && mediaScope ? (
           <div className="flex h-full items-center justify-center bg-black/90 p-4">
             <video src={mediaScope.url} controls className="max-h-full max-w-full" />
@@ -522,7 +529,7 @@ export function RightPanelFilePreview({
   )
 }
 
-function PreviewStatus({ children }: { children: React.ReactNode }) {
+export function PreviewStatus({ children }: { children: React.ReactNode }) {
   return <div className="flex h-full min-h-48 items-center justify-center px-6 text-center text-[13px] text-foreground/55">{children}</div>
 }
 

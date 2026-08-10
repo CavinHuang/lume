@@ -110,11 +110,16 @@ const MIME_TYPES: Record<string, string> = {
   '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.m4v': 'video/x-m4v',
   '.pdf': 'application/pdf',
+  '.csv': 'text/csv; charset=utf-8',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 }
 
 const MEDIA_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg',
   '.pdf', '.mp4', '.webm', '.mov', '.m4v',
+  '.csv', '.docx', '.xlsx', '.pptx',
 ])
 
 export type PreviewProtocolResolution =
