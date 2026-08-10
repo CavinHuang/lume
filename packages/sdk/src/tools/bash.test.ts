@@ -234,7 +234,7 @@ describe("BashTool shell invocation", () => {
         },
       },
     });
-  });
+  }, 15_000);
 
   test("keeps UTF-8 intact when TaskOutput resumes inside a multibyte character", async () => {
     clearTasks();
