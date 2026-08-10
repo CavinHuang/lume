@@ -7,12 +7,21 @@ import {
 } from "./im-config-manager";
 import { getImProvider, type ImWorker } from "./provider-registry";
 import { routeInboundImMessage } from "./im-message-router";
-// 副作用 import：模块加载即把各 provider 注册进 provider-registry，
-// 必须早于 startEnabledAccounts()（runtime-manager 默认 createWorker 将查注册表）。
-import "./weixin/weixin-provider";
-import "./dingtalk/dingtalk-provider";
-import "./feishu/feishu-provider";
-import "./wecom/wecom-provider";
+
+let providersLoaded = false;
+/**
+ * 副作用 import：模块加载即把各 provider 注册进 provider-registry。
+ * 延迟到首次启动 IM 账户才加载，避免 sidecar 冷启动期同步拉入 IM SDK
+ * （dingtalk-stream/飞书/企微）拖慢启动——曾使 reading-entrypoint 测试 5s 超时。
+ */
+async function ensureProvidersLoaded(): Promise<void> {
+  if (providersLoaded) return;
+  await import("./weixin/weixin-provider");
+  await import("./dingtalk/dingtalk-provider");
+  await import("./feishu/feishu-provider");
+  await import("./wecom/wecom-provider");
+  providersLoaded = true;
+}
 
 export interface ImRuntimeManager {
   startEnabledAccounts(): Promise<void>;
@@ -55,6 +64,7 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
 
   return {
     async startEnabledAccounts() {
+      await ensureProvidersLoaded();
       for (const account of listAccountsFn()) {
         if (!account.enabled) continue;
         try {
@@ -66,6 +76,7 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
     },
 
     async startAccount(accountId: string) {
+      await ensureProvidersLoaded();
       const existingWorker = workers.get(accountId);
       if (existingWorker?.isRunning()) return;
       if (existingWorker) {
