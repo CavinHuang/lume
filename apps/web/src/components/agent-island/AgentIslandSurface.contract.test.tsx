@@ -32,7 +32,9 @@ describe('AgentIslandSurface 契约', () => {
       <AgentIslandSurface state={state({ presentation: 'expanded' })} onIntent={noop} />,
     )
     expect(html).toContain('任务A')
-    expect(html).toContain('island-expanded island-drag-handle')
+    expect(html).toContain('class="island-expanded"')
+    expect(html).toContain('island-window-drag-handle island-drag-handle')
+    expect(html).not.toContain('island-expanded island-drag-handle')
     expect(html).not.toContain('island-expanded-head island-drag-handle')
   })
   test('needs-interaction 渲染"需要你接手"', () => {

@@ -172,7 +172,6 @@ export function AgentIslandSurface({
     state.planning.reminders.length > 0 ? `${state.planning.reminders.length} 提醒` : '',
   ].filter(Boolean).join(' · ')
   const requestedExpanded = state.presentation === 'expanded'
-  const surfaceRef = useRef<HTMLDivElement>(null)
   const expandedContentRef = useRef<HTMLDivElement>(null)
   const lastHeightRef = useRef(COMPACT_HEIGHT)
   const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>(requestedExpanded ? 'expanded' : 'compact')
@@ -214,16 +213,17 @@ export function AgentIslandSurface({
   return (
     <div className="island-root">
       <div
-        ref={surfaceRef}
         className={cn('island-surface island-transition-surface', surfaceMode)}
         data-phase={primary?.phase ?? 'idle'}
         onMouseEnter={() => onIntent({ name: 'set-hovered', value: true })}
         onMouseLeave={() => onIntent({ name: 'set-hovered', value: false })}
         style={{ '--island-expanded-height': `${expandedHeight}px` } as CSSProperties}
       >
+        <span className="island-window-drag-handle island-drag-handle" aria-hidden="true" />
+
         {/* expanded-content：surfaceMode !== compact 时渲染，collapsing 态保留旧内容淡出 */}
         {surfaceMode !== 'compact' && (
-          <div ref={expandedContentRef} className="island-expanded island-drag-handle">
+          <div ref={expandedContentRef} className="island-expanded">
             <div className="island-expanded-head">
               <span className={cn('island-dot', PHASE_DOT[primary?.phase ?? 'idle'])} />
               <span className="island-title">{state.compactLabel.replace('Lume · ', '')}</span>
@@ -408,7 +408,6 @@ export function AgentIslandSurface({
           className="island-compact-layer"
           data-collapsed={requestedExpanded ? 'false' : 'true'}
         >
-          <span className="island-compact-grip island-drag-handle" aria-hidden="true" />
           {!primary && planningIndicator && (
             <span className="island-planning-indicator" style={{ color: planningIndicator.color }}>
               {planningIndicator.symbol === 'calendar' ? (

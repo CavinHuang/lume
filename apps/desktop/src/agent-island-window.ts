@@ -8,6 +8,7 @@ const ISLAND_DEFAULT_HEIGHT = 32
 const ISLAND_MIN_WIDTH = 320
 const ISLAND_MAX_WIDTH = 620
 const ISLAND_MAX_HEIGHT = 640
+const ISLAND_TOP_SNAP_DISTANCE = 60
 
 export interface IslandWindowDeps {
   appIsPackaged: boolean
@@ -51,6 +52,18 @@ function displayContains(bounds: Electron.Rectangle, point: { x: number; y: numb
     point.y >= bounds.y &&
     point.y < bounds.y + bounds.height
   )
+}
+
+function resolveTopSnappedPosition(bounds: Electron.Rectangle): { x: number; y: number } {
+  const display = screen.getDisplayNearestPoint({
+    x: bounds.x + Math.round(bounds.width / 2),
+    y: bounds.y + Math.round(bounds.height / 2),
+  })
+  const top = display.workArea.y
+  return {
+    x: bounds.x,
+    y: Math.abs(bounds.y - top) <= ISLAND_TOP_SNAP_DISTANCE ? top : bounds.y,
+  }
 }
 
 /**
@@ -137,35 +150,35 @@ export function createIslandWindow(deps: IslandWindowDeps): BrowserWindow {
     devServerUrl: deps.devServerUrl,
   }))
 
-  // 拖动后防抖存盘：避免拖动过程中频繁写 settings.json。
-  // close 时 flush 最近一次 pending，防止退出前丢失最后一次拖动。
-  if (typeof deps.onWindowMove === 'function') {
-    const onMove = deps.onWindowMove
-    let timer: ReturnType<typeof setTimeout> | null = null
-    let pending: { x: number; y: number } | null = null
-    win.on('move', () => {
+  // 拖动停止 300ms 后，若窗口接近当前显示器工作区上沿则吸附；随后持久化最终位置。
+  // 复用原有 move 防抖，避免拖动过程中反复 setPosition 或频繁写 settings.json。
+  let moveTimer: ReturnType<typeof setTimeout> | null = null
+  let pendingPosition: { x: number; y: number } | null = null
+  win.on('move', () => {
+    if (win.isDestroyed()) return
+    const current = win.getBounds()
+    if (!Number.isFinite(current.x) || !Number.isFinite(current.y)) return
+    pendingPosition = { x: current.x, y: current.y }
+    if (moveTimer) clearTimeout(moveTimer)
+    moveTimer = setTimeout(() => {
+      moveTimer = null
       if (win.isDestroyed()) return
-      const current = win.getBounds()
-      if (!Number.isFinite(current.x) || !Number.isFinite(current.y)) return
-      pending = { x: current.x, y: current.y }
-      if (timer) clearTimeout(timer)
-      timer = setTimeout(() => {
-        timer = null
-        const snapshot = pending
-        pending = null
-        if (snapshot) onMove(snapshot)
-      }, MOVE_PERSIST_DEBOUNCE_MS)
-    })
-    win.on('close', () => {
-      if (timer) {
-        clearTimeout(timer)
-        timer = null
-        const snapshot = pending
-        pending = null
-        if (snapshot) onMove(snapshot)
-      }
-    })
-  }
+      const currentBounds = win.getBounds()
+      const snapped = resolveTopSnappedPosition(currentBounds)
+      pendingPosition = null
+      if (snapped.y !== currentBounds.y) win.setPosition(snapped.x, snapped.y)
+      deps.onWindowMove?.(snapped)
+    }, MOVE_PERSIST_DEBOUNCE_MS)
+  })
+  // close 时仅 flush 最近一次实际位置；不在关闭流程中移动窗口。
+  win.on('close', () => {
+    if (!moveTimer) return
+    clearTimeout(moveTimer)
+    moveTimer = null
+    const snapshot = pendingPosition
+    pendingPosition = null
+    if (snapshot) deps.onWindowMove?.(snapshot)
+  })
 
   return win
 }
