@@ -16,7 +16,7 @@ export function ProviderCard({ provider, configured, needsAttention, selected, o
       type="button"
       onClick={() => onOpen(provider.service)}
       className={cn(
-        "group/card relative grid w-full cursor-pointer overflow-hidden rounded-md border bg-card px-2.5 py-1.5 text-left transition-colors",
+        "group/card relative grid h-[68px] w-full cursor-pointer overflow-hidden rounded-md border bg-card px-2.5 py-1.5 text-left transition-colors",
         "hover:border-[var(--lume-focus-ring)] hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/40",
         selected && "border-[var(--lume-focus-ring)] bg-[var(--lume-accent-soft)] before:absolute before:inset-y-2 before:left-0 before:w-1 before:rounded-r-full before:bg-[var(--lume-accent)]",
       )}
