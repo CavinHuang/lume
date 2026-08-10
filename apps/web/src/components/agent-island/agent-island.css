@@ -63,7 +63,7 @@ html:not(.darwin) .island-surface {
   box-sizing: border-box;
   width: 420px;
   height: 32px;
-  padding: 0 18px 0 12px;
+  padding: 0 18px 0 40px;
   background: #09090a;
   color: #f5f5f7;
   cursor: default;
@@ -100,14 +100,15 @@ html:not(.darwin) .island-surface {
   color: rgb(255 255 255 / 0.48);
   transition: transform 180ms ease;
 }
-.island-compact-grip {
-  position: relative;
-  width: 20px;
+.island-window-drag-handle {
+  position: absolute;
+  z-index: 3;
+  top: 4px;
+  left: 8px;
+  width: 24px;
   height: 24px;
-  flex: 0 0 auto;
-  margin-right: -6px;
 }
-.island-compact-grip::after {
+.island-window-drag-handle::after {
   content: '';
   position: absolute;
   top: 5px;
@@ -173,7 +174,7 @@ html:not(.darwin) .island-surface {
   height: 32px;
   align-items: center;
   gap: 7px;
-  padding: 0 4px 0 12px;
+  padding: 0 4px 0 40px;
   border-bottom: 1px solid rgb(255 255 255 / 0.11);
 }
 .island-title {
@@ -416,7 +417,7 @@ html:not(.darwin) .island-surface {
   color: rgb(255 255 255 / 0.4);
 }
 
-/* 窗口拖动 grip（对齐 Proma agent-island.css:48-72） */
+/* 两种形态共用独立 grip，避免 drag region 覆盖内容后吞掉 hover 事件。 */
 .island-drag-handle {
   -webkit-app-region: drag;
   cursor: move;
