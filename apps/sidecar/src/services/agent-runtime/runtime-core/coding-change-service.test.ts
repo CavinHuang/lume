@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
   applyCodingDiffAction,
@@ -17,6 +18,10 @@ import {
 } from "./coding-change-service";
 
 const tempDirs: string[] = [];
+
+function makeTempDir(prefix: string): string {
+  return mkdtempSync(join(tmpdir(), prefix));
+}
 
 function createGitWorkspace(root: string, content: string): void {
   mkdirSync(join(root, "src"), { recursive: true });
@@ -35,7 +40,7 @@ afterEach(() => {
 
 describe("coding-change-service", () => {
   test("非 Git 工作区回退到 workspace snapshot 基线", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-diff-"));
+    const root = makeTempDir("lume-coding-diff-");
     tempDirs.push(root);
 
     await expect(getCodingChangeSet(root)).resolves.toMatchObject({
@@ -46,7 +51,7 @@ describe("coding-change-service", () => {
   });
 
   test("非 Git 工作区 diff 使用受限的 snapshot 预览", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-diff-"));
+    const root = makeTempDir("lume-coding-diff-");
     tempDirs.push(root);
 
     await expect(getCodingFileDiff(root, "src.ts")).resolves.toMatchObject({
@@ -57,7 +62,7 @@ describe("coding-change-service", () => {
   });
 
   test("非 Git 工作区也拒绝越界路径", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-diff-"));
+    const root = makeTempDir("lume-coding-diff-");
     tempDirs.push(root);
 
     await expect(getCodingChangeSet(root, { paths: ["../outside.ts"] })).resolves.toMatchObject({
@@ -67,9 +72,9 @@ describe("coding-change-service", () => {
   });
 
   test("多根目录用 rootId 区分同名文件并可读取对应 diff", async () => {
-    const first = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-root-a-"));
-    const second = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-root-b-"));
-    const snapshot = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-root-c-"));
+    const first = makeTempDir("lume-coding-root-a-");
+    const second = makeTempDir("lume-coding-root-b-");
+    const snapshot = makeTempDir("lume-coding-root-c-");
     tempDirs.push(first, second, snapshot);
     createGitWorkspace(first, "export const value = 'first';\n");
     createGitWorkspace(second, "export const value = 'second';\n");
@@ -172,7 +177,7 @@ describe("coding-change-service", () => {
   });
 
   test("mixed 文件可按 staged 与 unstaged 基线分别审阅和操作", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-stage-filter-"));
+    const root = makeTempDir("lume-coding-stage-filter-");
     tempDirs.push(root);
     createGitWorkspace(root, [
       "export const staged = 'before';",
@@ -240,7 +245,7 @@ describe("coding-change-service", () => {
   }, 30_000);
 
   test("Branch 与 Committed 来源使用各自稳定的 Git 基线", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-review-source-"));
+    const root = makeTempDir("lume-coding-review-source-");
     tempDirs.push(root);
     createGitWorkspace(root, "export const value = 'baseline';\n");
     execFileSync("git", ["branch", "review-base"], { cwd: root });
@@ -295,7 +300,7 @@ describe("coding-change-service", () => {
   }, 30_000);
 
   test("文件级 Stage 与 Unstage 受当前 diff hash 保护", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-action-"));
+    const root = makeTempDir("lume-coding-action-");
     tempDirs.push(root);
     createGitWorkspace(root, "export const value = 'before';\n");
     writeFileSync(join(root, "src", "index.ts"), "export const value = 'after';\n");
@@ -334,7 +339,7 @@ describe("coding-change-service", () => {
   }, 30_000);
 
   test("分区级 Stage 与 Unstage 在单次 Git 操作中处理全部文件", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-section-"));
+    const root = makeTempDir("lume-coding-section-");
     tempDirs.push(root);
     createGitWorkspace(root, "export const first = 'before';\n");
     writeFileSync(join(root, "src", "second.ts"), "export const second = 'before';\n");
@@ -371,7 +376,7 @@ describe("coding-change-service", () => {
   }, 30_000);
 
   test("分区级操作在任一文件 hash 过期时不修改 index", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-section-stale-"));
+    const root = makeTempDir("lume-coding-section-stale-");
     tempDirs.push(root);
     createGitWorkspace(root, "export const first = 'before';\n");
     writeFileSync(join(root, "src", "second.ts"), "export const second = 'before';\n");
@@ -396,7 +401,7 @@ describe("coding-change-service", () => {
   }, 30_000);
 
   test("blame 标记未提交行并从远程地址生成 commit 链接", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-blame-"));
+    const root = makeTempDir("lume-coding-blame-");
     tempDirs.push(root);
     createGitWorkspace(root, "export const first = 1;\nexport const second = 2;\n");
     execFileSync("git", ["remote", "add", "origin", "git@github.com:example/lume.git"], { cwd: root });
@@ -410,7 +415,7 @@ describe("coding-change-service", () => {
   }, 30_000);
 
   test("文件打开目标返回安全本地路径和固定到 HEAD 的 GitHub 链接", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-open-target-"));
+    const root = makeTempDir("lume-coding-open-target-");
     tempDirs.push(root);
     createGitWorkspace(root, "export const value = 1;\n");
     execFileSync("git", ["remote", "add", "origin", "git@github.com:example/lume.git"], { cwd: root });
@@ -432,7 +437,7 @@ describe("coding-change-service", () => {
   }, 30_000);
 
   test("文件打开目标拒绝越界路径", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-open-target-safe-"));
+    const root = makeTempDir("lume-coding-open-target-safe-");
     tempDirs.push(root);
     createGitWorkspace(root, "export const value = 1;\n");
 
@@ -440,8 +445,8 @@ describe("coding-change-service", () => {
   }, 30_000);
 
   test("仅提交已暂存内容并将当前分支推送到 upstream", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-publish-"));
-    const remote = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-publish-remote-"));
+    const root = makeTempDir("lume-coding-publish-");
+    const remote = makeTempDir("lume-coding-publish-remote-");
     tempDirs.push(root, remote);
     execFileSync("git", ["init", "--bare", "-q"], { cwd: remote });
     createGitWorkspace(root, "export const value = 'before';\n");
@@ -476,7 +481,7 @@ describe("coding-change-service", () => {
   }, 30_000);
 
   test("显式选择后可提交未暂存和未跟踪变更", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-publish-all-"));
+    const root = makeTempDir("lume-coding-publish-all-");
     tempDirs.push(root);
     createGitWorkspace(root, "export const value = 'before';\n");
     writeFileSync(join(root, "src", "index.ts"), "export const value = 'after';\n");
@@ -508,7 +513,7 @@ describe("coding-change-service", () => {
   }, 30_000);
 
   test("包含未暂存变更时受工作区指纹保护", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-publish-worktree-stale-"));
+    const root = makeTempDir("lume-coding-publish-worktree-stale-");
     tempDirs.push(root);
     createGitWorkspace(root, "export const value = 'before';\n");
     writeFileSync(join(root, "src", "index.ts"), "export const value = 'after';\n");
@@ -530,7 +535,7 @@ describe("coding-change-service", () => {
   }, 30_000);
 
   test("提交在暂存区指纹过期时不创建 commit", async () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-coding-publish-stale-"));
+    const root = makeTempDir("lume-coding-publish-stale-");
     tempDirs.push(root);
     createGitWorkspace(root, "export const value = 'before';\n");
     writeFileSync(join(root, "src", "index.ts"), "export const value = 'after';\n");
