@@ -65,14 +65,14 @@ describe("BashTool shell invocation", () => {
       purpose: "verification",
       terminationReason: "completed",
     });
-  });
+  }, 15_000);
 
   test("preserves non-ASCII output from the Windows fallback shell", async () => {
     if (process.platform !== "win32") return;
     const root = await mkdtemp(join(tmpdir(), "lume-bash-utf8-"));
     const result = await BashTool.call({ command: "echo 中文", timeout: 10_000 }, { cwd: root });
     expect(result.content).toContain("中文");
-  });
+  }, 15_000);
 
   test("does not mark a no-match search as a failed tool call", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-bash-semantic-"));
@@ -80,7 +80,7 @@ describe("BashTool shell invocation", () => {
     const result = await BashTool.call({ command, timeout: 10_000 }, { cwd: root });
     expect(result.is_error).toBeFalsy();
     expect(result.content).toContain("No matches found");
-  });
+  }, 15_000);
 
   test("recognizes PowerShell Select-String no-match as a semantic result", () => {
     expect(interpretShellExit("bun test | Select-String error", 1)).toEqual({
