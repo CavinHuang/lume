@@ -241,11 +241,11 @@ describe('ProviderIcon', () => {
   )
 
   test('非 lobehub service: 走首字母分支,产出含首字母的彩色块 DOM', async () => {
-    const { env, root } = await render(<ProviderIcon service="gmail" />)
+    const { env, root } = await render(<ProviderIcon service="some_custom_app" />)
     try {
-      // gmail 不在 LOBEHUB_SERVICES 且无 iconUrl → decideIconKind 返回 "letter"
-      // → LetterBlock 渲染 initialOf("gmail") = "G"
-      expect(env.container.textContent).toBe('G')
+      // some_custom_app 不在 LOBEHUB_SERVICES/LINK_ICONS 且无 iconUrl → decideIconKind 返回 "letter"
+      // → LetterBlock 渲染 initialOf("some_custom_app") = "S"
+      expect(env.container.textContent).toBe('S')
       const block = findByTag(env.container, 'div')
       expect(block).toBeDefined()
       // colorForSeed 已执行,内联 background 写入 style

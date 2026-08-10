@@ -1,15 +1,30 @@
-export type IconKind = "lobehub" | "image" | "letter";
+import { LINK_ICONS } from "./generated/link-icons";
 
-// @lobehub/icons 实际覆盖的 service(5.5.4 验证)。仅这 9 个有 Mono 组件;
-// 其余 service 一律走首字母兜底 —— 这是有意的,避免追求全量图标而引入额外图标资源包。
+export type IconKind = "lobehub" | "simpleIcon" | "image" | "letter";
+
+// @lobehub/icons 覆盖的 AI/开发者品牌（深路径 Mono 组件存在性验证）
 export const LOBEHUB_SERVICES = [
   "github", "notion", "microsoft", "figma", "vercel",
   "openai", "anthropic", "cohere", "perplexity",
 ] as const;
 
+// service(小写)→ simple-icons slug 手工修正（须与生成脚本一致）
+const SLUG_OVERRIDES: Record<string, string> = {
+  active_campaign: "activecampaign",
+  google_calendar: "googlecalendar",
+  microsoft_teams: "microsoftteams",
+};
+
+export function serviceToSimpleSlug(service: string): string | null {
+  const key = service.toLowerCase();
+  const slug = SLUG_OVERRIDES[key] ?? key.replaceAll("_", "-");
+  return slug;
+}
+
 export function decideIconKind(service: string, iconUrl?: string): IconKind {
   const key = service.toLowerCase();
   if ((LOBEHUB_SERVICES as readonly string[]).includes(key)) return "lobehub";
+  if (LINK_ICONS[key]) return "simpleIcon";
   if (iconUrl) return "image";
   return "letter";
 }

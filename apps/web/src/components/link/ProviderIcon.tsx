@@ -14,7 +14,9 @@ import OpenAIMono from "@lobehub/icons/es/OpenAI/components/Mono";
 import PerplexityMono from "@lobehub/icons/es/Perplexity/components/Mono";
 import VercelMono from "@lobehub/icons/es/Vercel/components/Mono";
 import type { IconType } from "@lobehub/icons/es/types";
+import { LINK_ICONS } from "@/lib/generated/link-icons";
 import { colorForSeed, decideIconKind, initialOf } from "@/lib/provider-icon";
+import { SimpleIconGlyph } from "./SimpleIconGlyph";
 
 // service(小写)→ lobehub Mono 组件。keys 必须与 LOBEHUB_SERVICES 对齐。
 const LOBEHUB_MAP: Record<string, IconType> = {
@@ -35,6 +37,17 @@ export function ProviderIcon({ service, displayName, iconUrl, size = 24 }: Provi
   if (kind === "lobehub") {
     const Icon = LOBEHUB_MAP[service.toLowerCase()];
     if (Icon) return <Icon size={size} />;
+  }
+
+  if (kind === "simpleIcon") {
+    const icon = LINK_ICONS[service.toLowerCase()];
+    if (icon) {
+      return (
+        <span className="shrink-0 text-[var(--lume-text-2)]" style={{ width: size, height: size }}>
+          <SimpleIconGlyph path={icon.path} size={size} />
+        </span>
+      );
+    }
   }
 
   if (kind === "image" && iconUrl) {
