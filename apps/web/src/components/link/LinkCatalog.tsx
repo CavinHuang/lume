@@ -115,36 +115,41 @@ export function LinkCatalog({
             <div className="text-sm font-medium text-[var(--lume-text-1)]">无匹配连接器</div>
             <div className="text-xs text-[var(--lume-text-3)]">尝试更换关键词或清除筛选。</div>
           </div>
-        ) : (
-          <div ref={gridRef} className="relative" style={{ height: rows ? rowVirtualizer.getTotalSize() : 0 }}>
-            {rowVirtualizer.getVirtualItems().map((vRow) => (
-              <div
-                key={vRow.key}
-                className="absolute left-0 top-0 grid gap-3"
-                style={{
-                  transform: `translateY(${vRow.start}px)`,
-                  width: "100%",
-                  gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-                }}
-              >
-                {Array.from({ length: columns }).map((_, col) => {
-                  const entry = visible[vRow.index * columns + col];
-                  if (!entry) return null;
-                  return (
-                    <ProviderCard
-                      key={entry.provider.service}
-                      provider={entry.provider}
-                      configured={entry.status.configured}
-                      needsAttention={entry.status.needsAttention}
-                      selected={entry.provider.service === selectedService}
-                      onOpen={onOpen}
-                    />
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        )}
+        ) : null}
+        {/*
+          gridRef 必须恒挂载：useLayoutEffect deps=[] 只在首挂时 attach ResizeObserver。
+          若放进 visible.length>0 分支，empty↔non-empty 切换会卸载 gridRef → cleanup disconnect
+          → 重挂时 effect 不重跑 → containerWidth 冻结 0、列数降级 1、窗口缩放失效。
+          空态下 rows=0 → height=0、无 virtual item，div 占位零成本。
+        */}
+        <div ref={gridRef} className="relative" style={{ height: rows ? rowVirtualizer.getTotalSize() : 0 }}>
+          {rowVirtualizer.getVirtualItems().map((vRow) => (
+            <div
+              key={vRow.key}
+              className="absolute left-0 top-0 grid gap-3"
+              style={{
+                transform: `translateY(${vRow.start}px)`,
+                width: "100%",
+                gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+              }}
+            >
+              {Array.from({ length: columns }).map((_, col) => {
+                const entry = visible[vRow.index * columns + col];
+                if (!entry) return null;
+                return (
+                  <ProviderCard
+                    key={entry.provider.service}
+                    provider={entry.provider}
+                    configured={entry.status.configured}
+                    needsAttention={entry.status.needsAttention}
+                    selected={entry.provider.service === selectedService}
+                    onOpen={onOpen}
+                  />
+                );
+              })}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
