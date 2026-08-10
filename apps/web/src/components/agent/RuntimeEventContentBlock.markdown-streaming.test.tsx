@@ -66,6 +66,7 @@ mock.module('@/lib/desktop-api', () => ({
   saveTextFileDialog: async () => undefined,
   sidecarHealthcheck: async () => undefined,
   sidecarCall: async () => undefined,
+  undoMemoryMutation: async () => undefined,
   statFilePaths: async () => ({ files: [] }),
   getMcpConfig: async () => ({ mcpServers: {} }),
   getMcpStatus: async () => ({ servers: [] }),

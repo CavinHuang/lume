@@ -11,6 +11,7 @@ import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/run
 import { createFileBackedTaskRunStore } from "../services/agent-runtime/task-run/task-run-store";
 import { createFileBackedLumeTraceStore } from "../services/agent-runtime/trace/trace-store";
 import { getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
+import { resetPlanningTodoStoreForTests } from "../services/planning/planning-todo-store";
 
 const sendAgentMessageMock = mock(async (_input: unknown, emit?: {
   onMessageAppended?: (event: { threadId: string; message: { role: "assistant"; content: string } }) => void;
@@ -34,9 +35,12 @@ mock.module("../services/agent/agent-service", () => ({
   generateAgentTitle: async () => undefined,
   generateWelcomeSuggestions: async () => [],
   listAgentMessageQueue: () => [],
+  pauseAgentQueue: () => undefined,
   promoteQueuedAgentMessageToGuidance: () => undefined,
   removeQueuedAgentMessage: () => undefined,
   reorderAgentMessageQueue: () => undefined,
+  resumeAgentQueue: () => undefined,
+  retryQueuedAgentMessage: () => undefined,
   stopAgent: async () => undefined,
   submitAgentToolPermission: () => false,
   submitAskUserQuestionAnswers: submitAskUserQuestionAnswersMock,
@@ -57,6 +61,7 @@ describe("agent-handlers runtime state", () => {
   const previousConfigDir = process.env.LUME_CONFIG_DIR;
 
   afterEach(() => {
+    resetPlanningTodoStoreForTests();
     submitAskUserQuestionAnswersResult = { ok: true };
     submitAskUserQuestionAnswersMock.mockClear();
     sendAgentMessageMock.mockClear();

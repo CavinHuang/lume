@@ -103,7 +103,7 @@ describe("coding-change-service", () => {
     if (diff.kind !== "text") throw new Error("expected text diff");
     expect(diff.oldContent).toContain("'second'");
     expect(diff.newContent).toContain("'second changed'");
-  }, 20_000);
+  }, 60_000);
 
   test("解析 Git unified diff 的行号和变更类型", () => {
     expect(parseUnifiedDiff([

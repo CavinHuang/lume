@@ -36,7 +36,10 @@ import { listEntries, listPending, readActivation } from "../memory-v2/markdown-
 import { parsePersonaProfile, readPersonaRaw } from "../memory-v2/persona";
 import { resolveMemoryExtractionModelRefs } from "../memory-v2/extraction";
 import { listAutomationJobs } from "../automation/automation-manager";
+import { createLogger } from "../infra/logger";
 import type { MemoryV2Scope } from "../memory-v2/types";
+
+const log = createLogger("suggest-analyst");
 
 /** 分析器允许产出的建议类型（保守：只产出规则引擎也能处理、有明确动作的类型） */
 export const ALLOWED_KINDS: SuggestionKind[] = ["automation", "skill", "todo"];
@@ -408,10 +411,9 @@ export async function runAnalysis(input: AnalysisInput): Promise<SuggestionCandi
     }
     return [];
   } catch (error) {
-    console.warn(
-      "[Analyst] 工作模式分析失败:",
-      error instanceof Error ? error.message : error,
-    );
+    log.warn("工作模式分析失败", {
+      error: error instanceof Error ? error.message : String(error)
+    });
     return [];
   }
 }

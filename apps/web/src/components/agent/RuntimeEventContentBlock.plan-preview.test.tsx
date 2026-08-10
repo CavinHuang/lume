@@ -39,6 +39,7 @@ mock.module('@/lib/desktop-api', () => ({
   saveTextFileDialog: async () => undefined,
   saveGuardedFileRefAs: async () => ({ path: null }),
   sidecarCall: async () => undefined,
+  undoMemoryMutation: async () => undefined,
   sidecarHealthcheck: async () => undefined,
   statFilePaths: async () => ({ files: [] }),
   revokeFilePreviewScope: async () => undefined,

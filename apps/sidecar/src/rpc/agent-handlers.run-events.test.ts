@@ -8,6 +8,7 @@ import type { TaskContractRecord } from "../services/agent-runtime/plan/task-con
 import { createFileBackedTaskContractStore } from "../services/agent-runtime/plan/task-contract-store";
 import { createFileBackedTaskRunStore } from "../services/agent-runtime/task-run/task-run-store";
 import { getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
+import { resetPlanningTodoStoreForTests } from "../services/planning/planning-todo-store";
 
 const appendedInputs: unknown[] = [];
 let mockCompletePayload: { reason?: "max_turns" } | undefined;
@@ -49,9 +50,12 @@ mock.module("../services/agent/agent-service", () => ({
   generateAgentTitle: async () => undefined,
   generateWelcomeSuggestions: async () => [],
   listAgentMessageQueue: () => [],
+  pauseAgentQueue: () => undefined,
   promoteQueuedAgentMessageToGuidance: () => undefined,
   removeQueuedAgentMessage: () => undefined,
   reorderAgentMessageQueue: () => undefined,
+  resumeAgentQueue: () => undefined,
+  retryQueuedAgentMessage: () => undefined,
   stopAgent: async () => undefined,
   submitAgentToolPermission: () => false,
   submitAskUserQuestionAnswers: () => false,
@@ -72,6 +76,7 @@ describe("agent-handlers run events", () => {
   const previousConfigDir = process.env.LUME_CONFIG_DIR;
 
   afterEach(() => {
+    resetPlanningTodoStoreForTests();
     appendedInputs.length = 0;
     mockCompletePayload = undefined;
     mockRuntimeEvents.splice(0, mockRuntimeEvents.length,

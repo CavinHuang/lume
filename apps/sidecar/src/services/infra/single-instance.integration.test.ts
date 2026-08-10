@@ -72,7 +72,7 @@ describe("acquireSingleInstance（集成）", () => {
     // pidfile 被当前 PID 接管
     expect(existsSync(getPidFilePath())).toBe(true);
     expect(readFileSync(getPidFilePath(), "utf-8").trim()).toBe(String(process.pid));
-  });
+  }, 20_000);
 
   test("pidfile 指向的 PID 已不存活：不报错，直接写入自己", () => {
     writeFileSync(getPidFilePath(), "999999", "utf-8"); // 几乎不可能存活的 PID

@@ -5,6 +5,8 @@ import { join } from "node:path";
 import type { ToolDefinition } from "@lume/agent-sdk";
 import { createRoutineTools } from "./create-routine-tools";
 import { readRoutine, writeRoutine } from "../../../routine/routine-store";
+import { stopAutomationRunner } from "../../../automation/automation-runner-service";
+import { resetPlanningTodoStoreForTests } from "../../../planning/planning-todo-store";
 import type { DailyRoutine } from "@lume/shared";
 
 function resolveTool(tools: ToolDefinition[], name: string): ToolDefinition {
@@ -23,19 +25,28 @@ async function callTool(tool: ToolDefinition, input: Record<string, unknown>) {
 describe("routine tools", () => {
   let tempConfigDir = "";
   const oldConfigDir = process.env.LUME_CONFIG_DIR;
+  const oldLogFile = process.env.LUME_LOG_FILE;
   const oldRoutineDir = process.env.LUME_ROUTINE_DIR;
 
   beforeEach(() => {
     tempConfigDir = mkdtempSync(join(tmpdir(), "lume-routine-tools-"));
     process.env.LUME_CONFIG_DIR = tempConfigDir;
+    process.env.LUME_LOG_FILE = "false";
     process.env.LUME_ROUTINE_DIR = join(tempConfigDir, "routine");
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await stopAutomationRunner();
+    resetPlanningTodoStoreForTests();
     if (oldConfigDir === undefined) {
       delete process.env.LUME_CONFIG_DIR;
     } else {
       process.env.LUME_CONFIG_DIR = oldConfigDir;
+    }
+    if (oldLogFile === undefined) {
+      delete process.env.LUME_LOG_FILE;
+    } else {
+      process.env.LUME_LOG_FILE = oldLogFile;
     }
     if (oldRoutineDir === undefined) {
       delete process.env.LUME_ROUTINE_DIR;

@@ -6,12 +6,12 @@ import {
   MEMORY_IPC_CHANNELS,
   type MemoryIngestSourcesJob,
   type MemoryOrganizeJob,
-  type MemoryOrganizeEntriesResult,
   type MemoryStartIngestSourcesResult,
   type MemoryStartOrganizeJobResult
 } from "@lume/shared";
 import { createAgentThread, appendAgentTranscriptMessage } from "../services/agent/agent-thread-manager";
 import { createAgentWorkspace } from "../services/agent/agent-workspace-manager";
+import { memoryJobService } from "../services/memory-v2/job-service";
 import { createMemoryV2Store, readEntryFile, readPendingFile } from "../services/memory-v2/markdown-store";
 import { createMemoryHandlers } from "./memory-handlers";
 
@@ -103,7 +103,7 @@ describe("memory handlers", () => {
     });
   });
 
-  test("organize entries handler supersedes duplicate historical memories", async () => {
+  test("organize entries handler routes through the unified Dream job without direct writes", async () => {
     const store = createMemoryV2Store();
     const kept = store.writeEntry({
       kind: "decision",
@@ -124,22 +124,19 @@ describe("memory handlers", () => {
     const started = await handlers[MEMORY_IPC_CHANNELS.ORGANIZE_ENTRIES]?.({
       workspaceSlug: "demo"
     }) as MemoryStartOrganizeJobResult;
-    const job = await waitForOrganizeJob(handlers, started?.jobId);
-    const result = job.result as MemoryOrganizeEntriesResult;
-
-    expect(result).toMatchObject({
+    expect(started).toMatchObject({
+      kind: "consolidation",
       workspaceSlug: "demo",
-      scannedEntries: 2,
-      keptEntries: 1,
-      supersededDuplicates: 1
+      status: "running"
     });
-    expect(new Set([
-      result.items[0]?.keptId,
-      result.items[0]?.duplicateId
-    ])).toEqual(new Set([
-      kept.frontmatter.id,
-      duplicate.frontmatter.id
-    ]));
+    await handlers[MEMORY_IPC_CHANNELS.CANCEL_JOB]?.({
+      workspaceSlug: "demo",
+      jobId: started.jobId
+    });
+    await memoryJobService.waitForSettled();
+
+    expect(readEntryFile(kept.path).frontmatter.status).toBe("active");
+    expect(readEntryFile(duplicate.path).frontmatter.status).toBe("active");
   });
 
   test("ingest sources handler starts a background job for pasted text imports", async () => {

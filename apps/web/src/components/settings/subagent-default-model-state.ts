@@ -4,6 +4,7 @@ import type {
 } from '@lume/shared'
 import {
   buildModelOptions,
+  findModelOption,
   getEnabledChannels,
 } from './model-option-utils'
 
@@ -20,14 +21,13 @@ export function getSubagentDefaultModelDraft(input: {
   const enabledChannels = getEnabledChannels(input.channels)
   const modelOptions = buildModelOptions(enabledChannels)
   const configuredModelRef = input.strategy?.defaultModelRef?.trim() || undefined
+  const configuredModel = findModelOption(modelOptions, configuredModelRef)
 
   return {
-    defaultModelRef: modelOptions.some((option) => option.modelRef === configuredModelRef)
-      ? configuredModelRef
-      : undefined,
+    defaultModelRef: configuredModel?.modelRef,
     hasExplicitDefaultModel: Boolean(configuredModelRef),
     unavailableDefaultModelRef:
-      configuredModelRef && !modelOptions.some((option) => option.modelRef === configuredModelRef)
+      configuredModelRef && !configuredModel
         ? configuredModelRef
         : undefined,
   }
