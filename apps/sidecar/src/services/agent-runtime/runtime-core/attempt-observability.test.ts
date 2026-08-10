@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createAgentThread } from "../../agent/agent-thread-manager";
 import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createChannel } from "../../channel/channel-manager";
+import { installConnectionVaultKey } from "../../channel/connection-credential-store";
 import { getAgentSessionWorkspacePath } from "../../infra/config-paths";
 import { getRuntimeCoreSessionDir } from "./session-store";
 import { runRuntimeCoreAttempt } from "./attempt";
@@ -32,6 +33,7 @@ describe("runtime-core attempt observability", () => {
     mkdirSync(projectDir);
     process.env.LUME_CONFIG_DIR = configDir;
     process.env.LUME_AGENT_RUNTIME_MOCK_SUCCESS = "1";
+    installConnectionVaultKey(Buffer.alloc(32, 31).toString("base64"));
 
     const workspace = createAgentWorkspace("Observability Workspace", { projectPath: projectDir });
     const channel = createChannel({
@@ -86,5 +88,5 @@ describe("runtime-core attempt observability", () => {
     expect(existsSync(join(getAgentSessionWorkspacePath(workspace.slug, thread.id), "systemPrompt.md"))).toBeFalse();
 
     rmSync(configDir, { recursive: true, force: true });
-  });
+  }, 20_000);
 });

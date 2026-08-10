@@ -824,7 +824,7 @@ export async function getCodingFileOpenTargets(
   if (!safePath) throw new Error("文件路径超出项目目录");
   const target = resolve(selectedRoot.path, safePath);
   const result: CodingFileOpenTargets = {};
-  if (existsSync(target) && statSync(target).isFile()) result.absolutePath = target;
+  if (existsSync(target) && statSync(target).isFile()) result.absolutePath = realpathSync(target);
 
   const gitRoot = await findGitRoot(selectedRoot.path);
   if (!gitRoot) return result;

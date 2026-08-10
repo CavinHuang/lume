@@ -77,13 +77,16 @@ describe("coding-change-service", () => {
     writeFileSync(join(snapshot, "src", "index.ts"), "export const value = 'snapshot';\n");
     writeFileSync(join(first, "src", "index.ts"), "export const value = 'first changed';\n");
     writeFileSync(join(second, "src", "index.ts"), "export const value = 'second changed';\n");
+    const canonicalFirst = realpathSync(first);
+    const canonicalSecond = realpathSync(second);
+    const canonicalSnapshot = realpathSync(snapshot);
 
-    const changeSet = await getCodingChangeSet(first, {
-      roots: [second, snapshot],
+    const changeSet = await getCodingChangeSet(canonicalFirst, {
+      roots: [canonicalSecond, canonicalSnapshot],
       paths: [
-        join(first, "src", "index.ts"),
-        join(second, "src", "index.ts"),
-        join(snapshot, "src", "index.ts"),
+        join(canonicalFirst, "src", "index.ts"),
+        join(canonicalSecond, "src", "index.ts"),
+        join(canonicalSnapshot, "src", "index.ts"),
       ],
     });
 
@@ -93,11 +96,11 @@ describe("coding-change-service", () => {
     expect(new Set(changeSet.files.map((file) => file.rootId)).size).toBe(3);
     expect(changeSet.files.every((file) => file.path === "src/index.ts")).toBe(true);
 
-    const secondRepository = changeSet.repositories?.find((repository) => repository.rootLabel === basename(second));
+    const secondRepository = changeSet.repositories?.find((repository) => repository.rootLabel === basename(canonicalSecond));
     expect(secondRepository).toBeDefined();
-    const diff = await getCodingFileDiff(first, "src/index.ts", {
+    const diff = await getCodingFileDiff(canonicalFirst, "src/index.ts", {
       rootId: secondRepository?.rootId,
-      roots: [second, snapshot],
+      roots: [canonicalSecond, canonicalSnapshot],
     });
     expect(diff.rootId).toBe(secondRepository?.rootId);
     if (diff.kind !== "text") throw new Error("expected text diff");
