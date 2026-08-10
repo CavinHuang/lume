@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { PanelLeft, Search, Sparkles } from 'lucide-react'
 import { activeTabIdAtom, commandPaletteOpenAtom, sidebarCollapsedAtom, tabsAtom } from '@/atoms'
-import { RightPanelWindowControls } from '@/components/right-panel'
+import { RightPanelWindowControls } from '@/components/right-panel/RightPanelWindowControls'
 import {
   isCustomWindowControlsPlatform,
   isMacosDesktopShell,

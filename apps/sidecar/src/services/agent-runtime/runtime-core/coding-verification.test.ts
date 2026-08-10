@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   selectVerificationCommands,
@@ -8,13 +9,17 @@ import {
 
 const roots: string[] = [];
 
+function makeTempDir(): string {
+  return mkdtempSync(join(tmpdir(), "lume-verification-"));
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 describe("coding verification command selection", () => {
   test("prefers existing check/typecheck scripts and caps suggestions at two", () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-verification-"));
+    const root = makeTempDir();
     roots.push(root);
     writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { check: "bun test", typecheck: "tsc", test: "bun test", lint: "eslint ." } }), "utf8");
 
@@ -25,7 +30,7 @@ describe("coding verification command selection", () => {
   });
 
   test("uses a test script when a test file changed", () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-verification-"));
+    const root = makeTempDir();
     roots.push(root);
     writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { typecheck: "tsc", test: "bun test", lint: "eslint ." } }), "utf8");
 
@@ -34,7 +39,7 @@ describe("coding verification command selection", () => {
   });
 
   test("does not invent commands for a repository without scripts", () => {
-    const root = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-verification-"));
+    const root = makeTempDir();
     roots.push(root);
     writeFileSync(join(root, "package.json"), JSON.stringify({ name: "empty" }), "utf8");
 
@@ -42,8 +47,8 @@ describe("coding verification command selection", () => {
   });
 
   test("selects at least one explicit command for every changed workspace", () => {
-    const first = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-verification-"));
-    const second = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-verification-"));
+    const first = makeTempDir();
+    const second = makeTempDir();
     roots.push(first, second);
     writeFileSync(join(first, "package.json"), JSON.stringify({ scripts: { typecheck: "tsc" } }), "utf8");
     writeFileSync(join(second, "go.mod"), "module example.com/second\n\ngo 1.22\n", "utf8");
@@ -59,9 +64,9 @@ describe("coding verification command selection", () => {
   });
 
   test("discovers configured Python, Rust and dotnet verification commands", () => {
-    const python = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-verification-"));
-    const rust = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-verification-"));
-    const dotnet = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-verification-"));
+    const python = makeTempDir();
+    const rust = makeTempDir();
+    const dotnet = makeTempDir();
     roots.push(python, rust, dotnet);
     writeFileSync(join(python, "pyproject.toml"), "[tool.pytest.ini_options]\n", "utf8");
     writeFileSync(join(rust, "Cargo.toml"), "[package]\nname='demo'\nversion='0.1.0'\n", "utf8");

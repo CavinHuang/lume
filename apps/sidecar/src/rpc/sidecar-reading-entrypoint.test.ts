@@ -9,6 +9,7 @@ import {
   READING_IPC_CHANNELS,
   WEREAD_IPC_CHANNELS
 } from "@lume/shared";
+import { isNativeAvailable } from "@lume/natives";
 
 type RpcResponse = {
   id?: number;
@@ -134,7 +135,7 @@ function createSidecarClient(configDir: string): SidecarClient {
   };
 }
 
-describe("sidecar Reading entrypoint", () => {
+describe.skipIf(!isNativeAvailable())("sidecar Reading entrypoint", () => {
   let tempConfigDir = "";
   let sidecar: SidecarClient | undefined;
 

@@ -262,7 +262,8 @@ test('desktop package builds and verifies the pinned OpenConnector resource', ()
   assert.match(buildScript, /runtime-.*archiveSha256/)
   assert.match(buildScript, /"prune", "--omit=dev", "--workspaces=false"/)
   assert.match(buildScript, /"migrations"/)
-  assertContainsBefore(pkg.scripts.package, 'build-openconnector-resources.mjs --verify', 'run-electron-builder.mjs')
+  assertContainsBefore(pkg.scripts.package, 'build-openconnector-resources.mjs', 'build-openconnector-bundle.mjs')
+  assertContainsBefore(pkg.scripts.package, 'build-openconnector-bundle.mjs --verify', 'run-electron-builder.mjs')
 })
 
 test('OpenConnector resource verification fails closed on a checksum mismatch', () => {

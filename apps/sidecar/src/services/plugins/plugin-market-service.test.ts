@@ -1112,7 +1112,7 @@ describe("PluginMarketService", () => {
 
     const first = await makeService(root, fetchImpl).getMarketCatalog({ workspaceSlug: "default", cacheMode: "force-refresh" });
     expect(first.plugins.map((plugin) => plugin.pluginId)).toEqual(["cached-plugin"]);
-    const cacheDirectory = join(root, ".lume", "cache", "market-snapshots", "v1");
+    const cacheDirectory = join(root, "cache", "market-snapshots", "v1");
     const currentPointer = readdirSync(cacheDirectory).find((name) => name.endsWith(".current"));
     expect(currentPointer).toBeTruthy();
     writeFileSync(join(cacheDirectory, currentPointer!), "interrupted-pointer-write", "utf8");

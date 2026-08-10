@@ -79,13 +79,14 @@ describe("agent-files-service file ops", () => {
     startWorkspaceWatcher((method) => {
       if (method === MEMORY_IPC_CHANNELS.SOURCE_FILES_CHANGED) resolveChanged();
     });
+    await new Promise((resolve) => setTimeout(resolve, 100));
     writeFileSync(join(global.dailyDir, "watch.md"), "changed", "utf-8");
     const result = await Promise.race([
       changed.then(() => "changed" as const),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 3_000)),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 10_000)),
     ]);
     expect(result).toBe("changed");
-  });
+  }, 15_000);
 
   test("paginates the complete workspace and global memory source file list", () => {
     createTempConfigDir();

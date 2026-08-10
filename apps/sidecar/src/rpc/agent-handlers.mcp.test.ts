@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { getWorkspaceMcpPath } from "../services/infra/config-paths";
+import { resetPlanningTodoStoreForTests } from "../services/planning/planning-todo-store";
 
 const syncWorkspaceMock = mock(async (_workspaceSlug: string) => undefined);
 const disposeWorkspaceMock = mock(async (_workspaceSlug: string) => undefined);
@@ -93,6 +94,7 @@ describe("agent-handlers MCP RPC", () => {
   let restoreEnv: (() => void) | null = null;
 
   afterEach(() => {
+    resetPlanningTodoStoreForTests();
     restoreEnv?.();
     restoreEnv = null;
     syncWorkspaceMock.mockReset();

@@ -119,7 +119,9 @@ class FileBackedLumeRunStateStore implements LumeRunStateStore {
         states.push(state);
       }
     }
-    return states.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return states.sort((a, b) =>
+      a.createdAt.localeCompare(b.createdAt) || a.runId.localeCompare(b.runId)
+    );
   }
 
   async findActiveByThread(threadId: string): Promise<LumeRunState | null> {

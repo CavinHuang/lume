@@ -11,6 +11,7 @@ import { dirname } from "node:path";
 import type { LLMProvider } from "@lume/agent-sdk";
 import type { PersonaProfile } from "@lume/shared";
 import { resolveChannelModelBinding } from "../channel/channel-manager";
+import { createLogger } from "../infra/logger";
 import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { MEMORY_CLAIM_PREFERRED_NAME, claimFromEntry } from "./claim";
@@ -20,6 +21,8 @@ import { getPersonaPath } from "./paths";
 import type { MemoryV2Entry, MemoryV2Scope } from "./types";
 
 export { getPersonaPath };
+
+const log = createLogger("memory-persona");
 
 export function readPersonaRaw(scope: MemoryV2Scope, workspaceSlug?: string): string | null {
   const path = getPersonaPath(scope, workspaceSlug);
@@ -242,7 +245,9 @@ export async function ensurePersona(input: {
     return writePersona(scope, workspaceSlug, markdown);
   } catch (error) {
     // fail-open：persona 编排失败不得阻塞调用方
-    console.warn("[ensurePersona] persona 编排失败，已忽略:", error);
+    log.warn("关于我编排失败，已忽略", {
+      error: error instanceof Error ? error.message : String(error)
+    });
     return false;
   }
 }

@@ -4,8 +4,8 @@ import { buildDirectBrowserAnnotationPayload, parseBrowserAnnotationDirectReques
 const annotation = { id: 'annotation-1', origin: 'browser-annotation' as const, tab: { id: 'tab', origin: 'browser-tab' as const, tabId: 'tab', ownerThreadId: 'thread-1', title: 'Example', url: 'https://example.test/' }, anchor: { kind: 'element' as const, url: 'https://example.test/', generation: 1, framePath: [], rect: { x: 0, y: 0, width: 1, height: 1 } }, body: 'Review this' }
 
 describe('browser annotation submission', () => {
-  test('direct send keeps the existing composer and submits only the current annotation', () => {
-    expect(resolveBrowserAnnotationSubmission({ attachments: [annotation], directAttachment: annotation })).toEqual({ attachments: [annotation], preserveComposer: true, text: '请处理这条网页批注。' })
+  test('direct send keeps the existing composer and submits the current annotation body', () => {
+    expect(resolveBrowserAnnotationSubmission({ attachments: [annotation], directAttachment: annotation })).toEqual({ attachments: [annotation], preserveComposer: true, text: 'Review this' })
   })
 
   test('normal composer submission retains all annotations for send or queue', () => {
@@ -32,7 +32,7 @@ describe('browser annotation submission', () => {
     })
     expect(payload).toEqual({
       threadId: 'thread-1',
-      userMessage: '请处理这条网页批注。',
+      userMessage: 'Review this',
       browserAttachments: [annotation],
       messageAttachments: [{ id: 'screenshot', filename: 'annotation.png', mediaType: 'image/png', size: 10, threadPath: 'annotation.png' }],
     })

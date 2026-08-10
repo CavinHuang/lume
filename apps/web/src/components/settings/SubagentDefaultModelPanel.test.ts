@@ -41,7 +41,7 @@ describe('getSubagentDefaultModelDraft', () => {
       channels,
       strategy: { defaultModelRef: 'anthropic/claude-sonnet-4-5' },
     })).toEqual({
-      defaultModelRef: 'anthropic/claude-sonnet-4-5',
+      defaultModelRef: 'connection:channel-openrouter/anthropic/claude-sonnet-4-5',
       hasExplicitDefaultModel: true,
       unavailableDefaultModelRef: undefined,
     })

@@ -28,8 +28,10 @@ describe('unified-file-tree-state', () => {
   test('toggles folders from the whole row while keeping file double click open', () => {
     const source = readFileSync(new URL('./UnifiedFileTree.tsx', import.meta.url), 'utf8')
 
-    expect(source).toContain('if (entry.isDirectory && event.detail === 1) void props.onToggle(entry.ref!)')
-    expect(source).toContain('if (!entry.isDirectory) props.onOpen(entry.ref!)')
+    expect(source).toContain('if (entry.isDirectory) {')
+    expect(source).toContain('if (event.detail === 1) void props.onToggle(entry.ref!)')
+    expect(source).toContain('} else if (props.singleClickOpen || event.detail === 2) {')
+    expect(source).toContain('props.onOpen(entry.ref!)')
     expect(source).not.toContain('entry.isDirectory ? void props.onToggle(entry.ref!) : props.onOpen(entry.ref!)')
   })
 

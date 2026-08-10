@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isNativeAvailable } from "@lume/natives";
 import { evaluateRuntimeToolSafety } from "./runtime-tool-safety";
 
 describe("runtime-tool-safety", () => {
@@ -21,7 +22,7 @@ describe("runtime-tool-safety", () => {
     });
   });
 
-  test("allows ordinary read-only shell commands", () => {
+  test.skipIf(!isNativeAvailable())("allows ordinary read-only shell commands when the native parser is available", () => {
     expect(evaluateRuntimeToolSafety("Bash", { command: "rg prompt apps/sidecar/src" })).toEqual({
       behavior: "allow"
     });

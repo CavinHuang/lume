@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { sendBoundImMediaMessage } from "./im-send-service";
 import { createImAccount } from "./im-config-manager";
 import { upsertImThreadBinding } from "./im-thread-binding-store";
+import "./weixin/weixin-provider";
 
 describe("im-send-service", () => {
   let prevConfigDir: string | undefined;

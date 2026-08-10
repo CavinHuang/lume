@@ -1,10 +1,12 @@
 import type { LinkRuntimePhase } from "@lume/shared";
 import { McpClientManager } from "@lume/agent-sdk";
+import { createLogger } from "../infra/logger";
 
 type LinkRuntimeBootstrap = { phase: LinkRuntimePhase; origin?: string; adminToken?: string; runtimeToken?: string };
 type BootstrapState = { phase: LinkRuntimePhase; origin?: string; adminToken?: Buffer; runtimeToken?: Buffer };
 
 let bootstrap: BootstrapState = { phase: "disabled" };
+const log = createLogger("link-client");
 const LINK_RUNTIME_PHASES = new Set<LinkRuntimePhase>([
   "disabled", "starting", "online", "stopping", "offline", "crashed", "port_conflict", "incompatible",
 ]);
@@ -41,7 +43,9 @@ export function installLinkRuntimeBootstrap(value: unknown): void {
     url: `${input.origin}/mcp`,
     headers: { authorization: `Bearer ${input.runtimeToken}` },
   });
-  void getLinkMcpClient().connect(LINK_MCP_SERVER_ID).catch((e) => console.warn("[link] mcp connect failed", e));
+  void getLinkMcpClient().connect(LINK_MCP_SERVER_ID).catch((error) => {
+    log.warn("MCP 连接失败", { error: error instanceof Error ? error.message : String(error) });
+  });
 }
 
 export function getLinkRuntimePhase(): LinkRuntimePhase {

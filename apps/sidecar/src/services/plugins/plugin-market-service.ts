@@ -960,7 +960,7 @@ export class PluginMarketService {
 
   private remoteMarketCachePath(sourceId: string, sourceUrl: string): string {
     const key = createHash("sha256").update(`${sourceId}\0${sourceUrl}`).digest("hex");
-    return join(homedir(), ".lume", "cache", "market-snapshots", "v1", `${key}.json`);
+    return join(dirname(this.config.statePath), "cache", "market-snapshots", "v1", `${key}.json`);
   }
 
   private async readRemoteMarketCache(path: string): Promise<{ syncedAt: number; entries: MarketIndexEntry[] } | undefined> {

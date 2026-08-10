@@ -10,6 +10,7 @@ import {
 } from "./agent-thread-manager";
 import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
 import { removeProject } from "./agent-project-lifecycle-service";
+import { resetPlanningTodoStoreForTests } from "../planning/planning-todo-store";
 
 describe("agent-project-lifecycle-service", () => {
   let previousConfigDir: string | undefined;
@@ -22,6 +23,7 @@ describe("agent-project-lifecycle-service", () => {
   });
 
   afterEach(() => {
+    resetPlanningTodoStoreForTests();
     if (previousConfigDir === undefined) delete process.env.LUME_CONFIG_DIR;
     else process.env.LUME_CONFIG_DIR = previousConfigDir;
     rmSync(configDir, { recursive: true, force: true });

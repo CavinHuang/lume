@@ -2,7 +2,7 @@
  * service.test.ts — 编排层测试
  *
  * 策略：用 mock.module 隔离所有依赖（store/engine/feedback/analyst/adapter/rules/
- * automation-manager/smart-add/logger），用 mutable state + mock spies 验证编排逻辑。
+ * automation-manager/MemoryCommandService/logger），用 mutable state + mock spies 验证编排逻辑。
  * 这些依赖各自的单元测试已覆盖自身行为，此处只关心 service 的"装配 + 编排 + fail-open"。
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -60,8 +60,8 @@ const spies = {
     id: "job-1",
     ...input,
   })),
-  smartAdd: mock(async (_input: { workspaceSlug?: string; candidate: object }) => ({
-    action: "added",
+  remember: mock(async (_input: Record<string, unknown>) => ({
+    action: "created",
   })),
   ensurePersona: mock(async (_input: { workspaceSlug?: string }) => {}),
   broadcaster: mock(() => {}),
@@ -117,8 +117,10 @@ mock.module("../automation/automation-manager", () => ({
   createAutomationJob: spies.createAutomationJob,
 }));
 
-mock.module("../memory-v2/smart-add", () => ({
-  smartAddMemoryV2Candidate: spies.smartAdd,
+mock.module("../memory-v2/command-service", () => ({
+  MemoryCommandService: class MemoryCommandService {
+    remember = spies.remember;
+  },
 }));
 
 mock.module("../memory-v2/persona", () => ({
@@ -156,7 +158,7 @@ function resetState(): void {
   spies.persistSuggestion.mockClear();
   spies.recordFeedback.mockClear();
   spies.createAutomationJob.mockClear();
-  spies.smartAdd.mockClear();
+  spies.remember.mockClear();
   spies.ensurePersona.mockClear();
   spies.broadcaster.mockClear();
 }
@@ -243,24 +245,24 @@ describe("handleSuggestionFeedback", () => {
     state.records = [{ ...correctionCandidate, id: 5, status: "suggested", createdAt: 0 }];
     await handleSuggestionFeedback(5, "ignored");
     expect(spies.recordFeedback).toHaveBeenCalledWith(5, "ignored");
-    expect(spies.smartAdd).not.toHaveBeenCalled();
+    expect(spies.remember).not.toHaveBeenCalled();
     expect(spies.createAutomationJob).not.toHaveBeenCalled();
   });
 
-  test("accepted + memory_correction → smartAddMemoryV2Candidate 调用（带 correction tag）", async () => {
+  test("accepted + memory_correction → MemoryCommandService 调用（带 correction facet）", async () => {
     state.records = [{ ...correctionCandidate, id: 5, status: "suggested", createdAt: 0, workspaceSlug: "ws" }];
     await handleSuggestionFeedback(5, "accepted");
     expect(spies.recordFeedback).toHaveBeenCalledWith(5, "accepted");
-    expect(spies.smartAdd).toHaveBeenCalledTimes(1);
-    expect(spies.smartAdd).toHaveBeenCalledWith(
+    expect(spies.remember).toHaveBeenCalledTimes(1);
+    expect(spies.remember).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceSlug: "ws",
-        candidate: expect.objectContaining({
-          kind: "preference",
-          statement: "不要用 var",
-          confidence: "high",
-          tags: expect.arrayContaining(["correction", "suggestion-derived"]),
-        }),
+        content: "不要用 var",
+        scope: "global",
+        semanticRole: "preference",
+        confidence: "high",
+        facets: expect.arrayContaining(["correction", "suggestion-derived"]),
+        explicitCorrection: true,
       }),
     );
   });
@@ -296,17 +298,17 @@ describe("handleSuggestionFeedback", () => {
     state.records = [todo];
     await handleSuggestionFeedback(9, "accepted");
     expect(spies.recordFeedback).toHaveBeenCalledWith(9, "accepted");
-    expect(spies.smartAdd).not.toHaveBeenCalled();
+    expect(spies.remember).not.toHaveBeenCalled();
     expect(spies.createAutomationJob).not.toHaveBeenCalled();
   });
 
-  test("smartAdd 抛错 → fail-open（不向上传播）", async () => {
+  test("记忆命令抛错 → fail-open（不向上传播）", async () => {
     state.records = [{ ...correctionCandidate, id: 5, status: "suggested", createdAt: 0 }];
-    spies.smartAdd.mockImplementation(async () => {
-      throw new Error("smartAdd boom");
+    spies.remember.mockImplementation(async () => {
+      throw new Error("remember boom");
     });
     await expect(handleSuggestionFeedback(5, "accepted")).resolves.toBeUndefined();
-    spies.smartAdd.mockImplementation(async () => ({ action: "added" }));
+    spies.remember.mockImplementation(async () => ({ action: "created" }));
   });
 
   test("accepted + memory_correction → 由 memory mutation 失效派生画像，不直接调用 ensurePersona", async () => {

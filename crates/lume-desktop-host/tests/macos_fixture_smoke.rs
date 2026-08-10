@@ -31,10 +31,7 @@ fn drives_the_macos_backend_through_a_deterministic_appkit_fixture() {
     let window = backend
         .invoke("get_window", &json!({ "windowId": window_id }))
         .unwrap();
-    assert!(window["window"]["title"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("seed"));
+    assert_eq!(window["window"]["title"], "Lume Computer Use Fixture");
 
     let state = backend
         .invoke(
@@ -43,6 +40,7 @@ fn drives_the_macos_backend_through_a_deterministic_appkit_fixture() {
         )
         .unwrap();
     assert_eq!(state["status"], "ok");
+    assert_eq!(find_element(&state, "Fixture Input")["value"], "seed");
     assert!(state["screenshots"][0]["dataUrl"]
         .as_str()
         .is_some_and(|value| value.starts_with("data:image/png;base64,")));

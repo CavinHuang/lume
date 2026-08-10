@@ -9,7 +9,7 @@
  *     persistSuggestion → listSuggestions("suggested") 出现 status="suggested" 的
  *     correction 记录；注入的 broadcaster 被调用。
  *  2) handleSuggestionFeedback(id, "accepted") on memory_correction → 调用
- *     smartAddMemoryV2Candidate（mock 捕获）AND feedback 层把 correction 类型权重
+ *     MemoryCommandService.remember（mock 捕获）AND feedback 层把 correction 类型权重
  *     从 1.0 调到 1.2（1.0 × 1.2）。
  *
  * 真实 vs 打桩：
@@ -18,7 +18,7 @@
  *    - adapter.extractRecentConversation：返回固定含纠正语的消息数组（不打线程 transcript）
  *    - automation-manager：listAutomationJobs→[]（dedup 空）/ createAutomationJob→spy
  *    - memory-v2/markdown-store：listEntries/listPending→[]（dedup 空）
- *    - memory-v2/smart-add：smartAddMemoryV2Candidate→spy（不写真实记忆）
+ *    - memory-v2/command-service：remember→spy（不写真实记忆）
  *    - analyst：buildAnalysisInput/runAnalysis→[]（LLM 链路在 analyst.test.ts 单独覆盖）
  *    - infra/logger：静默
  *
@@ -33,9 +33,9 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 const spies = {
   /** adapter 调用计数（验证管线确实读取了会话消息） */
   extractCalls: mock((_input: unknown) => {}),
-  /** smartAddMemoryV2Candidate 捕获（accepted memory_correction 动作） */
-  smartAdd: mock(async (_input: { workspaceSlug?: string; candidate: object }) => ({
-    action: "added" as const,
+  /** MemoryCommandService.remember 捕获（accepted memory_correction 动作） */
+  remember: mock(async (_input: Record<string, unknown>) => ({
+    action: "created" as const,
   })),
   /** createAutomationJob 捕获（accepted open_automation_create 动作） */
   createAutomationJob: mock((input: { name: string; prompt: string; schedule: unknown }) => ({
@@ -66,11 +66,14 @@ mock.module("../automation/automation-manager", () => ({
 mock.module("../memory-v2/markdown-store", () => ({
   listEntries: () => [],
   listPending: () => [],
+  readActivation: () => ({ recall: true, persona: true, suggestion: true, analyst: true }),
 }));
 
-// memory-v2/smart-add：spy（accepted memory_correction 动作不写真实记忆）
-mock.module("../memory-v2/smart-add", () => ({
-  smartAddMemoryV2Candidate: spies.smartAdd,
+// memory-v2/command-service：spy（accepted memory_correction 动作不写真实记忆）
+mock.module("../memory-v2/command-service", () => ({
+  MemoryCommandService: class MemoryCommandService {
+    remember = spies.remember;
+  },
 }));
 
 // analyst：LLM 链路不参与本集成测试（analyst.test.ts 已单独覆盖）
@@ -112,7 +115,7 @@ beforeEach(() => {
   process.env.LUME_CONFIG_DIR = root;
   resetSuggestionStoreForTest();
   spies.extractCalls.mockClear();
-  spies.smartAdd.mockClear();
+  spies.remember.mockClear();
   spies.createAutomationJob.mockClear();
   spies.broadcaster.mockClear();
   setSuggestionChangeBroadcaster(spies.broadcaster);
@@ -177,7 +180,7 @@ describe("建议系统端到端：signals → rules → engine → store → bro
 });
 
 describe("建议系统端到端：accepted 反馈 → 学习权重 + 触发记忆写入", () => {
-  test("accepted memory_correction → smartAddMemoryV2Candidate 调用 + correction 权重 1.0→1.2", async () => {
+  test("accepted memory_correction → MemoryCommandService 调用 + correction 权重 1.0→1.2", async () => {
     // 1) 跑完评估链路，得到一条 memory_correction 建议
     await evaluateSessionSuggestions({
       threadId: "thread-2",
@@ -188,23 +191,23 @@ describe("建议系统端到端：accepted 反馈 → 学习权重 + 触发记�
     expect(rec.action.type).toBe("memory_correction");
     // 反馈前 correction 权重仍为默认 1.0
     expect(getTypeWeights().correction).toBe(1.0);
-    // 反馈前 smart-add 未被调用
-    expect(spies.smartAdd).not.toHaveBeenCalled();
+    // 反馈前统一记忆命令未被调用
+    expect(spies.remember).not.toHaveBeenCalled();
 
     // 2) 用户接受建议 → handleSuggestionFeedback 编排 recordFeedback + 动作分发
     await handleSuggestionFeedback(rec.id, "accepted");
 
-    // 3) smartAddMemoryV2Candidate 被调用一次，参数携带规范化后的规则作为 statement
-    expect(spies.smartAdd).toHaveBeenCalledTimes(1);
-    expect(spies.smartAdd).toHaveBeenCalledWith(
+    // 3) MemoryCommandService 被调用一次，参数携带规范化后的纠正规则
+    expect(spies.remember).toHaveBeenCalledTimes(1);
+    expect(spies.remember).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceSlug: "ws-2",
-        candidate: expect.objectContaining({
-          kind: "preference",
-          statement: "不要用 var 声明变量",
-          confidence: "high",
-          tags: expect.arrayContaining(["correction", "suggestion-derived"]),
-        }),
+        content: "不要用 var 声明变量",
+        scope: "global",
+        semanticRole: "preference",
+        confidence: "high",
+        facets: expect.arrayContaining(["correction", "suggestion-derived"]),
+        explicitCorrection: true,
       }),
     );
 
@@ -229,12 +232,11 @@ describe("建议系统端到端：accepted 反馈 → 学习权重 + 触发记�
 
     await handleSuggestionFeedback(rec.id, "accepted");
 
-    expect(spies.smartAdd).toHaveBeenCalledWith(
+    expect(spies.remember).toHaveBeenCalledWith(
       expect.objectContaining({
-        candidate: expect.objectContaining({
-          targetScope: "global",
-          statement: "别再 var",
-        }),
+        workspaceSlug: "global",
+        scope: "global",
+        content: "别再 var",
       }),
     );
     expect(getTypeWeights().correction).toBeCloseTo(1.2, 6);
@@ -242,7 +244,7 @@ describe("建议系统端到端：accepted 反馈 → 学习权重 + 触发记�
 });
 
 describe("建议系统端到端：ignored 反馈不触发动作，仅调权", () => {
-  test("ignored memory_correction → smartAdd 不调用 + correction 权重 1.0→0.8", async () => {
+  test("ignored memory_correction → 记忆命令不调用 + correction 权重 1.0→0.8", async () => {
     await evaluateSessionSuggestions({
       threadId: "thread-3",
       workspaceSlug: "ws-3",
@@ -252,7 +254,7 @@ describe("建议系统端到端：ignored 反馈不触发动作，仅调权", ()
 
     await handleSuggestionFeedback(rec.id, "ignored");
 
-    expect(spies.smartAdd).not.toHaveBeenCalled();
+    expect(spies.remember).not.toHaveBeenCalled();
     expect(spies.createAutomationJob).not.toHaveBeenCalled();
     // 1.0 × 0.8 = 0.8
     expect(getTypeWeights().correction).toBeCloseTo(0.8, 6);

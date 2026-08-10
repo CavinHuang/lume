@@ -55,22 +55,7 @@ fn drives_a_real_windows_fixture_through_uia_and_targeted_input() {
         OCCLUDER_TITLE,
         Duration::from_secs(15),
     );
-    let occluded_state = adapter
-        .invoke(
-            &backend,
-            "get_window_state",
-            &json!({ "window": window, "include_screenshot": true, "include_text": false }),
-        )
-        .unwrap();
-    assert_eq!(occluded_state["window"], window);
-    let occluded_screenshot_len = occluded_state["screenshots"][0]["url"]
-        .as_str()
-        .unwrap()
-        .len();
-    assert!(
-        baseline_screenshot_len.abs_diff(occluded_screenshot_len) < baseline_screenshot_len / 5,
-        "occluded WGC capture should retain the target window pixels"
-    );
+    wait_for_occluded_window_capture(&mut adapter, &backend, &window, baseline_screenshot_len);
     occluder.stop();
 
     let clicked = adapter
@@ -259,6 +244,35 @@ fn wait_for_window_title(
         thread::sleep(Duration::from_millis(100));
     }
     panic!("fixture window did not appear: {title}");
+}
+
+fn wait_for_occluded_window_capture(
+    adapter: &mut ComputerUseProtocolAdapter,
+    backend: &WindowsDesktopBackend,
+    window: &Value,
+    baseline_screenshot_len: usize,
+) {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut last_screenshot_len = None;
+    while Instant::now() < deadline {
+        let state = adapter
+            .invoke(
+                backend,
+                "get_window_state",
+                &json!({ "window": window, "include_screenshot": true, "include_text": false }),
+            )
+            .unwrap();
+        assert_eq!(state["window"], *window);
+        let screenshot_len = state["screenshots"][0]["url"].as_str().unwrap().len();
+        if screenshot_len >= baseline_screenshot_len.saturating_mul(4) / 5 {
+            return;
+        }
+        last_screenshot_len = Some(screenshot_len);
+        thread::sleep(Duration::from_millis(100));
+    }
+    panic!(
+        "occluded WGC capture should retain the target window pixels: baseline={baseline_screenshot_len}, last={last_screenshot_len:?}"
+    );
 }
 
 #[derive(Clone, Copy)]

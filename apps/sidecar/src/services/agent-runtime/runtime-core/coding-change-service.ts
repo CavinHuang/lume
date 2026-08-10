@@ -824,7 +824,7 @@ export async function getCodingFileOpenTargets(
   if (!safePath) throw new Error("文件路径超出项目目录");
   const target = resolve(selectedRoot.path, safePath);
   const result: CodingFileOpenTargets = {};
-  if (existsSync(target) && statSync(target).isFile()) result.absolutePath = target;
+  if (existsSync(target) && statSync(target).isFile()) result.absolutePath = realpathSync.native(target);
 
   const gitRoot = await findGitRoot(selectedRoot.path);
   if (!gitRoot) return result;
@@ -1369,7 +1369,7 @@ export async function discoverCodingRoots(
     if (!existsSync(resolvedRoot)) continue;
     let realRoot: string;
     try {
-      realRoot = realpathSync(resolvedRoot);
+      realRoot = realpathSync.native(resolvedRoot);
     } catch {
       realRoot = resolvedRoot;
     }
@@ -1496,7 +1496,7 @@ async function findGitRoot(start: string): Promise<string | null> {
   if (!output) return null;
   const trimmed = output.trim();
   try {
-    return realpathSync(trimmed);
+    return realpathSync.native(trimmed);
   } catch {
     return resolve(trimmed);
   }
@@ -1588,7 +1588,7 @@ function normalizeSafePath(root: string, filePath: string): string | null {
   if (!filePath || typeof filePath !== "string") return null;
   let resolvedRoot: string;
   try {
-    resolvedRoot = realpathSync(resolve(root));
+    resolvedRoot = realpathSync.native(resolve(root));
   } catch {
     resolvedRoot = resolve(root);
   }
@@ -1596,10 +1596,10 @@ function normalizeSafePath(root: string, filePath: string): string | null {
   if (filePath.split(/[\\/]/).includes("..")) return null;
   let realTarget: string;
   try {
-    realTarget = realpathSync(target);
+    realTarget = realpathSync.native(target);
   } catch {
     try {
-      realTarget = resolve(realpathSync(dirname(target)), basename(target));
+      realTarget = resolve(realpathSync.native(dirname(target)), basename(target));
     } catch {
       realTarget = target;
     }
