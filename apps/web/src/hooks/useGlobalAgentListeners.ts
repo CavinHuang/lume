@@ -20,6 +20,7 @@ import {
   tabsAtom,
   welcomePromptSeedAtom,
   suggestionsVersionAtom,
+  memoryCenterVersionAtom,
 } from '@/atoms'
 import { buildDesktopProposalOpenRequestState } from '@/components/settings/desktop-assistant-proposals-state'
 import { threadMessagesCache } from '@/components/agent/thread-messages-cache'
@@ -93,6 +94,7 @@ export function useGlobalAgentListeners() {
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const setWelcomePromptSeed = useSetAtom(welcomePromptSeedAtom)
   const setSuggestionsVersion = useSetAtom(suggestionsVersionAtom)
+  const setMemoryCenterVersion = useSetAtom(memoryCenterVersionAtom)
 
   const pendingRuntimeEventsRef = useRef<LumeRuntimeEvent[]>([])
   const runtimeEventsRafRef = useRef<number | null>(null)
@@ -148,6 +150,9 @@ export function useGlobalAgentListeners() {
           const notification = params as AgentRuntimeEventNotification
           const { threadId, event } = notification
           enqueueRuntimeEvent(event)
+          if (event.type === 'memory.changed' || event.type === 'memory.job.progress' || event.type === 'memory.job.completed') {
+            setMemoryCenterVersion((version) => version + 1)
+          }
           if (event.type === 'desktop.action_visual') {
             if (desktopActionVisualTimerRef.current) {
               clearTimeout(desktopActionVisualTimerRef.current)
@@ -406,5 +411,5 @@ export function useGlobalAgentListeners() {
         setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
       }
     }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setSidePanelViews, setTabs, tabs, currentWorkspaceId, setActiveTabId, setWelcomePromptSeed, setSuggestionsVersion, enqueueRuntimeEvent])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setSidePanelViews, setTabs, tabs, currentWorkspaceId, setActiveTabId, setWelcomePromptSeed, setSuggestionsVersion, setMemoryCenterVersion, enqueueRuntimeEvent])
 }

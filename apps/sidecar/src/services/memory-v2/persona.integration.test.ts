@@ -51,7 +51,7 @@ function seedGlobalEntry(input: {
 
 /** 一份固定 5 段 Markdown（标题关键词与 parsePersonaProfile 对齐）。 */
 const FIVE_SECTION_MD = [
-  "# 用户画像",
+  "# 关于我",
   "## 用户（称呼）",
   "Alice",
   "## 一句话定位",
@@ -84,7 +84,7 @@ describe("persona 端到端集成（real pipeline + mocked LLM）", () => {
     // readPersonaRaw 读回（round-trip 经原子写入）
     const md = readPersonaRaw("global");
     expect(md).not.toBeNull();
-    expect(md).toContain("# 用户画像");
+    expect(md).toContain("# 关于我");
 
     // parsePersonaProfile 结构正确
     const profile = parsePersonaProfile(md as string);
@@ -95,7 +95,7 @@ describe("persona 端到端集成（real pipeline + mocked LLM）", () => {
     expect(profile.evolution).toEqual(["2026-08 偏好 TS"]);
   });
 
-  test("Fallback：LLM 抛错 → ensurePersona 规则兜底（persona.md 含 用户画像）", async () => {
+  test("Fallback：LLM 抛错 → ensurePersona 规则兜底（persona.md 含 关于我）", async () => {
     seedGlobalEntry({
       statement: "叫我 Alice",
       kind: "preference",
@@ -117,7 +117,7 @@ describe("persona 端到端集成（real pipeline + mocked LLM）", () => {
 
     const md = readPersonaRaw("global");
     expect(md).not.toBeNull();
-    expect(md).toContain("# 用户画像");
+    expect(md).toContain("# 关于我");
     expect(md).toContain("Alice"); // preferred_name claim → name
     expect(md).toContain("简洁代码"); // preference
     expect(md).toContain("不要用 var"); // correction → 交互协议
@@ -140,12 +140,12 @@ describe("persona 端到端集成（real pipeline + mocked LLM）", () => {
   test("Incremental：既有 persona 注入 prompt（增量合并段）", async () => {
     // 先 seed 一条 entry + 写入既有 persona
     seedGlobalEntry({ statement: "用 TypeScript", kind: "preference" });
-    const existing = "# 用户画像\n## 一句话定位\n旧画像内容";
+    const existing = "# 关于我\n## 一句话定位\n旧关于我内容";
     // 用 ensurePersona 自身写入既有 persona（避免直接耦合 writePersona）—— 这里直接走
     // ensurePersona 第一次生成，再验证第二次增量时 existing 被注入 prompt。
     const firstProvider = async () => existing;
     await ensurePersona({ scope: "global", providerFactory: firstProvider });
-    expect(readPersonaRaw("global")).toContain("旧画像内容");
+    expect(readPersonaRaw("global")).toContain("旧关于我内容");
 
     // 第二次：provider 捕获 prompt，验证 existing 内容在其中
     let capturedPrompt = "";
@@ -155,8 +155,8 @@ describe("persona 端到端集成（real pipeline + mocked LLM）", () => {
     };
     await ensurePersona({ scope: "global", providerFactory: secondProvider });
 
-    expect(capturedPrompt).toContain("旧画像内容");
-    expect(capturedPrompt).toContain("已有画像");
+    expect(capturedPrompt).toContain("旧关于我内容");
+    expect(capturedPrompt).toContain("已有关于我信息");
     // 读回的 persona 已更新为新输出
     expect(readPersonaRaw("global")).toContain("独立 TS 开发者");
   });
@@ -177,7 +177,7 @@ describe("persona 端到端集成（real pipeline + mocked LLM）", () => {
     const fakeProvider = async (prompt: string) => {
       capturedPrompt = prompt;
       return [
-        "# 用户画像",
+        "# 关于我",
         "## 交互协议",
         "- 代码注释统一用中文"
       ].join("\n");

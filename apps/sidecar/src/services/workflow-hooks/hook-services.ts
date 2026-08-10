@@ -1,5 +1,6 @@
 import type { MemoryV2Candidate, MemoryV2RecallItem } from "../memory-v2/types";
 import { extractMemoryCandidatesWithLlm } from "../memory-v2/extraction";
+import { enqueueBackgroundMemoryExtraction } from "../memory-v2/background-extractor";
 import {
   buildMemoryV2UserMessageContext,
   type MemoryV2UserMessageContext
@@ -31,6 +32,7 @@ export interface LumeWorkflowMemoryService {
     workspaceSlug?: string;
     userMessage: string;
   }): Promise<MemoryV2Candidate[]>;
+  enqueueExtraction?(input: Parameters<typeof enqueueBackgroundMemoryExtraction>[0]): void;
 }
 
 export interface LumeWorkflowSecurityService {
@@ -114,12 +116,14 @@ export function createMemoryWorkflowHookService(input: {
       workspaceSlug: contextInput.workspaceSlug,
       userMessage: contextInput.userMessage,
       sessionType: "main",
-      maxItems: 8
+      maxItems: 5,
+      contextTokenBudget: contextInput.tokenBudget
     }) as Promise<MemoryV2UserMessageContext>,
     extractCandidates: async (candidateInput) => extractCandidates({
       text: candidateInput.userMessage,
       workspaceSlug: candidateInput.workspaceSlug
-    })
+    }),
+    enqueueExtraction: (candidateInput) => enqueueBackgroundMemoryExtraction(candidateInput)
   };
 }
 
@@ -145,7 +149,9 @@ export function createPersonaWorkflowHookService(input: {
 } = {}): LumeWorkflowPersonaService {
   const ensure = input.ensure ?? ensurePersona;
   return {
-    ensurePersona: async (ctx) => ensure(ctx)
+    ensurePersona: async (ctx) => {
+      await ensure(ctx);
+    }
   };
 }
 

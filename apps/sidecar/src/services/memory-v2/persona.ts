@@ -31,9 +31,9 @@ export function writePersona(
   scope: MemoryV2Scope,
   workspaceSlug: string | undefined,
   markdown: string
-): void {
+): boolean {
   const path = getPersonaPath(scope, workspaceSlug);
-  writePersonaAtomic(path, markdown);
+  return writePersonaAtomic(path, markdown);
 }
 
 export function deletePersona(scope: MemoryV2Scope, workspaceSlug?: string): void {
@@ -117,7 +117,7 @@ export function buildPersonaFromRules(entries: MemoryV2Entry[]): string {
     if (interactionRules.length >= 3) break;
   }
 
-  const lines: string[] = ["# 用户画像"];
+  const lines: string[] = ["# 关于我"];
   if (name !== undefined) {
     lines.push("", "## 用户（称呼）", name);
   }
@@ -158,12 +158,12 @@ const PERSONA_MAX_ENTRIES = 40;
  * - 输出纯 Markdown（无围栏、无解释性前缀）
  */
 export const PERSONA_SYSTEM_PROMPT = [
-  "你是一个用户画像合成助手。基于提供的记忆条目，输出一份简洁、结构化的用户画像 Markdown。",
+  "你是一个“关于我”信息合成助手。基于提供的记忆条目，输出一份简洁、结构化的关于我 Markdown。",
   "",
   "输出必须严格遵循以下结构（按顺序，缺信息则对应段留空行）：",
-  "# 用户画像",
+  "# 关于我",
   "## 用户（称呼）        ← 用户希望被称呼的名字（无则留空）",
-  "## 一句话定位（≤30字）  ← 一句话概括用户身份/画像",
+  "## 一句话定位（≤30字）  ← 一句话概括用户身份",
   "## 长期偏好             ← 每条 10-40 字，用 `- ` 列表",
   "## 交互协议             ← 协作规则/行为纠正（如「不要用 var」），用 `- ` 列表",
   "## 演进轨迹             ← 偏好/状态的演变时间线（如「2026-08 偏好 TS」），用 `- ` 列表",
@@ -171,7 +171,7 @@ export const PERSONA_SYSTEM_PROMPT = [
   "约束：",
   "- 只使用提供的 entries 中明确出现的信息，绝不推测、脑补或虚构",
   "- 长期偏好每条 10-40 字，不要堆砌、不要重复",
-  "- 当提供「已有画像」时，合并保留其中仍然成立、稳定的 content；仅在新证据冲突时更新",
+  "- 当提供「已有关于我信息」时，合并保留其中仍然成立、稳定的 content；仅在新证据冲突时更新",
   "- 输出纯 Markdown，不要包裹在代码围栏中，不要添加任何解释性前缀或后缀"
 ].join("\n");
 
@@ -182,7 +182,7 @@ export type PersonaProviderFactory = (userPrompt: string) => Promise<string>;
  * 用 LLM 合成 persona Markdown。
  *
  * - entries slice 40，每条格式化为 `[kind] statement`（含 claim 时附加）
- * - existing 注入为「已有画像（合并保留稳定内容）」段
+ * - existing 注入为「已有关于我信息（合并保留稳定内容）」段
  * - 复用 memory-v2 extraction LLM 适配（`resolveMemoryExtractionModelRefs` → provider）
  * - 解析容错：剥离围栏，定位首个 `#`
  * - 失败抛错（caller ensurePersona 捕获 → 规则兜底）
@@ -218,11 +218,10 @@ export async function ensurePersona(input: {
   scope?: MemoryV2Scope;
   workspaceSlug?: string;
   providerFactory?: PersonaProviderFactory;
-}): Promise<void> {
+}): Promise<boolean> {
   try {
-    const scope: MemoryV2Scope =
-      input.scope ?? (input.workspaceSlug ? "workspace" : "global");
-    const workspaceSlug = scope === "workspace" ? input.workspaceSlug : undefined;
+    const scope: MemoryV2Scope = "global";
+    const workspaceSlug = undefined;
 
     const entries = listEntries({ workspaceSlug, scopes: [scope] })
       .filter((entry) => readActivation(entry.frontmatter).persona);
@@ -240,14 +239,15 @@ export async function ensurePersona(input: {
       // LLM 不可用或失败 → 规则兜底
       markdown = buildPersonaFromRules(entries);
     }
-    writePersona(scope, workspaceSlug, markdown);
+    return writePersona(scope, workspaceSlug, markdown);
   } catch (error) {
     // fail-open：persona 编排失败不得阻塞调用方
     console.warn("[ensurePersona] persona 编排失败，已忽略:", error);
+    return false;
   }
 }
 
-/** 构建 persona 生成 user prompt：记忆条目段 + 已有画像段 */
+/** 构建 persona 生成 user prompt：记忆条目段 + 已有关于我信息段 */
 function buildPersonaUserPrompt(entries: MemoryV2Entry[], existing?: string): string {
   const sections: string[] = [];
 
@@ -270,7 +270,7 @@ function buildPersonaUserPrompt(entries: MemoryV2Entry[], existing?: string): st
 
   if (existing !== undefined && existing.trim().length > 0) {
     sections.push("");
-    sections.push("已有画像（合并保留稳定内容）：");
+    sections.push("已有关于我信息（合并保留稳定内容）：");
     sections.push(existing.trim());
   }
 
@@ -363,13 +363,15 @@ function parseListBody(body: string): string[] {
   return out;
 }
 
-function writePersonaAtomic(path: string, content: string): void {
+function writePersonaAtomic(path: string, content: string): boolean {
   mkdirSync(dirname(path), { recursive: true });
+  if (existsSync(path) && readFileSync(path, "utf-8") === content) return false;
   const hash = createHash("sha1")
-    .update(`${path}:${content}:${Date.now()}`)
+    .update(`${path}:${content}`)
     .digest("hex")
     .slice(0, 8);
   const tempPath = `${path}.tmp.${hash}`;
   writeFileSync(tempPath, content, "utf-8");
   renameSync(tempPath, path);
+  return true;
 }

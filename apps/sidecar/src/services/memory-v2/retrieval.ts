@@ -28,6 +28,7 @@ import type {
   MemoryV2RecallItem,
   MemoryV2Scope
 } from "./types";
+import { MemoryCommandService } from "./command-service";
 
 export interface MemoryV2SearchInput {
   workspaceSlug?: string;
@@ -66,12 +67,15 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
   });
   const queryPlan = input.queryPlan ?? await resolveMemoryV2QueryPlan(query, queryPlanner);
   const scopes = input.scopes ?? (input.workspaceSlug ? ["global", "workspace"] : ["global"]);
-  const entryCandidates = entryRecallCandidates(
-    store.listEntries({
+  const loadedEntries = store.listEntries({
       workspaceSlug: input.workspaceSlug,
       scopes,
       includeStatuses: ["active", "suspected_stale"]
-    }).filter((entry) => readActivation(entry.frontmatter).recall)
+    });
+  expireEntries(loadedEntries, input.workspaceSlug);
+  const entryCandidates = entryRecallCandidates(
+    loadedEntries.filter((entry) => readActivation(entry.frontmatter).recall)
+      .filter((entry) => !currentMessageOverridesClaim(entry, query))
   );
   const scoredEntries = scoreRecallCandidates(entryCandidates, query, intent, queryPlan);
   const hasExactClaimMatch = scoredEntries.some((item) => isClaimMatchForQuery(item, queryPlan));
@@ -93,19 +97,19 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
     query,
     candidates: semanticCandidates,
     semantic: input.semantic ?? runtimeConfig.retrieval.semantic,
-    maxResults: input.maxResults ?? 8,
+    maxResults: input.maxResults ?? 5,
     hasBaseRecall: scored.length > 0
   });
   const merged = mergeRecallItems([...scored, ...semantic])
     .sort((a, b) => b.score - a.score)
-    .slice(0, input.maxResults ?? 8);
+    .slice(0, input.maxResults ?? 5);
   const reranker = input.rerankItems ?? createMemoryV2Reranker({
     workspaceSlug: input.workspaceSlug,
     modelRef: runtimeConfig.retrieval.rerankModelRef
   });
   if (!reranker) return sortClaimMatchesFirst(merged, queryPlan);
   try {
-    return sortClaimMatchesFirst((await reranker(merged, query)).slice(0, input.maxResults ?? 8), queryPlan);
+    return sortClaimMatchesFirst((await reranker(merged, query)).slice(0, input.maxResults ?? 5), queryPlan);
   } catch {
     return sortClaimMatchesFirst(merged, queryPlan);
   }
@@ -208,7 +212,7 @@ function markdownRecallCandidates(input: {
       }
     }
     if (input.includeRecentDaily) {
-      for (const path of recentDailyFiles(paths.dailyDir, 7)) {
+      for (const path of recentDailyFiles(paths.dailyDir, 2)) {
         const text = readFileSync(path, "utf-8").trim();
         if (!text) continue;
         items.push({
@@ -224,7 +228,7 @@ function markdownRecallCandidates(input: {
         });
       }
       if (scope === "workspace") {
-        for (const path of recentRunFiles(paths.runsDir, 20)) {
+        for (const path of recentRunFiles(paths.runsDir, 2)) {
           const text = readFileSync(path, "utf-8").trim();
           if (!text) continue;
           items.push({
@@ -241,8 +245,66 @@ function markdownRecallCandidates(input: {
         }
       }
     }
+    if (scope === "workspace" && existsSync(paths.workspaceBrief)) {
+      const text = readFileSync(paths.workspaceBrief, "utf-8").trim();
+      if (text) items.push({
+        id: "workspace:brief",
+        kind: "state",
+        scope,
+        status: "active",
+        statement: text,
+        path: paths.workspaceBrief,
+        citation: paths.workspaceBrief,
+        reason: "workspace memory brief",
+        score: 0,
+        pinned: true
+      });
+    }
+    if (scope === "workspace") {
+      const capsule = recentFiles(paths.capsulesDir, 1, /\.md$/)[0];
+      if (capsule) {
+        const text = readFileSync(capsule, "utf-8").trim();
+        if (text) items.push({
+          id: `workspace:capsule:${capsule}`,
+          kind: "state",
+          scope,
+          status: "active",
+          statement: text,
+          path: capsule,
+          citation: capsule,
+          reason: "workspace topic capsule",
+          score: 0
+        });
+      }
+    }
   }
   return items;
+}
+
+function expireEntries(entries: MemoryV2Entry[], workspaceSlug?: string): void {
+  const now = Date.now();
+  const service = new MemoryCommandService();
+  for (const entry of entries) {
+    if (entry.frontmatter.status !== "active" || !entry.frontmatter.valid_to) continue;
+    const expiresAt = Date.parse(entry.frontmatter.valid_to);
+    if (!Number.isFinite(expiresAt) || expiresAt > now) continue;
+    try {
+      service.markSuspectedStale({
+        workspaceSlug: workspaceSlug ?? "",
+        id: entry.frontmatter.id,
+        scope: entry.frontmatter.scope
+      });
+      entry.frontmatter.status = "suspected_stale";
+    } catch {
+      continue;
+    }
+  }
+}
+
+function currentMessageOverridesClaim(entry: MemoryV2Entry, query: string): boolean {
+  const claim = claimFromEntry(entry);
+  if (!claim || !/(?:纠正|改为|改成|不是|不再|instead|actually|from now on)/i.test(query)) return false;
+  return !query.toLowerCase().includes(claim.object.toLowerCase());
 }
 
 function scoreRecallCandidates(

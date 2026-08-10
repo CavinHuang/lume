@@ -226,6 +226,27 @@ registerToolMetadata({
   description: "保存结构化记忆"
 });
 
+registerToolMetadata({
+  name: "memory.evidence.search",
+  category: "read",
+  riskLevel: "low",
+  description: "搜索当前 Dream 任务的受限记忆证据"
+});
+
+registerToolMetadata({
+  name: "memory.evidence.read",
+  category: "read",
+  riskLevel: "low",
+  description: "读取当前 Dream 任务的单条受限记忆证据"
+});
+
+registerToolMetadata({
+  name: "memory.forget",
+  category: "write",
+  riskLevel: "medium",
+  description: "按用户明确意图归档记忆"
+});
+
 // 网络工具
 registerToolMetadata({
   name: "web_search",

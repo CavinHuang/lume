@@ -14,12 +14,8 @@ import {
   extractMemoryBatchCandidatesWithLlm,
   type MemoryBatchExtractionCandidate
 } from "./extraction";
-import { createMemoryV2Store } from "./markdown-store";
-import { smartAddMemoryV2Candidate } from "./smart-add";
-import type {
-  MemoryV2Candidate,
-  MemoryV2Scope
-} from "./types";
+import { MemoryCommandService } from "./command-service";
+import type { MemoryV2Scope } from "./types";
 
 const log = createLogger("memory-v2.ingestion");
 
@@ -74,6 +70,7 @@ export interface MemoryIngestionInput {
   batchMaxChars?: number;
   extractBatchCandidates?: MemoryIngestionBatchExtractor;
   onProgress?: (progress: MemoryIngestSourcesProgress) => void;
+  signal?: AbortSignal;
 }
 
 export type MemoryIngestionItem = MemoryIngestSourcesItem;
@@ -103,13 +100,14 @@ export async function ingestMemorySources(input: MemoryIngestionInput): Promise<
 
   const actions = emptyActionCounts();
   const items: MemoryIngestionItem[] = [];
-  const store = createMemoryV2Store();
+  const commands = new MemoryCommandService();
   const chunkSize = normalizeChunkSize(input.chunkSize);
   const batchMaxChars = normalizeBatchMaxChars(input.batchMaxChars);
   const chunks: MemoryIngestionChunk[] = [];
   let candidateCount = 0;
 
   for (const source of input.sources) {
+    throwIfAborted(input.signal);
     const sourceChunks = chunkText(source.content, chunkSize);
     if (sourceChunks.length === 0) {
       actions.suppressed += 1;
@@ -146,6 +144,7 @@ export async function ingestMemorySources(input: MemoryIngestionInput): Promise<
   input.onProgress?.({ ...progress });
 
   for (const batch of batches) {
+    throwIfAborted(input.signal);
     const candidates = await extractBatchCandidates({
       workspaceSlug: input.workspaceSlug,
       chunks: batch
@@ -157,12 +156,33 @@ export async function ingestMemorySources(input: MemoryIngestionInput): Promise<
       if (!chunk) continue;
       chunksWithCandidates.add(chunk.id);
       candidateCount += 1;
-      const result = await smartAddMemoryV2Candidate({
+      const receipt = await commands.remember({
         workspaceSlug: input.workspaceSlug,
-        candidate: candidateWithSourceEvidence(item.candidate, chunk),
-        store
+        content: item.candidate.statement,
+        scope: chunk.source.targetScope ?? item.candidate.targetScope,
+        legacyKind: item.candidate.kind,
+        semanticRole: item.candidate.semanticRole,
+        facets: item.candidate.facets ?? item.candidate.tags,
+        confidence: item.candidate.confidence,
+        claim: item.candidate.claim,
+        evidenceRefs: [{
+          type: "external_file",
+          id: chunk.id,
+          path: chunk.sourcePath,
+          quote: chunk.text.slice(0, 2_000)
+        }],
+        actor: "user"
       });
-      actions[result.action] += 1;
+      const action = receipt.action === "created"
+        ? "new"
+        : receipt.action === "updated" || receipt.action === "superseded"
+        ? "related"
+        : receipt.action === "pending"
+        ? "conflict"
+        : receipt.action === "duplicate"
+        ? "duplicate"
+        : "suppressed";
+      actions[action] += 1;
       items.push({
         sourceId: chunk.source.id,
         sourcePath: chunk.sourcePath,
@@ -170,10 +190,9 @@ export async function ingestMemorySources(input: MemoryIngestionInput): Promise<
         scope: chunk.source.targetScope ?? item.candidate.targetScope,
         kind: item.candidate.kind,
         confidence: item.candidate.confidence,
-        action: result.action,
-        reason: result.reason,
-        ...(result.entry ? { entryId: result.entry.frontmatter.id } : {}),
-        ...(result.pending ? { pendingId: result.pending.frontmatter.id } : {})
+        action,
+        reason: receipt.summary,
+        ...(receipt.memoryIds[0] ? { entryId: receipt.memoryIds[0] } : {})
       });
     }
     progress.processedBatches += 1;
@@ -380,13 +399,14 @@ export async function ingestLocalMemoryFolders(input: {
 }
 
 export async function ingestExternalMemorySources(
-  input: MemoryIngestSourcesInput & { onProgress?: MemoryIngestionProgressCallback }
+  input: MemoryIngestSourcesInput & { onProgress?: MemoryIngestionProgressCallback; signal?: AbortSignal }
 ): Promise<MemoryIngestSourcesResult> {
   const sources: MemoryIngestionSource[] = [];
   const skippedItems: MemoryIngestionItem[] = [];
   const skippedActions = emptyActionCounts();
 
   for (const [index, source] of input.sources.entries()) {
+    throwIfAborted(input.signal);
     if (source.kind === "pasted_text") {
       const sourceNumber = index + 1;
       sources.push({
@@ -483,7 +503,8 @@ export async function ingestExternalMemorySources(
       workspaceSlug: input.workspaceSlug,
       sources,
       batchMaxChars: input.batchMaxChars,
-      onProgress: input.onProgress
+      onProgress: input.onProgress,
+      signal: input.signal
     })
     : emptyIngestionResult(input.workspaceSlug);
   return {
@@ -495,6 +516,10 @@ export async function ingestExternalMemorySources(
     actions: mergeActionCounts(ingested.actions, skippedActions),
     items: [...ingested.items, ...skippedItems]
   };
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("记忆整理已取消");
 }
 
 export function chunkText(text: string, chunkSize = DEFAULT_CHUNK_SIZE): string[] {
@@ -534,38 +559,6 @@ export function emptyActionCounts(): MemoryOrganizeHistoryActionCounts {
     low_confidence: 0,
     new: 0,
     suppressed: 0
-  };
-}
-
-function candidateWithSourceEvidence(
-  candidate: MemoryV2Candidate,
-  chunk: MemoryIngestionChunk
-): MemoryV2Candidate {
-  const targetScope = chunk.source.targetScope ?? candidate.targetScope;
-  return {
-    ...candidate,
-    targetScope,
-    evidence: {
-      ...candidate.evidence,
-      recordIds: [
-        ...new Set([
-          ...(candidate.evidence?.recordIds ?? []),
-          chunk.id
-        ])
-      ],
-      sourceMessages: [
-        ...new Set([
-          ...(candidate.evidence?.sourceMessages ?? []),
-          chunk.text
-        ])
-      ],
-      sourcePaths: [
-        ...new Set([
-          ...(candidate.evidence?.sourcePaths ?? []),
-          chunk.sourcePath
-        ])
-      ]
-    }
   };
 }
 

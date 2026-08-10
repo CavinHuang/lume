@@ -5,10 +5,10 @@ import { Provider, createStore } from 'jotai'
 import {
   agentWorkspacesAtom,
   currentWorkspaceIdAtom,
+  memoryCenterDeepLinkAtom,
   suggestionsVersionAtom,
 } from '@/atoms'
 import type {
-  AutomationJob,
   MemorySettingsSnapshot,
   SuggestionFeedback,
   SuggestionRecord,
@@ -36,17 +36,14 @@ mock.module('@/lib/desktop-api/suggestion', () => ({
     runSuggestionAnalysisMock(...(args as [string?])),
 }))
 
-const listAutomationJobsMock = mock(async () => [] as AutomationJob[])
-mock.module('@/lib/desktop-api/automation', () => ({
-  listAutomationJobs: () => listAutomationJobsMock(),
-}))
-
 const getMemorySettingsSnapshotMock = mock(
   async () => null as MemorySettingsSnapshot | null,
 )
-mock.module('@/lib/desktop-api', () => ({
+const resolveMemoryPendingMock = mock(async () => ({ ok: true as const }))
+mock.module('@/lib/desktop-api/memory-center', () => ({
   getMemorySettingsSnapshot: (...args: unknown[]) =>
     getMemorySettingsSnapshotMock(...(args as [string])),
+  resolveMemoryPending: (...args: unknown[]) => resolveMemoryPendingMock(...args),
 }))
 
 const toastSuccessMock = mock((_msg: string) => undefined)
@@ -74,7 +71,8 @@ function captureKey(props: Record<string, unknown>): string {
   if (del !== undefined) return `delete:${del}`
   // data-proactive-analyze / data-proactive-open-memory → 布尔标记
   if (props['data-proactive-analyze'] !== undefined) return 'analyze'
-  if (props['data-proactive-open-memory'] !== undefined) return 'open-memory'
+  if (props['data-memory-center-section'] !== undefined) return `section:${props['data-memory-center-section']}`
+  if (props['data-memory-pending-action'] !== undefined) return `pending:${props['data-memory-pending-action']}:${props['data-memory-pending-id']}`
   return ''
 }
 
@@ -318,19 +316,6 @@ function makeRecord(overrides: Partial<SuggestionRecord> = {}): SuggestionRecord
   }
 }
 
-function makeJob(overrides: Partial<AutomationJob> = {}): AutomationJob {
-  return {
-    id: 'job-1',
-    name: '每日回顾',
-    enabled: true,
-    schedule: { type: 'cron', cronExpr: '0 9 * * *' },
-    prompt: '总结今天的进展',
-    createdAt: 1,
-    updatedAt: 2,
-    ...overrides,
-  }
-}
-
 function makeSnapshot(
   overrides: Partial<MemorySettingsSnapshot> = {},
 ): MemorySettingsSnapshot {
@@ -411,10 +396,10 @@ describe('ProactiveHub', () => {
     getSuggestionStatsMock.mockResolvedValue(emptyStats())
     runSuggestionAnalysisMock.mockReset()
     runSuggestionAnalysisMock.mockResolvedValue({ added: 0 })
-    listAutomationJobsMock.mockReset()
-    listAutomationJobsMock.mockResolvedValue([])
     getMemorySettingsSnapshotMock.mockReset()
     getMemorySettingsSnapshotMock.mockResolvedValue(null)
+    resolveMemoryPendingMock.mockReset()
+    resolveMemoryPendingMock.mockResolvedValue({ ok: true as const })
     toastSuccessMock.mockReset()
     toastErrorMock.mockReset()
     capturedClicks.length = 0
@@ -424,7 +409,7 @@ describe('ProactiveHub', () => {
     await flush()
   })
 
-  test('渲染：标题 + 副标题 + 4 统计卡 + 全部 section（含建议/自动化/记忆）', async () => {
+  test('默认渲染需要处理，不重复展示自动化入口', async () => {
     listSuggestionsMock.mockResolvedValueOnce([
       makeRecord({ id: 7, title: '跟进老王', reason: '三天未回复' }),
     ])
@@ -433,10 +418,6 @@ describe('ProactiveHub', () => {
       suggestedCount: 3,
       todayAccepted: 2,
     })
-    listAutomationJobsMock.mockResolvedValueOnce([
-      makeJob({ id: 'a', name: '每日回顾' }),
-      makeJob({ id: 'b', name: '周报草稿', schedule: { type: 'interval', intervalMs: 60_000 } }),
-    ])
     getMemorySettingsSnapshotMock.mockResolvedValueOnce(
       makeSnapshot({
         counts: {
@@ -481,26 +462,22 @@ describe('ProactiveHub', () => {
     try {
       const text = env.container.textContent ?? ''
       // header
-      expect(text).toContain('主动中心')
-      expect(text).toMatch(/关注 \d+ 件事/)
+      expect(text).toContain('记忆与洞察')
+      expect(text).toMatch(/\d+ 件事需要处理/)
       // stat tiles
-      expect(text).toContain('主动任务')
+      expect(text).toContain('待确认')
       expect(text).toContain('待定建议')
       expect(text).toContain('长期记忆')
       expect(text).toContain('今日采纳')
       // suggestions section
-      expect(text).toContain('Proma 建议')
+      expect(text).toContain('Lume 建议')
       expect(text).toContain('跟进老王')
       expect(text).toContain('三天未回复')
-      // automations section
-      expect(text).toContain('正在关注')
-      expect(text).toContain('每日回顾')
-      expect(text).toContain('周报草稿')
+      expect(text).not.toContain('正在关注')
+      expect(text).not.toContain('每日回顾')
       // pending section
       expect(text).toContain('需要确认')
       expect(text).toContain('候选记忆A')
-      // persona placeholder
-      expect(text).toContain('用户画像')
       // 三态按钮存在
       expect(uniqueKeys('accepted')).toHaveLength(1)
       expect(uniqueKeys('ignored')).toHaveLength(1)
@@ -509,6 +486,7 @@ describe('ProactiveHub', () => {
       expect(uniqueKeys('delete')).toHaveLength(1)
       // analyze button 存在
       expect(uniqueKeys('analyze')).toHaveLength(1)
+      expect(uniqueKeys('section')).toHaveLength(4)
     } finally {
       await unmount(env)
       env.cleanup()
@@ -516,13 +494,16 @@ describe('ProactiveHub', () => {
   })
 
   test('空状态：各数据源为空时渲染空提示', async () => {
-    const env = await render()
+    const store = createStore()
+    store.set(agentWorkspacesAtom, [
+      { id: 'w1', name: 'Lume', slug: 'ws', createdAt: 1, updatedAt: 2 },
+    ])
+    store.set(currentWorkspaceIdAtom, 'w1')
+    const env = await render({ store })
     try {
       const text = env.container.textContent ?? ''
       expect(text).toContain('暂无待定建议')
-      expect(text).toContain('暂无活跃的自动化任务')
       expect(text).toContain('暂无待确认记忆')
-      expect(text).toContain('用户画像')
     } finally {
       await unmount(env)
       env.cleanup()
@@ -625,7 +606,23 @@ describe('ProactiveHub', () => {
     }
   })
 
-  test('memory pending section 渲染条目且「管理记忆」按钮触发 onOpenMemorySettings', async () => {
+  test('切换到记忆区后复用唯一记忆库表面', async () => {
+    const env = await render()
+    try {
+      const memorySection = clicksFor('section:memory')[0]
+      expect(memorySection).toBeDefined()
+      await act(async () => {
+        memorySection!.onClick()
+        await flush()
+      })
+      expect(env.store.get(memoryCenterDeepLinkAtom).section).toBe('memory')
+    } finally {
+      await unmount(env)
+      env.cleanup()
+    }
+  })
+
+  test('待处理记忆可直接接受，不再跳转设置页', async () => {
     getMemorySettingsSnapshotMock.mockResolvedValueOnce(
       makeSnapshot({
         pending: [
@@ -657,23 +654,21 @@ describe('ProactiveHub', () => {
     ])
     store.set(currentWorkspaceIdAtom, 'w1')
 
-    let opened = false
-    const env = await render({
-      store,
-      onOpenMemorySettings: () => {
-        opened = true
-      },
-    })
+    const env = await render({ store })
     try {
       const text = env.container.textContent ?? ''
       expect(text).toContain('记住我偏好深色')
-      const openBtn = clicksFor('open-memory')[0]
-      expect(openBtn).toBeDefined()
+      const accept = clicksFor('pending:accept:p1')[0]
+      expect(accept).toBeDefined()
       await act(async () => {
-        openBtn!.onClick()
+        accept!.onClick()
         await flush()
       })
-      expect(opened).toBe(true)
+      expect(resolveMemoryPendingMock).toHaveBeenCalledWith({
+        workspaceSlug: 'ws',
+        path: 'mem/p.md',
+        action: 'accept',
+      })
     } finally {
       await unmount(env)
       env.cleanup()

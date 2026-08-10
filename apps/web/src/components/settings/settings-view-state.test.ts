@@ -63,4 +63,10 @@ describe('settings view state', () => {
   test('skills page subtitle is 管理自定义技能、触发条件与工具权限', () => {
     expect(SETTINGS_PAGE_SUBTITLES.skills).toBe('管理自定义技能、触发条件与工具权限')
   })
+
+  test('memory page is advanced settings rather than a second memory center', () => {
+    expect(SETTINGS_NAV_ITEMS.find((item) => item.id === 'memory')?.label).toBe('记忆设置')
+    expect(SETTINGS_PAGE_TITLES.memory).toBe('记忆设置')
+    expect(SETTINGS_PAGE_SUBTITLES.memory).toBe('管理主动记忆、后台整理、召回与迁移诊断')
+  })
 })

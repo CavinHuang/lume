@@ -308,12 +308,12 @@ describe('ActivationToggleGroup', () => {
       // 4 标签均渲染
       expect(container.textContent).toContain('激活用途')
       expect(container.textContent).toContain('召回')
-      expect(container.textContent).toContain('Persona')
+      expect(container.textContent).toContain('关于我')
       expect(container.textContent).toContain('主动建议')
       expect(container.textContent).toContain('工作模式分析')
 
       // 默认全 true：每个 switch data-checked='true'
-      for (const label of ['召回', 'Persona', '主动建议', '工作模式分析']) {
+      for (const label of ['召回', '关于我', '主动建议', '工作模式分析']) {
         const sw = findSwitchByLabel(container, label)!
         expect(sw).not.toBeNull()
         expect(sw.attributes.get('data-checked')).toBe('true')
@@ -345,7 +345,7 @@ describe('ActivationToggleGroup', () => {
       })
 
       expect(findSwitchByLabel(container, '召回')!.attributes.get('data-checked')).toBe('true')
-      expect(findSwitchByLabel(container, 'Persona')!.attributes.get('data-checked')).toBe('false')
+      expect(findSwitchByLabel(container, '关于我')!.attributes.get('data-checked')).toBe('false')
       expect(findSwitchByLabel(container, '主动建议')!.attributes.get('data-checked')).toBe('true')
       expect(findSwitchByLabel(container, '工作模式分析')!.attributes.get('data-checked')).toBe('false')
     } finally {

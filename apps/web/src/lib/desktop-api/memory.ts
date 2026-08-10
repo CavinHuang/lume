@@ -16,12 +16,17 @@ import type {
   MemoryResolvePendingInput,
   MemoryRuntimeConfig,
   MemorySettingsSnapshot,
+  MemoryDiagnosticsSnapshot,
   MemoryToolWriteResult,
   MemoryUpdateEntryInput,
   FileRef,
   MemoryListSourceFilesInput,
   MemorySourceFilesPage,
   UpdateMemoryRuntimeConfigInput,
+  MemoryUndoMutationInput,
+  MemoryMutationReceipt,
+  MemoryCancelJobInput,
+  MemoryJobStatus,
 } from '@lume/shared'
 import { MEMORY_IPC_CHANNELS } from '@lume/shared'
 import { sidecarCall } from './system'
@@ -33,8 +38,14 @@ export const readMemory = (input: MemoryReadToolInput) =>
 export const rememberMemory = (input: MemoryRememberToolInput) =>
   sidecarCall<MemoryToolWriteResult>(MEMORY_IPC_CHANNELS.REMEMBER, input)
 
+export const undoMemoryMutation = (input: MemoryUndoMutationInput) =>
+  sidecarCall<MemoryMutationReceipt>(MEMORY_IPC_CHANNELS.UNDO_MUTATION, input)
+
 export const getMemorySettingsSnapshot = (workspaceSlug: string) =>
   sidecarCall<MemorySettingsSnapshot>(MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT, { workspaceSlug })
+
+export const getMemoryDiagnosticsSnapshot = (workspaceSlug: string) =>
+  sidecarCall<MemoryDiagnosticsSnapshot>(MEMORY_IPC_CHANNELS.DIAGNOSTICS_SNAPSHOT, { workspaceSlug })
 
 export const organizeMemoryHistory = (input: MemoryOrganizeHistoryInput) =>
   sidecarCall<MemoryStartOrganizeJobResult>(MEMORY_IPC_CHANNELS.ORGANIZE_HISTORY, input)
@@ -50,6 +61,12 @@ export const ingestMemorySources = (input: MemoryIngestSourcesInput) =>
 
 export const getMemoryIngestJob = (input: MemoryIngestSourcesJobInput) =>
   sidecarCall<MemoryIngestSourcesJob>(MEMORY_IPC_CHANNELS.GET_INGEST_JOB, input)
+
+export const cancelMemoryJob = (input: MemoryCancelJobInput) =>
+  sidecarCall<{ status: MemoryJobStatus }>(MEMORY_IPC_CHANNELS.CANCEL_JOB, input)
+
+export const retryMemoryJob = (input: MemoryCancelJobInput) =>
+  sidecarCall<MemoryStartIngestSourcesResult | MemoryStartOrganizeJobResult>(MEMORY_IPC_CHANNELS.RETRY_JOB, input)
 
 export const listMemorySourceFiles = (input: MemoryListSourceFilesInput) =>
   sidecarCall<MemorySourceFilesPage>(MEMORY_IPC_CHANNELS.LIST_SOURCE_FILES, input)

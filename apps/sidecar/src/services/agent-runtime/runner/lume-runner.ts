@@ -24,7 +24,7 @@ import { applyResolvedThinkingLevel } from "./thinking-level";
 import { appendDaily, appendRunArchive } from "../../memory-v2/markdown-store";
 import { resolveMemoryRuntimeConfig } from "../../memory-v2/policy";
 import { memoryFileRefForPath } from "../../memory-v2/source-files";
-import { extractMemoryCandidatesWithLlm } from "../../memory-v2/extraction";
+import { enqueueBackgroundMemoryExtraction } from "../../memory-v2/background-extractor";
 import { smartAddMemoryV2Candidate } from "../../memory-v2/smart-add";
 import type { LumeWorkflowHookEvent } from "../../workflow-hooks/hook-events";
 import type { LumeWorkflowHookExecutionResult } from "../../workflow-hooks/hook-effects";
@@ -100,13 +100,17 @@ interface PreparedRuntimeCoreRunInput {
 }
 
 export function resolveRuntimeCoreMaxTurns(input: AgentRuntimeRunParams["input"]): number | undefined {
-  void input;
+  const requested = input.messageMetadata?.maxTurns;
+  if (typeof requested === "number" && Number.isFinite(requested)) {
+    return Math.max(1, Math.min(80, Math.trunc(requested)));
+  }
   return 80;
 }
 
 export class LumeRunner {
   readonly emit: AgentRuntimeEmitter;
   private latestMemoryContextUsedItems: CreateRuntimeCoreSessionResult["memoryContextUsedItems"] = [];
+  private latestModelVisibleMessage = "";
 
   private constructor(
     private readonly observer: LumeRunObserver,
@@ -469,6 +473,9 @@ export class LumeRunner {
       processSandbox: wikiCapability.sandbox
     });
     this.latestMemoryContextUsedItems = runtimeSession.memoryContextUsedItems ?? [];
+    this.latestModelVisibleMessage = typeof runtimeSession.userMessageForModel === "string"
+      ? runtimeSession.userMessageForModel
+      : "";
 
     return this.runRuntimeSession({
       params,
@@ -502,27 +509,24 @@ export class LumeRunner {
           record: {
             type: "run.completed",
             threadId: this.observer.getThreadId(),
+            threadType: this.params.runtime.threadType,
+            chatType: this.params.input.chatType,
             userMessage: compactMemoryHistoryText(this.observer.getUserMessage()),
             summary: historySummary
           }
         });
         this.scheduleConversationSummary(workspaceSlug, runState, historySummary);
-        if (!this.workflowHooks) {
-          for (const candidate of await extractMemoryCandidatesWithLlm({
-            text: this.observer.getUserMessage(),
-            workspaceSlug
-          })) {
-            await smartAddMemoryV2Candidate({
-              workspaceSlug,
-              candidate: {
-                ...candidate,
-                evidence: {
-                  ...candidate.evidence,
-                  runId: this.observer.getRunId()
-                }
-              }
-            });
-          }
+        if (!this.workflowHooks && runState) {
+          enqueueBackgroundMemoryExtraction({
+            threadId: this.observer.getThreadId(),
+            runId: this.observer.getRunId(),
+            workspaceSlug,
+            modelRef: runState.model.modelRef,
+            modelVisibleMessage: this.latestModelVisibleMessage,
+            threadType: this.params.runtime.threadType,
+            chatType: this.params.input.chatType,
+            items: this.memoryExtractionRunItems(runState)
+          });
         }
       } catch {
         // Memory capture must not block completion.
@@ -668,8 +672,19 @@ export class LumeRunner {
         pendingInterruptionCount: runState?.pendingInterruptions.length ?? 0
       },
       usage: runState?.usage,
-      memoryContextUsedItems: this.latestMemoryContextUsedItems
+      memoryContextUsedItems: this.latestMemoryContextUsedItems,
+      modelVisibleMessage: this.latestModelVisibleMessage,
+      runItems: this.memoryExtractionRunItems(runState)
     });
+  }
+
+  private memoryExtractionRunItems(runState: LumeRunState | null) {
+    return [{
+      type: "user_message" as const,
+      id: `${this.observer.getRunId()}:user`,
+      content: this.observer.getUserMessage(),
+      createdAt: runState?.createdAt ?? new Date().toISOString()
+    }, ...(runState?.generatedItems ?? [])];
   }
 
   private async fireRunAfterFailure(errorMessage: string): Promise<void> {
@@ -691,7 +706,8 @@ export class LumeRunner {
       permissionMode: this.params.input.permissionMode,
       threadType: this.params.runtime.threadType,
       chatType: this.params.input.chatType,
-      messageMetadata: this.params.input.messageMetadata
+      messageMetadata: this.params.input.messageMetadata,
+      modelRef: this.params.runtime.modelRef
     } as Omit<LumeWorkflowHookEvent, "event">;
   }
 

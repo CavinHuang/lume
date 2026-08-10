@@ -170,6 +170,19 @@ describe("LumeRunner", () => {
     })).toBe(80);
   });
 
+  test("allows a hidden background agent to request a smaller bounded turn budget", () => {
+    expect(resolveRuntimeCoreMaxTurns({
+      threadId: "thread-1",
+      userMessage: "background memory extraction",
+      messageMetadata: { hiddenFromChat: true, maxTurns: 5 }
+    })).toBe(5);
+    expect(resolveRuntimeCoreMaxTurns({
+      threadId: "thread-1",
+      userMessage: "background memory organization",
+      messageMetadata: { hiddenFromChat: true, maxTurns: 200 }
+    })).toBe(80);
+  });
+
   test("complete emits completion and finalizes run state", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-complete-"));
     dirs.push(agentDir);
@@ -201,13 +214,18 @@ describe("LumeRunner", () => {
       });
 
       const result = await runner.complete();
+      expect(result).toEqual({ status: "completed" });
+      expect(createMemoryV2Store().listEntries({
+        workspaceSlug: "demo",
+        scopes: ["global"],
+        includeStatuses: ["active"]
+      })).toEqual([]);
+      await Bun.sleep(80);
       const entries = createMemoryV2Store().listEntries({
         workspaceSlug: "demo",
         scopes: ["global"],
         includeStatuses: ["active"]
       });
-
-      expect(result).toEqual({ status: "completed" });
       expect(entries).toEqual([expect.objectContaining({
         statement: "默认用中文回答"
       })]);

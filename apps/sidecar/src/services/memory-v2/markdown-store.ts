@@ -9,10 +9,13 @@ import type {
   MemoryV2Candidate,
   MemoryV2Entry,
   MemoryV2EntryFrontmatter,
+  MemoryV2EvidenceRef,
+  MemoryV2Kind,
   MemoryV2PendingFrontmatter,
   MemoryV2PendingItem,
   MemoryV2PendingType,
   MemoryV2Scope,
+  MemoryV2SemanticRole,
   MemoryV2Source,
   MemoryV2Status
 } from "./types";
@@ -37,6 +40,7 @@ export interface MemoryV2Store {
     supersedes?: string[];
     source?: MemoryV2Source;
     activation?: MemoryV2Activation;
+    evidenceRefs?: MemoryV2EvidenceRef[];
   }): MemoryV2Entry;
   updateEntryStatus(input: {
     scope: MemoryV2Scope;
@@ -44,6 +48,8 @@ export interface MemoryV2Store {
     id: string;
     status: MemoryV2Status;
     supersededBy?: string | null;
+    evidenceRefs?: MemoryV2EvidenceRef[];
+    expectedRevision?: number;
   }): MemoryV2Entry;
   updateEntryRelations(input: {
     scope: MemoryV2Scope;
@@ -60,6 +66,19 @@ export interface MemoryV2Store {
     confidence?: MemoryV2EntryFrontmatter["confidence"];
     tags?: string[];
     activation?: MemoryV2Activation;
+    facets?: string[];
+    pinned?: boolean;
+    validTo?: string | null;
+    evidenceRefs?: MemoryV2EvidenceRef[];
+    lastConfirmedAt?: string;
+    expectedRevision?: number;
+  }): MemoryV2Entry;
+  moveEntryScope(input: {
+    scope: MemoryV2Scope;
+    targetScope: MemoryV2Scope;
+    workspaceSlug: string;
+    id: string;
+    expectedRevision?: number;
   }): MemoryV2Entry;
   deleteEntry(input: {
     scope: MemoryV2Scope;
@@ -115,6 +134,7 @@ export function createMemoryV2Store(): MemoryV2Store {
     updateEntryStatus,
     updateEntryRelations,
     updateEntry,
+    moveEntryScope,
     deleteEntry,
     writePending,
     listEntries,
@@ -142,6 +162,7 @@ export function writeEntry(candidate: MemoryV2Candidate, input: {
   supersedes?: string[];
   source?: MemoryV2Source;
   activation?: MemoryV2Activation;
+  evidenceRefs?: MemoryV2EvidenceRef[];
 } = {}): MemoryV2Entry {
   const paths = getMemoryV2ScopePaths({
     scope: candidate.targetScope,
@@ -150,13 +171,19 @@ export function writeEntry(candidate: MemoryV2Candidate, input: {
   const now = new Date().toISOString();
   const id = createMemoryId(now);
   const source = input.source ?? memorySourceFromCandidate(candidate);
+  const kind = candidate.kind ?? kindFromSemanticRole(candidate.semanticRole);
+  const semanticRole = candidate.semanticRole ?? semanticRoleFromKind(kind, candidate.tags);
   const frontmatter: MemoryV2EntryFrontmatter = {
     id,
-    kind: candidate.kind,
+    kind,
+    semantic_role: semanticRole,
+    facets: cleanList(candidate.facets ?? candidate.tags),
     scope: candidate.targetScope,
     status: input.status ?? "active",
     created: now,
     updated: now,
+    last_confirmed_at: now,
+    revision: 1,
     source,
     confidence: candidate.confidence,
     pinned: input.pinned ?? false,
@@ -169,6 +196,7 @@ export function writeEntry(candidate: MemoryV2Candidate, input: {
     valid_from: null,
     valid_to: null,
     activation: input.activation ? { ...input.activation } : { ...DEFAULT_ACTIVATION },
+    evidence_refs: input.evidenceRefs ?? evidenceRefsFromCandidate(candidate),
     ...(candidate.claim ? { claim: candidate.claim } : {})
   };
   const filename = `${now.slice(0, 10)}-${id}.md`;
@@ -184,11 +212,14 @@ export function updateEntryStatus(input: {
   id: string;
   status: MemoryV2Status;
   supersededBy?: string | null;
+  evidenceRefs?: MemoryV2EvidenceRef[];
+  expectedRevision?: number;
 }): MemoryV2Entry {
   const entry = findEntryById(input);
   if (!entry) {
     throw new Error(`Memory entry not found: ${input.id}`);
   }
+  assertRevision(entry, input.expectedRevision);
   const next: MemoryV2Entry = {
     ...entry,
     frontmatter: {
@@ -197,7 +228,11 @@ export function updateEntryStatus(input: {
       superseded_by: input.supersededBy === undefined
         ? entry.frontmatter.superseded_by
         : input.supersededBy,
-      updated: new Date().toISOString()
+      evidence_refs: input.evidenceRefs
+        ? uniqueEvidenceRefs([...entry.frontmatter.evidence_refs, ...input.evidenceRefs])
+        : entry.frontmatter.evidence_refs,
+      updated: new Date().toISOString(),
+      revision: entry.frontmatter.revision + 1
     }
   };
   writeMarkdownDocument(next.path, next.frontmatter, next.statement);
@@ -220,7 +255,8 @@ export function updateEntryRelations(input: {
     frontmatter: {
       ...entry.frontmatter,
       related: nextRelated,
-      updated: new Date().toISOString()
+      updated: new Date().toISOString(),
+      revision: entry.frontmatter.revision + 1
     }
   };
   writeMarkdownDocument(next.path, next.frontmatter, next.statement);
@@ -236,11 +272,18 @@ export function updateEntry(input: {
   confidence?: MemoryV2EntryFrontmatter["confidence"];
   tags?: string[];
   activation?: MemoryV2Activation;
+  facets?: string[];
+  pinned?: boolean;
+  validTo?: string | null;
+  evidenceRefs?: MemoryV2EvidenceRef[];
+  lastConfirmedAt?: string;
+  expectedRevision?: number;
 }): MemoryV2Entry {
   const entry = findEntryById(input);
   if (!entry) {
     throw new Error(`Memory entry not found: ${input.id}`);
   }
+  assertRevision(entry, input.expectedRevision);
   const nextStatement = input.statement === undefined ? entry.statement : input.statement.trim();
   if (!nextStatement) {
     throw new Error("Memory entry statement cannot be empty");
@@ -260,12 +303,67 @@ export function updateEntry(input: {
       ...(input.kind ? { kind: input.kind } : {}),
       ...(input.confidence ? { confidence: input.confidence } : {}),
       tags: nextTags,
+      facets: input.facets ? cleanList(input.facets) : entry.frontmatter.facets,
+      pinned: input.pinned ?? entry.frontmatter.pinned,
+      valid_to: input.validTo === undefined ? entry.frontmatter.valid_to : input.validTo,
       activation: nextActivation,
+      evidence_refs: input.evidenceRefs
+        ? uniqueEvidenceRefs([...entry.frontmatter.evidence_refs, ...input.evidenceRefs])
+        : entry.frontmatter.evidence_refs,
       ...(nextClaim ? { claim: nextClaim } : {}),
-      updated: new Date().toISOString()
+      updated: new Date().toISOString(),
+      last_confirmed_at: input.lastConfirmedAt ?? new Date().toISOString(),
+      revision: entry.frontmatter.revision + 1
     }
   };
   writeMarkdownDocument(next.path, next.frontmatter, next.statement);
+  return next;
+}
+
+function uniqueEvidenceRefs(refs: MemoryV2EvidenceRef[]): MemoryV2EvidenceRef[] {
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    const key = JSON.stringify([ref.type, ref.id, ref.runId, ref.threadId, ref.path, ref.quote]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function moveEntryScope(input: {
+  scope: MemoryV2Scope;
+  targetScope: MemoryV2Scope;
+  workspaceSlug: string;
+  id: string;
+  expectedRevision?: number;
+}): MemoryV2Entry {
+  const entry = findEntryById({
+    scope: input.scope,
+    workspaceSlug: input.workspaceSlug,
+    id: input.id
+  });
+  if (!entry) throw new Error(`Memory entry not found: ${input.id}`);
+  assertRevision(entry, input.expectedRevision);
+  if (input.scope === input.targetScope) return entry;
+  const targetPaths = getMemoryV2ScopePaths({
+    scope: input.targetScope,
+    workspaceSlug: input.targetScope === "workspace" ? input.workspaceSlug : undefined
+  });
+  const targetPath = join(targetPaths.entriesDir, basename(entry.path));
+  if (existsSync(targetPath)) throw new Error(`Memory entry already exists in target scope: ${input.id}`);
+  const next: MemoryV2Entry = {
+    ...entry,
+    path: targetPath,
+    frontmatter: {
+      ...entry.frontmatter,
+      scope: input.targetScope,
+      applies_when: input.targetScope === "workspace" ? { workspaceSlug: input.workspaceSlug } : {},
+      updated: new Date().toISOString(),
+      revision: entry.frontmatter.revision + 1
+    }
+  };
+  writeMarkdownDocument(targetPath, next.frontmatter, next.statement);
+  rmSync(entry.path, { force: true });
   return next;
 }
 
@@ -305,11 +403,13 @@ export function writePending(input: {
     type: input.type,
     created: now,
     candidate: {
-      kind: input.candidate.kind,
+      kind: input.candidate.kind ?? kindFromSemanticRole(input.candidate.semanticRole),
+      semantic_role: input.candidate.semanticRole,
       targetScope: input.candidate.targetScope,
       statement: input.candidate.statement.trim(),
       confidence: input.candidate.confidence,
       tags: cleanList(input.candidate.tags),
+      facets: cleanList(input.candidate.facets),
       entities: cleanList(input.candidate.entities),
       appliesWhen: input.candidate.appliesWhen,
       ...(input.candidate.claim ? { claim: input.candidate.claim } : {})
@@ -322,6 +422,7 @@ export function writePending(input: {
           record_ids: input.candidate.evidence.recordIds
         }
       : undefined,
+    evidence_refs: input.candidate.evidenceRefs,
     status: "open"
   };
   const pendingDir = pendingTypeDir(paths, input.type);
@@ -424,6 +525,7 @@ export function resolvePending(input: {
       run_id: pending.frontmatter.evidence?.run_id,
       record_ids: pending.frontmatter.evidence?.record_ids
     },
+    evidenceRefs: pending.frontmatter.evidence_refs,
     ...(supersededEntry ? { activation: readActivation(supersededEntry.frontmatter) } : {})
   });
   for (const existingId of existingIds) {
@@ -670,10 +772,12 @@ function candidateFromPending(
   }
   return {
     kind: override?.kind ?? item.frontmatter.candidate.kind,
+    semanticRole: item.frontmatter.candidate.semantic_role,
     targetScope,
     statement,
     confidence: override?.confidence ?? item.frontmatter.candidate.confidence ?? "medium",
     tags: override?.tags === undefined ? item.frontmatter.candidate.tags : cleanList(override.tags),
+    facets: item.frontmatter.candidate.facets,
     entities: item.frontmatter.candidate.entities,
     appliesWhen: targetScope === "workspace" && !appliesWhen.workspaceSlug
       ? { ...appliesWhen, workspaceSlug }
@@ -684,7 +788,8 @@ function candidateFromPending(
           runId: item.frontmatter.evidence.run_id,
           recordIds: item.frontmatter.evidence.record_ids
         }
-      : undefined
+      : undefined,
+    evidenceRefs: item.frontmatter.evidence_refs
   };
 }
 
@@ -709,6 +814,9 @@ function normalizeEntryFrontmatter(raw: MemoryV2EntryFrontmatter, path: string):
   }
   return {
     ...raw,
+    kind: raw.kind ?? kindFromSemanticRole(raw.semantic_role),
+    semantic_role: raw.semantic_role ?? semanticRoleFromKind(raw.kind, raw.tags),
+    facets: cleanList(raw.facets ?? raw.tags),
     tags: cleanList(raw.tags),
     entities: cleanList(raw.entities),
     related: cleanList(raw.related),
@@ -718,6 +826,9 @@ function normalizeEntryFrontmatter(raw: MemoryV2EntryFrontmatter, path: string):
     valid_from: raw.valid_from ?? null,
     valid_to: raw.valid_to ?? null,
     pinned: Boolean(raw.pinned),
+    revision: Number.isInteger(raw.revision) && raw.revision > 0 ? raw.revision : 1,
+    last_confirmed_at: raw.last_confirmed_at ?? raw.updated ?? raw.created,
+    evidence_refs: Array.isArray(raw.evidence_refs) ? raw.evidence_refs : evidenceRefsFromSource(raw.source),
     claim: normalizeMemoryV2Claim(raw.claim)
   };
 }
@@ -731,12 +842,14 @@ function normalizePendingFrontmatter(raw: MemoryV2PendingFrontmatter, path: stri
     candidate: {
       ...raw.candidate,
       tags: cleanList(raw.candidate.tags),
+      facets: cleanList(raw.candidate.facets),
       entities: cleanList(raw.candidate.entities),
       appliesWhen: raw.candidate.appliesWhen ?? {},
       claim: normalizeMemoryV2Claim(raw.candidate.claim)
     },
     existing: raw.existing?.ids?.length ? { ids: cleanList(raw.existing.ids) } : undefined,
     evidence: raw.evidence ?? undefined,
+    evidence_refs: Array.isArray(raw.evidence_refs) ? raw.evidence_refs : undefined,
     status: raw.status ?? "open"
   };
 }
@@ -772,6 +885,44 @@ function memorySourceFromCandidate(candidate: MemoryV2Candidate): MemoryV2Source
     record_ids: candidate.evidence?.recordIds,
     path: candidate.evidence?.sourcePaths?.[0]
   };
+}
+
+function evidenceRefsFromCandidate(candidate: MemoryV2Candidate): MemoryV2EvidenceRef[] {
+  if (candidate.evidenceRefs?.length) return uniqueEvidenceRefs(candidate.evidenceRefs);
+  const refs: MemoryV2EvidenceRef[] = [];
+  for (const id of candidate.evidence?.recordIds ?? []) {
+    refs.push({ type: "user_message", id, runId: candidate.evidence?.runId });
+  }
+  for (const path of candidate.evidence?.sourcePaths ?? []) {
+    refs.push({ type: "external_file", path, runId: candidate.evidence?.runId });
+  }
+  if (refs.length === 0) refs.push({ type: "manual", runId: candidate.evidence?.runId });
+  return refs;
+}
+
+function evidenceRefsFromSource(source: MemoryV2Source): MemoryV2EvidenceRef[] {
+  if (source.path) return [{ type: "external_file", path: source.path, runId: source.run_id }];
+  if (source.record_ids?.length) {
+    return source.record_ids.map((id) => ({ type: "user_message", id, runId: source.run_id }));
+  }
+  return [{ type: "manual", runId: source.run_id }];
+}
+
+function semanticRoleFromKind(kind?: MemoryV2Kind, tags?: string[]): MemoryV2SemanticRole {
+  if ((tags ?? []).some((tag) => ["identity", "preferred-name", "profile"].includes(tag))) return "identity";
+  if (kind === "preference" || kind === "decision" || kind === "lesson" || kind === "state") return kind;
+  return "fact";
+}
+
+function kindFromSemanticRole(role?: MemoryV2SemanticRole): MemoryV2Kind {
+  if (role === "preference" || role === "decision" || role === "lesson" || role === "state") return role;
+  return "fact";
+}
+
+function assertRevision(entry: MemoryV2Entry, expectedRevision?: number): void {
+  if (expectedRevision !== undefined && entry.frontmatter.revision !== expectedRevision) {
+    throw new Error(`Memory revision conflict: expected ${expectedRevision}, got ${entry.frontmatter.revision}`);
+  }
 }
 
 function candidateWorkspace(candidate: MemoryV2Candidate): string | undefined {

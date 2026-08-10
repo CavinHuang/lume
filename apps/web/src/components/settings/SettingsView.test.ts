@@ -24,8 +24,8 @@ describe('SettingsView metadata', () => {
       'archive',
       'updates',
     ])
-    expect(SETTINGS_PAGE_TITLES.memory).toBe('记忆')
-    expect(SETTINGS_PAGE_SUBTITLES.memory).toContain('工作区与全局记忆')
+    expect(SETTINGS_PAGE_TITLES.memory).toBe('记忆设置')
+    expect(SETTINGS_PAGE_SUBTITLES.memory).toBe('管理主动记忆、后台整理、召回与迁移诊断')
     expect(SETTINGS_PAGE_TITLES.permissions).toBe('权限管理')
     expect(SETTINGS_PAGE_SUBTITLES.permissions).toContain('权限模式')
     expect(SETTINGS_PAGE_TITLES.integrations).toBe('MCP')

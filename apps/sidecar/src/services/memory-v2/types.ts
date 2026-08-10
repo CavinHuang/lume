@@ -1,6 +1,35 @@
 export type MemoryV2Scope = "global" | "workspace";
 
+export type MemoryV2ScopeInput = MemoryV2Scope | "auto";
+
 export type MemoryV2Kind = "preference" | "fact" | "decision" | "lesson" | "state";
+
+export type MemoryV2SemanticRole =
+  | "identity"
+  | "fact"
+  | "preference"
+  | "constraint"
+  | "decision"
+  | "lesson"
+  | "state";
+
+export type MemoryV2EvidenceType =
+  | "user_message"
+  | "assistant_message"
+  | "tool_result"
+  | "external_file"
+  | "workspace_file"
+  | "manual"
+  | "consolidation";
+
+export interface MemoryV2EvidenceRef {
+  type: MemoryV2EvidenceType;
+  id?: string;
+  runId?: string;
+  threadId?: string;
+  path?: string;
+  quote?: string;
+}
 
 export type MemoryV2Status =
   | "active"
@@ -51,11 +80,16 @@ export interface MemoryV2Claim {
 
 export interface MemoryV2EntryFrontmatter {
   id: string;
+  /** @deprecated Kept for one schema version while old files are normalized. */
   kind: MemoryV2Kind;
+  semantic_role: MemoryV2SemanticRole;
+  facets: string[];
   scope: MemoryV2Scope;
   status: MemoryV2Status;
   created: string;
   updated: string;
+  last_confirmed_at: string;
+  revision: number;
   source: MemoryV2Source;
   confidence: MemoryV2Confidence;
   pinned: boolean;
@@ -73,6 +107,7 @@ export interface MemoryV2EntryFrontmatter {
    * 新记忆由 writeEntry 自动写入 DEFAULT_ACTIVATION。
    */
   activation?: MemoryV2Activation;
+  evidence_refs: MemoryV2EvidenceRef[];
 }
 
 export interface MemoryV2Entry {
@@ -89,10 +124,12 @@ export interface MemoryV2PendingFrontmatter {
   created: string;
   candidate: {
     kind: MemoryV2Kind;
+    semantic_role?: MemoryV2SemanticRole;
     targetScope: MemoryV2Scope;
     statement: string;
     confidence?: MemoryV2Confidence;
     tags?: string[];
+    facets?: string[];
     entities?: string[];
     appliesWhen?: Record<string, string>;
     claim?: MemoryV2Claim;
@@ -105,6 +142,7 @@ export interface MemoryV2PendingFrontmatter {
     run_id?: string;
     record_ids?: string[];
   };
+  evidence_refs?: MemoryV2EvidenceRef[];
   status: "open" | "resolved" | "archived";
 }
 
@@ -115,7 +153,9 @@ export interface MemoryV2PendingItem {
 }
 
 export interface MemoryV2Candidate {
-  kind: MemoryV2Kind;
+  /** Compatibility hint only. The command service derives semanticRole. */
+  kind?: MemoryV2Kind;
+  semanticRole?: MemoryV2SemanticRole;
   targetScope: MemoryV2Scope;
   statement: string;
   confidence: MemoryV2Confidence;
@@ -126,10 +166,43 @@ export interface MemoryV2Candidate {
     sourcePaths?: string[];
     quote?: string;
   };
+  evidenceRefs?: MemoryV2EvidenceRef[];
   tags?: string[];
+  facets?: string[];
   entities?: string[];
   appliesWhen?: Record<string, string>;
   claim?: MemoryV2Claim;
+}
+
+export type MemoryV2MutationActor =
+  | "main_agent"
+  | "background_extract"
+  | "consolidation"
+  | "user"
+  | "migration";
+
+export type MemoryV2MutationAction =
+  | "created"
+  | "updated"
+  | "superseded"
+  | "merged"
+  | "archived"
+  | "duplicate"
+  | "pending"
+  | "ignored";
+
+export interface MemoryV2MutationReceipt {
+  mutationId: string;
+  actor: MemoryV2MutationActor;
+  action: MemoryV2MutationAction;
+  memoryIds: string[];
+  runId?: string;
+  threadId?: string;
+  scope: MemoryV2Scope;
+  revision?: number;
+  summary: string;
+  undoable: boolean;
+  createdAt: string;
 }
 
 export type MemoryV2SmartAddAction =

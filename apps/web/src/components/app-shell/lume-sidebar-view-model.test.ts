@@ -70,6 +70,7 @@ describe('buildLumeSidebarViewModel', () => {
       'proactive',
     ])
     expect(model.topActions.find((action) => action.id === 'skills')?.label).toBe('技能 / 插件')
+    expect(model.topActions.find((action) => action.id === 'proactive')?.label).toBe('记忆与洞察')
   })
 
   test('marks automation navigation active and enabled when the automation tab is open', () => {

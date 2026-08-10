@@ -1,0 +1,547 @@
+import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { SDKMessage } from "@lume/agent-sdk";
+import { AGENT_IPC_CHANNELS, type AgentAskUserQuestionRequest, type AgentToolPermissionRequest, type LumeRuntimeEvent, type MemoryEvidenceRef } from "@lume/shared";
+import { appendAgentThreadSDKMessages, createAgentThreadWithModelRef, getAgentThreadSDKMessages } from "../agent/agent-thread-manager";
+import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
+import { sendAgentMessage } from "../agent/agent-service";
+import { getSubagentCoordinator } from "../agent/subagents/subagent-coordinator";
+import { emitAgentNotification } from "../agent/agent-notification-service";
+import type { LumeRunItem } from "../agent-runtime/runner/run-items";
+import { MemoryCommandService, hasMemoryMutationForRun } from "./command-service";
+import {
+  buildBatchExtractionUserPrompt,
+  extractMemoryBatchCandidatesWithLlm,
+  parseLlmBatchExtractionResponse,
+  resolveMemoryExtractionModelRefs
+} from "./extraction";
+import { claimFromEntry } from "./claim";
+import { createMemoryV2Store } from "./markdown-store";
+import { getMemoryV2ScopePaths } from "./paths";
+import { getMemoryRuntimeConfig } from "./policy";
+import { getEffectiveLumeConfig } from "../system/lume-config-service";
+import { resolveChannelModelBinding } from "../channel/channel-manager";
+import type { MemoryV2MutationReceipt } from "./types";
+import { maybeEnqueueAutoDream } from "./consolidation";
+import { memoryJobService } from "./job-service";
+
+export interface BackgroundMemoryExtractionRequest {
+  threadId: string;
+  runId: string;
+  workspaceSlug: string;
+  modelRef?: string;
+  modelVisibleMessage?: string;
+  threadType?: string;
+  chatType?: string;
+  items: LumeRunItem[];
+}
+
+interface ThreadQueueState {
+  running: boolean;
+  trailing?: BackgroundMemoryExtractionRequest;
+}
+
+interface ExtractionCursor {
+  threadId: string;
+  cursor: number;
+  lastIdempotencyKey?: string;
+  lastRunId?: string;
+  status: "idle" | "running" | "completed" | "failed" | "skipped";
+  updatedAt: string;
+  error?: string;
+}
+
+const queues = new Map<string, ThreadQueueState>();
+
+interface BackgroundExtractionProgress {
+  phase: string;
+  scannedItems: number;
+  processedItems: number;
+  changedItems: number;
+}
+
+interface BackgroundExtractionResult {
+  scannedItems: number;
+  changedItems: number;
+}
+
+export function enqueueBackgroundMemoryExtraction(input: BackgroundMemoryExtractionRequest): void {
+  if (!getMemoryRuntimeConfig().backgroundExtraction) return;
+  if (input.threadType === "subagent" || input.chatType === "group" || input.chatType === "channel") return;
+  const state = queues.get(input.threadId) ?? { running: false };
+  if (state.running) {
+    state.trailing = input;
+    queues.set(input.threadId, state);
+    return;
+  }
+  state.running = true;
+  queues.set(input.threadId, state);
+  setTimeout(() => void runQueued(input), 0);
+}
+
+async function runQueued(input: BackgroundMemoryExtractionRequest): Promise<void> {
+  try {
+    const job = memoryJobService.start<BackgroundExtractionResult, BackgroundExtractionProgress>({
+      kind: "turn_extract",
+      workspaceSlug: input.workspaceSlug,
+      idempotencyKey: `turn-extract:${input.threadId}:${input.runId}`,
+      manual: false,
+      payload: input,
+      run: ({ report, signal }) => runExtraction(input, report, signal),
+      onProgress: (current) => {
+        if (current.progress?.changedItems) notifyExtractionProgress(input, current.jobId, current.progress);
+      },
+      onCompleted: (current) => {
+        const result = current.result;
+        if (result?.changedItems) notifyExtractionCompleted(input, current.jobId, result);
+      }
+    });
+    await memoryJobService.waitForTerminal(input.workspaceSlug, job.jobId);
+  } finally {
+    const state = queues.get(input.threadId);
+    if (!state) return;
+    const trailing = state.trailing;
+    if (trailing) {
+      state.trailing = undefined;
+      setTimeout(() => void runQueued(trailing), 0);
+      return;
+    }
+    queues.delete(input.threadId);
+  }
+}
+
+/** Re-queue automatic extraction jobs whose process died before they reached a terminal state. */
+export function recoverBackgroundMemoryExtractionJobs(workspaceSlug: string): number {
+  let recovered = 0;
+  for (const job of memoryJobService.list(workspaceSlug)) {
+    if (job.kind !== "turn_extract" || job.status !== "interrupted" || !job.payload) continue;
+    const payload = job.payload as BackgroundMemoryExtractionRequest;
+    if (payload.workspaceSlug !== workspaceSlug || !payload.threadId || !payload.runId) continue;
+    enqueueBackgroundMemoryExtraction(payload);
+    recovered += 1;
+  }
+  return recovered;
+}
+
+async function runExtraction(
+  input: BackgroundMemoryExtractionRequest,
+  report: (progress: BackgroundExtractionProgress) => void,
+  signal: AbortSignal
+): Promise<BackgroundExtractionResult> {
+  signal.throwIfAborted();
+  const sources = extractionSources(input.items);
+  const cursor = readCursor(input);
+  if (cursor.lastRunId === input.runId && (cursor.status === "completed" || cursor.status === "skipped")) {
+    return { scannedItems: 0, changedItems: 0 };
+  }
+  const fromSequence = cursor.cursor;
+  const toSequence = fromSequence + sources.length;
+  const idempotencyKey = `${input.threadId}:${fromSequence}:${toSequence}`;
+  if (cursor.lastIdempotencyKey === idempotencyKey && cursor.status === "completed") {
+    return { scannedItems: 0, changedItems: 0 };
+  }
+  writeCursor(input, { ...cursor, status: "running", updatedAt: new Date().toISOString() });
+
+  if (hasMemoryMutationForRun({ workspaceSlug: input.workspaceSlug, runId: input.runId, actor: "main_agent" })) {
+    writeCursor(input, completedCursor(cursor, input, toSequence, idempotencyKey, "skipped"));
+    return { scannedItems: sources.length, changedItems: 0 };
+  }
+  if (sources.length === 0) {
+    writeCursor(input, completedCursor(cursor, input, toSequence, idempotencyKey, "skipped"));
+    return { scannedItems: 0, changedItems: 0 };
+  }
+
+  try {
+    const sourceRoles = new Map(sources.map((source) => [source.sourceId, source.role]));
+    const existingMemories = createMemoryV2Store().listEntries({
+      workspaceSlug: input.workspaceSlug,
+      scopes: ["global", "workspace"],
+      includeStatuses: ["active", "suspected_stale"]
+    }).map((entry) => {
+      const claim = claimFromEntry(entry);
+      return {
+        id: entry.frontmatter.id,
+        statement: entry.statement,
+        ...(claim ? { claim } : {})
+      };
+    });
+    report({
+      phase: "分析新增对话和工具证据",
+      scannedItems: sources.length,
+      processedItems: 0,
+      changedItems: 0
+    });
+    const extracted = await safeExtractMemoryCandidatesInSubagent({
+      sources: sources.map(({ sourceId, role, text }) => ({ sourceId, role, text })),
+      workspaceSlug: input.workspaceSlug,
+      modelRef: input.modelRef,
+      modelVisibleMessage: input.modelVisibleMessage,
+      existingMemories,
+      threadId: input.threadId,
+      runId: input.runId,
+      signal
+    }) ?? await extractMemoryBatchCandidatesWithLlm({
+      sources: sources.map(({ sourceId, role, text }) => ({ sourceId, role, text })),
+      workspaceSlug: input.workspaceSlug,
+      modelRef: input.modelRef,
+      modelVisibleMessage: input.modelVisibleMessage,
+      existingMemories,
+      maxRounds: 5,
+      agentMode: true,
+      threadId: input.threadId,
+      runId: input.runId
+    });
+    signal.throwIfAborted();
+    const service = new MemoryCommandService();
+    const receipts: MemoryV2MutationReceipt[] = [];
+    for (const item of extracted) {
+      signal.throwIfAborted();
+      const role = sourceRoles.get(item.sourceId);
+      // Assistant text is useful context for extraction, but can never be the sole evidence.
+      if (role === "assistant") continue;
+      const source = sources.find((candidate) => candidate.sourceId === item.sourceId);
+      const evidenceType: MemoryEvidenceRef["type"] = role === "tool_result" ? "tool_result" : "user_message";
+      receipts.push(await service.remember({
+        workspaceSlug: input.workspaceSlug,
+        content: item.candidate.statement,
+        scope: item.candidate.targetScope,
+        legacyKind: item.candidate.kind,
+        semanticRole: item.candidate.semanticRole,
+        facets: item.candidate.facets ?? item.candidate.tags,
+        confidence: item.candidate.confidence,
+        claim: item.candidate.claim,
+        evidenceRefs: [{ type: evidenceType, id: item.sourceId, runId: input.runId, threadId: input.threadId, quote: source?.text }],
+        actor: "background_extract",
+        runId: input.runId,
+        threadId: input.threadId
+      }));
+    }
+    const changed = receipts.filter((receipt) => receipt.action === "created" || receipt.action === "updated" || receipt.action === "superseded" || receipt.action === "pending");
+    report({
+      phase: "提交记忆变更",
+      scannedItems: sources.length,
+      processedItems: extracted.length,
+      changedItems: changed.length
+    });
+    writeCursor(input, completedCursor(cursor, input, toSequence, idempotencyKey, "completed"));
+    if (changed.length > 0) notifyMemorySaved(input, changed);
+    maybeEnqueueAutoDream(input.workspaceSlug, {
+      threadId: input.threadId,
+      runId: input.runId,
+      ...(input.modelRef ? { modelRef: input.modelRef } : {})
+    });
+    return { scannedItems: sources.length, changedItems: changed.length };
+  } catch (error) {
+    writeCursor(input, {
+      ...cursor,
+      status: "failed",
+      updatedAt: new Date().toISOString(),
+      error: error instanceof Error ? error.message : String(error)
+    });
+    throw error;
+  }
+}
+
+interface IndependentExtractionInput {
+  sources: Array<{ sourceId: string; role: "user" | "assistant" | "tool_result"; text: string }>;
+  workspaceSlug: string;
+  modelRef?: string;
+  modelVisibleMessage?: string;
+  existingMemories: Array<{ id: string; statement: string; claim?: ReturnType<typeof claimFromEntry> }>;
+  threadId: string;
+  runId: string;
+  signal: AbortSignal;
+}
+
+async function safeExtractMemoryCandidatesInSubagent(
+  input: IndependentExtractionInput
+): Promise<Awaited<ReturnType<typeof extractMemoryBatchCandidatesWithLlm>> | undefined> {
+  try {
+    return await extractMemoryCandidatesInSubagent(input);
+  } catch {
+    input.signal.throwIfAborted();
+    return undefined;
+  }
+}
+
+/**
+ * Run extraction through the real persistent subagent runtime. The child thread
+ * is hidden from the parent chat and receives only memory read tools; commits
+ * remain in this Job's CommandService transaction after parsing its report.
+ */
+async function extractMemoryCandidatesInSubagent(
+  input: IndependentExtractionInput
+): Promise<Awaited<ReturnType<typeof extractMemoryBatchCandidatesWithLlm>> | undefined> {
+  const config = getEffectiveLumeConfig(input.workspaceSlug);
+  const modelRef = resolveMemoryExtractionModelRefs(config, { modelRef: input.modelRef })[0];
+  const binding = modelRef ? resolveChannelModelBinding(modelRef, "chat") : undefined;
+  const workspace = getAgentWorkspaceBySlug(input.workspaceSlug);
+  if (!modelRef || !binding || !workspace) return undefined;
+
+  const coordinator = getSubagentCoordinator();
+  let extracted: Awaited<ReturnType<typeof extractMemoryBatchCandidatesWithLlm>> = [];
+  const coordinatorResult = await coordinator.runAgentTask({
+    parentThreadId: input.threadId,
+    parentRunId: input.runId,
+    parentToolUseId: `memory-extract:${input.runId}`,
+    prompt: [
+      "You are Lume's private memory extraction subagent.",
+      "Inspect the supplied conversation and tool evidence, use memory.search/read only when needed, and return strict JSON matching the requested extraction schema.",
+      "Never write files, call external services, run shell commands, or rely on assistant-only claims.",
+      buildBatchExtractionUserPrompt(input.sources, input.workspaceSlug, input.modelVisibleMessage, input.existingMemories)
+    ].join("\n\n"),
+    description: "Private memory extraction",
+    subagentType: "memory-extractor",
+    acceptanceCriteria: ["Every candidate cites one exact user message or tool result source."],
+    createSession: ({ title }) => {
+      const child = createAgentThreadWithModelRef(
+        title,
+        modelRef,
+        binding.channel.id,
+        workspace.id,
+        input.threadId,
+        binding.modelId,
+        { fileContextMode: "newRoot" }
+      );
+      return { threadId: child.id, modelRef };
+    },
+    execute: async ({ session, run, signal }) => {
+      const abortSignal = AbortSignal.any([signal, input.signal]);
+      const emitter = createSilentAgentEmitter();
+      await sendAgentMessage({
+        threadId: session.threadId,
+        userMessage: [
+          "This is a hidden background task. Do not address the user directly.",
+          "Return only the JSON extraction result after reviewing the evidence.",
+          buildBatchExtractionUserPrompt(input.sources, input.workspaceSlug, input.modelVisibleMessage, input.existingMemories)
+        ].join("\n\n"),
+        modelRef,
+        channelId: binding.channel.id,
+        modelId: binding.modelId,
+        workspaceId: workspace.id,
+        threadType: "subagent",
+        messageMetadata: {
+          hiddenFromChat: true,
+          memoryBackground: true,
+          maxTurns: 5,
+          toolPolicy: { allow: ["memory.search", "memory.read"] }
+        }
+      }, emitter, { abortSignal });
+      const text = extractAssistantText(getAgentThreadSDKMessages(session.threadId));
+      const parsed = parseLlmBatchExtractionResponse(text, input.sources);
+      if (!parsed) throw new Error("后台提取 Agent 未返回有效 JSON");
+      extracted = parsed;
+      getSubagentCoordinator().submitReport({
+        runId: run.runId,
+        report: { status: "submitted", summary: `Extracted ${extracted.length} memory candidates.` }
+      });
+      return { status: "completed", completionSummary: `Extracted ${extracted.length} memory candidates.` };
+    }
+  });
+  if (coordinatorResult.taskId) {
+    coordinator.finishTask({
+      taskId: coordinatorResult.taskId,
+      resolution: "accepted",
+      reason: "后台记忆提取已由 MemoryJobService 校验并提交。"
+    });
+  }
+  return extracted;
+}
+
+function extractAssistantText(messages: SDKMessage[]): string {
+  const chunks: string[] = [];
+  for (const message of messages) {
+    if (message.type === "assistant") {
+      const content = (message.message as { content?: unknown } | undefined)?.content;
+      if (Array.isArray(content)) {
+        chunks.push(...content.flatMap((block) => {
+          if (!block || typeof block !== "object") return [];
+          const text = (block as { type?: unknown; text?: unknown }).text;
+          return typeof text === "string" ? [text] : [];
+        }));
+      }
+    }
+    if (message.type === "result" && typeof message.result === "string") chunks.push(message.result);
+  }
+  return chunks.join("\n").trim();
+}
+
+function createSilentAgentEmitter() {
+  return {
+    onComplete: () => undefined,
+    onError: () => undefined,
+    onTitleUpdated: () => undefined,
+    onAskUserQuestion: (_request: AgentAskUserQuestionRequest) => undefined,
+    onToolPermissionRequest: (_request: AgentToolPermissionRequest) => undefined
+  };
+}
+
+function extractionSources(items: LumeRunItem[]): Array<{ sourceId: string; role: "user" | "assistant" | "tool_result"; text: string }> {
+  const sources: Array<{ sourceId: string; role: "user" | "assistant" | "tool_result"; text: string }> = [];
+  for (const item of items) {
+    if (item.type === "user_message") {
+      const text = readableText(item.content);
+      if (text) sources.push({ sourceId: item.id, role: "user", text });
+    } else if (item.type === "assistant_message" && !item.subagentRunId) {
+      const text = readableText(item.content);
+      if (text) sources.push({ sourceId: item.id, role: "assistant", text });
+    } else if (item.type === "tool_result" && !item.isError && !item.subagentRunId) {
+      const text = readableText(item.output);
+      if (text) sources.push({ sourceId: item.id, role: "tool_result", text });
+    }
+  }
+  return sources;
+}
+
+function readableText(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) return value.map(readableText).filter(Boolean).join("\n").trim();
+  if (!value || typeof value !== "object") return "";
+  const record = value as Record<string, unknown>;
+  if (typeof record.text === "string") return record.text.trim();
+  if (typeof record.content === "string") return record.content.trim();
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized.length > 12_000 ? serialized.slice(0, 12_000) : serialized;
+  } catch {
+    return "";
+  }
+}
+
+function notifyMemorySaved(input: BackgroundMemoryExtractionRequest, receipts: MemoryV2MutationReceipt[]): void {
+  const memoryIds = Array.from(new Set(receipts.flatMap((receipt) => receipt.memoryIds)));
+  const pendingCount = receipts.filter((receipt) => receipt.action === "pending").length;
+  const savedCount = receipts.length - pendingCount;
+  const summary = [savedCount > 0 ? `后台记住了 ${savedCount} 条信息` : "", pendingCount > 0 ? `${pendingCount} 条等待处理` : ""]
+    .filter(Boolean).join(" · ");
+  const createdAt = new Date().toISOString();
+  const entriesById = new Map(createMemoryV2Store().listEntries({
+    workspaceSlug: input.workspaceSlug,
+    includeStatuses: ["active", "suspected_stale", "pending_conflict", "pending_low_confidence", "superseded", "archived"]
+  }).map((entry) => [entry.frontmatter.id, entry]));
+  const details = receipts.map((receipt) => ({
+    mutationId: receipt.mutationId,
+    action: receipt.action,
+    scope: receipt.scope,
+    memoryIds: receipt.memoryIds,
+    summary: receipt.summary,
+    undoable: receipt.undoable,
+    entryPaths: receipt.memoryIds.flatMap((id) => {
+      const entry = entriesById.get(id);
+      return entry ? [entry.path] : [];
+    }),
+    sourcePaths: receipt.memoryIds.flatMap((id) => {
+      const entry = entriesById.get(id);
+      return entry?.frontmatter.evidence_refs.flatMap((ref) => ref.path ? [ref.path] : []) ?? [];
+    })
+  }));
+  const message: SDKMessage = {
+    type: "system",
+    subtype: "memory_saved",
+    session_id: input.threadId,
+    run_id: input.runId,
+    workspace_slug: input.workspaceSlug,
+    mutation_ids: receipts.map((receipt) => receipt.mutationId),
+    memory_ids: memoryIds,
+    summary,
+    created_at: createdAt,
+    details,
+    uuid: randomUUID()
+  };
+  appendAgentThreadSDKMessages(input.threadId, [message]);
+  const event: Extract<LumeRuntimeEvent, { type: "memory.changed" }> = {
+    id: `${input.runId}:memory.changed:${receipts[0]!.mutationId}`,
+    type: "memory.changed",
+    threadId: input.threadId,
+    runId: input.runId,
+    createdAt,
+    actor: "background_extract",
+    workspaceSlug: input.workspaceSlug,
+    mutationIds: receipts.map((receipt) => receipt.mutationId),
+    memoryIds,
+    summary,
+    details
+  };
+  emitAgentNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
+}
+
+function notifyExtractionProgress(
+  input: BackgroundMemoryExtractionRequest,
+  jobId: string,
+  progress: BackgroundExtractionProgress
+): void {
+  const event: Extract<LumeRuntimeEvent, { type: "memory.job.progress" }> = {
+    id: `${jobId}:progress:${progress.processedItems}`,
+    type: "memory.job.progress",
+    threadId: input.threadId,
+    runId: input.runId,
+    createdAt: new Date().toISOString(),
+    jobId,
+    jobKind: "turn_extract",
+    phase: progress.phase,
+    scannedItems: progress.scannedItems,
+    processedItems: progress.processedItems,
+    changedItems: progress.changedItems
+  };
+  emitAgentNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
+}
+
+function notifyExtractionCompleted(
+  input: BackgroundMemoryExtractionRequest,
+  jobId: string,
+  result: BackgroundExtractionResult
+): void {
+  const createdAt = new Date().toISOString();
+  const event: Extract<LumeRuntimeEvent, { type: "memory.job.completed" }> = {
+    id: `${jobId}:completed`,
+    type: "memory.job.completed",
+    threadId: input.threadId,
+    runId: input.runId,
+    createdAt,
+    jobId,
+    jobKind: "turn_extract",
+    status: "completed",
+    summary: `后台提取完成，处理 ${result.scannedItems} 条来源，变更 ${result.changedItems} 条记忆`,
+    changedItems: result.changedItems
+  };
+  emitAgentNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
+}
+
+function cursorPath(input: Pick<BackgroundMemoryExtractionRequest, "workspaceSlug" | "threadId">): string {
+  const paths = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: input.workspaceSlug });
+  return join(paths.jobsDir, `extract-${input.threadId.replace(/[^a-zA-Z0-9._-]/g, "_")}.json`);
+}
+
+function readCursor(input: BackgroundMemoryExtractionRequest): ExtractionCursor {
+  const path = cursorPath(input);
+  if (existsSync(path)) {
+    try { return JSON.parse(readFileSync(path, "utf-8")) as ExtractionCursor; } catch { /* retry from zero */ }
+  }
+  return { threadId: input.threadId, cursor: 0, status: "idle", updatedAt: new Date(0).toISOString() };
+}
+
+function writeCursor(input: BackgroundMemoryExtractionRequest, cursor: ExtractionCursor): void {
+  const path = cursorPath(input);
+  const temp = `${path}.${randomUUID()}.tmp`;
+  writeFileSync(temp, `${JSON.stringify(cursor, null, 2)}\n`, "utf-8");
+  renameSync(temp, path);
+}
+
+function completedCursor(
+  cursor: ExtractionCursor,
+  input: BackgroundMemoryExtractionRequest,
+  toSequence: number,
+  idempotencyKey: string,
+  status: "completed" | "skipped"
+): ExtractionCursor {
+  return {
+    ...cursor,
+    cursor: toSequence,
+    lastIdempotencyKey: idempotencyKey,
+    lastRunId: input.runId,
+    status,
+    updatedAt: new Date().toISOString(),
+    error: undefined
+  };
+}

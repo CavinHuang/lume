@@ -32,6 +32,9 @@ export type RuntimeEventType =
   | "permission.resolved"
   | "ask_user.requested"
   | "memory.context.used"
+  | "memory.changed"
+  | "memory.job.progress"
+  | "memory.job.completed"
   | "context.compaction.started"
   | "context.compaction.progress"
   | "context.compaction.completed"
@@ -788,6 +791,44 @@ export interface MemoryContextUsedRuntimeEvent extends RuntimeEventBase {
   hidden?: boolean;
 }
 
+export interface MemoryChangedRuntimeEvent extends RuntimeEventBase {
+  type: "memory.changed";
+  actor: "main_agent" | "background_extract" | "consolidation" | "user" | "migration";
+  workspaceSlug: string;
+  mutationIds: string[];
+  memoryIds: string[];
+  summary: string;
+  details: Array<{
+    mutationId: string;
+    action: string;
+    scope: "global" | "workspace";
+    memoryIds: string[];
+    summary: string;
+    undoable: boolean;
+    entryPaths?: string[];
+    sourcePaths?: string[];
+  }>;
+}
+
+export interface MemoryJobProgressRuntimeEvent extends RuntimeEventBase {
+  type: "memory.job.progress";
+  jobId: string;
+  jobKind: string;
+  phase: string;
+  scannedItems: number;
+  processedItems: number;
+  changedItems: number;
+}
+
+export interface MemoryJobCompletedRuntimeEvent extends RuntimeEventBase {
+  type: "memory.job.completed";
+  jobId: string;
+  jobKind: string;
+  status: "completed" | "failed" | "cancelled" | "interrupted";
+  summary: string;
+  changedItems: number;
+}
+
 export interface ContextCompactionCompletedRuntimeEvent extends RuntimeEventBase {
   type: "context.compaction.completed";
   trigger: "auto" | "manual" | "prompt_too_long" | string;
@@ -983,6 +1024,9 @@ export type LumeRuntimeEvent =
   | RunFailedRuntimeEvent
   | RunCancelledRuntimeEvent
   | MemoryContextUsedRuntimeEvent
+  | MemoryChangedRuntimeEvent
+  | MemoryJobProgressRuntimeEvent
+  | MemoryJobCompletedRuntimeEvent
   | ContextCompactionStartedRuntimeEvent
   | ContextCompactionProgressRuntimeEvent
   | ContextCompactionCompletedRuntimeEvent

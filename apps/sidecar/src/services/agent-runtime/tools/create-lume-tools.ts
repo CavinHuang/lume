@@ -3,6 +3,7 @@ import type { AgentAskUserQuestionRequest, AgentBrowserAuthRequest, AgentDesktop
 import type { AgentSendInput } from "@lume/shared";
 import type { MemoryToolPolicy } from "../../memory-v2/policy";
 import { createSdkMemoryTools } from "./memory/create-memory-tools";
+import { createDreamEvidenceTools } from "./memory/create-dream-evidence-tools";
 import { createSdkCronTools } from "./cron/create-cron-tools";
 import { createAutomationListTools } from "./cron/automation-list-tools";
 import { createAutomationTemplateTools } from "./cron/automation-template-tools";
@@ -125,15 +126,33 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     });
     return { customTools, availableToolNames: customTools.map((tool) => tool.name) };
   }
-  const enabledMemoryToolNames = resolveEnabledMemoryToolNames(input.memoryToolPolicy);
+  const writeAllowed = input.threadType !== "subagent" && input.chatType !== "group" && input.chatType !== "channel";
+  const dreamProfile = threadMeta?.memoryProfile?.kind === "dream" ? threadMeta.memoryProfile : undefined;
+  const enabledMemoryToolNames = [
+    ...resolveEnabledMemoryToolNames(input.memoryToolPolicy),
+    ...(dreamProfile ? ["memory.search" as const, "memory.read" as const] : [])
+  ]
+    .filter((name) => writeAllowed || (name !== "memory.remember" && name !== "memory.forget"));
   const enabledMemoryTools = new Set(enabledMemoryToolNames);
   const memoryTools = input.workspaceSlug
     ? createSdkMemoryTools({
       workspaceSlug: input.workspaceSlug,
       enabledTools: enabledMemoryTools,
-      includeCitations: input.includeCitations
+      includeCitations: input.includeCitations,
+      threadId: input.threadId,
+      runId: input.runId
     })
     : [];
+  const dreamEvidenceTools = input.workspaceSlug && dreamProfile
+    ? createDreamEvidenceTools({ workspaceSlug: input.workspaceSlug, jobId: dreamProfile.jobId })
+    : [];
+  if (dreamProfile) {
+    const customTools = [...memoryTools, ...dreamEvidenceTools];
+    return {
+      customTools,
+      availableToolNames: ["Read", "Glob", "Grep", "ls", ...customTools.map((tool) => tool.name)]
+    };
+  }
   const cronTools = createSdkCronTools({
     workspaceId: input.workspaceId,
     sessionId: input.threadId
@@ -221,6 +240,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   });
   const customTools = [
     ...memoryTools,
+    ...dreamEvidenceTools,
     ...cronTools,
     ...automationListTools,
     ...automationTemplateTools,

@@ -1,13 +1,20 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF } from "@lume/shared";
 import { appendDaily, appendRunArchive, createMemoryV2Store } from "./markdown-store";
-import { getMemoryV2SettingsSnapshot } from "./settings-snapshot";
+import {
+  getMemoryV2DiagnosticsSnapshot,
+  getMemoryV2SettingsSnapshot
+} from "./settings-snapshot";
 import { smartAddMemoryV2Candidate } from "./smart-add";
 import { updateMemoryRuntimeConfig } from "./policy";
 import { updateLumeConfigSection } from "../system/lume-config-service";
+import * as markdownStore from "./markdown-store";
+import { MemoryCommandService } from "./command-service";
+import { getMemoryV2ScopePaths } from "./paths";
+import { memoryJobService } from "./job-service";
 
 let root: string;
 
@@ -22,6 +29,28 @@ afterEach(() => {
 });
 
 describe("memory-v2 settings snapshot", () => {
+  test("diagnostics snapshot only projects status fields", () => {
+    const storeFactory = spyOn(markdownStore, "createMemoryV2Store").mockImplementation(() => {
+      throw new Error("diagnostics must not load memory entries");
+    });
+    const snapshot = getMemoryV2DiagnosticsSnapshot("demo");
+    storeFactory.mockRestore();
+
+    expect(snapshot).toEqual(expect.objectContaining({
+      workspaceSlug: "demo",
+      migration: expect.any(Object),
+      extraction: expect.any(Object),
+      retrieval: expect.any(Object),
+      jobs: expect.any(Array)
+    }));
+    expect(snapshot).not.toHaveProperty("counts");
+    expect(snapshot).not.toHaveProperty("files");
+    expect(snapshot).not.toHaveProperty("workspaceEntries");
+    expect(snapshot).not.toHaveProperty("globalEntries");
+    expect(snapshot).not.toHaveProperty("pending");
+    expect(snapshot).not.toHaveProperty("activity");
+  });
+
   test("summarizes files, entries, and pending review counts from Memory V2 markdown", async () => {
     const store = createMemoryV2Store();
     store.ensureMemoryFile("workspace", "demo");
@@ -207,5 +236,155 @@ describe("memory-v2 settings snapshot", () => {
         }
       }]
     });
+  });
+
+  test("projects exact activity snapshots with before and after memory content", async () => {
+    const service = new MemoryCommandService();
+    const created = await service.remember({
+      workspaceSlug: "demo",
+      content: "默认使用 Bun",
+      scope: "workspace",
+      actor: "user"
+    });
+    service.update({
+      workspaceSlug: "demo",
+      id: created.memoryIds[0]!,
+      scope: "workspace",
+      statement: "默认使用 Bun 和 TypeScript",
+      actor: "user"
+    });
+
+    const snapshot = getMemoryV2SettingsSnapshot("demo");
+    const activity = snapshot.activity.find((item) => item.action === "updated")!;
+    expect(activity.changes[0]).toMatchObject({
+      memoryId: created.memoryIds[0],
+      accuracy: "exact",
+      before: { statement: "默认使用 Bun" },
+      after: { statement: "默认使用 Bun 和 TypeScript" }
+    });
+  });
+
+  test("keeps valid activity when a journal contains a malformed line and hydrates legacy records", () => {
+    const store = createMemoryV2Store();
+    const entry = store.writeEntry({
+      kind: "fact",
+      targetScope: "workspace",
+      statement: "历史活动关联的记忆",
+      confidence: "high",
+      appliesWhen: { workspaceSlug: "demo" }
+    });
+    const journalDir = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: "demo" }).journalDir;
+    const receipt = {
+      mutationId: "legacy-activity",
+      actor: "user",
+      action: "updated",
+      memoryIds: [entry.frontmatter.id],
+      scope: "workspace",
+      summary: "更新了 1 条记忆",
+      undoable: false,
+      createdAt: "2026-08-07T10:00:00.000Z"
+    };
+    writeFileSync(
+      join(journalDir, "2026-08-07.jsonl"),
+      `${JSON.stringify({ receipt, before: [{ id: entry.frontmatter.id, scope: "workspace", revision: 1 }], after: [{ id: entry.frontmatter.id, scope: "workspace", revision: 2 }] })}\nnot-json\n`,
+      "utf-8"
+    );
+
+    const snapshot = getMemoryV2SettingsSnapshot("demo");
+    const activity = snapshot.activity.find((item) => item.mutationId === "legacy-activity")!;
+    expect(activity.changes[0]).toMatchObject({
+      accuracy: "current",
+      after: { statement: "历史活动关联的记忆" }
+    });
+  });
+
+  test("does not project ignored and duplicate receipts into memory changes", async () => {
+    const service = new MemoryCommandService();
+    await service.remember({
+      workspaceSlug: "demo",
+      content: "API token = sk-abcdefghijklmnopqrstuvwxyz",
+      actor: "user"
+    });
+    const created = await service.remember({
+      workspaceSlug: "demo",
+      content: "默认使用中文",
+      scope: "global",
+      actor: "user"
+    });
+    await service.remember({
+      workspaceSlug: "demo",
+      content: "默认使用中文",
+      scope: "global",
+      actor: "user"
+    });
+
+    const snapshot = getMemoryV2SettingsSnapshot("demo");
+    expect(snapshot.activity.every((item) => item.action !== "ignored" && item.action !== "duplicate")).toBe(true);
+    expect(snapshot.activity.some((item) => item.mutationId === created.mutationId)).toBe(true);
+  });
+
+  test("projects persisted background job results for settings activity", async () => {
+    const job = memoryJobService.start({
+      kind: "consolidation",
+      workspaceSlug: "demo",
+      manual: true,
+      run: async ({ report }) => {
+        report({ label: "分析记忆", scannedItems: 12, processedItems: 7 });
+        return ({
+        scannedEntries: 12,
+        updated: 2,
+        merged: 3,
+        stale: 1,
+        rebuilt: ["capsules/runtime.md", "persona.md"]
+        });
+      }
+    });
+
+    await memoryJobService.waitForTerminal("demo", job.jobId);
+    const snapshot = getMemoryV2SettingsSnapshot("demo");
+    const projected = snapshot.jobs.find((item) => item.jobId === job.jobId);
+
+    expect(projected).toMatchObject({
+      kind: "consolidation",
+      status: "completed",
+      progress: {
+        phase: "分析记忆",
+        scannedItems: 12,
+        processedItems: 7,
+        changedFiles: ["capsules/runtime.md", "persona.md"]
+      },
+      result: {
+        kind: "consolidation",
+        data: {
+          sessionsReviewed: 0,
+          evidenceItemsReviewed: 0,
+          scannedEntries: 12,
+          actions: {
+            created: 0,
+            versioned: 0,
+            updated: 2,
+            merged: 3,
+            stale: 1,
+            pending: 0,
+            ignored: 0
+          },
+          items: [],
+          rebuilt: ["capsules/runtime.md", "persona.md"],
+          warnings: []
+        }
+      }
+    });
+  });
+
+  test("returns the complete persisted job history instead of truncating it", async () => {
+    const jobs = Array.from({ length: 21 }, () => memoryJobService.start({
+      kind: "turn_extract" as const,
+      workspaceSlug: "demo",
+      manual: false,
+      run: async () => ({ scannedItems: 0, changedItems: 0 })
+    }));
+    await Promise.all(jobs.map((job) => memoryJobService.waitForTerminal("demo", job.jobId)));
+
+    expect(getMemoryV2SettingsSnapshot("demo").jobs).toHaveLength(21);
   });
 });

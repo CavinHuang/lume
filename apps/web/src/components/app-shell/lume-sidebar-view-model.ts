@@ -98,7 +98,7 @@ export function buildLumeSidebarViewModel({
       active: activeTabId === '__automation__',
     },
     { id: 'todos', label: '待办', icon: 'list-todo', kind: 'button', active: activeTabId === '__todos__', ...(planningTodoCount > 0 ? { badge: String(planningTodoCount) } : {}) },
-    { id: 'proactive', label: '主动', icon: 'sparkles', kind: 'button', active: activeTabId === '__proactive__' },
+    { id: 'proactive', label: '记忆与洞察', icon: 'sparkles', kind: 'button', active: activeTabId === '__proactive__' },
   ]
 
   const footerActions: LumeSidebarFooterAction[] = [

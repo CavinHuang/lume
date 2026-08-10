@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -11,7 +11,7 @@ import {
 
 describe("memory-v2 tools", () => {
   test("只暴露 Memory V2 主路径工具名", () => {
-    expect(MEMORY_V2_TOOL_NAMES).toEqual(["memory.search", "memory.read", "memory.remember"]);
+    expect(MEMORY_V2_TOOL_NAMES).toEqual(["memory.search", "memory.read", "memory.remember", "memory.forget"]);
   });
 
   test("memory.search/read/remember 使用 Memory V2 主路径", async () => {
@@ -43,6 +43,20 @@ describe("memory-v2 tools", () => {
         id: written.id
       });
       expect(read.text).toBe("Memory V2 search reads Markdown entries directly.");
+    } finally {
+      delete process.env.LUME_CONFIG_DIR;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("memory.read rejects arbitrary project and credential paths", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-memory-v2-tools-"));
+    process.env.LUME_CONFIG_DIR = root;
+    const outside = join(root, "outside.txt");
+    writeFileSync(outside, "not memory", "utf-8");
+    try {
+      await expect(readMemoryTool({ workspaceSlug: "demo", path: outside }))
+        .rejects.toThrow("只能读取当前工作区或全局记忆目录");
     } finally {
       delete process.env.LUME_CONFIG_DIR;
       rmSync(root, { recursive: true, force: true });

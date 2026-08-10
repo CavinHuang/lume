@@ -1,0 +1,240 @@
+import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import YAML from "yaml";
+import type { MemoryV2Scope } from "./types";
+
+export const MEMORY_SCHEMA_VERSION = 3;
+
+interface MemorySchemaMarker {
+  version: number;
+  migratedAt: string;
+  backupPath?: string;
+}
+
+export function migrateMemoryScopeRootIfNeeded(root: string, scope: MemoryV2Scope): MemorySchemaMarker {
+  const markerPath = join(root, ".memory-schema.json");
+  const current = readMarker(markerPath);
+  if (current?.version === MEMORY_SCHEMA_VERSION) return current;
+
+  if (!existsSync(root) || readdirSync(root).length === 0) {
+    mkdirSync(root, { recursive: true });
+    const marker = { version: MEMORY_SCHEMA_VERSION, migratedAt: new Date().toISOString() };
+    writeJson(markerPath, marker);
+    return marker;
+  }
+
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const parent = dirname(root);
+  const name = basename(root);
+  const lockPath = join(parent, `.${name}.migration.lock`);
+  const backupPath = join(parent, `${name}.backup-${stamp}`);
+  const tempPath = join(parent, `.${name}.migration-${stamp}`);
+  const previousPath = join(parent, `.${name}.previous-${stamp}`);
+  let lockAcquired = false;
+
+  try {
+    const lockFd = openMigrationLock(lockPath);
+    lockAcquired = true;
+    try {
+      writeFileSync(lockFd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf-8");
+    } finally {
+      closeSync(lockFd);
+    }
+    cpSync(root, backupPath, { recursive: true, errorOnExist: true });
+    cpSync(root, tempPath, { recursive: true, errorOnExist: true });
+    migrateEntries(tempPath, scope);
+    rmSync(join(tempPath, "persona.md"), { force: true });
+    validateEntries(tempPath);
+    const marker: MemorySchemaMarker = {
+      version: MEMORY_SCHEMA_VERSION,
+      migratedAt: new Date().toISOString(),
+      backupPath
+    };
+    writeJson(join(tempPath, ".memory-schema.json"), marker);
+    renameSync(root, previousPath);
+    try {
+      renameSync(tempPath, root);
+      rmSync(previousPath, { recursive: true, force: true });
+    } catch (error) {
+      if (existsSync(root)) rmSync(root, { recursive: true, force: true });
+      renameSync(previousPath, root);
+      throw error;
+    }
+    return marker;
+  } catch (error) {
+    rmSync(tempPath, { recursive: true, force: true });
+    throw new Error(`Memory migration failed for ${scope}: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    if (lockAcquired && existsSync(lockPath)) unlinkSync(lockPath);
+  }
+}
+
+function openMigrationLock(path: string): number {
+  try {
+    return openSync(path, "wx");
+  } catch (error) {
+    let owner: { pid?: unknown };
+    try {
+      owner = JSON.parse(readFileSync(path, "utf-8")) as { pid?: unknown };
+    } catch {
+      throw error;
+    }
+    if (typeof owner.pid !== "number") throw error;
+    try {
+      process.kill(owner.pid, 0);
+      throw error;
+    } catch (probeError) {
+      if (probeError === error) throw error;
+      try { unlinkSync(path); } catch { throw error; }
+    }
+    return openSync(path, "wx");
+  }
+}
+
+function migrateEntries(root: string, scope: MemoryV2Scope): void {
+  const entriesDir = join(root, "entries");
+  if (!existsSync(entriesDir)) return;
+  for (const path of listFiles(entriesDir, ".md")) {
+    const document = parseDocument(path, scope);
+    const now = typeof document.frontmatter.updated === "string"
+      ? document.frontmatter.updated
+      : new Date().toISOString();
+    const tags = stringList(document.frontmatter.tags);
+    const kind = normalizeKind(document.frontmatter.kind);
+    const frontmatter = {
+      ...document.frontmatter,
+      kind,
+      scope,
+      semantic_role: inferRole(kind, tags),
+      facets: stringList(document.frontmatter.facets ?? tags),
+      revision: positiveInteger(document.frontmatter.revision, 1),
+      last_confirmed_at: document.frontmatter.last_confirmed_at ?? now,
+      evidence_refs: Array.isArray(document.frontmatter.evidence_refs)
+        ? document.frontmatter.evidence_refs
+        : evidenceFromLegacySource(document.frontmatter.source)
+    };
+    writeDocument(path, frontmatter, document.body);
+  }
+}
+
+function validateEntries(root: string): void {
+  const entriesDir = join(root, "entries");
+  if (!existsSync(entriesDir)) return;
+  for (const path of listFiles(entriesDir, ".md")) {
+    const { frontmatter, body } = parseDocument(path);
+    if (!frontmatter.id || !frontmatter.scope || !frontmatter.semantic_role || !positiveInteger(frontmatter.revision, 0) || !body.trim()) {
+      throw new Error(`Invalid migrated entry: ${path}`);
+    }
+  }
+}
+
+function parseDocument(path: string, scope?: MemoryV2Scope): { frontmatter: Record<string, unknown>; body: string } {
+  const source = readFileSync(path, "utf-8");
+  const match = source.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!match) {
+    if (scope && isLegacyMarkdownNote(source)) {
+      return legacyMarkdownDocument(path, source, scope);
+    }
+    throw new Error(`Missing frontmatter: ${path}`);
+  }
+  const frontmatter = YAML.parse(match[1] ?? "") as unknown;
+  if (!frontmatter || typeof frontmatter !== "object" || Array.isArray(frontmatter)) throw new Error(`Invalid frontmatter: ${path}`);
+  return { frontmatter: frontmatter as Record<string, unknown>, body: source.slice(match[0].length) };
+}
+
+/**
+ * Older workspaces occasionally stored durable Markdown notes directly under
+ * entries/. Only heading-led notes are migrated implicitly; arbitrary plain
+ * text is still treated as corruption so a failed migration remains atomic.
+ */
+function isLegacyMarkdownNote(source: string): boolean {
+  const trimmed = source.trimStart();
+  return /^#{1,6}\s+\S+/.test(trimmed) && trimmed.includes("\n") && trimmed.trim().length >= 64;
+}
+
+function legacyMarkdownDocument(path: string, source: string, scope: MemoryV2Scope): { frontmatter: Record<string, unknown>; body: string } {
+  const timestamp = statSync(path).mtime.toISOString();
+  const id = basename(path, ".md");
+  return {
+    frontmatter: {
+      id,
+      kind: "state",
+      semantic_role: "state",
+      facets: ["legacy", "history"],
+      scope,
+      status: "active",
+      created: timestamp,
+      updated: timestamp,
+      last_confirmed_at: timestamp,
+      revision: 1,
+      source: { type: "manual" },
+      confidence: "medium",
+      pinned: false,
+      tags: ["legacy", "history"],
+      entities: [],
+      related: [],
+      supersedes: [],
+      superseded_by: null,
+      applies_when: {},
+      valid_from: null,
+      valid_to: null,
+      activation: { recall: true, persona: true, suggestion: true, analyst: true },
+      evidence_refs: [{ type: "manual" }]
+    },
+    body: source
+  };
+}
+
+function writeDocument(path: string, frontmatter: Record<string, unknown>, body: string): void {
+  writeFileSync(path, `---\n${YAML.stringify(frontmatter).trimEnd()}\n---\n${body.trim()}\n`, "utf-8");
+}
+
+function readMarker(path: string): MemorySchemaMarker | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as MemorySchemaMarker;
+    return typeof parsed.version === "number" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeJson(path: string, value: unknown): void {
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
+}
+
+function listFiles(dir: string, extension: string): string[] {
+  return readdirSync(dir).map((name) => join(dir, name)).filter((path) => statSync(path).isFile() && path.endsWith(extension));
+}
+
+function normalizeKind(value: unknown): "preference" | "fact" | "decision" | "lesson" | "state" {
+  if (value === "preference" || value === "decision" || value === "lesson" || value === "state") return value;
+  if (value === "summary" || value === "episode" || value === "milestone") return "state";
+  return "fact";
+}
+
+function inferRole(kind: string, tags: string[]): string {
+  if (tags.some((tag) => ["identity", "preferred-name", "profile"].includes(tag))) return "identity";
+  if (kind === "preference" || kind === "decision" || kind === "lesson" || kind === "state") return kind;
+  if (tags.some((tag) => ["constraint", "instruction"].includes(tag))) return "constraint";
+  return "fact";
+}
+
+function evidenceFromLegacySource(source: unknown): Array<Record<string, unknown>> {
+  if (!source || typeof source !== "object" || Array.isArray(source)) return [{ type: "manual" }];
+  const record = source as Record<string, unknown>;
+  if (typeof record.path === "string") return [{ type: "external_file", path: record.path, runId: record.run_id }];
+  if (Array.isArray(record.record_ids)) {
+    return record.record_ids.filter((id): id is string => typeof id === "string")
+      .map((id) => ({ type: "user_message", id, runId: record.run_id }));
+  }
+  return [{ type: "manual", runId: record.run_id }];
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? Array.from(new Set(value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))) : [];
+}
+
+function positiveInteger(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
+}

@@ -144,7 +144,8 @@ const ROUTING_HEURISTIC_TOOLS = [
   "WebFetch",
   "memory.search",
   "memory.read",
-  "memory.remember"
+  "memory.remember",
+  "memory.forget"
 ];
 
 const TURN_LIMIT_CONTINUATION_PREFIX = "请继续完成上一轮未完成的原始任务。不要把这看作新任务；基于当前线程历史、已有工具结果和最后一个 assistant 状态继续。";

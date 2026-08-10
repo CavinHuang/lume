@@ -334,6 +334,13 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     category: 'write',
     riskLevel: 'medium',
   },
+  memory_forget: {
+    name: 'memory.forget',
+    label: 'Memory Forget',
+    description: '按明确请求归档记忆',
+    category: 'write',
+    riskLevel: 'medium',
+  },
 
   // === 定时任务 ===
   cron_set: {

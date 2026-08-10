@@ -409,6 +409,17 @@ async function boot(): Promise<void> {
     });
   }
   startWorkspaceWatcher((method, params) => writeNotification(method, params));
+  void import("./services/memory-v2/job-recovery")
+    .then(({ recoverMemoryJobsOnStartup }) => recoverMemoryJobsOnStartup())
+    .catch((error) => {
+      writeLogRecord({
+        level: "error",
+        context: "memory-v2.job-recovery",
+        event: "memory.job_recovery_failed",
+        message: "memory jobs could not be recovered during startup",
+        error: { message: error instanceof Error ? error.message : String(error) }
+      });
+    });
   // 启动时清理过期回收站条目
   try { cleanupExpiredTrash(); } catch { /* non-critical */ }
   try { reconcilePlanningStartOperations(); } catch { /* retried on the next start or idempotent request */ }
@@ -437,6 +448,8 @@ async function boot(): Promise<void> {
       shutdownLspClients(),
       externalChromeTransport?.close() ?? Promise.resolve(),
     ]);
+    const { memoryJobService } = await import("./services/memory-v2/job-service");
+    await memoryJobService.waitForSettled(60_000);
     const { stopRoutineRunner } = require("./services/routine/routine-runner");
     stopRoutineRunner();
     imRuntimeManager.stopAll();
@@ -457,11 +470,11 @@ async function boot(): Promise<void> {
   };
   process.once("exit", () => { void stopWatcher(); });
   process.once("SIGINT", async () => {
-    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 2_000))]);
+    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 60_000))]);
     process.exit(0);
   });
   process.once("SIGTERM", async () => {
-    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 2_000))]);
+    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 60_000))]);
     process.exit(0);
   });
 

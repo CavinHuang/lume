@@ -38,7 +38,6 @@ describe("core workflow hooks", () => {
     expect(contributions.map((item) => item.id)).toEqual([
       "core.plugin.skill-activation",
       "core.suggestion.completion",
-      "core.persona.completion",
       "core.security.permission",
     ]);
   });
@@ -209,7 +208,8 @@ describe("core workflow hooks", () => {
       workspaceSlug: "demo",
       userMessage: "hello",
       sessionType: "main",
-      maxItems: 8
+      maxItems: 5,
+      contextTokenBudget: 1000
     }]);
   });
 });

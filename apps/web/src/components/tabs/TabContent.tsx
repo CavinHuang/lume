@@ -1,5 +1,5 @@
 import { useAtomValue, useSetAtom } from 'jotai'
-import { activeTabIdAtom, clearTabDesktopContextTarget, setTabDesktopContextTarget, settingsInitialTabAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, clearTabDesktopContextTarget, setTabDesktopContextTarget, tabsAtom } from '@/atoms'
 import { AgentView } from '@/components/agent/AgentView'
 import { AutomationManagementView } from '@/components/automation/AutomationManagementView'
 import { LumeView } from '@/components/lume/LumeView'
@@ -16,17 +16,7 @@ export function TabContent() {
   const tabs = useAtomValue(tabsAtom)
   const setTabs = useSetAtom(tabsAtom)
   const activeTabId = useAtomValue(activeTabIdAtom)
-  const setActiveTabId = useSetAtom(activeTabIdAtom)
-  const setSettingsInitialTab = useSetAtom(settingsInitialTabAtom)
   const activeTab = tabs.find((t) => t.id === activeTabId)
-
-  const openMemorySettings = () => {
-    setSettingsInitialTab('memory')
-    setTabs((previous) => previous.some((tab) => tab.id === '__settings__')
-      ? previous
-      : [...previous, { id: '__settings__', type: 'settings', title: '设置' }])
-    setActiveTabId('__settings__')
-  }
 
   if (!activeTab) {
     return (
@@ -84,7 +74,7 @@ export function TabContent() {
   if (activeTab.type === 'link') return <LinkView />
 
   if (activeTab.type === 'proactive') {
-    return <ProactiveHub onOpenMemorySettings={openMemorySettings} />
+    return <ProactiveHub />
   }
 
   return null

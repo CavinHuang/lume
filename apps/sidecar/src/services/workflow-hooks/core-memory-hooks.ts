@@ -28,15 +28,27 @@ export function createCoreMemoryHookHandlers(): LumeWorkflowHookHandlerRegistry 
       if (event.event !== "run.afterComplete" || !event.userMessage.trim()) {
         return { effects: [] };
       }
+      if (!event.workspaceSlug) return { effects: [] };
+      if (context.services.memory.enqueueExtraction) {
+        context.services.memory.enqueueExtraction({
+          runId: event.runId,
+          threadId: event.threadId,
+          workspaceSlug: event.workspaceSlug,
+          modelRef: event.modelRef,
+          modelVisibleMessage: event.modelVisibleMessage,
+          threadType: event.threadType,
+          chatType: event.chatType,
+          items: event.runItems ?? []
+        });
+        return { effects: [] };
+      }
       const candidates = await context.services.memory.extractCandidates({
         runId: event.runId,
         threadId: event.threadId,
         workspaceSlug: event.workspaceSlug,
         userMessage: event.userMessage
       });
-      return candidates.length > 0
-        ? { effects: [{ type: "enqueueMemoryCandidate", candidates }] }
-        : { effects: [] };
+      return candidates.length > 0 ? { effects: [{ type: "enqueueMemoryCandidate", candidates }] } : { effects: [] };
     }
   };
 }

@@ -155,12 +155,12 @@ describe("buildPersonaFromRules", () => {
     ]);
     expect(md).toContain("偏好 X");
     expect(md).toContain("长期偏好");
-    expect(md).toContain("用户画像"); // 顶层标题
+    expect(md).toContain("关于我"); // 顶层标题
   });
 
   test("空 entries → 占位 Markdown（含顶层标题）", () => {
     const md = buildPersonaFromRules([]);
-    expect(md).toContain("# 用户画像");
+    expect(md).toContain("# 关于我");
     // 仍可被 parsePersonaProfile 解析
     const parsed = parsePersonaProfile(md);
     expect(parsed.preferences).toEqual([]);
@@ -202,9 +202,9 @@ describe("buildPersonaFromRules", () => {
 
 describe("generatePersona", () => {
   test("用注入 provider 生成 Markdown（brief 契约）", async () => {
-    const fake = async () => "# 用户画像\n## 一句话定位\n开发者";
+    const fake = async () => "# 关于我\n## 一句话定位\n开发者";
     const md = await generatePersona({ entries: [], providerFactory: fake });
-    expect(md).toContain("# 用户画像");
+    expect(md).toContain("# 关于我");
   });
 
   test("existing 注入 prompt（增量合并段）", async () => {
@@ -219,7 +219,7 @@ describe("generatePersona", () => {
       providerFactory: fake
     });
     expect(captured).toContain("旧画像");
-    expect(captured).toContain("已有画像");
+    expect(captured).toContain("已有关于我信息");
   });
 
   test("entries 格式化为 [kind] statement 进入 prompt", async () => {
@@ -278,16 +278,16 @@ describe("generatePersona", () => {
 
   test("剥离 markdown 围栏 + 定位首个 #", async () => {
     const fake = async () =>
-      "```markdown\n# 用户画像\n## 一句话定位\n开发者\n```";
+      "```markdown\n# 关于我\n## 一句话定位\n开发者\n```";
     const md = await generatePersona({ entries: [], providerFactory: fake });
-    expect(md).toContain("# 用户画像");
+    expect(md).toContain("# 关于我");
     expect(md).not.toContain("```");
   });
 
   test("LLM 前置噪声文本仍能定位首个 #", async () => {
-    const fake = async () => "好的，这是画像：\n```md\n# 用户画像\n## 一句话定位\n开发者\n```";
+    const fake = async () => "好的，这是关于我：\n```md\n# 关于我\n## 一句话定位\n开发者\n```";
     const md = await generatePersona({ entries: [], providerFactory: fake });
-    expect(md.startsWith("# 用户画像")).toBe(true);
+    expect(md.startsWith("# 关于我")).toBe(true);
     expect(md).not.toContain("```");
   });
 
@@ -303,7 +303,7 @@ describe("generatePersona", () => {
 
 describe("ensurePersona", () => {
   test("无 persona + LLM 可用 → 生成（state 1）", async () => {
-    const provider = async () => "# 用户画像\n## 一句话定位\n开发者";
+    const provider = async () => "# 关于我\n## 一句话定位\n开发者";
     await ensurePersona({ scope: "global", providerFactory: provider });
     expect(readPersonaRaw("global")).toContain("一句话定位");
   });
@@ -313,7 +313,7 @@ describe("ensurePersona", () => {
     let capturedPrompt = "";
     const provider = async (p: string) => {
       capturedPrompt = p;
-      return "# 用户画像\n## 一句话定位\n新";
+      return "# 关于我\n## 一句话定位\n新";
     };
     await ensurePersona({ scope: "global", providerFactory: provider });
     expect(capturedPrompt).toContain("旧画像内容");
@@ -326,11 +326,11 @@ describe("ensurePersona", () => {
     };
     await ensurePersona({ scope: "global", providerFactory: provider });
     const md = readPersonaRaw("global");
-    expect(md).toContain("用户画像"); // buildPersonaFromRules 兜底产出
+    expect(md).toContain("关于我"); // buildPersonaFromRules 兜底产出
   });
 
   test("scope 默认 global（未传 scope/workspaceSlug）", async () => {
-    const provider = async () => "# 用户画像\n## 一句话定位\n默认";
+    const provider = async () => "# 关于我\n## 一句话定位\n默认";
     await ensurePersona({ providerFactory: provider });
     expect(readPersonaRaw("global")).toContain("默认");
   });
@@ -357,7 +357,7 @@ describe("ensurePersona", () => {
     let capturedPrompt = "";
     const provider = async (prompt: string) => {
       capturedPrompt = prompt;
-      return "# 用户画像\n## 一句话定位\nx";
+      return "# 关于我\n## 一句话定位\nx";
     };
     await ensurePersona({ scope: "global", providerFactory: provider });
 
