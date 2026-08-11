@@ -252,6 +252,7 @@ test('desktop package includes the optional desktop-host resource', () => {
 test('desktop package limits the Agent Island helper to macOS resources', () => {
   const workflow = readFileSync(resolve(REPO_ROOT, '.github/workflows/release-desktop.yml'), 'utf8')
   const ciWorkflow = readFileSync(resolve(REPO_ROOT, '.github/workflows/ci.yml'), 'utf8')
+  const nativeBuild = readFileSync(resolve(REPO_ROOT, 'apps/desktop/scripts/build-agent-island-native.ts'), 'utf8')
   const verifier = readFileSync(resolve(REPO_ROOT, 'scripts/verify-desktop-package-inputs.mjs'), 'utf8')
   const helper = readFileSync(
     resolve(REPO_ROOT, 'packages/natives/agent-island/macos-agent-island-helper.swift'),
@@ -272,6 +273,9 @@ test('desktop package limits the Agent Island helper to macOS resources', () => 
     'bun scripts/verify-desktop-package-inputs.mjs',
   )
   assert.match(ciWorkflow, /run: bun apps\/desktop\/scripts\/build-agent-island-native\.ts/)
+  assert.match(nativeBuild, /arm64-apple-macos26\.0/)
+  assert.match(nativeBuild, /x86_64-apple-macos26\.0/)
+  assert.match(nativeBuild, /'lipo', '-create'/)
   assert.match(verifier, /process\.platform === "darwin"/)
   assert.match(verifier, /"agent-island", "macos-agent-island-helper"/)
   assert.match(helper, /"type": "unavailable", "message": "no notched display available"/)
