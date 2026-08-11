@@ -179,6 +179,7 @@ jobs:
           node scripts/build-ripgrep-resources.mjs --target darwin-arm64 --target darwin-x64
       - name: Prepare desktop bundle resources
         run: |
+          bun apps/desktop/scripts/build-agent-island-native.ts
           bun run --filter @lume/desktop build:runtime
           bun scripts/build-sidecar-bundle.mjs
           bun scripts/build-default-skills-archive.mjs
