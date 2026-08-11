@@ -1,11 +1,12 @@
 import { SearchField } from "@/components/ui/search-field";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
-export type LinkFilter = "all" | "connected" | "noSetup";
+export type LinkFilter = "all" | "connected" | "needsSetup" | "noSetup";
 
 export interface FilterCounts {
   all: number;
   connected: number;
+  needsSetup: number;
   noSetup: number;
 }
 
@@ -21,6 +22,7 @@ export function LinkToolbar({ query, onQueryChange, filter, onFilterChange, coun
   const items: Array<{ value: LinkFilter; label: string; count: number }> = [
     { value: "all", label: "全部", count: counts.all },
     { value: "connected", label: "已连接", count: counts.connected },
+    { value: "needsSetup", label: "需配置", count: counts.needsSetup },
     { value: "noSetup", label: "免配置", count: counts.noSetup },
   ];
   return (
