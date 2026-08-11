@@ -1,7 +1,8 @@
 import { app } from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { NativeAgentIslandEvent, NativeAgentIslandSnapshot } from '../../../packages/shared/src/types/agent-island'
 
 const PROTOCOL = 1
@@ -21,9 +22,11 @@ let readyTimer: ReturnType<typeof setTimeout> | null = null
 let stdoutBuffer = ''
 
 function helperPath(): string {
+  // main 进程产物为 ESM（dist/main/main.mjs），ESM 作用域没有 __dirname，需用 import.meta.url 推导目录。
+  // dist/main/ 上溯两级得到 apps/desktop/，再拼 resources/agent-island/。
   return app.isPackaged
     ? join(process.resourcesPath, 'agent-island', 'macos-agent-island-helper')
-    : join(__dirname, 'resources', 'agent-island', 'macos-agent-island-helper')
+    : join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'resources', 'agent-island', 'macos-agent-island-helper')
 }
 
 function clearReadyTimer(): void {
