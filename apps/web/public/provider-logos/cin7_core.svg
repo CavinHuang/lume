@@ -1,0 +1,65 @@
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="120" height="120" rx="18" fill="#F6FAFC"/>
+  <g transform="translate(18 18) scale(1.75)">
+    <defs>
+      <linearGradient id="cin7-core-gradient" x1="41.97" y1="10.94" x2="25.13" y2="40.11" gradientUnits="userSpaceOnUse">
+        <stop offset=".03" stop-color="#009DA2"/>
+        <stop offset=".32" stop-color="#007392"/>
+        <stop offset=".61" stop-color="#004F85"/>
+        <stop offset=".85" stop-color="#00397D"/>
+        <stop offset="1" stop-color="#00317B"/>
+      </linearGradient>
+      <linearGradient id="cin7-core-gradient-2" x1="46.33" y1="17.41" x2="35.08" y2="36.9" gradientUnits="userSpaceOnUse">
+        <stop offset=".03" stop-color="#009DA2"/>
+        <stop offset=".32" stop-color="#007392"/>
+        <stop offset=".61" stop-color="#004F85"/>
+        <stop offset=".85" stop-color="#00397D"/>
+        <stop offset="1" stop-color="#00317B"/>
+      </linearGradient>
+      <linearGradient id="cin7-core-gradient-3" x1="27.27" y1="30.27" x2="27.17" y2="30.45" gradientUnits="userSpaceOnUse">
+        <stop offset=".03" stop-color="#009DA2"/>
+        <stop offset=".32" stop-color="#007392"/>
+        <stop offset=".61" stop-color="#004F85"/>
+        <stop offset=".85" stop-color="#00397D"/>
+        <stop offset="1" stop-color="#00317B"/>
+      </linearGradient>
+      <linearGradient id="cin7-core-gradient-4" x1="30.4" y1="2.16" x2="10.26" y2="37.06" gradientUnits="userSpaceOnUse">
+        <stop offset=".03" stop-color="#009DA2"/>
+        <stop offset=".32" stop-color="#007392"/>
+        <stop offset=".61" stop-color="#004F85"/>
+        <stop offset=".85" stop-color="#00397D"/>
+        <stop offset="1" stop-color="#00317B"/>
+      </linearGradient>
+      <linearGradient id="cin7-core-gradient-5" x1="21.23" y1="24.51" x2="12.89" y2="38.95" gradientUnits="userSpaceOnUse">
+        <stop offset=".03" stop-color="#009DA2"/>
+        <stop offset=".32" stop-color="#007392"/>
+        <stop offset=".61" stop-color="#004F85"/>
+        <stop offset=".85" stop-color="#00397D"/>
+        <stop offset="1" stop-color="#00317B"/>
+      </linearGradient>
+      <linearGradient id="cin7-core-gradient-6" x1="11.16" y1="23.7" x2="4.59" y2="35.09" gradientUnits="userSpaceOnUse">
+        <stop offset=".03" stop-color="#009DA2"/>
+        <stop offset=".32" stop-color="#007392"/>
+        <stop offset=".61" stop-color="#004F85"/>
+        <stop offset=".85" stop-color="#00397D"/>
+        <stop offset="1" stop-color="#00317B"/>
+      </linearGradient>
+      <linearGradient id="cin7-core-gradient-7" x1="24.88" y1="21.9" x2="20.35" y2="29.74" gradientUnits="userSpaceOnUse">
+        <stop offset=".03" stop-color="#009DA2"/>
+        <stop offset=".32" stop-color="#007392"/>
+        <stop offset=".61" stop-color="#004F85"/>
+        <stop offset=".85" stop-color="#00397D"/>
+        <stop offset="1" stop-color="#00317B"/>
+      </linearGradient>
+    </defs>
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M32.18 40.71L29.16 42.17C28.77 42.36 28.33 42.01 28.42 41.58L36.02 8.28C36.12 7.85 36.66 7.73 36.94 8.07L39.03 10.69C39.13 10.81 39.17 10.98 39.13 11.13L32.46 40.35C32.42 40.5 32.32 40.64 32.18 40.71Z" fill="url(#cin7-core-gradient)"/>
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M40.64 36.64L37.61 38.1C37.22 38.29 36.78 37.94 36.87 37.51L41.87 15.62C41.97 15.19 42.51 15.07 42.79 15.41L44.88 18.04C44.98 18.16 45.02 18.33 44.98 18.48L40.92 36.29C40.88 36.44 40.78 36.58 40.64 36.64Z" fill="url(#cin7-core-gradient-2)"/>
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M27.25 30.26L27.2 30.47L27.25 30.26Z" fill="url(#cin7-core-gradient-3)" fill-opacity=".5"/>
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M14.41 3.75L12.32 6.37C12.05 6.71 12.29 7.22 12.73 7.22H28.09C28.43 7.22 28.67 7.53 28.6 7.86L28 10.48C27.95 10.72 27.73 10.89 27.49 10.89H8.97C8.81 10.89 8.66 10.96 8.56 11.09L6.47 13.71C6.2 14.05 6.44 14.56 6.88 14.56H26.41C26.75 14.56 26.99 14.87 26.92 15.2L26.32 17.82C26.27 18.06 26.05 18.23 25.81 18.23H3.52C3.18 18.23 2.94 18.54 3.01 18.87L3.61 21.49C3.66 21.73 3.88 21.9 4.12 21.9H24.73C25.07 21.9 25.31 22.21 25.24 22.54L20.65 42.64C20.6 42.88 20.71 43.12 20.93 43.23L23.35 44.4C23.65 44.55 24.01 44.37 24.09 44.05L33.19 4.2C33.26 3.87 33.02 3.56 32.68 3.56H14.82C14.66 3.56 14.51 3.63 14.41 3.75Z" fill="url(#cin7-core-gradient-4)"/>
+    <g opacity=".5">
+      <path fill-rule="evenodd" clip-rule="evenodd" d="M20.66 42.64L21.06 40.9L16.72 21.9H12.38L16.73 40.98C16.77 41.13 16.87 41.27 17.01 41.33L20.56 43.04L20.68 43.1C20.72 43.12 20.77 43.14 20.82 43.14C20.68 43.02 20.61 42.83 20.66 42.64Z" fill="url(#cin7-core-gradient-5)"/>
+      <path fill-rule="evenodd" clip-rule="evenodd" d="M3.61 21.49L6.99 36.28C7.03 36.44 7.13 36.57 7.27 36.63L10.94 38.4C11.33 38.59 11.77 38.24 11.68 37.81L8.05 21.89H4.13C3.89 21.89 3.67 21.73 3.61 21.49Z" fill="url(#cin7-core-gradient-6)"/>
+      <path fill-rule="evenodd" clip-rule="evenodd" d="M25.25 22.54C25.32 22.21 25.08 21.9 24.74 21.9H21.06L23.23 31.4L25.25 22.54Z" fill="url(#cin7-core-gradient-7)"/>
+    </g>
+  </g>
+</svg>

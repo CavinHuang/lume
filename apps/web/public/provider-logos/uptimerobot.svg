@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0.00 0.00 180.00 180.00" width="128" height="128">
+<path stroke="#3ad571" stroke-opacity="0.702" stroke-width="2.00" fill="none" stroke-linecap="butt" vector-effect="non-scaling-stroke" d="
+  M 137.96 90.00
+  A 47.96 47.96 0.0 0 0 90.00 42.04
+  A 47.96 47.96 0.0 0 0 42.04 90.00
+  A 47.96 47.96 0.0 0 0 90.00 137.96
+  A 47.96 47.96 0.0 0 0 137.96 90.00"
+/>
+<path fill="#39d470" fill-opacity="0.400" d="
+  M 94.17 0.00
+  C 141.25 2.88 176.97 38.69 180.00 85.73
+  L 180.00 94.17
+  C 177.04 141.24 141.26 177.00 94.20 180.00
+  L 85.82 180.00
+  C 39.03 176.95 3.25 141.67 0.00 94.83
+  L 0.00 85.16
+  C 3.24 38.34 38.97 3.08 85.72 0.00
+  L 94.17 0.00
+  Z
+  M 137.96 90.00
+  A 47.96 47.96 0.0 0 0 90.00 42.04
+  A 47.96 47.96 0.0 0 0 42.04 90.00
+  A 47.96 47.96 0.0 0 0 90.00 137.96
+  A 47.96 47.96 0.0 0 0 137.96 90.00
+  Z"
+/>
+<circle fill="#3bd671" cx="90.00" cy="90.00" r="47.96"/>
+</svg>

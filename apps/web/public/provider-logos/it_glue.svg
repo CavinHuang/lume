@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" role="img" aria-labelledby="title">
+  <title id="title">IT Glue</title>
+  <rect width="120" height="120" rx="18" fill="#fff"/>
+  <rect x="1" y="1" width="118" height="118" rx="17" fill="none" stroke="#e5e7eb" stroke-width="2"/>
+  <g fill="#111827" transform="translate(20 20) scale(1.9) translate(-4.29 -4.85)">
+    <path d="M44.9,41.12,26.5,12.81H18.81l17.6,27.44H9.73V21.54L4.29,13.12V43.25a3.19,3.19,0,0,0,.79,2.12A2.6,2.6,0,0,0,7,46.26H43a2.74,2.74,0,0,0,2.51-1.86A3.25,3.25,0,0,0,44.9,41.12Z"/>
+    <path d="M5.08,10,23.48,38.3h7.69L13.57,10.86H40.26V29.57L45.7,38V7.85a3.19,3.19,0,0,0-.8-2.12A2.61,2.61,0,0,0,43,4.85H7A2.74,2.74,0,0,0,4.49,6.7,3.24,3.24,0,0,0,5.08,10Z"/>
+  </g>
+</svg>

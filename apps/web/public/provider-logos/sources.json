@@ -1,0 +1,4837 @@
+{
+  "source": "https://console.oomol.com/connections",
+  "assetOrigin": "https://static.oomol.com/logo/",
+  "openConnectorVersion": "1.3.5",
+  "entries": [
+    {
+      "service": "17track",
+      "file": "17track.svg",
+      "url": "https://static.oomol.com/logo/third-party/17track.svg"
+    },
+    {
+      "service": "7_shifts",
+      "file": "7_shifts.png",
+      "url": "https://static.oomol.com/logo/third-party/7_shifts.png"
+    },
+    {
+      "service": "a_leads",
+      "file": "a_leads.svg",
+      "url": "https://static.oomol.com/logo/third-party/a_leads.svg"
+    },
+    {
+      "service": "ably",
+      "file": "ably.svg",
+      "url": "https://static.oomol.com/logo/third-party/ably.svg"
+    },
+    {
+      "service": "ably_control",
+      "file": "ably_control.svg",
+      "url": "https://static.oomol.com/logo/third-party/ably_control.svg"
+    },
+    {
+      "service": "abuseipdb",
+      "file": "abuseipdb.svg",
+      "url": "https://static.oomol.com/logo/third-party/abuseipdb.svg"
+    },
+    {
+      "service": "abyssale",
+      "file": "abyssale.svg",
+      "url": "https://static.oomol.com/logo/third-party/abyssale.svg"
+    },
+    {
+      "service": "accredible_certificates",
+      "file": "accredible_certificates.png",
+      "url": "https://static.oomol.com/logo/third-party/accredible_certificates.png"
+    },
+    {
+      "service": "acculynx",
+      "file": "acculynx.svg",
+      "url": "https://static.oomol.com/logo/third-party/acculynx.svg"
+    },
+    {
+      "service": "active_trail",
+      "file": "active_trail.svg",
+      "url": "https://static.oomol.com/logo/third-party/active_trail.svg"
+    },
+    {
+      "service": "activecampaign",
+      "file": "activecampaign.svg",
+      "url": "https://static.oomol.com/logo/third-party/activecampaign.svg"
+    },
+    {
+      "service": "adafruit_io",
+      "file": "adafruit_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/adafruit_io.svg"
+    },
+    {
+      "service": "addressfinder",
+      "file": "addressfinder.svg",
+      "url": "https://static.oomol.com/logo/third-party/addressfinder.svg"
+    },
+    {
+      "service": "addresszen",
+      "file": "addresszen.svg",
+      "url": "https://static.oomol.com/logo/third-party/addresszen.svg"
+    },
+    {
+      "service": "adobe_commerce",
+      "file": "adobe_commerce.svg",
+      "url": "https://static.oomol.com/logo/third-party/adobe_commerce.svg"
+    },
+    {
+      "service": "adyntel",
+      "file": "adyntel.png",
+      "url": "https://static.oomol.com/logo/third-party/adyntel.png"
+    },
+    {
+      "service": "aerisweather",
+      "file": "aerisweather.svg",
+      "url": "https://static.oomol.com/logo/third-party/aerisweather.svg"
+    },
+    {
+      "service": "aeroleads",
+      "file": "aeroleads.png",
+      "url": "https://static.oomol.com/logo/third-party/aeroleads.png"
+    },
+    {
+      "service": "affinda",
+      "file": "affinda.svg",
+      "url": "https://static.oomol.com/logo/third-party/affinda.svg"
+    },
+    {
+      "service": "agent_mail",
+      "file": "agent_mail.svg",
+      "url": "https://static.oomol.com/logo/third-party/agent_mail.svg"
+    },
+    {
+      "service": "agent_qq",
+      "file": "agent_qq.svg",
+      "url": "https://static.oomol.com/logo/third-party/agent_qq.svg"
+    },
+    {
+      "service": "agentql",
+      "file": "agentql.png",
+      "url": "https://static.oomol.com/logo/third-party/agentql.png"
+    },
+    {
+      "service": "agenty",
+      "file": "agenty.svg",
+      "url": "https://static.oomol.com/logo/third-party/Agenty.svg"
+    },
+    {
+      "service": "agiled",
+      "file": "agiled.png",
+      "url": "https://static.oomol.com/logo/third-party/agiled.png"
+    },
+    {
+      "service": "agility",
+      "file": "agility.svg",
+      "url": "https://static.oomol.com/logo/third-party/agility.svg"
+    },
+    {
+      "service": "aimfox",
+      "file": "aimfox.svg",
+      "url": "https://static.oomol.com/logo/third-party/aimfox.svg"
+    },
+    {
+      "service": "aivoov",
+      "file": "aivoov.svg",
+      "url": "https://static.oomol.com/logo/third-party/Aivoov.svg"
+    },
+    {
+      "service": "algo_docs",
+      "file": "algo_docs.png",
+      "url": "https://static.oomol.com/logo/third-party/algo_docs.png"
+    },
+    {
+      "service": "aliyun_oss",
+      "file": "aliyun_oss.svg",
+      "url": "https://static.oomol.com/logo/third-party/alibabacloud.svg"
+    },
+    {
+      "service": "aliyun_sls",
+      "file": "aliyun_sls.svg",
+      "url": "https://static.oomol.com/logo/third-party/aliyun_sls.svg"
+    },
+    {
+      "service": "aliyun_sts",
+      "file": "aliyun_sts.svg",
+      "url": "https://static.oomol.com/logo/third-party/alibabacloud.svg"
+    },
+    {
+      "service": "alt_text_ai",
+      "file": "alt_text_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/alt_text_ai.svg"
+    },
+    {
+      "service": "alt_text_generator_ai",
+      "file": "alt_text_generator_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/alt_text_generator_ai.png"
+    },
+    {
+      "service": "altiria",
+      "file": "altiria.png",
+      "url": "https://static.oomol.com/logo/third-party/altiria.png"
+    },
+    {
+      "service": "amap",
+      "file": "amap.svg",
+      "url": "https://static.oomol.com/logo/third-party/amap.svg"
+    },
+    {
+      "service": "amara",
+      "file": "amara.svg",
+      "url": "https://static.oomol.com/logo/third-party/Amara.svg"
+    },
+    {
+      "service": "ambee",
+      "file": "ambee.svg",
+      "url": "https://static.oomol.com/logo/third-party/Ambee.svg"
+    },
+    {
+      "service": "ambient_weather",
+      "file": "ambient_weather.svg",
+      "url": "https://static.oomol.com/logo/third-party/Ambient%20Weather.svg"
+    },
+    {
+      "service": "ambivo",
+      "file": "ambivo.png",
+      "url": "https://static.oomol.com/logo/third-party/ambivo.png"
+    },
+    {
+      "service": "amilia",
+      "file": "amilia.svg",
+      "url": "https://static.oomol.com/logo/third-party/amilia.svg"
+    },
+    {
+      "service": "amplemarket",
+      "file": "amplemarket.svg",
+      "url": "https://static.oomol.com/logo/third-party/amplemarket.svg"
+    },
+    {
+      "service": "anchor_browser",
+      "file": "anchor_browser.svg",
+      "url": "https://static.oomol.com/logo/third-party/anchor_browser.svg"
+    },
+    {
+      "service": "anrok",
+      "file": "anrok.svg",
+      "url": "https://static.oomol.com/logo/third-party/anrok.svg"
+    },
+    {
+      "service": "anthropic_admin",
+      "file": "anthropic_admin.svg",
+      "url": "https://static.oomol.com/logo/third-party/anthropic_admin.svg"
+    },
+    {
+      "service": "anysearch",
+      "file": "anysearch.png",
+      "url": "https://static.oomol.com/logo/third-party/anysearch.png"
+    },
+    {
+      "service": "apaleo",
+      "file": "apaleo.svg",
+      "url": "https://static.oomol.com/logo/third-party/Apaleo.svg"
+    },
+    {
+      "service": "api_bible",
+      "file": "api_bible.svg",
+      "url": "https://static.oomol.com/logo/third-party/api_bible.svg"
+    },
+    {
+      "service": "api_ninjas",
+      "file": "api_ninjas.svg",
+      "url": "https://static.oomol.com/logo/third-party/API%20Ninjas.svg"
+    },
+    {
+      "service": "api_sports",
+      "file": "api_sports.svg",
+      "url": "https://static.oomol.com/logo/third-party/API-Sports.svg"
+    },
+    {
+      "service": "api_void",
+      "file": "api_void.png",
+      "url": "https://static.oomol.com/logo/third-party/api_void.png"
+    },
+    {
+      "service": "api2pdf",
+      "file": "api2pdf.jpg",
+      "url": "https://static.oomol.com/logo/third-party/api2pdf.jpg"
+    },
+    {
+      "service": "apiflash",
+      "file": "apiflash.svg",
+      "url": "https://static.oomol.com/logo/third-party/Apiflash.svg"
+    },
+    {
+      "service": "apify",
+      "file": "apify.svg",
+      "url": "https://static.oomol.com/logo/third-party/Apify.svg"
+    },
+    {
+      "service": "apipie_ai",
+      "file": "apipie_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/apipie_ai.png"
+    },
+    {
+      "service": "apiverve",
+      "file": "apiverve.svg",
+      "url": "https://static.oomol.com/logo/third-party/Apiverve.svg"
+    },
+    {
+      "service": "appdrag",
+      "file": "appdrag.svg",
+      "url": "https://static.oomol.com/logo/third-party/appdrag.svg"
+    },
+    {
+      "service": "appstle_subscriptions",
+      "file": "appstle_subscriptions.png",
+      "url": "https://static.oomol.com/logo/third-party/appstle_subscriptions.png"
+    },
+    {
+      "service": "arcgis_online",
+      "file": "arcgis_online.svg",
+      "url": "https://static.oomol.com/logo/third-party/arcgis_online.svg"
+    },
+    {
+      "service": "aroflo",
+      "file": "aroflo.svg",
+      "url": "https://static.oomol.com/logo/third-party/aroflo.svg"
+    },
+    {
+      "service": "ashby",
+      "file": "ashby.png",
+      "url": "https://static.oomol.com/logo/third-party/ashby.png"
+    },
+    {
+      "service": "asin_data_api",
+      "file": "asin_data_api.png",
+      "url": "https://static.oomol.com/logo/third-party/asin_data_api.png"
+    },
+    {
+      "service": "atlas_so",
+      "file": "atlas_so.svg",
+      "url": "https://static.oomol.com/logo/third-party/atlas_so.svg"
+    },
+    {
+      "service": "attention",
+      "file": "attention.svg",
+      "url": "https://static.oomol.com/logo/third-party/attention.svg"
+    },
+    {
+      "service": "auth0_management",
+      "file": "auth0_management.svg",
+      "url": "https://static.oomol.com/logo/third-party/auth0_management.svg"
+    },
+    {
+      "service": "autoblogger",
+      "file": "autoblogger.png",
+      "url": "https://static.oomol.com/logo/third-party/autoblogger.png"
+    },
+    {
+      "service": "autobound",
+      "file": "autobound.png",
+      "url": "https://static.oomol.com/logo/third-party/autobound.png"
+    },
+    {
+      "service": "autom",
+      "file": "autom.svg",
+      "url": "https://static.oomol.com/logo/third-party/autom.svg"
+    },
+    {
+      "service": "autotask",
+      "file": "autotask.svg",
+      "url": "https://static.oomol.com/logo/third-party/autotask.svg"
+    },
+    {
+      "service": "aviationstack",
+      "file": "aviationstack.png",
+      "url": "https://static.oomol.com/logo/third-party/aviationstack.png"
+    },
+    {
+      "service": "avochato",
+      "file": "avochato.svg",
+      "url": "https://static.oomol.com/logo/third-party/avochato.svg"
+    },
+    {
+      "service": "avoma",
+      "file": "avoma.svg",
+      "url": "https://static.oomol.com/logo/third-party/avoma.svg"
+    },
+    {
+      "service": "aws_s3",
+      "file": "aws_s3.svg",
+      "url": "https://static.oomol.com/logo/third-party/aws_s3.svg"
+    },
+    {
+      "service": "ayrshare",
+      "file": "ayrshare.png",
+      "url": "https://static.oomol.com/logo/third-party/ayrshare.png"
+    },
+    {
+      "service": "baidu_maps",
+      "file": "baidu_maps.png",
+      "url": "https://static.oomol.com/logo/third-party/baidu_maps.png"
+    },
+    {
+      "service": "balldontlie_worldcup",
+      "file": "balldontlie_worldcup.png",
+      "url": "https://static.oomol.com/logo/third-party/balldontlie_worldcup.png"
+    },
+    {
+      "service": "bamboohr",
+      "file": "bamboohr.png",
+      "url": "https://static.oomol.com/logo/third-party/bamboohr.png"
+    },
+    {
+      "service": "bannerbear",
+      "file": "bannerbear.svg",
+      "url": "https://static.oomol.com/logo/third-party/bannerbear.svg"
+    },
+    {
+      "service": "bark",
+      "file": "bark.png",
+      "url": "https://static.oomol.com/logo/third-party/bark.png"
+    },
+    {
+      "service": "baselinker",
+      "file": "baselinker.svg",
+      "url": "https://static.oomol.com/logo/third-party/baselinker.svg"
+    },
+    {
+      "service": "basin",
+      "file": "basin.svg",
+      "url": "https://static.oomol.com/logo/third-party/Basin.svg"
+    },
+    {
+      "service": "beaconchain",
+      "file": "beaconchain.svg",
+      "url": "https://static.oomol.com/logo/third-party/beaconchain.svg"
+    },
+    {
+      "service": "beamer",
+      "file": "beamer.svg",
+      "url": "https://static.oomol.com/logo/third-party/Beamer.svg"
+    },
+    {
+      "service": "beebole",
+      "file": "beebole.svg",
+      "url": "https://static.oomol.com/logo/third-party/beebole.svg"
+    },
+    {
+      "service": "beeminder",
+      "file": "beeminder.png",
+      "url": "https://static.oomol.com/logo/third-party/beeminder.png"
+    },
+    {
+      "service": "benchmark_email",
+      "file": "benchmark_email.svg",
+      "url": "https://static.oomol.com/logo/third-party/benchmark_email.svg"
+    },
+    {
+      "service": "benzinga",
+      "file": "benzinga.svg",
+      "url": "https://static.oomol.com/logo/third-party/benzinga.svg"
+    },
+    {
+      "service": "better_proposals",
+      "file": "better_proposals.svg",
+      "url": "https://static.oomol.com/logo/third-party/better_proposals.svg"
+    },
+    {
+      "service": "bettercontact",
+      "file": "bettercontact.svg",
+      "url": "https://static.oomol.com/logo/third-party/bettercontact.svg"
+    },
+    {
+      "service": "bidsketch",
+      "file": "bidsketch.svg",
+      "url": "https://static.oomol.com/logo/third-party/bidsketch.svg"
+    },
+    {
+      "service": "big_data_cloud",
+      "file": "big_data_cloud.svg",
+      "url": "https://static.oomol.com/logo/third-party/BigDataCloud.svg"
+    },
+    {
+      "service": "bigmailer",
+      "file": "bigmailer.svg",
+      "url": "https://static.oomol.com/logo/third-party/bigmailer.svg"
+    },
+    {
+      "service": "bigml",
+      "file": "bigml.svg",
+      "url": "https://static.oomol.com/logo/third-party/bigml.svg"
+    },
+    {
+      "service": "bigpicture_io",
+      "file": "bigpicture_io.png",
+      "url": "https://static.oomol.com/logo/third-party/bigpicture_io.png"
+    },
+    {
+      "service": "bird",
+      "file": "bird.png",
+      "url": "https://static.oomol.com/logo/third-party/bird.png"
+    },
+    {
+      "service": "bitquery",
+      "file": "bitquery.svg",
+      "url": "https://static.oomol.com/logo/third-party/bitquery.svg"
+    },
+    {
+      "service": "bland_ai",
+      "file": "bland_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/bland_ai.svg"
+    },
+    {
+      "service": "blaze_meter_functional",
+      "file": "blaze_meter_functional.svg",
+      "url": "https://static.oomol.com/logo/third-party/blaze_meter_functional.svg"
+    },
+    {
+      "service": "blaze_meter_performance",
+      "file": "blaze_meter_performance.svg",
+      "url": "https://static.oomol.com/logo/third-party/blaze_meter_performance.svg"
+    },
+    {
+      "service": "blaze_meter_service_virtualization",
+      "file": "blaze_meter_service_virtualization.svg",
+      "url": "https://static.oomol.com/logo/third-party/blaze_meter_service_virtualization.svg"
+    },
+    {
+      "service": "blocknative",
+      "file": "blocknative.svg",
+      "url": "https://static.oomol.com/logo/third-party/Blocknative.svg"
+    },
+    {
+      "service": "bolna",
+      "file": "bolna.png",
+      "url": "https://static.oomol.com/logo/third-party/bolna.png"
+    },
+    {
+      "service": "boloforms",
+      "file": "boloforms.svg",
+      "url": "https://static.oomol.com/logo/third-party/Boloforms.svg"
+    },
+    {
+      "service": "bookingmood",
+      "file": "bookingmood.svg",
+      "url": "https://static.oomol.com/logo/third-party/bookingmood.svg"
+    },
+    {
+      "service": "booqable",
+      "file": "booqable.svg",
+      "url": "https://static.oomol.com/logo/third-party/booqable.svg"
+    },
+    {
+      "service": "bot_star",
+      "file": "bot_star.svg",
+      "url": "https://static.oomol.com/logo/third-party/bot_star.svg"
+    },
+    {
+      "service": "botpress",
+      "file": "botpress.svg",
+      "url": "https://static.oomol.com/logo/third-party/botpress.svg"
+    },
+    {
+      "service": "botsonic",
+      "file": "botsonic.svg",
+      "url": "https://static.oomol.com/logo/third-party/botsonic.svg"
+    },
+    {
+      "service": "bouncer",
+      "file": "bouncer.svg",
+      "url": "https://static.oomol.com/logo/third-party/Bouncer.svg"
+    },
+    {
+      "service": "boxhero",
+      "file": "boxhero.svg",
+      "url": "https://static.oomol.com/logo/third-party/Boxhero.svg"
+    },
+    {
+      "service": "brave_search",
+      "file": "brave_search.svg",
+      "url": "https://static.oomol.com/logo/third-party/brave_search.svg"
+    },
+    {
+      "service": "breathe",
+      "file": "breathe.svg",
+      "url": "https://static.oomol.com/logo/third-party/breathe.svg"
+    },
+    {
+      "service": "breezy_hr",
+      "file": "breezy_hr.png",
+      "url": "https://static.oomol.com/logo/third-party/breezy_hr.png"
+    },
+    {
+      "service": "bright_data",
+      "file": "bright_data.png",
+      "url": "https://static.oomol.com/logo/third-party/bright_data.png"
+    },
+    {
+      "service": "browse_ai",
+      "file": "browse_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/Browseai.svg"
+    },
+    {
+      "service": "browser_use",
+      "file": "browser_use.svg",
+      "url": "https://static.oomol.com/logo/third-party/browser_use.svg"
+    },
+    {
+      "service": "browserbase",
+      "file": "browserbase.svg",
+      "url": "https://static.oomol.com/logo/third-party/Browserbase.svg"
+    },
+    {
+      "service": "browserless",
+      "file": "browserless.svg",
+      "url": "https://static.oomol.com/logo/third-party/browserless.svg"
+    },
+    {
+      "service": "btcpay_server",
+      "file": "btcpay_server.svg",
+      "url": "https://static.oomol.com/logo/third-party/btcpay_server.svg"
+    },
+    {
+      "service": "bug_herd",
+      "file": "bug_herd.png",
+      "url": "https://static.oomol.com/logo/third-party/bug_herd.png"
+    },
+    {
+      "service": "bugbug",
+      "file": "bugbug.png",
+      "url": "https://static.oomol.com/logo/third-party/Bugbug.png"
+    },
+    {
+      "service": "buildium",
+      "file": "buildium.svg",
+      "url": "https://static.oomol.com/logo/third-party/buildium.svg"
+    },
+    {
+      "service": "builtwith",
+      "file": "builtwith.svg",
+      "url": "https://static.oomol.com/logo/third-party/BuiltWith.svg"
+    },
+    {
+      "service": "businessmap",
+      "file": "businessmap.svg",
+      "url": "https://static.oomol.com/logo/third-party/businessmap.svg"
+    },
+    {
+      "service": "buttondown",
+      "file": "buttondown.svg",
+      "url": "https://static.oomol.com/logo/third-party/buttondown.svg"
+    },
+    {
+      "service": "byteforms",
+      "file": "byteforms.png",
+      "url": "https://static.oomol.com/logo/third-party/byteforms.png"
+    },
+    {
+      "service": "calendarific",
+      "file": "calendarific.png",
+      "url": "https://static.oomol.com/logo/third-party/calendarific.png"
+    },
+    {
+      "service": "callerapi",
+      "file": "callerapi.svg",
+      "url": "https://static.oomol.com/logo/third-party/callerapi.svg"
+    },
+    {
+      "service": "callingly",
+      "file": "callingly.svg",
+      "url": "https://static.oomol.com/logo/third-party/callingly.svg"
+    },
+    {
+      "service": "callpage",
+      "file": "callpage.svg",
+      "url": "https://static.oomol.com/logo/third-party/callpage.svg"
+    },
+    {
+      "service": "callrail",
+      "file": "callrail.png",
+      "url": "https://static.oomol.com/logo/third-party/callrail.png"
+    },
+    {
+      "service": "campaign_cleaner",
+      "file": "campaign_cleaner.png",
+      "url": "https://static.oomol.com/logo/third-party/campaign_cleaner.png"
+    },
+    {
+      "service": "canny",
+      "file": "canny.svg",
+      "url": "https://static.oomol.com/logo/third-party/Canny.svg"
+    },
+    {
+      "service": "capsule_crm",
+      "file": "capsule_crm.svg",
+      "url": "https://static.oomol.com/logo/third-party/capsule_crm.svg"
+    },
+    {
+      "service": "captainbi",
+      "file": "captainbi.svg",
+      "url": "https://static.oomol.com/logo/third-party/captainbi.svg"
+    },
+    {
+      "service": "carbone",
+      "file": "carbone.svg",
+      "url": "https://static.oomol.com/logo/third-party/carbone.svg"
+    },
+    {
+      "service": "cardly",
+      "file": "cardly.png",
+      "url": "https://static.oomol.com/logo/third-party/cardly.png"
+    },
+    {
+      "service": "cartes",
+      "file": "cartes.png",
+      "url": "https://static.oomol.com/logo/third-party/cartes.png"
+    },
+    {
+      "service": "castingwords",
+      "file": "castingwords.svg",
+      "url": "https://static.oomol.com/logo/third-party/castingwords.svg"
+    },
+    {
+      "service": "cats",
+      "file": "cats.svg",
+      "url": "https://static.oomol.com/logo/third-party/cats.svg"
+    },
+    {
+      "service": "celigo",
+      "file": "celigo.svg",
+      "url": "https://static.oomol.com/logo/third-party/Celigo.svg"
+    },
+    {
+      "service": "census_bureau",
+      "file": "census_bureau.svg",
+      "url": "https://static.oomol.com/logo/third-party/census_bureau.svg"
+    },
+    {
+      "service": "censys",
+      "file": "censys.jpg",
+      "url": "https://static.oomol.com/logo/third-party/censys.jpg"
+    },
+    {
+      "service": "central_station_crm",
+      "file": "central_station_crm.svg",
+      "url": "https://static.oomol.com/logo/third-party/central_station_crm.svg"
+    },
+    {
+      "service": "certifier",
+      "file": "certifier.svg",
+      "url": "https://static.oomol.com/logo/third-party/Certifier.svg"
+    },
+    {
+      "service": "certn",
+      "file": "certn.svg",
+      "url": "https://static.oomol.com/logo/third-party/certn.svg"
+    },
+    {
+      "service": "chargebee",
+      "file": "chargebee.svg",
+      "url": "https://static.oomol.com/logo/third-party/chargebee.svg"
+    },
+    {
+      "service": "chargeblast",
+      "file": "chargeblast.png",
+      "url": "https://static.oomol.com/logo/third-party/chargeblast.png"
+    },
+    {
+      "service": "chaserhq",
+      "file": "chaserhq.jpg",
+      "url": "https://static.oomol.com/logo/third-party/chaserhq.jpg"
+    },
+    {
+      "service": "chat_api_for_whatsapp",
+      "file": "chat_api_for_whatsapp.png",
+      "url": "https://static.oomol.com/logo/third-party/chat_api_for_whatsapp.png"
+    },
+    {
+      "service": "chatarmin",
+      "file": "chatarmin.svg",
+      "url": "https://static.oomol.com/logo/third-party/chatarmin.svg"
+    },
+    {
+      "service": "chatbotkit",
+      "file": "chatbotkit.svg",
+      "url": "https://static.oomol.com/logo/third-party/Chatbotkit.svg"
+    },
+    {
+      "service": "chatpdf",
+      "file": "chatpdf.svg",
+      "url": "https://static.oomol.com/logo/third-party/chatpdf.svg"
+    },
+    {
+      "service": "chattermill",
+      "file": "chattermill.svg",
+      "url": "https://static.oomol.com/logo/third-party/chattermill.svg"
+    },
+    {
+      "service": "chatwork",
+      "file": "chatwork.svg",
+      "url": "https://static.oomol.com/logo/third-party/Chatwork.svg"
+    },
+    {
+      "service": "check",
+      "file": "check.png",
+      "url": "https://static.oomol.com/logo/third-party/check.png"
+    },
+    {
+      "service": "chorus",
+      "file": "chorus.svg",
+      "url": "https://static.oomol.com/logo/third-party/chorus.svg"
+    },
+    {
+      "service": "cin7_core",
+      "file": "cin7_core.svg",
+      "url": "https://static.oomol.com/logo/third-party/cin7_core.svg"
+    },
+    {
+      "service": "cincopa",
+      "file": "cincopa.svg",
+      "url": "https://static.oomol.com/logo/third-party/cincopa.svg"
+    },
+    {
+      "service": "cisco_meraki",
+      "file": "cisco_meraki.png",
+      "url": "https://static.oomol.com/logo/third-party/cisco_meraki.png"
+    },
+    {
+      "service": "claid_ai",
+      "file": "claid_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/claid_ai.svg"
+    },
+    {
+      "service": "clari_copilot",
+      "file": "clari_copilot.png",
+      "url": "https://static.oomol.com/logo/third-party/clari_copilot.png"
+    },
+    {
+      "service": "classmarker",
+      "file": "classmarker.png",
+      "url": "https://static.oomol.com/logo/third-party/classmarker.png"
+    },
+    {
+      "service": "clearout",
+      "file": "clearout.svg",
+      "url": "https://static.oomol.com/logo/third-party/Clearout.svg"
+    },
+    {
+      "service": "clickhelp",
+      "file": "clickhelp.svg",
+      "url": "https://static.oomol.com/logo/third-party/clickhelp.svg"
+    },
+    {
+      "service": "clickmeeting",
+      "file": "clickmeeting.svg",
+      "url": "https://static.oomol.com/logo/third-party/clickmeeting.svg"
+    },
+    {
+      "service": "clicksend",
+      "file": "clicksend.png",
+      "url": "https://static.oomol.com/logo/third-party/clicksend.png"
+    },
+    {
+      "service": "close",
+      "file": "close.svg",
+      "url": "https://static.oomol.com/logo/third-party/Close.svg"
+    },
+    {
+      "service": "cloudconvert",
+      "file": "cloudconvert.svg",
+      "url": "https://static.oomol.com/logo/third-party/CloudConvert.svg"
+    },
+    {
+      "service": "cloudflare_browser_rendering",
+      "file": "cloudflare_browser_rendering.svg",
+      "url": "https://static.oomol.com/logo/third-party/cloudflare_browser_rendering.svg"
+    },
+    {
+      "service": "cloudflare_dns",
+      "file": "cloudflare_dns.svg",
+      "url": "https://static.oomol.com/logo/third-party/Cloudflare.svg"
+    },
+    {
+      "service": "cloudflare_docs",
+      "file": "cloudflare_docs.svg",
+      "url": "https://static.oomol.com/logo/third-party/cloudflare_docs.svg"
+    },
+    {
+      "service": "cloudflare_email_routing",
+      "file": "cloudflare_email_routing.svg",
+      "url": "https://static.oomol.com/logo/third-party/cloudflare_email_routing.svg"
+    },
+    {
+      "service": "cloudflare_mcp",
+      "file": "cloudflare_mcp.svg",
+      "url": "https://static.oomol.com/logo/third-party/cloudflare_mcp.svg"
+    },
+    {
+      "service": "cloudflare_r2",
+      "file": "cloudflare_r2.svg",
+      "url": "https://static.oomol.com/logo/third-party/Cloudflare.svg"
+    },
+    {
+      "service": "cloudflare_worker",
+      "file": "cloudflare_worker.svg",
+      "url": "https://static.oomol.com/logo/third-party/Cloudflare.svg"
+    },
+    {
+      "service": "cloudlayer",
+      "file": "cloudlayer.svg",
+      "url": "https://static.oomol.com/logo/third-party/cloudlayer.svg"
+    },
+    {
+      "service": "codegen",
+      "file": "codegen.svg",
+      "url": "https://static.oomol.com/logo/third-party/codegen.svg"
+    },
+    {
+      "service": "coinmarketcal",
+      "file": "coinmarketcal.svg",
+      "url": "https://static.oomol.com/logo/third-party/CoinMarketCal.svg"
+    },
+    {
+      "service": "coinranking",
+      "file": "coinranking.svg",
+      "url": "https://static.oomol.com/logo/third-party/coinranking.svg"
+    },
+    {
+      "service": "college_football_data",
+      "file": "college_football_data.svg",
+      "url": "https://static.oomol.com/logo/third-party/college_football_data.svg"
+    },
+    {
+      "service": "collegiate",
+      "file": "collegiate.png",
+      "url": "https://static.oomol.com/logo/third-party/collegiate.png"
+    },
+    {
+      "service": "commpeak",
+      "file": "commpeak.svg",
+      "url": "https://static.oomol.com/logo/third-party/commpeak.svg"
+    },
+    {
+      "service": "companycam",
+      "file": "companycam.png",
+      "url": "https://static.oomol.com/logo/third-party/companycam.png"
+    },
+    {
+      "service": "companyenrich",
+      "file": "companyenrich.svg",
+      "url": "https://static.oomol.com/logo/third-party/Companyenrich.svg"
+    },
+    {
+      "service": "configcat",
+      "file": "configcat.svg",
+      "url": "https://static.oomol.com/logo/third-party/configcat.svg"
+    },
+    {
+      "service": "contactout",
+      "file": "contactout.svg",
+      "url": "https://static.oomol.com/logo/third-party/contactout.svg"
+    },
+    {
+      "service": "contentful_graphql",
+      "file": "contentful_graphql.svg",
+      "url": "https://static.oomol.com/logo/third-party/contentful_graphql.svg"
+    },
+    {
+      "service": "contentstack_content_delivery",
+      "file": "contentstack_content_delivery.webp",
+      "url": "https://static.oomol.com/logo/third-party/contentstack_content_delivery.webp"
+    },
+    {
+      "service": "contentstack_content_management",
+      "file": "contentstack_content_management.webp",
+      "url": "https://static.oomol.com/logo/third-party/contentstack_content_management.webp"
+    },
+    {
+      "service": "context7",
+      "file": "context7.svg",
+      "url": "https://static.oomol.com/logo/third-party/context7.svg"
+    },
+    {
+      "service": "control_d",
+      "file": "control_d.svg",
+      "url": "https://static.oomol.com/logo/third-party/Control%20D.svg"
+    },
+    {
+      "service": "convertapi",
+      "file": "convertapi.svg",
+      "url": "https://static.oomol.com/logo/third-party/convertapi.svg"
+    },
+    {
+      "service": "coresignal",
+      "file": "coresignal.svg",
+      "url": "https://static.oomol.com/logo/third-party/coresignal.svg"
+    },
+    {
+      "service": "countdown_api",
+      "file": "countdown_api.webp",
+      "url": "https://static.oomol.com/logo/third-party/countdown_api.webp"
+    },
+    {
+      "service": "courier",
+      "file": "courier.svg",
+      "url": "https://static.oomol.com/logo/third-party/courier.svg"
+    },
+    {
+      "service": "craftmypdf",
+      "file": "craftmypdf.svg",
+      "url": "https://static.oomol.com/logo/third-party/Craftmypdf.svg"
+    },
+    {
+      "service": "cratedb_cloud",
+      "file": "cratedb_cloud.svg",
+      "url": "https://static.oomol.com/logo/third-party/cratedb_cloud.svg"
+    },
+    {
+      "service": "credit_repair_cloud",
+      "file": "credit_repair_cloud.svg",
+      "url": "https://static.oomol.com/logo/third-party/credit_repair_cloud.svg"
+    },
+    {
+      "service": "crisp",
+      "file": "crisp.svg",
+      "url": "https://static.oomol.com/logo/third-party/crisp.svg"
+    },
+    {
+      "service": "cronitor",
+      "file": "cronitor.svg",
+      "url": "https://static.oomol.com/logo/third-party/cronitor.svg"
+    },
+    {
+      "service": "crustdata",
+      "file": "crustdata.png",
+      "url": "https://static.oomol.com/logo/third-party/crustdata.png"
+    },
+    {
+      "service": "crypto_apis",
+      "file": "crypto_apis.svg",
+      "url": "https://static.oomol.com/logo/third-party/crypto_apis.svg"
+    },
+    {
+      "service": "currencyapi",
+      "file": "currencyapi.svg",
+      "url": "https://static.oomol.com/logo/third-party/currencyapi.svg"
+    },
+    {
+      "service": "currencyscoop",
+      "file": "currencyscoop.svg",
+      "url": "https://static.oomol.com/logo/third-party/CurrencyScoop.svg"
+    },
+    {
+      "service": "currents_api",
+      "file": "currents_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/Currents%20API.svg"
+    },
+    {
+      "service": "customgpt",
+      "file": "customgpt.svg",
+      "url": "https://static.oomol.com/logo/third-party/customgpt.svg"
+    },
+    {
+      "service": "cutt_ly",
+      "file": "cutt_ly.svg",
+      "url": "https://static.oomol.com/logo/third-party/Cutt.ly.svg"
+    },
+    {
+      "service": "cyberimpact",
+      "file": "cyberimpact.svg",
+      "url": "https://static.oomol.com/logo/third-party/cyberimpact.svg"
+    },
+    {
+      "service": "dadata_ru",
+      "file": "dadata_ru.svg",
+      "url": "https://static.oomol.com/logo/third-party/dadata_ru.svg"
+    },
+    {
+      "service": "daffy",
+      "file": "daffy.svg",
+      "url": "https://static.oomol.com/logo/third-party/daffy.svg"
+    },
+    {
+      "service": "daily",
+      "file": "daily.svg",
+      "url": "https://static.oomol.com/logo/third-party/daily.svg"
+    },
+    {
+      "service": "dailybot",
+      "file": "dailybot.svg",
+      "url": "https://static.oomol.com/logo/third-party/dailybot.svg"
+    },
+    {
+      "service": "data247",
+      "file": "data247.png",
+      "url": "https://static.oomol.com/logo/third-party/data247.png"
+    },
+    {
+      "service": "databar_ai",
+      "file": "databar_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/databar_ai.svg"
+    },
+    {
+      "service": "dataforseo",
+      "file": "dataforseo.png",
+      "url": "https://static.oomol.com/logo/third-party/dataforseo.png"
+    },
+    {
+      "service": "datagma",
+      "file": "datagma.png",
+      "url": "https://static.oomol.com/logo/third-party/datagma.png"
+    },
+    {
+      "service": "datalust",
+      "file": "datalust.svg",
+      "url": "https://static.oomol.com/logo/third-party/datalust.svg"
+    },
+    {
+      "service": "datascope",
+      "file": "datascope.svg",
+      "url": "https://static.oomol.com/logo/third-party/Datascope.svg"
+    },
+    {
+      "service": "deck_co",
+      "file": "deck_co.png",
+      "url": "https://static.oomol.com/logo/third-party/deck_co.png"
+    },
+    {
+      "service": "demio",
+      "file": "demio.svg",
+      "url": "https://static.oomol.com/logo/third-party/demio.svg"
+    },
+    {
+      "service": "demodesk",
+      "file": "demodesk.svg",
+      "url": "https://static.oomol.com/logo/third-party/demodesk.svg"
+    },
+    {
+      "service": "desktime",
+      "file": "desktime.svg",
+      "url": "https://static.oomol.com/logo/third-party/desktime.svg"
+    },
+    {
+      "service": "detect_language",
+      "file": "detect_language.png",
+      "url": "https://static.oomol.com/logo/third-party/detect_language.png"
+    },
+    {
+      "service": "detrack",
+      "file": "detrack.svg",
+      "url": "https://static.oomol.com/logo/third-party/detrack.svg"
+    },
+    {
+      "service": "devin",
+      "file": "devin.svg",
+      "url": "https://static.oomol.com/logo/third-party/devin.svg"
+    },
+    {
+      "service": "dialmycalls",
+      "file": "dialmycalls.svg",
+      "url": "https://static.oomol.com/logo/third-party/dialmycalls.svg"
+    },
+    {
+      "service": "dialpad_wfm",
+      "file": "dialpad_wfm.svg",
+      "url": "https://static.oomol.com/logo/third-party/dialpad_wfm.svg"
+    },
+    {
+      "service": "dida365",
+      "file": "dida365.svg",
+      "url": "https://static.oomol.com/logo/third-party/ticktick.svg"
+    },
+    {
+      "service": "diffbot",
+      "file": "diffbot.svg",
+      "url": "https://static.oomol.com/logo/third-party/Diffbot.svg"
+    },
+    {
+      "service": "diffy",
+      "file": "diffy.svg",
+      "url": "https://static.oomol.com/logo/third-party/diffy.svg"
+    },
+    {
+      "service": "digistore24",
+      "file": "digistore24.svg",
+      "url": "https://static.oomol.com/logo/third-party/digistore24.svg"
+    },
+    {
+      "service": "dingtalk_bot",
+      "file": "dingtalk_bot.png",
+      "url": "https://static.oomol.com/logo/third-party/dingtalk_bot.png"
+    },
+    {
+      "service": "discolike",
+      "file": "discolike.svg",
+      "url": "https://static.oomol.com/logo/third-party/discolike.svg"
+    },
+    {
+      "service": "discordbot",
+      "file": "discordbot.svg",
+      "url": "https://static.oomol.com/logo/third-party/Discord%20Bot.svg"
+    },
+    {
+      "service": "dixa",
+      "file": "dixa.svg",
+      "url": "https://static.oomol.com/logo/third-party/dixa.svg"
+    },
+    {
+      "service": "dns_filter",
+      "file": "dns_filter.webp",
+      "url": "https://static.oomol.com/logo/third-party/dns_filter.webp"
+    },
+    {
+      "service": "docker_hub",
+      "file": "docker_hub.svg",
+      "url": "https://static.oomol.com/logo/third-party/Docker%20Hub.svg"
+    },
+    {
+      "service": "docmosis",
+      "file": "docmosis.png",
+      "url": "https://static.oomol.com/logo/third-party/docmosis.png"
+    },
+    {
+      "service": "docparser",
+      "file": "docparser.svg",
+      "url": "https://static.oomol.com/logo/third-party/Docparser.svg"
+    },
+    {
+      "service": "docraptor",
+      "file": "docraptor.svg",
+      "url": "https://static.oomol.com/logo/third-party/docraptor.svg"
+    },
+    {
+      "service": "docsautomator",
+      "file": "docsautomator.png",
+      "url": "https://static.oomol.com/logo/third-party/docsautomator.png"
+    },
+    {
+      "service": "docsbot_ai",
+      "file": "docsbot_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/docsbot_ai.svg"
+    },
+    {
+      "service": "docsend_2_pdf",
+      "file": "docsend_2_pdf.png",
+      "url": "https://static.oomol.com/logo/third-party/docsend_2_pdf.png"
+    },
+    {
+      "service": "docsumo",
+      "file": "docsumo.svg",
+      "url": "https://static.oomol.com/logo/third-party/docsumo.svg"
+    },
+    {
+      "service": "docugenerate",
+      "file": "docugenerate.svg",
+      "url": "https://static.oomol.com/logo/third-party/docugenerate.svg"
+    },
+    {
+      "service": "document360",
+      "file": "document360.png",
+      "url": "https://static.oomol.com/logo/third-party/document360.png"
+    },
+    {
+      "service": "docuseal",
+      "file": "docuseal.svg",
+      "url": "https://static.oomol.com/logo/third-party/docuseal.svg"
+    },
+    {
+      "service": "dokploy",
+      "file": "dokploy.png",
+      "url": "https://static.oomol.com/logo/third-party/dokploy.png"
+    },
+    {
+      "service": "doppler_marketing_automation",
+      "file": "doppler_marketing_automation.png",
+      "url": "https://static.oomol.com/logo/third-party/doppler_marketing_automation.png"
+    },
+    {
+      "service": "drata",
+      "file": "drata.png",
+      "url": "https://static.oomol.com/logo/third-party/drata.png"
+    },
+    {
+      "service": "drimify",
+      "file": "drimify.svg",
+      "url": "https://static.oomol.com/logo/third-party/drimify.svg"
+    },
+    {
+      "service": "dropbox_sign",
+      "file": "dropbox_sign.svg",
+      "url": "https://static.oomol.com/logo/third-party/dropbox_sign.svg"
+    },
+    {
+      "service": "dropcontact",
+      "file": "dropcontact.svg",
+      "url": "https://static.oomol.com/logo/third-party/dropcontact.svg"
+    },
+    {
+      "service": "dumplingai",
+      "file": "dumplingai.svg",
+      "url": "https://static.oomol.com/logo/third-party/dumplingai.svg"
+    },
+    {
+      "service": "dune",
+      "file": "dune.svg",
+      "url": "https://static.oomol.com/logo/third-party/dune.svg"
+    },
+    {
+      "service": "dynapictures",
+      "file": "dynapictures.svg",
+      "url": "https://static.oomol.com/logo/third-party/dynapictures.svg"
+    },
+    {
+      "service": "e2b",
+      "file": "e2b.svg",
+      "url": "https://static.oomol.com/logo/third-party/e2b.svg"
+    },
+    {
+      "service": "eagle_doc",
+      "file": "eagle_doc.png",
+      "url": "https://static.oomol.com/logo/third-party/eagle_doc.png"
+    },
+    {
+      "service": "easypost",
+      "file": "easypost.svg",
+      "url": "https://static.oomol.com/logo/third-party/easypost.svg"
+    },
+    {
+      "service": "ecologi",
+      "file": "ecologi.png",
+      "url": "https://static.oomol.com/logo/third-party/ecologi.png"
+    },
+    {
+      "service": "edenai",
+      "file": "edenai.png",
+      "url": "https://static.oomol.com/logo/third-party/edenai.png"
+    },
+    {
+      "service": "elasticemail",
+      "file": "elasticemail.svg",
+      "url": "https://static.oomol.com/logo/third-party/elasticemail.svg"
+    },
+    {
+      "service": "elevenreader",
+      "file": "elevenreader.svg",
+      "url": "https://static.oomol.com/logo/third-party/Elevenreader.svg"
+    },
+    {
+      "service": "elevio",
+      "file": "elevio.png",
+      "url": "https://static.oomol.com/logo/third-party/elevio.png"
+    },
+    {
+      "service": "elorus",
+      "file": "elorus.svg",
+      "url": "https://static.oomol.com/logo/third-party/elorus.svg"
+    },
+    {
+      "service": "emailable",
+      "file": "emailable.svg",
+      "url": "https://static.oomol.com/logo/third-party/Emailable.svg"
+    },
+    {
+      "service": "emaillistverify",
+      "file": "emaillistverify.svg",
+      "url": "https://static.oomol.com/logo/third-party/Emaillistverify.svg"
+    },
+    {
+      "service": "emailoctopus",
+      "file": "emailoctopus.svg",
+      "url": "https://static.oomol.com/logo/third-party/EmailOctopus.svg"
+    },
+    {
+      "service": "emelia",
+      "file": "emelia.svg",
+      "url": "https://static.oomol.com/logo/third-party/emelia.svg"
+    },
+    {
+      "service": "encharge",
+      "file": "encharge.png",
+      "url": "https://static.oomol.com/logo/third-party/encharge.png"
+    },
+    {
+      "service": "encodian",
+      "file": "encodian.svg",
+      "url": "https://static.oomol.com/logo/third-party/Encodian.svg"
+    },
+    {
+      "service": "energy_performance_certificates",
+      "file": "energy_performance_certificates.svg",
+      "url": "https://static.oomol.com/logo/third-party/energy_performance_certificates.svg"
+    },
+    {
+      "service": "enigma",
+      "file": "enigma.svg",
+      "url": "https://static.oomol.com/logo/third-party/Enigma.svg"
+    },
+    {
+      "service": "eodhd_apis",
+      "file": "eodhd_apis.svg",
+      "url": "https://static.oomol.com/logo/third-party/eodhd_apis.svg"
+    },
+    {
+      "service": "esignatures_io",
+      "file": "esignatures_io.png",
+      "url": "https://static.oomol.com/logo/third-party/esignatures_io.png"
+    },
+    {
+      "service": "espocrm",
+      "file": "espocrm.svg",
+      "url": "https://static.oomol.com/logo/third-party/Espocrm.svg"
+    },
+    {
+      "service": "evenium",
+      "file": "evenium.svg",
+      "url": "https://static.oomol.com/logo/third-party/evenium.svg"
+    },
+    {
+      "service": "eventee",
+      "file": "eventee.png",
+      "url": "https://static.oomol.com/logo/third-party/eventee.png"
+    },
+    {
+      "service": "eventzilla",
+      "file": "eventzilla.svg",
+      "url": "https://static.oomol.com/logo/third-party/eventzilla.svg"
+    },
+    {
+      "service": "everhour",
+      "file": "everhour.png",
+      "url": "https://static.oomol.com/logo/third-party/everhour.png"
+    },
+    {
+      "service": "eversign",
+      "file": "eversign.svg",
+      "url": "https://static.oomol.com/logo/third-party/eversign.svg"
+    },
+    {
+      "service": "excalidraw_mcp",
+      "file": "excalidraw_mcp.png",
+      "url": "https://static.oomol.com/logo/third-party/excalidraw_mcp.png"
+    },
+    {
+      "service": "excel",
+      "file": "excel.svg",
+      "url": "https://static.oomol.com/logo/third-party/excel.svg"
+    },
+    {
+      "service": "expofp",
+      "file": "expofp.svg",
+      "url": "https://static.oomol.com/logo/third-party/expofp.svg"
+    },
+    {
+      "service": "fairing",
+      "file": "fairing.svg",
+      "url": "https://static.oomol.com/logo/third-party/fairing.svg"
+    },
+    {
+      "service": "faktoora",
+      "file": "faktoora.svg",
+      "url": "https://static.oomol.com/logo/third-party/faktoora.svg"
+    },
+    {
+      "service": "fal_ai",
+      "file": "fal_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/Fal.ai.svg"
+    },
+    {
+      "service": "faraday",
+      "file": "faraday.svg",
+      "url": "https://static.oomol.com/logo/third-party/faraday.svg"
+    },
+    {
+      "service": "fast_note_sync",
+      "file": "fast_note_sync.png",
+      "url": "https://static.oomol.com/logo/third-party/fast_note_sync.png"
+    },
+    {
+      "service": "feathery",
+      "file": "feathery.png",
+      "url": "https://static.oomol.com/logo/third-party/feathery.png"
+    },
+    {
+      "service": "featurebase",
+      "file": "featurebase.svg",
+      "url": "https://static.oomol.com/logo/third-party/featurebase.svg"
+    },
+    {
+      "service": "feishu",
+      "file": "feishu.svg",
+      "url": "https://static.oomol.com/logo/third-party/feishu.svg"
+    },
+    {
+      "service": "feishu_app_bot",
+      "file": "feishu_app_bot.svg",
+      "url": "https://static.oomol.com/logo/third-party/feishu_custom_bot.svg"
+    },
+    {
+      "service": "feishu_custom_bot",
+      "file": "feishu_custom_bot.svg",
+      "url": "https://static.oomol.com/logo/third-party/feishu_custom_bot.svg"
+    },
+    {
+      "service": "fellow",
+      "file": "fellow.svg",
+      "url": "https://static.oomol.com/logo/third-party/fellow.svg"
+    },
+    {
+      "service": "felt",
+      "file": "felt.png",
+      "url": "https://static.oomol.com/logo/third-party/felt.png"
+    },
+    {
+      "service": "fern",
+      "file": "fern.svg",
+      "url": "https://static.oomol.com/logo/third-party/fern.svg"
+    },
+    {
+      "service": "ffhub",
+      "file": "ffhub.png",
+      "url": "https://static.oomol.com/logo/third-party/ffhub.png"
+    },
+    {
+      "service": "fiber_ai",
+      "file": "fiber_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/fiber_ai.svg"
+    },
+    {
+      "service": "fidel_api",
+      "file": "fidel_api.jpg",
+      "url": "https://static.oomol.com/logo/third-party/flowiseai.jpg"
+    },
+    {
+      "service": "files_com",
+      "file": "files_com.svg",
+      "url": "https://static.oomol.com/logo/third-party/files_com.svg"
+    },
+    {
+      "service": "finage",
+      "file": "finage.svg",
+      "url": "https://static.oomol.com/logo/third-party/Finage.svg"
+    },
+    {
+      "service": "financial_modeling_prep",
+      "file": "financial_modeling_prep.svg",
+      "url": "https://static.oomol.com/logo/third-party/financial_modeling_prep.svg"
+    },
+    {
+      "service": "findymail",
+      "file": "findymail.svg",
+      "url": "https://static.oomol.com/logo/third-party/findymail.svg"
+    },
+    {
+      "service": "fireberry",
+      "file": "fireberry.svg",
+      "url": "https://static.oomol.com/logo/third-party/fireberry.svg"
+    },
+    {
+      "service": "fireflies",
+      "file": "fireflies.svg",
+      "url": "https://static.oomol.com/logo/third-party/Fireflies.svg"
+    },
+    {
+      "service": "firehydrant",
+      "file": "firehydrant.png",
+      "url": "https://static.oomol.com/logo/third-party/firehydrant.png"
+    },
+    {
+      "service": "firstbase",
+      "file": "firstbase.png",
+      "url": "https://static.oomol.com/logo/third-party/firstbase.png"
+    },
+    {
+      "service": "fivetran",
+      "file": "fivetran.svg",
+      "url": "https://static.oomol.com/logo/third-party/fivetran.svg"
+    },
+    {
+      "service": "fixer",
+      "file": "fixer.svg",
+      "url": "https://static.oomol.com/logo/third-party/Fixer.svg"
+    },
+    {
+      "service": "flagsmith",
+      "file": "flagsmith.svg",
+      "url": "https://static.oomol.com/logo/third-party/flagsmith.svg"
+    },
+    {
+      "service": "flexmail",
+      "file": "flexmail.svg",
+      "url": "https://static.oomol.com/logo/third-party/flexmail.svg"
+    },
+    {
+      "service": "float",
+      "file": "float.svg",
+      "url": "https://static.oomol.com/logo/third-party/float.svg"
+    },
+    {
+      "service": "flomo",
+      "file": "flomo.png",
+      "url": "https://static.oomol.com/logo/third-party/flomo.png"
+    },
+    {
+      "service": "flowiseai",
+      "file": "flowiseai.jpg",
+      "url": "https://static.oomol.com/logo/third-party/flowiseai.jpg"
+    },
+    {
+      "service": "fluxguard",
+      "file": "fluxguard.svg",
+      "url": "https://static.oomol.com/logo/third-party/fluxguard.svg"
+    },
+    {
+      "service": "folk",
+      "file": "folk.svg",
+      "url": "https://static.oomol.com/logo/third-party/folk.svg"
+    },
+    {
+      "service": "fomo",
+      "file": "fomo.svg",
+      "url": "https://static.oomol.com/logo/third-party/fomo.svg"
+    },
+    {
+      "service": "football_data",
+      "file": "football_data.png",
+      "url": "https://static.oomol.com/logo/third-party/football_data.png"
+    },
+    {
+      "service": "forem",
+      "file": "forem.svg",
+      "url": "https://static.oomol.com/logo/third-party/forem.svg"
+    },
+    {
+      "service": "formcarry",
+      "file": "formcarry.svg",
+      "url": "https://static.oomol.com/logo/third-party/Formcarry.svg"
+    },
+    {
+      "service": "formsite",
+      "file": "formsite.svg",
+      "url": "https://static.oomol.com/logo/third-party/formsite.svg"
+    },
+    {
+      "service": "formstack_documents",
+      "file": "formstack_documents.svg",
+      "url": "https://static.oomol.com/logo/third-party/formstack_documents.svg"
+    },
+    {
+      "service": "fraudlabspro",
+      "file": "fraudlabspro.svg",
+      "url": "https://static.oomol.com/logo/third-party/fraudlabspro.svg"
+    },
+    {
+      "service": "freshdesk",
+      "file": "freshdesk.svg",
+      "url": "https://static.oomol.com/logo/third-party/Freshdesk.svg"
+    },
+    {
+      "service": "freshsales",
+      "file": "freshsales.svg",
+      "url": "https://static.oomol.com/logo/third-party/freshsales.svg"
+    },
+    {
+      "service": "freshservice",
+      "file": "freshservice.svg",
+      "url": "https://static.oomol.com/logo/third-party/freshservice.svg"
+    },
+    {
+      "service": "freshteam",
+      "file": "freshteam.svg",
+      "url": "https://static.oomol.com/logo/third-party/freshteam.svg"
+    },
+    {
+      "service": "full_contact",
+      "file": "full_contact.svg",
+      "url": "https://static.oomol.com/logo/third-party/full_contact.svg"
+    },
+    {
+      "service": "fullenrich",
+      "file": "fullenrich.svg",
+      "url": "https://static.oomol.com/logo/third-party/fullenrich.svg"
+    },
+    {
+      "service": "fusion-api",
+      "file": "fusion-api.png",
+      "url": "https://static.oomol.com/logo/logo.png"
+    },
+    {
+      "service": "fuxin",
+      "file": "fuxin.svg",
+      "url": "https://static.oomol.com/logo/third-party/fuxin.svg"
+    },
+    {
+      "service": "gagelist",
+      "file": "gagelist.png",
+      "url": "https://static.oomol.com/logo/third-party/gagelist.png"
+    },
+    {
+      "service": "gainsight_nxt",
+      "file": "gainsight_nxt.svg",
+      "url": "https://static.oomol.com/logo/third-party/gainsight_nxt.svg"
+    },
+    {
+      "service": "gamma",
+      "file": "gamma.svg",
+      "url": "https://static.oomol.com/logo/third-party/Gamma.svg"
+    },
+    {
+      "service": "gatherup",
+      "file": "gatherup.svg",
+      "url": "https://static.oomol.com/logo/third-party/gatherup.svg"
+    },
+    {
+      "service": "geckoboard",
+      "file": "geckoboard.png",
+      "url": "https://static.oomol.com/logo/third-party/geckoboard.png"
+    },
+    {
+      "service": "gem",
+      "file": "gem.svg",
+      "url": "https://static.oomol.com/logo/third-party/gem.svg"
+    },
+    {
+      "service": "gender_api",
+      "file": "gender_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/gender_api.svg"
+    },
+    {
+      "service": "genderapi_io",
+      "file": "genderapi_io.png",
+      "url": "https://static.oomol.com/logo/third-party/genderapi_io.png"
+    },
+    {
+      "service": "genderize",
+      "file": "genderize.svg",
+      "url": "https://static.oomol.com/logo/third-party/Genderize.svg"
+    },
+    {
+      "service": "generic_imap",
+      "file": "generic_imap.svg",
+      "url": "https://static.oomol.com/logo/third-party/generic_imap.svg"
+    },
+    {
+      "service": "geoapify",
+      "file": "geoapify.png",
+      "url": "https://static.oomol.com/logo/third-party/Geoapify.png"
+    },
+    {
+      "service": "geocodio",
+      "file": "geocodio.svg",
+      "url": "https://static.oomol.com/logo/third-party/Geocodio.svg"
+    },
+    {
+      "service": "geokeo",
+      "file": "geokeo.svg",
+      "url": "https://static.oomol.com/logo/third-party/Geokeo.svg"
+    },
+    {
+      "service": "getform",
+      "file": "getform.png",
+      "url": "https://static.oomol.com/logo/third-party/getform.png"
+    },
+    {
+      "service": "getnote",
+      "file": "getnote.png",
+      "url": "https://static.oomol.com/logo/third-party/getnote.png"
+    },
+    {
+      "service": "getprospect",
+      "file": "getprospect.svg",
+      "url": "https://static.oomol.com/logo/third-party/getprospect.svg"
+    },
+    {
+      "service": "gift_up",
+      "file": "gift_up.png",
+      "url": "https://static.oomol.com/logo/third-party/gift_up.png"
+    },
+    {
+      "service": "gigasheet",
+      "file": "gigasheet.svg",
+      "url": "https://static.oomol.com/logo/third-party/Gigasheet.svg"
+    },
+    {
+      "service": "gist",
+      "file": "gist.png",
+      "url": "https://static.oomol.com/logo/third-party/github.png"
+    },
+    {
+      "service": "givebutter",
+      "file": "givebutter.svg",
+      "url": "https://static.oomol.com/logo/third-party/givebutter.svg"
+    },
+    {
+      "service": "gladia",
+      "file": "gladia.svg",
+      "url": "https://static.oomol.com/logo/third-party/gladia.svg"
+    },
+    {
+      "service": "gleap",
+      "file": "gleap.svg",
+      "url": "https://static.oomol.com/logo/third-party/gleap.svg"
+    },
+    {
+      "service": "globalping",
+      "file": "globalping.svg",
+      "url": "https://static.oomol.com/logo/third-party/globalping.svg"
+    },
+    {
+      "service": "glyphic",
+      "file": "glyphic.svg",
+      "url": "https://static.oomol.com/logo/third-party/glyphic.svg"
+    },
+    {
+      "service": "godial",
+      "file": "godial.png",
+      "url": "https://static.oomol.com/logo/third-party/godial.png"
+    },
+    {
+      "service": "goody",
+      "file": "goody.svg",
+      "url": "https://static.oomol.com/logo/third-party/goody.svg"
+    },
+    {
+      "service": "google_address_validation",
+      "file": "google_address_validation.svg",
+      "url": "https://static.oomol.com/logo/third-party/Google%20Address%20Validation.svg"
+    },
+    {
+      "service": "google_routes",
+      "file": "google_routes.svg",
+      "url": "https://static.oomol.com/logo/third-party/google_routes.svg"
+    },
+    {
+      "service": "gorgias",
+      "file": "gorgias.png",
+      "url": "https://static.oomol.com/logo/third-party/gorgias.png"
+    },
+    {
+      "service": "gosquared",
+      "file": "gosquared.png",
+      "url": "https://static.oomol.com/logo/third-party/gosquared.png"
+    },
+    {
+      "service": "gotify",
+      "file": "gotify.svg",
+      "url": "https://static.oomol.com/logo/third-party/gotify.svg"
+    },
+    {
+      "service": "govee",
+      "file": "govee.svg",
+      "url": "https://static.oomol.com/logo/third-party/govee.svg"
+    },
+    {
+      "service": "gptzero",
+      "file": "gptzero.svg",
+      "url": "https://static.oomol.com/logo/third-party/gptzero.svg"
+    },
+    {
+      "service": "grafana_cloud",
+      "file": "grafana_cloud.svg",
+      "url": "https://static.oomol.com/logo/third-party/grafana_cloud.svg"
+    },
+    {
+      "service": "graphhopper",
+      "file": "graphhopper.png",
+      "url": "https://static.oomol.com/logo/third-party/graphhopper.png"
+    },
+    {
+      "service": "griptape",
+      "file": "griptape.svg",
+      "url": "https://static.oomol.com/logo/third-party/griptape.svg"
+    },
+    {
+      "service": "grist",
+      "file": "grist.png",
+      "url": "https://static.oomol.com/logo/third-party/grist.png"
+    },
+    {
+      "service": "groqcloud",
+      "file": "groqcloud.svg",
+      "url": "https://static.oomol.com/logo/third-party/GroqCloud.svg"
+    },
+    {
+      "service": "gtmetrix",
+      "file": "gtmetrix.svg",
+      "url": "https://static.oomol.com/logo/third-party/GTmetrix.svg"
+    },
+    {
+      "service": "gumloop",
+      "file": "gumloop.svg",
+      "url": "https://static.oomol.com/logo/third-party/gumloop.svg"
+    },
+    {
+      "service": "guru",
+      "file": "guru.svg",
+      "url": "https://static.oomol.com/logo/third-party/guru.svg"
+    },
+    {
+      "service": "habitica",
+      "file": "habitica.png",
+      "url": "https://static.oomol.com/logo/third-party/habitica.png"
+    },
+    {
+      "service": "hackernews",
+      "file": "hackernews.svg",
+      "url": "https://static.oomol.com/logo/third-party/Hacker%20News.svg"
+    },
+    {
+      "service": "hackerrank_work",
+      "file": "hackerrank_work.svg",
+      "url": "https://static.oomol.com/logo/third-party/HackerRank%20Work.svg"
+    },
+    {
+      "service": "harmonic_ai",
+      "file": "harmonic_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/harmonic_ai.png"
+    },
+    {
+      "service": "harvest",
+      "file": "harvest.svg",
+      "url": "https://static.oomol.com/logo/third-party/Harvest.svg"
+    },
+    {
+      "service": "hasdata",
+      "file": "hasdata.svg",
+      "url": "https://static.oomol.com/logo/third-party/hasdata.svg"
+    },
+    {
+      "service": "headout",
+      "file": "headout.png",
+      "url": "https://static.oomol.com/logo/third-party/headout.png"
+    },
+    {
+      "service": "healthchecks_io",
+      "file": "healthchecks_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/healthchecks_io.svg"
+    },
+    {
+      "service": "heartbeat",
+      "file": "heartbeat.png",
+      "url": "https://static.oomol.com/logo/third-party/heartbeat.png"
+    },
+    {
+      "service": "helium10",
+      "file": "helium10.svg",
+      "url": "https://static.oomol.com/logo/third-party/helium10.svg"
+    },
+    {
+      "service": "helloleads",
+      "file": "helloleads.png",
+      "url": "https://static.oomol.com/logo/third-party/helloleads.png"
+    },
+    {
+      "service": "helpscout_docs",
+      "file": "helpscout_docs.svg",
+      "url": "https://static.oomol.com/logo/third-party/helpscout_docs.svg"
+    },
+    {
+      "service": "hex",
+      "file": "hex.svg",
+      "url": "https://static.oomol.com/logo/third-party/hex.svg"
+    },
+    {
+      "service": "heygen",
+      "file": "heygen.svg",
+      "url": "https://static.oomol.com/logo/third-party/HeyGen.svg"
+    },
+    {
+      "service": "heyreach",
+      "file": "heyreach.svg",
+      "url": "https://static.oomol.com/logo/third-party/heyreach.svg"
+    },
+    {
+      "service": "heyy",
+      "file": "heyy.svg",
+      "url": "https://static.oomol.com/logo/third-party/heyy.svg"
+    },
+    {
+      "service": "heyzine",
+      "file": "heyzine.svg",
+      "url": "https://static.oomol.com/logo/third-party/heyzine.svg"
+    },
+    {
+      "service": "higgsfield_ai",
+      "file": "higgsfield_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/higgsfield_ai.png"
+    },
+    {
+      "service": "high_level",
+      "file": "high_level.svg",
+      "url": "https://static.oomol.com/logo/third-party/high_level.svg"
+    },
+    {
+      "service": "highergov",
+      "file": "highergov.svg",
+      "url": "https://static.oomol.com/logo/third-party/highergov.svg"
+    },
+    {
+      "service": "holded",
+      "file": "holded.svg",
+      "url": "https://static.oomol.com/logo/third-party/holded.svg"
+    },
+    {
+      "service": "honeyhive",
+      "file": "honeyhive.png",
+      "url": "https://static.oomol.com/logo/third-party/honeyhive.png"
+    },
+    {
+      "service": "hookdeck",
+      "file": "hookdeck.svg",
+      "url": "https://static.oomol.com/logo/third-party/hookdeck.svg"
+    },
+    {
+      "service": "hoop",
+      "file": "hoop.svg",
+      "url": "https://static.oomol.com/logo/third-party/hoop.svg"
+    },
+    {
+      "service": "hotspotsystem",
+      "file": "hotspotsystem.png",
+      "url": "https://static.oomol.com/logo/third-party/hotspotsystem.png"
+    },
+    {
+      "service": "hr_partner",
+      "file": "hr_partner.png",
+      "url": "https://static.oomol.com/logo/third-party/hr_partner.png"
+    },
+    {
+      "service": "html_to_image",
+      "file": "html_to_image.svg",
+      "url": "https://static.oomol.com/logo/third-party/html_to_image.svg"
+    },
+    {
+      "service": "htmlcsstoimage",
+      "file": "htmlcsstoimage.svg",
+      "url": "https://static.oomol.com/logo/third-party/htmlcsstoimage.svg"
+    },
+    {
+      "service": "httpsms",
+      "file": "httpsms.svg",
+      "url": "https://static.oomol.com/logo/third-party/httpsms.svg"
+    },
+    {
+      "service": "hub_planner",
+      "file": "hub_planner.svg",
+      "url": "https://static.oomol.com/logo/third-party/hub_planner.svg"
+    },
+    {
+      "service": "humanitix",
+      "file": "humanitix.png",
+      "url": "https://static.oomol.com/logo/third-party/humanitix.png"
+    },
+    {
+      "service": "hunter",
+      "file": "hunter.png",
+      "url": "https://static.oomol.com/logo/third-party/hunter.png"
+    },
+    {
+      "service": "hyperbrowser",
+      "file": "hyperbrowser.svg",
+      "url": "https://static.oomol.com/logo/third-party/hyperbrowser.svg"
+    },
+    {
+      "service": "icypeas",
+      "file": "icypeas.png",
+      "url": "https://static.oomol.com/logo/third-party/icypeas.png"
+    },
+    {
+      "service": "ima",
+      "file": "ima.svg",
+      "url": "https://static.oomol.com/logo/third-party/ima.svg"
+    },
+    {
+      "service": "imagekit",
+      "file": "imagekit.svg",
+      "url": "https://static.oomol.com/logo/third-party/imagekit.svg"
+    },
+    {
+      "service": "imgbb",
+      "file": "imgbb.png",
+      "url": "https://static.oomol.com/logo/third-party/imgbb.png"
+    },
+    {
+      "service": "imgix",
+      "file": "imgix.svg",
+      "url": "https://static.oomol.com/logo/third-party/imgix.svg"
+    },
+    {
+      "service": "influxdb_cloud",
+      "file": "influxdb_cloud.svg",
+      "url": "https://static.oomol.com/logo/third-party/influxdb_cloud.svg"
+    },
+    {
+      "service": "infolobby",
+      "file": "infolobby.png",
+      "url": "https://static.oomol.com/logo/third-party/infolobby.png"
+    },
+    {
+      "service": "insites",
+      "file": "insites.svg",
+      "url": "https://static.oomol.com/logo/third-party/insites.svg"
+    },
+    {
+      "service": "instabot",
+      "file": "instabot.svg",
+      "url": "https://static.oomol.com/logo/third-party/instabot.svg"
+    },
+    {
+      "service": "instantly_ai",
+      "file": "instantly_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/instantly_ai.svg"
+    },
+    {
+      "service": "intelliprint",
+      "file": "intelliprint.png",
+      "url": "https://static.oomol.com/logo/third-party/intelliprint.png"
+    },
+    {
+      "service": "interzoid",
+      "file": "interzoid.svg",
+      "url": "https://static.oomol.com/logo/third-party/interzoid.svg"
+    },
+    {
+      "service": "intuiface",
+      "file": "intuiface.png",
+      "url": "https://static.oomol.com/logo/third-party/intuiface.png"
+    },
+    {
+      "service": "ip2location",
+      "file": "ip2location.png",
+      "url": "https://static.oomol.com/logo/third-party/ip2location.png"
+    },
+    {
+      "service": "ip2proxy",
+      "file": "ip2proxy.svg",
+      "url": "https://static.oomol.com/logo/third-party/Ip2Proxy.svg"
+    },
+    {
+      "service": "ip2whois",
+      "file": "ip2whois.png",
+      "url": "https://static.oomol.com/logo/third-party/ip2whois.png"
+    },
+    {
+      "service": "ipdata_co",
+      "file": "ipdata_co.svg",
+      "url": "https://static.oomol.com/logo/third-party/ipdata_co.svg"
+    },
+    {
+      "service": "ipgeolocation_io",
+      "file": "ipgeolocation_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/ipgeolocation_io.svg"
+    },
+    {
+      "service": "ipinfo_io",
+      "file": "ipinfo_io.png",
+      "url": "https://static.oomol.com/logo/third-party/ipinfo_io.png"
+    },
+    {
+      "service": "iplocate",
+      "file": "iplocate.svg",
+      "url": "https://static.oomol.com/logo/third-party/iplocate.svg"
+    },
+    {
+      "service": "ipqualityscore",
+      "file": "ipqualityscore.svg",
+      "url": "https://static.oomol.com/logo/third-party/ipqualityscore.svg"
+    },
+    {
+      "service": "ipregistry",
+      "file": "ipregistry.png",
+      "url": "https://static.oomol.com/logo/third-party/ipregistry.png"
+    },
+    {
+      "service": "ipstack",
+      "file": "ipstack.svg",
+      "url": "https://static.oomol.com/logo/third-party/ipstack.svg"
+    },
+    {
+      "service": "iqair_airvisual",
+      "file": "iqair_airvisual.svg",
+      "url": "https://static.oomol.com/logo/third-party/iqair_airvisual.svg"
+    },
+    {
+      "service": "it_glue",
+      "file": "it_glue.svg",
+      "url": "https://static.oomol.com/logo/third-party/it_glue.svg"
+    },
+    {
+      "service": "jamie",
+      "file": "jamie.png",
+      "url": "https://static.oomol.com/logo/third-party/jamie.png"
+    },
+    {
+      "service": "jazzhr",
+      "file": "jazzhr.png",
+      "url": "https://static.oomol.com/logo/third-party/jazzhr.png"
+    },
+    {
+      "service": "jimeng_ai",
+      "file": "jimeng_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/jimeng_ai.png"
+    },
+    {
+      "service": "jiminny",
+      "file": "jiminny.png",
+      "url": "https://static.oomol.com/logo/third-party/jiminny.png"
+    },
+    {
+      "service": "jin10",
+      "file": "jin10.png",
+      "url": "https://static.oomol.com/logo/third-party/jin10.png"
+    },
+    {
+      "service": "jobnimbus",
+      "file": "jobnimbus.webp",
+      "url": "https://static.oomol.com/logo/third-party/jobnimbus.png"
+    },
+    {
+      "service": "jotform",
+      "file": "jotform.svg",
+      "url": "https://static.oomol.com/logo/third-party/Jotform.svg"
+    },
+    {
+      "service": "jsonbin",
+      "file": "jsonbin.png",
+      "url": "https://static.oomol.com/logo/third-party/jsonbin.png"
+    },
+    {
+      "service": "jumpcloud",
+      "file": "jumpcloud.png",
+      "url": "https://static.oomol.com/logo/third-party/jumpcloud.png"
+    },
+    {
+      "service": "jumpseller",
+      "file": "jumpseller.svg",
+      "url": "https://static.oomol.com/logo/third-party/jumpseller.svg"
+    },
+    {
+      "service": "jumpserver",
+      "file": "jumpserver.svg",
+      "url": "https://static.oomol.com/logo/third-party/jumpserver.svg"
+    },
+    {
+      "service": "junglescout",
+      "file": "junglescout.svg",
+      "url": "https://static.oomol.com/logo/third-party/junglescout.svg"
+    },
+    {
+      "service": "juniper_mist",
+      "file": "juniper_mist.png",
+      "url": "https://static.oomol.com/logo/third-party/juniper_mist.png"
+    },
+    {
+      "service": "kadoa",
+      "file": "kadoa.svg",
+      "url": "https://static.oomol.com/logo/third-party/kadoa.svg"
+    },
+    {
+      "service": "kaleido",
+      "file": "kaleido.png",
+      "url": "https://static.oomol.com/logo/third-party/kaleido.png"
+    },
+    {
+      "service": "kandji",
+      "file": "kandji.png",
+      "url": "https://static.oomol.com/logo/third-party/kandji.png"
+    },
+    {
+      "service": "keen_io",
+      "file": "keen_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/keen_io.svg"
+    },
+    {
+      "service": "keepa",
+      "file": "keepa.svg",
+      "url": "https://static.oomol.com/logo/third-party/keepa.svg"
+    },
+    {
+      "service": "keeper_scim",
+      "file": "keeper_scim.png",
+      "url": "https://static.oomol.com/logo/third-party/keeper_scim.png"
+    },
+    {
+      "service": "kernel",
+      "file": "kernel.svg",
+      "url": "https://static.oomol.com/logo/third-party/kernel.svg"
+    },
+    {
+      "service": "keygen",
+      "file": "keygen.svg",
+      "url": "https://static.oomol.com/logo/third-party/keygen.svg"
+    },
+    {
+      "service": "keyword",
+      "file": "keyword.svg",
+      "url": "https://static.oomol.com/logo/third-party/keyword.svg"
+    },
+    {
+      "service": "kickbox",
+      "file": "kickbox.svg",
+      "url": "https://static.oomol.com/logo/third-party/Kickbox.svg"
+    },
+    {
+      "service": "kie_ai",
+      "file": "kie_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/kie_ai.png"
+    },
+    {
+      "service": "kintone",
+      "file": "kintone.svg",
+      "url": "https://static.oomol.com/logo/third-party/kintone.svg"
+    },
+    {
+      "service": "klangio",
+      "file": "klangio.svg",
+      "url": "https://static.oomol.com/logo/third-party/klangio.svg"
+    },
+    {
+      "service": "klaviyo",
+      "file": "klaviyo.svg",
+      "url": "https://static.oomol.com/logo/third-party/klaviyo.svg"
+    },
+    {
+      "service": "klazify",
+      "file": "klazify.svg",
+      "url": "https://static.oomol.com/logo/third-party/klazify.svg"
+    },
+    {
+      "service": "klicktipp",
+      "file": "klicktipp.svg",
+      "url": "https://static.oomol.com/logo/third-party/klicktipp.svg"
+    },
+    {
+      "service": "klipfolio",
+      "file": "klipfolio.svg",
+      "url": "https://static.oomol.com/logo/third-party/klipfolio.svg"
+    },
+    {
+      "service": "knack",
+      "file": "knack.png",
+      "url": "https://static.oomol.com/logo/third-party/knack.png"
+    },
+    {
+      "service": "knock",
+      "file": "knock.svg",
+      "url": "https://static.oomol.com/logo/third-party/knock.svg"
+    },
+    {
+      "service": "knowbe4",
+      "file": "knowbe4.png",
+      "url": "https://static.oomol.com/logo/third-party/knowbe4.png"
+    },
+    {
+      "service": "komari",
+      "file": "komari.png",
+      "url": "https://static.oomol.com/logo/third-party/komari.png"
+    },
+    {
+      "service": "kommo",
+      "file": "kommo.svg",
+      "url": "https://static.oomol.com/logo/third-party/kommo.svg"
+    },
+    {
+      "service": "kontent_ai",
+      "file": "kontent_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/kontent_ai.svg"
+    },
+    {
+      "service": "kraken_io",
+      "file": "kraken_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/Kraken.io.svg"
+    },
+    {
+      "service": "krispcall",
+      "file": "krispcall.svg",
+      "url": "https://static.oomol.com/logo/third-party/krispcall.svg"
+    },
+    {
+      "service": "kustomer",
+      "file": "kustomer.svg",
+      "url": "https://static.oomol.com/logo/third-party/kustomer.svg"
+    },
+    {
+      "service": "l2s",
+      "file": "l2s.png",
+      "url": "https://static.oomol.com/logo/third-party/l2s.png"
+    },
+    {
+      "service": "la_growth_machine",
+      "file": "la_growth_machine.svg",
+      "url": "https://static.oomol.com/logo/third-party/la_growth_machine.svg"
+    },
+    {
+      "service": "label_studio",
+      "file": "label_studio.svg",
+      "url": "https://static.oomol.com/logo/third-party/label_studio.svg"
+    },
+    {
+      "service": "landbot",
+      "file": "landbot.svg",
+      "url": "https://static.oomol.com/logo/third-party/landbot.svg"
+    },
+    {
+      "service": "langbase",
+      "file": "langbase.svg",
+      "url": "https://static.oomol.com/logo/third-party/langbase.svg"
+    },
+    {
+      "service": "langsmith",
+      "file": "langsmith.svg",
+      "url": "https://static.oomol.com/logo/third-party/langsmith.svg"
+    },
+    {
+      "service": "laposta",
+      "file": "laposta.svg",
+      "url": "https://static.oomol.com/logo/third-party/laposta.svg"
+    },
+    {
+      "service": "laravel_cloud",
+      "file": "laravel_cloud.svg",
+      "url": "https://static.oomol.com/logo/third-party/laravel_cloud.svg"
+    },
+    {
+      "service": "latchshot",
+      "file": "latchshot.svg",
+      "url": "https://static.oomol.com/logo/third-party/latchshot.svg"
+    },
+    {
+      "service": "lattice",
+      "file": "lattice.svg",
+      "url": "https://static.oomol.com/logo/third-party/lattice.svg"
+    },
+    {
+      "service": "leadboxer",
+      "file": "leadboxer.png",
+      "url": "https://static.oomol.com/logo/third-party/leadboxer.png"
+    },
+    {
+      "service": "leadfeeder",
+      "file": "leadfeeder.svg",
+      "url": "https://static.oomol.com/logo/third-party/leadfeeder.svg"
+    },
+    {
+      "service": "leadiq",
+      "file": "leadiq.svg",
+      "url": "https://static.oomol.com/logo/third-party/leadiq.svg"
+    },
+    {
+      "service": "leadmagic",
+      "file": "leadmagic.svg",
+      "url": "https://static.oomol.com/logo/third-party/leadmagic.svg"
+    },
+    {
+      "service": "leexi",
+      "file": "leexi.svg",
+      "url": "https://static.oomol.com/logo/third-party/leexi.svg"
+    },
+    {
+      "service": "leiga",
+      "file": "leiga.png",
+      "url": "https://static.oomol.com/logo/third-party/leiga.png"
+    },
+    {
+      "service": "lemlist",
+      "file": "lemlist.svg",
+      "url": "https://static.oomol.com/logo/third-party/lemlist.svg"
+    },
+    {
+      "service": "leonardo_ai",
+      "file": "leonardo_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/leonardo_ai.png"
+    },
+    {
+      "service": "lessonspace",
+      "file": "lessonspace.svg",
+      "url": "https://static.oomol.com/logo/third-party/lessonspace.svg"
+    },
+    {
+      "service": "lever",
+      "file": "lever.svg",
+      "url": "https://static.oomol.com/logo/third-party/lever.svg"
+    },
+    {
+      "service": "lexoffice",
+      "file": "lexoffice.svg",
+      "url": "https://static.oomol.com/logo/third-party/lexoffice.svg"
+    },
+    {
+      "service": "lightfield",
+      "file": "lightfield.svg",
+      "url": "https://static.oomol.com/logo/third-party/lightfield.svg"
+    },
+    {
+      "service": "lightspeed_vt",
+      "file": "lightspeed_vt.png",
+      "url": "https://static.oomol.com/logo/third-party/lightspeed_vt.png"
+    },
+    {
+      "service": "linguapop",
+      "file": "linguapop.svg",
+      "url": "https://static.oomol.com/logo/third-party/Linguapop.svg"
+    },
+    {
+      "service": "lingvanex_translation_api",
+      "file": "lingvanex_translation_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/lingvanex_translation_api.svg"
+    },
+    {
+      "service": "lingxing",
+      "file": "lingxing.png",
+      "url": "https://static.oomol.com/logo/third-party/lingxing.png"
+    },
+    {
+      "service": "linkfox",
+      "file": "linkfox.svg",
+      "url": "https://static.oomol.com/logo/third-party/linkfox.svg"
+    },
+    {
+      "service": "linkhut",
+      "file": "linkhut.svg",
+      "url": "https://static.oomol.com/logo/third-party/Linkhut.svg"
+    },
+    {
+      "service": "linkly",
+      "file": "linkly.svg",
+      "url": "https://static.oomol.com/logo/third-party/linkly.svg"
+    },
+    {
+      "service": "linkup",
+      "file": "linkup.svg",
+      "url": "https://static.oomol.com/logo/third-party/Linkup.svg"
+    },
+    {
+      "service": "linux_do",
+      "file": "linux_do.svg",
+      "url": "https://static.oomol.com/logo/third-party/linux_do.svg"
+    },
+    {
+      "service": "listennotes",
+      "file": "listennotes.svg",
+      "url": "https://static.oomol.com/logo/third-party/Listen%20Notes.svg"
+    },
+    {
+      "service": "liveagent",
+      "file": "liveagent.svg",
+      "url": "https://static.oomol.com/logo/third-party/liveagent.svg"
+    },
+    {
+      "service": "livesession",
+      "file": "livesession.jpg",
+      "url": "https://static.oomol.com/logo/third-party/livesession.jpg"
+    },
+    {
+      "service": "livespace",
+      "file": "livespace.svg",
+      "url": "https://static.oomol.com/logo/third-party/livespace.svg"
+    },
+    {
+      "service": "lob",
+      "file": "lob.svg",
+      "url": "https://static.oomol.com/logo/third-party/lob.svg"
+    },
+    {
+      "service": "logo_dev",
+      "file": "logo_dev.svg",
+      "url": "https://static.oomol.com/logo/third-party/Logo.dev.svg"
+    },
+    {
+      "service": "logsnag",
+      "file": "logsnag.svg",
+      "url": "https://static.oomol.com/logo/third-party/logsnag.svg"
+    },
+    {
+      "service": "lokalise",
+      "file": "lokalise.svg",
+      "url": "https://static.oomol.com/logo/third-party/lokalise.svg"
+    },
+    {
+      "service": "loomio",
+      "file": "loomio.png",
+      "url": "https://static.oomol.com/logo/third-party/loomio.png"
+    },
+    {
+      "service": "loop_returns",
+      "file": "loop_returns.svg",
+      "url": "https://static.oomol.com/logo/third-party/loop_returns.svg"
+    },
+    {
+      "service": "loyverse",
+      "file": "loyverse.svg",
+      "url": "https://static.oomol.com/logo/third-party/loyverse.svg"
+    },
+    {
+      "service": "lucid_scim",
+      "file": "lucid_scim.svg",
+      "url": "https://static.oomol.com/logo/third-party/lucid_scim.svg"
+    },
+    {
+      "service": "luckin_coffee",
+      "file": "luckin_coffee.svg",
+      "url": "https://static.oomol.com/logo/third-party/luckin_coffee.svg"
+    },
+    {
+      "service": "lumos",
+      "file": "lumos.svg",
+      "url": "https://static.oomol.com/logo/third-party/lumos.svg"
+    },
+    {
+      "service": "lusha",
+      "file": "lusha.png",
+      "url": "https://static.oomol.com/logo/third-party/lusha.png"
+    },
+    {
+      "service": "magileads",
+      "file": "magileads.svg",
+      "url": "https://static.oomol.com/logo/third-party/magileads.svg"
+    },
+    {
+      "service": "mailbluster",
+      "file": "mailbluster.svg",
+      "url": "https://static.oomol.com/logo/third-party/mailbluster.svg"
+    },
+    {
+      "service": "mailbox_validator",
+      "file": "mailbox_validator.svg",
+      "url": "https://static.oomol.com/logo/third-party/mailbox_validator.svg"
+    },
+    {
+      "service": "mailboxlayer",
+      "file": "mailboxlayer.svg",
+      "url": "https://static.oomol.com/logo/third-party/Mailboxlayer.svg"
+    },
+    {
+      "service": "mailcheck",
+      "file": "mailcheck.svg",
+      "url": "https://static.oomol.com/logo/third-party/Mailcheck.svg"
+    },
+    {
+      "service": "mailcoach",
+      "file": "mailcoach.svg",
+      "url": "https://static.oomol.com/logo/third-party/mailcoach.svg"
+    },
+    {
+      "service": "mailercloud",
+      "file": "mailercloud.png",
+      "url": "https://static.oomol.com/logo/third-party/mailercloud.png"
+    },
+    {
+      "service": "mailerlite",
+      "file": "mailerlite.svg",
+      "url": "https://static.oomol.com/logo/third-party/MailerLite.svg"
+    },
+    {
+      "service": "mailersend",
+      "file": "mailersend.svg",
+      "url": "https://static.oomol.com/logo/third-party/MailerSend.svg"
+    },
+    {
+      "service": "mailgenius",
+      "file": "mailgenius.png",
+      "url": "https://static.oomol.com/logo/third-party/mailgenius.png"
+    },
+    {
+      "service": "mailjet",
+      "file": "mailjet.png",
+      "url": "https://static.oomol.com/logo/third-party/mailjet.png"
+    },
+    {
+      "service": "mailosaur",
+      "file": "mailosaur.svg",
+      "url": "https://static.oomol.com/logo/third-party/mailosaur.svg"
+    },
+    {
+      "service": "mails_so",
+      "file": "mails_so.svg",
+      "url": "https://static.oomol.com/logo/third-party/Mails.so.svg"
+    },
+    {
+      "service": "mailsoftly",
+      "file": "mailsoftly.png",
+      "url": "https://static.oomol.com/logo/third-party/mailsoftly.png"
+    },
+    {
+      "service": "maintainx",
+      "file": "maintainx.svg",
+      "url": "https://static.oomol.com/logo/third-party/maintainx.svg"
+    },
+    {
+      "service": "manatal",
+      "file": "manatal.svg",
+      "url": "https://static.oomol.com/logo/third-party/manatal.svg"
+    },
+    {
+      "service": "maple_billing",
+      "file": "maple_billing.png",
+      "url": "https://static.oomol.com/logo/third-party/maple_billing.png"
+    },
+    {
+      "service": "marketstack",
+      "file": "marketstack.svg",
+      "url": "https://static.oomol.com/logo/third-party/Marketstack.svg"
+    },
+    {
+      "service": "mcdonalds_cn",
+      "file": "mcdonalds_cn.png",
+      "url": "https://static.oomol.com/logo/third-party/mcdonalds_cn.png"
+    },
+    {
+      "service": "mediastack",
+      "file": "mediastack.png",
+      "url": "https://static.oomol.com/logo/third-party/mediastack.png"
+    },
+    {
+      "service": "meet_geek",
+      "file": "meet_geek.svg",
+      "url": "https://static.oomol.com/logo/third-party/meet_geek.svg"
+    },
+    {
+      "service": "megaventory",
+      "file": "megaventory.svg",
+      "url": "https://static.oomol.com/logo/third-party/megaventory.svg"
+    },
+    {
+      "service": "mem",
+      "file": "mem.svg",
+      "url": "https://static.oomol.com/logo/third-party/mem.svg"
+    },
+    {
+      "service": "mem0",
+      "file": "mem0.svg",
+      "url": "https://static.oomol.com/logo/third-party/Mem0.svg"
+    },
+    {
+      "service": "memberstack",
+      "file": "memberstack.svg",
+      "url": "https://static.oomol.com/logo/third-party/memberstack.svg"
+    },
+    {
+      "service": "membervault",
+      "file": "membervault.svg",
+      "url": "https://static.oomol.com/logo/third-party/membervault.svg"
+    },
+    {
+      "service": "memos",
+      "file": "memos.webp",
+      "url": "https://static.oomol.com/logo/third-party/memos.webp"
+    },
+    {
+      "service": "metaso",
+      "file": "metaso.png",
+      "url": "https://static.oomol.com/logo/third-party/metaso.png"
+    },
+    {
+      "service": "metatextai",
+      "file": "metatextai.svg",
+      "url": "https://static.oomol.com/logo/third-party/metatextai.svg"
+    },
+    {
+      "service": "metronome",
+      "file": "metronome.svg",
+      "url": "https://static.oomol.com/logo/third-party/metronome.svg"
+    },
+    {
+      "service": "microsoft_clarity",
+      "file": "microsoft_clarity.png",
+      "url": "https://static.oomol.com/logo/third-party/microsoft_clarity.png"
+    },
+    {
+      "service": "mindbody",
+      "file": "mindbody.svg",
+      "url": "https://static.oomol.com/logo/third-party/mindbody.svg"
+    },
+    {
+      "service": "minerstat",
+      "file": "minerstat.png",
+      "url": "https://static.oomol.com/logo/third-party/minerstat.png"
+    },
+    {
+      "service": "mineru",
+      "file": "mineru.svg",
+      "url": "https://static.oomol.com/logo/third-party/mineru.svg"
+    },
+    {
+      "service": "missive",
+      "file": "missive.svg",
+      "url": "https://static.oomol.com/logo/third-party/missive.svg"
+    },
+    {
+      "service": "mixmax",
+      "file": "mixmax.svg",
+      "url": "https://static.oomol.com/logo/third-party/mixmax.svg"
+    },
+    {
+      "service": "mocean",
+      "file": "mocean.png",
+      "url": "https://static.oomol.com/logo/third-party/mocean.png"
+    },
+    {
+      "service": "moco",
+      "file": "moco.svg",
+      "url": "https://static.oomol.com/logo/third-party/moco.svg"
+    },
+    {
+      "service": "modjo_ai",
+      "file": "modjo_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/modjo_ai.png"
+    },
+    {
+      "service": "moesif",
+      "file": "moesif.svg",
+      "url": "https://static.oomol.com/logo/third-party/moesif.svg"
+    },
+    {
+      "service": "momentum_io",
+      "file": "momentum_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/momentum_io.svg"
+    },
+    {
+      "service": "mongo_db_atlas_administration",
+      "file": "mongo_db_atlas_administration.svg",
+      "url": "https://static.oomol.com/logo/third-party/mongo_db_atlas_administration.svg"
+    },
+    {
+      "service": "monica_crm",
+      "file": "monica_crm.png",
+      "url": "https://static.oomol.com/logo/third-party/monica_crm.png"
+    },
+    {
+      "service": "moonclerk",
+      "file": "moonclerk.svg",
+      "url": "https://static.oomol.com/logo/third-party/moonclerk.svg"
+    },
+    {
+      "service": "moorcheh",
+      "file": "moorcheh.png",
+      "url": "https://static.oomol.com/logo/third-party/moorcheh.png"
+    },
+    {
+      "service": "moosend",
+      "file": "moosend.svg",
+      "url": "https://static.oomol.com/logo/third-party/moosend.svg"
+    },
+    {
+      "service": "mopinion",
+      "file": "mopinion.svg",
+      "url": "https://static.oomol.com/logo/third-party/Mopinion.svg"
+    },
+    {
+      "service": "more_trees",
+      "file": "more_trees.svg",
+      "url": "https://static.oomol.com/logo/third-party/more_trees.svg"
+    },
+    {
+      "service": "mother_duck",
+      "file": "mother_duck.svg",
+      "url": "https://static.oomol.com/logo/third-party/mother_duck.svg"
+    },
+    {
+      "service": "msg91",
+      "file": "msg91.svg",
+      "url": "https://static.oomol.com/logo/third-party/msg91.svg"
+    },
+    {
+      "service": "mux",
+      "file": "mux.svg",
+      "url": "https://static.oomol.com/logo/third-party/mux.svg"
+    },
+    {
+      "service": "mx",
+      "file": "mx.svg",
+      "url": "https://static.oomol.com/logo/third-party/mx.svg"
+    },
+    {
+      "service": "mx_toolbox",
+      "file": "mx_toolbox.svg",
+      "url": "https://static.oomol.com/logo/third-party/mx_toolbox.svg"
+    },
+    {
+      "service": "namely",
+      "file": "namely.svg",
+      "url": "https://static.oomol.com/logo/third-party/namely.svg"
+    },
+    {
+      "service": "nango",
+      "file": "nango.svg",
+      "url": "https://static.oomol.com/logo/third-party/nango.svg"
+    },
+    {
+      "service": "needle",
+      "file": "needle.svg",
+      "url": "https://static.oomol.com/logo/third-party/Needle.svg"
+    },
+    {
+      "service": "neetodesk",
+      "file": "neetodesk.svg",
+      "url": "https://static.oomol.com/logo/third-party/neetodesk.svg"
+    },
+    {
+      "service": "netease_mail",
+      "file": "netease_mail.png",
+      "url": "https://static.oomol.com/logo/third-party/netease_mail.png"
+    },
+    {
+      "service": "nethunt",
+      "file": "nethunt.png",
+      "url": "https://static.oomol.com/logo/third-party/nethunt.png"
+    },
+    {
+      "service": "netsuite",
+      "file": "netsuite.svg",
+      "url": "https://static.oomol.com/logo/third-party/netsuite.svg"
+    },
+    {
+      "service": "neutrino",
+      "file": "neutrino.svg",
+      "url": "https://static.oomol.com/logo/third-party/neutrino.svg"
+    },
+    {
+      "service": "neverbounce",
+      "file": "neverbounce.svg",
+      "url": "https://static.oomol.com/logo/third-party/NeverBounce.svg"
+    },
+    {
+      "service": "news_api",
+      "file": "news_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/NewsAPI.svg"
+    },
+    {
+      "service": "newsdata_io",
+      "file": "newsdata_io.png",
+      "url": "https://static.oomol.com/logo/third-party/newsdata_io.png"
+    },
+    {
+      "service": "niftyimages",
+      "file": "niftyimages.png",
+      "url": "https://static.oomol.com/logo/third-party/niftyimages.png"
+    },
+    {
+      "service": "ninjapear",
+      "file": "ninjapear.svg",
+      "url": "https://static.oomol.com/logo/third-party/ninjapear.svg"
+    },
+    {
+      "service": "ninox",
+      "file": "ninox.png",
+      "url": "https://static.oomol.com/logo/third-party/ninox.png"
+    },
+    {
+      "service": "nocrm_io",
+      "file": "nocrm_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/NoCRM.io.svg"
+    },
+    {
+      "service": "northbeam",
+      "file": "northbeam.svg",
+      "url": "https://static.oomol.com/logo/third-party/northbeam.svg"
+    },
+    {
+      "service": "northflank",
+      "file": "northflank.svg",
+      "url": "https://static.oomol.com/logo/third-party/northflank.svg"
+    },
+    {
+      "service": "nozbe_teams",
+      "file": "nozbe_teams.svg",
+      "url": "https://static.oomol.com/logo/third-party/nozbe_teams.svg"
+    },
+    {
+      "service": "nusii_proposals",
+      "file": "nusii_proposals.svg",
+      "url": "https://static.oomol.com/logo/third-party/nusii_proposals.svg"
+    },
+    {
+      "service": "nutrient_document_web_services_api",
+      "file": "nutrient_document_web_services_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/nutrient_document_web_services_api.svg"
+    },
+    {
+      "service": "nylas",
+      "file": "nylas.svg",
+      "url": "https://static.oomol.com/logo/third-party/nylas.svg"
+    },
+    {
+      "service": "nyne_ai",
+      "file": "nyne_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/nyne_ai.png"
+    },
+    {
+      "service": "ocr_web_service",
+      "file": "ocr_web_service.svg",
+      "url": "https://static.oomol.com/logo/third-party/ocr_web_service.svg"
+    },
+    {
+      "service": "ocrspace",
+      "file": "ocrspace.svg",
+      "url": "https://static.oomol.com/logo/third-party/ocrspace.svg"
+    },
+    {
+      "service": "oksign",
+      "file": "oksign.png",
+      "url": "https://static.oomol.com/logo/third-party/oksign.png"
+    },
+    {
+      "service": "omnisend",
+      "file": "omnisend.svg",
+      "url": "https://static.oomol.com/logo/third-party/omnisend.svg"
+    },
+    {
+      "service": "oncehub",
+      "file": "oncehub.png",
+      "url": "https://static.oomol.com/logo/third-party/oncehub.png"
+    },
+    {
+      "service": "one_drive",
+      "file": "one_drive.svg",
+      "url": "https://static.oomol.com/logo/third-party/OneDrive.svg"
+    },
+    {
+      "service": "one_page_crm",
+      "file": "one_page_crm.svg",
+      "url": "https://static.oomol.com/logo/third-party/one_page_crm.svg"
+    },
+    {
+      "service": "one_password",
+      "file": "one_password.svg",
+      "url": "https://static.oomol.com/logo/third-party/one_password.svg"
+    },
+    {
+      "service": "one_password_events",
+      "file": "one_password_events.svg",
+      "url": "https://static.oomol.com/logo/third-party/one_password_events.svg"
+    },
+    {
+      "service": "onedesk",
+      "file": "onedesk.svg",
+      "url": "https://static.oomol.com/logo/third-party/onedesk.svg"
+    },
+    {
+      "service": "onesignal_rest_api",
+      "file": "onesignal_rest_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/onesignal_rest_api.svg"
+    },
+    {
+      "service": "ongage",
+      "file": "ongage.png",
+      "url": "https://static.oomol.com/logo/third-party/ongage.png"
+    },
+    {
+      "service": "onlyoffice_docspace",
+      "file": "onlyoffice_docspace.png",
+      "url": "https://static.oomol.com/logo/third-party/onlyoffice_docspace.png"
+    },
+    {
+      "service": "oomnitza",
+      "file": "oomnitza.svg",
+      "url": "https://static.oomol.com/logo/third-party/oomnitza.svg"
+    },
+    {
+      "service": "open_exchange_rates",
+      "file": "open_exchange_rates.jpg",
+      "url": "https://static.oomol.com/logo/third-party/open_exchange_rates.jpg"
+    },
+    {
+      "service": "openalex",
+      "file": "openalex.svg",
+      "url": "https://static.oomol.com/logo/third-party/openalex.svg"
+    },
+    {
+      "service": "openfootball_worldcup",
+      "file": "openfootball_worldcup.svg",
+      "url": "https://static.oomol.com/logo/third-party/openfootball_worldcup.svg"
+    },
+    {
+      "service": "opengraph_io",
+      "file": "opengraph_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/OpenGraph.io.svg"
+    },
+    {
+      "service": "openpagerank",
+      "file": "openpagerank.webp",
+      "url": "https://static.oomol.com/logo/third-party/openpagerank.webp"
+    },
+    {
+      "service": "openstatus",
+      "file": "openstatus.svg",
+      "url": "https://static.oomol.com/logo/third-party/openstatus.svg"
+    },
+    {
+      "service": "openweather_api",
+      "file": "openweather_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/OpenWeather%20API.svg"
+    },
+    {
+      "service": "optimoroute",
+      "file": "optimoroute.svg",
+      "url": "https://static.oomol.com/logo/third-party/optimoroute.svg"
+    },
+    {
+      "service": "oracle_cloud",
+      "file": "oracle_cloud.png",
+      "url": "https://static.oomol.com/logo/third-party/oracle_cloud.png"
+    },
+    {
+      "service": "ordinal",
+      "file": "ordinal.png",
+      "url": "https://static.oomol.com/logo/third-party/ordinal.png"
+    },
+    {
+      "service": "ortto",
+      "file": "ortto.svg",
+      "url": "https://static.oomol.com/logo/third-party/ortto.svg"
+    },
+    {
+      "service": "ossinsight",
+      "file": "ossinsight.png",
+      "url": "https://static.oomol.com/logo/third-party/ossinsight.png"
+    },
+    {
+      "service": "otter_ai",
+      "file": "otter_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/otter_ai.png"
+    },
+    {
+      "service": "owl_protocol",
+      "file": "owl_protocol.png",
+      "url": "https://static.oomol.com/logo/third-party/owl_protocol.png"
+    },
+    {
+      "service": "pandadoc",
+      "file": "pandadoc.svg",
+      "url": "https://static.oomol.com/logo/third-party/PandaDoc.svg"
+    },
+    {
+      "service": "paperform",
+      "file": "paperform.png",
+      "url": "https://static.oomol.com/logo/third-party/paperform.png"
+    },
+    {
+      "service": "paradym",
+      "file": "paradym.png",
+      "url": "https://static.oomol.com/logo/third-party/paradym.png"
+    },
+    {
+      "service": "parallel",
+      "file": "parallel.svg",
+      "url": "https://static.oomol.com/logo/third-party/parallel.svg"
+    },
+    {
+      "service": "parsehub",
+      "file": "parsehub.svg",
+      "url": "https://static.oomol.com/logo/third-party/parsehub.svg"
+    },
+    {
+      "service": "parsera",
+      "file": "parsera.png",
+      "url": "https://static.oomol.com/logo/third-party/parsera.png"
+    },
+    {
+      "service": "parseur",
+      "file": "parseur.svg",
+      "url": "https://static.oomol.com/logo/third-party/parseur.svg"
+    },
+    {
+      "service": "partner_stack_partner",
+      "file": "partner_stack_partner.svg",
+      "url": "https://static.oomol.com/logo/third-party/partner_stack_partner.svg"
+    },
+    {
+      "service": "partnerstack",
+      "file": "partnerstack.svg",
+      "url": "https://static.oomol.com/logo/third-party/partnerstack.svg"
+    },
+    {
+      "service": "passcreator",
+      "file": "passcreator.svg",
+      "url": "https://static.oomol.com/logo/third-party/passcreator.svg"
+    },
+    {
+      "service": "passslot",
+      "file": "passslot.png",
+      "url": "https://static.oomol.com/logo/third-party/passslot.png"
+    },
+    {
+      "service": "paymo",
+      "file": "paymo.png",
+      "url": "https://static.oomol.com/logo/third-party/paymo.png"
+    },
+    {
+      "service": "payrexx",
+      "file": "payrexx.svg",
+      "url": "https://static.oomol.com/logo/third-party/payrexx.svg"
+    },
+    {
+      "service": "paystack",
+      "file": "paystack.svg",
+      "url": "https://static.oomol.com/logo/third-party/Paystack.svg"
+    },
+    {
+      "service": "pdf_api_io",
+      "file": "pdf_api_io.png",
+      "url": "https://static.oomol.com/logo/third-party/pdf_api_io.png"
+    },
+    {
+      "service": "pdf_co",
+      "file": "pdf_co.svg",
+      "url": "https://static.oomol.com/logo/third-party/pdf_co.svg"
+    },
+    {
+      "service": "pdfless",
+      "file": "pdfless.svg",
+      "url": "https://static.oomol.com/logo/third-party/Pdfless.svg"
+    },
+    {
+      "service": "pdfmonkey",
+      "file": "pdfmonkey.svg",
+      "url": "https://static.oomol.com/logo/third-party/pdfmonkey.svg"
+    },
+    {
+      "service": "pendo",
+      "file": "pendo.svg",
+      "url": "https://static.oomol.com/logo/third-party/pendo.svg"
+    },
+    {
+      "service": "peopledatalabs",
+      "file": "peopledatalabs.png",
+      "url": "https://static.oomol.com/logo/third-party/peopledatalabs.png"
+    },
+    {
+      "service": "perdoo",
+      "file": "perdoo.svg",
+      "url": "https://static.oomol.com/logo/third-party/perdoo.svg"
+    },
+    {
+      "service": "perigon",
+      "file": "perigon.svg",
+      "url": "https://static.oomol.com/logo/third-party/perigon.svg"
+    },
+    {
+      "service": "permit_io",
+      "file": "permit_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/permit_io.svg"
+    },
+    {
+      "service": "persona",
+      "file": "persona.svg",
+      "url": "https://static.oomol.com/logo/third-party/persona.svg"
+    },
+    {
+      "service": "personal_ai",
+      "file": "personal_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/personal_ai.svg"
+    },
+    {
+      "service": "phantombuster",
+      "file": "phantombuster.svg",
+      "url": "https://static.oomol.com/logo/third-party/phantombuster.svg"
+    },
+    {
+      "service": "phonely",
+      "file": "phonely.png",
+      "url": "https://static.oomol.com/logo/third-party/phonely.png"
+    },
+    {
+      "service": "photoroom",
+      "file": "photoroom.svg",
+      "url": "https://static.oomol.com/logo/third-party/photoroom.svg"
+    },
+    {
+      "service": "pilvio",
+      "file": "pilvio.svg",
+      "url": "https://static.oomol.com/logo/third-party/pilvio.svg"
+    },
+    {
+      "service": "pinata",
+      "file": "pinata.svg",
+      "url": "https://static.oomol.com/logo/third-party/pinata.svg"
+    },
+    {
+      "service": "pixellab",
+      "file": "pixellab.png",
+      "url": "https://static.oomol.com/logo/third-party/pixellab.png"
+    },
+    {
+      "service": "placekey",
+      "file": "placekey.svg",
+      "url": "https://static.oomol.com/logo/third-party/Placekey.svg"
+    },
+    {
+      "service": "placid",
+      "file": "placid.png",
+      "url": "https://static.oomol.com/logo/third-party/placid.png"
+    },
+    {
+      "service": "plain",
+      "file": "plain.svg",
+      "url": "https://static.oomol.com/logo/third-party/plain.svg"
+    },
+    {
+      "service": "planhat",
+      "file": "planhat.svg",
+      "url": "https://static.oomol.com/logo/third-party/planhat.svg"
+    },
+    {
+      "service": "platerecognizer",
+      "file": "platerecognizer.png",
+      "url": "https://static.oomol.com/logo/third-party/platerecognizer.png"
+    },
+    {
+      "service": "plisio",
+      "file": "plisio.png",
+      "url": "https://static.oomol.com/logo/third-party/plisio.png"
+    },
+    {
+      "service": "plunk",
+      "file": "plunk.svg",
+      "url": "https://static.oomol.com/logo/third-party/plunk.svg"
+    },
+    {
+      "service": "pod_ai",
+      "file": "pod_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/pod_ai.png"
+    },
+    {
+      "service": "podscribe",
+      "file": "podscribe.svg",
+      "url": "https://static.oomol.com/logo/third-party/podscribe.svg"
+    },
+    {
+      "service": "positionstack",
+      "file": "positionstack.png",
+      "url": "https://static.oomol.com/logo/third-party/positionstack.png"
+    },
+    {
+      "service": "postalytics",
+      "file": "postalytics.png",
+      "url": "https://static.oomol.com/logo/third-party/postalytics.png"
+    },
+    {
+      "service": "postgrid",
+      "file": "postgrid.svg",
+      "url": "https://static.oomol.com/logo/third-party/postgrid.svg"
+    },
+    {
+      "service": "postgrid_verify",
+      "file": "postgrid_verify.svg",
+      "url": "https://static.oomol.com/logo/third-party/postgrid_verify.svg"
+    },
+    {
+      "service": "precoro",
+      "file": "precoro.svg",
+      "url": "https://static.oomol.com/logo/third-party/precoro.svg"
+    },
+    {
+      "service": "predis_ai",
+      "file": "predis_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/predis_ai.svg"
+    },
+    {
+      "service": "prerender",
+      "file": "prerender.svg",
+      "url": "https://static.oomol.com/logo/third-party/prerender.svg"
+    },
+    {
+      "service": "printavo",
+      "file": "printavo.svg",
+      "url": "https://static.oomol.com/logo/third-party/printavo.svg"
+    },
+    {
+      "service": "printify",
+      "file": "printify.svg",
+      "url": "https://static.oomol.com/logo/third-party/printify.svg"
+    },
+    {
+      "service": "process_street",
+      "file": "process_street.png",
+      "url": "https://static.oomol.com/logo/third-party/process_street.png"
+    },
+    {
+      "service": "processplan",
+      "file": "processplan.jpg",
+      "url": "https://static.oomol.com/logo/third-party/processplan.jpeg"
+    },
+    {
+      "service": "productive",
+      "file": "productive.svg",
+      "url": "https://static.oomol.com/logo/third-party/productive.svg"
+    },
+    {
+      "service": "productlane",
+      "file": "productlane.svg",
+      "url": "https://static.oomol.com/logo/third-party/productlane.svg"
+    },
+    {
+      "service": "profileapi",
+      "file": "profileapi.svg",
+      "url": "https://static.oomol.com/logo/third-party/profileapi.svg"
+    },
+    {
+      "service": "projectmanager",
+      "file": "projectmanager.svg",
+      "url": "https://static.oomol.com/logo/third-party/projectmanager.svg"
+    },
+    {
+      "service": "promptlayer",
+      "file": "promptlayer.png",
+      "url": "https://static.oomol.com/logo/third-party/promptlayer.png"
+    },
+    {
+      "service": "prospeo",
+      "file": "prospeo.svg",
+      "url": "https://static.oomol.com/logo/third-party/prospeo.svg"
+    },
+    {
+      "service": "proxiedmail",
+      "file": "proxiedmail.svg",
+      "url": "https://static.oomol.com/logo/third-party/proxiedmail.svg"
+    },
+    {
+      "service": "prtg_classic",
+      "file": "prtg_classic.svg",
+      "url": "https://static.oomol.com/logo/third-party/prtg_classic.svg"
+    },
+    {
+      "service": "push_by_techulus",
+      "file": "push_by_techulus.png",
+      "url": "https://static.oomol.com/logo/third-party/push_by_techulus.png"
+    },
+    {
+      "service": "pushover",
+      "file": "pushover.svg",
+      "url": "https://static.oomol.com/logo/third-party/Pushover.svg"
+    },
+    {
+      "service": "qianfan",
+      "file": "qianfan.png",
+      "url": "https://static.oomol.com/logo/third-party/Qianfan.png"
+    },
+    {
+      "service": "qq_mail",
+      "file": "qq_mail.png",
+      "url": "https://static.oomol.com/logo/third-party/qq_mail.png"
+    },
+    {
+      "service": "quaderno",
+      "file": "quaderno.svg",
+      "url": "https://static.oomol.com/logo/third-party/quaderno.svg"
+    },
+    {
+      "service": "quentn",
+      "file": "quentn.png",
+      "url": "https://static.oomol.com/logo/third-party/quentn.png"
+    },
+    {
+      "service": "quickbase",
+      "file": "quickbase.svg",
+      "url": "https://static.oomol.com/logo/third-party/quickbase.svg"
+    },
+    {
+      "service": "quickchart",
+      "file": "quickchart.svg",
+      "url": "https://static.oomol.com/logo/third-party/quickchart.svg"
+    },
+    {
+      "service": "quintadb",
+      "file": "quintadb.png",
+      "url": "https://static.oomol.com/logo/third-party/quintadb.png"
+    },
+    {
+      "service": "quipteams",
+      "file": "quipteams.svg",
+      "url": "https://static.oomol.com/logo/third-party/quipteams.svg"
+    },
+    {
+      "service": "quo",
+      "file": "quo.svg",
+      "url": "https://static.oomol.com/logo/third-party/quo.svg"
+    },
+    {
+      "service": "quriiri",
+      "file": "quriiri.png",
+      "url": "https://static.oomol.com/logo/third-party/quriiri.png"
+    },
+    {
+      "service": "ragie",
+      "file": "ragie.svg",
+      "url": "https://static.oomol.com/logo/third-party/Ragie.svg"
+    },
+    {
+      "service": "raisely",
+      "file": "raisely.svg",
+      "url": "https://static.oomol.com/logo/third-party/raisely.svg"
+    },
+    {
+      "service": "rawg",
+      "file": "rawg.svg",
+      "url": "https://static.oomol.com/logo/third-party/RAWG%20Video%20Games%20Database.svg"
+    },
+    {
+      "service": "raygun",
+      "file": "raygun.png",
+      "url": "https://static.oomol.com/logo/third-party/raygun.png"
+    },
+    {
+      "service": "readwise",
+      "file": "readwise.svg",
+      "url": "https://static.oomol.com/logo/third-party/readwise.svg"
+    },
+    {
+      "service": "realphonevalidation",
+      "file": "realphonevalidation.jpg",
+      "url": "https://static.oomol.com/logo/third-party/realphonevalidation.jpg"
+    },
+    {
+      "service": "rebrandly",
+      "file": "rebrandly.png",
+      "url": "https://static.oomol.com/logo/third-party/rebrandly.png"
+    },
+    {
+      "service": "recallai",
+      "file": "recallai.svg",
+      "url": "https://static.oomol.com/logo/third-party/Recall.ai.svg"
+    },
+    {
+      "service": "recharge",
+      "file": "recharge.svg",
+      "url": "https://static.oomol.com/logo/third-party/recharge.svg"
+    },
+    {
+      "service": "recruitcrm",
+      "file": "recruitcrm.png",
+      "url": "https://static.oomol.com/logo/third-party/recruitcrm.png"
+    },
+    {
+      "service": "recruitee",
+      "file": "recruitee.svg",
+      "url": "https://static.oomol.com/logo/third-party/recruitee.svg"
+    },
+    {
+      "service": "recruiterflow",
+      "file": "recruiterflow.png",
+      "url": "https://static.oomol.com/logo/third-party/recruiterflow.png"
+    },
+    {
+      "service": "recurly",
+      "file": "recurly.svg",
+      "url": "https://static.oomol.com/logo/third-party/recurly.svg"
+    },
+    {
+      "service": "redfox",
+      "file": "redfox.png",
+      "url": "https://static.oomol.com/logo/third-party/redfox.png"
+    },
+    {
+      "service": "reducto",
+      "file": "reducto.svg",
+      "url": "https://static.oomol.com/logo/third-party/reducto.svg"
+    },
+    {
+      "service": "referralhero",
+      "file": "referralhero.svg",
+      "url": "https://static.oomol.com/logo/third-party/referralhero.svg"
+    },
+    {
+      "service": "referralrock",
+      "file": "referralrock.svg",
+      "url": "https://static.oomol.com/logo/third-party/referralrock.svg"
+    },
+    {
+      "service": "refiner",
+      "file": "refiner.svg",
+      "url": "https://static.oomol.com/logo/third-party/Refiner.svg"
+    },
+    {
+      "service": "renderform",
+      "file": "renderform.svg",
+      "url": "https://static.oomol.com/logo/third-party/renderform.svg"
+    },
+    {
+      "service": "rentman",
+      "file": "rentman.svg",
+      "url": "https://static.oomol.com/logo/third-party/rentman.svg"
+    },
+    {
+      "service": "repairshopr",
+      "file": "repairshopr.png",
+      "url": "https://static.oomol.com/logo/third-party/repairshopr.png"
+    },
+    {
+      "service": "reply_io",
+      "file": "reply_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/reply_io.svg"
+    },
+    {
+      "service": "respond_io",
+      "file": "respond_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/respond_io.svg"
+    },
+    {
+      "service": "retell_ai",
+      "file": "retell_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/retell_ai.svg"
+    },
+    {
+      "service": "retently",
+      "file": "retently.svg",
+      "url": "https://static.oomol.com/logo/third-party/retently.svg"
+    },
+    {
+      "service": "reversecontact",
+      "file": "reversecontact.png",
+      "url": "https://static.oomol.com/logo/third-party/reversecontact.png"
+    },
+    {
+      "service": "ringba",
+      "file": "ringba.svg",
+      "url": "https://static.oomol.com/logo/third-party/ringba.svg"
+    },
+    {
+      "service": "ringover",
+      "file": "ringover.svg",
+      "url": "https://static.oomol.com/logo/third-party/ringover.svg"
+    },
+    {
+      "service": "rippling",
+      "file": "rippling.svg",
+      "url": "https://static.oomol.com/logo/third-party/rippling.svg"
+    },
+    {
+      "service": "ritekit",
+      "file": "ritekit.svg",
+      "url": "https://static.oomol.com/logo/third-party/ritekit.svg"
+    },
+    {
+      "service": "riveter",
+      "file": "riveter.svg",
+      "url": "https://static.oomol.com/logo/third-party/riveter.svg"
+    },
+    {
+      "service": "roam",
+      "file": "roam.png",
+      "url": "https://static.oomol.com/logo/third-party/roam.png"
+    },
+    {
+      "service": "roam_scim",
+      "file": "roam_scim.png",
+      "url": "https://static.oomol.com/logo/third-party/roam_scim.png"
+    },
+    {
+      "service": "rocket_reach",
+      "file": "rocket_reach.svg",
+      "url": "https://static.oomol.com/logo/third-party/RocketReach.svg"
+    },
+    {
+      "service": "rocketlane",
+      "file": "rocketlane.svg",
+      "url": "https://static.oomol.com/logo/third-party/rocketlane.svg"
+    },
+    {
+      "service": "rootly",
+      "file": "rootly.svg",
+      "url": "https://static.oomol.com/logo/third-party/rootly.svg"
+    },
+    {
+      "service": "rosette_text_analytics",
+      "file": "rosette_text_analytics.svg",
+      "url": "https://static.oomol.com/logo/third-party/rosette_text_analytics.svg"
+    },
+    {
+      "service": "route4me",
+      "file": "route4me.svg",
+      "url": "https://static.oomol.com/logo/third-party/route4me.svg"
+    },
+    {
+      "service": "saas_custom_domains",
+      "file": "saas_custom_domains.svg",
+      "url": "https://static.oomol.com/logo/third-party/saas_custom_domains.svg"
+    },
+    {
+      "service": "safetyculture",
+      "file": "safetyculture.png",
+      "url": "https://static.oomol.com/logo/third-party/safetyculture.png"
+    },
+    {
+      "service": "sage_hr",
+      "file": "sage_hr.svg",
+      "url": "https://static.oomol.com/logo/third-party/sage_hr.svg"
+    },
+    {
+      "service": "sage_sales_management",
+      "file": "sage_sales_management.svg",
+      "url": "https://static.oomol.com/logo/third-party/sage_sales_management.svg"
+    },
+    {
+      "service": "salesflare",
+      "file": "salesflare.svg",
+      "url": "https://static.oomol.com/logo/third-party/salesflare.svg"
+    },
+    {
+      "service": "salesloft",
+      "file": "salesloft.svg",
+      "url": "https://static.oomol.com/logo/third-party/salesloft.svg"
+    },
+    {
+      "service": "salesmate",
+      "file": "salesmate.svg",
+      "url": "https://static.oomol.com/logo/third-party/salesmate.svg"
+    },
+    {
+      "service": "satismeter",
+      "file": "satismeter.svg",
+      "url": "https://static.oomol.com/logo/third-party/Satismeter.svg"
+    },
+    {
+      "service": "scrape_do",
+      "file": "scrape_do.svg",
+      "url": "https://static.oomol.com/logo/third-party/scrape_do.svg"
+    },
+    {
+      "service": "scrape_graph_ai",
+      "file": "scrape_graph_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/scrape_graph_ai.svg"
+    },
+    {
+      "service": "scraperapi",
+      "file": "scraperapi.svg",
+      "url": "https://static.oomol.com/logo/third-party/scraperapi.svg"
+    },
+    {
+      "service": "scrapfly",
+      "file": "scrapfly.svg",
+      "url": "https://static.oomol.com/logo/third-party/scrapfly.svg"
+    },
+    {
+      "service": "scrapingant",
+      "file": "scrapingant.png",
+      "url": "https://static.oomol.com/logo/third-party/scrapingant.png"
+    },
+    {
+      "service": "scrapingbee",
+      "file": "scrapingbee.svg",
+      "url": "https://static.oomol.com/logo/third-party/Scrapingbee.svg"
+    },
+    {
+      "service": "scrapingdog",
+      "file": "scrapingdog.png",
+      "url": "https://static.oomol.com/logo/third-party/scrapingdog.png"
+    },
+    {
+      "service": "screenshot_fyi",
+      "file": "screenshot_fyi.svg",
+      "url": "https://static.oomol.com/logo/third-party/Screenshot.fyi.svg"
+    },
+    {
+      "service": "screenshotone",
+      "file": "screenshotone.jpg",
+      "url": "https://static.oomol.com/logo/third-party/Screenshotone.jpeg"
+    },
+    {
+      "service": "securitytrails",
+      "file": "securitytrails.svg",
+      "url": "https://static.oomol.com/logo/third-party/Securitytrails.svg"
+    },
+    {
+      "service": "segment",
+      "file": "segment.svg",
+      "url": "https://static.oomol.com/logo/third-party/segment.svg"
+    },
+    {
+      "service": "sellerspace",
+      "file": "sellerspace.png",
+      "url": "https://static.oomol.com/logo/third-party/sellerspace.png"
+    },
+    {
+      "service": "sellersprite",
+      "file": "sellersprite.svg",
+      "url": "https://static.oomol.com/logo/third-party/sellersprite.svg"
+    },
+    {
+      "service": "sendbird",
+      "file": "sendbird.svg",
+      "url": "https://static.oomol.com/logo/third-party/Sendbird.svg"
+    },
+    {
+      "service": "sender",
+      "file": "sender.svg",
+      "url": "https://static.oomol.com/logo/third-party/sender.svg"
+    },
+    {
+      "service": "sendfox",
+      "file": "sendfox.svg",
+      "url": "https://static.oomol.com/logo/third-party/sendfox.svg"
+    },
+    {
+      "service": "sendgrid",
+      "file": "sendgrid.svg",
+      "url": "https://static.oomol.com/logo/third-party/SendGrid.svg"
+    },
+    {
+      "service": "sendlane",
+      "file": "sendlane.svg",
+      "url": "https://static.oomol.com/logo/third-party/sendlane.svg"
+    },
+    {
+      "service": "sendmator",
+      "file": "sendmator.png",
+      "url": "https://static.oomol.com/logo/third-party/sendmator.png"
+    },
+    {
+      "service": "sendspark",
+      "file": "sendspark.svg",
+      "url": "https://static.oomol.com/logo/third-party/sendspark.svg"
+    },
+    {
+      "service": "sensibo",
+      "file": "sensibo.svg",
+      "url": "https://static.oomol.com/logo/third-party/sensibo.svg"
+    },
+    {
+      "service": "seqera",
+      "file": "seqera.svg",
+      "url": "https://static.oomol.com/logo/third-party/Seqera.svg"
+    },
+    {
+      "service": "serpapi",
+      "file": "serpapi.svg",
+      "url": "https://static.oomol.com/logo/third-party/SerpApi.svg"
+    },
+    {
+      "service": "serpdog",
+      "file": "serpdog.svg",
+      "url": "https://static.oomol.com/logo/third-party/serpdog.svg"
+    },
+    {
+      "service": "serphouse",
+      "file": "serphouse.svg",
+      "url": "https://static.oomol.com/logo/third-party/serphouse.svg"
+    },
+    {
+      "service": "serply",
+      "file": "serply.svg",
+      "url": "https://static.oomol.com/logo/third-party/serply.svg"
+    },
+    {
+      "service": "serveravatar",
+      "file": "serveravatar.png",
+      "url": "https://static.oomol.com/logo/third-party/serveravatar.png"
+    },
+    {
+      "service": "sevdesk",
+      "file": "sevdesk.svg",
+      "url": "https://static.oomol.com/logo/third-party/sevdesk.svg"
+    },
+    {
+      "service": "sheetdb",
+      "file": "sheetdb.svg",
+      "url": "https://static.oomol.com/logo/third-party/sheetdb.svg"
+    },
+    {
+      "service": "ship_bob",
+      "file": "ship_bob.png",
+      "url": "https://static.oomol.com/logo/third-party/ship_bob.png"
+    },
+    {
+      "service": "ship_station",
+      "file": "ship_station.svg",
+      "url": "https://static.oomol.com/logo/third-party/ship_station.svg"
+    },
+    {
+      "service": "shipday",
+      "file": "shipday.png",
+      "url": "https://static.oomol.com/logo/third-party/shipday.png"
+    },
+    {
+      "service": "shipengine",
+      "file": "shipengine.png",
+      "url": "https://static.oomol.com/logo/third-party/shipengine.png"
+    },
+    {
+      "service": "shippo",
+      "file": "shippo.png",
+      "url": "https://static.oomol.com/logo/third-party/shippo.png"
+    },
+    {
+      "service": "shodan",
+      "file": "shodan.png",
+      "url": "https://static.oomol.com/logo/third-party/shodan.png"
+    },
+    {
+      "service": "shopify_admin",
+      "file": "shopify_admin.svg",
+      "url": "https://static.oomol.com/logo/third-party/shopify_admin.svg"
+    },
+    {
+      "service": "shopify_partner",
+      "file": "shopify_partner.svg",
+      "url": "https://static.oomol.com/logo/third-party/shopify_partner.svg"
+    },
+    {
+      "service": "shopify_storefront",
+      "file": "shopify_storefront.svg",
+      "url": "https://static.oomol.com/logo/third-party/shopify_storefront.svg"
+    },
+    {
+      "service": "short_io",
+      "file": "short_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/short_io.svg"
+    },
+    {
+      "service": "short_menu",
+      "file": "short_menu.svg",
+      "url": "https://static.oomol.com/logo/third-party/Short%20Menu.svg"
+    },
+    {
+      "service": "shorten_rest",
+      "file": "shorten_rest.jpg",
+      "url": "https://static.oomol.com/logo/third-party/shorten_rest.jpg"
+    },
+    {
+      "service": "shortpixel",
+      "file": "shortpixel.png",
+      "url": "https://static.oomol.com/logo/third-party/shortpixel.png"
+    },
+    {
+      "service": "shotstack",
+      "file": "shotstack.svg",
+      "url": "https://static.oomol.com/logo/third-party/shotstack.svg"
+    },
+    {
+      "service": "sif",
+      "file": "sif.png",
+      "url": "https://static.oomol.com/logo/third-party/sif.png"
+    },
+    {
+      "service": "signalbase",
+      "file": "signalbase.svg",
+      "url": "https://static.oomol.com/logo/third-party/signalbase.svg"
+    },
+    {
+      "service": "signaturely",
+      "file": "signaturely.svg",
+      "url": "https://static.oomol.com/logo/third-party/signaturely.svg"
+    },
+    {
+      "service": "signpath",
+      "file": "signpath.svg",
+      "url": "https://static.oomol.com/logo/third-party/signpath.svg"
+    },
+    {
+      "service": "signwell",
+      "file": "signwell.svg",
+      "url": "https://static.oomol.com/logo/third-party/signwell.svg"
+    },
+    {
+      "service": "similarweb_digitalrank_api",
+      "file": "similarweb_digitalrank_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/SimilarWeb%20Digital%20Rank%20API.svg"
+    },
+    {
+      "service": "simla",
+      "file": "simla.svg",
+      "url": "https://static.oomol.com/logo/third-party/simla.svg"
+    },
+    {
+      "service": "simplesat",
+      "file": "simplesat.svg",
+      "url": "https://static.oomol.com/logo/third-party/simplesat.svg"
+    },
+    {
+      "service": "simplybook_me",
+      "file": "simplybook_me.svg",
+      "url": "https://static.oomol.com/logo/third-party/simplybook_me.svg"
+    },
+    {
+      "service": "sitespeakai",
+      "file": "sitespeakai.png",
+      "url": "https://static.oomol.com/logo/third-party/sitespeakai.png"
+    },
+    {
+      "service": "skio",
+      "file": "skio.png",
+      "url": "https://static.oomol.com/logo/third-party/skio.png"
+    },
+    {
+      "service": "skyfire",
+      "file": "skyfire.png",
+      "url": "https://static.oomol.com/logo/third-party/skyfire.png"
+    },
+    {
+      "service": "slab",
+      "file": "slab.svg",
+      "url": "https://static.oomol.com/logo/third-party/slab.svg"
+    },
+    {
+      "service": "sling",
+      "file": "sling.png",
+      "url": "https://static.oomol.com/logo/third-party/sling.png"
+    },
+    {
+      "service": "slite",
+      "file": "slite.png",
+      "url": "https://static.oomol.com/logo/third-party/slite.png"
+    },
+    {
+      "service": "smartlead_ai",
+      "file": "smartlead_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/smartlead_ai.png"
+    },
+    {
+      "service": "smartrecruiters",
+      "file": "smartrecruiters.png",
+      "url": "https://static.oomol.com/logo/third-party/smartrecruiters.png"
+    },
+    {
+      "service": "smartsheet",
+      "file": "smartsheet.svg",
+      "url": "https://static.oomol.com/logo/third-party/smartsheet.svg"
+    },
+    {
+      "service": "sms_alert",
+      "file": "sms_alert.jpg",
+      "url": "https://static.oomol.com/logo/third-party/sms_alert.jpg"
+    },
+    {
+      "service": "smtp2go",
+      "file": "smtp2go.png",
+      "url": "https://static.oomol.com/logo/third-party/smtp2go.png"
+    },
+    {
+      "service": "snipe_it",
+      "file": "snipe_it.png",
+      "url": "https://static.oomol.com/logo/third-party/snipe_it.png"
+    },
+    {
+      "service": "social_fetch",
+      "file": "social_fetch.svg",
+      "url": "https://static.oomol.com/logo/third-party/social_fetch.svg"
+    },
+    {
+      "service": "softr",
+      "file": "softr.svg",
+      "url": "https://static.oomol.com/logo/third-party/softr.svg"
+    },
+    {
+      "service": "solcast",
+      "file": "solcast.svg",
+      "url": "https://static.oomol.com/logo/third-party/solcast.svg"
+    },
+    {
+      "service": "sorftime",
+      "file": "sorftime.png",
+      "url": "https://static.oomol.com/logo/third-party/sorftime.png"
+    },
+    {
+      "service": "speechmatics",
+      "file": "speechmatics.svg",
+      "url": "https://static.oomol.com/logo/third-party/speechmatics.svg"
+    },
+    {
+      "service": "spider",
+      "file": "spider.svg",
+      "url": "https://static.oomol.com/logo/third-party/spider.svg"
+    },
+    {
+      "service": "splunk_http_event_collector",
+      "file": "splunk_http_event_collector.png",
+      "url": "https://static.oomol.com/logo/third-party/splunk_http_event_collector.png"
+    },
+    {
+      "service": "sslmate_cert_spotter_api",
+      "file": "sslmate_cert_spotter_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/SSLMate%20Cert%20Spotter%20API.svg"
+    },
+    {
+      "service": "stack_ai",
+      "file": "stack_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/stack_ai.png"
+    },
+    {
+      "service": "stannp",
+      "file": "stannp.svg",
+      "url": "https://static.oomol.com/logo/third-party/stannp.svg"
+    },
+    {
+      "service": "starton",
+      "file": "starton.jpg",
+      "url": "https://static.oomol.com/logo/third-party/starton.jpg"
+    },
+    {
+      "service": "statsig",
+      "file": "statsig.svg",
+      "url": "https://static.oomol.com/logo/third-party/statsig.svg"
+    },
+    {
+      "service": "statuscake",
+      "file": "statuscake.svg",
+      "url": "https://static.oomol.com/logo/third-party/Statuscake.svg"
+    },
+    {
+      "service": "stay_ai",
+      "file": "stay_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/stay_ai.png"
+    },
+    {
+      "service": "store_leads",
+      "file": "store_leads.png",
+      "url": "https://static.oomol.com/logo/third-party/store_leads.png"
+    },
+    {
+      "service": "storecensus",
+      "file": "storecensus.png",
+      "url": "https://static.oomol.com/logo/third-party/storecensus.png"
+    },
+    {
+      "service": "stormboard",
+      "file": "stormboard.png",
+      "url": "https://static.oomol.com/logo/third-party/stormboard.png"
+    },
+    {
+      "service": "stormglass_io",
+      "file": "stormglass_io.png",
+      "url": "https://static.oomol.com/logo/third-party/stormglass_io.png"
+    },
+    {
+      "service": "streak",
+      "file": "streak.png",
+      "url": "https://static.oomol.com/logo/third-party/streak.png"
+    },
+    {
+      "service": "streamtime",
+      "file": "streamtime.svg",
+      "url": "https://static.oomol.com/logo/third-party/streamtime.svg"
+    },
+    {
+      "service": "subvisory",
+      "file": "subvisory.svg",
+      "url": "https://static.oomol.com/logo/third-party/subvisory.svg"
+    },
+    {
+      "service": "sunoapi",
+      "file": "sunoapi.png",
+      "url": "https://static.oomol.com/logo/third-party/sunoapi.png"
+    },
+    {
+      "service": "supadata",
+      "file": "supadata.svg",
+      "url": "https://static.oomol.com/logo/third-party/supadata.svg"
+    },
+    {
+      "service": "super_saas",
+      "file": "super_saas.svg",
+      "url": "https://static.oomol.com/logo/third-party/super_saas.svg"
+    },
+    {
+      "service": "superchat",
+      "file": "superchat.png",
+      "url": "https://static.oomol.com/logo/third-party/superchat.png"
+    },
+    {
+      "service": "supermemory",
+      "file": "supermemory.svg",
+      "url": "https://static.oomol.com/logo/third-party/supermemory.svg"
+    },
+    {
+      "service": "supervisely",
+      "file": "supervisely.svg",
+      "url": "https://static.oomol.com/logo/third-party/supervisely.svg"
+    },
+    {
+      "service": "supportbee",
+      "file": "supportbee.png",
+      "url": "https://static.oomol.com/logo/third-party/supportbee.png"
+    },
+    {
+      "service": "surecontact",
+      "file": "surecontact.svg",
+      "url": "https://static.oomol.com/logo/third-party/surecontact.svg"
+    },
+    {
+      "service": "svix",
+      "file": "svix.svg",
+      "url": "https://static.oomol.com/logo/third-party/Svix.svg"
+    },
+    {
+      "service": "swaggerhub",
+      "file": "swaggerhub.svg",
+      "url": "https://static.oomol.com/logo/third-party/Swaggerhub.svg"
+    },
+    {
+      "service": "systeme_io",
+      "file": "systeme_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/systeme_io.svg"
+    },
+    {
+      "service": "taggun",
+      "file": "taggun.png",
+      "url": "https://static.oomol.com/logo/third-party/taggun.png"
+    },
+    {
+      "service": "talenox",
+      "file": "talenox.png",
+      "url": "https://static.oomol.com/logo/third-party/talenox.png"
+    },
+    {
+      "service": "talenthr",
+      "file": "talenthr.svg",
+      "url": "https://static.oomol.com/logo/third-party/Talenthr.svg"
+    },
+    {
+      "service": "talentlms",
+      "file": "talentlms.svg",
+      "url": "https://static.oomol.com/logo/third-party/talentlms.svg"
+    },
+    {
+      "service": "tally",
+      "file": "tally.svg",
+      "url": "https://static.oomol.com/logo/third-party/tally.svg"
+    },
+    {
+      "service": "tanium",
+      "file": "tanium.svg",
+      "url": "https://static.oomol.com/logo/third-party/tanium.svg"
+    },
+    {
+      "service": "tapfiliate",
+      "file": "tapfiliate.svg",
+      "url": "https://static.oomol.com/logo/third-party/tapfiliate.svg"
+    },
+    {
+      "service": "tave",
+      "file": "tave.png",
+      "url": "https://static.oomol.com/logo/third-party/tave.png"
+    },
+    {
+      "service": "taxjar",
+      "file": "taxjar.svg",
+      "url": "https://static.oomol.com/logo/third-party/Taxjar.svg"
+    },
+    {
+      "service": "teable",
+      "file": "teable.svg",
+      "url": "https://static.oomol.com/logo/third-party/teable.svg"
+    },
+    {
+      "service": "teamcamp",
+      "file": "teamcamp.png",
+      "url": "https://static.oomol.com/logo/third-party/teamcamp.png"
+    },
+    {
+      "service": "teamtailor",
+      "file": "teamtailor.svg",
+      "url": "https://static.oomol.com/logo/third-party/teamtailor.svg"
+    },
+    {
+      "service": "telnyx",
+      "file": "telnyx.png",
+      "url": "https://static.oomol.com/logo/third-party/telnyx.png"
+    },
+    {
+      "service": "teltel",
+      "file": "teltel.svg",
+      "url": "https://static.oomol.com/logo/third-party/teltel.svg"
+    },
+    {
+      "service": "templated",
+      "file": "templated.svg",
+      "url": "https://static.oomol.com/logo/third-party/Templated.svg"
+    },
+    {
+      "service": "templatefox",
+      "file": "templatefox.png",
+      "url": "https://static.oomol.com/logo/third-party/templatefox.png"
+    },
+    {
+      "service": "tencent_docs",
+      "file": "tencent_docs.svg",
+      "url": "https://static.oomol.com/logo/third-party/tencent_docs.svg"
+    },
+    {
+      "service": "tencent_maps",
+      "file": "tencent_maps.png",
+      "url": "https://static.oomol.com/logo/third-party/tencent_maps.png"
+    },
+    {
+      "service": "textcortex",
+      "file": "textcortex.svg",
+      "url": "https://static.oomol.com/logo/third-party/textcortex.svg"
+    },
+    {
+      "service": "textit",
+      "file": "textit.webp",
+      "url": "https://static.oomol.com/logo/third-party/textit.webp"
+    },
+    {
+      "service": "textmagic",
+      "file": "textmagic.svg",
+      "url": "https://static.oomol.com/logo/third-party/textmagic.svg"
+    },
+    {
+      "service": "textrazor",
+      "file": "textrazor.svg",
+      "url": "https://static.oomol.com/logo/third-party/TextRazor.svg"
+    },
+    {
+      "service": "the_cat_api",
+      "file": "the_cat_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/the_cat_api.svg"
+    },
+    {
+      "service": "the_colony",
+      "file": "the_colony.svg",
+      "url": "https://static.oomol.com/logo/third-party/the_colony.svg"
+    },
+    {
+      "service": "the_dog_api",
+      "file": "the_dog_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/the_dog_api.svg"
+    },
+    {
+      "service": "the_odds_api",
+      "file": "the_odds_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/the_odds_api.svg"
+    },
+    {
+      "service": "the_official_board",
+      "file": "the_official_board.png",
+      "url": "https://static.oomol.com/logo/third-party/the_official_board.png"
+    },
+    {
+      "service": "the_swarm",
+      "file": "the_swarm.svg",
+      "url": "https://static.oomol.com/logo/third-party/the_swarm.svg"
+    },
+    {
+      "service": "theirstack",
+      "file": "theirstack.svg",
+      "url": "https://static.oomol.com/logo/third-party/theirstack.svg"
+    },
+    {
+      "service": "ticket_source",
+      "file": "ticket_source.svg",
+      "url": "https://static.oomol.com/logo/third-party/ticket_source.svg"
+    },
+    {
+      "service": "tikhub",
+      "file": "tikhub.jpg",
+      "url": "https://static.oomol.com/logo/third-party/tikhub.jpeg"
+    },
+    {
+      "service": "tiktok_business",
+      "file": "tiktok_business.svg",
+      "url": "https://static.oomol.com/logo/third-party/tiktok.svg"
+    },
+    {
+      "service": "timebuzzer",
+      "file": "timebuzzer.svg",
+      "url": "https://static.oomol.com/logo/third-party/timebuzzer.svg"
+    },
+    {
+      "service": "timecamp",
+      "file": "timecamp.svg",
+      "url": "https://static.oomol.com/logo/third-party/timecamp.svg"
+    },
+    {
+      "service": "timelinesai",
+      "file": "timelinesai.svg",
+      "url": "https://static.oomol.com/logo/third-party/timelinesai.svg"
+    },
+    {
+      "service": "timelink",
+      "file": "timelink.svg",
+      "url": "https://static.oomol.com/logo/third-party/timelink.svg"
+    },
+    {
+      "service": "tinybird",
+      "file": "tinybird.svg",
+      "url": "https://static.oomol.com/logo/third-party/tinybird.svg"
+    },
+    {
+      "service": "tinypng",
+      "file": "tinypng.svg",
+      "url": "https://static.oomol.com/logo/third-party/TinyPNG.svg"
+    },
+    {
+      "service": "tinyurl",
+      "file": "tinyurl.svg",
+      "url": "https://static.oomol.com/logo/third-party/Tinyurl.svg"
+    },
+    {
+      "service": "tisane",
+      "file": "tisane.svg",
+      "url": "https://static.oomol.com/logo/third-party/tisane.svg"
+    },
+    {
+      "service": "tldv",
+      "file": "tldv.png",
+      "url": "https://static.oomol.com/logo/third-party/tldv.png"
+    },
+    {
+      "service": "token_metrics",
+      "file": "token_metrics.png",
+      "url": "https://static.oomol.com/logo/third-party/token_metrics.png"
+    },
+    {
+      "service": "tomba",
+      "file": "tomba.svg",
+      "url": "https://static.oomol.com/logo/third-party/tomba.svg"
+    },
+    {
+      "service": "torii",
+      "file": "torii.svg",
+      "url": "https://static.oomol.com/logo/third-party/torii.svg"
+    },
+    {
+      "service": "tpscheck",
+      "file": "tpscheck.svg",
+      "url": "https://static.oomol.com/logo/third-party/Tpscheck.svg"
+    },
+    {
+      "service": "trawlingweb",
+      "file": "trawlingweb.png",
+      "url": "https://static.oomol.com/logo/third-party/trawlingweb.png"
+    },
+    {
+      "service": "tremendous",
+      "file": "tremendous.svg",
+      "url": "https://static.oomol.com/logo/third-party/tremendous.svg"
+    },
+    {
+      "service": "trent",
+      "file": "trent.svg",
+      "url": "https://static.oomol.com/logo/third-party/trent.svg"
+    },
+    {
+      "service": "trigger_dev",
+      "file": "trigger_dev.svg",
+      "url": "https://static.oomol.com/logo/third-party/trigger_dev.svg"
+    },
+    {
+      "service": "triggercmd",
+      "file": "triggercmd.png",
+      "url": "https://static.oomol.com/logo/third-party/triggercmd.png"
+    },
+    {
+      "service": "triple_whale",
+      "file": "triple_whale.svg",
+      "url": "https://static.oomol.com/logo/third-party/triple_whale.svg"
+    },
+    {
+      "service": "truvera",
+      "file": "truvera.svg",
+      "url": "https://static.oomol.com/logo/third-party/truvera.svg"
+    },
+    {
+      "service": "turbot_pipes",
+      "file": "turbot_pipes.svg",
+      "url": "https://static.oomol.com/logo/third-party/turbot_pipes.svg"
+    },
+    {
+      "service": "tushare",
+      "file": "tushare.png",
+      "url": "https://static.oomol.com/logo/third-party/tushare.png"
+    },
+    {
+      "service": "tuskr",
+      "file": "tuskr.svg",
+      "url": "https://static.oomol.com/logo/third-party/tuskr.svg"
+    },
+    {
+      "service": "twelve_data",
+      "file": "twelve_data.svg",
+      "url": "https://static.oomol.com/logo/third-party/Twelve%20Data.svg"
+    },
+    {
+      "service": "twenty_crm",
+      "file": "twenty_crm.svg",
+      "url": "https://static.oomol.com/logo/third-party/twenty_crm.svg"
+    },
+    {
+      "service": "twitterapi_io",
+      "file": "twitterapi_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/twitterapi_io.svg"
+    },
+    {
+      "service": "twochat",
+      "file": "twochat.png",
+      "url": "https://static.oomol.com/logo/third-party/twochat.png"
+    },
+    {
+      "service": "typebot",
+      "file": "typebot.svg",
+      "url": "https://static.oomol.com/logo/third-party/typebot.svg"
+    },
+    {
+      "service": "typefully",
+      "file": "typefully.svg",
+      "url": "https://static.oomol.com/logo/third-party/typefully.svg"
+    },
+    {
+      "service": "u301",
+      "file": "u301.svg",
+      "url": "https://static.oomol.com/logo/third-party/u301.svg"
+    },
+    {
+      "service": "unifapi",
+      "file": "unifapi.svg",
+      "url": "https://static.oomol.com/logo/third-party/unifapi.svg"
+    },
+    {
+      "service": "unione",
+      "file": "unione.svg",
+      "url": "https://static.oomol.com/logo/third-party/unione.svg"
+    },
+    {
+      "service": "unipile",
+      "file": "unipile.svg",
+      "url": "https://static.oomol.com/logo/third-party/unipile.svg"
+    },
+    {
+      "service": "uniswap_api",
+      "file": "uniswap_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/uniswap_api.svg"
+    },
+    {
+      "service": "updown_io",
+      "file": "updown_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/Updown.io.svg"
+    },
+    {
+      "service": "uploadcare",
+      "file": "uploadcare.svg",
+      "url": "https://static.oomol.com/logo/third-party/uploadcare.svg"
+    },
+    {
+      "service": "upstash_redis",
+      "file": "upstash_redis.png",
+      "url": "https://static.oomol.com/logo/third-party/upstash_redis.png"
+    },
+    {
+      "service": "uptimerobot",
+      "file": "uptimerobot.svg",
+      "url": "https://static.oomol.com/logo/third-party/Uptimerobot.svg"
+    },
+    {
+      "service": "urlscan",
+      "file": "urlscan.png",
+      "url": "https://static.oomol.com/logo/third-party/urlscan.png"
+    },
+    {
+      "service": "userflow",
+      "file": "userflow.png",
+      "url": "https://static.oomol.com/logo/third-party/userflow.png"
+    },
+    {
+      "service": "userlist",
+      "file": "userlist.svg",
+      "url": "https://static.oomol.com/logo/third-party/userlist.svg"
+    },
+    {
+      "service": "valyu",
+      "file": "valyu.png",
+      "url": "https://static.oomol.com/logo/third-party/valyu.png"
+    },
+    {
+      "service": "vatlayer",
+      "file": "vatlayer.png",
+      "url": "https://static.oomol.com/logo/third-party/vatlayer.png"
+    },
+    {
+      "service": "vectera",
+      "file": "vectera.svg",
+      "url": "https://static.oomol.com/logo/third-party/vectera.svg"
+    },
+    {
+      "service": "vectorshift",
+      "file": "vectorshift.png",
+      "url": "https://static.oomol.com/logo/third-party/vectorshift.png"
+    },
+    {
+      "service": "verifiedemail",
+      "file": "verifiedemail.svg",
+      "url": "https://static.oomol.com/logo/third-party/verifiedemail.svg"
+    },
+    {
+      "service": "veriphone",
+      "file": "veriphone.svg",
+      "url": "https://static.oomol.com/logo/third-party/Veriphone.svg"
+    },
+    {
+      "service": "vestaboard",
+      "file": "vestaboard.png",
+      "url": "https://static.oomol.com/logo/third-party/vestaboard.png"
+    },
+    {
+      "service": "vida",
+      "file": "vida.svg",
+      "url": "https://static.oomol.com/logo/third-party/vida.svg"
+    },
+    {
+      "service": "vitally",
+      "file": "vitally.svg",
+      "url": "https://static.oomol.com/logo/third-party/vitally.svg"
+    },
+    {
+      "service": "voiceflow",
+      "file": "voiceflow.png",
+      "url": "https://static.oomol.com/logo/third-party/voiceflow.png"
+    },
+    {
+      "service": "waboxapp",
+      "file": "waboxapp.svg",
+      "url": "https://static.oomol.com/logo/third-party/waboxapp.svg"
+    },
+    {
+      "service": "wachete",
+      "file": "wachete.svg",
+      "url": "https://static.oomol.com/logo/third-party/wachete.svg"
+    },
+    {
+      "service": "waiverforever",
+      "file": "waiverforever.svg",
+      "url": "https://static.oomol.com/logo/third-party/waiverforever.svg"
+    },
+    {
+      "service": "waterfall",
+      "file": "waterfall.svg",
+      "url": "https://static.oomol.com/logo/third-party/waterfall.svg"
+    },
+    {
+      "service": "weatherapi",
+      "file": "weatherapi.png",
+      "url": "https://static.oomol.com/logo/third-party/weatherapi.png"
+    },
+    {
+      "service": "weatherbit",
+      "file": "weatherbit.svg",
+      "url": "https://static.oomol.com/logo/third-party/weatherbit.svg"
+    },
+    {
+      "service": "web_of_science",
+      "file": "web_of_science.svg",
+      "url": "https://static.oomol.com/logo/third-party/web_of_science.svg"
+    },
+    {
+      "service": "web_of_science_expanded",
+      "file": "web_of_science_expanded.svg",
+      "url": "https://static.oomol.com/logo/third-party/web_of_science_expanded.svg"
+    },
+    {
+      "service": "webinarjam",
+      "file": "webinarjam.png",
+      "url": "https://static.oomol.com/logo/third-party/webinarjam.png"
+    },
+    {
+      "service": "webscraper_io",
+      "file": "webscraper_io.svg",
+      "url": "https://static.oomol.com/logo/third-party/webscraper_io.svg"
+    },
+    {
+      "service": "webscraping_ai",
+      "file": "webscraping_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/webscraping_ai.png"
+    },
+    {
+      "service": "webshare",
+      "file": "webshare.svg",
+      "url": "https://static.oomol.com/logo/third-party/webshare.svg"
+    },
+    {
+      "service": "webvizio",
+      "file": "webvizio.png",
+      "url": "https://static.oomol.com/logo/third-party/webvizio.png"
+    },
+    {
+      "service": "wecom_bot",
+      "file": "wecom_bot.png",
+      "url": "https://static.oomol.com/logo/third-party/wecom_bot.png"
+    },
+    {
+      "service": "wejam_ai",
+      "file": "wejam_ai.png",
+      "url": "https://static.oomol.com/logo/third-party/wejam_ai.png"
+    },
+    {
+      "service": "whatsable",
+      "file": "whatsable.svg",
+      "url": "https://static.oomol.com/logo/third-party/whatsable.svg"
+    },
+    {
+      "service": "whoisfreaks",
+      "file": "whoisfreaks.svg",
+      "url": "https://static.oomol.com/logo/third-party/Whoisfreaks.svg"
+    },
+    {
+      "service": "winston_ai",
+      "file": "winston_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/winston_ai.svg"
+    },
+    {
+      "service": "wit_ai",
+      "file": "wit_ai.svg",
+      "url": "https://static.oomol.com/logo/third-party/Wit.ai.svg"
+    },
+    {
+      "service": "wiza",
+      "file": "wiza.png",
+      "url": "https://static.oomol.com/logo/third-party/wiza.png"
+    },
+    {
+      "service": "wolfram_alpha_api",
+      "file": "wolfram_alpha_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/wolfram_alpha_api.svg"
+    },
+    {
+      "service": "woodpecker_co",
+      "file": "woodpecker_co.svg",
+      "url": "https://static.oomol.com/logo/third-party/woodpecker_co.svg"
+    },
+    {
+      "service": "workable",
+      "file": "workable.svg",
+      "url": "https://static.oomol.com/logo/third-party/workable.svg"
+    },
+    {
+      "service": "workast",
+      "file": "workast.svg",
+      "url": "https://static.oomol.com/logo/third-party/workast.svg"
+    },
+    {
+      "service": "workiom",
+      "file": "workiom.png",
+      "url": "https://static.oomol.com/logo/third-party/workiom.png"
+    },
+    {
+      "service": "workiz",
+      "file": "workiz.svg",
+      "url": "https://static.oomol.com/logo/third-party/workiz.svg"
+    },
+    {
+      "service": "workpath",
+      "file": "workpath.svg",
+      "url": "https://static.oomol.com/logo/third-party/workpath.svg"
+    },
+    {
+      "service": "worksnaps",
+      "file": "worksnaps.png",
+      "url": "https://static.oomol.com/logo/third-party/worksnaps.png"
+    },
+    {
+      "service": "world_news_api",
+      "file": "world_news_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/world_news_api.svg"
+    },
+    {
+      "service": "wp_maps",
+      "file": "wp_maps.svg",
+      "url": "https://static.oomol.com/logo/third-party/wp_maps.svg"
+    },
+    {
+      "service": "wrike",
+      "file": "wrike.svg",
+      "url": "https://static.oomol.com/logo/third-party/wrike.svg"
+    },
+    {
+      "service": "writer",
+      "file": "writer.svg",
+      "url": "https://static.oomol.com/logo/third-party/writer.svg"
+    },
+    {
+      "service": "wttr_in",
+      "file": "wttr_in.png",
+      "url": "https://static.oomol.com/logo/third-party/wttr_in.png"
+    },
+    {
+      "service": "y_gy",
+      "file": "y_gy.svg",
+      "url": "https://static.oomol.com/logo/third-party/y_gy.svg"
+    },
+    {
+      "service": "ynab",
+      "file": "ynab.svg",
+      "url": "https://static.oomol.com/logo/third-party/ynab.svg"
+    },
+    {
+      "service": "you",
+      "file": "you.svg",
+      "url": "https://static.oomol.com/logo/third-party/you.svg"
+    },
+    {
+      "service": "yuandian",
+      "file": "yuandian.svg",
+      "url": "https://static.oomol.com/logo/third-party/yuandian.svg"
+    },
+    {
+      "service": "zenrows",
+      "file": "zenrows.svg",
+      "url": "https://static.oomol.com/logo/third-party/zenrows.svg"
+    },
+    {
+      "service": "zenscrape",
+      "file": "zenscrape.svg",
+      "url": "https://static.oomol.com/logo/third-party/zenscrape.svg"
+    },
+    {
+      "service": "zenserp",
+      "file": "zenserp.svg",
+      "url": "https://static.oomol.com/logo/third-party/zenserp.svg"
+    },
+    {
+      "service": "zep",
+      "file": "zep.png",
+      "url": "https://static.oomol.com/logo/third-party/zep.png"
+    },
+    {
+      "service": "zeplin",
+      "file": "zeplin.svg",
+      "url": "https://static.oomol.com/logo/third-party/zeplin.svg"
+    },
+    {
+      "service": "zerobounce",
+      "file": "zerobounce.svg",
+      "url": "https://static.oomol.com/logo/third-party/zerobounce.svg"
+    },
+    {
+      "service": "zigpoll",
+      "file": "zigpoll.png",
+      "url": "https://static.oomol.com/logo/third-party/zigpoll.png"
+    },
+    {
+      "service": "zip_archive_api",
+      "file": "zip_archive_api.png",
+      "url": "https://static.oomol.com/logo/third-party/zip_archive_api.png"
+    },
+    {
+      "service": "zipcodebase",
+      "file": "zipcodebase.svg",
+      "url": "https://static.oomol.com/logo/third-party/zipcodebase.svg"
+    },
+    {
+      "service": "zixflow",
+      "file": "zixflow.svg",
+      "url": "https://static.oomol.com/logo/third-party/zixflow.svg"
+    },
+    {
+      "service": "zlibrary",
+      "file": "zlibrary.svg",
+      "url": "https://static.oomol.com/logo/third-party/zlibrary.svg"
+    },
+    {
+      "service": "zorus",
+      "file": "zorus.svg",
+      "url": "https://static.oomol.com/logo/third-party/zorus.svg"
+    },
+    {
+      "service": "zylvie",
+      "file": "zylvie.svg",
+      "url": "https://static.oomol.com/logo/third-party/zylvie.svg"
+    },
+    {
+      "service": "zyte_api",
+      "file": "zyte_api.svg",
+      "url": "https://static.oomol.com/logo/third-party/zyte_api.svg"
+    }
+  ]
+}
