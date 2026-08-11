@@ -28,6 +28,7 @@ interface LinkAccountConnectDialogProps {
   existingConnectionNames: string[];
   oauthConfig?: LinkOAuthConfigSummary;
   runtimeMode: LinkRuntimeMode;
+  oauthAllowed: boolean;
   onClose: () => void;
   onConfigureProvider: (connectionName: string, authType: string) => void;
   onSaved: () => Promise<void>;
@@ -41,6 +42,7 @@ export function LinkAccountConnectDialog({
   existingConnectionNames,
   oauthConfig,
   runtimeMode,
+  oauthAllowed,
   onClose,
   onConfigureProvider,
   onSaved,
@@ -97,7 +99,7 @@ export function LinkAccountConnectDialog({
   const auth = provider.auth[authIndex] ?? provider.auth[0] ?? { type: "no_auth" as const };
   const fields = credentialFields(auth);
   const isOAuth = auth.type === "oauth2";
-  const oauthReady = !isOAuth || (oauthConfig?.configured ?? false);
+  const oauthReady = !isOAuth || (oauthAllowed && (oauthConfig?.configured ?? false));
   const fieldsReady = fields.every((field) => !field.required || Boolean(values[field.key]?.trim()));
   const connectionNameValid = isValidLinkConnectionName(connectionName);
   const connectionNameDuplicate = mode === "create" && existingConnectionNames.includes(connectionName.trim());
@@ -108,6 +110,10 @@ export function LinkAccountConnectDialog({
   const runtimeLabel = runtimeMode === "remote" ? "已有部署的 Link 运行时" : "本机 Link 运行时";
 
   const save = async () => {
+    if (isOAuth && !oauthAllowed) {
+      toast.error("当前运行时无法接收此服务的公网回调");
+      return;
+    }
     setBusy(true);
     try {
       const normalizedConnectionName = connectionName.trim();
@@ -201,7 +207,12 @@ export function LinkAccountConnectDialog({
                 }}
               >
                 {provider.auth.map((item, index) => (
-                  <ToggleGroupItem key={`${item.type}:${index}`} value={String(index)} disabled={oauth?.status === "pending"} className="border border-[var(--lume-border-subtle)]">
+                  <ToggleGroupItem
+                    key={`${item.type}:${index}`}
+                    value={String(index)}
+                    disabled={oauth?.status === "pending" || (item.type === "oauth2" && !oauthAllowed)}
+                    className="border border-[var(--lume-border-subtle)]"
+                  >
                     {authLabel(String(item.type))}
                   </ToggleGroupItem>
                 ))}

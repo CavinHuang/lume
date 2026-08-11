@@ -112,9 +112,10 @@ export function createLinkRuntimeSupervisor(input: {
       await waitForLinkHealth(origin, secrets.runtimeToken);
       if (!isCurrent()) return state;
       if (child !== running) throw new Error("link_runtime_exited_during_start");
+      await deliverBootstrap({ mode: "local", phase: "online", origin, adminToken: secrets.adminToken, runtimeToken: secrets.runtimeToken });
+      if (!isCurrent()) return state;
       state = { ...publicState(persisted, "online", metadata.version, dataDirectory, crashTimes.length, remoteCredentials), origin };
       input.emit(state);
-      await deliverBootstrap({ mode: "local", phase: "online", origin, adminToken: secrets.adminToken, runtimeToken: secrets.runtimeToken });
     } catch (error) {
       if (!isCurrent()) return state;
       if (child === running) child = null;
@@ -150,8 +151,6 @@ export function createLinkRuntimeSupervisor(input: {
       if (!isCurrent()) return state;
       await validateLinkAdminAccess(origin, credentials.adminToken);
       if (!isCurrent()) return state;
-      state = { ...publicState(persisted, "online", metadata.version, dataDirectory, 0, credentials), origin };
-      input.emit(state);
       await deliverBootstrap({
         mode: "remote",
         phase: "online",
@@ -159,6 +158,9 @@ export function createLinkRuntimeSupervisor(input: {
         ...(credentials.adminToken ? { adminToken: credentials.adminToken } : {}),
         ...(credentials.runtimeToken ? { runtimeToken: credentials.runtimeToken } : {}),
       });
+      if (!isCurrent()) return state;
+      state = { ...publicState(persisted, "online", metadata.version, dataDirectory, 0, credentials), origin };
+      input.emit(state);
       return state;
     } catch (error) {
       if (!isCurrent()) return state;
