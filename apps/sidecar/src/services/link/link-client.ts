@@ -6,30 +6,35 @@ type LinkRuntimeBootstrap = { mode?: LinkRuntimeMode; phase: LinkRuntimePhase; o
 type BootstrapState = { mode?: LinkRuntimeMode; phase: LinkRuntimePhase; origin?: string; adminToken?: Buffer; runtimeToken?: Buffer };
 
 let bootstrap: BootstrapState = { phase: "disabled" };
+let bootstrapGeneration = 0;
 const log = createLogger("link-client");
 const LINK_RUNTIME_PHASES = new Set<LinkRuntimePhase>([
   "disabled", "starting", "online", "stopping", "offline", "crashed", "port_conflict", "incompatible",
 ]);
 
 export function installLinkRuntimeBootstrap(value: unknown): void {
+  bootstrapGeneration += 1;
   clearSecrets();
   if (!value || typeof value !== "object") {
+    clearLinkMcpRegistration();
     bootstrap = { phase: "offline" };
     return;
   }
   const input = value as LinkRuntimeBootstrap;
   if (!LINK_RUNTIME_PHASES.has(input.phase)) {
+    clearLinkMcpRegistration();
     bootstrap = { phase: "offline" };
     throw new Error("invalid_link_bootstrap");
   }
   if (input.phase !== "online") {
-    getLinkMcpClient().sync({});
+    clearLinkMcpRegistration();
     bootstrap = { phase: input.phase };
     return;
   }
   const mode = input.mode ?? "local";
   const originValid = mode === "local" ? isEmbeddedOrigin(input.origin) : mode === "remote" && isRemoteOrigin(input.origin);
   if (!originValid || (mode === "local" && (!input.adminToken || !input.runtimeToken))) {
+    clearLinkMcpRegistration();
     bootstrap = { phase: "offline" };
     throw new Error("invalid_link_bootstrap");
   }
@@ -40,13 +45,15 @@ export function installLinkRuntimeBootstrap(value: unknown): void {
     ...(input.adminToken ? { adminToken: Buffer.from(input.adminToken) } : {}),
     ...(input.runtimeToken ? { runtimeToken: Buffer.from(input.runtimeToken) } : {}),
   };
-  getLinkMcpClient().register(LINK_MCP_SERVER_ID, {
+  const serverId = `${LINK_MCP_SERVER_ID}:${bootstrapGeneration}`;
+  activeLinkMcpServerId = serverId;
+  getLinkMcpClient().sync({ [serverId]: {
     enabled: true,
     transport: "streamable_http",
     url: `${input.origin}/mcp`,
     ...(input.runtimeToken ? { headers: { authorization: `Bearer ${input.runtimeToken}` } } : {}),
-  });
-  void getLinkMcpClient().connect(LINK_MCP_SERVER_ID).catch((error) => {
+  } });
+  void getLinkMcpClient().connect(serverId).catch((error) => {
     log.warn("MCP 连接失败", { error: error instanceof Error ? error.message : String(error) });
   });
 }
@@ -188,20 +195,41 @@ export function extractMcpPayload(result: unknown): McpLinkPayload {
 
 const LINK_MCP_SERVER_ID = "openconnector";
 let mcpClient: McpClientManager | null = null;
+let activeLinkMcpServerId: string | null = null;
+
+export interface LinkMcpBinding {
+  generation: number;
+  serverId: string;
+}
 
 export function getLinkMcpClient(): McpClientManager {
   if (!mcpClient) mcpClient = new McpClientManager();
   return mcpClient;
 }
 
+export function captureLinkMcpBinding(): LinkMcpBinding | null {
+  return bootstrap.phase === "online" && activeLinkMcpServerId
+    ? { generation: bootstrapGeneration, serverId: activeLinkMcpServerId }
+    : null;
+}
+
+function clearLinkMcpRegistration(): void {
+  activeLinkMcpServerId = null;
+  getLinkMcpClient().sync({});
+}
+
 export async function callLinkMcpTool(
   toolName: string,
   args: Record<string, unknown>,
   signal?: AbortSignal,
+  binding?: LinkMcpBinding,
 ): Promise<McpLinkPayload> {
-  if (!isLinkRuntimeOnline()) throw new Error("link_runtime_offline");
+  const serverId = binding?.serverId ?? activeLinkMcpServerId;
+  if (!isLinkRuntimeOnline() || !serverId) throw new Error("link_runtime_offline");
+  if (binding && binding.generation !== bootstrapGeneration) throw new Error("link_runtime_changed");
   const client = getLinkMcpClient();
-  await client.ensureConnected(LINK_MCP_SERVER_ID);
-  const result = await client.callTool(LINK_MCP_SERVER_ID, toolName, args, signal ? { signal } : {});
+  await client.ensureConnected(serverId);
+  if (binding && binding.generation !== bootstrapGeneration) throw new Error("link_runtime_changed");
+  const result = await client.callTool(serverId, toolName, args, signal ? { signal } : {});
   return extractMcpPayload(result);
 }
