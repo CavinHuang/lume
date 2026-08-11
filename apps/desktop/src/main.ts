@@ -1725,7 +1725,7 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     }
     case 'link_runtime_state':
       requireMainWindowSender(context, 'link_runtime_state')
-      return linkRuntimeSupervisor?.getState() ?? { enabled: false, mode: 'local', phase: 'disabled', port: null, origin: null, remoteOrigin: null, adminTokenConfigured: false, runtimeTokenConfigured: false, version: '1.3.5', dataDirectory: join(resolveConfigDir(), 'link-runtime', 'openconnector', 'data'), restartCount: 0 }
+      return linkRuntimeSupervisor?.getState() ?? { enabled: false, phase: 'disabled', port: null, origin: null, version: '1.3.5', dataDirectory: join(resolveConfigDir(), 'link-runtime', 'openconnector', 'data'), restartCount: 0 }
     case 'link_runtime_enable':
       requireMainWindowSender(context, 'link_runtime_enable')
       if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
@@ -1746,15 +1746,6 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       requireMainWindowSender(context, 'link_runtime_change_port')
       if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
       return linkRuntimeSupervisor.changePort(Number(payload.port))
-    case 'link_runtime_configure':
-      requireMainWindowSender(context, 'link_runtime_configure')
-      if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
-      return linkRuntimeSupervisor.configure({
-        mode: payload.mode,
-        ...(typeof payload.origin === 'string' ? { origin: payload.origin } : {}),
-        ...(typeof payload.adminToken === 'string' ? { adminToken: payload.adminToken } : {}),
-        ...(typeof payload.runtimeToken === 'string' ? { runtimeToken: payload.runtimeToken } : {}),
-      })
     case 'sidecar_call': {
       validateRendererSidecarMethod(payload.method)
       if (payload.method !== 'agent:send-thread-message') {
