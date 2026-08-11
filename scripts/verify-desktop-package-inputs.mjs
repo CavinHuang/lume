@@ -53,6 +53,9 @@ const requiredFiles = [
   resolve(REPO_ROOT, "apps", "web", "dist", "boot-theme.js"),
   resolve(REPO_ROOT, "apps", "web", "dist", "boot.css"),
 ];
+if (process.platform === "darwin") {
+  requiredFiles.push(resolve(DESKTOP_DIR, "resources", "agent-island", "macos-agent-island-helper"));
+}
 
 for (const file of requiredFiles) {
   if (!existsSync(file)) fail(`missing package input: ${file}`);
