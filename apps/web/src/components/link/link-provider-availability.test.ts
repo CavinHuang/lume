@@ -29,8 +29,12 @@ describe("Link provider availability", () => {
       "https://169.254.1.1",
       "https://172.16.0.1",
       "https://192.168.0.1",
+      "https://192.0.0.1",
+      "https://192.0.2.1",
       "https://[fd00::1]",
       "https://[fe80::1]",
+      "https://[100::1]",
+      "https://[64:ff9b::1]",
       "https://[::ffff:10.0.0.5]",
       "https://connector.internal",
       "https://nas",
@@ -45,6 +49,7 @@ describe("Link provider availability", () => {
   test("accepts public callback hosts", () => {
     expect(canCreateLinkConnection("intercom", "remote", "https://connector.example.com")).toBe(true);
     expect(canCreateLinkConnection("intercom", "remote", "https://8.8.8.8")).toBe(true);
+    expect(canCreateLinkConnection("intercom", "remote", "https://192.0.1.1")).toBe(true);
     expect(canCreateLinkConnection("intercom", "remote", "https://[2606:4700:4700::1111]")).toBe(true);
   });
 });

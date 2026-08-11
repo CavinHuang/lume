@@ -69,12 +69,15 @@ function parseIpv4(hostname: string): number[] | null {
   return values.every((value) => value >= 0 && value <= 255) ? values : null;
 }
 
-function isPublicIpv4([a, b, c]: number[]): boolean {
+function isPublicIpv4([a, b, c, d]: number[]): boolean {
   if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
   if (a === 100 && b >= 64 && b <= 127) return false;
   if (a === 169 && b === 254) return false;
   if (a === 172 && b >= 16 && b <= 31) return false;
-  if (a === 192 && (b === 0 || b === 168)) return false;
+  if (a === 192 && b === 0 && c === 0) return d === 9 || d === 10;
+  if (a === 192 && b === 0 && c === 2) return false;
+  if (a === 192 && b === 88 && c === 99) return false;
+  if (a === 192 && b === 168) return false;
   if (a === 198 && (b === 18 || b === 19)) return false;
   if (a === 198 && b === 51 && c === 100) return false;
   if (a === 203 && b === 0 && c === 113) return false;
@@ -110,5 +113,10 @@ function isPublicIpv6(groups: number[]): boolean {
   if (allZeroPrefix || (groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff)) {
     return isPublicIpv4([groups[6] >> 8, groups[6] & 0xff, groups[7] >> 8, groups[7] & 0xff]);
   }
+  if ((first & 0xe000) !== 0x2000) return false;
+  if (first === 0x2001 && groups[1] === 0x0002 && groups[2] === 0) return false;
+  if (first === 0x2001 && ((groups[1] & 0xfff0) === 0x0010 || (groups[1] & 0xfff0) === 0x0020)) return false;
+  if (first === 0x2002) return false;
+  if (first === 0x3fff && (groups[1] & 0xf000) === 0) return false;
   return true;
 }
