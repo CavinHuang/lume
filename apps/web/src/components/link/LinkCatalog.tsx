@@ -62,7 +62,7 @@ export function LinkCatalog({
       categories: Object.fromEntries(
         LINK_CATEGORY_FILTERS.map((category) => [
           category.id,
-          annotated.filter(({ provider }) => matchesLinkCategory(provider.categories, category.id)).length,
+          annotated.filter(({ provider }) => matchesLinkCategory(provider.service, provider.categories, category.id)).length,
         ]),
       ) as FilterCounts["categories"],
     }),
@@ -83,7 +83,7 @@ export function LinkCatalog({
           (filter === "connected" && status.configured) ||
           (filter === "noSetup" && status.noSetup) ||
           (filter === "needsSetup" && status.needsSetup) ||
-          (categoryFilter !== null && matchesLinkCategory(provider.categories, categoryFilter));
+          (categoryFilter !== null && matchesLinkCategory(provider.service, provider.categories, categoryFilter));
         return matchesQuery && matchesFilter;
       })
       .sort((a, b) => {

@@ -1,4 +1,5 @@
 export type LinkCategoryFilterId =
+  | "cross-border-commerce"
   | "ai"
   | "productivity"
   | "marketing"
@@ -18,13 +19,56 @@ export interface LinkCategoryFilterDefinition {
   id: LinkCategoryFilterId;
   label: string;
   categories: readonly string[];
+  services?: readonly string[];
   primary?: boolean;
 }
 
+const CROSS_BORDER_COMMERCE_SERVICES = [
+  "lingxing",
+  "lingxing_mcp",
+  "sellersprite",
+  "sellerspace",
+  "shopify",
+  "17track",
+  "adobe_commerce",
+  "aftership",
+  "asin_data_api",
+  "baselinker",
+  "big_commerce",
+  "captainbi",
+  "cin7_core",
+  "easypost",
+  "helium10",
+  "jumpseller",
+  "linkfox",
+  "printify",
+  "ship_bob",
+  "shipengine",
+  "shippo",
+  "ship_station",
+  "shopify_admin",
+  "shopify_partner",
+  "shopify_storefront",
+  "sif",
+  "sorftime",
+  "store_leads",
+  "storecensus",
+  "triple_whale",
+  "vtex",
+  "woocommerce",
+] as const;
+
 export const LINK_CATEGORY_FILTERS: readonly LinkCategoryFilterDefinition[] = [
+  {
+    id: "cross-border-commerce",
+    label: "跨境电商",
+    categories: [],
+    services: CROSS_BORDER_COMMERCE_SERVICES,
+    primary: true,
+  },
   { id: "ai", label: "AI", categories: ["AI"], primary: true },
   { id: "productivity", label: "效率", categories: ["Productivity", "Project Management"], primary: true },
-  { id: "marketing", label: "营销", categories: ["Marketing"], primary: true },
+  { id: "marketing", label: "营销", categories: ["Marketing"] },
   { id: "communication", label: "沟通", categories: ["Communication"] },
   { id: "developer", label: "开发者", categories: ["Developer Tools", "Infrastructure"] },
   { id: "data-storage", label: "数据与存储", categories: ["Data", "Storage"] },
@@ -49,9 +93,12 @@ export function linkCategoryIdFromFilter(filter: string): LinkCategoryFilterId |
   return categoryById.has(id) ? id : null;
 }
 
-export function matchesLinkCategory(categories: readonly string[], id: LinkCategoryFilterId): boolean {
+export function matchesLinkCategory(service: string, categories: readonly string[], id: LinkCategoryFilterId): boolean {
   const definition = categoryById.get(id);
   if (!definition) return false;
   if (id === "other") return categories.length === 0 || categories.every((category) => !mappedCategories.has(category));
-  return categories.some((category) => definition.categories.includes(category));
+  return (
+    definition.services?.includes(service) === true ||
+    categories.some((category) => definition.categories.includes(category))
+  );
 }
