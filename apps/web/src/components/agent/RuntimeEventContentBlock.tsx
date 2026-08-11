@@ -801,6 +801,7 @@ export function UserAgentRoleInvocationContent({
   capabilityReferences?: AgentCapabilityReferenceView[]
 }) {
   const { quotes, text: cleanText } = parseQuotedSelectionRefs(text)
+  const cleanMessageParts = stripQuotedSelectionRefsFromMessageParts(messageParts)
   const quoteMarks = quotes.length > 0 ? (
     <div className="mb-1.5 flex flex-wrap gap-1.5">
       {quotes.map((quote, index) => (
@@ -816,7 +817,7 @@ export function UserAgentRoleInvocationContent({
     return (
       <div className="min-w-0">
         {quoteMarks}
-        <CapabilityMessageText text={cleanText} messageParts={messageParts} capabilityReferences={capabilityReferences} />
+        <CapabilityMessageText text={cleanText} messageParts={cleanMessageParts} capabilityReferences={capabilityReferences} />
       </div>
     )
   }
@@ -855,6 +856,17 @@ export function UserAgentRoleInvocationContent({
       )}
     </div>
   )
+}
+
+function stripQuotedSelectionRefsFromMessageParts(
+  messageParts: AgentUserMessagePart[] | undefined,
+): AgentUserMessagePart[] | undefined {
+  const first = messageParts?.[0]
+  if (!first || first.type !== 'text') return messageParts
+  const parsed = parseQuotedSelectionRefs(first.text)
+  if (parsed.quotes.length === 0) return messageParts
+  const rest = messageParts.slice(1)
+  return parsed.text ? [{ ...first, text: parsed.text }, ...rest] : rest
 }
 
 function CapabilityMessageText({

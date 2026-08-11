@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import type { AgentUserMessagePart } from '@lume/shared'
 
 mock.module('@lume/ui', () => ({
   CodeBlock: ({ children }: { children: React.ReactNode }) => <section data-code-block="true">{children}</section>,
@@ -67,7 +68,7 @@ const {
   UserAgentRoleInvocationContent,
   parseAgentRoleInstructionMessage,
 } = await import('./RuntimeEventContentBlock') as typeof import('./RuntimeEventContentBlock') & {
-  UserAgentRoleInvocationContent: React.ComponentType<{ text: string }>
+  UserAgentRoleInvocationContent: React.ComponentType<{ text: string; messageParts?: AgentUserMessagePart[] }>
 }
 
 describe('user agent role invocation messages', () => {
@@ -94,5 +95,23 @@ describe('user agent role invocation messages', () => {
     expect(markup).toContain('让它写')
     expect(markup).not.toContain('请调用 Agent 工具')
     expect(markup).not.toContain('subagent_type')
+  })
+
+  test('renders quoted connector messages without exposing the quoted XML twice', () => {
+    const quotedBlock = '<quoted_context source="agent-history" label="历史消息" message_id="m1" role="assistant">\n引用内容\n</quoted_context>\n\n'
+    const markup = renderToStaticMarkup(
+      <UserAgentRoleInvocationContent
+        text={`${quotedBlock}请检查 @Gmail · work`}
+        messageParts={[
+          { type: 'text', text: quotedBlock },
+          { type: 'text', text: '请检查 ' },
+          { type: 'link_connection_ref', schemaVersion: 1, service: 'gmail', connectionName: 'work', displayText: 'Gmail · work' },
+        ]}
+      />,
+    )
+
+    expect(markup).toContain('历史消息')
+    expect(markup).toContain('@Gmail · work')
+    expect(markup).not.toContain('quoted_context')
   })
 })
