@@ -3215,9 +3215,6 @@ app.whenReady().then(async () => {
       else { try { process.kill(pid, 'SIGKILL') } catch {} }
     },
   })
-  await linkRuntimeSupervisor.initialize().catch((error) => {
-    writeMainLog('warn', 'desktop.link', 'runtime.autostart_failed', 'Link runtime autostart failed', { data: { error } })
-  })
   await sidecarHost.notifyBrowserSettings?.(browserRuntime.getSettings())
   logDesktopStartup('sidecar ready', 'sidecar.ready')
   pageRenderer = new PageRenderer()
@@ -3225,6 +3222,9 @@ app.whenReady().then(async () => {
   registerDesktopContextPowerEvents()
   await captureQuickInputContext()
   await createMainWindow()
+  void linkRuntimeSupervisor.initialize().catch((error) => {
+    writeMainLog('warn', 'desktop.link', 'runtime.autostart_failed', 'Link runtime autostart failed', { data: { error } })
+  })
   // Agent 灵动岛 service（Task 7）：主窗口就绪后启动，开始响应 sidecar intent。
   await getAgentIslandService().start()
   // Phase 2：启动渲染面（macOS 26+ 优先 native，否则 Electron 窗）。native 4s 未 ready 由 host 回退。
