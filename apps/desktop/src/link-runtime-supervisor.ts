@@ -37,6 +37,7 @@ export function createLinkRuntimeSupervisor(input: {
   let currentCredentials: LinkBootstrapCredentials | null = null;
   let remoteCredentials = loadRemoteCredentialsIfAvailable();
   let bootstrapDelivery = Promise.resolve();
+  let operationGeneration = 0;
   let state: LinkRuntimeState = publicState(persisted, "disabled", metadata.version, dataDirectory, 0, remoteCredentials);
 
   const deliverBootstrap = (bootstrap: LinkRuntimeBootstrap): Promise<void> => {
@@ -128,24 +129,33 @@ export function createLinkRuntimeSupervisor(input: {
     if (state.phase === "starting") return state;
     const origin = persisted.remoteOrigin;
     if (!origin) { publish("offline", "Existing deployment URL is not configured."); await bootstrapDelivery; return state; }
+    const generation = operationGeneration;
+    const isCurrent = () => generation === operationGeneration
+      && persisted.enabled
+      && persisted.mode === "remote"
+      && persisted.remoteOrigin === origin;
     try {
-      remoteCredentials = loadRemoteCredentials();
-      currentCredentials = remoteCredentials;
+      const credentials = loadRemoteCredentials();
+      remoteCredentials = credentials;
+      currentCredentials = credentials;
       publish("starting");
-      currentCredentials = remoteCredentials;
-      await waitForLinkHealth(origin, remoteCredentials.runtimeToken, 10_000);
-      await validateLinkAdminAccess(origin, remoteCredentials.adminToken);
-      state = { ...publicState(persisted, "online", metadata.version, dataDirectory, 0, remoteCredentials), origin };
+      currentCredentials = credentials;
+      await waitForLinkHealth(origin, credentials.runtimeToken, 10_000);
+      if (!isCurrent()) return state;
+      await validateLinkAdminAccess(origin, credentials.adminToken);
+      if (!isCurrent()) return state;
+      state = { ...publicState(persisted, "online", metadata.version, dataDirectory, 0, credentials), origin };
       input.emit(state);
       await deliverBootstrap({
         mode: "remote",
         phase: "online",
         origin,
-        ...(remoteCredentials.adminToken ? { adminToken: remoteCredentials.adminToken } : {}),
-        ...(remoteCredentials.runtimeToken ? { runtimeToken: remoteCredentials.runtimeToken } : {}),
+        ...(credentials.adminToken ? { adminToken: credentials.adminToken } : {}),
+        ...(credentials.runtimeToken ? { runtimeToken: credentials.runtimeToken } : {}),
       });
       return state;
     } catch (error) {
+      if (!isCurrent()) return state;
       publish("offline", message(error));
       await bootstrapDelivery;
       throw error;
@@ -153,6 +163,7 @@ export function createLinkRuntimeSupervisor(input: {
   }
 
   async function stop(nextPhase: LinkRuntimeState["phase"] = "offline"): Promise<LinkRuntimeState> {
+    operationGeneration += 1;
     stopping = true;
     if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
     const running = child;
@@ -376,11 +387,10 @@ export async function waitForLinkHealth(origin: string, token: string, timeoutMs
 }
 
 async function validateLinkAdminAccess(origin: string, token: string): Promise<void> {
-  if (!token) return;
   try {
     const response = await fetch(`${origin}/api/providers`, {
       redirect: "error",
-      headers: { authorization: `Bearer ${token}` },
+      headers: token ? { authorization: `Bearer ${token}` } : undefined,
       signal: AbortSignal.timeout(3_000),
     });
     const body = await response.json().catch(() => null) as unknown;
