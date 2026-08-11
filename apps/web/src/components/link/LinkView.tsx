@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useAtom, useSetAtom } from "jotai";
-import type {
-  LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderDetail, LinkProviderSummary, LinkRuntimeMode,
-} from "@lume/shared";
+import type { LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderDetail, LinkProviderSummary } from "@lume/shared";
 import {
   activeTabIdAtom,
   linkProviderTargetAtom,
@@ -41,7 +39,6 @@ export function LinkView() {
   const [selected, setSelected] = useState<LinkProviderDetail | null>(null);
   const [dialog, setDialog] = useState<LinkDialogState>(null);
   const [online, setOnline] = useState(false);
-  const [runtimeMode, setRuntimeMode] = useState<LinkRuntimeMode>("local");
   const [oauthConfigs, setOAuthConfigs] = useState<LinkOAuthConfigSummary[]>([]);
   const [providerTarget, setProviderTarget] = useAtom(linkProviderTargetAtom);
   const [deleteTarget, setDeleteTarget] = useState<LinkConnectionSummary | null>(null);
@@ -52,7 +49,6 @@ export function LinkView() {
   const refresh = useCallback(async () => {
     const runtime = await getLinkRuntimeState();
     setOnline(runtime.phase === "online");
-    setRuntimeMode(runtime.mode);
     if (runtime.phase !== "online") {
       setProviders([]); setConnections([]); setOAuthConfigs([]); return;
     }
@@ -138,7 +134,7 @@ export function LinkView() {
           <h1 className="text-base font-semibold">连接器</h1>
           <p className="mt-0.5 text-xs text-[var(--text-3)]">连接常用应用与数据服务，并查看智能体可以调用的能力。</p>
         </div>
-        <Badge variant="success">{runtimeMode === "remote" ? "已有部署已连接" : "本机服务运行中"}</Badge>
+        <Badge variant="success">本机服务运行中</Badge>
       </div>
       <div className={cn(
         "grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-hidden transition-[grid-template-columns] duration-200 ease-out",
@@ -166,7 +162,6 @@ export function LinkView() {
               provider={selected}
               connections={connections.filter((c) => c.service === selected.service)}
               oauthConfig={oauthConfigs.find((config) => config.service === selected.service)}
-              runtimeMode={runtimeMode}
               onConnect={() => openAccountDialog(
                 connections.some((connection) => connection.service === selected.service) ? "" : "default",
               )}
@@ -195,7 +190,6 @@ export function LinkView() {
           initialConnectionName={dialog.connectionName}
           initialAuthType={dialog.authType}
           mode={dialog.mode}
-          runtimeMode={runtimeMode}
           existingConnectionNames={connections
             .filter((connection) => connection.service === selected.service)
             .map((connection) => connection.connectionName)}
@@ -215,7 +209,6 @@ export function LinkView() {
         <LinkProviderSetupDialog
           provider={selected}
           oauthConfig={oauthConfigs.find((config) => config.service === selected.service)}
-          runtimeMode={runtimeMode}
           onClose={() => setDialog(null)}
           onSaved={async () => {
             await refresh();
@@ -229,7 +222,7 @@ export function LinkView() {
         open={Boolean(deleteTarget)}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
         title="断开这个连接？"
-        description={deleteTarget ? `将删除 ${deleteTarget.service} 的 ${deleteTarget.connectionName} ${runtimeMode === "remote" ? "已有部署凭据" : "本机凭据"}。` : ""}
+        description={deleteTarget ? `将删除 ${deleteTarget.service} 的 ${deleteTarget.connectionName} 本机凭据。` : ""}
         confirmLabel="断开连接"
         destructive
         onConfirm={() => {
