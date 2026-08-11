@@ -92,6 +92,7 @@ interface ServerState {
   config: NormalizedMcpServerConfig;
   status: McpClientStatus;
   tools: McpToolDetail[];
+  generation: number;
   error?: { code: McpClientErrorCode; message: string };
   client?: McpClientLike;
   connectingPromise?: Promise<void>;
@@ -433,7 +434,8 @@ export class McpClientManager {
     this.servers.set(serverId, {
       config: cloneConfig(config),
       status: 'idle',
-      tools: []
+      tools: [],
+      generation: 0
     });
   }
 
@@ -479,6 +481,7 @@ export class McpClientManager {
     if (!state) {
       return;
     }
+    state.generation += 1;
     await this.closeState(state);
     state.status = 'idle';
     state.tools = [];
@@ -597,6 +600,8 @@ export class McpClientManager {
   }
 
   private async openConnection(serverId: string, state: ServerState): Promise<void> {
+    const generation = state.generation;
+    const isCurrent = () => this.servers.get(serverId) === state && state.generation === generation;
     state.status = 'connecting';
     state.error = undefined;
     state.lastCheckedAt = Date.now();
@@ -608,15 +613,20 @@ export class McpClientManager {
       throw invalid;
     }
 
+    let client: McpClientLike | undefined;
     try {
-      const client = await this.clientFactory(serverId, state.config);
+      client = await this.clientFactory(serverId, state.config);
+      if (!isCurrent()) throw createMcpError('aborted', `MCP connection was superseded: ${serverId}`);
       const transport = await this.transportFactory(serverId, state.config);
+      if (!isCurrent()) throw createMcpError('aborted', `MCP connection was superseded: ${serverId}`);
       await withTimeout(Promise.resolve(client.connect(transport)), this.defaultConnectTimeoutMs);
+      if (!isCurrent()) throw createMcpError('aborted', `MCP connection was superseded: ${serverId}`);
       state.client = client;
       const toolList = await withTimeout(
         Promise.resolve(client.listTools?.() ?? { tools: [] }),
         this.defaultConnectTimeoutMs
       );
+      if (!isCurrent()) throw createMcpError('aborted', `MCP connection was superseded: ${serverId}`);
 
       state.tools = buildToolDetails(serverId, state.config, toolList.tools ?? []);
       state.status = 'connected';
@@ -624,11 +634,17 @@ export class McpClientManager {
       state.lastConnectedAt = Date.now();
       state.lastCheckedAt = Date.now();
     } catch (error) {
-      await this.closeState(state);
+      if (state.client === client) {
+        await this.closeState(state);
+      } else {
+        await this.closeClient(client);
+      }
       const classified = classifyError(error, 'transport_error');
-      state.status = 'failed';
-      state.error = { code: classified.code, message: classified.message };
-      state.lastCheckedAt = Date.now();
+      if (isCurrent()) {
+        state.status = 'failed';
+        state.error = { code: classified.code, message: classified.message };
+        state.lastCheckedAt = Date.now();
+      }
       throw classified;
     }
   }
@@ -637,9 +653,11 @@ export class McpClientManager {
     const client = state.client;
     state.client = undefined;
     state.connectingPromise = undefined;
-    if (!client?.close) {
-      return;
-    }
+    await this.closeClient(client);
+  }
+
+  private async closeClient(client: McpClientLike | undefined): Promise<void> {
+    if (!client?.close) return;
     try {
       await client.close();
     } catch {

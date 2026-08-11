@@ -156,6 +156,31 @@ describe("McpClientManager", () => {
     expect(manager.getTools("lume-test-http").map((tool) => tool.originalName)).toEqual(["echo"]);
   });
 
+  test("sync closes a pending connection after its server is removed", async () => {
+    let resolveConnect!: () => void;
+    let markStarted!: () => void;
+    let closeCalls = 0;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const manager = new McpClientManager({
+      clientFactory: () => ({
+        async connect() { markStarted(); await new Promise<void>((resolve) => { resolveConnect = resolve; }); },
+        async listTools() { return { tools: [] }; },
+        async close() { closeCalls += 1; },
+      }),
+      transportFactory: fakeTransportFactory,
+    });
+
+    manager.sync({ remote: { enabled: true, transport: "streamable_http", url: "https://connector.example.com/mcp" } });
+    const connecting = manager.connect("remote");
+    await started;
+    manager.sync({});
+    resolveConnect();
+
+    await expect(connecting).rejects.toMatchObject({ code: "aborted" });
+    expect(manager.getStatus().remote).toBeUndefined();
+    expect(closeCalls).toBe(1);
+  });
+
   test("sync reconnects when a reused config object is changed", async () => {
     const factory = createFakeMcpFactory();
     const manager = new McpClientManager({

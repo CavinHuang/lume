@@ -32,10 +32,22 @@ function hasPublicCallbackOrigin(runtimeMode: LinkRuntimeMode, runtimeOrigin: st
     if (ipv4) return isPublicIpv4(ipv4);
     const ipv6 = parseIpv6(hostname);
     if (ipv6) return isPublicIpv6(ipv6);
-    return hostname !== "localhost" && !hostname.endsWith(".localhost") && !hostname.endsWith(".local");
+    return isPlausiblyPublicHostname(hostname);
   } catch {
     return false;
   }
+}
+
+const INTERNAL_DNS_SUFFIXES = new Set([
+  "corp", "home", "internal", "intranet", "invalid", "lan", "local", "localhost", "private", "test",
+]);
+
+function isPlausiblyPublicHostname(hostname: string): boolean {
+  const labels = hostname.split(".");
+  if (labels.length < 2 || labels.some((label) => !label)) return false;
+  const topLevelDomain = labels.at(-1) ?? "";
+  if (INTERNAL_DNS_SUFFIXES.has(topLevelDomain)) return false;
+  return /^[a-z]{2,63}$/.test(topLevelDomain) || /^xn--[a-z0-9-]{2,59}$/.test(topLevelDomain);
 }
 
 function parseIpv4(hostname: string): number[] | null {
