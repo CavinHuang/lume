@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { LOBEHUB_SERVICES } from '@/lib/provider-icon'
+import { LOBEHUB_SERVICES, decideIconKind } from '@/lib/provider-icon'
 import { ProviderIcon } from './ProviderIcon'
 
 // fake DOM（仿 AgentView.test.tsx / SuggestionBanner.test.tsx,仓库组件测试标准模式）。
@@ -204,34 +204,26 @@ async function unmount(root: Root | null) {
 }
 
 describe('ProviderIcon', () => {
-  test('lobehub service: 深导入链 + <Icon/> 渲染不抛,svg 与 <title> 落 DOM', async () => {
-    // 覆盖最常用的 OpenAI Mono 深导入分支。
-    // 若 @lobehub/icons 升级破坏深路径、或 Mono 重新拖入 @lobehub/ui(React 19 use hook),
-    // 本测试会在加载/渲染期而非生产运行时崩溃。
+  test('theSVG service: 首选社区品牌图片', async () => {
     const { env, root } = await render(<ProviderIcon service="openai" size={20} />)
     try {
-      expect(findByTag(env.container, 'svg')).toBeDefined()
-      expect(env.container.textContent).toContain('OpenAI')
+      const image = findByTag(env.container, 'img')
+      expect(image).toBeDefined()
+      expect(image?.attributes.get('src')).toContain('thesvg')
     } finally {
       await unmount(root)
       env.cleanup()
     }
   })
 
-  // 漂移守卫:遍历权威列表 LOBEHUB_SERVICES(与 provider-icon.ts 同源)。
-  // 若未来给 LOBEHUB_SERVICES 加 service 忘了给 LOBEHUB_MAP 加 key,decideIconKind 返回
-  // "lobehub" 而 LOBEHUB_MAP[s] 得 undefined → 组件静默降级字母块(无 svg,无报错)。
-  // 同样捕获:某 @lobehub/icons 深导入路径断裂、或 Mono 组件运行时崩 → 无 svg。
-  // test.each 给出 per-service 失败归因,一眼定位哪个 service 漂移/断裂。
+  // Lobe 模块仍会在 ProviderIcon 模块加载时完成深导入；这里同时守卫社区首选与本地回退判定。
   test.each(LOBEHUB_SERVICES)(
-    'lobehub service[%s]: LOBEHUB_MAP/深导入未漂移,渲染 svg 而非字母块',
+    'lobehub service[%s]: 首选 theSVG，失败时仍判定为本地 lobehub',
     async (service) => {
       const { env, root } = await render(<ProviderIcon service={service} size={20} />)
       try {
-        expect(
-          findByTag(env.container, 'svg'),
-          `${service} 应渲染 svg(走 lobehub 分支);若失败说明 LOBEHUB_MAP 缺 key 或深导入断裂`,
-        ).toBeDefined()
+        expect(findByTag(env.container, 'img')).toBeDefined()
+        expect(decideIconKind(service, true)).toBe('lobehub')
       } finally {
         await unmount(root)
         env.cleanup()
@@ -239,11 +231,12 @@ describe('ProviderIcon', () => {
     },
   )
 
-  test('通用 SaaS service: 渲染本地 Simple Icons 品牌图标', async () => {
+  test('通用 SaaS service: 优先渲染 theSVG 品牌图标', async () => {
     const { env, root } = await render(<ProviderIcon service="stripe" size={20} />)
     try {
-      expect(findByTag(env.container, 'svg')).toBeDefined()
-      expect(findByTag(env.container, 'span')?.style.color.toLowerCase()).toContain('635bff')
+      const image = findByTag(env.container, 'img')
+      expect(image).toBeDefined()
+      expect(image?.attributes.get('src')).toContain('/stripe/default.svg')
     } finally {
       await unmount(root)
       env.cleanup()
