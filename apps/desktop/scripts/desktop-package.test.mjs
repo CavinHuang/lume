@@ -249,6 +249,17 @@ test('desktop package includes the optional desktop-host resource', () => {
   assertContainsBefore(pkg.scripts.package, 'build-desktop-host-resources.mjs', 'run-electron-builder.mjs')
 })
 
+test('desktop package limits the Agent Island helper to macOS resources', () => {
+  assert.equal(pkg.build.extraResources.some((entry) => entry.to === 'agent-island'), false)
+  assert.deepEqual(pkg.build.mac.extraResources, [
+    {
+      from: 'resources/agent-island',
+      to: 'agent-island',
+      filter: ['**/*'],
+    },
+  ])
+})
+
 test('desktop package builds and verifies the pinned OpenConnector resource', () => {
   assert.deepEqual(pkg.build.extraResources.find((entry) => entry.to === 'openconnector'), {
     from: 'resources/openconnector',

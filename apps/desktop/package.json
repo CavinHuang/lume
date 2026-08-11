@@ -106,12 +106,6 @@
         "to": "desktop-host"
       },
       {
-        "from": "resources/agent-island",
-        "to": "agent-island",
-        "filter": ["**/*"],
-        "os": ["mac"]
-      },
-      {
         "from": "resources/openconnector",
         "to": "openconnector"
       }
@@ -122,7 +116,14 @@
       "hardenedRuntime": true,
       "entitlements": "assets/entitlements.mac.plist",
       "entitlementsInherit": "assets/entitlements.mac.plist",
-      "notarize": false
+      "notarize": false,
+      "extraResources": [
+        {
+          "from": "resources/agent-island",
+          "to": "agent-island",
+          "filter": ["**/*"]
+        }
+      ]
     },
     "dmg": {
       "contents": [
