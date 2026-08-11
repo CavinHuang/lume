@@ -24,16 +24,15 @@ export function LinkToolbar({ query, onQueryChange, filter, onFilterChange, coun
     { value: "noSetup", label: "免配置", count: counts.noSetup },
   ];
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="grid w-full min-w-0 gap-2">
       <SearchField
-        className="min-w-48 flex-1 sm:max-w-xs"
         placeholder="搜索连接器…"
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
       />
-      <ToggleGroup value={filter} onValueChange={(v) => onFilterChange(v as LinkFilter)}>
+      <ToggleGroup className="justify-start overflow-x-auto" value={filter} onValueChange={(v) => onFilterChange(v as LinkFilter)}>
         {items.map((item) => (
-          <ToggleGroupItem key={item.value} value={item.value}>
+          <ToggleGroupItem key={item.value} value={item.value} className="shrink-0 border border-[var(--lume-border-subtle)]">
             {item.label}
             <span className="tabular-nums text-[var(--text-3)]">{item.count}</span>
           </ToggleGroupItem>

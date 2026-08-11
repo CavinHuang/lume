@@ -50,6 +50,13 @@ describe("decideIconKind simple-icons 档", () => {
     // stripe 在生成表但不在 lobehub → simpleIcon
     expect(decideIconKind("stripe", undefined)).toBe("simpleIcon");
   });
+  test("上游提供的专用图标优先于社区通用图标", () => {
+    expect(decideIconKind("stripe", "https://provider.example/stripe.svg")).toBe("image");
+  });
+  test("Simple Icons 未覆盖时使用 theSVG 社区目录", () => {
+    expect(decideIconKind("amplitude", undefined)).toBe("community");
+    expect(decideIconKind("apollo", undefined)).toBe("community");
+  });
   test("无 logo 且有 iconUrl 返回 image", () => {
     expect(decideIconKind("some_unknown_service", "https://x/y.svg")).toBe("image");
   });

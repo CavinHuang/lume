@@ -107,19 +107,19 @@ export function LinkView() {
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      <div className="mb-3 flex items-center justify-between px-6 pt-6">
+      <div className="flex min-h-14 items-center justify-between gap-3 border-b border-[var(--lume-border-subtle)] px-4 py-2.5">
         <div>
-          <h1 className="text-xl font-semibold">连接器</h1>
-          <p className="mt-1 text-sm text-[var(--text-3)]">由本机 OpenConnector Link 提供，连接凭据不会进入渲染器。</p>
+          <h1 className="text-base font-semibold">连接器</h1>
+          <p className="mt-0.5 text-xs text-[var(--text-3)]">连接常用应用与数据服务，凭据仅保存在本机。</p>
         </div>
-        <Badge>本地运行中</Badge>
+        <Badge variant="success">本地运行中</Badge>
       </div>
       <div className={cn(
-        "grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] gap-3 px-6 pb-6 transition-[grid-template-columns] duration-200 ease-out",
-        selected && "min-[960px]:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]",
+        "grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-hidden transition-[grid-template-columns] duration-200 ease-out",
+        selected && "min-[960px]:grid-cols-[minmax(0,1fr)_minmax(24rem,min(46%,34rem))]",
       )}>
         <div className={cn(
-          "min-h-0 overflow-hidden rounded-xl border border-[var(--lume-border-subtle)] bg-card",
+          "min-h-0 overflow-hidden",
           selected && "hidden min-[960px]:block",
         )}>
           <LinkCatalog
@@ -134,7 +134,7 @@ export function LinkView() {
           />
         </div>
         {selected && (
-          <div className="min-h-0 overflow-hidden rounded-xl border border-[var(--lume-border-subtle)] bg-card animate-in fade-in-0 slide-in-from-right-2">
+          <aside className="min-h-0 min-w-0 overflow-y-auto border-l border-[var(--lume-border-subtle)] bg-background p-3 pt-4 animate-in fade-in-0 slide-in-from-right-2 max-[959px]:border-l-0">
             <LinkDetailPane
               provider={selected}
               connections={connections.filter((c) => c.service === selected.service && c.configured)}
@@ -146,7 +146,7 @@ export function LinkView() {
                 if (target) setDeleteTarget(target);
               }}
             />
-          </div>
+          </aside>
         )}
       </div>
       {selected && connectOpen && (
