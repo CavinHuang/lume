@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAtom, useSetAtom } from "jotai";
 import type {
@@ -44,6 +44,7 @@ export function LinkView() {
   const [online, setOnline] = useState(false);
   const [runtimeMode, setRuntimeMode] = useState<LinkRuntimeMode>("local");
   const [runtimeOrigin, setRuntimeOrigin] = useState<string | null>(null);
+  const refreshGeneration = useRef(0);
   const [oauthConfigs, setOAuthConfigs] = useState<LinkOAuthConfigSummary[]>([]);
   const [providerTarget, setProviderTarget] = useAtom(linkProviderTargetAtom);
   const [deleteTarget, setDeleteTarget] = useState<LinkConnectionSummary | null>(null);
@@ -52,7 +53,9 @@ export function LinkView() {
   const setSettingsInitialTab = useSetAtom(settingsInitialTabAtom);
 
   const refresh = useCallback(async () => {
+    const generation = ++refreshGeneration.current;
     const runtime = await getLinkRuntimeState();
+    if (generation !== refreshGeneration.current) return;
     setRuntimeMode(runtime.mode);
     setRuntimeOrigin(runtime.origin);
     if (runtime.phase !== "online") {
@@ -62,6 +65,7 @@ export function LinkView() {
     const [nextProviders, nextConnections, nextOAuthConfigs] = await Promise.all([
       listLinkProviders(), listLinkConnections(), listLinkOAuthConfigs(),
     ]);
+    if (generation !== refreshGeneration.current) return;
     setProviders(nextProviders);
     setConnections(nextConnections);
     setOAuthConfigs(nextOAuthConfigs);
@@ -74,8 +78,13 @@ export function LinkView() {
     let offData: (() => void) | undefined;
     void onLinkRuntimeState(() => void refresh()).then((off) => { offRuntime = off; });
     void onLinkDataChanged(() => void refresh()).then((off) => { offData = off; });
-    return () => { offRuntime?.(); offData?.(); };
+    return () => { refreshGeneration.current += 1; offRuntime?.(); offData?.(); };
   }, [refresh]);
+
+  useEffect(() => {
+    setDialog(null);
+    setSelected(null);
+  }, [runtimeOrigin]);
 
   useEffect(() => {
     if (!online || !providerTarget) return;
@@ -86,9 +95,13 @@ export function LinkView() {
       toast.error("当前运行时无法连接此服务，请配置公网可访问的已有部署后重试");
       return;
     }
+    const generation = refreshGeneration.current;
     void getLinkProvider(target.service)
-      .then((provider) => { setDialog(null); setSelected(provider); })
-      .catch(() => toast.error("无法打开连接器详情"));
+      .then((provider) => {
+        if (generation !== refreshGeneration.current) return;
+        setDialog(null); setSelected(provider);
+      })
+      .catch(() => { if (generation === refreshGeneration.current) toast.error("无法打开连接器详情"); });
   }, [connections, online, providerTarget, runtimeMode, runtimeOrigin, setProviderTarget]);
 
   useEffect(() => {
@@ -100,9 +113,13 @@ export function LinkView() {
   }, [connections, runtimeMode, runtimeOrigin, selected]);
 
   const openProvider = (service: string) => {
+    const generation = refreshGeneration.current;
     void getLinkProvider(service)
-      .then((detail) => { setDialog(null); setSelected(detail); })
-      .catch(() => toast.error("无法打开连接器详情"));
+      .then((detail) => {
+        if (generation !== refreshGeneration.current) return;
+        setDialog(null); setSelected(detail);
+      })
+      .catch(() => { if (generation === refreshGeneration.current) toast.error("无法打开连接器详情"); });
   };
 
   const openAccountDialog = (
