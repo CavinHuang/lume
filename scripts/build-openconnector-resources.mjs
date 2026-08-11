@@ -48,7 +48,13 @@ if (!existsSync(join(extractedRoot, "package-lock.json"))) {
 }
 
 const npm = npmInvocation();
-run(npm.command, [...npm.prefixArgs, "ci"], extractedRoot);
+// open-connector 的 postinstall 直接执行 `node scripts/ensure-generated.ts`（.ts 文件）。
+// Node 22 默认不支持直接执行 .ts（ERR_UNKNOWN_FILE_EXTENSION），需要 --experimental-strip-types。
+// 只给 npm ci 注入 flag，避免影响 build:web / prune 的普通 .js 脚本。
+const stripTypesOptions = [process.env.NODE_OPTIONS, "--experimental-strip-types"]
+  .filter(Boolean)
+  .join(" ");
+run(npm.command, [...npm.prefixArgs, "ci"], extractedRoot, { env: { ...process.env, NODE_OPTIONS: stripTypesOptions } });
 run(npm.command, [...npm.prefixArgs, "run", "build:web"], extractedRoot);
 run(npm.command, [...npm.prefixArgs, "prune", "--omit=dev", "--workspaces=false"], extractedRoot);
 
@@ -99,8 +105,8 @@ function verifySourceDir(root) {
   }
 }
 
-function run(command, args, cwd) {
-  const result = spawnSync(command, args, { cwd, stdio: "inherit", windowsHide: true });
+function run(command, args, cwd, options = {}) {
+  const result = spawnSync(command, args, { cwd, stdio: "inherit", windowsHide: true, env: options.env });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}`);
 }
