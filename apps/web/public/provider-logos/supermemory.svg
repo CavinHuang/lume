@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" fill="none">
+  <title>Supermemory</title>
+  <g transform="translate(15 23.25) scale(1.4)">
+    <path d="M64.1607 20.7042H40.3439V.0027H32.6488V22.4642c0 2.3857.9418 4.6768 2.6157 6.3649l19.4471 19.6123 5.441-5.4872-14.3633-14.4851h18.3758v-7.7603l-.0044-.0046Z" fill="url(#a)"/>
+    <path d="m3.9992 9.536 14.3634 14.4853H-.0134v7.7603h23.8168V52.483h7.695V30.0216c0-2.3858-.9417-4.677-2.6157-6.3649L9.4401 4.0489 3.9992 9.536Z" fill="url(#b)"/>
+  </g>
+  <defs>
+    <linearGradient id="a" x1="3.272" y1="-.052" x2="122.975" y2="9.511" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#369BFD"/>
+      <stop offset=".41" stop-color="#36FDFD"/>
+      <stop offset=".79" stop-color="#36FDB5"/>
+    </linearGradient>
+    <linearGradient id="b" x1="3.272" y1="-.052" x2="122.975" y2="9.511" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#369BFD"/>
+      <stop offset=".41" stop-color="#36FDFD"/>
+      <stop offset=".79" stop-color="#36FDB5"/>
+    </linearGradient>
+  </defs>
+</svg>

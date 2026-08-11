@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="170" height="170" viewBox="0 0 170 170" role="img" aria-label="SaaS Custom Domains">
+  <defs>
+    <linearGradient id="pastelGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFFFFF"/>
+      <stop offset="33%" style="stop-color:#FFE6F5"/>
+      <stop offset="66%" style="stop-color:#E6E6FF"/>
+      <stop offset="100%" style="stop-color:#E6F5FF"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(0 20)">
+    <path d="M 160 80 a 40 40 0 0 0-40-40 a 50 50 0 0 0-95 20 a 35 35 0 0 0 15 66 h 100 a 40 40 0 0 0 20-46" fill="url(#pastelGradient)" stroke="#CCCCCC" stroke-width="4"/>
+    <path d="M 70 90 q 30 20 60 0" fill="none" stroke="#999999" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="80" cy="75" r="5" fill="#999999"/>
+    <circle cx="120" cy="75" r="5" fill="#999999"/>
+  </g>
+</svg>

@@ -1,0 +1,8 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Quickbase">
+  <rect width="120" height="120" fill="#FFFFFF"/>
+  <g transform="translate(24 12) scale(0.661)">
+    <path fill="#2C9382" d="M108.9 0v72.61H72.6V36.3H36.31V0h72.59z"/>
+    <path fill="#1C2C17" d="M72.6 72.61v36.29H0V36.3h36.31v36.31H72.6z"/>
+    <path fill="#F25E30" d="M72.6 108.9h36.31v36.31H72.6z"/>
+  </g>
+</svg>

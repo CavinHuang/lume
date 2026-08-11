@@ -243,6 +243,18 @@ describe('ProviderIcon', () => {
     }
   })
 
+  test('theSVG 未覆盖的 service: 使用本地 OOMOL 品牌图标', async () => {
+    const { env, root } = await render(<ProviderIcon service="17track" displayName="17TRACK" size={20} />)
+    try {
+      const image = findByTag(env.container, 'img')
+      expect(image).toBeDefined()
+      expect(image?.attributes.get('src')).toBe('/provider-logos/17track.svg')
+    } finally {
+      await unmount(root)
+      env.cleanup()
+    }
+  })
+
   test('非 lobehub service: 走首字母分支,产出含首字母的彩色块 DOM', async () => {
     const { env, root } = await render(<ProviderIcon service="some_custom_app" />)
     try {

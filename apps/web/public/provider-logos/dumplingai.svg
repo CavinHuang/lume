@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="-4 -4 56 56">
+  <style>
+    .disc { fill: #fff; }
+    .bowl { fill: #000; }
+    @media (prefers-color-scheme: light) {
+      .disc { fill: #000; }
+      .bowl { fill: #fff; }
+    }
+  </style>
+  <circle class="disc" cx="24" cy="24" r="24" />
+  <path
+    class="bowl"
+    d="M38 24c.552 0 1.004.448.967.999a14.936 14.936 0 0 1-1.109 4.741 15 15 0 0 1-27.716 0 14.936 14.936 0 0 1-1.109-4.741C8.997 24.448 9.448 24 10 24h28Z"
+  />
+</svg>

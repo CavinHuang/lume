@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120">
+  <circle cx="60" cy="60" r="56" fill="#fff"/>
+  <g transform="translate(22 16.2) scale(1.55)">
+    <linearGradient id="nozbe-a" gradientUnits="userSpaceOnUse" x1="-601.8233" y1="1250.1624" x2="-601.8233" y2="1250.1674" gradientTransform="matrix(24.458 0 0 -42.314 14731.624 52898.6367)">
+      <stop offset="0" stop-color="#840084"/>
+      <stop offset="1" stop-color="#390051"/>
+    </linearGradient>
+    <path d="M0 42.3V14.2L24.5 0v28.2L0 42.3z" fill="url(#nozbe-a)"/>
+    <linearGradient id="nozbe-b" gradientUnits="userSpaceOnUse" x1="-614.6617" y1="1257.407" x2="-614.6617" y2="1257.402" gradientTransform="matrix(48.916 0 0 -56.512 30091.248 71057.8516)">
+      <stop offset="0" stop-color="#ba02d8"/>
+      <stop offset="1" stop-color="#d002d8"/>
+    </linearGradient>
+    <path d="M24.5 0L0 14.2l24.5 42.3L49 42.4 24.5 0z" fill="url(#nozbe-b)"/>
+    <linearGradient id="nozbe-c" gradientUnits="userSpaceOnUse" x1="-601.8233" y1="1250.5455" x2="-601.8233" y2="1250.5375" gradientTransform="matrix(24.458 0 0 -42.376 14756.082 52992.0703)">
+      <stop offset="0" stop-color="#f35fff"/>
+      <stop offset="1" stop-color="#ff83cf"/>
+    </linearGradient>
+    <path d="M24.5 56.5V28.3L49 14.1v28.3L24.5 56.5z" fill="url(#nozbe-c)" opacity=".95"/>
+  </g>
+</svg>

@@ -1,0 +1,21 @@
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(11.75 24) scale(2.25)">
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M37.4029 0L33.9844 2.95924H38.3286L20 17.5547V22L40.2228 5.14654V8.80623L43 6.37287V0H37.4029Z" fill="url(#sender-a)"/>
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M37 18.5V29H3V6H23.812L27.3224 3H0V32H40V16.1032L37 18.5Z" fill="url(#sender-b)"/>
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M7 10.0002L20 17.5527V22L7 13V10.0002Z" fill="url(#sender-c)"/>
+  </g>
+  <defs>
+    <linearGradient id="sender-a" x1="43.0197" y1="0.0197371" x2="20.2266" y2="22.2336" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F57724"/>
+      <stop offset="1" stop-color="#ED1E24"/>
+    </linearGradient>
+    <linearGradient id="sender-b" x1="30.7755" y1="6.51654" x2="2.35487" y2="34.3992" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F57724"/>
+      <stop offset="1" stop-color="#ED1E24"/>
+    </linearGradient>
+    <linearGradient id="sender-c" x1="16.0142" y1="13.3502" x2="11.4322" y2="17.6956" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F57724"/>
+      <stop offset="1" stop-color="#ED1E24"/>
+    </linearGradient>
+  </defs>
+</svg>

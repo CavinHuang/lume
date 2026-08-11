@@ -1,0 +1,27 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <defs>
+    <linearGradient x1="60.3174532%" y1="83.8508034%" x2="45.5451812%" y2="31.5570942%" id="crisp-gradient">
+      <stop stop-color="#003AB8" offset="0%"/>
+      <stop stop-color="#3770EC" offset="100%"/>
+    </linearGradient>
+    <path d="M37.0375286,2.81001531 C37.0383968,2.81779119 37.0392347,2.82557043 37.0400421,2.83335287 L38.6927739,18.7637444 C38.8626515,20.4011644 37.6813036,21.869606 36.0454964,22.054369 L26.0468977,23.183283 L22.3450998,29.0489733 C21.9029512,29.7495417 20.976596,29.9590324 20.2760276,29.5168838 C20.1769922,29.4543797 20.0856173,29.3804928 20.0037698,29.2967327 L15.2248977,24.406283 L5.03857284,25.5565745 C3.3921872,25.7425323 1.90677931,24.5586217 1.72082147,22.912236 L1.71652954,22.8717794 L0.130972582,6.89397945 C-0.031221624,5.25953385 1.1510634,3.79852833 2.78339219,3.61625909 L33.7231409,0.161462072 C35.3697616,-0.022403034 36.8536635,1.16339464 37.0375286,2.81001531 Z" id="crisp-mark"/>
+    <filter x="-7.0%" y="-9.0%" width="113.9%" height="117.7%" filterUnits="objectBoundingBox" id="crisp-inner-shadow">
+      <feMorphology radius="1.5" operator="erode" in="SourceAlpha" result="shadowSpreadInner1"/>
+      <feGaussianBlur stdDeviation="1.5" in="shadowSpreadInner1" result="shadowBlurInner1"/>
+      <feOffset dx="1" dy="1" in="shadowBlurInner1" result="shadowOffsetInner1"/>
+      <feComposite in="shadowOffsetInner1" in2="SourceAlpha" operator="arithmetic" k2="-1" k3="1" result="shadowInnerInner1"/>
+      <feColorMatrix values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.156523164 0" type="matrix" in="shadowInnerInner1"/>
+    </filter>
+  </defs>
+  <g transform="translate(10 21.5) scale(2.56)" fill="none" fill-rule="evenodd">
+    <g transform="translate(0.4965, -1)">
+      <g transform="translate(-0.5485, 0.9414)">
+        <g transform="translate(19.4137, 15) rotate(0.25) translate(-19.4137, -15)">
+          <use fill="url(#crisp-gradient)" fill-rule="evenodd" xlink:href="#crisp-mark"/>
+          <use fill="#000" fill-opacity="1" filter="url(#crisp-inner-shadow)" xlink:href="#crisp-mark"/>
+          <path stroke-opacity="0.145623907" stroke="#000" stroke-width="1" d="M33.7786271,0.658373816 C34.464719,0.581763355 35.1169112,0.790499307 35.6167331,1.18991086 C36.1165549,1.58932241 36.4640064,2.17940957 36.5401982,2.86161477 L38.1954433,18.815341 C38.2662256,19.4975994 38.0555026,20.1446539 37.6566875,20.6403899 C37.2578723,21.136126 36.670965,21.4805436 35.9893992,21.5575259 L25.7522069,22.7133788 L21.9222693,28.782113 C21.7748865,29.0156358 21.5468025,29.1673123 21.2971836,29.2237624 C21.0632289,29.2766701 20.8103572,29.2459279 20.5872805,29.1205197 L15.4099283,23.8822105 L4.9824551,25.0597336 C4.29646108,25.1372161 3.6440041,24.9293092 3.14367501,24.5305333 C2.64334592,24.1317574 2.29514472,23.5421123 2.21837676,22.8628525 L0.628528721,6.84460446 C0.560947802,6.16358547 0.773466722,5.51869982 1.17291512,5.02508254 C1.57236352,4.53146526 2.1587414,4.18911635 2.83887839,4.11317083 Z" stroke-linejoin="square"/>
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

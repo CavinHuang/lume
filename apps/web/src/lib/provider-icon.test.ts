@@ -12,6 +12,10 @@ describe("decideIconKind", () => {
   test("未知 service 走 letter", () => {
     expect(decideIconKind("some_custom_app")).toBe("letter");
   });
+  test("社区和内置图标均缺失时使用本地品牌图片", () => {
+    expect(decideIconKind("17track")).toBe("localImage");
+    expect(decideIconKind("17track", false, true)).toBe("letter");
+  });
   test("LOBEHUB_SERVICES 与判定一致", () => {
     expect(LOBEHUB_SERVICES).toContain("openai");
     expect(LOBEHUB_SERVICES.length).toBeGreaterThan(0);

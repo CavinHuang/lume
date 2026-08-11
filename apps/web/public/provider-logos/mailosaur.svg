@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" role="img" aria-labelledby="mailosaur-title">
+  <title id="mailosaur-title">Mailosaur</title>
+  <rect width="120" height="120" rx="18" fill="#FFFFFF"/>
+  <g transform="translate(15 26.5) scale(.65)">
+    <path d="M41.26,18.62a4.57,4.57,0,1,1,4.56-4.57,4.61,4.61,0,0,1-4.56,4.57M82.72,51.37,46.44,30.23l3.53-6L82.72,43.29l55.15-32.14h0a11,11,0,0,0-11-11H38.56a11,11,0,0,0-11,11V82.89a10.37,10.37,0,0,1-20.73-.42H0A20.79,20.79,0,0,0,20.73,103.2h48.1a13.78,13.78,0,0,0-9.95-13.26,27.54,27.54,0,0,0,9.95-21.15h54.94a14.14,14.14,0,0,0,14.1-14.1V19.24Z" fill="#3BAB38"/>
+  </g>
+</svg>

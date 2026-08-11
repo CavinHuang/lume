@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" role="img" aria-label="Lumos">
+  <rect width="120" height="120" rx="18" fill="#fff"/>
+  <defs>
+    <linearGradient id="lumos-gradient" x1="18.884" y1="90.452" x2="86.309" y2="23.027" gradientUnits="userSpaceOnUse" gradientTransform="translate(5 7)">
+      <stop offset="0" stop-color="#ee0979"/>
+      <stop offset="0.14" stop-color="#ef0e78"/>
+      <stop offset="0.3" stop-color="#f01b74"/>
+      <stop offset="0.47" stop-color="#f2326f"/>
+      <stop offset="0.65" stop-color="#f65267"/>
+      <stop offset="0.83" stop-color="#fa7a5c"/>
+      <stop offset="1" stop-color="#ffa751"/>
+    </linearGradient>
+  </defs>
+  <path transform="translate(5 7)" fill="url(#lumos-gradient)" d="M91.56 36.46a20.75 20.75 0 0 1-20.75 20.75 20.75 20.75 0 0 1-20.75-20.75 20.75 20.75 0 0 1 20.75-20.75 20.75 20.75 0 0 1 20.75 20.75ZM35.42 74.21V31.62H19.02v58.59h58.00v-16H35.42Z"/>
+</svg>

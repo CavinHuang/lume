@@ -10,6 +10,7 @@ import OpenAIMono from "@lobehub/icons/es/OpenAI/components/Mono";
 import PerplexityMono from "@lobehub/icons/es/Perplexity/components/Mono";
 import type { IconType } from "@lobehub/icons/es/types";
 import { LINK_ICONS, LINK_ICON_URLS } from "@/lib/generated/link-icons";
+import { LOCAL_PROVIDER_ICON_URLS } from "@/lib/generated/local-provider-icons";
 import { colorForSeed, decideIconKind, initialOf } from "@/lib/provider-icon";
 import { SimpleIconGlyph } from "./SimpleIconGlyph";
 
@@ -28,7 +29,8 @@ interface ProviderIconProps {
 export function ProviderIcon({ service, displayName, size = 24 }: ProviderIconProps) {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const communityUrl = LINK_ICON_URLS[service.toLowerCase()];
-  const kind = decideIconKind(service, communityUrl === failedSrc);
+  const localUrl = LOCAL_PROVIDER_ICON_URLS[service.toLowerCase()];
+  const kind = decideIconKind(service, communityUrl === failedSrc, localUrl === failedSrc);
   const glyphSize = size >= 36 ? 24 : Math.max(12, Math.round(size * 0.67));
   const frameStyle = { width: size, height: size };
 
@@ -63,6 +65,10 @@ export function ProviderIcon({ service, displayName, size = 24 }: ProviderIconPr
 
   if (kind === "community" && communityUrl !== failedSrc) {
     return <ImageIcon src={communityUrl} alt={displayName ?? service} size={size} glyphSize={glyphSize} onError={() => setFailedSrc(communityUrl)} />;
+  }
+
+  if (kind === "localImage" && localUrl !== failedSrc) {
+    return <ImageIcon src={localUrl} alt={displayName ?? service} size={size} glyphSize={glyphSize} onError={() => setFailedSrc(localUrl)} />;
   }
 
   return <LetterBlock size={size} seed={service} letter={initialOf(displayName || service)} />;

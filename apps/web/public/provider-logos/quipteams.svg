@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" role="img" aria-label="Quipteams">
+  <rect width="120" height="120" rx="18" fill="#F8F8FF"/>
+  <g transform="translate(28 8) scale(3.2)" fill="#8989F5">
+    <path d="M13.76 20.97v11.52h4V20.97c-.57.39-1.26.62-2 .62s-1.43-.23-2-.62Z"/>
+    <path d="M8.88 7.83C3.98 7.83 0 11.81 0 16.72s3.93 8.82 8.79 8.88h2.1v-4.01h-2c-2.69 0-4.88-2.18-4.88-4.88s2.18-4.88 4.88-4.88 4.87 2.18 4.87 4.86v.01c0 1.11.9 2 2 2s2-.9 2-2c0-4.9-3.98-8.88-8.88-8.88Z"/>
+  </g>
+</svg>
