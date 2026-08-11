@@ -244,7 +244,7 @@ export function retryLocalOnnxMemoryEmbedding(): void {
 }
 
 export function getLocalOnnxMemoryEmbeddingStatus(): LocalOnnxMemoryEmbeddingStatus {
-  if (runtimeStatus) return runtimeStatus;
+  if (runtimeStatus?.cacheDir === getMemoryLocalModelsDir()) return runtimeStatus;
   return buildLocalOnnxStatus(hasLocalOnnxModelCache() ? "cached" : "not_cached");
 }
 
