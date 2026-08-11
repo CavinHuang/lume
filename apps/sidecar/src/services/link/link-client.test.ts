@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   callLinkMcpTool,
+  captureLinkMcpBinding,
   extractMcpPayload,
   getLinkMcpClient,
   getLinkRuntimeOrigin,
@@ -69,12 +70,23 @@ describe("Link existing deployment boundary", () => {
 
   test("unregisters MCP access and rejects stale tool calls when Link leaves online", async () => {
     installLinkRuntimeBootstrap({ mode: "remote", phase: "online", origin: "https://connector.example.test", runtimeToken: "runtime" });
-    expect(getLinkMcpClient().getStatus().openconnector).toBeDefined();
+    expect(Object.keys(getLinkMcpClient().getStatus()).some((id) => id.startsWith("openconnector:"))).toBe(true);
 
     installLinkRuntimeBootstrap({ phase: "disabled" });
 
-    expect(getLinkMcpClient().getStatus().openconnector).toBeUndefined();
+    expect(Object.keys(getLinkMcpClient().getStatus()).some((id) => id.startsWith("openconnector:"))).toBe(false);
     await expect(callLinkMcpTool("list_apps", {})).rejects.toThrow("link_runtime_offline");
+  });
+
+  test("binds tool calls to the deployment active when the tool set was created", async () => {
+    installLinkRuntimeBootstrap({ mode: "remote", phase: "online", origin: "https://first.example.com" });
+    const first = captureLinkMcpBinding();
+    expect(first).not.toBeNull();
+
+    installLinkRuntimeBootstrap({ mode: "remote", phase: "online", origin: "https://second.example.com" });
+
+    await expect(callLinkMcpTool("list_apps", {}, undefined, first!)).rejects.toThrow("link_runtime_changed");
+    expect(captureLinkMcpBinding()?.serverId).not.toBe(first?.serverId);
   });
 });
 

@@ -1,7 +1,7 @@
 import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
 import type { AgentToolPermissionRequest, LinkActionDetail, LinkAuthorizationSignal } from "@lume/shared";
 import { randomUUID } from "node:crypto";
-import { callLinkMcpTool, isLinkRuntimeOnline, LinkApiError, type McpLinkPayload } from "../../../link/link-client";
+import { callLinkMcpTool, captureLinkMcpBinding, isLinkRuntimeOnline, LinkApiError, type McpLinkPayload } from "../../../link/link-client";
 import { waitForToolPermissionDecision } from "../../interruption/tool-permission-session";
 
 const SAFE_ACTION_VERBS = new Set(["get", "list", "search", "find", "fetch", "read", "query", "lookup", "check", "describe", "count", "status"]);
@@ -31,7 +31,9 @@ export function createLinkTools(input: {
   promoteToActiveSchema?: boolean;
 }): ToolDefinition[] {
   if (!isLinkRuntimeOnline()) return [];
-  const mcpCaller = input.mcpCaller ?? callLinkMcpTool;
+  const binding = input.mcpCaller ? null : captureLinkMcpBinding();
+  if (!input.mcpCaller && !binding) return [];
+  const mcpCaller = input.mcpCaller ?? ((toolName, args, signal) => callLinkMcpTool(toolName, args, signal, binding!));
   const inspectedActions = new Map<string, LinkActionDetail>();
   const readMetadata = metadata(true, true, input.promoteToActiveSchema === true);
   return [
