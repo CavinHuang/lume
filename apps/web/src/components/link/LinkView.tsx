@@ -118,7 +118,7 @@ export function LinkView() {
         <Badge variant="secondary">未启用</Badge>
         <h1 className="text-xl font-semibold">连接器</h1>
         <p className="max-w-sm text-sm text-[var(--text-3)]">
-          连接器需要可用的 OpenConnector 服务。请在「设置 → Link 运行时」中启用本机服务或配置已有部署。
+          连接器需要可用的 OpenConnector 服务。请在「设置 → Link 运行时」中启用或重启本机服务。
         </p>
         <Button variant="outline" onClick={openLinkRuntimeSettings}>
           打开 Link 运行时设置
