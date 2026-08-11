@@ -23,7 +23,7 @@ export function installLinkRuntimeBootstrap(value: unknown): void {
     throw new Error("invalid_link_bootstrap");
   }
   if (input.phase !== "online") {
-    void getLinkMcpClient().disconnect(LINK_MCP_SERVER_ID).catch(() => { /* best-effort cleanup on phase leave */ });
+    getLinkMcpClient().sync({});
     bootstrap = { phase: input.phase };
     return;
   }
@@ -199,6 +199,7 @@ export async function callLinkMcpTool(
   args: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<McpLinkPayload> {
+  if (!isLinkRuntimeOnline()) throw new Error("link_runtime_offline");
   const client = getLinkMcpClient();
   await client.ensureConnected(LINK_MCP_SERVER_ID);
   const result = await client.callTool(LINK_MCP_SERVER_ID, toolName, args, signal ? { signal } : {});
