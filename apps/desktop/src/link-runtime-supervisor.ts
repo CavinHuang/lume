@@ -11,9 +11,9 @@ interface ResourceMetadata { version: string; archiveSha256: string; commit: str
 interface LinkRuntimeBootstrap { mode: LinkRuntimeMode; phase: LinkRuntimeState["phase"]; origin?: string; adminToken?: string; runtimeToken?: string }
 interface LinkBootstrapCredentials { adminToken: string; runtimeToken: string }
 
-const OPENCONNECTOR_VERSION = "1.3.3";
-const OPENCONNECTOR_COMMIT = "a332575d8facf09c11df91e1cc41c44b7bb8964c";
-const OPENCONNECTOR_ARCHIVE_SHA256 = "457443253b6ea5009b0c87193073029aed1e70d7d9e98a7cdd231b915f63a9c1";
+const OPENCONNECTOR_VERSION = "1.3.5";
+const OPENCONNECTOR_COMMIT = "5719a69468c698c7cb8108e062ff64ecef8a2e65";
+const OPENCONNECTOR_ARCHIVE_SHA256 = "4991b3a5a44ae68c57976767462f313f8d9bc1075ae0f64b314fca277e19441f";
 
 export function createLinkRuntimeSupervisor(input: {
   configDir: string;
@@ -60,7 +60,7 @@ export function createLinkRuntimeSupervisor(input: {
     if (child || state.phase === "starting") return state;
     if (!persisted.port) throw new Error("link_port_missing");
     if (!(await isPortFree(persisted.port))) { publish("port_conflict", "Configured port is already in use."); await bootstrapDelivery; return state; }
-    if (!metadata.available) { publish("incompatible", "OpenConnector 1.3.3 resources are missing or failed integrity validation."); await bootstrapDelivery; return state; }
+    if (!metadata.available) { publish("incompatible", "OpenConnector 1.3.5 resources are missing or failed integrity validation."); await bootstrapDelivery; return state; }
     const masterKey = input.getMasterKey();
     if (!masterKey) { publish("offline", "Connection vault is locked."); await bootstrapDelivery; throw new Error("connection_vault_locked"); }
     const secrets = loadOrCreateLinkSecrets(join(runtimeDir, "secrets.json"), masterKey);

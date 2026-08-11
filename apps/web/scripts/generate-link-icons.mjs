@@ -1,4 +1,4 @@
-// 构建期：读 OpenConnector v1.3.3 service 列表 + simple-icons，生成 service→{path,hex} 映射。
+// 构建期：读资源清单锁定的 OpenConnector service 列表 + simple-icons，生成 service→{path,hex} 映射。
 import { readFile, writeFile } from "node:fs/promises";
 import { extract } from "tar-stream";
 import { Readable } from "node:stream";
