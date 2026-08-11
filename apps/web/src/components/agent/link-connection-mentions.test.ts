@@ -28,4 +28,17 @@ describe('buildLinkConnectionMentionItems', () => {
     expect(buildLinkConnectionMentionItems(connections, providers, 'github')[0]?.connectionName).toBe('personal')
     expect(buildLinkConnectionMentionItems(connections, providers, 'fallback')[0]?.displayText).toBe('Gmail · fallback')
   })
+
+  test('bounds RPC reference fields and omits accounts whose identity cannot be preserved', () => {
+    const longProvider = 'P'.repeat(300)
+    const longProfile = 'A'.repeat(300)
+    const items = buildLinkConnectionMentionItems([
+      { service: 'gmail', configured: true, connectionName: 'work', authType: 'oauth2', profile: { displayName: longProfile } },
+      { service: 'gmail', configured: true, connectionName: 'x'.repeat(257), authType: 'oauth2' },
+    ], [{ ...providers[0], displayName: longProvider }], '')
+
+    expect(items).toHaveLength(1)
+    expect(items[0]?.connectionName).toBe('work')
+    expect(items[0]?.displayText.length).toBeLessThanOrEqual(256)
+  })
 })

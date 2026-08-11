@@ -92,11 +92,27 @@ describe("normalizeAgentUserMessage", () => {
     });
 
     expect(result.visibleMessage).toBe("检查 @Gmail · user@example.com 和 @Gmail · user@example.com");
-    expect(result.modelMessage).toBe("检查  和 ");
+    expect(result.modelMessage).toContain('检查 <link_connection_ref>{"service":"gmail","connectionName":"work"');
+    expect(result.modelMessage).toContain(" 和 <link_connection_ref>");
     expect(result.linkConnectionReferences).toEqual([gmail]);
     expect(buildLinkConnectionReferenceContext(result.linkConnectionReferences)).toContain(
       '[{"service":"gmail","connectionName":"work"}]'
     );
+  });
+
+  test("preserves source and destination account positions in model text", () => {
+    const result = normalizeAgentUserMessage({
+      userMessage: "从 @Gmail · 工作 复制到 @Gmail · 个人",
+      messageParts: [
+        { type: "text", text: "从 " },
+        { type: "link_connection_ref", schemaVersion: 1, service: "gmail", connectionName: "work", displayText: "Gmail · 工作" },
+        { type: "text", text: " 复制到 " },
+        { type: "link_connection_ref", schemaVersion: 1, service: "gmail", connectionName: "personal", displayText: "Gmail · 个人" },
+      ],
+    });
+
+    expect(result.modelMessage).toContain('"connectionName":"work","displayText":"Gmail · 工作"}</link_connection_ref> 复制到 <link_connection_ref>');
+    expect(result.modelMessage).toContain('"connectionName":"personal"');
   });
 
   test("rejects malformed Link connection references", () => {

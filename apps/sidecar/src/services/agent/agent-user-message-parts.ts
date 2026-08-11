@@ -110,7 +110,14 @@ export function normalizeAgentUserMessage(
       .map((part) => {
         if (part.type === "text") return part.text;
         if (part.type === "planning_todo_ref") return `<planning_todo_ref todoId="${part.todoId}" relation="${part.relation}">${part.displayText}</planning_todo_ref>`;
-        if (part.type === "link_connection_ref") return "";
+        if (part.type === "link_connection_ref") {
+          const reference = JSON.stringify({
+            service: part.service,
+            connectionName: part.connectionName,
+            displayText: part.displayText,
+          }).replaceAll("<", "\\u003c");
+          return `<link_connection_ref>${reference}</link_connection_ref>`;
+        }
         return "";
       })
       .join(""),
