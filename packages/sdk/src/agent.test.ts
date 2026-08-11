@@ -167,6 +167,36 @@ describe("Agent runtime tool resolver", () => {
     await agent.close()
   })
 
+  test("binds runtime tools to the resumed session identity", async () => {
+    process.env.ENABLE_TOOL_SEARCH = "tst"
+    const tempDir = mkdtempSync(join(tmpdir(), "sdk-agent-runtime-resume-"))
+    tempDirs.push(tempDir)
+    process.env.OPEN_AGENT_SDK_HOME = join(tempDir, "sdk-home")
+    const sessionId = `runtime-resume-${crypto.randomUUID()}`
+    await saveSession(sessionId, [], { cwd: tempDir, model: "test-model" })
+    const resolvedSessionIds: string[] = []
+    const registeredSessionIds: string[] = []
+    const agent = createAgent({
+      resume: sessionId,
+      persistSession: false,
+      cwd: tempDir,
+      tools: [tool("Read"), tool("PrivateResearch")],
+      resolveRuntimeTools: (tools, context) => {
+        resolvedSessionIds.push(context.sessionId)
+        return tools
+      },
+      registerGeneratedRuntimeTools: (_tools, context) => {
+        registeredSessionIds.push(context.sessionId)
+      },
+    })
+
+    await agent.getInitializationResult()
+
+    expect(resolvedSessionIds).toEqual([sessionId])
+    expect(registeredSessionIds).toEqual([sessionId])
+    await agent.close()
+  })
+
   test("binds an explicitly supplied Skill tool to the agent skill registry", async () => {
     const root = mkdtempSync(join(tmpdir(), "sdk-agent-explicit-skill-tool-"))
     tempDirs.push(root)

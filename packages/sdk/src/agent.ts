@@ -719,8 +719,8 @@ export class Agent {
     }
 
     await this.syncMcpConnections()
-    await this.rebuildToolPool()
     await this.resumeSessionIfNeeded()
+    await this.rebuildToolPool()
   }
 
   private getEffectiveOptions(overrides?: Partial<AgentOptions>): AgentOptions {
