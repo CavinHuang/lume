@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   extractMcpPayload,
+  getLinkRuntimeOrigin,
   installLinkRuntimeBootstrap,
   linkAdminRequest,
 } from "./link-client";
@@ -45,6 +46,8 @@ describe("Link existing deployment boundary", () => {
   test("accepts HTTPS and loopback HTTP origins but rejects plaintext remote origins", () => {
     expect(() => installLinkRuntimeBootstrap({ mode: "remote", phase: "online", origin: "https://connector.example.test", adminToken: "admin", runtimeToken: "runtime" })).not.toThrow();
     expect(() => installLinkRuntimeBootstrap({ mode: "remote", phase: "online", origin: "http://127.0.0.1:3000" })).not.toThrow();
+    expect(() => installLinkRuntimeBootstrap({ mode: "remote", phase: "online", origin: "http://[::1]:3000" })).not.toThrow();
+    expect(getLinkRuntimeOrigin()).toBe("http://[::1]:3000");
     expect(() => installLinkRuntimeBootstrap({ mode: "remote", phase: "online", origin: "http://connector.example.test" })).toThrow("invalid_link_bootstrap");
     expect(() => installLinkRuntimeBootstrap({ mode: "remote", phase: "online", origin: "https://connector.example.test/path" })).toThrow("invalid_link_bootstrap");
   });

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, ExternalLink, KeyRound, Settings2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
-import type { LinkOAuthConfigSummary, LinkOAuthSession, LinkProviderDetail } from "@lume/shared";
+import type { LinkOAuthConfigSummary, LinkOAuthSession, LinkProviderDetail, LinkRuntimeMode } from "@lume/shared";
 import {
   cancelLinkOAuth, getLinkOAuthStatus, listLinkOAuthSessions, openExternal,
   startLinkOAuth, upsertLinkConnection,
@@ -27,6 +27,7 @@ interface LinkAccountConnectDialogProps {
   mode: "create" | "reconnect";
   existingConnectionNames: string[];
   oauthConfig?: LinkOAuthConfigSummary;
+  runtimeMode: LinkRuntimeMode;
   onClose: () => void;
   onConfigureProvider: (connectionName: string, authType: string) => void;
   onSaved: () => Promise<void>;
@@ -39,6 +40,7 @@ export function LinkAccountConnectDialog({
   mode,
   existingConnectionNames,
   oauthConfig,
+  runtimeMode,
   onClose,
   onConfigureProvider,
   onSaved,
@@ -103,6 +105,7 @@ export function LinkAccountConnectDialog({
   const submitLabel = isOAuth
     ? mode === "reconnect" ? "在浏览器中重新授权" : "在浏览器中授权"
     : mode === "reconnect" ? "更新账户连接" : "保存账户连接";
+  const runtimeLabel = runtimeMode === "remote" ? "已有部署的 Link 运行时" : "本机 Link 运行时";
 
   const save = async () => {
     setBusy(true);
@@ -143,7 +146,7 @@ export function LinkAccountConnectDialog({
                 <Badge variant="secondary">{authLabel(String(auth.type))}</Badge>
               </div>
               <DialogDescription className="mt-1 leading-relaxed">
-                每个账户独立保存授权；OAuth 应用配置由本机 Link 运行时统一管理。
+                每个账户独立保存授权；OAuth 应用配置由{runtimeLabel}统一管理。
               </DialogDescription>
             </div>
           </div>
@@ -182,7 +185,7 @@ export function LinkAccountConnectDialog({
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="text-sm font-medium text-[var(--text-1)]">账户认证</h3>
-                <p className="mt-0.5 text-xs text-[var(--text-3)]">账户凭据只会交给本机 Link 运行时保存。</p>
+                <p className="mt-0.5 text-xs text-[var(--text-3)]">账户凭据只会交给{runtimeLabel}保存。</p>
               </div>
               {provider.auth.length === 1 ? <Badge variant="outline">{authLabel(String(auth.type))}</Badge> : null}
             </div>
