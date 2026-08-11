@@ -1,4 +1,4 @@
-import type { LinkActionDetail, LinkActionSummary, LinkConnectionSummary, LinkOAuthConfigSummary, LinkOAuthSession, LinkProviderDetail, LinkProviderSummary, LinkRunDetail, LinkRunPage, LinkRuntimeDiagnostic, LinkRuntimeState } from '@lume/shared'
+import type { LinkActionDetail, LinkActionSummary, LinkConnectionSummary, LinkOAuthConfigSummary, LinkOAuthSession, LinkProviderDetail, LinkProviderSummary, LinkRunDetail, LinkRunPage, LinkRuntimeConfigurationInput, LinkRuntimeDiagnostic, LinkRuntimeState } from '@lume/shared'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { listen } from '@/lib/desktop-runtime/event'
 
@@ -10,6 +10,7 @@ export const disableLinkRuntime = () => invoke<LinkRuntimeState>('link_runtime_d
 export const restartLinkRuntime = () => invoke<LinkRuntimeState>('link_runtime_restart')
 export const diagnoseLinkRuntime = () => invoke<LinkRuntimeDiagnostic>('link_runtime_diagnose')
 export const changeLinkRuntimePort = (port: number) => invoke<LinkRuntimeState>('link_runtime_change_port', { port })
+export const configureLinkRuntime = (configuration: LinkRuntimeConfigurationInput) => invoke<LinkRuntimeState>('link_runtime_configure', configuration)
 export const onLinkRuntimeState = (callback: (state: LinkRuntimeState) => void) => listen<LinkRuntimeState>('link:runtime', (event) => callback(event.payload))
 export const onLinkDataChanged = (callback: () => void) => listen<{ method: string; params: unknown }>('sidecar:event', (event) => {
   if (event.payload.method === 'link:connections-changed' || event.payload.method === 'link:authorization-changed') callback()
