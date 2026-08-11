@@ -13,6 +13,7 @@ interface LinkDetailPaneProps {
   connections: LinkConnectionSummary[];
   oauthConfig?: LinkOAuthConfigSummary;
   runtimeMode: LinkRuntimeMode;
+  canAddAccount: boolean;
   onConnect: () => void;
   onConfigureProvider: () => void;
   onClose: () => void;
@@ -25,6 +26,7 @@ export function LinkDetailPane({
   connections,
   oauthConfig,
   runtimeMode,
+  canAddAccount,
   onConnect,
   onConfigureProvider,
   onClose,
@@ -103,10 +105,15 @@ export function LinkDetailPane({
             <h3 className="text-sm font-medium text-[var(--text-1)]">连接账户</h3>
             <p className="mt-0.5 text-xs leading-relaxed text-[var(--text-3)]">每个账户独立保存授权，可为同一应用添加多个账户。</p>
           </div>
-          <Button size="sm" onClick={onConnect}>
+          <Button size="sm" onClick={onConnect} disabled={!canAddAccount} title={canAddAccount ? undefined : "当前运行时无法接收此服务的公网回调"}>
             <KeyRound className="size-3.5" />添加账户
           </Button>
         </div>
+        {!canAddAccount ? (
+          <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-[var(--text-2)]">
+            当前运行时无法接收此服务的公网回调，已有账户仍可管理，但不能添加新账户。
+          </div>
+        ) : null}
         {authTypes.length > 0 ? (
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="mr-0.5 text-xs text-[var(--text-3)]">支持</span>

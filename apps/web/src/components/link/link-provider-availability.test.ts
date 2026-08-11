@@ -1,17 +1,38 @@
 import { describe, expect, test } from "bun:test";
-import { isLinkProviderAvailable } from "./link-provider-availability";
+import { canCreateLinkConnection, isLinkProviderVisible } from "./link-provider-availability";
 
 describe("Link provider availability", () => {
-  test("hides public-callback providers only for new local connections", () => {
-    expect(isLinkProviderAvailable("intercom", "local", "http://127.0.0.1:51234", false)).toBe(false);
-    expect(isLinkProviderAvailable("sunoapi", "local", "http://127.0.0.1:51234", false)).toBe(false);
-    expect(isLinkProviderAvailable("gmail", "local", "http://127.0.0.1:51234", false)).toBe(true);
+  test("hides public-callback providers only when no manageable account exists", () => {
+    expect(isLinkProviderVisible("intercom", "local", "http://127.0.0.1:51234", false)).toBe(false);
+    expect(isLinkProviderVisible("intercom", "local", "http://127.0.0.1:51234", true)).toBe(true);
+    expect(isLinkProviderVisible("gmail", "local", "http://127.0.0.1:51234", false)).toBe(true);
   });
 
-  test("requires a non-loopback remote origin for new callback providers", () => {
-    expect(isLinkProviderAvailable("intercom", "remote", "https://connector.example.test", false)).toBe(true);
-    expect(isLinkProviderAvailable("intercom", "remote", "http://localhost:51234", false)).toBe(false);
-    expect(isLinkProviderAvailable("intercom", "remote", "http://[::1]:51234", false)).toBe(false);
-    expect(isLinkProviderAvailable("sunoapi", "local", "http://127.0.0.1:51234", true)).toBe(true);
+  test("does not let an existing account enable creation of another account", () => {
+    expect(canCreateLinkConnection("intercom", "local", "http://127.0.0.1:51234")).toBe(false);
+    expect(canCreateLinkConnection("sunoapi", "remote", "https://connector.example.test")).toBe(true);
+  });
+
+  test("rejects loopback and private callback origins", () => {
+    for (const origin of [
+      "http://localhost:51234",
+      "https://127.0.0.2",
+      "https://10.0.0.5",
+      "https://100.64.0.1",
+      "https://169.254.1.1",
+      "https://172.16.0.1",
+      "https://192.168.0.1",
+      "https://[fd00::1]",
+      "https://[fe80::1]",
+      "https://[::ffff:10.0.0.5]",
+    ]) {
+      expect(canCreateLinkConnection("intercom", "remote", origin)).toBe(false);
+    }
+  });
+
+  test("accepts public callback hosts", () => {
+    expect(canCreateLinkConnection("intercom", "remote", "https://connector.example.test")).toBe(true);
+    expect(canCreateLinkConnection("intercom", "remote", "https://8.8.8.8")).toBe(true);
+    expect(canCreateLinkConnection("intercom", "remote", "https://[2606:4700:4700::1111]")).toBe(true);
   });
 });
