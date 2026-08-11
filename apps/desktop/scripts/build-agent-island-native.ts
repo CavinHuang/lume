@@ -1,10 +1,7 @@
 #!/usr/bin/env bun
 /**
  * 构建 macOS 原生灵动岛 helper。非 macOS skip。
- *
- * 待 macOS 核对：universal binary（arm64 + x86_64）需两次编译 + `lipo create`，
- * 或 `swiftc -arch arm64 -arch x86_64`。当前仅编 arm64 单架构（与 Proma 一致），
- * multi-arch 参数留待 macOS 上核对后补全。
+ * 分别编译 arm64/x86_64 slice，再用 lipo 合成 universal binary，供两个 macOS 包复用。
  */
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, rmSync } from 'node:fs'
@@ -23,8 +20,19 @@ if (process.platform !== 'darwin') {
 if (!existsSync(source)) throw new Error(`helper source not found: ${source}`)
 mkdirSync(dirname(output), { recursive: true })
 rmSync(output, { force: true })
-// 当前仅 arm64 单架构；universal binary 参数待 macOS 核对
-execFileSync('xcrun', ['swiftc', '-O', '-parse-as-library',
-  '-target', 'arm64-apple-macos26.0', source, '-o', output], { stdio: 'inherit' })
+const slices = [
+  { target: 'arm64-apple-macos26.0', output: `${output}.arm64` },
+  { target: 'x86_64-apple-macos26.0', output: `${output}.x86_64` },
+]
+try {
+  for (const slice of slices) {
+    execFileSync('xcrun', [
+      'swiftc', '-O', '-parse-as-library', '-target', slice.target, source, '-o', slice.output,
+    ], { stdio: 'inherit' })
+  }
+  execFileSync('xcrun', ['lipo', '-create', ...slices.map((slice) => slice.output), '-output', output], { stdio: 'inherit' })
+} finally {
+  for (const slice of slices) rmSync(slice.output, { force: true })
+}
 chmodSync(output, 0o755)
-console.log(`[agent-island-native] built ${output}`)
+console.log(`[agent-island-native] built universal helper ${output}`)
