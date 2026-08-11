@@ -1,9 +1,9 @@
-import { LINK_ICONS, LINK_ICON_URLS } from "./generated/link-icons";
+import { LINK_ICON_URLS } from "./generated/link-icons";
 import { LOCAL_PROVIDER_ICON_URLS } from "./generated/local-provider-icons";
 
-export type IconKind = "lobehub" | "simpleIcon" | "community" | "localImage" | "letter";
+export type IconKind = "lobehub" | "community" | "localImage" | "letter";
 
-// theSVG 加载失败后，Lobe Icons 承接 AI 品牌，Simple Icons 承接通用 SaaS 品牌。
+// theSVG 加载失败后，Lobe Icons 承接 AI 品牌，本地镜像承接其余已知品牌。
 export const LOBEHUB_SERVICES = [
   "openai", "anthropic", "cohere", "perplexity",
 ] as const;
@@ -22,7 +22,6 @@ export function decideIconKind(service: string, skipCommunity = false, skipLocal
   if (preferLocalImage && !skipLocalImage && LOCAL_PROVIDER_ICON_URLS[key]) return "localImage";
   if (!preferLocalImage && !skipCommunity && LINK_ICON_URLS[key]) return "community";
   if ((LOBEHUB_SERVICES as readonly string[]).includes(key)) return "lobehub";
-  if (LINK_ICONS[key]) return "simpleIcon";
   if (!skipLocalImage && LOCAL_PROVIDER_ICON_URLS[key]) return "localImage";
   return "letter";
 }

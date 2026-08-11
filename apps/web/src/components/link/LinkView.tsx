@@ -165,10 +165,11 @@ export function LinkView() {
           <aside className="min-h-0 min-w-0 overflow-y-auto border-l border-[var(--lume-border-subtle)] bg-background p-3 pt-4 animate-in fade-in-0 slide-in-from-right-2 max-[959px]:border-l-0">
             <LinkDetailPane
               provider={selected}
-              connections={connections.filter((c) => c.service === selected.service && c.configured)}
+              connections={connections.filter((c) => c.service === selected.service)}
               oauthConfig={oauthConfigs.find((config) => config.service === selected.service)}
+              runtimeMode={runtimeMode}
               onConnect={() => openAccountDialog(
-                connections.some((connection) => connection.service === selected.service && connection.configured) ? "" : "default",
+                connections.some((connection) => connection.service === selected.service) ? "" : "default",
               )}
               onConfigureProvider={() => setDialog({
                 kind: "provider-setup",
@@ -182,7 +183,7 @@ export function LinkView() {
                 openAccountDialog(name, connection?.authType, "reconnect");
               }}
               onRequestDelete={(name) => {
-                const target = connections.find((c) => c.service === selected.service && c.connectionName === name && c.configured);
+                const target = connections.find((c) => c.service === selected.service && c.connectionName === name);
                 if (target) setDeleteTarget(target);
               }}
             />
@@ -195,8 +196,9 @@ export function LinkView() {
           initialConnectionName={dialog.connectionName}
           initialAuthType={dialog.authType}
           mode={dialog.mode}
+          runtimeMode={runtimeMode}
           existingConnectionNames={connections
-            .filter((connection) => connection.service === selected.service && connection.configured)
+            .filter((connection) => connection.service === selected.service)
             .map((connection) => connection.connectionName)}
           oauthConfig={oauthConfigs.find((config) => config.service === selected.service)}
           onClose={() => setDialog(null)}
@@ -214,6 +216,7 @@ export function LinkView() {
         <LinkProviderSetupDialog
           provider={selected}
           oauthConfig={oauthConfigs.find((config) => config.service === selected.service)}
+          runtimeMode={runtimeMode}
           onClose={() => setDialog(null)}
           onSaved={async () => {
             await refresh();
@@ -227,7 +230,7 @@ export function LinkView() {
         open={Boolean(deleteTarget)}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
         title="断开这个连接？"
-        description={deleteTarget ? `将删除 ${deleteTarget.service} 的 ${deleteTarget.connectionName} 本地凭据。` : ""}
+        description={deleteTarget ? `将删除 ${deleteTarget.service} 的 ${deleteTarget.connectionName} ${runtimeMode === "remote" ? "已有部署凭据" : "本机凭据"}。` : ""}
         confirmLabel="断开连接"
         destructive
         onConfirm={() => {

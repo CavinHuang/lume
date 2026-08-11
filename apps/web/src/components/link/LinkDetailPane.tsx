@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderDetail } from "@lume/shared";
+import type { LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderDetail, LinkRuntimeMode } from "@lume/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChevronDown, ChevronUp, KeyRound, ListChecks, Settings2, ShieldCheck, X } from "lucide-react";
@@ -12,6 +12,7 @@ interface LinkDetailPaneProps {
   provider: LinkProviderDetail;
   connections: LinkConnectionSummary[];
   oauthConfig?: LinkOAuthConfigSummary;
+  runtimeMode: LinkRuntimeMode;
   onConnect: () => void;
   onConfigureProvider: () => void;
   onClose: () => void;
@@ -23,13 +24,15 @@ export function LinkDetailPane({
   provider,
   connections,
   oauthConfig,
+  runtimeMode,
   onConnect,
   onConfigureProvider,
   onClose,
   onReconnect,
   onRequestDelete,
 }: LinkDetailPaneProps) {
-  const connected = connections.some((connection) => connection.configured);
+  const connectedCount = connections.filter((connection) => connection.configured).length;
+  const connected = connectedCount > 0;
   const authTypes = provider.authTypes?.length ? provider.authTypes : provider.auth?.map((a) => String(a.type)) ?? [];
   const oauthSetup = resolveLinkOAuthSetupState(authTypes, oauthConfig?.configured ?? false);
   const supportsOAuth = oauthSetup !== "not_supported";
@@ -46,8 +49,8 @@ export function LinkDetailPane({
             <div className="min-w-0">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h2 className="truncate text-sm font-semibold text-[var(--text-1)]">{provider.displayName}</h2>
-                <Badge variant={connected ? "success" : "secondary"}>
-                  {connected ? `已连接 ${connections.length} 个账户` : "未连接账户"}
+                <Badge variant={connected ? "success" : connections.length > 0 ? "warning" : "secondary"}>
+                  {connected ? `已连接 ${connectedCount} 个账户` : connections.length > 0 ? "有待完成账户" : "未连接账户"}
                 </Badge>
               </div>
               <p className="mt-1 break-words text-xs text-[var(--text-3)]">{provider.description || provider.service}</p>
@@ -72,7 +75,7 @@ export function LinkDetailPane({
                   <OAuthSetupBadge state={oauthSetup} />
                 </div>
                 <p className="mt-0.5 text-xs leading-relaxed text-[var(--text-3)]">
-                  OAuth 应用由本机 Link 运行时保存，所有 {provider.displayName} 账户共用这一份配置。
+                  OAuth 应用由{runtimeMode === "remote" ? "已有部署的" : "本机"} Link 运行时保存，所有 {provider.displayName} 账户共用这一份配置。
                 </p>
               </div>
             </div>

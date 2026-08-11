@@ -42,14 +42,17 @@ function ToggleGroupItem({
   value,
   className,
   children,
+  disabled,
 }: {
   value: string
   className?: string
   children: React.ReactNode
+  disabled?: boolean
 }) {
   return (
     <TogglePrimitive
       value={value}
+      disabled={disabled}
       className={cn(itemVariants(), className)}
     >
       {children}

@@ -112,4 +112,20 @@ describe("Link management RPC", () => {
     const sessions = await restarted["link:oauth-sessions"]!({}) as LinkOAuthSession[];
     expect(sessions).toEqual(expect.arrayContaining([expect.objectContaining({ state: "state-1", service: "github", status: "pending" })]));
   });
+
+  test("does not restore or poll an OAuth session against a different runtime origin", async () => {
+    installLinkRuntimeBootstrap({ phase: "online", origin: "http://127.0.0.1:51234", adminToken: "admin", runtimeToken: "runtime" });
+    globalThis.fetch = (async (input) => {
+      const request = new Request(input);
+      if (request.url.endsWith("/api/oauth/authorizations")) return Response.json({ state: "state-origin", authorizationUrl: "https://example.test/authorize" });
+      throw new Error(`unexpected: ${request.url}`);
+    }) as typeof fetch;
+    const handlers = createLinkHandlers(() => {});
+    const started = await handlers["link:oauth-start"]!({ service: "github", connectionName: "work" }) as LinkOAuthSession;
+
+    installLinkRuntimeBootstrap({ phase: "online", origin: "http://127.0.0.1:51235", adminToken: "other-admin", runtimeToken: "other-runtime" });
+
+    expect(await handlers["link:oauth-sessions"]!({})).toEqual([]);
+    await expect(handlers["link:oauth-status"]!({ state: started.state })).rejects.toThrow("link_oauth_session_origin_mismatch");
+  });
 });

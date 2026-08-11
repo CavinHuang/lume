@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getSupportedLinkActions, isValidLinkConnectionName, resolveLinkOAuthSetupState } from "./link-provider-state";
+import { findRestorableLinkOAuthSession, getSupportedLinkActions, isValidLinkConnectionName, resolveLinkOAuthSetupState } from "./link-provider-state";
 
 describe("resolveLinkOAuthSetupState", () => {
   test("OAuth-only provider requires runtime configuration before its first connection", () => {
@@ -33,5 +33,24 @@ describe("getSupportedLinkActions", () => {
       { id: "github.legacy", service: "github", name: "legacy" },
     ];
     expect(getSupportedLinkActions(actions).map((action) => action.id)).toEqual(["github.read", "github.legacy"]);
+  });
+});
+
+describe("findRestorableLinkOAuthSession", () => {
+  const sessions = [
+    { state: "work-state", service: "github", connectionName: "work", authorizationUrl: "https://example.test/work", status: "pending" as const },
+    { state: "done-state", service: "github", connectionName: "done", authorizationUrl: "https://example.test/done", status: "authorized" as const },
+  ];
+
+  test("restores the exact named account", () => {
+    expect(findRestorableLinkOAuthSession(sessions, "github", "work")?.state).toBe("work-state");
+  });
+
+  test("restores a single pending account when the create dialog started unnamed", () => {
+    expect(findRestorableLinkOAuthSession(sessions, "github", "")?.connectionName).toBe("work");
+    expect(findRestorableLinkOAuthSession([
+      ...sessions,
+      { state: "personal-state", service: "github", connectionName: "personal", authorizationUrl: "https://example.test/personal", status: "pending" },
+    ], "github", "")).toBeUndefined();
   });
 });

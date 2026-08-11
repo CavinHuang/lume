@@ -49,13 +49,13 @@ describe("colorForSeed", () => {
   });
 });
 
-describe("decideIconKind simple-icons 档", () => {
+describe("decideIconKind 回退", () => {
   test("通用 SaaS 品牌优先使用 theSVG", () => {
     expect(decideIconKind("github")).toBe("community");
     expect(decideIconKind("notion")).toBe("community");
   });
-  test("theSVG 加载失败后回退 simple-icons", () => {
-    expect(decideIconKind("stripe", true)).toBe("simpleIcon");
+  test("theSVG 加载失败后回退本地品牌图片", () => {
+    expect(decideIconKind("stripe", true)).toBe("localImage");
   });
   test("Simple Icons 未覆盖时使用 theSVG 社区目录", () => {
     expect(decideIconKind("amplitude")).toBe("community");

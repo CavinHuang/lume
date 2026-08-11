@@ -259,10 +259,20 @@ describe('ProviderIcon', () => {
     }
   })
 
+  test('优先使用 provider 返回的品牌图标', async () => {
+    const { env, root } = await render(<ProviderIcon service="custom_provider" displayName="Custom" iconUrl="https://assets.example.test/custom.svg" size={20} />)
+    try {
+      expect(findByTag(env.container, 'img')?.attributes.get('src')).toBe('https://assets.example.test/custom.svg')
+    } finally {
+      await unmount(root)
+      env.cleanup()
+    }
+  })
+
   test('非 lobehub service: 走首字母分支,产出含首字母的彩色块 DOM', async () => {
     const { env, root } = await render(<ProviderIcon service="some_custom_app" />)
     try {
-      // some_custom_app 不在 LOBEHUB_SERVICES/LINK_ICONS 且无 iconUrl → decideIconKind 返回 "letter"
+      // some_custom_app 不在内置品牌目录且无 iconUrl → decideIconKind 返回 "letter"
       // → LetterBlock 渲染 initialOf("some_custom_app") = "S"
       expect(env.container.textContent).toBe('S')
       const block = findByTag(env.container, 'div')

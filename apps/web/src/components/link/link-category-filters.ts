@@ -82,6 +82,7 @@ export const LINK_CATEGORY_FILTERS: readonly LinkCategoryFilterDefinition[] = [
 
 const categoryById = new Map(LINK_CATEGORY_FILTERS.map((filter) => [filter.id, filter]));
 const mappedCategories = new Set(LINK_CATEGORY_FILTERS.flatMap((filter) => filter.categories));
+const mappedServices = new Set(LINK_CATEGORY_FILTERS.flatMap((filter) => filter.services ?? []));
 
 export function linkCategoryFilterValue(id: LinkCategoryFilterId): `category:${LinkCategoryFilterId}` {
   return `category:${id}`;
@@ -96,7 +97,10 @@ export function linkCategoryIdFromFilter(filter: string): LinkCategoryFilterId |
 export function matchesLinkCategory(service: string, categories: readonly string[], id: LinkCategoryFilterId): boolean {
   const definition = categoryById.get(id);
   if (!definition) return false;
-  if (id === "other") return categories.length === 0 || categories.every((category) => !mappedCategories.has(category));
+  if (id === "other") {
+    return !mappedServices.has(service)
+      && (categories.length === 0 || categories.every((category) => !mappedCategories.has(category)));
+  }
   return (
     definition.services?.includes(service) === true ||
     categories.some((category) => definition.categories.includes(category))
