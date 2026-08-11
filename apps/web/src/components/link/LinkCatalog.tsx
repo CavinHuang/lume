@@ -2,16 +2,19 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { computeColumnCount, PROVIDER_GRID, rowCount } from "@/lib/provider-grid";
 import { linkServicePriority } from "@/lib/provider-ranking";
-import type { LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderSummary } from "@lume/shared";
+import type { LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderSummary, LinkRuntimeMode } from "@lume/shared";
 import { LinkToolbar, type FilterCounts, type LinkFilter } from "./LinkToolbar";
 import { ProviderCard } from "./ProviderCard";
 import { resolveLinkOAuthSetupState } from "./link-provider-state";
 import { LINK_CATEGORY_FILTERS, linkCategoryIdFromFilter, matchesLinkCategory } from "./link-category-filters";
+import { isLinkProviderVisible } from "./link-provider-availability";
 
 interface LinkCatalogProps {
   providers: LinkProviderSummary[];
   connections: LinkConnectionSummary[];
   oauthConfigs: LinkOAuthConfigSummary[];
+  runtimeMode: LinkRuntimeMode;
+  runtimeOrigin: string | null;
   query: string;
   onQueryChange: (v: string) => void;
   filter: LinkFilter;
@@ -33,7 +36,7 @@ function providerStatus(
 }
 
 export function LinkCatalog({
-  providers, connections, oauthConfigs, query, onQueryChange, filter, onFilterChange, selectedService, onOpen,
+  providers, connections, oauthConfigs, runtimeMode, runtimeOrigin, query, onQueryChange, filter, onFilterChange, selectedService, onOpen,
 }: LinkCatalogProps) {
   const configuredServices = useMemo(
     () => new Set(connections.filter((c) => c.configured).map((c) => c.service)),
@@ -46,11 +49,13 @@ export function LinkCatalog({
 
   const annotated = useMemo(
     () =>
-      providers.map((p) => ({
-        provider: p,
-        status: providerStatus(p, configuredServices, oauthConfiguredServices, p.authTypes ?? []),
-      })),
-    [providers, configuredServices, oauthConfiguredServices],
+      providers.flatMap((provider) => {
+        const status = providerStatus(provider, configuredServices, oauthConfiguredServices, provider.authTypes ?? []);
+        return isLinkProviderVisible(provider.service, runtimeMode, runtimeOrigin, status.configured)
+          ? [{ provider, status }]
+          : [];
+      }),
+    [providers, configuredServices, oauthConfiguredServices, runtimeMode, runtimeOrigin],
   );
 
   const counts: FilterCounts = useMemo(

@@ -1,10 +1,24 @@
 export type LinkRuntimePhase = "disabled" | "starting" | "online" | "stopping" | "offline" | "crashed" | "port_conflict" | "incompatible";
+export type LinkRuntimeMode = "local" | "remote";
+
+export interface LinkRuntimeConfigurationInput {
+  mode: LinkRuntimeMode;
+  origin?: string;
+  adminToken?: string;
+  runtimeToken?: string;
+  clearAdminToken?: boolean;
+  clearRuntimeToken?: boolean;
+}
 
 export interface LinkRuntimeState {
   enabled: boolean;
+  mode: LinkRuntimeMode;
   phase: LinkRuntimePhase;
   port: number | null;
   origin: string | null;
+  remoteOrigin: string | null;
+  adminTokenConfigured: boolean;
+  runtimeTokenConfigured: boolean;
   version: string;
   dataDirectory: string;
   restartCount: number;

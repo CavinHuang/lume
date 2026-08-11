@@ -1,14 +1,15 @@
-import type { LinkRuntimeDiagnostic, LinkRuntimeState } from "../../../packages/shared/src/types/link";
+import type { LinkRuntimeConfigurationInput, LinkRuntimeDiagnostic, LinkRuntimeMode, LinkRuntimeState } from "../../../packages/shared/src/types/link";
 import type { UtilityProcess } from "electron";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { randomInt } from "node:crypto";
-import { loadOrCreateLinkSecrets, type LinkRuntimeSecrets } from "./link-secret-store";
+import { loadLinkRemoteCredentials, loadOrCreateLinkSecrets, saveLinkRemoteCredentials, type LinkRemoteCredentials } from "./link-secret-store";
 
-interface PersistedLinkState { enabled: boolean; port: number | null }
+interface PersistedLinkState { enabled: boolean; mode: LinkRuntimeMode; port: number | null; remoteOrigin: string | null }
 interface ResourceMetadata { version: string; archiveSha256: string; commit: string; available: boolean }
-interface LinkRuntimeBootstrap { phase: LinkRuntimeState["phase"]; origin?: string; adminToken?: string; runtimeToken?: string }
+interface LinkRuntimeBootstrap { mode: LinkRuntimeMode; phase: LinkRuntimeState["phase"]; origin?: string; adminToken?: string; runtimeToken?: string }
+interface LinkBootstrapCredentials { adminToken: string; runtimeToken: string }
 
 const OPENCONNECTOR_VERSION = "1.3.5";
 const OPENCONNECTOR_COMMIT = "5719a69468c698c7cb8108e062ff64ecef8a2e65";
@@ -25,6 +26,7 @@ export function createLinkRuntimeSupervisor(input: {
 }) {
   const runtimeDir = join(input.configDir, "link-runtime");
   const statePath = join(runtimeDir, "state.json");
+  const remoteSecretsPath = join(runtimeDir, "remote-secrets.json");
   const dataDirectory = join(runtimeDir, "openconnector", "data");
   const metadata = readMetadata(input.resourceDir);
   let persisted = readPersistedState(statePath);
@@ -32,9 +34,11 @@ export function createLinkRuntimeSupervisor(input: {
   let stopping = false;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let crashTimes: number[] = [];
-  let currentSecrets: LinkRuntimeSecrets | null = null;
+  let currentCredentials: LinkBootstrapCredentials | null = null;
+  let remoteCredentials = loadRemoteCredentialsIfAvailable();
   let bootstrapDelivery = Promise.resolve();
-  let state: LinkRuntimeState = publicState(persisted, "disabled", metadata.version, dataDirectory, 0);
+  let operationGeneration = 0;
+  let state: LinkRuntimeState = publicState(persisted, "disabled", metadata.version, dataDirectory, 0, remoteCredentials);
 
   const deliverBootstrap = (bootstrap: LinkRuntimeBootstrap): Promise<void> => {
     const delivery = bootstrapDelivery.then(() => input.installBootstrap(bootstrap));
@@ -43,25 +47,32 @@ export function createLinkRuntimeSupervisor(input: {
   };
 
   const publish = (phase: LinkRuntimeState["phase"], error?: string) => {
-    state = publicState(persisted, phase, metadata.version, dataDirectory, crashTimes.length, error);
+    state = publicState(persisted, phase, metadata.version, dataDirectory, crashTimes.length, remoteCredentials, error);
     input.emit(state);
     if (phase !== "online") {
-      void deliverBootstrap({ phase }).catch(() => undefined);
+      currentCredentials = null;
+      void deliverBootstrap({ mode: persisted.mode, phase }).catch(() => undefined);
     }
   };
 
   async function start(): Promise<LinkRuntimeState> {
     if (!persisted.enabled) { publish("disabled"); await bootstrapDelivery; return state; }
+    if (persisted.mode === "remote") return connectRemote();
     if (child || state.phase === "starting") return state;
     if (!persisted.port) throw new Error("link_port_missing");
-    if (!(await isPortFree(persisted.port))) { publish("port_conflict", "Configured port is already in use."); await bootstrapDelivery; return state; }
+    const generation = operationGeneration;
+    const isCurrent = () => generation === operationGeneration && persisted.enabled && persisted.mode === "local";
+    const portFree = await isPortFree(persisted.port);
+    if (!isCurrent()) return state;
+    if (!portFree) { publish("port_conflict", "Configured port is already in use."); await bootstrapDelivery; return state; }
     if (!metadata.available) { publish("incompatible", "OpenConnector 1.3.5 resources are missing or failed integrity validation."); await bootstrapDelivery; return state; }
     const masterKey = input.getMasterKey();
     if (!masterKey) { publish("offline", "Connection vault is locked."); await bootstrapDelivery; throw new Error("connection_vault_locked"); }
     const secrets = loadOrCreateLinkSecrets(join(runtimeDir, "secrets.json"), masterKey);
-    currentSecrets = secrets;
+    currentCredentials = secrets;
     mkdirSync(dataDirectory, { recursive: true });
     publish("starting");
+    currentCredentials = secrets;
     stopping = false;
     const origin = `http://127.0.0.1:${persisted.port}`;
     const inheritedEnvironment = Object.fromEntries(
@@ -98,12 +109,15 @@ export function createLinkRuntimeSupervisor(input: {
       restartTimer = setTimeout(() => void start().catch((error) => publish("crashed", message(error))), crash.delayMs);
     });
     try {
-      await waitForHealth(origin, secrets.runtimeToken);
+      await waitForLinkHealth(origin, secrets.runtimeToken);
+      if (!isCurrent()) return state;
       if (child !== running) throw new Error("link_runtime_exited_during_start");
-      state = { ...publicState(persisted, "online", metadata.version, dataDirectory, crashTimes.length), origin };
+      await deliverBootstrap({ mode: "local", phase: "online", origin, adminToken: secrets.adminToken, runtimeToken: secrets.runtimeToken });
+      if (!isCurrent()) return state;
+      state = { ...publicState(persisted, "online", metadata.version, dataDirectory, crashTimes.length, remoteCredentials), origin };
       input.emit(state);
-      await deliverBootstrap({ phase: "online", origin, adminToken: secrets.adminToken, runtimeToken: secrets.runtimeToken });
     } catch (error) {
+      if (!isCurrent()) return state;
       if (child === running) child = null;
       stopping = true;
       const pid = running.pid;
@@ -118,7 +132,46 @@ export function createLinkRuntimeSupervisor(input: {
     return state;
   }
 
+  async function connectRemote(): Promise<LinkRuntimeState> {
+    if (state.phase === "starting") return state;
+    const origin = persisted.remoteOrigin;
+    if (!origin) { publish("offline", "Existing deployment URL is not configured."); await bootstrapDelivery; return state; }
+    const generation = operationGeneration;
+    const isCurrent = () => generation === operationGeneration
+      && persisted.enabled
+      && persisted.mode === "remote"
+      && persisted.remoteOrigin === origin;
+    try {
+      const credentials = loadRemoteCredentials();
+      remoteCredentials = credentials;
+      currentCredentials = credentials;
+      publish("starting");
+      currentCredentials = credentials;
+      await waitForLinkHealth(origin, credentials.runtimeToken, 10_000);
+      if (!isCurrent()) return state;
+      await validateLinkAdminAccess(origin, credentials.adminToken);
+      if (!isCurrent()) return state;
+      await deliverBootstrap({
+        mode: "remote",
+        phase: "online",
+        origin,
+        ...(credentials.adminToken ? { adminToken: credentials.adminToken } : {}),
+        ...(credentials.runtimeToken ? { runtimeToken: credentials.runtimeToken } : {}),
+      });
+      if (!isCurrent()) return state;
+      state = { ...publicState(persisted, "online", metadata.version, dataDirectory, 0, credentials), origin };
+      input.emit(state);
+      return state;
+    } catch (error) {
+      if (!isCurrent()) return state;
+      publish("offline", message(error));
+      await bootstrapDelivery;
+      throw error;
+    }
+  }
+
   async function stop(nextPhase: LinkRuntimeState["phase"] = "offline"): Promise<LinkRuntimeState> {
+    operationGeneration += 1;
     stopping = true;
     if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
     const running = child;
@@ -139,15 +192,47 @@ export function createLinkRuntimeSupervisor(input: {
 
   return {
     getState: () => state,
-    async initialize() { if (persisted.enabled) await start(); else { publish("disabled"); await bootstrapDelivery; } return state; },
+    async initialize() {
+      remoteCredentials = loadRemoteCredentialsIfAvailable();
+      if (persisted.enabled) await start(); else { publish("disabled"); await bootstrapDelivery; }
+      return state;
+    },
     async enable() {
-      if (!persisted.port) persisted.port = await choosePort();
+      if (persisted.mode === "local" && !persisted.port) persisted.port = await choosePort();
+      if (persisted.mode === "remote" && !persisted.remoteOrigin) throw new Error("link_remote_origin_missing");
       persisted.enabled = true; savePersistedState(statePath, persisted);
       return start();
     },
     async disable() { persisted.enabled = false; savePersistedState(statePath, persisted); return stop("disabled"); },
     async restart() { await stop("offline"); crashTimes = []; return start(); },
+    async configure(configuration: LinkRuntimeConfigurationInput) {
+      if (configuration.mode === "local") {
+        if (persisted.mode !== "local" || child || state.phase === "online" || state.phase === "starting") await stop("offline");
+        persisted = { ...persisted, enabled: true, mode: "local" };
+        if (!persisted.port) persisted.port = await choosePort();
+        savePersistedState(statePath, persisted);
+        crashTimes = [];
+        return start();
+      }
+      const origin = normalizeRemoteOrigin(configuration.origin);
+      const masterKey = input.getMasterKey();
+      if (!masterKey) throw new Error("connection_vault_locked");
+      await stop("offline");
+      const existing = loadRemoteCredentialsIfAvailable();
+      const sameOrigin = existing?.origin === origin;
+      remoteCredentials = {
+        origin,
+        adminToken: configuration.clearAdminToken ? "" : normalizeToken(configuration.adminToken) ?? (sameOrigin ? existing.adminToken : ""),
+        runtimeToken: configuration.clearRuntimeToken ? "" : normalizeToken(configuration.runtimeToken) ?? (sameOrigin ? existing.runtimeToken : ""),
+      };
+      saveLinkRemoteCredentials(remoteSecretsPath, remoteCredentials, masterKey);
+      persisted = { ...persisted, enabled: true, mode: "remote", remoteOrigin: origin };
+      savePersistedState(statePath, persisted);
+      crashTimes = [];
+      return start();
+    },
     async changePort(port: number) {
+      if (persisted.mode !== "local") throw new Error("link_port_not_available_for_remote");
       if (!Number.isInteger(port) || port < 49152 || port > 65535) throw new Error("invalid_link_port");
       if (port === persisted.port) return state;
       if (!(await isPortFree(port))) throw new Error("link_port_conflict");
@@ -157,10 +242,16 @@ export function createLinkRuntimeSupervisor(input: {
       return shouldRestart ? start() : (publish("disabled"), state);
     },
     async syncBootstrap() {
-      if (state.phase === "online" && state.origin && currentSecrets) {
-        await deliverBootstrap({ phase: "online", origin: state.origin, adminToken: currentSecrets.adminToken, runtimeToken: currentSecrets.runtimeToken });
+      if (state.phase === "online" && state.origin && currentCredentials) {
+        await deliverBootstrap({
+          mode: persisted.mode,
+          phase: "online",
+          origin: state.origin,
+          ...(currentCredentials.adminToken ? { adminToken: currentCredentials.adminToken } : {}),
+          ...(currentCredentials.runtimeToken ? { runtimeToken: currentCredentials.runtimeToken } : {}),
+        });
       } else {
-        await deliverBootstrap({ phase: state.phase });
+        await deliverBootstrap({ mode: persisted.mode, phase: state.phase });
       }
     },
     async diagnose(): Promise<LinkRuntimeDiagnostic> {
@@ -168,24 +259,25 @@ export function createLinkRuntimeSupervisor(input: {
       const result: LinkRuntimeDiagnostic = {
         checkedAt: new Date(startedAt).toISOString(),
         runtimePhase: state.phase,
-        resourceReady: metadata.available,
-        dataDirectoryReady: existsSync(dataDirectory),
+        resourceReady: persisted.mode === "remote" || metadata.available,
+        dataDirectoryReady: persisted.mode === "remote" || existsSync(dataDirectory),
         endpointReachable: false,
       };
-      if (state.phase !== "online" || !state.origin || !currentSecrets) {
+      if (state.phase !== "online" || !state.origin || !currentCredentials) {
         return { ...result, ...(state.lastError ? { error: state.lastError } : {}) };
       }
       try {
         const response = await fetch(`${state.origin}/v1/health`, {
           redirect: "error",
-          headers: { authorization: `Bearer ${currentSecrets.runtimeToken}` },
+          headers: currentCredentials.runtimeToken ? { authorization: `Bearer ${currentCredentials.runtimeToken}` } : undefined,
           signal: AbortSignal.timeout(3_000),
         });
+        const healthy = await isLinkHealthResponse(response);
         return {
           ...result,
-          endpointReachable: response.ok,
+          endpointReachable: healthy,
           latencyMs: Date.now() - startedAt,
-          ...(!response.ok ? { error: `health_http_${response.status}` } : {}),
+          ...(!healthy ? { error: response.ok ? "health_invalid_response" : `health_http_${response.status}` } : {}),
         };
       } catch (error) {
         return { ...result, latencyMs: Date.now() - startedAt, error: message(error) };
@@ -193,6 +285,25 @@ export function createLinkRuntimeSupervisor(input: {
     },
     stop,
   };
+
+  function loadRemoteCredentials(): LinkRemoteCredentials {
+    const origin = persisted.remoteOrigin;
+    if (!origin) throw new Error("link_remote_origin_missing");
+    const masterKey = input.getMasterKey();
+    if (!masterKey) {
+      if (existsSync(remoteSecretsPath)) throw new Error("connection_vault_locked");
+      return { origin, adminToken: "", runtimeToken: "" };
+    }
+    const credentials = loadLinkRemoteCredentials(remoteSecretsPath, masterKey);
+    if (!credentials) return { origin, adminToken: "", runtimeToken: "" };
+    if (credentials.origin !== origin) throw new Error("link_remote_credential_origin_mismatch");
+    return credentials;
+  }
+
+  function loadRemoteCredentialsIfAvailable(): LinkRemoteCredentials | null {
+    if (!persisted.remoteOrigin) return null;
+    try { return loadRemoteCredentials(); } catch { return null; }
+  }
 }
 
 export function nextLinkCrashState(previous: number[], now: number): { crashTimes: number[]; shouldRestart: boolean; delayMs: number } {
@@ -225,12 +336,108 @@ function readMetadata(resourceDir: string): ResourceMetadata {
   }
 }
 function readPersistedState(path: string): PersistedLinkState {
-  if (!existsSync(path)) return { enabled: false, port: null };
-  try { const value = JSON.parse(readFileSync(path, "utf8")); return { enabled: value.enabled === true, port: Number.isInteger(value.port) ? value.port : null }; } catch { return { enabled: false, port: null }; }
+  if (!existsSync(path)) return { enabled: false, mode: "local", port: null, remoteOrigin: null };
+  try {
+    const value = JSON.parse(readFileSync(path, "utf8"));
+    return {
+      enabled: value.enabled === true,
+      mode: value.mode === "remote" ? "remote" : "local",
+      port: Number.isInteger(value.port) ? value.port : null,
+      remoteOrigin: typeof value.remoteOrigin === "string" ? value.remoteOrigin : null,
+    };
+  } catch {
+    return { enabled: false, mode: "local", port: null, remoteOrigin: null };
+  }
 }
 function savePersistedState(path: string, value: PersistedLinkState): void { mkdirSync(dirname(path), { recursive: true }); const temporary = `${path}.tmp`; writeFileSync(temporary, `${JSON.stringify(value)}\n`); renameSync(temporary, path); }
-function publicState(persisted: PersistedLinkState, phase: LinkRuntimeState["phase"], version: string, dataDirectory: string, restartCount: number, lastError?: string): LinkRuntimeState { return { enabled: persisted.enabled, phase, port: persisted.port, origin: phase === "online" && persisted.port ? `http://127.0.0.1:${persisted.port}` : null, version, dataDirectory, restartCount, ...(lastError ? { lastError } : {}) }; }
+function publicState(persisted: PersistedLinkState, phase: LinkRuntimeState["phase"], version: string, dataDirectory: string, restartCount: number, remoteCredentials: LinkRemoteCredentials | null, lastError?: string): LinkRuntimeState {
+  return {
+    enabled: persisted.enabled,
+    mode: persisted.mode,
+    phase,
+    port: persisted.port,
+    origin: phase === "online" ? (persisted.mode === "remote" ? persisted.remoteOrigin : persisted.port ? `http://127.0.0.1:${persisted.port}` : null) : null,
+    remoteOrigin: persisted.remoteOrigin,
+    adminTokenConfigured: Boolean(remoteCredentials?.adminToken),
+    runtimeTokenConfigured: Boolean(remoteCredentials?.runtimeToken),
+    version,
+    dataDirectory,
+    restartCount,
+    ...(lastError ? { lastError } : {}),
+  };
+}
 async function isPortFree(port: number): Promise<boolean> { return new Promise((resolve) => { const server = createServer(); server.once("error", () => resolve(false)); server.listen(port, "127.0.0.1", () => server.close(() => resolve(true))); }); }
 async function choosePort(): Promise<number> { for (let attempt = 0; attempt < 100; attempt += 1) { const port = randomInt(49152, 65536); if (await isPortFree(port)) return port; } throw new Error("link_port_unavailable"); }
-async function waitForHealth(origin: string, token: string): Promise<void> { const deadline = Date.now() + 30_000; let delay = 100; while (Date.now() < deadline) { try { const response = await fetch(`${origin}/v1/health`, { redirect: "error", headers: { authorization: `Bearer ${token}` } }); if (response.ok) return; } catch {} await new Promise((resolve) => setTimeout(resolve, delay)); delay = Math.min(1000, delay * 2); } throw new Error("link_health_timeout"); }
+export async function waitForLinkHealth(origin: string, token: string, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let delay = 100;
+  while (Date.now() < deadline) {
+    try {
+      const remaining = Math.max(1, deadline - Date.now());
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), Math.min(3_000, remaining));
+      try {
+        const response = await fetch(`${origin}/v1/health`, {
+          redirect: "error",
+          headers: token ? { authorization: `Bearer ${token}` } : undefined,
+          signal: controller.signal,
+        });
+        if (await isLinkHealthResponse(response)) return;
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch { /* retry until the bounded deadline */ }
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(delay, remaining)));
+    delay = Math.min(1000, delay * 2);
+  }
+  throw new Error("link_health_timeout");
+}
+
+async function validateLinkAdminAccess(origin: string, token: string): Promise<void> {
+  try {
+    const response = await fetch(`${origin}/api/providers`, {
+      redirect: "error",
+      headers: token ? { authorization: `Bearer ${token}` } : undefined,
+      signal: AbortSignal.timeout(3_000),
+    });
+    const body = await response.json().catch(() => null) as unknown;
+    const validBody = Array.isArray(body)
+      || (body !== null && typeof body === "object" && (body as Record<string, unknown>).success === true);
+    if (!response.ok || !validBody) throw new Error("link_admin_access_failed");
+  } catch {
+    throw new Error("link_admin_access_failed");
+  }
+}
+
+async function isLinkHealthResponse(response: Response): Promise<boolean> {
+  if (!response.ok) return false;
+  const body = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (body?.success !== true || !body.data || typeof body.data !== "object") return false;
+  const payload = body.data as Record<string, unknown>;
+  return payload.ok === true && payload.runtime === "oomol-connect";
+}
+function normalizeRemoteOrigin(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error("invalid_link_remote_origin");
+  try {
+    const url = new URL(value.trim());
+    const loopback = isLoopbackHostname(url.hostname);
+    if ((url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) || url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) {
+      throw new Error("invalid_link_remote_origin");
+    }
+    return url.origin;
+  } catch (error) {
+    if (error instanceof Error && error.message === "invalid_link_remote_origin") throw error;
+    throw new Error("invalid_link_remote_origin");
+  }
+}
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
+}
+function normalizeToken(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const token = value.trim();
+  return token || undefined;
+}
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }

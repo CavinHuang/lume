@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAtom, useSetAtom } from "jotai";
-import type { LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderDetail, LinkProviderSummary } from "@lume/shared";
+import type {
+  LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderDetail, LinkProviderSummary, LinkRuntimeMode,
+} from "@lume/shared";
 import {
   activeTabIdAtom,
   linkProviderTargetAtom,
@@ -20,6 +22,7 @@ import { LinkCatalog } from "./LinkCatalog";
 import { LinkDetailPane } from "./LinkDetailPane";
 import { LinkAccountConnectDialog } from "./LinkAccountConnectDialog";
 import { LinkProviderSetupDialog } from "./LinkProviderSetupDialog";
+import { canCreateLinkConnection, canStartLinkConnectionFlow, isLinkProviderVisible } from "./link-provider-availability";
 import { resolveLinkOAuthSetupState } from "./link-provider-state";
 import type { LinkFilter } from "./LinkToolbar";
 
@@ -39,6 +42,9 @@ export function LinkView() {
   const [selected, setSelected] = useState<LinkProviderDetail | null>(null);
   const [dialog, setDialog] = useState<LinkDialogState>(null);
   const [online, setOnline] = useState(false);
+  const [runtimeMode, setRuntimeMode] = useState<LinkRuntimeMode>("local");
+  const [runtimeOrigin, setRuntimeOrigin] = useState<string | null>(null);
+  const refreshGeneration = useRef(0);
   const [oauthConfigs, setOAuthConfigs] = useState<LinkOAuthConfigSummary[]>([]);
   const [providerTarget, setProviderTarget] = useAtom(linkProviderTargetAtom);
   const [deleteTarget, setDeleteTarget] = useState<LinkConnectionSummary | null>(null);
@@ -47,17 +53,23 @@ export function LinkView() {
   const setSettingsInitialTab = useSetAtom(settingsInitialTabAtom);
 
   const refresh = useCallback(async () => {
+    const generation = ++refreshGeneration.current;
     const runtime = await getLinkRuntimeState();
-    setOnline(runtime.phase === "online");
+    if (generation !== refreshGeneration.current) return;
+    setRuntimeMode(runtime.mode);
+    setRuntimeOrigin(runtime.origin);
     if (runtime.phase !== "online") {
+      setOnline(false);
       setProviders([]); setConnections([]); setOAuthConfigs([]); return;
     }
     const [nextProviders, nextConnections, nextOAuthConfigs] = await Promise.all([
       listLinkProviders(), listLinkConnections(), listLinkOAuthConfigs(),
     ]);
+    if (generation !== refreshGeneration.current) return;
     setProviders(nextProviders);
     setConnections(nextConnections);
     setOAuthConfigs(nextOAuthConfigs);
+    setOnline(true);
   }, []);
 
   useEffect(() => {
@@ -66,24 +78,48 @@ export function LinkView() {
     let offData: (() => void) | undefined;
     void onLinkRuntimeState(() => void refresh()).then((off) => { offRuntime = off; });
     void onLinkDataChanged(() => void refresh()).then((off) => { offData = off; });
-    return () => { offRuntime?.(); offData?.(); };
+    return () => { refreshGeneration.current += 1; offRuntime?.(); offData?.(); };
   }, [refresh]);
 
   useEffect(() => {
+    setDialog(null);
+    setSelected(null);
+  }, [runtimeOrigin]);
+
+  useEffect(() => {
     if (!online || !providerTarget) return;
-    void getLinkProvider(providerTarget.service)
+    const target = providerTarget;
+    const configured = connections.some((connection) => connection.service === target.service && connection.configured);
+    setProviderTarget(null);
+    if (!isLinkProviderVisible(target.service, runtimeMode, runtimeOrigin, configured)) {
+      toast.error("当前运行时无法连接此服务，请配置公网可访问的已有部署后重试");
+      return;
+    }
+    const generation = refreshGeneration.current;
+    void getLinkProvider(target.service)
       .then((provider) => {
-        setDialog(null);
-        setSelected(provider);
-        setProviderTarget(null);
+        if (generation !== refreshGeneration.current) return;
+        setDialog(null); setSelected(provider);
       })
-      .catch(() => toast.error("无法打开连接器详情"));
-  }, [online, providerTarget, setProviderTarget]);
+      .catch(() => { if (generation === refreshGeneration.current) toast.error("无法打开连接器详情"); });
+  }, [connections, online, providerTarget, runtimeMode, runtimeOrigin, setProviderTarget]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const configured = connections.some((connection) => connection.service === selected.service && connection.configured);
+    if (isLinkProviderVisible(selected.service, runtimeMode, runtimeOrigin, configured)) return;
+    setDialog(null);
+    setSelected(null);
+  }, [connections, runtimeMode, runtimeOrigin, selected]);
 
   const openProvider = (service: string) => {
+    const generation = refreshGeneration.current;
     void getLinkProvider(service)
-      .then((detail) => { setDialog(null); setSelected(detail); })
-      .catch(() => toast.error("无法打开连接器详情"));
+      .then((detail) => {
+        if (generation !== refreshGeneration.current) return;
+        setDialog(null); setSelected(detail);
+      })
+      .catch(() => { if (generation === refreshGeneration.current) toast.error("无法打开连接器详情"); });
   };
 
   const openAccountDialog = (
@@ -92,12 +128,16 @@ export function LinkView() {
     mode: "create" | "reconnect" = "create",
   ) => {
     if (!selected) return;
+    const selectedAuthType = authType ?? (selected.auth.length === 1 ? String(selected.auth[0]?.type) : undefined);
+    if (!canStartLinkConnectionFlow(selected.service, runtimeMode, runtimeOrigin, mode, selectedAuthType)) {
+      toast.error("当前运行时无法接收此服务的公网回调");
+      return;
+    }
     const oauthConfig = oauthConfigs.find((config) => config.service === selected.service);
     const authTypes = selected.authTypes?.length
       ? selected.authTypes
       : selected.auth.map((auth) => String(auth.type));
     const oauthSetup = resolveLinkOAuthSetupState(authTypes, oauthConfig?.configured ?? false);
-    const selectedAuthType = authType ?? (selected.auth.length === 1 ? String(selected.auth[0]?.type) : undefined);
     if (selectedAuthType === "oauth2" && oauthSetup !== "configured") {
       setDialog({ kind: "provider-setup", connectionName, authType: selectedAuthType, continueToAccount: true, mode });
       return;
@@ -122,7 +162,7 @@ export function LinkView() {
         <Badge variant="secondary">未启用</Badge>
         <h1 className="text-xl font-semibold">连接器</h1>
         <p className="max-w-sm text-sm text-[var(--text-3)]">
-          连接器需要可用的 OpenConnector 服务。请在「设置 → Link 运行时」中启用或重启本机服务。
+          连接器需要可用的 OpenConnector 服务。请在「设置 → Link 运行时」中启用本机服务或配置已有部署。
         </p>
         <Button variant="outline" onClick={openLinkRuntimeSettings}>
           打开 Link 运行时设置
@@ -138,7 +178,7 @@ export function LinkView() {
           <h1 className="text-base font-semibold">连接器</h1>
           <p className="mt-0.5 text-xs text-[var(--text-3)]">连接常用应用与数据服务，并查看智能体可以调用的能力。</p>
         </div>
-        <Badge variant="success">本机服务运行中</Badge>
+        <Badge variant="success">{runtimeMode === "remote" ? "已有部署运行中" : "本机服务运行中"}</Badge>
       </div>
       <div className={cn(
         "grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-hidden transition-[grid-template-columns] duration-200 ease-out",
@@ -152,6 +192,8 @@ export function LinkView() {
             providers={providers}
             connections={connections}
             oauthConfigs={oauthConfigs}
+            runtimeMode={runtimeMode}
+            runtimeOrigin={runtimeOrigin}
             query={query}
             onQueryChange={setQuery}
             filter={filter}
@@ -166,6 +208,8 @@ export function LinkView() {
               provider={selected}
               connections={connections.filter((c) => c.service === selected.service)}
               oauthConfig={oauthConfigs.find((config) => config.service === selected.service)}
+              runtimeMode={runtimeMode}
+              canAddAccount={canCreateLinkConnection(selected.service, runtimeMode, runtimeOrigin)}
               onConnect={() => openAccountDialog(
                 connections.some((connection) => connection.service === selected.service) ? "" : "default",
               )}
@@ -194,6 +238,8 @@ export function LinkView() {
           initialConnectionName={dialog.connectionName}
           initialAuthType={dialog.authType}
           mode={dialog.mode}
+          runtimeMode={runtimeMode}
+          oauthAllowed={canCreateLinkConnection(selected.service, runtimeMode, runtimeOrigin)}
           existingConnectionNames={connections
             .filter((connection) => connection.service === selected.service)
             .map((connection) => connection.connectionName)}
@@ -213,6 +259,7 @@ export function LinkView() {
         <LinkProviderSetupDialog
           provider={selected}
           oauthConfig={oauthConfigs.find((config) => config.service === selected.service)}
+          runtimeMode={runtimeMode}
           onClose={() => setDialog(null)}
           onSaved={async () => {
             await refresh();
@@ -226,7 +273,7 @@ export function LinkView() {
         open={Boolean(deleteTarget)}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
         title="断开这个连接？"
-        description={deleteTarget ? `将删除 ${deleteTarget.service} 的 ${deleteTarget.connectionName} 本机凭据。` : ""}
+        description={deleteTarget ? `将删除 ${deleteTarget.service} 的 ${deleteTarget.connectionName} ${runtimeMode === "remote" ? "已有部署凭据" : "本机凭据"}。` : ""}
         confirmLabel="断开连接"
         destructive
         onConfirm={() => {

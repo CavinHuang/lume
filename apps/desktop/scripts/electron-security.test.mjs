@@ -697,6 +697,20 @@ test("cold start pre-captures desktop context before creating the Lume window", 
   assert.equal(captureIndex < createIndex, true, "desktop context must be captured before Lume receives focus");
 });
 
+test("cold start creates the Lume window before reconnecting Link", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  const start = mainSource.indexOf("app.whenReady().then(async () => {");
+  const end = mainSource.indexOf("}).catch((error) => {", start);
+  assert.notEqual(start, -1, "app ready handler is missing");
+  assert.notEqual(end, -1, "app ready handler end marker is missing");
+  const body = mainSource.slice(start, end);
+  const createIndex = body.indexOf("createMainWindow()");
+  const initializeIndex = body.indexOf("linkRuntimeSupervisor.initialize()");
+  assert.notEqual(createIndex, -1, "cold start does not create the main window");
+  assert.notEqual(initializeIndex, -1, "cold start does not initialize Link");
+  assert.equal(createIndex < initializeIndex, true, "Link reconnect must not delay the main window");
+});
+
 test("app activation pre-captures desktop context before recreating the Lume window", () => {
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
   const start = mainSource.indexOf("app.on('activate', async () => {");

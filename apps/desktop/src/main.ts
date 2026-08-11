@@ -1725,7 +1725,7 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     }
     case 'link_runtime_state':
       requireMainWindowSender(context, 'link_runtime_state')
-      return linkRuntimeSupervisor?.getState() ?? { enabled: false, phase: 'disabled', port: null, origin: null, version: '1.3.5', dataDirectory: join(resolveConfigDir(), 'link-runtime', 'openconnector', 'data'), restartCount: 0 }
+      return linkRuntimeSupervisor?.getState() ?? { enabled: false, mode: 'local', phase: 'disabled', port: null, origin: null, remoteOrigin: null, adminTokenConfigured: false, runtimeTokenConfigured: false, version: '1.3.5', dataDirectory: join(resolveConfigDir(), 'link-runtime', 'openconnector', 'data'), restartCount: 0 }
     case 'link_runtime_enable':
       requireMainWindowSender(context, 'link_runtime_enable')
       if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
@@ -1746,6 +1746,17 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       requireMainWindowSender(context, 'link_runtime_change_port')
       if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
       return linkRuntimeSupervisor.changePort(Number(payload.port))
+    case 'link_runtime_configure':
+      requireMainWindowSender(context, 'link_runtime_configure')
+      if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
+      return linkRuntimeSupervisor.configure({
+        mode: payload.mode,
+        ...(typeof payload.origin === 'string' ? { origin: payload.origin } : {}),
+        ...(typeof payload.adminToken === 'string' ? { adminToken: payload.adminToken } : {}),
+        ...(typeof payload.runtimeToken === 'string' ? { runtimeToken: payload.runtimeToken } : {}),
+        ...(payload.clearAdminToken === true ? { clearAdminToken: true } : {}),
+        ...(payload.clearRuntimeToken === true ? { clearRuntimeToken: true } : {}),
+      })
     case 'sidecar_call': {
       validateRendererSidecarMethod(payload.method)
       if (payload.method !== 'agent:send-thread-message') {
@@ -3204,9 +3215,6 @@ app.whenReady().then(async () => {
       else { try { process.kill(pid, 'SIGKILL') } catch {} }
     },
   })
-  await linkRuntimeSupervisor.initialize().catch((error) => {
-    writeMainLog('warn', 'desktop.link', 'runtime.autostart_failed', 'Link runtime autostart failed', { data: { error } })
-  })
   await sidecarHost.notifyBrowserSettings?.(browserRuntime.getSettings())
   logDesktopStartup('sidecar ready', 'sidecar.ready')
   pageRenderer = new PageRenderer()
@@ -3214,6 +3222,9 @@ app.whenReady().then(async () => {
   registerDesktopContextPowerEvents()
   await captureQuickInputContext()
   await createMainWindow()
+  void linkRuntimeSupervisor.initialize().catch((error) => {
+    writeMainLog('warn', 'desktop.link', 'runtime.autostart_failed', 'Link runtime autostart failed', { data: { error } })
+  })
   // Agent 灵动岛 service（Task 7）：主窗口就绪后启动，开始响应 sidecar intent。
   await getAgentIslandService().start()
   // Phase 2：启动渲染面（macOS 26+ 优先 native，否则 Electron 窗）。native 4s 未 ready 由 host 回退。
