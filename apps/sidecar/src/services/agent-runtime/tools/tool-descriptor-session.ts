@@ -10,6 +10,14 @@ export function setRuntimeToolDescriptors(sessionId: string, descriptors: LumeTo
   );
 }
 
+export function appendRuntimeToolDescriptors(sessionId: string, descriptors: LumeToolDescriptor[]): void {
+  const registered = descriptorsBySession.get(sessionId) ?? new Map<string, LumeToolDescriptor>();
+  for (const descriptor of descriptors) {
+    registered.set(descriptor.canonicalName, descriptor);
+  }
+  descriptorsBySession.set(sessionId, registered);
+}
+
 export function getRuntimeToolDescriptor(sessionId: string, toolName: string): LumeToolDescriptor | undefined {
   return descriptorsBySession.get(sessionId)?.get(canonicalizeAgentToolName(toolName));
 }

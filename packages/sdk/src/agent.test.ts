@@ -150,6 +150,23 @@ describe("Agent runtime tool resolver", () => {
     await agent.close()
   })
 
+  test("registers generated discovery tools with the host runtime", async () => {
+    process.env.ENABLE_TOOL_SEARCH = "tst"
+    const registered: string[] = []
+    const agent = createAgent({
+      persistSession: false,
+      tools: [tool("Read"), tool("PrivateResearch")],
+      registerGeneratedRuntimeTools: (tools) => {
+        registered.push(...tools.map((item) => item.name))
+      },
+    })
+
+    await agent.getInitializationResult()
+
+    expect(registered).toEqual(["ToolSearch", "ExecuteTool"])
+    await agent.close()
+  })
+
   test("binds an explicitly supplied Skill tool to the agent skill registry", async () => {
     const root = mkdtempSync(join(tmpdir(), "sdk-agent-explicit-skill-tool-"))
     tempDirs.push(root)

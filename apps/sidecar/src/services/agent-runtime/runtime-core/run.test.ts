@@ -135,6 +135,34 @@ describe("runtime-core run", () => {
     result.session.dispose();
   });
 
+  test("延迟工具搜索注册 SDK 生成工具的 Runtime descriptor", async () => {
+    const previousToolSearch = process.env.ENABLE_TOOL_SEARCH;
+    process.env.ENABLE_TOOL_SEARCH = "tst";
+    const sessionId = `tool-search-descriptor-${crypto.randomUUID()}`;
+    let result: Awaited<ReturnType<typeof createRuntimeCoreSession>> | undefined;
+
+    try {
+      result = await createRuntimeCoreSession(createHookRuntimeSessionInput({
+        lumeSessionId: sessionId,
+        permissionMode: "default"
+      }));
+      await result.agent.getInitializationResult();
+
+      const deferredTools = (result.agent as unknown as { deferredToolPool: ToolDefinition[] }).deferredToolPool;
+      expect(deferredTools.length).toBeGreaterThan(0);
+      expect(getRuntimeToolDescriptor(sessionId, deferredTools[0]!.name)).toBeDefined();
+      expect(getRuntimeToolDescriptor(sessionId, "ToolSearch")).toBeDefined();
+      expect(getRuntimeToolDescriptor(sessionId, "ExecuteTool")).toBeDefined();
+    } finally {
+      await result?.session.dispose();
+      if (previousToolSearch === undefined) {
+        delete process.env.ENABLE_TOOL_SEARCH;
+      } else {
+        process.env.ENABLE_TOOL_SEARCH = previousToolSearch;
+      }
+    }
+  });
+
   test("新运行时只暴露持久化 Agent 任务工具，子会话不能继续派生", async () => {
     const parent = await createRuntimeCoreSession(createHookRuntimeSessionInput({ permissionMode: "default", runId: "parent-run" }));
     expect(parent.session.getActiveToolNames()).toContain("Agent");

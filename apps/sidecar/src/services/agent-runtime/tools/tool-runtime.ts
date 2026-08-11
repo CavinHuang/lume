@@ -11,6 +11,7 @@ import { createLogger } from "../../infra/logger";
 import { getWikiProtectedRootPath } from "../../infra/config-paths";
 import { wrapToolWithProtectedRootPolicy } from "./protected-root-policy";
 import {
+  appendRuntimeToolDescriptors,
   setRuntimeToolDescriptors
 } from "./tool-descriptor-session";
 import {
@@ -139,6 +140,15 @@ export class ToolRuntime {
         requiredDuringSkillScope: true
       }
     } : tool);
+  }
+
+  static registerGeneratedTools(input: {
+    tools: ToolDefinition[];
+    sessionId: string;
+  }): void {
+    const registry = new ToolRegistry();
+    registry.registerMany(createToolDescriptorsFromDefinitions(input.tools, "sdk"));
+    appendRuntimeToolDescriptors(input.sessionId, registry.list());
   }
 }
 

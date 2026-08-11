@@ -594,6 +594,12 @@ export class Agent {
     const mcpTools = this.mcpLinks
       .filter((conn) => conn.enabled && conn.status === 'connected')
       .flatMap((conn) => conn.tools)
+    const runtimeContext = {
+      cwd: options.cwd || process.cwd(),
+      sessionId: this.sid,
+      permissionMode: options.permissionMode,
+      threadType: options.threadType,
+    }
 
     const assembledTools = assembleToolPool(
       baseTools,
@@ -602,24 +608,23 @@ export class Agent {
       options.disallowedTools,
     )
     const runtimeTools = options.resolveRuntimeTools
-      ? await options.resolveRuntimeTools(assembledTools, {
-        cwd: options.cwd || process.cwd(),
-        sessionId: this.sid,
-        permissionMode: options.permissionMode,
-        threadType: options.threadType,
-      })
+      ? await options.resolveRuntimeTools(assembledTools, runtimeContext)
       : assembledTools
     const { core, deferred } = splitDeferredTools(runtimeTools)
     const enableToolSearch = isToolSearchEnabled(deferred, options.model || this.modelId)
     this.deferredToolPool = enableToolSearch ? deferred : []
     setDeferredTools(this.deferredToolPool)
-    this.toolPool = this.deferredToolPool.length > 0
-      ? [
-          ...core,
-          createToolSearchTool(() => this.deferredToolPool),
-          createExecuteTool(() => this.deferredToolPool),
-        ]
-      : runtimeTools
+    if (this.deferredToolPool.length === 0) {
+      this.toolPool = runtimeTools
+      return
+    }
+
+    const generatedTools = [
+      createToolSearchTool(() => this.deferredToolPool),
+      createExecuteTool(() => this.deferredToolPool),
+    ]
+    await options.registerGeneratedRuntimeTools?.(generatedTools, runtimeContext)
+    this.toolPool = [...core, ...generatedTools]
   }
 
   private drainQueuedSdkEvents(): SDKMessage[] {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ToolContext, ToolDefinition } from "@lume/agent-sdk";
+import { createExecuteTool, createToolSearchTool, type ToolContext, type ToolDefinition } from "@lume/agent-sdk";
 import type { LumeGuardrailRunner } from "../guardrails/guardrail-runner";
 import { getRuntimeToolDescriptor } from "./tool-descriptor-session";
 import { ToolExecutionGateway } from "./tool-execution-gateway";
@@ -105,6 +105,31 @@ describe("ToolRuntime", () => {
     const context: ToolContext = { cwd: "/tmp", toolUseId: "task-report-collision" };
     await expect(tools[0]!.call({}, context)).resolves.toMatchObject({
       content: "bound"
+    });
+  });
+
+  test("appends SDK-generated descriptors without dropping deferred tool descriptors", () => {
+    const sessionId = `tool-runtime-generated-${crypto.randomUUID()}`;
+    ToolRuntime.resolveDynamicTools({
+      tools: [makeTool("Read"), makeTool("link_list_apps")],
+      cwd: "/tmp",
+      sessionId,
+      policyInput: {}
+    });
+
+    ToolRuntime.registerGeneratedTools({
+      tools: [createToolSearchTool(() => []), createExecuteTool(() => [])],
+      sessionId
+    });
+
+    expect(getRuntimeToolDescriptor(sessionId, "link_list_apps")).toBeDefined();
+    expect(getRuntimeToolDescriptor(sessionId, "ToolSearch")).toMatchObject({
+      name: "ToolSearch",
+      metadata: { allowedInPlanMode: true, requiresApprovalByDefault: false }
+    });
+    expect(getRuntimeToolDescriptor(sessionId, "ExecuteTool")).toMatchObject({
+      name: "ExecuteTool",
+      metadata: { allowedInPlanMode: true, requiresApprovalByDefault: false }
     });
   });
 });
