@@ -30,11 +30,13 @@ describe('agent-island native JSONL 协议', () => {
     expect('planQuotas' in round).toBe(false)
   })
 
-  test('NativeAgentIslandEvent ready/fatal/intent 形状', () => {
+  test('NativeAgentIslandEvent ready/unavailable/fatal/intent 形状', () => {
     const ready: NativeAgentIslandEvent = { type: 'ready', protocol: 1 }
+    const unavailable: NativeAgentIslandEvent = { type: 'unavailable', message: 'no notched display' }
     const fatal: NativeAgentIslandEvent = { type: 'fatal', message: 'boom' }
     const intent: NativeAgentIslandEvent = { type: 'intent', name: 'open-session', threadId: 't1' }
     expect(JSON.parse(JSON.stringify(ready)).type).toBe('ready')
+    expect(JSON.parse(JSON.stringify(unavailable)).message).toBe('no notched display')
     expect(JSON.parse(JSON.stringify(fatal)).message).toBe('boom')
     expect(JSON.parse(JSON.stringify(intent)).threadId).toBe('t1')
   })

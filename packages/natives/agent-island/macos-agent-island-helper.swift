@@ -820,13 +820,14 @@ final class IslandController {
   private let model = IslandModel()
   private let panel: AgentIslandPanel
   private var screen: NSScreen
+  private var displayAvailable: Bool
   private var latestMessage: SnapshotMessage?
   private var screenObserver: NSObjectProtocol?
 
-  init?() {
-    guard let preferredScreen = Self.preferredScreen() else { return nil }
-    screen = preferredScreen
+  init() {
+    screen = Self.preferredScreen() ?? NSScreen.main ?? NSScreen.screens[0]
     let metrics = NotchMetrics(screen: screen)
+    displayAvailable = metrics.hasNotch
     panel = AgentIslandPanel(
       contentRect: Self.topFrame(
         screen: screen,
@@ -876,12 +877,21 @@ final class IslandController {
 
   func close() { panel.orderOut(nil) }
 
+  var hasNotchedDisplay: Bool { displayAvailable }
+
   private func refreshForDisplayChange() {
-    guard Self.preferredScreen() != nil else {
-      emitJson(["type": "fatal", "message": "no notched display available"])
+    guard let preferredScreen = Self.preferredScreen() else {
+      if displayAvailable {
+        displayAvailable = false
+        emitJson(["type": "unavailable", "message": "no notched display available"])
+      }
       close()
-      NSApplication.shared.terminate(nil)
       return
+    }
+    screen = preferredScreen
+    if !displayAvailable {
+      displayAvailable = true
+      emitJson(["type": "ready", "protocol": 1])
     }
     guard let latestMessage else { return }
     layout(latestMessage, forceModelUpdate: true)
@@ -980,11 +990,12 @@ struct LumeAgentIslandHost {
   static func main() {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
-    guard let controller = IslandController() else {
-      emitJson(["type": "fatal", "message": "no notched display available"])
-      return
+    let controller = IslandController()
+    if controller.hasNotchedDisplay {
+      emitJson(["type": "ready", "protocol": 1])
+    } else {
+      emitJson(["type": "unavailable", "message": "no notched display available"])
     }
-    emitJson(["type": "ready", "protocol": 1])
 
     // stdin JSONL 循环放在后台队列；解析后的 SnapshotMessage 派回 main actor 应用。
     DispatchQueue.global(qos: .userInitiated).async {

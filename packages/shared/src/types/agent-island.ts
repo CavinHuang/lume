@@ -124,6 +124,7 @@ export interface NativeAgentIslandSnapshot {
 /** Swift helper → 主进程的受限事件。intent 与 Electron renderer 共用 AgentIslandIntentName。 */
 export type NativeAgentIslandEvent =
   | { type: 'ready'; protocol: 1 }
+  | { type: 'unavailable'; message: string }
   | { type: 'fatal'; message: string }
   | { type: 'intent'; name: 'set-expanded'; value: boolean }
   | { type: 'intent'; name: 'set-hovered'; value: boolean }
