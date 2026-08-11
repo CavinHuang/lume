@@ -239,6 +239,7 @@ export function LinkView() {
           initialAuthType={dialog.authType}
           mode={dialog.mode}
           runtimeMode={runtimeMode}
+          oauthAllowed={canCreateLinkConnection(selected.service, runtimeMode, runtimeOrigin)}
           existingConnectionNames={connections
             .filter((connection) => connection.service === selected.service)
             .map((connection) => connection.connectionName)}

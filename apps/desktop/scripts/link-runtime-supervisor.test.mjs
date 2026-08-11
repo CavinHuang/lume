@@ -33,6 +33,7 @@ test('existing deployment mode connects without starting the bundled service and
   const root = mkdtempSync(join(tmpdir(), 'lume-link-remote-'))
   const originalFetch = globalThis.fetch
   const bootstraps = []
+  const lifecycle = []
   let forkCount = 0
   try {
     globalThis.fetch = async () => Response.json({ success: true, data: { ok: true, runtime: 'oomol-connect' } })
@@ -41,8 +42,8 @@ test('existing deployment mode connects without starting the bundled service and
       resourceDir: join(root, 'missing'),
       getMasterKey: () => Buffer.alloc(32, 9),
       fork: () => { forkCount += 1; throw new Error('remote mode must not fork') },
-      emit: () => {},
-      installBootstrap: (value) => { bootstraps.push(value) },
+      emit: (value) => { lifecycle.push(`emit:${value.phase}`) },
+      installBootstrap: (value) => { bootstraps.push(value); lifecycle.push(`bootstrap:${value.phase}`) },
       killProcessTree: () => {},
     }
     const supervisor = createLinkRuntimeSupervisor(options)
@@ -59,6 +60,7 @@ test('existing deployment mode connects without starting the bundled service and
     assert.equal(configured.adminTokenConfigured, true)
     assert.equal(configured.runtimeTokenConfigured, true)
     assert.equal(forkCount, 0)
+    assert.ok(lifecycle.lastIndexOf('bootstrap:online') < lifecycle.lastIndexOf('emit:online'))
     assert.deepEqual(bootstraps.at(-1), {
       mode: 'remote',
       phase: 'online',
