@@ -76,7 +76,10 @@ export function LinkResult({
     }).catch((error) => toast.error(error instanceof Error ? error.message : "自动重试失败"));
   }, [authorized, signal]);
   const openProvider = () => {
-    setProviderTarget(signal?.service ?? null);
+    setProviderTarget(signal ? {
+      service: signal.service,
+      ...(signal.connectionName ? { connectionName: signal.connectionName } : {}),
+    } : null);
     setTabs((tabs) =>
       tabs.some((tab) => tab.id === "__link__")
         ? tabs

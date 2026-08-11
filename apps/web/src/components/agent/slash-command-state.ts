@@ -1,7 +1,7 @@
 import type { AgentInvocableCapabilityItem, BrowserReferenceCandidate } from '@lume/shared'
 
-export type MentionItemType = 'file' | 'skill' | 'mcp' | 'command' | 'agent' | 'plugin' | 'browser' | 'todo'
-export type MentionSection = 'capability' | 'skill' | 'agent' | 'browser-tab' | 'chrome-page' | 'file' | 'project-file' | 'session-file' | 'plugin' | 'todo'
+export type MentionItemType = 'file' | 'skill' | 'mcp' | 'command' | 'agent' | 'plugin' | 'browser' | 'todo' | 'connector'
+export type MentionSection = 'capability' | 'skill' | 'agent' | 'connector' | 'browser-tab' | 'chrome-page' | 'file' | 'project-file' | 'session-file' | 'plugin' | 'todo'
 
 export interface MentionItem {
   id: string
@@ -21,6 +21,9 @@ export interface MentionItem {
   todoId?: string
   relation?: 'mentioned' | 'primary'
   browserCandidate?: BrowserReferenceCandidate
+  service?: string
+  connectionName?: string
+  displayText?: string
 }
 
 type CommonSlashCommand = Pick<MentionItem, 'id' | 'label' | 'type' | 'title' | 'subtitle' | 'section' | 'executeOnSelect'> & {

@@ -117,6 +117,7 @@ import {
   resolveAgentInputDesktopMessageMetadata,
 } from './agent-input-desktop-context'
 import { resolveOpenDesktopAssistantSettingsState } from './agent-input-desktop-settings'
+import { fetchLinkConnectionMentionItems, insertLinkConnectionMention } from './link-connection-mentions'
 
 import { Button } from '@/components/ui/button'
 interface AgentInputProps {
@@ -171,7 +172,8 @@ async function fetchAgentAndFileSuggestions(
   const agentItems = buildAgentRoleMentionItems(query)
   const normalizedQuery = query.trim().toLowerCase()
   try {
-    const [browserCandidates, projectResult, sessionResult] = await Promise.all([
+    const [connectorItems, browserCandidates, projectResult, sessionResult] = await Promise.all([
+      fetchLinkConnectionMentionItems(query),
       getBrowserSuggestionCandidates(threadId),
       workspaceSlug
         ? sidecarCall<{ entries: FileEntry[] }>(AGENT_IPC_CHANNELS.LIST_PROJECT_DIRECTORY, { workspaceSlug, path: '.' })
@@ -216,7 +218,7 @@ async function fetchAgentAndFileSuggestions(
 
     const browserItems = buildBrowserMentionItems(browserCandidates, normalizedQuery)
     const fileItems = results.flatMap(({ source, entries }) => buildFileMentionItems(entries, source, normalizedQuery))
-    return [...agentItems, ...browserItems, ...fileItems]
+    return [...agentItems, ...connectorItems, ...browserItems, ...fileItems]
   } catch {
     return agentItems
   }
@@ -342,6 +344,12 @@ function createAgentSuggestionRenderer(
         })
       }
 
+      const selectLinkConnectionReference = (item: MentionItem) => {
+        const props = currentProps
+        if (!props) return
+        insertLinkConnectionMention(props.editor, props.range, item)
+      }
+
       return {
         onStart: (props: SuggestionProps) => {
           currentProps = props
@@ -352,7 +360,7 @@ function createAgentSuggestionRenderer(
           document.body.appendChild(wrapper)
 
           component = new ReactRenderer(MentionList, {
-            props: { ...props, trigger: '@' as const, onBrowserReferenceSelect: selectBrowserReference },
+            props: { ...props, trigger: '@' as const, onBrowserReferenceSelect: selectBrowserReference, onLinkConnectionReferenceSelect: selectLinkConnectionReference },
             editor: props.editor,
           })
           wrapper.appendChild(component.element)
@@ -362,7 +370,7 @@ function createAgentSuggestionRenderer(
 
         onUpdate: (props: SuggestionProps) => {
           currentProps = props
-          component?.updateProps({ ...props, trigger: '@' as const, onBrowserReferenceSelect: selectBrowserReference })
+          component?.updateProps({ ...props, trigger: '@' as const, onBrowserReferenceSelect: selectBrowserReference, onLinkConnectionReferenceSelect: selectLinkConnectionReference })
           if (wrapper) updateMentionPosition(wrapper, props)
         },
 
@@ -873,7 +881,7 @@ export function AgentInput({
 
   const editor = useEditor({
     extensions: createPromptEditorExtensions({
-      placeholder: '输入任务… 使用 / 选择动作、技能或插件，@ 引用 Agent、网页或文件',
+      placeholder: '输入任务… 使用 / 选择动作、技能或插件，@ 引用 Agent、连接账户、网页或文件',
       agentSuggestion: createAgentSuggestionRenderer(threadId, getWorkspaceSlug, setMentionSuggestionOpen, handleBrowserReferenceSelectStable, handleLocalSuggestionEscape),
       capabilitySuggestion: createSuggestionRenderer('/', threadId, '/', getWorkspaceSlug, setMentionSuggestionOpen, handleSlashCommandExecuteStable, handleLocalSuggestionEscape),
       planningTodoSuggestion: createSuggestionRenderer('&', threadId, '&', getWorkspaceSlug, setMentionSuggestionOpen, undefined, handleLocalSuggestionEscape, getWorkspaceId),
@@ -1265,7 +1273,7 @@ export function AgentInput({
     const quotedBlock = quotedSelectionSnapshot ? buildQuotedSelectionBlock(quotedSelectionSnapshot) : ''
     const text = quotedBlock + baseText
     // messageParts 须与 userMessage 一致（sidecar 校验 parts 拼接 == userMessage）；引用 prepend 为 text part
-    const hasStructuredParts = serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
+    const hasStructuredParts = serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref' || part.type === 'link_connection_ref')
     const messageParts = quotedBlock && hasStructuredParts
       ? [{ type: 'text' as const, text: quotedBlock }, ...serialized.messageParts]
       : serialized.messageParts
@@ -2279,6 +2287,18 @@ function setEditorMessageParts(
       activeContent().push({
         type: 'planningTodoMention',
         attrs: { schemaVersion: part.schemaVersion, uri: part.uri, todoId: part.todoId, relation: part.relation, displayText: part.displayText },
+      })
+      continue
+    }
+    if (part.type === 'link_connection_ref') {
+      activeContent().push({
+        type: 'linkConnectionMention',
+        attrs: {
+          schemaVersion: part.schemaVersion,
+          service: part.service,
+          connectionName: part.connectionName,
+          displayText: part.displayText,
+        },
       })
       continue
     }

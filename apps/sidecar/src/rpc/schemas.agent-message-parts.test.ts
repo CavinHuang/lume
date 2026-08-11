@@ -38,6 +38,18 @@ describe("agentSendInputSchema messageParts", () => {
     expect(parsed.messageParts).toHaveLength(3);
   });
 
+  test("accepts a matching Connector account reference", () => {
+    const parsed = agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "Use @Gmail · user@example.com",
+      messageParts: [
+        { type: "text", text: "Use " },
+        { type: "link_connection_ref", schemaVersion: 1, service: "gmail", connectionName: "work", displayText: "Gmail · user@example.com" },
+      ],
+    });
+    expect(parsed.messageParts).toHaveLength(2);
+  });
+
   test("rejects mismatches, duplicate occurrences, and malformed refs", () => {
     expect(() => agentSendInputSchema.parse({
       threadId: "thread-1",

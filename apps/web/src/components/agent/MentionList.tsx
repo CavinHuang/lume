@@ -6,6 +6,7 @@ import { getMcpConfig, getMcpStatus } from '@/lib/desktop-api'
 import { buildMcpServerRows, type McpServerRow, type McpUiStatus } from '@/components/settings/mcp-settings-state'
 
 import { Button } from '@/components/ui/button'
+import { ProviderIcon } from '@/components/link/ProviderIcon'
 interface MentionListProps {
   items: MentionItem[]
   command: (item: MentionItem & { occurrenceId?: string }) => void
@@ -14,6 +15,7 @@ interface MentionListProps {
   /** 选中即执行命令（executeOnSelect）时触发，替代插入 mention 文本 */
   onCommandExecute?: (id: string) => void
   onBrowserReferenceSelect?: (item: MentionItem) => void
+  onLinkConnectionReferenceSelect?: (item: MentionItem) => void
 }
 
 export interface MentionListRef {
@@ -21,7 +23,7 @@ export interface MentionListRef {
 }
 
 export const MentionList = forwardRef<MentionListRef, MentionListProps>(
-  function MentionList({ items, command, trigger = '/', getWorkspaceSlug, onCommandExecute, onBrowserReferenceSelect }, ref) {
+  function MentionList({ items, command, trigger = '/', getWorkspaceSlug, onCommandExecute, onBrowserReferenceSelect, onLinkConnectionReferenceSelect }, ref) {
     const [selectedIndex, setSelectedIndex] = useState(0)
     const [panelMode, setPanelMode] = useState<'commands' | 'mcp-status'>('commands')
     const [mcpRows, setMcpRows] = useState<McpServerRow[]>([])
@@ -57,6 +59,10 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         onBrowserReferenceSelect(item)
         return
       }
+      if (item.type === 'connector' && onLinkConnectionReferenceSelect) {
+        onLinkConnectionReferenceSelect(item)
+        return
+      }
       if (item.id === 'mcp' && item.type === 'command') {
         setPanelMode('mcp-status')
         setMcpSelectedIndex(0)
@@ -71,7 +77,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         ...item,
         ...(item.uri ? { occurrenceId: crypto.randomUUID() } : {}),
       })
-    }, [displayItems, command, fetchMcpData, onBrowserReferenceSelect, onCommandExecute])
+    }, [displayItems, command, fetchMcpData, onBrowserReferenceSelect, onCommandExecute, onLinkConnectionReferenceSelect])
 
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }: { event: KeyboardEvent }) => {
@@ -174,7 +180,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 
     if (displayItems.length === 0) {
       const emptyLabel = trigger === '@'
-        ? '继续输入关键词搜索 Agent 或文件'
+        ? '继续输入关键词搜索 Agent、连接账户或文件'
         : trigger === '#'
           ? '继续输入关键词搜索 MCP 服务'
           : trigger === '&'
@@ -247,7 +253,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 
     const panelTitle = trigger === '@' ? 'Agents & Context' : trigger === '#' ? 'MCP Servers' : trigger === '&' ? 'Planning Todo' : 'Slash Commands'
     const panelDescription = trigger === '@'
-      ? '选择 Agent，或引用浏览器与当前工作区文件'
+      ? '选择 Agent、已连接账户，或引用网页与文件'
       : trigger === '#'
         ? '选择可用的 MCP 服务与工具入口'
         : trigger === '&'
@@ -321,7 +327,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                             快捷
                           </span>
                         ) : null}
-                        {(item.type === 'agent' || item.type === 'browser') && item.meta ? (
+                        {(item.type === 'agent' || item.type === 'browser' || item.type === 'connector') && item.meta ? (
                           <span className="shrink-0 rounded-md border border-[color:color-mix(in_oklab,var(--brand)_20%,transparent)] bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--brand)]">
                             {item.meta}
                           </span>
@@ -353,6 +359,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 function getMentionSectionLabel(section: MentionItem['section']): string {
   if (section === 'capability') return '动作'
   if (section === 'agent') return 'Agents'
+  if (section === 'connector') return '已连接账户'
   if (section === 'browser-tab') return '内置浏览器'
   if (section === 'chrome-page') return 'Chrome 最近标签'
   if (section === 'project-file') return '项目文件'
@@ -365,6 +372,9 @@ function getMentionSectionLabel(section: MentionItem['section']): string {
 
 function MentionItemIcon({ item }: { item: MentionItem }) {
   const [failed, setFailed] = useState(false)
+  if (item.type === 'connector' && item.service) {
+    return <ProviderIcon service={item.service} displayName={item.title} iconUrl={item.iconUrl} size={18} />
+  }
   if (item.iconUrl && !failed) {
     return <img src={item.iconUrl} alt="" className="size-4 rounded object-contain" onError={() => setFailed(true)} />
   }

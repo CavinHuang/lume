@@ -42,6 +42,8 @@ import { AgentFileReference, type OpenThreadFile } from './AgentFileReference'
 import { collectAssistantSources, type AssistantSourceReference } from './source-references'
 import { prefetchSessionCodingDiffs, requestSessionCodingDiff } from '@/components/right-panel/coding-diff-cache'
 import { MEMORY_CENTER_TAB_ID, memoryCenterTarget, upsertMemoryCenterTab } from '@/components/memory/open-memory-center'
+import { LinkConnectionChip } from '@/components/link/LinkConnectionChip'
+import { remapAgentMessagePartsForEditedText } from './agent-editor-message-parts'
 const MARKDOWN_STREAM_MIN_DELAY_MS = 50
 
 interface RuntimeEventContentBlockProps {
@@ -556,10 +558,12 @@ function UserMessageBlock({
     }
     setSubmitting(true)
     try {
+      const messageParts = remapAgentMessagePartsForEditedText(message.messageParts, nextText)
       await agentSend({
         threadId,
         userMessage: nextText,
         editFromMessageId: message.messageId,
+        ...(messageParts ? { messageParts } : {}),
       })
       setEditing(false)
     } catch (error) {
@@ -808,7 +812,7 @@ export function UserAgentRoleInvocationContent({
     </div>
   ) : null
 
-  if (messageParts?.some((part) => part.type === 'capability_ref')) {
+  if (messageParts?.some((part) => part.type === 'capability_ref' || part.type === 'link_connection_ref')) {
     return (
       <div className="min-w-0">
         {quoteMarks}
@@ -891,6 +895,17 @@ function CapabilityMessageText({
           let available = true
           try { validatePlanningTodoRefPart(part) } catch { available = false }
           return <span key={index} data-planning-todo-unavailable={!available || undefined} className={cn('mx-0.5 inline-flex rounded-md border px-1.5 py-0.5 align-baseline text-[13px]', available ? 'border-border' : 'border-destructive/50 text-muted-foreground')} title={available ? part.uri : '此 Planning Todo 引用已不可用'}>&amp;{available ? part.displayText : '待办不可用'}</span>
+        }
+        if (part.type === 'link_connection_ref') {
+          return (
+            <LinkConnectionChip
+              key={`${part.service}:${part.connectionName}:${index}`}
+              service={part.service}
+              connectionName={part.connectionName}
+              displayText={part.displayText}
+              className="mx-0.5"
+            />
+          )
         }
         const reference = referencesByUri.get(part.uri)
         const isPlugin = reference?.kind === 'plugin'

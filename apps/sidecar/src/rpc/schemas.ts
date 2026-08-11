@@ -73,6 +73,15 @@ const agentUserMessagePartSchema = z.discriminatedUnion("type", [
       displayText: z.string().trim().min(1).max(240),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("link_connection_ref"),
+      schemaVersion: z.literal(1),
+      service: z.string().trim().regex(/^[a-z0-9_-]{1,128}$/),
+      connectionName: z.string().trim().min(1).max(256),
+      displayText: z.string().trim().min(1).max(256),
+    })
+    .strict(),
 ]);
 
 const agentDiffCommentAttachmentSchema = z.object({
@@ -294,7 +303,9 @@ export const agentSendInputSchema = z
           ? part.text
           : part.type === "planning_todo_ref"
             ? `&${part.displayText}`
-            : part.uri,
+            : part.type === "link_connection_ref"
+              ? `@${part.displayText}`
+              : part.uri,
       )
       .join("");
     if (visibleMessage !== input.userMessage) {

@@ -241,7 +241,8 @@ export function WelcomeView({
 
   const editor = useEditor({
     extensions: createPromptEditorExtensions({
-      placeholder: '描述你想完成的任务，使用 / 选择技能或插件…',
+      placeholder: '描述你想完成的任务，使用 @ 引用已连接账户…',
+      agentSuggestion: createSuggestionRenderer('@', '__welcome__', '@', getWorkspaceSlug, setMentionSuggestionOpen),
       capabilitySuggestion: createSuggestionRenderer('/', '__welcome__', '/', getWorkspaceSlug, setMentionSuggestionOpen, executeSlashCommand),
     }),
     editorProps: {
@@ -461,7 +462,7 @@ export function WelcomeView({
         threadId: meta.id,
         userMessage: text,
         clientSubmissionId,
-        ...(serialized.messageParts.some((part) => part.type === 'capability_ref')
+        ...(serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'link_connection_ref')
           ? { messageParts: serialized.messageParts }
           : {}),
         thinkingLevel,

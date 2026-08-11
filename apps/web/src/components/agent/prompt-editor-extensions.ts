@@ -2,9 +2,10 @@ import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Mention, { type MentionOptions } from '@tiptap/extension-mention'
 import { ReactNodeViewRenderer } from '@tiptap/react'
-import type { Extensions } from '@tiptap/core'
+import { Node, type Extensions } from '@tiptap/core'
 import { CapabilityMentionNodeView } from './CapabilityMentionNodeView'
 import { PlanningTodoMentionNodeView } from './PlanningTodoMentionNodeView'
+import { LinkConnectionMentionNodeView } from './LinkConnectionMentionNodeView'
 
 interface PromptEditorExtensionOptions {
   placeholder: string
@@ -19,6 +20,33 @@ export function createPromptEditorExtensions(options: PromptEditorExtensionOptio
     StarterKit.configure({ bold: false, italic: false, strike: false }),
     Placeholder.configure({ placeholder: options.placeholder }),
   ]
+
+  extensions.push(Node.create({
+    name: 'linkConnectionMention',
+    group: 'inline',
+    inline: true,
+    atom: true,
+    selectable: true,
+    addAttributes() {
+      return {
+        schemaVersion: { default: 1 },
+        service: { default: '' },
+        connectionName: { default: '' },
+        displayText: { default: '' },
+      }
+    },
+    renderHTML({ node }) {
+      return ['span', {
+        'data-link-connection-mention': '',
+        'data-service': node.attrs.service,
+        'data-connection-name': node.attrs.connectionName,
+      }, `@${node.attrs.displayText ?? ''}`]
+    },
+    renderText: ({ node }) => `@${node.attrs.displayText ?? ''}`,
+    addNodeView() {
+      return ReactNodeViewRenderer(LinkConnectionMentionNodeView)
+    },
+  }))
 
   if (options.agentSuggestion) {
     extensions.push(Mention.configure({

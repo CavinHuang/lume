@@ -40,7 +40,10 @@ export const capabilityDetailTargetAtom = atom<{
 } | null>(null)
 export const settingsInitialTabAtom = atom<string | null>(null)
 export const archiveInitialViewAtom = atom<'archive' | 'trash' | null>(null)
-export const linkProviderTargetAtom = atom<string | null>(null)
+export const linkProviderTargetAtom = atom<{
+  service: string
+  connectionName?: string
+} | null>(null)
 
 export function setTabDesktopContextTarget(tabs: Tab[], tabId: string, target: DesktopContextTarget): Tab[] {
   return tabs.map((tab) => (

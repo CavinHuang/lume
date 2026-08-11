@@ -233,10 +233,13 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const computerUseTools = computerUseSurface === "mcp" && shouldExposeComputerUseTools(input)
     ? allComputerUseTools
     : [];
+  const preferredLinkConnections = resolvePreferredLinkConnections(input.messageMetadata?.linkConnectionReferences);
   const linkTools = createLinkTools({
     threadId: input.threadId,
     runId: input.runId,
     emitToolPermissionRequest: input.emitToolPermissionRequest,
+    preferredConnections: preferredLinkConnections,
+    promoteToActiveSchema: Object.keys(preferredLinkConnections).length > 0,
   });
   const customTools = [
     ...memoryTools,
@@ -271,6 +274,18 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
       ...customToolNames
     ]
   };
+}
+
+function resolvePreferredLinkConnections(value: unknown): Record<string, string> {
+  const preferred: Record<string, string> = {};
+  if (!Array.isArray(value)) return preferred;
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const { service, connectionName } = item as Record<string, unknown>;
+    if (typeof service !== "string" || typeof connectionName !== "string" || preferred[service]) continue;
+    preferred[service] = connectionName;
+  }
+  return preferred;
 }
 
 function isDirectRepositoryToolRoute(input: CreateLumeRuntimeToolsInput): boolean {
