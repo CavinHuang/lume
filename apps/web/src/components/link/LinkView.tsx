@@ -22,7 +22,7 @@ import { LinkCatalog } from "./LinkCatalog";
 import { LinkDetailPane } from "./LinkDetailPane";
 import { LinkAccountConnectDialog } from "./LinkAccountConnectDialog";
 import { LinkProviderSetupDialog } from "./LinkProviderSetupDialog";
-import { canCreateLinkConnection, isLinkProviderVisible } from "./link-provider-availability";
+import { canCreateLinkConnection, canStartLinkConnectionFlow, isLinkProviderVisible } from "./link-provider-availability";
 import { resolveLinkOAuthSetupState } from "./link-provider-state";
 import type { LinkFilter } from "./LinkToolbar";
 
@@ -111,7 +111,8 @@ export function LinkView() {
     mode: "create" | "reconnect" = "create",
   ) => {
     if (!selected) return;
-    if (mode === "create" && !canCreateLinkConnection(selected.service, runtimeMode, runtimeOrigin)) {
+    const selectedAuthType = authType ?? (selected.auth.length === 1 ? String(selected.auth[0]?.type) : undefined);
+    if (!canStartLinkConnectionFlow(selected.service, runtimeMode, runtimeOrigin, mode, selectedAuthType)) {
       toast.error("当前运行时无法接收此服务的公网回调");
       return;
     }
@@ -120,7 +121,6 @@ export function LinkView() {
       ? selected.authTypes
       : selected.auth.map((auth) => String(auth.type));
     const oauthSetup = resolveLinkOAuthSetupState(authTypes, oauthConfig?.configured ?? false);
-    const selectedAuthType = authType ?? (selected.auth.length === 1 ? String(selected.auth[0]?.type) : undefined);
     if (selectedAuthType === "oauth2" && oauthSetup !== "configured") {
       setDialog({ kind: "provider-setup", connectionName, authType: selectedAuthType, continueToAccount: true, mode });
       return;
