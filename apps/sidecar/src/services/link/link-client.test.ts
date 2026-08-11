@@ -41,6 +41,28 @@ describe("Link local HTTP boundary", () => {
   });
 });
 
+describe("Link existing deployment boundary", () => {
+  test("accepts HTTPS and loopback HTTP origins but rejects plaintext remote origins", () => {
+    expect(() => installLinkRuntimeBootstrap({ mode: "remote", phase: "online", origin: "https://connector.example.test", adminToken: "admin", runtimeToken: "runtime" })).not.toThrow();
+    expect(() => installLinkRuntimeBootstrap({ mode: "remote", phase: "online", origin: "http://127.0.0.1:3000" })).not.toThrow();
+    expect(() => installLinkRuntimeBootstrap({ mode: "remote", phase: "online", origin: "http://connector.example.test" })).toThrow("invalid_link_bootstrap");
+    expect(() => installLinkRuntimeBootstrap({ mode: "remote", phase: "online", origin: "https://connector.example.test/path" })).toThrow("invalid_link_bootstrap");
+  });
+
+  test("supports deployments with authentication disabled", async () => {
+    installLinkRuntimeBootstrap({ mode: "remote", phase: "online", origin: "https://connector.example.test" });
+    let observed: Request | undefined;
+    globalThis.fetch = (async (input, init) => {
+      observed = new Request(input, init);
+      return Response.json({ success: true, data: [] });
+    }) as typeof fetch;
+
+    await linkAdminRequest("/api/providers");
+    expect(observed?.url).toBe("https://connector.example.test/api/providers");
+    expect(observed?.headers.has("authorization")).toBe(false);
+  });
+});
+
 describe("extractMcpPayload", () => {
   test("prefers structuredContent payload", () => {
     const r = extractMcpPayload({ structuredContent: { ok: true, data: { x: 1 } } });

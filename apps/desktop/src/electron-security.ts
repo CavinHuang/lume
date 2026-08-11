@@ -91,6 +91,7 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'link_runtime_restart',
   'link_runtime_diagnose',
   'link_runtime_change_port',
+  'link_runtime_configure',
 ])
 
 export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
