@@ -9,10 +9,9 @@ import CohereMono from "@lobehub/icons/es/Cohere/components/Mono";
 import OpenAIMono from "@lobehub/icons/es/OpenAI/components/Mono";
 import PerplexityMono from "@lobehub/icons/es/Perplexity/components/Mono";
 import type { IconType } from "@lobehub/icons/es/types";
-import { LINK_ICONS, LINK_ICON_URLS } from "@/lib/generated/link-icons";
+import { LINK_ICON_URLS } from "@/lib/generated/link-icons";
 import { LOCAL_PROVIDER_ICON_URLS } from "@/lib/generated/local-provider-icons";
 import { colorForSeed, decideIconKind, initialOf } from "@/lib/provider-icon";
-import { SimpleIconGlyph } from "./SimpleIconGlyph";
 
 // service(小写)→ lobehub Mono 组件。keys 必须与 LOBEHUB_SERVICES 对齐。
 const LOBEHUB_MAP: Record<string, IconType> = {
@@ -26,13 +25,25 @@ interface ProviderIconProps {
   size?: number;
 }
 
-export function ProviderIcon({ service, displayName, size = 24 }: ProviderIconProps) {
-  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+export function ProviderIcon({ service, displayName, iconUrl, size = 24 }: ProviderIconProps) {
+  const [failedSources, setFailedSources] = useState<Set<string>>(() => new Set());
   const communityUrl = LINK_ICON_URLS[service.toLowerCase()];
   const localUrl = LOCAL_PROVIDER_ICON_URLS[service.toLowerCase()];
-  const kind = decideIconKind(service, communityUrl === failedSrc, localUrl === failedSrc);
+  const kind = decideIconKind(
+    service,
+    Boolean(communityUrl && failedSources.has(communityUrl)),
+    Boolean(localUrl && failedSources.has(localUrl)),
+  );
   const glyphSize = size >= 36 ? 24 : Math.max(12, Math.round(size * 0.67));
   const frameStyle = { width: size, height: size };
+  const markFailed = (src: string) => setFailedSources((current) => {
+    if (current.has(src)) return current;
+    return new Set([...current, src]);
+  });
+
+  if (iconUrl && !failedSources.has(iconUrl)) {
+    return <ImageIcon src={iconUrl} alt={displayName ?? service} size={size} glyphSize={glyphSize} onError={() => markFailed(iconUrl)} />;
+  }
 
   if (kind === "lobehub") {
     const Icon = LOBEHUB_MAP[service.toLowerCase()];
@@ -45,30 +56,12 @@ export function ProviderIcon({ service, displayName, size = 24 }: ProviderIconPr
     }
   }
 
-  if (kind === "simpleIcon") {
-    const icon = LINK_ICONS[service.toLowerCase()];
-    if (icon) {
-      return (
-        <span
-          className="flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-[var(--lume-border-subtle)] bg-background shadow-xs"
-          style={{
-            width: size,
-            height: size,
-            color: `color-mix(in oklab, #${icon.hex} 70%, var(--text-1))`,
-          }}
-        >
-          <SimpleIconGlyph path={icon.path} size={glyphSize} />
-        </span>
-      );
-    }
+  if (kind === "community" && communityUrl && !failedSources.has(communityUrl)) {
+    return <ImageIcon src={communityUrl} alt={displayName ?? service} size={size} glyphSize={glyphSize} onError={() => markFailed(communityUrl)} />;
   }
 
-  if (kind === "community" && communityUrl !== failedSrc) {
-    return <ImageIcon src={communityUrl} alt={displayName ?? service} size={size} glyphSize={glyphSize} onError={() => setFailedSrc(communityUrl)} />;
-  }
-
-  if (kind === "localImage" && localUrl !== failedSrc) {
-    return <ImageIcon src={localUrl} alt={displayName ?? service} size={size} glyphSize={glyphSize} onError={() => setFailedSrc(localUrl)} />;
+  if (kind === "localImage" && localUrl && !failedSources.has(localUrl)) {
+    return <ImageIcon src={localUrl} alt={displayName ?? service} size={size} glyphSize={glyphSize} onError={() => markFailed(localUrl)} />;
   }
 
   return <LetterBlock size={size} seed={service} letter={initialOf(displayName || service)} />;

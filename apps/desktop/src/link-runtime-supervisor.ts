@@ -104,7 +104,7 @@ export function createLinkRuntimeSupervisor(input: {
       restartTimer = setTimeout(() => void start().catch((error) => publish("crashed", message(error))), crash.delayMs);
     });
     try {
-      await waitForHealth(origin, secrets.runtimeToken);
+      await waitForLinkHealth(origin, secrets.runtimeToken);
       if (child !== running) throw new Error("link_runtime_exited_during_start");
       state = { ...publicState(persisted, "online", metadata.version, dataDirectory, crashTimes.length, remoteCredentials), origin };
       input.emit(state);
@@ -133,7 +133,7 @@ export function createLinkRuntimeSupervisor(input: {
       currentCredentials = remoteCredentials;
       publish("starting");
       currentCredentials = remoteCredentials;
-      await waitForHealth(origin, remoteCredentials.runtimeToken, 10_000);
+      await waitForLinkHealth(origin, remoteCredentials.runtimeToken, 10_000);
       state = { ...publicState(persisted, "online", metadata.version, dataDirectory, 0, remoteCredentials), origin };
       input.emit(state);
       await deliverBootstrap({
@@ -252,11 +252,12 @@ export function createLinkRuntimeSupervisor(input: {
           headers: currentCredentials.runtimeToken ? { authorization: `Bearer ${currentCredentials.runtimeToken}` } : undefined,
           signal: AbortSignal.timeout(3_000),
         });
+        const healthy = await isLinkHealthResponse(response);
         return {
           ...result,
-          endpointReachable: response.ok,
+          endpointReachable: healthy,
           latencyMs: Date.now() - startedAt,
-          ...(!response.ok ? { error: `health_http_${response.status}` } : {}),
+          ...(!healthy ? { error: response.ok ? "health_invalid_response" : `health_http_${response.status}` } : {}),
         };
       } catch (error) {
         return { ...result, latencyMs: Date.now() - startedAt, error: message(error) };
@@ -347,12 +348,44 @@ function publicState(persisted: PersistedLinkState, phase: LinkRuntimeState["pha
 }
 async function isPortFree(port: number): Promise<boolean> { return new Promise((resolve) => { const server = createServer(); server.once("error", () => resolve(false)); server.listen(port, "127.0.0.1", () => server.close(() => resolve(true))); }); }
 async function choosePort(): Promise<number> { for (let attempt = 0; attempt < 100; attempt += 1) { const port = randomInt(49152, 65536); if (await isPortFree(port)) return port; } throw new Error("link_port_unavailable"); }
-async function waitForHealth(origin: string, token: string, timeoutMs = 30_000): Promise<void> { const deadline = Date.now() + timeoutMs; let delay = 100; while (Date.now() < deadline) { try { const response = await fetch(`${origin}/v1/health`, { redirect: "error", headers: token ? { authorization: `Bearer ${token}` } : undefined }); if (response.ok) return; } catch {} await new Promise((resolve) => setTimeout(resolve, delay)); delay = Math.min(1000, delay * 2); } throw new Error("link_health_timeout"); }
+export async function waitForLinkHealth(origin: string, token: string, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let delay = 100;
+  while (Date.now() < deadline) {
+    try {
+      const remaining = Math.max(1, deadline - Date.now());
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), Math.min(3_000, remaining));
+      try {
+        const response = await fetch(`${origin}/v1/health`, {
+          redirect: "error",
+          headers: token ? { authorization: `Bearer ${token}` } : undefined,
+          signal: controller.signal,
+        });
+        if (await isLinkHealthResponse(response)) return;
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch { /* retry until the bounded deadline */ }
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(delay, remaining)));
+    delay = Math.min(1000, delay * 2);
+  }
+  throw new Error("link_health_timeout");
+}
+
+async function isLinkHealthResponse(response: Response): Promise<boolean> {
+  if (!response.ok) return false;
+  const body = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (body?.success !== true || !body.data || typeof body.data !== "object") return false;
+  const payload = body.data as Record<string, unknown>;
+  return payload.ok === true && payload.runtime === "oomol-connect";
+}
 function normalizeRemoteOrigin(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) throw new Error("invalid_link_remote_origin");
   try {
     const url = new URL(value.trim());
-    const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1";
+    const loopback = isLoopbackHostname(url.hostname);
     if ((url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) || url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) {
       throw new Error("invalid_link_remote_origin");
     }
@@ -361,6 +394,10 @@ function normalizeRemoteOrigin(value: unknown): string {
     if (error instanceof Error && error.message === "invalid_link_remote_origin") throw error;
     throw new Error("invalid_link_remote_origin");
   }
+}
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 function normalizeToken(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;

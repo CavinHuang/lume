@@ -24,6 +24,7 @@ describe("Link category filters", () => {
     expect(matchesLinkCategory("uncategorized", [], "other")).toBe(true);
     expect(matchesLinkCategory("unmapped", ["Unmapped"], "other")).toBe(true);
     expect(matchesLinkCategory("openai", ["AI", "Unmapped"], "other")).toBe(false);
+    expect(matchesLinkCategory("shopify_admin", [], "other")).toBe(false);
   });
 
   test("parses only known category filter values", () => {

@@ -1,6 +1,6 @@
 import type { LinkConnectionSummary, LinkOAuthSession } from "@lume/shared";
-import { linkAdminRequest } from "../services/link/link-client";
-import { PersistentOAuthSessions } from "../services/link/persistent-oauth-sessions";
+import { getLinkRuntimeOrigin, linkAdminRequest } from "../services/link/link-client";
+import { PersistentOAuthSessions, type PersistedOAuthSession } from "../services/link/persistent-oauth-sessions";
 import { getConfigDir } from "../services/infra/config-paths";
 import type { NotificationWriter, RpcHandler } from "./types";
 
@@ -65,6 +65,7 @@ export function createLinkHandlers(writeNotification: NotificationWriter): Recor
     },
     "link:oauth-sessions": async () => {
       const now = Date.now();
+      const runtimeOrigin = getLinkRuntimeOrigin();
       let changed = false;
       for (const session of pendingOAuth.values()) {
         if (session.status === "pending" && now - session.startedAt > 5 * 60_000) {
@@ -73,7 +74,9 @@ export function createLinkHandlers(writeNotification: NotificationWriter): Recor
         }
       }
       if (changed) pendingOAuth.flush();
-      return [...pendingOAuth.values()].map(withoutStartedAt);
+      return [...pendingOAuth.values()]
+        .filter((session) => Boolean(runtimeOrigin) && session.runtimeOrigin === runtimeOrigin)
+        .map(withoutPersistenceMetadata);
     },
     "link:oauth-config-save": async (params) => {
       const input = asRecord(params);
@@ -89,27 +92,32 @@ export function createLinkHandlers(writeNotification: NotificationWriter): Recor
       const input = asRecord(params);
       const service = requiredString(input, "service");
       const connectionName = requiredString(input, "connectionName");
+      const runtimeOrigin = getLinkRuntimeOrigin();
+      if (!runtimeOrigin) throw new Error("link_runtime_offline");
       const result = asRecord(await linkAdminRequest("/api/oauth/authorizations", {
         method: "POST",
         body: JSON.stringify({ service, connectionName }),
       }));
       const state = requiredString(result, "state");
-      const session: LinkOAuthSession & { startedAt: number } = {
+      const session: PersistedOAuthSession = {
         state,
         service,
         connectionName,
         authorizationUrl: requiredString(result, "authorizationUrl"),
         status: "pending",
         startedAt: Date.now(),
+        runtimeOrigin,
       };
       pendingOAuth.set(state, session);
-      return withoutStartedAt(session);
+      return withoutPersistenceMetadata(session);
     },
     "link:oauth-status": async (params) => {
       const state = requiredString(params, "state");
       const session = pendingOAuth.get(state);
       if (!session) throw new Error("link_oauth_session_not_found");
-      if (session.status !== "pending") return withoutStartedAt(session);
+      const runtimeOrigin = getLinkRuntimeOrigin();
+      if (!runtimeOrigin || session.runtimeOrigin !== runtimeOrigin) throw new Error("link_oauth_session_origin_mismatch");
+      if (session.status !== "pending") return withoutPersistenceMetadata(session);
       let changed = false;
       if (Date.now() - session.startedAt > 5 * 60_000) { session.status = "timed_out"; changed = true; }
       if (session.status === "pending") {
@@ -121,7 +129,7 @@ export function createLinkHandlers(writeNotification: NotificationWriter): Recor
         }
       }
       if (changed) pendingOAuth.flush();
-      return withoutStartedAt(session);
+      return withoutPersistenceMetadata(session);
     },
     "link:oauth-cancel": async (params) => {
       const session = pendingOAuth.get(requiredString(params, "state"));
@@ -129,7 +137,7 @@ export function createLinkHandlers(writeNotification: NotificationWriter): Recor
         session.status = "cancelled";
         pendingOAuth.flush();
       }
-      return session ? withoutStartedAt(session) : { status: "cancelled" };
+      return session ? withoutPersistenceMetadata(session) : { status: "cancelled" };
     },
     "link:actions-list": async (params) => {
       const input = asRecord(params);
@@ -238,7 +246,7 @@ function requiredString(value: unknown, key: string): string {
   if (!result) throw new Error(`invalid_link_${key}`);
   return result;
 }
-function withoutStartedAt(session: LinkOAuthSession & { startedAt: number }): LinkOAuthSession {
-  const { startedAt: _startedAt, ...result } = session;
+function withoutPersistenceMetadata(session: PersistedOAuthSession): LinkOAuthSession {
+  const { startedAt: _startedAt, runtimeOrigin: _runtimeOrigin, ...result } = session;
   return result;
 }

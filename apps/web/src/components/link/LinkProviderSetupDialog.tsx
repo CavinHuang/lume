@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Save, Settings2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
-import type { LinkCredentialField, LinkOAuthConfigSummary, LinkProviderDetail } from "@lume/shared";
+import type { LinkCredentialField, LinkOAuthConfigSummary, LinkProviderDetail, LinkRuntimeMode } from "@lume/shared";
 import { saveLinkOAuthConfig } from "@/lib/desktop-api";
 import { credentialFields } from "@/lib/link-auth";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import { SecretField } from "./secret-field";
 interface LinkProviderSetupDialogProps {
   provider: LinkProviderDetail;
   oauthConfig?: LinkOAuthConfigSummary;
+  runtimeMode: LinkRuntimeMode;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }
@@ -23,6 +24,7 @@ interface LinkProviderSetupDialogProps {
 export function LinkProviderSetupDialog({
   provider,
   oauthConfig,
+  runtimeMode,
   onClose,
   onSaved,
 }: LinkProviderSetupDialogProps) {
@@ -96,7 +98,7 @@ export function LinkProviderSetupDialog({
                 <Badge variant={configured ? "success" : "secondary"}>{configured ? "已配置" : "需要配置"}</Badge>
               </div>
               <DialogDescription className="mt-1 leading-relaxed">
-                此 OAuth 应用配置由本机 Link 运行时保存，并供该连接器的所有账户共用。
+                此 OAuth 应用配置由{runtimeMode === "remote" ? "已有部署的" : "本机"} Link 运行时保存，并供该连接器的所有账户共用。
               </DialogDescription>
             </div>
           </div>

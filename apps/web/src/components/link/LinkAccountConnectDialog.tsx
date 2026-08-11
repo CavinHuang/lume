@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, ExternalLink, KeyRound, Settings2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
-import type { LinkOAuthConfigSummary, LinkOAuthSession, LinkProviderDetail } from "@lume/shared";
+import type { LinkOAuthConfigSummary, LinkOAuthSession, LinkProviderDetail, LinkRuntimeMode } from "@lume/shared";
 import {
   cancelLinkOAuth, getLinkOAuthStatus, listLinkOAuthSessions, openExternal,
   startLinkOAuth, upsertLinkConnection,
@@ -18,7 +18,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ProviderIcon } from "./ProviderIcon";
 import { SecretField } from "./secret-field";
-import { isValidLinkConnectionName } from "./link-provider-state";
+import { findRestorableLinkOAuthSession, isValidLinkConnectionName } from "./link-provider-state";
 
 interface LinkAccountConnectDialogProps {
   provider: LinkProviderDetail;
@@ -27,6 +27,7 @@ interface LinkAccountConnectDialogProps {
   mode: "create" | "reconnect";
   existingConnectionNames: string[];
   oauthConfig?: LinkOAuthConfigSummary;
+  runtimeMode: LinkRuntimeMode;
   onClose: () => void;
   onConfigureProvider: (connectionName: string, authType: string) => void;
   onSaved: () => Promise<void>;
@@ -39,6 +40,7 @@ export function LinkAccountConnectDialog({
   mode,
   existingConnectionNames,
   oauthConfig,
+  runtimeMode,
   onClose,
   onConfigureProvider,
   onSaved,
@@ -57,13 +59,17 @@ export function LinkAccountConnectDialog({
     setAuthIndex(nextAuthIndex >= 0 ? nextAuthIndex : 0);
     setValues({});
     setOAuth(null);
+    if (initialAuthType && initialAuthType !== "oauth2") return;
+    let active = true;
     void listLinkOAuthSessions()
-      .then((sessions) => setOAuth(sessions.find((session) =>
-        session.service === provider.service
-        && session.connectionName === initialConnectionName
-        && session.status === "pending",
-      ) ?? null))
+      .then((sessions) => {
+        if (!active) return;
+        const session = findRestorableLinkOAuthSession(sessions, provider.service, initialConnectionName);
+        setOAuth(session ?? null);
+        if (session) setConnectionName(session.connectionName);
+      })
       .catch(() => undefined);
+    return () => { active = false; };
   }, [provider.service, initialConnectionName, initialAuthType]);
 
   useEffect(() => {
@@ -95,6 +101,11 @@ export function LinkAccountConnectDialog({
   const submitLabel = isOAuth
     ? mode === "reconnect" ? "在浏览器中重新授权" : "在浏览器中授权"
     : mode === "reconnect" ? "更新账户连接" : "保存账户连接";
+  const runtimeLabel = runtimeMode === "remote" ? "已有部署的 Link 运行时" : "本机 Link 运行时";
+  const close = () => {
+    if (oauth?.status === "pending") void cancelLinkOAuth(oauth.state).catch(() => undefined);
+    onClose();
+  };
 
   const save = async () => {
     setBusy(true);
@@ -122,7 +133,7 @@ export function LinkAccountConnectDialog({
   };
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && close()}>
       <DialogContent className="max-h-[calc(100vh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-xl">
         <DialogHeader className="border-b border-[var(--lume-border-subtle)] p-4 pr-12">
           <div className="flex min-w-0 items-start gap-3">
@@ -135,7 +146,7 @@ export function LinkAccountConnectDialog({
                 <Badge variant="secondary">{authLabel(String(auth.type))}</Badge>
               </div>
               <DialogDescription className="mt-1 leading-relaxed">
-                每个账户独立保存授权；OAuth 应用配置由本机运行时统一管理。
+                每个账户独立保存授权；OAuth 应用配置由{runtimeLabel}统一管理。
               </DialogDescription>
             </div>
           </div>
@@ -174,7 +185,7 @@ export function LinkAccountConnectDialog({
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="text-sm font-medium text-[var(--text-1)]">账户认证</h3>
-                <p className="mt-0.5 text-xs text-[var(--text-3)]">账户凭据只会交给本机 Link 运行时保存。</p>
+                <p className="mt-0.5 text-xs text-[var(--text-3)]">账户凭据只会交给{runtimeLabel}保存。</p>
               </div>
               {provider.auth.length === 1 ? <Badge variant="outline">{authLabel(String(auth.type))}</Badge> : null}
             </div>
@@ -190,7 +201,7 @@ export function LinkAccountConnectDialog({
                 }}
               >
                 {provider.auth.map((item, index) => (
-                  <ToggleGroupItem key={`${item.type}:${index}`} value={String(index)} className="border border-[var(--lume-border-subtle)]">
+                  <ToggleGroupItem key={`${item.type}:${index}`} value={String(index)} disabled={oauth?.status === "pending"} className="border border-[var(--lume-border-subtle)]">
                     {authLabel(String(item.type))}
                   </ToggleGroupItem>
                 ))}
@@ -246,7 +257,7 @@ export function LinkAccountConnectDialog({
               <Button variant="outline" disabled={busy} onClick={() => void cancelLinkOAuth(oauth.state).then(setOAuth)}>取消授权</Button>
             </>
           ) : (
-            <Button variant="outline" disabled={busy} onClick={onClose}>取消</Button>
+            <Button variant="outline" disabled={busy} onClick={close}>取消</Button>
           )}
           {isOAuth && !oauthConfig?.configured ? (
             <Button disabled={busy} onClick={() => onConfigureProvider(connectionName.trim() || "default", String(auth.type))}>

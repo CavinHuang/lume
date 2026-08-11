@@ -1,4 +1,4 @@
-import type { LinkActionSummary } from "@lume/shared";
+import type { LinkActionSummary, LinkOAuthSession } from "@lume/shared";
 
 export type LinkOAuthSetupState = "not_supported" | "optional" | "required" | "configured";
 
@@ -18,6 +18,18 @@ const connectionNamePattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 
 export function isValidLinkConnectionName(value: string): boolean {
   return connectionNamePattern.test(value.trim());
+}
+
+export function findRestorableLinkOAuthSession(
+  sessions: readonly LinkOAuthSession[],
+  service: string,
+  initialConnectionName: string,
+): LinkOAuthSession | undefined {
+  const pending = sessions.filter((session) => session.service === service && session.status === "pending");
+  if (initialConnectionName) {
+    return pending.find((session) => session.connectionName === initialConnectionName);
+  }
+  return pending.length === 1 ? pending[0] : undefined;
 }
 
 export function getSupportedLinkActions(actions: readonly LinkActionSummary[]): LinkActionSummary[] {

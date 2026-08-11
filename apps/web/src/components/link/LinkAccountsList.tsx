@@ -13,7 +13,7 @@ export function LinkAccountsList({ connections, onReconnect, onRequestDelete }: 
   if (connections.length === 0) return null;
   return (
     <div className="space-y-1.5">
-      <div className="px-0.5 text-sm font-medium text-[var(--text-1)]">已连接账户（{connections.length}）</div>
+      <div className="px-0.5 text-sm font-medium text-[var(--text-1)]">账户（{connections.length}）</div>
       <div className="space-y-1.5">
         {connections.map((conn) => (
           <article key={conn.connectionName} className="grid gap-2.5 rounded-md border border-[var(--lume-border-subtle)] bg-card px-3 py-2.5">
@@ -22,9 +22,10 @@ export function LinkAccountsList({ connections, onReconnect, onRequestDelete }: 
               <div className="flex items-center gap-1.5">
                 <span className="truncate text-sm font-medium text-[var(--text-1)]">{conn.connectionName}</span>
                 {conn.default && <Badge variant="success">默认</Badge>}
+                {!conn.configured && <Badge variant="warning">待完成</Badge>}
               </div>
               <div className="mt-0.5 flex min-w-0 flex-wrap gap-x-2 text-xs text-[var(--text-3)]">
-                <span className="truncate">{conn.profile?.displayName || conn.profile?.accountId || "已保存凭据"}</span>
+                <span className="truncate">{conn.profile?.displayName || conn.profile?.accountId || (conn.configured ? "已保存凭据" : "尚未完成授权")}</span>
                 <span>{authLabel(conn.authType)}</span>
               </div>
             </div>
