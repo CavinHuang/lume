@@ -1,4 +1,4 @@
-// 自动生成（scripts/generate-link-icons.mjs）。勿手改。OpenConnector 1.3.3 × Simple Icons。
+// 自动生成（scripts/generate-link-icons.mjs）。勿手改。OpenConnector 1.3.5 × Simple Icons。
 export const LINK_ICONS: Record<string, { path: string; hex: string }> = {
   "abstract": {
     "path": "M12 0c9.601 0 12 2.399 12 12 0 9.601-2.399 12-12 12-9.601 0-12-2.399-12-12C0 2.399 2.399 0 12 0zm-1.969 18.564c2.524.003 4.604-2.07 4.609-4.595 0-2.521-2.074-4.595-4.595-4.595S5.45 11.449 5.45 13.969c0 2.516 2.065 4.588 4.581 4.595zm8.344-.189V5.625H5.625v2.247h10.498v10.503h2.252zm-8.344-6.748a2.343 2.343 0 11-.002 4.686 2.343 2.343 0 01.002-4.686z",
@@ -344,6 +344,10 @@ export const LINK_ICONS: Record<string, { path: string; hex: string }> = {
     "path": "M1.89 3.872 0 13.598h4.7l1.889-9.726ZM7.171 8.56l-.98 5.038h4.7l.98-5.038Zm5.936 1.306-.723 3.732h4.7l.722-3.732Zm6.192 0-.723 3.732h4.7L24 9.866ZM5.912 15.09l-.979 5.038h4.7l.98-5.038z",
     "hex": "030304"
   },
+  "helpdesk": {
+    "path": "M12 10.71l6.12-5.31H12c-2.16 0-4.32.06-6.36.21-.84.06-1.5.69-1.56 1.53-.12 1.26-.18 2.85-.18 4.41v.87c0 1.59.06 3.15.18 4.41.09.81.75 1.47 1.56 1.5a90 90 0 0012.72 0c.81-.03 1.5-.69 1.56-1.5.09-1.2.15-2.67.18-4.17L24 9.3V12.66c0 1.59-.06 3.18-.18 4.47a5.57 5.57 0 01-5.19 5.1c-2.13.18-4.38.27-6.63.27s-4.5-.09-6.63-.24a5.57 5.57 0 01-5.19-5.1C.06 15.81 0 14.13 0 12.45v-.87C0 9.9.06 8.22.18 6.84a5.57 5.57 0 015.19-5.1C7.5 1.59 9.75 1.5 12 1.5h12v3.9L12 15.81l-5.61-4.86L9.33 8.4z",
+    "hex": "2FC774"
+  },
   "here": {
     "path": "M19.29 1.007c-.697.036-1.367.384-2.008 1.036-.97.987-1.104 2.206-.679 3.316l-1.091-1.312c-.106.041-.306.203-.506.406-.572.596-.705 1.516-.558 2.125l-.734-.635-1.45 1.475 1.996 2.03c-1.583-1.326-3.007-1.259-4.323.082-1.331 1.353-1.252 3.006-.147 4.385l-.186-.189c-1.184-1.205-2.328-1.463-3.46-.298-.666.663-.772 1.314-.706 1.897l-2.794-2.83-1.625 1.651 5.372 5.48H0l3.312 3.37 3.282-3.34h3.128l-2.275-2.314c-.798-.8-1.039-1.354-.547-1.855.36-.379.773-.367 1.278.148l2.741 2.803 1.65-1.679-2.049-2.084c1.623 1.368 3.393 1.03 4.738-.351.706-.704 1.09-1.355 1.278-1.801l-1.452-.825a6.544 6.544 0 0 1-.878 1.218c-.799.812-1.543.812-2.048.392l2.94-2.992L17 12.25l1.65-1.678-1.782-1.815c-1.45-1.476-1.025-2.26-.691-2.599.212-.217.425-.378.572-.46a4.183 4.183 0 0 0 .797 1.096c1.728 1.774 3.62 1.53 5.07.042.865-.88 1.279-1.692 1.384-2.099l-1.424-.799a5.902 5.902 0 0 1-1.023 1.489c-.786.812-1.532.813-2.037.394l2.97-3.007-.374-.379C21.13 1.43 20.188.961 19.291 1.007zm-.055 1.918c.273-.002.558.113.838.35l-1.596 1.623c-.452-.527-.465-1.136 0-1.623.226-.23.485-.349.758-.35zm-7.357 7.486c.275-.002.564.113.85.35l-1.61 1.626c-.452-.528-.466-1.151 0-1.626.227-.23.486-.349.76-.35z",
     "hex": "00AFAA"
@@ -387,6 +391,10 @@ export const LINK_ICONS: Record<string, { path: string; hex: string }> = {
   "lifx": {
     "path": "M3.128 8.2a3.11 3.11 0 0 0-2.212.92A3.148 3.148 0 0 0 0 11.347a3.144 3.144 0 0 0 .916 2.226l.27.266.014-.014a2.729 2.729 0 0 1 1.932-.795 2.739 2.739 0 0 1 1.931.795l.015.014.266-.27a3.157 3.157 0 0 0 .916-2.226c0-.806-.305-1.612-.916-2.226A3.139 3.139 0 0 0 3.128 8.2zm0 .725a2.39 2.39 0 0 1 1.701.707 2.431 2.431 0 0 1 .156 3.252 3.42 3.42 0 0 0-3.72 0 2.45 2.45 0 0 1-.544-1.537c0-.618.234-1.24.706-1.715a2.38 2.38 0 0 1 1.701-.707zm5.316.082v6.025h3.167v-1.487H9.928l.004-4.538zm4.247 0v6.022h1.487V9.007zm2.585 0v6.025h1.487V13.15h1.918v-1.41h-1.918v-1.228h3.047l.863 1.545-1.662 2.975h1.662l.813-1.53.696 1.53h1.779l-1.665-2.975L24 9.007h-1.779l-.735 1.686-.735-1.686zM3.128 13.75c-.518 0-1.04.202-1.438.6l.444.443a1.41 1.41 0 0 1 1.996 0l.443-.443c-.4-.398-.92-.6-1.445-.6zm0 1.324a.707.707 0 0 0-.507.213l.507.511.508-.511a.701.701 0 0 0-.508-.213Z",
     "hex": "000000"
+  },
+  "line": {
+    "path": "M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63h2.386c.346 0 .627.285.627.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63.346 0 .628.285.628.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.282.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314",
+    "hex": "00C300"
   },
   "linear": {
     "path": "M2.886 4.18A11.982 11.982 0 0 1 11.99 0C18.624 0 24 5.376 24 12.009c0 3.64-1.62 6.903-4.18 9.105L2.887 4.18ZM1.817 5.626l16.556 16.556c-.524.33-1.075.62-1.65.866L.951 7.277c.247-.575.537-1.126.866-1.65ZM.322 9.163l14.515 14.515c-.71.172-1.443.282-2.195.322L0 11.358a12 12 0 0 1 .322-2.195Zm-.17 4.862 9.823 9.824a12.02 12.02 0 0 1-9.824-9.824Z",
@@ -837,6 +845,7 @@ export const LINK_ICON_URLS: Record<string, string> = {
   "amplitude": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/amplitude/default.svg",
   "anthropic": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/anthropic/default.svg",
   "apollo": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/apollodotio/default.svg",
+  "appcircle": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/appcircle/default.svg",
   "appveyor": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/appveyor/default.svg",
   "arxiv": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/arxiv/default.svg",
   "asana": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/asana/default.svg",
@@ -885,6 +894,7 @@ export const LINK_ICON_URLS: Record<string, string> = {
   "coinmarketcap": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/coinmarketcap/default.svg",
   "conductor": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/conductor/default.svg",
   "confluence": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/confluence/default.svg",
+  "confluent": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/confluent/default.svg",
   "contentful": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/contentful/default.svg",
   "convex": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/convex/default.svg",
   "crowdin": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/crowdin/default.svg",
@@ -951,6 +961,7 @@ export const LINK_ICON_URLS: Record<string, string> = {
   "gumroad": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/gumroad/default.svg",
   "hashnode": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/hashnode/default.svg",
   "haveibeenpwned": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/have-i-been-pwned/default.svg",
+  "helpdesk": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/helpdesk/default.svg",
   "here": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/here/default.svg",
   "home_assistant": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/home-assistant/default.svg",
   "honeybadger": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/honeybadger/default.svg",
@@ -969,6 +980,7 @@ export const LINK_ICON_URLS: Record<string, string> = {
   "launch_darkly": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/launchdarkly/default.svg",
   "lemon_squeezy": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/lemon-squeezy/default.svg",
   "lifx": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/lifx/default.svg",
+  "line": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/line/default.svg",
   "linear": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/linear/default.svg",
   "linkedin": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/linkedin/default.svg",
   "lodgify": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/lodgify/default.svg",
@@ -1108,6 +1120,7 @@ export const LINK_ICON_URLS: Record<string, string> = {
   "vtex": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/vtex/default.svg",
   "vultr": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/vultr/default.svg",
   "wakatime": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/wakatime/default.svg",
+  "wandb": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/weights-and-biases/default.svg",
   "wappalyzer": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/wappalyzer/default.svg",
   "weaviate": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/weaviate/default.svg",
   "webflow": "https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/webflow/default.svg",
