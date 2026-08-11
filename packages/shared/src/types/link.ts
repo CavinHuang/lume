@@ -6,6 +6,8 @@ export interface LinkRuntimeConfigurationInput {
   origin?: string;
   adminToken?: string;
   runtimeToken?: string;
+  clearAdminToken?: boolean;
+  clearRuntimeToken?: boolean;
 }
 
 export interface LinkRuntimeState {

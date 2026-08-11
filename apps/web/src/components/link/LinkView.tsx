@@ -89,6 +89,14 @@ export function LinkView() {
       .catch(() => toast.error("无法打开连接器详情"));
   }, [connections, online, providerTarget, runtimeMode, setProviderTarget]);
 
+  useEffect(() => {
+    if (!selected) return;
+    const configured = connections.some((connection) => connection.service === selected.service && connection.configured);
+    if (isLinkProviderAvailable(selected.service, runtimeMode, configured)) return;
+    setDialog(null);
+    setSelected(null);
+  }, [connections, runtimeMode, selected]);
+
   const openProvider = (service: string) => {
     void getLinkProvider(service)
       .then((detail) => { setDialog(null); setSelected(detail); })

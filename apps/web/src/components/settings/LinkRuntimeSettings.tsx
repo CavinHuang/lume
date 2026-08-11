@@ -25,6 +25,8 @@ export function LinkRuntimeSettings() {
   const [remoteOrigin, setRemoteOrigin] = useState("");
   const [adminToken, setAdminToken] = useState("");
   const [runtimeToken, setRuntimeToken] = useState("");
+  const [clearAdminToken, setClearAdminToken] = useState(false);
+  const [clearRuntimeToken, setClearRuntimeToken] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirmPort, setConfirmPort] = useState(false);
   const [diagnostic, setDiagnostic] = useState<LinkRuntimeDiagnostic | null>(null);
@@ -69,14 +71,16 @@ export function LinkRuntimeSettings() {
       () => configureLinkRuntime({
         mode: "remote",
         origin,
-        ...(adminToken.trim() ? { adminToken } : {}),
-        ...(runtimeToken.trim() ? { runtimeToken } : {}),
+        ...(clearAdminToken ? { clearAdminToken: true } : adminToken.trim() ? { adminToken } : {}),
+        ...(clearRuntimeToken ? { clearRuntimeToken: true } : runtimeToken.trim() ? { runtimeToken } : {}),
       }),
       "已有部署已保存并连接",
     ).then((saved) => {
       if (saved) {
         setAdminToken("");
         setRuntimeToken("");
+        setClearAdminToken(false);
+        setClearRuntimeToken(false);
       }
     });
   };
@@ -132,21 +136,25 @@ export function LinkRuntimeSettings() {
               label="Admin Token"
               value={adminToken}
               configured={state.adminTokenConfigured}
+              clear={clearAdminToken}
               description="用于在 Lume 中配置 Provider、连接账号和授权。"
               disabled={busy}
-              onChange={setAdminToken}
+              onChange={(value) => { setAdminToken(value); setClearAdminToken(false); }}
+              onClearChange={setClearAdminToken}
             />
             <TokenField
               label="Runtime Token"
               value={runtimeToken}
               configured={state.runtimeTokenConfigured}
+              clear={clearRuntimeToken}
               description="用于 Agent 调用 OpenConnector 的 MCP 工具。"
               disabled={busy}
-              onChange={setRuntimeToken}
+              onChange={(value) => { setRuntimeToken(value); setClearRuntimeToken(false); }}
+              onClearChange={setClearRuntimeToken}
             />
           </div>
           <p className="text-xs text-muted-foreground">
-            未启用对应鉴权时可以留空；已保存的 Token 会加密保管，留空不会覆盖同一地址的现有值。
+            未启用对应鉴权时可以留空；已保存的 Token 会加密保管，留空保持现有值，也可以显式清除。
           </p>
         </div>
       ) : (
@@ -246,13 +254,20 @@ function ModeOption({ active, icon, title, description, disabled, onClick }: { a
   );
 }
 
-function TokenField({ label, value, configured, description, disabled, onChange }: { label: string; value: string; configured: boolean; description: string; disabled: boolean; onChange: (value: string) => void }) {
+function TokenField({ label, value, configured, clear, description, disabled, onChange, onClearChange }: { label: string; value: string; configured: boolean; clear: boolean; description: string; disabled: boolean; onChange: (value: string) => void; onClearChange: (clear: boolean) => void }) {
   return (
-    <label className="grid gap-1.5 text-xs text-muted-foreground">
-      <span className="flex items-center gap-1.5 font-medium text-foreground"><KeyRound className="size-3.5" />{label}</span>
-      <Input type="password" autoComplete="off" value={value} placeholder={configured ? "已安全保存，留空保持不变" : "可选"} disabled={disabled} onChange={(event) => onChange(event.target.value)} />
+    <div className="grid gap-1.5 text-xs text-muted-foreground">
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 font-medium text-foreground"><KeyRound className="size-3.5" />{label}</span>
+        {configured ? (
+          <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => onClearChange(!clear)}>
+            {clear ? "取消清除" : "清除已保存"}
+          </Button>
+        ) : null}
+      </div>
+      <Input type="password" autoComplete="off" value={value} placeholder={clear ? "保存后清除" : configured ? "已安全保存，留空保持不变" : "可选"} disabled={disabled || clear} onChange={(event) => onChange(event.target.value)} />
       <span>{description}</span>
-    </label>
+    </div>
   );
 }
 
@@ -278,6 +293,7 @@ function linkErrorMessage(error: unknown): string {
   return ({
     invalid_link_remote_origin: "API 地址无效：公网部署请使用 HTTPS，本机服务可使用 HTTP。",
     link_health_timeout: "无法连接 OpenConnector，请检查地址、服务状态和 Runtime Token。",
+    link_admin_access_failed: "无法使用 Admin Token 访问 OpenConnector 管理接口，请检查 Token。",
     connection_vault_locked: "连接保管库尚未解锁，暂时无法保存凭据。",
     link_remote_credential_origin_mismatch: "已保存的凭据与当前地址不匹配，请重新输入 Token。",
   } as Record<string, string>)[message] ?? message;

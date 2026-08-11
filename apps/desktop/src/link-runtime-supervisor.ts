@@ -134,6 +134,7 @@ export function createLinkRuntimeSupervisor(input: {
       publish("starting");
       currentCredentials = remoteCredentials;
       await waitForLinkHealth(origin, remoteCredentials.runtimeToken, 10_000);
+      await validateLinkAdminAccess(origin, remoteCredentials.adminToken);
       state = { ...publicState(persisted, "online", metadata.version, dataDirectory, 0, remoteCredentials), origin };
       input.emit(state);
       await deliverBootstrap({
@@ -202,8 +203,8 @@ export function createLinkRuntimeSupervisor(input: {
       const sameOrigin = existing?.origin === origin;
       remoteCredentials = {
         origin,
-        adminToken: normalizeToken(configuration.adminToken) ?? (sameOrigin ? existing.adminToken : ""),
-        runtimeToken: normalizeToken(configuration.runtimeToken) ?? (sameOrigin ? existing.runtimeToken : ""),
+        adminToken: configuration.clearAdminToken ? "" : normalizeToken(configuration.adminToken) ?? (sameOrigin ? existing.adminToken : ""),
+        runtimeToken: configuration.clearRuntimeToken ? "" : normalizeToken(configuration.runtimeToken) ?? (sameOrigin ? existing.runtimeToken : ""),
       };
       saveLinkRemoteCredentials(remoteSecretsPath, remoteCredentials, masterKey);
       persisted = { ...persisted, enabled: true, mode: "remote", remoteOrigin: origin };
@@ -372,6 +373,23 @@ export async function waitForLinkHealth(origin: string, token: string, timeoutMs
     delay = Math.min(1000, delay * 2);
   }
   throw new Error("link_health_timeout");
+}
+
+async function validateLinkAdminAccess(origin: string, token: string): Promise<void> {
+  if (!token) return;
+  try {
+    const response = await fetch(`${origin}/api/providers`, {
+      redirect: "error",
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(3_000),
+    });
+    const body = await response.json().catch(() => null) as unknown;
+    const validBody = Array.isArray(body)
+      || (body !== null && typeof body === "object" && (body as Record<string, unknown>).success === true);
+    if (!response.ok || !validBody) throw new Error("link_admin_access_failed");
+  } catch {
+    throw new Error("link_admin_access_failed");
+  }
 }
 
 async function isLinkHealthResponse(response: Response): Promise<boolean> {

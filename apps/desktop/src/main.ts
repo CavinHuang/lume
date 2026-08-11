@@ -1754,6 +1754,8 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
         ...(typeof payload.origin === 'string' ? { origin: payload.origin } : {}),
         ...(typeof payload.adminToken === 'string' ? { adminToken: payload.adminToken } : {}),
         ...(typeof payload.runtimeToken === 'string' ? { runtimeToken: payload.runtimeToken } : {}),
+        ...(payload.clearAdminToken === true ? { clearAdminToken: true } : {}),
+        ...(payload.clearRuntimeToken === true ? { clearRuntimeToken: true } : {}),
       })
     case 'sidecar_call': {
       validateRendererSidecarMethod(payload.method)
