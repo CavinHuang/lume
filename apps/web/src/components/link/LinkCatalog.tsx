@@ -1,11 +1,12 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { computeColumnCount, PROVIDER_GRID, rowCount } from "@/lib/provider-grid";
-import { linkServicePriority, shouldShowLinkProviderByDefault } from "@/lib/provider-ranking";
+import { linkServicePriority } from "@/lib/provider-ranking";
 import type { LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderSummary } from "@lume/shared";
 import { LinkToolbar, type FilterCounts, type LinkFilter } from "./LinkToolbar";
 import { ProviderCard } from "./ProviderCard";
 import { resolveLinkOAuthSetupState } from "./link-provider-state";
+import { LINK_CATEGORY_FILTERS, linkCategoryIdFromFilter, matchesLinkCategory } from "./link-category-filters";
 
 interface LinkCatalogProps {
   providers: LinkProviderSummary[];
@@ -52,26 +53,25 @@ export function LinkCatalog({
     [providers, configuredServices, oauthConfiguredServices],
   );
 
-  const defaultCatalog = useMemo(
-    () => annotated.filter(({ provider, status }) =>
-      shouldShowLinkProviderByDefault(provider.service, status.configured, provider.service === selectedService),
-    ),
-    [annotated, selectedService],
-  );
-
   const counts: FilterCounts = useMemo(
     () => ({
-      all: defaultCatalog.length,
-      connected: defaultCatalog.filter((a) => a.status.configured).length,
-      noSetup: defaultCatalog.filter((a) => a.status.noSetup).length,
-      needsSetup: defaultCatalog.filter((a) => a.status.needsSetup).length,
+      all: annotated.length,
+      connected: annotated.filter((a) => a.status.configured).length,
+      noSetup: annotated.filter((a) => a.status.noSetup).length,
+      needsSetup: annotated.filter((a) => a.status.needsSetup).length,
+      categories: Object.fromEntries(
+        LINK_CATEGORY_FILTERS.map((category) => [
+          category.id,
+          annotated.filter(({ provider }) => matchesLinkCategory(provider.categories, category.id)).length,
+        ]),
+      ) as FilterCounts["categories"],
     }),
-    [defaultCatalog],
+    [annotated],
   );
 
   const visible = useMemo(() => {
-    const candidates = query.trim() ? annotated : defaultCatalog;
-    return candidates
+    const categoryFilter = linkCategoryIdFromFilter(filter);
+    return annotated
       .filter(({ provider, status }) => {
         const matchesQuery =
           !query ||
@@ -82,7 +82,8 @@ export function LinkCatalog({
           filter === "all" ||
           (filter === "connected" && status.configured) ||
           (filter === "noSetup" && status.noSetup) ||
-          (filter === "needsSetup" && status.needsSetup);
+          (filter === "needsSetup" && status.needsSetup) ||
+          (categoryFilter !== null && matchesLinkCategory(provider.categories, categoryFilter));
         return matchesQuery && matchesFilter;
       })
       .sort((a, b) => {
@@ -92,7 +93,7 @@ export function LinkCatalog({
         if (priority !== 0) return priority;
         return a.provider.displayName.localeCompare(b.provider.displayName);
       });
-  }, [annotated, defaultCatalog, query, filter]);
+  }, [annotated, query, filter]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
