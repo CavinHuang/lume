@@ -98,6 +98,42 @@ test('existing deployment rejects plaintext non-loopback origins', async () => {
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
 
+test('existing deployment validates the configured admin token before publishing online', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lume-link-remote-admin-'))
+  const originalFetch = globalThis.fetch
+  try {
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init)
+      if (request.url.endsWith('/v1/health')) return Response.json({ success: true, data: { ok: true, runtime: 'oomol-connect' } })
+      assert.equal(request.url, 'https://connector.example.test/api/providers')
+      assert.equal(request.headers.get('authorization'), 'Bearer wrong-admin')
+      return Response.json({ success: false }, { status: 401 })
+    }
+    const supervisor = createLinkRuntimeSupervisor({ configDir: root, resourceDir: join(root, 'missing'), getMasterKey: () => Buffer.alloc(32), fork: () => { throw new Error('must not fork') }, emit: () => {}, installBootstrap: () => {}, killProcessTree: () => {} })
+    await assert.rejects(supervisor.configure({ mode: 'remote', origin: 'https://connector.example.test', adminToken: 'wrong-admin' }), /link_admin_access_failed/)
+    assert.equal(supervisor.getState().phase, 'offline')
+  } finally {
+    globalThis.fetch = originalFetch
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('existing deployment can explicitly clear saved remote tokens', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lume-link-remote-clear-'))
+  const originalFetch = globalThis.fetch
+  try {
+    globalThis.fetch = async () => Response.json({ success: true, data: { ok: true, runtime: 'oomol-connect' } })
+    const supervisor = createLinkRuntimeSupervisor({ configDir: root, resourceDir: join(root, 'missing'), getMasterKey: () => Buffer.alloc(32), fork: () => { throw new Error('must not fork') }, emit: () => {}, installBootstrap: () => {}, killProcessTree: () => {} })
+    await supervisor.configure({ mode: 'remote', origin: 'https://connector.example.test', adminToken: 'admin', runtimeToken: 'runtime' })
+    const cleared = await supervisor.configure({ mode: 'remote', origin: 'https://connector.example.test', clearAdminToken: true, clearRuntimeToken: true })
+    assert.equal(cleared.adminTokenConfigured, false)
+    assert.equal(cleared.runtimeTokenConfigured, false)
+  } finally {
+    globalThis.fetch = originalFetch
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('existing deployment accepts bracketed IPv6 loopback origins', async () => {
   const root = mkdtempSync(join(tmpdir(), 'lume-link-remote-ipv6-'))
   const originalFetch = globalThis.fetch
