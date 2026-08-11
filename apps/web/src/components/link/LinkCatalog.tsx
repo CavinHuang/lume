@@ -14,6 +14,7 @@ interface LinkCatalogProps {
   connections: LinkConnectionSummary[];
   oauthConfigs: LinkOAuthConfigSummary[];
   runtimeMode: LinkRuntimeMode;
+  runtimeOrigin: string | null;
   query: string;
   onQueryChange: (v: string) => void;
   filter: LinkFilter;
@@ -35,7 +36,7 @@ function providerStatus(
 }
 
 export function LinkCatalog({
-  providers, connections, oauthConfigs, runtimeMode, query, onQueryChange, filter, onFilterChange, selectedService, onOpen,
+  providers, connections, oauthConfigs, runtimeMode, runtimeOrigin, query, onQueryChange, filter, onFilterChange, selectedService, onOpen,
 }: LinkCatalogProps) {
   const configuredServices = useMemo(
     () => new Set(connections.filter((c) => c.configured).map((c) => c.service)),
@@ -50,11 +51,11 @@ export function LinkCatalog({
     () =>
       providers.flatMap((provider) => {
         const status = providerStatus(provider, configuredServices, oauthConfiguredServices, provider.authTypes ?? []);
-        return isLinkProviderAvailable(provider.service, runtimeMode, status.configured)
+        return isLinkProviderAvailable(provider.service, runtimeMode, runtimeOrigin, status.configured)
           ? [{ provider, status }]
           : [];
       }),
-    [providers, configuredServices, oauthConfiguredServices, runtimeMode],
+    [providers, configuredServices, oauthConfiguredServices, runtimeMode, runtimeOrigin],
   );
 
   const counts: FilterCounts = useMemo(

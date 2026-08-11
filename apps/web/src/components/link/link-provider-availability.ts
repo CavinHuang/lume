@@ -11,7 +11,18 @@ const PUBLIC_CALLBACK_REQUIRED_SERVICES = new Set([
 export function isLinkProviderAvailable(
   service: string,
   runtimeMode: LinkRuntimeMode,
+  runtimeOrigin: string | null,
   configured: boolean,
 ): boolean {
-  return runtimeMode === "remote" || configured || !PUBLIC_CALLBACK_REQUIRED_SERVICES.has(service);
+  return configured || !PUBLIC_CALLBACK_REQUIRED_SERVICES.has(service) || hasPublicCallbackOrigin(runtimeMode, runtimeOrigin);
+}
+
+function hasPublicCallbackOrigin(runtimeMode: LinkRuntimeMode, runtimeOrigin: string | null): boolean {
+  if (runtimeMode !== "remote" || !runtimeOrigin) return false;
+  try {
+    const hostname = new URL(runtimeOrigin).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    return hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1";
+  } catch {
+    return false;
+  }
 }

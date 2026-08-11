@@ -43,6 +43,7 @@ export function LinkView() {
   const [dialog, setDialog] = useState<LinkDialogState>(null);
   const [online, setOnline] = useState(false);
   const [runtimeMode, setRuntimeMode] = useState<LinkRuntimeMode>("local");
+  const [runtimeOrigin, setRuntimeOrigin] = useState<string | null>(null);
   const [oauthConfigs, setOAuthConfigs] = useState<LinkOAuthConfigSummary[]>([]);
   const [providerTarget, setProviderTarget] = useAtom(linkProviderTargetAtom);
   const [deleteTarget, setDeleteTarget] = useState<LinkConnectionSummary | null>(null);
@@ -53,6 +54,7 @@ export function LinkView() {
   const refresh = useCallback(async () => {
     const runtime = await getLinkRuntimeState();
     setRuntimeMode(runtime.mode);
+    setRuntimeOrigin(runtime.origin);
     if (runtime.phase !== "online") {
       setOnline(false);
       setProviders([]); setConnections([]); setOAuthConfigs([]); return;
@@ -80,22 +82,22 @@ export function LinkView() {
     const target = providerTarget;
     const configured = connections.some((connection) => connection.service === target.service && connection.configured);
     setProviderTarget(null);
-    if (!isLinkProviderAvailable(target.service, runtimeMode, configured)) {
-      toast.error("当前本机运行时无法连接此服务，请配置已有部署后重试");
+    if (!isLinkProviderAvailable(target.service, runtimeMode, runtimeOrigin, configured)) {
+      toast.error("当前运行时无法连接此服务，请配置公网可访问的已有部署后重试");
       return;
     }
     void getLinkProvider(target.service)
       .then((provider) => { setDialog(null); setSelected(provider); })
       .catch(() => toast.error("无法打开连接器详情"));
-  }, [connections, online, providerTarget, runtimeMode, setProviderTarget]);
+  }, [connections, online, providerTarget, runtimeMode, runtimeOrigin, setProviderTarget]);
 
   useEffect(() => {
     if (!selected) return;
     const configured = connections.some((connection) => connection.service === selected.service && connection.configured);
-    if (isLinkProviderAvailable(selected.service, runtimeMode, configured)) return;
+    if (isLinkProviderAvailable(selected.service, runtimeMode, runtimeOrigin, configured)) return;
     setDialog(null);
     setSelected(null);
-  }, [connections, runtimeMode, selected]);
+  }, [connections, runtimeMode, runtimeOrigin, selected]);
 
   const openProvider = (service: string) => {
     void getLinkProvider(service)
@@ -170,6 +172,7 @@ export function LinkView() {
             connections={connections}
             oauthConfigs={oauthConfigs}
             runtimeMode={runtimeMode}
+            runtimeOrigin={runtimeOrigin}
             query={query}
             onQueryChange={setQuery}
             filter={filter}
