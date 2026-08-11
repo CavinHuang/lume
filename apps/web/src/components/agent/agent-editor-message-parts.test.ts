@@ -60,4 +60,18 @@ describe('serializeAgentEditorMessage', () => {
       { type: 'text', text: ' today' },
     ])
   })
+
+  test('does not guess account identity after editing duplicate visible labels', () => {
+    const work = { type: 'link_connection_ref' as const, schemaVersion: 1 as const, service: 'gmail', connectionName: 'work', displayText: 'Gmail · alice@example.com' }
+    const personal = { ...work, connectionName: 'personal' }
+    const original = [
+      { type: 'text' as const, text: 'Copy from ' },
+      work,
+      { type: 'text' as const, text: ' to ' },
+      personal,
+    ]
+
+    expect(remapAgentMessagePartsForEditedText(original, 'Copy from @Gmail · alice@example.com to @Gmail · alice@example.com')).toEqual(original)
+    expect(remapAgentMessagePartsForEditedText(original, 'Copy to @Gmail · alice@example.com')).toBeUndefined()
+  })
 })
