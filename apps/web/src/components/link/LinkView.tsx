@@ -22,7 +22,7 @@ import { LinkCatalog } from "./LinkCatalog";
 import { LinkDetailPane } from "./LinkDetailPane";
 import { LinkAccountConnectDialog } from "./LinkAccountConnectDialog";
 import { LinkProviderSetupDialog } from "./LinkProviderSetupDialog";
-import { isLinkProviderAvailable } from "./link-provider-availability";
+import { canCreateLinkConnection, isLinkProviderVisible } from "./link-provider-availability";
 import { resolveLinkOAuthSetupState } from "./link-provider-state";
 import type { LinkFilter } from "./LinkToolbar";
 
@@ -82,7 +82,7 @@ export function LinkView() {
     const target = providerTarget;
     const configured = connections.some((connection) => connection.service === target.service && connection.configured);
     setProviderTarget(null);
-    if (!isLinkProviderAvailable(target.service, runtimeMode, runtimeOrigin, configured)) {
+    if (!isLinkProviderVisible(target.service, runtimeMode, runtimeOrigin, configured)) {
       toast.error("当前运行时无法连接此服务，请配置公网可访问的已有部署后重试");
       return;
     }
@@ -94,7 +94,7 @@ export function LinkView() {
   useEffect(() => {
     if (!selected) return;
     const configured = connections.some((connection) => connection.service === selected.service && connection.configured);
-    if (isLinkProviderAvailable(selected.service, runtimeMode, runtimeOrigin, configured)) return;
+    if (isLinkProviderVisible(selected.service, runtimeMode, runtimeOrigin, configured)) return;
     setDialog(null);
     setSelected(null);
   }, [connections, runtimeMode, runtimeOrigin, selected]);
@@ -111,6 +111,10 @@ export function LinkView() {
     mode: "create" | "reconnect" = "create",
   ) => {
     if (!selected) return;
+    if (mode === "create" && !canCreateLinkConnection(selected.service, runtimeMode, runtimeOrigin)) {
+      toast.error("当前运行时无法接收此服务的公网回调");
+      return;
+    }
     const oauthConfig = oauthConfigs.find((config) => config.service === selected.service);
     const authTypes = selected.authTypes?.length
       ? selected.authTypes
@@ -188,6 +192,7 @@ export function LinkView() {
               connections={connections.filter((c) => c.service === selected.service)}
               oauthConfig={oauthConfigs.find((config) => config.service === selected.service)}
               runtimeMode={runtimeMode}
+              canAddAccount={canCreateLinkConnection(selected.service, runtimeMode, runtimeOrigin)}
               onConnect={() => openAccountDialog(
                 connections.some((connection) => connection.service === selected.service) ? "" : "default",
               )}

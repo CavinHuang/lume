@@ -7,7 +7,7 @@ import { LinkToolbar, type FilterCounts, type LinkFilter } from "./LinkToolbar";
 import { ProviderCard } from "./ProviderCard";
 import { resolveLinkOAuthSetupState } from "./link-provider-state";
 import { LINK_CATEGORY_FILTERS, linkCategoryIdFromFilter, matchesLinkCategory } from "./link-category-filters";
-import { isLinkProviderAvailable } from "./link-provider-availability";
+import { isLinkProviderVisible } from "./link-provider-availability";
 
 interface LinkCatalogProps {
   providers: LinkProviderSummary[];
@@ -51,7 +51,7 @@ export function LinkCatalog({
     () =>
       providers.flatMap((provider) => {
         const status = providerStatus(provider, configuredServices, oauthConfiguredServices, provider.authTypes ?? []);
-        return isLinkProviderAvailable(provider.service, runtimeMode, runtimeOrigin, status.configured)
+        return isLinkProviderVisible(provider.service, runtimeMode, runtimeOrigin, status.configured)
           ? [{ provider, status }]
           : [];
       }),
