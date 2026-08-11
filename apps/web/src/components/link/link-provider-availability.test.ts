@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { canCreateLinkConnection, isLinkProviderVisible } from "./link-provider-availability";
+import { canCreateLinkConnection, canStartLinkConnectionFlow, isLinkProviderVisible } from "./link-provider-availability";
 
 describe("Link provider availability", () => {
   test("hides public-callback providers only when no manageable account exists", () => {
@@ -11,6 +11,13 @@ describe("Link provider availability", () => {
   test("does not let an existing account enable creation of another account", () => {
     expect(canCreateLinkConnection("intercom", "local", "http://127.0.0.1:51234")).toBe(false);
     expect(canCreateLinkConnection("sunoapi", "remote", "https://connector.example.com")).toBe(true);
+  });
+
+  test("blocks OAuth reconnects without blocking callback-free account management", () => {
+    const origin = "http://127.0.0.1:51234";
+    expect(canStartLinkConnectionFlow("intercom", "local", origin, "reconnect", "oauth2")).toBe(false);
+    expect(canStartLinkConnectionFlow("intercom", "local", origin, "reconnect", "api_key")).toBe(true);
+    expect(canStartLinkConnectionFlow("intercom", "local", origin, "create", "api_key")).toBe(false);
   });
 
   test("rejects loopback and private callback origins", () => {

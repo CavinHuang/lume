@@ -24,6 +24,17 @@ export function canCreateLinkConnection(
   return !PUBLIC_CALLBACK_REQUIRED_SERVICES.has(service) || hasPublicCallbackOrigin(runtimeMode, runtimeOrigin);
 }
 
+export function canStartLinkConnectionFlow(
+  service: string,
+  runtimeMode: LinkRuntimeMode,
+  runtimeOrigin: string | null,
+  flowMode: "create" | "reconnect",
+  authType?: string,
+): boolean {
+  return canCreateLinkConnection(service, runtimeMode, runtimeOrigin)
+    || (flowMode === "reconnect" && authType !== "oauth2");
+}
+
 function hasPublicCallbackOrigin(runtimeMode: LinkRuntimeMode, runtimeOrigin: string | null): boolean {
   if (runtimeMode !== "remote" || !runtimeOrigin) return false;
   try {
