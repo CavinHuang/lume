@@ -1,18 +1,17 @@
 import { LINK_ICONS, LINK_ICON_URLS } from "./generated/link-icons";
 
-export type IconKind = "lobehub" | "simpleIcon" | "image" | "community" | "letter";
+export type IconKind = "lobehub" | "simpleIcon" | "community" | "letter";
 
-// Lobe Icons 只承接 AI 品牌；通用 SaaS 品牌交给覆盖更广、带品牌色的 Simple Icons。
+// theSVG 加载失败后，Lobe Icons 承接 AI 品牌，Simple Icons 承接通用 SaaS 品牌。
 export const LOBEHUB_SERVICES = [
   "openai", "anthropic", "cohere", "perplexity",
 ] as const;
 
-export function decideIconKind(service: string, iconUrl?: string): IconKind {
+export function decideIconKind(service: string, skipCommunity = false): IconKind {
   const key = service.toLowerCase();
+  if (!skipCommunity && LINK_ICON_URLS[key]) return "community";
   if ((LOBEHUB_SERVICES as readonly string[]).includes(key)) return "lobehub";
-  if (iconUrl) return "image";
   if (LINK_ICONS[key]) return "simpleIcon";
-  if (LINK_ICON_URLS[key]) return "community";
   return "letter";
 }
 

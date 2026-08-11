@@ -78,20 +78,18 @@ for (const service of await fetchServiceList()) {
   if (icon && icon.path) {
     map[service.toLowerCase()] = { path: icon.path, hex: icon.hex };
   }
-  if (!map[service.toLowerCase()]) {
-    const communitySlug =
-      COMMUNITY_SLUG_OVERRIDES[service] ??
-      (service.startsWith("alibaba_cloud_") ? "alibaba-cloud" : communitySlugs.get(compact(service)));
-    if (communitySlug) {
-      communityMap[service.toLowerCase()] =
-        `https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/${communitySlug}/default.svg`;
-    }
+  const communitySlug =
+    COMMUNITY_SLUG_OVERRIDES[service] ??
+    (service.startsWith("alibaba_cloud_") ? "alibaba-cloud" : communitySlugs.get(compact(service)));
+  if (communitySlug) {
+    communityMap[service.toLowerCase()] =
+      `https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/${communitySlug}/default.svg`;
   }
 }
 
 const out = `// 自动生成（scripts/generate-link-icons.mjs）。勿手改。OpenConnector ${manifest.version} × Simple Icons。
 export const LINK_ICONS: Record<string, { path: string; hex: string }> = ${JSON.stringify(map, null, 2)};\n`;
-const communityOut = `\n// Simple Icons 未覆盖时，回退到社区维护的 theSVG 品牌目录；图片失败后仍会回退字母图标。\nexport const LINK_ICON_URLS: Record<string, string> = ${JSON.stringify(communityMap, null, 2)};\n`;
+const communityOut = `\n// 首选社区维护的 theSVG 品牌目录；加载失败后回退本地图标，再回退字母图标。\nexport const LINK_ICON_URLS: Record<string, string> = ${JSON.stringify(communityMap, null, 2)};\n`;
 await writeFile(
   new URL("../src/lib/generated/link-icons.ts", import.meta.url),
   out + communityOut,

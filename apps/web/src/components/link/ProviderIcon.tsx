@@ -25,11 +25,10 @@ interface ProviderIconProps {
   size?: number;
 }
 
-export function ProviderIcon({ service, displayName, iconUrl, size = 24 }: ProviderIconProps) {
+export function ProviderIcon({ service, displayName, size = 24 }: ProviderIconProps) {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
-  const resolvedIconUrl = iconUrl === failedSrc ? undefined : iconUrl;
   const communityUrl = LINK_ICON_URLS[service.toLowerCase()];
-  const kind = decideIconKind(service, resolvedIconUrl);
+  const kind = decideIconKind(service, communityUrl === failedSrc);
   const glyphSize = size >= 36 ? 24 : Math.max(12, Math.round(size * 0.67));
   const frameStyle = { width: size, height: size };
 
@@ -60,10 +59,6 @@ export function ProviderIcon({ service, displayName, iconUrl, size = 24 }: Provi
         </span>
       );
     }
-  }
-
-  if (kind === "image" && resolvedIconUrl) {
-    return <ImageIcon src={resolvedIconUrl} alt={displayName ?? service} size={size} glyphSize={glyphSize} onError={() => setFailedSrc(resolvedIconUrl)} />;
   }
 
   if (kind === "community" && communityUrl !== failedSrc) {
