@@ -1,8 +1,6 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { LINK_ICONS, LINK_ICON_URLS } from "../src/lib/generated/link-icons";
-import { LOBEHUB_SERVICES } from "../src/lib/provider-icon";
 
 interface OomolLogoEntry {
   service: string;
@@ -26,17 +24,17 @@ const openConnectorResource = JSON.parse(
 ) as { version: string };
 const oomolEntries = JSON.parse(await readFile(resolve(mapPath), "utf8")) as OomolLogoEntry[];
 const oomolByService = new Map(oomolEntries.map((entry) => [entry.service.toLowerCase(), entry]));
-const lobehubServices = new Set<string>(LOBEHUB_SERVICES);
 const providerServices = (await readdir(catalogDir))
   .filter((name) => name.endsWith(".json"))
   .map((name) => name.slice(0, -extname(name).length))
   .sort();
-const missingServices = providerServices.filter(
-  (service) => !LINK_ICON_URLS[service] && !LINK_ICONS[service] && !lobehubServices.has(service),
-);
-const missingOomolEntries = missingServices.map((service) => {
+const providersWithoutOomolLogo: string[] = [];
+const providerOomolEntries = providerServices.flatMap((service) => {
   const entry = oomolByService.get(service);
-  if (!entry) throw new Error(`OOMOL logo missing for OpenConnector provider: ${service}`);
+  if (!entry) {
+    providersWithoutOomolLogo.push(service);
+    return [];
+  }
   if (!entry.url.startsWith("https://static.oomol.com/logo/")) {
     throw new Error(`Unexpected OOMOL logo source for ${service}: ${entry.url}`);
   }
@@ -47,9 +45,9 @@ await mkdir(assetDir, { recursive: true });
 const localIconUrls: Record<string, string> = {};
 const sources: Array<{ service: string; file: string; url: string }> = [];
 
-for (let index = 0; index < missingOomolEntries.length; index += 20) {
+for (let index = 0; index < providerOomolEntries.length; index += 20) {
   await Promise.all(
-    missingOomolEntries.slice(index, index + 20).map(async (entry) => {
+    providerOomolEntries.slice(index, index + 20).map(async (entry) => {
       const response = await fetch(entry.url);
       if (!response.ok) throw new Error(`Download failed for ${entry.service}: HTTP ${response.status}`);
       const bytes = new Uint8Array(await response.arrayBuffer());
@@ -61,7 +59,7 @@ for (let index = 0; index < missingOomolEntries.length; index += 20) {
       sources.push({ service: entry.service, file, url: entry.url });
     }),
   );
-  console.log(`downloaded ${Math.min(index + 20, missingOomolEntries.length)} / ${missingOomolEntries.length}`);
+  console.log(`downloaded ${Math.min(index + 20, providerOomolEntries.length)} / ${providerOomolEntries.length}`);
 }
 
 const sortedLocalIconUrls = Object.fromEntries(Object.entries(localIconUrls).sort(([a], [b]) => a.localeCompare(b)));
@@ -79,6 +77,7 @@ await writeFile(
       source: "https://console.oomol.com/connections",
       assetOrigin: "https://static.oomol.com/logo/",
       openConnectorVersion: openConnectorResource.version,
+      unavailableProviders: providersWithoutOomolLogo,
       entries: sources,
     },
     null,
@@ -87,6 +86,9 @@ await writeFile(
   "utf8",
 );
 console.log(`generated ${sources.length} local provider logos`);
+if (providersWithoutOomolLogo.length > 0) {
+  console.log(`OOMOL has no exact logo match for: ${providersWithoutOomolLogo.join(", ")}`);
+}
 
 function imageExtension(bytes: Uint8Array, url: string, service: string): ".svg" | ".png" | ".webp" | ".jpg" {
   const textPrefix = new TextDecoder().decode(bytes.slice(0, 512)).trimStart();

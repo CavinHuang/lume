@@ -3,23 +3,29 @@ import { LOBEHUB_SERVICES, decideIconKind, initialOf, colorForSeed } from "./pro
 
 describe("decideIconKind", () => {
   test("theSVG 覆盖的 service 优先走 community", () => {
-    expect(decideIconKind("openai")).toBe("community");
-    expect(decideIconKind("anthropic")).toBe("community");
+    expect(decideIconKind("github")).toBe("community");
+    expect(decideIconKind("gemini")).toBe("community");
   });
   test("大小写不敏感", () => {
-    expect(decideIconKind("OPENAI")).toBe("community");
+    expect(decideIconKind("GITHUB")).toBe("community");
   });
   test("未知 service 走 letter", () => {
     expect(decideIconKind("some_custom_app")).toBe("letter");
   });
   test("社区和内置图标均缺失时使用本地品牌图片", () => {
     expect(decideIconKind("17track")).toBe("localImage");
+    expect(decideIconKind("keen_io")).toBe("localImage");
     expect(decideIconKind("17track", false, true)).toBe("letter");
   });
   test("LOBEHUB_SERVICES 与判定一致", () => {
     expect(LOBEHUB_SERVICES).toContain("openai");
     expect(LOBEHUB_SERVICES.length).toBeGreaterThan(0);
-    expect(decideIconKind("openai", true)).toBe("lobehub");
+    expect(decideIconKind("openai", true, true)).toBe("lobehub");
+  });
+  test("浅色背景不可见的 theSVG 图标优先使用 OOMOL 本地版本", () => {
+    expect(decideIconKind("openai")).toBe("localImage");
+    expect(decideIconKind("anthropic")).toBe("localImage");
+    expect(decideIconKind("vercel")).toBe("localImage");
   });
 });
 

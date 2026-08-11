@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { LOBEHUB_SERVICES, decideIconKind } from '@/lib/provider-icon'
+import { LIGHT_BACKGROUND_INCOMPATIBLE_COMMUNITY_SERVICES, LOBEHUB_SERVICES, decideIconKind } from '@/lib/provider-icon'
 import { ProviderIcon } from './ProviderIcon'
 
 // fake DOM（仿 AgentView.test.tsx / SuggestionBanner.test.tsx,仓库组件测试标准模式）。
@@ -205,7 +205,7 @@ async function unmount(root: Root | null) {
 
 describe('ProviderIcon', () => {
   test('theSVG service: 首选社区品牌图片', async () => {
-    const { env, root } = await render(<ProviderIcon service="openai" size={20} />)
+    const { env, root } = await render(<ProviderIcon service="github" size={20} />)
     try {
       const image = findByTag(env.container, 'img')
       expect(image).toBeDefined()
@@ -216,14 +216,18 @@ describe('ProviderIcon', () => {
     }
   })
 
-  // Lobe 模块仍会在 ProviderIcon 模块加载时完成深导入；这里同时守卫社区首选与本地回退判定。
+  // Lobe 模块仍会在 ProviderIcon 模块加载时完成深导入；这里同时守卫主题敏感图标与本地回退判定。
   test.each(LOBEHUB_SERVICES)(
-    'lobehub service[%s]: 首选 theSVG，失败时仍判定为本地 lobehub',
+    'lobehub service[%s]: 按主题兼容性选择图片，失败时仍判定为本地 lobehub',
     async (service) => {
       const { env, root } = await render(<ProviderIcon service={service} size={20} />)
       try {
-        expect(findByTag(env.container, 'img')).toBeDefined()
-        expect(decideIconKind(service, true)).toBe('lobehub')
+        const image = findByTag(env.container, 'img')
+        expect(image).toBeDefined()
+        if (LIGHT_BACKGROUND_INCOMPATIBLE_COMMUNITY_SERVICES.has(service)) {
+          expect(image?.attributes.get('src')).toContain(`/provider-logos/${service}.`)
+        }
+        expect(decideIconKind(service, true, true)).toBe('lobehub')
       } finally {
         await unmount(root)
         env.cleanup()

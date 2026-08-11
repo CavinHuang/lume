@@ -1,0 +1,17 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="64" height="64" rx="14" fill="white" />
+  <rect x="0.5" y="0.5" width="63" height="63" rx="13.5" stroke="#D9E4EC" />
+  <g transform="translate(14 14) scale(0.5625)">
+    <rect x="29" y="10" width="6" height="15" fill="#222222" />
+    <path
+      d="M32 37C29.25 37 27 34.75 27 32C27 29.25 29.25 27 32 27C34.75 27 37 29.25 37 32C37 34.75 34.75 37 32 37Z"
+      fill="#222222"
+    />
+    <path
+      fill-rule="evenodd"
+      clip-rule="evenodd"
+      d="M32 64C49.6731 64 64 49.6731 64 32C64 14.3269 49.6731 0 32 0C14.3269 0 0 14.3269 0 32C0 49.6731 14.3269 64 32 64ZM32 56C45.2548 56 56 45.2548 56 32C56 18.7452 45.2548 8 32 8C18.7452 8 8 18.7452 8 32C8 45.2548 18.7452 56 32 56Z"
+      fill="#03A9F4"
+    />
+  </g>
+</svg>
