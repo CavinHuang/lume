@@ -20,11 +20,18 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { cn } from "@/lib/utils";
 import { LinkCatalog } from "./LinkCatalog";
 import { LinkDetailPane } from "./LinkDetailPane";
-import { LinkConnectDialog } from "./LinkConnectDialog";
+import { LinkAccountConnectDialog } from "./LinkAccountConnectDialog";
+import { LinkProviderSetupDialog } from "./LinkProviderSetupDialog";
+import { resolveLinkOAuthSetupState } from "./link-provider-state";
 import type { LinkFilter } from "./LinkToolbar";
 
 const SETTINGS_TAB_ID = "__settings__";
 const LINK_RUNTIME_SETTINGS_TAB = "link-runtime";
+
+type LinkDialogState =
+  | { kind: "account-connect"; connectionName: string; authType?: string; mode: "create" | "reconnect" }
+  | { kind: "provider-setup"; connectionName: string; authType?: string; continueToAccount: boolean; mode: "create" | "reconnect" }
+  | null;
 
 export function LinkView() {
   const [providers, setProviders] = useState<LinkProviderSummary[]>([]);
@@ -32,9 +39,7 @@ export function LinkView() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<LinkFilter>("all");
   const [selected, setSelected] = useState<LinkProviderDetail | null>(null);
-  // selected 控制右侧详情面板；connectOpen 独立控制凭据/OAuth 弹窗（点"连接"才开，与面板解耦）
-  const [connectOpen, setConnectOpen] = useState(false);
-  const [selectedConnectionName, setSelectedConnectionName] = useState("default");
+  const [dialog, setDialog] = useState<LinkDialogState>(null);
   const [online, setOnline] = useState(false);
   const [oauthConfigs, setOAuthConfigs] = useState<LinkOAuthConfigSummary[]>([]);
   const [providerTarget, setProviderTarget] = useAtom(linkProviderTargetAtom);
@@ -69,14 +74,33 @@ export function LinkView() {
   useEffect(() => {
     if (!online || !providerTarget) return;
     void getLinkProvider(providerTarget)
-      .then((provider) => { setSelectedConnectionName("default"); setSelected(provider); setProviderTarget(null); })
+      .then((provider) => { setDialog(null); setSelected(provider); setProviderTarget(null); })
       .catch(() => toast.error("无法打开连接器详情"));
   }, [online, providerTarget, setProviderTarget]);
 
   const openProvider = (service: string) => {
     void getLinkProvider(service)
-      .then((detail) => { setSelectedConnectionName("default"); setSelected(detail); })
+      .then((detail) => { setDialog(null); setSelected(detail); })
       .catch(() => toast.error("无法打开连接器详情"));
+  };
+
+  const openAccountDialog = (
+    connectionName: string,
+    authType?: string,
+    mode: "create" | "reconnect" = "create",
+  ) => {
+    if (!selected) return;
+    const oauthConfig = oauthConfigs.find((config) => config.service === selected.service);
+    const authTypes = selected.authTypes?.length
+      ? selected.authTypes
+      : selected.auth.map((auth) => String(auth.type));
+    const oauthSetup = resolveLinkOAuthSetupState(authTypes, oauthConfig?.configured ?? false);
+    const selectedAuthType = authType ?? (selected.auth.length === 1 ? String(selected.auth[0]?.type) : undefined);
+    if (selectedAuthType === "oauth2" && oauthSetup !== "configured") {
+      setDialog({ kind: "provider-setup", connectionName, authType: selectedAuthType, continueToAccount: true, mode });
+      return;
+    }
+    setDialog({ kind: "account-connect", connectionName, authType: selectedAuthType, mode });
   };
 
   // 对齐 link-result.tsx/BrowserShell 的标准入口：atoms 驱动 tab 切换，settingsInitialTab 定位到 link-runtime
@@ -125,6 +149,7 @@ export function LinkView() {
           <LinkCatalog
             providers={providers}
             connections={connections}
+            oauthConfigs={oauthConfigs}
             query={query}
             onQueryChange={setQuery}
             filter={filter}
@@ -138,9 +163,21 @@ export function LinkView() {
             <LinkDetailPane
               provider={selected}
               connections={connections.filter((c) => c.service === selected.service && c.configured)}
-              onConnect={() => setConnectOpen(true)}
-              onClose={() => setSelected(null)}
-              onReconnect={(name) => { setSelectedConnectionName(name); setConnectOpen(true); }}
+              oauthConfig={oauthConfigs.find((config) => config.service === selected.service)}
+              onConnect={() => openAccountDialog(
+                connections.some((connection) => connection.service === selected.service && connection.configured) ? "" : "default",
+              )}
+              onConfigureProvider={() => setDialog({
+                kind: "provider-setup",
+                connectionName: "default",
+                continueToAccount: false,
+                mode: "create",
+              })}
+              onClose={() => { setDialog(null); setSelected(null); }}
+              onReconnect={(name) => {
+                const connection = connections.find((item) => item.service === selected.service && item.connectionName === name);
+                openAccountDialog(name, connection?.authType, "reconnect");
+              }}
               onRequestDelete={(name) => {
                 const target = connections.find((c) => c.service === selected.service && c.connectionName === name && c.configured);
                 if (target) setDeleteTarget(target);
@@ -149,13 +186,38 @@ export function LinkView() {
           </aside>
         )}
       </div>
-      {selected && connectOpen && (
-        <LinkConnectDialog
+      {selected && dialog?.kind === "account-connect" && (
+        <LinkAccountConnectDialog
           provider={selected}
-          initialConnectionName={selectedConnectionName}
-          oauthConfig={oauthConfigs.find((o) => o.service === selected.service)}
-          onClose={() => setConnectOpen(false)}
-          onSaved={async () => { await refresh(); setConnectOpen(false); }}
+          initialConnectionName={dialog.connectionName}
+          initialAuthType={dialog.authType}
+          mode={dialog.mode}
+          existingConnectionNames={connections
+            .filter((connection) => connection.service === selected.service && connection.configured)
+            .map((connection) => connection.connectionName)}
+          oauthConfig={oauthConfigs.find((config) => config.service === selected.service)}
+          onClose={() => setDialog(null)}
+          onConfigureProvider={(connectionName, authType) => setDialog({
+            kind: "provider-setup",
+            connectionName,
+            authType,
+            continueToAccount: true,
+            mode: dialog.mode,
+          })}
+          onSaved={async () => { await refresh(); setDialog(null); }}
+        />
+      )}
+      {selected && dialog?.kind === "provider-setup" && (
+        <LinkProviderSetupDialog
+          provider={selected}
+          oauthConfig={oauthConfigs.find((config) => config.service === selected.service)}
+          onClose={() => setDialog(null)}
+          onSaved={async () => {
+            await refresh();
+            setDialog(dialog.continueToAccount
+              ? { kind: "account-connect", connectionName: dialog.connectionName, authType: dialog.authType, mode: dialog.mode }
+              : null);
+          }}
         />
       )}
       <ConfirmDialog

@@ -7,11 +7,13 @@ import { ProviderIcon } from "./ProviderIcon";
 interface ProviderCardProps {
   provider: LinkProviderSummary;
   configured: boolean;
+  needsSetup: boolean;
+  noSetup: boolean;
   selected?: boolean;
   onOpen: (service: string) => void;
 }
 
-export function ProviderCard({ provider, configured, selected, onOpen }: ProviderCardProps) {
+export function ProviderCard({ provider, configured, needsSetup, noSetup, selected, onOpen }: ProviderCardProps) {
   return (
     <Button
       type="button"
@@ -29,14 +31,15 @@ export function ProviderCard({ provider, configured, selected, onOpen }: Provide
           <span className="truncate text-sm font-medium text-[var(--text-1)]">{provider.displayName}</span>
           <span className="truncate text-[11px] text-[var(--text-3)]">{provider.description || provider.service}</span>
         </span>
-        <StatusMark configured={configured} noSetup={provider.authTypes?.includes("no_auth") ?? false} />
+        <StatusMark configured={configured} needsSetup={needsSetup} noSetup={noSetup} />
       </span>
     </Button>
   );
 }
 
-function StatusMark({ configured, noSetup }: { configured: boolean; noSetup: boolean }) {
+function StatusMark({ configured, needsSetup, noSetup }: { configured: boolean; needsSetup: boolean; noSetup: boolean }) {
   if (configured) return <Badge variant="success" className="px-1.5">已连接</Badge>;
+  if (needsSetup) return <Badge variant="warning" className="px-1.5">需配置</Badge>;
   if (noSetup) return <Badge variant="secondary" className="px-1.5">可直接使用</Badge>;
   return null;
 }

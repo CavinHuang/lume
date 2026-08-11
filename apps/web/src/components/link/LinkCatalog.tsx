@@ -2,13 +2,15 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { computeColumnCount, PROVIDER_GRID, rowCount } from "@/lib/provider-grid";
 import { linkServicePriority } from "@/lib/provider-ranking";
-import type { LinkConnectionSummary, LinkProviderSummary } from "@lume/shared";
+import type { LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderSummary } from "@lume/shared";
 import { LinkToolbar, type FilterCounts, type LinkFilter } from "./LinkToolbar";
 import { ProviderCard } from "./ProviderCard";
+import { resolveLinkOAuthSetupState } from "./link-provider-state";
 
 interface LinkCatalogProps {
   providers: LinkProviderSummary[];
   connections: LinkConnectionSummary[];
+  oauthConfigs: LinkOAuthConfigSummary[];
   query: string;
   onQueryChange: (v: string) => void;
   filter: LinkFilter;
@@ -17,27 +19,37 @@ interface LinkCatalogProps {
   onOpen: (service: string) => void;
 }
 
-function providerStatus(provider: LinkProviderSummary, configuredServices: Set<string>, authTypes: string[]) {
+function providerStatus(
+  provider: LinkProviderSummary,
+  configuredServices: Set<string>,
+  oauthConfiguredServices: Set<string>,
+  authTypes: string[],
+) {
   const configured = configuredServices.has(provider.service);
-  const noSetup = authTypes.includes("no_auth");
-  return { configured, noSetup };
+  const noSetup = authTypes.length === 0 || authTypes.every((authType) => authType === "no_auth");
+  const oauthSetup = resolveLinkOAuthSetupState(authTypes, oauthConfiguredServices.has(provider.service));
+  return { configured, noSetup, needsSetup: !configured && oauthSetup === "required" };
 }
 
 export function LinkCatalog({
-  providers, connections, query, onQueryChange, filter, onFilterChange, selectedService, onOpen,
+  providers, connections, oauthConfigs, query, onQueryChange, filter, onFilterChange, selectedService, onOpen,
 }: LinkCatalogProps) {
   const configuredServices = useMemo(
     () => new Set(connections.filter((c) => c.configured).map((c) => c.service)),
     [connections],
+  );
+  const oauthConfiguredServices = useMemo(
+    () => new Set(oauthConfigs.filter((config) => config.configured).map((config) => config.service)),
+    [oauthConfigs],
   );
 
   const annotated = useMemo(
     () =>
       providers.map((p) => ({
         provider: p,
-        status: providerStatus(p, configuredServices, p.authTypes ?? []),
+        status: providerStatus(p, configuredServices, oauthConfiguredServices, p.authTypes ?? []),
       })),
-    [providers, configuredServices],
+    [providers, configuredServices, oauthConfiguredServices],
   );
 
   const counts: FilterCounts = useMemo(
@@ -45,6 +57,7 @@ export function LinkCatalog({
       all: annotated.length,
       connected: annotated.filter((a) => a.status.configured).length,
       noSetup: annotated.filter((a) => a.status.noSetup).length,
+      needsSetup: annotated.filter((a) => a.status.needsSetup).length,
     }),
     [annotated],
   );
@@ -60,7 +73,8 @@ export function LinkCatalog({
         const matchesFilter =
           filter === "all" ||
           (filter === "connected" && status.configured) ||
-          (filter === "noSetup" && status.noSetup);
+          (filter === "noSetup" && status.noSetup) ||
+          (filter === "needsSetup" && status.needsSetup);
         return matchesQuery && matchesFilter;
       })
       .sort((a, b) => {
@@ -139,6 +153,8 @@ export function LinkCatalog({
                     key={entry.provider.service}
                     provider={entry.provider}
                     configured={entry.status.configured}
+                    needsSetup={entry.status.needsSetup}
+                    noSetup={entry.status.noSetup}
                     selected={entry.provider.service === selectedService}
                     onOpen={onOpen}
                   />
