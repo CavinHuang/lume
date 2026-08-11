@@ -1435,6 +1435,16 @@ export interface AgentOptions {
       threadType?: 'main' | 'subagent' | 'group' | 'channel'
     }
   ) => ToolDefinition[] | Promise<ToolDefinition[]>
+  /** Host hook for registering SDK-generated tools added after runtime resolution. */
+  registerGeneratedRuntimeTools?: (
+    tools: ToolDefinition[],
+    context: {
+      cwd: string
+      sessionId: string
+      permissionMode?: PermissionMode
+      threadType?: 'main' | 'subagent' | 'group' | 'channel'
+    }
+  ) => void | Promise<void>
   /**
    * Host-owned completion policy. Returning feedback keeps the agent loop alive
    * and presents that feedback to the model as an internal user message.

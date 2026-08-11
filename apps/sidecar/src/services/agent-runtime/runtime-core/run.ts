@@ -2255,6 +2255,10 @@ export async function createRuntimeCoreSession(
         messageMetadata: input.messageMetadata
       }
     }),
+    registerGeneratedRuntimeTools: (tools) => ToolRuntime.registerGeneratedTools({
+      tools,
+      sessionId: input.lumeSessionId
+    }),
     ...(codingCompletionEnabled && (input.userMessage?.trim() || existingCompletionGuard)
       ? { completionGuard }
       : {}),

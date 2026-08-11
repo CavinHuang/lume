@@ -59,6 +59,17 @@ export function createToolSearchTool(getTools: () => ToolDefinition[]): ToolDefi
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
     isEnabled: () => true,
+    runtimeMetadata: {
+      source: 'sdk',
+      category: 'read',
+      capability: 'skill',
+      riskLevel: 'low',
+      sideEffects: 'none',
+      allowedInPlanMode: true,
+      isReadOnly: true,
+      isConcurrencySafe: true,
+      requiresApprovalByDefault: false,
+    },
     async prompt() { return 'Search for available deferred tools.' },
     async call(input: any): Promise<ToolResult> {
       const deferredTools = getTools()
@@ -95,7 +106,18 @@ export function createExecuteTool(getTools: () => ToolDefinition[]): ToolDefinit
     isReadOnly: () => false,
     isConcurrencySafe: () => false,
     isEnabled: () => true,
-    runtimeMetadata: { delegatesPermission: true },
+    runtimeMetadata: {
+      source: 'sdk',
+      category: 'control',
+      capability: 'skill',
+      riskLevel: 'low',
+      sideEffects: 'none',
+      allowedInPlanMode: true,
+      isReadOnly: false,
+      isConcurrencySafe: false,
+      requiresApprovalByDefault: false,
+      delegatesPermission: true,
+    },
     validateInput(input) {
       if (!input || typeof input !== 'object') return 'Input must be an object.'
       if (typeof input.tool_name !== 'string' || !input.tool_name.trim()) return 'tool_name is required.'
