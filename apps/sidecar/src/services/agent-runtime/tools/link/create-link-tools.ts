@@ -67,8 +67,9 @@ export function createLinkTools(input: {
     }, readMetadata, async (args, context) => {
       const actionIds: string[] = Array.isArray(args.actions) ? args.actions.map((value: unknown) => requiredString(value, "action")) : [];
       if (!actionIds.length) throw new Error("actions is required");
-      const connectionName = optionalString(args.connectionName) || preferredConnectionForActions(actionIds, input.preferredConnections);
+      const explicitConnectionName = optionalString(args.connectionName);
       const details = await Promise.all(actionIds.map(async (actionId: string) => {
+        const connectionName = explicitConnectionName || preferredConnectionForAction(actionId, input.preferredConnections);
         const payload = await mcpCaller("get_action_guide", { actionId, ...(connectionName ? { connectionName } : {}) }, context.abortSignal);
         if (!payload.ok) throw new LinkApiError(payload.error.code, payload.error.message);
         const detail = actionDetailFromGuide(actionId, payload.data);
@@ -190,10 +191,8 @@ function asRecord(value: unknown): Record<string, unknown> { return value && typ
 function requiredString(value: unknown, label: string): string { const text = optionalString(value); if (!text) throw new Error(`${label} is required`); return text; }
 function optionalString(value: unknown): string { return typeof value === "string" ? value.trim() : ""; }
 function inspectionKey(action: string, connectionName: string): string { return `${action}\u0000${connectionName || "default"}`; }
-function preferredConnectionForActions(actionIds: string[], preferredConnections?: Readonly<Record<string, string>>): string {
-  const services = new Set(actionIds.map((actionId) => actionId.split(".")[0]).filter(Boolean));
-  if (services.size !== 1) return "";
-  const service = services.values().next().value;
+function preferredConnectionForAction(actionId: string, preferredConnections?: Readonly<Record<string, string>>): string {
+  const service = actionId.split(".")[0];
   return service ? preferredConnections?.[service] ?? "" : "";
 }
 async function acquireCallSlot(signal?: AbortSignal): Promise<() => void> {

@@ -100,6 +100,14 @@ export function remapAgentMessagePartsForEditedText(
 ): AgentUserMessagePart[] | undefined {
   const references = originalParts?.filter((part): part is Exclude<AgentUserMessagePart, { type: 'text' }> => part.type !== 'text') ?? []
   if (references.length === 0) return undefined
+  const visibleCounts = new Map<string, number>()
+  for (const reference of references) {
+    const visible = visibleReferenceText(reference)
+    visibleCounts.set(visible, (visibleCounts.get(visible) ?? 0) + 1)
+  }
+  const hasAmbiguousIdentity = [...visibleCounts.values()].some((count) => count > 1)
+  const originalText = originalParts?.map((part) => part.type === 'text' ? part.text : visibleReferenceText(part)).join('') ?? ''
+  if (hasAmbiguousIdentity && nextText !== originalText) return undefined
   const nextParts: AgentUserMessagePart[] = []
   let cursor = 0
   for (const reference of references) {

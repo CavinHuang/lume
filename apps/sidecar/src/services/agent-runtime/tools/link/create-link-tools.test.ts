@@ -193,6 +193,36 @@ describe("OpenConnector Link tools", () => {
     expect(calls.filter((item) => item.name === "execute_action").map((item) => item.args.connectionName)).toEqual(["work", "personal"]);
   });
 
+  test("inspects mixed-service batches with each service preferred account", async () => {
+    installLinkRuntimeBootstrap({ phase: "online", origin: "http://127.0.0.1:51234", adminToken: "admin", runtimeToken: "runtime" });
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const mcpCaller = async (name: string, args: Record<string, unknown>): Promise<McpLinkPayload> => {
+      calls.push({ name, args });
+      if (name === "get_action_guide") return { ok: true, data: { readOnly: true } };
+      return { ok: true, data: { ok: true } };
+    };
+    const tools = createLinkTools({
+      threadId: "thread",
+      emitToolPermissionRequest: () => {},
+      mcpCaller,
+      preferredConnections: { gmail: "work", github: "personal" },
+    });
+    const inspect = tools.find((tool) => tool.name === "link_inspect_actions")!;
+    const call = tools.find((tool) => tool.name === "link_call_action")!;
+
+    await inspect.call(
+      { actions: ["gmail.list_messages", "github.list_issues"] },
+      { cwd: ".", toolUseId: "inspect-mixed" } as never,
+    );
+    await call.call({ service: "gmail", action: "gmail.list_messages", input: {} }, { cwd: ".", toolUseId: "call-gmail" } as never);
+    await call.call({ service: "github", action: "github.list_issues", input: {} }, { cwd: ".", toolUseId: "call-github" } as never);
+
+    expect(calls.filter((item) => item.name === "get_action_guide").map((item) => item.args)).toEqual([
+      { actionId: "gmail.list_messages", connectionName: "work" },
+      { actionId: "github.list_issues", connectionName: "personal" },
+    ]);
+  });
+
   test("keeps a stale referenced account in the authorization signal", async () => {
     installLinkRuntimeBootstrap({ phase: "online", origin: "http://127.0.0.1:51234", adminToken: "admin", runtimeToken: "runtime" });
     const mcpCaller = async (name: string): Promise<McpLinkPayload> => name === "get_action_guide"
