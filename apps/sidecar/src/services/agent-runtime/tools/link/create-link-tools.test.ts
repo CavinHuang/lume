@@ -166,4 +166,50 @@ describe("OpenConnector Link tools", () => {
       _meta: { link: { kind: "link_authorization_required", errorCode: "connection_not_found" } },
     });
   });
+
+  test("uses the referenced account by default while allowing an explicit override", async () => {
+    installLinkRuntimeBootstrap({ phase: "online", origin: "http://127.0.0.1:51234", adminToken: "admin", runtimeToken: "runtime" });
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const mcpCaller = async (name: string, args: Record<string, unknown>): Promise<McpLinkPayload> => {
+      calls.push({ name, args });
+      if (name === "get_action_guide") return { ok: true, data: { readOnly: true } };
+      return { ok: true, data: { ok: true } };
+    };
+    const tools = createLinkTools({
+      threadId: "thread",
+      emitToolPermissionRequest: () => {},
+      mcpCaller,
+      preferredConnections: { gmail: "work" },
+      promoteToActiveSchema: true,
+    });
+    expect(tools.every((tool) => tool.runtimeMetadata?.requiredDuringSkillScope === true)).toBe(true);
+    expect(tools.find((tool) => tool.name === "link_call_action")?.runtimeMetadata?.allowedInPlanMode).toBe(false);
+    const inspect = tools.find((tool) => tool.name === "link_inspect_actions")!;
+    const call = tools.find((tool) => tool.name === "link_call_action")!;
+    await inspect.call({ actions: ["gmail.list_messages"] }, { cwd: ".", toolUseId: "inspect-work" } as never);
+    await call.call({ service: "gmail", action: "gmail.list_messages", input: {} }, { cwd: ".", toolUseId: "call-work" } as never);
+    await inspect.call({ actions: ["gmail.list_messages"], connectionName: "personal" }, { cwd: ".", toolUseId: "inspect-personal" } as never);
+    await call.call({ service: "gmail", action: "gmail.list_messages", connectionName: "personal", input: {} }, { cwd: ".", toolUseId: "call-personal" } as never);
+    expect(calls.filter((item) => item.name === "execute_action").map((item) => item.args.connectionName)).toEqual(["work", "personal"]);
+  });
+
+  test("keeps a stale referenced account in the authorization signal", async () => {
+    installLinkRuntimeBootstrap({ phase: "online", origin: "http://127.0.0.1:51234", adminToken: "admin", runtimeToken: "runtime" });
+    const mcpCaller = async (name: string): Promise<McpLinkPayload> => name === "get_action_guide"
+      ? { ok: true, data: { readOnly: true } }
+      : { ok: false, error: { code: "connection_not_found", message: "Connect Gmail" } };
+    const tools = createLinkTools({ threadId: "thread", emitToolPermissionRequest: () => {}, mcpCaller, preferredConnections: { gmail: "deleted-work" } });
+    await tools.find((tool) => tool.name === "link_inspect_actions")!.call(
+      { actions: ["gmail.list_messages"] },
+      { cwd: ".", toolUseId: "inspect" } as never,
+    );
+    const result = await tools.find((tool) => tool.name === "link_call_action")!.call(
+      { service: "gmail", action: "gmail.list_messages", input: {} },
+      { cwd: ".", toolUseId: "call" } as never,
+    );
+    expect(result).toMatchObject({
+      is_error: true,
+      _meta: { link: { service: "gmail", connectionName: "deleted-work", errorCode: "connection_not_found" } },
+    });
+  });
 });

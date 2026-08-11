@@ -80,7 +80,7 @@ import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import type { LumeRunState } from "../agent-runtime/runner/run-state";
 import { emitAgentNotification, emitDiagnosticContent } from "./agent-notification-service";
 import { createFileReferenceBinding } from "./agent-files-service";
-import { normalizeAgentUserMessage } from "./agent-user-message-parts";
+import { buildLinkConnectionReferenceContext, normalizeAgentUserMessage } from "./agent-user-message-parts";
 import { getPlanningTodoStore } from "../planning/planning-todo-store";
 import { addPlanningAuthorizedTodo, authorizePlanningOperation, finishPlanningExecutionRun, resolvePlanningExecutionContext } from "../planning/planning-execution-context";
 import { materializeCapabilityReferences } from "./invocable-capability-catalog";
@@ -306,6 +306,10 @@ async function validateQueuedAgentDispatch(
   dispatch.input.messageMetadata = {
     ...(dispatch.input.messageMetadata ?? {}),
     capabilityFingerprints: projection.fingerprints,
+    linkConnectionReferences: normalized.linkConnectionReferences.map(({ service, connectionName }) => ({
+      service,
+      connectionName,
+    })),
   };
 }
 
@@ -340,15 +344,17 @@ export async function prepareAgentDispatchInput(input: AgentSendInput): Promise<
         data: { references: projection.references.map((item) => item.uri) }
       });
     }
-    return projection.references.length > 0
-      ? {
-          ...input,
-          messageMetadata: {
-            ...(input.messageMetadata ?? {}),
-            capabilityFingerprints: projection.fingerprints,
-          },
-        }
-      : input;
+    return {
+      ...input,
+      messageMetadata: {
+        ...(input.messageMetadata ?? {}),
+        ...(projection.references.length > 0 ? { capabilityFingerprints: projection.fingerprints } : {}),
+        linkConnectionReferences: normalized.linkConnectionReferences.map(({ service, connectionName }) => ({
+          service,
+          connectionName,
+        })),
+      },
+    };
   } catch (error) {
     writeLogRecord({
       level: "warn",
@@ -919,6 +925,10 @@ export async function sendAgentMessage(
   if (capabilityProjection.context) {
     modelFacingUserMessage = [capabilityProjection.context, modelFacingUserMessage].filter(Boolean).join("\n\n");
   }
+  const linkConnectionContext = buildLinkConnectionReferenceContext(normalizedUserMessage.linkConnectionReferences);
+  if (linkConnectionContext) {
+    modelFacingUserMessage = [linkConnectionContext, modelFacingUserMessage].filter(Boolean).join("\n\n");
+  }
   if (!isManualCompactCommand) {
     const pendingBackgroundTasks = buildPendingBackgroundTaskContext(getAgentThreadSDKMessages(threadId));
     if (pendingBackgroundTasks) {
@@ -990,6 +1000,10 @@ export async function sendAgentMessage(
       capabilityFingerprints: capabilityProjection.fingerprints,
       capabilityReferenceViews: capabilityProjection.references,
     } : {}),
+    linkConnectionReferences: normalizedUserMessage.linkConnectionReferences.map(({ service, connectionName }) => ({
+      service,
+      connectionName,
+    })),
     capabilityLanes: routingTrace.capabilityLanes,
     preferredCapabilityRoute: routingTrace.preferredCapabilityRoute,
     capabilityRoutingReason: routingTrace.reason,

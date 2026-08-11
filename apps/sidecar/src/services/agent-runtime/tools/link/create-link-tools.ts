@@ -27,11 +27,13 @@ export function createLinkTools(input: {
   runId?: string;
   emitToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
   mcpCaller?: McpCaller;
+  preferredConnections?: Readonly<Record<string, string>>;
+  promoteToActiveSchema?: boolean;
 }): ToolDefinition[] {
   if (!isLinkRuntimeOnline()) return [];
   const mcpCaller = input.mcpCaller ?? callLinkMcpTool;
   const inspectedActions = new Map<string, LinkActionDetail>();
-  const readMetadata = metadata(true, true);
+  const readMetadata = metadata(true, true, input.promoteToActiveSchema === true);
   return [
     definition("link_list_apps", "List locally configured OpenConnector apps. Optionally filter by service.", {
       type: "object", properties: { service: { type: "string" } }, additionalProperties: false,
@@ -65,7 +67,7 @@ export function createLinkTools(input: {
     }, readMetadata, async (args, context) => {
       const actionIds: string[] = Array.isArray(args.actions) ? args.actions.map((value: unknown) => requiredString(value, "action")) : [];
       if (!actionIds.length) throw new Error("actions is required");
-      const connectionName = optionalString(args.connectionName);
+      const connectionName = optionalString(args.connectionName) || preferredConnectionForActions(actionIds, input.preferredConnections);
       const details = await Promise.all(actionIds.map(async (actionId: string) => {
         const payload = await mcpCaller("get_action_guide", { actionId, ...(connectionName ? { connectionName } : {}) }, context.abortSignal);
         if (!payload.ok) throw new LinkApiError(payload.error.code, payload.error.message);
@@ -81,10 +83,10 @@ export function createLinkTools(input: {
         service: { type: "string" }, action: { type: "string" }, input: { type: "object" }, connectionName: { type: "string" },
       },
       required: ["service", "action", "input"], additionalProperties: false,
-    }, metadata(false, false), async (args, context) => {
+    }, metadata(false, false, input.promoteToActiveSchema === true), async (args, context) => {
       const service = requiredString(args.service, "service");
       const action = requiredString(args.action, "action");
-      const connectionName = optionalString(args.connectionName);
+      const connectionName = optionalString(args.connectionName) || input.preferredConnections?.[service] || "";
       const detail = inspectedActions.get(inspectionKey(action, connectionName));
       if (!detail) throw new Error("inspection_required");
       if (detail.service !== service) throw new Error("link_action_service_mismatch");
@@ -178,8 +180,8 @@ function actionTokens(value: string): string[] {
 function definition(name: string, description: string, inputSchema: ToolDefinition["inputSchema"], runtimeMetadata: Record<string, unknown>, call: ToolDefinition["call"]): ToolDefinition {
   return { name, description, inputSchema, runtimeMetadata, isEnabled: () => true, isReadOnly: () => name !== "link_call_action", isConcurrencySafe: () => name !== "link_call_action", prompt: async () => description, call };
 }
-function metadata(readOnly: boolean, allowedInPlanMode: boolean): Record<string, unknown> {
-  return { source: "link", title: "OpenConnector Link", category: "network", capability: "link", riskLevel: "low", sideEffects: "external", allowedInPlanMode, isReadOnly: readOnly, isConcurrencySafe: readOnly, requiresNetwork: true, requiresApprovalByDefault: false };
+function metadata(readOnly: boolean, allowedInPlanMode: boolean, requiredDuringSkillScope = false): Record<string, unknown> {
+  return { source: "link", title: "OpenConnector Link", category: "network", capability: "link", riskLevel: "low", sideEffects: "external", allowedInPlanMode, isReadOnly: readOnly, isConcurrencySafe: readOnly, requiresNetwork: true, requiresApprovalByDefault: false, ...(requiredDuringSkillScope ? { requiredDuringSkillScope: true } : {}) };
 }
 function result(toolUseId: string | undefined, data: unknown, isError = false, meta?: Record<string, unknown>): ToolResult {
   return { type: "tool_result", tool_use_id: toolUseId ?? "", content: JSON.stringify(data, null, 2), ...(isError ? { is_error: true } : {}), ...(meta ? { _meta: meta } : {}) };
@@ -188,6 +190,12 @@ function asRecord(value: unknown): Record<string, unknown> { return value && typ
 function requiredString(value: unknown, label: string): string { const text = optionalString(value); if (!text) throw new Error(`${label} is required`); return text; }
 function optionalString(value: unknown): string { return typeof value === "string" ? value.trim() : ""; }
 function inspectionKey(action: string, connectionName: string): string { return `${action}\u0000${connectionName || "default"}`; }
+function preferredConnectionForActions(actionIds: string[], preferredConnections?: Readonly<Record<string, string>>): string {
+  const services = new Set(actionIds.map((actionId) => actionId.split(".")[0]).filter(Boolean));
+  if (services.size !== 1) return "";
+  const service = services.values().next().value;
+  return service ? preferredConnections?.[service] ?? "" : "";
+}
 async function acquireCallSlot(signal?: AbortSignal): Promise<() => void> {
   if (activeCalls >= 2) await new Promise<void>((resolve, reject) => {
     const resume = () => { signal?.removeEventListener("abort", onAbort); resolve(); };

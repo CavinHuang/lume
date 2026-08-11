@@ -71,8 +71,12 @@ export function LinkView() {
 
   useEffect(() => {
     if (!online || !providerTarget) return;
-    void getLinkProvider(providerTarget)
-      .then((provider) => { setDialog(null); setSelected(provider); setProviderTarget(null); })
+    void getLinkProvider(providerTarget.service)
+      .then((provider) => {
+        setDialog(null);
+        setSelected(provider);
+        setProviderTarget(null);
+      })
       .catch(() => toast.error("无法打开连接器详情"));
   }, [online, providerTarget, setProviderTarget]);
 

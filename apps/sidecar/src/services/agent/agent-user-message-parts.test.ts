@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AgentUserMessagePartsError, normalizeAgentUserMessage } from "./agent-user-message-parts";
+import { AgentUserMessagePartsError, buildLinkConnectionReferenceContext, normalizeAgentUserMessage } from "./agent-user-message-parts";
 
 describe("normalizeAgentUserMessage", () => {
   test("wraps legacy userMessage as non-authorizing text", () => {
@@ -9,6 +9,7 @@ describe("normalizeAgentUserMessage", () => {
     expect(result.parts).toEqual([{ type: "text", text: "Log: lume-skill://review" }]);
     expect(result.modelMessage).toBe("Log: lume-skill://review");
     expect(result.capabilityReferences).toEqual([]);
+    expect(result.linkConnectionReferences).toEqual([]);
   });
 
   test("removes only marked reference occurrences from model text", () => {
@@ -76,5 +77,32 @@ describe("normalizeAgentUserMessage", () => {
       userMessage: "&发布版本",
       messageParts: [{ type: "planning_todo_ref", schemaVersion: 1, uri: `lume://planning/todo/${todoId}`, todoId, relation: "primary", displayText: "发布版本" }]
     }, { allowPrimaryPlanningTodo: true })).not.toThrow();
+  });
+
+  test("normalizes and deduplicates preferred Link connection references", () => {
+    const gmail = { type: "link_connection_ref" as const, schemaVersion: 1 as const, service: "gmail", connectionName: "work", displayText: "Gmail · user@example.com" };
+    const result = normalizeAgentUserMessage({
+      userMessage: "检查 @Gmail · user@example.com 和 @Gmail · user@example.com",
+      messageParts: [
+        { type: "text", text: "检查 " },
+        gmail,
+        { type: "text", text: " 和 " },
+        gmail,
+      ]
+    });
+
+    expect(result.visibleMessage).toBe("检查 @Gmail · user@example.com 和 @Gmail · user@example.com");
+    expect(result.modelMessage).toBe("检查  和 ");
+    expect(result.linkConnectionReferences).toEqual([gmail]);
+    expect(buildLinkConnectionReferenceContext(result.linkConnectionReferences)).toContain(
+      '[{"service":"gmail","connectionName":"work"}]'
+    );
+  });
+
+  test("rejects malformed Link connection references", () => {
+    expect(() => normalizeAgentUserMessage({
+      userMessage: "@Gmail",
+      messageParts: [{ type: "link_connection_ref", schemaVersion: 1, service: "Gmail!", connectionName: "work", displayText: "Gmail" }]
+    })).toThrow("Invalid Link connection reference");
   });
 });

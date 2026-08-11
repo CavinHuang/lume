@@ -10,6 +10,7 @@ import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { listPlanningTodos } from '@/lib/desktop-api/planning-todo'
 import { toast } from 'sonner'
 import type { EditorOptions } from '@tiptap/core'
+import { fetchLinkConnectionMentionItems, insertLinkConnectionMention } from './link-connection-mentions'
 
 type PasteEditorView = Parameters<NonNullable<EditorOptions['editorProps']['handlePaste']>>[0]
 
@@ -37,6 +38,7 @@ export async function fetchSuggestions(
   workspaceId?: string | null,
 ): Promise<MentionItem[]> {
   try {
+    if (trigger === '@') return fetchLinkConnectionMentionItems(query)
     if (trigger === '&') {
       const normalizedQuery = query.trim().toLocaleLowerCase()
       const all = normalizedQuery.startsWith('all ') || normalizedQuery.startsWith('全部 ')
@@ -150,9 +152,16 @@ export function createSuggestionRenderer(
     render: () => {
       let component: ReactRenderer<MentionListRef> | null = null
       let wrapper: HTMLDivElement | null = null
+      let currentProps: SuggestionProps | null = null
+
+      const selectLinkConnectionReference = (item: MentionItem) => {
+        if (!currentProps) return
+        insertLinkConnectionMention(currentProps.editor, currentProps.range, item)
+      }
 
       return {
         onStart: (props: SuggestionProps) => {
+          currentProps = props
           setSuggestionOpen(true)
           wrapper = document.createElement('div')
           wrapper.style.position = 'fixed'
@@ -160,7 +169,7 @@ export function createSuggestionRenderer(
           document.body.appendChild(wrapper)
 
           component = new ReactRenderer(MentionList, {
-            props: { ...props, trigger: char as '@' | '/' | '#' | '&', getWorkspaceSlug, onCommandExecute },
+            props: { ...props, trigger: char as '@' | '/' | '#' | '&', getWorkspaceSlug, onCommandExecute, onLinkConnectionReferenceSelect: selectLinkConnectionReference },
             editor: props.editor,
           })
           wrapper.appendChild(component.element)
@@ -169,7 +178,8 @@ export function createSuggestionRenderer(
         },
 
         onUpdate: (props: SuggestionProps) => {
-          component?.updateProps(props)
+          currentProps = props
+          component?.updateProps({ ...props, trigger: char as '@' | '/' | '#' | '&', getWorkspaceSlug, onCommandExecute, onLinkConnectionReferenceSelect: selectLinkConnectionReference })
           if (wrapper) updatePosition(wrapper, props, char)
         },
 
@@ -184,6 +194,7 @@ export function createSuggestionRenderer(
         },
 
         onExit: () => {
+          currentProps = null
           setSuggestionOpen(false)
           component?.destroy()
           wrapper?.remove()

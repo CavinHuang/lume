@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { serializeAgentEditorMessage } from './agent-editor-message-parts'
+import { remapAgentMessagePartsForEditedText, serializeAgentEditorMessage } from './agent-editor-message-parts'
 
 describe('serializeAgentEditorMessage', () => {
   test('keeps visible canonical URIs aligned with structured reference parts', () => {
@@ -29,5 +29,35 @@ describe('serializeAgentEditorMessage', () => {
       content: [{ type: 'paragraph', content: [{ type: 'text', text: 'log: lume-plugin://demo' }] }],
     })
     expect(result.messageParts).toEqual([{ type: 'text', text: 'log: lume-plugin://demo' }])
+  })
+
+  test('serializes Connector mentions as visible account text and structured refs', () => {
+    const result = serializeAgentEditorMessage({
+      type: 'doc',
+      content: [{
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Check ' },
+          { type: 'linkConnectionMention', attrs: { schemaVersion: 1, service: 'gmail', connectionName: 'work', displayText: 'Gmail · user@example.com' } },
+        ],
+      }],
+    })
+    expect(result.userMessage).toBe('Check @Gmail · user@example.com')
+    expect(result.messageParts).toEqual([
+      { type: 'text', text: 'Check ' },
+      { type: 'link_connection_ref', schemaVersion: 1, service: 'gmail', connectionName: 'work', displayText: 'Gmail · user@example.com' },
+    ])
+  })
+
+  test('keeps Connector refs when editing and resending surrounding text', () => {
+    const reference = { type: 'link_connection_ref' as const, schemaVersion: 1 as const, service: 'gmail', connectionName: 'work', displayText: 'Gmail · user@example.com' }
+    expect(remapAgentMessagePartsForEditedText(
+      [{ type: 'text', text: 'Check ' }, reference],
+      'Please check @Gmail · user@example.com today',
+    )).toEqual([
+      { type: 'text', text: 'Please check ' },
+      reference,
+      { type: 'text', text: ' today' },
+    ])
   })
 })
