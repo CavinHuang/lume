@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  callLinkMcpTool,
   extractMcpPayload,
+  getLinkMcpClient,
   getLinkRuntimeOrigin,
   installLinkRuntimeBootstrap,
   linkAdminRequest,
@@ -63,6 +65,16 @@ describe("Link existing deployment boundary", () => {
     await linkAdminRequest("/api/providers");
     expect(observed?.url).toBe("https://connector.example.test/api/providers");
     expect(observed?.headers.has("authorization")).toBe(false);
+  });
+
+  test("unregisters MCP access and rejects stale tool calls when Link leaves online", async () => {
+    installLinkRuntimeBootstrap({ mode: "remote", phase: "online", origin: "https://connector.example.test", runtimeToken: "runtime" });
+    expect(getLinkMcpClient().getStatus().openconnector).toBeDefined();
+
+    installLinkRuntimeBootstrap({ phase: "disabled" });
+
+    expect(getLinkMcpClient().getStatus().openconnector).toBeUndefined();
+    await expect(callLinkMcpTool("list_apps", {})).rejects.toThrow("link_runtime_offline");
   });
 });
 
