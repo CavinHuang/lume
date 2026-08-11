@@ -152,7 +152,6 @@ export function LinkView() {
             providers={providers}
             connections={connections}
             oauthConfigs={oauthConfigs}
-            runtimeMode={runtimeMode}
             query={query}
             onQueryChange={setQuery}
             filter={filter}
