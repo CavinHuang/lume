@@ -20,7 +20,7 @@ interface LinkToolbarProps {
 
 export function LinkToolbar({ query, onQueryChange, filter, onFilterChange, counts }: LinkToolbarProps) {
   const items: Array<{ value: LinkFilter; label: string; count: number }> = [
-    { value: "all", label: "全部", count: counts.all },
+    { value: "all", label: "常用", count: counts.all },
     { value: "connected", label: "已连接", count: counts.connected },
     { value: "needsSetup", label: "需配置", count: counts.needsSetup },
     { value: "noSetup", label: "免配置", count: counts.noSetup },
@@ -28,7 +28,7 @@ export function LinkToolbar({ query, onQueryChange, filter, onFilterChange, coun
   return (
     <div className="grid w-full min-w-0 gap-2">
       <SearchField
-        placeholder="搜索连接器…"
+        placeholder="搜索全部连接器…"
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
       />

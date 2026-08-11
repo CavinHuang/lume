@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { computeColumnCount, PROVIDER_GRID, rowCount } from "@/lib/provider-grid";
-import { linkServicePriority } from "@/lib/provider-ranking";
+import { linkServicePriority, shouldShowLinkProviderByDefault } from "@/lib/provider-ranking";
 import type { LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderSummary } from "@lume/shared";
 import { LinkToolbar, type FilterCounts, type LinkFilter } from "./LinkToolbar";
 import { ProviderCard } from "./ProviderCard";
@@ -52,18 +52,26 @@ export function LinkCatalog({
     [providers, configuredServices, oauthConfiguredServices],
   );
 
+  const defaultCatalog = useMemo(
+    () => annotated.filter(({ provider, status }) =>
+      shouldShowLinkProviderByDefault(provider.service, status.configured, provider.service === selectedService),
+    ),
+    [annotated, selectedService],
+  );
+
   const counts: FilterCounts = useMemo(
     () => ({
-      all: annotated.length,
-      connected: annotated.filter((a) => a.status.configured).length,
-      noSetup: annotated.filter((a) => a.status.noSetup).length,
-      needsSetup: annotated.filter((a) => a.status.needsSetup).length,
+      all: defaultCatalog.length,
+      connected: defaultCatalog.filter((a) => a.status.configured).length,
+      noSetup: defaultCatalog.filter((a) => a.status.noSetup).length,
+      needsSetup: defaultCatalog.filter((a) => a.status.needsSetup).length,
     }),
-    [annotated],
+    [defaultCatalog],
   );
 
   const visible = useMemo(() => {
-    return annotated
+    const candidates = query.trim() ? annotated : defaultCatalog;
+    return candidates
       .filter(({ provider, status }) => {
         const matchesQuery =
           !query ||
@@ -84,7 +92,7 @@ export function LinkCatalog({
         if (priority !== 0) return priority;
         return a.provider.displayName.localeCompare(b.provider.displayName);
       });
-  }, [annotated, query, filter]);
+  }, [annotated, defaultCatalog, query, filter]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);

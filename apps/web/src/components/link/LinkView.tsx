@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useAtom, useSetAtom } from "jotai";
 import type {
-  LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderDetail, LinkProviderSummary,
+  LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderDetail, LinkProviderSummary, LinkRuntimeMode,
 } from "@lume/shared";
 import {
   activeTabIdAtom,
@@ -41,6 +41,7 @@ export function LinkView() {
   const [selected, setSelected] = useState<LinkProviderDetail | null>(null);
   const [dialog, setDialog] = useState<LinkDialogState>(null);
   const [online, setOnline] = useState(false);
+  const [runtimeMode, setRuntimeMode] = useState<LinkRuntimeMode>("local");
   const [oauthConfigs, setOAuthConfigs] = useState<LinkOAuthConfigSummary[]>([]);
   const [providerTarget, setProviderTarget] = useAtom(linkProviderTargetAtom);
   const [deleteTarget, setDeleteTarget] = useState<LinkConnectionSummary | null>(null);
@@ -51,6 +52,7 @@ export function LinkView() {
   const refresh = useCallback(async () => {
     const runtime = await getLinkRuntimeState();
     setOnline(runtime.phase === "online");
+    setRuntimeMode(runtime.mode);
     if (runtime.phase !== "online") {
       setProviders([]); setConnections([]); setOAuthConfigs([]); return;
     }
@@ -120,7 +122,7 @@ export function LinkView() {
         <Badge variant="secondary">未启用</Badge>
         <h1 className="text-xl font-semibold">连接器</h1>
         <p className="max-w-sm text-sm text-[var(--text-3)]">
-          连接器需要本机 OpenConnector Link 运行时。请在「设置 → Link 运行时」中启用。
+          连接器需要可用的 OpenConnector 服务。请在「设置 → Link 运行时」中启用本机服务或配置已有部署。
         </p>
         <Button variant="outline" onClick={openLinkRuntimeSettings}>
           打开 Link 运行时设置
@@ -134,9 +136,9 @@ export function LinkView() {
       <div className="flex min-h-14 items-center justify-between gap-3 border-b border-[var(--lume-border-subtle)] px-4 py-2.5">
         <div>
           <h1 className="text-base font-semibold">连接器</h1>
-          <p className="mt-0.5 text-xs text-[var(--text-3)]">连接常用应用与数据服务，凭据仅保存在本机。</p>
+          <p className="mt-0.5 text-xs text-[var(--text-3)]">连接常用应用与数据服务，并查看智能体可以调用的能力。</p>
         </div>
-        <Badge variant="success">本地运行中</Badge>
+        <Badge variant="success">{runtimeMode === "remote" ? "已有部署已连接" : "本机服务运行中"}</Badge>
       </div>
       <div className={cn(
         "grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-hidden transition-[grid-template-columns] duration-200 ease-out",

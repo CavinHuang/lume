@@ -20,6 +20,15 @@ export function linkServicePriority(service: string): number {
   return priorityMap.get(compactService(service)) ?? Number.MAX_SAFE_INTEGER
 }
 
+/** 默认目录只展示 Wanta 推荐服务；已连接、选中和搜索命中的服务由目录层额外保留。 */
+export function isRecommendedLinkService(service: string): boolean {
+  return priorityMap.has(compactService(service))
+}
+
+export function shouldShowLinkProviderByDefault(service: string, configured: boolean, selected: boolean): boolean {
+  return isRecommendedLinkService(service) || configured || selected
+}
+
 // 容错匹配：去标点连字符（如 "google-sheets" → "googlesheets"）再比对
 function compactService(value: string): string {
   return value.toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, "")
