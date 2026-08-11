@@ -1,9 +1,9 @@
-import type { LinkRuntimePhase } from "@lume/shared";
+import type { LinkRuntimeMode, LinkRuntimePhase } from "@lume/shared";
 import { McpClientManager } from "@lume/agent-sdk";
 import { createLogger } from "../infra/logger";
 
-type LinkRuntimeBootstrap = { phase: LinkRuntimePhase; origin?: string; adminToken?: string; runtimeToken?: string };
-type BootstrapState = { phase: LinkRuntimePhase; origin?: string; adminToken?: Buffer; runtimeToken?: Buffer };
+type LinkRuntimeBootstrap = { mode?: LinkRuntimeMode; phase: LinkRuntimePhase; origin?: string; adminToken?: string; runtimeToken?: string };
+type BootstrapState = { mode?: LinkRuntimeMode; phase: LinkRuntimePhase; origin?: string; adminToken?: Buffer; runtimeToken?: Buffer };
 
 let bootstrap: BootstrapState = { phase: "disabled" };
 const log = createLogger("link-client");
@@ -27,21 +27,24 @@ export function installLinkRuntimeBootstrap(value: unknown): void {
     bootstrap = { phase: input.phase };
     return;
   }
-  if (!isLoopbackOrigin(input.origin) || !input.adminToken || !input.runtimeToken) {
+  const mode = input.mode ?? "local";
+  const originValid = mode === "local" ? isEmbeddedOrigin(input.origin) : mode === "remote" && isRemoteOrigin(input.origin);
+  if (!originValid || (mode === "local" && (!input.adminToken || !input.runtimeToken))) {
     bootstrap = { phase: "offline" };
     throw new Error("invalid_link_bootstrap");
   }
   bootstrap = {
     phase: "online",
+    mode,
     origin: input.origin,
-    adminToken: Buffer.from(input.adminToken),
-    runtimeToken: Buffer.from(input.runtimeToken),
+    ...(input.adminToken ? { adminToken: Buffer.from(input.adminToken) } : {}),
+    ...(input.runtimeToken ? { runtimeToken: Buffer.from(input.runtimeToken) } : {}),
   };
   getLinkMcpClient().register(LINK_MCP_SERVER_ID, {
     enabled: true,
     transport: "streamable_http",
     url: `${input.origin}/mcp`,
-    headers: { authorization: `Bearer ${input.runtimeToken}` },
+    ...(input.runtimeToken ? { headers: { authorization: `Bearer ${input.runtimeToken}` } } : {}),
   });
   void getLinkMcpClient().connect(LINK_MCP_SERVER_ID).catch((error) => {
     log.warn("MCP 连接失败", { error: error instanceof Error ? error.message : String(error) });
@@ -62,7 +65,6 @@ export async function linkAdminRequest<T>(path: string, init?: RequestInit): Pro
 
 async function linkRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (bootstrap.phase !== "online" || !bootstrap.origin) throw new Error("link_runtime_offline");
-  if (!bootstrap.adminToken) throw new Error("link_runtime_offline");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
   const onAbort = () => controller.abort();
@@ -74,7 +76,7 @@ async function linkRequest<T>(path: string, init: RequestInit = {}): Promise<T> 
     }
     const headers = new Headers(init.headers);
     if (init.body != null && !headers.has("content-type")) headers.set("content-type", "application/json");
-    headers.set("authorization", `Bearer ${bootstrap.adminToken.toString()}`);
+    if (bootstrap.adminToken) headers.set("authorization", `Bearer ${bootstrap.adminToken.toString()}`);
     const response = await fetch(url, {
       ...init,
       redirect: "error",
@@ -102,7 +104,7 @@ export class LinkApiError extends Error {
   }
 }
 
-function isLoopbackOrigin(value: unknown): value is string {
+function isEmbeddedOrigin(value: unknown): value is string {
   if (typeof value !== "string") return false;
   try {
     const url = new URL(value);
@@ -117,6 +119,23 @@ function isLoopbackOrigin(value: unknown): value is string {
       && Number.isInteger(port)
       && port >= 49152
       && port <= 65535;
+  } catch {
+    return false;
+  }
+}
+
+function isRemoteOrigin(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1";
+    return (url.protocol === "https:" || (url.protocol === "http:" && loopback))
+      && url.origin === value
+      && url.pathname === "/"
+      && !url.username
+      && !url.password
+      && !url.search
+      && !url.hash;
   } catch {
     return false;
   }
