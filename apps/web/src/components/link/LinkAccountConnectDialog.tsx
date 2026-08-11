@@ -99,10 +99,6 @@ export function LinkAccountConnectDialog({
   const submitLabel = isOAuth
     ? mode === "reconnect" ? "在浏览器中重新授权" : "在浏览器中授权"
     : mode === "reconnect" ? "更新账户连接" : "保存账户连接";
-  const close = () => {
-    if (oauth?.status === "pending") void cancelLinkOAuth(oauth.state).catch(() => undefined);
-    onClose();
-  };
 
   const save = async () => {
     setBusy(true);
@@ -130,7 +126,7 @@ export function LinkAccountConnectDialog({
   };
 
   return (
-    <Dialog open onOpenChange={(open) => !open && close()}>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[calc(100vh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-xl">
         <DialogHeader className="border-b border-[var(--lume-border-subtle)] p-4 pr-12">
           <div className="flex min-w-0 items-start gap-3">
@@ -254,7 +250,7 @@ export function LinkAccountConnectDialog({
               <Button variant="outline" disabled={busy} onClick={() => void cancelLinkOAuth(oauth.state).then(setOAuth)}>取消授权</Button>
             </>
           ) : (
-            <Button variant="outline" disabled={busy} onClick={close}>取消</Button>
+            <Button variant="outline" disabled={busy} onClick={onClose}>取消</Button>
           )}
           {isOAuth && !oauthConfig?.configured ? (
             <Button disabled={busy} onClick={() => onConfigureProvider(connectionName.trim() || "default", String(auth.type))}>
