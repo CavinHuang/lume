@@ -64,7 +64,11 @@ export function LinkAccountConnectDialog({
         if (!active) return;
         const session = findRestorableLinkOAuthSession(sessions, provider.service, initialConnectionName);
         setOAuth(session ?? null);
-        if (session) setConnectionName(session.connectionName);
+        if (session) {
+          setConnectionName(session.connectionName);
+          const oauthIndex = provider.auth.findIndex((auth) => auth.type === "oauth2");
+          if (oauthIndex >= 0) setAuthIndex(oauthIndex);
+        }
       })
       .catch(() => undefined);
     return () => { active = false; };
