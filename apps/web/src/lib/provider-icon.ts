@@ -8,9 +8,19 @@ export const LOBEHUB_SERVICES = [
   "openai", "anthropic", "cohere", "perplexity",
 ] as const;
 
+// 这些 theSVG default.svg 实际等同于白色的 dark.svg，在浅色卡片上不可见。
+// OOMOL 版本带有可辨识的前景或底色，因此仅对这组主题敏感图标优先使用本地资源。
+export const LIGHT_BACKGROUND_INCOMPATIBLE_COMMUNITY_SERVICES = new Set([
+  "anthropic", "axiom", "clerk", "cursor", "documenso", "dub", "firecrawl", "instatus", "manus",
+  "mattermost", "motion", "ngrok", "openai", "polar", "qdrant", "railway", "replicate", "resend",
+  "together_ai", "turso", "v0", "vercel", "wakatime", "whop", "workos",
+]);
+
 export function decideIconKind(service: string, skipCommunity = false, skipLocalImage = false): IconKind {
   const key = service.toLowerCase();
-  if (!skipCommunity && LINK_ICON_URLS[key]) return "community";
+  const preferLocalImage = LIGHT_BACKGROUND_INCOMPATIBLE_COMMUNITY_SERVICES.has(key);
+  if (preferLocalImage && !skipLocalImage && LOCAL_PROVIDER_ICON_URLS[key]) return "localImage";
+  if (!preferLocalImage && !skipCommunity && LINK_ICON_URLS[key]) return "community";
   if ((LOBEHUB_SERVICES as readonly string[]).includes(key)) return "lobehub";
   if (LINK_ICONS[key]) return "simpleIcon";
   if (!skipLocalImage && LOCAL_PROVIDER_ICON_URLS[key]) return "localImage";

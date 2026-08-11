@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" role="img" aria-label="Novu">
+  <g transform="translate(12 12) scale(3)">
+    <path fill="url(#novu_a)" fill-rule="evenodd" d="M24.64 12.826c0 .86-1.044 1.286-1.646.671L10.676.907A16 16 0 0 1 16 0c3.183 0 6.148.93 8.64 2.531zm4.48-5.986v5.986c0 4.875-5.919 7.289-9.328 3.804L6.545 3.091C2.576 6.003 0 10.701 0 16c0 3.407 1.065 6.565 2.88 9.16v-5.954c0-4.875 5.919-7.289 9.328-3.804l13.229 13.52C29.416 26.012 32 21.308 32 16c0-3.407-1.065-6.565-2.88-9.16M9.006 18.535 21.301 31.1C19.642 31.683 17.858 32 16 32c-3.182 0-6.148-.93-8.64-2.531V19.206c0-.86 1.045-1.286 1.646-.671" clip-rule="evenodd"/>
+    <path fill="url(#novu_b)" fill-rule="evenodd" d="M24.64 12.826c0 .86-1.044 1.286-1.646.671L10.676.907A16 16 0 0 1 16 0c3.183 0 6.148.93 8.64 2.531zm4.48-5.986v5.986c0 4.875-5.919 7.289-9.328 3.804L6.545 3.091C2.576 6.003 0 10.701 0 16c0 3.407 1.065 6.565 2.88 9.16v-5.954c0-4.875 5.919-7.289 9.328-3.804l13.229 13.52C29.416 26.012 32 21.308 32 16c0-3.407-1.065-6.565-2.88-9.16M9.006 18.535 21.301 31.1C19.642 31.683 17.858 32 16 32c-3.182 0-6.148-.93-8.64-2.531V19.206c0-.86 1.045-1.286 1.646-.671" clip-rule="evenodd"/>
+    <path fill="url(#novu_c)" fill-rule="evenodd" d="M24.64 12.826c0 .86-1.044 1.286-1.646.671L10.676.907A16 16 0 0 1 16 0c3.183 0 6.148.93 8.64 2.531zm4.48-5.986v5.986c0 4.875-5.919 7.289-9.328 3.804L6.545 3.091C2.576 6.003 0 10.701 0 16c0 3.407 1.065 6.565 2.88 9.16v-5.954c0-4.875 5.919-7.289 9.328-3.804l13.229 13.52C29.416 26.012 32 21.308 32 16c0-3.407-1.065-6.565-2.88-9.16M9.006 18.535 21.301 31.1C19.642 31.683 17.858 32 16 32c-3.182 0-6.148-.93-8.64-2.531V19.206c0-.86 1.045-1.286 1.646-.671" clip-rule="evenodd"/>
+  </g>
+  <defs>
+    <linearGradient id="novu_b" x1="19.733" x2="16" y1="-1.067" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0.085" stop-color="#ffba33"/>
+      <stop offset="0.553" stop-color="#ff006a" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="novu_c" x1="16" x2="16" y1="0" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0.547" stop-opacity="0"/>
+      <stop offset="1" stop-opacity="0.6"/>
+    </linearGradient>
+    <radialGradient id="novu_a" cx="0" cy="0" r="1" gradientTransform="rotate(135 4.686 11.314) scale(22.6274)" gradientUnits="userSpaceOnUse">
+      <stop offset="0.34" stop-color="#ff006a"/>
+      <stop offset="0.613" stop-color="#e300bd"/>
+      <stop offset="0.767" stop-color="#ff4ce1"/>
+    </radialGradient>
+  </defs>
+</svg>

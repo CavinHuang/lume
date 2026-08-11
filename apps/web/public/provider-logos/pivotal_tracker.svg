@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" role="img" aria-label="Pivotal Tracker">
+  <rect width="120" height="120" rx="18" fill="#ffffff"/>
+  <circle cx="60" cy="60" r="47" fill="#ffffff" stroke="#4f84ad" stroke-width="10"/>
+  <g fill="#f58213">
+    <rect x="28" y="52" width="27" height="14" rx="1"/>
+    <rect x="65" y="52" width="27" height="14" rx="1"/>
+    <rect x="53" y="25" width="14" height="30" rx="1" transform="rotate(-25 60 40)"/>
+    <rect x="53" y="65" width="14" height="30" rx="1" transform="rotate(-25 60 80)"/>
+    <rect x="32" y="69" width="14" height="30" rx="1" transform="rotate(30 39 84)"/>
+    <rect x="74" y="22" width="14" height="30" rx="1" transform="rotate(30 81 37)"/>
+  </g>
+  <circle cx="60" cy="60" r="9" fill="#ffffff"/>
+</svg>
