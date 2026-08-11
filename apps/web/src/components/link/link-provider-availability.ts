@@ -50,7 +50,8 @@ function hasPublicCallbackOrigin(runtimeMode: LinkRuntimeMode, runtimeOrigin: st
 }
 
 const INTERNAL_DNS_SUFFIXES = new Set([
-  "corp", "home", "internal", "intranet", "invalid", "lan", "local", "localhost", "private", "test",
+  "alt", "arpa", "corp", "example", "home", "internal", "intranet", "invalid", "lan", "local", "localhost",
+  "onion", "private", "test",
 ]);
 
 function isPlausiblyPublicHostname(hostname: string): boolean {

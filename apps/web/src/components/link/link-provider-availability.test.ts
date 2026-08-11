@@ -34,6 +34,9 @@ describe("Link provider availability", () => {
       "https://[::ffff:10.0.0.5]",
       "https://connector.internal",
       "https://nas",
+      "https://connector.example",
+      "https://service.onion",
+      "https://resolver.alt",
     ]) {
       expect(canCreateLinkConnection("intercom", "remote", origin)).toBe(false);
     }
