@@ -60,7 +60,11 @@ export function createLinkRuntimeSupervisor(input: {
     if (persisted.mode === "remote") return connectRemote();
     if (child || state.phase === "starting") return state;
     if (!persisted.port) throw new Error("link_port_missing");
-    if (!(await isPortFree(persisted.port))) { publish("port_conflict", "Configured port is already in use."); await bootstrapDelivery; return state; }
+    const generation = operationGeneration;
+    const isCurrent = () => generation === operationGeneration && persisted.enabled && persisted.mode === "local";
+    const portFree = await isPortFree(persisted.port);
+    if (!isCurrent()) return state;
+    if (!portFree) { publish("port_conflict", "Configured port is already in use."); await bootstrapDelivery; return state; }
     if (!metadata.available) { publish("incompatible", "OpenConnector 1.3.5 resources are missing or failed integrity validation."); await bootstrapDelivery; return state; }
     const masterKey = input.getMasterKey();
     if (!masterKey) { publish("offline", "Connection vault is locked."); await bootstrapDelivery; throw new Error("connection_vault_locked"); }
@@ -106,11 +110,13 @@ export function createLinkRuntimeSupervisor(input: {
     });
     try {
       await waitForLinkHealth(origin, secrets.runtimeToken);
+      if (!isCurrent()) return state;
       if (child !== running) throw new Error("link_runtime_exited_during_start");
       state = { ...publicState(persisted, "online", metadata.version, dataDirectory, crashTimes.length, remoteCredentials), origin };
       input.emit(state);
       await deliverBootstrap({ mode: "local", phase: "online", origin, adminToken: secrets.adminToken, runtimeToken: secrets.runtimeToken });
     } catch (error) {
+      if (!isCurrent()) return state;
       if (child === running) child = null;
       stopping = true;
       const pid = running.pid;

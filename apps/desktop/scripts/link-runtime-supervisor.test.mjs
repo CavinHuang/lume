@@ -169,6 +169,60 @@ test('stopping invalidates an in-flight remote connection before it can publish 
   }
 })
 
+test('switching to remote invalidates an in-flight local startup', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lume-link-local-race-'))
+  const resourceDir = join(root, 'openconnector')
+  const portProbe = createServer()
+  await new Promise((resolve) => portProbe.listen(0, '127.0.0.1', resolve))
+  const address = portProbe.address()
+  assert.equal(typeof address, 'object')
+  const port = address.port
+  await new Promise((resolve) => portProbe.close(resolve))
+  mkdirSync(join(root, 'link-runtime'), { recursive: true })
+  for (const directory of ['catalog', 'migrations']) mkdirSync(join(resourceDir, directory), { recursive: true })
+  writeFileSync(join(resourceDir, 'openconnector.mjs'), '')
+  writeFileSync(join(resourceDir, 'lume-resource.json'), JSON.stringify({ version: '1.3.5', commit: '5719a69468c698c7cb8108e062ff64ecef8a2e65', archiveSha256: '4991b3a5a44ae68c57976767462f313f8d9bc1075ae0f64b314fca277e19441f' }))
+  writeFileSync(join(root, 'link-runtime', 'state.json'), JSON.stringify({ enabled: true, mode: 'local', port }))
+  const originalFetch = globalThis.fetch
+  const emitted = []
+  const bootstraps = []
+  let resolveLocalHealth
+  let localHealthStarted
+  const started = new Promise((resolve) => { localHealthStarted = resolve })
+  try {
+    globalThis.fetch = async (input) => {
+      const url = String(input)
+      if (url.startsWith(`http://127.0.0.1:${port}/`)) {
+        localHealthStarted()
+        return new Promise((resolve) => { resolveLocalHealth = resolve })
+      }
+      if (url.endsWith('/api/providers')) return Response.json([])
+      return Response.json({ success: true, data: { ok: true, runtime: 'oomol-connect' } })
+    }
+    const process = new EventEmitter()
+    process.pid = 12346
+    process.stdout = { resume: () => {} }
+    process.stderr = { resume: () => {} }
+    process.kill = () => { queueMicrotask(() => process.emit('exit', 0)); return true }
+    const supervisor = createLinkRuntimeSupervisor({ configDir: root, resourceDir, getMasterKey: () => Buffer.alloc(32), fork: () => process, emit: (value) => { emitted.push(value) }, installBootstrap: (value) => { bootstraps.push(value) }, killProcessTree: () => {} })
+    const localStarting = supervisor.initialize()
+    await started
+    const remote = await supervisor.configure({ mode: 'remote', origin: 'https://connector.example.test' })
+    resolveLocalHealth(Response.json({ success: true, data: { ok: true, runtime: 'oomol-connect' } }))
+    const staleResult = await localStarting
+    assert.equal(remote.phase, 'online')
+    assert.equal(remote.mode, 'remote')
+    assert.equal(staleResult.mode, 'remote')
+    assert.equal(supervisor.getState().mode, 'remote')
+    assert.equal(emitted.some((value) => value.phase === 'crashed'), false)
+    assert.equal(bootstraps.at(-1).mode, 'remote')
+    assert.equal(bootstraps.at(-1).phase, 'online')
+  } finally {
+    globalThis.fetch = originalFetch
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('existing deployment can explicitly clear saved remote tokens', async () => {
   const root = mkdtempSync(join(tmpdir(), 'lume-link-remote-clear-'))
   const originalFetch = globalThis.fetch
