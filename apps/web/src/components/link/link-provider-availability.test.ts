@@ -10,7 +10,7 @@ describe("Link provider availability", () => {
 
   test("does not let an existing account enable creation of another account", () => {
     expect(canCreateLinkConnection("intercom", "local", "http://127.0.0.1:51234")).toBe(false);
-    expect(canCreateLinkConnection("sunoapi", "remote", "https://connector.example.test")).toBe(true);
+    expect(canCreateLinkConnection("sunoapi", "remote", "https://connector.example.com")).toBe(true);
   });
 
   test("rejects loopback and private callback origins", () => {
@@ -25,13 +25,15 @@ describe("Link provider availability", () => {
       "https://[fd00::1]",
       "https://[fe80::1]",
       "https://[::ffff:10.0.0.5]",
+      "https://connector.internal",
+      "https://nas",
     ]) {
       expect(canCreateLinkConnection("intercom", "remote", origin)).toBe(false);
     }
   });
 
   test("accepts public callback hosts", () => {
-    expect(canCreateLinkConnection("intercom", "remote", "https://connector.example.test")).toBe(true);
+    expect(canCreateLinkConnection("intercom", "remote", "https://connector.example.com")).toBe(true);
     expect(canCreateLinkConnection("intercom", "remote", "https://8.8.8.8")).toBe(true);
     expect(canCreateLinkConnection("intercom", "remote", "https://[2606:4700:4700::1111]")).toBe(true);
   });
