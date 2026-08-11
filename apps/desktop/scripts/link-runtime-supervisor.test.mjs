@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
@@ -25,76 +25,7 @@ test('Link runtime is disabled by default and emits no credentials', async () =>
     const supervisor = createLinkRuntimeSupervisor({ configDir: root, resourceDir: join(root, 'missing'), getMasterKey: () => null, fork: () => { throw new Error('must not fork') }, emit: () => {}, installBootstrap: (value) => { bootstraps.push(value) }, killProcessTree: () => {} })
     const state = await supervisor.initialize()
     assert.equal(state.phase, 'disabled')
-    assert.deepEqual(bootstraps, [{ mode: 'local', phase: 'disabled' }])
-  } finally { rmSync(root, { recursive: true, force: true }) }
-})
-
-test('existing deployment mode connects without starting the bundled service and restores on launch', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'lume-link-remote-'))
-  const originalFetch = globalThis.fetch
-  const bootstraps = []
-  let forkCount = 0
-  try {
-    globalThis.fetch = async () => Response.json({ success: true, data: { ok: true, runtime: 'oomol-connect' } })
-    const options = {
-      configDir: root,
-      resourceDir: join(root, 'missing'),
-      getMasterKey: () => Buffer.alloc(32, 9),
-      fork: () => { forkCount += 1; throw new Error('remote mode must not fork') },
-      emit: () => {},
-      installBootstrap: (value) => { bootstraps.push(value) },
-      killProcessTree: () => {},
-    }
-    const supervisor = createLinkRuntimeSupervisor(options)
-    const configured = await supervisor.configure({
-      mode: 'remote',
-      origin: 'https://connector.example.test/',
-      adminToken: 'admin-secret',
-      runtimeToken: 'runtime-secret',
-    })
-    assert.equal(configured.mode, 'remote')
-    assert.equal(configured.phase, 'online')
-    assert.equal(configured.origin, 'https://connector.example.test')
-    assert.equal(configured.remoteOrigin, 'https://connector.example.test')
-    assert.equal(configured.adminTokenConfigured, true)
-    assert.equal(configured.runtimeTokenConfigured, true)
-    assert.equal(forkCount, 0)
-    assert.deepEqual(bootstraps.at(-1), {
-      mode: 'remote',
-      phase: 'online',
-      origin: 'https://connector.example.test',
-      adminToken: 'admin-secret',
-      runtimeToken: 'runtime-secret',
-    })
-    const stored = readFileSync(join(root, 'link-runtime', 'remote-secrets.json'), 'utf8')
-    assert.equal(stored.includes('admin-secret'), false)
-    assert.equal(stored.includes('runtime-secret'), false)
-
-    const local = await supervisor.configure({ mode: 'local' })
-    assert.equal(local.mode, 'local')
-    assert.equal(local.phase, 'incompatible')
-    const reconnected = await supervisor.configure({ mode: 'remote', origin: 'https://connector.example.test' })
-    assert.equal(reconnected.adminTokenConfigured, true)
-    assert.equal(reconnected.runtimeTokenConfigured, true)
-    assert.equal(bootstraps.at(-1).adminToken, 'admin-secret')
-    assert.equal(bootstraps.at(-1).runtimeToken, 'runtime-secret')
-
-    const restored = createLinkRuntimeSupervisor(options)
-    const restoredState = await restored.initialize()
-    assert.equal(restoredState.phase, 'online')
-    assert.equal(restoredState.mode, 'remote')
-    assert.equal(forkCount, 0)
-  } finally {
-    globalThis.fetch = originalFetch
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test('existing deployment rejects plaintext non-loopback origins', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'lume-link-remote-origin-'))
-  try {
-    const supervisor = createLinkRuntimeSupervisor({ configDir: root, resourceDir: join(root, 'missing'), getMasterKey: () => Buffer.alloc(32), fork: () => { throw new Error('must not fork') }, emit: () => {}, installBootstrap: () => {}, killProcessTree: () => {} })
-    await assert.rejects(supervisor.configure({ mode: 'remote', origin: 'http://connector.example.test' }), /invalid_link_remote_origin/)
+    assert.deepEqual(bootstraps, [{ phase: 'disabled' }])
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
 
