@@ -55,6 +55,10 @@ export function getLinkRuntimePhase(): LinkRuntimePhase {
   return bootstrap.phase;
 }
 
+export function getLinkRuntimeOrigin(): string | undefined {
+  return bootstrap.phase === "online" ? bootstrap.origin : undefined;
+}
+
 export function isLinkRuntimeOnline(): boolean {
   return bootstrap.phase === "online";
 }
@@ -128,7 +132,7 @@ function isRemoteOrigin(value: unknown): value is string {
   if (typeof value !== "string") return false;
   try {
     const url = new URL(value);
-    const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1";
+    const loopback = isLoopbackHostname(url.hostname);
     return (url.protocol === "https:" || (url.protocol === "http:" && loopback))
       && url.origin === value
       && url.pathname === "/"
@@ -139,6 +143,11 @@ function isRemoteOrigin(value: unknown): value is string {
   } catch {
     return false;
   }
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
 function clearSecrets(): void {
