@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderDetail, LinkRuntimeMode } from "@lume/shared";
+import type { LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderDetail } from "@lume/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChevronDown, ChevronUp, KeyRound, ListChecks, Settings2, ShieldCheck, X } from "lucide-react";
@@ -12,7 +12,6 @@ interface LinkDetailPaneProps {
   provider: LinkProviderDetail;
   connections: LinkConnectionSummary[];
   oauthConfig?: LinkOAuthConfigSummary;
-  runtimeMode: LinkRuntimeMode;
   onConnect: () => void;
   onConfigureProvider: () => void;
   onClose: () => void;
@@ -24,7 +23,6 @@ export function LinkDetailPane({
   provider,
   connections,
   oauthConfig,
-  runtimeMode,
   onConnect,
   onConfigureProvider,
   onClose,
@@ -75,7 +73,7 @@ export function LinkDetailPane({
                   <OAuthSetupBadge state={oauthSetup} />
                 </div>
                 <p className="mt-0.5 text-xs leading-relaxed text-[var(--text-3)]">
-                  OAuth 应用由{runtimeMode === "remote" ? "已有部署的" : "本机"} Link 运行时保存，所有 {provider.displayName} 账户共用这一份配置。
+                  OAuth 应用由本机 Link 运行时保存，所有 {provider.displayName} 账户共用这一份配置。
                 </p>
               </div>
             </div>

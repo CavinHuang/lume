@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import type { LinkOAuthSession } from "@lume/shared";
 
-export type PersistedOAuthSession = LinkOAuthSession & { startedAt: number; runtimeOrigin?: string };
+type PersistedSession = LinkOAuthSession & { startedAt: number };
 
 const FILE_NAME = "link-oauth-sessions.json";
 const SESSION_TTL_MS = 5 * 60_000;
@@ -14,7 +14,7 @@ const SESSION_TTL_MS = 5 * 60_000;
  * sessions older than SESSION_TTL_MS are expired to "timed_out" on load.
  */
 export class PersistentOAuthSessions {
-  private readonly sessions = new Map<string, PersistedOAuthSession>();
+  private readonly sessions = new Map<string, PersistedSession>();
   private readonly file?: string;
 
   constructor(configDir?: string) {
@@ -25,7 +25,7 @@ export class PersistentOAuthSessions {
   private load(): void {
     if (!this.file || !existsSync(this.file)) return;
     try {
-      const entries = JSON.parse(readFileSync(this.file, "utf8")) as Array<[string, PersistedOAuthSession]>;
+      const entries = JSON.parse(readFileSync(this.file, "utf8")) as Array<[string, PersistedSession]>;
       const now = Date.now();
       for (const [state, session] of entries) {
         if (session && session.status === "pending" && now - session.startedAt > SESSION_TTL_MS) {
@@ -46,11 +46,11 @@ export class PersistentOAuthSessions {
     renameSync(temporary, this.file);
   }
 
-  get(state: string): PersistedOAuthSession | undefined {
+  get(state: string): PersistedSession | undefined {
     return this.sessions.get(state);
   }
 
-  set(state: string, session: PersistedOAuthSession): void {
+  set(state: string, session: PersistedSession): void {
     this.sessions.set(state, session);
     this.persist();
   }
@@ -60,7 +60,7 @@ export class PersistentOAuthSessions {
     this.persist();
   }
 
-  values(): IterableIterator<PersistedOAuthSession> {
+  values(): IterableIterator<PersistedSession> {
     return this.sessions.values();
   }
 

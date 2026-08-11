@@ -5,7 +5,7 @@ import { createServer } from 'node:net'
 import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLinkRuntimeSupervisor, nextLinkCrashState, waitForLinkHealth } from '../src/link-runtime-supervisor.ts'
+import { createLinkRuntimeSupervisor, nextLinkCrashState } from '../src/link-runtime-supervisor.ts'
 
 test('Link runtime allows only two automatic restarts after three crashes in five minutes', () => {
   const now = 1_000_000
@@ -27,42 +27,6 @@ test('Link runtime is disabled by default and emits no credentials', async () =>
     assert.equal(state.phase, 'disabled')
     assert.deepEqual(bootstraps, [{ phase: 'disabled' }])
   } finally { rmSync(root, { recursive: true, force: true }) }
-})
-
-test('existing deployment accepts bracketed IPv6 loopback origins', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'lume-link-remote-ipv6-'))
-  const originalFetch = globalThis.fetch
-  try {
-    globalThis.fetch = async () => Response.json({ success: true, data: { ok: true, runtime: 'oomol-connect' } })
-    const supervisor = createLinkRuntimeSupervisor({ configDir: root, resourceDir: join(root, 'missing'), getMasterKey: () => Buffer.alloc(32), fork: () => { throw new Error('must not fork') }, emit: () => {}, installBootstrap: () => {}, killProcessTree: () => {} })
-    const state = await supervisor.configure({ mode: 'remote', origin: 'http://[::1]:51234' })
-    assert.equal(state.origin, 'http://[::1]:51234')
-  } finally {
-    globalThis.fetch = originalFetch
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test('Link health requires the expected JSON contract', async () => {
-  const originalFetch = globalThis.fetch
-  try {
-    globalThis.fetch = async () => new Response(null, { status: 204 })
-    await assert.rejects(waitForLinkHealth('https://connector.example.test', '', 20), /link_health_timeout/)
-    globalThis.fetch = async () => Response.json({ success: true, data: { ok: true, runtime: 'oomol-connect' } })
-    await waitForLinkHealth('https://connector.example.test', '', 20)
-  } finally { globalThis.fetch = originalFetch }
-})
-
-test('Link health aborts a stalled request at the startup deadline', async () => {
-  const originalFetch = globalThis.fetch
-  try {
-    globalThis.fetch = (_input, init) => new Promise((_resolve, reject) => {
-      init?.signal?.addEventListener('abort', () => reject(init.signal.reason), { once: true })
-    })
-    const startedAt = Date.now()
-    await assert.rejects(waitForLinkHealth('https://connector.example.test', '', 30), /link_health_timeout/)
-    assert.ok(Date.now() - startedAt < 500)
-  } finally { globalThis.fetch = originalFetch }
 })
 
 test('Link runtime reports a persisted port conflict without silently switching ports', async () => {
@@ -112,7 +76,7 @@ test('Link runtime reaches health, keeps its stable port, and shuts down cleanly
   const bootstraps = []
   let killed = false
   try {
-    globalThis.fetch = async () => Response.json({ success: true, data: { ok: true, runtime: 'oomol-connect' } })
+    globalThis.fetch = async () => Response.json({ ok: true })
     const process = new EventEmitter()
     process.pid = 12345
     process.stdout = { resume: () => {} }

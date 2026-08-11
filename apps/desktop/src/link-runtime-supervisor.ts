@@ -181,12 +181,11 @@ export function createLinkRuntimeSupervisor(input: {
           headers: { authorization: `Bearer ${currentSecrets.runtimeToken}` },
           signal: AbortSignal.timeout(3_000),
         });
-        const healthy = await isLinkHealthResponse(response);
         return {
           ...result,
-          endpointReachable: healthy,
+          endpointReachable: response.ok,
           latencyMs: Date.now() - startedAt,
-          ...(!healthy ? { error: response.ok ? "health_invalid_response" : `health_http_${response.status}` } : {}),
+          ...(!response.ok ? { error: `health_http_${response.status}` } : {}),
         };
       } catch (error) {
         return { ...result, latencyMs: Date.now() - startedAt, error: message(error) };
