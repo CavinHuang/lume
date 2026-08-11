@@ -131,11 +131,15 @@ describe("reading-note-generator", () => {
     expect(systemPrompt).toContain("禁止「不是");
     expect(systemPrompt).toContain("禁止用破折号");
     expect(systemPrompt).toContain("第一段");
+    expect(systemPrompt).toContain("300-450 字，最多不超过 500 字");
+    expect(systemPrompt).toContain("每篇只展开一个核心洞察");
+    expect(systemPrompt).toContain("最多保留一个关联");
     expect(systemPrompt).toContain("JSON");
     expect(userPrompt).toContain("上次给自己留的线索");
     expect(userPrompt).toContain("nextPlan");
     expect(userPrompt).toContain("不要重复");
-    expect(userPrompt).toContain("4 个自然段");
+    expect(userPrompt).toContain("3-4 个自然段");
+    expect(userPrompt).toContain("300-450 字，最多不超过 500 字");
     expect(userPrompt).toContain("把自己看作一个普通人");
     expect(userPrompt).toContain("用户在这本书里的划线");
     expect(userPrompt).toContain("用户划线的段落是用户的关注点");
