@@ -36,6 +36,7 @@ describe("PR verification workflow contract", () => {
     expect(workflow).toContain("run: bun run test:windows");
 
     expect(workflow).toContain("name: macOS desktop reliability");
+    expect(workflow).toContain("run: bun apps/desktop/scripts/build-agent-island-native.ts");
     expect(workflow).toContain("bun run --filter @lume/desktop typecheck");
     expect(workflow).toContain("bun run --filter @lume/desktop test:smoke");
     expect(workflow).toContain("bun run --filter @lume/agent-sdk test:smoke");
