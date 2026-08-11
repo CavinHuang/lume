@@ -274,9 +274,9 @@ test('desktop package limits the Agent Island helper to macOS resources', () => 
   assert.match(ciWorkflow, /run: bun apps\/desktop\/scripts\/build-agent-island-native\.ts/)
   assert.match(verifier, /process\.platform === "darwin"/)
   assert.match(verifier, /"agent-island", "macos-agent-island-helper"/)
-  assert.match(helper, /guard let controller = IslandController\(\) else/)
-  assert.match(helper, /"type": "fatal", "message": "no notched display available"/)
-  assert.match(helper, /private func refreshForDisplayChange\(\)[\s\S]*Self\.preferredScreen\(\) != nil/)
+  assert.match(helper, /"type": "unavailable", "message": "no notched display available"/)
+  assert.match(helper, /private func refreshForDisplayChange\(\)[\s\S]*guard let preferredScreen = Self\.preferredScreen\(\)/)
+  assert.match(helper, /if !displayAvailable \{[\s\S]*"type": "ready", "protocol": 1/)
 })
 
 test('desktop package builds and verifies the pinned OpenConnector resource', () => {

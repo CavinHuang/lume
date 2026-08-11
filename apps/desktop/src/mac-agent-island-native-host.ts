@@ -40,6 +40,7 @@ function parseEvent(line: string): NativeAgentIslandEvent | null {
     if (!value || typeof value !== 'object') return null
     const e = value as Record<string, unknown>
     if (e.type === 'ready' && typeof e.protocol === 'number') return { type: 'ready', protocol: e.protocol as 1 }
+    if (e.type === 'unavailable' && typeof e.message === 'string') return { type: 'unavailable', message: e.message }
     if (e.type === 'fatal' && typeof e.message === 'string') return { type: 'fatal', message: e.message }
     if (e.type !== 'intent' || typeof e.name !== 'string') return null
     // Lume 协议：set-expanded/set-hovered 用 value(boolean)；open-session 用 threadId
@@ -98,6 +99,10 @@ export function startMacAgentIslandNativeHost(options: MacAgentIslandNativeHostO
           } else if (!ready) {
             ready = true; clearReadyTimer(); options.onReady()
           }
+        } else if (event?.type === 'unavailable') {
+          ready = false
+          clearReadyTimer()
+          options.onUnavailable(`native helper unavailable: ${event.message}`)
         } else if (event?.type === 'fatal') {
           disposeMacAgentIslandNativeHost()
           options.onUnavailable(`native helper fatal: ${event.message}`)

@@ -1401,6 +1401,7 @@ function startAgentIslandSurface(): void {
     onReady: () => {
       nativeSurfaceActive = true
       destroyIslandWindow()
+      agentIslandService?.repush()
     },
     onEvent: (event) => {
       if (event.type === 'intent') {
