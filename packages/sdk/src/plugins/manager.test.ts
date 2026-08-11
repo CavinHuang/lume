@@ -1,12 +1,23 @@
-import { describe, expect, test } from "bun:test";
-import { mkdir, writeFile, rm } from "fs/promises";
-import { homedir } from "os";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, writeFile, rm } from "fs/promises";
+import { tmpdir } from "os";
 import { join } from "path";
 import { PluginManager } from "./manager.js";
 
 describe("PluginManager", () => {
-  const testRoot = join(homedir(), ".lume", "plugins", "cache");
-  const dataRoot = join(homedir(), ".lume", "plugins", "data");
+  let root: string;
+  let testRoot: string;
+  let dataRoot: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "lume-plugin-manager-"));
+    testRoot = join(root, "cache");
+    dataRoot = join(root, "data");
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
 
   test("installs a plugin from a source directory", async () => {
     const manager = new PluginManager(testRoot, dataRoot);

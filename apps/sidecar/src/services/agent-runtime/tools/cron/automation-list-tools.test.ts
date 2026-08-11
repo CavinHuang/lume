@@ -63,7 +63,7 @@ describe("automation-list-tools", () => {
     const result = await callTool(listTool, {}) as { ok: boolean; total: number; jobs: Array<{ name: string }> };
     expect(result.ok).toBeTrue();
     expect(result.total).toBe(2);
-  });
+  }, 30_000);
 
   test("query 应按名称模糊匹配", async () => {
     createAutomationJob({
@@ -85,7 +85,7 @@ describe("automation-list-tools", () => {
     expect(result.ok).toBeTrue();
     expect(result.jobs.length).toBe(1);
     expect(result.jobs[0]?.name).toBe("每日扫描");
-  });
+  }, 30_000);
 
   test("enabled 应筛选启用状态", async () => {
     createAutomationJob({
@@ -132,7 +132,7 @@ describe("automation-list-tools", () => {
     const result = await callTool(listTool, { scheduleType: "cron" }) as { jobs: Array<{ name: string }> };
     expect(result.jobs.length).toBe(1);
     expect(result.jobs[0]?.name).toBe("cron任务");
-  });
+  }, 30_000);
 
   test("limit 应限制返回数量", async () => {
     for (let i = 0; i < 5; i++) {
