@@ -22,6 +22,7 @@ import { LinkCatalog } from "./LinkCatalog";
 import { LinkDetailPane } from "./LinkDetailPane";
 import { LinkAccountConnectDialog } from "./LinkAccountConnectDialog";
 import { LinkProviderSetupDialog } from "./LinkProviderSetupDialog";
+import { isLinkProviderAvailable } from "./link-provider-availability";
 import { resolveLinkOAuthSetupState } from "./link-provider-state";
 import type { LinkFilter } from "./LinkToolbar";
 
@@ -51,9 +52,9 @@ export function LinkView() {
 
   const refresh = useCallback(async () => {
     const runtime = await getLinkRuntimeState();
-    setOnline(runtime.phase === "online");
     setRuntimeMode(runtime.mode);
     if (runtime.phase !== "online") {
+      setOnline(false);
       setProviders([]); setConnections([]); setOAuthConfigs([]); return;
     }
     const [nextProviders, nextConnections, nextOAuthConfigs] = await Promise.all([
@@ -62,6 +63,7 @@ export function LinkView() {
     setProviders(nextProviders);
     setConnections(nextConnections);
     setOAuthConfigs(nextOAuthConfigs);
+    setOnline(true);
   }, []);
 
   useEffect(() => {
@@ -75,14 +77,17 @@ export function LinkView() {
 
   useEffect(() => {
     if (!online || !providerTarget) return;
-    void getLinkProvider(providerTarget.service)
-      .then((provider) => {
-        setDialog(null);
-        setSelected(provider);
-        setProviderTarget(null);
-      })
+    const target = providerTarget;
+    const configured = connections.some((connection) => connection.service === target.service && connection.configured);
+    setProviderTarget(null);
+    if (!isLinkProviderAvailable(target.service, runtimeMode, configured)) {
+      toast.error("当前本机运行时无法连接此服务，请配置已有部署后重试");
+      return;
+    }
+    void getLinkProvider(target.service)
+      .then((provider) => { setDialog(null); setSelected(provider); })
       .catch(() => toast.error("无法打开连接器详情"));
-  }, [online, providerTarget, setProviderTarget]);
+  }, [connections, online, providerTarget, runtimeMode, setProviderTarget]);
 
   const openProvider = (service: string) => {
     void getLinkProvider(service)
@@ -126,7 +131,7 @@ export function LinkView() {
         <Badge variant="secondary">未启用</Badge>
         <h1 className="text-xl font-semibold">连接器</h1>
         <p className="max-w-sm text-sm text-[var(--text-3)]">
-          连接器需要可用的 OpenConnector 服务。请在「设置 → Link 运行时」中启用或重启本机服务。
+          连接器需要可用的 OpenConnector 服务。请在「设置 → Link 运行时」中启用本机服务或配置已有部署。
         </p>
         <Button variant="outline" onClick={openLinkRuntimeSettings}>
           打开 Link 运行时设置
@@ -142,7 +147,7 @@ export function LinkView() {
           <h1 className="text-base font-semibold">连接器</h1>
           <p className="mt-0.5 text-xs text-[var(--text-3)]">连接常用应用与数据服务，并查看智能体可以调用的能力。</p>
         </div>
-        <Badge variant="success">本机服务运行中</Badge>
+        <Badge variant="success">{runtimeMode === "remote" ? "已有部署运行中" : "本机服务运行中"}</Badge>
       </div>
       <div className={cn(
         "grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-hidden transition-[grid-template-columns] duration-200 ease-out",
