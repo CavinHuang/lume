@@ -1,6 +1,6 @@
-import { LINK_ICONS } from "./generated/link-icons";
+import { LINK_ICONS, LINK_ICON_URLS } from "./generated/link-icons";
 
-export type IconKind = "lobehub" | "simpleIcon" | "image" | "letter";
+export type IconKind = "lobehub" | "simpleIcon" | "image" | "community" | "letter";
 
 // Lobe Icons 只承接 AI 品牌；通用 SaaS 品牌交给覆盖更广、带品牌色的 Simple Icons。
 export const LOBEHUB_SERVICES = [
@@ -10,8 +10,9 @@ export const LOBEHUB_SERVICES = [
 export function decideIconKind(service: string, iconUrl?: string): IconKind {
   const key = service.toLowerCase();
   if ((LOBEHUB_SERVICES as readonly string[]).includes(key)) return "lobehub";
-  if (LINK_ICONS[key]) return "simpleIcon";
   if (iconUrl) return "image";
+  if (LINK_ICONS[key]) return "simpleIcon";
+  if (LINK_ICON_URLS[key]) return "community";
   return "letter";
 }
 

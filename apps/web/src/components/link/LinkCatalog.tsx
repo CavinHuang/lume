@@ -124,7 +124,7 @@ export function LinkCatalog({
           {rowVirtualizer.getVirtualItems().map((vRow) => (
             <div
               key={vRow.key}
-              className="absolute left-0 top-0 grid gap-3"
+              className="absolute left-0 top-0 grid gap-2"
               style={{
                 transform: `translateY(${vRow.start}px)`,
                 width: "100%",
