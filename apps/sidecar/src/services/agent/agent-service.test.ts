@@ -1099,7 +1099,7 @@ describe("agent-service", () => {
 
   test("appendAgentMessage 应在运行中排队并在完成后自动发送下一条", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
-    const { appendAgentMessage } = await import("./agent-service");
+    const { appendAgentMessage, waitForAgentRuntimeKernelIdleForTest } = await import("./agent-service");
     const { getAgentRuntimeStatusManager } = await import("./agent-runtime-status-manager");
     const thread = createAgentThread("queue lifecycle", "channel-test");
     const appended: AgentMessageAppendedEvent[] = [];
@@ -1139,7 +1139,7 @@ describe("agent-service", () => {
     expect(getAgentRuntimeStatusManager().get(thread.id)?.queuedCount).toBe(1);
 
     await waitForQueuedRunRelease("hold:first");
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForAgentRuntimeKernelIdleForTest();
 
     expect(getAgentRuntimeStatusManager().get(thread.id)?.queuedCount).toBe(0);
     expect(appended.filter((event) => event.message.role === "user").map((event) => event.message.content)).toEqual([
