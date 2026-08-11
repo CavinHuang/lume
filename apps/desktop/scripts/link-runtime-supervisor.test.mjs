@@ -118,6 +118,57 @@ test('existing deployment validates the configured admin token before publishing
   }
 })
 
+test('existing deployment validates admin access when no admin token is configured', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lume-link-remote-admin-empty-'))
+  const originalFetch = globalThis.fetch
+  try {
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init)
+      if (request.url.endsWith('/v1/health')) return Response.json({ success: true, data: { ok: true, runtime: 'oomol-connect' } })
+      assert.equal(request.headers.has('authorization'), false)
+      return Response.json({ success: false }, { status: 401 })
+    }
+    const supervisor = createLinkRuntimeSupervisor({ configDir: root, resourceDir: join(root, 'missing'), getMasterKey: () => Buffer.alloc(32), fork: () => { throw new Error('must not fork') }, emit: () => {}, installBootstrap: () => {}, killProcessTree: () => {} })
+    await assert.rejects(supervisor.configure({ mode: 'remote', origin: 'https://connector.example.test', runtimeToken: 'runtime' }), /link_admin_access_failed/)
+    assert.equal(supervisor.getState().phase, 'offline')
+  } finally {
+    globalThis.fetch = originalFetch
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('stopping invalidates an in-flight remote connection before it can publish online', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lume-link-remote-race-'))
+  const originalFetch = globalThis.fetch
+  const emitted = []
+  const bootstraps = []
+  let resolveHealth
+  let healthStarted
+  const started = new Promise((resolve) => { healthStarted = resolve })
+  try {
+    globalThis.fetch = async (input) => {
+      const url = String(input)
+      if (url.endsWith('/api/providers')) throw new Error('stale connection must not probe admin access')
+      healthStarted()
+      return new Promise((resolve) => { resolveHealth = resolve })
+    }
+    const supervisor = createLinkRuntimeSupervisor({ configDir: root, resourceDir: join(root, 'missing'), getMasterKey: () => Buffer.alloc(32), fork: () => { throw new Error('must not fork') }, emit: (value) => { emitted.push(value) }, installBootstrap: (value) => { bootstraps.push(value) }, killProcessTree: () => {} })
+    const connecting = supervisor.configure({ mode: 'remote', origin: 'https://connector.example.test' })
+    await started
+    const disabled = await supervisor.disable()
+    resolveHealth(Response.json({ success: true, data: { ok: true, runtime: 'oomol-connect' } }))
+    const staleResult = await connecting
+    assert.equal(disabled.phase, 'disabled')
+    assert.equal(staleResult.phase, 'disabled')
+    assert.equal(supervisor.getState().phase, 'disabled')
+    assert.equal(emitted.some((value) => value.phase === 'online'), false)
+    assert.equal(bootstraps.at(-1).phase, 'disabled')
+  } finally {
+    globalThis.fetch = originalFetch
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('existing deployment can explicitly clear saved remote tokens', async () => {
   const root = mkdtempSync(join(tmpdir(), 'lume-link-remote-clear-'))
   const originalFetch = globalThis.fetch
