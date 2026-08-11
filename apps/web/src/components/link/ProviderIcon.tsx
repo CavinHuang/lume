@@ -6,19 +6,15 @@ import { useState } from "react";
 // `es/<Icon>/components/Mono.js` 仅 `import { memo } from 'react'` + 自家 style,自包含。
 import AnthropicMono from "@lobehub/icons/es/Anthropic/components/Mono";
 import CohereMono from "@lobehub/icons/es/Cohere/components/Mono";
-import FigmaMono from "@lobehub/icons/es/Figma/components/Mono";
-import GithubMono from "@lobehub/icons/es/Github/components/Mono";
-import MicrosoftMono from "@lobehub/icons/es/Microsoft/components/Mono";
-import NotionMono from "@lobehub/icons/es/Notion/components/Mono";
 import OpenAIMono from "@lobehub/icons/es/OpenAI/components/Mono";
 import PerplexityMono from "@lobehub/icons/es/Perplexity/components/Mono";
-import VercelMono from "@lobehub/icons/es/Vercel/components/Mono";
 import type { IconType } from "@lobehub/icons/es/types";
+import { LINK_ICONS } from "@/lib/generated/link-icons";
 import { colorForSeed, decideIconKind, initialOf } from "@/lib/provider-icon";
+import { SimpleIconGlyph } from "./SimpleIconGlyph";
 
 // service(小写)→ lobehub Mono 组件。keys 必须与 LOBEHUB_SERVICES 对齐。
 const LOBEHUB_MAP: Record<string, IconType> = {
-  github: GithubMono, notion: NotionMono, microsoft: MicrosoftMono, figma: FigmaMono, vercel: VercelMono,
   openai: OpenAIMono, anthropic: AnthropicMono, cohere: CohereMono, perplexity: PerplexityMono,
 };
 
@@ -35,6 +31,24 @@ export function ProviderIcon({ service, displayName, iconUrl, size = 24 }: Provi
   if (kind === "lobehub") {
     const Icon = LOBEHUB_MAP[service.toLowerCase()];
     if (Icon) return <Icon size={size} />;
+  }
+
+  if (kind === "simpleIcon") {
+    const icon = LINK_ICONS[service.toLowerCase()];
+    if (icon) {
+      return (
+        <span
+          className="shrink-0"
+          style={{
+            width: size,
+            height: size,
+            color: `color-mix(in oklab, #${icon.hex} 70%, var(--text-1))`,
+          }}
+        >
+          <SimpleIconGlyph path={icon.path} size={size} />
+        </span>
+      );
+    }
   }
 
   if (kind === "image" && iconUrl) {
@@ -56,8 +70,8 @@ function LetterBlock({ size, seed, letter }: { size: number; seed: string; lette
 }
 
 function ImageIcon({ src, alt, size, fallbackLetter, fallbackSeed }: { src: string; alt: string; size: number; fallbackLetter: string; fallbackSeed: string }) {
-  const [failed, setFailed] = useState(false);
-  if (failed) return <LetterBlock size={size} seed={fallbackSeed} letter={fallbackLetter} />;
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  if (failedSrc === src) return <LetterBlock size={size} seed={fallbackSeed} letter={fallbackLetter} />;
   return (
     <img
       src={src}
@@ -65,7 +79,7 @@ function ImageIcon({ src, alt, size, fallbackLetter, fallbackSeed }: { src: stri
       width={size}
       height={size}
       className="shrink-0 rounded object-contain"
-      onError={() => setFailed(true)}
+      onError={() => setFailedSrc(src)}
     />
   );
 }

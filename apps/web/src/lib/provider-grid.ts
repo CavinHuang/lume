@@ -1,7 +1,7 @@
 // 多列虚拟化布局参数（与 ProviderCard 固定高度对齐）
 export const PROVIDER_GRID = {
   minCardWidth: 260, // catalog 卡片最小宽度，驱动响应式列数
-  cardHeight: 128,   // ProviderCard 固定高度（h-[128px]）
+  cardHeight: 68,    // ProviderCard 紧凑行高度（对齐 wanta 68px）
   gap: 12,           // 对应 Tailwind gap-3
   overscanRows: 4,
 } as const;
@@ -12,7 +12,7 @@ export function computeColumnCount(
   minCardWidth: number = PROVIDER_GRID.minCardWidth,
 ): number {
   if (containerWidth <= 0) return 1;
-  return Math.max(1, Math.floor(containerWidth / minCardWidth));
+  return Math.max(1, Math.floor((containerWidth + PROVIDER_GRID.gap) / (minCardWidth + PROVIDER_GRID.gap)));
 }
 
 /** 条目数 + 列数 → 行数（列数 ≤0 时返回 0）。 */

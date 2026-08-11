@@ -10,12 +10,12 @@ describe("computeColumnCount", () => {
     const min = PROVIDER_GRID.minCardWidth;
     expect(computeColumnCount(min - 1)).toBe(1);
     expect(computeColumnCount(min)).toBe(1);
-    expect(computeColumnCount(min * 2 - 1)).toBe(1);
-    expect(computeColumnCount(min * 2)).toBe(2);
-    expect(computeColumnCount(min * 3)).toBe(3);
+    expect(computeColumnCount(min * 2)).toBe(1);
+    expect(computeColumnCount(min * 2 + PROVIDER_GRID.gap)).toBe(2);
+    expect(computeColumnCount(min * 3 + PROVIDER_GRID.gap * 2)).toBe(3);
   });
   test("自定义 minCardWidth 生效", () => {
-    expect(computeColumnCount(300, 100)).toBe(3);
+    expect(computeColumnCount(324, 100)).toBe(3);
   });
 });
 
