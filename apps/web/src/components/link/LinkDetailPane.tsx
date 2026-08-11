@@ -1,11 +1,12 @@
+import { useState } from "react";
 import type { LinkConnectionSummary, LinkOAuthConfigSummary, LinkProviderDetail } from "@lume/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { KeyRound, Settings2, ShieldCheck, X } from "lucide-react";
+import { ChevronDown, ChevronUp, KeyRound, ListChecks, Settings2, ShieldCheck, X } from "lucide-react";
 import { authLabel } from "@/lib/link-auth";
 import { ProviderIcon } from "./ProviderIcon";
 import { LinkAccountsList } from "./LinkAccountsList";
-import { resolveLinkOAuthSetupState } from "./link-provider-state";
+import { getSupportedLinkActions, resolveLinkOAuthSetupState } from "./link-provider-state";
 
 interface LinkDetailPaneProps {
   provider: LinkProviderDetail;
@@ -32,6 +33,10 @@ export function LinkDetailPane({
   const authTypes = provider.authTypes?.length ? provider.authTypes : provider.auth?.map((a) => String(a.type)) ?? [];
   const oauthSetup = resolveLinkOAuthSetupState(authTypes, oauthConfig?.configured ?? false);
   const supportsOAuth = oauthSetup !== "not_supported";
+  const actions = getSupportedLinkActions(provider.actions ?? []);
+  const [expandedActionService, setExpandedActionService] = useState<string | null>(null);
+  const actionsExpanded = expandedActionService === provider.service;
+  const visibleActions = actionsExpanded ? actions : actions.slice(0, 8);
   return (
     <div className="grid min-w-0 gap-3">
       <section className="grid gap-3 border-b border-[var(--lume-border-subtle)] pb-3">
@@ -119,6 +124,57 @@ export function LinkDetailPane({
         ) : null}
       </section>
 
+      <section className="grid gap-2.5 rounded-lg border border-[var(--lume-border-subtle)] bg-card p-3">
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-2.5">
+            <div className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-[var(--text-2)]">
+              <ListChecks className="size-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <h3 className="text-sm font-medium text-[var(--text-1)]">支持的能力</h3>
+                <Badge variant="secondary">{actions.length} 个</Badge>
+              </div>
+              <p className="mt-0.5 text-xs leading-relaxed text-[var(--text-3)]">
+                智能体可以通过此连接器调用以下操作。
+              </p>
+            </div>
+          </div>
+        </div>
+        {actions.length > 0 ? (
+          <div id={`link-actions-${provider.service}`} className="overflow-hidden rounded-md border border-[var(--lume-border-subtle)]">
+            {visibleActions.map((action) => (
+              <div key={action.id} className="grid gap-0.5 border-b border-[var(--lume-border-subtle)] px-3 py-2.5 last:border-b-0">
+                <div className="truncate text-xs font-medium text-[var(--text-1)]" title={action.id}>
+                  {formatActionName(action.name)}
+                </div>
+                <p className="line-clamp-2 text-xs leading-relaxed text-[var(--text-3)]">
+                  {action.description || action.id}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-md border border-dashed border-[var(--lume-border-subtle)] px-3 py-3 text-xs text-[var(--text-3)]">
+            此服务暂未声明可供智能体调用的能力。
+          </div>
+        )}
+        {actions.length > 8 ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="justify-center"
+            aria-expanded={actionsExpanded}
+            aria-controls={`link-actions-${provider.service}`}
+            onClick={() => setExpandedActionService(actionsExpanded ? null : provider.service)}
+          >
+            {actionsExpanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+            {actionsExpanded ? "收起能力列表" : `查看全部 ${actions.length} 个能力`}
+          </Button>
+        ) : null}
+      </section>
+
       <section className="grid gap-3">
         <div className="grid gap-1.5">
           <h3 className="px-0.5 text-sm font-medium text-[var(--text-1)]">提供方信息</h3>
@@ -126,9 +182,6 @@ export function LinkDetailPane({
             <DetailRow label="服务" value={provider.service} mono />
             {provider.categories?.length ? (
               <DetailRow label="分类" value={provider.categories.join("、")} />
-            ) : null}
-            {provider.actions?.length ? (
-              <DetailRow label="可用操作" value={`${provider.actions.length} 个`} />
             ) : null}
             <DetailRow label="认证方式" value={authTypes.length ? authTypes.map(authLabel).join("、") : "无需认证"} />
           </dl>
@@ -151,4 +204,8 @@ function DetailRow({ label, value, mono = false }: { label: string; value: strin
       <dd className={mono ? "truncate px-3 py-2 font-mono text-[var(--text-2)]" : "px-3 py-2 text-[var(--text-2)]"}>{value}</dd>
     </div>
   );
+}
+
+function formatActionName(name: string): string {
+  return name.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }

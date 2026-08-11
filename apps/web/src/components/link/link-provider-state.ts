@@ -1,3 +1,5 @@
+import type { LinkActionSummary } from "@lume/shared";
+
 export type LinkOAuthSetupState = "not_supported" | "optional" | "required" | "configured";
 
 export function resolveLinkOAuthSetupState(
@@ -16,4 +18,8 @@ const connectionNamePattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 
 export function isValidLinkConnectionName(value: string): boolean {
   return connectionNamePattern.test(value.trim());
+}
+
+export function getSupportedLinkActions(actions: readonly LinkActionSummary[]): LinkActionSummary[] {
+  return actions.filter((action) => action.execution?.locallyExecutable !== false);
 }

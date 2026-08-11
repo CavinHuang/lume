@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isValidLinkConnectionName, resolveLinkOAuthSetupState } from "./link-provider-state";
+import { getSupportedLinkActions, isValidLinkConnectionName, resolveLinkOAuthSetupState } from "./link-provider-state";
 
 describe("resolveLinkOAuthSetupState", () => {
   test("OAuth-only provider requires runtime configuration before its first connection", () => {
@@ -22,5 +22,16 @@ describe("isValidLinkConnectionName", () => {
     expect(isValidLinkConnectionName(" 工作账户 ")).toBe(false);
     expect(isValidLinkConnectionName("-work")).toBe(false);
     expect(isValidLinkConnectionName("a".repeat(65))).toBe(false);
+  });
+});
+
+describe("getSupportedLinkActions", () => {
+  test("hides catalog-only actions while retaining legacy runtimes without execution metadata", () => {
+    const actions = [
+      { id: "github.read", service: "github", name: "read", execution: { locallyExecutable: true, catalogOnly: false } },
+      { id: "github.catalog_only", service: "github", name: "catalog_only", execution: { locallyExecutable: false, catalogOnly: true } },
+      { id: "github.legacy", service: "github", name: "legacy" },
+    ];
+    expect(getSupportedLinkActions(actions).map((action) => action.id)).toEqual(["github.read", "github.legacy"]);
   });
 });

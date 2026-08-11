@@ -82,6 +82,10 @@ export interface LinkActionSummary {
   service: string;
   name: string;
   description?: string;
+  execution?: {
+    locallyExecutable: boolean;
+    catalogOnly: boolean;
+  };
 }
 
 export interface LinkActionDetail extends LinkActionSummary {
