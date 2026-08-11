@@ -205,14 +205,13 @@ async function unmount(root: Root | null) {
 
 describe('ProviderIcon', () => {
   test('lobehub service: 深导入链 + <Icon/> 渲染不抛,svg 与 <title> 落 DOM', async () => {
-    // 覆盖评审 Important #1+#2:9 个 Mono 深导入里最常被用的 github 分支。
+    // 覆盖最常用的 OpenAI Mono 深导入分支。
     // 若 @lobehub/icons 升级破坏深路径、或 Mono 重新拖入 @lobehub/ui(React 19 use hook),
     // 本测试会在加载/渲染期而非生产运行时崩溃。
-    const { env, root } = await render(<ProviderIcon service="github" size={20} />)
+    const { env, root } = await render(<ProviderIcon service="openai" size={20} />)
     try {
       expect(findByTag(env.container, 'svg')).toBeDefined()
-      // Github Mono 内含 <title>Github</title>,证明组件真实执行了渲染
-      expect(env.container.textContent).toContain('Github')
+      expect(env.container.textContent).toContain('OpenAI')
     } finally {
       await unmount(root)
       env.cleanup()
@@ -240,12 +239,23 @@ describe('ProviderIcon', () => {
     },
   )
 
-  test('非 lobehub service: 走首字母分支,产出含首字母的彩色块 DOM', async () => {
-    const { env, root } = await render(<ProviderIcon service="gmail" />)
+  test('通用 SaaS service: 渲染本地 Simple Icons 品牌图标', async () => {
+    const { env, root } = await render(<ProviderIcon service="stripe" size={20} />)
     try {
-      // gmail 不在 LOBEHUB_SERVICES 且无 iconUrl → decideIconKind 返回 "letter"
-      // → LetterBlock 渲染 initialOf("gmail") = "G"
-      expect(env.container.textContent).toBe('G')
+      expect(findByTag(env.container, 'svg')).toBeDefined()
+      expect(findByTag(env.container, 'span')?.style.color.toLowerCase()).toContain('635bff')
+    } finally {
+      await unmount(root)
+      env.cleanup()
+    }
+  })
+
+  test('非 lobehub service: 走首字母分支,产出含首字母的彩色块 DOM', async () => {
+    const { env, root } = await render(<ProviderIcon service="some_custom_app" />)
+    try {
+      // some_custom_app 不在 LOBEHUB_SERVICES/LINK_ICONS 且无 iconUrl → decideIconKind 返回 "letter"
+      // → LetterBlock 渲染 initialOf("some_custom_app") = "S"
+      expect(env.container.textContent).toBe('S')
       const block = findByTag(env.container, 'div')
       expect(block).toBeDefined()
       // colorForSeed 已执行,内联 background 写入 style
