@@ -175,6 +175,67 @@ describe('RuntimeEventContentBlock tool results', () => {
     expect(markup).toContain('data-tool-result-renderer="wiki.propose_changes"')
     expect(markup).not.toContain('1 个工具调用')
   })
+
+  test('renders memory mutations as a lightweight status line', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-memory',
+      type: 'assistant',
+      text: '',
+      thinking: '',
+      status: 'completed',
+      toolCalls: [],
+      blocks: [{
+        type: 'tool_call',
+        id: 'tool:memory-1',
+        toolCall: {
+          id: 'memory-1',
+          toolName: 'memory.remember',
+          input: { content: '默认使用中文' },
+          status: 'completed',
+          output: JSON.stringify({ data: { summary: '已记住 1 条信息' } }),
+        },
+      }],
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock message={message} threadId="thread-memory" />,
+    )
+
+    expect(markup).toContain('已记住 1 条信息')
+    expect(markup).not.toContain('data-tool-result-renderer="memory.remember"')
+    expect(markup).not.toContain('已完成')
+  })
+
+  test('renders background memory changes without rich detail controls', () => {
+    const message: RuntimeMessageView = {
+      id: 'memory-change-1',
+      type: 'system',
+      variant: 'memory_saved',
+      status: 'completed',
+      text: '后台记住了 1 条信息',
+      createdAt: '2026-08-12T00:00:00.000Z',
+      workspaceSlug: 'demo',
+      details: [{
+        mutationId: 'mutation-1',
+        action: 'created',
+        scope: 'global',
+        memoryIds: ['memory-1'],
+        summary: '已记住 1 条信息',
+        undoable: true,
+      }],
+      target: { section: 'memory', workspaceSlug: 'demo', libraryView: 'recent' },
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock message={message} threadId="thread-memory" />,
+    )
+
+    expect(markup).toContain('后台记住了 1 条信息')
+    expect(markup).toContain('打开')
+    expect(markup).not.toContain('>已记住 1 条信息<')
+    expect(markup).not.toContain('撤销')
+    expect(markup).not.toContain('查看')
+  })
 })
 
 describe('RuntimeEventContentBlock user attachments', () => {
