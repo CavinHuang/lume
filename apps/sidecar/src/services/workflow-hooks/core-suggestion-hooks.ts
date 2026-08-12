@@ -23,6 +23,14 @@ export function createCoreSuggestionHookHandlers(): LumeWorkflowHookHandlerRegis
         return { effects: [] };
       }
 
+      const metadata = event.messageMetadata;
+      if (
+        typeof metadata?.automationJobId === "string"
+        || typeof metadata?.automationTrigger === "string"
+      ) {
+        return { effects: [] };
+      }
+
       // fire-and-forget：handler 不 await，立即返回；评估在后台进行。
       // .catch() 兜底：建议失败绝不冒泡到 hook-bus / run 完成路径。
       void context.services.suggestion
