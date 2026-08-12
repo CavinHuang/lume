@@ -232,7 +232,7 @@ function FallbackSelectRow(props: {
         </Button>
 
         {open && (
-          <div className="absolute left-0 top-full z-50 mt-1 min-w-full overflow-hidden rounded-lg border border-border/60 bg-popover shadow-lg">
+          <div className="absolute left-0 top-full z-50 mt-1 max-h-[min(380px,calc(100vh-160px))] min-w-full overflow-x-hidden overflow-y-auto overscroll-contain rounded-lg border border-border/60 bg-popover shadow-lg">
             <ModelOptionList
               groups={groups}
               onSelect={(option) => {
@@ -514,7 +514,7 @@ export function DefaultModelStrategyPanel() {
           </Button>
 
           {defaultModelOpen && (
-            <div className="absolute left-0 top-full z-50 mt-1 min-w-full overflow-hidden rounded-lg border border-border/60 bg-popover shadow-lg">
+            <div className="absolute left-0 top-full z-50 mt-1 max-h-[min(380px,calc(100vh-160px))] min-w-full overflow-x-hidden overflow-y-auto overscroll-contain rounded-lg border border-border/60 bg-popover shadow-lg">
               <ModelOptionList groups={defaultModelGroups} onSelect={handleDefaultModelSelect} />
             </div>
           )}
