@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import YAML from "yaml";
+import { createMemoryV2Store } from "./markdown-store";
 import { MEMORY_SCHEMA_VERSION, migrateMemoryScopeRootIfNeeded } from "./migration";
 
 describe("memory schema migration", () => {
@@ -57,7 +58,10 @@ describe("memory schema migration", () => {
 
     migrateMemoryScopeRootIfNeeded(root, "workspace");
 
-    const migrated = readFileSync(note, "utf-8");
+    const migratedPath = join(root, "entries", readdirSync(join(root, "entries"))[0]!);
+    const migrated = readFileSync(migratedPath, "utf-8");
+    expect(migratedPath).not.toBe(note);
+    expect(existsSync(note)).toBe(false);
     expect(migrated).toContain("id: lume-app-development");
     expect(migrated).toContain("semantic_role: state");
     expect(migrated).toContain("facets:");
@@ -93,5 +97,47 @@ describe("memory schema migration", () => {
 
     expect(readFileSync(note, "utf-8")).toContain("id: mem_test");
     rmSync(parent, { recursive: true, force: true });
+  });
+
+  test("repairs generated entry ids in workspaces already marked as schema 3", () => {
+    const parent = mkdtempSync(join(tmpdir(), "lume-memory-migration-v3-"));
+    const root = join(parent, "memory");
+    const entryPath = join(root, "entries", "2026-07-28-mem_existing.md");
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    mkdirSync(dirname(entryPath), { recursive: true });
+    writeFileSync(join(root, ".memory-schema.json"), `${JSON.stringify({
+      version: 3,
+      migratedAt: "2026-07-28T15:00:00.000Z"
+    }, null, 2)}\n`, "utf-8");
+    writeFileSync(entryPath, `---\n${YAML.stringify({
+      id: "2026-07-28-mem_existing",
+      kind: "state",
+      scope: "global",
+      status: "active",
+      created: "2026-07-28T15:00:00.000Z",
+      updated: "2026-07-28T15:00:00.000Z",
+      source: { type: "manual" },
+      confidence: "medium",
+      pinned: false,
+      tags: ["legacy"]
+    }).trimEnd()}\n---\n旧版迁移后的记忆\n`, "utf-8");
+
+    try {
+      process.env.LUME_CONFIG_DIR = parent;
+      const marker = migrateMemoryScopeRootIfNeeded(root, "global");
+      expect(marker.version).toBe(4);
+      expect(readFileSync(entryPath, "utf-8")).toContain("id: mem_existing");
+
+      const store = createMemoryV2Store();
+      const updated = store.updateEntryStatus({ scope: "global", id: "mem_existing", status: "archived" });
+      expect(updated.frontmatter.id).toBe("mem_existing");
+      expect(updated.frontmatter.status).toBe("archived");
+      expect(store.deleteEntry({ scope: "global", id: "mem_existing" })).toMatchObject({ ok: true, id: "mem_existing" });
+      expect(existsSync(entryPath)).toBe(false);
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.LUME_CONFIG_DIR;
+      else process.env.LUME_CONFIG_DIR = previousConfigDir;
+      rmSync(parent, { recursive: true, force: true });
+    }
   });
 });

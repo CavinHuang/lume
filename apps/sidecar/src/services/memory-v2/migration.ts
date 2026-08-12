@@ -3,7 +3,7 @@ import { basename, dirname, join } from "node:path";
 import YAML from "yaml";
 import type { MemoryV2Scope } from "./types";
 
-export const MEMORY_SCHEMA_VERSION = 3;
+export const MEMORY_SCHEMA_VERSION = 4;
 const FRONTMATTER_RE = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 const GENERATED_MEMORY_FILENAME_RE = /^\d{4}-\d{2}-\d{2}-(mem_[A-Za-z0-9][A-Za-z0-9_-]*)\.md$/;
 
@@ -103,8 +103,10 @@ function migrateEntries(root: string, scope: MemoryV2Scope): void {
       : new Date().toISOString();
     const tags = stringList(document.frontmatter.tags);
     const kind = normalizeKind(document.frontmatter.kind);
+    const id = canonicalEntryId(path, document.frontmatter.id);
     const frontmatter = {
       ...document.frontmatter,
+      id,
       kind,
       scope,
       semantic_role: inferRole(kind, tags),
@@ -115,7 +117,12 @@ function migrateEntries(root: string, scope: MemoryV2Scope): void {
         ? document.frontmatter.evidence_refs
         : evidenceFromLegacySource(document.frontmatter.source)
     };
-    writeDocument(path, frontmatter, document.body);
+    const targetPath = canonicalEntryPath(path, id, document.frontmatter.created);
+    if (targetPath !== path && existsSync(targetPath)) {
+      throw new Error(`Duplicate migrated entry: ${targetPath}`);
+    }
+    writeDocument(targetPath, frontmatter, document.body);
+    if (targetPath !== path) unlinkSync(path);
   }
 }
 
@@ -188,6 +195,20 @@ function legacyMarkdownDocument(path: string, source: string, scope: MemoryV2Sco
     },
     body: source
   };
+}
+
+function canonicalEntryId(path: string, value: unknown): string {
+  const generatedId = basename(path).match(GENERATED_MEMORY_FILENAME_RE)?.[1];
+  if (generatedId) return generatedId;
+  if (typeof value === "string" && value.trim() && !/[\\/]/.test(value)) return value.trim();
+  return basename(path, ".md");
+}
+
+function canonicalEntryPath(path: string, id: string, created: unknown): string {
+  if (GENERATED_MEMORY_FILENAME_RE.test(basename(path))) return path;
+  const createdDate = typeof created === "string" ? created.match(/^\d{4}-\d{2}-\d{2}/)?.[0] : undefined;
+  const date = createdDate ?? statSync(path).mtime.toISOString().slice(0, 10);
+  return join(dirname(path), `${date}-${id}.md`);
 }
 
 function writeDocument(path: string, frontmatter: Record<string, unknown>, body: string): void {
