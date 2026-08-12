@@ -3,7 +3,9 @@ import { basename, dirname, join } from "node:path";
 import YAML from "yaml";
 import type { MemoryV2Scope } from "./types";
 
-export const MEMORY_SCHEMA_VERSION = 3;
+export const MEMORY_SCHEMA_VERSION = 4;
+const FRONTMATTER_RE = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+const GENERATED_MEMORY_FILENAME_RE = /^\d{4}-\d{2}-\d{2}-(mem_[A-Za-z0-9][A-Za-z0-9_-]*)\.md$/;
 
 interface MemorySchemaMarker {
   version: number;
@@ -42,7 +44,9 @@ export function migrateMemoryScopeRootIfNeeded(root: string, scope: MemoryV2Scop
     }
     cpSync(root, backupPath, { recursive: true, errorOnExist: true });
     cpSync(root, tempPath, { recursive: true, errorOnExist: true });
-    migrateEntries(tempPath, scope);
+    const idMap = migrateEntries(tempPath, scope);
+    migratePendingReferences(tempPath, idMap);
+    invalidateIdDerivedViews(tempPath, idMap);
     rmSync(join(tempPath, "persona.md"), { force: true });
     validateEntries(tempPath);
     const marker: MemorySchemaMarker = {
@@ -91,30 +95,71 @@ function openMigrationLock(path: string): number {
   }
 }
 
-function migrateEntries(root: string, scope: MemoryV2Scope): void {
+function migrateEntries(root: string, scope: MemoryV2Scope): Map<string, string> {
   const entriesDir = join(root, "entries");
-  if (!existsSync(entriesDir)) return;
-  for (const path of listFiles(entriesDir, ".md")) {
-    const document = parseDocument(path, scope);
+  const idMap = new Map<string, string>();
+  if (!existsSync(entriesDir)) return idMap;
+  const entries = listFiles(entriesDir, ".md").map((path) => ({ path, document: parseDocument(path, scope) }));
+  for (const { path, document } of entries) {
+    const previousId = typeof document.frontmatter.id === "string" ? document.frontmatter.id : undefined;
+    const id = canonicalEntryId(path, previousId);
+    if (previousId && previousId !== id) idMap.set(previousId, id);
+  }
+  for (const { path, document } of entries) {
     const now = typeof document.frontmatter.updated === "string"
       ? document.frontmatter.updated
       : new Date().toISOString();
     const tags = stringList(document.frontmatter.tags);
     const kind = normalizeKind(document.frontmatter.kind);
+    const id = canonicalEntryId(path, document.frontmatter.id);
     const frontmatter = {
       ...document.frontmatter,
+      id,
       kind,
       scope,
       semantic_role: inferRole(kind, tags),
       facets: stringList(document.frontmatter.facets ?? tags),
+      related: rewriteReferenceList(document.frontmatter.related, idMap),
+      supersedes: rewriteReferenceList(document.frontmatter.supersedes, idMap),
+      superseded_by: rewriteReference(document.frontmatter.superseded_by, idMap),
       revision: positiveInteger(document.frontmatter.revision, 1),
       last_confirmed_at: document.frontmatter.last_confirmed_at ?? now,
       evidence_refs: Array.isArray(document.frontmatter.evidence_refs)
         ? document.frontmatter.evidence_refs
         : evidenceFromLegacySource(document.frontmatter.source)
     };
-    writeDocument(path, frontmatter, document.body);
+    const targetPath = canonicalEntryPath(path, id, document.frontmatter.created);
+    if (targetPath !== path && existsSync(targetPath)) {
+      throw new Error(`Duplicate migrated entry: ${targetPath}`);
+    }
+    writeDocument(targetPath, frontmatter, document.body);
+    if (targetPath !== path) unlinkSync(path);
   }
+  return idMap;
+}
+
+function migratePendingReferences(root: string, idMap: Map<string, string>): void {
+  const pendingRoot = join(root, "pending");
+  for (const type of ["conflicts", "stale", "low-confidence"]) {
+    const dir = join(pendingRoot, type);
+    if (!existsSync(dir)) continue;
+    for (const path of listFiles(dir, ".md")) {
+      const document = parseDocument(path);
+      const existing = document.frontmatter.existing;
+      if (!existing || typeof existing !== "object" || Array.isArray(existing)) continue;
+      const ids = rewriteReferenceList((existing as Record<string, unknown>).ids, idMap);
+      writeDocument(path, {
+        ...document.frontmatter,
+        existing: ids.length > 0 ? { ...(existing as Record<string, unknown>), ids } : undefined
+      }, document.body);
+    }
+  }
+}
+
+function invalidateIdDerivedViews(root: string, idMap: Map<string, string>): void {
+  if (idMap.size === 0) return;
+  rmSync(join(root, "MEMORY.md"), { force: true });
+  rmSync(join(root, "capsules"), { recursive: true, force: true });
 }
 
 function validateEntries(root: string): void {
@@ -130,9 +175,9 @@ function validateEntries(root: string): void {
 
 function parseDocument(path: string, scope?: MemoryV2Scope): { frontmatter: Record<string, unknown>; body: string } {
   const source = readFileSync(path, "utf-8");
-  const match = source.match(/^---\n([\s\S]*?)\n---\n?/);
+  const match = source.match(FRONTMATTER_RE);
   if (!match) {
-    if (scope && isLegacyMarkdownNote(source)) {
+    if (scope && isLegacyMarkdownNote(path, source)) {
       return legacyMarkdownDocument(path, source, scope);
     }
     throw new Error(`Missing frontmatter: ${path}`);
@@ -144,17 +189,20 @@ function parseDocument(path: string, scope?: MemoryV2Scope): { frontmatter: Reco
 
 /**
  * Older workspaces occasionally stored durable Markdown notes directly under
- * entries/. Only heading-led notes are migrated implicitly; arbitrary plain
- * text is still treated as corruption so a failed migration remains atomic.
+ * entries/. Heading-led notes and non-empty files with the generated memory
+ * filename are migrated; unrelated plain text still fails atomically.
  */
-function isLegacyMarkdownNote(source: string): boolean {
+function isLegacyMarkdownNote(path: string, source: string): boolean {
   const trimmed = source.trimStart();
-  return /^#{1,6}\s+\S+/.test(trimmed) && trimmed.includes("\n") && trimmed.trim().length >= 64;
+  const isHeadingLedNote = /^#{1,6}\s+\S+/.test(trimmed) && trimmed.includes("\n") && trimmed.trim().length >= 64;
+  const hasGeneratedFilename = GENERATED_MEMORY_FILENAME_RE.test(basename(path));
+  return isHeadingLedNote || (hasGeneratedFilename && Boolean(trimmed.trim()) && !trimmed.startsWith("---"));
 }
 
 function legacyMarkdownDocument(path: string, source: string, scope: MemoryV2Scope): { frontmatter: Record<string, unknown>; body: string } {
   const timestamp = statSync(path).mtime.toISOString();
-  const id = basename(path, ".md");
+  const filename = basename(path);
+  const id = filename.match(GENERATED_MEMORY_FILENAME_RE)?.[1] ?? basename(path, ".md");
   return {
     frontmatter: {
       id,
@@ -183,6 +231,29 @@ function legacyMarkdownDocument(path: string, source: string, scope: MemoryV2Sco
     },
     body: source
   };
+}
+
+function canonicalEntryId(path: string, value: unknown): string {
+  const generatedId = basename(path).match(GENERATED_MEMORY_FILENAME_RE)?.[1];
+  if (generatedId) return generatedId;
+  if (typeof value === "string" && value.trim() && !/[\\/]/.test(value)) return value.trim();
+  return basename(path, ".md");
+}
+
+function canonicalEntryPath(path: string, id: string, created: unknown): string {
+  if (GENERATED_MEMORY_FILENAME_RE.test(basename(path))) return path;
+  const createdDate = typeof created === "string" ? created.match(/^\d{4}-\d{2}-\d{2}/)?.[0] : undefined;
+  const date = createdDate ?? statSync(path).mtime.toISOString().slice(0, 10);
+  return join(dirname(path), `${date}-${id}.md`);
+}
+
+function rewriteReference(value: unknown, idMap: Map<string, string>): string | null {
+  if (typeof value !== "string") return null;
+  return idMap.get(value) ?? value.match(/^\d{4}-\d{2}-\d{2}-(mem_[A-Za-z0-9][A-Za-z0-9_-]*)$/)?.[1] ?? value;
+}
+
+function rewriteReferenceList(value: unknown, idMap: Map<string, string>): string[] {
+  return stringList(value).map((id) => rewriteReference(id, idMap)!).filter((id, index, all) => all.indexOf(id) === index);
 }
 
 function writeDocument(path: string, frontmatter: Record<string, unknown>, body: string): void {

@@ -9,15 +9,9 @@ export function buildRuntimeUserMessageInput(input: {
   userMessage: string;
   contentBlocks?: ContentBlockParam[];
   attachments?: AgentMessageAttachmentInput[];
-  visionSupported: boolean;
   workspaceSlug?: string;
   threadId: string;
 }): RuntimeUserMessageInput {
-  const hasImageInput = (input.contentBlocks?.some((block) => block.type === "image") ?? false)
-    || (input.attachments?.some((attachment) => attachment.mediaType.toLowerCase().startsWith("image/")) ?? false);
-  if (hasImageInput && !input.visionSupported) {
-    throw new Error("当前模型不支持图片输入，请切换支持视觉的模型");
-  }
   const extraBlocks = input.contentBlocks ?? [];
   const imageBlocks = buildImageAttachmentBlocks(input);
   if (!extraBlocks.length && !imageBlocks.length) {
@@ -35,7 +29,6 @@ export function buildRuntimeUserMessageInput(input: {
 
 function buildImageAttachmentBlocks(input: {
   attachments?: AgentMessageAttachmentInput[];
-  visionSupported: boolean;
   workspaceSlug?: string;
   threadId: string;
 }): ContentBlockParam[] {
