@@ -284,6 +284,11 @@ test('desktop package limits the Agent Island helper to macOS resources', () => 
 })
 
 test('desktop package builds and verifies the pinned OpenConnector resource', () => {
+  const workflow = readFileSync(resolve(REPO_ROOT, '.github/workflows/release-desktop.yml'), 'utf8')
+  const preparationSteps = workflow.match(/- name: Prepare desktop bundle resources[\s\S]*?(?=\n\s+- name:)/g) ?? []
+  const inputVerifier = readFileSync(resolve(REPO_ROOT, 'scripts/verify-desktop-package-inputs.mjs'), 'utf8')
+  const artifactVerifier = readFileSync(resolve(REPO_ROOT, 'scripts/verify-desktop-package-artifacts.mjs'), 'utf8')
+
   assert.deepEqual(pkg.build.extraResources.find((entry) => entry.to === 'openconnector'), {
     from: 'resources/openconnector',
     to: 'openconnector',
@@ -298,6 +303,13 @@ test('desktop package builds and verifies the pinned OpenConnector resource', ()
   assert.match(buildScript, /"migrations"/)
   assertContainsBefore(pkg.scripts.package, 'build-openconnector-resources.mjs', 'build-openconnector-bundle.mjs')
   assertContainsBefore(pkg.scripts.package, 'build-openconnector-bundle.mjs --verify', 'run-electron-builder.mjs')
+  assert.equal(preparationSteps.length, 2)
+  for (const step of preparationSteps) {
+    assertContainsBefore(step, 'build-openconnector-resources.mjs', 'build-openconnector-bundle.mjs')
+    assertContainsBefore(step, 'build-openconnector-bundle.mjs', 'build-openconnector-bundle.mjs --verify')
+  }
+  assert.match(inputVerifier, /resources", "openconnector", "openconnector\.mjs"/)
+  assert.match(artifactVerifier, /verifyOpenConnectorResources/)
 })
 
 test('OpenConnector resource verification fails closed on a checksum mismatch', () => {

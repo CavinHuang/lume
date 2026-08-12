@@ -30,6 +30,7 @@ verifyPackagedApplications(files);
 verifyNativeResources(files, target);
 verifyRipgrepResources(files, target);
 verifySidecarResources(files, target);
+verifyOpenConnectorResources(files);
 
 writeSummary(`Local Electron package artifacts for ${target}`, files);
 console.error(`[verify-package-artifacts] ok for ${target}`);
@@ -163,6 +164,30 @@ function verifySidecarResources(files, desktopTarget) {
     const windowsSandbox = /\/resources\/sidecar\/node_modules\/@microsoft\/mxc-sdk\/bin\/x64\/wxc-exec\.exe$/i;
     if (!files.some((file) => windowsSandbox.test(file))) {
       fail("missing packaged Windows MXC sandbox runtime");
+    }
+  }
+}
+
+function verifyOpenConnectorResources(files) {
+  const metadataFiles = files.filter((file) => /\/resources\/openconnector\/lume-resource\.json$/i.test(file));
+  const packagedApplications = files.filter((file) => /\/resources\/app\.asar$/i.test(file));
+  if (metadataFiles.length !== packagedApplications.length) {
+    fail(`expected one OpenConnector resource per packaged application, got ${metadataFiles.length} for ${packagedApplications.length}`);
+  }
+
+  const expected = JSON.parse(readFileSync(resolve(REPO_ROOT, "scripts", "openconnector-resource.json"), "utf8"));
+  for (const metadataFile of metadataFiles) {
+    const root = dirname(metadataFile);
+    for (const relativePath of ["openconnector.mjs", join("catalog", "apps"), "migrations"]) {
+      if (!existsSync(join(root, relativePath))) {
+        fail(`missing packaged OpenConnector resource: ${join(root, relativePath)}`);
+      }
+    }
+    const actual = JSON.parse(readFileSync(metadataFile, "utf8"));
+    for (const key of ["version", "tag", "commit", "archiveSha256"]) {
+      if (actual[key] !== expected[key]) {
+        fail(`packaged OpenConnector metadata mismatch: ${key}`);
+      }
     }
   }
 }

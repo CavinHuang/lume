@@ -32,6 +32,7 @@ const desktopMain = resolve(DESKTOP_DIR, "dist", "main", "main.mjs");
 const desktopPreload = resolve(DESKTOP_DIR, "dist", "preload", "preload.cjs");
 const browserAuthPreload = resolve(DESKTOP_DIR, "dist", "preload", "browser-auth-preload.cjs");
 const browserGuestPreload = resolve(DESKTOP_DIR, "dist", "preload", "browser-guest-preload.cjs");
+const openConnectorMetadata = resolve(DESKTOP_DIR, "resources", "openconnector", "lume-resource.json");
 const requiredFiles = [
   desktopMain,
   desktopPreload,
@@ -49,6 +50,10 @@ const requiredFiles = [
   sharpNative,
   nativeBinary,
   ripgrepBinary,
+  resolve(DESKTOP_DIR, "resources", "openconnector", "openconnector.mjs"),
+  resolve(DESKTOP_DIR, "resources", "openconnector", "catalog", "apps"),
+  resolve(DESKTOP_DIR, "resources", "openconnector", "migrations"),
+  openConnectorMetadata,
   resolve(REPO_ROOT, "apps", "web", "dist", "index.html"),
   resolve(REPO_ROOT, "apps", "web", "dist", "boot-theme.js"),
   resolve(REPO_ROOT, "apps", "web", "dist", "boot.css"),
@@ -78,7 +83,7 @@ if (pkg.devDependencies?.["electron-updater"] !== "6.8.9" || pkg.dependencies?.[
 }
 
 const resources = pkg.build?.extraResources ?? [];
-for (const expected of ["../web/dist", "../web/src/assets/imgs/logo.png", "resources/default-skills.tar", "resources/sidecar", "resources/bin", "resources/natives", "resources/ripgrep"]) {
+for (const expected of ["../web/dist", "../web/src/assets/imgs/logo.png", "resources/default-skills.tar", "resources/sidecar", "resources/bin", "resources/natives", "resources/ripgrep", "resources/openconnector"]) {
   if (!resources.some((entry) => entry?.from === expected)) {
     fail(`electron-builder extraResources missing ${expected}`);
   }
@@ -93,7 +98,18 @@ if (JSON.stringify(appFiles) !== JSON.stringify(expectedAppFiles)) {
 verifyPngIsReadable(resolve(DESKTOP_DIR, "assets", "icon.png"));
 verifyWebCsp(resolve(REPO_ROOT, "apps", "web", "dist", "index.html"));
 verifyDesktopRuntime(desktopMain, desktopPreload, sidecarBundle);
+verifyOpenConnectorMetadata(openConnectorMetadata);
 console.error("[verify-package-inputs] ok");
+
+function verifyOpenConnectorMetadata(file) {
+  const expected = JSON.parse(readFileSync(resolve(REPO_ROOT, "scripts", "openconnector-resource.json"), "utf8"));
+  const actual = JSON.parse(readFileSync(file, "utf8"));
+  for (const key of ["version", "tag", "commit", "archiveSha256"]) {
+    if (actual[key] !== expected[key]) {
+      fail(`OpenConnector resource metadata mismatch: ${key}`);
+    }
+  }
+}
 
 function verifyPngIsReadable(file) {
   const bytes = readFileSync(file);

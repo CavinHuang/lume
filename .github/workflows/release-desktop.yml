@@ -186,6 +186,9 @@ jobs:
           node scripts/build-node-repl-resources.mjs
           node scripts/build-desktop-host-resources.mjs --target aarch64-apple-darwin
           node scripts/build-desktop-host-resources.mjs --target x86_64-apple-darwin
+          node scripts/build-openconnector-resources.mjs
+          bun scripts/build-openconnector-bundle.mjs
+          node scripts/build-openconnector-bundle.mjs --verify
       - name: Verify desktop package inputs
         run: bun scripts/verify-desktop-package-inputs.mjs
       - name: Build Electron package
@@ -346,6 +349,9 @@ jobs:
           bun scripts/build-default-skills-archive.mjs
           node scripts/build-node-repl-resources.mjs
           node scripts/build-desktop-host-resources.mjs
+          node scripts/build-openconnector-resources.mjs
+          bun scripts/build-openconnector-bundle.mjs
+          node scripts/build-openconnector-bundle.mjs --verify
       - name: Verify desktop package inputs
         run: bun scripts/verify-desktop-package-inputs.mjs
       - name: Build Electron package
