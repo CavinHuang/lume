@@ -19,6 +19,7 @@
  */
 
 import type {
+  SuggestionCandidate,
   SuggestionFeedback,
   SuggestionKind,
   SuggestionRecord,
@@ -240,9 +241,14 @@ export async function runAnalysisAndPersist(
       workspaceSlug: ctx.workspaceSlug,
     });
 
-    const filtered = candidates.filter(
-      (c) => !neverKeys.has(c.duplicateKey) && !suggestedKeys.has(c.duplicateKey),
-    );
+    const filtered: SuggestionCandidate[] = [];
+    for (const candidate of candidates) {
+      if (neverKeys.has(candidate.duplicateKey) || suggestedKeys.has(candidate.duplicateKey)) {
+        continue;
+      }
+      suggestedKeys.add(candidate.duplicateKey);
+      filtered.push(candidate);
+    }
 
     for (const candidate of filtered) {
       persistSuggestion(candidate, { workspaceSlug: ctx.workspaceSlug });

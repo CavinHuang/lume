@@ -378,6 +378,29 @@ describe("runAnalysisAndPersist", () => {
     expect(spies.broadcaster).toHaveBeenCalledTimes(1);
   });
 
+  test("同批分析候选 duplicateKey 重复时只落库一次", async () => {
+    state.analysisCandidates = [
+      {
+        ...automationCandidate,
+        duplicateKey: "todo:记录未完成任务",
+        kind: "todo",
+        action: { type: "open_memory_board" },
+      },
+      {
+        ...automationCandidate,
+        duplicateKey: "todo:记录未完成任务",
+        kind: "todo",
+        action: { type: "open_memory_board" },
+      },
+    ];
+
+    const count = await runAnalysisAndPersist({ workspaceSlug: "ws" });
+
+    expect(count).toBe(1);
+    expect(spies.persistSuggestion).toHaveBeenCalledTimes(1);
+    expect(spies.broadcaster).toHaveBeenCalledTimes(1);
+  });
+
   test("runAnalysis 抛错 → fail-open 返回 0", async () => {
     state.analysisThrow = true;
     const count = await runAnalysisAndPersist({ workspaceSlug: "ws" });

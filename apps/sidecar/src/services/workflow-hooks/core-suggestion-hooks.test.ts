@@ -66,6 +66,24 @@ describe("core.suggestion.completion hook", () => {
     ]);
   });
 
+  test("skips suggestion evaluation for automation runs", async () => {
+    const calls: unknown[] = [];
+    const handlers = createCoreSuggestionHookHandlers();
+
+    const result = await handlers["core.suggestion.completion"]!(
+      afterCompleteEvent({ messageMetadata: { automationJobId: "job-1" } }),
+      createContext({
+        evaluateSessionSuggestions: async (input) => {
+          calls.push(input);
+        }
+      })
+    );
+    await flushMicrotasks();
+
+    expect(result.effects).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
   test("does not await evaluateSessionSuggestions — resolves before the eval completes", async () => {
     let evalResolved = false;
     let resolveEval!: () => void;
