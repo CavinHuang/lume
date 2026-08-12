@@ -239,6 +239,67 @@ describe('RuntimeEventContentBlock tool results', () => {
 
     expect(markup).not.toContain('data-coding-file-changes-summary="true"')
   })
+
+  test('renders terminal coding warnings even when no files changed', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-coding-warning',
+      type: 'assistant',
+      text: '后台继续验证',
+      thinking: '',
+      status: 'completed',
+      toolCalls: [],
+      blocks: [],
+      codingReport: {
+        status: 'unverified',
+        workspaceChanged: false,
+        changedFiles: [],
+        externalChangedFiles: [],
+        pendingBackground: true,
+      },
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock message={message} threadId="thread-coding" />,
+    )
+
+    expect(markup).toContain('data-coding-file-changes-summary="true"')
+    expect(markup).toContain('后台验证仍在运行')
+    expect(markup).not.toContain('个文件已修改')
+  })
+
+  test('limits the initial coding file rows', () => {
+    const fileChanges = Array.from({ length: 7 }, (_, index) => ({
+      path: `src/file-${index + 1}.ts`,
+      addedLines: index + 1,
+      removedLines: 0,
+    }))
+    const message: RuntimeMessageView = {
+      id: 'assistant-coding-many-files',
+      type: 'assistant',
+      text: '批量修改完成',
+      thinking: '',
+      status: 'completed',
+      toolCalls: [],
+      blocks: [],
+      codingReport: {
+        runId: 'run-many-files',
+        status: 'verified',
+        workspaceChanged: true,
+        changedFiles: fileChanges.map((change) => change.path),
+        fileChanges,
+        externalChangedFiles: [],
+        pendingBackground: false,
+      },
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock message={message} threadId="thread-coding" />,
+    )
+
+    expect(markup).toContain('src/file-5.ts')
+    expect(markup).not.toContain('src/file-6.ts')
+    expect(markup).toContain('再显示 2 个文件')
+  })
 })
 
 describe('RuntimeEventContentBlock user attachments', () => {

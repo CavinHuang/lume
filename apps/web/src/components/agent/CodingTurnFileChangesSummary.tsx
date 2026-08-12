@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSetAtom } from 'jotai'
-import { FileDiff, Loader2 } from 'lucide-react'
+import { ChevronDown, FileDiff, Loader2, TriangleAlert } from 'lucide-react'
 import { AGENT_IPC_CHANNELS, type CodingDiffPayload, type RuntimeCodingFileChange, type RuntimeCodingReport } from '@lume/shared'
 import { codingReviewPanelActionAtom } from '@/atoms'
 import { codingReviewFileKey } from '@/atoms/right-panel-atoms'
@@ -12,6 +12,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { sidecarCall } from '@/lib/desktop-api'
 import type { OpenThreadFile } from './AgentFileReference'
+
+const INITIAL_FILE_LIMIT = 5
 
 export function collectCodingTurnChanges(report: RuntimeCodingReport): RuntimeCodingFileChange[] {
   const source = report.changeSet?.files.length
@@ -42,6 +44,9 @@ export function CodingTurnFileChangesSummary({
 }) {
   const codingReviewPanelAction = useSetAtom(codingReviewPanelActionAtom)
   const [liveChangeSet, setLiveChangeSet] = useState(report.changeSet)
+  const enrichedFilesKeyRef = useRef<string>()
+  const [showAllChanges, setShowAllChanges] = useState(false)
+  const changedFilesKey = report.changedFiles.join('\u0000')
   const effectiveReport = useMemo(
     () => liveChangeSet ? { ...report, changeSet: liveChangeSet } : report,
     [liveChangeSet, report],
@@ -53,17 +58,25 @@ export function CodingTurnFileChangesSummary({
   const removedLines = effectiveReport.changeSet?.totalRemovedLines
     ?? report.totalRemovedLines
     ?? changes.reduce((sum, change) => sum + (change.removedLines ?? 0), 0)
+  const visibleChanges = showAllChanges ? changes : changes.slice(0, INITIAL_FILE_LIMIT)
+  const hiddenChangeCount = changes.length - visibleChanges.length
+  const warning = codingReportWarning(report)
+
+  useEffect(() => {
+    setShowAllChanges(false)
+  }, [changedFilesKey])
 
   useEffect(() => {
     setLiveChangeSet(report.changeSet)
-  }, [report.changeSet])
+  }, [changedFilesKey, report.changeSet])
 
   useEffect(() => {
     const hasFileStats = changes.length > 0 && changes.every((change) => (
       change.addedLines !== undefined && change.removedLines !== undefined
     ))
-    if (report.changeSet || report.changedFiles.length === 0 || hasFileStats) return
+    if (report.changeSet || report.changedFiles.length === 0 || hasFileStats || enrichedFilesKeyRef.current === changedFilesKey) return
     let cancelled = false
+    enrichedFilesKeyRef.current = changedFilesKey
     void sidecarCall<RuntimeCodingReport['changeSet']>(AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET, {
       threadId,
       paths: report.changedFiles,
@@ -75,7 +88,7 @@ export function CodingTurnFileChangesSummary({
     return () => {
       cancelled = true
     }
-  }, [changes, report.changeSet, report.changedFiles, threadId])
+  }, [changedFilesKey, changes, report.changeSet, report.changedFiles, threadId])
 
   useEffect(() => {
     codingReviewPanelAction({
@@ -91,7 +104,7 @@ export function CodingTurnFileChangesSummary({
     })
   }, [codingReviewPanelAction, report.gitActions, report.phase, report.recommendedVerificationCommands, report.review, report.verificationRecords, threadId])
 
-  if (changes.length === 0) return null
+  if (changes.length === 0 && !warning) return null
 
   const canReviewDiff = Boolean(report.runId || effectiveReport.changeSet || report.fileChanges)
   const openChange = async (change: RuntimeCodingFileChange) => {
@@ -118,7 +131,7 @@ export function CodingTurnFileChangesSummary({
 
   return (
     <Card data-coding-file-changes-summary="true" size="sm" className="max-w-[640px] gap-0 py-0">
-      <CardHeader className="flex min-h-9 flex-row items-center border-b px-3 py-1.5">
+      {changes.length > 0 && <CardHeader className="flex min-h-9 flex-row items-center border-b px-3 py-1.5">
         <CardTitle className="flex min-w-0 items-center gap-2 text-[13px]">
           <FileDiff size={15} className="shrink-0 text-[var(--lume-text-secondary)]" />
           <span>{changes.length} 个文件已修改</span>
@@ -127,9 +140,9 @@ export function CodingTurnFileChangesSummary({
           <span className="text-emerald-500">+{addedLines}</span>
           <span className="ml-2 text-red-500">-{removedLines}</span>
         </div>
-      </CardHeader>
-      <CardContent className="py-1">
-        {changes.map((change) => (
+      </CardHeader>}
+      {changes.length > 0 && <CardContent className="py-1">
+        {visibleChanges.map((change) => (
           <CodingFileChangeRow
             key={codingReviewFileKey(change)}
             change={change}
@@ -138,9 +151,37 @@ export function CodingTurnFileChangesSummary({
             onOpen={() => void openChange(change)}
           />
         ))}
-      </CardContent>
+        {hiddenChangeCount > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 w-full justify-start gap-1.5 rounded-md px-3 text-[12px] font-normal text-[var(--lume-text-secondary)]"
+            onClick={() => setShowAllChanges(true)}
+          >
+            再显示 {hiddenChangeCount} 个文件
+            <ChevronDown size={13} />
+          </Button>
+        )}
+      </CardContent>}
+      {warning && (
+        <div className="flex items-start gap-2 px-3 py-2 text-[12px] text-amber-700 dark:text-amber-300">
+          <TriangleAlert size={14} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 break-words">{warning}</span>
+        </div>
+      )}
     </Card>
   )
+}
+
+function codingReportWarning(report: RuntimeCodingReport): string | null {
+  if (report.pendingBackground) return '后台验证仍在运行，可稍后查看结果。'
+  if (report.baselineFailure) return `验证命令失败：${report.baselineFailure.command}`
+  if (report.externalChangedFiles.length > 0) {
+    const paths = report.externalChangedFiles.slice(0, 4).join('、')
+    return `检测到外部改动：${paths}${report.externalChangedFiles.length > 4 ? ` 等 ${report.externalChangedFiles.length} 个文件` : ''}`
+  }
+  if (report.status === 'failed') return report.message ?? '编码任务未通过验证。'
+  return null
 }
 
 function CodingFileChangeRow({

@@ -1204,7 +1204,7 @@ describe('todo_update block 稳定性', () => {
     })
   })
 
-  test('does not show a coding completion report while the run is still active', () => {
+  test('preserves a coding report while the run is active so terminal events can reuse it', () => {
     const activeMessages = projectRuntimeEventMessages([
       event({ type: 'run.started' }),
       event({ type: 'message.user.submitted', text: '修复测试', messageId: 'user-1' }),
@@ -1222,7 +1222,10 @@ describe('todo_update block 稳定性', () => {
     ])
 
     const activeAssistant = activeMessages.find((message) => message.type === 'assistant')
-    expect(activeAssistant?.type === 'assistant' ? activeAssistant.codingReport : undefined).toBeUndefined()
+    expect(activeAssistant?.type === 'assistant' ? activeAssistant.codingReport : undefined).toMatchObject({
+      status: 'unverified',
+      changedFiles: ['src/fix.ts'],
+    })
 
     const completedMessages = projectRuntimeEventMessages([
       event({ type: 'run.started' }),
@@ -1347,6 +1350,36 @@ describe('todo_update block 稳定性', () => {
       changedFiles: ['src/failed.ts'],
       pendingBackground: false,
     })
+  })
+
+  test('keeps an interim coding report when failure and cancellation events omit it', () => {
+    for (const terminalEvent of [
+      event({ type: 'run.failed', runId: 'run-terminal', error: { code: 'runtime_error', message: '失败' } }),
+      event({ type: 'run.cancelled', runId: 'run-terminal', reason: '已取消' }),
+    ]) {
+      const messages = projectRuntimeEventMessages([
+        event({ type: 'run.started', runId: 'run-terminal' }),
+        event({ type: 'assistant.delta', runId: 'run-terminal', delta: '已经修改文件' }),
+        event({
+          type: 'coding.report.updated',
+          runId: 'run-terminal',
+          codingReport: {
+            status: 'unverified',
+            workspaceChanged: true,
+            changedFiles: ['src/interim.ts'],
+            externalChangedFiles: [],
+            pendingBackground: false,
+          },
+        }),
+        terminalEvent,
+      ])
+
+      const assistant = messages.find((message) => message.type === 'assistant')
+      expect(assistant?.type).toBe('assistant')
+      if (assistant?.type !== 'assistant') continue
+      expect(assistant.status).toBe('failed')
+      expect(assistant.codingReport?.changedFiles).toEqual(['src/interim.ts'])
+    }
   })
 
   test('does not attach an older background result to the active assistant', () => {

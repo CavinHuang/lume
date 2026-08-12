@@ -210,6 +210,10 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
 
   if (event.type === 'coding.report.updated') {
     if (state.currentAssistant?.id.startsWith(`assistant:${event.runId}`)) {
+      state.currentAssistant.codingReport = {
+        ...state.currentAssistant.codingReport,
+        ...event.codingReport,
+      }
       return
     }
     for (let index = state.messages.length - 1; index >= 0; index -= 1) {
