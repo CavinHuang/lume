@@ -8,10 +8,8 @@ import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
 import { formatDurationLabel, formatRunningDuration, formatCompletedDuration } from '@/lib/format-duration'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { activeTabIdAtom, agentThreadsAtom, capabilityDetailTargetAtom, codingReviewPanelActionAtom, generalSettingsAtom, memoryCenterDeepLinkAtom, tabsAtom } from '@/atoms'
-import { codingReviewFileKey } from '@/atoms/right-panel-atoms'
+import { activeTabIdAtom, agentThreadsAtom, capabilityDetailTargetAtom, generalSettingsAtom, memoryCenterDeepLinkAtom, tabsAtom } from '@/atoms'
 import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
-import type { RuntimeCodingFileChange, RuntimeCodingReport } from '@lume/shared'
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { AskUserQuestionBlock } from './AskUserQuestionBlock'
@@ -40,7 +38,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { AgentFileReference, type OpenThreadFile } from './AgentFileReference'
 import { collectAssistantSources, type AssistantSourceReference } from './source-references'
-import { prefetchSessionCodingDiffs, requestSessionCodingDiff } from '@/components/right-panel/coding-diff-cache'
+import { CodingTurnFileChangesSummary } from './CodingTurnFileChangesSummary'
 import { MEMORY_CENTER_TAB_ID, memoryCenterTarget, upsertMemoryCenterTab } from '@/components/memory/open-memory-center'
 import { LinkConnectionChip } from '@/components/link/LinkConnectionChip'
 import { remapAgentMessagePartsForEditedText } from './agent-editor-message-parts'
@@ -233,9 +231,6 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
             onUserResizeStart={onUserResizeStart}
           />
         )}
-        {message.codingReport && (
-          <CodingRunReportCard report={message.codingReport} assistantMessageId={message.messageId} threadId={threadId} onOpenThreadFile={onOpenThreadFile} />
-        )}
         {latestTaskProgressBlock && (
           <TaskProgressStatusLine event={latestTaskProgressBlock.event} />
         )}
@@ -247,6 +242,9 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
           <p className="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-[12px] text-destructive/80">
             {message.error}
           </p>
+        )}
+        {message.status !== 'streaming' && message.codingReport && (
+          <CodingTurnFileChangesSummary report={message.codingReport} assistantMessageId={message.messageId} threadId={threadId} onOpenThreadFile={onOpenThreadFile} />
         )}
         {expressionActions.length > 0 && (
           <ExpressionActionBar
@@ -1418,15 +1416,18 @@ function StandardAssistantContent({
 function MemoryMutationStatusLine({ toolCall }: { toolCall: RuntimeToolCallView }) {
   const label = memoryMutationLabel(toolCall)
   const isRunning = toolCall.status === 'running'
+  const error = memoryMutationError(toolCall)
   return (
     <div className={cn(
-      'mx-6 flex min-h-5 items-center gap-1.5 text-[12px] leading-5 text-[var(--lume-text-muted)]',
+      'mx-6 flex min-h-5 items-start gap-1.5 text-[12px] leading-5 text-[var(--lume-text-muted)]',
       toolCall.status === 'failed' && 'text-destructive/75',
     )}>
       {isRunning
         ? <Loader2 size={13} className="shrink-0 animate-spin" />
-        : <Database size={13} className="shrink-0" />}
-      <span>{label}</span>
+        : toolCall.status === 'failed'
+          ? <TriangleAlert size={13} className="mt-1 shrink-0" />
+          : <Database size={13} className="shrink-0" />}
+      <span className="min-w-0 whitespace-pre-wrap break-words">{label}{error ? `：${error}` : ''}</span>
     </div>
   )
 }
@@ -1506,210 +1507,6 @@ function parseToolCallOutput(output: unknown): unknown {
   } catch {
     return output
   }
-}
-
-function CodingRunReportCard({
-  report,
-  assistantMessageId,
-  threadId,
-  onOpenThreadFile,
-}: {
-  report: RuntimeCodingReport
-  assistantMessageId?: string
-  threadId: string
-  onOpenThreadFile?: OpenThreadFile
-}) {
-  const codingReviewPanelAction = useSetAtom(codingReviewPanelActionAtom)
-  const cardRef = useRef<HTMLDivElement | null>(null)
-  const [showAllChanges, setShowAllChanges] = useState(false)
-  const [liveChangeSet, setLiveChangeSet] = useState(report.changeSet)
-  const hasRisk = report.status === 'failed' || Boolean(report.baselineFailure) || report.externalChangedFiles.length > 0
-
-  useEffect(() => {
-    setLiveChangeSet(report.changeSet)
-  }, [report.changeSet?.generatedAt])
-
-  useEffect(() => {
-    if (report.changeSet || report.changedFiles.length === 0) return
-    let cancelled = false
-    void sidecarCall<RuntimeCodingReport['changeSet']>(AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET, {
-      threadId,
-      paths: report.changedFiles,
-    }).then((refreshed) => {
-      if (!cancelled && refreshed) setLiveChangeSet(refreshed)
-    }).catch(() => {
-      // Historical reports may no longer have an accessible workspace.
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [report.changeSet, report.changedFiles, threadId])
-
-  const currentChangeSet = liveChangeSet ?? report.changeSet
-  const changes: RuntimeCodingFileChange[] = currentChangeSet
-    ? currentChangeSet.files
-    : report.fileChanges?.length
-      ? report.fileChanges
-      : report.changedFiles.map((path) => ({ path }))
-  const activeChanges = changes
-  const visibleChanges = showAllChanges ? activeChanges : activeChanges.slice(0, 3)
-  const hiddenChangeCount = Math.max(0, activeChanges.length - visibleChanges.length)
-  const addedLines = liveChangeSet ? liveChangeSet.totalAddedLines : report.totalAddedLines ?? changes.reduce((sum, change) => sum + (change.addedLines ?? 0), 0)
-  const removedLines = liveChangeSet ? liveChangeSet.totalRemovedLines : report.totalRemovedLines ?? changes.reduce((sum, change) => sum + (change.removedLines ?? 0), 0)
-  // The compact Coding card always reserves the diff counter row. Older
-  // reports may not have per-file stats, but hiding the counters makes the
-  // result look incomplete and differs from the Review panel.
-  const hasLineStats = changes.length > 0
-  const firstReviewChange = activeChanges[0]
-  const canReviewDiff = activeChanges.length > 0 && (currentChangeSet !== undefined || report.fileChanges !== undefined)
-  const reviewPathsKey = activeChanges.map(codingReviewFileKey).join('\u0000')
-
-  useEffect(() => {
-    codingReviewPanelAction({
-      type: 'update',
-      threadId,
-      patch: {
-        phase: report.phase,
-        verificationRecords: report.verificationRecords,
-        recommendedVerificationCommands: report.recommendedVerificationCommands,
-        gitActions: report.gitActions,
-        review: report.review,
-      },
-    })
-  }, [codingReviewPanelAction, report.gitActions, report.phase, report.recommendedVerificationCommands, report.review, report.verificationRecords, threadId])
-  const prefetchReviewDiffs = (limit = activeChanges.length) => {
-    if (!report.runId) return
-    void prefetchSessionCodingDiffs(
-      threadId,
-      report.runId,
-      activeChanges.slice(0, limit).map((change) => ({ path: change.path, rootId: change.rootId })),
-    )
-  }
-
-  useEffect(() => {
-    const element = cardRef.current
-    if (!element || !report.runId || !canReviewDiff || typeof IntersectionObserver === 'undefined') return
-    const observer = new IntersectionObserver(([entry]) => {
-      if (!entry?.isIntersecting) return
-      prefetchReviewDiffs(3)
-      observer.disconnect()
-    }, { rootMargin: '240px 0px' })
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [canReviewDiff, report.runId, reviewPathsKey, threadId])
-
-  if (report.status === 'not_required' && !report.workspaceChanged && !report.pendingBackground) return null
-
-  const openReview = async (change: RuntimeCodingFileChange, expand = true) => {
-    if (!canReviewDiff) {
-      if (onOpenThreadFile) await onOpenThreadFile(change.path)
-      else toast.info('当前工作区没有可读取的 Coding diff')
-      return
-    }
-    codingReviewPanelAction({
-      type: 'open',
-      threadId,
-      changes: activeChanges,
-      selectedPath: expand ? change.path : '',
-      selectedRootId: expand ? change.rootId : undefined,
-      runId: report.runId,
-      turnId: report.turnId,
-      assistantMessageId: report.assistantMessageId ?? assistantMessageId,
-      phase: report.phase,
-      verificationRecords: report.verificationRecords,
-      recommendedVerificationCommands: report.recommendedVerificationCommands,
-      gitActions: report.gitActions,
-      review: report.review,
-    })
-  }
-
-  return (
-    <div ref={cardRef} onPointerEnter={() => prefetchReviewDiffs()} className={cn(
-      'coding-summary-card w-full max-w-[640px] overflow-hidden rounded-[12px] border bg-[var(--lume-bg-elevated)] shadow-[0_8px_28px_-22px_hsl(var(--lume-shadow-panel)/0.8)]',
-      report.status === 'failed' ? 'border-destructive/30' : 'border-[var(--lume-border-subtle)]',
-    )}>
-      <div className="coding-summary-header flex items-start gap-3 px-4 py-3.5">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-foreground/[0.08] text-[var(--lume-text-secondary)]">
-          <Edit3 size={20} strokeWidth={1.8} />
-        </div>
-        <div className="coding-summary-title min-w-0 flex-1">
-          <div className="truncate whitespace-nowrap text-[16px] font-semibold leading-5 text-[var(--lume-text-primary)]">
-            {report.workspaceChanged && changes.length > 0 ? `已编辑 ${changes.length} 个文件` : '编码任务执行完成'}
-          </div>
-          {hasLineStats && (
-            <div className="mt-1 whitespace-nowrap text-[13px] leading-4">
-              <span className="text-emerald-500">+{addedLines}</span>
-              <span className="ml-1 text-red-500">-{removedLines}</span>
-            </div>
-          )}
-        </div>
-        <div className="coding-summary-actions flex shrink-0 items-center gap-1.5">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!firstReviewChange || (!canReviewDiff && !onOpenThreadFile)}
-            title={canReviewDiff ? '在右侧面板查看变更' : '当前仅支持打开文件预览'}
-            className="h-8 px-3 text-[12px]"
-            onPointerEnter={() => prefetchReviewDiffs()}
-            onFocus={() => prefetchReviewDiffs()}
-            onClick={() => firstReviewChange && void openReview(firstReviewChange, false)}
-          >
-            审核
-          </Button>
-        </div>
-      </div>
-      {visibleChanges.length > 0 && (
-        <div className="border-t border-[var(--lume-border-subtle)] bg-foreground/[0.025] px-4 py-1">
-          {visibleChanges.map((change) => (
-            <div
-              key={codingReviewFileKey(change)}
-              className="flex min-h-9 w-full items-center gap-2 rounded-none text-[13px] text-[var(--lume-text-secondary)]"
-            >
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-9 min-w-0 flex-1 justify-start rounded-none px-0 text-left text-[13px] font-normal text-[var(--lume-text-secondary)] hover:bg-transparent hover:text-[var(--lume-text-primary)]"
-                onPointerEnter={() => report.runId && void requestSessionCodingDiff(threadId, report.runId, change.path, change.rootId).catch(() => undefined)}
-                onFocus={() => report.runId && void requestSessionCodingDiff(threadId, report.runId, change.path, change.rootId).catch(() => undefined)}
-                onClick={() => void openReview(change)}
-              >
-                <span className="min-w-0 truncate">{change.path}</span>
-              </Button>
-              <span className="shrink-0 tabular-nums">
-                <span className="text-emerald-500">+{change.addedLines ?? 0}</span>
-                <span className="ml-2 text-red-500">-{change.removedLines ?? 0}</span>
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-      {hiddenChangeCount > 0 && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-9 w-full justify-start gap-1 rounded-none border-t border-[var(--lume-border-subtle)] px-4 text-[13px] font-medium text-[var(--lume-text-secondary)] hover:bg-transparent hover:text-[var(--lume-text-primary)]"
-          onClick={() => setShowAllChanges(true)}
-        >
-          <span>再显示 {hiddenChangeCount} 个文件</span>
-          <ChevronDown size={16} />
-        </Button>
-      )}
-      {hasRisk && (
-        <div className="flex items-start gap-1.5 border-t border-[var(--lume-border-subtle)] px-4 py-2.5 text-[12px] text-amber-700 dark:text-amber-300">
-          <TriangleAlert size={13} className="mt-0.5 shrink-0" />
-          <span>{report.baselineFailure ? `验证命令失败：${report.baselineFailure.command}` : report.externalChangedFiles.length > 0 ? `检测到外部改动：${formatFileList(report.externalChangedFiles)}` : report.message ?? '编码任务未通过验证'}</span>
-        </div>
-      )}
-      {report.pendingBackground && (
-        <div className="border-t border-[var(--lume-border-subtle)] px-4 py-2.5 text-[12px] text-amber-700 dark:text-amber-300">后台命令仍在运行，不影响继续对话；可稍后查看或停止任务。</div>
-      )}
-    </div>
-  )
-}
-
-function formatFileList(files: string[]): string {
-  if (files.length <= 4) return files.join('、')
-  return `${files.slice(0, 4).join('、')} 等 ${files.length} 个文件`
 }
 
 function ToolExecutionDetails({
@@ -2587,6 +2384,7 @@ export function getToolPermissionTitleBadgeText(toolCall: RuntimeToolCallView): 
 function memoryMutationLabel(toolCall: RuntimeToolCallView): string | null {
   if (toolCall.toolName !== 'memory.remember' && toolCall.toolName !== 'memory.forget') return null
   if (toolCall.status === 'running') return toolCall.toolName === 'memory.remember' ? '正在记住…' : '正在遗忘…'
+  if (toolCall.status === 'failed') return toolCall.toolName === 'memory.remember' ? '记忆失败' : '遗忘失败'
   let output = toolCall.output
   if (typeof output === 'string') {
     try { output = JSON.parse(output) } catch { return toolCall.toolName === 'memory.remember' ? '记忆已处理' : '遗忘已处理' }
@@ -2595,6 +2393,12 @@ function memoryMutationLabel(toolCall: RuntimeToolCallView): string | null {
   const data = asRecord(record.data)
   const summary = asString(data.summary ?? record.summary)
   return summary ?? (toolCall.toolName === 'memory.remember' ? '记忆已处理' : '遗忘已处理')
+}
+
+function memoryMutationError(toolCall: RuntimeToolCallView): string | null {
+  if (toolCall.status !== 'failed') return null
+  const error = formatToolErrorOutput(toolCall.output).trim()
+  return error || null
 }
 
 function riskLevelLabel(level: NonNullable<RuntimeToolCallView['riskLevel']>): string {
