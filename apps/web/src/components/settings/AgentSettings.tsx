@@ -595,6 +595,7 @@ type ActionModelOption = {
   modelRef: string
   legacyModelRefs?: string[]
   label: string
+  channelLabel?: string
 }
 
 function ModelActionSettings({
@@ -1099,8 +1100,8 @@ function ModelInfoSettings({
           {rows.map((row) => (
             <div key={row.modelRef} className="grid min-h-14 min-w-[620px] grid-cols-[minmax(0,1.4fr)_76px_minmax(130px,1fr)_110px] items-center gap-3 border-b border-[color:color-mix(in_oklab,var(--border)_55%,transparent)] px-3 py-2 last:border-b-0">
               <div className="min-w-0">
-                <div className="truncate text-[12px] font-semibold text-[var(--text-1)]">{row.modelRef}</div>
-                <div className="truncate text-[11px] text-[var(--text-3)]">{row.label}</div>
+                <div className="truncate text-[12px] font-semibold text-[var(--text-1)]">{row.label}</div>
+                <div className="truncate text-[11px] text-[var(--text-3)]">{row.channelLabel ?? row.modelRef}</div>
               </div>
               <span className="justify-self-end rounded-[7px] bg-[var(--surface-1)] px-2 py-1 text-[12px] font-semibold text-[var(--text-2)]">
                 {row.contextWindow ? formatContextWindow(row.contextWindow) : '未收录'}
@@ -1630,13 +1631,14 @@ function ModelCapabilityBadges({ meta }: { meta: ModelMeta }) {
 function buildModelInfoRows(
   options: ActionModelOption[],
   overrides: Record<string, number>
-): Array<{ modelRef: string; label: string; contextWindow?: number; custom: boolean; meta?: ModelMeta }> {
-  const rows = new Map<string, { modelRef: string; label: string; contextWindow?: number; custom: boolean; meta?: ModelMeta }>()
+): Array<{ modelRef: string; label: string; channelLabel?: string; contextWindow?: number; custom: boolean; meta?: ModelMeta }> {
+  const rows = new Map<string, { modelRef: string; label: string; channelLabel?: string; contextWindow?: number; custom: boolean; meta?: ModelMeta }>()
   for (const option of options) {
     const meta = findModelMeta(option.modelRef)
     rows.set(option.modelRef, {
       modelRef: option.modelRef,
       label: option.label,
+      channelLabel: option.channelLabel,
       contextWindow: overrides[option.modelRef] ?? meta?.contextWindow,
       custom: overrides[option.modelRef] !== undefined,
       meta,
