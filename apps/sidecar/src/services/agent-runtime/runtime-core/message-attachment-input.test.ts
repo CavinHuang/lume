@@ -32,7 +32,6 @@ describe("message attachment model input", () => {
 
     const input = buildRuntimeUserMessageInput({
       userMessage: "请解读图片",
-      visionSupported: true,
       workspaceSlug,
       threadId,
       attachments: [{
@@ -66,7 +65,6 @@ describe("message attachment model input", () => {
 
     const input = buildRuntimeUserMessageInput({
       userMessage: "请根据当前微信回复",
-      visionSupported: true,
       workspaceSlug,
       threadId,
       contentBlocks: [{
@@ -109,7 +107,6 @@ describe("message attachment model input", () => {
 
     const input = buildRuntimeUserMessageInput({
       userMessage: "请解读附件",
-      visionSupported: true,
       workspaceSlug,
       threadId,
       attachments: [
@@ -134,7 +131,6 @@ describe("message attachment model input", () => {
 
     expect(() => buildRuntimeUserMessageInput({
       userMessage: "请解读图片",
-      visionSupported: true,
       workspaceSlug,
       threadId,
       attachments: [{
@@ -147,16 +143,15 @@ describe("message attachment model input", () => {
     })).toThrow("图片附件不可读取");
   });
 
-  test("不支持视觉的模型应在运行前明确拒绝图片", () => {
+  test("本地模型能力未标记视觉时仍应保留图片交给厂商判断", () => {
     createTempConfigDir();
     const workspaceSlug = "workspace-deepseek";
     const threadId = "thread-deepseek";
     const sessionDir = getAgentSessionPath(workspaceSlug, threadId);
     writeFileSync(join(sessionDir, "screen.png"), "fake-image");
 
-    expect(() => buildRuntimeUserMessageInput({
+    const input = buildRuntimeUserMessageInput({
       userMessage: "请解读图片",
-      visionSupported: false,
       workspaceSlug,
       threadId,
       attachments: [{
@@ -166,6 +161,18 @@ describe("message attachment model input", () => {
         size: 10,
         threadPath: "screen.png"
       }]
-    })).toThrow("当前模型不支持图片输入");
+    });
+
+    expect(input).toEqual([
+      { type: "text", text: "请解读图片" },
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/png",
+          data: Buffer.from("fake-image").toString("base64")
+        }
+      }
+    ]);
   });
 });
