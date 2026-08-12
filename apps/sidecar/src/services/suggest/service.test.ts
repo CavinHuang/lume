@@ -32,6 +32,8 @@ const state = {
   dedupContext: { automationTitles: [] as string[], correctionRules: [] as string[], sopCandidateCount: 0 },
   evalCandidates: [] as SuggestionCandidate[],
   analysisCandidates: [] as SuggestionCandidate[],
+  analysisGate: undefined as Promise<void> | undefined,
+  analysisStarted: undefined as (() => void) | undefined,
   extractedMessages: [{ role: "user", content: "以后不要用 var" }] as {
     role: "user";
     content: string;
@@ -98,6 +100,8 @@ mock.module("./analyst", () => ({
   buildAnalysisInput: (_opts?: object) => "fake-context",
   runAnalysis: async (_input: object) => {
     if (state.analysisThrow) throw new Error("analyst boom");
+    state.analysisStarted?.();
+    await state.analysisGate;
     return [...state.analysisCandidates];
   },
 }));
@@ -151,6 +155,8 @@ function resetState(): void {
   state.dedupContext = { automationTitles: [], correctionRules: [], sopCandidateCount: 0 };
   state.evalCandidates = [];
   state.analysisCandidates = [];
+  state.analysisGate = undefined;
+  state.analysisStarted = undefined;
   state.extractedMessages = [{ role: "user", content: "以后不要用 var" }];
   state.extractThrow = false;
   state.evalThrow = false;
@@ -398,6 +404,33 @@ describe("runAnalysisAndPersist", () => {
 
     expect(count).toBe(1);
     expect(spies.persistSuggestion).toHaveBeenCalledTimes(1);
+    expect(spies.broadcaster).toHaveBeenCalledTimes(1);
+  });
+
+  test("并发分析返回相同 duplicateKey 时只落库一次", async () => {
+    state.analysisCandidates = [{ ...automationCandidate, duplicateKey: "automation:并发去重" }];
+    let releaseAnalysis!: () => void;
+    state.analysisGate = new Promise<void>((resolve) => {
+      releaseAnalysis = resolve;
+    });
+    let started = 0;
+    let bothStarted!: () => void;
+    const bothStartedPromise = new Promise<void>((resolve) => {
+      bothStarted = resolve;
+    });
+    state.analysisStarted = () => {
+      started++;
+      if (started === 2) bothStarted();
+    };
+
+    const first = runAnalysisAndPersist({ workspaceSlug: "ws" });
+    const second = runAnalysisAndPersist({ workspaceSlug: "ws" });
+    await bothStartedPromise;
+    releaseAnalysis();
+
+    expect(await Promise.all([first, second])).toEqual([1, 0]);
+    expect(spies.persistSuggestion).toHaveBeenCalledTimes(1);
+    expect(state.records.filter((record) => record.duplicateKey === "automation:并发去重")).toHaveLength(1);
     expect(spies.broadcaster).toHaveBeenCalledTimes(1);
   });
 
