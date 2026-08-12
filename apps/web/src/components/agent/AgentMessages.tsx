@@ -410,7 +410,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
           ref={contentRef}
           className={cn(
             'min-h-full w-full px-3 py-5',
-            !hasRenderableMessages ? 'flex items-center justify-center' : 'space-y-7'
+            !hasRenderableMessages ? 'flex items-center justify-center' : 'space-y-3'
           )}
         >
           {!hasRenderableMessages ? (
