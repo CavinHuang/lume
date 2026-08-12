@@ -1986,7 +1986,7 @@ function FileChangeLabel({ path, addedLines, removedLines, emphasized = false }:
   const filename = separator >= 0 ? normalizedPath.slice(separator + 1) : normalizedPath
 
   return (
-    <span className="flex min-w-0 items-center overflow-hidden">
+    <span className="flex min-w-0 items-center overflow-hidden text-[12px] leading-4">
       <span className="flex min-w-0 items-center overflow-hidden">
         {directory && <span className="min-w-0 truncate text-[var(--lume-text-muted)]">{directory}</span>}
         <span className={cn('shrink-0 truncate text-[var(--lume-text-secondary)]', directory ? 'max-w-[55%]' : 'max-w-full', emphasized && 'font-medium text-[var(--lume-text-primary)]')}>{filename}</span>
