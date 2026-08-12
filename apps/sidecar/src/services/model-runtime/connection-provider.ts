@@ -89,7 +89,6 @@ export async function createConnectionPiAiRoute(input: {
     headers: normalizeHeaders({ ...(catalogModel?.headers ?? {}), ...(oauth?.auth.headers ?? {}) }),
     contextWindow: configuredModel?.contextWindow ?? catalogModel?.contextWindow,
     maxTokens: configuredModel?.maxOutputTokens ?? catalogModel?.maxTokens,
-    supportsImages: configuredModel?.capabilities?.vision ?? catalogModel?.input?.includes("image"),
     supportsReasoning: configuredModel?.capabilities?.reasoning ?? catalogModel?.reasoning,
     sessionId: input.sessionId,
   };

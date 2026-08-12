@@ -36,7 +36,6 @@ export interface PiAiProviderOptions {
   headers?: Record<string, string>;
   contextWindow?: number;
   maxTokens?: number;
-  supportsImages?: boolean;
   supportsReasoning?: boolean;
   sessionId?: string;
 }
@@ -107,6 +106,23 @@ function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
 
 function toPiApi(apiType: ApiType): PiTextApi {
   return apiType === "deepseek-chat-completions" ? "openai-completions" : apiType;
+}
+
+export function resolvePiModelInput(messages: NormalizedMessageParam[]): Array<"text" | "image"> {
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if (block.type === "image") return ["text", "image"];
+      if (
+        block.type === "tool_result"
+        && Array.isArray(block.content)
+        && block.content.some((item) => item.type === "image")
+      ) {
+        return ["text", "image"];
+      }
+    }
+  }
+  return ["text"];
 }
 
 async function loadStreams(api: PiTextApi): Promise<ProviderStreams> {
@@ -338,7 +354,7 @@ export class PiAiProvider implements LLMProvider {
       provider: this.options.providerId,
       baseUrl: this.options.baseUrl,
       reasoning: this.options.supportsReasoning ?? params.thinking?.type !== "disabled",
-      input: this.options.supportsImages ? ["text", "image"] : ["text"],
+      input: resolvePiModelInput(params.messages),
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: this.options.contextWindow ?? 128_000,
       maxTokens: this.options.maxTokens ?? params.maxTokens,
