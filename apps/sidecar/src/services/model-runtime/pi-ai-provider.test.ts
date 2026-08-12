@@ -2,9 +2,37 @@ import { describe, expect, test } from "bun:test";
 import {
   isRetryablePiAiError,
   PiAiProviderError,
+  resolvePiModelInput,
   resolvePiAiRetryDelayMs,
   shouldTryNextPiAiRoute,
 } from "./pi-ai-provider";
+
+describe("pi-ai image transport", () => {
+  test("advertises image input when the request contains a user image", () => {
+    expect(resolvePiModelInput([{
+      role: "user",
+      content: [
+        { type: "text", text: "describe this" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" } },
+      ],
+    }])).toEqual(["text", "image"]);
+  });
+
+  test("advertises image input when a tool result contains an image", () => {
+    expect(resolvePiModelInput([{
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: "tool-1",
+        content: [{ type: "image", data: "ZmFrZQ==", mimeType: "image/png" }],
+      }],
+    }])).toEqual(["text", "image"]);
+  });
+
+  test("keeps text-only requests text-only", () => {
+    expect(resolvePiModelInput([{ role: "user", content: "hello" }])).toEqual(["text"]);
+  });
+});
 
 describe("pi-ai provider retry policy", () => {
   test("retries transient status and network failures only", () => {
