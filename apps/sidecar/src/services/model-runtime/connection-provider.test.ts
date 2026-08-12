@@ -290,7 +290,7 @@ describe("connection provider", () => {
     });
   });
 
-  test("falls back to Lume model metadata for image support missing from the transport catalog", async () => {
+  test("routes catalog-missing multimodal models without guessing transport capability", async () => {
     const channel = createChannel({
       name: "Step Plan",
       provider: "stepfun-coding-plan",
@@ -300,10 +300,9 @@ describe("connection provider", () => {
       enabled: true,
     });
 
-    await expect(createConnectionPiAiRoute({ channel, modelId: "step-3.7-flash" })).resolves.toMatchObject({
-      modelId: "step-3.7-flash",
-      supportsImages: true,
-    });
+    const route = await createConnectionPiAiRoute({ channel, modelId: "step-3.7-flash" });
+    expect(route.modelId).toBe("step-3.7-flash");
+    expect(route).not.toHaveProperty("supportsImages");
   });
 
   test("treats an Anthropic-compatible endpoint as an explicit protocol override", async () => {

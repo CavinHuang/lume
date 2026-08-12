@@ -6,7 +6,7 @@ import type {
   LLMProvider,
 } from "@lume/agent-sdk";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import { findModelMeta, PROVIDER_DEFAULT_URLS, type Channel } from "@lume/shared";
+import { PROVIDER_DEFAULT_URLS, type Channel } from "@lume/shared";
 import { decryptApiKey, getChannelById } from "../channel/channel-manager";
 import { getConnectionOAuthProviderId, resolveConnectionOAuthAuth } from "../channel/connection-oauth-service";
 import { createRoutingPiAiProvider, type PiAiProviderRoute } from "./pi-ai-provider";
@@ -78,7 +78,6 @@ export async function createConnectionPiAiRoute(input: {
     throw new Error("connection_api_key_unavailable");
   }
   const catalogModel = findConnectionCatalogModel(input.channel, routeModelId, oauth?.providerId);
-  const modelMeta = findModelMeta(routeModelId);
   const apiType = resolveConnectionApiType(input.channel, configuredModel?.protocol, catalogModel?.api);
   const catalogBaseUrl = shouldUseCatalogBaseUrl(input.channel) ? catalogModel?.baseUrl : undefined;
   return {
@@ -90,9 +89,6 @@ export async function createConnectionPiAiRoute(input: {
     headers: normalizeHeaders({ ...(catalogModel?.headers ?? {}), ...(oauth?.auth.headers ?? {}) }),
     contextWindow: configuredModel?.contextWindow ?? catalogModel?.contextWindow,
     maxTokens: configuredModel?.maxOutputTokens ?? catalogModel?.maxTokens,
-    supportsImages: configuredModel?.capabilities?.vision
-      ?? catalogModel?.input?.includes("image")
-      ?? modelMeta?.capabilities.vision,
     supportsReasoning: configuredModel?.capabilities?.reasoning ?? catalogModel?.reasoning,
     sessionId: input.sessionId,
   };

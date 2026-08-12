@@ -2186,7 +2186,6 @@ export async function createRuntimeCoreSession(
       apiKey: input.apiKey,
       contextWindow: input.resolvedModel?.contextWindow,
       maxTokens: input.resolvedModel?.maxTokens,
-      supportsImages: input.resolvedModel?.input?.includes("image"),
       supportsReasoning: input.resolvedModel?.reasoning,
       sessionId: input.lumeSessionId,
     }];
@@ -2336,7 +2335,6 @@ export async function createRuntimeCoreSession(
     userMessage: contextAssembly.userMessageForModel,
     contentBlocks: contextAssembly.userMessageContentBlocks,
     attachments: input.messageAttachments,
-    visionSupported: input.resolvedModel?.input?.includes("image") === true,
     workspaceSlug: input.workspaceSlug,
     threadId: input.lumeSessionId
   });
