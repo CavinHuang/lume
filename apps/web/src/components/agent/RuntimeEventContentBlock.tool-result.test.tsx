@@ -176,7 +176,7 @@ describe('RuntimeEventContentBlock tool results', () => {
     expect(markup).not.toContain('1 个工具调用')
   })
 
-  test('renders Proma-style changed file chips only after a coding turn ends', () => {
+  test('renders a compact diff summary card only after a coding turn ends', () => {
     const message: RuntimeMessageView = {
       id: 'assistant-coding',
       type: 'assistant',
@@ -190,6 +190,10 @@ describe('RuntimeEventContentBlock tool results', () => {
         status: 'verified',
         workspaceChanged: true,
         changedFiles: ['src/alpha.ts', 'src/nested/beta.tsx'],
+        fileChanges: [
+          { path: 'src/alpha.ts', addedLines: 5, removedLines: 1 },
+          { path: 'src/nested/beta.tsx', addedLines: 3, removedLines: 2 },
+        ],
         externalChangedFiles: [],
         pendingBackground: false,
       },
@@ -200,13 +204,17 @@ describe('RuntimeEventContentBlock tool results', () => {
     )
 
     expect(markup).toContain('data-coding-file-changes-summary="true"')
-    expect(markup).toContain('alpha.ts')
-    expect(markup).toContain('beta.tsx')
+    expect(markup).toContain('2 个文件已修改')
+    expect(markup).toContain('src/alpha.ts')
+    expect(markup).toContain('src/nested/beta.tsx')
+    expect(markup).toContain('+8')
+    expect(markup).toContain('-3')
+    expect(markup).toContain('+5')
+    expect(markup).toContain('-1')
     expect(markup).not.toContain('编码任务执行完成')
-    expect(markup).not.toContain('已编辑 2 个文件')
   })
 
-  test('does not render changed file chips for a streaming message', () => {
+  test('does not render the diff summary card for a streaming message', () => {
     const message: RuntimeMessageView = {
       id: 'assistant-coding-streaming',
       type: 'assistant',
