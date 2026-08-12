@@ -374,7 +374,12 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     const msg = liveMessages[i]
     const activeStreamingMessage = streaming && i === liveMessages.length - 1
     items.push(
-      <div key={`runtime-event-${msg.id}`} data-message-id={msg.id} data-message-role={msg.type}>
+      <div
+        key={`runtime-event-${msg.id}`}
+        data-message-id={msg.id}
+        data-message-role={msg.type}
+        className="mx-auto w-full max-w-[920px]"
+      >
         <RuntimeEventContentBlock
           message={msg}
           animate={activeStreamingMessage && newMessageIds.has(msg.id)}
