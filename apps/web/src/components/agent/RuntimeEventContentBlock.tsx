@@ -527,8 +527,8 @@ function UserMessageBlock({
 
   return (
     <div className={cn(
-      'group/user-message flex max-w-full gap-3',
-      leftAligned ? 'mx-auto w-fit justify-start' : 'ml-auto w-full max-w-[920px] justify-end gap-2',
+      'group/user-message flex w-full max-w-[920px] gap-3',
+      leftAligned ? 'justify-start' : 'ml-auto justify-end gap-2',
       className,
     )}>
       {leftAligned && showAvatar && (
