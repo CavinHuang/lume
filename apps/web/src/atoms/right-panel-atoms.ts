@@ -10,6 +10,7 @@ import {
   type RightPanelFileTab,
 } from '@/components/right-panel/right-panel-files-state'
 import type { ThreadBrowserWorkspace } from '@/components/right-panel/right-panel-browser-state'
+import { activeTabIdAtom, tabsAtom } from './tab-atoms'
 import {
   closeRightPanelTab,
   getOpenRightPanelFunctions,
@@ -26,14 +27,35 @@ export interface RightPanelLayoutState {
   width?: number
 }
 
+const DEFAULT_RIGHT_PANEL_LAYOUT: RightPanelLayoutState = { open: false, mode: 'normal' }
+
+type RightPanelLayoutUpdate = RightPanelLayoutState | ((current: RightPanelLayoutState) => RightPanelLayoutState)
+
 export const rightPanelWorkspacesAtom = atomWithStorage<Record<string, ThreadRightPanelWorkspace>>(
   'right-panel-workspaces',
   {},
 )
 
-export const rightPanelLayoutAtom = atomWithStorage<RightPanelLayoutState>(
-  'right-panel-layout',
-  { open: true, mode: 'normal' },
+export const rightPanelLayoutsAtom = atomWithStorage<Record<string, RightPanelLayoutState>>(
+  'right-panel-layouts',
+  {},
+)
+
+export const rightPanelLayoutAtom = atom(
+  (get) => {
+    const activeTabId = get(activeTabIdAtom)
+    const threadId = get(tabsAtom).find((tab) => tab.id === activeTabId && tab.type === 'agent')?.threadId
+    return threadId ? get(rightPanelLayoutsAtom)[threadId] ?? DEFAULT_RIGHT_PANEL_LAYOUT : DEFAULT_RIGHT_PANEL_LAYOUT
+  },
+  (get, set, update: RightPanelLayoutUpdate) => {
+    const activeTabId = get(activeTabIdAtom)
+    const threadId = get(tabsAtom).find((tab) => tab.id === activeTabId && tab.type === 'agent')?.threadId
+    if (!threadId) return
+    const layouts = get(rightPanelLayoutsAtom)
+    const current = layouts[threadId] ?? DEFAULT_RIGHT_PANEL_LAYOUT
+    const next = typeof update === 'function' ? update(current) : update
+    set(rightPanelLayoutsAtom, { ...layouts, [threadId]: next })
+  },
 )
 
 export const rightPanelBlameEnabledAtom = atomWithStorage<boolean>(
