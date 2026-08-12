@@ -216,7 +216,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       const message = state.messages[index]
       if (
         message?.type !== 'assistant'
-        || message.status !== 'completed'
+        || message.status === 'streaming'
         || !message.id.startsWith(`assistant:${event.runId}`)
       ) continue
       state.messages[index] = {
@@ -402,11 +402,11 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     if (event.type === 'run.completed') {
       state.currentAssistant.messageId = event.finalMessageId
       state.currentAssistant.completedAt = event.createdAt
-      if (event.codingReport) {
-        state.currentAssistant.codingReport = {
-          ...state.currentAssistant.codingReport,
-          ...event.codingReport,
-        }
+    }
+    if (event.codingReport) {
+      state.currentAssistant.codingReport = {
+        ...state.currentAssistant.codingReport,
+        ...event.codingReport,
       }
     }
     state.currentAssistant.status = 'completed'
@@ -422,6 +422,12 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     state.currentAssistant.status = 'failed'
     state.currentAssistant.retry = undefined
     state.currentAssistant.error = event.type === 'run.failed' ? event.error.message : (event.reason ?? 'Run cancelled')
+    if (event.type === 'run.failed' && event.codingReport) {
+      state.currentAssistant.codingReport = {
+        ...state.currentAssistant.codingReport,
+        ...event.codingReport,
+      }
+    }
     flushAssistant(state.messages, state.currentAssistant)
     state.currentAssistant = null
     state.terminalClosed = true

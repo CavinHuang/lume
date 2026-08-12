@@ -175,6 +175,62 @@ describe('RuntimeEventContentBlock tool results', () => {
     expect(markup).toContain('data-tool-result-renderer="wiki.propose_changes"')
     expect(markup).not.toContain('1 个工具调用')
   })
+
+  test('renders Proma-style changed file chips only after a coding turn ends', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-coding',
+      type: 'assistant',
+      text: '修改完成',
+      thinking: '',
+      status: 'completed',
+      toolCalls: [],
+      blocks: [],
+      codingReport: {
+        runId: 'run-coding',
+        status: 'verified',
+        workspaceChanged: true,
+        changedFiles: ['src/alpha.ts', 'src/nested/beta.tsx'],
+        externalChangedFiles: [],
+        pendingBackground: false,
+      },
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock message={message} threadId="thread-coding" />,
+    )
+
+    expect(markup).toContain('data-coding-file-changes-summary="true"')
+    expect(markup).toContain('alpha.ts')
+    expect(markup).toContain('beta.tsx')
+    expect(markup).not.toContain('编码任务执行完成')
+    expect(markup).not.toContain('已编辑 2 个文件')
+  })
+
+  test('does not render changed file chips for a streaming message', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-coding-streaming',
+      type: 'assistant',
+      text: '正在修改',
+      thinking: '',
+      status: 'streaming',
+      toolCalls: [],
+      blocks: [],
+      codingReport: {
+        runId: 'run-coding',
+        status: 'unverified',
+        workspaceChanged: true,
+        changedFiles: ['src/alpha.ts'],
+        externalChangedFiles: [],
+        pendingBackground: false,
+      },
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock message={message} threadId="thread-coding" />,
+    )
+
+    expect(markup).not.toContain('data-coding-file-changes-summary="true"')
+  })
 })
 
 describe('RuntimeEventContentBlock user attachments', () => {

@@ -1285,6 +1285,70 @@ describe('todo_update block 稳定性', () => {
     })
   })
 
+  test('projects the final coding report when the run reaches its turn limit', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'run.started', runId: 'run-limited' }),
+      event({ type: 'assistant.delta', runId: 'run-limited', delta: '已完成部分修改' }),
+      event({
+        type: 'run.turn_limited',
+        runId: 'run-limited',
+        codingReport: {
+          status: 'unverified',
+          workspaceChanged: true,
+          changedFiles: ['src/limited.ts'],
+          externalChangedFiles: [],
+          pendingBackground: false,
+        },
+      }),
+    ])
+
+    const assistant = messages.find((message) => message.type === 'assistant')
+    expect(assistant?.type).toBe('assistant')
+    if (assistant?.type !== 'assistant') return
+    expect(assistant.status).toBe('completed')
+    expect(assistant.codingReport?.changedFiles).toEqual(['src/limited.ts'])
+  })
+
+  test('projects and refreshes the final coding report for a failed run', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'run.started', runId: 'run-failed' }),
+      event({ type: 'assistant.delta', runId: 'run-failed', delta: '修改后验证失败' }),
+      event({
+        type: 'run.failed',
+        runId: 'run-failed',
+        error: { code: 'verification_failed', message: '测试失败' },
+        codingReport: {
+          status: 'failed',
+          workspaceChanged: true,
+          changedFiles: ['src/failed.ts'],
+          externalChangedFiles: [],
+          pendingBackground: true,
+        },
+      }),
+      event({
+        type: 'coding.report.updated',
+        runId: 'run-failed',
+        codingReport: {
+          status: 'failed',
+          workspaceChanged: true,
+          changedFiles: ['src/failed.ts'],
+          externalChangedFiles: [],
+          pendingBackground: false,
+        },
+      }),
+    ])
+
+    const assistant = messages.find((message) => message.type === 'assistant')
+    expect(assistant?.type).toBe('assistant')
+    if (assistant?.type !== 'assistant') return
+    expect(assistant.status).toBe('failed')
+    expect(assistant.error).toBe('测试失败')
+    expect(assistant.codingReport).toMatchObject({
+      changedFiles: ['src/failed.ts'],
+      pendingBackground: false,
+    })
+  })
+
   test('does not attach an older background result to the active assistant', () => {
     const messages = projectRuntimeEventMessages([
       event({ type: 'run.started', runId: 'run-old' }),
