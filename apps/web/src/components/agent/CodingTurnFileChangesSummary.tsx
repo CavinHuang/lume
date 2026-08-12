@@ -118,7 +118,7 @@ export function CodingTurnFileChangesSummary({
 
   return (
     <Card data-coding-file-changes-summary="true" size="sm" className="max-w-[640px] gap-0 py-0">
-      <CardHeader className="flex min-h-11 flex-row items-center border-b px-3 py-2">
+      <CardHeader className="flex min-h-9 flex-row items-center border-b px-3 py-1.5">
         <CardTitle className="flex min-w-0 items-center gap-2 text-[13px]">
           <FileDiff size={15} className="shrink-0 text-[var(--lume-text-secondary)]" />
           <span>{changes.length} 个文件已修改</span>
@@ -128,7 +128,7 @@ export function CodingTurnFileChangesSummary({
           <span className="ml-2 text-red-500">-{removedLines}</span>
         </div>
       </CardHeader>
-      <CardContent className="px-0">
+      <CardContent className="py-1">
         {changes.map((change) => (
           <CodingFileChangeRow
             key={codingReviewFileKey(change)}
@@ -175,7 +175,7 @@ function CodingFileChangeRow({
         <Button
           variant="ghost"
           size="sm"
-          className="h-auto min-h-9 w-full justify-start gap-2 rounded-none border-b border-[var(--lume-border-subtle)] px-3 py-2 text-[12px] font-normal hover:bg-foreground/[0.04]"
+          className="h-auto min-h-8 w-full justify-start gap-2 rounded-md px-3 py-1.5 text-[12px] font-normal hover:bg-foreground/[0.04]"
           onClick={onOpen}
         >
           <FileTypeIcon filename={filename} size={13} className="shrink-0" />
