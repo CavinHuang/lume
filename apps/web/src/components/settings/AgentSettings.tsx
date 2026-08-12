@@ -595,6 +595,7 @@ type ActionModelOption = {
   modelRef: string
   legacyModelRefs?: string[]
   label: string
+  channelLabel?: string
 }
 
 function ModelActionSettings({
@@ -1053,7 +1054,7 @@ function ModelInfoSettings({
   onRemove,
   onSync,
 }: {
-  chatOptions: ModelOption[]
+  chatOptions: ActionModelOption[]
   contextWindows: Record<string, number>
   modelRef: string
   tokens: string
@@ -1628,7 +1629,7 @@ function ModelCapabilityBadges({ meta }: { meta: ModelMeta }) {
 }
 
 function buildModelInfoRows(
-  options: ModelOption[],
+  options: ActionModelOption[],
   overrides: Record<string, number>
 ): Array<{ modelRef: string; label: string; channelLabel?: string; contextWindow?: number; custom: boolean; meta?: ModelMeta }> {
   const rows = new Map<string, { modelRef: string; label: string; channelLabel?: string; contextWindow?: number; custom: boolean; meta?: ModelMeta }>()
