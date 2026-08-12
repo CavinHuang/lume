@@ -44,7 +44,8 @@ export function migrateMemoryScopeRootIfNeeded(root: string, scope: MemoryV2Scop
     }
     cpSync(root, backupPath, { recursive: true, errorOnExist: true });
     cpSync(root, tempPath, { recursive: true, errorOnExist: true });
-    migrateEntries(tempPath, scope);
+    const idMap = migrateEntries(tempPath, scope);
+    migratePendingReferences(tempPath, idMap);
     rmSync(join(tempPath, "persona.md"), { force: true });
     validateEntries(tempPath);
     const marker: MemorySchemaMarker = {
@@ -93,11 +94,17 @@ function openMigrationLock(path: string): number {
   }
 }
 
-function migrateEntries(root: string, scope: MemoryV2Scope): void {
+function migrateEntries(root: string, scope: MemoryV2Scope): Map<string, string> {
   const entriesDir = join(root, "entries");
-  if (!existsSync(entriesDir)) return;
-  for (const path of listFiles(entriesDir, ".md")) {
-    const document = parseDocument(path, scope);
+  const idMap = new Map<string, string>();
+  if (!existsSync(entriesDir)) return idMap;
+  const entries = listFiles(entriesDir, ".md").map((path) => ({ path, document: parseDocument(path, scope) }));
+  for (const { path, document } of entries) {
+    const previousId = typeof document.frontmatter.id === "string" ? document.frontmatter.id : undefined;
+    const id = canonicalEntryId(path, previousId);
+    if (previousId && previousId !== id) idMap.set(previousId, id);
+  }
+  for (const { path, document } of entries) {
     const now = typeof document.frontmatter.updated === "string"
       ? document.frontmatter.updated
       : new Date().toISOString();
@@ -111,6 +118,9 @@ function migrateEntries(root: string, scope: MemoryV2Scope): void {
       scope,
       semantic_role: inferRole(kind, tags),
       facets: stringList(document.frontmatter.facets ?? tags),
+      related: rewriteReferenceList(document.frontmatter.related, idMap),
+      supersedes: rewriteReferenceList(document.frontmatter.supersedes, idMap),
+      superseded_by: rewriteReference(document.frontmatter.superseded_by, idMap),
       revision: positiveInteger(document.frontmatter.revision, 1),
       last_confirmed_at: document.frontmatter.last_confirmed_at ?? now,
       evidence_refs: Array.isArray(document.frontmatter.evidence_refs)
@@ -123,6 +133,25 @@ function migrateEntries(root: string, scope: MemoryV2Scope): void {
     }
     writeDocument(targetPath, frontmatter, document.body);
     if (targetPath !== path) unlinkSync(path);
+  }
+  return idMap;
+}
+
+function migratePendingReferences(root: string, idMap: Map<string, string>): void {
+  const pendingRoot = join(root, "pending");
+  for (const type of ["conflicts", "stale", "low-confidence"]) {
+    const dir = join(pendingRoot, type);
+    if (!existsSync(dir)) continue;
+    for (const path of listFiles(dir, ".md")) {
+      const document = parseDocument(path);
+      const existing = document.frontmatter.existing;
+      if (!existing || typeof existing !== "object" || Array.isArray(existing)) continue;
+      const ids = rewriteReferenceList((existing as Record<string, unknown>).ids, idMap);
+      writeDocument(path, {
+        ...document.frontmatter,
+        existing: ids.length > 0 ? { ...(existing as Record<string, unknown>), ids } : undefined
+      }, document.body);
+    }
   }
 }
 
@@ -209,6 +238,15 @@ function canonicalEntryPath(path: string, id: string, created: unknown): string 
   const createdDate = typeof created === "string" ? created.match(/^\d{4}-\d{2}-\d{2}/)?.[0] : undefined;
   const date = createdDate ?? statSync(path).mtime.toISOString().slice(0, 10);
   return join(dirname(path), `${date}-${id}.md`);
+}
+
+function rewriteReference(value: unknown, idMap: Map<string, string>): string | null {
+  if (typeof value !== "string") return null;
+  return idMap.get(value) ?? value.match(/^\d{4}-\d{2}-\d{2}-(mem_[A-Za-z0-9][A-Za-z0-9_-]*)$/)?.[1] ?? value;
+}
+
+function rewriteReferenceList(value: unknown, idMap: Map<string, string>): string[] {
+  return stringList(value).map((id) => rewriteReference(id, idMap)!).filter((id, index, all) => all.indexOf(id) === index);
 }
 
 function writeDocument(path: string, frontmatter: Record<string, unknown>, body: string): void {

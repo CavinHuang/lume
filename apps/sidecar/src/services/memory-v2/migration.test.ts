@@ -140,4 +140,86 @@ describe("memory schema migration", () => {
       rmSync(parent, { recursive: true, force: true });
     }
   });
+
+  test("rewrites entry and pending references to repaired schema 3 ids", () => {
+    const parent = mkdtempSync(join(tmpdir(), "lume-memory-migration-v3-refs-"));
+    const root = join(parent, "memory");
+    const entriesDir = join(root, "entries");
+    const targetPath = join(entriesDir, "2026-07-28-mem_target.md");
+    const relatedPath = join(entriesDir, "2026-07-28-mem_related.md");
+    const pendingPath = join(root, "pending", "conflicts", "2026-07-28-pending_test.md");
+    const oldId = "2026-07-28-mem_target";
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    mkdirSync(entriesDir, { recursive: true });
+    mkdirSync(dirname(pendingPath), { recursive: true });
+    writeFileSync(join(root, ".memory-schema.json"), `${JSON.stringify({ version: 3, migratedAt: "2026-07-28T15:00:00.000Z" }, null, 2)}\n`, "utf-8");
+    writeFileSync(targetPath, memoryEntrySource({ id: oldId, statement: "需要被替换的旧记忆" }), "utf-8");
+    writeFileSync(relatedPath, memoryEntrySource({
+      id: "mem_related",
+      statement: "引用旧记忆的条目",
+      related: [oldId],
+      supersedes: [oldId],
+      superseded_by: oldId
+    }), "utf-8");
+    writeFileSync(pendingPath, `---\n${YAML.stringify({
+      id: "pending_test",
+      type: "conflict",
+      created: "2026-07-28T16:00:00.000Z",
+      candidate: {
+        kind: "state",
+        targetScope: "global",
+        statement: "替换后的新记忆",
+        confidence: "high"
+      },
+      existing: { ids: [oldId] },
+      reason: "测试迁移引用",
+      status: "open"
+    }).trimEnd()}\n---\n测试迁移引用\n`, "utf-8");
+
+    try {
+      process.env.LUME_CONFIG_DIR = parent;
+      migrateMemoryScopeRootIfNeeded(root, "global");
+
+      const store = createMemoryV2Store();
+      const related = store.listEntries({ scopes: ["global"] }).find((entry) => entry.frontmatter.id === "mem_related");
+      expect(related?.frontmatter.related).toEqual(["mem_target"]);
+      expect(related?.frontmatter.supersedes).toEqual(["mem_target"]);
+      expect(related?.frontmatter.superseded_by).toBe("mem_target");
+      const pending = store.listPending({ scopes: ["global"] })[0]!;
+      expect(pending.frontmatter.existing?.ids).toEqual(["mem_target"]);
+
+      store.resolvePending({ workspaceSlug: "unused", path: pending.path, action: "accept" });
+      const target = store.listEntries({ scopes: ["global"], includeStatuses: ["superseded"] })
+        .find((entry) => entry.frontmatter.id === "mem_target");
+      expect(target?.frontmatter.status).toBe("superseded");
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.LUME_CONFIG_DIR;
+      else process.env.LUME_CONFIG_DIR = previousConfigDir;
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
 });
+
+function memoryEntrySource(input: {
+  id: string;
+  statement: string;
+  related?: string[];
+  supersedes?: string[];
+  superseded_by?: string | null;
+}): string {
+  return `---\n${YAML.stringify({
+    id: input.id,
+    kind: "state",
+    scope: "global",
+    status: "active",
+    created: "2026-07-28T15:00:00.000Z",
+    updated: "2026-07-28T15:00:00.000Z",
+    source: { type: "manual" },
+    confidence: "medium",
+    pinned: false,
+    tags: ["legacy"],
+    related: input.related ?? [],
+    supersedes: input.supersedes ?? [],
+    superseded_by: input.superseded_by ?? null
+  }).trimEnd()}\n---\n${input.statement}\n`;
+}
