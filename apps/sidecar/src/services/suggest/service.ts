@@ -19,6 +19,7 @@
  */
 
 import type {
+  SuggestionCandidate,
   SuggestionFeedback,
   SuggestionKind,
   SuggestionRecord,
@@ -229,20 +230,25 @@ export async function runAnalysisAndPersist(
   ctx: AnalysisContext = {},
 ): Promise<number> {
   try {
-    const neverKeys = getNeverKeys();
-    const suggestedKeys = new Set(
-      listSuggestions("suggested").map((r) => r.duplicateKey),
-    );
-
     const context = safeBuildAnalysisInput(ctx.workspaceSlug);
     const candidates = await runAnalysis({
       context,
       workspaceSlug: ctx.workspaceSlug,
     });
 
-    const filtered = candidates.filter(
-      (c) => !neverKeys.has(c.duplicateKey) && !suggestedKeys.has(c.duplicateKey),
+    // 分析期间可能有其它调用落库；在同步持久化前重新读取，关闭并发去重竞态。
+    const neverKeys = getNeverKeys();
+    const suggestedKeys = new Set(
+      listSuggestions("suggested").map((r) => r.duplicateKey),
     );
+    const filtered: SuggestionCandidate[] = [];
+    for (const candidate of candidates) {
+      if (neverKeys.has(candidate.duplicateKey) || suggestedKeys.has(candidate.duplicateKey)) {
+        continue;
+      }
+      suggestedKeys.add(candidate.duplicateKey);
+      filtered.push(candidate);
+    }
 
     for (const candidate of filtered) {
       persistSuggestion(candidate, { workspaceSlug: ctx.workspaceSlug });

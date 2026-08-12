@@ -290,6 +290,21 @@ describe("connection provider", () => {
     });
   });
 
+  test("routes catalog-missing multimodal models without guessing transport capability", async () => {
+    const channel = createChannel({
+      name: "Step Plan",
+      provider: "stepfun-coding-plan",
+      baseUrl: PROVIDER_DEFAULT_URLS["stepfun-coding-plan"],
+      apiKey: "step-key",
+      models: [{ id: "step-3.7-flash", name: "Step 3.7 Flash", enabled: true }],
+      enabled: true,
+    });
+
+    const route = await createConnectionPiAiRoute({ channel, modelId: "step-3.7-flash" });
+    expect(route.modelId).toBe("step-3.7-flash");
+    expect(route).not.toHaveProperty("supportsImages");
+  });
+
   test("treats an Anthropic-compatible endpoint as an explicit protocol override", async () => {
     const channel = createChannel({
       name: "Z.ai Anthropic",
