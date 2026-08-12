@@ -148,10 +148,12 @@ describe("memory schema migration", () => {
     const targetPath = join(entriesDir, "2026-07-28-mem_target.md");
     const relatedPath = join(entriesDir, "2026-07-28-mem_related.md");
     const pendingPath = join(root, "pending", "conflicts", "2026-07-28-pending_test.md");
+    const capsulePath = join(root, "capsules", "legacy.md");
     const oldId = "2026-07-28-mem_target";
     const previousConfigDir = process.env.LUME_CONFIG_DIR;
     mkdirSync(entriesDir, { recursive: true });
     mkdirSync(dirname(pendingPath), { recursive: true });
+    mkdirSync(dirname(capsulePath), { recursive: true });
     writeFileSync(join(root, ".memory-schema.json"), `${JSON.stringify({ version: 3, migratedAt: "2026-07-28T15:00:00.000Z" }, null, 2)}\n`, "utf-8");
     writeFileSync(targetPath, memoryEntrySource({ id: oldId, statement: "需要被替换的旧记忆" }), "utf-8");
     writeFileSync(relatedPath, memoryEntrySource({
@@ -175,6 +177,8 @@ describe("memory schema migration", () => {
       reason: "测试迁移引用",
       status: "open"
     }).trimEnd()}\n---\n测试迁移引用\n`, "utf-8");
+    writeFileSync(join(root, "MEMORY.md"), `- [${oldId}] 旧索引\n`, "utf-8");
+    writeFileSync(capsulePath, `---\nclaim_ids:\n  - ${oldId}\n---\n旧主题摘要\n`, "utf-8");
 
     try {
       process.env.LUME_CONFIG_DIR = parent;
@@ -187,6 +191,8 @@ describe("memory schema migration", () => {
       expect(related?.frontmatter.superseded_by).toBe("mem_target");
       const pending = store.listPending({ scopes: ["global"] })[0]!;
       expect(pending.frontmatter.existing?.ids).toEqual(["mem_target"]);
+      expect(existsSync(join(root, "MEMORY.md"))).toBe(false);
+      expect(existsSync(capsulePath)).toBe(false);
 
       store.resolvePending({ workspaceSlug: "unused", path: pending.path, action: "accept" });
       const target = store.listEntries({ scopes: ["global"], includeStatuses: ["superseded"] })

@@ -46,6 +46,7 @@ export function migrateMemoryScopeRootIfNeeded(root: string, scope: MemoryV2Scop
     cpSync(root, tempPath, { recursive: true, errorOnExist: true });
     const idMap = migrateEntries(tempPath, scope);
     migratePendingReferences(tempPath, idMap);
+    invalidateIdDerivedViews(tempPath, idMap);
     rmSync(join(tempPath, "persona.md"), { force: true });
     validateEntries(tempPath);
     const marker: MemorySchemaMarker = {
@@ -153,6 +154,12 @@ function migratePendingReferences(root: string, idMap: Map<string, string>): voi
       }, document.body);
     }
   }
+}
+
+function invalidateIdDerivedViews(root: string, idMap: Map<string, string>): void {
+  if (idMap.size === 0) return;
+  rmSync(join(root, "MEMORY.md"), { force: true });
+  rmSync(join(root, "capsules"), { recursive: true, force: true });
 }
 
 function validateEntries(root: string): void {
