@@ -64,4 +64,34 @@ describe("memory schema migration", () => {
     expect(migrated).toContain("# Lume 应用开发活动");
     rmSync(parent, { recursive: true, force: true });
   });
+
+  test("converts short legacy entries with a generated memory filename", () => {
+    const parent = mkdtempSync(join(tmpdir(), "lume-memory-migration-short-"));
+    const root = join(parent, "memory");
+    const note = join(root, "entries", "2026-07-28-mem_20260728150000_chrome_bridge.md");
+    const body = "Chrome Bridge 已启用。\n";
+    mkdirSync(dirname(note), { recursive: true });
+    writeFileSync(note, body, "utf-8");
+
+    migrateMemoryScopeRootIfNeeded(root, "workspace");
+
+    const migrated = readFileSync(note, "utf-8");
+    expect(migrated).toContain("id: mem_20260728150000_chrome_bridge");
+    expect(migrated).toContain(body.trim());
+    rmSync(parent, { recursive: true, force: true });
+  });
+
+  test("accepts Windows line endings in existing frontmatter", () => {
+    const parent = mkdtempSync(join(tmpdir(), "lume-memory-migration-crlf-"));
+    const root = join(parent, "memory");
+    const note = join(root, "entries", "2026-07-28-mem_test.md");
+    const source = `\uFEFF---\r\nid: mem_test\r\nkind: fact\r\nupdated: 2026-07-28T15:00:00.000Z\r\n---\r\n正文\r\n`;
+    mkdirSync(dirname(note), { recursive: true });
+    writeFileSync(note, source, "utf-8");
+
+    migrateMemoryScopeRootIfNeeded(root, "workspace");
+
+    expect(readFileSync(note, "utf-8")).toContain("id: mem_test");
+    rmSync(parent, { recursive: true, force: true });
+  });
 });

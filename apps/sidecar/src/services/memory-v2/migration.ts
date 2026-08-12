@@ -4,6 +4,8 @@ import YAML from "yaml";
 import type { MemoryV2Scope } from "./types";
 
 export const MEMORY_SCHEMA_VERSION = 3;
+const FRONTMATTER_RE = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+const GENERATED_MEMORY_FILENAME_RE = /^\d{4}-\d{2}-\d{2}-(mem_[A-Za-z0-9][A-Za-z0-9_-]*)\.md$/;
 
 interface MemorySchemaMarker {
   version: number;
@@ -130,9 +132,9 @@ function validateEntries(root: string): void {
 
 function parseDocument(path: string, scope?: MemoryV2Scope): { frontmatter: Record<string, unknown>; body: string } {
   const source = readFileSync(path, "utf-8");
-  const match = source.match(/^---\n([\s\S]*?)\n---\n?/);
+  const match = source.match(FRONTMATTER_RE);
   if (!match) {
-    if (scope && isLegacyMarkdownNote(source)) {
+    if (scope && isLegacyMarkdownNote(path, source)) {
       return legacyMarkdownDocument(path, source, scope);
     }
     throw new Error(`Missing frontmatter: ${path}`);
@@ -144,17 +146,20 @@ function parseDocument(path: string, scope?: MemoryV2Scope): { frontmatter: Reco
 
 /**
  * Older workspaces occasionally stored durable Markdown notes directly under
- * entries/. Only heading-led notes are migrated implicitly; arbitrary plain
- * text is still treated as corruption so a failed migration remains atomic.
+ * entries/. Heading-led notes and non-empty files with the generated memory
+ * filename are migrated; unrelated plain text still fails atomically.
  */
-function isLegacyMarkdownNote(source: string): boolean {
+function isLegacyMarkdownNote(path: string, source: string): boolean {
   const trimmed = source.trimStart();
-  return /^#{1,6}\s+\S+/.test(trimmed) && trimmed.includes("\n") && trimmed.trim().length >= 64;
+  const isHeadingLedNote = /^#{1,6}\s+\S+/.test(trimmed) && trimmed.includes("\n") && trimmed.trim().length >= 64;
+  const hasGeneratedFilename = GENERATED_MEMORY_FILENAME_RE.test(basename(path));
+  return isHeadingLedNote || (hasGeneratedFilename && Boolean(trimmed.trim()) && !trimmed.startsWith("---"));
 }
 
 function legacyMarkdownDocument(path: string, source: string, scope: MemoryV2Scope): { frontmatter: Record<string, unknown>; body: string } {
   const timestamp = statSync(path).mtime.toISOString();
-  const id = basename(path, ".md");
+  const filename = basename(path);
+  const id = filename.match(GENERATED_MEMORY_FILENAME_RE)?.[1] ?? basename(path, ".md");
   return {
     frontmatter: {
       id,
