@@ -1204,6 +1204,49 @@ describe('todo_update block 稳定性', () => {
     })
   })
 
+  test('does not show a coding completion report while the run is still active', () => {
+    const activeMessages = projectRuntimeEventMessages([
+      event({ type: 'run.started' }),
+      event({ type: 'message.user.submitted', text: '修复测试', messageId: 'user-1' }),
+      event({ type: 'assistant.delta', delta: '正在修改' }),
+      event({
+        type: 'coding.report.updated',
+        codingReport: {
+          status: 'unverified',
+          workspaceChanged: true,
+          changedFiles: ['src/fix.ts'],
+          externalChangedFiles: [],
+          pendingBackground: false,
+        },
+      }),
+    ])
+
+    const activeAssistant = activeMessages.find((message) => message.type === 'assistant')
+    expect(activeAssistant?.type === 'assistant' ? activeAssistant.codingReport : undefined).toBeUndefined()
+
+    const completedMessages = projectRuntimeEventMessages([
+      event({ type: 'run.started' }),
+      event({ type: 'message.user.submitted', text: '修复测试', messageId: 'user-1' }),
+      event({ type: 'assistant.delta', delta: '修改完成' }),
+      event({
+        type: 'run.completed',
+        codingReport: {
+          status: 'verified',
+          workspaceChanged: true,
+          changedFiles: ['src/fix.ts'],
+          externalChangedFiles: [],
+          pendingBackground: false,
+        },
+      }),
+    ])
+
+    const completedAssistant = completedMessages.find((message) => message.type === 'assistant')
+    expect(completedAssistant?.type === 'assistant' ? completedAssistant.codingReport : undefined).toMatchObject({
+      status: 'verified',
+      changedFiles: ['src/fix.ts'],
+    })
+  })
+
   test('updates the completed assistant when a background verification finishes later', () => {
     const messages = projectRuntimeEventMessages([
       event({ type: 'run.started', runId: 'run-background' }),
