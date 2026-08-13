@@ -1,5 +1,12 @@
 import type { BrowserTabDescriptor, BrowserViewportPreset, BrowserViewportState } from '@lume/shared'
 
+export const THREAD_BROWSER_ACTIVATE_EVENT = 'lume:thread-browser-activate'
+
+export interface ThreadBrowserActivateDetail {
+  threadId: string
+  tab: BrowserTabDescriptor
+}
+
 export interface RightPanelBrowserTab {
   id: string
   profileKind?: BrowserTabDescriptor['profileKind']
@@ -118,6 +125,18 @@ export function browserTabFromDescriptor(descriptor: BrowserTabDescriptor): Righ
   }
 }
 
+export function findThreadBrowserTabByUrl(
+  tabs: BrowserTabDescriptor[],
+  threadId: string,
+  url: string,
+): BrowserTabDescriptor | undefined {
+  const targetUrl = comparableBrowserUrl(url)
+  if (!targetUrl) return undefined
+  return tabs
+    .filter((tab) => tab.ownerThreadId === threadId && comparableBrowserUrl(tab.url) === targetUrl)
+    .sort((left, right) => String(right.lastOpenedAt ?? '').localeCompare(String(left.lastOpenedAt ?? '')))[0]
+}
+
 export function closeBrowserTab(workspace: ThreadBrowserWorkspace, tabId: string): ThreadBrowserWorkspace {
   const index = workspace.tabs.findIndex((tab) => tab.id === tabId)
   if (index < 0) return workspace
@@ -187,6 +206,17 @@ function sanitizeBrowserTab(value: unknown): RightPanelBrowserTab | null {
     ...(Array.isArray(value.navigationEntries) ? { navigationEntries: value.navigationEntries.filter((entry): entry is string => typeof entry === 'string').slice(-200) } : {}),
     ...(typeof value.navigationIndex === 'number' && Number.isInteger(value.navigationIndex) ? { navigationIndex: value.navigationIndex } : {}),
     ...(isScrollPosition(value.scrollPosition) ? { scrollPosition: value.scrollPosition } : {}),
+  }
+}
+
+function comparableBrowserUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value.trim().replace(/[。，、；：！？）】》〉”’]+$/u, ''))
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined
+    url.hash = ''
+    return url.toString()
+  } catch {
+    return undefined
   }
 }
 

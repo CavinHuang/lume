@@ -4,6 +4,7 @@ import {
   applyBrowserDescriptor,
   closeBrowserTab,
   duplicateBrowserTab,
+  findThreadBrowserTabByUrl,
   openBrowserTab,
   restoreClosedBrowserTab,
   sanitizeThreadBrowserWorkspace,
@@ -113,5 +114,17 @@ describe('right panel browser workspace', () => {
     })
 
     expect(restored.tabs[0]?.viewport?.preset).toBe('laptop-l')
+  })
+
+  test('finds the latest matching live tab only inside the current thread', () => {
+    const match = findThreadBrowserTabByUrl([
+      { tabId: 'browser:other', ownerThreadId: 'thread-2', backend: 'iab', generation: 1, url: 'https://example.com/', title: 'Other', visible: false, surface: null },
+      { tabId: 'browser:old', ownerThreadId: 'thread-1', backend: 'iab', generation: 1, url: 'https://example.com/', title: 'Old', visible: false, surface: null, lastOpenedAt: '2026-01-01T00:00:00.000Z' },
+      { tabId: 'browser:new', ownerThreadId: 'thread-1', backend: 'iab', generation: 1, url: 'https://example.com/#result', title: 'New', visible: false, surface: null, lastOpenedAt: '2026-02-01T00:00:00.000Z' },
+    ], 'thread-1', 'https://example.com')
+
+    expect(match?.tabId).toBe('browser:new')
+    expect(findThreadBrowserTabByUrl([match!], 'thread-1', 'https://example.com。')?.tabId).toBe('browser:new')
+    expect(findThreadBrowserTabByUrl([], 'thread-1', 'not-a-url')).toBeUndefined()
   })
 })

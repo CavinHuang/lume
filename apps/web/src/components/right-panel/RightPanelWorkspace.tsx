@@ -53,6 +53,8 @@ import {
   closeBrowserTab,
   createBrowserTab,
   sanitizeThreadBrowserWorkspace,
+  THREAD_BROWSER_ACTIVATE_EVENT,
+  type ThreadBrowserActivateDetail,
   type ThreadBrowserWorkspace,
 } from './right-panel-browser-state'
 import { CodingReviewPanel } from './CodingReviewPanel'
@@ -213,8 +215,13 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
       .then(async (workspace) => ({ workspace, tabs: await browserRuntime<BrowserTabDescriptor[]>({ method: 'list' }) }))
       .then(({ workspace, tabs }) => {
         if (cancelled) return
-        const descriptors = new Map(tabs.filter((tab) => tab.ownerThreadId === threadId).map((tab) => [tab.tabId, tab]))
+        const threadTabs = tabs.filter((tab) => tab.ownerThreadId === threadId)
+        const descriptors = new Map(threadTabs.map((tab) => [tab.tabId, tab]))
         const restoredTabs = workspace.orderedTabIds.flatMap((tabId) => descriptors.get(tabId) ? [browserTabFromDescriptor(descriptors.get(tabId)!)] : [])
+        const agentDescriptors = threadTabs.filter((tab) => tab.profileKind === 'agent')
+        const agentTabs = agentDescriptors.map(browserTabFromDescriptor)
+        const activeAgentTab = agentDescriptors.find((tab) => tab.visible)
+          ?? [...agentDescriptors].sort((left, right) => String(right.lastOpenedAt ?? '').localeCompare(String(left.lastOpenedAt ?? '')))[0]
         const recentlyClosed = workspace.recentlyClosed.map((closed) => ({
           id: closed.tabId,
           url: closed.url,
@@ -227,6 +234,15 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
           ...current,
           [threadId]: { tabs: restoredTabs, recentlyClosed, ...(workspace.activeTabId ? { activeTabId: workspace.activeTabId } : {}) },
         }))
+        setAgentBrowserWorkspaces((current) => ({
+          ...current,
+          [threadId]: {
+            tabs: agentTabs,
+            recentlyClosed: [],
+            ...(activeAgentTab ? { activeTabId: activeAgentTab.tabId } : {}),
+          },
+        }))
+        knownBrowserTabIdsRef.current[threadId] = new Set(threadTabs.map((tab) => tab.tabId))
       })
       .catch(() => undefined)
     return () => { cancelled = true }
@@ -284,6 +300,31 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
       }).catch(() => undefined)
     }).then((dispose) => { if (disposed) dispose(); else stop = dispose })
     return () => { disposed = true; stop?.() }
+  }, [setLayout, setPersistedBrowserWorkspaces, threadId, updateRuntime])
+
+  useEffect(() => {
+    if (!threadId) return
+    const activate = (event: Event) => {
+      const detail = (event as CustomEvent<ThreadBrowserActivateDetail>).detail
+      if (!detail || detail.threadId !== threadId || detail.tab.ownerThreadId !== threadId) return
+      const tab = browserTabFromDescriptor(detail.tab)
+      if (detail.tab.profileKind === 'agent') {
+        setAgentBrowserWorkspaces((current) => {
+          const workspace = sanitizeThreadBrowserWorkspace(current[threadId])
+          return { ...current, [threadId]: { ...workspace, tabs: [...workspace.tabs.filter((item) => item.id !== tab.id), tab], activeTabId: tab.id } }
+        })
+      } else {
+        setPersistedBrowserWorkspaces((current) => {
+          const workspace = sanitizeThreadBrowserWorkspace(current[threadId])
+          return { ...current, [threadId]: { ...workspace, tabs: [...workspace.tabs.filter((item) => item.id !== tab.id), tab], activeTabId: tab.id } }
+        })
+        void browserRuntime({ method: 'workspace:activate', params: { ownerThreadId: threadId, tabId: tab.id } }).catch(() => undefined)
+      }
+      setLayout((current) => current.open && current.mode !== 'compact' ? current : { open: true, mode: 'normal' })
+      updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId: tab.id } }))
+    }
+    window.addEventListener(THREAD_BROWSER_ACTIVATE_EVENT, activate)
+    return () => window.removeEventListener(THREAD_BROWSER_ACTIVATE_EVENT, activate)
   }, [setLayout, setPersistedBrowserWorkspaces, threadId, updateRuntime])
 
   useEffect(() => {
