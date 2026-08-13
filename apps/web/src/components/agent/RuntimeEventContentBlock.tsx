@@ -151,7 +151,6 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
         threadId={threadId}
         className={cls}
         leftAligned={useLeftAlignedMessageList}
-        showAvatar={showMessageAvatar}
         canEdit={canEditUserMessage}
         onOpenThreadFile={onOpenThreadFile}
         onOpenThreadImage={onOpenThreadImage}
@@ -461,7 +460,6 @@ function UserMessageBlock({
   className,
   canEdit,
   leftAligned,
-  showAvatar,
   onOpenThreadFile,
   onOpenThreadImage,
 }: {
@@ -470,7 +468,6 @@ function UserMessageBlock({
   className: string
   canEdit: boolean
   leftAligned: boolean
-  showAvatar: boolean
   onOpenThreadFile?: OpenThreadFile
   onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
 }) {
@@ -528,14 +525,9 @@ function UserMessageBlock({
   return (
     <div className={cn(
       'group/user-message flex w-full max-w-[920px] gap-4',
-      leftAligned ? 'justify-start' : 'ml-auto justify-end gap-2',
+      leftAligned ? 'justify-start pl-14' : 'ml-auto justify-end gap-2',
       className,
     )}>
-      {leftAligned && showAvatar && (
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[var(--lume-accent)] text-[15px] font-semibold text-[var(--lume-accent-foreground)] shadow-[0_12px_24px_-18px_hsl(var(--lume-shadow-panel)/0.72)]">
-          L
-        </div>
-      )}
       <div className={cn(
         'relative flex min-w-0 flex-col',
         leftAligned ? 'max-w-[760px] items-start' : 'max-w-[560px] items-end',
