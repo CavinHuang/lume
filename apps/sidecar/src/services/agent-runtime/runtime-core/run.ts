@@ -84,6 +84,7 @@ import { createSdkWebTools } from "../tools/web/create-web-tools";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
 import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
 import { hasCodingIntent } from "../../agent/capability-routing";
+import { resolvePersistedRoutingTrace } from "../../agent/agent-runtime-context";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
 import { buildSubagentWorkContext, resolveSubagentDispatchPolicy } from "../../agent/subagents/subagent-dispatch-policy";
@@ -2098,6 +2099,7 @@ export async function createRuntimeCoreSession(
     commentAttachments: input.commentAttachments,
     browserAttachments: input.browserAttachments,
     availableTools: toolset.availableToolNames,
+    routingTrace: resolvePersistedRoutingTrace(input.messageMetadata),
     browserRuntimeAvailable: isBundledBrowserRuntimeAvailable(),
     enabledPlugins,
     tokenBudget: contextTokenBudget,

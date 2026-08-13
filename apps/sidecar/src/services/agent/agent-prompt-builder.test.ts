@@ -416,6 +416,23 @@ describe("agent-prompt-builder", () => {
     expect(dynamic).toContain("- global-planner (Global Planner):");
   });
 
+  test("buildDynamicContext 保留发送阶段确定的 Browser 路由", () => {
+    const dynamic = buildDynamicContext({
+      sessionId: "browser-route-session",
+      workspaceSlug: "browser-route-workspace",
+      availableTools: ["Skill", "Read", "Grep", "mcp__node_repl__js"],
+      userMessage: "打开百度搜索agent",
+      capabilityLanes: ["skills", "browser", "raw-tools"],
+      preferredCapabilityRoute: "browser",
+      capabilityRoutingReason: "request implies browser/session continuity"
+    });
+
+    expect(dynamic).toContain("Capability lanes: skills, browser, raw-tools");
+    expect(dynamic).toContain("Preferred capability route: browser");
+    expect(dynamic).toContain("Capability routing reason: request implies browser/session continuity");
+    expect(dynamic).not.toContain("Preferred capability route: raw-tools");
+  });
+
   test("buildDynamicContext 应包含启用插件摘要与插件 skill", () => {
     const dynamic = buildDynamicContext({
       sessionId: "agent-session-plugin-context",

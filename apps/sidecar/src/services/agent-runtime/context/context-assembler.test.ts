@@ -17,7 +17,7 @@ describe("ContextAssembler", () => {
       tokenBudget: 8_000,
     });
 
-    expect(result.runtimeContext).toContain("Use list_apps, choose one unique Window, call get_window");
+    expect(result.runtimeContext).toContain("Use mcp__computer_use__list_apps, choose one unique Window, call mcp__computer_use__get_window");
     expect(result.runtimeContext).toContain("replace the prior target with state.window");
     expect(result.runtimeContext).not.toContain("historical app/title hint");
   });
@@ -26,17 +26,26 @@ describe("ContextAssembler", () => {
     const result = await new ContextAssembler().assemble({
       threadId: "browser-thread",
       runId: "browser-run",
-      userMessage: "打开内置浏览器访问百度",
+      userMessage: "打开百度搜索agent",
       resolvedModelId: "test-model",
+      workspaceSlug: "browser-workspace",
       availableTools: ["mcp__node_repl__js", "mcp__computer_use__click"],
       browserRuntimeAvailable: true,
+      routingTrace: {
+        capabilityLanes: ["skills", "browser", "raw-tools"],
+        preferredCapabilityRoute: "browser",
+        reason: "request implies browser/session continuity"
+      },
       tokenBudget: 8_000,
     });
 
+    expect(result.runtimeContext).toContain("Preferred capability route: browser");
+    expect(result.runtimeContext).not.toContain("Preferred capability route: raw-tools");
     expect(result.runtimeContext).toContain("task-isolated in-app Browser runtime is available");
     expect(result.runtimeContext).toContain("exact skill name browser:browser (without a workspace prefix)");
     expect(result.runtimeContext).toContain("Do not claim browser automation is unavailable before attempting it");
     expect(result.runtimeContext).toContain("defaults to the iab backend");
+    expect(result.runtimeContext).not.toContain("mcp__computer_use__list_apps");
     expect(result.runtimeContext).not.toContain("prefer the installed lume-chrome");
   });
 
@@ -125,12 +134,12 @@ describe("ContextAssembler", () => {
 
     expect(result.runtimeContext).toContain("historical app/title hint");
     expect(result.runtimeContext).toContain("If desktop_context.snapshot.selectedText is present");
-    expect(result.runtimeContext).toContain("Use list_apps, choose one unique Window, call get_window");
+    expect(result.runtimeContext).toContain("Use mcp__computer_use__list_apps, choose one unique Window, call mcp__computer_use__get_window");
     expect(result.runtimeContext).toContain("mcp__computer_use__get_window_state");
     expect(result.runtimeContext).toContain("replace the prior target with state.window");
     expect(result.runtimeContext).toContain("Never reconstruct a Window id");
     expect(result.runtimeContext).toContain("Passive reads do not activate windows");
-    expect(result.runtimeContext).toContain("use activate_window only");
+    expect(result.runtimeContext).toContain("use mcp__computer_use__activate_window only");
     expect(result.runtimeContext).toContain("Input tools restore and activate");
     expect(result.runtimeContext).toContain("include_screenshot defaults to true");
     expect(result.runtimeContext).toContain("include_screenshot:false, include_text:true");

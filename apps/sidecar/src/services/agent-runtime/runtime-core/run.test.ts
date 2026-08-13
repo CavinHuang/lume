@@ -172,10 +172,13 @@ describe("runtime-core run", () => {
     try {
       result = await createRuntimeCoreSession(createHookRuntimeSessionInput({
         lumeSessionId: `browser-tool-${crypto.randomUUID()}`,
+        workspaceSlug: `browser-route-${crypto.randomUUID()}`,
         permissionMode: "default",
-        userMessage: "使用浏览器在百度中搜索 agent",
+        userMessage: "打开百度搜索agent",
         messageMetadata: {
+          capabilityLanes: ["skills", "browser", "raw-tools"],
           preferredCapabilityRoute: "browser",
+          capabilityRoutingReason: "request implies browser/session continuity",
           toolPolicy: resolveSoftToolPolicyForPreferredRoute("browser")
         }
       }));
@@ -183,6 +186,7 @@ describe("runtime-core run", () => {
 
       expect(result.session.getActiveToolNames()).toContain("mcp__node_repl__js");
       expect(result.session.getActiveToolNames()).not.toContain("Bash");
+      expect(result.runtimeContext).toContain("Preferred capability route: browser");
       const deferredTools = (result.agent as unknown as { deferredToolPool: ToolDefinition[] }).deferredToolPool;
       expect(deferredTools.map((tool) => tool.name)).not.toContain("mcp__node_repl__js");
     } finally {

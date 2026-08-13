@@ -13,6 +13,7 @@ interface ResolveAgentDynamicContextInput {
   lumeWorkDir?: string;
   projectRoot?: string;
   availableTools?: string[];
+  routingTrace?: AgentRuntimeRoutingTrace;
   threadType?: AgentSendInput["threadType"];
   chatType?: AgentSendInput["chatType"];
   fallbackModelRef?: string;
@@ -24,6 +25,34 @@ export interface AgentRuntimeRoutingTrace {
   capabilityLanes: CapabilityLane[];
   preferredCapabilityRoute: CapabilityLane | null;
   reason: string;
+}
+
+const CAPABILITY_LANES = new Set<CapabilityLane>([
+  "skills",
+  "browser",
+  "memory",
+  "web",
+  "coding",
+  "raw-tools"
+]);
+
+function isCapabilityLane(value: unknown): value is CapabilityLane {
+  return typeof value === "string" && CAPABILITY_LANES.has(value as CapabilityLane);
+}
+
+export function resolvePersistedRoutingTrace(
+  metadata?: Record<string, unknown>
+): AgentRuntimeRoutingTrace | undefined {
+  if (!metadata || !Array.isArray(metadata.capabilityLanes)) return undefined;
+  const preferredRoute = metadata.preferredCapabilityRoute;
+  if (preferredRoute !== null && !isCapabilityLane(preferredRoute)) return undefined;
+  if (typeof metadata.capabilityRoutingReason !== "string") return undefined;
+
+  return {
+    capabilityLanes: metadata.capabilityLanes.filter(isCapabilityLane),
+    preferredCapabilityRoute: preferredRoute,
+    reason: metadata.capabilityRoutingReason
+  };
 }
 
 export function resolveAgentDynamicContextInput(
@@ -47,6 +76,9 @@ export function resolveAgentDynamicContextInput(
     projectRoot: input.projectRoot,
     availableTools: input.availableTools,
     userMessage: input.userMessage,
+    capabilityLanes: input.routingTrace?.capabilityLanes,
+    preferredCapabilityRoute: input.routingTrace?.preferredCapabilityRoute,
+    capabilityRoutingReason: input.routingTrace?.reason,
     enabledPlugins: input.enabledPlugins
   };
 }

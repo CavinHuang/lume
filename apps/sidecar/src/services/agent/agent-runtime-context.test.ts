@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentThread } from "./agent-thread-manager";
-import { resolveAgentDynamicContextInput, resolveAgentRuntimeRoutingTrace } from "./agent-runtime-context";
+import {
+  resolveAgentDynamicContextInput,
+  resolveAgentRuntimeRoutingTrace,
+  resolvePersistedRoutingTrace
+} from "./agent-runtime-context";
 import { getAgentWorkspacePath, getUserSkillsDir } from "../infra/config-paths";
 
 describe("agent-runtime-context", () => {
@@ -74,6 +78,18 @@ describe("agent-runtime-context", () => {
     expect(trace.capabilityLanes).toEqual(["skills", "browser", "raw-tools"]);
     expect(trace.preferredCapabilityRoute).toBe("skills");
     expect(trace.reason).toContain("loaded skill metadata");
+  });
+
+  test("应读取消息发送阶段持久化的 Browser 路由", () => {
+    expect(resolvePersistedRoutingTrace({
+      capabilityLanes: ["skills", "browser", "raw-tools", "unknown"],
+      preferredCapabilityRoute: "browser",
+      capabilityRoutingReason: "request implies browser/session continuity"
+    })).toEqual({
+      capabilityLanes: ["skills", "browser", "raw-tools"],
+      preferredCapabilityRoute: "browser",
+      reason: "request implies browser/session continuity"
+    });
   });
 
   test("runtime routing trace 应包含用户全局 skill 元数据", () => {

@@ -1,6 +1,6 @@
 
 import { getRuntimeSkills, getWorkspaceMcpConfig } from "./agent-workspace-manager";
-import { inferCapabilityLanes, resolvePreferredCapabilityRoute } from "./capability-routing";
+import { inferCapabilityLanes, resolvePreferredCapabilityRoute, type CapabilityLane } from "./capability-routing";
 import type { MemoryCitationsMode } from "../memory-v2/policy";
 import { BUILTIN_AGENT_ROLES, canonicalizeAgentToolName } from "@lume/shared";
 import type { AgentDefinition } from "@lume/agent-sdk";
@@ -438,6 +438,9 @@ export interface DynamicContext {
   projectRoot?: string;
   availableTools?: string[];
   userMessage?: string;
+  capabilityLanes?: CapabilityLane[];
+  preferredCapabilityRoute?: CapabilityLane | null;
+  capabilityRoutingReason?: string;
   enabledPlugins?: EnabledPluginContextItem[];
 }
 
@@ -484,17 +487,22 @@ export function buildDynamicContext(ctx: DynamicContext): string {
     if (ctx.workspaceName) {
       lines.push(`工作区: ${ctx.workspaceName}`);
     }
-    const capabilityLanes = inferCapabilityLanes(ctx.availableTools);
+    const capabilityLanes = ctx.capabilityLanes ?? inferCapabilityLanes(ctx.availableTools);
     if (capabilityLanes.length > 0) {
       lines.push(`Capability lanes: ${capabilityLanes.join(", ")}`);
     }
 
     const skills = getRuntimeSkills(ctx.workspaceSlug, ctx.agentCwd);
-    const preferredRoute = resolvePreferredCapabilityRoute({
-      userMessage: ctx.userMessage,
-      availableTools: ctx.availableTools,
-      loadedSkills: skills
-    });
+    const preferredRoute = ctx.preferredCapabilityRoute !== undefined
+      ? {
+          preferredLane: ctx.preferredCapabilityRoute,
+          reason: ctx.capabilityRoutingReason ?? "route selected before runtime context assembly"
+        }
+      : resolvePreferredCapabilityRoute({
+          userMessage: ctx.userMessage,
+          availableTools: ctx.availableTools,
+          loadedSkills: skills
+        });
     if (preferredRoute.preferredLane) {
       lines.push(`Preferred capability route: ${preferredRoute.preferredLane}`);
     }
