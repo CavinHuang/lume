@@ -7,6 +7,7 @@ import type { RuntimeAssistantBlock } from './runtime-message-view'
 export type AssistantSegment =
   | { kind: 'inline'; block: RuntimeAssistantBlock }
   | { kind: 'process'; blocks: RuntimeAssistantBlock[] }
+  | { kind: 'memory_mutation'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
   | { kind: 'ask_user_question'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
   | { kind: 'image_tools'; blocks: Array<Extract<RuntimeAssistantBlock, { type: 'tool_call' }>> }
   | { kind: 'wiki_proposal'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
@@ -43,6 +44,12 @@ export function groupAssistantBlocksForMinimal(blocks: RuntimeAssistantBlock[]):
       segments.push({ kind: 'wiki_proposal', block })
       continue
     }
+    if (block.type === 'tool_call' && isMemoryMutation(block)) {
+      flushProcess()
+      flushImages()
+      segments.push({ kind: 'memory_mutation', block })
+      continue
+    }
     if (block.type === 'tool_call' && block.toolCall.toolName === 'image_gen') {
       flushProcess()
       imageBuffer.push(block)
@@ -63,6 +70,7 @@ export function groupAssistantBlocksForMinimal(blocks: RuntimeAssistantBlock[]):
 
 export type StandardAssistantSegment =
   | { kind: 'inline'; block: RuntimeAssistantBlock }
+  | { kind: 'memory_mutation'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
   | { kind: 'ask_user_question'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
   | { kind: 'image_tools'; blocks: Array<Extract<RuntimeAssistantBlock, { type: 'tool_call' }>> }
   | { kind: 'wiki_proposal'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
@@ -90,6 +98,11 @@ export function groupAssistantBlocksForStandard(blocks: RuntimeAssistantBlock[])
       segments.push({ kind: 'wiki_proposal', block })
       continue
     }
+    if (block.type === 'tool_call' && isMemoryMutation(block)) {
+      flushImages()
+      segments.push({ kind: 'memory_mutation', block })
+      continue
+    }
     if (block.type === 'tool_call' && block.toolCall.toolName === 'image_gen') {
       imageBuffer.push(block)
       continue
@@ -112,4 +125,8 @@ function isCompletedWikiProposal(
 ): boolean {
   return block.toolCall.toolName === 'wiki.propose_changes'
     && block.toolCall.status === 'completed'
+}
+
+function isMemoryMutation(block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }>): boolean {
+  return block.toolCall.toolName === 'memory.remember' || block.toolCall.toolName === 'memory.forget'
 }

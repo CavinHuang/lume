@@ -8,6 +8,11 @@ const tool = (id: string): RuntimeAssistantBlock => ({
   id,
   toolCall: { id, toolName: 'Bash', input: {}, status: 'completed' },
 })
+const memoryTool = (id: string, toolName: 'memory.remember' | 'memory.forget'): RuntimeAssistantBlock => ({
+  type: 'tool_call',
+  id,
+  toolCall: { id, toolName, input: {}, status: 'completed' },
+})
 const askUserQuestion = (id: string): RuntimeAssistantBlock => ({
   type: 'tool_call',
   id,
@@ -111,6 +116,16 @@ describe('groupAssistantBlocksForMinimal', () => {
     expect(result.map((segment) => segment.kind)).toEqual(['process', 'wiki_proposal', 'process'])
   })
 
+  test('memory mutations leave the collapsible process as a lightweight status', () => {
+    expect(groupAssistantBlocksForMinimal([
+      memoryTool('memory-1', 'memory.remember'),
+      tool('bash-1'),
+    ])).toEqual([
+      expect.objectContaining({ kind: 'memory_mutation' }),
+      expect.objectContaining({ kind: 'process' }),
+    ])
+  })
+
   test('AskUserQuestion leaves the collapsible process as a standalone result', () => {
     const result = groupAssistantBlocksForMinimal([tool('1'), askUserQuestion('2'), tool('3')])
 
@@ -152,5 +167,15 @@ describe('groupAssistantBlocksForStandard', () => {
     const result = groupAssistantBlocksForStandard([tool('1'), askUserQuestion('2')])
 
     expect(result.map((segment) => segment.kind)).toEqual(['inline', 'ask_user_question'])
+  })
+
+  test('renders memory mutations as standalone standard segments', () => {
+    expect(groupAssistantBlocksForStandard([
+      memoryTool('memory-1', 'memory.forget'),
+      tool('bash-1'),
+    ])).toEqual([
+      expect.objectContaining({ kind: 'memory_mutation' }),
+      expect.objectContaining({ kind: 'inline' }),
+    ])
   })
 })

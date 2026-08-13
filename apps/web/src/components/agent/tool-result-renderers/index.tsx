@@ -15,7 +15,6 @@ import { TodoResult } from './todo-result'
 import { DefaultResult } from './default-result'
 import { WikiProposalResult } from './wiki-proposal-result'
 import { PlanningTodoResult } from './planning-todo-result'
-import { MemoryMutationResult } from './memory-mutation-result'
 import { LinkResult } from './link-result'
 import type { LinkAuthorizationSignal } from '@lume/shared'
 
@@ -47,7 +46,7 @@ export function ToolResultRenderer({ toolName, input, result, imagePresentation,
     case 'wiki.propose_changes': return <WikiProposalResult result={result} />
     case 'memory.remember':
     case 'memory.forget':
-      return <MemoryMutationResult result={result} />
+      return null
     case 'PlanningTodoList':
     case 'PlanningTodoGet':
     case 'PlanningTodoCreate':

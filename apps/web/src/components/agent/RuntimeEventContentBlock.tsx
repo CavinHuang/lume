@@ -13,7 +13,7 @@ import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { AskUserQuestionBlock } from './AskUserQuestionBlock'
-import { agentSend, getThreadMessageVersions, openExternal, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, undoMemoryMutation, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
+import { agentSend, getThreadMessageVersions, openExternal, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
 import { parseMessageThreadFileReference, stripFileReferenceProtocolFromMarkdown } from './thread-file-links'
 import { MessageFileReferenceBindingProvider, useMessageFileReferenceBinding, useMessageFileReferenceProtocolVersion } from './thread-file-env'
 import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, validatePlanningTodoRefPart, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta, type AgentUserMessagePart, type FileRef } from '@lume/shared'
@@ -151,7 +151,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
         threadId={threadId}
         className={cls}
         leftAligned={useLeftAlignedMessageList}
-        showAvatar={showMessageAvatar}
+        showAvatar={showMessageAvatar && showAssistantAvatar}
         canEdit={canEditUserMessage}
         onOpenThreadFile={onOpenThreadFile}
         onOpenThreadImage={onOpenThreadImage}
@@ -160,7 +160,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
   }
 
   if (message.type === 'system') {
-    return <SystemMessageBlock message={message} className={cls} onOpenMemorySource={onOpenMemorySource} onOpenMemoryCenter={openMemoryCenter} />
+    return <SystemMessageBlock message={message} className={cls} onOpenMemoryCenter={openMemoryCenter} />
   }
 
   const latestTaskProgressBlock = findLatestTaskProgressBlock(message.blocks)
@@ -199,19 +199,30 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
       : [],
     [message.status, message.text, showExpressionActions],
   )
+  const showAssistantHeader = showAssistantAvatar && showMessageAvatar
 
   return (
     <MessageFileReferenceBindingProvider value={message.fileReferenceBinding} consumerThreadId={threadId} protocolVersion={message.fileReferenceProtocolVersion}>
-    <div className={cn('group/agent-message flex w-full max-w-[920px] min-w-0 gap-4', cls)}>
-      {showAssistantAvatar && showMessageAvatar && (
-        <div
-          data-agent-message-avatar="true"
-          className="mt-1 flex size-10 shrink-0 items-center justify-center rounded-full border border-[color:color-mix(in_oklab,var(--lume-accent)_24%,var(--lume-border-subtle))] bg-[var(--lume-bg-elevated)] text-[var(--lume-accent)] shadow-[0_10px_24px_-20px_hsl(var(--lume-shadow-panel)/0.72)]"
-        >
-          <Sparkles size={21} strokeWidth={1.8} fill="currentColor" fillOpacity={0.1} />
+    <div className={cn('group/agent-message flex w-full max-w-[920px] min-w-0 flex-col gap-0.5', cls)}>
+      {showAssistantHeader && (
+        <div className="mb-2.5 flex items-start gap-2.5">
+          <div
+            data-agent-message-avatar="true"
+            className="flex size-[35px] shrink-0 items-center justify-center rounded-[25%] border border-[color:color-mix(in_oklab,var(--lume-accent)_24%,var(--lume-border-subtle))] bg-[var(--lume-bg-elevated)] text-[var(--lume-accent)]"
+          >
+            <Sparkles size={19} strokeWidth={1.8} fill="currentColor" fillOpacity={0.1} />
+          </div>
+          <div className="flex h-[35px] flex-col justify-between">
+            <span className="text-[13px] font-semibold leading-none text-[var(--lume-text-secondary)]">Lume</span>
+            {formatMessageTime(message.completedAt) && (
+              <span className="text-[10px] leading-none text-[var(--lume-text-muted)]">
+                {formatMessageTime(message.completedAt)}
+              </span>
+            )}
+          </div>
         </div>
       )}
-      <div className="min-w-0 flex-1 space-y-4 pt-2">
+      <div className={cn('min-w-0 flex-1 space-y-3', showAssistantHeader && 'pl-[46px]')}>
         {useMinimalMode ? (
           <MinimalAssistantContent
             blocks={minimalBlocks}
@@ -261,7 +272,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
           tokenCount={message.tokenCount}
           tokenCountSource={message.tokenCountSource}
           tokenUsage={message.tokenUsage}
-          completedAt={message.completedAt}
+          completedAt={showAssistantHeader ? undefined : message.completedAt}
           memoryEvents={contentBlocks
             .filter((b): b is Extract<typeof b, { type: 'memory_context_used' }> => b.type === 'memory_context_used')
             .map(b => b.event)}
@@ -369,93 +380,47 @@ function ImDeliveryStatusLine({
 function SystemMessageBlock({
   message,
   className,
-  onOpenMemorySource,
   onOpenMemoryCenter,
 }: {
   message: Extract<RuntimeMessageView, { type: 'system' }>
   className?: string
-  onOpenMemorySource?: (path: string, fileRef?: FileRef) => void
   onOpenMemoryCenter: (target: Extract<RuntimeMessageView, { type: 'system'; variant: 'memory_saved' | 'memory_job' }>['target']) => void
 }) {
   if (message.variant === 'context_compaction') {
     return <ContextCompactionDivider message={message} className={className} />
   }
   if (message.variant === 'memory_saved') {
-    return <MemorySavedNotice message={message} className={className} onOpenMemorySource={onOpenMemorySource} onOpenMemoryCenter={onOpenMemoryCenter} />
+    return <MemorySystemNotice message={message} className={className} onOpenMemoryCenter={onOpenMemoryCenter} />
   }
   if (message.variant === 'memory_job') {
-    return (
-      <div className={cn('mx-6 flex items-center gap-2 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-3 py-2 text-[13px] text-[var(--lume-text-secondary)]', className)}>
-        {message.status === 'active' ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
-        <span>{message.text}</span>
-        <Button variant="ghost" size="sm" onClick={() => onOpenMemoryCenter(message.target)}>
-          打开
-        </Button>
-      </div>
-    )
+    return <MemorySystemNotice message={message} className={className} onOpenMemoryCenter={onOpenMemoryCenter} />
   }
   return null
 }
 
-function MemorySavedNotice({
+function MemorySystemNotice({
   message,
   className,
-  onOpenMemorySource,
   onOpenMemoryCenter,
 }: {
-  message: Extract<RuntimeMessageView, { type: 'system'; variant: 'memory_saved' }>
+  message: Extract<RuntimeMessageView, { type: 'system'; variant: 'memory_saved' | 'memory_job' }>
   className?: string
-  onOpenMemorySource?: (path: string, fileRef?: FileRef) => void
-  onOpenMemoryCenter: (target: Extract<RuntimeMessageView, { type: 'system'; variant: 'memory_saved' }>['target']) => void
+  onOpenMemoryCenter: (target: Extract<RuntimeMessageView, { type: 'system'; variant: 'memory_saved' | 'memory_job' }>['target']) => void
 }) {
-  const [expanded, setExpanded] = useState(false)
-  const [undone, setUndone] = useState<Set<string>>(() => new Set())
-  const undo = async (mutationId: string) => {
-    try {
-      await undoMemoryMutation({ workspaceSlug: message.workspaceSlug, mutationId })
-      setUndone((current) => new Set(current).add(mutationId))
-      toast.success('已撤销记忆变更')
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '撤销失败')
-    }
-  }
   return (
-    <div className={cn('mx-6 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-3 py-2 text-[13px]', className)}>
-      <div className="flex items-center gap-2 text-[var(--lume-text-secondary)]">
-        <Database size={14} />
-        <span className="flex-1">{message.text}</span>
-        <Button variant="ghost" size="sm" onClick={() => onOpenMemoryCenter(message.target)}>
-          打开
-        </Button>
-        {message.details.length > 0 && (
-          <Button variant="ghost" size="sm" onClick={() => setExpanded((value) => !value)}>
-            {expanded ? '收起' : '查看'}
-          </Button>
-        )}
-      </div>
-      {expanded && (
-        <div className="mt-2 space-y-2 border-t border-[var(--lume-border-subtle)] pt-2">
-          {message.details.map((detail) => (
-            <div key={detail.mutationId} className="flex items-center gap-2 text-xs text-[var(--lume-text-muted)]">
-              <span className="min-w-0 flex-1 truncate">{detail.summary}</span>
-              {detail.entryPaths?.map((path) => (
-                <Button key={path} variant="ghost" size="sm" onClick={() => onOpenMemorySource?.(path)}>
-                  查看
-                </Button>
-              ))}
-              {detail.sourcePaths?.map((path) => (
-                <Button key={`source:${path}`} variant="ghost" size="sm" onClick={() => onOpenMemorySource?.(path)}>
-                  来源
-                </Button>
-              ))}
-              {detail.undoable && !undone.has(detail.mutationId) && (
-                <Button variant="ghost" size="sm" onClick={() => void undo(detail.mutationId)}>撤销</Button>
-              )}
-              {undone.has(detail.mutationId) && <span>已撤销</span>}
-            </div>
-          ))}
-        </div>
-      )}
+    <div className={cn('mx-6 flex min-h-5 items-center gap-1.5 text-[12px] leading-5 text-[var(--lume-text-muted)]', className)}>
+      {message.variant === 'memory_job' && message.status === 'active'
+        ? <Loader2 size={13} className="shrink-0 animate-spin" />
+        : <Database size={13} className="shrink-0" />}
+      <span>{message.text}</span>
+      <Button
+        variant="link"
+        size="sm"
+        className="h-auto p-0 text-[12px] text-[var(--lume-text-muted)]"
+        onClick={() => onOpenMemoryCenter(message.target)}
+      >
+        打开
+      </Button>
     </div>
   )
 }
@@ -573,18 +538,30 @@ function UserMessageBlock({
 
   return (
     <div className={cn(
-      'group/user-message flex w-full max-w-[920px] gap-3',
-      leftAligned ? 'justify-start' : 'ml-auto justify-end gap-2',
+      'group/user-message flex w-full max-w-[920px]',
+      leftAligned ? 'flex-col gap-0.5' : 'ml-auto flex-row justify-end gap-2',
       className,
     )}>
       {leftAligned && showAvatar && (
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--lume-accent)] text-[15px] font-semibold text-[var(--lume-accent-foreground)] shadow-[0_12px_24px_-18px_hsl(var(--lume-shadow-panel)/0.72)]">
-          L
+        <div className="mb-2.5 flex items-start gap-2.5">
+          <div className="flex size-[35px] shrink-0 items-center justify-center rounded-full bg-[var(--lume-accent)] text-[14px] font-semibold text-[var(--lume-accent-foreground)]">
+            L
+          </div>
+          <div className="flex h-[35px] flex-col justify-between">
+            <span className="text-[13px] font-semibold leading-none text-[var(--lume-text-secondary)]">你</span>
+            {formatMessageTime(message.createdAt) && (
+              <span className="text-[10px] leading-none text-[var(--lume-text-muted)]">
+                {formatMessageTime(message.createdAt)}
+              </span>
+            )}
+          </div>
         </div>
       )}
       <div className={cn(
-        'flex min-w-0 flex-col gap-1.5',
-        leftAligned ? 'max-w-[760px] items-start' : 'max-w-[560px] items-end',
+        'relative flex min-w-0 flex-col',
+        leftAligned
+          ? cn('max-w-[806px] items-start', showAvatar && 'pl-[46px]')
+          : 'max-w-[560px] items-end',
       )}>
         {message.attachments && message.attachments.length > 0 && (
           <AgentAttachmentGrid
@@ -615,7 +592,7 @@ function UserMessageBlock({
         <div className={cn(
           'text-[15px] font-medium leading-[22px] text-[var(--lume-text-primary)]',
           leftAligned
-            ? 'px-0 py-0'
+            ? 'rounded-[10px] bg-[var(--lume-accent-soft)] px-3.5 py-2.5'
             : 'rounded-[12px] rounded-tr-[10px] bg-[var(--lume-accent-soft)] px-3 py-2 shadow-[0_1px_0_hsl(var(--lume-shadow-panel)/0.08)]',
         )}>
           {editing ? (
@@ -633,7 +610,10 @@ function UserMessageBlock({
             />
           )}
         </div>
-        <div className="pointer-events-none flex -translate-y-1 items-center gap-1 text-[var(--lume-text-muted)] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/user-message:pointer-events-auto group-hover/user-message:translate-y-0 group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:translate-y-0 group-focus-within/user-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
+        <div className={cn(
+          'pointer-events-none mt-0.5 flex h-6 items-center gap-0.5 whitespace-nowrap text-[var(--lume-text-muted)] opacity-0 transition-opacity duration-150 ease-out group-hover/user-message:pointer-events-auto group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:opacity-100 motion-reduce:transition-none',
+          leftAligned ? 'self-start' : 'self-end',
+        )}>
           {canShowVersions && (
             <Button
                 variant="ghost"
@@ -713,7 +693,7 @@ function UserMessageBlock({
           </div>
         )}
       </div>
-      {!leftAligned && (
+      {!leftAligned && showAvatar && (
         <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--lume-accent)] text-[15px] font-semibold text-[var(--lume-accent-foreground)] shadow-[0_12px_24px_-18px_hsl(var(--lume-shadow-panel)/0.72)]">
           L
         </div>
@@ -1296,6 +1276,20 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({
   const Icon = toolCall.toolName === 'Bash' ? Terminal : Wrench
   const memoryLabel = memoryMutationLabel(toolCall)
 
+  if (memoryLabel) {
+    return (
+      <div className={cn(
+        'flex min-h-5 items-center gap-1.5 py-0.5 text-[11.5px] text-foreground/40',
+        toolCall.status === 'failed' && 'text-destructive/70',
+      )}>
+        {isRunning
+          ? <Loader2 size={12} className="shrink-0 animate-spin" />
+          : <Database size={12} className="shrink-0" />}
+        <span>{memoryLabel}</span>
+      </div>
+    )
+  }
+
   return (
     <div>
       <Button
@@ -1424,6 +1418,9 @@ function StandardAssistantContent({
     if (segment.kind === 'ask_user_question') {
       return <AskUserQuestionBlock key={segment.block.id} toolCall={segment.block.toolCall} />
     }
+    if (segment.kind === 'memory_mutation') {
+      return <MemoryMutationStatusLine key={segment.block.id} toolCall={segment.block.toolCall} />
+    }
     if (segment.kind === 'wiki_proposal') {
       return <WikiProposalBlock key={segment.block.id} block={segment.block} />
     }
@@ -1440,6 +1437,25 @@ function StandardAssistantContent({
       />
     )
   })
+}
+
+function MemoryMutationStatusLine({ toolCall }: { toolCall: RuntimeToolCallView }) {
+  const label = memoryMutationLabel(toolCall)
+  const isRunning = toolCall.status === 'running'
+  const error = memoryMutationError(toolCall)
+  return (
+    <div className={cn(
+      'mx-6 flex min-h-5 items-start gap-1.5 text-[12px] leading-5 text-[var(--lume-text-muted)]',
+      toolCall.status === 'failed' && 'text-destructive/75',
+    )}>
+      {isRunning
+        ? <Loader2 size={13} className="shrink-0 animate-spin" />
+        : toolCall.status === 'failed'
+          ? <TriangleAlert size={13} className="mt-1 shrink-0" />
+          : <Database size={13} className="shrink-0" />}
+      <span className="min-w-0 whitespace-pre-wrap break-words">{label}{error ? `：${error}` : ''}</span>
+    </div>
+  )
 }
 
 function ImageGenerationGroup({
@@ -1610,6 +1626,9 @@ function MinimalAssistantContent({
         }
         if (segment.kind === 'ask_user_question') {
           return <AskUserQuestionBlock key={segment.block.id} toolCall={segment.block.toolCall} />
+        }
+        if (segment.kind === 'memory_mutation') {
+          return <MemoryMutationStatusLine key={segment.block.id} toolCall={segment.block.toolCall} />
         }
         if (segment.kind === 'wiki_proposal') {
           return <WikiProposalBlock key={segment.block.id} block={segment.block} />
@@ -2308,8 +2327,8 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
   }
 
   const isBash = toolCall.toolName === 'Bash'
-  const memoryLabel = memoryMutationLabel(toolCall)
   const Icon = isBash ? Terminal : Wrench
+
   const resultOpen = !isRunning && !collapsed
   const shouldRenderResult = useDeferredUnmount(resultOpen)
   let resultData: unknown
@@ -2338,7 +2357,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
         className="flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
       >
         <Icon size={15} className="shrink-0 text-[var(--lume-text-muted)]" />
-        <span className="font-semibold text-[var(--lume-text-primary)]">{memoryLabel ?? toolCall.toolName}</span>
+        <span className="font-semibold text-[var(--lume-text-primary)]">{toolCall.toolName}</span>
         {toolCall.riskLevel && (
           <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', riskLevelClassName(toolCall.riskLevel))}>
             {riskLevelLabel(toolCall.riskLevel)}
@@ -2391,6 +2410,7 @@ export function getToolPermissionTitleBadgeText(toolCall: RuntimeToolCallView): 
 function memoryMutationLabel(toolCall: RuntimeToolCallView): string | null {
   if (toolCall.toolName !== 'memory.remember' && toolCall.toolName !== 'memory.forget') return null
   if (toolCall.status === 'running') return toolCall.toolName === 'memory.remember' ? '正在记住…' : '正在遗忘…'
+  if (toolCall.status === 'failed') return toolCall.toolName === 'memory.remember' ? '记忆失败' : '遗忘失败'
   let output = toolCall.output
   if (typeof output === 'string') {
     try { output = JSON.parse(output) } catch { return toolCall.toolName === 'memory.remember' ? '记忆已处理' : '遗忘已处理' }
@@ -2399,6 +2419,12 @@ function memoryMutationLabel(toolCall: RuntimeToolCallView): string | null {
   const data = asRecord(record.data)
   const summary = asString(data.summary ?? record.summary)
   return summary ?? (toolCall.toolName === 'memory.remember' ? '记忆已处理' : '遗忘已处理')
+}
+
+function memoryMutationError(toolCall: RuntimeToolCallView): string | null {
+  if (toolCall.status !== 'failed') return null
+  const error = formatToolErrorOutput(toolCall.output).trim()
+  return error || null
 }
 
 function riskLevelLabel(level: NonNullable<RuntimeToolCallView['riskLevel']>): string {
@@ -2661,7 +2687,7 @@ function AssistantMessageFooter({
   }
 
   return (
-    <div className="assistant-message-footer pointer-events-none flex min-h-6 w-full -translate-y-1 items-center justify-between gap-3 pt-2 text-[var(--lume-text-muted)] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/agent-message:pointer-events-auto group-hover/agent-message:translate-y-0 group-hover/agent-message:opacity-100 group-focus-within/agent-message:pointer-events-auto group-focus-within/agent-message:translate-y-0 group-focus-within/agent-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
+    <div className="assistant-message-footer pointer-events-none flex min-h-5 w-full items-center justify-between gap-3 text-[var(--lume-text-muted)] opacity-0 transition-opacity duration-150 ease-out group-hover/agent-message:pointer-events-auto group-hover/agent-message:opacity-100 group-focus-within/agent-message:pointer-events-auto group-focus-within/agent-message:opacity-100 motion-reduce:transition-none">
       <div className="assistant-footer-actions flex min-w-0 items-center gap-4">
         {canCopy && (
           <CopyMessageButton
@@ -2890,11 +2916,15 @@ function escapeHtml(text: string): string {
     .replaceAll("'", '&#39;')
 }
 
-function formatAssistantCompletionTime(completedAt?: string): string | null {
-  if (!completedAt) return null
-  const date = new Date(completedAt)
+function formatMessageTime(value?: string): string | null {
+  if (!value) return null
+  const date = new Date(value)
   if (Number.isNaN(date.getTime())) return null
-  return `${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+function formatAssistantCompletionTime(completedAt?: string): string | null {
+  return formatMessageTime(completedAt)
 }
 
 function CopyMessageButton({
