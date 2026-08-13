@@ -93,7 +93,7 @@ export interface MemoryCenterController {
         targetScope?: 'global' | 'workspace'
         explicitCorrection?: boolean
       },
-    ) => Promise<void>
+    ) => Promise<boolean>
     toggleActivation: (entry: MemorySettingsEntrySummary, activation: MemoryActivation) => Promise<void>
     deleteMemoryEntry: (entry: MemorySettingsEntrySummary) => Promise<void>
     addManualMemory: (category: MemoryUserCategory) => Promise<void>
@@ -274,17 +274,23 @@ export function useMemoryCenter(
     })
   }, [historyOrganizeJob?.jobId, historyOrganizeJob?.status, refresh])
 
-  const runAction = React.useCallback(async (name: string, action: () => Promise<void>) => {
+  const runActionWithResult = React.useCallback(async (name: string, action: () => Promise<void>) => {
     setBusyAction(name)
     try {
       await action()
+      return true
     } catch (error) {
       console.error(`[useMemoryCenter] ${name} FAILED:`, error)
       toast.error(errorMessage(error, '记忆操作失败'))
+      return false
     } finally {
       setBusyAction(null)
     }
   }, [])
+
+  const runAction = React.useCallback(async (name: string, action: () => Promise<void>) => {
+    await runActionWithResult(name, action)
+  }, [runActionWithResult])
 
   const openMemoryFile = (path: string) => runAction(`open-${path}`, async () => {
     if (!workspaceSlug) return
@@ -311,7 +317,7 @@ export function useMemoryCenter(
     setDetail(await readMemory({ workspaceSlug, id: entry.id }))
   })
 
-  const updateEntry: MemoryCenterController['actions']['updateMemoryEntry'] = (entry, input) => runAction(`update-${entry.id}`, async () => {
+  const updateEntry: MemoryCenterController['actions']['updateMemoryEntry'] = (entry, input) => runActionWithResult(`update-${entry.id}`, async () => {
     if (!workspaceSlug) return
     const result = await updateMemoryEntry({
       workspaceSlug,
