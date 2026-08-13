@@ -39,6 +39,7 @@ mock.module('@ant-design/x-markdown', () => ({
 
 mock.module('@/lib/desktop-api', () => ({
   agentSend: async () => undefined,
+  browserRuntime: async () => [],
   checkDesktopUpdate: async () => undefined,
   copyFile: async () => undefined,
   downloadDesktopUpdate: async () => undefined,
