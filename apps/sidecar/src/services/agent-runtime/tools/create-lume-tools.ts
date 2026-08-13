@@ -303,6 +303,7 @@ function shouldExposeNodeReplTools(input: CreateLumeRuntimeToolsInput): boolean 
     : undefined;
   if (preferredRoute === "coding" || preferredRoute === "raw-tools" || hasCodingIntent(input.originalUserInstruction)) return false;
   if (input.computerUseSurface === "sky") return true;
+  if (preferredRoute === "browser") return true;
 
   const instruction = [
     input.originalUserInstruction,

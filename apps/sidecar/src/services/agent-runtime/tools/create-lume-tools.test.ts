@@ -150,13 +150,15 @@ describe("create-lume-tools", () => {
     expect(toolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeFalse();
   });
 
-  test("exposes Computer Use for an explicit browser interaction", () => {
+  test("exposes the Browser runtime and Computer Use fallback for an explicit browser interaction", () => {
     const result = createLumeRuntimeTools({
       ...baseInput(),
       originalUserInstruction: "点击当前页面的提交按钮",
       messageMetadata: { preferredCapabilityRoute: "browser" }
     });
-    expect(result.customTools.map((tool) => tool.name)).toContain("mcp__computer_use__click");
+    const toolNames = result.customTools.map((tool) => tool.name);
+    expect(toolNames).toContain("mcp__node_repl__js");
+    expect(toolNames).toContain("mcp__computer_use__click");
   });
 
   test("keeps both automation tool families out of a coding route", () => {

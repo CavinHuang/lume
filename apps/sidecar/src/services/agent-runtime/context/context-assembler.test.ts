@@ -22,6 +22,22 @@ describe("ContextAssembler", () => {
     expect(result.runtimeContext).not.toContain("historical app/title hint");
   });
 
+  test("identifies the bundled in-app Browser runtime before the desktop fallback", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "browser-thread",
+      runId: "browser-run",
+      userMessage: "打开内置浏览器访问百度",
+      resolvedModelId: "test-model",
+      availableTools: ["mcp__node_repl__js", "mcp__computer_use__click"],
+      tokenBudget: 8_000,
+    });
+
+    expect(result.runtimeContext).toContain("task-isolated in-app Browser runtime is available");
+    expect(result.runtimeContext).toContain("Do not claim browser automation is unavailable before attempting it");
+    expect(result.runtimeContext).toContain("defaults to the iab backend");
+    expect(result.runtimeContext).not.toContain("prefer the installed lume-chrome");
+  });
+
   test("injects desktop context as explicitly untrusted user data", async () => {
     const result = await new ContextAssembler().assemble({
       threadId: "desktop-thread",

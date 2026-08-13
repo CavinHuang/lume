@@ -21,6 +21,7 @@ import { getEffectivePluginRuntimeConfig } from "../services/system/lume-config-
 import { createPersonaHandlers } from "./persona-handlers";
 import { createPlanningTodoHandlers } from "./planning-todo-handlers";
 import { createLinkHandlers } from "./link-handlers";
+import { isBundledBrowserPluginAvailable } from "../services/agent-runtime/plugins/plugin-manager";
 
 export interface CreateRpcHandlersContext {
   writeNotification: NotificationWriter;
@@ -54,7 +55,7 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
   let extensionBackendEnabled = false;
   const notifyBrowserPluginState = (): void => {
     const enabled = getEffectivePluginRuntimeConfig().enabled;
-    const browserEnabled = enabled.includes("browser");
+    const browserEnabled = enabled.includes("browser") || isBundledBrowserPluginAvailable();
     const chromeEnabled = enabled.includes("lume-chrome");
     context.browserBroker?.setPluginState({ browserEnabled, chromeEnabled, extensionBackendEnabled });
     context.writeNotification("browser:plugin-state", { browserEnabled, chromeEnabled, extensionBackendEnabled, enabled });
