@@ -18,6 +18,24 @@ test("extension backend is absent until browser/chrome plugins, setting, and liv
   assert.equal(calls.length, 0);
 });
 
+test("connected Chrome cookie export is capability-gated, user-only, and paged", async () => {
+  const calls: any[] = []
+  const broker = new BrowserBroker(
+    { request: async () => ({}) },
+    { isAvailable: () => true, request: async (request) => {
+      calls.push(request)
+      if (request.method === "handshake") return { protocolVersion: 5, minSupported: 5, maxSupported: 5, capabilities: { browser: [{ id: "cookieExport" }], tab: [] }, apiSupportOverrides: {} }
+      if (request.method === "cookieExport" && request.params?.cursor === 0) return { cookies: [{ name: "a" }], nextCursor: 1 }
+      if (request.method === "cookieExport" && request.params?.cursor === 1) return { cookies: [{ name: "b" }], nextCursor: null }
+      throw new Error("unexpected request")
+    } },
+  )
+  broker.setPluginState({ browserEnabled: true, chromeEnabled: true, extensionBackendEnabled: true, hostConnected: true })
+  assert.deepEqual(await broker.connectedChromeImportStatus(), { available: true })
+  assert.deepEqual(await broker.exportConnectedChromeCookies(), [{ name: "a" }, { name: "b" }])
+  assert.equal(calls.filter((call) => call.method === "cookieExport").every((call) => call.context.actor === "user"), true)
+});
+
 test("broker obtains and binds one-time confirmation for consequential actions", async () => {
   const calls: any[] = [];
   const broker = new BrowserBroker({ request: async (request) => {

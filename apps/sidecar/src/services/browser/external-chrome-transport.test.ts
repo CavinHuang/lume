@@ -134,6 +134,7 @@ test("external Chrome mapping preserves locator input and existing-tab operation
   );
   assert.equal(mapExternalChromeRequest({ ...base, method: "locator:evaluate", params: { tabId: "tab-1", locator: { version: 1, steps: [] }, expression: "(element) => element.textContent" } }).method, "playwright_locator_evaluate");
   assert.equal(mapExternalChromeRequest({ ...base, method: "cdp", params: { tabId: "tab-1", method: "DOM.getDocument" } }).method, "tab_cdp_call");
+  assert.equal(mapExternalChromeRequest({ ...base, method: "cookieExport", params: { cursor: 200 } }).method, "browser_user_export_cookies");
 });
 
 function authenticate(peer: any, sent: any[]): { key: Buffer } {

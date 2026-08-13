@@ -96,6 +96,27 @@ export class BrowserBroker {
   }
   setExternalState(state: { chromeEnabled?: boolean; extensionBackendEnabled?: boolean; hostConnected?: boolean }): void { this.setPluginState(state) }
   revoke(): void { this.setPluginEnabled(false) }
+  async connectedChromeImportStatus(): Promise<{ available: boolean }> {
+    return { available: (await this.connectedChromeRuntime())?.cookieExport === true }
+  }
+  async exportConnectedChromeCookies(): Promise<unknown[]> {
+    const runtime = await this.connectedChromeRuntime()
+    if (!runtime?.cookieExport || !this.extension) throw new Error("browser_unavailable")
+    const context: BrowserRequestContext = { browserSessionId: "renderer-chrome-import", browserTurnId: randomUUID(), actor: "user", capability: `browser-cookie-import-v1:${this.generation}` }
+    const cookies: unknown[] = []
+    let cursor = 0
+    for (let page = 0; page < 50; page += 1) {
+      const result = await this.extension.request({ requestId: randomUUID(), context, method: "cookieExport", params: { cursor } })
+      if (!result || typeof result !== "object") throw new Error("invalid_browser_request")
+      const payload = result as { cookies?: unknown; nextCursor?: unknown }
+      if (!Array.isArray(payload.cookies) || payload.cookies.length > 200) throw new Error("invalid_browser_request")
+      cookies.push(...payload.cookies)
+      if (payload.nextCursor === null || payload.nextCursor === undefined) return cookies
+      if (!Number.isSafeInteger(payload.nextCursor) || Number(payload.nextCursor) <= cursor || Number(payload.nextCursor) > 10_000) throw new Error("invalid_browser_request")
+      cursor = Number(payload.nextCursor)
+    }
+    throw new Error("invalid_browser_request")
+  }
   async listReferenceCandidates(threadId: string): Promise<BrowserReferenceCandidate[]> {
     const normalizedThreadId = threadId.trim().slice(0, 200)
     if (!normalizedThreadId || !this.browserPluginEnabled) return []
@@ -248,6 +269,17 @@ export class BrowserBroker {
     } catch {
       this.extensionRuntime = undefined
     }
+  }
+
+  private async connectedChromeRuntime(): Promise<ExtensionRuntimeDescriptor | undefined> {
+    if (!this.extension || !this.extensionBackendEnabled || !this.chromePluginEnabled || !this.extensionConnected) return undefined
+    try {
+      return sanitizeExtensionRuntimeDescriptor(await this.extension.request({
+        requestId: randomUUID(),
+        context: { browserSessionId: "renderer-chrome-import", browserTurnId: randomUUID(), actor: "user", capability: `browser-cookie-import-v1:${this.generation}` },
+        method: "handshake",
+      }))
+    } catch { return undefined }
   }
 
   private rememberClaimSnapshots(backend: "iab" | "extension", context: BrowserRequestContext, value: unknown): void {
@@ -605,6 +637,7 @@ type ExtensionRuntimeDescriptor = {
   maxSupported: number
   tabCapabilities: BrowserBackendDescriptor["capabilities"]["tab"]
   apiSupportOverrides: Record<string, boolean>
+  cookieExport: boolean
 }
 
 const EXTENSION_TAB_CAPABILITIES = {
@@ -625,6 +658,9 @@ function sanitizeExtensionRuntimeDescriptor(value: unknown): ExtensionRuntimeDes
   const declaredTabCapabilities = new Set(Array.isArray(capabilities.tab)
     ? capabilities.tab.flatMap((capability) => capability && typeof capability === "object" && typeof (capability as { id?: unknown }).id === "string" ? [(capability as { id: string }).id] : [])
     : [])
+  const declaredBrowserCapabilities = new Set(Array.isArray(capabilities.browser)
+    ? capabilities.browser.flatMap((capability) => capability && typeof capability === "object" && typeof (capability as { id?: unknown }).id === "string" ? [(capability as { id: string }).id] : [])
+    : [])
   const declaredApiSupport = descriptor.apiSupportOverrides && typeof descriptor.apiSupportOverrides === "object"
     ? descriptor.apiSupportOverrides as Record<string, unknown>
     : {}
@@ -638,6 +674,7 @@ function sanitizeExtensionRuntimeDescriptor(value: unknown): ExtensionRuntimeDes
       new Set(BROWSER_API_REGISTRY.filter((entry) => entry.backends.includes("extension")).map((entry) => entry.runtimeMethod)),
       declaredApiSupport,
     ),
+    cookieExport: declaredBrowserCapabilities.has("cookieExport"),
   }
 }
 

@@ -103,6 +103,8 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     };
     handlers["browser:broker"] = async () => { throw new Error("browser broker requires the authenticated Node REPL ingress"); };
     handlers["browser:backends"] = async () => context.browserBroker!.listBackends();
+    handlers["browser:chrome-import-status"] = async () => context.browserBroker!.connectedChromeImportStatus();
+    handlers["browser:export-chrome-cookies"] = async () => context.browserBroker!.exportConnectedChromeCookies();
     handlers["browser:reference-candidates"] = async (params) => {
       const threadId = params && typeof params === "object" && typeof (params as { threadId?: unknown }).threadId === "string"
         ? (params as { threadId: string }).threadId.trim()

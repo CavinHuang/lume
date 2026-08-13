@@ -46,7 +46,7 @@ export function browserRuntime<T = unknown>(input: {
 
 export const getBrowserSettings = () => invoke<BrowserSettings>('browser_settings:get')
 export const updateBrowserSettings = (input: Partial<BrowserSettings>) => invoke<BrowserSettings>('browser_settings:update', input)
-export const discoverChromeProfiles = () => invoke<Array<{ id: string; name: string; platform: 'win32' | 'darwin'; hasCookies: boolean; hasPasswords: boolean }>>('browser_import:discover')
+export const discoverChromeProfiles = () => invoke<Array<{ id: string; name: string; platform: 'win32' | 'darwin' | 'linux'; source: 'local' | 'connected'; hasCookies: boolean; hasPasswords: boolean }>>('browser_import:discover')
 export const startChromeImport = (input: { profileId: string; cookies: boolean; passwords: boolean; acknowledged: boolean }) => invoke<{ jobId: string }>('browser_import:start', input)
 export const cancelChromeImport = (jobId: string) => invoke<{ ok: true }>('browser_import:cancel', { jobId })
 

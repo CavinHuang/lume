@@ -86,7 +86,7 @@ export function BrowserSettings({ onOpenSkills: _onOpenSkills }: { onOpenSkills?
       <ManagedSettingRow title="扩展程序" description="安装、启停或移除用户确认的本地 unpacked 扩展。" manager="extensions" managerRef={dataManagersRef} />
       <ManagedSettingRow title="历史记录" description="搜索、删除或清除本机浏览历史。" manager="history" managerRef={dataManagersRef} />
       <ManagedSettingRow title="清除浏览数据" description="分别清除 Cookie、站点数据、缓存、历史、下载和权限。" manager="clear" managerRef={dataManagersRef} />
-      <SettingRow title="导入浏览器 Profile" description="从已关闭的 Chrome Profile 导入 Cookie 和保存的密码。"><Button variant="ghost" size="sm" onClick={() => setImportOpen(true)}>管理<ChevronRight size={14} /></Button></SettingRow>
+      <SettingRow title="导入 Chrome 登录数据" description="优先从已连接的 Chrome 导入 Cookie，也可使用本地 Profile 兼容导入。"><Button variant="ghost" size="sm" onClick={() => setImportOpen(true)}>管理<ChevronRight size={14} /></Button></SettingRow>
       <BrowserDataManagers ref={dataManagersRef} showLauncher={false} onImport={() => setImportOpen(true)} />
     </section>
     <section className="lume-panel-padded"><SectionTitle title="下载" description="用户下载目录、保存前确认和无敏感路径的下载历史。" />
