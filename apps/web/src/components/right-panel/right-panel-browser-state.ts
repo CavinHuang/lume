@@ -190,7 +190,7 @@ export function sanitizeThreadBrowserWorkspace(value: unknown): ThreadBrowserWor
 }
 
 function sanitizeBrowserTab(value: unknown): RightPanelBrowserTab | null {
-  if (!isRecord(value) || typeof value.id !== 'string' || !value.id.startsWith('browser:')) return null
+  if (!isRecord(value) || typeof value.id !== 'string' || !isBrowserTabId(value.id, value.profileKind)) return null
   const createdAt = typeof value.createdAt === 'string' ? value.createdAt : new Date().toISOString()
   const viewport = sanitizeViewport(value.viewport)
   return {
@@ -207,6 +207,11 @@ function sanitizeBrowserTab(value: unknown): RightPanelBrowserTab | null {
     ...(typeof value.navigationIndex === 'number' && Number.isInteger(value.navigationIndex) ? { navigationIndex: value.navigationIndex } : {}),
     ...(isScrollPosition(value.scrollPosition) ? { scrollPosition: value.scrollPosition } : {}),
   }
+}
+
+function isBrowserTabId(id: string, profileKind: unknown): boolean {
+  return id.startsWith('browser:')
+    || (profileKind === 'agent' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
 }
 
 function comparableBrowserUrl(value: string): string | undefined {

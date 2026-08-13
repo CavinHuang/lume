@@ -105,7 +105,7 @@ export function hasCodingIntent(value?: string): boolean {
 
 export function hasBrowserIntent(value?: string): boolean {
   const message = (value ?? "").trim().toLowerCase();
-  return containsAny(message, [
+  if (containsAny(message, [
     "browser",
     "tab",
     "page",
@@ -115,8 +115,34 @@ export function hasBrowserIntent(value?: string): boolean {
     "浏览器",
     "页面",
     "当前页",
-    "标签页"
+    "标签页",
+    "地址栏",
+    "搜索框"
+  ])) return true;
+
+  const wantsNavigation = containsAny(message, [
+    "open",
+    "visit",
+    "navigate",
+    "go to",
+    "打开",
+    "访问",
+    "进入",
+    "跳转",
+    "前往"
   ]);
+  const hasBrowserTarget = /https?:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|cn|net|org|io)\b/i.test(message)
+    || containsAny(message, [
+      "百度",
+      "谷歌",
+      "google",
+      "bing",
+      "github",
+      "网站",
+      "网页",
+      "网址"
+    ]);
+  return wantsNavigation && hasBrowserTarget;
 }
 
 function buildSkillText(skills: SkillMeta[]): string {

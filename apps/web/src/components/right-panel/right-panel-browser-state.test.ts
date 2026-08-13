@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   activateBrowserTab,
   applyBrowserDescriptor,
+  browserTabFromDescriptor,
   closeBrowserTab,
   duplicateBrowserTab,
   findThreadBrowserTabByUrl,
@@ -69,6 +70,25 @@ describe('right panel browser workspace', () => {
     expect(restored.tabs.map((tab) => tab.id)).toEqual(['browser:valid'])
     expect(restored.activeTabId).toBe('browser:valid')
     expect(restored.tabs[0]?.viewport).toMatchObject({ preset: 'iphone-15-pro', displayScale: 0.75 })
+  })
+
+  test('keeps task-isolated agent tabs whose runtime ids are UUIDs', () => {
+    const tab = browserTabFromDescriptor({
+      tabId: 'bba6ab3e-57e4-4463-9b07-4d645584dfce',
+      ownerThreadId: 'thread-1',
+      profileKind: 'agent',
+      backend: 'iab',
+      generation: 2,
+      url: 'https://www.baidu.com/',
+      title: '百度一下',
+      visible: true,
+      surface: 'right-panel',
+    })
+
+    expect(sanitizeThreadBrowserWorkspace({ tabs: [tab], activeTabId: tab.id, recentlyClosed: [] })).toMatchObject({
+      activeTabId: tab.id,
+      tabs: [{ id: tab.id, profileKind: 'agent', url: 'https://www.baidu.com/' }],
+    })
   })
 
   test('reflects runtime loading and media state in the tab strip', () => {

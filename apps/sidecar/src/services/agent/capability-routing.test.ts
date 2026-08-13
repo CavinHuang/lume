@@ -38,9 +38,9 @@ describe("capability-routing", () => {
     expect(decision.reason).toContain("loaded skill metadata");
   });
 
-  test("旧 $plugin 文本不再覆盖正常意图路由", () => {
+  test("旧 $plugin 文本不再覆盖普通公共检索意图", () => {
     const decision = resolvePreferredCapabilityRoute({
-      userMessage: "$lume-chrome 打开百度并搜索 glm",
+      userMessage: "$lume-chrome 搜索一下 glm 的最新消息",
       availableTools: ["Skill", "browser", "WebSearch", "WebFetch", "read"],
       loadedSkills: [
         {
@@ -102,6 +102,18 @@ describe("capability-routing", () => {
       availableTools: ["browser", "web_search", "read"]
     });
     expect(decision.preferredLane).toBe("browser");
+  });
+
+  test("打开指定网站并搜索应优先内置浏览器而不是公共检索", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "打开百度搜索agent",
+      availableTools: ["Skill", "browser", "WebSearch", "WebFetch", "read"]
+    });
+
+    expect(decision.preferredLane).toBe("browser");
+    expect(resolveSoftToolPolicyForPreferredRoute(decision.preferredLane)).toEqual({
+      deny: ["web_search", "web_fetch", "bash"]
+    });
   });
 
   test("浏览器意图不应被已加载的 browser skill 抢占", () => {
