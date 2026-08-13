@@ -19,17 +19,23 @@ if (!globalThis.agent?.browsers) {
 ```
 
 Set `timeout_ms` to `300000` on browser `mcp__node_repl__js` calls. Navigation can wait for an action-time confirmation, so the default tool timeout is too short.
+Set `title` to a short user-facing description such as `读取 X 首页` or `打开 GitHub Issue`; never expose the runtime implementation in that title.
 
 The runtime is persistent. Use `var` for reusable top-level bindings, and return observations with `nodeRepl.write(JSON.stringify(value))`; bare final expressions are invisible.
 
-Select the in-app browser, create a tab, and navigate:
+Select the in-app browser and resume the task's existing tab before creating one:
 
 ```js
 var browser = await agent.browsers.getDefault();
-var tab = await browser.tabs.new();
-await tab.goto("https://example.com");
+var resumedTabs = await browser.tabs.resumeHandoff();
+var tab = resumedTabs[0]
+  ?? await browser.tabs.selected();
+if (!tab) tab = await browser.tabs.new();
+if ((await tab.url()) !== "https://example.com") await tab.goto("https://example.com");
 nodeRepl.write(JSON.stringify({ title: await tab.title(), url: await tab.url() }));
 ```
+
+For follow-up requests such as "continue", "read the latest posts", "click the third item", or "scroll down", keep using the resumed tab. Do not create a duplicate merely because the new turn has a new browser turn id. If an old binding returns `action_denied` or `tab_not_found`, discard it, call `browser.tabs.resumeHandoff()` once, select the visible result, and retry the observation.
 
 Prefer semantic Playwright locators and re-observe after navigation or a failed action:
 
@@ -41,4 +47,32 @@ await search.fill("Lume");
 await search.press("Enter");
 ```
 
-Read `await browser.documentation()` once before interaction and `await agent.documentation.get("confirmations")` before consequential actions. If setup fails, retry once; only then report the exact stable error. Never claim Lume has no browser before attempting this runtime, and do not fall back to shell-driven UI automation.
+For reading, prefer bounded visible text over dumping a full raw DOM snapshot:
+
+```js
+var text = await tab.playwright.locator("body").innerText();
+nodeRepl.write(JSON.stringify({ url: await tab.url(), title: await tab.title(), text: text.slice(0, 20000) }));
+```
+
+For virtualized feeds or result lists, collect and deduplicate semantic items over a bounded number of scrolls. Start with `article`, `main article`, or another role/label derived from the live page; do not assume one selector works on every site:
+
+```js
+var seen = new Set();
+var items = [];
+for (var round = 0; round < 8 && items.length < 10; round += 1) {
+  var visibleItems = await tab.playwright.locator("article").allTextContents();
+  for (var itemText of visibleItems) {
+    var normalized = itemText.trim();
+    if (normalized && !seen.has(normalized)) { seen.add(normalized); items.push(normalized); }
+  }
+  if (items.length < 10) {
+    await tab.cua.scroll({ scrollX: 0, scrollY: 800 });
+    await tab.playwright.waitForTimeout(500);
+  }
+}
+nodeRepl.write(JSON.stringify({ collected: items.length, items: items.slice(0, 10) }));
+```
+
+Keep observations compact. Return counts and the requested items, not entire page trees. Re-observe after every navigation and after each scroll batch before claiming that an item was found or an action succeeded.
+
+Read `await browser.documentation()` once before interaction and `await agent.documentation.get("confirmations")` before consequential actions. If setup or resumption fails, refresh the runtime and retry once; only then report the exact stable error. Never claim Lume has no browser before attempting this runtime, and do not fall back to shell-driven UI automation or tool search for a replacement browser.

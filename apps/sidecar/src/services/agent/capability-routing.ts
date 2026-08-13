@@ -7,6 +7,8 @@ export interface CapabilityRoutingInput {
   userMessage?: string;
   availableTools?: string[];
   loadedSkills?: SkillMeta[];
+  hasActiveAgentBrowserTab?: boolean;
+  hasVisibleAgentBrowserTab?: boolean;
 }
 
 export interface CapabilityRoutingDecision {
@@ -20,7 +22,7 @@ export function resolveSoftToolPolicyForPreferredRoute(
 ): AgentToolPolicy | undefined {
   if (preferredLane === "browser") {
     return {
-      deny: ["web_search", "web_fetch", "bash"]
+      deny: ["bash"]
     };
   }
   if (preferredLane === "memory") {
@@ -145,6 +147,42 @@ export function hasBrowserIntent(value?: string): boolean {
   return wantsNavigation && hasBrowserTarget;
 }
 
+export function hasBrowserContinuationIntent(value?: string): boolean {
+  const message = (value ?? "").trim().toLowerCase();
+  if (!message) return false;
+  const hasNonBrowserArtifact = containsAny(message, [
+    "file", "folder", "repository", "repo", "code", "issue", "pull request", "document",
+    "文件", "文件夹", "目录", "仓库", "代码", "问题单", "文档"
+  ]);
+  const hasPageSubject = containsAny(message, [
+    "post", "tweet", "feed", "page", "website", "site", "link", "item", "list",
+    "帖子", "动态", "信息流", "网页", "页面", "网站", "链接", "条", "列表"
+  ]);
+  if (hasNonBrowserArtifact && !hasPageSubject) return false;
+
+  const refersToExistingPage = containsAny(message, [
+    "current", "this", "these", "that", "those", "continue", "keep going", "latest", "newest", "first", "second", "third",
+    "当前", "这个", "这些", "那个", "那些", "继续", "接着", "刚才", "最新", "第", "往下", "上一页", "下一页"
+  ]);
+  const directlyActsOnPage = containsAny(message, [
+    "click", "scroll", "back", "forward", "refresh", "keep going",
+    "点开", "点击", "滚动", "翻", "返回", "前进", "刷新", "往下"
+  ]);
+  return refersToExistingPage && (hasPageSubject || directlyActsOnPage);
+}
+
+function hasTerseBrowserFollowUpIntent(value?: string): boolean {
+  const message = (value ?? "").trim().toLowerCase();
+  if (!message || message.length > 80 || containsAny(message, [
+    "file", "folder", "repository", "repo", "code", "issue", "pull request", "document",
+    "文件", "文件夹", "目录", "仓库", "代码", "问题单", "文档"
+  ])) return false;
+  return containsAny(message, [
+    "read it", "summarize it", "what does it say", "continue", "keep going",
+    "看看", "看下", "读一下", "总结一下", "说了什么", "继续", "接着"
+  ]);
+}
+
 function buildSkillText(skills: SkillMeta[]): string {
   return skills
     .filter((skill) => skill.disableModelInvocation !== true)
@@ -215,6 +253,16 @@ export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): 
       lanes,
       preferredLane: "browser",
       reason: "request implies browser/session continuity"
+    };
+  }
+
+  if (input.hasActiveAgentBrowserTab
+    && (hasBrowserContinuationIntent(message) || (input.hasVisibleAgentBrowserTab && hasTerseBrowserFollowUpIntent(message)))
+    && laneSet.has("browser")) {
+    return {
+      lanes,
+      preferredLane: "browser",
+      reason: "request continues the active task-owned browser tab"
     };
   }
 

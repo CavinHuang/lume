@@ -80,6 +80,7 @@ import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import type { LumeRunState } from "../agent-runtime/runner/run-state";
 import { emitAgentNotification, emitDiagnosticContent } from "./agent-notification-service";
 import { createFileReferenceBinding } from "./agent-files-service";
+import { getActiveBrowserBroker } from "../browser/browser-broker-holder";
 import { buildLinkConnectionReferenceContext, normalizeAgentUserMessage } from "./agent-user-message-parts";
 import { getPlanningTodoStore } from "../planning/planning-todo-store";
 import { addPlanningAuthorizedTodo, authorizePlanningOperation, finishPlanningExecutionRun, resolvePlanningExecutionContext } from "../planning/planning-execution-context";
@@ -977,11 +978,14 @@ export async function sendAgentMessage(
   let userSdkMessage: SDKMessage | null = null;
 
   const stateWorkspaceSlug = effectiveWorkspace?.slug;
+  const browserContinuity = await getActiveBrowserBroker()?.getThreadAgentContinuity(threadId).catch(() => undefined);
 
   const routingTrace = resolveAgentRuntimeRoutingTrace({
     workspaceSlug: stateWorkspaceSlug,
     userMessage: normalizedUserMessage.modelMessage,
-    availableTools: ROUTING_HEURISTIC_TOOLS
+    availableTools: ROUTING_HEURISTIC_TOOLS,
+    hasActiveAgentBrowserTab: Boolean(browserContinuity),
+    hasVisibleAgentBrowserTab: browserContinuity?.visible === true
   });
   const routingToolPolicy = resolveSoftToolPolicyForPreferredRoute(routingTrace.preferredCapabilityRoute);
   const existingToolPolicy =
@@ -1007,6 +1011,7 @@ export async function sendAgentMessage(
     capabilityLanes: routingTrace.capabilityLanes,
     preferredCapabilityRoute: routingTrace.preferredCapabilityRoute,
     capabilityRoutingReason: routingTrace.reason,
+    browserContinuity: browserContinuity ?? null,
     toolPolicy: mergeToolPolicies(
       mergeToolPolicies(existingToolPolicy, routingToolPolicy),
       capabilityProjection.allowedTools

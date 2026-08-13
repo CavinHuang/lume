@@ -88,6 +88,8 @@ export function resolveAgentRuntimeRoutingTrace(input: {
   agentCwd?: string;
   userMessage?: string;
   availableTools?: string[];
+  hasActiveAgentBrowserTab?: boolean;
+  hasVisibleAgentBrowserTab?: boolean;
 }): AgentRuntimeRoutingTrace {
   const loadedSkills = input.workspaceSlug ? getRuntimeSkills(input.workspaceSlug, input.agentCwd) : [];
   const availableTools = [...(input.availableTools ?? [])];
@@ -97,7 +99,9 @@ export function resolveAgentRuntimeRoutingTrace(input: {
   const decision = resolvePreferredCapabilityRoute({
     userMessage: input.userMessage,
     availableTools,
-    loadedSkills
+    loadedSkills,
+    hasActiveAgentBrowserTab: input.hasActiveAgentBrowserTab,
+    hasVisibleAgentBrowserTab: input.hasVisibleAgentBrowserTab
   });
   return {
     capabilityLanes: inferCapabilityLanes(availableTools, input.userMessage),

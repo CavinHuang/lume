@@ -373,10 +373,12 @@ app.whenReady().then(async () => {
     const resumed = await runtime.dispatch({ requestId: crypto.randomUUID(), context: { ...context, browserTurnId: 'fixture-turn-2' }, method: 'resumeHandoff', params: {} })
     check(resumed.length === 1 && resumed[0].tabId === 'fixture-tab', 'handoff did not resume in the next Agent turn')
     const secondTurn = { ...context, browserTurnId: 'fixture-turn-2' }
-    await runtime.dispatch({ requestId: crypto.randomUUID(), context: secondTurn, method: 'mark', params: { tabId: 'fixture-tab', status: 'handoff' } })
+    await runtime.dispatch({ requestId: crypto.randomUUID(), context: secondTurn, method: 'mark', params: { tabId: 'fixture-tab', status: 'deliverable' } })
     await runtime.dispatch({ requestId: crypto.randomUUID(), context: secondTurn, method: 'finalize', params: {} })
     const retained = await runtime.dispatch({ requestId: crypto.randomUUID(), context: { ...context, browserTurnId: 'fixture-turn-3' }, method: 'resumeHandoff', params: {} })
-    check(retained.length === 1 && retained[0].tabId === 'fixture-tab', 'markHandoff was not retained by turn finalization')
+    check(retained.length === 1 && retained[0].tabId === 'fixture-tab', 'deliverable tab was not resumable after turn finalization')
+    const resumedAgain = await runtime.dispatch({ requestId: crypto.randomUUID(), context: { ...context, browserTurnId: 'fixture-turn-4' }, method: 'resumeHandoff', params: {} })
+    check(resumedAgain.length === 1 && resumedAgain[0].tabId === 'fixture-tab', 'deliverable tab did not remain resumable across later turns')
     writeFileSync(resultPath, JSON.stringify({ ok: true, assertions }))
   } finally {
     runtime.destroy()

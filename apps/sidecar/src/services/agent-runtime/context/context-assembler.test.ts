@@ -31,6 +31,15 @@ describe("ContextAssembler", () => {
       workspaceSlug: "browser-workspace",
       availableTools: ["mcp__node_repl__js", "mcp__computer_use__click"],
       browserRuntimeAvailable: true,
+      browserContinuity: {
+        tabId: "agent-tab-1",
+        url: "https://x.com/home",
+        title: "Home / X",
+        profileKind: "agent",
+        handoffStatus: "deliverable",
+        visible: true,
+        lifecycle: "active"
+      },
       routingTrace: {
         capabilityLanes: ["skills", "browser", "raw-tools"],
         preferredCapabilityRoute: "browser",
@@ -45,6 +54,9 @@ describe("ContextAssembler", () => {
     expect(result.runtimeContext).toContain("exact skill name browser:browser (without a workspace prefix)");
     expect(result.runtimeContext).toContain("Do not claim browser automation is unavailable before attempting it");
     expect(result.runtimeContext).toContain("defaults to the iab backend");
+    expect(result.runtimeContext).toContain("browser.tabs.resumeHandoff()");
+    expect(result.runtimeContext).toContain('"tabId":"agent-tab-1"');
+    expect(result.runtimeContext).toContain("Continue that tab instead of creating a duplicate");
     expect(result.runtimeContext).not.toContain("mcp__computer_use__list_apps");
     expect(result.runtimeContext).not.toContain("prefer the installed lume-chrome");
   });

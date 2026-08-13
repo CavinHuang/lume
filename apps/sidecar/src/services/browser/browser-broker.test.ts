@@ -185,6 +185,30 @@ test("reference candidates stay in the current IAB task and include only the thr
   assert.equal(candidates[1]?.browserId, "lume-extension")
 });
 
+test("browser continuity selects the visible resumable Agent tab owned by the task", async () => {
+  const broker = new BrowserBroker({ request: async (request) => request.method === "list" ? [
+    { tabId: "hidden-agent", ownerThreadId: "thread-1", profileKind: "agent", backend: "iab", generation: 1, title: "Old", url: "https://old.example/", visible: false, lifecycle: "background", handoffStatus: "handoff", lastOpenedAt: "2026-08-01T12:00:00.000Z" },
+    { tabId: "visible-agent", ownerThreadId: "thread-1", profileKind: "agent", backend: "iab", generation: 1, title: "Current", url: "https://current.example/", visible: true, lifecycle: "active", handoffStatus: "deliverable", lastOpenedAt: "2026-08-01T11:00:00.000Z" },
+    { tabId: "other-agent", ownerThreadId: "thread-2", profileKind: "agent", backend: "iab", generation: 1, title: "Other", url: "https://other.example/", visible: true, lifecycle: "active", handoffStatus: "deliverable" },
+    { tabId: "user-tab", ownerThreadId: "thread-1", profileKind: "user", backend: "iab", generation: 1, title: "User", url: "https://user.example/", visible: true, lifecycle: "active", handoffStatus: "deliverable" },
+  ] : {} })
+  broker.setPluginState({ browserEnabled: true })
+
+  assert.deepEqual(await broker.getThreadAgentContinuity("thread-1"), {
+    tabId: "visible-agent",
+    ownerThreadId: "thread-1",
+    profileKind: "agent",
+    backend: "iab",
+    generation: 1,
+    title: "Current",
+    url: "https://current.example/",
+    visible: true,
+    lifecycle: "active",
+    handoffStatus: "deliverable",
+    lastOpenedAt: "2026-08-01T11:00:00.000Z",
+  })
+});
+
 test("reference grant RPCs use user context and the selected backend", async () => {
   const mainCalls: any[] = []
   const extensionCalls: any[] = []

@@ -11,12 +11,17 @@ import {
   type BrowserReferenceGrantResult,
   type BrowserRequestContext,
   type BrowserRuntimeDescriptor,
+  type BrowserTabDescriptor,
 } from "@lume/shared"
 import { BROWSER_API_REGISTRY, browserApiSupportForBackend } from "@lume/shared"
 import { classifyBrowserAction } from "./browser-action-policy"
 import { resolveAuthorizedBrowserUploadPaths } from "../agent/agent-files-service"
 
 export interface BrowserMainTransport { request(request: BrowserActionRequest): Promise<unknown>; isAvailable?: () => boolean }
+
+export type BrowserThreadContinuity = Pick<BrowserTabDescriptor,
+  "tabId" | "url" | "title" | "profileKind" | "visible" | "lifecycle" | "handoffStatus"
+>
 
 /** Long-lived sidecar ingress. Identity is derived here; callers cannot set actor. */
 export class BrowserBroker {
@@ -140,6 +145,27 @@ export class BrowserBroker {
       .sort(compareReferenceCandidates)
       .slice(0, 3)
     return [...iab, ...extension]
+  }
+  async getThreadAgentContinuity(threadId: string): Promise<BrowserThreadContinuity | undefined> {
+    const normalizedThreadId = threadId.trim().slice(0, 200)
+    if (!normalizedThreadId || !this.browserPluginEnabled) return undefined
+    const context: BrowserRequestContext = {
+      threadId: normalizedThreadId,
+      browserSessionId: "agent-browser-continuity",
+      browserTurnId: randomUUID(),
+      actor: "user",
+    }
+    const result = await this.main.request({ requestId: randomUUID(), context, method: "list" }).catch(() => [])
+    return browserUserTabArray(result)
+      .flatMap((value) => value && typeof value === "object" ? [value as BrowserTabDescriptor] : [])
+      .filter((tab) => tab.ownerThreadId === normalizedThreadId
+        && tab.profileKind === "agent"
+        && tab.lifecycle !== "crashed"
+        && (tab.handoffStatus === "handoff" || tab.handoffStatus === "deliverable")
+        && typeof tab.url === "string"
+        && tab.url.trim().length > 0)
+      .sort((left, right) => Number(right.visible) - Number(left.visible)
+        || String(right.lastOpenedAt ?? "").localeCompare(String(left.lastOpenedAt ?? "")))[0]
   }
   async createReferenceGrant(input: BrowserReferenceGrantInput): Promise<BrowserReferenceGrantResult> {
     if (!input || (input.backend !== "iab" && input.backend !== "extension") || input.access !== "control"

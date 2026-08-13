@@ -81,15 +81,32 @@ export function createNodeReplTools(input: {
             const requestedBackend = String(params.__browserBackend ?? params.browserId ?? params.browser_id ?? params.clientType ?? "").toLowerCase();
             const backend = requestedBackend === "extension" || requestedBackend === "chrome-extension" || requestedBackend === "lume-extension" ? "extension" as const : "iab" as const;
             delete params.__browserBackend;
-            return broker.dispatch({
+            const browserTurnId = context.runId ?? context.currentUserMessageId ?? `node-repl:${threadId}`;
+            const dispatchInput = {
               method: request.method,
               params,
               ...(typeof params.tabId === "string" ? { tabId: params.tabId } : typeof params.tab_id === "string" ? { tabId: params.tab_id } : {}),
               browserSessionId: threadId,
-              browserTurnId: context.runId ?? context.currentUserMessageId ?? `node-repl:${threadId}`,
+              browserTurnId,
               threadId,
               backend,
-            });
+            };
+            try {
+              return await broker.dispatch(dispatchInput);
+            } catch (error) {
+              const tabId = dispatchInput.tabId;
+              if (backend !== "iab" || request.method === "resume_handoff_tabs" || !tabId || !isBrowserLeaseError(error)) throw error;
+              const resumed = await broker.dispatch({
+                method: "resume_handoff_tabs",
+                params: { browserId: "lume-iab" },
+                browserSessionId: threadId,
+                browserTurnId,
+                threadId,
+                backend,
+              });
+              if (!hasResumedTab(resumed, tabId)) throw error;
+              return broker.dispatch(dispatchInput);
+            }
           },
         });
         return {
@@ -208,6 +225,25 @@ export function getNodeReplMcpStatus(now = Date.now()): McpServerStatus {
 
 function toNodeReplMcpWrapperName(toolName: string): string {
   return `${NODE_REPL_MCP_WRAPPER_PREFIX}${toolName}`;
+}
+
+function isBrowserLeaseError(error: unknown): boolean {
+  const code = error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : error instanceof Error
+      ? error.message
+      : String(error);
+  return code === "action_denied" || code === "tab_not_found";
+}
+
+function hasResumedTab(value: unknown, tabId: string): boolean {
+  const tabs = Array.isArray(value)
+    ? value
+    : value && typeof value === "object" && Array.isArray((value as { tabs?: unknown }).tabs)
+      ? (value as { tabs: unknown[] }).tabs
+      : [];
+  return tabs.some((tab) => tab && typeof tab === "object"
+    && ((tab as { tabId?: unknown }).tabId === tabId || (tab as { id?: unknown }).id === tabId));
 }
 
 function parseJsExecInput(rawArgs: unknown): { ok: true; value: JsExecInput } | { ok: false; error: string } {

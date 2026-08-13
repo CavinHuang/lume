@@ -3312,11 +3312,15 @@ export class BrowserRuntime {
   private resumeHandoffTabs(context: BrowserRequestContext): BrowserTabDescriptor[] {
     if (context.actor !== "agent") throw browserError("action_denied")
     const resumed: BrowserTabDescriptor[] = []
-    for (const tab of this.tabs.values()) {
-      if (tab.handoff?.browserSessionId !== context.browserSessionId || tab.handoff.status !== "handoff") continue
+    const candidates = [...this.tabs.values()]
+      .filter((tab) => tab.handoff?.browserSessionId === context.browserSessionId
+        && (tab.handoff.status === "handoff" || tab.handoff.status === "deliverable"))
+      .sort((left, right) => Number(right.visible) - Number(left.visible)
+        || String(right.lastOpenedAt ?? "").localeCompare(String(left.lastOpenedAt ?? "")))
+    for (const tab of candidates) {
       tab.context = context
       tab.agentLease = { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, generation: tab.generation }
-      tab.handoff = undefined
+      if (tab.handoff?.status === "handoff") tab.handoff = undefined
       resumed.push(publicTab(tab))
     }
     return resumed

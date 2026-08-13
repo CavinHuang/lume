@@ -112,8 +112,60 @@ describe("capability-routing", () => {
 
     expect(decision.preferredLane).toBe("browser");
     expect(resolveSoftToolPolicyForPreferredRoute(decision.preferredLane)).toEqual({
-      deny: ["web_search", "web_fetch", "bash"]
+      deny: ["bash"]
     });
+  });
+
+  test("任务已有 Agent 浏览器时应把隐式后续请求路由回 browser", () => {
+    const messages = ["看下当前最新十条 post 说了什么", "点开第三条", "继续往下翻"];
+    for (const userMessage of messages) {
+      const decision = resolvePreferredCapabilityRoute({
+        userMessage,
+        availableTools: ["browser", "web_search", "read"],
+        hasActiveAgentBrowserTab: true
+      });
+      expect(decision.preferredLane).toBe("browser");
+      expect(decision.reason).toContain("task-owned browser tab");
+    }
+  });
+
+  test("没有任务浏览器时最新信息请求仍应使用公共 web", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "看下当前最新十条 post 说了什么",
+      availableTools: ["browser", "web_search", "read"]
+    });
+    expect(decision.preferredLane).toBe("web");
+  });
+
+  test("后台存在浏览器标签时不应抢占当前文件请求", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "总结一下这个文件",
+      availableTools: ["browser", "web_search", "read"],
+      hasActiveAgentBrowserTab: true
+    });
+    expect(decision.preferredLane).toBe("raw-tools");
+  });
+
+  test("用户正看着任务浏览器时简短追问应继续当前页面", () => {
+    for (const userMessage of ["说了什么", "总结一下", "继续"]) {
+      const decision = resolvePreferredCapabilityRoute({
+        userMessage,
+        availableTools: ["browser", "web_search", "read"],
+        hasActiveAgentBrowserTab: true,
+        hasVisibleAgentBrowserTab: true
+      });
+      expect(decision.preferredLane).toBe("browser");
+    }
+  });
+
+  test("浏览器在后台时不应让无指向的简短请求抢占普通工具", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "总结一下",
+      availableTools: ["browser", "web_search", "read"],
+      hasActiveAgentBrowserTab: true,
+      hasVisibleAgentBrowserTab: false
+    });
+    expect(decision.preferredLane).toBe("raw-tools");
   });
 
   test("浏览器意图不应被已加载的 browser skill 抢占", () => {
@@ -232,7 +284,7 @@ describe("capability-routing", () => {
 
   test("browser/memory/web 路由应生成保守 soft tool policy", () => {
     expect(resolveSoftToolPolicyForPreferredRoute("browser")).toEqual({
-      deny: ["web_search", "web_fetch", "bash"]
+      deny: ["bash"]
     });
     expect(resolveSoftToolPolicyForPreferredRoute("memory")).toEqual({
       deny: ["web_search", "web_fetch"]

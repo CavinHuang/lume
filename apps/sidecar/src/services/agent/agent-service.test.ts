@@ -490,6 +490,57 @@ describe("agent-service", () => {
     expect(runtimeInput.input?.userMessage).toContain("C:\\temp\\tests.log");
   });
 
+  test("同一任务已有 Agent 浏览器时后续消息应保留 browser 路由和连续性", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const { setActiveBrowserBroker } = await import("../browser/browser-broker-holder");
+    const thread = createAgentThread("browser continuity", "channel-test");
+    setActiveBrowserBroker({
+      async getThreadAgentContinuity(threadId: string) {
+        return threadId === thread.id ? {
+          tabId: "agent-tab-1",
+          url: "https://x.com/home",
+          title: "Home / X",
+          profileKind: "agent",
+          visible: true,
+          lifecycle: "active",
+          handoffStatus: "deliverable",
+        } : undefined;
+      }
+    } as any);
+
+    try {
+      await sendAgentMessage({
+        threadId: thread.id,
+        userMessage: "看下当前最新十条 post 说了什么",
+        channelId: "channel-test",
+        modelId: "provider/model-test"
+      }, {
+        onRuntimeEvent: () => undefined,
+        onMessageAppended: () => undefined,
+        onComplete: () => undefined,
+        onError: () => undefined,
+        onTitleUpdated: () => undefined,
+        onAskUserQuestion: () => undefined,
+        onBrowserAuthRequest: () => undefined,
+        onToolPermissionRequest: () => undefined
+      });
+
+      const runtimeInput = runAgentRuntimeCalls.at(-1) as { input?: { messageMetadata?: Record<string, unknown> } };
+      expect(runtimeInput.input?.messageMetadata).toMatchObject({
+        preferredCapabilityRoute: "browser",
+        capabilityRoutingReason: "request continues the active task-owned browser tab",
+        browserContinuity: {
+          tabId: "agent-tab-1",
+          url: "https://x.com/home",
+          handoffStatus: "deliverable"
+        }
+      });
+    } finally {
+      setActiveBrowserBroker(null);
+    }
+  });
+
   test("Run 完成后到达的后台任务通知仍应单独持久化", async () => {
     const {
       createAgentThread,

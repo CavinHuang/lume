@@ -2101,6 +2101,7 @@ export async function createRuntimeCoreSession(
     availableTools: toolset.availableToolNames,
     routingTrace: resolvePersistedRoutingTrace(input.messageMetadata),
     browserRuntimeAvailable: isBundledBrowserRuntimeAvailable(),
+    browserContinuity: input.messageMetadata?.browserContinuity,
     enabledPlugins,
     tokenBudget: contextTokenBudget,
     toolSchemaFingerprint,
