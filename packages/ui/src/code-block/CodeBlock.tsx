@@ -237,14 +237,14 @@ export function CodeBlock({ children, onCopy }: CodeBlockProps): React.ReactElem
   }, [onCopy, trimmedCode])
 
   return (
-    <div className="code-block-wrapper group/code rounded-lg overflow-hidden my-2 border border-border/50">
+    <div className="code-block-wrapper group/code my-2 overflow-hidden rounded-lg border border-border/50 bg-[var(--lume-bg-panel,var(--card))] shadow-sm">
       {/* 头部栏：语言标签 + 复制按钮 */}
-      <div className="flex items-center justify-between h-[34px] px-2 py-1 bg-muted/60 text-muted-foreground text-xs">
+      <div className="flex h-8 items-center justify-between border-b border-border/50 bg-muted/55 px-3 text-xs text-muted-foreground">
         <span className="font-medium select-none">{getDisplayName(language)}</span>
         <button
           type="button"
           onClick={handleCopy}
-          className="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-foreground/10 transition-colors text-muted-foreground hover:text-foreground"
+          className="flex items-center gap-1.5 rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-foreground/8 hover:text-foreground"
         >
           <svg {...ICON_ATTRS}>{copied ? checkIconPath : copyIconPath}</svg>
           <span>{copied ? '已复制' : '复制'}</span>
@@ -253,9 +253,9 @@ export function CodeBlock({ children, onCopy }: CodeBlockProps): React.ReactElem
 
       {/* 代码区域：逐行渲染 */}
       <pre
-        className="shiki overflow-x-auto p-4 m-0 text-[13px] leading-[1.6]"
+        className="shiki m-0 overflow-x-auto px-4 py-3 text-[13px] leading-[1.6]"
         style={{
-          backgroundColor: 'var(--lume-bg-app, var(--background))',
+          backgroundColor: 'var(--lume-bg-panel, var(--card))',
           color: tokenResult?.fgColor ?? 'var(--lume-text-primary, var(--foreground))',
           borderRadius: '0 0 8px 8px',
         }}
