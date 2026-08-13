@@ -54,6 +54,7 @@ export interface BrowserTabDescriptor {
   title: string;
   faviconUrl?: string;
   isLoading?: boolean;
+  loadError?: { errorCode: number; errorDescription: string; url: string };
   canGoBack?: boolean;
   canGoForward?: boolean;
   navigationEntries?: string[];

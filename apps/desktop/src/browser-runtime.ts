@@ -1127,6 +1127,7 @@ export class BrowserRuntime {
     })
     wc.on("did-start-loading", () => {
       tab.isLoading = true
+      tab.loadError = undefined
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
     })
     wc.on("did-stop-loading", () => {
@@ -1142,6 +1143,8 @@ export class BrowserRuntime {
     wc.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (!isMainFrame || errorCode === -3) return
       tab.isLoading = false
+      tab.loadError = { errorCode, errorDescription: errorDescription.slice(0, 300), url: stripUrl(validatedURL) }
+      this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
       this.options.emit({ method: "browser:tab-error", params: { tabId: tab.tabId, code: "load_failed", errorCode, errorDescription: errorDescription.slice(0, 300), url: stripUrl(validatedURL), recoverable: true } })
     })
     wc.on("page-favicon-updated", (_event, favicons) => {
@@ -1338,7 +1341,10 @@ export class BrowserRuntime {
       callback({ cancel: policy.disposed || (guarded && !isAllowedNavigation(details.url, true, this.settings, claimedGlobalTab?.approvedPrivateOrigins)) })
     })
     if (!agent) return
-    const guard = new BrowserNetworkGuard({ allowPrivateOrigin: (origin) => this.settings.siteOverrides[origin] === "allow" || [...this.tabs.values()].some((tab) => tab.webContents?.session === browserSession && tab.approvedPrivateOrigins?.has(origin)) })
+    const guard = new BrowserNetworkGuard({
+      allowPrivateOrigin: (origin) => this.settings.siteOverrides[origin] === "allow" || [...this.tabs.values()].some((tab) => tab.webContents?.session === browserSession && tab.approvedPrivateOrigins?.has(origin)),
+      resolveProxy: (url) => session.defaultSession.resolveProxy(url),
+    })
     policy.networkGuard = guard
     policy.networkReady = guard.start().then(() => browserSession.setProxy({ proxyRules: guard.proxyRules(), proxyBypassRules: "<-loopback>" })).catch((error) => {
       policy.disposed = true
@@ -2957,6 +2963,10 @@ export class BrowserRuntime {
     tab.visible = params.visible !== false
     tab.lifecycle = tab.visible ? "active" : "background"
     if (tab.visible) tab.lastOpenedAt = new Date().toISOString()
+    if (tab.visible && tab.surface === "right-panel" && tab.profileKind === "agent" && tab.context && !tab.handoff) {
+      tab.handoff = { browserSessionId: tab.context.browserSessionId, status: "deliverable", reason: "shown_in_right_panel" }
+      this.rememberTab(tab)
+    }
     tab.webContents?.setBackgroundThrottling(!tab.visible)
     if (tab.visible) void this.setTabSuspended(tab, false)
     this.enforceBackgroundLimit()
@@ -3218,7 +3228,7 @@ export class BrowserRuntime {
     tab.webContents = null
     this.tabs.delete(tabId)
     this.disposeOwnedSessionIfUnused(tab.partition, browserSession)
-    this.options.emit({ method: "browser:tab-closed", params: { tabId } })
+    this.options.emit({ method: "browser:tab-closed", params: { tabId, ownerThreadId: tab.ownerThreadId, profileKind: tab.profileKind } })
     if (contents) closeWebContentsAfterRenderer(contents)
     this.enforceBackgroundLimit()
     return { ok: true }

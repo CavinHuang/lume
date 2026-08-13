@@ -226,7 +226,7 @@ export function BrowserShell({
     setDescriptor(next)
     currentUrlRef.current = next.url
     setAddress(next.url)
-    setLoadError(null)
+    setLoadError(next.loadError?.errorDescription ?? null)
     onUrlChangeRef.current?.(next.url)
     onDescriptorChangeRef.current?.(next)
     if (next.viewport?.enabled) {

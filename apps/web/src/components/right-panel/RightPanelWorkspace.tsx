@@ -272,6 +272,33 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
         }
         return
       }
+      if (event.method === 'browser:tab-closed') {
+        const ownerThreadId = typeof event.params.ownerThreadId === 'string' ? event.params.ownerThreadId : undefined
+        const tabId = typeof event.params.tabId === 'string' ? event.params.tabId : undefined
+        if (!ownerThreadId || !tabId || ownerThreadId !== threadId || event.params.profileKind !== 'agent') return
+        knownBrowserTabIdsRef.current[ownerThreadId]?.delete(tabId)
+        void browserRuntime<BrowserTabDescriptor[]>({ method: 'list' }).then((tabs) => {
+          if (disposed) return
+          const agentTabs = tabs
+            .filter((tab) => tab.ownerThreadId === ownerThreadId && tab.profileKind === 'agent')
+            .map(browserTabFromDescriptor)
+          const fallbackTabId = agentTabs[0]?.id
+          setAgentBrowserWorkspaces((current) => {
+            const previousActiveTabId = current[ownerThreadId]?.activeTabId
+            const activeTabId = previousActiveTabId && agentTabs.some((tab) => tab.id === previousActiveTabId)
+              ? previousActiveTabId
+              : fallbackTabId
+            return {
+              ...current,
+              [ownerThreadId]: { tabs: agentTabs, recentlyClosed: [], ...(activeTabId ? { activeTabId } : {}) },
+            }
+          })
+          updateRuntime((current) => current.activeItem?.kind === 'browser' && current.activeItem.tabId === tabId
+            ? { ...current, activeItem: fallbackTabId ? { kind: 'browser', tabId: fallbackTabId } : null }
+            : current)
+        }).catch(() => undefined)
+        return
+      }
       if (event.method !== 'browser:workspace-changed') return
       const descriptor = event.params as unknown as BrowserWorkspaceDescriptor
       if (!descriptor.ownerThreadId || descriptor.revision <= (browserWorkspaceRevisionRef.current[descriptor.ownerThreadId] ?? -1)) return

@@ -1,7 +1,9 @@
 import { lookup as dnsLookup } from "node:dns/promises"
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http"
+import { request as httpsRequest } from "node:https"
 import { connect as connectSocket, isIP } from "node:net"
 import type { Duplex } from "node:stream"
+import { connect as connectTls } from "node:tls"
 
 type LookupResult = { address: string; family: number }
 type Lookup = (hostname: string) => Promise<LookupResult[]>
@@ -9,7 +11,12 @@ type Lookup = (hostname: string) => Promise<LookupResult[]>
 export type BrowserNetworkGuardOptions = {
   allowPrivateOrigin?: (origin: string) => boolean
   lookup?: Lookup
+  resolveProxy?: (url: string) => Promise<string>
 }
+
+type ProxyRoute =
+  | { kind: "direct" }
+  | { kind: "proxy"; host: string; port: number; secure: boolean }
 
 export class BrowserNetworkGuard {
   private server: Server | null = null
@@ -59,11 +66,20 @@ export class BrowserNetworkGuard {
   private async forwardHttp(request: IncomingMessage): Promise<IncomingMessage> {
     const url = new URL(request.url ?? "")
     if (url.protocol !== "http:") throw new Error("browser_network_blocked")
-    const target = await resolveGuardTarget(url.hostname, Number(url.port || 80), url.protocol, this.lookup, this.options.allowPrivateOrigin)
+    const route = await this.resolveRoute(url)
+    const target = await resolveGuardTarget(url.hostname, Number(url.port || 80), url.protocol, this.lookup, this.options.allowPrivateOrigin, route.kind === "proxy")
     const forwardedHeaders = { ...request.headers, host: url.host }
     delete forwardedHeaders["proxy-connection"]
     return new Promise<IncomingMessage>((resolve, reject) => {
-      const upstream = httpRequest({ host: target.address, family: target.family, port: target.port, method: request.method ?? "GET", path: `${url.pathname}${url.search}`, headers: forwardedHeaders }, resolve)
+      const requestUpstream = route.kind === "proxy" && route.secure ? httpsRequest : httpRequest
+      const upstream = requestUpstream({
+        host: route.kind === "proxy" ? route.host : target.address,
+        ...(route.kind === "direct" ? { family: target.family } : {}),
+        port: route.kind === "proxy" ? route.port : target.port,
+        method: request.method ?? "GET",
+        path: route.kind === "proxy" ? url.toString() : `${url.pathname}${url.search}`,
+        headers: forwardedHeaders,
+      }, resolve)
       upstream.once("error", reject)
       request.pipe(upstream)
     })
@@ -73,7 +89,12 @@ export class BrowserNetworkGuard {
     try {
       const parsed = new URL(`https://${authority}`)
       const port = Number(parsed.port || 443)
-      const target = await resolveGuardTarget(parsed.hostname, port, "https:", this.lookup, this.options.allowPrivateOrigin)
+      const route = await this.resolveRoute(parsed)
+      const target = await resolveGuardTarget(parsed.hostname, port, "https:", this.lookup, this.options.allowPrivateOrigin, route.kind === "proxy")
+      if (route.kind === "proxy") {
+        await connectThroughProxy(route, authority, client, head)
+        return
+      }
       const upstream = connectSocket({ host: target.address, family: target.family as 4 | 6, port })
       upstream.setTimeout(30_000, () => upstream.destroy())
       upstream.once("connect", () => {
@@ -88,9 +109,14 @@ export class BrowserNetworkGuard {
       client.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
     }
   }
+
+  private async resolveRoute(url: URL): Promise<ProxyRoute> {
+    if (!this.options.resolveProxy) return { kind: "direct" }
+    return parseProxyRoute(await this.options.resolveProxy(url.toString()))
+  }
 }
 
-export async function resolveGuardTarget(hostname: string, port: number, scheme: "http:" | "https:", lookup: Lookup, allowPrivateOrigin?: (origin: string) => boolean): Promise<{ address: string; family: number; port: number }> {
+export async function resolveGuardTarget(hostname: string, port: number, scheme: "http:" | "https:", lookup: Lookup, allowPrivateOrigin?: (origin: string) => boolean, allowProxyFakeAddress = false): Promise<{ address: string; family: number; port: number }> {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("browser_network_blocked")
   const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "")
   const literalFamily = isIP(normalized)
@@ -101,9 +127,24 @@ export async function resolveGuardTarget(hostname: string, port: number, scheme:
   }
   const results = literalFamily ? [{ address: normalized, family: literalFamily }] : await lookup(normalized)
   if (!results.length) throw new Error("browser_network_blocked")
-  const hasPrivateAddress = results.some((result) => !isPublicAddress(result.address))
+  const hasPrivateAddress = results.some((result) => !isPublicAddress(result.address) && !(allowProxyFakeAddress && isProxyFakeAddress(result.address)))
   if (hasPrivateAddress && (!results.every((result) => !isPublicAddress(result.address)) || !allowPrivateOrigin?.(origin))) throw new Error("browser_network_blocked")
   return { address: results[0].address, family: results[0].family, port }
+}
+
+export function parseProxyRoute(value: string): ProxyRoute {
+  for (const directive of value.split(";")) {
+    const [kind = "", authority = ""] = directive.trim().split(/\s+/, 2)
+    if (kind.toUpperCase() === "DIRECT") return { kind: "direct" }
+    if (!["PROXY", "HTTP", "HTTPS"].includes(kind.toUpperCase()) || !authority) continue
+    try {
+      const parsed = new URL(`http://${authority}`)
+      const port = Number(parsed.port)
+      if (!parsed.hostname || !Number.isInteger(port) || port < 1 || port > 65535) continue
+      return { kind: "proxy", host: parsed.hostname, port, secure: kind.toUpperCase() === "HTTPS" }
+    } catch { /* try the next proxy directive */ }
+  }
+  return { kind: "direct" }
 }
 
 export function isPublicAddress(address: string): boolean {
@@ -126,6 +167,54 @@ export function isPublicAddress(address: string): boolean {
   if (normalized.startsWith("2001:db8:")) return false
   const mapped = normalized.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1]
   return mapped ? isPublicAddress(mapped) : true
+}
+
+function isProxyFakeAddress(address: string): boolean {
+  const [a, b] = address.split(".").map(Number)
+  return isIP(address) === 4 && a === 198 && (b === 18 || b === 19)
+}
+
+function connectThroughProxy(route: Extract<ProxyRoute, { kind: "proxy" }>, authority: string, client: Duplex, head: Buffer): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const upstream = route.secure
+      ? connectTls({ host: route.host, port: route.port, servername: isIP(route.host) ? undefined : route.host })
+      : connectSocket({ host: route.host, port: route.port })
+    let response = Buffer.alloc(0)
+    const fail = (error: Error) => {
+      upstream.destroy()
+      reject(error)
+    }
+    upstream.setTimeout(30_000, () => fail(new Error("browser_proxy_timeout")))
+    upstream.once("error", fail)
+    upstream.once(route.secure ? "secureConnect" : "connect", () => {
+      upstream.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\nProxy-Connection: Keep-Alive\r\n\r\n`)
+    })
+    upstream.on("data", function onData(chunk: Buffer) {
+      response = Buffer.concat([response, chunk])
+      const headerEnd = response.indexOf("\r\n\r\n")
+      if (headerEnd < 0) {
+        if (response.length > 16_384) fail(new Error("browser_proxy_invalid_response"))
+        return
+      }
+      upstream.off("data", onData)
+      const statusLine = response.subarray(0, headerEnd).toString("latin1").split("\r\n", 1)[0] ?? ""
+      if (!/^HTTP\/1\.[01] 2\d\d\b/.test(statusLine)) {
+        fail(new Error("browser_proxy_connect_failed"))
+        return
+      }
+      upstream.removeListener("error", fail)
+      upstream.setTimeout(0)
+      client.write("HTTP/1.1 200 Connection Established\r\nProxy-Agent: Lume\r\n\r\n")
+      if (head.length) upstream.write(head)
+      const remaining = response.subarray(headerEnd + 4)
+      if (remaining.length) client.write(remaining)
+      upstream.once("error", () => client.destroy())
+      client.once("error", () => upstream.destroy())
+      upstream.pipe(client)
+      client.pipe(upstream)
+      resolve()
+    })
+  })
 }
 
 function formatHost(hostname: string): string { return isIP(hostname) === 6 ? `[${hostname}]` : hostname }
