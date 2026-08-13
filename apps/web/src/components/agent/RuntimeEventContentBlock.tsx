@@ -151,6 +151,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
         threadId={threadId}
         className={cls}
         leftAligned={useLeftAlignedMessageList}
+        showAvatar={showMessageAvatar && showAssistantAvatar}
         canEdit={canEditUserMessage}
         onOpenThreadFile={onOpenThreadFile}
         onOpenThreadImage={onOpenThreadImage}
@@ -198,19 +199,30 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
       : [],
     [message.status, message.text, showExpressionActions],
   )
+  const showAssistantHeader = showAssistantAvatar && showMessageAvatar
 
   return (
     <MessageFileReferenceBindingProvider value={message.fileReferenceBinding} consumerThreadId={threadId} protocolVersion={message.fileReferenceProtocolVersion}>
-    <div className={cn('group/agent-message flex w-full max-w-[920px] min-w-0 gap-4', cls)}>
-      {showAssistantAvatar && showMessageAvatar && (
-        <div
-          data-agent-message-avatar="true"
-          className="mt-1 flex size-10 shrink-0 items-center justify-center rounded-full border border-[color:color-mix(in_oklab,var(--lume-accent)_24%,var(--lume-border-subtle))] bg-[var(--lume-bg-elevated)] text-[var(--lume-accent)] shadow-[0_10px_24px_-20px_hsl(var(--lume-shadow-panel)/0.72)]"
-        >
-          <Sparkles size={21} strokeWidth={1.8} fill="currentColor" fillOpacity={0.1} />
+    <div className={cn('group/agent-message flex w-full max-w-[920px] min-w-0 flex-col gap-0.5', cls)}>
+      {showAssistantHeader && (
+        <div className="mb-2.5 flex items-start gap-2.5">
+          <div
+            data-agent-message-avatar="true"
+            className="flex size-[35px] shrink-0 items-center justify-center rounded-[25%] border border-[color:color-mix(in_oklab,var(--lume-accent)_24%,var(--lume-border-subtle))] bg-[var(--lume-bg-elevated)] text-[var(--lume-accent)]"
+          >
+            <Sparkles size={19} strokeWidth={1.8} fill="currentColor" fillOpacity={0.1} />
+          </div>
+          <div className="flex h-[35px] flex-col justify-between">
+            <span className="text-[13px] font-semibold leading-none text-[var(--lume-text-secondary)]">Lume</span>
+            {formatMessageTime(message.completedAt) && (
+              <span className="text-[10px] leading-none text-[var(--lume-text-muted)]">
+                {formatMessageTime(message.completedAt)}
+              </span>
+            )}
+          </div>
         </div>
       )}
-      <div className="min-w-0 flex-1 space-y-3 pt-1">
+      <div className={cn('min-w-0 flex-1 space-y-3', showAssistantHeader && 'pl-[46px]')}>
         {useMinimalMode ? (
           <MinimalAssistantContent
             blocks={minimalBlocks}
@@ -260,7 +272,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
           tokenCount={message.tokenCount}
           tokenCountSource={message.tokenCountSource}
           tokenUsage={message.tokenUsage}
-          completedAt={message.completedAt}
+          completedAt={showAssistantHeader ? undefined : message.completedAt}
           memoryEvents={contentBlocks
             .filter((b): b is Extract<typeof b, { type: 'memory_context_used' }> => b.type === 'memory_context_used')
             .map(b => b.event)}
@@ -460,6 +472,7 @@ function UserMessageBlock({
   className,
   canEdit,
   leftAligned,
+  showAvatar,
   onOpenThreadFile,
   onOpenThreadImage,
 }: {
@@ -468,6 +481,7 @@ function UserMessageBlock({
   className: string
   canEdit: boolean
   leftAligned: boolean
+  showAvatar: boolean
   onOpenThreadFile?: OpenThreadFile
   onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
 }) {
@@ -524,13 +538,30 @@ function UserMessageBlock({
 
   return (
     <div className={cn(
-      'group/user-message flex w-full max-w-[920px] gap-4',
-      leftAligned ? 'justify-start pl-14' : 'ml-auto justify-end gap-2',
+      'group/user-message flex w-full max-w-[920px]',
+      leftAligned ? 'flex-col gap-0.5' : 'ml-auto flex-row justify-end gap-2',
       className,
     )}>
+      {leftAligned && showAvatar && (
+        <div className="mb-2.5 flex items-start gap-2.5">
+          <div className="flex size-[35px] shrink-0 items-center justify-center rounded-full bg-[var(--lume-accent)] text-[14px] font-semibold text-[var(--lume-accent-foreground)]">
+            L
+          </div>
+          <div className="flex h-[35px] flex-col justify-between">
+            <span className="text-[13px] font-semibold leading-none text-[var(--lume-text-secondary)]">你</span>
+            {formatMessageTime(message.createdAt) && (
+              <span className="text-[10px] leading-none text-[var(--lume-text-muted)]">
+                {formatMessageTime(message.createdAt)}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
       <div className={cn(
         'relative flex min-w-0 flex-col',
-        leftAligned ? 'max-w-[760px] items-start' : 'max-w-[560px] items-end',
+        leftAligned
+          ? cn('max-w-[806px] items-start', showAvatar && 'pl-[46px]')
+          : 'max-w-[560px] items-end',
       )}>
         {message.attachments && message.attachments.length > 0 && (
           <AgentAttachmentGrid
@@ -561,7 +592,7 @@ function UserMessageBlock({
         <div className={cn(
           'text-[15px] font-medium leading-[22px] text-[var(--lume-text-primary)]',
           leftAligned
-            ? 'px-0 py-0'
+            ? 'rounded-[10px] bg-[var(--lume-accent-soft)] px-3.5 py-2.5'
             : 'rounded-[12px] rounded-tr-[10px] bg-[var(--lume-accent-soft)] px-3 py-2 shadow-[0_1px_0_hsl(var(--lume-shadow-panel)/0.08)]',
         )}>
           {editing ? (
@@ -662,7 +693,7 @@ function UserMessageBlock({
           </div>
         )}
       </div>
-      {!leftAligned && (
+      {!leftAligned && showAvatar && (
         <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--lume-accent)] text-[15px] font-semibold text-[var(--lume-accent-foreground)] shadow-[0_12px_24px_-18px_hsl(var(--lume-shadow-panel)/0.72)]">
           L
         </div>
@@ -2885,11 +2916,15 @@ function escapeHtml(text: string): string {
     .replaceAll("'", '&#39;')
 }
 
-function formatAssistantCompletionTime(completedAt?: string): string | null {
-  if (!completedAt) return null
-  const date = new Date(completedAt)
+function formatMessageTime(value?: string): string | null {
+  if (!value) return null
+  const date = new Date(value)
   if (Number.isNaN(date.getTime())) return null
-  return `${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+function formatAssistantCompletionTime(completedAt?: string): string | null {
+  return formatMessageTime(completedAt)
 }
 
 function CopyMessageButton({
