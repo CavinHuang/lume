@@ -27,7 +27,7 @@ import type { ResolvedComputerUseSurface } from "./computer-use/computer-use-sur
 import { createComputerUseRequestBridge } from "./node-repl/node-repl-computer-use-bridge";
 import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
-import { hasCodingIntent } from "../../agent/capability-routing";
+import { hasBrowserIntent, hasCodingIntent } from "../../agent/capability-routing";
 import { createWikiProposalTool, createWikiReadTools } from "./wiki/create-wiki-tools";
 import { resolveTrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
 import type { TrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
@@ -215,11 +215,21 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
       })
       : undefined,
   });
-  const nodeReplTools = shouldExposeNodeReplTools(input)
+  const browserNodeReplRequired = input.messageMetadata?.preferredCapabilityRoute === "browser"
+    || hasBrowserIntent(input.originalUserInstruction);
+  const nodeReplTools = (shouldExposeNodeReplTools(input)
     ? computerUseSurface === "sky"
       ? allNodeReplTools.filter((tool) => tool.name === "mcp__node_repl__js")
       : allNodeReplTools
-    : [];
+    : []).map((tool) => browserNodeReplRequired && tool.name === "mcp__node_repl__js"
+      ? {
+          ...tool,
+          runtimeMetadata: {
+            ...(tool.runtimeMetadata ?? {}),
+            requiredDuringSkillScope: true
+          }
+        }
+      : tool);
   const ordinaryWikiTools = createOrdinaryWikiTools({
     profile: wikiProfile,
     proposalEnabled: input.wikiProposalEnabled,
@@ -304,6 +314,7 @@ function shouldExposeNodeReplTools(input: CreateLumeRuntimeToolsInput): boolean 
   if (preferredRoute === "coding" || preferredRoute === "raw-tools" || hasCodingIntent(input.originalUserInstruction)) return false;
   if (input.computerUseSurface === "sky") return true;
   if (preferredRoute === "browser") return true;
+  if (hasBrowserIntent(input.originalUserInstruction)) return true;
 
   const instruction = [
     input.originalUserInstruction,

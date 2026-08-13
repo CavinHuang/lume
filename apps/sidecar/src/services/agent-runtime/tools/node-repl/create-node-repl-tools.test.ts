@@ -119,6 +119,43 @@ describe("createNodeReplTools", () => {
     });
   });
 
+  test("browser calls keep one lease across node_repl tool calls in the same run", async () => {
+    const dispatched: any[] = [];
+    setActiveBrowserBroker({
+      async dispatch(request: unknown) {
+        dispatched.push(request);
+        return {};
+      }
+    } as any);
+    const tools = createNodeReplTools({
+      sessionId: "thread-1",
+      cwd: "D:/repo",
+      registry: {
+        async exec(_threadId, _input, options) {
+          await options?.browserRequest?.(
+            { method: "runtime_ping", params: {} },
+            new AbortController().signal,
+          );
+          return { content: [{ type: "text", text: "ready" }] };
+        },
+        async addModuleDir() { return true; },
+        async reset() {},
+        async shutdown() {},
+        debugSnapshot() { return null; },
+      },
+    });
+    const js = tools.find((tool) => tool.name === "js")!;
+
+    try {
+      await js.call({ code: "first" }, { ...makeToolContext(), runId: "run-1", toolUseId: "tool-1" });
+      await js.call({ code: "second" }, { ...makeToolContext(), runId: "run-1", toolUseId: "tool-2" });
+
+      expect(dispatched.map((request) => request.browserTurnId)).toEqual(["run-1", "run-1"]);
+    } finally {
+      setActiveBrowserBroker(null);
+    }
+  });
+
   test("MCP wrapper exposes node_repl tools with MCP names and metadata", async () => {
     const tools = createNodeReplMcpTools({
       sessionId: "thread-1",

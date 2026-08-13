@@ -18,6 +18,8 @@ if (!globalThis.agent?.browsers) {
 }
 ```
 
+Set `timeout_ms` to `300000` on browser `mcp__node_repl__js` calls. Navigation can wait for an action-time confirmation, so the default tool timeout is too short.
+
 The runtime is persistent. Use `var` for reusable top-level bindings, and return observations with `nodeRepl.write(JSON.stringify(value))`; bare final expressions are invisible.
 
 Select the in-app browser, create a tab, and navigate:

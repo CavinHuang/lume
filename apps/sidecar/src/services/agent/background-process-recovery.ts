@@ -66,6 +66,7 @@ async function resumeTerminalProcessJob(
   ));
   if (!alreadyPersisted) appendAgentThreadSDKMessages(job.threadId, [notification]);
   markProcessJobNotified(job.id);
+  if (job.taskType === "shell") return;
   if (!markProcessJobContinuationConsumed(job.id)) return;
 
   try {

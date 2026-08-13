@@ -105,7 +105,7 @@ import { FileBackedTaskStore } from "../task/task-store";
 import { ToolRuntime, type ToolRuntimeDiagnostic } from "../tools/tool-runtime";
 import { bindPlanningExecutionRun, resolvePlanningExecutionContext } from "../../planning/planning-execution-context";
 import { getPlanningTodoStore } from "../../planning/planning-todo-store";
-import { SidecarPluginManager } from "../plugins/plugin-manager.js";
+import { isBundledBrowserRuntimeAvailable, SidecarPluginManager } from "../plugins/plugin-manager.js";
 import { assemblePluginRuntime, type PluginRuntimeAssembly } from "../plugins/runtime-bridge.js";
 import type { RegisteredPlugin } from "../plugins/plugin-registry.js";
 import { PluginPermissionRuntime } from "../plugins/permission-runtime.js";
@@ -2098,6 +2098,7 @@ export async function createRuntimeCoreSession(
     commentAttachments: input.commentAttachments,
     browserAttachments: input.browserAttachments,
     availableTools: toolset.availableToolNames,
+    browserRuntimeAvailable: isBundledBrowserRuntimeAvailable(),
     enabledPlugins,
     tokenBudget: contextTokenBudget,
     toolSchemaFingerprint,

@@ -20,7 +20,7 @@ export function resolveSoftToolPolicyForPreferredRoute(
 ): AgentToolPolicy | undefined {
   if (preferredLane === "browser") {
     return {
-      deny: ["web_search", "web_fetch"]
+      deny: ["web_search", "web_fetch", "bash"]
     };
   }
   if (preferredLane === "memory") {
@@ -103,6 +103,22 @@ export function hasCodingIntent(value?: string): boolean {
   return hasUiArtifact && hasChangeOrDiagnosis;
 }
 
+export function hasBrowserIntent(value?: string): boolean {
+  const message = (value ?? "").trim().toLowerCase();
+  return containsAny(message, [
+    "browser",
+    "tab",
+    "page",
+    "current page",
+    "profile",
+    "open page",
+    "浏览器",
+    "页面",
+    "当前页",
+    "标签页"
+  ]);
+}
+
 function buildSkillText(skills: SkillMeta[]): string {
   return skills
     .filter((skill) => skill.disableModelInvocation !== true)
@@ -160,18 +176,6 @@ export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): 
     };
   }
 
-  const skillLikelyMatch = laneSet.has("skills")
-    && skillText.length > 0
-    && message.split(/[\s,.;:!?，。；：！？()（）]+/).filter((token) => token.length >= 3)
-      .some((token) => skillText.includes(token));
-  if (skillLikelyMatch) {
-    return {
-      lanes,
-      preferredLane: "skills",
-      reason: "loaded skill metadata overlaps with the user request"
-    };
-  }
-
   if (laneSet.has("coding")) {
     return {
       lanes,
@@ -180,19 +184,7 @@ export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): 
     };
   }
 
-  const browserIntent = containsAny(message, [
-    "browser",
-    "tab",
-    "page",
-    "current page",
-    "profile",
-    "open page",
-    "浏览器",
-    "页面",
-    "当前页",
-    "标签页"
-  ]);
-  if (browserIntent && laneSet.has("browser")) {
+  if (hasBrowserIntent(message) && laneSet.has("browser")) {
     return {
       lanes,
       preferredLane: "browser",
@@ -256,6 +248,18 @@ export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): 
       lanes,
       preferredLane: "web",
       reason: "request implies public web retrieval"
+    };
+  }
+
+  const skillLikelyMatch = laneSet.has("skills")
+    && skillText.length > 0
+    && message.split(/[\s,.;:!?，。；：！？()（）]+/).filter((token) => token.length >= 3)
+      .some((token) => skillText.includes(token));
+  if (skillLikelyMatch) {
+    return {
+      lanes,
+      preferredLane: "skills",
+      reason: "loaded skill metadata overlaps with the user request"
     };
   }
 

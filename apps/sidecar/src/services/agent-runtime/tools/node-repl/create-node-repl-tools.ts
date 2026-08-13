@@ -86,7 +86,7 @@ export function createNodeReplTools(input: {
               params,
               ...(typeof params.tabId === "string" ? { tabId: params.tabId } : typeof params.tab_id === "string" ? { tabId: params.tab_id } : {}),
               browserSessionId: threadId,
-              browserTurnId: context.toolUseId ?? `node-repl:${threadId}`,
+              browserTurnId: context.runId ?? context.currentUserMessageId ?? `node-repl:${threadId}`,
               threadId,
               backend,
             });

@@ -2,6 +2,7 @@ import type { BrowserTabDescriptor, BrowserViewportPreset, BrowserViewportState 
 
 export interface RightPanelBrowserTab {
   id: string
+  profileKind?: BrowserTabDescriptor['profileKind']
   url: string
   title: string
   faviconUrl?: string
@@ -80,6 +81,7 @@ export function applyBrowserDescriptor(
   descriptor: BrowserTabDescriptor,
 ): ThreadBrowserWorkspace {
   return updateBrowserTab(workspace, descriptor.tabId, {
+    profileKind: descriptor.profileKind,
     url: descriptor.url,
     title: descriptor.title || '新标签页',
     faviconUrl: descriptor.faviconUrl,
@@ -99,6 +101,7 @@ export function browserTabFromDescriptor(descriptor: BrowserTabDescriptor): Righ
   const now = new Date().toISOString()
   return {
     id: descriptor.tabId,
+    ...(descriptor.profileKind ? { profileKind: descriptor.profileKind } : {}),
     url: descriptor.url,
     title: descriptor.title || '新标签页',
     ...(descriptor.faviconUrl ? { faviconUrl: descriptor.faviconUrl } : {}),
@@ -173,6 +176,7 @@ function sanitizeBrowserTab(value: unknown): RightPanelBrowserTab | null {
   const viewport = sanitizeViewport(value.viewport)
   return {
     id: value.id,
+    ...(value.profileKind === 'user' || value.profileKind === 'agent' || value.profileKind === 'advanced-cdp' ? { profileKind: value.profileKind } : {}),
     url: typeof value.url === 'string' ? value.url : '',
     title: typeof value.title === 'string' && value.title ? value.title : '新标签页',
     ...(typeof value.faviconUrl === 'string' ? { faviconUrl: value.faviconUrl } : {}),

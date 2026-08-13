@@ -159,6 +159,20 @@ describe("create-lume-tools", () => {
     const toolNames = result.customTools.map((tool) => tool.name);
     expect(toolNames).toContain("mcp__node_repl__js");
     expect(toolNames).toContain("mcp__computer_use__click");
+    expect(result.customTools.find((tool) => tool.name === "mcp__node_repl__js")?.runtimeMetadata)
+      .toMatchObject({ requiredDuringSkillScope: true });
+  });
+
+  test("explicit browser intent still exposes node_repl when stale metadata says skills", () => {
+    const result = createLumeRuntimeTools({
+      ...baseInput(),
+      originalUserInstruction: "使用浏览器在百度中搜索 agent",
+      messageMetadata: { preferredCapabilityRoute: "skills" }
+    });
+
+    const nodeRepl = result.customTools.find((tool) => tool.name === "mcp__node_repl__js");
+    expect(nodeRepl).toBeDefined();
+    expect(nodeRepl?.runtimeMetadata).toMatchObject({ requiredDuringSkillScope: true });
   });
 
   test("keeps both automation tool families out of a coding route", () => {

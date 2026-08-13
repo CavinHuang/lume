@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { isBundledBrowserPluginAvailable, SidecarPluginManager } from "./plugin-manager.js";
+import {
+  isBundledBrowserPluginAvailable,
+  isBundledBrowserRuntimeAvailable,
+  SidecarPluginManager
+} from "./plugin-manager.js";
 
 async function writeJson(path: string, value: unknown) {
   await mkdir(dirname(path), { recursive: true });
@@ -20,6 +24,10 @@ describe("SidecarPluginManager compatibility wrapper", () => {
       });
 
       expect(isBundledBrowserPluginAvailable(root)).toBe(true);
+      expect(isBundledBrowserRuntimeAvailable(root)).toBe(false);
+      await mkdir(join(root, "browser", "scripts"), { recursive: true });
+      await writeFile(join(root, "browser", "scripts", "browser-client.mjs"), "export {};");
+      expect(isBundledBrowserRuntimeAvailable(root)).toBe(true);
       expect(isBundledBrowserPluginAvailable(join(root, "missing"))).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });

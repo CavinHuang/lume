@@ -115,3 +115,8 @@ export function isBundledBrowserPluginAvailable(root = process.env.LUME_BUNDLED_
   return existsSync(join(pluginRoot, ".lume-plugin", "plugin.json"))
     || existsSync(join(pluginRoot, "lume-plugin.json"));
 }
+
+export function isBundledBrowserRuntimeAvailable(root = process.env.LUME_BUNDLED_PLUGINS_DIR?.trim()): boolean {
+  if (!isBundledBrowserPluginAvailable(root) || !root) return false;
+  return existsSync(join(root, "browser", "scripts", "browser-client.mjs"));
+}

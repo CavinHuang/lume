@@ -22,6 +22,7 @@ import { getRuntimeCoreSessionDir } from "./session-store";
 import { getAgentSessionWorkspacePath, getAgentWorkspacePath, getAliceUserSkillsDir, getDefaultSkillsDir } from "../../infra/config-paths";
 import { createAgentThread } from "../../agent/agent-thread-manager";
 import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
+import { resolveSoftToolPolicyForPreferredRoute } from "../../agent/capability-routing";
 import { getSubagentCoordinator, resetSubagentCoordinatorForTest } from "../../agent/subagents/subagent-coordinator";
 import { resetSubagentWorkStoreForTest } from "../../agent/subagents/subagent-work-store";
 import { createChannel } from "../../channel/channel-manager";
@@ -160,6 +161,34 @@ describe("runtime-core run", () => {
       } else {
         process.env.ENABLE_TOOL_SEARCH = previousToolSearch;
       }
+    }
+  });
+
+  test("browser 路由在延迟工具搜索开启时仍首轮暴露 node_repl", async () => {
+    const previousToolSearch = process.env.ENABLE_TOOL_SEARCH;
+    process.env.ENABLE_TOOL_SEARCH = "tst";
+    let result: Awaited<ReturnType<typeof createRuntimeCoreSession>> | undefined;
+
+    try {
+      result = await createRuntimeCoreSession(createHookRuntimeSessionInput({
+        lumeSessionId: `browser-tool-${crypto.randomUUID()}`,
+        permissionMode: "default",
+        userMessage: "使用浏览器在百度中搜索 agent",
+        messageMetadata: {
+          preferredCapabilityRoute: "browser",
+          toolPolicy: resolveSoftToolPolicyForPreferredRoute("browser")
+        }
+      }));
+      await result.agent.getInitializationResult();
+
+      expect(result.session.getActiveToolNames()).toContain("mcp__node_repl__js");
+      expect(result.session.getActiveToolNames()).not.toContain("Bash");
+      const deferredTools = (result.agent as unknown as { deferredToolPool: ToolDefinition[] }).deferredToolPool;
+      expect(deferredTools.map((tool) => tool.name)).not.toContain("mcp__node_repl__js");
+    } finally {
+      await result?.session.dispose();
+      if (previousToolSearch === undefined) delete process.env.ENABLE_TOOL_SEARCH;
+      else process.env.ENABLE_TOOL_SEARCH = previousToolSearch;
     }
   });
 

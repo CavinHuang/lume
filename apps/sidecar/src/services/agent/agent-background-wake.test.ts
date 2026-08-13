@@ -55,4 +55,24 @@ describe("AgentBackgroundWakeController", () => {
     expect(new AgentBackgroundWakeController().tryClaim("thread-1", message)).toBeFalse();
     expect(JSON.parse(readFileSync(join(jobDir, "state.json"), "utf8")).continuationConsumedAt).toBeNumber();
   });
+
+  test("后台 shell 完成只通知，不创建新的 Agent run", () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-background-shell-"));
+    const jobDir = join(root, "process-jobs", "task-shell");
+    mkdirSync(jobDir, { recursive: true });
+    const outputFile = join(jobDir, "output.log");
+    writeFileSync(outputFile, "done");
+    writeFileSync(join(jobDir, "state.json"), JSON.stringify({
+      version: 2,
+      id: "task-shell",
+      status: "completed",
+      taskType: "shell"
+    }));
+
+    expect(isTerminalBackgroundTaskNotification(notification({
+      task_id: "task-shell",
+      output_file: outputFile
+    }), "thread-1")).toBe(false);
+    expect(JSON.parse(readFileSync(join(jobDir, "state.json"), "utf8")).continuationConsumedAt).toBeUndefined();
+  });
 });

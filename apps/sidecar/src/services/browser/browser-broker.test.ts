@@ -36,6 +36,26 @@ test("broker obtains and binds one-time confirmation for consequential actions",
   await assert.rejects(() => broker.dispatch({ method: "click", params: { semanticIntent: "Pay now" }, browserSessionId: "s", browserTurnId: "t" }), /action_denied/);
 });
 
+test("agent-created in-app tabs are bound to the owning thread workspace", async () => {
+  const calls: any[] = [];
+  const broker = new BrowserBroker({ request: async (request) => {
+    calls.push(request);
+    return { tabId: "tab-1" };
+  } });
+  broker.setPluginState({ browserEnabled: true });
+
+  await broker.dispatch({
+    method: "create_tab",
+    params: { options: {} },
+    threadId: "thread-1",
+    browserSessionId: "thread-1",
+    browserTurnId: "run-1",
+  });
+
+  assert.equal(calls.at(-1).method, "ensure");
+  assert.equal(calls.at(-1).params.ownerThreadId, "thread-1");
+});
+
 test("canonical BrowserClient commands select and normalize the requested backend", async () => {
   const mainCalls: any[] = []
   const extensionCalls: any[] = []

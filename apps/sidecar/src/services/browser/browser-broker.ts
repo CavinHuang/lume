@@ -199,6 +199,7 @@ export class BrowserBroker {
         : undefined
       const params = {
         ...normalized.params,
+        ...(normalized.method === "ensure" && input.threadId ? { ownerThreadId: input.threadId } : {}),
         ...(normalized.method === "claim" ? this.referenceGrantForClaim(backend, context, tabId, normalized.params) : {}),
         ...(authorizedUploadFiles ? { files: authorizedUploadFiles.browserDownloadRefs, __authorizedFiles: authorizedUploadFiles.authorizedPaths } : {}),
         ...(confirmationToken ? { __policyRequired: true, __policyConfirmation: confirmationToken, __policyBindingHash: bindingHash } : {}),

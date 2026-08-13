@@ -29,13 +29,30 @@ describe("ContextAssembler", () => {
       userMessage: "打开内置浏览器访问百度",
       resolvedModelId: "test-model",
       availableTools: ["mcp__node_repl__js", "mcp__computer_use__click"],
+      browserRuntimeAvailable: true,
       tokenBudget: 8_000,
     });
 
     expect(result.runtimeContext).toContain("task-isolated in-app Browser runtime is available");
+    expect(result.runtimeContext).toContain("exact skill name browser:browser (without a workspace prefix)");
     expect(result.runtimeContext).toContain("Do not claim browser automation is unavailable before attempting it");
     expect(result.runtimeContext).toContain("defaults to the iab backend");
     expect(result.runtimeContext).not.toContain("prefer the installed lume-chrome");
+  });
+
+  test("does not advertise Browser when node_repl lacks the bundled runtime", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "node-repl-only-thread",
+      runId: "node-repl-only-run",
+      userMessage: "打开浏览器",
+      resolvedModelId: "test-model",
+      availableTools: ["mcp__node_repl__js", "mcp__computer_use__click"],
+      browserRuntimeAvailable: false,
+      tokenBudget: 8_000,
+    });
+
+    expect(result.runtimeContext).not.toContain("task-isolated in-app Browser runtime is available");
+    expect(result.runtimeContext).toContain("No Browser runtime tool is available for this turn");
   });
 
   test("injects desktop context as explicitly untrusted user data", async () => {

@@ -104,6 +104,20 @@ describe("capability-routing", () => {
     expect(decision.preferredLane).toBe("browser");
   });
 
+  test("浏览器意图不应被已加载的 browser skill 抢占", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "使用浏览器在百度中搜索 agent",
+      availableTools: ["Skill", "browser", "web_search", "read"],
+      loadedSkills: [{
+        slug: "browser:browser",
+        name: "Lume Browser",
+        description: "Control task-isolated pages in the Lume in-app browser"
+      }]
+    });
+
+    expect(decision.preferredLane).toBe("browser");
+  });
+
   test("浏览器交互中仅提到页面或弹窗时不应误判为 coding", () => {
     const decision = resolvePreferredCapabilityRoute({
       userMessage: "打开当前页面并点击登录弹窗",
@@ -206,7 +220,7 @@ describe("capability-routing", () => {
 
   test("browser/memory/web 路由应生成保守 soft tool policy", () => {
     expect(resolveSoftToolPolicyForPreferredRoute("browser")).toEqual({
-      deny: ["web_search", "web_fetch"]
+      deny: ["web_search", "web_fetch", "bash"]
     });
     expect(resolveSoftToolPolicyForPreferredRoute("memory")).toEqual({
       deny: ["web_search", "web_fetch"]

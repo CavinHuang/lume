@@ -13,6 +13,36 @@ function browserResponseError(error) {
   };
 }
 
+function createBrokerProtocolAdapter() {
+  const dialogIdsByTab = new Map();
+
+  return {
+    prepareRequest(method, params) {
+      if (method !== "tab_js_dialog_handle") return params;
+      const tabId = params?.tabId;
+      return {
+        ...params,
+        action: params?.accept === false ? "dismiss" : "accept",
+        dialogId: params?.dialogId ?? (typeof tabId === "string" ? dialogIdsByTab.get(tabId) : undefined),
+      };
+    },
+    unwrapResult(method, result, params) {
+      if (method === "tab_js_dialog_get") {
+        const dialog = result?.dialog ?? result ?? null;
+        if (typeof params?.tabId === "string") {
+          if (typeof dialog?.id === "string") dialogIdsByTab.set(params.tabId, dialog.id);
+          else dialogIdsByTab.delete(params.tabId);
+        }
+        return dialog;
+      }
+      if (method === "tab_js_dialog_handle" && typeof params?.tabId === "string") {
+        dialogIdsByTab.delete(params.tabId);
+      }
+      return unwrapBrowserResult(method, result);
+    },
+  };
+}
+
 function unwrapBrowserResult(method, result) {
   if (method === "create_tab" || method === "get_tab" || method === "browser_user_claim_tab") {
     return { ...result, tabId: result?.tabId ?? result?.id };
@@ -27,6 +57,16 @@ function unwrapBrowserResult(method, result) {
   if (method === "tab_title") return result?.title;
   if (method === "tab_url") return result?.url;
   if (method === "playwright_dom_snapshot") return result?.dom_snapshot;
+  if (method === "tab_screenshot") {
+    return { dataBase64: typeof result === "string" ? result : result?.dataBase64 ?? result?.data };
+  }
+  if (method === "browser_user_history") {
+    const entries = Array.isArray(result) ? result : result?.items;
+    return (entries ?? []).map((entry) => ({
+      ...entry,
+      lastVisitTime: entry?.lastVisitTime ?? entry?.dateVisited,
+    }));
+  }
   if (method === "playwright_locator_count") return result?.count;
   if (method === "playwright_locator_all_text_contents" || method === "playwright_locator_read_all") return result?.values;
   if ([
@@ -47,10 +87,12 @@ export async function setupLumeBrowserRuntime({ globals = globalThis } = {}) {
     throw new Error("Lume Browser trusted bridge is unavailable");
   }
 
+  const adapter = createBrokerProtocolAdapter();
   const transport = new JsonRpcTransport(async ({ id, method, params }) => {
     try {
-      const result = await browser.request(method, params ?? {});
-      return { jsonrpc: "2.0", id, result: unwrapBrowserResult(method, result) };
+      const requestParams = adapter.prepareRequest(method, params ?? {});
+      const result = await browser.request(method, requestParams);
+      return { jsonrpc: "2.0", id, result: adapter.unwrapResult(method, result, requestParams) };
     } catch (error) {
       return { jsonrpc: "2.0", id, error: browserResponseError(error) };
     }

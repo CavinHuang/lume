@@ -18,6 +18,7 @@ export function isTerminalBackgroundTaskNotification(
   if (message.type !== "system" || message.subtype !== "task_notification") return false;
   if (!message.task_id || !TERMINAL_STATUSES.has(message.status)) return false;
   if (message.subagent_run_id) return false;
+  if (persistedTaskType(message) === "shell") return false;
   return !message.session_id || message.session_id === threadId;
 }
 
@@ -103,6 +104,18 @@ function claimPersistedContinuation(message: TaskNotification): string | false |
     return claimPath;
   } catch {
     rollbackClaim(claimPath);
+    return undefined;
+  }
+}
+
+function persistedTaskType(message: TaskNotification): string | undefined {
+  if (!message.output_file) return undefined;
+  const statePath = join(dirname(message.output_file), "state.json");
+  if (!existsSync(statePath)) return undefined;
+  try {
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
+    return typeof state.taskType === "string" ? state.taskType : undefined;
+  } catch {
     return undefined;
   }
 }
