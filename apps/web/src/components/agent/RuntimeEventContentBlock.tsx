@@ -611,8 +611,8 @@ function UserMessageBlock({
           )}
         </div>
         <div className={cn(
-          'pointer-events-none absolute top-0 z-10 flex h-6 items-center gap-0.5 whitespace-nowrap text-[var(--lume-text-muted)] opacity-0 transition-opacity duration-150 ease-out group-hover/user-message:pointer-events-auto group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:opacity-100 motion-reduce:transition-none',
-          leftAligned ? 'left-full ml-1' : 'right-full mr-1',
+          'pointer-events-none mt-0.5 flex h-6 items-center gap-0.5 whitespace-nowrap text-[var(--lume-text-muted)] opacity-0 transition-opacity duration-150 ease-out group-hover/user-message:pointer-events-auto group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:opacity-100 motion-reduce:transition-none',
+          leftAligned ? 'self-start' : 'self-end',
         )}>
           {canShowVersions && (
             <Button
