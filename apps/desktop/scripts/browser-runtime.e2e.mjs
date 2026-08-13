@@ -8,6 +8,7 @@ const root = mkdtempSync(join(tmpdir(), 'lume-browser-runtime-e2e-'))
 const appRoot = join(root, 'app')
 const configRoot = join(root, 'config')
 const resultPath = join(root, 'result.json')
+const popupOnly = process.argv.includes('--popup-only')
 mkdirSync(appRoot)
 mkdirSync(configRoot)
 
@@ -26,7 +27,7 @@ try {
   writeFileSync(join(appRoot, 'main.mjs'), electronFixtureMain(builtModule.replace(/\\/g, '/'), guestPreloadPath.replace(/\\/g, '/')))
 
   const child = spawn(findElectronBinary(), [`--user-data-dir=${join(root, 'user-data')}`, appRoot], {
-    env: { ...process.env, LUME_BROWSER_E2E_CONFIG: configRoot, LUME_BROWSER_E2E_RESULT: resultPath },
+    env: { ...process.env, LUME_BROWSER_E2E_CONFIG: configRoot, LUME_BROWSER_E2E_RESULT: resultPath, LUME_BROWSER_POPUP_ONLY: popupOnly ? '1' : '0' },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
@@ -101,6 +102,11 @@ const frameServer = createServer((_request, response) => {
     <output id="frame-result"></output>\`)
 })
 const server = createServer((request, response) => {
+  if (request.url === '/popup') {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    response.end(\`<!doctype html><title>OAuth popup</title><output id="opener"></output><script>document.querySelector('#opener').textContent=window.opener?'present':'missing'</script>\`)
+    return
+  }
   if (request.url === '/download') {
     response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="fixture.txt"' })
     response.end('download fixture')
@@ -111,6 +117,7 @@ const server = createServer((request, response) => {
     <label>Name <input id="name" aria-label="Name"></label>
     <button id="submit" onclick="document.querySelector('#result').textContent=document.querySelector('#name').value">Apply</button>
     <button id="annotation-target" onclick="document.querySelector('#annotation-result').textContent='clicked'">Annotation target</button>
+    <button id="open-popup" onclick="window.open('/popup', 'oauth-popup', 'width=520,height=640')">Open popup</button>
     <output id="annotation-result"></output>
     <a id="download" href="/download" download="fixture.txt">Download</a>
     <output id="result"></output>
@@ -153,13 +160,14 @@ app.whenReady().then(async () => {
     preferences.contextIsolation = true
     preferences.nodeIntegration = false
     preferences.webSecurity = true
-    delete params.allowpopups
+    params.allowpopups = ''
     delete params.preload
     params.partition = grant.partition
   })
   win.webContents.on('did-attach-webview', (_event, contents) => {
     pendingGuestContents.set(contents.id, contents)
   })
+  ipcMain.on('lume:get-browser-webmcp-enabled', event => { event.returnValue = true })
   ipcMain.on('lume:browser-guest-mounted', (event, bootstrapUrl) => {
     const contents = pendingGuestContents.get(event.sender.id)
     if (!contents || contents !== event.sender) return
@@ -196,7 +204,7 @@ app.whenReady().then(async () => {
     check(runtime.authorizeGuestMount(win.webContents.id, mount.bootstrapUrl, 'persist:forged-browser') === null, 'guest mount accepted a forged partition')
     const repeatedMount = await userCall('mount:prepare', { tabId })
     check(repeatedMount?.mountToken === mount.mountToken, 'a concurrent mount request did not reuse the active mount grant')
-    await win.webContents.executeJavaScript(\`(() => { const host = document.querySelector('#guests'); const view = document.createElement('webview'); view.dataset.tabId = \${JSON.stringify(tabId)}; view.setAttribute('partition', \${JSON.stringify(mount.partition)}); view.setAttribute('src', \${JSON.stringify(mount.bootstrapUrl)}); view.style.cssText = 'position:absolute;inset:0;width:100%;height:100%'; host.append(view) })()\`)
+    await win.webContents.executeJavaScript(\`(() => { const host = document.querySelector('#guests'); const view = document.createElement('webview'); view.dataset.tabId = \${JSON.stringify(tabId)}; view.setAttribute('partition', \${JSON.stringify(mount.partition)}); view.setAttribute('allowpopups', ''); view.setAttribute('src', \${JSON.stringify(mount.bootstrapUrl)}); view.style.cssText = 'position:absolute;inset:0;width:100%;height:100%'; host.append(view) })()\`)
     await waitUntil(() => guests.has(mount.mountToken) && events.some(event => event.method === 'browser:tab-changed' && event.params?.tabId === tabId && event.params?.generation === mount.generation && event.params?.guestState === 'ready'))
     check(await userCall('mount:prepare', { tabId }) === null, 'an attached guest produced a redundant mount grant')
     check(runtime.authorizeGuestMount(win.webContents.id, mount.bootstrapUrl, mount.partition) === null, 'guest mount token was replayable')
@@ -227,6 +235,7 @@ app.whenReady().then(async () => {
         const view = document.createElement('webview');
         view.dataset.tabId = mount.tabId;
         view.setAttribute('partition', mount.partition);
+        view.setAttribute('allowpopups', '');
         view.setAttribute('src', mount.bootstrapUrl);
         view.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
         host.append(view);
@@ -247,6 +256,22 @@ app.whenReady().then(async () => {
     await call('navigate', { tabId: 'fixture-tab', url: origin + '/' })
     const navigatedUrl = await call('url', { tabId: 'fixture-tab' })
     check(navigatedUrl.startsWith(origin), 'fixture navigation failed: ' + JSON.stringify(navigatedUrl))
+    setStage('popup-policy')
+    await call('click', { tabId: 'fixture-tab', locator: { version: 1, steps: [{ kind: 'css', selector: '#open-popup' }] } })
+    await waitUntil(() => events.some(event => event.method === 'browser:popup-request' && event.params?.tabId === 'fixture-tab'))
+    check(BrowserWindow.getAllWindows().length === 1, 'Agent-triggered popup bypassed confirmation')
+    const popupCreated = new Promise(resolvePopup => view.once('did-create-window', resolvePopup))
+    const popupButton = await view.executeJavaScript(\`(() => { const rect = document.querySelector('#open-popup').getBoundingClientRect(); return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) } })()\`)
+    view.sendInputEvent({ type: 'mouseDown', x: popupButton.x, y: popupButton.y, button: 'left', clickCount: 1 })
+    view.sendInputEvent({ type: 'mouseUp', x: popupButton.x, y: popupButton.y, button: 'left', clickCount: 1 })
+    const popupWindow = await Promise.race([popupCreated, new Promise((_, reject) => setTimeout(() => reject(new Error('user popup did not open')), 3000))])
+    await popupWindow.webContents.executeJavaScript(\`new Promise(resolve => document.readyState === 'complete' ? resolve() : addEventListener('load', resolve, { once: true }))\`)
+    check(await popupWindow.webContents.executeJavaScript(\`document.querySelector('#opener').textContent\`) === 'present', 'user popup lost its opener relationship')
+    popupWindow.close()
+    if (process.env.LUME_BROWSER_POPUP_ONLY === '1') {
+      writeFileSync(resultPath, JSON.stringify({ ok: true, assertions }))
+      return
+    }
     setStage('annotation-runtime')
     const annotationSession = await userCall('annotation:session', { tabId: 'fixture-tab', threadId: 'fixture-thread' })
     check(annotationSession.version === 2 && annotationSession.threadId === 'fixture-thread', 'annotation session did not use the bounded v2 contract')
@@ -284,7 +309,7 @@ app.whenReady().then(async () => {
     check(await call('locator:evaluate', { tabId: 'fixture-tab', locator: locator('#name'), expression: '(element, suffix) => element.value + suffix', arg: '!' }) === 'Lume Agent!', 'locator evaluate did not receive the strict element')
     await checkRejects(() => call('locator:evaluate', { tabId: 'fixture-tab', locator: locator('#name'), expression: '(element) => { element.value = \"mutated\"; return element.value }' }), 'action_denied', 'locator evaluate allowed a side effect')
     check(await call('locator:inputValue', { tabId: 'fixture-tab', locator: locator('#name') }) === 'Lume Agent', 'rejected locator evaluate changed the page')
-    check(await call('locator:count', { tabId: 'fixture-tab', locator: locator('button') }) === 2, 'locator count was incorrect')
+    check(await call('locator:count', { tabId: 'fixture-tab', locator: locator('button') }) === 3, 'locator count was incorrect')
     await call('locator:waitFor', { tabId: 'fixture-tab', locator: locator('#submit'), state: 'visible', timeoutMs: 1000 })
     await call('wait:url', { tabId: 'fixture-tab', url: origin + '/*', timeoutMs: 1000 })
     await call('click', { tabId: 'fixture-tab', locator: locator('#submit') })

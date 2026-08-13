@@ -61,6 +61,7 @@ type BrowserTab = BrowserTabDescriptor & {
   context?: BrowserRequestContext
   inputSequence: number
   agentDispatching?: boolean
+  lastUserActivationAt?: number
   dialogOpen?: boolean
   dialogInfo?: { id: string; type: "alert" | "beforeunload" | "confirm" | "prompt"; message?: string; defaultValue?: string }
   recentAgentContext?: { browserSessionId: string; browserTurnId: string; expiresAt: number }
@@ -1068,6 +1069,27 @@ export class BrowserRuntime {
     const wc = browserContents(tab)
     this.ensureSessionPolicy(wc.session, tab.partition, agent || advancedCdp)
     wc.setWindowOpenHandler(({ url }) => {
+      const now = Date.now()
+      const userInitiated = tab.lastUserActivationAt !== undefined && now - tab.lastUserActivationAt <= 5_000
+      tab.lastUserActivationAt = undefined
+      if (userInitiated && (url === "about:blank" || isAllowedNavigation(url, agent, this.settings, tab.approvedPrivateOrigins))) {
+        const parent = this.options.getWindow()
+        return {
+          action: "allow",
+          outlivesOpener: false,
+          overrideBrowserWindowOptions: {
+            ...(parent && !parent.isDestroyed() ? { parent } : {}),
+            autoHideMenuBar: true,
+            webPreferences: {
+              partition: tab.partition,
+              sandbox: true,
+              contextIsolation: true,
+              nodeIntegration: false,
+              webSecurity: true,
+            },
+          },
+        }
+      }
       const agentInitiated = agent || Boolean(tab.recentAgentContext && tab.recentAgentContext.expiresAt >= Date.now())
       const target = isPrivateUrl(url) ? this.settings.localUrlTarget : this.settings.linkOpenTarget
       if (!agentInitiated && target === "system" && isAllowedNavigation(url, false)) {
@@ -1078,6 +1100,13 @@ export class BrowserRuntime {
       this.popupTokens.set(activationToken, { sourceTabId: tab.tabId, url: stripUrl(url), expiresAt: Date.now() + 60_000 })
       this.options.emit({ method: "browser:popup-request", params: { tabId: tab.tabId, activationToken, origin: safeOrigin(url), url: stripUrl(url) } })
       return { action: "deny" }
+    })
+    wc.on("did-create-window", (popup) => {
+      popup.setMenuBarVisibility(false)
+      popup.webContents.setWindowOpenHandler(() => ({ action: "deny" }))
+      popup.webContents.on("will-navigate", (event, url) => {
+        if (!isAllowedNavigation(url, agent, this.settings, tab.approvedPrivateOrigins)) event.preventDefault()
+      })
     })
     wc.on("will-navigate", (event, url) => {
       if (!isAllowedNavigation(url, agent, this.settings, tab.approvedPrivateOrigins)) event.preventDefault()
@@ -1169,7 +1198,6 @@ export class BrowserRuntime {
       this.enforceBackgroundLimit()
     })
     wc.on("before-input-event", (event, input) => {
-      if (!tab.agentDispatching) tab.inputSequence += 1
       const key = input.key.toLowerCase()
       const modifier = input.control || input.meta
       const action = modifier && key === "l"
@@ -1179,12 +1207,19 @@ export class BrowserRuntime {
           : (modifier && key === "r") || key === "f5"
             ? input.shift ? "hard-reload" : "reload"
             : undefined
+      if (!tab.agentDispatching) {
+        tab.inputSequence += 1
+        if (!action && input.type === "keyDown" && !input.isAutoRepeat) tab.lastUserActivationAt = Date.now()
+      }
       if (!action) return
       event.preventDefault()
       this.options.emit({ method: "browser:shortcut", params: { tabId: tab.tabId, action } })
     })
-    wc.on("before-mouse-event", () => {
-      if (!tab.agentDispatching) tab.inputSequence += 1
+    wc.on("before-mouse-event", (_event, mouse) => {
+      if (!tab.agentDispatching) {
+        tab.inputSequence += 1
+        if (mouse.type === "mouseDown" && (mouse.button === "left" || mouse.button === "middle")) tab.lastUserActivationAt = Date.now()
+      }
     })
     wc.on("page-title-updated", (_event, title) => {
       tab.title = title.slice(0, 256)
@@ -3503,6 +3538,7 @@ function publicTab(tab: BrowserTab): BrowserTabDescriptor {
     domNodes: _domNodes,
     recentAgentContext: _recentAgentContext,
     agentDispatching: _agentDispatching,
+    lastUserActivationAt: _lastUserActivationAt,
     dialogOpen: _dialogOpen,
     dialogInfo: _dialogInfo,
     surfaceBounds: _surfaceBounds,

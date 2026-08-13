@@ -1162,7 +1162,7 @@ function attachBrowserGuestSecurity(win: BrowserWindow) {
     webPreferences.webSecurity = true
     webPreferences.allowRunningInsecureContent = false
     params.partition = grant.partition
-    delete params.allowpopups
+    params.allowpopups = ''
     delete params.preload
   })
   win.webContents.on('did-attach-webview', (_event, guestContents) => {
