@@ -211,7 +211,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
           <Sparkles size={21} strokeWidth={1.8} fill="currentColor" fillOpacity={0.1} />
         </div>
       )}
-      <div className="min-w-0 flex-1 space-y-4 pt-2">
+      <div className="min-w-0 flex-1 space-y-3 pt-1">
         {useMinimalMode ? (
           <MinimalAssistantContent
             blocks={minimalBlocks}
@@ -527,17 +527,17 @@ function UserMessageBlock({
 
   return (
     <div className={cn(
-      'group/user-message flex w-full max-w-[920px] gap-3',
+      'group/user-message flex w-full max-w-[920px] gap-4',
       leftAligned ? 'justify-start' : 'ml-auto justify-end gap-2',
       className,
     )}>
       {leftAligned && showAvatar && (
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--lume-accent)] text-[15px] font-semibold text-[var(--lume-accent-foreground)] shadow-[0_12px_24px_-18px_hsl(var(--lume-shadow-panel)/0.72)]">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[var(--lume-accent)] text-[15px] font-semibold text-[var(--lume-accent-foreground)] shadow-[0_12px_24px_-18px_hsl(var(--lume-shadow-panel)/0.72)]">
           L
         </div>
       )}
       <div className={cn(
-        'flex min-w-0 flex-col gap-1.5',
+        'relative flex min-w-0 flex-col',
         leftAligned ? 'max-w-[760px] items-start' : 'max-w-[560px] items-end',
       )}>
         {message.attachments && message.attachments.length > 0 && (
@@ -587,7 +587,10 @@ function UserMessageBlock({
             />
           )}
         </div>
-        <div className="pointer-events-none flex h-6 items-center gap-0.5 text-[var(--lume-text-muted)] opacity-0 transition-opacity duration-150 ease-out group-hover/user-message:pointer-events-auto group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:opacity-100 motion-reduce:transition-none">
+        <div className={cn(
+          'pointer-events-none absolute top-0 z-10 flex h-6 items-center gap-0.5 whitespace-nowrap text-[var(--lume-text-muted)] opacity-0 transition-opacity duration-150 ease-out group-hover/user-message:pointer-events-auto group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:opacity-100 motion-reduce:transition-none',
+          leftAligned ? 'left-full ml-1' : 'right-full mr-1',
+        )}>
           {canShowVersions && (
             <Button
                 variant="ghost"
@@ -2661,7 +2664,7 @@ function AssistantMessageFooter({
   }
 
   return (
-    <div className="assistant-message-footer pointer-events-none flex min-h-6 w-full -translate-y-1 items-center justify-between gap-3 pt-2 text-[var(--lume-text-muted)] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/agent-message:pointer-events-auto group-hover/agent-message:translate-y-0 group-hover/agent-message:opacity-100 group-focus-within/agent-message:pointer-events-auto group-focus-within/agent-message:translate-y-0 group-focus-within/agent-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
+    <div className="assistant-message-footer pointer-events-none flex min-h-5 w-full items-center justify-between gap-3 text-[var(--lume-text-muted)] opacity-0 transition-opacity duration-150 ease-out group-hover/agent-message:pointer-events-auto group-hover/agent-message:opacity-100 group-focus-within/agent-message:pointer-events-auto group-focus-within/agent-message:opacity-100 motion-reduce:transition-none">
       <div className="assistant-footer-actions flex min-w-0 items-center gap-4">
         {canCopy && (
           <CopyMessageButton
