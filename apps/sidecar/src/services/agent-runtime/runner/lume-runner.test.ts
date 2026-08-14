@@ -499,6 +499,59 @@ describe("LumeRunner", () => {
     expect(events).toEqual(["runtime:run.cancelled", "complete"]);
   });
 
+  test("soft-abort error result finalizes as cancelled when the abort signal fired", async () => {
+    // F1 regression: the SDK no longer throws on abort — it ends the stream
+    // with error_during_execution ("Run aborted by user."). With the abort
+    // signal set that must land as cancelled, not failed.
+    const abortedDir = mkdtempSync(join(tmpdir(), "lume-runner-soft-abort-"));
+    dirs.push(abortedDir);
+    const abortController = new AbortController();
+    abortController.abort();
+    const abortedParams = createTestParams("thread-1");
+    abortedParams.runtime.abortSignal = abortController.signal;
+    const abortedEvents: string[] = [];
+    const abortedRunner = await LumeRunner.create({
+      params: abortedParams,
+      prepared: createPrepared(abortedDir),
+      emit: createRuntimeEventEmitter(abortedEvents)
+    });
+
+    const abortedResult = await abortedRunner.runQueryStream(stream([
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["Run aborted by user."]
+      } as SDKMessage
+    ]));
+
+    expect(abortedResult).toEqual({ status: "aborted" });
+    expect(abortedEvents).toContain("runtime:run.cancelled");
+    expect(readOnlyRunState(abortedDir).status).toBe("cancelled");
+
+    // 对照：非 abort 的同类 error result 仍归 failed。
+    const failedDir = mkdtempSync(join(tmpdir(), "lume-runner-hard-error-"));
+    dirs.push(failedDir);
+    const failedEvents: string[] = [];
+    const failedRunner = await LumeRunner.create({
+      params: createTestParams("thread-1"),
+      prepared: createPrepared(failedDir),
+      emit: createRuntimeEventEmitter(failedEvents)
+    });
+
+    const failedResult = await failedRunner.runQueryStream(stream([
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["model exploded"]
+      } as SDKMessage
+    ]));
+
+    expect(failedResult).toEqual({ status: "errored", errorMessage: "model exploded" });
+    expect(readOnlyRunState(failedDir).status).toBe("failed");
+  });
+
   test("fires failure hook and preserves original failure", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-hooks-fail-"));
     dirs.push(agentDir);
