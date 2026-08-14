@@ -407,7 +407,7 @@ describe("agent-handlers runtime state", () => {
       threadId,
       rootAgentId: "runtime-core",
       currentAgentId: "runtime-core",
-      status: "paused",
+      status: "cancelled",
       input: { userMessage: "interrupted task", permissionMode: "default" },
       generatedItems: [],
       pendingInterruptions: [],
@@ -443,6 +443,42 @@ describe("agent-handlers runtime state", () => {
       }
     });
     expect(sendAgentMessageMock.mock.calls[0]?.[2]).toEqual({ appendUserMessage: false });
+  });
+
+  test("resume-run does not trigger dangling fallback for active runs without continuation", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-dangling-gated-"));
+    const threadId = "thread-dangling-gated";
+    const sessionDir = getRuntimeCoreSessionDir(threadId);
+    await createFileBackedLumeRunStateStore(sessionDir).create({
+      version: 1,
+      runId: "run-dangling-gated",
+      threadId,
+      rootAgentId: "runtime-core",
+      currentAgentId: "runtime-core",
+      status: "running",
+      input: { userMessage: "in-flight task", permissionMode: "default" },
+      generatedItems: [],
+      pendingInterruptions: [],
+      approvals: { alwaysAllowedTools: [] },
+      traceId: "trace-dangling-gated",
+      model: { provider: "openai", modelId: "gpt-test" },
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z"
+    });
+
+    const { createAgentHandlers } = await import("./agent-handlers");
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
+    });
+
+    const result = await handlers[AGENT_IPC_CHANNELS.RESUME_RUN]!({ threadId }) as { status: string; error?: string };
+
+    expect(result.status).toBe("not_resumable");
+    expect(result.error).toContain("找不到可恢复 turn checkpoint");
+    expect(sendAgentMessageMock).not.toHaveBeenCalled();
   });
 
   test("run_aborted event persists an interrupted continuation checkpoint", async () => {

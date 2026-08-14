@@ -495,8 +495,13 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     }
     // 悬空兜底：无 checkpoint 的中断线程也允许一键续跑，由 run.ts 从
     // session history 检测未配对 tool_use 构造 toolContinuations
-    //（只读重放 / 副作用注入中断说明占位）。
-    if (!(await continuationStore.get(runId))) {
+    //（只读重放 / 副作用注入中断说明占位）。状态门：只允许已中断的非正常
+    // 完成态 run（cancelled=人工中止，failed=崩溃）走兜底；活跃 run
+    //（created/running/waiting_*/paused）与正常 completed 的 run 不注入续跑。
+    if (
+      !(await continuationStore.get(runId))
+      && (runState.status === "cancelled" || runState.status === "failed")
+    ) {
       try {
         const result = await sendResumeContinuationMessage(
           runState,
