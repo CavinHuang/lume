@@ -156,3 +156,16 @@ test("uses canonical backend selection and request shapes", async () => {
     steps: [{ kind: "role", role: "button", name: "Google" }],
   });
 });
+
+test("refreshes live backends before URL selection", async () => {
+  const extension = descriptors.pop();
+  try {
+    const globals = {};
+    await setupLumeBrowserRuntime({ globals });
+    descriptors.push(extension);
+
+    assert.equal((await globals.agent.browsers.getForUrl("https://example.com/")).browserId, "lume-extension");
+  } finally {
+    if (!descriptors.includes(extension)) descriptors.push(extension);
+  }
+});

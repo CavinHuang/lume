@@ -60,7 +60,7 @@ export class BrowserRegistry {
         return this.createBrowser(chooseDefaultBackend(asSelectable(descriptors)));
     }
     async getForUrl(value) {
-        const descriptors = await this.ensureDescriptors();
+        const descriptors = await this.refreshDescriptors();
         const selectable = asSelectable(descriptors);
         return this.createBrowser(chooseBackendForUrl(selectable, value, isLocalBrowserUrl(value) ? "iab" : "extension"));
     }
