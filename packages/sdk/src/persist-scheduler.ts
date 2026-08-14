@@ -1,22 +1,23 @@
 export interface PersistScheduler {
   schedule: () => void
-  flush: () => void
-  cancel: () => void
+  flush: () => Promise<void>
+  cancel: () => Promise<void>
 }
 
 // Trailing debounce: collapses bursts of message events into one write.
-// Crash window is bounded by delayMs; run-final finally flush remains the backstop.
+// Crash window is bounded by delayMs; run-final finally persist remains the backstop.
 export function createPersistScheduler(
   delayMs: number,
   write: () => Promise<unknown>,
 ): PersistScheduler {
   let timer: ReturnType<typeof setTimeout> | null = null
   let pending = false
+  let inflight: Promise<unknown> | null = null
   const fire = () => {
     timer = null
     if (!pending) return
     pending = false
-    void write()
+    inflight = write()
   }
   return {
     schedule: () => {
@@ -24,14 +25,16 @@ export function createPersistScheduler(
       if (timer) clearTimeout(timer)
       timer = setTimeout(fire, delayMs)
     },
-    flush: () => {
+    flush: async () => {
       if (timer) clearTimeout(timer)
       fire()
+      await inflight
     },
-    cancel: () => {
+    cancel: async () => {
       if (timer) clearTimeout(timer)
       timer = null
       pending = false
+      await inflight
     },
   }
 }

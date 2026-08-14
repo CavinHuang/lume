@@ -1105,7 +1105,12 @@ export class Agent {
         }
       }
     } finally {
-      persistScheduler.flush()
+      // Drop any pending debounced write and wait out one already in flight:
+      // the awaited persistCurrentSession below writes the same (or fresher)
+      // state. Flushing here instead would launch a concurrent fire-and-forget
+      // saveSession that races with both the awaited write and readers of the
+      // session file.
+      await persistScheduler.cancel()
       this.history = engine.getMessages()
       this.lastContextUsage = engine.getContextUsage()
       this.currentEngine = null
