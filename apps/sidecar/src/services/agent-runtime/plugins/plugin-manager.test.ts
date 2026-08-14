@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { SidecarPluginManager } from "./plugin-manager.js";
+import {
+  isBundledBrowserPluginAvailable,
+  isBundledBrowserRuntimeAvailable,
+  SidecarPluginManager
+} from "./plugin-manager.js";
 
 async function writeJson(path: string, value: unknown) {
   await mkdir(dirname(path), { recursive: true });
@@ -10,6 +14,26 @@ async function writeJson(path: string, value: unknown) {
 }
 
 describe("SidecarPluginManager compatibility wrapper", () => {
+  test("detects the bundled browser manifest without user plugin state", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bundled-browser-"));
+    try {
+      await writeJson(join(root, "browser", ".lume-plugin", "plugin.json"), {
+        schema: "lume-plugin/v1",
+        name: "browser",
+        version: "1.0.0",
+      });
+
+      expect(isBundledBrowserPluginAvailable(root)).toBe(true);
+      expect(isBundledBrowserRuntimeAvailable(root)).toBe(false);
+      await mkdir(join(root, "browser", "scripts"), { recursive: true });
+      await writeFile(join(root, "browser", "scripts", "browser-client.mjs"), "export {};");
+      expect(isBundledBrowserRuntimeAvailable(root)).toBe(true);
+      expect(isBundledBrowserPluginAvailable(join(root, "missing"))).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("discovers trusted bundled plugins independently from the install store", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-plugin-manager-"));
     try {

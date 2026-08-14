@@ -168,22 +168,35 @@ export function clearProcessJobs(): void {
   counter = 0
 }
 
-export function waitForProcessJobTerminal(id: string, timeoutMs = 45_000): Promise<ProcessJob | undefined> {
+export function waitForProcessJobTerminal(
+  id: string,
+  timeoutMs = 45_000,
+  abortSignal?: AbortSignal,
+): Promise<ProcessJob | undefined> {
   const job = getProcessJob(id)
   if (!job || job.status !== 'running' || timeoutMs <= 0) return Promise.resolve(job)
-  return new Promise((resolve) => {
+  if (abortSignal?.aborted) return Promise.reject(new Error('aborted'))
+  return new Promise((resolve, reject) => {
     const waiters = terminalWaiters.get(id) ?? new Set()
     let timer: ReturnType<typeof setTimeout> | undefined
     let poll: ReturnType<typeof setInterval> | undefined
-    const finish = (next: ProcessJob | undefined) => {
+    const finish = (next: ProcessJob | undefined, error?: Error) => {
       if (timer) clearTimeout(timer)
       if (poll) clearInterval(poll)
+      abortSignal?.removeEventListener('abort', abort)
       waiters.delete(finish)
       if (waiters.size === 0) terminalWaiters.delete(id)
-      resolve(next)
+      if (error) reject(error)
+      else resolve(next)
     }
+    const abort = () => finish(getProcessJob(id), new Error('aborted'))
     waiters.add(finish)
     terminalWaiters.set(id, waiters)
+    abortSignal?.addEventListener('abort', abort, { once: true })
+    if (abortSignal?.aborted) {
+      abort()
+      return
+    }
     poll = setInterval(() => {
       const next = getProcessJob(id)
       if (!next || next.status !== 'running') {

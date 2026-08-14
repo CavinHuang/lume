@@ -23,6 +23,7 @@ import { getAgentSessionWorkspacePath, getAgentWorkspacePath, getAliceUserSkills
 import { createAgentThread } from "../../agent/agent-thread-manager";
 import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { getSubagentCoordinator, resetSubagentCoordinatorForTest } from "../../agent/subagents/subagent-coordinator";
+import { getSubagentRunRegistry, resetSubagentRunRegistryForTest } from "../../agent/subagents/subagent-run-registry";
 import { resetSubagentWorkStoreForTest } from "../../agent/subagents/subagent-work-store";
 import { createChannel } from "../../channel/channel-manager";
 import { installConnectionVaultKey } from "../../channel/connection-credential-store";
@@ -75,6 +76,7 @@ describe("runtime-core run", () => {
   afterEach(() => {
     setWorkspaceMcpManagerForTesting(null);
     resetSubagentCoordinatorForTest();
+    resetSubagentRunRegistryForTest();
     resetSubagentWorkStoreForTest();
     if (prevConfigDir === undefined) {
       delete process.env.LUME_CONFIG_DIR;
@@ -135,6 +137,41 @@ describe("runtime-core run", () => {
     result.session.dispose();
   });
 
+  test("后台子会话终态结果只在原运行内合并续跑一次", async () => {
+    const lumeSessionId = `background-completion-${crypto.randomUUID()}`;
+    const runId = `run-${crypto.randomUUID()}`;
+    const registry = getSubagentRunRegistry();
+    registry.create({
+      runId: "background-child",
+      parentThreadId: lumeSessionId,
+      parentRunId: runId,
+      rootThreadId: lumeSessionId,
+      depth: 1,
+      childThreadId: "background-child-thread",
+      task: "inspect",
+      cleanup: "keep",
+      status: "running",
+      background: true
+    });
+    registry.update("background-child", {
+      status: "completed",
+      outcome: { output: "inspection complete" }
+    });
+    const result = await createRuntimeCoreSession(createHookRuntimeSessionInput({
+      lumeSessionId,
+      runId,
+      permissionMode: "acceptEdits"
+    }));
+    const completionGuard = (result.agent as any).baseOptions.completionGuard as () => Promise<unknown>;
+
+    await expect(completionGuard()).resolves.toMatchObject({
+      type: "continue",
+      message: expect.stringContaining("<background-task-results>")
+    });
+    await expect(completionGuard()).resolves.toBeUndefined();
+    await result.session.dispose();
+  });
+
   test("延迟工具搜索注册 SDK 生成工具的 Runtime descriptor", async () => {
     const previousToolSearch = process.env.ENABLE_TOOL_SEARCH;
     process.env.ENABLE_TOOL_SEARCH = "tst";
@@ -160,6 +197,32 @@ describe("runtime-core run", () => {
       } else {
         process.env.ENABLE_TOOL_SEARCH = previousToolSearch;
       }
+    }
+  });
+
+  test("Browser 执行器保持延迟可发现且不依赖预判路由", async () => {
+    const previousToolSearch = process.env.ENABLE_TOOL_SEARCH;
+    process.env.ENABLE_TOOL_SEARCH = "tst";
+    let result: Awaited<ReturnType<typeof createRuntimeCoreSession>> | undefined;
+
+    try {
+      result = await createRuntimeCoreSession(createHookRuntimeSessionInput({
+        lumeSessionId: `browser-tool-${crypto.randomUUID()}`,
+        workspaceSlug: `browser-route-${crypto.randomUUID()}`,
+        permissionMode: "default",
+        userMessage: "打开百度搜索agent"
+      }));
+      await result.agent.getInitializationResult();
+
+      expect(result.session.getActiveToolNames()).not.toContain("mcp__node_repl__js");
+      expect(result.session.getActiveToolNames()).toContain("Bash");
+      expect(result.runtimeContext).not.toContain("Preferred capability route:");
+      const deferredTools = (result.agent as unknown as { deferredToolPool: ToolDefinition[] }).deferredToolPool;
+      expect(deferredTools.map((tool) => tool.name)).toContain("mcp__node_repl__js");
+    } finally {
+      await result?.session.dispose();
+      if (previousToolSearch === undefined) delete process.env.ENABLE_TOOL_SEARCH;
+      else process.env.ENABLE_TOOL_SEARCH = previousToolSearch;
     }
   });
 
@@ -470,7 +533,6 @@ describe("runtime-core run", () => {
     expect(toolNames).toContain("Grep");
     expect(toolNames).toContain("WebSearch");
     expect(toolNames).toContain("WebFetch");
-    expect(toolNames).not.toContain("TaskContractWrite");
     expect(toolNames).toContain("TaskCreate");
     expect(toolNames).toContain("TaskUpdate");
     expect(toolNames).toContain("TaskList");
@@ -492,7 +554,7 @@ describe("runtime-core run", () => {
     result.session.dispose();
   });
 
-  test("Coding 路由仅暴露仓库基础工具，不混入 Web 和任务编排工具", async () => {
+  test("Coding 请求可直接发现 Web 和任务编排工具", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-coding-tools-"));
     const agentDir = join(cwd, ".runtime-core-test");
     mkdirSync(agentDir, { recursive: true });
@@ -505,8 +567,7 @@ describe("runtime-core run", () => {
       provider: "anthropic",
       resolvedModelId: "claude-sonnet-4-5",
       apiKey: "test-key",
-      permissionMode: "acceptEdits",
-      messageMetadata: { preferredCapabilityRoute: "coding" }
+      permissionMode: "acceptEdits"
     });
 
     const toolNames = availableToolNames(result);
@@ -514,7 +575,7 @@ describe("runtime-core run", () => {
       expect(toolNames).toContain(toolName);
     }
     for (const toolName of ["WebSearch", "WebFetch", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]) {
-      expect(toolNames).not.toContain(toolName);
+      expect(toolNames).toContain(toolName);
     }
 
     result.session.dispose();
@@ -724,7 +785,6 @@ describe("runtime-core run", () => {
     expect(toolNames).not.toContain("Agent");
     expect(toolNames).not.toContain("Write");
     expect(toolNames).not.toContain("Edit");
-    expect(toolNames).not.toContain("TaskContractWrite");
     expect(toolNames).not.toContain("TaskReport");
     expect(toolNames).not.toContain("TodoWrite");
 
@@ -902,7 +962,7 @@ describe("runtime-core run", () => {
     expect(first).toBe(second);
   });
 
-  test("plan mode exposes read-only persistent Task tools without the legacy TaskContractWrite", async () => {
+  test("plan mode exposes read-only persistent Task tools", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-plan-md-thread-"));
     const agentDir = join(cwd, ".runtime-core-test");
     mkdirSync(agentDir, { recursive: true });
@@ -918,14 +978,13 @@ describe("runtime-core run", () => {
       workspaceSlug: "plan-md-workspace"
     });
 
-    expect(result.tools.find((item) => item.name === "TaskContractWrite")).toBeUndefined();
     expect(result.tools.find((item) => item.name === "TaskList")).toBeTruthy();
     expect(result.tools.find((item) => item.name === "TaskGet")).toBeTruthy();
 
     result.session.dispose();
   });
 
-  test("只有明确隔离或并行请求时才暴露 Worktree 工具", async () => {
+  test("非 Plan 模式始终暴露 Worktree 工具", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-worktree-tools-"));
     const agentDir = join(cwd, ".runtime-core-test");
     mkdirSync(agentDir, { recursive: true });
@@ -940,23 +999,23 @@ describe("runtime-core run", () => {
       permissionMode: "acceptEdits",
       userMessage: "修复一个小的类型错误"
     });
-    expect(getRuntimeToolDescriptor("ordinary-worktree-session", "EnterWorktree")).toBeUndefined();
-    expect(getRuntimeToolDescriptor("ordinary-worktree-session", "ExitWorktree")).toBeUndefined();
+    expect(getRuntimeToolDescriptor("ordinary-worktree-session", "EnterWorktree")).toBeDefined();
+    expect(getRuntimeToolDescriptor("ordinary-worktree-session", "ExitWorktree")).toBeDefined();
     await ordinary.session.dispose();
 
-    const isolated = await createRuntimeCoreSession({
-      lumeSessionId: "isolated-worktree-session",
+    const plan = await createRuntimeCoreSession({
+      lumeSessionId: "plan-worktree-session",
       cwd,
       agentDir,
       provider: "anthropic",
       resolvedModelId: "claude-sonnet-4-5",
       apiKey: "test-key",
-      permissionMode: "acceptEdits",
-      userMessage: "请在隔离 worktree 中并行修改这个模块"
+      permissionMode: "plan",
+      userMessage: "请规划一个隔离 worktree"
     });
-    expect(getRuntimeToolDescriptor("isolated-worktree-session", "EnterWorktree")).toBeDefined();
-    expect(getRuntimeToolDescriptor("isolated-worktree-session", "ExitWorktree")).toBeDefined();
-    await isolated.session.dispose();
+    expect(getRuntimeToolDescriptor("plan-worktree-session", "EnterWorktree")).toBeUndefined();
+    expect(getRuntimeToolDescriptor("plan-worktree-session", "ExitWorktree")).toBeUndefined();
+    await plan.session.dispose();
   });
 
   test("同一个 Lume session 应恢复既有 transcript", async () => {
@@ -1334,7 +1393,7 @@ describe("runtime-core run", () => {
     expect(result.runtimeContext).toContain("threadType: main");
     expect(result.runtimeContext).toContain("chatType: direct");
     expect(result.runtimeContext).toContain("modelId: claude-sonnet-4-5");
-    expect(result.runtimeContext).toContain("Preferred capability route: raw-tools");
+    expect(result.runtimeContext).not.toContain("Preferred capability route:");
     expect(result.runtimeContext).toContain("<working_directory>");
 
     result.session.dispose();

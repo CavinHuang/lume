@@ -145,6 +145,7 @@ class SubagentRunRegistry {
       deliveryThreadId: input.deliveryThreadId,
       threadRequested: input.threadRequested === true,
       threadBound: input.threadBound === true,
+      background: input.background === true,
       label: input.label,
       task: input.task,
       status: input.status ?? "accepted",
@@ -347,8 +348,13 @@ class SubagentRunRegistry {
     mode: "all" | "any";
     minCompleted?: number;
     timeoutMs: number;
+    runIds?: string[];
+    abortSignal?: AbortSignal;
   }): Promise<{ status: "completed" | "timeout"; completedCount: number; runningCount: number }> {
-    const runs = this.listByParentSession(input.parentThreadId);
+    const runIds = input.runIds ? new Set(input.runIds) : undefined;
+    const selectedRuns = () => this.listByParentSession(input.parentThreadId)
+      .filter((run) => !runIds || runIds.has(run.runId));
+    const runs = selectedRuns();
     const running = runs.filter((run) => !this.terminalStatuses.has(run.status));
     const completedCount = runs.length - running.length;
 
@@ -364,15 +370,21 @@ class SubagentRunRegistry {
       return { status: "completed", completedCount, runningCount: running.length };
     }
 
-    return new Promise((resolve) => {
+    if (input.abortSignal?.aborted) throw new Error("aborted");
+    return new Promise((resolve, reject) => {
       let settled = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
 
-      const finish = (status: "completed" | "timeout") => {
+      const finish = (status: "completed" | "timeout", error?: Error) => {
         if (settled) return;
         settled = true;
         if (timer) clearTimeout(timer);
-        const current = this.listByParentSession(input.parentThreadId);
+        input.abortSignal?.removeEventListener("abort", abort);
+        if (error) {
+          reject(error);
+          return;
+        }
+        const current = selectedRuns();
         const currentRunning = current.filter((run) => !this.terminalStatuses.has(run.status)).length;
         resolve({
           status,
@@ -380,9 +392,10 @@ class SubagentRunRegistry {
           runningCount: currentRunning
         });
       };
+      const abort = () => finish("timeout", new Error("aborted"));
 
       const check = () => {
-        const current = this.listByParentSession(input.parentThreadId);
+        const current = selectedRuns();
         const done = current.filter((run) => this.terminalStatuses.has(run.status)).length;
         if (done >= target) finish("completed");
       };
@@ -392,6 +405,11 @@ class SubagentRunRegistry {
         if (completion) completion.then(check);
       }
 
+      input.abortSignal?.addEventListener("abort", abort, { once: true });
+      if (input.abortSignal?.aborted) {
+        abort();
+        return;
+      }
       timer = setTimeout(() => finish("timeout"), input.timeoutMs);
       // 不 unref：unref 在事件循环空闲时（纯 timeout 用例 / 父 wait 时短暂无其他活动）会让 timer 永不 fire，
       // 使超时语义失效。生产 sidecar 退出走 stopAllAgentRuntimeSessions 中止 runtime，wait 调用随父终止结束，
@@ -477,6 +495,7 @@ function normalizeRun(raw: unknown): SubagentRun | null {
     deliveryThreadId: typeof record.deliveryThreadId === "string" ? record.deliveryThreadId : undefined,
     threadRequested: record.threadRequested === true,
     threadBound: record.threadBound === true,
+    background: record.background === true,
     label: typeof record.label === "string" ? record.label : undefined,
     task,
     status: status as SubagentRun["status"],

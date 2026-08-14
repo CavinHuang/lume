@@ -38,8 +38,6 @@ export function buildAgentSendStartLogData(input: {
   modelId?: string;
   modelRef?: string;
   appendUserMessage: boolean;
-  preferredCapabilityRoute?: string;
-  capabilityLanes?: string[];
   userMessage?: string;
 }): Record<string, unknown> {
   return {
@@ -49,8 +47,6 @@ export function buildAgentSendStartLogData(input: {
     modelId: input.modelId,
     modelRef: input.modelRef,
     appendUserMessage: input.appendUserMessage,
-    preferredCapabilityRoute: input.preferredCapabilityRoute,
-    capabilityLanes: input.capabilityLanes,
     userMessagePreview: previewText(input.userMessage)
   };
 }

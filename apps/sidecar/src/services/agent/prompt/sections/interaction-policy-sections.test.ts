@@ -8,8 +8,6 @@ describe("interaction-policy-sections", () => {
     expect(section).toContain("Markdown 计划");
     expect(section).toContain("Markdown");
     expect(section).toContain("Task 不需要单独审批");
-    expect(section).toContain("旧的 TaskContractWrite");
-    expect(section).toContain("旧 TaskRun");
     expect(section).toContain("AskUserQuestion");
     expect(section).toContain("澄清需求");
     expect(section).toContain("用户决定继续后按正常流程执行");

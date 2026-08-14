@@ -10,12 +10,15 @@ import { setTimeout as delay } from "node:timers/promises"
 const execFileAsync = promisify(execFile)
 const runtimeRequire = createRequire(import.meta.url)
 const CHROME_EPOCH_US = 11644473600000000
-export type ChromeImportProfile = { id: string; name: string; platform: "win32" | "darwin"; hasCookies: boolean; hasPasswords: boolean }
-export type ChromeImportReport = { imported: { cookies: number; passwords: number }; skipped: { cookies: number; passwords: number }; failed: { cookies: number; passwords: number }; reasons: Record<string, number>; errors: string[]; profileId: string }
+export type ChromeImportProfile =
+  | { id: string; name: string; platform: "win32" | "darwin"; source: "local"; hasCookies: boolean; hasPasswords: boolean }
+  | { id: string; name: string; platform: "win32" | "darwin" | "linux"; source: "connected"; hasCookies: true; hasPasswords: false }
+export type ChromeImportReport = { imported: { cookies: number; passwords: number }; skipped: { cookies: number; passwords: number }; failed: { cookies: number; passwords: number }; reasons: Record<string, number>; errors: string[]; profileId: string; cookieSource?: "chrome_extension" | "local_database" }
 type SecretStorage = { isEncryptionAvailable(): boolean; encryptString(value: string): Buffer; decryptString?(value: Buffer): string }
 export type ImportedCookie = { url: string; name: string; value: string; path: string; domain?: string; expirationDate?: number; secure: boolean; httpOnly: boolean; sameSite?: "unspecified" | "no_restriction" | "lax" | "strict" }
 type ImportOptions = { profileId: string; cookies: boolean; passwords: boolean; acknowledged: boolean; configDir: string; safeStorage: SecretStorage; emit?: (params: Record<string, unknown>) => void; cancelled?: () => boolean; onCookie?: (cookie: ImportedCookie) => Promise<(() => Promise<void>) | void> }
 type ChromeCryptoContext = { platform: "win32" | "darwin"; key: Buffer | null; unprotect?: (value: Buffer) => Promise<Buffer | null> }
+type ConnectedChromeImportOptions = { cookies: unknown[]; configDir: string; emit?: (params: Record<string, unknown>) => void; cancelled?: () => boolean; onCookie?: (cookie: ImportedCookie) => Promise<(() => Promise<void>) | void> }
 
 export function classifyChromeImportError(error: unknown): "profile_missing" | "database_locked" | "keychain_denied" | "app_bound_unsupported" | "invalid_database" | "unknown" {
   const message = error instanceof Error ? error.message : String(error)
@@ -124,21 +127,81 @@ export function discoverChromeProfiles(os = platform(), home = homedir()): Chrom
     const hasCookies = existsSync(join(profilePath, "Network", "Cookies")) || existsSync(join(profilePath, "Cookies"))
     const hasPasswords = existsSync(join(profilePath, "Login Data"))
     if (!hasCookies && !hasPasswords) return []
-    return [{ id: createHash("sha256").update(profilePath).digest("hex").slice(0, 24), name, platform: os, hasCookies, hasPasswords }]
+    return [{ id: createHash("sha256").update(profilePath).digest("hex").slice(0, 24), name, platform: os, source: "local", hasCookies, hasPasswords }]
   })
+}
+
+export async function importConnectedChromeCookies(options: ConnectedChromeImportOptions): Promise<ChromeImportReport> {
+  const profile: ChromeImportProfile = { id: "connected-chrome", name: "当前已连接的 Chrome", platform: platform() === "darwin" ? "darwin" : platform() === "linux" ? "linux" : "win32", source: "connected", hasCookies: true, hasPasswords: false }
+  const report: ChromeImportReport = { imported: { cookies: 0, passwords: 0 }, skipped: { cookies: 0, passwords: 0 }, failed: { cookies: 0, passwords: 0 }, reasons: {}, errors: [], profileId: profile.id, cookieSource: "chrome_extension" }
+  const rollbacks: Array<() => Promise<void>> = []
+  options.emit?.({ profileId: profile.id, phase: "cookies", completed: 0, total: options.cookies.length })
+  for (const row of options.cookies.slice(0, 10_000)) {
+    if (options.cancelled?.()) return cancelImport(report, rollbacks)
+    if (!row || typeof row !== "object") {
+      report.skipped.cookies += 1
+      incrementReason(report, "cookie_invalid")
+      continue
+    }
+    const record = row as Record<string, unknown>
+    if (record.partitionKey !== undefined) {
+      report.skipped.cookies += 1
+      incrementReason(report, "partitioned_cookie_unsupported")
+      continue
+    }
+    const cookie = createImportedExtensionCookie(record)
+    if (!cookie || !options.onCookie) {
+      report.skipped.cookies += 1
+      incrementReason(report, "cookie_invalid")
+      continue
+    }
+    try {
+      const rollback = await options.onCookie(cookie)
+      if (rollback) rollbacks.push(rollback)
+      report.imported.cookies += 1
+    } catch { report.failed.cookies += 1 }
+  }
+  options.emit?.({ profileId: profile.id, phase: "complete", completed: options.cookies.length, total: options.cookies.length, count: report.imported.cookies })
+  writeImportMetadata(options.configDir, profile, report)
+  return report
+}
+
+export function createImportedExtensionCookie(row: Record<string, unknown>, now = Date.now()): ImportedCookie | null {
+  const domain = typeof row.domain === "string" ? row.domain.trim().toLowerCase() : ""
+  const host = domain.replace(/^\./, "")
+  const name = typeof row.name === "string" ? row.name : ""
+  const value = typeof row.value === "string" ? row.value : ""
+  const expirationDate = Number(row.expirationDate)
+  if (!host || !name || (Number.isFinite(expirationDate) && expirationDate > 0 && expirationDate <= now / 1_000)) return null
+  let url: URL
+  try { url = new URL(`${row.secure === true ? "https" : "http"}://${host}`) } catch { return null }
+  if (url.hostname.toLowerCase() !== host || url.username || url.password || url.port) return null
+  const sameSite = row.sameSite === "strict" ? "strict" : row.sameSite === "lax" ? "lax" : row.sameSite === "no_restriction" ? "no_restriction" : row.sameSite === "unspecified" ? "unspecified" : undefined
+  return {
+    url: url.origin,
+    name,
+    value,
+    path: typeof row.path === "string" && row.path.startsWith("/") ? row.path : "/",
+    ...(row.hostOnly === false ? { domain } : {}),
+    ...(row.session !== true && Number.isFinite(expirationDate) && expirationDate > 0 ? { expirationDate } : {}),
+    secure: row.secure === true,
+    httpOnly: row.httpOnly === true,
+    ...(sameSite ? { sameSite } : {}),
+  }
 }
 
 export async function importChromeProfile(options: ImportOptions): Promise<ChromeImportReport> {
   if (!options.acknowledged) throw new Error("import_acknowledgement_required")
   const profiles = discoverChromeProfiles()
   const profile = profiles.find((item) => item.id === options.profileId)
-  if (!profile) throw new Error("chrome_profile_not_found")
+  if (!profile || profile.source !== "local") throw new Error("chrome_profile_not_found")
   const root = profile.platform === "win32" ? join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "Google", "Chrome", "User Data") : join(homedir(), "Library", "Application Support", "Google", "Chrome")
   const directory = readdirSync(root, { withFileTypes: true }).find((entry) => entry.isDirectory() && createHash("sha256").update(join(root, entry.name)).digest("hex").startsWith(options.profileId))?.name
   if (!directory) throw new Error("chrome_profile_not_found")
   const source = join(root, directory)
   assertSafeChromeProfile(root, source)
   const report: ChromeImportReport = { imported: { cookies: 0, passwords: 0 }, skipped: { cookies: 0, passwords: 0 }, failed: { cookies: 0, passwords: 0 }, reasons: {}, errors: [], profileId: profile.id }
+  report.cookieSource = "local_database"
   const cookieRollbacks: Array<() => Promise<void>> = []
   const total = Number(options.cookies) + Number(options.passwords)
   let completed = 0
@@ -310,7 +373,7 @@ function writeImportMetadata(configDir: string, profile: ChromeImportProfile, re
   const path = join(directory, "chrome-import-metadata.json")
   if (existsSync(path) && lstatSync(path).isSymbolicLink()) throw new Error("import_metadata_symlink_rejected")
   const temporary = `${path}.${process.pid}.tmp`
-  writeFileSync(temporary, JSON.stringify({ schemaVersion: 1, profileId: profile.id, profileName: profile.name, importedAt: new Date().toISOString(), imported: report.imported, skipped: report.skipped, failed: report.failed }), { mode: 0o600 })
+  writeFileSync(temporary, JSON.stringify({ schemaVersion: 1, profileId: profile.id, profileName: profile.name, source: profile.source, cookieSource: report.cookieSource, importedAt: new Date().toISOString(), imported: report.imported, skipped: report.skipped, failed: report.failed }), { mode: 0o600 })
   renameSync(temporary, path)
 }
 

@@ -12,7 +12,6 @@ import { getWorkspaceResourcesPath } from "../services/infra/config-paths";
 
 function createTestPlanModePhaseTracker(): PlanModePhaseTracker {
   return {
-    isLikelyExecutionRequest: () => false,
     getPhase: () => "idle",
     clearSession: () => undefined,
   } as unknown as PlanModePhaseTracker;

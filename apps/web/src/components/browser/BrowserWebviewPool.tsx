@@ -234,6 +234,7 @@ export function BrowserWebviewPoolProvider({ children }: { children: ReactNode }
         wrapper.style.pointerEvents = 'none'
         const webview = document.createElement('webview') as BrowserWebviewElement
         webview.setAttribute('partition', descriptor.partition)
+        webview.setAttribute('allowpopups', '')
         webview.style.display = 'flex'
         webview.style.width = '100%'
         webview.style.height = '100%'

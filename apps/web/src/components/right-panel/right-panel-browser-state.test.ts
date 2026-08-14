@@ -2,8 +2,10 @@ import { describe, expect, test } from 'bun:test'
 import {
   activateBrowserTab,
   applyBrowserDescriptor,
+  browserTabFromDescriptor,
   closeBrowserTab,
   duplicateBrowserTab,
+  findThreadBrowserTabByUrl,
   openBrowserTab,
   restoreClosedBrowserTab,
   sanitizeThreadBrowserWorkspace,
@@ -70,6 +72,25 @@ describe('right panel browser workspace', () => {
     expect(restored.tabs[0]?.viewport).toMatchObject({ preset: 'iphone-15-pro', displayScale: 0.75 })
   })
 
+  test('keeps task-isolated agent tabs whose runtime ids are UUIDs', () => {
+    const tab = browserTabFromDescriptor({
+      tabId: 'bba6ab3e-57e4-4463-9b07-4d645584dfce',
+      ownerThreadId: 'thread-1',
+      profileKind: 'agent',
+      backend: 'iab',
+      generation: 2,
+      url: 'https://www.baidu.com/',
+      title: '百度一下',
+      visible: true,
+      surface: 'right-panel',
+    })
+
+    expect(sanitizeThreadBrowserWorkspace({ tabs: [tab], activeTabId: tab.id, recentlyClosed: [] })).toMatchObject({
+      activeTabId: tab.id,
+      tabs: [{ id: tab.id, profileKind: 'agent', url: 'https://www.baidu.com/' }],
+    })
+  })
+
   test('reflects runtime loading and media state in the tab strip', () => {
     const workspace = openBrowserTab({ tabs: [], recentlyClosed: [] })
     const tabId = workspace.tabs[0]!.id
@@ -113,5 +134,17 @@ describe('right panel browser workspace', () => {
     })
 
     expect(restored.tabs[0]?.viewport?.preset).toBe('laptop-l')
+  })
+
+  test('finds the latest matching live tab only inside the current thread', () => {
+    const match = findThreadBrowserTabByUrl([
+      { tabId: 'browser:other', ownerThreadId: 'thread-2', backend: 'iab', generation: 1, url: 'https://example.com/', title: 'Other', visible: false, surface: null },
+      { tabId: 'browser:old', ownerThreadId: 'thread-1', backend: 'iab', generation: 1, url: 'https://example.com/', title: 'Old', visible: false, surface: null, lastOpenedAt: '2026-01-01T00:00:00.000Z' },
+      { tabId: 'browser:new', ownerThreadId: 'thread-1', backend: 'iab', generation: 1, url: 'https://example.com/#result', title: 'New', visible: false, surface: null, lastOpenedAt: '2026-02-01T00:00:00.000Z' },
+    ], 'thread-1', 'https://example.com')
+
+    expect(match?.tabId).toBe('browser:new')
+    expect(findThreadBrowserTabByUrl([match!], 'thread-1', 'https://example.com。')?.tabId).toBe('browser:new')
+    expect(findThreadBrowserTabByUrl([], 'thread-1', 'not-a-url')).toBeUndefined()
   })
 })

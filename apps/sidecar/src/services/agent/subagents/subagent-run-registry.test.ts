@@ -209,6 +209,32 @@ describe("delegation completion signal", () => {
     expect(result.status).toBe("timeout");
   });
 
+  test("只等待指定的后台委派", async () => {
+    const reg = getSubagentRunRegistry();
+    reg.create({ runId: "current", parentThreadId: "p1", rootThreadId: "p1", depth: 1, childThreadId: "c1", task: "current", cleanup: "keep", status: "running", background: true });
+    reg.create({ runId: "other", parentThreadId: "p1", rootThreadId: "p1", depth: 1, childThreadId: "c2", task: "other", cleanup: "keep", status: "running", background: true });
+    reg.createDelegationCompletion("current");
+    reg.createDelegationCompletion("other");
+    const wait = reg.waitForDelegations({ parentThreadId: "p1", runIds: ["current"], mode: "all", timeoutMs: 1000 });
+
+    reg.update("current", { status: "completed" });
+    reg.resolveDelegationCompletion("current");
+
+    await expect(wait).resolves.toMatchObject({ status: "completed", completedCount: 1, runningCount: 0 });
+  });
+
+  test("中止信号立即取消等待", async () => {
+    const reg = getSubagentRunRegistry();
+    reg.create({ runId: "r1", parentThreadId: "p1", rootThreadId: "p1", depth: 1, childThreadId: "c1", task: "t", cleanup: "keep", status: "running", background: true });
+    reg.createDelegationCompletion("r1");
+    const controller = new AbortController();
+    const wait = reg.waitForDelegations({ parentThreadId: "p1", mode: "all", timeoutMs: 1000, abortSignal: controller.signal });
+
+    controller.abort();
+
+    await expect(wait).rejects.toThrow("aborted");
+  });
+
   test("无 running 立即返回 completed", async () => {
     const reg = getSubagentRunRegistry();
     const result = await reg.waitForDelegations({ parentThreadId: "p1", mode: "all", timeoutMs: 1000 });

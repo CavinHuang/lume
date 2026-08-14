@@ -1363,62 +1363,10 @@ export interface AgentPendingInteractiveState {
   browserAuthRequests?: AgentBrowserAuthRequest[]
   desktopActionRequests?: import('./computer-use').AgentDesktopActionRequest[]
   toolPermissions?: AgentToolPermissionRequest[]
-  taskApprovals?: AgentTaskApprovalRequest[]
 }
 
 export interface AgentPendingInteractiveInput {
   threadId?: string
-}
-
-export interface AgentTaskApprovalRequest {
-  threadId: string
-  runId?: string
-  requestId: string
-  contractId: string
-  title: string
-  message: string
-  summary?: string
-  stepCount: number
-  expectedChanges?: {
-    files?: string[]
-    commands?: string[]
-    tools?: string[]
-    memoryWrites?: string[]
-  }
-  planFilePath?: string
-  planVerified?: boolean
-}
-
-export interface AgentTaskApprovalResponseInput {
-  threadId: string
-  contractId: string
-  decision: 'approve' | 'reject'
-  execute?: boolean
-  feedback?: string
-}
-
-export interface AgentTaskApprovalResponseResult {
-  ok: boolean
-  feedback?: string
-  replanning?: {
-    status: 'sent' | 'queued'
-  }
-  execution?: AgentExecuteTaskContractResult
-}
-
-export interface AgentExecuteTaskContractInput {
-  threadId: string
-  contractId?: string
-  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'dontAsk'
-  intent?: 'execute' | 'continue' | 'retry' | 'skip'
-}
-
-export interface AgentExecuteTaskContractResult {
-  ok: boolean
-  status: 'sent' | 'queued' | 'not_found' | 'not_executable'
-  queuedCount?: number
-  contractId?: string
-  error?: string
 }
 
 export type AgentResumeRunStatus =
@@ -1564,69 +1512,6 @@ export interface AgentListRunStatesInput {
 
 export interface AgentListRunStatesResult {
   runs: AgentRunStateSummary[]
-}
-
-export type AgentTaskRunStatus =
-  | 'pending'
-  | 'running'
-  | 'waiting_for_user'
-  | 'waiting_for_permission'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-
-export type AgentTaskRunTaskStatus =
-  | 'pending'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'skipped'
-
-export interface AgentTaskRunTask {
-  id: string
-  title: string
-  description?: string
-  expectedTools?: string[]
-  expectedFiles?: string[]
-  status: AgentTaskRunTaskStatus
-  attemptCount: number
-  result?: string
-  error?: string
-  startedAt?: string
-  endedAt?: string
-  blockedReason?: string
-}
-
-export interface AgentTaskRunEvent {
-  type:
-    | 'task_run_created'
-    | 'task_started'
-    | 'task_completed'
-    | 'task_failed'
-    | 'task_skipped'
-    | 'task_waiting'
-    | 'task_run_completed'
-  taskRunId: string
-  contractId?: string
-  taskId?: string
-  message?: string
-  createdAt: string
-}
-
-export interface AgentTaskRun {
-  id: string
-  contractId: string
-  runId: string
-  threadId: string
-  goal: string
-  summary: string
-  status: AgentTaskRunStatus
-  currentTaskId?: string
-  tasks: AgentTaskRunTask[]
-  events: AgentTaskRunEvent[]
-  createdAt: string
-  updatedAt: string
-  completedAt?: string
 }
 
 // ===== Plan 模式 =====
@@ -2194,10 +2079,6 @@ export const AGENT_IPC_CHANNELS = {
   TOOL_PERMISSION_REQUEST: 'agent:tool-permission-request',
   /** 工具权限确认结果（web -> sidecar） */
   SUBMIT_TOOL_PERMISSION: 'agent:submit-tool-permission',
-  /** 任务清单审批结果（web -> sidecar） */
-  SUBMIT_TASK_APPROVAL: 'agent:submit-task-approval',
-  /** 执行或继续任务清单（web -> sidecar） */
-  EXECUTE_TASK_CONTRACT: 'agent:execute-task-contract',
   /** 获取当前待处理的交互请求（用于冷启动恢复） */
   GET_PENDING_INTERACTIVE: 'agent:get-pending-interactive',
   /** runtime status 变化通知（sidecar -> web） */

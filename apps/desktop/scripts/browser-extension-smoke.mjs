@@ -84,7 +84,7 @@ try {
     console.log(JSON.stringify({ ok: true, packagedLume: true, extensionId, extensionBackend: true }))
   } else {
     fixture = createServer((_request, response) => {
-      response.writeHead(200, { "content-type": "text/html; charset=utf-8" })
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8", "set-cookie": "lume_smoke=connected; HttpOnly; SameSite=Lax" })
       response.end("<title>Lume installed smoke</title><label>Name <input id=name></label><button id=apply onclick=\"document.querySelector('output').textContent=document.querySelector('#name').value\">Apply</button><output></output>")
     })
     await new Promise((resolveListen) => fixture.listen(0, "127.0.0.1", resolveListen))
@@ -107,10 +107,12 @@ try {
     await request("click", { tabId, locator: locator("#apply") })
     const result = await request("locator:innerText", { tabId, locator: locator("output") })
     if (result !== "Lume installed bridge") throw new Error("Installed extension locator input did not roundtrip")
+    const exported = await transport.request({ requestId: randomUUID(), context: { actor: "user", browserSessionId: "installed-smoke-import", browserTurnId: "installed-smoke-import" }, method: "cookieExport", params: { cursor: 0 } })
+    if (!Array.isArray(exported?.cookies) || !exported.cookies.some((cookie) => cookie?.name === "lume_smoke" && cookie?.httpOnly === true)) throw new Error("Installed extension did not export the user-confirmed cookie page")
     const screenshot = await request("screenshot", { tabId })
     if (typeof screenshot?.dataBase64 !== "string" || screenshot.dataBase64.length < 100) throw new Error("Installed extension screenshot was empty")
     await request("close", { tabId })
-    console.log(JSON.stringify({ ok: true, extensionId, protocolVersion: handshake.protocolVersion, locatorRoundtrip: true, screenshot: true }))
+    console.log(JSON.stringify({ ok: true, extensionId, protocolVersion: handshake.protocolVersion, locatorRoundtrip: true, cookieExport: true, screenshot: true }))
   }
 } finally {
   if (transport) await transport.close().catch(() => undefined)

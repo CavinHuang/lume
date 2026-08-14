@@ -39,6 +39,7 @@ mock.module('@ant-design/x-markdown', () => ({
 
 mock.module('@/lib/desktop-api', () => ({
   agentSend: async () => undefined,
+  browserRuntime: async () => [],
   checkDesktopUpdate: async () => undefined,
   copyFile: async () => undefined,
   downloadDesktopUpdate: async () => undefined,
@@ -70,7 +71,6 @@ mock.module('@/lib/desktop-api', () => ({
   statFilePaths: async () => ({ files: [] }),
   getMcpConfig: async () => ({ mcpServers: {} }),
   getMcpStatus: async () => ({ servers: [] }),
-  submitTaskApproval: async () => undefined,
   writeClipboardImage: async () => undefined,
   writeClipboardText: async () => undefined,
   writeBinaryFile: async () => undefined,

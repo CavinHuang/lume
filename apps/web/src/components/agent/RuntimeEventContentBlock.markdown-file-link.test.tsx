@@ -25,6 +25,7 @@ mock.module('@ant-design/x-markdown', () => ({
 
 mock.module('@/lib/desktop-api', () => ({
   agentSend: async () => undefined,
+  browserRuntime: async () => [],
   getThreadMessageVersions: async () => ({ messages: [] }),
   createFilePreviewScope: async () => ({ token: 'preview', url: 'lume-file://preview', expiresAt: 0 }),
   createGuardedFilePreviewScope: async () => ({ token: 'guarded-preview', url: 'lume-file://preview', expiresAt: 0 }),
@@ -57,7 +58,6 @@ mock.module('@/lib/desktop-api', () => ({
   installDesktopUpdateAndRelaunch: async () => undefined,
   getMcpConfig: async () => ({ mcpServers: {} }),
   getMcpStatus: async () => ({ servers: [] }),
-  submitTaskApproval: async () => undefined,
   getThreadMessages: async () => [],
   getThreadRuntimeEvents: async () => [],
   isDesktopRuntime: () => true,

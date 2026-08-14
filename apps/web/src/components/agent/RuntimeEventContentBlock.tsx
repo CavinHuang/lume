@@ -13,7 +13,7 @@ import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { AskUserQuestionBlock } from './AskUserQuestionBlock'
-import { agentSend, getThreadMessageVersions, openExternal, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
+import { agentSend, browserRuntime, getThreadMessageVersions, openExternal, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
 import { parseMessageThreadFileReference, stripFileReferenceProtocolFromMarkdown } from './thread-file-links'
 import { MessageFileReferenceBindingProvider, useMessageFileReferenceBinding, useMessageFileReferenceProtocolVersion } from './thread-file-env'
 import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, validatePlanningTodoRefPart, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta, type AgentUserMessagePart, type FileRef } from '@lume/shared'
@@ -42,6 +42,7 @@ import { CodingTurnFileChangesSummary } from './CodingTurnFileChangesSummary'
 import { MEMORY_CENTER_TAB_ID, memoryCenterTarget, upsertMemoryCenterTab } from '@/components/memory/open-memory-center'
 import { LinkConnectionChip } from '@/components/link/LinkConnectionChip'
 import { remapAgentMessagePartsForEditedText } from './agent-editor-message-parts'
+import { findThreadBrowserTabByUrl, THREAD_BROWSER_ACTIVATE_EVENT, type ThreadBrowserActivateDetail } from '@/components/right-panel/right-panel-browser-state'
 const MARKDOWN_STREAM_MIN_DELAY_MS = 50
 
 interface RuntimeEventContentBlockProps {
@@ -978,7 +979,7 @@ const RuntimeEventAssistantBlockItem = memo(function RuntimeEventAssistantBlockI
   onUserResizeStart?: () => void
 }) {
   if (block.type === 'text') {
-    return <SmoothText text={block.text} isStreaming={isStreaming} onOpenThreadFile={onOpenThreadFile} />
+    return <SmoothText text={block.text} isStreaming={isStreaming} threadId={threadId} onOpenThreadFile={onOpenThreadFile} />
   }
 
   if (block.type === 'thinking') {
@@ -1641,6 +1642,7 @@ function MinimalAssistantContent({
                 key={block.id}
                 text={block.text}
                 isStreaming={block.id === activeStreamingTextBlockId}
+                threadId={threadId}
                 onOpenThreadFile={onOpenThreadFile}
               />
             )
@@ -1853,10 +1855,12 @@ const AfterglowLine = memo(function AfterglowLine({ text }: { text: string }) {
 const SmoothText = memo(function SmoothText({
   text,
   isStreaming,
+  threadId,
   onOpenThreadFile,
 }: {
   text: string
   isStreaming: boolean
+  threadId: string
   onOpenThreadFile?: OpenThreadFile
 }) {
   const { displayedContent } = useSmoothStream({
@@ -1879,11 +1883,11 @@ const SmoothText = memo(function SmoothText({
         onOpenThreadFile={onOpenThreadFile}
       />
     ),
-    a: (props: MarkdownAnchorProps) => <MarkdownAnchor {...props} onOpenThreadFile={onOpenThreadFile} />,
+    a: (props: MarkdownAnchorProps) => <MarkdownAnchor {...props} threadId={threadId} onOpenThreadFile={onOpenThreadFile} />,
     'incomplete-link': IncompleteLink,
     'incomplete-image': IncompleteImage,
     'incomplete-table': IncompleteTable,
-  }), [onOpenThreadFile])
+  }), [onOpenThreadFile, threadId])
   const afterglowBlocks = useMemo(
     () => displayedContent.includes('⟡') ? parseAfterglowBlocks(displayedContent) : null,
     [displayedContent],
@@ -2226,9 +2230,10 @@ export function MarkdownCode({
 export function MarkdownAnchor({
   href,
   children,
+  threadId,
   onOpenThreadFile,
   ...rest
-}: MarkdownAnchorProps & { onOpenThreadFile?: OpenThreadFile }) {
+}: MarkdownAnchorProps & { threadId?: string; onOpenThreadFile?: OpenThreadFile }) {
   const binding = useMessageFileReferenceBinding()
   const protocolVersion = useMessageFileReferenceProtocolVersion()
   const reference = typeof href === 'string' && (href.startsWith('@project/') || href.startsWith('@session/'))
@@ -2237,7 +2242,31 @@ export function MarkdownAnchor({
   if (reference && onOpenThreadFile) {
     return <AgentFileReference reference={reference} binding={binding} onOpen={onOpenThreadFile} />
   }
-  return <a {...rest} href={href}>{children}</a>
+  const browserUrl = typeof href === 'string' && /^https?:\/\//i.test(href) ? href : undefined
+  return (
+    <a
+      {...rest}
+      href={href}
+      onClick={browserUrl && threadId ? (event) => {
+        rest.onClick?.(event)
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+        event.preventDefault()
+        void activateThreadBrowserUrl(threadId, browserUrl).then((activated) => {
+          if (!activated) return openExternal(browserUrl)
+        }).catch(() => undefined)
+      } : rest.onClick}
+    >
+      {children}
+    </a>
+  )
+}
+
+export async function activateThreadBrowserUrl(threadId: string, url: string): Promise<boolean> {
+  const tabs = await browserRuntime<import('@lume/shared').BrowserTabDescriptor[]>({ method: 'list' })
+  const tab = findThreadBrowserTabByUrl(tabs, threadId, url)
+  if (!tab) return false
+  window.dispatchEvent(new CustomEvent<ThreadBrowserActivateDetail>(THREAD_BROWSER_ACTIVATE_EVENT, { detail: { threadId, tab } }))
+  return true
 }
 
 export function normalizeMarkdownCodeProps(props: Record<string, unknown>): Record<string, unknown> {

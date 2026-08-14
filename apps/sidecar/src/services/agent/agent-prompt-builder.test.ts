@@ -375,9 +375,6 @@ describe("agent-prompt-builder", () => {
     expect(dynamic).toContain("channelId: channel-1");
     expect(dynamic).toContain("modelId: claude-sonnet-4-5");
     expect(dynamic).toContain("<workspace_state>");
-    expect(dynamic).toContain("Capability lanes: skills, browser, memory, web, raw-tools");
-    expect(dynamic).toContain("Preferred capability route: skills");
-    expect(dynamic).toContain("Capability routing reason:");
     expect(dynamic).toContain("Loaded Skills:");
     expect(dynamic).toContain("Use a loaded Skill only when it clearly matches the user's request");
     expect(dynamic).toContain("Only fall back to raw tool composition when no suitable Skill fits");
@@ -412,7 +409,6 @@ describe("agent-prompt-builder", () => {
       userMessage: "help me create an execution plan"
     });
 
-    expect(dynamic).toContain("Preferred capability route: skills");
     expect(dynamic).toContain("- global-planner (Global Planner):");
   });
 

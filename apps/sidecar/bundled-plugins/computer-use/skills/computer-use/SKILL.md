@@ -1,6 +1,8 @@
 ---
 name: computer-use
 description: Control desktop applications through Lume Computer Use
+activate-tools:
+  - mcp__node_repl__js
 ---
 
 # Computer Use

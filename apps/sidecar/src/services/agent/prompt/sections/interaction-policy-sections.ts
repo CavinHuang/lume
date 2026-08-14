@@ -42,7 +42,7 @@ export function buildPlanModeSection(): string {
 你当前处于计划模式。规则：
 1. 只能做只读探索和结构化规划，不要修改文件、执行命令或调用写入类工具
 2. 完成规划后，在普通回复中给出可执行的 Markdown 计划、关键文件、验收标准和风险
-3. Task 不需要单独审批，也不要调用旧的 TaskContractWrite 或创建旧 TaskRun；用户决定继续后按正常流程执行
+3. Task 不需要单独审批；用户决定继续后按正常流程执行
 4. 如果定稿前有关键不确定性，可以用 AskUserQuestion 澄清需求或让用户选择方案；不要用 AskUserQuestion 请求普通确认
 5. 对非平凡实现，先探索，再调用 planner 子代理基于探索结果设计实现方案；planner 只提供设计草案，不修改文件、不管理 Task
 6. 主线程负责审阅 planner 结果，并在用户继续后自行执行；不要把执行责任交给 planner

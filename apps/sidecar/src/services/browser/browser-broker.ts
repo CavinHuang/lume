@@ -11,12 +11,17 @@ import {
   type BrowserReferenceGrantResult,
   type BrowserRequestContext,
   type BrowserRuntimeDescriptor,
+  type BrowserTabDescriptor,
 } from "@lume/shared"
 import { BROWSER_API_REGISTRY, browserApiSupportForBackend } from "@lume/shared"
 import { classifyBrowserAction } from "./browser-action-policy"
 import { resolveAuthorizedBrowserUploadPaths } from "../agent/agent-files-service"
 
 export interface BrowserMainTransport { request(request: BrowserActionRequest): Promise<unknown>; isAvailable?: () => boolean }
+
+export type BrowserThreadContinuity = Pick<BrowserTabDescriptor,
+  "tabId" | "url" | "title" | "profileKind" | "visible" | "lifecycle" | "handoffStatus"
+>
 
 /** Long-lived sidecar ingress. Identity is derived here; callers cannot set actor. */
 export class BrowserBroker {
@@ -96,6 +101,27 @@ export class BrowserBroker {
   }
   setExternalState(state: { chromeEnabled?: boolean; extensionBackendEnabled?: boolean; hostConnected?: boolean }): void { this.setPluginState(state) }
   revoke(): void { this.setPluginEnabled(false) }
+  async connectedChromeImportStatus(): Promise<{ available: boolean }> {
+    return { available: (await this.connectedChromeRuntime())?.cookieExport === true }
+  }
+  async exportConnectedChromeCookies(): Promise<unknown[]> {
+    const runtime = await this.connectedChromeRuntime()
+    if (!runtime?.cookieExport || !this.extension) throw new Error("browser_unavailable")
+    const context: BrowserRequestContext = { browserSessionId: "renderer-chrome-import", browserTurnId: randomUUID(), actor: "user", capability: `browser-cookie-import-v1:${this.generation}` }
+    const cookies: unknown[] = []
+    let cursor = 0
+    for (let page = 0; page < 50; page += 1) {
+      const result = await this.extension.request({ requestId: randomUUID(), context, method: "cookieExport", params: { cursor } })
+      if (!result || typeof result !== "object") throw new Error("invalid_browser_request")
+      const payload = result as { cookies?: unknown; nextCursor?: unknown }
+      if (!Array.isArray(payload.cookies) || payload.cookies.length > 200) throw new Error("invalid_browser_request")
+      cookies.push(...payload.cookies)
+      if (payload.nextCursor === null || payload.nextCursor === undefined) return cookies
+      if (!Number.isSafeInteger(payload.nextCursor) || Number(payload.nextCursor) <= cursor || Number(payload.nextCursor) > 10_000) throw new Error("invalid_browser_request")
+      cursor = Number(payload.nextCursor)
+    }
+    throw new Error("invalid_browser_request")
+  }
   async listReferenceCandidates(threadId: string): Promise<BrowserReferenceCandidate[]> {
     const normalizedThreadId = threadId.trim().slice(0, 200)
     if (!normalizedThreadId || !this.browserPluginEnabled) return []
@@ -119,6 +145,27 @@ export class BrowserBroker {
       .sort(compareReferenceCandidates)
       .slice(0, 3)
     return [...iab, ...extension]
+  }
+  async getThreadAgentContinuity(threadId: string): Promise<BrowserThreadContinuity | undefined> {
+    const normalizedThreadId = threadId.trim().slice(0, 200)
+    if (!normalizedThreadId || !this.browserPluginEnabled) return undefined
+    const context: BrowserRequestContext = {
+      threadId: normalizedThreadId,
+      browserSessionId: "agent-browser-continuity",
+      browserTurnId: randomUUID(),
+      actor: "user",
+    }
+    const result = await this.main.request({ requestId: randomUUID(), context, method: "list" }).catch(() => [])
+    return browserUserTabArray(result)
+      .flatMap((value) => value && typeof value === "object" ? [value as BrowserTabDescriptor] : [])
+      .filter((tab) => tab.ownerThreadId === normalizedThreadId
+        && tab.profileKind === "agent"
+        && tab.lifecycle !== "crashed"
+        && (tab.handoffStatus === "handoff" || tab.handoffStatus === "deliverable")
+        && typeof tab.url === "string"
+        && tab.url.trim().length > 0)
+      .sort((left, right) => Number(right.visible) - Number(left.visible)
+        || String(right.lastOpenedAt ?? "").localeCompare(String(left.lastOpenedAt ?? "")))[0]
   }
   async createReferenceGrant(input: BrowserReferenceGrantInput): Promise<BrowserReferenceGrantResult> {
     if (!input || (input.backend !== "iab" && input.backend !== "extension") || input.access !== "control"
@@ -199,6 +246,7 @@ export class BrowserBroker {
         : undefined
       const params = {
         ...normalized.params,
+        ...(normalized.method === "ensure" && input.threadId ? { ownerThreadId: input.threadId } : {}),
         ...(normalized.method === "claim" ? this.referenceGrantForClaim(backend, context, tabId, normalized.params) : {}),
         ...(authorizedUploadFiles ? { files: authorizedUploadFiles.browserDownloadRefs, __authorizedFiles: authorizedUploadFiles.authorizedPaths } : {}),
         ...(confirmationToken ? { __policyRequired: true, __policyConfirmation: confirmationToken, __policyBindingHash: bindingHash } : {}),
@@ -247,6 +295,17 @@ export class BrowserBroker {
     } catch {
       this.extensionRuntime = undefined
     }
+  }
+
+  private async connectedChromeRuntime(): Promise<ExtensionRuntimeDescriptor | undefined> {
+    if (!this.extension || !this.extensionBackendEnabled || !this.chromePluginEnabled || !this.extensionConnected) return undefined
+    try {
+      return sanitizeExtensionRuntimeDescriptor(await this.extension.request({
+        requestId: randomUUID(),
+        context: { browserSessionId: "renderer-chrome-import", browserTurnId: randomUUID(), actor: "user", capability: `browser-cookie-import-v1:${this.generation}` },
+        method: "handshake",
+      }))
+    } catch { return undefined }
   }
 
   private rememberClaimSnapshots(backend: "iab" | "extension", context: BrowserRequestContext, value: unknown): void {
@@ -604,6 +663,7 @@ type ExtensionRuntimeDescriptor = {
   maxSupported: number
   tabCapabilities: BrowserBackendDescriptor["capabilities"]["tab"]
   apiSupportOverrides: Record<string, boolean>
+  cookieExport: boolean
 }
 
 const EXTENSION_TAB_CAPABILITIES = {
@@ -624,6 +684,9 @@ function sanitizeExtensionRuntimeDescriptor(value: unknown): ExtensionRuntimeDes
   const declaredTabCapabilities = new Set(Array.isArray(capabilities.tab)
     ? capabilities.tab.flatMap((capability) => capability && typeof capability === "object" && typeof (capability as { id?: unknown }).id === "string" ? [(capability as { id: string }).id] : [])
     : [])
+  const declaredBrowserCapabilities = new Set(Array.isArray(capabilities.browser)
+    ? capabilities.browser.flatMap((capability) => capability && typeof capability === "object" && typeof (capability as { id?: unknown }).id === "string" ? [(capability as { id: string }).id] : [])
+    : [])
   const declaredApiSupport = descriptor.apiSupportOverrides && typeof descriptor.apiSupportOverrides === "object"
     ? descriptor.apiSupportOverrides as Record<string, unknown>
     : {}
@@ -637,6 +700,7 @@ function sanitizeExtensionRuntimeDescriptor(value: unknown): ExtensionRuntimeDes
       new Set(BROWSER_API_REGISTRY.filter((entry) => entry.backends.includes("extension")).map((entry) => entry.runtimeMethod)),
       declaredApiSupport,
     ),
+    cookieExport: declaredBrowserCapabilities.has("cookieExport"),
   }
 }
 

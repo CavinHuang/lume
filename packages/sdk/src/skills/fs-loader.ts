@@ -157,6 +157,12 @@ export async function loadFilesystemSkills(
           'allowedTools',
           'allowed-tools',
         )
+        const activatedTools = pickFrontmatterList(
+          parsed.frontmatter,
+          'activate_tools',
+          'activateTools',
+          'activate-tools',
+        )
         const model = pickFrontmatterString(parsed.frontmatter, 'model')
         const version = pickFrontmatterString(parsed.frontmatter, 'version')
         const context = parsed.frontmatter.context === 'fork' ? 'fork' : 'inline'
@@ -174,6 +180,7 @@ export async function loadFilesystemSkills(
           argumentHint: pickFrontmatterString(parsed.frontmatter, 'argument_hint', 'argumentHint', 'argument-hint'),
           version,
           allowedTools,
+          activatedTools,
           model,
           userInvocable: pickFrontmatterBoolean(
             parsed.frontmatter,

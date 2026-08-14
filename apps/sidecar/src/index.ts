@@ -47,6 +47,8 @@ const rpcTransport = createProcessRpcTransport(
   process.env.LUME_SIDECAR_TRANSPORT === "stdio" ? { parentPort: null } : undefined,
 );
 const SETTINGS_ACK_TIMEOUT_MS = 10_000;
+const BROWSER_REQUEST_TIMEOUT_MS = 10_000;
+const BROWSER_CONFIRMATION_TIMEOUT_MS = 5 * 60_000;
 const pendingSettingsMutations = new Map<string, {
   resolve: () => void;
   reject: (error: Error) => void;
@@ -69,10 +71,13 @@ function requestBrowserMain(request: import("@lume/shared").BrowserActionRequest
   if (!browserRpcSecret) return Promise.reject(new Error("browser transport unavailable"));
   return new Promise((resolve, reject) => {
     const sequence = ++browserRpcOutboundSequence;
+    const timeoutMs = request.method === "policy:confirm"
+      ? BROWSER_CONFIRMATION_TIMEOUT_MS
+      : BROWSER_REQUEST_TIMEOUT_MS;
     const timeout = setTimeout(() => {
       pendingBrowserMainRequests.delete(request.requestId);
       reject(new Error("browser request timed out"));
-    }, 10_000);
+    }, timeoutMs);
     pendingBrowserMainRequests.set(request.requestId, { resolve, reject, timeout });
     rpcTransport.send(JSON.stringify({
       id: request.requestId,
@@ -340,7 +345,7 @@ async function boot(): Promise<void> {
     void handleRpcLine(trimmed);
   });
   writeNotification("system.ready", { native });
-  const stopBackgroundProcessRecovery = startBackgroundProcessRecovery(writeNotification);
+  const stopBackgroundProcessRecovery = startBackgroundProcessRecovery();
 
   // 单例守卫仍然早于所有 runner：ready 只表示 RPC/native 已可用，
   // 不让单例检查或可选启动项阻塞桌面端握手。

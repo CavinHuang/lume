@@ -213,6 +213,7 @@ test("应按 slug 注册 Alice 风格 SKILL.md 字段并保留展示名别名", 
       'description: "审查代码质量"',
       'when_to_use: "当用户要求 code review 时使用"',
       'allowed_tools: ["Read", "Bash"]',
+      'activate_tools: ["mcp__node_repl__js"]',
       'argument_hint: "请提供文件路径"',
       "disable_model_invocation: true",
       'version: "1.2.3"',
@@ -235,6 +236,7 @@ test("应按 slug 注册 Alice 风格 SKILL.md 字段并保留展示名别名", 
     expect(skill?.whenToUse).toBe("当用户要求 code review 时使用");
     expect(skill?.argumentHint).toBe("请提供文件路径");
     expect(skill?.allowedTools).toEqual(["Read", "Bash"]);
+    expect(skill?.activatedTools).toEqual(["mcp__node_repl__js"]);
     expect(skill?.disableModelInvocation).toBe(true);
     expect(skill?.version).toBe("1.2.3");
     expect(skill?.sourcePath).toBe(join(skillDir, "SKILL.md"));

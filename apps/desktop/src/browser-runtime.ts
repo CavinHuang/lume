@@ -61,6 +61,7 @@ type BrowserTab = BrowserTabDescriptor & {
   context?: BrowserRequestContext
   inputSequence: number
   agentDispatching?: boolean
+  lastUserActivationAt?: number
   dialogOpen?: boolean
   dialogInfo?: { id: string; type: "alert" | "beforeunload" | "confirm" | "prompt"; message?: string; defaultValue?: string }
   recentAgentContext?: { browserSessionId: string; browserTurnId: string; expiresAt: number }
@@ -999,16 +1000,22 @@ export class BrowserRuntime {
       return publicTab(existing)
     }
     const partition = restoredPartition ?? selectBrowserPartition(context, params)
-    const isAgent = shouldInstallAgentSessionPolicy(partition)
+    const isolatedAgent = shouldInstallAgentSessionPolicy(partition)
     const advancedCdp = shouldInstallAdvancedCdpPolicy(partition)
     const agentOwned = context.actor === "agent"
+    const restoredAgent = params.profileKind === "agent"
+    const profileKind: NonNullable<BrowserTabDescriptor["profileKind"]> = advancedCdp
+      ? "advanced-cdp"
+      : agentOwned || restoredAgent || isolatedAgent
+        ? "agent"
+        : "user"
     if (advancedCdp && !this.settings.advancedCdpEnabled) throw browserError("action_denied")
     const tab: BrowserTab = {
       tabId,
       providerTabId: randomUUID(),
       ...(typeof params.ownerThreadId === "string" ? { ownerThreadId: params.ownerThreadId.slice(0, 200) } : {}),
       ...(typeof params.openerTabId === "string" ? { openerTabId: params.openerTabId.slice(0, 200) } : {}),
-      profileKind: advancedCdp ? "advanced-cdp" : isAgent ? "agent" : "user",
+      profileKind,
       backend: "iab",
       generation: 1,
       url: "",
@@ -1037,13 +1044,13 @@ export class BrowserRuntime {
       mountWaiters: [],
       viewportQueue: Promise.resolve(),
     }
-    if (isAgent && (params.handoffStatus === "handoff" || params.handoffStatus === "deliverable") && typeof params.handoffBrowserSessionId === "string") {
+    if (profileKind === "agent" && (params.handoffStatus === "handoff" || params.handoffStatus === "deliverable") && typeof params.handoffBrowserSessionId === "string") {
       tab.handoff = { browserSessionId: params.handoffBrowserSessionId.slice(0, 200), status: params.handoffStatus }
     }
     const initialZoomFactor = Math.max(.25, Math.min(5, Number(params.zoomFactor) || 1))
     tab.zoomFactor = initialZoomFactor
     this.tabs.set(tabId, tab)
-    this.ensureSessionPolicy(session.fromPartition(partition), partition, isAgent || advancedCdp)
+    this.ensureSessionPolicy(session.fromPartition(partition), partition, isolatedAgent || advancedCdp)
     const initialUrl = typeof params.url === "string" && params.url.trim() ? params.url : undefined
     if (initialUrl) {
       const normalized = normalizeNavigableUrl(initialUrl)
@@ -1068,6 +1075,27 @@ export class BrowserRuntime {
     const wc = browserContents(tab)
     this.ensureSessionPolicy(wc.session, tab.partition, agent || advancedCdp)
     wc.setWindowOpenHandler(({ url }) => {
+      const now = Date.now()
+      const userInitiated = tab.lastUserActivationAt !== undefined && now - tab.lastUserActivationAt <= 5_000
+      tab.lastUserActivationAt = undefined
+      if (userInitiated && (url === "about:blank" || isAllowedNavigation(url, agent, this.settings, tab.approvedPrivateOrigins))) {
+        const parent = this.options.getWindow()
+        return {
+          action: "allow",
+          outlivesOpener: false,
+          overrideBrowserWindowOptions: {
+            ...(parent && !parent.isDestroyed() ? { parent } : {}),
+            autoHideMenuBar: true,
+            webPreferences: {
+              partition: tab.partition,
+              sandbox: true,
+              contextIsolation: true,
+              nodeIntegration: false,
+              webSecurity: true,
+            },
+          },
+        }
+      }
       const agentInitiated = agent || Boolean(tab.recentAgentContext && tab.recentAgentContext.expiresAt >= Date.now())
       const target = isPrivateUrl(url) ? this.settings.localUrlTarget : this.settings.linkOpenTarget
       if (!agentInitiated && target === "system" && isAllowedNavigation(url, false)) {
@@ -1078,6 +1106,13 @@ export class BrowserRuntime {
       this.popupTokens.set(activationToken, { sourceTabId: tab.tabId, url: stripUrl(url), expiresAt: Date.now() + 60_000 })
       this.options.emit({ method: "browser:popup-request", params: { tabId: tab.tabId, activationToken, origin: safeOrigin(url), url: stripUrl(url) } })
       return { action: "deny" }
+    })
+    wc.on("did-create-window", (popup) => {
+      popup.setMenuBarVisibility(false)
+      popup.webContents.setWindowOpenHandler(() => ({ action: "deny" }))
+      popup.webContents.on("will-navigate", (event, url) => {
+        if (!isAllowedNavigation(url, agent, this.settings, tab.approvedPrivateOrigins)) event.preventDefault()
+      })
     })
     wc.on("will-navigate", (event, url) => {
       if (!isAllowedNavigation(url, agent, this.settings, tab.approvedPrivateOrigins)) event.preventDefault()
@@ -1127,6 +1162,7 @@ export class BrowserRuntime {
     })
     wc.on("did-start-loading", () => {
       tab.isLoading = true
+      tab.loadError = undefined
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
     })
     wc.on("did-stop-loading", () => {
@@ -1142,6 +1178,8 @@ export class BrowserRuntime {
     wc.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (!isMainFrame || errorCode === -3) return
       tab.isLoading = false
+      tab.loadError = { errorCode, errorDescription: errorDescription.slice(0, 300), url: stripUrl(validatedURL) }
+      this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
       this.options.emit({ method: "browser:tab-error", params: { tabId: tab.tabId, code: "load_failed", errorCode, errorDescription: errorDescription.slice(0, 300), url: stripUrl(validatedURL), recoverable: true } })
     })
     wc.on("page-favicon-updated", (_event, favicons) => {
@@ -1166,7 +1204,6 @@ export class BrowserRuntime {
       this.enforceBackgroundLimit()
     })
     wc.on("before-input-event", (event, input) => {
-      if (!tab.agentDispatching) tab.inputSequence += 1
       const key = input.key.toLowerCase()
       const modifier = input.control || input.meta
       const action = modifier && key === "l"
@@ -1176,12 +1213,19 @@ export class BrowserRuntime {
           : (modifier && key === "r") || key === "f5"
             ? input.shift ? "hard-reload" : "reload"
             : undefined
+      if (!tab.agentDispatching) {
+        tab.inputSequence += 1
+        if (!action && input.type === "keyDown" && !input.isAutoRepeat) tab.lastUserActivationAt = Date.now()
+      }
       if (!action) return
       event.preventDefault()
       this.options.emit({ method: "browser:shortcut", params: { tabId: tab.tabId, action } })
     })
-    wc.on("before-mouse-event", () => {
-      if (!tab.agentDispatching) tab.inputSequence += 1
+    wc.on("before-mouse-event", (_event, mouse) => {
+      if (!tab.agentDispatching) {
+        tab.inputSequence += 1
+        if (mouse.type === "mouseDown" && (mouse.button === "left" || mouse.button === "middle")) tab.lastUserActivationAt = Date.now()
+      }
     })
     wc.on("page-title-updated", (_event, title) => {
       tab.title = title.slice(0, 256)
@@ -1274,6 +1318,8 @@ export class BrowserRuntime {
     this.ownedSessionPolicies.add(policy)
     browserSession.setPermissionRequestHandler((contents, permission, callback, details) => {
       const origin = safeOrigin(contents.getURL())
+      const permissionTab = this.tabForContents(contents)
+      const agentControlled = policy.agent || Boolean(permissionTab?.agentLease)
       const legacyOverride = origin ? this.settings.siteOverrides[origin] : undefined
       const requestedMediaTypes = (details as { mediaTypes?: unknown } | undefined)?.mediaTypes
       const mediaTypes = Array.isArray(requestedMediaTypes) ? requestedMediaTypes : []
@@ -1281,18 +1327,17 @@ export class BrowserRuntime {
         ? mediaTypes.includes("video") ? "camera" : mediaTypes.includes("audio") ? "microphone" : undefined
         : undefined
       const override = origin && permissionKey ? this.settings.sitePermissionOverrides?.[origin]?.[permissionKey] : legacyOverride
-      if (policy.agent || override === "deny" || (!override && this.settings.sitePermissionDefault === "deny")) {
+      if (agentControlled || override === "deny" || (!override && this.settings.sitePermissionDefault === "deny")) {
         callback(false)
         return
       }
       if (override === "allow") {
-        const tab = this.tabForContents(contents)
-        if (tab && permissionKey) {
-          tab.mediaState = {
-            ...(tab.mediaState ?? { audible: false, camera: false, microphone: false }),
+        if (permissionTab && permissionKey) {
+          permissionTab.mediaState = {
+            ...(permissionTab.mediaState ?? { audible: false, camera: false, microphone: false }),
             [permissionKey]: true,
           }
-          this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+          this.options.emit({ method: "browser:tab-changed", params: publicTab(permissionTab) as unknown as Record<string, unknown> })
         }
         callback(true)
         return
@@ -1312,13 +1357,12 @@ export class BrowserRuntime {
       }).then((result) => {
         const allowed = result.response === 0
         if (allowed && origin && permissionKey) {
-          const tab = this.tabForContents(contents)
-          if (tab) {
-            tab.mediaState = {
-              ...(tab.mediaState ?? { audible: false, camera: false, microphone: false }),
+          if (permissionTab) {
+            permissionTab.mediaState = {
+              ...(permissionTab.mediaState ?? { audible: false, camera: false, microphone: false }),
               [permissionKey]: true,
             }
-            this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+            this.options.emit({ method: "browser:tab-changed", params: publicTab(permissionTab) as unknown as Record<string, unknown> })
           }
         }
         callback(allowed)
@@ -1338,7 +1382,10 @@ export class BrowserRuntime {
       callback({ cancel: policy.disposed || (guarded && !isAllowedNavigation(details.url, true, this.settings, claimedGlobalTab?.approvedPrivateOrigins)) })
     })
     if (!agent) return
-    const guard = new BrowserNetworkGuard({ allowPrivateOrigin: (origin) => this.settings.siteOverrides[origin] === "allow" || [...this.tabs.values()].some((tab) => tab.webContents?.session === browserSession && tab.approvedPrivateOrigins?.has(origin)) })
+    const guard = new BrowserNetworkGuard({
+      allowPrivateOrigin: (origin) => this.settings.siteOverrides[origin] === "allow" || [...this.tabs.values()].some((tab) => tab.webContents?.session === browserSession && tab.approvedPrivateOrigins?.has(origin)),
+      resolveProxy: (url) => session.defaultSession.resolveProxy(url),
+    })
     policy.networkGuard = guard
     policy.networkReady = guard.start().then(() => browserSession.setProxy({ proxyRules: guard.proxyRules(), proxyBypassRules: "<-loopback>" })).catch((error) => {
       policy.disposed = true
@@ -2957,6 +3004,10 @@ export class BrowserRuntime {
     tab.visible = params.visible !== false
     tab.lifecycle = tab.visible ? "active" : "background"
     if (tab.visible) tab.lastOpenedAt = new Date().toISOString()
+    if (tab.visible && tab.surface === "right-panel" && tab.profileKind === "agent" && tab.context && !tab.handoff) {
+      tab.handoff = { browserSessionId: tab.context.browserSessionId, status: "deliverable", reason: "shown_in_right_panel" }
+      this.rememberTab(tab)
+    }
     tab.webContents?.setBackgroundThrottling(!tab.visible)
     if (tab.visible) void this.setTabSuspended(tab, false)
     this.enforceBackgroundLimit()
@@ -3218,7 +3269,7 @@ export class BrowserRuntime {
     tab.webContents = null
     this.tabs.delete(tabId)
     this.disposeOwnedSessionIfUnused(tab.partition, browserSession)
-    this.options.emit({ method: "browser:tab-closed", params: { tabId } })
+    this.options.emit({ method: "browser:tab-closed", params: { tabId, ownerThreadId: tab.ownerThreadId, profileKind: tab.profileKind } })
     if (contents) closeWebContentsAfterRenderer(contents)
     this.enforceBackgroundLimit()
     return { ok: true }
@@ -3267,11 +3318,15 @@ export class BrowserRuntime {
   private resumeHandoffTabs(context: BrowserRequestContext): BrowserTabDescriptor[] {
     if (context.actor !== "agent") throw browserError("action_denied")
     const resumed: BrowserTabDescriptor[] = []
-    for (const tab of this.tabs.values()) {
-      if (tab.handoff?.browserSessionId !== context.browserSessionId || tab.handoff.status !== "handoff") continue
+    const candidates = [...this.tabs.values()]
+      .filter((tab) => tab.handoff?.browserSessionId === context.browserSessionId
+        && (tab.handoff.status === "handoff" || tab.handoff.status === "deliverable"))
+      .sort((left, right) => Number(right.visible) - Number(left.visible)
+        || String(right.lastOpenedAt ?? "").localeCompare(String(left.lastOpenedAt ?? "")))
+    for (const tab of candidates) {
       tab.context = context
       tab.agentLease = { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, generation: tab.generation }
-      tab.handoff = undefined
+      if (tab.handoff?.status === "handoff") tab.handoff = undefined
       resumed.push(publicTab(tab))
     }
     return resumed
@@ -3452,7 +3507,7 @@ export class BrowserRuntime {
       if (result.response !== 0) throw browserError("action_denied")
       this.credentials.clearPasswords()
     }
-    const browserSession = this.tabs.values().next().value?.webContents?.session ?? session.fromPartition("persist:lume-browser")
+    const browserSession = session.fromPartition("persist:lume-browser")
     const dataTypes: Electron.ClearDataOptions["dataTypes"] = []
     if (selected.has("siteData")) dataTypes.push("cookies", "fileSystems", "indexedDB", "localStorage", "serviceWorkers", "webSQL")
     if (selected.has("cache")) dataTypes.push("cache")
@@ -3493,6 +3548,7 @@ function publicTab(tab: BrowserTab): BrowserTabDescriptor {
     domNodes: _domNodes,
     recentAgentContext: _recentAgentContext,
     agentDispatching: _agentDispatching,
+    lastUserActivationAt: _lastUserActivationAt,
     dialogOpen: _dialogOpen,
     dialogInfo: _dialogInfo,
     surfaceBounds: _surfaceBounds,

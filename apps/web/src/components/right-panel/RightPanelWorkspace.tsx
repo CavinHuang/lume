@@ -53,6 +53,8 @@ import {
   closeBrowserTab,
   createBrowserTab,
   sanitizeThreadBrowserWorkspace,
+  THREAD_BROWSER_ACTIVATE_EVENT,
+  type ThreadBrowserActivateDetail,
   type ThreadBrowserWorkspace,
 } from './right-panel-browser-state'
 import { CodingReviewPanel } from './CodingReviewPanel'
@@ -72,10 +74,12 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   const [runtime, setRuntime] = useAtom(rightPanelFileWorkspacesAtom)
   const [persistedFileTabs, setPersistedFileTabs] = useAtom(rightPanelFileTabsAtom)
   const [persistedBrowserWorkspaces, setPersistedBrowserWorkspaces] = useAtom(rightPanelBrowserWorkspacesAtom)
+  const [agentBrowserWorkspaces, setAgentBrowserWorkspaces] = useState<Record<string, ThreadBrowserWorkspace>>({})
   const dispatch = useSetAtom(rightPanelWorkspaceActionAtom)
   const [layout, setLayout] = useAtom(rightPanelLayoutAtom)
   const [resizing, setResizing] = useState(false)
   const browserWorkspaceRevisionRef = useRef<Record<string, number>>({})
+  const knownBrowserTabIdsRef = useRef<Record<string, Set<string>>>({})
   const threads = useAtomValue(agentThreadsAtom)
   const agentWorkspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
@@ -199,15 +203,25 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
     if (!threadId) return
     let cancelled = false
     const legacy = sanitizeThreadBrowserWorkspace(persistedBrowserWorkspaces[threadId])
+    knownBrowserTabIdsRef.current[threadId] = new Set(legacy.tabs.map((tab) => tab.id))
     void browserRuntime<BrowserWorkspaceDescriptor>({
       method: 'workspace:import-legacy',
-      params: { ownerThreadId: threadId, tabs: legacy.tabs, activeTabId: legacy.activeTabId },
+      params: {
+        ownerThreadId: threadId,
+        tabs: legacy.tabs.filter((tab) => tab.profileKind !== 'agent'),
+        activeTabId: legacy.tabs.find((tab) => tab.id === legacy.activeTabId)?.profileKind === 'agent' ? undefined : legacy.activeTabId,
+      },
     }).then(() => browserRuntime<BrowserWorkspaceDescriptor>({ method: 'workspace:get', params: { ownerThreadId: threadId } }))
       .then(async (workspace) => ({ workspace, tabs: await browserRuntime<BrowserTabDescriptor[]>({ method: 'list' }) }))
       .then(({ workspace, tabs }) => {
         if (cancelled) return
-        const descriptors = new Map(tabs.filter((tab) => tab.ownerThreadId === threadId).map((tab) => [tab.tabId, tab]))
+        const threadTabs = tabs.filter((tab) => tab.ownerThreadId === threadId)
+        const descriptors = new Map(threadTabs.map((tab) => [tab.tabId, tab]))
         const restoredTabs = workspace.orderedTabIds.flatMap((tabId) => descriptors.get(tabId) ? [browserTabFromDescriptor(descriptors.get(tabId)!)] : [])
+        const agentDescriptors = threadTabs.filter((tab) => tab.profileKind === 'agent')
+        const agentTabs = agentDescriptors.map(browserTabFromDescriptor)
+        const activeAgentTab = agentDescriptors.find((tab) => tab.visible)
+          ?? [...agentDescriptors].sort((left, right) => String(right.lastOpenedAt ?? '').localeCompare(String(left.lastOpenedAt ?? '')))[0]
         const recentlyClosed = workspace.recentlyClosed.map((closed) => ({
           id: closed.tabId,
           url: closed.url,
@@ -220,6 +234,15 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
           ...current,
           [threadId]: { tabs: restoredTabs, recentlyClosed, ...(workspace.activeTabId ? { activeTabId: workspace.activeTabId } : {}) },
         }))
+        setAgentBrowserWorkspaces((current) => ({
+          ...current,
+          [threadId]: {
+            tabs: agentTabs,
+            recentlyClosed: [],
+            ...(activeAgentTab ? { activeTabId: activeAgentTab.tabId } : {}),
+          },
+        }))
+        knownBrowserTabIdsRef.current[threadId] = new Set(threadTabs.map((tab) => tab.tabId))
       })
       .catch(() => undefined)
     return () => { cancelled = true }
@@ -230,10 +253,65 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
     let disposed = false
     let stop: (() => void) | undefined
     void onBrowserEvent((event) => {
+      if (event.method === 'browser:tab-changed') {
+        const descriptor = event.params as unknown as BrowserTabDescriptor
+        const ownerThreadId = descriptor.ownerThreadId
+        if (!ownerThreadId || ownerThreadId !== threadId || descriptor.profileKind !== 'agent') return
+        const knownTabIds = knownBrowserTabIdsRef.current[ownerThreadId] ?? new Set<string>()
+        const isNewTab = !knownTabIds.has(descriptor.tabId)
+        knownTabIds.add(descriptor.tabId)
+        knownBrowserTabIdsRef.current[ownerThreadId] = knownTabIds
+        const tab = browserTabFromDescriptor(descriptor)
+        setAgentBrowserWorkspaces((current) => {
+          const workspace = sanitizeThreadBrowserWorkspace(current[ownerThreadId])
+          return { ...current, [ownerThreadId]: { ...workspace, tabs: [...workspace.tabs.filter((item) => item.id !== tab.id), tab], activeTabId: tab.id } }
+        })
+        if (isNewTab) {
+          setLayout((current) => current.open && current.mode !== 'compact' ? current : { open: true, mode: 'normal' })
+          updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId: descriptor.tabId } }))
+        }
+        return
+      }
+      if (event.method === 'browser:tab-closed') {
+        const ownerThreadId = typeof event.params.ownerThreadId === 'string' ? event.params.ownerThreadId : undefined
+        const tabId = typeof event.params.tabId === 'string' ? event.params.tabId : undefined
+        if (!ownerThreadId || !tabId || ownerThreadId !== threadId || event.params.profileKind !== 'agent') return
+        knownBrowserTabIdsRef.current[ownerThreadId]?.delete(tabId)
+        void browserRuntime<BrowserTabDescriptor[]>({ method: 'list' }).then((tabs) => {
+          if (disposed) return
+          const agentTabs = tabs
+            .filter((tab) => tab.ownerThreadId === ownerThreadId && tab.profileKind === 'agent')
+            .map(browserTabFromDescriptor)
+          const fallbackTabId = agentTabs[0]?.id
+          setAgentBrowserWorkspaces((current) => {
+            const previousActiveTabId = current[ownerThreadId]?.activeTabId
+            const activeTabId = previousActiveTabId && agentTabs.some((tab) => tab.id === previousActiveTabId)
+              ? previousActiveTabId
+              : fallbackTabId
+            return {
+              ...current,
+              [ownerThreadId]: { tabs: agentTabs, recentlyClosed: [], ...(activeTabId ? { activeTabId } : {}) },
+            }
+          })
+          updateRuntime((current) => current.activeItem?.kind === 'browser' && current.activeItem.tabId === tabId
+            ? { ...current, activeItem: fallbackTabId ? { kind: 'browser', tabId: fallbackTabId } : null }
+            : current)
+        }).catch(() => undefined)
+        return
+      }
       if (event.method !== 'browser:workspace-changed') return
       const descriptor = event.params as unknown as BrowserWorkspaceDescriptor
       if (!descriptor.ownerThreadId || descriptor.revision <= (browserWorkspaceRevisionRef.current[descriptor.ownerThreadId] ?? -1)) return
       browserWorkspaceRevisionRef.current[descriptor.ownerThreadId] = descriptor.revision
+      const knownTabIds = knownBrowserTabIdsRef.current[descriptor.ownerThreadId] ?? new Set<string>()
+      const shouldRevealBrowser = descriptor.ownerThreadId === threadId
+        && Boolean(descriptor.activeTabId)
+        && !knownTabIds.has(descriptor.activeTabId!)
+      knownBrowserTabIdsRef.current[descriptor.ownerThreadId] = new Set(descriptor.orderedTabIds)
+      if (shouldRevealBrowser && descriptor.activeTabId) {
+        setLayout((current) => current.open && current.mode !== 'compact' ? current : { open: true, mode: 'normal' })
+        updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId: descriptor.activeTabId! } }))
+      }
       void browserRuntime<BrowserTabDescriptor[]>({ method: 'list' }).then((tabs) => {
         if (disposed) return
         const descriptors = new Map(tabs.filter((tab) => tab.ownerThreadId === descriptor.ownerThreadId).map((tab) => [tab.tabId, tab]))
@@ -249,7 +327,32 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
       }).catch(() => undefined)
     }).then((dispose) => { if (disposed) dispose(); else stop = dispose })
     return () => { disposed = true; stop?.() }
-  }, [setPersistedBrowserWorkspaces])
+  }, [setLayout, setPersistedBrowserWorkspaces, threadId, updateRuntime])
+
+  useEffect(() => {
+    if (!threadId) return
+    const activate = (event: Event) => {
+      const detail = (event as CustomEvent<ThreadBrowserActivateDetail>).detail
+      if (!detail || detail.threadId !== threadId || detail.tab.ownerThreadId !== threadId) return
+      const tab = browserTabFromDescriptor(detail.tab)
+      if (detail.tab.profileKind === 'agent') {
+        setAgentBrowserWorkspaces((current) => {
+          const workspace = sanitizeThreadBrowserWorkspace(current[threadId])
+          return { ...current, [threadId]: { ...workspace, tabs: [...workspace.tabs.filter((item) => item.id !== tab.id), tab], activeTabId: tab.id } }
+        })
+      } else {
+        setPersistedBrowserWorkspaces((current) => {
+          const workspace = sanitizeThreadBrowserWorkspace(current[threadId])
+          return { ...current, [threadId]: { ...workspace, tabs: [...workspace.tabs.filter((item) => item.id !== tab.id), tab], activeTabId: tab.id } }
+        })
+        void browserRuntime({ method: 'workspace:activate', params: { ownerThreadId: threadId, tabId: tab.id } }).catch(() => undefined)
+      }
+      setLayout((current) => current.open && current.mode !== 'compact' ? current : { open: true, mode: 'normal' })
+      updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId: tab.id } }))
+    }
+    window.addEventListener(THREAD_BROWSER_ACTIVATE_EVENT, activate)
+    return () => window.removeEventListener(THREAD_BROWSER_ACTIVATE_EVENT, activate)
+  }, [setLayout, setPersistedBrowserWorkspaces, threadId, updateRuntime])
 
   useEffect(() => {
     if (!threadId) return
@@ -273,7 +376,13 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   if (!threadId || !layout.open) return null
 
   const persistedWorkspace = sanitizeRightPanelWorkspace(persisted[threadId] ?? createEmptyRightPanelWorkspace())
-  const browserWorkspace = sanitizeThreadBrowserWorkspace(persistedBrowserWorkspaces[threadId])
+  const persistedBrowserWorkspace = sanitizeThreadBrowserWorkspace(persistedBrowserWorkspaces[threadId])
+  const agentBrowserWorkspace = sanitizeThreadBrowserWorkspace(agentBrowserWorkspaces[threadId])
+  const browserWorkspace: ThreadBrowserWorkspace = {
+    tabs: [...persistedBrowserWorkspace.tabs, ...agentBrowserWorkspace.tabs.filter((tab) => !persistedBrowserWorkspace.tabs.some((item) => item.id === tab.id))],
+    recentlyClosed: persistedBrowserWorkspace.recentlyClosed,
+    ...(agentBrowserWorkspace.activeTabId || persistedBrowserWorkspace.activeTabId ? { activeTabId: agentBrowserWorkspace.activeTabId ?? persistedBrowserWorkspace.activeTabId } : {}),
+  }
   const openFunctions = getOpenRightPanelFunctions(persistedWorkspace.tabs)
   const storedRuntimeWorkspace = runtime[threadId]
   const runtimeWorkspace = storedRuntimeWorkspace
@@ -306,7 +415,24 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
 
   const action = (value: Parameters<typeof dispatch>[0]) => dispatch(value)
   const updateBrowserWorkspace = (next: ThreadBrowserWorkspace) => {
-    setPersistedBrowserWorkspaces((current) => ({ ...current, [threadId]: next }))
+    const agentTabs = next.tabs.filter((tab) => tab.profileKind === 'agent')
+    const persistedTabs = next.tabs.filter((tab) => tab.profileKind !== 'agent')
+    setAgentBrowserWorkspaces((current) => ({
+      ...current,
+      [threadId]: {
+        tabs: agentTabs,
+        recentlyClosed: [],
+        ...(agentTabs.some((tab) => tab.id === next.activeTabId) ? { activeTabId: next.activeTabId } : {}),
+      },
+    }))
+    setPersistedBrowserWorkspaces((current) => ({
+      ...current,
+      [threadId]: {
+        tabs: persistedTabs,
+        recentlyClosed: next.recentlyClosed.filter((tab) => tab.profileKind !== 'agent'),
+        ...(persistedTabs.some((tab) => tab.id === next.activeTabId) ? { activeTabId: next.activeTabId } : {}),
+      },
+    }))
   }
   const openBrowser = (url = '', insertAfterTabId?: string) => {
     const tab = createBrowserTab({ url })
