@@ -7,24 +7,13 @@ import {
 import type {
   ReadingAddBookInput,
   ReadingBook,
-  ReadingBookDebugInfo,
   ReadingConnectWereadInput,
-  ReadingGenerateShareCardInput,
   ReadingLibrarySnapshot,
-  ReadingListNotesInput,
-  ReadingNote,
-  ReadingNoteReactionResult,
-  ReadingNoteRevisionInput,
-  ReadingNoteSummary,
   ReadingRunTaskInput,
   ReadingSearchBooksInput,
   ReadingSearchResult,
-  ReadingSearchWereadInput,
   ReadingSettings,
-  ReadingShareCardResult,
   ReadingTaskResult,
-  ReadingUnreadCounts,
-  ReadingUpdateBookInput,
   ReadingUpdateSettingsInput,
   ReadingWereadConnection,
   WereadOpenAndFetchKeyResult,
@@ -38,84 +27,17 @@ const WEREAD_API_CACHE_TTL_MS = 5 * 60_000
 
 const wereadApiCache = new Map<string, { expiresAt: number; promise: Promise<unknown> }>()
 
-export interface ReadingGenerateCoverResult {
-  ok: boolean
-  bookId: string
-  path: string
-  createdAt: number
-}
-
-export interface ReadingRefreshQuotesResult {
-  ok: boolean
-  refreshed: number
-  path: string
-}
-
 export const getReadingSnapshot = () =>
   sidecarCall<ReadingLibrarySnapshot>(READING_IPC_CHANNELS.GET_SNAPSHOT, {})
 
 export const updateReadingSettings = (input: ReadingUpdateSettingsInput) =>
   sidecarCall<ReadingSettings>(READING_IPC_CHANNELS.UPDATE_SETTINGS, input)
 
-export const listReadingBooks = () =>
-  sidecarCall<ReadingBook[]>(READING_IPC_CHANNELS.LIST_BOOKS, {})
-
-export const listReadingNotes = (input: ReadingListNotesInput = {}) =>
-  sidecarCall<ReadingNoteSummary[]>(READING_IPC_CHANNELS.LIST_NOTES, input)
-
-export const getReadingNote = (id: string) =>
-  sidecarCall<ReadingNoteSummary | null>(READING_IPC_CHANNELS.GET_NOTE, { id })
-
 export const addReadingBook = (input: ReadingAddBookInput) =>
   sidecarCall<ReadingBook>(READING_IPC_CHANNELS.ADD_BOOK, input)
 
-export const addBookToAlice = (title: string, reason?: string) =>
-  sidecarCall<ReadingBook>(READING_IPC_CHANNELS.ADD_BOOK_TO_ALICE, { title, reason })
-
-export const updateReadingBook = (input: ReadingUpdateBookInput) =>
-  sidecarCall<ReadingBook>(READING_IPC_CHANNELS.UPDATE_BOOK, input)
-
-export const hideReadingNote = (id: string) =>
-  sidecarCall<ReadingNoteSummary>(READING_IPC_CHANNELS.HIDE_NOTE, { id })
-
-export const deleteReadingNote = (id: string) =>
-  sidecarCall<ReadingNoteSummary>(READING_IPC_CHANNELS.DELETE_NOTE, { id })
-
-export const markReadingSeen = (noteIds?: string[]) =>
-  sidecarCall<{ ok: true }>(READING_IPC_CHANNELS.MARK_SEEN, noteIds ? { noteIds } : {})
-
-export const getReadingUnreadCounts = () =>
-  sidecarCall<ReadingUnreadCounts>(READING_IPC_CHANNELS.GET_UNREAD_COUNTS, {})
-
-export const getReadingHighlights = () =>
-  sidecarCall<ReadingNoteSummary[]>(READING_IPC_CHANNELS.GET_HIGHLIGHTS, {})
-
-export const removeReadingHighlight = (id: string) =>
-  sidecarCall<{ ok: true }>(READING_IPC_CHANNELS.REMOVE_HIGHLIGHT, { id })
-
-export const getReadingBlurs = () =>
-  sidecarCall<ReadingNoteSummary[]>(READING_IPC_CHANNELS.GET_BLURS, {})
-
-export const addReadingBlur = (id: string) =>
-  sidecarCall<ReadingNoteSummary>(READING_IPC_CHANNELS.ADD_BLUR, { id })
-
-export const removeReadingBlur = (id: string) =>
-  sidecarCall<{ ok: true }>(READING_IPC_CHANNELS.REMOVE_BLUR, { id })
-
-export const reactPlusOneReadingNote = (id: string) =>
-  sidecarCall<ReadingNoteReactionResult>(READING_IPC_CHANNELS.REACT_PLUS_ONE, { id })
-
-export const runReadingTask = (input: ReadingRunTaskInput = {}) =>
-  sidecarCall<ReadingTaskResult>(READING_IPC_CHANNELS.RUN_TASK, input)
-
-export const forceGenerateReadingNote = (input: ReadingRunTaskInput = {}) =>
-  sidecarCall<ReadingTaskResult>(READING_IPC_CHANNELS.FORCE_GENERATE_NOTE, input)
-
 export const manualGenerateReadingNote = (input: ReadingRunTaskInput = {}) =>
   sidecarCall<ReadingTaskResult>(READING_IPC_CHANNELS.MANUAL_GENERATE_NOTE, input)
-
-export const reviseReadingNote = (input: ReadingNoteRevisionInput) =>
-  sidecarCall<ReadingNote>(READING_IPC_CHANNELS.REVISE_NOTE, input)
 
 export const connectReadingWeread = async (input: ReadingConnectWereadInput) => {
   const connection = await sidecarCall<ReadingWereadConnection>(READING_IPC_CHANNELS.CONNECT_WEREAD, input)
@@ -123,32 +45,8 @@ export const connectReadingWeread = async (input: ReadingConnectWereadInput) => 
   return connection
 }
 
-export const disconnectReadingWeread = async () => {
-  const connection = await sidecarCall<ReadingWereadConnection>(READING_IPC_CHANNELS.DISCONNECT_WEREAD, {})
-  clearWereadApiCache()
-  return connection
-}
-
-export const searchReadingWeread = (input: ReadingSearchWereadInput) =>
-  sidecarCall<ReadingSearchResult[]>(READING_IPC_CHANNELS.SEARCH_WEREAD, input)
-
 export const searchReadingBooks = (input: ReadingSearchBooksInput) =>
   sidecarCall<ReadingSearchResult[]>(READING_IPC_CHANNELS.SEARCH_BOOKS, input)
-
-export const generateReadingShareCard = (input: ReadingGenerateShareCardInput) =>
-  sidecarCall<ReadingShareCardResult>(READING_IPC_CHANNELS.GENERATE_SHARE_CARD, input)
-
-export const generateReadingCover = (bookId: string) =>
-  sidecarCall<ReadingGenerateCoverResult>(READING_IPC_CHANNELS.GENERATE_COVER, { bookId })
-
-export const deleteReadingCover = (bookId: string) =>
-  sidecarCall<ReadingBook>(READING_IPC_CHANNELS.DELETE_COVER, { bookId })
-
-export const refreshReadingQuotes = (bookId: string) =>
-  sidecarCall<ReadingRefreshQuotesResult>(READING_IPC_CHANNELS.REFRESH_QUOTES, { bookId })
-
-export const getReadingBookDebugInfo = (bookId: string) =>
-  sidecarCall<ReadingBookDebugInfo>(READING_IPC_CHANNELS.GET_BOOK_DEBUG_INFO, { bookId })
 
 export async function readWereadKeyFromClipboard(): Promise<WereadOpenAndFetchKeyResult> {
   const desktopText = await readDesktopClipboardText()
@@ -292,19 +190,6 @@ export const getWereadBestBookmarks = (bookId: string, bookTitle?: string) =>
 
 export const getWereadPublicReviews = (bookId: string, listType?: string, bookTitle?: string) =>
   cachedWereadCall(`publicReviews:${bookId}:${listType ?? ''}:${bookTitle ?? ''}`, () => sidecarCall<unknown>(WEREAD_IPC_CHANNELS.GET_PUBLIC_REVIEWS, { bookId, listType, bookTitle }))
-
-export const generateWereadNote = (input: {
-  bookTitle: string
-  text: string
-  source?: string
-  authorName?: string
-}) => sidecarCall<ReadingTaskResult>(WEREAD_IPC_CHANNELS.GENERATE_NOTE, input)
-
-export const exportAllWereadNotes = () =>
-  sidecarCall<unknown>(WEREAD_IPC_CHANNELS.EXPORT_ALL_NOTES, {})
-
-export const searchWereadBooks = (keyword: string, limit?: number) =>
-  sidecarCall<unknown>(WEREAD_IPC_CHANNELS.SEARCH_BOOKS, { keyword, limit })
 
 function isWereadApiKey(value: string): boolean {
   return /^(wrk-|wr_)[A-Za-z0-9_-]{8,}$/.test(value)

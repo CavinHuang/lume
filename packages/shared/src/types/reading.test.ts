@@ -12,34 +12,10 @@ describe("reading shared types", () => {
     expect(READING_IPC_CHANNELS).toMatchObject({
       GET_SNAPSHOT: "reading:get-snapshot",
       UPDATE_SETTINGS: "reading:update-settings",
-      LIST_BOOKS: "reading:list-books",
-      LIST_NOTES: "reading:list-notes",
-      GET_NOTE: "reading:get-note",
       ADD_BOOK: "reading:add-book",
-      ADD_BOOK_TO_ALICE: "reading:addBookToAlice",
-      UPDATE_BOOK: "reading:update-book",
-      HIDE_NOTE: "reading:hide-note",
-      DELETE_NOTE: "reading:delete-note",
-      MARK_SEEN: "reading:mark-seen",
-      GET_UNREAD_COUNTS: "reading:get-unread-counts",
-      GET_HIGHLIGHTS: "reading:get-highlights",
-      REMOVE_HIGHLIGHT: "reading:remove-highlight",
-      GET_BLURS: "reading:get-blurs",
-      ADD_BLUR: "reading:add-blur",
-      REMOVE_BLUR: "reading:remove-blur",
-      REACT_PLUS_ONE: "reading:react-plus-one",
-      RUN_TASK: "reading:run-task",
-      FORCE_GENERATE_NOTE: "reading:force-generate-note",
       MANUAL_GENERATE_NOTE: "reading:manual-generate-note",
-      REVISE_NOTE: "reading:revise-note",
       CONNECT_WEREAD: "reading:connect-weread",
-      DISCONNECT_WEREAD: "reading:disconnect-weread",
-      SEARCH_WEREAD: "reading:search-weread",
-      GENERATE_COVER: "reading:generate-cover",
-      DELETE_COVER: "reading:delete-cover",
-      REFRESH_QUOTES: "reading:refresh-quotes",
-      GET_BOOK_DEBUG_INFO: "reading:get-book-debug-info",
-      GENERATE_SHARE_CARD: "reading:generate-share-card",
+      SEARCH_BOOKS: "reading:search-books",
       NOTE_GEN_DONE: "reading:noteGenDone",
       NOTE_GEN_FAILED: "reading:noteGenFailed"
     });
@@ -47,7 +23,6 @@ describe("reading shared types", () => {
 
   test("Alice-like WeRead IPC channel names are stable", () => {
     expect(WEREAD_IPC_CHANNELS).toMatchObject({
-      OPEN_AND_FETCH_KEY: "weread:openAndFetchKey",
       GET_KEY: "weread:getKey",
       TEST_KEY: "weread:testKey",
       GET_SHELF: "weread:getShelf",
@@ -56,11 +31,7 @@ describe("reading shared types", () => {
       GET_REVIEWS: "weread:getReviews",
       GET_READ_DATA: "weread:getReadData",
       GET_BEST_BOOKMARKS: "weread:getBestBookmarks",
-      GET_PUBLIC_REVIEWS: "weread:getPublicReviews",
-      GENERATE_NOTE: "weread:generateNote",
-      EXPORT_ALL_NOTES: "weread:exportAllNotes",
-      SEARCH_BOOKS: "weread:searchBooks",
-      EXPORT_PROGRESS: "weread:exportProgress"
+      GET_PUBLIC_REVIEWS: "weread:getPublicReviews"
     });
   });
 

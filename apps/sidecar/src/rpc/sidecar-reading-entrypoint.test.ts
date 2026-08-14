@@ -160,44 +160,12 @@ describe.skipIf(!isNativeAvailable())("sidecar Reading entrypoint", () => {
 
     expect(methods).toEqual(expect.arrayContaining([
       READING_IPC_CHANNELS.GET_SNAPSHOT,
-      READING_IPC_CHANNELS.ADD_BOOK_TO_ALICE,
       WEREAD_IPC_CHANNELS.GET_SHELF,
       WEREAD_IPC_CHANNELS.GET_NOTEBOOKS,
       WEREAD_IPC_CHANNELS.GET_BOOKMARKS,
       WEREAD_IPC_CHANNELS.GET_REVIEWS,
-      WEREAD_IPC_CHANNELS.GENERATE_NOTE,
-      WEREAD_IPC_CHANNELS.EXPORT_ALL_NOTES,
-      WEREAD_IPC_CHANNELS.SEARCH_BOOKS
+      WEREAD_IPC_CHANNELS.GET_PUBLIC_REVIEWS
     ]));
   });
 
-  test("desktop sidecar process can add and list a user-recommended book", async () => {
-    sidecar = createSidecarClient(tempConfigDir);
-
-    const book = await sidecar.call(READING_IPC_CHANNELS.ADD_BOOK_TO_ALICE, {
-      title: "置身事内",
-      reason: "用户希望 Lume 一起读，理解制度和普通生活之间的关系。"
-    }) as {
-      id: string;
-      title: string;
-      track: string;
-      status: string;
-    };
-
-    expect(book).toMatchObject({
-      title: "置身事内",
-      track: "recommended",
-      status: "queued"
-    });
-
-    const books = await sidecar.call(READING_IPC_CHANNELS.LIST_BOOKS, {}) as Array<{
-      id: string;
-      title: string;
-    }>;
-
-    expect(books).toContainEqual(expect.objectContaining({
-      id: book.id,
-      title: "置身事内"
-    }));
-  });
 });
