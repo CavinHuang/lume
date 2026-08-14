@@ -1,3 +1,5 @@
+import { unwrapRuntimeViewValue } from "./runtime-view.js";
+
 export class DocumentedCapability {
     context;
     id;
@@ -108,15 +110,22 @@ function normalizeBrowserAuthOptions(options) {
                 selector: normalizeBrowserAuthSelector(options.submit.selector),
             }
         } : {}),
+        ...(options.options ? {
+            options: options.options.map((option) => ({
+                ...option,
+                ...(option.selector ? { selector: normalizeBrowserAuthSelector(option.selector) } : {}),
+            })),
+        } : {}),
     };
 }
 function normalizeBrowserAuthSelector(selector) {
     if (typeof selector === "string")
         return selector;
-    if (selector && typeof selector === "object" && "ast" in selector) {
-        return selector.ast;
+    const raw = unwrapRuntimeViewValue(selector);
+    if (raw && typeof raw === "object" && "ast" in raw) {
+        return raw.ast;
     }
-    return selector;
+    return raw;
 }
 export function createCapabilityDefinitions() {
     const definitions = [

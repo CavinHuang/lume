@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto"
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, session, shell, type IpcMainEvent } from "electron"
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme, session, shell, type IpcMainEvent } from "electron"
 import {
   BROWSER_PROTOCOL_MAX_SUPPORTED,
   BROWSER_PROTOCOL_MIN_SUPPORTED,
@@ -9,6 +9,7 @@ import {
   DEFAULT_BROWSER_SETTINGS,
   type BrowserActionRequest,
   type BrowserAuthFieldRequest,
+  type BrowserAuthOption,
   type BrowserAuthRequest,
   type BrowserAuthResult,
   type BrowserErrorCode,
@@ -251,6 +252,7 @@ export class BrowserRuntime {
     this.extensions = new BrowserExtensionStore(options.configDir)
     this.credentials = new BrowserCredentialVault(options.configDir, options.credentialStorage)
     this.workspaces = new BrowserWorkspaceStore(options.configDir)
+    nativeTheme.on("updated", this.onThemeUpdated)
     this.annotations = new BrowserAnnotationManager({
       configDir: options.configDir,
       emit: (method, params) => this.options.emit({ method, params }),
@@ -259,7 +261,7 @@ export class BrowserRuntime {
         const data = Buffer.from(await this.screenshot(tab as BrowserTab, { fullPage: false }), 'base64')
         const image = nativeImage.createFromBuffer(data)
         const size = image.getSize()
-        return { data, width: size.width, height: size.height, deviceScaleFactor: tab.zoomFactor ?? 1 }
+        return { data: image.toPNG(), width: size.width, height: size.height, deviceScaleFactor: tab.zoomFactor ?? 1 }
       },
     })
     void this.restoreBrowserExtensions()
@@ -385,6 +387,7 @@ export class BrowserRuntime {
       const targetUrl = tab.pendingUrl || tab.url
       tab.pendingUrl = undefined
       if (targetUrl) void contents.loadURL(targetUrl).catch(() => undefined)
+      this.syncTabColorScheme(tab)
       if (tab.scrollPosition) {
         contents.once("did-finish-load", () => {
           const scroll = tab.scrollPosition
@@ -396,6 +399,21 @@ export class BrowserRuntime {
     })
     this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
     return true
+  }
+
+  // 页面 prefers-color-scheme 跟随应用主题（对齐 Codex setEmulatedMedia 同步）；
+  // runtime 为应用级单例，nativeTheme 监听随进程生命周期，无需拆卸
+  private readonly onThemeUpdated = () => {
+    for (const tab of this.tabs.values()) {
+      if (tab.webContents && !tab.webContents.isDestroyed()) this.syncTabColorScheme(tab)
+    }
+  }
+
+  private syncTabColorScheme(tab: BrowserTab): void {
+    const scheme = nativeTheme.shouldUseDarkColors ? "dark" : "light"
+    void withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-color-scheme", value: scheme }],
+    })).catch(() => undefined)
   }
 
   private markGuestGone(tab: BrowserTab, contents: Electron.WebContents, details: { reason?: string; exitCode?: number } = {}): void {
@@ -1156,6 +1174,11 @@ export class BrowserRuntime {
       tab.url = stripUrl(url)
       tab.securityState = securityStateForUrl(tab.url)
       tab.lastOpenedAt = new Date().toISOString()
+      tab.generation += 1
+      tab.inputSequence += 1
+      tab.domNodes = undefined
+      if (tab.context?.actor === "agent") tab.agentLease = { browserSessionId: tab.context.browserSessionId, browserTurnId: tab.context.browserTurnId, generation: tab.generation }
+      else tab.agentLease = undefined
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
       this.annotations.onGuestReady(tab)
       this.rememberTab(tab)
@@ -1591,23 +1614,22 @@ export class BrowserRuntime {
         && splitFrameLocator(params.locator)
         && ["click", "doubleClick", "scroll", "fill", "type", "press", "select", "check", "uncheck"].includes(method)) {
         if (tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
-        tab.inputSequence += 1
-        tab.agentDispatching = true
-        try {
-          const argument = method === "fill" || method === "type"
-            ? String(params.text ?? "")
-            : method === "press"
-              ? String(params.key ?? "Enter")
-              : method === "select"
-                ? JSON.stringify(Array.isArray(params.value) ? params.value : [String(params.value ?? "")])
-                : undefined
-          await this.executeFrameLocatorQuery(tab, params.locator, method as BrowserLocatorQuery, argument)
-        } finally {
-          tab.agentDispatching = false
-        }
+        const argument = method === "fill" || method === "type"
+          ? String(params.text ?? "")
+          : method === "press"
+            ? String(params.key ?? "Enter")
+            : method === "select"
+              ? JSON.stringify(Array.isArray(params.value) ? params.value : [String(params.value ?? "")])
+              : undefined
+        const rawFrameAutoWait = params.timeoutMs ?? params.timeout_ms
+        const frameAutoWaitMs = rawFrameAutoWait === 0 ? 0 : (boundedNumber(rawFrameAutoWait, 0, 30_000) || 3_000)
+        await this.runFrameLocatorActionWithAutoWait(tab, generation, inputSequence, params, method as BrowserLocatorQuery, argument, frameAutoWaitMs)
         return { ok: true, inputSequence: tab.inputSequence }
       }
-      const target = await this.resolveTarget(tab, params)
+      // 显式 timeoutMs:0 = 关闭 auto-wait（boundedNumber 的 || 3_000 会吞掉 0）
+      const rawAutoWait = params.timeoutMs ?? params.timeout_ms
+      const autoWaitMs = rawAutoWait === 0 ? 0 : (boundedNumber(rawAutoWait, 0, 30_000) || 3_000)
+      const target = await this.resolveTargetWithAutoWait(tab, generation, params, autoWaitMs)
       if (tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
       tab.inputSequence += 1
       tab.agentDispatching = true
@@ -1739,6 +1761,7 @@ export class BrowserRuntime {
   private async handleBrowserAuthMessage(auth: BrowserAuthSession, payload: unknown): Promise<void> {
     if (!isRecord(payload) || auth.settled) return
     if (payload.cancel === true) { this.settleBrowserAuth(auth, { status: "cancelled" }); return }
+    if (payload.decline === true) { this.settleBrowserAuth(auth, { status: "declined" }); return }
     if (!isRecord(payload.values)) return
     const tab = this.tabs.get(auth.tabId)
     if (!tab || tab.generation !== auth.generation || tab.inputSequence !== auth.inputSequence) { this.settleBrowserAuth(auth, { status: "page_changed" }); return }
@@ -1746,6 +1769,32 @@ export class BrowserRuntime {
     const selectedOption = typeof payload.selectedOption === "string" ? payload.selectedOption : undefined
     const option = auth.request.options?.find((item) => item.id === selectedOption)
     if (auth.request.options?.length && !option) return
+    // method-only 选项：用户选择登录方式，主进程点击对应按钮，不填写任何字段
+    if (option?.locator) {
+      try {
+        const target = await this.resolveTarget(tab, { locator: combineAuthLocators(option.frameLocator, option.locator) })
+        if (auth.settled) return
+        if (tab.generation !== auth.generation || tab.inputSequence !== auth.inputSequence) {
+          this.settleBrowserAuth(auth, { status: "page_changed" })
+          return
+        }
+        if (safeOrigin(tab.url) !== auth.origin) {
+          this.settleBrowserAuth(auth, { status: "origin_changed" })
+          return
+        }
+        tab.inputSequence += 1
+        tab.agentDispatching = true
+        try {
+          await this.dispatchMouse(tab, "click", target)
+        } finally {
+          tab.agentDispatching = false
+        }
+        this.settleBrowserAuth(auth, { status: "submitted", selected_option: selectedOption })
+      } catch {
+        this.settleBrowserAuth(auth, { status: "submission_failed" })
+      }
+      return
+    }
     const enabledFieldIds = new Set(option?.fields ?? auth.request.fields.map((field) => field.id))
     const values = new Map<string, string>()
     for (const field of auth.request.fields) {
@@ -2344,13 +2393,21 @@ export class BrowserRuntime {
       if (splitFrameLocator(params.locator)) return await this.executeFrameLocatorQuery(tab, params.locator, operation, argument)
       return await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(${browserLocatorScript()})(${JSON.stringify(params.locator)},${JSON.stringify(operation)},${JSON.stringify(argument)})` }], true)
     } catch (error) {
+      // 已带 code 的 browserError（含 withDebugger 归类的 tab_not_found/stale_target）原样透传，避免被改写
+      if (error && typeof error === "object" && "code" in error) throw error
       const message = error instanceof Error ? error.message : ""
-      const code = ["stale_target", "strict_locator_violation", "action_denied"].find((value) => message.includes(value)) ?? "stale_target"
+      const code = ["stale_target", "strict_locator_violation", "action_denied", "tab_not_found"].find((value) => message.includes(value)) ?? "stale_target"
       throw browserError(code as BrowserErrorCode)
     }
   }
 
-  private async executeFrameLocatorQuery(tab: BrowserTab, locator: BrowserLocator, operation: BrowserLocatorQuery, argument?: string): Promise<unknown> {
+  private async executeFrameLocatorQuery(
+    tab: BrowserTab,
+    locator: BrowserLocator,
+    operation: BrowserLocatorQuery,
+    argument?: string,
+    actionGuard?: { generation: number; inputSequence: number },
+  ): Promise<unknown> {
     const parts = splitFrameLocator(locator)
     if (!parts) throw browserError("invalid_browser_request")
     const evaluation = operation === "evaluate" ? parseLocatorEvaluation(argument) : undefined
@@ -2394,15 +2451,26 @@ export class BrowserRuntime {
         grantUniveralAccess: false,
       }) as { executionContextId?: number }
       if (!isolated.executionContextId || generation !== tab.generation) throw browserError("stale_target")
-      const evaluated = await debuggerRef.sendCommand("Runtime.evaluate", {
-        contextId: isolated.executionContextId,
-        expression: evaluation
-          ? locatorReadonlyExpression(parts.locator, evaluation.script, evaluation.arg)
-          : `(${browserLocatorScript()})(${JSON.stringify(parts.locator)},${JSON.stringify(operation)},${JSON.stringify(argument)})`,
-        returnByValue: true,
-        awaitPromise: true,
-        ...(evaluation ? { throwOnSideEffect: true, timeout: evaluation.timeoutMs } : {}),
-      }) as { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } }
+      if (actionGuard) {
+        if (tab.generation !== actionGuard.generation || tab.inputSequence !== actionGuard.inputSequence) throw browserError("stale_target")
+        tab.inputSequence += 1
+        actionGuard.inputSequence = tab.inputSequence
+        tab.agentDispatching = true
+      }
+      let evaluated: { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } }
+      try {
+        evaluated = await debuggerRef.sendCommand("Runtime.evaluate", {
+          contextId: isolated.executionContextId,
+          expression: evaluation
+            ? locatorReadonlyExpression(parts.locator, evaluation.script, evaluation.arg)
+            : `(${browserLocatorScript()})(${JSON.stringify(parts.locator)},${JSON.stringify(operation)},${JSON.stringify(argument)})`,
+          returnByValue: true,
+          awaitPromise: true,
+          ...(evaluation ? { throwOnSideEffect: true, timeout: evaluation.timeoutMs } : {}),
+        }) as { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } }
+      } finally {
+        if (actionGuard) tab.agentDispatching = false
+      }
       if (evaluated.exceptionDetails) throw browserError(evaluation ? readonlyLocatorExceptionCode(evaluated.exceptionDetails) : frameLocatorExceptionCode(evaluated.exceptionDetails))
       if (generation !== tab.generation) throw browserError("stale_target")
       const value = evaluated.result?.value
@@ -2459,9 +2527,75 @@ export class BrowserRuntime {
       if (splitFrameLocator(params.locator)) return await this.executeFrameLocatorQuery(tab, params.locator, "target") as ResolvedBrowserTarget
       return await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(${browserLocatorScript()})(${JSON.stringify(params.locator)})` }], true) as ResolvedBrowserTarget
     } catch (error) {
+      // 已带 code 的 browserError（含 withDebugger 归类的 tab_not_found/stale_target）原样透传，避免被改写
+      if (error && typeof error === "object" && "code" in error) throw error
       const message = error instanceof Error ? error.message : ""
-      const code = ["stale_target", "strict_locator_violation", "action_denied"].find((value) => message.includes(value)) ?? "stale_target"
+      const code = ["stale_target", "strict_locator_violation", "action_denied", "tab_not_found"].find((value) => message.includes(value)) ?? "stale_target"
       throw browserError(code as BrowserErrorCode)
+    }
+  }
+
+  // auto-wait：在 timeoutMs 内重试 resolveTarget，让 locator 操作自动等元素就绪（对齐 Codex mI 循环）。
+  // 检查项复用 resolveTarget 已有的 visible/enabled/obstruction；多匹配(strict)不重试立即抛；导航靠 generation 识别。
+  private async resolveTargetWithAutoWait(
+    tab: BrowserTab,
+    generation: number,
+    params: Record<string, unknown>,
+    timeoutMs: number,
+  ): Promise<ResolvedBrowserTarget> {
+    // 坐标点目标(无 locator)或 timeoutMs<=0(关闭等待)：直通 one-shot
+    if (timeoutMs <= 0 || params.locator === undefined || !isBrowserLocator(params.locator)) {
+      return this.resolveTarget(tab, params)
+    }
+    const deadline = Date.now() + timeoutMs
+    while (true) {
+      if (tab.generation !== generation) throw browserError("stale_target")
+      try {
+        return await this.resolveTarget(tab, params)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : ""
+        if (message.includes("invalid_browser_request")) throw browserError("invalid_browser_request")
+        if (message.includes("strict_locator_violation")) throw browserError("strict_locator_violation")
+        if (message.includes("tab_not_found")) throw browserError("tab_not_found")
+        // resolveTarget 的 action_denied 仅表示目标暂时不可见、不可用或被遮挡；具体动作的永久拒绝发生在后续 dispatch。
+        if (Date.now() >= deadline) throw browserError("actionability_failed")
+        await delay(50)
+      }
+    }
+  }
+
+  // frame-locator action 的 auto-wait 包装（executeFrameLocatorQuery 单次查询无重试）
+  private async runFrameLocatorActionWithAutoWait(
+    tab: BrowserTab,
+    generation: number,
+    inputSequence: number,
+    params: Record<string, unknown>,
+    operation: BrowserLocatorQuery,
+    argument: string | undefined,
+    timeoutMs: number,
+  ): Promise<void> {
+    if (!isBrowserLocator(params.locator)) throw browserError("invalid_browser_request")
+    const locator = params.locator
+    const actionGuard = { generation, inputSequence }
+    if (timeoutMs <= 0) {
+      await this.executeFrameLocatorQuery(tab, locator, operation, argument, actionGuard)
+      return
+    }
+    const deadline = Date.now() + timeoutMs
+    while (true) {
+      if (tab.generation !== generation || tab.inputSequence !== actionGuard.inputSequence) throw browserError("stale_target")
+      try {
+        await this.executeFrameLocatorQuery(tab, locator, operation, argument, actionGuard)
+        return
+      } catch (error) {
+        const message = error instanceof Error ? error.message : ""
+        if (message.includes("invalid_browser_request")) throw browserError("invalid_browser_request")
+        if (message.includes("strict_locator_violation")) throw browserError("strict_locator_violation")
+        if (message.includes("tab_not_found")) throw browserError("tab_not_found")
+        if (message.includes("action_denied")) throw browserError("action_denied")
+        if (Date.now() >= deadline) throw browserError("actionability_failed")
+        await delay(50)
+      }
     }
   }
 
@@ -2526,26 +2660,33 @@ export class BrowserRuntime {
   }
 
   private async snapshot(tab: BrowserTab): Promise<unknown> {
-    return withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("DOMSnapshot.captureSnapshot", { computedStyles: [] }))
+    const result = await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("DOMSnapshot.captureSnapshot", { computedStyles: [] }))
+    // 防 token 爆炸：大页面/SPA 的 DOMSnapshot 可达数 MB，超阈值返回截断提示，
+    // 让 agent 改用 tab.screenshot()（视觉）或 playwright locator（精准定位）——对齐 Codex 大页面策略
+    const text = JSON.stringify(result)
+    if (text.length > 150_000) {
+      return { truncated: true, byteLength: text.length, hint: "DOM snapshot too large for one read; use tab.screenshot() for visual context or playwright locators to target specific elements" }
+    }
+    return result
   }
 
   private async screenshot(tab: BrowserTab, params: Record<string, unknown>): Promise<string> {
     if (params.fullPage === true) {
-      const result = await browserPromiseTimeout(withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "png", captureBeyondViewport: true })), 8_000) as { data?: string }
+      const result = await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "png", captureBeyondViewport: true }), 8_000) as { data?: string }
       if (typeof result.data === "string") return result.data
     }
     try {
       const image = await browserPromiseTimeout(browserContents(tab).capturePage(), 5_000)
-      return image.toPNG().toString("base64")
+      return image.toJPEG(80).toString("base64")
     } catch {
       const parent = this.options.getWindow()
       if (tab.visible && tab.surfaceBounds && parent && !parent.isDestroyed()) {
         try {
           const image = await browserPromiseTimeout(parent.webContents.capturePage(tab.surfaceBounds), 5_000)
-          if (!image.isEmpty()) return image.toPNG().toString("base64")
+          if (!image.isEmpty()) return image.toJPEG(80).toString("base64")
         } catch { /* CDP remains the final guest-only fallback. */ }
       }
-      const result = await browserPromiseTimeout(withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "png", captureBeyondViewport: false })), 8_000) as { data?: string }
+      const result = await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "jpeg", quality: 80, captureBeyondViewport: false }), 8_000) as { data?: string }
       if (typeof result.data === "string") return result.data
       throw browserError("browser_internal_error")
     }
@@ -2557,7 +2698,8 @@ export class BrowserRuntime {
     const selected = await dialog.showSaveDialog(win, { defaultPath: `lume-page-${Date.now()}.png`, filters: [{ name: "PNG", extensions: ["png"] }] })
     if (selected.canceled || !selected.filePath) return { saved: false }
     const data = await this.screenshot(tab, { ...params, fullPage: true })
-    writeFileSync(selected.filePath, Buffer.from(data, "base64"))
+    // screenshot 可能返回 jpeg（fallback 链），此处契约是 .png 文件——重编码保一致
+    writeFileSync(selected.filePath, nativeImage.createFromBuffer(Buffer.from(data, "base64")).toPNG())
     return { saved: true }
   }
 
@@ -2568,7 +2710,8 @@ export class BrowserRuntime {
     const id = randomUUID()
     const directory = join(this.options.configDir(), "browser", "review-resources", ownerThreadId)
     mkdirSync(directory, { recursive: true })
-    const data = Buffer.from(await this.screenshot(tab, { fullPage: false }), "base64")
+    // screenshot 恒返回 jpeg（视口路径），此处契约是 .png 文件——重编码保一致
+    const data = nativeImage.createFromBuffer(Buffer.from(await this.screenshot(tab, { fullPage: false }), "base64")).toPNG()
     if (!data.length || data.length > 20 * 1024 * 1024) throw browserError("browser_internal_error")
     writeFileSync(join(directory, `${id}.png`), data, { mode: 0o600 })
     return { screenshotRef: `browser-review-screenshot:${ownerThreadId}:${id}` }
@@ -4014,15 +4157,36 @@ function keyedParameterHash(method: string, params: Record<string, unknown>): st
   return createHmac("sha256", JOURNAL_HMAC_KEY).update(`${method}:${JSON.stringify(redactParams(params))}`).digest("hex").slice(0, 32)
 }
 const JOURNAL_HMAC_KEY = randomBytes(32)
+const DEBUGGER_OPERATIONS = new WeakMap<Electron.WebContents, Promise<unknown>>()
+const DEBUGGER_OPERATION_TIMEOUT_MS = 30_000
 function redactParams(params: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(params).map(([key, value]) => [key, typeof value === "string" ? "[redacted]" : typeof value === "object" ? "[object]" : value]))
 }
 
-async function withDebugger<T>(contents: Electron.WebContents, work: (debuggerRef: Electron.Debugger) => Promise<T>): Promise<T> {
-  const debuggerRef = contents.debugger
-  const attached = debuggerRef.isAttached()
-  if (!attached) debuggerRef.attach("1.3")
-  try { return await work(debuggerRef) } finally { if (!attached && debuggerRef.isAttached()) debuggerRef.detach() }
+async function withDebugger<T>(contents: Electron.WebContents, work: (debuggerRef: Electron.Debugger) => Promise<T>, timeoutMs = DEBUGGER_OPERATION_TIMEOUT_MS): Promise<T> {
+  const previous = DEBUGGER_OPERATIONS.get(contents) ?? Promise.resolve()
+  const operation = previous.catch(() => undefined).then(async () => {
+    const debuggerRef = contents.debugger
+    const attached = debuggerRef.isAttached()
+    if (!attached) debuggerRef.attach("1.3")
+    try {
+      return await browserPromiseTimeout(work(debuggerRef), timeoutMs)
+    } catch (error) {
+      // 必须带 .code —— dispatch catch 的 stableBrowserErrorCode 只认 code，裸 Error 会全部塌缩成 browser_internal_error
+      const message = error instanceof Error ? error.message : String(error ?? "")
+      if (/Target closed|Session.*not attached|No target|target.*not found/i.test(message)) throw Object.assign(new Error(`tab_not_found: ${message}`), { code: "tab_not_found" })
+      if (/Cannot find context|Execution context was destroyed|context.*destroyed|context.*not found/i.test(message)) throw Object.assign(new Error(`stale_target: ${message}`), { code: "stale_target" })
+      throw error
+    } finally {
+      if (!attached && debuggerRef.isAttached()) debuggerRef.detach()
+    }
+  })
+  DEBUGGER_OPERATIONS.set(contents, operation)
+  try {
+    return await operation
+  } finally {
+    if (DEBUGGER_OPERATIONS.get(contents) === operation) DEBUGGER_OPERATIONS.delete(contents)
+  }
 }
 
 class BrowserOperationJournal {
@@ -4106,13 +4270,26 @@ function sanitizeBrowserAuthRequest(value: Record<string, unknown>): BrowserAuth
       ...(frameLocator ? { frameLocator } : {}),
     }]
   })
-  if (!tabId || !Number.isSafeInteger(generation) || generation < 1 || !origin || !expiresAt || !fields.length) throw browserError("invalid_browser_request")
-  const options = (Array.isArray(value.options) ? value.options.slice(0, 10) : []).flatMap((raw) => {
+  if (!tabId || !Number.isSafeInteger(generation) || generation < 1 || !origin || !expiresAt) throw browserError("invalid_browser_request")
+  const optionIds = new Set<string>()
+  const options = (Array.isArray(value.options) ? value.options.slice(0, 10) : []).flatMap((raw): BrowserAuthOption[] => {
     if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.label !== "string" || !Array.isArray(raw.fields)) return []
     const optionFields = raw.fields.filter((id): id is string => typeof id === "string" && ids.has(id))
-    if (!optionFields.length) return []
-    return [{ id: raw.id.slice(0, 100), label: raw.label.slice(0, 200), fields: [...new Set(optionFields)] }]
+    // method-only 选项：无字段但带 locator（用户选登录方式 → 后端点按钮），对齐 Codex BrowserAuthOption.selector
+    const locator = isBrowserLocator(raw.locator) ? raw.locator : undefined
+    if (!optionFields.length && !locator) return []
+    const id = raw.id.slice(0, 100)
+    if (optionIds.has(id)) throw browserError("invalid_browser_request")
+    optionIds.add(id)
+    if (locator) {
+      validateBrowserLocator(locator)
+      const frameLocator = isBrowserLocator(raw.frameLocator) ? raw.frameLocator : undefined
+      if (frameLocator) validateBrowserLocator(frameLocator)
+      return [{ id, label: raw.label.slice(0, 200), fields: [...new Set(optionFields)], locator, ...(frameLocator ? { frameLocator } : {}) }]
+    }
+    return [{ id, label: raw.label.slice(0, 200), fields: [...new Set(optionFields)] }]
   })
+  if (!fields.length && !options.some((item) => item.locator)) throw browserError("invalid_browser_request")
   let submit: BrowserAuthRequest["submit"]
   if (isRecord(value.submit) && value.submit.kind === "click" && isBrowserLocator(value.submit.locator)) {
     validateBrowserLocator(value.submit.locator)
@@ -4141,10 +4318,10 @@ function browserAuthHtml(request: BrowserAuthRequest): string {
   const safe = JSON.stringify({
     origin: request.origin,
     fields: request.fields.map(({ id, label, inputType, autocomplete, required }) => ({ id, label, inputType, autocomplete, required })),
-    options: request.options ?? [],
+    options: (request.options ?? []).map(({ id, label, fields }) => ({ id, label, fields })),
   }).replaceAll("<", "\\u003c")
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
-<style>*{box-sizing:border-box}body{margin:0;background:#151517;color:#f4f4f5;font:13px system-ui,-apple-system,sans-serif}.wrap{padding:22px}.eyebrow{color:#a78bfa;font-size:11px;font-weight:600}.title{font-size:18px;font-weight:650;margin-top:5px}.origin{color:#a1a1aa;font-size:11px;margin:5px 0 18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.field{display:block;margin:11px 0}.label{display:flex;gap:4px;margin-bottom:5px;color:#d4d4d8;font-size:11px}.required{color:#fb7185}input,select{width:100%;height:36px;border:1px solid #3f3f46;border-radius:8px;background:#202024;color:#fafafa;padding:0 10px;outline:none}input:focus,select:focus{border-color:#8b5cf6;box-shadow:0 0 0 2px rgba(139,92,246,.2)}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}button{height:34px;border:0;border-radius:8px;padding:0 14px;font:inherit;cursor:pointer}.cancel{background:#29292e;color:#e4e4e7}.submit{background:#7c3aed;color:white;font-weight:600}.note{margin-top:12px;color:#71717a;font-size:10px;line-height:1.5}</style></head><body><form class="wrap" id="form"><div class="eyebrow">Lume Browser Auth</div><div class="title">在当前页面安全填写</div><div class="origin" id="origin"></div><div id="option"></div><div id="fields"></div><div class="note">凭证只会发送到主进程并直接填写到此标签页，不会进入聊天、Sidecar、日志或审计详情。</div><div class="actions"><button type="button" class="cancel" id="cancel">取消</button><button class="submit">填写并继续</button></div></form><script>const state=${safe};document.getElementById('origin').textContent=state.origin;const fields=document.getElementById('fields');const controls=new Map();for(const field of state.fields){const row=document.createElement('label');row.className='field';row.dataset.fieldId=field.id;const label=document.createElement('span');label.className='label';label.textContent=field.label;if(field.required){const mark=document.createElement('span');mark.className='required';mark.textContent='*';label.append(mark)}const input=document.createElement('input');input.type=field.inputType==='otp'?'text':field.inputType;input.autocomplete=field.autocomplete||'off';input.required=field.required;if(field.inputType==='otp')input.inputMode='numeric';row.append(label,input);fields.append(row);controls.set(field.id,{row,input})}let selectedOption;if(state.options.length){const select=document.createElement('select');for(const option of state.options){const item=document.createElement('option');item.value=option.id;item.textContent=option.label;select.append(item)}document.getElementById('option').append(select);const update=()=>{selectedOption=select.value;const enabled=new Set(state.options.find(item=>item.id===selectedOption)?.fields||[]);for(const [id,control] of controls){control.row.hidden=!enabled.has(id);control.input.disabled=!enabled.has(id)}};select.addEventListener('change',update);update()}document.getElementById('cancel').addEventListener('click',()=>window.lumeBrowserAuth.cancel());document.getElementById('form').addEventListener('submit',event=>{event.preventDefault();const values={};for(const [id,control] of controls)if(!control.input.disabled)values[id]=control.input.value;window.lumeBrowserAuth.submit({selectedOption,values});for(const control of controls.values())control.input.value=''})</script></body></html>`
+<style>*{box-sizing:border-box}body{margin:0;background:#151517;color:#f4f4f5;font:13px system-ui,-apple-system,sans-serif}.wrap{padding:22px}.eyebrow{color:#a78bfa;font-size:11px;font-weight:600}.title{font-size:18px;font-weight:650;margin-top:5px}.origin{color:#a1a1aa;font-size:11px;margin:5px 0 18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.field{display:block;margin:11px 0}.label{display:flex;gap:4px;margin-bottom:5px;color:#d4d4d8;font-size:11px}.required{color:#fb7185}input,select{width:100%;height:36px;border:1px solid #3f3f46;border-radius:8px;background:#202024;color:#fafafa;padding:0 10px;outline:none}input:focus,select:focus{border-color:#8b5cf6;box-shadow:0 0 0 2px rgba(139,92,246,.2)}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}button{height:34px;border:0;border-radius:8px;padding:0 14px;font:inherit;cursor:pointer}.cancel{background:#29292e;color:#e4e4e7}.submit{background:#7c3aed;color:white;font-weight:600}.note{margin-top:12px;color:#71717a;font-size:10px;line-height:1.5}</style></head><body><form class="wrap" id="form"><div class="eyebrow">Lume Browser Auth</div><div class="title">在当前页面安全填写</div><div class="origin" id="origin"></div><div id="option"></div><div id="fields"></div><div class="note">凭证只会发送到主进程并直接填写到此标签页，不会进入聊天、Sidecar、日志或审计详情。</div><div class="actions"><button type="button" class="cancel" id="decline">拒绝</button><button type="button" class="cancel" id="cancel">取消</button><button class="submit">填写并继续</button></div></form><script>const state=${safe};document.getElementById('origin').textContent=state.origin;const fields=document.getElementById('fields');const controls=new Map();for(const field of state.fields){const row=document.createElement('label');row.className='field';row.dataset.fieldId=field.id;const label=document.createElement('span');label.className='label';label.textContent=field.label;if(field.required){const mark=document.createElement('span');mark.className='required';mark.textContent='*';label.append(mark)}const input=document.createElement('input');input.type=field.inputType==='otp'?'text':field.inputType;input.autocomplete=field.autocomplete||'off';input.required=field.required;if(field.inputType==='otp')input.inputMode='numeric';row.append(label,input);fields.append(row);controls.set(field.id,{row,input})}let selectedOption;if(state.options.length){const select=document.createElement('select');for(const option of state.options){const item=document.createElement('option');item.value=option.id;item.textContent=option.label;select.append(item)}document.getElementById('option').append(select);const update=()=>{selectedOption=select.value;const enabled=new Set(state.options.find(item=>item.id===selectedOption)?.fields||[]);for(const [id,control] of controls){control.row.hidden=!enabled.has(id);control.input.disabled=!enabled.has(id)}};select.addEventListener('change',update);update()}document.getElementById('decline').addEventListener('click',()=>window.lumeBrowserAuth.decline());document.getElementById('cancel').addEventListener('click',()=>window.lumeBrowserAuth.cancel());document.getElementById('form').addEventListener('submit',event=>{event.preventDefault();const values={};for(const [id,control] of controls)if(!control.input.disabled)values[id]=control.input.value;window.lumeBrowserAuth.submit({selectedOption,values});for(const control of controls.values())control.input.value=''})</script></body></html>`
 }
 
 function applyPageTweaksScript(): string {
