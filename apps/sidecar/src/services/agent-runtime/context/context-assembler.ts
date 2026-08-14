@@ -239,14 +239,14 @@ export class ContextAssembler {
       ].join("\n")
       : "";
     const browserFallbackPolicy = hasBrowserRuntime
-      ? "Lume's shared persistent in-app Browser runtime is available through the bundled browser skill and mcp__node_repl__js. Login and site storage persist across Lume restarts, while Agent control remains scoped to the current task and tab. For live browser tasks, first call Skill with the exact skill name browser:browser (without a workspace prefix) and follow its bootstrap instructions exactly; never guess an import name, use require, or fall back to Bash. The runtime defaults to the iab backend. Do not claim browser automation is unavailable before attempting it. Use native computer-use only after the Browser runtime returns browser_unavailable, and state that capability was degraded."
+      ? "Lume's shared persistent in-app Browser runtime is available through the bundled browser skill and mcp__node_repl__js. Login, site storage, and handed-off tabs persist across Lume restarts, but JavaScript bindings and deferred tool activation reset for every new user turn. For live browser tasks, first call Skill in this turn with the exact skill name browser:browser (without a workspace prefix), then include its full bootstrap block in the first mcp__node_repl__js call even if an earlier transcript shows agent/browser/tab variables. Never call mcp__node_repl__js before loading the Skill in the current turn; never guess an import name, use require, or fall back to Bash. The runtime defaults to the iab backend. Do not claim browser automation is unavailable before attempting it. Use native computer-use only after the Browser runtime returns browser_unavailable, and state that capability was degraded."
       : hasComputerUseTools
         ? "No Browser runtime tool is available for this turn. Use native computer-use for visible browser interaction and state that DOM browser capability is unavailable."
         : "";
     const browserContinuityPolicy = browserContinuity && hasBrowserRuntime
       ? [
           "A task-owned in-app browser tab from an earlier turn is still available. Continue that tab instead of creating a duplicate.",
-          "After loading browser:browser, call browser.tabs.resumeHandoff() before reading or acting. Prefer the visible resumed tab; create a new tab only when no resumable or selected task tab exists.",
+          "After loading browser:browser in this turn, repeat its bootstrap block and call browser.tabs.resumeHandoff() before reading or acting. Prefer the visible resumed tab; create a new tab only when no resumable or selected task tab exists.",
           "If an old tab binding returns action_denied or tab_not_found, discard that binding, resume once, and retry the observation before reporting failure.",
           `<browser_continuity trust="trusted">${JSON.stringify(browserContinuity).replaceAll("<", "\\u003c")}</browser_continuity>`
         ].join("\n")

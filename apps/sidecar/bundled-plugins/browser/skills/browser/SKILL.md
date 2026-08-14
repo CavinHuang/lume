@@ -11,23 +11,15 @@ Use this skill for ordinary live web navigation and interaction. The Browser run
 
 Treat connection setup as internal. Do not mention Node REPL, JavaScript sessions, module imports, or Browser Broker in user-facing updates unless the user asks about the implementation.
 
-Before the first browser action in a task, bootstrap the trusted client through `mcp__node_repl__js`:
+Every user turn starts with fresh JavaScript bindings and deferred Browser tool activation. In every turn, invoke this Skill before calling `mcp__node_repl__js`. The first `mcp__node_repl__js` call after loading the Skill must repeat the trusted client bootstrap, even when the transcript contains `agent`, `browser`, or `tab` bindings from an earlier turn.
+
+Use this complete bootstrap and resumption block for that first browser call:
 
 ```js
 if (!globalThis.agent?.browsers) {
   var { setupLumeBrowserRuntime } = await import("${PLUGIN_DIR}/scripts/browser-client.mjs");
   await setupLumeBrowserRuntime({ globals: globalThis });
 }
-```
-
-Set `timeout_ms` to `300000` on browser `mcp__node_repl__js` calls. Navigation can wait for an action-time confirmation, so the default tool timeout is too short.
-Set `title` to a short user-facing description such as `读取 X 首页` or `打开 GitHub Issue`; never expose the runtime implementation in that title.
-
-The runtime is persistent. Use `var` for reusable top-level bindings, and return observations with `nodeRepl.write(JSON.stringify(value))`; bare final expressions are invisible.
-
-Select the in-app browser and resume the task's existing tab before creating one:
-
-```js
 var browser = await agent.browsers.getDefault();
 var resumedTabs = await browser.tabs.resumeHandoff();
 var tab = resumedTabs[0]
@@ -36,6 +28,11 @@ if (!tab) tab = await browser.tabs.new();
 if ((await tab.url()) !== "https://example.com") await tab.goto("https://example.com");
 nodeRepl.write(JSON.stringify({ title: await tab.title(), url: await tab.url() }));
 ```
+
+Set `timeout_ms` to `300000` on browser `mcp__node_repl__js` calls. Navigation can wait for an action-time confirmation, so the default tool timeout is too short.
+Set `title` to a short user-facing description such as `读取 X 首页` or `打开 GitHub Issue`; never expose the runtime implementation in that title.
+
+The in-app browser profile and handed-off tabs persist across turns; JavaScript bindings persist only within the current turn. Use `var` for reusable top-level bindings, and return observations with `nodeRepl.write(JSON.stringify(value))`; bare final expressions are invisible.
 
 Only use `await browser.tabs.new({ sessionKind: "agent-task" })` when the user explicitly asks for an isolated or temporary session. That session intentionally does not retain login state after Lume exits.
 

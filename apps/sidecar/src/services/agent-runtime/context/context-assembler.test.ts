@@ -46,6 +46,9 @@ describe("ContextAssembler", () => {
     expect(result.runtimeContext).not.toContain("Preferred capability route:");
     expect(result.runtimeContext).toContain("shared persistent in-app Browser runtime is available");
     expect(result.runtimeContext).toContain("exact skill name browser:browser (without a workspace prefix)");
+    expect(result.runtimeContext).toContain("deferred tool activation reset for every new user turn");
+    expect(result.runtimeContext).toContain("Never call mcp__node_repl__js before loading the Skill in the current turn");
+    expect(result.runtimeContext).toContain("include its full bootstrap block in the first mcp__node_repl__js call");
     expect(result.runtimeContext).toContain("Do not claim browser automation is unavailable before attempting it");
     expect(result.runtimeContext).toContain("defaults to the iab backend");
     expect(result.runtimeContext).toContain("browser.tabs.resumeHandoff()");

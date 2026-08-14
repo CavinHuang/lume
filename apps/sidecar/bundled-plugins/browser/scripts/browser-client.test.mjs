@@ -40,6 +40,7 @@ globalThis.nodeRepl = {
       if (method === "runtime_list_browsers") return descriptors;
       if (method === "runtime_ping") return String(params.clientType).includes("extension") ? descriptors[1] : descriptors[0];
       if (method === "create_tab") return { id: "tab-1" };
+      if (method === "resume_handoff_tabs") return [{ id: "tab-1" }];
       if (method === "tab_title") return { title: "百度一下" };
       if (method === "tab_url") return { url: "https://www.baidu.com/" };
       if (method === "playwright_dom_snapshot") return { dom_snapshot: "search page" };
@@ -163,6 +164,20 @@ test("uses canonical backend selection and request shapes", async () => {
     version: 1,
     steps: [{ kind: "role", role: "button", name: "Google" }],
   });
+});
+
+test("exposes the handed-off tab recovery API across fresh runtimes", async () => {
+  calls.length = 0;
+  const globals = {};
+  await setupLumeBrowserRuntime({ globals });
+
+  const browser = await globals.agent.browsers.getDefault();
+  const resumed = await browser.tabs.resumeHandoff();
+
+  assert.equal(typeof browser.tabs.resumeHandoff, "function");
+  assert.equal(resumed.length, 1);
+  assert.equal(resumed[0].id, "tab-1");
+  assert.deepEqual(calls.map((call) => call.method), ["runtime_list_browsers", "resume_handoff_tabs"]);
 });
 
 test("refreshes live backends before URL selection", async () => {

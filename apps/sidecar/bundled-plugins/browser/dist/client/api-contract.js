@@ -15,7 +15,7 @@ export const API_MEMBERS = freezeArrayRecord({
     BotDetectionCapability: ["documentation", "report"],
     BrowserAuthCapability: ["documentation", "request"],
     BrowserUser: ["claimTab", "history", "openTabs"],
-    Tabs: ["content", "finalize", "get", "list", "new", "selected"],
+    Tabs: ["content", "finalize", "get", "list", "new", "resumeHandoff", "selected"],
     Tab: [
         "capabilities", "clipboard", "content", "cua", "dev", "dom_cua", "id", "playwright",
         "back", "close", "forward", "getJsDialog", "goto", "markDeliverable", "markHandoff",
