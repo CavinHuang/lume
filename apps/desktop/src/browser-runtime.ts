@@ -1601,13 +1601,15 @@ export class BrowserRuntime {
               : method === "select"
                 ? JSON.stringify(Array.isArray(params.value) ? params.value : [String(params.value ?? "")])
                 : undefined
-          await this.executeFrameLocatorQuery(tab, params.locator, method as BrowserLocatorQuery, argument)
+          const frameAutoWaitMs = boundedNumber(params.timeoutMs ?? params.timeout_ms, 0, 30_000) || 3_000
+          await this.runFrameLocatorActionWithAutoWait(tab, generation, params, method as BrowserLocatorQuery, argument, frameAutoWaitMs)
         } finally {
           tab.agentDispatching = false
         }
         return { ok: true, inputSequence: tab.inputSequence }
       }
-      const target = await this.resolveTarget(tab, params)
+      const autoWaitMs = boundedNumber(params.timeoutMs ?? params.timeout_ms, 0, 30_000) || 3_000
+      const target = await this.resolveTargetWithAutoWait(tab, generation, params, autoWaitMs)
       if (tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
       tab.inputSequence += 1
       tab.agentDispatching = true
@@ -2462,6 +2464,60 @@ export class BrowserRuntime {
       const message = error instanceof Error ? error.message : ""
       const code = ["stale_target", "strict_locator_violation", "action_denied"].find((value) => message.includes(value)) ?? "stale_target"
       throw browserError(code as BrowserErrorCode)
+    }
+  }
+
+  // auto-wait：在 timeoutMs 内重试 resolveTarget，让 locator 操作自动等元素就绪（对齐 Codex mI 循环）。
+  // 检查项复用 resolveTarget 已有的 visible/enabled/obstruction；多匹配(strict)不重试立即抛；导航靠 generation 识别。
+  private async resolveTargetWithAutoWait(
+    tab: BrowserTab,
+    generation: number,
+    params: Record<string, unknown>,
+    timeoutMs: number,
+  ): Promise<ResolvedBrowserTarget> {
+    // 坐标点目标(无 locator)或 timeoutMs<=0(关闭等待)：直通 one-shot
+    if (timeoutMs <= 0 || params.locator === undefined || !isBrowserLocator(params.locator)) {
+      return this.resolveTarget(tab, params)
+    }
+    const deadline = Date.now() + timeoutMs
+    while (true) {
+      if (tab.generation !== generation) throw browserError("stale_target")
+      try {
+        return await this.resolveTarget(tab, params)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : ""
+        if (message.includes("strict_locator_violation")) throw browserError("strict_locator_violation")
+        if (Date.now() >= deadline) throw browserError("actionability_failed")
+        await delay(50)
+      }
+    }
+  }
+
+  // frame-locator action 的 auto-wait 包装（executeFrameLocatorQuery 单次查询无重试）
+  private async runFrameLocatorActionWithAutoWait(
+    tab: BrowserTab,
+    generation: number,
+    params: Record<string, unknown>,
+    operation: BrowserLocatorQuery,
+    argument: string | undefined,
+    timeoutMs: number,
+  ): Promise<void> {
+    if (timeoutMs <= 0) {
+      await this.executeFrameLocatorQuery(tab, params.locator, operation, argument)
+      return
+    }
+    const deadline = Date.now() + timeoutMs
+    while (true) {
+      if (tab.generation !== generation) throw browserError("stale_target")
+      try {
+        await this.executeFrameLocatorQuery(tab, params.locator, operation, argument)
+        return
+      } catch (error) {
+        const message = error instanceof Error ? error.message : ""
+        if (message.includes("strict_locator_violation")) throw browserError("strict_locator_violation")
+        if (Date.now() >= deadline) throw browserError("actionability_failed")
+        await delay(50)
+      }
     }
   }
 
