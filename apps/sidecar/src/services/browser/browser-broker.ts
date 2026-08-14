@@ -42,14 +42,13 @@ export class BrowserBroker {
     const id = backend === "iab" ? "lume-iab" : "lume-extension"
     const browserCapabilities = backend === "iab"
       ? (runtime?.capabilities ?? [{ id: "tabs", description: "In-app tab lifecycle" }, { id: "navigation", description: "Policy-checked navigation" }, { id: "locator-actions", description: "Constrained snapshot and locator actions" }, { id: "screenshot", description: "Screenshot evidence" }, { id: "guardedUpload", description: "Confirmed task-bound file-ref upload" }, { id: "agentDownload", description: "Confirmed quota-bound Agent downloads" }])
-        .filter((capability) => !["advancedCdp", "browserAuth", "pageAssets"].includes(capability.id))
+        .filter((capability) => !["advancedCdp", "browserAuth", "pageAssets", "webmcp"].includes(capability.id))
       : [{ id: "tabs", description: "Explicit external Chrome tab lifecycle" }, { id: "navigation", description: "Explicit external Chrome navigation" }, { id: "input", description: "Explicit external Chrome click and input control" }, { id: "locator", description: "Strict locator resolution and actionability" }, { id: "screenshot", description: "External Chrome screenshot evidence" }, { id: "visibility", description: "Show or hide the external Chrome window" }, { id: "viewport", description: "Set or reset the external Chrome viewport" }]
     const tabCapabilities = backend === "iab" && Array.isArray(runtime?.capabilities)
       ? [
           ...(runtime.capabilities.some((capability) => capability.id === "advancedCdp") ? [{ id: "cdp", description: "Full CDP for isolated sessions with origin and per-action approval" }] : []),
           ...(runtime.capabilities.some((capability) => capability.id === "browserAuth") ? [{ id: "browserAuth", description: "Collect and submit credentials through an isolated backend-owned window" }] : []),
           ...(runtime.capabilities.some((capability) => capability.id === "pageAssets") ? [{ id: "pageAssets", description: "Inventory and export bounded assets observed in the current page state" }] : []),
-          ...(runtime.capabilities.some((capability) => capability.id === "webmcp") ? [{ id: "webmcp", description: "Invoke page-defined WebMCP tools announced by browser notifications" }] : []),
         ]
       : backend === "extension"
         ? this.extensionRuntime?.tabCapabilities ?? []
@@ -220,7 +219,10 @@ export class BrowserBroker {
     }
     if (input.method === "runtime_diagnostics") return { generation: this.generation, backends: this.listBackends() }
     const normalized = normalizeBrowserCommand(input.method, input.params ?? {})
-    const tabId = input.tabId ?? (typeof normalized.params.tabId === "string" ? normalized.params.tabId : undefined)
+    const commandParams = backend === "extension" && input.method === "tab_browser_auth_request"
+      ? canonicalExtensionBrowserAuthParams(input.params ?? {})
+      : normalized.params
+    const tabId = input.tabId ?? (typeof commandParams.tabId === "string" ? commandParams.tabId : undefined)
     const transport = backend === "extension" ? this.extension : this.main
     if (!transport || (backend === "extension" && (!this.extensionBackendEnabled || !this.chromePluginEnabled || !this.extensionConnected))) throw new Error("browser_unavailable")
     const context: BrowserRequestContext = { ...(input.threadId ? { threadId: input.threadId } : {}), browserSessionId: input.browserSessionId, browserTurnId: input.browserTurnId, ...(tabId ? { tabId } : {}), actor: "agent", capability: `browser-broker-v1:${this.generation}` }
@@ -248,7 +250,7 @@ export class BrowserBroker {
         ? authorizeBrowserUploadFiles(input.threadId, normalized.params.files)
         : undefined
       const params = {
-        ...normalized.params,
+        ...commandParams,
         ...(normalized.method === "ensure" && input.threadId ? { ownerThreadId: input.threadId } : {}),
         ...(normalized.method === "claim" ? this.referenceGrantForClaim(backend, context, tabId, normalized.params) : {}),
         ...(authorizedUploadFiles ? { files: authorizedUploadFiles.browserDownloadRefs, __authorizedFiles: authorizedUploadFiles.authorizedPaths } : {}),
@@ -431,6 +433,14 @@ function inferBackend(explicit: "iab" | "extension" | undefined, params: Record<
   if (explicit === "extension") return "extension"
   const requested = String(params?.browserId ?? params?.browser_id ?? params?.clientType ?? "").toLowerCase()
   return requested === "extension" || requested === "chrome-extension" || requested === "lume-extension" ? "extension" : "iab"
+}
+
+function canonicalExtensionBrowserAuthParams(input: Record<string, unknown>): Record<string, unknown> {
+  const params = { ...input }
+  if (typeof params.tabId !== "string" && typeof input.tab_id === "string") params.tabId = input.tab_id
+  delete params.browserId
+  delete params.browser_id
+  return params
 }
 
 function normalizeBrowserCommand(method: string, input: Record<string, unknown>): { method: string; params: Record<string, unknown> } {
@@ -729,7 +739,6 @@ const EXTENSION_TAB_CAPABILITIES = {
   pageAssets: { id: "pageAssets", description: "Inventory and export bounded assets from the current Chrome tab" },
   cdp: { id: "cdp", description: "Read-only CDP with per-action approval and buffered events" },
   botDetection: { id: "botDetection", description: "Report bot-detection blockers without page secrets" },
-  webmcp: { id: "webmcp", description: "Invoke page-defined WebMCP tools announced by browser notifications" },
 } as const
 
 function sanitizeExtensionRuntimeDescriptor(value: unknown): ExtensionRuntimeDescriptor | undefined {

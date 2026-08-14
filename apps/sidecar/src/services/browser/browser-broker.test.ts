@@ -78,7 +78,7 @@ test("canonical BrowserClient commands select and normalize the requested backen
   const mainCalls: any[] = []
   const extensionCalls: any[] = []
   const broker = new BrowserBroker(
-    { request: async (request) => { mainCalls.push(request); return request.method === "handshake" ? { capabilities: [{ id: "advancedCdp" }] } : request.method === "screenshot" ? "cG5n" : request.method === "elementScreenshot" ? { data: "ZWxlbWVudA==" } : { ok: true } } },
+    { request: async (request) => { mainCalls.push(request); return request.method === "handshake" ? { capabilities: [{ id: "advancedCdp" }] } : request.method === "policy:confirm" ? { approved: true, token: "token" } : request.method === "screenshot" ? "cG5n" : request.method === "elementScreenshot" ? { data: "ZWxlbWVudA==" } : { ok: true } } },
     { isAvailable: () => true, request: async (request) => {
       extensionCalls.push(request)
       if (request.method === "handshake") return {
@@ -96,7 +96,7 @@ test("canonical BrowserClient commands select and normalize the requested backen
   const descriptors = await broker.dispatch({ method: "runtime_list_browsers", browserSessionId: "s", browserTurnId: "t" }) as any[]
   assert.deepEqual(descriptors.map((descriptor) => [descriptor.type, descriptor.protocolVersion]), [["iab", 8], ["extension", 5]])
   assert.deepEqual(descriptors[0].capabilities.tab.map((capability: { id: string }) => capability.id), ["cdp"])
-  assert.deepEqual(descriptors[1].capabilities.tab.map((capability: { id: string }) => capability.id), ["pageAssets", "cdp", "webmcp"])
+  assert.deepEqual(descriptors[1].capabilities.tab.map((capability: { id: string }) => capability.id), ["pageAssets", "cdp"])
   assert.equal(descriptors[1].apiSupportOverrides["BrowserUser.history"], true)
   assert.equal(descriptors[1].apiSupportOverrides["PlaywrightAPI.evaluate"], true)
   assert.equal(descriptors[1].apiSupportOverrides["PlaywrightLocator.evaluate"], true)
@@ -141,6 +141,21 @@ test("canonical BrowserClient commands select and normalize the requested backen
 
   await broker.dispatch({ method: "finalize_tabs", params: { browserId: "lume-iab", keep: [{ tab_id: "tab-1", status: "deliverable" }] }, browserSessionId: "s", browserTurnId: "t" })
   assert.deepEqual(mainCalls.at(-1).params.keep, [{ tabId: "tab-1", status: "deliverable" }])
+
+  const authOptions = {
+    generation: 3,
+    origin: "https://example.com",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    fields: [{ id: "username", selector: "#username" }],
+  }
+  await broker.dispatch({
+    method: "tab_browser_auth_request",
+    params: { browserId: "lume-extension", tabId: "chrome-tab:1", options: authOptions },
+    browserSessionId: "s",
+    browserTurnId: "t",
+  })
+  assert.equal(extensionCalls.at(-1).method, "tab_browser_auth_request")
+  assert.deepEqual(extensionCalls.at(-1).params.options, authOptions)
 
   mainCalls.length = 0
   const dialogBroker = new BrowserBroker({ request: async (request) => {
@@ -280,10 +295,8 @@ test("broker exposes runtime-declared APIs and normalizes protected browser-use 
 
   const [descriptor] = await broker.dispatch({ method: "runtime_list_browsers", browserSessionId: "s", browserTurnId: "t" }) as any[]
   assert.equal(descriptor.apiSupportOverrides["BrowserUser.history"], true)
-  // Task 83：webmcp 不再从 iab browser capabilities 剥离（与 advancedCdp/browserAuth/pageAssets 不同），
-  // 故 browser capabilities 同时保留 history + webmcp；pageAssets 仍按设计剥离（仅 tab capabilities 出现）。
-  assert.deepEqual(descriptor.capabilities.browser.map((capability: { id: string }) => capability.id), ["history", "webmcp"])
-  assert.deepEqual(descriptor.capabilities.tab.map((capability: { id: string }) => capability.id), ["pageAssets", "webmcp"])
+  assert.deepEqual(descriptor.capabilities.browser.map((capability: { id: string }) => capability.id), ["history"])
+  assert.deepEqual(descriptor.capabilities.tab.map((capability: { id: string }) => capability.id), ["pageAssets"])
   assert.equal(descriptor.apiSupportOverrides["CdpCapability.readEvents"], false)
 
   const result = await broker.dispatch({
@@ -472,11 +485,7 @@ test("broker normalizes media downloads and confirmed file chooser uploads", asy
   assert.equal(calls.at(-1).params.__policyRequired, true)
 })
 
-// Task 83：iab 后端不再从 browser capabilities 剥离 webmcp（让 agent 看到 iab tab 的 webmcp 能力）。
-// 之前 L40 把 webmcp 与 advancedCdp/browserAuth/pageAssets 一并滤除，导致 iab descriptor 的
-// browser capabilities 缺失 webmcp；tab capabilities 仍保留（L47），但 agent 协商端依赖
-// browser capabilities 列表判定后端总体能力。修复后 webmcp 应同时出现在 browser 与 tab 两处。
-test("iab descriptor keeps webmcp in browser capabilities (no longer stripped)", () => {
+test("iab descriptor keeps internal WebMCP out of public capabilities", () => {
   const broker = new BrowserBroker({ request: async () => ({}) })
   broker.setPluginState({ browserEnabled: true })
   const runtime = { capabilities: [
@@ -487,13 +496,10 @@ test("iab descriptor keeps webmcp in browser capabilities (no longer stripped)",
   ] }
   const descriptor = broker.descriptor("iab", runtime as any)
   const browserCapabilityIds = descriptor.capabilities.browser.map((c: { id: string }) => c.id)
-  // webmcp 必须保留在 browser capabilities（修复前被剥离）
-  assert.ok(browserCapabilityIds.includes("webmcp"), `browser capabilities 应包含 webmcp，实际：${JSON.stringify(browserCapabilityIds)}`)
-  // advancedCdp 仍按设计从 browser capabilities 剥离（仅出现在 tab capabilities）
+  assert.ok(!browserCapabilityIds.includes("webmcp"), "WebMCP should not be advertised as a browser capability")
   assert.ok(!browserCapabilityIds.includes("advancedCdp"), "advancedCdp 仍应被剥离")
-  // webmcp 同步出现在 tab capabilities
   const tabCapabilityIds = descriptor.capabilities.tab.map((c: { id: string }) => c.id)
-  assert.ok(tabCapabilityIds.includes("webmcp"), "tab capabilities 应包含 webmcp")
+  assert.ok(!tabCapabilityIds.includes("webmcp"), "WebMCP should not be advertised as a tab capability")
 })
 
 test("iab descriptor default (no runtime) still excludes webmcp from browser capabilities", () => {

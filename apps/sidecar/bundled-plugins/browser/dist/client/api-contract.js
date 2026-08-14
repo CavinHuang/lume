@@ -14,8 +14,6 @@ export const API_MEMBERS = freezeArrayRecord({
     CdpCapability: ["documentation", "send", "readEvents"],
     BotDetectionCapability: ["documentation", "report"],
     BrowserAuthCapability: ["documentation", "request"],
-    WebMcpCapability: ["documentation", "fetchTools"],
-    WebMcpTools: ["call", "description"],
     BrowserUser: ["claimTab", "history", "openTabs"],
     Tabs: ["content", "finalize", "get", "list", "new", "selected"],
     Tab: [

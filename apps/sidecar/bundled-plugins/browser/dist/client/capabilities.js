@@ -97,37 +97,6 @@ export class BrowserAuthCapability extends DocumentedCapability {
         });
     }
 }
-export class WebMcpCapability extends DocumentedCapability {
-    async fetchTools() {
-        const result = await this.context.transport.send("webmcp_list_tools", {
-            browserId: this.context.browserId,
-            tabId: this.context.tabId,
-        });
-        return new WebMcpTools(this.context, Array.isArray(result) ? result : result?.tools ?? []);
-    }
-}
-export class WebMcpTools {
-    context;
-    tools;
-    constructor(context, tools) {
-        this.context = context;
-        this.tools = tools;
-    }
-    description() {
-        return JSON.stringify(this.tools, null, 2);
-    }
-    async call(name, input = {}) {
-        if (!this.tools.some((tool) => tool?.name === name))
-            throw new Error(`WebMCP tool not available: ${name}`);
-        const result = await this.context.transport.send("webmcp_invoke_tool", {
-            browserId: this.context.browserId,
-            tabId: this.context.tabId,
-            toolName: name,
-            input,
-        });
-        return result?.result ?? result;
-    }
-}
 function normalizeBrowserAuthOptions(options) {
     return {
         ...options,
@@ -189,11 +158,6 @@ export function createCapabilityDefinitions() {
             id: "browserAuth",
             scope: "tab",
             create: (context) => new BrowserAuthCapability(context, "browserAuth", "tab"),
-        },
-        {
-            id: "webmcp",
-            scope: "tab",
-            create: (context) => new WebMcpCapability(context, "webmcp", "tab"),
         },
     ];
     return new Map(definitions.map((definition) => [definition.id, definition]));
