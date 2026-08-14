@@ -16,7 +16,10 @@
 // ---- selector 编码（对齐 browserClientSelectorToLocator 解析格式）----
 
 function encodeSelectorString(value) {
-  return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+  const text = String(value)
+  // ">>" 是 frame 分隔符，出现在匹配文本里会被 parser 切开产生损坏 locator——显式拒绝
+  if (text.includes(">>")) throw new Error("selector text must not contain '>>' (frame separator)")
+  return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
 }
 function roleSelector(role, opts = {}) {
   if (opts.name === undefined) return `internal:role=${role}`
@@ -33,6 +36,11 @@ function placeholderSelector(text, opts = {}) {
 }
 function testIdSelector(testId) {
   return `internal:testid=[data-testid="${encodeSelectorString(testId)}"s]`
+}
+
+// broker adaptBrowserResult 会把值类结果包装成 {value}，解包还原 Playwright 契约
+function unwrapLocatorValue(result) {
+  return (result && typeof result === "object" && "value" in result) ? result.value : result
 }
 
 function asTabArray(result) {
@@ -54,6 +62,7 @@ export function createLumeBrowserRuntime(nodeRepl) {
   const req = (method, params = {}) => nodeRepl.browser.request(method, params)
 
   const base64ToBytes = (b64) => {
+    if (typeof Buffer !== "undefined") return new Uint8Array(Buffer.from(b64, "base64"))
     const bin = atob(b64)
     const bytes = new Uint8Array(bin.length)
     for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
@@ -90,16 +99,17 @@ export function createLumeBrowserRuntime(nodeRepl) {
       setChecked: (checked, opts) => req("playwright_locator_set_checked", { ...base, checked: checked !== false, ...(opts || {}) }),
       selectOption: (value, opts) => req("playwright_locator_select_option", { ...base, selections: value, ...(opts || {}) }),
       scroll: (opts) => req("playwright_locator_scroll", withOpts(opts)),
-      getAttribute: (name, opts) => req("playwright_locator_get_attribute", { ...base, name, ...(opts || {}) }),
-      innerText: (opts) => req("playwright_locator_inner_text", withOpts(opts)),
-      textContent: (opts) => req("playwright_locator_text_content", withOpts(opts)),
-      textContents: () => req("playwright_locator_all_text_contents", base),
-      inputValue: (opts) => req("playwright_locator_input_value", withOpts(opts)),
-      count: () => req("playwright_locator_count", base),
-      isVisible: () => req("playwright_locator_is_visible", base),
-      isEnabled: () => req("playwright_locator_is_enabled", base),
-      isChecked: () => req("playwright_locator_is_checked", base),
-      evaluate: (fn, arg, opts) => req("playwright_locator_evaluate", { ...base, fn: String(fn), arg, ...(opts || {}) }),
+      // broker adaptBrowserResult 会把 count→{count}、值类→{value} 包装，这里解包还原 Playwright 契约
+      getAttribute: async (name, opts) => unwrapLocatorValue(await req("playwright_locator_get_attribute", { ...base, name, ...(opts || {}) })),
+      innerText: async (opts) => unwrapLocatorValue(await req("playwright_locator_inner_text", withOpts(opts))),
+      textContent: async (opts) => unwrapLocatorValue(await req("playwright_locator_text_content", withOpts(opts))),
+      textContents: async () => unwrapLocatorValue(await req("playwright_locator_all_text_contents", base)),
+      inputValue: async (opts) => unwrapLocatorValue(await req("playwright_locator_input_value", withOpts(opts))),
+      count: async () => { const r = await req("playwright_locator_count", base); return (r && typeof r === "object" && "count" in r) ? r.count : r },
+      isVisible: async () => Boolean(unwrapLocatorValue(await req("playwright_locator_is_visible", base))),
+      isEnabled: async () => Boolean(unwrapLocatorValue(await req("playwright_locator_is_enabled", base))),
+      isChecked: async () => Boolean(unwrapLocatorValue(await req("playwright_locator_is_checked", base))),
+      evaluate: (fn, arg, opts) => req("playwright_locator_evaluate", { ...base, script: String(fn), arg, ...(opts || {}) }),
       waitFor: (opts) => req("playwright_locator_wait_for", { ...base, ...(opts || {}) }),
       readAll: () => req("playwright_locator_read_all", base),
       downloadMedia: (opts) => req("playwright_locator_download_media", { ...base, ...(opts || {}) }),
@@ -117,7 +127,7 @@ export function createLumeBrowserRuntime(nodeRepl) {
       domSnapshot: (opts) => req("playwright_dom_snapshot", { tabId, ...(opts || {}) }),
       elementInfo: (opts) => req("playwright_element_info", { tabId, ...(opts || {}) }),
       elementScreenshot: async (opts) => emitScreenshotImage(await req("playwright_element_screenshot", { tabId, ...(opts || {}) })),
-      evaluate: (fn, arg, opts) => req("playwright_evaluate", { tabId, fn: String(fn), arg, ...(opts || {}) }),
+      evaluate: (fn, arg, opts) => req("playwright_evaluate", { tabId, script: String(fn), arg, ...(opts || {}) }),
       waitForDownload: (opts) => req("playwright_wait_for_download", { tabId, ...(opts || {}) }),
       downloadPath: (opts) => req("playwright_download_path", { tabId, ...(opts || {}) }),
       waitForFileChooser: (opts) => req("playwright_wait_for_file_chooser", { tabId, ...(opts || {}) }),
@@ -195,7 +205,7 @@ export function createLumeBrowserRuntime(nodeRepl) {
       markDeliverable: () => req("mark_tab", { tabId, status: "deliverable" }),
       markHandoff: () => req("mark_tab", { tabId, status: "handoff" }),
       // JS dialog（alert/confirm/prompt）处理：遇弹窗先 getJsDialog 再 handleJsDialog，否则操作被阻塞
-      getJsDialog: () => req("tab_get_js_dialog", { tabId }),
+      getJsDialog: async () => { const r = await req("tab_get_js_dialog", { tabId }); return (r && typeof r === "object" && "dialog" in r) ? r.dialog ?? null : r ?? null },
       handleJsDialog: (opts) => req("tab_handle_js_dialog", { tabId, ...(opts || {}) }),
       exportContent: (opts) => req("tab_content_export", { tabId, ...(opts || {}) }),
       clipboard: {
@@ -225,7 +235,9 @@ export function createLumeBrowserRuntime(nodeRepl) {
         claimTab: (tab) =>
           req("browser_user_claim_tab", {
             browserId,
-            providerTabId: tab?.providerTabId ?? tab?.id ?? tab,
+            // runtime 的 claim 以 openTabs 返回的 claim handle(id)为 tabId；providerTabId/title/url 仅作 reference-grant 匹配
+            tabId: tab?.id ?? tab,
+            providerTabId: tab?.providerTabId,
             title: tab?.title,
             url: tab?.url,
           }),

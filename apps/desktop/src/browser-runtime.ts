@@ -1618,14 +1618,17 @@ export class BrowserRuntime {
               : method === "select"
                 ? JSON.stringify(Array.isArray(params.value) ? params.value : [String(params.value ?? "")])
                 : undefined
-          const frameAutoWaitMs = boundedNumber(params.timeoutMs ?? params.timeout_ms, 0, 30_000) || 3_000
+          const rawFrameAutoWait = params.timeoutMs ?? params.timeout_ms
+          const frameAutoWaitMs = rawFrameAutoWait === 0 ? 0 : (boundedNumber(rawFrameAutoWait, 0, 30_000) || 3_000)
           await this.runFrameLocatorActionWithAutoWait(tab, generation, params, method as BrowserLocatorQuery, argument, frameAutoWaitMs)
         } finally {
           tab.agentDispatching = false
         }
         return { ok: true, inputSequence: tab.inputSequence }
       }
-      const autoWaitMs = boundedNumber(params.timeoutMs ?? params.timeout_ms, 0, 30_000) || 3_000
+      // 显式 timeoutMs:0 = 关闭 auto-wait（boundedNumber 的 || 3_000 会吞掉 0）
+      const rawAutoWait = params.timeoutMs ?? params.timeout_ms
+      const autoWaitMs = rawAutoWait === 0 ? 0 : (boundedNumber(rawAutoWait, 0, 30_000) || 3_000)
       const target = await this.resolveTargetWithAutoWait(tab, generation, params, autoWaitMs)
       if (tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
       tab.inputSequence += 1
@@ -2381,6 +2384,8 @@ export class BrowserRuntime {
       if (splitFrameLocator(params.locator)) return await this.executeFrameLocatorQuery(tab, params.locator, operation, argument)
       return await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(${browserLocatorScript()})(${JSON.stringify(params.locator)},${JSON.stringify(operation)},${JSON.stringify(argument)})` }], true)
     } catch (error) {
+      // 已带 code 的 browserError（含 withDebugger 归类的 tab_not_found/stale_target）原样透传，避免被改写
+      if (error && typeof error === "object" && "code" in error) throw error
       const message = error instanceof Error ? error.message : ""
       const code = ["stale_target", "strict_locator_violation", "action_denied", "tab_not_found"].find((value) => message.includes(value)) ?? "stale_target"
       throw browserError(code as BrowserErrorCode)
@@ -2496,6 +2501,8 @@ export class BrowserRuntime {
       if (splitFrameLocator(params.locator)) return await this.executeFrameLocatorQuery(tab, params.locator, "target") as ResolvedBrowserTarget
       return await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(${browserLocatorScript()})(${JSON.stringify(params.locator)})` }], true) as ResolvedBrowserTarget
     } catch (error) {
+      // 已带 code 的 browserError（含 withDebugger 归类的 tab_not_found/stale_target）原样透传，避免被改写
+      if (error && typeof error === "object" && "code" in error) throw error
       const message = error instanceof Error ? error.message : ""
       const code = ["stale_target", "strict_locator_violation", "action_denied", "tab_not_found"].find((value) => message.includes(value)) ?? "stale_target"
       throw browserError(code as BrowserErrorCode)
@@ -2657,7 +2664,8 @@ export class BrowserRuntime {
     const selected = await dialog.showSaveDialog(win, { defaultPath: `lume-page-${Date.now()}.png`, filters: [{ name: "PNG", extensions: ["png"] }] })
     if (selected.canceled || !selected.filePath) return { saved: false }
     const data = await this.screenshot(tab, { ...params, fullPage: true })
-    writeFileSync(selected.filePath, Buffer.from(data, "base64"))
+    // screenshot 可能返回 jpeg（fallback 链），此处契约是 .png 文件——重编码保一致
+    writeFileSync(selected.filePath, nativeImage.createFromBuffer(Buffer.from(data, "base64")).toPNG())
     return { saved: true }
   }
 
@@ -2668,7 +2676,8 @@ export class BrowserRuntime {
     const id = randomUUID()
     const directory = join(this.options.configDir(), "browser", "review-resources", ownerThreadId)
     mkdirSync(directory, { recursive: true })
-    const data = Buffer.from(await this.screenshot(tab, { fullPage: false }), "base64")
+    // screenshot 恒返回 jpeg（视口路径），此处契约是 .png 文件——重编码保一致
+    const data = nativeImage.createFromBuffer(Buffer.from(await this.screenshot(tab, { fullPage: false }), "base64")).toPNG()
     if (!data.length || data.length > 20 * 1024 * 1024) throw browserError("browser_internal_error")
     writeFileSync(join(directory, `${id}.png`), data, { mode: 0o600 })
     return { screenshotRef: `browser-review-screenshot:${ownerThreadId}:${id}` }
@@ -4127,8 +4136,10 @@ async function withDebugger<T>(contents: Electron.WebContents, work: (debuggerRe
   } catch (error) {
     // 归类 CDP 错误：让 agent 区分 transient(navigation 期间 context 暂失，可重试) vs fatal(tab 没了，需重建)
     const message = error instanceof Error ? error.message : String(error ?? "")
-    if (/Target closed|Session.*not attached|No target|target.*not found/i.test(message)) throw new Error(`tab_not_found: ${message}`)
-    if (/Cannot find context|Execution context was destroyed|context.*destroyed|context.*not found/i.test(message)) throw new Error(`stale_target: ${message}`)
+    // 归类 CDP 错误：让 agent 区分 transient(navigation 期间 context 暂失，可重试) vs fatal(tab 没了，需重建)。
+    // 必须带 .code —— dispatch catch 的 stableBrowserErrorCode 只认 code，裸 Error 会全部塌缩成 browser_internal_error
+    if (/Target closed|Session.*not attached|No target|target.*not found/i.test(message)) throw Object.assign(new Error(`tab_not_found: ${message}`), { code: "tab_not_found" })
+    if (/Cannot find context|Execution context was destroyed|context.*destroyed|context.*not found/i.test(message)) throw Object.assign(new Error(`stale_target: ${message}`), { code: "stale_target" })
     throw error
   } finally { if (!attached && debuggerRef.isAttached()) debuggerRef.detach() }
 }

@@ -448,7 +448,7 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "browser_visibility_set": return { method: "browser:visibility:set", params }
     case "browser_viewport_set": return { method: "browser:viewport:set", params: { ...params, ...options, width: input.width ?? options.width, height: input.height ?? options.height } }
     case "browser_viewport_reset": return { method: "browser:viewport:reset", params }
-    case "create_tab": return { method: "ensure", params: { ...params, ...options, url: options.url } }
+    case "create_tab": return { method: "ensure", params: { ...params, ...options, url: options.url ?? params.url } }
     case "get_tab": return { method: "get", params }
     case "selected_tab": return { method: "selected", params }
     case "list_tabs": case "get_session_tabs": return { method: "list", params }
@@ -477,7 +477,7 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "navigate_tab_reload": return { method: "reload", params }
     case "tab_url": return { method: "url", params }
     case "tab_title": return { method: "title", params }
-    case "tab_screenshot": return { method: "screenshot", params: { ...params, ...options, fullPage: options.fullPage === true } }
+    case "tab_screenshot": return { method: "screenshot", params: { ...params, ...options, fullPage: options.fullPage === true || params.fullPage === true } }
     case "tab_content": return { method: "content", params: { ...params, format: input.content_type === "html" ? "html" : "text" } }
     case "tab_content_export": return { method: "content:export", params }
     case "tab_content_export_gsuite": return { method: "content:exportGsuite", params: { ...params, format: input.format } }
@@ -544,7 +544,7 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "playwright_locator_wait_for": return { method: "locator:waitFor", params }
     case "playwright_locator_evaluate": return { method: "locator:evaluate", params: { ...params, timeoutMs: input.timeoutMs ?? input.timeout_ms ?? options.timeoutMs } }
     case "playwright_locator_download_media": return { method: "downloadMedia", params }
-    case "playwright_wait_for_url": return { method: "wait:url", params: { ...params, timeoutMs: options.timeoutMs } }
+    case "playwright_wait_for_url": return { method: "wait:url", params: { ...params, timeoutMs: options.timeoutMs ?? params.timeoutMs ?? params.timeout_ms } }
     case "playwright_wait_for_load_state": return { method: "wait:load", params }
     case "playwright_wait_for_timeout": return { method: "wait:timeout", params }
     case "cua_click": return { method: "click", params }
