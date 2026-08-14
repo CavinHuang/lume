@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createAgent } from "./agent.js"
 import { SkillTool } from "./tools/skill-tool.js"
-import type { ToolDefinition } from "./types.js"
+import type { SDKMessage, ToolDefinition } from "./types.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
 import { forkSession, getSessionMessages, saveSession } from "./session.js"
 import { clearSkills, getSkill } from "./skills/registry.js"
@@ -108,14 +108,15 @@ describe("Agent runtime tool resolver", () => {
       model: "host/model-a",
     })
 
-    const consume = async () => {
-      for await (const _event of agent.query("hello", { abortSignal: controller.signal })) {
-        // Consume the query to exercise lazy setup.
-      }
+    const events: SDKMessage[] = []
+    for await (const event of agent.query("hello", { abortSignal: controller.signal })) {
+      events.push(event)
     }
 
-    await expect(consume()).rejects.toThrow("aborted")
+    // Soft abort: the run resolves normally with an error result and no provider call.
     expect(provider.requests).toHaveLength(0)
+    const result = events.find((event) => event.type === "result")
+    expect(result?.subtype).toBe("error_during_execution")
     await agent.close()
   })
 

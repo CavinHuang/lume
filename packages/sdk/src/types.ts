@@ -89,6 +89,7 @@ export type SDKMessage =
   | SDKSessionStateChangedMessage
   | SDKLocalCommandOutputMessage
   | SDKElicitationCompleteMessage
+  | SDKRunAbortedMessage
 
 /** Error type for SDKAssistantMessage when the turn ended due to an error. */
 export type SDKAssistantMessageError =
@@ -224,6 +225,14 @@ export interface SDKSystemMessage {
   plugins?: Array<{ name: string; path: string; source?: string }>
   output_style?: string
   claude_code_version?: string
+}
+
+/** Emitted via onAsyncEvent when a run is aborted; lists tool calls that never completed. */
+export interface SDKRunAbortedMessage {
+  type: 'system'
+  subtype: 'run_aborted'
+  session_id: string
+  pending_tool_calls: Array<{ id: string; name: string; input: unknown }>
 }
 
 export interface SDKLspDiagnosticsMessage {

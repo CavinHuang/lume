@@ -78,7 +78,7 @@ function wait(ms: number): Promise<null> {
 }
 
 describe("QueryEngine cancellation", () => {
-  test("propagates aborts from an active tool instead of continuing the turn", async () => {
+  test("aborts from an active tool end the turn with an interrupted placeholder", async () => {
     const controller = new AbortController()
     const started = deferred<void>()
     const provider = new StaticProvider([{
@@ -111,8 +111,14 @@ describe("QueryEngine cancellation", () => {
     await started.promise
     controller.abort()
 
-    await expect(running).rejects.toThrow("aborted")
+    const events = (await running) as Array<{ type: string; result?: { is_error: boolean; content: string } }>
     expect(provider.requests).toHaveLength(1)
+    // Soft abort: the run ends normally with a paired error tool_result.
+    const toolResults = events.filter((event) => event.type === "tool_result")
+    expect(toolResults).toHaveLength(1)
+    expect(toolResults[0].result?.is_error).toBe(true)
+    expect(toolResults[0].result?.content).toContain("interrupted")
+    expect(engine.getMessages().at(-1)?.role).toBe("user")
   })
 })
 
