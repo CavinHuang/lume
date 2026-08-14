@@ -443,7 +443,16 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "name_session": case "browser_name_session": return { method: "nameSession", params }
     case "browser_user_open_tabs": return { method: "openTabs", params }
     case "browser_user_claim_tab": return { method: "claim", params }
-    case "browser_user_history": return { method: "history:list", params }
+    case "browser_user_history": return {
+      method: "history:list",
+      params: {
+        ...params,
+        query: input.query ?? options.text,
+        limit: input.limit ?? options.maxResults,
+        from: normalizeBrowserHistoryTime(input.from ?? options.startTime),
+        to: normalizeBrowserHistoryTime(input.to ?? options.endTime),
+      },
+    }
     case "browser_visibility_get": return { method: "browser:visibility:get", params }
     case "browser_visibility_set": return { method: "browser:visibility:set", params }
     case "browser_viewport_set": return { method: "browser:viewport:set", params: { ...params, ...options, width: input.width ?? options.width, height: input.height ?? options.height } }
@@ -681,6 +690,10 @@ function normalizeBrowserAuthParams(params: Record<string, unknown>, options: Re
     }
   }
   return { ...params, ...options, fields, options: authOptions, submit }
+}
+
+function normalizeBrowserHistoryTime(value: unknown): unknown {
+  return typeof value === "number" && Number.isFinite(value) ? new Date(value).toISOString() : value
 }
 
 function decodeSelectorString(value: string): string {

@@ -285,9 +285,25 @@ test("broker exposes runtime-declared APIs and normalizes protected browser-use 
   assert.deepEqual(descriptor.capabilities.browser.map((capability: { id: string }) => capability.id), ["history", "webmcp"])
   assert.deepEqual(descriptor.capabilities.tab.map((capability: { id: string }) => capability.id), ["pageAssets", "webmcp"])
 
-  const result = await broker.dispatch({ method: "browser_user_history", params: { queries: ["example"] }, browserSessionId: "s", browserTurnId: "t" })
+  const result = await broker.dispatch({
+    method: "browser_user_history",
+    params: {
+      options: {
+        text: "example",
+        maxResults: 25,
+        startTime: Date.parse("2026-07-01T00:00:00.000Z"),
+        endTime: Date.parse("2026-08-01T00:00:00.000Z"),
+      },
+    },
+    browserSessionId: "s",
+    browserTurnId: "t",
+  })
   assert.equal(calls.at(-2).method, "policy:confirm")
   assert.equal(calls.at(-1).method, "history:list")
+  assert.deepEqual(
+    { query: calls.at(-1).params.query, limit: calls.at(-1).params.limit, from: calls.at(-1).params.from, to: calls.at(-1).params.to },
+    { query: "example", limit: 25, from: "2026-07-01T00:00:00.000Z", to: "2026-08-01T00:00:00.000Z" },
+  )
   assert.deepEqual(result, { items: [{ url: "https://example.com/", title: "Example", dateVisited: "2026-07-30T00:00:00.000Z" }] })
 
   await broker.dispatch({ method: "tab_page_assets_list", params: { tabId: "tab-1" }, browserSessionId: "s", browserTurnId: "t" })
