@@ -533,7 +533,6 @@ describe("runtime-core run", () => {
     expect(toolNames).toContain("Grep");
     expect(toolNames).toContain("WebSearch");
     expect(toolNames).toContain("WebFetch");
-    expect(toolNames).not.toContain("TaskContractWrite");
     expect(toolNames).toContain("TaskCreate");
     expect(toolNames).toContain("TaskUpdate");
     expect(toolNames).toContain("TaskList");
@@ -786,7 +785,6 @@ describe("runtime-core run", () => {
     expect(toolNames).not.toContain("Agent");
     expect(toolNames).not.toContain("Write");
     expect(toolNames).not.toContain("Edit");
-    expect(toolNames).not.toContain("TaskContractWrite");
     expect(toolNames).not.toContain("TaskReport");
     expect(toolNames).not.toContain("TodoWrite");
 
@@ -964,7 +962,7 @@ describe("runtime-core run", () => {
     expect(first).toBe(second);
   });
 
-  test("plan mode exposes read-only persistent Task tools without the legacy TaskContractWrite", async () => {
+  test("plan mode exposes read-only persistent Task tools", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-plan-md-thread-"));
     const agentDir = join(cwd, ".runtime-core-test");
     mkdirSync(agentDir, { recursive: true });
@@ -980,7 +978,6 @@ describe("runtime-core run", () => {
       workspaceSlug: "plan-md-workspace"
     });
 
-    expect(result.tools.find((item) => item.name === "TaskContractWrite")).toBeUndefined();
     expect(result.tools.find((item) => item.name === "TaskList")).toBeTruthy();
     expect(result.tools.find((item) => item.name === "TaskGet")).toBeTruthy();
 

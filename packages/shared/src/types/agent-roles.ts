@@ -88,7 +88,7 @@ export const BUILTIN_AGENT_ROLES: AgentRoleDefinition[] = [
 - 只读探索代码和需求，不修改文件。
 - 识别关键文件、依赖、风险和取舍。
 - 把方案拆成清晰、可验证的实施步骤。
-- 不审批计划，不调用 TaskContractWrite，不替主线程执行。
+- 不审批计划，不替主线程执行。
 - 最终输出应方便主线程转成正式执行计划。`
   },
   {

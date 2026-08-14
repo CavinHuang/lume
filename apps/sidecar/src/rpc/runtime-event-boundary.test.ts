@@ -21,21 +21,6 @@ describe("RuntimeEvent sidecar boundary", () => {
     expect(content).not.toContain("projectTaskRunToRuntimeEvents");
   });
 
-  test("agent RPC handlers delegate task execution orchestration", () => {
-    const content = source("apps/sidecar/src/rpc/agent-handlers.ts");
-
-    expect(content).not.toContain("../services/agent-runtime/task-run/task-run-controller");
-    expect(content).not.toContain("../services/agent-runtime/task-run/task-run-store");
-    expect(content).not.toContain("buildCurrentTaskRunSendInput");
-    expect(content).not.toContain("createTaskRunFromContract");
-    expect(content).not.toContain("startNextTaskRunTask");
-    expect(content).not.toContain("skipCurrentTask");
-    expect(content).not.toContain("markCurrentTaskUnreported");
-    expect(content).not.toContain("markTaskRunWaiting");
-    expect(content).not.toContain("const dispatchTaskExecution");
-    expect(content).not.toContain("function createTaskRunFromTaskContractRecord");
-  });
-
   test("runtime runner path no longer exposes onRunEvent callbacks", () => {
     for (const file of [
       "apps/sidecar/src/services/agent-runtime/runner/types.ts",
@@ -51,8 +36,7 @@ describe("RuntimeEvent sidecar boundary", () => {
   test("shared and sidecar event projection boundary exposes only RuntimeEvent", () => {
     for (const file of [
       "packages/shared/src/types/agent.ts",
-      "apps/sidecar/src/services/agent-runtime/runner/run-item-events.ts",
-      "apps/sidecar/src/services/agent-runtime/task-run/task-progress-events.ts"
+      "apps/sidecar/src/services/agent-runtime/runner/run-item-events.ts"
     ]) {
       const content = source(file);
 

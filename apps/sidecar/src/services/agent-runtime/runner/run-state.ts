@@ -29,7 +29,6 @@ export type LumeRunStepType =
   | "tool_approval"
   | "tool_call"
   | "tool_result"
-  | "handoff"
   | "subagent"
   | "output_guardrails"
   | "persist_session"

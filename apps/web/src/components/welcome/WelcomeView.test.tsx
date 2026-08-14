@@ -125,8 +125,6 @@ mock.module('@/lib/desktop-api', () => ({
   writeClipboardImage: async () => undefined,
   writeClipboardText: async () => undefined,
   onSidecarEvent: async () => () => {},
-  executeTaskContract: (...args: unknown[]) =>
-    (globalThis as any).__lumeDesktopExecuteTaskContract?.(...args) ?? Promise.resolve({ ok: true }),
   getAgentRunTrace: (...args: unknown[]) =>
     (globalThis as any).__lumeDesktopGetAgentRunTrace?.(...args) ?? Promise.resolve({ trace: null }),
   listAgentRunStates: (...args: unknown[]) =>

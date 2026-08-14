@@ -58,7 +58,6 @@ mock.module('@/lib/desktop-api', () => ({
   installDesktopUpdateAndRelaunch: async () => undefined,
   getMcpConfig: async () => ({ mcpServers: {} }),
   getMcpStatus: async () => ({ servers: [] }),
-  submitTaskApproval: async () => undefined,
   getThreadMessages: async () => [],
   getThreadRuntimeEvents: async () => [],
   isDesktopRuntime: () => true,

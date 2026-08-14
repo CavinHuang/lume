@@ -438,29 +438,6 @@ export interface GetMarketDetailResult {
   readme?: PluginReadmePreview
 }
 
-export interface ExportPluginArtifactInput {
-  pluginId: string
-  version: string
-  artifactPath: string
-  destDir?: string
-}
-
-export interface ExportPluginArtifactResult {
-  savedPath: string
-}
-
-export interface DownloadBridgeAssetInput {
-  url: string
-  filename?: string
-  sha256?: string
-  destDir?: string
-}
-
-export interface DownloadBridgeAssetResult {
-  savedPath: string
-  verified: boolean
-}
-
 export interface CheckBridgeStatusInput {
   pluginId: string
   version: string

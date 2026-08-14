@@ -1961,21 +1961,6 @@ export const submitToolPermissionInputSchema = z.object({
   threadPermissionMode: z.enum(["bypassPermissions"]).optional()
 });
 
-export const submitTaskApprovalInputSchema = z.object({
-  threadId: idSchema,
-  contractId: idSchema,
-  decision: z.enum(["approve", "reject"]),
-  execute: z.boolean().optional(),
-  feedback: z.string().optional()
-});
-
-export const executeTaskContractInputSchema = z.object({
-  threadId: idSchema,
-  contractId: idSchema.optional(),
-  permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "dontAsk"]).optional(),
-  intent: z.enum(["execute", "continue", "retry", "skip"]).optional()
-});
-
 export const pendingInteractiveInputSchema = z.object({
   threadId: z.string().optional()
 });

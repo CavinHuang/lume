@@ -5,7 +5,6 @@ import type { AgentAskUserQuestionRequest } from '@lume/shared'
 
 mock.module('@/lib/desktop-api', () => ({
   sidecarCall: async () => undefined,
-  submitTaskApproval: async () => ({ ok: true }),
 }))
 
 const { AskUserBanner } = await import('./AskUserBanner')
