@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import {
-  ALICE_READING_IPC_CHANNELS,
   READING_IPC_CHANNELS,
   WEREAD_KEY_PAGE_URL,
   WEREAD_IPC_CHANNELS,
@@ -47,10 +46,8 @@ describe('desktop reading API', () => {
     return readText
   }
 
-  test('routes Lume and Alice Reading aliases through the desktop sidecar command', async () => {
+  test('routes the collaborative reading entry through the desktop sidecar command', async () => {
     await readingApi.addBookToAlice('置身事内', '用户希望 Lume 一起读。')
-    await readingApi.readingGetBooks()
-    await readingApi.readingMarkNotesRead(['note-1'])
 
     expect(invokeMock.mock.calls).toEqual([
       [
@@ -61,20 +58,6 @@ describe('desktop reading API', () => {
             title: '置身事内',
             reason: '用户希望 Lume 一起读。',
           },
-        },
-      ],
-      [
-        'sidecar_call',
-        {
-          method: ALICE_READING_IPC_CHANNELS.GET_BOOKS,
-          params: {},
-        },
-      ],
-      [
-        'sidecar_call',
-        {
-          method: ALICE_READING_IPC_CHANNELS.MARK_NOTES_READ,
-          params: ['note-1'],
         },
       ],
     ])

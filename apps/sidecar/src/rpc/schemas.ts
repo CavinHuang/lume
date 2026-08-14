@@ -773,46 +773,6 @@ export const readingGenerateShareCardInputSchema = z.object({
   outputPath: z.string().trim().min(1).optional()
 }).strict();
 
-export const aliceReadingNoteIdInputSchema = z.union([
-  z.string().min(1),
-  z.object({ id: z.string().min(1) }).strict(),
-  z.object({ noteId: z.string().min(1) }).strict()
-]);
-
-export const aliceReadingNoteIdsInputSchema = z.union([
-  z.array(z.string().min(1)),
-  z.object({
-    noteIds: z.array(z.string().min(1)).optional()
-  }).strict()
-]).optional();
-
-export const aliceReadingListNotesInputSchema = z.object({
-  bookId: z.string().min(1).optional(),
-  interestId: z.string().min(1).optional(),
-  wereadBookId: z.string().min(1).optional(),
-  includeHidden: z.boolean().optional(),
-  includeDeleted: z.boolean().optional(),
-  limit: z.number().int().min(1).max(200).optional()
-}).strict().optional();
-
-export const aliceReadingRunTaskInputSchema = z.object({
-  trigger: z.enum(["manual", "scheduled", "progress", "conversation"]).optional(),
-  bookId: z.string().optional(),
-  interestId: z.string().min(1).optional(),
-  wereadBookId: z.string().min(1).optional(),
-  depth: readingNoteDepthSchema.optional(),
-  workspaceSlug: z.string().trim().optional(),
-  userContext: readingUserContextSchema.optional(),
-  manualQuoteText: z.string().optional(),
-  manualSource: z.string().optional()
-}).strict().optional();
-
-export const aliceReadingBookInputSchema = z.object({
-  interestId: z.string().min(1).optional(),
-  bookId: z.string().min(1).optional(),
-  wereadBookId: z.string().min(1).optional()
-}).strict().optional();
-
 const memoryScopeSchema = z.enum(["global", "workspace"]);
 const memoryScopeInputSchema = z.enum(["auto", "global", "workspace"]);
 const memoryKindSchema = z.enum(["raw", "summary", "fact", "preference", "decision", "episode", "lesson", "milestone", "artifact"]);

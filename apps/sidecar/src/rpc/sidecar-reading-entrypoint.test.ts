@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import {
-  ALICE_READING_IPC_CHANNELS,
   READING_IPC_CHANNELS,
   WEREAD_IPC_CHANNELS
 } from "@lume/shared";
@@ -154,7 +153,7 @@ describe.skipIf(!isNativeAvailable())("sidecar Reading entrypoint", () => {
     }
   });
 
-  test("desktop sidecar process exposes Alice-compatible Reading and WeRead RPC methods", async () => {
+  test("desktop sidecar process exposes active Reading and WeRead RPC methods", async () => {
     sidecar = createSidecarClient(tempConfigDir);
 
     const methods = await sidecar.call("rpc:list-methods") as string[];
@@ -162,9 +161,6 @@ describe.skipIf(!isNativeAvailable())("sidecar Reading entrypoint", () => {
     expect(methods).toEqual(expect.arrayContaining([
       READING_IPC_CHANNELS.GET_SNAPSHOT,
       READING_IPC_CHANNELS.ADD_BOOK_TO_ALICE,
-      ALICE_READING_IPC_CHANNELS.GET_BOOKS,
-      ALICE_READING_IPC_CHANNELS.GET_NOTES,
-      ALICE_READING_IPC_CHANNELS.MARK_NOTES_READ,
       WEREAD_IPC_CHANNELS.GET_SHELF,
       WEREAD_IPC_CHANNELS.GET_NOTEBOOKS,
       WEREAD_IPC_CHANNELS.GET_BOOKMARKS,
@@ -175,7 +171,7 @@ describe.skipIf(!isNativeAvailable())("sidecar Reading entrypoint", () => {
     ]));
   });
 
-  test("desktop sidecar process can add a user-recommended book and read it through Alice alias", async () => {
+  test("desktop sidecar process can add and list a user-recommended book", async () => {
     sidecar = createSidecarClient(tempConfigDir);
 
     const book = await sidecar.call(READING_IPC_CHANNELS.ADD_BOOK_TO_ALICE, {
@@ -194,7 +190,7 @@ describe.skipIf(!isNativeAvailable())("sidecar Reading entrypoint", () => {
       status: "queued"
     });
 
-    const books = await sidecar.call(ALICE_READING_IPC_CHANNELS.GET_BOOKS, {}) as Array<{
+    const books = await sidecar.call(READING_IPC_CHANNELS.LIST_BOOKS, {}) as Array<{
       id: string;
       title: string;
     }>;

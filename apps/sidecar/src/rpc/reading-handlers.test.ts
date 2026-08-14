@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ALICE_READING_IPC_CHANNELS, READING_IPC_CHANNELS, WEREAD_IPC_CHANNELS } from "@lume/shared";
+import { READING_IPC_CHANNELS, WEREAD_IPC_CHANNELS } from "@lume/shared";
 import { createReadingHandlers } from "./reading-handlers";
 import { createReadingNote } from "../services/reading/reading-store";
 import type { WereadIpcSource } from "../services/reading/weread-ipc-service";
@@ -240,124 +240,6 @@ describe("reading-handlers", () => {
         status: "reading"
       })
     );
-    await expect(handlers[ALICE_READING_IPC_CHANNELS.GET_BOOKS]?.({})).resolves.toContainEqual(
-      expect.objectContaining({
-        title: "人间词话",
-        author: "王国维",
-        track: "lume",
-        status: "reading"
-      })
-    );
-  });
-
-  test("maps Alice-compatible Reading IPC aliases onto the same Lume Reading data", async () => {
-    const handlers = createReadingHandlers();
-    const book = await handlers[READING_IPC_CHANNELS.ADD_BOOK]?.({
-      title: "我在北京送快递",
-      author: "胡安焉",
-      source: {
-        kind: "manual",
-        excerpt: "把自己看作一个普通人，过普通人的生活。"
-      }
-    }) as { id: string };
-    const note = createReadingNote({
-      bookId: book.id,
-      body: "普通人的生活在重复劳动里显出重量。",
-      evidence: [
-        {
-          quote: "把自己看作一个普通人，过普通人的生活。",
-          sourceKind: "manual",
-          excerpt: "把自己看作一个普通人，过普通人的生活。",
-          capturedAt: 1
-        }
-      ]
-    });
-
-    await expect(handlers[ALICE_READING_IPC_CHANNELS.GET_BOOKS]?.({})).resolves.toContainEqual(
-      expect.objectContaining({ id: book.id, title: "我在北京送快递" })
-    );
-    await expect(handlers[ALICE_READING_IPC_CHANNELS.GET_NOTES]?.({ bookId: book.id })).resolves.toContainEqual(
-      expect.objectContaining({ id: note.id, bookId: book.id })
-    );
-    await expect(handlers[ALICE_READING_IPC_CHANNELS.GET_NOTE]?.({ noteId: note.id })).resolves.toMatchObject({
-      id: note.id,
-      book: {
-        title: "我在北京送快递"
-      }
-    });
-    await expect(handlers[ALICE_READING_IPC_CHANNELS.GET_STATS]?.({})).resolves.toMatchObject({
-      readingCount: 1,
-      noteCount: 1
-    });
-    await expect(handlers[ALICE_READING_IPC_CHANNELS.GET_UNREAD_COUNTS]?.({})).resolves.toMatchObject({
-      total: 1
-    });
-    await expect(handlers[ALICE_READING_IPC_CHANNELS.MARK_NOTES_READ]?.([note.id])).resolves.toMatchObject({ ok: true });
-    await expect(handlers[ALICE_READING_IPC_CHANNELS.GET_UNREAD_COUNTS]?.({})).resolves.toMatchObject({
-      total: 0
-    });
-    await expect(handlers[ALICE_READING_IPC_CHANNELS.DELETE_NOTE]?.({ noteId: note.id })).resolves.toMatchObject({
-      id: note.id,
-      deleted: true
-    });
-  });
-
-  test("maps Alice interest ids onto Lume book ids for note listing and manual generation", async () => {
-    const handlers = createReadingHandlers();
-    const wereadBook = await handlers[READING_IPC_CHANNELS.ADD_BOOK]?.({
-      title: "我在北京送快递",
-      source: {
-        kind: "weread",
-        externalId: "wr-1",
-        excerpt: "把自己看作一个普通人，过普通人的生活。"
-      }
-    }) as { id: string };
-    const otherBook = await handlers[READING_IPC_CHANNELS.ADD_BOOK]?.({
-      title: "置身事内",
-      source: {
-        kind: "manual",
-        excerpt: "理解地方政府如何进入普通生活。"
-      }
-    }) as { id: string };
-    const wereadNote = createReadingNote({
-      bookId: wereadBook.id,
-      body: "普通人的生活在重复劳动里显出重量。",
-      evidence: [
-        {
-          quote: "把自己看作一个普通人，过普通人的生活。",
-          sourceKind: "weread",
-          excerpt: "把自己看作一个普通人，过普通人的生活。",
-          capturedAt: 1
-        }
-      ]
-    });
-    createReadingNote({
-      bookId: otherBook.id,
-      body: "财政结构影响日常生活。",
-      evidence: [
-        {
-          quote: "地方治理有自己的激励结构。",
-          sourceKind: "manual",
-          excerpt: "地方治理有自己的激励结构。",
-          capturedAt: 1
-        }
-      ]
-    });
-
-    await expect(handlers[ALICE_READING_IPC_CHANNELS.GET_NOTES]?.({ interestId: wereadBook.id })).resolves.toEqual([
-      expect.objectContaining({ id: wereadNote.id, bookId: wereadBook.id })
-    ]);
-    await expect(handlers[ALICE_READING_IPC_CHANNELS.GET_NOTES]?.({ wereadBookId: "wr-1" })).resolves.toEqual([
-      expect.objectContaining({ id: wereadNote.id, bookId: wereadBook.id })
-    ]);
-    await expect(handlers[ALICE_READING_IPC_CHANNELS.MANUAL_GENERATE_NOTE]?.({
-      interestId: wereadBook.id,
-      depth: "seed"
-    })).resolves.toMatchObject({
-      status: "failed",
-      message: "读书模型未配置，无法生成读书笔记",
-      bookId: wereadBook.id
-    });
   });
 
   test("exposes Alice-like generation, revision, cover, and quote refresh channels", async () => {

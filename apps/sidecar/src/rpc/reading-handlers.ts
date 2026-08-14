@@ -1,4 +1,4 @@
-import { ALICE_READING_IPC_CHANNELS, READING_IPC_CHANNELS, WEREAD_IPC_CHANNELS } from "@lume/shared";
+import { READING_IPC_CHANNELS, WEREAD_IPC_CHANNELS } from "@lume/shared";
 import type {
   ReadingAddBookInput,
   ReadingAddBookToAliceInput,
@@ -50,11 +50,6 @@ import { createLogger } from "../services/infra/logger";
 
 const log = createLogger("reading-rpc");
 import {
-  aliceReadingBookInputSchema,
-  aliceReadingListNotesInputSchema,
-  aliceReadingNoteIdInputSchema,
-  aliceReadingNoteIdsInputSchema,
-  aliceReadingRunTaskInputSchema,
   readingAddBookInputSchema,
   readingAddBookToAliceInputSchema,
   readingBookIdInputSchema,
@@ -89,8 +84,6 @@ import {
   type WereadIpcSource
 } from "../services/reading/weread-ipc-service";
 import { clearWereadCache } from "../services/reading/weread-cache-service";
-
-const MISSING_ALICE_BOOK_ID = "__alice_missing_book__";
 
 function listReadingBooksWithBootstrap() {
   ensureReadingBootstrapBook();
@@ -276,45 +269,6 @@ export function createReadingHandlers(context: CreateReadingHandlersContext = {}
       ) as ReadingGenerateShareCardInput;
       return generateReadingShareCard(input);
     },
-    [ALICE_READING_IPC_CHANNELS.GET_BOOKS]: async () => listReadingBooksWithBootstrap(),
-    [ALICE_READING_IPC_CHANNELS.GET_NOTES]: async (params) =>
-      listReadingNotes(readAliceListNotesInput(params, ALICE_READING_IPC_CHANNELS.GET_NOTES)),
-    [ALICE_READING_IPC_CHANNELS.GET_NOTE]: async (params) =>
-      getReadingNote(readAliceNoteId(params, ALICE_READING_IPC_CHANNELS.GET_NOTE)),
-    [ALICE_READING_IPC_CHANNELS.GET_STATS]: async () => getReadingSnapshot().stats,
-    [ALICE_READING_IPC_CHANNELS.FORCE_GENERATE_NOTE]: async (params) => {
-      const bookId = readAliceBookId(params, ALICE_READING_IPC_CHANNELS.FORCE_GENERATE_NOTE);
-      return runReadingTaskAndNotify(context, { ...(bookId ? { bookId } : {}), trigger: "manual", depth: "deep" });
-    },
-    [ALICE_READING_IPC_CHANNELS.MANUAL_GENERATE_NOTE]: async (params) => {
-      const input = readAliceRunTaskInput(params, ALICE_READING_IPC_CHANNELS.MANUAL_GENERATE_NOTE);
-      return runReadingTaskAndNotify(context, { ...input, trigger: input?.trigger ?? "conversation" });
-    },
-    [ALICE_READING_IPC_CHANNELS.DELETE_NOTE]: async (params) =>
-      deleteReadingNote(readAliceNoteId(params, ALICE_READING_IPC_CHANNELS.DELETE_NOTE)),
-    [ALICE_READING_IPC_CHANNELS.GENERATE_COVER]: async (params) =>
-      generateReadingCover({ bookId: requireAliceBookId(params, ALICE_READING_IPC_CHANNELS.GENERATE_COVER) }),
-    [ALICE_READING_IPC_CHANNELS.DELETE_COVER]: async (params) =>
-      deleteReadingBookCover(requireAliceBookId(params, ALICE_READING_IPC_CHANNELS.DELETE_COVER)),
-    [ALICE_READING_IPC_CHANNELS.REFRESH_QUOTES]: async (params) =>
-      refreshReadingQuotes({ bookId: requireAliceBookId(params, ALICE_READING_IPC_CHANNELS.REFRESH_QUOTES) }),
-    [ALICE_READING_IPC_CHANNELS.GET_UNREAD_COUNTS]: async () => getReadingUnreadCounts(),
-    [ALICE_READING_IPC_CHANNELS.MARK_NOTES_READ]: async (params) =>
-      markReadingSeen(readAliceNoteIds(params, ALICE_READING_IPC_CHANNELS.MARK_NOTES_READ)),
-    [ALICE_READING_IPC_CHANNELS.GET_HIGHLIGHTS]: async (params) =>
-      filterNotesByIds(getReadingHighlights(), readAliceNoteIds(params, ALICE_READING_IPC_CHANNELS.GET_HIGHLIGHTS)),
-    [ALICE_READING_IPC_CHANNELS.REMOVE_HIGHLIGHT]: async (params) =>
-      removeReadingHighlight(readAliceNoteId(params, ALICE_READING_IPC_CHANNELS.REMOVE_HIGHLIGHT)),
-    [ALICE_READING_IPC_CHANNELS.GET_BLURS]: async (params) =>
-      filterNotesByIds(getReadingBlurs(), readAliceNoteIds(params, ALICE_READING_IPC_CHANNELS.GET_BLURS)),
-    [ALICE_READING_IPC_CHANNELS.ADD_BLUR]: async (params) =>
-      markReadingBlurred(readAliceNoteId(params, ALICE_READING_IPC_CHANNELS.ADD_BLUR)),
-    [ALICE_READING_IPC_CHANNELS.REMOVE_BLUR]: async (params) =>
-      removeReadingBlur(readAliceNoteId(params, ALICE_READING_IPC_CHANNELS.REMOVE_BLUR)),
-    [ALICE_READING_IPC_CHANNELS.REACT_PLUS_ONE]: async (params) =>
-      reactPlusOneReadingNote(readAliceNoteId(params, ALICE_READING_IPC_CHANNELS.REACT_PLUS_ONE)),
-    [ALICE_READING_IPC_CHANNELS.GET_BOOK_DEBUG_INFO]: async (params) =>
-      getReadingBookDebugInfo(requireAliceBookId(params, ALICE_READING_IPC_CHANNELS.GET_BOOK_DEBUG_INFO)),
     [WEREAD_IPC_CHANNELS.OPEN_AND_FETCH_KEY]: async () => weread.openAndFetchKey(),
     [WEREAD_IPC_CHANNELS.GET_KEY]: async () => ({ apiKey: getReadingWereadApiKey() }),
     [WEREAD_IPC_CHANNELS.TEST_KEY]: async (params) => {
@@ -397,79 +351,4 @@ async function runReadingTaskAndNotify(
   const result = await runReadingTaskAsync(input);
   emitReadingGenerationNotification(context.writeNotification, result, input);
   return result;
-}
-
-function readAliceListNotesInput(params: unknown, method: string): ReadingListNotesInput | undefined {
-  const input = validateInput(aliceReadingListNotesInputSchema, params ?? {}, method) as (ReadingListNotesInput & {
-    interestId?: string;
-    wereadBookId?: string;
-  }) | undefined;
-  if (!input) return undefined;
-  const { interestId, wereadBookId, ...rest } = input;
-  const bookId = resolveAliceBookId({ interestId, bookId: rest.bookId, wereadBookId });
-  if (bookId) {
-    return { ...rest, bookId };
-  }
-  if (interestId || rest.bookId || wereadBookId) {
-    return { ...rest, bookId: MISSING_ALICE_BOOK_ID };
-  }
-  return rest;
-}
-
-function readAliceRunTaskInput(params: unknown, method: string): ReadingRunTaskInput | undefined {
-  const input = validateInput(aliceReadingRunTaskInputSchema, params ?? {}, method) as (ReadingRunTaskInput & {
-    interestId?: string;
-    wereadBookId?: string;
-  }) | undefined;
-  if (!input) return undefined;
-  const { interestId, wereadBookId, ...rest } = input;
-  const bookId = resolveAliceBookId({ interestId, bookId: rest.bookId, wereadBookId });
-  if (!bookId && (interestId || rest.bookId || wereadBookId)) {
-    throw new Error(`${method} 参数非法: interestId - Required`);
-  }
-  return bookId ? { ...rest, bookId } : rest;
-}
-
-function readAliceNoteId(params: unknown, method: string): string {
-  const input = validateInput(aliceReadingNoteIdInputSchema, params, method) as string | { id?: string; noteId?: string };
-  return typeof input === "string" ? input : input.noteId ?? input.id ?? "";
-}
-
-function readAliceNoteIds(params: unknown, method: string): string[] | undefined {
-  const input = validateInput(aliceReadingNoteIdsInputSchema, params ?? {}, method) as string[] | { noteIds?: string[] } | undefined;
-  if (!input) return undefined;
-  return Array.isArray(input) ? input : input.noteIds;
-}
-
-function readAliceBookId(params: unknown, method: string): string | undefined {
-  const input = validateInput(aliceReadingBookInputSchema, params ?? {}, method) as {
-    interestId?: string;
-    bookId?: string;
-    wereadBookId?: string;
-  } | undefined;
-  if (!input) return undefined;
-  return resolveAliceBookId(input);
-}
-
-function requireAliceBookId(params: unknown, method: string): string {
-  const bookId = readAliceBookId(params, method);
-  if (!bookId) {
-    throw new Error(`${method} 参数非法: interestId - Required`);
-  }
-  return bookId;
-}
-
-function resolveBookIdFromWereadId(wereadBookId: string | undefined): string | undefined {
-  if (!wereadBookId) return undefined;
-  return listReadingBooks().find((book) => book.source.externalId === wereadBookId)?.id;
-}
-
-function resolveAliceBookId(input: { interestId?: string; bookId?: string; wereadBookId?: string }): string | undefined {
-  return input.interestId ?? input.bookId ?? resolveBookIdFromWereadId(input.wereadBookId);
-}
-
-function filterNotesByIds<T extends { id: string }>(notes: T[], noteIds: string[] | undefined): T[] {
-  if (!noteIds?.length) return notes;
-  const wanted = new Set(noteIds);
-  return notes.filter((note) => wanted.has(note.id));
 }

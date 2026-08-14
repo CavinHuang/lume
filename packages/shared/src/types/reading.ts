@@ -412,29 +412,6 @@ export const READING_IPC_CHANNELS = {
   NOTE_GEN_FAILED: "reading:noteGenFailed"
 } as const;
 
-export const ALICE_READING_IPC_CHANNELS = {
-  GET_BOOKS: "reading:getBooks",
-  GET_NOTES: "reading:getNotes",
-  GET_NOTE: "reading:getNote",
-  GET_STATS: "reading:getStats",
-  FORCE_GENERATE_NOTE: "reading:forceGenerateNote",
-  MANUAL_GENERATE_NOTE: "reading:manualGenerateNote",
-  DELETE_NOTE: "reading:deleteNote",
-  GENERATE_COVER: "reading:generateCover",
-  DELETE_COVER: "reading:deleteCover",
-  REFRESH_QUOTES: "reading:refreshQuotes",
-  GET_UNREAD_COUNTS: "reading:getUnreadCounts",
-  MARK_NOTES_READ: "reading:markNotesRead",
-  GET_HIGHLIGHTS: "reading:getHighlights",
-  REMOVE_HIGHLIGHT: "reading:removeHighlight",
-  GET_BLURS: "reading:getBlurs",
-  ADD_BLUR: "reading:addBlur",
-  REMOVE_BLUR: "reading:removeBlur",
-  REACT_PLUS_ONE: "reading:reactPlusOne",
-  GET_BOOK_DEBUG_INFO: "reading:getBookDebugInfo",
-  ADD_BOOK_TO_ALICE: "reading:addBookToAlice"
-} as const;
-
 export const WEREAD_IPC_CHANNELS = {
   OPEN_AND_FETCH_KEY: "weread:openAndFetchKey",
   GET_KEY: "weread:getKey",

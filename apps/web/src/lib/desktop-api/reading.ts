@@ -1,6 +1,5 @@
 import { invoke } from '@/lib/desktop-runtime/core'
 import {
-  ALICE_READING_IPC_CHANNELS,
   READING_IPC_CHANNELS,
   WEREAD_IPC_CHANNELS,
   WEREAD_KEY_PAGE_URL,
@@ -150,63 +149,6 @@ export const refreshReadingQuotes = (bookId: string) =>
 
 export const getReadingBookDebugInfo = (bookId: string) =>
   sidecarCall<ReadingBookDebugInfo>(READING_IPC_CHANNELS.GET_BOOK_DEBUG_INFO, { bookId })
-
-export const readingGetBooks = () =>
-  sidecarCall<ReadingBook[]>(ALICE_READING_IPC_CHANNELS.GET_BOOKS, {})
-
-export const readingGetNotes = (input: ReadingListNotesInput = {}) =>
-  sidecarCall<ReadingNoteSummary[]>(ALICE_READING_IPC_CHANNELS.GET_NOTES, input)
-
-export const readingGetNote = (noteId: string) =>
-  sidecarCall<ReadingNoteSummary | null>(ALICE_READING_IPC_CHANNELS.GET_NOTE, { noteId })
-
-export const readingGetStats = () =>
-  sidecarCall<ReadingLibrarySnapshot['stats']>(ALICE_READING_IPC_CHANNELS.GET_STATS, {})
-
-export const readingForceGenerateNote = (interestId?: string) =>
-  sidecarCall<ReadingTaskResult>(ALICE_READING_IPC_CHANNELS.FORCE_GENERATE_NOTE, interestId ? { interestId } : {})
-
-export const readingManualGenerateNote = (input: ReadingRunTaskInput = {}) =>
-  sidecarCall<ReadingTaskResult>(ALICE_READING_IPC_CHANNELS.MANUAL_GENERATE_NOTE, input)
-
-export const readingDeleteNote = (noteId: string) =>
-  sidecarCall<ReadingNoteSummary>(ALICE_READING_IPC_CHANNELS.DELETE_NOTE, { noteId })
-
-export const readingGenerateCover = (interestId: string) =>
-  sidecarCall<ReadingGenerateCoverResult>(ALICE_READING_IPC_CHANNELS.GENERATE_COVER, { interestId })
-
-export const readingDeleteCover = (interestId: string) =>
-  sidecarCall<ReadingBook>(ALICE_READING_IPC_CHANNELS.DELETE_COVER, { interestId })
-
-export const readingRefreshQuotes = (interestId: string) =>
-  sidecarCall<ReadingRefreshQuotesResult>(ALICE_READING_IPC_CHANNELS.REFRESH_QUOTES, { interestId })
-
-export const readingGetUnreadCounts = () =>
-  sidecarCall<ReadingUnreadCounts>(ALICE_READING_IPC_CHANNELS.GET_UNREAD_COUNTS, {})
-
-export const readingMarkNotesRead = (noteIds?: string[]) =>
-  sidecarCall<{ ok: true }>(ALICE_READING_IPC_CHANNELS.MARK_NOTES_READ, noteIds ?? {})
-
-export const readingGetHighlights = (noteIds?: string[]) =>
-  sidecarCall<ReadingNoteSummary[]>(ALICE_READING_IPC_CHANNELS.GET_HIGHLIGHTS, noteIds ? { noteIds } : {})
-
-export const readingRemoveHighlight = (noteId: string) =>
-  sidecarCall<{ ok: true }>(ALICE_READING_IPC_CHANNELS.REMOVE_HIGHLIGHT, { noteId })
-
-export const readingGetBlurs = (noteIds?: string[]) =>
-  sidecarCall<ReadingNoteSummary[]>(ALICE_READING_IPC_CHANNELS.GET_BLURS, noteIds ? { noteIds } : {})
-
-export const readingAddBlur = (noteId: string) =>
-  sidecarCall<ReadingNoteSummary>(ALICE_READING_IPC_CHANNELS.ADD_BLUR, { noteId })
-
-export const readingRemoveBlur = (noteId: string) =>
-  sidecarCall<{ ok: true }>(ALICE_READING_IPC_CHANNELS.REMOVE_BLUR, { noteId })
-
-export const readingReactPlusOne = (noteId: string) =>
-  sidecarCall<ReadingNoteReactionResult>(ALICE_READING_IPC_CHANNELS.REACT_PLUS_ONE, { noteId })
-
-export const readingGetBookDebugInfo = (interestId: string, wereadBookId?: string) =>
-  sidecarCall<ReadingBookDebugInfo>(ALICE_READING_IPC_CHANNELS.GET_BOOK_DEBUG_INFO, { interestId, wereadBookId })
 
 export async function readWereadKeyFromClipboard(): Promise<WereadOpenAndFetchKeyResult> {
   const desktopText = await readDesktopClipboardText()
