@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { History, Play, X } from 'lucide-react'
 import { getAgentPendingResume, resumeAgentRun } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
@@ -26,8 +26,12 @@ const dismissedThreadIds = new Set<string>()
  */
 export function PendingResumeBanner({ threadId }: PendingResumeBannerProps) {
   const [state, setState] = useState<PendingResumeState>({ phase: 'hidden' })
+  const [resuming, setResuming] = useState(false)
+  const resumingRef = useRef(false)
 
   useEffect(() => {
+    // threadId 原地切换（AgentView 不重挂）时无条件重置，防止上一线程的横幅残留
+    setState({ phase: 'hidden' })
     if (dismissedThreadIds.has(threadId)) return
     let cancelled = false
     getAgentPendingResume(threadId)
@@ -42,6 +46,10 @@ export function PendingResumeBanner({ threadId }: PendingResumeBannerProps) {
   }, [threadId])
 
   const handleResume = useCallback(async () => {
+    // ref 守卫：同步双击下 state 闭包仍是旧值，ref 跨闭包即时生效
+    if (resumingRef.current) return
+    resumingRef.current = true
+    setResuming(true)
     const runId = state.phase === 'prompt' ? state.runId : undefined
     try {
       const result = await resumeAgentRun({ threadId, ...(runId ? { runId } : {}) })
@@ -53,6 +61,9 @@ export function PendingResumeBanner({ threadId }: PendingResumeBannerProps) {
       setState({ phase: 'hidden' })
     } catch {
       setState({ phase: 'notice', message: '该任务无法自动恢复，可发送新消息重新开始' })
+    } finally {
+      resumingRef.current = false
+      setResuming(false)
     }
   }, [state, threadId])
 
@@ -82,6 +93,7 @@ export function PendingResumeBanner({ threadId }: PendingResumeBannerProps) {
       <Button
         variant="ghost"
         data-pending-resume-action="resume"
+        disabled={resuming}
         onClick={handleResume}
         className="h-7 gap-1 rounded-full border border-border px-2.5 text-[11px] font-semibold text-foreground hover:bg-accent"
       >

@@ -327,6 +327,56 @@ describe('PendingResumeBanner', () => {
     }
   })
 
+  test('threadId 原地切换：A 有横幅 → 切到无 pending 的 B → 横幅消失', async () => {
+    getPendingResumeMock.mockImplementation(async (threadId: string) =>
+      threadId === 't-switch-a'
+        ? { threadId, hasPendingResume: true, runId: 'run-a' }
+        : { threadId, hasPendingResume: false })
+    const env = await render('t-switch-a')
+    try {
+      expect(env.container.textContent ?? '').toContain('上次有未完成任务')
+      // AgentView 切线程不重挂组件，threadId 原地变化
+      await act(async () => {
+        env.root!.render(<PendingResumeBanner threadId="t-switch-b" />)
+        await flush()
+      })
+      expect(env.container.childNodes.length).toBe(0)
+      expect(env.container.textContent).toBe('')
+      // 不会以 B 的 threadId + A 的 runId 调 resume
+      expect(resumeRunMock).not.toHaveBeenCalled()
+    } finally {
+      await unmount(env)
+      env.cleanup()
+    }
+  })
+
+  test('resume in-flight 期间重复点继续只发一次 resume-run', async () => {
+    getPendingResumeMock.mockResolvedValueOnce({
+      threadId: 't-dbl', hasPendingResume: true, runId: 'run-dbl',
+    })
+    let resolveResume!: (v: AgentResumeRunResult) => void
+    resumeRunMock.mockImplementationOnce(() => new Promise((r) => { resolveResume = r }))
+    const env = await render('t-dbl')
+    try {
+      const resumeBtn = capturedButtons.filter((b) => b.action === 'resume').at(-1)
+      expect(resumeBtn).toBeDefined()
+      await act(async () => {
+        resumeBtn!.onClick!()
+        resumeBtn!.onClick!() // in-flight 期间重复点击
+        await flush()
+      })
+      expect(resumeRunMock.mock.calls.length).toBe(1)
+      await act(async () => {
+        resolveResume({ status: 'resumed' })
+        await flush()
+      })
+      expect(env.container.childNodes.length).toBe(0)
+    } finally {
+      await unmount(env)
+      env.cleanup()
+    }
+  })
+
   test('点放弃 → 横幅消失且本周期内重开不再提示、不调 resume', async () => {
     getPendingResumeMock.mockResolvedValue({
       threadId: 't-discard', hasPendingResume: true, runId: 'run-4',
