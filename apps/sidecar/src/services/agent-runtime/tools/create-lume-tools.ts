@@ -27,7 +27,6 @@ import type { ResolvedComputerUseSurface } from "./computer-use/computer-use-sur
 import { createComputerUseRequestBridge } from "./node-repl/node-repl-computer-use-bridge";
 import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
-import { hasCodingIntent } from "../../agent/capability-routing";
 import { createWikiProposalTool, createWikiReadTools } from "./wiki/create-wiki-tools";
 import { resolveTrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
 import type { TrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
@@ -215,11 +214,9 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
       })
       : undefined,
   });
-  const nodeReplTools = shouldExposeNodeReplTools(input)
-    ? computerUseSurface === "sky"
-      ? allNodeReplTools.filter((tool) => tool.name === "mcp__node_repl__js")
-      : allNodeReplTools
-    : [];
+  const nodeReplTools = computerUseSurface === "sky"
+    ? allNodeReplTools.filter((tool) => tool.name === "mcp__node_repl__js")
+    : allNodeReplTools;
   const ordinaryWikiTools = createOrdinaryWikiTools({
     profile: wikiProfile,
     proposalEnabled: input.wikiProposalEnabled,
@@ -230,7 +227,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const planningTodoTools = input.planningExecutionContext && input.planningExecutionContext.surface !== "subagent"
     ? createPlanningTodoTools({ workspaceId: input.workspaceId, executionContext: input.planningExecutionContext })
     : [];
-  const computerUseTools = computerUseSurface === "mcp" && shouldExposeComputerUseTools(input)
+  const computerUseTools = computerUseSurface === "mcp"
     ? allComputerUseTools
     : [];
   const preferredLinkConnections = resolvePreferredLinkConnections(input.messageMetadata?.linkConnectionReferences);
@@ -260,17 +257,14 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...planningTodoTools,
     ...computerUseTools,
   ];
-  // Coding/raw-tools runs keep the SDK repository tools plus the explicitly
-  // governed Link surface; unrelated product integrations stay hidden.
-  const directToolRoute = isDirectRepositoryToolRoute(input);
-  const visibleCustomTools = directToolRoute ? linkTools : [...customTools, ...linkTools];
+  const visibleCustomTools = [...customTools, ...linkTools];
   const customToolNames = visibleCustomTools.map((tool) => tool.name);
 
   return {
     customTools: visibleCustomTools,
     availableToolNames: [
       ...BASE_RUNTIME_TOOL_NAMES,
-      ...(directToolRoute ? [] : AUTOMATION_TOOL_NAMES),
+      ...AUTOMATION_TOOL_NAMES,
       ...customToolNames
     ]
   };
@@ -286,65 +280,4 @@ function resolvePreferredLinkConnections(value: unknown): Record<string, string>
     preferred[service] = connectionName;
   }
   return preferred;
-}
-
-function isDirectRepositoryToolRoute(input: CreateLumeRuntimeToolsInput): boolean {
-  const preferredRoute = typeof input.messageMetadata?.preferredCapabilityRoute === "string"
-    ? input.messageMetadata.preferredCapabilityRoute
-    : undefined;
-  return preferredRoute === "coding"
-    || preferredRoute === "raw-tools"
-    || hasCodingIntent(input.originalUserInstruction);
-}
-
-function shouldExposeNodeReplTools(input: CreateLumeRuntimeToolsInput): boolean {
-  const preferredRoute = typeof input.messageMetadata?.preferredCapabilityRoute === "string"
-    ? input.messageMetadata.preferredCapabilityRoute
-    : undefined;
-  if (preferredRoute === "coding" || preferredRoute === "raw-tools" || hasCodingIntent(input.originalUserInstruction)) return false;
-  if (input.computerUseSurface === "sky") return true;
-
-  const instruction = [
-    input.originalUserInstruction,
-    typeof input.messageMetadata?.preferredCapabilityRoute === "string"
-      ? input.messageMetadata.preferredCapabilityRoute
-      : undefined,
-  ].filter(Boolean).join(" ").toLowerCase();
-
-  return [
-    "node_repl",
-    "node repl",
-    "playwright",
-    "puppeteer",
-    "browser automation",
-    "chrome automation",
-    "网页自动化",
-    "浏览器自动化",
-    "用 js 操作网页",
-    "用 javascript 操作网页",
-  ].some((marker) => instruction.includes(marker));
-}
-
-function shouldExposeComputerUseTools(input: CreateLumeRuntimeToolsInput): boolean {
-  const preferredRoute = typeof input.messageMetadata?.preferredCapabilityRoute === "string"
-    ? input.messageMetadata.preferredCapabilityRoute
-    : undefined;
-  if (preferredRoute === "coding" || preferredRoute === "raw-tools" || hasCodingIntent(input.originalUserInstruction)) return false;
-  if (preferredRoute === "browser") return true;
-
-  const instruction = (input.originalUserInstruction ?? "").trim().toLowerCase();
-  return [
-    "computer use",
-    "computer_use",
-    "desktop automation",
-    "桌面自动化",
-    "操作当前页面",
-    "操作浏览器",
-    "控制浏览器",
-    "控制窗口",
-    "切换窗口",
-    "启动应用",
-    "点击当前页面",
-    "截图当前页面",
-  ].some((marker) => instruction.includes(marker));
 }

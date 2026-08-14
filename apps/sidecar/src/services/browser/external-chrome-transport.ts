@@ -357,6 +357,7 @@ export function mapExternalChromeRequest(request: BrowserActionRequest): { metho
     case "content:exportGsuite": return { method: "tab_content_export_gsuite", params: { ...params, tabId, tab_id: tabId, format: request.params?.format } };
     case "nameSession": return { method: "browser_name_session", params };
     case "history:list": return { method: "browser_user_history", params };
+    case "cookieExport": return { method: "browser_user_export_cookies", params };
     case "clipboard": return { method: "tab_clipboard", params: { ...params, tabId } };
     case "clipboard:read": return { method: "tab_clipboard_read", params: { ...params, tabId } };
     case "clipboard:readText": return { method: "tab_clipboard_read_text", params: { ...params, tabId } };

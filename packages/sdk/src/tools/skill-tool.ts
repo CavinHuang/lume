@@ -148,6 +148,9 @@ export function createSkillTool(registry: SkillRegistry | SkillLookup = globalSk
       if (skill.allowedTools) {
         result.allowedTools = skill.allowedTools
       }
+      if (skill.activatedTools) {
+        result.activatedTools = skill.activatedTools
+      }
 
       if (skill.model) {
         result.model = skill.model

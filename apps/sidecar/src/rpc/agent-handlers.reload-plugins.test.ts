@@ -28,7 +28,6 @@ describe("agent handlers RELOAD_PLUGINS", () => {
         notifications.push({ method, params });
       },
       planModePhaseTracker: {
-        isLikelyExecutionRequest: () => false,
         getPhase: () => "idle",
         clearSession: () => undefined,
       } as unknown as PlanModePhaseTracker,

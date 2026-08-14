@@ -1,12 +1,10 @@
 import {
   loadProcessJobs,
-  markProcessJobContinuationConsumed,
   markProcessJobNotified,
-  updateProcessJob,
   waitForProcessJobTerminal,
   type ProcessJob,
 } from "@lume/agent-sdk";
-import { AGENT_IPC_CHANNELS, type SDKMessage } from "@lume/shared";
+import type { SDKMessage } from "@lume/shared";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentFileContextsDir } from "../infra/config-paths";
@@ -16,26 +14,31 @@ import {
   getAgentThreadMeta,
   getAgentThreadSDKMessages,
 } from "./agent-thread-manager";
-import { BACKGROUND_TASK_WAKE_PROMPT } from "./agent-background-wake";
 
 const log = createLogger("background-process-recovery");
 
-export function startBackgroundProcessRecovery(
-  writeNotification: (method: string, params: unknown) => void,
-): () => void {
-  let stopped = false;
-  const jobs = scanPersistedProcessJobs();
+export function startBackgroundProcessRecovery(): () => void {
+  const abortController = new AbortController();
 
   const watch = async (job: ProcessJob): Promise<void> => {
-    let current: ProcessJob | undefined = job;
-    while (!stopped && current?.status === "running") {
-      current = await waitForProcessJobTerminal(current.id, 60_000);
+    try {
+      let current: ProcessJob | undefined = job;
+      while (!abortController.signal.aborted && current?.status === "running") {
+        current = await waitForProcessJobTerminal(current.id, 60_000, abortController.signal);
+      }
+      if (!abortController.signal.aborted && current) persistTerminalProcessJobNotification(current);
+    } catch (error) {
+      if (!abortController.signal.aborted) {
+        log.warn("failed to restore background task notification", {
+          jobId: job.id,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
     }
-    if (!stopped && current) await resumeTerminalProcessJob(current, writeNotification);
   };
 
-  for (const job of jobs) void watch(job);
-  return () => { stopped = true; };
+  for (const job of scanPersistedProcessJobs()) void watch(job);
+  return () => abortController.abort();
 }
 
 function scanPersistedProcessJobs(): ProcessJob[] {
@@ -50,10 +53,7 @@ function scanPersistedProcessJobs(): ProcessJob[] {
   return [...jobs.values()];
 }
 
-async function resumeTerminalProcessJob(
-  job: ProcessJob,
-  writeNotification: (method: string, params: unknown) => void,
-): Promise<void> {
+export function persistTerminalProcessJobNotification(job: ProcessJob): void {
   if (!job.threadId || job.status === "running" || job.continuationConsumedAt) return;
   const thread = getAgentThreadMeta(job.threadId);
   if (!thread || thread.status === "trashed") return;
@@ -66,55 +66,6 @@ async function resumeTerminalProcessJob(
   ));
   if (!alreadyPersisted) appendAgentThreadSDKMessages(job.threadId, [notification]);
   markProcessJobNotified(job.id);
-  if (!markProcessJobContinuationConsumed(job.id)) return;
-
-  try {
-    const { sendAgentMessage } = await import("./agent-service");
-    await sendAgentMessage({
-      threadId: job.threadId,
-      userMessage: BACKGROUND_TASK_WAKE_PROMPT,
-      ...(thread.workspaceId ? { workspaceId: thread.workspaceId } : {}),
-      ...(thread.modelRef ? { modelRef: thread.modelRef } : {}),
-      ...(thread.channelId ? { channelId: thread.channelId } : {}),
-      ...(thread.modelId ? { modelId: thread.modelId } : {}),
-      messageMetadata: {
-        hiddenFromChat: true,
-        backgroundRecovery: {
-          processJobId: job.id,
-          runId: job.runId,
-          toolUseId: job.toolUseId,
-        },
-      },
-      traceContext: {
-        submissionId: `background-recovery:${job.id}`,
-        traceId: `background-recovery:${job.id}`,
-        origin: "resume",
-      },
-    }, {
-      onRuntimeEvent: (event) => writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-        threadId: job.threadId,
-        event,
-      }),
-      onMessageAppended: (event) => writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event),
-      onComplete: () => undefined,
-      onError: (error) => log.error("background continuation failed", { jobId: job.id, error }),
-      onTitleUpdated: (title) => writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
-        threadId: job.threadId,
-        title,
-      }),
-      onAskUserQuestion: (request) => writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request),
-      onBrowserAuthRequest: (request) => writeNotification(AGENT_IPC_CHANNELS.BROWSER_AUTH_REQUEST, request),
-      onDesktopActionRequest: (request) => writeNotification(AGENT_IPC_CHANNELS.DESKTOP_ACTION_REQUEST, request),
-      onToolPermissionRequest: (request) => writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request),
-    }, { appendUserMessage: false });
-  } catch (error) {
-    updateProcessJob(job.id, { continuationConsumedAt: undefined });
-    log.error("failed to resume persisted background process", {
-      jobId: job.id,
-      threadId: job.threadId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
 }
 
 function toTaskNotification(job: ProcessJob): SDKMessage {

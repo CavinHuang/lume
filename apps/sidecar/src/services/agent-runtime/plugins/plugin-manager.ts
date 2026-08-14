@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { LumePluginManifest } from "@lume/agent-sdk";
@@ -106,4 +107,16 @@ export class SidecarPluginManager {
 function bundledPluginRoots(): string[] {
   const root = process.env.LUME_BUNDLED_PLUGINS_DIR?.trim();
   return root ? [root] : [];
+}
+
+export function isBundledBrowserPluginAvailable(root = process.env.LUME_BUNDLED_PLUGINS_DIR?.trim()): boolean {
+  if (!root) return false;
+  const pluginRoot = join(root, "browser");
+  return existsSync(join(pluginRoot, ".lume-plugin", "plugin.json"))
+    || existsSync(join(pluginRoot, "lume-plugin.json"));
+}
+
+export function isBundledBrowserRuntimeAvailable(root = process.env.LUME_BUNDLED_PLUGINS_DIR?.trim()): boolean {
+  if (!isBundledBrowserPluginAvailable(root) || !root) return false;
+  return existsSync(join(root, "browser", "scripts", "browser-client.mjs"));
 }

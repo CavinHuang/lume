@@ -14,7 +14,7 @@ import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest
 } from "../../agent/subagents/subagent-run-registry";
-import { buildSidecarSubagentRunContext, buildWaitForDelegationsResult, canDelegateFromThread, deriveDelegateTitle, resolveTaskThreadInitialTitle } from "./run";
+import { buildBackgroundTaskResultsContext, buildSidecarSubagentRunContext, buildWaitForDelegationsResult, canDelegateFromThread, deriveDelegateTitle, resolveTaskThreadInitialTitle } from "./run";
 
 describe("DelegateTool child thread", () => {
   let prevConfigDir: string | undefined;
@@ -273,6 +273,22 @@ describe("WaitForDelegations tool result structure", () => {
     const res = await buildWaitForDelegationsResult({ mode: "all" }, "parent-x", stub);
     const body = JSON.parse(res.content);
     expect(body.delegations[0].outputSummary.length).toBe(2000);
+  });
+});
+
+describe("background task continuation context", () => {
+  test("merges success, failure, and stopped results into one structured context", () => {
+    const context = buildBackgroundTaskResultsContext([
+      { id: "success", kind: "subagent", status: "completed", childThreadId: "child-1", output: "done" },
+      { id: "failure", kind: "subagent", status: "errored", error: "boom" },
+      { id: "stopped", kind: "process", status: "stopped", output: "cancelled" }
+    ]);
+
+    expect(context.match(/<background-task-results>/g)).toHaveLength(1);
+    expect(context).toContain('"id": "success"');
+    expect(context).toContain('"status": "errored"');
+    expect(context).toContain('"status": "stopped"');
+    expect(context).toContain("untrusted task data");
   });
 });
 

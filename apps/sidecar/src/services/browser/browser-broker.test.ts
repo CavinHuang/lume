@@ -18,6 +18,24 @@ test("extension backend is absent until browser/chrome plugins, setting, and liv
   assert.equal(calls.length, 0);
 });
 
+test("connected Chrome cookie export is capability-gated, user-only, and paged", async () => {
+  const calls: any[] = []
+  const broker = new BrowserBroker(
+    { request: async () => ({}) },
+    { isAvailable: () => true, request: async (request) => {
+      calls.push(request)
+      if (request.method === "handshake") return { protocolVersion: 5, minSupported: 5, maxSupported: 5, capabilities: { browser: [{ id: "cookieExport" }], tab: [] }, apiSupportOverrides: {} }
+      if (request.method === "cookieExport" && request.params?.cursor === 0) return { cookies: [{ name: "a" }], nextCursor: 1 }
+      if (request.method === "cookieExport" && request.params?.cursor === 1) return { cookies: [{ name: "b" }], nextCursor: null }
+      throw new Error("unexpected request")
+    } },
+  )
+  broker.setPluginState({ browserEnabled: true, chromeEnabled: true, extensionBackendEnabled: true, hostConnected: true })
+  assert.deepEqual(await broker.connectedChromeImportStatus(), { available: true })
+  assert.deepEqual(await broker.exportConnectedChromeCookies(), [{ name: "a" }, { name: "b" }])
+  assert.equal(calls.filter((call) => call.method === "cookieExport").every((call) => call.context.actor === "user"), true)
+});
+
 test("broker obtains and binds one-time confirmation for consequential actions", async () => {
   const calls: any[] = [];
   const broker = new BrowserBroker({ request: async (request) => {
@@ -34,6 +52,26 @@ test("broker obtains and binds one-time confirmation for consequential actions",
   await broker.dispatch({ method: "submitForm", params: { tabId: "tab-1", locator: { version: 1, steps: [{ kind: "css", selector: "button.other" }] }, semanticIntent: "提交表单" }, tabId: "tab-1", browserSessionId: "s", browserTurnId: "t" });
   assert.notEqual(calls[0].params.bindingHash, calls[2].params.bindingHash);
   await assert.rejects(() => broker.dispatch({ method: "click", params: { semanticIntent: "Pay now" }, browserSessionId: "s", browserTurnId: "t" }), /action_denied/);
+});
+
+test("agent-created in-app tabs are bound to the owning thread workspace", async () => {
+  const calls: any[] = [];
+  const broker = new BrowserBroker({ request: async (request) => {
+    calls.push(request);
+    return { tabId: "tab-1" };
+  } });
+  broker.setPluginState({ browserEnabled: true });
+
+  await broker.dispatch({
+    method: "create_tab",
+    params: { options: {} },
+    threadId: "thread-1",
+    browserSessionId: "thread-1",
+    browserTurnId: "run-1",
+  });
+
+  assert.equal(calls.at(-1).method, "ensure");
+  assert.equal(calls.at(-1).params.ownerThreadId, "thread-1");
 });
 
 test("canonical BrowserClient commands select and normalize the requested backend", async () => {
@@ -145,6 +183,30 @@ test("reference candidates stay in the current IAB task and include only the thr
   assert.deepEqual(candidates.map((candidate) => candidate.tabId), ["iab-current", "chrome-2", "chrome-3", "chrome-1"])
   assert.equal(candidates[0]?.browserId, "lume-iab")
   assert.equal(candidates[1]?.browserId, "lume-extension")
+});
+
+test("browser continuity selects the visible resumable Agent tab owned by the task", async () => {
+  const broker = new BrowserBroker({ request: async (request) => request.method === "list" ? [
+    { tabId: "hidden-agent", ownerThreadId: "thread-1", profileKind: "agent", backend: "iab", generation: 1, title: "Old", url: "https://old.example/", visible: false, lifecycle: "background", handoffStatus: "handoff", lastOpenedAt: "2026-08-01T12:00:00.000Z" },
+    { tabId: "visible-agent", ownerThreadId: "thread-1", profileKind: "agent", backend: "iab", generation: 1, title: "Current", url: "https://current.example/", visible: true, lifecycle: "active", handoffStatus: "deliverable", lastOpenedAt: "2026-08-01T11:00:00.000Z" },
+    { tabId: "other-agent", ownerThreadId: "thread-2", profileKind: "agent", backend: "iab", generation: 1, title: "Other", url: "https://other.example/", visible: true, lifecycle: "active", handoffStatus: "deliverable" },
+    { tabId: "user-tab", ownerThreadId: "thread-1", profileKind: "user", backend: "iab", generation: 1, title: "User", url: "https://user.example/", visible: true, lifecycle: "active", handoffStatus: "deliverable" },
+  ] : {} })
+  broker.setPluginState({ browserEnabled: true })
+
+  assert.deepEqual(await broker.getThreadAgentContinuity("thread-1"), {
+    tabId: "visible-agent",
+    ownerThreadId: "thread-1",
+    profileKind: "agent",
+    backend: "iab",
+    generation: 1,
+    title: "Current",
+    url: "https://current.example/",
+    visible: true,
+    lifecycle: "active",
+    handoffStatus: "deliverable",
+    lastOpenedAt: "2026-08-01T11:00:00.000Z",
+  })
 });
 
 test("reference grant RPCs use user context and the selected backend", async () => {

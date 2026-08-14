@@ -139,7 +139,7 @@ import { createLogContentDigest, createSidecarLogDigestPolicy, isSafeStorageSecu
 import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { createLinkRuntimeSupervisor } from './link-runtime-supervisor'
-import { discoverChromeProfiles, importChromeProfile } from './browser-import'
+import { discoverChromeProfiles, importChromeProfile, importConnectedChromeCookies, type ImportedCookie } from './browser-import'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '../../../packages/shared/src/types/logging'
 import { nativeEventToIntent } from '../../../packages/shared/src/types/agent-island'
 import type { AgentIslandIntent, NativeAgentIslandSnapshot } from '../../../packages/shared/src/types/agent-island'
@@ -216,6 +216,27 @@ const browserRpcSecret = randomBytes(32)
 let browserRpcInboundSequence = 0
 let browserRpcOutboundSequence = 0
 const browserImportJobs = new Map<string, { cancelled: boolean }>()
+
+async function setImportedBrowserCookie(cookie: ImportedCookie): Promise<() => Promise<void>> {
+  const cookieStore = session.fromPartition('persist:lume-browser').cookies
+  const existing = (await cookieStore.get({ url: cookie.url, name: cookie.name })).find((entry) => entry.path === cookie.path && (cookie.domain ? entry.domain === cookie.domain : !entry.domain.startsWith('.')))
+  await cookieStore.set(cookie)
+  return async () => {
+    await cookieStore.remove(cookie.url, cookie.name)
+    if (!existing) return
+    await cookieStore.set({
+      url: `${existing.secure ? 'https' : 'http'}://${existing.domain.replace(/^\./, '')}${existing.path}`,
+      name: existing.name,
+      value: existing.value,
+      path: existing.path,
+      ...(existing.domain.startsWith('.') ? { domain: existing.domain } : {}),
+      ...(existing.expirationDate ? { expirationDate: existing.expirationDate } : {}),
+      secure: existing.secure,
+      httpOnly: existing.httpOnly,
+      sameSite: existing.sameSite,
+    })
+  }
+}
 let pendingMacUpdatePath: string | null = null
 const mainWindowCreation = createAsyncSingleFlight<any>()
 const mainWindowLifecycle = createMainWindowLifecycleState<any>()
@@ -1162,7 +1183,7 @@ function attachBrowserGuestSecurity(win: BrowserWindow) {
     webPreferences.webSecurity = true
     webPreferences.allowRunningInsecureContent = false
     params.partition = grant.partition
-    delete params.allowpopups
+    params.allowpopups = ''
     delete params.preload
   })
   win.webContents.on('did-attach-webview', (_event, guestContents) => {
@@ -1661,7 +1682,13 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       }
     case 'browser_import:discover':
       requireMainWindowSender(context, 'browser_import:discover')
-      return discoverChromeProfiles()
+      {
+        const connected = await sidecarHost.call('browser:chrome-import-status', null).catch(() => ({ available: false })) as { available?: unknown }
+        return [
+          ...(connected.available === true ? [{ id: 'connected-chrome', name: '当前已连接的 Chrome', platform: process.platform === 'darwin' ? 'darwin' : process.platform === 'linux' ? 'linux' : 'win32', source: 'connected', hasCookies: true, hasPasswords: false }] : []),
+          ...discoverChromeProfiles(),
+        ]
+      }
     case 'browser_import:start': {
       requireMainWindowSender(context, 'browser_import:start')
       if (payload.acknowledged !== true) throw new Error('import_acknowledgement_required')
@@ -1669,6 +1696,23 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       const jobId = randomUUID()
       const job = { cancelled: false }
       browserImportJobs.set(jobId, job)
+      if (profileId === 'connected-chrome') {
+        if (payload.cookies === false) {
+          browserImportJobs.delete(jobId)
+          throw new Error('connected_chrome_cookie_import_required')
+        }
+        void sidecarHost.call('browser:export-chrome-cookies', null).then((cookies) => {
+          if (!Array.isArray(cookies)) throw new Error('connected_chrome_export_invalid')
+          return importConnectedChromeCookies({
+            cookies,
+            configDir: resolveConfigDir(),
+            cancelled: () => job.cancelled,
+            emit: (params) => emitRendererEvent('browser:event', { method: 'browser:import-progress', params: { jobId, ...params } }),
+            onCookie: setImportedBrowserCookie,
+          })
+        }).then((report) => emitRendererEvent('browser:event', { method: 'browser:import-complete', params: { jobId, report } })).catch((error) => emitRendererEvent('browser:event', { method: 'browser:import-complete', params: { jobId, error: error instanceof Error ? error.message : 'import failed' } })).finally(() => browserImportJobs.delete(jobId))
+        return { jobId }
+      }
       void importChromeProfile({
           profileId,
           cookies: payload.cookies !== false,
@@ -1678,26 +1722,7 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
           safeStorage,
           cancelled: () => job.cancelled,
           emit: (params) => emitRendererEvent('browser:event', { method: 'browser:import-progress', params: { jobId, ...params } }),
-          onCookie: async (cookie) => {
-            const cookieStore = session.fromPartition('persist:lume-browser').cookies
-            const existing = (await cookieStore.get({ url: cookie.url, name: cookie.name })).find((entry) => entry.path === cookie.path && (cookie.domain ? entry.domain === cookie.domain : !entry.domain.startsWith('.')))
-            await cookieStore.set(cookie)
-            return async () => {
-              await cookieStore.remove(cookie.url, cookie.name)
-              if (!existing) return
-              await cookieStore.set({
-                url: `${existing.secure ? 'https' : 'http'}://${existing.domain.replace(/^\./, '')}${existing.path}`,
-                name: existing.name,
-                value: existing.value,
-                path: existing.path,
-                ...(existing.domain.startsWith('.') ? { domain: existing.domain } : {}),
-                ...(existing.expirationDate ? { expirationDate: existing.expirationDate } : {}),
-                secure: existing.secure,
-                httpOnly: existing.httpOnly,
-                sameSite: existing.sameSite,
-              })
-            }
-          },
+          onCookie: setImportedBrowserCookie,
         }).then((report) => emitRendererEvent('browser:event', { method: 'browser:import-complete', params: { jobId, report } })).catch((error) => emitRendererEvent('browser:event', { method: 'browser:import-complete', params: { jobId, error: error instanceof Error ? error.message : 'import failed' } })).finally(() => browserImportJobs.delete(jobId))
       return { jobId }
     }

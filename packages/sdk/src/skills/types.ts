@@ -60,6 +60,9 @@ export interface SkillDefinition {
   /** Tools the skill is allowed to use (empty = all tools) */
   allowedTools?: string[]
 
+  /** Deferred tools to add to the active schema without restricting other tools. */
+  activatedTools?: string[]
+
   /** Model override for this skill */
   model?: string
 
@@ -112,6 +115,9 @@ export interface SkillResult {
 
   /** Allowed tools override (for inline execution) */
   allowedTools?: string[]
+
+  /** Deferred tools activated for inline execution. */
+  activatedTools?: string[]
 
   /** Model override */
   model?: string

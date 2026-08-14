@@ -353,7 +353,6 @@ describe("model-selection", () => {
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
       planModePhaseTracker: {
-        isLikelyExecutionRequest: () => false,
         getPhase: () => "idle",
         clearSession: () => undefined
       } as any,
@@ -390,7 +389,6 @@ describe("model-selection", () => {
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
       planModePhaseTracker: {
-        isLikelyExecutionRequest: () => false,
         getPhase: () => "idle",
         clearSession: () => undefined
       } as any,

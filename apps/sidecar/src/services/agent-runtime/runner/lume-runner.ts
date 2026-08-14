@@ -470,7 +470,8 @@ export class LumeRunner {
       applyWorkflowHookEffects: (result) => this.applyWorkflowHookEffects(result),
       trace: this.observer.getContextAssemblyTrace(),
       wikiProposalEnabled: WIKI_CAPABILITIES.askWikiProposal,
-      processSandbox: wikiCapability.sandbox
+      processSandbox: wikiCapability.sandbox,
+      abortSignal: runtime.abortSignal
     });
     this.latestMemoryContextUsedItems = runtimeSession.memoryContextUsedItems ?? [];
     this.latestModelVisibleMessage = typeof runtimeSession.userMessageForModel === "string"

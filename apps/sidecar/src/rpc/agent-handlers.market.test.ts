@@ -21,7 +21,6 @@ function makeHandlers(notifications: string[] = []) {
       notifications.push(channel);
     },
     planModePhaseTracker: {
-      isLikelyExecutionRequest: () => false,
       getPhase: () => "idle",
       clearSession: () => undefined,
     } as unknown as PlanModePhaseTracker,

@@ -268,11 +268,32 @@ mock.module("../agent-runtime/runtime-core/attempt", () => ({
     runAgentRuntimeCalls.push(params);
     const userMessage = (params as { input?: { userMessage?: string } })?.input?.userMessage ?? "";
     const threadId = (params as { runtime?: { sessionId?: string } })?.runtime?.sessionId ?? "";
+    const visibleUserMessage = (params as { runtime?: { visibleUserMessage?: string } })?.runtime?.visibleUserMessage ?? "";
     activeMockSessions.add(threadId);
     try {
     if (userMessage === "subagent-projection") {
       emitRunWithSubagentTranscript(emit);
       return { status: "completed" as const };
+    }
+    if (visibleUserMessage === "把这个文件收好") {
+      emitSuccessfulRun(emit);
+      const metadata = (params as { input?: { messageMetadata?: Record<string, unknown> } }).input?.messageMetadata;
+      return {
+        status: "completed" as const,
+        codingReport: {
+          runId: "run-lazy-coding",
+          turnId: metadata?.turnId,
+          userMessageId: metadata?.messageId,
+          phase: "ready_for_review" as const,
+          status: "unverified" as const,
+          workspaceChanged: true,
+          changedFiles: ["notes.txt"],
+          fileChanges: [{ path: "notes.txt", addedLines: 1, removedLines: 0 }],
+          externalChangedFiles: [],
+          pendingBackground: false,
+          rewindState: "available" as const
+        }
+      };
     }
     if (userMessage === "compact-summary") {
       emitRunWithCompactionSummary(emit);
@@ -490,6 +511,55 @@ describe("agent-service", () => {
     expect(runtimeInput.input?.userMessage).toContain("C:\\temp\\tests.log");
   });
 
+  test("同一任务已有 Agent 浏览器时后续消息只保留连续性，不预判路由", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const { setActiveBrowserBroker } = await import("../browser/browser-broker-holder");
+    const thread = createAgentThread("browser continuity", "channel-test");
+    setActiveBrowserBroker({
+      async getThreadAgentContinuity(threadId: string) {
+        return threadId === thread.id ? {
+          tabId: "agent-tab-1",
+          url: "https://x.com/home",
+          title: "Home / X",
+          profileKind: "agent",
+          visible: true,
+          lifecycle: "active",
+          handoffStatus: "deliverable",
+        } : undefined;
+      }
+    } as any);
+
+    try {
+      await sendAgentMessage({
+        threadId: thread.id,
+        userMessage: "看下当前最新十条 post 说了什么",
+        channelId: "channel-test",
+        modelId: "provider/model-test"
+      }, {
+        onRuntimeEvent: () => undefined,
+        onMessageAppended: () => undefined,
+        onComplete: () => undefined,
+        onError: () => undefined,
+        onTitleUpdated: () => undefined,
+        onAskUserQuestion: () => undefined,
+        onBrowserAuthRequest: () => undefined,
+        onToolPermissionRequest: () => undefined
+      });
+
+      const runtimeInput = runAgentRuntimeCalls.at(-1) as { input?: { messageMetadata?: Record<string, unknown> } };
+      expect(runtimeInput.input?.messageMetadata).toMatchObject({
+        browserContinuity: {
+          tabId: "agent-tab-1",
+          url: "https://x.com/home",
+          handoffStatus: "deliverable"
+        }
+      });
+    } finally {
+      setActiveBrowserBroker(null);
+    }
+  });
+
   test("Run 完成后到达的后台任务通知仍应单独持久化", async () => {
     const {
       createAgentThread,
@@ -540,7 +610,7 @@ describe("agent-service", () => {
     }));
   });
 
-  test("后台任务终态通知应主动排队一次隐藏主 agent 续跑", async () => {
+  test("后台任务终态通知不应创建隐藏主 agent 轮次", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { appendAgentMessage, waitForAgentRuntimeKernelIdleForTest } = await import("./agent-service");
     const thread = createAgentThread("background wake", "channel-test");
@@ -562,16 +632,10 @@ describe("agent-service", () => {
       onToolPermissionRequest: () => undefined
     });
 
-    for (let attempt = 0; attempt < 50 && runAgentRuntimeCalls.length < before + 2; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
     await waitForAgentRuntimeKernelIdleForTest();
+    await new Promise((resolve) => setTimeout(resolve, 30));
 
-    expect(runAgentRuntimeCalls.length).toBeGreaterThanOrEqual(before + 2);
-    const wakeInput = runAgentRuntimeCalls[before + 1] as { input?: { userMessage?: string; messageMetadata?: Record<string, unknown> } };
-    expect(wakeInput.input?.userMessage).toContain("后台任务刚刚产生了终态通知");
-    expect(wakeInput.input?.messageMetadata?.hiddenFromChat).toBe(true);
-    expect(wakeInput.input?.messageMetadata?.backgroundTaskId).toBe("task_late");
+    expect(runAgentRuntimeCalls).toHaveLength(before + 1);
   });
 
   test("sendAgentMessage 应先追加 user 可见消息，再在完成后追加 assistant 与原始 sdk transcript", async () => {
@@ -656,6 +720,36 @@ describe("agent-service", () => {
       }
     });
     expect(sdkMessages.map((message) => message.type)).toEqual(["user", "assistant", "result"]);
+  });
+
+  test("CodingTurn 只在实际修改后惰性创建且不依赖用户措辞", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
+    const { listCodingTurnRecords } = await import("../agent-runtime/runtime-core/coding-turn-store");
+    const send = (threadId: string, userMessage: string) => sendAgentMessage({
+      threadId,
+      userMessage,
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    const conversation = createAgentThread("ordinary conversation", "channel-test");
+    await send(conversation.id, "你好，今天怎么样");
+    expect(await listCodingTurnRecords(getRuntimeCoreSessionDir(conversation.id))).toHaveLength(0);
+
+    const changed = createAgentThread("implicit file change", "channel-test");
+    await send(changed.id, "把这个文件收好");
+    const turns = await listCodingTurnRecords(getRuntimeCoreSessionDir(changed.id));
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.changedFiles).toEqual([{ path: "notes.txt", addedLines: 1, removedLines: 0 }]);
   });
 
   test("未配置 title 模型时首轮完成后也应回退到会话渠道触发 LLM 标题生成", async () => {
@@ -821,7 +915,7 @@ describe("agent-service", () => {
     }));
   });
 
-  test("sendAgentMessage 在 turn-limited 后应把裸继续扩展为模型侧续跑指令", async () => {
+  test("sendAgentMessage 在 turn-limited 后保留用户原文并附加客观恢复状态", async () => {
     const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");
     const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
@@ -890,10 +984,10 @@ describe("agent-service", () => {
     });
 
     expect(getAgentThreadMessages(thread.id)[0]?.content).toBe("继续");
-    expect((runAgentRuntimeCalls.at(-1) as { input?: { userMessage?: string } })?.input?.userMessage)
-      .toContain("请继续完成上一轮未完成的原始任务");
-    expect((runAgentRuntimeCalls.at(-1) as { input?: { userMessage?: string } })?.input?.userMessage)
-      .toContain("用户发送的继续指令：继续");
+    const modelMessage = (runAgentRuntimeCalls.at(-1) as { input?: { userMessage?: string } })?.input?.userMessage ?? "";
+    expect(modelMessage).toContain('<runtime-recovery-state reason="turn_limit">');
+    expect(modelMessage.endsWith("继续")).toBeTrue();
+    expect(modelMessage).not.toContain("请继续完成上一轮未完成的原始任务");
     expect((runAgentRuntimeCalls.at(-1) as { runtime?: { visibleUserMessage?: string } })?.runtime?.visibleUserMessage)
       .toBe("继续");
   });
@@ -945,7 +1039,7 @@ describe("agent-service", () => {
     ))).toBe(true);
   });
 
-  test("sendAgentMessage 在进程重启后应把裸继续扩展为未完成 run 的恢复指令", async () => {
+  test("sendAgentMessage 在进程重启后为任意新消息附加未完成 run 状态", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");
     const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
@@ -1012,7 +1106,7 @@ describe("agent-service", () => {
 
     await sendAgentMessage({
       threadId: thread.id,
-      userMessage: "继续",
+      userMessage: "换个方向，先总结目前发现",
       channelId: "channel-test",
       modelId: "provider/model-test"
     }, {
@@ -1026,14 +1120,15 @@ describe("agent-service", () => {
     });
 
     const modelMessage = (runAgentRuntimeCalls.at(-1) as { input?: { userMessage?: string } })?.input?.userMessage ?? "";
-    expect(modelMessage).toContain("上一轮运行在进程退出前未正常完成");
+    expect(modelMessage).toContain('<runtime-recovery-state reason="interrupted">');
     expect(modelMessage).toContain("分析 Alice.app 世界观和主动动作");
     expect(modelMessage).toContain("已读取目录结构");
     expect(modelMessage).toContain("Bash");
     expect(modelMessage).toContain("130");
+    expect(modelMessage.endsWith("换个方向，先总结目前发现")).toBeTrue();
   });
 
-  test("sendAgentMessage 在仅有可见历史时应把裸继续扩展为历史续跑指令", async () => {
+  test("sendAgentMessage 在 transcript 缺失时为任意新消息附加可见历史", async () => {
     const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
     const { createUserMessageVersion } = await import("./agent-message-versioning-service");
     const { sendAgentMessage } = await import("./agent-service");
@@ -1048,7 +1143,7 @@ describe("agent-service", () => {
 
     await sendAgentMessage({
       threadId: thread.id,
-      userMessage: "继续",
+      userMessage: "现在只列出三个关键结论",
       channelId: "channel-test",
       modelId: "provider/model-test"
     }, {
@@ -1062,9 +1157,9 @@ describe("agent-service", () => {
     });
 
     const modelMessage = (runAgentRuntimeCalls.at(-1) as { input?: { userMessage?: string } })?.input?.userMessage ?? "";
-    expect(modelMessage).toContain("当前 runtime transcript 不完整");
+    expect(modelMessage).toContain("<visible-thread-history>");
     expect(modelMessage).toContain("深入分析 Alice.app 的世界观和主动动作设计");
-    expect(modelMessage).toContain("用户发送的继续指令：继续");
+    expect(modelMessage.endsWith("现在只列出三个关键结论")).toBeTrue();
   });
 
   test("sendAgentMessage 应继承线程工作区传给 runtime", async () => {
@@ -1637,7 +1732,7 @@ describe("stopAgent cascade (D6)", () => {
     // drain 把 steer 放回 queue → startNextQueued 调度执行(证明完整 dispatch 链路不崩)
     const steerRan = runAgentRuntimeCalls
       .slice(runCallsBefore)
-      .some((p) => (p as { input?: { userMessage?: string } })?.input?.userMessage === "steer-drain-msg");
+      .some((p) => (p as { runtime?: { visibleUserMessage?: string } })?.runtime?.visibleUserMessage === "steer-drain-msg");
     expect(steerRan).toBe(true);
   });
 

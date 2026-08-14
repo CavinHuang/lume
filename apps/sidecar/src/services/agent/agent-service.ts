@@ -48,7 +48,6 @@ import {
 } from "./agent-message-versioning-service";
 import { getAgentRuntimeStatusManager } from "./agent-runtime-status-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";
-import { resolveAgentRuntimeRoutingTrace } from "./agent-runtime-context";
 import { createLogger, sanitizeBaseUrlForLog, writeLogRecord } from "../infra/logger";
 import { getSessionStateManager } from "../agent-runtime/runner/session-state-manager";
 import { submitAskUserQuestionAnswers as submitRuntimeAskUserQuestionAnswers } from "../agent-runtime/interruption/ask-user-question-session";
@@ -62,7 +61,6 @@ import {
   isWeakGeneratedTitle,
   sanitizeGeneratedTitle
 } from "./session-title-summarizer";
-import { resolveSoftToolPolicyForPreferredRoute } from "./capability-routing";
 import { getSubagentRunRegistry } from "./subagents/subagent-run-registry";
 import { buildAgentContentLogData, buildAgentSendStartLogData } from "./agent-log-summary";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
@@ -73,22 +71,19 @@ import { AgentRuntimeKernel, AgentRuntimeKernelQueueConflictError, type AgentRun
 import { runGuidanceStore } from "../agent-runtime/guidance/run-guidance-store";
 import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../agent-runtime/runtime-core/session-store";
 import { isAgentRuntimeSessionActive } from "../agent-runtime/runtime-core/attempt";
-import { createCodingTurnRecord, updateCodingTurnRecord } from "../agent-runtime/runtime-core/coding-turn-store";
+import { createCodingTurnRecord } from "../agent-runtime/runtime-core/coding-turn-store";
 import { createFileBackedLumeRunStateStore } from "../agent-runtime/runner/run-state-store";
 import { projectBackgroundTaskNotificationRuntimeEvent } from "../agent-runtime/runner/run-item-events";
 import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import type { LumeRunState } from "../agent-runtime/runner/run-state";
 import { emitAgentNotification, emitDiagnosticContent } from "./agent-notification-service";
 import { createFileReferenceBinding } from "./agent-files-service";
+import { getActiveBrowserBroker } from "../browser/browser-broker-holder";
 import { buildLinkConnectionReferenceContext, normalizeAgentUserMessage } from "./agent-user-message-parts";
 import { getPlanningTodoStore } from "../planning/planning-todo-store";
 import { addPlanningAuthorizedTodo, authorizePlanningOperation, finishPlanningExecutionRun, resolvePlanningExecutionContext } from "../planning/planning-execution-context";
 import { materializeCapabilityReferences } from "./invocable-capability-catalog";
 import { getAgentSubmissionStore } from "./agent-submission-store";
-import {
-  AgentBackgroundWakeController,
-  BACKGROUND_TASK_WAKE_PROMPT
-} from "./agent-background-wake";
 
 type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -128,116 +123,10 @@ const DEFAULT_WELCOME_SUGGESTIONS: AgentWelcomeSuggestion[] = [
 ];
 
 const log = createLogger("agent-service");
-const backgroundWakeController = new AgentBackgroundWakeController();
-const streamEmitters = new Map<string, AgentStreamEmitter>();
-const scheduledBackgroundWakes = new Set<string>();
-const ROUTING_HEURISTIC_TOOLS = [
-  "Read",
-  "Write",
-  "Edit",
-  "Bash",
-  "Glob",
-  "Grep",
-  "ls",
-  "browser",
-  "WebSearch",
-  "WebFetch",
-  "memory.search",
-  "memory.read",
-  "memory.remember",
-  "memory.forget"
-];
-
-const TURN_LIMIT_CONTINUATION_PREFIX = "请继续完成上一轮未完成的原始任务。不要把这看作新任务；基于当前线程历史、已有工具结果和最后一个 assistant 状态继续。";
-const STALE_RUN_CONTINUATION_PREFIX = "上一轮运行在进程退出前未正常完成。请继续完成上一轮未完成的原始任务，不要把这看作新任务；基于下面的运行记录摘要衔接执行。";
-const VISIBLE_HISTORY_CONTINUATION_PREFIX = "当前 runtime transcript 不完整。请继续完成上一轮未完成的原始任务，不要把这看作新任务；基于下面可见聊天历史衔接执行。";
-const CONTINUE_ONLY_MESSAGES = new Set([
-  "继续",
-  "请继续",
-  "continue"
-]);
 const STALE_RUN_STATUSES = new Set<LumeRunState["status"]>(["created", "running"]);
 const STALE_RUN_PROGRESS_HEAD_COUNT = 6;
 const STALE_RUN_PROGRESS_TAIL_COUNT = 10;
 const VISIBLE_HISTORY_CONTINUATION_TAIL_COUNT = 8;
-
-function scheduleBackgroundTaskWake(
-  input: AgentSendInput,
-  emit: AgentStreamEmitter,
-  message: SDKMessage,
-  options?: { emitCompletionEvent?: boolean }
-): void {
-  if (!backgroundWakeController.tryClaim(input.threadId, message, input.threadType)) return;
-  if (message.type !== "system" || message.subtype !== "task_notification") return;
-
-  if (options?.emitCompletionEvent) {
-    const completionEvent = projectLateBackgroundTaskCompletion(input.threadId, message);
-    if (completionEvent) emit.onRuntimeEvent?.(completionEvent);
-  }
-
-  const taskId = message.task_id;
-  if (scheduledBackgroundWakes.has(input.threadId)) return;
-  scheduledBackgroundWakes.add(input.threadId);
-  const {
-    clientSubmissionId: _clientSubmissionId,
-    messageId: _messageId,
-    turnId: _turnId,
-    capabilityFingerprints: _capabilityFingerprints,
-    desktopContextSnapshotId: _desktopContextSnapshotId,
-    ...metadata
-  } = input.messageMetadata ?? {};
-  const wakeInput: AgentSendInput = {
-    threadId: input.threadId,
-    userMessage: BACKGROUND_TASK_WAKE_PROMPT,
-    ...(input.modelRef ? { modelRef: input.modelRef } : {}),
-    ...(input.channelId ? { channelId: input.channelId } : {}),
-    ...(input.modelId ? { modelId: input.modelId } : {}),
-    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
-    ...(input.chatType ? { chatType: input.chatType } : {}),
-    ...(input.threadType ? { threadType: input.threadType } : {}),
-    ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
-    ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
-    messageMetadata: {
-      ...metadata,
-      hiddenFromChat: true,
-      backgroundTaskWake: true,
-      backgroundTaskId: taskId
-    },
-    traceContext: {
-      submissionId: randomUUID(),
-      traceId: randomUUID(),
-      origin: "internal",
-      ...(input.traceContext?.traceId ? { linkedTraceId: input.traceContext.traceId } : {})
-    }
-  };
-
-  queueMicrotask(() => {
-    try {
-      const result = appendAgentMessage(wakeInput, emit, {
-        priority: "background",
-        onExecutionStarted: () => scheduledBackgroundWakes.delete(input.threadId)
-      });
-      writeLogRecord({
-        level: "info",
-        kind: "trace",
-        context: "agent.background_wake",
-        event: "background_task.wake_scheduled",
-        message: "background task completion scheduled a hidden agent continuation",
-        status: "ok",
-        threadId: input.threadId,
-        data: { taskId, mode: result.mode, queuedCount: result.queuedCount }
-      });
-    } catch (error) {
-      scheduledBackgroundWakes.delete(input.threadId);
-      backgroundWakeController.rollback(input.threadId, taskId);
-      log.warn("Failed to schedule background task wake", {
-        threadId: input.threadId,
-        taskId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  });
-}
 
 function projectLateBackgroundTaskCompletion(
   threadId: string,
@@ -284,7 +173,6 @@ const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmi
 async function validateQueuedAgentDispatch(
   dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInput, AgentStreamEmitter>
 ): Promise<void> {
-  if (isBackgroundWakeInput(dispatch.input)) return;
   const threadMeta = getAgentThreadMeta(dispatch.threadId);
   const workspaceId = dispatch.input.workspaceId ?? threadMeta?.workspaceId;
   const workspace = workspaceId ? getAgentWorkspace(workspaceId) : undefined;
@@ -409,10 +297,6 @@ function mergeToolPolicies(
   };
 }
 
-function isContinueOnlyMessage(userMessage: string): boolean {
-  return CONTINUE_ONLY_MESSAGES.has(userMessage.trim().toLowerCase());
-}
-
 function hasTurnLimitedMarker(item: unknown): boolean {
   if (!item || typeof item !== "object") return false;
   const record = item as Record<string, unknown>;
@@ -427,16 +311,16 @@ function hasTurnLimitedMarker(item: unknown): boolean {
   );
 }
 
-async function shouldExpandTurnLimitedContinuation(threadId: string, userMessage: string): Promise<boolean> {
-  if (!isContinueOnlyMessage(userMessage)) return false;
+async function findTurnLimitedRun(threadId: string): Promise<LumeRunState | null> {
   const store = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
   const runs = await store.listByThread(threadId);
-  const latestCompletedRun = [...runs].reverse().find((run) => run.status === "completed");
-  return Boolean(latestCompletedRun?.generatedItems.some(hasTurnLimitedMarker));
+  const latestRun = runs.at(-1);
+  return latestRun?.status === "completed" && latestRun.generatedItems.some(hasTurnLimitedMarker)
+    ? latestRun
+    : null;
 }
 
-async function findStaleRunningRun(threadId: string, userMessage: string): Promise<LumeRunState | null> {
-  if (!isContinueOnlyMessage(userMessage)) return null;
+async function findStaleRunningRun(threadId: string): Promise<LumeRunState | null> {
   const store = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
   const runs = await store.listByThread(threadId);
   const latestRun = runs.at(-1);
@@ -446,32 +330,39 @@ async function findStaleRunningRun(threadId: string, userMessage: string): Promi
 }
 
 async function resolveModelFacingUserMessage(threadId: string, userMessage: string): Promise<string> {
-  const staleRun = await findStaleRunningRun(threadId, userMessage);
-  if (staleRun) {
-    return buildStaleRunContinuationMessage(staleRun, userMessage);
-  }
-  if (await shouldExpandTurnLimitedContinuation(threadId, userMessage)) {
-    return [
-      TURN_LIMIT_CONTINUATION_PREFIX,
-      `用户发送的继续指令：${userMessage.trim()}`
-    ].join("\n\n");
-  }
-  const visibleHistoryContinuation = buildVisibleHistoryContinuationMessage(threadId, userMessage);
-  if (visibleHistoryContinuation) {
-    return visibleHistoryContinuation;
-  }
-  return userMessage;
+  const [staleRun, turnLimitedRun] = await Promise.all([
+    findStaleRunningRun(threadId),
+    findTurnLimitedRun(threadId)
+  ]);
+  const recoveryContext = staleRun
+    ? buildStaleRunRecoveryContext(staleRun)
+    : turnLimitedRun
+      ? buildTurnLimitedRecoveryContext(turnLimitedRun)
+      : null;
+  const visibleHistory = buildVisibleHistoryContext(threadId);
+  const context = [recoveryContext, visibleHistory].filter((part): part is string => Boolean(part));
+  return context.length > 0 ? `${context.join("\n\n")}\n\n${userMessage}` : userMessage;
 }
 
-function buildStaleRunContinuationMessage(run: LumeRunState, userMessage: string): string {
+function buildStaleRunRecoveryContext(run: LumeRunState): string {
   return [
-    STALE_RUN_CONTINUATION_PREFIX,
+    '<runtime-recovery-state reason="interrupted">',
     `原始任务：${compactRuntimeText(run.input.userMessage, 800)}`,
     `上次运行状态：${run.status}${run.currentStep?.type ? ` / ${run.currentStep.type}` : ""}`,
     "上次运行已完成的关键记录：",
     summarizeStaleRunProgress(run.generatedItems),
-    `用户发送的继续指令：${userMessage.trim()}`
+    "该状态仅供参考；以当前用户消息为准。",
+    "</runtime-recovery-state>"
   ].filter((part) => part.trim().length > 0).join("\n\n");
+}
+
+function buildTurnLimitedRecoveryContext(run: LumeRunState): string {
+  return [
+    '<runtime-recovery-state reason="turn_limit">',
+    `原始任务：${compactRuntimeText(run.input.userMessage, 800)}`,
+    "上次运行达到了轮次上限。该状态仅供参考；以当前用户消息为准。",
+    "</runtime-recovery-state>"
+  ].join("\n\n");
 }
 
 function summarizeStaleRunProgress(items: LumeRunItem[]): string {
@@ -493,26 +384,19 @@ function summarizeStaleRunProgress(items: LumeRunItem[]): string {
   ].join("\n");
 }
 
-function buildVisibleHistoryContinuationMessage(threadId: string, userMessage: string): string | null {
-  if (!isContinueOnlyMessage(userMessage)) return null;
+function buildVisibleHistoryContext(threadId: string): string | null {
   if (hasRuntimeCoreSessionTranscript(threadId)) return null;
   const messages = getAgentThreadMessages(threadId)
     .filter((message) => message.content.trim().length > 0);
-  while (messages.length > 0) {
-    const latest = messages[messages.length - 1];
-    if (latest?.role !== "user" || !isContinueOnlyMessage(latest.content)) break;
-    messages.pop();
-  }
   if (messages.length === 0) return null;
   const historyLines = messages
     .slice(-VISIBLE_HISTORY_CONTINUATION_TAIL_COUNT)
     .map((message) => `- ${message.role}: ${compactRuntimeText(message.content, 360)}`)
     .join("\n");
   return [
-    VISIBLE_HISTORY_CONTINUATION_PREFIX,
-    "可见聊天历史：",
+    "<visible-thread-history>",
     historyLines,
-    `用户发送的继续指令：${userMessage.trim()}`
+    "</visible-thread-history>"
   ].join("\n\n");
 }
 
@@ -885,7 +769,6 @@ export async function sendAgentMessage(
   options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal } = {}
 ): Promise<void> {
   const { threadId, userMessage } = input;
-  streamEmitters.set(threadId, emit);
   const completeIfAborted = () => {
     if (!options.abortSignal?.aborted) return false;
     emit.onComplete();
@@ -973,17 +856,11 @@ export async function sendAgentMessage(
   const shouldTryAutoTitle = shouldAppendUserMessage && assistantTurnCountBeforeSend === 0;
   void options.allowResumeRetry;
   let activeTurnId: string | null = null;
+  let activeTurnStartedAt: string | null = null;
   const persistedSdkMessages: SDKMessage[] = [];
   let userSdkMessage: SDKMessage | null = null;
 
-  const stateWorkspaceSlug = effectiveWorkspace?.slug;
-
-  const routingTrace = resolveAgentRuntimeRoutingTrace({
-    workspaceSlug: stateWorkspaceSlug,
-    userMessage: normalizedUserMessage.modelMessage,
-    availableTools: ROUTING_HEURISTIC_TOOLS
-  });
-  const routingToolPolicy = resolveSoftToolPolicyForPreferredRoute(routingTrace.preferredCapabilityRoute);
+  const browserContinuity = await getActiveBrowserBroker()?.getThreadAgentContinuity(threadId).catch(() => undefined);
   const existingToolPolicy =
     input.messageMetadata?.toolPolicy && typeof input.messageMetadata.toolPolicy === "object"
       ? (input.messageMetadata.toolPolicy as AgentToolPolicy)
@@ -1004,11 +881,9 @@ export async function sendAgentMessage(
       service,
       connectionName,
     })),
-    capabilityLanes: routingTrace.capabilityLanes,
-    preferredCapabilityRoute: routingTrace.preferredCapabilityRoute,
-    capabilityRoutingReason: routingTrace.reason,
+    browserContinuity: browserContinuity ?? null,
     toolPolicy: mergeToolPolicies(
-      mergeToolPolicies(existingToolPolicy, routingToolPolicy),
+      existingToolPolicy,
       capabilityProjection.allowedTools
         ? capabilityProjection.allowedTools.length > 0
           ? { allow: capabilityProjection.allowedTools }
@@ -1052,8 +927,6 @@ export async function sendAgentMessage(
     modelId: resolvedModelId,
     modelRef: canonicalModelRef,
     appendUserMessage: shouldAppendUserMessage,
-    preferredCapabilityRoute: routingTrace.preferredCapabilityRoute ?? undefined,
-    capabilityLanes: routingTrace.capabilityLanes,
     userMessage
   }));
 
@@ -1084,25 +957,8 @@ export async function sendAgentMessage(
       ...(sourceMessageId ? { sourceMessageId } : {})
     };
     activeTurnId = createdUserVersion.turnId;
+    activeTurnStartedAt = new Date((userSdkMessage as SDKMessage & { _createdAt?: number })._createdAt ?? Date.now()).toISOString();
     runtimeMessageMetadata.turnId = activeTurnId;
-    if (routingTrace.preferredCapabilityRoute === "coding" || routingTrace.preferredCapabilityRoute === "raw-tools") {
-      await createCodingTurnRecord(getRuntimeCoreSessionDir(threadId), {
-        turnId: activeTurnId,
-        threadId,
-        userMessageId: createdUserVersion.message.id,
-        runIds: [],
-        startedAt: new Date().toISOString(),
-        phase: "planning",
-        changedFiles: [],
-        verificationStatus: "not_run",
-        verificationRepairAttempts: 0,
-        approvalRequestCount: 0,
-        rewindState: "active",
-        routeReason: routingTrace.reason,
-        toolSelectionReason: "Coding 请求优先使用基础文件工具；仅在明确浏览器或桌面自动化需求时启用插件工具。"
-      });
-      if (completeIfAborted()) return;
-    }
     if (sourceMessageId) {
       replaceAgentThreadTranscript(threadId, getLatestVisibleMessagesForThread(threadId));
     }
@@ -1229,12 +1085,10 @@ export async function sendAgentMessage(
         }
       }
       if (stampedMessage.type === "system" && stampedMessage.subtype === "task_notification") {
-        scheduleBackgroundTaskWake(
-          input,
-          streamEmitters.get(threadId) ?? emit,
-          stampedMessage,
-          { emitCompletionEvent: runtimeCompleted }
-        );
+        if (runtimeCompleted) {
+          const completionEvent = projectLateBackgroundTaskCompletion(threadId, stampedMessage);
+          if (completionEvent) emit.onRuntimeEvent?.(completionEvent);
+        }
       }
     },
     onComplete: () => {
@@ -1342,12 +1196,24 @@ export async function sendAgentMessage(
       }
     }
   }
-  if (runtimeResult.codingReport?.turnId) {
+  if (
+    runtimeResult.codingReport?.turnId
+    && runtimeResult.codingReport.userMessageId
+    && (
+      runtimeResult.codingReport.workspaceChanged
+      || runtimeResult.codingReport.pendingBackground
+      || (runtimeResult.codingReport.gitActions?.length ?? 0) > 0
+    )
+  ) {
     const report = runtimeResult.codingReport;
     const turnId = report.turnId!;
-    await updateCodingTurnRecord(getRuntimeCoreSessionDir(threadId), turnId, {
+    await createCodingTurnRecord(getRuntimeCoreSessionDir(threadId), {
+      turnId,
+      threadId,
+      userMessageId: report.userMessageId!,
       ...(visibleAssistantMessageId ? { assistantMessageId: visibleAssistantMessageId } : {}),
-      ...(report.runId ? { runIds: [report.runId] } : {}),
+      runIds: report.runId ? [report.runId] : [],
+      startedAt: activeTurnStartedAt ?? new Date().toISOString(),
       finishedAt: new Date().toISOString(),
       checkpointId: report.checkpointId,
       baselineCommit: report.baselineCommit,
@@ -1360,8 +1226,6 @@ export async function sendAgentMessage(
       verificationRecords: report.verificationRecords,
       gitActions: report.gitActions,
       review: report.review,
-      routeReason: report.routeReason,
-      toolSelectionReason: report.toolSelectionReason,
       terminationReason: report.terminationReason
     });
   }
@@ -1442,7 +1306,6 @@ export function appendAgentMessage(
     trustedPlanningOperationId?: string;
   }
 ): AgentThreadMessageDispatchResult {
-  streamEmitters.set(input.threadId, emit);
   const submissionStore = input.clientSubmissionId ? getAgentSubmissionStore() : undefined;
   const submission = submissionStore?.begin(input);
   if (submission?.existing) {
@@ -1523,7 +1386,7 @@ export function appendAgentMessage(
     };
     // 运行中提交时按 followUpQueueMode 路由:steer 直接入 guidance;interrupt 中止当前 turn 后正常派发
     const isSessionActive = isAgentRuntimeSessionActive(input.threadId);
-    if (isSessionActive && input.followUpQueueMode === "steer" && !isBackgroundWakeInput(dispatchInput)) {
+    if (isSessionActive && input.followUpQueueMode === "steer") {
       // 携带完整 dispatch 字段(与 promote 路径对齐):steer 未被当前 turn 消费时,drain 回 queue 作为下一条 queued 消息跑(消息不丢,startNextQueued/validateQueued/execute 读 input/emit/priority/status/revision)
       runGuidanceStore.addQueuedDispatch({
         input: dispatchInput,
@@ -1627,7 +1490,6 @@ export function resumeAgentQueue(input: AgentResumeQueueInput): AgentMessageQueu
 function removeQueuedAgentMessageUnchecked(input: AgentRemoveQueuedMessageInput): Omit<AgentMessageQueueOperationResult, "ok" | "snapshot"> {
   const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
   if (removed) {
-    releaseBackgroundWakeInput(removed.input);
     if (removed.input.clientSubmissionId) {
       getAgentSubmissionStore().transition(removed.input.clientSubmissionId, "rejected", "queue_removed");
     }
@@ -1652,7 +1514,7 @@ export function promoteQueuedAgentMessageToGuidance(
   input: AgentPromoteQueuedMessageToGuidanceInput
 ): AgentMessageQueueOperationResult {
   const candidate = agentRuntimeKernel.listQueued(input.threadId).find((item) => item.id === input.queuedMessageId);
-  if (!candidate || isBackgroundWakeInput(candidate.input) || !candidate.input.userMessage.trim()) {
+  if (!candidate || !candidate.input.userMessage.trim()) {
     return { ok: false, snapshot: listAgentMessageQueue(input.threadId) };
   }
   return runQueueOperation(input.queueOperationId, input.threadId, () => promoteQueuedAgentMessageToGuidanceUnchecked(input));
@@ -1688,9 +1550,6 @@ export function updateQueuedAgentMessage(input: AgentUpdateQueuedMessageInput): 
   return runQueueOperation(input.queueOperationId, input.threadId, () => {
     const current = agentRuntimeKernel.listQueued(input.threadId)
       .find((item) => item.id === input.queuedMessageId);
-    if (current && isBackgroundWakeInput(current.input)) {
-      throw new Error("内部后台续跑消息不可编辑");
-    }
     const { capabilityFingerprints: _staleFingerprints, ...messageMetadata } = current?.input.messageMetadata ?? {};
     const updated = agentRuntimeKernel.updateQueued(input.threadId, input.queuedMessageId, input.expectedRevision, {
       userMessage: input.userMessage,
@@ -1722,9 +1581,6 @@ export async function waitForAgentRuntimeKernelIdleForTest(): Promise<void> {
 
 export function resetAgentRuntimeKernelForTest(): void {
   agentRuntimeKernel.resetForTest();
-  backgroundWakeController.reset();
-  streamEmitters.clear();
-  scheduledBackgroundWakes.clear();
   runGuidanceStore.resetForTest();
   queueOperationResults.clear();
 }
@@ -1795,18 +1651,6 @@ function restoreUnconsumedGuidanceToQueue(threadId: string): void {
   emitAgentMessageQueueChanged(threadId);
 }
 
-function isBackgroundWakeInput(input: AgentSendInput): boolean {
-  return input.messageMetadata?.backgroundTaskWake === true
-    && typeof input.messageMetadata.backgroundTaskId === "string";
-}
-
-function releaseBackgroundWakeInput(input: AgentSendInput): void {
-  if (!isBackgroundWakeInput(input)) return;
-  const taskId = input.messageMetadata?.backgroundTaskId;
-  scheduledBackgroundWakes.delete(input.threadId);
-  if (typeof taskId === "string") backgroundWakeController.release(input.threadId, taskId);
-}
-
 // 富 steer 附件摘要:以"摘要信封"注入 guidance 文本(模型可见、不可执行),与 ContextAssembler 的 <browser_attachments> 风格一致。
 function summarizeGuidanceAttachments(input: AgentSendInput): string | undefined {
   const parts: string[] = [];
@@ -1847,16 +1691,12 @@ function toQueuedMessage(dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInp
       : {}),
     ...(Array.isArray(dispatch.input.messageMetadata?.capabilityFingerprints)
       ? { capabilityFingerprints: dispatch.input.messageMetadata.capabilityFingerprints as Array<{ uri: string; fingerprint: string }> }
-      : {}),
-    ...(isBackgroundWakeInput(dispatch.input) ? { internal: true } : {})
+      : {})
   };
 }
 
 export async function stopAgent(threadId: string): Promise<boolean> {
   const dispatchStopped = agentRuntimeKernel.cancelActive(threadId);
-  backgroundWakeController.clearThread(threadId);
-  streamEmitters.delete(threadId);
-  scheduledBackgroundWakes.delete(threadId);
   const sessionStateManager = getSessionStateManager();
   sessionStateManager.delete(threadId);
   getAgentRuntimeStatusManager().markIdle(threadId);

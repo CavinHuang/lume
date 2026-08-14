@@ -1,4 +1,4 @@
-import type { AgentSendInput, PlanModePhase, PlanModePhaseChangedEvent } from "@lume/shared";
+import type { PlanModePhase, PlanModePhaseChangedEvent } from "@lume/shared";
 
 export class PlanModePhaseTracker {
   private readonly phaseBySession = new Map<string, PlanModePhase>();
@@ -9,12 +9,6 @@ export class PlanModePhaseTracker {
 
   clearSession(sessionId: string): void {
     this.phaseBySession.delete(sessionId);
-  }
-
-  isLikelyExecutionRequest(input: AgentSendInput): boolean {
-    if (input.permissionMode === "plan") return false;
-    return typeof input.messageMetadata?.taskRunId === "string"
-      && typeof input.messageMetadata?.taskId === "string";
   }
 
   updatePhase(

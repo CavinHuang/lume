@@ -450,6 +450,7 @@ test("browser webview guests are one-time authorized and receive no host bridge"
   assert.match(mainSource, /authorizeGuestMount/);
   assert.match(mainSource, /did-attach-webview/);
   assert.match(mainSource, /browser-guest-preload\.cjs/);
+  assert.match(mainSource, /params\.allowpopups = ['"]{2}/);
   assert.match(mainSource, /ipcMain\.on\('lume:browser-guest-mounted'/);
   // guest-preload 不得向 page 暴露任意 host bridge。Task 82 起唯一允许的受审例外是
   // Web MCP shim（__lumeWebMcpModelContext，frozen、仅 registerTool/getTools/executeTool
@@ -469,6 +470,7 @@ test("renderer browser guest pool never reparents an attached webview", () => {
   assert.match(poolSource, /api\.recover\(tabId/);
   assert.match(poolSource, /wrapper\.style\.position = 'fixed'/);
   assert.match(poolSource, /wrapper\.style\.visibility = 'hidden'/);
+  assert.match(poolSource, /webview\.setAttribute\('allowpopups', ''\)/);
   assert.doesNotMatch(poolSource, /wrapper\.style\.display = 'none'/);
   assert.doesNotMatch(poolSource, /append\(existing\.wrapper\)/);
   assert.doesNotMatch(poolSource, /append\(entry\.wrapper\)/);

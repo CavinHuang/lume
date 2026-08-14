@@ -21,7 +21,7 @@ describe("BrowserWorkspaceStore", () => {
     expect(store.get("thread-1").orderedTabIds).toEqual(["one"])
     expect(store.restoreClosed("thread-1")?.tabId).toBe("two")
     expect(new BrowserWorkspaceStore(() => directory).get("thread-1").orderedTabIds).toEqual(["one", "two"])
-    expect(readFileSync(join(directory, "browser", "workspaces.json"), "utf8")).toContain('"version":8')
+    expect(readFileSync(join(directory, "browser", "workspaces.json"), "utf8")).toContain('"version":9')
   })
 
   test("does not restore ordinary agent tabs and ignores corrupt state", () => {
@@ -45,7 +45,50 @@ describe("BrowserWorkspaceStore", () => {
     expect(new BrowserWorkspaceStore(() => directory).list()).toEqual([])
   })
 
-  test("reads a v1 workspace and writes it back as v8", () => {
+  test("migrates legacy Agent tabs to the shared persistent profile", () => {
+    const directory = mkdtempSync(join(tmpdir(), "lume-browser-workspaces-"))
+    directories.push(directory)
+    const browserDirectory = join(directory, "browser")
+    mkdirSync(browserDirectory, { recursive: true })
+    writeFileSync(join(browserDirectory, "workspaces.json"), JSON.stringify({
+      version: 8,
+      workspaces: { "thread-1": { ownerThreadId: "thread-1", orderedTabIds: ["agent"], recentlyClosed: [], revision: 1 } },
+      tabs: {
+        agent: {
+          ...tab("agent", "thread-1"),
+          profileKind: "agent",
+          handoffStatus: "deliverable",
+          handoffBrowserSessionId: "thread-1",
+          partition: "lume-agent-thread-1-turn-1",
+        },
+      },
+    }))
+
+    expect(new BrowserWorkspaceStore(() => directory).persistedTabs("thread-1")[0]).toMatchObject({
+      tabId: "agent",
+      profileKind: "agent",
+      partition: "persist:lume-browser",
+      storageKind: "shared",
+      handoffStatus: "deliverable",
+    })
+  })
+
+  test("keeps explicitly isolated Agent tabs isolated in v9", () => {
+    const directory = mkdtempSync(join(tmpdir(), "lume-browser-workspaces-"))
+    directories.push(directory)
+    const store = new BrowserWorkspaceStore(() => directory)
+    store.rememberTab(
+      { ...tab("isolated", "thread-1"), profileKind: "agent", handoffStatus: "handoff" },
+      { partition: "lume-agent-thread-1-turn-1", handoffBrowserSessionId: "thread-1" },
+    )
+    expect(new BrowserWorkspaceStore(() => directory).persistedTabs("thread-1")[0]).toMatchObject({
+      tabId: "isolated",
+      partition: "lume-agent-thread-1-turn-1",
+      storageKind: "isolated",
+    })
+  })
+
+  test("reads a v1 workspace and writes it back as v9", () => {
     const directory = mkdtempSync(join(tmpdir(), "lume-browser-workspaces-"))
     directories.push(directory)
     const browserDirectory = join(directory, "browser")
@@ -59,7 +102,7 @@ describe("BrowserWorkspaceStore", () => {
     const store = new BrowserWorkspaceStore(() => directory)
     expect(store.get("thread-1").orderedTabIds).toEqual(["one"])
     store.flush()
-    expect(readFileSync(join(browserDirectory, "workspaces.json"), "utf8")).toContain('"version":8')
+    expect(readFileSync(join(browserDirectory, "workspaces.json"), "utf8")).toContain('"version":9')
   })
 })
 

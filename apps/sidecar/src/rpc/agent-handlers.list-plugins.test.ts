@@ -25,7 +25,6 @@ describe("agent handlers LIST_PLUGINS", () => {
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
       planModePhaseTracker: {
-        isLikelyExecutionRequest: () => false,
         getPhase: () => "idle",
         clearSession: () => undefined,
       } as unknown as PlanModePhaseTracker,

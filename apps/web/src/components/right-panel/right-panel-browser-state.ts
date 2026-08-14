@@ -1,7 +1,15 @@
 import type { BrowserTabDescriptor, BrowserViewportPreset, BrowserViewportState } from '@lume/shared'
 
+export const THREAD_BROWSER_ACTIVATE_EVENT = 'lume:thread-browser-activate'
+
+export interface ThreadBrowserActivateDetail {
+  threadId: string
+  tab: BrowserTabDescriptor
+}
+
 export interface RightPanelBrowserTab {
   id: string
+  profileKind?: BrowserTabDescriptor['profileKind']
   url: string
   title: string
   faviconUrl?: string
@@ -80,6 +88,7 @@ export function applyBrowserDescriptor(
   descriptor: BrowserTabDescriptor,
 ): ThreadBrowserWorkspace {
   return updateBrowserTab(workspace, descriptor.tabId, {
+    profileKind: descriptor.profileKind,
     url: descriptor.url,
     title: descriptor.title || '新标签页',
     faviconUrl: descriptor.faviconUrl,
@@ -99,6 +108,7 @@ export function browserTabFromDescriptor(descriptor: BrowserTabDescriptor): Righ
   const now = new Date().toISOString()
   return {
     id: descriptor.tabId,
+    ...(descriptor.profileKind ? { profileKind: descriptor.profileKind } : {}),
     url: descriptor.url,
     title: descriptor.title || '新标签页',
     ...(descriptor.faviconUrl ? { faviconUrl: descriptor.faviconUrl } : {}),
@@ -113,6 +123,18 @@ export function browserTabFromDescriptor(descriptor: BrowserTabDescriptor): Righ
     ...(descriptor.navigationIndex !== undefined ? { navigationIndex: descriptor.navigationIndex } : {}),
     ...(descriptor.scrollPosition ? { scrollPosition: descriptor.scrollPosition } : {}),
   }
+}
+
+export function findThreadBrowserTabByUrl(
+  tabs: BrowserTabDescriptor[],
+  threadId: string,
+  url: string,
+): BrowserTabDescriptor | undefined {
+  const targetUrl = comparableBrowserUrl(url)
+  if (!targetUrl) return undefined
+  return tabs
+    .filter((tab) => tab.ownerThreadId === threadId && comparableBrowserUrl(tab.url) === targetUrl)
+    .sort((left, right) => String(right.lastOpenedAt ?? '').localeCompare(String(left.lastOpenedAt ?? '')))[0]
 }
 
 export function closeBrowserTab(workspace: ThreadBrowserWorkspace, tabId: string): ThreadBrowserWorkspace {
@@ -168,11 +190,12 @@ export function sanitizeThreadBrowserWorkspace(value: unknown): ThreadBrowserWor
 }
 
 function sanitizeBrowserTab(value: unknown): RightPanelBrowserTab | null {
-  if (!isRecord(value) || typeof value.id !== 'string' || !value.id.startsWith('browser:')) return null
+  if (!isRecord(value) || typeof value.id !== 'string' || !isBrowserTabId(value.id, value.profileKind)) return null
   const createdAt = typeof value.createdAt === 'string' ? value.createdAt : new Date().toISOString()
   const viewport = sanitizeViewport(value.viewport)
   return {
     id: value.id,
+    ...(value.profileKind === 'user' || value.profileKind === 'agent' || value.profileKind === 'advanced-cdp' ? { profileKind: value.profileKind } : {}),
     url: typeof value.url === 'string' ? value.url : '',
     title: typeof value.title === 'string' && value.title ? value.title : '新标签页',
     ...(typeof value.faviconUrl === 'string' ? { faviconUrl: value.faviconUrl } : {}),
@@ -183,6 +206,22 @@ function sanitizeBrowserTab(value: unknown): RightPanelBrowserTab | null {
     ...(Array.isArray(value.navigationEntries) ? { navigationEntries: value.navigationEntries.filter((entry): entry is string => typeof entry === 'string').slice(-200) } : {}),
     ...(typeof value.navigationIndex === 'number' && Number.isInteger(value.navigationIndex) ? { navigationIndex: value.navigationIndex } : {}),
     ...(isScrollPosition(value.scrollPosition) ? { scrollPosition: value.scrollPosition } : {}),
+  }
+}
+
+function isBrowserTabId(id: string, profileKind: unknown): boolean {
+  return id.startsWith('browser:')
+    || (profileKind === 'agent' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
+}
+
+function comparableBrowserUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value.trim().replace(/[。，、；：！？）】》〉”’]+$/u, ''))
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined
+    url.hash = ''
+    return url.toString()
+  } catch {
+    return undefined
   }
 }
 

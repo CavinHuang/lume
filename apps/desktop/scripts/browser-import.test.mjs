@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createCipheriv } from "node:crypto";
-import { discoverChromeProfiles, mergeImportedPasswords, classifyChromeImportError, chromeEncryptedBytes, decryptWindowsV10Value, deriveMacChromeKey, decryptMacV10Value, decryptLegacyDpapiValue, atomicWriteEncryptedVault, createImportedCookie, readEncryptedVault, readChromeRows, readChromeCookieRows, isExpiredChromeCookie } from "../src/browser-import.ts";
+import { discoverChromeProfiles, mergeImportedPasswords, classifyChromeImportError, chromeEncryptedBytes, decryptWindowsV10Value, deriveMacChromeKey, decryptMacV10Value, decryptLegacyDpapiValue, atomicWriteEncryptedVault, createImportedCookie, createImportedExtensionCookie, importConnectedChromeCookies, readEncryptedVault, readChromeRows, readChromeCookieRows, isExpiredChromeCookie } from "../src/browser-import.ts";
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -65,6 +65,30 @@ test("cookie import preserves Chrome domain scope but keeps host-only cookies ho
   assert.equal(domainCookie.sameSite, "strict");
   const hostCookie = createImportedCookie({ host_key: "login.example.test", name: "sid", path: "/", is_secure: 1, is_httponly: 1 }, "secret");
   assert.equal("domain" in hostCookie, false);
+});
+
+test("connected Chrome cookies preserve supported scope without accepting partitioned cookies", async () => {
+  const root = join(process.cwd(), ".tmp-connected-chrome-import-test");
+  const imported = [];
+  const report = await importConnectedChromeCookies({
+    cookies: [
+      { domain: ".example.test", hostOnly: false, name: "sid", value: "secret", path: "/", secure: true, httpOnly: true, sameSite: "no_restriction", session: false, expirationDate: 4_000_000_000 },
+      { domain: "partitioned.test", hostOnly: true, name: "sid", value: "secret", path: "/", secure: true, httpOnly: true, sameSite: "lax", session: true, partitionKey: { topLevelSite: "https://top.test" } },
+    ],
+    configDir: root,
+    onCookie: async (cookie) => { imported.push(cookie); },
+  });
+  assert.equal(report.cookieSource, "chrome_extension");
+  assert.equal(report.imported.cookies, 1);
+  assert.equal(report.skipped.cookies, 1);
+  assert.equal(report.reasons.partitioned_cookie_unsupported, 1);
+  assert.equal(imported[0].domain, ".example.test");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("connected Chrome cookie conversion rejects expired and malformed domains", () => {
+  assert.equal(createImportedExtensionCookie({ domain: "example.test", hostOnly: true, name: "sid", value: "secret", expirationDate: 999 }, 1_000_000), null);
+  assert.equal(createImportedExtensionCookie({ domain: "user@example.test", hostOnly: true, name: "sid", value: "secret", session: true }), null);
 });
 
 test("expired persistent cookies are skipped instead of widening into session cookies", () => {

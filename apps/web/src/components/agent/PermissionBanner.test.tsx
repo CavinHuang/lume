@@ -7,7 +7,6 @@ mock.module('@/lib/desktop-api', () => ({
   agentSend: async () => undefined,
   openFileDialog: async () => ({ files: [] }),
   sidecarCall: async () => undefined,
-  submitTaskApproval: async () => ({ ok: true }),
 }))
 
 const { PermissionBanner, buildToolPermissionSubmission } = await import('./PermissionBanner')

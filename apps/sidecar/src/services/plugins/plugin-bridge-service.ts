@@ -1,24 +1,15 @@
 import { createConnection } from "node:net";
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { copyFile, mkdir, stat } from "node:fs/promises";
+import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import type {
   CheckBridgeStatusInput,
   CheckBridgeStatusResult,
-  DownloadBridgeAssetInput,
-  DownloadBridgeAssetResult,
-  ExportPluginArtifactInput,
-  ExportPluginArtifactResult,
 } from "@lume/shared";
 
 export class PluginBridgeError extends Error {
   constructor(
     public readonly code:
-      | "artifact_not_found"
-      | "download_failed"
-      | "verify_failed"
       | "unsupported_verify"
       | "unsafe_target",
     message: string,
@@ -29,14 +20,11 @@ export class PluginBridgeError extends Error {
 }
 
 export interface PluginBridgeServiceConfig {
-  installedRoot: string;
   fetchImpl?: typeof fetch;
 }
 
 export function createDefaultPluginBridgeService(): PluginBridgeService {
-  return new PluginBridgeService({
-    installedRoot: join(homedir(), ".lume", "plugins"),
-  });
+  return new PluginBridgeService();
 }
 
 const TCP_TIMEOUT_MS = 2000;
@@ -44,51 +32,8 @@ const TCP_TIMEOUT_MS = 2000;
 export class PluginBridgeService {
   private readonly fetchImpl: typeof fetch;
 
-  constructor(private readonly config: PluginBridgeServiceConfig) {
+  constructor(config: PluginBridgeServiceConfig = {}) {
     this.fetchImpl = config.fetchImpl ?? fetch;
-  }
-
-  /** 导出已安装插件目录内的桥接产物到本地目录。 */
-  async exportPluginArtifact(input: ExportPluginArtifactInput): Promise<ExportPluginArtifactResult> {
-    const src = this.resolveArtifactPath(input.pluginId, input.version, input.artifactPath);
-    if (!existsSync(src)) {
-      throw new PluginBridgeError("artifact_not_found", `桥接产物不存在: ${input.artifactPath}`);
-    }
-    const destDir = input.destDir ?? join(homedir(), "Downloads");
-    await mkdir(destDir, { recursive: true });
-    const dest = join(destDir, basename(src));
-    await copyFile(src, dest);
-    return { savedPath: dest };
-  }
-
-  /** 下载外部桥接资产（如 GitHub Release），可选 sha256 校验。 */
-  async downloadBridgeAsset(input: DownloadBridgeAssetInput): Promise<DownloadBridgeAssetResult> {
-    if (!input.url.startsWith("https://")) {
-      throw new PluginBridgeError("download_failed", "仅允许 https 下载源");
-    }
-    const filename = input.filename ?? (basename(new URL(input.url).pathname) || "bridge-asset.bin");
-    const destDir = input.destDir ?? join(homedir(), "Downloads");
-    await mkdir(destDir, { recursive: true });
-    const dest = join(destDir, filename);
-
-    const resp = await this.fetchImpl(input.url);
-    if (!resp.ok || !resp.body) {
-      throw new PluginBridgeError("download_failed", `下载失败: HTTP ${resp.status}`);
-    }
-    const buf = Buffer.from(await resp.arrayBuffer());
-    await mkdir(dirname(dest), { recursive: true });
-    const { writeFile } = await import("node:fs/promises");
-    await writeFile(dest, buf);
-
-    let verified = true;
-    if (input.sha256) {
-      const actual = createHash("sha256").update(buf).digest("hex");
-      verified = actual === input.sha256.toLowerCase();
-      if (!verified) {
-        throw new PluginBridgeError("verify_failed", `sha256 不匹配: 期望 ${input.sha256}, 实际 ${actual}`);
-      }
-    }
-    return { savedPath: dest, verified };
   }
 
   /** 检测桥接是否就绪。tcp-port/http-get 仅允许本地地址。 */
@@ -124,12 +69,6 @@ export class PluginBridgeService {
       default:
         throw new PluginBridgeError("unsupported_verify", `不支持的检测方式: ${method}`);
     }
-  }
-
-  private resolveArtifactPath(pluginId: string, version: string, artifactPath: string): string {
-    // artifactPath 形如 "./ext.zip"；拼到 ~/.lume/plugins/<id>/<ver>/<path>
-    const rel = artifactPath.replace(/^\.\//, "");
-    return join(this.config.installedRoot, pluginId, version, rel);
   }
 }
 

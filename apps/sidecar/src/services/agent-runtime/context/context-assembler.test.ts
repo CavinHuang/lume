@@ -17,9 +17,57 @@ describe("ContextAssembler", () => {
       tokenBudget: 8_000,
     });
 
-    expect(result.runtimeContext).toContain("Use list_apps, choose one unique Window, call get_window");
+    expect(result.runtimeContext).toContain("Use mcp__computer_use__list_apps, choose one unique Window, call mcp__computer_use__get_window");
     expect(result.runtimeContext).toContain("replace the prior target with state.window");
     expect(result.runtimeContext).not.toContain("historical app/title hint");
+  });
+
+  test("identifies the bundled in-app Browser runtime before the desktop fallback", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "browser-thread",
+      runId: "browser-run",
+      userMessage: "打开百度搜索agent",
+      resolvedModelId: "test-model",
+      workspaceSlug: "browser-workspace",
+      availableTools: ["mcp__node_repl__js", "mcp__computer_use__click"],
+      browserRuntimeAvailable: true,
+      browserContinuity: {
+        tabId: "agent-tab-1",
+        url: "https://x.com/home",
+        title: "Home / X",
+        profileKind: "agent",
+        handoffStatus: "deliverable",
+        visible: true,
+        lifecycle: "active"
+      },
+      tokenBudget: 8_000,
+    });
+
+    expect(result.runtimeContext).not.toContain("Preferred capability route:");
+    expect(result.runtimeContext).toContain("shared persistent in-app Browser runtime is available");
+    expect(result.runtimeContext).toContain("exact skill name browser:browser (without a workspace prefix)");
+    expect(result.runtimeContext).toContain("Do not claim browser automation is unavailable before attempting it");
+    expect(result.runtimeContext).toContain("defaults to the iab backend");
+    expect(result.runtimeContext).toContain("browser.tabs.resumeHandoff()");
+    expect(result.runtimeContext).toContain('"tabId":"agent-tab-1"');
+    expect(result.runtimeContext).toContain("Continue that tab instead of creating a duplicate");
+    expect(result.runtimeContext).not.toContain("mcp__computer_use__list_apps");
+    expect(result.runtimeContext).not.toContain("prefer the installed lume-chrome");
+  });
+
+  test("does not advertise Browser when node_repl lacks the bundled runtime", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "node-repl-only-thread",
+      runId: "node-repl-only-run",
+      userMessage: "打开浏览器",
+      resolvedModelId: "test-model",
+      availableTools: ["mcp__node_repl__js", "mcp__computer_use__click"],
+      browserRuntimeAvailable: false,
+      tokenBudget: 8_000,
+    });
+
+    expect(result.runtimeContext).not.toContain("shared persistent in-app Browser runtime is available");
+    expect(result.runtimeContext).toContain("No Browser runtime tool is available for this turn");
   });
 
   test("injects desktop context as explicitly untrusted user data", async () => {
@@ -92,12 +140,12 @@ describe("ContextAssembler", () => {
 
     expect(result.runtimeContext).toContain("historical app/title hint");
     expect(result.runtimeContext).toContain("If desktop_context.snapshot.selectedText is present");
-    expect(result.runtimeContext).toContain("Use list_apps, choose one unique Window, call get_window");
+    expect(result.runtimeContext).toContain("Use mcp__computer_use__list_apps, choose one unique Window, call mcp__computer_use__get_window");
     expect(result.runtimeContext).toContain("mcp__computer_use__get_window_state");
     expect(result.runtimeContext).toContain("replace the prior target with state.window");
     expect(result.runtimeContext).toContain("Never reconstruct a Window id");
     expect(result.runtimeContext).toContain("Passive reads do not activate windows");
-    expect(result.runtimeContext).toContain("use activate_window only");
+    expect(result.runtimeContext).toContain("use mcp__computer_use__activate_window only");
     expect(result.runtimeContext).toContain("Input tools restore and activate");
     expect(result.runtimeContext).toContain("include_screenshot defaults to true");
     expect(result.runtimeContext).toContain("include_screenshot:false, include_text:true");

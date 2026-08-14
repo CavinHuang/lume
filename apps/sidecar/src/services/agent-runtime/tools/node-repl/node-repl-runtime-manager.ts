@@ -339,39 +339,41 @@ export function buildNodeReplChildEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEn
   const env = { ...base };
   delete env.LUME_WIKI_PRIVILEGED_CREDENTIAL;
   const bundledRoot = base.LUME_BUNDLED_PLUGINS_DIR?.trim();
-  if (!bundledRoot) return withoutComputerUsePermission(env);
-  const clientPath = join(
-    bundledRoot,
-    "computer-use",
-    "scripts",
-    "computer-use-client.mjs",
-  );
-  if (!existsSync(clientPath)) return withoutComputerUsePermission(env);
+  const bundledClients = bundledRoot
+    ? [
+      { permission: "computerUse", path: join(bundledRoot, "computer-use", "scripts", "computer-use-client.mjs") },
+      { permission: "browser", path: join(bundledRoot, "browser", "scripts", "browser-client.mjs") },
+    ].filter((client) => existsSync(client.path))
+    : [];
 
   const manifest = readRuntimeManifest(base.LUME_CUA_RUNTIME_MANIFEST);
+  const bundledPermissions = new Set(bundledClients.map((client) => client.permission));
   const permissions = uniqueStrings([
-    ...readStringArray(manifest.permissions),
-    "computerUse",
+    ...readStringArray(manifest.permissions).filter((permission) =>
+      (permission !== "computerUse" && permission !== "browser") || bundledPermissions.has(permission)
+    ),
+    ...bundledPermissions,
   ]);
-  env.LUME_CUA_RUNTIME_MANIFEST = JSON.stringify({
-    ...manifest,
-    name: typeof manifest.name === "string" && manifest.name.trim()
-      ? manifest.name
-      : "lume-computer-use",
-    permissions,
-  });
-  env.NODE_REPL_TRUSTED_CODE_PATHS = uniqueStrings([
+  if (permissions.length === 0 && !base.LUME_CUA_RUNTIME_MANIFEST) {
+    delete env.LUME_CUA_RUNTIME_MANIFEST;
+  } else {
+    env.LUME_CUA_RUNTIME_MANIFEST = JSON.stringify({
+      ...manifest,
+      name: typeof manifest.name === "string" && manifest.name.trim()
+        ? manifest.name
+        : "lume-bundled-runtime",
+      permissions,
+    });
+  }
+  const trustedCodePaths = uniqueStrings([
     ...(base.NODE_REPL_TRUSTED_CODE_PATHS?.split(delimiter) ?? []),
-    clientPath,
-  ]).join(delimiter);
-  return env;
-}
-
-function withoutComputerUsePermission(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  if (!env.LUME_CUA_RUNTIME_MANIFEST) return env;
-  const manifest = readRuntimeManifest(env.LUME_CUA_RUNTIME_MANIFEST);
-  const permissions = readStringArray(manifest.permissions).filter((permission) => permission !== "computerUse");
-  env.LUME_CUA_RUNTIME_MANIFEST = JSON.stringify({ ...manifest, permissions });
+    ...bundledClients.map((client) => client.path),
+  ]);
+  if (trustedCodePaths.length > 0) {
+    env.NODE_REPL_TRUSTED_CODE_PATHS = trustedCodePaths.join(delimiter);
+  } else {
+    delete env.NODE_REPL_TRUSTED_CODE_PATHS;
+  }
   return env;
 }
 

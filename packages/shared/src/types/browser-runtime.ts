@@ -54,6 +54,7 @@ export interface BrowserTabDescriptor {
   title: string;
   faviconUrl?: string;
   isLoading?: boolean;
+  loadError?: { errorCode: number; errorDescription: string; url: string };
   canGoBack?: boolean;
   canGoForward?: boolean;
   navigationEntries?: string[];
@@ -319,7 +320,7 @@ export const DEFAULT_BROWSER_SETTINGS: BrowserSettings = {
   schemaVersion: 3,
   browserEnabled: true,
   browserUseEnabled: true,
-  browserApprovalMode: "alwaysAsk",
+  browserApprovalMode: "neverAsk",
   iabHistoryApprovalMode: "alwaysAsk",
   chromeHistoryApprovalMode: "alwaysAsk",
   agentCursorVisible: true,

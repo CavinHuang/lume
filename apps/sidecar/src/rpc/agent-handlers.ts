@@ -496,9 +496,8 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
   };
 
   const createExecutionStartCallback = (input: AgentSendInput) => () => {
-    if (!context.planModePhaseTracker.isLikelyExecutionRequest(input)) {
-      return;
-    }
+    const phase = context.planModePhaseTracker.getPhase(input.threadId);
+    if (input.permissionMode === "plan" || (phase !== "planning" && phase !== "awaiting_approval")) return;
     context.notifyPlanModePhaseChange(input.threadId, "executing");
   };
 

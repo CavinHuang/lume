@@ -26,6 +26,7 @@ export interface SubagentRun {
   deliveryThreadId?: string;
   threadRequested?: boolean;
   threadBound?: boolean;
+  background?: boolean;
   label?: string;
   task: string;
   status: SubagentRunStatus;
@@ -62,6 +63,7 @@ export interface CreateSubagentRunInput {
   deliveryThreadId?: string;
   threadRequested?: boolean;
   threadBound?: boolean;
+  background?: boolean;
   label?: string;
   task: string;
   cleanup: "keep" | "delete";
@@ -88,6 +90,7 @@ export interface UpdateSubagentRunInput {
   deliveryThreadId?: string;
   threadRequested?: boolean;
   threadBound?: boolean;
+  background?: boolean;
   requestedAgentId?: string;
   resolvedAgentId?: string;
   parentToolUseId?: string;
@@ -99,4 +102,3 @@ export interface UpdateSubagentRunInput {
   endedAt?: number;
   outcome?: SubagentRunOutcome;
 }
-
