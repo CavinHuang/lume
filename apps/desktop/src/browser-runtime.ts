@@ -3901,16 +3901,13 @@ function browserCapabilityDocumentation(id: string): string {
   return value
 }
 
-async function browserPromiseTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout?: () => void): Promise<T> {
+async function browserPromiseTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          try { onTimeout?.() } catch { /* The timeout still releases the caller when debugger reset fails. */ }
-          reject(browserError("browser_internal_error"))
-        }, timeoutMs)
+        timer = setTimeout(() => reject(browserError("browser_internal_error")), timeoutMs)
       }),
     ])
   } finally {
@@ -4168,9 +4165,7 @@ async function withDebugger<T>(contents: Electron.WebContents, work: (debuggerRe
     const attached = debuggerRef.isAttached()
     if (!attached) debuggerRef.attach("1.3")
     try {
-      return await browserPromiseTimeout(work(debuggerRef), timeoutMs, () => {
-        if (debuggerRef.isAttached()) debuggerRef.detach()
-      })
+      return await browserPromiseTimeout(work(debuggerRef), timeoutMs)
     } catch (error) {
       // 必须带 .code —— dispatch catch 的 stableBrowserErrorCode 只认 code，裸 Error 会全部塌缩成 browser_internal_error
       const message = error instanceof Error ? error.message : String(error ?? "")
