@@ -481,6 +481,64 @@ describe("agent-handlers runtime state", () => {
     expect(sendAgentMessageMock).not.toHaveBeenCalled();
   });
 
+  test("get-pending-resume stays silent for tool_running and waiting_background continuations", async () => {
+    // F2: 这两个状态已有审批/后台交互提示，横幅不再双重提示。
+    for (const continuationStatus of ["tool_running", "waiting_background"] as const) {
+      process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), `lume-runtime-pending-${continuationStatus}-`));
+      const threadId = `thread-pending-${continuationStatus}`;
+      const runId = `run-pending-${continuationStatus}`;
+      const sessionDir = getRuntimeCoreSessionDir(threadId);
+      await createFileBackedLumeRunStateStore(sessionDir).create({
+        version: 1,
+        runId,
+        threadId,
+        rootAgentId: "runtime-core",
+        currentAgentId: "runtime-core",
+        status: "paused",
+        input: { userMessage: "paused task", permissionMode: "default" },
+        generatedItems: [],
+        pendingInterruptions: [],
+        approvals: { alwaysAllowedTools: [] },
+        traceId: `trace-${continuationStatus}`,
+        model: { provider: "openai", modelId: "gpt-test" },
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        createdAt: "2026-04-30T00:00:00.000Z",
+        updatedAt: "2026-04-30T00:00:00.000Z"
+      });
+      await createFileBackedRunContinuationStore(sessionDir).upsert({
+        version: 2,
+        runId,
+        threadId,
+        status: continuationStatus,
+        checkpoint: {
+          step: "waiting_for_tool_result",
+          toolCallId: "tool-1",
+          toolName: "Bash",
+          toolKind: "execute",
+          toolCall: {
+            id: "tool-1",
+            name: "Bash",
+            input: { command: "ls" },
+            inputHash: "hash-1",
+            kind: "execute"
+          }
+        },
+        createdAt: "2026-04-30T00:00:00.000Z",
+        updatedAt: "2026-04-30T00:00:00.000Z"
+      });
+
+      const { createAgentHandlers } = await import("./agent-handlers");
+      const handlers = createAgentHandlers({
+        writeNotification: () => undefined,
+        planModePhaseTracker: createTestPlanModePhaseTracker(),
+        notifyPlanModePhaseChange: () => undefined
+      });
+
+      const pending = await handlers[AGENT_IPC_CHANNELS.GET_PENDING_RESUME]!({ threadId });
+      expect(pending).toEqual({ threadId, hasPendingResume: false });
+    }
+  });
+
   test("get-pending-resume flags a crashed running run with dangling tool_use", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-pending-crash-"));
     const threadId = "thread-pending-crash";

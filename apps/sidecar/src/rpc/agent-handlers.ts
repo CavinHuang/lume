@@ -563,15 +563,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     const runStore = createFileBackedLumeRunStateStore(sessionDir);
     const continuationStore = createFileBackedRunContinuationStore(sessionDir);
     // 只看线程最近一个 run 的 continuation 状态。
+    // tool_running / waiting_background 不进横幅触发集：审批与后台等待已有
+    // 专门的交互提示（TOOL_PERMISSION_REQUEST / 后台状态），横幅会造成双重提示。
     const lastRun = (await runStore.listByThread(input.threadId)).at(-1);
     if (lastRun) {
       const continuation = await continuationStore.get(lastRun.runId);
-      if (
-        continuation
-        && (continuation.status === "interrupted"
-          || continuation.status === "tool_running"
-          || continuation.status === "waiting_background")
-      ) {
+      if (continuation && continuation.status === "interrupted") {
         return {
           threadId: input.threadId,
           hasPendingResume: true,
