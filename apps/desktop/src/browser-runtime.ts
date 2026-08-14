@@ -1174,6 +1174,11 @@ export class BrowserRuntime {
       tab.url = stripUrl(url)
       tab.securityState = securityStateForUrl(tab.url)
       tab.lastOpenedAt = new Date().toISOString()
+      tab.generation += 1
+      tab.inputSequence += 1
+      tab.domNodes = undefined
+      if (tab.context?.actor === "agent") tab.agentLease = { browserSessionId: tab.context.browserSessionId, browserTurnId: tab.context.browserTurnId, generation: tab.generation }
+      else tab.agentLease = undefined
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
       this.annotations.onGuestReady(tab)
       this.rememberTab(tab)
