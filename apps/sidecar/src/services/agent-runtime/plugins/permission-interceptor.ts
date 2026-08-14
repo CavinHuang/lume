@@ -3,12 +3,30 @@ import {
   checkFilesystemPermission,
   checkNetworkPermission,
 } from "@lume/agent-sdk/plugins/permissions";
-import type {
-  InterceptorInput,
-  InterceptorResult,
-  PluginPermissionContext,
-} from "./index.js";
 import { createLogger } from "../../infra/logger";
+
+export interface PluginPermissionContext {
+  pluginName: string;
+  pluginRoot: string;
+  permissions: Record<string, unknown>;
+}
+
+export interface InterceptorInput {
+  toolName: string;
+  input: unknown;
+  context: {
+    cwd: string;
+    threadId: string;
+    /** Source plugin for plugin-provided tools; absent for built-in tools. */
+    sourcePluginId?: string;
+  };
+}
+
+export interface InterceptorResult {
+  behavior: "allow" | "deny" | "ask";
+  reason?: string;
+  updatedInput?: unknown;
+}
 
 const log = createLogger("plugin-permission");
 

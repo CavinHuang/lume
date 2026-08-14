@@ -14,7 +14,6 @@ import {
   agentThreadsAtom,
   agentErrorMessagesAtom,
   desktopActionVisualAtom,
-  agentSidePanelViewAtom,
   activeTabIdAtom,
   currentWorkspaceIdAtom,
   tabsAtom,
@@ -87,7 +86,6 @@ export function useGlobalAgentListeners() {
   const setThreads = useSetAtom(agentThreadsAtom)
   const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
   const setDesktopActionVisual = useSetAtom(desktopActionVisualAtom)
-  const setSidePanelViews = useSetAtom(agentSidePanelViewAtom)
   const setTabs = useSetAtom(tabsAtom)
   const tabs = useAtomValue(tabsAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
@@ -165,9 +163,6 @@ export function useGlobalAgentListeners() {
                 desktopActionVisualTimerRef.current = null
               }, 1_600)
             }
-          }
-          if (event.type === 'task.progress') {
-            setSidePanelViews((prev) => ({ ...prev, [threadId]: 'task-progress' }))
           }
           if (
             event.type === 'tool.permission_timeout' ||
@@ -411,5 +406,5 @@ export function useGlobalAgentListeners() {
         setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
       }
     }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setSidePanelViews, setTabs, tabs, currentWorkspaceId, setActiveTabId, setWelcomePromptSeed, setSuggestionsVersion, setMemoryCenterVersion, enqueueRuntimeEvent])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setTabs, tabs, currentWorkspaceId, setActiveTabId, setWelcomePromptSeed, setSuggestionsVersion, setMemoryCenterVersion, enqueueRuntimeEvent])
 }

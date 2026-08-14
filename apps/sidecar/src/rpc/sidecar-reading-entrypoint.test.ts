@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import {
-  ALICE_READING_IPC_CHANNELS,
   READING_IPC_CHANNELS,
   WEREAD_IPC_CHANNELS
 } from "@lume/shared";
@@ -154,54 +153,19 @@ describe.skipIf(!isNativeAvailable())("sidecar Reading entrypoint", () => {
     }
   });
 
-  test("desktop sidecar process exposes Alice-compatible Reading and WeRead RPC methods", async () => {
+  test("desktop sidecar process exposes active Reading and WeRead RPC methods", async () => {
     sidecar = createSidecarClient(tempConfigDir);
 
     const methods = await sidecar.call("rpc:list-methods") as string[];
 
     expect(methods).toEqual(expect.arrayContaining([
       READING_IPC_CHANNELS.GET_SNAPSHOT,
-      READING_IPC_CHANNELS.ADD_BOOK_TO_ALICE,
-      ALICE_READING_IPC_CHANNELS.GET_BOOKS,
-      ALICE_READING_IPC_CHANNELS.GET_NOTES,
-      ALICE_READING_IPC_CHANNELS.MARK_NOTES_READ,
       WEREAD_IPC_CHANNELS.GET_SHELF,
       WEREAD_IPC_CHANNELS.GET_NOTEBOOKS,
       WEREAD_IPC_CHANNELS.GET_BOOKMARKS,
       WEREAD_IPC_CHANNELS.GET_REVIEWS,
-      WEREAD_IPC_CHANNELS.GENERATE_NOTE,
-      WEREAD_IPC_CHANNELS.EXPORT_ALL_NOTES,
-      WEREAD_IPC_CHANNELS.SEARCH_BOOKS
+      WEREAD_IPC_CHANNELS.GET_PUBLIC_REVIEWS
     ]));
   });
 
-  test("desktop sidecar process can add a user-recommended book and read it through Alice alias", async () => {
-    sidecar = createSidecarClient(tempConfigDir);
-
-    const book = await sidecar.call(READING_IPC_CHANNELS.ADD_BOOK_TO_ALICE, {
-      title: "置身事内",
-      reason: "用户希望 Lume 一起读，理解制度和普通生活之间的关系。"
-    }) as {
-      id: string;
-      title: string;
-      track: string;
-      status: string;
-    };
-
-    expect(book).toMatchObject({
-      title: "置身事内",
-      track: "recommended",
-      status: "queued"
-    });
-
-    const books = await sidecar.call(ALICE_READING_IPC_CHANNELS.GET_BOOKS, {}) as Array<{
-      id: string;
-      title: string;
-    }>;
-
-    expect(books).toContainEqual(expect.objectContaining({
-      id: book.id,
-      title: "置身事内"
-    }));
-  });
 });

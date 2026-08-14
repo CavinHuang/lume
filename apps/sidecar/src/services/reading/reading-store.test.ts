@@ -15,23 +15,11 @@ import {
 import {
   addReadingBook,
   createReadingNote,
-  deleteReadingBookCover,
-  deleteReadingNote,
-  getReadingBlurs,
-  getReadingBookDebugInfo,
-  getReadingHighlights,
   getReadingSnapshot,
-  getReadingUnreadCounts,
   hideReadingNote,
   initReadingStorage,
   listReadingNotes,
-  markReadingBlurred,
-  markReadingSeen,
-  reactPlusOneReadingNote,
-  removeReadingBlur,
-  removeReadingHighlight,
   reviseReadingNote,
-  setReadingBookLocalCover,
   syncReadingWereadShelf
 } from "./reading-store";
 
@@ -95,7 +83,7 @@ describe("reading-store", () => {
     expect(getReadingSnapshot().books).toHaveLength(1);
   });
 
-  test("stores books and filters hidden or deleted notes from normal results", () => {
+  test("stores books and filters hidden notes from normal results", () => {
     const book = addReadingBook({
       title: "我在北京送快递",
       author: "胡安焉",
@@ -130,8 +118,7 @@ describe("reading-store", () => {
     expect(getReadingSnapshot().stats).toMatchObject({
       readingCount: 1,
       noteCount: 1,
-      finishedCount: 0,
-      unseenNoteCount: 1
+      finishedCount: 0
     });
     expect(listReadingNotes()).toHaveLength(1);
 
@@ -140,13 +127,6 @@ describe("reading-store", () => {
     expect(listReadingNotes({ includeHidden: true })[0]).toMatchObject({
       id: note.id,
       hidden: true
-    });
-
-    deleteReadingNote(note.id);
-    expect(listReadingNotes({ includeHidden: true })).toEqual([]);
-    expect(listReadingNotes({ includeHidden: true, includeDeleted: true })[0]).toMatchObject({
-      id: note.id,
-      deleted: true
     });
   });
 
@@ -390,70 +370,4 @@ describe("reading-store", () => {
     });
   });
 
-  test("tracks Alice-like unread, highlight, blur, reaction, cover, and debug state", () => {
-    const book = addReadingBook({
-      title: "我在北京送快递",
-      author: "胡安焉",
-      coverUrl: "https://example.test/cover.jpg",
-      source: {
-        kind: "weread",
-        externalId: "wr-1",
-        excerpt: "把自己看作一个普通人，过普通人的生活。"
-      },
-      progressPercent: 54
-    });
-    const note = createReadingNote({
-      bookId: book.id,
-      body: "普通人的日常在这里有了具体重量。",
-      evidence: [{
-        quote: "把自己看作一个普通人，过普通人的生活。",
-        sourceKind: "weread",
-        excerpt: "把自己看作一个普通人，过普通人的生活。",
-        capturedAt: 1
-      }]
-    });
-
-    expect(getReadingUnreadCounts()).toMatchObject({
-      total: 1,
-      byBookId: {
-        [book.id]: 1
-      }
-    });
-    expect(getReadingHighlights()).toHaveLength(1);
-
-    expect(reactPlusOneReadingNote(note.id)).toMatchObject({
-      noteId: note.id,
-      plusOnes: 1
-    });
-    expect(reactPlusOneReadingNote(note.id)).toMatchObject({
-      plusOnes: 2
-    });
-
-    markReadingBlurred(note.id);
-    expect(getReadingBlurs()).toMatchObject([{ id: note.id }]);
-    removeReadingBlur(note.id);
-    expect(getReadingBlurs()).toEqual([]);
-
-    removeReadingHighlight(note.id);
-    expect(getReadingHighlights()).toEqual([]);
-    markReadingSeen([note.id]);
-    expect(getReadingUnreadCounts()).toMatchObject({ total: 0 });
-
-    setReadingBookLocalCover(book.id, "/tmp/lume-reading-cover.svg");
-    const coverDeletedBook = deleteReadingBookCover(book.id);
-    expect(coverDeletedBook.id).toBe(book.id);
-    expect(coverDeletedBook).not.toHaveProperty("localCoverPath");
-
-    expect(getReadingBookDebugInfo(book.id)).toMatchObject({
-      book: {
-        id: book.id,
-        title: "我在北京送快递"
-      },
-      noteCount: 1,
-      reactionCount: 2,
-      unreadCount: 0,
-      highlightedCount: 0,
-      blurredCount: 0
-    });
-  });
 });

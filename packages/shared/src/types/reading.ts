@@ -127,31 +127,6 @@ export interface ReadingStats {
   readingCount: number;
   noteCount: number;
   finishedCount: number;
-  unseenNoteCount: number;
-}
-
-export interface ReadingUnreadCounts {
-  total: number;
-  byBookId: Record<string, number>;
-}
-
-export interface ReadingNoteReactionResult {
-  noteId: string;
-  plusOnes: number;
-}
-
-export interface ReadingBookDebugInfo {
-  book: ReadingBook;
-  noteCount: number;
-  hiddenNoteCount: number;
-  deletedNoteCount: number;
-  unreadCount: number;
-  highlightedCount: number;
-  blurredCount: number;
-  reactionCount: number;
-  sourceKind: ReadingSourceKind;
-  sourceId?: string;
-  localCoverPath?: string;
 }
 
 export interface ReadingWereadConnection {
@@ -207,18 +182,6 @@ export interface ReadingAddBookInput {
   tags?: string[];
 }
 
-export interface ReadingAddBookToAliceInput {
-  title: string;
-  reason?: string;
-}
-
-export interface ReadingUpdateBookInput {
-  id: string;
-  input: Partial<Omit<ReadingAddBookInput, "source">> & {
-    source?: Partial<ReadingSourceRef>;
-  };
-}
-
 export interface ReadingNoteInput {
   bookId: string;
   title?: string;
@@ -239,10 +202,6 @@ export interface ReadingNoteInput {
   cost?: number;
   modelUsage?: ReadingModelUsage;
   nextPlan?: string;
-}
-
-export interface ReadingNoteIdInput {
-  id: string;
 }
 
 export interface ReadingNoteRevisionInput {
@@ -332,11 +291,6 @@ export interface WereadTestKeyResult {
   error?: string;
 }
 
-export interface ReadingSearchWereadInput {
-  query: string;
-  limit?: number;
-}
-
 export interface ReadingSearchBooksInput {
   query: string;
   limit?: number;
@@ -379,64 +333,15 @@ export interface WereadExportProgress {
 export const READING_IPC_CHANNELS = {
   GET_SNAPSHOT: "reading:get-snapshot",
   UPDATE_SETTINGS: "reading:update-settings",
-  LIST_BOOKS: "reading:list-books",
-  LIST_NOTES: "reading:list-notes",
-  GET_NOTE: "reading:get-note",
   ADD_BOOK: "reading:add-book",
-  ADD_BOOK_TO_ALICE: "reading:addBookToAlice",
-  UPDATE_BOOK: "reading:update-book",
-  HIDE_NOTE: "reading:hide-note",
-  DELETE_NOTE: "reading:delete-note",
-  MARK_SEEN: "reading:mark-seen",
-  GET_UNREAD_COUNTS: "reading:get-unread-counts",
-  GET_HIGHLIGHTS: "reading:get-highlights",
-  REMOVE_HIGHLIGHT: "reading:remove-highlight",
-  GET_BLURS: "reading:get-blurs",
-  ADD_BLUR: "reading:add-blur",
-  REMOVE_BLUR: "reading:remove-blur",
-  REACT_PLUS_ONE: "reading:react-plus-one",
-  RUN_TASK: "reading:run-task",
-  FORCE_GENERATE_NOTE: "reading:force-generate-note",
   MANUAL_GENERATE_NOTE: "reading:manual-generate-note",
-  REVISE_NOTE: "reading:revise-note",
   CONNECT_WEREAD: "reading:connect-weread",
-  DISCONNECT_WEREAD: "reading:disconnect-weread",
-  SEARCH_WEREAD: "reading:search-weread",
   SEARCH_BOOKS: "reading:search-books",
-  GENERATE_COVER: "reading:generate-cover",
-  DELETE_COVER: "reading:delete-cover",
-  REFRESH_QUOTES: "reading:refresh-quotes",
-  GET_BOOK_DEBUG_INFO: "reading:get-book-debug-info",
-  GENERATE_SHARE_CARD: "reading:generate-share-card",
   NOTE_GEN_DONE: "reading:noteGenDone",
   NOTE_GEN_FAILED: "reading:noteGenFailed"
 } as const;
 
-export const ALICE_READING_IPC_CHANNELS = {
-  GET_BOOKS: "reading:getBooks",
-  GET_NOTES: "reading:getNotes",
-  GET_NOTE: "reading:getNote",
-  GET_STATS: "reading:getStats",
-  FORCE_GENERATE_NOTE: "reading:forceGenerateNote",
-  MANUAL_GENERATE_NOTE: "reading:manualGenerateNote",
-  DELETE_NOTE: "reading:deleteNote",
-  GENERATE_COVER: "reading:generateCover",
-  DELETE_COVER: "reading:deleteCover",
-  REFRESH_QUOTES: "reading:refreshQuotes",
-  GET_UNREAD_COUNTS: "reading:getUnreadCounts",
-  MARK_NOTES_READ: "reading:markNotesRead",
-  GET_HIGHLIGHTS: "reading:getHighlights",
-  REMOVE_HIGHLIGHT: "reading:removeHighlight",
-  GET_BLURS: "reading:getBlurs",
-  ADD_BLUR: "reading:addBlur",
-  REMOVE_BLUR: "reading:removeBlur",
-  REACT_PLUS_ONE: "reading:reactPlusOne",
-  GET_BOOK_DEBUG_INFO: "reading:getBookDebugInfo",
-  ADD_BOOK_TO_ALICE: "reading:addBookToAlice"
-} as const;
-
 export const WEREAD_IPC_CHANNELS = {
-  OPEN_AND_FETCH_KEY: "weread:openAndFetchKey",
   GET_KEY: "weread:getKey",
   TEST_KEY: "weread:testKey",
   GET_SHELF: "weread:getShelf",
@@ -445,11 +350,7 @@ export const WEREAD_IPC_CHANNELS = {
   GET_REVIEWS: "weread:getReviews",
   GET_READ_DATA: "weread:getReadData",
   GET_BEST_BOOKMARKS: "weread:getBestBookmarks",
-  GET_PUBLIC_REVIEWS: "weread:getPublicReviews",
-  GENERATE_NOTE: "weread:generateNote",
-  EXPORT_ALL_NOTES: "weread:exportAllNotes",
-  SEARCH_BOOKS: "weread:searchBooks",
-  EXPORT_PROGRESS: "weread:exportProgress"
+  GET_PUBLIC_REVIEWS: "weread:getPublicReviews"
 } as const;
 
 const SOURCE_KINDS = new Set<ReadingSourceKind>(["weread", "gutenberg", "poetry", "manual", "generated"]);

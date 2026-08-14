@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import {
-  ALICE_READING_IPC_CHANNELS,
   READING_IPC_CHANNELS,
   WEREAD_KEY_PAGE_URL,
   WEREAD_IPC_CHANNELS,
@@ -47,49 +46,10 @@ describe('desktop reading API', () => {
     return readText
   }
 
-  test('routes Lume and Alice Reading aliases through the desktop sidecar command', async () => {
-    await readingApi.addBookToAlice('置身事内', '用户希望 Lume 一起读。')
-    await readingApi.readingGetBooks()
-    await readingApi.readingMarkNotesRead(['note-1'])
-
-    expect(invokeMock.mock.calls).toEqual([
-      [
-        'sidecar_call',
-        {
-          method: READING_IPC_CHANNELS.ADD_BOOK_TO_ALICE,
-          params: {
-            title: '置身事内',
-            reason: '用户希望 Lume 一起读。',
-          },
-        },
-      ],
-      [
-        'sidecar_call',
-        {
-          method: ALICE_READING_IPC_CHANNELS.GET_BOOKS,
-          params: {},
-        },
-      ],
-      [
-        'sidecar_call',
-        {
-          method: ALICE_READING_IPC_CHANNELS.MARK_NOTES_READ,
-          params: ['note-1'],
-        },
-      ],
-    ])
-  })
-
-  test('routes Alice-like WeRead methods through the same desktop sidecar command', async () => {
+  test('routes active WeRead methods through the desktop sidecar command', async () => {
     await readingApi.getWereadApiKey()
     await readingApi.getWereadShelf()
     await readingApi.getWereadReviews('wr-1')
-    await readingApi.generateWereadNote({
-      bookTitle: '我在北京送快递',
-      text: '把自己看作一个普通人，过普通人的生活。',
-      source: 'weread',
-    })
-    await readingApi.searchWereadBooks('胡安焉', 5)
 
     expect(invokeMock.mock.calls).toEqual([
       [
@@ -115,46 +75,25 @@ describe('desktop reading API', () => {
           },
         },
       ],
-      [
-        'sidecar_call',
-        {
-          method: WEREAD_IPC_CHANNELS.GENERATE_NOTE,
-          params: {
-            bookTitle: '我在北京送快递',
-            text: '把自己看作一个普通人，过普通人的生活。',
-            source: 'weread',
-          },
-        },
-      ],
-      [
-        'sidecar_call',
-        {
-          method: WEREAD_IPC_CHANNELS.SEARCH_BOOKS,
-          params: {
-            keyword: '胡安焉',
-            limit: 5,
-          },
-        },
-      ],
     ])
   })
 
-  test('caches WeRead read-only data and clears it after disconnecting', async () => {
+  test('caches WeRead read-only data and clears it after reconnecting', async () => {
     invokeMock.mockImplementation(async (_command, payload) => {
       const params = payload as { method?: string } | undefined
       if (params?.method === WEREAD_IPC_CHANNELS.GET_SHELF) return { books: [{ title: '缓存书架' }] }
-      if (params?.method === READING_IPC_CHANNELS.DISCONNECT_WEREAD) return { connected: false }
+      if (params?.method === READING_IPC_CHANNELS.CONNECT_WEREAD) return { connected: true }
       return {}
     })
 
     await expect(readingApi.getWereadShelf()).resolves.toEqual({ books: [{ title: '缓存书架' }] })
     await expect(readingApi.getWereadShelf()).resolves.toEqual({ books: [{ title: '缓存书架' }] })
-    await readingApi.disconnectReadingWeread()
+    await readingApi.connectReadingWeread({ apiKey: 'wrk-lume-test-key' })
     await readingApi.getWereadShelf()
 
     expect(invokeMock.mock.calls.map((call) => (call[1] as { method?: string } | undefined)?.method)).toEqual([
       WEREAD_IPC_CHANNELS.GET_SHELF,
-      READING_IPC_CHANNELS.DISCONNECT_WEREAD,
+      READING_IPC_CHANNELS.CONNECT_WEREAD,
       WEREAD_IPC_CHANNELS.GET_SHELF,
     ])
   })
