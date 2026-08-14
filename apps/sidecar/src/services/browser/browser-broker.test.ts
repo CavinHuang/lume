@@ -345,6 +345,29 @@ test("event waits do not block the action that produces the event", async () => 
   assert.deepEqual(await waiting, { download_id: "download-1" })
 })
 
+test("broker preserves canonical download handles and their originating tab", async () => {
+  const calls: any[] = []
+  const broker = new BrowserBroker({ request: async (request) => {
+    calls.push(request)
+    if (request.method === "policy:confirm") return { approved: true, token: "download-token" }
+    return { path: "C:\\downloads\\report.pdf" }
+  } })
+  broker.setPluginState({ browserEnabled: true })
+
+  await broker.dispatch({
+    method: "playwright_download_path",
+    params: { tabId: "tab-1", downloadId: "download-1", options: { timeoutMs: 5_000 } },
+    browserSessionId: "s",
+    browserTurnId: "t",
+  })
+
+  assert.equal(calls.at(-1).method, "download:path")
+  assert.deepEqual(
+    { tabId: calls.at(-1).params.tabId, downloadId: calls.at(-1).params.downloadId, timeoutMs: calls.at(-1).params.timeoutMs },
+    { tabId: "tab-1", downloadId: "download-1", timeoutMs: 5_000 },
+  )
+})
+
 test("broker normalizes media downloads and confirmed file chooser uploads", async () => {
   const calls: any[] = []
   const broker = new BrowserBroker({ request: async (request) => {

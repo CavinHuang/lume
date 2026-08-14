@@ -16,7 +16,7 @@ const descriptors = [
       browser: [{ id: "visibility", description: "visibility" }],
       tab: [{ id: "pageAssets", description: "page assets" }],
     },
-    apiSupportOverrides: { "BrowserUser.history": true, "Tabs.content": true },
+    apiSupportOverrides: { "BrowserUser.history": true, "Tabs.content": true, "PlaywrightFileChooser.setFiles": true },
   },
   {
     id: "lume-extension",
@@ -53,6 +53,9 @@ globalThis.nodeRepl = {
       if (method === "tabs_content") return [{ url: "https://example.com/", title: "Example", content: "ok" }];
       if (method === "browser_visibility_get") return { visible: false };
       if (method === "tab_page_assets_bundle") return { assetId: "asset-1" };
+      if (method === "playwright_wait_for_download") return { download_id: "download-1", filename: "report.pdf" };
+      if (method === "playwright_download_path") return { path: "C:\\downloads\\report.pdf" };
+      if (method === "playwright_wait_for_file_chooser") return { file_chooser_id: "chooser-1", is_multiple: true };
       return {};
     },
   },
@@ -118,6 +121,11 @@ test("uses canonical backend selection and request shapes", async () => {
   assert.equal(await visibility.get(), false);
   const pageAssets = await tab.capabilities.get("pageAssets");
   await pageAssets.bundle({ inventoryId: "inventory-1", assetIds: ["asset-1"] });
+  const download = await tab.playwright.waitForEvent("download");
+  assert.equal(await download.path(), "C:\\downloads\\report.pdf");
+  const fileChooser = await tab.playwright.waitForEvent("filechooser");
+  assert.equal(fileChooser.isMultiple(), true);
+  await fileChooser.setFiles(["browser-download:00000000-0000-0000-0000-000000000001"]);
 
   assert.deepEqual(calls.find((call) => call.method === "create_tab")?.params.options, { url: "https://example.com/" });
   assert.deepEqual(calls.find((call) => call.method === "tab_screenshot")?.params.options, { fullPage: true });
@@ -128,4 +136,8 @@ test("uses canonical backend selection and request shapes", async () => {
   assert.deepEqual(calls.find((call) => call.method === "tab_page_assets_bundle")?.params.options, {
     inventoryId: "inventory-1", assetIds: ["asset-1"],
   });
+  const downloadPath = calls.find((call) => call.method === "playwright_download_path")?.params;
+  assert.equal(downloadPath.downloadId, "download-1");
+  assert.equal(downloadPath.tabId, "tab-1");
+  assert.equal(calls.find((call) => call.method === "playwright_file_chooser_set_files")?.params.chooserId, "chooser-1");
 });

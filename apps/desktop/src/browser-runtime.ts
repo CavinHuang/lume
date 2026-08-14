@@ -1609,22 +1609,16 @@ export class BrowserRuntime {
         && splitFrameLocator(params.locator)
         && ["click", "doubleClick", "scroll", "fill", "type", "press", "select", "check", "uncheck"].includes(method)) {
         if (tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
-        tab.inputSequence += 1
-        tab.agentDispatching = true
-        try {
-          const argument = method === "fill" || method === "type"
-            ? String(params.text ?? "")
-            : method === "press"
-              ? String(params.key ?? "Enter")
-              : method === "select"
-                ? JSON.stringify(Array.isArray(params.value) ? params.value : [String(params.value ?? "")])
-                : undefined
-          const rawFrameAutoWait = params.timeoutMs ?? params.timeout_ms
-          const frameAutoWaitMs = rawFrameAutoWait === 0 ? 0 : (boundedNumber(rawFrameAutoWait, 0, 30_000) || 3_000)
-          await this.runFrameLocatorActionWithAutoWait(tab, generation, params, method as BrowserLocatorQuery, argument, frameAutoWaitMs)
-        } finally {
-          tab.agentDispatching = false
-        }
+        const argument = method === "fill" || method === "type"
+          ? String(params.text ?? "")
+          : method === "press"
+            ? String(params.key ?? "Enter")
+            : method === "select"
+              ? JSON.stringify(Array.isArray(params.value) ? params.value : [String(params.value ?? "")])
+              : undefined
+        const rawFrameAutoWait = params.timeoutMs ?? params.timeout_ms
+        const frameAutoWaitMs = rawFrameAutoWait === 0 ? 0 : (boundedNumber(rawFrameAutoWait, 0, 30_000) || 3_000)
+        await this.runFrameLocatorActionWithAutoWait(tab, generation, inputSequence, params, method as BrowserLocatorQuery, argument, frameAutoWaitMs)
         return { ok: true, inputSequence: tab.inputSequence }
       }
       // 显式 timeoutMs:0 = 关闭 auto-wait（boundedNumber 的 || 3_000 会吞掉 0）
@@ -1773,24 +1767,22 @@ export class BrowserRuntime {
     // method-only 选项：用户选择登录方式，主进程点击对应按钮，不填写任何字段
     if (option?.locator) {
       try {
+        const target = await this.resolveTarget(tab, { locator: combineAuthLocators(option.frameLocator, option.locator) })
+        if (auth.settled) return
+        if (tab.generation !== auth.generation || tab.inputSequence !== auth.inputSequence) {
+          this.settleBrowserAuth(auth, { status: "page_changed" })
+          return
+        }
+        if (safeOrigin(tab.url) !== auth.origin) {
+          this.settleBrowserAuth(auth, { status: "origin_changed" })
+          return
+        }
+        tab.inputSequence += 1
         tab.agentDispatching = true
-        let dispatched = false
         try {
-          const target = await this.resolveTarget(tab, { locator: combineAuthLocators(option.frameLocator, option.locator) })
-          if (auth.settled) return
-          if (tab.generation !== auth.generation || tab.inputSequence !== auth.inputSequence) {
-            this.settleBrowserAuth(auth, { status: "page_changed" })
-            return
-          }
-          if (safeOrigin(tab.url) !== auth.origin) {
-            this.settleBrowserAuth(auth, { status: "origin_changed" })
-            return
-          }
           await this.dispatchMouse(tab, "click", target)
-          dispatched = true
         } finally {
           tab.agentDispatching = false
-          if (dispatched) tab.inputSequence += 1
         }
         this.settleBrowserAuth(auth, { status: "submitted", selected_option: selectedOption })
       } catch {
@@ -2404,7 +2396,13 @@ export class BrowserRuntime {
     }
   }
 
-  private async executeFrameLocatorQuery(tab: BrowserTab, locator: BrowserLocator, operation: BrowserLocatorQuery, argument?: string): Promise<unknown> {
+  private async executeFrameLocatorQuery(
+    tab: BrowserTab,
+    locator: BrowserLocator,
+    operation: BrowserLocatorQuery,
+    argument?: string,
+    actionGuard?: { generation: number; inputSequence: number },
+  ): Promise<unknown> {
     const parts = splitFrameLocator(locator)
     if (!parts) throw browserError("invalid_browser_request")
     const evaluation = operation === "evaluate" ? parseLocatorEvaluation(argument) : undefined
@@ -2448,15 +2446,26 @@ export class BrowserRuntime {
         grantUniveralAccess: false,
       }) as { executionContextId?: number }
       if (!isolated.executionContextId || generation !== tab.generation) throw browserError("stale_target")
-      const evaluated = await debuggerRef.sendCommand("Runtime.evaluate", {
-        contextId: isolated.executionContextId,
-        expression: evaluation
-          ? locatorReadonlyExpression(parts.locator, evaluation.script, evaluation.arg)
-          : `(${browserLocatorScript()})(${JSON.stringify(parts.locator)},${JSON.stringify(operation)},${JSON.stringify(argument)})`,
-        returnByValue: true,
-        awaitPromise: true,
-        ...(evaluation ? { throwOnSideEffect: true, timeout: evaluation.timeoutMs } : {}),
-      }) as { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } }
+      if (actionGuard) {
+        if (tab.generation !== actionGuard.generation || tab.inputSequence !== actionGuard.inputSequence) throw browserError("stale_target")
+        tab.inputSequence += 1
+        actionGuard.inputSequence = tab.inputSequence
+        tab.agentDispatching = true
+      }
+      let evaluated: { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } }
+      try {
+        evaluated = await debuggerRef.sendCommand("Runtime.evaluate", {
+          contextId: isolated.executionContextId,
+          expression: evaluation
+            ? locatorReadonlyExpression(parts.locator, evaluation.script, evaluation.arg)
+            : `(${browserLocatorScript()})(${JSON.stringify(parts.locator)},${JSON.stringify(operation)},${JSON.stringify(argument)})`,
+          returnByValue: true,
+          awaitPromise: true,
+          ...(evaluation ? { throwOnSideEffect: true, timeout: evaluation.timeoutMs } : {}),
+        }) as { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } }
+      } finally {
+        if (actionGuard) tab.agentDispatching = false
+      }
       if (evaluated.exceptionDetails) throw browserError(evaluation ? readonlyLocatorExceptionCode(evaluated.exceptionDetails) : frameLocatorExceptionCode(evaluated.exceptionDetails))
       if (generation !== tab.generation) throw browserError("stale_target")
       const value = evaluated.result?.value
@@ -2553,6 +2562,7 @@ export class BrowserRuntime {
   private async runFrameLocatorActionWithAutoWait(
     tab: BrowserTab,
     generation: number,
+    inputSequence: number,
     params: Record<string, unknown>,
     operation: BrowserLocatorQuery,
     argument: string | undefined,
@@ -2560,15 +2570,16 @@ export class BrowserRuntime {
   ): Promise<void> {
     if (!isBrowserLocator(params.locator)) throw browserError("invalid_browser_request")
     const locator = params.locator
+    const actionGuard = { generation, inputSequence }
     if (timeoutMs <= 0) {
-      await this.executeFrameLocatorQuery(tab, locator, operation, argument)
+      await this.executeFrameLocatorQuery(tab, locator, operation, argument, actionGuard)
       return
     }
     const deadline = Date.now() + timeoutMs
     while (true) {
-      if (tab.generation !== generation) throw browserError("stale_target")
+      if (tab.generation !== generation || tab.inputSequence !== actionGuard.inputSequence) throw browserError("stale_target")
       try {
-        await this.executeFrameLocatorQuery(tab, locator, operation, argument)
+        await this.executeFrameLocatorQuery(tab, locator, operation, argument, actionGuard)
         return
       } catch (error) {
         const message = error instanceof Error ? error.message : ""

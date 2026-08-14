@@ -15,16 +15,22 @@ function browserResponseError(error) {
 
 function createBrokerProtocolAdapter() {
   const dialogIdsByTab = new Map();
+  const downloadTabs = new Map();
 
   return {
     prepareRequest(method, params) {
-      if (method !== "tab_js_dialog_handle") return params;
-      const tabId = params?.tabId;
-      return {
-        ...params,
-        action: params?.accept === false ? "dismiss" : "accept",
-        dialogId: params?.dialogId ?? (typeof tabId === "string" ? dialogIdsByTab.get(tabId) : undefined),
-      };
+      if (method === "tab_js_dialog_handle") {
+        const tabId = params?.tabId;
+        return {
+          ...params,
+          action: params?.accept === false ? "dismiss" : "accept",
+          dialogId: params?.dialogId ?? (typeof tabId === "string" ? dialogIdsByTab.get(tabId) : undefined),
+        };
+      }
+      if (method === "playwright_download_path") {
+        return { ...params, tabId: params?.tabId ?? downloadTabs.get(params?.downloadId) };
+      }
+      return params;
     },
     unwrapResult(method, result, params) {
       if (method === "tab_js_dialog_get") {
@@ -37,6 +43,10 @@ function createBrokerProtocolAdapter() {
       }
       if (method === "tab_js_dialog_handle" && typeof params?.tabId === "string") {
         dialogIdsByTab.delete(params.tabId);
+      }
+      if (method === "playwright_wait_for_download") {
+        const downloadId = result?.downloadId ?? result?.download_id;
+        if (typeof downloadId === "string" && typeof params?.tabId === "string") downloadTabs.set(downloadId, params.tabId);
       }
       return unwrapBrowserResult(method, result);
     },
@@ -68,6 +78,16 @@ function unwrapBrowserResult(method, result) {
     }));
   }
   if (method === "browser_visibility_get") return result?.visible;
+  if (method === "playwright_wait_for_download") {
+    return { ...result, downloadId: result?.downloadId ?? result?.download_id };
+  }
+  if (method === "playwright_wait_for_file_chooser") {
+    return {
+      ...result,
+      chooserId: result?.chooserId ?? result?.file_chooser_id,
+      multiple: result?.multiple ?? result?.is_multiple,
+    };
+  }
   if (method === "playwright_locator_count") return result?.count;
   if (method === "playwright_locator_all_text_contents" || method === "playwright_locator_read_all") return result?.values;
   if ([

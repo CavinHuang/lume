@@ -492,7 +492,7 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "playwright_element_screenshot": return { method: "elementScreenshot", params: { ...params, ...options } }
     case "playwright_evaluate": return { method: "evaluate:readonly", params: { ...params, timeoutMs: input.timeoutMs ?? input.timeout_ms ?? options.timeoutMs } }
     case "playwright_wait_for_download": return { method: "wait:download", params: { ...params, timeoutMs: input.timeout_ms ?? options.timeoutMs } }
-    case "playwright_download_path": return { method: "download:path", params: { ...params, downloadId: input.download_id, timeoutMs: input.timeout_ms } }
+    case "playwright_download_path": return { method: "download:path", params: { ...params, downloadId: input.download_id ?? input.downloadId, timeoutMs: input.timeout_ms ?? input.timeoutMs ?? options.timeoutMs } }
     case "playwright_wait_for_file_chooser": return { method: "wait:filechooser", params: { ...params, timeoutMs: input.timeout_ms ?? options.timeoutMs } }
     case "playwright_file_chooser_set_files": return {
       method: "filechooser:setFiles",
