@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL, URL, URLSearchParams } from "node:url";
 import vm from "node:vm";
 import { parentPort, workerData } from "node:worker_threads";
 import { buildCellSource } from "./cell-source.js";
+import { createLumeBrowserRuntime } from "./lume-browser-runtime.js";
 if (!parentPort)
     throw new Error("CUA runtime worker requires a parent port");
 const parent = parentPort;
@@ -664,6 +665,10 @@ const rootNodeRepl = options.exposePrivilegedToRoot ? trustedNodeRepl : baseNode
 defineLockedGlobal(untrustedContext, "nodeRepl", rootNodeRepl);
 defineLockedGlobal(untrustedContext, "tmpDir", os.tmpdir());
 defineLockedGlobal(trustedContext, "nodeRepl", trustedNodeRepl);
+// Lume 浏览器高层 API（镜像 Codex browser-client）：agent 调 setupBrowserRuntime()
+// 拿到 agent.browsers，封装 nodeRepl.browser.request 成链式 API，screenshot 自动 emitImage。
+const lumeBrowserRuntime = createLumeBrowserRuntime(trustedNodeRepl);
+defineLockedGlobal(trustedContext, "setupBrowserRuntime", lumeBrowserRuntime.setupBrowserRuntime);
 defineLockedGlobal(trustedContext, "tmpDir", os.tmpdir());
 class ModuleLoader {
     fileModules = new Map();
