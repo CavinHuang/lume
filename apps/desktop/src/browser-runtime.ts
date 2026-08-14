@@ -2347,7 +2347,7 @@ export class BrowserRuntime {
       return await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(${browserLocatorScript()})(${JSON.stringify(params.locator)},${JSON.stringify(operation)},${JSON.stringify(argument)})` }], true)
     } catch (error) {
       const message = error instanceof Error ? error.message : ""
-      const code = ["stale_target", "strict_locator_violation", "action_denied"].find((value) => message.includes(value)) ?? "stale_target"
+      const code = ["stale_target", "strict_locator_violation", "action_denied", "tab_not_found"].find((value) => message.includes(value)) ?? "stale_target"
       throw browserError(code as BrowserErrorCode)
     }
   }
@@ -2462,7 +2462,7 @@ export class BrowserRuntime {
       return await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(${browserLocatorScript()})(${JSON.stringify(params.locator)})` }], true) as ResolvedBrowserTarget
     } catch (error) {
       const message = error instanceof Error ? error.message : ""
-      const code = ["stale_target", "strict_locator_violation", "action_denied"].find((value) => message.includes(value)) ?? "stale_target"
+      const code = ["stale_target", "strict_locator_violation", "action_denied", "tab_not_found"].find((value) => message.includes(value)) ?? "stale_target"
       throw browserError(code as BrowserErrorCode)
     }
   }
@@ -2487,6 +2487,7 @@ export class BrowserRuntime {
       } catch (error) {
         const message = error instanceof Error ? error.message : ""
         if (message.includes("strict_locator_violation")) throw browserError("strict_locator_violation")
+        if (message.includes("tab_not_found")) throw browserError("tab_not_found")
         if (Date.now() >= deadline) throw browserError("actionability_failed")
         await delay(50)
       }
@@ -2515,6 +2516,7 @@ export class BrowserRuntime {
       } catch (error) {
         const message = error instanceof Error ? error.message : ""
         if (message.includes("strict_locator_violation")) throw browserError("strict_locator_violation")
+        if (message.includes("tab_not_found")) throw browserError("tab_not_found")
         if (Date.now() >= deadline) throw browserError("actionability_failed")
         await delay(50)
       }
@@ -2592,16 +2594,16 @@ export class BrowserRuntime {
     }
     try {
       const image = await browserPromiseTimeout(browserContents(tab).capturePage(), 5_000)
-      return image.toPNG().toString("base64")
+      return image.toJPEG(80).toString("base64")
     } catch {
       const parent = this.options.getWindow()
       if (tab.visible && tab.surfaceBounds && parent && !parent.isDestroyed()) {
         try {
           const image = await browserPromiseTimeout(parent.webContents.capturePage(tab.surfaceBounds), 5_000)
-          if (!image.isEmpty()) return image.toPNG().toString("base64")
+          if (!image.isEmpty()) return image.toJPEG(80).toString("base64")
         } catch { /* CDP remains the final guest-only fallback. */ }
       }
-      const result = await browserPromiseTimeout(withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "png", captureBeyondViewport: false })), 8_000) as { data?: string }
+      const result = await browserPromiseTimeout(withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "jpeg", quality: 80, captureBeyondViewport: false })), 8_000) as { data?: string }
       if (typeof result.data === "string") return result.data
       throw browserError("browser_internal_error")
     }
@@ -4078,7 +4080,15 @@ async function withDebugger<T>(contents: Electron.WebContents, work: (debuggerRe
   const debuggerRef = contents.debugger
   const attached = debuggerRef.isAttached()
   if (!attached) debuggerRef.attach("1.3")
-  try { return await work(debuggerRef) } finally { if (!attached && debuggerRef.isAttached()) debuggerRef.detach() }
+  try {
+    return await work(debuggerRef)
+  } catch (error) {
+    // 归类 CDP 错误：让 agent 区分 transient(navigation 期间 context 暂失，可重试) vs fatal(tab 没了，需重建)
+    const message = error instanceof Error ? error.message : String(error ?? "")
+    if (/Target closed|Session.*not attached|No target|target.*not found/i.test(message)) throw new Error(`tab_not_found: ${message}`)
+    if (/Cannot find context|Execution context was destroyed|context.*destroyed|context.*not found/i.test(message)) throw new Error(`stale_target: ${message}`)
+    throw error
+  } finally { if (!attached && debuggerRef.isAttached()) debuggerRef.detach() }
 }
 
 class BrowserOperationJournal {

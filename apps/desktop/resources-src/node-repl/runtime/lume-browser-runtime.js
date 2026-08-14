@@ -66,7 +66,8 @@ export function createLumeBrowserRuntime(nodeRepl) {
     const data = result?.data ?? result?.dataBase64
     if (typeof data === "string" && data.length > 0) {
       try {
-        await nodeRepl.emitImage(base64ToBytes(data), "image/png")
+        const mime = data.startsWith("/9j/") ? "image/jpeg" : "image/png"
+        await nodeRepl.emitImage(base64ToBytes(data), mime)
       } catch {
         // emitImage 失败不应阻断截图返回值
       }
