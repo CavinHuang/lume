@@ -99,6 +99,9 @@ export function createLumeBrowserRuntime(nodeRepl) {
       isEnabled: () => req("playwright_locator_is_enabled", base),
       isChecked: () => req("playwright_locator_is_checked", base),
       evaluate: (fn, arg, opts) => req("playwright_locator_evaluate", { ...base, fn: String(fn), arg, ...(opts || {}) }),
+      waitFor: (opts) => req("playwright_locator_wait_for", { ...base, ...(opts || {}) }),
+      readAll: () => req("playwright_locator_read_all", base),
+      downloadMedia: (opts) => req("playwright_locator_download_media", { ...base, ...(opts || {}) }),
     }
   }
 
@@ -118,6 +121,10 @@ export function createLumeBrowserRuntime(nodeRepl) {
       downloadPath: (opts) => req("playwright_download_path", { tabId, ...(opts || {}) }),
       waitForFileChooser: (opts) => req("playwright_wait_for_file_chooser", { tabId, ...(opts || {}) }),
       fileChooserSetFiles: (opts) => req("playwright_file_chooser_set_files", { tabId, ...(opts || {}) }),
+      // wait 系：Lume locator 不内置 auto-wait，显式 wait 让 navigate/操作后页面就绪
+      waitForLoadState: (opts) => req("playwright_wait_for_load_state", { tabId, ...(opts || {}) }),
+      waitForURL: (url, opts) => req("playwright_wait_for_url", { tabId, url, ...(opts || {}) }),
+      waitForTimeout: (ms) => req("playwright_wait_for_timeout", { tabId, timeoutMs: ms }),
     }
   }
 
@@ -150,7 +157,7 @@ export function createLumeBrowserRuntime(nodeRepl) {
     return async (cap) => {
       switch (cap) {
         case "cdp":
-          return { send: (method, params) => req("cdp", { tabId, method, params }) }
+          return { send: (method, params) => req("tab_cdp_send", { tabId, method, params }) }
         case "webmcp":
           return {
             listTools: () => req("webmcp_list_tools", { tabId }),
@@ -186,6 +193,17 @@ export function createLumeBrowserRuntime(nodeRepl) {
       screenshot: async (opts) => emitScreenshotImage(await req("tab_screenshot", { tabId, ...(opts || {}) })),
       markDeliverable: () => req("mark_tab", { tabId, status: "deliverable" }),
       markHandoff: () => req("mark_tab", { tabId, status: "handoff" }),
+      // JS dialog（alert/confirm/prompt）处理：遇弹窗先 getJsDialog 再 handleJsDialog，否则操作被阻塞
+      getJsDialog: () => req("tab_get_js_dialog", { tabId }),
+      handleJsDialog: (opts) => req("tab_handle_js_dialog", { tabId, ...(opts || {}) }),
+      exportContent: (opts) => req("tab_content_export", { tabId, ...(opts || {}) }),
+      clipboard: {
+        read: () => req("tab_clipboard_read", { tabId }),
+        readText: () => req("tab_clipboard_read_text", { tabId }),
+        write: (opts) => req("tab_clipboard_write", { tabId, ...(opts || {}) }),
+        writeText: (text) => req("tab_clipboard_write_text", { tabId, text }),
+      },
+      dev: { logs: () => req("tab_dev_logs", { tabId }) },
       playwright: makePlaywright(tabId),
       cua: makeCua(tabId),
       dom_cua: makeDomCua(tabId),
@@ -221,6 +239,10 @@ export function createLumeBrowserRuntime(nodeRepl) {
           const tabId = asTabId(r)
           return tabId ? makeTab(tabId, browserId) : undefined
         },
+        finalize: (opts) => req("finalize_tabs", { browserId, ...(opts || {}) }),
+        release: (opts) => req("release_tabs", { browserId, ...(opts || {}) }),
+        resumeHandoff: (opts) => req("resume_handoff_tabs", { browserId, ...(opts || {}) }),
+        content: (opts) => req("tabs_content", { browserId, ...(opts || {}) }),
       },
       capabilities: {
         list: async () => [
@@ -319,7 +341,20 @@ await tab.playwright.getByText("Continue").click();
 
 Locator methods: click, dblclick, fill, type, press, check, uncheck, hover, scroll,
 selectOption, getAttribute, innerText, textContents, inputValue, count, isVisible,
-isEnabled, isChecked, evaluate.
+isEnabled, isChecked, evaluate, waitFor, readAll.
+
+## Wait for page readiness (IMPORTANT: Lume locators do NOT auto-wait)
+await tab.goto(url); await tab.playwright.waitForLoadState();   // always after navigation
+await tab.playwright.waitForURL("**/dashboard");                // wait for a route
+await tab.playwright.getByRole("button", { name: "Continue" }).waitFor();  // wait for element
+await tab.playwright.waitForTimeout(500);                       // fixed delay, last resort
+
+## JavaScript dialogs (alert/confirm/prompt block all page actions)
+const dialog = await tab.getJsDialog();
+if (dialog) await tab.handleJsDialog({ accept: true, promptText: "" });
+
+## Frames (chain selector with the frame separator)
+await tab.playwright.locator("iframe#main >> internal:control=enter-frame >> button#go").click();
 
 ## Coordinate-based interaction (CUA)
 await tab.cua.click({ x: 100, y: 200 });
