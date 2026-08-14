@@ -29,6 +29,7 @@ describe("bundled browser plugin", () => {
     expect(skill).toContain("setupLumeBrowserRuntime");
     expect(skill).toContain("agent.browsers.getDefault()");
     expect(skill).toContain("browser.tabs.resumeHandoff()");
+    expect(skill).toContain('browser.tabs.new({ sessionKind: "agent-task" })');
     expect(skill).toContain("browser.tabs.new()");
     expect(skill).toContain("Set `timeout_ms` to `300000`");
     expect(skill).toContain("nodeRepl.write(JSON.stringify");

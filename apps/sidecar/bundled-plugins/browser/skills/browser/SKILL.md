@@ -1,11 +1,11 @@
 ---
 name: browser
-description: Control task-isolated pages in the Lume in-app browser
+description: Control pages in Lume's shared persistent in-app browser profile
 ---
 
 # Lume Browser
 
-Use this skill for ordinary live web navigation and interaction. The Browser runtime is built into Lume and defaults to the task-isolated `iab` backend. Use external Chrome only when the user explicitly requests Chrome or needs its current tabs, profile, extensions, or login state.
+Use this skill for ordinary live web navigation and interaction. The Browser runtime is built into Lume and defaults to the shared persistent `iab` profile, so logins and site storage survive Lume restarts while tab control remains scoped to the current task. Use external Chrome only when the user explicitly requests Chrome or needs its current Chrome tabs, profile, or extensions.
 
 Treat connection setup as internal. Do not mention Node REPL, JavaScript sessions, module imports, or Browser Broker in user-facing updates unless the user asks about the implementation.
 
@@ -34,6 +34,8 @@ if (!tab) tab = await browser.tabs.new();
 if ((await tab.url()) !== "https://example.com") await tab.goto("https://example.com");
 nodeRepl.write(JSON.stringify({ title: await tab.title(), url: await tab.url() }));
 ```
+
+Only use `await browser.tabs.new({ sessionKind: "agent-task" })` when the user explicitly asks for an isolated or temporary session. That session intentionally does not retain login state after Lume exits.
 
 For follow-up requests such as "continue", "read the latest posts", "click the third item", or "scroll down", keep using the resumed tab. Do not create a duplicate merely because the new turn has a new browser turn id. If an old binding returns `action_denied` or `tab_not_found`, discard it, call `browser.tabs.resumeHandoff()` once, select the visible result, and retry the observation.
 

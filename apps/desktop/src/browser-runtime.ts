@@ -1000,16 +1000,22 @@ export class BrowserRuntime {
       return publicTab(existing)
     }
     const partition = restoredPartition ?? selectBrowserPartition(context, params)
-    const isAgent = shouldInstallAgentSessionPolicy(partition)
+    const isolatedAgent = shouldInstallAgentSessionPolicy(partition)
     const advancedCdp = shouldInstallAdvancedCdpPolicy(partition)
     const agentOwned = context.actor === "agent"
+    const restoredAgent = params.profileKind === "agent"
+    const profileKind: NonNullable<BrowserTabDescriptor["profileKind"]> = advancedCdp
+      ? "advanced-cdp"
+      : agentOwned || restoredAgent || isolatedAgent
+        ? "agent"
+        : "user"
     if (advancedCdp && !this.settings.advancedCdpEnabled) throw browserError("action_denied")
     const tab: BrowserTab = {
       tabId,
       providerTabId: randomUUID(),
       ...(typeof params.ownerThreadId === "string" ? { ownerThreadId: params.ownerThreadId.slice(0, 200) } : {}),
       ...(typeof params.openerTabId === "string" ? { openerTabId: params.openerTabId.slice(0, 200) } : {}),
-      profileKind: advancedCdp ? "advanced-cdp" : isAgent ? "agent" : "user",
+      profileKind,
       backend: "iab",
       generation: 1,
       url: "",
@@ -1038,13 +1044,13 @@ export class BrowserRuntime {
       mountWaiters: [],
       viewportQueue: Promise.resolve(),
     }
-    if (isAgent && (params.handoffStatus === "handoff" || params.handoffStatus === "deliverable") && typeof params.handoffBrowserSessionId === "string") {
+    if (profileKind === "agent" && (params.handoffStatus === "handoff" || params.handoffStatus === "deliverable") && typeof params.handoffBrowserSessionId === "string") {
       tab.handoff = { browserSessionId: params.handoffBrowserSessionId.slice(0, 200), status: params.handoffStatus }
     }
     const initialZoomFactor = Math.max(.25, Math.min(5, Number(params.zoomFactor) || 1))
     tab.zoomFactor = initialZoomFactor
     this.tabs.set(tabId, tab)
-    this.ensureSessionPolicy(session.fromPartition(partition), partition, isAgent || advancedCdp)
+    this.ensureSessionPolicy(session.fromPartition(partition), partition, isolatedAgent || advancedCdp)
     const initialUrl = typeof params.url === "string" && params.url.trim() ? params.url : undefined
     if (initialUrl) {
       const normalized = normalizeNavigableUrl(initialUrl)
@@ -1312,6 +1318,8 @@ export class BrowserRuntime {
     this.ownedSessionPolicies.add(policy)
     browserSession.setPermissionRequestHandler((contents, permission, callback, details) => {
       const origin = safeOrigin(contents.getURL())
+      const permissionTab = this.tabForContents(contents)
+      const agentControlled = policy.agent || Boolean(permissionTab?.agentLease)
       const legacyOverride = origin ? this.settings.siteOverrides[origin] : undefined
       const requestedMediaTypes = (details as { mediaTypes?: unknown } | undefined)?.mediaTypes
       const mediaTypes = Array.isArray(requestedMediaTypes) ? requestedMediaTypes : []
@@ -1319,18 +1327,17 @@ export class BrowserRuntime {
         ? mediaTypes.includes("video") ? "camera" : mediaTypes.includes("audio") ? "microphone" : undefined
         : undefined
       const override = origin && permissionKey ? this.settings.sitePermissionOverrides?.[origin]?.[permissionKey] : legacyOverride
-      if (policy.agent || override === "deny" || (!override && this.settings.sitePermissionDefault === "deny")) {
+      if (agentControlled || override === "deny" || (!override && this.settings.sitePermissionDefault === "deny")) {
         callback(false)
         return
       }
       if (override === "allow") {
-        const tab = this.tabForContents(contents)
-        if (tab && permissionKey) {
-          tab.mediaState = {
-            ...(tab.mediaState ?? { audible: false, camera: false, microphone: false }),
+        if (permissionTab && permissionKey) {
+          permissionTab.mediaState = {
+            ...(permissionTab.mediaState ?? { audible: false, camera: false, microphone: false }),
             [permissionKey]: true,
           }
-          this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+          this.options.emit({ method: "browser:tab-changed", params: publicTab(permissionTab) as unknown as Record<string, unknown> })
         }
         callback(true)
         return
@@ -1350,13 +1357,12 @@ export class BrowserRuntime {
       }).then((result) => {
         const allowed = result.response === 0
         if (allowed && origin && permissionKey) {
-          const tab = this.tabForContents(contents)
-          if (tab) {
-            tab.mediaState = {
-              ...(tab.mediaState ?? { audible: false, camera: false, microphone: false }),
+          if (permissionTab) {
+            permissionTab.mediaState = {
+              ...(permissionTab.mediaState ?? { audible: false, camera: false, microphone: false }),
               [permissionKey]: true,
             }
-            this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+            this.options.emit({ method: "browser:tab-changed", params: publicTab(permissionTab) as unknown as Record<string, unknown> })
           }
         }
         callback(allowed)
@@ -3501,7 +3507,7 @@ export class BrowserRuntime {
       if (result.response !== 0) throw browserError("action_denied")
       this.credentials.clearPasswords()
     }
-    const browserSession = this.tabs.values().next().value?.webContents?.session ?? session.fromPartition("persist:lume-browser")
+    const browserSession = session.fromPartition("persist:lume-browser")
     const dataTypes: Electron.ClearDataOptions["dataTypes"] = []
     if (selected.has("siteData")) dataTypes.push("cookies", "fileSystems", "indexedDB", "localStorage", "serviceWorkers", "webSQL")
     if (selected.has("cache")) dataTypes.push("cache")

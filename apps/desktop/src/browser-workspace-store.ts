@@ -7,15 +7,16 @@ type PersistedBrowserTab = Pick<BrowserTabDescriptor,
   "navigationIndex" | "scrollPosition" | "zoomFactor" | "viewport" | "lastOpenedAt" | "handoffStatus"> & {
     partition?: string
     handoffBrowserSessionId?: string
+    storageKind?: "shared" | "isolated"
   }
 
 type BrowserWorkspaceFile = {
-  version: 8
+  version: 9
   workspaces: Record<string, BrowserWorkspaceDescriptor>
   tabs: Record<string, PersistedBrowserTab>
 }
 
-const EMPTY_STATE: BrowserWorkspaceFile = { version: 8, workspaces: {}, tabs: {} }
+const EMPTY_STATE: BrowserWorkspaceFile = { version: 9, workspaces: {}, tabs: {} }
 
 export class BrowserWorkspaceStore {
   private readonly path: string
@@ -23,7 +24,9 @@ export class BrowserWorkspaceStore {
 
   constructor(configDir: () => string) {
     this.path = join(configDir(), "browser", "workspaces.json")
-    this.state = readState(this.path)
+    const restored = readState(this.path)
+    this.state = restored.state
+    if (restored.migrated) this.write()
   }
 
   list(): BrowserWorkspaceDescriptor[] {
@@ -156,15 +159,20 @@ export class BrowserWorkspaceStore {
   }
 }
 
-function readState(path: string): BrowserWorkspaceFile {
-  if (!existsSync(path)) return structuredClone(EMPTY_STATE)
+function readState(path: string): { state: BrowserWorkspaceFile; migrated: boolean } {
+  if (!existsSync(path)) return { state: structuredClone(EMPTY_STATE), migrated: false }
   try {
     const value = JSON.parse(readFileSync(path, "utf8")) as Partial<Omit<BrowserWorkspaceFile, "version">> & { version?: number }
-    if ((value.version !== 1 && value.version !== 8) || !isRecord(value.workspaces) || !isRecord(value.tabs)) return structuredClone(EMPTY_STATE)
+    if ((value.version !== 1 && value.version !== 8 && value.version !== 9) || !isRecord(value.workspaces) || !isRecord(value.tabs)) {
+      return { state: structuredClone(EMPTY_STATE), migrated: false }
+    }
     const tabs = Object.fromEntries(Object.entries(value.tabs).flatMap(([tabId, raw]) => {
       if (!isRecord(raw) || raw.tabId !== tabId || typeof raw.url !== "string" || typeof raw.title !== "string") return []
       const profileKind: NonNullable<BrowserTabDescriptor["profileKind"]> = raw.profileKind === "agent" || raw.profileKind === "advanced-cdp" ? raw.profileKind : "user"
       const handoffStatus = raw.handoffStatus === "handoff" || raw.handoffStatus === "deliverable" ? raw.handoffStatus : undefined
+      const storedPartition = isBrowserPartition(raw.partition) ? raw.partition : undefined
+      const migrateLegacyAgentProfile = value.version !== 9 && profileKind === "agent" && storedPartition?.startsWith("lume-agent-")
+      const partition = migrateLegacyAgentProfile ? "persist:lume-browser" : storedPartition
       const restored = {
         ...(raw as unknown as PersistedBrowserTab),
         tabId,
@@ -172,9 +180,10 @@ function readState(path: string): BrowserWorkspaceFile {
         url: safeUrl(raw.url),
         title: raw.title.slice(0, 256),
         ...(handoffStatus ? { handoffStatus } : {}),
+        ...(partition ? { partition, storageKind: partition === "persist:lume-browser" ? "shared" : "isolated" } : {}),
       } satisfies PersistedBrowserTab
       if (!handoffStatus) { delete restored.handoffStatus; delete restored.handoffBrowserSessionId }
-      if (!isBrowserPartition(raw.partition)) delete restored.partition
+      if (!partition) { delete restored.partition; delete restored.storageKind }
       return [[tabId, restored]]
     }))
     const workspaces = Object.fromEntries(Object.entries(value.workspaces).flatMap(([ownerThreadId, raw]) => {
@@ -187,9 +196,9 @@ function readState(path: string): BrowserWorkspaceFile {
       }).slice(0, 10)
       return [[ownerThreadId, { ownerThreadId, orderedTabIds, ...(typeof raw.activeTabId === "string" && orderedTabIds.includes(raw.activeTabId) ? { activeTabId: raw.activeTabId } : {}), recentlyClosed, revision: Number.isSafeInteger(raw.revision) ? Number(raw.revision) : 0 } satisfies BrowserWorkspaceDescriptor]]
     }))
-    return { version: 8, workspaces, tabs }
+    return { state: { version: 9, workspaces, tabs }, migrated: value.version !== 9 }
   } catch {
-    return structuredClone(EMPTY_STATE)
+    return { state: structuredClone(EMPTY_STATE), migrated: false }
   }
 }
 
@@ -212,7 +221,10 @@ function sanitizeTab(tab: BrowserTabDescriptor, runtime?: { partition?: string; 
     ...(tab.viewport ? { viewport: { ...tab.viewport } } : {}),
     lastOpenedAt: tab.lastOpenedAt ?? new Date().toISOString(),
     ...(tab.handoffStatus ? { handoffStatus: tab.handoffStatus } : {}),
-    ...(isBrowserPartition(runtime?.partition) ? { partition: runtime.partition } : {}),
+    ...(isBrowserPartition(runtime?.partition) ? {
+      partition: runtime.partition,
+      storageKind: runtime.partition === "persist:lume-browser" ? "shared" : "isolated",
+    } : {}),
     ...(tab.handoffStatus && runtime?.handoffBrowserSessionId ? { handoffBrowserSessionId: runtime.handoffBrowserSessionId.slice(0, 200) } : {}),
   }
 }

@@ -175,7 +175,7 @@ describe("capability-routing", () => {
       loadedSkills: [{
         slug: "browser:browser",
         name: "Lume Browser",
-        description: "Control task-isolated pages in the Lume in-app browser"
+        description: "Control pages in Lume's shared persistent in-app browser profile"
       }]
     });
 

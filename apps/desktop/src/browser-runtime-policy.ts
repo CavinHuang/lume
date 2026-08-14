@@ -1,15 +1,16 @@
 import type { BrowserRequestContext } from "../../../packages/shared/src/types/browser-runtime"
 
-export type BrowserSessionKind = "user" | "agent-task" | "advanced-cdp"
+export type BrowserSessionKind = "shared" | "agent-task" | "advanced-cdp"
 
 export function selectBrowserSessionKind(context: BrowserRequestContext, params: Record<string, unknown>): BrowserSessionKind {
   if (params.sessionKind === "advanced-cdp") return "advanced-cdp"
-  return context.actor === "agent" ? "agent-task" : "user"
+  if (context.actor === "agent" && params.sessionKind === "agent-task") return "agent-task"
+  return "shared"
 }
 
 export function selectBrowserPartition(context: BrowserRequestContext, params: Record<string, unknown>): string {
   const kind = selectBrowserSessionKind(context, params)
-  if (kind === "user") return "persist:lume-browser"
+  if (kind === "shared") return "persist:lume-browser"
   const session = safePartitionPart(context.browserSessionId)
   const turn = safePartitionPart(context.browserTurnId)
   return `${kind === "advanced-cdp" ? "lume-cdp" : "lume-agent"}-${session}-${turn}`

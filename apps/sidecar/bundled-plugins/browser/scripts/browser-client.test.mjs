@@ -41,9 +41,10 @@ test("adapts Broker result envelopes to the canonical BrowserClient API", async 
   const globals = {};
   await setupLumeBrowserRuntime({ globals });
   const browser = await globals.agent.browsers.getDefault();
-  const tab = await browser.tabs.new();
+  const tab = await browser.tabs.new({ sessionKind: "agent-task" });
 
   assert.equal(tab.id, "tab-1");
+  assert.equal(calls.find((call) => call.method === "create_tab").params.options.sessionKind, "agent-task");
   assert.equal(await tab.title(), "百度一下");
   assert.equal(await tab.url(), "https://www.baidu.com/");
   assert.equal(await tab.playwright.domSnapshot(), "search page");

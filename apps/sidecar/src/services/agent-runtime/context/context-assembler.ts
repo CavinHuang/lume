@@ -260,7 +260,7 @@ export class ContextAssembler {
       ].join("\n")
       : "";
     const browserFallbackPolicy = hasBrowserRuntime
-      ? "Lume's task-isolated in-app Browser runtime is available through the bundled browser skill and mcp__node_repl__js. For live browser tasks, first call Skill with the exact skill name browser:browser (without a workspace prefix) and follow its bootstrap instructions exactly; never guess an import name, use require, or fall back to Bash. The runtime defaults to the iab backend. Do not claim browser automation is unavailable before attempting it. Use native computer-use only after the Browser runtime returns browser_unavailable, and state that capability was degraded."
+      ? "Lume's shared persistent in-app Browser runtime is available through the bundled browser skill and mcp__node_repl__js. Login and site storage persist across Lume restarts, while Agent control remains scoped to the current task and tab. For live browser tasks, first call Skill with the exact skill name browser:browser (without a workspace prefix) and follow its bootstrap instructions exactly; never guess an import name, use require, or fall back to Bash. The runtime defaults to the iab backend. Do not claim browser automation is unavailable before attempting it. Use native computer-use only after the Browser runtime returns browser_unavailable, and state that capability was degraded."
       : hasComputerUseTools
         ? "No Browser runtime tool is available for this turn. Use native computer-use for visible browser interaction and state that DOM browser capability is unavailable."
         : "";

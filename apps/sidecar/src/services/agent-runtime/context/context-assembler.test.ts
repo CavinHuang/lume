@@ -50,7 +50,7 @@ describe("ContextAssembler", () => {
 
     expect(result.runtimeContext).toContain("Preferred capability route: browser");
     expect(result.runtimeContext).not.toContain("Preferred capability route: raw-tools");
-    expect(result.runtimeContext).toContain("task-isolated in-app Browser runtime is available");
+    expect(result.runtimeContext).toContain("shared persistent in-app Browser runtime is available");
     expect(result.runtimeContext).toContain("exact skill name browser:browser (without a workspace prefix)");
     expect(result.runtimeContext).toContain("Do not claim browser automation is unavailable before attempting it");
     expect(result.runtimeContext).toContain("defaults to the iab backend");
@@ -72,7 +72,7 @@ describe("ContextAssembler", () => {
       tokenBudget: 8_000,
     });
 
-    expect(result.runtimeContext).not.toContain("task-isolated in-app Browser runtime is available");
+    expect(result.runtimeContext).not.toContain("shared persistent in-app Browser runtime is available");
     expect(result.runtimeContext).toContain("No Browser runtime tool is available for this turn");
   });
 
