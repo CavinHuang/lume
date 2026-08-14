@@ -50,7 +50,7 @@ globalThis.nodeRepl = {
       }
       if (method === "tab_js_dialog_get") return { dialog: { id: "dialog-1", type: "confirm" } };
       if (method === "tab_js_dialog_handle") return {};
-      if (method === "tabs_content") return [{ url: "https://example.com/", title: "Example", content: "ok" }];
+      if (method === "tabs_content") return { results: [{ url: "https://example.com/", title: "Example", content: "ok" }] };
       if (method === "browser_visibility_get") return { visible: false };
       if (method === "tab_page_assets_bundle") return { assetId: "asset-1" };
       if (method === "playwright_wait_for_download") return { download_id: "download-1", filename: "report.pdf" };
@@ -116,7 +116,9 @@ test("uses canonical backend selection and request shapes", async () => {
   const browser = await globals.agent.browsers.get("lume-iab");
   const tab = await browser.tabs.new({ url: "https://example.com/" });
   await tab.screenshot({ fullPage: true });
-  await browser.tabs.content({ urls: ["https://example.com/"], contentType: "html", timeoutMs: 30_000 });
+  assert.deepEqual(await browser.tabs.content({ urls: ["https://example.com/"], contentType: "html", timeoutMs: 30_000 }), [
+    { url: "https://example.com/", title: "Example", content: "ok" },
+  ]);
   await tab.playwright.waitForURL("**/done", { timeoutMs: 250 });
   const visibility = await browser.capabilities.get("visibility");
   assert.equal(await visibility.get(), false);

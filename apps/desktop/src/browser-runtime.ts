@@ -2551,7 +2551,7 @@ export class BrowserRuntime {
         const message = error instanceof Error ? error.message : ""
         if (message.includes("strict_locator_violation")) throw browserError("strict_locator_violation")
         if (message.includes("tab_not_found")) throw browserError("tab_not_found")
-        if (message.includes("action_denied")) throw browserError("action_denied")
+        // resolveTarget 的 action_denied 仅表示目标暂时不可见、不可用或被遮挡；具体动作的永久拒绝发生在后续 dispatch。
         if (Date.now() >= deadline) throw browserError("actionability_failed")
         await delay(50)
       }

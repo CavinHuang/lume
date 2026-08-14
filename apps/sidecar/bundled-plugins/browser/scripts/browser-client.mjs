@@ -92,6 +92,7 @@ function unwrapBrowserResult(method, result) {
     }));
   }
   if (method === "browser_visibility_get") return result?.visible;
+  if (method === "tabs_content") return Array.isArray(result) ? result : result?.results;
   if (method === "playwright_wait_for_download") {
     return { ...result, downloadId: result?.downloadId ?? result?.download_id };
   }
