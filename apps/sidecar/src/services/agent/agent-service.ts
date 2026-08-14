@@ -48,7 +48,6 @@ import {
 } from "./agent-message-versioning-service";
 import { getAgentRuntimeStatusManager } from "./agent-runtime-status-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";
-import { resolveAgentRuntimeRoutingTrace } from "./agent-runtime-context";
 import { createLogger, sanitizeBaseUrlForLog, writeLogRecord } from "../infra/logger";
 import { getSessionStateManager } from "../agent-runtime/runner/session-state-manager";
 import { submitAskUserQuestionAnswers as submitRuntimeAskUserQuestionAnswers } from "../agent-runtime/interruption/ask-user-question-session";
@@ -72,7 +71,7 @@ import { AgentRuntimeKernel, AgentRuntimeKernelQueueConflictError, type AgentRun
 import { runGuidanceStore } from "../agent-runtime/guidance/run-guidance-store";
 import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../agent-runtime/runtime-core/session-store";
 import { isAgentRuntimeSessionActive } from "../agent-runtime/runtime-core/attempt";
-import { createCodingTurnRecord, updateCodingTurnRecord } from "../agent-runtime/runtime-core/coding-turn-store";
+import { createCodingTurnRecord } from "../agent-runtime/runtime-core/coding-turn-store";
 import { createFileBackedLumeRunStateStore } from "../agent-runtime/runner/run-state-store";
 import { projectBackgroundTaskNotificationRuntimeEvent } from "../agent-runtime/runner/run-item-events";
 import type { LumeRunItem } from "../agent-runtime/runner/run-items";
@@ -85,7 +84,6 @@ import { getPlanningTodoStore } from "../planning/planning-todo-store";
 import { addPlanningAuthorizedTodo, authorizePlanningOperation, finishPlanningExecutionRun, resolvePlanningExecutionContext } from "../planning/planning-execution-context";
 import { materializeCapabilityReferences } from "./invocable-capability-catalog";
 import { getAgentSubmissionStore } from "./agent-submission-store";
-import { shouldTrackCodingWorkflow } from "./coding-workflow-policy";
 
 type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -125,31 +123,6 @@ const DEFAULT_WELCOME_SUGGESTIONS: AgentWelcomeSuggestion[] = [
 ];
 
 const log = createLogger("agent-service");
-const AGENT_CAPABILITY_TOOLS = [
-  "Read",
-  "Write",
-  "Edit",
-  "Bash",
-  "Glob",
-  "Grep",
-  "ls",
-  "browser",
-  "WebSearch",
-  "WebFetch",
-  "memory.search",
-  "memory.read",
-  "memory.remember",
-  "memory.forget"
-];
-
-const TURN_LIMIT_CONTINUATION_PREFIX = "请继续完成上一轮未完成的原始任务。不要把这看作新任务；基于当前线程历史、已有工具结果和最后一个 assistant 状态继续。";
-const STALE_RUN_CONTINUATION_PREFIX = "上一轮运行在进程退出前未正常完成。请继续完成上一轮未完成的原始任务，不要把这看作新任务；基于下面的运行记录摘要衔接执行。";
-const VISIBLE_HISTORY_CONTINUATION_PREFIX = "当前 runtime transcript 不完整。请继续完成上一轮未完成的原始任务，不要把这看作新任务；基于下面可见聊天历史衔接执行。";
-const CONTINUE_ONLY_MESSAGES = new Set([
-  "继续",
-  "请继续",
-  "continue"
-]);
 const STALE_RUN_STATUSES = new Set<LumeRunState["status"]>(["created", "running"]);
 const STALE_RUN_PROGRESS_HEAD_COUNT = 6;
 const STALE_RUN_PROGRESS_TAIL_COUNT = 10;
@@ -324,10 +297,6 @@ function mergeToolPolicies(
   };
 }
 
-function isContinueOnlyMessage(userMessage: string): boolean {
-  return CONTINUE_ONLY_MESSAGES.has(userMessage.trim().toLowerCase());
-}
-
 function hasTurnLimitedMarker(item: unknown): boolean {
   if (!item || typeof item !== "object") return false;
   const record = item as Record<string, unknown>;
@@ -342,16 +311,16 @@ function hasTurnLimitedMarker(item: unknown): boolean {
   );
 }
 
-async function shouldExpandTurnLimitedContinuation(threadId: string, userMessage: string): Promise<boolean> {
-  if (!isContinueOnlyMessage(userMessage)) return false;
+async function findTurnLimitedRun(threadId: string): Promise<LumeRunState | null> {
   const store = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
   const runs = await store.listByThread(threadId);
-  const latestCompletedRun = [...runs].reverse().find((run) => run.status === "completed");
-  return Boolean(latestCompletedRun?.generatedItems.some(hasTurnLimitedMarker));
+  const latestRun = runs.at(-1);
+  return latestRun?.status === "completed" && latestRun.generatedItems.some(hasTurnLimitedMarker)
+    ? latestRun
+    : null;
 }
 
-async function findStaleRunningRun(threadId: string, userMessage: string): Promise<LumeRunState | null> {
-  if (!isContinueOnlyMessage(userMessage)) return null;
+async function findStaleRunningRun(threadId: string): Promise<LumeRunState | null> {
   const store = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
   const runs = await store.listByThread(threadId);
   const latestRun = runs.at(-1);
@@ -361,32 +330,39 @@ async function findStaleRunningRun(threadId: string, userMessage: string): Promi
 }
 
 async function resolveModelFacingUserMessage(threadId: string, userMessage: string): Promise<string> {
-  const staleRun = await findStaleRunningRun(threadId, userMessage);
-  if (staleRun) {
-    return buildStaleRunContinuationMessage(staleRun, userMessage);
-  }
-  if (await shouldExpandTurnLimitedContinuation(threadId, userMessage)) {
-    return [
-      TURN_LIMIT_CONTINUATION_PREFIX,
-      `用户发送的继续指令：${userMessage.trim()}`
-    ].join("\n\n");
-  }
-  const visibleHistoryContinuation = buildVisibleHistoryContinuationMessage(threadId, userMessage);
-  if (visibleHistoryContinuation) {
-    return visibleHistoryContinuation;
-  }
-  return userMessage;
+  const [staleRun, turnLimitedRun] = await Promise.all([
+    findStaleRunningRun(threadId),
+    findTurnLimitedRun(threadId)
+  ]);
+  const recoveryContext = staleRun
+    ? buildStaleRunRecoveryContext(staleRun)
+    : turnLimitedRun
+      ? buildTurnLimitedRecoveryContext(turnLimitedRun)
+      : null;
+  const visibleHistory = buildVisibleHistoryContext(threadId);
+  const context = [recoveryContext, visibleHistory].filter((part): part is string => Boolean(part));
+  return context.length > 0 ? `${context.join("\n\n")}\n\n${userMessage}` : userMessage;
 }
 
-function buildStaleRunContinuationMessage(run: LumeRunState, userMessage: string): string {
+function buildStaleRunRecoveryContext(run: LumeRunState): string {
   return [
-    STALE_RUN_CONTINUATION_PREFIX,
+    '<runtime-recovery-state reason="interrupted">',
     `原始任务：${compactRuntimeText(run.input.userMessage, 800)}`,
     `上次运行状态：${run.status}${run.currentStep?.type ? ` / ${run.currentStep.type}` : ""}`,
     "上次运行已完成的关键记录：",
     summarizeStaleRunProgress(run.generatedItems),
-    `用户发送的继续指令：${userMessage.trim()}`
+    "该状态仅供参考；以当前用户消息为准。",
+    "</runtime-recovery-state>"
   ].filter((part) => part.trim().length > 0).join("\n\n");
+}
+
+function buildTurnLimitedRecoveryContext(run: LumeRunState): string {
+  return [
+    '<runtime-recovery-state reason="turn_limit">',
+    `原始任务：${compactRuntimeText(run.input.userMessage, 800)}`,
+    "上次运行达到了轮次上限。该状态仅供参考；以当前用户消息为准。",
+    "</runtime-recovery-state>"
+  ].join("\n\n");
 }
 
 function summarizeStaleRunProgress(items: LumeRunItem[]): string {
@@ -408,26 +384,19 @@ function summarizeStaleRunProgress(items: LumeRunItem[]): string {
   ].join("\n");
 }
 
-function buildVisibleHistoryContinuationMessage(threadId: string, userMessage: string): string | null {
-  if (!isContinueOnlyMessage(userMessage)) return null;
+function buildVisibleHistoryContext(threadId: string): string | null {
   if (hasRuntimeCoreSessionTranscript(threadId)) return null;
   const messages = getAgentThreadMessages(threadId)
     .filter((message) => message.content.trim().length > 0);
-  while (messages.length > 0) {
-    const latest = messages[messages.length - 1];
-    if (latest?.role !== "user" || !isContinueOnlyMessage(latest.content)) break;
-    messages.pop();
-  }
   if (messages.length === 0) return null;
   const historyLines = messages
     .slice(-VISIBLE_HISTORY_CONTINUATION_TAIL_COUNT)
     .map((message) => `- ${message.role}: ${compactRuntimeText(message.content, 360)}`)
     .join("\n");
   return [
-    VISIBLE_HISTORY_CONTINUATION_PREFIX,
-    "可见聊天历史：",
+    "<visible-thread-history>",
     historyLines,
-    `用户发送的继续指令：${userMessage.trim()}`
+    "</visible-thread-history>"
   ].join("\n\n");
 }
 
@@ -887,16 +856,11 @@ export async function sendAgentMessage(
   const shouldTryAutoTitle = shouldAppendUserMessage && assistantTurnCountBeforeSend === 0;
   void options.allowResumeRetry;
   let activeTurnId: string | null = null;
+  let activeTurnStartedAt: string | null = null;
   const persistedSdkMessages: SDKMessage[] = [];
   let userSdkMessage: SDKMessage | null = null;
 
-  const stateWorkspaceSlug = effectiveWorkspace?.slug;
   const browserContinuity = await getActiveBrowserBroker()?.getThreadAgentContinuity(threadId).catch(() => undefined);
-
-  const routingTrace = resolveAgentRuntimeRoutingTrace({
-    workspaceSlug: stateWorkspaceSlug,
-    availableTools: AGENT_CAPABILITY_TOOLS
-  });
   const existingToolPolicy =
     input.messageMetadata?.toolPolicy && typeof input.messageMetadata.toolPolicy === "object"
       ? (input.messageMetadata.toolPolicy as AgentToolPolicy)
@@ -917,9 +881,6 @@ export async function sendAgentMessage(
       service,
       connectionName,
     })),
-    capabilityLanes: routingTrace.capabilityLanes,
-    preferredCapabilityRoute: routingTrace.preferredCapabilityRoute,
-    capabilityRoutingReason: routingTrace.reason,
     browserContinuity: browserContinuity ?? null,
     toolPolicy: mergeToolPolicies(
       existingToolPolicy,
@@ -966,8 +927,6 @@ export async function sendAgentMessage(
     modelId: resolvedModelId,
     modelRef: canonicalModelRef,
     appendUserMessage: shouldAppendUserMessage,
-    preferredCapabilityRoute: routingTrace.preferredCapabilityRoute ?? undefined,
-    capabilityLanes: routingTrace.capabilityLanes,
     userMessage
   }));
 
@@ -998,25 +957,8 @@ export async function sendAgentMessage(
       ...(sourceMessageId ? { sourceMessageId } : {})
     };
     activeTurnId = createdUserVersion.turnId;
+    activeTurnStartedAt = new Date((userSdkMessage as SDKMessage & { _createdAt?: number })._createdAt ?? Date.now()).toISOString();
     runtimeMessageMetadata.turnId = activeTurnId;
-    if (shouldTrackCodingWorkflow(normalizedUserMessage.modelMessage)) {
-      await createCodingTurnRecord(getRuntimeCoreSessionDir(threadId), {
-        turnId: activeTurnId,
-        threadId,
-        userMessageId: createdUserVersion.message.id,
-        runIds: [],
-        startedAt: new Date().toISOString(),
-        phase: "planning",
-        changedFiles: [],
-        verificationStatus: "not_run",
-        verificationRepairAttempts: 0,
-        approvalRequestCount: 0,
-        rewindState: "active",
-        routeReason: routingTrace.reason,
-        toolSelectionReason: "Coding 请求优先使用基础文件工具；仅在明确浏览器或桌面自动化需求时启用插件工具。"
-      });
-      if (completeIfAborted()) return;
-    }
     if (sourceMessageId) {
       replaceAgentThreadTranscript(threadId, getLatestVisibleMessagesForThread(threadId));
     }
@@ -1254,12 +1196,24 @@ export async function sendAgentMessage(
       }
     }
   }
-  if (runtimeResult.codingReport?.turnId) {
+  if (
+    runtimeResult.codingReport?.turnId
+    && runtimeResult.codingReport.userMessageId
+    && (
+      runtimeResult.codingReport.workspaceChanged
+      || runtimeResult.codingReport.pendingBackground
+      || (runtimeResult.codingReport.gitActions?.length ?? 0) > 0
+    )
+  ) {
     const report = runtimeResult.codingReport;
     const turnId = report.turnId!;
-    await updateCodingTurnRecord(getRuntimeCoreSessionDir(threadId), turnId, {
+    await createCodingTurnRecord(getRuntimeCoreSessionDir(threadId), {
+      turnId,
+      threadId,
+      userMessageId: report.userMessageId!,
       ...(visibleAssistantMessageId ? { assistantMessageId: visibleAssistantMessageId } : {}),
-      ...(report.runId ? { runIds: [report.runId] } : {}),
+      runIds: report.runId ? [report.runId] : [],
+      startedAt: activeTurnStartedAt ?? new Date().toISOString(),
       finishedAt: new Date().toISOString(),
       checkpointId: report.checkpointId,
       baselineCommit: report.baselineCommit,
@@ -1272,8 +1226,6 @@ export async function sendAgentMessage(
       verificationRecords: report.verificationRecords,
       gitActions: report.gitActions,
       review: report.review,
-      routeReason: report.routeReason,
-      toolSelectionReason: report.toolSelectionReason,
       terminationReason: report.terminationReason
     });
   }

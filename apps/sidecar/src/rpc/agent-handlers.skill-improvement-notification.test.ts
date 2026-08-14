@@ -22,7 +22,6 @@ const analyzeThreadWorkspaceSkillImprovementsMock = mock(async (_input: unknown)
 
 function createTestPlanModePhaseTracker(): PlanModePhaseTracker {
   return {
-    isLikelyExecutionRequest: () => false,
     getPhase: () => "idle",
     clearSession: () => undefined
   } as unknown as PlanModePhaseTracker;

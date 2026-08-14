@@ -40,11 +40,6 @@ describe("ContextAssembler", () => {
         visible: true,
         lifecycle: "active"
       },
-      routingTrace: {
-        capabilityLanes: ["skills", "browser", "raw-tools"],
-        preferredCapabilityRoute: "browser",
-        reason: "request implies browser/session continuity"
-      },
       tokenBudget: 8_000,
     });
 

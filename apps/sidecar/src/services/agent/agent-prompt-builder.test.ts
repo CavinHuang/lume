@@ -375,9 +375,6 @@ describe("agent-prompt-builder", () => {
     expect(dynamic).toContain("channelId: channel-1");
     expect(dynamic).toContain("modelId: claude-sonnet-4-5");
     expect(dynamic).toContain("<workspace_state>");
-    expect(dynamic).toContain("Capability lanes: skills, browser, memory, web, raw-tools, coding");
-    expect(dynamic).not.toContain("Preferred capability route:");
-    expect(dynamic).not.toContain("Capability routing reason:");
     expect(dynamic).toContain("Loaded Skills:");
     expect(dynamic).toContain("Use a loaded Skill only when it clearly matches the user's request");
     expect(dynamic).toContain("Only fall back to raw tool composition when no suitable Skill fits");
@@ -412,24 +409,7 @@ describe("agent-prompt-builder", () => {
       userMessage: "help me create an execution plan"
     });
 
-    expect(dynamic).not.toContain("Preferred capability route:");
     expect(dynamic).toContain("- global-planner (Global Planner):");
-  });
-
-  test("buildDynamicContext 不把兼容路由元数据注入模型提示", () => {
-    const dynamic = buildDynamicContext({
-      sessionId: "browser-route-session",
-      workspaceSlug: "browser-route-workspace",
-      availableTools: ["Skill", "Read", "Grep", "mcp__node_repl__js"],
-      userMessage: "打开百度搜索agent",
-      capabilityLanes: ["skills", "browser", "raw-tools"],
-      preferredCapabilityRoute: "browser",
-      capabilityRoutingReason: "request implies browser/session continuity"
-    });
-
-    expect(dynamic).toContain("Capability lanes: skills, browser, raw-tools");
-    expect(dynamic).not.toContain("Preferred capability route:");
-    expect(dynamic).not.toContain("Capability routing reason:");
   });
 
   test("buildDynamicContext 应包含启用插件摘要与插件 skill", () => {

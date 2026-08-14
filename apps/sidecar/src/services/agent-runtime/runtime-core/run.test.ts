@@ -210,12 +210,7 @@ describe("runtime-core run", () => {
         lumeSessionId: `browser-tool-${crypto.randomUUID()}`,
         workspaceSlug: `browser-route-${crypto.randomUUID()}`,
         permissionMode: "default",
-        userMessage: "打开百度搜索agent",
-        messageMetadata: {
-          capabilityLanes: ["skills", "browser", "raw-tools"],
-          preferredCapabilityRoute: "browser",
-          capabilityRoutingReason: "legacy metadata"
-        }
+        userMessage: "打开百度搜索agent"
       }));
       await result.agent.getInitializationResult();
 
@@ -560,7 +555,7 @@ describe("runtime-core run", () => {
     result.session.dispose();
   });
 
-  test("兼容的 Coding 路由元数据不再隐藏 Web 和任务编排工具", async () => {
+  test("Coding 请求可直接发现 Web 和任务编排工具", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-coding-tools-"));
     const agentDir = join(cwd, ".runtime-core-test");
     mkdirSync(agentDir, { recursive: true });
@@ -573,8 +568,7 @@ describe("runtime-core run", () => {
       provider: "anthropic",
       resolvedModelId: "claude-sonnet-4-5",
       apiKey: "test-key",
-      permissionMode: "acceptEdits",
-      messageMetadata: { preferredCapabilityRoute: "coding" }
+      permissionMode: "acceptEdits"
     });
 
     const toolNames = availableToolNames(result);
@@ -993,7 +987,7 @@ describe("runtime-core run", () => {
     result.session.dispose();
   });
 
-  test("只有明确隔离或并行请求时才暴露 Worktree 工具", async () => {
+  test("非 Plan 模式始终暴露 Worktree 工具", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-worktree-tools-"));
     const agentDir = join(cwd, ".runtime-core-test");
     mkdirSync(agentDir, { recursive: true });
@@ -1008,23 +1002,23 @@ describe("runtime-core run", () => {
       permissionMode: "acceptEdits",
       userMessage: "修复一个小的类型错误"
     });
-    expect(getRuntimeToolDescriptor("ordinary-worktree-session", "EnterWorktree")).toBeUndefined();
-    expect(getRuntimeToolDescriptor("ordinary-worktree-session", "ExitWorktree")).toBeUndefined();
+    expect(getRuntimeToolDescriptor("ordinary-worktree-session", "EnterWorktree")).toBeDefined();
+    expect(getRuntimeToolDescriptor("ordinary-worktree-session", "ExitWorktree")).toBeDefined();
     await ordinary.session.dispose();
 
-    const isolated = await createRuntimeCoreSession({
-      lumeSessionId: "isolated-worktree-session",
+    const plan = await createRuntimeCoreSession({
+      lumeSessionId: "plan-worktree-session",
       cwd,
       agentDir,
       provider: "anthropic",
       resolvedModelId: "claude-sonnet-4-5",
       apiKey: "test-key",
-      permissionMode: "acceptEdits",
-      userMessage: "请在隔离 worktree 中并行修改这个模块"
+      permissionMode: "plan",
+      userMessage: "请规划一个隔离 worktree"
     });
-    expect(getRuntimeToolDescriptor("isolated-worktree-session", "EnterWorktree")).toBeDefined();
-    expect(getRuntimeToolDescriptor("isolated-worktree-session", "ExitWorktree")).toBeDefined();
-    await isolated.session.dispose();
+    expect(getRuntimeToolDescriptor("plan-worktree-session", "EnterWorktree")).toBeUndefined();
+    expect(getRuntimeToolDescriptor("plan-worktree-session", "ExitWorktree")).toBeUndefined();
+    await plan.session.dispose();
   });
 
   test("同一个 Lume session 应恢复既有 transcript", async () => {

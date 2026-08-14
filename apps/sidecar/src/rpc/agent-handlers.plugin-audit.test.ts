@@ -26,7 +26,6 @@ describe("agent handlers GET_PLUGIN_AUDIT_LOG", () => {
     return createAgentHandlers({
       writeNotification: () => undefined,
       planModePhaseTracker: {
-        isLikelyExecutionRequest: () => false,
         getPhase: () => "idle",
         clearSession: () => undefined,
       } as unknown as PlanModePhaseTracker,

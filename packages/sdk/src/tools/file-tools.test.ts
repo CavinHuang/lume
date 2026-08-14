@@ -7,7 +7,7 @@ import { FileReadTool } from "./read";
 import { FileWriteTool } from "./write";
 import { NotebookEditTool } from "./notebook-edit";
 import { FileStateCache } from "../utils/fileCache";
-import { captureFileSnapshots, collectCheckpointPaths, rewindCheckpoint } from "../utils/file-checkpoints";
+import { captureFileSnapshots, collectCheckpointPaths, requiresWorkspaceCheckpoint, rewindCheckpoint } from "../utils/file-checkpoints";
 
 const roots: string[] = [];
 
@@ -16,6 +16,15 @@ afterEach(async () => {
 });
 
 describe("file tools", () => {
+  test("uses target checkpoints for file tools and workspace checkpoints for broad mutation tools", () => {
+    expect(collectCheckpointPaths("Write", { file_path: "src/a.ts" })).toEqual(["src/a.ts"]);
+    expect(collectCheckpointPaths("Edit", { file_path: "src/b.ts" })).toEqual(["src/b.ts"]);
+    for (const toolName of ["Bash", "Task", "Agent", "Delegate"]) {
+      expect(requiresWorkspaceCheckpoint(toolName)).toBeTrue();
+    }
+    expect(requiresWorkspaceCheckpoint("Read")).toBeFalse();
+  });
+
   test("blocks device and UNC paths before filesystem access", async () => {
     const readDevice = await FileReadTool.call({ file_path: "/dev/zero" }, { cwd: process.cwd() });
     const readUnc = await FileReadTool.call({ file_path: "\\\\server\\share\\secret.txt" }, { cwd: process.cwd() });

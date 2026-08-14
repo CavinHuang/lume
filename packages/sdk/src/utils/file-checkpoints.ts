@@ -172,6 +172,10 @@ export function collectCheckpointPaths(
   }
 }
 
+export function requiresWorkspaceCheckpoint(toolName: string): boolean {
+  return ['bash', 'task', 'agent', 'delegate'].includes(toolName.trim().toLowerCase())
+}
+
 function collectShellMutationPaths(command: string): string[] {
   const paths = new Set<string>()
   const patterns = [

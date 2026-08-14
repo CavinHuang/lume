@@ -6,11 +6,7 @@ import {
   buildSystemPromptAppend,
   type EnabledPluginContextItem
 } from "../../agent/agent-prompt-builder";
-import {
-  resolveAgentDynamicContextInput,
-  resolveAgentRuntimeRoutingTrace,
-  type AgentRuntimeRoutingTrace
-} from "../../agent/agent-runtime-context";
+import { resolveAgentDynamicContextInput } from "../../agent/agent-runtime-context";
 import { createLogger } from "../../infra/logger";
 import { resolveMemoryRuntimeConfig } from "../../memory-v2/policy";
 import {
@@ -45,7 +41,6 @@ export interface ContextAssemblyInput {
   lumeWorkDir?: string;
   projectRoot?: string;
   availableTools: string[];
-  routingTrace?: AgentRuntimeRoutingTrace;
   browserRuntimeAvailable?: boolean;
   browserContinuity?: unknown;
   enabledPlugins?: EnabledPluginContextItem[];
@@ -148,19 +143,6 @@ export class ContextAssembler {
     }).trim();
     const agentSystemPrompt = input.agentSystemPrompt?.trim();
 
-    const routingTrace = input.routingTrace ?? resolveAgentRuntimeRoutingTrace({
-      workspaceSlug: input.workspaceSlug,
-      agentCwd: input.cwd ?? process.cwd(),
-      availableTools: input.availableTools
-    });
-    log.debug("resolved capability routing trace", {
-      sessionId: input.threadId,
-      workspaceSlug: input.workspaceSlug,
-      capabilityLanes: routingTrace.capabilityLanes,
-      preferredCapabilityRoute: routingTrace.preferredCapabilityRoute,
-      routingReason: routingTrace.reason
-    });
-
     const dynamicContext = buildDynamicContext(
       resolveAgentDynamicContextInput({
         threadId: input.threadId,
@@ -171,7 +153,6 @@ export class ContextAssembler {
         lumeWorkDir: input.lumeWorkDir,
         projectRoot: input.projectRoot,
         availableTools: input.availableTools,
-        routingTrace,
         enabledPlugins: input.enabledPlugins,
         threadType: input.threadType,
         chatType: input.chatType,

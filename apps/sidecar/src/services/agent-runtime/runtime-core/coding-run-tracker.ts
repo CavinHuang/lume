@@ -58,8 +58,6 @@ export interface CodingVerificationReport {
   approvalRequestCount?: number;
   turnId?: string;
   userMessageId?: string;
-  routeReason?: string;
-  toolSelectionReason?: string;
   baselineCommit?: string;
 }
 
@@ -109,8 +107,6 @@ export interface CodingRunTrackerOptions {
   statePath?: string;
   turnId?: string;
   userMessageId?: string;
-  routeReason?: string;
-  toolSelectionReason?: string;
 }
 
 export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
@@ -615,8 +611,6 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
         gitActions: [...gitActions],
         ...(options.turnId ? { turnId: options.turnId } : {}),
         ...(options.userMessageId ? { userMessageId: options.userMessageId } : {}),
-        ...(options.routeReason ? { routeReason: options.routeReason } : {}),
-        ...(options.toolSelectionReason ? { toolSelectionReason: options.toolSelectionReason } : {}),
         ...(baselineCommit ? { baselineCommit } : {})
       };
     },

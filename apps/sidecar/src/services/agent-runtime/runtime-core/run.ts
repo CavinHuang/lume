@@ -41,7 +41,6 @@ import {
   type ToolDefinition,
   type PersistedToolContinuation,
   type ProcessJob,
-  warmupLspClients,
   setLspIdleTimeout
 } from "@lume/agent-sdk";
 import type {
@@ -86,8 +85,6 @@ import { createLumeRuntimeTools } from "../tools/create-lume-tools";
 import { createSdkWebTools } from "../tools/web/create-web-tools";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
 import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
-import { resolvePersistedRoutingTrace } from "../../agent/agent-runtime-context";
-import { shouldTrackCodingWorkflow } from "../../agent/coding-workflow-policy";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
 import { buildSubagentWorkContext, resolveSubagentDispatchPolicy } from "../../agent/subagents/subagent-dispatch-policy";
@@ -775,7 +772,6 @@ function createBaseSdkAlignedTools(
     includeWebTools: boolean;
     workspaceSlug?: string;
     renderClient?: RenderClient;
-    originalUserInstruction?: string;
   }
 ): ToolDefinition[] {
   const readOnlyTools: ToolDefinition[] = [
@@ -796,10 +792,6 @@ function createBaseSdkAlignedTools(
     ];
   }
 
-  const worktreeTools = shouldExposeWorktreeTools(options.originalUserInstruction)
-    ? [EnterWorktreeTool, ExitWorktreeTool]
-    : [];
-
   return [
     ...readOnlyTools,
     ...(options.includeAskUserQuestion ? [AskUserQuestionTool] : []),
@@ -812,24 +804,9 @@ function createBaseSdkAlignedTools(
     SkillTool,
     LSPTool,
     LSPApplyTool,
-    ...worktreeTools
+    EnterWorktreeTool,
+    ExitWorktreeTool
   ];
-}
-
-function shouldExposeWorktreeTools(instruction?: string): boolean {
-  const normalized = (instruction ?? "").trim().toLowerCase();
-  return [
-    "worktree",
-    "git worktree",
-    "isolation",
-    "isolated workspace",
-    "parallel agent",
-    "parallel coding",
-    "并行开发",
-    "并行修改",
-    "隔离工作区",
-    "独立工作区",
-  ].some((marker) => normalized.includes(marker));
 }
 
 function buildRuntimeCoreTools(input: {
@@ -885,7 +862,6 @@ function buildRuntimeCoreTools(input: {
     includeWebTools: true,
     workspaceSlug: input.workspaceSlug,
     renderClient: input.renderClient,
-    originalUserInstruction: input.originalUserInstruction
   }).map((tool) => tool.name === "Bash" && input.computerUseSurface === "sky"
     ? withDesktopAutomationFallbackGuard(tool, {
       computerUseActive: () => getComputerUseSessionRegistry().isActive(input.sessionId),
@@ -1738,8 +1714,6 @@ export async function createRuntimeCoreSession(
     statePath: join(sessionDir, `coding-state-${(input.runId ?? "session").replace(/[^a-zA-Z0-9_-]/g, "_")}.v1.json`),
     turnId: typeof input.messageMetadata?.turnId === "string" ? input.messageMetadata.turnId : undefined,
     userMessageId: typeof input.messageMetadata?.messageId === "string" ? input.messageMetadata.messageId : undefined,
-    routeReason: typeof input.messageMetadata?.routeReason === "string" ? input.messageMetadata.routeReason : undefined,
-    toolSelectionReason: typeof input.messageMetadata?.toolSelectionReason === "string" ? input.messageMetadata.toolSelectionReason : undefined
   });
   await codingRunTracker.initialize();
   let approvalRequestCount = 0;
@@ -2156,7 +2130,6 @@ export async function createRuntimeCoreSession(
     commentAttachments: input.commentAttachments,
     browserAttachments: input.browserAttachments,
     availableTools: toolset.availableToolNames,
-    routingTrace: resolvePersistedRoutingTrace(input.messageMetadata),
     browserRuntimeAvailable: isBundledBrowserRuntimeAvailable(),
     browserContinuity: input.messageMetadata?.browserContinuity,
     enabledPlugins,
@@ -2272,7 +2245,7 @@ export async function createRuntimeCoreSession(
     && !input.runId
     && !boundSubagentIdentity
   );
-  const enableFileCheckpointing = shouldTrackCodingWorkflow(input.userMessage);
+  const enableFileCheckpointing = input.permissionMode !== "plan";
   const additionalDirectories = [...new Set([
     ...(input.additionalDirectories ?? []),
     input.lumeWorkDir,
@@ -2393,13 +2366,6 @@ export async function createRuntimeCoreSession(
   };
 
   const agent = createAgent(agentOptions);
-  if (
-    enableFileCheckpointing
-    && lspConfig?.enabled !== false
-    && lspConfig?.lazy !== true
-  ) {
-    void warmupLspClients(input.cwd, agentOptions.toolConfig, 5_000).catch(() => undefined);
-  }
   await agent.getInitializationResult();
   const resolvedTools = getResolvedAgentTools(agent, toolset.tools);
 

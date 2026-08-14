@@ -72,7 +72,7 @@ import {
 } from './utils/messages.js'
 import type { HookRegistry, HookInput, HookExecutionResult } from './hooks.js'
 import { buildStructuredOutputInstruction, parseStructuredOutput } from './utils/structured-output.js'
-import { captureFileSnapshots, captureWorkspaceFileSnapshots, collectCheckpointPaths } from './utils/file-checkpoints.js'
+import { captureFileSnapshots, captureWorkspaceFileSnapshots, collectCheckpointPaths, requiresWorkspaceCheckpoint } from './utils/file-checkpoints.js'
 import { generatePromptSuggestion } from './utils/prompt-suggestions.js'
 import { resolve } from 'path'
 import { getUserInvocableSkills } from './skills/index.js'
@@ -898,14 +898,6 @@ export class QueryEngine {
         errors: ['Blocked by UserPromptSubmit hook'],
       }
       return
-    }
-
-    if (this.config.enableFileCheckpointing && this.config.fileCheckpointState && this.config.currentUserMessageId) {
-      await captureWorkspaceFileSnapshots(
-        this.config.fileCheckpointState,
-        this.config.currentUserMessageId,
-        [this.config.cwd, ...(this.config.additionalDirectories ?? [])],
-      )
     }
 
     yield {
@@ -1852,13 +1844,21 @@ export class QueryEngine {
       })
       if (toolContext.abortSignal?.aborted) throw new Error('aborted')
       if (this.config.fileCheckpointState && this.config.currentUserMessageId) {
-        const checkpointPaths = collectCheckpointPaths(block.name, block.input)
-          .map((path) => resolve(toolContext.cwd, path))
-        await captureFileSnapshots(
-          this.config.fileCheckpointState,
-          this.config.currentUserMessageId,
-          checkpointPaths,
-        )
+        if (requiresWorkspaceCheckpoint(block.name)) {
+          await captureWorkspaceFileSnapshots(
+            this.config.fileCheckpointState,
+            this.config.currentUserMessageId,
+            [this.config.cwd, ...(this.config.additionalDirectories ?? [])],
+          )
+        } else {
+          const checkpointPaths = collectCheckpointPaths(block.name, block.input)
+            .map((path) => resolve(toolContext.cwd, path))
+          await captureFileSnapshots(
+            this.config.fileCheckpointState,
+            this.config.currentUserMessageId,
+            checkpointPaths,
+          )
+        }
       }
       if (toolContext.abortSignal?.aborted) throw new Error('aborted')
 

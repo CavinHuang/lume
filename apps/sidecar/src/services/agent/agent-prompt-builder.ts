@@ -1,6 +1,5 @@
 
 import { getRuntimeSkills, getWorkspaceMcpConfig } from "./agent-workspace-manager";
-import { inferCapabilityLanes, type CapabilityLane } from "./capability-inventory";
 import type { MemoryCitationsMode } from "../memory-v2/policy";
 import { BUILTIN_AGENT_ROLES, canonicalizeAgentToolName } from "@lume/shared";
 import type { AgentDefinition } from "@lume/agent-sdk";
@@ -438,9 +437,6 @@ export interface DynamicContext {
   projectRoot?: string;
   availableTools?: string[];
   userMessage?: string;
-  capabilityLanes?: CapabilityLane[];
-  preferredCapabilityRoute?: CapabilityLane | null;
-  capabilityRoutingReason?: string;
   enabledPlugins?: EnabledPluginContextItem[];
 }
 
@@ -486,10 +482,6 @@ export function buildDynamicContext(ctx: DynamicContext): string {
     const lines: string[] = [];
     if (ctx.workspaceName) {
       lines.push(`工作区: ${ctx.workspaceName}`);
-    }
-    const capabilityLanes = ctx.capabilityLanes ?? inferCapabilityLanes(ctx.availableTools);
-    if (capabilityLanes.length > 0) {
-      lines.push(`Capability lanes: ${capabilityLanes.join(", ")}`);
     }
     const skills = getRuntimeSkills(ctx.workspaceSlug, ctx.agentCwd);
 

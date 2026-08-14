@@ -329,8 +329,6 @@ export interface RuntimeCodingReport {
   verificationNoEvidenceAttempts?: number;
   approvalRequestCount?: number;
   terminationReason?: string;
-  routeReason?: string;
-  toolSelectionReason?: string;
   nonRewindableFiles?: string[];
   message?: string;
   baselineFailure?: {
@@ -720,8 +718,6 @@ export interface CodingTurnRecord {
   verificationRepairAttempts: number;
   approvalRequestCount: number;
   rewindState: CodingRewindState;
-  routeReason?: string;
-  toolSelectionReason?: string;
   terminationReason?: string;
   verificationRecords?: CodingVerificationRecord[];
   gitActions?: CodingGitAction[];

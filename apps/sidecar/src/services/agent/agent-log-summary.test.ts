@@ -15,8 +15,6 @@ describe("agent-log-summary", () => {
       modelId: "glm-5.1",
       modelRef: "zai/glm-5.1",
       appendUserMessage: true,
-      preferredCapabilityRoute: "skills",
-      capabilityLanes: ["skills", "tools"],
       userMessage: "请帮我自我介绍，并保持简洁"
     });
 
@@ -27,8 +25,6 @@ describe("agent-log-summary", () => {
       modelId: "glm-5.1",
       modelRef: "zai/glm-5.1",
       appendUserMessage: true,
-      preferredCapabilityRoute: "skills",
-      capabilityLanes: ["skills", "tools"],
       userMessagePreview: "请帮我自我介绍，并保持简洁"
     });
   });

@@ -20,7 +20,6 @@ function makeHandlers() {
   return createAgentHandlers({
     writeNotification: () => {},
     planModePhaseTracker: {
-      isLikelyExecutionRequest: () => false,
       getPhase: () => 'idle',
       clearSession: () => undefined,
     } as unknown as PlanModePhaseTracker,

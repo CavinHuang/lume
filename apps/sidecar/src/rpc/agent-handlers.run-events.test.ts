@@ -66,7 +66,6 @@ mock.module("../services/agent/agent-service", () => ({
 
 function createTestPlanModePhaseTracker(): PlanModePhaseTracker {
   return {
-    isLikelyExecutionRequest: () => false,
     getPhase: () => "idle",
     clearSession: () => undefined
   } as unknown as PlanModePhaseTracker;
@@ -198,7 +197,6 @@ describe("agent-handlers run events", () => {
       writeNotification: (method, params) => notifications.push({ method, params }),
       planModePhaseTracker: {
         ...createTestPlanModePhaseTracker(),
-        isLikelyExecutionRequest: () => true,
         getPhase: () => "executing"
       } as unknown as PlanModePhaseTracker,
       notifyPlanModePhaseChange: () => undefined
@@ -251,7 +249,6 @@ describe("agent-handlers run events", () => {
       writeNotification: () => undefined,
       planModePhaseTracker: {
         ...createTestPlanModePhaseTracker(),
-        isLikelyExecutionRequest: () => true,
         getPhase: () => "awaiting_approval"
       } as unknown as PlanModePhaseTracker,
       notifyPlanModePhaseChange: () => undefined
@@ -312,7 +309,6 @@ describe("agent-handlers run events", () => {
         writeNotification: () => undefined,
         planModePhaseTracker: {
           ...createTestPlanModePhaseTracker(),
-          isLikelyExecutionRequest: () => true,
           getPhase: () => "awaiting_approval"
         } as unknown as PlanModePhaseTracker,
         notifyPlanModePhaseChange: () => undefined
@@ -479,7 +475,6 @@ describe("agent-handlers run events", () => {
       writeNotification: (method, params) => notifications.push({ method, params }),
       planModePhaseTracker: {
         ...createTestPlanModePhaseTracker(),
-        isLikelyExecutionRequest: () => true,
         getPhase: () => "executing"
       } as unknown as PlanModePhaseTracker,
       notifyPlanModePhaseChange: () => undefined

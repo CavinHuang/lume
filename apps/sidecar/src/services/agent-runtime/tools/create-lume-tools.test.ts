@@ -139,8 +139,7 @@ describe("create-lume-tools", () => {
     const result = createLumeRuntimeTools({
       ...baseInput(),
       workspaceSlug: "workspace-1",
-      originalUserInstruction: "使用浏览器在百度中搜索 agent",
-      messageMetadata: { preferredCapabilityRoute: "web" }
+      originalUserInstruction: "使用浏览器在百度中搜索 agent"
     });
 
     const nodeRepl = result.customTools.find((tool) => tool.name === "mcp__node_repl__js");
@@ -151,8 +150,7 @@ describe("create-lume-tools", () => {
   test("does not hide mixed capabilities from a coding request", () => {
     const result = createLumeRuntimeTools({
       ...baseInput(),
-      originalUserInstruction: "修复浏览器页面的弹窗层级问题",
-      messageMetadata: { preferredCapabilityRoute: "coding" }
+      originalUserInstruction: "修复浏览器页面的弹窗层级问题"
     });
     const toolNames = result.customTools.map((tool) => tool.name);
     expect(result.availableToolNames).toContain("automation_read");
@@ -171,12 +169,4 @@ describe("create-lume-tools", () => {
     expect(result.availableToolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeFalse();
   });
 
-  test("route metadata does not hide node_repl on the sky Computer Use surface", () => {
-    const result = createLumeRuntimeTools({
-      ...baseInput(),
-      computerUseSurface: "sky",
-      messageMetadata: { preferredCapabilityRoute: "coding" },
-    });
-    expect(result.customTools.some((tool) => tool.name.startsWith("mcp__node_repl__"))).toBeTrue();
-  });
 });
