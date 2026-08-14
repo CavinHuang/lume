@@ -219,7 +219,7 @@ describe("LumeResumeService", () => {
     expect(receivedInput).toEqual({ file_path: "README.md" });
   });
 
-  test("resumes an interrupted read-tool checkpoint by replaying the original input", async () => {
+  test("resumes an interrupted checkpoint via a plain continuation message without tool replay or injection", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lume-resume-interrupted-read-"));
     const runStateStore = createFileBackedLumeRunStateStore(dir);
     const continuationStore = createFileBackedRunContinuationStore(dir);
@@ -257,12 +257,15 @@ describe("LumeResumeService", () => {
     ).resumeRun({ runId: "run-1" });
 
     expect(result.status).toBe("resumed");
-    expect(received?.status).toBe("ready_to_execute");
-    expect(received?.checkpoint.step).toBe("before_tool_execution");
-    expect(received?.checkpoint.toolCall?.input).toEqual({ file_path: "README.md" });
+    // 直接续跑：checkpoint 原样传递，不经 ready_to_execute/ready_to_resume
+    // 的工具重放/注入路径（历史中的 engine 占位已把配对补齐）。
+    expect(received?.status).toBe("interrupted");
+    expect(received?.checkpoint.step).toBe("waiting_for_tool_result");
+    expect(received?.checkpoint.syntheticToolResult).toBeUndefined();
+    expect((await continuationStore.get("run-1"))?.status).toBe("resumed");
   });
 
-  test("resumes an interrupted execute checkpoint with an injected interrupted placeholder instead of replaying", async () => {
+  test("resumes an interrupted execute checkpoint without injecting a duplicate tool result", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lume-resume-interrupted-execute-"));
     const runStateStore = createFileBackedLumeRunStateStore(dir);
     const continuationStore = createFileBackedRunContinuationStore(dir);
@@ -300,17 +303,11 @@ describe("LumeResumeService", () => {
     ).resumeRun({ runId: "run-1" });
 
     expect(result.status).toBe("resumed");
-    expect(received?.status).toBe("ready_to_resume");
-    // 副作用工具不自动重放：step 保持 waiting_for_tool_result，走注入路径。
-    expect(received?.checkpoint.step).toBe("waiting_for_tool_result");
-    const synthetic = received?.checkpoint.syntheticToolResult as {
-      is_error?: boolean;
-      content?: string;
-      tool_use_id?: string;
-    };
-    expect(synthetic.is_error).toBe(true);
-    expect(synthetic.tool_use_id).toBe("tool-1");
-    expect(String(synthetic.content)).toContain("中断");
+    // 副作用工具同样不做 syntheticToolResult 注入：历史里的 engine 中断
+    // 占位已配对同 id，注入会产生重复 tool_result。
+    expect(received?.status).toBe("interrupted");
+    expect(received?.checkpoint.syntheticToolResult).toBeUndefined();
+    expect((await continuationStore.get("run-1"))?.status).toBe("resumed");
   });
 
   test("does not replay a V2 side-effect tool with an unknown result", async () => {

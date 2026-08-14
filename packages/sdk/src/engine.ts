@@ -1002,60 +1002,77 @@ export class QueryEngine {
     }
 
     if (this.config.toolContinuations?.length) {
-      const continuations = this.config.toolContinuations
-      const blocks: ToolUseBlock[] = continuations.map((persisted) => ({
-        type: 'tool_use',
-        id: persisted.toolCall.id,
-        name: persisted.toolCall.name,
-        input: persisted.toolCall.input,
-      }))
-      // Idempotent rebuild: only push the assistant blocks that are not already present.
-      const missing = blocks.filter((block) => !this.messages.some((message) => (
-        message.role === 'assistant'
-        && Array.isArray(message.content)
-        && message.content.some((content) => content.type === 'tool_use' && content.id === block.id)
-      )))
-      if (missing.length > 0) {
-        this.messages.push({ role: 'assistant', content: missing })
+      // Result-side idempotency: a continuation whose tool_use_id already has
+      // a tool_result in history (e.g. abort placeholders persisted by the
+      // engine) must not be executed or injected again — a second result for
+      // the same id is rejected by the provider.
+      const answeredToolUseIds = new Set<string>()
+      for (const message of this.messages) {
+        if (message.role !== 'user' || !Array.isArray(message.content)) continue
+        for (const block of message.content) {
+          if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+            answeredToolUseIds.add(block.tool_use_id)
+          }
+        }
       }
-      const allResults: Array<{ result: ToolResult & { tool_name?: string }; toolName: string }> = []
-      for (const persisted of continuations) {
-        const block: ToolUseBlock = {
+      const continuations = this.config.toolContinuations.filter(
+        (persisted) => !answeredToolUseIds.has(persisted.toolCall.id),
+      )
+      if (continuations.length > 0) {
+        const blocks: ToolUseBlock[] = continuations.map((persisted) => ({
           type: 'tool_use',
           id: persisted.toolCall.id,
           name: persisted.toolCall.name,
           input: persisted.toolCall.input,
+        }))
+        // Idempotent rebuild: only push the assistant blocks that are not already present.
+        const missing = blocks.filter((block) => !this.messages.some((message) => (
+          message.role === 'assistant'
+          && Array.isArray(message.content)
+          && message.content.some((content) => content.type === 'tool_use' && content.id === block.id)
+        )))
+        if (missing.length > 0) {
+          this.messages.push({ role: 'assistant', content: missing })
         }
-        const execution = persisted.toolResult
-          ? { results: [{ ...persisted.toolResult, tool_use_id: block.id, tool_name: block.name }], events: [], toolsUsed: [block.name] }
-          : await this.executeTools([block])
-        for (const event of execution.events) yield event
-        for (const result of execution.results) {
-          const toolName = result.tool_name || block.name
-          allResults.push({ result, toolName })
-          yield {
-            type: 'tool_result',
-            result: {
-              tool_use_id: result.tool_use_id,
-              tool_name: toolName,
-              output: formatToolResultOutput(result.content),
-              content: result.content,
-              is_error: result.is_error === true,
-              ...(result._meta ? { _meta: result._meta } : {}),
-            },
+        const allResults: Array<{ result: ToolResult & { tool_name?: string }; toolName: string }> = []
+        for (const persisted of continuations) {
+          const block: ToolUseBlock = {
+            type: 'tool_use',
+            id: persisted.toolCall.id,
+            name: persisted.toolCall.name,
+            input: persisted.toolCall.input,
+          }
+          const execution = persisted.toolResult
+            ? { results: [{ ...persisted.toolResult, tool_use_id: block.id, tool_name: block.name }], events: [], toolsUsed: [block.name] }
+            : await this.executeTools([block])
+          for (const event of execution.events) yield event
+          for (const result of execution.results) {
+            const toolName = result.tool_name || block.name
+            allResults.push({ result, toolName })
+            yield {
+              type: 'tool_result',
+              result: {
+                tool_use_id: result.tool_use_id,
+                tool_name: toolName,
+                output: formatToolResultOutput(result.content),
+                content: result.content,
+                is_error: result.is_error === true,
+                ...(result._meta ? { _meta: result._meta } : {}),
+              },
+            }
           }
         }
+        this.messages.push({
+          role: 'user',
+          content: allResults.map(({ result }) => ({
+            type: 'tool_result' as const,
+            tool_use_id: result.tool_use_id,
+            content: result.content,
+            is_error: result.is_error,
+            ...(result._meta ? { _meta: result._meta } : {}),
+          })),
+        })
       }
-      this.messages.push({
-        role: 'user',
-        content: allResults.map(({ result }) => ({
-          type: 'tool_result' as const,
-          tool_use_id: result.tool_use_id,
-          content: result.content,
-          is_error: result.is_error,
-          ...(result._meta ? { _meta: result._meta } : {}),
-        })),
-      })
     }
 
     // Agentic loop

@@ -130,40 +130,33 @@ export class LumeResumeService {
     }
 
     // 人工中止（Task 6 abort checkpoint）留下的 interrupted 状态：
-    // 只读/控制工具结果未知，允许相同输入安全重放；副作用工具结果未知，
-    // 注入中断说明占位（不自动重放），交由 Agent 检查实际状态后决定重试。
+    // 软中止时 SDK engine 已为每个被中断工具补 error 占位 tool_result 并随
+    // message 级持久化落盘，历史配对已完整。这里若再重放或注入同 id 的
+    // syntheticToolResult，会与历史占位产生重复 tool_result（provider 400）。
+    // 因此不经工具注入路径，直接以"继续原始任务"消息续跑（与
+    // dangling-fallback 纯消息路径同构），由消费方以不带 checkpoint 的
+    // runtimeContinuation 发送续跑消息，让模型读取已有占位后自行决策。
     if (continuation.version === 2 && continuation.status === "interrupted") {
-      const checkpoint = continuation.checkpoint;
-      if (
-        checkpoint.step === "waiting_for_tool_result"
-        && checkpoint.toolCall
-        && (checkpoint.toolKind === "read" || checkpoint.toolKind === "control")
-      ) {
-        const nextCheckpoint = { ...checkpoint, step: "before_tool_execution" as const };
-        await this.stores.continuationStore.update(input.runId, {
-          status: "ready_to_execute",
-          checkpoint: nextCheckpoint,
-          reason: "中断的只读/控制工具结果未知，允许使用相同输入安全重放。"
-        });
-        continuation.status = "ready_to_execute";
-        continuation.checkpoint = nextCheckpoint;
-      } else if (checkpoint.step === "waiting_for_tool_result" && checkpoint.toolCall) {
-        const nextCheckpoint = {
-          ...checkpoint,
-          syntheticToolResult: {
-            type: "tool_result" as const,
-            tool_use_id: checkpoint.toolCall.id,
-            content: "工具执行被用户中断，实际结果未知；请先检查工作区实际状态再决定是否重试。",
-            is_error: true
-          }
+      if (!this.continueRunFromCheckpoint) {
+        return {
+          status: "not_resumable",
+          error: "没有注册 cold-start continuation runner。"
         };
+      }
+      try {
+        const result = await this.continueRunFromCheckpoint(continuation, state);
         await this.stores.continuationStore.update(input.runId, {
-          status: "ready_to_resume",
-          checkpoint: nextCheckpoint,
-          reason: "中断的副作用工具结果未知；已注入中断说明占位，禁止自动重放。"
+          status: "resumed"
         });
-        continuation.status = "ready_to_resume";
-        continuation.checkpoint = nextCheckpoint;
+        return {
+          status: "resumed",
+          finalOutput: result.finalOutput
+        };
+      } catch (error) {
+        return {
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error)
+        };
       }
     }
 

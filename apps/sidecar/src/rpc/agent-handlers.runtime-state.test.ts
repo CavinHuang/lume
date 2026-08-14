@@ -481,6 +481,85 @@ describe("agent-handlers runtime state", () => {
     expect(sendAgentMessageMock).not.toHaveBeenCalled();
   });
 
+  test("resume-run sends a plain continuation message for interrupted checkpoints without tool result injection", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-interrupted-continue-"));
+    const threadId = "thread-interrupted-continue";
+    const runId = "run-interrupted-continue";
+    const sessionDir = getRuntimeCoreSessionDir(threadId);
+    await createFileBackedLumeRunStateStore(sessionDir).create({
+      version: 1,
+      runId,
+      threadId,
+      rootAgentId: "runtime-core",
+      currentAgentId: "runtime-core",
+      status: "cancelled",
+      input: { userMessage: "interrupted task", permissionMode: "default" },
+      generatedItems: [],
+      pendingInterruptions: [],
+      approvals: { alwaysAllowedTools: [] },
+      traceId: "trace-interrupted-continue",
+      model: { provider: "openai", modelId: "gpt-test" },
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z"
+    });
+    await createFileBackedRunContinuationStore(sessionDir).upsert({
+      version: 2,
+      runId,
+      threadId,
+      status: "interrupted",
+      checkpoint: {
+        step: "waiting_for_tool_result",
+        toolCallId: "t1",
+        toolName: "Bash",
+        toolKind: "execute",
+        toolCall: {
+          id: "t1",
+          name: "Bash",
+          input: { command: "ls" },
+          inputHash: "hash-1",
+          kind: "execute"
+        }
+      },
+      reason: "run 已被用户中止；恢复时从首个 pending 工具断点继续。",
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z"
+    });
+
+    const { createAgentHandlers } = await import("./agent-handlers");
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
+    });
+
+    const result = await handlers[AGENT_IPC_CHANNELS.RESUME_RUN]!({ threadId, runId });
+
+    expect(result).toEqual({
+      status: "resumed",
+      finalOutput: "resumed output"
+    });
+    expect(sendAgentMessageMock).toHaveBeenCalledTimes(1);
+    // 关键断言：runtimeContinuation 不携带 checkpoint/toolCall —— engine 消费侧
+    // (resolvePersistedToolContinuation) 拿不到注入物，历史中的中断占位成为该
+    // tool_use_id 的唯一 tool_result，不会产生重复。
+    expect(sendAgentMessageMock.mock.calls[0]?.[0]).toMatchObject({
+      threadId,
+      messageMetadata: {
+        runtimeContinuation: {
+          source: "interrupted-continue",
+          sourceRunId: runId
+        }
+      }
+    });
+    expect(
+      (sendAgentMessageMock.mock.calls[0]?.[0] as { messageMetadata?: { runtimeContinuation?: { checkpoint?: unknown } } })
+        .messageMetadata?.runtimeContinuation?.checkpoint
+    ).toBeUndefined();
+    expect((sendAgentMessageMock.mock.calls[0]?.[0] as { userMessage?: string }).userMessage).toContain("中断占位");
+    expect((await createFileBackedRunContinuationStore(sessionDir).get(runId))?.status).toBe("resumed");
+  });
+
   test("run_aborted event persists an interrupted continuation checkpoint", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-abort-continuation-"));
     const threadId = "thread-runtime-abort";

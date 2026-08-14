@@ -520,16 +520,28 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     const service = new LumeResumeService({
       runStateStore,
       continuationStore
-    }, async (checkpoint, state) => sendResumeContinuationMessage(
-      state,
-      buildColdStartContinuationMessage(checkpoint),
-      {
-        sourceRunId: state.runId,
-        status: checkpoint.status,
-        checkpoint: checkpoint.checkpoint,
-        reason: checkpoint.reason
+    }, async (checkpoint, state) => {
+      // interrupted（软中止 checkpoint）：engine 已为被中断工具补 error 占位
+      // 并随历史落盘，注入同 id 的 syntheticToolResult 会产生重复
+      // tool_result。不带 checkpoint 发送纯续跑消息，让模型读取已有占位。
+      if (checkpoint.status === "interrupted") {
+        return sendResumeContinuationMessage(
+          state,
+          "继续执行之前被用户中断的任务；被中断的工具在历史中已带有中断占位结果，请基于占位与工作区实际状态继续原始任务，不要重复已完成的操作。",
+          { source: "interrupted-continue", sourceRunId: state.runId }
+        );
       }
-    ));
+      return sendResumeContinuationMessage(
+        state,
+        buildColdStartContinuationMessage(checkpoint),
+        {
+          sourceRunId: state.runId,
+          status: checkpoint.status,
+          checkpoint: checkpoint.checkpoint,
+          reason: checkpoint.reason
+        }
+      );
+    });
     const result = await service.resumeRun({
       runId,
       interruptionId: input.interruptionId

@@ -118,4 +118,56 @@ describe("soft abort semantics", () => {
       { id: "t1", name: "Bash", input: { command: "x" } },
     ])
   })
+
+  test("skips continuations whose tool_use_id already has a tool_result in history", async () => {
+    // Regression: after a soft abort the engine persists error placeholders for
+    // the interrupted tools. A resume that injects/executes a continuation for
+    // the same id must be a no-op, or the provider request carries two
+    // tool_results for one tool_use (Anthropic 400).
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "ok" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [tool("Read")],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      toolContinuations: [{
+        toolCall: { id: "t1", name: "Read", input: {} },
+        toolResult: {
+          type: "tool_result",
+          tool_use_id: "t1",
+          content: "injected duplicate result",
+          is_error: true,
+        },
+      }],
+    })
+    engine.messages.push(
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "Error: interrupted placeholder", is_error: true }] },
+    )
+
+    const events: any[] = []
+    for await (const event of engine.submitMessage("")) {
+      events.push(event)
+    }
+
+    const payload = JSON.stringify(provider.requests[0]?.messages)
+    const t1Results = payload.match(/"tool_use_id":\s*"t1"/g) ?? []
+    expect(t1Results).toHaveLength(1)
+    expect(payload).not.toContain("injected duplicate result")
+    expect(events.filter((e) => e.type === "tool_result")).toHaveLength(0)
+    // No empty-content user message is appended for the skipped continuation.
+    expect(
+      engine.getMessages().some((m) => Array.isArray(m.content) && m.content.length === 0)
+    ).toBe(false)
+  })
 })
