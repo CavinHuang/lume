@@ -1256,9 +1256,11 @@ export class Agent {
     // currentEngine (not abortCtrl, which is never cleared after a run) is
     // the accurate in-flight marker: set before the loop, cleared in finally.
     if (this.currentEngine) throw new Error('agent is running')
+    // Await setup before detecting: this.history is loaded from the session
+    // file inside setup(), so an early detect sees [] and silently no-ops.
+    await this.setupDone
     const dangling = detectDanglingToolUses(this.history)
     if (dangling.length === 0) return
-    await this.setupDone
     const opts = this.getEffectiveOptions(overrides)
     const { tools } = this.getRunTools(opts, overrides)
     const continuations = buildResumeContinuations(dangling, {
