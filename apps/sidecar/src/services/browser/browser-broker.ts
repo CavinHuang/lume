@@ -481,7 +481,12 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "tab_content": return { method: "content", params: { ...params, format: input.content_type === "html" ? "html" : "text" } }
     case "tab_content_export": return { method: "content:export", params }
     case "tab_content_export_gsuite": return { method: "content:exportGsuite", params: { ...params, format: input.format ?? input.type ?? options.format } }
-    case "tab_browser_auth_request": return { method: "browserAuth:request", params }
+    case "tab_browser_auth_request": return {
+      method: "browserAuth:request",
+      params: input.options && typeof input.options === "object" && !Array.isArray(input.options)
+        ? normalizeBrowserAuthParams(params, options)
+        : params,
+    }
     case "tabs_content": return { method: "tabs:content", params: { ...params, ...options, contentType: input.content_type ?? options.contentType, timeoutMs: input.timeout_ms ?? options.timeoutMs } }
     case "tab_clipboard_read": return { method: "clipboard:read", params }
     case "tab_clipboard_read_text": return { method: "clipboard:readText", params }
@@ -597,6 +602,11 @@ function authorizeBrowserUploadFiles(threadId: string | undefined, value: unknow
 const WAIT_COMMANDS = new Set(["playwright_wait_for_download", "playwright_wait_for_file_chooser"])
 
 function browserClientSelectorToLocator(value: unknown): BrowserLocator | undefined {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const candidate = value as Record<string, unknown>
+    const ast = candidate.ast && typeof candidate.ast === "object" ? candidate.ast : candidate
+    if ((ast as Record<string, unknown>).version === 1 && Array.isArray((ast as Record<string, unknown>).steps)) return ast as BrowserLocator
+  }
   if (typeof value !== "string" || !value.trim() || value.length > 4096) return undefined
   const frameParts = value.split(/\s*>>\s*internal:control=enter-frame\s*>>\s*/g)
   const steps: BrowserLocator["steps"] = []
@@ -643,6 +653,34 @@ function browserClientSelectorToLocator(value: unknown): BrowserLocator | undefi
     steps.push({ kind: "css", selector: part })
   }
   return steps.length ? { version: 1, steps } : undefined
+}
+
+function normalizeBrowserAuthParams(params: Record<string, unknown>, options: Record<string, unknown>): Record<string, unknown> {
+  const fields = Array.isArray(options.fields) ? options.fields.map((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value
+    const field = value as Record<string, unknown>
+    return { ...field, locator: browserClientSelectorToLocator(field.locator ?? field.selector) }
+  }) : options.fields
+  const authOptions = Array.isArray(options.options) ? options.options.map((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value
+    const option = value as Record<string, unknown>
+    return {
+      ...option,
+      fields: option.fields ?? option.field_ids ?? [],
+      locator: browserClientSelectorToLocator(option.locator ?? option.selector),
+    }
+  }) : options.options
+  let submit = options.submit
+  if (submit && typeof submit === "object" && !Array.isArray(submit)) {
+    const value = submit as Record<string, unknown>
+    submit = {
+      ...value,
+      kind: value.kind ?? value.action,
+      locator: browserClientSelectorToLocator(value.locator ?? value.selector),
+      fieldId: value.fieldId ?? value.field_id,
+    }
+  }
+  return { ...params, ...options, fields, options: authOptions, submit }
 }
 
 function decodeSelectorString(value: string): string {

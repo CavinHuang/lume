@@ -297,6 +297,37 @@ test("broker exposes runtime-declared APIs and normalizes protected browser-use 
   assert.equal(calls.at(-1).method, "content")
   assert.equal(calls.at(-1).params.format, "html")
 
+  await broker.dispatch({
+    method: "tab_browser_auth_request",
+    params: {
+      tabId: "tab-1",
+      options: {
+        generation: 2,
+        origin: "https://example.com",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        fields: [],
+        options: [{
+          id: "google",
+          label: "Google",
+          field_ids: [],
+          selector: { ast: { version: 1, steps: [{ kind: "role", role: "button", name: "Google" }] } },
+        }],
+      },
+    },
+    browserSessionId: "s",
+    browserTurnId: "t",
+  })
+  assert.equal(calls.at(-1).method, "browserAuth:request")
+  assert.equal(calls.at(-1).params.generation, 2)
+  assert.deepEqual(calls.at(-1).params.options, [{
+    id: "google",
+    label: "Google",
+    field_ids: [],
+    selector: { ast: { version: 1, steps: [{ kind: "role", role: "button", name: "Google" }] } },
+    fields: [],
+    locator: { version: 1, steps: [{ kind: "role", role: "button", name: "Google" }] },
+  }])
+
   await broker.dispatch({ method: "tabs_content", params: { options: { urls: ["https://example.com/"], contentType: "html", timeoutMs: 30_000 } }, browserSessionId: "s", browserTurnId: "t" })
   assert.equal(calls.at(-1).method, "tabs:content")
   assert.deepEqual(

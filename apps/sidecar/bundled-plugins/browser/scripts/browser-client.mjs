@@ -30,6 +30,20 @@ function createBrokerProtocolAdapter() {
       if (method === "playwright_download_path") {
         return { ...params, tabId: params?.tabId ?? downloadTabs.get(params?.downloadId) };
       }
+      if (method === "tab_browser_auth_request" && params?.options && typeof params.options === "object") {
+        return {
+          ...params,
+          options: {
+            ...params.options,
+            options: Array.isArray(params.options.options)
+              ? params.options.options.map((option) => ({
+                  ...option,
+                  selector: option?.selector?.ast ?? option?.selector,
+                }))
+              : params.options.options,
+          },
+        };
+      }
       return params;
     },
     unwrapResult(method, result, params) {

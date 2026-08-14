@@ -14,7 +14,7 @@ const descriptors = [
     generation: 1,
     capabilities: {
       browser: [{ id: "visibility", description: "visibility" }],
-      tab: [{ id: "pageAssets", description: "page assets" }],
+      tab: [{ id: "pageAssets", description: "page assets" }, { id: "browserAuth", description: "browser auth" }],
     },
     apiSupportOverrides: { "BrowserUser.history": true, "Tabs.content": true, "PlaywrightFileChooser.setFiles": true },
   },
@@ -56,6 +56,7 @@ globalThis.nodeRepl = {
       if (method === "playwright_wait_for_download") return { download_id: "download-1", filename: "report.pdf" };
       if (method === "playwright_download_path") return { path: "C:\\downloads\\report.pdf" };
       if (method === "playwright_wait_for_file_chooser") return { file_chooser_id: "chooser-1", is_multiple: true };
+      if (method === "tab_browser_auth_request") return { status: "submitted", selected_option: "google" };
       return {};
     },
   },
@@ -126,6 +127,15 @@ test("uses canonical backend selection and request shapes", async () => {
   const fileChooser = await tab.playwright.waitForEvent("filechooser");
   assert.equal(fileChooser.isMultiple(), true);
   await fileChooser.setFiles(["browser-download:00000000-0000-0000-0000-000000000001"]);
+  const browserAuth = await tab.capabilities.get("browserAuth");
+  const authResult = await browserAuth.request({
+    generation: 1,
+    origin: "https://example.com",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    fields: [],
+    options: [{ id: "google", label: "Google", selector: tab.playwright.getByRole("button", { name: "Google" }) }],
+  });
+  assert.equal(authResult.selected_option, "google");
 
   assert.deepEqual(calls.find((call) => call.method === "create_tab")?.params.options, { url: "https://example.com/" });
   assert.deepEqual(calls.find((call) => call.method === "tab_screenshot")?.params.options, { fullPage: true });
@@ -140,4 +150,9 @@ test("uses canonical backend selection and request shapes", async () => {
   assert.equal(downloadPath.downloadId, "download-1");
   assert.equal(downloadPath.tabId, "tab-1");
   assert.equal(calls.find((call) => call.method === "playwright_file_chooser_set_files")?.params.chooserId, "chooser-1");
+  const authRequest = calls.find((call) => call.method === "tab_browser_auth_request")?.params;
+  assert.deepEqual(authRequest.options.options[0].selector, {
+    version: 1,
+    steps: [{ kind: "role", role: "button", name: "Google" }],
+  });
 });
