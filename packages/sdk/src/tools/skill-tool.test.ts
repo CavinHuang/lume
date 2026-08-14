@@ -72,6 +72,21 @@ test("SkillTool stays enabled when only manual skills are registered", () => {
   expect(SkillTool.isEnabled?.()).toBe(true);
 });
 
+test("SkillTool returns additive deferred tool activations", async () => {
+  registerSkill({
+    name: "browser",
+    description: "Browser runtime",
+    activatedTools: ["mcp__node_repl__js"],
+    getPrompt: async () => [{ type: "text", text: "use browser" }]
+  });
+
+  const result = await SkillTool.call({ skill: "browser" }, { cwd: process.cwd() } as any);
+
+  expect(JSON.parse(String(result.content))).toMatchObject({
+    activatedTools: ["mcp__node_repl__js"]
+  });
+});
+
 test("SkillTool asks for argumentHint instead of executing when args are missing", async () => {
   let promptCalled = false;
   registerSkill({

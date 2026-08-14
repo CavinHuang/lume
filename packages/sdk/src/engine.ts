@@ -2132,7 +2132,20 @@ function applySkillAllowedTools(
 ): void {
   if (toolName !== 'Skill' || typeof result.content !== 'string' || result.is_error) return
   try {
-    const parsed = JSON.parse(result.content) as { allowedTools?: unknown }
+    const parsed = JSON.parse(result.content) as { allowedTools?: unknown; activatedTools?: unknown }
+    const activated = Array.isArray(parsed.activatedTools)
+      ? parsed.activatedTools.filter((item): item is string => typeof item === 'string')
+      : []
+    const activatedDeferredTools = (config.deferredTools ?? []).filter((tool) =>
+      matchesAnyToolPattern(tool.name, activated)
+    )
+    for (const tool of activatedDeferredTools) {
+      if (!config.tools.some((candidate) => candidate.name === tool.name)) config.tools.push(tool)
+    }
+    config.deferredTools = (config.deferredTools ?? []).filter((tool) =>
+      !matchesAnyToolPattern(tool.name, activated)
+    )
+
     if (!Array.isArray(parsed.allowedTools)) return
     const allowed = parsed.allowedTools.filter((item): item is string => typeof item === 'string')
     if (allowed.length === 0) return

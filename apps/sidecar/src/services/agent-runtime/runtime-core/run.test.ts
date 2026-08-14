@@ -22,7 +22,6 @@ import { getRuntimeCoreSessionDir } from "./session-store";
 import { getAgentSessionWorkspacePath, getAgentWorkspacePath, getAliceUserSkillsDir, getDefaultSkillsDir } from "../../infra/config-paths";
 import { createAgentThread } from "../../agent/agent-thread-manager";
 import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
-import { resolveSoftToolPolicyForPreferredRoute } from "../../agent/capability-routing";
 import { getSubagentCoordinator, resetSubagentCoordinatorForTest } from "../../agent/subagents/subagent-coordinator";
 import { resetSubagentWorkStoreForTest } from "../../agent/subagents/subagent-work-store";
 import { createChannel } from "../../channel/channel-manager";
@@ -164,7 +163,7 @@ describe("runtime-core run", () => {
     }
   });
 
-  test("browser 路由在延迟工具搜索开启时仍首轮暴露 node_repl", async () => {
+  test("Browser 执行器保持延迟可发现且不依赖预判路由", async () => {
     const previousToolSearch = process.env.ENABLE_TOOL_SEARCH;
     process.env.ENABLE_TOOL_SEARCH = "tst";
     let result: Awaited<ReturnType<typeof createRuntimeCoreSession>> | undefined;
@@ -178,17 +177,16 @@ describe("runtime-core run", () => {
         messageMetadata: {
           capabilityLanes: ["skills", "browser", "raw-tools"],
           preferredCapabilityRoute: "browser",
-          capabilityRoutingReason: "request implies browser/session continuity",
-          toolPolicy: resolveSoftToolPolicyForPreferredRoute("browser")
+          capabilityRoutingReason: "legacy metadata"
         }
       }));
       await result.agent.getInitializationResult();
 
-      expect(result.session.getActiveToolNames()).toContain("mcp__node_repl__js");
-      expect(result.session.getActiveToolNames()).not.toContain("Bash");
-      expect(result.runtimeContext).toContain("Preferred capability route: browser");
+      expect(result.session.getActiveToolNames()).not.toContain("mcp__node_repl__js");
+      expect(result.session.getActiveToolNames()).toContain("Bash");
+      expect(result.runtimeContext).not.toContain("Preferred capability route:");
       const deferredTools = (result.agent as unknown as { deferredToolPool: ToolDefinition[] }).deferredToolPool;
-      expect(deferredTools.map((tool) => tool.name)).not.toContain("mcp__node_repl__js");
+      expect(deferredTools.map((tool) => tool.name)).toContain("mcp__node_repl__js");
     } finally {
       await result?.session.dispose();
       if (previousToolSearch === undefined) delete process.env.ENABLE_TOOL_SEARCH;
@@ -525,7 +523,7 @@ describe("runtime-core run", () => {
     result.session.dispose();
   });
 
-  test("Coding 路由仅暴露仓库基础工具，不混入 Web 和任务编排工具", async () => {
+  test("兼容的 Coding 路由元数据不再隐藏 Web 和任务编排工具", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-coding-tools-"));
     const agentDir = join(cwd, ".runtime-core-test");
     mkdirSync(agentDir, { recursive: true });
@@ -547,7 +545,7 @@ describe("runtime-core run", () => {
       expect(toolNames).toContain(toolName);
     }
     for (const toolName of ["WebSearch", "WebFetch", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]) {
-      expect(toolNames).not.toContain(toolName);
+      expect(toolNames).toContain(toolName);
     }
 
     result.session.dispose();
@@ -1367,7 +1365,7 @@ describe("runtime-core run", () => {
     expect(result.runtimeContext).toContain("threadType: main");
     expect(result.runtimeContext).toContain("chatType: direct");
     expect(result.runtimeContext).toContain("modelId: claude-sonnet-4-5");
-    expect(result.runtimeContext).toContain("Preferred capability route: raw-tools");
+    expect(result.runtimeContext).not.toContain("Preferred capability route:");
     expect(result.runtimeContext).toContain("<working_directory>");
 
     result.session.dispose();

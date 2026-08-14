@@ -1,6 +1,8 @@
 ---
 name: browser
 description: Control pages in Lume's shared persistent in-app browser profile
+activate-tools:
+  - mcp__node_repl__js
 ---
 
 # Lume Browser

@@ -83,8 +83,8 @@ import { createLumeRuntimeTools } from "../tools/create-lume-tools";
 import { createSdkWebTools } from "../tools/web/create-web-tools";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
 import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
-import { hasCodingIntent } from "../../agent/capability-routing";
 import { resolvePersistedRoutingTrace } from "../../agent/agent-runtime-context";
+import { shouldTrackCodingWorkflow } from "../../agent/coding-workflow-policy";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
 import { buildSubagentWorkContext, resolveSubagentDispatchPolicy } from "../../agent/subagents/subagent-dispatch-policy";
@@ -875,13 +875,9 @@ function buildRuntimeCoreTools(input: {
     input.chatType ?? "direct"
   );
   const automationExecution = isAutomationExecution(input.messageMetadata);
-  const directRepositoryRoute = isDirectRepositoryRuntimeRoute(
-    input.messageMetadata,
-    input.originalUserInstruction
-  );
   const baseTools = createBaseSdkAlignedTools(permissionMode, {
     includeAskUserQuestion: automationExecution !== true,
-    includeWebTools: !directRepositoryRoute,
+    includeWebTools: true,
     workspaceSlug: input.workspaceSlug,
     renderClient: input.renderClient,
     originalUserInstruction: input.originalUserInstruction
@@ -1121,11 +1117,9 @@ function buildRuntimeCoreTools(input: {
   })
 
   const mainTaskTools = mainTaskRuntime?.tools ?? [];
-  const taskLoopTools = directRepositoryRoute && isMainTaskThread
-    ? []
-    : input.threadType === "subagent"
-      ? (input.boundSubagentReportTool ? [input.boundSubagentReportTool, todoTool] : [todoTool])
-      : [...(isMainTaskThread ? mainTaskTools : []), sidecarAgentTool, finishAgentTaskTool, retireSubagentTool, todoTool]
+  const taskLoopTools = input.threadType === "subagent"
+    ? (input.boundSubagentReportTool ? [input.boundSubagentReportTool, todoTool] : [todoTool])
+    : [...(isMainTaskThread ? mainTaskTools : []), sidecarAgentTool, finishAgentTaskTool, retireSubagentTool, todoTool]
 
   const delegateTool: ToolDefinition = {
     ...AgentTool,
@@ -1365,29 +1359,17 @@ function buildRuntimeCoreTools(input: {
       { source: "sdk", tools: baseTools },
       { source: "task", tools: taskLoopTools },
       { source: "lume", tools: lumeTools.customTools as ToolDefinition[] },
-      ...(!directRepositoryRoute && input.mcpTools?.length
+      ...(input.mcpTools?.length
         ? [{ source: "mcp" as const, tools: sortDiscoveredTools(input.mcpTools) }]
         : []),
-      ...(!directRepositoryRoute && input.pluginCommandTools?.length
+      ...(input.pluginCommandTools?.length
         ? [{ source: "plugin" as const, tools: sortDiscoveredTools(input.pluginCommandTools) }]
         : []),
-      ...(!directRepositoryRoute && input.pluginMcpTools?.length
+      ...(input.pluginMcpTools?.length
         ? [{ source: "plugin" as const, tools: sortDiscoveredTools(input.pluginMcpTools) }]
         : [])
     ]
   });
-}
-
-function isDirectRepositoryRuntimeRoute(
-  messageMetadata?: Record<string, unknown>,
-  originalUserInstruction?: string
-): boolean {
-  const preferredRoute = typeof messageMetadata?.preferredCapabilityRoute === "string"
-    ? messageMetadata.preferredCapabilityRoute
-    : undefined;
-  return preferredRoute === "coding"
-    || preferredRoute === "raw-tools"
-    || hasCodingIntent(originalUserInstruction);
 }
 
 function resolvePlanningTodoContext(
@@ -2156,11 +2138,7 @@ export async function createRuntimeCoreSession(
     && !input.runId
     && !boundSubagentIdentity
   );
-  const preferredCapabilityRoute = typeof input.messageMetadata?.preferredCapabilityRoute === "string"
-    ? input.messageMetadata.preferredCapabilityRoute
-    : undefined;
-  const enableFileCheckpointing = preferredCapabilityRoute === "coding"
-    || preferredCapabilityRoute === "raw-tools";
+  const enableFileCheckpointing = shouldTrackCodingWorkflow(input.userMessage);
   const additionalDirectories = [...new Set([
     ...(input.additionalDirectories ?? []),
     input.lumeWorkDir,
@@ -2282,7 +2260,7 @@ export async function createRuntimeCoreSession(
 
   const agent = createAgent(agentOptions);
   if (
-    (preferredCapabilityRoute === "coding" || preferredCapabilityRoute === "raw-tools")
+    enableFileCheckpointing
     && lspConfig?.enabled !== false
     && lspConfig?.lazy !== true
   ) {

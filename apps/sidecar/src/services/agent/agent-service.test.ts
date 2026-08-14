@@ -490,7 +490,7 @@ describe("agent-service", () => {
     expect(runtimeInput.input?.userMessage).toContain("C:\\temp\\tests.log");
   });
 
-  test("同一任务已有 Agent 浏览器时后续消息应保留 browser 路由和连续性", async () => {
+  test("同一任务已有 Agent 浏览器时后续消息只保留连续性，不预判路由", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");
     const { setActiveBrowserBroker } = await import("../browser/browser-broker-holder");
@@ -528,8 +528,8 @@ describe("agent-service", () => {
 
       const runtimeInput = runAgentRuntimeCalls.at(-1) as { input?: { messageMetadata?: Record<string, unknown> } };
       expect(runtimeInput.input?.messageMetadata).toMatchObject({
-        preferredCapabilityRoute: "browser",
-        capabilityRoutingReason: "request continues the active task-owned browser tab",
+        preferredCapabilityRoute: null,
+        capabilityRoutingReason: "the agent selects capabilities from available skills and tools",
         browserContinuity: {
           tabId: "agent-tab-1",
           url: "https://x.com/home",

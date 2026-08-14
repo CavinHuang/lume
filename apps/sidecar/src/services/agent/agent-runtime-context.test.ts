@@ -71,13 +71,12 @@ describe("agent-runtime-context", () => {
 
     const trace = resolveAgentRuntimeRoutingTrace({
       workspaceSlug,
-      userMessage: "help me create an execution plan",
       availableTools: ["Skill", "browser", "read", "write"]
     });
 
-    expect(trace.capabilityLanes).toEqual(["skills", "browser", "raw-tools"]);
-    expect(trace.preferredCapabilityRoute).toBe("skills");
-    expect(trace.reason).toContain("loaded skill metadata");
+    expect(trace.capabilityLanes).toEqual(["skills", "browser", "raw-tools", "coding"]);
+    expect(trace.preferredCapabilityRoute).toBeNull();
+    expect(trace.reason).toBe("the agent selects capabilities from available skills and tools");
   });
 
   test("应读取消息发送阶段持久化的 Browser 路由", () => {
@@ -103,12 +102,11 @@ describe("agent-runtime-context", () => {
 
     const trace = resolveAgentRuntimeRoutingTrace({
       workspaceSlug: "routing-trace-global-skill",
-      userMessage: "help me create an execution plan",
       availableTools: ["read", "write"]
     });
 
-    expect(trace.capabilityLanes).toEqual(["skills", "raw-tools"]);
-    expect(trace.preferredCapabilityRoute).toBe("skills");
+    expect(trace.capabilityLanes).toEqual(["skills", "raw-tools", "coding"]);
+    expect(trace.preferredCapabilityRoute).toBeNull();
   });
 
   test("runtime routing trace 应包含当前项目 .lume/skills 元数据", () => {
@@ -124,12 +122,11 @@ describe("agent-runtime-context", () => {
     const trace = resolveAgentRuntimeRoutingTrace({
       workspaceSlug: "routing-trace-local-skill",
       agentCwd: projectDir,
-      userMessage: "help me create an execution plan for this project",
       availableTools: ["read", "write"]
     });
 
-    expect(trace.capabilityLanes).toEqual(["skills", "raw-tools"]);
-    expect(trace.preferredCapabilityRoute).toBe("skills");
+    expect(trace.capabilityLanes).toEqual(["skills", "raw-tools", "coding"]);
+    expect(trace.preferredCapabilityRoute).toBeNull();
   });
 
   test("存在 workspace skills 时，即使未显式传入 Skill 工具也应补出 skills lane", () => {
@@ -145,11 +142,10 @@ describe("agent-runtime-context", () => {
 
     const trace = resolveAgentRuntimeRoutingTrace({
       workspaceSlug,
-      userMessage: "help me create an execution plan",
       availableTools: ["read", "write"]
     });
 
-    expect(trace.capabilityLanes).toEqual(["skills", "raw-tools"]);
-    expect(trace.preferredCapabilityRoute).toBe("skills");
+    expect(trace.capabilityLanes).toEqual(["skills", "raw-tools", "coding"]);
+    expect(trace.preferredCapabilityRoute).toBeNull();
   });
 });

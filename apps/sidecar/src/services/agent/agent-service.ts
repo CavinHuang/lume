@@ -62,7 +62,6 @@ import {
   isWeakGeneratedTitle,
   sanitizeGeneratedTitle
 } from "./session-title-summarizer";
-import { resolveSoftToolPolicyForPreferredRoute } from "./capability-routing";
 import { getSubagentRunRegistry } from "./subagents/subagent-run-registry";
 import { buildAgentContentLogData, buildAgentSendStartLogData } from "./agent-log-summary";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
@@ -86,6 +85,7 @@ import { getPlanningTodoStore } from "../planning/planning-todo-store";
 import { addPlanningAuthorizedTodo, authorizePlanningOperation, finishPlanningExecutionRun, resolvePlanningExecutionContext } from "../planning/planning-execution-context";
 import { materializeCapabilityReferences } from "./invocable-capability-catalog";
 import { getAgentSubmissionStore } from "./agent-submission-store";
+import { shouldTrackCodingWorkflow } from "./coding-workflow-policy";
 import {
   AgentBackgroundWakeController,
   BACKGROUND_TASK_WAKE_PROMPT
@@ -132,7 +132,7 @@ const log = createLogger("agent-service");
 const backgroundWakeController = new AgentBackgroundWakeController();
 const streamEmitters = new Map<string, AgentStreamEmitter>();
 const scheduledBackgroundWakes = new Set<string>();
-const ROUTING_HEURISTIC_TOOLS = [
+const AGENT_CAPABILITY_TOOLS = [
   "Read",
   "Write",
   "Edit",
@@ -982,12 +982,8 @@ export async function sendAgentMessage(
 
   const routingTrace = resolveAgentRuntimeRoutingTrace({
     workspaceSlug: stateWorkspaceSlug,
-    userMessage: normalizedUserMessage.modelMessage,
-    availableTools: ROUTING_HEURISTIC_TOOLS,
-    hasActiveAgentBrowserTab: Boolean(browserContinuity),
-    hasVisibleAgentBrowserTab: browserContinuity?.visible === true
+    availableTools: AGENT_CAPABILITY_TOOLS
   });
-  const routingToolPolicy = resolveSoftToolPolicyForPreferredRoute(routingTrace.preferredCapabilityRoute);
   const existingToolPolicy =
     input.messageMetadata?.toolPolicy && typeof input.messageMetadata.toolPolicy === "object"
       ? (input.messageMetadata.toolPolicy as AgentToolPolicy)
@@ -1013,7 +1009,7 @@ export async function sendAgentMessage(
     capabilityRoutingReason: routingTrace.reason,
     browserContinuity: browserContinuity ?? null,
     toolPolicy: mergeToolPolicies(
-      mergeToolPolicies(existingToolPolicy, routingToolPolicy),
+      existingToolPolicy,
       capabilityProjection.allowedTools
         ? capabilityProjection.allowedTools.length > 0
           ? { allow: capabilityProjection.allowedTools }
@@ -1090,7 +1086,7 @@ export async function sendAgentMessage(
     };
     activeTurnId = createdUserVersion.turnId;
     runtimeMessageMetadata.turnId = activeTurnId;
-    if (routingTrace.preferredCapabilityRoute === "coding" || routingTrace.preferredCapabilityRoute === "raw-tools") {
+    if (shouldTrackCodingWorkflow(normalizedUserMessage.modelMessage)) {
       await createCodingTurnRecord(getRuntimeCoreSessionDir(threadId), {
         turnId: activeTurnId,
         threadId,

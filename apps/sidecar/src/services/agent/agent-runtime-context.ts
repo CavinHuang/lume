@@ -2,7 +2,7 @@ import type { AgentSendInput } from "@lume/shared";
 import { getAgentThreadMeta } from "./agent-thread-manager";
 import { getRuntimeSkills } from "./agent-workspace-manager";
 import type { DynamicContext, EnabledPluginContextItem } from "./agent-prompt-builder";
-import { inferCapabilityLanes, resolvePreferredCapabilityRoute, type CapabilityLane } from "./capability-routing";
+import { inferCapabilityLanes, type CapabilityLane } from "./capability-inventory";
 
 interface ResolveAgentDynamicContextInput {
   threadId: string;
@@ -86,26 +86,16 @@ export function resolveAgentDynamicContextInput(
 export function resolveAgentRuntimeRoutingTrace(input: {
   workspaceSlug?: string;
   agentCwd?: string;
-  userMessage?: string;
   availableTools?: string[];
-  hasActiveAgentBrowserTab?: boolean;
-  hasVisibleAgentBrowserTab?: boolean;
 }): AgentRuntimeRoutingTrace {
   const loadedSkills = input.workspaceSlug ? getRuntimeSkills(input.workspaceSlug, input.agentCwd) : [];
   const availableTools = [...(input.availableTools ?? [])];
   if (loadedSkills.length > 0 && !availableTools.some((tool) => tool.trim().toLowerCase() === "skill")) {
     availableTools.push("Skill");
   }
-  const decision = resolvePreferredCapabilityRoute({
-    userMessage: input.userMessage,
-    availableTools,
-    loadedSkills,
-    hasActiveAgentBrowserTab: input.hasActiveAgentBrowserTab,
-    hasVisibleAgentBrowserTab: input.hasVisibleAgentBrowserTab
-  });
   return {
-    capabilityLanes: inferCapabilityLanes(availableTools, input.userMessage),
-    preferredCapabilityRoute: decision.preferredLane,
-    reason: decision.reason
+    capabilityLanes: inferCapabilityLanes(availableTools),
+    preferredCapabilityRoute: null,
+    reason: "the agent selects capabilities from available skills and tools"
   };
 }
