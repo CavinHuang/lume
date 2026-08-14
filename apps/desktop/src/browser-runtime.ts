@@ -2584,7 +2584,14 @@ export class BrowserRuntime {
   }
 
   private async snapshot(tab: BrowserTab): Promise<unknown> {
-    return withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("DOMSnapshot.captureSnapshot", { computedStyles: [] }))
+    const result = await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("DOMSnapshot.captureSnapshot", { computedStyles: [] }))
+    // 防 token 爆炸：大页面/SPA 的 DOMSnapshot 可达数 MB，超阈值返回截断提示，
+    // 让 agent 改用 tab.screenshot()（视觉）或 playwright locator（精准定位）——对齐 Codex 大页面策略
+    const text = JSON.stringify(result)
+    if (text.length > 150_000) {
+      return { truncated: true, byteLength: text.length, hint: "DOM snapshot too large for one read; use tab.screenshot() for visual context or playwright locators to target specific elements" }
+    }
+    return result
   }
 
   private async screenshot(tab: BrowserTab, params: Record<string, unknown>): Promise<string> {
