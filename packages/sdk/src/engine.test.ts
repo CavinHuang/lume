@@ -261,6 +261,15 @@ describe("QueryEngine turn limits", () => {
       .filter((c: any) => c.type === "tool_result")
     const ids = toolResults.map((c: any) => c.tool_use_id).sort()
     expect(ids).toEqual(["t-inject", "t-replay"])
+    // Array-pairing core semantics: every continuation result must land in the
+    // SAME user message (one tool-boundary repair turn, not one per tool).
+    const carrierMessages = request.filter(
+      (m) => Array.isArray(m.content) && m.content.some((c: any) => c.type === "tool_result"),
+    )
+    expect(carrierMessages).toHaveLength(1)
+    expect(carrierMessages[0]?.role).toBe("user")
+    expect((carrierMessages[0]?.content as any[]).map((c) => c.tool_use_id).sort())
+      .toEqual(["t-inject", "t-replay"])
   })
 
   test("forwards exactly terminal task notifications emitted after a tool call returns", async () => {

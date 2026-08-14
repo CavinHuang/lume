@@ -1,5 +1,6 @@
 // packages/sdk/src/interrupt-recovery.ts
 import type { NormalizedMessageParam } from './providers/types.js'
+import type { PersistedToolContinuation } from './types.js'
 
 export interface DanglingToolUse {
   id: string
@@ -40,4 +41,44 @@ export function detectDanglingToolUses(messages: NormalizedMessageParam[]): Dang
       }))
   }
   return []
+}
+
+export interface ResumeToolInfo {
+  /** Unknown tools must answer false: never auto-replay a possibly-mutating tool. */
+  isReadOnly: (toolName: string) => boolean
+}
+
+/**
+ * Build persisted tool continuations from dangling tool uses. Read-only /
+ * concurrency-safe tools replay once (toolCall only); everything else gets an
+ * interrupted error placeholder so the model knows the actual state is
+ * unknown. Duplicate tool_call ids are deduped here (keeping the first)
+ * because the engine does not dedupe within one continuation batch.
+ */
+export function buildResumeContinuations(
+  dangling: DanglingToolUse[],
+  toolInfo: ResumeToolInfo,
+): PersistedToolContinuation[] {
+  const seen = new Set<string>()
+  const continuations: PersistedToolContinuation[] = []
+  for (const use of dangling) {
+    if (seen.has(use.id)) continue
+    seen.add(use.id)
+    const toolCall = { id: use.id, name: use.name, input: use.input }
+    continuations.push(
+      toolInfo.isReadOnly(use.name)
+        ? { toolCall }
+        : {
+            toolCall,
+            toolResult: {
+              type: 'tool_result' as const,
+              tool_use_id: use.id,
+              content:
+                'Error: interrupted before completion; actual state unknown — inspect the workspace before retrying.',
+              is_error: true,
+            },
+          },
+    )
+  }
+  return continuations
 }

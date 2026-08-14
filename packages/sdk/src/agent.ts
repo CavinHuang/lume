@@ -73,6 +73,7 @@ import { setMcpConnections } from './tools/mcp-resource-tools.js'
 import { getContextWindowSize } from './utils/tokens.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { createExecuteTool, createToolSearchTool, isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
+import { buildResumeContinuations, detectDanglingToolUses } from './interrupt-recovery.js'
 
 type QueryInput = string | ContentBlockParam[] | SDKUserMessage
 
@@ -881,6 +882,29 @@ export class Agent {
     }
   }
 
+  /** Resolve the tool pools for one run: shared by runSinglePrompt and resumeInterruptedRun. */
+  private getRunTools(
+    opts: AgentOptions,
+    overrides?: Partial<AgentOptions>,
+  ): { tools: ToolDefinition[]; deferredTools: ToolDefinition[] } {
+    let tools = this.toolPool
+    let deferredTools = this.deferredToolPool
+    if (overrides?.disallowedTools) {
+      tools = filterTools(tools, undefined, overrides.disallowedTools)
+      deferredTools = filterTools(deferredTools, undefined, overrides.disallowedTools)
+    }
+    if (overrides?.tools) {
+      const raw = overrides.tools
+      if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'string') {
+        tools = filterTools(this.buildBaseToolPool(opts), raw as string[])
+      } else if (Array.isArray(raw)) {
+        tools = raw as ToolDefinition[]
+      }
+      deferredTools = []
+    }
+    return { tools, deferredTools }
+  }
+
   private async *runSinglePrompt(
     prompt: QueryInput,
     overrides?: Partial<AgentOptions>,
@@ -932,21 +956,7 @@ export class Agent {
     }
 
 
-    let tools = this.toolPool
-    let deferredTools = this.deferredToolPool
-    if (overrides?.disallowedTools) {
-      tools = filterTools(tools, undefined, overrides.disallowedTools)
-      deferredTools = filterTools(deferredTools, undefined, overrides.disallowedTools)
-    }
-    if (overrides?.tools) {
-      const raw = overrides.tools
-      if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'string') {
-        tools = filterTools(this.buildBaseToolPool(opts), raw as string[])
-      } else if (Array.isArray(raw)) {
-        tools = raw as ToolDefinition[]
-      }
-      deferredTools = []
-    }
+    const { tools, deferredTools } = this.getRunTools(opts, overrides)
 
     let provider = this.provider
     if (overrides?.apiType || overrides?.apiKey || overrides?.baseURL) {
@@ -1234,6 +1244,51 @@ export class Agent {
 
   async interrupt(): Promise<void> {
     this.abortCtrl?.abort('interrupt')
+  }
+
+  /**
+   * Resume an interrupted run from the persisted dangling tool boundary.
+   * Read-only / concurrency-safe tools replay once; everything else
+   * (including unknown tools) gets an interrupted placeholder — never
+   * auto-replay a mutation whose actual effect is unknown.
+   */
+  async *resumeInterruptedRun(overrides?: Partial<AgentOptions>): AsyncGenerator<SDKMessage, void> {
+    // currentEngine (not abortCtrl, which is never cleared after a run) is
+    // the accurate in-flight marker: set before the loop, cleared in finally.
+    if (this.currentEngine) throw new Error('agent is running')
+    const dangling = detectDanglingToolUses(this.history)
+    if (dangling.length === 0) return
+    await this.setupDone
+    const opts = this.getEffectiveOptions(overrides)
+    const { tools } = this.getRunTools(opts, overrides)
+    const continuations = buildResumeContinuations(dangling, {
+      isReadOnly: (name) => {
+        const tool = tools.find((t) => t.name === name)
+        if (!tool) return false
+        return tool.isReadOnly?.() === true || tool.isConcurrencySafe?.() === true
+      },
+    })
+    yield* this.runSinglePrompt('', { ...overrides, toolContinuations: continuations })
+  }
+
+  /**
+   * Discard an interrupted run: fill dangling tool_use with error results so
+   * the session lands in a clean state without another model request.
+   */
+  async discardInterruptedRun(cwd: string): Promise<void> {
+    await this.setupDone
+    const dangling = detectDanglingToolUses(this.history)
+    if (dangling.length === 0) return
+    this.history.push({
+      role: 'user',
+      content: dangling.map((use) => ({
+        type: 'tool_result' as const,
+        tool_use_id: use.id,
+        content: 'Error: run discarded by user',
+        is_error: true,
+      })),
+    })
+    await this.persistCurrentSession(cwd, this.getEffectiveOptions())
   }
 
   async setModel(model?: string): Promise<void> {
