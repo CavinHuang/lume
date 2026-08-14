@@ -1,0 +1,43 @@
+// packages/sdk/src/interrupt-recovery.ts
+import type { NormalizedMessageParam } from './providers/types.js'
+
+export interface DanglingToolUse {
+  id: string
+  name: string
+  input: unknown
+}
+
+/**
+ * Detect tool_use blocks in the trailing assistant message that have no
+ * matching tool_result — the residue of an interrupted or crashed run.
+ * Only the trailing assistant is inspected; earlier gaps are historical
+ * damage and are intentionally ignored.
+ */
+export function detectDanglingToolUses(messages: NormalizedMessageParam[]): DanglingToolUse[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i] as { role?: string; content?: unknown }
+    if (message.role !== 'assistant' || !Array.isArray(message.content)) continue
+    const blocks = message.content as Array<Record<string, unknown>>
+    const toolUses = blocks.filter((block) => block.type === 'tool_use')
+    if (toolUses.length === 0) continue
+
+    const answered = new Set<string>()
+    for (let j = i + 1; j < messages.length; j++) {
+      const later = messages[j] as { role?: string; content?: unknown }
+      if (later.role !== 'user' || !Array.isArray(later.content)) continue
+      for (const block of later.content as Array<Record<string, unknown>>) {
+        if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+          answered.add(block.tool_use_id)
+        }
+      }
+    }
+    return toolUses
+      .filter((block) => !answered.has(block.id as string))
+      .map((block) => ({
+        id: block.id as string,
+        name: block.name as string,
+        input: block.input,
+      }))
+  }
+  return []
+}
