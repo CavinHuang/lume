@@ -26,7 +26,7 @@ const descriptors = [
     minSupported: 5,
     maxSupported: 5,
     generation: 1,
-    capabilities: { browser: [], tab: [] },
+    capabilities: { browser: [{ id: "visibility", description: "visibility" }], tab: [] },
     apiSupportOverrides: {},
   },
 ];
@@ -51,7 +51,7 @@ globalThis.nodeRepl = {
       if (method === "tab_js_dialog_get") return { dialog: { id: "dialog-1", type: "confirm" } };
       if (method === "tab_js_dialog_handle") return {};
       if (method === "tabs_content") return { results: [{ url: "https://example.com/", title: "Example", content: "ok" }] };
-      if (method === "browser_visibility_get") return { visible: false };
+      if (method === "browser_visibility_get") return params.browserId === "lume-extension" ? true : { visible: false };
       if (method === "tab_page_assets_bundle") return { assetId: "asset-1" };
       if (method === "playwright_wait_for_download") return { download_id: "download-1", filename: "report.pdf" };
       if (method === "playwright_download_path") return { path: "C:\\downloads\\report.pdf" };
@@ -111,7 +111,9 @@ test("uses canonical backend selection and request shapes", async () => {
   const globals = {};
   await setupLumeBrowserRuntime({ globals });
 
-  assert.equal((await globals.agent.browsers.get("lume-extension")).browserId, "lume-extension");
+  const extensionBrowser = await globals.agent.browsers.get("lume-extension");
+  assert.equal(extensionBrowser.browserId, "lume-extension");
+  assert.equal(await (await extensionBrowser.capabilities.get("visibility")).get(), true);
   assert.equal((await globals.agent.browsers.getForUrl("https://example.com/")).browserId, "lume-extension");
   assert.equal((await globals.agent.browsers.getForUrl("http://localhost:3000/")).browserId, "lume-iab");
 

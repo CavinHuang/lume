@@ -91,7 +91,7 @@ function unwrapBrowserResult(method, result) {
       lastVisitTime: entry?.lastVisitTime ?? entry?.dateVisited,
     }));
   }
-  if (method === "browser_visibility_get") return result?.visible;
+  if (method === "browser_visibility_get") return typeof result === "boolean" ? result : result?.visible;
   if (method === "tabs_content") return Array.isArray(result) ? result : result?.results;
   if (method === "playwright_wait_for_download") {
     return { ...result, downloadId: result?.downloadId ?? result?.download_id };
