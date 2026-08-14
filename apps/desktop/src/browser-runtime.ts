@@ -2667,7 +2667,7 @@ export class BrowserRuntime {
 
   private async screenshot(tab: BrowserTab, params: Record<string, unknown>): Promise<string> {
     if (params.fullPage === true) {
-      const result = await browserPromiseTimeout(withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "png", captureBeyondViewport: true })), 8_000) as { data?: string }
+      const result = await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "png", captureBeyondViewport: true }), 8_000) as { data?: string }
       if (typeof result.data === "string") return result.data
     }
     try {
@@ -2681,7 +2681,7 @@ export class BrowserRuntime {
           if (!image.isEmpty()) return image.toJPEG(80).toString("base64")
         } catch { /* CDP remains the final guest-only fallback. */ }
       }
-      const result = await browserPromiseTimeout(withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "jpeg", quality: 80, captureBeyondViewport: false })), 8_000) as { data?: string }
+      const result = await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "jpeg", quality: 80, captureBeyondViewport: false }), 8_000) as { data?: string }
       if (typeof result.data === "string") return result.data
       throw browserError("browser_internal_error")
     }
@@ -3901,13 +3901,16 @@ function browserCapabilityDocumentation(id: string): string {
   return value
 }
 
-async function browserPromiseTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+async function browserPromiseTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout?: () => void): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_resolve, reject) => {
-        timer = setTimeout(() => reject(browserError("browser_internal_error")), timeoutMs)
+        timer = setTimeout(() => {
+          try { onTimeout?.() } catch { /* The timeout still releases the caller when debugger reset fails. */ }
+          reject(browserError("browser_internal_error"))
+        }, timeoutMs)
       }),
     ])
   } finally {
@@ -4153,18 +4156,21 @@ function keyedParameterHash(method: string, params: Record<string, unknown>): st
 }
 const JOURNAL_HMAC_KEY = randomBytes(32)
 const DEBUGGER_OPERATIONS = new WeakMap<Electron.WebContents, Promise<unknown>>()
+const DEBUGGER_OPERATION_TIMEOUT_MS = 30_000
 function redactParams(params: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(params).map(([key, value]) => [key, typeof value === "string" ? "[redacted]" : typeof value === "object" ? "[object]" : value]))
 }
 
-async function withDebugger<T>(contents: Electron.WebContents, work: (debuggerRef: Electron.Debugger) => Promise<T>): Promise<T> {
+async function withDebugger<T>(contents: Electron.WebContents, work: (debuggerRef: Electron.Debugger) => Promise<T>, timeoutMs = DEBUGGER_OPERATION_TIMEOUT_MS): Promise<T> {
   const previous = DEBUGGER_OPERATIONS.get(contents) ?? Promise.resolve()
   const operation = previous.catch(() => undefined).then(async () => {
     const debuggerRef = contents.debugger
     const attached = debuggerRef.isAttached()
     if (!attached) debuggerRef.attach("1.3")
     try {
-      return await work(debuggerRef)
+      return await browserPromiseTimeout(work(debuggerRef), timeoutMs, () => {
+        if (debuggerRef.isAttached()) debuggerRef.detach()
+      })
     } catch (error) {
       // 必须带 .code —— dispatch catch 的 stableBrowserErrorCode 只认 code，裸 Error 会全部塌缩成 browser_internal_error
       const message = error instanceof Error ? error.message : String(error ?? "")
