@@ -6,7 +6,7 @@ import { getReadingLibraryPath } from "../infra/config-paths";
 import { ensureReadingBootstrapBook, listReadingBooks } from "./reading-store";
 
 /**
- * 回归：ensureReadingBootstrapBook 被 LIST_BOOKS RPC 频繁触发，旧实现仅以
+ * 回归：ensureReadingBootstrapBook 会被快照与阅读任务触发，旧实现仅以
  * `library.books.length === 0` 为播种条件。一旦库「瞬时为空」（跨进程/读失败回退空库），
  * 就会重新种入一本《人间词话》，历史累积出多本重复种子书。
  *

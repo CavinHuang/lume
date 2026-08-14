@@ -799,8 +799,7 @@ function createSnapshot(input: { connected: boolean }): ReadingLibrarySnapshot {
     stats: {
       readingCount: 2,
       noteCount: 2,
-      finishedCount: 0,
-      unseenNoteCount: 1
+      finishedCount: 0
     },
     settings: {
       version: 1,

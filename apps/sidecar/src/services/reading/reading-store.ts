@@ -5,7 +5,6 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
-  rmSync,
   writeFileSync
 } from "node:fs";
 import { join } from "node:path";
@@ -13,24 +12,19 @@ import type {
   ReadingAddBookInput,
   ReadingActivity,
   ReadingBook,
-  ReadingBookDebugInfo,
   ReadingBookStatus,
   ReadingBookTrack,
   ReadingConnectWereadInput,
   ReadingLibrarySnapshot,
   ReadingListNotesInput,
   ReadingNote,
-  ReadingNoteIdInput,
   ReadingNoteInput,
-  ReadingNoteReactionResult,
   ReadingNoteRevisionInput,
   ReadingNoteSummary,
   ReadingSearchResult,
   ReadingSettings,
   ReadingStats,
   ReadingSourceRef,
-  ReadingUnreadCounts,
-  ReadingUpdateBookInput,
   ReadingUpdateSettingsInput,
   ReadingWereadConnection
 } from "@lume/shared";
@@ -78,10 +72,6 @@ const STARTER_READING_BOOK: ReadingAddBookInput = {
 interface ReadingLibraryIndex {
   version: number;
   books: ReadingBook[];
-  seenNoteIds: string[];
-  removedHighlightNoteIds: string[];
-  blurredNoteIds: string[];
-  reactionCounts: Record<string, number>;
 }
 
 interface StoredReadingSettings extends ReadingSettings {
@@ -110,7 +100,7 @@ export function getReadingSnapshot(): ReadingLibrarySnapshot {
   return {
     books,
     notes,
-    stats: buildStats(books, notes, readLibrary().seenNoteIds),
+    stats: buildStats(books, notes),
     activity: buildActivity(books, notes),
     settings,
     wereadConnection: toWereadConnection(settings)
@@ -124,7 +114,7 @@ function getBootstrapMarkerPath(): string {
 export function ensureReadingBootstrapBook(): ReadingBook | null {
   initReadingStorage();
   // 用独立标记文件保证 bootstrap 一生只发生一次。旧实现仅以 `library.books.length === 0`
-  // 为播种条件，而 readLibrary 在解析失败时回退空库、且本函数被 LIST_BOOKS RPC 频繁触发，
+  // 为播种条件，而 readLibrary 在解析失败时回退空库、且快照与阅读任务都会触发本函数，
   // 一旦库「瞬时为空」（跨进程/读失败）就会重新种入《人间词话》，历史累积出多本重复种子书。
   // 标记存在后即便库被清空也不再种，根治重复。
   if (existsSync(getBootstrapMarkerPath())) return null;
@@ -261,27 +251,6 @@ export function syncReadingWereadShelf(rawShelf: unknown, syncedAt = Date.now())
   return listReadingBooks();
 }
 
-export function updateReadingBook(input: ReadingUpdateBookInput): ReadingBook {
-  initReadingStorage();
-  const library = readLibrary();
-  const index = library.books.findIndex((book) => book.id === input.id);
-  if (index < 0) {
-    throw new Error(`读书书籍不存在: ${input.id}`);
-  }
-  const existing = library.books[index] as ReadingBook;
-  const updated = normalizeReadingBook({
-    ...existing,
-    ...input.input,
-    source: {
-      ...existing.source,
-      ...input.input.source
-    },
-    updatedAt: Date.now()
-  });
-  library.books[index] = updated;
-  writeLibrary(library);
-  return updated;
-}
 
 export function recordReadingBookProgress(input: {
   bookId: string;
@@ -392,27 +361,6 @@ export function setReadingBookLocalCover(bookId: string, localCoverPath: string)
   return updated;
 }
 
-export function deleteReadingBookCover(bookId: string): ReadingBook {
-  initReadingStorage();
-  const library = readLibrary();
-  const index = library.books.findIndex((book) => book.id === bookId);
-  if (index < 0) {
-    throw new Error(`读书书籍不存在: ${bookId}`);
-  }
-  const existing = library.books[index] as ReadingBook;
-  if (existing.localCoverPath && isPathUnder(existing.localCoverPath, getReadingCoversDir()) && existsSync(existing.localCoverPath)) {
-    rmSync(existing.localCoverPath, { force: true });
-  }
-  const updated = normalizeReadingBook({
-    ...existing,
-    localCoverPath: undefined,
-    updatedAt: Date.now()
-  });
-  delete (updated as Partial<ReadingBook>).localCoverPath;
-  library.books[index] = updated;
-  writeLibrary(library);
-  return updated;
-}
 
 export function listReadingNotes(input: ReadingListNotesInput = {}): ReadingNoteSummary[] {
   initReadingStorage();
@@ -517,19 +465,13 @@ export function reviseReadingNote(input: ReadingNoteRevisionInput): ReadingNote 
   return updated;
 }
 
-export function hideReadingNote(idOrInput: string | ReadingNoteIdInput): ReadingNote {
-  const note = getRequiredNote(typeof idOrInput === "string" ? idOrInput : idOrInput.id);
+export function hideReadingNote(id: string): ReadingNote {
+  const note = getRequiredNote(id);
   const updated = { ...note, hidden: true, updatedAt: Date.now() };
   writeNote(updated);
   return updated;
 }
 
-export function deleteReadingNote(idOrInput: string | ReadingNoteIdInput): ReadingNote {
-  const note = getRequiredNote(typeof idOrInput === "string" ? idOrInput : idOrInput.id);
-  const updated = { ...note, deleted: true, hidden: true, updatedAt: Date.now() };
-  writeNote(updated);
-  return updated;
-}
 
 export function getReadingNote(id: string): ReadingNoteSummary | null {
   return listReadingNotes({ includeHidden: true, includeDeleted: true })
@@ -543,102 +485,6 @@ export function setReadingNoteShareCard(noteId: string, shareCardPath: string): 
   return updated;
 }
 
-export function markReadingSeen(noteIds?: string[]): { ok: true } {
-  initReadingStorage();
-  const library = readLibrary();
-  const ids = noteIds?.length ? noteIds : readAllNotes().map((note) => note.id);
-  library.seenNoteIds = [...new Set([...library.seenNoteIds, ...ids])];
-  writeLibrary(library);
-  return { ok: true };
-}
-
-export function getReadingUnreadCounts(): ReadingUnreadCounts {
-  initReadingStorage();
-  const seen = new Set(readLibrary().seenNoteIds);
-  const byBookId: Record<string, number> = {};
-  for (const note of readVisibleNotes()) {
-    if (seen.has(note.id)) continue;
-    byBookId[note.bookId] = (byBookId[note.bookId] ?? 0) + 1;
-  }
-  return {
-    total: Object.values(byBookId).reduce((sum, count) => sum + count, 0),
-    byBookId
-  };
-}
-
-export function getReadingHighlights(): ReadingNoteSummary[] {
-  const library = readLibrary();
-  const removed = new Set(library.removedHighlightNoteIds);
-  return listReadingNotes()
-    .filter((note) => !removed.has(note.id));
-}
-
-export function removeReadingHighlight(noteId: string): { ok: true } {
-  getRequiredNote(noteId);
-  const library = readLibrary();
-  library.removedHighlightNoteIds = uniqueStrings([...library.removedHighlightNoteIds, noteId]);
-  writeLibrary(library);
-  return { ok: true };
-}
-
-export function getReadingBlurs(): ReadingNoteSummary[] {
-  const blurred = new Set(readLibrary().blurredNoteIds);
-  return listReadingNotes({ includeHidden: true })
-    .filter((note) => blurred.has(note.id) && !note.deleted);
-}
-
-export function markReadingBlurred(noteId: string): ReadingNoteSummary {
-  getRequiredNote(noteId);
-  const library = readLibrary();
-  library.blurredNoteIds = uniqueStrings([...library.blurredNoteIds, noteId]);
-  writeLibrary(library);
-  return getReadingNote(noteId) as ReadingNoteSummary;
-}
-
-export function removeReadingBlur(noteId: string): { ok: true } {
-  const library = readLibrary();
-  library.blurredNoteIds = library.blurredNoteIds.filter((id) => id !== noteId);
-  writeLibrary(library);
-  return { ok: true };
-}
-
-export function reactPlusOneReadingNote(noteId: string): ReadingNoteReactionResult {
-  getRequiredNote(noteId);
-  const library = readLibrary();
-  const plusOnes = Math.max(0, Math.round(library.reactionCounts[noteId] ?? 0)) + 1;
-  library.reactionCounts = {
-    ...library.reactionCounts,
-    [noteId]: plusOnes
-  };
-  writeLibrary(library);
-  return { noteId, plusOnes };
-}
-
-export function getReadingBookDebugInfo(bookId: string): ReadingBookDebugInfo {
-  const book = listReadingBooks().find((item) => item.id === bookId);
-  if (!book) {
-    throw new Error(`读书书籍不存在: ${bookId}`);
-  }
-  const library = readLibrary();
-  const notes = readAllNotes().filter((note) => note.bookId === bookId);
-  const visibleNotes = notes.filter((note) => !note.hidden && !note.deleted);
-  const seen = new Set(library.seenNoteIds);
-  const removedHighlights = new Set(library.removedHighlightNoteIds);
-  const blurred = new Set(library.blurredNoteIds);
-  return {
-    book,
-    noteCount: visibleNotes.length,
-    hiddenNoteCount: notes.filter((note) => note.hidden && !note.deleted).length,
-    deletedNoteCount: notes.filter((note) => note.deleted).length,
-    unreadCount: visibleNotes.filter((note) => !seen.has(note.id)).length,
-    highlightedCount: visibleNotes.filter((note) => !removedHighlights.has(note.id)).length,
-    blurredCount: visibleNotes.filter((note) => blurred.has(note.id)).length,
-    reactionCount: notes.reduce((sum, note) => sum + Math.max(0, Math.round(library.reactionCounts[note.id] ?? 0)), 0),
-    sourceKind: book.source.kind,
-    ...(book.source.externalId ? { sourceId: book.source.externalId } : {}),
-    ...(book.localCoverPath ? { localCoverPath: book.localCoverPath } : {})
-  };
-}
 
 export function getReadingSettings(): ReadingSettings {
   initReadingStorage();
@@ -686,18 +532,6 @@ export function connectReadingWeread(input: ReadingConnectWereadInput): ReadingW
   return toWereadConnection(updated);
 }
 
-export function disconnectReadingWeread(): ReadingWereadConnection {
-  const existing = getReadingSettings();
-  const updated: ReadingSettings = {
-    ...existing,
-    weread: {
-      apiKeySet: false
-    },
-    updatedAt: Date.now()
-  };
-  writeSettings(updated);
-  return toWereadConnection(updated);
-}
 
 export function getReadingWereadApiKey(): string | null {
   const stored = readSettings();
@@ -705,14 +539,6 @@ export function getReadingWereadApiKey(): string | null {
   return decryptSecret(stored.encryptedWereadApiKey);
 }
 
-export async function searchReadingWeread(query: string, limit = 10): Promise<ReadingSearchResult[]> {
-  const apiKey = getReadingWereadApiKey();
-  if (!apiKey) {
-    return [];
-  }
-  const result = await new BookDataService({ wereadApiKey: apiKey }).searchWeread(query, limit);
-  return result.data;
-}
 
 const SEARCH_SOURCE_TIMEOUT_MS = 8_000;
 
@@ -743,11 +569,7 @@ function readLibrary(): ReadingLibraryIndex {
     const parsed = JSON.parse(readFileSync(getReadingLibraryPath(), "utf-8")) as Partial<ReadingLibraryIndex>;
     return {
       version: LIBRARY_VERSION,
-      books: Array.isArray(parsed.books) ? parsed.books.map((book) => normalizeReadingBook(book)) : [],
-      seenNoteIds: normalizeStringList(parsed.seenNoteIds),
-      removedHighlightNoteIds: normalizeStringList(parsed.removedHighlightNoteIds),
-      blurredNoteIds: normalizeStringList(parsed.blurredNoteIds),
-      reactionCounts: normalizeReactionCounts(parsed.reactionCounts)
+      books: Array.isArray(parsed.books) ? parsed.books.map((book) => normalizeReadingBook(book)) : []
     };
   } catch (error) {
     log.warn("读取书架文件失败", { error: error instanceof Error ? error.message : String(error) });
@@ -759,22 +581,14 @@ function writeLibrary(library: ReadingLibraryIndex): void {
   initBaseDirs();
   writeJsonAtomic(getReadingLibraryPath(), JSON.stringify({
     version: LIBRARY_VERSION,
-    books: library.books,
-    seenNoteIds: library.seenNoteIds,
-    removedHighlightNoteIds: library.removedHighlightNoteIds,
-    blurredNoteIds: library.blurredNoteIds,
-    reactionCounts: library.reactionCounts
+    books: library.books
   }, null, 2));
 }
 
 function createEmptyLibrary(): ReadingLibraryIndex {
   return {
     version: LIBRARY_VERSION,
-    books: [],
-    seenNoteIds: [],
-    removedHighlightNoteIds: [],
-    blurredNoteIds: [],
-    reactionCounts: {}
+    books: []
   };
 }
 
@@ -837,14 +651,12 @@ function initBaseDirs(): void {
   mkdirSync(getReadingNotesDir(), { recursive: true });
 }
 
-function buildStats(books: ReadingBook[], notes: ReadingNote[], seenNoteIds: string[]): ReadingStats {
+function buildStats(books: ReadingBook[], notes: ReadingNote[]): ReadingStats {
   const visibleNotes = notes.filter((note) => !note.hidden && !note.deleted);
-  const seen = new Set(seenNoteIds);
   return {
     readingCount: books.filter((book) => book.status === "reading").length,
     noteCount: visibleNotes.length,
-    finishedCount: books.filter((book) => book.status === "finished").length,
-    unseenNoteCount: visibleNotes.filter((note) => !seen.has(note.id)).length
+    finishedCount: books.filter((book) => book.status === "finished").length
   };
 }
 
@@ -913,16 +725,6 @@ function writeJsonAtomic(path: string, payload: string): void {
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmpPath, payload, "utf-8");
   renameSync(tmpPath, path);
-}
-
-function normalizeReactionCounts(value: unknown): Record<string, number> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const counts: Record<string, number> = {};
-  for (const [key, raw] of Object.entries(value)) {
-    if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) continue;
-    counts[key] = Math.round(raw);
-  }
-  return counts;
 }
 
 function readWereadShelfBooks(rawShelf: unknown): ReadingAddBookInput[] {
@@ -1161,12 +963,4 @@ function readNumber(value: unknown): number | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function uniqueStrings(values: string[]): string[] {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-}
-
-function isPathUnder(path: string, parent: string): boolean {
-  return path === parent || path.startsWith(`${parent}/`);
 }

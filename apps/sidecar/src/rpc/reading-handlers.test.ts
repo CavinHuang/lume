@@ -45,8 +45,7 @@ describe("reading-handlers", () => {
       stats: {
         readingCount: 1,
         noteCount: 0,
-        finishedCount: 0,
-        unseenNoteCount: 0
+        finishedCount: 0
       },
       settings: {
         cadence: "weekly",

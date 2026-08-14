@@ -127,31 +127,6 @@ export interface ReadingStats {
   readingCount: number;
   noteCount: number;
   finishedCount: number;
-  unseenNoteCount: number;
-}
-
-export interface ReadingUnreadCounts {
-  total: number;
-  byBookId: Record<string, number>;
-}
-
-export interface ReadingNoteReactionResult {
-  noteId: string;
-  plusOnes: number;
-}
-
-export interface ReadingBookDebugInfo {
-  book: ReadingBook;
-  noteCount: number;
-  hiddenNoteCount: number;
-  deletedNoteCount: number;
-  unreadCount: number;
-  highlightedCount: number;
-  blurredCount: number;
-  reactionCount: number;
-  sourceKind: ReadingSourceKind;
-  sourceId?: string;
-  localCoverPath?: string;
 }
 
 export interface ReadingWereadConnection {
@@ -207,18 +182,6 @@ export interface ReadingAddBookInput {
   tags?: string[];
 }
 
-export interface ReadingAddBookToAliceInput {
-  title: string;
-  reason?: string;
-}
-
-export interface ReadingUpdateBookInput {
-  id: string;
-  input: Partial<Omit<ReadingAddBookInput, "source">> & {
-    source?: Partial<ReadingSourceRef>;
-  };
-}
-
 export interface ReadingNoteInput {
   bookId: string;
   title?: string;
@@ -239,10 +202,6 @@ export interface ReadingNoteInput {
   cost?: number;
   modelUsage?: ReadingModelUsage;
   nextPlan?: string;
-}
-
-export interface ReadingNoteIdInput {
-  id: string;
 }
 
 export interface ReadingNoteRevisionInput {
@@ -330,11 +289,6 @@ export interface WereadTestKeyResult {
   bookCount?: number;
   albumCount?: number;
   error?: string;
-}
-
-export interface ReadingSearchWereadInput {
-  query: string;
-  limit?: number;
 }
 
 export interface ReadingSearchBooksInput {
