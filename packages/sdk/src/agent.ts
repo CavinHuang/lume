@@ -27,6 +27,7 @@ import type {
   ContentBlockParam,
 } from './types.js'
 import { QueryEngine } from './engine.js'
+import { createPersistScheduler } from './persist-scheduler.js'
 import {
   assembleToolPool,
   filterTools,
@@ -901,6 +902,12 @@ export class Agent {
 
     const abortCtrl = opts.abortController || new AbortController()
     this.abortCtrl = abortCtrl
+
+    // Message-level throttled persistence: collapse bursts of message events
+    // into one write so a crash loses at most the debounce window, not the run.
+    // The finally block below flushes whatever is still pending.
+    const persistScheduler = createPersistScheduler(200, () =>
+      this.persistCurrentSession(cwd, opts).then(() => undefined))
     if (opts.abortSignal) {
       if (opts.abortSignal.aborted) {
         abortCtrl.abort(opts.abortSignal.reason)
@@ -1074,6 +1081,7 @@ export class Agent {
             uuid: assistantMessage.uuid,
             timestamp: assistantMessage.timestamp,
           })
+          persistScheduler.schedule()
         } else if (event.type === 'tool_result') {
           this.sessionMessages.push(toSessionMessage('user', [{
             type: 'tool_result',
@@ -1082,11 +1090,13 @@ export class Agent {
             content: event.result.content ?? event.result.output,
             is_error: event.result.is_error === true,
           }]))
+          persistScheduler.schedule()
         } else if (event.type === 'system') {
           this.sessionMessages.push(toSessionMessage('system', event))
           if (event.subtype === 'compact_boundary') {
             compactionBoundarySeen = true
           }
+          persistScheduler.schedule()
         }
 
         yield event
@@ -1095,6 +1105,7 @@ export class Agent {
         }
       }
     } finally {
+      persistScheduler.flush()
       this.history = engine.getMessages()
       this.lastContextUsage = engine.getContextUsage()
       this.currentEngine = null
