@@ -297,10 +297,25 @@ test("broker exposes runtime-declared APIs and normalizes protected browser-use 
   assert.equal(calls.at(-1).method, "content")
   assert.equal(calls.at(-1).params.format, "html")
 
-  await broker.dispatch({ method: "tab_page_assets_bundle", params: { tabId: "tab-1", inventory_id: "inventory-1", kinds: ["image"] }, browserSessionId: "s", browserTurnId: "t" })
+  await broker.dispatch({ method: "tabs_content", params: { options: { urls: ["https://example.com/"], contentType: "html", timeoutMs: 30_000 } }, browserSessionId: "s", browserTurnId: "t" })
+  assert.equal(calls.at(-1).method, "tabs:content")
+  assert.deepEqual(
+    { contentType: calls.at(-1).params.contentType, timeoutMs: calls.at(-1).params.timeoutMs },
+    { contentType: "html", timeoutMs: 30_000 },
+  )
+
+  await broker.dispatch({ method: "tab_page_assets_bundle", params: { tabId: "tab-1", options: { inventoryId: "inventory-1", assetIds: ["asset-1"] } }, browserSessionId: "s", browserTurnId: "t" })
   assert.equal(calls.at(-2).method, "policy:confirm")
   assert.equal(calls.at(-1).method, "pageAssets:bundle")
   assert.equal(calls.at(-1).params.inventoryId, "inventory-1")
+  assert.deepEqual(calls.at(-1).params.assetIds, ["asset-1"])
+
+  await broker.dispatch({ method: "dom_cua_scroll", params: { tabId: "tab-1", node_id: "node-1", x: 10, y: 20 }, browserSessionId: "s", browserTurnId: "t" })
+  assert.equal(calls.at(-1).method, "dom:scroll")
+  assert.deepEqual(
+    { nodeId: calls.at(-1).params.nodeId, scrollX: calls.at(-1).params.scrollX, scrollY: calls.at(-1).params.scrollY },
+    { nodeId: "node-1", scrollX: 10, scrollY: 20 },
+  )
 
   await broker.dispatch({ method: "webmcp_list_tools", params: { tabId: "tab-1" }, browserSessionId: "s", browserTurnId: "t" })
   assert.equal(calls.at(-1).method, "webmcp:list")

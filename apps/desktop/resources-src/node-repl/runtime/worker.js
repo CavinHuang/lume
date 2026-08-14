@@ -11,7 +11,6 @@ import { fileURLToPath, pathToFileURL, URL, URLSearchParams } from "node:url";
 import vm from "node:vm";
 import { parentPort, workerData } from "node:worker_threads";
 import { buildCellSource } from "./cell-source.js";
-import { createLumeBrowserRuntime } from "./lume-browser-runtime.js";
 if (!parentPort)
     throw new Error("CUA runtime worker requires a parent port");
 const parent = parentPort;
@@ -24,6 +23,7 @@ const permissions = new Set(options.manifest.permissions ?? []);
 const fullEnv = freezeEnv(options.env);
 const untrustedEnv = freezeEnv(pickEnvironment(options.env, options.manifest.allowedEnv ?? []));
 const trustedCodePaths = (options.trustedCodePaths ?? []).map((entry) => canonicalPath(path.resolve(entry)));
+const browserClientPath = trustedCodePaths.find((entry) => path.basename(entry) === "browser-client.mjs");
 const trustedSourceHashes = new Set((options.trustedSourceHashes ?? []).map(normalizeHash));
 const execStorage = new AsyncLocalStorage();
 const spanStorage = new AsyncLocalStorage();
@@ -665,10 +665,6 @@ const rootNodeRepl = options.exposePrivilegedToRoot ? trustedNodeRepl : baseNode
 defineLockedGlobal(untrustedContext, "nodeRepl", rootNodeRepl);
 defineLockedGlobal(untrustedContext, "tmpDir", os.tmpdir());
 defineLockedGlobal(trustedContext, "nodeRepl", trustedNodeRepl);
-// Lume 浏览器高层 API（镜像 Codex browser-client）：agent 调 setupBrowserRuntime()
-// 拿到 agent.browsers，封装 nodeRepl.browser.request 成链式 API，screenshot 自动 emitImage。
-const lumeBrowserRuntime = createLumeBrowserRuntime(trustedNodeRepl);
-defineLockedGlobal(trustedContext, "setupBrowserRuntime", lumeBrowserRuntime.setupBrowserRuntime);
 defineLockedGlobal(trustedContext, "tmpDir", os.tmpdir());
 class ModuleLoader {
     fileModules = new Map();
@@ -918,6 +914,15 @@ function isWithinBaseNodeModules(base, resolvedPath) {
     return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 const moduleLoader = new ModuleLoader();
+defineLockedGlobal(untrustedContext, "setupBrowserRuntime", async () => {
+    if (!browserClientPath)
+        throw new Error("Lume Browser trusted client is unavailable");
+    const browserClient = await moduleLoader.dynamicImport(browserClientPath, path.join(cwd, ".node_repl_browser_bootstrap.mjs"), false);
+    if (typeof browserClient.setupLumeBrowserRuntime !== "function")
+        throw new Error("Lume Browser trusted client is invalid");
+    const runtime = await browserClient.setupLumeBrowserRuntime({ globals: untrustedContext });
+    return runtime.agent;
+});
 async function isTrustedFile(filePath) {
     if (options.trustAllImportedCode)
         return true;

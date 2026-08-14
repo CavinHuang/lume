@@ -9,6 +9,7 @@ import {
   DEFAULT_BROWSER_SETTINGS,
   type BrowserActionRequest,
   type BrowserAuthFieldRequest,
+  type BrowserAuthOption,
   type BrowserAuthRequest,
   type BrowserAuthResult,
   type BrowserErrorCode,
@@ -260,7 +261,7 @@ export class BrowserRuntime {
         const data = Buffer.from(await this.screenshot(tab as BrowserTab, { fullPage: false }), 'base64')
         const image = nativeImage.createFromBuffer(data)
         const size = image.getSize()
-        return { data, width: size.width, height: size.height, deviceScaleFactor: tab.zoomFactor ?? 1 }
+        return { data: image.toPNG(), width: size.width, height: size.height, deviceScaleFactor: tab.zoomFactor ?? 1 }
       },
     })
     void this.restoreBrowserExtensions()
@@ -1773,12 +1774,23 @@ export class BrowserRuntime {
     if (option?.locator) {
       try {
         tab.agentDispatching = true
+        let dispatched = false
         try {
           const target = await this.resolveTarget(tab, { locator: combineAuthLocators(option.frameLocator, option.locator) })
+          if (auth.settled) return
+          if (tab.generation !== auth.generation || tab.inputSequence !== auth.inputSequence) {
+            this.settleBrowserAuth(auth, { status: "page_changed" })
+            return
+          }
+          if (safeOrigin(tab.url) !== auth.origin) {
+            this.settleBrowserAuth(auth, { status: "origin_changed" })
+            return
+          }
           await this.dispatchMouse(tab, "click", target)
+          dispatched = true
         } finally {
           tab.agentDispatching = false
-          tab.inputSequence += 1
+          if (dispatched) tab.inputSequence += 1
         }
         this.settleBrowserAuth(auth, { status: "submitted", selected_option: selectedOption })
       } catch {
@@ -2530,6 +2542,7 @@ export class BrowserRuntime {
         const message = error instanceof Error ? error.message : ""
         if (message.includes("strict_locator_violation")) throw browserError("strict_locator_violation")
         if (message.includes("tab_not_found")) throw browserError("tab_not_found")
+        if (message.includes("action_denied")) throw browserError("action_denied")
         if (Date.now() >= deadline) throw browserError("actionability_failed")
         await delay(50)
       }
@@ -2545,20 +2558,23 @@ export class BrowserRuntime {
     argument: string | undefined,
     timeoutMs: number,
   ): Promise<void> {
+    if (!isBrowserLocator(params.locator)) throw browserError("invalid_browser_request")
+    const locator = params.locator
     if (timeoutMs <= 0) {
-      await this.executeFrameLocatorQuery(tab, params.locator, operation, argument)
+      await this.executeFrameLocatorQuery(tab, locator, operation, argument)
       return
     }
     const deadline = Date.now() + timeoutMs
     while (true) {
       if (tab.generation !== generation) throw browserError("stale_target")
       try {
-        await this.executeFrameLocatorQuery(tab, params.locator, operation, argument)
+        await this.executeFrameLocatorQuery(tab, locator, operation, argument)
         return
       } catch (error) {
         const message = error instanceof Error ? error.message : ""
         if (message.includes("strict_locator_violation")) throw browserError("strict_locator_violation")
         if (message.includes("tab_not_found")) throw browserError("tab_not_found")
+        if (message.includes("action_denied")) throw browserError("action_denied")
         if (Date.now() >= deadline) throw browserError("actionability_failed")
         await delay(50)
       }
@@ -4123,25 +4139,35 @@ function keyedParameterHash(method: string, params: Record<string, unknown>): st
   return createHmac("sha256", JOURNAL_HMAC_KEY).update(`${method}:${JSON.stringify(redactParams(params))}`).digest("hex").slice(0, 32)
 }
 const JOURNAL_HMAC_KEY = randomBytes(32)
+const DEBUGGER_OPERATIONS = new WeakMap<Electron.WebContents, Promise<unknown>>()
 function redactParams(params: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(params).map(([key, value]) => [key, typeof value === "string" ? "[redacted]" : typeof value === "object" ? "[object]" : value]))
 }
 
 async function withDebugger<T>(contents: Electron.WebContents, work: (debuggerRef: Electron.Debugger) => Promise<T>): Promise<T> {
-  const debuggerRef = contents.debugger
-  const attached = debuggerRef.isAttached()
-  if (!attached) debuggerRef.attach("1.3")
+  const previous = DEBUGGER_OPERATIONS.get(contents) ?? Promise.resolve()
+  const operation = previous.catch(() => undefined).then(async () => {
+    const debuggerRef = contents.debugger
+    const attached = debuggerRef.isAttached()
+    if (!attached) debuggerRef.attach("1.3")
+    try {
+      return await work(debuggerRef)
+    } catch (error) {
+      // 必须带 .code —— dispatch catch 的 stableBrowserErrorCode 只认 code，裸 Error 会全部塌缩成 browser_internal_error
+      const message = error instanceof Error ? error.message : String(error ?? "")
+      if (/Target closed|Session.*not attached|No target|target.*not found/i.test(message)) throw Object.assign(new Error(`tab_not_found: ${message}`), { code: "tab_not_found" })
+      if (/Cannot find context|Execution context was destroyed|context.*destroyed|context.*not found/i.test(message)) throw Object.assign(new Error(`stale_target: ${message}`), { code: "stale_target" })
+      throw error
+    } finally {
+      if (!attached && debuggerRef.isAttached()) debuggerRef.detach()
+    }
+  })
+  DEBUGGER_OPERATIONS.set(contents, operation)
   try {
-    return await work(debuggerRef)
-  } catch (error) {
-    // 归类 CDP 错误：让 agent 区分 transient(navigation 期间 context 暂失，可重试) vs fatal(tab 没了，需重建)
-    const message = error instanceof Error ? error.message : String(error ?? "")
-    // 归类 CDP 错误：让 agent 区分 transient(navigation 期间 context 暂失，可重试) vs fatal(tab 没了，需重建)。
-    // 必须带 .code —— dispatch catch 的 stableBrowserErrorCode 只认 code，裸 Error 会全部塌缩成 browser_internal_error
-    if (/Target closed|Session.*not attached|No target|target.*not found/i.test(message)) throw Object.assign(new Error(`tab_not_found: ${message}`), { code: "tab_not_found" })
-    if (/Cannot find context|Execution context was destroyed|context.*destroyed|context.*not found/i.test(message)) throw Object.assign(new Error(`stale_target: ${message}`), { code: "stale_target" })
-    throw error
-  } finally { if (!attached && debuggerRef.isAttached()) debuggerRef.detach() }
+    return await operation
+  } finally {
+    if (DEBUGGER_OPERATIONS.get(contents) === operation) DEBUGGER_OPERATIONS.delete(contents)
+  }
 }
 
 class BrowserOperationJournal {
@@ -4226,19 +4252,23 @@ function sanitizeBrowserAuthRequest(value: Record<string, unknown>): BrowserAuth
     }]
   })
   if (!tabId || !Number.isSafeInteger(generation) || generation < 1 || !origin || !expiresAt) throw browserError("invalid_browser_request")
-  const options = (Array.isArray(value.options) ? value.options.slice(0, 10) : []).flatMap((raw) => {
+  const optionIds = new Set<string>()
+  const options = (Array.isArray(value.options) ? value.options.slice(0, 10) : []).flatMap((raw): BrowserAuthOption[] => {
     if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.label !== "string" || !Array.isArray(raw.fields)) return []
     const optionFields = raw.fields.filter((id): id is string => typeof id === "string" && ids.has(id))
     // method-only 选项：无字段但带 locator（用户选登录方式 → 后端点按钮），对齐 Codex BrowserAuthOption.selector
-    const hasLocator = isBrowserLocator(raw.locator)
-    if (!optionFields.length && !hasLocator) return []
-    if (hasLocator) {
-      validateBrowserLocator(raw.locator)
+    const locator = isBrowserLocator(raw.locator) ? raw.locator : undefined
+    if (!optionFields.length && !locator) return []
+    const id = raw.id.slice(0, 100)
+    if (optionIds.has(id)) throw browserError("invalid_browser_request")
+    optionIds.add(id)
+    if (locator) {
+      validateBrowserLocator(locator)
       const frameLocator = isBrowserLocator(raw.frameLocator) ? raw.frameLocator : undefined
       if (frameLocator) validateBrowserLocator(frameLocator)
-      return [{ id: raw.id.slice(0, 100), label: raw.label.slice(0, 200), fields: [...new Set(optionFields)], locator: raw.locator, ...(frameLocator ? { frameLocator } : {}) }]
+      return [{ id, label: raw.label.slice(0, 200), fields: [...new Set(optionFields)], locator, ...(frameLocator ? { frameLocator } : {}) }]
     }
-    return [{ id: raw.id.slice(0, 100), label: raw.label.slice(0, 200), fields: [...new Set(optionFields)] }]
+    return [{ id, label: raw.label.slice(0, 200), fields: [...new Set(optionFields)] }]
   })
   if (!fields.length && !options.some((item) => item.locator)) throw browserError("invalid_browser_request")
   let submit: BrowserAuthRequest["submit"]

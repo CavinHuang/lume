@@ -1,11 +1,13 @@
 import { appendLocator, locatorAst } from "../shared/locator.js";
 import { disabledMembersFor } from "./api-contract.js";
-import { chooseBackendForUrl, chooseDefaultBackend, } from "./backend-selection.js";
+import { chooseBackendForUrl, chooseDefaultBackend, isLocalBrowserUrl, } from "./backend-selection.js";
 import { CapabilityCollection, createCapabilityDefinitions } from "./capabilities.js";
 import { BrowserDocumentation, formatApiReference, } from "./documentation.js";
 import { createRuntimeView } from "./runtime-view.js";
 const CAPABILITY_DEFINITIONS = createCapabilityDefinitions();
 const EMPTY_DOCUMENT_READER = async () => "";
+const CLIENT_PROTOCOL_MIN_SUPPORTED = 5;
+const CLIENT_PROTOCOL_MAX_SUPPORTED = 8;
 const DEFAULT_CONTEXT = {
     browserSessionId: "browser-runtime",
     browserTurnId: "browser-runtime",
@@ -60,9 +62,7 @@ export class BrowserRegistry {
     async getForUrl(value) {
         const descriptors = await this.ensureDescriptors();
         const selectable = asSelectable(descriptors);
-        // URL choice is always IAB by default. External Chrome is selected only
-        // through the explicit get("extension")/backend path.
-        return this.createBrowser(chooseBackendForUrl(selectable, value, "iab"));
+        return this.createBrowser(chooseBackendForUrl(selectable, value, isLocalBrowserUrl(value) ? "iab" : "extension"));
     }
     async list() {
         return await this.refreshDescriptors();
@@ -109,7 +109,7 @@ function normalizePingDescriptor(value, requestedId) {
     const type = value.type ?? value.clientType ?? requestedType(requestedId);
     const minSupported = value.minSupported ?? value.protocolVersion ?? 0;
     const maxSupported = value.maxSupported ?? value.protocolVersion ?? 0;
-    if (maxSupported < 5 || minSupported > 5) {
+    if (maxSupported < CLIENT_PROTOCOL_MIN_SUPPORTED || minSupported > CLIENT_PROTOCOL_MAX_SUPPORTED) {
         const error = new Error("incompatible_protocol");
         error.code = "incompatible_protocol";
         throw error;
@@ -262,6 +262,7 @@ export class Tabs {
         return r.tabId ? new Tab(this.t, this.ctx, r.tabId, this.browser) : undefined;
     }
     list() { return this.t.send("list_tabs", { context: this.ctx }); }
+    content(options) { return this.t.send("tabs_content", { context: this.ctx, options }); }
     sessionTabs() { return this.t.send("get_session_tabs", { context: this.ctx }); }
     finalize(options = {}) { return this.t.send("finalize_tabs", { context: this.ctx, keep: options.keep ?? [] }); }
     release(tabIds) { return this.t.send("release_tabs", { context: this.ctx, tabIds }); }

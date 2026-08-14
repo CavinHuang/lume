@@ -67,6 +67,7 @@ function unwrapBrowserResult(method, result) {
       lastVisitTime: entry?.lastVisitTime ?? entry?.dateVisited,
     }));
   }
+  if (method === "browser_visibility_get") return result?.visible;
   if (method === "playwright_locator_count") return result?.count;
   if (method === "playwright_locator_all_text_contents" || method === "playwright_locator_read_all") return result?.values;
   if ([
@@ -81,8 +82,21 @@ function unwrapBrowserResult(method, result) {
   return result;
 }
 
+async function emitBrowserImage(nodeRepl, method, result) {
+  if (method !== "tab_screenshot" && method !== "playwright_element_screenshot") return;
+  const data = typeof result === "string" ? result : result?.dataBase64 ?? result?.data;
+  if (typeof data !== "string" || data.length === 0) return;
+  try {
+    const bytes = new Uint8Array(Buffer.from(data, "base64"));
+    await nodeRepl.emitImage(bytes, data.startsWith("/9j/") ? "image/jpeg" : "image/png");
+  } catch {
+    // Returning screenshot bytes remains useful even when image emission is unavailable.
+  }
+}
+
 export async function setupLumeBrowserRuntime({ globals = globalThis } = {}) {
-  const browser = globalThis.nodeRepl?.browser;
+  const nodeRepl = globalThis.nodeRepl;
+  const browser = nodeRepl?.browser;
   if (typeof browser?.request !== "function") {
     throw new Error("Lume Browser trusted bridge is unavailable");
   }
@@ -92,7 +106,9 @@ export async function setupLumeBrowserRuntime({ globals = globalThis } = {}) {
     try {
       const requestParams = adapter.prepareRequest(method, params ?? {});
       const result = await browser.request(method, requestParams);
-      return { jsonrpc: "2.0", id, result: adapter.unwrapResult(method, result, requestParams) };
+      const adapted = adapter.unwrapResult(method, result, requestParams);
+      await emitBrowserImage(nodeRepl, method, adapted);
+      return { jsonrpc: "2.0", id, result: adapted };
     } catch (error) {
       return { jsonrpc: "2.0", id, error: browserResponseError(error) };
     }

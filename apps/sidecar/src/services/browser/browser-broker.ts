@@ -480,9 +480,9 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "tab_screenshot": return { method: "screenshot", params: { ...params, ...options, fullPage: options.fullPage === true || params.fullPage === true } }
     case "tab_content": return { method: "content", params: { ...params, format: input.content_type === "html" ? "html" : "text" } }
     case "tab_content_export": return { method: "content:export", params }
-    case "tab_content_export_gsuite": return { method: "content:exportGsuite", params: { ...params, format: input.format } }
+    case "tab_content_export_gsuite": return { method: "content:exportGsuite", params: { ...params, format: input.format ?? input.type ?? options.format } }
     case "tab_browser_auth_request": return { method: "browserAuth:request", params }
-    case "tabs_content": return { method: "tabs:content", params: { ...params, contentType: input.content_type, timeoutMs: input.timeout_ms } }
+    case "tabs_content": return { method: "tabs:content", params: { ...params, ...options, contentType: input.content_type ?? options.contentType, timeoutMs: input.timeout_ms ?? options.timeoutMs } }
     case "tab_clipboard_read": return { method: "clipboard:read", params }
     case "tab_clipboard_read_text": return { method: "clipboard:readText", params }
     case "tab_clipboard_write": return { method: "clipboard:write", params }
@@ -505,7 +505,12 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "tab_page_assets_list": return { method: "pageAssets:list", params }
     case "tab_page_assets_bundle": return {
       method: "pageAssets:bundle",
-      params: { ...params, inventoryId: input.inventory_id, assetIds: input.asset_ids },
+      params: {
+        ...params,
+        ...options,
+        inventoryId: input.inventory_id ?? input.inventoryId ?? options.inventoryId,
+        assetIds: input.asset_ids ?? input.assetIds ?? options.assetIds,
+      },
     }
     case "webmcp_list_tools": return { method: "webmcp:list", params }
     case "webmcp_invoke_tool": return {
@@ -516,7 +521,7 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "dom_cua_get_visible_dom": return { method: "dom:visible", params }
     case "dom_cua_click": return { method: "dom:click", params: { ...params, nodeId: input.node_id } }
     case "dom_cua_double_click": return { method: "dom:doubleClick", params: { ...params, nodeId: input.node_id } }
-    case "dom_cua_scroll": return { method: "dom:scroll", params: { ...params, nodeId: input.node_id, scrollX: input.scroll_x, scrollY: input.scroll_y } }
+    case "dom_cua_scroll": return { method: "dom:scroll", params: { ...params, nodeId: input.node_id, scrollX: input.scroll_x ?? input.x, scrollY: input.scroll_y ?? input.y } }
     case "dom_cua_type": return { method: "dom:type", params }
     case "dom_cua_keypress": return { method: "dom:keypress", params }
     case "dom_cua_download_media": return { method: "downloadMedia", params: { ...params, nodeId: input.node_id } }
