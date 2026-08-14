@@ -1388,6 +1388,17 @@ export interface AgentResumeRunResult {
   error?: string
 }
 
+export interface AgentGetPendingResumeInput {
+  threadId: string
+}
+
+export interface AgentGetPendingResumeResult {
+  threadId: string
+  hasPendingResume: boolean
+  runId?: string
+  reason?: string
+}
+
 export type AgentTraceRedactionLevel = 'safe_summary' | 'diagnostic'
 
 export type AgentRunTraceStatus = 'running' | 'completed' | 'failed' | 'cancelled'

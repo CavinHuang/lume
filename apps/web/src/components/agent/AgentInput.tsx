@@ -85,6 +85,7 @@ import {
 } from './agent-input-state'
 import { AgentMessageQueueList } from './AgentMessageQueueList'
 import { SuggestionBanner } from './SuggestionBanner'
+import { PendingResumeBanner } from './PendingResumeBanner'
 import {
   applyOrderByIds,
   createEmptyAgentMessageQueueSnapshot,
@@ -1905,6 +1906,7 @@ export function AgentInput({
   return (
     <div className="px-3 pb-4 pt-2">
       <SuggestionBanner threadId={threadId} workspaceSlug={configWorkspaceSlug} />
+      <PendingResumeBanner threadId={threadId} />
       <div className="mx-auto w-full max-w-[980px] px-4">
         <div>
           <LumeComposer
