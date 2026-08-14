@@ -2253,7 +2253,8 @@ export async function createRuntimeCoreSession(
   ].filter((directory): directory is string => Boolean(directory))
     .map((directory) => resolve(directory))
     .filter((directory) => directory !== resolve(input.cwd)))];
-  const toolContinuation = resolvePersistedToolContinuation(input.messageMetadata);
+  const persistedContinuation = resolvePersistedToolContinuation(input.messageMetadata);
+  const toolContinuations = persistedContinuation ? [persistedContinuation] : undefined;
   const runtimeToolConfig = {
     ...(input.toolConfig ?? {}),
     ...(Object.keys(lspConfig).length > 0 ? { lsp: lspConfig } : {}),
@@ -2316,7 +2317,7 @@ export async function createRuntimeCoreSession(
     promptCache,
     tools: toolset.tools,
     sessionId: input.lumeSessionId,
-    ...(toolContinuation ? { toolContinuation } : {}),
+    ...(toolContinuations ? { toolContinuations } : {}),
     ...(hasRuntimeCoreSessionTranscript(input.lumeSessionId, input.agentDir)
       ? { resume: input.lumeSessionId }
       : {}),

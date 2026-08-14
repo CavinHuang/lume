@@ -882,7 +882,7 @@ export class QueryEngine {
     for (const event of sessionStartHooks.events) yield event
 
     // Hook: UserPromptSubmit
-    const userHookResults = this.config.toolContinuation
+    const userHookResults = this.config.toolContinuations?.length
       ? { events: [], outputs: [] }
       : await this.executeHooks('UserPromptSubmit', { toolInput: prompt })
     for (const event of userHookResults.events) yield event
@@ -974,49 +974,62 @@ export class QueryEngine {
       this.messages.push({ role: 'runtime', content: this.config.runtimeContext.trim() })
     }
 
-    // Exact cold-start continuation resumes at the persisted tool boundary,
-    // so it must not add a second model-facing user prompt.
+    // Exact cold-start continuations resume at the persisted tool boundary,
+    // so they must not add a second model-facing user prompt.
     let protectedMessageIndex: number | undefined
-    if (!this.config.toolContinuation) {
+    if (!this.config.toolContinuations?.length) {
       protectedMessageIndex = this.messages.length
       this.messages.push({ role: 'user', content: prompt as any })
     }
 
-    if (this.config.toolContinuation) {
-      const persisted = this.config.toolContinuation
-      const block: ToolUseBlock = {
+    if (this.config.toolContinuations?.length) {
+      const continuations = this.config.toolContinuations
+      const blocks: ToolUseBlock[] = continuations.map((persisted) => ({
         type: 'tool_use',
         id: persisted.toolCall.id,
         name: persisted.toolCall.name,
         input: persisted.toolCall.input,
-      }
-      if (!this.messages.some((message) => (
+      }))
+      // Idempotent rebuild: only push the assistant blocks that are not already present.
+      const missing = blocks.filter((block) => !this.messages.some((message) => (
         message.role === 'assistant'
         && Array.isArray(message.content)
         && message.content.some((content) => content.type === 'tool_use' && content.id === block.id)
-      ))) {
-        this.messages.push({ role: 'assistant', content: [block] })
+      )))
+      if (missing.length > 0) {
+        this.messages.push({ role: 'assistant', content: missing })
       }
-      const execution = persisted.toolResult
-        ? { results: [{ ...persisted.toolResult, tool_use_id: block.id, tool_name: block.name }], events: [], toolsUsed: [block.name] }
-        : await this.executeTools([block])
-      for (const event of execution.events) yield event
-      for (const result of execution.results) {
-        yield {
-          type: 'tool_result',
-          result: {
-            tool_use_id: result.tool_use_id,
-            tool_name: result.tool_name || block.name,
-            output: formatToolResultOutput(result.content),
-            content: result.content,
-            is_error: result.is_error === true,
-            ...(result._meta ? { _meta: result._meta } : {}),
-          },
+      const allResults: Array<{ result: ToolResult & { tool_name?: string }; toolName: string }> = []
+      for (const persisted of continuations) {
+        const block: ToolUseBlock = {
+          type: 'tool_use',
+          id: persisted.toolCall.id,
+          name: persisted.toolCall.name,
+          input: persisted.toolCall.input,
+        }
+        const execution = persisted.toolResult
+          ? { results: [{ ...persisted.toolResult, tool_use_id: block.id, tool_name: block.name }], events: [], toolsUsed: [block.name] }
+          : await this.executeTools([block])
+        for (const event of execution.events) yield event
+        for (const result of execution.results) {
+          const toolName = result.tool_name || block.name
+          allResults.push({ result, toolName })
+          yield {
+            type: 'tool_result',
+            result: {
+              tool_use_id: result.tool_use_id,
+              tool_name: toolName,
+              output: formatToolResultOutput(result.content),
+              content: result.content,
+              is_error: result.is_error === true,
+              ...(result._meta ? { _meta: result._meta } : {}),
+            },
+          }
         }
       }
       this.messages.push({
         role: 'user',
-        content: execution.results.map((result) => ({
+        content: allResults.map(({ result }) => ({
           type: 'tool_result' as const,
           tool_use_id: result.tool_use_id,
           content: result.content,

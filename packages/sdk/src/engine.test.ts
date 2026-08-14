@@ -146,9 +146,9 @@ describe("QueryEngine turn limits", () => {
         approvals += 1
         return { behavior: "allow" }
       },
-      toolContinuation: {
-        toolCall: { id: "tool-resume-1", name: "Read", input: { file_path: "README.md" } },
-      },
+      toolContinuations: [
+        { toolCall: { id: "tool-resume-1", name: "Read", input: { file_path: "README.md" } } },
+      ],
     })
 
     await collectEvents(engine, "ignored continuation prompt")
@@ -192,14 +192,12 @@ describe("QueryEngine turn limits", () => {
       maxTokens: 256,
       includePartialMessages: false,
       canUseTool: async () => ({ behavior: "allow" }),
-      toolContinuation: {
-        toolCall: { id: "tool-resume-2", name: "Bash", input: { command: "bun test" } },
-        toolResult: {
-          type: "tool_result",
-          tool_use_id: "tool-resume-2",
-          content: "2 pass",
+      toolContinuations: [
+        {
+          toolCall: { id: "tool-resume-2", name: "Bash", input: { command: "bun test" } },
+          toolResult: { type: "tool_result", tool_use_id: "tool-resume-2", content: "2 pass" },
         },
-      },
+      ],
     })
 
     await collectEvents(engine)
@@ -215,6 +213,48 @@ describe("QueryEngine turn limits", () => {
         })],
       }),
     ]))
+  })
+
+  test("mixed continuations replay some tools and inject others", async () => {
+    let calls = 0
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "mixed resumed" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          calls += 1
+          return { type: "tool_result", tool_use_id: "", content: "replayed" }
+        },
+      }],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      toolContinuations: [
+        { toolCall: { id: "t-inject", name: "Read", input: { file_path: "x" } },
+          toolResult: { type: "tool_result", tool_use_id: "t-inject", content: "injected" } },
+        { toolCall: { id: "t-replay", name: "Read", input: { file_path: "y" } } },
+      ],
+    })
+
+    await collectEvents(engine)
+
+    expect(calls).toBe(1) // only t-replay is replayed
+    const request = provider.requests[0]?.messages as any[]
+    const toolResults = request.flatMap((m) => Array.isArray(m.content) ? m.content : [])
+      .filter((c: any) => c.type === "tool_result")
+    const ids = toolResults.map((c: any) => c.tool_use_id).sort()
+    expect(ids).toEqual(["t-inject", "t-replay"])
   })
 
   test("forwards exactly terminal task notifications emitted after a tool call returns", async () => {
