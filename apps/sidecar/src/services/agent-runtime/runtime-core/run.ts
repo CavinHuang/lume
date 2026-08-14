@@ -147,6 +147,7 @@ import {
   readLatestTodoState
 } from "../runner/todo-state";
 import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
+import { persistAbortContinuation } from "../interruption/abort-continuation";
 import {
   collectAppendContextEffects,
   type LumeWorkflowHookExecutionResult
@@ -1819,6 +1820,20 @@ export async function createRuntimeCoreSession(
         });
       }).catch((error) => {
         log.warn("Failed to persist background continuation result", {
+          sessionId: input.lumeSessionId,
+          runId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }
+    if (input.runId && event.type === "system" && event.subtype === "run_aborted") {
+      void persistAbortContinuation({
+        sessionDir,
+        runId: input.runId,
+        threadId: input.lumeSessionId,
+        pendingToolCalls: event.pending_tool_calls
+      }).catch((error) => {
+        log.warn("Failed to persist abort continuation", {
           sessionId: input.lumeSessionId,
           runId,
           error: error instanceof Error ? error.message : String(error)

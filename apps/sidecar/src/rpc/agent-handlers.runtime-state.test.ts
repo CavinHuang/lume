@@ -347,4 +347,26 @@ describe("agent-handlers runtime state", () => {
     expect(sendAgentMessageMock).not.toHaveBeenCalled();
     expect((await createFileBackedRunContinuationStore(sessionDir).get(runId))?.status).toBe("ready_to_resume");
   });
+
+  test("run_aborted event persists an interrupted continuation checkpoint", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-abort-continuation-"));
+    const threadId = "thread-runtime-abort";
+    const sessionDir = getRuntimeCoreSessionDir(threadId);
+
+    const { persistAbortContinuation } = await import("../services/agent-runtime/interruption/abort-continuation");
+    await persistAbortContinuation({
+      sessionDir,
+      runId: "run-1",
+      threadId,
+      pendingToolCalls: [{ id: "t1", name: "Bash", input: { command: "ls" } }]
+    });
+
+    const state = await createFileBackedRunContinuationStore(sessionDir).get("run-1");
+    expect(state?.status).toBe("interrupted");
+    expect(state?.version).toBe(2);
+    expect(state?.checkpoint.step).toBe("waiting_for_tool_result");
+    expect(state?.checkpoint.toolCall?.name).toBe("Bash");
+    expect(state?.checkpoint.toolKind).toBe("execute");
+    expect(typeof state?.checkpoint.toolCall?.inputHash).toBe("string");
+  });
 });
