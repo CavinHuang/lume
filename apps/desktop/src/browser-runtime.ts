@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto"
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, session, shell, type IpcMainEvent } from "electron"
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme, session, shell, type IpcMainEvent } from "electron"
 import {
   BROWSER_PROTOCOL_MAX_SUPPORTED,
   BROWSER_PROTOCOL_MIN_SUPPORTED,
@@ -251,6 +251,7 @@ export class BrowserRuntime {
     this.extensions = new BrowserExtensionStore(options.configDir)
     this.credentials = new BrowserCredentialVault(options.configDir, options.credentialStorage)
     this.workspaces = new BrowserWorkspaceStore(options.configDir)
+    nativeTheme.on("updated", this.onThemeUpdated)
     this.annotations = new BrowserAnnotationManager({
       configDir: options.configDir,
       emit: (method, params) => this.options.emit({ method, params }),
@@ -385,6 +386,7 @@ export class BrowserRuntime {
       const targetUrl = tab.pendingUrl || tab.url
       tab.pendingUrl = undefined
       if (targetUrl) void contents.loadURL(targetUrl).catch(() => undefined)
+      this.syncTabColorScheme(tab)
       if (tab.scrollPosition) {
         contents.once("did-finish-load", () => {
           const scroll = tab.scrollPosition
@@ -396,6 +398,21 @@ export class BrowserRuntime {
     })
     this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
     return true
+  }
+
+  // 页面 prefers-color-scheme 跟随应用主题（对齐 Codex setEmulatedMedia 同步）；
+  // runtime 为应用级单例，nativeTheme 监听随进程生命周期，无需拆卸
+  private readonly onThemeUpdated = () => {
+    for (const tab of this.tabs.values()) {
+      if (tab.webContents && !tab.webContents.isDestroyed()) this.syncTabColorScheme(tab)
+    }
+  }
+
+  private syncTabColorScheme(tab: BrowserTab): void {
+    const scheme = nativeTheme.shouldUseDarkColors ? "dark" : "light"
+    void withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-color-scheme", value: scheme }],
+    })).catch(() => undefined)
   }
 
   private markGuestGone(tab: BrowserTab, contents: Electron.WebContents, details: { reason?: string; exitCode?: number } = {}): void {
@@ -1741,6 +1758,7 @@ export class BrowserRuntime {
   private async handleBrowserAuthMessage(auth: BrowserAuthSession, payload: unknown): Promise<void> {
     if (!isRecord(payload) || auth.settled) return
     if (payload.cancel === true) { this.settleBrowserAuth(auth, { status: "cancelled" }); return }
+    if (payload.decline === true) { this.settleBrowserAuth(auth, { status: "declined" }); return }
     if (!isRecord(payload.values)) return
     const tab = this.tabs.get(auth.tabId)
     if (!tab || tab.generation !== auth.generation || tab.inputSequence !== auth.inputSequence) { this.settleBrowserAuth(auth, { status: "page_changed" }); return }
@@ -1748,6 +1766,23 @@ export class BrowserRuntime {
     const selectedOption = typeof payload.selectedOption === "string" ? payload.selectedOption : undefined
     const option = auth.request.options?.find((item) => item.id === selectedOption)
     if (auth.request.options?.length && !option) return
+    // method-only 选项：用户选择登录方式，主进程点击对应按钮，不填写任何字段
+    if (option?.locator) {
+      try {
+        tab.agentDispatching = true
+        try {
+          const target = await this.resolveTarget(tab, { locator: combineAuthLocators(option.frameLocator, option.locator) })
+          await this.dispatchMouse(tab, "click", target)
+        } finally {
+          tab.agentDispatching = false
+          tab.inputSequence += 1
+        }
+        this.settleBrowserAuth(auth, { status: "submitted", selected_option: selectedOption })
+      } catch {
+        this.settleBrowserAuth(auth, { status: "submission_failed" })
+      }
+      return
+    }
     const enabledFieldIds = new Set(option?.fields ?? auth.request.fields.map((field) => field.id))
     const values = new Map<string, string>()
     for (const field of auth.request.fields) {
@@ -4179,13 +4214,22 @@ function sanitizeBrowserAuthRequest(value: Record<string, unknown>): BrowserAuth
       ...(frameLocator ? { frameLocator } : {}),
     }]
   })
-  if (!tabId || !Number.isSafeInteger(generation) || generation < 1 || !origin || !expiresAt || !fields.length) throw browserError("invalid_browser_request")
+  if (!tabId || !Number.isSafeInteger(generation) || generation < 1 || !origin || !expiresAt) throw browserError("invalid_browser_request")
   const options = (Array.isArray(value.options) ? value.options.slice(0, 10) : []).flatMap((raw) => {
     if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.label !== "string" || !Array.isArray(raw.fields)) return []
     const optionFields = raw.fields.filter((id): id is string => typeof id === "string" && ids.has(id))
-    if (!optionFields.length) return []
+    // method-only 选项：无字段但带 locator（用户选登录方式 → 后端点按钮），对齐 Codex BrowserAuthOption.selector
+    const hasLocator = isBrowserLocator(raw.locator)
+    if (!optionFields.length && !hasLocator) return []
+    if (hasLocator) {
+      validateBrowserLocator(raw.locator)
+      const frameLocator = isBrowserLocator(raw.frameLocator) ? raw.frameLocator : undefined
+      if (frameLocator) validateBrowserLocator(frameLocator)
+      return [{ id: raw.id.slice(0, 100), label: raw.label.slice(0, 200), fields: [...new Set(optionFields)], locator: raw.locator, ...(frameLocator ? { frameLocator } : {}) }]
+    }
     return [{ id: raw.id.slice(0, 100), label: raw.label.slice(0, 200), fields: [...new Set(optionFields)] }]
   })
+  if (!fields.length && !options.some((item) => item.locator)) throw browserError("invalid_browser_request")
   let submit: BrowserAuthRequest["submit"]
   if (isRecord(value.submit) && value.submit.kind === "click" && isBrowserLocator(value.submit.locator)) {
     validateBrowserLocator(value.submit.locator)
@@ -4214,10 +4258,10 @@ function browserAuthHtml(request: BrowserAuthRequest): string {
   const safe = JSON.stringify({
     origin: request.origin,
     fields: request.fields.map(({ id, label, inputType, autocomplete, required }) => ({ id, label, inputType, autocomplete, required })),
-    options: request.options ?? [],
+    options: (request.options ?? []).map(({ id, label, fields }) => ({ id, label, fields })),
   }).replaceAll("<", "\\u003c")
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
-<style>*{box-sizing:border-box}body{margin:0;background:#151517;color:#f4f4f5;font:13px system-ui,-apple-system,sans-serif}.wrap{padding:22px}.eyebrow{color:#a78bfa;font-size:11px;font-weight:600}.title{font-size:18px;font-weight:650;margin-top:5px}.origin{color:#a1a1aa;font-size:11px;margin:5px 0 18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.field{display:block;margin:11px 0}.label{display:flex;gap:4px;margin-bottom:5px;color:#d4d4d8;font-size:11px}.required{color:#fb7185}input,select{width:100%;height:36px;border:1px solid #3f3f46;border-radius:8px;background:#202024;color:#fafafa;padding:0 10px;outline:none}input:focus,select:focus{border-color:#8b5cf6;box-shadow:0 0 0 2px rgba(139,92,246,.2)}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}button{height:34px;border:0;border-radius:8px;padding:0 14px;font:inherit;cursor:pointer}.cancel{background:#29292e;color:#e4e4e7}.submit{background:#7c3aed;color:white;font-weight:600}.note{margin-top:12px;color:#71717a;font-size:10px;line-height:1.5}</style></head><body><form class="wrap" id="form"><div class="eyebrow">Lume Browser Auth</div><div class="title">在当前页面安全填写</div><div class="origin" id="origin"></div><div id="option"></div><div id="fields"></div><div class="note">凭证只会发送到主进程并直接填写到此标签页，不会进入聊天、Sidecar、日志或审计详情。</div><div class="actions"><button type="button" class="cancel" id="cancel">取消</button><button class="submit">填写并继续</button></div></form><script>const state=${safe};document.getElementById('origin').textContent=state.origin;const fields=document.getElementById('fields');const controls=new Map();for(const field of state.fields){const row=document.createElement('label');row.className='field';row.dataset.fieldId=field.id;const label=document.createElement('span');label.className='label';label.textContent=field.label;if(field.required){const mark=document.createElement('span');mark.className='required';mark.textContent='*';label.append(mark)}const input=document.createElement('input');input.type=field.inputType==='otp'?'text':field.inputType;input.autocomplete=field.autocomplete||'off';input.required=field.required;if(field.inputType==='otp')input.inputMode='numeric';row.append(label,input);fields.append(row);controls.set(field.id,{row,input})}let selectedOption;if(state.options.length){const select=document.createElement('select');for(const option of state.options){const item=document.createElement('option');item.value=option.id;item.textContent=option.label;select.append(item)}document.getElementById('option').append(select);const update=()=>{selectedOption=select.value;const enabled=new Set(state.options.find(item=>item.id===selectedOption)?.fields||[]);for(const [id,control] of controls){control.row.hidden=!enabled.has(id);control.input.disabled=!enabled.has(id)}};select.addEventListener('change',update);update()}document.getElementById('cancel').addEventListener('click',()=>window.lumeBrowserAuth.cancel());document.getElementById('form').addEventListener('submit',event=>{event.preventDefault();const values={};for(const [id,control] of controls)if(!control.input.disabled)values[id]=control.input.value;window.lumeBrowserAuth.submit({selectedOption,values});for(const control of controls.values())control.input.value=''})</script></body></html>`
+<style>*{box-sizing:border-box}body{margin:0;background:#151517;color:#f4f4f5;font:13px system-ui,-apple-system,sans-serif}.wrap{padding:22px}.eyebrow{color:#a78bfa;font-size:11px;font-weight:600}.title{font-size:18px;font-weight:650;margin-top:5px}.origin{color:#a1a1aa;font-size:11px;margin:5px 0 18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.field{display:block;margin:11px 0}.label{display:flex;gap:4px;margin-bottom:5px;color:#d4d4d8;font-size:11px}.required{color:#fb7185}input,select{width:100%;height:36px;border:1px solid #3f3f46;border-radius:8px;background:#202024;color:#fafafa;padding:0 10px;outline:none}input:focus,select:focus{border-color:#8b5cf6;box-shadow:0 0 0 2px rgba(139,92,246,.2)}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}button{height:34px;border:0;border-radius:8px;padding:0 14px;font:inherit;cursor:pointer}.cancel{background:#29292e;color:#e4e4e7}.submit{background:#7c3aed;color:white;font-weight:600}.note{margin-top:12px;color:#71717a;font-size:10px;line-height:1.5}</style></head><body><form class="wrap" id="form"><div class="eyebrow">Lume Browser Auth</div><div class="title">在当前页面安全填写</div><div class="origin" id="origin"></div><div id="option"></div><div id="fields"></div><div class="note">凭证只会发送到主进程并直接填写到此标签页，不会进入聊天、Sidecar、日志或审计详情。</div><div class="actions"><button type="button" class="cancel" id="decline">拒绝</button><button type="button" class="cancel" id="cancel">取消</button><button class="submit">填写并继续</button></div></form><script>const state=${safe};document.getElementById('origin').textContent=state.origin;const fields=document.getElementById('fields');const controls=new Map();for(const field of state.fields){const row=document.createElement('label');row.className='field';row.dataset.fieldId=field.id;const label=document.createElement('span');label.className='label';label.textContent=field.label;if(field.required){const mark=document.createElement('span');mark.className='required';mark.textContent='*';label.append(mark)}const input=document.createElement('input');input.type=field.inputType==='otp'?'text':field.inputType;input.autocomplete=field.autocomplete||'off';input.required=field.required;if(field.inputType==='otp')input.inputMode='numeric';row.append(label,input);fields.append(row);controls.set(field.id,{row,input})}let selectedOption;if(state.options.length){const select=document.createElement('select');for(const option of state.options){const item=document.createElement('option');item.value=option.id;item.textContent=option.label;select.append(item)}document.getElementById('option').append(select);const update=()=>{selectedOption=select.value;const enabled=new Set(state.options.find(item=>item.id===selectedOption)?.fields||[]);for(const [id,control] of controls){control.row.hidden=!enabled.has(id);control.input.disabled=!enabled.has(id)}};select.addEventListener('change',update);update()}document.getElementById('decline').addEventListener('click',()=>window.lumeBrowserAuth.decline());document.getElementById('cancel').addEventListener('click',()=>window.lumeBrowserAuth.cancel());document.getElementById('form').addEventListener('submit',event=>{event.preventDefault();const values={};for(const [id,control] of controls)if(!control.input.disabled)values[id]=control.input.value;window.lumeBrowserAuth.submit({selectedOption,values});for(const control of controls.values())control.input.value=''})</script></body></html>`
 }
 
 function applyPageTweaksScript(): string {

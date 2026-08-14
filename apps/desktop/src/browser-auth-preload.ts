@@ -6,4 +6,5 @@ contextBridge.exposeInMainWorld('lumeBrowserAuth', {
     ipcRenderer.send('lume:browser-auth', input)
   },
   cancel(): void { ipcRenderer.send('lume:browser-auth', { cancel: true }) },
+  decline(): void { ipcRenderer.send('lume:browser-auth', { decline: true }) },
 })
