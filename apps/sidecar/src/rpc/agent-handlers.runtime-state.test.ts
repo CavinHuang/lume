@@ -348,6 +348,103 @@ describe("agent-handlers runtime state", () => {
     expect((await createFileBackedRunContinuationStore(sessionDir).get(runId))?.status).toBe("ready_to_resume");
   });
 
+  test("get-pending-resume reports interrupted runs and stays false for clean threads", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-pending-resume-"));
+    const threadId = "thread-pending-resume";
+    const runId = "run-pending-resume";
+    const sessionDir = getRuntimeCoreSessionDir(threadId);
+    await createFileBackedLumeRunStateStore(sessionDir).create({
+      version: 1,
+      runId,
+      threadId,
+      rootAgentId: "runtime-core",
+      currentAgentId: "runtime-core",
+      status: "paused",
+      input: { userMessage: "original task", permissionMode: "default" },
+      generatedItems: [],
+      pendingInterruptions: [],
+      approvals: { alwaysAllowedTools: [] },
+      traceId: "trace-pending-resume",
+      model: { provider: "openai", modelId: "gpt-test" },
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z"
+    });
+    const { persistAbortContinuation } = await import("../services/agent-runtime/interruption/abort-continuation");
+    await persistAbortContinuation({
+      sessionDir,
+      runId,
+      threadId,
+      pendingToolCalls: [{ id: "t1", name: "Bash", input: { command: "ls" } }]
+    });
+
+    const { createAgentHandlers } = await import("./agent-handlers");
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
+    });
+
+    const pending = await handlers[AGENT_IPC_CHANNELS.GET_PENDING_RESUME]!({ threadId });
+    expect(pending).toMatchObject({
+      threadId,
+      hasPendingResume: true,
+      runId
+    });
+
+    const clean = await handlers[AGENT_IPC_CHANNELS.GET_PENDING_RESUME]!({ threadId: "thread-clean-pending" });
+    expect(clean).toEqual({ threadId: "thread-clean-pending", hasPendingResume: false });
+  });
+
+  test("resume-run falls back to a dangling resume message when no continuation checkpoint exists", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-dangling-fallback-"));
+    const threadId = "thread-dangling-fallback";
+    const runId = "run-dangling-fallback";
+    const sessionDir = getRuntimeCoreSessionDir(threadId);
+    await createFileBackedLumeRunStateStore(sessionDir).create({
+      version: 1,
+      runId,
+      threadId,
+      rootAgentId: "runtime-core",
+      currentAgentId: "runtime-core",
+      status: "paused",
+      input: { userMessage: "interrupted task", permissionMode: "default" },
+      generatedItems: [],
+      pendingInterruptions: [],
+      approvals: { alwaysAllowedTools: [] },
+      traceId: "trace-dangling",
+      model: { provider: "openai", modelId: "gpt-test" },
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z"
+    });
+
+    const { createAgentHandlers } = await import("./agent-handlers");
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
+    });
+
+    const result = await handlers[AGENT_IPC_CHANNELS.RESUME_RUN]!({ threadId });
+
+    expect(result).toEqual({
+      status: "resumed",
+      finalOutput: "resumed output"
+    });
+    expect(sendAgentMessageMock).toHaveBeenCalledTimes(1);
+    expect(sendAgentMessageMock.mock.calls[0]?.[0]).toMatchObject({
+      threadId,
+      messageMetadata: {
+        runtimeContinuation: {
+          source: "dangling-fallback",
+          sourceRunId: runId
+        }
+      }
+    });
+    expect(sendAgentMessageMock.mock.calls[0]?.[2]).toEqual({ appendUserMessage: false });
+  });
+
   test("run_aborted event persists an interrupted continuation checkpoint", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-abort-continuation-"));
     const threadId = "thread-runtime-abort";

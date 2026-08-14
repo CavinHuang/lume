@@ -40,8 +40,11 @@ import {
   summarizeSubagentAssistantEvent,
   type ToolDefinition,
   type PersistedToolContinuation,
+  type NormalizedMessageParam,
   type ProcessJob,
-  setLspIdleTimeout
+  setLspIdleTimeout,
+  detectDanglingToolUses,
+  buildResumeContinuations
 } from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionRequest,
@@ -94,7 +97,8 @@ import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDir,
   hasRuntimeCoreSessionTranscript,
-  type RuntimeCoreSessionManager
+  type RuntimeCoreSessionManager,
+  type RuntimeCoreSessionContextMessage
 } from "./session-store";
 import { ContextAssembler } from "../context/context-assembler";
 import type { ContextAssemblyInput } from "../context/context-assembler";
@@ -148,6 +152,7 @@ import {
 } from "../runner/todo-state";
 import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
 import { persistAbortContinuation } from "../interruption/abort-continuation";
+import { classifyToolKind } from "../interruption/approval-service";
 import {
   collectAppendContextEffects,
   type LumeWorkflowHookExecutionResult
@@ -2269,7 +2274,14 @@ export async function createRuntimeCoreSession(
     .map((directory) => resolve(directory))
     .filter((directory) => directory !== resolve(input.cwd)))];
   const persistedContinuation = resolvePersistedToolContinuation(input.messageMetadata);
-  const toolContinuations = persistedContinuation ? [persistedContinuation] : undefined;
+  // 悬空兜底：无单数 checkpoint 且标记为 dangling-fallback 时，从 session
+  // history 检测未配对 tool_use，构造数组型 toolContinuations。
+  const danglingFallbackContinuations = persistedContinuation
+    ? undefined
+    : resolveDanglingFallbackContinuations(input.messageMetadata, context.messages);
+  const toolContinuations = persistedContinuation
+    ? [persistedContinuation]
+    : danglingFallbackContinuations;
   const runtimeToolConfig = {
     ...(input.toolConfig ?? {}),
     ...(Object.keys(lspConfig).length > 0 ? { lsp: lspConfig } : {}),
@@ -2496,6 +2508,41 @@ function resolvePersistedToolContinuation(
       },
     } : {}),
   };
+}
+
+/**
+ * 悬空兜底：messageMetadata.runtimeContinuation 标记为 dangling-fallback 且
+ * 无单数 checkpoint 时，从 session history 检测末尾 assistant 未配对的
+ * tool_use，复用 SDK 的 buildResumeContinuations 构造数组——只读/控制工具
+ * 相同输入重放一次，副作用工具注入中断说明占位（不自动重放）。
+ */
+export function resolveDanglingFallbackContinuations(
+  metadata: Record<string, unknown> | undefined,
+  sessionMessages: RuntimeCoreSessionContextMessage[],
+): PersistedToolContinuation[] | undefined {
+  const runtimeContinuation = metadata?.runtimeContinuation;
+  if (!runtimeContinuation || typeof runtimeContinuation !== "object") return undefined;
+  if ((runtimeContinuation as Record<string, unknown>).source !== "dangling-fallback") return undefined;
+  const normalized: NormalizedMessageParam[] = sessionMessages.map((message) => {
+    if (message.role === "toolResult") {
+      return {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: message.toolCallId ?? "", content: "" }]
+      };
+    }
+    return {
+      role: message.role === "assistant" ? "assistant" : "user",
+      content: message.content as NormalizedMessageParam["content"]
+    };
+  });
+  const dangling = detectDanglingToolUses(normalized);
+  if (dangling.length === 0) return undefined;
+  return buildResumeContinuations(dangling, {
+    isReadOnly: (toolName) => {
+      const kind = classifyToolKind(toolName);
+      return kind === "read" || kind === "control";
+    }
+  });
 }
 
 function parseTaskRef(value: unknown, parentThreadId: string): AgentTaskRef {

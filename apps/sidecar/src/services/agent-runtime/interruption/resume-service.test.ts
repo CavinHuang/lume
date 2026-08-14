@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
 import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
 import type { LumeRunState } from "../runner/run-state";
+import type { RunContinuationState } from "../runner/run-continuation";
 import { LumeResumeService } from "./resume-service";
 
 function makeRunState(input?: Partial<LumeRunState>): LumeRunState {
@@ -216,6 +217,100 @@ describe("LumeResumeService", () => {
 
     expect(result.status).toBe("resumed");
     expect(receivedInput).toEqual({ file_path: "README.md" });
+  });
+
+  test("resumes an interrupted read-tool checkpoint by replaying the original input", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-resume-interrupted-read-"));
+    const runStateStore = createFileBackedLumeRunStateStore(dir);
+    const continuationStore = createFileBackedRunContinuationStore(dir);
+    await runStateStore.create(makeRunState());
+    await continuationStore.upsert({
+      version: 2,
+      runId: "run-1",
+      threadId: "thread-1",
+      status: "interrupted",
+      checkpoint: {
+        step: "waiting_for_tool_result",
+        toolCallId: "tool-1",
+        toolName: "Read",
+        toolKind: "read",
+        toolCall: {
+          id: "tool-1",
+          name: "Read",
+          input: { file_path: "README.md" },
+          inputHash: "hash-1",
+          kind: "read"
+        }
+      },
+      reason: "run 已被用户中止；恢复时从首个 pending 工具断点继续。",
+      createdAt: "2026-04-29T00:00:00.000Z",
+      updatedAt: "2026-04-29T00:00:00.000Z"
+    });
+
+    let received: RunContinuationState | undefined;
+    const result = await new LumeResumeService(
+      { runStateStore, continuationStore },
+      async (checkpoint) => {
+        received = checkpoint;
+        return { finalOutput: "resumed" };
+      }
+    ).resumeRun({ runId: "run-1" });
+
+    expect(result.status).toBe("resumed");
+    expect(received?.status).toBe("ready_to_execute");
+    expect(received?.checkpoint.step).toBe("before_tool_execution");
+    expect(received?.checkpoint.toolCall?.input).toEqual({ file_path: "README.md" });
+  });
+
+  test("resumes an interrupted execute checkpoint with an injected interrupted placeholder instead of replaying", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-resume-interrupted-execute-"));
+    const runStateStore = createFileBackedLumeRunStateStore(dir);
+    const continuationStore = createFileBackedRunContinuationStore(dir);
+    await runStateStore.create(makeRunState());
+    await continuationStore.upsert({
+      version: 2,
+      runId: "run-1",
+      threadId: "thread-1",
+      status: "interrupted",
+      checkpoint: {
+        step: "waiting_for_tool_result",
+        toolCallId: "tool-1",
+        toolName: "Bash",
+        toolKind: "execute",
+        toolCall: {
+          id: "tool-1",
+          name: "Bash",
+          input: { command: "rm -rf build" },
+          inputHash: "hash-2",
+          kind: "execute"
+        }
+      },
+      reason: "run 已被用户中止；恢复时从首个 pending 工具断点继续。",
+      createdAt: "2026-04-29T00:00:00.000Z",
+      updatedAt: "2026-04-29T00:00:00.000Z"
+    });
+
+    let received: RunContinuationState | undefined;
+    const result = await new LumeResumeService(
+      { runStateStore, continuationStore },
+      async (checkpoint) => {
+        received = checkpoint;
+        return { finalOutput: "resumed" };
+      }
+    ).resumeRun({ runId: "run-1" });
+
+    expect(result.status).toBe("resumed");
+    expect(received?.status).toBe("ready_to_resume");
+    // 副作用工具不自动重放：step 保持 waiting_for_tool_result，走注入路径。
+    expect(received?.checkpoint.step).toBe("waiting_for_tool_result");
+    const synthetic = received?.checkpoint.syntheticToolResult as {
+      is_error?: boolean;
+      content?: string;
+      tool_use_id?: string;
+    };
+    expect(synthetic.is_error).toBe(true);
+    expect(synthetic.tool_use_id).toBe("tool-1");
+    expect(String(synthetic.content)).toContain("中断");
   });
 
   test("does not replay a V2 side-effect tool with an unknown result", async () => {

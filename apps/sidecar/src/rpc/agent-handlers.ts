@@ -205,6 +205,7 @@ import {
 } from "../services/agent-runtime/interruption/resume-service";
 import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runner/run-continuation-store";
 import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runner/run-state-store";
+import type { LumeRunState } from "../services/agent-runtime/runner/run-state";
 import { listThreadRuntimeEvents } from "../services/agent-runtime/replay/runtime-event-history";
 import { redactTraceForLevel, type TraceRedactionLevel } from "../services/agent-runtime/trace/trace-redaction";
 import { createFileBackedLumeTraceStore } from "../services/agent-runtime/trace/trace-store";
@@ -288,6 +289,7 @@ import {
   proxySettingsInputSchema,
   readBootstrapFileInputSchema,
   listRunStatesInputSchema,
+  getPendingResumeInputSchema,
   mcpCallToolDiagnosticInputSchema,
   mcpListResourcesInputSchema,
   mcpReadResourceInputSchema,
@@ -406,6 +408,69 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     return runs.at(-1)?.runId ?? null;
   };
 
+  const sendResumeContinuationMessage = async (
+    state: LumeRunState,
+    userMessage: string,
+    runtimeContinuation: Record<string, unknown>
+  ): Promise<{ finalOutput: string }> => {
+    let finalOutput = "";
+    await sendAgentMessage({
+      threadId: state.threadId,
+      userMessage,
+      ...(state.workspaceId ? { workspaceId: state.workspaceId } : {}),
+      ...(state.model.modelRef ? { modelRef: state.model.modelRef } : {}),
+      ...(state.model.channelId ? { channelId: state.model.channelId } : {}),
+      modelId: state.model.modelId,
+      chatType: state.input.chatType as never,
+      threadType: state.input.threadType as never,
+      permissionMode: state.input.permissionMode,
+      traceContext: {
+        submissionId: randomUUID(),
+        traceId: randomUUID(),
+        origin: "resume",
+        ...(state.input.traceContext?.traceId ? { linkedTraceId: state.input.traceContext.traceId } : {})
+      },
+      messageMetadata: {
+        ...(state.input.messageMetadata ?? {}),
+        hiddenFromChat: true,
+        runtimeContinuation
+      }
+    }, {
+      onRuntimeEvent: (event) => {
+        context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
+          threadId: state.threadId,
+          event
+        });
+      },
+      onMessageAppended: (event) => {
+        context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
+        if (event.message.role === "assistant") {
+          finalOutput = event.message.content;
+        }
+      },
+      onComplete: () => undefined,
+      onError: (error) => {
+        throw new Error(error);
+      },
+      onTitleUpdated: (title) => {
+        context.writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
+          threadId: state.threadId,
+          title
+        });
+      },
+      onAskUserQuestion: (request) => {
+        context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
+      },
+      onDesktopActionRequest: (request) => {
+        context.writeNotification(AGENT_IPC_CHANNELS.DESKTOP_ACTION_REQUEST, request);
+      },
+      onToolPermissionRequest: (request) => {
+        context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
+      }
+    }, { appendUserMessage: false });
+    return { finalOutput };
+  };
+
   const resumeRunForThread = async (input: {
     threadId: string;
     runId?: string;
@@ -419,72 +484,47 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         error: "找不到可恢复 run。"
       };
     }
+    const runStateStore = createFileBackedLumeRunStateStore(sessionDir);
+    const continuationStore = createFileBackedRunContinuationStore(sessionDir);
+    const runState = await runStateStore.get(runId);
+    if (!runState) {
+      return {
+        status: "not_resumable",
+        error: "找不到 run state。"
+      };
+    }
+    // 悬空兜底：无 checkpoint 的中断线程也允许一键续跑，由 run.ts 从
+    // session history 检测未配对 tool_use 构造 toolContinuations
+    //（只读重放 / 副作用注入中断说明占位）。
+    if (!(await continuationStore.get(runId))) {
+      try {
+        const result = await sendResumeContinuationMessage(
+          runState,
+          "继续执行之前被中断的任务；被中断的工具已按只读重放或中断说明处理，请基于实际状态继续。",
+          { source: "dangling-fallback", sourceRunId: runState.runId }
+        );
+        resumeAutomationAfterInteraction(input.threadId);
+        return { status: "resumed", finalOutput: result.finalOutput };
+      } catch (error) {
+        return {
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error)
+        };
+      }
+    }
     const service = new LumeResumeService({
-      runStateStore: createFileBackedLumeRunStateStore(sessionDir),
-      continuationStore: createFileBackedRunContinuationStore(sessionDir)
-    }, async (checkpoint, state) => {
-      let finalOutput = "";
-      await sendAgentMessage({
-        threadId: state.threadId,
-        userMessage: buildColdStartContinuationMessage(checkpoint),
-        ...(state.workspaceId ? { workspaceId: state.workspaceId } : {}),
-        ...(state.model.modelRef ? { modelRef: state.model.modelRef } : {}),
-        ...(state.model.channelId ? { channelId: state.model.channelId } : {}),
-        modelId: state.model.modelId,
-        chatType: state.input.chatType as never,
-        threadType: state.input.threadType as never,
-        permissionMode: state.input.permissionMode,
-        traceContext: {
-          submissionId: randomUUID(),
-          traceId: randomUUID(),
-          origin: "resume",
-          ...(state.input.traceContext?.traceId ? { linkedTraceId: state.input.traceContext.traceId } : {})
-        },
-        messageMetadata: {
-          ...(state.input.messageMetadata ?? {}),
-          hiddenFromChat: true,
-          runtimeContinuation: {
-            sourceRunId: state.runId,
-            status: checkpoint.status,
-            checkpoint: checkpoint.checkpoint,
-            reason: checkpoint.reason
-          }
-        }
-      }, {
-        onRuntimeEvent: (event) => {
-          context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-            threadId: state.threadId,
-            event
-          });
-        },
-        onMessageAppended: (event) => {
-          context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
-          if (event.message.role === "assistant") {
-            finalOutput = event.message.content;
-          }
-        },
-        onComplete: () => undefined,
-        onError: (error) => {
-          throw new Error(error);
-        },
-        onTitleUpdated: (title) => {
-          context.writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
-            threadId: state.threadId,
-            title
-          });
-        },
-        onAskUserQuestion: (request) => {
-          context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
-        },
-        onDesktopActionRequest: (request) => {
-          context.writeNotification(AGENT_IPC_CHANNELS.DESKTOP_ACTION_REQUEST, request);
-        },
-        onToolPermissionRequest: (request) => {
-          context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
-        }
-      }, { appendUserMessage: false });
-      return { finalOutput };
-    });
+      runStateStore,
+      continuationStore
+    }, async (checkpoint, state) => sendResumeContinuationMessage(
+      state,
+      buildColdStartContinuationMessage(checkpoint),
+      {
+        sourceRunId: state.runId,
+        status: checkpoint.status,
+        checkpoint: checkpoint.checkpoint,
+        reason: checkpoint.reason
+      }
+    ));
     const result = await service.resumeRun({
       runId,
       interruptionId: input.interruptionId
@@ -493,6 +533,36 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       resumeAutomationAfterInteraction(input.threadId);
     }
     return result;
+  };
+
+  const getPendingResume = async (input: { threadId: string }): Promise<{
+    threadId: string;
+    hasPendingResume: boolean;
+    runId?: string;
+    reason?: string;
+  }> => {
+    const sessionDir = resolveRuntimeSessionDir(input.threadId);
+    const runStore = createFileBackedLumeRunStateStore(sessionDir);
+    const continuationStore = createFileBackedRunContinuationStore(sessionDir);
+    // 只看线程最近一个 run 的 continuation 状态。
+    const lastRun = (await runStore.listByThread(input.threadId)).at(-1);
+    if (lastRun) {
+      const continuation = await continuationStore.get(lastRun.runId);
+      if (
+        continuation
+        && (continuation.status === "interrupted"
+          || continuation.status === "tool_running"
+          || continuation.status === "waiting_background")
+      ) {
+        return {
+          threadId: input.threadId,
+          hasPendingResume: true,
+          runId: lastRun.runId,
+          reason: continuation.reason
+        };
+      }
+    }
+    return { threadId: input.threadId, hasPendingResume: false };
   };
 
   const createExecutionStartCallback = (input: AgentSendInput) => () => {
@@ -783,6 +853,10 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.RESUME_RUN]: async (params) => {
       const input = validateInput(resumeRunInputSchema, params, AGENT_IPC_CHANNELS.RESUME_RUN);
       return resumeRunForThread(input);
+    },
+    [AGENT_IPC_CHANNELS.GET_PENDING_RESUME]: async (params) => {
+      const input = validateInput(getPendingResumeInputSchema, params, AGENT_IPC_CHANNELS.GET_PENDING_RESUME);
+      return getPendingResume(input);
     },
     [AGENT_IPC_CHANNELS.LIST_RUN_STATES]: async (params) => {
       const input = validateInput(listRunStatesInputSchema, params, AGENT_IPC_CHANNELS.LIST_RUN_STATES);

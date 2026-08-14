@@ -1865,6 +1865,10 @@ export const listRunStatesInputSchema = z.object({
   threadId: idSchema
 });
 
+export const getPendingResumeInputSchema = z.object({
+  threadId: idSchema
+});
+
 export const threadRunEventsInputSchema = z.object({
   threadId: idSchema
 });

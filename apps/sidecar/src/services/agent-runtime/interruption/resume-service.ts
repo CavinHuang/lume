@@ -129,6 +129,44 @@ export class LumeResumeService {
       }
     }
 
+    // 人工中止（Task 6 abort checkpoint）留下的 interrupted 状态：
+    // 只读/控制工具结果未知，允许相同输入安全重放；副作用工具结果未知，
+    // 注入中断说明占位（不自动重放），交由 Agent 检查实际状态后决定重试。
+    if (continuation.version === 2 && continuation.status === "interrupted") {
+      const checkpoint = continuation.checkpoint;
+      if (
+        checkpoint.step === "waiting_for_tool_result"
+        && checkpoint.toolCall
+        && (checkpoint.toolKind === "read" || checkpoint.toolKind === "control")
+      ) {
+        const nextCheckpoint = { ...checkpoint, step: "before_tool_execution" as const };
+        await this.stores.continuationStore.update(input.runId, {
+          status: "ready_to_execute",
+          checkpoint: nextCheckpoint,
+          reason: "中断的只读/控制工具结果未知，允许使用相同输入安全重放。"
+        });
+        continuation.status = "ready_to_execute";
+        continuation.checkpoint = nextCheckpoint;
+      } else if (checkpoint.step === "waiting_for_tool_result" && checkpoint.toolCall) {
+        const nextCheckpoint = {
+          ...checkpoint,
+          syntheticToolResult: {
+            type: "tool_result" as const,
+            tool_use_id: checkpoint.toolCall.id,
+            content: "工具执行被用户中断，实际结果未知；请先检查工作区实际状态再决定是否重试。",
+            is_error: true
+          }
+        };
+        await this.stores.continuationStore.update(input.runId, {
+          status: "ready_to_resume",
+          checkpoint: nextCheckpoint,
+          reason: "中断的副作用工具结果未知；已注入中断说明占位，禁止自动重放。"
+        });
+        continuation.status = "ready_to_resume";
+        continuation.checkpoint = nextCheckpoint;
+      }
+    }
+
     if (continuation.version === 2 && continuation.status === "ready_to_execute" && !continuation.checkpoint.toolCall) {
       await this.stores.continuationStore.update(input.runId, {
         status: "failed",
