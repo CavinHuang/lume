@@ -333,7 +333,7 @@ function MemorySettingsSurface() {
           onAddManualMemory={(category) => void actions.addManualMemory(category)}
           onOpenFile={(path) => void actions.openMemoryFile(path)}
           onInspectEntry={(entry) => void actions.inspectMemoryEntry(entry)}
-          onUpdateEntry={(entry, input) => void actions.updateMemoryEntry(entry, input)}
+          onUpdateEntry={(entry, input) => actions.updateMemoryEntry(entry, input)}
           onToggleActivation={(entry, activation) => void actions.toggleActivation(entry, activation)}
           onDeleteEntry={(entry) => void actions.deleteMemoryEntry(entry)}
           onDirtyChange={actions.setDetailDirty}
@@ -624,7 +624,7 @@ function UserMemoryPanel({
       validTo?: string | null
       targetScope?: 'global' | 'workspace'
     },
-  ) => void
+  ) => Promise<boolean>
   onToggleActivation: (entry: MemorySettingsEntrySummary, activation: MemoryActivation) => void
   selectedEntry: MemorySettingsEntrySummary | null
   selectedEntryId: string | null
@@ -812,7 +812,7 @@ function PendingMemoryPanel({
   )
 }
 
-function PendingMemoryCard({
+export function PendingMemoryCard({
   busyAction,
   item,
   onOpenFile,
@@ -833,13 +833,19 @@ function PendingMemoryCard({
   const [confidence, setConfidence] = React.useState<MemorySettingsEntrySummary['confidence']>(item.candidate.confidence)
   const [tagsText, setTagsText] = React.useState(item.candidate.tags.join(', '))
 
-  React.useEffect(() => {
-    setMergeMode(false)
+  const syncDraftFromItem = () => {
     setStatement(item.candidate.statement)
     setKind(item.candidate.kind)
     setConfidence(item.candidate.confidence)
     setTagsText(item.candidate.tags.join(', '))
-  }, [item])
+  }
+
+  React.useEffect(() => {
+    syncDraftFromItem()
+    setMergeMode(false)
+    // 依赖 item.id 而非 item 引用：快照轮询刷新会误触发本 effect 重置合并草稿。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id])
 
   const tags = parseTags(tagsText)
   const override = (): NonNullable<MemoryResolvePendingInput['candidateOverride']> => ({
@@ -960,7 +966,10 @@ function PendingMemoryCard({
               variant="outline"
               size="sm"
               disabled={busyAction !== null}
-              onClick={() => setMergeMode(true)}
+              onClick={() => {
+                syncDraftFromItem()
+                setMergeMode(true)
+              }}
             >
               <Pencil size={14} />
               手动合并
@@ -1063,7 +1072,7 @@ function EntryRow({
   )
 }
 
-function MemoryDetailPanel({
+export function MemoryDetailPanel({
   busyAction,
   detail,
   entry,
@@ -1090,7 +1099,7 @@ function MemoryDetailPanel({
       validTo?: string | null
       targetScope?: 'global' | 'workspace'
     },
-  ) => void
+  ) => Promise<boolean>
   onToggleActivation: (entry: MemorySettingsEntrySummary, activation: MemoryActivation) => void
 }) {
   const rows = buildMemoryDetailRows(detail)
@@ -1102,16 +1111,23 @@ function MemoryDetailPanel({
   const [targetScope, setTargetScope] = React.useState<'global' | 'workspace'>('workspace')
   const [editMode, setEditMode] = React.useState(false)
 
-  React.useEffect(() => {
+  const syncDraftFromEntry = () => {
     setStatement(entry?.statement ?? detail?.text ?? '')
     setKind(entry?.kind ?? 'fact')
     setConfidence(entry?.confidence ?? 'medium')
     setTagsText(entry?.tags.join(', ') ?? '')
     setValidTo(entry?.validTo?.slice(0, 10) ?? '')
     setTargetScope(entry?.scope ?? 'workspace')
+  }
+
+  React.useEffect(() => {
+    syncDraftFromEntry()
     setEditMode(false)
     onDirtyChange(false)
-  }, [detail?.text, entry, onDirtyChange])
+    // 依赖 entry?.id 而非 entry 引用：后台任务轮询每 1.2s 刷新快照，
+    // 产生的新对象引用会误触发本 effect，导致编辑中的草稿被重置、编辑态被强制关闭。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry?.id, onDirtyChange])
 
   const tags = parseTags(tagsText)
   const isDirty = entry ? (
@@ -1138,6 +1154,20 @@ function MemoryDetailPanel({
     setEditMode(false)
     onDirtyChange(false)
   }
+  const saveDraft = async () => {
+    if (!entry) return
+    const saved = await onUpdateEntry(entry, {
+      statement: statement.trim(),
+      kind,
+      confidence,
+      tags,
+      validTo: validTo ? new Date(`${validTo}T23:59:59.999Z`).toISOString() : null,
+      targetScope,
+    })
+    if (!saved) return
+    setEditMode(false)
+    onDirtyChange(false)
+  }
   return (
     <div className="min-w-0 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1151,18 +1181,7 @@ function MemoryDetailPanel({
                     variant="outline"
                     size="sm"
                     disabled={busyAction !== null || !isDirty || statement.trim().length === 0}
-                    onClick={() => {
-                      onUpdateEntry(entry, {
-                        statement: statement.trim(),
-                        kind,
-                        confidence,
-                        tags,
-                        validTo: validTo ? new Date(`${validTo}T23:59:59.999Z`).toISOString() : null,
-                        targetScope,
-                      })
-                      setEditMode(false)
-                      onDirtyChange(false)
-                    }}
+                    onClick={() => void saveDraft()}
                   >
                     <Save size={14} />
                     保存
@@ -1183,7 +1202,7 @@ function MemoryDetailPanel({
                     variant="outline"
                     size="sm"
                     disabled={busyAction !== null}
-                    onClick={() => onUpdateEntry(entry, {
+                    onClick={() => void onUpdateEntry(entry, {
                       statement: entry.statement,
                       kind: entry.kind,
                       confidence: entry.confidence,
@@ -1197,7 +1216,10 @@ function MemoryDetailPanel({
                     variant="outline"
                     size="sm"
                     disabled={busyAction !== null}
-                    onClick={() => setEditMode(true)}
+                    onClick={() => {
+                      syncDraftFromEntry()
+                      setEditMode(true)
+                    }}
                   >
                     <Pencil size={14} />
                     编辑
