@@ -284,6 +284,7 @@ test("broker exposes runtime-declared APIs and normalizes protected browser-use 
   // 故 browser capabilities 同时保留 history + webmcp；pageAssets 仍按设计剥离（仅 tab capabilities 出现）。
   assert.deepEqual(descriptor.capabilities.browser.map((capability: { id: string }) => capability.id), ["history", "webmcp"])
   assert.deepEqual(descriptor.capabilities.tab.map((capability: { id: string }) => capability.id), ["pageAssets", "webmcp"])
+  assert.equal(descriptor.apiSupportOverrides["CdpCapability.readEvents"], false)
 
   const result = await broker.dispatch({
     method: "browser_user_history",

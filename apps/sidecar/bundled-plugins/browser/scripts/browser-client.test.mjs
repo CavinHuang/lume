@@ -14,9 +14,9 @@ const descriptors = [
     generation: 1,
     capabilities: {
       browser: [{ id: "visibility", description: "visibility" }],
-      tab: [{ id: "pageAssets", description: "page assets" }, { id: "browserAuth", description: "browser auth" }],
+      tab: [{ id: "pageAssets", description: "page assets" }, { id: "browserAuth", description: "browser auth" }, { id: "webmcp", description: "webmcp" }, { id: "cdp", description: "cdp" }],
     },
-    apiSupportOverrides: { "BrowserUser.history": true, "Tabs.content": true, "PlaywrightFileChooser.setFiles": true },
+    apiSupportOverrides: { "BrowserUser.history": true, "Tabs.content": true, "PlaywrightFileChooser.setFiles": true, "CdpCapability.readEvents": false },
   },
   {
     id: "lume-extension",
@@ -57,6 +57,8 @@ globalThis.nodeRepl = {
       if (method === "playwright_download_path") return { path: "C:\\downloads\\report.pdf" };
       if (method === "playwright_wait_for_file_chooser") return { file_chooser_id: "chooser-1", is_multiple: true };
       if (method === "tab_browser_auth_request") return { status: "submitted", selected_option: "google" };
+      if (method === "webmcp_list_tools") return { tools: [{ name: "echo", description: "Echo input" }] };
+      if (method === "webmcp_invoke_tool") return { result: { echoed: params.input } };
       return {};
     },
   },
@@ -138,6 +140,12 @@ test("uses canonical backend selection and request shapes", async () => {
     options: [{ id: "google", label: "Google", selector: tab.playwright.getByRole("button", { name: "Google" }) }],
   });
   assert.equal(authResult.selected_option, "google");
+  const webmcp = await tab.capabilities.get("webmcp");
+  const webmcpTools = await webmcp.fetchTools();
+  assert.match(webmcpTools.description(), /echo/);
+  assert.deepEqual(await webmcpTools.call("echo", { value: "hello" }), { echoed: { value: "hello" } });
+  const cdp = await tab.capabilities.get("cdp");
+  assert.equal(cdp.readEvents, undefined);
 
   assert.deepEqual(calls.find((call) => call.method === "create_tab")?.params.options, { url: "https://example.com/" });
   assert.deepEqual(calls.find((call) => call.method === "tab_screenshot")?.params.options, { fullPage: true });
@@ -157,6 +165,7 @@ test("uses canonical backend selection and request shapes", async () => {
     version: 1,
     steps: [{ kind: "role", role: "button", name: "Google" }],
   });
+  assert.equal(calls.find((call) => call.method === "webmcp_invoke_tool")?.params.toolName, "echo");
 });
 
 test("refreshes live backends before URL selection", async () => {

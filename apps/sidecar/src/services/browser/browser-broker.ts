@@ -57,7 +57,10 @@ export class BrowserBroker {
     const protocol = backend === "extension" ? this.extensionRuntime : runtime
     const apiSupportOverrides = backend === "extension"
       ? this.extensionRuntime?.apiSupportOverrides ?? browserApiSupportForBackend("extension", new Set())
-      : runtime?.apiSupportOverrides ?? browserApiSupportForBackend("iab", new Set())
+      : {
+          ...(runtime?.apiSupportOverrides ?? browserApiSupportForBackend("iab", new Set())),
+          "CdpCapability.readEvents": false,
+        }
     return {
       id, browserId: id, backend, type: backend, clientType: backend, name: backend === "iab" ? "Lume 内置浏览器" : "Lume Chrome",
       protocolVersion: protocol?.protocolVersion ?? BROWSER_PROTOCOL_VERSION,
