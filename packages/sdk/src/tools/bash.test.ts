@@ -280,4 +280,15 @@ describe("BashTool shell invocation", () => {
       status: "running",
     });
   });
+
+  test("cancels a host-side wait immediately", async () => {
+    clearTasks();
+    const job = createProcessJobRecord({ subject: "cancel wait", status: "running" });
+    const controller = new AbortController();
+    const waiting = waitForProcessJobTerminal(job.id, 5_000, controller.signal);
+
+    controller.abort();
+
+    await expect(waiting).rejects.toThrow("aborted");
+  });
 });

@@ -345,7 +345,7 @@ async function boot(): Promise<void> {
     void handleRpcLine(trimmed);
   });
   writeNotification("system.ready", { native });
-  const stopBackgroundProcessRecovery = startBackgroundProcessRecovery(writeNotification);
+  const stopBackgroundProcessRecovery = startBackgroundProcessRecovery();
 
   // 单例守卫仍然早于所有 runner：ready 只表示 RPC/native 已可用，
   // 不让单例检查或可选启动项阻塞桌面端握手。

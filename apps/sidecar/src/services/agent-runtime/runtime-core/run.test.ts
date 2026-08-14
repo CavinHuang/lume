@@ -23,6 +23,7 @@ import { getAgentSessionWorkspacePath, getAgentWorkspacePath, getAliceUserSkills
 import { createAgentThread } from "../../agent/agent-thread-manager";
 import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { getSubagentCoordinator, resetSubagentCoordinatorForTest } from "../../agent/subagents/subagent-coordinator";
+import { getSubagentRunRegistry, resetSubagentRunRegistryForTest } from "../../agent/subagents/subagent-run-registry";
 import { resetSubagentWorkStoreForTest } from "../../agent/subagents/subagent-work-store";
 import { createChannel } from "../../channel/channel-manager";
 import { installConnectionVaultKey } from "../../channel/connection-credential-store";
@@ -75,6 +76,7 @@ describe("runtime-core run", () => {
   afterEach(() => {
     setWorkspaceMcpManagerForTesting(null);
     resetSubagentCoordinatorForTest();
+    resetSubagentRunRegistryForTest();
     resetSubagentWorkStoreForTest();
     if (prevConfigDir === undefined) {
       delete process.env.LUME_CONFIG_DIR;
@@ -133,6 +135,41 @@ describe("runtime-core run", () => {
     ]);
 
     result.session.dispose();
+  });
+
+  test("后台子会话终态结果只在原运行内合并续跑一次", async () => {
+    const lumeSessionId = `background-completion-${crypto.randomUUID()}`;
+    const runId = `run-${crypto.randomUUID()}`;
+    const registry = getSubagentRunRegistry();
+    registry.create({
+      runId: "background-child",
+      parentThreadId: lumeSessionId,
+      parentRunId: runId,
+      rootThreadId: lumeSessionId,
+      depth: 1,
+      childThreadId: "background-child-thread",
+      task: "inspect",
+      cleanup: "keep",
+      status: "running",
+      background: true
+    });
+    registry.update("background-child", {
+      status: "completed",
+      outcome: { output: "inspection complete" }
+    });
+    const result = await createRuntimeCoreSession(createHookRuntimeSessionInput({
+      lumeSessionId,
+      runId,
+      permissionMode: "acceptEdits"
+    }));
+    const completionGuard = (result.agent as any).baseOptions.completionGuard as () => Promise<unknown>;
+
+    await expect(completionGuard()).resolves.toMatchObject({
+      type: "continue",
+      message: expect.stringContaining("<background-task-results>")
+    });
+    await expect(completionGuard()).resolves.toBeUndefined();
+    await result.session.dispose();
   });
 
   test("延迟工具搜索注册 SDK 生成工具的 Runtime descriptor", async () => {

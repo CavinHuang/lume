@@ -86,10 +86,6 @@ import { addPlanningAuthorizedTodo, authorizePlanningOperation, finishPlanningEx
 import { materializeCapabilityReferences } from "./invocable-capability-catalog";
 import { getAgentSubmissionStore } from "./agent-submission-store";
 import { shouldTrackCodingWorkflow } from "./coding-workflow-policy";
-import {
-  AgentBackgroundWakeController,
-  BACKGROUND_TASK_WAKE_PROMPT
-} from "./agent-background-wake";
 
 type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -129,9 +125,6 @@ const DEFAULT_WELCOME_SUGGESTIONS: AgentWelcomeSuggestion[] = [
 ];
 
 const log = createLogger("agent-service");
-const backgroundWakeController = new AgentBackgroundWakeController();
-const streamEmitters = new Map<string, AgentStreamEmitter>();
-const scheduledBackgroundWakes = new Set<string>();
 const AGENT_CAPABILITY_TOOLS = [
   "Read",
   "Write",
@@ -161,84 +154,6 @@ const STALE_RUN_STATUSES = new Set<LumeRunState["status"]>(["created", "running"
 const STALE_RUN_PROGRESS_HEAD_COUNT = 6;
 const STALE_RUN_PROGRESS_TAIL_COUNT = 10;
 const VISIBLE_HISTORY_CONTINUATION_TAIL_COUNT = 8;
-
-function scheduleBackgroundTaskWake(
-  input: AgentSendInput,
-  emit: AgentStreamEmitter,
-  message: SDKMessage,
-  options?: { emitCompletionEvent?: boolean }
-): void {
-  if (!backgroundWakeController.tryClaim(input.threadId, message, input.threadType)) return;
-  if (message.type !== "system" || message.subtype !== "task_notification") return;
-
-  if (options?.emitCompletionEvent) {
-    const completionEvent = projectLateBackgroundTaskCompletion(input.threadId, message);
-    if (completionEvent) emit.onRuntimeEvent?.(completionEvent);
-  }
-
-  const taskId = message.task_id;
-  if (scheduledBackgroundWakes.has(input.threadId)) return;
-  scheduledBackgroundWakes.add(input.threadId);
-  const {
-    clientSubmissionId: _clientSubmissionId,
-    messageId: _messageId,
-    turnId: _turnId,
-    capabilityFingerprints: _capabilityFingerprints,
-    desktopContextSnapshotId: _desktopContextSnapshotId,
-    ...metadata
-  } = input.messageMetadata ?? {};
-  const wakeInput: AgentSendInput = {
-    threadId: input.threadId,
-    userMessage: BACKGROUND_TASK_WAKE_PROMPT,
-    ...(input.modelRef ? { modelRef: input.modelRef } : {}),
-    ...(input.channelId ? { channelId: input.channelId } : {}),
-    ...(input.modelId ? { modelId: input.modelId } : {}),
-    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
-    ...(input.chatType ? { chatType: input.chatType } : {}),
-    ...(input.threadType ? { threadType: input.threadType } : {}),
-    ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
-    ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
-    messageMetadata: {
-      ...metadata,
-      hiddenFromChat: true,
-      backgroundTaskWake: true,
-      backgroundTaskId: taskId
-    },
-    traceContext: {
-      submissionId: randomUUID(),
-      traceId: randomUUID(),
-      origin: "internal",
-      ...(input.traceContext?.traceId ? { linkedTraceId: input.traceContext.traceId } : {})
-    }
-  };
-
-  queueMicrotask(() => {
-    try {
-      const result = appendAgentMessage(wakeInput, emit, {
-        priority: "background",
-        onExecutionStarted: () => scheduledBackgroundWakes.delete(input.threadId)
-      });
-      writeLogRecord({
-        level: "info",
-        kind: "trace",
-        context: "agent.background_wake",
-        event: "background_task.wake_scheduled",
-        message: "background task completion scheduled a hidden agent continuation",
-        status: "ok",
-        threadId: input.threadId,
-        data: { taskId, mode: result.mode, queuedCount: result.queuedCount }
-      });
-    } catch (error) {
-      scheduledBackgroundWakes.delete(input.threadId);
-      backgroundWakeController.rollback(input.threadId, taskId);
-      log.warn("Failed to schedule background task wake", {
-        threadId: input.threadId,
-        taskId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  });
-}
 
 function projectLateBackgroundTaskCompletion(
   threadId: string,
@@ -285,7 +200,6 @@ const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmi
 async function validateQueuedAgentDispatch(
   dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInput, AgentStreamEmitter>
 ): Promise<void> {
-  if (isBackgroundWakeInput(dispatch.input)) return;
   const threadMeta = getAgentThreadMeta(dispatch.threadId);
   const workspaceId = dispatch.input.workspaceId ?? threadMeta?.workspaceId;
   const workspace = workspaceId ? getAgentWorkspace(workspaceId) : undefined;
@@ -886,7 +800,6 @@ export async function sendAgentMessage(
   options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal } = {}
 ): Promise<void> {
   const { threadId, userMessage } = input;
-  streamEmitters.set(threadId, emit);
   const completeIfAborted = () => {
     if (!options.abortSignal?.aborted) return false;
     emit.onComplete();
@@ -1230,12 +1143,10 @@ export async function sendAgentMessage(
         }
       }
       if (stampedMessage.type === "system" && stampedMessage.subtype === "task_notification") {
-        scheduleBackgroundTaskWake(
-          input,
-          streamEmitters.get(threadId) ?? emit,
-          stampedMessage,
-          { emitCompletionEvent: runtimeCompleted }
-        );
+        if (runtimeCompleted) {
+          const completionEvent = projectLateBackgroundTaskCompletion(threadId, stampedMessage);
+          if (completionEvent) emit.onRuntimeEvent?.(completionEvent);
+        }
       }
     },
     onComplete: () => {
@@ -1443,7 +1354,6 @@ export function appendAgentMessage(
     trustedPlanningOperationId?: string;
   }
 ): AgentThreadMessageDispatchResult {
-  streamEmitters.set(input.threadId, emit);
   const submissionStore = input.clientSubmissionId ? getAgentSubmissionStore() : undefined;
   const submission = submissionStore?.begin(input);
   if (submission?.existing) {
@@ -1524,7 +1434,7 @@ export function appendAgentMessage(
     };
     // 运行中提交时按 followUpQueueMode 路由:steer 直接入 guidance;interrupt 中止当前 turn 后正常派发
     const isSessionActive = isAgentRuntimeSessionActive(input.threadId);
-    if (isSessionActive && input.followUpQueueMode === "steer" && !isBackgroundWakeInput(dispatchInput)) {
+    if (isSessionActive && input.followUpQueueMode === "steer") {
       // 携带完整 dispatch 字段(与 promote 路径对齐):steer 未被当前 turn 消费时,drain 回 queue 作为下一条 queued 消息跑(消息不丢,startNextQueued/validateQueued/execute 读 input/emit/priority/status/revision)
       runGuidanceStore.addQueuedDispatch({
         input: dispatchInput,
@@ -1628,7 +1538,6 @@ export function resumeAgentQueue(input: AgentResumeQueueInput): AgentMessageQueu
 function removeQueuedAgentMessageUnchecked(input: AgentRemoveQueuedMessageInput): Omit<AgentMessageQueueOperationResult, "ok" | "snapshot"> {
   const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
   if (removed) {
-    releaseBackgroundWakeInput(removed.input);
     if (removed.input.clientSubmissionId) {
       getAgentSubmissionStore().transition(removed.input.clientSubmissionId, "rejected", "queue_removed");
     }
@@ -1653,7 +1562,7 @@ export function promoteQueuedAgentMessageToGuidance(
   input: AgentPromoteQueuedMessageToGuidanceInput
 ): AgentMessageQueueOperationResult {
   const candidate = agentRuntimeKernel.listQueued(input.threadId).find((item) => item.id === input.queuedMessageId);
-  if (!candidate || isBackgroundWakeInput(candidate.input) || !candidate.input.userMessage.trim()) {
+  if (!candidate || !candidate.input.userMessage.trim()) {
     return { ok: false, snapshot: listAgentMessageQueue(input.threadId) };
   }
   return runQueueOperation(input.queueOperationId, input.threadId, () => promoteQueuedAgentMessageToGuidanceUnchecked(input));
@@ -1689,9 +1598,6 @@ export function updateQueuedAgentMessage(input: AgentUpdateQueuedMessageInput): 
   return runQueueOperation(input.queueOperationId, input.threadId, () => {
     const current = agentRuntimeKernel.listQueued(input.threadId)
       .find((item) => item.id === input.queuedMessageId);
-    if (current && isBackgroundWakeInput(current.input)) {
-      throw new Error("内部后台续跑消息不可编辑");
-    }
     const { capabilityFingerprints: _staleFingerprints, ...messageMetadata } = current?.input.messageMetadata ?? {};
     const updated = agentRuntimeKernel.updateQueued(input.threadId, input.queuedMessageId, input.expectedRevision, {
       userMessage: input.userMessage,
@@ -1723,9 +1629,6 @@ export async function waitForAgentRuntimeKernelIdleForTest(): Promise<void> {
 
 export function resetAgentRuntimeKernelForTest(): void {
   agentRuntimeKernel.resetForTest();
-  backgroundWakeController.reset();
-  streamEmitters.clear();
-  scheduledBackgroundWakes.clear();
   runGuidanceStore.resetForTest();
   queueOperationResults.clear();
 }
@@ -1796,18 +1699,6 @@ function restoreUnconsumedGuidanceToQueue(threadId: string): void {
   emitAgentMessageQueueChanged(threadId);
 }
 
-function isBackgroundWakeInput(input: AgentSendInput): boolean {
-  return input.messageMetadata?.backgroundTaskWake === true
-    && typeof input.messageMetadata.backgroundTaskId === "string";
-}
-
-function releaseBackgroundWakeInput(input: AgentSendInput): void {
-  if (!isBackgroundWakeInput(input)) return;
-  const taskId = input.messageMetadata?.backgroundTaskId;
-  scheduledBackgroundWakes.delete(input.threadId);
-  if (typeof taskId === "string") backgroundWakeController.release(input.threadId, taskId);
-}
-
 // 富 steer 附件摘要:以"摘要信封"注入 guidance 文本(模型可见、不可执行),与 ContextAssembler 的 <browser_attachments> 风格一致。
 function summarizeGuidanceAttachments(input: AgentSendInput): string | undefined {
   const parts: string[] = [];
@@ -1848,16 +1739,12 @@ function toQueuedMessage(dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInp
       : {}),
     ...(Array.isArray(dispatch.input.messageMetadata?.capabilityFingerprints)
       ? { capabilityFingerprints: dispatch.input.messageMetadata.capabilityFingerprints as Array<{ uri: string; fingerprint: string }> }
-      : {}),
-    ...(isBackgroundWakeInput(dispatch.input) ? { internal: true } : {})
+      : {})
   };
 }
 
 export async function stopAgent(threadId: string): Promise<boolean> {
   const dispatchStopped = agentRuntimeKernel.cancelActive(threadId);
-  backgroundWakeController.clearThread(threadId);
-  streamEmitters.delete(threadId);
-  scheduledBackgroundWakes.delete(threadId);
   const sessionStateManager = getSessionStateManager();
   sessionStateManager.delete(threadId);
   getAgentRuntimeStatusManager().markIdle(threadId);

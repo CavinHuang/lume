@@ -591,7 +591,7 @@ describe("agent-service", () => {
     }));
   });
 
-  test("后台任务终态通知应主动排队一次隐藏主 agent 续跑", async () => {
+  test("后台任务终态通知不应创建隐藏主 agent 轮次", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { appendAgentMessage, waitForAgentRuntimeKernelIdleForTest } = await import("./agent-service");
     const thread = createAgentThread("background wake", "channel-test");
@@ -613,16 +613,10 @@ describe("agent-service", () => {
       onToolPermissionRequest: () => undefined
     });
 
-    for (let attempt = 0; attempt < 50 && runAgentRuntimeCalls.length < before + 2; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
     await waitForAgentRuntimeKernelIdleForTest();
+    await new Promise((resolve) => setTimeout(resolve, 30));
 
-    expect(runAgentRuntimeCalls.length).toBeGreaterThanOrEqual(before + 2);
-    const wakeInput = runAgentRuntimeCalls[before + 1] as { input?: { userMessage?: string; messageMetadata?: Record<string, unknown> } };
-    expect(wakeInput.input?.userMessage).toContain("后台任务刚刚产生了终态通知");
-    expect(wakeInput.input?.messageMetadata?.hiddenFromChat).toBe(true);
-    expect(wakeInput.input?.messageMetadata?.backgroundTaskId).toBe("task_late");
+    expect(runAgentRuntimeCalls).toHaveLength(before + 1);
   });
 
   test("sendAgentMessage 应先追加 user 可见消息，再在完成后追加 assistant 与原始 sdk transcript", async () => {
