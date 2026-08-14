@@ -137,3 +137,42 @@ describe("Agent.resumeInterruptedRun", () => {
     await agent.close()
   })
 })
+
+describe("Agent dangling history repair on next prompt", () => {
+  test("a plain prompt fills placeholders for crashed-run dangling tool_use before the provider request", async () => {
+    // Regression (C2): message-level persistence lets a crashed run's trailing
+    // assistant tool_use survive on disk with no tool_result. The next user
+    // message must repair the pairing instead of sending a rejected request.
+    const tempDir = mkdtempSync(join(tmpdir(), "sdk-agent-repair-"))
+    tempDirs.push(tempDir)
+    process.env.OPEN_AGENT_SDK_HOME = join(tempDir, "sdk-home")
+    const sessionId = `repair-${crypto.randomUUID()}`
+
+    await saveSession(sessionId, [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "tool-crash-1", name: "Bash", input: { command: "ls" } }],
+      },
+      // tool-crash-1 has no tool_result → dangling after a crash
+    ], { cwd: tempDir, model: "test-model" })
+
+    const provider = new CapturingProvider()
+    const agent = createAgent({
+      resume: sessionId,
+      persistSession: false,
+      cwd: tempDir,
+      model: "test-model",
+      provider,
+    })
+
+    await agent.prompt("continue")
+
+    expect(provider.requests).toHaveLength(1)
+    const payload = JSON.stringify(provider.requests[0]?.messages)
+    const results = payload.match(/"tool_use_id":\s*"tool-crash-1"/g) ?? []
+    expect(results).toHaveLength(1)
+    expect(payload).toContain("interrupted before completion")
+    await agent.close()
+  })
+})

@@ -48,6 +48,10 @@ export interface ResumeToolInfo {
   isReadOnly: (toolName: string) => boolean
 }
 
+/** Shared placeholder for a tool_use whose actual execution state is unknown. */
+export const INTERRUPTED_TOOL_PLACEHOLDER =
+  'Error: interrupted before completion; actual state unknown — inspect the workspace before retrying.'
+
 /**
  * Build persisted tool continuations from dangling tool uses. Read-only /
  * concurrency-safe tools replay once (toolCall only); everything else gets an
@@ -73,8 +77,7 @@ export function buildResumeContinuations(
             toolResult: {
               type: 'tool_result' as const,
               tool_use_id: use.id,
-              content:
-                'Error: interrupted before completion; actual state unknown — inspect the workspace before retrying.',
+              content: INTERRUPTED_TOOL_PLACEHOLDER,
               is_error: true,
             },
           },

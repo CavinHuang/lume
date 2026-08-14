@@ -2511,18 +2511,13 @@ function resolvePersistedToolContinuation(
 }
 
 /**
- * 悬空兜底：messageMetadata.runtimeContinuation 标记为 dangling-fallback 且
- * 无单数 checkpoint 时，从 session history 检测末尾 assistant 未配对的
- * tool_use，复用 SDK 的 buildResumeContinuations 构造数组——只读/控制工具
- * 相同输入重放一次，副作用工具注入中断说明占位（不自动重放）。
+ * 从 runtime-core session context messages 检测末尾 assistant 未配对的
+ * tool_use（悬空）。供 dangling-fallback 续跑与 getPendingResume 的
+ * 崩溃运行判定共用。
  */
-export function resolveDanglingFallbackContinuations(
-  metadata: Record<string, unknown> | undefined,
+export function detectSessionDanglingToolUses(
   sessionMessages: RuntimeCoreSessionContextMessage[],
-): PersistedToolContinuation[] | undefined {
-  const runtimeContinuation = metadata?.runtimeContinuation;
-  if (!runtimeContinuation || typeof runtimeContinuation !== "object") return undefined;
-  if ((runtimeContinuation as Record<string, unknown>).source !== "dangling-fallback") return undefined;
+) {
   const normalized: NormalizedMessageParam[] = sessionMessages.map((message) => {
     if (message.role === "toolResult") {
       return {
@@ -2535,7 +2530,23 @@ export function resolveDanglingFallbackContinuations(
       content: message.content as NormalizedMessageParam["content"]
     };
   });
-  const dangling = detectDanglingToolUses(normalized);
+  return detectDanglingToolUses(normalized);
+}
+
+/**
+ * 悬空兜底：messageMetadata.runtimeContinuation 标记为 dangling-fallback 且
+ * 无单数 checkpoint 时，从 session history 检测末尾 assistant 未配对的
+ * tool_use，复用 SDK 的 buildResumeContinuations 构造数组——只读/控制工具
+ * 相同输入重放一次，副作用工具注入中断说明占位（不自动重放）。
+ */
+export function resolveDanglingFallbackContinuations(
+  metadata: Record<string, unknown> | undefined,
+  sessionMessages: RuntimeCoreSessionContextMessage[],
+): PersistedToolContinuation[] | undefined {
+  const runtimeContinuation = metadata?.runtimeContinuation;
+  if (!runtimeContinuation || typeof runtimeContinuation !== "object") return undefined;
+  if ((runtimeContinuation as Record<string, unknown>).source !== "dangling-fallback") return undefined;
+  const dangling = detectSessionDanglingToolUses(sessionMessages);
   if (dangling.length === 0) return undefined;
   return buildResumeContinuations(dangling, {
     isReadOnly: (toolName) => {

@@ -481,6 +481,64 @@ describe("agent-handlers runtime state", () => {
     expect(sendAgentMessageMock).not.toHaveBeenCalled();
   });
 
+  test("get-pending-resume flags a crashed running run with dangling tool_use", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-pending-crash-"));
+    const threadId = "thread-pending-crash";
+    const runId = "run-pending-crash";
+    const sessionDir = getRuntimeCoreSessionDir(threadId);
+    await createFileBackedLumeRunStateStore(sessionDir).create({
+      version: 1,
+      runId,
+      threadId,
+      rootAgentId: "runtime-core",
+      currentAgentId: "runtime-core",
+      status: "running",
+      input: { userMessage: "crashed task", permissionMode: "default" },
+      generatedItems: [],
+      pendingInterruptions: [],
+      approvals: { alwaysAllowedTools: [] },
+      traceId: "trace-pending-crash",
+      model: { provider: "openai", modelId: "gpt-test" },
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z"
+    });
+    // 崩溃残留：assistant tool_use 已落盘（message 级持久化），无 tool_result。
+    const { createOrResumeRuntimeCoreSessionManager } = await import("../services/agent-runtime/runtime-core/session-store");
+    const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), threadId);
+    sessionManager.appendMessage({
+      role: "user",
+      content: "run this"
+    });
+    sessionManager.appendMessage({
+      role: "assistant",
+      content: [{ type: "tool_use", id: "t-crash", name: "Bash", input: { command: "ls" } }]
+    });
+
+    const { createAgentHandlers } = await import("./agent-handlers");
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
+    });
+
+    const pending = await handlers[AGENT_IPC_CHANNELS.GET_PENDING_RESUME]!({ threadId });
+    expect(pending).toMatchObject({
+      threadId,
+      hasPendingResume: true,
+      runId
+    });
+
+    // 对照：running 但无悬空（工具结果已配对）不触发。
+    sessionManager.appendMessage({
+      role: "toolResult",
+      content: "done",
+      toolCallId: "t-crash"
+    });
+    const clean = await handlers[AGENT_IPC_CHANNELS.GET_PENDING_RESUME]!({ threadId });
+    expect(clean).toEqual({ threadId, hasPendingResume: false });
+  });
+
   test("resume-run sends a plain continuation message for interrupted checkpoints without tool result injection", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-interrupted-continue-"));
     const threadId = "thread-interrupted-continue";

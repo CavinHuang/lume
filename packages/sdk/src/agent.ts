@@ -73,7 +73,7 @@ import { setMcpConnections } from './tools/mcp-resource-tools.js'
 import { getContextWindowSize } from './utils/tokens.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { createExecuteTool, createToolSearchTool, isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
-import { buildResumeContinuations, detectDanglingToolUses } from './interrupt-recovery.js'
+import { buildResumeContinuations, detectDanglingToolUses, INTERRUPTED_TOOL_PLACEHOLDER } from './interrupt-recovery.js'
 
 type QueryInput = string | ContentBlockParam[] | SDKUserMessage
 
@@ -924,6 +924,16 @@ export class Agent {
     })
     this.registerExplicitSkills()
 
+    // Crash repair: message-level persistence can leave the trailing assistant
+    // tool_use without a tool_result (a crashed run has no abort placeholders).
+    // Sending that history to the provider is rejected, deadlocking the thread.
+    // Fill error placeholders here so the next request is well-formed. Skipped
+    // when toolContinuations carry the boundary (resumeInterruptedRun etc.) —
+    // the engine's result-side idempotency covers those paths.
+    if (!opts.toolContinuations?.length) {
+      this.repairDanglingToolUses()
+    }
+
     const abortCtrl = opts.abortController || new AbortController()
     this.abortCtrl = abortCtrl
 
@@ -1244,6 +1254,24 @@ export class Agent {
 
   async interrupt(): Promise<void> {
     this.abortCtrl?.abort('interrupt')
+  }
+
+  /**
+   * Fill dangling trailing tool_use blocks with error placeholders so the
+   * session is provider-clean. Returns true when history changed.
+   */
+  private repairDanglingToolUses(): boolean {
+    const dangling = detectDanglingToolUses(this.history)
+    if (dangling.length === 0) return false
+    const blocks = dangling.map((use) => ({
+      type: 'tool_result' as const,
+      tool_use_id: use.id,
+      content: INTERRUPTED_TOOL_PLACEHOLDER,
+      is_error: true,
+    }))
+    this.history.push({ role: 'user', content: blocks })
+    this.sessionMessages.push(toSessionMessage('user', blocks))
+    return true
   }
 
   /**

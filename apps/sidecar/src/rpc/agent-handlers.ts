@@ -177,7 +177,8 @@ import { getAgentWorkspacePath, getPluginAuditPath } from "../services/infra/con
 import { createLogger, writeLogRecord } from "../services/infra/logger";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runtime-core/attempt";
-import { getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
+import { createOrResumeRuntimeCoreSessionManager, getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
+import { detectSessionDanglingToolUses } from "../services/agent-runtime/runtime-core/run";
 import { resolveAgentThreadWorkdir } from "../services/agent/agent-workdir-resolver";
 import {
   applyCodingDiffAction,
@@ -577,6 +578,24 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           runId: lastRun.runId,
           reason: continuation.reason
         };
+      }
+      // 崩溃场景：message 级持久化让正在执行工具的 assistant tool_use 落盘，
+      // run state 停在 running 且无 continuation checkpoint。session 存在悬空
+      // tool_use 时提示恢复（点击后续跑会被状态门挡下并给出友好引导，
+      // 线程本身已由 SDK 的悬空自动修复保活）。
+      if (lastRun.status === "running") {
+        const messages = createOrResumeRuntimeCoreSessionManager(
+          process.cwd(),
+          input.threadId
+        ).buildSessionContext().messages;
+        if (detectSessionDanglingToolUses(messages).length > 0) {
+          return {
+            threadId: input.threadId,
+            hasPendingResume: true,
+            runId: lastRun.runId,
+            reason: "检测到未完成的崩溃运行"
+          };
+        }
       }
     }
     return { threadId: input.threadId, hasPendingResume: false };
