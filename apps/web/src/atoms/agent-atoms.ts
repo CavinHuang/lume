@@ -67,14 +67,6 @@ export const agentThreadPermissionModesAtom = atomWithStorage<Record<string, Age
   {},
 )
 
-export type SidePanelView = 'files' | 'task-progress' | 'trace' | null
-export const agentSidePanelViewAtom = atomWithStorage<Record<string, SidePanelView>>(
-  'agent-side-panel-view', {}
-)
-export const agentFileTreeOpenAtom = atomWithStorage<Record<string, boolean>>(
-  'agent-file-tree-open', {}
-)
-
 /**
  * 输入草稿 / 历史：按 threadId 分桶，落 localStorage。
  * - draft：每会话 1 份未发送草稿（富文本 JSON）。

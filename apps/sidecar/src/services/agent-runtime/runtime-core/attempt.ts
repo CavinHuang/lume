@@ -46,17 +46,16 @@ import {
 } from "../../workflow-hooks/hook-effects";
 import type { LumeWorkflowHookRuntimeLike } from "../../workflow-hooks/hook-runtime";
 import { runGuidanceStore, type ConsumedRunGuidance } from "../guidance/run-guidance-store";
-import { createPluginPermissionInterceptor } from "../plugins/permission-interceptor.js";
-import { appendPluginAuditEntry } from "../plugins/plugin-audit-store.js";
 import {
+  createPluginPermissionInterceptor,
   type InterceptorInput,
   type InterceptorResult,
-  PluginPermissionRuntime,
-  FilePluginStateStore,
-  evaluatePluginSensitiveGate,
-} from "../plugins/index.js";
+} from "../plugins/permission-interceptor.js";
+import { appendPluginAuditEntry } from "../plugins/plugin-audit-store.js";
+import { PluginPermissionRuntime } from "../plugins/permission-runtime.js";
+import { DEFAULT_PLUGIN_STATE_PATH, FilePluginStateStore } from "../plugins/plugin-state-store.js";
+import { evaluatePluginSensitiveGate } from "../plugins/sensitive-gate.js";
 import { SidecarPluginManager } from "../plugins/plugin-manager.js";
-import { DEFAULT_PLUGIN_STATE_PATH } from "../plugins/plugin-state-store.js";
 
 interface RunRuntimeCoreAttemptOptions {
   registerAbort: (threadId: string, abort: () => Promise<void>) => void;

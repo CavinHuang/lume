@@ -5,7 +5,6 @@ import { Provider, createStore } from 'jotai'
 import {
   activeTabIdAtom,
   agentPlanModePhaseAtom,
-  agentSidePanelViewAtom,
   agentStreamingStatesAtom,
   agentThreadPermissionModesAtom,
   agentThreadsAtom,
@@ -791,7 +790,6 @@ describe('WelcomeView', () => {
         threadId: 'created-thread',
         phase: 'planning',
       })
-      expect(store.get(agentSidePanelViewAtom)['created-thread']).toBeUndefined()
     } finally {
       if (root) {
         await act(async () => {
