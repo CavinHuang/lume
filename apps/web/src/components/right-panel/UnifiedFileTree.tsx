@@ -724,7 +724,7 @@ function TreeEntryRow(props: {
           />
         ) : <span className="min-w-0 flex-1 truncate">{entry.name}{props.showPath && <span className="ml-2 text-[10px] text-foreground/38">{entry.ref.relativePath}</span>}</span>}
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="size-5 opacity-0 group-hover:opacity-100" />}><MoreHorizontal size={12} /></DropdownMenuTrigger>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className={cn('size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100', menuOpen && 'opacity-100')} />}><MoreHorizontal size={12} /></DropdownMenuTrigger>
           <DropdownMenuContent>
             {!entry.isDirectory && <DropdownMenuItem onSelect={() => props.onOpen(entry.ref!)}>预览</DropdownMenuItem>}
             <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void openFileRefInSystem(entry.ref!)}>系统打开</DropdownMenuItem>

@@ -1,19 +1,16 @@
 import { useCallback, useMemo, useRef, useState, useEffect, type PointerEvent as ReactPointerEvent } from 'react'
 import { useAtom } from 'jotai'
-import { ChevronDown, Copy, ExternalLink, FolderSearch, MoreHorizontal, PanelLeftClose } from 'lucide-react'
+import { PanelLeftClose } from 'lucide-react'
 import type { FileEntry, FileRef } from '@lume/shared'
 import { rightPanelFileLayoutPreferencesAtom } from '@/atoms'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
-import { openFileRefInSystem, isDesktopRuntime, revealFileRefInSystem, writeClipboardText } from '@/lib/desktop-api'
 import { RightPanelFilePreview } from './RightPanelFilePreview'
 import { UnifiedFileTree } from './UnifiedFileTree'
 import { RightPanelMcpResourcePreview } from './RightPanelMcpResourcePreview'
 import {
   openFileTab,
   clearPreviewFileTab,
-  createRightPanelFileTarget,
   fileRefKey,
   removeFileRef,
   rightPanelFileTargetKey,
@@ -60,14 +57,12 @@ export function FilesRightPanelWorkspace({
   const previewActiveTab = workspace.previewTab
   const previewTarget = activeTab?.target ?? previewActiveTab?.target ?? null
   const previewRef = previewTarget ? rightPanelFileTargetRef(previewTarget) : null
+  const previewEntry = previewRef ? findCachedEntry(workspace.directoryCache as Record<string, FileEntry[]>, previewRef) : undefined
   const showTree = !treeCollapsed && (wide || !preferences.narrowShowsPreview || !previewTarget)
   const treeWidth = useMemo(
     () => clampRightPanelFileTreeWidth(preferences.treeWidth ?? FILE_TREE_DEFAULT_WIDTH, Math.max(containerWidth, 680)),
     [containerWidth, preferences.treeWidth],
   )
-  const selectedEntry = workspace.selectedRef
-    ? findCachedEntry(workspace.directoryCache as Record<string, FileEntry[]>, workspace.selectedRef)
-    : undefined
   workspaceRef.current = workspace
   openFunctionsRef.current = openFunctions
 
@@ -153,15 +148,6 @@ export function FilesRightPanelWorkspace({
           onWorkspaceChange={handleWorkspaceChange}
           onOpenFile={openFile}
         />
-        {!wide && workspace.selectedRef && (
-          <FileDetailsBar
-            fileRef={workspace.selectedRef}
-            entry={selectedEntry}
-            collapsed={workspace.detailsCollapsed}
-            onToggle={() => onWorkspaceChange({ ...workspace, detailsCollapsed: !workspace.detailsCollapsed })}
-            onPreview={() => openFile(createRightPanelFileTarget(workspace.selectedRef!))}
-          />
-        )}
       </div>
       {wide && !treeCollapsed && <div role="separator" aria-orientation="vertical" aria-label="调整文件树宽度" className="w-1.5 shrink-0 cursor-col-resize hover:bg-primary/10" onPointerDown={startResize} />}
       <div className={cn('flex min-h-0 min-w-0 flex-1 flex-col', !wide && showTree && 'hidden')}>
@@ -176,12 +162,12 @@ export function FilesRightPanelWorkspace({
             >
               <PanelLeftClose size={13} />
             </Button>
-            <span className="min-w-0 flex-1 truncate text-foreground/60" title={`${previewRef?.source} · ${previewRef?.relativePath}`}>
-              {previewRef?.relativePath ?? previewTarget.kind}
+            <span className="min-w-0 flex-1 truncate text-foreground/60" title={previewRef ? `${previewRef.source} · ${previewRef.relativePath}` : undefined}>
+              {previewRef?.relativePath ?? (previewTarget?.kind === 'mcp-resource' ? previewTarget.resource.name : previewTarget?.kind)}
             </span>
-            {selectedEntry && !selectedEntry.isDirectory && previewRef && (
+            {previewEntry && !previewEntry.isDirectory && previewRef && (
               <span className="shrink-0 text-[10px] text-foreground/45" title="文件信息">
-                {fileType(previewRef.relativePath)}{selectedEntry.size !== undefined ? ` · ${formatBytes(selectedEntry.size)}` : ''}{selectedEntry.modifiedAt ? ` · ${new Date(selectedEntry.modifiedAt).toLocaleString()}` : ''}
+                {fileType(previewRef.relativePath)}{previewEntry.size !== undefined ? ` · ${formatBytes(previewEntry.size)}` : ''}{previewEntry.modifiedAt ? ` · ${new Date(previewEntry.modifiedAt).toLocaleString()}` : ''}
               </span>
             )}
           </div>
@@ -199,45 +185,11 @@ export function FilesRightPanelWorkspace({
             onPreviewScopeChange={handlePreviewScopeChange}
             onEditStart={!activeTab && previewActiveTab ? () => openFile(previewActiveTab.target) : undefined}
             treeCollapsed={treeCollapsed}
+            hideSelfHeader={!wide}
             onToggleTree={wide ? () => setPreferences((current) => ({ ...current, treeCollapsed: !treeCollapsed })) : undefined}
           />}
         </div>
       </div>
-    </div>
-  )
-}
-
-function FileDetailsBar({ fileRef, entry, collapsed, onToggle, onPreview }: {
-  fileRef: FileRef
-  entry?: FileEntry
-  collapsed: boolean
-  onToggle: () => void
-  onPreview: () => void
-}) {
-  return (
-    <div className={cn('absolute inset-x-0 bottom-0 border-t bg-background px-2', collapsed ? 'h-7' : 'h-[72px]')}>
-      <div className="flex h-7 items-center gap-2 text-[11px]">
-        <span className="min-w-0 flex-1 truncate">{fileRef.source} · {fileRef.relativePath}</span>
-        <Button variant="ghost" size="icon-sm" className="size-5" onClick={onToggle}><ChevronDown size={12} className={cn(collapsed && 'rotate-180')} /></Button>
-      </div>
-      {!collapsed && (
-        <div className="flex items-center gap-1">
-          <span className="mr-auto truncate text-[10px] text-foreground/45">
-            {entry?.isDirectory ? '目录' : fileType(fileRef.relativePath)}
-            {entry?.size !== undefined ? ` · ${formatBytes(entry.size)}` : ''}
-            {entry?.modifiedAt ? ` · ${new Date(entry.modifiedAt).toLocaleString()}` : ''}
-          </span>
-          <Button variant="secondary" size="sm" disabled={entry?.isDirectory} onClick={onPreview}>预览</Button>
-          <Button variant="ghost" size="sm" disabled={!isDesktopRuntime()} onClick={() => void openFileRefInSystem(fileRef)}><ExternalLink size={13} />系统打开</Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" title="更多文件操作" />}><MoreHorizontal size={13} /></DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void revealFileRefInSystem(fileRef)}><FolderSearch size={13} />在文件管理器中显示</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => void writeClipboardText(fileRef.relativePath)}><Copy size={13} />复制相对路径</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      )}
     </div>
   )
 }
