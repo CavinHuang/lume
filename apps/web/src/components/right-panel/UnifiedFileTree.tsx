@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Braces, Check, ChevronRight, ChevronsUp, Folder, MoreHorizontal, RefreshCw, Search, X } from 'lucide-react'
-import { AGENT_IPC_CHANNELS, type FileEntry, type FileIndexEntry, type FileRef, type FileSource, type McpResourceSummary } from '@lume/shared'
+import { Braces, Check, ChevronRight, ChevronsUp, Folder, FolderPlus, MoreHorizontal, RefreshCw, Search, X } from 'lucide-react'
+import { AGENT_IPC_CHANNELS, type ExternalDirEntry, type FileEntry, type FileIndexEntry, type FileRef, type FileSource, type McpResourceSummary } from '@lume/shared'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -23,6 +23,7 @@ import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import {
   isDesktopRuntime,
   openFileRefInSystem,
+  openFolderDialog,
   revealFileRefInSystem,
   sidecarCall,
   writeClipboardText,
@@ -55,6 +56,7 @@ import {
   shouldCommitTreeRequest,
 } from './unified-file-tree-state'
 import { SourceMutationQueue } from './unified-file-tree-state'
+import { ExternalDirsSection, type ExternalDirsByScope } from './ExternalDirsSection'
 import type { RightPanelFunction } from './right-panel-state'
 
 const GROUP_META: Record<FileSource, { label: string; empty: string }> = {
@@ -71,6 +73,7 @@ export function UnifiedFileTree({
   workspaceSlug,
   workspaceProjectPath,
   fileContextId,
+  threadId,
   openFunctions,
   onWorkspaceChange,
   onOpenFile,
@@ -80,6 +83,7 @@ export function UnifiedFileTree({
   workspaceSlug?: string
   workspaceProjectPath?: string
   fileContextId?: string
+  threadId?: string
   openFunctions: RightPanelFunction[]
   onWorkspaceChange: (workspace: ThreadFileWorkspace) => void
   onOpenFile: (target: RightPanelFileTarget | FileRef) => void
@@ -97,6 +101,7 @@ export function UnifiedFileTree({
   const [moving, setMoving] = useState<FileEntry | null>(null)
   const [moveTarget, setMoveTarget] = useState('')
   const [mcpResources, setMcpResources] = useState<McpResourceSummary[]>([])
+  const [externalDirs, setExternalDirs] = useState<ExternalDirsByScope>({ thread: [], workspace: [] })
   const mutationQueue = useRef(new SourceMutationQueue()).current
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
@@ -123,6 +128,56 @@ export function UnifiedFileTree({
       .catch(() => { if (!disposed) setMcpResources([]) })
     return () => { disposed = true }
   }, [workspaceSlug])
+
+  // 附加目录双作用域清单：service 按单 scope 查询（kind 判别联合），web 各查一次合并
+  const externalScopeInput = useCallback((scope: keyof ExternalDirsByScope) =>
+    scope === 'thread'
+      ? workspaceSlug && threadId
+        ? { kind: 'thread' as const, workspaceSlug, threadId, ...(fileContextId ? { fileContextId } : {}) }
+        : null
+      : workspaceSlug
+        ? { kind: 'workspace' as const, workspaceSlug }
+        : null, [workspaceSlug, threadId, fileContextId])
+  const reloadExternalDirs = useCallback(async () => {
+    const [thread, workspace] = await Promise.all((['thread', 'workspace'] as const).map(async (scope) => {
+      const input = externalScopeInput(scope)
+      if (!input) return []
+      try {
+        return await sidecarCall<ExternalDirEntry[]>(AGENT_IPC_CHANNELS.LIST_EXTERNAL_DIRS, input)
+      } catch {
+        return []
+      }
+    }))
+    setExternalDirs({ thread, workspace })
+  }, [externalScopeInput])
+  useEffect(() => { void reloadExternalDirs() }, [reloadExternalDirs])
+  const attachExternalDir = useCallback(async (scope: keyof ExternalDirsByScope, absolutePath: string) => {
+    const input = externalScopeInput(scope)
+    if (!input) return
+    try {
+      await sidecarCall(AGENT_IPC_CHANNELS.ADD_EXTERNAL_DIR, { ...input, absolutePath })
+      await reloadExternalDirs()
+      toast.success('已附加外部目录')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '附加外部目录失败')
+    }
+  }, [externalScopeInput, reloadExternalDirs])
+  // absolutePath 必须回传 listExternalDirs 返回的原串（Windows 大小写不归一，remove 匹配依赖原键）
+  const removeExternalDir = useCallback(async (scope: keyof ExternalDirsByScope, absolutePath: string) => {
+    const input = externalScopeInput(scope)
+    if (!input) return
+    try {
+      await sidecarCall(AGENT_IPC_CHANNELS.REMOVE_EXTERNAL_DIR, { ...input, absolutePath })
+      await reloadExternalDirs()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '移除外部目录失败')
+    }
+  }, [externalScopeInput, reloadExternalDirs])
+  const pickAndAttachExternalDir = useCallback(async (scope: keyof ExternalDirsByScope) => {
+    const { path } = await openFolderDialog()
+    if (!path) return
+    await attachExternalDir(scope, path)
+  }, [attachExternalDir])
 
   workspaceRef.current = workspace
 
@@ -578,6 +633,23 @@ export function UnifiedFileTree({
         </div>
         <Button variant="ghost" size="icon-sm" onClick={() => refreshSource(workspace.selectedRef?.source ?? 'project')} title="刷新当前来源"><RefreshCw size={13} /></Button>
         <Button variant="ghost" size="icon-sm" onClick={() => commitWorkspace({ ...workspaceRef.current, expandedKeys: [] })} title="折叠全部目录"><ChevronsUp size={13} /></Button>
+        {isDesktopRuntime() && (
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" title="附加外部目录（引用，不复制）" />}><FolderPlus size={13} /></DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem
+                disabled={!workspaceSlug || !threadId}
+                title={!workspaceSlug || !threadId ? '当前会话缺少工作区信息，无法附加' : undefined}
+                onSelect={() => void pickAndAttachExternalDir('thread')}
+              >附加到本会话</DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!workspaceSlug}
+                title={!workspaceSlug ? '当前会话未绑定工作区，无法附加' : undefined}
+                onSelect={() => void pickAndAttachExternalDir('workspace')}
+              >附加到此工作区</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" title="搜索范围" />}><MoreHorizontal size={13} /></DropdownMenuTrigger>
           <DropdownMenuContent>
@@ -594,7 +666,16 @@ export function UnifiedFileTree({
         </DropdownMenu>
       </div>
       {searchTruncated && <div className="border-b px-2 py-1 text-[11px] text-amber-600">扫描达到预算，当前结果不是精确总数。</div>}
-      <div ref={scrollContainerRef} className="file-tree-scrollbar min-h-0 flex-1 overflow-auto py-1" onScroll={(event) => {
+      <div ref={scrollContainerRef} className="file-tree-scrollbar min-h-0 flex-1 overflow-auto py-1" onDragOver={(event) => {
+        // 仅放行 OS 文件拖入（树内 FileRef 拖拽不含 Files 类型，不受影响）
+        if (event.dataTransfer.types.includes('Files')) event.preventDefault()
+      }} onDrop={(event) => {
+        const file = event.dataTransfer.files[0] as (File & { path?: string }) | undefined
+        const path = file?.path
+        if (!path) return
+        event.preventDefault()
+        void attachExternalDir('thread', path)
+      }} onScroll={(event) => {
         if (query.trim()) return
         const element = event.currentTarget
         const row = Array.from(element.querySelectorAll<HTMLElement>('[data-tree-row]'))
@@ -696,6 +777,12 @@ export function UnifiedFileTree({
                 )
               })}
           </div>
+        )}
+        {!query.trim() && (
+          <ExternalDirsSection
+            dirs={externalDirs}
+            onRemove={(scope, absolutePath) => void removeExternalDir(scope, absolutePath)}
+          />
         )}
       </div>
       <ConfirmDialog
