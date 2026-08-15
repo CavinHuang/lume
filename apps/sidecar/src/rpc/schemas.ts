@@ -1744,6 +1744,7 @@ export const fileRefSearchInputSchema = z.object({
 }).strict();
 export const fileRefRenameInputSchema = z.object({ ref: fileRefSchema, newName: z.string().min(1) }).strict();
 export const fileRefMoveInputSchema = z.object({ ref: fileRefSchema, targetDirectory: fileRefSchema }).strict();
+export const promoteFileRefInputSchema = z.object({ ref: fileRefSchema, workspaceSlug: idSchema }).strict();
 export const legacyFileRefConversionInputSchema = z.discriminatedUnion("recordKind", [
   z.object({ recordKind: z.literal("thread-attachment"), threadId: idSchema, workspaceSlug: optionalIdSchema, legacyRelativePath: z.string().min(1) }).strict(),
   z.object({ recordKind: z.literal("memory-source"), workspaceSlug: idSchema, legacyRelativePath: z.string().min(1) }).strict()

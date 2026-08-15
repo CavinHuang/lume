@@ -2194,6 +2194,8 @@ export const AGENT_IPC_CHANNELS = {
   READ_PROJECT_FILE_DATA: 'agent:read-project-file-data',
   /** 将旧版资源只读导出到项目根目录，不覆盖同名内容 */
   EXPORT_LEGACY_RESOURCE_TO_PROJECT: 'agent:export-legacy-resource-to-project',
+  /** 将 session/memory/legacy 条目复制晋升到项目根（源保留，同名报错） */
+  PROMOTE_FILE_REF_TO_PROJECT: 'agent:promote-file-ref-to-project',
   /** 用系统默认应用打开项目绑定目录文件 */
   OPEN_PROJECT_FILE: 'agent:open-project-file',
   /** 在系统文件管理器中显示项目绑定目录文件 */

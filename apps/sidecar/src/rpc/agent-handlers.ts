@@ -99,6 +99,7 @@ import {
   readProjectFileData,
   readProjectPath,
   previewWorkspacePath,
+  promoteFileRefToProject,
   readWorkspacePath,
   readWorkspaceFileData,
   readWorkspaceRootPath,
@@ -280,6 +281,7 @@ import {
   listDirectoryInputSchema,
   marketCatalogInputSchema,
   privilegedPreparePluginPackageInputSchema,
+  promoteFileRefInputSchema,
   privilegedFinalizePluginPackageInputSchema,
   privilegedRevokePluginPackageInputSchema,
   marketDetailInputSchema,
@@ -1913,6 +1915,10 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.RENAME_FILE_REF]: async (params) => {
       const input = validateInput(fileRefRenameInputSchema, params, AGENT_IPC_CHANNELS.RENAME_FILE_REF);
       return renameAuthorizedFileRef(input.ref, input.newName);
+    },
+    [AGENT_IPC_CHANNELS.PROMOTE_FILE_REF_TO_PROJECT]: async (params) => {
+      const input = validateInput(promoteFileRefInputSchema, params, AGENT_IPC_CHANNELS.PROMOTE_FILE_REF_TO_PROJECT);
+      return promoteFileRefToProject(input.ref, input.workspaceSlug);
     },
     [AGENT_IPC_CHANNELS.MOVE_FILE_REF]: async (params) => {
       const input = validateInput(fileRefMoveInputSchema, params, AGENT_IPC_CHANNELS.MOVE_FILE_REF);
