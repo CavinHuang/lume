@@ -16,12 +16,12 @@ const streamTextDelta = (text: string) => ({
   event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
   parent_tool_use_id: null,
 })
-const assistantWithTool = (uuid: string) => ({
+const assistantWithTool = (uuid: string, toolId = "t1") => ({
   type: "assistant",
   uuid,
   message: { role: "assistant", content: [
     { type: "text", text: "hi" },
-    { type: "tool_use", id: "t1", name: "Read", input: {} },
+    { type: "tool_use", id: toolId, name: "Read", input: {} },
   ] },
 })
 const toolResult = (id: string) => ({
@@ -46,7 +46,7 @@ describe("projectLifecycle", () => {
       "turn.end", "run.end",
     ])
     const turnEnd = events.find((e) => e.phase === "end" && e.kind === "turn")
-    expect(turnEnd.turnId).toBe("turn-a")
+    expect(turnEnd.turnId).toBe("turn-1")
     expect(turnEnd.detail.toolResults).toEqual([
       expect.objectContaining({ tool_use_id: "t1" }),
     ])
@@ -101,21 +101,41 @@ describe("projectLifecycle", () => {
         message: { role: "assistant", content: [{ type: "text", text: "ok" }] } } as any,
     ])
     expect(events.every((e) => e.turnId !== "s-u")).toBe(true)
-    expect(events.some((e) => e.turnId === "main-1")).toBe(true)
+    // Main-stream turn gets the positional fallback id (turnId never uses uuid).
+    expect(events.some((e) => e.turnId === "turn-1")).toBe(true)
   })
 
   test("multi-turn: turn boundary waits for full tool pairing per turn", async () => {
     const events = await run([
       assistantWithTool("t-a") as any,
       toolResult("t1") as any,
-      assistantWithTool("t-b") as any,
+      assistantWithTool("t-b", "t2") as any,
       toolResult("t2") as any,
       { type: "result", subtype: "success", num_turns: 2 } as any,
     ])
     const turnEnds = events.filter((e) => e.kind === "turn" && e.phase === "end")
-    expect(turnEnds.map((e) => e.turnId)).toEqual(["t-a", "t-b"])
+    expect(turnEnds.map((e) => e.turnId)).toEqual(["turn-1", "turn-2"])
     expect(turnEnds[0].detail.toolResults[0].tool_use_id).toBe("t1")
     expect(turnEnds[1].detail.toolResults[0].tool_use_id).toBe("t2")
     expect(events.at(-1).detail.numTurns).toBe(2)
+  })
+
+  test("thinking_delta passes through as update without folding into partial", async () => {
+    const thinkingDelta = {
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "hm" } },
+      parent_tool_use_id: null,
+    }
+    const events = await run([
+      streamTextDelta("he") as any,
+      thinkingDelta as any,
+      { type: "assistant", uuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "he" }] } } as any,
+    ])
+    const updates = events.filter((e) => e.phase === "update")
+    expect(updates).toHaveLength(2)
+    expect(updates[1].detail.delta?.delta?.type).toBe("thinking_delta")
+    // Batch 1: thinking is not folded — no toolUses slot, no thinking accumulation.
+    expect(updates[1].detail.partial.toolUses).toEqual([])
+    expect(updates[1].detail.partial.text).toBe("he")
   })
 })

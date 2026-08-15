@@ -18,9 +18,9 @@ import type {
 
 interface PendingTurn {
   turnId: string
-  /** Whether turnId came from an assistant uuid (vs positional fallback). */
-  uuidAssigned: boolean
-  /** Expected tool_result count (from the assistant's tool_use blocks). */
+  /** tool_use ids from the assistant message, consumed as results pair up. */
+  pendingToolUseIds: Set<string>
+  /** Total tool_use blocks in the assistant message (count-based fallback). */
   expectedToolResults: number
   toolResults: TurnEndDetail['toolResults']
   assistantMessage: { role: 'assistant'; content: unknown[] } | null
@@ -56,12 +56,16 @@ export async function* projectLifecycle(
     return emit('run', 'start', null, { type: 'run.start' })
   }
 
-  /** Turn boundary: turnId = assistant uuid, with positional fallback. */
-  function openTurn(uuid?: string): PendingTurn {
+  /**
+   * Turn boundary: turnId is the stable positional id `turn-<n>` — it is the
+   * event bus join key, so it must never change mid-turn. The assistant uuid
+   * stays reachable via detail.assistantMessage.
+   */
+  function openTurn(): PendingTurn {
     turnCounter += 1
     const turn: PendingTurn = {
-      turnId: uuid ?? `turn-${turnCounter}`,
-      uuidAssigned: uuid !== undefined,
+      turnId: `turn-${turnCounter}`,
+      pendingToolUseIds: new Set(),
       expectedToolResults: 0,
       toolResults: [],
       assistantMessage: null,
@@ -72,13 +76,17 @@ export async function* projectLifecycle(
     return turn
   }
 
-  /** Fold a content_block_delta family event into the cumulative partial. */
+  /**
+   * Fold a content_block_delta family event into the cumulative partial.
+   * thinking_delta is NOT folded in batch 1 — it only rides the update's
+   * passthrough delta (partial.thinking lands in batch 2).
+   */
   function foldDelta(turn: PendingTurn, event: SDKStreamEventMessage['event']): void {
     const delta = event.delta as { type: string; text?: string; partial_json?: string } | undefined
     if (!delta) return
     if (delta.type === 'text_delta') {
       turn.partialText += delta.text ?? ''
-    } else if (delta.type === 'input_json_delta' || delta.type === 'thinking_delta') {
+    } else if (delta.type === 'input_json_delta') {
       const index = (event.index as number) ?? 0
       const slot = turn.partialToolUses.get(index) ?? { id: '', name: '', partialJson: '' }
       slot.partialJson += delta.partial_json ?? ''
@@ -101,7 +109,8 @@ export async function* projectLifecycle(
     }
     const deltaType = (message.event.delta as { type?: string } | undefined)?.type
     if (message.event.type === 'content_block_delta' && deltaType && DELTA_FAMILY.has(deltaType)) {
-      foldDelta(currentTurn, message.event)
+      // thinking_delta passes through without folding (see foldDelta).
+      if (deltaType !== 'thinking_delta') foldDelta(currentTurn, message.event)
       const detail: MessageUpdateDetail = {
         type: 'message.update',
         delta: message.event,
@@ -121,12 +130,8 @@ export async function* projectLifecycle(
     const runStart = ensureRunStarted()
     if (runStart) out.push(runStart)
     if (!currentTurn) {
-      currentTurn = openTurn(message.uuid)
+      currentTurn = openTurn()
       out.push(emit('turn', 'start', currentTurn.turnId, { type: 'turn.start' }))
-    } else if (!currentTurn.uuidAssigned && message.uuid) {
-      // Streaming opened the turn before the uuid was known — adopt it now.
-      currentTurn.turnId = message.uuid
-      currentTurn.uuidAssigned = true
     }
     // No-streaming degrade: keep the skeleton complete with a late message.start.
     if (!currentTurn.messageStarted) {
@@ -144,6 +149,7 @@ export async function* projectLifecycle(
     for (const block of message.message.content) {
       if ((block as { type?: string }).type === 'tool_use') {
         currentTurn.expectedToolResults += 1
+        currentTurn.pendingToolUseIds.add((block as { id?: string }).id ?? '')
       }
     }
 
@@ -162,12 +168,20 @@ export async function* projectLifecycle(
   }
 
   /**
-   * tool_result: recorded by tool_use_id; the turn ends once the result count
-   * reaches the assistant's tool_use count (count-based pairing — engine
-   * replayed assistants may carry regenerated tool_use ids).
+   * tool_result pairing: id hit first, count fallback second. A result whose
+   * tool_use_id matches a pending id pairs by id; an id miss still fills a
+   * slot while the turn is under-filled (tolerates regenerated ids); once the
+   * turn is full, extra results are orphans and ignored.
    */
   function handleToolResult(result: { tool_use_id: string; tool_name?: string; output?: string; is_error?: boolean }): SdkLifecycleEvent<Batch1LifecycleDetail>[] {
-    if (!currentTurn || currentTurn.expectedToolResults === 0) return []
+    const out: SdkLifecycleEvent<Batch1LifecycleDetail>[] = []
+    const runStart = ensureRunStarted()
+    if (runStart) out.push(runStart)
+    if (!currentTurn || currentTurn.expectedToolResults === 0) return out
+    const idHit = currentTurn.pendingToolUseIds.has(result.tool_use_id)
+    const underFilled = currentTurn.toolResults.length < currentTurn.expectedToolResults
+    if (!idHit && !underFilled) return out // orphan
+    if (idHit) currentTurn.pendingToolUseIds.delete(result.tool_use_id)
     currentTurn.toolResults.push({
       tool_use_id: result.tool_use_id,
       tool_name: result.tool_name,
@@ -177,9 +191,9 @@ export async function* projectLifecycle(
     if (currentTurn.toolResults.length >= currentTurn.expectedToolResults) {
       const turn = currentTurn
       currentTurn = null
-      return [endTurn(turn)]
+      out.push(endTurn(turn))
     }
-    return []
+    return out
   }
 
   function endTurn(turn: PendingTurn): SdkLifecycleEvent<Batch1LifecycleDetail> {
