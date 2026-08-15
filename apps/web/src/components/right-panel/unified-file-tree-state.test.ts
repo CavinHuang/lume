@@ -32,7 +32,16 @@ describe('unified-file-tree-state', () => {
     expect(source).toContain('if (event.detail === 1) void props.onToggle(entry.ref!)')
     expect(source).toContain('} else if (event.detail === 2) {')
     expect(source).toContain('props.onOpen(entry.ref!)')
+    expect(source).toContain('event.detail !== 2')
+    expect(source).toContain("window.addEventListener('mousedown', openPendingTarget, true)")
     expect(source).not.toContain('entry.isDirectory ? void props.onToggle(entry.ref!) : props.onOpen(entry.ref!)')
+  })
+
+  test('tree previews return to the Files workspace while preserving formal tabs', () => {
+    const source = readFileSync(new URL('./UnifiedFileTree.tsx', import.meta.url), 'utf8')
+
+    expect(source).toContain("activeItem: { kind: 'function', type: 'files' }")
+    expect(source).toContain("openFunctions.includes('files')")
   })
 
   test('uses fixed groups, defaults, and hides empty legacy', () => {

@@ -70,6 +70,7 @@ export function UnifiedFileTree({
   openFunctions,
   onWorkspaceChange,
   onOpenFile,
+  preserveDoubleClickTarget = false,
 }: {
   workspace: ThreadFileWorkspace
   workspaceSlug?: string
@@ -78,6 +79,7 @@ export function UnifiedFileTree({
   openFunctions: RightPanelFunction[]
   onWorkspaceChange: (workspace: ThreadFileWorkspace) => void
   onOpenFile: (target: RightPanelFileTarget | FileRef) => void
+  preserveDoubleClickTarget?: boolean
 }) {
   const treeCacheIdentity = getUnifiedFileTreeCacheIdentity(workspaceSlug, fileContextId, workspaceProjectPath)
   const [cache, setCache] = useState<Record<string, FileEntry[]>>(() => workspace.directoryCache as Record<string, FileEntry[]>)
@@ -100,6 +102,7 @@ export function UnifiedFileTree({
   const treeCacheIdentityRef = useRef(treeCacheIdentity)
   const generationRef = useRef<Record<FileSource, number>>({ project: 0, session: 0, memory: 0, legacy: 0 })
   const previousSourceStatusRef = useRef(workspace.sourceStatus)
+  const pendingDoubleClickTargetRef = useRef<RightPanelFileTarget | FileRef | null>(null)
   const searchSnapshotRef = useRef<Pick<ThreadFileWorkspace, 'expandedKeys' | 'selectedRef' | 'scrollAnchor'> | null>(null)
   const roots = useMemo(() => buildSourceRoots(workspaceSlug, fileContextId), [treeCacheIdentity])
 
@@ -116,6 +119,23 @@ export function UnifiedFileTree({
   }, [workspaceSlug])
 
   workspaceRef.current = workspace
+
+  useEffect(() => {
+    if (!preserveDoubleClickTarget) {
+      pendingDoubleClickTargetRef.current = null
+      return
+    }
+    const openPendingTarget = (event: MouseEvent) => {
+      const target = pendingDoubleClickTargetRef.current
+      pendingDoubleClickTargetRef.current = null
+      if (!target || event.button !== 0 || event.detail !== 2) return
+      event.preventDefault()
+      event.stopPropagation()
+      onOpenFile(target)
+    }
+    window.addEventListener('mousedown', openPendingTarget, true)
+    return () => window.removeEventListener('mousedown', openPendingTarget, true)
+  }, [onOpenFile, preserveDoubleClickTarget])
 
   useLayoutEffect(() => {
     if (treeCacheIdentityRef.current === treeCacheIdentity) return
@@ -343,9 +363,12 @@ export function UnifiedFileTree({
 
   const select = (ref: FileRef) => {
     const entry = findCachedEntry(cacheRef.current, ref)
-    commitWorkspace(entry?.isDirectory
+    const next = entry?.isDirectory
       ? { ...workspaceRef.current, selectedRef: ref }
-      : previewFileTab({ ...workspaceRef.current, selectedRef: ref }, ref))
+      : previewFileTab({ ...workspaceRef.current, selectedRef: ref }, ref)
+    commitWorkspace(!entry?.isDirectory && openFunctions.includes('files')
+      ? { ...next, activeItem: { kind: 'function', type: 'files' } }
+      : next)
   }
   const toggle = async (ref: FileRef) => {
     const key = fileRefKey(ref)
@@ -497,6 +520,9 @@ export function UnifiedFileTree({
       onSelect={select}
       onToggle={toggle}
       onOpen={(ref) => onOpenFile(createRightPanelFileTarget(ref))}
+      onArmDoubleClick={preserveDoubleClickTarget
+        ? (ref) => { pendingDoubleClickTargetRef.current = ref }
+        : undefined}
       onEdit={(next) => { setEditing(next.ref ?? null); setRenameValue(next.name) }}
       onMove={(next) => { setMoving(next); setMoveTarget(parentPath(next.ref?.relativePath ?? '')) }}
       onDelete={setDeleting}
@@ -618,7 +644,13 @@ export function UnifiedFileTree({
                   variant="ghost"
                   className={cn('h-7 w-full justify-start gap-1.5 rounded-none px-5 text-[12px]', selected && 'bg-primary/10 text-primary')}
                   title={`${resource.serverName} · ${resource.uri}`}
-                  onClick={() => commitWorkspace(previewFileTab({ ...workspaceRef.current, selectedRef: null }, target))}
+                  onClick={(event) => {
+                    const preview = previewFileTab({ ...workspaceRef.current, selectedRef: null }, target)
+                    commitWorkspace(openFunctions.includes('files')
+                      ? { ...preview, activeItem: { kind: 'function', type: 'files' } }
+                      : preview)
+                    if (event.detail === 1 && preserveDoubleClickTarget) pendingDoubleClickTargetRef.current = target
+                  }}
                   onDoubleClick={() => onOpenFile(target)}
                 >
                   <Braces size={13} className="shrink-0 text-foreground/45" />
@@ -668,6 +700,7 @@ function TreeEntryRow(props: {
   selectedRef: FileRef | null; treeTabStopKey: string | null; loadingKeys: string[]; editing: FileRef | null; renameValue: string
   onRenameValue: (value: string) => void; onCommitRename: (entry: FileEntry) => Promise<void>
   onSelect: (ref: FileRef) => void; onToggle: (ref: FileRef) => Promise<void>; onOpen: (ref: FileRef) => void
+  onArmDoubleClick?: (ref: FileRef) => void
   onEdit: (entry: FileEntry) => void; onMove: (entry: FileEntry) => void; onDelete: (entry: FileEntry) => void
   onExportLegacy: (entry: FileEntry) => Promise<void>; onCopyAbsolutePath: (ref: FileRef) => Promise<void>; showPath: boolean
 }) {
@@ -705,6 +738,8 @@ function TreeEntryRow(props: {
             if (event.detail === 1) void props.onToggle(entry.ref!)
           } else if (event.detail === 2) {
             props.onOpen(entry.ref!)
+          } else if (event.detail === 1) {
+            props.onArmDoubleClick?.(entry.ref!)
           }
         }}
         onContextMenu={(event) => { event.preventDefault(); setMenuOpen(true) }}

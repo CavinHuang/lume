@@ -48,7 +48,7 @@ export function RightPanelFilePreview({
   onEditStart,
   treeCollapsed = false,
   onToggleTree,
-  hideSelfHeader = false,
+  hideTitle = false,
 }: {
   threadId: string
   fileRef: FileRef | null
@@ -61,7 +61,7 @@ export function RightPanelFilePreview({
   onEditStart?: () => void
   treeCollapsed?: boolean
   onToggleTree?: () => void
-  hideSelfHeader?: boolean
+  hideTitle?: boolean
 }) {
   const requestId = useRef(0)
   const [payload, setPayload] = useState<FileRefReadResult | null>(null)
@@ -383,19 +383,17 @@ export function RightPanelFilePreview({
   )
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {!hideSelfHeader && (
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-2.5">
         {onToggleTree && (
           <Button variant="ghost" size="icon-sm" onClick={onToggleTree} title={treeCollapsed ? '展开文件树' : '收起文件树'}>
             {treeCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
           </Button>
         )}
-        <FileTypeIcon filename={fileRef.relativePath} size={15} />
-        {guardedRef ? (
-          <FileLinkContextMenu context={{ source: 'thread', relPath: fileRef.relativePath, guardedRef }} inline>
-            {title}
-          </FileLinkContextMenu>
-        ) : title}
+        {!hideTitle && <FileTypeIcon filename={fileRef.relativePath} size={15} />}
+        {!hideTitle && (guardedRef ? (
+          <FileLinkContextMenu context={{ source: 'thread', relPath: fileRef.relativePath, guardedRef }} inline>{title}</FileLinkContextMenu>
+        ) : title)}
+        {hideTitle && <span className="min-w-0 flex-1" />}
         {(kind === 'markdown' || kind === 'html' || kind === 'pdb') && (
           <Button variant="ghost" size="sm" onClick={() => setSourceMode((value) => {
             const next = !value
@@ -432,7 +430,6 @@ export function RightPanelFilePreview({
         <Button variant="ghost" size="icon-sm" disabled={!desktop} onClick={() => void (guardedRef ? revealGuardedFileRefInSystem(guardedRef) : revealFileRefInSystem(fileRef))} title={desktop ? '在文件管理器中显示' : '仅桌面端可用'}><FolderSearch size={14} /></Button>
         <Button variant="ghost" size="icon-sm" onClick={() => void writeClipboardText(fileRef.relativePath)} title="复制相对路径"><Copy size={14} /></Button>
       </div>
-      )}
       <div className="min-h-0 flex-1 overflow-hidden">
         {loading ? (
           <PreviewStatus>正在读取文件…</PreviewStatus>

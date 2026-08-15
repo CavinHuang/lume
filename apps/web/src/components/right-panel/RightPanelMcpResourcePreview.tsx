@@ -9,11 +9,11 @@ import { RightPanelSourcePreview } from './RightPanelSourcePreview'
 export function RightPanelMcpResourcePreview({
   workspaceSlug,
   resource,
-  hideSelfHeader,
+  hideTitle,
 }: {
   workspaceSlug: string
   resource: McpResourceSummary
-  hideSelfHeader?: boolean
+  hideTitle?: boolean
 }) {
   const [result, setResult] = useState<ReadMcpResourceResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -29,11 +29,12 @@ export function RightPanelMcpResourcePreview({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {!hideSelfHeader && <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3">
-        <span className="min-w-0 flex-1 truncate text-xs font-medium">{resource.name || resource.uri}</span>
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3">
+        {!hideTitle && <span className="min-w-0 flex-1 truncate text-xs font-medium">{resource.name || resource.uri}</span>}
+        {hideTitle && <span className="min-w-0 flex-1" />}
         <span className="truncate text-[10px] text-foreground/45">{resource.serverName}</span>
         <Button variant="ghost" size="xs" onClick={() => void writeClipboardText(resource.uri)}>复制 URI</Button>
-      </div>}
+      </div>
       <div className="min-h-0 flex-1 overflow-auto">
         {error ? <ResourceStatus>{error}</ResourceStatus>
           : !result ? <ResourceStatus>正在读取 MCP 资源…</ResourceStatus>
