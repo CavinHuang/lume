@@ -27,6 +27,8 @@ import {
   isWideFileWorkspace,
 } from './right-panel-layout'
 
+const NARROW_PREVIEW_DELAY_MS = 250
+
 export function FilesRightPanelWorkspace({
   threadId,
   workspace,
@@ -47,6 +49,7 @@ export function FilesRightPanelWorkspace({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const workspaceRef = useRef(workspace)
   const openFunctionsRef = useRef(openFunctions)
+  const narrowPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [containerWidth, setContainerWidth] = useState(0)
   const [preferences, setPreferences] = useAtom(rightPanelFileLayoutPreferencesAtom)
   const [resizing, setResizing] = useState(false)
@@ -58,7 +61,7 @@ export function FilesRightPanelWorkspace({
   const previewTarget = activeTab?.target ?? previewActiveTab?.target ?? null
   const previewRef = previewTarget ? rightPanelFileTargetRef(previewTarget) : null
   const previewEntry = previewRef ? findCachedEntry(workspace.directoryCache as Record<string, FileEntry[]>, previewRef) : undefined
-  const showTree = !treeCollapsed && (wide || !preferences.narrowShowsPreview || !previewTarget)
+  const showTree = !treeCollapsed && (wide || (!activeTab && (!preferences.narrowShowsPreview || !previewTarget)))
   const treeWidth = useMemo(
     () => clampRightPanelFileTreeWidth(preferences.treeWidth ?? FILE_TREE_DEFAULT_WIDTH, Math.max(containerWidth, 680)),
     [containerWidth, preferences.treeWidth],
@@ -75,6 +78,10 @@ export function FilesRightPanelWorkspace({
     return () => observer.disconnect()
   }, [])
 
+  useEffect(() => () => {
+    if (narrowPreviewTimerRef.current) clearTimeout(narrowPreviewTimerRef.current)
+  }, [])
+
   // 窄模式树/预览二态：树内单击/双击产生新预览目标（previewTab 或正式 file tab）时切到预览
   const handleWorkspaceChange = useCallback((next: ThreadFileWorkspace | ((current: ThreadFileWorkspace) => ThreadFileWorkspace)) => {
     const current = workspaceRef.current
@@ -83,8 +90,17 @@ export function FilesRightPanelWorkspace({
     if (!wide) {
       const previewSet = resolved.previewTab && resolved.previewTab !== current.previewTab
       const tabActivated = resolved.activeItem?.kind === 'file' && resolved.activeItem !== current.activeItem
-      if (previewSet || tabActivated) {
+      if (tabActivated) {
+        if (narrowPreviewTimerRef.current) clearTimeout(narrowPreviewTimerRef.current)
+        narrowPreviewTimerRef.current = null
         setPreferences((currentPreferences) => ({ ...currentPreferences, narrowShowsPreview: true }))
+      } else if (previewSet) {
+        if (narrowPreviewTimerRef.current) clearTimeout(narrowPreviewTimerRef.current)
+        // 先保留树行，等浏览器完成单双击判定；否则首击隐藏树后，第二击无法升格。
+        narrowPreviewTimerRef.current = setTimeout(() => {
+          narrowPreviewTimerRef.current = null
+          setPreferences((currentPreferences) => ({ ...currentPreferences, narrowShowsPreview: true }))
+        }, NARROW_PREVIEW_DELAY_MS)
       }
     }
     onWorkspaceChange(resolved)

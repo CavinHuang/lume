@@ -44,8 +44,8 @@ describe('FilesRightPanelWorkspace narrow-mode layout (preference-driven)', () =
     expect(markup).toContain('flex h-9 shrink-0 items-center gap-2 border-b')
   })
 
-  test('narrowShowsPreview=true: 正式 tab 同样预览占满且有返回树按钮', () => {
-    setNarrowShowsPreview(true)
+  test('正式 tab 无视 narrowShowsPreview=false，仍让预览占满并显示返回树按钮', () => {
+    setNarrowShowsPreview(false)
     const markup = renderNarrow(openFileTab(createThreadFileWorkspace({ fileContextId: 'ctx' }), ref))
     expect(markup).toMatch(/class="relative min-h-0 shrink-0 [^"]*hidden"/)
     expect(markup).toContain('flex h-9 shrink-0 items-center gap-2 border-b')
