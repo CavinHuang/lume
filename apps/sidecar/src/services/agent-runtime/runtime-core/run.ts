@@ -132,7 +132,6 @@ import {
   type CodingVerificationStatus,
 } from "./coding-run-tracker";
 import { runAdvisor } from "../advisor/advisor-service";
-import { getNodeReplRuntimeRegistry } from "../tools/node-repl/node-repl-runtime-registry";
 import { getComputerUseSessionRegistry } from "../tools/computer-use/computer-use-session";
 import {
   filterComputerUseSkills,
@@ -2415,7 +2414,8 @@ export async function createRuntimeCoreSession(
     },
     async dispose() {
       await agent.close();
-      await getNodeReplRuntimeRegistry().shutdown(input.lumeSessionId);
+      // node_repl 沙箱不再随 run 销毁：registry 按 thread 常驻（跨消息复用 globalThis.agent 等 binding，
+      // 对齐 Codex；崩溃自愈见 registry.exec 的错误回收）。清理挂点=线程删除 + sidecar 退出 + idle 回收。
       getComputerUseSessionRegistry().clear(input.lumeSessionId);
       try {
         await pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG);

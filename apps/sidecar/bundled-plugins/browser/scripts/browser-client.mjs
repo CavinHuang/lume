@@ -15,16 +15,36 @@ function browserResponseError(error) {
 
 function createBrokerProtocolAdapter() {
   const dialogIdsByTab = new Map();
+  const downloadTabs = new Map();
 
   return {
     prepareRequest(method, params) {
-      if (method !== "tab_js_dialog_handle") return params;
-      const tabId = params?.tabId;
-      return {
-        ...params,
-        action: params?.accept === false ? "dismiss" : "accept",
-        dialogId: params?.dialogId ?? (typeof tabId === "string" ? dialogIdsByTab.get(tabId) : undefined),
-      };
+      if (method === "tab_js_dialog_handle") {
+        const tabId = params?.tabId;
+        return {
+          ...params,
+          action: params?.accept === false ? "dismiss" : "accept",
+          dialogId: params?.dialogId ?? (typeof tabId === "string" ? dialogIdsByTab.get(tabId) : undefined),
+        };
+      }
+      if (method === "playwright_download_path") {
+        return { ...params, tabId: params?.tabId ?? downloadTabs.get(params?.downloadId) };
+      }
+      if (method === "tab_browser_auth_request" && params?.options && typeof params.options === "object") {
+        return {
+          ...params,
+          options: {
+            ...params.options,
+            options: Array.isArray(params.options.options)
+              ? params.options.options.map((option) => ({
+                  ...option,
+                  selector: option?.selector?.ast ?? option?.selector,
+                }))
+              : params.options.options,
+          },
+        };
+      }
+      return params;
     },
     unwrapResult(method, result, params) {
       if (method === "tab_js_dialog_get") {
@@ -37,6 +57,10 @@ function createBrokerProtocolAdapter() {
       }
       if (method === "tab_js_dialog_handle" && typeof params?.tabId === "string") {
         dialogIdsByTab.delete(params.tabId);
+      }
+      if (method === "playwright_wait_for_download") {
+        const downloadId = result?.downloadId ?? result?.download_id;
+        if (typeof downloadId === "string" && typeof params?.tabId === "string") downloadTabs.set(downloadId, params.tabId);
       }
       return unwrapBrowserResult(method, result);
     },
@@ -67,6 +91,18 @@ function unwrapBrowserResult(method, result) {
       lastVisitTime: entry?.lastVisitTime ?? entry?.dateVisited,
     }));
   }
+  if (method === "browser_visibility_get") return typeof result === "boolean" ? result : result?.visible;
+  if (method === "tabs_content") return Array.isArray(result) ? result : result?.results;
+  if (method === "playwright_wait_for_download") {
+    return { ...result, downloadId: result?.downloadId ?? result?.download_id };
+  }
+  if (method === "playwright_wait_for_file_chooser") {
+    return {
+      ...result,
+      chooserId: result?.chooserId ?? result?.file_chooser_id,
+      multiple: result?.multiple ?? result?.is_multiple,
+    };
+  }
   if (method === "playwright_locator_count") return result?.count;
   if (method === "playwright_locator_all_text_contents" || method === "playwright_locator_read_all") return result?.values;
   if ([
@@ -81,8 +117,21 @@ function unwrapBrowserResult(method, result) {
   return result;
 }
 
+async function emitBrowserImage(nodeRepl, method, result) {
+  if (method !== "tab_screenshot" && method !== "playwright_element_screenshot") return;
+  const data = typeof result === "string" ? result : result?.dataBase64 ?? result?.data;
+  if (typeof data !== "string" || data.length === 0) return;
+  try {
+    const bytes = new Uint8Array(Buffer.from(data, "base64"));
+    await nodeRepl.emitImage(bytes, data.startsWith("/9j/") ? "image/jpeg" : "image/png");
+  } catch {
+    // Returning screenshot bytes remains useful even when image emission is unavailable.
+  }
+}
+
 export async function setupLumeBrowserRuntime({ globals = globalThis } = {}) {
-  const browser = globalThis.nodeRepl?.browser;
+  const nodeRepl = globalThis.nodeRepl;
+  const browser = nodeRepl?.browser;
   if (typeof browser?.request !== "function") {
     throw new Error("Lume Browser trusted bridge is unavailable");
   }
@@ -92,7 +141,9 @@ export async function setupLumeBrowserRuntime({ globals = globalThis } = {}) {
     try {
       const requestParams = adapter.prepareRequest(method, params ?? {});
       const result = await browser.request(method, requestParams);
-      return { jsonrpc: "2.0", id, result: adapter.unwrapResult(method, result, requestParams) };
+      const adapted = adapter.unwrapResult(method, result, requestParams);
+      await emitBrowserImage(nodeRepl, method, adapted);
+      return { jsonrpc: "2.0", id, result: adapted };
     } catch (error) {
       return { jsonrpc: "2.0", id, error: browserResponseError(error) };
     }

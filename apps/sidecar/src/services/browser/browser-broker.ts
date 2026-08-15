@@ -42,14 +42,13 @@ export class BrowserBroker {
     const id = backend === "iab" ? "lume-iab" : "lume-extension"
     const browserCapabilities = backend === "iab"
       ? (runtime?.capabilities ?? [{ id: "tabs", description: "In-app tab lifecycle" }, { id: "navigation", description: "Policy-checked navigation" }, { id: "locator-actions", description: "Constrained snapshot and locator actions" }, { id: "screenshot", description: "Screenshot evidence" }, { id: "guardedUpload", description: "Confirmed task-bound file-ref upload" }, { id: "agentDownload", description: "Confirmed quota-bound Agent downloads" }])
-        .filter((capability) => !["advancedCdp", "browserAuth", "pageAssets"].includes(capability.id))
+        .filter((capability) => !["advancedCdp", "browserAuth", "pageAssets", "webmcp"].includes(capability.id))
       : [{ id: "tabs", description: "Explicit external Chrome tab lifecycle" }, { id: "navigation", description: "Explicit external Chrome navigation" }, { id: "input", description: "Explicit external Chrome click and input control" }, { id: "locator", description: "Strict locator resolution and actionability" }, { id: "screenshot", description: "External Chrome screenshot evidence" }, { id: "visibility", description: "Show or hide the external Chrome window" }, { id: "viewport", description: "Set or reset the external Chrome viewport" }]
     const tabCapabilities = backend === "iab" && Array.isArray(runtime?.capabilities)
       ? [
           ...(runtime.capabilities.some((capability) => capability.id === "advancedCdp") ? [{ id: "cdp", description: "Full CDP for isolated sessions with origin and per-action approval" }] : []),
           ...(runtime.capabilities.some((capability) => capability.id === "browserAuth") ? [{ id: "browserAuth", description: "Collect and submit credentials through an isolated backend-owned window" }] : []),
           ...(runtime.capabilities.some((capability) => capability.id === "pageAssets") ? [{ id: "pageAssets", description: "Inventory and export bounded assets observed in the current page state" }] : []),
-          ...(runtime.capabilities.some((capability) => capability.id === "webmcp") ? [{ id: "webmcp", description: "Invoke page-defined WebMCP tools announced by browser notifications" }] : []),
         ]
       : backend === "extension"
         ? this.extensionRuntime?.tabCapabilities ?? []
@@ -57,7 +56,10 @@ export class BrowserBroker {
     const protocol = backend === "extension" ? this.extensionRuntime : runtime
     const apiSupportOverrides = backend === "extension"
       ? this.extensionRuntime?.apiSupportOverrides ?? browserApiSupportForBackend("extension", new Set())
-      : runtime?.apiSupportOverrides ?? browserApiSupportForBackend("iab", new Set())
+      : {
+          ...(runtime?.apiSupportOverrides ?? browserApiSupportForBackend("iab", new Set())),
+          "CdpCapability.readEvents": false,
+        }
     return {
       id, browserId: id, backend, type: backend, clientType: backend, name: backend === "iab" ? "Lume 内置浏览器" : "Lume Chrome",
       protocolVersion: protocol?.protocolVersion ?? BROWSER_PROTOCOL_VERSION,
@@ -217,7 +219,10 @@ export class BrowserBroker {
     }
     if (input.method === "runtime_diagnostics") return { generation: this.generation, backends: this.listBackends() }
     const normalized = normalizeBrowserCommand(input.method, input.params ?? {})
-    const tabId = input.tabId ?? (typeof normalized.params.tabId === "string" ? normalized.params.tabId : undefined)
+    const commandParams = backend === "extension" && input.method === "tab_browser_auth_request"
+      ? canonicalExtensionBrowserAuthParams(input.params ?? {})
+      : normalized.params
+    const tabId = input.tabId ?? (typeof commandParams.tabId === "string" ? commandParams.tabId : undefined)
     const transport = backend === "extension" ? this.extension : this.main
     if (!transport || (backend === "extension" && (!this.extensionBackendEnabled || !this.chromePluginEnabled || !this.extensionConnected))) throw new Error("browser_unavailable")
     const context: BrowserRequestContext = { ...(input.threadId ? { threadId: input.threadId } : {}), browserSessionId: input.browserSessionId, browserTurnId: input.browserTurnId, ...(tabId ? { tabId } : {}), actor: "agent", capability: `browser-broker-v1:${this.generation}` }
@@ -245,7 +250,7 @@ export class BrowserBroker {
         ? authorizeBrowserUploadFiles(input.threadId, normalized.params.files)
         : undefined
       const params = {
-        ...normalized.params,
+        ...commandParams,
         ...(normalized.method === "ensure" && input.threadId ? { ownerThreadId: input.threadId } : {}),
         ...(normalized.method === "claim" ? this.referenceGrantForClaim(backend, context, tabId, normalized.params) : {}),
         ...(authorizedUploadFiles ? { files: authorizedUploadFiles.browserDownloadRefs, __authorizedFiles: authorizedUploadFiles.authorizedPaths } : {}),
@@ -430,6 +435,14 @@ function inferBackend(explicit: "iab" | "extension" | undefined, params: Record<
   return requested === "extension" || requested === "chrome-extension" || requested === "lume-extension" ? "extension" : "iab"
 }
 
+function canonicalExtensionBrowserAuthParams(input: Record<string, unknown>): Record<string, unknown> {
+  const params = { ...input }
+  if (typeof params.tabId !== "string" && typeof input.tab_id === "string") params.tabId = input.tab_id
+  delete params.browserId
+  delete params.browser_id
+  return params
+}
+
 function normalizeBrowserCommand(method: string, input: Record<string, unknown>): { method: string; params: Record<string, unknown> } {
   const params = { ...input }
   if (typeof params.tabId !== "string" && typeof input.tab_id === "string") params.tabId = input.tab_id
@@ -443,12 +456,21 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "name_session": case "browser_name_session": return { method: "nameSession", params }
     case "browser_user_open_tabs": return { method: "openTabs", params }
     case "browser_user_claim_tab": return { method: "claim", params }
-    case "browser_user_history": return { method: "history:list", params }
+    case "browser_user_history": return {
+      method: "history:list",
+      params: {
+        ...params,
+        query: input.query ?? options.text,
+        limit: input.limit ?? options.maxResults,
+        from: normalizeBrowserHistoryTime(input.from ?? options.startTime),
+        to: normalizeBrowserHistoryTime(input.to ?? options.endTime),
+      },
+    }
     case "browser_visibility_get": return { method: "browser:visibility:get", params }
     case "browser_visibility_set": return { method: "browser:visibility:set", params }
     case "browser_viewport_set": return { method: "browser:viewport:set", params: { ...params, ...options, width: input.width ?? options.width, height: input.height ?? options.height } }
     case "browser_viewport_reset": return { method: "browser:viewport:reset", params }
-    case "create_tab": return { method: "ensure", params: { ...params, ...options, url: options.url } }
+    case "create_tab": return { method: "ensure", params: { ...params, ...options, url: options.url ?? params.url } }
     case "get_tab": return { method: "get", params }
     case "selected_tab": return { method: "selected", params }
     case "list_tabs": case "get_session_tabs": return { method: "list", params }
@@ -477,12 +499,17 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "navigate_tab_reload": return { method: "reload", params }
     case "tab_url": return { method: "url", params }
     case "tab_title": return { method: "title", params }
-    case "tab_screenshot": return { method: "screenshot", params: { ...params, ...options, fullPage: options.fullPage === true } }
+    case "tab_screenshot": return { method: "screenshot", params: { ...params, ...options, fullPage: options.fullPage === true || params.fullPage === true } }
     case "tab_content": return { method: "content", params: { ...params, format: input.content_type === "html" ? "html" : "text" } }
     case "tab_content_export": return { method: "content:export", params }
-    case "tab_content_export_gsuite": return { method: "content:exportGsuite", params: { ...params, format: input.format } }
-    case "tab_browser_auth_request": return { method: "browserAuth:request", params }
-    case "tabs_content": return { method: "tabs:content", params: { ...params, contentType: input.content_type, timeoutMs: input.timeout_ms } }
+    case "tab_content_export_gsuite": return { method: "content:exportGsuite", params: { ...params, format: input.format ?? input.type ?? options.format } }
+    case "tab_browser_auth_request": return {
+      method: "browserAuth:request",
+      params: input.options && typeof input.options === "object" && !Array.isArray(input.options)
+        ? normalizeBrowserAuthParams(params, options)
+        : params,
+    }
+    case "tabs_content": return { method: "tabs:content", params: { ...params, ...options, contentType: input.content_type ?? options.contentType, timeoutMs: input.timeout_ms ?? options.timeoutMs } }
     case "tab_clipboard_read": return { method: "clipboard:read", params }
     case "tab_clipboard_read_text": return { method: "clipboard:readText", params }
     case "tab_clipboard_write": return { method: "clipboard:write", params }
@@ -492,7 +519,7 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "playwright_element_screenshot": return { method: "elementScreenshot", params: { ...params, ...options } }
     case "playwright_evaluate": return { method: "evaluate:readonly", params: { ...params, timeoutMs: input.timeoutMs ?? input.timeout_ms ?? options.timeoutMs } }
     case "playwright_wait_for_download": return { method: "wait:download", params: { ...params, timeoutMs: input.timeout_ms ?? options.timeoutMs } }
-    case "playwright_download_path": return { method: "download:path", params: { ...params, downloadId: input.download_id, timeoutMs: input.timeout_ms } }
+    case "playwright_download_path": return { method: "download:path", params: { ...params, downloadId: input.download_id ?? input.downloadId, timeoutMs: input.timeout_ms ?? input.timeoutMs ?? options.timeoutMs } }
     case "playwright_wait_for_file_chooser": return { method: "wait:filechooser", params: { ...params, timeoutMs: input.timeout_ms ?? options.timeoutMs } }
     case "playwright_file_chooser_set_files": return {
       method: "filechooser:setFiles",
@@ -505,7 +532,12 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "tab_page_assets_list": return { method: "pageAssets:list", params }
     case "tab_page_assets_bundle": return {
       method: "pageAssets:bundle",
-      params: { ...params, inventoryId: input.inventory_id, assetIds: input.asset_ids },
+      params: {
+        ...params,
+        ...options,
+        inventoryId: input.inventory_id ?? input.inventoryId ?? options.inventoryId,
+        assetIds: input.asset_ids ?? input.assetIds ?? options.assetIds,
+      },
     }
     case "webmcp_list_tools": return { method: "webmcp:list", params }
     case "webmcp_invoke_tool": return {
@@ -516,7 +548,7 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "dom_cua_get_visible_dom": return { method: "dom:visible", params }
     case "dom_cua_click": return { method: "dom:click", params: { ...params, nodeId: input.node_id } }
     case "dom_cua_double_click": return { method: "dom:doubleClick", params: { ...params, nodeId: input.node_id } }
-    case "dom_cua_scroll": return { method: "dom:scroll", params: { ...params, nodeId: input.node_id, scrollX: input.scroll_x, scrollY: input.scroll_y } }
+    case "dom_cua_scroll": return { method: "dom:scroll", params: { ...params, nodeId: input.node_id, scrollX: input.scroll_x ?? input.x, scrollY: input.scroll_y ?? input.y } }
     case "dom_cua_type": return { method: "dom:type", params }
     case "dom_cua_keypress": return { method: "dom:keypress", params }
     case "dom_cua_download_media": return { method: "downloadMedia", params: { ...params, nodeId: input.node_id } }
@@ -544,7 +576,7 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "playwright_locator_wait_for": return { method: "locator:waitFor", params }
     case "playwright_locator_evaluate": return { method: "locator:evaluate", params: { ...params, timeoutMs: input.timeoutMs ?? input.timeout_ms ?? options.timeoutMs } }
     case "playwright_locator_download_media": return { method: "downloadMedia", params }
-    case "playwright_wait_for_url": return { method: "wait:url", params: { ...params, timeoutMs: options.timeoutMs } }
+    case "playwright_wait_for_url": return { method: "wait:url", params: { ...params, timeoutMs: options.timeoutMs ?? params.timeoutMs ?? params.timeout_ms } }
     case "playwright_wait_for_load_state": return { method: "wait:load", params }
     case "playwright_wait_for_timeout": return { method: "wait:timeout", params }
     case "cua_click": return { method: "click", params }
@@ -592,6 +624,11 @@ function authorizeBrowserUploadFiles(threadId: string | undefined, value: unknow
 const WAIT_COMMANDS = new Set(["playwright_wait_for_download", "playwright_wait_for_file_chooser"])
 
 function browserClientSelectorToLocator(value: unknown): BrowserLocator | undefined {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const candidate = value as Record<string, unknown>
+    const ast = candidate.ast && typeof candidate.ast === "object" ? candidate.ast : candidate
+    if ((ast as Record<string, unknown>).version === 1 && Array.isArray((ast as Record<string, unknown>).steps)) return ast as BrowserLocator
+  }
   if (typeof value !== "string" || !value.trim() || value.length > 4096) return undefined
   const frameParts = value.split(/\s*>>\s*internal:control=enter-frame\s*>>\s*/g)
   const steps: BrowserLocator["steps"] = []
@@ -640,6 +677,38 @@ function browserClientSelectorToLocator(value: unknown): BrowserLocator | undefi
   return steps.length ? { version: 1, steps } : undefined
 }
 
+function normalizeBrowserAuthParams(params: Record<string, unknown>, options: Record<string, unknown>): Record<string, unknown> {
+  const fields = Array.isArray(options.fields) ? options.fields.map((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value
+    const field = value as Record<string, unknown>
+    return { ...field, locator: browserClientSelectorToLocator(field.locator ?? field.selector) }
+  }) : options.fields
+  const authOptions = Array.isArray(options.options) ? options.options.map((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value
+    const option = value as Record<string, unknown>
+    return {
+      ...option,
+      fields: option.fields ?? option.field_ids ?? [],
+      locator: browserClientSelectorToLocator(option.locator ?? option.selector),
+    }
+  }) : options.options
+  let submit = options.submit
+  if (submit && typeof submit === "object" && !Array.isArray(submit)) {
+    const value = submit as Record<string, unknown>
+    submit = {
+      ...value,
+      kind: value.kind ?? value.action,
+      locator: browserClientSelectorToLocator(value.locator ?? value.selector),
+      fieldId: value.fieldId ?? value.field_id,
+    }
+  }
+  return { ...params, ...options, fields, options: authOptions, submit }
+}
+
+function normalizeBrowserHistoryTime(value: unknown): unknown {
+  return typeof value === "number" && Number.isFinite(value) ? new Date(value).toISOString() : value
+}
+
 function decodeSelectorString(value: string): string {
   try { return String(JSON.parse(value)).slice(0, 4096) } catch { return "" }
 }
@@ -670,7 +739,6 @@ const EXTENSION_TAB_CAPABILITIES = {
   pageAssets: { id: "pageAssets", description: "Inventory and export bounded assets from the current Chrome tab" },
   cdp: { id: "cdp", description: "Read-only CDP with per-action approval and buffered events" },
   botDetection: { id: "botDetection", description: "Report bot-detection blockers without page secrets" },
-  webmcp: { id: "webmcp", description: "Invoke page-defined WebMCP tools announced by browser notifications" },
 } as const
 
 function sanitizeExtensionRuntimeDescriptor(value: unknown): ExtensionRuntimeDescriptor | undefined {

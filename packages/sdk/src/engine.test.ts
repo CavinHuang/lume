@@ -3,6 +3,7 @@ import { QueryEngine } from "./engine.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
 import type { SDKMessage, ToolContext } from "./types.js"
 import { normalizeProviderUsage } from "./utils/usage.js"
+import { SkillRegistry } from "./skills/registry.js"
 
 const structuredCompactionSummary = `## Goal
 Continue the current task.
@@ -1799,4 +1800,61 @@ describe("QueryEngine structured tool results", () => {
 
     expect(JSON.stringify((provider as any).requests?.[0]?.messages)).not.toContain("_meta");
   });
+});
+
+describe("QueryEngine skill catalog injection", () => {
+  test("appends an available_skills runtime message on every model call", async () => {
+    const registry = new SkillRegistry([{
+      name: "commit",
+      description: "Create a git commit",
+      getPrompt: async () => [{ type: "text", text: "commit" }],
+    }])
+    const provider = new StaticProvider([
+      { content: [{ type: "tool_use", id: "t1", name: "Skill", input: { skill: "commit" } }], stopReason: "tool_use", usage: { input_tokens: 1, output_tokens: 1 } },
+      { content: [{ type: "text", text: "done" }], stopReason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } },
+    ])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],          // Skill 工具不必真注册：目录注入独立于工具执行
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      skillRegistry: registry,
+    })
+
+    await collectEvents(engine)
+
+    expect(provider.requests).toHaveLength(2)
+    for (const request of provider.requests) {
+      const runtime = request.messages.filter((m: any) => m.role === "runtime")
+      expect(runtime.length).toBeGreaterThanOrEqual(1)
+      expect(runtime.at(-1)?.content).toContain("<available_skills>")
+      expect(String(runtime.at(-1)?.content)).toContain("- commit: Create a git commit")
+    }
+  })
+
+  test("injects no catalog message when the registry is empty", async () => {
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "ok" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      skillRegistry: new SkillRegistry(),
+    })
+
+    await collectEvents(engine)
+
+    const runtimeMessages = provider.requests[0].messages.filter((m: any) => m.role === "runtime")
+    expect(runtimeMessages.some((m: any) => String(m.content).includes("<available_skills>"))).toBe(false)
+  })
 });

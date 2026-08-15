@@ -145,6 +145,9 @@ export interface BrowserAuthOption {
   id: string;
   label: string;
   fields: string[];
+  /** method-only 选项：用户选择登录方式后端点击该定位器，不填写任何字段（对齐 Codex BrowserAuthOption.selector） */
+  locator?: BrowserLocator;
+  frameLocator?: BrowserLocator;
 }
 
 export interface BrowserAuthRequest {
@@ -162,7 +165,7 @@ export interface BrowserAuthRequest {
 }
 
 export type BrowserAuthStatus =
-  | "submitted" | "cancelled" | "expired" | "page_changed" | "origin_changed"
+  | "submitted" | "declined" | "cancelled" | "expired" | "page_changed" | "origin_changed"
   | "locator_invalid" | "submission_failed";
 
 export interface BrowserAuthResult {

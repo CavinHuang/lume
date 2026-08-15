@@ -12,7 +12,11 @@ interface ThreadRuntimeEntry {
   client: NodeReplRuntimeClient;
   cwd: string;
   moduleDirs: string[];
+  lastUsedAt: number;
 }
+
+// node_repl 按 thread 常驻后，闲置超时的沙箱回收，防止子进程无限累积
+const IDLE_SHUTDOWN_MS = 30 * 60_000;
 
 export function createNodeReplRuntimeRegistry(
   factory: RuntimeFactory,
@@ -20,13 +24,27 @@ export function createNodeReplRuntimeRegistry(
 ): NodeReplRuntimeRegistry {
   const entries = new Map<string, ThreadRuntimeEntry>();
 
+  function sweepIdle(): void {
+    const now = Date.now();
+    for (const [threadId, entry] of entries) {
+      if (now - entry.lastUsedAt > IDLE_SHUTDOWN_MS) {
+        entries.delete(threadId);
+        void entry.client.shutdown().catch(() => undefined);
+      }
+    }
+  }
+
   async function ensure(threadId: string, options: { cwd?: string; sandbox?: import("@lume/agent-sdk").SandboxSettings } = {}): Promise<ThreadRuntimeEntry> {
+    sweepIdle();
     const existing = entries.get(threadId);
-    if (existing) return existing;
+    if (existing) {
+      existing.lastUsedAt = Date.now();
+      return existing;
+    }
 
     const cwd = options.cwd ?? defaults.cwd ?? process.cwd();
     const client = await factory({ threadId, cwd, sandbox: options.sandbox });
-    const created: ThreadRuntimeEntry = { client, cwd, moduleDirs: [] };
+    const created: ThreadRuntimeEntry = { client, cwd, moduleDirs: [], lastUsedAt: Date.now() };
     entries.set(threadId, created);
     return created;
   }
@@ -58,8 +76,13 @@ export function createNodeReplRuntimeRegistry(
     async shutdown(threadId: string) {
       const entry = entries.get(threadId);
       if (!entry) return;
-      await entry.client.shutdown();
       entries.delete(threadId);
+      await entry.client.shutdown();
+    },
+    async shutdownAll() {
+      const pending = [...entries.values()].map((entry) => entry.client.shutdown().catch(() => undefined));
+      entries.clear();
+      await Promise.all(pending);
     },
     debugSnapshot(threadId: string) {
       const entry = entries.get(threadId);

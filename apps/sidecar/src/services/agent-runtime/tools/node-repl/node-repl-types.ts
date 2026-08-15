@@ -1,5 +1,5 @@
 export const NODE_REPL_MCP_INSTRUCTIONS =
-  "Use `js` only for browser JavaScript automation or an explicitly requested persistent JS session. Do not use it as a terminal, shell, git, file search, or file editing tool; use Read, Write, Edit, Bash, Glob, or Grep for repository work. Top-level bindings persist across calls until `js_reset`. Bare final expressions are not returned; call `nodeRepl.write(text)` to include output and use `JSON.stringify(value)` for structured values.";
+  'Use `js` only for browser JavaScript automation or an explicitly requested persistent JS session. Do not use it as a terminal, shell, git, file search, or file editing tool; use Read, Write, Edit, Bash, Glob, or Grep for repository work. Top-level bindings persist across calls until `js_reset`. Bare final expressions are not returned; call `nodeRepl.write(text)` to include output and use `JSON.stringify(value)` for structured values. Browser automation: run `globalThis.agent ??= await setupBrowserRuntime()` once, then `globalThis.iab ??= await agent.browsers.get("iab")`; call `nodeRepl.write(await iab.documentation())` for the full browser API (tabs, playwright locators, cua, capabilities). `tab.screenshot()` auto-emits the image to you. Reuse existing globalThis.agent/iab/browser bindings across turns (they survive between messages; if lost after long idle, re-run the bootstrap guard).';
 
 export interface JsExecInput {
   title?: string;
@@ -95,6 +95,8 @@ export interface NodeReplRuntimeRegistry {
   exec(threadId: string, input: JsExecInput, options?: { cwd?: string } & NodeReplRuntimeExecOptions): Promise<NodeReplExecutionResult>;
   reset(threadId: string, options?: { cwd?: string; sandbox?: SandboxSettings }): Promise<void>;
   shutdown(threadId: string): Promise<void>;
+  /** 关闭全部 thread 沙箱（sidecar 退出时用；thread 级清理走 shutdown） */
+  shutdownAll?(): Promise<void>;
   debugSnapshot(threadId: string): { moduleDirs: string[]; cwd: string } | null;
 }
 import type { SandboxSettings } from "@lume/agent-sdk";

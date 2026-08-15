@@ -1,4 +1,8 @@
 import { API_MEMBERS } from "./api-contract.js";
+const RUNTIME_VIEW_RAW = new WeakMap();
+export function unwrapRuntimeViewValue(value) {
+    return RUNTIME_VIEW_RAW.get(value) ?? value;
+}
 const CONSTRUCTOR_NAME_ALIASES = {
     BrowserRegistry: "Browsers",
     ClipboardAPI: "TabClipboardAPI",
@@ -71,6 +75,7 @@ export function createRuntimeView(disabled) {
         });
         rawToProxy.set(raw, proxy);
         proxyToRaw.set(proxy, raw);
+        RUNTIME_VIEW_RAW.set(proxy, raw);
         return proxy;
     }
     function sanitizedPrototypeFor(raw, interfaceName) {

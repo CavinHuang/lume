@@ -42,6 +42,7 @@ import { reconcilePlanningStartOperations } from "./services/planning/planning-s
 import { closePlanningCalendarStore } from "./services/planning/planning-calendar-store";
 import { startPlanningReminderScheduler, stopPlanningReminderScheduler } from "./services/planning/planning-reminder-scheduler";
 import { installLinkRuntimeBootstrap } from "./services/link/link-client";
+import { getNodeReplRuntimeRegistry } from "./services/agent-runtime/tools/node-repl/node-repl-runtime-registry";
 
 const rpcTransport = createProcessRpcTransport(
   process.env.LUME_SIDECAR_TRANSPORT === "stdio" ? { parentPort: null } : undefined,
@@ -475,10 +476,12 @@ async function boot(): Promise<void> {
   };
   process.once("exit", () => { void stopWatcher(); });
   process.once("SIGINT", async () => {
+    void getNodeReplRuntimeRegistry().shutdownAll?.();
     await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 60_000))]);
     process.exit(0);
   });
   process.once("SIGTERM", async () => {
+    void getNodeReplRuntimeRegistry().shutdownAll?.();
     await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 60_000))]);
     process.exit(0);
   });
