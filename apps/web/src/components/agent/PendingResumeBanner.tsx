@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { History, Play, X } from 'lucide-react'
-import { getAgentPendingResume, resumeAgentRun } from '@/lib/desktop-api'
+import { discardAgentInterruptedRun, getAgentPendingResume, resumeAgentRun } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
 
 export interface PendingResumeBannerProps {
@@ -13,26 +13,18 @@ type PendingResumeState =
   | { phase: 'notice'; message: string }
 
 /**
- * 「放弃」= 本次应用运行周期内不再提示该线程（前端记录）。
- * ponytail: phase 1 未补 sidecar discard 通道（不动 session）；若需要跨重启静默，
- * 升级为 agent:discard-interrupted-run IPC 持久清理。
- */
-const dismissedThreadIds = new Set<string>()
-
-/**
  * 待恢复中断提示横幅。线程打开时查询 agent:get-pending-resume，
- * 有待恢复 run 则提示用户「继续」（agent:resume-run）或「放弃」（本地忽略）。
+ * 有待恢复 run 则提示用户「继续」（agent:resume-run）或持久化「放弃」。
  * resume 返回 not_resumable/failed 时以友好文案提示，不弹错误。
  */
 export function PendingResumeBanner({ threadId }: PendingResumeBannerProps) {
   const [state, setState] = useState<PendingResumeState>({ phase: 'hidden' })
-  const [resuming, setResuming] = useState(false)
-  const resumingRef = useRef(false)
+  const [pendingAction, setPendingAction] = useState<'resume' | 'discard' | null>(null)
+  const actionPendingRef = useRef(false)
 
   useEffect(() => {
     // threadId 原地切换（AgentView 不重挂）时无条件重置，防止上一线程的横幅残留
     setState({ phase: 'hidden' })
-    if (dismissedThreadIds.has(threadId)) return
     let cancelled = false
     getAgentPendingResume(threadId)
       .then((result) => {
@@ -47,9 +39,9 @@ export function PendingResumeBanner({ threadId }: PendingResumeBannerProps) {
 
   const handleResume = useCallback(async () => {
     // ref 守卫：同步双击下 state 闭包仍是旧值，ref 跨闭包即时生效
-    if (resumingRef.current) return
-    resumingRef.current = true
-    setResuming(true)
+    if (actionPendingRef.current) return
+    actionPendingRef.current = true
+    setPendingAction('resume')
     const runId = state.phase === 'prompt' ? state.runId : undefined
     try {
       const result = await resumeAgentRun({ threadId, ...(runId ? { runId } : {}) })
@@ -62,15 +54,30 @@ export function PendingResumeBanner({ threadId }: PendingResumeBannerProps) {
     } catch {
       setState({ phase: 'notice', message: '该任务无法自动恢复，可发送新消息重新开始' })
     } finally {
-      resumingRef.current = false
-      setResuming(false)
+      actionPendingRef.current = false
+      setPendingAction(null)
     }
   }, [state, threadId])
 
-  const handleDismiss = useCallback(() => {
-    dismissedThreadIds.add(threadId)
-    setState({ phase: 'hidden' })
-  }, [threadId])
+  const handleDiscard = useCallback(async () => {
+    if (actionPendingRef.current) return
+    actionPendingRef.current = true
+    setPendingAction('discard')
+    const runId = state.phase === 'prompt' ? state.runId : undefined
+    try {
+      const result = await discardAgentInterruptedRun({ threadId, ...(runId ? { runId } : {}) })
+      if (!result.ok) {
+        setState({ phase: 'notice', message: result.error || '该任务暂时无法放弃，请稍后重试' })
+        return
+      }
+      setState({ phase: 'hidden' })
+    } catch {
+      setState({ phase: 'notice', message: '该任务暂时无法放弃，请稍后重试' })
+    } finally {
+      actionPendingRef.current = false
+      setPendingAction(null)
+    }
+  }, [state, threadId])
 
   if (state.phase === 'hidden') return null
 
@@ -93,7 +100,7 @@ export function PendingResumeBanner({ threadId }: PendingResumeBannerProps) {
       <Button
         variant="ghost"
         data-pending-resume-action="resume"
-        disabled={resuming}
+        disabled={pendingAction !== null}
         onClick={handleResume}
         className="h-7 gap-1 rounded-full border border-border px-2.5 text-[11px] font-semibold text-foreground hover:bg-accent"
       >
@@ -103,7 +110,8 @@ export function PendingResumeBanner({ threadId }: PendingResumeBannerProps) {
       <Button
         variant="ghost"
         data-pending-resume-action="discard"
-        onClick={handleDismiss}
+        disabled={pendingAction !== null}
+        onClick={handleDiscard}
         className="h-7 gap-1 rounded-full border border-border px-2.5 text-[11px] font-semibold text-muted-foreground hover:text-foreground"
       >
         <X size={13} />

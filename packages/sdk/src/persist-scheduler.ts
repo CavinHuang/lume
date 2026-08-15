@@ -13,11 +13,16 @@ export function createPersistScheduler(
   let timer: ReturnType<typeof setTimeout> | null = null
   let pending = false
   let inflight: Promise<unknown> | null = null
+  let writeTail = Promise.resolve()
   const fire = () => {
     timer = null
     if (!pending) return
     pending = false
-    inflight = write()
+    inflight = writeTail.then(write)
+    writeTail = inflight.then(
+      () => undefined,
+      () => undefined,
+    )
   }
   return {
     schedule: () => {

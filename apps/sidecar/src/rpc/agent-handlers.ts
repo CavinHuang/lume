@@ -290,6 +290,7 @@ import {
   proxySettingsInputSchema,
   readBootstrapFileInputSchema,
   listRunStatesInputSchema,
+  discardInterruptedRunInputSchema,
   getPendingResumeInputSchema,
   mcpCallToolDiagnosticInputSchema,
   mcpListResourcesInputSchema,
@@ -409,6 +410,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     return runs.at(-1)?.runId ?? null;
   };
 
+  const getDanglingToolUsesForThread = (threadId: string) => {
+    const messages = createOrResumeRuntimeCoreSessionManager(
+      process.cwd(),
+      threadId
+    ).buildSessionContext().messages;
+    return detectSessionDanglingToolUses(messages);
+  };
+
   const sendResumeContinuationMessage = async (
     state: LumeRunState,
     userMessage: string,
@@ -497,11 +506,20 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     // 悬空兜底：无 checkpoint 的中断线程也允许一键续跑，由 run.ts 从
     // session history 检测未配对 tool_use 构造 toolContinuations
     //（只读重放 / 副作用注入中断说明占位）。状态门：只允许已中断的非正常
-    // 完成态 run（cancelled=人工中止，failed=崩溃）走兜底；活跃 run
-    //（created/running/waiting_*/paused）与正常 completed 的 run 不注入续跑。
+    // 完成态 run（cancelled=人工中止，failed=崩溃）走兜底。进程崩溃会把
+    // run 留在 running；只有当前进程无活跃 runtime 且 session 确有悬空
+    // tool_use 时，才把它视为 stale running 并允许续跑。
+    const continuation = await continuationStore.get(runId);
+    const isStaleRunningRun = runState.status === "running"
+      && !isAgentRuntimeSessionActive(input.threadId)
+      && getDanglingToolUsesForThread(input.threadId).length > 0;
     if (
-      !(await continuationStore.get(runId))
-      && (runState.status === "cancelled" || runState.status === "failed")
+      !continuation
+      && (
+        runState.status === "cancelled"
+        || runState.status === "failed"
+        || isStaleRunningRun
+      )
     ) {
       try {
         const result = await sendResumeContinuationMessage(
@@ -509,6 +527,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           "继续执行之前被中断的任务；被中断的工具已按只读重放或中断说明处理，请基于实际状态继续。",
           { source: "dangling-fallback", sourceRunId: runState.runId }
         );
+        if (isStaleRunningRun) {
+          await runStateStore.update(runId, {
+            status: "failed",
+            completedAt: new Date().toISOString()
+          });
+        }
         resumeAutomationAfterInteraction(input.threadId);
         return { status: "resumed", finalOutput: result.finalOutput };
       } catch (error) {
@@ -553,6 +577,51 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     return result;
   };
 
+  const discardInterruptedRunForThread = async (input: {
+    threadId: string;
+    runId?: string;
+  }): Promise<{ ok: boolean; runId?: string; error?: string }> => {
+    if (isAgentRuntimeSessionActive(input.threadId)) {
+      return { ok: false, error: "任务仍在运行，暂时无法放弃恢复。" };
+    }
+    const runId = await resolveRunIdForThread(input.threadId, input.runId);
+    if (!runId) {
+      return { ok: false, error: "找不到待放弃的 run。" };
+    }
+    const sessionDir = resolveRuntimeSessionDir(input.threadId);
+    const runStore = createFileBackedLumeRunStateStore(sessionDir);
+    const continuationStore = createFileBackedRunContinuationStore(sessionDir);
+    const runState = await runStore.get(runId);
+    if (!runState || runState.threadId !== input.threadId) {
+      return { ok: false, runId, error: "找不到待放弃的 run state。" };
+    }
+
+    const continuation = await continuationStore.get(runId);
+    const dangling = getDanglingToolUsesForThread(input.threadId);
+    if (dangling.length > 0) {
+      createOrResumeRuntimeCoreSessionManager(process.cwd(), input.threadId).appendMessage({
+        role: "user",
+        content: dangling.map((use) => ({
+          type: "tool_result",
+          tool_use_id: use.id,
+          content: "Error: run discarded by user",
+          is_error: true
+        }))
+      });
+    }
+    if (continuation?.status === "interrupted") {
+      await continuationStore.update(runId, {
+        status: "not_resumable",
+        reason: "用户已放弃恢复。"
+      });
+    }
+    if (runState.status === "running") {
+      const completedAt = new Date().toISOString();
+      await runStore.update(runId, { status: "cancelled", completedAt });
+    }
+    return { ok: true, runId };
+  };
+
   const getPendingResume = async (input: { threadId: string }): Promise<{
     threadId: string;
     hasPendingResume: boolean;
@@ -578,14 +647,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       }
       // 崩溃场景：message 级持久化让正在执行工具的 assistant tool_use 落盘，
       // run state 停在 running 且无 continuation checkpoint。session 存在悬空
-      // tool_use 时提示恢复（点击后续跑会被状态门挡下并给出友好引导，
-      // 线程本身已由 SDK 的悬空自动修复保活）。
-      if (lastRun.status === "running") {
-        const messages = createOrResumeRuntimeCoreSessionManager(
-          process.cwd(),
-          input.threadId
-        ).buildSessionContext().messages;
-        if (detectSessionDanglingToolUses(messages).length > 0) {
+      // tool_use 且当前进程没有活跃 runtime 时提示恢复。
+      if (lastRun.status === "running" && !isAgentRuntimeSessionActive(input.threadId)) {
+        if (getDanglingToolUsesForThread(input.threadId).length > 0) {
           return {
             threadId: input.threadId,
             hasPendingResume: true,
@@ -886,6 +950,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.RESUME_RUN]: async (params) => {
       const input = validateInput(resumeRunInputSchema, params, AGENT_IPC_CHANNELS.RESUME_RUN);
       return resumeRunForThread(input);
+    },
+    [AGENT_IPC_CHANNELS.DISCARD_INTERRUPTED_RUN]: async (params) => {
+      const input = validateInput(
+        discardInterruptedRunInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.DISCARD_INTERRUPTED_RUN
+      );
+      return discardInterruptedRunForThread(input);
     },
     [AGENT_IPC_CHANNELS.GET_PENDING_RESUME]: async (params) => {
       const input = validateInput(getPendingResumeInputSchema, params, AGENT_IPC_CHANNELS.GET_PENDING_RESUME);

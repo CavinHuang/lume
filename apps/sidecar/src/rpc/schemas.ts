@@ -1861,6 +1861,11 @@ export const resumeRunInputSchema = z.object({
   interruptionId: idSchema.optional()
 });
 
+export const discardInterruptedRunInputSchema = z.object({
+  threadId: idSchema,
+  runId: idSchema.optional()
+});
+
 export const listRunStatesInputSchema = z.object({
   threadId: idSchema
 });

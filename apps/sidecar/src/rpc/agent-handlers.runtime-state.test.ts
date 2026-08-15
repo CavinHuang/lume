@@ -587,6 +587,19 @@ describe("agent-handlers runtime state", () => {
       runId
     });
 
+    const resumed = await handlers[AGENT_IPC_CHANNELS.RESUME_RUN]!({ threadId, runId });
+    expect(resumed).toEqual({ status: "resumed", finalOutput: "resumed output" });
+    expect(sendAgentMessageMock.mock.calls[0]?.[0]).toMatchObject({
+      threadId,
+      messageMetadata: {
+        runtimeContinuation: {
+          source: "dangling-fallback",
+          sourceRunId: runId
+        }
+      }
+    });
+    expect((await createFileBackedLumeRunStateStore(sessionDir).get(runId))?.status).toBe("failed");
+
     // 对照：running 但无悬空（工具结果已配对）不触发。
     sessionManager.appendMessage({
       role: "toolResult",
@@ -595,6 +608,110 @@ describe("agent-handlers runtime state", () => {
     });
     const clean = await handlers[AGENT_IPC_CHANNELS.GET_PENDING_RESUME]!({ threadId });
     expect(clean).toEqual({ threadId, hasPendingResume: false });
+  });
+
+  test("discard-interrupted-run persists the decision for an interrupted checkpoint", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-discard-interrupted-"));
+    const threadId = "thread-discard-interrupted";
+    const runId = "run-discard-interrupted";
+    const sessionDir = getRuntimeCoreSessionDir(threadId);
+    await createFileBackedLumeRunStateStore(sessionDir).create({
+      version: 1,
+      runId,
+      threadId,
+      rootAgentId: "runtime-core",
+      currentAgentId: "runtime-core",
+      status: "cancelled",
+      input: { userMessage: "interrupted task", permissionMode: "default" },
+      generatedItems: [],
+      pendingInterruptions: [],
+      approvals: { alwaysAllowedTools: [] },
+      traceId: "trace-discard-interrupted",
+      model: { provider: "openai", modelId: "gpt-test" },
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z"
+    });
+    await createFileBackedRunContinuationStore(sessionDir).upsert({
+      version: 2,
+      runId,
+      threadId,
+      status: "interrupted",
+      checkpoint: { step: "waiting_for_tool_result" },
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z"
+    });
+
+    const { createAgentHandlers } = await import("./agent-handlers");
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
+    });
+
+    const result = await handlers[AGENT_IPC_CHANNELS.DISCARD_INTERRUPTED_RUN]!({ threadId, runId });
+    expect(result).toEqual({ ok: true, runId });
+    expect(await createFileBackedRunContinuationStore(sessionDir).get(runId)).toMatchObject({
+      status: "not_resumable",
+      reason: "用户已放弃恢复。"
+    });
+    expect(await handlers[AGENT_IPC_CHANNELS.GET_PENDING_RESUME]!({ threadId })).toEqual({
+      threadId,
+      hasPendingResume: false
+    });
+  });
+
+  test("discard-interrupted-run pairs dangling tools and cancels a stale running run", async () => {
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-runtime-discard-dangling-"));
+    const threadId = "thread-discard-dangling";
+    const runId = "run-discard-dangling";
+    const sessionDir = getRuntimeCoreSessionDir(threadId);
+    const runStore = createFileBackedLumeRunStateStore(sessionDir);
+    await runStore.create({
+      version: 1,
+      runId,
+      threadId,
+      rootAgentId: "runtime-core",
+      currentAgentId: "runtime-core",
+      status: "running",
+      input: { userMessage: "crashed task", permissionMode: "default" },
+      generatedItems: [],
+      pendingInterruptions: [],
+      approvals: { alwaysAllowedTools: [] },
+      traceId: "trace-discard-dangling",
+      model: { provider: "openai", modelId: "gpt-test" },
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z"
+    });
+    const { createOrResumeRuntimeCoreSessionManager } = await import("../services/agent-runtime/runtime-core/session-store");
+    const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), threadId);
+    sessionManager.appendMessage({
+      role: "assistant",
+      content: [{ type: "tool_use", id: "t-discard", name: "Bash", input: { command: "ls" } }]
+    });
+
+    const { createAgentHandlers } = await import("./agent-handlers");
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
+    });
+
+    const result = await handlers[AGENT_IPC_CHANNELS.DISCARD_INTERRUPTED_RUN]!({ threadId, runId });
+    expect(result).toEqual({ ok: true, runId });
+    expect((await runStore.get(runId))?.status).toBe("cancelled");
+    expect(sessionManager.buildSessionContext().messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "toolResult",
+        toolCallId: "t-discard",
+        isError: true
+      })
+    ]));
+    expect(await handlers[AGENT_IPC_CHANNELS.GET_PENDING_RESUME]!({ threadId })).toEqual({
+      threadId,
+      hasPendingResume: false
+    });
   });
 
   test("resume-run sends a plain continuation message for interrupted checkpoints without tool result injection", async () => {

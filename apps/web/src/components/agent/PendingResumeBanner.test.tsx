@@ -1,17 +1,23 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { AgentGetPendingResumeResult, AgentResumeRunResult } from '@lume/shared'
+import type {
+  AgentDiscardInterruptedRunResult,
+  AgentGetPendingResumeResult,
+  AgentResumeRunResult,
+} from '@lume/shared'
 
 mock.restore()
 
 // ── desktop-api mock：getAgentPendingResume / resumeAgentRun ────────────────
 const getPendingResumeMock = mock(async () => ({ threadId: 't', hasPendingResume: false }) as AgentGetPendingResumeResult)
 const resumeRunMock = mock(async () => ({ status: 'resumed' } as AgentResumeRunResult))
+const discardRunMock = mock(async () => ({ ok: true } as AgentDiscardInterruptedRunResult))
 
 mock.module('@/lib/desktop-api', () => ({
   getAgentPendingResume: (threadId: string) => getPendingResumeMock(threadId),
   resumeAgentRun: (input: { threadId: string; runId?: string }) => resumeRunMock(input),
+  discardAgentInterruptedRun: (input: { threadId: string; runId?: string }) => discardRunMock(input),
 }))
 
 // ── Button mock：捕获 onClick，绕过 fake DOM 不派发 React 合成事件 ────────
@@ -251,8 +257,10 @@ describe('PendingResumeBanner', () => {
   beforeEach(() => {
     getPendingResumeMock.mockReset()
     resumeRunMock.mockReset()
+    discardRunMock.mockReset()
     getPendingResumeMock.mockResolvedValue({ threadId: 't', hasPendingResume: false })
     resumeRunMock.mockResolvedValue({ status: 'resumed' })
+    discardRunMock.mockResolvedValue({ ok: true })
     capturedButtons.length = 0
   })
 
@@ -377,7 +385,7 @@ describe('PendingResumeBanner', () => {
     }
   })
 
-  test('点放弃 → 横幅消失且本周期内重开不再提示、不调 resume', async () => {
+  test('点放弃 → 持久化 discard 并隐藏横幅', async () => {
     getPendingResumeMock.mockResolvedValue({
       threadId: 't-discard', hasPendingResume: true, runId: 'run-4',
     })
@@ -390,13 +398,15 @@ describe('PendingResumeBanner', () => {
         await flush()
       })
       expect(resumeRunMock).not.toHaveBeenCalled()
+      expect(discardRunMock).toHaveBeenCalledWith({ threadId: 't-discard', runId: 'run-4' })
       expect(env.container.childNodes.length).toBe(0)
     } finally {
       await unmount(env)
       env.cleanup()
     }
 
-    // 重挂载（同周期内重开线程）不再提示
+    // sidecar 持久清理后，重挂载查询不再返回 pending。
+    getPendingResumeMock.mockResolvedValue({ threadId: 't-discard', hasPendingResume: false })
     const env2 = await render('t-discard')
     try {
       expect(env2.container.childNodes.length).toBe(0)
