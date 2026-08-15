@@ -7,6 +7,7 @@
 
 import type { ToolDefinition } from '../types.js'
 import { matchesAnyToolPattern } from '../utils/tool-approval.js'
+import { createToolRegistry } from './registry.js'
 
 // File I/O
 import { BashTool } from './bash.js'
@@ -259,17 +260,10 @@ export function splitDeferredTools(tools: ToolDefinition[]): {
   core: ToolDefinition[]
   deferred: ToolDefinition[]
 } {
-  const candidates = tools.filter((tool) => tool.name !== 'ToolSearch' && tool.name !== 'ExecuteTool')
-  return {
-    core: candidates.filter((tool) =>
-      CORE_TOOL_NAMES.has(tool.name)
-      || tool.runtimeMetadata?.requiredDuringSkillScope === true
-    ),
-    deferred: candidates.filter((tool) =>
-      !CORE_TOOL_NAMES.has(tool.name)
-      && tool.runtimeMetadata?.requiredDuringSkillScope !== true
-    ),
-  }
+  const registry = createToolRegistry();
+  registry.global.register(tools);
+  registry.preset("default").setCore([...CORE_TOOL_NAMES]);
+  return registry.agent("adapter").view().split();
 }
 
 export type { LspWorkspaceEditPreview } from './lsp-tool.js'

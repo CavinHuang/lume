@@ -151,6 +151,29 @@ describe("Agent runtime tool resolver", () => {
     await agent.close()
   })
 
+  test("rebuildToolPool keeps core tools eager and defers the rest", async () => {
+    const agent = createAgent({
+      persistSession: false,
+      tools: [tool("Bash"), tool("GuanlanSearch")],
+      provider: new StaticProvider(),
+      model: "host/model-a",
+    })
+    await agent.getInitializationResult()
+
+    const toolPool = (agent as any).toolPool as ToolDefinition[]
+    const deferredPool = (agent as any).deferredToolPool as ToolDefinition[]
+    // Built-in core tools stay in the eager pool.
+    expect(toolPool.map((t) => t.name)).toContain("Bash")
+    // ToolSearch/ExecuteTool are injected into the eager pool when deferred is non-empty.
+    expect(toolPool.map((t) => t.name)).toContain("ToolSearch")
+    expect(toolPool.map((t) => t.name)).toContain("ExecuteTool")
+    // Core tools never land in deferred; non-core tools do.
+    expect(deferredPool.map((t) => t.name)).not.toContain("Bash")
+    expect(deferredPool.map((t) => t.name)).toContain("GuanlanSearch")
+
+    await agent.close()
+  })
+
   test("registers generated discovery tools with the host runtime", async () => {
     process.env.ENABLE_TOOL_SEARCH = "tst"
     const registered: string[] = []

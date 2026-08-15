@@ -30,10 +30,11 @@ import { QueryEngine } from './engine.js'
 import { createPersistScheduler } from './persist-scheduler.js'
 import {
   assembleToolPool,
+  CORE_TOOL_NAMES,
   filterTools,
   getAllBaseTools,
-  splitDeferredTools,
 } from './tools/index.js'
+import { applyOverrides, createToolRegistry } from './tools/registry.js'
 import {
   closeAllConnections,
   connectMCPServer,
@@ -251,6 +252,8 @@ export class Agent {
   private cfg: AgentOptions
   private toolPool: ToolDefinition[] = []
   private deferredToolPool: ToolDefinition[] = []
+  private toolRegistry = createToolRegistry()
+  private unregisterRuntimeTools: (() => void) | null = null
   private modelId = 'claude-sonnet-4-6'
   private apiType: ApiType = 'anthropic-messages'
   private apiCredentials: { key?: string; baseUrl?: string } = {}
@@ -612,7 +615,13 @@ export class Agent {
     const runtimeTools = options.resolveRuntimeTools
       ? await options.resolveRuntimeTools(assembledTools, runtimeContext)
       : assembledTools
-    const { core, deferred } = splitDeferredTools(runtimeTools)
+    // Registry is the single source of truth: global pool + default preset core set.
+    // Dispose the previous registration so the registry mirrors this full rebuild
+    // (tools dropped from runtimeTools must not linger across rebuilds).
+    this.unregisterRuntimeTools?.()
+    this.unregisterRuntimeTools = this.toolRegistry.global.register(runtimeTools)
+    this.toolRegistry.preset("default").setCore([...CORE_TOOL_NAMES])
+    const { core, deferred } = this.toolRegistry.agent(this.sid).view().split()
     const enableToolSearch = isToolSearchEnabled(deferred, options.model || this.modelId)
     this.deferredToolPool = enableToolSearch ? deferred : []
     setDeferredTools(this.deferredToolPool)
@@ -884,25 +893,19 @@ export class Agent {
 
   /** Resolve the tool pools for one run: shared by runSinglePrompt and resumeInterruptedRun. */
   private getRunTools(
-    opts: AgentOptions,
+    _opts: AgentOptions,
     overrides?: Partial<AgentOptions>,
   ): { tools: ToolDefinition[]; deferredTools: ToolDefinition[] } {
-    let tools = this.toolPool
-    let deferredTools = this.deferredToolPool
-    if (overrides?.disallowedTools) {
-      tools = filterTools(tools, undefined, overrides.disallowedTools)
-      deferredTools = filterTools(deferredTools, undefined, overrides.disallowedTools)
+    if (!overrides?.disallowedTools && !overrides?.tools) {
+      return { tools: this.toolPool, deferredTools: this.deferredToolPool }
     }
-    if (overrides?.tools) {
-      const raw = overrides.tools
-      if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'string') {
-        tools = filterTools(this.buildBaseToolPool(opts), raw as string[])
-      } else if (Array.isArray(raw)) {
-        tools = raw as ToolDefinition[]
-      }
-      deferredTools = []
-    }
-    return { tools, deferredTools }
+    // One-shot registry masks: evaluate the masked snapshot, then restore.
+    const masked = applyOverrides(this.toolRegistry, this.sid, overrides, {
+      tools: this.toolPool,
+      deferredTools: this.deferredToolPool,
+    })
+    masked.undo()
+    return { tools: masked.tools, deferredTools: masked.deferredTools }
   }
 
   private async *runSinglePrompt(
