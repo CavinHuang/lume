@@ -112,7 +112,7 @@ projector 产物 → ThreadEventBus(每线程单实例 = seq 单写者)
 
 试点链 UI 两处改造:
 - 流式渲染改由 message.start/update/end 驱动(取代 stream_event 直连)
-- turn 落定改由 turn.end 驱动(assistant 消息逐 turn 进列表,不等 run 完成)——P4 兑现
+- turn 落定改由 turn.end 驱动(assistant 消息逐 turn 进列表,不等 run 完成)——P4 兑现。**批次1 实现偏差**:turn.end 不产 UI 事件,落定由 message.end→assistant.final 覆盖(管线等价,plan P4 修正已论证),逐 turn 进列表待批次2
 
 atom 写入保留 rAF 批量;旧 useGlobalAgentListeners 对试点链事件分支停用(flag 同步),其余链路照常。
 
@@ -127,7 +127,7 @@ atom 写入保留 rAF 批量;旧 useGlobalAgentListeners 对试点链事件分�
 | 推送失败/无订阅者 | 不重试;事件已持久化,重连 get-events 补齐 |
 | web 收到 seq 空洞(存储损坏等) | 全量重拉(从 0 回放) |
 | push/pull 交叠(重连窗口) | web 按 seq 去重归并 |
-| 流式中途 error/abort | projector 兜底:补发 message.end(error)+ turn.end(空)+ run.end(aborted) |
+| 流式中途 error/abort | **批次1 实现偏差**:流终止无 result 终值时 projector 不补发任何事件(含 run.end),终值语义由旧 result 路径兜底;`message.end(error)+ turn.end(空)+ run.end(aborted)` 补发链留批次2 |
 | 半行尾(append 断电) | 读取侧容忍并截断到最后一完整行 |
 | fork 线程 | seq 从 0 重开,事件流不继承历史(声明的语义) |
 | flag off | 全量走旧路,零行为变化 |
