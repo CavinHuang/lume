@@ -17,6 +17,8 @@ import { getActiveBrowserBroker } from "../../../browser/browser-broker-holder";
 export const NODE_REPL_MCP_SERVER_ID = "node_repl";
 export const NODE_REPL_MCP_SERVER_NAME = "node_repl";
 const NODE_REPL_MCP_WRAPPER_PREFIX = `mcp__${NODE_REPL_MCP_SERVER_ID}__`;
+// Nested agent tool calls may sit on user approval; grant 5 minutes by default.
+const NODE_REPL_DEFAULT_TIMEOUT_MS = 300_000;
 
 export function createNodeReplTools(input: {
   sessionId: string;
@@ -49,7 +51,11 @@ export function createNodeReplTools(input: {
         properties: {
           title: { type: "string" },
           code: { type: "string" },
-          timeout_ms: { type: "number" },
+          timeout_ms: {
+            type: "number",
+            description:
+              "Execution timeout in milliseconds. Defaults to 300000 (5 minutes) because nested agent tool calls may wait on user approval; pass a smaller value for pure computation."
+          },
           _meta: { type: "object", additionalProperties: true }
         },
         required: ["code"]
@@ -65,10 +71,13 @@ export function createNodeReplTools(input: {
         const parsed = parseJsExecInput(rawArgs);
         if (!parsed.ok) return errorResult(context.toolUseId, parsed.error);
         const threadId = context.sessionId ?? input.sessionId;
-        const execInput = withRuntimeRequestMeta(parsed.value, {
-          threadId,
-          toolUseId: context.toolUseId
-        });
+        const execInput = withRuntimeRequestMeta(
+          { ...parsed.value, timeout_ms: parsed.value.timeout_ms ?? NODE_REPL_DEFAULT_TIMEOUT_MS },
+          {
+            threadId,
+            toolUseId: context.toolUseId
+          }
+        );
         const result = await registry.exec(threadId, execInput, {
           cwd: context.cwd || input.cwd,
           sandbox: context.sandbox,

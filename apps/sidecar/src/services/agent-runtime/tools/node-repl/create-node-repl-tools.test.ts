@@ -58,6 +58,31 @@ describe("createNodeReplTools", () => {
     });
   });
 
+  test("js defaults timeout_ms to 300s and keeps explicit values", async () => {
+    const capturedInputs: any[] = [];
+    const tools = createNodeReplTools({
+      sessionId: "thread-1",
+      cwd: "D:/repo",
+      registry: {
+        async exec(_threadId, input) {
+          capturedInputs.push(input);
+          return { content: [{ type: "text", text: "ready" }] };
+        },
+        async addModuleDir() { return true; },
+        async reset() {},
+        async shutdown() {},
+        debugSnapshot() { return null; },
+      },
+    });
+    const js = tools.find((tool) => tool.name === "js")!;
+
+    await js.call({ code: "nodeRepl.write('ready')" }, makeToolContext());
+    await js.call({ code: "nodeRepl.write('fast')", timeout_ms: 5000 }, makeToolContext());
+
+    expect(capturedInputs[0].timeout_ms).toBe(300_000);
+    expect(capturedInputs[1].timeout_ms).toBe(5000);
+  });
+
   test("js_add_node_module_dir validates absolute node_modules paths", async () => {
     const tools = createNodeReplTools({
       sessionId: "thread-1",
