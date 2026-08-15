@@ -74,8 +74,8 @@ tool   : tool.start → tool.update×N → tool.end(detail: result/isError)   [�
 
 状态机规则:
 - run 边界:流首(跳过 init/system 类)→ `run.start`;旧 result 事件 → `run.end`(detail 迁移 usage/cost/num_turns/stop_reason/is_error)
-- turn 边界:每条 assistant(终值)→ turnId = assistant uuid;`turn.start` 在其首条 stream_event 到达时发出;`turn.end` 当该 assistant 全部 tool_use 收到对应 tool_result 后发出(detail 自携带 assistantMessage + toolResults[]);无 tool_use 的 assistant:turn.end 紧随 message.end
-- message 三段式:首条 stream_event → `message.start`(空壳);每条 stream_event → `message.update`(detail:原生 delta + 折叠后累计 partial,消费者免攒状态);assistant 终值 → `message.end`(完整消息)
+- turn 边界:每条 assistant(终值)→ turnId = 稳定兜底 id `turn-<run 内序号>`(join key 全程不可变;assistant uuid 只进 detail.assistantMessage,不作 turnId);`turn.start` 在其首条 stream_event 到达时发出;`turn.end` 当该 assistant 全部 tool_use 收到对应 tool_result 后发出(id 命中优先 + 数量兜底 + 孤儿忽略的混合配对;detail 自携带 assistantMessage + toolResults[]);无 tool_use 的 assistant:turn.end 紧随 message.end
+- message 三段式:首条 stream_event → `message.start`(空壳);每条 stream_event → `message.update`(detail:原生 delta + 折叠后累计 partial,消费者免攒状态;thinking_delta 批次1 只透传不折叠,partial.thinking 字段留批次2);assistant 终值 → `message.end`(完整消息)
 - **无流式退化**(includePartialMessages=false,无 stream_event):`turn.start`+`message.start`+`message.end` 由 assistant 终值触发改良直发(单消息内三连发,保持骨架完整性);update 段缺省
 - 兜底:流式中途 error/abort → `message.end`(带 error)+ `turn.end`(toolResults=[])+ `run.end`(stopReason=aborted)——与阶段1 软 abort 语义对齐;冷启动 toolContinuation 恢复的 tool_result 归入当前 turn
 - 导出:`projectLifecycle(messages: AsyncIterable<SDKMessage>): AsyncGenerator<SdkLifecycleEvent>`(组合式,agent.query() 返回值可直接 pipe)
