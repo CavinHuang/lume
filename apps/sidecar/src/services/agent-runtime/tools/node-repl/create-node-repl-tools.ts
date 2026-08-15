@@ -102,10 +102,11 @@ export function createNodeReplTools(input: {
                 is_error: true
               };
             }
-            return context.executeNestedTool?.({
+            const nested = await context.executeNestedTool?.({
               toolName: String(request.args?.name ?? ""),
               params: isRecord(request.args?.params) ? request.args.params : {}
             });
+            return nested ? normalizeNestedToolContent(nested) : nested;
           },
           browserRequest: async (request, signal) => {
             if (signal.aborted) throw new Error("browser request cancelled");
@@ -299,6 +300,20 @@ function parseJsExecInput(rawArgs: unknown): { ok: true; value: JsExecInput } | 
       ...(typeof args.timeout_ms === "number" ? { timeout_ms: args.timeout_ms } : {}),
       ...(isRecord(args._meta) ? { _meta: args._meta } : {})
     }
+  };
+}
+
+// The sandbox protocol only accepts string content; flatten block arrays
+// (text blocks joined, other blocks replaced by placeholders) before bridging.
+function normalizeNestedToolContent<T extends { content?: unknown }>(result: T): T {
+  if (!Array.isArray(result.content)) return result;
+  return {
+    ...result,
+    content: result.content
+      .map((block) => isRecord(block) && block.type === "text" && typeof block.text === "string"
+        ? block.text
+        : `[unsupported block: ${isRecord(block) ? String(block.type) : "unknown"}]`)
+      .join("\n")
   };
 }
 

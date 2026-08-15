@@ -307,6 +307,63 @@ describe("createNodeReplTools", () => {
     expect(nestedCalls).toHaveLength(1);
   });
 
+  test("js flattens nested tool content blocks for the sandbox", async () => {
+    const bridgedResults: unknown[] = [];
+    const nestedResults = [
+      {
+        type: "tool_result",
+        tool_use_id: "nested-1",
+        content: [
+          { type: "text", text: "line one" },
+          { type: "text", text: "line two" },
+          { type: "image", data: "x", mimeType: "image/png" }
+        ],
+        is_error: true
+      },
+      { type: "tool_result", tool_use_id: "nested-2", content: "plain ok" }
+    ];
+    const tools = createNodeReplTools({
+      sessionId: "thread-1",
+      cwd: "D:/repo",
+      registry: {
+        async exec(_threadId, _input, options) {
+          const signal = new AbortController().signal;
+          bridgedResults.push(await options?.toolRequest?.(
+            { method: "tool_call", args: { name: "Read", params: {} } },
+            signal,
+          ));
+          bridgedResults.push(await options?.toolRequest?.(
+            { method: "tool_call", args: { name: "Read", params: {} } },
+            signal,
+          ));
+          return { content: [{ type: "text", text: "ready" }] };
+        },
+        async addModuleDir() { return true; },
+        async reset() {},
+        async shutdown() {},
+        debugSnapshot() { return null; },
+      },
+    });
+    const context = {
+      ...makeToolContext(),
+      executeNestedTool: async () => nestedResults.shift(),
+    } as any;
+
+    await tools.find((tool) => tool.name === "js")!.call({ code: "await tools.call('Read')" }, context);
+
+    expect(bridgedResults[0]).toEqual({
+      type: "tool_result",
+      tool_use_id: "nested-1",
+      content: "line one\nline two\n[unsupported block: image]",
+      is_error: true
+    });
+    expect(bridgedResults[1]).toEqual({
+      type: "tool_result",
+      tool_use_id: "nested-2",
+      content: "plain ok"
+    });
+  });
+
   test("js resolves browserAuth through the broker without returning secrets", async () => {
     const dispatched: any[] = [];
     let runtimeAuthResult: unknown;
