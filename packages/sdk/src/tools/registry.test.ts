@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ToolDefinition } from "../types";
 import { createToolRegistry } from "./registry.js";
+import { splitDeferredTools, CORE_TOOL_NAMES } from "./index.js";
 
 function tool(name: string): ToolDefinition {
   return {
@@ -79,5 +80,19 @@ describe("tool registry", () => {
     const names = [...view.split().core, ...view.split().deferred].map((t) => t.name);
     expect(names).not.toContain("ToolSearch");
     expect(names).not.toContain("ExecuteTool");
+  });
+});
+
+describe("splitDeferredTools adapter", () => {
+  test("splits by CORE_TOOL_NAMES and requiredDuringSkillScope", () => {
+    const skillTool = tool("GuanlanSearch");
+    skillTool.runtimeMetadata = { requiredDuringSkillScope: true } as never;
+    const { core, deferred } = splitDeferredTools([tool("Bash"), tool("WebFetch"), skillTool, tool("ToolSearch")]);
+    expect(core.map((t) => t.name)).toEqual(["Bash", "GuanlanSearch"]);
+    expect(deferred.map((t) => t.name)).toEqual(["WebFetch"]);
+  });
+
+  test("CORE_TOOL_NAMES stays the default preset core set", () => {
+    expect(CORE_TOOL_NAMES.has("Bash")).toBe(true);
   });
 });
