@@ -42,12 +42,14 @@ import {
   type ThreadFileWorkspace,
 } from './right-panel-files-state'
 import {
+  canPromoteToProject,
   getFileSourceCapabilities,
   getRovingTreeTabIndex,
   getRovingTreeTabStopKey,
   getSourceRefreshRefs,
   getUnifiedFileTreeCacheIdentity,
   invalidateSourceDirectoryCache,
+  markSourceStale,
   reconcileSourceTreeNavigation,
   settleMutation,
   shouldCommitTreeRequest,
@@ -481,18 +483,17 @@ export function UnifiedFileTree({
       toast.error(error instanceof Error ? error.message : '移动失败')
     }
   })
-  const exportLegacy = async (entry: FileEntry) => {
-    if (!entry.ref || entry.ref.source !== 'legacy') return
+  const mutatePromote = async (entry: FileEntry) => {
+    if (!entry.ref || !canPromoteToProject(entry.ref.source) || !workspaceSlug) return
     try {
-      await sidecarCall(AGENT_IPC_CHANNELS.EXPORT_LEGACY_RESOURCE_TO_PROJECT, {
-        workspaceSlug: entry.ref.scopeId,
-        path: entry.ref.relativePath,
-        conflict: 'error',
+      await sidecarCall<{ ok: true; path: string }>(AGENT_IPC_CHANNELS.PROMOTE_FILE_REF_TO_PROJECT, {
+        ref: entry.ref,
+        workspaceSlug,
       })
-      commitWorkspace({ ...workspaceRef.current, sourceStatus: { ...workspaceRef.current.sourceStatus, project: 'stale' } })
-      toast.success('已导出到项目；项目文件已标记为有更新')
+      commitWorkspace(markSourceStale(workspaceRef.current, 'project'))
+      toast.success('已晋升到项目；项目文件已标记为有更新')
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '导出失败')
+      toast.error(error instanceof Error ? error.message : '晋升失败')
     }
   }
   const copyAbsolutePath = async (ref: FileRef) => {
@@ -559,7 +560,7 @@ export function UnifiedFileTree({
       onEdit={(next) => { setEditing(next.ref ?? null); setRenameValue(next.name) }}
       onMove={(next) => { setMoving(next); setMoveTarget(parentPath(next.ref?.relativePath ?? '')) }}
       onDelete={setDeleting}
-      onExportLegacy={exportLegacy}
+      onPromoteToProject={mutatePromote}
       onCopyAbsolutePath={copyAbsolutePath}
       showPath={Boolean(query.trim())}
     />
@@ -735,7 +736,7 @@ function TreeEntryRow(props: {
   onSelect: (ref: FileRef) => void; onToggle: (ref: FileRef) => Promise<void>; onOpen: (ref: FileRef) => void
   onArmDoubleClick?: (ref: FileRef) => void
   onEdit: (entry: FileEntry) => void; onMove: (entry: FileEntry) => void; onDelete: (entry: FileEntry) => void
-  onExportLegacy: (entry: FileEntry) => Promise<void>; onCopyAbsolutePath: (ref: FileRef) => Promise<void>; showPath: boolean
+  onPromoteToProject: (entry: FileEntry) => Promise<void>; onCopyAbsolutePath: (ref: FileRef) => Promise<void>; showPath: boolean
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const { entry } = props
@@ -799,7 +800,7 @@ function TreeEntryRow(props: {
             <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void revealFileRefInSystem(entry.ref!)}>在文件管理器中显示</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => void writeClipboardText(entry.ref!.relativePath)}>复制相对路径</DropdownMenuItem>
             <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void props.onCopyAbsolutePath(entry.ref!)}>复制绝对路径</DropdownMenuItem>
-            {entry.ref.source === 'legacy' && <DropdownMenuItem onSelect={() => void props.onExportLegacy(entry)}>导出到项目（不覆盖）</DropdownMenuItem>}
+            {canPromoteToProject(entry.ref.source) && <DropdownMenuItem onSelect={() => void props.onPromoteToProject(entry)}>晋升到项目</DropdownMenuItem>}
             <DropdownMenuItem disabled={!capabilities.rename} onSelect={() => props.onEdit(entry)}>重命名</DropdownMenuItem>
             <DropdownMenuItem disabled={!capabilities.move} onSelect={() => props.onMove(entry)}>移动</DropdownMenuItem>
             <DropdownMenuItem destructive disabled={!capabilities.delete} onSelect={() => props.onDelete(entry)}>删除</DropdownMenuItem>

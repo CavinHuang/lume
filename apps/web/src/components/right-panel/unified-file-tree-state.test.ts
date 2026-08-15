@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import {
   beginTreeSearch,
+  canPromoteToProject,
   createUnifiedFileTreeState,
   endTreeSearch,
   getFileSourceCapabilities,
@@ -68,6 +69,13 @@ describe('unified-file-tree-state', () => {
       scrollAnchor: initial.scrollAnchor,
       searchQuery: '',
     })
+  })
+
+  test('canPromoteToProject 仅 session/memory/legacy', () => {
+    expect(canPromoteToProject('session')).toBeTrue()
+    expect(canPromoteToProject('memory')).toBeTrue()
+    expect(canPromoteToProject('legacy')).toBeTrue()
+    expect(canPromoteToProject('project')).toBeFalse()
   })
 
   test('keeps non-session sources read-only', () => {
