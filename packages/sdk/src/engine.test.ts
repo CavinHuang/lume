@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { QueryEngine } from "./engine.js"
+import { createToolSearchTool } from "./tools/tool-search.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
 import type { SDKMessage, ToolContext } from "./types.js"
 import { normalizeProviderUsage } from "./utils/usage.js"
@@ -1536,6 +1537,67 @@ describe("QueryEngine deferred tool promotion", () => {
     const names = (lastRequest.tools ?? []).map((tool) => tool.name);
     expect(names).toContain("GuanlanSearch");
     expect(names.filter((name) => name === "GuanlanSearch")).toHaveLength(1);
+  });
+
+  test("ToolSearch end to end: constructor rebinding, native promotion, and deferred removal", async () => {
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "select:GuanlanSearch" } }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "tool_use", id: "guanlan-1", name: "GuanlanSearch", input: {} }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    ]);
+    let guanlanCalls = 0;
+    const deferredTool = {
+      name: "GuanlanSearch",
+      description: "search guanlan",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        guanlanCalls += 1;
+        return { type: "tool_result" as const, tool_use_id: "", content: "guanlan result" };
+      }
+    };
+
+    // Real factory output bound to an empty pool: only the engine's
+    // construction-time rebinding can see the deferred tools.
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [createToolSearchTool(() => [])],
+      deferredTools: [deferredTool],
+      systemPrompt: "test",
+      maxTurns: 5,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    await collectResult(engine);
+
+    expect(provider.requests).toHaveLength(3);
+    // Turn 1 result carries the direct-call guidance from the rebound ToolSearch.
+    expect(JSON.stringify(provider.requests[1]?.messages)).toContain("call them directly by name");
+    // Turn 2 request exposes the promoted tool natively, exactly once.
+    const turnTwoNames = (provider.requests[1]?.tools ?? []).map((tool) => tool.name);
+    expect(turnTwoNames).toContain("GuanlanSearch");
+    expect(turnTwoNames.filter((name) => name === "GuanlanSearch")).toHaveLength(1);
+    // The promoted tool executed natively and its result reached the final turn.
+    expect(guanlanCalls).toBe(1);
+    expect(JSON.stringify(provider.requests[2]?.messages)).toContain("guanlan result");
+    // Promotion removed the tool from the deferred pool.
+    const deferredNames = ((engine as any).config.deferredTools as Array<{ name: string }>).map((tool) => tool.name);
+    expect(deferredNames).not.toContain("GuanlanSearch");
   });
 });
 

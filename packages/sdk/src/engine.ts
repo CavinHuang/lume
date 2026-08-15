@@ -277,7 +277,7 @@ function compactionStageMessage(stage: AgentContextCompactionStage): string {
 
 async function buildSystemPrompt(config: QueryEngineConfig): Promise<string> {
   const deferredToolGuide = config.deferredTools?.length
-    ? '\n\nSome tools are deferred to keep your context focused. Use ToolSearch to discover them, then call ExecuteTool with the selected tool name and parameters. Do not claim a capability is unavailable before searching when the visible tools do not cover the task.'
+    ? '\n\nSome tools are deferred to keep your context focused. Use ToolSearch to discover them; matched tools become natively callable on your next turn — call them directly by name. Do not claim a capability is unavailable before searching when the visible tools do not cover the task.'
     : ''
   if (config.systemPrompt) {
     const structuredOutputInstruction = buildStructuredOutputInstruction(
