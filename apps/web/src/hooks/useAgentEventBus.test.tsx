@@ -318,4 +318,26 @@ describe('useAgentEventBus', () => {
     await t.unmount()
     t.cleanup()
   })
+
+  test('重载竞态:push 先于首拉回包不触发 refetchAll,回包按 snapshot 语义吸收', async () => {
+    let resolvePull!: (events: SdkEventEnvelope[]) => void
+    getAgentEventsMock.mockImplementation(() => new Promise((res) => {
+      resolvePull = (events) => res({ threadId: '', events })
+    }))
+    const t = await mount()
+    await t.rerender('t1')
+    expect(getAgentEventsMock).toHaveBeenCalledTimes(1) // 首拉在飞(deferred 未回)
+    push(envelope('t1', 5)) // 5 > 0+1 判空洞 → 只进 pending,不触发 refetch
+    await act(async () => {
+      resolvePull([envelope('t1', 1), envelope('t1', 2), envelope('t1', 3), envelope('t1', 4), envelope('t1', 5)])
+      await flush()
+    })
+    // 不触发全量 refetch(否则历史全按 push 入队+置 streaming,吞掉 snapshot 语义)
+    expect(getAgentEventsMock).toHaveBeenCalledTimes(1)
+    expect(t.received.map(({ e, source }) => [e.seq, source])).toEqual([
+      [1, 'snapshot'], [2, 'snapshot'], [3, 'snapshot'], [4, 'snapshot'], [5, 'snapshot'],
+    ])
+    await t.unmount()
+    t.cleanup()
+  })
 })
