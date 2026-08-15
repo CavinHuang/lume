@@ -70,7 +70,6 @@ export function UnifiedFileTree({
   openFunctions,
   onWorkspaceChange,
   onOpenFile,
-  singleClickOpen,
 }: {
   workspace: ThreadFileWorkspace
   workspaceSlug?: string
@@ -79,8 +78,6 @@ export function UnifiedFileTree({
   openFunctions: RightPanelFunction[]
   onWorkspaceChange: (workspace: ThreadFileWorkspace) => void
   onOpenFile: (target: RightPanelFileTarget | FileRef) => void
-  /** 窄布局下单击非目录文件直接打开预览（而非仅选中）；宽布局保持单击选中、双击打开 */
-  singleClickOpen?: boolean
 }) {
   const treeCacheIdentity = getUnifiedFileTreeCacheIdentity(workspaceSlug, fileContextId, workspaceProjectPath)
   const [cache, setCache] = useState<Record<string, FileEntry[]>>(() => workspace.directoryCache as Record<string, FileEntry[]>)
@@ -500,7 +497,6 @@ export function UnifiedFileTree({
       onSelect={select}
       onToggle={toggle}
       onOpen={(ref) => onOpenFile(createRightPanelFileTarget(ref))}
-      singleClickOpen={singleClickOpen}
       onEdit={(next) => { setEditing(next.ref ?? null); setRenameValue(next.name) }}
       onMove={(next) => { setMoving(next); setMoveTarget(parentPath(next.ref?.relativePath ?? '')) }}
       onDelete={setDeleting}
@@ -672,7 +668,6 @@ function TreeEntryRow(props: {
   selectedRef: FileRef | null; treeTabStopKey: string | null; loadingKeys: string[]; editing: FileRef | null; renameValue: string
   onRenameValue: (value: string) => void; onCommitRename: (entry: FileEntry) => Promise<void>
   onSelect: (ref: FileRef) => void; onToggle: (ref: FileRef) => Promise<void>; onOpen: (ref: FileRef) => void
-  singleClickOpen?: boolean
   onEdit: (entry: FileEntry) => void; onMove: (entry: FileEntry) => void; onDelete: (entry: FileEntry) => void
   onExportLegacy: (entry: FileEntry) => Promise<void>; onCopyAbsolutePath: (ref: FileRef) => Promise<void>; showPath: boolean
 }) {
@@ -708,7 +703,7 @@ function TreeEntryRow(props: {
           props.onSelect(entry.ref!)
           if (entry.isDirectory) {
             if (event.detail === 1) void props.onToggle(entry.ref!)
-          } else if (props.singleClickOpen || event.detail === 2) {
+          } else if (event.detail === 2) {
             props.onOpen(entry.ref!)
           }
         }}

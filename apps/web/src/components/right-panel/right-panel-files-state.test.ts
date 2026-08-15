@@ -188,7 +188,6 @@ describe('right-panel-files-state', () => {
     state = {
       ...state,
       selectedRef: projectRef,
-      temporaryPreviewTarget: { kind: 'file', ref: projectRef },
       directoryCache: { project: [] },
       previewScopes: { [state.openTabs[0]!.id]: 'scope-token' },
     }
@@ -196,7 +195,7 @@ describe('right-panel-files-state', () => {
       id: 'thread', workspaceId: 'workspace-1', fileContextId: 'context-1', projectBindingKey: 'new-root', openFunctions: ['files'],
     }])
     expect(result.workspaces.thread).toMatchObject({
-      openTabs: [], selectedRef: null, temporaryPreviewTarget: null, directoryCache: {}, previewScopes: {},
+      openTabs: [], selectedRef: null, directoryCache: {}, previewScopes: {},
     })
     expect(result.revokedScopeTokens).toEqual(['scope-token'])
   })
@@ -214,7 +213,6 @@ describe('right-panel-files-state', () => {
   test('a fresh process starts with no runtime file state', () => {
     expect(createThreadFileWorkspace({ fileContextId: 'scope-1' })).toMatchObject({
       selectedRef: null,
-      temporaryPreviewTarget: null,
       openTabs: [],
       expandedKeys: [],
       search: { query: '' },

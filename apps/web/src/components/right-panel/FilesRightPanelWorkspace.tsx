@@ -57,9 +57,7 @@ export function FilesRightPanelWorkspace({
   const activeFileTabId = workspace.activeItem?.kind === 'file' ? workspace.activeItem.tabId : null
   const activeTab = activeFileTabId ? workspace.openTabs.find((tab) => tab.id === activeFileTabId) : undefined
   const previewActiveTab = workspace.activeItem?.kind === 'file-preview' ? workspace.previewTab : null
-  // 过渡期兼容（Task 4 删）：temporaryPreviewTarget 已无写入方，仅兜底宽模式读取
-  const createPreviewTargetFromTemporary = (): RightPanelFileTarget | null => workspace.temporaryPreviewTarget
-  const previewTarget = activeTab?.target ?? previewActiveTab?.target ?? (wide ? createPreviewTargetFromTemporary() : null)
+  const previewTarget = activeTab?.target ?? previewActiveTab?.target ?? null
   const previewRef = previewTarget ? rightPanelFileTargetRef(previewTarget) : null
   const showTree = !treeCollapsed && (wide || (workspace.activeItem?.kind !== 'file' && workspace.activeItem?.kind !== 'file-preview'))
   const treeWidth = useMemo(

@@ -30,7 +30,7 @@ describe('unified-file-tree-state', () => {
 
     expect(source).toContain('if (entry.isDirectory) {')
     expect(source).toContain('if (event.detail === 1) void props.onToggle(entry.ref!)')
-    expect(source).toContain('} else if (props.singleClickOpen || event.detail === 2) {')
+    expect(source).toContain('} else if (event.detail === 2) {')
     expect(source).toContain('props.onOpen(entry.ref!)')
     expect(source).not.toContain('entry.isDirectory ? void props.onToggle(entry.ref!) : props.onOpen(entry.ref!)')
   })

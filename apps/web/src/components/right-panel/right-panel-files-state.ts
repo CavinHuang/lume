@@ -43,7 +43,6 @@ export interface ThreadFileWorkspace {
   binding: { workspaceId?: string; fileContextId?: string; projectBindingKey?: string }
   activeItem: RightPanelActiveItem | null
   selectedRef: FileRef | null
-  temporaryPreviewTarget: RightPanelFileTarget | null
   previewTab: RightPanelFileTab | null
   expandedKeys: string[]
   groupExpanded: Record<FileSource, boolean>
@@ -86,7 +85,6 @@ export function createThreadFileWorkspace(
     binding,
     activeItem,
     selectedRef: null,
-    temporaryPreviewTarget: null,
     previewTab: null,
     expandedKeys: [],
     groupExpanded: { project: true, session: true, memory: false, legacy: false },
@@ -330,11 +328,6 @@ export function rewriteFileRefPrefix(state: ThreadFileWorkspace, from: FileRef, 
   return {
     ...state,
     selectedRef: rewriteNullable(state.selectedRef),
-    temporaryPreviewTarget: state.temporaryPreviewTarget?.kind === 'mcp-resource'
-      ? state.temporaryPreviewTarget
-      : state.temporaryPreviewTarget
-        ? { ...state.temporaryPreviewTarget, ref: rewriteRef(state.temporaryPreviewTarget.ref, from, to) }
-        : null,
     previewTab: state.previewTab?.ref
       && sameScope(state.previewTab.ref, from)
       && isSameOrDescendant(state.previewTab.ref.relativePath, from.relativePath)
@@ -369,11 +362,6 @@ export function removeFileRef(
   return {
     ...next,
     selectedRef: next.selectedRef && matches(next.selectedRef) ? null : next.selectedRef,
-    temporaryPreviewTarget: next.temporaryPreviewTarget
-      && next.temporaryPreviewTarget.kind !== 'mcp-resource'
-      && matches(next.temporaryPreviewTarget.ref)
-      ? null
-      : next.temporaryPreviewTarget,
     previewTab: next.previewTab?.ref && matches(next.previewTab.ref)
       ? null
       : next.previewTab,
@@ -455,7 +443,6 @@ export function reconcileThreadFileWorkspaces(
       activeItem,
       openTabs,
       selectedRef: state.selectedRef?.source === 'session' && state.selectedRef.scopeId === thread.fileContextId ? state.selectedRef : null,
-      temporaryPreviewTarget: null,
       previewTab: null,
       directoryCache: {},
       sourceStatus: Object.fromEntries(SOURCES.map((source) => [source, 'stale'])) as ThreadFileWorkspace['sourceStatus'],
