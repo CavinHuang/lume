@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ToolDefinition } from "../types";
-import { createToolRegistry } from "./registry.js";
+import { applyOverrides, createToolRegistry } from "./registry.js";
 import { splitDeferredTools, CORE_TOOL_NAMES } from "./index.js";
 
 function tool(name: string): ToolDefinition {
@@ -94,5 +94,54 @@ describe("splitDeferredTools adapter", () => {
 
   test("CORE_TOOL_NAMES stays the default preset core set", () => {
     expect(CORE_TOOL_NAMES.has("Bash")).toBe(true);
+  });
+});
+
+describe("applyOverrides", () => {
+  function setup() {
+    const registry = createToolRegistry();
+    registry.global.register([tool("Bash"), tool("WebFetch"), tool("GuanlanSearch")]);
+    registry.preset("default").setCore(["Bash"]);
+    return registry;
+  }
+
+  test("no overrides returns the unmasked view", () => {
+    const registry = setup();
+    const { tools, deferredTools, undo } = applyOverrides(registry, "a1", undefined);
+    expect(tools.map((t) => t.name)).toEqual(["Bash", "WebFetch", "GuanlanSearch"]);
+    expect(deferredTools.map((t) => t.name)).toEqual(["WebFetch", "GuanlanSearch"]);
+    undo();
+  });
+
+  test("disallowedTools masks both pools", () => {
+    const registry = setup();
+    const { tools, deferredTools, undo } = applyOverrides(registry, "a1", { disallowedTools: ["Web*"] });
+    expect(tools.map((t) => t.name)).toContain("Bash");
+    expect(tools.map((t) => t.name)).not.toContain("WebFetch");
+    expect(deferredTools.map((t) => t.name)).not.toContain("WebFetch");
+    undo();
+    expect(registry.agent("a1").view().visible().map((t) => t.name)).toContain("WebFetch");
+  });
+
+  test("string tool list becomes allow mask and clears deferred", () => {
+    const registry = setup();
+    const { tools, deferredTools } = applyOverrides(registry, "a1", { tools: ["Bash"] });
+    expect(tools.map((t) => t.name)).toEqual(["Bash"]);
+    expect(deferredTools).toEqual([]);
+  });
+
+  test("tool definition array replaces tools outright", () => {
+    const registry = setup();
+    const custom = tool("Custom");
+    const { tools, deferredTools } = applyOverrides(registry, "a1", { tools: [custom] });
+    expect(tools).toEqual([custom]);
+    expect(deferredTools).toEqual([]);
+  });
+
+  test("empty tools array yields empty pools", () => {
+    const registry = setup();
+    const { tools, deferredTools } = applyOverrides(registry, "a1", { tools: [] });
+    expect(tools).toEqual([]);
+    expect(deferredTools).toEqual([]);
   });
 });

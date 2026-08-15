@@ -122,3 +122,46 @@ export function createToolRegistry(): ToolRegistry {
     },
   };
 }
+
+/** Query-time tool overrides, structurally compatible with `Partial<AgentOptions>`. */
+export interface ToolOverrides {
+  disallowedTools?: string[];
+  tools?: string[] | ToolDefinition[] | { type: "preset"; preset: "default" };
+}
+
+/**
+ * Evaluate query-time overrides as agent-layer masks; `undo` restores the registry.
+ * Tool-definition arrays (including empty ones) bypass the registry and replace
+ * the pool outright, matching the legacy override semantics.
+ */
+export function applyOverrides(
+  registry: ToolRegistry,
+  agentId: string,
+  overrides: ToolOverrides | undefined,
+): { tools: ToolDefinition[]; deferredTools: ToolDefinition[]; undo: () => void } {
+  if (!overrides) {
+    const view = registry.agent(agentId).view();
+    return { tools: view.visible(), deferredTools: view.split().deferred, undo: () => {} };
+  }
+  if (Array.isArray(overrides.tools) && (overrides.tools.length === 0 || typeof overrides.tools[0] !== "string")) {
+    return { tools: overrides.tools as ToolDefinition[], deferredTools: [], undo: () => {} };
+  }
+  const layer = registry.agent(agentId);
+  const undos: Array<() => void> = [];
+  if (overrides.disallowedTools) undos.push(layer.restrict({ deny: overrides.disallowedTools }));
+  const explicitList = Array.isArray(overrides.tools) ? (overrides.tools as string[]) : undefined;
+  if (explicitList) undos.push(layer.restrict({ allow: explicitList }));
+  try {
+    const view = layer.view();
+    return {
+      tools: view.visible(),
+      deferredTools: overrides.tools ? [] : view.split().deferred,
+      undo: () => {
+        for (const undo of undos) undo();
+      },
+    };
+  } catch (error) {
+    for (const undo of undos) undo();
+    throw error;
+  }
+}

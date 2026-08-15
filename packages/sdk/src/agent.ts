@@ -33,7 +33,7 @@ import {
   filterTools,
   getAllBaseTools,
 } from './tools/index.js'
-import { createToolRegistry } from './tools/registry.js'
+import { applyOverrides, createToolRegistry } from './tools/registry.js'
 import {
   closeAllConnections,
   connectMCPServer,
@@ -936,18 +936,12 @@ export class Agent {
 
     let tools = this.toolPool
     let deferredTools = this.deferredToolPool
-    if (overrides?.disallowedTools) {
-      tools = filterTools(tools, undefined, overrides.disallowedTools)
-      deferredTools = filterTools(deferredTools, undefined, overrides.disallowedTools)
-    }
-    if (overrides?.tools) {
-      const raw = overrides.tools
-      if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'string') {
-        tools = filterTools(this.buildBaseToolPool(opts), raw as string[])
-      } else if (Array.isArray(raw)) {
-        tools = raw as ToolDefinition[]
-      }
-      deferredTools = []
+    if (overrides?.disallowedTools || overrides?.tools) {
+      // One-shot registry masks: evaluate the masked snapshot, then restore.
+      const masked = applyOverrides(this.toolRegistry, this.sid, overrides)
+      tools = masked.tools
+      deferredTools = masked.deferredTools
+      masked.undo()
     }
 
     let provider = this.provider
