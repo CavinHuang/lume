@@ -5,7 +5,6 @@ import { RIGHT_PANEL_FUNCTION_ORDER, type RightPanelFunction } from './right-pan
 export type RightPanelActiveItem =
   | { kind: 'function'; type: RightPanelFunction }
   | { kind: 'file'; tabId: string }
-  | { kind: 'file-preview' }
   | { kind: 'browser'; tabId: string }
 
 export type RightPanelArtifactViewer = 'markdown' | 'image' | 'pdf' | 'video' | 'text' | 'structured' | 'unknown'
@@ -150,7 +149,6 @@ export function previewFileTab(
     return {
       ...state,
       previewTab: { ...state.previewTab, lineSelection, navigationRevision: state.previewTab.navigationRevision + 1 },
-      activeItem: { kind: 'file-preview' },
     }
   }
   const normalized = normalizeRightPanelFileTarget(target)
@@ -158,7 +156,7 @@ export function previewFileTab(
   const previewTab: RightPanelFileTab = normalized.kind === 'mcp-resource'
     ? { ...base, target: normalized }
     : { ...base, target: normalized, ref: normalized.ref }
-  return { ...state, previewTab, activeItem: { kind: 'file-preview' } }
+  return { ...state, previewTab }
 }
 
 /** 固定预览：转正为正式 tab（复用 openFileTab 的同文件去重），随后清空预览槽 */
@@ -175,15 +173,10 @@ export function pinPreviewFileTab(
   return { ...pinned, previewTab: null }
 }
 
-/** 清除预览：activeItem 回退到最后一个正式 tab，无则回退 files 功能视图 */
+/** 清除预览：预览不占激活态，activeItem 原样保留 */
 export function clearPreviewFileTab(state: ThreadFileWorkspace): ThreadFileWorkspace {
   if (!state.previewTab) return state
-  const fallback = state.activeItem?.kind === 'file-preview'
-    ? state.openTabs.length > 0
-      ? { kind: 'file' as const, tabId: state.openTabs[state.openTabs.length - 1]!.id }
-      : { kind: 'function' as const, type: 'files' as const }
-    : state.activeItem
-  return { ...state, previewTab: null, activeItem: fallback }
+  return { ...state, previewTab: null }
 }
 
 export function createRightPanelFileTarget(

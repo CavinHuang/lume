@@ -246,11 +246,11 @@ describe('preview tab 状态转换', () => {
   const binding = { fileContextId: 'ctx-1' }
   const base = () => createThreadFileWorkspace(binding)
 
-  test('previewFileTab 设置预览并激活 file-preview', () => {
-    const next = previewFileTab(base(), ref('a.ts'))
-    expect(next.previewTab?.target).toEqual({ kind: 'file', ref: ref('a.ts') })
-    expect(next.activeItem).toEqual({ kind: 'file-preview' })
-    expect(next.openTabs).toEqual([])
+  test('previewFileTab 设置预览但不动 activeItem', () => {
+    const state = previewFileTab(createThreadFileWorkspace({ fileContextId: 'ctx-1' }, { kind: 'function', type: 'files' }), ref('a.ts'))
+    expect(state.previewTab?.target).toEqual({ kind: 'file', ref: ref('a.ts') })
+    expect(state.activeItem).toEqual({ kind: 'function', type: 'files' }) // 树常驻：激活态不变
+    expect(state.openTabs).toEqual([])
   })
 
   test('previewFileTab 替换为不同文件（单槽）', () => {
@@ -290,13 +290,13 @@ describe('preview tab 状态转换', () => {
     expect(pinPreviewFileTab(state)).toBe(state)
   })
 
-  test('clearPreviewFileTab 清预览并回退 activeItem 到最后一个正式 tab', () => {
+  test('clearPreviewFileTab 清预览且不影响 activeItem', () => {
     let state = openFileTab(base(), ref('a.ts'))
-    const tabId = state.openTabs[0]!.id
+    const before = state.activeItem
     state = previewFileTab(state, ref('b.ts'))
     state = clearPreviewFileTab(state)
     expect(state.previewTab).toBeNull()
-    expect(state.activeItem).toEqual({ kind: 'file', tabId })
+    expect(state.activeItem).toEqual(before)
   })
 
   test('reconcile 换 binding 后清空 previewTab', () => {
@@ -309,10 +309,9 @@ describe('preview tab 状态转换', () => {
     expect(result.workspaces.thread!.previewTab).toBeNull()
   })
 
-  test('clearPreviewFileTab 无正式 tab 时回退 files 功能视图', () => {
-    let state = previewFileTab(base(), ref('a.ts'))
-    state = clearPreviewFileTab(state)
-    expect(state.activeItem).toEqual({ kind: 'function', type: 'files' })
+  test('clearPreviewFileTab 无预览时原样返回', () => {
+    const state = base()
+    expect(clearPreviewFileTab(state)).toBe(state)
   })
 })
 
