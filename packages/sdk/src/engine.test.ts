@@ -79,7 +79,7 @@ function wait(ms: number): Promise<null> {
 }
 
 describe("QueryEngine cancellation", () => {
-  test("propagates aborts from an active tool instead of continuing the turn", async () => {
+  test("aborts from an active tool end the turn with an interrupted placeholder", async () => {
     const controller = new AbortController()
     const started = deferred<void>()
     const provider = new StaticProvider([{
@@ -112,8 +112,14 @@ describe("QueryEngine cancellation", () => {
     await started.promise
     controller.abort()
 
-    await expect(running).rejects.toThrow("aborted")
+    const events = (await running) as Array<{ type: string; result?: { is_error: boolean; content: string } }>
     expect(provider.requests).toHaveLength(1)
+    // Soft abort: the run ends normally with a paired error tool_result.
+    const toolResults = events.filter((event) => event.type === "tool_result")
+    expect(toolResults).toHaveLength(1)
+    expect(toolResults[0].result?.is_error).toBe(true)
+    expect(toolResults[0].result?.content).toContain("interrupted")
+    expect(engine.getMessages().at(-1)?.role).toBe("user")
   })
 })
 
@@ -147,9 +153,9 @@ describe("QueryEngine turn limits", () => {
         approvals += 1
         return { behavior: "allow" }
       },
-      toolContinuation: {
-        toolCall: { id: "tool-resume-1", name: "Read", input: { file_path: "README.md" } },
-      },
+      toolContinuations: [
+        { toolCall: { id: "tool-resume-1", name: "Read", input: { file_path: "README.md" } } },
+      ],
     })
 
     await collectEvents(engine, "ignored continuation prompt")
@@ -193,14 +199,12 @@ describe("QueryEngine turn limits", () => {
       maxTokens: 256,
       includePartialMessages: false,
       canUseTool: async () => ({ behavior: "allow" }),
-      toolContinuation: {
-        toolCall: { id: "tool-resume-2", name: "Bash", input: { command: "bun test" } },
-        toolResult: {
-          type: "tool_result",
-          tool_use_id: "tool-resume-2",
-          content: "2 pass",
+      toolContinuations: [
+        {
+          toolCall: { id: "tool-resume-2", name: "Bash", input: { command: "bun test" } },
+          toolResult: { type: "tool_result", tool_use_id: "tool-resume-2", content: "2 pass" },
         },
-      },
+      ],
     })
 
     await collectEvents(engine)
@@ -216,6 +220,57 @@ describe("QueryEngine turn limits", () => {
         })],
       }),
     ]))
+  })
+
+  test("mixed continuations replay some tools and inject others", async () => {
+    let calls = 0
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "mixed resumed" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          calls += 1
+          return { type: "tool_result", tool_use_id: "", content: "replayed" }
+        },
+      }],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      toolContinuations: [
+        { toolCall: { id: "t-inject", name: "Read", input: { file_path: "x" } },
+          toolResult: { type: "tool_result", tool_use_id: "t-inject", content: "injected" } },
+        { toolCall: { id: "t-replay", name: "Read", input: { file_path: "y" } } },
+      ],
+    })
+
+    await collectEvents(engine)
+
+    expect(calls).toBe(1) // only t-replay is replayed
+    const request = provider.requests[0]?.messages as any[]
+    const toolResults = request.flatMap((m) => Array.isArray(m.content) ? m.content : [])
+      .filter((c: any) => c.type === "tool_result")
+    const ids = toolResults.map((c: any) => c.tool_use_id).sort()
+    expect(ids).toEqual(["t-inject", "t-replay"])
+    // Array-pairing core semantics: every continuation result must land in the
+    // SAME user message (one tool-boundary repair turn, not one per tool).
+    const carrierMessages = request.filter(
+      (m) => Array.isArray(m.content) && m.content.some((c: any) => c.type === "tool_result"),
+    )
+    expect(carrierMessages).toHaveLength(1)
+    expect(carrierMessages[0]?.role).toBe("user")
+    expect((carrierMessages[0]?.content as any[]).map((c) => c.tool_use_id).sort())
+      .toEqual(["t-inject", "t-replay"])
   })
 
   test("forwards exactly terminal task notifications emitted after a tool call returns", async () => {

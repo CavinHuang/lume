@@ -1388,6 +1388,28 @@ export interface AgentResumeRunResult {
   error?: string
 }
 
+export interface AgentDiscardInterruptedRunInput {
+  threadId: string
+  runId?: string
+}
+
+export interface AgentDiscardInterruptedRunResult {
+  ok: boolean
+  runId?: string
+  error?: string
+}
+
+export interface AgentGetPendingResumeInput {
+  threadId: string
+}
+
+export interface AgentGetPendingResumeResult {
+  threadId: string
+  hasPendingResume: boolean
+  runId?: string
+  reason?: string
+}
+
 export type AgentTraceRedactionLevel = 'safe_summary' | 'diagnostic'
 
 export type AgentRunTraceStatus = 'running' | 'completed' | 'failed' | 'cancelled'
@@ -2087,6 +2109,10 @@ export const AGENT_IPC_CHANNELS = {
   MESSAGE_QUEUE_CHANGED: 'agent:message-queue-changed',
   /** 尝试恢复可恢复的 runtime run */
   RESUME_RUN: 'agent:resume-run',
+  /** 放弃待恢复的中断 run，并清理悬空工具结果 */
+  DISCARD_INTERRUPTED_RUN: 'agent:discard-interrupted-run',
+  /** 查询线程是否存在待恢复的中断 run（desktop 决定是否弹恢复提示） */
+  GET_PENDING_RESUME: 'agent:get-pending-resume',
   /** 列出线程 runtime run state 摘要 */
   LIST_RUN_STATES: 'agent:list-run-states',
   /** 获取 runtime trace（默认 safe_summary 脱敏） */

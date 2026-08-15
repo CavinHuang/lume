@@ -206,6 +206,12 @@ export class LumeRunner {
       query,
       emit: this.emit
     });
+    // Soft abort no longer throws from the SDK: it fills interrupted tool
+    // placeholders and ends with an error result. Classify by the abort signal
+    // so a user stop finalizes as cancelled, not failed.
+    if (result.status === "errored" && this.params.runtime.abortSignal?.aborted) {
+      return this.abort();
+    }
     await coding?.refreshCodingChangeSet?.();
     const verificationReport = coding?.getVerificationReport?.();
     const checkpoint = coding?.getLatestFileCheckpoint?.();
