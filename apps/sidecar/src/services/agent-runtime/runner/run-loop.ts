@@ -60,14 +60,17 @@ async function* teeLifecycleProjection(
   const pump = (async () => {
     try {
       for await (const event of projectLifecycle(projected)) {
-        try {
-          void bus.publish(target.threadId, (event as SdkLifecycleEvent<Batch1LifecycleDetail>).runId, event);
-        } catch (error) {
-          log.warn("lifecycle 事件 publish 失败", {
-            threadId: target.threadId,
-            error: error instanceof Error ? error.message : String(error)
+        // 前提钉死:bus.publish 当前全同步(appendFileSync 后 resolve),resolve 即持久化完成。
+        // 若改为真异步 fs,promise 化的 publish 在此 fire-and-forget 会让 finally 的 await pump
+        // 不再等事件落盘——run 尾事件将静默丢失;重构前必须同步改造 tee(pump 内 await publish)。
+        // 用 .catch 而非同步 try/catch:后者对异步 reject 无效,.catch 兼容两种时序。
+        void bus.publish(target.threadId, (event as SdkLifecycleEvent<Batch1LifecycleDetail>).runId, event)
+          .catch((error) => {
+            log.warn("lifecycle 事件 publish 失败", {
+              threadId: target.threadId,
+              error: error instanceof Error ? error.message : String(error)
+            });
           });
-        }
       }
     } catch (error) {
       log.warn("lifecycle 投影失败", {

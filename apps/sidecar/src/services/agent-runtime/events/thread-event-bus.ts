@@ -27,7 +27,13 @@ export class ThreadEventBus {
     mkdirSync(sessionDir, { recursive: true })
   }
 
-  /** 盖信封、append 落盘、入微批队列;返回分配的 seq(落盘成功后 resolve)。 */
+  /**
+   * 盖信封、append 落盘、入微批队列;返回分配的 seq(落盘成功后 resolve)。
+   * 约束(调用方依赖,勿静默破坏):本方法必须保持"同步落盘后 resolve"——resolve 即
+   * 持久化完成。run-loop 的 tee 对 publish 是 fire-and-forget(.catch 兜底),只靠
+   * pump 排空保证事件全部落盘;若改为真异步 fs(如 fs.promises),resolve 将先于
+   * 落盘,tee 的 await pump 不再等落盘,run 尾事件会静默丢失——改前必须同步改造 tee。
+   */
   publish(threadId: string, runId: string, event: SdkLifecycleEvent): Promise<number> {
     const st = this.state(threadId)
     const seq = st.nextSeq++
