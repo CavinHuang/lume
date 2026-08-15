@@ -55,7 +55,7 @@ export function FilesRightPanelWorkspace({
   const activeFileTabId = workspace.activeItem?.kind === 'file' ? workspace.activeItem.tabId : null
   const activeTab = activeFileTabId ? workspace.openTabs.find((tab) => tab.id === activeFileTabId) : undefined
   const previewActiveTab = workspace.previewTab
-  const previewTarget = activeTab?.target ?? previewActiveTab?.target ?? null
+  const previewTarget = previewActiveTab?.target ?? activeTab?.target ?? null
   const previewRef = previewTarget ? rightPanelFileTargetRef(previewTarget) : null
   const previewEntry = previewRef ? findCachedEntry(workspace.directoryCache as Record<string, FileEntry[]>, previewRef) : undefined
   const showTree = !treeCollapsed && (wide || !preferences.narrowShowsPreview || !previewTarget)
@@ -102,7 +102,9 @@ export function FilesRightPanelWorkspace({
     }
     onWorkspaceChange(removeFileRef(workspaceRef.current, ref, false, openFunctionsRef.current))
   }, [onWorkspaceChange, setPreferences, wide])
-  const previewScopeKey = activeTab?.id ?? (previewTarget ? `temporary:${rightPanelFileTargetKey(previewTarget)}` : 'temporary')
+  const previewScopeKey = previewActiveTab
+    ? `temporary:${rightPanelFileTargetKey(previewActiveTab.target)}`
+    : activeTab?.id ?? 'temporary'
   const handlePreviewScopeChange = useCallback((token: string | null) => {
     onWorkspaceChange((current) => setFilePreviewScope(current, previewScopeKey, token))
   }, [onWorkspaceChange, previewScopeKey])
@@ -178,12 +180,12 @@ export function FilesRightPanelWorkspace({
             : <RightPanelFilePreview
             threadId={threadId}
             fileRef={previewRef}
-            lineSelection={activeTab?.lineSelection ?? previewActiveTab?.lineSelection}
-            navigationRevision={activeTab?.navigationRevision ?? previewActiveTab?.navigationRevision}
+            lineSelection={previewActiveTab?.lineSelection ?? activeTab?.lineSelection}
+            navigationRevision={previewActiveTab?.navigationRevision ?? activeTab?.navigationRevision}
             onOpenFile={openFile}
             onMissing={handleMissing}
             onPreviewScopeChange={handlePreviewScopeChange}
-            onEditStart={!activeTab && previewActiveTab ? () => openFile(previewActiveTab.target) : undefined}
+            onEditStart={previewActiveTab ? () => openFile(previewActiveTab.target) : undefined}
             treeCollapsed={treeCollapsed}
             hideSelfHeader={!wide}
             onToggleTree={wide ? () => setPreferences((current) => ({ ...current, treeCollapsed: !treeCollapsed })) : undefined}

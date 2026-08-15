@@ -116,6 +116,7 @@ export function openFileTab(
         lineSelection,
         navigationRevision,
       } : tab),
+      previewTab: null,
       activeItem: { kind: 'file', tabId: existing.id },
     }
   }
@@ -132,6 +133,7 @@ export function openFileTab(
   return {
     ...state,
     openTabs: [...state.openTabs, tab],
+    previewTab: null,
     activeItem: { kind: 'file', tabId: tab.id },
   }
 }

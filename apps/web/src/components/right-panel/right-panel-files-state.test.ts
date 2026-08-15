@@ -267,6 +267,23 @@ describe('preview tab 状态转换', () => {
     expect(state.previewTab?.id).toMatch(/^preview:/)
   })
 
+  test('openFileTab 新建正式 tab 时清空预览槽', () => {
+    let state = previewFileTab(base(), ref('a.ts'))
+    state = openFileTab(state, ref('b.ts'))
+    expect(state.previewTab).toBeNull()
+    expect(state.openTabs).toHaveLength(1)
+    expect(state.openTabs[0]!.id).toMatch(/^file:/)
+  })
+
+  test('openFileTab 激活既有正式 tab 时也清空预览槽', () => {
+    let state = openFileTab(base(), ref('a.ts'))
+    state = previewFileTab(state, ref('b.ts'))
+    state = openFileTab(state, ref('a.ts'))
+    expect(state.previewTab).toBeNull()
+    expect(state.openTabs).toHaveLength(1)
+    expect(state.activeItem).toEqual({ kind: 'file', tabId: state.openTabs[0]!.id })
+  })
+
   test('pinPreviewFileTab 原地转正并清空预览', () => {
     let state = previewFileTab(base(), ref('a.ts'))
     state = pinPreviewFileTab(state)
