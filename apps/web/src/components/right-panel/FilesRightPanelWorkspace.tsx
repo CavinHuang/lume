@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState, useEffect, type PointerEvent as ReactPointerEvent } from 'react'
 import { useAtom } from 'jotai'
-import { ChevronDown, Copy, ExternalLink, FolderSearch, MoreHorizontal } from 'lucide-react'
+import { ChevronDown, Copy, ExternalLink, FolderSearch, MoreHorizontal, PanelLeftClose } from 'lucide-react'
 import type { FileEntry, FileRef } from '@lume/shared'
 import { rightPanelFileLayoutPreferencesAtom } from '@/atoms'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,7 @@ import {
   openFileTab,
   clearPreviewFileTab,
   createRightPanelFileTarget,
+  fileRefKey,
   removeFileRef,
   rightPanelFileTargetKey,
   rightPanelFileTargetRef,
@@ -56,10 +57,10 @@ export function FilesRightPanelWorkspace({
   const treeCollapsed = wide && preferences.treeCollapsed === true
   const activeFileTabId = workspace.activeItem?.kind === 'file' ? workspace.activeItem.tabId : null
   const activeTab = activeFileTabId ? workspace.openTabs.find((tab) => tab.id === activeFileTabId) : undefined
-  const previewActiveTab = workspace.activeItem?.kind === 'file-preview' ? workspace.previewTab : null
+  const previewActiveTab = workspace.previewTab
   const previewTarget = activeTab?.target ?? previewActiveTab?.target ?? null
   const previewRef = previewTarget ? rightPanelFileTargetRef(previewTarget) : null
-  const showTree = !treeCollapsed && (wide || (workspace.activeItem?.kind !== 'file' && workspace.activeItem?.kind !== 'file-preview'))
+  const showTree = !treeCollapsed && (wide || !preferences.narrowShowsPreview || !previewTarget)
   const treeWidth = useMemo(
     () => clampRightPanelFileTreeWidth(preferences.treeWidth ?? FILE_TREE_DEFAULT_WIDTH, Math.max(containerWidth, 680)),
     [containerWidth, preferences.treeWidth],
@@ -79,18 +80,33 @@ export function FilesRightPanelWorkspace({
     return () => observer.disconnect()
   }, [])
 
+  // 窄模式树/预览二态：树内单击/双击产生新预览目标（previewTab 或正式 file tab）时切到预览
+  const handleWorkspaceChange = useCallback((next: ThreadFileWorkspace | ((current: ThreadFileWorkspace) => ThreadFileWorkspace)) => {
+    const resolved = typeof next === 'function' ? next(workspaceRef.current) : next
+    if (!wide) {
+      const current = workspaceRef.current
+      const previewSet = resolved.previewTab && resolved.previewTab !== current.previewTab
+      const tabActivated = resolved.activeItem?.kind === 'file' && resolved.activeItem !== current.activeItem
+      if (previewSet || tabActivated) {
+        setPreferences((currentPreferences) => ({ ...currentPreferences, narrowShowsPreview: true }))
+      }
+    }
+    onWorkspaceChange(resolved)
+  }, [onWorkspaceChange, setPreferences, wide])
   const openFile = useCallback((target: RightPanelFileTarget | FileRef) => {
-    onWorkspaceChange(openFileTab(workspaceRef.current, target, {
+    handleWorkspaceChange(openFileTab(workspaceRef.current, target, {
       caseInsensitive: /Win/i.test(navigator.platform),
     }))
-  }, [onWorkspaceChange])
+  }, [handleWorkspaceChange])
   const handleMissing = useCallback((ref: FileRef) => {
-    if (workspaceRef.current.activeItem?.kind === 'file-preview' && workspaceRef.current.previewTab) {
+    const previewTab = workspaceRef.current.previewTab
+    if (previewTab?.ref && fileRefKey(previewTab.ref) === fileRefKey(ref)) {
+      if (!wide) setPreferences((current) => ({ ...current, narrowShowsPreview: false }))
       onWorkspaceChange(clearPreviewFileTab(workspaceRef.current))
       return
     }
     onWorkspaceChange(removeFileRef(workspaceRef.current, ref, false, openFunctionsRef.current))
-  }, [onWorkspaceChange])
+  }, [onWorkspaceChange, setPreferences, wide])
   const previewScopeKey = activeTab?.id ?? (previewTarget ? `temporary:${rightPanelFileTargetKey(previewTarget)}` : 'temporary')
   const handlePreviewScopeChange = useCallback((token: string | null) => {
     onWorkspaceChange((current) => setFilePreviewScope(current, previewScopeKey, token))
@@ -134,7 +150,7 @@ export function FilesRightPanelWorkspace({
           workspaceProjectPath={workspaceProjectPath}
           fileContextId={fileContextId}
           openFunctions={openFunctions}
-          onWorkspaceChange={onWorkspaceChange}
+          onWorkspaceChange={handleWorkspaceChange}
           onOpenFile={openFile}
         />
         {!wide && workspace.selectedRef && (
@@ -148,21 +164,44 @@ export function FilesRightPanelWorkspace({
         )}
       </div>
       {wide && !treeCollapsed && <div role="separator" aria-orientation="vertical" aria-label="调整文件树宽度" className="w-1.5 shrink-0 cursor-col-resize hover:bg-primary/10" onPointerDown={startResize} />}
-      <div className={cn('min-h-0 min-w-0 flex-1', !wide && showTree && 'hidden')}>
-        {previewTarget?.kind === 'mcp-resource'
-          ? <RightPanelMcpResourcePreview workspaceSlug={previewTarget.workspaceSlug} resource={previewTarget.resource} />
-          : <RightPanelFilePreview
-          threadId={threadId}
-          fileRef={previewRef}
-          lineSelection={activeTab?.lineSelection ?? previewActiveTab?.lineSelection}
-          navigationRevision={activeTab?.navigationRevision ?? previewActiveTab?.navigationRevision}
-          onOpenFile={openFile}
-          onMissing={handleMissing}
-          onPreviewScopeChange={handlePreviewScopeChange}
-          onEditStart={!activeTab && previewActiveTab ? () => openFile(previewActiveTab.target) : undefined}
-          treeCollapsed={treeCollapsed}
-          onToggleTree={wide ? () => setPreferences((current) => ({ ...current, treeCollapsed: !treeCollapsed })) : undefined}
-        />}
+      <div className={cn('flex min-h-0 min-w-0 flex-1 flex-col', !wide && showTree && 'hidden')}>
+        {!wide && !showTree && previewTarget && (
+          <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/60 px-2.5 text-[11px]">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="size-5"
+              title="返回文件树"
+              onClick={() => setPreferences((current) => ({ ...current, narrowShowsPreview: false }))}
+            >
+              <PanelLeftClose size={13} />
+            </Button>
+            <span className="min-w-0 flex-1 truncate text-foreground/60" title={`${previewRef?.source} · ${previewRef?.relativePath}`}>
+              {previewRef?.relativePath ?? previewTarget.kind}
+            </span>
+            {selectedEntry && !selectedEntry.isDirectory && previewRef && (
+              <span className="shrink-0 text-[10px] text-foreground/45" title="文件信息">
+                {fileType(previewRef.relativePath)}{selectedEntry.size !== undefined ? ` · ${formatBytes(selectedEntry.size)}` : ''}{selectedEntry.modifiedAt ? ` · ${new Date(selectedEntry.modifiedAt).toLocaleString()}` : ''}
+              </span>
+            )}
+          </div>
+        )}
+        <div className="min-h-0 flex-1">
+          {previewTarget?.kind === 'mcp-resource'
+            ? <RightPanelMcpResourcePreview workspaceSlug={previewTarget.workspaceSlug} resource={previewTarget.resource} />
+            : <RightPanelFilePreview
+            threadId={threadId}
+            fileRef={previewRef}
+            lineSelection={activeTab?.lineSelection ?? previewActiveTab?.lineSelection}
+            navigationRevision={activeTab?.navigationRevision ?? previewActiveTab?.navigationRevision}
+            onOpenFile={openFile}
+            onMissing={handleMissing}
+            onPreviewScopeChange={handlePreviewScopeChange}
+            onEditStart={!activeTab && previewActiveTab ? () => openFile(previewActiveTab.target) : undefined}
+            treeCollapsed={treeCollapsed}
+            onToggleTree={wide ? () => setPreferences((current) => ({ ...current, treeCollapsed: !treeCollapsed })) : undefined}
+          />}
+        </div>
       </div>
     </div>
   )
