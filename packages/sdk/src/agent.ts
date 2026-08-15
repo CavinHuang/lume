@@ -652,15 +652,20 @@ export class Agent {
 
   /**
    * Record a native promotion reported by the engine and mirror it into the
-   * live pools immediately (append order), so the next query keeps the tool
+   * live pools immediately (match order), so the next query keeps the tool
    * without waiting for a full pool rebuild.
    */
   private recordToolActivation(names: string[]): void {
     for (const name of names) this.activatedToolNames.add(name)
-    const nameSet = new Set(names)
-    const promoted = this.deferredToolPool.filter((candidate) => nameSet.has(candidate.name))
+    // Append in match order (names order) to mirror the engine-side promotion
+    // order; deferred registration order would reorder the batch at the query
+    // boundary and break the prompt-cache prefix.
+    const promoted = names
+      .map((name) => this.deferredToolPool.find((candidate) => candidate.name === name))
+      .filter((candidate): candidate is ToolDefinition => !!candidate)
     if (promoted.length === 0) return
     this.toolPool = [...this.toolPool, ...promoted]
+    const nameSet = new Set(names)
     this.deferredToolPool = this.deferredToolPool.filter((candidate) => !nameSet.has(candidate.name))
     setDeferredTools(this.deferredToolPool)
   }

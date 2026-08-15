@@ -2278,21 +2278,28 @@ function applySkillAllowedTools(
     const activatedDeferredTools = (config.deferredTools ?? []).filter((tool) =>
       matchesAnyToolPattern(tool.name, activated)
     )
+    const promoted: string[] = []
     for (const tool of activatedDeferredTools) {
-      if (!config.tools.some((candidate) => candidate.name === tool.name)) config.tools.push(tool)
+      if (config.tools.some((candidate) => candidate.name === tool.name)) continue
+      config.tools.push(tool)
+      promoted.push(tool.name)
     }
     config.deferredTools = (config.deferredTools ?? []).filter((tool) =>
       !matchesAnyToolPattern(tool.name, activated)
     )
 
-    if (!Array.isArray(parsed.allowedTools)) return
-    const allowed = parsed.allowedTools.filter((item): item is string => typeof item === 'string')
-    if (allowed.length === 0) return
-    config.tools = config.tools.filter((tool) =>
-      tool.name === 'Skill'
-      || tool.runtimeMetadata?.requiredDuringSkillScope === true
-      || matchesAnyToolPattern(tool.name, allowed)
-    )
+    if (Array.isArray(parsed.allowedTools)) {
+      const allowed = parsed.allowedTools.filter((item): item is string => typeof item === 'string')
+      if (allowed.length > 0) {
+        config.tools = config.tools.filter((tool) =>
+          tool.name === 'Skill'
+          || tool.runtimeMetadata?.requiredDuringSkillScope === true
+          || matchesAnyToolPattern(tool.name, allowed)
+        )
+      }
+    }
+    // Mirror activateTools: report activations after all config changes, only when non-empty.
+    if (promoted.length > 0) config.onToolsActivated?.(promoted)
   } catch {
     // Non-JSON skill output does not alter tool visibility.
   }

@@ -1610,7 +1610,7 @@ export interface QueryEngineConfig {
   tools: ToolDefinition[]
   /** Tools omitted from the provider schema and reachable only through ExecuteTool. */
   deferredTools?: ToolDefinition[]
-  /** Notified with the names successfully promoted by activateTools during this run. */
+  /** Notified with the names successfully promoted by activateTools (ToolSearch) or skill-scope activation during this run. */
   onToolsActivated?: (names: string[]) => void
   systemPrompt?: string
   runtimeContext?: string
