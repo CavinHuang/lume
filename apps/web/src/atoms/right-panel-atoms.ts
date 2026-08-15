@@ -294,6 +294,8 @@ export const codingReviewPanelActionAtom = atom(null, (get, set, action:
 export interface RightPanelFileLayoutPreferences {
   treeWidth: number
   treeCollapsed?: boolean
+  /** 窄面板（<680）树/预览二态：true=预览占满，false/缺省=树占满 */
+  narrowShowsPreview?: boolean
 }
 
 export const rightPanelFileLayoutPreferencesAtom = atomWithStorage<RightPanelFileLayoutPreferences>(

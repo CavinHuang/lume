@@ -48,6 +48,7 @@ export function RightPanelFilePreview({
   onEditStart,
   treeCollapsed = false,
   onToggleTree,
+  hideTitle = false,
 }: {
   threadId: string
   fileRef: FileRef | null
@@ -60,6 +61,7 @@ export function RightPanelFilePreview({
   onEditStart?: () => void
   treeCollapsed?: boolean
   onToggleTree?: () => void
+  hideTitle?: boolean
 }) {
   const requestId = useRef(0)
   const [payload, setPayload] = useState<FileRefReadResult | null>(null)
@@ -81,12 +83,16 @@ export function RightPanelFilePreview({
   const saveTimerRef = useRef<number | null>(null)
   const dirtyTimerRef = useRef<number | null>(null)
   const editStartedRef = useRef('')
+  const onMissingRef = useRef(onMissing)
+  const onPreviewScopeChangeRef = useRef(onPreviewScopeChange)
   const [blameEnabled, setBlameEnabled] = useAtom(rightPanelBlameEnabledAtom)
   const [editorStates, setEditorStates] = useAtom(rightPanelFileEditorStatesAtom)
   const editorStatesRef = useRef(editorStates)
   const kind = classifyFilePreview(fileRef?.relativePath ?? '')
   const editorStateKey = fileRef ? `${threadId}:${fileRef.source}:${fileRef.scopeId}:${fileRef.relativePath}` : ''
   editorStatesRef.current = editorStates
+  onMissingRef.current = onMissing
+  onPreviewScopeChangeRef.current = onPreviewScopeChange
 
   const refresh = () => setRefreshKey((value) => value + 1)
 
@@ -113,7 +119,7 @@ export function RightPanelFilePreview({
     const reportMissing = (nextError: unknown) => {
       if (missingReported || !isMissingFileError(nextError)) return false
       missingReported = true
-      onMissing?.(fileRef)
+      onMissingRef.current?.(fileRef)
       return true
     }
     const statChannel = guardedRef ? AGENT_IPC_CHANNELS.STAT_GUARDED_FILE_REF : AGENT_IPC_CHANNELS.STAT_FILE_REF
@@ -133,6 +139,7 @@ export function RightPanelFilePreview({
       setLoading(true)
       let token: string | null = null
       let disposed = false
+      const previewScopeChange = onPreviewScopeChangeRef.current
       const createScope = guardedRef
         ? createGuardedFilePreviewScope({ guardedRef, kind: 'media-file', generation: current })
         : createFilePreviewScope({ ref: fileRef, kind: 'media-file', generation: current })
@@ -144,7 +151,7 @@ export function RightPanelFilePreview({
             return
           }
           setMediaScope(scope)
-          onPreviewScopeChange?.(scope.token)
+          previewScopeChange?.(scope.token)
         })
         .catch((nextError) => {
           if (!disposed && current === requestId.current) {
@@ -157,7 +164,7 @@ export function RightPanelFilePreview({
         disposed = true
         if (token) {
           void revokeFilePreviewScope(token)
-          onPreviewScopeChange?.(null)
+          previewScopeChange?.(null)
         }
       }
     }
@@ -193,7 +200,7 @@ export function RightPanelFilePreview({
       })
       .finally(() => { if (!disposed && current === requestId.current) setLoading(false) })
     return () => { disposed = true }
-  }, [editorStateKey, fileRef, guardedRef, kind, lineSelection, onMissing, onPreviewScopeChange, refreshKey])
+  }, [editorStateKey, guardedRef, kind, lineSelection?.end, lineSelection?.start, refreshKey])
 
   const saveContent = useCallback(async (content: string, expectedMtimeMs?: number) => {
     if (!fileRef || guardedRef || expectedMtimeMs === undefined) return false
@@ -381,18 +388,17 @@ export function RightPanelFilePreview({
   )
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-2.5">
+      <div className="flex h-10 shrink-0 items-center gap-2 overflow-x-auto overflow-y-hidden border-b border-border/60 px-2.5">
         {onToggleTree && (
           <Button variant="ghost" size="icon-sm" onClick={onToggleTree} title={treeCollapsed ? '展开文件树' : '收起文件树'}>
             {treeCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
           </Button>
         )}
-        <FileTypeIcon filename={fileRef.relativePath} size={15} />
-        {guardedRef ? (
-          <FileLinkContextMenu context={{ source: 'thread', relPath: fileRef.relativePath, guardedRef }} inline>
-            {title}
-          </FileLinkContextMenu>
-        ) : title}
+        {!hideTitle && <FileTypeIcon filename={fileRef.relativePath} size={15} />}
+        {!hideTitle && (guardedRef ? (
+          <FileLinkContextMenu context={{ source: 'thread', relPath: fileRef.relativePath, guardedRef }} inline>{title}</FileLinkContextMenu>
+        ) : title)}
+        {hideTitle && <span className="min-w-0 flex-1" />}
         {(kind === 'markdown' || kind === 'html' || kind === 'pdb') && (
           <Button variant="ghost" size="sm" onClick={() => setSourceMode((value) => {
             const next = !value

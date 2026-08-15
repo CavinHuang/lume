@@ -11,9 +11,12 @@ import {
   openFileTab,
   normalizePersistedRightPanelFileTabs,
   normalizeLineSelection,
+  clearPreviewFileTab,
+  pinPreviewFileTab,
+  previewFileTab,
   reconcileThreadFileWorkspaces,
-    removeFileRef,
-    setFilePreviewScope,
+  removeFileRef,
+  setFilePreviewScope,
   settleFileTreeReveal,
   rewriteFileRefPrefix,
 } from './right-panel-files-state'
@@ -185,7 +188,6 @@ describe('right-panel-files-state', () => {
     state = {
       ...state,
       selectedRef: projectRef,
-      temporaryPreviewTarget: { kind: 'file', ref: projectRef },
       directoryCache: { project: [] },
       previewScopes: { [state.openTabs[0]!.id]: 'scope-token' },
     }
@@ -193,7 +195,7 @@ describe('right-panel-files-state', () => {
       id: 'thread', workspaceId: 'workspace-1', fileContextId: 'context-1', projectBindingKey: 'new-root', openFunctions: ['files'],
     }])
     expect(result.workspaces.thread).toMatchObject({
-      openTabs: [], selectedRef: null, temporaryPreviewTarget: null, directoryCache: {}, previewScopes: {},
+      openTabs: [], selectedRef: null, directoryCache: {}, previewScopes: {},
     })
     expect(result.revokedScopeTokens).toEqual(['scope-token'])
   })
@@ -211,7 +213,6 @@ describe('right-panel-files-state', () => {
   test('a fresh process starts with no runtime file state', () => {
     expect(createThreadFileWorkspace({ fileContextId: 'scope-1' })).toMatchObject({
       selectedRef: null,
-      temporaryPreviewTarget: null,
       openTabs: [],
       expandedKeys: [],
       search: { query: '' },
@@ -240,3 +241,107 @@ describe('right-panel-files-state', () => {
     })
   })
 })
+
+describe('preview tab 状态转换', () => {
+  const binding = { fileContextId: 'ctx-1' }
+  const base = () => createThreadFileWorkspace(binding)
+
+  test('previewFileTab 设置预览但不动 activeItem', () => {
+    const state = previewFileTab(createThreadFileWorkspace({ fileContextId: 'ctx-1' }, { kind: 'function', type: 'files' }), ref('a.ts'))
+    expect(state.previewTab?.target).toEqual({ kind: 'file', ref: ref('a.ts') })
+    expect(state.activeItem).toEqual({ kind: 'function', type: 'files' }) // 树常驻：激活态不变
+    expect(state.openTabs).toEqual([])
+  })
+
+  test('previewFileTab 替换为不同文件（单槽）', () => {
+    let state = previewFileTab(base(), ref('a.ts'))
+    state = previewFileTab(state, ref('b.ts'))
+    expect(next_target(state)).toBe('b.ts')
+  })
+
+  test('previewFileTab 同文件重复点击只刷新 navigationRevision', () => {
+    let state = previewFileTab(base(), ref('a.ts'))
+    const firstRevision = state.previewTab!.navigationRevision
+    state = previewFileTab(state, ref('a.ts'))
+    expect(state.previewTab!.navigationRevision).toBe(firstRevision + 1)
+    expect(state.previewTab?.id).toMatch(/^preview:/)
+  })
+
+  test('pinPreviewFileTab 原地转正并清空预览', () => {
+    let state = previewFileTab(base(), ref('a.ts'))
+    state = pinPreviewFileTab(state)
+    expect(state.previewTab).toBeNull()
+    expect(state.openTabs).toHaveLength(1)
+    expect(state.openTabs[0]!.id).toMatch(/^file:/)
+    expect(state.activeItem).toEqual({ kind: 'file', tabId: state.openTabs[0]!.id })
+  })
+
+  test('openFileTab 直接打开当前预览时同样升格并清空预览', () => {
+    let state = previewFileTab(base(), ref('a.ts'))
+    state = openFileTab(state, ref('./a.ts'))
+
+    expect(state.previewTab).toBeNull()
+    expect(state.openTabs).toHaveLength(1)
+    expect(state.activeItem).toEqual({ kind: 'file', tabId: state.openTabs[0]!.id })
+  })
+
+  test('pinPreviewFileTab 对已打开文件去重（激活既有 tab）', () => {
+    let state = openFileTab(base(), ref('a.ts'))
+    const openTabId = state.openTabs[0]!.id
+    state = previewFileTab(state, ref('a.ts'))
+    state = pinPreviewFileTab(state)
+    expect(state.openTabs).toHaveLength(1)
+    expect(state.activeItem).toEqual({ kind: 'file', tabId: openTabId })
+  })
+
+  test('pinPreviewFileTab 无预览时原样返回', () => {
+    const state = base()
+    expect(pinPreviewFileTab(state)).toBe(state)
+  })
+
+  test('clearPreviewFileTab 清预览且不影响 activeItem', () => {
+    let state = openFileTab(base(), ref('a.ts'))
+    const before = state.activeItem
+    state = previewFileTab(state, ref('b.ts'))
+    state = clearPreviewFileTab(state)
+    expect(state.previewTab).toBeNull()
+    expect(state.activeItem).toEqual(before)
+  })
+
+  test('reconcile 换 binding 后清空 previewTab', () => {
+    let state = createThreadFileWorkspace({ workspaceId: 'w1', fileContextId: 'ctx-1' })
+    state = previewFileTab(state, ref('a.ts'))
+    expect(state.previewTab).not.toBeNull()
+    const result = reconcileThreadFileWorkspaces({ thread: state }, [{
+      id: 'thread', workspaceId: 'w1', fileContextId: 'ctx-2', openFunctions: ['files'],
+    }])
+    expect(result.workspaces.thread!.previewTab).toBeNull()
+  })
+
+  test('clearPreviewFileTab 无预览时原样返回', () => {
+    const state = base()
+    expect(clearPreviewFileTab(state)).toBe(state)
+  })
+
+  test('重命名只清除同 scope 的路径段命中预览', () => {
+    const preview = previewFileTab(base(), ref('src/a.ts'))
+
+    expect(rewriteFileRefPrefix(preview, ref('src', 'session', 'scope-2'), ref('lib', 'session', 'scope-2')).previewTab).not.toBeNull()
+    expect(rewriteFileRefPrefix(preview, ref('sr', 'session', 'scope-1'), ref('lib')).previewTab).not.toBeNull()
+    expect(rewriteFileRefPrefix(preview, ref('./src'), ref('lib')).previewTab).toBeNull()
+  })
+
+  test('递归删除只清除同 scope 的路径段命中预览', () => {
+    const preview = previewFileTab(base(), ref('src-next/a.ts'))
+
+    expect(removeFileRef(preview, ref('src'), true, ['files']).previewTab).not.toBeNull()
+    expect(removeFileRef(preview, ref('src-next', 'session', 'scope-2'), true, ['files']).previewTab).not.toBeNull()
+    expect(removeFileRef(preview, ref('src-next'), true, ['files']).previewTab).toBeNull()
+  })
+})
+
+function next_target(state: ReturnType<typeof createThreadFileWorkspace>): string {
+  const tab = state.previewTab
+  if (!tab || tab.target.kind === 'mcp-resource') return ''
+  return tab.target.ref.relativePath
+}

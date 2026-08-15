@@ -566,7 +566,8 @@ function readLibrary(): ReadingLibraryIndex {
     return createEmptyLibrary();
   }
   try {
-    const parsed = JSON.parse(readFileSync(getReadingLibraryPath(), "utf-8")) as Partial<ReadingLibraryIndex>;
+    const contents = readFileSync(getReadingLibraryPath(), "utf-8").replace(/^\uFEFF/, "");
+    const parsed = JSON.parse(contents) as Partial<ReadingLibraryIndex>;
     return {
       version: LIBRARY_VERSION,
       books: Array.isArray(parsed.books) ? parsed.books.map((book) => normalizeReadingBook(book)) : []

@@ -218,7 +218,6 @@ Lume
 ├── packages/
 │   ├── sdk/                  # @lume/agent-sdk — 可嵌入的 Agent SDK
 │   ├── natives/              # @lume/natives — Rust N-API 性能模块加载器
-│   ├── cli/                  # 命令行工具
 │   ├── shared/               # 跨端共享类型和工具
 │   └── ui/                   # 共享 UI 组件库
 ├── crates/

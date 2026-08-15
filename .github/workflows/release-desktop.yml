@@ -86,7 +86,6 @@ jobs:
           bun run --filter @lume/shared build
           bun run --filter @lume/ui build
           bun run --filter @lume/sidecar build
-          bun run --filter @lume/cli build
           bun run --filter @lume/web build
       - name: Upload JS assets
         uses: actions/upload-artifact@v4
@@ -98,7 +97,6 @@ jobs:
             apps/web/dist
             apps/sidecar/dist
             packages/shared/dist
-            packages/cli/dist
 
   build-macos:
     name: Build macOS

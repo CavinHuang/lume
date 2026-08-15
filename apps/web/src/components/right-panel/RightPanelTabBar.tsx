@@ -130,7 +130,7 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
       ? props.onActivateFunction(item.type)
       : item.kind === 'browser'
         ? props.onActivateBrowser?.(item.id)
-      : props.onActivateFile(item.id)
+        : props.onActivateFile(item.id)
 
   const close = (item: RightPanelTabItem) => {
     const fallback = isActive(item) ? getRightPanelCloseFallback(items, item.id) : undefined

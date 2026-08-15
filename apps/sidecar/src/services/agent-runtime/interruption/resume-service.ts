@@ -129,6 +129,37 @@ export class LumeResumeService {
       }
     }
 
+    // 人工中止（Task 6 abort checkpoint）留下的 interrupted 状态：
+    // 软中止时 SDK engine 已为每个被中断工具补 error 占位 tool_result 并随
+    // message 级持久化落盘，历史配对已完整。这里若再重放或注入同 id 的
+    // syntheticToolResult，会与历史占位产生重复 tool_result（provider 400）。
+    // 因此不经工具注入路径，直接以"继续原始任务"消息续跑（与
+    // dangling-fallback 纯消息路径同构），由消费方以不带 checkpoint 的
+    // runtimeContinuation 发送续跑消息，让模型读取已有占位后自行决策。
+    if (continuation.version === 2 && continuation.status === "interrupted") {
+      if (!this.continueRunFromCheckpoint) {
+        return {
+          status: "not_resumable",
+          error: "没有注册 cold-start continuation runner。"
+        };
+      }
+      try {
+        const result = await this.continueRunFromCheckpoint(continuation, state);
+        await this.stores.continuationStore.update(input.runId, {
+          status: "resumed"
+        });
+        return {
+          status: "resumed",
+          finalOutput: result.finalOutput
+        };
+      } catch (error) {
+        return {
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error)
+        };
+      }
+    }
+
     if (continuation.version === 2 && continuation.status === "ready_to_execute" && !continuation.checkpoint.toolCall) {
       await this.stores.continuationStore.update(input.runId, {
         status: "failed",

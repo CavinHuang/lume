@@ -733,3 +733,8 @@ export type {
 
 // AbortError is a class (value + type), so it must be exported separately
 export { AbortError } from './types.js'
+
+// Interrupted-run recovery: dangling tool_use detection + continuation building
+// (reused by the sidecar dangling-fallback resume path).
+export { detectDanglingToolUses, buildResumeContinuations } from './interrupt-recovery.js'
+export type { DanglingToolUse, ResumeToolInfo } from './interrupt-recovery.js'
