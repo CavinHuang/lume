@@ -156,6 +156,14 @@ describe('preview classification and race guard', () => {
     expect(`${previewSource}\n${htmlSource}`).not.toContain('navigator.clipboard')
     expect(previewSource).toContain('writeClipboardText')
   })
+
+  test('does not reload an editor when preview bookkeeping callbacks change', () => {
+    const previewSource = readFileSync(resolve(import.meta.dir, 'RightPanelFilePreview.tsx'), 'utf8')
+
+    expect(previewSource).toContain('onPreviewScopeChangeRef.current')
+    expect(previewSource).toContain('onMissingRef.current')
+    expect(previewSource).toContain('[editorStateKey, guardedRef, kind, lineSelection?.end, lineSelection?.start, refreshKey]')
+  })
 })
 
 describe('classifyFilePreview — 文档查看器格式', () => {

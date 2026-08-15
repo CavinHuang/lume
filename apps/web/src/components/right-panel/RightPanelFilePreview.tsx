@@ -83,12 +83,16 @@ export function RightPanelFilePreview({
   const saveTimerRef = useRef<number | null>(null)
   const dirtyTimerRef = useRef<number | null>(null)
   const editStartedRef = useRef('')
+  const onMissingRef = useRef(onMissing)
+  const onPreviewScopeChangeRef = useRef(onPreviewScopeChange)
   const [blameEnabled, setBlameEnabled] = useAtom(rightPanelBlameEnabledAtom)
   const [editorStates, setEditorStates] = useAtom(rightPanelFileEditorStatesAtom)
   const editorStatesRef = useRef(editorStates)
   const kind = classifyFilePreview(fileRef?.relativePath ?? '')
   const editorStateKey = fileRef ? `${threadId}:${fileRef.source}:${fileRef.scopeId}:${fileRef.relativePath}` : ''
   editorStatesRef.current = editorStates
+  onMissingRef.current = onMissing
+  onPreviewScopeChangeRef.current = onPreviewScopeChange
 
   const refresh = () => setRefreshKey((value) => value + 1)
 
@@ -115,7 +119,7 @@ export function RightPanelFilePreview({
     const reportMissing = (nextError: unknown) => {
       if (missingReported || !isMissingFileError(nextError)) return false
       missingReported = true
-      onMissing?.(fileRef)
+      onMissingRef.current?.(fileRef)
       return true
     }
     const statChannel = guardedRef ? AGENT_IPC_CHANNELS.STAT_GUARDED_FILE_REF : AGENT_IPC_CHANNELS.STAT_FILE_REF
@@ -146,7 +150,7 @@ export function RightPanelFilePreview({
             return
           }
           setMediaScope(scope)
-          onPreviewScopeChange?.(scope.token)
+          onPreviewScopeChangeRef.current?.(scope.token)
         })
         .catch((nextError) => {
           if (!disposed && current === requestId.current) {
@@ -159,7 +163,7 @@ export function RightPanelFilePreview({
         disposed = true
         if (token) {
           void revokeFilePreviewScope(token)
-          onPreviewScopeChange?.(null)
+            onPreviewScopeChangeRef.current?.(null)
         }
       }
     }
@@ -195,7 +199,7 @@ export function RightPanelFilePreview({
       })
       .finally(() => { if (!disposed && current === requestId.current) setLoading(false) })
     return () => { disposed = true }
-  }, [editorStateKey, fileRef, guardedRef, kind, lineSelection, onMissing, onPreviewScopeChange, refreshKey])
+  }, [editorStateKey, guardedRef, kind, lineSelection?.end, lineSelection?.start, refreshKey])
 
   const saveContent = useCallback(async (content: string, expectedMtimeMs?: number) => {
     if (!fileRef || guardedRef || expectedMtimeMs === undefined) return false

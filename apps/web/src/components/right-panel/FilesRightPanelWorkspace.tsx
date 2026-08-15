@@ -104,7 +104,7 @@ export function FilesRightPanelWorkspace({
     }
     onWorkspaceChange(removeFileRef(workspaceRef.current, ref, false, openFunctionsRef.current))
   }, [onWorkspaceChange, setPreferences, wide])
-  const previewScopeKey = activeTab?.id ?? (previewTarget ? `temporary:${rightPanelFileTargetKey(previewTarget)}` : 'temporary')
+  const previewScopeKey = previewTarget ? `temporary:${rightPanelFileTargetKey(previewTarget)}` : 'temporary'
   const handlePreviewScopeChange = useCallback((token: string | null) => {
     onWorkspaceChange((current) => setFilePreviewScope(current, previewScopeKey, token))
   }, [onWorkspaceChange, previewScopeKey])
