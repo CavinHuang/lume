@@ -19,7 +19,7 @@
 | 源 | session / memory / legacy 条目（文件或目录；project 自身与 MCP 资源不参与） |
 | 语义 | **复制**（源保留）；同名默认报错，可选 `conflict: 'rename'`（追加 ` (1)` 类后缀，复用 promote 通道的 rename 模式） |
 | 目标 | project 根（v1 不选子目录） |
-| 后端 | 新通道 `PROMOTE_FILE_REF_TO_PROJECT`（channel `agent:promote-file-ref-to-project`）：入参 `{ ref: FileRef, workspaceSlug, conflict: 'error'|'rename' }`；实现=staging 临时目录 cpSync + rename 原子落盘（照抄 `exportLegacyResourceToProject` 的 `agent-files-service.ts:966-1006` 模式）；权限校验沿用 resolveFileRefRoot（三 source 均可读）+ project 根存在性检查；schema zod 强制 conflict 枚举 |
+| 后端 | 新通道 `PROMOTE_FILE_REF_TO_PROJECT`（channel `agent:promote-file-ref-to-project`）：入参 `{ ref: FileRef, workspaceSlug }`（v1 固定 conflict:error，枚举留 v2）；实现=staging 临时目录 cpSync + rename 原子落盘（照抄 `exportLegacyResourceToProject` 的 `agent-files-service.ts:966-1006` 模式）；权限校验沿用 resolveFileRefRoot（三 source 均可读）+ project 根存在性检查；schema zod 强制 conflict 枚举 |
 | 前端 | 行右键菜单（`UnifiedFileTree.tsx` TreeEntryRow）：`entry.ref.source` 为 session/memory/legacy 时显示「晋升到项目」（置于"导出到项目（不覆盖）"同区位，legacy 的旧菜单项**删除**由新项取代）；tooltip "复制到项目目录，所有会话可见"；成功后 `markSourceStale('project')` + toast（照抄 :436-437 刷新链路） |
 | 交互细节 | 固定 `conflict: 'error'`（v1 不做 rename 子选项）；同名冲突 toast 报"项目目录已存在同名文件"，用户自行重命名源后重试——不弹对话框（保持轻量） |
 | 不做 | 移动式晋升（memory/legacy 被记忆管线/旧数据引用，删除断链）；目标子目录选择；批量多选晋升 |
