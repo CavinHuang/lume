@@ -1595,6 +1595,59 @@ describe("QueryEngine deferred tool promotion", () => {
     expect(names.filter((name) => name === "GuanlanSearch")).toHaveLength(1);
   });
 
+  test("activateTools reports promoted names through onToolsActivated", async () => {
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "tool_use", id: "probe-1", name: "ProbeTool", input: {} }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    ]);
+    const activations: string[][] = [];
+    const probeTool = {
+      name: "ProbeTool",
+      description: "probe",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call(_input: unknown, context: ToolContext) {
+        context.activateTools?.(["GuanlanSearch", "NoSuchTool"]);
+        // Second call promotes nothing: no callback, no duplicate report.
+        context.activateTools?.(["GuanlanSearch"]);
+        return { type: "tool_result" as const, tool_use_id: "", content: "probe done" };
+      }
+    };
+    const deferredTool = {
+      name: "GuanlanSearch",
+      description: "search guanlan",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "guanlan" };
+      }
+    };
+
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [probeTool],
+      deferredTools: [deferredTool],
+      onToolsActivated: (names) => activations.push([...names]),
+      systemPrompt: "test",
+      maxTurns: 5,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    await collectResult(engine);
+
+    expect(activations).toEqual([["GuanlanSearch"]]);
+  });
+
   test("listAvailableTools returns native plus deferred tools live", async () => {
     const provider = new StaticProvider([
       {

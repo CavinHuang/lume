@@ -252,6 +252,8 @@ export class Agent {
   private cfg: AgentOptions
   private toolPool: ToolDefinition[] = []
   private deferredToolPool: ToolDefinition[] = []
+  /** Names promoted via ToolSearch; kept eager for this Agent instance's lifetime. */
+  private activatedToolNames = new Set<string>()
   private toolRegistry = createToolRegistry()
   private unregisterRuntimeTools: (() => void) | null = null
   private modelId = 'claude-sonnet-4-6'
@@ -622,8 +624,16 @@ export class Agent {
     this.unregisterRuntimeTools = this.toolRegistry.global.register(runtimeTools)
     this.toolRegistry.preset("default").setCore([...CORE_TOOL_NAMES])
     const { core, deferred } = this.toolRegistry.agent(this.sid).view().split()
-    const enableToolSearch = isToolSearchEnabled(deferred, options.model || this.modelId)
-    this.deferredToolPool = enableToolSearch ? deferred : []
+    // Lifetime promotions survive rebuilds: activated names stay eager and never
+    // return to the deferred pool. Names no longer present in the pool (e.g. an
+    // MCP server removed after promotion) are silently skipped.
+    const runtimeByName = new Map(runtimeTools.map((candidate) => [candidate.name, candidate]))
+    const activatedPool = [...this.activatedToolNames]
+      .map((name) => runtimeByName.get(name))
+      .filter((candidate): candidate is ToolDefinition => !!candidate)
+    const remainingDeferred = deferred.filter((candidate) => !this.activatedToolNames.has(candidate.name))
+    const enableToolSearch = isToolSearchEnabled(remainingDeferred, options.model || this.modelId)
+    this.deferredToolPool = enableToolSearch ? remainingDeferred : []
     setDeferredTools(this.deferredToolPool)
     if (this.deferredToolPool.length === 0) {
       this.toolPool = runtimeTools
@@ -635,7 +645,24 @@ export class Agent {
       createExecuteTool(() => this.deferredToolPool),
     ]
     await options.registerGeneratedRuntimeTools?.(generatedTools, runtimeContext)
-    this.toolPool = [...core, ...generatedTools]
+    // Activated tools are appended after the eager prefix so each query's
+    // previously-sent tool list stays a stable prefix (prompt-cache friendly).
+    this.toolPool = [...core, ...generatedTools, ...activatedPool]
+  }
+
+  /**
+   * Record a native promotion reported by the engine and mirror it into the
+   * live pools immediately (append order), so the next query keeps the tool
+   * without waiting for a full pool rebuild.
+   */
+  private recordToolActivation(names: string[]): void {
+    for (const name of names) this.activatedToolNames.add(name)
+    const nameSet = new Set(names)
+    const promoted = this.deferredToolPool.filter((candidate) => nameSet.has(candidate.name))
+    if (promoted.length === 0) return
+    this.toolPool = [...this.toolPool, ...promoted]
+    this.deferredToolPool = this.deferredToolPool.filter((candidate) => !nameSet.has(candidate.name))
+    setDeferredTools(this.deferredToolPool)
   }
 
   private drainQueuedSdkEvents(): SDKMessage[] {
@@ -1010,6 +1037,7 @@ export class Agent {
       provider,
       tools,
       deferredTools,
+      onToolsActivated: (names) => this.recordToolActivation(names),
       systemPrompt,
       runtimeContext: runtimeMessage ? opts.runtimeContext?.trim() : undefined,
       promptCache: opts.promptCache,

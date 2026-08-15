@@ -298,6 +298,52 @@ describe("Agent runtime tool resolver", () => {
     await agent.close()
   })
 
+  test("persists tool promotions across queries for the agent lifetime", async () => {
+    process.env.ENABLE_TOOL_SEARCH = "tst"
+    const provider = new class implements LLMProvider {
+      readonly apiType = "anthropic-messages" as const
+      requests: CreateMessageParams[] = []
+      async createMessage(params: CreateMessageParams): Promise<CreateMessageResponse> {
+        this.requests.push(params)
+        if (this.requests.length === 1) {
+          return { content: [{ type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "select:GuanlanSearch" } }], stopReason: "tool_use", usage: { input_tokens: 1, output_tokens: 1 } }
+        }
+        return { content: [{ type: "text", text: "done" }], stopReason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }
+      }
+    }()
+    const agent = createAgent({
+      persistSession: false,
+      tools: [tool("Read"), tool("GuanlanSearch"), tool("OtherSearch")],
+    })
+    await agent.getInitializationResult()
+    ;(agent as any).provider = provider
+
+    // Query 1: ToolSearch promotes GuanlanSearch natively (turns 1-2).
+    for await (const _event of agent.query("find guanlan")) {
+      // drain query
+    }
+    // Query 2: the engine must receive the promoted tool natively, in append
+    // order (the previously-sent prefix stays stable), and OtherSearch must
+    // stay deferred.
+    for await (const _event of agent.query("use it again")) {
+      // drain query
+    }
+
+    expect(provider.requests[2]?.tools.map((item) => item.name)).toEqual([
+      "Read", "ToolSearch", "ExecuteTool", "GuanlanSearch",
+    ])
+    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toContain("GuanlanSearch")
+    expect((agent as any).deferredToolPool.map((item: ToolDefinition) => item.name)).toEqual(["OtherSearch"])
+
+    // Promotions survive a pool rebuild (MCP reconnect etc.); names no longer
+    // present in the pool are silently skipped.
+    ;(agent as any).activatedToolNames.add("GoneTool")
+    await (agent as any).rebuildToolPool()
+    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toContain("GuanlanSearch")
+    expect((agent as any).deferredToolPool.map((item: ToolDefinition) => item.name)).toEqual(["OtherSearch"])
+    await agent.close()
+  })
+
   test("keeps host-required runtime tools in the active schema", async () => {
     process.env.ENABLE_TOOL_SEARCH = "tst"
     const required = {
