@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -81,6 +81,28 @@ describe("reading-store", () => {
     });
 
     expect(getReadingSnapshot().books).toHaveLength(1);
+  });
+
+  test("reads a UTF-8 BOM-prefixed library without hiding its books", () => {
+    const book = addReadingBook({
+      title: "文心雕龙",
+      author: "刘勰",
+      progressPercent: 38
+    });
+    const libraryPath = getReadingLibraryPath();
+    writeFileSync(libraryPath, `\uFEFF${readFileSync(libraryPath, "utf-8")}`, "utf-8");
+
+    expect(getReadingSnapshot()).toMatchObject({
+      books: [{
+        id: book.id,
+        title: "文心雕龙",
+        status: "reading",
+        progressPercent: 38
+      }],
+      stats: {
+        readingCount: 1
+      }
+    });
   });
 
   test("stores books and filters hidden notes from normal results", () => {
