@@ -78,6 +78,7 @@ import { resolve } from 'path'
 import { getModelInvocableSkills, getUserInvocableSkills, renderSkillCatalog } from './skills/index.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { FileStateCache } from './utils/fileCache.js'
+import { createExecuteTool, createToolSearchTool } from './tools/tool-search.js'
 
 function renderLspDiagnosticsForModel(
   event: Extract<SDKMessage, { type: 'system'; subtype: 'lsp_diagnostics' }>,
@@ -289,7 +290,7 @@ function compactionStageMessage(stage: AgentContextCompactionStage): string {
 
 async function buildSystemPrompt(config: QueryEngineConfig): Promise<string> {
   const deferredToolGuide = config.deferredTools?.length
-    ? '\n\nSome tools are deferred to keep your context focused. Use ToolSearch to discover them, then call ExecuteTool with the selected tool name and parameters. Do not claim a capability is unavailable before searching when the visible tools do not cover the task.'
+    ? '\n\nSome tools are deferred to keep your context focused. Use ToolSearch to discover them; matched tools become natively callable on your next turn — call them directly by name. Do not claim a capability is unavailable before searching when the visible tools do not cover the task.'
     : ''
   if (config.systemPrompt) {
     const structuredOutputInstruction = buildStructuredOutputInstruction(
@@ -404,6 +405,15 @@ export class QueryEngine {
 
   constructor(config: QueryEngineConfig) {
     this.config = config
+    // Rebind generated discovery tools to the engine's live deferred list:
+    // the agent passes a filtered copy, so promotion must be engine-local.
+    if (this.config.deferredTools && this.config.deferredTools.length > 0) {
+      const live = () => this.config.deferredTools ?? []
+      this.config.tools = this.config.tools.map((tool) =>
+        tool.name === 'ToolSearch' ? createToolSearchTool(live)
+          : tool.name === 'ExecuteTool' ? createExecuteTool(live)
+            : tool)
+    }
     this.provider = config.provider
     this.compactState = createAutoCompactState()
     this.sessionId = config.sessionId || crypto.randomUUID()
@@ -1793,6 +1803,20 @@ export class QueryEngine {
       return delegated.result
     }
     toolContext.executeDeferredTool = toolContext.executeNestedTool
+    toolContext.activateTools = (names) => {
+      const promoted: string[] = []
+      for (const name of names) {
+        const target = this.config.deferredTools?.find((candidate) => candidate.name === name)
+        if (!target || this.config.tools.some((candidate) => candidate.name === name)) continue
+        this.config.tools.push(target)
+        this.config.deferredTools = this.config.deferredTools?.filter((candidate) => candidate.name !== name) ?? []
+        promoted.push(name)
+      }
+      return promoted
+    }
+    toolContext.listAvailableTools = () =>
+      [...this.config.tools, ...(this.config.deferredTools ?? [])]
+        .map(({ name, description, inputSchema }) => ({ name, description, inputSchema }))
     if (!tool) {
       return {
         result: {

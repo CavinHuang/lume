@@ -267,6 +267,22 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       }
       return;
     }
+    if (message.method === "tool_call" || message.method === "tool_list") {
+      if (!active?.options?.toolRequest) {
+        this.writeHostResult(message.id, false, undefined, "tools bridge is unavailable");
+        return;
+      }
+      try {
+        const value = await active.options.toolRequest(
+          { method: message.method, args: isRecord(message.args) ? message.args : {} },
+          active.abortController.signal
+        );
+        this.writeHostResult(message.id, true, value);
+      } catch (error) {
+        this.writeHostResult(message.id, false, undefined, error instanceof Error ? error.message : "tools bridge request failed");
+      }
+      return;
+    }
     if (message.method === "browser.request") {
       if (!active?.options?.browserRequest) {
         this.writeHostResult(message.id, false, undefined, "Browser Broker is unavailable");

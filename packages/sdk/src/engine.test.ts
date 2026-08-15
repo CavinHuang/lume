@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { QueryEngine } from "./engine.js"
+import { createToolSearchTool } from "./tools/tool-search.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
 import type { SDKMessage, ToolContext } from "./types.js"
 import { normalizeProviderUsage } from "./utils/usage.js"
@@ -1535,6 +1536,187 @@ describe("QueryEngine skill allowed tools", () => {
     expect(calledTools).toEqual(["Skill"]);
     expect(observedTools[0]).toEqual(["Bash", "Read", "Skill", "Write"]);
     expect(observedTools[1]).toEqual(["Bash", "Skill"]);
+  });
+});
+
+describe("QueryEngine deferred tool promotion", () => {
+  test("activateTools promotes deferred tools into the native tools array", async () => {
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "tool_use", id: "probe-1", name: "ProbeTool", input: {} }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    ]);
+    let promoted: string[] = [];
+    const probeTool = {
+      name: "ProbeTool",
+      description: "probe",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call(_input: unknown, context: ToolContext) {
+        promoted = context.activateTools?.(["GuanlanSearch", "GuanlanSearch", "NoSuchTool"]) ?? [];
+        return { type: "tool_result" as const, tool_use_id: "", content: "probe done" };
+      }
+    };
+    const deferredTool = {
+      name: "GuanlanSearch",
+      description: "search guanlan",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "guanlan" };
+      }
+    };
+
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [probeTool],
+      deferredTools: [deferredTool],
+      systemPrompt: "test",
+      maxTurns: 5,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    await collectResult(engine);
+
+    // Unknown names are ignored and already-promoted names are not duplicated.
+    expect(promoted).toEqual(["GuanlanSearch"]);
+    const lastRequest = provider.requests[provider.requests.length - 1];
+    const names = (lastRequest.tools ?? []).map((tool) => tool.name);
+    expect(names).toContain("GuanlanSearch");
+    expect(names.filter((name) => name === "GuanlanSearch")).toHaveLength(1);
+  });
+
+  test("listAvailableTools returns native plus deferred tools live", async () => {
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "tool_use", id: "probe-1", name: "ProbeTool", input: {} }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    ]);
+    let before: string[] = [];
+    let after: string[] = [];
+    const probeTool = {
+      name: "ProbeTool",
+      description: "probe",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call(_input: unknown, context: ToolContext) {
+        before = (context.listAvailableTools?.() ?? []).map((tool) => tool.name);
+        context.activateTools?.(["GuanlanSearch"]);
+        after = (context.listAvailableTools?.() ?? []).map((tool) => tool.name);
+        return { type: "tool_result" as const, tool_use_id: "", content: "probe done" };
+      }
+    };
+    const nativeTool = {
+      name: "NativeTool",
+      description: "native",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "native" };
+      }
+    };
+    const deferredTool = {
+      name: "GuanlanSearch",
+      description: "search guanlan",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "guanlan" };
+      }
+    };
+
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [probeTool, nativeTool],
+      deferredTools: [deferredTool],
+      systemPrompt: "test",
+      maxTurns: 5,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    await collectResult(engine);
+
+    expect(before).toEqual(["ProbeTool", "NativeTool", "GuanlanSearch"]);
+    // After promotion the deferred tool is native, so the live catalog still lists it exactly once.
+    expect(after).toEqual(["ProbeTool", "NativeTool", "GuanlanSearch"]);
+  });
+
+  test("ToolSearch end to end: constructor rebinding, native promotion, and deferred removal", async () => {
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "select:GuanlanSearch" } }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "tool_use", id: "guanlan-1", name: "GuanlanSearch", input: {} }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    ]);
+    let guanlanCalls = 0;
+    const deferredTool = {
+      name: "GuanlanSearch",
+      description: "search guanlan",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        guanlanCalls += 1;
+        return { type: "tool_result" as const, tool_use_id: "", content: "guanlan result" };
+      }
+    };
+
+    // Real factory output bound to an empty pool: only the engine's
+    // construction-time rebinding can see the deferred tools.
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [createToolSearchTool(() => [])],
+      deferredTools: [deferredTool],
+      systemPrompt: "test",
+      maxTurns: 5,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    await collectResult(engine);
+
+    expect(provider.requests).toHaveLength(3);
+    // Turn 1 result carries the direct-call guidance from the rebound ToolSearch.
+    expect(JSON.stringify(provider.requests[1]?.messages)).toContain("call them directly by name");
+    // Turn 2 request exposes the promoted tool natively, exactly once.
+    const turnTwoNames = (provider.requests[1]?.tools ?? []).map((tool) => tool.name);
+    expect(turnTwoNames).toContain("GuanlanSearch");
+    expect(turnTwoNames.filter((name) => name === "GuanlanSearch")).toHaveLength(1);
+    // The promoted tool executed natively and its result reached the final turn.
+    expect(guanlanCalls).toBe(1);
+    expect(JSON.stringify(provider.requests[2]?.messages)).toContain("guanlan result");
+    // Promotion removed the tool from the deferred pool.
+    const deferredNames = ((engine as any).config.deferredTools as Array<{ name: string }>).map((tool) => tool.name);
+    expect(deferredNames).not.toContain("GuanlanSearch");
   });
 });
 

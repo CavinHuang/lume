@@ -1,5 +1,5 @@
 export const NODE_REPL_MCP_INSTRUCTIONS =
-  'Use `js` only for browser JavaScript automation or an explicitly requested persistent JS session. Do not use it as a terminal, shell, git, file search, or file editing tool; use Read, Write, Edit, Bash, Glob, or Grep for repository work. Top-level bindings persist across calls until `js_reset`. Bare final expressions are not returned; call `nodeRepl.write(text)` to include output and use `JSON.stringify(value)` for structured values. Browser automation: run `globalThis.agent ??= await setupBrowserRuntime()` once, then `globalThis.iab ??= await agent.browsers.get("iab")`; call `nodeRepl.write(await iab.documentation())` for the full browser API (tabs, playwright locators, cua, capabilities). `tab.screenshot()` auto-emits the image to you. Reuse existing globalThis.agent/iab/browser bindings across turns (they survive between messages; if lost after long idle, re-run the bootstrap guard).';
+  'Use `js` only for browser JavaScript automation or an explicitly requested persistent JS session. Do not use it as a terminal, shell, git, file search, or file editing tool; use Read, Write, Edit, Bash, Glob, or Grep for repository work. Top-level bindings persist across calls until `js_reset`. Bare final expressions are not returned; call `nodeRepl.write(text)` to include output and use `JSON.stringify(value)` for structured values. Browser automation: run `globalThis.agent ??= await setupBrowserRuntime()` once, then `globalThis.iab ??= await agent.browsers.get("iab")`; call `nodeRepl.write(await iab.documentation())` for the full browser API (tabs, playwright locators, cua, capabilities). `tab.screenshot()` auto-emits the image to you. Reuse existing globalThis.agent/iab/browser bindings across turns (they survive between messages; if lost after long idle, re-run the bootstrap guard). Agent tools: await tools.NAME(params) (or await tools.call("NAME", params)) invokes the agent\'s own tools with normal permission checks; await tools.documentation() lists them.';
 
 export interface JsExecInput {
   title?: string;
@@ -73,6 +73,7 @@ export interface NodeReplRuntimeExecOptions {
   emitBrowserAuthRequest?: (request: NodeReplBrowserAuthRequest, signal: AbortSignal) => Promise<NodeReplBrowserAuthResult>;
   emitComputerUseRequest?: (request: NodeReplComputerUseRequest, signal: AbortSignal) => Promise<NodeReplComputerUseResult>;
   browserRequest?: (request: { method: string; params: Record<string, unknown> }, signal: AbortSignal) => Promise<unknown>;
+  toolRequest?: (request: { method: "tool_call" | "tool_list"; args: Record<string, unknown> }, signal: AbortSignal) => Promise<unknown>;
 }
 
 export interface NodeReplRuntimeClient {

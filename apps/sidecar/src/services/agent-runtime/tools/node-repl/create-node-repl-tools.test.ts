@@ -223,6 +223,65 @@ describe("createNodeReplTools", () => {
     expect((result as any)._meta).toEqual({ traceId: "t-1" });
   });
 
+  test("js bridges tool_list and tool_call through the engine context", async () => {
+    let catalogResult: unknown;
+    let toolCallResult: unknown;
+    let selfCallResult: unknown;
+    let wrappedSelfCallResult: unknown;
+    const nestedCalls: Array<{ toolName: string; params: unknown }> = [];
+    const nestedResult = { type: "tool_result", tool_use_id: "nested-1", content: "read ok" };
+    const tools = createNodeReplTools({
+      sessionId: "thread-1",
+      cwd: "D:/repo",
+      registry: {
+        async exec(_threadId, _input, options) {
+          const signal = new AbortController().signal;
+          catalogResult = await options?.toolRequest?.({ method: "tool_list", args: {} }, signal);
+          toolCallResult = await options?.toolRequest?.(
+            { method: "tool_call", args: { name: "Read", params: { path: "x" } } },
+            signal,
+          );
+          selfCallResult = await options?.toolRequest?.({ method: "tool_call", args: { name: "js", params: {} } }, signal);
+          wrappedSelfCallResult = await options?.toolRequest?.(
+            { method: "tool_call", args: { name: "mcp__node_repl__js", params: {} } },
+            signal,
+          );
+          return { content: [{ type: "text", text: "ready" }] };
+        },
+        async addModuleDir() { return true; },
+        async reset() {},
+        async shutdown() {},
+        debugSnapshot() { return null; },
+      },
+    });
+    const context = {
+      ...makeToolContext(),
+      listAvailableTools: () => [
+        { name: "js", description: "Run JavaScript", inputSchema: { type: "object" } },
+        { name: "mcp__node_repl__js", description: "Run JavaScript (wrapped)", inputSchema: { type: "object" } },
+        { name: "Read", description: "Read a file", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
+      ],
+      executeNestedTool: async (input: { toolName: string; params: unknown }) => {
+        nestedCalls.push(input);
+        return nestedResult;
+      },
+    } as any;
+
+    await tools.find((tool) => tool.name === "js")!.call({ code: "await tools.documentation()" }, context);
+
+    const catalog = catalogResult as { tools: Array<{ name: string }>; documentation: string };
+    expect(catalog.tools.map((tool) => tool.name)).toEqual(["Read"]);
+    expect(catalog.documentation).toContain("Read");
+    expect(catalog.documentation).not.toContain("js");
+    expect(catalog.documentation).not.toContain("mcp__node_repl__js");
+    expect(nestedCalls).toEqual([{ toolName: "Read", params: { path: "x" } }]);
+    expect(toolCallResult).toBe(nestedResult);
+    expect((selfCallResult as any).is_error).toBe(true);
+    expect((wrappedSelfCallResult as any).is_error).toBe(true);
+    expect((selfCallResult as any).content).toContain("cannot be invoked from inside the sandbox");
+    expect(nestedCalls).toHaveLength(1);
+  });
+
   test("js resolves browserAuth through the broker without returning secrets", async () => {
     const dispatched: any[] = [];
     let runtimeAuthResult: unknown;

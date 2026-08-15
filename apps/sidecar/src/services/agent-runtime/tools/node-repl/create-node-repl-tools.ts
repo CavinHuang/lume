@@ -2,6 +2,7 @@ import { basename, isAbsolute, win32 } from "node:path";
 import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
 import type { AgentBrowserAuthRequest, BrowserAuthRequest, BrowserAuthResult, McpServerStatus, McpToolDetail } from "@lume/shared";
 import { getNodeReplRuntimeRegistry } from "./node-repl-runtime-registry";
+import { buildToolCatalogResult } from "./tool-catalog";
 import {
   NODE_REPL_MCP_INSTRUCTIONS,
   type JsExecInput,
@@ -73,6 +74,30 @@ export function createNodeReplTools(input: {
           sandbox: context.sandbox,
           emitBrowserAuthRequest: (request, signal) => resolveBrowserAuthRequest({ request, signal, threadId, toolUseId: context.toolUseId }),
           emitComputerUseRequest: input.emitComputerUseRequest,
+          toolRequest: async (request) => {
+            // Self-invocation would nest a registry.exec on the same threadId behind the
+            // running outer exec (deterministic deadlock), so reject it before dispatch.
+            const excludedNames = ["js", `${NODE_REPL_MCP_WRAPPER_PREFIX}js`];
+            if (request.method === "tool_list") {
+              return buildToolCatalogResult(
+                (context.listAvailableTools?.() ?? [])
+                  .filter((tool) => !excludedNames.includes(tool.name))
+                  .map((tool) => ({ ...tool, inputSchema: tool.inputSchema as unknown as Record<string, unknown> }))
+              );
+            }
+            if (excludedNames.includes(String(request.args?.name ?? ""))) {
+              return {
+                type: "tool_result",
+                tool_use_id: "",
+                content: "Error: the node REPL tool cannot be invoked from inside the sandbox.",
+                is_error: true
+              };
+            }
+            return context.executeNestedTool?.({
+              toolName: String(request.args?.name ?? ""),
+              params: isRecord(request.args?.params) ? request.args.params : {}
+            });
+          },
           browserRequest: async (request, signal) => {
             if (signal.aborted) throw new Error("browser request cancelled");
             const broker = getActiveBrowserBroker();

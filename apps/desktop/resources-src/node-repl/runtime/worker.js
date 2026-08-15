@@ -666,6 +666,48 @@ defineLockedGlobal(untrustedContext, "nodeRepl", rootNodeRepl);
 defineLockedGlobal(untrustedContext, "tmpDir", os.tmpdir());
 defineLockedGlobal(trustedContext, "nodeRepl", trustedNodeRepl);
 defineLockedGlobal(trustedContext, "tmpDir", os.tmpdir());
+// Agent tool bridge: `await tools.Name(params)` routes the call through the
+// host so normal permission checks apply; `await tools.documentation()`
+// returns the tool catalog. Reserved names bypass tool dispatch.
+const TOOLS_RESERVED = new Set(["call", "documentation", "then"]);
+function toolsOperation(run) {
+    let state;
+    try {
+        state = getCurrentExecState();
+    }
+    catch (error) {
+        return makeRejectedThenable(error);
+    }
+    return trackBackground(state, Promise.resolve().then(() => run(state)));
+}
+function toolsCall(name, params) {
+    return toolsOperation((state) => (async () => {
+        const toolName = normalizeNonEmptyString(name, "tools tool name");
+        const resolved = params ?? {};
+        if (!isPlainObject(resolved))
+            throw new Error("tools call params must be an object");
+        const result = await hostCall("tool_call", { name: toolName, params: structuredClone(resolved) }, state);
+        const content = typeof result?.content === "string" ? result.content : JSON.stringify(result);
+        if (result?.is_error)
+            throw new Error(content);
+        return content;
+    })());
+}
+const toolsBridge = new Proxy({}, {
+    get(_target, prop) {
+        if (typeof prop !== "string")
+            return undefined;
+        if (prop === "call")
+            return toolsCall;
+        if (prop === "documentation")
+            return () => toolsOperation((state) => hostCall("tool_list", {}, state).then((r) => String(r?.documentation ?? "")));
+        if (TOOLS_RESERVED.has(prop))
+            return undefined;
+        return (params) => toolsCall(prop, params);
+    },
+});
+defineLockedGlobal(untrustedContext, "tools", toolsBridge);
+defineLockedGlobal(trustedContext, "tools", toolsBridge);
 class ModuleLoader {
     fileModules = new Map();
     nativeModules = new Map();
