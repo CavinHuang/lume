@@ -27,6 +27,7 @@ import type {
   ContentBlockParam,
 } from './types.js'
 import { QueryEngine } from './engine.js'
+import { createPersistScheduler } from './persist-scheduler.js'
 import {
   assembleToolPool,
   CORE_TOOL_NAMES,
@@ -73,6 +74,7 @@ import { setMcpConnections } from './tools/mcp-resource-tools.js'
 import { getContextWindowSize } from './utils/tokens.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { createExecuteTool, createToolSearchTool, isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
+import { buildResumeContinuations, detectDanglingToolUses, INTERRUPTED_TOOL_PLACEHOLDER } from './interrupt-recovery.js'
 
 type QueryInput = string | ContentBlockParam[] | SDKUserMessage
 
@@ -889,6 +891,29 @@ export class Agent {
     }
   }
 
+  /** Resolve the tool pools for one run: shared by runSinglePrompt and resumeInterruptedRun. */
+  private getRunTools(
+    opts: AgentOptions,
+    overrides?: Partial<AgentOptions>,
+  ): { tools: ToolDefinition[]; deferredTools: ToolDefinition[] } {
+    let tools = this.toolPool
+    let deferredTools = this.deferredToolPool
+    if (overrides?.disallowedTools) {
+      tools = filterTools(tools, undefined, overrides.disallowedTools)
+      deferredTools = filterTools(deferredTools, undefined, overrides.disallowedTools)
+    }
+    if (overrides?.tools) {
+      const raw = overrides.tools
+      if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'string') {
+        tools = filterTools(this.buildBaseToolPool(opts), raw as string[])
+      } else if (Array.isArray(raw)) {
+        tools = raw as ToolDefinition[]
+      }
+      deferredTools = []
+    }
+    return { tools, deferredTools }
+  }
+
   private async *runSinglePrompt(
     prompt: QueryInput,
     overrides?: Partial<AgentOptions>,
@@ -908,8 +933,24 @@ export class Agent {
     })
     this.registerExplicitSkills()
 
+    // Crash repair: message-level persistence can leave the trailing assistant
+    // tool_use without a tool_result (a crashed run has no abort placeholders).
+    // Sending that history to the provider is rejected, deadlocking the thread.
+    // Fill error placeholders here so the next request is well-formed. Skipped
+    // when toolContinuations carry the boundary (resumeInterruptedRun etc.) —
+    // the engine's result-side idempotency covers those paths.
+    if (!opts.toolContinuations?.length) {
+      this.repairDanglingToolUses()
+    }
+
     const abortCtrl = opts.abortController || new AbortController()
     this.abortCtrl = abortCtrl
+
+    // Message-level throttled persistence: collapse bursts of message events
+    // into one write so a crash loses at most the debounce window, not the run.
+    // The finally block below flushes whatever is still pending.
+    const persistScheduler = createPersistScheduler(200, () =>
+      this.persistCurrentSession(cwd, opts).then(() => undefined))
     if (opts.abortSignal) {
       if (opts.abortSignal.aborted) {
         abortCtrl.abort(opts.abortSignal.reason)
@@ -934,18 +975,7 @@ export class Agent {
     }
 
 
-    let tools = this.toolPool
-    let deferredTools = this.deferredToolPool
-    if (overrides?.disallowedTools || overrides?.tools) {
-      // One-shot registry masks: evaluate the masked snapshot, then restore.
-      const masked = applyOverrides(this.toolRegistry, this.sid, overrides, {
-        tools: this.toolPool,
-        deferredTools: this.deferredToolPool,
-      })
-      tools = masked.tools
-      deferredTools = masked.deferredTools
-      masked.undo()
-    }
+    const { tools, deferredTools } = this.getRunTools(opts, overrides)
 
     let provider = this.provider
     if (overrides?.apiType || overrides?.apiKey || overrides?.baseURL) {
@@ -962,7 +992,7 @@ export class Agent {
     const runtimeMessage = !isManualCompactCommand && opts.runtimeContext?.trim()
       ? toSessionMessage('runtime', opts.runtimeContext.trim())
       : null
-    const userMessage = isManualCompactCommand || opts.toolContinuation
+    const userMessage = isManualCompactCommand || opts.toolContinuations?.length
       ? null
       : toSessionMessage('user', normalizedPrompt)
     if (runtimeMessage) {
@@ -1008,7 +1038,7 @@ export class Agent {
       hookRegistry: this.hookRegistry,
       sessionId: this.sid,
       runId: opts.runId,
-      toolContinuation: opts.toolContinuation,
+      toolContinuations: opts.toolContinuations,
       permissionMode: opts.permissionMode,
       promptSuggestions: opts.promptSuggestions,
       additionalDirectories: opts.additionalDirectories,
@@ -1080,6 +1110,7 @@ export class Agent {
             uuid: assistantMessage.uuid,
             timestamp: assistantMessage.timestamp,
           })
+          persistScheduler.schedule()
         } else if (event.type === 'tool_result') {
           this.sessionMessages.push(toSessionMessage('user', [{
             type: 'tool_result',
@@ -1088,11 +1119,13 @@ export class Agent {
             content: event.result.content ?? event.result.output,
             is_error: event.result.is_error === true,
           }]))
+          persistScheduler.schedule()
         } else if (event.type === 'system') {
           this.sessionMessages.push(toSessionMessage('system', event))
           if (event.subtype === 'compact_boundary') {
             compactionBoundarySeen = true
           }
+          persistScheduler.schedule()
         }
 
         yield event
@@ -1101,13 +1134,19 @@ export class Agent {
         }
       }
     } finally {
+      // Drop any pending debounced write and wait out one already in flight:
+      // the awaited persistCurrentSession below writes the same (or fresher)
+      // state. Flushing here instead would launch a concurrent fire-and-forget
+      // saveSession that races with both the awaited write and readers of the
+      // session file.
+      await persistScheduler.cancel()
       this.history = engine.getMessages()
       this.lastContextUsage = engine.getContextUsage()
       this.currentEngine = null
       if (compactionBoundarySeen) {
         this.sessionMessages = sessionMessagesFromHistory(this.history)
       }
-      if (opts.toolContinuation) {
+      if (opts.toolContinuations?.length) {
         this.sessionMessages = sessionMessagesFromHistory(this.history)
       }
       persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
@@ -1224,6 +1263,71 @@ export class Agent {
 
   async interrupt(): Promise<void> {
     this.abortCtrl?.abort('interrupt')
+  }
+
+  /**
+   * Fill dangling trailing tool_use blocks with error placeholders so the
+   * session is provider-clean. Returns true when history changed.
+   */
+  private repairDanglingToolUses(): boolean {
+    const dangling = detectDanglingToolUses(this.history)
+    if (dangling.length === 0) return false
+    const blocks = dangling.map((use) => ({
+      type: 'tool_result' as const,
+      tool_use_id: use.id,
+      content: INTERRUPTED_TOOL_PLACEHOLDER,
+      is_error: true,
+    }))
+    this.history.push({ role: 'user', content: blocks })
+    this.sessionMessages.push(toSessionMessage('user', blocks))
+    return true
+  }
+
+  /**
+   * Resume an interrupted run from the persisted dangling tool boundary.
+   * Read-only / concurrency-safe tools replay once; everything else
+   * (including unknown tools) gets an interrupted placeholder — never
+   * auto-replay a mutation whose actual effect is unknown.
+   */
+  async *resumeInterruptedRun(overrides?: Partial<AgentOptions>): AsyncGenerator<SDKMessage, void> {
+    // currentEngine (not abortCtrl, which is never cleared after a run) is
+    // the accurate in-flight marker: set before the loop, cleared in finally.
+    if (this.currentEngine) throw new Error('agent is running')
+    // Await setup before detecting: this.history is loaded from the session
+    // file inside setup(), so an early detect sees [] and silently no-ops.
+    await this.setupDone
+    const dangling = detectDanglingToolUses(this.history)
+    if (dangling.length === 0) return
+    const opts = this.getEffectiveOptions(overrides)
+    const { tools } = this.getRunTools(opts, overrides)
+    const continuations = buildResumeContinuations(dangling, {
+      isReadOnly: (name) => {
+        const tool = tools.find((t) => t.name === name)
+        if (!tool) return false
+        return tool.isReadOnly?.() === true || tool.isConcurrencySafe?.() === true
+      },
+    })
+    yield* this.runSinglePrompt('', { ...overrides, toolContinuations: continuations })
+  }
+
+  /**
+   * Discard an interrupted run: fill dangling tool_use with error results so
+   * the session lands in a clean state without another model request.
+   */
+  async discardInterruptedRun(cwd: string): Promise<void> {
+    await this.setupDone
+    const dangling = detectDanglingToolUses(this.history)
+    if (dangling.length === 0) return
+    this.history.push({
+      role: 'user',
+      content: dangling.map((use) => ({
+        type: 'tool_result' as const,
+        tool_use_id: use.id,
+        content: 'Error: run discarded by user',
+        is_error: true,
+      })),
+    })
+    await this.persistCurrentSession(cwd, this.getEffectiveOptions())
   }
 
   async setModel(model?: string): Promise<void> {

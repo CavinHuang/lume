@@ -42,7 +42,7 @@ export interface ThreadFileWorkspace {
   binding: { workspaceId?: string; fileContextId?: string; projectBindingKey?: string }
   activeItem: RightPanelActiveItem | null
   selectedRef: FileRef | null
-  temporaryPreviewTarget: RightPanelFileTarget | null
+  previewTab: RightPanelFileTab | null
   expandedKeys: string[]
   groupExpanded: Record<FileSource, boolean>
   directoryCache: Record<string, unknown>
@@ -84,7 +84,7 @@ export function createThreadFileWorkspace(
     binding,
     activeItem,
     selectedRef: null,
-    temporaryPreviewTarget: null,
+    previewTab: null,
     expandedKeys: [],
     groupExpanded: { project: true, session: true, memory: false, legacy: false },
     directoryCache: {},
@@ -106,11 +106,15 @@ export function openFileTab(
   const target = normalizeRightPanelFileTarget(input)
   const lineSelection = normalizeLineSelection(options.lineSelection)
   const key = rightPanelFileTargetKey(target, options)
+  const previewTab = state.previewTab && rightPanelFileTargetKey(state.previewTab.target, options) === key
+    ? null
+    : state.previewTab
   const existing = state.openTabs.find((tab) => rightPanelFileTargetKey(tab.target, options) === key)
   if (existing) {
     const navigationRevision = options.navigationRevision ?? existing.navigationRevision + 1
     return {
       ...state,
+      previewTab,
       openTabs: state.openTabs.map((tab) => tab.id === existing.id ? {
         ...tab,
         lineSelection,
@@ -131,9 +135,52 @@ export function openFileTab(
     : { ...base, target: normalized, ref: normalized.ref }
   return {
     ...state,
+    previewTab,
     openTabs: [...state.openTabs, tab],
     activeItem: { kind: 'file', tabId: tab.id },
   }
+}
+
+/** 单击预览：单槽替换式预览 tab（VS Code 预览语义），同文件重复点击只刷新 navigationRevision */
+export function previewFileTab(
+  state: ThreadFileWorkspace,
+  input: RightPanelFileTarget | FileRef,
+  options: FileRefIdentityOptions & { lineSelection?: ThreadFileLineSelection } = {},
+): ThreadFileWorkspace {
+  const target = normalizeRightPanelFileTarget(input)
+  const lineSelection = normalizeLineSelection(options.lineSelection)
+  const key = rightPanelFileTargetKey(target, options)
+  if (state.previewTab && rightPanelFileTargetKey(state.previewTab.target, options) === key) {
+    return {
+      ...state,
+      previewTab: { ...state.previewTab, lineSelection, navigationRevision: state.previewTab.navigationRevision + 1 },
+    }
+  }
+  const normalized = normalizeRightPanelFileTarget(target)
+  const base = { id: `preview:${encodeURIComponent(key)}`, lineSelection, navigationRevision: 1 }
+  const previewTab: RightPanelFileTab = normalized.kind === 'mcp-resource'
+    ? { ...base, target: normalized }
+    : { ...base, target: normalized, ref: normalized.ref }
+  return { ...state, previewTab }
+}
+
+/** 固定预览：转正为正式 tab（复用 openFileTab 的同文件去重），随后清空预览槽 */
+export function pinPreviewFileTab(
+  state: ThreadFileWorkspace,
+  options: FileRefIdentityOptions = {},
+): ThreadFileWorkspace {
+  if (!state.previewTab) return state
+  return openFileTab(state, state.previewTab.target, {
+    ...options,
+    lineSelection: state.previewTab.lineSelection,
+    navigationRevision: state.previewTab.navigationRevision,
+  })
+}
+
+/** 清除预览：预览不占激活态，activeItem 原样保留 */
+export function clearPreviewFileTab(state: ThreadFileWorkspace): ThreadFileWorkspace {
+  if (!state.previewTab) return state
+  return { ...state, previewTab: null }
 }
 
 export function createRightPanelFileTarget(
@@ -275,14 +322,13 @@ function rewriteRef(ref: FileRef, from: FileRef, to: FileRef): FileRef {
 
 export function rewriteFileRefPrefix(state: ThreadFileWorkspace, from: FileRef, to: FileRef): ThreadFileWorkspace {
   const rewriteNullable = (value: FileRef | null) => value ? rewriteRef(value, from, to) : null
+  const rewrittenPreviewRef = state.previewTab?.ref ? rewriteRef(state.previewTab.ref, from, to) : undefined
   return {
     ...state,
     selectedRef: rewriteNullable(state.selectedRef),
-    temporaryPreviewTarget: state.temporaryPreviewTarget?.kind === 'mcp-resource'
-      ? state.temporaryPreviewTarget
-      : state.temporaryPreviewTarget
-        ? { ...state.temporaryPreviewTarget, ref: rewriteRef(state.temporaryPreviewTarget.ref, from, to) }
-        : null,
+    previewTab: state.previewTab?.ref && rewrittenPreviewRef !== state.previewTab.ref
+      ? null
+      : state.previewTab,
     openTabs: state.openTabs.map((tab) => {
       if (tab.target.kind === 'mcp-resource') return tab
       const nextRef = rewriteRef(tab.target.ref, from, to)
@@ -312,11 +358,9 @@ export function removeFileRef(
   return {
     ...next,
     selectedRef: next.selectedRef && matches(next.selectedRef) ? null : next.selectedRef,
-    temporaryPreviewTarget: next.temporaryPreviewTarget
-      && next.temporaryPreviewTarget.kind !== 'mcp-resource'
-      && matches(next.temporaryPreviewTarget.ref)
+    previewTab: next.previewTab?.ref && matches(next.previewTab.ref)
       ? null
-      : next.temporaryPreviewTarget,
+      : next.previewTab,
   }
 }
 
@@ -395,7 +439,7 @@ export function reconcileThreadFileWorkspaces(
       activeItem,
       openTabs,
       selectedRef: state.selectedRef?.source === 'session' && state.selectedRef.scopeId === thread.fileContextId ? state.selectedRef : null,
-      temporaryPreviewTarget: null,
+      previewTab: null,
       directoryCache: {},
       sourceStatus: Object.fromEntries(SOURCES.map((source) => [source, 'stale'])) as ThreadFileWorkspace['sourceStatus'],
       previewScopes: {},

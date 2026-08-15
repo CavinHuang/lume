@@ -75,7 +75,7 @@ import { buildStructuredOutputInstruction, parseStructuredOutput } from './utils
 import { captureFileSnapshots, captureWorkspaceFileSnapshots, collectCheckpointPaths, requiresWorkspaceCheckpoint } from './utils/file-checkpoints.js'
 import { generatePromptSuggestion } from './utils/prompt-suggestions.js'
 import { resolve } from 'path'
-import { getUserInvocableSkills } from './skills/index.js'
+import { getModelInvocableSkills, getUserInvocableSkills, renderSkillCatalog } from './skills/index.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { FileStateCache } from './utils/fileCache.js'
 import { createExecuteTool, createToolSearchTool } from './tools/tool-search.js'
@@ -228,6 +228,19 @@ function createDeferredSiblingToolResult(
     tool_name: block.name,
     content:
       'Tool call skipped: a Skill activation in the same assistant turn must be applied before other tools can run. Retry after the skill prompt is loaded.',
+    is_error: true,
+  }
+}
+
+/** Placeholder tool result pairing an interrupted tool_use so history never dangles. */
+function createInterruptedToolResult(
+  block: ToolUseBlock,
+): ToolResult & { tool_name: string } {
+  return {
+    type: 'tool_result',
+    tool_use_id: block.id,
+    tool_name: block.name,
+    content: 'Error: interrupted by user before execution',
     is_error: true,
   }
 }
@@ -387,6 +400,8 @@ export class QueryEngine {
   private fileStateCache = new FileStateCache()
   private workingDirectory: string
   private pendingLspDiagnostics: Array<Extract<SDKMessage, { type: 'system'; subtype: 'lsp_diagnostics' }>> = []
+  /** Tool calls skipped or interrupted by an abort during the current run. */
+  private abortedPendingToolCalls: Array<{ id: string; name: string; input: unknown }> = []
 
   constructor(config: QueryEngineConfig) {
     this.config = config
@@ -892,7 +907,7 @@ export class QueryEngine {
     for (const event of sessionStartHooks.events) yield event
 
     // Hook: UserPromptSubmit
-    const userHookResults = this.config.toolContinuation
+    const userHookResults = this.config.toolContinuations?.length
       ? { events: [], outputs: [] }
       : await this.executeHooks('UserPromptSubmit', { toolInput: prompt })
     for (const event of userHookResults.events) yield event
@@ -984,56 +999,90 @@ export class QueryEngine {
       this.messages.push({ role: 'runtime', content: this.config.runtimeContext.trim() })
     }
 
-    // Exact cold-start continuation resumes at the persisted tool boundary,
-    // so it must not add a second model-facing user prompt.
+    // Exact cold-start continuations resume at the persisted tool boundary,
+    // so they must not add a second model-facing user prompt.
     let protectedMessageIndex: number | undefined
-    if (!this.config.toolContinuation) {
+    // Reset per-run abort bookkeeping before any tool execution (continuations
+    // included) so run_aborted reflects this run's interrupted tool calls.
+    this.abortedPendingToolCalls = []
+
+    if (!this.config.toolContinuations?.length) {
       protectedMessageIndex = this.messages.length
       this.messages.push({ role: 'user', content: prompt as any })
     }
 
-    if (this.config.toolContinuation) {
-      const persisted = this.config.toolContinuation
-      const block: ToolUseBlock = {
-        type: 'tool_use',
-        id: persisted.toolCall.id,
-        name: persisted.toolCall.name,
-        input: persisted.toolCall.input,
-      }
-      if (!this.messages.some((message) => (
-        message.role === 'assistant'
-        && Array.isArray(message.content)
-        && message.content.some((content) => content.type === 'tool_use' && content.id === block.id)
-      ))) {
-        this.messages.push({ role: 'assistant', content: [block] })
-      }
-      const execution = persisted.toolResult
-        ? { results: [{ ...persisted.toolResult, tool_use_id: block.id, tool_name: block.name }], events: [], toolsUsed: [block.name] }
-        : await this.executeTools([block])
-      for (const event of execution.events) yield event
-      for (const result of execution.results) {
-        yield {
-          type: 'tool_result',
-          result: {
-            tool_use_id: result.tool_use_id,
-            tool_name: result.tool_name || block.name,
-            output: formatToolResultOutput(result.content),
-            content: result.content,
-            is_error: result.is_error === true,
-            ...(result._meta ? { _meta: result._meta } : {}),
-          },
+    if (this.config.toolContinuations?.length) {
+      // Result-side idempotency: a continuation whose tool_use_id already has
+      // a tool_result in history (e.g. abort placeholders persisted by the
+      // engine) must not be executed or injected again — a second result for
+      // the same id is rejected by the provider.
+      const answeredToolUseIds = new Set<string>()
+      for (const message of this.messages) {
+        if (message.role !== 'user' || !Array.isArray(message.content)) continue
+        for (const block of message.content) {
+          if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+            answeredToolUseIds.add(block.tool_use_id)
+          }
         }
       }
-      this.messages.push({
-        role: 'user',
-        content: execution.results.map((result) => ({
-          type: 'tool_result' as const,
-          tool_use_id: result.tool_use_id,
-          content: result.content,
-          is_error: result.is_error,
-          ...(result._meta ? { _meta: result._meta } : {}),
-        })),
-      })
+      const continuations = this.config.toolContinuations.filter(
+        (persisted) => !answeredToolUseIds.has(persisted.toolCall.id),
+      )
+      if (continuations.length > 0) {
+        const blocks: ToolUseBlock[] = continuations.map((persisted) => ({
+          type: 'tool_use',
+          id: persisted.toolCall.id,
+          name: persisted.toolCall.name,
+          input: persisted.toolCall.input,
+        }))
+        // Idempotent rebuild: only push the assistant blocks that are not already present.
+        const missing = blocks.filter((block) => !this.messages.some((message) => (
+          message.role === 'assistant'
+          && Array.isArray(message.content)
+          && message.content.some((content) => content.type === 'tool_use' && content.id === block.id)
+        )))
+        if (missing.length > 0) {
+          this.messages.push({ role: 'assistant', content: missing })
+        }
+        const allResults: Array<{ result: ToolResult & { tool_name?: string }; toolName: string }> = []
+        for (const persisted of continuations) {
+          const block: ToolUseBlock = {
+            type: 'tool_use',
+            id: persisted.toolCall.id,
+            name: persisted.toolCall.name,
+            input: persisted.toolCall.input,
+          }
+          const execution = persisted.toolResult
+            ? { results: [{ ...persisted.toolResult, tool_use_id: block.id, tool_name: block.name }], events: [], toolsUsed: [block.name] }
+            : await this.executeTools([block])
+          for (const event of execution.events) yield event
+          for (const result of execution.results) {
+            const toolName = result.tool_name || block.name
+            allResults.push({ result, toolName })
+            yield {
+              type: 'tool_result',
+              result: {
+                tool_use_id: result.tool_use_id,
+                tool_name: toolName,
+                output: formatToolResultOutput(result.content),
+                content: result.content,
+                is_error: result.is_error === true,
+                ...(result._meta ? { _meta: result._meta } : {}),
+              },
+            }
+          }
+        }
+        this.messages.push({
+          role: 'user',
+          content: allResults.map(({ result }) => ({
+            type: 'tool_result' as const,
+            tool_use_id: result.tool_use_id,
+            content: result.content,
+            is_error: result.is_error,
+            ...(result._meta ? { _meta: result._meta } : {}),
+          })),
+        })
+      }
     }
 
     // Agentic loop
@@ -1047,8 +1096,9 @@ export class QueryEngine {
     let structuredOutputRetryAttempts = 0
     const MAX_STRUCTURED_OUTPUT_RETRIES = 2
 
-    while (turnsRemaining > 0) {
-      if (this.config.abortSignal?.aborted) throw new Error('aborted')
+    turnLoop: while (turnsRemaining > 0) {
+      // Soft abort: skip further turns and fall through to normal finalization.
+      if (this.config.abortSignal?.aborted) break turnLoop
 
       // Check budget
       if (this.config.maxBudgetUsd && this.totalCost >= this.config.maxBudgetUsd) {
@@ -1083,6 +1133,13 @@ export class QueryEngine {
       ].filter(Boolean).join('\n\n')
       if (transientRuntimeContext) {
         apiMessages.push({ role: 'runtime', content: transientRuntimeContext })
+      }
+
+      const skillCatalog = renderSkillCatalog(
+        this.config.skillRegistry?.getModelInvocable() ?? getModelInvocableSkills(),
+      )
+      if (skillCatalog) {
+        apiMessages.push({ role: 'runtime', content: skillCatalog })
       }
 
       this.turnCount++
@@ -1120,7 +1177,9 @@ export class QueryEngine {
           const stream = this.provider.createMessageStream(providerRequest)
 
           while (true) {
-            if (this.config.abortSignal?.aborted) throw new Error('aborted')
+            // Soft abort mid-stream: the response is incomplete and no tool_use
+            // was committed, so abandon the turn without pairing obligations.
+            if (this.config.abortSignal?.aborted) break turnLoop
             const next = await stream.next()
             if (next.done) {
               response = next.value as CreateMessageResponse
@@ -1221,8 +1280,10 @@ export class QueryEngine {
           }
         }
       } catch (err: any) {
+        // Soft abort: the provider call failed because the run was aborted.
+        // Finalize normally instead of propagating to the caller.
         if (this.config.abortSignal?.aborted) {
-          throw new Error('aborted')
+          break turnLoop
         }
         const stopFailureHooks = await this.executeHooks('StopFailure', {
           error: err?.message || 'Unknown provider error',
@@ -1429,6 +1490,18 @@ export class QueryEngine {
       }
     }
 
+    // Soft abort: report the interrupted boundary (tool calls that never ran)
+    // via onAsyncEvent so hosts can offer resumption later.
+    const runAborted = this.config.abortSignal?.aborted === true
+    if (runAborted) {
+      this.config.onAsyncEvent?.({
+        type: 'system',
+        subtype: 'run_aborted',
+        pending_tool_calls: this.abortedPendingToolCalls,
+        session_id: this.sessionId,
+      })
+    }
+
     // Hook: Stop (end of agentic loop)
     const stopHooks = await this.executeHooks('Stop', {
       // Expose the bounded, normalized conversation to host-owned post-turn
@@ -1442,7 +1515,9 @@ export class QueryEngine {
     for (const event of sessionEndHooks.events) yield event
 
     // Yield enriched final result
-    const endSubtype = budgetExceeded
+    const endSubtype = runAborted
+      ? 'error_during_execution'
+      : budgetExceeded
       ? 'error_max_budget_usd'
       : structuredOutputRetriesExceeded
         ? 'error_max_structured_output_retries'
@@ -1479,7 +1554,9 @@ export class QueryEngine {
       cost: this.totalCost,
       permission_denials: this.permissionDenials,
       structured_output: structuredOutput,
-      errors: completionGuardStop
+      errors: runAborted
+        ? ['Run aborted by user.']
+        : completionGuardStop
         ? [completionGuardStop.message]
         : structuredOutputRetriesExceeded
           ? ['Structured output validation failed after retry attempts.']
@@ -1556,8 +1633,16 @@ export class QueryEngine {
       const resultsById = new Map<string, ToolResult & { tool_name?: string }>()
 
       for (const block of toolUseBlocks.filter((item) => item.name === 'Skill')) {
+        if (this.config.abortSignal?.aborted) break // soft abort: skip remaining activations
         const tool = this.config.tools.find((t) => t.name === block.name)
-        const result = await this.executeSingleTool(block, tool, context)
+        let result
+        try {
+          result = await this.executeSingleTool(block, tool, context)
+        } catch (error) {
+          if (!this.config.abortSignal?.aborted) throw error
+          this.abortedPendingToolCalls.push({ id: block.id, name: block.name, input: block.input })
+          result = { result: createInterruptedToolResult(block), events: [] as SDKMessage[], toolsUsed: [] as string[] }
+        }
         resultsById.set(block.id, result.result)
         events.push(...result.events)
         toolsUsed.push(...result.toolsUsed)
@@ -1568,7 +1653,15 @@ export class QueryEngine {
       }
 
       return {
-        results: toolUseBlocks.map((block) => resultsById.get(block.id) ?? createDeferredSiblingToolResult(block)),
+        results: toolUseBlocks.map((block) => {
+          const existing = resultsById.get(block.id)
+          if (existing) return existing
+          if (this.config.abortSignal?.aborted) {
+            this.abortedPendingToolCalls.push({ id: block.id, name: block.name, input: block.input })
+            return createInterruptedToolResult(block)
+          }
+          return createDeferredSiblingToolResult(block)
+        }),
         events,
         toolsUsed,
       }
@@ -1592,44 +1685,64 @@ export class QueryEngine {
 
     // Execute concurrent tools (batched by MAX_CONCURRENCY)
     for (let i = 0; i < concurrent.length; i += MAX_CONCURRENCY) {
-      if (this.config.abortSignal?.aborted) throw new Error('aborted')
+      if (this.config.abortSignal?.aborted) break // soft abort: skip not-yet-started batches
       const batch = concurrent.slice(i, i + MAX_CONCURRENCY)
-      const batchResults = await Promise.all(
+      const batchResults = await Promise.allSettled(
         batch.map((item) =>
           this.executeSingleTool(item.block, item.tool, context),
         ),
       )
-      if (this.config.abortSignal?.aborted) throw new Error('aborted')
       for (const [batchIndex, batchResult] of batchResults.entries()) {
         const item = batch[batchIndex]
-        if (item) {
-          results[item.index] = batchResult.result
+        if (!item) continue
+        if (batchResult.status === 'fulfilled') {
+          // Keep completed results even if the abort fired while awaiting.
+          results[item.index] = batchResult.value.result
+          events.push(...batchResult.value.events)
+          toolsUsed.push(...batchResult.value.toolsUsed)
+        } else if (this.config.abortSignal?.aborted) {
+          // Interrupted mid-flight: pair with an error placeholder.
+          this.abortedPendingToolCalls.push({ id: item.block.id, name: item.block.name, input: item.block.input })
+          results[item.index] = createInterruptedToolResult(item.block)
+        } else {
+          throw batchResult.reason
         }
-        events.push(...batchResult.events)
-        toolsUsed.push(...batchResult.toolsUsed)
       }
     }
 
     // Execute serial tools sequentially
     for (const item of serial) {
-      if (this.config.abortSignal?.aborted) throw new Error('aborted')
-      const result = await this.executeSingleTool(item.block, item.tool, context)
-      if (this.config.abortSignal?.aborted) throw new Error('aborted')
+      if (this.config.abortSignal?.aborted) break // soft abort: skip remaining serial tools
+      let result
+      try {
+        result = await this.executeSingleTool(item.block, item.tool, context)
+      } catch (error) {
+        if (!this.config.abortSignal?.aborted) throw error
+        this.abortedPendingToolCalls.push({ id: item.block.id, name: item.block.name, input: item.block.input })
+        result = { result: createInterruptedToolResult(item.block), events: [] as SDKMessage[], toolsUsed: [] as string[] }
+      }
       results[item.index] = result.result
       events.push(...result.events)
       toolsUsed.push(...result.toolsUsed)
     }
 
     return {
-      results: toolUseBlocks.map((block, index) =>
-        results[index] ?? {
+      results: toolUseBlocks.map((block, index) => {
+        const existing = results[index]
+        if (existing) return existing
+        if (this.config.abortSignal?.aborted) {
+          // Skipped by an abort break: still pair the tool_use with a result.
+          this.abortedPendingToolCalls.push({ id: block.id, name: block.name, input: block.input })
+          return createInterruptedToolResult(block)
+        }
+        return {
           type: 'tool_result' as const,
           tool_use_id: block.id,
           content: `Error: Tool "${block.name}" did not return a result`,
           is_error: true,
           tool_name: block.name,
-        },
-      ),
+        }
+      }),
       events,
       toolsUsed,
     }
@@ -1889,7 +2002,8 @@ export class QueryEngine {
       const startedAt = performance.now()
       const eventStartIndex = events.length
       const result = await tool.call(block.input, toolContext)
-      if (toolContext.abortSignal?.aborted) throw new Error('aborted')
+      // Soft abort: a tool that already finished keeps its result; only
+      // not-yet-started or still-running tools are interrupted.
       toolCallActive = false
       toolContext.onToolExecution?.({
         toolName: block.name,

@@ -33,6 +33,7 @@ import {
   createRightPanelFileTarget,
   fileRefKey,
   getFileTreeRevealDirectories,
+  previewFileTab,
   removeFileRef,
   rewriteFileRefPrefix,
   rightPanelFileTargetKey,
@@ -69,7 +70,7 @@ export function UnifiedFileTree({
   openFunctions,
   onWorkspaceChange,
   onOpenFile,
-  singleClickOpen,
+  preserveDoubleClickTarget = false,
 }: {
   workspace: ThreadFileWorkspace
   workspaceSlug?: string
@@ -78,8 +79,7 @@ export function UnifiedFileTree({
   openFunctions: RightPanelFunction[]
   onWorkspaceChange: (workspace: ThreadFileWorkspace) => void
   onOpenFile: (target: RightPanelFileTarget | FileRef) => void
-  /** 窄布局下单击非目录文件直接打开预览（而非仅选中）；宽布局保持单击选中、双击打开 */
-  singleClickOpen?: boolean
+  preserveDoubleClickTarget?: boolean
 }) {
   const treeCacheIdentity = getUnifiedFileTreeCacheIdentity(workspaceSlug, fileContextId, workspaceProjectPath)
   const [cache, setCache] = useState<Record<string, FileEntry[]>>(() => workspace.directoryCache as Record<string, FileEntry[]>)
@@ -102,6 +102,9 @@ export function UnifiedFileTree({
   const treeCacheIdentityRef = useRef(treeCacheIdentity)
   const generationRef = useRef<Record<FileSource, number>>({ project: 0, session: 0, memory: 0, legacy: 0 })
   const previousSourceStatusRef = useRef(workspace.sourceStatus)
+  const pendingDoubleClickTargetRef = useRef<RightPanelFileTarget | FileRef | null>(null)
+  const suppressCapturedGestureRef = useRef(false)
+  const capturedGestureResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchSnapshotRef = useRef<Pick<ThreadFileWorkspace, 'expandedKeys' | 'selectedRef' | 'scrollAnchor'> | null>(null)
   const roots = useMemo(() => buildSourceRoots(workspaceSlug, fileContextId), [treeCacheIdentity])
 
@@ -118,6 +121,54 @@ export function UnifiedFileTree({
   }, [workspaceSlug])
 
   workspaceRef.current = workspace
+
+  useEffect(() => {
+    if (!preserveDoubleClickTarget) {
+      pendingDoubleClickTargetRef.current = null
+      suppressCapturedGestureRef.current = false
+      if (capturedGestureResetRef.current) clearTimeout(capturedGestureResetRef.current)
+      capturedGestureResetRef.current = null
+      return
+    }
+    const openPendingTarget = (event: MouseEvent) => {
+      const target = pendingDoubleClickTargetRef.current
+      pendingDoubleClickTargetRef.current = null
+      if (!target || event.button !== 0 || event.detail !== 2) return
+      suppressCapturedGestureRef.current = true
+      event.preventDefault()
+      event.stopPropagation()
+      onOpenFile(target)
+    }
+    const suppressCapturedGesture = (event: MouseEvent) => {
+      if (!suppressCapturedGestureRef.current) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.type === 'click') {
+        if (capturedGestureResetRef.current) clearTimeout(capturedGestureResetRef.current)
+        capturedGestureResetRef.current = setTimeout(() => {
+          suppressCapturedGestureRef.current = false
+          capturedGestureResetRef.current = null
+        }, 0)
+      } else if (event.type === 'dblclick') {
+        suppressCapturedGestureRef.current = false
+        if (capturedGestureResetRef.current) clearTimeout(capturedGestureResetRef.current)
+        capturedGestureResetRef.current = null
+      }
+    }
+    window.addEventListener('mousedown', openPendingTarget, true)
+    window.addEventListener('mouseup', suppressCapturedGesture, true)
+    window.addEventListener('click', suppressCapturedGesture, true)
+    window.addEventListener('dblclick', suppressCapturedGesture, true)
+    return () => {
+      window.removeEventListener('mousedown', openPendingTarget, true)
+      window.removeEventListener('mouseup', suppressCapturedGesture, true)
+      window.removeEventListener('click', suppressCapturedGesture, true)
+      window.removeEventListener('dblclick', suppressCapturedGesture, true)
+      if (capturedGestureResetRef.current) clearTimeout(capturedGestureResetRef.current)
+      suppressCapturedGestureRef.current = false
+      capturedGestureResetRef.current = null
+    }
+  }, [onOpenFile, preserveDoubleClickTarget])
 
   useLayoutEffect(() => {
     if (treeCacheIdentityRef.current === treeCacheIdentity) return
@@ -345,13 +396,12 @@ export function UnifiedFileTree({
 
   const select = (ref: FileRef) => {
     const entry = findCachedEntry(cacheRef.current, ref)
-    commitWorkspace({
-      ...workspaceRef.current,
-      selectedRef: ref,
-      temporaryPreviewTarget: entry?.isDirectory
-        ? workspaceRef.current.temporaryPreviewTarget
-        : createRightPanelFileTarget(ref),
-    })
+    const next = entry?.isDirectory
+      ? { ...workspaceRef.current, selectedRef: ref }
+      : previewFileTab({ ...workspaceRef.current, selectedRef: ref }, ref)
+    commitWorkspace(!entry?.isDirectory && openFunctions.includes('files')
+      ? { ...next, activeItem: { kind: 'function', type: 'files' } }
+      : next)
   }
   const toggle = async (ref: FileRef) => {
     const key = fileRefKey(ref)
@@ -503,7 +553,9 @@ export function UnifiedFileTree({
       onSelect={select}
       onToggle={toggle}
       onOpen={(ref) => onOpenFile(createRightPanelFileTarget(ref))}
-      singleClickOpen={singleClickOpen}
+      onArmDoubleClick={preserveDoubleClickTarget
+        ? (ref) => { pendingDoubleClickTargetRef.current = ref }
+        : undefined}
       onEdit={(next) => { setEditing(next.ref ?? null); setRenameValue(next.name) }}
       onMove={(next) => { setMoving(next); setMoveTarget(parentPath(next.ref?.relativePath ?? '')) }}
       onDelete={setDeleting}
@@ -616,8 +668,8 @@ export function UnifiedFileTree({
                 || `${resource.name ?? ''} ${resource.uri} ${resource.serverName}`.toLowerCase().includes(query.trim().toLowerCase()))
               .map((resource) => {
                 const target = { kind: 'mcp-resource' as const, workspaceSlug, resource }
-                const selected = workspace.temporaryPreviewTarget
-                  ? rightPanelFileTargetKey(workspace.temporaryPreviewTarget) === rightPanelFileTargetKey(target)
+                const selected = workspace.previewTab
+                  ? rightPanelFileTargetKey(workspace.previewTab.target) === rightPanelFileTargetKey(target)
                   : false
                 return (
                   <Button
@@ -625,11 +677,13 @@ export function UnifiedFileTree({
                   variant="ghost"
                   className={cn('h-7 w-full justify-start gap-1.5 rounded-none px-5 text-[12px]', selected && 'bg-primary/10 text-primary')}
                   title={`${resource.serverName} · ${resource.uri}`}
-                  onClick={() => commitWorkspace({
-                    ...workspaceRef.current,
-                    selectedRef: null,
-                    temporaryPreviewTarget: target,
-                  })}
+                  onClick={(event) => {
+                    const preview = previewFileTab({ ...workspaceRef.current, selectedRef: null }, target)
+                    commitWorkspace(openFunctions.includes('files')
+                      ? { ...preview, activeItem: { kind: 'function', type: 'files' } }
+                      : preview)
+                    if (event.detail === 1 && preserveDoubleClickTarget) pendingDoubleClickTargetRef.current = target
+                  }}
                   onDoubleClick={() => onOpenFile(target)}
                 >
                   <Braces size={13} className="shrink-0 text-foreground/45" />
@@ -679,7 +733,7 @@ function TreeEntryRow(props: {
   selectedRef: FileRef | null; treeTabStopKey: string | null; loadingKeys: string[]; editing: FileRef | null; renameValue: string
   onRenameValue: (value: string) => void; onCommitRename: (entry: FileEntry) => Promise<void>
   onSelect: (ref: FileRef) => void; onToggle: (ref: FileRef) => Promise<void>; onOpen: (ref: FileRef) => void
-  singleClickOpen?: boolean
+  onArmDoubleClick?: (ref: FileRef) => void
   onEdit: (entry: FileEntry) => void; onMove: (entry: FileEntry) => void; onDelete: (entry: FileEntry) => void
   onExportLegacy: (entry: FileEntry) => Promise<void>; onCopyAbsolutePath: (ref: FileRef) => Promise<void>; showPath: boolean
 }) {
@@ -715,8 +769,10 @@ function TreeEntryRow(props: {
           props.onSelect(entry.ref!)
           if (entry.isDirectory) {
             if (event.detail === 1) void props.onToggle(entry.ref!)
-          } else if (props.singleClickOpen || event.detail === 2) {
+          } else if (event.detail === 2) {
             props.onOpen(entry.ref!)
+          } else if (event.detail === 1) {
+            props.onArmDoubleClick?.(entry.ref!)
           }
         }}
         onContextMenu={(event) => { event.preventDefault(); setMenuOpen(true) }}
@@ -736,9 +792,9 @@ function TreeEntryRow(props: {
           />
         ) : <span className="min-w-0 flex-1 truncate">{entry.name}{props.showPath && <span className="ml-2 text-[10px] text-foreground/38">{entry.ref.relativePath}</span>}</span>}
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="size-5 opacity-0 group-hover:opacity-100" />}><MoreHorizontal size={12} /></DropdownMenuTrigger>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className={cn('size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100', menuOpen && 'opacity-100')} />}><MoreHorizontal size={12} /></DropdownMenuTrigger>
           <DropdownMenuContent>
-            {!entry.isDirectory && <DropdownMenuItem onSelect={() => props.onOpen(entry.ref!)}>预览</DropdownMenuItem>}
+            {!entry.isDirectory && <DropdownMenuItem onSelect={() => props.onSelect(entry.ref!)}>预览</DropdownMenuItem>}
             <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void openFileRefInSystem(entry.ref!)}>系统打开</DropdownMenuItem>
             <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void revealFileRefInSystem(entry.ref!)}>在文件管理器中显示</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => void writeClipboardText(entry.ref!.relativePath)}>复制相对路径</DropdownMenuItem>

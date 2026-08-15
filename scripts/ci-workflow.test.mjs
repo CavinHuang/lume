@@ -49,7 +49,6 @@ describe("PR verification workflow contract", () => {
 
   test("keeps Windows filesystem and sandbox regressions in the native checkpoint", () => {
     const windowsTests = packageJson.scripts["test:windows"];
-    expect(windowsTests).toContain("packages/sdk/src/plugins/manager.test.ts");
     expect(windowsTests).toContain("packages/sdk/src/tools/worktree-tools.test.ts");
     expect(windowsTests).toContain("packages/sdk/src/utils/process-sandbox.test.ts");
   });

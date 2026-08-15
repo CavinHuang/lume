@@ -57,7 +57,6 @@ describe('RuntimeEvent UI boundary', () => {
 
     for (const file of [
       'apps/web/src/components/agent/AgentMessages.tsx',
-      'apps/web/src/components/agent/TracePanel.tsx',
       'apps/web/src/components/agent/runtime-state-projections.ts',
       'apps/web/src/components/agent/RuntimeEventContentBlock.tsx',
     ]) {

@@ -201,11 +201,11 @@ export function resolvePersistedToolApprovalInterruption(input: {
   return resolved;
 }
 
-function hashToolInput(input: unknown): string {
+export function hashToolInput(input: unknown): string {
   return createHash("sha256").update(JSON.stringify(input ?? null)).digest("hex");
 }
 
-function classifyToolKind(toolName: string): "read" | "write" | "execute" | "control" {
+export function classifyToolKind(toolName: string): "read" | "write" | "execute" | "control" {
   const normalized = toolName.toLowerCase();
   if (normalized === "read" || normalized === "glob" || normalized === "grep" || normalized === "processoutput" || normalized === "taskoutput") return "read";
   if (normalized === "write" || normalized === "edit" || normalized === "notebookedit") return "write";

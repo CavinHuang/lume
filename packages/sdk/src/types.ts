@@ -89,6 +89,7 @@ export type SDKMessage =
   | SDKSessionStateChangedMessage
   | SDKLocalCommandOutputMessage
   | SDKElicitationCompleteMessage
+  | SDKRunAbortedMessage
 
 /** Error type for SDKAssistantMessage when the turn ended due to an error. */
 export type SDKAssistantMessageError =
@@ -224,6 +225,14 @@ export interface SDKSystemMessage {
   plugins?: Array<{ name: string; path: string; source?: string }>
   output_style?: string
   claude_code_version?: string
+}
+
+/** Emitted via onAsyncEvent when a run is aborted; lists tool calls that never completed. */
+export interface SDKRunAbortedMessage {
+  type: 'system'
+  subtype: 'run_aborted'
+  session_id: string
+  pending_tool_calls: Array<{ id: string; name: string; input: unknown }>
 }
 
 export interface SDKLspDiagnosticsMessage {
@@ -1529,8 +1538,8 @@ export interface AgentOptions {
   sessionId?: string
   /** Host Run identity for durable tool recovery. */
   runId?: string
-  /** Host-owned exact tool continuation restored after a cold start. */
-  toolContinuation?: PersistedToolContinuation
+  /** Host-owned exact tool continuations restored after a cold start. */
+  toolContinuations?: PersistedToolContinuation[]
   /** Enable file checkpointing (for rewindFiles) */
   enableFileCheckpointing?: boolean
   /** Sandbox configuration */
@@ -1624,8 +1633,8 @@ export interface QueryEngineConfig {
   sessionId?: string
   /** Host Run identity for durable tool recovery. */
   runId?: string
-  /** Execute or inject one persisted tool call before the next model request. */
-  toolContinuation?: PersistedToolContinuation
+  /** Execute or inject persisted tool calls before the next model request. */
+  toolContinuations?: PersistedToolContinuation[]
   permissionMode?: PermissionMode
   promptSuggestions?: boolean
   additionalDirectories?: string[]
