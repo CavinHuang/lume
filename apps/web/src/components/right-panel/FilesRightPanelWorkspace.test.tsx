@@ -40,13 +40,14 @@ describe('FilesRightPanelWorkspace narrow-mode layout (preference-driven)', () =
     const markup = renderNarrow(previewFileTab(createThreadFileWorkspace({ fileContextId: 'ctx' }), ref))
     expect(markup).toMatch(/class="relative min-h-0 shrink-0 [^"]*hidden"/)
     expect(markup).toMatch(/class="flex min-h-0 min-w-0 flex-1 flex-col"/)
-    expect(markup).toContain('title="返回文件树"')
+    // 断言头部容器（与返回按钮同一条件渲染，纯 HTML 不受其他测试文件 mock Button 影响）
+    expect(markup).toContain('flex h-9 shrink-0 items-center gap-2 border-b')
   })
 
   test('narrowShowsPreview=true: 正式 tab 同样预览占满且有返回树按钮', () => {
     setNarrowShowsPreview(true)
     const markup = renderNarrow(openFileTab(createThreadFileWorkspace({ fileContextId: 'ctx' }), ref))
     expect(markup).toMatch(/class="relative min-h-0 shrink-0 [^"]*hidden"/)
-    expect(markup).toContain('title="返回文件树"')
+    expect(markup).toContain('flex h-9 shrink-0 items-center gap-2 border-b')
   })
 })
