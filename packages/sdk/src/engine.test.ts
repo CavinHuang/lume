@@ -1482,6 +1482,63 @@ describe("QueryEngine skill allowed tools", () => {
   });
 });
 
+describe("QueryEngine deferred tool promotion", () => {
+  test("activateTools promotes deferred tools into the native tools array", async () => {
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "tool_use", id: "probe-1", name: "ProbeTool", input: {} }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    ]);
+    let promoted: string[] = [];
+    const probeTool = {
+      name: "ProbeTool",
+      description: "probe",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call(_input: unknown, context: ToolContext) {
+        promoted = context.activateTools?.(["GuanlanSearch", "GuanlanSearch", "NoSuchTool"]) ?? [];
+        return { type: "tool_result" as const, tool_use_id: "", content: "probe done" };
+      }
+    };
+    const deferredTool = {
+      name: "GuanlanSearch",
+      description: "search guanlan",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "guanlan" };
+      }
+    };
+
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [probeTool],
+      deferredTools: [deferredTool],
+      systemPrompt: "test",
+      maxTurns: 5,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    await collectResult(engine);
+
+    // Unknown names are ignored and already-promoted names are not duplicated.
+    expect(promoted).toEqual(["GuanlanSearch"]);
+    const lastRequest = provider.requests[provider.requests.length - 1];
+    const names = (lastRequest.tools ?? []).map((tool) => tool.name);
+    expect(names).toContain("GuanlanSearch");
+    expect(names.filter((name) => name === "GuanlanSearch")).toHaveLength(1);
+  });
+});
+
 describe("QueryEngine usage records", () => {
   test("emits assistant usage and final billing/context usage contract", async () => {
     const provider = new StaticProvider([{

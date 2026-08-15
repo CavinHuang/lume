@@ -893,6 +893,8 @@ export interface ToolContext {
   }) => Promise<void> | void
   /** Internal bridge used by ExecuteTool to run a discovered deferred tool. */
   executeDeferredTool?: (input: { toolName: string; params: unknown }) => Promise<ToolResult>
+  /** Promote deferred tools into the native tools array for subsequent turns. Returns names actually promoted. */
+  activateTools?: (names: string[]) => string[]
   /** Runs a registered core or deferred tool through the normal permission and event chain. */
   executeNestedTool?: (input: { toolName: string; params: unknown }) => Promise<ToolResult>
 }
