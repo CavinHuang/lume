@@ -94,3 +94,46 @@ test("formatSkillsForPrompt exposes argument hints but not trigger details for m
   expect(prompt).not.toContain("manual-secret");
   expect(prompt).not.toContain("secret args");
 });
+
+import { renderSkillCatalog } from "./registry";
+import type { SkillDefinition } from "./types";
+
+function def(name: string, description: string, extra: Partial<SkillDefinition> = {}): SkillDefinition {
+  return { name, description, getPrompt: async () => [{ type: "text", text: name }], ...extra };
+}
+
+test("renderSkillCatalog returns empty string for no skills", () => {
+  expect(renderSkillCatalog([])).toBe("");
+});
+
+test("renderSkillCatalog lists name, description and argument hint", () => {
+  const catalog = renderSkillCatalog([
+    def("commit", "Create a git commit"),
+    def("review", "Review code", { argumentHint: "path to review" }),
+  ]);
+  expect(catalog).toContain("<available_skills>");
+  expect(catalog).toContain("- commit: Create a git commit");
+  expect(catalog).toContain("- review: Review code (args: path to review)");
+  expect(catalog).toContain("Skill tool");
+});
+
+test("renderSkillCatalog truncates long descriptions", () => {
+  const catalog = renderSkillCatalog([def("big", "x".repeat(400))], { maxDescChars: 50 });
+  expect(catalog).toContain("x".repeat(47) + "...");
+  expect(catalog).not.toContain("x".repeat(50));
+});
+
+test("renderSkillCatalog drops entries beyond the character budget", () => {
+  const long = "y".repeat(300);
+  const catalog = renderSkillCatalog(
+    [def("first", long), def("second", long), def("third", long)],
+    { budgetChars: 400 },
+  );
+  expect(catalog).toContain("first");
+  expect(catalog).not.toContain("third");
+});
+
+test("renderSkillCatalog includes display-name alias when present", () => {
+  const catalog = renderSkillCatalog([def("code-review", "Review code", { aliases: ["代码审查"] })]);
+  expect(catalog).toContain("- code-review (代码审查): Review code");
+});

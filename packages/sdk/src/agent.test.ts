@@ -385,14 +385,14 @@ describe("Agent skill slash commands", () => {
     for await (const _event of agent.query("/skill hot-skill one")) {
       // drain query
     }
-    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("/skill hot-skill one")
+    expect(provider.requests[0]?.messages.filter((m: any) => m.role !== "runtime").at(-1)?.content).toBe("/skill hot-skill one")
     expect((agent as any).skillRegistry.get("hot-skill")?.invocationDescriptor.promptTemplate).toBe("First prompt: ${ARG}")
 
     writeSkill("Updated prompt: ${ARG}")
     for await (const _event of agent.query("/skill hot-skill two")) {
       // drain query
     }
-    expect(provider.requests[1]?.messages.at(-1)?.content).toBe("/skill hot-skill two")
+    expect(provider.requests[1]?.messages.filter((m: any) => m.role !== "runtime").at(-1)?.content).toBe("/skill hot-skill two")
     expect((agent as any).skillRegistry.get("hot-skill")?.invocationDescriptor.promptTemplate).toBe("Updated prompt: ${ARG}")
 
     rmSync(skillDir, { recursive: true, force: true })
@@ -616,13 +616,13 @@ describe("Agent skill slash commands", () => {
       askEvents.push(event)
     }
 
-    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("/code-review")
+    expect(provider.requests[0]?.messages.filter((m: any) => m.role !== "runtime").at(-1)?.content).toBe("/code-review")
 
     for await (const _event of agent.query("src/index.ts")) {
       // drain query
     }
 
-    expect(provider.requests[1]?.messages.at(-1)?.content).toBe("src/index.ts")
+    expect(provider.requests[1]?.messages.filter((m: any) => m.role !== "runtime").at(-1)?.content).toBe("src/index.ts")
     await agent.close()
   })
 
@@ -648,13 +648,13 @@ describe("Agent skill slash commands", () => {
       askEvents.push(event)
     }
 
-    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("$code-review")
+    expect(provider.requests[0]?.messages.filter((m: any) => m.role !== "runtime").at(-1)?.content).toBe("$code-review")
 
     for await (const _event of agent.query("src/index.ts")) {
       // drain query
     }
 
-    expect(provider.requests[1]?.messages.at(-1)?.content).toBe("src/index.ts")
+    expect(provider.requests[1]?.messages.filter((m: any) => m.role !== "runtime").at(-1)?.content).toBe("src/index.ts")
     await agent.close()
   })
 })

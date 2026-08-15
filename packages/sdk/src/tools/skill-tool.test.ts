@@ -1,9 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
 import { tmpdir } from "os";
-import { clearSkills, registerSkill } from "../skills/registry";
-import { SkillTool } from "./skill-tool";
+import { clearSkills, registerSkill, SkillRegistry } from "../skills/registry";
+import { createSkillTool, SkillTool } from "./skill-tool";
 
 afterEach(() => {
   clearSkills();
@@ -130,4 +130,37 @@ test("SkillTool records filesystem skill usage with the active session id", asyn
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("Skill tool result exposes the skill directory for relative resources", async () => {
+  const sourcePath = join(tmpdir(), "lume-skill-test", "demo", "SKILL.md");
+  const registry = new SkillRegistry([{
+    name: "demo",
+    description: "Demo skill",
+    sourcePath,
+    getPrompt: async () => [{ type: "text", text: "do the thing" }],
+  }]);
+  const tool = createSkillTool(registry);
+
+  const result = await tool.call({ skill: "demo", args: "" }, { cwd: process.cwd() } as any);
+  const parsed = JSON.parse(result.content as string);
+
+  expect(parsed.skillDir).toBe(dirname(sourcePath));
+  expect(parsed.prompt).toContain("do the thing");
+  expect(parsed.prompt).toContain(`resolve against: ${dirname(sourcePath)}`);
+});
+
+test("Skill tool result omits skillDir when no sourcePath", async () => {
+  const registry = new SkillRegistry([{
+    name: "inline-skill",
+    description: "Inline skill",
+    getPrompt: async () => [{ type: "text", text: "inline" }],
+  }]);
+  const tool = createSkillTool(registry);
+
+  const result = await tool.call({ skill: "inline-skill", args: "" }, { cwd: process.cwd() } as any);
+  const parsed = JSON.parse(result.content as string);
+
+  expect(parsed.skillDir).toBeUndefined();
+  expect(parsed.prompt).not.toContain("resolve against");
 });
