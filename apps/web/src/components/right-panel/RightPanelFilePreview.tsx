@@ -383,7 +383,7 @@ export function RightPanelFilePreview({
   )
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-2.5">
+      <div className="flex h-10 shrink-0 items-center gap-2 overflow-x-auto overflow-y-hidden border-b border-border/60 px-2.5">
         {onToggleTree && (
           <Button variant="ghost" size="icon-sm" onClick={onToggleTree} title={treeCollapsed ? '展开文件树' : '收起文件树'}>
             {treeCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
