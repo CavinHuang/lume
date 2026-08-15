@@ -5,6 +5,9 @@ import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import type {
   AgentResumeRunInput,
   AgentResumeRunResult,
+  AgentDiscardInterruptedRunInput,
+  AgentDiscardInterruptedRunResult,
+  AgentGetPendingResumeResult,
   AgentListRunStatesInput,
   AgentListRunStatesResult,
   AgentPendingInteractiveInput,
@@ -188,6 +191,18 @@ export const resumeAgentRun = (input: AgentResumeRunInput) =>
   invoke<AgentResumeRunResult>('sidecar_call', {
     method: AGENT_IPC_CHANNELS.RESUME_RUN,
     params: input,
+  })
+
+export const discardAgentInterruptedRun = (input: AgentDiscardInterruptedRunInput) =>
+  invoke<AgentDiscardInterruptedRunResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.DISCARD_INTERRUPTED_RUN,
+    params: input,
+  })
+
+export const getAgentPendingResume = (threadId: string) =>
+  invoke<AgentGetPendingResumeResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.GET_PENDING_RESUME,
+    params: { threadId },
   })
 
 export const listAgentRunStates = (input: AgentListRunStatesInput) =>

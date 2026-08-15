@@ -247,3 +247,56 @@ export function formatSkillsForPrompt(
 
   return lines.join('\n')
 }
+
+export interface SkillCatalogOptions {
+  /** Maximum total catalog characters before entries are dropped. */
+  budgetChars?: number
+  /** Maximum description characters per entry. */
+  maxDescChars?: number
+}
+
+const DEFAULT_CATALOG_BUDGET_CHARS = 8000
+const DEFAULT_CATALOG_DESC_CHARS = 250
+
+/**
+ * Render the model-facing `<available_skills>` catalog block.
+ *
+ * Entries carry name (plus display alias), a truncated description and an
+ * argument hint — summaries only, mirroring the Skill tool's progressive
+ * disclosure: full bodies are loaded via the tool.
+ */
+export function renderSkillCatalog(
+  skills: SkillDefinition[],
+  options: SkillCatalogOptions = {},
+): string {
+  if (skills.length === 0) return ''
+
+  const budget = options.budgetChars ?? DEFAULT_CATALOG_BUDGET_CHARS
+  const maxDescChars = options.maxDescChars ?? DEFAULT_CATALOG_DESC_CHARS
+
+  const lines: string[] = []
+  let used = 0
+  for (const skill of skills) {
+    const desc = skill.description.length > maxDescChars
+      ? skill.description.slice(0, maxDescChars - 3) + '...'
+      : skill.description
+    const alias = skill.aliases
+      ?.map((item) => item.trim())
+      .find((item) => item && item !== skill.name)
+    const name = alias ? `${skill.name} (${alias})` : skill.name
+    const args = skill.argumentHint ? ` (args: ${skill.argumentHint})` : ''
+    const line = `- ${name}: ${desc}${args}`
+    if (used + line.length > budget) break
+    lines.push(line)
+    used += line.length
+  }
+  if (lines.length === 0) return ''
+
+  return [
+    '<available_skills>',
+    ...lines,
+    '</available_skills>',
+    '',
+    'When the user names a skill above or the task clearly matches a skill description, call the Skill tool with the exact skill name before taking task actions. This catalog contains summaries only; follow a skill\'s full instructions only after loading it with the Skill tool.',
+  ].join('\n')
+}

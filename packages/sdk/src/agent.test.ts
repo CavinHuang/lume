@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createAgent } from "./agent.js"
 import { SkillTool } from "./tools/skill-tool.js"
-import type { ToolDefinition } from "./types.js"
+import type { SDKMessage, ToolDefinition } from "./types.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
 import { forkSession, getSessionMessages, saveSession } from "./session.js"
 import { clearSkills, getSkill } from "./skills/registry.js"
@@ -108,14 +108,15 @@ describe("Agent runtime tool resolver", () => {
       model: "host/model-a",
     })
 
-    const consume = async () => {
-      for await (const _event of agent.query("hello", { abortSignal: controller.signal })) {
-        // Consume the query to exercise lazy setup.
-      }
+    const events: SDKMessage[] = []
+    for await (const event of agent.query("hello", { abortSignal: controller.signal })) {
+      events.push(event)
     }
 
-    await expect(consume()).rejects.toThrow("aborted")
+    // Soft abort: the run resolves normally with an error result and no provider call.
     expect(provider.requests).toHaveLength(0)
+    const result = events.find((event) => event.type === "result")
+    expect(result?.subtype).toBe("error_during_execution")
     await agent.close()
   })
 
@@ -385,14 +386,14 @@ describe("Agent skill slash commands", () => {
     for await (const _event of agent.query("/skill hot-skill one")) {
       // drain query
     }
-    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("/skill hot-skill one")
+    expect(provider.requests[0]?.messages.filter((m: any) => m.role !== "runtime").at(-1)?.content).toBe("/skill hot-skill one")
     expect((agent as any).skillRegistry.get("hot-skill")?.invocationDescriptor.promptTemplate).toBe("First prompt: ${ARG}")
 
     writeSkill("Updated prompt: ${ARG}")
     for await (const _event of agent.query("/skill hot-skill two")) {
       // drain query
     }
-    expect(provider.requests[1]?.messages.at(-1)?.content).toBe("/skill hot-skill two")
+    expect(provider.requests[1]?.messages.filter((m: any) => m.role !== "runtime").at(-1)?.content).toBe("/skill hot-skill two")
     expect((agent as any).skillRegistry.get("hot-skill")?.invocationDescriptor.promptTemplate).toBe("Updated prompt: ${ARG}")
 
     rmSync(skillDir, { recursive: true, force: true })
@@ -616,13 +617,13 @@ describe("Agent skill slash commands", () => {
       askEvents.push(event)
     }
 
-    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("/code-review")
+    expect(provider.requests[0]?.messages.filter((m: any) => m.role !== "runtime").at(-1)?.content).toBe("/code-review")
 
     for await (const _event of agent.query("src/index.ts")) {
       // drain query
     }
 
-    expect(provider.requests[1]?.messages.at(-1)?.content).toBe("src/index.ts")
+    expect(provider.requests[1]?.messages.filter((m: any) => m.role !== "runtime").at(-1)?.content).toBe("src/index.ts")
     await agent.close()
   })
 
@@ -648,13 +649,13 @@ describe("Agent skill slash commands", () => {
       askEvents.push(event)
     }
 
-    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("$code-review")
+    expect(provider.requests[0]?.messages.filter((m: any) => m.role !== "runtime").at(-1)?.content).toBe("$code-review")
 
     for await (const _event of agent.query("src/index.ts")) {
       // drain query
     }
 
-    expect(provider.requests[1]?.messages.at(-1)?.content).toBe("src/index.ts")
+    expect(provider.requests[1]?.messages.filter((m: any) => m.role !== "runtime").at(-1)?.content).toBe("src/index.ts")
     await agent.close()
   })
 })

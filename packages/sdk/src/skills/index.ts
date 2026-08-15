@@ -30,6 +30,7 @@ export {
   unregisterSkill,
   clearSkills,
   formatSkillsForPrompt,
+  renderSkillCatalog,
 } from './registry.js'
 export {
   analyzeSkillImprovement,
