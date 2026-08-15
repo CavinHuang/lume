@@ -103,6 +103,8 @@ export function UnifiedFileTree({
   const generationRef = useRef<Record<FileSource, number>>({ project: 0, session: 0, memory: 0, legacy: 0 })
   const previousSourceStatusRef = useRef(workspace.sourceStatus)
   const pendingDoubleClickTargetRef = useRef<RightPanelFileTarget | FileRef | null>(null)
+  const suppressCapturedGestureRef = useRef(false)
+  const capturedGestureResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchSnapshotRef = useRef<Pick<ThreadFileWorkspace, 'expandedKeys' | 'selectedRef' | 'scrollAnchor'> | null>(null)
   const roots = useMemo(() => buildSourceRoots(workspaceSlug, fileContextId), [treeCacheIdentity])
 
@@ -123,18 +125,49 @@ export function UnifiedFileTree({
   useEffect(() => {
     if (!preserveDoubleClickTarget) {
       pendingDoubleClickTargetRef.current = null
+      suppressCapturedGestureRef.current = false
+      if (capturedGestureResetRef.current) clearTimeout(capturedGestureResetRef.current)
+      capturedGestureResetRef.current = null
       return
     }
     const openPendingTarget = (event: MouseEvent) => {
       const target = pendingDoubleClickTargetRef.current
       pendingDoubleClickTargetRef.current = null
       if (!target || event.button !== 0 || event.detail !== 2) return
+      suppressCapturedGestureRef.current = true
       event.preventDefault()
       event.stopPropagation()
       onOpenFile(target)
     }
+    const suppressCapturedGesture = (event: MouseEvent) => {
+      if (!suppressCapturedGestureRef.current) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.type === 'click') {
+        if (capturedGestureResetRef.current) clearTimeout(capturedGestureResetRef.current)
+        capturedGestureResetRef.current = setTimeout(() => {
+          suppressCapturedGestureRef.current = false
+          capturedGestureResetRef.current = null
+        }, 0)
+      } else if (event.type === 'dblclick') {
+        suppressCapturedGestureRef.current = false
+        if (capturedGestureResetRef.current) clearTimeout(capturedGestureResetRef.current)
+        capturedGestureResetRef.current = null
+      }
+    }
     window.addEventListener('mousedown', openPendingTarget, true)
-    return () => window.removeEventListener('mousedown', openPendingTarget, true)
+    window.addEventListener('mouseup', suppressCapturedGesture, true)
+    window.addEventListener('click', suppressCapturedGesture, true)
+    window.addEventListener('dblclick', suppressCapturedGesture, true)
+    return () => {
+      window.removeEventListener('mousedown', openPendingTarget, true)
+      window.removeEventListener('mouseup', suppressCapturedGesture, true)
+      window.removeEventListener('click', suppressCapturedGesture, true)
+      window.removeEventListener('dblclick', suppressCapturedGesture, true)
+      if (capturedGestureResetRef.current) clearTimeout(capturedGestureResetRef.current)
+      suppressCapturedGestureRef.current = false
+      capturedGestureResetRef.current = null
+    }
   }, [onOpenFile, preserveDoubleClickTarget])
 
   useLayoutEffect(() => {

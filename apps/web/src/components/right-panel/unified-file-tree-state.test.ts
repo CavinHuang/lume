@@ -34,6 +34,8 @@ describe('unified-file-tree-state', () => {
     expect(source).toContain('props.onOpen(entry.ref!)')
     expect(source).toContain('event.detail !== 2')
     expect(source).toContain("window.addEventListener('mousedown', openPendingTarget, true)")
+    expect(source).toContain("window.addEventListener('click', suppressCapturedGesture, true)")
+    expect(source).toContain("window.addEventListener('dblclick', suppressCapturedGesture, true)")
     expect(source).not.toContain('entry.isDirectory ? void props.onToggle(entry.ref!) : props.onOpen(entry.ref!)')
   })
 
