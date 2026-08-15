@@ -29,10 +29,11 @@ import type {
 import { QueryEngine } from './engine.js'
 import {
   assembleToolPool,
+  CORE_TOOL_NAMES,
   filterTools,
   getAllBaseTools,
-  splitDeferredTools,
 } from './tools/index.js'
+import { createToolRegistry } from './tools/registry.js'
 import {
   closeAllConnections,
   connectMCPServer,
@@ -249,6 +250,8 @@ export class Agent {
   private cfg: AgentOptions
   private toolPool: ToolDefinition[] = []
   private deferredToolPool: ToolDefinition[] = []
+  private toolRegistry = createToolRegistry()
+  private unregisterRuntimeTools: (() => void) | null = null
   private modelId = 'claude-sonnet-4-6'
   private apiType: ApiType = 'anthropic-messages'
   private apiCredentials: { key?: string; baseUrl?: string } = {}
@@ -610,7 +613,13 @@ export class Agent {
     const runtimeTools = options.resolveRuntimeTools
       ? await options.resolveRuntimeTools(assembledTools, runtimeContext)
       : assembledTools
-    const { core, deferred } = splitDeferredTools(runtimeTools)
+    // Registry is the single source of truth: global pool + default preset core set.
+    // Dispose the previous registration so the registry mirrors this full rebuild
+    // (tools dropped from runtimeTools must not linger across rebuilds).
+    this.unregisterRuntimeTools?.()
+    this.unregisterRuntimeTools = this.toolRegistry.global.register(runtimeTools)
+    this.toolRegistry.preset("default").setCore([...CORE_TOOL_NAMES])
+    const { core, deferred } = this.toolRegistry.agent(this.sid).view().split()
     const enableToolSearch = isToolSearchEnabled(deferred, options.model || this.modelId)
     this.deferredToolPool = enableToolSearch ? deferred : []
     setDeferredTools(this.deferredToolPool)
