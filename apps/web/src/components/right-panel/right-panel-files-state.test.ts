@@ -301,6 +301,16 @@ describe('preview tab 状态转换', () => {
     expect(state.activeItem).toEqual({ kind: 'file', tabId })
   })
 
+  test('reconcile 换 binding 后清空 previewTab', () => {
+    let state = createThreadFileWorkspace({ workspaceId: 'w1', fileContextId: 'ctx-1' })
+    state = previewFileTab(state, ref('a.ts'))
+    expect(state.previewTab).not.toBeNull()
+    const result = reconcileThreadFileWorkspaces({ thread: state }, [{
+      id: 'thread', workspaceId: 'w1', fileContextId: 'ctx-2', openFunctions: ['files'],
+    }])
+    expect(result.workspaces.thread!.previewTab).toBeNull()
+  })
+
   test('clearPreviewFileTab 无正式 tab 时回退 files 功能视图', () => {
     let state = previewFileTab(base(), ref('a.ts'))
     state = clearPreviewFileTab(state)

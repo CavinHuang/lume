@@ -456,6 +456,7 @@ export function reconcileThreadFileWorkspaces(
       openTabs,
       selectedRef: state.selectedRef?.source === 'session' && state.selectedRef.scopeId === thread.fileContextId ? state.selectedRef : null,
       temporaryPreviewTarget: null,
+      previewTab: null,
       directoryCache: {},
       sourceStatus: Object.fromEntries(SOURCES.map((source) => [source, 'stale'])) as ThreadFileWorkspace['sourceStatus'],
       previewScopes: {},
