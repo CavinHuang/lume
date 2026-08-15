@@ -24,9 +24,11 @@ import { onSidecarEvent } from '@/lib/desktop-api'
 import { AGENT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, type BrowserTabDescriptor, type BrowserWorkspaceDescriptor, type FileSource } from '@lume/shared'
 import { cn } from '@/lib/utils'
 import {
+  clearPreviewFileTab,
   createThreadFileWorkspace,
   getEffectiveThreadFileBindings,
   normalizePersistedRightPanelFileTabs,
+  pinPreviewFileTab,
   reconcileThreadFileWorkspaces,
   type ThreadFileWorkspace,
 } from './right-panel-files-state'
@@ -618,6 +620,13 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
               onActivateBrowser={activateBrowser}
               onCloseFunction={(fn) => action({ type: 'close-function', threadId, function: fn })}
               onCloseFile={(tabId) => action({ type: 'close-file', threadId, tabId })}
+              previewTab={runtimeWorkspace.previewTab}
+              onActivatePreview={() => {
+                closeCodingReview({ type: 'deactivate', threadId })
+                updateRuntime((current) => current.previewTab ? { ...current, activeItem: { kind: 'file-preview' } } : current)
+              }}
+              onPinPreview={() => updateRuntime(pinPreviewFileTab)}
+              onClosePreview={() => updateRuntime(clearPreviewFileTab)}
               onCloseBrowser={closeBrowser}
               onNewBrowserToRight={(tabId) => openBrowser('', tabId)}
               onReloadBrowser={reloadBrowser}

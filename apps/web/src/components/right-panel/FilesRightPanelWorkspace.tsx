@@ -12,6 +12,7 @@ import { UnifiedFileTree } from './UnifiedFileTree'
 import { RightPanelMcpResourcePreview } from './RightPanelMcpResourcePreview'
 import {
   openFileTab,
+  clearPreviewFileTab,
   createRightPanelFileTarget,
   removeFileRef,
   rightPanelFileTargetKey,
@@ -54,10 +55,11 @@ export function FilesRightPanelWorkspace({
   const wide = isWideFileWorkspace(containerWidth)
   const treeCollapsed = wide && preferences.treeCollapsed === true
   const activeFileTabId = workspace.activeItem?.kind === 'file' ? workspace.activeItem.tabId : null
-  const activeTab = activeFileTabId
-    ? workspace.openTabs.find((tab) => tab.id === activeFileTabId)
-    : undefined
-  const previewTarget = activeTab?.target ?? (wide ? workspace.temporaryPreviewTarget : null)
+  const activeTab = activeFileTabId ? workspace.openTabs.find((tab) => tab.id === activeFileTabId) : undefined
+  const previewActiveTab = workspace.activeItem?.kind === 'file-preview' ? workspace.previewTab : null
+  // 过渡期兼容（Task 4 删）：temporaryPreviewTarget 已无写入方，仅兜底宽模式读取
+  const createPreviewTargetFromTemporary = (): RightPanelFileTarget | null => workspace.temporaryPreviewTarget
+  const previewTarget = activeTab?.target ?? previewActiveTab?.target ?? (wide ? createPreviewTargetFromTemporary() : null)
   const previewRef = previewTarget ? rightPanelFileTargetRef(previewTarget) : null
   const showTree = !treeCollapsed && (wide || workspace.activeItem?.kind !== 'file')
   const treeWidth = useMemo(
@@ -85,6 +87,10 @@ export function FilesRightPanelWorkspace({
     }))
   }, [onWorkspaceChange])
   const handleMissing = useCallback((ref: FileRef) => {
+    if (workspaceRef.current.activeItem?.kind === 'file-preview' && workspaceRef.current.previewTab) {
+      onWorkspaceChange(clearPreviewFileTab(workspaceRef.current))
+      return
+    }
     onWorkspaceChange(removeFileRef(workspaceRef.current, ref, false, openFunctionsRef.current))
   }, [onWorkspaceChange])
   const previewScopeKey = activeTab?.id ?? (previewTarget ? `temporary:${rightPanelFileTargetKey(previewTarget)}` : 'temporary')
@@ -132,7 +138,6 @@ export function FilesRightPanelWorkspace({
           openFunctions={openFunctions}
           onWorkspaceChange={onWorkspaceChange}
           onOpenFile={openFile}
-          singleClickOpen={!wide}
         />
         {!wide && workspace.selectedRef && (
           <FileDetailsBar
@@ -151,12 +156,12 @@ export function FilesRightPanelWorkspace({
           : <RightPanelFilePreview
           threadId={threadId}
           fileRef={previewRef}
-          lineSelection={activeTab?.lineSelection}
-          navigationRevision={activeTab?.navigationRevision}
+          lineSelection={activeTab?.lineSelection ?? previewActiveTab?.lineSelection}
+          navigationRevision={activeTab?.navigationRevision ?? previewActiveTab?.navigationRevision}
           onOpenFile={openFile}
           onMissing={handleMissing}
           onPreviewScopeChange={handlePreviewScopeChange}
-          onEditStart={!activeTab && previewTarget ? () => openFile(previewTarget) : undefined}
+          onEditStart={!activeTab && previewActiveTab ? () => openFile(previewActiveTab.target) : undefined}
           treeCollapsed={treeCollapsed}
           onToggleTree={wide ? () => setPreferences((current) => ({ ...current, treeCollapsed: !treeCollapsed })) : undefined}
         />}

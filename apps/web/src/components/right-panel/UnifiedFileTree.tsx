@@ -33,6 +33,7 @@ import {
   createRightPanelFileTarget,
   fileRefKey,
   getFileTreeRevealDirectories,
+  previewFileTab,
   removeFileRef,
   rewriteFileRefPrefix,
   rightPanelFileTargetKey,
@@ -345,13 +346,9 @@ export function UnifiedFileTree({
 
   const select = (ref: FileRef) => {
     const entry = findCachedEntry(cacheRef.current, ref)
-    commitWorkspace({
-      ...workspaceRef.current,
-      selectedRef: ref,
-      temporaryPreviewTarget: entry?.isDirectory
-        ? workspaceRef.current.temporaryPreviewTarget
-        : createRightPanelFileTarget(ref),
-    })
+    commitWorkspace(entry?.isDirectory
+      ? { ...workspaceRef.current, selectedRef: ref }
+      : previewFileTab({ ...workspaceRef.current, selectedRef: ref }, ref))
   }
   const toggle = async (ref: FileRef) => {
     const key = fileRefKey(ref)
@@ -616,8 +613,8 @@ export function UnifiedFileTree({
                 || `${resource.name ?? ''} ${resource.uri} ${resource.serverName}`.toLowerCase().includes(query.trim().toLowerCase()))
               .map((resource) => {
                 const target = { kind: 'mcp-resource' as const, workspaceSlug, resource }
-                const selected = workspace.temporaryPreviewTarget
-                  ? rightPanelFileTargetKey(workspace.temporaryPreviewTarget) === rightPanelFileTargetKey(target)
+                const selected = workspace.previewTab
+                  ? rightPanelFileTargetKey(workspace.previewTab.target) === rightPanelFileTargetKey(target)
                   : false
                 return (
                   <Button
@@ -625,11 +622,7 @@ export function UnifiedFileTree({
                   variant="ghost"
                   className={cn('h-7 w-full justify-start gap-1.5 rounded-none px-5 text-[12px]', selected && 'bg-primary/10 text-primary')}
                   title={`${resource.serverName} · ${resource.uri}`}
-                  onClick={() => commitWorkspace({
-                    ...workspaceRef.current,
-                    selectedRef: null,
-                    temporaryPreviewTarget: target,
-                  })}
+                  onClick={() => commitWorkspace(previewFileTab({ ...workspaceRef.current, selectedRef: null }, target))}
                   onDoubleClick={() => onOpenFile(target)}
                 >
                   <Braces size={13} className="shrink-0 text-foreground/45" />
