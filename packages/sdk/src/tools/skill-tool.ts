@@ -41,7 +41,7 @@ export function createSkillTool(registry: SkillRegistry | SkillLookup = globalSk
     'Execute a skill within the current conversation. ' +
     'Skills provide specialized capabilities and domain knowledge. ' +
     'Use this tool with the skill name and optional arguments. ' +
-    'Available skills are listed in system-reminder messages.',
+    'Available skills are listed in an <available_skills> runtime context block.',
   inputSchema: {
     type: 'object',
     properties: {
