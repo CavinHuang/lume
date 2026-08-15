@@ -1,7 +1,57 @@
 import { describe, expect, test } from "bun:test";
 import { createNodeReplTools } from "./create-node-repl-tools";
 import { createNodeReplRuntimeRegistry } from "./node-repl-runtime-registry";
-import type { JsExecInput, NodeReplRuntimeClient, NodeReplExecutionResult } from "./node-repl-types";
+import { JsonlNodeReplRuntimeClient } from "./node-repl-runtime-manager";
+import type {
+  JsExecInput,
+  NodeReplRuntimeClient,
+  NodeReplRuntimeExecOptions,
+  NodeReplExecutionResult
+} from "./node-repl-types";
+
+interface HostResultWrite {
+  method: string;
+  params: { id: string; ok: boolean; value?: unknown; error?: string };
+}
+
+function createHostCallHarness(options: NodeReplRuntimeExecOptions) {
+  const writes: HostResultWrite[] = [];
+  const client = new JsonlNodeReplRuntimeClient({
+    threadId: "thread-1",
+    cwd: "D:/repo",
+    hostPath: "host.js",
+    kernelPath: "kernel.js",
+    nodePath: "node.exe"
+  });
+  (client as any).child = {
+    stdin: {
+      writable: true,
+      write(line: string, _encoding: string, callback?: (error?: Error | null) => void) {
+        writes.push(JSON.parse(line) as HostResultWrite);
+        callback?.(null);
+        return true;
+      }
+    },
+    kill() {}
+  };
+  (client as any).activeExecs.set("exec-1", {
+    options,
+    abortController: new AbortController(),
+    computerUseResults: []
+  });
+  async function emitHostCall(method: string, args?: unknown): Promise<HostResultWrite | undefined> {
+    const before = writes.length;
+    await (client as any).handleRuntimeHostCall({
+      type: "runtime_host_call",
+      id: `host-${before + 1}`,
+      exec_id: "exec-1",
+      method,
+      args
+    });
+    return writes[before];
+  }
+  return { emitHostCall };
+}
 
 function createTestRuntime(): NodeReplRuntimeClient {
   const vars = new Map<string, number>();
@@ -81,5 +131,66 @@ describe("node_repl tool contract", () => {
     const result = await js.call({ code: "nodeRepl.setResponseMeta({ traceId: 't-1' })" }, makeToolContext());
 
     expect((result as any)._meta).toEqual({ traceId: "t-1" });
+  });
+});
+
+describe("node_repl tool bridge host calls", () => {
+  test("tool_call routes to toolRequest and writes the result back", async () => {
+    const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
+    const { emitHostCall } = createHostCallHarness({
+      toolRequest: async (request) => {
+        calls.push(request);
+        return { content: [{ type: "text", text: "done" }] };
+      }
+    });
+
+    const write = await emitHostCall("tool_call", { name: "search", params: { query: "lume" } });
+
+    expect(calls).toEqual([{ method: "tool_call", args: { name: "search", params: { query: "lume" } } }]);
+    expect(write).toMatchObject({
+      method: "host_result",
+      params: { ok: true, value: { content: [{ type: "text", text: "done" }] } }
+    });
+  });
+
+  test("tool_list routes to toolRequest with empty args", async () => {
+    const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
+    const { emitHostCall } = createHostCallHarness({
+      toolRequest: async (request) => {
+        calls.push(request);
+        return { tools: [], documentation: "docs" };
+      }
+    });
+
+    const write = await emitHostCall("tool_list", {});
+
+    expect(calls).toEqual([{ method: "tool_list", args: {} }]);
+    expect(write).toMatchObject({
+      params: { ok: true, value: { tools: [], documentation: "docs" } }
+    });
+  });
+
+  test("missing toolRequest returns a structured error without crashing", async () => {
+    const { emitHostCall } = createHostCallHarness({});
+
+    const write = await emitHostCall("tool_call", { name: "search", params: {} });
+
+    expect(write).toMatchObject({
+      params: { ok: false, error: "tools bridge is unavailable" }
+    });
+  });
+
+  test("toolRequest rejection surfaces the error message", async () => {
+    const { emitHostCall } = createHostCallHarness({
+      toolRequest: async () => {
+        throw new Error("permission denied");
+      }
+    });
+
+    const write = await emitHostCall("tool_list", {});
+
+    expect(write).toMatchObject({
+      params: { ok: false, error: "permission denied" }
+    });
   });
 });

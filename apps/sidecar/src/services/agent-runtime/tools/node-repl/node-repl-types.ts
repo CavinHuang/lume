@@ -73,6 +73,7 @@ export interface NodeReplRuntimeExecOptions {
   emitBrowserAuthRequest?: (request: NodeReplBrowserAuthRequest, signal: AbortSignal) => Promise<NodeReplBrowserAuthResult>;
   emitComputerUseRequest?: (request: NodeReplComputerUseRequest, signal: AbortSignal) => Promise<NodeReplComputerUseResult>;
   browserRequest?: (request: { method: string; params: Record<string, unknown> }, signal: AbortSignal) => Promise<unknown>;
+  toolRequest?: (request: { method: "tool_call" | "tool_list"; args: Record<string, unknown> }, signal: AbortSignal) => Promise<unknown>;
 }
 
 export interface NodeReplRuntimeClient {
