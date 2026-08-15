@@ -21,7 +21,7 @@
 | 单击树文件 | 树内高亮 + 预览槽显示内容；**TabBar 高亮保持在"文件"功能 tab 不动** |
 | 单击另一文件 | 预览槽单槽替换（树不动） |
 | 双击文件 / 预览内开始编辑 | 升格正式 file tab（复用 `openFileTab` 去重），activeItem 切到该 tab |
-| 激活正式 file tab | 该文件全宽预览（既有行为） |
+| 激活正式 file tab | 预览区显示该正式文件（既有行为） |
 | 回"文件"功能 tab | 树+预览槽原样恢复（预览槽内容保留） |
 
 ## 布局（宽窄统一模型）
@@ -51,7 +51,7 @@
   - `UnifiedFileTree.select()`：设 previewTab 但**不动 activeItem**（树高亮走 selectedRef 既有机制）；
   - 窄模式二态切换态：新增 preference（如 `narrowShowsPreview: boolean`），由"单击文件→true / 返回树→false"驱动；宽模式忽略；
   - `FilesRightPanelWorkspace`：预览槽渲染已有（previewTarget 链），新增预览槽头部（文件名+元信息+窄模式返回钮）；`handleMissing` 预览清理保留。
-- **不持久化**：previewTab 与窄模式切换态均为会话内状态（previewTab 本就不持久化；切换态入 preferences 则随 preferences 持久化，可接受）。
+- **持久化边界**：previewTab 仅存在于当前会话；窄模式切换态沿用 preferences 持久化。
 
 ## 错误处理与边界
 

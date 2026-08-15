@@ -11,12 +11,12 @@ import {
   openFileTab,
   normalizePersistedRightPanelFileTabs,
   normalizeLineSelection,
-  pinPreviewFileTab,
   clearPreviewFileTab,
+  pinPreviewFileTab,
   previewFileTab,
   reconcileThreadFileWorkspaces,
-    removeFileRef,
-    setFilePreviewScope,
+  removeFileRef,
+  setFilePreviewScope,
   settleFileTreeReveal,
   rewriteFileRefPrefix,
 } from './right-panel-files-state'
@@ -276,6 +276,15 @@ describe('preview tab 状态转换', () => {
     expect(state.activeItem).toEqual({ kind: 'file', tabId: state.openTabs[0]!.id })
   })
 
+  test('openFileTab 直接打开当前预览时同样升格并清空预览', () => {
+    let state = previewFileTab(base(), ref('a.ts'))
+    state = openFileTab(state, ref('./a.ts'))
+
+    expect(state.previewTab).toBeNull()
+    expect(state.openTabs).toHaveLength(1)
+    expect(state.activeItem).toEqual({ kind: 'file', tabId: state.openTabs[0]!.id })
+  })
+
   test('pinPreviewFileTab 对已打开文件去重（激活既有 tab）', () => {
     let state = openFileTab(base(), ref('a.ts'))
     const openTabId = state.openTabs[0]!.id
@@ -312,6 +321,22 @@ describe('preview tab 状态转换', () => {
   test('clearPreviewFileTab 无预览时原样返回', () => {
     const state = base()
     expect(clearPreviewFileTab(state)).toBe(state)
+  })
+
+  test('重命名只清除同 scope 的路径段命中预览', () => {
+    const preview = previewFileTab(base(), ref('src/a.ts'))
+
+    expect(rewriteFileRefPrefix(preview, ref('src', 'session', 'scope-2'), ref('lib', 'session', 'scope-2')).previewTab).not.toBeNull()
+    expect(rewriteFileRefPrefix(preview, ref('sr', 'session', 'scope-1'), ref('lib')).previewTab).not.toBeNull()
+    expect(rewriteFileRefPrefix(preview, ref('./src'), ref('lib')).previewTab).toBeNull()
+  })
+
+  test('递归删除只清除同 scope 的路径段命中预览', () => {
+    const preview = previewFileTab(base(), ref('src-next/a.ts'))
+
+    expect(removeFileRef(preview, ref('src'), true, ['files']).previewTab).not.toBeNull()
+    expect(removeFileRef(preview, ref('src-next', 'session', 'scope-2'), true, ['files']).previewTab).not.toBeNull()
+    expect(removeFileRef(preview, ref('src-next'), true, ['files']).previewTab).toBeNull()
   })
 })
 

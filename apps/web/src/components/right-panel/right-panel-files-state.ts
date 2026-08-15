@@ -106,11 +106,15 @@ export function openFileTab(
   const target = normalizeRightPanelFileTarget(input)
   const lineSelection = normalizeLineSelection(options.lineSelection)
   const key = rightPanelFileTargetKey(target, options)
+  const previewTab = state.previewTab && rightPanelFileTargetKey(state.previewTab.target, options) === key
+    ? null
+    : state.previewTab
   const existing = state.openTabs.find((tab) => rightPanelFileTargetKey(tab.target, options) === key)
   if (existing) {
     const navigationRevision = options.navigationRevision ?? existing.navigationRevision + 1
     return {
       ...state,
+      previewTab,
       openTabs: state.openTabs.map((tab) => tab.id === existing.id ? {
         ...tab,
         lineSelection,
@@ -131,6 +135,7 @@ export function openFileTab(
     : { ...base, target: normalized, ref: normalized.ref }
   return {
     ...state,
+    previewTab,
     openTabs: [...state.openTabs, tab],
     activeItem: { kind: 'file', tabId: tab.id },
   }
@@ -165,12 +170,11 @@ export function pinPreviewFileTab(
   options: FileRefIdentityOptions = {},
 ): ThreadFileWorkspace {
   if (!state.previewTab) return state
-  const pinned = openFileTab({ ...state, previewTab: null }, state.previewTab.target, {
+  return openFileTab(state, state.previewTab.target, {
     ...options,
     lineSelection: state.previewTab.lineSelection,
     navigationRevision: state.previewTab.navigationRevision,
   })
-  return { ...pinned, previewTab: null }
 }
 
 /** 清除预览：预览不占激活态，activeItem 原样保留 */
@@ -318,12 +322,11 @@ function rewriteRef(ref: FileRef, from: FileRef, to: FileRef): FileRef {
 
 export function rewriteFileRefPrefix(state: ThreadFileWorkspace, from: FileRef, to: FileRef): ThreadFileWorkspace {
   const rewriteNullable = (value: FileRef | null) => value ? rewriteRef(value, from, to) : null
+  const rewrittenPreviewRef = state.previewTab?.ref ? rewriteRef(state.previewTab.ref, from, to) : undefined
   return {
     ...state,
     selectedRef: rewriteNullable(state.selectedRef),
-    previewTab: state.previewTab?.ref
-      && sameScope(state.previewTab.ref, from)
-      && isSameOrDescendant(state.previewTab.ref.relativePath, from.relativePath)
+    previewTab: state.previewTab?.ref && rewrittenPreviewRef !== state.previewTab.ref
       ? null
       : state.previewTab,
     openTabs: state.openTabs.map((tab) => {

@@ -9,9 +9,9 @@ import { RightPanelFilePreview } from './RightPanelFilePreview'
 import { UnifiedFileTree } from './UnifiedFileTree'
 import { RightPanelMcpResourcePreview } from './RightPanelMcpResourcePreview'
 import {
-  openFileTab,
   clearPreviewFileTab,
   fileRefKey,
+  openFileTab,
   removeFileRef,
   rightPanelFileTargetKey,
   rightPanelFileTargetRef,
@@ -77,9 +77,10 @@ export function FilesRightPanelWorkspace({
 
   // 窄模式树/预览二态：树内单击/双击产生新预览目标（previewTab 或正式 file tab）时切到预览
   const handleWorkspaceChange = useCallback((next: ThreadFileWorkspace | ((current: ThreadFileWorkspace) => ThreadFileWorkspace)) => {
-    const resolved = typeof next === 'function' ? next(workspaceRef.current) : next
+    const current = workspaceRef.current
+    const resolved = typeof next === 'function' ? next(current) : next
+    workspaceRef.current = resolved
     if (!wide) {
-      const current = workspaceRef.current
       const previewSet = resolved.previewTab && resolved.previewTab !== current.previewTab
       const tabActivated = resolved.activeItem?.kind === 'file' && resolved.activeItem !== current.activeItem
       if (previewSet || tabActivated) {
