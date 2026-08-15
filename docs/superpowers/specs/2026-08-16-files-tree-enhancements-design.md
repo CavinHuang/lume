@@ -53,12 +53,12 @@
 
 - **入口**：①工具条「附加目录」按钮（`dialog.showOpenDialog` 选系统目录，desktop-only）②拖文件夹到树（drop 即附加）
 - **作用域选择**：附加时问一次（轻量 DropdownMenu 二选一：本会话 / 此工作区共享）；或按住拖拽=会话、按钮=菜单选——v1 简化：按钮菜单二选一，拖拽默认会话级
-- **语义**：**引用不复制**——记录绝对路径到 `external-attachments.json`（基建已有双作用域：thread `.context/` / workspace `.meta/`，`agent-attachment-meta-service.ts:79-92`）；条目**只读**（预览/复制路径/系统打开/在文件管理器显示；无重命名/移动/删除/晋升）
+- **语义**：**引用不复制**——新轻量元数据 `external-dirs.json`（`Record<absolutePath, { attachedAt: string }>`，双作用域：thread `.context/` / workspace `.meta/`，与既有 external-attachments.json 同目录并列）。注：既有 `attachment-meta-service` 的键设计是"scope 根内相对路径"（为复制式附加设计），引用式外部目录不在 scope 根内无落点——故复用其**双作用域 JSON + 原子写模式**（`.tmp`+rename）而非存储本身；条目**只读**（预览/复制路径/系统打开/在文件管理器显示；无重命名/移动/删除/晋升）
 - **数据流**：
-  - 读：新 IPC `LIST_EXTERNAL_ATTACHMENT_DIRECTORY`（入参 `{ absolutePath, scope: 'thread'|'workspace', scopeId }`；列目录返回 FileEntry[]（无 FileRef——外部路径不在 FileRef 体系，用 `ExternalAttachmentMeta` 寻址）；权限=只读）
-  - 写：`ADD_EXTERNAL_ATTACHMENT` / `REMOVE_EXTERNAL_ATTACHMENT`（upsert/删除元数据；移除不动物理目录）
-  - 预览：外部文件走现有预览管道需要 FileRef——v1 预览降级为「系统打开 + 在文件管理器显示」（不做内联预览；内联预览需 FileRef 体系扩展，留 follow-up）
-- **消费既有基建**：`FileEntry.externalAttachment` 字段（shared 类型已有）在 mini tree 行渲染 ✕ 与「共享」badge 时使用
+  - 读：新 IPC `LIST_EXTERNAL_DIRS`（返回当前双作用域附加清单）+ `LIST_EXTERNAL_DIR_ENTRIES`（入参 `{ absolutePath }`；列目录返回 `Array<{ name, isDirectory, size?, modifiedAt? }>`——外部路径不在 FileRef 体系；权限=只读，拒绝符号链接）
+  - 写：`ADD_EXTERNAL_DIR` / `REMOVE_EXTERNAL_DIR`（upsert/删除 `external-dirs.json` 条目；移除不动物理目录；ADD 校验路径存在且为目录）
+  - 预览：v1 预览降级为「系统打开 + 在文件管理器显示」（不做内联预览，留 follow-up）
+- **元数据服务**：sidecar 新 service（或 attachment-meta-service 同文件追加独立函数组）`external-dirs-service.ts`：`listExternalDirs(scope)` / `upsertExternalDir(scope, absolutePath)` / `removeExternalDir(scope, absolutePath)`——存储模式照抄 attachment-meta（原子写、按作用域路径解析）
 - **展示细节**：workspace 级条目标题行加「共享」badge（`text-[9px]` 蓝灰）；mini tree 根行 `ChevronDown` 折叠 + hover ✕（stopPropagation）；子项懒加载（展开时 LIST_EXTERNAL_ATTACHMENT_DIRECTORY）；空目录显示「空文件夹」；目录物理不存在显示红色「路径不可用」+ ✕
 - **状态**：mini tree 展开态/子目录缓存为组件本地 useState（不入 ThreadFileWorkspace——外部目录与 FileRef workspace 生命周期无关）；附加清单本身在元数据 JSON（持久化天然具备）
 - **不做**：复制式附加（Proma 模式）；外部文件内联预览；外部目录内搜索（v1 搜索仍限四 source）
