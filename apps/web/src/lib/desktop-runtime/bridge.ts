@@ -62,6 +62,7 @@ export interface DesktopBridgeAPI {
     listener: (payload: T) => void
   ): Promise<() => void> | (() => void)
   convertFileSrc?(path: string): string
+  getPathForFile?(file: File): string
   relaunch?(): Promise<void>
   checkForUpdate?(): Promise<DesktopUpdateHandle | null>
   getAppSignature?(): Promise<DesktopAppSignature>

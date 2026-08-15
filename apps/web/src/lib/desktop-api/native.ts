@@ -110,6 +110,12 @@ export const writeClipboardImage = (source: ClipboardImageSource) =>
   invoke<void>('write_clipboard_image', source)
 export const localFilePreviewUrl = (path: string) => convertFileSrc(path)
 
+// Electron 32+ 移除 File.path，拖入文件路径须经 preload 的 webUtils 桥同步获取；非桌面/测试环境返回 undefined
+export const getPathForFile = (file: File): string | undefined => {
+  const bridge = getDesktopBridge()
+  return typeof bridge?.getPathForFile === 'function' ? bridge.getPathForFile(file) : undefined
+}
+
 let pendingDesktopUpdate: Update | null = null
 
 function toDesktopUpdateInfo(update: Update): DesktopUpdateInfo {

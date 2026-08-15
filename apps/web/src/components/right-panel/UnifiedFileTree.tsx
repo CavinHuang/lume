@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import {
+  getPathForFile,
   isDesktopRuntime,
   openFileRefInSystem,
   openFolderDialog,
@@ -670,8 +671,9 @@ export function UnifiedFileTree({
         // 仅放行 OS 文件拖入（树内 FileRef 拖拽不含 Files 类型，不受影响）
         if (event.dataTransfer.types.includes('Files')) event.preventDefault()
       }} onDrop={(event) => {
-        const file = event.dataTransfer.files[0] as (File & { path?: string }) | undefined
-        const path = file?.path
+        const file = event.dataTransfer.files[0]
+        // Electron 32+ 移除 File.path：优先走 preload 的 webUtils 桥，旧运行时回退 .path
+        const path = file ? getPathForFile(file) ?? (file as File & { path?: string }).path : undefined
         if (!path) return
         event.preventDefault()
         void attachExternalDir('thread', path)

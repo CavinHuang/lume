@@ -51,6 +51,10 @@ export function ExternalDirsSection({ dirs, onRemove }: {
           setEntriesCache((cache) => ({ ...cache, [absolutePath]: entries }))
         } catch (error) {
           toast.error(error instanceof Error ? error.message : '读取外部目录失败')
+          // 加载失败且未写缓存：回滚展开态，避免行停留在「加载中…」
+          next.delete(absolutePath)
+          setExpanded(next)
+          return
         }
       }
     }
@@ -166,7 +170,7 @@ function ExternalDirRow(props: {
                 name={item.name}
                 depth={props.depth + 1}
                 removable={false}
-                available
+                available={true}
                 isDirectory={item.isDirectory}
               />
             ))
