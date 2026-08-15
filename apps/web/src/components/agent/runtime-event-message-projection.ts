@@ -104,6 +104,10 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
 
   if (event.type === 'memory.context.used') {
     if (event.items.length === 0) return
+    // 终态后到达的尾巴事件不得经 ??= 重建同 id 的空 assistant:会与已 flush 的
+    // assistant:<runId> 撞 React key(总线 run.end 先于旧路 memory_context_used
+    // 落盘关闭流时到达此处)。#22 双投 duplicate key 的实际路径。
+    if (state.terminalClosed) return
     state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block) => block.type !== 'memory_context_used')
     state.currentAssistant.blocks.push({
@@ -159,6 +163,8 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'advisor.reviewed') {
+    // 同 memory.context.used:终态后的 advisor 尾巴不重建同 id assistant
+    if (state.terminalClosed) return
     state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.blocks.push({
       type: 'advisor_review',
