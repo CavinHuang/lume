@@ -83,7 +83,17 @@ export function createNodeReplTools(input: {
           sandbox: context.sandbox,
           emitBrowserAuthRequest: (request, signal) => resolveBrowserAuthRequest({ request, signal, threadId, toolUseId: context.toolUseId }),
           emitComputerUseRequest: input.emitComputerUseRequest,
-          toolRequest: async (request) => {
+          toolRequest: async (request, signal) => {
+            // Only pre-dispatch abort is handled here; in-flight cancellation awaits
+            // engine-side semantics and is left untouched.
+            if (signal?.aborted) {
+              return {
+                type: "tool_result",
+                tool_use_id: "",
+                content: "Error: aborted before dispatch.",
+                is_error: true
+              };
+            }
             // Self-invocation would nest a registry.exec on the same threadId behind the
             // running outer exec (deterministic deadlock), so reject it before dispatch.
             const excludedNames = ["js", `${NODE_REPL_MCP_WRAPPER_PREFIX}js`];

@@ -364,6 +364,47 @@ describe("createNodeReplTools", () => {
     });
   });
 
+  test("js honors an aborted signal before dispatching nested tool calls", async () => {
+    let abortedResult: unknown;
+    let nestedCallCount = 0;
+    const tools = createNodeReplTools({
+      sessionId: "thread-1",
+      cwd: "D:/repo",
+      registry: {
+        async exec(_threadId, _input, options) {
+          const controller = new AbortController();
+          controller.abort();
+          abortedResult = await options?.toolRequest?.(
+            { method: "tool_call", args: { name: "Read", params: {} } },
+            controller.signal,
+          );
+          return { content: [{ type: "text", text: "ready" }] };
+        },
+        async addModuleDir() { return true; },
+        async reset() {},
+        async shutdown() {},
+        debugSnapshot() { return null; },
+      },
+    });
+    const context = {
+      ...makeToolContext(),
+      executeNestedTool: async () => {
+        nestedCallCount += 1;
+        return { type: "tool_result", tool_use_id: "nested-1", content: "read ok" };
+      },
+    } as any;
+
+    await tools.find((tool) => tool.name === "js")!.call({ code: "await tools.call('Read')" }, context);
+
+    expect(abortedResult).toEqual({
+      type: "tool_result",
+      tool_use_id: "",
+      content: "Error: aborted before dispatch.",
+      is_error: true
+    });
+    expect(nestedCallCount).toBe(0);
+  });
+
   test("js resolves browserAuth through the broker without returning secrets", async () => {
     const dispatched: any[] = [];
     let runtimeAuthResult: unknown;
