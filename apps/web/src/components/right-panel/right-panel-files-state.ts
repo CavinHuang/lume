@@ -161,20 +161,6 @@ export function previewFileTab(
   return { ...state, previewTab }
 }
 
-/** 固定预览：转正为正式 tab（复用 openFileTab 的同文件去重），随后清空预览槽 */
-export function pinPreviewFileTab(
-  state: ThreadFileWorkspace,
-  options: FileRefIdentityOptions = {},
-): ThreadFileWorkspace {
-  if (!state.previewTab) return state
-  const pinned = openFileTab({ ...state, previewTab: null }, state.previewTab.target, {
-    ...options,
-    lineSelection: state.previewTab.lineSelection,
-    navigationRevision: state.previewTab.navigationRevision,
-  })
-  return { ...pinned, previewTab: null }
-}
-
 /** 清除预览：预览不占激活态，activeItem 原样保留 */
 export function clearPreviewFileTab(state: ThreadFileWorkspace): ThreadFileWorkspace {
   if (!state.previewTab) return state

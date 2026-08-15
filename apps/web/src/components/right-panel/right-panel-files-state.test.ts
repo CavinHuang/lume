@@ -11,7 +11,6 @@ import {
   openFileTab,
   normalizePersistedRightPanelFileTabs,
   normalizeLineSelection,
-  pinPreviewFileTab,
   clearPreviewFileTab,
   previewFileTab,
   reconcileThreadFileWorkspaces,
@@ -282,29 +281,6 @@ describe('preview tab 状态转换', () => {
     expect(state.previewTab).toBeNull()
     expect(state.openTabs).toHaveLength(1)
     expect(state.activeItem).toEqual({ kind: 'file', tabId: state.openTabs[0]!.id })
-  })
-
-  test('pinPreviewFileTab 原地转正并清空预览', () => {
-    let state = previewFileTab(base(), ref('a.ts'))
-    state = pinPreviewFileTab(state)
-    expect(state.previewTab).toBeNull()
-    expect(state.openTabs).toHaveLength(1)
-    expect(state.openTabs[0]!.id).toMatch(/^file:/)
-    expect(state.activeItem).toEqual({ kind: 'file', tabId: state.openTabs[0]!.id })
-  })
-
-  test('pinPreviewFileTab 对已打开文件去重（激活既有 tab）', () => {
-    let state = openFileTab(base(), ref('a.ts'))
-    const openTabId = state.openTabs[0]!.id
-    state = previewFileTab(state, ref('a.ts'))
-    state = pinPreviewFileTab(state)
-    expect(state.openTabs).toHaveLength(1)
-    expect(state.activeItem).toEqual({ kind: 'file', tabId: openTabId })
-  })
-
-  test('pinPreviewFileTab 无预览时原样返回', () => {
-    const state = base()
-    expect(pinPreviewFileTab(state)).toBe(state)
   })
 
   test('clearPreviewFileTab 清预览且不影响 activeItem', () => {
