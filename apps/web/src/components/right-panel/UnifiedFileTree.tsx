@@ -563,6 +563,7 @@ export function UnifiedFileTree({
       onPromoteToProject={mutatePromote}
       onCopyAbsolutePath={copyAbsolutePath}
       showPath={Boolean(query.trim())}
+      promoteDisabled={!workspaceSlug}
     />
   )
   return (
@@ -737,6 +738,7 @@ function TreeEntryRow(props: {
   onArmDoubleClick?: (ref: FileRef) => void
   onEdit: (entry: FileEntry) => void; onMove: (entry: FileEntry) => void; onDelete: (entry: FileEntry) => void
   onPromoteToProject: (entry: FileEntry) => Promise<void>; onCopyAbsolutePath: (ref: FileRef) => Promise<void>; showPath: boolean
+  promoteDisabled?: boolean
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const { entry } = props
@@ -800,7 +802,13 @@ function TreeEntryRow(props: {
             <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void revealFileRefInSystem(entry.ref!)}>在文件管理器中显示</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => void writeClipboardText(entry.ref!.relativePath)}>复制相对路径</DropdownMenuItem>
             <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void props.onCopyAbsolutePath(entry.ref!)}>复制绝对路径</DropdownMenuItem>
-            {canPromoteToProject(entry.ref.source) && <DropdownMenuItem onSelect={() => void props.onPromoteToProject(entry)}>晋升到项目</DropdownMenuItem>}
+            {canPromoteToProject(entry.ref.source) && (
+              <DropdownMenuItem
+                disabled={props.promoteDisabled}
+                title={props.promoteDisabled ? '未绑定项目目录，无法晋升' : '复制到项目目录，所有会话可用'}
+                onSelect={() => void props.onPromoteToProject(entry)}
+              >晋升到项目</DropdownMenuItem>
+            )}
             <DropdownMenuItem disabled={!capabilities.rename} onSelect={() => props.onEdit(entry)}>重命名</DropdownMenuItem>
             <DropdownMenuItem disabled={!capabilities.move} onSelect={() => props.onMove(entry)}>移动</DropdownMenuItem>
             <DropdownMenuItem destructive disabled={!capabilities.delete} onSelect={() => props.onDelete(entry)}>删除</DropdownMenuItem>
