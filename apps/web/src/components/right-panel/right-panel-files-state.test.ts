@@ -11,6 +11,9 @@ import {
   openFileTab,
   normalizePersistedRightPanelFileTabs,
   normalizeLineSelection,
+  pinPreviewFileTab,
+  clearPreviewFileTab,
+  previewFileTab,
   reconcileThreadFileWorkspaces,
     removeFileRef,
     setFilePreviewScope,
@@ -240,3 +243,73 @@ describe('right-panel-files-state', () => {
     })
   })
 })
+
+describe('preview tab 状态转换', () => {
+  const binding = { fileContextId: 'ctx-1' }
+  const base = () => createThreadFileWorkspace(binding)
+
+  test('previewFileTab 设置预览并激活 file-preview', () => {
+    const next = previewFileTab(base(), ref('a.ts'))
+    expect(next.previewTab?.target).toEqual({ kind: 'file', ref: ref('a.ts') })
+    expect(next.activeItem).toEqual({ kind: 'file-preview' })
+    expect(next.openTabs).toEqual([])
+  })
+
+  test('previewFileTab 替换为不同文件（单槽）', () => {
+    let state = previewFileTab(base(), ref('a.ts'))
+    state = previewFileTab(state, ref('b.ts'))
+    expect(next_target(state)).toBe('b.ts')
+  })
+
+  test('previewFileTab 同文件重复点击只刷新 navigationRevision', () => {
+    let state = previewFileTab(base(), ref('a.ts'))
+    const firstRevision = state.previewTab!.navigationRevision
+    state = previewFileTab(state, ref('a.ts'))
+    expect(state.previewTab!.navigationRevision).toBe(firstRevision + 1)
+    expect(state.previewTab?.id).toMatch(/^preview:/)
+  })
+
+  test('pinPreviewFileTab 原地转正并清空预览', () => {
+    let state = previewFileTab(base(), ref('a.ts'))
+    state = pinPreviewFileTab(state)
+    expect(state.previewTab).toBeNull()
+    expect(state.openTabs).toHaveLength(1)
+    expect(state.openTabs[0]!.id).toMatch(/^file:/)
+    expect(state.activeItem).toEqual({ kind: 'file', tabId: state.openTabs[0]!.id })
+  })
+
+  test('pinPreviewFileTab 对已打开文件去重（激活既有 tab）', () => {
+    let state = openFileTab(base(), ref('a.ts'))
+    const openTabId = state.openTabs[0]!.id
+    state = previewFileTab(state, ref('a.ts'))
+    state = pinPreviewFileTab(state)
+    expect(state.openTabs).toHaveLength(1)
+    expect(state.activeItem).toEqual({ kind: 'file', tabId: openTabId })
+  })
+
+  test('pinPreviewFileTab 无预览时原样返回', () => {
+    const state = base()
+    expect(pinPreviewFileTab(state)).toBe(state)
+  })
+
+  test('clearPreviewFileTab 清预览并回退 activeItem 到最后一个正式 tab', () => {
+    let state = openFileTab(base(), ref('a.ts'))
+    const tabId = state.openTabs[0]!.id
+    state = previewFileTab(state, ref('b.ts'))
+    state = clearPreviewFileTab(state)
+    expect(state.previewTab).toBeNull()
+    expect(state.activeItem).toEqual({ kind: 'file', tabId })
+  })
+
+  test('clearPreviewFileTab 无正式 tab 时回退 files 功能视图', () => {
+    let state = previewFileTab(base(), ref('a.ts'))
+    state = clearPreviewFileTab(state)
+    expect(state.activeItem).toEqual({ kind: 'function', type: 'files' })
+  })
+})
+
+function next_target(state: ReturnType<typeof createThreadFileWorkspace>): string {
+  const tab = state.previewTab
+  if (!tab || tab.target.kind === 'mcp-resource') return ''
+  return tab.target.ref.relativePath
+}

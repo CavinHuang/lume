@@ -725,7 +725,7 @@ function RightPanelActiveContent({ runtime, browserWorkspace, workspaceSlug, wor
       />
     )
   }
-  if (active.kind === 'file' || active.type === 'files') {
+  if (active.kind === 'file' || active.kind === 'file-preview' || active.type === 'files') {
     return <FilesRightPanelWorkspace threadId={threadId} workspace={runtime} workspaceSlug={workspaceSlug} workspaceProjectPath={workspaceProjectPath} fileContextId={fileContextId} openFunctions={openFunctions} onWorkspaceChange={onRuntimeChange} />
   }
   if (active.kind === 'function' && active.type === 'chat') {
