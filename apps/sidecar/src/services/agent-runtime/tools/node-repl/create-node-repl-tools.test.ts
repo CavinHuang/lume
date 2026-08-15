@@ -58,6 +58,31 @@ describe("createNodeReplTools", () => {
     });
   });
 
+  test("js defaults timeout_ms to 300s and keeps explicit values", async () => {
+    const capturedInputs: any[] = [];
+    const tools = createNodeReplTools({
+      sessionId: "thread-1",
+      cwd: "D:/repo",
+      registry: {
+        async exec(_threadId, input) {
+          capturedInputs.push(input);
+          return { content: [{ type: "text", text: "ready" }] };
+        },
+        async addModuleDir() { return true; },
+        async reset() {},
+        async shutdown() {},
+        debugSnapshot() { return null; },
+      },
+    });
+    const js = tools.find((tool) => tool.name === "js")!;
+
+    await js.call({ code: "nodeRepl.write('ready')" }, makeToolContext());
+    await js.call({ code: "nodeRepl.write('fast')", timeout_ms: 5000 }, makeToolContext());
+
+    expect(capturedInputs[0].timeout_ms).toBe(300_000);
+    expect(capturedInputs[1].timeout_ms).toBe(5000);
+  });
+
   test("js_add_node_module_dir validates absolute node_modules paths", async () => {
     const tools = createNodeReplTools({
       sessionId: "thread-1",
@@ -280,6 +305,104 @@ describe("createNodeReplTools", () => {
     expect((wrappedSelfCallResult as any).is_error).toBe(true);
     expect((selfCallResult as any).content).toContain("cannot be invoked from inside the sandbox");
     expect(nestedCalls).toHaveLength(1);
+  });
+
+  test("js flattens nested tool content blocks for the sandbox", async () => {
+    const bridgedResults: unknown[] = [];
+    const nestedResults = [
+      {
+        type: "tool_result",
+        tool_use_id: "nested-1",
+        content: [
+          { type: "text", text: "line one" },
+          { type: "text", text: "line two" },
+          { type: "image", data: "x", mimeType: "image/png" }
+        ],
+        is_error: true
+      },
+      { type: "tool_result", tool_use_id: "nested-2", content: "plain ok" }
+    ];
+    const tools = createNodeReplTools({
+      sessionId: "thread-1",
+      cwd: "D:/repo",
+      registry: {
+        async exec(_threadId, _input, options) {
+          const signal = new AbortController().signal;
+          bridgedResults.push(await options?.toolRequest?.(
+            { method: "tool_call", args: { name: "Read", params: {} } },
+            signal,
+          ));
+          bridgedResults.push(await options?.toolRequest?.(
+            { method: "tool_call", args: { name: "Read", params: {} } },
+            signal,
+          ));
+          return { content: [{ type: "text", text: "ready" }] };
+        },
+        async addModuleDir() { return true; },
+        async reset() {},
+        async shutdown() {},
+        debugSnapshot() { return null; },
+      },
+    });
+    const context = {
+      ...makeToolContext(),
+      executeNestedTool: async () => nestedResults.shift(),
+    } as any;
+
+    await tools.find((tool) => tool.name === "js")!.call({ code: "await tools.call('Read')" }, context);
+
+    expect(bridgedResults[0]).toEqual({
+      type: "tool_result",
+      tool_use_id: "nested-1",
+      content: "line one\nline two\n[unsupported block: image]",
+      is_error: true
+    });
+    expect(bridgedResults[1]).toEqual({
+      type: "tool_result",
+      tool_use_id: "nested-2",
+      content: "plain ok"
+    });
+  });
+
+  test("js honors an aborted signal before dispatching nested tool calls", async () => {
+    let abortedResult: unknown;
+    let nestedCallCount = 0;
+    const tools = createNodeReplTools({
+      sessionId: "thread-1",
+      cwd: "D:/repo",
+      registry: {
+        async exec(_threadId, _input, options) {
+          const controller = new AbortController();
+          controller.abort();
+          abortedResult = await options?.toolRequest?.(
+            { method: "tool_call", args: { name: "Read", params: {} } },
+            controller.signal,
+          );
+          return { content: [{ type: "text", text: "ready" }] };
+        },
+        async addModuleDir() { return true; },
+        async reset() {},
+        async shutdown() {},
+        debugSnapshot() { return null; },
+      },
+    });
+    const context = {
+      ...makeToolContext(),
+      executeNestedTool: async () => {
+        nestedCallCount += 1;
+        return { type: "tool_result", tool_use_id: "nested-1", content: "read ok" };
+      },
+    } as any;
+
+    await tools.find((tool) => tool.name === "js")!.call({ code: "await tools.call('Read')" }, context);
+
+    expect(abortedResult).toEqual({
+      type: "tool_result",
+      tool_use_id: "",
+      content: "Error: aborted before dispatch.",
+      is_error: true
+    });
+    expect(nestedCallCount).toBe(0);
   });
 
   test("js resolves browserAuth through the broker without returning secrets", async () => {

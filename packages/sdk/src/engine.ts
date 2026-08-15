@@ -1812,6 +1812,7 @@ export class QueryEngine {
         this.config.deferredTools = this.config.deferredTools?.filter((candidate) => candidate.name !== name) ?? []
         promoted.push(name)
       }
+      if (promoted.length > 0) this.config.onToolsActivated?.(promoted)
       return promoted
     }
     toolContext.listAvailableTools = () =>

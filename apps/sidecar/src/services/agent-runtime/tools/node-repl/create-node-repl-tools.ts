@@ -17,6 +17,8 @@ import { getActiveBrowserBroker } from "../../../browser/browser-broker-holder";
 export const NODE_REPL_MCP_SERVER_ID = "node_repl";
 export const NODE_REPL_MCP_SERVER_NAME = "node_repl";
 const NODE_REPL_MCP_WRAPPER_PREFIX = `mcp__${NODE_REPL_MCP_SERVER_ID}__`;
+// Nested agent tool calls may sit on user approval; grant 5 minutes by default.
+const NODE_REPL_DEFAULT_TIMEOUT_MS = 300_000;
 
 export function createNodeReplTools(input: {
   sessionId: string;
@@ -49,7 +51,11 @@ export function createNodeReplTools(input: {
         properties: {
           title: { type: "string" },
           code: { type: "string" },
-          timeout_ms: { type: "number" },
+          timeout_ms: {
+            type: "number",
+            description:
+              "Execution timeout in milliseconds. Defaults to 300000 (5 minutes) because nested agent tool calls may wait on user approval; pass a smaller value for pure computation."
+          },
           _meta: { type: "object", additionalProperties: true }
         },
         required: ["code"]
@@ -65,16 +71,29 @@ export function createNodeReplTools(input: {
         const parsed = parseJsExecInput(rawArgs);
         if (!parsed.ok) return errorResult(context.toolUseId, parsed.error);
         const threadId = context.sessionId ?? input.sessionId;
-        const execInput = withRuntimeRequestMeta(parsed.value, {
-          threadId,
-          toolUseId: context.toolUseId
-        });
+        const execInput = withRuntimeRequestMeta(
+          { ...parsed.value, timeout_ms: parsed.value.timeout_ms ?? NODE_REPL_DEFAULT_TIMEOUT_MS },
+          {
+            threadId,
+            toolUseId: context.toolUseId
+          }
+        );
         const result = await registry.exec(threadId, execInput, {
           cwd: context.cwd || input.cwd,
           sandbox: context.sandbox,
           emitBrowserAuthRequest: (request, signal) => resolveBrowserAuthRequest({ request, signal, threadId, toolUseId: context.toolUseId }),
           emitComputerUseRequest: input.emitComputerUseRequest,
-          toolRequest: async (request) => {
+          toolRequest: async (request, signal) => {
+            // Only pre-dispatch abort is handled here; in-flight cancellation awaits
+            // engine-side semantics and is left untouched.
+            if (signal?.aborted) {
+              return {
+                type: "tool_result",
+                tool_use_id: "",
+                content: "Error: aborted before dispatch.",
+                is_error: true
+              };
+            }
             // Self-invocation would nest a registry.exec on the same threadId behind the
             // running outer exec (deterministic deadlock), so reject it before dispatch.
             const excludedNames = ["js", `${NODE_REPL_MCP_WRAPPER_PREFIX}js`];
@@ -93,10 +112,11 @@ export function createNodeReplTools(input: {
                 is_error: true
               };
             }
-            return context.executeNestedTool?.({
+            const nested = await context.executeNestedTool?.({
               toolName: String(request.args?.name ?? ""),
               params: isRecord(request.args?.params) ? request.args.params : {}
             });
+            return nested ? normalizeNestedToolContent(nested) : nested;
           },
           browserRequest: async (request, signal) => {
             if (signal.aborted) throw new Error("browser request cancelled");
@@ -290,6 +310,20 @@ function parseJsExecInput(rawArgs: unknown): { ok: true; value: JsExecInput } | 
       ...(typeof args.timeout_ms === "number" ? { timeout_ms: args.timeout_ms } : {}),
       ...(isRecord(args._meta) ? { _meta: args._meta } : {})
     }
+  };
+}
+
+// The sandbox protocol only accepts string content; flatten block arrays
+// (text blocks joined, other blocks replaced by placeholders) before bridging.
+function normalizeNestedToolContent<T extends { content?: unknown }>(result: T): T {
+  if (!Array.isArray(result.content)) return result;
+  return {
+    ...result,
+    content: result.content
+      .map((block) => isRecord(block) && block.type === "text" && typeof block.text === "string"
+        ? block.text
+        : `[unsupported block: ${isRecord(block) ? String(block.type) : "unknown"}]`)
+      .join("\n")
   };
 }
 
