@@ -1810,6 +1810,21 @@ export interface ExternalAttachmentMeta {
   absoluteSourcePath: string
 }
 
+/** 引用式附加的外部目录条目（available 表示物理目录当前是否存在） */
+export interface ExternalDirEntry {
+  absolutePath: string
+  attachedAt: string
+  available: boolean
+}
+
+/** 外部目录单层只读条目 */
+export interface ExternalDirEntryItem {
+  name: string
+  isDirectory: boolean
+  size?: number
+  modifiedAt?: string
+}
+
 /** Agent 复制文件夹到 thread 的输入 */
 export interface AgentCopyFolderInput {
   sourcePath: string
@@ -2196,6 +2211,14 @@ export const AGENT_IPC_CHANNELS = {
   EXPORT_LEGACY_RESOURCE_TO_PROJECT: 'agent:export-legacy-resource-to-project',
   /** 将 session/memory/legacy 条目复制晋升到项目根（源保留，同名报错） */
   PROMOTE_FILE_REF_TO_PROJECT: 'agent:promote-file-ref-to-project',
+  /** 列出作用域已引用附加的外部目录 */
+  LIST_EXTERNAL_DIRS: 'agent:list-external-dirs',
+  /** 引用式附加外部目录（仅记录绝对路径，不复制） */
+  ADD_EXTERNAL_DIR: 'agent:add-external-dir',
+  /** 移除外部目录附加记录（不动物理目录） */
+  REMOVE_EXTERNAL_DIR: 'agent:remove-external-dir',
+  /** 只读列出外部目录单层内容（拒绝符号链接） */
+  LIST_EXTERNAL_DIR_ENTRIES: 'agent:list-external-dir-entries',
   /** 用系统默认应用打开项目绑定目录文件 */
   OPEN_PROJECT_FILE: 'agent:open-project-file',
   /** 在系统文件管理器中显示项目绑定目录文件 */
