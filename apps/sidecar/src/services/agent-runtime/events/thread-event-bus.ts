@@ -2,7 +2,7 @@
  * ThreadEventBus —— 线程级事件总线:seq 单写者分配 + append-only jsonl 持久化 + 16ms 微批推送。
  * 原则:持久化即承诺(publish 在 appendFileSync 完成后 resolve),推送只是加速(read 永远可回放)。
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import type { SdkEventEnvelope, SdkLifecycleEvent } from "@lume/shared"
 
@@ -54,7 +54,7 @@ export class ThreadEventBus {
     } else {
       // 非 update 相位:先冲掉挂起的 update(保序——同 turn 的 message.end 必须晚于其 update),再立即推
       this.flush(st)
-      for (const listener of st.listeners) listener(envelope)
+      this.dispatch(st, envelope)
     }
     return Promise.resolve(seq)
   }
@@ -80,6 +80,7 @@ export class ThreadEventBus {
     let st = this.threads.get(threadId)
     if (!st) {
       const envelopes = this.readFile(threadId)
+      this.repairTornTail(threadId)
       st = {
         // 序号续上而非重写:以文件尾部最后一条合法行为基数(半行被截断,不参与计数)
         nextSeq: (envelopes[envelopes.length - 1]?.seq ?? 0) + 1,
@@ -90,6 +91,19 @@ export class ThreadEventBus {
       this.threads.set(threadId, st)
     }
     return st
+  }
+
+  /**
+   * 半行尾修复(每线程每进程一次,首次触达时):若文件不以 \n 结尾(断电残行),
+   * 截掉最后一个 \n 之后的内容。否则下一次 append 会把合法行拼进毒行,
+   * read() 在毒行截断后该线程 seq≥2 的事件将永久不可读。
+   */
+  private repairTornTail(threadId: string): void {
+    const file = this.file(threadId)
+    if (!existsSync(file)) return
+    const content = readFileSync(file, "utf8")
+    if (content === "" || content.endsWith("\n")) return
+    writeFileSync(file, content.slice(0, content.lastIndexOf("\n") + 1))
   }
 
   /** 逐行读取;遇非法 JSON 行(断电半行)即截断后续。 */
@@ -117,8 +131,17 @@ export class ThreadEventBus {
     if (st.coalesceBuffer.size === 0) return
     const envelopes = [...st.coalesceBuffer.values()]
     st.coalesceBuffer.clear()
-    for (const envelope of envelopes) {
-      for (const listener of st.listeners) listener(envelope)
+    for (const envelope of envelopes) this.dispatch(st, envelope)
+  }
+
+  /** 推送给全部 listeners;单个 listener 抛异常不影响其余订阅者(推送失败不影响持久化) */
+  private dispatch(st: ThreadState, envelope: SdkEventEnvelope): void {
+    for (const listener of st.listeners) {
+      try {
+        listener(envelope)
+      } catch {
+        // 吞掉 listener 异常:不影响同批其他订阅者
+      }
     }
   }
 }

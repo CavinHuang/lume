@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { SdkEventEnvelope, SdkEventKind, SdkEventPhase, SdkLifecycleEvent } from "@lume/shared"
-import { getThreadEventBus } from "./thread-event-bus.js"
+import { getThreadEventBus, ThreadEventBus } from "./thread-event-bus.js"
 
 let dir: string
 afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); dir = undefined as any })
@@ -75,5 +75,30 @@ describe("ThreadEventBus", () => {
     expect(events.map((e) => e.seq)).toEqual([1])       // 半行被截断
     const s = await bus2.publish("th1", "r1", skeletonEvent("message", "end"))
     expect(s).toBe(2)                                     // 序号续上而非重写
+  })
+
+  test("direct construction repairs torn tail before appending (restart path)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "bus-"))
+    const bus = new ThreadEventBus(dir)
+    await bus.publish("th1", "r1", skeletonEvent("run", "start"))
+    // 模拟半行尾(断电)后进程重启:绕过单例直接构造
+    const { appendFileSync } = await import("node:fs")
+    appendFileSync(join(dir, "th1.events.jsonl"), '{"seq":2,"bro')
+    const bus2 = new ThreadEventBus(dir)
+    const s = await bus2.publish("th1", "r1", skeletonEvent("message", "end"))
+    expect(s).toBe(2)
+    // 毒行已被截断修复,publish 的新行可读——否则 seq≥2 永久不可读
+    const events = await bus2.read("th1")
+    expect(events.map((e) => e.seq)).toEqual([1, 2])
+  })
+
+  test("coalesced update is flushed before subsequent end phase (ordering invariant)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "bus-"))
+    const bus = getThreadEventBus(dir)
+    const received: SdkEventEnvelope[] = []
+    bus.subscribe("th1", (e) => received.push(e))
+    await bus.publish("th1", "r1", skeletonEvent("message", "update", { type: "message.update", delta: null, partial: { text: "a", toolUses: [] } }))
+    await bus.publish("th1", "r1", skeletonEvent("message", "end", { type: "message.end", message: { role: "assistant", content: [] } }))
+    expect(received.map((e) => e.phase)).toEqual(["update", "end"])
   })
 })
