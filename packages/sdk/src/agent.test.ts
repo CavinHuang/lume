@@ -371,6 +371,57 @@ describe("Agent runtime tool resolver", () => {
     await agent.close()
   })
 
+  test("appends promoted tools in match order so query boundaries keep a stable prefix", async () => {
+    process.env.ENABLE_TOOL_SEARCH = "tst"
+    const provider = new class implements LLMProvider {
+      readonly apiType = "anthropic-messages" as const
+      requests: CreateMessageParams[] = []
+      async createMessage(params: CreateMessageParams): Promise<CreateMessageResponse> {
+        this.requests.push(params)
+        if (this.requests.length === 1) {
+          return { content: [{ type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "beta" } }], stopReason: "tool_use", usage: { input_tokens: 1, output_tokens: 1 } }
+        }
+        return { content: [{ type: "text", text: "done" }], stopReason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }
+      }
+    }()
+    // Deferred registration order [AlphaResearch, BetaResearch, GammaSearch];
+    // keyword search scores BetaResearch (name match) above AlphaResearch
+    // (description match), so the engine promotes them in match order
+    // [BetaResearch, AlphaResearch] — not registration order.
+    const agent = createAgent({
+      persistSession: false,
+      tools: [
+        tool("Read"),
+        { ...tool("AlphaResearch"), description: "Search the beta archive from the alpha era." },
+        tool("BetaResearch"),
+        tool("GammaSearch"),
+      ],
+    })
+    await agent.getInitializationResult()
+    ;(agent as any).provider = provider
+
+    for await (const _event of agent.query("find beta")) {
+      // drain query
+    }
+    for await (const _event of agent.query("use them again")) {
+      // drain query
+    }
+
+    const expectedTail = ["Read", "ToolSearch", "ExecuteTool", "BetaResearch", "AlphaResearch"]
+    // Within the run: the engine appends promotions in match order.
+    expect(provider.requests[1]?.tools.map((item) => item.name)).toEqual(expectedTail)
+    // Next query: the agent-side mirror must keep the same tail order.
+    expect(provider.requests[2]?.tools.map((item) => item.name)).toEqual(expectedTail)
+    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toEqual(expectedTail)
+    expect((agent as any).deferredToolPool.map((item: ToolDefinition) => item.name)).toEqual(["GammaSearch"])
+
+    // Rebuild keeps the activation-order tail (GammaSearch still deferred, so
+    // the activated-append path runs).
+    await (agent as any).rebuildToolPool()
+    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toEqual(expectedTail)
+    await agent.close()
+  })
+
   test("keeps host-required runtime tools in the active schema", async () => {
     process.env.ENABLE_TOOL_SEARCH = "tst"
     const required = {
