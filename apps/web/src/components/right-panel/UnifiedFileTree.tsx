@@ -64,6 +64,8 @@ const GROUP_META: Record<FileSource, { label: string; empty: string }> = {
   legacy: { label: '旧版资源', empty: '没有旧版资源' },
 }
 
+const SOURCE_BADGE_LABEL: Record<FileSource, string> = { project: '项目', session: '会话', memory: '记忆', legacy: '旧版' }
+
 export function UnifiedFileTree({
   workspace,
   workspaceSlug,
@@ -637,7 +639,7 @@ export function UnifiedFileTree({
               >
                 <ChevronRight size={13} className={cn('transition-transform', groupExpanded && 'rotate-90')} />
                 {GROUP_META[root.source].label}
-                {root.source !== 'project' && <span className="text-foreground/38">{entries.length}</span>}
+                <span className="text-foreground/38">{entries.length}</span>
                 {workspace.sourceStatus[root.source] === 'stale' && <span className="ml-auto text-[10px] text-amber-600">有更新</span>}
               </Button>
               {groupExpanded && (
@@ -794,6 +796,11 @@ function TreeEntryRow(props: {
             className="h-6 min-w-0 flex-1 px-1 text-[12px]"
           />
         ) : <span className="min-w-0 flex-1 truncate">{entry.name}{props.showPath && <span className="ml-2 text-[10px] text-foreground/38">{entry.ref.relativePath}</span>}</span>}
+        {props.showPath && (
+          <span className="shrink-0 rounded bg-foreground/6 px-1 text-[9px] leading-4 text-foreground/45">
+            {SOURCE_BADGE_LABEL[entry.ref.source]}
+          </span>
+        )}
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className={cn('size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100', menuOpen && 'opacity-100')} />}><MoreHorizontal size={12} /></DropdownMenuTrigger>
           <DropdownMenuContent>
