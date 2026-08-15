@@ -2,6 +2,7 @@
 
 import type { ToolDefinition } from "../types.js";
 import { matchesAnyToolPattern } from "../utils/tool-approval.js";
+import { filterTools } from "./index.js";
 
 export interface ToolMask {
   allow?: string[];
@@ -133,13 +134,20 @@ export interface ToolOverrides {
  * Evaluate query-time overrides as agent-layer masks; `undo` restores the registry.
  * Tool-definition arrays (including empty ones) bypass the registry and replace
  * the pool outright, matching the legacy override semantics.
+ *
+ * When `pools` (the caller's live tool/deferred pools) is provided, the deny
+ * path pattern-filters those pools so eager/generated tools (ToolSearch,
+ * ExecuteTool) survive and deferred tools never leak into the main pool; the
+ * registry masks are still registered for future registry-native evaluation.
  */
 export function applyOverrides(
   registry: ToolRegistry,
   agentId: string,
   overrides: ToolOverrides | undefined,
+  pools?: { tools: ToolDefinition[]; deferredTools: ToolDefinition[] },
 ): { tools: ToolDefinition[]; deferredTools: ToolDefinition[]; undo: () => void } {
   if (!overrides) {
+    if (pools) return { tools: pools.tools, deferredTools: pools.deferredTools, undo: () => {} };
     const view = registry.agent(agentId).view();
     return { tools: view.visible(), deferredTools: view.split().deferred, undo: () => {} };
   }
@@ -148,20 +156,41 @@ export function applyOverrides(
   }
   const layer = registry.agent(agentId);
   const undos: Array<() => void> = [];
-  if (overrides.disallowedTools) undos.push(layer.restrict({ deny: overrides.disallowedTools }));
   const explicitList = Array.isArray(overrides.tools) ? (overrides.tools as string[]) : undefined;
-  if (explicitList) undos.push(layer.restrict({ allow: explicitList }));
+  if (explicitList) {
+    // Legacy semantics: an explicit string list replaces the tool pool outright
+    // and ignores disallowedTools. Do not register the deny mask here — the
+    // allow-filtered result is read back from the registry view.
+    undos.push(layer.restrict({ allow: explicitList }));
+  } else if (overrides.disallowedTools) {
+    undos.push(layer.restrict({ deny: overrides.disallowedTools }));
+  }
+  const undoAll = () => {
+    for (const undo of undos) undo();
+  };
+  const denied = overrides.disallowedTools;
   try {
     const view = layer.view();
+    if (explicitList) {
+      // Declared deviation: pool source is the registry's full global pool
+      // (includes MCP and runtime-resolved tools) instead of buildBaseToolPool.
+      return { tools: view.visible(), deferredTools: [], undo: undoAll };
+    }
+    if (pools) {
+      return {
+        tools: filterTools(pools.tools, undefined, denied),
+        deferredTools: overrides.tools ? [] : filterTools(pools.deferredTools, undefined, denied),
+        undo: undoAll,
+      };
+    }
+    const split = view.split();
     return {
-      tools: view.visible(),
-      deferredTools: overrides.tools ? [] : view.split().deferred,
-      undo: () => {
-        for (const undo of undos) undo();
-      },
+      tools: split.core,
+      deferredTools: overrides.tools ? [] : split.deferred,
+      undo: undoAll,
     };
   } catch (error) {
-    for (const undo of undos) undo();
+    undoAll();
     throw error;
   }
 }

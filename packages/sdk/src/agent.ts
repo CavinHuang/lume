@@ -938,7 +938,10 @@ export class Agent {
     let deferredTools = this.deferredToolPool
     if (overrides?.disallowedTools || overrides?.tools) {
       // One-shot registry masks: evaluate the masked snapshot, then restore.
-      const masked = applyOverrides(this.toolRegistry, this.sid, overrides)
+      const masked = applyOverrides(this.toolRegistry, this.sid, overrides, {
+        tools: this.toolPool,
+        deferredTools: this.deferredToolPool,
+      })
       tools = masked.tools
       deferredTools = masked.deferredTools
       masked.undo()

@@ -144,4 +144,44 @@ describe("applyOverrides", () => {
     expect(tools).toEqual([]);
     expect(deferredTools).toEqual([]);
   });
+
+  test("deny with pools filters the live pools and keeps eager-only tools", () => {
+    const registry = setup();
+    const pools = {
+      tools: [tool("Bash"), tool("ToolSearch")],
+      deferredTools: [tool("WebFetch"), tool("GuanlanSearch")],
+    };
+    const { tools, deferredTools } = applyOverrides(registry, "a1", { disallowedTools: ["Web*"] }, pools);
+    expect(tools.map((t) => t.name)).toEqual(["Bash", "ToolSearch"]);
+    expect(deferredTools.map((t) => t.name)).toEqual(["GuanlanSearch"]);
+  });
+
+  test("string list plus disallowedTools ignores the deny", () => {
+    const registry = setup();
+    const pools = { tools: [tool("Bash")], deferredTools: [tool("WebFetch")] };
+    const { tools, deferredTools } = applyOverrides(
+      registry,
+      "a1",
+      { tools: ["Bash", "WebFetch"], disallowedTools: ["Web*"] },
+      pools,
+    );
+    expect(tools.map((t) => t.name)).toEqual(["Bash", "WebFetch"]);
+    expect(deferredTools).toEqual([]);
+  });
+
+  test("preset-object tools with pools applies deny to pools and clears deferred", () => {
+    const registry = setup();
+    const pools = {
+      tools: [tool("Bash"), tool("WebFetch"), tool("ToolSearch")],
+      deferredTools: [tool("GuanlanSearch")],
+    };
+    const { tools, deferredTools } = applyOverrides(
+      registry,
+      "a1",
+      { tools: { type: "preset", preset: "default" }, disallowedTools: ["Web*"] },
+      pools,
+    );
+    expect(tools.map((t) => t.name)).toEqual(["Bash", "ToolSearch"]);
+    expect(deferredTools).toEqual([]);
+  });
 });
