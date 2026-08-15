@@ -1,16 +1,92 @@
-import type { PermissionMode } from "@lume/agent-sdk";
-import type { SDKMessage } from "@lume/shared";
+import { projectLifecycle, type PermissionMode } from "@lume/agent-sdk";
+import type { Batch1LifecycleDetail, SDKMessage, SdkLifecycleEvent } from "@lume/shared";
 import {
   appendSdkMessage,
   createAgentStreamAccumulatorState,
   hasRenderableAssistantOutput
 } from "../../agent/agent-stream-accumulator";
+import { createLogger } from "../../infra/logger";
+import { getThreadEventBus } from "../events/thread-event-bus";
 import type { AgentRuntimeEmitter } from "./types";
 import type { LumeRunObserver } from "./run-observer";
+
+const log = createLogger("run-loop");
 
 interface ConsumeRuntimeCoreQueryStreamInput {
   query: AsyncIterable<SDKMessage>;
   emit: Pick<AgentRuntimeEmitter, "onSdkMessage">;
+  /** AGENT_LIFECYCLE_EVENTS=1 时投影 lifecycle 事件到 ThreadEventBus；缺省不启用 */
+  lifecycle?: { threadId: string; sessionDir: string };
+}
+
+/** Batch 1 feature flag：默认 off，显式置 1 才接入 lifecycle 投影。 */
+export function isAgentLifecycleEventsEnabled(): boolean {
+  return process.env.AGENT_LIFECYCLE_EVENTS === "1";
+}
+
+/**
+ * Tee 主 query 流：每个 chunk 照常转发给主循环，同时排入队列由后台泵
+ * 喂给 projectLifecycle，产物 fire-and-forget publish 到线程事件总线
+ * （失败仅 warn，不阻塞也不影响主流）。主流提前 return（错误 result）时
+ * 由 finally 结束队列并等泵排空，保证事件序列完整落盘。
+ */
+async function* teeLifecycleProjection(
+  query: AsyncIterable<SDKMessage>,
+  target: { threadId: string; sessionDir: string }
+): AsyncGenerator<SDKMessage> {
+  const bus = getThreadEventBus(target.sessionDir);
+  const pending: SDKMessage[] = [];
+  let wake: (() => void) | null = null;
+  let finished = false;
+  const projected: AsyncIterable<SDKMessage> = {
+    [Symbol.asyncIterator]: () => ({
+      next: async (): Promise<IteratorResult<SDKMessage>> => {
+        while (pending.length === 0) {
+          if (finished) return { done: true, value: undefined };
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+        return { done: false, value: pending.shift()! };
+      }
+    })
+  };
+  // 独立成函数：闭包内读取 wake 才不会被外层 null 赋值的窄化污染
+  const notifyProjected = (): void => {
+    const resolve = wake;
+    wake = null;
+    resolve?.();
+  };
+  const pump = (async () => {
+    try {
+      for await (const event of projectLifecycle(projected)) {
+        try {
+          void bus.publish(target.threadId, (event as SdkLifecycleEvent<Batch1LifecycleDetail>).runId, event);
+        } catch (error) {
+          log.warn("lifecycle 事件 publish 失败", {
+            threadId: target.threadId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    } catch (error) {
+      log.warn("lifecycle 投影失败", {
+        threadId: target.threadId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  })();
+  try {
+    for await (const message of query) {
+      pending.push(message);
+      notifyProjected();
+      yield message;
+    }
+  } finally {
+    finished = true;
+    notifyProjected();
+    await pump;
+  }
 }
 
 export function normalizeRuntimeCoreQueryPermissionMode(
@@ -29,11 +105,15 @@ export function normalizeRuntimeCoreQueryPermissionMode(
 
 export async function consumeRuntimeCoreQueryStream({
   query,
-  emit
+  emit,
+  lifecycle
 }: ConsumeRuntimeCoreQueryStreamInput) {
   const accumulator = createAgentStreamAccumulatorState();
+  const source = lifecycle && isAgentLifecycleEventsEnabled()
+    ? teeLifecycleProjection(query, lifecycle)
+    : query;
 
-  for await (const message of query) {
+  for await (const message of source) {
     emit.onSdkMessage(message);
     appendSdkMessage(accumulator, message);
 
