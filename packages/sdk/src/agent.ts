@@ -893,25 +893,19 @@ export class Agent {
 
   /** Resolve the tool pools for one run: shared by runSinglePrompt and resumeInterruptedRun. */
   private getRunTools(
-    opts: AgentOptions,
+    _opts: AgentOptions,
     overrides?: Partial<AgentOptions>,
   ): { tools: ToolDefinition[]; deferredTools: ToolDefinition[] } {
-    let tools = this.toolPool
-    let deferredTools = this.deferredToolPool
-    if (overrides?.disallowedTools) {
-      tools = filterTools(tools, undefined, overrides.disallowedTools)
-      deferredTools = filterTools(deferredTools, undefined, overrides.disallowedTools)
+    if (!overrides?.disallowedTools && !overrides?.tools) {
+      return { tools: this.toolPool, deferredTools: this.deferredToolPool }
     }
-    if (overrides?.tools) {
-      const raw = overrides.tools
-      if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'string') {
-        tools = filterTools(this.buildBaseToolPool(opts), raw as string[])
-      } else if (Array.isArray(raw)) {
-        tools = raw as ToolDefinition[]
-      }
-      deferredTools = []
-    }
-    return { tools, deferredTools }
+    // One-shot registry masks: evaluate the masked snapshot, then restore.
+    const masked = applyOverrides(this.toolRegistry, this.sid, overrides, {
+      tools: this.toolPool,
+      deferredTools: this.deferredToolPool,
+    })
+    masked.undo()
+    return { tools: masked.tools, deferredTools: masked.deferredTools }
   }
 
   private async *runSinglePrompt(
