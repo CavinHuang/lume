@@ -251,6 +251,7 @@ describe("createNodeReplTools", () => {
       ...makeToolContext(),
       listAvailableTools: () => [
         { name: "js", description: "Run JavaScript", inputSchema: { type: "object" } },
+        { name: "mcp__node_repl__js", description: "Run JavaScript (wrapped)", inputSchema: { type: "object" } },
         { name: "Read", description: "Read a file", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
       ],
       executeNestedTool: async (input: { toolName: string; params: unknown }) => {
@@ -265,6 +266,7 @@ describe("createNodeReplTools", () => {
     expect(catalog.tools.map((tool) => tool.name)).toEqual(["Read"]);
     expect(catalog.documentation).toContain("Read");
     expect(catalog.documentation).not.toContain("js");
+    expect(catalog.documentation).not.toContain("mcp__node_repl__js");
     expect(nestedCalls).toEqual([{ toolName: "Read", params: { path: "x" } }]);
     expect(toolCallResult).toBe(nestedResult);
   });

@@ -76,9 +76,10 @@ export function createNodeReplTools(input: {
           emitComputerUseRequest: input.emitComputerUseRequest,
           toolRequest: async (request) => {
             if (request.method === "tool_list") {
+              const excludedNames = ["js", `${NODE_REPL_MCP_WRAPPER_PREFIX}js`];
               return buildToolCatalogResult(
                 (context.listAvailableTools?.() ?? [])
-                  .filter((tool) => tool.name !== "js")
+                  .filter((tool) => !excludedNames.includes(tool.name))
                   .map((tool) => ({ ...tool, inputSchema: tool.inputSchema as unknown as Record<string, unknown> }))
               );
             }
