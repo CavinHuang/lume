@@ -134,7 +134,7 @@ const ALL_TOOLS: ToolDefinition[] = [
 /** Schemas always sent to the provider when deferred tool loading is enabled. */
 export const CORE_TOOL_NAMES = new Set([
   'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'NotebookEdit',
-  'WebSearch', 'Agent', 'AskUserQuestion', 'Skill', 'LSP', 'LSPApply',
+  'WebFetch', 'WebSearch', 'Agent', 'AskUserQuestion', 'Skill', 'LSP', 'LSPApply',
   'ProcessOutput', 'ProcessStop', 'TaskOutput', 'TaskStop', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
 ])
 

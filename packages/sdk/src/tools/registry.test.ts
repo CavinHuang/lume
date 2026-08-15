@@ -85,11 +85,11 @@ describe("tool registry", () => {
 
 describe("splitDeferredTools adapter", () => {
   test("splits by CORE_TOOL_NAMES and requiredDuringSkillScope", () => {
-    const skillTool = tool("GuanlanSearch");
+    const skillTool = tool("SubscribePolling");
     skillTool.runtimeMetadata = { requiredDuringSkillScope: true } as never;
-    const { core, deferred } = splitDeferredTools([tool("Bash"), tool("WebFetch"), skillTool, tool("ToolSearch")]);
-    expect(core.map((t) => t.name)).toEqual(["Bash", "GuanlanSearch"]);
-    expect(deferred.map((t) => t.name)).toEqual(["WebFetch"]);
+    const { core, deferred } = splitDeferredTools([tool("Bash"), tool("GuanlanSearch"), skillTool, tool("ToolSearch")]);
+    expect(core.map((t) => t.name)).toEqual(["Bash", "SubscribePolling"]);
+    expect(deferred.map((t) => t.name)).toEqual(["GuanlanSearch"]);
   });
 
   test("CORE_TOOL_NAMES stays the default preset core set", () => {
