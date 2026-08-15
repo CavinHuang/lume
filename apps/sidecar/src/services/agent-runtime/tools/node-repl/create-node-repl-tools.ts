@@ -75,13 +75,23 @@ export function createNodeReplTools(input: {
           emitBrowserAuthRequest: (request, signal) => resolveBrowserAuthRequest({ request, signal, threadId, toolUseId: context.toolUseId }),
           emitComputerUseRequest: input.emitComputerUseRequest,
           toolRequest: async (request) => {
+            // Self-invocation would nest a registry.exec on the same threadId behind the
+            // running outer exec (deterministic deadlock), so reject it before dispatch.
+            const excludedNames = ["js", `${NODE_REPL_MCP_WRAPPER_PREFIX}js`];
             if (request.method === "tool_list") {
-              const excludedNames = ["js", `${NODE_REPL_MCP_WRAPPER_PREFIX}js`];
               return buildToolCatalogResult(
                 (context.listAvailableTools?.() ?? [])
                   .filter((tool) => !excludedNames.includes(tool.name))
                   .map((tool) => ({ ...tool, inputSchema: tool.inputSchema as unknown as Record<string, unknown> }))
               );
+            }
+            if (excludedNames.includes(String(request.args?.name ?? ""))) {
+              return {
+                type: "tool_result",
+                tool_use_id: "",
+                content: "Error: the node REPL tool cannot be invoked from inside the sandbox.",
+                is_error: true
+              };
             }
             return context.executeNestedTool?.({
               toolName: String(request.args?.name ?? ""),

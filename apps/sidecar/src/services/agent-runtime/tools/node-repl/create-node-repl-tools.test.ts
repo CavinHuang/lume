@@ -226,6 +226,8 @@ describe("createNodeReplTools", () => {
   test("js bridges tool_list and tool_call through the engine context", async () => {
     let catalogResult: unknown;
     let toolCallResult: unknown;
+    let selfCallResult: unknown;
+    let wrappedSelfCallResult: unknown;
     const nestedCalls: Array<{ toolName: string; params: unknown }> = [];
     const nestedResult = { type: "tool_result", tool_use_id: "nested-1", content: "read ok" };
     const tools = createNodeReplTools({
@@ -237,6 +239,11 @@ describe("createNodeReplTools", () => {
           catalogResult = await options?.toolRequest?.({ method: "tool_list", args: {} }, signal);
           toolCallResult = await options?.toolRequest?.(
             { method: "tool_call", args: { name: "Read", params: { path: "x" } } },
+            signal,
+          );
+          selfCallResult = await options?.toolRequest?.({ method: "tool_call", args: { name: "js", params: {} } }, signal);
+          wrappedSelfCallResult = await options?.toolRequest?.(
+            { method: "tool_call", args: { name: "mcp__node_repl__js", params: {} } },
             signal,
           );
           return { content: [{ type: "text", text: "ready" }] };
@@ -269,6 +276,10 @@ describe("createNodeReplTools", () => {
     expect(catalog.documentation).not.toContain("mcp__node_repl__js");
     expect(nestedCalls).toEqual([{ toolName: "Read", params: { path: "x" } }]);
     expect(toolCallResult).toBe(nestedResult);
+    expect((selfCallResult as any).is_error).toBe(true);
+    expect((wrappedSelfCallResult as any).is_error).toBe(true);
+    expect((selfCallResult as any).content).toContain("cannot be invoked from inside the sandbox");
+    expect(nestedCalls).toHaveLength(1);
   });
 
   test("js resolves browserAuth through the broker without returning secrets", async () => {
