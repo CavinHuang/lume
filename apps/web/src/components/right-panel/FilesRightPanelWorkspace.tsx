@@ -174,7 +174,7 @@ export function FilesRightPanelWorkspace({
         )}
         <div className="min-h-0 flex-1">
           {previewTarget?.kind === 'mcp-resource'
-            ? <RightPanelMcpResourcePreview workspaceSlug={previewTarget.workspaceSlug} resource={previewTarget.resource} />
+            ? <RightPanelMcpResourcePreview workspaceSlug={previewTarget.workspaceSlug} resource={previewTarget.resource} hideSelfHeader={!wide} />
             : <RightPanelFilePreview
             threadId={threadId}
             fileRef={previewRef}
