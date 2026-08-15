@@ -60,62 +60,6 @@ describe('RightPanelTabBar', () => {
     expect(calls).toEqual(['prevent', 'stop', 'close'])
   })
 
-  test('appends the preview tab after file tabs with a disambiguated label', () => {
-    const previewTab = {
-      ...fileTab('preview:src-b-ts', 'src/b.ts'),
-    }
-    const items = buildRightPanelTabItems(
-      { tabs: { files: { type: 'files' } } },
-      [fileTab('file-a', 'src/a.ts')],
-      false,
-      [],
-      previewTab,
-    )
-
-    expect(items.map((item) => item.kind)).toEqual(['function', 'file', 'file-preview'])
-    const previewItem = items[2]!
-    expect(previewItem.kind === 'file-preview' && previewItem.id).toBe('preview:src-b-ts')
-    expect(previewItem.kind === 'file-preview' && previewItem.label).toBe('b.ts')
-  })
-
-  test('disambiguates the preview label against formal file tabs with the same basename', () => {
-    const previewTab = fileTab('preview:test-a-ts', 'test/a.ts')
-    const items = buildRightPanelTabItems(
-      { tabs: { files: { type: 'files' } } },
-      [fileTab('file-a', 'src/a.ts')],
-      false,
-      [],
-      previewTab,
-    )
-
-    expect(items[1]!.label).toBe('a.ts — src')
-    expect(items[2]!.label).toBe('a.ts — test')
-  })
-
-  test('appends the preview tab even without the files function open', () => {
-    const items = buildRightPanelTabItems(
-      { tabs: {} },
-      [fileTab('file-a', 'src/a.ts')],
-      false,
-      [],
-      fileTab('preview:src-b-ts', 'src/b.ts'),
-    )
-
-    expect(items.map((item) => item.id)).toEqual(['file-a', 'preview:src-b-ts'])
-  })
-
-  test('omits the preview item when previewTab is null', () => {
-    const items = buildRightPanelTabItems(
-      { tabs: { files: { type: 'files' } } },
-      [fileTab('file-a', 'src/a.ts')],
-      false,
-      [],
-      null,
-    )
-
-    expect(items.map((item) => item.kind)).toEqual(['function', 'file'])
-  })
-
   test('chooses the tab on the right after closing, then falls back to the left', () => {
     const browser = createBrowserTab({ title: 'Example', url: 'https://example.com' })
     const items = buildRightPanelTabItems(
