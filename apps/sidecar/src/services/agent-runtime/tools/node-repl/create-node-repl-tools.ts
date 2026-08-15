@@ -2,6 +2,7 @@ import { basename, isAbsolute, win32 } from "node:path";
 import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
 import type { AgentBrowserAuthRequest, BrowserAuthRequest, BrowserAuthResult, McpServerStatus, McpToolDetail } from "@lume/shared";
 import { getNodeReplRuntimeRegistry } from "./node-repl-runtime-registry";
+import { buildToolCatalogResult } from "./tool-catalog";
 import {
   NODE_REPL_MCP_INSTRUCTIONS,
   type JsExecInput,
@@ -73,6 +74,19 @@ export function createNodeReplTools(input: {
           sandbox: context.sandbox,
           emitBrowserAuthRequest: (request, signal) => resolveBrowserAuthRequest({ request, signal, threadId, toolUseId: context.toolUseId }),
           emitComputerUseRequest: input.emitComputerUseRequest,
+          toolRequest: async (request) => {
+            if (request.method === "tool_list") {
+              return buildToolCatalogResult(
+                (context.listAvailableTools?.() ?? [])
+                  .filter((tool) => tool.name !== "js")
+                  .map((tool) => ({ ...tool, inputSchema: tool.inputSchema as unknown as Record<string, unknown> }))
+              );
+            }
+            return context.executeNestedTool?.({
+              toolName: String(request.args?.name ?? ""),
+              params: isRecord(request.args?.params) ? request.args.params : {}
+            });
+          },
           browserRequest: async (request, signal) => {
             if (signal.aborted) throw new Error("browser request cancelled");
             const broker = getActiveBrowserBroker();
