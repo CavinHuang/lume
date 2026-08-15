@@ -4,6 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GlobTool } from "./glob";
 import { GrepTool } from "./grep";
+import { createToolSearchTool } from "./tool-search";
+import type { ToolDefinition } from "../types";
+
+function makeFakeTool(name: string): ToolDefinition {
+  return {
+    name,
+    description: `fake ${name}`,
+    inputSchema: { type: "object", properties: {} },
+    async call() {
+      return { type: "tool_result", tool_use_id: "", content: "ok" };
+    },
+  };
+}
 
 const roots: string[] = [];
 
@@ -45,5 +58,25 @@ describe("search tools", () => {
     expect(result.is_error).toBeFalsy();
     expect((result._meta?.search as any)).toMatchObject({ limit: 500, truncated: true, appliedLimit: 500 });
     expect(JSON.parse(String(result.content)).matches).toHaveLength(500);
+  });
+});
+
+describe("ToolSearch promotion", () => {
+  test("activates matched tools when the hook is present", async () => {
+    const activated: string[][] = [];
+    const tool = createToolSearchTool(() => [makeFakeTool("GuanlanSearch")]);
+    const result = await tool.call({ query: "guanlan" }, {
+      activateTools: (names) => { activated.push(names); return names; },
+    } as any);
+
+    expect(activated).toEqual([["GuanlanSearch"]]);
+    expect(result.content).toContain("call them directly");
+  });
+
+  test("falls back to ExecuteTool guidance without the hook", async () => {
+    const tool = createToolSearchTool(() => [makeFakeTool("GuanlanSearch")]);
+    const result = await tool.call({ query: "guanlan" }, {} as any);
+
+    expect(result.content).toContain("ExecuteTool");
   });
 });

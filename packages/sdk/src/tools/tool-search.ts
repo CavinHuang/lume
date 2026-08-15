@@ -71,7 +71,7 @@ export function createToolSearchTool(getTools: () => ToolDefinition[]): ToolDefi
       requiresApprovalByDefault: false,
     },
     async prompt() { return 'Search for available deferred tools.' },
-    async call(input: any): Promise<ToolResult> {
+    async call(input: any, context?: any): Promise<ToolResult> {
       const deferredTools = getTools()
       const query = typeof input?.query === 'string' ? input.query.trim() : ''
       const maxResults = Math.max(1, Math.min(Number(input?.max_results ?? 5), 20))
@@ -83,9 +83,14 @@ export function createToolSearchTool(getTools: () => ToolDefinition[]): ToolDefi
         : searchTools(deferredTools, query, maxResults)
       if (matches.length === 0) return success(`No tools found matching "${query}".`)
 
+      const matchedNames = matches.map((tool) => tool.name)
+      const promoted = context?.activateTools?.(matchedNames)
+      const usage = promoted && promoted.length > 0
+        ? 'The matched tools are now available natively — call them directly by name with their documented parameters.'
+        : 'Call ExecuteTool with tool_name and params to invoke a selected tool.'
       return success(JSON.stringify({
         tools: matches.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema })),
-        usage: 'Call ExecuteTool with tool_name and params to invoke a selected tool.',
+        usage,
       }, null, 2))
     },
   }
@@ -118,11 +123,13 @@ export function createExecuteTool(getTools: () => ToolDefinition[]): ToolDefinit
       requiresApprovalByDefault: false,
       delegatesPermission: true,
     },
-    validateInput(input) {
+    validateInput(input, context) {
       if (!input || typeof input !== 'object') return 'Input must be an object.'
       if (typeof input.tool_name !== 'string' || !input.tool_name.trim()) return 'tool_name is required.'
       if (!input.params || typeof input.params !== 'object' || Array.isArray(input.params)) return 'params must be an object.'
-      if (!getTools().some((tool) => tool.name === input.tool_name)) return `Tool "${input.tool_name}" is not available through ToolSearch.`
+      // Promoted tools leave the deferred pool; the nested executor resolves them from the
+      // native tools array, so only reject here when that bridge is unavailable.
+      if (!getTools().some((tool) => tool.name === input.tool_name) && !context?.executeDeferredTool) return `Tool "${input.tool_name}" is not available through ToolSearch.`
     },
     async prompt() { return 'Invoke a deferred tool discovered through ToolSearch.' },
     async call(input, context) {
