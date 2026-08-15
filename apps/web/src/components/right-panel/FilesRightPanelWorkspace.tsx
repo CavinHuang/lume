@@ -61,7 +61,7 @@ export function FilesRightPanelWorkspace({
   const createPreviewTargetFromTemporary = (): RightPanelFileTarget | null => workspace.temporaryPreviewTarget
   const previewTarget = activeTab?.target ?? previewActiveTab?.target ?? (wide ? createPreviewTargetFromTemporary() : null)
   const previewRef = previewTarget ? rightPanelFileTargetRef(previewTarget) : null
-  const showTree = !treeCollapsed && (wide || workspace.activeItem?.kind !== 'file')
+  const showTree = !treeCollapsed && (wide || (workspace.activeItem?.kind !== 'file' && workspace.activeItem?.kind !== 'file-preview'))
   const treeWidth = useMemo(
     () => clampRightPanelFileTreeWidth(preferences.treeWidth ?? FILE_TREE_DEFAULT_WIDTH, Math.max(containerWidth, 680)),
     [containerWidth, preferences.treeWidth],
