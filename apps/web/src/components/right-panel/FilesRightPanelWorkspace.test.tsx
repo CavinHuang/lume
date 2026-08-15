@@ -52,4 +52,15 @@ describe('FilesRightPanelWorkspace narrow-mode layout (preference-driven)', () =
     expect(markup).toContain('flex h-9 shrink-0 items-center gap-2 border-b')
     expect(markup).toContain('flex h-10 shrink-0 items-center gap-2 overflow-x-auto overflow-y-hidden border-b')
   })
+
+  test('无名称 MCP 资源在窄预览头部回退显示 URI', () => {
+    setNarrowShowsPreview(true)
+    const workspace = previewFileTab(createThreadFileWorkspace({}), {
+      kind: 'mcp-resource',
+      workspaceSlug: 'demo',
+      resource: { serverId: 'docs', serverName: 'Docs', uri: 'docs://guide' },
+    })
+    const markup = renderNarrow(workspace)
+    expect(markup).toContain('>docs://guide</span>')
+  })
 })

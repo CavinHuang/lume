@@ -161,6 +161,9 @@ describe('preview classification and race guard', () => {
     const previewSource = readFileSync(resolve(import.meta.dir, 'RightPanelFilePreview.tsx'), 'utf8')
 
     expect(previewSource).toContain('onPreviewScopeChangeRef.current')
+    expect(previewSource).toContain('const previewScopeChange = onPreviewScopeChangeRef.current')
+    expect(previewSource).toContain('previewScopeChange?.(scope.token)')
+    expect(previewSource).toContain('previewScopeChange?.(null)')
     expect(previewSource).toContain('onMissingRef.current')
     expect(previewSource).toContain('[editorStateKey, guardedRef, kind, lineSelection?.end, lineSelection?.start, refreshKey]')
   })

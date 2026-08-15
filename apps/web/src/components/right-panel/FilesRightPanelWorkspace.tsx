@@ -172,7 +172,7 @@ export function FilesRightPanelWorkspace({
               <PanelLeftClose size={13} />
             </Button>}
             <span className="min-w-0 flex-1 truncate text-foreground/60" title={previewRef ? `${previewRef.source} · ${previewRef.relativePath}` : undefined}>
-              {previewRef?.relativePath ?? (previewTarget?.kind === 'mcp-resource' ? previewTarget.resource.name : previewTarget?.kind)}
+              {previewRef?.relativePath ?? (previewTarget?.kind === 'mcp-resource' ? previewTarget.resource.name || previewTarget.resource.uri : previewTarget?.kind)}
             </span>
             {previewEntry && !previewEntry.isDirectory && previewRef && (
               <span className="shrink-0 text-[10px] text-foreground/45" title="文件信息">

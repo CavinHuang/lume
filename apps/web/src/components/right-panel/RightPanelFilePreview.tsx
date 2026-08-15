@@ -139,6 +139,7 @@ export function RightPanelFilePreview({
       setLoading(true)
       let token: string | null = null
       let disposed = false
+      const previewScopeChange = onPreviewScopeChangeRef.current
       const createScope = guardedRef
         ? createGuardedFilePreviewScope({ guardedRef, kind: 'media-file', generation: current })
         : createFilePreviewScope({ ref: fileRef, kind: 'media-file', generation: current })
@@ -150,7 +151,7 @@ export function RightPanelFilePreview({
             return
           }
           setMediaScope(scope)
-          onPreviewScopeChangeRef.current?.(scope.token)
+          previewScopeChange?.(scope.token)
         })
         .catch((nextError) => {
           if (!disposed && current === requestId.current) {
@@ -163,7 +164,7 @@ export function RightPanelFilePreview({
         disposed = true
         if (token) {
           void revokeFilePreviewScope(token)
-            onPreviewScopeChangeRef.current?.(null)
+          previewScopeChange?.(null)
         }
       }
     }
