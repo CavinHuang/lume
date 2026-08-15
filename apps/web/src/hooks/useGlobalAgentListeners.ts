@@ -52,7 +52,7 @@ import {
 } from './pending-interactive-state'
 import { appendRuntimeEvents, hydrateRuntimeEvents } from './runtime-event-state'
 import { projectDesktopActionVisualEvent } from './desktop-action-visual-state'
-import { adaptLifecycleEvent, createLifecycleAdapterState } from './lifecycle-event-adapter'
+import { consumeBusEnvelope, type LifecycleAdapterState } from './lifecycle-event-adapter'
 import { useAgentEventBus } from './useAgentEventBus'
 
 /**
@@ -79,7 +79,7 @@ const LEGACY_SKIPPED_PILOT_EVENT_TYPES = new Set<string>([
 ])
 
 // 模块级而非 ref:适配器求差基线与去重水位须跨双挂载实例、跨 tab 切换存活
-const lifecycleAdapterStatesByThread = new Map<string, ReturnType<typeof createLifecycleAdapterState>>()
+const lifecycleAdapterStatesByThread = new Map<string, LifecycleAdapterState>()
 const lifecycleDeliveredSeqByThread = new Map<string, number>()
 
 export function hydrateSubagentRuns(
@@ -151,28 +151,16 @@ export function useGlobalAgentListeners() {
   lifecycleBusThreadIdRef.current = lifecycleBusThreadId
   useAgentEventBus(lifecycleBusThreadId ?? '', {
     enabled: lifecycleBusThreadId !== null,
-    onEvent: (envelope) => {
-      const threadId = envelope.threadId
-      if ((lifecycleDeliveredSeqByThread.get(threadId) ?? 0) >= envelope.seq) return
-      lifecycleDeliveredSeqByThread.set(threadId, envelope.seq)
-      const state = lifecycleAdapterStatesByThread.get(threadId) ?? createLifecycleAdapterState()
-      lifecycleAdapterStatesByThread.set(threadId, state)
-      const events = adaptLifecycleEvent(envelope, state)
-      for (const event of events) enqueueRuntimeEvent(event)
-      // streaming 态副作用对齐旧 RUNTIME_EVENT 分支(该分支对跳过类型不再置位)
-      if (envelope.kind === 'message' && envelope.phase !== 'end') {
-        setStreamingStates((prev) => (
-          prev[threadId] === 'streaming' ? prev : { ...prev, [threadId]: 'streaming' }
-        ))
-      }
-      for (const event of events) {
-        if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
-          setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
-        } else if (event.type === 'run.failed') {
-          setStreamingStates((prev) => ({ ...prev, [threadId]: 'errored' }))
-          setErrorMessages((prev) => ({ ...prev, [threadId]: event.error.message }))
-        }
-      }
+    onEvent: (envelope, source) => {
+      // 快照回放不注入事件(旧路 hydrate 已覆盖,双份注入无法去重)、不置 streaming;
+      // 详见 lifecycle-event-adapter.ts consumeBusEnvelope 注释。
+      consumeBusEnvelope(envelope, source, {
+        deliveredSeqByThread: lifecycleDeliveredSeqByThread,
+        adapterStatesByThread: lifecycleAdapterStatesByThread,
+        enqueueRuntimeEvent,
+        setStreamingStates,
+        setErrorMessages,
+      })
     },
   })
 

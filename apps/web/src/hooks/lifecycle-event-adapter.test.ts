@@ -1,6 +1,11 @@
 import { test, expect } from 'bun:test'
-import type { Batch1LifecycleDetail, SdkEventEnvelope } from '@lume/shared'
-import { adaptLifecycleEvent, createLifecycleAdapterState } from './lifecycle-event-adapter'
+import type { LumeRuntimeEvent, Batch1LifecycleDetail, SdkEventEnvelope } from '@lume/shared'
+import {
+  adaptLifecycleEvent,
+  consumeBusEnvelope,
+  createLifecycleAdapterState,
+  type BusEnvelopeConsumerContext,
+} from './lifecycle-event-adapter'
 
 const TS = 1_723_680_000_000
 
@@ -152,4 +157,76 @@ test('message.start 重置求差基线:新 message 从零开始', () => {
     partial: { text: 'next', toolUses: [] },
   }), state)
   expect((events[0] as { delta: string }).delta).toBe('next')
+})
+
+// ── consumeBusEnvelope:总线消费副作用(seq 去重 / snapshot 不入队不置位 / push 全量) ──
+
+function createContext() {
+  const ctx: BusEnvelopeConsumerContext & {
+    enqueued: LumeRuntimeEvent[]
+    streaming: Record<string, 'idle' | 'streaming' | 'errored'>
+    errors: Record<string, string>
+  } = {
+    deliveredSeqByThread: new Map(),
+    adapterStatesByThread: new Map(),
+    enqueued: [],
+    streaming: {},
+    errors: {},
+    enqueueRuntimeEvent: (event) => ctx.enqueued.push(event),
+    setStreamingStates: (update) => { ctx.streaming = update(ctx.streaming) },
+    setErrorMessages: (update) => { ctx.errors = update(ctx.errors) },
+  }
+  return ctx
+}
+
+test('snapshot 回放不入队、不置 streaming(重载/切回不与旧路双份注入)', () => {
+  const ctx = createContext()
+  consumeBusEnvelope(messageStart(1), 'snapshot', ctx)
+  consumeBusEnvelope(messageUpdate(2, 'hello'), 'snapshot', ctx)
+  consumeBusEnvelope(messageEnd(3, [{ type: 'text', text: 'hello' }]), 'snapshot', ctx)
+  expect(ctx.enqueued).toEqual([])
+  expect(ctx.streaming).toEqual({})
+})
+
+test('snapshot 仍推进适配器基线:后续 push 只投增量(不与旧路已渲染文本叠加)', () => {
+  const ctx = createContext()
+  consumeBusEnvelope(messageStart(1), 'snapshot', ctx)
+  consumeBusEnvelope(messageUpdate(2, 'hel'), 'snapshot', ctx)
+  consumeBusEnvelope(messageUpdate(3, 'hello'), 'push', ctx)
+  expect(ctx.enqueued).toEqual([expect.objectContaining({ type: 'assistant.delta', delta: 'lo' })])
+  expect(ctx.streaming).toEqual({ t1: 'streaming' })
+})
+
+test('push 全量副作用:delta 入队并置 streaming;run.completed 置 idle', () => {
+  const ctx = createContext()
+  consumeBusEnvelope(messageStart(1), 'push', ctx)
+  consumeBusEnvelope(messageUpdate(2, 'hi'), 'push', ctx)
+  expect(ctx.enqueued).toEqual([expect.objectContaining({ type: 'assistant.delta', delta: 'hi' })])
+  expect(ctx.streaming).toEqual({ t1: 'streaming' })
+
+  consumeBusEnvelope(runEnd(3, { stopReason: 'end_turn' }), 'push', ctx)
+  expect(ctx.streaming).toEqual({ t1: 'idle' })
+})
+
+test('push run.failed 置 errored 并写错误信息', () => {
+  const ctx = createContext()
+  consumeBusEnvelope(runEnd(1, { stopReason: 'error_during_execution', isError: true }), 'push', ctx)
+  expect(ctx.streaming).toEqual({ t1: 'errored' })
+  expect(ctx.errors).toEqual({ t1: 'error_during_execution' })
+})
+
+test('seq 水位去重:同线程重复/回退 seq 不重复消费', () => {
+  const ctx = createContext()
+  consumeBusEnvelope(messageUpdate(2, 'a'), 'push', ctx)
+  consumeBusEnvelope(messageUpdate(2, 'a'), 'push', ctx) // 重复
+  consumeBusEnvelope(messageUpdate(1, 'a'), 'push', ctx) // 回退
+  expect(ctx.enqueued).toHaveLength(1)
+})
+
+test('快照路径悬空 run(有 message.update 无 run.end)不置 streaming', () => {
+  const ctx = createContext()
+  consumeBusEnvelope(messageStart(1), 'snapshot', ctx)
+  consumeBusEnvelope(messageUpdate(2, 'partial'), 'snapshot', ctx)
+  // 无后续任何 push:线程不得停留在流式态
+  expect(ctx.streaming).toEqual({})
 })

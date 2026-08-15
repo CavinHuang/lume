@@ -1,4 +1,5 @@
 import type { Batch1LifecycleDetail, LumeRuntimeEvent, SdkEventEnvelope } from '@lume/shared'
+import type { AgentEventBusSource } from './useAgentEventBus'
 
 /**
  * Batch 1 过渡适配器:生命周期骨架事件 → 等价 RuntimeEvent,喂现有投影组件(UI 零改动)。
@@ -24,6 +25,56 @@ export interface LifecycleAdapterState {
 
 export function createLifecycleAdapterState(): LifecycleAdapterState {
   return { turnId: null, lastText: '' }
+}
+
+export interface BusEnvelopeConsumerContext {
+  /** 模块级(跨挂载实例/跨 tab 切换存活):每线程已投递最大 seq,双实例去重水位。 */
+  deliveredSeqByThread: Map<string, number>
+  adapterStatesByThread: Map<string, LifecycleAdapterState>
+  enqueueRuntimeEvent: (event: LumeRuntimeEvent) => void
+  setStreamingStates: (update: (prev: Record<string, 'idle' | 'streaming' | 'errored'>) => Record<string, 'idle' | 'streaming' | 'errored'>) => void
+  setErrorMessages: (update: (prev: Record<string, string>) => Record<string, string>) => void
+}
+
+/**
+ * 总线 envelope 的完整消费副作用(seq 去重 → 适配 → 入队 → streaming 态)。
+ *
+ * snapshot 来源(重载/切回线程的初始回放)只跑适配器维持求差基线(lastText/
+ * turnId),不注入任何事件也不置 streaming:该窗口的内容旧路已覆盖——hydrate
+ * (AgentMessages 挂载)与未跳过的旧路 live 推送。若把 snapshot 事件也入队,会与
+ * 旧路事件双份注入且 runId 错位(总线 projector 自产 runId)导致投影无法去重
+ * (详见 final-fix-report 场景 E:run 终结在 tool 边界时文本持久重复)。
+ * 基线必须推进:否则后续 push 的累计 partial 会从空基线全量重发,与旧路已渲染
+ * 文本叠加成双份。
+ */
+export function consumeBusEnvelope(
+  envelope: SdkEventEnvelope,
+  source: AgentEventBusSource,
+  ctx: BusEnvelopeConsumerContext,
+): void {
+  const threadId = envelope.threadId
+  if ((ctx.deliveredSeqByThread.get(threadId) ?? 0) >= envelope.seq) return
+  ctx.deliveredSeqByThread.set(threadId, envelope.seq)
+  const state = ctx.adapterStatesByThread.get(threadId) ?? createLifecycleAdapterState()
+  ctx.adapterStatesByThread.set(threadId, state)
+  const events = adaptLifecycleEvent(envelope, state)
+  if (source === 'snapshot') return
+  for (const event of events) ctx.enqueueRuntimeEvent(event)
+  // streaming 态副作用对齐旧 RUNTIME_EVENT 分支(该分支对跳过类型不再置位);
+  // 仅 push 置位——快照回放悬空 run(无 run.end)不应把线程永久卡在流式态。
+  if (envelope.kind === 'message' && envelope.phase !== 'end') {
+    ctx.setStreamingStates((prev) => (
+      prev[threadId] === 'streaming' ? prev : { ...prev, [threadId]: 'streaming' }
+    ))
+  }
+  for (const event of events) {
+    if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
+      ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
+    } else if (event.type === 'run.failed') {
+      ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'errored' }))
+      ctx.setErrorMessages((prev) => ({ ...prev, [threadId]: event.error.message }))
+    }
+  }
 }
 
 /** 有状态纯函数:按事件顺序调用,state 由调用方持有(每线程一份)。 */

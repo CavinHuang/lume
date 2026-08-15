@@ -177,18 +177,22 @@ function envelope(threadId: string, seq: number): SdkEventEnvelope {
   }
 }
 
-function Harness(props: { threadId: string; enabled: boolean; onEvent: (e: SdkEventEnvelope) => void }) {
+function Harness(props: {
+  threadId: string
+  enabled: boolean
+  onEvent: (e: SdkEventEnvelope, source: 'snapshot' | 'push') => void
+}) {
   useAgentEventBus(props.threadId, { enabled: props.enabled, onEvent: props.onEvent })
   return null
 }
 
 async function mount() {
   const env = installFakeDom()
-  const received: SdkEventEnvelope[] = []
+  const received: Array<{ e: SdkEventEnvelope; source: 'snapshot' | 'push' }> = []
   const root: Root = createRoot(env.container as never)
   const rerender = async (threadId: string) => {
     await act(async () => {
-      root.render(<Harness threadId={threadId} enabled onEvent={(e) => received.push(e)} />)
+      root.render(<Harness threadId={threadId} enabled onEvent={(e, source) => received.push({ e, source })} />)
       await flush()
     })
   }
@@ -231,7 +235,7 @@ describe('useAgentEventBus', () => {
     const t = await mount()
     await t.rerender('t1')
     expect(getAgentEventsMock.mock.calls[0]).toEqual(['t1', undefined])
-    expect(t.received.map((e) => e.seq)).toEqual([1, 2, 3])
+    expect(t.received.map(({ e }) => e.seq)).toEqual([1, 2, 3])
     await t.unmount()
     t.cleanup()
   })
@@ -261,7 +265,7 @@ describe('useAgentEventBus', () => {
     push(envelope('t1', 2))
     push(envelope('t1', 3))
     await act(async () => { await flush() })
-    expect(t.received.map((e) => e.seq)).toEqual([1, 2, 3])
+    expect(t.received.map(({ e }) => e.seq)).toEqual([1, 2, 3])
     await t.unmount()
     t.cleanup()
   })
@@ -277,7 +281,7 @@ describe('useAgentEventBus', () => {
     await act(async () => { await flush() })
     expect(getAgentEventsMock.mock.calls).toHaveLength(2)
     expect(getAgentEventsMock.mock.calls[1]).toEqual(['t1'])
-    expect(t.received.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5])
+    expect(t.received.map(({ e }) => e.seq)).toEqual([1, 2, 3, 4, 5])
     await t.unmount()
     t.cleanup()
   })
@@ -286,14 +290,31 @@ describe('useAgentEventBus', () => {
     scriptPull([envelope('t1', 1)], [envelope('t2', 1), envelope('t2', 2)])
     const t = await mount()
     await t.rerender('t1')
-    expect(t.received.map((e) => e.seq)).toEqual([1])
+    expect(t.received.map(({ e }) => e.seq)).toEqual([1])
     await t.rerender('t2')
     expect(unlistenMock).toHaveBeenCalled()
     push(envelope('t1', 2))
     push(envelope('t2', 3))
     await act(async () => { await flush() })
-    expect(t.received.filter((e) => e.threadId === 't1').map((e) => e.seq)).toEqual([1])
-    expect(t.received.filter((e) => e.threadId === 't2').map((e) => e.seq)).toEqual([1, 2, 3])
+    expect(t.received.filter(({ e }) => e.threadId === 't1').map(({ e }) => e.seq)).toEqual([1])
+    expect(t.received.filter(({ e }) => e.threadId === 't2').map(({ e }) => e.seq)).toEqual([1, 2, 3])
+    await t.unmount()
+    t.cleanup()
+  })
+
+  test('来源标注:初始拉取为 snapshot,推送与空洞重拉为 push', async () => {
+    scriptPull(
+      [envelope('t1', 1), envelope('t1', 2), envelope('t1', 3)],
+      [envelope('t1', 1), envelope('t1', 2), envelope('t1', 3), envelope('t1', 4), envelope('t1', 5)],
+    )
+    const t = await mount()
+    await t.rerender('t1')
+    push(envelope('t1', 5)) // 空洞(5 > 3+1)触发全量重拉
+    await act(async () => { await flush() })
+    expect(t.received.map(({ e, source }) => [e.seq, source])).toEqual([
+      [1, 'snapshot'], [2, 'snapshot'], [3, 'snapshot'],
+      [4, 'push'], [5, 'push'],
+    ])
     await t.unmount()
     t.cleanup()
   })
