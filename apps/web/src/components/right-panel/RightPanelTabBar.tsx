@@ -39,6 +39,7 @@ export type RightPanelTabItem =
   | { kind: 'function'; id: string; type: RightPanelFunction; label: string }
   | { kind: 'browser'; id: string; tab: RightPanelBrowserTab; label: string }
   | { kind: 'file'; id: string; tab: RightPanelFileTab; label: string }
+  | { kind: 'file-preview'; id: string; tab: RightPanelFileTab; label: string }
 
 const FUNCTION_META: Record<RightPanelFunction, { label: string; Icon: LucideIcon; shortcut?: string }> = {
   browser: { label: '浏览器', Icon: Globe, shortcut: '⌘T' },
@@ -52,8 +53,9 @@ export function buildRightPanelTabItems(
   fileTabs: RightPanelFileTab[],
   reviewOpen = false,
   browserTabs: RightPanelBrowserTab[] = [],
+  previewTab: RightPanelFileTab | null = null,
 ): RightPanelTabItem[] {
-  const labels = disambiguateFileTabLabels(fileTabs)
+  const labels = disambiguateFileTabLabels(previewTab ? [...fileTabs, previewTab] : fileTabs)
   const result: RightPanelTabItem[] = []
   if (reviewOpen) result.push({ kind: 'review', id: 'review', label: '审阅' })
   result.push(...browserTabs.map((tab) => ({ kind: 'browser' as const, id: tab.id, tab, label: tab.title || '新标签页' })))
@@ -68,6 +70,7 @@ export function buildRightPanelTabItems(
   if (!workspace.tabs.files) {
     result.push(...fileTabs.map((tab) => ({ kind: 'file' as const, id: tab.id, tab, label: labels[tab.id]! })))
   }
+  if (previewTab) result.push({ kind: 'file-preview', id: previewTab.id, tab: previewTab, label: labels[previewTab.id]! })
   return result
 }
 
@@ -97,6 +100,10 @@ interface RightPanelTabBarProps {
   onRestoreBrowser?: () => void
   onActivateReview?: () => void
   onCloseReview?: () => void
+  previewTab?: RightPanelFileTab | null
+  onActivatePreview?: () => void
+  onPinPreview?: () => void
+  onClosePreview?: () => void
   onOpenFunction: (type: RightPanelFunction) => void
 }
 
@@ -104,8 +111,8 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   const activeRef = useRef<HTMLDivElement | null>(null)
   const items = useMemo(
-    () => buildRightPanelTabItems(props.workspace, props.fileTabs, props.reviewOpen, props.browserTabs),
-    [props.workspace, props.fileTabs, props.reviewOpen, props.browserTabs],
+    () => buildRightPanelTabItems(props.workspace, props.fileTabs, props.reviewOpen, props.browserTabs, props.previewTab ?? null),
+    [props.workspace, props.fileTabs, props.reviewOpen, props.browserTabs, props.previewTab],
   )
   const availableFunctions = [
     'browser' as const,
@@ -122,6 +129,8 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
       ? !props.reviewActive && props.activeItem?.kind === 'function' && props.activeItem.type === item.type
       : item.kind === 'browser'
         ? !props.reviewActive && props.activeItem?.kind === 'browser' && props.activeItem.tabId === item.id
+      : item.kind === 'file-preview'
+        ? !props.reviewActive && props.activeItem?.kind === 'file-preview'
       : !props.reviewActive && props.activeItem?.kind === 'file' && props.activeItem.tabId === item.id
 
   const activate = (item: RightPanelTabItem) => item.kind === 'review'
@@ -130,13 +139,16 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
       ? props.onActivateFunction(item.type)
       : item.kind === 'browser'
         ? props.onActivateBrowser?.(item.id)
-      : props.onActivateFile(item.id)
+      : item.kind === 'file-preview'
+        ? props.onActivatePreview?.()
+        : props.onActivateFile(item.id)
 
   const close = (item: RightPanelTabItem) => {
     const fallback = isActive(item) ? getRightPanelCloseFallback(items, item.id) : undefined
     if (item.kind === 'review') props.onCloseReview?.()
     else if (item.kind === 'function') props.onCloseFunction(item.type)
     else if (item.kind === 'browser') props.onCloseBrowser?.(item.id)
+    else if (item.kind === 'file-preview') props.onClosePreview?.()
     else props.onCloseFile(item.id)
     if (fallback) activate(fallback)
   }
@@ -154,7 +166,7 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
         {items.map((item) => {
           const active = isActive(item)
           const Icon = item.kind === 'review' ? FileDiff : item.kind === 'function' ? FUNCTION_META[item.type].Icon : item.kind === 'browser' ? Globe : null
-          const title = item.kind === 'file'
+          const title = item.kind === 'file' || item.kind === 'file-preview'
             ? item.tab.target.kind === 'mcp-resource'
               ? `${item.tab.target.resource.serverName}: ${item.tab.target.resource.uri}`
               : `${item.tab.target.kind}: ${item.tab.target.ref.source}:${item.tab.target.ref.relativePath}`
@@ -170,6 +182,7 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
                 event.preventDefault()
                 close(item)
               }}
+              onDoubleClick={() => { if (item.kind === 'file-preview') props.onPinPreview?.() }}
               className={cn(
                 'group relative flex h-7 min-w-[90px] max-w-[160px] shrink-0 items-center overflow-hidden rounded-lg bg-[var(--lume-bg-panel)] text-sm transition-colors',
                 active
@@ -196,14 +209,14 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
                   ? <img src={item.tab.faviconUrl} alt="" className="size-3.5 rounded-sm" />
                   : Icon
                   ? <Icon size={14} />
-                  : item.kind === 'file'
+                  : item.kind === 'file' || item.kind === 'file-preview'
                     ? item.tab.target.kind === 'mcp-resource'
                       ? <Braces size={14} />
                       : item.tab.target.kind === 'artifact'
                         ? <Package size={14} />
                         : <FileTypeIcon filename={rightPanelFileTargetName(item.tab.target)} size={14} />
                     : null}
-                <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
+                <span className={cn('min-w-0 flex-1 truncate text-left', item.kind === 'file-preview' && 'italic')}>{item.label}</span>
                 {item.kind === 'browser' && item.tab.mediaState?.camera && <Camera size={11} className="text-red-500" aria-label="摄像头使用中" />}
                 {item.kind === 'browser' && item.tab.mediaState?.microphone && <Mic size={11} className="text-red-500" aria-label="麦克风使用中" />}
                 {item.kind === 'browser' && item.tab.mediaState?.audible && <Volume2 size={11} className="text-muted-foreground" aria-label="正在播放声音" />}

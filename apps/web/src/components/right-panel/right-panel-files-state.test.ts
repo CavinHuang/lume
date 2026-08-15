@@ -11,6 +11,7 @@ import {
   openFileTab,
   normalizePersistedRightPanelFileTabs,
   normalizeLineSelection,
+  previewFileTab,
   reconcileThreadFileWorkspaces,
     removeFileRef,
     setFilePreviewScope,
@@ -182,10 +183,9 @@ describe('right-panel-files-state', () => {
     let state = createThreadFileWorkspace({ workspaceId: 'workspace-1', fileContextId: 'context-1', projectBindingKey: 'old-root' })
     const projectRef = ref('src/app.ts', 'project', 'workspace-1')
     state = openFileTab(state, projectRef)
+    state = previewFileTab({ ...state, selectedRef: projectRef }, projectRef)
     state = {
       ...state,
-      selectedRef: projectRef,
-      temporaryPreviewTarget: { kind: 'file', ref: projectRef },
       directoryCache: { project: [] },
       previewScopes: { [state.openTabs[0]!.id]: 'scope-token' },
     }
@@ -193,7 +193,7 @@ describe('right-panel-files-state', () => {
       id: 'thread', workspaceId: 'workspace-1', fileContextId: 'context-1', projectBindingKey: 'new-root', openFunctions: ['files'],
     }])
     expect(result.workspaces.thread).toMatchObject({
-      openTabs: [], selectedRef: null, temporaryPreviewTarget: null, directoryCache: {}, previewScopes: {},
+      openTabs: [], selectedRef: null, previewTab: null, directoryCache: {}, previewScopes: {},
     })
     expect(result.revokedScopeTokens).toEqual(['scope-token'])
   })
@@ -211,7 +211,7 @@ describe('right-panel-files-state', () => {
   test('a fresh process starts with no runtime file state', () => {
     expect(createThreadFileWorkspace({ fileContextId: 'scope-1' })).toMatchObject({
       selectedRef: null,
-      temporaryPreviewTarget: null,
+      previewTab: null,
       openTabs: [],
       expandedKeys: [],
       search: { query: '' },

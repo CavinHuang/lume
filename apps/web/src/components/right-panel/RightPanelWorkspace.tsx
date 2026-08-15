@@ -24,9 +24,11 @@ import { onSidecarEvent } from '@/lib/desktop-api'
 import { AGENT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, type BrowserTabDescriptor, type BrowserWorkspaceDescriptor, type FileSource } from '@lume/shared'
 import { cn } from '@/lib/utils'
 import {
+  clearPreviewFileTab,
   createThreadFileWorkspace,
   getEffectiveThreadFileBindings,
   normalizePersistedRightPanelFileTabs,
+  pinPreviewFileTab,
   reconcileThreadFileWorkspaces,
   type ThreadFileWorkspace,
 } from './right-panel-files-state'
@@ -565,6 +567,10 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || compact) return
     event.preventDefault()
+    // 面板内容承载 webview/iframe（独立文档，不向主文档冒泡 pointer 事件）：
+    // 必须捕获指针，否则光标拖入其区域（宽度触到钳制值后极易发生）后
+    // pointermove/pointerup 全部丢失——拖动冻结且 resizing 状态卡死
+    event.currentTarget.setPointerCapture(event.pointerId)
     const move = (next: PointerEvent) => setLayout((current) => ({
       ...current, open: true, mode: 'normal',
       width: getRightPanelDragWidth({ clientX: next.clientX, viewportWidth: window.innerWidth, maxWidth: resolvedMaxWidth }),
@@ -573,11 +579,13 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
       setResizing(false)
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', stop)
+      window.removeEventListener('pointercancel', stop)
     }
     setResizing(true)
     move(event.nativeEvent)
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', stop)
+    window.addEventListener('pointercancel', stop)
   }
 
   return (
@@ -612,6 +620,13 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
               onActivateBrowser={activateBrowser}
               onCloseFunction={(fn) => action({ type: 'close-function', threadId, function: fn })}
               onCloseFile={(tabId) => action({ type: 'close-file', threadId, tabId })}
+              previewTab={runtimeWorkspace.previewTab}
+              onActivatePreview={() => {
+                closeCodingReview({ type: 'deactivate', threadId })
+                updateRuntime((current) => current.previewTab ? { ...current, activeItem: { kind: 'file-preview' } } : current)
+              }}
+              onPinPreview={() => updateRuntime(pinPreviewFileTab)}
+              onClosePreview={() => updateRuntime(clearPreviewFileTab)}
               onCloseBrowser={closeBrowser}
               onNewBrowserToRight={(tabId) => openBrowser('', tabId)}
               onReloadBrowser={reloadBrowser}
@@ -719,7 +734,7 @@ function RightPanelActiveContent({ runtime, browserWorkspace, workspaceSlug, wor
       />
     )
   }
-  if (active.kind === 'file' || active.type === 'files') {
+  if (active.kind === 'file' || active.kind === 'file-preview' || active.type === 'files') {
     return <FilesRightPanelWorkspace threadId={threadId} workspace={runtime} workspaceSlug={workspaceSlug} workspaceProjectPath={workspaceProjectPath} fileContextId={fileContextId} openFunctions={openFunctions} onWorkspaceChange={onRuntimeChange} />
   }
   if (active.kind === 'function' && active.type === 'chat') {

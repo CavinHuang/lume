@@ -33,6 +33,7 @@ import {
   createRightPanelFileTarget,
   fileRefKey,
   getFileTreeRevealDirectories,
+  previewFileTab,
   removeFileRef,
   rewriteFileRefPrefix,
   rightPanelFileTargetKey,
@@ -69,7 +70,6 @@ export function UnifiedFileTree({
   openFunctions,
   onWorkspaceChange,
   onOpenFile,
-  singleClickOpen,
 }: {
   workspace: ThreadFileWorkspace
   workspaceSlug?: string
@@ -78,8 +78,6 @@ export function UnifiedFileTree({
   openFunctions: RightPanelFunction[]
   onWorkspaceChange: (workspace: ThreadFileWorkspace) => void
   onOpenFile: (target: RightPanelFileTarget | FileRef) => void
-  /** 窄布局下单击非目录文件直接打开预览（而非仅选中）；宽布局保持单击选中、双击打开 */
-  singleClickOpen?: boolean
 }) {
   const treeCacheIdentity = getUnifiedFileTreeCacheIdentity(workspaceSlug, fileContextId, workspaceProjectPath)
   const [cache, setCache] = useState<Record<string, FileEntry[]>>(() => workspace.directoryCache as Record<string, FileEntry[]>)
@@ -345,13 +343,9 @@ export function UnifiedFileTree({
 
   const select = (ref: FileRef) => {
     const entry = findCachedEntry(cacheRef.current, ref)
-    commitWorkspace({
-      ...workspaceRef.current,
-      selectedRef: ref,
-      temporaryPreviewTarget: entry?.isDirectory
-        ? workspaceRef.current.temporaryPreviewTarget
-        : createRightPanelFileTarget(ref),
-    })
+    commitWorkspace(entry?.isDirectory
+      ? { ...workspaceRef.current, selectedRef: ref }
+      : previewFileTab({ ...workspaceRef.current, selectedRef: ref }, ref))
   }
   const toggle = async (ref: FileRef) => {
     const key = fileRefKey(ref)
@@ -503,7 +497,6 @@ export function UnifiedFileTree({
       onSelect={select}
       onToggle={toggle}
       onOpen={(ref) => onOpenFile(createRightPanelFileTarget(ref))}
-      singleClickOpen={singleClickOpen}
       onEdit={(next) => { setEditing(next.ref ?? null); setRenameValue(next.name) }}
       onMove={(next) => { setMoving(next); setMoveTarget(parentPath(next.ref?.relativePath ?? '')) }}
       onDelete={setDeleting}
@@ -616,8 +609,8 @@ export function UnifiedFileTree({
                 || `${resource.name ?? ''} ${resource.uri} ${resource.serverName}`.toLowerCase().includes(query.trim().toLowerCase()))
               .map((resource) => {
                 const target = { kind: 'mcp-resource' as const, workspaceSlug, resource }
-                const selected = workspace.temporaryPreviewTarget
-                  ? rightPanelFileTargetKey(workspace.temporaryPreviewTarget) === rightPanelFileTargetKey(target)
+                const selected = workspace.previewTab
+                  ? rightPanelFileTargetKey(workspace.previewTab.target) === rightPanelFileTargetKey(target)
                   : false
                 return (
                   <Button
@@ -625,11 +618,7 @@ export function UnifiedFileTree({
                   variant="ghost"
                   className={cn('h-7 w-full justify-start gap-1.5 rounded-none px-5 text-[12px]', selected && 'bg-primary/10 text-primary')}
                   title={`${resource.serverName} · ${resource.uri}`}
-                  onClick={() => commitWorkspace({
-                    ...workspaceRef.current,
-                    selectedRef: null,
-                    temporaryPreviewTarget: target,
-                  })}
+                  onClick={() => commitWorkspace(previewFileTab({ ...workspaceRef.current, selectedRef: null }, target))}
                   onDoubleClick={() => onOpenFile(target)}
                 >
                   <Braces size={13} className="shrink-0 text-foreground/45" />
@@ -679,7 +668,6 @@ function TreeEntryRow(props: {
   selectedRef: FileRef | null; treeTabStopKey: string | null; loadingKeys: string[]; editing: FileRef | null; renameValue: string
   onRenameValue: (value: string) => void; onCommitRename: (entry: FileEntry) => Promise<void>
   onSelect: (ref: FileRef) => void; onToggle: (ref: FileRef) => Promise<void>; onOpen: (ref: FileRef) => void
-  singleClickOpen?: boolean
   onEdit: (entry: FileEntry) => void; onMove: (entry: FileEntry) => void; onDelete: (entry: FileEntry) => void
   onExportLegacy: (entry: FileEntry) => Promise<void>; onCopyAbsolutePath: (ref: FileRef) => Promise<void>; showPath: boolean
 }) {
@@ -715,7 +703,7 @@ function TreeEntryRow(props: {
           props.onSelect(entry.ref!)
           if (entry.isDirectory) {
             if (event.detail === 1) void props.onToggle(entry.ref!)
-          } else if (props.singleClickOpen || event.detail === 2) {
+          } else if (event.detail === 2) {
             props.onOpen(entry.ref!)
           }
         }}
