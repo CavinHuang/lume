@@ -94,6 +94,7 @@ describe("splitDeferredTools adapter", () => {
 
   test("CORE_TOOL_NAMES stays the default preset core set", () => {
     expect(CORE_TOOL_NAMES.has("Bash")).toBe(true);
+    expect(CORE_TOOL_NAMES.has("WebFetch")).toBe(true);
   });
 });
 
@@ -156,7 +157,7 @@ describe("applyOverrides", () => {
     expect(deferredTools.map((t) => t.name)).toEqual(["GuanlanSearch"]);
   });
 
-  test("string list plus disallowedTools ignores the deny", () => {
+  test("string list plus disallowedTools intersects allow with deny", () => {
     const registry = setup();
     const pools = { tools: [tool("Bash")], deferredTools: [tool("WebFetch")] };
     const { tools, deferredTools } = applyOverrides(
@@ -165,7 +166,7 @@ describe("applyOverrides", () => {
       { tools: ["Bash", "WebFetch"], disallowedTools: ["Web*"] },
       pools,
     );
-    expect(tools.map((t) => t.name)).toEqual(["Bash", "WebFetch"]);
+    expect(tools.map((t) => t.name)).toEqual(["Bash"]);
     expect(deferredTools).toEqual([]);
   });
 

@@ -78,6 +78,7 @@ export function createToolRegistry(): ToolRegistry {
     return layer;
   };
 
+  // ponytail: only the "default" preset participates in resolution until P2; other preset keys register but do not resolve.
   const chain = (id: string): Layer[] => [globalLayer, layerOf(presets, "default"), layerOf(agents, id)];
 
   const merged = (id: string): { byName: Map<string, ToolDefinition>; order: string[] } => {
@@ -157,13 +158,15 @@ export function applyOverrides(
   const layer = registry.agent(agentId);
   const undos: Array<() => void> = [];
   const explicitList = Array.isArray(overrides.tools) ? (overrides.tools as string[]) : undefined;
-  if (explicitList) {
-    // Legacy semantics: an explicit string list replaces the tool pool outright
-    // and ignores disallowedTools. Do not register the deny mask here — the
-    // allow-filtered result is read back from the registry view.
-    undos.push(layer.restrict({ allow: explicitList }));
-  } else if (overrides.disallowedTools) {
+  if (overrides.disallowedTools) {
     undos.push(layer.restrict({ deny: overrides.disallowedTools }));
+  }
+  if (explicitList) {
+    // Legacy semantics: an explicit string list intersects with the deny mask
+    // (allow ∩ ¬deny) — the old base-pool builder already subtracted
+    // disallowedTools before applying the allow list, so both masks register
+    // and visible() applies the allow-intersection then the deny-union.
+    undos.push(layer.restrict({ allow: explicitList }));
   }
   const undoAll = () => {
     for (const undo of undos) undo();
