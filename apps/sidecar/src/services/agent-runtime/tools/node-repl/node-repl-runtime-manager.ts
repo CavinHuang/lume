@@ -19,6 +19,7 @@ import {
 } from "./node-repl-computer-use-bridge";
 
 const DEFAULT_CALL_TIMEOUT_MS = 35_000;
+const DEFAULT_HOST_CALL_LEASE_MS = 10 * 60_000;
 const MAX_STDERR_CHARS = 16_000;
 
 interface RuntimeControlResponse {
@@ -61,6 +62,7 @@ interface ActiveExec {
   options?: NodeReplRuntimeExecOptions;
   abortController: AbortController;
   computerUseResults: NodeReplComputerUseResult[];
+  execRequestId: string;
 }
 
 interface JsonlNodeReplRuntimeClientOptions {
@@ -70,6 +72,7 @@ interface JsonlNodeReplRuntimeClientOptions {
   kernelPath: string;
   nodePath: string;
   sandbox?: SandboxSettings;
+  hostCallLeaseMs?: number;
 }
 
 export function createNodeReplRuntimeClientFromEnv(input: RuntimeFactoryInput): NodeReplRuntimeClient {
@@ -95,8 +98,9 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
 
   async exec(input: JsExecInput, options?: NodeReplRuntimeExecOptions): Promise<NodeReplExecutionResult> {
     const execId = `node-repl-exec-${Date.now()}-${this.nextId++}`;
+    const execRequestId = `node-repl-${this.nextId++}`;
     const abortController = new AbortController();
-    const active: ActiveExec = { options, abortController, computerUseResults: [] };
+    const active: ActiveExec = { options, abortController, computerUseResults: [], execRequestId };
     this.activeExecs.set(execId, active);
     try {
       const value = await this.call("exec", {
@@ -104,7 +108,7 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
         code: input.code,
         ...(input.timeout_ms ? { timeout_ms: input.timeout_ms } : {}),
         ...(input._meta ? { request_meta: input._meta } : {})
-      }, callTimeoutMs(input.timeout_ms));
+      }, callTimeoutMs(input.timeout_ms), execRequestId);
       return mergeComputerUseExecutionResult(mapExecutionValue(value), active.computerUseResults);
     } finally {
       abortController.abort();
@@ -133,7 +137,7 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
     }
   }
 
-  private async call(method: string, params: Record<string, unknown>, timeoutMs = DEFAULT_CALL_TIMEOUT_MS): Promise<unknown> {
+  private async call(method: string, params: Record<string, unknown>, timeoutMs = DEFAULT_CALL_TIMEOUT_MS, requestIdOverride?: string): Promise<unknown> {
     this.ensureStarted();
     const child = this.child;
     const stdin = child?.stdin;
@@ -141,7 +145,7 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       throw new Error("node_repl runtime stdin unavailable");
     }
 
-    const requestId = `node-repl-${this.nextId++}`;
+    const requestId = requestIdOverride ?? `node-repl-${this.nextId++}`;
     const payload = JSON.stringify({
       request_id: requestId,
       method,
@@ -247,6 +251,7 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
 
   private async handleRuntimeHostCall(message: RuntimeHostCall): Promise<void> {
     const active = this.activeExecs.get(message.exec_id);
+    if (active) this.extendExecDeadline(active);
     if (message.method === "computer.request") {
       if (!active?.options?.emitComputerUseRequest) {
         this.writeHostResult(message.id, false, undefined, "Computer Use bridge is unavailable");
@@ -312,6 +317,20 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
     } catch {
       this.writeHostResult(message.id, true, { status: "unavailable" });
     }
+  }
+
+  // A host call (tool approval, browser request, ...) can wait on the user far
+  // longer than the exec deadline; while it is in flight, re-arm the exec's
+  // pending timeout to a one-shot lease so the sandbox thread is not torn down.
+  private extendExecDeadline(active: ActiveExec): void {
+    const pending = this.pending.get(active.execRequestId);
+    if (!pending) return;
+    const leaseMs = Math.max(this.options.hostCallLeaseMs ?? DEFAULT_HOST_CALL_LEASE_MS, 1);
+    clearTimeout(pending.timeout);
+    pending.timeout = setTimeout(() => {
+      this.pending.delete(active.execRequestId);
+      pending.reject(new Error(`node_repl exec timed out after ${leaseMs}ms`));
+    }, leaseMs);
   }
 
   private writeHostResult(id: string, ok: boolean, value?: unknown, error?: string): void {

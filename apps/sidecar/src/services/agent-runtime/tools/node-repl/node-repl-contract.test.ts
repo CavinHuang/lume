@@ -14,14 +14,15 @@ interface HostResultWrite {
   params: { id: string; ok: boolean; value?: unknown; error?: string };
 }
 
-function createHostCallHarness(options: NodeReplRuntimeExecOptions) {
+function createFakeChildClient(hostCallLeaseMs?: number) {
   const writes: HostResultWrite[] = [];
   const client = new JsonlNodeReplRuntimeClient({
     threadId: "thread-1",
     cwd: "D:/repo",
     hostPath: "host.js",
     kernelPath: "kernel.js",
-    nodePath: "node.exe"
+    nodePath: "node.exe",
+    ...(hostCallLeaseMs === undefined ? {} : { hostCallLeaseMs })
   });
   (client as any).child = {
     stdin: {
@@ -34,6 +35,11 @@ function createHostCallHarness(options: NodeReplRuntimeExecOptions) {
     },
     kill() {}
   };
+  return { client, writes };
+}
+
+function createHostCallHarness(options: NodeReplRuntimeExecOptions) {
+  const { client, writes } = createFakeChildClient();
   (client as any).activeExecs.set("exec-1", {
     options,
     abortController: new AbortController(),
@@ -191,6 +197,110 @@ describe("node_repl tool bridge host calls", () => {
 
     expect(write).toMatchObject({
       params: { ok: false, error: "permission denied" }
+    });
+  });
+});
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Scales only the long default exec deadline (>= 30s) down so lease behavior
+// is observable with real timers while lease values keep their real duration.
+async function scaleLongTimeouts(scale: (ms: number) => number, run: () => Promise<void>): Promise<void> {
+  const original = globalThis.setTimeout;
+  (globalThis as any).setTimeout = ((handler: TimerHandler, timeout = 0, ...args: unknown[]) =>
+    original(handler, scale(timeout), ...(args as []))) as typeof setTimeout;
+  try {
+    await run();
+  } finally {
+    (globalThis as any).setTimeout = original;
+  }
+}
+
+function soleActiveExec(client: JsonlNodeReplRuntimeClient): [string, any] {
+  return [...(client as any).activeExecs.entries()][0];
+}
+
+async function rejectionOf(promise: Promise<unknown>): Promise<Error> {
+  return promise.then(
+    () => {
+      throw new Error("expected rejection");
+    },
+    (error: Error) => error
+  );
+}
+
+describe("node_repl exec deadline lease", () => {
+  test("host call in flight keeps a pending exec alive past the original deadline", async () => {
+    await scaleLongTimeouts((ms) => (ms >= 30_000 ? 400 : ms), async () => {
+      const { client } = createFakeChildClient(2_000);
+      let releaseToolRequest!: (value: unknown) => void;
+      const toolRequest = new Promise<unknown>((resolve) => {
+        releaseToolRequest = resolve;
+      });
+      let state = "pending";
+      const execPromise = client.exec({ code: "await tools.search('lume')" }, { toolRequest: () => toolRequest });
+      void execPromise.then(() => {
+        state = "fulfilled";
+      }, () => {
+        state = "rejected";
+      });
+
+      await sleep(100);
+      const [execId, active] = soleActiveExec(client);
+      void (client as any).handleRuntimeHostCall({
+        type: "runtime_host_call",
+        id: "host-1",
+        exec_id: execId,
+        method: "tool_call",
+        args: { name: "search", params: {} }
+      });
+
+      await sleep(800);
+      expect(state).toBe("pending");
+
+      releaseToolRequest({ content: [] });
+      (client as any).handleLine(JSON.stringify({
+        type: "runtime_response",
+        request_id: active.execRequestId,
+        ok: true,
+        value: { ok: true, output: "done" }
+      }));
+      const result = await execPromise;
+      expect(result.content).toEqual([{ type: "text", text: "done" }]);
+    });
+  });
+
+  test("exec still times out after the lease when the host call never resolves", async () => {
+    await scaleLongTimeouts((ms) => (ms >= 30_000 ? 400 : ms), async () => {
+      const { client } = createFakeChildClient(300);
+      const execPromise = client.exec({ code: "await tools.search('lume')" }, {
+        toolRequest: () => new Promise<unknown>(() => {})
+      });
+
+      await sleep(100);
+      const [execId] = soleActiveExec(client);
+      void (client as any).handleRuntimeHostCall({
+        type: "runtime_host_call",
+        id: "host-1",
+        exec_id: execId,
+        method: "tool_call",
+        args: { name: "search", params: {} }
+      });
+
+      const error = await rejectionOf(execPromise);
+      expect(error.message).toContain("timed out after 300ms");
+    });
+  });
+
+  test("exec without host calls still rejects on the original deadline", async () => {
+    await scaleLongTimeouts((ms) => (ms >= 30_000 ? 400 : ms), async () => {
+      const { client } = createFakeChildClient();
+      const execPromise = client.exec({ code: "while (true) {}" }, {});
+
+      const error = await rejectionOf(execPromise);
+      expect(error.message).toContain("timed out after 35000ms");
     });
   });
 });
