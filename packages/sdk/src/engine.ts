@@ -75,7 +75,7 @@ import { buildStructuredOutputInstruction, parseStructuredOutput } from './utils
 import { captureFileSnapshots, captureWorkspaceFileSnapshots, collectCheckpointPaths, requiresWorkspaceCheckpoint } from './utils/file-checkpoints.js'
 import { generatePromptSuggestion } from './utils/prompt-suggestions.js'
 import { resolve } from 'path'
-import { getUserInvocableSkills } from './skills/index.js'
+import { getModelInvocableSkills, getUserInvocableSkills, renderSkillCatalog } from './skills/index.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { FileStateCache } from './utils/fileCache.js'
 
@@ -1073,6 +1073,13 @@ export class QueryEngine {
       ].filter(Boolean).join('\n\n')
       if (transientRuntimeContext) {
         apiMessages.push({ role: 'runtime', content: transientRuntimeContext })
+      }
+
+      const skillCatalog = renderSkillCatalog(
+        this.config.skillRegistry?.getModelInvocable() ?? getModelInvocableSkills(),
+      )
+      if (skillCatalog) {
+        apiMessages.push({ role: 'runtime', content: skillCatalog })
       }
 
       this.turnCount++

@@ -23,6 +23,7 @@ const permissions = new Set(options.manifest.permissions ?? []);
 const fullEnv = freezeEnv(options.env);
 const untrustedEnv = freezeEnv(pickEnvironment(options.env, options.manifest.allowedEnv ?? []));
 const trustedCodePaths = (options.trustedCodePaths ?? []).map((entry) => canonicalPath(path.resolve(entry)));
+const browserClientPath = trustedCodePaths.find((entry) => path.basename(entry) === "browser-client.mjs");
 const trustedSourceHashes = new Set((options.trustedSourceHashes ?? []).map(normalizeHash));
 const execStorage = new AsyncLocalStorage();
 const spanStorage = new AsyncLocalStorage();
@@ -913,6 +914,15 @@ function isWithinBaseNodeModules(base, resolvedPath) {
     return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 const moduleLoader = new ModuleLoader();
+defineLockedGlobal(untrustedContext, "setupBrowserRuntime", async () => {
+    if (!browserClientPath)
+        throw new Error("Lume Browser trusted client is unavailable");
+    const browserClient = await moduleLoader.dynamicImport(browserClientPath, path.join(cwd, ".node_repl_browser_bootstrap.mjs"), false);
+    if (typeof browserClient.setupLumeBrowserRuntime !== "function")
+        throw new Error("Lume Browser trusted client is invalid");
+    const runtime = await browserClient.setupLumeBrowserRuntime({ globals: untrustedContext });
+    return runtime.agent;
+});
 async function isTrustedFile(filePath) {
     if (options.trustAllImportedCode)
         return true;

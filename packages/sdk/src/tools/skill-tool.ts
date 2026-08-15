@@ -5,6 +5,7 @@
  * Skills are prompt templates that provide specialized capabilities.
  */
 
+import { dirname } from 'path'
 import type { ToolDefinition, ToolResult, ToolContext } from '../types.js'
 import type { SkillDefinition } from '../skills/types.js'
 import { recordSkillUsage } from '../skills/evolution.js'
@@ -41,7 +42,7 @@ export function createSkillTool(registry: SkillRegistry | SkillLookup = globalSk
     'Execute a skill within the current conversation. ' +
     'Skills provide specialized capabilities and domain knowledge. ' +
     'Use this tool with the skill name and optional arguments. ' +
-    'Available skills are listed in system-reminder messages.',
+    'Available skills are listed in an <available_skills> runtime context block.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -137,12 +138,18 @@ export function createSkillTool(registry: SkillRegistry | SkillLookup = globalSk
         .map((b) => b.text)
         .join('\n\n')
 
+      const skillDir = skill.sourcePath ? dirname(skill.sourcePath) : undefined
+      const finalPrompt = skillDir
+        ? `${promptText}\n\nReferences and relative paths in this skill resolve against: ${skillDir}`
+        : promptText
+
       // Build result with metadata
       const result: Record<string, unknown> = {
         success: true,
         commandName: skill.name,
         status: skill.context === 'fork' ? 'forked' : 'inline',
-        prompt: promptText,
+        prompt: finalPrompt,
+        ...(skillDir ? { skillDir } : {}),
       }
 
       if (skill.allowedTools) {

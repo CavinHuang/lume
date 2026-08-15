@@ -31,6 +31,9 @@ describe("bundled browser plugin", () => {
     expect(skill).toContain("browser.tabs.resumeHandoff()");
     expect(skill).toContain('browser.tabs.new({ sessionKind: "agent-task" })');
     expect(skill).toContain("browser.tabs.new()");
+    expect(skill).toContain("Every user turn starts with fresh JavaScript bindings");
+    expect(skill).toContain("The first `mcp__node_repl__js` call after loading the Skill must repeat");
+    expect(skill).toContain("JavaScript bindings persist only within the current turn");
     expect(skill).toContain("Set `timeout_ms` to `300000`");
     expect(skill).toContain("nodeRepl.write(JSON.stringify");
     expect(skill).toContain("Never claim Lume has no browser before attempting this runtime");

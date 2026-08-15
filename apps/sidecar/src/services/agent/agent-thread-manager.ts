@@ -571,6 +571,12 @@ export function deleteAgentThread(id: string): void {
   const workspaceLock = `workspace:${threadBeforeDelete?.workspaceId ?? "<unassigned>"}`;
   const release = agentLifecycleLocks.tryAcquire([workspaceLock, `thread:${id}`]);
   if (!release) throw new Error("Agent 线程正在执行项目生命周期操作，请稍后重试");
+  // node_repl 按 thread 常驻（跨消息复用 binding），线程删除时回收沙箱（含 permanentlyDelete 路径）。
+  // 惰性动态 import：静态引入会闭合 create-computer-use-tools↔node-repl 的模块环（TDZ:
+  // Cannot access 'COMPUTER_USE_TOOL_NAMES' before initialization,见 verify:computer-use）
+  void import("../agent-runtime/tools/node-repl/node-repl-runtime-registry")
+    .then((module) => module.getNodeReplRuntimeRegistry().shutdown(id))
+    .catch(() => undefined);
   try { deleteAgentThreadLocked(id); } finally { release(); }
 }
 
