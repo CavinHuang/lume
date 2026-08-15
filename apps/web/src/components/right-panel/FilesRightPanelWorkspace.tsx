@@ -95,6 +95,9 @@ export function FilesRightPanelWorkspace({
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !wide) return
     event.preventDefault()
+    // 捕获指针：预览区承载 iframe/webview（独立文档不冒泡 pointer 事件），
+    // 未捕获时光标拖入其区域后 move/up 丢失——拖动冻结且 resizing 卡死
+    event.currentTarget.setPointerCapture(event.pointerId)
     const move = (next: PointerEvent) => {
       const rect = containerRef.current?.getBoundingClientRect()
       if (!rect) return
@@ -107,10 +110,12 @@ export function FilesRightPanelWorkspace({
       setResizing(false)
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', stop)
+      window.removeEventListener('pointercancel', stop)
     }
     setResizing(true)
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', stop)
+    window.addEventListener('pointercancel', stop)
   }
 
   return (
