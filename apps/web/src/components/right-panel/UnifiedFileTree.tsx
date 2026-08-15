@@ -794,7 +794,7 @@ function TreeEntryRow(props: {
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className={cn('size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100', menuOpen && 'opacity-100')} />}><MoreHorizontal size={12} /></DropdownMenuTrigger>
           <DropdownMenuContent>
-            {!entry.isDirectory && <DropdownMenuItem onSelect={() => props.onOpen(entry.ref!)}>预览</DropdownMenuItem>}
+            {!entry.isDirectory && <DropdownMenuItem onSelect={() => props.onSelect(entry.ref!)}>预览</DropdownMenuItem>}
             <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void openFileRefInSystem(entry.ref!)}>系统打开</DropdownMenuItem>
             <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void revealFileRefInSystem(entry.ref!)}>在文件管理器中显示</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => void writeClipboardText(entry.ref!.relativePath)}>复制相对路径</DropdownMenuItem>

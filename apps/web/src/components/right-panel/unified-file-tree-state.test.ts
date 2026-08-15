@@ -44,6 +44,7 @@ describe('unified-file-tree-state', () => {
 
     expect(source).toContain("activeItem: { kind: 'function', type: 'files' }")
     expect(source).toContain("openFunctions.includes('files')")
+    expect(source).toContain('<DropdownMenuItem onSelect={() => props.onSelect(entry.ref!)}>预览</DropdownMenuItem>')
   })
 
   test('uses fixed groups, defaults, and hides empty legacy', () => {
