@@ -174,6 +174,33 @@ describe("Agent runtime tool resolver", () => {
     await agent.close()
   })
 
+  test("rebuildToolPool shrinks the pools when resolveRuntimeTools drops a tool", async () => {
+    process.env.ENABLE_TOOL_SEARCH = "tst"
+    let resolveCount = 0
+    const agent = createAgent({
+      persistSession: false,
+      tools: [tool("Read"), tool("DisposableExtra"), tool("SurvivingExtra")],
+      resolveRuntimeTools: (tools) => {
+        resolveCount += 1
+        return resolveCount === 1 ? tools : tools.filter((item) => item.name !== "DisposableExtra")
+      },
+    })
+    await agent.getInitializationResult()
+
+    // First rebuild: Read stays core-eager, both extras defer, generated pair injected.
+    expect((agent as any).toolPool.map((t: ToolDefinition) => t.name)).toEqual(["Read", "ToolSearch", "ExecuteTool"])
+    expect((agent as any).deferredToolPool.map((t: ToolDefinition) => t.name)).toEqual(["DisposableExtra", "SurvivingExtra"])
+
+    // Second rebuild without DisposableExtra: the previous registration is
+    // disposed, so the dropped tool is gone from both pools while the
+    // generated pair and the surviving deferred tool remain.
+    await (agent as any).rebuildToolPool()
+    expect((agent as any).toolPool.map((t: ToolDefinition) => t.name)).toEqual(["Read", "ToolSearch", "ExecuteTool"])
+    expect((agent as any).deferredToolPool.map((t: ToolDefinition) => t.name)).toEqual(["SurvivingExtra"])
+
+    await agent.close()
+  })
+
   test("registers generated discovery tools with the host runtime", async () => {
     process.env.ENABLE_TOOL_SEARCH = "tst"
     const registered: string[] = []
