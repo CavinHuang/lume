@@ -1701,6 +1701,9 @@ export class QueryEngine {
       }
       return promoted
     }
+    toolContext.listAvailableTools = () =>
+      [...this.config.tools, ...(this.config.deferredTools ?? [])]
+        .map(({ name, description, inputSchema }) => ({ name, description, inputSchema }))
     if (!tool) {
       return {
         result: {

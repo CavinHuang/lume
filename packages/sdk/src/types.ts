@@ -897,6 +897,8 @@ export interface ToolContext {
   activateTools?: (names: string[]) => string[]
   /** Runs a registered core or deferred tool through the normal permission and event chain. */
   executeNestedTool?: (input: { toolName: string; params: unknown }) => Promise<ToolResult>
+  /** Live snapshot of every tool this engine can call: native tools first, then deferred. */
+  listAvailableTools?: () => Array<{ name: string; description: string; inputSchema: ToolDefinition['inputSchema'] }>
 }
 
 export interface PersistedToolContinuation {
