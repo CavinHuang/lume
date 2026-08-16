@@ -147,8 +147,8 @@ atom 写入保留 rAF 批量;旧 useGlobalAgentListeners 对试点链事件分�
 | 1(本 spec) | run + turn + assistant message | 全链路验证与模板 |
 | 2 | tool 三段式 | 吞并 tool_result/tool_use_summary/tool_progress;子 agent 归属决策;权限拦截点挂 tool.start 前 |
 | 3(已完成,范围收窄) | memory.context.used 迁移(第二注入路径:数据源在 session 层而非 SDK 流,lume-runner 在旧发点同步 bus.publish,runId 用 Lume runId 修正批次1 projector 自产 UUID 错位)。**终审实证(2026-08-16)**:memory 事件 seq 恒在 run.end 之后(lume-runner 在流返回后才双发),live 总线版被终态闸门**确定性拦截**(`[lifecycle-mismatch]` 每 memory run 必触发)——live 展示实际由旧路 hydrate replay 驱动,总线事件为 events.jsonl 落盘先占;根因是 projector UUID 与 Lume runId 分裂(闸门无法 runId 域化收窄),**批次5 统一 runId 并删旧路后由总线接管**。验收表述修正:本类打点不归零,批次5 才归零 | **范围收窄裁决**:交互事件(权限/ask_user/browser_auth/desktop_action)不迁——专用请求-应答闭环通道单源无双投,迁移需重建闭环无收益(原批次3 主题,修正);memory.changed/memory.job.* 不迁——版本计数非渲染路径,YAGNI;memory.context.used 迁移——批次1 `[lifecycle-mismatch]` 打点错位实锤。**消费端裁定转正**(批次2 遗留两项):① error assistant 悬空卡:总线不发未执行工具的 tool.start 为正式语义(旧路悬空卡为缺陷,批次5 删旧路后全库一致);② 孤立 tool_result:不产 tool.end(无 start 的 end 无意义;count-fallback 补位例外为有意容忍),终态闸门与 orphan guard 为正式语义 |
-| 4 | 系统类(init/api_retry/compaction×3/task_notification/status…) | kind+phase='event' 直迁 |
-| 5 | 收尾 | 删旧投影双开关盒、合并 events.jsonl 与 runtime-events store、删 flag、官方兼容出口终态确认 |
+| 4(已完成,范围实证收窄) | task_notification(非 subagent)+ compaction×3 迁移。**双入口注入**(engine 二选一):in-run 走主流 projector 投影、late 走 onAsyncEvent 旁路(run.ts handleAsyncEvent 直发 bus)——P7 旁路乱序被 seq 单调收编;late 双投(agent-service projectLate 双发)随跳过清单消除。**范围裁决(取证依据)**:api_retry 不迁(live-only 单源无双投;迁入会引入回放突现新面——批次3 教训);memory_saved 不迁(批次3 同构,流外补发被闸门拦;consolidation 突现留旧路内修);init/status 不迁(零消费方)。subagent 形态不迁(独立闭环 SUBAGENT_COMPLETED) | kind+phase='event' 直迁(原案,已被实证收窄取代) |
+| 5 | 收尾 | 删旧投影双开关盒、合并 events.jsonl 与 runtime-events store、删 flag、官方兼容出口终态确认;**runId 统一**(批次3 记入:根治闸门 runId 域化收窄与 memory live 拦截)。**批次4 评审并入清单**:①adapter 补 outcome←detail.isError、summary/failureReason←detail.result(否则失败压缩渲染成成功文案);②骨架带 trigger 真值(否则手动 /compact 显示"自动");③compaction 置 streaming 副作用迁移(交叉时序瞬态 idle 窗口);④status 四态归一三份复制收编一份;⑤contextWindow/budget 骨架透传(消费降级点);⑥memory.context_used claim 类型 string→MemoryClaim 对象(批次3 F2) |
 
 ## 8. 风险
 
