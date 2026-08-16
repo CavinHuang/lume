@@ -95,7 +95,7 @@ export interface ToolEndDetail {
 
 export interface MemoryContextUsedDetail {
   type: 'memory.context.used'
-  /** 与旧路 event.items 同构:memory 引用条目列表 */
+  /** Isomorphic to the legacy event.items: memory reference entries. */
   items: Array<{
     id: string
     kind: string
