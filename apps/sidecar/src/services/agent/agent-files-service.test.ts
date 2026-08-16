@@ -1015,6 +1015,24 @@ describe("promoteFileRefToProject", () => {
     expect(existsSync(join(resources, "legacy.txt"))).toBeTrue();
   });
 
+  test("空 relativePath（scope 根）拒绝晋升", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "project-promote-root");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("promote root", { projectPath });
+    const thread = createAgentThread("promote root thread", undefined, workspace.id);
+    const workdir = resolveAgentThreadWorkdir(thread.id);
+    writeFileSync(join(workdir.filesRoot, "a.md"), "x", "utf-8");
+
+    for (const relativePath of ["", ".", "./"]) {
+      expect(() => promoteFileRefToProject(
+        { source: "session" as const, scopeId: workdir.fileContextId, relativePath },
+        workspace.slug
+      )).toThrow("不能晋升来源根目录");
+    }
+    expect(readdirSync(projectPath).some((name) => name.startsWith(".lume-promote"))).toBeFalse();
+  });
+
   test("project 自身 ref 拒绝晋升", () => {
     const configDir = createTempConfigDir();
     const projectPath = join(configDir, "project-promote-self");

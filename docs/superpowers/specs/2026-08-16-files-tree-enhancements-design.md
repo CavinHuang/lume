@@ -66,7 +66,7 @@
 ## 状态模型变更汇总
 
 - `ThreadFileWorkspace` **零新增字段**（①刷新走既有 sourceStatus；②纯渲染；③全部组件本地+元数据 JSON）
-- shared 新增：`PROMOTE_FILE_REF_TO_PROJECT` / `LIST_EXTERNAL_ATTACHMENT_DIRECTORY` / `ADD_EXTERNAL_ATTACHMENT` / `REMOVE_EXTERNAL_ATTACHMENT` 四个 channel + 对应 schema
+- shared 新增：`PROMOTE_FILE_REF_TO_PROJECT` / `LIST_EXTERNAL_DIR_ENTRIES` / `ADD_EXTERNAL_DIR` / `REMOVE_EXTERNAL_DIR` 四个 channel + 对应 schema
 - `ExternalAttachmentMeta` 复用不改（label/absoluteSourcePath 已够）
 
 ## 错误处理与边界

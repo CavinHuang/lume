@@ -1009,6 +1009,9 @@ export function promoteFileRefToProject(ref: FileRef, workspaceSlug: string): { 
   if (ref.source === "project") throw new Error("项目文件无需晋升");
   const rootPath = resolveFileRefRoot(ref);
   const lexicalSource = resolveSafePathWithin(rootPath, ref.relativePath, "源路径超出来源目录");
+  // IPC 边界防御：schema 的 relativePath 是裸 z.string()，空串/"." 会被 resolveSafePathWithin
+  // 解析回 scope 根——禁止晋升整个来源根目录（否则 .context 内部元数据会被复制进项目）
+  if (lexicalSource === resolve(rootPath)) throw new Error("不能晋升来源根目录");
   if (!existsSync(lexicalSource)) throw new Error("源文件不存在");
   assertLegacyExportSourceSafe(lexicalSource);
   const source = realpathSync(lexicalSource);
