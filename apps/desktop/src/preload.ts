@@ -238,6 +238,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   convertFileSrc(path) {
     return filePathToFileUrl(path)
   },
+  // Electron 32+ 移除 File.path，同步换取拖入文件的绝对路径（File 可跨 contextBridge 传递）
+  getPathForFile(file) {
+    return webUtils.getPathForFile(file)
+  },
   relaunch() {
     return ipcRenderer.invoke('lume:relaunch')
   },

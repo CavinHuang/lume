@@ -59,6 +59,7 @@ export function RightPanelSourcePreview({
   editorCacheKey,
   onContentChange,
   onEditorAttach,
+  wrapLines = false,
 }: {
   threadId?: string
   content: string
@@ -69,6 +70,7 @@ export function RightPanelSourcePreview({
   onLineSelected?: (range: SelectedLineRange | null) => void
   blameEnabled?: boolean
   editable?: boolean
+  wrapLines?: boolean
   editorCacheKey?: string
   onContentChange?: (content: string) => void
   onEditorAttach?: (editor: Editor<SourceCommentAnnotation>) => void
@@ -492,6 +494,7 @@ export function RightPanelSourcePreview({
           onLineSelected={openComment}
           onLineSelectionChange={setLocalSelection}
           onGutterUtilityClick={openComment}
+          wrapLines={wrapLines}
           renderAnnotation={renderCommentEditor}
         />
       ) : patchResult ? (
@@ -514,6 +517,7 @@ export function RightPanelSourcePreview({
           onLineSelected={openComment}
           onGutterUtilityClick={threadId ? openComment : undefined}
           onContentChange={onContentChange}
+          wrapLines={wrapLines}
           onEditorAttach={(editor) => {
             editorRef.current = editor
             onEditorAttach?.(editor)
@@ -534,6 +538,7 @@ export function RightPanelSourcePreview({
           onGutterUtilityClick={openComment}
           renderAnnotation={renderCommentEditor}
           onPostRender={handlePostRender as never}
+          wrapLines={wrapLines}
           unsafeCSS={sourceCss}
         />
       )
@@ -543,6 +548,10 @@ export function RightPanelSourcePreview({
 }
 
 const BLAME_CSS = `
+  /* 行内容区显示文本 I-beam（pierre 交互行默认 pointer 手指，不符合文本区预期）；行号列保留 pointer */
+  [data-interactive-lines] [data-line] [data-content] {
+    cursor: text;
+  }
   [data-file-selection-action] {
     padding: .25rem .5rem;
     border: 1px solid var(--lume-border-strong);

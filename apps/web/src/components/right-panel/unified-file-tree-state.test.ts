@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import {
   beginTreeSearch,
+  canPromoteToProject,
   createUnifiedFileTreeState,
   endTreeSearch,
   getFileSourceCapabilities,
@@ -68,6 +69,21 @@ describe('unified-file-tree-state', () => {
       scrollAnchor: initial.scrollAnchor,
       searchQuery: '',
     })
+  })
+
+  test('canPromoteToProject 仅 session/memory/legacy', () => {
+    expect(canPromoteToProject('session')).toBeTrue()
+    expect(canPromoteToProject('memory')).toBeTrue()
+    expect(canPromoteToProject('legacy')).toBeTrue()
+    expect(canPromoteToProject('project')).toBeFalse()
+  })
+
+  test('promote menu item is disabled with a reason when no project is bound', () => {
+    const source = readFileSync(new URL('./UnifiedFileTree.tsx', import.meta.url), 'utf8')
+
+    expect(source).toContain('promoteDisabled={!workspaceSlug}')
+    expect(source).toContain('disabled={props.promoteDisabled}')
+    expect(source).toContain("props.promoteDisabled ? '未绑定项目目录，无法晋升' : '复制到项目目录，所有会话可用'")
   })
 
   test('keeps non-session sources read-only', () => {

@@ -99,6 +99,7 @@ import {
   readProjectFileData,
   readProjectPath,
   previewWorkspacePath,
+  promoteFileRefToProject,
   readWorkspacePath,
   readWorkspaceFileData,
   readWorkspaceRootPath,
@@ -120,6 +121,12 @@ import {
   showProjectPathInFolder,
   showWorkspacePathInFolder,
 } from "../services/agent/agent-files-service";
+import {
+  listExternalDirEntries,
+  listExternalDirs,
+  removeExternalDir,
+  upsertExternalDir
+} from "../services/agent/external-dirs-service";
 import { promoteFileToWorkspace } from "../services/agent/agent-file-promotion-service";
 import { requestFileSelectionEdit } from "../services/agent/file-selection-edit-service";
 import {
@@ -280,6 +287,11 @@ import {
   listDirectoryInputSchema,
   marketCatalogInputSchema,
   privilegedPreparePluginPackageInputSchema,
+  promoteFileRefInputSchema,
+  externalDirScopeInputSchema,
+  externalDirAddInputSchema,
+  externalDirRemoveInputSchema,
+  externalDirEntriesInputSchema,
   privilegedFinalizePluginPackageInputSchema,
   privilegedRevokePluginPackageInputSchema,
   marketDetailInputSchema,
@@ -1913,6 +1925,26 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.RENAME_FILE_REF]: async (params) => {
       const input = validateInput(fileRefRenameInputSchema, params, AGENT_IPC_CHANNELS.RENAME_FILE_REF);
       return renameAuthorizedFileRef(input.ref, input.newName);
+    },
+    [AGENT_IPC_CHANNELS.PROMOTE_FILE_REF_TO_PROJECT]: async (params) => {
+      const input = validateInput(promoteFileRefInputSchema, params, AGENT_IPC_CHANNELS.PROMOTE_FILE_REF_TO_PROJECT);
+      return promoteFileRefToProject(input.ref, input.workspaceSlug);
+    },
+    [AGENT_IPC_CHANNELS.LIST_EXTERNAL_DIRS]: async (params) => {
+      const input = validateInput(externalDirScopeInputSchema, params, AGENT_IPC_CHANNELS.LIST_EXTERNAL_DIRS);
+      return listExternalDirs(input);
+    },
+    [AGENT_IPC_CHANNELS.ADD_EXTERNAL_DIR]: async (params) => {
+      const input = validateInput(externalDirAddInputSchema, params, AGENT_IPC_CHANNELS.ADD_EXTERNAL_DIR);
+      upsertExternalDir(input, input.absolutePath);
+    },
+    [AGENT_IPC_CHANNELS.REMOVE_EXTERNAL_DIR]: async (params) => {
+      const input = validateInput(externalDirRemoveInputSchema, params, AGENT_IPC_CHANNELS.REMOVE_EXTERNAL_DIR);
+      removeExternalDir(input, input.absolutePath);
+    },
+    [AGENT_IPC_CHANNELS.LIST_EXTERNAL_DIR_ENTRIES]: async (params) => {
+      const input = validateInput(externalDirEntriesInputSchema, params, AGENT_IPC_CHANNELS.LIST_EXTERNAL_DIR_ENTRIES);
+      return listExternalDirEntries(input.absolutePath);
     },
     [AGENT_IPC_CHANNELS.MOVE_FILE_REF]: async (params) => {
       const input = validateInput(fileRefMoveInputSchema, params, AGENT_IPC_CHANNELS.MOVE_FILE_REF);

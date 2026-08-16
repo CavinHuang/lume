@@ -207,6 +207,7 @@ export function PierreFileView<TAnnotation = unknown>({
   onPostRender,
   renderAnnotation,
   unsafeCSS,
+  wrapLines = false,
 }: {
   content: string
   filePath: string
@@ -220,6 +221,7 @@ export function PierreFileView<TAnnotation = unknown>({
   onPostRender?: NonNullable<Parameters<typeof File>[0]['options']>['onPostRender']
   renderAnnotation?: (annotation: LineAnnotation<TAnnotation>) => ReactNode
   unsafeCSS?: string
+  wrapLines?: boolean
 }) {
   const theme = useCodeTheme()
   return (
@@ -232,7 +234,7 @@ export function PierreFileView<TAnnotation = unknown>({
           options={{
             theme: LUME_DIFF_THEMES,
             themeType: theme.type,
-            overflow: 'scroll',
+            overflow: wrapLines ? 'wrap' as const : 'scroll' as const,
             disableFileHeader: true,
             enableLineSelection,
             controlledSelection: enableLineSelection,
@@ -285,6 +287,7 @@ export function PierreEditableFileView<TAnnotation = unknown>({
   onGutterUtilityClick,
   onLineNumberClick,
   unsafeCSS,
+  wrapLines = false,
 }: {
   content: string
   filePath: string
@@ -298,6 +301,7 @@ export function PierreEditableFileView<TAnnotation = unknown>({
   onPostRender?: NonNullable<Parameters<typeof File>[0]['options']>['onPostRender']
   renderAnnotation?: (annotation: LineAnnotation<TAnnotation>) => ReactNode
   onGutterUtilityClick?: (range: SelectedLineRange) => void
+  wrapLines?: boolean
   onLineNumberClick?: NonNullable<Parameters<typeof File>[0]['options']>['onLineNumberClick']
   unsafeCSS?: string
 }) {
@@ -321,7 +325,7 @@ export function PierreEditableFileView<TAnnotation = unknown>({
           options={{
             theme: LUME_DIFF_THEMES,
             themeType: theme.type,
-            overflow: 'scroll',
+            overflow: wrapLines ? 'wrap' as const : 'scroll' as const,
             disableFileHeader: true,
             enableLineSelection: true,
             controlledSelection: true,

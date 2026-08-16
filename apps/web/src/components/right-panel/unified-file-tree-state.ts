@@ -51,8 +51,12 @@ export function endTreeSearch(state: UnifiedFileTreeState): UnifiedFileTreeState
   }
 }
 
-export function markSourceStale(state: UnifiedFileTreeState, source: FileSource): UnifiedFileTreeState {
+export function markSourceStale<S extends { sourceStatus: UnifiedFileTreeState['sourceStatus'] }>(state: S, source: FileSource): S {
   return { ...state, sourceStatus: { ...state.sourceStatus, [source]: 'stale' } }
+}
+
+export function canPromoteToProject(source: FileSource): boolean {
+  return source === 'session' || source === 'memory' || source === 'legacy'
 }
 
 export function getFileSourceCapabilities(source: FileSource): {

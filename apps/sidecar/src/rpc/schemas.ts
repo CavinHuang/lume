@@ -1744,6 +1744,28 @@ export const fileRefSearchInputSchema = z.object({
 }).strict();
 export const fileRefRenameInputSchema = z.object({ ref: fileRefSchema, newName: z.string().min(1) }).strict();
 export const fileRefMoveInputSchema = z.object({ ref: fileRefSchema, targetDirectory: fileRefSchema }).strict();
+export const promoteFileRefInputSchema = z.object({ ref: fileRefSchema, workspaceSlug: idSchema }).strict();
+const externalDirThreadScopeSchema = z.object({
+  kind: z.literal("thread"),
+  workspaceSlug: idSchema,
+  threadId: idSchema,
+  fileContextId: optionalIdSchema
+}).strict();
+const externalDirWorkspaceScopeSchema = z.object({
+  kind: z.literal("workspace"),
+  workspaceSlug: idSchema
+}).strict();
+export const externalDirScopeInputSchema = z.discriminatedUnion("kind", [
+  externalDirThreadScopeSchema,
+  externalDirWorkspaceScopeSchema
+]);
+const externalDirPathSchema = z.string().min(1).max(4096);
+export const externalDirAddInputSchema = z.discriminatedUnion("kind", [
+  externalDirThreadScopeSchema.extend({ absolutePath: externalDirPathSchema }).strict(),
+  externalDirWorkspaceScopeSchema.extend({ absolutePath: externalDirPathSchema }).strict()
+]);
+export const externalDirRemoveInputSchema = externalDirAddInputSchema;
+export const externalDirEntriesInputSchema = z.object({ absolutePath: externalDirPathSchema }).strict();
 export const legacyFileRefConversionInputSchema = z.discriminatedUnion("recordKind", [
   z.object({ recordKind: z.literal("thread-attachment"), threadId: idSchema, workspaceSlug: optionalIdSchema, legacyRelativePath: z.string().min(1) }).strict(),
   z.object({ recordKind: z.literal("memory-source"), workspaceSlug: idSchema, legacyRelativePath: z.string().min(1) }).strict()

@@ -152,6 +152,7 @@ export function FilesRightPanelWorkspace({
           workspaceSlug={workspaceSlug}
           workspaceProjectPath={workspaceProjectPath}
           fileContextId={fileContextId}
+          threadId={threadId}
           openFunctions={openFunctions}
           onWorkspaceChange={handleWorkspaceChange}
           onOpenFile={openFile}

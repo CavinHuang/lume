@@ -1003,6 +1003,41 @@ export function exportLegacyResourceToProject(
     throw error;
   }
 }
+
+/** 复制式晋升：session/memory/legacy → project 根，源保留，同名报错。 */
+export function promoteFileRefToProject(ref: FileRef, workspaceSlug: string): { ok: true; path: string } {
+  if (ref.source === "project") throw new Error("项目文件无需晋升");
+  const rootPath = resolveFileRefRoot(ref);
+  const lexicalSource = resolveSafePathWithin(rootPath, ref.relativePath, "源路径超出来源目录");
+  // IPC 边界防御：schema 的 relativePath 是裸 z.string()，空串/"." 会被 resolveSafePathWithin
+  // 解析回 scope 根——禁止晋升整个来源根目录（否则 .context 内部元数据会被复制进项目）
+  if (lexicalSource === resolve(rootPath)) throw new Error("不能晋升来源根目录");
+  if (!existsSync(lexicalSource)) throw new Error("源文件不存在");
+  assertLegacyExportSourceSafe(lexicalSource);
+  const source = realpathSync(lexicalSource);
+  if (!isWithin(realpathSync(rootPath), source)) throw new Error("源路径超出来源目录");
+
+  const projectRoot = resolveExistingProjectTarget(workspaceSlug);
+  const destination = join(projectRoot, basename(source));
+  if (existsSync(destination)) throw new Error("项目目录已存在同名文件，未覆盖任何内容");
+  const staging = join(projectRoot, `.lume-promote-${randomUUID()}`);
+  try {
+    cpSync(source, staging, {
+      recursive: statSync(source).isDirectory(),
+      errorOnExist: true,
+      filter: (sourcePath) => {
+        assertLegacyExportSourceSafe(sourcePath);
+        return true;
+      }
+    });
+    if (!isWithin(projectRoot, realpathSync(staging))) throw new Error("晋升目标超出项目目录");
+    renameSync(staging, destination);
+    return { ok: true, path: destination };
+  } catch (error) {
+    rmSync(staging, { recursive: true, force: true });
+    throw error;
+  }
+}
 export function listWorkspaceRootDirectory(
   workspaceSlug: string,
   targetPath?: string

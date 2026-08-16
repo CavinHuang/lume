@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { getWorkspaceResourcesPath } from "../infra/config-paths";
@@ -20,6 +20,7 @@ import {
   moveAuthorizedFileRef,
   moveAgentFile,
   moveWorkspaceFile,
+  promoteFileRefToProject,
   renameAgentFile,
   renameWorkspaceFile,
   readAgentPath,
@@ -964,5 +965,111 @@ describe("agent-files-service file ops", () => {
     deleteWorkspaceFile(workspaceSlug, join(archiveDir, "report-final.md"));
     entries = listWorkspaceDirectory(workspaceSlug, archiveDir);
     expect(entries.find((item) => item.name === "report-final.md")).toBeUndefined();
+  });
+});
+
+describe("promoteFileRefToProject", () => {
+  test("session 文件复制到项目根且源保留", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "project-promote");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("promote", { projectPath });
+    const thread = createAgentThread("promote thread", undefined, workspace.id);
+    const workdir = resolveAgentThreadWorkdir(thread.id);
+    writeFileSync(join(workdir.filesRoot, "brief.md"), "brief", "utf-8");
+    const ref = { source: "session" as const, scopeId: workdir.fileContextId, relativePath: "files/brief.md" };
+
+    const promoted = promoteFileRefToProject(ref, workspace.slug);
+
+    expect(promoted.ok).toBeTrue();
+    expect(basename(promoted.path)).toBe("brief.md");
+    expect(existsSync(promoted.path)).toBeTrue();
+    expect(readFileSync(promoted.path, "utf-8")).toBe("brief");
+    expect(existsSync(join(workdir.filesRoot, "brief.md"))).toBeTrue();
+  });
+
+  test("memory 与 legacy 条目可晋升且源保留", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "project-promote-multi");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("promote multi", { projectPath });
+    const global = getMemoryV2ScopePaths({ scope: "global" });
+    writeFileSync(global.memoryMd, "# memory", "utf-8");
+    const resources = getWorkspaceResourcesPath(workspace.slug);
+    writeFileSync(join(resources, "legacy.txt"), "legacy", "utf-8");
+
+    const memory = promoteFileRefToProject(
+      { source: "memory", scopeId: "global", relativePath: "MEMORY.md" },
+      workspace.slug
+    );
+    const legacy = promoteFileRefToProject(
+      { source: "legacy", scopeId: workspace.slug, relativePath: "legacy.txt" },
+      workspace.slug
+    );
+
+    expect(existsSync(memory.path)).toBeTrue();
+    expect(existsSync(legacy.path)).toBeTrue();
+    expect(readFileSync(memory.path, "utf-8")).toBe("# memory");
+    expect(readFileSync(legacy.path, "utf-8")).toBe("legacy");
+    expect(existsSync(global.memoryMd)).toBeTrue();
+    expect(existsSync(join(resources, "legacy.txt"))).toBeTrue();
+  });
+
+  test("空 relativePath（scope 根）拒绝晋升", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "project-promote-root");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("promote root", { projectPath });
+    const thread = createAgentThread("promote root thread", undefined, workspace.id);
+    const workdir = resolveAgentThreadWorkdir(thread.id);
+    writeFileSync(join(workdir.filesRoot, "a.md"), "x", "utf-8");
+
+    for (const relativePath of ["", ".", "./"]) {
+      expect(() => promoteFileRefToProject(
+        { source: "session" as const, scopeId: workdir.fileContextId, relativePath },
+        workspace.slug
+      )).toThrow("不能晋升来源根目录");
+    }
+    expect(readdirSync(projectPath).some((name) => name.startsWith(".lume-promote"))).toBeFalse();
+  });
+
+  test("project 自身 ref 拒绝晋升", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "project-promote-self");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("promote self", { projectPath });
+
+    expect(() => promoteFileRefToProject(
+      { source: "project", scopeId: workspace.slug, relativePath: "any.md" },
+      workspace.slug
+    )).toThrow("项目");
+  });
+
+  test("同名冲突报错且不覆盖既有内容", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "project-promote-conflict");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("promote conflict", { projectPath });
+    writeFileSync(join(projectPath, "legacy.txt"), "existing", "utf-8");
+    const resources = getWorkspaceResourcesPath(workspace.slug);
+    writeFileSync(join(resources, "legacy.txt"), "legacy", "utf-8");
+
+    expect(() => promoteFileRefToProject(
+      { source: "legacy", scopeId: workspace.slug, relativePath: "legacy.txt" },
+      workspace.slug
+    )).toThrow("已存在同名");
+    expect(readFileSync(join(projectPath, "legacy.txt"), "utf-8")).toBe("existing");
+  });
+
+  test("目标 workspace 未绑定项目目录时报错", () => {
+    createTempConfigDir();
+    const workspace = createAgentWorkspace("promote unbound");
+    const resources = getWorkspaceResourcesPath(workspace.slug);
+    writeFileSync(join(resources, "legacy.txt"), "legacy", "utf-8");
+
+    expect(() => promoteFileRefToProject(
+      { source: "legacy", scopeId: workspace.slug, relativePath: "legacy.txt" },
+      workspace.slug
+    )).toThrow("项目尚未绑定本地目录");
   });
 });

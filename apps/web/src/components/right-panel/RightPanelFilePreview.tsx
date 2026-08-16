@@ -3,10 +3,11 @@ import { useAtom } from 'jotai'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { DIFF_AWARE_MARKDOWN_COMPONENTS } from '@/components/markdown/DiffAwareMarkdownPre'
 import { PierreDiffView } from '@/components/diff/PierreDiffView'
-import { Check, Copy, ExternalLink, FolderSearch, GitCommitHorizontal, PanelLeftClose, PanelLeftOpen, RotateCw, Save, TriangleAlert } from 'lucide-react'
+import { Check, Code, Copy, Eye, ExternalLink, FolderSearch, GitCommitHorizontal, MoreHorizontal, PanelLeftClose, PanelLeftOpen, RotateCw, Save, TriangleAlert, WrapText } from 'lucide-react'
 import type { FileEntry, FileRef, FileRefChangedEvent, FileRefReadResult, GuardedFileRef, WriteFileRefResult } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import {
   createFilePreviewScope,
@@ -24,6 +25,7 @@ import {
 import { DocumentViewerHost } from './document-viewer/DocumentViewerHost'
 import { isDocumentViewerKind } from './document-viewer/document-viewer-kinds'
 import { classifyFilePreview, isMissingFileError } from './file-preview-utils'
+import { cn } from '@/lib/utils'
 import { RightPanelHtmlPreview } from './RightPanelHtmlPreview'
 import { RightPanelSourcePreview } from './RightPanelSourcePreview'
 import { RightPanelPdbPreview } from './RightPanelPdbPreview'
@@ -69,6 +71,14 @@ export function RightPanelFilePreview({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sourceMode, setSourceMode] = useState(false)
+  const [wrapLines, setWrapLines] = useState(() => {
+    try { return window.localStorage.getItem('lume-source-wrap') === '1' } catch { return false }
+  })
+  const toggleWrap = () => setWrapLines((current) => {
+    const next = !current
+    try { window.localStorage.setItem('lume-source-wrap', next ? '1' : '0') } catch { /* 忽略持久化失败 */ }
+    return next
+  })
   const [imageOriginalSize, setImageOriginalSize] = useState(false)
   const [metadata, setMetadata] = useState<FileEntry | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -399,8 +409,9 @@ export function RightPanelFilePreview({
           <FileLinkContextMenu context={{ source: 'thread', relPath: fileRef.relativePath, guardedRef }} inline>{title}</FileLinkContextMenu>
         ) : title)}
         {hideTitle && <span className="min-w-0 flex-1" />}
+        {!hideTitle && <span className="min-w-0 flex-1" />}
         {(kind === 'markdown' || kind === 'html' || kind === 'pdb') && (
-          <Button variant="ghost" size="sm" onClick={() => setSourceMode((value) => {
+          <Button variant="ghost" size="icon-sm" onClick={() => setSourceMode((value) => {
             const next = !value
             if (editorStateKey) {
               setEditorStates((current) => ({
@@ -409,31 +420,40 @@ export function RightPanelFilePreview({
               }))
             }
             return next
-          })}>
-            {sourceMode ? '渲染' : '源码'}
-          </Button>
-        )}
-        {kind === 'image' && <Button variant="ghost" size="sm" onClick={() => setImageOriginalSize((value) => !value)}>{imageOriginalSize ? '适应' : '原始尺寸'}</Button>}
-        {fileRef.source === 'project' && (kind === 'text' || kind === 'unsupported' || sourceMode) && (
-          <Button variant={blameEnabled ? 'secondary' : 'ghost'} size="sm" onClick={() => setBlameEnabled((value) => !value)} title="显示 Git blame">
-            <GitCommitHorizontal size={13} />
-            Blame
+          })} title={sourceMode ? '切换到渲染视图' : '切换到源码视图'}>
+            {sourceMode ? <Eye size={14} /> : <Code size={14} />}
           </Button>
         )}
         {payload?.kind === 'text' && payload.editable && (
-          <span className="flex items-center gap-1 text-[11px] text-foreground/45">
+          <span className="flex shrink-0 items-center gap-1 text-[11px] text-foreground/45">
             {saving ? <><Save size={12} />保存中</> : dirty ? <><TriangleAlert size={12} />未保存</> : <><Check size={12} />已保存</>}
           </span>
         )}
         {payload?.kind === 'text' && payload.editable && dirty && !saving && (
           <Button size="xs" onClick={() => void saveContent(contentRef.current, payload.mtimeMs)}>保存</Button>
         )}
-        {saveError && <span className="max-w-40 truncate text-[11px] text-destructive" title={saveError}>{saveError}</span>}
-        {payload?.kind === 'text' && <Button variant="ghost" size="sm" onClick={() => void writeClipboardText(editorContent)}>复制内容</Button>}
-        <Button variant="ghost" size="icon-sm" onClick={refresh} title="重新读取预览"><RotateCw size={14} /></Button>
-        <Button variant="ghost" size="icon-sm" disabled={!desktop} onClick={() => void (guardedRef ? openGuardedFileRefInSystem(guardedRef) : openFileRefInSystem(fileRef))} title={desktop ? '系统打开' : '仅桌面端可用'}><ExternalLink size={14} /></Button>
-        <Button variant="ghost" size="icon-sm" disabled={!desktop} onClick={() => void (guardedRef ? revealGuardedFileRefInSystem(guardedRef) : revealFileRefInSystem(fileRef))} title={desktop ? '在文件管理器中显示' : '仅桌面端可用'}><FolderSearch size={14} /></Button>
-        <Button variant="ghost" size="icon-sm" onClick={() => void writeClipboardText(fileRef.relativePath)} title="复制相对路径"><Copy size={14} /></Button>
+        {saveError && <span className="max-w-40 shrink-0 truncate text-[11px] text-destructive" title={saveError}>{saveError}</span>}
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" title="更多预览操作" />}><MoreHorizontal size={14} /></DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {kind === 'image' && <DropdownMenuItem onSelect={() => setImageOriginalSize((value) => !value)}>{imageOriginalSize ? '切换到适应尺寸' : '切换到原始尺寸'}</DropdownMenuItem>}
+            {fileRef.source === 'project' && (kind === 'text' || kind === 'unsupported' || sourceMode) && (
+              <DropdownMenuItem onSelect={() => setBlameEnabled((value) => !value)}>
+                <GitCommitHorizontal size={13} />
+                {blameEnabled ? '关闭 Git Blame' : '显示 Git Blame'}
+              </DropdownMenuItem>
+            )}
+            {payload?.kind === 'text' && <DropdownMenuItem onSelect={() => void writeClipboardText(editorContent)}>复制内容</DropdownMenuItem>}
+            <DropdownMenuItem onSelect={toggleWrap}>
+              <WrapText size={13} />
+              {wrapLines ? '关闭自动换行' : '开启自动换行'}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={refresh}><RotateCw size={13} />刷新预览</DropdownMenuItem>
+            <DropdownMenuItem disabled={!desktop} onSelect={() => void (guardedRef ? openGuardedFileRefInSystem(guardedRef) : openFileRefInSystem(fileRef))}><ExternalLink size={13} />系统打开</DropdownMenuItem>
+            <DropdownMenuItem disabled={!desktop} onSelect={() => void (guardedRef ? revealGuardedFileRefInSystem(guardedRef) : revealFileRefInSystem(fileRef))}><FolderSearch size={13} />在文件管理器中显示</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => void writeClipboardText(fileRef.relativePath)}><Copy size={13} />复制相对路径</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         {loading ? (
@@ -507,7 +527,7 @@ export function RightPanelFilePreview({
             </div>
           </div>
         ) : payload?.kind === 'text' ? (
-          <div className={kind === 'text' || kind === 'unsupported' || sourceMode ? 'h-full' : 'h-full overflow-auto p-4'}>
+          <div className={cn('h-full overflow-auto', wrapLines && '[&_pre]:whitespace-pre-wrap [&_pre]:overflow-wrap-anywhere')}>
             {kind === 'html' && !sourceMode ? (
               <RightPanelHtmlPreview fileRef={fileRef} guardedRef={guardedRef} source={editorContent} onOpenFile={onOpenFile} onMissing={onMissing} onPreviewScopeChange={onPreviewScopeChange} />
             ) : kind === 'markdown' && !sourceMode ? (
@@ -526,6 +546,7 @@ export function RightPanelFilePreview({
                 editable={!guardedRef && payload.editable}
                 editorCacheKey={`${fileRef.source}:${fileRef.scopeId}:${fileRef.relativePath}`}
                 onContentChange={handleEditorChange}
+                wrapLines={wrapLines}
               />
             )}
           </div>
