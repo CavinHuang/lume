@@ -76,7 +76,7 @@ const LEGACY_SKIPPED_PILOT_EVENT_TYPES = new Set<string>([
   'run.completed',
   'run.turn_limited',
   'run.failed',
-  // Batch 2: tool rendering also driven by the lifecycle bus adapter.
+  // 批次2 扩:tool 渲染同由 lifecycle 总线适配器驱动。
   'tool.started',
   'tool.completed',
   'tool.failed',
