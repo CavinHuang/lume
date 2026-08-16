@@ -113,6 +113,7 @@ export const PUBLIC_RENDERER_SIDECAR_METHODS = new Set([
   'agent:get-skill-market-detail',
   'agent:get-skills',
   'agent:get-submission-receipt',
+  'agent:get-events',
   'agent:get-thread-message-versions',
   'agent:get-thread-messages',
   'agent:get-thread-path',

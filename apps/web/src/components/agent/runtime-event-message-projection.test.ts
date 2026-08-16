@@ -1461,4 +1461,27 @@ describe('todo_update block 稳定性', () => {
     expect(new Set(ids).size).toBe(ids.length)
     expect(ids.filter((id) => id === `assistant:${sidecarRun}`)).toHaveLength(1)
   })
+
+  test('other rebuilding event types after a terminal run do not recreate the flushed assistant', () => {
+    // 入口统一闸门(TERMINAL_REBUILDING_EVENT_TYPES)不只覆盖 memory.context.used/
+    // advisor.reviewed:任何重建型事件(plan.preview 等)终态后到达都不得经 ??=
+    // 重建同 id assistant——消息 id 唯一、数量不变。
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', text: 'hi', messageId: 'user-1' }),
+      event({ type: 'assistant.delta', delta: 'done' }),
+      event({ type: 'run.completed' }),
+      event({
+        type: 'plan.preview',
+        contractId: 'plan-late',
+        title: 'Late plan',
+        summary: 'late',
+        markdown: '# late',
+        stepCount: 1,
+      } as any),
+      event({ type: 'run.completed' }),
+    ])
+    const ids = messages.map((message) => message.id)
+    expect(ids).toEqual(['user-1', 'assistant:run-1'])
+    expect(new Set(ids).size).toBe(ids.length)
+  })
 })
