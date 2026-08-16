@@ -210,8 +210,9 @@
 .reading-note-markdown {
   color: var(--text-1);
   font-family: var(--reading-serif);
-  font-size: 12.5px;
-  line-height: 1.75;
+  font-size: var(--lume-chat-font-size);
+  line-height: 1.9;
+  max-width: 600px;
   overflow-wrap: anywhere;
 }
 
@@ -238,10 +239,10 @@
   line-height: 1.45;
 }
 
-.reading-note-markdown h1 { font-size: 16px; }
-.reading-note-markdown h2 { font-size: 15px; }
-.reading-note-markdown h3 { font-size: 14px; }
-.reading-note-markdown h4 { font-size: 13px; }
+.reading-note-markdown h1 { font-size: 1.3em; }
+.reading-note-markdown h2 { font-size: 1.17em; }
+.reading-note-markdown h3 { font-size: 1.07em; }
+.reading-note-markdown h4 { font-size: 1em; }
 
 .reading-note-markdown ul,
 .reading-note-markdown ol {
@@ -259,7 +260,7 @@
 
 .reading-note-markdown code {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 0.85em;
 }
 
 .agent-message-markdown {
@@ -589,6 +590,7 @@
 :root {
   --lume-chat-font-size: 15px;
   --lume-chat-measure: 680px;
+  --reading-serif: Georgia, 'Songti SC', 'Noto Serif CJK SC', 'Source Han Serif SC', STSong, SimSun, serif;
   --lume-bg-app: oklch(0.982 0.006 248);
   --lume-bg-rail: oklch(0.962 0.007 248);
   --lume-bg-panel: oklch(0.996 0.003 248);
