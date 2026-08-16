@@ -1,4 +1,4 @@
-import type { SdkLifecycleDetail, LumeRuntimeEvent, SdkEventEnvelope } from '@lume/shared'
+import type { MemoryContextUsedRuntimeEvent, SdkLifecycleDetail, LumeRuntimeEvent, SdkEventEnvelope } from '@lume/shared'
 import type { AgentEventBusSource } from './useAgentEventBus'
 
 /**
@@ -17,6 +17,8 @@ import type { AgentEventBusSource } from './useAgentEventBus'
  * - turn.* / run.start → 不产事件(turn 落定由 message.end 覆盖;run.started 走旧路)
  * - run.end → max_turns → run.turn_limited;aborted → 不产(旧路 run.cancelled 承担);
  *   isError → run.failed;否则 run.completed
+ * - memory.context.used → 同名事件(items 引用透传;批次3,数据源在 session 层
+ *   而非 SDK 流,由 sidecar lume-runner 第二注入路径直发)
  * - 其他未知 detail → 忽略
  *
  * 事件 id 由 envelope.seq 派生(线程内唯一且跨重放稳定),便于 hydrate 合并去重。
@@ -171,7 +173,21 @@ export function adaptLifecycleEvent(
     return event ? [event] : []
   }
 
-  // turn.* / run.start / 未知事件:不产 RuntimeEvent
+  // 批次3:memory 领域事件(run 级 kind='run' phase='event',判别走 detail.type)。
+  // 无状态(不触碰求差基线),快照重放天然幂等;snapshot 版不入队由旧路 hydrate
+  // replay 覆盖,投影 memory 分支 filter+push 幂等吸收双投(已知安全)。
+  // detail.items 为宽标注(sidecar 透传,claim 实际是对象),与旧路事件 items
+  // 运行时同构——原样引用透传,不做字段级重建。
+  if (detail.type === 'memory.context.used') {
+    return [{
+      id: `lifecycle:${envelope.seq}:memory.context.used`,
+      type: 'memory.context.used' as const,
+      ...base,
+      items: detail.items as MemoryContextUsedRuntimeEvent['items'],
+    }]
+  }
+
+  // turn.* / run.start / 未知事件(含未迁移领域事件 memory.changed 等):不产 RuntimeEvent
   return []
 }
 

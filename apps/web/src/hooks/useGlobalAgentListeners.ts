@@ -80,6 +80,9 @@ const LEGACY_SKIPPED_PILOT_EVENT_TYPES = new Set<string>([
   'tool.started',
   'tool.completed',
   'tool.failed',
+  // 批次3 扩:memory 引用展示由总线驱动(sidecar 第二注入路径双发,跳过旧路 live 避免双写;
+  // 旧路 hydrate replay 版由投影 memory 分支 filter+push 幂等吸收,无需跳过)。
+  'memory.context.used',
 ])
 
 // 模块级而非 ref:适配器求差基线与去重水位须跨双挂载实例、跨 tab 切换存活
