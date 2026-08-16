@@ -120,6 +120,10 @@ export interface BackgroundTaskNotificationDetail {
 export interface ContextCompactionDetail {
   type: 'context.compaction'
   phase: 'started' | 'progress' | 'completed'
+  /** Tokens before compaction (engine compact_metadata.pre_tokens; all three phases carry it). */
+  preTokens?: number
+  /** Tokens after compaction (compact_metadata.post_tokens; completed phase only). */
+  postTokens?: number
   /** Progress percentage (e.g. 45 of 85) while compacting. */
   progress?: number
   /** Completed phase: success or failure text. */

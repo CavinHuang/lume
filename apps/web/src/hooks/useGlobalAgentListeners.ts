@@ -85,6 +85,12 @@ const LEGACY_SKIPPED_PILOT_EVENT_TYPES = new Set<string>([
   // 驱动;总线事件为 events.jsonl 落盘先占(批次5 统一 runId 并删旧路后由总线接管)。
   // 跳过旧路 live 仍必要:避免与(被拦截的)总线版之外的重复注入路径并存。
   'memory.context.used',
+  // 批次4 扩:background.task(late 通知旁路)与 compaction 三态由总线适配器驱动;
+  // background.task.completed 的 streaming 副作用同步移至 consumeBusEnvelope。
+  'background.task.completed',
+  'context.compaction.started',
+  'context.compaction.progress',
+  'context.compaction.completed',
 ])
 
 // 模块级而非 ref:适配器求差基线与去重水位须跨双挂载实例、跨 tab 切换存活

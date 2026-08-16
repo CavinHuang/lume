@@ -226,9 +226,12 @@ describe("projectLifecycle", () => {
       "run.event:started", "run.event:progress", "run.event:completed",
     ])
     expect(events.every((e) => e.turnId === null)).toBe(true)
+    // T2 追加①: preTokens 逐事件透传(web ContextWindowIndicator 真实消费,缺省不可恢复)
+    expect(events.map((e) => e.detail.preTokens)).toEqual([1000, 1000, 1000])
     expect(events[1].detail.progress).toBe(45)
     expect(events[2].detail).toEqual({
       type: "context.compaction", phase: "completed",
+      preTokens: 1000, postTokens: 200,
       result: "compacted summary", isError: false,
     })
   })
@@ -240,8 +243,11 @@ describe("projectLifecycle", () => {
     expect(events).toHaveLength(1)
     expect(events[0].detail).toEqual({
       type: "context.compaction", phase: "completed",
+      preTokens: 1000,
       result: "provider_error", isError: true,
     })
+    // 失败路径无 post_tokens:字段不携带(不落默认 0)
+    expect(events[0].detail.postTokens).toBeUndefined()
   })
 
   test("in-run task_notification completed → background.task skeleton fields", async () => {
@@ -272,7 +278,8 @@ describe("projectLifecycle", () => {
       taskNotification({ task_id: "at1", status: "attention" }) as any,
       taskNotification({ task_id: "at2", status: "running" }) as any,
     ])
-    expect(events.filter((e) => e.detail?.type === "background.task")).toHaveLength(0)
+    // T2 追加②收紧:断言全流为空(非仅 background.task 子集)——任何骨架外泄都算失败
+    expect(events).toHaveLength(0)
   })
 
   test("subagent task_notification produces no skeleton (entry skip)", async () => {

@@ -252,6 +252,115 @@ test('未迁移的领域事件(memory.changed 等未知 detail)仍忽略', () =>
   expect(adaptLifecycleEvent(envelope(9, 'run', 'event', null, { type: 'memory.job.progress' } as unknown as SdkLifecycleDetail), state)).toEqual([])
 })
 
+// ── 批次4:background.task / context.compaction 领域事件映射 ──
+
+function backgroundTask(seq: number, detail: Partial<Extract<SdkLifecycleDetail, { type: 'background.task' }>> = {}) {
+  return envelope(seq, 'run', 'event', null, {
+    type: 'background.task',
+    taskId: 'job-1',
+    status: 'completed',
+    ...detail,
+  })
+}
+
+function compaction(seq: number, detail: Partial<Extract<SdkLifecycleDetail, { type: 'context.compaction' }>>) {
+  return envelope(seq, 'run', 'event', null, {
+    type: 'context.compaction',
+    phase: 'started',
+    ...detail,
+  })
+}
+
+test('background.task → background.task.completed:字段对齐旧路(taskId/status/message/summary/execution)', () => {
+  const state = createLifecycleAdapterState()
+  const events = adaptLifecycleEvent(backgroundTask(11, {
+    status: 'failed',
+    message: 'boom',
+    summary: 'did things',
+    execution: { durationMs: 12 },
+  }), state)
+  expect(events).toEqual([{
+    id: 'lifecycle:11:background.task.completed',
+    type: 'background.task.completed',
+    threadId: 't1',
+    runId: 'r1',
+    createdAt: new Date(TS + 11).toISOString(),
+    taskId: 'job-1',
+    status: 'failed',
+    message: 'boom',
+    summary: 'did things',
+    execution: { durationMs: 12 },
+  }])
+  // 可选字段缺省时省略
+  expect(adaptLifecycleEvent(backgroundTask(12), state)).toEqual([expect.objectContaining({
+    type: 'background.task.completed',
+    taskId: 'job-1',
+    status: 'completed',
+  })])
+  expect(Object.keys(adaptLifecycleEvent(backgroundTask(13), state)[0] as object))
+    .not.toContain('message')
+})
+
+test('context.compaction 三态 → 旧路同形 RuntimeEvent:默认值补齐 + preTokens/postTokens 透传', () => {
+  const state = createLifecycleAdapterState()
+  const base = {
+    threadId: 't1',
+    runId: 'r1',
+    trigger: 'auto',
+    preTokens: 1000,
+    policy: 'sdk-default',
+    source: 'agent-sdk',
+  }
+
+  expect(adaptLifecycleEvent(compaction(21, { phase: 'started', preTokens: 1000 }), state)).toEqual([{
+    id: 'lifecycle:21:context.compaction.started',
+    type: 'context.compaction.started',
+    createdAt: new Date(TS + 21).toISOString(),
+    ...base,
+  }])
+
+  // progress:progress 做旧路 clampProgress 防御复制(147 → 100);stage 用旧路默认值
+  expect(adaptLifecycleEvent(compaction(22, { phase: 'progress', preTokens: 1000, progress: 147 }), state)).toEqual([{
+    id: 'lifecycle:22:context.compaction.progress',
+    type: 'context.compaction.progress',
+    createdAt: new Date(TS + 22).toISOString(),
+    ...base,
+    stage: 'summarizing',
+    progress: 100,
+  }])
+  expect(adaptLifecycleEvent(compaction(23, { phase: 'progress', preTokens: 1000, progress: -5 }), state))
+    .toEqual([expect.objectContaining({ progress: 0 })])
+
+  expect(adaptLifecycleEvent(compaction(24, {
+    phase: 'completed', preTokens: 1000, postTokens: 200,
+  }), state)).toEqual([{
+    id: 'lifecycle:24:context.compaction.completed',
+    type: 'context.compaction.completed',
+    createdAt: new Date(TS + 24).toISOString(),
+    ...base,
+    postTokens: 200,
+  }])
+  // completed 无 postTokens(压缩失败路径):字段省略,不落默认 0
+  const failed = adaptLifecycleEvent(compaction(25, { phase: 'completed', preTokens: 1000 }), state)
+  expect(Object.keys(failed[0] as object)).not.toContain('postTokens')
+})
+
+test('consumeBusEnvelope streaming 副作用:background.task completed→idle、failed→errored(对齐旧路映射)', () => {
+  const ctx = createContext()
+  consumeBusEnvelope(backgroundTask(1, { status: 'completed' }), 'push', ctx)
+  expect(ctx.enqueued.map((event) => event.type)).toEqual(['background.task.completed'])
+  expect(ctx.streaming).toEqual({ t1: 'idle' })
+
+  consumeBusEnvelope(backgroundTask(2, { status: 'failed' }), 'push', ctx)
+  expect(ctx.streaming).toEqual({ t1: 'errored' })
+
+  // snapshot 版维持既有语义:不入队、不置位
+  const snapshotCtx = createContext()
+  consumeBusEnvelope(backgroundTask(1, { status: 'completed' }), 'snapshot', snapshotCtx)
+  expect(snapshotCtx.enqueued).toEqual([])
+  expect(snapshotCtx.streaming).toEqual({})
+})
+
 // ── consumeBusEnvelope:总线消费副作用(seq 去重 / snapshot 不入队不置位 / push 全量) ──
 
 function createContext() {

@@ -90,15 +90,28 @@ describe("batch 4 domain detail types", () => {
     const d: ContextCompactionDetail = {
       type: "context.compaction",
       phase: "progress",
+      preTokens: 1200,
       progress: 45,
     }
     const detail: SdkLifecycleDetail = d
     expect(detail.type).toBe("context.compaction")
     if (detail.type === "context.compaction") {
       expect(detail.phase).toBe("progress")
+      expect(detail.preTokens).toBe(1200)
       expect(detail.progress).toBe(45)
+      expect(detail.postTokens).toBeUndefined()
       expect(detail.result).toBeUndefined()
       expect(detail.isError).toBeUndefined()
     }
+    // completed 形态: postTokens 仅完成相位携带
+    const done: ContextCompactionDetail = {
+      type: "context.compaction",
+      phase: "completed",
+      preTokens: 1200,
+      postTokens: 300,
+      result: "compacted",
+      isError: false,
+    }
+    expect(done.postTokens).toBe(300)
   })
 })

@@ -11,6 +11,7 @@ import type {
   SDKAssistantMessage,
   SDKResultMessage,
   SDKStreamEventMessage,
+  SDKContextCompactionStartedMessage,
   SDKContextCompactionProgressMessage,
   SDKCompactBoundaryMessage,
   SDKTaskNotificationMessage,
@@ -264,11 +265,15 @@ export async function* projectLifecycle(
   function handleSystem(message: SDKMessage): SdkLifecycleEvent<SdkLifecycleDetail>[] {
     const subtype = (message as { subtype?: string }).subtype
     if (subtype === 'context_compaction_started') {
-      return [emit('run', 'event', null, { type: 'context.compaction', phase: 'started' })]
+      const meta = (message as SDKContextCompactionStartedMessage).compact_metadata
+      const detail: ContextCompactionDetail = { type: 'context.compaction', phase: 'started' }
+      if (typeof meta?.pre_tokens === 'number') detail.preTokens = meta.pre_tokens
+      return [emit('run', 'event', null, detail)]
     }
     if (subtype === 'context_compaction_progress') {
       const meta = (message as SDKContextCompactionProgressMessage).compact_metadata
       const detail: ContextCompactionDetail = { type: 'context.compaction', phase: 'progress' }
+      if (typeof meta?.pre_tokens === 'number') detail.preTokens = meta.pre_tokens
       if (typeof meta.progress === 'number') detail.progress = meta.progress
       return [emit('run', 'event', null, detail)]
     }
@@ -276,6 +281,8 @@ export async function* projectLifecycle(
       const meta = (message as SDKCompactBoundaryMessage).compact_metadata
       const failed = meta?.outcome === 'failed'
       const detail: ContextCompactionDetail = { type: 'context.compaction', phase: 'completed', isError: failed }
+      if (typeof meta?.pre_tokens === 'number') detail.preTokens = meta.pre_tokens
+      if (typeof meta?.post_tokens === 'number') detail.postTokens = meta.post_tokens
       const result = failed ? meta?.failure_reason : meta?.summary
       if (typeof result === 'string' && result) detail.result = result
       return [emit('run', 'event', null, detail)]
