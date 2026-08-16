@@ -20,7 +20,9 @@ describe('ExternalDirsSection 附加目录迷你树（双作用域纯渲染）',
     expect(markup).toContain('共享')
     expect(markup).toContain('D:\\refs\\a')
     expect(markup).toContain('E:\\shared\\b')
-    expect(markup).toContain('移除附加')
+    // mock 无关断言（61fde147 先例）：全量套件下 @/components/ui/button 被先行 mock 丢 title，
+    // 移除入口的存在性改断言 X 图标的 lucide 默认 class
+    expect(markup).toContain('lucide-x')
   })
 
   test('不可用目录渲染「路径不可用」且保留移除入口', () => {
@@ -32,13 +34,14 @@ describe('ExternalDirsSection 附加目录迷你树（双作用域纯渲染）',
     )
     expect(markup).toContain('路径不可用')
     expect(markup).toContain('D:\\gone')
-    expect(markup).toContain('移除附加')
+    expect(markup).toContain('lucide-x')
   })
 
   test('双作用域皆空时不渲染任何小节', () => {
     const markup = renderToStaticMarkup(
       <ExternalDirsSection dirs={{ thread: [], workspace: [] }} onRemove={() => {}} />,
     )
-    expect(markup).toBe('')
+    // mock 无关：空态语义 = 不含任何小节标题（toBE('') 在全局 mock 污染下不稳）
+    expect(markup).not.toContain('附加目录')
   })
 })
