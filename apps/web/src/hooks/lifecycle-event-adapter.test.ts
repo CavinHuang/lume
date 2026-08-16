@@ -48,6 +48,26 @@ function runEnd(seq: number, detail: Partial<Extract<SdkLifecycleDetail, { type:
   })
 }
 
+function toolStart(seq: number) {
+  return envelope(seq, 'tool', 'start', 'turn-1', {
+    type: 'tool.start',
+    toolCallId: 'call-1',
+    toolName: 'Bash',
+    input: { command: 'ls' },
+  })
+}
+
+function toolEnd(seq: number, detail: Partial<Extract<SdkLifecycleDetail, { type: 'tool.end' }>> = {}) {
+  return envelope(seq, 'tool', 'end', 'turn-1', {
+    type: 'tool.end',
+    toolCallId: 'call-1',
+    toolName: 'Bash',
+    isError: false,
+    output: 'done',
+    ...detail,
+  })
+}
+
 test('message.update 求差:he → hello 只投增量 llo', () => {
   const state = createLifecycleAdapterState()
   adaptLifecycleEvent(messageStart(1), state)
@@ -128,6 +148,51 @@ test('run.end 三分支:isError → failed;max_turns → turn_limited;正常 →
 test('run.end stopReason=aborted 不产事件(中止由旧路 run.cancelled 承担,避免双终态)', () => {
   const state = createLifecycleAdapterState()
   expect(adaptLifecycleEvent(runEnd(1, { stopReason: 'aborted' }), state)).toEqual([])
+})
+
+test('tool.start 映射 tool.started:字段对齐旧路(inputPreview=input,riskLevel 省略)', () => {
+  const state = createLifecycleAdapterState()
+  const events = adaptLifecycleEvent(toolStart(2), state)
+  expect(events).toEqual([{
+    id: 'lifecycle:2:tool.started',
+    type: 'tool.started',
+    threadId: 't1',
+    runId: 'r1',
+    createdAt: new Date(TS + 2).toISOString(),
+    toolCallId: 'call-1',
+    toolName: 'Bash',
+    inputPreview: { command: 'ls' },
+  }])
+})
+
+test('tool.end 成功 → tool.completed(resultPreview=output;execution/resultRef 减配批次2.1)', () => {
+  const state = createLifecycleAdapterState()
+  const events = adaptLifecycleEvent(toolEnd(3), state)
+  expect(events).toEqual([{
+    id: 'lifecycle:3:tool.completed',
+    type: 'tool.completed',
+    threadId: 't1',
+    runId: 'r1',
+    createdAt: new Date(TS + 3).toISOString(),
+    toolCallId: 'call-1',
+    toolName: 'Bash',
+    resultPreview: 'done',
+  }])
+})
+
+test('tool.end 失败 → tool.failed(error.code=tool_error,message=output)', () => {
+  const state = createLifecycleAdapterState()
+  const events = adaptLifecycleEvent(toolEnd(4, { isError: true, output: 'boom' }), state)
+  expect(events).toEqual([{
+    id: 'lifecycle:4:tool.failed',
+    type: 'tool.failed',
+    threadId: 't1',
+    runId: 'r1',
+    createdAt: new Date(TS + 4).toISOString(),
+    toolCallId: 'call-1',
+    toolName: 'Bash',
+    error: { code: 'tool_error', message: 'boom' },
+  }])
 })
 
 test('message.start / turn.* / run.start / 未知事件不产 RuntimeEvent', () => {

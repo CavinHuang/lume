@@ -76,6 +76,10 @@ const LEGACY_SKIPPED_PILOT_EVENT_TYPES = new Set<string>([
   'run.completed',
   'run.turn_limited',
   'run.failed',
+  // Batch 2: tool rendering also driven by the lifecycle bus adapter.
+  'tool.started',
+  'tool.completed',
+  'tool.failed',
 ])
 
 // 模块级而非 ref:适配器求差基线与去重水位须跨双挂载实例、跨 tab 切换存活

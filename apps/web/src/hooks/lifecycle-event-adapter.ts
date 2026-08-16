@@ -9,10 +9,17 @@ import type { AgentEventBusSource } from './useAgentEventBus'
  * - message.start → 只重置流式求差基线,不产事件(streaming 态由 update 驱动)
  * - message.update → assistant.delta(text = 累计 partial 与上次差值)
  * - message.end → assistant.final(blocks = detail.message.content 的 text/thinking 块)
+ * - tool.start → tool.started (inputPreview = detail.input; riskLevel omitted — no
+ *   web-side inferToolMetadata, the projection tolerates absence so the badge
+ *   simply does not render)
+ * - tool.end → isError ? tool.failed (error.message = output) : tool.completed
+ *   (resultPreview = output); execution/resultRef omitted — web has no
+ *   normalizeToolExecutionMetadata, so large-result file links are missing
+ *   (known de-scope, batch 2.1)
  * - turn.* / run.start → 不产事件(turn 落定由 message.end 覆盖;run.started 走旧路)
  * - run.end → max_turns → run.turn_limited;aborted → 不产(旧路 run.cancelled 承担);
  *   isError → run.failed;否则 run.completed
- * - 其他(tool.* 等)→ 忽略
+ * - other unknown detail types → ignored
  *
  * 事件 id 由 envelope.seq 派生(线程内唯一且跨重放稳定),便于 hydrate 合并去重。
  */
@@ -123,6 +130,40 @@ export function adaptLifecycleEvent(
       type: 'assistant.final' as const,
       ...base,
       blocks,
+    }]
+  }
+
+  // Batch 2: stateless tool branches (no streaming-diff baseline interaction) —
+  // snapshot replays stay naturally idempotent.
+  if (detail.type === 'tool.start') {
+    return [{
+      id: `lifecycle:${envelope.seq}:tool.started`,
+      type: 'tool.started' as const,
+      ...base,
+      toolCallId: detail.toolCallId,
+      toolName: detail.toolName,
+      inputPreview: detail.input,
+    }]
+  }
+
+  if (detail.type === 'tool.end') {
+    if (detail.isError) {
+      return [{
+        id: `lifecycle:${envelope.seq}:tool.failed`,
+        type: 'tool.failed' as const,
+        ...base,
+        toolCallId: detail.toolCallId,
+        toolName: detail.toolName,
+        error: { code: 'tool_error', message: detail.output },
+      }]
+    }
+    return [{
+      id: `lifecycle:${envelope.seq}:tool.completed`,
+      type: 'tool.completed' as const,
+      ...base,
+      toolCallId: detail.toolCallId,
+      toolName: detail.toolName,
+      resultPreview: detail.output,
     }]
   }
 
