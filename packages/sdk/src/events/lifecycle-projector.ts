@@ -6,7 +6,15 @@
  * AsyncIterable<SDKMessage> it is given (Task 4 wires it in the sidecar).
  */
 import { randomUUID } from 'node:crypto'
-import type { SDKMessage, SDKAssistantMessage, SDKResultMessage, SDKStreamEventMessage } from '../types.js'
+import type {
+  SDKMessage,
+  SDKAssistantMessage,
+  SDKResultMessage,
+  SDKStreamEventMessage,
+  SDKContextCompactionProgressMessage,
+  SDKCompactBoundaryMessage,
+  SDKTaskNotificationMessage,
+} from '../types.js'
 import type {
   SdkLifecycleEvent,
   SdkLifecycleDetail,
@@ -16,6 +24,8 @@ import type {
   MessageUpdateDetail,
   ToolStartDetail,
   ToolEndDetail,
+  BackgroundTaskNotificationDetail,
+  ContextCompactionDetail,
 } from '@lume/shared'
 
 interface PendingTurn {
@@ -35,6 +45,18 @@ interface PendingTurn {
 }
 
 const DELTA_FAMILY = new Set(['text_delta', 'input_json_delta', 'thinking_delta'])
+
+/**
+ * Legacy parity (run-item-events.ts normalizeBackgroundTaskStatus): only the
+ * four terminal statuses map; attention and unknown statuses are dropped.
+ */
+function normalizeTaskNotificationStatus(status: string): BackgroundTaskNotificationDetail['status'] | undefined {
+  if (status === 'completed') return 'completed'
+  if (status === 'failed') return 'failed'
+  if (status === 'stopped' || status === 'killed') return 'stopped'
+  if (status === 'cancelled' || status === 'canceled') return 'cancelled'
+  return undefined
+}
 
 export async function* projectLifecycle(
   messages: AsyncIterable<SDKMessage>,
@@ -233,6 +255,44 @@ export async function* projectLifecycle(
     return emit('turn', 'end', turn.turnId, detail)
   }
 
+  /**
+   * System-family domain events: compaction tri-state + in-run task_notification.
+   * Pure domain skeletons (kind 'run'/phase 'event'/turnId null) — they never
+   * open the run nor join turn pairing (orthogonal to the message/tool stream).
+   * Subagent forms are already skipped at the loop entry.
+   */
+  function handleSystem(message: SDKMessage): SdkLifecycleEvent<SdkLifecycleDetail>[] {
+    const subtype = (message as { subtype?: string }).subtype
+    if (subtype === 'context_compaction_started') {
+      return [emit('run', 'event', null, { type: 'context.compaction', phase: 'started' })]
+    }
+    if (subtype === 'context_compaction_progress') {
+      const meta = (message as SDKContextCompactionProgressMessage).compact_metadata
+      const detail: ContextCompactionDetail = { type: 'context.compaction', phase: 'progress' }
+      if (typeof meta.progress === 'number') detail.progress = meta.progress
+      return [emit('run', 'event', null, detail)]
+    }
+    if (subtype === 'compact_boundary') {
+      const meta = (message as SDKCompactBoundaryMessage).compact_metadata
+      const failed = meta?.outcome === 'failed'
+      const detail: ContextCompactionDetail = { type: 'context.compaction', phase: 'completed', isError: failed }
+      const result = failed ? meta?.failure_reason : meta?.summary
+      if (typeof result === 'string' && result) detail.result = result
+      return [emit('run', 'event', null, detail)]
+    }
+    if (subtype === 'task_notification') {
+      const task = message as SDKTaskNotificationMessage
+      const status = normalizeTaskNotificationStatus(task.status)
+      if (!status) return []
+      const detail: BackgroundTaskNotificationDetail = { type: 'background.task', taskId: task.task_id, status }
+      if (typeof task.message === 'string') detail.message = task.message
+      if (typeof task.summary === 'string') detail.summary = task.summary
+      if (task.execution !== undefined) detail.execution = task.execution
+      return [emit('run', 'event', null, detail)]
+    }
+    return []
+  }
+
   /** Legacy result message → run.end (detail migrated from the legacy fields). */
   function endRun(result: SDKResultMessage): SdkLifecycleEvent<SdkLifecycleDetail>[] {
     if (runEnded) return []
@@ -263,6 +323,9 @@ export async function* projectLifecycle(
         break
       case 'result':
         events = endRun(message)
+        break
+      case 'system':
+        events = handleSystem(message)
         break
       default:
         break
