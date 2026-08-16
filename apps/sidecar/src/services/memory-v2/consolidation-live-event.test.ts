@@ -77,6 +77,9 @@ describe("consolidation live memory.changed", () => {
       (event): event is Extract<LumeRuntimeEvent, { type: "memory.changed" }> => event.type === "memory.changed"
     );
     expect(changed).toHaveLength(1);
+    // 先取值再 toMatchObject：Bun 1.3 的 toMatchObject 会把被匹配字段原地替换成
+    // asymmetric matcher（changed[0].summary 会被写成 StringContaining 对象）。
+    const changedSummary = changed[0]?.summary;
     expect(changed[0]).toMatchObject({
       id: `${runId}:memory.changed:${saved?.uuid}`,
       type: "memory.changed",
@@ -91,6 +94,6 @@ describe("consolidation live memory.changed", () => {
       (event): event is Extract<LumeRuntimeEvent, { type: "memory.job.completed" }> => event.type === "memory.job.completed"
     );
     expect(jobCompleted).toMatchObject({ jobId: job?.jobId, status: "completed" });
-    expect(jobCompleted?.summary).toBe(changed[0]!.summary);
+    expect(jobCompleted?.summary).toBe(changedSummary);
   });
 });

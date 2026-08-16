@@ -935,68 +935,6 @@ describe('runtime-event-message-projection', () => {
     expect(messages.filter((message) => message.id === 'run-1:memory.changed:uuid-b')).toHaveLength(1)
   })
 
-  test('upserts memory.changed by id: replayed duplicate replaces instead of appending (no ghost message)', () => {
-    const messages = projectRuntimeEventMessages([
-      event({
-        type: 'memory.changed',
-        id: 'run-1:memory.changed:uuid-same',
-        actor: 'consolidation',
-        workspaceSlug: 'demo',
-        mutationIds: [],
-        memoryIds: [],
-        summary: '整理了 2 条记忆',
-        details: [],
-      }),
-      event({
-        type: 'memory.changed',
-        id: 'run-1:memory.changed:uuid-same',
-        actor: 'background_extract',
-        workspaceSlug: 'demo',
-        mutationIds: [],
-        memoryIds: [],
-        summary: '整理了 3 条记忆',
-        details: [],
-      }),
-    ])
-    const withId = messages.filter((message) => message.id === 'run-1:memory.changed:uuid-same')
-    expect(withId).toHaveLength(1)
-    expect(withId[0]).toMatchObject({
-      type: 'system',
-      variant: 'memory_saved',
-      status: 'completed',
-      text: '整理了 3 条记忆',
-    })
-  })
-
-  test('keeps memory.changed messages with distinct ids side by side', () => {
-    const messages = projectRuntimeEventMessages([
-      event({
-        type: 'memory.changed',
-        id: 'run-1:memory.changed:uuid-a',
-        actor: 'consolidation',
-        workspaceSlug: 'demo',
-        mutationIds: [],
-        memoryIds: [],
-        summary: '整理了 2 条记忆',
-        details: [],
-      }),
-      event({
-        type: 'memory.changed',
-        id: 'run-2:memory.changed:uuid-b',
-        actor: 'background_extract',
-        workspaceSlug: 'demo',
-        mutationIds: [],
-        memoryIds: [],
-        summary: '后台记住了 1 条信息',
-        details: [],
-      }),
-    ])
-    expect(messages.map((message) => message.id)).toEqual([
-      'run-1:memory.changed:uuid-a',
-      'run-2:memory.changed:uuid-b',
-    ])
-  })
-
   test('projects one updating AutoDream job message', () => {
     const messages = projectRuntimeEventMessages([
       event({
