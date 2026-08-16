@@ -43,7 +43,7 @@ describe("projectLifecycle", () => {
     expect(kinds).toEqual([
       "run.start", "turn.start", "message.start",
       "message.update", "message.update", "message.end",
-      "turn.end", "run.end",
+      "tool.start", "tool.end", "turn.end", "run.end",
     ])
     const turnEnd = events.find((e) => e.phase === "end" && e.kind === "turn")
     expect(turnEnd.turnId).toBe("turn-1")
@@ -118,6 +118,56 @@ describe("projectLifecycle", () => {
     expect(turnEnds[0].detail.toolResults[0].tool_use_id).toBe("t1")
     expect(turnEnds[1].detail.toolResults[0].tool_use_id).toBe("t2")
     expect(events.at(-1).detail.numTurns).toBe(2)
+  })
+
+  test("two tool_use blocks: tool.start×2 after message.end in content order", async () => {
+    const events = await run([
+      streamTextDelta("he") as any,
+      { type: "assistant", uuid: "u1", message: { role: "assistant", content: [
+        { type: "tool_use", id: "t1", name: "Read", input: { path: "a" } },
+        { type: "tool_use", id: "t2", name: "Bash", input: { cmd: "ls" } },
+      ] } } as any,
+      toolResult("t1") as any,
+      toolResult("t2") as any,
+      { type: "result", subtype: "success", num_turns: 1 } as any,
+    ])
+    expect(events.map((e) => `${e.kind}.${e.phase}`)).toEqual([
+      "run.start", "turn.start", "message.start", "message.update",
+      "message.end", "tool.start", "tool.start",
+      "tool.end", "tool.end", "turn.end", "run.end",
+    ])
+    const starts = events.filter((e) => e.kind === "tool" && e.phase === "start")
+    expect(starts.map((e) => e.detail.toolCallId)).toEqual(["t1", "t2"])
+    expect(starts.map((e) => e.detail.input)).toEqual([{ path: "a" }, { cmd: "ls" }])
+    expect(starts.every((e) => e.turnId === "turn-1")).toBe(true)
+  })
+
+  test("tool_result → tool.end passes through output and _meta, before turn.end", async () => {
+    const events = await run([
+      assistantWithTool("u1") as any,
+      { type: "tool_result", result: {
+        tool_use_id: "t1", tool_name: "Read", output: "file body",
+        is_error: false, _meta: { execution: { durationMs: 12 } },
+      } } as any,
+    ])
+    const toolEnd = events.find((e) => e.kind === "tool" && e.phase === "end")
+    expect(toolEnd.detail).toEqual({
+      type: "tool.end", toolCallId: "t1", toolName: "Read",
+      isError: false, output: "file body", meta: { execution: { durationMs: 12 } },
+    })
+    expect(events.findIndex((e) => e.kind === "tool" && e.phase === "end"))
+      .toBeLessThan(events.findIndex((e) => e.kind === "turn" && e.phase === "end"))
+  })
+
+  test("failed tool_result → tool.end isError=true", async () => {
+    const events = await run([
+      assistantWithTool("u1") as any,
+      { type: "tool_result", result: {
+        tool_use_id: "t1", tool_name: "Bash", output: "boom", is_error: true,
+      } } as any,
+    ])
+    const toolEnd = events.find((e) => e.kind === "tool" && e.phase === "end")
+    expect(toolEnd.detail.isError).toBe(true)
   })
 
   test("thinking_delta passes through as update without folding into partial", async () => {
