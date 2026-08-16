@@ -193,6 +193,7 @@
   background: var(--lume-bg-panel) !important;
   box-shadow: none !important;
   font-family: var(--font-mono);
+  font-size: 0.8667em;
 }
 
 .agent-message-markdown .code-block-wrapper pre.shiki code {
@@ -266,6 +267,14 @@
   font-weight: 450;
   line-height: 1.85;
   overflow-wrap: anywhere;
+}
+
+/* 正文段落限宽（≈45 汉字/行）；代码块/表格/图片继续撑满消息容器 */
+.agent-message-markdown > p,
+.agent-message-markdown ul,
+.agent-message-markdown ol,
+.agent-message-markdown blockquote {
+  max-width: var(--lume-chat-measure);
 }
 
 .agent-message-markdown p {
@@ -356,14 +365,15 @@
   margin: 26px 0 10px;
   color: var(--lume-text-primary);
   font-weight: 700;
-  letter-spacing: -0.018em;
+  /* CJK 负字距挤压标点，标题字距归零 */
+  letter-spacing: 0;
   line-height: 1.4;
 }
 
-.agent-message-markdown h1 { font-size: 24px; }
-.agent-message-markdown h2 { font-size: 21px; }
-.agent-message-markdown h3 { font-size: 18px; }
-.agent-message-markdown h4 { font-size: 16px; }
+.agent-message-markdown h1 { font-size: 1.35em; }
+.agent-message-markdown h2 { font-size: 1.17em; }
+.agent-message-markdown h3 { font-size: 1.07em; }
+.agent-message-markdown h4 { font-size: 1em; }
 
 .agent-message-markdown h1:first-child,
 .agent-message-markdown h2:first-child,
