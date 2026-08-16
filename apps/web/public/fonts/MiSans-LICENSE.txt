@@ -1,0 +1,8 @@
+MiSans 字体（含 MiSans VF）
+版权所有者：小米（Xiaomi Corporation）
+官方页面：https://hyperos.mi.com/font/
+授权：全球免费商用（Global Free Commercial-Use Fonts），允许在应用中内置与分发。
+
+本仓库中的 MiSans-VF.woff2 由官方发布的 MiSans VF（TTF）经 woff2 无损压缩转换而来，
+未修改任何字形与字体数据。完整授权条款以小米官方发布为准：
+https://hyperos.mi.com/font/

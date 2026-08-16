@@ -36,18 +36,27 @@
 
 混排原理：字体栈按序回落，Geist 无汉字字形自然落 MiSans；零 JS 成本。
 
-### 1.1 MiSans 获取与加载
+### 1.1 MiSans 获取与加载（实现修正版）
+
+计划阶段验证发现两个关键事实，来源方案修正：
+
+1. **`misans` npm 包（dsrkafuU）不可用**：其静态权重 CSS 声明的 font-weight 是小米视觉字重标定值（Regular=330 / Medium=380 / Demibold=450 / Bold=630），与 UI 标准字重刻度（400/500/700）全错位——`font-medium(500)` 会渲染成 Bold。
+2. **官方 VF 的 wght 轴是 150-700 连续轴**（default 330，named instances 150/200/250/305/330/380/450/520/630/700）——`@font-face` 声明 `font-weight: 150 700` 后任意 CSS 字重请求（含现状用到的 450/550/650）精确插值渲染，无错位。
+
+**最终来源**：`@fontpkg/mi-sans-vf@4.3.0`（npm，官方 VF 的 TTF 打包）→ fonttools 转 woff2（无损压缩，不改字形）→ 入库自托管：
 
 ```
-apps/web/public/fonts/MiSans-VF.woff2       (~8-9MB 全字符集单文件)
-apps/web/public/fonts/MiSans-LICENSE.txt
+apps/web/public/fonts/MiSans-VF.woff2       (11.3MB，VF 150-700 全字符集单文件)
+apps/web/public/fonts/MiSans-LICENSE.txt    (来源声明 + 官方免费商用授权 URL)
 ```
 
-- `@font-face { font-family: 'MiSans Variable'; font-weight: 250 900; font-display: swap; }`
+- `@font-face { font-family: 'MiSans Variable'; font-weight: 150 700; font-display: swap; }`
 - 不做 unicode-range 分片：本地 file:// 加载毫秒级，swap 保证首帧系统字体渲染
-- ponytail: 全量 8-9MB；体积敏感时可子集化常用 7000 字到 ~3MB
+- ponytail: 全量 11.3MB；体积敏感时可子集化常用 7000 字到 ~4MB
+- 注意：VF 上限 700，全库无 >700 字重使用（font-black 零引用），无影响
 - JetBrains Mono 走 `@fontsource-variable/jetbrains-mono`；Geist 已有
 - 删除 Inter 四个死权重导入
+- follow-up: 小米《字体免费授权许可协议》全文抓取入库（官方页 JS 渲染，当前 LICENSE 为来源声明版）
 
 ### 1.2 等宽栈统一（三份 → 一份）
 
@@ -68,7 +77,7 @@ apps/web/public/fonts/MiSans-LICENSE.txt
 @theme {
   --text-micro:     10px;   /* badge、悬浮岛指标 */
   --text-caption:   11px;   /* 辅助说明、时间戳 */
-  --text-secondary: 12px;   /* 右面板正文、次要信息 */
+  --text-ui:        12px;   /* 右面板正文、次要信息（不叫 secondary：与 --color-secondary 在 text-* 解析上冲突） */
   --text-body:      13px;   /* UI 正文、表单、按钮 */
   --text-body-lg:   14px;   /* 强调正文 */
 }
