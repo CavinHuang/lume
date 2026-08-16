@@ -37,4 +37,13 @@ describe("updateGeneralSettingsInputSchema", () => {
     expect(parsed).toEqual({ agentMessageDisplayMode: "verbose" });
     expect(parsed).not.toHaveProperty("agentIsland");
   });
+
+  test("chatFontScale 接受合法枚举", () => {
+    const parsed = updateGeneralSettingsInputSchema.parse({ chatFontScale: "lg" });
+    expect(parsed).toEqual({ chatFontScale: "lg" });
+  });
+
+  test("chatFontScale 拒绝非法枚举", () => {
+    expect(() => updateGeneralSettingsInputSchema.parse({ chatFontScale: "xl" })).toThrow();
+  });
 });

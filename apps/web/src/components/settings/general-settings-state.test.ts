@@ -47,6 +47,7 @@ describe('general settings state', () => {
       agentMessageDisplayMode: 'minimal',
       agentMessageListDisplayMode: 'conversation',
       agentMessageAvatarMode: 'visible',
+      chatFontScale: 'md',
       agentIsland: { enabled: true },
       logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
@@ -75,6 +76,7 @@ describe('general settings state', () => {
       agentMessageDisplayMode: 'minimal',
       agentMessageListDisplayMode: 'conversation',
       agentMessageAvatarMode: 'visible',
+      chatFontScale: 'md',
       agentIsland: { enabled: true },
       logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
