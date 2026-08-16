@@ -76,10 +76,6 @@ export function RightPanelSourcePreview({
   onEditorAttach?: (editor: Editor<SourceCommentAnnotation>) => void
 }) {
   const editorRef = useRef<Editor<SourceCommentAnnotation> | null>(null)
-  // 自动换行：pre-wrap 作用于 pierre 的 pre[data-file] 与编辑器行（含 CodeMirror .cm-line）
-  const wrapCss = wrapLines
-    ? `\n[data-file], [data-file] .cm-line, [data-file] pre { white-space: pre-wrap !important; word-break: break-word !important; overflow-wrap: anywhere !important; }`
-    : ''
   const selectionEditRequestRef = useRef(0)
   const [blame, setBlame] = useState<CodingBlameResult>({ available: false, lines: [] })
   const [expandedBlameLine, setExpandedBlameLine] = useState<number | null>(null)
@@ -498,6 +494,7 @@ export function RightPanelSourcePreview({
           onLineSelected={openComment}
           onLineSelectionChange={setLocalSelection}
           onGutterUtilityClick={openComment}
+          wrapLines={wrapLines}
           renderAnnotation={renderCommentEditor}
         />
       ) : patchResult ? (
@@ -520,6 +517,7 @@ export function RightPanelSourcePreview({
           onLineSelected={openComment}
           onGutterUtilityClick={threadId ? openComment : undefined}
           onContentChange={onContentChange}
+          wrapLines={wrapLines}
           onEditorAttach={(editor) => {
             editorRef.current = editor
             onEditorAttach?.(editor)
@@ -527,7 +525,7 @@ export function RightPanelSourcePreview({
           renderSelectionAction={renderSelectionAction}
           onPostRender={handlePostRender as never}
           renderAnnotation={renderCommentEditor}
-          unsafeCSS={`${sourceCss}${wrapCss}`}
+          unsafeCSS={sourceCss}
         />
       ) : (
         <PierreFileView<SourceCommentAnnotation>
@@ -540,7 +538,8 @@ export function RightPanelSourcePreview({
           onGutterUtilityClick={openComment}
           renderAnnotation={renderCommentEditor}
           onPostRender={handlePostRender as never}
-          unsafeCSS={`${sourceCss}${wrapCss}`}
+          wrapLines={wrapLines}
+          unsafeCSS={sourceCss}
         />
       )
       )}
