@@ -170,6 +170,31 @@ describe("projectLifecycle", () => {
     expect(toolEnd.detail.isError).toBe(true)
   })
 
+  test("error assistant with tool_use: no tool.start (tools never ran)", async () => {
+    const events = await run([
+      { type: "assistant", uuid: "u1", error: "server_error",
+        message: { role: "assistant", content: [
+          { type: "text", text: "par" },
+          { type: "tool_use", id: "t1", name: "Read", input: {} },
+        ] } } as any,
+      { type: "result", subtype: "error_during_execution", is_error: true, num_turns: 1 } as any,
+    ])
+    expect(events.map((e) => `${e.kind}.${e.phase}`)).toEqual([
+      "run.start", "turn.start", "message.start", "message.end", "turn.end", "run.end",
+    ])
+  })
+
+  test("duplicate assistant with same tool_use id in open turn: tool.start emitted once", async () => {
+    const events = await run([
+      assistantWithTool("u1") as any,
+      assistantWithTool("u1-replay") as any, // same default toolId "t1"
+      toolResult("t1") as any,
+    ])
+    const starts = events.filter((e) => e.kind === "tool" && e.phase === "start")
+    expect(starts).toHaveLength(1)
+    expect(starts[0].detail.toolCallId).toBe("t1")
+  })
+
   test("thinking_delta passes through as update without folding into partial", async () => {
     const thinkingDelta = {
       type: "stream_event",
