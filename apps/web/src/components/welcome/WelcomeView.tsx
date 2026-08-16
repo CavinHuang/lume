@@ -241,7 +241,7 @@ export function WelcomeView({
 
   const editor = useEditor({
     extensions: createPromptEditorExtensions({
-      placeholder: '描述你想完成的任务，使用 @ 引用已连接账户…',
+      placeholder: '描述你想完成的任务，使用 @ 引用已连接账户或项目文件…',
       agentSuggestion: createSuggestionRenderer('@', '__welcome__', '@', getWorkspaceSlug, setMentionSuggestionOpen),
       capabilitySuggestion: createSuggestionRenderer('/', '__welcome__', '/', getWorkspaceSlug, setMentionSuggestionOpen, executeSlashCommand),
     }),

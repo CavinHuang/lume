@@ -11,6 +11,7 @@ import { listPlanningTodos } from '@/lib/desktop-api/planning-todo'
 import { toast } from 'sonner'
 import type { EditorOptions } from '@tiptap/core'
 import { fetchLinkConnectionMentionItems, insertLinkConnectionMention } from './link-connection-mentions'
+import { fetchFileMentionItems } from './agent-file-mentions'
 
 type PasteEditorView = Parameters<NonNullable<EditorOptions['editorProps']['handlePaste']>>[0]
 
@@ -38,7 +39,13 @@ export async function fetchSuggestions(
   workspaceId?: string | null,
 ): Promise<MentionItem[]> {
   try {
-    if (trigger === '@') return fetchLinkConnectionMentionItems(query)
+    if (trigger === '@') {
+      const [connectorItems, fileItems] = await Promise.all([
+        fetchLinkConnectionMentionItems(query),
+        fetchFileMentionItems(query, workspaceSlug, threadId),
+      ])
+      return [...connectorItems, ...fileItems]
+    }
     if (trigger === '&') {
       const normalizedQuery = query.trim().toLocaleLowerCase()
       const all = normalizedQuery.startsWith('all ') || normalizedQuery.startsWith('全部 ')
