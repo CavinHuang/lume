@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { AGENT_IPC_CHANNELS } from "./agent.js"
-import type { SdkLifecycleDetail, ToolEndDetail, ToolStartDetail } from "./agent-events.js"
+import type {
+  MemoryContextUsedDetail,
+  SdkLifecycleDetail,
+  ToolEndDetail,
+  ToolStartDetail,
+} from "./agent-events.js"
 
 describe("agent event bus channels", () => {
   test("exposes EVENTS push channel and GET_EVENTS request channel", () => {
@@ -29,6 +34,32 @@ describe("tool skeleton detail types", () => {
       expect(detail.isError).toBe(false)
       expect(detail.output).toBe("done")
       expect(detail.meta).toBeUndefined()
+    }
+  })
+})
+
+describe("memory context detail type", () => {
+  test("MemoryContextUsedDetail fields and union membership", () => {
+    const d: MemoryContextUsedDetail = {
+      type: "memory.context.used",
+      items: [
+        {
+          id: "m1",
+          kind: "entity",
+          scope: "user",
+          status: "active",
+          citation: "[1]",
+          reason: "mentioned in prompt",
+        },
+      ],
+    }
+    const detail: SdkLifecycleDetail = d
+    expect(detail.type).toBe("memory.context.used")
+    if (detail.type === "memory.context.used") {
+      expect(detail.items).toHaveLength(1)
+      expect(detail.items[0]?.id).toBe("m1")
+      expect(detail.items[0]?.fileRef).toBeUndefined()
+      expect(detail.items[0]?.claim).toBeUndefined()
     }
   })
 })

@@ -93,11 +93,27 @@ export interface ToolEndDetail {
   meta?: Record<string, unknown>
 }
 
+export interface MemoryContextUsedDetail {
+  type: 'memory.context.used'
+  /** 与旧路 event.items 同构:memory 引用条目列表 */
+  items: Array<{
+    id: string
+    kind: string
+    scope: string
+    status: string
+    citation: string
+    fileRef?: unknown
+    reason?: string
+    claim?: string
+  }>
+}
+
 export type SdkLifecycleDetail =
   | RunStartDetail | RunEndDetail
   | TurnStartDetail | TurnEndDetail
   | MessageStartDetail | MessageUpdateDetail | MessageEndDetail
   | ToolStartDetail | ToolEndDetail
+  | MemoryContextUsedDetail
 
 /** Result of AGENT_IPC_CHANNELS.GET_EVENTS. */
 export interface AgentEventsResult {
