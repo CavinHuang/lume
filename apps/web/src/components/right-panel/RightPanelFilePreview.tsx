@@ -3,7 +3,7 @@ import { useAtom } from 'jotai'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { DIFF_AWARE_MARKDOWN_COMPONENTS } from '@/components/markdown/DiffAwareMarkdownPre'
 import { PierreDiffView } from '@/components/diff/PierreDiffView'
-import { Check, Code, Copy, Eye, ExternalLink, FolderSearch, GitCommitHorizontal, MoreHorizontal, PanelLeftClose, PanelLeftOpen, RotateCw, Save, TriangleAlert } from 'lucide-react'
+import { Check, Code, Copy, Eye, ExternalLink, FolderSearch, GitCommitHorizontal, MoreHorizontal, PanelLeftClose, PanelLeftOpen, RotateCw, Save, TriangleAlert, WrapText } from 'lucide-react'
 import type { FileEntry, FileRef, FileRefChangedEvent, FileRefReadResult, GuardedFileRef, WriteFileRefResult } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { Button } from '@/components/ui/button'
@@ -70,6 +70,14 @@ export function RightPanelFilePreview({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sourceMode, setSourceMode] = useState(false)
+  const [wrapLines, setWrapLines] = useState(() => {
+    try { return window.localStorage.getItem('lume-source-wrap') === '1' } catch { return false }
+  })
+  const toggleWrap = () => setWrapLines((current) => {
+    const next = !current
+    try { window.localStorage.setItem('lume-source-wrap', next ? '1' : '0') } catch { /* 忽略持久化失败 */ }
+    return next
+  })
   const [imageOriginalSize, setImageOriginalSize] = useState(false)
   const [metadata, setMetadata] = useState<FileEntry | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -435,6 +443,10 @@ export function RightPanelFilePreview({
               </DropdownMenuItem>
             )}
             {payload?.kind === 'text' && <DropdownMenuItem onSelect={() => void writeClipboardText(editorContent)}>复制内容</DropdownMenuItem>}
+            <DropdownMenuItem onSelect={toggleWrap}>
+              <WrapText size={13} />
+              {wrapLines ? '关闭自动换行' : '开启自动换行'}
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={refresh}><RotateCw size={13} />刷新预览</DropdownMenuItem>
             <DropdownMenuItem disabled={!desktop} onSelect={() => void (guardedRef ? openGuardedFileRefInSystem(guardedRef) : openFileRefInSystem(fileRef))}><ExternalLink size={13} />系统打开</DropdownMenuItem>
             <DropdownMenuItem disabled={!desktop} onSelect={() => void (guardedRef ? revealGuardedFileRefInSystem(guardedRef) : revealFileRefInSystem(fileRef))}><FolderSearch size={13} />在文件管理器中显示</DropdownMenuItem>
@@ -514,7 +526,7 @@ export function RightPanelFilePreview({
             </div>
           </div>
         ) : payload?.kind === 'text' ? (
-          <div className={kind === 'text' || kind === 'unsupported' || sourceMode ? 'h-full' : 'h-full overflow-auto p-4'}>
+          <div className="h-full overflow-auto">
             {kind === 'html' && !sourceMode ? (
               <RightPanelHtmlPreview fileRef={fileRef} guardedRef={guardedRef} source={editorContent} onOpenFile={onOpenFile} onMissing={onMissing} onPreviewScopeChange={onPreviewScopeChange} />
             ) : kind === 'markdown' && !sourceMode ? (
@@ -533,6 +545,7 @@ export function RightPanelFilePreview({
                 editable={!guardedRef && payload.editable}
                 editorCacheKey={`${fileRef.source}:${fileRef.scopeId}:${fileRef.relativePath}`}
                 onContentChange={handleEditorChange}
+                wrapLines={wrapLines}
               />
             )}
           </div>

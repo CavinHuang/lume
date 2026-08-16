@@ -59,6 +59,7 @@ export function RightPanelSourcePreview({
   editorCacheKey,
   onContentChange,
   onEditorAttach,
+  wrapLines = false,
 }: {
   threadId?: string
   content: string
@@ -69,11 +70,16 @@ export function RightPanelSourcePreview({
   onLineSelected?: (range: SelectedLineRange | null) => void
   blameEnabled?: boolean
   editable?: boolean
+  wrapLines?: boolean
   editorCacheKey?: string
   onContentChange?: (content: string) => void
   onEditorAttach?: (editor: Editor<SourceCommentAnnotation>) => void
 }) {
   const editorRef = useRef<Editor<SourceCommentAnnotation> | null>(null)
+  // 自动换行：pre-wrap 作用于 pierre 的 pre[data-file] 与编辑器行（含 CodeMirror .cm-line）
+  const wrapCss = wrapLines
+    ? `\n[data-file], [data-file] .cm-line, [data-file] pre { white-space: pre-wrap !important; word-break: break-word !important; overflow-wrap: anywhere !important; }`
+    : ''
   const selectionEditRequestRef = useRef(0)
   const [blame, setBlame] = useState<CodingBlameResult>({ available: false, lines: [] })
   const [expandedBlameLine, setExpandedBlameLine] = useState<number | null>(null)
@@ -521,7 +527,7 @@ export function RightPanelSourcePreview({
           renderSelectionAction={renderSelectionAction}
           onPostRender={handlePostRender as never}
           renderAnnotation={renderCommentEditor}
-          unsafeCSS={sourceCss}
+          unsafeCSS={`${sourceCss}${wrapCss}`}
         />
       ) : (
         <PierreFileView<SourceCommentAnnotation>
@@ -534,7 +540,7 @@ export function RightPanelSourcePreview({
           onGutterUtilityClick={openComment}
           renderAnnotation={renderCommentEditor}
           onPostRender={handlePostRender as never}
-          unsafeCSS={sourceCss}
+          unsafeCSS={`${sourceCss}${wrapCss}`}
         />
       )
       )}
