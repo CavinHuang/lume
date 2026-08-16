@@ -295,8 +295,8 @@ export function AppearanceSettings() {
         <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[var(--text-1)]">Agent 消息显示</h2>
         <div className="flex min-h-[48px] items-center justify-between gap-5 py-2">
           <div className="min-w-0">
-            <div className="text-[13px] font-medium leading-5 text-[var(--text-2)]">对话字号</div>
-            <div className="mt-0.5 text-[12px] leading-4 text-[var(--text-3)]">
+            <div className="text-body font-medium leading-5 text-[var(--text-2)]">对话字号</div>
+            <div className="mt-0.5 text-ui leading-4 text-[var(--text-3)]">
               调整消息正文与代码块字号，界面其他部分不受影响
             </div>
           </div>

@@ -506,8 +506,8 @@ describe("general-settings-service", () => {
     expect(raw.generalSettings?.agentMessageAvatarMode).toBe("hidden");
   });
 
-  test("chatFontScale 可持久化，非法值回退默认", () => {
-    updatePersistedGeneralSettings({ chatFontScale: "lg" });
+  test("chatFontScale 可持久化，非法值回退默认", async () => {
+    await updatePersistedGeneralSettings({ chatFontScale: "lg" });
     expect(getPersistedGeneralSettings().chatFontScale).toBe("lg");
 
     const settingsPath = getSettingsPath();
