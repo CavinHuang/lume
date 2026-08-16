@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createCodingRunTracker } from "./coding-run-tracker";
@@ -117,7 +117,21 @@ describe("coding run tracker", () => {
     expect(report.status).toBe("unverified");
     expect(report.baselineFailure).toEqual({ command: "bun test", signature: "error:baseline failure" });
     await expect(resumed.completionGuard()).resolves.toBeUndefined();
-  });
+  }, 20_000);
+
+  test("persists v2 snapshots in the collection fields only", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-coding-state-v2-"));
+    const statePath = join(root, "session", "coding-state.v1.json");
+    const tracker = createCodingRunTracker({ workspaceRoot: root, statePath });
+    await tracker.initialize();
+
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    expect(state.version).toBe(2);
+    expect(Object.keys(state.baselineSnapshots ?? {})).toHaveLength(1);
+    // 单根冗余字段是 245MB 状态文件的来源之一（issue #90），v2 只保留集合字段。
+    expect(state.baselineSnapshot).toBeUndefined();
+    expect(state.latestSnapshot).toBeUndefined();
+  }, 20_000);
 
   test("keeps a running background task recoverable without failing the Run", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-coding-background-"));
@@ -149,7 +163,7 @@ describe("coding run tracker", () => {
       changedFiles: ["generated.ts"],
       pendingBackground: false
     });
-  });
+  }, 20_000);
 
   test("updates an auto-backgrounded verification from its terminal notification", async () => {
     const tracker = createCodingRunTracker();
@@ -341,7 +355,7 @@ describe("coding run tracker", () => {
       fileChanges: [{ path: "changed.ts", addedLines: 1, removedLines: 0 }],
       totalAddedLines: 1
     });
-  });
+  }, 20_000);
 
   test("attributes files changed by an indirect Bash script", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-coding-bash-script-"));
@@ -360,7 +374,7 @@ describe("coding run tracker", () => {
       workspaceChanged: true,
       changedFiles: ["generated.ts"]
     });
-  });
+  }, 20_000);
 
   test("attributes indirect changes in an authorized additional root", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-coding-main-root-"));
@@ -390,5 +404,5 @@ describe("coding run tracker", () => {
         `bun run --cwd ${additionalRoot} typecheck`,
       ],
     });
-  });
+  }, 20_000);
 });

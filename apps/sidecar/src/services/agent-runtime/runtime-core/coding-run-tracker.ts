@@ -27,6 +27,9 @@ import {
 
 export type CodingVerificationStatus = "not_required" | "unverified" | "verified" | "failed";
 
+/** 执行前钩子等待快照链的上限：正常快照毫秒级，超时只可能是异常环境。 */
+const SNAPSHOT_WAIT_TIMEOUT_MS = 10_000;
+
 export interface CodingVerificationReport {
   phase: CodingTurnPhase;
   status: CodingVerificationStatus;
@@ -117,8 +120,6 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   let promptedWithoutEvidence = false;
   let baselineVerification: PersistedCodingRunState["baselineVerification"];
   let baselineFailure: PersistedCodingRunState["baselineFailure"];
-  let baselineSnapshot: WorkspaceSnapshot | undefined;
-  let latestSnapshot: WorkspaceSnapshot | undefined;
   let workspaceDiff: WorkspaceSnapshotDiff = { added: [], modified: [], deleted: [] };
   let baselineSnapshots: Record<string, WorkspaceSnapshot> = {};
   let latestSnapshots: Record<string, WorkspaceSnapshot> = {};
@@ -154,13 +155,14 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     pendingSnapshot = pendingSnapshot.then(async () => {
       try {
         latestSnapshots = await captureWorkspaceSnapshots(workspaceRoots);
-        latestSnapshot = options.workspaceRoot ? latestSnapshots[resolve(options.workspaceRoot)] : undefined;
         persist();
       } catch {
         // The post-tool snapshot remains authoritative when a pre-snapshot fails.
       }
     });
-    await pendingSnapshot;
+    // 兜底：扫描链被异常环境（网络盘/杀毒实时扫描）拖长时放行工具执行，
+    // 快照在后台继续收敛，避免工具在执行前钩子上永久 pending（issue #90）。
+    await raceSettled(pendingSnapshot, SNAPSHOT_WAIT_TIMEOUT_MS);
   }
 
   function persist(): void {
@@ -171,8 +173,8 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       workspaceRoots,
       baselineCommit,
       baselineCommits,
-      baselineSnapshot,
-      latestSnapshot,
+      // v2 只持久化集合字段；单根 baselineSnapshot/latestSnapshot 是旧版冗余
+      // （同棵树在 state 里出现两次，issue #90 的 245MB 直接来源），读取兼容保留在 restore。
       baselineSnapshots,
       latestSnapshots,
       mutationObserved,
@@ -208,15 +210,13 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       const state = JSON.parse(readFileSync(options.statePath, "utf-8")) as Partial<PersistedCodingRunState>;
       if ((state.version !== 1 && state.version !== 2) || state.workspaceRoot !== options.workspaceRoot) return;
       if (state.version === 2 && state.workspaceRoots && !sameWorkspaceRoots(state.workspaceRoots, workspaceRoots)) return;
-      baselineSnapshot = state.baselineSnapshot;
       baselineCommit = state.baselineCommit;
       baselineCommits = state.baselineCommits ?? {};
-      latestSnapshot = state.latestSnapshot;
       baselineSnapshots = state.baselineSnapshots ?? (
-        baselineSnapshot ? { [resolve(options.workspaceRoot)]: baselineSnapshot } : {}
+        state.baselineSnapshot ? { [resolve(options.workspaceRoot)]: state.baselineSnapshot } : {}
       );
       latestSnapshots = state.latestSnapshots ?? (
-        latestSnapshot ? { [resolve(options.workspaceRoot)]: latestSnapshot } : {}
+        state.latestSnapshot ? { [resolve(options.workspaceRoot)]: state.latestSnapshot } : {}
       );
       workspaceDiffs = diffSnapshotCollections(baselineSnapshots, latestSnapshots);
       workspaceDiff = options.workspaceRoot
@@ -283,8 +283,6 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     try {
       baselineSnapshots = await captureWorkspaceSnapshots(workspaceRoots);
       latestSnapshots = baselineSnapshots;
-      baselineSnapshot = options.workspaceRoot ? baselineSnapshots[resolve(options.workspaceRoot)] : undefined;
-      latestSnapshot = baselineSnapshot;
       persist();
     } catch {
       // A missing or inaccessible workspace produces an unverified report later.
@@ -312,8 +310,6 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
         if (Object.keys(baselineSnapshots).length === 0) baselineSnapshots = snapshots;
         latestSnapshots = snapshots;
         workspaceDiffs = diffSnapshotCollections(baselineSnapshots, snapshots);
-        baselineSnapshot = options.workspaceRoot ? baselineSnapshots[resolve(options.workspaceRoot)] : undefined;
-        latestSnapshot = options.workspaceRoot ? latestSnapshots[resolve(options.workspaceRoot)] : undefined;
         workspaceDiff = options.workspaceRoot
           ? workspaceDiffs[resolve(options.workspaceRoot)] ?? { added: [], modified: [], deleted: [] }
           : { added: [], modified: [], deleted: [] };
@@ -700,6 +696,15 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
 function normalizeGitActionKind(value: string): CodingGitAction["kind"] {
   if (value === "cherry-pick" || value === "revert") return "other";
   return value as CodingGitAction["kind"];
+}
+
+/** 等 promise 结算或超时先放行，二者取先；永不 reject。 */
+function raceSettled(promise: Promise<void>, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return new Promise<void>((resolve) => {
+    timer = setTimeout(() => resolve(), timeoutMs);
+    promise.then(() => resolve(), () => resolve());
+  }).finally(() => clearTimeout(timer));
 }
 
 function hasGitMetadata(start: string): boolean {

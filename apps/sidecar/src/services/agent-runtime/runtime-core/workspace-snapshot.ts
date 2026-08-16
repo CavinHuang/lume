@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { resolve, relative, sep } from "node:path";
+import { runGitCommand } from "./coding-change-service";
 
 export interface WorkspaceFileSnapshot {
   path: string;
@@ -41,13 +41,52 @@ const EXCLUDED_DIRECTORIES = new Set([
 export async function captureWorkspaceSnapshot(root: string): Promise<WorkspaceSnapshot> {
   const canonicalRoot = resolve(root);
   const files: Record<string, WorkspaceFileSnapshot> = {};
-  await walk(canonicalRoot, canonicalRoot, files);
+  const gitPaths = await listGitWorkspaceFiles(canonicalRoot);
+  if (gitPaths) {
+    for (const relativePath of gitPaths) await snapshotFile(canonicalRoot, relativePath, files);
+  } else {
+    await walk(canonicalRoot, canonicalRoot, files);
+  }
   return {
     version: 1,
     root: canonicalRoot,
     capturedAt: new Date().toISOString(),
     files
   };
+}
+
+/**
+ * 优先复用 git 的文件视图（tracked + untracked，排除 .gitignore 等标准忽略规则）。
+ * git index 本身就是增量维护的文件状态库，交给它枚举可把 node_modules/target 等
+ * 生成物天然挡在快照之外——硬编码排除表永远追不全生态（issue #90）。
+ * 非 git 目录或 git 调用失败时返回 undefined，由调用方退回目录遍历。
+ * 注意走 spawn 版 runGitCommand：bun 在 Windows 上 execFile 有秒级开销。
+ */
+async function listGitWorkspaceFiles(root: string): Promise<string[] | undefined> {
+  const stdout = await runGitCommand(["ls-files", "-co", "--exclude-standard"], root);
+  if (stdout === null) return undefined;
+  return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+}
+
+async function snapshotFile(
+  root: string,
+  relativePath: string,
+  files: Record<string, WorkspaceFileSnapshot>
+): Promise<void> {
+  try {
+    const metadata = await stat(resolve(root, relativePath));
+    if (!metadata.isFile()) return;
+    files[relativePath] = {
+      path: relativePath,
+      size: metadata.size,
+      mtimeMs: metadata.mtimeMs,
+      // 伪 hash：mtimeNs+size 足够判定"是否变化"（git index 的快速路径同理），
+      // 免去逐文件读全文+sha256；内容级差异由 coding-change-service 的 git diff 负责。
+      hash: `${metadata.mtimeNs}:${metadata.size}`
+    };
+  } catch {
+    // 文件可能在枚举后消失；下一次快照会收敛。
+  }
 }
 
 export function diffWorkspaceSnapshots(
@@ -102,18 +141,6 @@ async function walk(
       continue;
     }
     if (!entry.isFile()) continue;
-    try {
-      const metadata = await stat(absolute);
-      const content = await readFile(absolute);
-      const path = relative(root, absolute).split(sep).join("/");
-      files[path] = {
-        path,
-        size: metadata.size,
-        mtimeMs: metadata.mtimeMs,
-        hash: createHash("sha256").update(content).digest("hex")
-      };
-    } catch {
-      // Files can disappear while a command is running; the next snapshot will settle it.
-    }
+    await snapshotFile(root, relative(root, absolute).split(sep).join("/"), files);
   }
 }
