@@ -82,7 +82,7 @@ describe('preview classification and race guard', () => {
     const previewSource = readFileSync(resolve(import.meta.dir, 'RightPanelFilePreview.tsx'), 'utf8')
     const sourceRenderer = readFileSync(resolve(import.meta.dir, 'RightPanelSourcePreview.tsx'), 'utf8')
     expect(previewSource).toContain('RightPanelSourcePreview')
-    expect(previewSource).toContain('className="h-full overflow-auto"')
+    expect(previewSource).toContain("cn('h-full overflow-auto'")
     expect(sourceRenderer).toContain('PierreEditableFileView')
     expect(sourceRenderer).toContain('PierreFileView')
     expect(sourceRenderer).not.toContain('rounded-md p-4')

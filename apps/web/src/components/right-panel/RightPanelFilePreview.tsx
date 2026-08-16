@@ -25,6 +25,7 @@ import {
 import { DocumentViewerHost } from './document-viewer/DocumentViewerHost'
 import { isDocumentViewerKind } from './document-viewer/document-viewer-kinds'
 import { classifyFilePreview, isMissingFileError } from './file-preview-utils'
+import { cn } from '@/lib/utils'
 import { RightPanelHtmlPreview } from './RightPanelHtmlPreview'
 import { RightPanelSourcePreview } from './RightPanelSourcePreview'
 import { RightPanelPdbPreview } from './RightPanelPdbPreview'
@@ -526,7 +527,7 @@ export function RightPanelFilePreview({
             </div>
           </div>
         ) : payload?.kind === 'text' ? (
-          <div className="h-full overflow-auto">
+          <div className={cn('h-full overflow-auto', wrapLines && '[&_pre]:whitespace-pre-wrap [&_pre]:overflow-wrap-anywhere')}>
             {kind === 'html' && !sourceMode ? (
               <RightPanelHtmlPreview fileRef={fileRef} guardedRef={guardedRef} source={editorContent} onOpenFile={onOpenFile} onMissing={onMissing} onPreviewScopeChange={onPreviewScopeChange} />
             ) : kind === 'markdown' && !sourceMode ? (
