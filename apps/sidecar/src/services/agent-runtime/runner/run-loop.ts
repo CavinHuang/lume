@@ -1,5 +1,5 @@
 import { projectLifecycle, type PermissionMode } from "@lume/agent-sdk";
-import type { Batch1LifecycleDetail, SDKMessage, SdkLifecycleEvent } from "@lume/shared";
+import type { SdkLifecycleDetail, SDKMessage, SdkLifecycleEvent } from "@lume/shared";
 import {
   appendSdkMessage,
   createAgentStreamAccumulatorState,
@@ -64,7 +64,7 @@ async function* teeLifecycleProjection(
         // 若改为真异步 fs,promise 化的 publish 在此 fire-and-forget 会让 finally 的 await pump
         // 不再等事件落盘——run 尾事件将静默丢失;重构前必须同步改造 tee(pump 内 await publish)。
         // 用 .catch 而非同步 try/catch:后者对异步 reject 无效,.catch 兼容两种时序。
-        void bus.publish(target.threadId, (event as SdkLifecycleEvent<Batch1LifecycleDetail>).runId, event)
+        void bus.publish(target.threadId, (event as SdkLifecycleEvent<SdkLifecycleDetail>).runId, event)
           .catch((error) => {
             log.warn("lifecycle 事件 publish 失败", {
               threadId: target.threadId,

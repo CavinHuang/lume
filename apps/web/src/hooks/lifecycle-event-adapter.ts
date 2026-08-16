@@ -1,4 +1,4 @@
-import type { Batch1LifecycleDetail, LumeRuntimeEvent, SdkEventEnvelope } from '@lume/shared'
+import type { SdkLifecycleDetail, LumeRuntimeEvent, SdkEventEnvelope } from '@lume/shared'
 import type { AgentEventBusSource } from './useAgentEventBus'
 
 /**
@@ -82,7 +82,7 @@ export function adaptLifecycleEvent(
   envelope: SdkEventEnvelope,
   state: LifecycleAdapterState,
 ): LumeRuntimeEvent[] {
-  const detail = envelope.detail as Batch1LifecycleDetail
+  const detail = envelope.detail as SdkLifecycleDetail
   const base = {
     threadId: envelope.threadId,
     runId: envelope.runId,
@@ -139,7 +139,7 @@ export function adaptLifecycleEvent(
 
 function adaptRunEnd(
   envelope: SdkEventEnvelope,
-  detail: Extract<Batch1LifecycleDetail, { type: 'run.end' }>,
+  detail: Extract<SdkLifecycleDetail, { type: 'run.end' }>,
   base: { threadId: string; runId: string; createdAt: string },
 ): LumeRuntimeEvent | null {
   // 判定来源对齐旧路:sidecar 由 result subtype `error_max_turns` 判 turn_limited

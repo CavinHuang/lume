@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto'
 import type { SDKMessage, SDKAssistantMessage, SDKResultMessage, SDKStreamEventMessage } from '../types.js'
 import type {
   SdkLifecycleEvent,
-  Batch1LifecycleDetail,
+  SdkLifecycleDetail,
   RunEndDetail,
   TurnEndDetail,
   MessageEndDetail,
@@ -34,7 +34,7 @@ const DELTA_FAMILY = new Set(['text_delta', 'input_json_delta', 'thinking_delta'
 
 export async function* projectLifecycle(
   messages: AsyncIterable<SDKMessage>,
-): AsyncGenerator<SdkLifecycleEvent<Batch1LifecycleDetail>> {
+): AsyncGenerator<SdkLifecycleEvent<SdkLifecycleDetail>> {
   const runId = randomUUID()
   const ts = () => Date.now()
   let runStarted = false
@@ -46,11 +46,11 @@ export async function* projectLifecycle(
     kind: SdkLifecycleEvent['kind'],
     phase: SdkLifecycleEvent['phase'],
     turnId: string | null,
-    detail: Batch1LifecycleDetail,
-  ): SdkLifecycleEvent<Batch1LifecycleDetail> => ({ runId, turnId, ts: ts(), kind, phase, detail })
+    detail: SdkLifecycleDetail,
+  ): SdkLifecycleEvent<SdkLifecycleDetail> => ({ runId, turnId, ts: ts(), kind, phase, detail })
 
   /** Run boundary: first assistant/stream_event/tool_result opens the run. */
-  function ensureRunStarted(): SdkLifecycleEvent<Batch1LifecycleDetail> | null {
+  function ensureRunStarted(): SdkLifecycleEvent<SdkLifecycleDetail> | null {
     if (runStarted) return null
     runStarted = true
     return emit('run', 'start', null, { type: 'run.start' })
@@ -95,8 +95,8 @@ export async function* projectLifecycle(
   }
 
   /** Stream events: first any stream_event opens turn + message; delta family folds + updates. */
-  function handleStreamEvent(message: SDKStreamEventMessage): SdkLifecycleEvent<Batch1LifecycleDetail>[] {
-    const out: SdkLifecycleEvent<Batch1LifecycleDetail>[] = []
+  function handleStreamEvent(message: SDKStreamEventMessage): SdkLifecycleEvent<SdkLifecycleDetail>[] {
+    const out: SdkLifecycleEvent<SdkLifecycleDetail>[] = []
     const runStart = ensureRunStarted()
     if (runStart) out.push(runStart)
     if (!currentTurn) {
@@ -125,8 +125,8 @@ export async function* projectLifecycle(
   }
 
   /** Assistant final value: message.end (+ turn.end when no tool_use or error). */
-  function handleAssistant(message: SDKAssistantMessage): SdkLifecycleEvent<Batch1LifecycleDetail>[] {
-    const out: SdkLifecycleEvent<Batch1LifecycleDetail>[] = []
+  function handleAssistant(message: SDKAssistantMessage): SdkLifecycleEvent<SdkLifecycleDetail>[] {
+    const out: SdkLifecycleEvent<SdkLifecycleDetail>[] = []
     const runStart = ensureRunStarted()
     if (runStart) out.push(runStart)
     if (!currentTurn) {
@@ -173,8 +173,8 @@ export async function* projectLifecycle(
    * slot while the turn is under-filled (tolerates regenerated ids); once the
    * turn is full, extra results are orphans and ignored.
    */
-  function handleToolResult(result: { tool_use_id: string; tool_name?: string; output?: string; is_error?: boolean }): SdkLifecycleEvent<Batch1LifecycleDetail>[] {
-    const out: SdkLifecycleEvent<Batch1LifecycleDetail>[] = []
+  function handleToolResult(result: { tool_use_id: string; tool_name?: string; output?: string; is_error?: boolean }): SdkLifecycleEvent<SdkLifecycleDetail>[] {
+    const out: SdkLifecycleEvent<SdkLifecycleDetail>[] = []
     const runStart = ensureRunStarted()
     if (runStart) out.push(runStart)
     if (!currentTurn || currentTurn.expectedToolResults === 0) return out
@@ -196,7 +196,7 @@ export async function* projectLifecycle(
     return out
   }
 
-  function endTurn(turn: PendingTurn): SdkLifecycleEvent<Batch1LifecycleDetail> {
+  function endTurn(turn: PendingTurn): SdkLifecycleEvent<SdkLifecycleDetail> {
     const detail: TurnEndDetail = {
       type: 'turn.end',
       assistantMessage: turn.assistantMessage ?? { role: 'assistant', content: [] },
@@ -206,7 +206,7 @@ export async function* projectLifecycle(
   }
 
   /** Legacy result message → run.end (detail migrated from the legacy fields). */
-  function endRun(result: SDKResultMessage): SdkLifecycleEvent<Batch1LifecycleDetail>[] {
+  function endRun(result: SDKResultMessage): SdkLifecycleEvent<SdkLifecycleDetail>[] {
     if (runEnded) return []
     runEnded = true
     const detail: RunEndDetail = {
@@ -222,7 +222,7 @@ export async function* projectLifecycle(
 
   for await (const message of messages) {
     if ((message as { subagent_run_id?: string }).subagent_run_id) continue
-    let events: SdkLifecycleEvent<Batch1LifecycleDetail>[] = []
+    let events: SdkLifecycleEvent<SdkLifecycleDetail>[] = []
     switch (message.type) {
       case 'stream_event':
         events = handleStreamEvent(message)

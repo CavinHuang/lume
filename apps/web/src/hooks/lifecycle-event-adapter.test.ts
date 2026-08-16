@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import type { LumeRuntimeEvent, Batch1LifecycleDetail, SdkEventEnvelope } from '@lume/shared'
+import type { LumeRuntimeEvent, SdkLifecycleDetail, SdkEventEnvelope } from '@lume/shared'
 import {
   adaptLifecycleEvent,
   consumeBusEnvelope,
@@ -14,7 +14,7 @@ function envelope(
   kind: SdkEventEnvelope['kind'],
   phase: SdkEventEnvelope['phase'],
   turnId: string | null,
-  detail: Batch1LifecycleDetail,
+  detail: SdkLifecycleDetail,
 ): SdkEventEnvelope {
   return { v: 1, seq, threadId: 't1', runId: 'r1', turnId, ts: TS + seq, kind, phase, detail }
 }
@@ -38,7 +38,7 @@ function messageEnd(seq: number, content: unknown[]) {
   })
 }
 
-function runEnd(seq: number, detail: Partial<Extract<Batch1LifecycleDetail, { type: 'run.end' }>>) {
+function runEnd(seq: number, detail: Partial<Extract<SdkLifecycleDetail, { type: 'run.end' }>>) {
   return envelope(seq, 'run', 'end', null, {
     type: 'run.end',
     stopReason: null,
@@ -140,7 +140,7 @@ test('message.start / turn.* / run.start / 未知事件不产 RuntimeEvent', () 
     toolResults: [],
   }), state)).toEqual([])
   expect(adaptLifecycleEvent(envelope(4, 'run', 'start', null, { type: 'run.start' }), state)).toEqual([])
-  expect(adaptLifecycleEvent(envelope(5, 'tool', 'event', 'turn-1', { type: 'tool.unknown' } as unknown as Batch1LifecycleDetail), state)).toEqual([])
+  expect(adaptLifecycleEvent(envelope(5, 'tool', 'event', 'turn-1', { type: 'tool.unknown' } as unknown as SdkLifecycleDetail), state)).toEqual([])
 })
 
 test('message.start 重置求差基线:新 message 从零开始', () => {

@@ -1,6 +1,7 @@
 /**
  * Lifecycle event bus types — single vocabulary shared by SDK, sidecar and web.
- * Batch 1 scope: run + turn + assistant message lifecycle only.
+ * Batch 1 scope: run + turn + assistant message lifecycle.
+ * Batch 2 scope: tool start/end skeleton.
  */
 
 export type SdkEventKind = 'run' | 'turn' | 'message' | 'tool'
@@ -73,10 +74,30 @@ export interface MessageEndDetail {
   error?: string
 }
 
-export type Batch1LifecycleDetail =
+export interface ToolStartDetail {
+  type: 'tool.start'
+  toolCallId: string
+  toolName: string
+  /** Raw input; the projection layer derives the preview (legacy inputPreview path). */
+  input: unknown
+}
+
+export interface ToolEndDetail {
+  type: 'tool.end'
+  toolCallId: string
+  toolName: string
+  isError: boolean
+  /** Output text; the projection layer derives the preview (legacy resultPreview path). */
+  output: string
+  /** Engine _meta.execution passed through as-is (input of the legacy normalizeToolExecutionMetadata). */
+  meta?: Record<string, unknown>
+}
+
+export type SdkLifecycleDetail =
   | RunStartDetail | RunEndDetail
   | TurnStartDetail | TurnEndDetail
   | MessageStartDetail | MessageUpdateDetail | MessageEndDetail
+  | ToolStartDetail | ToolEndDetail
 
 /** Result of AGENT_IPC_CHANNELS.GET_EVENTS. */
 export interface AgentEventsResult {
