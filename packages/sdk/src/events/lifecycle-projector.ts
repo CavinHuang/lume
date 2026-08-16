@@ -1,9 +1,11 @@
 /**
  * LifecycleProjector — pure state machine projecting the engine's SDKMessage
- * stream into lifecycle skeleton events (run / turn / assistant message / tool).
+ * stream into lifecycle skeleton events (run / turn / assistant message /
+ * tool) plus domain events (memory.context.used wiring lives in the sidecar;
+ * here: tool lifecycle batch 2, compaction & in-run task_notification batch 4).
  *
- * Batch 1 scope. The engine itself is untouched: this generator wraps whatever
- * AsyncIterable<SDKMessage> it is given (Task 4 wires it in the sidecar).
+ * The engine itself is untouched: this generator wraps whatever
+ * AsyncIterable<SDKMessage> it is given (the sidecar run-loop tee wires it in).
  */
 import { randomUUID } from 'node:crypto'
 import type {
