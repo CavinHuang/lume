@@ -31,6 +31,7 @@ import {
   collectRuntimeMessageIds,
   getLatestUserMessageKey,
   getProgrammaticScrollHoldUntil,
+  haveSameMessageIdentities,
   isNearScrollBottom,
   projectVisibleThreadMessages,
   reconcileUserMessageVersions,
@@ -94,13 +95,29 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     ),
     [projectedMessages, visibleThreadMessages],
   )
+  // 结构快照:minimap 只关心消息身份,不关心流式 token。
+  // collectConversationMinimapItems 会为每个用户 turn join 复制全部 assistant 文本,
+  // 流式期间 liveMessages 每 update 帧都是新引用,直接依赖会让长会话在 ~60fps 下持续全量重算。
+  // 身份未变时保持旧数组引用;流式开始/结束必须刷新一次,否则活跃 turn 的 preview 停留在旧正文。
+  // 非流式时每次变更都刷新,保持用户消息版本合并等低频更新的即时性。
+  const structuralMessagesRef = useRef(liveMessages)
+  const structuralStreamingRef = useRef(streaming)
+  if (
+    !streaming
+    || structuralStreamingRef.current !== streaming
+    || !haveSameMessageIdentities(structuralMessagesRef.current, liveMessages)
+  ) {
+    structuralStreamingRef.current = streaming
+    structuralMessagesRef.current = liveMessages
+  }
+  const structuralMessages = structuralMessagesRef.current
   const minimapItems = useMemo<MinimapItem[]>(
-    () => collectConversationMinimapItems(liveMessages).map((item) => ({
+    () => collectConversationMinimapItems(structuralMessages).map((item) => ({
       id: item.id,
       title: summarizeMessageForPreview(item.title),
       preview: item.preview.trim(),
     })),
-    [liveMessages],
+    [structuralMessages],
   )
   const newMessageIds = useMemo(() => {
     const previousIds = previousMessageIdsRef.current.threadId === threadId

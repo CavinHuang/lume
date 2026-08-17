@@ -305,6 +305,22 @@ export function collectRuntimeMessageIds(messages: RuntimeMessageView[]): Set<st
   return new Set(messages.map((message) => message.id))
 }
 
+/**
+ * 比较两批消息的"结构身份"是否一致(长度相同,且逐条引用相同或同位置 id 相同)。
+ * 流式期间只有活跃消息是新引用且 id 不变,历史前缀保持原引用;
+ * 借此让 minimap 等只关心消息身份的派生在 token 帧间保持旧数组引用,避免全量重算。
+ */
+export function haveSameMessageIdentities(previous: RuntimeMessageView[], next: RuntimeMessageView[]): boolean {
+  if (previous.length !== next.length) return false
+  for (let index = 0; index < previous.length; index += 1) {
+    const prev = previous[index]
+    const curr = next[index]
+    if (prev === curr) continue
+    if (prev?.id !== curr?.id) return false
+  }
+  return true
+}
+
 export function getLatestUserMessageKey(messages: RuntimeMessageView[]): string | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
