@@ -11,6 +11,7 @@ import { listPlanningTodos } from '@/lib/desktop-api/planning-todo'
 import { toast } from 'sonner'
 import type { EditorOptions } from '@tiptap/core'
 import { fetchLinkConnectionMentionItems, insertLinkConnectionMention } from './link-connection-mentions'
+import { fetchFileMentionItems } from './agent-file-mentions'
 
 type PasteEditorView = Parameters<NonNullable<EditorOptions['editorProps']['handlePaste']>>[0]
 
@@ -38,7 +39,13 @@ export async function fetchSuggestions(
   workspaceId?: string | null,
 ): Promise<MentionItem[]> {
   try {
-    if (trigger === '@') return fetchLinkConnectionMentionItems(query)
+    if (trigger === '@') {
+      const [connectorItems, fileItems] = await Promise.all([
+        fetchLinkConnectionMentionItems(query),
+        fetchFileMentionItems(query, workspaceSlug, threadId),
+      ])
+      return [...connectorItems, ...fileItems]
+    }
     if (trigger === '&') {
       const normalizedQuery = query.trim().toLocaleLowerCase()
       const all = normalizedQuery.startsWith('all ') || normalizedQuery.startsWith('全部 ')
@@ -141,6 +148,8 @@ export function createSuggestionRenderer(
   onEscape?: () => void,
   getWorkspaceId?: () => string | null,
 ) {
+  let itemsRequestSequence = 0
+  let latestItems: MentionItem[] = []
   return {
     char,
     allow: ({ state, range }: { state: { doc: { textBetween: (from: number, to: number) => string } }; range: { from: number } }) => {
@@ -148,7 +157,13 @@ export function createSuggestionRenderer(
       const previous = state.doc.textBetween(Math.max(0, range.from - 1), range.from)
       return previous.length === 0 || /\s/.test(previous)
     },
-    items: ({ query }: { query: string }) => fetchSuggestions(trigger, query, threadId, getWorkspaceSlug(), getWorkspaceId?.()),
+    items: async ({ query }: { query: string }) => {
+      const requestSequence = ++itemsRequestSequence
+      const items = await fetchSuggestions(trigger, query, threadId, getWorkspaceSlug(), getWorkspaceId?.())
+      if (requestSequence !== itemsRequestSequence) return latestItems
+      latestItems = items
+      return items
+    },
     render: () => {
       let component: ReactRenderer<MentionListRef> | null = null
       let wrapper: HTMLDivElement | null = null
