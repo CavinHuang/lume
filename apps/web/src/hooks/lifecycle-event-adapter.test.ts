@@ -224,6 +224,34 @@ test('message.start 重置求差基线:新 message 从零开始', () => {
   expect((events[0] as { delta: string }).delta).toBe('next')
 })
 
+test('memory.context.used 领域事件映射:字段等价旧路,items 引用透传', () => {
+  const state = createLifecycleAdapterState()
+  const items = [
+    { id: 'm1', kind: 'preference', scope: 'global', status: 'active', citation: 'mem#L1', reason: 'match' },
+    // claim 实际是对象(detail 标注为 string 不符):透传无损断言
+    { id: 'm2', kind: 'fact', scope: 'workspace', status: 'suspected_stale', citation: 'mem#L2', claim: { text: 'x' } as unknown as string },
+  ]
+  const events = adaptLifecycleEvent(envelope(7, 'run', 'event', null, { type: 'memory.context.used', items }), state)
+  expect(events).toEqual([{
+    id: 'lifecycle:7:memory.context.used',
+    type: 'memory.context.used',
+    threadId: 't1',
+    runId: 'r1',
+    createdAt: new Date(TS + 7).toISOString(),
+    items,
+  }])
+  expect((events[0] as { items: unknown }).items).toBe(items) // 引用透传,不拷贝
+  // 无状态分支:不触碰求差基线
+  expect(state.turnId).toBe(null)
+  expect(state.lastText).toBe('')
+})
+
+test('未迁移的领域事件(memory.changed 等未知 detail)仍忽略', () => {
+  const state = createLifecycleAdapterState()
+  expect(adaptLifecycleEvent(envelope(8, 'run', 'event', null, { type: 'memory.changed' } as unknown as SdkLifecycleDetail), state)).toEqual([])
+  expect(adaptLifecycleEvent(envelope(9, 'run', 'event', null, { type: 'memory.job.progress' } as unknown as SdkLifecycleDetail), state)).toEqual([])
+})
+
 // ── consumeBusEnvelope:总线消费副作用(seq 去重 / snapshot 不入队不置位 / push 全量) ──
 
 function createContext() {

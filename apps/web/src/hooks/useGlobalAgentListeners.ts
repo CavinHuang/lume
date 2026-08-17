@@ -80,6 +80,11 @@ const LEGACY_SKIPPED_PILOT_EVENT_TYPES = new Set<string>([
   'tool.started',
   'tool.completed',
   'tool.failed',
+  // 批次3 扩:memory 事件 seq 恒在 run.end 之后(lume-runner 在流返回后才双发),live 总线版
+  // 被终态闸门确定性拦截([lifecycle-mismatch] 必触发)——live 展示实际由旧路 hydrate replay
+  // 驱动;总线事件为 events.jsonl 落盘先占(批次5 统一 runId 并删旧路后由总线接管)。
+  // 跳过旧路 live 仍必要:避免与(被拦截的)总线版之外的重复注入路径并存。
+  'memory.context.used',
 ])
 
 // 模块级而非 ref:适配器求差基线与去重水位须跨双挂载实例、跨 tab 切换存活
