@@ -240,7 +240,7 @@ async function flush() {
   await new Promise((r) => setTimeout(r, 0))
 }
 
-const { SuggestionBanner, SUGGESTION_EXPIRY_MS } = await import('./SuggestionBanner')
+const { SuggestionBanner, SUGGESTION_EXPIRY_MS, confidenceSignal } = await import('./SuggestionBanner')
 
 function makeRecord(overrides: Partial<SuggestionRecord> = {}): SuggestionRecord {
   return {
@@ -420,6 +420,31 @@ describe('SuggestionBanner', () => {
         await flush()
       })
       expect(listSuggestionsMock.mock.calls.length).toBeGreaterThan(callsBefore)
+    } finally {
+      await unmount(env)
+      env.cleanup()
+    }
+  })
+
+  test('maps confidence into four stable signal levels', () => {
+    expect([confidenceSignal(0), confidenceSignal(0.2), confidenceSignal(0.5), confidenceSignal(0.75)])
+      .toEqual([0, 1, 2, 3])
+  })
+
+  test('操作失败时保留建议并显示错误，可再次操作', async () => {
+    listSuggestionsMock.mockResolvedValueOnce([makeRecord({ id: 12 })])
+    actOnSuggestionMock.mockRejectedValueOnce(new Error('服务暂不可用'))
+    const env = await render({ threadId: 'thread-1', workspaceSlug: 'ws' })
+    try {
+      const accept = capturedButtons.find((button) => button.recordId === 12 && button.action === 'accepted')
+      await act(async () => {
+        accept!.onClick()
+        await flush()
+      })
+
+      expect(env.container.textContent).toContain('服务暂不可用')
+      expect(env.container.textContent).toContain('建议标题')
+      expect(uniqueActionsFor(12)).toEqual(['accepted', 'ignored', 'never'])
     } finally {
       await unmount(env)
       env.cleanup()
