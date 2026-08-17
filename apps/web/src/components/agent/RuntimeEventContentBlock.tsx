@@ -2611,13 +2611,17 @@ function FooterMemoryNotice({
       >
         <Database size={13} strokeWidth={1.8} />
         <span>参考了 {totalCount} 条记忆</span>
-        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        <ChevronRight size={13} className={cn('transition-transform duration-300', expanded && 'rotate-90')} />
       </Button>
       {expanded && (
-        <div className="absolute left-0 top-full z-30 mt-1 max-h-60 min-w-[220px] max-w-[360px] overflow-y-auto rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-2 shadow-[0_16px_40px_-24px_hsl(var(--lume-shadow-panel)/0.62)]">
+        <div className="animate-in fade-in zoom-in-95 slide-in-from-top-1 absolute left-0 top-full z-30 mt-1 max-h-60 min-w-[220px] max-w-[360px] origin-top-left overflow-y-auto rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-2 shadow-[0_16px_40px_-24px_hsl(var(--lume-shadow-panel)/0.62)] duration-200 motion-reduce:animate-none">
           <div className="space-y-2 text-[11px] leading-5 text-[var(--lume-text-muted)]">
-            {groups.map(group => (
-              <div key={group.key}>
+            {groups.map((group, groupIndex) => (
+              <div
+                key={group.key}
+                className="animate-in fade-in slide-in-from-top-1 fill-mode-both duration-300 motion-reduce:animate-none"
+                style={{ animationDelay: `${groupIndex * 80}ms` }}
+              >
                 <div className="mb-0.5 text-[var(--lume-text-muted)]">{group.label}</div>
                 <ol className="space-y-1">
                   {group.items.map((item, index) => {
