@@ -9,23 +9,22 @@ import type {
   CodingVerificationRecord,
   RuntimeCodingChangeSet,
 } from "@lume/shared";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import {
-  captureWorkspaceSnapshot,
-  diffWorkspaceSnapshots,
-  flattenWorkspaceSnapshotDiff,
-  type WorkspaceSnapshot,
-  type WorkspaceSnapshotDiff
-} from "./workspace-snapshot";
 import { discoverCodingRoots, getCodingChangeSet } from "./coding-change-service";
+import { createCodingWorkspaceMonitor } from "./coding-workspace-monitor";
 import {
   selectVerificationCommands,
   selectVerificationCommandsForWorkspaces,
 } from "./coding-verification";
 
 export type CodingVerificationStatus = "not_required" | "unverified" | "verified" | "failed";
+
+const MAX_RESTORED_STATE_BYTES = 1024 * 1024;
+const MAX_PERSISTED_CANDIDATES = 2_000;
+const PERSIST_DEBOUNCE_MS = 50;
+const COMPLETION_CHANGESET_WAIT_MS = 750;
 
 export interface CodingVerificationReport {
   phase: CodingTurnPhase;
@@ -62,15 +61,11 @@ export interface CodingVerificationReport {
 }
 
 interface PersistedCodingRunState {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   workspaceRoot: string;
   workspaceRoots?: string[];
   baselineCommit?: string;
   baselineCommits?: Record<string, string>;
-  baselineSnapshot?: WorkspaceSnapshot;
-  latestSnapshot?: WorkspaceSnapshot;
-  baselineSnapshots?: Record<string, WorkspaceSnapshot>;
-  latestSnapshots?: Record<string, WorkspaceSnapshot>;
   mutationObserved: boolean;
   verificationStatus: CodingVerificationStatus;
   verificationMessage: string;
@@ -111,19 +106,22 @@ export interface CodingRunTrackerOptions {
 
 export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   const workspaceRoots = uniqueWorkspaceRoots(options.workspaceRoot, options.additionalRoots);
+  const gitWorkspaceRoots = workspaceRoots.filter(hasGitMetadata);
+  const workspaceMonitor = createCodingWorkspaceMonitor(workspaceRoots, {
+    // Git is the authoritative, incremental index for repositories. Recursively
+    // installing filesystem watchers there can itself enumerate a very large tree,
+    // so those watchers are initialized outside the runtime's event loop.
+    watchRoots: workspaceRoots.filter((root) => !gitWorkspaceRoots.includes(root)),
+    isolatedWatchRoots: gitWorkspaceRoots,
+  });
   let mutationObserved = false;
   let verificationStatus: CodingVerificationStatus = "not_required";
   let verificationMessage = "";
   let promptedWithoutEvidence = false;
   let baselineVerification: PersistedCodingRunState["baselineVerification"];
   let baselineFailure: PersistedCodingRunState["baselineFailure"];
-  let baselineSnapshot: WorkspaceSnapshot | undefined;
-  let latestSnapshot: WorkspaceSnapshot | undefined;
-  let workspaceDiff: WorkspaceSnapshotDiff = { added: [], modified: [], deleted: [] };
-  let baselineSnapshots: Record<string, WorkspaceSnapshot> = {};
-  let latestSnapshots: Record<string, WorkspaceSnapshot> = {};
-  let workspaceDiffs: Record<string, WorkspaceSnapshotDiff> = {};
   const attributedCandidates = new Set<string>();
+  const pendingShellMutationPaths: string[][] = [];
   let pendingBackground = false;
   const pendingBackgroundTaskIds = new Set<string>();
   const pendingVerificationTaskIds = new Set<string>();
@@ -131,9 +129,16 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   let verificationNoEvidenceAttempts = 0;
   const fileChangeStats = new Map<string, FileChangeStats>();
   let changeSet: RuntimeCodingChangeSet | undefined;
-  let pendingSnapshot: Promise<void> = Promise.resolve();
+  let authoritativeRefresh: Promise<RuntimeCodingChangeSet | undefined> | undefined;
+  let authoritativeRefreshRequested = false;
+  let authoritativeWaitDeadline = 0;
   let baselineCommit: string | undefined;
   let baselineCommits: Record<string, string> = {};
+  let persistTimer: ReturnType<typeof setTimeout> | undefined;
+  let persistInFlight: Promise<void> | undefined;
+  let persistDirty = false;
+  let disposed = false;
+  let successfulShellObserved = false;
   const verificationRecords: CodingVerificationRecord[] = [];
   const lspDiagnostics = new Map<string, {
     total: number;
@@ -150,38 +155,40 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     userMessageId?: string;
     cwd: string;
   }): Promise<void> {
-    if (workspaceRoots.length === 0) return;
-    pendingSnapshot = pendingSnapshot.then(async () => {
-      try {
-        latestSnapshots = await captureWorkspaceSnapshots(workspaceRoots);
-        latestSnapshot = options.workspaceRoot ? latestSnapshots[resolve(options.workspaceRoot)] : undefined;
-        persist();
-      } catch {
-        // The post-tool snapshot remains authoritative when a pre-snapshot fails.
-      }
-    });
-    await pendingSnapshot;
+    workspaceMonitor.beginTool(input.toolName);
+    if (input.toolName.toLowerCase() === "bash") {
+      pendingShellMutationPaths.push(readShellMutationPaths(input.input, input.cwd, workspaceRoots));
+    }
   }
 
   function persist(): void {
-    if (!options.statePath || !options.workspaceRoot) return;
-    const state: PersistedCodingRunState = {
-      version: 2,
-      workspaceRoot: options.workspaceRoot,
+    if (!options.statePath || !options.workspaceRoot || disposed) return;
+    persistDirty = true;
+    if (persistTimer || persistInFlight) return;
+    persistTimer = setTimeout(() => {
+      persistTimer = undefined;
+      void flushState();
+    }, PERSIST_DEBOUNCE_MS);
+  }
+
+  function createPersistedState(): PersistedCodingRunState {
+    const candidates = [...new Set([
+      ...attributedCandidates,
+      ...workspaceMonitor.getAttributedPaths(),
+    ])].slice(-MAX_PERSISTED_CANDIDATES);
+    return {
+      version: 3,
+      workspaceRoot: options.workspaceRoot!,
       workspaceRoots,
       baselineCommit,
       baselineCommits,
-      baselineSnapshot,
-      latestSnapshot,
-      baselineSnapshots,
-      latestSnapshots,
       mutationObserved,
       verificationStatus,
       verificationMessage,
       promptedWithoutEvidence,
       baselineVerification,
       baselineFailure,
-      attributedCandidates: [...attributedCandidates],
+      attributedCandidates: candidates,
       pendingBackground,
       pendingBackgroundTaskIds: [...pendingBackgroundTaskIds],
       pendingVerificationTaskIds: [...pendingVerificationTaskIds],
@@ -192,43 +199,57 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       lspDiagnostics: Object.fromEntries(lspDiagnostics),
       gitActions
     };
-    try {
-      mkdirSync(dirname(options.statePath), { recursive: true });
-      const tempPath = `${options.statePath}.${process.pid}.${Date.now()}.tmp`;
-      writeFileSync(tempPath, JSON.stringify(state), "utf-8");
-      renameSync(tempPath, options.statePath);
-    } catch {
-      // State persistence is best effort; the in-memory guard remains authoritative.
-    }
   }
 
-  function restore(): void {
-    if (!options.statePath || !options.workspaceRoot || !existsSync(options.statePath)) return;
+  async function flushState(): Promise<void> {
+    if (!options.statePath || !options.workspaceRoot || disposed || persistInFlight) return persistInFlight;
+    if (!persistDirty) return;
+    persistDirty = false;
+    const statePath = options.statePath;
+    const payload = JSON.stringify(createPersistedState());
+    const tempPath = `${statePath}.${process.pid}.${Date.now()}.tmp`;
+    persistInFlight = (async () => {
+      try {
+        await mkdir(dirname(statePath), { recursive: true });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 1_000);
+        try {
+          await writeFile(tempPath, payload, { encoding: "utf-8", signal: controller.signal });
+        } finally {
+          clearTimeout(timeout);
+        }
+        await rename(tempPath, statePath);
+      } catch {
+        // State persistence is best effort; the in-memory guard remains authoritative.
+      }
+    })().finally(() => {
+      persistInFlight = undefined;
+      if (persistDirty && !disposed) persist();
+    });
+    await persistInFlight;
+  }
+
+  async function restore(): Promise<void> {
+    if (!options.statePath || !options.workspaceRoot) return;
     try {
-      const state = JSON.parse(readFileSync(options.statePath, "utf-8")) as Partial<PersistedCodingRunState>;
-      if ((state.version !== 1 && state.version !== 2) || state.workspaceRoot !== options.workspaceRoot) return;
-      if (state.version === 2 && state.workspaceRoots && !sameWorkspaceRoots(state.workspaceRoots, workspaceRoots)) return;
-      baselineSnapshot = state.baselineSnapshot;
+      const metadata = await stat(options.statePath);
+      if (metadata.size > MAX_RESTORED_STATE_BYTES) return;
+      const state = JSON.parse(await readFile(options.statePath, "utf-8")) as Partial<PersistedCodingRunState>;
+      if ((state.version !== 1 && state.version !== 2 && state.version !== 3)
+        || state.workspaceRoot !== options.workspaceRoot) return;
+      if (state.version >= 2 && state.workspaceRoots && !sameWorkspaceRoots(state.workspaceRoots, workspaceRoots)) return;
       baselineCommit = state.baselineCommit;
       baselineCommits = state.baselineCommits ?? {};
-      latestSnapshot = state.latestSnapshot;
-      baselineSnapshots = state.baselineSnapshots ?? (
-        baselineSnapshot ? { [resolve(options.workspaceRoot)]: baselineSnapshot } : {}
-      );
-      latestSnapshots = state.latestSnapshots ?? (
-        latestSnapshot ? { [resolve(options.workspaceRoot)]: latestSnapshot } : {}
-      );
-      workspaceDiffs = diffSnapshotCollections(baselineSnapshots, latestSnapshots);
-      workspaceDiff = options.workspaceRoot
-        ? workspaceDiffs[resolve(options.workspaceRoot)] ?? { added: [], modified: [], deleted: [] }
-        : { added: [], modified: [], deleted: [] };
       mutationObserved = state.mutationObserved === true;
       verificationStatus = state.verificationStatus ?? "not_required";
       verificationMessage = state.verificationMessage ?? "";
       promptedWithoutEvidence = state.promptedWithoutEvidence === true;
       baselineVerification = state.baselineVerification;
       baselineFailure = state.baselineFailure;
-      for (const path of state.attributedCandidates ?? []) attributedCandidates.add(path);
+      for (const path of state.attributedCandidates ?? []) {
+        attributedCandidates.add(path);
+        workspaceMonitor.recordAttributedPath(path);
+      }
       pendingBackground = state.pendingBackground === true;
       for (const taskId of state.pendingBackgroundTaskIds ?? []) pendingBackgroundTaskIds.add(taskId);
       for (const taskId of state.pendingVerificationTaskIds ?? []) pendingVerificationTaskIds.add(taskId);
@@ -249,7 +270,8 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
           fileChangeStats.set(path, {
             addedLines: Math.max(0, addedLines),
             removedLines: Math.max(0, removedLines),
-        });
+          });
+        }
       }
       verificationRecords.splice(0, verificationRecords.length, ...(state.verificationRecords ?? []).slice(-8));
       for (const [path, diagnostics] of Object.entries(state.lspDiagnostics ?? {})) {
@@ -257,87 +279,20 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
         lspDiagnostics.set(path, diagnostics);
       }
       gitActions.splice(0, gitActions.length, ...(state.gitActions ?? []).slice(-16));
-      }
     } catch {
-      // Ignore corrupt or partial state and establish a fresh baseline.
+      // Missing, corrupt, partial, or oversized legacy state establishes a fresh baseline.
     }
   }
 
   async function initialize(): Promise<void> {
-    restore();
-    if (options.workspaceRoot) {
-      if (hasGitMetadata(options.workspaceRoot)) {
-        const result = spawnSync("git", ["rev-parse", "HEAD"], {
-          cwd: options.workspaceRoot,
-          encoding: "utf8",
-          windowsHide: true,
-          timeout: 1000,
-        });
-        if (result.status === 0) baselineCommit = result.stdout.trim() || undefined;
-      }
-    }
+    workspaceMonitor.start();
+    await restore();
     if (Object.keys(baselineCommits).length === 0) {
-      baselineCommits = captureGitBaselines(workspaceRoots);
+      const baselines = await captureGitBaselines(workspaceRoots, options.workspaceRoot);
+      baselineCommits = baselines.commits;
+      baselineCommit = baselines.primaryCommit;
     }
-    if (workspaceRoots.length === 0 || Object.keys(baselineSnapshots).length > 0) return;
-    try {
-      baselineSnapshots = await captureWorkspaceSnapshots(workspaceRoots);
-      latestSnapshots = baselineSnapshots;
-      baselineSnapshot = options.workspaceRoot ? baselineSnapshots[resolve(options.workspaceRoot)] : undefined;
-      latestSnapshot = baselineSnapshot;
-      persist();
-    } catch {
-      // A missing or inaccessible workspace produces an unverified report later.
-    }
-  }
-
-  function queueSnapshot(input: { toolName: string; input: unknown; result: ToolResult }): void {
-    const toolName = input.toolName;
-    const result = input.result;
-    if (workspaceRoots.length === 0) return;
-    const name = toolName.toLowerCase();
-    const isProcessOutput = name === "taskoutput" || name === "processoutput";
-    const execution = getExecutionMetadata(result);
-    const task = getTaskMetadata(result);
-    const processOutputRunning = task?.status
-      ? task.status === "running"
-      : execution?.terminationReason === "running";
-    const shouldSnapshot = name === "bash"
-      || ["write", "edit", "notebookedit", "lsp"].includes(name)
-      || (isProcessOutput && !processOutputRunning);
-    if (!shouldSnapshot) return;
-    pendingSnapshot = pendingSnapshot.then(async () => {
-      try {
-        const snapshots = await captureWorkspaceSnapshots(workspaceRoots);
-        if (Object.keys(baselineSnapshots).length === 0) baselineSnapshots = snapshots;
-        latestSnapshots = snapshots;
-        workspaceDiffs = diffSnapshotCollections(baselineSnapshots, snapshots);
-        baselineSnapshot = options.workspaceRoot ? baselineSnapshots[resolve(options.workspaceRoot)] : undefined;
-        latestSnapshot = options.workspaceRoot ? latestSnapshots[resolve(options.workspaceRoot)] : undefined;
-        workspaceDiff = options.workspaceRoot
-          ? workspaceDiffs[resolve(options.workspaceRoot)] ?? { added: [], modified: [], deleted: [] }
-          : { added: [], modified: [], deleted: [] };
-        const executionMutation = execution?.command
-          ? isLikelyMutationCommand({ input: { command: execution.command } })
-          : false;
-        const observedWorkspaceChanges = flattenAbsoluteWorkspaceChanges(workspaceDiffs);
-        const shellProducedChanges = name === "bash" && observedWorkspaceChanges.length > 0;
-        const taskProducedChanges = isProcessOutput
-          && !processOutputRunning
-          && observedWorkspaceChanges.length > 0;
-        const fileToolProducedChanges = ["write", "edit", "notebookedit", "lsp"].includes(name)
-          && result.is_error !== true
-          && observedWorkspaceChanges.length > 0;
-        if (shellProducedChanges || taskProducedChanges || fileToolProducedChanges || (executionMutation && result.is_error !== true)) {
-          for (const path of observedWorkspaceChanges) attributedCandidates.add(path);
-          mutationObserved = true;
-          if (verificationStatus === "verified" || verificationStatus === "not_required") verificationStatus = "unverified";
-        }
-        persist();
-      } catch {
-        // Keep the previous snapshot; direct mutation evidence still applies.
-      }
-    });
+    persist();
   }
 
   function observe(input: { toolName: string; input: unknown; result: ToolResult }): void {
@@ -345,8 +300,27 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     const isProcessOutput = name === "taskoutput" || name === "processoutput";
     const execution = getExecutionMetadata(input.result);
     const task = getTaskMetadata(input.result);
+    const toolStillRunning = task?.status
+      ? task.status === "running"
+      : execution?.terminationReason === "running";
+    if (["bash", "write", "edit", "notebookedit", "lsp"].includes(name)) {
+      workspaceMonitor.finishTool(name, task?.id, name === "bash" && toolStillRunning);
+    }
+    if (isProcessOutput && !toolStillRunning) {
+      workspaceMonitor.finishBackgroundTask(task?.id);
+    }
     const raw = input.input && typeof input.input === "object" ? input.input as Record<string, unknown> : {};
     const shellCommand = typeof raw.command === "string" ? raw.command : execution?.command ?? "";
+    if (name === "bash") {
+      const predictedPaths = pendingShellMutationPaths.shift() ?? [];
+      if (input.result.is_error !== true) {
+        successfulShellObserved = true;
+        for (const path of predictedPaths) {
+          attributedCandidates.add(path);
+          workspaceMonitor.recordAttributedPath(path);
+        }
+      }
+    }
     if (name === "bash" && shellCommand) recordGitAction(shellCommand, input.result, execution);
     if (name === "bash" && execution?.terminationReason === "running") {
       pendingBackground = true;
@@ -383,12 +357,13 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
         const path = readMutationPath(input.input, input.result, options.workspaceRoot, workspaceRoots);
         if (path) {
           attributedCandidates.add(path);
+          workspaceMonitor.recordAttributedPath(path);
           mergeFileChangeStats(fileChangeStats, path, readFileChangeStats(input.result));
         }
       }
       if (verificationStatus === "verified" || verificationStatus === "not_required") verificationStatus = "unverified";
+      if (options.workspaceRoot) void startAuthoritativeRefresh();
     }
-    queueSnapshot(input);
     if (name !== "bash" && !isProcessOutput) {
       persist();
       return;
@@ -448,7 +423,8 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   }
 
   async function completionGuard(): Promise<CompletionGuardResult> {
-    await pendingSnapshot;
+    await workspaceMonitor.settle();
+    synchronizeWorkspaceMonitor();
     const verificationStillRunning = [...pendingVerificationTaskIds]
       .some((taskId) => pendingBackgroundTaskIds.has(taskId));
     if (verificationStillRunning) {
@@ -459,7 +435,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       return undefined;
     }
     if (mutationObserved && options.workspaceRoot) {
-      changeSet = await refreshAuthoritativeChangeSet();
+      await waitForAuthoritativeRefresh(startAuthoritativeRefresh());
     }
     if (verificationNoEvidenceAttempts >= 2) {
       return {
@@ -487,22 +463,37 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     if (promptedWithoutEvidence) return undefined;
     promptedWithoutEvidence = true;
     const workspaceRoot = options.workspaceRoot;
-    if (workspaceRoot && changeSet?.files.some((file) => file.rootId)) {
-      const discoveredRoots = await discoverCodingRoots(workspaceRoots);
+    const candidatePaths = getCandidatePaths();
+    if (candidatePaths.length > 0) {
       recommendedVerificationCommands = selectVerificationCommandsForWorkspaces(
-        discoveredRoots.map((root) => ({
-          workspaceRoot: root.path,
-          rootId: root.repository.rootId,
-          changedFiles: changeSet?.files
-            .filter((file) => file.rootId === root.repository.rootId)
-            .map((file) => file.path) ?? [],
-        }))
+        workspaceRoots.map((root) => ({
+          workspaceRoot: root,
+          changedFiles: candidatePaths
+            .filter((path) => isPathInside(root, path))
+            .map((path) => displayWorkspacePath(path, root)),
+        })),
       ).map((candidate) => candidate.command);
+    } else if (workspaceRoot && changeSet?.files.some((file) => file.rootId)) {
+      const discoveredRoots = await withDeadline(discoverCodingRoots(workspaceRoots), COMPLETION_CHANGESET_WAIT_MS);
+      recommendedVerificationCommands = discoveredRoots
+        ? selectVerificationCommandsForWorkspaces(
+          discoveredRoots.map((root) => ({
+            workspaceRoot: root.path,
+            rootId: root.repository.rootId,
+            changedFiles: changeSet?.files
+              .filter((file) => file.rootId === root.repository.rootId)
+              .map((file) => file.path) ?? [],
+          }))
+        ).map((candidate) => candidate.command)
+        : selectVerificationCommands({
+          workspaceRoot,
+          changedFiles: getCandidatePaths().map((path) => displayWorkspacePath(path, workspaceRoot)),
+        }).map((candidate) => candidate.command);
     } else {
       recommendedVerificationCommands = workspaceRoot
         ? selectVerificationCommands({
           workspaceRoot,
-          changedFiles: changeSet?.files.map((file) => file.path) ?? [],
+          changedFiles: changeSet?.files.map((file) => file.path) ?? candidatePaths,
         }).map((candidate) => candidate.command)
         : [];
     }
@@ -548,23 +539,23 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     observe,
     observeAsyncEvent,
     initialize,
+    waitForWorkspaceMonitorReady: workspaceMonitor.waitUntilReady,
     beforeToolExecution,
     getBaselineCommit: () => baselineCommit,
     getBaselineCommits: () => ({ ...baselineCommits }),
     completionGuard,
     getVerificationStatus: () => verificationStatus,
     getVerificationReport: (): CodingVerificationReport => {
-      const allSnapshotChanges = flattenAbsoluteWorkspaceChanges(workspaceDiffs);
-      const snapshotChangedFiles = allSnapshotChanges
-        .filter((path) => attributedCandidates.has(path))
+      const candidateFiles = getCandidatePaths()
         .map((path) => displayWorkspacePath(path, options.workspaceRoot));
       const authoritativeFiles = changeSet?.files.map((file) => file.path) ?? [];
-      const changedFiles = [...new Set([...snapshotChangedFiles, ...authoritativeFiles])];
-      const externalChangedFiles = allSnapshotChanges
-        .filter((path) => !attributedCandidates.has(path))
+      const changedFiles = changeSet?.isGitRepo
+        ? [...new Set(authoritativeFiles)]
+        : [...new Set([...candidateFiles, ...authoritativeFiles])];
+      const externalChangedFiles = workspaceMonitor.getExternalPaths()
         .map((path) => displayWorkspacePath(path, options.workspaceRoot));
       const authoritativeChangeSet = changeSet?.isGitRepo ? changeSet : undefined;
-      const fileChanges = authoritativeChangeSet?.files.length
+      const fileChanges = authoritativeChangeSet
         ? authoritativeChangeSet.files
         : changedFiles.map((path) => {
           const absolutePath = options.workspaceRoot && !isAbsolute(path)
@@ -615,18 +606,78 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       };
     },
     refreshChangeSet: async () => {
-      await pendingSnapshot;
+      await workspaceMonitor.settle();
+      synchronizeWorkspaceMonitor();
       if (!options.workspaceRoot || !mutationObserved) return changeSet;
-      changeSet = await refreshAuthoritativeChangeSet();
-      return changeSet;
-    }
+      return waitForAuthoritativeRefresh(startAuthoritativeRefresh());
+    },
+    dispose: async () => {
+      workspaceMonitor.dispose();
+      if (persistTimer) {
+        clearTimeout(persistTimer);
+        persistTimer = undefined;
+      }
+      await waitForSettled(flushState(), 500);
+      disposed = true;
+    },
   };
+
+  function synchronizeWorkspaceMonitor(): void {
+    const observed = workspaceMonitor.getAttributedPaths();
+    for (const path of observed) attributedCandidates.add(path);
+    if (observed.length === 0 && !(workspaceMonitor.hasUnresolvedChanges() && successfulShellObserved)) return;
+    mutationObserved = true;
+    if (verificationStatus === "verified" || verificationStatus === "not_required") {
+      verificationStatus = "unverified";
+    }
+    persist();
+  }
+
+  function getCandidatePaths(): string[] {
+    return [...new Set([...attributedCandidates, ...workspaceMonitor.getAttributedPaths()])];
+  }
+
+  function startAuthoritativeRefresh(): Promise<RuntimeCodingChangeSet | undefined> {
+    authoritativeRefreshRequested = true;
+    if (authoritativeRefresh) return authoritativeRefresh;
+    authoritativeRefresh = (async () => {
+      do {
+        authoritativeRefreshRequested = false;
+        try {
+          changeSet = await refreshAuthoritativeChangeSet();
+          persist();
+        } catch {
+          // Candidate paths remain available when Git or filesystem reconciliation fails.
+        }
+      } while (authoritativeRefreshRequested && !disposed);
+      return changeSet;
+    })().finally(() => {
+      authoritativeRefresh = undefined;
+    });
+    return authoritativeRefresh;
+  }
+
+  async function waitForAuthoritativeRefresh(
+    refresh: Promise<RuntimeCodingChangeSet | undefined>,
+  ): Promise<RuntimeCodingChangeSet | undefined> {
+    if (authoritativeWaitDeadline === 0) {
+      authoritativeWaitDeadline = Date.now() + COMPLETION_CHANGESET_WAIT_MS;
+    }
+    const remainingMs = authoritativeWaitDeadline - Date.now();
+    if (remainingMs <= 0) return changeSet;
+    return (await withDeadline(refresh, remainingMs)) ?? changeSet;
+  }
 
   async function refreshAuthoritativeChangeSet(): Promise<RuntimeCodingChangeSet> {
     const workspaceRoot = options.workspaceRoot!;
-    const absolutePaths = [...attributedCandidates];
+    const absolutePaths = getCandidatePaths();
+    const requiresFullGitReconciliation = workspaceMonitor.hasUnresolvedChanges();
     return getCodingChangeSet(workspaceRoot, {
-      paths: absolutePaths,
+      // A degraded watcher may have missed siblings or descendants. In that state
+      // candidates are only evidence that a mutation happened, never a safe filter.
+      paths: absolutePaths.length > 0 && !requiresFullGitReconciliation
+        ? absolutePaths
+        : undefined,
       turnId: options.turnId,
       roots: options.additionalRoots
     });
@@ -703,37 +754,61 @@ function normalizeGitActionKind(value: string): CodingGitAction["kind"] {
 }
 
 function hasGitMetadata(start: string): boolean {
+  return Boolean(findGitMetadataRoot(start));
+}
+
+function findGitMetadataRoot(start: string): string | undefined {
   let current = resolve(start);
   while (true) {
-    if (existsSync(resolve(current, ".git"))) return true;
+    if (existsSync(resolve(current, ".git"))) return current;
     const parent = dirname(current);
-    if (parent === current) return false;
+    if (parent === current) return undefined;
     current = parent;
   }
 }
 
-function captureGitBaselines(roots: string[]): Record<string, string> {
-  const baselines: Record<string, string> = {};
-  for (const root of roots) {
-    if (!hasGitMetadata(root)) continue;
-    const rootResult = spawnSync("git", ["rev-parse", "--show-toplevel"], {
-      cwd: root,
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: 1000,
-    });
-    const gitRoot = rootResult.status === 0 ? rootResult.stdout.trim() : "";
-    if (!gitRoot || baselines[resolve(gitRoot)]) continue;
-    const commitResult = spawnSync("git", ["rev-parse", "HEAD"], {
-      cwd: gitRoot,
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: 1000,
-    });
-    const commit = commitResult.status === 0 ? commitResult.stdout.trim() : "";
-    if (commit) baselines[resolve(gitRoot)] = commit;
+async function captureGitBaselines(
+  roots: string[],
+  primaryRoot?: string,
+): Promise<{ commits: Record<string, string>; primaryCommit?: string }> {
+  const gitRoots = [...new Set(roots.map(findGitMetadataRoot).filter((root): root is string => Boolean(root)))];
+  const entries = await Promise.all(gitRoots.map(async (root) => {
+    const commit = await readGitHead(root);
+    return commit ? [resolve(root), commit] as const : undefined;
+  }));
+  const commits = Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => Boolean(entry)));
+  const primaryGitRoot = primaryRoot ? findGitMetadataRoot(primaryRoot) : undefined;
+  return {
+    commits,
+    ...(primaryGitRoot ? { primaryCommit: commits[primaryGitRoot] } : {}),
+  };
+}
+
+async function readGitHead(gitRoot: string): Promise<string | undefined> {
+  try {
+    const dotGit = resolve(gitRoot, ".git");
+    const dotGitStat = await stat(dotGit);
+    const gitDirectory = dotGitStat.isDirectory()
+      ? dotGit
+      : resolve(gitRoot, (await readFile(dotGit, "utf8")).trim().replace(/^gitdir:\s*/i, ""));
+    const head = (await readFile(resolve(gitDirectory, "HEAD"), "utf8")).trim();
+    if (/^[0-9a-f]{40,64}$/i.test(head)) return head;
+    const ref = head.match(/^ref:\s+(.+)$/i)?.[1];
+    if (!ref) return undefined;
+    const commonDirectory = await readFile(resolve(gitDirectory, "commondir"), "utf8")
+      .then((value) => resolve(gitDirectory, value.trim()), () => gitDirectory);
+    for (const directory of [gitDirectory, commonDirectory]) {
+      const commit = await readFile(resolve(directory, ref), "utf8").then((value) => value.trim(), () => "");
+      if (/^[0-9a-f]{40,64}$/i.test(commit)) return commit;
+    }
+    const packedRefs = await readFile(resolve(commonDirectory, "packed-refs"), "utf8").catch(() => "");
+    const packedCommit = packedRefs.split(/\r?\n/)
+      .find((line) => line.endsWith(` ${ref}`))
+      ?.split(" ", 1)[0];
+    return packedCommit && /^[0-9a-f]{40,64}$/i.test(packedCommit) ? packedCommit : undefined;
+  } catch {
+    return undefined;
   }
-  return baselines;
 }
 
 function mergeFileChangeStats(
@@ -774,6 +849,26 @@ function isLikelyMutationCommand(input: { input: unknown }): boolean {
     || /(?:>>?|\|\s*(?:tee|Set-Content)|Set-Content|Out-File|writeFile|write_text|unlink\s*\()/i.test(command);
 }
 
+function readShellMutationPaths(input: unknown, cwd: string, workspaceRoots: string[]): string[] {
+  if (!input || typeof input !== "object") return [];
+  const command = (input as Record<string, unknown>).command;
+  if (typeof command !== "string" || !command) return [];
+  const rawPaths: string[] = [];
+  const collect = (pattern: RegExp) => {
+    for (const match of command.matchAll(pattern)) {
+      const value = match.slice(1).find((candidate) => Boolean(candidate?.trim()));
+      if (value) rawPaths.push(value);
+    }
+  };
+  collect(/>>?\s*(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/g);
+  collect(/(?:Set-Content|Out-File)\b[^\r\n]*?-(?:LiteralPath|Path)\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/gi);
+  collect(/\bPath\(\s*(?:"([^"]+)"|'([^']+)')\s*\)\.(?:write_text|write_bytes|touch|unlink)\b/g);
+  return [...new Set(rawPaths
+    .filter((path) => !/[$%`*?]/.test(path))
+    .map((path) => resolve(cwd, path)))]
+    .filter((path) => workspaceRoots.some((root) => isPathInside(root, path)));
+}
+
 function readMutationPath(
   input: unknown,
   result: ToolResult,
@@ -812,30 +907,32 @@ function sameWorkspaceRoots(left: string[], right: string[]): boolean {
   return [...left].map(normalizeRoot).sort().join("\n") === [...right].map(normalizeRoot).sort().join("\n");
 }
 
-async function captureWorkspaceSnapshots(roots: string[]): Promise<Record<string, WorkspaceSnapshot>> {
-  const entries = await Promise.all(roots.map(async (root) => [root, await captureWorkspaceSnapshot(root)] as const));
-  return Object.fromEntries(entries);
-}
-
-function diffSnapshotCollections(
-  before: Record<string, WorkspaceSnapshot>,
-  after: Record<string, WorkspaceSnapshot>,
-): Record<string, WorkspaceSnapshotDiff> {
-  return Object.fromEntries(Object.entries(after).map(([root, snapshot]) => [
-    root,
-    diffWorkspaceSnapshots(before[root], snapshot),
-  ]));
-}
-
-function flattenAbsoluteWorkspaceChanges(diffs: Record<string, WorkspaceSnapshotDiff>): string[] {
-  return [...new Set(Object.entries(diffs).flatMap(([root, diff]) => (
-    flattenWorkspaceSnapshotDiff(diff).map((path) => resolve(root, path))
-  )))];
-}
-
 function displayWorkspacePath(path: string, workspaceRoot?: string): string {
   if (!workspaceRoot || !isPathInside(workspaceRoot, path)) return path;
   return relative(workspaceRoot, path).split("\\").join("/");
+}
+
+async function waitForSettled(promise: Promise<unknown>, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    promise.then(() => undefined, () => undefined),
+    new Promise<void>((resolveTimeout) => {
+      timer = setTimeout(resolveTimeout, timeoutMs);
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+}
+
+async function withDeadline<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const result = await Promise.race([
+    promise.then((value) => ({ settled: true as const, value }), () => ({ settled: false as const })),
+    new Promise<{ settled: false }>((resolveTimeout) => {
+      timer = setTimeout(() => resolveTimeout({ settled: false }), timeoutMs);
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+  return result.settled ? result.value : undefined;
 }
 
 function isPathInside(root: string, candidate: string): boolean {

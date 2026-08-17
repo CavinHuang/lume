@@ -71,6 +71,20 @@ describe("coding-change-service", () => {
     });
   });
 
+  test("Git 候选目录应包含目录内的变更文件", async () => {
+    const root = makeTempDir("lume-coding-directory-candidate-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'baseline';\n");
+    mkdirSync(join(root, "generated"));
+    writeFileSync(join(root, "generated", "output.ts"), "export const output = true;\n");
+
+    const changeSet = await getCodingChangeSet(root, {
+      paths: [join(root, "generated")],
+    });
+
+    expect(changeSet.files.map((file) => file.path)).toEqual(["generated/output.ts"]);
+  }, 20_000);
+
   test("多根目录用 rootId 区分同名文件并可读取对应 diff", async () => {
     const first = makeTempDir("lume-coding-root-a-");
     const second = makeTempDir("lume-coding-root-b-");

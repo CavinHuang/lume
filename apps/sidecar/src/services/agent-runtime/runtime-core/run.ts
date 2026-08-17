@@ -2481,7 +2481,11 @@ export async function createRuntimeCoreSession(
       return resolvedTools.map((tool) => tool.name);
     },
     async dispose() {
-      await agent.close();
+      try {
+        await agent.close();
+      } finally {
+        await codingRunTracker.dispose();
+      }
       // node_repl 沙箱不再随 run 销毁：registry 按 thread 常驻（跨消息复用 globalThis.agent 等 binding，
       // 对齐 Codex；崩溃自愈见 registry.exec 的错误回收）。清理挂点=线程删除 + sidecar 退出 + idle 回收。
       getComputerUseSessionRegistry().clear(input.lumeSessionId);
