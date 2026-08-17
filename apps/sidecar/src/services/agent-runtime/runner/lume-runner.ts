@@ -204,7 +204,12 @@ export class LumeRunner {
   ): Promise<AgentRuntimeRunResult> {
     const result = await consumeRuntimeCoreQueryStream({
       query,
-      emit: this.emit
+      emit: this.emit,
+      // flag off 时 consume 内部不启用，这里只提供投影所需的线程上下文
+      lifecycle: {
+        threadId: this.params.runtime.sessionId,
+        sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir)
+      }
     });
     // Soft abort no longer throws from the SDK: it fills interrupted tool
     // placeholders and ends with an error result. Classify by the abort signal

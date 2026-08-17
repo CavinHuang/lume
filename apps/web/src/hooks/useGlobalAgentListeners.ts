@@ -52,6 +52,35 @@ import {
 } from './pending-interactive-state'
 import { appendRuntimeEvents, hydrateRuntimeEvents } from './runtime-event-state'
 import { projectDesktopActionVisualEvent } from './desktop-action-visual-state'
+import { consumeBusEnvelope, type LifecycleAdapterState } from './lifecycle-event-adapter'
+import { useAgentEventBus } from './useAgentEventBus'
+
+/**
+ * Batch 1 lifecycle 总线开关(与 sidecar 同 flag:AGENT_LIFECYCLE_EVENTS=1)。
+ * web 是 Vite 渲染进程,经 vite envPrefix 暴露 AGENT_ 前缀变量读取——flag 需在
+ * 启动 web dev server 与 desktop 的同一环境(根目录 `bun run dev`)中设置。
+ * flag off:本文件零行为变化。
+ */
+const LIFECYCLE_BUS_ENABLED = import.meta.env.AGENT_LIFECYCLE_EVENTS === '1'
+
+/**
+ * flag on 时旧 RUNTIME_EVENT 分支跳过的试点链类型(试点线程内由 lifecycle 总线
+ * 经适配器驱动,避免双写)。刻意不含:
+ * - assistant.thinking_delta:总线批次1 不折叠 thinking,旧路是唯一来源
+ * - run.cancelled:软中止无 result 终值、总线不产对应事件,旧路是唯一来源
+ *   (含 Resume 横幅所需的 queue-interrupted 副作用)
+ */
+const LEGACY_SKIPPED_PILOT_EVENT_TYPES = new Set<string>([
+  'assistant.delta',
+  'assistant.final',
+  'run.completed',
+  'run.turn_limited',
+  'run.failed',
+])
+
+// 模块级而非 ref:适配器求差基线与去重水位须跨双挂载实例、跨 tab 切换存活
+const lifecycleAdapterStatesByThread = new Map<string, LifecycleAdapterState>()
+const lifecycleDeliveredSeqByThread = new Map<string, number>()
 
 export function hydrateSubagentRuns(
   current: Record<string, SubagentRunRecord[]>,
@@ -88,6 +117,7 @@ export function useGlobalAgentListeners() {
   const setDesktopActionVisual = useSetAtom(desktopActionVisualAtom)
   const setTabs = useSetAtom(tabsAtom)
   const tabs = useAtomValue(tabsAtom)
+  const activeTabId = useAtomValue(activeTabIdAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const setWelcomePromptSeed = useSetAtom(welcomePromptSeedAtom)
@@ -110,6 +140,29 @@ export function useGlobalAgentListeners() {
       runtimeEventsRafRef.current = requestAnimationFrame(flushRuntimeEvents)
     }
   }, [flushRuntimeEvents])
+
+  // ---- Batch 1 lifecycle 总线消费(flag on 时试点链切换到新总线,经适配器喂现有投影) ----
+  // useGlobalAgentListeners 会被 App 与 QuickInput 同时挂载:两实例各自消费总线会导致
+  // 同一 envelope 适配两次。用模块级 seq 水位去重(事件已按线程 seq 排序)。
+  const lifecycleBusThreadId = LIFECYCLE_BUS_ENABLED
+    ? tabs.find((tab) => tab.id === activeTabId && tab.type === 'agent')?.threadId ?? null
+    : null
+  const lifecycleBusThreadIdRef = useRef<string | null>(null)
+  lifecycleBusThreadIdRef.current = lifecycleBusThreadId
+  useAgentEventBus(lifecycleBusThreadId ?? '', {
+    enabled: lifecycleBusThreadId !== null,
+    onEvent: (envelope, source) => {
+      // 快照回放不注入事件(旧路 hydrate 已覆盖,双份注入无法去重)、不置 streaming;
+      // 详见 lifecycle-event-adapter.ts consumeBusEnvelope 注释。
+      consumeBusEnvelope(envelope, source, {
+        deliveredSeqByThread: lifecycleDeliveredSeqByThread,
+        adapterStatesByThread: lifecycleAdapterStatesByThread,
+        enqueueRuntimeEvent,
+        setStreamingStates,
+        setErrorMessages,
+      })
+    },
+  })
 
   useEffect(() => {
     sidecarCall<AgentListSubagentRunsResult>(AGENT_IPC_CHANNELS.LIST_SUBAGENT_RUNS, { limit: 500 })
@@ -147,6 +200,10 @@ export function useGlobalAgentListeners() {
         case AGENT_IPC_CHANNELS.RUNTIME_EVENT: {
           const notification = params as AgentRuntimeEventNotification
           const { threadId, event } = notification
+          // flag on 时试点线程的试点链类型改由 lifecycle 总线驱动,旧分支跳过避免双写
+          if (LIFECYCLE_BUS_ENABLED && threadId === lifecycleBusThreadIdRef.current && LEGACY_SKIPPED_PILOT_EVENT_TYPES.has(event.type)) {
+            break
+          }
           enqueueRuntimeEvent(event)
           if (event.type === 'memory.changed' || event.type === 'memory.job.progress' || event.type === 'memory.job.completed') {
             setMemoryCenterVersion((version) => version + 1)

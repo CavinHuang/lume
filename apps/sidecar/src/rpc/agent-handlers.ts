@@ -186,6 +186,8 @@ import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tra
 import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runtime-core/attempt";
 import { createOrResumeRuntimeCoreSessionManager, getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
 import { detectSessionDanglingToolUses } from "../services/agent-runtime/runtime-core/run";
+import { getThreadEventBus } from "../services/agent-runtime/events/thread-event-bus";
+import { isAgentLifecycleEventsEnabled } from "../services/agent-runtime/runner/run-loop";
 import { resolveAgentThreadWorkdir } from "../services/agent/agent-workdir-resolver";
 import {
   applyCodingDiffAction,
@@ -272,6 +274,7 @@ import {
   fileSelectionEditInputSchema,
   fileRefWriteInputSchema,
   fileRefUnwatchInputSchema,
+  getEventsInputSchema,
   guardedFileRefInputSchema,
   fileRefMoveInputSchema,
   fileRefRenameInputSchema,
@@ -413,6 +416,18 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
 
   const resolveRuntimeSessionDir = (threadId: string) => getRuntimeCoreSessionDir(threadId);
 
+  // agent:events 推送桥：每线程建立一次进程级订阅（去重防重复注册）。
+  // 不随单次 run 退订——覆盖排队消息/恢复等所有 run 入口，且规避
+  // run 结束瞬间 16ms 微批 update 尚未 flush 就退订的推送丢失。
+  const agentEventsBridgedThreads = new Set<string>();
+  const ensureAgentEventsBridge = (threadId: string): void => {
+    if (!isAgentLifecycleEventsEnabled() || agentEventsBridgedThreads.has(threadId)) return;
+    agentEventsBridgedThreads.add(threadId);
+    getThreadEventBus(resolveRuntimeSessionDir(threadId)).subscribe(threadId, (envelope) => {
+      context.writeNotification(AGENT_IPC_CHANNELS.EVENTS, envelope);
+    });
+  };
+
   const resolveRunIdForThread = async (threadId: string, runId?: string): Promise<string | null> => {
     if (runId) return runId;
     const runStore = createFileBackedLumeRunStateStore(resolveRuntimeSessionDir(threadId));
@@ -498,6 +513,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     runId?: string;
     interruptionId?: string;
   }): Promise<ResumeRunResult> => {
+    ensureAgentEventsBridge(input.threadId);
     const sessionDir = resolveRuntimeSessionDir(input.threadId);
     const runId = await resolveRunIdForThread(input.threadId, input.runId);
     if (!runId) {
@@ -719,21 +735,24 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
   const createAgentStreamEmitter = (
     threadId: string,
     options?: { workspaceSlug?: string }
-  ) => createAgentNotificationEmitter({
-    threadId,
-    writeNotification: context.writeNotification,
-    onComplete: () => {
-      scheduleSkillImprovementSuggestionScan(threadId, options?.workspaceSlug);
-      if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
-        context.notifyPlanModePhaseChange(threadId, "completed");
+  ) => {
+    ensureAgentEventsBridge(threadId);
+    return createAgentNotificationEmitter({
+      threadId,
+      writeNotification: context.writeNotification,
+      onComplete: () => {
+        scheduleSkillImprovementSuggestionScan(threadId, options?.workspaceSlug);
+        if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
+          context.notifyPlanModePhaseChange(threadId, "completed");
+        }
+      },
+      onError: () => {
+        if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
+          context.notifyPlanModePhaseChange(threadId, "awaiting_approval");
+        }
       }
-    },
-    onError: () => {
-      if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
-        context.notifyPlanModePhaseChange(threadId, "awaiting_approval");
-      }
-    }
-  });
+    });
+  };
 
   const handlers: Record<string, RpcHandler> = {
     [AGENT_IPC_CHANNELS.LIST_THREADS]: async () => listAgentThreads(),
@@ -962,6 +981,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.RESUME_RUN]: async (params) => {
       const input = validateInput(resumeRunInputSchema, params, AGENT_IPC_CHANNELS.RESUME_RUN);
       return resumeRunForThread(input);
+    },
+    [AGENT_IPC_CHANNELS.GET_EVENTS]: async (params) => {
+      const input = validateInput(getEventsInputSchema, params, AGENT_IPC_CHANNELS.GET_EVENTS);
+      const events = await getThreadEventBus(resolveRuntimeSessionDir(input.threadId))
+        .read(input.threadId, input.afterSeq);
+      return { threadId: input.threadId, events };
     },
     [AGENT_IPC_CHANNELS.DISCARD_INTERRUPTED_RUN]: async (params) => {
       const input = validateInput(

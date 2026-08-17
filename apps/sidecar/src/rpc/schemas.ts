@@ -1900,6 +1900,11 @@ export const threadRunEventsInputSchema = z.object({
   threadId: idSchema
 });
 
+export const getEventsInputSchema = z.object({
+  threadId: idSchema,
+  afterSeq: z.number().int().nonnegative().optional()
+});
+
 export const runTraceInputSchema = z.object({
   threadId: idSchema,
   runId: idSchema.optional(),

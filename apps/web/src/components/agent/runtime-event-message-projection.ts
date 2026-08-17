@@ -9,6 +9,38 @@ import type {
 
 const TURN_LIMIT_NOTICE = '本轮已达到最大执行轮次，当前进度已保存。发送“继续”可接着执行。'
 
+/**
+ * 「重建型」事件集合：到达时若无 currentAssistant，会经 ??= 重建同 id 的 assistant
+ * （`assistant:${runId}` / 分段 id）。双路并行期（总线 + 旧路）跨路时序错位时，
+ * 终态后到达的此类事件会复活已 flush 的消息 → React key 撞车（#22 duplicate key）。
+ * 由 applyRuntimeEvent 入口闸门统一拦截（原 memory.context.used/advisor.reviewed
+ * 分支内特判 357ff9f3 已上提至此）。
+ * 不入集合的甄别：
+ * - message.user.submitted / task.progress / run.started：有意开启新回合/新任务流，
+ *   task.progress 重建用唯一 id（assistant:task:*），无同 id 撞车；
+ * - model.retry_cleared / usage.updated / im.delivery / coding.report.updated：纯副作用
+ *   （修补已存在的 currentAssistant 或已 flush 消息），无 ??= 重建；
+ * - memory.changed / memory.job.* / context.compaction.*：独立 system 消息，非 assistant 重建。
+ */
+const TERMINAL_REBUILDING_EVENT_TYPES: ReadonlySet<LumeRuntimeEvent['type']> = new Set([
+  'memory.context.used',
+  'advisor.reviewed',
+  'model.retry',
+  'assistant.delta',
+  'assistant.thinking_delta',
+  'assistant.final',
+  'plan.preview',
+  'todo.state_updated',
+  'tool.started',
+  'tool.completed',
+  'tool.failed',
+  'tool.permission_timeout',
+  'run.completed',
+  'run.turn_limited',
+  'run.failed',
+  'run.cancelled',
+])
+
 export interface ProjectionState {
   messages: RuntimeMessageView[]
   currentAssistant: MutableAssistantMessage | null
@@ -61,6 +93,13 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     if (state.currentAssistant) state.currentAssistant.fileReferenceProtocolVersion = event.fileReferenceProtocolVersion
   }
 
+  if (state.terminalClosed && !state.currentAssistant && TERMINAL_REBUILDING_EVENT_TYPES.has(event.type)) {
+    // 双路并行期(总线+旧路)跨路时序错位:终态后到达的重建型事件不得复活已 flush 的消息。
+    // 打点供批次2/3 迁移排序(哪类最常错位先迁);批次5 删旧路时随闸门一起退役。
+    console.debug('[lifecycle-mismatch]', event.type, event.runId)
+    return
+  }
+
   if (event.type === 'run.started') {
     state.terminalClosed = false
     return
@@ -104,6 +143,9 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
 
   if (event.type === 'memory.context.used') {
     if (event.items.length === 0) return
+    // 终态后到达的尾巴事件不得经 ??= 重建同 id 的空 assistant(会与已 flush 的
+    // assistant:<runId> 撞 React key,#22 双投 duplicate key 的实际路径)——
+    // 已上提为 applyRuntimeEvent 入口统一闸门(TERMINAL_REBUILDING_EVENT_TYPES)。
     state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block) => block.type !== 'memory_context_used')
     state.currentAssistant.blocks.push({
@@ -159,6 +201,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'advisor.reviewed') {
+    // 同 memory.context.used:终态后的 advisor 尾巴由入口闸门统一拦截,不重建同 id assistant
     state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.blocks.push({
       type: 'advisor_review',
