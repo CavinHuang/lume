@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { Worker } from "node:worker_threads";
 import type {
   CodingBinaryDiffPayload,
   CodingBlameResult,
@@ -30,6 +31,49 @@ const GIT_PUBLISH_TIMEOUT_MS = 120_000;
 const MAX_REVIEW_SEARCH_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_BLAME_CACHE_ENTRIES = 128;
 const blameCache = new Map<string, CodingBlameResult>();
+const SHOULD_ISOLATE_GIT_SPAWN = "bun" in process.versions;
+const GIT_COMMAND_WORKER_SOURCE = String.raw`
+  const { spawn } = require("node:child_process");
+  const { parentPort } = require("node:worker_threads");
+
+  parentPort.on("message", ({ id, args, cwd, timeoutMs }) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      parentPort.postMessage({ id, value });
+    };
+    let child;
+    try {
+      child = spawn("git", ["-c", "core.quotePath=false", ...args], {
+        cwd,
+        stdio: ["ignore", "pipe", "ignore"],
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      });
+    } catch {
+      finish(null);
+      return;
+    }
+    child.stdout.setEncoding("utf8");
+    let stdout = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(null);
+    }, timeoutMs);
+    child.on("error", () => {
+      clearTimeout(timeout);
+      finish(null);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      finish(code === 0 ? stdout : null);
+    });
+  });
+`;
+let gitCommandWorker: Worker | undefined;
+let nextGitCommandId = 1;
+const pendingGitCommands = new Map<number, (value: string | null) => void>();
 
 export interface CodingFileDiff {
   kind: "text";
@@ -1663,6 +1707,7 @@ function normalizeLineEndings(content: string): string {
 }
 
 function runGitCommand(args: string[], cwd: string): Promise<string | null> {
+  if (SHOULD_ISOLATE_GIT_SPAWN) return runGitCommandInWorker(args, cwd);
   return new Promise((resolveResult) => {
     let settled = false;
     const finish = (value: string | null) => {
@@ -1698,6 +1743,48 @@ function runGitCommand(args: string[], cwd: string): Promise<string | null> {
       finish(code === 0 ? stdout : null);
     });
   });
+}
+
+function runGitCommandInWorker(args: string[], cwd: string): Promise<string | null> {
+  return new Promise((resolveResult) => {
+    let worker: Worker;
+    try {
+      worker = getGitCommandWorker();
+    } catch {
+      resolveResult(null);
+      return;
+    }
+    const id = nextGitCommandId++;
+    pendingGitCommands.set(id, resolveResult);
+    try {
+      worker.postMessage({ id, args, cwd, timeoutMs: GIT_TIMEOUT_MS });
+    } catch {
+      pendingGitCommands.delete(id);
+      resolveResult(null);
+    }
+  });
+}
+
+function getGitCommandWorker(): Worker {
+  if (gitCommandWorker) return gitCommandWorker;
+  const worker = new Worker(GIT_COMMAND_WORKER_SOURCE, { eval: true });
+  worker.unref();
+  worker.on("message", (message: { id: number; value: string | null }) => {
+    const resolveResult = pendingGitCommands.get(message.id);
+    if (!resolveResult) return;
+    pendingGitCommands.delete(message.id);
+    resolveResult(message.value);
+  });
+  const resetWorker = () => {
+    if (gitCommandWorker !== worker) return;
+    gitCommandWorker = undefined;
+    for (const resolveResult of pendingGitCommands.values()) resolveResult(null);
+    pendingGitCommands.clear();
+  };
+  worker.on("error", resetWorker);
+  worker.on("exit", resetWorker);
+  gitCommandWorker = worker;
+  return worker;
 }
 
 function runGitSearchDiff(args: string[], cwd: string): Promise<{ output: string; truncated: boolean }> {

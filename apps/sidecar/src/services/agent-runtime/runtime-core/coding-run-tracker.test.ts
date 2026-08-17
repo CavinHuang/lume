@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createCodingRunTracker } from "./coding-run-tracker";
@@ -103,6 +104,7 @@ describe("coding run tracker", () => {
       input: { command: "bun test", purpose: "verification" },
       result: verificationResult("baseline failure", "failed")
     });
+    await baseline.dispose();
 
     const resumed = createCodingRunTracker({ workspaceRoot: root, statePath });
     await resumed.initialize();
@@ -119,10 +121,115 @@ describe("coding run tracker", () => {
     await expect(resumed.completionGuard()).resolves.toBeUndefined();
   });
 
+  test("persists compact v3 state without workspace snapshots", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-coding-state-v3-"));
+    const statePath = join(root, "session", "coding-state.v1.json");
+    const tracker = createCodingRunTracker({ workspaceRoot: root, statePath });
+
+    const startedAt = performance.now();
+    await tracker.initialize();
+    expect(performance.now() - startedAt).toBeLessThan(500);
+    await tracker.dispose();
+
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    expect(state.version).toBe(3);
+    expect(state.baselineSnapshot).toBeUndefined();
+    expect(state.latestSnapshot).toBeUndefined();
+    expect(state.baselineSnapshots).toBeUndefined();
+    expect(state.latestSnapshots).toBeUndefined();
+    expect(statSync(statePath).size).toBeLessThan(100_000);
+  });
+
+  test("skips oversized legacy state instead of parsing it on startup", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-coding-large-state-"));
+    const statePath = join(root, "coding-state.v1.json");
+    writeFileSync(statePath, "x".repeat(1024 * 1024 + 1), "utf8");
+    const tracker = createCodingRunTracker({ workspaceRoot: root, statePath });
+
+    await tracker.initialize();
+    tracker.observe({ toolName: "Write", input: { file_path: "new.ts" }, result: result("written") });
+    await tracker.dispose();
+
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    expect(state.version).toBe(3);
+    expect(statSync(statePath).size).toBeLessThan(100_000);
+  });
+
+  test("detects same-size Bash edits through Git without content snapshots", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-coding-same-size-"));
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: root });
+    writeFileSync(join(root, "a.ts"), "one", "utf8");
+    execFileSync("git", ["add", "a.ts"], { cwd: root });
+    execFileSync("git", ["commit", "-qm", "baseline"], { cwd: root });
+    const tracker = createCodingRunTracker({ workspaceRoot: root });
+    await tracker.initialize();
+    expect(tracker.getBaselineCommit()).toMatch(/^[0-9a-f]{40}$/);
+    await tracker.beforeToolExecution({ toolName: "Bash", input: { command: "echo two > a.ts" }, cwd: root });
+
+    writeFileSync(join(root, "a.ts"), "two", "utf8");
+    tracker.observe({ toolName: "Bash", input: { command: "echo two > a.ts" }, result: result("done") });
+
+    const completionStartedAt = performance.now();
+    expect(await tracker.completionGuard()).toContain("verification needed");
+    expect(performance.now() - completionStartedAt).toBeLessThan(2_000);
+    expect(tracker.getVerificationReport()).toMatchObject({
+      workspaceChanged: true,
+      changedFiles: ["a.ts"],
+    });
+    await tracker.dispose();
+  }, 20_000);
+
+  test("keeps Git paths with leading spaces intact", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-coding-special-path-"));
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    const tracker = createCodingRunTracker({ workspaceRoot: root });
+    await tracker.initialize();
+    await tracker.beforeToolExecution({ toolName: "Bash", input: { command: "echo value > \" leading.ts\"" }, cwd: root });
+
+    writeFileSync(join(root, " leading.ts"), "value", "utf8");
+    tracker.observe({ toolName: "Bash", input: { command: "echo value > \" leading.ts\"" }, result: result("done") });
+
+    await expect(tracker.completionGuard()).resolves.toContain("verification needed");
+    expect(tracker.getVerificationReport().changedFiles).toContain(" leading.ts");
+    await tracker.dispose();
+  }, 20_000);
+
+  test("attributes indirect Bash edits inside a Git worktree", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-coding-git-watch-"));
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    const tracker = createCodingRunTracker({ workspaceRoot: root });
+    await tracker.initialize();
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    await tracker.beforeToolExecution({
+      toolName: "Bash",
+      input: { command: "node scripts/generate.mjs" },
+      cwd: root,
+    });
+
+    mkdirSync(join(root, "generated"));
+    writeFileSync(join(root, "generated", "output.ts"), "export const output = true;", "utf8");
+    tracker.observe({
+      toolName: "Bash",
+      input: { command: "node scripts/generate.mjs" },
+      result: result("done"),
+    });
+
+    await expect(tracker.completionGuard()).resolves.toContain("verification needed");
+    expect(tracker.getVerificationReport().changedFiles).toContain("generated/output.ts");
+    await tracker.dispose();
+  }, 20_000);
+
   test("keeps a running background task recoverable without failing the Run", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-coding-background-"));
     const tracker = createCodingRunTracker({ workspaceRoot: root });
     await tracker.initialize();
+    await tracker.beforeToolExecution({
+      toolName: "Bash",
+      input: { command: "bun test", run_in_background: true },
+      cwd: root,
+    });
     tracker.observe({
       toolName: "Bash",
       input: { command: "bun test", run_in_background: true },
@@ -348,6 +455,11 @@ describe("coding run tracker", () => {
     const tracker = createCodingRunTracker({ workspaceRoot: root });
     await tracker.initialize();
 
+    await tracker.beforeToolExecution({
+      toolName: "Bash",
+      input: { command: "python -c ..." },
+      cwd: root,
+    });
     writeFileSync(join(root, "generated.ts"), "export const value = 1;\n", "utf-8");
     tracker.observe({
       toolName: "Bash",
@@ -375,6 +487,11 @@ describe("coding run tracker", () => {
     await tracker.initialize();
 
     const generatedPath = join(additionalRoot, "generated.ts");
+    await tracker.beforeToolExecution({
+      toolName: "Bash",
+      input: { command: `Set-Content -Path '${generatedPath}' -Value 'generated'` },
+      cwd: root,
+    });
     writeFileSync(generatedPath, "export const value = 1;\n", "utf-8");
     tracker.observe({
       toolName: "Bash",
