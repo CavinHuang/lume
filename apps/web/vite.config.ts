@@ -34,6 +34,9 @@ function disable3DmolStringCallbacks(): Plugin {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), disable3DmolStringCallbacks()],
+  // 暴露 AGENT_ 前缀进程环境变量给渲染进程(如 batch1 的 AGENT_LIFECYCLE_EVENTS
+  // 与 sidecar 同 flag);默认 VITE_ 前缀保持不变
+  envPrefix: ['VITE_', 'AGENT_'],
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
   },

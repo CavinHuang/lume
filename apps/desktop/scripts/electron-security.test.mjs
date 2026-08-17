@@ -97,7 +97,7 @@ test("renderer sidecar allowlist tracks public shared IPC channels", () => {
   const sharedMethods = Object.entries(sharedIpc)
     .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && name !== "AGENT_ISLAND_IPC_CHANNELS" && value && typeof value === "object")
     .flatMap(([, value]) => Object.entries(value))
-    .filter(([key, value]) => key !== "CHANGED" && key !== "REMINDER_DUE" && typeof value === "string" && !value.includes(":privileged-") && !Object.values(BROWSER_IPC_CHANNELS).includes(value))
+    .filter(([key, value]) => key !== "CHANGED" && key !== "REMINDER_DUE" && key !== "EVENTS" && typeof value === "string" && !value.includes(":privileged-") && !Object.values(BROWSER_IPC_CHANNELS).includes(value))
     .map(([, value]) => value);
   for (const method of sharedMethods) assert.equal(PUBLIC_RENDERER_SIDECAR_METHODS.has(method), true, method);
 });

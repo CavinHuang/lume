@@ -20,6 +20,7 @@ import {
   ExitWorktreeTool,
   registerAgents,
   type SDKMessage,
+  type SDKTaskNotificationMessage,
   type Agent,
   type FileCheckpoint,
   type AgentDefinition,
@@ -56,6 +57,7 @@ import type {
   LumeRuntimeEvent,
   RuntimeCodingReport,
   FileReferenceBinding,
+  BackgroundTaskNotificationDetail,
   SubagentTaskReport,
   SubagentTask,
   SubagentTaskFeedback,
@@ -152,6 +154,8 @@ import {
 import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
 import { persistAbortContinuation } from "../interruption/abort-continuation";
 import { classifyToolKind } from "../interruption/approval-service";
+import { isAgentLifecycleEventsEnabled } from "../runner/run-loop";
+import { getThreadEventBus } from "../events/thread-event-bus";
 import {
   collectAppendContextEffects,
   type LumeWorkflowHookExecutionResult
@@ -1704,6 +1708,60 @@ async function waitForProcessJobToFinish(id: string, abortSignal?: AbortSignal):
   }
 }
 
+/**
+ * 批次4 旁路注入:late task_notification(后台命令在 run 流返回后进入终态)经
+ * ThreadEventBus 再发一份 background.task 领域事件——detail 与 projector 主流投影
+ * (run-loop tee → handleSystem)同形态,双入口共用同一 bus 单调分配 seq。
+ * 仅主流事件(无 subagent_run_id)且 status 归一为四态终态才发;attention/未知
+ * status 丢弃。flag off 时零行为。
+ */
+export function publishBackgroundTaskNotificationToBus(input: {
+  sessionDir: string;
+  threadId: string;
+  runId: string;
+  event: SDKMessage;
+}): void {
+  if (!isAgentLifecycleEventsEnabled()) return;
+  const notification = input.event as SDKTaskNotificationMessage;
+  if (notification.subagent_run_id) return;
+  const status = normalizeTaskNotificationBusStatus(notification.status);
+  if (!status) return;
+  const detail: BackgroundTaskNotificationDetail = { type: "background.task", taskId: notification.task_id, status };
+  if (typeof notification.message === "string") detail.message = notification.message;
+  if (typeof notification.summary === "string") detail.summary = notification.summary;
+  if (notification.execution !== undefined) detail.execution = notification.execution;
+  void getThreadEventBus(input.sessionDir)
+    .publish(input.threadId, input.runId, {
+      runId: input.runId,
+      turnId: null,
+      ts: Date.now(),
+      kind: "run",
+      phase: "event",
+      detail
+    })
+    .catch((error) => {
+      log.warn("background.task 总线 publish 失败", {
+        threadId: input.threadId,
+        runId: input.runId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+}
+
+/**
+ * 四态归一,与 projector normalizeTaskNotificationStatus / 旧路
+ * normalizeBackgroundTaskStatus(run-item-events.ts)逐字同语义。
+ */
+function normalizeTaskNotificationBusStatus(
+  status: string
+): BackgroundTaskNotificationDetail["status"] | undefined {
+  if (status === "completed") return "completed";
+  if (status === "failed") return "failed";
+  if (status === "stopped" || status === "killed") return "stopped";
+  if (status === "cancelled" || status === "canceled") return "cancelled";
+  return undefined;
+}
+
 export async function createRuntimeCoreSession(
   input: CreateRuntimeCoreSessionInput
 ): Promise<CreateRuntimeCoreSessionResult> {
@@ -1842,6 +1900,16 @@ export async function createRuntimeCoreSession(
           runId,
           error: error instanceof Error ? error.message : String(error)
         });
+      });
+    }
+    // 批次4 旁路注入:同批 late task_notification 再上总线(领域事件双入口归一;
+    // 与上方续跑 checkpoint 无耦合,runId 缺省回落线程 id)
+    if (event.type === "system" && event.subtype === "task_notification") {
+      publishBackgroundTaskNotificationToBus({
+        sessionDir,
+        threadId: input.lumeSessionId,
+        runId,
+        event
       });
     }
     try {

@@ -16,8 +16,11 @@ import { updateRuntimeThreadMetaIfPresent } from "../runtime-core/thread-meta-ta
 import {
   consumeRuntimeCoreQueryStream,
   createObservedRuntimeEmitter,
+  isAgentLifecycleEventsEnabled,
   normalizeRuntimeCoreQueryPermissionMode
 } from "./run-loop";
+import { getThreadEventBus } from "../events/thread-event-bus";
+import { createLogger } from "../../infra/logger";
 import { LumeRunObserver } from "./run-observer";
 import { fromAgentRuntimeRunResult } from "./run-result";
 import { applyResolvedThinkingLevel } from "./thinking-level";
@@ -51,6 +54,8 @@ import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { createWikiProtectedSandbox, resolveWikiRuntimeCapability } from "../../wiki/wiki-runtime-capability";
 import { WIKI_CAPABILITIES } from "../../wiki/wiki-capabilities";
 import { resolveConfiguredAdditionalDirectories } from "../permissions/permission-config";
+
+const log = createLogger("lume-runner");
 
 interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
@@ -204,7 +209,12 @@ export class LumeRunner {
   ): Promise<AgentRuntimeRunResult> {
     const result = await consumeRuntimeCoreQueryStream({
       query,
-      emit: this.emit
+      emit: this.emit,
+      // flag off 时 consume 内部不启用，这里只提供投影所需的线程上下文
+      lifecycle: {
+        threadId: this.params.runtime.sessionId,
+        sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir)
+      }
     });
     // Soft abort no longer throws from the SDK: it fills interrupted tool
     // placeholders and ends with an error result. Classify by the abort signal
@@ -627,6 +637,27 @@ export class LumeRunner {
     } as const;
     this.observer.recordMemoryContextUsed(event);
     this.emit.onRuntimeEvent?.(event);
+    // 第二注入路径:flag on 时同一 items 经 ThreadEventBus 再发一份(run 级领域事件),
+    // 与旧路双发互不替代;sessionDir 与 run-loop tee 一致,保证同一 bus 单例与单调 seq。
+    if (isAgentLifecycleEventsEnabled()) {
+      const threadId = this.observer.getThreadId();
+      const runId = this.observer.getRunId();
+      void getThreadEventBus(getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir))
+        .publish(threadId, runId, {
+          runId,
+          turnId: null,
+          ts: Date.now(),
+          kind: "run",
+          phase: "event",
+          detail: { type: "memory.context.used", items: event.items }
+        })
+        .catch((error) => {
+          log.warn("memory.context.used 总线 publish 失败", {
+            threadId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
+    }
   }
 
   async abort(): Promise<AgentRuntimeRunResult> {
