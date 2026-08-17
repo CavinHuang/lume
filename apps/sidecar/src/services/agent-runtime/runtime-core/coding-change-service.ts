@@ -1601,8 +1601,13 @@ function normalizePathFilter(root: string, paths?: Iterable<string>): Set<string
 }
 
 function matchesPathFilter(allowedPaths: Set<string>, path: string): boolean {
-  for (const allowedPath of allowedPaths) {
-    if (path === allowedPath || path.startsWith(`${allowedPath}/`)) return true;
+  if (allowedPaths.has("") || allowedPaths.has(".")) return true;
+  let candidate = path;
+  while (candidate) {
+    if (allowedPaths.has(candidate)) return true;
+    const separatorIndex = candidate.lastIndexOf("/");
+    if (separatorIndex < 0) return false;
+    candidate = candidate.slice(0, separatorIndex);
   }
   return false;
 }

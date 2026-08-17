@@ -30,6 +30,14 @@ function verificationResult(content: string, outcome: "succeeded" | "failed") {
   });
 }
 
+async function waitForCondition(predicate: () => boolean, timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("condition did not become true before timeout");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+}
+
 describe("coding run tracker", () => {
   test("requires verification after a successful mutation and clears it after verification", async () => {
     const tracker = createCodingRunTracker();
@@ -201,7 +209,7 @@ describe("coding run tracker", () => {
     execFileSync("git", ["init", "-q"], { cwd: root });
     const tracker = createCodingRunTracker({ workspaceRoot: root });
     await tracker.initialize();
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    await expect(tracker.waitForWorkspaceMonitorReady()).resolves.toBe("ready");
     await tracker.beforeToolExecution({
       toolName: "Bash",
       input: { command: "node scripts/generate.mjs" },
@@ -218,6 +226,39 @@ describe("coding run tracker", () => {
 
     await expect(tracker.completionGuard()).resolves.toContain("verification needed");
     expect(tracker.getVerificationReport().changedFiles).toContain("generated/output.ts");
+    await tracker.dispose();
+  }, 20_000);
+
+  test("uses full Git reconciliation when watcher startup is degraded", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-coding-degraded-watch-"));
+    const unavailableRoot = join(tmpdir(), `lume-coding-missing-${Date.now()}`);
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    const tracker = createCodingRunTracker({
+      workspaceRoot: root,
+      additionalRoots: [unavailableRoot],
+    });
+    await tracker.initialize();
+    await expect(tracker.waitForWorkspaceMonitorReady()).resolves.toBe("degraded");
+    await tracker.beforeToolExecution({
+      toolName: "Bash",
+      input: { command: "node scripts/generate.mjs" },
+      cwd: root,
+    });
+
+    writeFileSync(join(root, "fallback.ts"), "export const fallback = true;", "utf8");
+    tracker.observe({
+      toolName: "Bash",
+      input: { command: "node scripts/generate.mjs" },
+      result: result("done"),
+    });
+
+    await expect(tracker.completionGuard()).resolves.toContain("verification needed");
+    await waitForCondition(() => tracker.getVerificationReport().changeSet?.files
+      .some((file) => file.path === "fallback.ts") === true);
+    expect(tracker.getVerificationReport().changeSet).toMatchObject({
+      base: "git:HEAD",
+      isGitRepo: true,
+    });
     await tracker.dispose();
   }, 20_000);
 

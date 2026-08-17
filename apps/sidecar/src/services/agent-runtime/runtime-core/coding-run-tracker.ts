@@ -539,6 +539,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     observe,
     observeAsyncEvent,
     initialize,
+    waitForWorkspaceMonitorReady: workspaceMonitor.waitUntilReady,
     beforeToolExecution,
     getBaselineCommit: () => baselineCommit,
     getBaselineCommits: () => ({ ...baselineCommits }),
@@ -670,8 +671,11 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   async function refreshAuthoritativeChangeSet(): Promise<RuntimeCodingChangeSet> {
     const workspaceRoot = options.workspaceRoot!;
     const absolutePaths = getCandidatePaths();
+    const requiresFullGitReconciliation = workspaceMonitor.hasUnresolvedChanges();
     return getCodingChangeSet(workspaceRoot, {
-      paths: absolutePaths.length > 0 && !workspaceMonitor.hasUnresolvedChanges()
+      // A degraded watcher may have missed siblings or descendants. In that state
+      // candidates are only evidence that a mutation happened, never a safe filter.
+      paths: absolutePaths.length > 0 && !requiresFullGitReconciliation
         ? absolutePaths
         : undefined,
       turnId: options.turnId,

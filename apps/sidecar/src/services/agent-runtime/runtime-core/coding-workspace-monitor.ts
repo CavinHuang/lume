@@ -5,9 +5,12 @@ import { Worker } from "node:worker_threads";
 const ATTRIBUTION_GRACE_MS = 120;
 const SETTLE_QUIET_MS = 150;
 const SETTLE_TIMEOUT_MS = 400;
+const WATCHER_READY_TIMEOUT_MS = 10_000;
 const MAX_CANDIDATE_PATHS = 10_000;
 
 const MUTATION_WINDOW_TOOLS = new Set(["bash", "write", "edit", "notebookedit", "lsp"]);
+
+export type CodingWorkspaceMonitorReadiness = "ready" | "degraded";
 const ISOLATED_WATCHER_SOURCE = String.raw`
   const { watch } = require("node:fs");
   const { resolve } = require("node:path");
@@ -40,6 +43,7 @@ const ISOLATED_WATCHER_SOURCE = String.raw`
 
 export interface CodingWorkspaceMonitor {
   start(): void;
+  waitUntilReady(): Promise<CodingWorkspaceMonitorReadiness>;
   beginTool(toolName: string): void;
   finishTool(toolName: string, backgroundTaskId?: string, keepOpen?: boolean): void;
   finishBackgroundTask(taskId?: string): void;
@@ -69,10 +73,29 @@ export function createCodingWorkspaceMonitor(
   let nextWindowId = 1;
   let lastEventAt = 0;
   let unresolvedChanges = false;
-  let isolatedWatcherReady = isolatedWatchRoots.length === 0;
+  let readinessState: "starting" | CodingWorkspaceMonitorReadiness = "starting";
+  let resolveReadiness!: (readiness: CodingWorkspaceMonitorReadiness) => void;
+  const readinessPromise = new Promise<CodingWorkspaceMonitorReadiness>((resolveReady) => {
+    resolveReadiness = resolveReady;
+  });
+  let readinessTimer: ReturnType<typeof setTimeout> | undefined;
   let isolatedWorker: Worker | undefined;
   let started = false;
   let disposed = false;
+
+  function completeReadiness(degraded: boolean): void {
+    if (degraded) unresolvedChanges = true;
+    if (readinessState !== "starting") {
+      if (degraded) readinessState = "degraded";
+      return;
+    }
+    readinessState = degraded ? "degraded" : "ready";
+    if (readinessTimer) {
+      clearTimeout(readinessTimer);
+      readinessTimer = undefined;
+    }
+    resolveReadiness(readinessState);
+  }
 
   function addCandidate(path: string, attributed: boolean): void {
     const canonical = resolve(path);
@@ -95,8 +118,12 @@ export function createCodingWorkspaceMonitor(
   function start(): void {
     if (started || disposed) return;
     started = true;
+    let startupDegraded = false;
     for (const root of watchRoots) {
-      if (!existsSync(root)) continue;
+      if (!existsSync(root)) {
+        startupDegraded = true;
+        continue;
+      }
       try {
         watchers.push(watch(root, { recursive: true }, (_eventType, filename) => {
           if (!filename) {
@@ -110,10 +137,14 @@ export function createCodingWorkspaceMonitor(
           addCandidate(path, openWindows.size > 0);
         }));
       } catch {
-        unresolvedChanges = true;
+        startupDegraded = true;
       }
     }
-    if (isolatedWatchRoots.length > 0) {
+    if (isolatedWatchRoots.length === 0) {
+      completeReadiness(startupDegraded);
+    } else {
+      readinessTimer = setTimeout(() => completeReadiness(true), WATCHER_READY_TIMEOUT_MS);
+      readinessTimer.unref?.();
       try {
         const worker = new Worker(ISOLATED_WATCHER_SOURCE, { eval: true });
         isolatedWorker = worker;
@@ -125,23 +156,20 @@ export function createCodingWorkspaceMonitor(
             lastEventAt = Date.now();
             unresolvedChanges = true;
           } else if (message.type === "ready") {
-            isolatedWatcherReady = true;
-            if (message.failed) unresolvedChanges = true;
+            completeReadiness(startupDegraded || message.failed === true);
           }
         });
         worker.on("error", () => {
-          isolatedWatcherReady = true;
-          unresolvedChanges = true;
+          completeReadiness(true);
         });
         worker.on("exit", () => {
-          if (!disposed) unresolvedChanges = true;
+          if (!disposed) completeReadiness(true);
           if (isolatedWorker === worker) isolatedWorker = undefined;
         });
         worker.unref();
         worker.postMessage({ type: "start", roots: isolatedWatchRoots });
       } catch {
-        isolatedWatcherReady = true;
-        unresolvedChanges = true;
+        completeReadiness(true);
       }
     }
   }
@@ -149,7 +177,7 @@ export function createCodingWorkspaceMonitor(
   function beginTool(toolName: string): void {
     const name = toolName.toLowerCase();
     if (!MUTATION_WINDOW_TOOLS.has(name) || disposed) return;
-    if (!isolatedWatcherReady && name === "bash") unresolvedChanges = true;
+    if (readinessState === "starting" && name === "bash") unresolvedChanges = true;
     const windowId = nextWindowId++;
     openWindows.add(windowId);
     const queue = pendingWindows.get(name) ?? [];
@@ -214,6 +242,11 @@ export function createCodingWorkspaceMonitor(
     watchers.length = 0;
     for (const timer of closeTimers) clearTimeout(timer);
     closeTimers.clear();
+    if (readinessTimer) {
+      clearTimeout(readinessTimer);
+      readinessTimer = undefined;
+    }
+    completeReadiness(true);
     openWindows.clear();
     pendingWindows.clear();
     backgroundWindows.clear();
@@ -231,6 +264,7 @@ export function createCodingWorkspaceMonitor(
 
   return {
     start,
+    waitUntilReady: () => readinessPromise,
     beginTool,
     finishTool,
     finishBackgroundTask,
@@ -238,7 +272,7 @@ export function createCodingWorkspaceMonitor(
     settle,
     getAttributedPaths: () => [...attributedPaths],
     getExternalPaths: () => [...externalPaths],
-    hasUnresolvedChanges: () => unresolvedChanges,
+    hasUnresolvedChanges: () => unresolvedChanges || readinessState === "degraded",
     dispose,
   };
 }
