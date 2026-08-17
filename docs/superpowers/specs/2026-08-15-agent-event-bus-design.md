@@ -157,6 +157,60 @@ atom 写入保留 rAF 批量;旧 useGlobalAgentListeners 对试点链事件分�
 - web 双路径并存由 flag 保证同链路单路径,UI 组件逐个切
 - 终态(engine 产新形态反转)不在本 spec,批次5 评估
 
+## 9. 批次5 终局设计(三阶段收敛,2026-08-17 定案)
+
+**决策**:范围=原 8 项+散落治理合并一次收敛;投影终态=**双层模型+单点适配**(视图模型正当化,不消除)。
+
+### 9.1 三阶段结构与核心依赖
+
+```
+Phase A 定案:A 表 14 类留旧路事件逐一取证 → 迁(~10)或正式裁定死(~4)
+             —— 判据同批次4:无双投/乱序/回放突现面 → 裁;有 → 迁
+Phase B 统一:runId 统一(Lume runId 贯穿,projector 经 tee 参数拿真 id)
+             + 减配补齐(compaction outcome/trigger/streaming、tool meta、
+               thinking 折叠、contextWindow/budget、claim 类型)
+Phase C 删除与治理:删旧投影双开关盒/双存储之一/flag/终态闸门/打点/跳过清单;
+             治理:白名单单源(AGENT_IPC_CHANNELS 派生三处)/status 归一三收一/
+             emit 产生点收编(EventHub 单出口)/适配器单文件化
+```
+
+**核心依赖**:删旧路的前置是 A 表全部定案(迁完或裁定死)——不允许"删一半"。
+
+### 9.2 双层模型终态
+
+```
+传输模型:agent-events.ts(SdkEventEnvelope+detail)——唯一线上形态,seq 单调
+视图模型:runtime-event.ts(36 类)——投影/UI 稳定消费,Phase C 后不再新增
+单点适配:lifecycle-event-adapter——唯一翻译点(收编其余散落 switch)
+```
+
+### 9.3 A 表 14 类终表(2026-08-17 T1 取证定案)
+
+迁:message.user.submitted(骨架 user 消息对)/run.started(补映射)/run.cancelled(需 projector 补流中止终值,批次1 遗留)/assistant.thinking_delta(需 partial.thinking)/plan.preview/todo.state_updated/task.progress/advisor.reviewed/lsp.diagnostics.updated(task_notification 双入口模式)/coding.report.updated(产生点双发,与 lsp 同构第二入口)
+- **coding.report.updated → 迁**:与 run.completed 双路携带同 report(run.ts:1852/1914 in-run+late vs run-item-events.ts:80/98 终态全量,双投面)+ late 后台任务终态后到达(乱序面),批次4 late 旁路 seq 单调可承载;runId 统一后消除投影 `assistant:${runId}` 前缀匹配错位(批次1 finalMessageId 关联遗留)
+
+裁(正式裁定,旧路保留,T7a 分支原样):
+- **usage.updated → 裁**:live/replay 同源同 id(run-item-events.ts:537-553 派生,web id 去重收敛)、单相、消费全幂等覆盖,三面皆无
+- **im.delivery → 裁**:live-only 单源(im-message-router.ts:251 唯一产生点,合成 runId 非线程 run 域),迁入反而新增过期投递状态重放突现面(api_retry 同构)
+- **guidance.delivered → 裁**:web 零消费方 + canUseTool 闭环单源(attempt.ts:238),迁移零收益(闭环语义由 deny 工具消息承载)
+- **desktop.action_visual → 裁**:瞬态 overlay live-only(computer-use emitVisual,1600ms 自焚),迁入即 overlay 重放突现;专用原子消费不经消息投影
+
+(取证报告:`.superpowers/sdd/2026-08-17-agent-event-bus-batch5/t1-research.md`;判据 §9.1,边界倾向裁)
+
+### 9.4 任务分解(8 任务)
+
+T1 取证定案(五类代码取证→终表入 spec)/T2 类型扩展/T3 projector(thinking 折叠+user 对+aborted 终值+领域新类)/T4 sidecar 第二入口/T5 web 适配+跳过清单/T6 runId 统一/T7 删除与治理/T8 终审验收。
+
+**风险预案**:任一类迁不动 → 降级"裁定保留+旧路最小切片保留",T7 范围收缩(记录)。
+
+### 9.5 验收(8 条可断言)
+
+1. flag 与旧投影双开关盒 grep 零命中;2. 闸门+打点代码零命中;3. RUNTIME_EVENT emit 点 ≤2;4. 白名单三处手写→单源派生;5. status 归一全仓一份;6. **投影与 UI 零改动**(diff 断言);7. 四包全量绿+五场景冒烟;8. events.jsonl 唯一事件存储。
+
+### 9.6 执行前置
+
+#93→#94→#95→#97 依次合并后,基于新 main 开分支执行(删除批不可栈式)。
+
 ## 附录:与 pi 事件流的对照(设计依据)
 
 | 维度 | pi | Lume 现状 | 本设计 |
