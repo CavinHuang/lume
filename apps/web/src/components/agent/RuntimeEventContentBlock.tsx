@@ -1105,6 +1105,7 @@ const MinimalProcessGroup = memo(function MinimalProcessGroup({
   onUserResizeStart,
 }: MinimalProcessGroupProps) {
   const [expanded, setExpanded] = useState(false)
+  const shouldRenderExpanded = useDeferredUnmount(expanded)
 
   // 派生计算 memo：blocks 引用由 stabilizeRuntimeMessages + 项 A contentBlocks memo 稳定化，
   // blocks 不变时跳过重算。项 B 移除 now/计时后派生不再依赖时间，可干净 memo。
@@ -1223,30 +1224,41 @@ const MinimalProcessGroup = memo(function MinimalProcessGroup({
         className="flex h-auto items-center gap-1.5 p-0 font-normal text-[11.5px] text-foreground/40 transition-colors hover:bg-transparent hover:text-foreground/60"
       >
         {summaryNodes}
-        <ChevronRight size={12} className={cn('shrink-0 transition-transform', expanded && 'rotate-90')} />
+        <ChevronRight size={12} className={cn('shrink-0 transition-transform duration-300', expanded && 'rotate-90')} />
       </Button>
-      {expanded && (
-        <div className="mt-1.5 space-y-0.5 pl-1">
-          {blocks.map((block) => {
-            if (block.type === 'thinking') {
-              return <MinimalThinkingRow key={block.id} text={block.text} />
-            }
-            if (block.type === 'tool_call') {
-              if (block.toolCall.toolName === 'Agent') {
+      {shouldRenderExpanded && (
+        <AnimatedCollapsiblePanel open={expanded}>
+          <div className="mt-1.5 space-y-0.5 pl-1">
+            {blocks.map((block) => {
+              if (block.type === 'thinking') {
                 return (
-                  <MinimalSubagentRow
-                    key={block.id}
-                    toolCall={block.toolCall}
-                    threadId={threadId}
-                    onUserResizeStart={onUserResizeStart}
-                  />
+                  <div key={block.id} className="animate-in fade-in slide-in-from-top-1 fill-mode-both duration-300 motion-reduce:animate-none">
+                    <MinimalThinkingRow text={block.text} />
+                  </div>
                 )
               }
-              return <MinimalToolCallRow key={block.id} toolCall={block.toolCall} onOpenThreadFile={onOpenThreadFile} />
-            }
-            return null
-          })}
-        </div>
+              if (block.type === 'tool_call') {
+                if (block.toolCall.toolName === 'Agent') {
+                  return (
+                    <div key={block.id} className="animate-in fade-in slide-in-from-top-1 fill-mode-both duration-300 motion-reduce:animate-none">
+                      <MinimalSubagentRow
+                        toolCall={block.toolCall}
+                        threadId={threadId}
+                        onUserResizeStart={onUserResizeStart}
+                      />
+                    </div>
+                  )
+                }
+                return (
+                  <div key={block.id} className="animate-in fade-in slide-in-from-top-1 fill-mode-both duration-300 motion-reduce:animate-none">
+                    <MinimalToolCallRow toolCall={block.toolCall} onOpenThreadFile={onOpenThreadFile} />
+                  </div>
+                )
+              }
+              return null
+            })}
+          </div>
+        </AnimatedCollapsiblePanel>
       )}
     </div>
   )
