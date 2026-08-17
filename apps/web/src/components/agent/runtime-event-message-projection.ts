@@ -159,7 +159,9 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   if (event.type === 'memory.changed') {
     flushAssistant(state.messages, state.currentAssistant)
     state.currentAssistant = null
-    messages.push({
+    // 幂等 upsert：live 补发与 replay 重放可能携带同 id（见 consolidation/replay 的 id 公式），
+    // 无条件 push 会在刷新后突现重复的幽灵消息。
+    const message: RuntimeMessageView = {
       id: event.id,
       type: 'system',
       variant: 'memory_saved',
@@ -175,7 +177,10 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
         ...(event.memoryIds[0] ? { memoryId: event.memoryIds[0] } : {}),
         ...(event.mutationIds[0] ? { mutationId: event.mutationIds[0] } : {}),
       },
-    })
+    }
+    const existingIndex = messages.findIndex((item) => item.id === event.id)
+    if (existingIndex >= 0) messages[existingIndex] = message
+    else messages.push(message)
     return
   }
 

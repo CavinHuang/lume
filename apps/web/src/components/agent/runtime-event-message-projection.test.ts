@@ -913,6 +913,45 @@ describe('runtime-event-message-projection', () => {
     })
   })
 
+  test('upserts memory.changed messages sharing one id (live + replay dedupe, no ghost duplicate)', () => {
+    const memoryChanged = (id: string, summary: string) => event({
+      id,
+      type: 'memory.changed',
+      actor: 'consolidation',
+      workspaceSlug: 'demo',
+      mutationIds: [],
+      memoryIds: [],
+      summary,
+      details: [],
+    })
+    const messages = projectRuntimeEventMessages([
+      memoryChanged('run-1:memory.changed:uuid-same', '整理了 1 条记忆'),
+      memoryChanged('run-1:memory.changed:uuid-same', '整理了 2 条记忆'),
+    ])
+    const same = messages.filter((message) => message.id === 'run-1:memory.changed:uuid-same')
+    expect(same).toHaveLength(1)
+    expect(same[0]).toMatchObject({ type: 'system', variant: 'memory_saved', text: '整理了 2 条记忆' })
+  })
+
+  test('keeps distinct memory.changed messages side by side', () => {
+    const memoryChanged = (id: string, summary: string) => event({
+      id,
+      type: 'memory.changed',
+      actor: 'consolidation',
+      workspaceSlug: 'demo',
+      mutationIds: [],
+      memoryIds: [],
+      summary,
+      details: [],
+    })
+    const messages = projectRuntimeEventMessages([
+      memoryChanged('run-1:memory.changed:uuid-a', '整理了 1 条记忆'),
+      memoryChanged('run-1:memory.changed:uuid-b', '整理了 3 条记忆'),
+    ])
+    expect(messages.filter((message) => message.id === 'run-1:memory.changed:uuid-a')).toHaveLength(1)
+    expect(messages.filter((message) => message.id === 'run-1:memory.changed:uuid-b')).toHaveLength(1)
+  })
+
   test('projects one updating AutoDream job message', () => {
     const messages = projectRuntimeEventMessages([
       event({

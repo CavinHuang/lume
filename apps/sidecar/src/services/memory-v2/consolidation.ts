@@ -172,6 +172,10 @@ function notifyCompleted(
   const changedItems = changedItemCount(result);
   const summary = `整理了 ${changedItems} 条记忆 · 新增 ${result.actions.created} · 更新 ${result.actions.versioned + result.actions.updated} · 合并 ${result.actions.merged} · 标记过期 ${result.actions.stale} · 待处理 ${result.actions.pending}`;
   const createdAt = new Date().toISOString();
+  // uuid 段必须与落盘消息同一 uuid：replay 投影公式为
+  // `${run_id}:memory.changed:${mutation_ids[0] ?? uuid}`（consolidation 恒无 mutation_ids），
+  // live 与 replay 同 id → 前端 upsert 去重，刷新后不再突现幽灵消息。
+  const messageUuid = randomUUID();
   const message: SDKMessage = {
     type: "system",
     subtype: "memory_saved",
@@ -183,9 +187,23 @@ function notifyCompleted(
     summary,
     created_at: createdAt,
     details: [],
-    uuid: randomUUID()
+    uuid: messageUuid
   };
   appendAgentThreadSDKMessages(context.threadId, [message]);
+  const memoryChangedEvent: Extract<LumeRuntimeEvent, { type: "memory.changed" }> = {
+    id: `${context.runId}:memory.changed:${messageUuid}`,
+    type: "memory.changed",
+    threadId: context.threadId,
+    runId: context.runId,
+    createdAt,
+    actor: "consolidation",
+    workspaceSlug,
+    mutationIds: [],
+    memoryIds: [],
+    summary,
+    details: []
+  };
+  emitAgentNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: context.threadId, event: memoryChangedEvent });
   const event: Extract<LumeRuntimeEvent, { type: "memory.job.completed" }> = {
     id: `${jobId}:completed`,
     type: "memory.job.completed",
