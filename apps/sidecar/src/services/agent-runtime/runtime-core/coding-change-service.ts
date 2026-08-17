@@ -185,7 +185,7 @@ async function getSingleCodingChangeSet(
   const byPath = new Map<string, GitFileEntry>();
 
   for (const entry of statuses) {
-    if (allowedPaths && !allowedPaths.has(entry.path)) continue;
+    if (allowedPaths && !matchesPathFilter(allowedPaths, entry.path)) continue;
     const stats = tracked.get(entry.path) ?? { addedLines: 0, removedLines: 0 };
     byPath.set(entry.path, {
       path: entry.path,
@@ -194,7 +194,7 @@ async function getSingleCodingChangeSet(
     });
   }
   for (const path of untracked) {
-    if (allowedPaths && !allowedPaths.has(path)) continue;
+    if (allowedPaths && !matchesPathFilter(allowedPaths, path)) continue;
     let addedLines = 0;
     try {
       addedLines = countLines(readSafeContent(gitRoot, path));
@@ -1598,6 +1598,13 @@ function normalizePathFilter(root: string, paths?: Iterable<string>): Set<string
     if (safe) result.add(safe);
   }
   return result;
+}
+
+function matchesPathFilter(allowedPaths: Set<string>, path: string): boolean {
+  for (const allowedPath of allowedPaths) {
+    if (path === allowedPath || path.startsWith(`${allowedPath}/`)) return true;
+  }
+  return false;
 }
 
 async function getSnapshotFileChanges(
