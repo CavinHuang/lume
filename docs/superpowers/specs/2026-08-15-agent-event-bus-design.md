@@ -184,10 +184,18 @@ Phase C 删除与治理:删旧投影双开关盒/双存储之一/flag/终态闸�
 单点适配:lifecycle-event-adapter——唯一翻译点(收编其余散落 switch)
 ```
 
-### 9.3 A 表 14 类预判(执行期 T1 取证定案)
+### 9.3 A 表 14 类终表(2026-08-17 T1 取证定案)
 
-迁:message.user.submitted(骨架 user 消息对)/run.started(补映射)/run.cancelled(需 projector 补流中止终值,批次1 遗留)/assistant.thinking_delta(需 partial.thinking)/plan.preview/todo.state_updated/task.progress/advisor.reviewed/lsp.diagnostics.updated(task_notification 双入口模式)
-取证定:coding.report.updated(sidecar 第二入口)/usage.updated(倾向裁)/im.delivery、guidance.delivered、desktop.action_visual(三盲区类,首次进视野)
+迁:message.user.submitted(骨架 user 消息对)/run.started(补映射)/run.cancelled(需 projector 补流中止终值,批次1 遗留)/assistant.thinking_delta(需 partial.thinking)/plan.preview/todo.state_updated/task.progress/advisor.reviewed/lsp.diagnostics.updated(task_notification 双入口模式)/coding.report.updated(产生点双发,与 lsp 同构第二入口)
+- **coding.report.updated → 迁**:与 run.completed 双路携带同 report(run.ts:1852/1914 in-run+late vs run-item-events.ts:80/98 终态全量,双投面)+ late 后台任务终态后到达(乱序面),批次4 late 旁路 seq 单调可承载;runId 统一后消除投影 `assistant:${runId}` 前缀匹配错位(批次1 finalMessageId 关联遗留)
+
+裁(正式裁定,旧路保留,T7a 分支原样):
+- **usage.updated → 裁**:live/replay 同源同 id(run-item-events.ts:537-553 派生,web id 去重收敛)、单相、消费全幂等覆盖,三面皆无
+- **im.delivery → 裁**:live-only 单源(im-message-router.ts:251 唯一产生点,合成 runId 非线程 run 域),迁入反而新增过期投递状态重放突现面(api_retry 同构)
+- **guidance.delivered → 裁**:web 零消费方 + canUseTool 闭环单源(attempt.ts:238),迁移零收益(闭环语义由 deny 工具消息承载)
+- **desktop.action_visual → 裁**:瞬态 overlay live-only(computer-use emitVisual,1600ms 自焚),迁入即 overlay 重放突现;专用原子消费不经消息投影
+
+(取证报告:`.superpowers/sdd/2026-08-17-agent-event-bus-batch5/t1-research.md`;判据 §9.1,边界倾向裁)
 
 ### 9.4 任务分解(8 任务)
 
