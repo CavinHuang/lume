@@ -76,6 +76,10 @@ const LEGACY_SKIPPED_PILOT_EVENT_TYPES = new Set<string>([
   'run.completed',
   'run.turn_limited',
   'run.failed',
+  // 批次2 扩:tool 渲染同由 lifecycle 总线适配器驱动。
+  'tool.started',
+  'tool.completed',
+  'tool.failed',
 ])
 
 // 模块级而非 ref:适配器求差基线与去重水位须跨双挂载实例、跨 tab 切换存活

@@ -517,6 +517,22 @@ describe('runtime-event-message-projection', () => {
     })
   })
 
+  test('tool.started 幂等:双 id 空间(旧路 persisted + lifecycle 总线)同 toolCallId 只产单卡单 block', () => {
+    // 批次2 双投链路:hydrate 合并按 event.id 去重,旧路 `${runId}:${item.id}` 与总线
+    // `lifecycle:{seq}` 互异 → 双 tool.started 存活 → 投影不得 push 两个 block。
+    const messages = projectRuntimeEventMessages([
+      event({ id: 'run-1:call-1:tool.started', type: 'tool.started', toolCallId: 'call-1', toolName: 'Bash', inputPreview: { command: 'pwd' } }),
+      event({ id: 'lifecycle:9:tool.started', type: 'tool.started', toolCallId: 'call-1', toolName: 'Bash', inputPreview: { command: 'pwd' } }),
+      event({ id: 'run-1:call-1:tool.completed', type: 'tool.completed', toolCallId: 'call-1', toolName: 'Bash', resultPreview: 'ok' }),
+    ])
+
+    expect(messages[0]?.type).toBe('assistant')
+    if (messages[0]?.type !== 'assistant') return
+    expect(messages[0].toolCalls).toHaveLength(1)
+    expect(messages[0].blocks.filter((block) => block.id === 'tool:call-1')).toHaveLength(1)
+    expect(messages[0].toolCalls[0]).toMatchObject({ id: 'call-1', status: 'completed', output: 'ok' })
+  })
+
   test('marks timed out tool permission failures for the tool title badge', () => {
     const messages = projectRuntimeEventMessages([
       event({

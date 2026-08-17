@@ -1,6 +1,6 @@
 /**
  * LifecycleProjector — pure state machine projecting the engine's SDKMessage
- * stream into lifecycle skeleton events (run / turn / assistant message).
+ * stream into lifecycle skeleton events (run / turn / assistant message / tool).
  *
  * Batch 1 scope. The engine itself is untouched: this generator wraps whatever
  * AsyncIterable<SDKMessage> it is given (Task 4 wires it in the sidecar).
@@ -9,17 +9,21 @@ import { randomUUID } from 'node:crypto'
 import type { SDKMessage, SDKAssistantMessage, SDKResultMessage, SDKStreamEventMessage } from '../types.js'
 import type {
   SdkLifecycleEvent,
-  Batch1LifecycleDetail,
+  SdkLifecycleDetail,
   RunEndDetail,
   TurnEndDetail,
   MessageEndDetail,
   MessageUpdateDetail,
+  ToolStartDetail,
+  ToolEndDetail,
 } from '@lume/shared'
 
 interface PendingTurn {
   turnId: string
   /** tool_use ids from the assistant message, consumed as results pair up. */
   pendingToolUseIds: Set<string>
+  /** tool_use ids already announced via tool.start (idempotent across replays). */
+  startedToolIds: Set<string>
   /** Total tool_use blocks in the assistant message (count-based fallback). */
   expectedToolResults: number
   toolResults: TurnEndDetail['toolResults']
@@ -34,7 +38,7 @@ const DELTA_FAMILY = new Set(['text_delta', 'input_json_delta', 'thinking_delta'
 
 export async function* projectLifecycle(
   messages: AsyncIterable<SDKMessage>,
-): AsyncGenerator<SdkLifecycleEvent<Batch1LifecycleDetail>> {
+): AsyncGenerator<SdkLifecycleEvent<SdkLifecycleDetail>> {
   const runId = randomUUID()
   const ts = () => Date.now()
   let runStarted = false
@@ -46,11 +50,11 @@ export async function* projectLifecycle(
     kind: SdkLifecycleEvent['kind'],
     phase: SdkLifecycleEvent['phase'],
     turnId: string | null,
-    detail: Batch1LifecycleDetail,
-  ): SdkLifecycleEvent<Batch1LifecycleDetail> => ({ runId, turnId, ts: ts(), kind, phase, detail })
+    detail: SdkLifecycleDetail,
+  ): SdkLifecycleEvent<SdkLifecycleDetail> => ({ runId, turnId, ts: ts(), kind, phase, detail })
 
   /** Run boundary: first assistant/stream_event/tool_result opens the run. */
-  function ensureRunStarted(): SdkLifecycleEvent<Batch1LifecycleDetail> | null {
+  function ensureRunStarted(): SdkLifecycleEvent<SdkLifecycleDetail> | null {
     if (runStarted) return null
     runStarted = true
     return emit('run', 'start', null, { type: 'run.start' })
@@ -66,6 +70,7 @@ export async function* projectLifecycle(
     const turn: PendingTurn = {
       turnId: `turn-${turnCounter}`,
       pendingToolUseIds: new Set(),
+      startedToolIds: new Set(),
       expectedToolResults: 0,
       toolResults: [],
       assistantMessage: null,
@@ -95,8 +100,8 @@ export async function* projectLifecycle(
   }
 
   /** Stream events: first any stream_event opens turn + message; delta family folds + updates. */
-  function handleStreamEvent(message: SDKStreamEventMessage): SdkLifecycleEvent<Batch1LifecycleDetail>[] {
-    const out: SdkLifecycleEvent<Batch1LifecycleDetail>[] = []
+  function handleStreamEvent(message: SDKStreamEventMessage): SdkLifecycleEvent<SdkLifecycleDetail>[] {
+    const out: SdkLifecycleEvent<SdkLifecycleDetail>[] = []
     const runStart = ensureRunStarted()
     if (runStart) out.push(runStart)
     if (!currentTurn) {
@@ -125,8 +130,8 @@ export async function* projectLifecycle(
   }
 
   /** Assistant final value: message.end (+ turn.end when no tool_use or error). */
-  function handleAssistant(message: SDKAssistantMessage): SdkLifecycleEvent<Batch1LifecycleDetail>[] {
-    const out: SdkLifecycleEvent<Batch1LifecycleDetail>[] = []
+  function handleAssistant(message: SDKAssistantMessage): SdkLifecycleEvent<SdkLifecycleDetail>[] {
+    const out: SdkLifecycleEvent<SdkLifecycleDetail>[] = []
     const runStart = ensureRunStarted()
     if (runStart) out.push(runStart)
     if (!currentTurn) {
@@ -149,7 +154,20 @@ export async function* projectLifecycle(
     for (const block of message.message.content) {
       if ((block as { type?: string }).type === 'tool_use') {
         currentTurn.expectedToolResults += 1
-        currentTurn.pendingToolUseIds.add((block as { id?: string }).id ?? '')
+        const toolUse = block as { id?: string; name?: string; input?: unknown }
+        currentTurn.pendingToolUseIds.add(toolUse.id ?? '')
+        // tool.start skeleton in content order; skipped on the error chain (the
+        // tools never ran, so no dangling start) and idempotent across replays.
+        if (!message.error && !currentTurn.startedToolIds.has(toolUse.id ?? '')) {
+          currentTurn.startedToolIds.add(toolUse.id ?? '')
+          const detail: ToolStartDetail = {
+            type: 'tool.start',
+            toolCallId: toolUse.id ?? '',
+            toolName: toolUse.name ?? '',
+            input: toolUse.input,
+          }
+          out.push(emit('tool', 'start', currentTurn.turnId, detail))
+        }
       }
     }
 
@@ -173,8 +191,8 @@ export async function* projectLifecycle(
    * slot while the turn is under-filled (tolerates regenerated ids); once the
    * turn is full, extra results are orphans and ignored.
    */
-  function handleToolResult(result: { tool_use_id: string; tool_name?: string; output?: string; is_error?: boolean }): SdkLifecycleEvent<Batch1LifecycleDetail>[] {
-    const out: SdkLifecycleEvent<Batch1LifecycleDetail>[] = []
+  function handleToolResult(result: { tool_use_id: string; tool_name?: string; output?: string; is_error?: boolean; _meta?: Record<string, unknown> }): SdkLifecycleEvent<SdkLifecycleDetail>[] {
+    const out: SdkLifecycleEvent<SdkLifecycleDetail>[] = []
     const runStart = ensureRunStarted()
     if (runStart) out.push(runStart)
     if (!currentTurn || currentTurn.expectedToolResults === 0) return out
@@ -182,6 +200,16 @@ export async function* projectLifecycle(
     const underFilled = currentTurn.toolResults.length < currentTurn.expectedToolResults
     if (!idHit && !underFilled) return out // orphan
     if (idHit) currentTurn.pendingToolUseIds.delete(result.tool_use_id)
+    // tool.end before the pairing close below keeps it ahead of turn.end.
+    const toolEndDetail: ToolEndDetail = {
+      type: 'tool.end',
+      toolCallId: result.tool_use_id,
+      toolName: result.tool_name ?? '',
+      isError: result.is_error === true,
+      output: result.output ?? '',
+    }
+    if (result._meta !== undefined) toolEndDetail.meta = result._meta
+    out.push(emit('tool', 'end', currentTurn.turnId, toolEndDetail))
     currentTurn.toolResults.push({
       tool_use_id: result.tool_use_id,
       tool_name: result.tool_name,
@@ -196,7 +224,7 @@ export async function* projectLifecycle(
     return out
   }
 
-  function endTurn(turn: PendingTurn): SdkLifecycleEvent<Batch1LifecycleDetail> {
+  function endTurn(turn: PendingTurn): SdkLifecycleEvent<SdkLifecycleDetail> {
     const detail: TurnEndDetail = {
       type: 'turn.end',
       assistantMessage: turn.assistantMessage ?? { role: 'assistant', content: [] },
@@ -206,7 +234,7 @@ export async function* projectLifecycle(
   }
 
   /** Legacy result message → run.end (detail migrated from the legacy fields). */
-  function endRun(result: SDKResultMessage): SdkLifecycleEvent<Batch1LifecycleDetail>[] {
+  function endRun(result: SDKResultMessage): SdkLifecycleEvent<SdkLifecycleDetail>[] {
     if (runEnded) return []
     runEnded = true
     const detail: RunEndDetail = {
@@ -222,7 +250,7 @@ export async function* projectLifecycle(
 
   for await (const message of messages) {
     if ((message as { subagent_run_id?: string }).subagent_run_id) continue
-    let events: SdkLifecycleEvent<Batch1LifecycleDetail>[] = []
+    let events: SdkLifecycleEvent<SdkLifecycleDetail>[] = []
     switch (message.type) {
       case 'stream_event':
         events = handleStreamEvent(message)

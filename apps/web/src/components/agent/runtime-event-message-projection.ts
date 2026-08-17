@@ -385,10 +385,10 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       startedAt: event.createdAt,
       ...(event.riskLevel ? { riskLevel: event.riskLevel } : {}),
     }
-    state.currentAssistant.toolCalls.set(event.toolCallId, toolCall)
-    state.currentAssistant.toolBlockIds.set(event.toolCallId, state.currentAssistant.blocks.length)
-    state.currentAssistant.blocks.push({ type: 'tool_call', id: `tool:${event.toolCallId}`, toolCall })
-    state.currentAssistant.currentContentSegmentStart = state.currentAssistant.blocks.length
+    // 幂等 upsert(与 completed/failed 对称):批次2 总线与旧路 persisted 事件跨 id 空间,
+    // 同 toolCallId 的重复 started 只覆盖原位,不再 push 第二个 block(否则 React duplicate
+    // key + 前一张卡永久 running)。
+    upsertToolCallBlock(state.currentAssistant, event.toolCallId, toolCall)
     return
   }
 
