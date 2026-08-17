@@ -580,6 +580,9 @@
   --lume-danger-foreground: oklch(0.99 0.004 25);
   --lume-success: oklch(0.62 0.13 155);
   --lume-warning: oklch(0.52 0.14 75);
+  /* diff +/- 行字色（light 档：green-500 / red-600） */
+  --lume-diff-added-fg: #00a240;
+  --lume-diff-deleted-fg: #ba2623;
   --lume-shadow-panel: var(--shadow-panel);
   --background: var(--lume-bg-app);
   --foreground: var(--lume-text-primary);
@@ -648,6 +651,9 @@
   --lume-danger-foreground: oklch(0.14 0.025 25);
   --lume-success: oklch(0.72 0.12 155);
   --lume-warning: oklch(0.78 0.13 75);
+  /* diff +/- 行字色（dark 档：green-300 / red-400） */
+  --lume-diff-added-fg: #40c977;
+  --lume-diff-deleted-fg: #fa423e;
   --lume-shadow-panel: var(--shadow-panel);
   --background: var(--lume-bg-app);
   --foreground: var(--lume-text-primary);
