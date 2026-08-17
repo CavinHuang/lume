@@ -108,12 +108,37 @@ export interface MemoryContextUsedDetail {
   }>
 }
 
+export interface BackgroundTaskNotificationDetail {
+  type: 'background.task'
+  taskId: string
+  status: 'completed' | 'failed' | 'stopped' | 'cancelled'
+  message?: string
+  summary?: string
+  execution?: unknown
+}
+
+export interface ContextCompactionDetail {
+  type: 'context.compaction'
+  phase: 'started' | 'progress' | 'completed'
+  /** Tokens before compaction (engine compact_metadata.pre_tokens; all three phases carry it). */
+  preTokens?: number
+  /** Tokens after compaction (compact_metadata.post_tokens; completed phase only). */
+  postTokens?: number
+  /** Progress percentage (e.g. 45 of 85) while compacting. */
+  progress?: number
+  /** Completed phase: success or failure text. */
+  result?: string
+  isError?: boolean
+}
+
 export type SdkLifecycleDetail =
   | RunStartDetail | RunEndDetail
   | TurnStartDetail | TurnEndDetail
   | MessageStartDetail | MessageUpdateDetail | MessageEndDetail
   | ToolStartDetail | ToolEndDetail
   | MemoryContextUsedDetail
+  | BackgroundTaskNotificationDetail
+  | ContextCompactionDetail
 
 /** Result of AGENT_IPC_CHANNELS.GET_EVENTS. */
 export interface AgentEventsResult {

@@ -19,6 +19,10 @@ import type { AgentEventBusSource } from './useAgentEventBus'
  *   isError → run.failed;否则 run.completed
  * - memory.context.used → 同名事件(items 引用透传;批次3,数据源在 session 层
  *   而非 SDK 流,由 sidecar lume-runner 第二注入路径直发)
+ * - background.task → background.task.completed(批次4,late task_notification 旁路
+ *   + projector 主流双入口;streaming 副作用见 consumeBusEnvelope)
+ * - context.compaction 三态 → 同名三事件(批次4;trigger/policy/source/stage 用
+ *   旧路默认值,preTokens/postTokens 透传,progress clampProgress 防御复制)
  * - 其他未知 detail → 忽略
  *
  * 事件 id 由 envelope.seq 派生(线程内唯一且跨重放稳定),便于 hydrate 合并去重。
@@ -80,6 +84,10 @@ export function consumeBusEnvelope(
     } else if (event.type === 'run.failed') {
       ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'errored' }))
       ctx.setErrorMessages((prev) => ({ ...prev, [threadId]: event.error.message }))
+    } else if (event.type === 'background.task.completed') {
+      // 批次4:对齐旧路 useGlobalAgentListeners background.task.completed 分支的映射
+      // (跳过清单接管该类型后,streaming 副作用由总线版承担)
+      ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: event.status === 'failed' ? 'errored' : 'idle' }))
     }
   }
 }
@@ -187,6 +195,63 @@ export function adaptLifecycleEvent(
     }]
   }
 
+  // 批次4:background.task 领域事件(late task_notification 旁路 + projector 主流双入口,
+  // 同一 detail 形态)→ 旧路 background.task.completed。字段对齐旧路
+  // projectBackgroundTaskNotificationRuntimeEvent:taskId/status/message/summary/execution
+  // (outputFile/toolUseId/usage 骨架不携带,减配留档);旧路恒定 id 的去重语义跨入口
+  // 无稳定键可复刻——但两入口同一事件只走其一,无双发。
+  if (detail.type === 'background.task') {
+    return [{
+      id: `lifecycle:${envelope.seq}:background.task.completed`,
+      type: 'background.task.completed' as const,
+      ...base,
+      taskId: detail.taskId,
+      status: detail.status,
+      ...(detail.message !== undefined ? { message: detail.message } : {}),
+      ...(detail.summary !== undefined ? { summary: detail.summary } : {}),
+      // detail.execution 标注为 unknown(sidecar 原样透传 engine 的 ToolExecutionMetadata),
+      // 与旧路运行时同构——引用透传,宽标注处 cast(同批次3 items 模式)
+      ...(detail.execution !== undefined
+        ? { execution: detail.execution as Extract<LumeRuntimeEvent, { type: 'background.task.completed' }>['execution'] }
+        : {}),
+    }]
+  }
+
+  // 批次4:context.compaction 三态 → 旧路同形 RuntimeEvent。骨架不带 trigger/policy/
+  // source/stage,用旧路默认值补齐(run-item-events 同款);preTokens/postTokens 逐事件
+  // 透传——ContextWindowIndicator 与 runtime-state-projections 真实消费,缺省不可恢复;
+  // progress 做旧路 clampProgress 防御复制。outcome/failureReason/summary/retained*
+  // 骨架不携带,减配留档(批次5 删旧路时随总线侧补齐)。
+  if (detail.type === 'context.compaction') {
+    const compactionBase = {
+      trigger: 'auto',
+      preTokens: detail.preTokens ?? 0,
+      policy: 'sdk-default',
+      source: 'agent-sdk',
+    }
+    if (detail.phase === 'progress') {
+      return [{
+        id: `lifecycle:${envelope.seq}:context.compaction.progress`,
+        type: 'context.compaction.progress' as const,
+        ...base,
+        ...compactionBase,
+        stage: 'summarizing',
+        progress: clampCompactionProgress(detail.progress ?? 0),
+      }]
+    }
+    return [{
+      id: `lifecycle:${envelope.seq}:context.compaction.${detail.phase}`,
+      type: detail.phase === 'completed'
+        ? 'context.compaction.completed' as const
+        : 'context.compaction.started' as const,
+      ...base,
+      ...compactionBase,
+      ...(detail.phase === 'completed' && detail.postTokens !== undefined
+        ? { postTokens: detail.postTokens }
+        : {}),
+    }]
+  }
+
   // turn.* / run.start / 未知事件(含未迁移领域事件 memory.changed 等):不产 RuntimeEvent
   return []
 }
@@ -222,6 +287,12 @@ function adaptRunEnd(
     type: 'run.completed',
     ...base,
   }
+}
+
+/** 与旧路 run-item-events clampProgress 同款防御复制(骨架透传原值,钳制职责在适配器)。 */
+function clampCompactionProgress(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.min(100, Math.max(0, Math.round(value)))
 }
 
 /** 与旧路 projectAssistantMessageFinalRuntimeEvent 对齐:只留非空 text/thinking 块。 */

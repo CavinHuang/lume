@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { AGENT_IPC_CHANNELS } from "./agent.js"
 import type {
+  BackgroundTaskNotificationDetail,
+  ContextCompactionDetail,
   MemoryContextUsedDetail,
   SdkLifecycleDetail,
   ToolEndDetail,
@@ -61,5 +63,55 @@ describe("memory context detail type", () => {
       expect(detail.items[0]?.fileRef).toBeUndefined()
       expect(detail.items[0]?.claim).toBeUndefined()
     }
+  })
+})
+
+describe("batch 4 domain detail types", () => {
+  test("BackgroundTaskNotificationDetail fields and union membership", () => {
+    const d: BackgroundTaskNotificationDetail = {
+      type: "background.task",
+      taskId: "bt1",
+      status: "completed",
+      message: "Background task finished",
+      summary: "Summarized background task result",
+    }
+    const detail: SdkLifecycleDetail = d
+    expect(detail.type).toBe("background.task")
+    if (detail.type === "background.task") {
+      expect(detail.taskId).toBe("bt1")
+      expect(detail.status).toBe("completed")
+      expect(detail.message).toBe("Background task finished")
+      expect(detail.summary).toBe("Summarized background task result")
+      expect(detail.execution).toBeUndefined()
+    }
+  })
+
+  test("ContextCompactionDetail fields and union membership", () => {
+    const d: ContextCompactionDetail = {
+      type: "context.compaction",
+      phase: "progress",
+      preTokens: 1200,
+      progress: 45,
+    }
+    const detail: SdkLifecycleDetail = d
+    expect(detail.type).toBe("context.compaction")
+    if (detail.type === "context.compaction") {
+      expect(detail.phase).toBe("progress")
+      expect(detail.preTokens).toBe(1200)
+      expect(detail.progress).toBe(45)
+      expect(detail.postTokens).toBeUndefined()
+      expect(detail.result).toBeUndefined()
+      expect(detail.isError).toBeUndefined()
+    }
+    // completed 形态: postTokens 仅完成相位携带
+    const done: ContextCompactionDetail = {
+      type: "context.compaction",
+      phase: "completed",
+      preTokens: 1200,
+      postTokens: 300,
+      result: "compacted",
+      isError: false,
+    }
+    expect(done.postTokens).toBe(300)
   })
 })

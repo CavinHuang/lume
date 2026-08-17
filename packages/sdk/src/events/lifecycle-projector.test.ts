@@ -195,6 +195,100 @@ describe("projectLifecycle", () => {
     expect(starts[0].detail.toolCallId).toBe("t1")
   })
 
+  // ---- batch 4: domain events (context.compaction / background.task) ----
+
+  const compactionStarted = () => ({
+    type: "system", subtype: "context_compaction_started",
+    compact_metadata: { trigger: "auto", pre_tokens: 1000 },
+  })
+  const compactionProgress = (progress: number) => ({
+    type: "system", subtype: "context_compaction_progress",
+    compact_metadata: { trigger: "auto", pre_tokens: 1000, stage: "summarizing", progress },
+  })
+  const compactBoundary = (extra: Record<string, unknown>) => ({
+    type: "system", subtype: "compact_boundary",
+    compact_metadata: { trigger: "auto", pre_tokens: 1000, ...extra },
+  })
+  const taskNotification = (fields: Record<string, unknown>) => ({
+    type: "system", subtype: "task_notification",
+    task_id: "bt1", status: "completed", session_id: "s1", ...fields,
+  })
+
+  test("compaction tri-state: started→progress→boundary success, orthogonal to turns", async () => {
+    const events = await run([
+      compactionStarted() as any,
+      compactionProgress(45) as any,
+      compactBoundary({ post_tokens: 200, summary: "compacted summary", outcome: "succeeded" }) as any,
+    ])
+    // Pure domain events: no run.start/turn/message side effects.
+    expect(events).toHaveLength(3)
+    expect(events.map((e) => `${e.kind}.${e.phase}:${e.detail.phase}`)).toEqual([
+      "run.event:started", "run.event:progress", "run.event:completed",
+    ])
+    expect(events.every((e) => e.turnId === null)).toBe(true)
+    // T2 追加①: preTokens 逐事件透传(web ContextWindowIndicator 真实消费,缺省不可恢复)
+    expect(events.map((e) => e.detail.preTokens)).toEqual([1000, 1000, 1000])
+    expect(events[1].detail.progress).toBe(45)
+    expect(events[2].detail).toEqual({
+      type: "context.compaction", phase: "completed",
+      preTokens: 1000, postTokens: 200,
+      result: "compacted summary", isError: false,
+    })
+  })
+
+  test("compact_boundary failure → completed with isError:true and failure text", async () => {
+    const events = await run([
+      compactBoundary({ outcome: "failed", failure_reason: "provider_error" }) as any,
+    ])
+    expect(events).toHaveLength(1)
+    expect(events[0].detail).toEqual({
+      type: "context.compaction", phase: "completed",
+      preTokens: 1000,
+      result: "provider_error", isError: true,
+    })
+    // 失败路径无 post_tokens:字段不携带(不落默认 0)
+    expect(events[0].detail.postTokens).toBeUndefined()
+  })
+
+  test("in-run task_notification completed → background.task skeleton fields", async () => {
+    const events = await run([
+      taskNotification({
+        status: "completed", message: "Task finished", summary: "did things",
+        execution: { durationMs: 12 },
+      }) as any,
+    ])
+    expect(events).toHaveLength(1)
+    expect(events[0].kind).toBe("run")
+    expect(events[0].phase).toBe("event")
+    expect(events[0].turnId).toBeNull()
+    expect(events[0].detail).toEqual({
+      type: "background.task", taskId: "bt1", status: "completed",
+      message: "Task finished", summary: "did things", execution: { durationMs: 12 },
+    })
+    // Legacy status aliases map onto the four terminal states.
+    const aliasEvents = await run([
+      taskNotification({ task_id: "bt2", status: "killed" }) as any,
+      taskNotification({ task_id: "bt3", status: "canceled" }) as any,
+    ])
+    expect(aliasEvents.map((e) => e.detail.status)).toEqual(["stopped", "cancelled"])
+  })
+
+  test("task_notification attention and unknown statuses produce no skeleton", async () => {
+    const events = await run([
+      taskNotification({ task_id: "at1", status: "attention" }) as any,
+      taskNotification({ task_id: "at2", status: "running" }) as any,
+    ])
+    // T2 追加②收紧:断言全流为空(非仅 background.task 子集)——任何骨架外泄都算失败
+    expect(events).toHaveLength(0)
+  })
+
+  test("subagent task_notification produces no skeleton (entry skip)", async () => {
+    const events = await run([
+      taskNotification({ subagent_run_id: "sub-1" }) as any,
+    ])
+    expect(events).toHaveLength(0)
+  })
+
   test("thinking_delta passes through as update without folding into partial", async () => {
     const thinkingDelta = {
       type: "stream_event",
