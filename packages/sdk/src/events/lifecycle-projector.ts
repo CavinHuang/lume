@@ -393,32 +393,48 @@ export async function* projectLifecycle(
     return [emit('run', 'end', null, detail)]
   }
 
-  for await (const message of messages) {
-    if ((message as { subagent_run_id?: string }).subagent_run_id) continue
-    let events: SdkLifecycleEvent<SdkLifecycleDetail>[] = []
-    switch (message.type) {
-      case 'stream_event':
-        events = handleStreamEvent(message)
-        break
-      case 'user':
-        events = handleUser(message)
-        break
-      case 'assistant':
-        events = handleAssistant(message)
-        break
-      case 'tool_result':
-        events = handleToolResult(message.result)
-        break
-      case 'result':
-        events = endRun(message)
-        break
-      case 'system':
-        events = handleSystem(message)
-        break
-      default:
-        break
+  try {
+    for await (const message of messages) {
+      if ((message as { subagent_run_id?: string }).subagent_run_id) continue
+      let events: SdkLifecycleEvent<SdkLifecycleDetail>[] = []
+      switch (message.type) {
+        case 'stream_event':
+          events = handleStreamEvent(message)
+          break
+        case 'user':
+          events = handleUser(message)
+          break
+        case 'assistant':
+          events = handleAssistant(message)
+          break
+        case 'tool_result':
+          events = handleToolResult(message.result)
+          break
+        case 'result':
+          events = endRun(message)
+          break
+        case 'system':
+          events = handleSystem(message)
+          break
+        default:
+          break
+      }
+      for (const event of events) yield event
     }
-    for (const event of events) yield event
+  } catch (error) {
+    // F3:流抛错(引擎崩溃/传输异常,由 sidecar tee 注入投影链)≠流正常结束——
+    // run 已开未终时补 error 终值,不再留给 post-loop 误标 aborted。
+    // 错误本身仍由主流(tee rethrow)向 LumeRunner 传播,此处只负责投影终值。
+    if (runStarted && !runEnded) {
+      runEnded = true
+      yield emit('run', 'end', null, {
+        type: 'run.end',
+        stopReason: 'error',
+        isError: true,
+        numTurns: turnCounter,
+        result: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
   // Stream ends without a result message (hard abort / engine teardown): close
   // an open run as aborted — legacy run.cancelled parity. Mutually exclusive

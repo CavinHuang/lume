@@ -40,6 +40,8 @@ export interface RunEndDetail {
   stopReason: string | null
   isError: boolean
   numTurns: number
+  /** F3:错误终值携带的错误信息(流抛错/run 链内失败的补发终值);正常终值缺省。 */
+  result?: string
   /** Migrated from the legacy SDKResultMessage when present. */
   usage?: Record<string, unknown>
   costUSD?: number
