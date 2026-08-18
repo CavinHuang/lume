@@ -66,6 +66,7 @@ import type {
   AgentTaskRef,
   PlanningTodo
 } from "@lume/shared";
+import { normalizeBackgroundTaskStatus } from "@lume/shared";
 import { readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
@@ -1726,7 +1727,7 @@ export function publishBackgroundTaskNotificationToBus(input: {
   if (!isAgentLifecycleEventsEnabled()) return;
   const notification = input.event as SDKTaskNotificationMessage;
   if (notification.subagent_run_id) return;
-  const status = normalizeTaskNotificationBusStatus(notification.status);
+  const status = normalizeBackgroundTaskStatus(notification.status);
   if (!status) return;
   const detail: BackgroundTaskNotificationDetail = { type: "background.task", taskId: notification.task_id, status };
   if (typeof notification.message === "string") detail.message = notification.message;
@@ -1748,20 +1749,6 @@ export function publishBackgroundTaskNotificationToBus(input: {
         error: error instanceof Error ? error.message : String(error)
       });
     });
-}
-
-/**
- * 四态归一,与 projector normalizeTaskNotificationStatus / 旧路
- * normalizeBackgroundTaskStatus(run-item-events.ts)逐字同语义。
- */
-function normalizeTaskNotificationBusStatus(
-  status: string
-): BackgroundTaskNotificationDetail["status"] | undefined {
-  if (status === "completed") return "completed";
-  if (status === "failed") return "failed";
-  if (status === "stopped" || status === "killed") return "stopped";
-  if (status === "cancelled" || status === "canceled") return "cancelled";
-  return undefined;
 }
 
 /**

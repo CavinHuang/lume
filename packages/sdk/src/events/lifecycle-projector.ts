@@ -39,6 +39,7 @@ import type {
   TaskProgressDetail,
   AdvisorReviewedDetail,
 } from '@lume/shared'
+import { normalizeBackgroundTaskStatus } from '@lume/shared'
 
 interface PendingTurn {
   turnId: string
@@ -59,18 +60,6 @@ interface PendingTurn {
 }
 
 const DELTA_FAMILY = new Set(['text_delta', 'input_json_delta', 'thinking_delta'])
-
-/**
- * Legacy parity (run-item-events.ts normalizeBackgroundTaskStatus): only the
- * four terminal statuses map; attention and unknown statuses are dropped.
- */
-function normalizeTaskNotificationStatus(status: string): BackgroundTaskNotificationDetail['status'] | undefined {
-  if (status === 'completed') return 'completed'
-  if (status === 'failed') return 'failed'
-  if (status === 'stopped' || status === 'killed') return 'stopped'
-  if (status === 'cancelled' || status === 'canceled') return 'cancelled'
-  return undefined
-}
 
 export async function* projectLifecycle(
   messages: AsyncIterable<SDKMessage>,
@@ -323,7 +312,7 @@ export async function* projectLifecycle(
     }
     if (subtype === 'task_notification') {
       const task = message as SDKTaskNotificationMessage
-      const status = normalizeTaskNotificationStatus(task.status)
+      const status = normalizeBackgroundTaskStatus(task.status)
       if (!status) return []
       const detail: BackgroundTaskNotificationDetail = { type: 'background.task', taskId: task.task_id, status }
       if (typeof task.message === 'string') detail.message = task.message

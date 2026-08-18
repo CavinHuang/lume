@@ -1,4 +1,5 @@
 import { FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
+import { normalizeBackgroundTaskStatus } from "@lume/shared";
 import type { FileReferenceBinding, LumeRuntimeEvent, RuntimeNormalizedUsage } from "@lume/shared";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { getAgentFileContextRootPath } from "../../infra/config-paths";
@@ -561,7 +562,7 @@ function projectBackgroundTaskNotificationRuntimeEvent(
 ): Extract<LumeRuntimeEvent, { type: "background.task.completed" }> | null {
   const record = asRecord(payload);
   const taskId = stringField(record.task_id);
-  const status = normalizeBackgroundTaskStatus(record.status);
+  const status = typeof record.status === "string" ? normalizeBackgroundTaskStatus(record.status) : undefined;
   if (!taskId || !status || stringField(record.subagent_run_id)) return null;
   const usage = asRecord(record.usage);
   const execution = normalizeToolExecutionMetadata(record.execution);
@@ -582,14 +583,6 @@ function projectBackgroundTaskNotificationRuntimeEvent(
       : {}),
     ...(execution ? { execution } : {})
   };
-}
-
-function normalizeBackgroundTaskStatus(value: unknown): Extract<LumeRuntimeEvent, { type: "background.task.completed" }>['status'] | undefined {
-  if (value === "completed") return "completed";
-  if (value === "failed") return "failed";
-  if (value === "stopped" || value === "killed") return "stopped";
-  if (value === "cancelled" || value === "canceled") return "cancelled";
-  return undefined;
 }
 
 type MemoryContextUsedItem = Extract<LumeRuntimeEvent, { type: "memory.context.used" }>["items"][number];
