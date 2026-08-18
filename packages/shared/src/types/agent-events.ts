@@ -144,9 +144,9 @@ export interface ContextCompactionDetail {
   /** Completed phase: success or failure text. */
   result?: string
   isError?: boolean
-  /** Compaction trigger (engine metadata.trigger; batch 5 Low-1 de-scoped field). */
+  /** Compaction trigger 真值（engine compact_metadata.trigger 透传：'auto'|'manual'|'prompt_too_long'；缺省 'auto'）。 */
   trigger?: string
-  /** Completed phase outcome (batch 5 Low-2 de-scoped field). */
+  /** Completed phase outcome（compact_metadata.outcome 透传；仅 completed 带，started/progress 省略）。 */
   outcome?: 'succeeded' | 'failed'
 }
 

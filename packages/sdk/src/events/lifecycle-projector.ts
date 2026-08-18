@@ -290,12 +290,15 @@ export async function* projectLifecycle(
     if (subtype === 'context_compaction_started') {
       const meta = (message as SDKContextCompactionStartedMessage).compact_metadata
       const detail: ContextCompactionDetail = { type: 'context.compaction', phase: 'started' }
+      // T3: trigger 真值透传(engine compact_metadata.trigger;缺省 'auto')
+      detail.trigger = typeof meta?.trigger === 'string' ? meta.trigger : 'auto'
       if (typeof meta?.pre_tokens === 'number') detail.preTokens = meta.pre_tokens
       return [emit('run', 'event', null, detail)]
     }
     if (subtype === 'context_compaction_progress') {
       const meta = (message as SDKContextCompactionProgressMessage).compact_metadata
       const detail: ContextCompactionDetail = { type: 'context.compaction', phase: 'progress' }
+      detail.trigger = typeof meta?.trigger === 'string' ? meta.trigger : 'auto'
       if (typeof meta?.pre_tokens === 'number') detail.preTokens = meta.pre_tokens
       if (typeof meta.progress === 'number') detail.progress = meta.progress
       return [emit('run', 'event', null, detail)]
@@ -304,8 +307,11 @@ export async function* projectLifecycle(
       const meta = (message as SDKCompactBoundaryMessage).compact_metadata
       const failed = meta?.outcome === 'failed'
       const detail: ContextCompactionDetail = { type: 'context.compaction', phase: 'completed', isError: failed }
+      detail.trigger = typeof meta?.trigger === 'string' ? meta.trigger : 'auto'
       if (typeof meta?.pre_tokens === 'number') detail.preTokens = meta.pre_tokens
       if (typeof meta?.post_tokens === 'number') detail.postTokens = meta.post_tokens
+      // T3: outcome 仅 boundary(completed)带值;started/progress 省略
+      if (meta?.outcome === 'succeeded' || meta?.outcome === 'failed') detail.outcome = meta.outcome
       const result = failed ? meta?.failure_reason : meta?.summary
       if (typeof result === 'string' && result) detail.result = result
       return [emit('run', 'event', null, detail)]

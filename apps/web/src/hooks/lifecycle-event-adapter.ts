@@ -35,7 +35,8 @@ import type { AgentEventBusSource } from './useAgentEventBus'
  *   + projector 主流双入口;streaming 副作用见 consumeBusEnvelope)
  * - todo.state/advisor.reviewed/lsp.diagnostics/coding.report → 旧路同形事件(批次5,
  *   sidecar 第二入口双发,载荷同引用;字段对齐 run-item-events 对应构造)
- * - context.compaction 三态 → 同名三事件(批次4;trigger 真值+outcome 批次5 补齐,
+ * - context.compaction 三态 → 同名三事件(批次4;trigger 真值+outcome 已由 projector
+ *   透传(加固批次 detail.trigger/detail.outcome,adapter outcome 取 isError 等价),
  *   policy/source/stage 用旧路默认值,preTokens/postTokens 透传,
  *   progress clampProgress 防御复制)
  * - 批次5 裁定不映射:user.message(旧路 message.user.submitted 继续驱动)/
@@ -352,12 +353,12 @@ export function adaptLifecycleEvent(
     }]
   }
 
-  // 批次4:context.compaction 三态 → 旧路同形 RuntimeEvent。trigger 批次5 补真值
-  // (T2 Low-1 字段,projector 暂未携带,引擎接通前回落旧路默认 'auto');policy/source/
+  // 批次4:context.compaction 三态 → 旧路同形 RuntimeEvent。trigger 真值已透传
+  // (加固批次起 projector 携带 detail.trigger;缺省回落 'auto');policy/source/
   // stage 用旧路默认值;preTokens/postTokens 逐事件透传——ContextWindowIndicator 与
   // runtime-state-projections 真实消费,缺省不可恢复;progress 做旧路 clampProgress
-  // 防御复制;completed 的 outcome 批次5 补齐(←isError)。result→summary/failureReason
-  // 与 retained* 骨架不携带,减配留档(批次5 删旧路时随总线侧补齐)。
+  // 防御复制;completed 的 outcome 由 detail.isError 等价折叠(与 detail.outcome 一致)。
+  // result→summary/failureReason 与 retained* 骨架不携带,减配留档(删旧路时随总线侧补齐)。
   if (detail.type === 'context.compaction') {
     const compactionBase = {
       trigger: detail.trigger ?? 'auto',
