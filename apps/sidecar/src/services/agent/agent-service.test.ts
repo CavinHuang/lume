@@ -565,7 +565,6 @@ describe("agent-service", () => {
       createAgentThread,
       getAgentThreadSDKMessages
     } = await import("./agent-thread-manager");
-    const { listThreadRuntimeEvents } = await import("../agent-runtime/replay/runtime-event-history");
     const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
     const { sendAgentMessage } = await import("./agent-service");
     const thread = createAgentThread("late background notification", "channel-test");
@@ -595,18 +594,21 @@ describe("agent-service", () => {
       status: "completed"
     }));
     // T7a 起 late 后台通知不再走旧路 live emit(runtimeEvents 回调),经 handleAsyncEvent
-    // 旁路上事件总线;持久化语义由下方 SDK log + hydrate replay 双断言覆盖。
+    // 旁路上事件总线;T7a 起 late 后台通知的持久化语义 = SDK log 落盘 + 事件总线 envelope
+    // (events.jsonl),旧路 hydrate replay 不再投影已迁类。
     expect(runtimeEvents).not.toContainEqual(expect.objectContaining({
       type: "background.task.completed"
     }));
-    const replayed = await listThreadRuntimeEvents({
-      sessionDir: getRuntimeCoreSessionDir(thread.id),
-      threadId: thread.id
-    });
-    expect(replayed.events).toContainEqual(expect.objectContaining({
-      type: "background.task.completed",
-      taskId: "task_late",
-      status: "completed"
+    const { getThreadEventBus } = await import("../agent-runtime/events/thread-event-bus");
+    const busEvents = await getThreadEventBus(getRuntimeCoreSessionDir(thread.id)).read(thread.id);
+    expect(busEvents).toContainEqual(expect.objectContaining({
+      kind: "run",
+      phase: "event",
+      detail: {
+        type: "background.task",
+        taskId: "task_late",
+        status: "completed"
+      }
     }));
   });
 
