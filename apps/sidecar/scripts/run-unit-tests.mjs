@@ -33,11 +33,21 @@ const failures = [];
 async function worker() {
   while (cursor < tests.length) {
     const file = tests[cursor++];
+    // 每子进程独立 LUME_CONFIG_DIR:并行 worker 共享 HOME 会锁冲突
+    // (planning.sqlite 等共享 SQLite "database is locked"——CI 实证)。
     const proc = Bun.spawn({
       cmd: ["bun", "test", file],
       cwd: repositoryRoot,
       stdout: "pipe",
       stderr: "pipe",
+      env: {
+        ...process.env,
+        LUME_CONFIG_DIR: join(
+          import.meta.dir,
+          `..`,
+          `.tmp-test-config-${process.pid}-${cursor}`,
+        ),
+      },
     });
     const [exitCode, stderr, stdout] = await Promise.all([
       proc.exited,
