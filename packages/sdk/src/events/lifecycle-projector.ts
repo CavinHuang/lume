@@ -146,6 +146,8 @@ export async function* projectLifecycle(
         delta: message.event,
         partial: {
           text: currentTurn.partialText,
+          // Placeholder until batch 5 T3 folds thinking_delta into the partial.
+          thinking: '',
           toolUses: [...currentTurn.partialToolUses.values()],
         },
       }
