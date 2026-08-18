@@ -248,7 +248,7 @@ export class LumeRunner {
     const result = await consumeRuntimeCoreQueryStream({
       query,
       emit: this.emit,
-      // flag off 时 consume 内部不启用，这里只提供投影所需的线程上下文
+      // 投影线程上下文(T7c 起总线恒开,tee 无条件启用)
       lifecycle: {
         threadId: this.params.runtime.sessionId,
         sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir),

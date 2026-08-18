@@ -60,3 +60,22 @@
 
 - 存储双读过渡(4.1)与保留类清理(4.2)为独立批次,按 T1 终表保留类迁移节奏推进。
 - `[lifecycle-mismatch]` 打点退役后,时序错位观测能力消失;若后续再现 duplicate key 类问题,靠 #22 防线的行为测试(已存在)定位。
+
+## Fix round 1(评审 Major-1 + Minor-1/2)
+
+**Major-1(emit 收编时序失效)**:初版判定 `!isAgentRuntimeSessionActive(threadId)` 在 run 内失败主路径恒 true——session 于 `lume-runner` finally 的 `unregisterAbort` 注销后才走到 `emit.onError`(`attempt.ts` 对 errored 结果的二次 onError 也在注销后),判定恒 false → 合成照发,双投未消除,且合成先到时 UI 显示 runtime-error 空 failed。
+
+**采用的判定信号**:`AgentStreamEmitter.onError` 加可选第二参 `options?: { fromActiveRun?: boolean }`——错误是否来自 run 执行链由**调用位置自身**表达,不依赖任何可变运行时状态查询:
+
+- `agent-service.ts` 内层 onError(`runAgentRuntime` 的 emit,唯一 run 内失败转发点,覆盖 lume-runner.fail 与 attempt errored 二次转发两条路径)→ `emit.onError(error, { fromActiveRun: true })`
+- run 外失败(kernel `onDispatchError` 派发失败、sendAgentMessage 缺渠道/模型启动分支、planning/automation/memory-v2 后台自建 emitter)不经内层,缺省无标记 → 合成兜底照发
+- `trackedEmit`(submission 跟踪层)透传 options
+- notification emitter 合成闸门:`options?.fromActiveRun !== true` 才合成;`input.onError?.(error)` 回调不受闸门影响
+
+**否决的备选**:① status manager streaming 态——`markStreaming`(agent-service:1006)先于缺模型启动失败分支执行,且内层 onError 先 `markErrored` 再转发,run 内/外两场景在判定点读到的 phase 同为 errored,不可区分;② attempt 层查"该 run 是否发过总线 run.end"——attempt 不持有 bus 引用,需跨层传递,侵入更大。调用位置标记是唯一零歧义信号。
+
+**Minor-1**:agent-notification-service.test 补 onError 两用例(run 外缺省 → 合成发出且外层回调仍调;fromActiveRun → 不合成且回调仍调)。另加 agent-service 集成验收两用例:mock "failed-run" 路径(run 内失败)断言零 `runtime-error:` 合成;无渠道线程 sendAgentMessage(启动失败)断言恰好 1 条合成。
+
+**Minor-2**:lume-runner.ts runQueryStream 处过时 flag 注释删除。
+
+**验证**:notification-service 3 pass/0 fail;agent-service 29 pass/1 fail(既有红同名"后台任务通知仍应单独持久化",与本改动无关);sidecar typecheck 绿。

@@ -88,7 +88,9 @@ type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   onMessageAppended?: (event: AgentMessageAppendedEvent) => void;
   onComplete: (payload?: { reason?: "max_turns" }) => void;
-  onError: (error: string) => void;
+  /** options.fromActiveRun=true 表示错误来自 run 执行链(runtime 会话内失败)——
+   * 终值已由事件总线 run.end{isError} 单源交付,消费方不得再合成 run.failed(T7c)。 */
+  onError: (error: string, options?: { fromActiveRun?: boolean }) => void;
   onTitleUpdated: (title: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   onBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
@@ -1087,7 +1089,8 @@ export async function sendAgentMessage(
     },
     onError: (error) => {
       runtimeStatusManager.markErrored(threadId, error);
-      emit.onError(error);
+      // run 执行链内的失败:总线 run.end{isError} 已单源交付,转发带抑制合成标记
+      emit.onError(error, { fromActiveRun: true });
     },
     onAskUserQuestion: (request) => {
       runtimeStatusManager.markAwaitingUserAnswer(threadId, {
@@ -1358,11 +1361,11 @@ export function appendAgentMessage(
           if (context?.runId) finishPlanningExecutionRun(context.runId);
           emit.onComplete(payload);
         },
-        onError: (error) => {
+        onError: (error, options) => {
           submissionStore!.transition(clientSubmissionId, "failed", "runtime_failed");
           const context = resolvePlanningExecutionContext({ clientSubmissionId });
           if (context?.runId) finishPlanningExecutionRun(context.runId);
-          emit.onError(error);
+          emit.onError(error, options);
         }
       }
     : emit;

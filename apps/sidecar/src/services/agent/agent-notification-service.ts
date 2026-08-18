@@ -1,7 +1,6 @@
 import { AGENT_IPC_CHANNELS, type SensitiveDiagnosticEnvelope } from "@lume/shared";
 import type { appendAgentMessage } from "./agent-service";
 import { getPersistedGeneralSettings } from "../system/general-settings-service";
-import { isAgentRuntimeSessionActive } from "../agent-runtime/runtime-core/attempt";
 
 type AgentNotificationWriter = (method: string, params: unknown) => void;
 type AgentStreamEmitter = Parameters<typeof appendAgentMessage>[1];
@@ -55,10 +54,13 @@ export function createAgentNotificationEmitter(input: {
       });
     },
     onComplete: (payload) => input.onComplete?.(payload),
-    onError: (error) => {
-      // T7c 收编:活跃 run 的失败终值由事件总线 run.end{isError}→run.failed 单源交付,
-      // 此处不再合成(避免双投);仅兜底无活跃 run 的 run 外失败(队列派发/规划启动等)。
-      if (!isAgentRuntimeSessionActive(input.threadId)) {
+    onError: (error, options) => {
+      // T7c 收编(fix round 1):fromActiveRun=true 表示错误来自 run 执行链
+      // (agent-service 内层 onError 转发,run 终值已由总线 run.end{isError}→run.failed
+      // 单源交付)——不合成,避免双投。缺省(run 外失败:队列派发/启动缺模型等)
+      // 兜底合成。注:不用 isAgentRuntimeSessionActive——session 在 run 收尾
+      // unregisterAbort 后才调 onError,判定恒 false(评审 Major-1)。
+      if (options?.fromActiveRun !== true) {
         writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
           threadId: input.threadId,
           event: {

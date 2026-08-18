@@ -1243,6 +1243,59 @@ describe("agent-service", () => {
     ]);
   });
 
+  test("run 内失败不合成 runtime-error run.failed(T7c fix round 1 单源验收)", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { appendAgentMessage, waitForAgentRuntimeKernelIdleForTest } = await import("./agent-service");
+    const { createAgentNotificationEmitter } = await import("./agent-notification-service");
+    const { AGENT_IPC_CHANNELS } = await import("@lume/shared");
+    const thread = createAgentThread("run fail single source", "channel-test");
+    const notifications: Array<{ method: string; params: unknown }> = [];
+    const emitter = createAgentNotificationEmitter({
+      threadId: thread.id,
+      writeNotification: (method, params) => notifications.push({ method, params })
+    });
+
+    // mock runtime "failed-run" 路径:emit.onError 来自 run 执行链 → 应带 fromActiveRun 抑制合成
+    appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "failed-run",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, emitter);
+    await waitForAgentRuntimeKernelIdleForTest();
+
+    const syntheticRunFailed = notifications.filter((item) => {
+      if (item.method !== AGENT_IPC_CHANNELS.RUNTIME_EVENT) return false;
+      const event = (item.params as { event?: { type?: string; runId?: string } }).event;
+      return event?.type === "run.failed" && String(event.runId ?? "").startsWith("runtime-error:");
+    });
+    expect(syntheticRunFailed).toHaveLength(0);
+  });
+
+  test("无 run 启动失败(缺渠道/模型)仍合成 runtime-error run.failed 兜底", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const { createAgentNotificationEmitter } = await import("./agent-notification-service");
+    const { AGENT_IPC_CHANNELS } = await import("@lume/shared");
+    // 不传 channelId:线程无渠道/模型 → resolvedChannelId 缺失 → run 外启动失败分支
+    const thread = createAgentThread("startup fail synth");
+    const notifications: Array<{ method: string; params: unknown }> = [];
+    const emitter = createAgentNotificationEmitter({
+      threadId: thread.id,
+      writeNotification: (method, params) => notifications.push({ method, params })
+    });
+
+    await sendAgentMessage({ threadId: thread.id, userMessage: "hi" }, emitter);
+
+    const syntheticRunFailed = notifications.filter((item) => {
+      if (item.method !== AGENT_IPC_CHANNELS.RUNTIME_EVENT) return false;
+      const event = (item.params as { event?: { type?: string; runId?: string } }).event;
+      return event?.type === "run.failed" && String(event.runId ?? "").startsWith("runtime-error:");
+    });
+    expect(syntheticRunFailed).toHaveLength(1);
+    expect((syntheticRunFailed[0]!.params as { threadId: string }).threadId).toBe(thread.id);
+  });
+
   test("队列 API 应支持列表、重排、CAS 编辑和删除排队消息", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const {
