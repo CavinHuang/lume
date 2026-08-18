@@ -430,7 +430,7 @@ function adaptRunEnd(
       id: `lifecycle:${envelope.seq}:run.failed`,
       type: 'run.failed',
       ...base,
-      error: { code: 'runtime_error', message: detail.stopReason ?? 'Run failed' },
+      error: { code: 'runtime_error', message: detail.result ?? detail.stopReason ?? 'Run failed' },
     }
   }
   return {

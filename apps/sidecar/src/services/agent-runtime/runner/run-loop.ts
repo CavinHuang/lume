@@ -94,8 +94,13 @@ async function* teeLifecycleProjection(
       yield message;
     }
   } catch (error) {
-    streamFailed = true;
-    streamError = error;
+    // F3 fix round 1:abort 味异常(用户主动取消)不注入投影链——与 LumeRunner
+    // catch 的 /abort|interrupted/i 判定对齐,post-loop 保持 aborted 终值语义,
+    // 避免总线 error 与 observer cancelled 分裂(用户取消显示为 run.failed)。
+    if (!/abort|interrupted/i.test(error instanceof Error ? error.message : String(error))) {
+      streamFailed = true;
+      streamError = error;
+    }
     throw error;
   } finally {
     finished = true;

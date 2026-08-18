@@ -1148,8 +1148,8 @@ describe("LumeRunner", () => {
     const runEnds = await readBusRunEnds(agentDir, "thread-1");
     expect(runEnds).toHaveLength(1);
     // fromActiveRun 抑制旧路合成 run.failed 后,这是 web 端终值的唯一来源
-    expect(runEnds[0].runId).toBe(runner.getRunId());
-    expect(runEnds[0].detail).toMatchObject({
+    expect(runEnds[0]!.runId).toBe(runner.getRunId());
+    expect(runEnds[0]!.detail).toMatchObject({
       type: "run.end",
       stopReason: "error",
       isError: true,
@@ -1177,6 +1177,6 @@ describe("LumeRunner", () => {
 
     const runEnds = await readBusRunEnds(agentDir, "thread-1");
     expect(runEnds).toHaveLength(1);
-    expect((runEnds[0].detail as { stopReason: string }).stopReason).toBe("error");
+    expect((runEnds[0]!.detail as { stopReason: string }).stopReason).toBe("error");
   });
 });

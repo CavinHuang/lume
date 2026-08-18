@@ -234,11 +234,45 @@ describe("tee lifecycle 接线:骨架事件 runId=Lume runId(批次5 Task 6)", (
     // 终值唯一且为 error(旧链路误标 aborted)
     const runEnds = published.filter((envelope) => envelope.kind === "run" && envelope.phase === "end");
     expect(runEnds).toHaveLength(1);
-    expect(runEnds[0].detail).toMatchObject({
+    expect(runEnds[0]!.detail).toMatchObject({
       type: "run.end",
       stopReason: "error",
       isError: true,
       result: "mid-run boom"
+    });
+  });
+
+  test("AbortError 味流 reject:终值保持 aborted 语义,不误标 error(F3 fix round 1)", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "run-loop-tee-abort-"));
+    dirs.push(agentDir);
+    const threadId = "run-loop-tee-abort";
+    const sessionDir = getRuntimeCoreSessionDir(threadId, agentDir);
+    const published: SdkEventEnvelope[] = [];
+    getThreadEventBus(sessionDir).subscribe(threadId, (envelope) => {
+      published.push(envelope);
+    });
+
+    async function* abortingStream(): AsyncIterable<SDKMessage> {
+      yield {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "partial" }] }
+      } as SDKMessage;
+      throw new Error("This operation was aborted");
+    }
+
+    await expect(consumeRuntimeCoreQueryStream({
+      query: abortingStream(),
+      emit: { onSdkMessage: () => {} },
+      lifecycle: { threadId, sessionDir, runId: "lume-run-tee-abort-1" }
+    })).rejects.toThrow("This operation was aborted");
+
+    // abort 味不注入投影链:post-loop 补 aborted(与 LumeRunner abort() 判定对齐)
+    const runEnds = published.filter((envelope) => envelope.kind === "run" && envelope.phase === "end");
+    expect(runEnds).toHaveLength(1);
+    expect(runEnds[0]!.detail).toMatchObject({
+      type: "run.end",
+      stopReason: "aborted",
+      isError: false
     });
   });
 });

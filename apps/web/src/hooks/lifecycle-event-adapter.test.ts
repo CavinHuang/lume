@@ -423,6 +423,17 @@ test('push run.failed 置 errored 并写错误信息', () => {
   expect(ctx.errors).toEqual({ t1: 'error_during_execution' })
 })
 
+test('run.failed 错误文案优先取 detail.result(F3 fix round 1)', () => {
+  const ctx = createContext()
+  // F3 补发终值:stopReason='error',真实错误信息在 result
+  consumeBusEnvelope(runEnd(1, { stopReason: 'error', isError: true, result: 'session boom' }), 'push', ctx)
+  expect(ctx.errors).toEqual({ t1: 'session boom' })
+  // 无 result 时回落 stopReason(现存 isError 路径,endRun 不产 result)
+  const ctx2 = createContext()
+  consumeBusEnvelope(runEnd(1, { stopReason: 'error_during_execution', isError: true }), 'push', ctx2)
+  expect(ctx2.errors).toEqual({ t1: 'error_during_execution' })
+})
+
 test('seq 水位去重:同线程重复/回退 seq 不重复消费', () => {
   const ctx = createContext()
   consumeBusEnvelope(messageUpdate(2, 'a'), 'push', ctx)
