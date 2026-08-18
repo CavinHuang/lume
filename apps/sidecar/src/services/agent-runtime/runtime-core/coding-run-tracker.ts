@@ -517,7 +517,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     if (message.type !== "system" || message.subtype !== "task_notification" || !message.execution) {
       return false;
     }
-    const status = normalizeBackgroundTaskStatus(message.status);
+    const status = normalizeCodingExitStatus(message.status);
     observe({
       toolName: "ProcessOutput",
       input: { task_id: message.task_id },
@@ -996,7 +996,7 @@ function getTaskMetadata(result: ToolResult): {
     : undefined;
 }
 
-function normalizeBackgroundTaskStatus(status: string): "completed" | "failed" | "stopped" {
+function normalizeCodingExitStatus(status: string): "completed" | "failed" | "stopped" {
   if (status === "completed") return "completed";
   if (status === "stopped" || status === "cancelled" || status === "aborted") return "stopped";
   return "failed";
