@@ -5,6 +5,7 @@ import { XMarkdown } from '@ant-design/x-markdown'
 import { MermaidBlock, useSmoothStream } from '@lume/ui'
 import { DiffAwareMarkdownPre } from '@/components/markdown/DiffAwareMarkdownPre'
 import { ToolResultRenderer } from './tool-result-renderers'
+import { AgentLoadingIndicator } from './AgentLoadingIndicator'
 import { cn } from '@/lib/utils'
 import { formatDurationLabel, formatRunningDuration, formatCompletedDuration } from '@/lib/format-duration'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -2411,7 +2412,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
           </span>
         )}
         <span className="min-w-0 flex-1 truncate text-[var(--lume-text-muted)]">{summarizeInput(input)}</span>
-        {isRunning && <Loader2 size={13} className="shrink-0 animate-spin text-[var(--lume-accent)]" />}
+        {isRunning && <AgentLoadingIndicator variant="drive" startedAt={toolCall.startedAt} className="shrink-0" />}
         {!isRunning && (
           <ChevronDown
             size={16}

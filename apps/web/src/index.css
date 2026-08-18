@@ -432,6 +432,23 @@
   animation: lume-shimmer-text 1.45s ease-in-out infinite;
 }
 
+/* AgentLoadingIndicator 像素网格单格点亮（基态 0.15 → 峰值 1） */
+@keyframes lume-pixel-on {
+  0%, 100% { opacity: 0.15; }
+  40% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lume-shimmer-text {
+    animation: none;
+  }
+
+  /* 单格动画是内联 style 注入，需 !important 才能覆盖 */
+  [data-agent-loading-indicator] [aria-hidden] span {
+    animation: none !important;
+  }
+}
+
 :where(.lume-segmented) {
   border: 1px solid color-mix(in oklab, var(--border) 78%, transparent);
   border-radius: 10px;
