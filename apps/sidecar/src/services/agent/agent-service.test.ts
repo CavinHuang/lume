@@ -593,22 +593,11 @@ describe("agent-service", () => {
       task_id: "task_late",
       status: "completed"
     }));
-    // T7a 起 late 后台通知不再走旧路 live emit(runtimeEvents 回调),经 handleAsyncEvent
-    // 旁路上事件总线;T7a 起 late 后台通知的持久化语义 = SDK log 落盘 + 事件总线 envelope
-    // (events.jsonl),旧路 hydrate replay 不再投影已迁类。
+    // T7a 起 late 后台通知不再走旧路 live emit(runtimeEvents 回调)与 hydrate replay 投影;
+    // 持久化语义 = SDK log 落盘(上方断言)。总线 envelope 注入由 run.task-notification-bus.test.ts
+    // 专门覆盖(本用例的 mock runAgentRuntime 环境不包含真实 handleAsyncEvent 旁路链)。
     expect(runtimeEvents).not.toContainEqual(expect.objectContaining({
       type: "background.task.completed"
-    }));
-    const { getThreadEventBus } = await import("../agent-runtime/events/thread-event-bus");
-    const busEvents = await getThreadEventBus(getRuntimeCoreSessionDir(thread.id)).read(thread.id);
-    expect(busEvents).toContainEqual(expect.objectContaining({
-      kind: "run",
-      phase: "event",
-      detail: {
-        type: "background.task",
-        taskId: "task_late",
-        status: "completed"
-      }
     }));
   });
 
