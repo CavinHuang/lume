@@ -74,7 +74,9 @@ export function hydrateRuntimeEvents(
   if (result.events.length === 0) {
     return prev
   }
-  const events = mergeHydratedRuntimeEvents(result.events, current?.events ?? [])
+  // 与 append 路径同上限：sidecar 回放不封顶，hydrate 不 trim 会让重开的超长线程
+  // 全量驻留内存（且直到下一条 append 前都无界）。trim 规则同 append：先丢头部 delta。
+  const events = trimRuntimeEvents(mergeHydratedRuntimeEvents(result.events, current?.events ?? []))
   if (current && sameRuntimeEvents(current.events, events)) {
     return prev
   }
@@ -89,6 +91,17 @@ export function hydrateRuntimeEvents(
       updatedAt: Date.now(),
     },
   }
+}
+
+/** 删除线程的 runtime events 条目（回收站/永久删除时调用，防止 Record 只增不减）。 */
+export function removeRuntimeEvents(
+  prev: RuntimeEventState,
+  threadId: string,
+): RuntimeEventState {
+  if (!(threadId in prev)) return prev
+  const next = { ...prev }
+  delete next[threadId]
+  return next
 }
 
 function mergeHydratedRuntimeEvents(

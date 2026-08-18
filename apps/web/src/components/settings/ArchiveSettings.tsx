@@ -12,7 +12,8 @@ import { toast } from 'sonner'
 import type { AgentThreadMeta } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { cn } from '@/lib/utils'
-import { agentInputDraftAtom, agentInputHistoryAtom, agentWorkspacesAtom } from '@/atoms'
+import { agentInputDraftAtom, agentInputHistoryAtom, agentRuntimeEventsAtom, agentWorkspacesAtom } from '@/atoms'
+import { removeRuntimeEvents } from '@/hooks/runtime-event-state'
 import { sidecarCall } from '@/lib/desktop-api'
 import { removeDraft, removeHistory } from '@/lib/agent-input-draft-state'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -36,12 +37,14 @@ export function ArchiveSettings({ initialView }: { initialView?: 'archive' | 'tr
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const setDraftState = useSetAtom(agentInputDraftAtom)
   const setHistoryState = useSetAtom(agentInputHistoryAtom)
+  const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const removeThreadInputState = React.useCallback(
     (threadId: string) => {
       setDraftState((prev) => removeDraft(prev, threadId))
       setHistoryState((prev) => removeHistory(prev, threadId))
+      setRuntimeEvents((prev) => removeRuntimeEvents(prev, threadId))
     },
-    [setDraftState, setHistoryState],
+    [setDraftState, setHistoryState, setRuntimeEvents],
   )
   const [view, setView] = React.useState<View>(initialView ?? 'archive')
   const [archivedThreads, setArchivedThreads] = React.useState<AgentThreadMeta[]>([])

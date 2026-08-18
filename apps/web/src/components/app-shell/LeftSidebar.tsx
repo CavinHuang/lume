@@ -7,11 +7,13 @@ import {
   activeTabIdAtom,
   archiveInitialViewAtom,
   currentWorkspaceIdAtom,
+  agentRuntimeEventsAtom,
   settingsInitialTabAtom,
   sidebarCollapsedAtom,
   tabsAtom,
   workspacePinnedIdsAtom,
 } from '@/atoms'
+import { removeRuntimeEvents } from '@/hooks/runtime-event-state'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
@@ -103,6 +105,7 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
   const [workspaces, setWorkspaces] = useAtom(agentWorkspacesAtom)
   const [pinnedIds, setPinnedIds] = useAtom(workspacePinnedIdsAtom)
   const setSettingsInitialTab = useSetAtom(settingsInitialTabAtom)
+  const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const setArchiveInitialView = useSetAtom(archiveInitialViewAtom)
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<string[]>([])
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
@@ -362,6 +365,7 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
         try {
           await sidecarCall(AGENT_IPC_CHANNELS.TRASH_THREAD, { threadId: thread.id })
           removeThreadFromNavigation(thread.id)
+          setRuntimeEvents((prev) => removeRuntimeEvents(prev, thread.id))
           toast.success('已移入回收站')
         } catch (error) {
           console.error('[LeftSidebar] 移入回收站失败:', error)
