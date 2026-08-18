@@ -58,12 +58,15 @@ import type {
   RuntimeCodingReport,
   FileReferenceBinding,
   BackgroundTaskNotificationDetail,
+  CodingReportDetail,
+  LspDiagnosticsDetail,
   SubagentTaskReport,
   SubagentTask,
   SubagentTaskFeedback,
   AgentTaskRef,
   PlanningTodo
 } from "@lume/shared";
+import { normalizeBackgroundTaskStatus } from "@lume/shared";
 import { readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
@@ -154,7 +157,6 @@ import {
 import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
 import { persistAbortContinuation } from "../interruption/abort-continuation";
 import { classifyToolKind } from "../interruption/approval-service";
-import { isAgentLifecycleEventsEnabled } from "../runner/run-loop";
 import { getThreadEventBus } from "../events/thread-event-bus";
 import {
   collectAppendContextEffects,
@@ -1713,7 +1715,7 @@ async function waitForProcessJobToFinish(id: string, abortSignal?: AbortSignal):
  * ThreadEventBus 再发一份 background.task 领域事件——detail 与 projector 主流投影
  * (run-loop tee → handleSystem)同形态,双入口共用同一 bus 单调分配 seq。
  * 仅主流事件(无 subagent_run_id)且 status 归一为四态终态才发;attention/未知
- * status 丢弃。flag off 时零行为。
+ * status 丢弃。T7c 起恒开(批次1 flag 已退役)。
  */
 export function publishBackgroundTaskNotificationToBus(input: {
   sessionDir: string;
@@ -1721,10 +1723,9 @@ export function publishBackgroundTaskNotificationToBus(input: {
   runId: string;
   event: SDKMessage;
 }): void {
-  if (!isAgentLifecycleEventsEnabled()) return;
   const notification = input.event as SDKTaskNotificationMessage;
   if (notification.subagent_run_id) return;
-  const status = normalizeTaskNotificationBusStatus(notification.status);
+  const status = normalizeBackgroundTaskStatus(notification.status);
   if (!status) return;
   const detail: BackgroundTaskNotificationDetail = { type: "background.task", taskId: notification.task_id, status };
   if (typeof notification.message === "string") detail.message = notification.message;
@@ -1749,17 +1750,77 @@ export function publishBackgroundTaskNotificationToBus(input: {
 }
 
 /**
- * 四态归一,与 projector normalizeTaskNotificationStatus / 旧路
- * normalizeBackgroundTaskStatus(run-item-events.ts)逐字同语义。
+ * 批次5 第二入口:lsp_diagnostics(system 异步事件)在旧路(coding-run-tracker 观察 +
+ * run-item-events 投影 lsp.diagnostics.updated RuntimeEvent)之外,flag on 时经
+ * ThreadEventBus 再发一份 lsp.diagnostics 领域事件——字段与旧路逐一对齐
+ * (toolUseId←tool_use_id、filePath←file_path 等);filePath/sha256 缺失丢弃,
+ * 同旧路 gate(run-item-events lsp_diagnostics 分支)。T7c 起恒开(批次1 flag 已退役)。
  */
-function normalizeTaskNotificationBusStatus(
-  status: string
-): BackgroundTaskNotificationDetail["status"] | undefined {
-  if (status === "completed") return "completed";
-  if (status === "failed") return "failed";
-  if (status === "stopped" || status === "killed") return "stopped";
-  if (status === "cancelled" || status === "canceled") return "cancelled";
-  return undefined;
+export function publishLspDiagnosticsToBus(input: {
+  sessionDir: string;
+  threadId: string;
+  runId: string;
+  event: SDKMessage;
+}): void {
+  // SDKLspDiagnosticsMessage 未从 @lume/agent-sdk index 导出,与 engine 同法经 Extract 取型
+  const message = input.event as Extract<SDKMessage, { type: "system"; subtype: "lsp_diagnostics" }>;
+  if (!message.file_path || !message.sha256) return;
+  const detail: LspDiagnosticsDetail = {
+    type: "lsp.diagnostics",
+    filePath: message.file_path,
+    mutationVersion: message.mutation_version,
+    sha256: message.sha256,
+    delayed: message.delayed === true,
+    diagnostics: message.diagnostics,
+    ...(typeof message.tool_use_id === "string" ? { toolUseId: message.tool_use_id } : {})
+  };
+  void getThreadEventBus(input.sessionDir)
+    .publish(input.threadId, input.runId, {
+      runId: input.runId,
+      turnId: null,
+      ts: Date.now(),
+      kind: "run",
+      phase: "event",
+      detail
+    })
+    .catch((error) => {
+      log.warn("lsp.diagnostics 总线 publish 失败", {
+        threadId: input.threadId,
+        runId: input.runId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+}
+
+/**
+ * 批次5 第二入口:coding.report.updated 的产生点(publishCodingReport)在旧路
+ * RuntimeEvent 之外,经 ThreadEventBus 再发一份 coding.report 领域事件——
+ * detail.report 与旧路 codingReport 同引用(T1 终表:迁,双入口)。
+ * T7c 起恒开(批次1 flag 已退役)。
+ */
+export function publishCodingReportToBus(input: {
+  sessionDir: string;
+  threadId: string;
+  runId: string;
+  report: RuntimeCodingReport;
+}): void {
+  const detail: CodingReportDetail = { type: "coding.report", report: input.report };
+  void getThreadEventBus(input.sessionDir)
+    .publish(input.threadId, input.runId, {
+      runId: input.runId,
+      turnId: null,
+      ts: Date.now(),
+      kind: "run",
+      phase: "event",
+      detail
+    })
+    .catch((error) => {
+      log.warn("coding.report 总线 publish 失败", {
+        threadId: input.threadId,
+        runId: input.runId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
 }
 
 export async function createRuntimeCoreSession(
@@ -1796,22 +1857,14 @@ export async function createRuntimeCoreSession(
       && (codingReport.gitActions?.length ?? 0) === 0
     ) return;
     input.persistCodingReport?.(codingReport);
-    try {
-      input.emitRuntimeEvent?.({
-        id: `${runId}:coding-report:${Date.now()}`,
-        type: "coding.report.updated",
-        threadId: input.lumeSessionId,
-        runId,
-        createdAt: new Date().toISOString(),
-        codingReport,
-      });
-    } catch (error) {
-      log.warn("Failed to emit Coding report update", {
-        sessionId: input.lumeSessionId,
-        runId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    // 批次5 第二入口:同一 codingReport 经 ThreadEventBus 发布(flag gate 在 helper 内;
+    // 空报告早退于 publish 之前)。T7a:旧路 emitRuntimeEvent(coding.report.updated)删除。
+    publishCodingReportToBus({
+      sessionDir,
+      threadId: input.lumeSessionId,
+      runId,
+      report: codingReport
+    });
   };
   const handleToolExecution = (toolInput: Parameters<typeof codingRunTracker.observe>[0]): void => {
     codingRunTracker.observe(toolInput);
@@ -1906,6 +1959,15 @@ export async function createRuntimeCoreSession(
     // 与上方续跑 checkpoint 无耦合,runId 缺省回落线程 id)
     if (event.type === "system" && event.subtype === "task_notification") {
       publishBackgroundTaskNotificationToBus({
+        sessionDir,
+        threadId: input.lumeSessionId,
+        runId,
+        event
+      });
+    }
+    // 批次5 第二入口:lsp_diagnostics 同批再上总线(与 task_notification 同构旁路)
+    if (event.type === "system" && event.subtype === "lsp_diagnostics") {
+      publishLspDiagnosticsToBus({
         sessionDir,
         threadId: input.lumeSessionId,
         runId,

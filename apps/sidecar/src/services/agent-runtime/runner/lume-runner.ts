@@ -1,6 +1,6 @@
 import { clearQuestionHandler, setQuestionHandler, type ApiType, type CanUseToolFn, type FileCheckpoint, type SandboxSettings } from "@lume/agent-sdk";
 import { createHash } from "node:crypto";
-import type { LumeConfigHooksInternalSection, OpenAiApiMode, SDKMessage } from "@lume/shared";
+import type { AdvisorReviewedDetail, LumeConfigHooksInternalSection, OpenAiApiMode, SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter } from "./types";
 import { resolveAgentThinkingLevel } from "./model-capabilities";
@@ -16,7 +16,6 @@ import { updateRuntimeThreadMetaIfPresent } from "../runtime-core/thread-meta-ta
 import {
   consumeRuntimeCoreQueryStream,
   createObservedRuntimeEmitter,
-  isAgentLifecycleEventsEnabled,
   normalizeRuntimeCoreQueryPermissionMode
 } from "./run-loop";
 import { getThreadEventBus } from "../events/thread-event-bus";
@@ -112,6 +111,43 @@ export function resolveRuntimeCoreMaxTurns(input: AgentRuntimeRunParams["input"]
   return 80;
 }
 
+/**
+ * 批次5 第二入口:advisor 审查结论经 ThreadEventBus 发布 advisor.reviewed 领域
+ * 事件(T7c 起恒开,flag 已退役)——detail.review 为旧路 payload 同引用
+ * (severity/summary/details?/modelRef/durationMs)。
+ */
+export function publishAdvisorReviewedToBus(input: {
+  sessionDir: string;
+  threadId: string;
+  runId: string;
+  review: {
+    severity: "clear" | "suggestion" | "concern" | "blocker";
+    summary: string;
+    details?: string;
+    modelRef: string;
+    durationMs: number;
+  };
+}): void {
+  const detail: AdvisorReviewedDetail = { type: "advisor.reviewed", review: input.review };
+  if (input.review.summary) detail.summary = input.review.summary;
+  void getThreadEventBus(input.sessionDir)
+    .publish(input.threadId, input.runId, {
+      runId: input.runId,
+      turnId: null,
+      ts: Date.now(),
+      kind: "run",
+      phase: "event",
+      detail
+    })
+    .catch((error) => {
+      log.warn("advisor.reviewed 总线 publish 失败", {
+        threadId: input.threadId,
+        runId: input.runId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+}
+
 export class LumeRunner {
   readonly emit: AgentRuntimeEmitter;
   private latestMemoryContextUsedItems: CreateRuntimeCoreSessionResult["memoryContextUsedItems"] = [];
@@ -126,7 +162,9 @@ export class LumeRunner {
     private readonly workflowHooks: LumeWorkflowHookRuntimeLike | undefined,
     private readonly addMemoryCandidate: typeof smartAddMemoryV2Candidate
   ) {
-    this.emit = createObservedRuntimeEmitter(emit, observer);
+    this.emit = createObservedRuntimeEmitter(emit, observer, {
+      sessionDir: getRuntimeCoreSessionDir(params.runtime.sessionId, prepared.agentDir)
+    });
   }
 
   static async create(input: {
@@ -210,10 +248,11 @@ export class LumeRunner {
     const result = await consumeRuntimeCoreQueryStream({
       query,
       emit: this.emit,
-      // flag off 时 consume 内部不启用，这里只提供投影所需的线程上下文
+      // 投影线程上下文(T7c 起总线恒开,tee 无条件启用)
       lifecycle: {
         threadId: this.params.runtime.sessionId,
-        sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir)
+        sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir),
+        runId: this.observer.getRunId()
       }
     });
     // Soft abort no longer throws from the SDK: it fills interrupted tool
@@ -266,33 +305,12 @@ export class LumeRunner {
     if (resultWithCoding.status === "turn_limited") {
       this.observer.recordTurnLimited(resultWithCoding.errorMessage);
       await this.observer.flush();
-      this.emit.onRuntimeEvent?.({
-        id: `${this.observer.getRunId()}:run.turn_limited`,
-        type: "run.turn_limited",
-        threadId: this.observer.getThreadId(),
-        runId: this.observer.getRunId(),
-        createdAt: new Date().toISOString(),
-        reason: resultWithCoding.errorMessage,
-        ...(resultWithCoding.verificationStatus ? { verificationStatus: resultWithCoding.verificationStatus } : {}),
-        ...(resultWithCoding.codingReport ? { codingReport: resultWithCoding.codingReport } : {})
-      });
+      // T7a:run.turn_limited 已迁事件总线(run.end{stopReason:'max_turns'}),旧路 emit 删除
       return this.finalizeResult(resultWithCoding);
     }
     if (resultWithCoding.status !== "completed") {
+      // T7a:run.failed 已迁事件总线(run.end{isError}),旧路 emit 删除
       await this.observer.flush();
-      this.emit.onRuntimeEvent?.({
-        id: `${this.observer.getRunId()}:run.failed`,
-        type: "run.failed",
-        threadId: this.observer.getThreadId(),
-        runId: this.observer.getRunId(),
-        createdAt: new Date().toISOString(),
-        error: {
-          code: "runtime_error",
-          message: resultWithCoding.errorMessage
-        },
-        ...(resultWithCoding.verificationStatus ? { verificationStatus: resultWithCoding.verificationStatus } : {}),
-        ...(resultWithCoding.codingReport ? { codingReport: resultWithCoding.codingReport } : {})
-      });
       return this.finalizeResult(resultWithCoding);
     }
     return resultWithCoding;
@@ -475,7 +493,17 @@ export class LumeRunner {
       emitSdkMessage: this.emit.onSdkMessage,
       emitRuntimeEvent: this.emit.onRuntimeEvent,
       persistCodingReport: (report) => this.observer.recordCodingReport(report),
-      emitAdvisorReview: (review) => this.observer.recordAdvisorReview(review, this.emit.onRuntimeEvent),
+      emitAdvisorReview: (review) => {
+        // T7a:advisor.reviewed 已迁事件总线,旧路只落盘 item(recordAdvisorReview 不再投影)
+        this.observer.recordAdvisorReview(review);
+        // 批次5 第二入口:advisor.reviewed 领域事件经 ThreadEventBus 发布
+        publishAdvisorReviewedToBus({
+          sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir),
+          threadId: this.observer.getThreadId(),
+          runId: this.observer.getRunId(),
+          review
+        });
+      },
       emitAskUserQuestion: this.emit.onAskUserQuestion,
       emitBrowserAuthRequest: this.emit.onBrowserAuthRequest,
       emitDesktopActionRequest: this.emit.onDesktopActionRequest,
@@ -550,15 +578,7 @@ export class LumeRunner {
       }
     }
     await this.fireRunAfterComplete(runState);
-    this.emit.onRuntimeEvent?.({
-      id: `${this.observer.getRunId()}:run.completed`,
-      type: "run.completed",
-      threadId: this.observer.getThreadId(),
-      runId: this.observer.getRunId(),
-      createdAt: new Date().toISOString(),
-      ...(verificationStatus ? { verificationStatus } : {}),
-      ...(codingReport ? { codingReport } : {})
-    });
+    // T7a:run.completed 已迁事件总线(run.end),旧路 emit 删除
     this.emit.onComplete();
     return this.finalizeResult({ status: "completed", verificationStatus, codingReport });
   }
@@ -636,58 +656,40 @@ export class LumeRunner {
       hidden: true
     } as const;
     this.observer.recordMemoryContextUsed(event);
-    this.emit.onRuntimeEvent?.(event);
-    // 第二注入路径:flag on 时同一 items 经 ThreadEventBus 再发一份(run 级领域事件),
-    // 与旧路双发互不替代;sessionDir 与 run-loop tee 一致,保证同一 bus 单例与单调 seq。
-    if (isAgentLifecycleEventsEnabled()) {
-      const threadId = this.observer.getThreadId();
-      const runId = this.observer.getRunId();
-      void getThreadEventBus(getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir))
-        .publish(threadId, runId, {
-          runId,
-          turnId: null,
-          ts: Date.now(),
-          kind: "run",
-          phase: "event",
-          detail: { type: "memory.context.used", items: event.items }
-        })
-        .catch((error) => {
-          log.warn("memory.context.used 总线 publish 失败", {
-            threadId,
-            error: error instanceof Error ? error.message : String(error)
-          });
+    // T7a:memory.context.used 已迁事件总线,旧路 emit 删除(item 记录保留供 hydrate replay)。
+    // 第二注入路径:同一 items 经 ThreadEventBus 发布(run 级领域事件,T7c 起恒开);
+    // sessionDir 与 run-loop tee 一致,保证同一 bus 单例与单调 seq。
+    const threadId = this.observer.getThreadId();
+    const runId = this.observer.getRunId();
+    void getThreadEventBus(getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir))
+      .publish(threadId, runId, {
+        runId,
+        turnId: null,
+        ts: Date.now(),
+        kind: "run",
+        phase: "event",
+        detail: { type: "memory.context.used", items: event.items }
+      })
+      .catch((error) => {
+        log.warn("memory.context.used 总线 publish 失败", {
+          threadId,
+          error: error instanceof Error ? error.message : String(error)
         });
-    }
+      });
   }
 
   async abort(): Promise<AgentRuntimeRunResult> {
+    // T7a:run.cancelled 已迁事件总线(流中止终值 run.end{stopReason:'aborted'}),旧路 emit 删除
     await this.observer.flush();
-    this.emit.onRuntimeEvent?.({
-      id: `${this.observer.getRunId()}:run.cancelled`,
-      type: "run.cancelled",
-      threadId: this.observer.getThreadId(),
-      runId: this.observer.getRunId(),
-      createdAt: new Date().toISOString()
-    });
     this.emit.onComplete();
     return this.finalizeResult({ status: "aborted" });
   }
 
   async fail(errorMessage: string): Promise<AgentRuntimeRunResult> {
+    // T7a:run.failed 已迁事件总线(run.end{isError}),旧路 emit 删除
     await this.fireRunAfterFailure(errorMessage);
     await this.observer.flush();
     this.emit.onError(errorMessage);
-    this.emit.onRuntimeEvent?.({
-      id: `${this.observer.getRunId()}:run.failed`,
-      type: "run.failed",
-      threadId: this.observer.getThreadId(),
-      runId: this.observer.getRunId(),
-      createdAt: new Date().toISOString(),
-      error: {
-        code: "runtime_error",
-        message: errorMessage
-      }
-    });
     return this.finalizeResult({ status: "errored", errorMessage });
   }
 

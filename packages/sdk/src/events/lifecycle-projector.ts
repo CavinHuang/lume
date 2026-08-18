@@ -2,7 +2,9 @@
  * LifecycleProjector — pure state machine projecting the engine's SDKMessage
  * stream into lifecycle skeleton events (run / turn / assistant message /
  * tool) plus domain events (memory.context.used wiring lives in the sidecar;
- * here: tool lifecycle batch 2, compaction & in-run task_notification batch 4).
+ * here: tool lifecycle batch 2, compaction & in-run task_notification batch 4,
+ * thinking folding / user message pair / aborted run.end / plan-todo-progress-
+ * advisor domain classes batch 5).
  *
  * The engine itself is untouched: this generator wraps whatever
  * AsyncIterable<SDKMessage> it is given (the sidecar run-loop tee wires it in).
@@ -10,6 +12,7 @@
 import { randomUUID } from 'node:crypto'
 import type {
   SDKMessage,
+  SDKUserMessage,
   SDKAssistantMessage,
   SDKResultMessage,
   SDKStreamEventMessage,
@@ -17,6 +20,7 @@ import type {
   SDKContextCompactionProgressMessage,
   SDKCompactBoundaryMessage,
   SDKTaskNotificationMessage,
+  SDKTaskProgressMessage,
 } from '../types.js'
 import type {
   SdkLifecycleEvent,
@@ -25,11 +29,17 @@ import type {
   TurnEndDetail,
   MessageEndDetail,
   MessageUpdateDetail,
+  UserMessageDetail,
   ToolStartDetail,
   ToolEndDetail,
   BackgroundTaskNotificationDetail,
   ContextCompactionDetail,
+  PlanPreviewDetail,
+  TodoStateDetail,
+  TaskProgressDetail,
+  AdvisorReviewedDetail,
 } from '@lume/shared'
+import { normalizeBackgroundTaskStatus } from '@lume/shared'
 
 interface PendingTurn {
   turnId: string
@@ -43,28 +53,22 @@ interface PendingTurn {
   assistantMessage: { role: 'assistant'; content: unknown[] } | null
   messageStarted: boolean
   partialText: string
+  /** Cumulative thinking text folded from thinking_delta (batch 5). */
+  partialThinking: string
   /** Folding slots per streaming content_block index. */
   partialToolUses: Map<number, { id: string; name: string; partialJson: string }>
 }
 
 const DELTA_FAMILY = new Set(['text_delta', 'input_json_delta', 'thinking_delta'])
 
-/**
- * Legacy parity (run-item-events.ts normalizeBackgroundTaskStatus): only the
- * four terminal statuses map; attention and unknown statuses are dropped.
- */
-function normalizeTaskNotificationStatus(status: string): BackgroundTaskNotificationDetail['status'] | undefined {
-  if (status === 'completed') return 'completed'
-  if (status === 'failed') return 'failed'
-  if (status === 'stopped' || status === 'killed') return 'stopped'
-  if (status === 'cancelled' || status === 'canceled') return 'cancelled'
-  return undefined
-}
-
 export async function* projectLifecycle(
   messages: AsyncIterable<SDKMessage>,
+  options?: { runId?: string },
 ): AsyncGenerator<SdkLifecycleEvent<SdkLifecycleDetail>> {
-  const runId = randomUUID()
+  // runId 缺省回落自产 UUID(向后兼容);sidecar tee 接线后恒传 Lume runId——
+  // 同一线程 events.jsonl 不再混两种 runId(memory 尾巴拦截闸门/compaction
+  // divider 的双域根因,批次5 Task 6)。
+  const runId = options?.runId ?? randomUUID()
   const ts = () => Date.now()
   let runStarted = false
   let runEnded = false
@@ -101,21 +105,24 @@ export async function* projectLifecycle(
       assistantMessage: null,
       messageStarted: false,
       partialText: '',
+      partialThinking: '',
       partialToolUses: new Map(),
     }
     return turn
   }
 
   /**
-   * Fold a content_block_delta family event into the cumulative partial.
-   * thinking_delta is NOT folded in batch 1 — it only rides the update's
-   * passthrough delta (partial.thinking lands in batch 2).
+   * Fold a content_block_delta family event into the cumulative partial:
+   * text_delta → partialText, thinking_delta → partialThinking (batch 5),
+   * input_json_delta → per-index tool_use slot.
    */
   function foldDelta(turn: PendingTurn, event: SDKStreamEventMessage['event']): void {
-    const delta = event.delta as { type: string; text?: string; partial_json?: string } | undefined
+    const delta = event.delta as { type: string; text?: string; partial_json?: string; thinking?: string } | undefined
     if (!delta) return
     if (delta.type === 'text_delta') {
       turn.partialText += delta.text ?? ''
+    } else if (delta.type === 'thinking_delta') {
+      turn.partialThinking += delta.thinking ?? ''
     } else if (delta.type === 'input_json_delta') {
       const index = (event.index as number) ?? 0
       const slot = turn.partialToolUses.get(index) ?? { id: '', name: '', partialJson: '' }
@@ -139,19 +146,32 @@ export async function* projectLifecycle(
     }
     const deltaType = (message.event.delta as { type?: string } | undefined)?.type
     if (message.event.type === 'content_block_delta' && deltaType && DELTA_FAMILY.has(deltaType)) {
-      // thinking_delta passes through without folding (see foldDelta).
-      if (deltaType !== 'thinking_delta') foldDelta(currentTurn, message.event)
+      foldDelta(currentTurn, message.event)
       const detail: MessageUpdateDetail = {
         type: 'message.update',
         delta: message.event,
         partial: {
           text: currentTurn.partialText,
+          thinking: currentTurn.partialThinking,
           toolUses: [...currentTurn.partialToolUses.values()],
         },
       }
       out.push(emit('message', 'update', currentTurn.turnId, detail))
     }
     return out
+  }
+
+  /**
+   * User messages live outside the turn lifecycle (they precede a turn, never
+   * join it): a single-loop-iteration start→end pair with turnId null. They
+   * never open the run — the run boundary stays assistant/stream/tool_result.
+   */
+  function handleUser(message: SDKUserMessage): SdkLifecycleEvent<SdkLifecycleDetail>[] {
+    const detail: UserMessageDetail = { type: 'user.message', content: message.message.content }
+    return [
+      emit('message', 'start', null, { type: 'message.start' }),
+      emit('message', 'end', null, detail),
+    ]
   }
 
   /** Assistant final value: message.end (+ turn.end when no tool_use or error). */
@@ -259,10 +279,11 @@ export async function* projectLifecycle(
   }
 
   /**
-   * System-family domain events: compaction tri-state + in-run task_notification.
-   * Pure domain skeletons (kind 'run'/phase 'event'/turnId null) — they never
-   * open the run nor join turn pairing (orthogonal to the message/tool stream).
-   * Subagent forms are already skipped at the loop entry.
+   * System-family domain events: compaction tri-state + in-run task_notification
+   * (batch 4), plan.preview / todo.state / task.progress / advisor.reviewed
+   * (batch 5). Pure domain skeletons (kind 'run'/phase 'event'/turnId null) —
+   * they never open the run nor join turn pairing (orthogonal to the
+   * message/tool stream). Subagent forms are already skipped at the loop entry.
    */
   function handleSystem(message: SDKMessage): SdkLifecycleEvent<SdkLifecycleDetail>[] {
     const subtype = (message as { subtype?: string }).subtype
@@ -291,12 +312,67 @@ export async function* projectLifecycle(
     }
     if (subtype === 'task_notification') {
       const task = message as SDKTaskNotificationMessage
-      const status = normalizeTaskNotificationStatus(task.status)
+      const status = normalizeBackgroundTaskStatus(task.status)
       if (!status) return []
       const detail: BackgroundTaskNotificationDetail = { type: 'background.task', taskId: task.task_id, status }
       if (typeof task.message === 'string') detail.message = task.message
       if (typeof task.summary === 'string') detail.summary = task.summary
       if (task.execution !== undefined) detail.execution = task.execution
+      return [emit('run', 'event', null, detail)]
+    }
+    if (subtype === 'plan_preview') {
+      // No native SDK emitter yet: payload shape pinned to the legacy
+      // LumePlanPreviewItem / PlanPreviewRuntimeEvent fields the adapter folds.
+      const m = message as unknown as Record<string, unknown>
+      const detail: PlanPreviewDetail = {
+        type: 'plan.preview',
+        content: {
+          contractId: m.contractId,
+          title: m.title,
+          summary: m.summary,
+          markdown: m.markdown,
+          stepCount: m.stepCount,
+          ...(typeof m.planFilePath === 'string' ? { planFilePath: m.planFilePath } : {}),
+          ...(typeof m.planVerified === 'boolean' ? { planVerified: m.planVerified } : {}),
+        },
+      }
+      return [emit('run', 'event', null, detail)]
+    }
+    if (subtype === 'todo_state_updated') {
+      // Same as above: legacy TodoStateUpdatedRuntimeEvent payload shape.
+      const m = message as { todos?: unknown; currentActiveForm?: unknown }
+      const detail: TodoStateDetail = { type: 'todo.state', state: { todos: m.todos, currentActiveForm: m.currentActiveForm } }
+      return [emit('run', 'event', null, detail)]
+    }
+    if (subtype === 'task_progress') {
+      // Real SDK shape (SDKTaskProgressMessage, background task progress); the
+      // subagent-tagged variant is already skipped at the loop entry.
+      const m = message as SDKTaskProgressMessage
+      const detail: TaskProgressDetail = {
+        type: 'task.progress',
+        taskId: m.task_id,
+        progress: {
+          description: m.description,
+          usage: m.usage,
+          ...(m.last_tool_name ? { last_tool_name: m.last_tool_name } : {}),
+          ...(m.summary ? { summary: m.summary } : {}),
+          ...(m.tool_use_id ? { tool_use_id: m.tool_use_id } : {}),
+        },
+      }
+      return [emit('run', 'event', null, detail)]
+    }
+    if (subtype === 'advisor_reviewed') {
+      // Same as plan/todo: legacy AdvisorReviewedRuntimeEvent payload shape.
+      const m = message as unknown as Record<string, unknown>
+      const review = {
+        severity: m.severity,
+        summary: m.summary,
+        ...(m.details !== undefined ? { details: m.details } : {}),
+        modelRef: m.modelRef,
+        ...(typeof m.durationMs === 'number' ? { durationMs: m.durationMs } : {}),
+      }
+      const detail: AdvisorReviewedDetail = { type: 'advisor.reviewed', review }
+      if (typeof m.summary === 'string') detail.summary = m.summary
       return [emit('run', 'event', null, detail)]
     }
     return []
@@ -324,6 +400,9 @@ export async function* projectLifecycle(
       case 'stream_event':
         events = handleStreamEvent(message)
         break
+      case 'user':
+        events = handleUser(message)
+        break
       case 'assistant':
         events = handleAssistant(message)
         break
@@ -341,6 +420,11 @@ export async function* projectLifecycle(
     }
     for (const event of events) yield event
   }
-  // Stream ends without a result message: no run.end here — the sidecar's legacy
-  // result path is the fallback source of truth (accepted for batch 1).
+  // Stream ends without a result message (hard abort / engine teardown): close
+  // an open run as aborted — legacy run.cancelled parity. Mutually exclusive
+  // with the result path by construction (endRun already flipped runEnded).
+  if (runStarted && !runEnded) {
+    runEnded = true
+    yield emit('run', 'end', null, { type: 'run.end', stopReason: 'aborted', isError: false, numTurns: turnCounter })
+  }
 }

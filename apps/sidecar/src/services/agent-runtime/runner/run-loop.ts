@@ -1,5 +1,5 @@
 import { projectLifecycle, type PermissionMode } from "@lume/agent-sdk";
-import type { SdkLifecycleDetail, SDKMessage, SdkLifecycleEvent } from "@lume/shared";
+import type { SdkLifecycleDetail, SDKMessage, SdkLifecycleEvent, TodoStateDetail } from "@lume/shared";
 import {
   appendSdkMessage,
   createAgentStreamAccumulatorState,
@@ -15,13 +15,10 @@ const log = createLogger("run-loop");
 interface ConsumeRuntimeCoreQueryStreamInput {
   query: AsyncIterable<SDKMessage>;
   emit: Pick<AgentRuntimeEmitter, "onSdkMessage">;
-  /** AGENT_LIFECYCLE_EVENTS=1 时投影 lifecycle 事件到 ThreadEventBus；缺省不启用 */
-  lifecycle?: { threadId: string; sessionDir: string };
-}
-
-/** Batch 1 feature flag：默认 off，显式置 1 才接入 lifecycle 投影。 */
-export function isAgentLifecycleEventsEnabled(): boolean {
-  return process.env.AGENT_LIFECYCLE_EVENTS === "1";
+  /** 投影 lifecycle 事件到 ThreadEventBus(批次5 T7c 起恒开,flag 已退役)。
+   * runId=Lume runId(lume-runner 构造处 observer.getRunId())——骨架事件弃自产
+   * UUID,与第二入口领域事件(memory/todo/advisor)同域(批次5 Task 6)。 */
+  lifecycle?: { threadId: string; sessionDir: string; runId: string };
 }
 
 /**
@@ -32,7 +29,7 @@ export function isAgentLifecycleEventsEnabled(): boolean {
  */
 async function* teeLifecycleProjection(
   query: AsyncIterable<SDKMessage>,
-  target: { threadId: string; sessionDir: string }
+  target: { threadId: string; sessionDir: string; runId: string }
 ): AsyncGenerator<SDKMessage> {
   const bus = getThreadEventBus(target.sessionDir);
   const pending: SDKMessage[] = [];
@@ -59,7 +56,7 @@ async function* teeLifecycleProjection(
   };
   const pump = (async () => {
     try {
-      for await (const event of projectLifecycle(projected)) {
+      for await (const event of projectLifecycle(projected, { runId: target.runId })) {
         // 前提钉死:bus.publish 当前全同步(appendFileSync 后 resolve),resolve 即持久化完成。
         // 若改为真异步 fs,promise 化的 publish 在此 fire-and-forget 会让 finally 的 await pump
         // 不再等事件落盘——run 尾事件将静默丢失;重构前必须同步改造 tee(pump 内 await publish)。
@@ -112,9 +109,7 @@ export async function consumeRuntimeCoreQueryStream({
   lifecycle
 }: ConsumeRuntimeCoreQueryStreamInput) {
   const accumulator = createAgentStreamAccumulatorState();
-  const source = lifecycle && isAgentLifecycleEventsEnabled()
-    ? teeLifecycleProjection(query, lifecycle)
-    : query;
+  const source = lifecycle ? teeLifecycleProjection(query, lifecycle) : query;
 
   for await (const message of source) {
     emit.onSdkMessage(message);
@@ -175,7 +170,8 @@ export function getRuntimeCoreStreamError(message: SDKMessage): string | null {
 
 export function createObservedRuntimeEmitter(
   emit: AgentRuntimeEmitter,
-  observer: LumeRunObserver
+  observer: LumeRunObserver,
+  bus?: { sessionDir: string }
 ): AgentRuntimeEmitter {
   return {
     ...emit,
@@ -188,8 +184,31 @@ export function createObservedRuntimeEmitter(
       emit.onSdkMessage(message);
     },
     onTodoUpdated: (state) => {
-      observer.recordTodoState(state, emit.onRuntimeEvent);
+      observer.recordTodoState(state);
       emit.onTodoUpdated?.(state);
+      // 批次5 第二入口:同一 todo state 经 ThreadEventBus 发布(run 级领域事件,
+      // T7c 起恒开);T7a 后旧路投影已删,item 记录仅供 hydrate replay。
+      // runId 取 Lume run id,detail.state 与回调载荷同引用。
+      if (bus) {
+        const threadId = observer.getThreadId();
+        const runId = observer.getRunId();
+        const detail: TodoStateDetail = { type: "todo.state", state };
+        void getThreadEventBus(bus.sessionDir)
+          .publish(threadId, runId, {
+            runId,
+            turnId: null,
+            ts: Date.now(),
+            kind: "run",
+            phase: "event",
+            detail
+          })
+          .catch((error) => {
+            log.warn("todo.state 总线 publish 失败", {
+              threadId,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          });
+      }
     },
     onToolPermissionRequest: (request) => {
       void observer.flush();
