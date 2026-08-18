@@ -1,5 +1,5 @@
 import { projectLifecycle, type PermissionMode } from "@lume/agent-sdk";
-import type { SdkLifecycleDetail, SDKMessage, SdkLifecycleEvent } from "@lume/shared";
+import type { SdkLifecycleDetail, SDKMessage, SdkLifecycleEvent, TodoStateDetail } from "@lume/shared";
 import {
   appendSdkMessage,
   createAgentStreamAccumulatorState,
@@ -175,7 +175,8 @@ export function getRuntimeCoreStreamError(message: SDKMessage): string | null {
 
 export function createObservedRuntimeEmitter(
   emit: AgentRuntimeEmitter,
-  observer: LumeRunObserver
+  observer: LumeRunObserver,
+  bus?: { sessionDir: string }
 ): AgentRuntimeEmitter {
   return {
     ...emit,
@@ -190,6 +191,29 @@ export function createObservedRuntimeEmitter(
     onTodoUpdated: (state) => {
       observer.recordTodoState(state, emit.onRuntimeEvent);
       emit.onTodoUpdated?.(state);
+      // 批次5 第二入口:flag on 时同一 todo state 经 ThreadEventBus 再发一份(run 级
+      // 领域事件),与旧路(recordTodoState → projectRunItemToRuntimeEvents)双发
+      // 互不替代;runId 取 Lume run id,detail.state 与旧路载荷同引用。
+      if (bus && isAgentLifecycleEventsEnabled()) {
+        const threadId = observer.getThreadId();
+        const runId = observer.getRunId();
+        const detail: TodoStateDetail = { type: "todo.state", state };
+        void getThreadEventBus(bus.sessionDir)
+          .publish(threadId, runId, {
+            runId,
+            turnId: null,
+            ts: Date.now(),
+            kind: "run",
+            phase: "event",
+            detail
+          })
+          .catch((error) => {
+            log.warn("todo.state 总线 publish 失败", {
+              threadId,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          });
+      }
     },
     onToolPermissionRequest: (request) => {
       void observer.flush();

@@ -58,6 +58,8 @@ import type {
   RuntimeCodingReport,
   FileReferenceBinding,
   BackgroundTaskNotificationDetail,
+  CodingReportDetail,
+  LspDiagnosticsDetail,
   SubagentTaskReport,
   SubagentTask,
   SubagentTaskFeedback,
@@ -1762,6 +1764,82 @@ function normalizeTaskNotificationBusStatus(
   return undefined;
 }
 
+/**
+ * 批次5 第二入口:lsp_diagnostics(system 异步事件)在旧路(coding-run-tracker 观察 +
+ * run-item-events 投影 lsp.diagnostics.updated RuntimeEvent)之外,flag on 时经
+ * ThreadEventBus 再发一份 lsp.diagnostics 领域事件——字段与旧路逐一对齐
+ * (toolUseId←tool_use_id、filePath←file_path 等);filePath/sha256 缺失丢弃,
+ * 同旧路 gate(run-item-events lsp_diagnostics 分支)。flag off 时零行为。
+ */
+export function publishLspDiagnosticsToBus(input: {
+  sessionDir: string;
+  threadId: string;
+  runId: string;
+  event: SDKMessage;
+}): void {
+  if (!isAgentLifecycleEventsEnabled()) return;
+  // SDKLspDiagnosticsMessage 未从 @lume/agent-sdk index 导出,与 engine 同法经 Extract 取型
+  const message = input.event as Extract<SDKMessage, { type: "system"; subtype: "lsp_diagnostics" }>;
+  if (!message.file_path || !message.sha256) return;
+  const detail: LspDiagnosticsDetail = {
+    type: "lsp.diagnostics",
+    filePath: message.file_path,
+    mutationVersion: message.mutation_version,
+    sha256: message.sha256,
+    delayed: message.delayed === true,
+    diagnostics: message.diagnostics,
+    ...(typeof message.tool_use_id === "string" ? { toolUseId: message.tool_use_id } : {})
+  };
+  void getThreadEventBus(input.sessionDir)
+    .publish(input.threadId, input.runId, {
+      runId: input.runId,
+      turnId: null,
+      ts: Date.now(),
+      kind: "run",
+      phase: "event",
+      detail
+    })
+    .catch((error) => {
+      log.warn("lsp.diagnostics 总线 publish 失败", {
+        threadId: input.threadId,
+        runId: input.runId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+}
+
+/**
+ * 批次5 第二入口:coding.report.updated 的产生点(publishCodingReport)在旧路
+ * RuntimeEvent 之外,flag on 时经 ThreadEventBus 再发一份 coding.report 领域
+ * 事件——detail.report 与旧路 codingReport 同引用(T1 终表:迁,双入口)。
+ * flag off 时零行为。
+ */
+export function publishCodingReportToBus(input: {
+  sessionDir: string;
+  threadId: string;
+  runId: string;
+  report: RuntimeCodingReport;
+}): void {
+  if (!isAgentLifecycleEventsEnabled()) return;
+  const detail: CodingReportDetail = { type: "coding.report", report: input.report };
+  void getThreadEventBus(input.sessionDir)
+    .publish(input.threadId, input.runId, {
+      runId: input.runId,
+      turnId: null,
+      ts: Date.now(),
+      kind: "run",
+      phase: "event",
+      detail
+    })
+    .catch((error) => {
+      log.warn("coding.report 总线 publish 失败", {
+        threadId: input.threadId,
+        runId: input.runId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+}
+
 export async function createRuntimeCoreSession(
   input: CreateRuntimeCoreSessionInput
 ): Promise<CreateRuntimeCoreSessionResult> {
@@ -1796,6 +1874,14 @@ export async function createRuntimeCoreSession(
       && (codingReport.gitActions?.length ?? 0) === 0
     ) return;
     input.persistCodingReport?.(codingReport);
+    // 批次5 第二入口:同一 codingReport 经 ThreadEventBus 再发一份(与旧路双发,
+    // flag gate 在 helper 内;空报告早退于两条路之前)
+    publishCodingReportToBus({
+      sessionDir,
+      threadId: input.lumeSessionId,
+      runId,
+      report: codingReport
+    });
     try {
       input.emitRuntimeEvent?.({
         id: `${runId}:coding-report:${Date.now()}`,
@@ -1906,6 +1992,15 @@ export async function createRuntimeCoreSession(
     // 与上方续跑 checkpoint 无耦合,runId 缺省回落线程 id)
     if (event.type === "system" && event.subtype === "task_notification") {
       publishBackgroundTaskNotificationToBus({
+        sessionDir,
+        threadId: input.lumeSessionId,
+        runId,
+        event
+      });
+    }
+    // 批次5 第二入口:lsp_diagnostics 同批再上总线(与 task_notification 同构旁路)
+    if (event.type === "system" && event.subtype === "lsp_diagnostics") {
+      publishLspDiagnosticsToBus({
         sessionDir,
         threadId: input.lumeSessionId,
         runId,

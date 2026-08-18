@@ -1,6 +1,6 @@
 import { clearQuestionHandler, setQuestionHandler, type ApiType, type CanUseToolFn, type FileCheckpoint, type SandboxSettings } from "@lume/agent-sdk";
 import { createHash } from "node:crypto";
-import type { LumeConfigHooksInternalSection, OpenAiApiMode, SDKMessage } from "@lume/shared";
+import type { AdvisorReviewedDetail, LumeConfigHooksInternalSection, OpenAiApiMode, SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter } from "./types";
 import { resolveAgentThinkingLevel } from "./model-capabilities";
@@ -112,6 +112,45 @@ export function resolveRuntimeCoreMaxTurns(input: AgentRuntimeRunParams["input"]
   return 80;
 }
 
+/**
+ * 批次5 第二入口:advisor 审查结论在旧路(recordAdvisorReview → run items →
+ * advisor.reviewed RuntimeEvent)之外,flag on 时经 ThreadEventBus 再发一份
+ * advisor.reviewed 领域事件——detail.review 为旧路 payload 同引用
+ * (severity/summary/details?/modelRef/durationMs)。flag off 时零行为。
+ */
+export function publishAdvisorReviewedToBus(input: {
+  sessionDir: string;
+  threadId: string;
+  runId: string;
+  review: {
+    severity: "clear" | "suggestion" | "concern" | "blocker";
+    summary: string;
+    details?: string;
+    modelRef: string;
+    durationMs: number;
+  };
+}): void {
+  if (!isAgentLifecycleEventsEnabled()) return;
+  const detail: AdvisorReviewedDetail = { type: "advisor.reviewed", review: input.review };
+  if (input.review.summary) detail.summary = input.review.summary;
+  void getThreadEventBus(input.sessionDir)
+    .publish(input.threadId, input.runId, {
+      runId: input.runId,
+      turnId: null,
+      ts: Date.now(),
+      kind: "run",
+      phase: "event",
+      detail
+    })
+    .catch((error) => {
+      log.warn("advisor.reviewed 总线 publish 失败", {
+        threadId: input.threadId,
+        runId: input.runId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+}
+
 export class LumeRunner {
   readonly emit: AgentRuntimeEmitter;
   private latestMemoryContextUsedItems: CreateRuntimeCoreSessionResult["memoryContextUsedItems"] = [];
@@ -126,7 +165,9 @@ export class LumeRunner {
     private readonly workflowHooks: LumeWorkflowHookRuntimeLike | undefined,
     private readonly addMemoryCandidate: typeof smartAddMemoryV2Candidate
   ) {
-    this.emit = createObservedRuntimeEmitter(emit, observer);
+    this.emit = createObservedRuntimeEmitter(emit, observer, {
+      sessionDir: getRuntimeCoreSessionDir(params.runtime.sessionId, prepared.agentDir)
+    });
   }
 
   static async create(input: {
@@ -475,7 +516,16 @@ export class LumeRunner {
       emitSdkMessage: this.emit.onSdkMessage,
       emitRuntimeEvent: this.emit.onRuntimeEvent,
       persistCodingReport: (report) => this.observer.recordCodingReport(report),
-      emitAdvisorReview: (review) => this.observer.recordAdvisorReview(review, this.emit.onRuntimeEvent),
+      emitAdvisorReview: (review) => {
+        this.observer.recordAdvisorReview(review, this.emit.onRuntimeEvent);
+        // 批次5 第二入口:advisor.reviewed 领域事件经 ThreadEventBus 双发(与旧路互不替代)
+        publishAdvisorReviewedToBus({
+          sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir),
+          threadId: this.observer.getThreadId(),
+          runId: this.observer.getRunId(),
+          review
+        });
+      },
       emitAskUserQuestion: this.emit.onAskUserQuestion,
       emitBrowserAuthRequest: this.emit.onBrowserAuthRequest,
       emitDesktopActionRequest: this.emit.onDesktopActionRequest,

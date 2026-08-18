@@ -166,9 +166,9 @@ export interface TodoStateDetail {
 
 export interface TaskProgressDetail {
   type: 'task.progress'
-  /** Task list identity (legacy taskListId/taskRunId, normalized by the adapter). */
+  /** SDK background task id (system task_progress message's task_id). */
   taskId: string
-  /** Legacy TaskProgressRuntimeEvent payload (status/tasks/message/...). */
+  /** SDK background progress shape: description/usage (plus last_tool_name/summary/tool_use_id when present). */
   progress: unknown
 }
 
