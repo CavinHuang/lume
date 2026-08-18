@@ -14,6 +14,7 @@ import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { cn } from '@/lib/utils'
 import { agentInputDraftAtom, agentInputHistoryAtom, agentRuntimeEventsAtom, agentWorkspacesAtom } from '@/atoms'
 import { removeRuntimeEvents } from '@/hooks/runtime-event-state'
+import { threadMessagesCache } from '@/components/agent/thread-messages-cache'
 import { sidecarCall } from '@/lib/desktop-api'
 import { removeDraft, removeHistory } from '@/lib/agent-input-draft-state'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -43,6 +44,7 @@ export function ArchiveSettings({ initialView }: { initialView?: 'archive' | 'tr
       setDraftState((prev) => removeDraft(prev, threadId))
       setHistoryState((prev) => removeHistory(prev, threadId))
       setRuntimeEvents((prev) => removeRuntimeEvents(prev, threadId))
+      threadMessagesCache.invalidate(threadId)
     },
     [setDraftState, setHistoryState, setRuntimeEvents],
   )

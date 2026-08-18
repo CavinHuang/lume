@@ -14,6 +14,7 @@ import {
   workspacePinnedIdsAtom,
 } from '@/atoms'
 import { removeRuntimeEvents } from '@/hooks/runtime-event-state'
+import { threadMessagesCache } from '@/components/agent/thread-messages-cache'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
@@ -366,6 +367,7 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
           await sidecarCall(AGENT_IPC_CHANNELS.TRASH_THREAD, { threadId: thread.id })
           removeThreadFromNavigation(thread.id)
           setRuntimeEvents((prev) => removeRuntimeEvents(prev, thread.id))
+          threadMessagesCache.invalidate(thread.id)
           toast.success('已移入回收站')
         } catch (error) {
           console.error('[LeftSidebar] 移入回收站失败:', error)
