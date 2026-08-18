@@ -28,20 +28,27 @@ const tests = collectTests(sourceRoot)
 let cursor = 0;
 const failures = [];
 
+// Bun.spawn 异步 + await proc.exited:4 worker 真并行(spawnSync 会阻塞事件循环,
+// worker 池退化为串行——实测串行全量 >15min,并行 4 收进 ~1/4 时长)
 async function worker() {
   while (cursor < tests.length) {
     const file = tests[cursor++];
-    const result = Bun.spawnSync({
+    const proc = Bun.spawn({
       cmd: ["bun", "test", file],
       cwd: repositoryRoot,
       stdout: "pipe",
       stderr: "pipe",
     });
-    if (result.exitCode === 0) continue;
+    const [exitCode, stderr, stdout] = await Promise.all([
+      proc.exited,
+      new Response(proc.stderr).text(),
+      new Response(proc.stdout).text(),
+    ]);
+    if (exitCode === 0) continue;
     failures.push(file);
-    console.error(`\n===== FAIL ${file} (exit ${result.exitCode}) =====`);
-    console.error(result.stderr.toString());
-    console.error(result.stdout.toString());
+    console.error(`\n===== FAIL ${file} (exit ${exitCode}) =====`);
+    console.error(stderr);
+    console.error(stdout);
   }
 }
 
