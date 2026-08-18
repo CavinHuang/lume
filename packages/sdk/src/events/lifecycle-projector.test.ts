@@ -70,10 +70,12 @@ describe("projectLifecycle", () => {
     const events = await run([
       { type: "assistant", uuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "done" }] } } as any,
     ])
-    // 无流式退化:turn.start→message.start→message.end→turn.end 四连发(无 run.end,流未结束)
+    // 无流式退化:turn.start→message.start→message.end→turn.end 四连发;批次5 起流终止
+    // 无 result 时补 run.end(aborted) 终值
     expect(events.map((e) => `${e.kind}.${e.phase}`)).toEqual([
-      "run.start", "turn.start", "message.start", "message.end", "turn.end",
+      "run.start", "turn.start", "message.start", "message.end", "turn.end", "run.end",
     ])
+    expect(events.at(-1).detail.stopReason).toBe("aborted")
   })
 
   test("error assistant: fallback chain message.end(error)→turn.end(∅)→run.end", async () => {
@@ -289,22 +291,158 @@ describe("projectLifecycle", () => {
     expect(events).toHaveLength(0)
   })
 
-  test("thinking_delta passes through as update without folding into partial", async () => {
-    const thinkingDelta = {
+  test("thinking_delta folds into partial.thinking cumulatively (batch 5)", async () => {
+    const thinkingDelta = (thinking: string) => ({
       type: "stream_event",
-      event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "hm" } },
+      event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking } },
       parent_tool_use_id: null,
-    }
+    })
     const events = await run([
       streamTextDelta("he") as any,
-      thinkingDelta as any,
+      thinkingDelta("hm") as any,
+      thinkingDelta("... ") as any,
+      thinkingDelta("hmm") as any,
       { type: "assistant", uuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "he" }] } } as any,
     ])
     const updates = events.filter((e) => e.phase === "update")
-    expect(updates).toHaveLength(2)
+    expect(updates).toHaveLength(4)
+    // Native delta still rides the update untouched; thinking accumulates.
     expect(updates[1].detail.delta?.delta?.type).toBe("thinking_delta")
-    // Batch 1: thinking is not folded — no toolUses slot, no thinking accumulation.
-    expect(updates[1].detail.partial.toolUses).toEqual([])
-    expect(updates[1].detail.partial.text).toBe("he")
+    expect(updates.map((e) => e.detail.partial.thinking)).toEqual(["", "hm", "hm... ", "hm... hmm"])
+    expect(updates.every((e) => e.detail.partial.toolUses !== undefined)).toBe(true)
+    expect(updates[3].detail.partial.text).toBe("he")
+  })
+
+  // ---- batch 5: user message pair / aborted run.end / domain classes ----
+
+  test("user message: immediate start→end pair, turnId null, never opens the run", async () => {
+    const events = await run([
+      { type: "user", uuid: "u-1", message: { role: "user", content: "do the thing" } } as any,
+      { type: "assistant", uuid: "a-1", message: { role: "assistant", content: [{ type: "text", text: "ok" }] } } as any,
+    ])
+    expect(events.slice(0, 2).map((e) => `${e.kind}.${e.phase}`)).toEqual(["message.start", "message.end"])
+    expect(events[1].detail).toEqual({ type: "user.message", content: "do the thing" })
+    // User pair carries no turn and does not open the run by itself.
+    expect(events.slice(0, 2).every((e) => e.turnId === null)).toBe(true)
+    expect(events[2].kind === "run" && events[2].phase === "start").toBe(true)
+    expect(events.filter((e) => e.kind === "turn")).toHaveLength(2) // turn.start + turn.end of the assistant turn
+  })
+
+
+  test("user message with structured content passes through as-is", async () => {
+    const content = [{ type: "text", text: "part" }, { type: "image", source: { type: "base64" } }]
+    const events = await run([
+      { type: "user", uuid: "u-1", message: { role: "user", content } } as any,
+    ])
+    expect(events).toHaveLength(2)
+    expect(events[1].detail.content).toEqual(content)
+    // No assistant activity: no run/turn side effects.
+    expect(events.some((e) => e.kind === "run" || e.kind === "turn")).toBe(false)
+  })
+
+  test("stream aborts with pending tool: run.end aborted after the dangling turn", async () => {
+    const events = await run([
+      streamTextDelta("wor") as any,
+      assistantWithTool("u1") as any,
+      // tool never runs, stream ends without a result message
+    ])
+    const kinds = events.map((e) => `${e.kind}.${e.phase}`)
+    expect(kinds).toEqual([
+      "run.start", "turn.start", "message.start", "message.update", "message.end",
+      "tool.start", "run.end",
+    ])
+    const runEnd = events.at(-1)
+    expect(runEnd.detail).toEqual({ type: "run.end", stopReason: "aborted", isError: false, numTurns: 1 })
+  })
+
+  test("stream aborts without tools: run.end aborted after turn.end", async () => {
+    const events = await run([
+      { type: "assistant", uuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "partial" }] } } as any,
+    ])
+    expect(events.map((e) => `${e.kind}.${e.phase}`)).toEqual([
+      "run.start", "turn.start", "message.start", "message.end", "turn.end", "run.end",
+    ])
+    expect(events.at(-1).detail.stopReason).toBe("aborted")
+    expect(events.at(-1).detail.isError).toBe(false)
+  })
+
+  test("result present: run.end comes from the result path, aborted supplement stays silent", async () => {
+    const events = await run([
+      { type: "assistant", uuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "done" }] } } as any,
+      { type: "result", subtype: "success", num_turns: 1 } as any,
+    ])
+    const runEnds = events.filter((e) => e.kind === "run" && e.phase === "end")
+    expect(runEnds).toHaveLength(1)
+    expect(runEnds[0].detail.stopReason).toBe("end_turn")
+  })
+
+  test("empty stream produces no events (run never opened)", async () => {
+    const events = await run([])
+    expect(events).toHaveLength(0)
+  })
+
+  test("plan_preview system message → run.event plan.preview skeleton", async () => {
+    const events = await run([
+      { type: "system", subtype: "plan_preview", contractId: "c-1", title: "The Plan",
+        summary: "s", markdown: "# steps", planFilePath: "p.md", planVerified: true, stepCount: 3 } as any,
+    ])
+    expect(events).toHaveLength(1)
+    expect(events[0].kind).toBe("run")
+    expect(events[0].phase).toBe("event")
+    expect(events[0].turnId).toBeNull()
+    expect(events[0].detail).toEqual({
+      type: "plan.preview",
+      content: { contractId: "c-1", title: "The Plan", summary: "s", markdown: "# steps",
+        planFilePath: "p.md", planVerified: true, stepCount: 3 },
+    })
+  })
+
+  test("todo_state_updated system message → run.event todo.state skeleton", async () => {
+    const todos = [{ content: "a", activeForm: "doing a", status: "in_progress" }]
+    const events = await run([
+      { type: "system", subtype: "todo_state_updated", todos, currentActiveForm: "doing a" } as any,
+    ])
+    expect(events).toHaveLength(1)
+    expect(events[0].kind).toBe("run")
+    expect(events[0].phase).toBe("event")
+    expect(events[0].turnId).toBeNull()
+    expect(events[0].detail).toEqual({
+      type: "todo.state",
+      state: { todos, currentActiveForm: "doing a" },
+    })
+  })
+
+  test("task_progress system message → run.event task.progress skeleton", async () => {
+    const events = await run([
+      { type: "system", subtype: "task_progress", task_id: "bg-1", description: "work",
+        usage: { total_tokens: 10, tool_uses: 2, duration_ms: 30 },
+        last_tool_name: "Bash", summary: "halfway" } as any,
+    ])
+    expect(events).toHaveLength(1)
+    expect(events[0].kind).toBe("run")
+    expect(events[0].phase).toBe("event")
+    expect(events[0].turnId).toBeNull()
+    expect(events[0].detail).toEqual({
+      type: "task.progress",
+      taskId: "bg-1",
+      progress: { description: "work", usage: { total_tokens: 10, tool_uses: 2, duration_ms: 30 },
+        last_tool_name: "Bash", summary: "halfway" },
+    })
+  })
+
+  test("advisor_reviewed system message → run.event advisor.reviewed skeleton", async () => {
+    const events = await run([
+      { type: "system", subtype: "advisor_reviewed", severity: "concern", summary: "watch out",
+        details: "line 3", modelRef: "gpt-x", durationMs: 120 } as any,
+    ])
+    expect(events).toHaveLength(1)
+    expect(events[0].kind).toBe("run")
+    expect(events[0].phase).toBe("event")
+    expect(events[0].turnId).toBeNull()
+    expect(events[0].detail).toEqual({
+      type: "advisor.reviewed",
+      summary: "watch out",
+      review: { severity: "concern", summary: "watch out", details: "line 3", modelRef: "gpt-x", durationMs: 120 },
+    })
   })
 })
