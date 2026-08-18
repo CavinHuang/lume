@@ -152,6 +152,9 @@ export class LumeRunner {
   readonly emit: AgentRuntimeEmitter;
   private latestMemoryContextUsedItems: CreateRuntimeCoreSessionResult["memoryContextUsedItems"] = [];
   private latestModelVisibleMessage = "";
+  /** F3:投影链(tee→projector)是否已为本 run 交付 run.end 终值——异常路径
+   * 补发错误终值前查询,保证同一 run 只有一个总线终值(projector 与 LumeRunner 互斥)。 */
+  private busRunEndEmitted = false;
 
   private constructor(
     private readonly observer: LumeRunObserver,
@@ -252,7 +255,9 @@ export class LumeRunner {
       lifecycle: {
         threadId: this.params.runtime.sessionId,
         sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir),
-        runId: this.observer.getRunId()
+        runId: this.observer.getRunId(),
+        // F3 互斥:projector 交付 run.end 即置位,后续 fail() 不再补发终值
+        onRunEnd: () => { this.busRunEndEmitted = true; }
       }
     });
     // Soft abort no longer throws from the SDK: it fills interrupted tool
@@ -310,6 +315,8 @@ export class LumeRunner {
     }
     if (resultWithCoding.status !== "completed") {
       // T7a:run.failed 已迁事件总线(run.end{isError}),旧路 emit 删除
+      // F3:空流/引擎早夭(无 result 消息)时 projector 未开 run,总线无终值——补发
+      await this.publishRunEndErrorIfMissing(resultWithCoding.errorMessage ?? "Agent SDK 执行失败");
       await this.observer.flush();
       return this.finalizeResult(resultWithCoding);
     }
@@ -428,106 +435,122 @@ export class LumeRunner {
   }: PreparedRuntimeCoreRunInput): Promise<AgentRuntimeRunResult> {
     const { input, runtime } = params;
     if (runtime.abortSignal?.aborted) return this.abort();
-    const wikiCapability = await resolveWikiRuntimeCapability({
-      threadId: runtime.sessionId,
-      cwd: prepared.agentCwd,
-      lumeWorkDir: prepared.lumeWorkDir,
-      filesRoot: prepared.filesRoot,
-      plansRoot: prepared.plansRoot,
-      artifactsRoot: prepared.artifactsRoot,
-      workspaceId: runtime.workspaceId,
-      threadType: runtime.threadType,
-      chatType: input.chatType
-    });
-    if (runtime.abortSignal?.aborted) return this.abort();
-    const runtimeSession = await createRuntimeSession({
-      lumeSessionId: runtime.sessionId,
-      cwd: prepared.agentCwd,
-      lumeWorkDir: prepared.lumeWorkDir,
-      filesRoot: prepared.filesRoot,
-      plansRoot: prepared.plansRoot,
-      artifactsRoot: prepared.artifactsRoot,
-      projectRoot: prepared.projectRoot,
-      additionalDirectories: resolveConfiguredAdditionalDirectories(
-        getEffectiveLumeConfig(prepared.workspaceSlug).permissions?.privateWriteRoots,
-        prepared.agentCwd,
-      ),
-      fileContextId: prepared.fileContextId,
-      fileReferenceBinding: runtime.fileReferenceBinding,
-      agentDir: prepared.agentDir,
-      userMessage: input.userMessage,
-      messageParts: input.messageParts,
-      provider: prepared.modelResolution.provider,
-      channelProvider: prepared.channelProvider,
-      openaiApiMode: prepared.openaiApiMode,
-      apiType: prepared.apiType,
-      modelRef: runtime.modelRef,
-      resolvedModelId: prepared.modelResolution.resolvedModelId,
-      resolvedModel: {
-        id: prepared.modelResolution.model.id,
-        provider: prepared.modelResolution.model.provider,
-        baseUrl: prepared.modelResolution.model.baseUrl,
-        contextWindow: prepared.modelResolution.model.contextWindow,
-        maxTokens: prepared.modelResolution.model.maxTokens,
-        input: prepared.modelResolution.model.input,
-        reasoning: prepared.modelResolution.model.reasoning
-      },
-      apiKey: prepared.apiKey,
-      workspaceId: runtime.workspaceId,
-      workspaceName: prepared.workspaceName,
-      workspaceSlug: prepared.workspaceSlug,
-      channelId: runtime.channelId,
-      threadType: runtime.threadType,
-      subagentType: runtime.subagentType,
-      subagentRunId: runtime.subagentRunId,
-      subagentId: runtime.subagentId,
-      subagentTaskId: runtime.subagentTaskId,
-      subagentAttempt: runtime.subagentAttempt,
-      chatType: input.chatType,
-      permissionMode: input.permissionMode,
-      messageAttachments: input.messageAttachments,
-      commentAttachments: input.commentAttachments,
-      browserAttachments: input.browserAttachments,
-      messageMetadata: input.messageMetadata,
-      planningClientSubmissionId: input.trustedPlanningClientSubmissionId,
-      emitSdkMessage: this.emit.onSdkMessage,
-      emitRuntimeEvent: this.emit.onRuntimeEvent,
-      persistCodingReport: (report) => this.observer.recordCodingReport(report),
-      emitAdvisorReview: (review) => {
-        // T7a:advisor.reviewed 已迁事件总线,旧路只落盘 item(recordAdvisorReview 不再投影)
-        this.observer.recordAdvisorReview(review);
-        // 批次5 第二入口:advisor.reviewed 领域事件经 ThreadEventBus 发布
-        publishAdvisorReviewedToBus({
-          sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir),
-          threadId: this.observer.getThreadId(),
-          runId: this.observer.getRunId(),
-          review
-        });
-      },
-      emitAskUserQuestion: this.emit.onAskUserQuestion,
-      emitBrowserAuthRequest: this.emit.onBrowserAuthRequest,
-      emitDesktopActionRequest: this.emit.onDesktopActionRequest,
-      emitToolPermissionRequest: this.emit.onToolPermissionRequest,
-      emitTodoUpdated: this.emit.onTodoUpdated,
-      runId: this.observer.getRunId(),
-      workflowHooks: this.workflowHooks,
-      applyWorkflowHookEffects: (result) => this.applyWorkflowHookEffects(result),
-      trace: this.observer.getContextAssemblyTrace(),
-      wikiProposalEnabled: WIKI_CAPABILITIES.askWikiProposal,
-      processSandbox: wikiCapability.sandbox,
-      abortSignal: runtime.abortSignal
-    });
-    this.latestMemoryContextUsedItems = runtimeSession.memoryContextUsedItems ?? [];
-    this.latestModelVisibleMessage = typeof runtimeSession.userMessageForModel === "string"
-      ? runtimeSession.userMessageForModel
+    let runtimeSession: CreateRuntimeCoreSessionResult | undefined;
+    let sandbox: SandboxSettings | undefined;
+    try {
+      const wikiCapability = await resolveWikiRuntimeCapability({
+        threadId: runtime.sessionId,
+        cwd: prepared.agentCwd,
+        lumeWorkDir: prepared.lumeWorkDir,
+        filesRoot: prepared.filesRoot,
+        plansRoot: prepared.plansRoot,
+        artifactsRoot: prepared.artifactsRoot,
+        workspaceId: runtime.workspaceId,
+        threadType: runtime.threadType,
+        chatType: input.chatType
+      });
+      sandbox = wikiCapability.sandbox;
+      if (runtime.abortSignal?.aborted) return this.abort();
+      runtimeSession = await createRuntimeSession({
+        lumeSessionId: runtime.sessionId,
+        cwd: prepared.agentCwd,
+        lumeWorkDir: prepared.lumeWorkDir,
+        filesRoot: prepared.filesRoot,
+        plansRoot: prepared.plansRoot,
+        artifactsRoot: prepared.artifactsRoot,
+        projectRoot: prepared.projectRoot,
+        additionalDirectories: resolveConfiguredAdditionalDirectories(
+          getEffectiveLumeConfig(prepared.workspaceSlug).permissions?.privateWriteRoots,
+          prepared.agentCwd,
+        ),
+        fileContextId: prepared.fileContextId,
+        fileReferenceBinding: runtime.fileReferenceBinding,
+        agentDir: prepared.agentDir,
+        userMessage: input.userMessage,
+        messageParts: input.messageParts,
+        provider: prepared.modelResolution.provider,
+        channelProvider: prepared.channelProvider,
+        openaiApiMode: prepared.openaiApiMode,
+        apiType: prepared.apiType,
+        modelRef: runtime.modelRef,
+        resolvedModelId: prepared.modelResolution.resolvedModelId,
+        resolvedModel: {
+          id: prepared.modelResolution.model.id,
+          provider: prepared.modelResolution.model.provider,
+          baseUrl: prepared.modelResolution.model.baseUrl,
+          contextWindow: prepared.modelResolution.model.contextWindow,
+          maxTokens: prepared.modelResolution.model.maxTokens,
+          input: prepared.modelResolution.model.input,
+          reasoning: prepared.modelResolution.model.reasoning
+        },
+        apiKey: prepared.apiKey,
+        workspaceId: runtime.workspaceId,
+        workspaceName: prepared.workspaceName,
+        workspaceSlug: prepared.workspaceSlug,
+        channelId: runtime.channelId,
+        threadType: runtime.threadType,
+        subagentType: runtime.subagentType,
+        subagentRunId: runtime.subagentRunId,
+        subagentId: runtime.subagentId,
+        subagentTaskId: runtime.subagentTaskId,
+        subagentAttempt: runtime.subagentAttempt,
+        chatType: input.chatType,
+        permissionMode: input.permissionMode,
+        messageAttachments: input.messageAttachments,
+        commentAttachments: input.commentAttachments,
+        browserAttachments: input.browserAttachments,
+        messageMetadata: input.messageMetadata,
+        planningClientSubmissionId: input.trustedPlanningClientSubmissionId,
+        emitSdkMessage: this.emit.onSdkMessage,
+        emitRuntimeEvent: this.emit.onRuntimeEvent,
+        persistCodingReport: (report) => this.observer.recordCodingReport(report),
+        emitAdvisorReview: (review) => {
+          // T7a:advisor.reviewed 已迁事件总线,旧路只落盘 item(recordAdvisorReview 不再投影)
+          this.observer.recordAdvisorReview(review);
+          // 批次5 第二入口:advisor.reviewed 领域事件经 ThreadEventBus 发布
+          publishAdvisorReviewedToBus({
+            sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir),
+            threadId: this.observer.getThreadId(),
+            runId: this.observer.getRunId(),
+            review
+          });
+        },
+        emitAskUserQuestion: this.emit.onAskUserQuestion,
+        emitBrowserAuthRequest: this.emit.onBrowserAuthRequest,
+        emitDesktopActionRequest: this.emit.onDesktopActionRequest,
+        emitToolPermissionRequest: this.emit.onToolPermissionRequest,
+        emitTodoUpdated: this.emit.onTodoUpdated,
+        runId: this.observer.getRunId(),
+        workflowHooks: this.workflowHooks,
+        applyWorkflowHookEffects: (result) => this.applyWorkflowHookEffects(result),
+        trace: this.observer.getContextAssemblyTrace(),
+        wikiProposalEnabled: WIKI_CAPABILITIES.askWikiProposal,
+        processSandbox: sandbox,
+        abortSignal: runtime.abortSignal
+      });
+    } catch (error) {
+      // F3:createRuntimeCoreSession(或 wiki 能力解析)失败时查询流从未启动,
+      // projector 未开 run → 总线无终值;fromActiveRun 又抑制旧路合成 run.failed
+      // → web 静默失败。收编进 fail():补发 run.end{error} + observer 落终态。
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (/abort|interrupted/i.test(errorMessage)) {
+        return this.abort();
+      }
+      return this.fail(errorMessage);
+    }
+    // catch 分支恒 return,此处 runtimeSession 必已赋值(TS 不追踪该控制流,断言兜底)
+    const session = runtimeSession as CreateRuntimeCoreSessionResult;
+    this.latestMemoryContextUsedItems = session.memoryContextUsedItems ?? [];
+    this.latestModelVisibleMessage = typeof session.userMessageForModel === "string"
+      ? session.userMessageForModel
       : "";
 
     return this.runRuntimeSession({
       params,
       prepared,
-      runtimeSession,
+      runtimeSession: session,
       options,
-      sandbox: wikiCapability.sandbox,
+      sandbox,
       createCanUseTool
     });
   }
@@ -688,9 +711,47 @@ export class LumeRunner {
   async fail(errorMessage: string): Promise<AgentRuntimeRunResult> {
     // T7a:run.failed 已迁事件总线(run.end{isError}),旧路 emit 删除
     await this.fireRunAfterFailure(errorMessage);
+    // F3:查询流未启动(或未交付终值)的失败,投影链不拥有终值——补发 run.end{error};
+    // 流已交付终值则跳过,避免同一 run 双终值。
+    await this.publishRunEndErrorIfMissing(errorMessage);
     await this.observer.flush();
     this.emit.onError(errorMessage);
     return this.finalizeResult({ status: "errored", errorMessage });
+  }
+
+  /**
+   * F3:run 链内失败的总线终值补发(仅当投影链未交付 run.end 时)。
+   * 与 projector 互斥靠执行序保证:tee 的 finally 先 await pump 排空投影
+   * (终值已落盘、互斥标记已置位),异常才向主流传播到 LumeRunner catch。
+   */
+  private async publishRunEndErrorIfMissing(errorMessage: string): Promise<void> {
+    if (this.busRunEndEmitted) return;
+    this.busRunEndEmitted = true;
+    const threadId = this.observer.getThreadId();
+    const runId = this.observer.getRunId();
+    try {
+      await getThreadEventBus(getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir))
+        .publish(threadId, runId, {
+          runId,
+          turnId: null,
+          ts: Date.now(),
+          kind: "run",
+          phase: "end",
+          detail: {
+            type: "run.end",
+            stopReason: "error",
+            isError: true,
+            numTurns: 0,
+            result: errorMessage
+          }
+        });
+    } catch (error) {
+      log.warn("run.end 错误终值补发失败", {
+        threadId,
+        runId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   private async fireRunBeforeStart(): Promise<void> {

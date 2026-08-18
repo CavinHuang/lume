@@ -17,8 +17,10 @@ interface ConsumeRuntimeCoreQueryStreamInput {
   emit: Pick<AgentRuntimeEmitter, "onSdkMessage">;
   /** 投影 lifecycle 事件到 ThreadEventBus(批次5 T7c 起恒开,flag 已退役)。
    * runId=Lume runId(lume-runner 构造处 observer.getRunId())——骨架事件弃自产
-   * UUID,与第二入口领域事件(memory/todo/advisor)同域(批次5 Task 6)。 */
-  lifecycle?: { threadId: string; sessionDir: string; runId: string };
+   * UUID,与第二入口领域事件(memory/todo/advisor)同域(批次5 Task 6)。
+   * onRunEnd(F3):projector 产出 run.end 终值时回调——LumeRunner 据此在异常
+   * 路径跳过终值补发,保证同一 run 只有一个总线终值。 */
+  lifecycle?: { threadId: string; sessionDir: string; runId: string; onRunEnd?: () => void };
 }
 
 /**
@@ -29,17 +31,24 @@ interface ConsumeRuntimeCoreQueryStreamInput {
  */
 async function* teeLifecycleProjection(
   query: AsyncIterable<SDKMessage>,
-  target: { threadId: string; sessionDir: string; runId: string }
+  target: { threadId: string; sessionDir: string; runId: string; onRunEnd?: () => void }
 ): AsyncGenerator<SDKMessage> {
   const bus = getThreadEventBus(target.sessionDir);
   const pending: SDKMessage[] = [];
   let wake: (() => void) | null = null;
   let finished = false;
+  // F3:主流异常先记录再 rethrow——finally 排空 pump 时投影链取到异常,
+  // projector 据此补发 run.end{error} 而非把错误流当正常结束标 aborted。
+  let streamFailed = false;
+  let streamError: unknown = null;
   const projected: AsyncIterable<SDKMessage> = {
     [Symbol.asyncIterator]: () => ({
       next: async (): Promise<IteratorResult<SDKMessage>> => {
         while (pending.length === 0) {
-          if (finished) return { done: true, value: undefined };
+          if (finished) {
+            if (streamFailed) throw streamError;
+            return { done: true, value: undefined };
+          }
           await new Promise<void>((resolve) => {
             wake = resolve;
           });
@@ -57,6 +66,8 @@ async function* teeLifecycleProjection(
   const pump = (async () => {
     try {
       for await (const event of projectLifecycle(projected, { runId: target.runId })) {
+        // F3 互斥标记:见到 run.end 即通知调用方终值已由投影链交付
+        if (event.kind === "run" && event.phase === "end") target.onRunEnd?.();
         // 前提钉死:bus.publish 当前全同步(appendFileSync 后 resolve),resolve 即持久化完成。
         // 若改为真异步 fs,promise 化的 publish 在此 fire-and-forget 会让 finally 的 await pump
         // 不再等事件落盘——run 尾事件将静默丢失;重构前必须同步改造 tee(pump 内 await publish)。
@@ -82,6 +93,15 @@ async function* teeLifecycleProjection(
       notifyProjected();
       yield message;
     }
+  } catch (error) {
+    // F3 fix round 1:abort 味异常(用户主动取消)不注入投影链——与 LumeRunner
+    // catch 的 /abort|interrupted/i 判定对齐,post-loop 保持 aborted 终值语义,
+    // 避免总线 error 与 observer cancelled 分裂(用户取消显示为 run.failed)。
+    if (!/abort|interrupted/i.test(error instanceof Error ? error.message : String(error))) {
+      streamFailed = true;
+      streamError = error;
+    }
+    throw error;
   } finally {
     finished = true;
     notifyProjected();

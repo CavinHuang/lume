@@ -2,8 +2,21 @@ import type { AgentThreadRuntimeEventsResult, LumeRuntimeEvent } from "@lume/sha
 import { projectRunStateToRuntimeEvents } from "../runner/run-item-events";
 import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
 import { createFileBackedTaskStore } from "../task/task-store";
+import { getThreadEventBus } from "../events/thread-event-bus";
 import { getAgentThreadSDKMessages } from "../../agent/agent-thread-manager";
 import type { LumeRunState } from "../runner/run-state";
+
+/**
+ * F4:events.jsonl 有事件(总线恒开后创建的线程)时,run 投影只保留未迁总线的类——
+ * assistant/tool/run/todo/compaction/memory.context.used/background.task 等历史由
+ * web 端总线快照(GET_EVENTS)单读驱动,旧投影再产一份会 runId 错位无法去重。
+ * 旧线程(events.jsonl 空/缺)无快照可读,全量旧投影兜底。
+ */
+const RETAINED_HYDRATE_EVENT_TYPES = new Set([
+  "message.user.submitted",
+  "plan.preview",
+  "usage.updated"
+]);
 
 export function projectRunStateToReplayEvents(run: LumeRunState): LumeRuntimeEvent[] {
   const events = projectRunStateToRuntimeEvents(run);
@@ -18,6 +31,11 @@ export async function listThreadRuntimeEvents(input: {
   threadId: string;
 }): Promise<AgentThreadRuntimeEventsResult> {
   const runs = await createFileBackedLumeRunStateStore(input.sessionDir).listByThread(input.threadId);
+  // F4 分界:总线快照非空 → 该线程历史单读总线,已迁类不再投影;空/缺 → 全量旧投影
+  const busHasEvents = (await getThreadEventBus(input.sessionDir).read(input.threadId)).length > 0;
+  const runEvents = runs
+    .flatMap(projectRunStateToReplayEvents)
+    .filter((event) => !busHasEvents || RETAINED_HYDRATE_EVENT_TYPES.has(event.type));
   const taskEvents = createFileBackedTaskStore(input.sessionDir, { taskListId: input.threadId }).listEvents();
   // T7a:background.task.completed 已迁事件总线,不再从 SDK log 投影(保留类照旧)
   const memoryChangedEvents = getAgentThreadSDKMessages(input.threadId)
@@ -39,7 +57,7 @@ export async function listThreadRuntimeEvents(input: {
   return {
     threadId: input.threadId,
     events: assignRunSequences(sortRuntimeEvents([
-      ...runs.flatMap(projectRunStateToReplayEvents),
+      ...runEvents,
       ...memoryChangedEvents,
       ...taskEvents.map((event) => ({
         id: `task.progress:${event.taskListId}:${event.sequence}`,
