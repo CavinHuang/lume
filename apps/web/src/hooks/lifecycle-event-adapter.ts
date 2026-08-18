@@ -73,13 +73,13 @@ export interface BusEnvelopeConsumerContext {
 /**
  * 总线 envelope 的完整消费副作用(seq 去重 → 适配 → 入队 → streaming 态)。
  *
- * snapshot 来源(重载/切回线程的初始回放)只跑适配器维持求差基线(lastText/
- * turnId),不注入任何事件也不置 streaming:该窗口的内容旧路已覆盖——hydrate
- * (AgentMessages 挂载)与未跳过的旧路 live 推送。若把 snapshot 事件也入队,会与
- * 旧路事件双份注入且 runId 错位(总线 projector 自产 runId)导致投影无法去重
- * (详见 final-fix-report 场景 E:run 终结在 tool 边界时文本持久重复)。
- * 基线必须推进:否则后续 push 的累计 partial 会从空基线全量重发,与旧路已渲染
- * 文本叠加成双份。
+ * snapshot 来源(重载/切回线程的初始回放)同样注入事件,但不置 streaming:
+ * F4 起旧路 hydrate(sidecar GET_THREAD_RUNTIME_EVENTS)对 events.jsonl 有事件的
+ * 线程只投保留类,assistant/tool/run 历史单读总线快照——snapshot 是其唯一来源;
+ * 旧线程 events.jsonl 为空,快照自然为空,注入无效果(旧路全量投影照旧)。此前
+ * "snapshot 不入队"防的双份注入(runId 错位无法去重,场景 E)随 hydrate 过滤
+ * 消失:已迁类不再有第二来源。求差基线(lastText/turnId)仍必须推进,否则后续
+ * push 的累计 partial 会从空基线全量重发,与已注入文本叠加成双份。
  */
 export function consumeBusEnvelope(
   envelope: SdkEventEnvelope,
@@ -92,7 +92,11 @@ export function consumeBusEnvelope(
   const state = ctx.adapterStatesByThread.get(threadId) ?? createLifecycleAdapterState()
   ctx.adapterStatesByThread.set(threadId, state)
   const events = adaptLifecycleEvent(envelope, state)
-  if (source === 'snapshot') return
+  if (source === 'snapshot') {
+    // F4:注入但不动 streaming 态——历史回放不得把线程卡在流式/错误态
+    for (const event of events) ctx.enqueueRuntimeEvent(event)
+    return
+  }
   for (const event of events) ctx.enqueueRuntimeEvent(event)
   // streaming 态副作用对齐旧 RUNTIME_EVENT 分支(该分支对跳过类型不再置位);
   // 仅 push 置位——快照回放悬空 run(无 run.end)不应把线程永久卡在流式态。

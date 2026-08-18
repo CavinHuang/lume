@@ -360,14 +360,14 @@ test('consumeBusEnvelope streaming 副作用:background.task completed→idle、
   consumeBusEnvelope(backgroundTask(2, { status: 'failed' }), 'push', ctx)
   expect(ctx.streaming).toEqual({ t1: 'errored' })
 
-  // snapshot 版维持既有语义:不入队、不置位
+  // snapshot 版:F4 起注入事件,但维持不置位
   const snapshotCtx = createContext()
   consumeBusEnvelope(backgroundTask(1, { status: 'completed' }), 'snapshot', snapshotCtx)
-  expect(snapshotCtx.enqueued).toEqual([])
+  expect(snapshotCtx.enqueued.map((event) => event.type)).toEqual(['background.task.completed'])
   expect(snapshotCtx.streaming).toEqual({})
 })
 
-// ── consumeBusEnvelope:总线消费副作用(seq 去重 / snapshot 不入队不置位 / push 全量) ──
+// ── consumeBusEnvelope:总线消费副作用(seq 去重 / snapshot 入队不置位 / push 全量) ──
 
 function createContext() {
   const ctx: BusEnvelopeConsumerContext & {
@@ -387,21 +387,22 @@ function createContext() {
   return ctx
 }
 
-test('snapshot 回放不入队、不置 streaming(重载/切回不与旧路双份注入)', () => {
+test('snapshot 回放注入事件、不置 streaming(F4 新线程历史单读总线快照)', () => {
   const ctx = createContext()
   consumeBusEnvelope(messageStart(1), 'snapshot', ctx)
   consumeBusEnvelope(messageUpdate(2, 'hello'), 'snapshot', ctx)
   consumeBusEnvelope(messageEnd(3, [{ type: 'text', text: 'hello' }]), 'snapshot', ctx)
-  expect(ctx.enqueued).toEqual([])
+  expect(ctx.enqueued.map((event) => event.type)).toEqual(['assistant.delta', 'assistant.final'])
   expect(ctx.streaming).toEqual({})
 })
 
-test('snapshot 仍推进适配器基线:后续 push 只投增量(不与旧路已渲染文本叠加)', () => {
+test('snapshot 推进适配器基线:后续 push 只投增量(不与已注入文本叠加)', () => {
   const ctx = createContext()
   consumeBusEnvelope(messageStart(1), 'snapshot', ctx)
   consumeBusEnvelope(messageUpdate(2, 'hel'), 'snapshot', ctx)
   consumeBusEnvelope(messageUpdate(3, 'hello'), 'push', ctx)
-  expect(ctx.enqueued).toEqual([expect.objectContaining({ type: 'assistant.delta', delta: 'lo' })])
+  expect(ctx.enqueued.map((event) => event.type)).toEqual(['assistant.delta', 'assistant.delta'])
+  expect(ctx.enqueued.map((event) => event.delta)).toEqual(['hel', 'lo'])
   expect(ctx.streaming).toEqual({ t1: 'streaming' })
 })
 
@@ -499,7 +500,7 @@ test('consumeBusEnvelope run.cancelled 置 idle 并触发 onRunCancelled(snapsho
   const snapshotCtx = createContext()
   snapshotCtx.onRunCancelled = (threadId) => cancelled.push(threadId)
   consumeBusEnvelope(runEnd(1, { stopReason: 'aborted' }), 'snapshot', snapshotCtx)
-  expect(snapshotCtx.enqueued).toEqual([])
+  expect(snapshotCtx.enqueued.map((event) => event.type)).toEqual(['run.cancelled'])
   expect(snapshotCtx.streaming).toEqual({})
   expect(cancelled).toEqual(['t1'])
 })

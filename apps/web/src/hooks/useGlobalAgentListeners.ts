@@ -131,7 +131,8 @@ export function useGlobalAgentListeners() {
   useAgentEventBus(lifecycleBusThreadId ?? '', {
     enabled: lifecycleBusThreadId !== null,
     onEvent: (envelope, source) => {
-      // 快照回放不注入事件(旧路 hydrate 已覆盖,双份注入无法去重)、不置 streaming;
+      // F4:快照回放注入事件(新线程 assistant/tool/run 历史单读总线快照,旧路
+      // hydrate 已过滤已迁类)、不置 streaming;
       // 详见 lifecycle-event-adapter.ts consumeBusEnvelope 注释。
       consumeBusEnvelope(envelope, source, {
         deliveredSeqByThread: lifecycleDeliveredSeqByThread,
