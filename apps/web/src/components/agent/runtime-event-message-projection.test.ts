@@ -1517,6 +1517,35 @@ describe('todo_update block 稳定性', () => {
     expect(ids.filter((id) => id === `assistant:${sidecarRun}`)).toHaveLength(1)
   })
 
+  test('runId 统一后(批次5 T6):终态后 memory 尾巴与已 flush assistant 同域,闸门拦截不重建', () => {
+    // T6 后总线骨架事件弃自产 UUID、恒用 Lume runId——live 总线侧
+    // assistant.final→run.completed 与紧随其后的 memory.context.used(第二入口,
+    // tee 排空后才 publish)同 runId。此前双域(busRun≠sidecarRun)时 runId 判
+    // 无法区分「同 run 尾巴」与「新 run 事件」,闸门只能全量拦截;统一后
+    // event.runId===已终止 run 的 runId,按 runId 收窄成为可能(收窄本身留 T7c)。
+    const runId = 'unified-run-1'
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', runId, text: 'hi', messageId: 'user-1' }),
+      event({ id: `lifecycle:10:assistant.delta`, type: 'assistant.delta', runId, delta: 'done' }),
+      event({ id: `lifecycle:11:assistant.final`, type: 'assistant.final', runId, blocks: [{ type: 'text', text: 'done' }] }),
+      event({ id: `lifecycle:12:run.completed`, type: 'run.completed', runId }),
+      // 尾巴:同 runId 的 memory.context.used(终态后到达)
+      event({
+        id: `lifecycle:13:memory.context.used`,
+        type: 'memory.context.used',
+        runId,
+        items: [{ kind: 'fact', scope: 'workspace', status: 'active', id: 'mem-1', citation: 'memory.md', reason: '相关' }],
+      }),
+    ])
+
+    // 当前行为保持:入口闸门拦截,不重建 assistant——id 唯一、数量不变
+    const ids = messages.map((message) => message.id)
+    expect(ids).toEqual(['user-1', `assistant:${runId}`])
+    expect(new Set(ids).size).toBe(ids.length)
+    // 同域验证:尾巴事件 runId 与已 flush assistant 的 runId 一致(收窄前置条件成立)
+    expect(ids).toContain(`assistant:${runId}`)
+  })
+
   test('other rebuilding event types after a terminal run do not recreate the flushed assistant', () => {
     // 入口统一闸门(TERMINAL_REBUILDING_EVENT_TYPES)不只覆盖 memory.context.used/
     // advisor.reviewed:任何重建型事件(plan.preview 等)终态后到达都不得经 ??=

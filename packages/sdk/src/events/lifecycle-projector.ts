@@ -74,8 +74,12 @@ function normalizeTaskNotificationStatus(status: string): BackgroundTaskNotifica
 
 export async function* projectLifecycle(
   messages: AsyncIterable<SDKMessage>,
+  options?: { runId?: string },
 ): AsyncGenerator<SdkLifecycleEvent<SdkLifecycleDetail>> {
-  const runId = randomUUID()
+  // runId 缺省回落自产 UUID(向后兼容);sidecar tee 接线后恒传 Lume runId——
+  // 同一线程 events.jsonl 不再混两种 runId(memory 尾巴拦截闸门/compaction
+  // divider 的双域根因,批次5 Task 6)。
+  const runId = options?.runId ?? randomUUID()
   const ts = () => Date.now()
   let runStarted = false
   let runEnded = false

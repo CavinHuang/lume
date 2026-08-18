@@ -1,11 +1,16 @@
-import { describe, expect, test } from "bun:test";
-import type { SDKMessage } from "@lume/shared";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { SDKMessage, SdkEventEnvelope } from "@lume/shared";
 import {
   consumeRuntimeCoreQueryStream,
   createObservedRuntimeEmitter,
   getRuntimeCoreStreamError,
   normalizeRuntimeCoreQueryPermissionMode
 } from "./run-loop";
+import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
+import { getThreadEventBus } from "../events/thread-event-bus";
 import type { LumeRunObserver } from "./run-observer";
 
 async function* stream(messages: SDKMessage[]): AsyncIterable<SDKMessage> {
@@ -155,5 +160,57 @@ describe("runtime-core run loop", () => {
       createdAt: "2026-05-11T00:00:00.000Z",
       delta: "from run item"
     }]);
+  });
+});
+
+describe("tee lifecycle 接线:骨架事件 runId=Lume runId(批次5 Task 6)", () => {
+  const dirs: string[] = [];
+  const previousFlag = process.env.AGENT_LIFECYCLE_EVENTS;
+  const hadFlag = previousFlag !== undefined;
+
+  afterEach(() => {
+    if (hadFlag) {
+      process.env.AGENT_LIFECYCLE_EVENTS = previousFlag;
+    } else {
+      delete process.env.AGENT_LIFECYCLE_EVENTS;
+    }
+    for (const dir of dirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("flag on: bus 收到的全部骨架 envelope.runId=lifecycle.runId", async () => {
+    process.env.AGENT_LIFECYCLE_EVENTS = "1";
+    const agentDir = mkdtempSync(join(tmpdir(), "run-loop-tee-runid-"));
+    dirs.push(agentDir);
+    const threadId = "run-loop-tee-runid";
+    const sessionDir = getRuntimeCoreSessionDir(threadId, agentDir);
+    const published: SdkEventEnvelope[] = [];
+    getThreadEventBus(sessionDir).subscribe(threadId, (envelope) => {
+      published.push(envelope);
+    });
+
+    const result = await consumeRuntimeCoreQueryStream({
+      query: stream([{
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "hello" }]
+        }
+      } as SDKMessage]),
+      emit: { onSdkMessage: () => {} },
+      lifecycle: { threadId, sessionDir, runId: "lume-run-tee-1" }
+    });
+
+    expect(result).toEqual({ status: "completed" });
+    // 无 result 终值流:run.start→turn.start→message.start→message.end→turn.end→run.end(aborted)
+    const kinds = published.map((envelope) => `${envelope.kind}.${envelope.phase}`);
+    expect(kinds).toEqual([
+      "run.start", "turn.start", "message.start",
+      "message.end", "turn.end", "run.end"
+    ]);
+    // 全部骨架事件 runId=传入 Lume runId(不再自产 UUID)
+    expect(new Set(published.map((envelope) => envelope.runId)))
+      .toEqual(new Set(["lume-run-tee-1"]));
   });
 });

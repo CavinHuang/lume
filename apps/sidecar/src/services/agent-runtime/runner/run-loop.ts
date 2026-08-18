@@ -15,8 +15,10 @@ const log = createLogger("run-loop");
 interface ConsumeRuntimeCoreQueryStreamInput {
   query: AsyncIterable<SDKMessage>;
   emit: Pick<AgentRuntimeEmitter, "onSdkMessage">;
-  /** AGENT_LIFECYCLE_EVENTS=1 时投影 lifecycle 事件到 ThreadEventBus；缺省不启用 */
-  lifecycle?: { threadId: string; sessionDir: string };
+  /** AGENT_LIFECYCLE_EVENTS=1 时投影 lifecycle 事件到 ThreadEventBus；缺省不启用。
+   * runId=Lume runId(lume-runner 构造处 observer.getRunId())——骨架事件弃自产
+   * UUID,与第二入口领域事件(memory/todo/advisor)同域(批次5 Task 6)。 */
+  lifecycle?: { threadId: string; sessionDir: string; runId: string };
 }
 
 /** Batch 1 feature flag：默认 off，显式置 1 才接入 lifecycle 投影。 */
@@ -32,7 +34,7 @@ export function isAgentLifecycleEventsEnabled(): boolean {
  */
 async function* teeLifecycleProjection(
   query: AsyncIterable<SDKMessage>,
-  target: { threadId: string; sessionDir: string }
+  target: { threadId: string; sessionDir: string; runId: string }
 ): AsyncGenerator<SDKMessage> {
   const bus = getThreadEventBus(target.sessionDir);
   const pending: SDKMessage[] = [];
@@ -59,7 +61,7 @@ async function* teeLifecycleProjection(
   };
   const pump = (async () => {
     try {
-      for await (const event of projectLifecycle(projected)) {
+      for await (const event of projectLifecycle(projected, { runId: target.runId })) {
         // 前提钉死:bus.publish 当前全同步(appendFileSync 后 resolve),resolve 即持久化完成。
         // 若改为真异步 fs,promise 化的 publish 在此 fire-and-forget 会让 finally 的 await pump
         // 不再等事件落盘——run 尾事件将静默丢失;重构前必须同步改造 tee(pump 内 await publish)。

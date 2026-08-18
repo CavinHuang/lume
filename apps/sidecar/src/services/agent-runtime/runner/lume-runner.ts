@@ -254,7 +254,8 @@ export class LumeRunner {
       // flag off 时 consume 内部不启用，这里只提供投影所需的线程上下文
       lifecycle: {
         threadId: this.params.runtime.sessionId,
-        sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir)
+        sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir),
+        runId: this.observer.getRunId()
       }
     });
     // Soft abort no longer throws from the SDK: it fills interrupted tool

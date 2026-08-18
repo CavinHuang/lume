@@ -142,7 +142,7 @@ describe("agent-handlers events (get-events / lifecycle bus)", () => {
     const result = await consumeRuntimeCoreQueryStream({
       query: stream(lifecycleMockStream),
       emit: { onSdkMessage: () => undefined },
-      lifecycle: { threadId, sessionDir }
+      lifecycle: { threadId, sessionDir, runId: "lume-run-1" }
     });
 
     expect(result).toEqual({ status: "completed" });
@@ -158,7 +158,7 @@ describe("agent-handlers events (get-events / lifecycle bus)", () => {
     const result = await consumeRuntimeCoreQueryStream({
       query: stream(lifecycleMockStream),
       emit: { onSdkMessage: () => undefined },
-      lifecycle: { threadId, sessionDir }
+      lifecycle: { threadId, sessionDir, runId: "lume-run-1" }
     });
 
     expect(result).toEqual({ status: "completed" });
@@ -183,6 +183,7 @@ describe("agent-handlers events (get-events / lifecycle bus)", () => {
       null
     ]);
     const runId = envelopes[0]!.runId;
+    expect(runId).toBe("lume-run-1");
     for (const envelope of envelopes) {
       expect(envelope.threadId).toBe(threadId);
       expect(envelope.runId).toBe(runId);

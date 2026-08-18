@@ -4,10 +4,10 @@ import { projectLifecycle } from "./lifecycle-projector.js"
 import type { SDKMessage } from "../types.js"
 
 /** 用固定消息序列驱动 projector,收集骨架事件 */
-async function run(messages: SDKMessage[]): Promise<any[]> {
+async function run(messages: SDKMessage[], options?: { runId?: string }): Promise<any[]> {
   async function* input() { for (const m of messages) yield m }
   const out: any[] = []
-  for await (const ev of projectLifecycle(input())) out.push(ev)
+  for await (const ev of projectLifecycle(input(), options)) out.push(ev)
   return out
 }
 
@@ -30,6 +30,36 @@ const toolResult = (id: string) => ({
 })
 
 describe("projectLifecycle", () => {
+  test("options.runId 传入:全部骨架事件 runId=传入值(Lume runId 贯穿)", async () => {
+    const events = await run([
+      streamTextDelta("he") as any,
+      assistantWithTool("turn-a") as any,
+      toolResult("t1") as any,
+      { type: "result", subtype: "success", num_turns: 1 } as any,
+    ], { runId: "lume-run-1" })
+
+    expect(events.length).toBeGreaterThan(0)
+    expect(new Set(events.map((e) => e.runId))).toEqual(new Set(["lume-run-1"]))
+    // run.start/run.end 等全部骨架事件与领域事件同域
+    expect(events.find((e) => e.kind === "run" && e.phase === "start")!.runId).toBe("lume-run-1")
+    expect(events.find((e) => e.kind === "run" && e.phase === "end")!.runId).toBe("lume-run-1")
+  })
+
+  test("options 缺省:回落自产 UUID,全事件同域(向后兼容)", async () => {
+    const events = await run([
+      streamTextDelta("he") as any,
+      assistantWithTool("turn-a") as any,
+      toolResult("t1") as any,
+      { type: "result", subtype: "success", num_turns: 1 } as any,
+    ])
+
+    const runIds = new Set(events.map((e) => e.runId))
+    expect(runIds.size).toBe(1)
+    expect(runIds.values().next().value).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+    )
+  })
+
   test("single turn with tool: full skeleton, turn.end self-contained", async () => {
     const events = await run([
       streamTextDelta("he") as any,
