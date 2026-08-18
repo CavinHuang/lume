@@ -65,10 +65,12 @@ const LIFECYCLE_BUS_ENABLED = import.meta.env.AGENT_LIFECYCLE_EVENTS === '1'
 
 /**
  * flag on 时旧 RUNTIME_EVENT 分支跳过的试点链类型(试点线程内由 lifecycle 总线
- * 经适配器驱动,避免双写)。刻意不含:
- * - assistant.thinking_delta:总线批次1 不折叠 thinking,旧路是唯一来源
- * - run.cancelled:软中止无 result 终值、总线不产对应事件,旧路是唯一来源
- *   (含 Resume 横幅所需的 queue-interrupted 副作用)
+ * 经适配器驱动,避免双写)。批次5 扩至终表全量收口。刻意不含:
+ * - message.user.submitted:engine 不在流内 yield user 消息,projector user 对无产生点,
+ *   旧路是唯一来源(批次5 Low-1 裁定;适配器 user.message 分支留作 SDK 未来 emitter)
+ * - plan.preview:旧路休眠(无写入者),projector 分支留作接收端
+ * - task.progress:SDK 后台进度(taskId/description/usage)与旧路 Task 清单事件
+ *   (源于 task-tools 而非 SDK 流)不同物,无总线版,旧路继续
  */
 const LEGACY_SKIPPED_PILOT_EVENT_TYPES = new Set<string>([
   'assistant.delta',
@@ -91,6 +93,17 @@ const LEGACY_SKIPPED_PILOT_EVENT_TYPES = new Set<string>([
   'context.compaction.started',
   'context.compaction.progress',
   'context.compaction.completed',
+  // 批次5 扩(Phase A 收口):thinking 总线已折叠(partial.thinking)由适配器驱动;
+  // run.started/run.cancelled 翻转为总线产(run.cancelled 的 streaming idle +
+  // queue-interrupted 副作用移至 consumeBusEnvelope);todo/advisor/lsp/coding.report
+  // 为 sidecar 第二入口双发同形。
+  'assistant.thinking_delta',
+  'run.started',
+  'run.cancelled',
+  'todo.state_updated',
+  'advisor.reviewed',
+  'lsp.diagnostics.updated',
+  'coding.report.updated',
 ])
 
 // 模块级而非 ref:适配器求差基线与去重水位须跨双挂载实例、跨 tab 切换存活
@@ -175,6 +188,14 @@ export function useGlobalAgentListeners() {
         enqueueRuntimeEvent,
         setStreamingStates,
         setErrorMessages,
+        // 批次5:run.cancelled 被跳过清单接管后,queue-interrupted(Resume 横幅)副作用
+        // 移至总线版——与旧路 RUNTIME_EVENT 分支同逻辑(队列非空才置位,幂等不重复置)
+        onRunCancelled: (threadId) => {
+          const queue = messageQueuesRef.current[threadId]
+          if (queue && queue.queuedMessages.some((item) => !item.internal)) {
+            setQueueInterrupted((prev) => (prev[threadId] ? prev : { ...prev, [threadId]: true }))
+          }
+        },
       })
     },
   })
