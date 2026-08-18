@@ -142,14 +142,20 @@ export function CodingTurnFileChangesSummary({
         </div>
       </CardHeader>}
       {changes.length > 0 && <CardContent className="py-1">
-        {visibleChanges.map((change) => (
-          <CodingFileChangeRow
+        {visibleChanges.map((change, index) => (
+          <div
             key={codingReviewFileKey(change)}
-            change={change}
-            report={report}
-            threadId={threadId}
-            onOpen={() => void openChange(change)}
-          />
+            // 错峰 pop-in：沿用 PR#100 洞察/建议卡的 80ms stagger 模式
+            className="animate-in fade-in slide-in-from-bottom-1 fill-mode-both duration-300 motion-reduce:animate-none"
+            style={{ animationDelay: `${Math.min(index, 8) * 80}ms` }}
+          >
+            <CodingFileChangeRow
+              change={change}
+              report={report}
+              threadId={threadId}
+              onOpen={() => void openChange(change)}
+            />
+          </div>
         ))}
         {hiddenChangeCount > 0 && (
           <Button
