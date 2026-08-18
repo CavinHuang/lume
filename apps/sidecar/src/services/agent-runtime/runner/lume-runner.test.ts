@@ -348,13 +348,11 @@ describe("LumeRunner", () => {
 
     expect(events).toEqual([
       "sdk:assistant",
-      "runtime:assistant.delta",
-      "runtime:run.completed",
       "complete"
     ]);
   });
 
-  test("complete emits RuntimeEvents", async () => {
+  test("complete no longer emits migrated legacy RuntimeEvents (T7a)", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-runtime-events-"));
     dirs.push(agentDir);
     const events: string[] = [];
@@ -373,10 +371,9 @@ describe("LumeRunner", () => {
     } as SDKMessage]));
     await runner.complete();
 
+    // T7a:assistant.delta/run.completed 已迁事件总线,旧路不再产
     expect(events).toEqual([
       "sdk:assistant",
-      "runtime:assistant.delta",
-      "runtime:run.completed",
       "complete"
     ]);
   });
@@ -483,7 +480,7 @@ describe("LumeRunner", () => {
     expect(state.error?.message).toBe("boom");
   });
 
-  test("abort emits run.cancelled so clients can reset streaming state", async () => {
+  test("abort no longer emits legacy run.cancelled (T7a: migrated to bus)", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-abort-"));
     dirs.push(agentDir);
     const events: string[] = [];
@@ -496,7 +493,7 @@ describe("LumeRunner", () => {
     const result = await runner.abort();
 
     expect(result).toEqual({ status: "aborted" });
-    expect(events).toEqual(["runtime:run.cancelled", "complete"]);
+    expect(events).toEqual(["complete"]);
   });
 
   test("soft-abort error result finalizes as cancelled when the abort signal fired", async () => {
@@ -526,7 +523,8 @@ describe("LumeRunner", () => {
     ]));
 
     expect(abortedResult).toEqual({ status: "aborted" });
-    expect(abortedEvents).toContain("runtime:run.cancelled");
+    // T7a:run.cancelled 已迁事件总线,旧路不再产;归一语义由 run state 断言承载
+    expect(abortedEvents).not.toContain("runtime:run.cancelled");
     expect(readOnlyRunState(abortedDir).status).toBe("cancelled");
 
     // 对照：非 abort 的同类 error result 仍归 failed。
@@ -789,7 +787,8 @@ describe("LumeRunner", () => {
       status: "turn_limited",
       errorMessage: "Agent SDK 达到最大回合数（20），本轮需要继续执行。"
     });
-    expect(events).toEqual(["sdk:result", "runtime:usage.updated", "runtime:run.turn_limited"]);
+    // T7a:run.turn_limited 已迁事件总线,旧路不再产;usage.updated(裁定保留)照旧
+    expect(events).toEqual(["sdk:result", "runtime:usage.updated"]);
     expect(readOnlyRunState(agentDir).status).toBe("completed");
     expect(readRunItems(agentDir)).toContainEqual(expect.objectContaining({
       type: "system_event",

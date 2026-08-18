@@ -554,7 +554,7 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
   return [];
 }
 
-export function projectBackgroundTaskNotificationRuntimeEvent(
+function projectBackgroundTaskNotificationRuntimeEvent(
   threadId: string,
   payload: unknown,
   createdAt: string
@@ -651,29 +651,6 @@ function isMemoryScope(value: unknown): value is MemoryContextUsedItem["scope"] 
 
 function isMemoryStatus(value: unknown): value is MemoryContextUsedItem["status"] {
   return value === "active" || value === "suspected_stale";
-}
-
-export function projectAssistantMessageFinalRuntimeEvent(
-  run: LumeRunState,
-  item: LumeRunItem
-): LumeRuntimeEvent | null {
-  if (item.type !== "assistant_message") return null;
-  const blocks = extractAssistantContentBlocks(item.content)
-    .filter((block) => block.text.trim())
-    .map((block) => ({
-      type: block.kind,
-      text: block.text
-    }));
-  return blocks.length > 0
-    ? {
-        id: `${run.runId}:${item.id}:assistant.final`,
-        type: "assistant.final",
-        threadId: run.threadId,
-        runId: run.runId,
-        createdAt: item.createdAt,
-        blocks
-      }
-    : null;
 }
 
 function extractFinalOutput(items: LumeRunItem[]): string | undefined {

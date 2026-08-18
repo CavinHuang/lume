@@ -17,10 +17,7 @@ import { redactTracePayload, summarizeTraceOutput } from "../trace/trace-redacti
 import { createFileBackedLumeTraceStore } from "../trace/trace-store";
 import type { LumeTraceSpan } from "../trace/trace-types";
 import type { LumeRunItem } from "./run-items";
-import {
-  projectAssistantMessageFinalRuntimeEvent,
-  projectRunItemToRuntimeEvents
-} from "./run-item-events";
+import { projectRunItemToRuntimeEvents } from "./run-item-events";
 import type { LumeRunState, LumeRunStatus } from "./run-state";
 import { createFileBackedLumeRunStateStore, type LumeRunStateStore } from "./run-state-store";
 import { stripMemoryUserMessagePrefix } from "../../memory-v2/user-message-prefix";
@@ -126,8 +123,6 @@ export class LumeRunObserver {
   private readonly subagentParentToolCallIds = new Map<string, string>();
   private readonly nextRuntimeSequenceByRun = new Map<string, number>();
   private compactionSpanId?: string;
-  private emittedModelStreamText = false;
-  private emittedModelStreamThinking = false;
 
   private constructor(
     private readonly state: LumeRunState,
@@ -241,8 +236,6 @@ export class LumeRunObserver {
               });
             }
           }
-          this.emittedModelStreamText = false;
-          this.emittedModelStreamThinking = false;
         }
         const createdAt = new Date().toISOString();
         if (message.phase === "cleared") {
@@ -279,24 +272,18 @@ export class LumeRunObserver {
       });
       for (const item of items) {
         await this.stateStore.appendItem(this.state.runId, item);
-        if (item.type === "assistant_message" && (this.emittedModelStreamText || this.emittedModelStreamThinking)) {
-          const finalRuntimeEvent = projectAssistantMessageFinalRuntimeEvent(this.state, item);
-          if (finalRuntimeEvent) this.emitRuntimeEvent(emitRuntimeEvent, finalRuntimeEvent);
-          continue;
-        }
-        const runtimeEvents = projectRunItemToRuntimeEvents(this.state, item, {
-          includeAssistantText: !this.emittedModelStreamText,
-          includeAssistantThinking: !this.emittedModelStreamThinking,
-          includeModelStreamText: true
-        });
-        for (const event of runtimeEvents) {
-          if (event.type === "assistant.delta" && item.type === "model_stream") {
-            this.emittedModelStreamText = true;
+        // T7a:已迁类(assistant/tool/todo/advisor/lsp/compaction 等)的 live 投影删除,
+        // live 由事件总线经适配器驱动;唯一保留的 item 级 live 投影是裁定保留类
+        // usage.updated(system_event name=result)。item 记录照常落盘(run state/trace 消费)。
+        if (item.type === "system_event" && item.name === "result") {
+          const runtimeEvents = projectRunItemToRuntimeEvents(this.state, item, {
+            includeAssistantText: true,
+            includeAssistantThinking: true,
+            includeModelStreamText: true
+          });
+          for (const event of runtimeEvents) {
+            this.emitRuntimeEvent(emitRuntimeEvent, event);
           }
-          if (event.type === "assistant.thinking_delta" && item.type === "model_stream") {
-            this.emittedModelStreamThinking = true;
-          }
-          this.emitRuntimeEvent(emitRuntimeEvent, event);
         }
       }
       await this.recordSdkMessageTrace(message);
@@ -319,8 +306,7 @@ export class LumeRunObserver {
   }
 
   recordTodoState(
-    state: { todos: { content: string; activeForm: string; status: "pending" | "in_progress" | "completed" }[]; currentActiveForm: string | null },
-    emitRuntimeEvent?: (event: LumeRuntimeEvent) => void
+    state: { todos: { content: string; activeForm: string; status: "pending" | "in_progress" | "completed" }[]; currentActiveForm: string | null }
   ): void {
     this.enqueue(async () => {
       const createdAt = new Date().toISOString();
@@ -331,14 +317,8 @@ export class LumeRunObserver {
         currentActiveForm: state.currentActiveForm,
         createdAt
       };
+      // T7a:todo.state_updated 已迁事件总线,旧路只落盘 item(hydrate replay 消费),不再投影
       await this.stateStore.appendItem(this.state.runId, item);
-      for (const event of projectRunItemToRuntimeEvents(this.state, item, {
-        includeAssistantText: true,
-        includeAssistantThinking: true,
-        includeModelStreamText: true
-      })) {
-        this.emitRuntimeEvent(emitRuntimeEvent, event);
-      }
     });
   }
 
@@ -441,8 +421,7 @@ export class LumeRunObserver {
       details?: string;
       modelRef: string;
       durationMs: number;
-    },
-    emitRuntimeEvent?: (event: LumeRuntimeEvent) => void
+    }
   ): void {
     this.enqueue(async () => {
       const item: LumeRunItem = {
@@ -452,14 +431,8 @@ export class LumeRunObserver {
         payload: review,
         createdAt: new Date().toISOString()
       };
+      // T7a:advisor.reviewed 已迁事件总线,旧路只落盘 item(hydrate replay 消费),不再投影
       await this.stateStore.appendItem(this.state.runId, item);
-      for (const event of projectRunItemToRuntimeEvents(this.state, item, {
-        includeAssistantText: true,
-        includeAssistantThinking: true,
-        includeModelStreamText: true
-      })) {
-        this.emitRuntimeEvent(emitRuntimeEvent, event);
-      }
     });
   }
 

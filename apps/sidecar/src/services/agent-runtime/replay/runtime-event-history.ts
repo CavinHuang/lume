@@ -1,5 +1,5 @@
 import type { AgentThreadRuntimeEventsResult, LumeRuntimeEvent } from "@lume/shared";
-import { projectBackgroundTaskNotificationRuntimeEvent, projectRunStateToRuntimeEvents } from "../runner/run-item-events";
+import { projectRunStateToRuntimeEvents } from "../runner/run-item-events";
 import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
 import { createFileBackedTaskStore } from "../task/task-store";
 import { getAgentThreadSDKMessages } from "../../agent/agent-thread-manager";
@@ -19,17 +19,7 @@ export async function listThreadRuntimeEvents(input: {
 }): Promise<AgentThreadRuntimeEventsResult> {
   const runs = await createFileBackedLumeRunStateStore(input.sessionDir).listByThread(input.threadId);
   const taskEvents = createFileBackedTaskStore(input.sessionDir, { taskListId: input.threadId }).listEvents();
-  const backgroundTaskEvents = getAgentThreadSDKMessages(input.threadId)
-    .filter((message) => message.type === "system" && message.subtype === "task_notification")
-    .map((message) => {
-      const createdAt = (message as SDKMessageWithCreatedAt)._createdAt;
-      return projectBackgroundTaskNotificationRuntimeEvent(
-        input.threadId,
-        message,
-        typeof createdAt === "number" ? new Date(createdAt).toISOString() : new Date(0).toISOString()
-      );
-    })
-    .filter((event): event is Extract<LumeRuntimeEvent, { type: "background.task.completed" }> => event !== null);
+  // T7a:background.task.completed 已迁事件总线,不再从 SDK log 投影(保留类照旧)
   const memoryChangedEvents = getAgentThreadSDKMessages(input.threadId)
     .filter((message) => message.type === "system" && message.subtype === "memory_saved")
     .map((message): Extract<LumeRuntimeEvent, { type: "memory.changed" }> => ({
@@ -50,7 +40,6 @@ export async function listThreadRuntimeEvents(input: {
     threadId: input.threadId,
     events: assignRunSequences(sortRuntimeEvents([
       ...runs.flatMap(projectRunStateToReplayEvents),
-      ...backgroundTaskEvents,
       ...memoryChangedEvents,
       ...taskEvents.map((event) => ({
         id: `task.progress:${event.taskListId}:${event.sequence}`,
@@ -73,8 +62,6 @@ export async function listThreadRuntimeEvents(input: {
     ]))
   };
 }
-
-type SDKMessageWithCreatedAt = { _createdAt?: number };
 
 /** Event timestamps can collide across parallel child runs; sequence is the stable order within one run. */
 function assignRunSequences(events: LumeRuntimeEvent[]): LumeRuntimeEvent[] {

@@ -308,33 +308,12 @@ export class LumeRunner {
     if (resultWithCoding.status === "turn_limited") {
       this.observer.recordTurnLimited(resultWithCoding.errorMessage);
       await this.observer.flush();
-      this.emit.onRuntimeEvent?.({
-        id: `${this.observer.getRunId()}:run.turn_limited`,
-        type: "run.turn_limited",
-        threadId: this.observer.getThreadId(),
-        runId: this.observer.getRunId(),
-        createdAt: new Date().toISOString(),
-        reason: resultWithCoding.errorMessage,
-        ...(resultWithCoding.verificationStatus ? { verificationStatus: resultWithCoding.verificationStatus } : {}),
-        ...(resultWithCoding.codingReport ? { codingReport: resultWithCoding.codingReport } : {})
-      });
+      // T7a:run.turn_limited 已迁事件总线(run.end{stopReason:'max_turns'}),旧路 emit 删除
       return this.finalizeResult(resultWithCoding);
     }
     if (resultWithCoding.status !== "completed") {
+      // T7a:run.failed 已迁事件总线(run.end{isError}),旧路 emit 删除
       await this.observer.flush();
-      this.emit.onRuntimeEvent?.({
-        id: `${this.observer.getRunId()}:run.failed`,
-        type: "run.failed",
-        threadId: this.observer.getThreadId(),
-        runId: this.observer.getRunId(),
-        createdAt: new Date().toISOString(),
-        error: {
-          code: "runtime_error",
-          message: resultWithCoding.errorMessage
-        },
-        ...(resultWithCoding.verificationStatus ? { verificationStatus: resultWithCoding.verificationStatus } : {}),
-        ...(resultWithCoding.codingReport ? { codingReport: resultWithCoding.codingReport } : {})
-      });
       return this.finalizeResult(resultWithCoding);
     }
     return resultWithCoding;
@@ -518,8 +497,9 @@ export class LumeRunner {
       emitRuntimeEvent: this.emit.onRuntimeEvent,
       persistCodingReport: (report) => this.observer.recordCodingReport(report),
       emitAdvisorReview: (review) => {
-        this.observer.recordAdvisorReview(review, this.emit.onRuntimeEvent);
-        // 批次5 第二入口:advisor.reviewed 领域事件经 ThreadEventBus 双发(与旧路互不替代)
+        // T7a:advisor.reviewed 已迁事件总线,旧路只落盘 item(recordAdvisorReview 不再投影)
+        this.observer.recordAdvisorReview(review);
+        // 批次5 第二入口:advisor.reviewed 领域事件经 ThreadEventBus 发布
         publishAdvisorReviewedToBus({
           sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir),
           threadId: this.observer.getThreadId(),
@@ -601,15 +581,7 @@ export class LumeRunner {
       }
     }
     await this.fireRunAfterComplete(runState);
-    this.emit.onRuntimeEvent?.({
-      id: `${this.observer.getRunId()}:run.completed`,
-      type: "run.completed",
-      threadId: this.observer.getThreadId(),
-      runId: this.observer.getRunId(),
-      createdAt: new Date().toISOString(),
-      ...(verificationStatus ? { verificationStatus } : {}),
-      ...(codingReport ? { codingReport } : {})
-    });
+    // T7a:run.completed 已迁事件总线(run.end),旧路 emit 删除
     this.emit.onComplete();
     return this.finalizeResult({ status: "completed", verificationStatus, codingReport });
   }
@@ -687,9 +659,9 @@ export class LumeRunner {
       hidden: true
     } as const;
     this.observer.recordMemoryContextUsed(event);
-    this.emit.onRuntimeEvent?.(event);
-    // 第二注入路径:flag on 时同一 items 经 ThreadEventBus 再发一份(run 级领域事件),
-    // 与旧路双发互不替代;sessionDir 与 run-loop tee 一致,保证同一 bus 单例与单调 seq。
+    // T7a:memory.context.used 已迁事件总线,旧路 emit 删除(item 记录保留供 hydrate replay)。
+    // 第二注入路径:flag on 时同一 items 经 ThreadEventBus 发布(run 级领域事件);
+    // sessionDir 与 run-loop tee 一致,保证同一 bus 单例与单调 seq。
     if (isAgentLifecycleEventsEnabled()) {
       const threadId = this.observer.getThreadId();
       const runId = this.observer.getRunId();
@@ -712,33 +684,17 @@ export class LumeRunner {
   }
 
   async abort(): Promise<AgentRuntimeRunResult> {
+    // T7a:run.cancelled 已迁事件总线(流中止终值 run.end{stopReason:'aborted'}),旧路 emit 删除
     await this.observer.flush();
-    this.emit.onRuntimeEvent?.({
-      id: `${this.observer.getRunId()}:run.cancelled`,
-      type: "run.cancelled",
-      threadId: this.observer.getThreadId(),
-      runId: this.observer.getRunId(),
-      createdAt: new Date().toISOString()
-    });
     this.emit.onComplete();
     return this.finalizeResult({ status: "aborted" });
   }
 
   async fail(errorMessage: string): Promise<AgentRuntimeRunResult> {
+    // T7a:run.failed 已迁事件总线(run.end{isError}),旧路 emit 删除
     await this.fireRunAfterFailure(errorMessage);
     await this.observer.flush();
     this.emit.onError(errorMessage);
-    this.emit.onRuntimeEvent?.({
-      id: `${this.observer.getRunId()}:run.failed`,
-      type: "run.failed",
-      threadId: this.observer.getThreadId(),
-      runId: this.observer.getRunId(),
-      createdAt: new Date().toISOString(),
-      error: {
-        code: "runtime_error",
-        message: errorMessage
-      }
-    });
     return this.finalizeResult({ status: "errored", errorMessage });
   }
 

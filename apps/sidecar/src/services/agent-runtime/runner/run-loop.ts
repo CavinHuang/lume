@@ -191,11 +191,11 @@ export function createObservedRuntimeEmitter(
       emit.onSdkMessage(message);
     },
     onTodoUpdated: (state) => {
-      observer.recordTodoState(state, emit.onRuntimeEvent);
+      observer.recordTodoState(state);
       emit.onTodoUpdated?.(state);
-      // 批次5 第二入口:flag on 时同一 todo state 经 ThreadEventBus 再发一份(run 级
-      // 领域事件),与旧路(recordTodoState → projectRunItemToRuntimeEvents)双发
-      // 互不替代;runId 取 Lume run id,detail.state 与旧路载荷同引用。
+      // 批次5 第二入口:flag on 时同一 todo state 经 ThreadEventBus 发布(run 级
+      // 领域事件);T7a 后旧路投影已删,item 记录仅供 hydrate replay。
+      // runId 取 Lume run id,detail.state 与回调载荷同引用。
       if (bus && isAgentLifecycleEventsEnabled()) {
         const threadId = observer.getThreadId();
         const runId = observer.getRunId();

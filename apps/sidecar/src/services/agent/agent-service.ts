@@ -73,7 +73,6 @@ import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../ag
 import { isAgentRuntimeSessionActive } from "../agent-runtime/runtime-core/attempt";
 import { createCodingTurnRecord } from "../agent-runtime/runtime-core/coding-turn-store";
 import { createFileBackedLumeRunStateStore } from "../agent-runtime/runner/run-state-store";
-import { projectBackgroundTaskNotificationRuntimeEvent } from "../agent-runtime/runner/run-item-events";
 import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import type { LumeRunState } from "../agent-runtime/runner/run-state";
 import { emitAgentNotification, emitDiagnosticContent } from "./agent-notification-service";
@@ -127,13 +126,6 @@ const STALE_RUN_STATUSES = new Set<LumeRunState["status"]>(["created", "running"
 const STALE_RUN_PROGRESS_HEAD_COUNT = 6;
 const STALE_RUN_PROGRESS_TAIL_COUNT = 10;
 const VISIBLE_HISTORY_CONTINUATION_TAIL_COUNT = 8;
-
-function projectLateBackgroundTaskCompletion(
-  threadId: string,
-  message: Extract<SDKMessage, { type: "system"; subtype: "task_notification" }>
-): LumeRuntimeEvent | null {
-  return projectBackgroundTaskNotificationRuntimeEvent(threadId, message, new Date().toISOString());
-}
 
 const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter>({
   validateQueued: validateQueuedAgentDispatch,
@@ -1084,12 +1076,8 @@ export async function sendAgentMessage(
           persistedSdkMessages.push(stampedMessage);
         }
       }
-      if (stampedMessage.type === "system" && stampedMessage.subtype === "task_notification") {
-        if (runtimeCompleted) {
-          const completionEvent = projectLateBackgroundTaskCompletion(threadId, stampedMessage);
-          if (completionEvent) emit.onRuntimeEvent?.(completionEvent);
-        }
-      }
+      // T7a:background.task.completed 已迁事件总线(late 旁路 run.ts handleAsyncEvent),
+      // 旧路对 late task_notification 的 emit 删除;SDK log 照常落盘供上下文构建。
     },
     onComplete: () => {
       runtimeCompleted = true;

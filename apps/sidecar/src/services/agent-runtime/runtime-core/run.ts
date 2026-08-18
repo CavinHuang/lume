@@ -1874,30 +1874,14 @@ export async function createRuntimeCoreSession(
       && (codingReport.gitActions?.length ?? 0) === 0
     ) return;
     input.persistCodingReport?.(codingReport);
-    // 批次5 第二入口:同一 codingReport 经 ThreadEventBus 再发一份(与旧路双发,
-    // flag gate 在 helper 内;空报告早退于两条路之前)
+    // 批次5 第二入口:同一 codingReport 经 ThreadEventBus 发布(flag gate 在 helper 内;
+    // 空报告早退于 publish 之前)。T7a:旧路 emitRuntimeEvent(coding.report.updated)删除。
     publishCodingReportToBus({
       sessionDir,
       threadId: input.lumeSessionId,
       runId,
       report: codingReport
     });
-    try {
-      input.emitRuntimeEvent?.({
-        id: `${runId}:coding-report:${Date.now()}`,
-        type: "coding.report.updated",
-        threadId: input.lumeSessionId,
-        runId,
-        createdAt: new Date().toISOString(),
-        codingReport,
-      });
-    } catch (error) {
-      log.warn("Failed to emit Coding report update", {
-        sessionId: input.lumeSessionId,
-        runId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
   };
   const handleToolExecution = (toolInput: Parameters<typeof codingRunTracker.observe>[0]): void => {
     codingRunTracker.observe(toolInput);

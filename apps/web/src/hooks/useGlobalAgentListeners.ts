@@ -63,48 +63,10 @@ import { useAgentEventBus } from './useAgentEventBus'
  */
 const LIFECYCLE_BUS_ENABLED = import.meta.env.AGENT_LIFECYCLE_EVENTS === '1'
 
-/**
- * flag on 时旧 RUNTIME_EVENT 分支跳过的试点链类型(试点线程内由 lifecycle 总线
- * 经适配器驱动,避免双写)。批次5 扩至终表全量收口。刻意不含:
- * - message.user.submitted:engine 不在流内 yield user 消息,projector user 对无产生点,
- *   旧路是唯一来源(批次5 Low-1 裁定;适配器 user.message 分支留作 SDK 未来 emitter)
- * - plan.preview:旧路休眠(无写入者),projector 分支留作接收端
- * - task.progress:SDK 后台进度(taskId/description/usage)与旧路 Task 清单事件
- *   (源于 task-tools 而非 SDK 流)不同物,无总线版,旧路继续
- */
-const LEGACY_SKIPPED_PILOT_EVENT_TYPES = new Set<string>([
-  'assistant.delta',
-  'assistant.final',
-  'run.completed',
-  'run.turn_limited',
-  'run.failed',
-  // 批次2 扩:tool 渲染同由 lifecycle 总线适配器驱动。
-  'tool.started',
-  'tool.completed',
-  'tool.failed',
-  // 批次3 扩:memory 事件 seq 恒在 run.end 之后(lume-runner 在流返回后才双发),live 总线版
-  // 被终态闸门确定性拦截([lifecycle-mismatch] 必触发)——live 展示实际由旧路 hydrate replay
-  // 驱动;总线事件为 events.jsonl 落盘先占(批次5 统一 runId 并删旧路后由总线接管)。
-  // 跳过旧路 live 仍必要:避免与(被拦截的)总线版之外的重复注入路径并存。
-  'memory.context.used',
-  // 批次4 扩:background.task(late 通知旁路)与 compaction 三态由总线适配器驱动;
-  // background.task.completed 的 streaming 副作用同步移至 consumeBusEnvelope。
-  'background.task.completed',
-  'context.compaction.started',
-  'context.compaction.progress',
-  'context.compaction.completed',
-  // 批次5 扩(Phase A 收口):thinking 总线已折叠(partial.thinking)由适配器驱动;
-  // run.started/run.cancelled 翻转为总线产(run.cancelled 的 streaming idle +
-  // queue-interrupted 副作用移至 consumeBusEnvelope);todo/advisor/lsp/coding.report
-  // 为 sidecar 第二入口双发同形。
-  'assistant.thinking_delta',
-  'run.started',
-  'run.cancelled',
-  'todo.state_updated',
-  'advisor.reviewed',
-  'lsp.diagnostics.updated',
-  'coding.report.updated',
-])
+// T7a(批次5 删除批):LEGACY_SKIPPED_PILOT_EVENT_TYPES 与跳过逻辑已删——已迁类的
+// 旧路产生点(sidecar 投影/emit)已删,RUNTIME_EVENT 通道不再送达已迁类,无需跳过。
+// 保留类(message.user.submitted/plan.preview/task.progress/usage.updated/model.retry 系/
+// memory.changed 系/交互对等)旧路分支原样。
 
 // 模块级而非 ref:适配器求差基线与去重水位须跨双挂载实例、跨 tab 切换存活
 const lifecycleAdapterStatesByThread = new Map<string, LifecycleAdapterState>()
@@ -175,8 +137,6 @@ export function useGlobalAgentListeners() {
   const lifecycleBusThreadId = LIFECYCLE_BUS_ENABLED
     ? tabs.find((tab) => tab.id === activeTabId && tab.type === 'agent')?.threadId ?? null
     : null
-  const lifecycleBusThreadIdRef = useRef<string | null>(null)
-  lifecycleBusThreadIdRef.current = lifecycleBusThreadId
   useAgentEventBus(lifecycleBusThreadId ?? '', {
     enabled: lifecycleBusThreadId !== null,
     onEvent: (envelope, source) => {
@@ -236,10 +196,6 @@ export function useGlobalAgentListeners() {
         case AGENT_IPC_CHANNELS.RUNTIME_EVENT: {
           const notification = params as AgentRuntimeEventNotification
           const { threadId, event } = notification
-          // flag on 时试点线程的试点链类型改由 lifecycle 总线驱动,旧分支跳过避免双写
-          if (LIFECYCLE_BUS_ENABLED && threadId === lifecycleBusThreadIdRef.current && LEGACY_SKIPPED_PILOT_EVENT_TYPES.has(event.type)) {
-            break
-          }
           enqueueRuntimeEvent(event)
           if (event.type === 'memory.changed' || event.type === 'memory.job.progress' || event.type === 'memory.job.completed') {
             setMemoryCenterVersion((version) => version + 1)
