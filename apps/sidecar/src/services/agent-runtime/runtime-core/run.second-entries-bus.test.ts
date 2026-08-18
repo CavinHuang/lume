@@ -51,15 +51,8 @@ function isCodingReportDetail(detail: unknown): boolean {
 
 describe("批次5 第二入口:lsp.diagnostics(handleAsyncEvent 旁路 helper)", () => {
   const dirs: string[] = [];
-  const previousFlag = process.env.AGENT_LIFECYCLE_EVENTS;
-  const hadFlag = previousFlag !== undefined;
 
   afterEach(() => {
-    if (hadFlag) {
-      process.env.AGENT_LIFECYCLE_EVENTS = previousFlag;
-    } else {
-      delete process.env.AGENT_LIFECYCLE_EVENTS;
-    }
     for (const dir of dirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -76,8 +69,7 @@ describe("批次5 第二入口:lsp.diagnostics(handleAsyncEvent 旁路 helper)",
     return { sessionDir, published };
   }
 
-  test("flag on: 字段与旧路 lsp.diagnostics.updated 逐一对齐", async () => {
-    process.env.AGENT_LIFECYCLE_EVENTS = "1";
+  test("字段与旧路 lsp.diagnostics.updated 逐一对齐", async () => {
     const threadId = "run-lsp-bus-on";
     const { sessionDir, published } = setup(threadId);
 
@@ -113,24 +105,7 @@ describe("批次5 第二入口:lsp.diagnostics(handleAsyncEvent 旁路 helper)",
       }));
   });
 
-  test("flag off: 零行为,总线无 publish", async () => {
-    delete process.env.AGENT_LIFECYCLE_EVENTS;
-    const threadId = "run-lsp-bus-off";
-    const { sessionDir, published } = setup(threadId);
-
-    publishLspDiagnosticsToBus({
-      sessionDir,
-      threadId,
-      runId: "lume-run-1",
-      event: lspDiagnosticsMessage() as never
-    });
-
-    expect(published).toHaveLength(0);
-    expect(await getThreadEventBus(sessionDir).read(threadId)).toEqual([]);
-  });
-
   test("filePath/sha256 缺失丢弃(同旧路 run-item-events gate)", async () => {
-    process.env.AGENT_LIFECYCLE_EVENTS = "1";
     const threadId = "run-lsp-bus-gate";
     const { sessionDir, published } = setup(threadId);
 
@@ -148,15 +123,8 @@ describe("批次5 第二入口:lsp.diagnostics(handleAsyncEvent 旁路 helper)",
 
 describe("批次5 第二入口:coding.report(publishCodingReport 产生点双发 helper)", () => {
   const dirs: string[] = [];
-  const previousFlag = process.env.AGENT_LIFECYCLE_EVENTS;
-  const hadFlag = previousFlag !== undefined;
 
   afterEach(() => {
-    if (hadFlag) {
-      process.env.AGENT_LIFECYCLE_EVENTS = previousFlag;
-    } else {
-      delete process.env.AGENT_LIFECYCLE_EVENTS;
-    }
     for (const dir of dirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -173,8 +141,7 @@ describe("批次5 第二入口:coding.report(publishCodingReport 产生点双发
     return { sessionDir, published };
   }
 
-  test("flag on: publish coding.report,detail.report 与旧路 codingReport 同引用", async () => {
-    process.env.AGENT_LIFECYCLE_EVENTS = "1";
+  test("publish coding.report,detail.report 与旧路 codingReport 同引用", async () => {
     const threadId = "run-coding-bus-on";
     const { sessionDir, published } = setup(threadId);
 
@@ -201,21 +168,5 @@ describe("批次5 第二入口:coding.report(publishCodingReport 产生点双发
         phase: "event",
         detail: expect.objectContaining({ type: "coding.report" })
       }));
-  });
-
-  test("flag off: 零行为,总线无 publish", async () => {
-    delete process.env.AGENT_LIFECYCLE_EVENTS;
-    const threadId = "run-coding-bus-off";
-    const { sessionDir, published } = setup(threadId);
-
-    publishCodingReportToBus({
-      sessionDir,
-      threadId,
-      runId: "lume-run-1",
-      report: codingReport
-    });
-
-    expect(published).toHaveLength(0);
-    expect(await getThreadEventBus(sessionDir).read(threadId)).toEqual([]);
   });
 });

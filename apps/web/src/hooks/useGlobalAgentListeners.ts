@@ -55,17 +55,10 @@ import { projectDesktopActionVisualEvent } from './desktop-action-visual-state'
 import { consumeBusEnvelope, type LifecycleAdapterState } from './lifecycle-event-adapter'
 import { useAgentEventBus } from './useAgentEventBus'
 
-/**
- * Batch 1 lifecycle 总线开关(与 sidecar 同 flag:AGENT_LIFECYCLE_EVENTS=1)。
- * web 是 Vite 渲染进程,经 vite envPrefix 暴露 AGENT_ 前缀变量读取——flag 需在
- * 启动 web dev server 与 desktop 的同一环境(根目录 `bun run dev`)中设置。
- * flag off:本文件零行为变化。
- */
-const LIFECYCLE_BUS_ENABLED = import.meta.env.AGENT_LIFECYCLE_EVENTS === '1'
-
-// T7a(批次5 删除批):LEGACY_SKIPPED_PILOT_EVENT_TYPES 与跳过逻辑已删——已迁类的
-// 旧路产生点(sidecar 投影/emit)已删,RUNTIME_EVENT 通道不再送达已迁类,无需跳过。
-// 保留类(message.user.submitted/plan.preview/task.progress/usage.updated/model.retry 系/
+// T7c(批次5 删除批):AGENT_LIFECYCLE_EVENTS flag 已退役——总线消费恒开
+// (active agent tab 即订阅);T7a 已删 LEGACY_SKIPPED_PILOT_EVENT_TYPES 跳过清单
+// (已迁类旧路产生点已删,RUNTIME_EVENT 不再送达已迁类)。保留类
+// (message.user.submitted/plan.preview/task.progress/usage.updated/model.retry 系/
 // memory.changed 系/交互对等)旧路分支原样。
 
 // 模块级而非 ref:适配器求差基线与去重水位须跨双挂载实例、跨 tab 切换存活
@@ -131,12 +124,10 @@ export function useGlobalAgentListeners() {
     }
   }, [flushRuntimeEvents])
 
-  // ---- Batch 1 lifecycle 总线消费(flag on 时试点链切换到新总线,经适配器喂现有投影) ----
+  // ---- lifecycle 总线消费(T7c 起恒开:active agent tab 即订阅,经适配器喂现有投影) ----
   // useGlobalAgentListeners 会被 App 与 QuickInput 同时挂载:两实例各自消费总线会导致
   // 同一 envelope 适配两次。用模块级 seq 水位去重(事件已按线程 seq 排序)。
-  const lifecycleBusThreadId = LIFECYCLE_BUS_ENABLED
-    ? tabs.find((tab) => tab.id === activeTabId && tab.type === 'agent')?.threadId ?? null
-    : null
+  const lifecycleBusThreadId = tabs.find((tab) => tab.id === activeTabId && tab.type === 'agent')?.threadId ?? null
   useAgentEventBus(lifecycleBusThreadId ?? '', {
     enabled: lifecycleBusThreadId !== null,
     onEvent: (envelope, source) => {

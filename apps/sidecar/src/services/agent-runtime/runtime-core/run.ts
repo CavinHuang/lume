@@ -157,7 +157,6 @@ import {
 import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
 import { persistAbortContinuation } from "../interruption/abort-continuation";
 import { classifyToolKind } from "../interruption/approval-service";
-import { isAgentLifecycleEventsEnabled } from "../runner/run-loop";
 import { getThreadEventBus } from "../events/thread-event-bus";
 import {
   collectAppendContextEffects,
@@ -1716,7 +1715,7 @@ async function waitForProcessJobToFinish(id: string, abortSignal?: AbortSignal):
  * ThreadEventBus 再发一份 background.task 领域事件——detail 与 projector 主流投影
  * (run-loop tee → handleSystem)同形态,双入口共用同一 bus 单调分配 seq。
  * 仅主流事件(无 subagent_run_id)且 status 归一为四态终态才发;attention/未知
- * status 丢弃。flag off 时零行为。
+ * status 丢弃。T7c 起恒开(批次1 flag 已退役)。
  */
 export function publishBackgroundTaskNotificationToBus(input: {
   sessionDir: string;
@@ -1724,7 +1723,6 @@ export function publishBackgroundTaskNotificationToBus(input: {
   runId: string;
   event: SDKMessage;
 }): void {
-  if (!isAgentLifecycleEventsEnabled()) return;
   const notification = input.event as SDKTaskNotificationMessage;
   if (notification.subagent_run_id) return;
   const status = normalizeBackgroundTaskStatus(notification.status);
@@ -1756,7 +1754,7 @@ export function publishBackgroundTaskNotificationToBus(input: {
  * run-item-events 投影 lsp.diagnostics.updated RuntimeEvent)之外,flag on 时经
  * ThreadEventBus 再发一份 lsp.diagnostics 领域事件——字段与旧路逐一对齐
  * (toolUseId←tool_use_id、filePath←file_path 等);filePath/sha256 缺失丢弃,
- * 同旧路 gate(run-item-events lsp_diagnostics 分支)。flag off 时零行为。
+ * 同旧路 gate(run-item-events lsp_diagnostics 分支)。T7c 起恒开(批次1 flag 已退役)。
  */
 export function publishLspDiagnosticsToBus(input: {
   sessionDir: string;
@@ -1764,7 +1762,6 @@ export function publishLspDiagnosticsToBus(input: {
   runId: string;
   event: SDKMessage;
 }): void {
-  if (!isAgentLifecycleEventsEnabled()) return;
   // SDKLspDiagnosticsMessage 未从 @lume/agent-sdk index 导出,与 engine 同法经 Extract 取型
   const message = input.event as Extract<SDKMessage, { type: "system"; subtype: "lsp_diagnostics" }>;
   if (!message.file_path || !message.sha256) return;
@@ -1797,9 +1794,9 @@ export function publishLspDiagnosticsToBus(input: {
 
 /**
  * 批次5 第二入口:coding.report.updated 的产生点(publishCodingReport)在旧路
- * RuntimeEvent 之外,flag on 时经 ThreadEventBus 再发一份 coding.report 领域
- * 事件——detail.report 与旧路 codingReport 同引用(T1 终表:迁,双入口)。
- * flag off 时零行为。
+ * RuntimeEvent 之外,经 ThreadEventBus 再发一份 coding.report 领域事件——
+ * detail.report 与旧路 codingReport 同引用(T1 终表:迁,双入口)。
+ * T7c 起恒开(批次1 flag 已退役)。
  */
 export function publishCodingReportToBus(input: {
   sessionDir: string;
@@ -1807,7 +1804,6 @@ export function publishCodingReportToBus(input: {
   runId: string;
   report: RuntimeCodingReport;
 }): void {
-  if (!isAgentLifecycleEventsEnabled()) return;
   const detail: CodingReportDetail = { type: "coding.report", report: input.report };
   void getThreadEventBus(input.sessionDir)
     .publish(input.threadId, input.runId, {

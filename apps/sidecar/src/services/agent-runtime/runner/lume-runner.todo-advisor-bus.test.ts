@@ -45,15 +45,8 @@ function isAdvisorReviewedDetail(detail: unknown): boolean {
 
 describe("批次5 第二入口:todo.state(run-loop 观察发射器)", () => {
   const dirs: string[] = [];
-  const previousFlag = process.env.AGENT_LIFECYCLE_EVENTS;
-  const hadFlag = previousFlag !== undefined;
 
   afterEach(() => {
-    if (hadFlag) {
-      process.env.AGENT_LIFECYCLE_EVENTS = previousFlag;
-    } else {
-      delete process.env.AGENT_LIFECYCLE_EVENTS;
-    }
     for (const dir of dirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -70,8 +63,7 @@ describe("批次5 第二入口:todo.state(run-loop 观察发射器)", () => {
     return { sessionDir, published };
   }
 
-  test("flag on: onTodoUpdated → todo.state 总线事件,detail.state 与旧路载荷同引用", async () => {
-    process.env.AGENT_LIFECYCLE_EVENTS = "1";
+  test("onTodoUpdated → todo.state 总线事件,detail.state 与旧路载荷同引用", async () => {
     const threadId = "run-todo-bus-on";
     const { sessionDir, published } = setup(threadId);
 
@@ -111,37 +103,12 @@ describe("批次5 第二入口:todo.state(run-loop 观察发射器)", () => {
         detail: expect.objectContaining({ type: "todo.state" })
       }));
   });
-
-  test("flag off: 零行为,总线无 publish", async () => {
-    delete process.env.AGENT_LIFECYCLE_EVENTS;
-    const threadId = "run-todo-bus-off";
-    const { sessionDir, published } = setup(threadId);
-
-    const observer = {
-      recordTodoState: () => {},
-      getThreadId: () => threadId,
-      getRunId: () => "lume-run-1"
-    } as unknown as LumeRunObserver;
-    const emitter = createObservedRuntimeEmitter(baseEmitter(), observer, { sessionDir });
-
-    emitter.onTodoUpdated?.(todoState);
-
-    expect(published).toHaveLength(0);
-    expect(await getThreadEventBus(sessionDir).read(threadId)).toEqual([]);
-  });
 });
 
 describe("批次5 第二入口:advisor.reviewed(lume-runner 注入 helper)", () => {
   const dirs: string[] = [];
-  const previousFlag = process.env.AGENT_LIFECYCLE_EVENTS;
-  const hadFlag = previousFlag !== undefined;
 
   afterEach(() => {
-    if (hadFlag) {
-      process.env.AGENT_LIFECYCLE_EVENTS = previousFlag;
-    } else {
-      delete process.env.AGENT_LIFECYCLE_EVENTS;
-    }
     for (const dir of dirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -158,8 +125,7 @@ describe("批次5 第二入口:advisor.reviewed(lume-runner 注入 helper)", () 
     return { sessionDir, published };
   }
 
-  test("flag on: publish advisor.reviewed,detail.review 为旧路 payload 同引用", async () => {
-    process.env.AGENT_LIFECYCLE_EVENTS = "1";
+  test("publish advisor.reviewed,detail.review 为旧路 payload 同引用", async () => {
     const threadId = "run-advisor-bus-on";
     const { sessionDir, published } = setup(threadId);
 
@@ -190,21 +156,5 @@ describe("批次5 第二入口:advisor.reviewed(lume-runner 注入 helper)", () 
         phase: "event",
         detail: expect.objectContaining({ type: "advisor.reviewed" })
       }));
-  });
-
-  test("flag off: 零行为,总线无 publish", async () => {
-    delete process.env.AGENT_LIFECYCLE_EVENTS;
-    const threadId = "run-advisor-bus-off";
-    const { sessionDir, published } = setup(threadId);
-
-    publishAdvisorReviewedToBus({
-      sessionDir,
-      threadId,
-      runId: "lume-run-1",
-      review: advisorReview
-    });
-
-    expect(published).toHaveLength(0);
-    expect(await getThreadEventBus(sessionDir).read(threadId)).toEqual([]);
   });
 });

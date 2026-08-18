@@ -69,7 +69,6 @@ const lifecycleMockStream: SDKMessage[] = [
 
 describe("agent-handlers events (get-events / lifecycle bus)", () => {
   const previousConfigDir = process.env.LUME_CONFIG_DIR;
-  const previousFlag = process.env.AGENT_LIFECYCLE_EVENTS;
 
   afterEach(() => {
     resetPlanningTodoStoreForTests();
@@ -80,11 +79,6 @@ describe("agent-handlers events (get-events / lifecycle bus)", () => {
       delete process.env.LUME_CONFIG_DIR;
     } else {
       process.env.LUME_CONFIG_DIR = previousConfigDir;
-    }
-    if (previousFlag === undefined) {
-      delete process.env.AGENT_LIFECYCLE_EVENTS;
-    } else {
-      process.env.AGENT_LIFECYCLE_EVENTS = previousFlag;
     }
   });
 
@@ -133,25 +127,8 @@ describe("agent-handlers events (get-events / lifecycle bus)", () => {
     expect((tail as { events: Array<{ seq: number }> }).events.map((e) => e.seq)).toEqual([3]);
   });
 
-  test("flag off: consuming a query stream publishes nothing to the bus", async () => {
-    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-events-off-"));
-    delete process.env.AGENT_LIFECYCLE_EVENTS;
-    const threadId = "thread-events-off";
-    const sessionDir = getRuntimeCoreSessionDir(threadId);
-
-    const result = await consumeRuntimeCoreQueryStream({
-      query: stream(lifecycleMockStream),
-      emit: { onSdkMessage: () => undefined },
-      lifecycle: { threadId, sessionDir, runId: "lume-run-1" }
-    });
-
-    expect(result).toEqual({ status: "completed" });
-    expect(await getThreadEventBus(sessionDir).read(threadId)).toEqual([]);
-  });
-
-  test("flag on: query stream projects the full lifecycle skeleton to the bus", async () => {
+  test("query stream projects the full lifecycle skeleton to the bus", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-events-on-"));
-    process.env.AGENT_LIFECYCLE_EVENTS = "1";
     const threadId = "thread-events-on";
     const sessionDir = getRuntimeCoreSessionDir(threadId);
 

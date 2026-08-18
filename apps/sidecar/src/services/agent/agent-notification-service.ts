@@ -1,6 +1,7 @@
 import { AGENT_IPC_CHANNELS, type SensitiveDiagnosticEnvelope } from "@lume/shared";
 import type { appendAgentMessage } from "./agent-service";
 import { getPersistedGeneralSettings } from "../system/general-settings-service";
+import { isAgentRuntimeSessionActive } from "../agent-runtime/runtime-core/attempt";
 
 type AgentNotificationWriter = (method: string, params: unknown) => void;
 type AgentStreamEmitter = Parameters<typeof appendAgentMessage>[1];
@@ -55,20 +56,24 @@ export function createAgentNotificationEmitter(input: {
     },
     onComplete: (payload) => input.onComplete?.(payload),
     onError: (error) => {
-      writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-        threadId: input.threadId,
-        event: {
-          id: `${input.threadId}:${Date.now()}:run.failed`,
-          type: "run.failed",
+      // T7c 收编:活跃 run 的失败终值由事件总线 run.end{isError}→run.failed 单源交付,
+      // 此处不再合成(避免双投);仅兜底无活跃 run 的 run 外失败(队列派发/规划启动等)。
+      if (!isAgentRuntimeSessionActive(input.threadId)) {
+        writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
           threadId: input.threadId,
-          runId: `runtime-error:${input.threadId}`,
-          createdAt: new Date().toISOString(),
-          error: {
-            code: "runtime_error",
-            message: error
+          event: {
+            id: `${input.threadId}:${Date.now()}:run.failed`,
+            type: "run.failed",
+            threadId: input.threadId,
+            runId: `runtime-error:${input.threadId}`,
+            createdAt: new Date().toISOString(),
+            error: {
+              code: "runtime_error",
+              message: error
+            }
           }
-        }
-      });
+        });
+      }
       input.onError?.(error);
     },
     onTitleUpdated: (title) =>

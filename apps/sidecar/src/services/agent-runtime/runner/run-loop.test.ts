@@ -165,22 +165,14 @@ describe("runtime-core run loop", () => {
 
 describe("tee lifecycle 接线:骨架事件 runId=Lume runId(批次5 Task 6)", () => {
   const dirs: string[] = [];
-  const previousFlag = process.env.AGENT_LIFECYCLE_EVENTS;
-  const hadFlag = previousFlag !== undefined;
 
   afterEach(() => {
-    if (hadFlag) {
-      process.env.AGENT_LIFECYCLE_EVENTS = previousFlag;
-    } else {
-      delete process.env.AGENT_LIFECYCLE_EVENTS;
-    }
     for (const dir of dirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("flag on: bus 收到的全部骨架 envelope.runId=lifecycle.runId", async () => {
-    process.env.AGENT_LIFECYCLE_EVENTS = "1";
+  test("bus 收到的全部骨架 envelope.runId=lifecycle.runId", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "run-loop-tee-runid-"));
     dirs.push(agentDir);
     const threadId = "run-loop-tee-runid";

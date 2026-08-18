@@ -16,7 +16,6 @@ import { updateRuntimeThreadMetaIfPresent } from "../runtime-core/thread-meta-ta
 import {
   consumeRuntimeCoreQueryStream,
   createObservedRuntimeEmitter,
-  isAgentLifecycleEventsEnabled,
   normalizeRuntimeCoreQueryPermissionMode
 } from "./run-loop";
 import { getThreadEventBus } from "../events/thread-event-bus";
@@ -113,10 +112,9 @@ export function resolveRuntimeCoreMaxTurns(input: AgentRuntimeRunParams["input"]
 }
 
 /**
- * 批次5 第二入口:advisor 审查结论在旧路(recordAdvisorReview → run items →
- * advisor.reviewed RuntimeEvent)之外,flag on 时经 ThreadEventBus 再发一份
- * advisor.reviewed 领域事件——detail.review 为旧路 payload 同引用
- * (severity/summary/details?/modelRef/durationMs)。flag off 时零行为。
+ * 批次5 第二入口:advisor 审查结论经 ThreadEventBus 发布 advisor.reviewed 领域
+ * 事件(T7c 起恒开,flag 已退役)——detail.review 为旧路 payload 同引用
+ * (severity/summary/details?/modelRef/durationMs)。
  */
 export function publishAdvisorReviewedToBus(input: {
   sessionDir: string;
@@ -130,7 +128,6 @@ export function publishAdvisorReviewedToBus(input: {
     durationMs: number;
   };
 }): void {
-  if (!isAgentLifecycleEventsEnabled()) return;
   const detail: AdvisorReviewedDetail = { type: "advisor.reviewed", review: input.review };
   if (input.review.summary) detail.summary = input.review.summary;
   void getThreadEventBus(input.sessionDir)
@@ -660,27 +657,25 @@ export class LumeRunner {
     } as const;
     this.observer.recordMemoryContextUsed(event);
     // T7a:memory.context.used 已迁事件总线,旧路 emit 删除(item 记录保留供 hydrate replay)。
-    // 第二注入路径:flag on 时同一 items 经 ThreadEventBus 发布(run 级领域事件);
+    // 第二注入路径:同一 items 经 ThreadEventBus 发布(run 级领域事件,T7c 起恒开);
     // sessionDir 与 run-loop tee 一致,保证同一 bus 单例与单调 seq。
-    if (isAgentLifecycleEventsEnabled()) {
-      const threadId = this.observer.getThreadId();
-      const runId = this.observer.getRunId();
-      void getThreadEventBus(getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir))
-        .publish(threadId, runId, {
-          runId,
-          turnId: null,
-          ts: Date.now(),
-          kind: "run",
-          phase: "event",
-          detail: { type: "memory.context.used", items: event.items }
-        })
-        .catch((error) => {
-          log.warn("memory.context.used 总线 publish 失败", {
-            threadId,
-            error: error instanceof Error ? error.message : String(error)
-          });
+    const threadId = this.observer.getThreadId();
+    const runId = this.observer.getRunId();
+    void getThreadEventBus(getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir))
+      .publish(threadId, runId, {
+        runId,
+        turnId: null,
+        ts: Date.now(),
+        kind: "run",
+        phase: "event",
+        detail: { type: "memory.context.used", items: event.items }
+      })
+      .catch((error) => {
+        log.warn("memory.context.used 总线 publish 失败", {
+          threadId,
+          error: error instanceof Error ? error.message : String(error)
         });
-    }
+      });
   }
 
   async abort(): Promise<AgentRuntimeRunResult> {

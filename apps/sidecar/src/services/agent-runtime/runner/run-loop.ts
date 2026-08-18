@@ -15,15 +15,10 @@ const log = createLogger("run-loop");
 interface ConsumeRuntimeCoreQueryStreamInput {
   query: AsyncIterable<SDKMessage>;
   emit: Pick<AgentRuntimeEmitter, "onSdkMessage">;
-  /** AGENT_LIFECYCLE_EVENTS=1 时投影 lifecycle 事件到 ThreadEventBus；缺省不启用。
+  /** 投影 lifecycle 事件到 ThreadEventBus(批次5 T7c 起恒开,flag 已退役)。
    * runId=Lume runId(lume-runner 构造处 observer.getRunId())——骨架事件弃自产
    * UUID,与第二入口领域事件(memory/todo/advisor)同域(批次5 Task 6)。 */
   lifecycle?: { threadId: string; sessionDir: string; runId: string };
-}
-
-/** Batch 1 feature flag：默认 off，显式置 1 才接入 lifecycle 投影。 */
-export function isAgentLifecycleEventsEnabled(): boolean {
-  return process.env.AGENT_LIFECYCLE_EVENTS === "1";
 }
 
 /**
@@ -114,9 +109,7 @@ export async function consumeRuntimeCoreQueryStream({
   lifecycle
 }: ConsumeRuntimeCoreQueryStreamInput) {
   const accumulator = createAgentStreamAccumulatorState();
-  const source = lifecycle && isAgentLifecycleEventsEnabled()
-    ? teeLifecycleProjection(query, lifecycle)
-    : query;
+  const source = lifecycle ? teeLifecycleProjection(query, lifecycle) : query;
 
   for await (const message of source) {
     emit.onSdkMessage(message);
@@ -193,10 +186,10 @@ export function createObservedRuntimeEmitter(
     onTodoUpdated: (state) => {
       observer.recordTodoState(state);
       emit.onTodoUpdated?.(state);
-      // 批次5 第二入口:flag on 时同一 todo state 经 ThreadEventBus 发布(run 级
-      // 领域事件);T7a 后旧路投影已删,item 记录仅供 hydrate replay。
+      // 批次5 第二入口:同一 todo state 经 ThreadEventBus 发布(run 级领域事件,
+      // T7c 起恒开);T7a 后旧路投影已删,item 记录仅供 hydrate replay。
       // runId 取 Lume run id,detail.state 与回调载荷同引用。
-      if (bus && isAgentLifecycleEventsEnabled()) {
+      if (bus) {
         const threadId = observer.getThreadId();
         const runId = observer.getRunId();
         const detail: TodoStateDetail = { type: "todo.state", state };
