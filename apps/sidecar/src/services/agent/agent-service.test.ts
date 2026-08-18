@@ -594,10 +594,10 @@ describe("agent-service", () => {
       task_id: "task_late",
       status: "completed"
     }));
-    expect(runtimeEvents).toContainEqual(expect.objectContaining({
-      type: "background.task.completed",
-      taskId: "task_late",
-      status: "completed"
+    // T7a 起 late 后台通知不再走旧路 live emit(runtimeEvents 回调),经 handleAsyncEvent
+    // 旁路上事件总线;持久化语义由下方 SDK log + hydrate replay 双断言覆盖。
+    expect(runtimeEvents).not.toContainEqual(expect.objectContaining({
+      type: "background.task.completed"
     }));
     const replayed = await listThreadRuntimeEvents({
       sessionDir: getRuntimeCoreSessionDir(thread.id),
