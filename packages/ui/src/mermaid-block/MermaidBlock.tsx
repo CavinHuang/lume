@@ -21,6 +21,7 @@
  */
 
 import * as React from 'react'
+import DOMPurify from 'dompurify'
 import { renderMermaid, THEMES } from 'beautiful-mermaid'
 import type { RenderOptions } from 'beautiful-mermaid'
 
@@ -137,6 +138,20 @@ export function stripStylesheetImports(svg: string): string {
   return svg.replace(/@import\s+url\((?:'[^']*'|"[^"]*"|[^)]*)\)\s*;?/gi, '')
 }
 
+/**
+ * mermaid SVG 注入 innerHTML 前的 DOMPurify 二层防御。
+ * svg+html 双 profile：flowchart/gantt 等图类的标签文字靠 foreignObject 内的
+ * div/span 渲染，纯 svg profile 不含 foreignObject（且在其黑名单内）会把文字整块剥掉。
+ */
+export function sanitizeMermaidSvg(svg: string): string {
+  // 非 DOM 环境（bun test 纯函数测试）无 window，dompurify 默认导出不可用，原样返回
+  if (typeof window === 'undefined') return svg
+  return DOMPurify.sanitize(svg, {
+    USE_PROFILES: { svg: true, svgFilters: true, html: true },
+    ADD_TAGS: ['foreignObject'],
+  })
+}
+
 export function MermaidBlock({ code, onCopy, onCopyImage, onPreview }: MermaidBlockProps): React.ReactElement {
   const [svgHtml, setSvgHtml] = React.useState<string | null>(null)
   const [svgVisible, setSvgVisible] = React.useState(false)
@@ -167,7 +182,7 @@ export function MermaidBlock({ code, onCopy, onCopyImage, onPreview }: MermaidBl
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(async () => {
       try {
-        const svg = stripStylesheetImports(await renderMermaid(codeRef.current, getThemeOptions()))
+        const svg = sanitizeMermaidSvg(stripStylesheetImports(await renderMermaid(codeRef.current, getThemeOptions())))
         // 只有最新一代的结果才生效，旧的全部丢弃
         if (generationRef.current !== currentGen) return
         if (typeof svg === 'string' && svg.length > 0) {
@@ -190,7 +205,7 @@ export function MermaidBlock({ code, onCopy, onCopyImage, onPreview }: MermaidBl
       generationRef.current++
       const gen = generationRef.current
       try {
-        const svg = stripStylesheetImports(await renderMermaid(codeRef.current, getThemeOptions()))
+        const svg = sanitizeMermaidSvg(stripStylesheetImports(await renderMermaid(codeRef.current, getThemeOptions())))
         if (generationRef.current !== gen) return
         if (typeof svg === 'string' && svg.length > 0) {
           setSvgHtml(svg)
