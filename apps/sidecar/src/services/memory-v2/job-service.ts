@@ -35,11 +35,21 @@ interface StartMemoryJobInput<TResult, TProgress> {
   onProgress?: (job: MemoryJobRecord<TResult, TProgress>) => void;
 }
 
+/** 终态 job 文件保留时长：超期后随 list() 惰性清理（每 turn 一条 job-*.json，不清理则无限累积）。 */
+const TERMINAL_JOB_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** 常驻进程内缓存命中时的清扫间隔：清理必须随缓存的读盘路径周期性执行，否则只跑一次。 */
+const TERMINAL_JOB_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
 /** Persistent source of truth for every long-running memory task. */
 export class MemoryJobService {
   private readonly controllers = new Map<string, AbortController>();
   private readonly locations = new Map<string, string>();
   private readonly executions = new Map<string, Promise<void>>();
+  /**
+   * list 结果写穿缓存（key=workspaceSlug）。本进程内 write() 是唯一变更落盘点
+   * （start/cancel/execute/recoverInterrupted 均经 write），jobs 目录由 sidecar 独占。
+   */
+  private readonly cache = new Map<string, { jobs: MemoryJobRecord[]; lastSweptAt: number }>();
 
   start<TResult, TProgress>(
     input: StartMemoryJobInput<TResult, TProgress>
@@ -93,20 +103,36 @@ export class MemoryJobService {
   }
 
   list(workspaceSlug: string): MemoryJobRecord[] {
+    const now = Date.now();
+    const cached = this.cache.get(workspaceSlug);
+    if (cached && now - cached.lastSweptAt < TERMINAL_JOB_SWEEP_INTERVAL_MS) {
+      return cached.jobs.slice();
+    }
     const { jobsDir } = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug });
-    const jobs = readdirSync(jobsDir)
-      .filter((name) => name.startsWith("job-") && name.endsWith(".json"))
-      .map((name) => {
+    const jobs: MemoryJobRecord[] = [];
+    for (const name of readdirSync(jobsDir)) {
+      if (!name.startsWith("job-") || !name.endsWith(".json")) continue;
+      let job: MemoryJobRecord | undefined;
+      try {
+        job = JSON.parse(readFileSync(join(jobsDir, name), "utf-8")) as MemoryJobRecord;
+      } catch {
+        continue;
+      }
+      if (isStaleTerminalJob(job, now)) {
+        // 先清后缓存，避免缓存里留幽灵记录
         try {
-          return JSON.parse(readFileSync(join(jobsDir, name), "utf-8")) as MemoryJobRecord;
+          unlinkSync(join(jobsDir, name));
         } catch {
-          return undefined;
+          // 清理失败不阻塞 list（下次清扫重试）
         }
-      })
-      .filter((job): job is MemoryJobRecord => Boolean(job))
-      .sort((a, b) => b.createdAt - a.createdAt);
+        continue;
+      }
+      jobs.push(job);
+    }
+    jobs.sort((a, b) => b.createdAt - a.createdAt);
+    this.cache.set(workspaceSlug, { jobs, lastSweptAt: now });
     for (const job of jobs) this.locations.set(job.jobId, workspaceSlug);
-    return jobs;
+    return jobs.slice();
   }
 
   resolveWorkspace(jobId: string): string | undefined {
@@ -213,6 +239,18 @@ export class MemoryJobService {
     } finally {
       if (existsSync(temp)) unlinkSync(temp);
     }
+    this.updateCache(job);
+  }
+
+  /** 写穿：缓存未预热不预填（下次 list 读盘自然含新 job），已预热则原地替换并保持 createdAt 降序。 */
+  private updateCache(job: MemoryJobRecord): void {
+    const cached = this.cache.get(job.workspaceSlug);
+    if (!cached) return;
+    const rest = cached.jobs.filter((existing) => existing.jobId !== job.jobId);
+    let insertAt = rest.findIndex((existing) => existing.createdAt < job.createdAt);
+    if (insertAt < 0) insertAt = rest.length;
+    rest.splice(insertAt, 0, job);
+    cached.jobs = rest;
   }
 
   private path(workspaceSlug: string, jobId: string): string {
@@ -223,6 +261,12 @@ export class MemoryJobService {
 
 function isActive(status: MemoryJobStatus): boolean {
   return status === "queued" || status === "running";
+}
+
+function isStaleTerminalJob(job: MemoryJobRecord, now: number): boolean {
+  if (isActive(job.status)) return false;
+  // completedAt 缺失/损坏不删，保守保留
+  return typeof job.completedAt === "number" && job.completedAt < now - TERMINAL_JOB_RETENTION_MS;
 }
 
 export const memoryJobService = new MemoryJobService();
