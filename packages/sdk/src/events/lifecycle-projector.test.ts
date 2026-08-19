@@ -265,6 +265,7 @@ describe("projectLifecycle", () => {
       type: "context.compaction", phase: "completed",
       preTokens: 1000, postTokens: 200,
       result: "compacted summary", isError: false,
+      trigger: "auto", outcome: "succeeded",
     })
   })
 
@@ -277,9 +278,33 @@ describe("projectLifecycle", () => {
       type: "context.compaction", phase: "completed",
       preTokens: 1000,
       result: "provider_error", isError: true,
+      trigger: "auto", outcome: "failed",
     })
     // 失败路径无 post_tokens:字段不携带(不落默认 0)
     expect(events[0].detail.postTokens).toBeUndefined()
+  })
+
+  test("T3: compaction trigger 真值透传(manual/prompt_too_long)+缺省 'auto';outcome 仅 completed 携带", async () => {
+    const events = await run([
+      {
+        type: "system", subtype: "context_compaction_started",
+        compact_metadata: { trigger: "manual", pre_tokens: 1000 },
+      },
+      {
+        type: "system", subtype: "context_compaction_progress",
+        compact_metadata: { trigger: "prompt_too_long", pre_tokens: 1000, stage: "summarizing", progress: 45 },
+      },
+      // boundary 缺 trigger → 缺省 'auto';缺 outcome → 字段省略
+      {
+        type: "system", subtype: "compact_boundary",
+        compact_metadata: { pre_tokens: 1000 },
+      },
+    ] as any[])
+    expect(events.map((e) => e.detail.trigger)).toEqual(["manual", "prompt_too_long", "auto"])
+    // outcome 条件携带:started/progress 恒省略;boundary 无 outcome 字段时也省略
+    expect(events[0].detail.outcome).toBeUndefined()
+    expect(events[1].detail.outcome).toBeUndefined()
+    expect(events[2].detail.outcome).toBeUndefined()
   })
 
   test("in-run task_notification completed → background.task skeleton fields", async () => {

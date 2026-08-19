@@ -290,12 +290,15 @@ export async function* projectLifecycle(
     if (subtype === 'context_compaction_started') {
       const meta = (message as SDKContextCompactionStartedMessage).compact_metadata
       const detail: ContextCompactionDetail = { type: 'context.compaction', phase: 'started' }
+      // T3: trigger 真值透传(engine compact_metadata.trigger;缺省 'auto')
+      detail.trigger = typeof meta?.trigger === 'string' ? meta.trigger : 'auto'
       if (typeof meta?.pre_tokens === 'number') detail.preTokens = meta.pre_tokens
       return [emit('run', 'event', null, detail)]
     }
     if (subtype === 'context_compaction_progress') {
       const meta = (message as SDKContextCompactionProgressMessage).compact_metadata
       const detail: ContextCompactionDetail = { type: 'context.compaction', phase: 'progress' }
+      detail.trigger = typeof meta?.trigger === 'string' ? meta.trigger : 'auto'
       if (typeof meta?.pre_tokens === 'number') detail.preTokens = meta.pre_tokens
       if (typeof meta.progress === 'number') detail.progress = meta.progress
       return [emit('run', 'event', null, detail)]
@@ -304,8 +307,11 @@ export async function* projectLifecycle(
       const meta = (message as SDKCompactBoundaryMessage).compact_metadata
       const failed = meta?.outcome === 'failed'
       const detail: ContextCompactionDetail = { type: 'context.compaction', phase: 'completed', isError: failed }
+      detail.trigger = typeof meta?.trigger === 'string' ? meta.trigger : 'auto'
       if (typeof meta?.pre_tokens === 'number') detail.preTokens = meta.pre_tokens
       if (typeof meta?.post_tokens === 'number') detail.postTokens = meta.post_tokens
+      // T3: outcome 仅 boundary(completed)带值;started/progress 省略
+      if (meta?.outcome === 'succeeded' || meta?.outcome === 'failed') detail.outcome = meta.outcome
       const result = failed ? meta?.failure_reason : meta?.summary
       if (typeof result === 'string' && result) detail.result = result
       return [emit('run', 'event', null, detail)]
@@ -393,32 +399,48 @@ export async function* projectLifecycle(
     return [emit('run', 'end', null, detail)]
   }
 
-  for await (const message of messages) {
-    if ((message as { subagent_run_id?: string }).subagent_run_id) continue
-    let events: SdkLifecycleEvent<SdkLifecycleDetail>[] = []
-    switch (message.type) {
-      case 'stream_event':
-        events = handleStreamEvent(message)
-        break
-      case 'user':
-        events = handleUser(message)
-        break
-      case 'assistant':
-        events = handleAssistant(message)
-        break
-      case 'tool_result':
-        events = handleToolResult(message.result)
-        break
-      case 'result':
-        events = endRun(message)
-        break
-      case 'system':
-        events = handleSystem(message)
-        break
-      default:
-        break
+  try {
+    for await (const message of messages) {
+      if ((message as { subagent_run_id?: string }).subagent_run_id) continue
+      let events: SdkLifecycleEvent<SdkLifecycleDetail>[] = []
+      switch (message.type) {
+        case 'stream_event':
+          events = handleStreamEvent(message)
+          break
+        case 'user':
+          events = handleUser(message)
+          break
+        case 'assistant':
+          events = handleAssistant(message)
+          break
+        case 'tool_result':
+          events = handleToolResult(message.result)
+          break
+        case 'result':
+          events = endRun(message)
+          break
+        case 'system':
+          events = handleSystem(message)
+          break
+        default:
+          break
+      }
+      for (const event of events) yield event
     }
-    for (const event of events) yield event
+  } catch (error) {
+    // F3:流抛错(引擎崩溃/传输异常,由 sidecar tee 注入投影链)≠流正常结束——
+    // run 已开未终时补 error 终值,不再留给 post-loop 误标 aborted。
+    // 错误本身仍由主流(tee rethrow)向 LumeRunner 传播,此处只负责投影终值。
+    if (runStarted && !runEnded) {
+      runEnded = true
+      yield emit('run', 'end', null, {
+        type: 'run.end',
+        stopReason: 'error',
+        isError: true,
+        numTurns: turnCounter,
+        result: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
   // Stream ends without a result message (hard abort / engine teardown): close
   // an open run as aborted — legacy run.cancelled parity. Mutually exclusive
