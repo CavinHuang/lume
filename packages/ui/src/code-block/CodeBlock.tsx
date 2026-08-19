@@ -253,7 +253,7 @@ export function CodeBlock({ children, onCopy }: CodeBlockProps): React.ReactElem
 
       {/* 代码区域：逐行渲染 */}
       <pre
-        className="shiki m-0 overflow-x-auto px-4 py-3 text-[12px] leading-[1.8]"
+        className="shiki m-0 overflow-x-auto px-4 py-3 text-ui leading-[1.8]"
         style={{
           backgroundColor: 'var(--lume-bg-panel, var(--card))',
           color: tokenResult?.fgColor ?? 'var(--lume-text-primary, var(--foreground))',

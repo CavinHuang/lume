@@ -128,7 +128,7 @@ export function HighlightedCode({
 
       {/* 代码区域 */}
       <pre
-        className="overflow-x-auto p-3 m-0 text-[12px] leading-[1.8]"
+        className="overflow-x-auto p-3 m-0 text-ui leading-[1.8]"
         style={{
           backgroundColor: tokenResult?.bgColor ?? '#24292e',
           color: tokenResult?.fgColor ?? '#e1e4e8',
