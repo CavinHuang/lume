@@ -313,10 +313,30 @@ function createAgentSuggestionRenderer(
 function updateMentionPosition(wrapper: HTMLDivElement, props: SuggestionProps) {
   const rect = props.clientRect?.()
   if (!rect) return
+
+  const editorEl = props.editor.view.dom
+  const composer = editorEl.closest('[data-tone]') as HTMLElement | null
+  const composerRect = composer?.getBoundingClientRect()
+  if (composer && composerRect) {
+    const safeLeft = Math.max(12, composerRect.left)
+    const safeWidth = Math.min(
+      composerRect.width - Math.max(0, safeLeft - composerRect.left),
+      window.innerWidth - safeLeft - 12,
+    )
+    wrapper.style.left = `${safeLeft}px`
+    wrapper.style.width = `${safeWidth}px`
+    wrapper.style.maxWidth = `${safeWidth}px`
+    wrapper.style.boxSizing = 'border-box'
+    wrapper.style.bottom = `${window.innerHeight - composerRect.top + 8}px`
+    wrapper.style.top = 'auto'
+    return
+  }
+
   const estimatedWidth = 360
   const safeLeft = Math.min(rect.left, window.innerWidth - estimatedWidth - 16)
   wrapper.style.left = `${Math.max(12, safeLeft)}px`
   wrapper.style.width = ''
+  wrapper.style.maxWidth = ''
   wrapper.style.bottom = `${window.innerHeight - rect.top + 4}px`
   wrapper.style.top = 'auto'
 }
