@@ -323,7 +323,41 @@ async function handleRpcLine(line: string): Promise<void> {
   }
 }
 
+/**
+ * 进程级兜底：sidecar 承载全部线程/IM 连接/cron，崩溃即整批丢失（desktop 侧需重新 fork 冷启动）。
+ * Node ≥15 默认 --unhandled-rejections=throw，任一漏网的 fire-and-forget 拒绝都会终止进程；
+ * 这里改为记录日志并存活。uncaughtException 可能留下半写状态，累计超阈值仍退出止损。
+ */
+function installProcessErrorGuards(): void {
+  let uncaughtCount = 0;
+  const UNCAUGHT_EXIT_THRESHOLD = 5;
+  process.on("unhandledRejection", (reason) => {
+    writeLogRecord({
+      level: "error",
+      context: "sidecar.lifecycle",
+      event: "sidecar.unhandled_rejection",
+      message: "unhandled promise rejection (guarded, process kept alive)",
+      error: { message: reason instanceof Error ? reason.message : String(reason) }
+    });
+  });
+  process.on("uncaughtException", (error) => {
+    uncaughtCount += 1;
+    writeLogRecord({
+      level: "error",
+      context: "sidecar.lifecycle",
+      event: "sidecar.uncaught_exception",
+      message: `uncaught exception (guarded ${uncaughtCount}/${UNCAUGHT_EXIT_THRESHOLD})`,
+      error: { message: error instanceof Error ? error.message : String(error) }
+    });
+    if (uncaughtCount >= UNCAUGHT_EXIT_THRESHOLD) {
+      writeEmergencyLog(`sidecar exiting after ${uncaughtCount} uncaught exceptions (pid=${process.pid})`);
+      process.exit(1);
+    }
+  });
+}
+
 async function boot(): Promise<void> {
+  installProcessErrorGuards();
   writeLogRecord({
     level: "info",
     context: "sidecar.lifecycle",

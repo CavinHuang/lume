@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
@@ -51,6 +51,39 @@ describe("tool-permission-session", () => {
     });
     expect(handled).toBeTrue();
     const decision = await waitPromise;
+    expect(decision).toBe("allow_once");
+  });
+
+  test("持久化失败时 done 仍必须 resolve（不允许无限悬挂）", async () => {
+    // 配置根指向普通文件 → 其下所有目录/文件写入抛 ENOTDIR，模拟 AV 锁/磁盘满等 IO 失败
+    const invalidBase = join(tmpdir(), `lume-tps-invalid-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    writeFileSync(invalidBase, "not-a-dir", "utf-8");
+    process.env.LUME_CONFIG_DIR = invalidBase;
+    const waitPromise = waitForToolPermissionDecision(
+      {
+        threadId: "s-io-failure",
+        requestId: "req-io-failure",
+        toolUseId: "tool-io-failure",
+        toolName: "Bash",
+        risk: "high",
+        reason: "需要确认",
+        input: { command: "ls" }
+      },
+      new AbortController().signal,
+      () => {}
+    );
+    const handled = submitToolPermissionDecision({
+      threadId: "s-io-failure",
+      requestId: "req-io-failure",
+      decision: "allow_once"
+    });
+    expect(handled).toBeTrue();
+    const decision = await Promise.race([
+      waitPromise,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("waitForToolPermissionDecision 未在持久化失败后 resolve")), 5_000);
+      })
+    ]);
     expect(decision).toBe("allow_once");
   });
 

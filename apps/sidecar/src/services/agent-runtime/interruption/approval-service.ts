@@ -11,6 +11,9 @@ import {
   resolveFileBackedInterruptionSync
 } from "./interruption-store";
 import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
+import { createLogger } from "../../infra/logger";
+
+const log = createLogger("approval-service");
 
 export function toolApprovalInterruptionId(requestId: string): string {
   return `tool_approval:${requestId}`;
@@ -196,6 +199,13 @@ export function resolvePersistedToolApprovalInterruption(input: {
       reason: approved
         ? "工具审批已解决；冷启动恢复必须使用保存的输入执行原工具调用一次。"
         : "工具审批已拒绝；冷启动恢复将注入拒绝结果。"
+    }).catch((error) => {
+      // fire-and-forget 持久化失败只降级冷启动恢复能力，不允许变成未处理拒绝崩进程
+      log.warn("Failed to persist approval continuation", {
+        threadId: matched.interruption.threadId,
+        runId: matched.interruption.runId,
+        error: error instanceof Error ? error.message : String(error)
+      });
     });
   }
   return resolved;
