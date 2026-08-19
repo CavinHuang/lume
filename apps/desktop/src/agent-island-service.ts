@@ -322,7 +322,9 @@ export class AgentIslandService {
       activityLines,
       attention: phase === 'needs-interaction',
       unread: phase === 'completed' || phase === 'error',
-      terminalAt: phase === 'completed' || phase === 'error' ? Date.now() : prev?.terminalAt ?? null,
+      // 非终态必须清零 terminalAt:否则完成后追问的场景保留旧终态时间戳,
+      // run 超过 10min 时 prune 会把正在 running 的会话误删(丢失累计 cost/token)(#125)
+      terminalAt: phase === 'completed' || phase === 'error' ? Date.now() : null,
       lastActivityAt: status.updatedAt ?? Date.now(),
       // status 覆盖式 set：必须显式保留 prev 的 run/usage 写入值，否则被清空。
       modelRef: prev?.modelRef,

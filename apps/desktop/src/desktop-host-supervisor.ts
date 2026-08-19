@@ -4,10 +4,14 @@ import { tmpdir } from 'node:os'
 import { posix } from 'node:path'
 import { spawn as spawnProcess } from 'node:child_process'
 import { createDesktopHostSpawnConfig, createDesktopHostTokenFilePath } from './sidecar-process'
+import { nextLinkCrashState } from './link-runtime-supervisor'
 
 export type DesktopHostState =
   | { available: true; endpoint: string; token: string }
   | { available: false; reason: string }
+
+// 稳定运行该时长后清零崩溃窗口,视为一次健康启动(#124)
+const STABLE_RUN_MS = 10_000
 
 interface DesktopHostSupervisorOptions {
   binaryPath: string
@@ -23,6 +27,7 @@ interface DesktopHostSupervisorOptions {
   removeTokenFile?: (path: string) => void
   schedule?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
   cancelSchedule?: (timer: ReturnType<typeof setTimeout>) => void
+  now?: () => number
 }
 
 interface DesktopHostEndpointOptions {
@@ -61,15 +66,36 @@ export function createDesktopHostSupervisor({
   removeTokenFile = (path) => rmSync(path, { force: true }),
   schedule = setTimeout,
   cancelSchedule = clearTimeout,
+  now = Date.now,
 }: DesktopHostSupervisorOptions): DesktopHostSupervisor {
   let child: ReturnType<typeof spawnProcess> | null = null
   let state: DesktopHostState | null = null
   let restartTimer: ReturnType<typeof setTimeout> | null = null
   let stopped = false
-  let restartAttempt = 0
+  let crashTimes: number[] = []
   let activeConfig: ReturnType<typeof createDesktopHostSpawnConfig> | null = null
   let activeConnection: Extract<DesktopHostState, { available: true }> | null = null
   let activeTokenFilePath: string | null = null
+
+  // exit 与 error 共用的降级路径:置 unavailable、按崩溃窗口退避重调度。
+  // spawn 失败(杀软拦截/缺 DLL)只发 error 不发 exit,原实现仅打日志导致 state 永远 available(#124)。
+  const scheduleRestart = (reason: string, spawnedAt: number) => {
+    child = null
+    // 稳定运行过一段时间才算「健康」,清零崩溃窗口——避免 spawn 即崩的循环把退避清零(#124)
+    if (spawnedAt && now() - spawnedAt >= STABLE_RUN_MS) crashTimes = []
+    const crash = nextLinkCrashState(crashTimes, now())
+    crashTimes = crash.crashTimes
+    state = {
+      available: false,
+      reason: crash.shouldRestart ? reason : `${reason}; giving up after repeated crashes`,
+    }
+    if (!crash.shouldRestart) return
+    if (restartTimer) cancelSchedule(restartTimer)
+    restartTimer = schedule(() => {
+      restartTimer = null
+      spawnHost()
+    }, crash.delayMs)
+  }
 
   const spawnHost = () => {
     if (stopped || !activeConfig) return
@@ -77,30 +103,32 @@ export function createDesktopHostSupervisor({
     if (activeTokenFilePath && activeConnection) {
       writeTokenFile(activeTokenFilePath, activeConnection.token)
     }
-    child = spawn(config.command, config.args, config.options)
+    const running = spawn(config.command, config.args, config.options)
+    child = running
     if (activeConnection) state = activeConnection
-    child.stdout?.on('data', (chunk) => log(`[desktop-host] ${String(chunk).trimEnd()}`))
-    child.stderr?.on('data', (chunk) => log(`[desktop-host] ${String(chunk).trimEnd()}`))
-    child.once?.('spawn', () => { restartAttempt = 0 })
-    child.once?.('exit', (code) => {
-      if (stopped) return
+    running.stdout?.on('data', (chunk) => log(`[desktop-host] ${String(chunk).trimEnd()}`))
+    running.stderr?.on('data', (chunk) => log(`[desktop-host] ${String(chunk).trimEnd()}`))
+    let spawnedAt = 0
+    running.once?.('spawn', () => { spawnedAt = now() })
+    running.once?.('exit', (code) => {
+      if (stopped || child !== running) return
       log(`[desktop-host] exited with code ${code}`)
-      child = null
-      state = { available: false, reason: `desktop host exited with code ${code}; restarting` }
-      const delay = Math.min(10_000, 500 * (2 ** restartAttempt++))
-      restartTimer = schedule(() => {
-        restartTimer = null
-        spawnHost()
-      }, delay)
+      scheduleRestart(`desktop host exited with code ${code}; restarting`, spawnedAt)
     })
-    child.once?.('error', (error) => {
+    running.once?.('error', (error) => {
+      if (stopped || child !== running) return
       log(`[desktop-host] failed: ${error instanceof Error ? error.message : String(error)}`)
+      scheduleRestart(`desktop host failed: ${error instanceof Error ? error.message : String(error)}; restarting`, spawnedAt)
     })
   }
 
   return {
     async start() {
       if (state?.available && child) return state
+      // 手动 start 视为显式拉起:取消挂起的重启定时器(否则与 timer 双 spawn 产生孤儿)
+      // 并清零崩溃窗口(对齐 link-runtime-supervisor 的 restart 语义)
+      if (restartTimer) { cancelSchedule(restartTimer); restartTimer = null }
+      crashTimes = []
       if (!exists(binaryPath)) {
         state = {
           available: false,

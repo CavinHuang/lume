@@ -131,7 +131,7 @@ test('restarts a crashed host with backoff on the same endpoint', async () => {
 
   await supervisor.start()
   children[0].emit('exit', 1)
-  assert.equal(scheduled[0].delay, 500)
+  assert.equal(scheduled[0].delay, 1000)
   scheduled[0].callback()
   assert.equal(children.length, 2)
 })
