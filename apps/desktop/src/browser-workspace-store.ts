@@ -83,14 +83,20 @@ export class BrowserWorkspaceStore {
     const workspace = this.ensureWorkspace(ownerThreadId)
     workspace.orderedTabIds = workspace.orderedTabIds.filter((tabId) => tabId !== tab.tabId)
     if (workspace.activeTabId === tab.tabId) workspace.activeTabId = workspace.orderedTabIds.at(-1)
-    workspace.recentlyClosed = [{
+    const closedQueue = [{
       tabId: tab.tabId,
       closedAt: new Date().toISOString(),
       title: tab.title || "新标签页",
       url: safeUrl(tab.url),
       profileKind: tab.profileKind ?? "user",
       ...(tab.handoffStatus ? { handoffStatus: tab.handoffStatus } : {}),
-    }, ...workspace.recentlyClosed.filter((item) => item.tabId !== tab.tabId)].slice(0, 10)
+    }, ...workspace.recentlyClosed.filter((item) => item.tabId !== tab.tabId)]
+    workspace.recentlyClosed = closedQueue.slice(0, 10)
+    // 被 recentlyClosed 上限挤出的条目其 tabs 记录成为死数据，须同步删除——否则
+    // workspaces.json 只增不减，长期使用无限膨胀(#129)
+    for (const evicted of closedQueue.slice(10)) {
+      if (!this.isTabReferenced(evicted.tabId)) delete this.state.tabs[evicted.tabId]
+    }
     this.state.tabs[tab.tabId] = sanitizeTab(tab, runtime)
     workspace.revision += 1
     this.write()
@@ -149,6 +155,12 @@ export class BrowserWorkspaceStore {
     workspace.orderedTabIds = workspace.orderedTabIds.filter((value) => value !== tabId)
     if (workspace.activeTabId === tabId) workspace.activeTabId = workspace.orderedTabIds.at(-1)
     workspace.revision += 1
+  }
+
+  // tab 记录的活跃引用检查：orderedTabIds(打开中)与 recentlyClosed(可恢复)都算引用
+  private isTabReferenced(tabId: string): boolean {
+    return Object.values(this.state.workspaces).some((workspace) =>
+      workspace.orderedTabIds.includes(tabId) || workspace.recentlyClosed.some((item) => item.tabId === tabId))
   }
 
   private write(): void {
