@@ -21,12 +21,9 @@ mock.module("@/lib/desktop-api", () => ({
   openGuardedFileRefInSystem: async () => undefined,
   revealPathInSystem: async (path: string) => { calls.push({ fn: "revealPathInSystem", args: [path] }) },
   revealGuardedFileRefInSystem: async () => undefined,
-  saveFilePathDialog: async (filename: string, filters?: unknown) => {
-    calls.push({ fn: "saveFilePathDialog", args: [filename, filters] })
+  savePathAs: async (source: string, filename: string, filters?: unknown) => {
+    calls.push({ fn: "savePathAs", args: [source, filename, filters] })
     return { path: saveDialogResult }
-  },
-  copyFile: async (source: string, target: string) => {
-    calls.push({ fn: "copyFile", args: [source, target] })
   },
   saveGuardedFileRefAs: async () => ({ path: null }),
   writeClipboardImage: async () => undefined,
@@ -148,13 +145,17 @@ describe("resolveFileLinkActions", () => {
     ).toBe(true)
   })
 
-  test("saveAs happy path: resolve -> dialog -> copyFile -> success toast", async () => {
+  test("saveAs happy path: resolve -> savePathAs -> success toast", async () => {
     calls.length = 0
     toasts.length = 0
     saveDialogResult = "/target/copied.md"
     await resolveFileLinkActions(threadCtx()).saveAs()
-    expect(calls.map((c) => c.fn)).toEqual(["sidecarCall", "saveFilePathDialog", "copyFile"])
-    expect(calls[2]!.args).toEqual(["/data/threads/t1/plans/research.md", "/target/copied.md"])
+    expect(calls.map((c) => c.fn)).toEqual(["sidecarCall", "savePathAs"])
+    expect(calls[1]!.args).toEqual([
+      "/data/threads/t1/plans/research.md",
+      "research.md",
+      [{ name: "md", extensions: ["md"] }],
+    ])
     expect(toasts[0]).toMatchObject({ kind: "success" })
   })
 
@@ -163,7 +164,7 @@ describe("resolveFileLinkActions", () => {
     toasts.length = 0
     saveDialogResult = null
     await resolveFileLinkActions(threadCtx()).saveAs()
-    expect(calls.some((c) => c.fn === "copyFile")).toBe(false)
+    expect(calls.some((c) => c.fn === "savePathAs")).toBe(true)
     expect(toasts).toHaveLength(0)
   })
 
@@ -172,9 +173,9 @@ describe("resolveFileLinkActions", () => {
     toasts.length = 0
     saveDialogResult = "/target/copied.md"
     await resolveFileLinkActions(threadCtx()).saveAs()
-    const dialogCall = calls.find((c) => c.fn === "saveFilePathDialog")!
-    expect(dialogCall.args[0]).toBe("research.md")
-    expect(dialogCall.args[1]).toEqual([{ name: "md", extensions: ["md"] }])
+    const dialogCall = calls.find((c) => c.fn === "savePathAs")!
+    expect(dialogCall.args[1]).toBe("research.md")
+    expect(dialogCall.args[2]).toEqual([{ name: "md", extensions: ["md"] }])
   })
 
   test("saveAs passes empty filter (no restriction) for extensionless file", async () => {
@@ -182,8 +183,8 @@ describe("resolveFileLinkActions", () => {
     toasts.length = 0
     saveDialogResult = "/target/NOTES"
     await resolveFileLinkActions({ source: "thread", relPath: "NOTES", threadId: "t1", workspaceSlug: "ws-1" }).saveAs()
-    const dialogCall = calls.find((c) => c.fn === "saveFilePathDialog")!
-    expect(dialogCall.args[1]).toEqual([])
+    const dialogCall = calls.find((c) => c.fn === "savePathAs")!
+    expect(dialogCall.args[2]).toEqual([])
   })
 
   test("openInSystem toasts error when resolve fails (missing threadId)", async () => {

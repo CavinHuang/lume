@@ -91,7 +91,8 @@ mock.module('@/lib/desktop-api', () => ({
     getDesktopApiMocks().getSkillMarketCatalog?.(...args),
   getMcpConfig: (...args: unknown[]) => getDesktopApiMocks().getMcpConfig?.(...args),
   getMcpStatus: (...args: unknown[]) => getDesktopApiMocks().getMcpStatus?.(...args),
-  copyFile: mock(async () => undefined),
+  savePathAs: mock(async () => ({ path: null })),
+  saveBinaryFileDialog: mock(async () => ({ path: null })),
   localFilePreviewUrl: (path: string) => `asset://${path}`,
   listSkillVersions: (...args: Parameters<typeof listSkillVersionsMock>) =>
     getDesktopApiMocks().listSkillVersions?.(...args),
@@ -105,7 +106,6 @@ mock.module('@/lib/desktop-api', () => ({
   saveTextFileDialog: mock(async () => ({ path: null })),
   saveWorkspaceSkill: (...args: unknown[]) => getDesktopApiMocks().saveWorkspaceSkill?.(...args),
   sidecarCall: (...args: unknown[]) => getDesktopApiMocks().sidecarCall?.(...args),
-  writeBinaryFile: mock(async () => ({ path: '' })),
   writeClipboardText: mock(async () => undefined),
 }))
 
