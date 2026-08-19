@@ -163,10 +163,41 @@ export function isPublicAddress(address: string): boolean {
     return true
   }
   if (family !== 6) return false
-  if (normalized === "::" || normalized === "::1" || normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe8") || normalized.startsWith("fe9") || normalized.startsWith("fea") || normalized.startsWith("feb") || normalized.startsWith("ff")) return false
-  if (normalized.startsWith("2001:db8:")) return false
-  const mapped = normalized.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1]
-  return mapped ? isPublicAddress(mapped) : true
+  const groups = parseIpv6Groups(normalized)
+  if (!groups) return false
+  if (groups.every((group) => group === 0)) return false
+  if (groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1) return false
+  if ((groups[0] & 0xfe00) === 0xfc00) return false
+  if ((groups[0] & 0xffc0) === 0xfe80) return false
+  if ((groups[0] & 0xff00) === 0xff00) return false
+  if (groups[0] === 0x2001 && groups[1] === 0x0db8) return false
+  const embeddedIpv4 = groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff
+    || (groups[0] === 0x64 && groups[1] === 0xff9b && groups.slice(2, 5).every((group) => group === 0))
+  if (!embeddedIpv4) return true
+  return isPublicAddress(`${groups[6] >> 8}.${groups[6] & 0xff}.${groups[7] >> 8}.${groups[7] & 0xff}`)
+}
+
+function parseIpv6Groups(host: string): number[] | null {
+  const halves = host.split("::")
+  if (halves.length > 2) return null
+  const groups: number[] = []
+  for (let half = 0; half < halves.length; half++) {
+    const parts = halves[half] ? halves[half].split(":") : []
+    for (let index = 0; index < parts.length; index++) {
+      const part = parts[index]
+      if (half === halves.length - 1 && index === parts.length - 1 && part.includes(".")) {
+        if (isIP(part) !== 4) return null
+        const [a, b, c, d] = part.split(".").map(Number)
+        groups.push((a << 8) | b, (c << 8) | d)
+      } else if (/^[0-9a-f]{1,4}$/.test(part)) groups.push(parseInt(part, 16))
+      else return null
+    }
+  }
+  const missing = 8 - groups.length
+  if (halves.length === 1) return missing === 0 ? groups : null
+  if (missing < 1) return null
+  groups.splice(halves[0] ? halves[0].split(":").length : 0, 0, ...Array.from({ length: missing }, () => 0))
+  return groups
 }
 
 function isProxyFakeAddress(address: string): boolean {

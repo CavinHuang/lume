@@ -9,6 +9,15 @@ test("network guard rejects private, reserved, link-local, and mixed DNS answers
   await assert.rejects(() => resolveGuardTarget("example.test", 443, "https:", async () => [{ address: "1.1.1.1", family: 4 }, { address: "10.0.0.1", family: 4 }]), /browser_network_blocked/)
 })
 
+test("network guard classifies ipv4-mapped, NAT64, and unspecified ipv6 literals by their embedded target", () => {
+  for (const address of ["::ffff:a00:1", "::ffff:7f00:1", "::ffff:10.0.0.1", "64:ff9b::a00:1", "::", "::1", "0.0.0.0", "ff02::1", "fe80::1", "fc00::1", "fd12::1"]) {
+    assert.equal(isPublicAddress(address), false, address)
+  }
+  for (const address of ["::ffff:101:101", "::ffff:1.1.1.1", "64:ff9b::101:101", "2606:4700:4700::1111"]) {
+    assert.equal(isPublicAddress(address), true, address)
+  }
+})
+
 test("network guard permits only explicitly approved private origins", async () => {
   await assert.rejects(() => resolveGuardTarget("127.0.0.1", 3000, "http:", async () => []), /private_origin_confirmation_required/)
   assert.deepEqual(await resolveGuardTarget("127.0.0.1", 3000, "http:", async () => [], (origin) => origin === "http://127.0.0.1:3000"), { address: "127.0.0.1", family: 4, port: 3000 })
