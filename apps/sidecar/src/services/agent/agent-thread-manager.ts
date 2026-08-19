@@ -44,7 +44,8 @@ import { extractAssistantReasoningText, extractRenderableAssistantText } from ".
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath,
-  hasRuntimeCoreSessionTranscript
+  hasRuntimeCoreSessionTranscript,
+  type RuntimeCoreAppendMessageInput
 } from "../agent-runtime/runtime-core/session-store";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createLogger } from "../infra/logger";
@@ -944,12 +945,13 @@ function rebuildRuntimeCoreTranscript(threadId: string, messages: AgentMessage[]
     return;
   }
   const sessionManager = createOrResumeRuntimeCoreSessionManager(resolveAgentThreadCwd(threadId), threadId);
+  const batch: RuntimeCoreAppendMessageInput[] = [];
   for (const message of messages) {
     if (!message.content.trim()) {
       continue;
     }
     if (message.role === "user") {
-      sessionManager.appendMessage({
+      batch.push({
         role: "user",
         content: [{ type: "text", text: message.content }],
         timestamp: message.createdAt
@@ -968,7 +970,7 @@ function rebuildRuntimeCoreTranscript(threadId: string, messages: AgentMessage[]
       if (message.content.trim()) {
         contentBlocks.push({ type: "text", text: message.content });
       }
-      sessionManager.appendMessage({
+      batch.push({
         role: "assistant",
         provider,
         model,
@@ -987,6 +989,8 @@ function rebuildRuntimeCoreTranscript(threadId: string, messages: AgentMessage[]
       });
     }
   }
+  // 单次读改写（fork/导入数百条时避免逐条全量重写的 O(n²)）
+  sessionManager.appendMessages(batch);
 }
 
 function resolveTranscriptAppendModel(model: string | undefined): {
