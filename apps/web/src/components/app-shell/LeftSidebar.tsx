@@ -432,6 +432,15 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
         await sidecarCall(AGENT_IPC_CHANNELS.DELETE_WORKSPACE, { id: workspaceId, mode })
         setWorkspaces((previous) => previous.filter((w) => w.id !== workspaceId))
         setCurrentWorkspaceId((current) => current === workspaceId ? null : current)
+        if (mode === 'deleteLumeData') {
+          // 会话随项目数据进回收站：与单线程删除路径一致，同步释放内存驻留
+          // （keepHistory 会话转为普通会话仍在用，不能清）
+          const removedIds = threads
+            .filter((thread) => thread.workspaceId === workspaceId)
+            .map((thread) => thread.id)
+          setRuntimeEvents((prev) => removedIds.reduce((acc, id) => removeRuntimeEvents(acc, id), prev))
+          for (const id of removedIds) threadMessagesCache.invalidate(id)
+        }
         const nextThreads = await sidecarCall<AgentThreadMeta[]>(AGENT_IPC_CHANNELS.LIST_THREADS, {})
         setThreads(Array.isArray(nextThreads) ? nextThreads : [])
         toast.success(mode === 'keepHistory' ? '已移除项目，会话已转为普通会话' : '已移除项目并将 Lume 用户数据移入回收站')
