@@ -357,7 +357,7 @@ export function MermaidBlock({ code, onCopy, onCopyImage, onPreview }: MermaidBl
       >
         {/* 源码层 —— 始终在文档流中，流式输出时自然增长 */}
         <pre
-          className="h-full overflow-auto p-4 m-0 text-[13px] leading-[1.6] bg-muted/30 text-foreground/80"
+          className="h-full overflow-auto p-4 m-0 text-ui leading-[1.8] bg-muted/30 text-foreground/80"
           style={{
             opacity: svgVisible ? 0 : 1,
             transition: `opacity ${FADE_MS}ms ease`,

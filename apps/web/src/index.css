@@ -609,6 +609,8 @@
 }
 
 :root {
+  /* 声明配色方案——diff 组件的 light-dark() 派生与滚动条原生配色依赖此声明 */
+  color-scheme: light;
   --lume-chat-font-size: 15px;
   --lume-chat-measure: 680px;
   --reading-serif: Georgia, 'Songti SC', 'Noto Serif CJK SC', 'Source Han Serif SC', STSong, SimSun, serif;
@@ -691,6 +693,8 @@
 }
 
 .dark {
+  /* 不声明则 light-dark() 恒走 light 分支，diff 行背景/强调 alpha 取不到暗色档 */
+  color-scheme: dark;
   --lume-bg-app: oklch(0.155 0.012 248);
   --lume-bg-rail: oklch(0.18 0.013 248);
   --lume-bg-panel: oklch(0.205 0.012 248);
