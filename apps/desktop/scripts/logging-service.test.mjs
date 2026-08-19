@@ -1,9 +1,22 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LoggingService, normalizeLogValue } from '../src/logging/logging-service.ts'
+
+// Windows 上 service 构造函数后台的 mkdir/cleanup 链可能短暂持有目录句柄，rm 需要重试。
+async function rmRetry(path) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rm(path, { recursive: true, force: true })
+      return
+    } catch (error) {
+      if (attempt >= 4) throw error
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+}
 
 test('normalizes cyclic and sensitive data without invoking getters', () => {
   let getterCalled = false
@@ -76,7 +89,7 @@ test('writes v2 NDJSON, filters ordinary debug, and keeps trace events', async (
     assert.doesNotMatch(terminal.join(''), /\[desktop\].*\[sidecar\]/)
   } finally {
     await service.close()
-    await rm(configDir, { recursive: true, force: true })
+    await rmRetry(configDir)
   }
 })
 
@@ -98,7 +111,7 @@ test('validates batch source and deduplicates event IDs', async () => {
     assert.throws(() => service.ingestBatch(batch, 'renderer'), /source or schema/)
   } finally {
     await service.close()
-    await rm(configDir, { recursive: true, force: true })
+    await rmRetry(configDir)
   }
 })
 
@@ -118,7 +131,7 @@ test('reads v2, legacy NDJSON, pino, and plain log lines', async () => {
     assert.match(result.lines[0].text, /legacy old/)
   } finally {
     await service.close()
-    await rm(configDir, { recursive: true, force: true })
+    await rmRetry(configDir)
   }
 })
 
@@ -146,6 +159,66 @@ test('queries retained log segments as one bounded result', async () => {
     assert.equal(bounded.lines.length, 1)
   } finally {
     await service.close()
-    await rm(configDir, { recursive: true, force: true })
+    await rmRetry(configDir)
+  }
+})
+
+// #122: append 失败时整批事件必须回队，恢复后在下次 flush 重试，而不是静默丢失。
+test('flush failure keeps the batch queued and retries it (#122)', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-flush-retry-'))
+  // 同名文件占住 logs 路径，让 mkdir/appendFile 全部失败（ENOTDIR）。
+  await Bun.write(join(configDir, 'logs'), 'not a directory')
+  const service = new LoggingService({ configDir, terminal: { write: () => true } })
+  const received = []
+  service.subscribe((events) => { received.push(...events) })
+  try {
+    service.emit({ level: 'warn', source: 'main', context: 'test', event: 'test.append.fail', message: 'm' })
+    await service.flush()
+    assert.equal(received.length, 0)
+    assert.equal(service.queue.length, 1)
+
+    await rm(join(configDir, 'logs'), { force: true })
+    await mkdir(join(configDir, 'logs'), { recursive: true })
+    await service.flush()
+    assert.equal(received.length, 1)
+    assert.equal(received[0].event, 'test.append.fail')
+    assert.equal(service.queue.length, 0)
+  } finally {
+    await service.close()
+    await rmRetry(configDir)
+  }
+})
+
+// #123: settings.consoleLevel=debug 必须对终端输出生效，不能只认环境变量。
+test('settings.consoleLevel=debug surfaces debug events in the terminal (#123)', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-console-debug-'))
+  const terminal = []
+  const service = new LoggingService({
+    configDir,
+    terminal: { write: (value) => { terminal.push(String(value)); return true } },
+    settings: { consoleLevel: 'debug' },
+  })
+  try {
+    service.emit({ level: 'debug', source: 'main', context: 'test', event: 'test.debug', message: 'm' })
+    assert.match(terminal.join(''), /DEBUG/)
+  } finally {
+    await service.close()
+    await rmRetry(configDir)
+  }
+})
+
+test('default consoleLevel still hides debug events in the terminal', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-console-default-'))
+  const terminal = []
+  const service = new LoggingService({
+    configDir,
+    terminal: { write: (value) => { terminal.push(String(value)); return true } },
+  })
+  try {
+    service.emit({ level: 'debug', source: 'main', context: 'test', event: 'test.debug2', message: 'm' })
+    assert.doesNotMatch(terminal.join(''), /DEBUG/)
+  } finally {
+    await service.close()
+    await rmRetry(configDir)
   }
 })
