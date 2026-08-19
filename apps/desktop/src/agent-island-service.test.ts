@@ -149,3 +149,20 @@ test('无 active session 时 isIdle=true（buildSnapshot 内部推导）', async
   expect(state!.isIdle).toBe(true)
   svc.destroy()
 })
+
+test('#125 追问复活会话时 terminalAt 清零，prune 不再按旧终态时间淘汰运行中会话', async () => {
+  const { svc } = makeService()
+  await svc.start()
+  const sessions = () => (svc as unknown as { sessions: Map<string, { terminalAt: number | null }> }).sessions
+  svc.handleSidecarNotification('agent:runtime-status-changed', {
+    status: { threadId: 't1', phase: 'completed', updatedAt: Date.now() },
+  })
+  expect(sessions().get('t1')?.terminalAt).toBeGreaterThan(0)
+  // 完成后用户追问 → phase 回到 streaming：terminalAt 必须清零，
+  // 否则 run 超 10min 后 prune 会误删正在运行的会话（丢失累计 cost/token）
+  svc.handleSidecarNotification('agent:runtime-status-changed', {
+    status: { threadId: 't1', phase: 'streaming', updatedAt: Date.now() },
+  })
+  expect(sessions().get('t1')?.terminalAt).toBeNull()
+  svc.destroy()
+})

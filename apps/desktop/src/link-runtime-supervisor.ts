@@ -60,6 +60,9 @@ export function createLinkRuntimeSupervisor(input: {
     if (persisted.mode === "remote") return connectRemote();
     if (child || state.phase === "starting") return state;
     if (!persisted.port) throw new Error("link_port_missing");
+    // 并发守卫必须覆盖整个 async 区间：置 starting 要在 await isPortFree 之前，
+    // 否则两次并发 start 都能通过最上面的 child/starting 检查，各自 fork 出孤儿进程(#126)
+    publish("starting");
     const generation = operationGeneration;
     const isCurrent = () => generation === operationGeneration && persisted.enabled && persisted.mode === "local";
     const portFree = await isPortFree(persisted.port);
@@ -71,8 +74,6 @@ export function createLinkRuntimeSupervisor(input: {
     const secrets = loadOrCreateLinkSecrets(join(runtimeDir, "secrets.json"), masterKey);
     currentCredentials = secrets;
     mkdirSync(dataDirectory, { recursive: true });
-    publish("starting");
-    currentCredentials = secrets;
     stopping = false;
     const origin = `http://127.0.0.1:${persisted.port}`;
     const inheritedEnvironment = Object.fromEntries(
@@ -98,7 +99,12 @@ export function createLinkRuntimeSupervisor(input: {
     running.stdout?.resume();
     running.stderr?.resume();
     child = running;
+    // exited 标志须在 fork 后立即注册：健康等待期内进程崩溃时 exit 事件已 flush，
+    // catch 里再 once("exit") 永不触发，会白等 1.5s 并对可能已被系统回收的 pid 调
+    // killProcessTree 误杀无关进程树(#127)
+    let exitedDuringStart = false;
     running.on("exit", () => {
+      exitedDuringStart = true;
       if (child !== running) return;
       child = null;
       if (stopping || !persisted.enabled) { publish(persisted.enabled ? "offline" : "disabled"); return; }
@@ -120,12 +126,15 @@ export function createLinkRuntimeSupervisor(input: {
       if (!isCurrent()) return state;
       if (child === running) child = null;
       stopping = true;
-      const pid = running.pid;
-      let exited = false;
-      const exitedPromise = new Promise<void>((resolve) => running.once("exit", () => { exited = true; resolve(); }));
-      running.kill();
-      await Promise.race([exitedPromise, new Promise((resolve) => setTimeout(resolve, 1_500))]);
-      if (!exited && pid) input.killProcessTree(pid);
+      // 进程已退出(exit 事件已发)时不再注册等待/kill——此时 pid 可能已被回收(#127)
+      if (!exitedDuringStart) {
+        const pid = running.pid;
+        let exited = false;
+        const exitedPromise = new Promise<void>((resolve) => running.once("exit", () => { exited = true; resolve(); }));
+        running.kill();
+        await Promise.race([exitedPromise, new Promise((resolve) => setTimeout(resolve, 1_500))]);
+        if (!exited && pid) input.killProcessTree(pid);
+      }
       publish("crashed", message(error));
       throw error;
     }
