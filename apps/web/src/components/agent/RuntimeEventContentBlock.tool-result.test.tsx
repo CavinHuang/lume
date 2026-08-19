@@ -392,9 +392,10 @@ describe('RuntimeEventContentBlock tool results', () => {
       <RuntimeEventContentBlock message={message} threadId="thread-coding" />,
     )
 
-    expect(markup).toContain('src/file-5.ts')
+    // chip 形态：完整路径经 title 属性携带，可见文本为文件名
+    expect(markup).toContain('title="src/file-5.ts"')
     expect(markup).not.toContain('src/file-6.ts')
-    expect(markup).toContain('再显示 2 个文件')
+    expect(markup).toContain('+2 个文件')
   })
 })
 
