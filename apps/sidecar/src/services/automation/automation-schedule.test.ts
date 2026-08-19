@@ -28,7 +28,8 @@ describe("automation schedule timezone and misfire primitives", () => {
       "America/New_York"
     );
     expect(afterFirstOccurrence).toBe(Date.parse("2026-11-02T06:30:00.000Z"));
-  });
+    // CI 并行跑批下 DST 时区扫描实测可破 5s 默认线(本地 <1.5s),放宽超时避免环境性红。
+  }, 20000);
 
   test("keeps interval schedules anchored instead of drifting from completion time", () => {
     const anchor = Date.parse("2026-07-28T00:00:00.000Z");
