@@ -24,15 +24,8 @@ function isBackgroundTaskDetail(detail: unknown): boolean {
 
 describe("run.ts handleAsyncEvent 旁路注入(late task_notification → background.task 总线事件)", () => {
   const dirs: string[] = [];
-  const previousFlag = process.env.AGENT_LIFECYCLE_EVENTS;
-  const hadFlag = previousFlag !== undefined;
 
   afterEach(() => {
-    if (hadFlag) {
-      process.env.AGENT_LIFECYCLE_EVENTS = previousFlag;
-    } else {
-      delete process.env.AGENT_LIFECYCLE_EVENTS;
-    }
     for (const dir of dirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -49,8 +42,7 @@ describe("run.ts handleAsyncEvent 旁路注入(late task_notification → backgr
     return { sessionDir, published };
   }
 
-  test("flag on: 四态终态主流通知 → publish 与 projector 主流版同形态的 detail,seq 单调", async () => {
-    process.env.AGENT_LIFECYCLE_EVENTS = "1";
+  test("四态终态主流通知 → publish 与 projector 主流版同形态的 detail,seq 单调", async () => {
     const threadId = "run-task-bus-on";
     const { sessionDir, published } = setup(threadId);
 
@@ -101,24 +93,7 @@ describe("run.ts handleAsyncEvent 旁路注入(late task_notification → backgr
       }));
   });
 
-  test("flag off: 零行为,总线无 publish", async () => {
-    delete process.env.AGENT_LIFECYCLE_EVENTS;
-    const threadId = "run-task-bus-off";
-    const { sessionDir, published } = setup(threadId);
-
-    publishBackgroundTaskNotificationToBus({
-      sessionDir,
-      threadId,
-      runId: "lume-run-1",
-      event: lateNotification() as never
-    });
-
-    expect(published).toHaveLength(0);
-    expect(await getThreadEventBus(sessionDir).read(threadId)).toEqual([]);
-  });
-
   test("subagent 形态(subagent_run_id)不注入——子代理事件走各自会话", async () => {
-    process.env.AGENT_LIFECYCLE_EVENTS = "1";
     const threadId = "run-task-bus-subagent";
     const { sessionDir, published } = setup(threadId);
 
@@ -134,7 +109,6 @@ describe("run.ts handleAsyncEvent 旁路注入(late task_notification → backgr
   });
 
   test("attention 与未知 status 不注入(四态外丢弃,同 projector 语义)", async () => {
-    process.env.AGENT_LIFECYCLE_EVENTS = "1";
     const threadId = "run-task-bus-attention";
     const { sessionDir, published } = setup(threadId);
 

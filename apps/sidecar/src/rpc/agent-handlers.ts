@@ -187,7 +187,6 @@ import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runtime-c
 import { createOrResumeRuntimeCoreSessionManager, getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
 import { detectSessionDanglingToolUses } from "../services/agent-runtime/runtime-core/run";
 import { getThreadEventBus } from "../services/agent-runtime/events/thread-event-bus";
-import { isAgentLifecycleEventsEnabled } from "../services/agent-runtime/runner/run-loop";
 import { resolveAgentThreadWorkdir } from "../services/agent/agent-workdir-resolver";
 import {
   applyCodingDiffAction,
@@ -421,7 +420,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
   // run 结束瞬间 16ms 微批 update 尚未 flush 就退订的推送丢失。
   const agentEventsBridgedThreads = new Set<string>();
   const ensureAgentEventsBridge = (threadId: string): void => {
-    if (!isAgentLifecycleEventsEnabled() || agentEventsBridgedThreads.has(threadId)) return;
+    if (agentEventsBridgedThreads.has(threadId)) return;
     agentEventsBridgedThreads.add(threadId);
     getThreadEventBus(resolveRuntimeSessionDir(threadId)).subscribe(threadId, (envelope) => {
       context.writeNotification(AGENT_IPC_CHANNELS.EVENTS, envelope);

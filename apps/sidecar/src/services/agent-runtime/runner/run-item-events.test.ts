@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import {
-  projectAssistantMessageFinalRuntimeEvent,
   projectRunItemToRuntimeEvents,
   projectRunStateToRuntimeEvents
 } from "./run-item-events";
@@ -950,30 +949,6 @@ describe("projectRunStateToRuntimeEvents", () => {
         reason: "matched memory entry"
       }],
       hidden: true
-    });
-  });
-});
-
-describe("projectAssistantMessageFinalRuntimeEvent", () => {
-  test("projects final assistant content as a replacement runtime event", () => {
-    expect(projectAssistantMessageFinalRuntimeEvent(baseRun(), {
-      type: "assistant_message",
-      id: "assistant-1",
-      content: [
-        { type: "thinking", thinking: "think" },
-        { type: "text", text: "- first\n- second" }
-      ],
-      createdAt: "2026-04-30T00:00:01.000Z"
-    })).toEqual({
-      id: "run-1:assistant-1:assistant.final",
-      type: "assistant.final",
-      threadId: "thread-1",
-      runId: "run-1",
-      createdAt: "2026-04-30T00:00:01.000Z",
-      blocks: [
-        { type: "thinking", text: "think" },
-        { type: "text", text: "- first\n- second" }
-      ]
     });
   });
 });

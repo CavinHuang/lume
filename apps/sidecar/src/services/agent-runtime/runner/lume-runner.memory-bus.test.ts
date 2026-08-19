@@ -138,28 +138,18 @@ function isMemoryContextUsedDetail(detail: unknown): boolean {
 
 describe("LumeRunner memory.context.used 第二注入路径", () => {
   const dirs: string[] = [];
-  let previousFlag: string | undefined;
-  let hadFlag: boolean;
 
   afterEach(() => {
-    if (hadFlag) {
-      process.env.AGENT_LIFECYCLE_EVENTS = previousFlag;
-    } else {
-      delete process.env.AGENT_LIFECYCLE_EVENTS;
-    }
     delete process.env.LUME_CONFIG_DIR;
     for (const dir of dirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("flag on: bus publish 与旧路 runtime event 双发,detail.items 为同一数组", async () => {
+  test("bus publish 单源(T7a 后旧路 emit 已删),detail.items 为同一数组", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-memory-bus-on-"));
     const configDir = mkdtempSync(join(tmpdir(), "lume-runner-memory-bus-on-config-"));
     dirs.push(agentDir, configDir);
-    previousFlag = process.env.AGENT_LIFECYCLE_EVENTS;
-    hadFlag = previousFlag !== undefined;
-    process.env.AGENT_LIFECYCLE_EVENTS = "1";
     process.env.LUME_CONFIG_DIR = configDir;
 
     const threadId = "memory-bus-on";
@@ -171,11 +161,11 @@ describe("LumeRunner memory.context.used 第二注入路径", () => {
 
     const { runner, runtimeEvents } = await runMemorySession({ threadId, agentDir });
 
-    // 旧路照发:runtime event 仍在
+    // T7a:旧路 emit 已删,memory.context.used 不再经 RUNTIME_EVENT 产生
     const legacy = runtimeEvents.find((event) => event.type === "memory.context.used") as
       | { runId: string; items: unknown[] }
       | undefined;
-    expect(legacy).toBeDefined();
+    expect(legacy).toBeUndefined();
 
     // 新路:总线收到骨架事件(run 级领域事件)
     expect(published).toHaveLength(1);
@@ -185,13 +175,11 @@ describe("LumeRunner memory.context.used 第二注入路径", () => {
     expect(envelope.turnId).toBeNull();
     expect(envelope.threadId).toBe(threadId);
     expect(envelope.runId).toBe(runner.getRunId());
-    expect(envelope.runId).toBe(legacy!.runId);
     expect(envelope.seq).toBeNumber();
 
-    // detail.items 与旧路 event.items 为同一数组(双发共享,非复制)
+    // detail.items 为原始引用(sidecar 透传,非复制)
     const detail = envelope.detail as { type: string; items: unknown[] };
     expect(detail.type).toBe("memory.context.used");
-    expect(detail.items).toBe(legacy!.items);
     expect(detail.items).toEqual([expect.objectContaining({
       id: "mem-1",
       kind: "preference",
@@ -211,36 +199,10 @@ describe("LumeRunner memory.context.used 第二注入路径", () => {
       }));
   });
 
-  test("flag off: 仅旧路,总线无 publish", async () => {
-    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-memory-bus-off-"));
-    const configDir = mkdtempSync(join(tmpdir(), "lume-runner-memory-bus-off-config-"));
-    dirs.push(agentDir, configDir);
-    previousFlag = process.env.AGENT_LIFECYCLE_EVENTS;
-    hadFlag = previousFlag !== undefined;
-    delete process.env.AGENT_LIFECYCLE_EVENTS;
-    process.env.LUME_CONFIG_DIR = configDir;
-
-    const threadId = "memory-bus-off";
-    const sessionDir = getRuntimeCoreSessionDir(threadId, agentDir);
-    const published: SdkEventEnvelope[] = [];
-    getThreadEventBus(sessionDir).subscribe(threadId, (envelope) => {
-      if (isMemoryContextUsedDetail(envelope.detail)) published.push(envelope);
-    });
-
-    const { runtimeEvents } = await runMemorySession({ threadId, agentDir });
-
-    expect(runtimeEvents.find((event) => event.type === "memory.context.used")).toBeDefined();
-    expect(published).toHaveLength(0);
-    expect(await getThreadEventBus(sessionDir).read(threadId)).toEqual([]);
-  });
-
   test("citations 配置关:早退于 publish 之前,双路皆不发", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-memory-bus-cite-off-"));
     const configDir = mkdtempSync(join(tmpdir(), "lume-runner-memory-bus-cite-off-config-"));
     dirs.push(agentDir, configDir);
-    previousFlag = process.env.AGENT_LIFECYCLE_EVENTS;
-    hadFlag = previousFlag !== undefined;
-    process.env.AGENT_LIFECYCLE_EVENTS = "1";
     process.env.LUME_CONFIG_DIR = configDir;
     writeFileSync(getMemoryConfigPath(), JSON.stringify({ citations: "off" }), "utf-8");
 

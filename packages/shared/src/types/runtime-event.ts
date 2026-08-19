@@ -370,6 +370,18 @@ export interface CodingVerificationRecord {
 
 export type BackgroundTaskCompletedRuntimeStatus = "completed" | "failed" | "stopped" | "cancelled";
 
+/**
+ * background.task 终态归一（唯一来源，事件总线批次5 Task 7b 三收一）：
+ * killed→stopped、canceled→cancelled；attention/running/未知状态返回 undefined（丢弃）。
+ */
+export function normalizeBackgroundTaskStatus(raw: string): BackgroundTaskCompletedRuntimeStatus | undefined {
+  if (raw === "completed") return "completed";
+  if (raw === "failed") return "failed";
+  if (raw === "stopped" || raw === "killed") return "stopped";
+  if (raw === "cancelled" || raw === "canceled") return "cancelled";
+  return undefined;
+}
+
 export interface BackgroundTaskCompletedRuntimeEvent extends RuntimeEventBase {
   type: "background.task.completed";
   taskId: string;

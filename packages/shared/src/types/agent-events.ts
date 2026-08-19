@@ -2,6 +2,7 @@
  * Lifecycle event bus types — single vocabulary shared by SDK, sidecar and web.
  * Batch 1 scope: run + turn + assistant message lifecycle.
  * Batch 2 scope: tool start/end skeleton.
+ * Batch 5 scope: thinking folding, user message pair, domain events (final T1 table).
  */
 
 export type SdkEventKind = 'run' | 'turn' | 'message' | 'tool'
@@ -39,6 +40,8 @@ export interface RunEndDetail {
   stopReason: string | null
   isError: boolean
   numTurns: number
+  /** F3:错误终值携带的错误信息(流抛错/run 链内失败的补发终值);正常终值缺省。 */
+  result?: string
   /** Migrated from the legacy SDKResultMessage when present. */
   usage?: Record<string, unknown>
   costUSD?: number
@@ -65,7 +68,18 @@ export interface MessageUpdateDetail {
   /** Native provider stream event (e.g. text_delta / input_json_delta), when available. */
   delta: { type: string; [key: string]: unknown } | null
   /** Folded cumulative partial — consumers never accumulate state themselves. */
-  partial: { text: string; toolUses: Array<{ id: string; name: string; partialJson: string }> }
+  partial: {
+    text: string
+    /** Folded cumulative thinking text (batch 2 leftover, batch 5). */
+    thinking: string
+    toolUses: Array<{ id: string; name: string; partialJson: string }>
+  }
+}
+
+export interface UserMessageDetail {
+  type: 'user.message'
+  /** Plain text or structured message parts (mirrors the SDK user turn input). */
+  content: string | unknown[]
 }
 
 export interface MessageEndDetail {
@@ -104,7 +118,8 @@ export interface MemoryContextUsedDetail {
     citation: string
     fileRef?: unknown
     reason?: string
-    claim?: string
+    /** Structured memory claim (legacy MemoryClaim), not a plain string. */
+    claim?: unknown
   }>
 }
 
@@ -129,16 +144,93 @@ export interface ContextCompactionDetail {
   /** Completed phase: success or failure text. */
   result?: string
   isError?: boolean
+  /** Compaction trigger 真值（engine compact_metadata.trigger 透传：'auto'|'manual'|'prompt_too_long'；缺省 'auto'）。 */
+  trigger?: string
+  /** Completed phase outcome（compact_metadata.outcome 透传；仅 completed 带，started/progress 省略）。 */
+  outcome?: 'succeeded' | 'failed'
+}
+
+/**
+ * Domain event details (batch 5, T1 final table). Payloads stay opaque at the
+ * shared type level; the sidecar adapter folds the legacy RuntimeEvent shapes.
+ */
+export interface PlanPreviewDetail {
+  type: 'plan.preview'
+  /** Legacy PlanPreviewRuntimeEvent payload (contractId/title/summary/markdown/stepCount/...). */
+  content: unknown
+}
+
+export interface TodoStateDetail {
+  type: 'todo.state'
+  /** Legacy TodoStateUpdatedRuntimeEvent payload (todos/currentActiveForm). */
+  state: unknown
+}
+
+export interface TaskProgressDetail {
+  type: 'task.progress'
+  /** SDK background task id (system task_progress message's task_id). */
+  taskId: string
+  /** SDK background progress shape: description/usage (plus last_tool_name/summary/tool_use_id when present). */
+  progress: unknown
+}
+
+export interface AdvisorReviewedDetail {
+  type: 'advisor.reviewed'
+  summary?: string
+  /** Legacy AdvisorReviewedRuntimeEvent payload (severity/summary/details/modelRef/durationMs). */
+  review: unknown
+}
+
+export interface LspDiagnosticsDetail {
+  type: 'lsp.diagnostics'
+  /** Fields aligned with the legacy LspDiagnosticsUpdatedRuntimeEvent. */
+  toolUseId?: string
+  filePath: string
+  mutationVersion: number
+  sha256: string
+  delayed: boolean
+  diagnostics: {
+    servers: string[]
+    total: number
+    errors: number
+    warnings: number
+    truncated: boolean
+    items: Array<{
+      server?: string
+      source?: string
+      severity?: 1 | 2 | 3 | 4
+      code?: string | number
+      message: string
+      range: {
+        start: { line: number; character: number }
+        end: { line: number; character: number }
+      }
+    }>
+    artifact?: unknown
+  }
+}
+
+export interface CodingReportDetail {
+  type: 'coding.report'
+  /** Legacy RuntimeCodingReport payload (T1 verdict: migrated; dual-entry with run.completed). */
+  report: unknown
 }
 
 export type SdkLifecycleDetail =
   | RunStartDetail | RunEndDetail
   | TurnStartDetail | TurnEndDetail
   | MessageStartDetail | MessageUpdateDetail | MessageEndDetail
+  | UserMessageDetail
   | ToolStartDetail | ToolEndDetail
   | MemoryContextUsedDetail
   | BackgroundTaskNotificationDetail
   | ContextCompactionDetail
+  | PlanPreviewDetail
+  | TodoStateDetail
+  | TaskProgressDetail
+  | AdvisorReviewedDetail
+  | LspDiagnosticsDetail
+  | CodingReportDetail
 
 /** Result of AGENT_IPC_CHANNELS.GET_EVENTS. */
 export interface AgentEventsResult {
