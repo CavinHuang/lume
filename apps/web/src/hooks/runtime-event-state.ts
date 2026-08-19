@@ -66,6 +66,21 @@ export function appendRuntimeEvents(
   return next
 }
 
+// hydrate 入口短路指纹：persisted 投影是 append-only + 确定性 id（run 级拼接），
+// 指纹相同即 persisted 未变 ⇒ 上次 merge 已吸收进 current ⇒ 产物与 current 相同。
+// 避免每条 MESSAGE_APPENDED 重复走 merge（O(n log n)）+ 逐位比较。假阳性只会
+// 丢一次更新且下次指纹变化自愈——指纹命中的前提是 length/首尾 id 全同。
+const persistedHydrateFingerprints = new Map<string, string>()
+
+function persistedFingerprint(events: LumeRuntimeEvent[]): string {
+  return `${events.length}:${events[0]?.id ?? ''}:${events[events.length - 1]?.id ?? ''}`
+}
+
+/** 重置 hydrate 指纹（测试隔离用：模块级 Map 在同模块测试间共享）。 */
+export function resetHydrateFingerprints(): void {
+  persistedHydrateFingerprints.clear()
+}
+
 export function hydrateRuntimeEvents(
   prev: RuntimeEventState,
   result: AgentThreadRuntimeEventsResult,
@@ -74,10 +89,15 @@ export function hydrateRuntimeEvents(
   if (result.events.length === 0) {
     return prev
   }
+  const fingerprint = persistedFingerprint(result.events)
+  if (persistedHydrateFingerprints.get(result.threadId) === fingerprint) {
+    return prev
+  }
   // 与 append 路径同上限：sidecar 回放不封顶，hydrate 不 trim 会让重开的超长线程
   // 全量驻留内存（且直到下一条 append 前都无界）。merge 阶段已按 live 规则合并相邻
   // 同流 delta（回放无 assistant.final，正文全靠 delta，先合并再 trim 才不会误伤）。
   const events = trimRuntimeEvents(mergeHydratedRuntimeEvents(result.events, current?.events ?? []))
+  persistedHydrateFingerprints.set(result.threadId, fingerprint)
   if (current && sameRuntimeEvents(current.events, events)) {
     return prev
   }
@@ -99,6 +119,7 @@ export function removeRuntimeEvents(
   prev: RuntimeEventState,
   threadId: string,
 ): RuntimeEventState {
+  persistedHydrateFingerprints.delete(threadId)
   if (!(threadId in prev)) return prev
   const next = { ...prev }
   delete next[threadId]

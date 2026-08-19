@@ -509,7 +509,7 @@ export function BrowserShell({
       if (event.key === 'Escape' && auxiliaryPanel === 'find') {
         setAuxiliaryPanel(null)
         setFindText('')
-        void browserRuntime({ method: 'find:stop', params: { tabId } })
+        void browserRuntime({ method: 'find:stop', params: { tabId } }).catch(() => undefined)
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -530,7 +530,7 @@ export function BrowserShell({
     }).then((result) => setFindResult({
       activeMatchOrdinal: result.activeMatchOrdinal ?? 0,
       matches: result.matches ?? 0,
-    }))
+    })).catch(() => undefined)
   }
 
   const commitViewport = (viewport: BrowserViewportState, failureMessage: string) => {
@@ -1247,7 +1247,7 @@ export function BrowserShell({
             title="在默认浏览器中打开"
             aria-label="在默认浏览器中打开"
             disabled={!descriptor.url}
-            onClick={() => descriptor.url && void browserRuntime({ method: 'openExternal', params: { url: descriptor.url } })}
+            onClick={() => descriptor.url && void browserRuntime({ method: 'openExternal', params: { url: descriptor.url } }).catch(() => undefined)}
             className="absolute right-0 z-10 size-7 rounded-l-none rounded-r-xl text-muted-foreground hover:bg-foreground/5 hover:text-foreground disabled:opacity-45"
           >
             <ExternalLink size={13} />
@@ -1310,7 +1310,7 @@ export function BrowserShell({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" sideOffset={6} className="w-[240px] p-1.5">
             <DropdownMenuItem disabled={!descriptor.url} onSelect={() => setAuxiliaryPanel('find')}>在页面中查找</DropdownMenuItem>
-            <DropdownMenuItem disabled={!descriptor.url} onSelect={() => void browserRuntime({ method: 'print', params: { tabId } })}>打印</DropdownMenuItem>
+            <DropdownMenuItem disabled={!descriptor.url} onSelect={() => void browserRuntime({ method: 'print', params: { tabId } }).catch(() => undefined)}>打印</DropdownMenuItem>
             <DropdownMenuItem disabled={!descriptor.url || selecting} onSelect={() => startAnnotationSelection()}>
               <span className="min-w-0 flex-1">页面批注</span>
               {reviewItems.length > 0 && <span className="text-[10px] text-muted-foreground">{reviewItems.length}</span>}
@@ -1399,7 +1399,7 @@ export function BrowserShell({
             value={findText}
             onChange={(event) => {
               setFindText(event.target.value)
-              void browserRuntime({ method: 'find', params: { tabId, text: event.target.value, findNext: false } })
+              void browserRuntime({ method: 'find', params: { tabId, text: event.target.value, findNext: false } }).catch(() => undefined)
             }}
             aria-label="在页面中查找"
             placeholder="在页面中查找…"
@@ -1413,7 +1413,7 @@ export function BrowserShell({
               if (event.key === 'Escape') {
                 setAuxiliaryPanel(null)
                 setFindText('')
-                void browserRuntime({ method: 'find:stop', params: { tabId } })
+                void browserRuntime({ method: 'find:stop', params: { tabId } }).catch(() => undefined)
               }
             }}
           />
@@ -1423,7 +1423,7 @@ export function BrowserShell({
           <ToolbarButton title="关闭" onClick={() => {
             setAuxiliaryPanel(null)
             setFindText('')
-            void browserRuntime({ method: 'find:stop', params: { tabId } })
+            void browserRuntime({ method: 'find:stop', params: { tabId } }).catch(() => undefined)
           }}><X size={14} /></ToolbarButton>
         </form>
       )}

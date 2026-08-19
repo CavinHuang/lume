@@ -65,6 +65,12 @@ import { useAgentEventBus } from './useAgentEventBus'
 const lifecycleAdapterStatesByThread = new Map<string, LifecycleAdapterState>()
 const lifecycleDeliveredSeqByThread = new Map<string, number>()
 
+/** 线程删除时释放其 lifecycle 适配器基线（含 lastText/lastThinking 累计全文），防止 Map 只增不减。 */
+export function releaseThreadLifecycleState(threadId: string): void {
+  lifecycleAdapterStatesByThread.delete(threadId)
+  lifecycleDeliveredSeqByThread.delete(threadId)
+}
+
 export function hydrateSubagentRuns(
   current: Record<string, SubagentRunRecord[]>,
   runs: SubagentRunRecord[],
