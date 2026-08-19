@@ -12,9 +12,8 @@ import {
 import { cn } from '@/lib/utils'
 import {
   isDesktopRuntime,
-  saveFilePathDialog,
+  saveBinaryFileDialog,
   saveTextFileDialog,
-  writeBinaryFile,
   writeClipboardImage,
   writeClipboardText,
 } from '@/lib/desktop-api'
@@ -244,9 +243,8 @@ export function InfographicBlock({ code, streaming }: InfographicBlockProps) {
           const result = await saveTextFileDialog(filename, svgDataUrlToText(dataUrl))
           toast.success('信息图已导出', { description: result.path })
         } else {
-          const selected = await saveFilePathDialog(filename, [{ name: 'PNG 图片', extensions: ['png'] }])
-          if (!selected.path) return
-          const result = await writeBinaryFile(selected.path, dataUrlToBase64(dataUrl))
+          const result = await saveBinaryFileDialog(filename, dataUrlToBase64(dataUrl), [{ name: 'PNG 图片', extensions: ['png'] }])
+          if (!result.path) return
           toast.success('信息图已导出', { description: result.path })
         }
       } else {

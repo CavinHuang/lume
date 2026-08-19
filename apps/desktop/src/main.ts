@@ -182,7 +182,6 @@ const QUIET_SIDECAR_RPC_METHODS = new Set([
 const SLOW_RPC_MS = 2_000
 const RENDERER_DELIVERY_ACK_TIMEOUT_MS = 10_000
 const UPDATE_INSTALL_HANDOFF_TIMEOUT_MS = 15_000
-const TEXT_FILE_LIMIT = 512 * 1024
 const SIDE_CAR_EVENT_CHANNEL = 'sidecar:event'
 const DATA_MIGRATE_PROGRESS_CHANNEL = 'data:migrate-progress'
 const UPDATE_DOWNLOAD_CHANNEL = 'update:download'
@@ -2271,14 +2270,6 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       return getDiagnosticContentStore().decrypt(payload.recordId)
     case 'desktop_diagnostic_delete':
       return { deleted: await getDiagnosticContentStore().clear() }
-    case 'read_text_file': {
-      const text = readFileSync(payload.path, 'utf8')
-      const truncated = text.length > TEXT_FILE_LIMIT
-      return {
-        content: truncated ? text.slice(0, TEXT_FILE_LIMIT) : text,
-        truncated,
-      }
-    }
     case 'save_text_file_dialog': {
       const result = await dialog.showSaveDialog(mainWindow, {
         defaultPath: payload.filename,
@@ -2288,6 +2279,18 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       }
       writeFileSync(result.filePath, payload.content ?? '', 'utf8')
       return { path: result.filePath }
+    }
+    case 'save_binary_file_dialog': {
+      const filters = Array.isArray(payload.filters) && payload.filters.length > 0 ? payload.filters : undefined
+      const result = await dialog.showSaveDialog(mainWindow, { defaultPath: payload.filename, ...(filters ? { filters } : {}) })
+      if (result.canceled || !result.filePath) return { path: null }
+      // 用户手输文件名可能不带扩展名（各平台 dialog 自动补全行为不一致），按需补全
+      const extension = typeof payload.ensureExtension === 'string' && payload.ensureExtension.length > 0 ? payload.ensureExtension : null
+      const filePath = extension && !result.filePath.toLowerCase().endsWith(extension.toLowerCase())
+        ? `${result.filePath}.${extension}`
+        : result.filePath
+      writeFileSync(filePath, decodeBase64Content(payload.base64Content))
+      return { path: filePath }
     }
     case 'save_file_path_dialog': {
       const filters = Array.isArray(payload.filters) && payload.filters.length > 0
@@ -2299,13 +2302,14 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       })
       return { path: result.canceled ? null : result.filePath ?? null }
     }
-    case 'write_binary_file':
-      writeFileSync(payload.path, decodeBase64Content(payload.base64Content))
-      return { path: payload.path }
-    case 'copy_file':
-      ensureFile(payload.source, `源文件不存在`)
-      copyFileSync(payload.source, payload.target)
-      return null
+    case 'save_path_as': {
+      ensureFile(payload.source, '源文件不存在')
+      const filters = Array.isArray(payload.filters) && payload.filters.length > 0 ? payload.filters : undefined
+      const result = await dialog.showSaveDialog(mainWindow, { defaultPath: payload.filename, ...(filters ? { filters } : {}) })
+      if (result.canceled || !result.filePath) return { path: null }
+      copyFileSync(payload.source, result.filePath)
+      return { path: result.filePath }
+    }
     case 'open_in_system': {
       ensureExistingPath(payload.path)
       const error = await shell.openPath(payload.path)

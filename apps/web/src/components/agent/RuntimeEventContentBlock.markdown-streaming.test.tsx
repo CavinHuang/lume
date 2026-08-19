@@ -41,7 +41,8 @@ mock.module('@/lib/desktop-api', () => ({
   agentSend: async () => undefined,
   browserRuntime: async () => [],
   checkDesktopUpdate: async () => undefined,
-  copyFile: async () => undefined,
+  savePathAs: async () => ({ path: null }),
+  saveBinaryFileDialog: async () => ({ path: null }),
   downloadDesktopUpdate: async () => undefined,
   getThreadMessageVersions: async () => ({ messages: [] }),
   getThreadMessages: async () => [],
@@ -55,7 +56,6 @@ mock.module('@/lib/desktop-api', () => ({
   openGuardedFileRefInSystem: async () => undefined,
   openFolderDialog: async () => undefined,
   openInSystem: async () => undefined,
-  readTextFile: async () => '',
   revealFileRefInSystem: async () => undefined,
   revealGuardedFileRefInSystem: async () => undefined,
   revealPathInSystem: async () => undefined,
@@ -73,7 +73,6 @@ mock.module('@/lib/desktop-api', () => ({
   getMcpStatus: async () => ({ servers: [] }),
   writeClipboardImage: async () => undefined,
   writeClipboardText: async () => undefined,
-  writeBinaryFile: async () => undefined,
   isDesktopRuntime: () => true,
 }))
 

@@ -627,6 +627,10 @@ export class LoggingService {
         try { listener(events) } catch { /* subscriber failures cannot break the writer */ }
       }
     } catch (error) {
+      // Put the batch back so the next flush retries it instead of silently
+      // losing it; the queue cap plus enqueue drop accounting bound memory
+      // if the append keeps failing.
+      this.queue.unshift(...events)
       this.writeEmergency('log append failed', error)
     }
   }
@@ -680,7 +684,7 @@ export class LoggingService {
     if (process.env.LUME_LOG_CONSOLE === 'false') return
     const configuredLevel = process.env.LUME_LOG_CONSOLE_LEVEL
     const threshold = isLevel(configuredLevel) ? configuredLevel : this.settings.consoleLevel
-    const explicitVerbose = configuredLevel === 'trace' || configuredLevel === 'debug'
+    const explicitVerbose = threshold === 'trace' || threshold === 'debug'
     const visible = LEVEL_ORDER[event.level] >= LEVEL_ORDER.warn
       || (event.level === 'info' && TERMINAL_INFO_EVENTS.has(event.event))
       || (explicitVerbose && LEVEL_ORDER[event.level] >= LEVEL_ORDER[threshold])

@@ -9,7 +9,8 @@ mock.module("@/lib/desktop-api", () => ({
   openInSystem: async () => undefined,
   revealPathInSystem: async () => undefined,
   saveFilePathDialog: async () => ({ path: null }),
-  copyFile: async () => undefined,
+  savePathAs: async () => ({ path: null }),
+  saveBinaryFileDialog: async () => ({ path: null }),
 }))
 mock.module("sonner", () => ({ toast: { success: () => undefined, error: () => undefined } }))
 

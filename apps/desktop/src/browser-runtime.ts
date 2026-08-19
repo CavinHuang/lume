@@ -130,6 +130,18 @@ type BrowserFileChooserWaiter = {
   timer: ReturnType<typeof setTimeout>
 }
 
+const FILE_CHOOSER_IDLE_EXPIRY_MS = 120_000
+
+type BrowserFileChooserEntry = {
+  tabId: string
+  backendNodeId: number
+  isMultiple: boolean
+  browserSessionId: string
+  browserTurnId: string
+  generation: number
+  expiryTimer?: ReturnType<typeof setTimeout>
+}
+
 type BrowserPageAsset = {
   id: string
   kind: "script" | "font" | "image" | "stylesheet" | "video" | "other"
@@ -202,7 +214,7 @@ export class BrowserRuntime {
   private readonly downloadWaiters = new Map<string, BrowserDownloadWaiter[]>()
   private readonly downloadResults = new Map<string, { browserSessionId: string; browserTurnId: string; state: "pending" | "completed" | "failed"; fileRef?: string; waiters: Array<(value: string | null) => void> }>()
   private readonly fileChooserWaiters = new Map<string, BrowserFileChooserWaiter[]>()
-  private readonly fileChoosers = new Map<string, { tabId: string; backendNodeId: number; isMultiple: boolean; browserSessionId: string; browserTurnId: string; generation: number }>()
+  private readonly fileChoosers = new Map<string, BrowserFileChooserEntry>()
   private readonly pageAssetInventories = new Map<string, BrowserPageAssetInventory>()
   private readonly authSessions = new Map<number, BrowserAuthSession>()
   private readonly browserAuthMessageHandler = (event: IpcMainEvent, payload: unknown): void => {
@@ -758,9 +770,9 @@ export class BrowserRuntime {
     }
     if (!GUEST_OPTIONAL_METHODS.has(method)) await this.waitForGuest(tab)
     if (method === "snapshot") return this.snapshot(tab)
-    if (method === "wait:download") return this.waitForDownload(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms, 1, 30_000) || 10_000)
-    if (method === "download:path") return this.downloadPath(context, String(params.downloadId ?? params.download_id ?? ""), boundedNumber(params.timeoutMs ?? params.timeout_ms, 1, 30_000) || 10_000)
-    if (method === "wait:filechooser") return this.waitForFileChooser(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms, 1, 30_000) || 10_000)
+    if (method === "wait:download") return this.waitForDownload(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
+    if (method === "download:path") return this.downloadPath(context, String(params.downloadId ?? params.download_id ?? ""), boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
+    if (method === "wait:filechooser") return this.waitForFileChooser(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
     if (method === "pageAssets:list") return this.listPageAssets(tab, context)
     if (method === "webmcp:list") return listWebMcpTools(tab)
     if (method === "webmcp:invoke") return invokeWebMcpTool(tab, params)
@@ -1146,9 +1158,10 @@ export class BrowserRuntime {
       tab.isLoading = wc.isLoading()
       tab.lifecycle = tab.visible ? "active" : "background"
       tab.lastOpenedAt = new Date().toISOString()
-      if (tab.pendingNavigationIndex !== undefined) {
-        tab.navigationIndex = tab.pendingNavigationIndex
-        tab.pendingNavigationIndex = undefined
+      const pendingNavigationIndex = tab.pendingNavigationIndex
+      tab.pendingNavigationIndex = undefined
+      if (pendingNavigationIndex !== undefined && tab.navigationStack[pendingNavigationIndex] === tab.url) {
+        tab.navigationIndex = pendingNavigationIndex
       } else if (tab.navigationStack[tab.navigationIndex] !== tab.url) {
         tab.navigationStack = [...tab.navigationStack.slice(0, tab.navigationIndex + 1), tab.url].slice(-200)
         tab.navigationIndex = tab.navigationStack.length - 1
@@ -1321,14 +1334,20 @@ export class BrowserRuntime {
           clearTimeout(waiter.timer)
           const fileChooserId = randomUUID()
           const isMultiple = detail.mode === "selectMultiple"
-          this.fileChoosers.set(fileChooserId, {
+          const chooser: BrowserFileChooserEntry = {
             tabId: tab.tabId,
             backendNodeId,
             isMultiple,
             browserSessionId: waiter.browserSessionId,
             browserTurnId: waiter.browserTurnId,
             generation: tab.generation,
-          })
+          }
+          chooser.expiryTimer = setTimeout(() => {
+            if (this.fileChoosers.get(fileChooserId) !== chooser) return
+            this.fileChoosers.delete(fileChooserId)
+            this.disableFileChooserInterceptIfIdle(tab.tabId)
+          }, FILE_CHOOSER_IDLE_EXPIRY_MS)
+          this.fileChoosers.set(fileChooserId, chooser)
           waiter.resolve({ file_chooser_id: fileChooserId, is_multiple: isMultiple })
         }
       })
@@ -1428,7 +1447,7 @@ export class BrowserRuntime {
       const win = this.options.getWindow()
       if (!win || win.isDestroyed()) { item.cancel(); return }
       const result = await dialog.showMessageBox(win, { type: "question", buttons: ["保存", "取消"], defaultId: 1, cancelId: 1, title: agent ? "确认 Agent 下载" : "确认下载", message: `保存下载文件“${filename}”？`, detail: agent ? "批准仅适用于当前标签页和这一次下载。" : undefined })
-      if (result.response !== 0 || policy.disposed || !tab || (generation !== undefined && tab.generation !== generation)) { item.cancel(); return }
+      if (result.response !== 0 || policy.disposed || (generation !== undefined && tab?.generation !== generation)) { item.cancel(); return }
     }
     const actor = agent ? "agent" : "user"
     const sessionId = recentAgent ? `${recentAgent.browserSessionId}:${recentAgent.browserTurnId}` : "user"
@@ -1581,14 +1600,14 @@ export class BrowserRuntime {
       tab.pendingNavigationIndex = tab.navigationIndex - 1
       const contents = browserContents(tab)
       if (contents.canGoBack()) return contents.goBack()
-      return contents.loadURL(tab.navigationStack[tab.pendingNavigationIndex]!)
+      return contents.loadURL(tab.navigationStack[tab.pendingNavigationIndex]!).catch(() => { tab.pendingNavigationIndex = undefined })
     }
     if (method === "forward") {
       if (tab.navigationIndex < 0 || tab.navigationIndex >= tab.navigationStack.length - 1) return undefined
       tab.pendingNavigationIndex = tab.navigationIndex + 1
       const contents = browserContents(tab)
       if (contents.canGoForward()) return contents.goForward()
-      return contents.loadURL(tab.navigationStack[tab.pendingNavigationIndex]!)
+      return contents.loadURL(tab.navigationStack[tab.pendingNavigationIndex]!).catch(() => { tab.pendingNavigationIndex = undefined })
     }
     if (method === "reload") return browserContents(tab).reload()
     if (method === "dialog:handle") {
@@ -1938,6 +1957,15 @@ export class BrowserRuntime {
     }
   }
 
+  // ponytail: 兜底关闭用固定 120s 过期，覆盖 agent 拿到 chooser id 后不再 setFiles 的所有路径（含 turn 结束）
+  private disableFileChooserInterceptIfIdle(tabId: string): void {
+    if (this.fileChooserWaiters.get(tabId)?.length) return
+    for (const chooser of this.fileChoosers.values()) if (chooser.tabId === tabId) return
+    const tab = this.tabs.get(tabId)
+    if (!tab?.webContents || tab.webContents.isDestroyed()) return
+    void withDebugger(tab.webContents, (debuggerRef) => debuggerRef.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false })).catch(() => undefined)
+  }
+
   private async waitForFileChooser(tab: BrowserTab, context: BrowserRequestContext, timeoutMs: number): Promise<{ file_chooser_id: string; is_multiple: boolean }> {
     if (context.actor !== "agent") throw browserError("action_denied")
     await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.setInterceptFileChooserDialog", { enabled: true }))
@@ -1989,6 +2017,7 @@ export class BrowserRuntime {
       await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("DOM.setFileInputFiles", { files, backendNodeId: chooser.backendNodeId }))
       return {}
     } finally {
+      clearTimeout(this.fileChoosers.get(chooserId)?.expiryTimer)
       this.fileChoosers.delete(chooserId)
       await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false })).catch(() => undefined)
     }
@@ -2371,7 +2400,7 @@ export class BrowserRuntime {
     const script = String(params.script ?? params.expression ?? "")
     if (!script || script.length > 100_000) throw browserError("invalid_browser_request")
     validateBrowserLocator(locator)
-    const timeoutMs = boundedNumber(params.timeoutMs ?? params.timeout_ms, 1, 10_000) || 3_000
+    const timeoutMs = boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 3_000, 1, 10_000)
     const argument = JSON.stringify({ script, arg: params.arg ?? null, timeoutMs })
     if (splitFrameLocator(locator)) return this.executeFrameLocatorQuery(tab, locator, "evaluate", argument)
     const generation = tab.generation
@@ -2952,7 +2981,7 @@ export class BrowserRuntime {
       awaitPromise: true,
       returnByValue: true,
       throwOnSideEffect: true,
-      timeout: boundedNumber(params.timeoutMs ?? params.timeout_ms, 1, 10_000) || 3_000,
+      timeout: boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 3_000, 1, 10_000),
     })) as { result?: { value?: unknown }; exceptionDetails?: unknown }
     if (result.exceptionDetails) throw browserError("action_denied")
     return result.result?.value
@@ -3183,6 +3212,7 @@ export class BrowserRuntime {
     if (tab.mountToken) {
       const pending = this.guestMounts.get(tab.mountToken)
       if (pending
+        && pending.state === "issued"
         && pending.tabId === tab.tabId
         && pending.generation === tab.generation
         && pending.ownerWebContentsId === win.webContents.id
@@ -3385,6 +3415,7 @@ export class BrowserRuntime {
       throw browserError("action_denied")
     }
     this.claimSnapshots.delete(snapshotKey)
+    tab.context = context
     tab.agentLease = { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, generation: tab.generation }
     void this.setTabSuspended(tab, false)
     this.options.emit({ method: "browser:tab-share-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
@@ -3445,7 +3476,7 @@ export class BrowserRuntime {
       waiter.reject(error)
     }
     this.fileChooserWaiters.delete(tabId)
-    for (const [id, chooser] of this.fileChoosers) if (chooser.tabId === tabId) this.fileChoosers.delete(id)
+    for (const [id, chooser] of this.fileChoosers) if (chooser.tabId === tabId) { clearTimeout(chooser.expiryTimer); this.fileChoosers.delete(id) }
   }
 
   private handoffTabs(context: BrowserRequestContext, params: Record<string, unknown>): { ok: true } {
@@ -3954,7 +3985,7 @@ function parseLocatorEvaluation(value: string | undefined): { script: string; ar
   try {
     const parsed = JSON.parse(value ?? "") as { script?: unknown; arg?: unknown; timeoutMs?: unknown }
     const script = typeof parsed.script === "string" ? parsed.script : ""
-    const timeoutMs = boundedNumber(parsed.timeoutMs, 1, 10_000) || 3_000
+    const timeoutMs = boundedNumber(parsed.timeoutMs ?? 3_000, 1, 10_000)
     if (!script || script.length > 100_000) throw new Error()
     return { script, arg: parsed.arg, timeoutMs }
   } catch {

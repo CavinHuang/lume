@@ -70,16 +70,14 @@ export const openFolderDialog = () =>
 export const getQuickInputContext = () =>
   invoke<unknown>('quick_input_get_context')
 export const openExternal = (url: string) => invoke('open_external', { url })
-export const readTextFile = (path: string) =>
-  invoke<{ content: string; truncated: boolean }>('read_text_file', { path })
 export const saveTextFileDialog = (filename: string, content: string) =>
   invoke<{ path: string }>('save_text_file_dialog', { filename, content })
+export const saveBinaryFileDialog = (filename: string, base64Content: string, filters?: SaveFilePathFilter[], ensureExtension?: string) =>
+  invoke<{ path: string | null }>('save_binary_file_dialog', { filename, base64Content, filters, ensureExtension })
 export const saveFilePathDialog = (filename: string, filters?: SaveFilePathFilter[]) =>
   invoke<{ path: string | null }>('save_file_path_dialog', { filename, filters })
-export const writeBinaryFile = (path: string, base64Content: string) =>
-  invoke<{ path: string }>('write_binary_file', { path, base64Content })
-export const copyFile = (source: string, target: string) =>
-  invoke<void>('copy_file', { source, target })
+export const savePathAs = (source: string, filename: string, filters?: SaveFilePathFilter[]) =>
+  invoke<{ path: string | null }>('save_path_as', { source, filename, filters })
 export const openInSystem = (path: string) =>
   invoke<void>('open_in_system', { path })
 export const revealPathInSystem = (path: string) =>
