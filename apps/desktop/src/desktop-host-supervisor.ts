@@ -125,6 +125,10 @@ export function createDesktopHostSupervisor({
   return {
     async start() {
       if (state?.available && child) return state
+      // 手动 start 视为显式拉起:取消挂起的重启定时器(否则与 timer 双 spawn 产生孤儿)
+      // 并清零崩溃窗口(对齐 link-runtime-supervisor 的 restart 语义)
+      if (restartTimer) { cancelSchedule(restartTimer); restartTimer = null }
+      crashTimes = []
       if (!exists(binaryPath)) {
         state = {
           available: false,
