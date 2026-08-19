@@ -8,6 +8,8 @@ export type InstalledSkillSourceMeta =
     sourceRef: string;
     trustLevel: "review-required";
     ref: string;
+    /** 安装时钉住的 commit SHA（存量 version 1 元数据无此字段） */
+    commitSha?: string;
     rootPath: string;
     installedAt: number;
   }
@@ -58,6 +60,7 @@ export function saveGitHubInstalledSkillMetadata(input: {
   slugs: string[];
   sourceRef: string;
   ref: string;
+  commitSha?: string;
   rootPath: string;
 }): void {
   const current = readMetadata(input.workspaceSlug);
@@ -72,6 +75,7 @@ export function saveGitHubInstalledSkillMetadata(input: {
       sourceRef: input.sourceRef,
       trustLevel: "review-required",
       ref: input.ref,
+      ...(input.commitSha ? { commitSha: input.commitSha } : {}),
       rootPath: input.rootPath,
       installedAt: Date.now()
     };

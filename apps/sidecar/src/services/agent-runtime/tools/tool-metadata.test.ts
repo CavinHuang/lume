@@ -127,6 +127,61 @@ describe("tool-metadata", () => {
     });
   });
 
+  test("classifies remaining office tools explicitly (名称推断漏网收口)", () => {
+    expect(getToolMetadata("office_convert")).toMatchObject({
+      category: "execute",
+      riskLevel: "medium",
+      allowedInPlanMode: false
+    });
+    for (const name of [
+      "office_clean",
+      "docx_create",
+      "pptx_create",
+      "xlsx_create",
+      "pdf_create",
+      "docx_comment",
+      "pptx_add_slide",
+      "xlsx_recalc",
+      "pdf_tools",
+      "office_extract_style",
+      "office_thumbnail",
+      "office_accept_changes"
+    ]) {
+      expect(getToolMetadata(name)).toMatchObject({
+        category: "write",
+        riskLevel: "medium",
+        allowedInPlanMode: false
+      });
+      expect(isToolAllowedInPlanMode(name)).toBeFalse();
+    }
+    expect(getToolMetadata("info_extract")).toMatchObject({
+      category: "read",
+      riskLevel: "low",
+      allowedInPlanMode: true
+    });
+  });
+
+  test("classifies routine/suggestion/reading write tools explicitly", () => {
+    expect(getToolMetadata("routine_read")).toMatchObject({
+      category: "read",
+      riskLevel: "low",
+      allowedInPlanMode: true
+    });
+    expect(getToolMetadata("routine_trigger")).toMatchObject({
+      category: "execute",
+      riskLevel: "high",
+      allowedInPlanMode: false
+    });
+    for (const name of ["routine_update", "routine_regenerate", "suggestion_analyze", "lume_reading_advance_progress", "lume_reading_pick_next"]) {
+      expect(getToolMetadata(name)).toMatchObject({
+        category: "write",
+        riskLevel: "medium",
+        allowedInPlanMode: false
+      });
+      expect(isToolAllowedInPlanMode(name)).toBeFalse();
+    }
+  });
+
   test("classifies Guanlan tools as low-risk plan-safe network reads", () => {
     for (const name of [
       "guanlan_search",

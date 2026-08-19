@@ -2351,6 +2351,11 @@ export function MarkdownCode({
   return <code {...codeProps}>{children}</code>
 }
 
+/** 外链 href 兜底白名单：不依赖上游 x-markdown 的 DOMPurify 配置，非 http/https/mailto 不输出 href。 */
+export function isSafeExternalHref(href: string): boolean {
+  return /^(https?:|mailto:)/i.test(href)
+}
+
 export function MarkdownAnchor({
   href,
   children,
@@ -2367,10 +2372,11 @@ export function MarkdownAnchor({
     return <AgentFileReference reference={reference} binding={binding} onOpen={onOpenThreadFile} />
   }
   const browserUrl = typeof href === 'string' && /^https?:\/\//i.test(href) ? href : undefined
+  const safeHref = typeof href === 'string' && isSafeExternalHref(href) ? href : undefined
   return (
     <a
       {...rest}
-      href={href}
+      href={safeHref}
       onClick={browserUrl && threadId ? (event) => {
         rest.onClick?.(event)
         if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return

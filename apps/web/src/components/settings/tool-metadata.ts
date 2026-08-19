@@ -357,6 +357,41 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     category: 'write',
     riskLevel: 'high',
   },
+  routine_read: {
+    name: 'routine_read',
+    label: 'Routine Read',
+    description: '读取每日日程安排',
+    category: 'read',
+    riskLevel: 'low',
+  },
+  routine_trigger: {
+    name: 'routine_trigger',
+    label: 'Routine Trigger',
+    description: '手动触发日程条目：创建自动化任务并立即执行',
+    category: 'execute',
+    riskLevel: 'high',
+  },
+  routine_update: {
+    name: 'routine_update',
+    label: 'Routine Update',
+    description: '修改今日日程条目',
+    category: 'write',
+    riskLevel: 'medium',
+  },
+  routine_regenerate: {
+    name: 'routine_regenerate',
+    label: 'Routine Regenerate',
+    description: '重新生成今日日程并重新调度',
+    category: 'write',
+    riskLevel: 'medium',
+  },
+  suggestion_analyze: {
+    name: 'suggestion_analyze',
+    label: 'Suggestion Analyze',
+    description: '运行 LLM 分析并写入建议库',
+    category: 'write',
+    riskLevel: 'medium',
+  },
 
   // === IM 渠道 ===
   send_im_message: {
@@ -409,7 +444,7 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     name: 'office_convert',
     label: 'Office Convert',
     description: 'Office 格式转换（LibreOffice headless）',
-    category: 'write',
+    category: 'execute',
     riskLevel: 'medium',
   },
   docx_create: {
@@ -445,7 +480,7 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     label: 'DOCX Comment',
     description: '向 Word 文档添加批注',
     category: 'write',
-    riskLevel: 'low',
+    riskLevel: 'medium',
   },
   pptx_add_slide: {
     name: 'pptx_add_slide',
@@ -458,8 +493,8 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     name: 'xlsx_recalc',
     label: 'XLSX Recalc',
     description: '重新计算 Excel 公式并返回错误统计',
-    category: 'read',
-    riskLevel: 'low',
+    category: 'write',
+    riskLevel: 'medium',
   },
   pdf_tools: {
     name: 'pdf_tools',
@@ -472,8 +507,8 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     name: 'office_extract_style',
     label: 'Extract Style',
     description: '提取文档设计样式规范（颜色、字体、布局）',
-    category: 'read',
-    riskLevel: 'low',
+    category: 'write',
+    riskLevel: 'medium',
   },
   office_accept_changes: {
     name: 'office_accept_changes',
@@ -530,6 +565,20 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     name: 'lume_revise_reading_note',
     label: 'Revise Reading Note',
     description: '修订 Lume Reading 读书笔记',
+    category: 'write',
+    riskLevel: 'medium',
+  },
+  lume_reading_advance_progress: {
+    name: 'lume_reading_advance_progress',
+    label: 'Advance Progress',
+    description: '推进在读书籍阅读进度（写 reading store）',
+    category: 'write',
+    riskLevel: 'medium',
+  },
+  lume_reading_pick_next: {
+    name: 'lume_reading_pick_next',
+    label: 'Pick Next Book',
+    description: '从 queued 书中挑选下一本开始阅读（写 reading store）',
     category: 'write',
     riskLevel: 'medium',
   },

@@ -51,17 +51,21 @@ export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
   const toolName = runtimeStatus?.toolName
 
   useEffect(() => {
+    // 快速切换会话时旧线程的响应可能晚到，cancelled 守卫防止覆盖新线程的状态
+    // （否则头部显示错误路径，后续 OPEN_FILE 会打开错误目录）
+    let cancelled = false
     if (workspace) {
       void sidecarCall<AgentWorkspaceStatus>(AGENT_IPC_CHANNELS.GET_WORKSPACE_STATUS, { id: workspace.id })
-        .then(setWorkspaceStatus)
-        .catch(() => setWorkspaceStatus(null))
+        .then((status) => { if (!cancelled) setWorkspaceStatus(status) })
+        .catch(() => { if (!cancelled) setWorkspaceStatus(null) })
       setOrdinaryPath(null)
-      return
+      return () => { cancelled = true }
     }
     setWorkspaceStatus(null)
     void sidecarCall<string>(AGENT_IPC_CHANNELS.GET_THREAD_PATH, { threadId })
-      .then(setOrdinaryPath)
-      .catch(() => setOrdinaryPath(null))
+      .then((path) => { if (!cancelled) setOrdinaryPath(path) })
+      .catch(() => { if (!cancelled) setOrdinaryPath(null) })
+    return () => { cancelled = true }
   }, [threadId, workspace])
 
   useEffect(() => {
