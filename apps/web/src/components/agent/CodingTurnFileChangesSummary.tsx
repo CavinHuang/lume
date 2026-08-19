@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSetAtom } from 'jotai'
-import { ChevronDown, FileDiff, Loader2, TriangleAlert } from 'lucide-react'
+import { FileDiff, Loader2, TriangleAlert } from 'lucide-react'
 import { AGENT_IPC_CHANNELS, type CodingDiffPayload, type RuntimeCodingFileChange, type RuntimeCodingReport } from '@lume/shared'
 import { codingReviewPanelActionAtom } from '@/atoms'
 import { codingReviewFileKey } from '@/atoms/right-panel-atoms'
@@ -141,25 +141,30 @@ export function CodingTurnFileChangesSummary({
           <span className="ml-2 text-red-500">-{removedLines}</span>
         </div>
       </CardHeader>}
-      {changes.length > 0 && <CardContent className="py-1">
-        {visibleChanges.map((change) => (
-          <CodingFileChangeRow
+      {changes.length > 0 && <CardContent className="flex flex-wrap gap-1.5 px-3 py-2">
+        {visibleChanges.map((change, index) => (
+          <div
             key={codingReviewFileKey(change)}
-            change={change}
-            report={report}
-            threadId={threadId}
-            onOpen={() => void openChange(change)}
-          />
+            // 错峰 pop-in：沿用 PR#100 洞察/建议卡的 80ms stagger 模式
+            className="animate-in fade-in slide-in-from-bottom-1 fill-mode-both duration-300 motion-reduce:animate-none"
+            style={{ animationDelay: `${Math.min(index, 8) * 80}ms` }}
+          >
+            <CodingFileChangeRow
+              change={change}
+              report={report}
+              threadId={threadId}
+              onOpen={() => void openChange(change)}
+            />
+          </div>
         ))}
         {hiddenChangeCount > 0 && (
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 w-full justify-start gap-1.5 rounded-md px-3 text-[12px] font-normal text-[var(--lume-text-secondary)]"
+            className="h-7 rounded-full px-2 font-mono text-[11.5px] font-normal text-[var(--lume-text-secondary)] underline decoration-transparent underline-offset-2 hover:decoration-current"
             onClick={() => setShowAllChanges(true)}
           >
-            再显示 {hiddenChangeCount} 个文件
-            <ChevronDown size={13} />
+            +{hiddenChangeCount} 个文件
           </Button>
         )}
       </CardContent>}
@@ -213,17 +218,18 @@ function CodingFileChangeRow({
   return (
     <Tooltip onOpenChange={loadDiff}>
       <TooltipTrigger render={<div />}>
+        {/* 紧凑 chip 形态：文件名+±行数，完整路径与 Diff 交给 hover tooltip / 点击审查面板 */}
         <Button
           variant="ghost"
           size="sm"
-          className="h-auto min-h-8 w-full justify-start gap-2 rounded-md px-3 py-1.5 text-[12px] font-normal hover:bg-foreground/[0.04]"
+          className="h-7 max-w-full justify-start gap-1.5 rounded-full border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)] px-2 font-mono text-[11.5px] font-normal hover:bg-[color:color-mix(in_oklab,var(--lume-text-primary)_6%,transparent)]"
           onClick={onOpen}
         >
-          <FileTypeIcon filename={filename} size={13} className="shrink-0" />
-          <span className="min-w-0 flex-1 whitespace-normal break-all text-left font-mono" title={change.path}>{change.path}</span>
+          <FileTypeIcon filename={filename} size={12} className="shrink-0" />
+          <span className="min-w-0 truncate text-[var(--lume-text-primary)]" title={change.path}>{filename}</span>
           <span className="shrink-0 tabular-nums">
             <span className="text-emerald-500">+{change.addedLines ?? 0}</span>
-            <span className="ml-2 text-red-500">-{change.removedLines ?? 0}</span>
+            {change.removedLines ? <span className="ml-1 text-red-500">−{change.removedLines}</span> : null}
           </span>
         </Button>
       </TooltipTrigger>

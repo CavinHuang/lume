@@ -22,7 +22,7 @@ export const LUME_DIFF_THEMES = {
 
 export const LUME_DIFF_CSS = `
   :host {
-    --diffs-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    --diffs-font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace);
     --diffs-font-size: 12px;
     --diffs-line-height: 20px;
     --diffs-gap-inline: 8px;

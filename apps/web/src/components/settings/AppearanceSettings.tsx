@@ -6,6 +6,7 @@ import type {
   AgentMessageDisplayMode,
   AgentMessageAvatarMode,
   AgentMessageListDisplayMode,
+  ChatFontScale,
   CustomThemePalette,
   ThemeMode,
   ThemePalette,
@@ -20,6 +21,7 @@ import {
   welcomePromptSeedAtom,
 } from '@/atoms'
 import { setThemeMode, setThemePalette } from '@/lib/theme-mode'
+import { setChatFontScale } from '@/lib/chat-font-scale'
 import { useBootstrapGeneralSettings } from '@/lib/use-general-settings'
 import { cn } from '@/lib/utils'
 import {
@@ -52,6 +54,12 @@ const MESSAGE_AVATAR_MODE_OPTIONS: Array<{ value: AgentMessageAvatarMode; label:
   { value: 'hidden', label: '不显示头像', desc: '隐藏消息头像，保留消息内容' },
 ]
 
+const CHAT_FONT_SCALE_OPTIONS: Array<{ value: ChatFontScale; label: string }> = [
+  { value: 'sm', label: '小' },
+  { value: 'md', label: '中' },
+  { value: 'lg', label: '大' },
+]
+
 export function AppearanceSettings() {
   useBootstrapGeneralSettings()
   const [settings, setSettings] = useAtom(generalSettingsAtom)
@@ -74,6 +82,9 @@ export function AppearanceSettings() {
       }
       if (updates.themePalette || updates.customThemePalettes) {
         setThemePalette(saved.themePalette, saved.customThemePalettes)
+      }
+      if (updates.chatFontScale) {
+        setChatFontScale(saved.chatFontScale)
       }
       toast.success(successMessage)
     } catch (error) {
@@ -108,6 +119,12 @@ export function AppearanceSettings() {
   const handleMessageAvatarModeChange = (mode: AgentMessageAvatarMode) => {
     if (mode === settings.agentMessageAvatarMode || saving) return
     void persistSettings({ agentMessageAvatarMode: mode }, '外观设置已保存')
+  }
+
+  const handleChatFontScaleChange = (scale: ChatFontScale) => {
+    const current = settings.chatFontScale ?? 'md'
+    if (scale === current || saving) return
+    void persistSettings({ chatFontScale: scale }, '外观设置已保存')
   }
 
   const handleAskLumeToConfigure = () => {
@@ -278,6 +295,33 @@ export function AppearanceSettings() {
 
       <section className="lume-panel-padded">
         <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[var(--text-1)]">Agent 消息显示</h2>
+        <div className="flex min-h-[48px] items-center justify-between gap-5 py-2">
+          <div className="min-w-0">
+            <div className="text-body font-medium leading-5 text-[var(--text-2)]">对话字号</div>
+            <div className="mt-0.5 text-ui leading-4 text-[var(--text-3)]">
+              调整消息正文与代码块字号，界面其他部分不受影响
+            </div>
+          </div>
+          <div className="lume-segmented grid w-[220px] grid-cols-3">
+            {CHAT_FONT_SCALE_OPTIONS.map((option) => (
+              <Button
+                variant="ghost"
+                key={option.value}
+                type="button"
+                onClick={() => handleChatFontScaleChange(option.value)}
+                disabled={saving}
+                className={cn(
+                  'lume-segmented-item disabled:opacity-60',
+                  (settings.chatFontScale ?? 'md') === option.value
+                    ? 'lume-segmented-item-active'
+                    : '',
+                )}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+        </div>
         <div className="flex min-h-[48px] items-center justify-between gap-5 py-2">
           <div className="min-w-0">
             <div className="text-[13px] font-medium leading-5 text-[var(--text-2)]">显示方式</div>

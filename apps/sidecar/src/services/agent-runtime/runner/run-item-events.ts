@@ -1,4 +1,5 @@
 import { FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
+import { normalizeBackgroundTaskStatus } from "@lume/shared";
 import type { FileReferenceBinding, LumeRuntimeEvent, RuntimeNormalizedUsage } from "@lume/shared";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { getAgentFileContextRootPath } from "../../infra/config-paths";
@@ -554,14 +555,14 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
   return [];
 }
 
-export function projectBackgroundTaskNotificationRuntimeEvent(
+function projectBackgroundTaskNotificationRuntimeEvent(
   threadId: string,
   payload: unknown,
   createdAt: string
 ): Extract<LumeRuntimeEvent, { type: "background.task.completed" }> | null {
   const record = asRecord(payload);
   const taskId = stringField(record.task_id);
-  const status = normalizeBackgroundTaskStatus(record.status);
+  const status = typeof record.status === "string" ? normalizeBackgroundTaskStatus(record.status) : undefined;
   if (!taskId || !status || stringField(record.subagent_run_id)) return null;
   const usage = asRecord(record.usage);
   const execution = normalizeToolExecutionMetadata(record.execution);
@@ -582,14 +583,6 @@ export function projectBackgroundTaskNotificationRuntimeEvent(
       : {}),
     ...(execution ? { execution } : {})
   };
-}
-
-function normalizeBackgroundTaskStatus(value: unknown): Extract<LumeRuntimeEvent, { type: "background.task.completed" }>['status'] | undefined {
-  if (value === "completed") return "completed";
-  if (value === "failed") return "failed";
-  if (value === "stopped" || value === "killed") return "stopped";
-  if (value === "cancelled" || value === "canceled") return "cancelled";
-  return undefined;
 }
 
 type MemoryContextUsedItem = Extract<LumeRuntimeEvent, { type: "memory.context.used" }>["items"][number];
@@ -651,29 +644,6 @@ function isMemoryScope(value: unknown): value is MemoryContextUsedItem["scope"] 
 
 function isMemoryStatus(value: unknown): value is MemoryContextUsedItem["status"] {
   return value === "active" || value === "suspected_stale";
-}
-
-export function projectAssistantMessageFinalRuntimeEvent(
-  run: LumeRunState,
-  item: LumeRunItem
-): LumeRuntimeEvent | null {
-  if (item.type !== "assistant_message") return null;
-  const blocks = extractAssistantContentBlocks(item.content)
-    .filter((block) => block.text.trim())
-    .map((block) => ({
-      type: block.kind,
-      text: block.text
-    }));
-  return blocks.length > 0
-    ? {
-        id: `${run.runId}:${item.id}:assistant.final`,
-        type: "assistant.final",
-        threadId: run.threadId,
-        runId: run.runId,
-        createdAt: item.createdAt,
-        blocks
-      }
-    : null;
 }
 
 function extractFinalOutput(items: LumeRunItem[]): string | undefined {

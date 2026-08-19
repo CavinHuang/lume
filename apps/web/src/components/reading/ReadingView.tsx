@@ -87,7 +87,6 @@ const readingThemeVars = {
   '--reading-active': 'color-mix(in oklab, var(--brand) 10%, var(--surface-1))',
   '--reading-pill': 'color-mix(in oklab, var(--brand) 8%, var(--surface-1))',
   '--reading-border': 'color-mix(in oklab, var(--border) 52%, transparent)',
-  '--reading-serif': '"Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", STSong, SimSun, serif',
 } as CSSProperties
 
 export function ReadingView() {
@@ -589,7 +588,7 @@ export function ReadingView() {
                         </div>
 
                         {note.excerpt && (
-                          <blockquote className="mt-4 rounded-[8px] bg-[var(--reading-soft)] px-3.5 py-2.5 [font-family:var(--reading-serif)] text-[13px] italic leading-6 text-[var(--text-2)]">
+                          <blockquote className="mt-4 rounded-[8px] bg-[var(--reading-soft)] px-3.5 py-2.5 [font-family:var(--reading-serif)] text-chat italic leading-[1.7] text-[var(--text-2)]">
                             “{note.excerpt}”
                           </blockquote>
                         )}
@@ -912,7 +911,7 @@ function WereadBookPanel({
                     </div>
                   </div>
                   {note.excerpt && (
-                    <blockquote className="mt-3 rounded-[8px] bg-[var(--reading-soft)] px-3.5 py-2.5 [font-family:var(--reading-serif)] text-[12.5px] italic leading-6 text-[var(--text-2)]">
+                    <blockquote className="mt-3 rounded-[8px] bg-[var(--reading-soft)] px-3.5 py-2.5 [font-family:var(--reading-serif)] text-chat italic leading-[1.7] text-[var(--text-2)]">
                       “{note.excerpt}”
                     </blockquote>
                   )}
@@ -963,7 +962,7 @@ function WereadTextList({
       {items.map((item) => (
         <div key={item.id}>
           {item.chapterTitle && <div className="mb-1.5 text-[11px] text-[var(--text-3)]">{item.chapterTitle}</div>}
-          <div className="rounded-[8px] bg-[var(--reading-panel)] px-3.5 py-3 [font-family:var(--reading-serif)] text-[13px] leading-[1.85] text-[var(--text-1)]">
+          <div className="rounded-[8px] bg-[var(--reading-panel)] px-3.5 py-3 [font-family:var(--reading-serif)] text-chat leading-[1.9] text-[var(--text-1)]">
             <div>{item.text}</div>
             {(item.createdAt || item.authorName || item.totalCount) && (
               <div className={cn('mt-2 text-[11px] text-[var(--text-3)]', alignDate && 'text-right')}>

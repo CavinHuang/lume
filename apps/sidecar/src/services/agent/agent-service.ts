@@ -73,7 +73,6 @@ import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../ag
 import { isAgentRuntimeSessionActive } from "../agent-runtime/runtime-core/attempt";
 import { createCodingTurnRecord } from "../agent-runtime/runtime-core/coding-turn-store";
 import { createFileBackedLumeRunStateStore } from "../agent-runtime/runner/run-state-store";
-import { projectBackgroundTaskNotificationRuntimeEvent } from "../agent-runtime/runner/run-item-events";
 import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import type { LumeRunState } from "../agent-runtime/runner/run-state";
 import { emitAgentNotification, emitDiagnosticContent } from "./agent-notification-service";
@@ -89,7 +88,9 @@ type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   onMessageAppended?: (event: AgentMessageAppendedEvent) => void;
   onComplete: (payload?: { reason?: "max_turns" }) => void;
-  onError: (error: string) => void;
+  /** options.fromActiveRun=true 表示错误来自 run 执行链(runtime 会话内失败)——
+   * 终值已由事件总线 run.end{isError} 单源交付,消费方不得再合成 run.failed(T7c)。 */
+  onError: (error: string, options?: { fromActiveRun?: boolean }) => void;
   onTitleUpdated: (title: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   onBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
@@ -127,13 +128,6 @@ const STALE_RUN_STATUSES = new Set<LumeRunState["status"]>(["created", "running"
 const STALE_RUN_PROGRESS_HEAD_COUNT = 6;
 const STALE_RUN_PROGRESS_TAIL_COUNT = 10;
 const VISIBLE_HISTORY_CONTINUATION_TAIL_COUNT = 8;
-
-function projectLateBackgroundTaskCompletion(
-  threadId: string,
-  message: Extract<SDKMessage, { type: "system"; subtype: "task_notification" }>
-): LumeRuntimeEvent | null {
-  return projectBackgroundTaskNotificationRuntimeEvent(threadId, message, new Date().toISOString());
-}
 
 const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter>({
   validateQueued: validateQueuedAgentDispatch,
@@ -1084,12 +1078,8 @@ export async function sendAgentMessage(
           persistedSdkMessages.push(stampedMessage);
         }
       }
-      if (stampedMessage.type === "system" && stampedMessage.subtype === "task_notification") {
-        if (runtimeCompleted) {
-          const completionEvent = projectLateBackgroundTaskCompletion(threadId, stampedMessage);
-          if (completionEvent) emit.onRuntimeEvent?.(completionEvent);
-        }
-      }
+      // T7a:background.task.completed 已迁事件总线(late 旁路 run.ts handleAsyncEvent),
+      // 旧路对 late task_notification 的 emit 删除;SDK log 照常落盘供上下文构建。
     },
     onComplete: () => {
       runtimeCompleted = true;
@@ -1099,7 +1089,8 @@ export async function sendAgentMessage(
     },
     onError: (error) => {
       runtimeStatusManager.markErrored(threadId, error);
-      emit.onError(error);
+      // run 执行链内的失败:总线 run.end{isError} 已单源交付,转发带抑制合成标记
+      emit.onError(error, { fromActiveRun: true });
     },
     onAskUserQuestion: (request) => {
       runtimeStatusManager.markAwaitingUserAnswer(threadId, {
@@ -1370,11 +1361,11 @@ export function appendAgentMessage(
           if (context?.runId) finishPlanningExecutionRun(context.runId);
           emit.onComplete(payload);
         },
-        onError: (error) => {
+        onError: (error, options) => {
           submissionStore!.transition(clientSubmissionId, "failed", "runtime_failed");
           const context = resolvePlanningExecutionContext({ clientSubmissionId });
           if (context?.runId) finishPlanningExecutionRun(context.runId);
-          emit.onError(error);
+          emit.onError(error, options);
         }
       }
     : emit;

@@ -68,6 +68,7 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
       agentMessageAvatarMode: "visible",
+      chatFontScale: "md",
       agentIsland: { enabled: true },
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
@@ -102,6 +103,7 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
       agentMessageAvatarMode: "visible",
+      chatFontScale: "md",
       agentIsland: { enabled: true },
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
@@ -130,6 +132,7 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
       agentMessageAvatarMode: "visible",
+      chatFontScale: "md",
       agentIsland: { enabled: true },
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
@@ -163,6 +166,7 @@ describe("general-settings-service", () => {
         agentMessageDisplayMode?: string;
         agentMessageListDisplayMode?: string;
         agentMessageAvatarMode?: string;
+        chatFontScale?: string;
         agentIsland?: { enabled?: boolean };
         logging?: typeof LUME_LOGGING_DEFAULTS;
         windowBehavior?: {
@@ -186,6 +190,7 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
       agentMessageAvatarMode: "visible",
+      chatFontScale: "md",
       agentIsland: { enabled: true },
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
@@ -307,6 +312,7 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
       agentMessageAvatarMode: "visible",
+      chatFontScale: "md",
       agentIsland: { enabled: true },
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
@@ -498,6 +504,20 @@ describe("general-settings-service", () => {
     expect(raw.generalSettings?.agentMessageDisplayMode).toBe("verbose");
     expect(raw.generalSettings?.agentMessageListDisplayMode).toBe("left_aligned");
     expect(raw.generalSettings?.agentMessageAvatarMode).toBe("hidden");
+  });
+
+  test("chatFontScale 可持久化，非法值回退默认", async () => {
+    await updatePersistedGeneralSettings({ chatFontScale: "lg" });
+    expect(getPersistedGeneralSettings().chatFontScale).toBe("lg");
+
+    const settingsPath = getSettingsPath();
+    const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
+      generalSettings: Record<string, unknown>;
+    };
+    raw.generalSettings.chatFontScale = "huge";
+    writeFileSync(settingsPath, JSON.stringify(raw, null, 2));
+    clearGeneralSettingsCaches({});
+    expect(getPersistedGeneralSettings().chatFontScale).toBe("md");
   });
 
   function writeConfigFile(pathSegments: string[], content: string): string {

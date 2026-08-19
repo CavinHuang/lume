@@ -135,6 +135,7 @@ export function mergeGeneralSettings(
     agentMessageDisplayMode: updates.agentMessageDisplayMode ?? base.agentMessageDisplayMode,
     agentMessageListDisplayMode: updates.agentMessageListDisplayMode ?? base.agentMessageListDisplayMode,
     agentMessageAvatarMode: updates.agentMessageAvatarMode ?? base.agentMessageAvatarMode,
+    chatFontScale: updates.chatFontScale ?? base.chatFontScale,
     logging: {
       ...base.logging,
       ...(updates.logging ?? {}),

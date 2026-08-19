@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useAtomValue } from 'jotai'
-import { Ban, Check, Sparkles, X } from 'lucide-react'
+import { Ban, Check, Loader2, X } from 'lucide-react'
 import { suggestionsVersionAtom } from '@/atoms'
 import { cn } from '@/lib/utils'
 import { actOnSuggestion, listSuggestions } from '@/lib/desktop-api/suggestion'
 import { Button } from '@/components/ui/button'
+import { RecommendationCard, type RecommendationOption } from './RecommendationCard'
 import type { SuggestionFeedback, SuggestionKind, SuggestionRecord } from '@lume/shared'
 
 /**
@@ -56,15 +57,16 @@ export function SuggestionBanner({ threadId, workspaceSlug }: SuggestionBannerPr
     }
   }, [threadId, workspaceSlug, version])
 
-  const handleAct = async (id: number, feedback: SuggestionFeedback) => {
+  const handleAct = async (id: number, feedback: SuggestionFeedback): Promise<void> => {
     try {
       await actOnSuggestion(id, feedback)
     } catch (err) {
       console.error('[SuggestionBanner] actOnSuggestion failed', err)
-      return
+      throw err
     }
+    setRecords((current) => current.filter((record) => record.id !== id))
     // Task 12 gap：feedback 不触发 sidecar 的 CHANGED 广播，
-    // 因此显式重拉一次，确保 UI 立即移除已处理的建议。
+    // 因此先乐观移除，再显式重拉一次与持久层收敛。
     try {
       const all = await listSuggestions('suggested')
       setRecords(filterVisible(all, threadId, workspaceSlug))
@@ -105,71 +107,96 @@ function SuggestionCard({
   onAct,
 }: {
   record: SuggestionRecord
-  onAct: (id: number, feedback: SuggestionFeedback) => void
+  onAct: (id: number, feedback: SuggestionFeedback) => Promise<void>
 }) {
+  const [busyAction, setBusyAction] = useState<SuggestionFeedback | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const option: RecommendationOption = {
+    key: String(record.id),
+    body: record.reason || record.title,
+    short: record.title,
+    signal: confidenceSignal(record.rawConfidence),
+  }
+
+  const act = async (feedback: SuggestionFeedback) => {
+    if (busyAction) return
+    setBusyAction(feedback)
+    setError(null)
+    try {
+      await onAct(record.id, feedback)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '操作失败，请重试')
+      setBusyAction(null)
+    }
+  }
+
   return (
-    <section
-      data-suggestion-banner={record.id}
-      className="animate-in fade-in slide-in-from-bottom-1 mx-auto flex flex-col gap-2.5 rounded-[14px] border border-white/[0.06] bg-[#292929] px-4 py-3 text-white shadow-[0_12px_36px_rgba(0,0,0,0.18)] duration-150 sm:flex-row sm:items-start"
-    >
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#eaf2ff]/10 text-[#9ec3ff]">
-        <Sparkles size={16} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="mb-0.5 flex flex-wrap items-center gap-2">
-          <span className="rounded-full bg-white/[0.08] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#bdbdbd]">
-            {KIND_LABEL[record.kind]}
-          </span>
-          <h4 className="truncate text-[13px] font-semibold leading-5 text-[#f5f5f5]">
-            {record.title}
-          </h4>
-        </div>
-        {record.reason && (
-          <p className="text-[12px] leading-5 text-[#bdbdbd]">{record.reason}</p>
+    <section data-suggestion-banner={record.id} className="mx-auto">
+      <RecommendationCard
+        className="max-w-none shadow-[0_12px_36px_var(--lume-shadow-panel)]"
+        eyebrow={KIND_LABEL[record.kind]}
+        title={record.title}
+        options={[option]}
+        evidence={record.evidence}
+        disabled={busyAction !== null}
+        error={error}
+        footerActions={(
+          <>
+            <ActionButton
+              action="accepted"
+              recordId={record.id}
+              busy={busyAction === 'accepted'}
+              disabled={busyAction !== null}
+              onClick={() => void act('accepted')}
+              className="border-[color:color-mix(in_oklab,var(--lume-accent)_24%,var(--lume-border-subtle))] bg-[var(--lume-accent-soft)] text-[var(--lume-accent)] hover:bg-[color:color-mix(in_oklab,var(--lume-accent)_14%,var(--lume-bg-elevated))]"
+            >
+              {busyAction === 'accepted' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+              接受
+            </ActionButton>
+            <ActionButton
+              action="ignored"
+              recordId={record.id}
+              aria-label="忽略此建议"
+              busy={busyAction === 'ignored'}
+              disabled={busyAction !== null}
+              onClick={() => void act('ignored')}
+              className="border-[var(--lume-border-subtle)] text-[var(--lume-text-muted)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]"
+            >
+              {busyAction === 'ignored' ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
+              忽略
+            </ActionButton>
+            <ActionButton
+              action="never"
+              recordId={record.id}
+              aria-label="不再建议这类"
+              busy={busyAction === 'never'}
+              disabled={busyAction !== null}
+              onClick={() => void act('never')}
+              className="border-[var(--lume-border-subtle)] text-[var(--lume-text-muted)] hover:border-destructive/25 hover:bg-destructive/8 hover:text-destructive"
+            >
+              {busyAction === 'never' ? <Loader2 size={13} className="animate-spin" /> : <Ban size={13} />}
+              不再建议这类
+            </ActionButton>
+          </>
         )}
-        {record.evidence && (
-          <p className="mt-0.5 text-[11px] leading-4 text-[#8f8f8f]">依据：{record.evidence}</p>
-        )}
-      </div>
-      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-        <ActionButton
-          action="accepted"
-          recordId={record.id}
-          onClick={() => onAct(record.id, 'accepted')}
-          className="border-white/[0.12] bg-white/[0.04] text-[#d6d6d6] hover:border-white/[0.18] hover:bg-white/[0.10] hover:text-white"
-        >
-          <Check size={13} />
-          接受
-        </ActionButton>
-        <ActionButton
-          action="ignored"
-          recordId={record.id}
-          aria-label="忽略此建议"
-          onClick={() => onAct(record.id, 'ignored')}
-          className="border-white/[0.10] bg-transparent text-[#9a9a9a] hover:border-white/[0.16] hover:bg-white/[0.06] hover:text-white"
-        >
-          <X size={13} />
-          忽略
-        </ActionButton>
-        <ActionButton
-          action="never"
-          recordId={record.id}
-          aria-label="不再建议这类"
-          onClick={() => onAct(record.id, 'never')}
-          className="border-white/[0.10] bg-transparent text-[#9a9a9a] hover:border-[#6e3c3c] hover:bg-[#3b2a2a] hover:text-[#ffc0c0]"
-        >
-          <Ban size={13} />
-          不再建议这类
-        </ActionButton>
-      </div>
+      />
     </section>
   )
+}
+
+export function confidenceSignal(confidence: number): RecommendationOption['signal'] {
+  if (confidence >= 0.75) return 3
+  if (confidence >= 0.5) return 2
+  if (confidence > 0) return 1
+  return 0
 }
 
 function ActionButton({
   action,
   recordId,
   onClick,
+  busy,
+  disabled,
   className,
   children,
   'aria-label': ariaLabel,
@@ -177,6 +204,8 @@ function ActionButton({
   action: SuggestionFeedback
   recordId: number
   onClick: () => void
+  busy: boolean
+  disabled: boolean
   className: string
   children: React.ReactNode
   'aria-label'?: string
@@ -188,6 +217,8 @@ function ActionButton({
       data-suggestion-action={action}
       data-suggestion-record-id={recordId}
       aria-label={ariaLabel}
+      aria-busy={busy}
+      disabled={disabled}
       onClick={onClick}
       className={cn(
         'inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[11px] font-semibold',

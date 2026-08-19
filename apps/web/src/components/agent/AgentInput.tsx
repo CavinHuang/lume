@@ -313,10 +313,30 @@ function createAgentSuggestionRenderer(
 function updateMentionPosition(wrapper: HTMLDivElement, props: SuggestionProps) {
   const rect = props.clientRect?.()
   if (!rect) return
+
+  const editorEl = props.editor.view.dom
+  const composer = editorEl.closest('[data-tone]') as HTMLElement | null
+  const composerRect = composer?.getBoundingClientRect()
+  if (composer && composerRect) {
+    const safeLeft = Math.max(12, composerRect.left)
+    const safeWidth = Math.min(
+      composerRect.width - Math.max(0, safeLeft - composerRect.left),
+      window.innerWidth - safeLeft - 12,
+    )
+    wrapper.style.left = `${safeLeft}px`
+    wrapper.style.width = `${safeWidth}px`
+    wrapper.style.maxWidth = `${safeWidth}px`
+    wrapper.style.boxSizing = 'border-box'
+    wrapper.style.bottom = `${window.innerHeight - composerRect.top + 8}px`
+    wrapper.style.top = 'auto'
+    return
+  }
+
   const estimatedWidth = 360
   const safeLeft = Math.min(rect.left, window.innerWidth - estimatedWidth - 16)
   wrapper.style.left = `${Math.max(12, safeLeft)}px`
   wrapper.style.width = ''
+  wrapper.style.maxWidth = ''
   wrapper.style.bottom = `${window.innerHeight - rect.top + 4}px`
   wrapper.style.top = 'auto'
 }
@@ -804,7 +824,7 @@ export function AgentInput({
     editorProps: {
       attributes: {
         class:
-          'outline-none min-h-[72px] max-h-[220px] overflow-y-auto text-[14px] leading-7 text-[var(--text-1)]',
+          'outline-none min-h-[72px] max-h-[220px] overflow-y-auto text-chat text-[var(--text-1)]',
       },
       handlePaste(view, event) {
         if (
@@ -1821,7 +1841,7 @@ export function AgentInput({
     <div className="px-3 pb-4 pt-2">
       <SuggestionBanner threadId={threadId} workspaceSlug={configWorkspaceSlug} />
       <PendingResumeBanner threadId={threadId} />
-      <div className="mx-auto w-full max-w-[980px] px-4">
+      <div className="mx-auto w-full max-w-[920px] px-4">
         <div>
           <LumeComposer
             tone={composerState.tone}
