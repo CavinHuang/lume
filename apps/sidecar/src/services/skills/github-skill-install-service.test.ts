@@ -38,7 +38,11 @@ function createTextResponse(data: string): Response {
   });
 }
 
-function createMockFetch(): typeof fetch {
+const MAIN_SHA = "1111111111111111111111111111111111111111";
+const MAIN_SHA_MOVED = "2222222222222222222222222222222222222222";
+
+function createMockFetch(options: { commitsSha?: string } = {}): typeof fetch {
+  const sha = options.commitsSha ?? MAIN_SHA;
   return (async (input: string | URL | Request) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 
@@ -48,6 +52,10 @@ function createMockFetch(): typeof fetch {
         pushed_at: "2026-04-21T00:00:00Z",
         owner: { login: "acme" }
       });
+    }
+
+    if (url === `https://api.github.com/repos/acme/agent-skills/commits/${encodeURIComponent("main")}`) {
+      return createJsonResponse({ sha });
     }
 
     if (url === "https://api.github.com/repos/acme/agent-skills/git/trees/main?recursive=1") {
@@ -60,15 +68,15 @@ function createMockFetch(): typeof fetch {
       });
     }
 
-    if (url === "https://raw.githubusercontent.com/acme/agent-skills/main/prompt-library/SKILL.md") {
+    if (url === `https://raw.githubusercontent.com/acme/agent-skills/${sha}/prompt-library/SKILL.md`) {
       return createTextResponse("---\nname: Prompt Library\ndescription: Prompt helpers\nversion: 1.0.0\n---\n# Prompt Library\n");
     }
 
-    if (url === "https://raw.githubusercontent.com/acme/agent-skills/main/prompt-library/README.md") {
+    if (url === `https://raw.githubusercontent.com/acme/agent-skills/${sha}/prompt-library/README.md`) {
       return createTextResponse("# Prompt Library\n");
     }
 
-    if (url === "https://raw.githubusercontent.com/acme/agent-skills/main/prompt-library/scripts/check.sh") {
+    if (url === `https://raw.githubusercontent.com/acme/agent-skills/${sha}/prompt-library/scripts/check.sh`) {
       return createTextResponse("#!/bin/sh\necho ok\n");
     }
 
@@ -87,6 +95,10 @@ function createMultiSkillMockFetch(): typeof fetch {
       });
     }
 
+    if (url === `https://api.github.com/repos/acme/agent-pack/commits/${encodeURIComponent("main")}`) {
+      return createJsonResponse({ sha: MAIN_SHA });
+    }
+
     if (url === "https://api.github.com/repos/acme/agent-pack/git/trees/main?recursive=1") {
       return createJsonResponse({
         tree: [
@@ -97,15 +109,15 @@ function createMultiSkillMockFetch(): typeof fetch {
       });
     }
 
-    if (url === "https://raw.githubusercontent.com/acme/agent-pack/main/alpha/SKILL.md") {
+    if (url === `https://raw.githubusercontent.com/acme/agent-pack/${MAIN_SHA}/alpha/SKILL.md`) {
       return createTextResponse("---\nname: Alpha\n---\n# Alpha\n");
     }
 
-    if (url === "https://raw.githubusercontent.com/acme/agent-pack/main/alpha/README.md") {
+    if (url === `https://raw.githubusercontent.com/acme/agent-pack/${MAIN_SHA}/alpha/README.md`) {
       return createTextResponse("# Alpha\n");
     }
 
-    if (url === "https://raw.githubusercontent.com/acme/agent-pack/main/beta/SKILL.md") {
+    if (url === `https://raw.githubusercontent.com/acme/agent-pack/${MAIN_SHA}/beta/SKILL.md`) {
       return createTextResponse("---\nname: Beta\n---\n# Beta\n");
     }
 
@@ -124,6 +136,10 @@ function createSlashBranchMockFetch(): typeof fetch {
       });
     }
 
+    if (url === `https://api.github.com/repos/acme/agent-skills/commits/${encodeURIComponent("feature/foo")}`) {
+      return createJsonResponse({ sha: MAIN_SHA });
+    }
+
     if (url === "https://api.github.com/repos/acme/agent-skills/git/trees/feature%2Ffoo?recursive=1") {
       return createJsonResponse({
         tree: [
@@ -132,7 +148,7 @@ function createSlashBranchMockFetch(): typeof fetch {
       });
     }
 
-    if (url === "https://raw.githubusercontent.com/acme/agent-skills/feature/foo/prompt-library/SKILL.md") {
+    if (url === `https://raw.githubusercontent.com/acme/agent-skills/${MAIN_SHA}/prompt-library/SKILL.md`) {
       return createTextResponse("---\nname: Prompt Library\n---\n# Prompt Library\n");
     }
 
@@ -249,6 +265,26 @@ describe("github-skill-install-service", () => {
       { url: "https://github.com/acme/agent-skills", workspaceSlug: "demo" } as never,
       { fetchImpl: createMockFetch() }
     )).rejects.toThrow("请先完成安装前审查");
+  });
+
+  test("审查后分支被推送新提交时应拒装（token 钉住 commit SHA）", async () => {
+    restoreEnv = withTempConfigDir();
+    const review = await getGitHubSkillReview(
+      { url: "https://github.com/acme/agent-skills" },
+      { fetchImpl: createMockFetch() }
+    );
+    expect(review.commitSha).toBe(MAIN_SHA);
+
+    // 审查与安装之间分支前移：重 inspect 解析出不同 SHA → token 不匹配 → 拒装要求重审
+    await expect(installGitHubSkillToWorkspace(
+      {
+        url: "https://github.com/acme/agent-skills",
+        workspaceSlug: "demo",
+        reviewToken: review.reviewToken
+      },
+      { fetchImpl: createMockFetch({ commitsSha: MAIN_SHA_MOVED }) }
+    )).rejects.toThrow("请先完成安装前审查");
+    expect(existsSync(join(getWorkspaceSkillsDir("demo"), "prompt-library"))).toBe(false);
   });
 
   test("does not partially install multi-skill repos when a later target conflicts", async () => {
