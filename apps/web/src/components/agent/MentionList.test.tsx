@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MentionList } from './MentionList'
 
 describe('MentionList', () => {
-  test('renders grouped slash sections with quick actions and skills', () => {
+  test('renders grouped slash command rows without source icons', () => {
     const html = renderToStaticMarkup(
       <MentionList
         trigger="/"
@@ -15,10 +15,14 @@ describe('MentionList', () => {
       />,
     )
 
-    expect(html).toContain('gap-0.5')
-    expect(html).toContain('p-2')
-    expect(html).toContain('pr-1')
-    expect(html).toContain('text-[12px]')
+    expect(html).toContain('rounded-[10px]')
+    expect(html).toContain('h-9')
+    expect(html).toContain('rounded-[6px]')
+    expect(html).toContain('role="listbox"')
+    expect(html).toContain('aria-selected="true"')
+    expect(html).toContain('继续输入以搜索命令、技能与插件')
+    expect(html).not.toContain('size-[22px]')
+    expect(html).toContain('动作')
     expect(html).toContain('技能')
     expect(html).toContain('/clear')
     expect(html).toContain('/debug')
@@ -49,7 +53,9 @@ describe('MentionList', () => {
       />,
     )
 
-    expect(html).toContain('Agents &amp; Context')
+    expect(html).toContain('继续输入以搜索 Agent、连接账户、网页与文件')
+    expect(html).toContain('size-[22px]')
+    expect(html).not.toContain('引用上下文')
     expect(html).toContain('Agents')
     expect(html).toContain('Files')
     expect(html.indexOf('江岚 · 作家')).toBeLessThan(html.indexOf('brief.md'))

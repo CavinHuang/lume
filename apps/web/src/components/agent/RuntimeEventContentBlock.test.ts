@@ -239,6 +239,20 @@ describe('getTaskProgressStatusText', () => {
 
     expect(getTaskProgressStatusText(progress)).toBe('正在执行：Run focused tests')
   })
+
+  test('distinguishes pending, waiting, cancelled and failed states', () => {
+    const base = {
+      type: 'task.progress' as const,
+      tasks: [{ id: 'task-1', title: 'Apply changes', status: 'running' as const }],
+      currentTaskId: 'task-1',
+      createdAt: '2026-05-01T00:00:00.000Z',
+    }
+    expect(getTaskProgressStatusText({ ...base, status: 'pending' })).toBe('准备执行：Apply changes')
+    expect(getTaskProgressStatusText({ ...base, status: 'waiting_for_user' })).toBe('等待你的确认：Apply changes')
+    expect(getTaskProgressStatusText({ ...base, status: 'waiting_for_permission' })).toBe('等待授权：Apply changes')
+    expect(getTaskProgressStatusText({ ...base, status: 'cancelled' })).toBe('任务已取消')
+    expect(getTaskProgressStatusText({ ...base, status: 'failed' })).toBe('执行失败：Apply changes')
+  })
 })
 
 describe('formatMessageAttachmentSize', () => {
