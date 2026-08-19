@@ -1824,8 +1824,36 @@ export function publishCodingReportToBus(input: {
     });
 }
 
+/**
+ * 包装器：session 工厂中途抛错（fallback 重试、指纹不匹配、连接初始化失败等）时，
+ * 上层 catch（LumeRunner）拿不到 session 无法 dispose——这里按 LIFO 执行已注册的
+ * 资源清理后 rethrow，避免泄漏 MCP 子进程 / FS watcher / worker。成功路径由
+ * session.dispose() 负责清理，pendingCleanup 随返回值丢弃。
+ */
 export async function createRuntimeCoreSession(
   input: CreateRuntimeCoreSessionInput
+): Promise<CreateRuntimeCoreSessionResult> {
+  const pendingCleanup: Array<() => Promise<unknown> | void> = [];
+  try {
+    return await createRuntimeCoreSessionImpl(input, pendingCleanup);
+  } catch (error) {
+    for (let index = pendingCleanup.length - 1; index >= 0; index -= 1) {
+      try {
+        await pendingCleanup[index]!();
+      } catch (cleanupError) {
+        log.warn("createRuntimeCoreSession 失败路径清理出错", {
+          sessionId: input.lumeSessionId,
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+        });
+      }
+    }
+    throw error;
+  }
+}
+
+async function createRuntimeCoreSessionImpl(
+  input: CreateRuntimeCoreSessionInput,
+  pendingCleanup: Array<() => Promise<unknown> | void>
 ): Promise<CreateRuntimeCoreSessionResult> {
   const boundSubagentIdentity = resolveBoundSubagentIdentity(input);
   const sessionDir = getRuntimeCoreSessionDir(input.lumeSessionId, input.agentDir);
@@ -1840,6 +1868,7 @@ export async function createRuntimeCoreSession(
     turnId: typeof input.messageMetadata?.turnId === "string" ? input.messageMetadata.turnId : undefined,
     userMessageId: typeof input.messageMetadata?.messageId === "string" ? input.messageMetadata.messageId : undefined,
   });
+  pendingCleanup.push(() => codingRunTracker.dispose());
   await codingRunTracker.initialize();
   let approvalRequestCount = 0;
   const getCodingReport = (): CodingVerificationReport & RuntimeCodingReport => {
@@ -2157,6 +2186,10 @@ export async function createRuntimeCoreSession(
         reason: error instanceof Error ? error.message : String(error),
       }],
     }));
+  // createRuntimeTools 恒 resolve（内部失败也留下已 spawn 的子进程 state），失败清理须无条件注册
+  if (!askWikiOnly) {
+    pendingCleanup.push(() => pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG));
+  }
   const enabledPlugins = buildEnabledPluginContext(registeredPlugins, runtimePluginAssembly);
   const workspaceMcpRuntime = input.workspaceSlug && !askWikiOnly
     ? await workspaceMcpManager.createRuntimeTools(input.workspaceSlug).catch((error) => ({
@@ -2168,6 +2201,9 @@ export async function createRuntimeCoreSession(
       }]
     }))
     : { tools: [], diagnostics: [] };
+  if (input.workspaceSlug && !askWikiOnly && input.processSandbox?.processIsolation?.enabled) {
+    pendingCleanup.push(() => workspaceMcpManager.disposeWorkspace(input.workspaceSlug!));
+  }
   const pluginAwareMcpResourceTools = input.workspaceSlug && pluginAssembly.mcpServers.length > 0
     ? createPluginAwareMcpResourceTools({
       workspaceSlug: input.workspaceSlug,
@@ -2530,6 +2566,11 @@ export async function createRuntimeCoreSession(
   };
 
   const agent = createAgent(agentOptions);
+  pendingCleanup.push(() => agent.close());
+  pendingCleanup.push(() => {
+    clearRuntimeToolDescriptors(input.lumeSessionId);
+    clearRuntimeFileAccessLedger(input.lumeSessionId);
+  });
   await agent.getInitializationResult();
   const resolvedTools = getResolvedAgentTools(agent, toolset.tools);
 
