@@ -2383,9 +2383,29 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
           }
           setCollapsed((value) => !value)
         }}
-        className="flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
+        className="group/tool-call flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
       >
-        <Icon size={15} className="shrink-0 text-[var(--lume-text-muted)]" />
+        {isRunning ? (
+          <Icon size={15} className="shrink-0 text-[var(--lume-text-muted)]" />
+        ) : (
+          /* 图标↔箭头渐变：hover 或展开时图标淡出、箭头淡入（右向=可展开，下向=已展开） */
+          <span className="relative flex size-4 shrink-0 items-center justify-center text-[var(--lume-text-muted)]">
+            <Icon
+              size={15}
+              className={cn(
+                'transition-opacity duration-100 group-hover/tool-call:opacity-0 motion-reduce:transition-none',
+                !collapsed && 'opacity-0',
+              )}
+            />
+            <ChevronDown
+              size={13}
+              className={cn(
+                'absolute transition-[opacity,transform] duration-150 group-hover/tool-call:opacity-100 motion-reduce:transition-none',
+                collapsed ? 'opacity-0 -rotate-90' : 'opacity-100',
+              )}
+            />
+          </span>
+        )}
         <span className="font-semibold text-[var(--lume-text-primary)]">{toolCall.toolName}</span>
         {toolCall.riskLevel && (
           <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', riskLevelClassName(toolCall.riskLevel))}>
@@ -2412,12 +2432,6 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
         )}
         <span className="min-w-0 flex-1 truncate text-[var(--lume-text-muted)]">{summarizeInput(input)}</span>
         {isRunning && <Loader2 size={13} className="shrink-0 animate-spin text-[var(--lume-accent)]" />}
-        {!isRunning && (
-          <ChevronDown
-            size={16}
-            className={cn('shrink-0 text-[var(--lume-text-muted)] transition-transform', !collapsed && 'rotate-180')}
-          />
-        )}
       </Button>
       {shouldRenderResult && (
         <AnimatedCollapsiblePanel open={resultOpen}>
