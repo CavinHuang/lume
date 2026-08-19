@@ -65,7 +65,7 @@ function patchHealthyFetch() {
   globalThis.fetch = (async () => ({
     ok: true,
     json: async () => ({ success: true, data: { ok: true, runtime: 'oomol-connect' } }),
-  })) as typeof fetch
+  })) as unknown as typeof fetch
   return () => { globalThis.fetch = realFetch }
 }
 
@@ -92,7 +92,7 @@ test('#127 健康等待期内进程已退出时不再 kill/killProcessTree', asy
   globalThis.fetch = (async () => {
     forks[0]?.emit('exit')
     return { ok: true, json: async () => ({ success: true, data: { ok: true, runtime: 'oomol-connect' } }) }
-  }) as typeof fetch
+  }) as unknown as typeof fetch
   try {
     await expect(supervisor.initialize()).rejects.toThrow('link_runtime_exited_during_start')
     expect(killProcessTree).not.toHaveBeenCalled()

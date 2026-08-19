@@ -48,8 +48,9 @@ describe('createDesktopHostSupervisor', () => {
     expect(h.supervisor.getState()?.available).toBe(true)
     h.children[0]!.emit('error', new Error('EACCES'))
     const state = h.supervisor.getState()
+    const reason = state?.available === false ? state.reason : ''
     expect(state?.available).toBe(false)
-    expect(state).toMatchObject({ reason: expect.stringContaining('EACCES') })
+    expect(reason).toContain('EACCES')
     expect(h.timers).toHaveLength(1)
   })
 
