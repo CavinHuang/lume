@@ -603,7 +603,11 @@ function WorkspaceFilesPanel({ workspace }: { workspace: AgentWorkspace }) {
     if (result.files.length === 0) return
     await sidecarCall(AGENT_IPC_CHANNELS.SAVE_FILES_TO_WORKSPACE_ROOT, {
       workspaceSlug: workspace.slug,
-      files: result.files.map((file) => ({ filename: file.filename, sourcePath: file.sourcePath })),
+      files: result.files.map((file) => ({
+        filename: file.filename,
+        id: file.id,
+        stagedAttachmentId: file.stagedAttachmentId,
+      })),
     })
     toast.success(`已保存 ${result.files.length} 个文件到工作区`)
   })

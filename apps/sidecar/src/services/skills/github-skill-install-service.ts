@@ -33,6 +33,7 @@ interface ResolvedGitHubTarget {
   owner: string;
   repo: string;
   ref: string;
+  commitSha: string;
   rootPath: string;
 }
 
@@ -152,14 +153,32 @@ async function tryFetchRepoTree(
   return payload.tree ?? [];
 }
 
+async function resolveCommitSha(
+  owner: string,
+  repo: string,
+  ref: string,
+  fetchImpl: typeof fetch
+): Promise<string> {
+  const payload = await fetchJson<{ sha?: unknown }>(
+    `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}`,
+    fetchImpl
+  );
+  if (typeof payload.sha !== "string" || !/^[0-9a-f]{7,40}$/i.test(payload.sha)) {
+    throw new Error("无法将 ref 解析为 commit SHA");
+  }
+  return payload.sha;
+}
+
 async function resolveGitHubTarget(target: GitHubRepoTarget, fetchImpl: typeof fetch): Promise<ResolvedGitHubTarget> {
   const metadata = await resolveRepoMetadata(target, fetchImpl);
 
   if (!target.treeSegments || target.treeSegments.length === 0) {
+    const ref = target.ref ?? metadata.default_branch;
     return {
       owner: target.owner,
       repo: target.repo,
-      ref: target.ref ?? metadata.default_branch,
+      ref,
+      commitSha: await resolveCommitSha(target.owner, target.repo, ref, fetchImpl),
       rootPath: target.rootPath
     };
   }
@@ -174,6 +193,7 @@ async function resolveGitHubTarget(target: GitHubRepoTarget, fetchImpl: typeof f
       owner: target.owner,
       repo: target.repo,
       ref,
+      commitSha: await resolveCommitSha(target.owner, target.repo, ref, fetchImpl),
       rootPath
     };
   }
@@ -220,6 +240,7 @@ function buildReviewToken(review: Omit<GitHubSkillReviewResult, "reviewToken">):
     .update(JSON.stringify({
       normalizedUrl: review.normalizedUrl,
       ref: review.ref,
+      commitSha: review.commitSha,
       rootPath: review.rootPath,
       riskSummary: review.riskSummary,
       structuralIssues: review.structuralIssues,
@@ -261,7 +282,8 @@ async function inspectGitHubSkillSource(
 
     const skillMdPath = skillPath ? `${skillPath}/SKILL.md` : "SKILL.md";
     const skillMd = await fetchText(
-      `https://raw.githubusercontent.com/${target.owner}/${target.repo}/${target.ref}/${skillMdPath}`,
+      // 钉住 commit SHA：同一 inspect run 内 frontmatter 与安装文件必须来自同一快照
+      `https://raw.githubusercontent.com/${target.owner}/${target.repo}/${target.commitSha}/${skillMdPath}`,
       fetchImpl
     );
     const slug = skillPath ? posix.basename(skillPath) : target.repo;
@@ -284,6 +306,7 @@ async function inspectGitHubSkillSource(
     owner: target.owner,
     repo: target.repo,
     ref: target.ref,
+    commitSha: target.commitSha,
     rootPath: target.rootPath,
     trustLevel: "review-required" as const,
     riskSummary: buildRiskSummary(skills.flatMap((skill) => skill.filePaths)),
@@ -312,7 +335,8 @@ async function fetchSkillFileContents(
       const prefix = skill.path ? `${skill.path}/` : "";
       const relativePath = prefix && filePath.startsWith(prefix) ? filePath.slice(prefix.length) : filePath;
       const content = await fetchText(
-        `https://raw.githubusercontent.com/${inspected.review.owner}/${inspected.review.repo}/${inspected.review.ref}/${filePath}`,
+        // 安装下载钉住审查时的 commit SHA，杜绝审查/安装两次快照脱钩
+        `https://raw.githubusercontent.com/${inspected.review.owner}/${inspected.review.repo}/${inspected.review.commitSha}/${filePath}`,
         fetchImpl
       );
       skillFiles.push({ relativePath, content });
@@ -389,6 +413,7 @@ export async function installGitHubSkillToWorkspace(
     slugs: inspected.skills.map((skill) => skill.slug),
     sourceRef: inspected.review.normalizedUrl,
     ref: inspected.review.ref,
+    commitSha: inspected.review.commitSha,
     rootPath: inspected.review.rootPath
   });
 
