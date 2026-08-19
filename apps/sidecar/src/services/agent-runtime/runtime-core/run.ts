@@ -44,6 +44,7 @@ import {
   type NormalizedMessageParam,
   type ProcessJob,
   setLspIdleTimeout,
+  warmupLspClients,
   detectDanglingToolUses,
   buildResumeContinuations
 } from "@lume/agent-sdk";
@@ -2060,6 +2061,12 @@ export async function createRuntimeCoreSession(
       : {}),
   };
   setLspIdleTimeout(lspConfig.idleTimeoutMs);
+  // 默认保持懒启动；lazy: false 时在 run 启动阶段后台预热 rootMarkers 匹配的
+  // server（warmupLspClients 内置 5s race，慢环境自动放行），首个 Write/Edit
+  // 不再付 language server 冷启动代价。fire-and-forget，不阻塞首事件。
+  if (lspConfig.enabled !== false && lspConfig.lazy === false) {
+    void warmupLspClients(input.cwd, { lsp: lspConfig }).catch(() => undefined);
+  }
   const computerUsePlugin = registeredPlugins.find((plugin) => plugin.pluginId === "computer-use");
   log.info("Computer Use capability selected", {
     sessionId: input.lumeSessionId,
