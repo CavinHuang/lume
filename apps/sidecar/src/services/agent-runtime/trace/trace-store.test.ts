@@ -103,4 +103,31 @@ describe("trace-store", () => {
     expect(stored?.spans).toHaveLength(1);
     expect(stored?.spans[0]?.id).toBe("s1");
   });
+
+  test("recorder 缓存路径 failSpan 落盘终态且保持 span 顺序", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-trace-recorder-"));
+    const store = createFileBackedLumeTraceStore(dir);
+    const recorder = new TraceRecorder(store, {
+      createId: (() => {
+        const ids = ["trace-f", "span-a", "span-b"];
+        return () => ids.shift() ?? "fallback";
+      })(),
+      now: (() => {
+        let tick = 0;
+        return () => new Date(Date.UTC(2026, 3, 29, 0, 0, tick++)).toISOString();
+      })()
+    });
+
+    const trace = await recorder.startTrace({ runId: "run-f", threadId: "thread-f", name: "Agent run" });
+    const spanA = await recorder.startSpan({ traceId: trace.id, type: "tool_call", name: "a" });
+    const spanB = await recorder.startSpan({ traceId: trace.id, type: "tool_call", name: "b" });
+    await recorder.endSpan(spanA.id, { done: true });
+    await recorder.failSpan(spanB.id, new Error("boom"));
+
+    const stored = await store.get(trace.id);
+    expect(stored?.spans.map((s) => s.id)).toEqual([spanA.id, spanB.id]);
+    expect(stored?.spans[0]).toMatchObject({ id: spanA.id, status: "completed", output: { done: true } });
+    expect(stored?.spans[1]).toMatchObject({ id: spanB.id, status: "failed" });
+    expect((stored?.spans[1] as any).error?.message).toBe("boom");
+  });
 });
