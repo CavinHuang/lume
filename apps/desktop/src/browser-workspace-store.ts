@@ -208,7 +208,14 @@ function readState(path: string): { state: BrowserWorkspaceFile; migrated: boole
       }).slice(0, 10)
       return [[ownerThreadId, { ownerThreadId, orderedTabIds, ...(typeof raw.activeTabId === "string" && orderedTabIds.includes(raw.activeTabId) ? { activeTabId: raw.activeTabId } : {}), recentlyClosed, revision: Number.isSafeInteger(raw.revision) ? Number(raw.revision) : 0 } satisfies BrowserWorkspaceDescriptor]]
     }))
-    return { state: { version: 9, workspaces, tabs }, migrated: value.version !== 9 }
+    // 存量死数据回收:剥离不被任何 orderedTabIds/recentlyClosed 引用的 tabs 记录(#129),
+    // 清理发生即视为一次迁移(migrated),构造器会立即落盘瘦身
+    const referenced = new Set(Object.values(workspaces).flatMap((workspace) => [
+      ...workspace.orderedTabIds,
+      ...workspace.recentlyClosed.map((closed) => closed.tabId),
+    ]))
+    const pruned = Object.fromEntries(Object.entries(tabs).filter(([tabId]) => referenced.has(tabId)))
+    return { state: { version: 9, workspaces, tabs: pruned }, migrated: value.version !== 9 || Object.keys(pruned).length !== Object.keys(tabs).length }
   } catch {
     return { state: structuredClone(EMPTY_STATE), migrated: false }
   }

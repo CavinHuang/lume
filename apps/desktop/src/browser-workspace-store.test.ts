@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'bun:test'
@@ -44,4 +44,40 @@ test('#129 restoreClosed 恢复后 tabs 记录保留(是打开中 tab 的活跃�
   const restored = store.restoreClosed('thread-1')
   expect(restored?.tabId).toBe('tab-a')
   expect(readTabs(directory)['tab-a']).toBeDefined()
+})
+
+test('#129 跨 workspace 仍引用的被淘汰条目不删(move 场景)', () => {
+  const { store, directory } = createStore()
+  // thread-1 关闭 shared 后把它 move 到 thread-2(orderedTabIds 持有引用)
+  store.close(makeTab('shared'))
+  store.move(makeTab('shared', 'https://example.test/2'), 'thread-2')
+  // thread-1 再关 11 个 tab,把 shared 与 tab-0 一起挤出 recentlyClosed
+  for (let index = 0; index < 11; index++) store.close(makeTab(`tab-${index}`))
+  const tabs = readTabs(directory)
+  expect(tabs['shared']).toBeDefined()
+  expect(tabs['tab-0']).toBeUndefined()
+})
+
+test('#129 close→restore→close 交错:记录重写不误删', () => {
+  const { store, directory } = createStore()
+  store.close(makeTab('tab-a'))
+  expect(store.restoreClosed('thread-1')?.tabId).toBe('tab-a')
+  store.close(makeTab('tab-a'))
+  expect(readTabs(directory)['tab-a']).toBeDefined()
+  expect(store.get('thread-1').recentlyClosed.map((closed) => closed.tabId)).toEqual(['tab-a'])
+})
+
+test('#129 启动时回收存量无引用的死数据记录', () => {
+  const { store, directory } = createStore()
+  for (let index = 0; index < 11; index++) store.close(makeTab(`tab-${index}`))
+  expect(existsSync(join(directory, 'browser', 'workspaces.json'))).toBe(true)
+  // 模拟历史积累:塞一条格式合法但无任何引用的死记录
+  const path = join(directory, 'browser', 'workspaces.json')
+  const raw = JSON.parse(readFileSync(path, 'utf8'))
+  raw.tabs['orphan-tab'] = { ...raw.tabs['tab-10'], tabId: 'orphan-tab' }
+  writeFileSync(path, JSON.stringify(raw))
+  void new BrowserWorkspaceStore(() => directory)
+  const tabs = readTabs(directory)
+  expect(tabs['orphan-tab']).toBeUndefined()
+  expect(tabs['tab-10']).toBeDefined()
 })
