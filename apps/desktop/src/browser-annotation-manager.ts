@@ -439,7 +439,9 @@ export class BrowserAnnotationManager {
     const match = /^browser-review-screenshot:([a-zA-Z0-9._-]{1,200}):([a-f0-9-]{36})$/i.exec(screenshotRef)
     if (!match || match[1] !== threadId) return
     const path = join(this.options.configDir(), 'browser', 'review-resources', threadId, `${match[2]}.png`)
-    if (existsSync(path)) unlinkSync(path)
+    // 删除失败(Windows 下杀软/索引器短暂占用 EPERM/EBUSY)只意味着该文件暂时成为孤儿,
+    // 不能沿 hooks 上抛阻断 store 的事务性写入(否则内存态与盘不一致,重新制造孤儿)(#130)
+    try { if (existsSync(path)) unlinkSync(path) } catch { /* 留待下次清理 */ }
   }
 }
 

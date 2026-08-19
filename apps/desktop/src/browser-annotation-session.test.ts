@@ -380,10 +380,29 @@ describe('BrowserAnnotationSessionStore', () => {
         for (let index = 0; index <= 100; index++) {
           store.saveComment({ ...attachment(`comment-${index}`), screenshotRef: `browser-review-screenshot:thread-1:${index}` })
         }
-        // 第 101 条写入后,comment-0 被截断
-        expect(discarded.at(-1)?.threadId).toBe('thread-1')
-        expect(discarded.at(-1)?.refs).toEqual(['browser-review-screenshot:thread-1:0'])
+        // 第 101 条写入后,comment-0 被截断(全程仅此一次回调,精确断言防意外丢弃)
+        expect(discarded).toEqual([{ threadId: 'thread-1', refs: ['browser-review-screenshot:thread-1:0'] }])
         expect(store.get('thread-1', 'tab-1', anchor.url, 1).comments[0]?.id).toBe('comment-1')
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    })
+
+    test('被截断评论与保留集共享同一 screenshotRef 时不回调清理(防误删活引用)', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'lume-annotation-'))
+      try {
+        const discarded: Array<{ threadId: string; refs: string[] }> = []
+        const store = new BrowserAnnotationSessionStore(() => directory, {
+          onDiscardedScreenshots: (threadId, refs) => { discarded.push({ threadId, refs }) },
+        })
+        // 生产常态:setScreenshot 给同 url 的全部评论赋同一 ref
+        const sharedRef = 'browser-review-screenshot:thread-1:11111111-1111-4111-8111-111111111111'
+        for (let index = 0; index <= 100; index++) {
+          store.saveComment({ ...attachment(`comment-${index}`), screenshotRef: sharedRef })
+        }
+        // 截断丢弃的 comment-0 与保留的 100 条共享 ref——文件仍被引用,不得清理
+        expect(discarded).toEqual([])
+        expect(store.get('thread-1', 'tab-1', anchor.url, 1).comments).toHaveLength(100)
       } finally {
         rmSync(directory, { recursive: true, force: true })
       }
