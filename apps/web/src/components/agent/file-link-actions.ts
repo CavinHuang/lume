@@ -1,6 +1,6 @@
 import { AGENT_IPC_CHANNELS } from "@lume/shared"
 import { toast } from "sonner"
-import { openInSystem, revealPathInSystem, saveFilePathDialog, copyFile, writeClipboardImage, writeClipboardText, sidecarCall, openGuardedFileRefInSystem, revealGuardedFileRefInSystem, saveGuardedFileRefAs, type SaveFilePathFilter } from "@/lib/desktop-api"
+import { openInSystem, revealPathInSystem, savePathAs, writeClipboardImage, writeClipboardText, sidecarCall, openGuardedFileRefInSystem, revealGuardedFileRefInSystem, saveGuardedFileRefAs, type SaveFilePathFilter } from "@/lib/desktop-api"
 import type { FileLinkContext } from "./file-link-types"
 
 function joinPath(dir: string, rel: string): string {
@@ -114,9 +114,8 @@ export function resolveFileLinkActions(ctx: FileLinkContext): FileLinkActions {
           return
         }
         const abs = await resolveAbsolutePath(ctx)
-        const { path: target } = await saveFilePathDialog(basename(abs), buildSaveAsFilter(abs))
+        const { path: target } = await savePathAs(abs, basename(abs), buildSaveAsFilter(abs))
         if (!target) return // 用户取消，静默
-        await copyFile(abs, target)
         toast.success(`已保存到 ${target}`)
       } catch (e) {
         toast.error(`保存失败：${errMsg(e)}`)
