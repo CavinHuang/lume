@@ -1739,7 +1739,7 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
         ok: true,
         source: 'desktop',
         sidecar: 'ready',
-        desktopHost: sanitizeDesktopHostState(desktopHostState),
+        desktopHost: sanitizeDesktopHostState(currentDesktopHostState()),
       }
     }
     case 'sidecar_healthcheck':
@@ -2529,9 +2529,10 @@ function createSidecarHost({ onNotification }) {
       } : {}),
     }
 
-    if (desktopHostState.available) {
-      env.LUME_DESKTOP_HOST_ENDPOINT = desktopHostState.endpoint
-      env.LUME_DESKTOP_HOST_TOKEN = desktopHostState.token
+    const desktopHost = currentDesktopHostState()
+    if (desktopHost.available) {
+      env.LUME_DESKTOP_HOST_ENDPOINT = desktopHost.endpoint
+      env.LUME_DESKTOP_HOST_TOKEN = desktopHost.token
     }
 
     const defaultSkillsArchive = getDefaultSkillsArchivePath()
@@ -3342,6 +3343,12 @@ function sanitizeDesktopHostState(state: DesktopHostState) {
   return state.available
     ? { available: true, endpoint: state.endpoint }
     : { available: false, reason: 'reason' in state ? state.reason : 'desktop host unavailable' }
+}
+
+// supervisor 的 state 会随 spawn 失败/崩溃熔断实时降级(#124);desktopHostState 快照只在启动时
+// 写入,消费方须优先读 supervisor 实时状态,否则熔断后仍向 sidecar 注入死 pipe 的 endpoint/token
+function currentDesktopHostState(): DesktopHostState {
+  return desktopHostSupervisor?.getState() ?? desktopHostState
 }
 
 async function unlockDesktopContextStore() {

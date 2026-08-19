@@ -17,8 +17,10 @@ const MAX_BODY = 20_000
 export class BrowserAnnotationSessionStore {
   private readonly path: string
   private sessions = new Map<string, StoredSession>()
+  private readonly onDiscardedScreenshots?: (threadId: string, refs: string[]) => void
 
-  constructor(configDir: () => string) {
+  constructor(configDir: () => string, hooks?: { onDiscardedScreenshots?: (threadId: string, refs: string[]) => void }) {
+    this.onDiscardedScreenshots = hooks?.onDiscardedScreenshots
     const directory = join(configDir(), 'browser')
     mkdirSync(directory, { recursive: true })
     this.path = join(directory, 'annotation-sessions-v2.json')
@@ -194,10 +196,10 @@ export class BrowserAnnotationSessionStore {
     const threadId = comment.tab.ownerThreadId ?? ''
     if (!threadId) throw new Error('annotation_owner_thread_required')
     const snapshot = this.get(threadId, comment.tab.tabId, comment.tab.url, comment.tab.generation ?? 1)
-    const comments = [
+    const comments = this.capComments(threadId, [
       ...snapshot.comments.filter((item) => item.id !== comment.id),
       { ...comment, body: comment.body.slice(0, MAX_BODY), createdAt: comment.createdAt ?? new Date().toISOString() },
-    ].slice(-MAX_COMMENTS)
+    ])
     const next = { ...snapshot, comments, activeDraft: undefined, updatedAt: new Date().toISOString() }
     this.write(next)
     return next
@@ -220,10 +222,10 @@ export class BrowserAnnotationSessionStore {
       body: (attachment.body ?? '').slice(0, MAX_BODY),
       createdAt: new Date().toISOString(),
     } as unknown as AgentBrowserAnnotationAttachment
-    const comments = [
+    const comments = this.capComments(threadId, [
       ...snapshot.comments.filter((item) => item.id !== comment.id),
       comment,
-    ].slice(-MAX_COMMENTS)
+    ])
     const next = { ...snapshot, comments, activeDesignChange: undefined, updatedAt: new Date().toISOString() }
     this.write(next)
     return next
@@ -321,7 +323,7 @@ export class BrowserAnnotationSessionStore {
         } as AgentBrowserAnnotationAttachment
         const snapshot = this.get(threadId, tabId, typeof session.url === 'string' ? session.url : comment.tab.url, Number.isInteger(session.generation) ? Number(session.generation) : comment.tab.generation ?? 1)
         if (snapshot.comments.some((existing) => existing.id === comment.id)) continue
-        this.write({ ...snapshot, comments: [...snapshot.comments, comment].slice(-MAX_COMMENTS), updatedAt: new Date().toISOString() })
+        this.write({ ...snapshot, comments: this.capComments(threadId, [...snapshot.comments, comment]), updatedAt: new Date().toISOString() })
         imported += 1
       }
     }
@@ -333,13 +335,44 @@ export class BrowserAnnotationSessionStore {
     this.sessions.set(key, {
       ...snapshot,
       version: 2,
-      comments: snapshot.comments.slice(-MAX_COMMENTS),
+      comments: this.capComments(snapshot.threadId, snapshot.comments),
       updatedAt: new Date().toISOString(),
     })
-    while (this.sessions.size > MAX_SESSIONS) this.sessions.delete(this.sessions.keys().next().value as string)
+    // FIFO 淘汰的会话无人再引用其截图文件,须回调清理——否则 review-resources 孤儿 PNG 永久累积(#130)
+    while (this.sessions.size > MAX_SESSIONS) {
+      const oldestKey = this.sessions.keys().next().value as string
+      const evicted = this.sessions.get(oldestKey)
+      this.sessions.delete(oldestKey)
+      if (evicted) this.discardSessionScreenshots(evicted)
+    }
     const temporaryPath = `${this.path}.${process.pid}.tmp`
     writeFileSync(temporaryPath, JSON.stringify(Object.fromEntries(this.sessions), null, 2), { mode: 0o600 })
     renameSync(temporaryPath, this.path)
+  }
+
+  // 评论截断统一入口:被 slice 丢弃的评论若带截图引用且回调方未保留,交 hooks 清理文件(#130)
+  private capComments(threadId: string, comments: AgentBrowserAnnotationAttachment[]): AgentBrowserAnnotationAttachment[] {
+    if (comments.length <= MAX_COMMENTS) return comments
+    const kept = comments.slice(-MAX_COMMENTS)
+    const keptRefs = new Set(kept.map((comment) => comment.screenshotRef).filter((ref): ref is string => Boolean(ref)))
+    const discarded = [...new Set(comments.slice(0, comments.length - MAX_COMMENTS)
+      .map((comment) => comment.screenshotRef)
+      .filter((ref): ref is string => Boolean(ref)))]
+      .filter((ref) => !keptRefs.has(ref))
+    if (discarded.length) this.onDiscardedScreenshots?.(threadId, discarded)
+    return kept
+  }
+
+  // 会话淘汰时收集其全部截图引用;其他存活会话仍引用的(共享防御)不清理(#130)
+  private discardSessionScreenshots(evicted: StoredSession): void {
+    const refs = new Set<string>()
+    for (const comment of evicted.comments) if (comment.screenshotRef) refs.add(comment.screenshotRef)
+    if (evicted.screenshotRef) refs.add(evicted.screenshotRef)
+    for (const session of this.sessions.values()) {
+      for (const comment of session.comments) if (comment.screenshotRef) refs.delete(comment.screenshotRef)
+      if (session.screenshotRef) refs.delete(session.screenshotRef)
+    }
+    if (refs.size) this.onDiscardedScreenshots?.(evicted.threadId, [...refs])
   }
 
   private restore(): void {
@@ -349,7 +382,7 @@ export class BrowserAnnotationSessionStore {
       for (const [key, value] of Object.entries(parsed)) {
         if (!isStoredSession(value)) continue
         // Task 71：交互 flag 是瞬时 UI 状态，恢复时一律清空（重启后 Alt 未按 / 原始视图关闭 / tweaks 面板关）
-        this.sessions.set(key, { ...value, mode: 'browse', selectionPurpose: undefined, activeDraft: undefined, activeDesignChange: undefined, isDesignModifierPressed: undefined, isOriginalViewEnabled: undefined, isTweaksEditorOpen: undefined, comments: value.comments.slice(-MAX_COMMENTS) })
+        this.sessions.set(key, { ...value, mode: 'browse', selectionPurpose: undefined, activeDraft: undefined, activeDesignChange: undefined, isDesignModifierPressed: undefined, isOriginalViewEnabled: undefined, isTweaksEditorOpen: undefined, comments: this.capComments(value.threadId, value.comments) })
       }
     } catch {
       this.sessions.clear()

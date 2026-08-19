@@ -297,6 +297,15 @@ test("preview protocol responses implement media HEAD and single-range semantics
   const oversizedScope = registry.create({ kind: "media-file", ownerWebContentsId: 4, absolutePath: oversized });
   assert.equal(resolvePreviewProtocolRequest(registry, previewScopeUrl(oversizedScope), "GET").kind, "too-large");
 
+  // #128:html-directory 的超限 .html 在 resolve 侧放行(kind=ok),由响应侧 fstat 拦截为 413
+  const oversizedHtml = join(root, "oversized.html");
+  writeFileSync(oversizedHtml, "<html></html>");
+  truncateSync(oversizedHtml, PREVIEW_PROTOCOL_MAX_MEDIA_BYTES + 1);
+  const oversizedHtmlScope = registry.create({ kind: "html-directory", ownerWebContentsId: 4, absolutePath: oversizedHtml });
+  assert.equal(resolvePreviewProtocolRequest(registry, previewScopeUrl(oversizedHtmlScope), "GET").kind, "ok");
+  assert.equal((await createPreviewProtocolResponse(registry, new Request(previewScopeUrl(oversizedHtmlScope)))).status, 413);
+  assert.equal((await createPreviewProtocolResponse(registry, new Request(previewScopeUrl(oversizedHtmlScope), { method: "HEAD" }))).status, 413);
+
   const growing = join(root, "growing.png");
   writeFileSync(growing, "0123456789");
   const growingScope = registry.create({ kind: "media-file", ownerWebContentsId: 4, absolutePath: growing });
