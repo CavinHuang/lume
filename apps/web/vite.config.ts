@@ -59,7 +59,11 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          return id.replace(/\\/g, '/').includes('/3dmol/') ? 'pdb-viewer' : undefined
+          const normalized = id.replace(/\\/g, '/')
+          if (normalized.includes('/3dmol/')) return 'pdb-viewer'
+          // pierre editor 内核体量大且被消息流/右面板静态引用，独立 chunk 隔离缓存、并行加载
+          if (normalized.includes('@pierre/diffs')) return 'pierre-diffs'
+          return undefined
         },
       },
     },

@@ -1,6 +1,11 @@
-import { describe, expect, test } from 'bun:test'
-import { appendRuntimeEvent, appendRuntimeEvents, hydrateRuntimeEvents, removeRuntimeEvents } from './runtime-event-state'
+import { beforeEach, describe, expect, test } from 'bun:test'
+import { appendRuntimeEvent, appendRuntimeEvents, hydrateRuntimeEvents, removeRuntimeEvents, resetHydrateFingerprints } from './runtime-event-state'
 import type { AgentThreadRuntimeEventsResult, LumeRuntimeEvent } from '@lume/shared'
+
+// hydrate 入口指纹是模块级 Map，测试间共享会让同序列 persisted 的用例互相短路
+beforeEach(() => {
+  resetHydrateFingerprints()
+})
 
 function runtimeEvent(event: Partial<LumeRuntimeEvent> & Pick<LumeRuntimeEvent, 'type'>): LumeRuntimeEvent {
   return {
@@ -365,6 +370,78 @@ describe('runtime-event-state', () => {
     expect(next['thread-1']).toBeUndefined()
     expect(removeRuntimeEvents(next, 'thread-1')).toBe(next)
     expect(removeRuntimeEvents(next, 'other-thread')).toBe(next)
+  })
+
+  test('hydrate 入口指纹：同 persisted 重复拉取短路返回 prev 引用', () => {
+    const events = [
+      runtimeEvent({ id: 'p1', type: 'run.started' }),
+      runtimeEvent({ id: 'p2', type: 'run.completed' }),
+    ]
+    const first = hydrateRuntimeEvents({}, { threadId: 'thread-1', events })
+    expect(first['thread-1']?.events).toHaveLength(2)
+    // 同 persisted 再拉（MESSAGE_APPENDED 每条消息都会触发）：直接短路
+    expect(hydrateRuntimeEvents(first, { threadId: 'thread-1', events: events.map((e) => ({ ...e })) })).toBe(first)
+  })
+
+  test('hydrate 入口指纹：persisted 变化（追加）不被短路', () => {
+    const first = hydrateRuntimeEvents({}, {
+      threadId: 'thread-1',
+      events: [runtimeEvent({ id: 'p1', type: 'run.started' })],
+    })
+    const second = hydrateRuntimeEvents(first, {
+      threadId: 'thread-1',
+      events: [
+        runtimeEvent({ id: 'p1', type: 'run.started' }),
+        runtimeEvent({ id: 'p2', type: 'run.completed' }),
+      ],
+    })
+    expect(second).not.toBe(first)
+    expect(second['thread-1']?.events).toHaveLength(2)
+    expect(second['thread-1']?.terminalStatus).toBe('completed')
+  })
+
+  test('hydrate 入口指纹：removeRuntimeEvents 后同 persisted 重建，不被残留指纹短路', () => {
+    const events = [runtimeEvent({ id: 'p1', type: 'run.started' })]
+    const first = hydrateRuntimeEvents({}, { threadId: 'thread-1', events })
+    const cleared = removeRuntimeEvents(first, 'thread-1')
+    expect(cleared['thread-1']).toBeUndefined()
+
+    const rebuilt = hydrateRuntimeEvents(cleared, { threadId: 'thread-1', events })
+    expect(rebuilt).not.toBe(cleared)
+    expect(rebuilt['thread-1']?.events).toHaveLength(1)
+  })
+
+  test('hydrate 入口指纹不破坏乐观 user → 投影 user 的等量替换语义', () => {
+    // live 乐观 user（id=optimistic:*,假 runId）先在;persisted 投影 user(同 text)
+    // 到达时必须替换为带 messageId/versionGroupId 的投影版——指纹只对 persisted 生效，
+    // 首次到达必然 miss，替换照常发生。
+    const optimistic = appendRuntimeEvent({}, runtimeEvent({
+      id: 'optimistic:t1:1',
+      runId: 'optimistic:t1:1',
+      type: 'message.user.submitted',
+      text: '帮我看看 download 目录',
+      createdAt: '2026-05-11T00:10:00.000Z',
+    }))
+    const result: AgentThreadRuntimeEventsResult = {
+      threadId: 'thread-1',
+      events: [
+        runtimeEvent({ id: 'run-1:message.user.submitted', type: 'run.started' }),
+        runtimeEvent({
+          id: 'run-1:user',
+          type: 'message.user.submitted',
+          text: '帮我看看 download 目录',
+          messageId: 'message-1',
+          versionGroupId: 'group-1',
+          createdAt: '2026-05-11T00:10:01.000Z',
+        }),
+      ],
+    }
+    const hydrated = hydrateRuntimeEvents(optimistic, result)
+    const userEvents = hydrated['thread-1']?.events.filter((event) => event.type === 'message.user.submitted') ?? []
+    expect(userEvents).toHaveLength(1)
+    expect(userEvents[0]).toMatchObject({ id: 'run-1:user', messageId: 'message-1', versionGroupId: 'group-1' })
+    // 替换完成后同 persisted 再拉：短路
+    expect(hydrateRuntimeEvents(hydrated, result)).toBe(hydrated)
   })
 
   test('超过 MAX_EVENTS_PER_THREAD 时优先丢头部 delta，保留结构事件与 user 提交', () => {
