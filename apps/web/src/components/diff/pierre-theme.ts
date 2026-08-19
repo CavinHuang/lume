@@ -24,7 +24,12 @@ export const LUME_DIFF_CSS = `
   :host {
     --diffs-font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace);
     --diffs-font-size: 12px;
-    --diffs-line-height: 20px;
+    /* 行高系数式：随字号自动联动 */
+    --diffs-line-height: calc(var(--diffs-font-size, 12px) * 1.8);
+    /* diff +/- 行字色（light green-500/red-600，dark green-300/red-400）；
+       pierre 据此自动派生行背景（bg 88% + 基色 12% 混色） */
+    --diffs-addition-color-override: var(--lume-diff-added-fg, #00a240);
+    --diffs-deletion-color-override: var(--lume-diff-deleted-fg, #ba2623);
     --diffs-gap-inline: 8px;
     --codex-diffs-surface: var(--lume-bg-panel, var(--background));
     --codex-diffs-context-surface: color-mix(in srgb, var(--codex-diffs-surface) 94%, var(--lume-bg-app, var(--background)));
@@ -39,8 +44,8 @@ export const LUME_DIFF_CSS = `
   pre {
     margin: 0;
     font-family: var(--diffs-font-family);
-    font-size: 12px;
-    line-height: 20px;
+    font-size: var(--diffs-font-size);
+    line-height: var(--diffs-line-height);
     background: var(--codex-diffs-surface);
   }
   [data-code] {

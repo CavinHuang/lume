@@ -609,6 +609,8 @@
 }
 
 :root {
+  /* 声明配色方案——diff 组件的 light-dark() 派生与滚动条原生配色依赖此声明 */
+  color-scheme: light;
   --lume-chat-font-size: 15px;
   --lume-chat-measure: 680px;
   --reading-serif: Georgia, 'Songti SC', 'Noto Serif CJK SC', 'Source Han Serif SC', STSong, SimSun, serif;
@@ -630,6 +632,9 @@
   --lume-danger-foreground: oklch(0.99 0.004 25);
   --lume-success: oklch(0.62 0.13 155);
   --lume-warning: oklch(0.52 0.14 75);
+  /* diff +/- 行字色（light 档：green-500 / red-600） */
+  --lume-diff-added-fg: #00a240;
+  --lume-diff-deleted-fg: #ba2623;
   --lume-shadow-panel: var(--shadow-panel);
   --background: var(--lume-bg-app);
   --foreground: var(--lume-text-primary);
@@ -688,6 +693,8 @@
 }
 
 .dark {
+  /* 不声明则 light-dark() 恒走 light 分支，diff 行背景/强调 alpha 取不到暗色档 */
+  color-scheme: dark;
   --lume-bg-app: oklch(0.155 0.012 248);
   --lume-bg-rail: oklch(0.18 0.013 248);
   --lume-bg-panel: oklch(0.205 0.012 248);
@@ -706,6 +713,9 @@
   --lume-danger-foreground: oklch(0.14 0.025 25);
   --lume-success: oklch(0.72 0.12 155);
   --lume-warning: oklch(0.78 0.13 75);
+  /* diff +/- 行字色（dark 档：green-300 / red-400） */
+  --lume-diff-added-fg: #40c977;
+  --lume-diff-deleted-fg: #fa423e;
   --lume-shadow-panel: var(--shadow-panel);
   --background: var(--lume-bg-app);
   --foreground: var(--lume-text-primary);
