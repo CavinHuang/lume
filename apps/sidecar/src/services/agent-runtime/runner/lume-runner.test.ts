@@ -6,6 +6,7 @@ import type { SDKMessage } from "@lume/shared";
 import type { AgentRuntimeRunParams, AgentRuntimeEmitter } from "./types";
 import type { LumeWorkflowHookEvent } from "../../workflow-hooks/hook-events";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
+import { getThreadEventBus } from "../events/thread-event-bus";
 import { LumeRunner, resolveRuntimeCoreMaxTurns } from "./lume-runner";
 import type { LumeRunState } from "./run-state";
 import { createMemoryV2Store } from "../../memory-v2/markdown-store";
@@ -348,13 +349,11 @@ describe("LumeRunner", () => {
 
     expect(events).toEqual([
       "sdk:assistant",
-      "runtime:assistant.delta",
-      "runtime:run.completed",
       "complete"
     ]);
   });
 
-  test("complete emits RuntimeEvents", async () => {
+  test("complete no longer emits migrated legacy RuntimeEvents (T7a)", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-runtime-events-"));
     dirs.push(agentDir);
     const events: string[] = [];
@@ -373,10 +372,9 @@ describe("LumeRunner", () => {
     } as SDKMessage]));
     await runner.complete();
 
+    // T7a:assistant.delta/run.completed 已迁事件总线,旧路不再产
     expect(events).toEqual([
       "sdk:assistant",
-      "runtime:assistant.delta",
-      "runtime:run.completed",
       "complete"
     ]);
   });
@@ -483,7 +481,7 @@ describe("LumeRunner", () => {
     expect(state.error?.message).toBe("boom");
   });
 
-  test("abort emits run.cancelled so clients can reset streaming state", async () => {
+  test("abort no longer emits legacy run.cancelled (T7a: migrated to bus)", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-abort-"));
     dirs.push(agentDir);
     const events: string[] = [];
@@ -496,7 +494,7 @@ describe("LumeRunner", () => {
     const result = await runner.abort();
 
     expect(result).toEqual({ status: "aborted" });
-    expect(events).toEqual(["runtime:run.cancelled", "complete"]);
+    expect(events).toEqual(["complete"]);
   });
 
   test("soft-abort error result finalizes as cancelled when the abort signal fired", async () => {
@@ -526,7 +524,8 @@ describe("LumeRunner", () => {
     ]));
 
     expect(abortedResult).toEqual({ status: "aborted" });
-    expect(abortedEvents).toContain("runtime:run.cancelled");
+    // T7a:run.cancelled 已迁事件总线,旧路不再产;归一语义由 run state 断言承载
+    expect(abortedEvents).not.toContain("runtime:run.cancelled");
     expect(readOnlyRunState(abortedDir).status).toBe("cancelled");
 
     // 对照：非 abort 的同类 error result 仍归 failed。
@@ -789,7 +788,8 @@ describe("LumeRunner", () => {
       status: "turn_limited",
       errorMessage: "Agent SDK 达到最大回合数（20），本轮需要继续执行。"
     });
-    expect(events).toEqual(["sdk:result", "runtime:usage.updated", "runtime:run.turn_limited"]);
+    // T7a:run.turn_limited 已迁事件总线,旧路不再产;usage.updated(裁定保留)照旧
+    expect(events).toEqual(["sdk:result", "runtime:usage.updated"]);
     expect(readOnlyRunState(agentDir).status).toBe("completed");
     expect(readRunItems(agentDir)).toContainEqual(expect.objectContaining({
       type: "system_event",
@@ -1116,5 +1116,67 @@ describe("LumeRunner", () => {
       pendingBackground: false,
       changedFiles: ["src/background.ts"],
     });
+  });
+
+  // ─── F3:run 链内失败补总线终值 ───
+
+  /** 读总线中指定 run 的 run.end 终值信封 */
+  async function readBusRunEnds(agentDir: string, threadId: string) {
+    const sessionDir = getRuntimeCoreSessionDir(threadId, agentDir);
+    const envelopes = await getThreadEventBus(sessionDir).read(threadId);
+    return envelopes.filter((envelope) => envelope.kind === "run" && envelope.phase === "end");
+  }
+
+  test("createRuntimeSession 抛错:总线补发 run.end 错误终值,不再静默失败(F3)", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-f3-session-"));
+    dirs.push(agentDir);
+    const events: string[] = [];
+    const runner = await createRunner(agentDir, events);
+
+    const result = await runner.runPreparedRuntimeCoreAttempt({
+      params: createTestParams("thread-1"),
+      prepared: createPrepared(agentDir),
+      options: { registerAbort: () => {}, unregisterAbort: () => {} },
+      createCanUseTool: () => async () => ({ behavior: "allow" }),
+      createRuntimeSession: async () => {
+        throw new Error("session boom");
+      }
+    });
+
+    // 查询流从未启动 → projector 未开 run → 旧链路无任何总线终值
+    expect(result).toEqual({ status: "errored", errorMessage: "session boom" });
+    const runEnds = await readBusRunEnds(agentDir, "thread-1");
+    expect(runEnds).toHaveLength(1);
+    // fromActiveRun 抑制旧路合成 run.failed 后,这是 web 端终值的唯一来源
+    expect(runEnds[0]!.runId).toBe(runner.getRunId());
+    expect(runEnds[0]!.detail).toMatchObject({
+      type: "run.end",
+      stopReason: "error",
+      isError: true,
+      result: "session boom"
+    });
+  });
+
+  test("投影链已交付终值后 fail() 不再补发,同一 run 只一个总线终值(F3 互斥)", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-f3-mutex-"));
+    dirs.push(agentDir);
+    const runner = await createRunner(agentDir, []);
+
+    // run 中途抛错:tee finally 先排空投影(projector 补发 error 终值),异常才向主流传播
+    async function* failingStream(): AsyncIterable<SDKMessage> {
+      yield {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "partial" }] }
+      } as SDKMessage;
+      throw new Error("mid-run boom");
+    }
+    await expect(runner.runQueryStream(failingStream())).rejects.toThrow("mid-run boom");
+
+    // runRuntimeSession 的 catch 会走 fail():不应产生第二个 run.end
+    await runner.fail("later failure");
+
+    const runEnds = await readBusRunEnds(agentDir, "thread-1");
+    expect(runEnds).toHaveLength(1);
+    expect((runEnds[0]!.detail as { stopReason: string }).stopReason).toBe("error");
   });
 });

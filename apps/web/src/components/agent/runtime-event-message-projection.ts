@@ -61,6 +61,11 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     if (state.currentAssistant) state.currentAssistant.fileReferenceProtocolVersion = event.fileReferenceProtocolVersion
   }
 
+  // T7c:双路并行期入口闸门(TERMINAL_REBUILDING_EVENT_TYPES)+[lifecycle-mismatch] 打点已删
+  // ——双投源消失。其余重建型分支(model.retry/assistant.*/tool.*/plan/todo/run 终值)
+  // 仍由下方 terminalClosed 通用早退兜底;memory.context.used/advisor.reviewed 两分支
+  // 因位于通用早退之前,各自保留最小防线(见分支内注释)。
+
   if (event.type === 'run.started') {
     state.terminalClosed = false
     return
@@ -104,6 +109,11 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
 
   if (event.type === 'memory.context.used') {
     if (event.items.length === 0) return
+    // 终态后到达的尾巴事件不得经 ??= 重建同 id 的空 assistant(会与已 flush 的
+    // assistant:<runId> 撞 React key,#22 duplicate key 的实际路径)。T7c 入口闸门
+    // 退役后保留此最小防线:历史 events.jsonl 双域回放与 hydrate replay 中已迁类
+    // (本类+advisor.reviewed)仍可能终态后到达(位于下方通用早退之前,需自守)。
+    if (state.terminalClosed && !state.currentAssistant) return
     state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block) => block.type !== 'memory_context_used')
     state.currentAssistant.blocks.push({
@@ -117,7 +127,9 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   if (event.type === 'memory.changed') {
     flushAssistant(state.messages, state.currentAssistant)
     state.currentAssistant = null
-    messages.push({
+    // 幂等 upsert：live 补发与 replay 重放可能携带同 id（见 consolidation/replay 的 id 公式），
+    // 无条件 push 会在刷新后突现重复的幽灵消息。
+    const message: RuntimeMessageView = {
       id: event.id,
       type: 'system',
       variant: 'memory_saved',
@@ -133,7 +145,10 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
         ...(event.memoryIds[0] ? { memoryId: event.memoryIds[0] } : {}),
         ...(event.mutationIds[0] ? { mutationId: event.mutationIds[0] } : {}),
       },
-    })
+    }
+    const existingIndex = messages.findIndex((item) => item.id === event.id)
+    if (existingIndex >= 0) messages[existingIndex] = message
+    else messages.push(message)
     return
   }
 
@@ -159,6 +174,9 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'advisor.reviewed') {
+    // 同 memory.context.used:终态后的 advisor 尾巴不重建同 id assistant(T7c 闸门
+    // 退役后的最小防线,理由见 memory.context.used 分支注释)。
+    if (state.terminalClosed && !state.currentAssistant) return
     state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.blocks.push({
       type: 'advisor_review',
@@ -342,10 +360,10 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       startedAt: event.createdAt,
       ...(event.riskLevel ? { riskLevel: event.riskLevel } : {}),
     }
-    state.currentAssistant.toolCalls.set(event.toolCallId, toolCall)
-    state.currentAssistant.toolBlockIds.set(event.toolCallId, state.currentAssistant.blocks.length)
-    state.currentAssistant.blocks.push({ type: 'tool_call', id: `tool:${event.toolCallId}`, toolCall })
-    state.currentAssistant.currentContentSegmentStart = state.currentAssistant.blocks.length
+    // 幂等 upsert(与 completed/failed 对称):批次2 总线与旧路 persisted 事件跨 id 空间,
+    // 同 toolCallId 的重复 started 只覆盖原位,不再 push 第二个 block(否则 React duplicate
+    // key + 前一张卡永久 running)。
+    upsertToolCallBlock(state.currentAssistant, event.toolCallId, toolCall)
     return
   }
 

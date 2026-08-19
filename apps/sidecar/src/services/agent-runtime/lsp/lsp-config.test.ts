@@ -134,4 +134,23 @@ describe("runtime LSP config", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("passes the lazy flag through so run startup can warm up servers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-lsp-lazy-"));
+    const bare = await mkdtemp(join(tmpdir(), "lume-lsp-lazy-bare-"));
+    try {
+      await writeFile(join(root, "lsp.json"), JSON.stringify({ lazy: false }));
+      const result = await resolveRuntimeLspConfig({ cwd: root, plugins: [] });
+      expect(result.lazy).toBe(false);
+
+      const defaulted = await resolveRuntimeLspConfig({
+        cwd: bare,
+        plugins: [],
+      });
+      expect(defaulted.lazy).toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(bare, { recursive: true, force: true });
+    }
+  });
 });

@@ -34,6 +34,8 @@ import type {
   AgentUpdateQueuedMessageInput,
   AgentGetSubmissionReceiptInput,
   AgentGetSubmissionReceiptResult,
+  AgentEventsResult,
+  SdkEventEnvelope,
 } from '@lume/shared'
 
 export const agentSend = async (input: AgentSendInput) => {
@@ -257,6 +259,20 @@ export const updateQueuedAgentMessage = (input: AgentUpdateQueuedMessageInput) =
   invoke<AgentMessageQueueOperationResult>('sidecar_call', {
     method: AGENT_IPC_CHANNELS.UPDATE_QUEUED_MESSAGE,
     params: input,
+  })
+
+export const getAgentEvents = (threadId: string, afterSeq?: number) =>
+  invoke<AgentEventsResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.GET_EVENTS,
+    params: { threadId, ...(afterSeq !== undefined ? { afterSeq } : {}) },
+  })
+
+// Sidecar notifications all reach the renderer multiplexed on 'sidecar:event'
+// ({ method, params }) — the dedicated 'agent:events' channel is not in the
+// preload allowlist, so filter by method like onSidecarEvent does.
+export const onAgentEvents = (cb: (e: SdkEventEnvelope) => void) =>
+  listen<{ method: string; params: SdkEventEnvelope }>('sidecar:event', (ev) => {
+    if (ev.payload.method === AGENT_IPC_CHANNELS.EVENTS) cb(ev.payload.params)
   })
 
 export const promoteQueuedAgentMessageToGuidance = (input: AgentPromoteQueuedMessageToGuidanceInput) =>

@@ -52,6 +52,18 @@ import {
 } from './pending-interactive-state'
 import { appendRuntimeEvents, hydrateRuntimeEvents } from './runtime-event-state'
 import { projectDesktopActionVisualEvent } from './desktop-action-visual-state'
+import { consumeBusEnvelope, type LifecycleAdapterState } from './lifecycle-event-adapter'
+import { useAgentEventBus } from './useAgentEventBus'
+
+// T7c(批次5 删除批):AGENT_LIFECYCLE_EVENTS flag 已退役——总线消费恒开
+// (active agent tab 即订阅);T7a 已删 LEGACY_SKIPPED_PILOT_EVENT_TYPES 跳过清单
+// (已迁类旧路产生点已删,RUNTIME_EVENT 不再送达已迁类)。保留类
+// (message.user.submitted/plan.preview/task.progress/usage.updated/model.retry 系/
+// memory.changed 系/交互对等)旧路分支原样。
+
+// 模块级而非 ref:适配器求差基线与去重水位须跨双挂载实例、跨 tab 切换存活
+const lifecycleAdapterStatesByThread = new Map<string, LifecycleAdapterState>()
+const lifecycleDeliveredSeqByThread = new Map<string, number>()
 
 export function hydrateSubagentRuns(
   current: Record<string, SubagentRunRecord[]>,
@@ -88,6 +100,7 @@ export function useGlobalAgentListeners() {
   const setDesktopActionVisual = useSetAtom(desktopActionVisualAtom)
   const setTabs = useSetAtom(tabsAtom)
   const tabs = useAtomValue(tabsAtom)
+  const activeTabId = useAtomValue(activeTabIdAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const setWelcomePromptSeed = useSetAtom(welcomePromptSeedAtom)
@@ -110,6 +123,34 @@ export function useGlobalAgentListeners() {
       runtimeEventsRafRef.current = requestAnimationFrame(flushRuntimeEvents)
     }
   }, [flushRuntimeEvents])
+
+  // ---- lifecycle 总线消费(T7c 起恒开:active agent tab 即订阅,经适配器喂现有投影) ----
+  // useGlobalAgentListeners 会被 App 与 QuickInput 同时挂载:两实例各自消费总线会导致
+  // 同一 envelope 适配两次。用模块级 seq 水位去重(事件已按线程 seq 排序)。
+  const lifecycleBusThreadId = tabs.find((tab) => tab.id === activeTabId && tab.type === 'agent')?.threadId ?? null
+  useAgentEventBus(lifecycleBusThreadId ?? '', {
+    enabled: lifecycleBusThreadId !== null,
+    onEvent: (envelope, source) => {
+      // F4:快照回放注入事件(新线程 assistant/tool/run 历史单读总线快照,旧路
+      // hydrate 已过滤已迁类)、不置 streaming;
+      // 详见 lifecycle-event-adapter.ts consumeBusEnvelope 注释。
+      consumeBusEnvelope(envelope, source, {
+        deliveredSeqByThread: lifecycleDeliveredSeqByThread,
+        adapterStatesByThread: lifecycleAdapterStatesByThread,
+        enqueueRuntimeEvent,
+        setStreamingStates,
+        setErrorMessages,
+        // 批次5:run.cancelled 被跳过清单接管后,queue-interrupted(Resume 横幅)副作用
+        // 移至总线版——与旧路 RUNTIME_EVENT 分支同逻辑(队列非空才置位,幂等不重复置)
+        onRunCancelled: (threadId) => {
+          const queue = messageQueuesRef.current[threadId]
+          if (queue && queue.queuedMessages.some((item) => !item.internal)) {
+            setQueueInterrupted((prev) => (prev[threadId] ? prev : { ...prev, [threadId]: true }))
+          }
+        },
+      })
+    },
+  })
 
   useEffect(() => {
     sidecarCall<AgentListSubagentRunsResult>(AGENT_IPC_CHANNELS.LIST_SUBAGENT_RUNS, { limit: 500 })
