@@ -121,7 +121,12 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
     >
       <div className="space-y-1.5">
         {activeQuestion ? (
-          <div className="space-y-1" role="radiogroup" aria-label={activeQuestion.header || activeQuestion.question}>
+          <div
+            key={activeQuestion.question}
+            className="animate-in fade-in slide-in-from-bottom-1 space-y-1 fill-mode-both duration-300 motion-reduce:animate-none"
+            role="radiogroup"
+            aria-label={activeQuestion.header || activeQuestion.question}
+          >
               {activeQuestion.options.map((opt, optionIndex) => {
                 const selected = answers[activeQuestion.question] === opt.label
                 return (
@@ -134,7 +139,7 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                     aria-checked={selected}
                     onClick={() => select(activeQuestion.question, opt.label)}
                     className={cn(
-                      'group flex min-h-10 w-full items-center justify-start gap-2.5 rounded-2xl border px-2.5 py-1.5 text-left transition-colors',
+                      'group flex min-h-10 w-full items-center justify-start gap-2.5 rounded-2xl border px-2.5 py-1.5 text-left transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.99] motion-reduce:transition-none',
                       selected
                         ? 'border-[color:color-mix(in_oklab,var(--lume-accent)_28%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-accent)_8%,var(--lume-bg-elevated))] text-[var(--lume-text-primary)]'
                         : 'border-transparent text-[var(--lume-text-secondary)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
@@ -155,13 +160,13 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                       )}
                     </span>
                     {selected
-                      ? <Check size={14} className="shrink-0 text-[var(--lume-accent)]" />
+                      ? <Check size={14} className="animate-in zoom-in-75 shrink-0 text-[var(--lume-accent)] duration-200 motion-reduce:animate-none" />
                       : <ChevronRight size={14} className="shrink-0 text-[var(--lume-text-muted)] opacity-0 transition-opacity group-hover:opacity-100" />}
                   </Button>
                 )
               })}
               {customQuestion === activeQuestion.question ? (
-                <div className="flex min-h-10 items-center gap-2 rounded-2xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-2.5 py-1">
+                <div className="animate-in fade-in slide-in-from-top-1 flex min-h-10 items-center gap-2 rounded-2xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-2.5 py-1 duration-200 motion-reduce:animate-none">
                   <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[var(--lume-border-subtle)] text-[var(--lume-text-muted)]">
                     <Pencil size={13} />
                   </span>

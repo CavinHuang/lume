@@ -295,6 +295,9 @@ describe('RuntimeEventContentBlock markdown streaming config', () => {
 
     expect(markup.match(/data-tail="true"/g)?.length ?? 0).toBe(0)
     expect(markup.match(/data-tail="false"/g)?.length ?? 0).toBe(1)
+    expect(markup).toContain('data-task-progress="running"')
+    expect(markup).toContain('已完成 0/1')
+    expect(markup).toContain('读取文件')
   })
 
   test('renders assistant token usage as a hover-only footer', () => {
