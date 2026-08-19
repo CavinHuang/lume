@@ -1907,6 +1907,13 @@ export async function createRuntimeCoreSession(
         reason: "后台命令已持久化，恢复时重新附着而不重复执行。",
         createdAt: now,
         updatedAt: now
+      }).catch((error) => {
+        // fire-and-forget 持久化失败（AV 锁/磁盘满等）只降级恢复能力，不允许变成未处理拒绝崩进程
+        log.warn("Failed to persist background continuation checkpoint", {
+          sessionId: input.lumeSessionId,
+          runId: input.runId,
+          error: error instanceof Error ? error.message : String(error)
+        });
       });
     }
     publishCodingReport();

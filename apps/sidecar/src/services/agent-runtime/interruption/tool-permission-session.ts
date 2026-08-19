@@ -11,6 +11,9 @@ import {
 } from "./approval-service";
 import { listPendingRuntimeCoreInterruptions } from "./interruption-index";
 import { runtimePermissionSessionStore } from "../permissions/permission-session";
+import { createLogger } from "../../infra/logger";
+
+const log = createLogger("tool-permission-session");
 
 const pendingToolPermissionResolvers = new Map<
   string,
@@ -62,6 +65,11 @@ export function setToolPermissionApprovalSession(requestId: string, approvalSess
     originalThreadId: pending.threadId,
     approvalThreadId: normalized,
     request: pending.request
+  }).catch((error) => {
+    log.warn("Failed to update tool approval session", {
+      requestId,
+      error: error instanceof Error ? error.message : String(error)
+    });
   });
 }
 
@@ -81,11 +89,21 @@ export function waitForToolPermissionDecision(
       }
       pendingToolPermissionResolvers.delete(request.requestId);
       signal.removeEventListener("abort", onAbort);
-      await resolveToolApprovalInterruption({
-        threadId: request.threadId,
-        requestId: request.requestId,
-        decision
-      });
+      try {
+        await resolveToolApprovalInterruption({
+          threadId: request.threadId,
+          requestId: request.requestId,
+          decision
+        });
+      } catch (error) {
+        // 持久化失败只降级冷启动恢复能力；resolve 必须仍被执行（在 try 之外），
+        // 否则 timeout 已清除、abort 监听已摘除，等待方将无限悬挂
+        log.warn("Failed to resolve tool approval interruption", {
+          requestId: request.requestId,
+          threadId: request.threadId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
       resolve(decision);
     };
 
@@ -114,7 +132,12 @@ export function waitForToolPermissionDecision(
       timeout
     });
     signal.addEventListener("abort", onAbort, { once: true });
-    void persistToolApprovalInterruption(request);
+    void persistToolApprovalInterruption(request).catch((error) => {
+      log.warn("Failed to persist tool approval interruption", {
+        requestId: request.requestId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
     emit(request);
   });
 }
@@ -169,6 +192,11 @@ export function cancelPendingToolPermissionBySession(threadId: string): void {
       threadId: pending.threadId,
       requestId,
       decision: null
+    }).catch((error) => {
+      log.warn("Failed to resolve cancelled tool approval interruption", {
+        requestId,
+        error: error instanceof Error ? error.message : String(error)
+      });
     });
     void pending.resolve(null);
     pendingToolPermissionResolvers.delete(requestId);
