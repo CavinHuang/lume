@@ -20,7 +20,6 @@ import type {
   SkillImprovementAnalysisResult,
   SkillMarketCatalogResult,
   SkillMarketDetailResult,
-  SkillMeta,
   SkillStorageScope,
   SkillVersionInfo,
 } from '@lume/shared'
@@ -35,15 +34,6 @@ export const getSkillMarketCatalog = (workspaceSlug: string, includeBlockedSourc
 
 export const getSkillMarketDetail = (input: GetSkillMarketDetailInput) =>
   sidecarCall<SkillMarketDetailResult>('agent:get-skill-market-detail', input)
-
-export const getWorkspaceSkills = (workspaceSlug: string) =>
-  sidecarCall<SkillMeta[]>(AGENT_CHANNELS.GET_SKILLS, { workspaceSlug })
-
-export const getAgentThreadPath = (threadId: string, workspaceSlug?: string) =>
-  sidecarCall<string>(AGENT_CHANNELS.GET_THREAD_PATH, {
-    threadId,
-    ...(workspaceSlug ? { workspaceSlug } : {}),
-  })
 
 export const listEditableSkills = (workspaceSlug: string, cwd?: string) =>
   sidecarCall<EditableSkillMeta[]>(AGENT_CHANNELS.LIST_EDITABLE_SKILLS, {
