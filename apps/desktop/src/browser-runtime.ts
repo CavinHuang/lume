@@ -34,7 +34,8 @@ import {
 import { browserLocatorScript, isBrowserLocator, validateBrowserLocator, type BrowserLocatorQuery, type ResolvedBrowserTarget } from "./browser-locator"
 import { createCursorUpdateScript } from "./browser-cursor"
 import { canAgentClaim, canAgentUse, revokeSharedLease } from "./browser-sharing-policy"
-import { BrowserNetworkGuard } from "./browser-network-guard"
+import { isIP } from "node:net"
+import { BrowserNetworkGuard, isPublicAddress } from "./browser-network-guard"
 import { BrowserAuditLog } from "./browser-audit"
 import { AGENT_DOWNLOAD_LIMITS, AgentDownloadQuota, BrowserDownloadHistory, completeDownload, prepareDownload, removePartialDownload, safeDownloadFilename } from "./browser-downloads"
 import { BrowserCredentialVault } from "./browser-credentials"
@@ -3994,12 +3995,8 @@ function isPrivateUrl(value: string): boolean { try { return isPrivateHost(new U
 
 function isPrivateHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "")
-  if (host === "localhost" || host.endsWith(".local") || host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:")) return true
-  const octets = host.split(".").map(Number)
-  if (octets.length !== 4 || octets.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) return false
-  return octets[0] === 10 || octets[0] === 127 || (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127) || (octets[0] === 169 && octets[1] === 254)
-    || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
-    || (octets[0] === 192 && octets[1] === 168)
+  if (host === "localhost" || host.endsWith(".local")) return true
+  return isIP(host) !== 0 && !isPublicAddress(host)
 }
 
 function boundedNumber(value: unknown, min: number, max: number): number {
