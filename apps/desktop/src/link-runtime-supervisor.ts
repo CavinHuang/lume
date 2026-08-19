@@ -74,7 +74,6 @@ export function createLinkRuntimeSupervisor(input: {
     const secrets = loadOrCreateLinkSecrets(join(runtimeDir, "secrets.json"), masterKey);
     currentCredentials = secrets;
     mkdirSync(dataDirectory, { recursive: true });
-    currentCredentials = secrets;
     stopping = false;
     const origin = `http://127.0.0.1:${persisted.port}`;
     const inheritedEnvironment = Object.fromEntries(
