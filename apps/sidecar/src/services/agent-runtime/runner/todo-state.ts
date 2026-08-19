@@ -30,8 +30,19 @@ export async function readLatestTodoState(input: {
   sessionDir: string;
   threadId: string;
 }): Promise<TodoState | null> {
-  const runs = await createFileBackedLumeRunStateStore(input.sessionDir).listByThread(input.threadId);
-  let latest: { state: TodoState; createdAt: string } | null = null;
+  const store = createFileBackedLumeRunStateStore(input.sessionDir);
+  // 快照优先：recordTodoState 每次落盘时更新，免全量解析线程全部历史 items
+  const snapshot = store.readTodoSnapshot(input.threadId);
+  if (snapshot) {
+    return {
+      todos: snapshot.todos.map((todo) => ({ ...todo })),
+      currentActiveForm: snapshot.currentActiveForm
+    };
+  }
+
+  // 回退：存量线程（快照产生前）全量扫描，并顺带写快照让下次读取走 O(1) 路径
+  const runs = await store.listByThread(input.threadId);
+  let latest: { state: TodoState; createdAt: string; runId: string } | null = null;
 
   for (const run of runs) {
     for (const item of run.generatedItems) {
@@ -42,8 +53,22 @@ export async function readLatestTodoState(input: {
           todos: item.todos.map((todo) => ({ ...todo })),
           currentActiveForm: item.currentActiveForm
         },
-        createdAt: item.createdAt
+        createdAt: item.createdAt,
+        runId: run.runId
       };
+    }
+  }
+
+  if (latest) {
+    try {
+      store.saveTodoSnapshot(input.threadId, {
+        todos: latest.state.todos,
+        currentActiveForm: latest.state.currentActiveForm,
+        runId: latest.runId,
+        createdAt: latest.createdAt
+      });
+    } catch {
+      // 写快照失败不影响本次返回
     }
   }
 
