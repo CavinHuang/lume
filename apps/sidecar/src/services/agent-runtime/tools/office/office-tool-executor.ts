@@ -90,8 +90,13 @@ ${code}
     }
   }
 
+  /** soffice 产物路径：输入名剥最后一段扩展名 + 目标扩展名（report.v2.docx → report.v2.pdf）。 */
+  convertOutputPath(inputPath: string, outputDir: string, targetExt: string): string {
+    return resolve(outputDir, `${this.baseName(inputPath)}.${targetExt}`);
+  }
+
   async convertWithSoffice(inputPath: string, outputDir: string, targetExt: string): Promise<OfficeToolExecutorResult> {
-    const outputPath = resolve(outputDir, `${this.baseName(inputPath)}.${targetExt}`);
+    const outputPath = this.convertOutputPath(inputPath, outputDir, targetExt);
     const result = await this.runSoffice([
       "--headless",
       "--convert-to",
