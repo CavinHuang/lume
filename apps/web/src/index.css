@@ -4,10 +4,17 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
-@import "@fontsource/inter/latin-400.css";
-@import "@fontsource/inter/latin-500.css";
-@import "@fontsource/inter/latin-600.css";
-@import "@fontsource/inter/latin-700.css";
+@import "@fontsource-variable/jetbrains-mono";
+
+/* MiSans VF（wght 150-700 连续轴）：中文正文/界面字体，拉丁继续走 Geist。
+   来源与授权见 public/fonts/MiSans-LICENSE.txt */
+@font-face {
+  font-family: 'MiSans Variable';
+  font-style: normal;
+  font-weight: 150 700;
+  font-display: swap;
+  src: url('/fonts/MiSans-VF.woff2') format('woff2');
+}
 
 @custom-variant dark (&:is(.dark *));
 
@@ -24,6 +31,11 @@
   --color-destructive: hsl(0 84.2% 60.2%);
   --color-destructive-foreground: hsl(0 0% 98%);
   --radius: 0.5rem;
+  --text-micro: 10px;
+  --text-caption: 11px;
+  --text-ui: 12px;
+  --text-body: 13px;
+  --text-body-lg: 14px;
 }
 
 @layer base {
@@ -180,7 +192,8 @@
   border-radius: 0 0 8px 8px !important;
   background: var(--lume-bg-panel) !important;
   box-shadow: none !important;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, 'Cascadia Code', Consolas, monospace;
+  font-family: var(--font-mono);
+  font-size: 0.8667em;
 }
 
 .agent-message-markdown .code-block-wrapper pre.shiki code {
@@ -197,8 +210,9 @@
 .reading-note-markdown {
   color: var(--text-1);
   font-family: var(--reading-serif);
-  font-size: 12.5px;
-  line-height: 1.75;
+  font-size: var(--lume-chat-font-size);
+  line-height: 1.9;
+  max-width: 600px;
   overflow-wrap: anywhere;
 }
 
@@ -225,10 +239,10 @@
   line-height: 1.45;
 }
 
-.reading-note-markdown h1 { font-size: 16px; }
-.reading-note-markdown h2 { font-size: 15px; }
-.reading-note-markdown h3 { font-size: 14px; }
-.reading-note-markdown h4 { font-size: 13px; }
+.reading-note-markdown h1 { font-size: 1.3em; }
+.reading-note-markdown h2 { font-size: 1.17em; }
+.reading-note-markdown h3 { font-size: 1.07em; }
+.reading-note-markdown h4 { font-size: 1em; }
 
 .reading-note-markdown ul,
 .reading-note-markdown ol {
@@ -246,7 +260,7 @@
 
 .reading-note-markdown code {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 0.85em;
 }
 
 .agent-message-markdown {
@@ -254,6 +268,18 @@
   font-weight: 450;
   line-height: 1.85;
   overflow-wrap: anywhere;
+}
+
+/* 正文与标题限宽（≈45 汉字/行）；代码块/表格/图片继续撑满消息容器 */
+.agent-message-markdown > p,
+.agent-message-markdown > h1,
+.agent-message-markdown > h2,
+.agent-message-markdown > h3,
+.agent-message-markdown > h4,
+.agent-message-markdown ul,
+.agent-message-markdown ol,
+.agent-message-markdown blockquote {
+  max-width: var(--lume-chat-measure);
 }
 
 .agent-message-markdown p {
@@ -344,14 +370,15 @@
   margin: 26px 0 10px;
   color: var(--lume-text-primary);
   font-weight: 700;
-  letter-spacing: -0.018em;
+  /* CJK 负字距挤压标点，标题字距归零 */
+  letter-spacing: 0;
   line-height: 1.4;
 }
 
-.agent-message-markdown h1 { font-size: 24px; }
-.agent-message-markdown h2 { font-size: 21px; }
-.agent-message-markdown h3 { font-size: 18px; }
-.agent-message-markdown h4 { font-size: 16px; }
+.agent-message-markdown h1 { font-size: 1.35em; }
+.agent-message-markdown h2 { font-size: 1.17em; }
+.agent-message-markdown h3 { font-size: 1.07em; }
+.agent-message-markdown h4 { font-size: 1em; }
 
 .agent-message-markdown h1:first-child,
 .agent-message-markdown h2:first-child,
@@ -430,6 +457,23 @@
   background-clip: text;
   color: transparent;
   animation: lume-shimmer-text 1.45s ease-in-out infinite;
+}
+
+/* AgentLoadingIndicator 像素网格单格点亮（基态 0.15 → 峰值 1） */
+@keyframes lume-pixel-on {
+  0%, 100% { opacity: 0.15; }
+  40% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lume-shimmer-text {
+    animation: none;
+  }
+
+  /* 单格动画是内联 style 注入，需 !important 才能覆盖 */
+  [data-agent-loading-indicator] [aria-hidden] span {
+    animation: none !important;
+  }
 }
 
 :where(.lume-segmented) {
@@ -520,7 +564,10 @@
 
 @theme inline {
   --font-heading: var(--font-sans);
-  --font-sans: 'Geist Variable', sans-serif;
+  --font-sans: 'Geist Variable', 'MiSans Variable', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  --text-chat: var(--lume-chat-font-size);
+  --text-chat--line-height: 1.85;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -562,6 +609,9 @@
 }
 
 :root {
+  --lume-chat-font-size: 15px;
+  --lume-chat-measure: 680px;
+  --reading-serif: Georgia, 'Songti SC', 'Noto Serif CJK SC', 'Source Han Serif SC', STSong, SimSun, serif;
   --lume-bg-app: oklch(0.982 0.006 248);
   --lume-bg-rail: oklch(0.962 0.007 248);
   --lume-bg-panel: oklch(0.996 0.003 248);
@@ -627,6 +677,14 @@
   --sidebar-accent-foreground: var(--lume-text-primary);
   --sidebar-border: var(--lume-border-subtle);
   --sidebar-ring: oklch(0.708 0 0);
+}
+
+:root[data-chat-font-scale='sm'] {
+  --lume-chat-font-size: 14px;
+}
+
+:root[data-chat-font-scale='lg'] {
+  --lume-chat-font-size: 16.5px;
 }
 
 .dark {
@@ -1211,6 +1269,29 @@
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   overscroll-behavior: contain;
+}
+
+@keyframes lume-suggestion-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.lume-suggestion-panel {
+  animation: lume-suggestion-pop-in 180ms cubic-bezier(0.23, 1, 0.32, 1) both;
+  transform-origin: bottom center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lume-suggestion-panel {
+    animation: none;
+  }
 }
 
 .mention-list-scrollbar::-webkit-scrollbar {

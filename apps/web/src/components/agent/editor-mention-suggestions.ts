@@ -223,7 +223,7 @@ function updatePosition(wrapper: HTMLDivElement, props: SuggestionProps, char: s
   const rect = props.clientRect?.()
   if (!rect) return
 
-  if (char === '/') {
+  if (char === '/' || char === '@') {
     const editorEl = props.editor.view.dom
     const composer = editorEl.closest('[data-tone]') as HTMLElement | null
     const composerRect = composer?.getBoundingClientRect()

@@ -14,6 +14,7 @@ import {
   type AgentMessageDisplayMode,
   type AgentMessageListDisplayMode,
   type BuiltInThemePalette,
+  type ChatFontScale,
   type CustomThemePalette,
   type CustomThemePaletteColors,
   type GeneralSettings,
@@ -140,6 +141,10 @@ function isAgentMessageAvatarMode(value: unknown): value is AgentMessageAvatarMo
   return value === "visible" || value === "hidden";
 }
 
+function isChatFontScale(value: unknown): value is ChatFontScale {
+  return value === "sm" || value === "md" || value === "lg";
+}
+
 function isLogLevel(value: unknown): value is LumeLogLevel {
   return value === "trace" || value === "debug" || value === "info"
     || value === "warn" || value === "error" || value === "fatal";
@@ -226,6 +231,9 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
     agentMessageAvatarMode: isAgentMessageAvatarMode(value.agentMessageAvatarMode)
       ? value.agentMessageAvatarMode
       : GENERAL_SETTINGS_DEFAULTS.agentMessageAvatarMode,
+    chatFontScale: isChatFontScale(value.chatFontScale)
+      ? value.chatFontScale
+      : GENERAL_SETTINGS_DEFAULTS.chatFontScale,
     logging: sanitizeLoggingSettings(value.logging),
     windowBehavior: {
       minimizeToTray:
@@ -418,6 +426,7 @@ export async function updatePersistedGeneralSettings(input: UpdateGeneralSetting
     agentMessageDisplayMode: input.agentMessageDisplayMode ?? current.agentMessageDisplayMode,
     agentMessageListDisplayMode: input.agentMessageListDisplayMode ?? current.agentMessageListDisplayMode,
     agentMessageAvatarMode: input.agentMessageAvatarMode ?? current.agentMessageAvatarMode,
+    chatFontScale: input.chatFontScale ?? current.chatFontScale,
     logging: sanitizeLoggingSettings({ ...current.logging, ...(input.logging ?? {}) }),
     windowBehavior: (() => {
       const showTray = input.windowBehavior?.showTray ?? current.windowBehavior.showTray;

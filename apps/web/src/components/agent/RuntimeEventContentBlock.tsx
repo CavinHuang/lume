@@ -5,6 +5,7 @@ import { XMarkdown } from '@ant-design/x-markdown'
 import { MermaidBlock, useSmoothStream } from '@lume/ui'
 import { DiffAwareMarkdownPre } from '@/components/markdown/DiffAwareMarkdownPre'
 import { ToolResultRenderer } from './tool-result-renderers'
+import { AgentLoadingIndicator } from './AgentLoadingIndicator'
 import { cn } from '@/lib/utils'
 import { formatDurationLabel, formatRunningDuration, formatCompletedDuration } from '@/lib/format-duration'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -591,7 +592,7 @@ function UserMessageBlock({
           </div>
         )}
         <div className={cn(
-          'text-[15px] font-medium leading-[22px] text-[var(--lume-text-primary)]',
+          'text-chat font-medium leading-[1.5] text-[var(--lume-text-primary)]',
           leftAligned
             ? 'rounded-[10px] bg-[var(--lume-accent-soft)] px-3.5 py-2.5'
             : 'rounded-[12px] rounded-tr-[10px] bg-[var(--lume-accent-soft)] px-3 py-2 shadow-[0_1px_0_hsl(var(--lume-shadow-panel)/0.08)]',
@@ -1105,6 +1106,7 @@ const MinimalProcessGroup = memo(function MinimalProcessGroup({
   onUserResizeStart,
 }: MinimalProcessGroupProps) {
   const [expanded, setExpanded] = useState(false)
+  const shouldRenderExpanded = useDeferredUnmount(expanded)
 
   // 派生计算 memo：blocks 引用由 stabilizeRuntimeMessages + 项 A contentBlocks memo 稳定化，
   // blocks 不变时跳过重算。项 B 移除 now/计时后派生不再依赖时间，可干净 memo。
@@ -1223,30 +1225,41 @@ const MinimalProcessGroup = memo(function MinimalProcessGroup({
         className="flex h-auto items-center gap-1.5 p-0 font-normal text-[11.5px] text-foreground/40 transition-colors hover:bg-transparent hover:text-foreground/60"
       >
         {summaryNodes}
-        <ChevronRight size={12} className={cn('shrink-0 transition-transform', expanded && 'rotate-90')} />
+        <ChevronRight size={12} className={cn('shrink-0 transition-transform duration-300', expanded && 'rotate-90')} />
       </Button>
-      {expanded && (
-        <div className="mt-1.5 space-y-0.5 pl-1">
-          {blocks.map((block) => {
-            if (block.type === 'thinking') {
-              return <MinimalThinkingRow key={block.id} text={block.text} />
-            }
-            if (block.type === 'tool_call') {
-              if (block.toolCall.toolName === 'Agent') {
+      {shouldRenderExpanded && (
+        <AnimatedCollapsiblePanel open={expanded}>
+          <div className="mt-1.5 space-y-0.5 pl-1">
+            {blocks.map((block) => {
+              if (block.type === 'thinking') {
                 return (
-                  <MinimalSubagentRow
-                    key={block.id}
-                    toolCall={block.toolCall}
-                    threadId={threadId}
-                    onUserResizeStart={onUserResizeStart}
-                  />
+                  <div key={block.id} className="animate-in fade-in slide-in-from-top-1 fill-mode-both duration-300 motion-reduce:animate-none">
+                    <MinimalThinkingRow text={block.text} />
+                  </div>
                 )
               }
-              return <MinimalToolCallRow key={block.id} toolCall={block.toolCall} onOpenThreadFile={onOpenThreadFile} />
-            }
-            return null
-          })}
-        </div>
+              if (block.type === 'tool_call') {
+                if (block.toolCall.toolName === 'Agent') {
+                  return (
+                    <div key={block.id} className="animate-in fade-in slide-in-from-top-1 fill-mode-both duration-300 motion-reduce:animate-none">
+                      <MinimalSubagentRow
+                        toolCall={block.toolCall}
+                        threadId={threadId}
+                        onUserResizeStart={onUserResizeStart}
+                      />
+                    </div>
+                  )
+                }
+                return (
+                  <div key={block.id} className="animate-in fade-in slide-in-from-top-1 fill-mode-both duration-300 motion-reduce:animate-none">
+                    <MinimalToolCallRow toolCall={block.toolCall} onOpenThreadFile={onOpenThreadFile} />
+                  </div>
+                )
+              }
+              return null
+            })}
+          </div>
+        </AnimatedCollapsiblePanel>
       )}
     </div>
   )
@@ -1747,12 +1760,123 @@ export function getTaskProgressStatusText(event: TaskProgressViewEvent): string 
   const title = current?.title || current?.description || current?.id
   if (event.status === 'completed') return '任务已完成'
   if (event.status === 'failed') return title ? `执行失败：${title}` : '任务执行失败'
+  if (event.status === 'cancelled') return '任务已取消'
+  if (event.status === 'waiting_for_user') return title ? `等待你的确认：${title}` : event.message?.trim() || '等待你的确认'
+  if (event.status === 'waiting_for_permission') return title ? `等待授权：${title}` : event.message?.trim() || '等待授权'
+  if (event.status === 'pending') return title ? `准备执行：${title}` : event.message?.trim() || '准备执行任务'
   if (title) return `正在执行：${title}`
   return event.message?.trim() || '正在执行任务'
 }
 
 function TaskProgressStatusLine({ event }: { event: TaskProgressViewEvent }) {
-  return <ShimmerStatusLine text={getTaskProgressStatusText(event)} />
+  const [expanded, setExpanded] = useState(event.status !== 'completed')
+  const shouldRenderTasks = useDeferredUnmount(expanded)
+  const completedCount = event.tasks.filter((task) => task.status === 'completed' || task.status === 'skipped').length
+  const failedCount = event.tasks.filter((task) => task.status === 'failed').length
+  const isRunning = event.status === 'pending' || event.status === 'in_progress' || event.status === 'running'
+  const isWaiting = event.status === 'waiting_for_user' || event.status === 'waiting_for_permission'
+
+  useEffect(() => {
+    if (event.status === 'failed') {
+      setExpanded(true)
+      return undefined
+    }
+    if (event.status !== 'completed' && event.status !== 'cancelled') return undefined
+    const timeoutId = window.setTimeout(() => setExpanded(false), 650)
+    return () => window.clearTimeout(timeoutId)
+  }, [event.status])
+
+  if (event.tasks.length === 0) {
+    return isRunning
+      ? <ShimmerStatusLine text={getTaskProgressStatusText(event)} />
+      : <div className="text-[12px] text-[var(--lume-text-muted)]">{getTaskProgressStatusText(event)}</div>
+  }
+
+  return (
+    <div data-task-progress={event.status} className="max-w-[560px] overflow-hidden rounded-xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)]/60">
+      <Button
+        type="button"
+        variant="ghost"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+        className="flex h-auto w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left hover:bg-[var(--lume-bg-elevated)]"
+      >
+        <span className={cn(
+          'flex size-6 shrink-0 items-center justify-center rounded-full border transition-colors duration-300',
+          failedCount > 0
+            ? 'border-destructive/25 bg-destructive/8 text-destructive'
+            : isWaiting
+              ? 'border-[color:color-mix(in_oklab,var(--lume-warning)_28%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-warning)_10%,transparent)] text-[var(--lume-warning)]'
+            : isRunning
+              ? 'border-[color:color-mix(in_oklab,var(--lume-accent)_28%,var(--lume-border-subtle))] bg-[var(--lume-accent-soft)] text-[var(--lume-accent)]'
+              : event.status === 'cancelled'
+                ? 'border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] text-[var(--lume-text-muted)]'
+              : 'border-[color:color-mix(in_oklab,var(--lume-success)_28%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-success)_10%,transparent)] text-[var(--lume-success)]',
+        )}>
+          {failedCount > 0
+            ? <TriangleAlert size={13} />
+            : isWaiting
+              ? <Clock size={13} />
+            : isRunning
+              ? <Loader2 size={13} className="animate-spin motion-reduce:animate-none" />
+              : event.status === 'cancelled'
+                ? <X size={13} />
+              : <Check size={13} />}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className={cn(
+            'block truncate text-[12.5px] font-medium text-[var(--lume-text-secondary)]',
+            isRunning && 'lume-shimmer-text',
+          )}>
+            {getTaskProgressStatusText(event)}
+          </span>
+          <span className="block text-[10.5px] tabular-nums text-[var(--lume-text-muted)]">
+            已完成 {completedCount}/{event.tasks.length}{failedCount > 0 ? ` · ${failedCount} 失败` : ''}
+          </span>
+        </span>
+        <ChevronRight size={13} className={cn('shrink-0 text-[var(--lume-text-muted)] transition-transform duration-300', expanded && 'rotate-90')} />
+      </Button>
+      {shouldRenderTasks && (
+        <AnimatedCollapsiblePanel open={expanded}>
+          <div className="border-t border-[var(--lume-border-subtle)] px-2 py-1.5">
+            {event.tasks.map((task, index) => {
+              const running = task.status === 'running' || task.status === 'in_progress'
+              const detail = task.error || task.blockedReason || (running ? task.description : undefined)
+              const title = task.title || task.subject || task.description || task.id
+              return (
+                <div
+                  key={task.id}
+                  className="animate-in fade-in slide-in-from-top-1 fill-mode-both rounded-lg px-1.5 py-1.5 duration-300 motion-reduce:animate-none"
+                  style={{ animationDelay: `${index * 80}ms` }}
+                >
+                  <div className="flex items-center gap-2 text-[11.5px] text-[var(--lume-text-secondary)]">
+                    <span className="flex size-4 shrink-0 items-center justify-center">
+                      {task.status === 'completed'
+                        ? <Check size={12} className="text-[var(--lume-success)]" />
+                        : task.status === 'failed'
+                          ? <TriangleAlert size={12} className="text-destructive" />
+                          : running
+                            ? <Loader2 size={12} className="animate-spin text-[var(--lume-accent)] motion-reduce:animate-none" />
+                            : <Clock size={11} className="text-[var(--lume-text-muted)]" />}
+                    </span>
+                    <span className={cn('min-w-0 flex-1 truncate', task.status === 'completed' && 'text-[var(--lume-text-muted)]')}>{title}</span>
+                    {task.attemptCount && task.attemptCount > 1 ? (
+                      <span className="shrink-0 text-[10px] tabular-nums text-[var(--lume-text-muted)]">第 {task.attemptCount} 次</span>
+                    ) : null}
+                  </div>
+                  {detail && detail !== title ? (
+                    <p className={cn('ml-6 mt-0.5 line-clamp-2 text-[10.5px] leading-4 text-[var(--lume-text-muted)]', task.status === 'failed' && 'text-destructive/80')}>
+                      {detail}
+                    </p>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+        </AnimatedCollapsiblePanel>
+      )}
+    </div>
+  )
 }
 
 function ShimmerStatusLine({ text }: { text: string }) {
@@ -1907,7 +2031,7 @@ const SmoothText = memo(function SmoothText({
   const renderMarkdown = (content: string, key?: string) => (
     <XMarkdown
       key={key}
-      className="agent-message-markdown x-markdown text-[15px] leading-7 text-[var(--lume-text-primary)]"
+      className="agent-message-markdown x-markdown text-chat text-[var(--lume-text-primary)]"
       rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
       streaming={markdownStreaming}
       components={markdownComponents}
@@ -2066,7 +2190,7 @@ const PlanPreviewMarkdown = memo(function PlanPreviewMarkdown({
 
   return (
     <XMarkdown
-      className="agent-message-markdown x-markdown text-[15px] leading-7 text-[var(--lume-text-primary)]"
+      className="agent-message-markdown x-markdown text-chat text-[var(--lume-text-primary)]"
       rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
       components={components}
     >
@@ -2383,9 +2507,29 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
           }
           setCollapsed((value) => !value)
         }}
-        className="flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
+        className="group/tool-call flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
       >
-        <Icon size={15} className="shrink-0 text-[var(--lume-text-muted)]" />
+        {isRunning ? (
+          <Icon size={15} className="shrink-0 text-[var(--lume-text-muted)]" />
+        ) : (
+          /* 图标↔箭头渐变：hover 或展开时图标淡出、箭头淡入（右向=可展开，下向=已展开） */
+          <span className="relative flex size-4 shrink-0 items-center justify-center text-[var(--lume-text-muted)]">
+            <Icon
+              size={15}
+              className={cn(
+                'transition-opacity duration-100 group-hover/tool-call:opacity-0 motion-reduce:transition-none',
+                !collapsed && 'opacity-0',
+              )}
+            />
+            <ChevronDown
+              size={13}
+              className={cn(
+                'absolute transition-[opacity,transform] duration-150 group-hover/tool-call:opacity-100 motion-reduce:transition-none',
+                collapsed ? 'opacity-0 -rotate-90' : 'opacity-100',
+              )}
+            />
+          </span>
+        )}
         <span className="font-semibold text-[var(--lume-text-primary)]">{toolCall.toolName}</span>
         {toolCall.riskLevel && (
           <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', riskLevelClassName(toolCall.riskLevel))}>
@@ -2411,13 +2555,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
           </span>
         )}
         <span className="min-w-0 flex-1 truncate text-[var(--lume-text-muted)]">{summarizeInput(input)}</span>
-        {isRunning && <Loader2 size={13} className="shrink-0 animate-spin text-[var(--lume-accent)]" />}
-        {!isRunning && (
-          <ChevronDown
-            size={16}
-            className={cn('shrink-0 text-[var(--lume-text-muted)] transition-transform', !collapsed && 'rotate-180')}
-          />
-        )}
+        {isRunning && <AgentLoadingIndicator variant="drive" startedAt={toolCall.startedAt} className="shrink-0" />}
       </Button>
       {shouldRenderResult && (
         <AnimatedCollapsiblePanel open={resultOpen}>
@@ -2488,13 +2626,17 @@ function FooterMemoryNotice({
       >
         <Database size={13} strokeWidth={1.8} />
         <span>参考了 {totalCount} 条记忆</span>
-        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        <ChevronRight size={13} className={cn('transition-transform duration-300', expanded && 'rotate-90')} />
       </Button>
       {expanded && (
-        <div className="absolute left-0 top-full z-30 mt-1 max-h-60 min-w-[220px] max-w-[360px] overflow-y-auto rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-2 shadow-[0_16px_40px_-24px_hsl(var(--lume-shadow-panel)/0.62)]">
+        <div className="animate-in fade-in zoom-in-95 slide-in-from-top-1 absolute left-0 top-full z-30 mt-1 max-h-60 min-w-[220px] max-w-[360px] origin-top-left overflow-y-auto rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-2 shadow-[0_16px_40px_-24px_hsl(var(--lume-shadow-panel)/0.62)] duration-200 motion-reduce:animate-none">
           <div className="space-y-2 text-[11px] leading-5 text-[var(--lume-text-muted)]">
-            {groups.map(group => (
-              <div key={group.key}>
+            {groups.map((group, groupIndex) => (
+              <div
+                key={group.key}
+                className="animate-in fade-in slide-in-from-top-1 fill-mode-both duration-300 motion-reduce:animate-none"
+                style={{ animationDelay: `${groupIndex * 80}ms` }}
+              >
                 <div className="mb-0.5 text-[var(--lume-text-muted)]">{group.label}</div>
                 <ol className="space-y-1">
                   {group.items.map((item, index) => {

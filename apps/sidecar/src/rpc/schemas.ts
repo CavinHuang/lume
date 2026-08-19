@@ -2056,7 +2056,8 @@ export const updateGeneralSettingsInputSchema = z.object({
   }).optional(),
   agentMessageDisplayMode: z.enum(["minimal", "verbose"]).optional(),
   agentMessageListDisplayMode: z.enum(["conversation", "left_aligned"]).optional(),
-  agentMessageAvatarMode: z.enum(["visible", "hidden"]).optional()
+  agentMessageAvatarMode: z.enum(["visible", "hidden"]).optional(),
+  chatFontScale: z.enum(["sm", "md", "lg"]).optional()
 });
 
 export const clearCacheInputSchema = z.object({

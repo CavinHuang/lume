@@ -1,10 +1,12 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
 const packageRoot = join(import.meta.dir, "..");
 const repositoryRoot = join(packageRoot, "..", "..");
 const sourceRoot = join(packageRoot, "src");
-const batchSize = 40;
+// F7:逐文件隔离子进程——组合跑时 mock.module 污染同批文件(单文件绿、合跑红),
+// 进程边界是唯一彻底的隔离;4 路并行摊平 spawn 开销。
+const concurrency = 4;
 
 function collectTests(directory) {
   const tests = [];
@@ -19,31 +21,52 @@ function collectTests(directory) {
   return tests;
 }
 
-function run(files) {
-  const result = Bun.spawnSync({
-    cmd: ["bun", "test", ...files],
-    cwd: repositoryRoot,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  if (result.exitCode !== 0) process.exit(result.exitCode);
-}
-
 const tests = collectTests(sourceRoot)
   .map((path) => relative(repositoryRoot, path))
   .sort();
-const isolated = [];
-const ordinary = [];
 
-for (const path of tests) {
-  const source = readFileSync(join(repositoryRoot, path), "utf8");
-  const needsIsolatedProcess = path.endsWith(".integration.test.ts")
-    || source.includes("mock.module(")
-    || source.includes("setLogBatchNotificationWriter(");
-  (needsIsolatedProcess ? isolated : ordinary).push(path);
+let cursor = 0;
+const failures = [];
+
+// Bun.spawn 异步 + await proc.exited:4 worker 真并行(spawnSync 会阻塞事件循环,
+// worker 池退化为串行——实测串行全量 >15min,并行 4 收进 ~1/4 时长)
+async function worker() {
+  while (cursor < tests.length) {
+    const file = tests[cursor++];
+    // 每子进程独立 LUME_CONFIG_DIR:并行 worker 共享 HOME 会锁冲突
+    // (planning.sqlite 等共享 SQLite "database is locked"——CI 实证)。
+    const proc = Bun.spawn({
+      cmd: ["bun", "test", file],
+      cwd: repositoryRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        LUME_CONFIG_DIR: join(
+          import.meta.dir,
+          `..`,
+          `.tmp-test-config-${process.pid}-${cursor}`,
+        ),
+      },
+    });
+    const [exitCode, stderr, stdout] = await Promise.all([
+      proc.exited,
+      new Response(proc.stderr).text(),
+      new Response(proc.stdout).text(),
+    ]);
+    if (exitCode === 0) continue;
+    failures.push(file);
+    console.error(`\n===== FAIL ${file} (exit ${exitCode}) =====`);
+    console.error(stderr);
+    console.error(stdout);
+  }
 }
 
-for (let index = 0; index < ordinary.length; index += batchSize) {
-  run(ordinary.slice(index, index + batchSize));
+await Promise.all(Array.from({ length: Math.min(concurrency, tests.length) }, worker));
+
+if (failures.length > 0) {
+  console.error(`\n${failures.length}/${tests.length} test files failed:`);
+  for (const file of failures) console.error(`  ${file}`);
+  process.exit(1);
 }
-for (const path of isolated) run([path]);
+console.log(`${tests.length} test files passed (isolated per-file subprocesses).`);
