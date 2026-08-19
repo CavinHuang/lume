@@ -83,6 +83,9 @@ export function AppearanceSettings() {
       if (updates.themePalette || updates.customThemePalettes) {
         setThemePalette(saved.themePalette, saved.customThemePalettes)
       }
+      if (updates.chatFontScale) {
+        setChatFontScale(saved.chatFontScale)
+      }
       toast.success(successMessage)
     } catch (error) {
       console.error('[AppearanceSettings] 保存失败:', error)
@@ -121,7 +124,6 @@ export function AppearanceSettings() {
   const handleChatFontScaleChange = (scale: ChatFontScale) => {
     const current = settings.chatFontScale ?? 'md'
     if (scale === current || saving) return
-    setChatFontScale(scale)
     void persistSettings({ chatFontScale: scale }, '外观设置已保存')
   }
 
