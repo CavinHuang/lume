@@ -824,7 +824,7 @@ export function AgentInput({
     editorProps: {
       attributes: {
         class:
-          'outline-none min-h-[72px] max-h-[220px] overflow-y-auto text-[14px] leading-7 text-[var(--text-1)]',
+          'outline-none min-h-[72px] max-h-[220px] overflow-y-auto text-chat text-[var(--text-1)]',
       },
       handlePaste(view, event) {
         if (
@@ -1841,7 +1841,7 @@ export function AgentInput({
     <div className="px-3 pb-4 pt-2">
       <SuggestionBanner threadId={threadId} workspaceSlug={configWorkspaceSlug} />
       <PendingResumeBanner threadId={threadId} />
-      <div className="mx-auto w-full max-w-[980px] px-4">
+      <div className="mx-auto w-full max-w-[920px] px-4">
         <div>
           <LumeComposer
             tone={composerState.tone}

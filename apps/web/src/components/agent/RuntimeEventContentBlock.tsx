@@ -592,7 +592,7 @@ function UserMessageBlock({
           </div>
         )}
         <div className={cn(
-          'text-[15px] font-medium leading-[22px] text-[var(--lume-text-primary)]',
+          'text-chat font-medium leading-[1.5] text-[var(--lume-text-primary)]',
           leftAligned
             ? 'rounded-[10px] bg-[var(--lume-accent-soft)] px-3.5 py-2.5'
             : 'rounded-[12px] rounded-tr-[10px] bg-[var(--lume-accent-soft)] px-3 py-2 shadow-[0_1px_0_hsl(var(--lume-shadow-panel)/0.08)]',
@@ -2031,7 +2031,7 @@ const SmoothText = memo(function SmoothText({
   const renderMarkdown = (content: string, key?: string) => (
     <XMarkdown
       key={key}
-      className="agent-message-markdown x-markdown text-[15px] leading-7 text-[var(--lume-text-primary)]"
+      className="agent-message-markdown x-markdown text-chat text-[var(--lume-text-primary)]"
       rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
       streaming={markdownStreaming}
       components={markdownComponents}
@@ -2190,7 +2190,7 @@ const PlanPreviewMarkdown = memo(function PlanPreviewMarkdown({
 
   return (
     <XMarkdown
-      className="agent-message-markdown x-markdown text-[15px] leading-7 text-[var(--lume-text-primary)]"
+      className="agent-message-markdown x-markdown text-chat text-[var(--lume-text-primary)]"
       rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
       components={components}
     >

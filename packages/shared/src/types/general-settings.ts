@@ -30,6 +30,8 @@ export type AgentMessageListDisplayMode = "conversation" | "left_aligned"
 
 export type AgentMessageAvatarMode = "visible" | "hidden"
 
+export type ChatFontScale = "sm" | "md" | "lg"
+
 export interface GeneralSettingsWindowBehavior {
   minimizeToTray: boolean
   closeToTray: boolean
@@ -67,6 +69,7 @@ export interface GeneralSettings {
   agentMessageDisplayMode: AgentMessageDisplayMode
   agentMessageListDisplayMode: AgentMessageListDisplayMode
   agentMessageAvatarMode: AgentMessageAvatarMode
+  chatFontScale: ChatFontScale
   agentIsland: GeneralSettingsAgentIsland
   /**
    * Windows/Linux 灵动岛窗口位置持久化。macOS 贴刘海/原生面板，该字段无副作用。
@@ -84,6 +87,7 @@ export interface UpdateGeneralSettingsInput {
   agentMessageDisplayMode?: AgentMessageDisplayMode
   agentMessageListDisplayMode?: AgentMessageListDisplayMode
   agentMessageAvatarMode?: AgentMessageAvatarMode
+  chatFontScale?: ChatFontScale
   agentIsland?: Partial<GeneralSettingsAgentIsland>
   islandWindowPosition?: IslandWindowPosition | null
   logging?: Partial<LumeLoggingSettings>
@@ -190,6 +194,7 @@ export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
   agentMessageDisplayMode: "minimal",
   agentMessageListDisplayMode: "conversation",
   agentMessageAvatarMode: "visible",
+  chatFontScale: "md",
   logging: { ...LUME_LOGGING_DEFAULTS }
 }
 
