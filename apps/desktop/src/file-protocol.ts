@@ -239,6 +239,9 @@ export async function createPreviewProtocolResponse(
       headers.set('Content-Length', String(resolution.size))
       return new Response(null, { status: 200, headers })
     }
+    // html-directory scope 在 resolve 侧不做大小检查(仅 media-file 检查),此处必须拦在
+    // readFileSync 之前——否则超大 html 同步全读会阻塞主进程乃至 OOM(#128)
+    if (resolution.size > resolution.maxBytes) return new Response('Preview file is too large', { status: 413, headers })
     const html = injectHtmlNavigationBridge(readFileSync(resolution.path, 'utf8'))
     headers.set('Content-Length', String(Buffer.byteLength(html)))
     return new Response(html, { status: 200, headers })
