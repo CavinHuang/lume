@@ -112,7 +112,7 @@ describe('RuntimeEvent UI boundary', () => {
     expect(subagentPanel).toContain('!expanded && !isPending && isDone')
     expect(animatedPanel).toContain('grid-rows-[0fr]')
     expect(animatedPanel).toContain('grid-rows-[1fr]')
-    expect(animatedPanel).toContain('duration-200')
+    expect(animatedPanel).toContain('duration-300')
     expect(animatedPanel).toContain('visualOpen')
     expect(animatedPanel).toContain('requestAnimationFrame')
   })
