@@ -11,8 +11,10 @@ import {
 import { toast } from 'sonner'
 import { listen } from '@/lib/desktop-runtime/event'
 import { relaunch } from '@/lib/desktop-runtime/process'
-import { DATA_CATEGORY_META } from '@lume/shared'
-import type { StorageStats } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, DATA_CATEGORY_META } from '@lume/shared'
+import type { AgentThreadMeta, StorageStats } from '@lume/shared'
+import { useReleaseThreadState } from '@/hooks/use-release-thread-state'
+import { sidecarCall } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -44,6 +46,7 @@ import {
 import { useModelMetaReload } from '@/lib/model-meta-context'
 
 export function DataManagementSettings() {
+  const releaseThreadState = useReleaseThreadState()
   const [stats, setStats] = React.useState<StorageStats | null>(null)
   const [loadingStats, setLoadingStats] = React.useState(true)
   const [selection, setSelection] = React.useState<CleanupSelection>(createDefaultCleanupSelection())
@@ -111,7 +114,10 @@ export function DataManagementSettings() {
   const handleEmptyTrash = async () => {
     setEmptying(true)
     try {
+      // 与 ArchiveSettings 清空回收站同语义：回收站里的线程一并释放渲染端状态
+      const trashedThreads = await sidecarCall<AgentThreadMeta[]>(AGENT_IPC_CHANNELS.LIST_TRASHED_THREADS, {})
       const { cleanedCount } = await emptyTrash()
+      for (const thread of trashedThreads ?? []) releaseThreadState(thread.id)
       toast.success(`已清空回收站 ${cleanedCount} 项`)
       await refreshStats()
     } catch (error) {
