@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { openExternal, openFileDialog, openFolderDialog, revealPathInSystem } from '@/lib/desktop-api'
+import { openFileDialog, openFolderDialog, openExternalScheme, revealPathInSystem } from '@/lib/desktop-api'
 import { applyWikiDraft, cancelWikiDraft, createAskWikiThread, createWikiEditDraft, createWikiImportDraft, createWikiPrivacyPurgeDraft, getWikiCapabilities, getWikiSnapshot, prepareWikiRuntime, previewWikiPrivacyPurge, readWikiPage, resolveWikiPending, runWikiLint, searchWiki, undoWikiBatch } from '@/lib/desktop-api/wiki'
 import { cn } from '@/lib/utils'
 import { countWikiPages, defaultAskWikiScope, filterWikiPages, type WikiFolderFilter } from './wiki-view-state'
@@ -197,7 +197,7 @@ export function WikiView() {
     setTabs((items) => items.some((tab) => tab.id === threadId) ? items : [...items, { id: threadId, type: 'agent', title: '向 Wiki 提问', threadId }])
     setActiveTabId(threadId)
   })
-  const openObsidian = () => snapshot && void openExternal(`obsidian://open?path=${encodeURIComponent(snapshot.rootPath)}`).catch(() => toast.error('未能打开 Obsidian，请确认已安装并注册 URI'))
+  const openObsidian = () => snapshot && void openExternalScheme(`obsidian://open?path=${encodeURIComponent(snapshot.rootPath)}`, 'obsidian').catch(() => toast.error('未能打开 Obsidian，请确认已安装并注册 URI'))
   const openWikiFolder = () => snapshot && void revealPathInSystem(snapshot.rootPath).catch(() => toast.error('打开 Wiki 目录失败'))
   const checkWiki = () => void act(async () => { await runWikiLint(); await load() })
   const isDark = useIsDark()
