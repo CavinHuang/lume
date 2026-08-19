@@ -40,15 +40,16 @@ describe('Codex syntax themes', () => {
     expect(CODEX_DARK_THEME.semanticTokenColors).toMatchObject({ keyword: '#F67576', string: '#85df7b' })
   })
 
-  test('invalid tokens carry a red background in both modes', () => {
-    // 前景为白，必须有底色否则浅色面板上不可见
+  test('invalid tokens render visible red foreground in both modes', () => {
+    // shiki 语法 token 不渲染背景色，数据前景为白会在浅色面板上不可见——包装层覆盖为红
+    const expected = { [CODEX_LIGHT_THEME.name]: '#e02e2a', [CODEX_DARK_THEME.name]: '#F44A4C' }
     for (const theme of [CODEX_LIGHT_THEME, CODEX_DARK_THEME]) {
       const invalidRules = theme.tokenColors?.filter(
         (rule) => typeof rule.scope === 'string' && rule.scope.startsWith('invalid'),
       ) ?? []
       expect(invalidRules.length).toBeGreaterThan(0)
       for (const rule of invalidRules) {
-        expect(rule.settings?.background).toBe('#e02e2a')
+        expect(rule.settings?.foreground).toBe(expected[theme.name as string])
       }
     }
   })
