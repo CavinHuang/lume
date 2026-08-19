@@ -49,7 +49,10 @@ export class BrowserAnnotationManager {
     getScreenshotMode: () => 'off' | 'necessary' | 'always'
     captureScreenshot: (tab: AnnotationRuntimeTab) => Promise<{ data: Buffer; width?: number; height?: number; deviceScaleFactor?: number }>
   }) {
-    this.store = new BrowserAnnotationSessionStore(options.configDir)
+    this.store = new BrowserAnnotationSessionStore(options.configDir, {
+      // 会话淘汰/评论截断丢弃的截图引用同步清理,避免 review-resources 下孤儿 PNG 累积(#130)
+      onDiscardedScreenshots: (threadId, refs) => { for (const ref of refs) this.deleteScreenshotFile(threadId, ref) },
+    })
   }
 
   session(tab: AnnotationRuntimeTab, threadId: string): BrowserAnnotationSessionSnapshot {
