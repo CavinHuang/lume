@@ -75,7 +75,8 @@ export function hydrateRuntimeEvents(
     return prev
   }
   // 与 append 路径同上限：sidecar 回放不封顶，hydrate 不 trim 会让重开的超长线程
-  // 全量驻留内存（且直到下一条 append 前都无界）。trim 规则同 append：先丢头部 delta。
+  // 全量驻留内存（且直到下一条 append 前都无界）。merge 阶段已按 live 规则合并相邻
+  // 同流 delta（回放无 assistant.final，正文全靠 delta，先合并再 trim 才不会误伤）。
   const events = trimRuntimeEvents(mergeHydratedRuntimeEvents(result.events, current?.events ?? []))
   if (current && sameRuntimeEvents(current.events, events)) {
     return prev
@@ -116,7 +117,30 @@ function mergeHydratedRuntimeEvents(
     seenIds.add(event.id)
     merged.push(event)
   }
-  return sortRuntimeEvents(merged)
+  // 回放按内容块/流事件逐条产出 delta，不像 live 路径边流边合并，计数远更膨胀——
+  // 直接 trim 会把头部 turn 的正文 delta 丢掉（回放没有 assistant.final 兜底重建，
+  // 投影 text 完全靠 delta 累积，丢了就是空泡）。先按 live 同规则合并相邻同流 delta，
+  // 让上限语义两条路径一致。
+  return mergeAdjacentStreamDeltas(sortRuntimeEvents(merged))
+}
+
+function mergeAdjacentStreamDeltas(events: LumeRuntimeEvent[]): LumeRuntimeEvent[] {
+  const merged: LumeRuntimeEvent[] = []
+  for (const event of events) {
+    const last = merged[merged.length - 1]
+    if (
+      last !== undefined
+      && (last.type === 'assistant.delta' || last.type === 'assistant.thinking_delta')
+      && (event.type === 'assistant.delta' || event.type === 'assistant.thinking_delta')
+      && last.type === event.type
+      && hasSameAssistantStreamOwner(last, event)
+    ) {
+      merged[merged.length - 1] = { ...last, delta: last.delta + event.delta }
+      continue
+    }
+    merged.push(event)
+  }
+  return merged
 }
 
 function compareRuntimeEvents(a: LumeRuntimeEvent, b: LumeRuntimeEvent): number {
