@@ -3183,6 +3183,7 @@ export class BrowserRuntime {
     if (tab.mountToken) {
       const pending = this.guestMounts.get(tab.mountToken)
       if (pending
+        && pending.state === "issued"
         && pending.tabId === tab.tabId
         && pending.generation === tab.generation
         && pending.ownerWebContentsId === win.webContents.id
