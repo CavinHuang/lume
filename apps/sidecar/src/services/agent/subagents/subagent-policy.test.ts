@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { getSubagentRunRegistry, resetSubagentRunRegistryForTest } from "./subagent-run-registry";
-import { resolveSubagentSpawnPolicy } from "./subagent-policy";
+import { clampSubagentPermissionMode, resolveSubagentSpawnPolicy } from "./subagent-policy";
 
 let previousConfigDir: string | undefined;
 let previousMaxDepth: string | undefined;
@@ -86,6 +86,42 @@ describe("subagent-policy", () => {
     });
     expect(decision.ok).toBe(true);
     expect(decision.childPermissionMode).toBe("plan");
+  });
+});
+
+describe("clampSubagentPermissionMode", () => {
+  test("未请求时应继承父级模式（含 undefined 父级）", () => {
+    expect(clampSubagentPermissionMode(undefined, "default")).toBe("default");
+    expect(clampSubagentPermissionMode(undefined, undefined)).toBeUndefined();
+  });
+
+  test("default 父级下请求 bypassPermissions 应钳制为 default", () => {
+    expect(clampSubagentPermissionMode("bypassPermissions", "default")).toBe("default");
+  });
+
+  test("dontAsk 父级下请求 dontAsk/auto/acceptEdits 应放行（同级或降级请求）", () => {
+    expect(clampSubagentPermissionMode("dontAsk", "dontAsk")).toBe("dontAsk");
+    expect(clampSubagentPermissionMode("auto", "dontAsk")).toBe("dontAsk");
+    expect(clampSubagentPermissionMode("acceptEdits", "dontAsk")).toBe("acceptEdits");
+  });
+
+  test("default 父级下请求 auto 应钳制（auto 档位高于 default）", () => {
+    expect(clampSubagentPermissionMode("auto", "default")).toBe("default");
+  });
+
+  test("bypassPermissions 父级下应放行全部请求", () => {
+    expect(clampSubagentPermissionMode("bypassPermissions", "bypassPermissions")).toBe("bypassPermissions");
+    expect(clampSubagentPermissionMode("default", "bypassPermissions")).toBe("default");
+  });
+
+  test("plan 与 default 同档：plan 父级可派生 default 子级", () => {
+    expect(clampSubagentPermissionMode("default", "plan")).toBe("default");
+    expect(clampSubagentPermissionMode("plan", "default")).toBe("plan");
+  });
+
+  test("未知模式应继承父级", () => {
+    expect(clampSubagentPermissionMode("yolo", "acceptEdits")).toBe("acceptEdits");
+    expect(clampSubagentPermissionMode("yolo", undefined)).toBeUndefined();
   });
 });
 
