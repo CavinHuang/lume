@@ -563,16 +563,15 @@ test("app protocol resolves only lume app URLs within the web root", () => {
   assert.equal(resolveAppProtocolFilePath("lume://app/%5c..%5csecret.txt", webRoot), null);
 });
 
-test("preload allowlists stay in sync with main process allowlists", () => {
+test("preload and main process share the single renderer-ipc-contract source", () => {
+  // 双端白名单已抽到 renderer-ipc-contract.ts 单源；本测试守卫双端 import 同一模块，
+  // 且不得回归为各自的本地 Set 字面量（双份手工维护）。
   const preloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "preload.ts"), "utf8");
-  assert.deepEqual(
-    extractStringSet(preloadSource, "ALLOWED_RENDERER_INVOKE_COMMANDS"),
-    [...ALLOWED_RENDERER_INVOKE_COMMANDS],
-  );
-  assert.deepEqual(
-    extractStringSet(preloadSource, "ALLOWED_RENDERER_EVENT_CHANNELS"),
-    [...ALLOWED_RENDERER_EVENT_CHANNELS],
-  );
+  const securitySource = readFileSync(resolve(DESKTOP_ROOT, "src", "electron-security.ts"), "utf8");
+  assert.match(preloadSource, /from ['"]\.\/renderer-ipc-contract['"]/);
+  assert.match(securitySource, /from ['"]\.\/renderer-ipc-contract['"]/);
+  assert.doesNotMatch(preloadSource, /ALLOWED_RENDERER_INVOKE_COMMANDS\s*=\s*new Set/);
+  assert.doesNotMatch(securitySource, /ALLOWED_RENDERER_INVOKE_COMMANDS\s*=\s*new Set/);
 });
 
 test("main window uses frameless title bar with platform-specific style", () => {
