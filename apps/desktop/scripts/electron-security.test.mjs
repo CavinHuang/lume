@@ -21,6 +21,7 @@ import {
   validateRendererSidecarMethod,
 } from "../src/electron-security.ts";
 import { PUBLIC_RENDERER_SIDECAR_METHODS } from "../src/renderer-sidecar-methods.ts";
+import { LOCAL_RENDERER_SIDECAR_METHODS } from "../../../packages/shared/src/types/renderer-allowlist.ts";
 import {
   createPluginAssetRegistry,
   pluginAssetTokenFromUrl,
@@ -93,13 +94,20 @@ test("preview scopes bind unguessable tokens to one webContents owner and expire
   assert.equal(registry.owns(scope.token, 7), false);
 });
 
-test("renderer sidecar allowlist tracks public shared IPC channels", () => {
+test("renderer sidecar allowlist equals shared derived channels plus local increment (bidirectional)", () => {
+  // 测试内独立重算派生规则（不走 renderer-allowlist.ts 的 PUBLIC_CHANNEL_SOURCES），
+  // 绊住"新增通道常量但 source 列表漏配"；再并上 shared 导出的本地增量，与桌面侧
+  // Set 双向 ==：漏配/私加条目（含死条目）两个方向都会红。
   const sharedMethods = Object.entries(sharedIpc)
     .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && name !== "AGENT_ISLAND_IPC_CHANNELS" && value && typeof value === "object")
     .flatMap(([, value]) => Object.entries(value))
-    .filter(([key, value]) => key !== "CHANGED" && key !== "REMINDER_DUE" && typeof value === "string" && !value.includes(":privileged-") && !Object.values(BROWSER_IPC_CHANNELS).includes(value))
+    .filter(([key, value]) => key !== "CHANGED" && key !== "REMINDER_DUE" && key !== "EVENTS" && typeof value === "string" && !value.includes(":privileged-") && !Object.values(BROWSER_IPC_CHANNELS).includes(value))
     .map(([, value]) => value);
-  for (const method of sharedMethods) assert.equal(PUBLIC_RENDERER_SIDECAR_METHODS.has(method), true, method);
+  const expected = new Set([...sharedMethods, ...LOCAL_RENDERER_SIDECAR_METHODS]);
+  assert.deepEqual(
+    [...PUBLIC_RENDERER_SIDECAR_METHODS].sort(),
+    [...expected].sort(),
+  );
 });
 
 test("renderer may inspect browser backend availability without invoking browser actions", () => {

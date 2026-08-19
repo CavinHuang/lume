@@ -1,16 +1,112 @@
-import type { PermissionMode } from "@lume/agent-sdk";
-import type { SDKMessage } from "@lume/shared";
+import { projectLifecycle, type PermissionMode } from "@lume/agent-sdk";
+import type { SdkLifecycleDetail, SDKMessage, SdkLifecycleEvent, TodoStateDetail } from "@lume/shared";
 import {
   appendSdkMessage,
   createAgentStreamAccumulatorState,
   hasRenderableAssistantOutput
 } from "../../agent/agent-stream-accumulator";
+import { createLogger } from "../../infra/logger";
+import { getThreadEventBus } from "../events/thread-event-bus";
 import type { AgentRuntimeEmitter } from "./types";
 import type { LumeRunObserver } from "./run-observer";
+
+const log = createLogger("run-loop");
 
 interface ConsumeRuntimeCoreQueryStreamInput {
   query: AsyncIterable<SDKMessage>;
   emit: Pick<AgentRuntimeEmitter, "onSdkMessage">;
+  /** 投影 lifecycle 事件到 ThreadEventBus(批次5 T7c 起恒开,flag 已退役)。
+   * runId=Lume runId(lume-runner 构造处 observer.getRunId())——骨架事件弃自产
+   * UUID,与第二入口领域事件(memory/todo/advisor)同域(批次5 Task 6)。
+   * onRunEnd(F3):projector 产出 run.end 终值时回调——LumeRunner 据此在异常
+   * 路径跳过终值补发,保证同一 run 只有一个总线终值。 */
+  lifecycle?: { threadId: string; sessionDir: string; runId: string; onRunEnd?: () => void };
+}
+
+/**
+ * Tee 主 query 流：每个 chunk 照常转发给主循环，同时排入队列由后台泵
+ * 喂给 projectLifecycle，产物 fire-and-forget publish 到线程事件总线
+ * （失败仅 warn，不阻塞也不影响主流）。主流提前 return（错误 result）时
+ * 由 finally 结束队列并等泵排空，保证事件序列完整落盘。
+ */
+async function* teeLifecycleProjection(
+  query: AsyncIterable<SDKMessage>,
+  target: { threadId: string; sessionDir: string; runId: string; onRunEnd?: () => void }
+): AsyncGenerator<SDKMessage> {
+  const bus = getThreadEventBus(target.sessionDir);
+  const pending: SDKMessage[] = [];
+  let wake: (() => void) | null = null;
+  let finished = false;
+  // F3:主流异常先记录再 rethrow——finally 排空 pump 时投影链取到异常,
+  // projector 据此补发 run.end{error} 而非把错误流当正常结束标 aborted。
+  let streamFailed = false;
+  let streamError: unknown = null;
+  const projected: AsyncIterable<SDKMessage> = {
+    [Symbol.asyncIterator]: () => ({
+      next: async (): Promise<IteratorResult<SDKMessage>> => {
+        while (pending.length === 0) {
+          if (finished) {
+            if (streamFailed) throw streamError;
+            return { done: true, value: undefined };
+          }
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+        return { done: false, value: pending.shift()! };
+      }
+    })
+  };
+  // 独立成函数：闭包内读取 wake 才不会被外层 null 赋值的窄化污染
+  const notifyProjected = (): void => {
+    const resolve = wake;
+    wake = null;
+    resolve?.();
+  };
+  const pump = (async () => {
+    try {
+      for await (const event of projectLifecycle(projected, { runId: target.runId })) {
+        // F3 互斥标记:见到 run.end 即通知调用方终值已由投影链交付
+        if (event.kind === "run" && event.phase === "end") target.onRunEnd?.();
+        // 前提钉死:bus.publish 当前全同步(appendFileSync 后 resolve),resolve 即持久化完成。
+        // 若改为真异步 fs,promise 化的 publish 在此 fire-and-forget 会让 finally 的 await pump
+        // 不再等事件落盘——run 尾事件将静默丢失;重构前必须同步改造 tee(pump 内 await publish)。
+        // 用 .catch 而非同步 try/catch:后者对异步 reject 无效,.catch 兼容两种时序。
+        void bus.publish(target.threadId, (event as SdkLifecycleEvent<SdkLifecycleDetail>).runId, event)
+          .catch((error) => {
+            log.warn("lifecycle 事件 publish 失败", {
+              threadId: target.threadId,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          });
+      }
+    } catch (error) {
+      log.warn("lifecycle 投影失败", {
+        threadId: target.threadId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  })();
+  try {
+    for await (const message of query) {
+      pending.push(message);
+      notifyProjected();
+      yield message;
+    }
+  } catch (error) {
+    // F3 fix round 1:abort 味异常(用户主动取消)不注入投影链——与 LumeRunner
+    // catch 的 /abort|interrupted/i 判定对齐,post-loop 保持 aborted 终值语义,
+    // 避免总线 error 与 observer cancelled 分裂(用户取消显示为 run.failed)。
+    if (!/abort|interrupted/i.test(error instanceof Error ? error.message : String(error))) {
+      streamFailed = true;
+      streamError = error;
+    }
+    throw error;
+  } finally {
+    finished = true;
+    notifyProjected();
+    await pump;
+  }
 }
 
 export function normalizeRuntimeCoreQueryPermissionMode(
@@ -29,11 +125,13 @@ export function normalizeRuntimeCoreQueryPermissionMode(
 
 export async function consumeRuntimeCoreQueryStream({
   query,
-  emit
+  emit,
+  lifecycle
 }: ConsumeRuntimeCoreQueryStreamInput) {
   const accumulator = createAgentStreamAccumulatorState();
+  const source = lifecycle ? teeLifecycleProjection(query, lifecycle) : query;
 
-  for await (const message of query) {
+  for await (const message of source) {
     emit.onSdkMessage(message);
     appendSdkMessage(accumulator, message);
 
@@ -92,7 +190,8 @@ export function getRuntimeCoreStreamError(message: SDKMessage): string | null {
 
 export function createObservedRuntimeEmitter(
   emit: AgentRuntimeEmitter,
-  observer: LumeRunObserver
+  observer: LumeRunObserver,
+  bus?: { sessionDir: string }
 ): AgentRuntimeEmitter {
   return {
     ...emit,
@@ -105,8 +204,31 @@ export function createObservedRuntimeEmitter(
       emit.onSdkMessage(message);
     },
     onTodoUpdated: (state) => {
-      observer.recordTodoState(state, emit.onRuntimeEvent);
+      observer.recordTodoState(state);
       emit.onTodoUpdated?.(state);
+      // 批次5 第二入口:同一 todo state 经 ThreadEventBus 发布(run 级领域事件,
+      // T7c 起恒开);T7a 后旧路投影已删,item 记录仅供 hydrate replay。
+      // runId 取 Lume run id,detail.state 与回调载荷同引用。
+      if (bus) {
+        const threadId = observer.getThreadId();
+        const runId = observer.getRunId();
+        const detail: TodoStateDetail = { type: "todo.state", state };
+        void getThreadEventBus(bus.sessionDir)
+          .publish(threadId, runId, {
+            runId,
+            turnId: null,
+            ts: Date.now(),
+            kind: "run",
+            phase: "event",
+            detail
+          })
+          .catch((error) => {
+            log.warn("todo.state 总线 publish 失败", {
+              threadId,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          });
+      }
     },
     onToolPermissionRequest: (request) => {
       void observer.flush();

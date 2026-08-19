@@ -83,7 +83,8 @@ describe("create-cron-tools", () => {
     const readAfterDelete = await callTool(readTool, {});
     const jobsAfterDelete = (readAfterDelete as { jobs?: unknown[] }).jobs ?? [];
     expect(jobsAfterDelete.length).toBe(0);
-  });
+    // CI 并行跑批下实测 7s+(本地 <1s),放宽超时避免环境性红。
+  }, 20000);
 
   test("query 应返回运行记录结构", async () => {
     const tools = createSdkCronTools({ workspaceId: "ws-1" });
@@ -114,7 +115,8 @@ describe("create-cron-tools", () => {
     expect(details.ok).toBeTrue();
     expect(details.accepted).toBeTrue();
     expect((details.message ?? "").includes("异步执行")).toBeTrue();
-  });
+    // CI 并行跑批下实测 8s+(本地 <1s),放宽超时。
+  }, 20000);
 
   test("update 应支持将定时任务切回 manual 调度", async () => {
     const tools = createSdkCronTools({ workspaceId: "ws-1", sessionId: "session-main-1" });
@@ -139,7 +141,8 @@ describe("create-cron-tools", () => {
     const nextRunAt = (updateResult as { job?: { nextRunAt?: number | null } }).job?.nextRunAt;
     expect(updatedSchedule?.type).toBe("manual");
     expect(nextRunAt).toBeNull();
-  });
+    // CI 并行跑批下实测 8s+(本地 <1s),放宽超时。
+  }, 20000);
 
   test("创建定时任务后应刷新正在运行的 scheduler", async () => {
     await startAutomationRunner();

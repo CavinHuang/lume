@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { projectRuntimeEventMessages, applyRuntimeEventsIncremental, type ProjectionRef } from './runtime-event-message-projection'
+import { hydrateRuntimeEvents } from '@/hooks/runtime-event-state'
 import type { LumeRuntimeEvent } from '@lume/shared'
 import type { RuntimeMessageView } from './runtime-message-view'
 
@@ -516,6 +517,22 @@ describe('runtime-event-message-projection', () => {
     })
   })
 
+  test('tool.started 幂等:双 id 空间(旧路 persisted + lifecycle 总线)同 toolCallId 只产单卡单 block', () => {
+    // 批次2 双投链路:hydrate 合并按 event.id 去重,旧路 `${runId}:${item.id}` 与总线
+    // `lifecycle:{seq}` 互异 → 双 tool.started 存活 → 投影不得 push 两个 block。
+    const messages = projectRuntimeEventMessages([
+      event({ id: 'run-1:call-1:tool.started', type: 'tool.started', toolCallId: 'call-1', toolName: 'Bash', inputPreview: { command: 'pwd' } }),
+      event({ id: 'lifecycle:9:tool.started', type: 'tool.started', toolCallId: 'call-1', toolName: 'Bash', inputPreview: { command: 'pwd' } }),
+      event({ id: 'run-1:call-1:tool.completed', type: 'tool.completed', toolCallId: 'call-1', toolName: 'Bash', resultPreview: 'ok' }),
+    ])
+
+    expect(messages[0]?.type).toBe('assistant')
+    if (messages[0]?.type !== 'assistant') return
+    expect(messages[0].toolCalls).toHaveLength(1)
+    expect(messages[0].blocks.filter((block) => block.id === 'tool:call-1')).toHaveLength(1)
+    expect(messages[0].toolCalls[0]).toMatchObject({ id: 'call-1', status: 'completed', output: 'ok' })
+  })
+
   test('marks timed out tool permission failures for the tool title badge', () => {
     const messages = projectRuntimeEventMessages([
       event({
@@ -894,6 +911,45 @@ describe('runtime-event-message-projection', () => {
         mutationId: 'mutation-1',
       },
     })
+  })
+
+  test('upserts memory.changed messages sharing one id (live + replay dedupe, no ghost duplicate)', () => {
+    const memoryChanged = (id: string, summary: string) => event({
+      id,
+      type: 'memory.changed',
+      actor: 'consolidation',
+      workspaceSlug: 'demo',
+      mutationIds: [],
+      memoryIds: [],
+      summary,
+      details: [],
+    })
+    const messages = projectRuntimeEventMessages([
+      memoryChanged('run-1:memory.changed:uuid-same', '整理了 1 条记忆'),
+      memoryChanged('run-1:memory.changed:uuid-same', '整理了 2 条记忆'),
+    ])
+    const same = messages.filter((message) => message.id === 'run-1:memory.changed:uuid-same')
+    expect(same).toHaveLength(1)
+    expect(same[0]).toMatchObject({ type: 'system', variant: 'memory_saved', text: '整理了 2 条记忆' })
+  })
+
+  test('keeps distinct memory.changed messages side by side', () => {
+    const memoryChanged = (id: string, summary: string) => event({
+      id,
+      type: 'memory.changed',
+      actor: 'consolidation',
+      workspaceSlug: 'demo',
+      mutationIds: [],
+      memoryIds: [],
+      summary,
+      details: [],
+    })
+    const messages = projectRuntimeEventMessages([
+      memoryChanged('run-1:memory.changed:uuid-a', '整理了 1 条记忆'),
+      memoryChanged('run-1:memory.changed:uuid-b', '整理了 3 条记忆'),
+    ])
+    expect(messages.filter((message) => message.id === 'run-1:memory.changed:uuid-a')).toHaveLength(1)
+    expect(messages.filter((message) => message.id === 'run-1:memory.changed:uuid-b')).toHaveLength(1)
   })
 
   test('projects one updating AutoDream job message', () => {
@@ -1420,5 +1476,96 @@ describe('todo_update block 稳定性', () => {
       pendingBackground: false,
     })
     expect(assistants[1]?.type === 'assistant' ? assistants[1].codingReport : undefined).toBeUndefined()
+  })
+
+  test('trailing memory context after early run close does not duplicate the assistant message', () => {
+    // CDP 实测(2026-08-15 总线批次1 验收):flag on 时同一 run 双路时序为
+    //   assistant.final(总线,.155)→ run.completed(总线,.167,flush assistant:<runId>)
+    //   → memory.context.used(旧路 replay,.452)→ run.completed(旧路 replay,.880)
+    // 总线 run.end 先关流,旧路尾巴 memory.context.used 若经 ??= 重建同 id 空
+    // assistant,末尾 flush 会产出第二条 assistant:<runId> → AgentMessages
+    // duplicate key(runtime-event-assistant:<uuid>)与空白 assistant 消息。
+    const sidecarRun = 'a745e511-sidecar'
+    const busRun = 'e5eabd0d-bus'
+    const persisted = [
+      event({ id: `${sidecarRun}:run.started`, type: 'run.started', runId: sidecarRun, createdAt: '2026-08-15T21:02:05.700Z' }),
+      event({ id: `${sidecarRun}:message.user.submitted`, type: 'message.user.submitted', runId: sidecarRun, text: '你有什么能力', createdAt: '2026-08-15T21:02:05.700Z' }),
+      event({ id: `${sidecarRun}:item-1:assistant.delta:0`, type: 'assistant.delta', runId: sidecarRun, delta: '回复内容', messageId: 'item-1', createdAt: '2026-08-15T21:02:11.155Z' }),
+      event({
+        id: `${sidecarRun}:item-mem:memory.context.used`,
+        type: 'memory.context.used',
+        runId: sidecarRun,
+        createdAt: '2026-08-15T21:02:11.452Z',
+        items: [{ kind: 'fact', scope: 'workspace', status: 'active', id: 'mem-1', citation: 'memory.md', reason: '相关' }],
+      }),
+      event({ id: `${sidecarRun}:run.completed`, type: 'run.completed', runId: sidecarRun, createdAt: '2026-08-15T21:02:11.880Z' }),
+    ]
+    const live = [
+      event({ id: 'lifecycle:326:assistant.delta', type: 'assistant.delta', runId: busRun, delta: '回复', createdAt: '2026-08-15T21:02:07.100Z' }),
+      event({ id: 'lifecycle:327:assistant.delta', type: 'assistant.delta', runId: busRun, delta: '内容', createdAt: '2026-08-15T21:02:09.000Z' }),
+      event({ id: 'lifecycle:555:assistant.final', type: 'assistant.final', runId: busRun, blocks: [{ type: 'text', text: '回复内容' }], createdAt: '2026-08-15T21:02:11.155Z' }),
+      event({ id: 'lifecycle:557:run.completed', type: 'run.completed', runId: busRun, createdAt: '2026-08-15T21:02:11.167Z' }),
+    ]
+    const merged = hydrateRuntimeEvents(
+      { 'thread-1': { events: live, updatedAt: 0 } },
+      { threadId: 'thread-1', events: persisted },
+    )
+    const messages = projectRuntimeEventMessages(merged['thread-1']!.events)
+
+    const ids = messages.map((message) => message.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids.filter((id) => id === `assistant:${sidecarRun}`)).toHaveLength(1)
+  })
+
+  test('runId 统一后(批次5 T6):终态后 memory 尾巴与已 flush assistant 同域,分支防线拦截不重建', () => {
+    // T6 后总线骨架事件弃自产 UUID、恒用 Lume runId——live 总线侧
+    // assistant.final→run.completed 与紧随其后的 memory.context.used(第二入口,
+    // tee 排空后才 publish)同 runId。T7c 入口闸门退役,memory.context.used 分支
+    // 内 terminalClosed 早退保留为最小防线(历史回放仍可能终态后到达)。
+    const runId = 'unified-run-1'
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', runId, text: 'hi', messageId: 'user-1' }),
+      event({ id: `lifecycle:10:assistant.delta`, type: 'assistant.delta', runId, delta: 'done' }),
+      event({ id: `lifecycle:11:assistant.final`, type: 'assistant.final', runId, blocks: [{ type: 'text', text: 'done' }] }),
+      event({ id: `lifecycle:12:run.completed`, type: 'run.completed', runId }),
+      // 尾巴:同 runId 的 memory.context.used(终态后到达)
+      event({
+        id: `lifecycle:13:memory.context.used`,
+        type: 'memory.context.used',
+        runId,
+        items: [{ kind: 'fact', scope: 'workspace', status: 'active', id: 'mem-1', citation: 'memory.md', reason: '相关' }],
+      }),
+    ])
+
+    // 当前行为保持:分支防线拦截,不重建 assistant——id 唯一、数量不变
+    const ids = messages.map((message) => message.id)
+    expect(ids).toEqual(['user-1', `assistant:${runId}`])
+    expect(new Set(ids).size).toBe(ids.length)
+    // 同域验证:尾巴事件 runId 与已 flush assistant 的 runId 一致(收窄前置条件成立)
+    expect(ids).toContain(`assistant:${runId}`)
+  })
+
+  test('other rebuilding event types after a terminal run do not recreate the flushed assistant', () => {
+    // T7c 入口闸门(TERMINAL_REBUILDING_EVENT_TYPES)退役后,这些类型由
+    // applyRuntimeEvent 中段的 terminalClosed 通用早退兜底:任何重建型事件
+    // (plan.preview 等)终态后到达都不得经 ??= 重建同 id assistant——
+    // 消息 id 唯一、数量不变。
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', text: 'hi', messageId: 'user-1' }),
+      event({ type: 'assistant.delta', delta: 'done' }),
+      event({ type: 'run.completed' }),
+      event({
+        type: 'plan.preview',
+        contractId: 'plan-late',
+        title: 'Late plan',
+        summary: 'late',
+        markdown: '# late',
+        stepCount: 1,
+      } as any),
+      event({ type: 'run.completed' }),
+    ])
+    const ids = messages.map((message) => message.id)
+    expect(ids).toEqual(['user-1', 'assistant:run-1'])
+    expect(new Set(ids).size).toBe(ids.length)
   })
 })
