@@ -1,8 +1,8 @@
 // Task 43: manager onGuestMessage editor 命令（editor-submit/cancel/delete）的 TDD 测试。
 // 编辑器分支走 store+syncGuest+emit，不调 BrowserWindow/popup，故 getParentWindow→null 即可。
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { describe, expect, mock, test } from 'bun:test'
 
 // manager 在模块加载期从 electron 导入 BrowserWindow/screen；编辑器分支不会触发它们，
@@ -912,5 +912,32 @@ describe('sanitizeDeclarations', () => {
     // 数字开头的 property 非法，全部被滤
     const illegal = Array.from({ length: 5 }, (_, i) => ({ property: `${i}abc`, value: 'v', previousValue: 'o' }))
     expect(sanitizeDeclarations(illegal)).toEqual([])
+  })
+})
+
+// #130:manager → store hooks → deleteScreenshotFile 的生产接线端到端。
+// 断言文件被真实删除(而非仅回调触发),防止 hooks 接线被重构破坏后测试仍全绿。
+describe('#130 孤儿截图清理接线', () => {
+  test('评论截断丢弃的 ref 经 manager hooks 删除对应 PNG 文件', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      const uuid = '22222222-2222-4222-8222-222222222222'
+      const ref = `browser-review-screenshot:thread-1:${uuid}`
+      const pngPath = join(directory, 'browser', 'review-resources', 'thread-1', `${uuid}.png`)
+      mkdirSync(dirname(pngPath), { recursive: true })
+      writeFileSync(pngPath, Buffer.from('png'))
+      for (let index = 0; index <= 100; index++) {
+        manager.store.saveComment({
+          id: `comment-${index}`,
+          origin: 'browser-annotation' as const,
+          tab: { id: 'tab-1', origin: 'browser-tab' as const, backend: 'iab' as const, browserId: 'lume-iab' as const, tabId: 'tab-1', title: 'Example', url: ANCHOR.url, generation: 1, ownerThreadId: 'thread-1' },
+          anchor: ANCHOR,
+          body: 'Fix this',
+          // comment-0 持独占 ref(截断后无保留集引用,应删文件);其余共享另一 ref
+          screenshotRef: index === 0 ? ref : 'browser-review-screenshot:thread-1:33333333-3333-4333-8333-333333333333',
+        })
+      }
+      expect(existsSync(pngPath)).toBe(false)
+    })
   })
 })
