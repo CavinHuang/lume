@@ -66,14 +66,19 @@ export function MemoryAttentionView({
           />
         ) : (
           <div className="space-y-2">
-            {suggestions.map((record) => (
-              <SuggestionRow
+            {suggestions.map((record, index) => (
+              <div
                 key={record.id}
-                record={record}
-                busy={busySuggestionId === record.id}
-                onAct={(feedback) => onActSuggestion(record.id, feedback)}
-                onDelete={() => onDeleteSuggestion(record.id)}
-              />
+                className="animate-in fade-in slide-in-from-bottom-1 fill-mode-both duration-300 motion-reduce:animate-none"
+                style={{ animationDelay: `${index * 80}ms` }}
+              >
+                <SuggestionRow
+                  record={record}
+                  busy={busySuggestionId === record.id}
+                  onAct={(feedback) => onActSuggestion(record.id, feedback)}
+                  onDelete={() => onDeleteSuggestion(record.id)}
+                />
+              </div>
             ))}
           </div>
         )}
@@ -116,7 +121,7 @@ function StatTile({
   value: number | string
 } & Record<string, unknown>) {
   return (
-    <div className="rounded-xl border border-border/60 bg-[var(--surface-1)] px-4 py-3 shadow-sm" {...rest}>
+    <div className="rounded-xl border border-border/60 bg-[var(--surface-1)] px-4 py-3 shadow-sm transition-[background-color,border-color,transform] duration-300 hover:-translate-y-0.5 hover:border-[color:color-mix(in_oklab,var(--lume-accent)_20%,var(--lume-border-subtle))] motion-reduce:transition-none" {...rest}>
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
     </div>
@@ -159,7 +164,7 @@ export function SuggestionRow({
   onDelete: () => void
 }) {
   return (
-    <article className="flex flex-col gap-2.5 rounded-xl border border-border/60 bg-[var(--surface-1)] px-4 py-3 shadow-sm sm:flex-row sm:items-start">
+    <article className="flex flex-col gap-2.5 rounded-xl border border-border/60 bg-[var(--surface-1)] px-4 py-3 shadow-sm transition-[background-color,border-color,transform] duration-300 hover:-translate-y-0.5 hover:border-[color:color-mix(in_oklab,var(--lume-accent)_18%,var(--lume-border-subtle))] motion-reduce:transition-none sm:flex-row sm:items-start">
       <div className="min-w-0 flex-1">
         <div className="mb-0.5 flex flex-wrap items-center gap-2">
           <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground">

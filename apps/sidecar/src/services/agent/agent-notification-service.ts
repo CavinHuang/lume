@@ -54,21 +54,28 @@ export function createAgentNotificationEmitter(input: {
       });
     },
     onComplete: (payload) => input.onComplete?.(payload),
-    onError: (error) => {
-      writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-        threadId: input.threadId,
-        event: {
-          id: `${input.threadId}:${Date.now()}:run.failed`,
-          type: "run.failed",
+    onError: (error, options) => {
+      // T7c 收编(fix round 1):fromActiveRun=true 表示错误来自 run 执行链
+      // (agent-service 内层 onError 转发,run 终值已由总线 run.end{isError}→run.failed
+      // 单源交付)——不合成,避免双投。缺省(run 外失败:队列派发/启动缺模型等)
+      // 兜底合成。注:不用 isAgentRuntimeSessionActive——session 在 run 收尾
+      // unregisterAbort 后才调 onError,判定恒 false(评审 Major-1)。
+      if (options?.fromActiveRun !== true) {
+        writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
           threadId: input.threadId,
-          runId: `runtime-error:${input.threadId}`,
-          createdAt: new Date().toISOString(),
-          error: {
-            code: "runtime_error",
-            message: error
+          event: {
+            id: `${input.threadId}:${Date.now()}:run.failed`,
+            type: "run.failed",
+            threadId: input.threadId,
+            runId: `runtime-error:${input.threadId}`,
+            createdAt: new Date().toISOString(),
+            error: {
+              code: "runtime_error",
+              message: error
+            }
           }
-        }
-      });
+        });
+      }
       input.onError?.(error);
     },
     onTitleUpdated: (title) =>

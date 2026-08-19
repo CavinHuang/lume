@@ -6,10 +6,12 @@ import {
   applyTextEdits,
   encodeLspMessage,
   getLspClient,
+  getLspClientsForFile,
   languageIdForPath,
   parseLspMessages,
   resolveLspServerConfigsForFile,
   shutdownLspClients,
+  warmupLspClients,
 } from './client.js'
 import { DEFAULT_LSP_SERVERS, findLspWorkspaceRoot, resolveLspExecutable } from './registry.js'
 
@@ -215,4 +217,43 @@ process.stdin.on('data', (chunk) => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  test('warms up a configured server and never rejects when none matches', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'lume-lsp-warmup-'))
+    const empty = await mkdtemp(join(tmpdir(), 'lume-lsp-warmup-empty-'))
+    const script = join(root, 'server.mjs')
+    await writeFile(join(root, 'package.json'), '{}')
+    await writeFile(script, `
+let buffer = Buffer.alloc(0)
+const send = (value) => {
+  const body = Buffer.from(JSON.stringify(value))
+  process.stdout.write(Buffer.concat([Buffer.from('Content-Length: ' + body.length + '\\r\\n\\r\\n'), body]))
+}
+process.stdin.on('data', (chunk) => {
+  buffer = Buffer.concat([buffer, chunk])
+  const end = buffer.indexOf('\\r\\n\\r\\n')
+  if (end < 0) return
+  const match = buffer.subarray(0, end).toString().match(/Content-Length:\\s*(\\d+)/i)
+  if (!match) process.exit(2)
+  const message = JSON.parse(buffer.subarray(end + 4, end + 4 + Number(match[1])))
+  buffer = Buffer.alloc(0)
+  if (message.method === 'initialize') send({ jsonrpc: '2.0', id: message.id, result: { capabilities: {} } })
+  else if (message.method === 'shutdown' || message.id !== undefined) send({ jsonrpc: '2.0', id: message.id, result: null })
+})
+`)
+    try {
+      const config = { lsp: { command: process.execPath, args: [script] } }
+      await expect(warmupLspClients(root, config, 5_000)).resolves.toBeUndefined()
+      const clients = await getLspClientsForFile(root, config)
+      expect(clients.map((client) => client.state)).toEqual(['ready'])
+
+      // No PATH server matches the builtin registry in a bare temp dir: warmup must settle silently.
+      await expect(warmupLspClients(empty, undefined, 500)).resolves.toBeUndefined()
+    } finally {
+      await shutdownLspClients(root)
+      await shutdownLspClients(empty)
+      await rm(root, { recursive: true, force: true })
+      await rm(empty, { recursive: true, force: true })
+    }
+  }, 20_000)
 })

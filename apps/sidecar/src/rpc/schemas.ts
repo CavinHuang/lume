@@ -1900,6 +1900,11 @@ export const threadRunEventsInputSchema = z.object({
   threadId: idSchema
 });
 
+export const getEventsInputSchema = z.object({
+  threadId: idSchema,
+  afterSeq: z.number().int().nonnegative().optional()
+});
+
 export const runTraceInputSchema = z.object({
   threadId: idSchema,
   runId: idSchema.optional(),
@@ -2051,7 +2056,8 @@ export const updateGeneralSettingsInputSchema = z.object({
   }).optional(),
   agentMessageDisplayMode: z.enum(["minimal", "verbose"]).optional(),
   agentMessageListDisplayMode: z.enum(["conversation", "left_aligned"]).optional(),
-  agentMessageAvatarMode: z.enum(["visible", "hidden"]).optional()
+  agentMessageAvatarMode: z.enum(["visible", "hidden"]).optional(),
+  chatFontScale: z.enum(["sm", "md", "lg"]).optional()
 });
 
 export const clearCacheInputSchema = z.object({

@@ -738,3 +738,6 @@ export { AbortError } from './types.js'
 // (reused by the sidecar dangling-fallback resume path).
 export { detectDanglingToolUses, buildResumeContinuations } from './interrupt-recovery.js'
 export type { DanglingToolUse, ResumeToolInfo } from './interrupt-recovery.js'
+
+// Lifecycle projector - SDKMessage stream -> lifecycle skeleton events (batch 1)
+export { projectLifecycle } from './events/lifecycle-projector.js'

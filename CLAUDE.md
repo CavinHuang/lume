@@ -68,6 +68,10 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 2. **在 worktree 新分支上开发** —— 基于最新 `main` 为每个能力创建独立 worktree 与新分支，所有改动只在分支上完成。
 3. **通过 PR 合并 main** —— 改动只能经 PR review 通过后合并回 `main`，禁止本地直接 merge 到 main。
 
+## 6. 排版规范
+
+新代码字号使用语义 token（`text-micro` / `text-caption` / `text-ui` / `text-body` / `text-body-lg` / `text-chat`），禁止新增 `text-[Npx]` 形式的字号 utility；行高跟随 token 配对值（`text-chat` 自带 1.85）。对话流内派生字号（标题/行内 code/代码块）用 em 相对量，保证档位联动。字号 token 命名避开颜色名（如 `secondary`/`muted` 已是 `--color-*`，会产生 `text-*` 解析歧义）。存量 `text-[Npx]` 触碰时顺手迁移，不做机械全量替换。
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.

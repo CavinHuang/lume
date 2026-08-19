@@ -29,26 +29,29 @@ export function SelectionActionPopover({
   return (
     <div
       data-selection-action-popover
-      className="fixed z-[90] flex -translate-x-1/2 -translate-y-full items-center gap-1 rounded-xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-1 shadow-[0_4px_16px_var(--lume-shadow-panel)]"
+      className="fixed z-[90] -translate-x-1/2 -translate-y-full"
       style={{ left: x, top: y }}
       onMouseDown={(event) => event.preventDefault()}
     >
-      <Button variant="ghost" size="default" onClick={onAddToAgent}>
-        <Bot />
-        为 Agent 引用
-      </Button>
-      {onOpenChat ? (
-        <Button
-          variant="ghost"
-          size="default"
-          onClick={() => {
-            void onOpenChat()
-          }}
-        >
-          <MessageCircle />
-          打开右侧问答
+      <div className="animate-in fade-in zoom-in-95 slide-in-from-bottom-1 flex origin-bottom items-center gap-1 rounded-xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-1 shadow-[0_4px_16px_var(--lume-shadow-panel)] duration-150 motion-reduce:animate-none">
+        <Button variant="ghost" size="default" onClick={onAddToAgent} className="transition-transform duration-150 active:scale-[0.97] motion-reduce:transition-none">
+          <Bot />
+          为 Agent 引用
         </Button>
-      ) : null}
+        {onOpenChat ? (
+          <Button
+            variant="ghost"
+            size="default"
+            className="transition-transform duration-150 active:scale-[0.97] motion-reduce:transition-none"
+            onClick={() => {
+              void onOpenChat()
+            }}
+          >
+            <MessageCircle />
+            打开右侧问答
+          </Button>
+        ) : null}
+      </div>
     </div>
   )
 }

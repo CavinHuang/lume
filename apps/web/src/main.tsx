@@ -11,6 +11,7 @@ import {
   setThemeMode,
   setThemePalette,
 } from './lib/theme-mode'
+import { isChatFontScale, readStoredChatFontScale, setChatFontScale } from './lib/chat-font-scale'
 import './index.css'
 import { PierreDiffProvider } from './components/diff/PierreDiffProvider'
 import { BrowserWebviewPoolProvider } from './components/browser/BrowserWebviewPool'
@@ -23,6 +24,9 @@ async function bootstrap() {
   const storedThemePalette = readStoredThemePalette()
   initThemeModeRuntime(storedThemeMode, storedThemePalette)
 
+  const storedChatFontScale = readStoredChatFontScale()
+  setChatFontScale(storedChatFontScale)
+
   let themeMode = storedThemeMode || GENERAL_SETTINGS_DEFAULTS.themeMode
   let themePalette = storedThemePalette || GENERAL_SETTINGS_DEFAULTS.themePalette
   let customThemePalettes = GENERAL_SETTINGS_DEFAULTS.customThemePalettes
@@ -32,6 +36,9 @@ async function bootstrap() {
     themeMode = settings.themeMode
     themePalette = settings.themePalette
     customThemePalettes = settings.customThemePalettes
+    if (isChatFontScale(settings.chatFontScale)) {
+      setChatFontScale(settings.chatFontScale)
+    }
   } catch {
     // Fall back to the last locally stored theme mode during bootstrap.
   }

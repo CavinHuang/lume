@@ -1918,6 +1918,10 @@ export const AGENT_IPC_CHANNELS = {
   GET_THREAD_RUNTIME_EVENTS: 'agent:get-thread-runtime-events',
   /** 产品级 RuntimeEvent 实时通知 */
   RUNTIME_EVENT: 'agent:runtime-event',
+  /** 生命周期事件信封实时推送（sidecar ThreadEventBus 单写者） */
+  EVENTS: 'agent:events',
+  /** 拉取线程生命周期事件信封全量/快照 */
+  GET_EVENTS: 'agent:get-events',
   /** 获取线程单个消息版本组 */
   GET_THREAD_MESSAGE_VERSIONS: 'agent:get-thread-message-versions',
   /** 获取最近 N 条线程消息（分页） */
