@@ -1572,7 +1572,7 @@ function resolveStagedAttachmentParams(params: unknown, ownerWebContentsId?: num
   const input = params && typeof params === 'object' ? params as Record<string, any> : {}
   if (!Array.isArray(input.files)) return params ?? null
   if (input.files.some((file) => !file?.stagedAttachmentId)) {
-    throw new Error('线程附件必须通过受控暂存协议提交')
+    throw new Error('附件必须通过受控暂存协议提交')
   }
   const owner = requireAttachmentStageOwner({ ownerWebContentsId })
   return {
@@ -1589,6 +1589,13 @@ function resolveStagedAttachmentParams(params: unknown, ownerWebContentsId?: num
     }),
   }
 }
+
+/** 强制经附件暂存协议提交 sourcePath 的 sidecar 通道（save-files 系列共用 files[] 形状） */
+const STAGED_ATTACHMENT_SIDECAR_METHODS = new Set([
+  'agent:save-files-to-thread',
+  'agent:save-files-to-workspace',
+  'agent:save-files-to-workspace-root',
+])
 
 async function dispatchCommand(command, payload: Record<string, any> = {}, context: { ownerWebContentsId?: number } = {}) {
   switch (command) {
@@ -1785,7 +1792,8 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     case 'sidecar_call': {
       validateRendererSidecarMethod(payload.method)
       if (payload.method !== 'agent:send-thread-message') {
-        const params = payload.method === 'agent:save-files-to-thread'
+        // 文件保存类通道强制走附件暂存协议：sourcePath 只能来自受控暂存解析（issue #145）
+        const params = STAGED_ATTACHMENT_SIDECAR_METHODS.has(payload.method)
           ? resolveStagedAttachmentParams(payload.params, context.ownerWebContentsId)
           : payload.params ?? null
         const result = await sidecarHost.call(payload.method, params)
