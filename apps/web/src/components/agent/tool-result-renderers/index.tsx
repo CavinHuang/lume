@@ -40,7 +40,11 @@ export function ToolResultRenderer({ toolName, input, result, imagePresentation,
     case 'guanlan_read': return <GuanlanTextResult variant="read" input={input} result={result} />
     case 'guanlan_hotnews': return <GuanlanTextResult variant="hotnews" input={input} result={result} />
     case 'guanlan_research': return <GuanlanTextResult variant="research" input={input} result={result} />
-    case 'info_extract': return <InfoExtractResult input={input} result={result} />
+    // fail-fast（ok:false）时专用渲染器会展示空计划卡片，回落默认渲染器显示错误
+    case 'info_extract':
+      return result && typeof result === 'object' && (result as { ok?: unknown }).ok === false
+        ? <DefaultResult toolName={toolName} input={input} result={result} />
+        : <InfoExtractResult input={input} result={result} />
     case 'image_gen': return <ImageGenResult input={input} result={result} presentation={imagePresentation} />
     case 'TodoWrite': return <TodoResult input={input} result={result} />
     case 'wiki.propose_changes': return <WikiProposalResult result={result} />

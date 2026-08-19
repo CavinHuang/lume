@@ -206,6 +206,34 @@ describe("createLumeRuntimeTools office_pack", () => {
   });
 });
 
+describe("createLumeRuntimeTools 占位工具 fail-fast", () => {
+  test("六个未实现工具返回 not-implemented 而非写占位产物", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "lume-office-notimpl-"));
+    try {
+      const tools = createTools();
+      const cases: Array<[string, Record<string, unknown>]> = [
+        ["office_clean", { path: "a.pptx" }],
+        ["pdf_tools", { action: "merge", input_paths: ["a.pdf"], output_path: "out.pdf" }],
+        ["office_thumbnail", { path: "a.pptx" }],
+        ["office_accept_changes", { input_path: "a.docx", output_path: "out.docx" }],
+        ["xlsx_recalc", { path: "a.xlsx" }],
+        ["info_extract", { path: "a.docx" }]
+      ];
+      for (const [name, input] of cases) {
+        const tool = resolveTool(tools, name);
+        const result = await callTool(tool, input, tempDir);
+        expect(result.ok).toBe(false);
+        expect(String(result.error)).toContain("当前版本未实现");
+      }
+      // 不应产出任何占位产物文件
+      expect(existsSync(join(tempDir, "out.pdf"))).toBe(false);
+      expect(existsSync(join(tempDir, "out.docx"))).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
 function crc32(buf: Buffer): number {
   let crc = -1;
   const table = (() => {

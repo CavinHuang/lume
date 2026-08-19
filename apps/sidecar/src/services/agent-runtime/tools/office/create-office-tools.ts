@@ -146,7 +146,7 @@ export function createSdkOfficeTools(): ToolDefinition[] {
     }),
     createSdkJsonResultTool({
       name: "office_clean",
-      description: "清理 Office 文档中的孤立资源（例如 PPTX 中未引用的媒体、notes、rels）。适用于文档体积优化和冗余清理。",
+      description: "清理 Office 文档中的孤立资源（例如 PPTX 中未引用的媒体、notes、rels）。适用于文档体积优化和冗余清理。（当前版本未实现，调用会返回错误）",
       inputSchema: {
         type: "object",
         properties: {
@@ -155,26 +155,8 @@ export function createSdkOfficeTools(): ToolDefinition[] {
         },
         required: ["path"]
       },
-      async call(args, context) {
-        const executor = new OfficeToolExecutor(context.cwd);
-        const path = resolveInputPath(requiredString(args.path, "path"), context.cwd);
-        const outputPath = args.outputPath ? resolveInputPath(requiredString(args.outputPath, "outputPath"), context.cwd) : addSuffix(path, ".clean");
-        const result = await executor.runPythonScript("clean.py", [path, outputPath]);
-        if (!result.ok) {
-          return { ok: false, error: result.stderr ?? result.stdout ?? "office_clean failed" };
-        }
-        const data = safeParseJson(result.stdout ?? "");
-        if (!data) {
-          return { ok: false, error: "Invalid office_clean output" };
-        }
-        const d = data as Record<string, unknown>;
-        return {
-          ok: d.ok ?? false,
-          path,
-          outputPath,
-          removed: d.removed,
-          warnings: d.warnings
-        };
+      async call() {
+        return notImplementedResult("office_clean");
       }
     }),
     createSdkJsonResultTool({
@@ -465,7 +447,7 @@ ${userCode}
     }),
     createSdkJsonResultTool({
       name: "xlsx_recalc",
-      description: "重新计算 Excel 文件中的所有公式并返回错误统计。当 xlsx 文件中包含公式且需要验证公式正确性或刷新计算结果时使用。返回公式总数、错误数和错误摘要。",
+      description: "重新计算 Excel 文件中的所有公式并返回错误统计。当 xlsx 文件中包含公式且需要验证公式正确性或刷新计算结果时使用。返回公式总数、错误数和错误摘要。（当前版本未实现，调用会返回错误）",
       inputSchema: {
         type: "object",
         properties: {
@@ -474,32 +456,13 @@ ${userCode}
         },
         required: ["path"]
       },
-      async call(args, context) {
-        const executor = new OfficeToolExecutor(context.cwd);
-        const path = resolveInputPath(requiredString(args.path, "path"), context.cwd);
-        const timeout = clampNumber(args.timeout, 30, 1, 600);
-        const result = await executor.runPythonScript("recalc.py", [path, String(timeout)]);
-        if (!result.ok) {
-          return { ok: false, error: result.stderr ?? result.stdout ?? "xlsx_recalc failed" };
-        }
-        const data = safeParseJson(result.stdout ?? "");
-        if (!data) {
-          return { ok: false, error: "Invalid xlsx_recalc output" };
-        }
-        const d = data as Record<string, unknown>;
-        return {
-          ok: d.ok ?? false,
-          path,
-          status: d.status,
-          total_formulas: d.total_formulas,
-          total_errors: d.total_errors,
-          error_summary: d.error_summary
-        };
+      async call() {
+        return notImplementedResult("xlsx_recalc");
       }
     }),
     createSdkJsonResultTool({
       name: "pdf_tools",
-      description: "PDF 文件操作工具集：合并、拆分、旋转、添加水印、加密/解密、提取图片。action 参数指定操作类型，input_paths 指定输入文件，output_path 指定输出路径。当用户需要对 PDF 文件进行处理时使用。",
+      description: "PDF 文件操作工具集：合并、拆分、旋转、添加水印、加密/解密、提取图片。action 参数指定操作类型，input_paths 指定输入文件，output_path 指定输出路径。当用户需要对 PDF 文件进行处理时使用。（当前版本未实现，调用会返回错误）",
       inputSchema: {
         type: "object",
         properties: {
@@ -510,31 +473,8 @@ ${userCode}
         },
         required: ["action", "input_paths", "output_path"]
       },
-      async call(args, context) {
-        const executor = new OfficeToolExecutor(context.cwd);
-        const action = requiredString(args.action, "action");
-        const inputPaths = Array.isArray(args.input_paths) ? args.input_paths.map((value) => resolveInputPath(requiredString(value, "input_paths[]"), context.cwd)) : [];
-        const outputPath = resolveInputPath(requiredString(args.output_path, "output_path"), context.cwd);
-        if (inputPaths.length === 0) {
-          return { ok: false, error: "input_paths 不能为空" };
-        }
-        const options = (args.options && typeof args.options === "object") ? JSON.stringify(args.options) : "{}";
-        const result = await executor.runPythonScript("pdf_tools.py", [action, inputPaths.join("|"), outputPath, options]);
-        if (!result.ok) {
-          return { ok: false, error: result.stderr ?? result.stdout ?? "pdf_tools failed" };
-        }
-        const data = safeParseJson(result.stdout ?? "");
-        if (!data) {
-          return { ok: false, error: "Invalid pdf_tools output" };
-        }
-        const d = data as Record<string, unknown>;
-        return {
-          ok: d.ok ?? false,
-          action,
-          input_paths: inputPaths,
-          output_path: outputPath,
-          message: d.message
-        };
+      async call() {
+        return notImplementedResult("pdf_tools");
       }
     }),
     createSdkJsonResultTool({
@@ -583,7 +523,7 @@ ${userCode}
     }),
     createSdkJsonResultTool({
       name: "office_accept_changes",
-      description: "接受 Word 文档中的所有修订（Tracked Changes），生成一个干净的文档。当 docx 文件包含修订标记需要批量接受时使用。",
+      description: "接受 Word 文档中的所有修订（Tracked Changes），生成一个干净的文档。当 docx 文件包含修订标记需要批量接受时使用。（当前版本未实现，调用会返回错误）",
       inputSchema: {
         type: "object",
         properties: {
@@ -592,30 +532,13 @@ ${userCode}
         },
         required: ["input_path", "output_path"]
       },
-      async call(args, context) {
-        const executor = new OfficeToolExecutor(context.cwd);
-        const inputPath = resolveInputPath(requiredString(args.input_path, "input_path"), context.cwd);
-        const outputPath = resolveInputPath(requiredString(args.output_path, "output_path"), context.cwd);
-        const result = await executor.runPythonScript("accept_changes.py", [inputPath, outputPath]);
-        if (!result.ok) {
-          return { ok: false, error: result.stderr ?? result.stdout ?? "office_accept_changes failed" };
-        }
-        const data = safeParseJson(result.stdout ?? "");
-        if (!data) {
-          return { ok: false, error: "Invalid office_accept_changes output" };
-        }
-        const d = data as Record<string, unknown>;
-        return {
-          ok: d.ok ?? false,
-          input_path: inputPath,
-          output_path: outputPath,
-          message: d.message
-        };
+      async call() {
+        return notImplementedResult("office_accept_changes");
       }
     }),
     createSdkJsonResultTool({
       name: "info_extract",
-      description: "从文档（docx/xlsx/pptx/pdf 等）中提取关键信息。支持合同、报告、简历等多种文档类型的信息提取，自动分配信息提取专家并分步骤执行。extraction_type 参数可选 contract（合同）、resume（简历）、report（报告）等。当用户上传文档并需要从中提取结构化信息时使用。",
+      description: "从文档（docx/xlsx/pptx/pdf 等）中提取关键信息。支持合同、报告、简历等多种文档类型的信息提取，自动分配信息提取专家并分步骤执行。extraction_type 参数可选 contract（合同）、resume（简历）、report（报告）等。当用户上传文档并需要从中提取结构化信息时使用。（当前版本未实现，调用会返回错误）",
       inputSchema: {
         type: "object",
         properties: {
@@ -624,32 +547,13 @@ ${userCode}
         },
         required: ["path"]
       },
-      async call(args, context) {
-        const executor = new OfficeToolExecutor(context.cwd);
-        const path = resolveInputPath(requiredString(args.path, "path"), context.cwd);
-        const extractionType = (args.extraction_type as string) || "contract";
-        const result = await executor.runPythonScript("info_extract.py", [path, extractionType]);
-        if (!result.ok) {
-          return { ok: false, error: result.stderr ?? result.stdout ?? "info_extract failed" };
-        }
-        const data = safeParseJson(result.stdout ?? "");
-        if (!data || typeof data !== "object") {
-          return { ok: false, error: "Invalid info_extract output" };
-        }
-        const d = data as Record<string, unknown>;
-        return {
-          ok: d.ok ?? false,
-          path,
-          extraction_type: extractionType,
-          expert: d.expert,
-          configConfirmed: d.configConfirmed ?? true,
-          steps: d.steps
-        };
+      async call() {
+        return notImplementedResult("info_extract");
       }
     }),
     createSdkJsonResultTool({
       name: "office_thumbnail",
-      description: "为 PowerPoint 文件生成缩略图网格预览。将 PPT 每页幻灯片渲染为图片并拼成网格。当用户需要预览 PPT 内容或生成 PPT 封面图时使用。",
+      description: "为 PowerPoint 文件生成缩略图网格预览。将 PPT 每页幻灯片渲染为图片并拼成网格。当用户需要预览 PPT 内容或生成 PPT 封面图时使用。（当前版本未实现，调用会返回错误）",
       inputSchema: {
         type: "object",
         properties: {
@@ -659,26 +563,8 @@ ${userCode}
         },
         required: ["path"]
       },
-      async call(args, context) {
-        const executor = new OfficeToolExecutor(context.cwd);
-        const path = resolveInputPath(requiredString(args.path, "path"), context.cwd);
-        const outputPrefix = args.output_prefix ? resolveInputPath(requiredString(args.output_prefix, "output_prefix"), context.cwd) : resolvePath(context.cwd, "thumbnails");
-        const cols = clampNumber(args.cols, 3, 1, 12);
-        const result = await executor.runPythonScript("thumbnail.py", [path, outputPrefix, String(cols)]);
-        if (!result.ok) {
-          return { ok: false, error: result.stderr ?? result.stdout ?? "office_thumbnail failed" };
-        }
-        const data = safeParseJson(result.stdout ?? "");
-        if (!data) {
-          return { ok: false, error: "Invalid office_thumbnail output" };
-        }
-        const d = data as Record<string, unknown>;
-        return {
-          ok: d.ok ?? false,
-          path,
-          output_prefix: outputPrefix,
-          outputs: d.outputs
-        };
+      async call() {
+        return notImplementedResult("office_thumbnail");
       }
     })
   ];
@@ -689,6 +575,17 @@ function requiredString(value: unknown, field: string): string {
     throw new Error(`${field} must be a non-empty string`);
   }
   return value;
+}
+
+/**
+ * 占位脚本已删除的六个工具统一 fail-fast：宁可明确报错也不产出假产物谎报成功
+ * （此前 pdf_tools 写 9 字节假 PDF 头、accept_changes 纯复制后声称已接受修订，属静默数据丢失）。
+ */
+function notImplementedResult(toolName: string): { ok: false; error: string } {
+  return {
+    ok: false,
+    error: `${toolName} 当前版本未实现，请勿重试。请改用其他方式完成任务（如 office_unpack 解包后直接编辑 XML 再 office_pack），并如实告知用户该能力暂不可用。`
+  };
 }
 
 function resolveInputPath(path: string, cwd: string): string {
