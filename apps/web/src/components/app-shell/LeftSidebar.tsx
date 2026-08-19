@@ -12,6 +12,7 @@ import {
   tabsAtom,
   workspacePinnedIdsAtom,
 } from '@/atoms'
+import { useReleaseThreadState } from '@/hooks/use-release-thread-state'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
@@ -103,6 +104,7 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
   const [workspaces, setWorkspaces] = useAtom(agentWorkspacesAtom)
   const [pinnedIds, setPinnedIds] = useAtom(workspacePinnedIdsAtom)
   const setSettingsInitialTab = useSetAtom(settingsInitialTabAtom)
+  const releaseThreadState = useReleaseThreadState()
   const setArchiveInitialView = useSetAtom(archiveInitialViewAtom)
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<string[]>([])
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
@@ -339,6 +341,8 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
         try {
           await sidecarCall(AGENT_IPC_CHANNELS.ARCHIVE_THREAD, { threadId: thread.id })
           removeThreadFromNavigation(thread.id)
+          // 归档后线程只能恢复后再打开，重开时 hydrate 重建，清掉无副作用
+          releaseThreadState(thread.id)
           toast.success('已归档')
         } catch (error) {
           console.error('[LeftSidebar] 归档失败:', error)
@@ -362,6 +366,7 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
         try {
           await sidecarCall(AGENT_IPC_CHANNELS.TRASH_THREAD, { threadId: thread.id })
           removeThreadFromNavigation(thread.id)
+          releaseThreadState(thread.id)
           toast.success('已移入回收站')
         } catch (error) {
           console.error('[LeftSidebar] 移入回收站失败:', error)
@@ -426,6 +431,13 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
         await sidecarCall(AGENT_IPC_CHANNELS.DELETE_WORKSPACE, { id: workspaceId, mode })
         setWorkspaces((previous) => previous.filter((w) => w.id !== workspaceId))
         setCurrentWorkspaceId((current) => current === workspaceId ? null : current)
+        if (mode === 'deleteLumeData') {
+          // 会话随项目数据进回收站：与单线程删除路径一致，统一释放渲染端状态
+          // （keepHistory 会话转为普通会话仍在用，不能清）
+          for (const thread of threads.filter((item) => item.workspaceId === workspaceId)) {
+            releaseThreadState(thread.id)
+          }
+        }
         const nextThreads = await sidecarCall<AgentThreadMeta[]>(AGENT_IPC_CHANNELS.LIST_THREADS, {})
         setThreads(Array.isArray(nextThreads) ? nextThreads : [])
         toast.success(mode === 'keepHistory' ? '已移除项目，会话已转为普通会话' : '已移除项目并将 Lume 用户数据移入回收站')

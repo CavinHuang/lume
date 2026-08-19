@@ -7,14 +7,14 @@ import {
   Trash,
   Trash2,
 } from 'lucide-react'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue } from 'jotai'
 import { toast } from 'sonner'
 import type { AgentThreadMeta } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { cn } from '@/lib/utils'
-import { agentInputDraftAtom, agentInputHistoryAtom, agentWorkspacesAtom } from '@/atoms'
+import { agentWorkspacesAtom } from '@/atoms'
+import { useReleaseThreadState } from '@/hooks/use-release-thread-state'
 import { sidecarCall } from '@/lib/desktop-api'
-import { removeDraft, removeHistory } from '@/lib/agent-input-draft-state'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 
 import { Button } from '@/components/ui/button'
@@ -34,15 +34,7 @@ function formatDate(timestamp: number): string {
 
 export function ArchiveSettings({ initialView }: { initialView?: 'archive' | 'trash' }) {
   const workspaces = useAtomValue(agentWorkspacesAtom)
-  const setDraftState = useSetAtom(agentInputDraftAtom)
-  const setHistoryState = useSetAtom(agentInputHistoryAtom)
-  const removeThreadInputState = React.useCallback(
-    (threadId: string) => {
-      setDraftState((prev) => removeDraft(prev, threadId))
-      setHistoryState((prev) => removeHistory(prev, threadId))
-    },
-    [setDraftState, setHistoryState],
-  )
+  const removeThreadInputState = useReleaseThreadState()
   const [view, setView] = React.useState<View>(initialView ?? 'archive')
   const [archivedThreads, setArchivedThreads] = React.useState<AgentThreadMeta[]>([])
   const [trashedThreads, setTrashedThreads] = React.useState<AgentThreadMeta[]>([])
