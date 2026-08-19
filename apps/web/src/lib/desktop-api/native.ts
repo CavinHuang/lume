@@ -69,7 +69,24 @@ export const openFolderDialog = () =>
   invoke<{ path: string | null }>('open_folder_dialog')
 export const getQuickInputContext = () =>
   invoke<unknown>('quick_input_get_context')
-export const openExternal = (url: string) => invoke('open_external', { url })
+const HTTP_URL_RE = /^https?:\/\//i
+// 调用点透传 LLM 输出/搜索结果等不可信 URL,入口统一收口 http/https;
+// 功能性 scheme(obsidian:/weread:)仅经 openExternalScheme 显式放行。
+// 校验失败返回 rejected promise(同步 throw 会变成 window error 而非 unhandledrejection)。
+export function openExternal(url: string): Promise<unknown> {
+  if (!HTTP_URL_RE.test(url)) {
+    return Promise.reject(new Error('仅支持打开 http/https 链接'))
+  }
+  return invoke('open_external', { url })
+}
+export function openExternalScheme(url: string, scheme: 'obsidian' | 'weread'): Promise<unknown> {
+  // weread 书籍深链经 deepLink 透传,可能以 https 网页链接下发,一并放行
+  const allowed = url.startsWith(`${scheme}:`) || (scheme === 'weread' && HTTP_URL_RE.test(url))
+  if (!allowed) {
+    return Promise.reject(new Error(`仅支持打开 ${scheme}: 或 https 链接`))
+  }
+  return invoke('open_external', { url })
+}
 export const saveTextFileDialog = (filename: string, content: string) =>
   invoke<{ path: string }>('save_text_file_dialog', { filename, content })
 export const saveBinaryFileDialog = (filename: string, base64Content: string, filters?: SaveFilePathFilter[], ensureExtension?: string) =>

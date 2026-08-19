@@ -769,6 +769,8 @@ export interface GitHubSkillReviewResult {
   owner: string
   repo: string
   ref: string
+  /** 审查时解析出的不可变 commit SHA；安装下载与审查令牌均钉住该值 */
+  commitSha: string
   rootPath: string
   reviewToken: string
   trustLevel: SkillTrustLevel

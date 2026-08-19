@@ -18,6 +18,37 @@ export interface SubagentSpawnPolicyInput {
   requestedSandbox?: "inherit" | "require";
 }
 
+type SubagentPermissionMode = NonNullable<AgentSendInput["permissionMode"]>;
+
+// 特权序: bypassPermissions(4) > dontAsk ≡ auto(3) > acceptEdits(2) > default ≡ plan(1)
+// plan 与 default 同档: plan 父级派生 default 子级时写操作仍逐次经用户审批，非静默提权
+const SUBAGENT_PERMISSION_RANK: Record<string, number> = {
+  default: 1,
+  plan: 1,
+  acceptEdits: 2,
+  dontAsk: 3,
+  auto: 3,
+  bypassPermissions: 4
+};
+
+/**
+ * 将模型请求的子代理权限模式钳制为不高于父线程模式。
+ * - requested 为模型可控的工具入参，父级不可信时一律继承
+ * - auto 归一为 dontAsk（engine 层与 SDK query 层对 auto 归一不一致，统一从严）
+ * - 请求超过父级特权时降级为父级而非拒绝：agent 定义文件预置 mode 的合法派生不应被打断
+ */
+export function clampSubagentPermissionMode(
+  requested: string | undefined,
+  parent: SubagentPermissionMode | undefined
+): SubagentPermissionMode | undefined {
+  if (!requested) return parent;
+  const normalized = requested === "auto" ? "dontAsk" : requested;
+  const rank = SUBAGENT_PERMISSION_RANK[normalized];
+  if (rank === undefined) return parent;
+  const parentRank = SUBAGENT_PERMISSION_RANK[parent ?? "default"] ?? 1;
+  return rank <= parentRank ? normalized as SubagentPermissionMode : parent;
+}
+
 export interface SubagentSpawnPolicyDecision {
   ok: boolean;
   error?: string;
@@ -57,8 +88,7 @@ export function resolveSubagentSpawnPolicy(input: SubagentSpawnPolicyInput): Sub
   }
 
   const sandbox = input.requestedSandbox === "require" ? "require" : "inherit";
-  const inheritedPermission = input.parentPermissionMode ?? "default";
-  const childPermissionMode = sandbox === "require" ? inheritedPermission : inheritedPermission;
+  const childPermissionMode = sandbox === "require" ? input.parentPermissionMode : input.parentPermissionMode;
 
   return {
     ok: true,

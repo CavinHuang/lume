@@ -93,7 +93,7 @@ import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig } from "../../s
 import { createLumeRuntimeTools } from "../tools/create-lume-tools";
 import { createSdkWebTools } from "../tools/web/create-web-tools";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
-import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
+import { clampSubagentPermissionMode, resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
 import { buildSubagentWorkContext, resolveSubagentDispatchPolicy } from "../../agent/subagents/subagent-dispatch-policy";
@@ -486,11 +486,12 @@ async function runSidecarSubagent(input: {
   }
 
   const { runAgentRuntime } = await import("./attempt");
-  const childPermissionMode = (
-    typeof input.toolInput.mode === "string"
-      ? input.toolInput.mode
-      : input.permissionMode
-  ) as AgentSendInput["permissionMode"] | undefined;
+  // 收口契约：模型可控的子代理权限模式一律经此钳制，子级特权不得高于父线程
+  // （sendAgentMessage 直派子代理的路径当前均非模型可控，不在此范围）
+  const requestedPermissionMode = typeof input.toolInput.mode === "string" ? input.toolInput.mode : undefined;
+  const childPermissionMode = clampSubagentPermissionMode(requestedPermissionMode, input.permissionMode);
+  const permissionModeAdjusted = requestedPermissionMode !== undefined
+    && requestedPermissionMode !== childPermissionMode;
   let textOutput = "";
   let lastAssistantMessage = "";
   const toolCalls: string[] = [];
@@ -597,16 +598,20 @@ async function runSidecarSubagent(input: {
     errorMessage: subagentErrorMessage,
     status: subagentStatus
   });
+  // 钳制/归一发生时向模型声明实际生效的模式，避免其误以为拿到了更高权限而重试
+  const outputWithModeNote = permissionModeAdjusted && childPermissionMode
+    ? `${finalized.output}\n\n[子代理权限模式: ${requestedPermissionMode} → ${childPermissionMode}（不得超过父线程权限）]`
+    : finalized.output;
 
   return {
     status: subagentStatus,
-    output: finalized.output,
+    output: outputWithModeNote,
     ...(finalized.lastAssistantMessage ? { completionSummary: finalized.lastAssistantMessage } : {}),
     ...(subagentErrorMessage ? { error: subagentErrorMessage } : {}),
     result: {
       type: "tool_result",
       tool_use_id: "",
-      content: finalized.output,
+      content: outputWithModeNote,
       ...(subagentStatus !== "completed" ? { is_error: true } : {})
     }
   };
@@ -948,7 +953,7 @@ function buildRuntimeCoreTools(input: {
       const parentThreadId = context.sessionId ?? "";
       const policy = resolveSubagentSpawnPolicy({
         parentThreadId,
-        parentPermissionMode: toolInput.mode
+        parentPermissionMode: permissionMode
       });
       if (!policy.ok) {
         return { type: "tool_result" as const, tool_use_id: "", content: policy.error ?? "spawn policy rejected", is_error: true };
@@ -1143,7 +1148,7 @@ function buildRuntimeCoreTools(input: {
       const parentThreadId = context.sessionId ?? "";
       const policy = resolveSubagentSpawnPolicy({
         parentThreadId,
-        parentPermissionMode: toolInput.mode
+        parentPermissionMode: permissionMode
       });
       if (!policy.ok) {
         return { type: "tool_result" as const, tool_use_id: "", content: policy.error ?? "spawn policy rejected", is_error: true };
@@ -1936,6 +1941,13 @@ async function createRuntimeCoreSessionImpl(
         reason: "后台命令已持久化，恢复时重新附着而不重复执行。",
         createdAt: now,
         updatedAt: now
+      }).catch((error) => {
+        // fire-and-forget 持久化失败（AV 锁/磁盘满等）只降级恢复能力，不允许变成未处理拒绝崩进程
+        log.warn("Failed to persist background continuation checkpoint", {
+          sessionId: input.lumeSessionId,
+          runId: input.runId,
+          error: error instanceof Error ? error.message : String(error)
+        });
       });
     }
     publishCodingReport();

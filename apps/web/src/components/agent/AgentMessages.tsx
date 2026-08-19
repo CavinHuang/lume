@@ -401,7 +401,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
         key={`runtime-event-${msg.id}`}
         data-message-id={msg.id}
         data-message-role={msg.type}
-        className="mx-auto w-full max-w-[920px]"
+        className="mx-auto w-full max-w-[920px] [content-visibility:auto] [contain-intrinsic-size:auto_160px]"
       >
         <RuntimeEventContentBlock
           message={msg}

@@ -6,7 +6,8 @@
  * - 取全部 *_IPC_CHANNELS 常量（PLUGIN_PACKAGE_PRIVILEGED 与 AGENT_ISLAND 除外——
  *   前者主进程专属，后者 island 窗口专用通道）；
  * - 排除通知类 key（CHANGED/REMINDER_DUE/EVENTS，renderer 经事件通道订阅而非 RPC 调用）；
- * - 排除 privileged 通道与 BROWSER_IPC_CHANNELS 成员（走桌面专属入口）。
+ * - 排除 privileged 通道与 BROWSER_IPC_CHANNELS 成员（走桌面专属入口）；
+ * - 排除 RENDERER_BLOCKED_CHANNEL_VALUES（源路径收口，renderer 不可直达）。
  * 新增通道常量时需同步本文件的 source 列表；契约测试是漏配的绊线（会红）。
  */
 import { AGENT_IPC_CHANNELS } from "./agent"
@@ -34,6 +35,17 @@ import { WIKI_IPC_CHANNELS } from "./wiki"
 const NOTIFICATION_CHANNEL_KEYS = new Set(["CHANGED", "REMINDER_DUE", "EVENTS"])
 
 const BROWSER_CHANNEL_VALUES = new Set<string>(Object.values(BROWSER_IPC_CHANNELS))
+
+/**
+ * Renderer 禁用的通道值：源路径收口（issue #145）。
+ * copy-folder 系列接受 renderer 可控的任意绝对路径做递归复制，构成任意文件读取原语；
+ * 附件暂存协议仅支持普通文件，目录复制无受控入口，故整体移出 renderer 可达面
+ * （sidecar handler 保留，供未来受控入口使用）。
+ */
+const RENDERER_BLOCKED_CHANNEL_VALUES = new Set<string>([
+  AGENT_IPC_CHANNELS.COPY_FOLDER_TO_THREAD,
+  AGENT_IPC_CHANNELS.COPY_FOLDER_TO_WORKSPACE,
+])
 
 const PUBLIC_CHANNEL_SOURCES = [
   AGENT_IPC_CHANNELS,
@@ -67,7 +79,8 @@ export const SHARED_RENDERER_SIDECAR_METHODS: ReadonlySet<string> = new Set(
         typeof value === "string" &&
         !NOTIFICATION_CHANNEL_KEYS.has(key) &&
         !value.includes(":privileged-") &&
-        !BROWSER_CHANNEL_VALUES.has(value),
+        !BROWSER_CHANNEL_VALUES.has(value) &&
+        !RENDERER_BLOCKED_CHANNEL_VALUES.has(value),
     )
     .map(([, value]) => value),
 )

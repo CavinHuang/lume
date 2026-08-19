@@ -347,6 +347,48 @@ registerToolMetadata({
   allowedInPlanMode: true
 });
 
+// routine 家族：trigger 创建并立即执行自动化任务（对齐 automation_set 的 high），
+// update/regenerate 写日程并重新调度——显式注册避免名称推断漏网
+registerToolMetadata({
+  name: "routine_read",
+  category: "read",
+  riskLevel: "low",
+  description: "读取每日日程安排",
+  allowedInPlanMode: true
+});
+
+registerToolMetadata({
+  name: "routine_trigger",
+  category: "execute",
+  riskLevel: "high",
+  description: "手动触发日程条目：创建自动化任务并立即执行 agent run",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
+  name: "routine_update",
+  category: "write",
+  riskLevel: "medium",
+  description: "修改今日日程条目",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
+  name: "routine_regenerate",
+  category: "write",
+  riskLevel: "medium",
+  description: "重新生成今日日程并重新调度",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
+  name: "suggestion_analyze",
+  category: "write",
+  riskLevel: "medium",
+  description: "运行 LLM 分析并写入建议库",
+  allowedInPlanMode: false
+});
+
 // Reading 工具
 registerToolMetadata({
   name: "lume_reading_snapshot",
@@ -389,6 +431,22 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
+  name: "lume_reading_advance_progress",
+  category: "write",
+  riskLevel: "medium",
+  description: "推进在读书籍阅读进度并可能标记 finished（写 reading store）",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
+  name: "lume_reading_pick_next",
+  category: "write",
+  riskLevel: "medium",
+  description: "从 queued 书中挑选下一本开始阅读（写 reading store）",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
   name: "lume_generate_share_card",
   category: "write",
   riskLevel: "medium",
@@ -418,6 +476,47 @@ registerToolMetadata({
   riskLevel: "medium",
   description: "将解包目录重新打包为 Office OOXML 文档",
   allowedInPlanMode: false
+});
+
+// office 其余工具：spawn 进程/写文档产物，显式注册避免被 inferToolMetadata 按名称关键词
+// 误推断为 read/low（office_convert/office_clean 等不含任何关键词，曾整批免审批+Plan 放行）
+registerToolMetadata({
+  name: "office_convert",
+  category: "execute",
+  riskLevel: "medium",
+  description: "调用 LibreOffice 无头转换 Office 文档格式（spawn soffice 并写产物）",
+  allowedInPlanMode: false
+});
+
+for (const [name, description] of [
+  ["office_clean", "产出剔除冗余元素的文档副本"],
+  ["docx_create", "生成 docx 文档"],
+  ["pptx_create", "生成 pptx 演示文稿"],
+  ["xlsx_create", "生成 xlsx 表格"],
+  ["pdf_create", "生成 pdf 文档"],
+  ["docx_comment", "向 docx 插入批注"],
+  ["pptx_add_slide", "向 pptx 追加幻灯片"],
+  ["xlsx_recalc", "重算 xlsx 公式"],
+  ["pdf_tools", "PDF 合并/拆分/旋转/水印/加密/提取图片"],
+  ["office_extract_style", "提取文档设计样式并写 yaml 产物"],
+  ["office_thumbnail", "渲染文档页缩略图"],
+  ["office_accept_changes", "产出接受全部修订的文档副本"]
+] as const) {
+  registerToolMetadata({
+    name,
+    category: "write",
+    riskLevel: "medium",
+    description,
+    allowedInPlanMode: false
+  });
+}
+
+registerToolMetadata({
+  name: "info_extract",
+  category: "read",
+  riskLevel: "low",
+  description: "从文档提取结构化信息（纯分析，无产物落盘）",
+  allowedInPlanMode: true
 });
 
 registerToolMetadata({
