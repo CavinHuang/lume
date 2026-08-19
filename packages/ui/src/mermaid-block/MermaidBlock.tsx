@@ -139,17 +139,23 @@ export function stripStylesheetImports(svg: string): string {
 }
 
 /**
+ * mermaid SVG 消毒配置。svg+html 双 profile + ADD_TAGS foreignObject：
+ * flowchart/gantt 等图类的标签文字靠 foreignObject 内的 div/span 渲染，纯 svg
+ * profile 不含 foreignObject（且在其黑名单内）会把文字整块剥掉。导出供配置守卫测试。
+ */
+export const MERMAID_SANITIZE_CONFIG = {
+  USE_PROFILES: { svg: true, svgFilters: true, html: true },
+  ADD_TAGS: ['foreignObject'],
+}
+
+/**
  * mermaid SVG 注入 innerHTML 前的 DOMPurify 二层防御。
- * svg+html 双 profile：flowchart/gantt 等图类的标签文字靠 foreignObject 内的
- * div/span 渲染，纯 svg profile 不含 foreignObject（且在其黑名单内）会把文字整块剥掉。
+ * dompurify 的 default 实例在模块加载时按 window 求值——加载早于 window 的环境
+ * （CI bun 对动态 import 的求值时机差异）实例不可用，此时原样返回（浏览器恒可用）。
  */
 export function sanitizeMermaidSvg(svg: string): string {
-  // 非 DOM 环境（bun test 纯函数测试）无 window，dompurify 默认导出不可用，原样返回
-  if (typeof window === 'undefined') return svg
-  return DOMPurify.sanitize(svg, {
-    USE_PROFILES: { svg: true, svgFilters: true, html: true },
-    ADD_TAGS: ['foreignObject'],
-  })
+  if (typeof window === 'undefined' || typeof DOMPurify?.sanitize !== 'function') return svg
+  return DOMPurify.sanitize(svg, MERMAID_SANITIZE_CONFIG)
 }
 
 export function MermaidBlock({ code, onCopy, onCopyImage, onPreview }: MermaidBlockProps): React.ReactElement {
