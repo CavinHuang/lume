@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { appendRuntimeEvent, appendRuntimeEvents, hydrateRuntimeEvents } from './runtime-event-state'
+import { appendRuntimeEvent, appendRuntimeEvents, hydrateRuntimeEvents, removeRuntimeEvents } from './runtime-event-state'
 import type { AgentThreadRuntimeEventsResult, LumeRuntimeEvent } from '@lume/shared'
 
 function runtimeEvent(event: Partial<LumeRuntimeEvent> & Pick<LumeRuntimeEvent, 'type'>): LumeRuntimeEvent {
@@ -288,6 +288,83 @@ describe('runtime-event-state', () => {
       versionGroupId: 'group-1',
     })
     expect(hydrated['thread-1']?.terminalStatus).toBe('completed')
+  })
+
+  test('hydrate 同样受 MAX_EVENTS_PER_THREAD 上限约束', () => {
+    // 重开超长线程：sidecar 返回全量持久化事件，hydrate 后也必须 ≤ MAX，
+    // 与 append 路径上限一致（否则内存驻留无界，直到下一条 append 才触发 trim）。
+    const events: LumeRuntimeEvent[] = [
+      {
+        id: 'u0',
+        type: 'message.user.submitted',
+        threadId: 'thread-1',
+        runId: 'run-1',
+        createdAt: '2026-06-21T00:00:00.000Z',
+        text: 'hi',
+      } as LumeRuntimeEvent,
+    ]
+    for (let i = 1; i <= 2500; i++) {
+      events.push({
+        id: `d${i}`,
+        type: 'assistant.delta',
+        threadId: 'thread-1',
+        runId: 'run-1',
+        messageId: `msg-${i}`,
+        sequence: i,
+        createdAt: '2026-06-21T00:00:00.000Z',
+        delta: `c${i}`,
+      } as LumeRuntimeEvent)
+    }
+    const hydrated = hydrateRuntimeEvents({}, { threadId: 'thread-1', events })
+
+    expect(hydrated['thread-1']?.events.length).toBeLessThanOrEqual(2000)
+    expect(hydrated['thread-1']?.events[0]?.type).toBe('message.user.submitted')
+  })
+
+  test('hydrate 先合并相邻同流 delta 再 trim：同一条消息的分片回放不触发上限、正文完整', () => {
+    // 回放路径没有 assistant.final，正文完全靠 delta 累积；若不先按 live 规则合并，
+    // 逐 chunk 的回放计数会膨胀到上限，trim 丢头部 delta = 该 turn 渲染为空泡。
+    const events: LumeRuntimeEvent[] = [
+      {
+        id: 'u0',
+        type: 'message.user.submitted',
+        threadId: 'thread-1',
+        runId: 'run-1',
+        createdAt: '2026-06-21T00:00:00.000Z',
+        text: 'hi',
+      } as LumeRuntimeEvent,
+    ]
+    let full = ''
+    for (let i = 1; i <= 2500; i++) {
+      events.push({
+        id: `d${i}`,
+        type: 'assistant.delta',
+        threadId: 'thread-1',
+        runId: 'run-1',
+        messageId: 'msg-1',
+        sequence: i,
+        createdAt: '2026-06-21T00:00:00.000Z',
+        delta: `c${i};`,
+      } as LumeRuntimeEvent)
+      full += `c${i};`
+    }
+    const hydrated = hydrateRuntimeEvents({}, { threadId: 'thread-1', events })
+
+    const hydratedEvents = hydrated['thread-1']?.events ?? []
+    expect(hydratedEvents.length).toBe(2)
+    expect(hydratedEvents[1]?.type).toBe('assistant.delta')
+    expect(hydratedEvents[1]?.delta).toBe(full)
+    // 重开幂等：同样的回放再次 hydrate 不改变结果
+    expect(hydrateRuntimeEvents(hydrated, { threadId: 'thread-1', events })).toBe(hydrated)
+  })
+
+  test('removeRuntimeEvents 删除线程条目；条目不存在时返回原引用', () => {
+    const prev = appendRuntimeEvent({}, runtimeEvent({ type: 'run.completed' }))
+    const next = removeRuntimeEvents(prev, 'thread-1')
+
+    expect(next['thread-1']).toBeUndefined()
+    expect(removeRuntimeEvents(next, 'thread-1')).toBe(next)
+    expect(removeRuntimeEvents(next, 'other-thread')).toBe(next)
   })
 
   test('超过 MAX_EVENTS_PER_THREAD 时优先丢头部 delta，保留结构事件与 user 提交', () => {
