@@ -270,8 +270,12 @@
   overflow-wrap: anywhere;
 }
 
-/* 正文段落限宽（≈45 汉字/行）；代码块/表格/图片继续撑满消息容器 */
+/* 正文与标题限宽（≈45 汉字/行）；代码块/表格/图片继续撑满消息容器 */
 .agent-message-markdown > p,
+.agent-message-markdown > h1,
+.agent-message-markdown > h2,
+.agent-message-markdown > h3,
+.agent-message-markdown > h4,
 .agent-message-markdown ul,
 .agent-message-markdown ol,
 .agent-message-markdown blockquote {
