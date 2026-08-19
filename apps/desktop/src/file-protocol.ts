@@ -235,14 +235,35 @@ export async function createPreviewProtocolResponse(
   headers.set('Content-Type', resolution.mimeType)
   if (resolution.method === 'OPTIONS') return new Response(null, { status: 204, headers })
   if (resolution.mimeType.startsWith('text/html')) {
+    // html-directory scope 在 resolve 侧不做大小检查(仅 media-file 检查),响应侧必须拦在
+    // readFileSync 之前——否则超大 html 同步全读会阻塞主进程乃至 OOM(#128)。
+    // open 后 fstat 权威检查并经同一 fd 读取,消除 stat→read 窗口内文件被替换的绕过
+    //(与下方流式分支的防御对齐);检查置于 HEAD 之前,超限文件 HEAD 也不再返回 200。
+    const descriptor = openSync(resolution.path, 'r')
+    let metadata: ReturnType<typeof fstatSync>
+    try {
+      metadata = fstatSync(descriptor)
+    } catch (error) {
+      try { closeSync(descriptor) } catch { /* already closed */ }
+      throw error
+    }
+    if (metadata.size > resolution.maxBytes) {
+      closeSync(descriptor)
+      return new Response('Preview file is too large', { status: 413, headers })
+    }
     if (resolution.method === 'HEAD') {
-      headers.set('Content-Length', String(resolution.size))
+      closeSync(descriptor)
+      headers.set('Content-Length', String(metadata.size))
       return new Response(null, { status: 200, headers })
     }
-    // html-directory scope 在 resolve 侧不做大小检查(仅 media-file 检查),此处必须拦在
-    // readFileSync 之前——否则超大 html 同步全读会阻塞主进程乃至 OOM(#128)
-    if (resolution.size > resolution.maxBytes) return new Response('Preview file is too large', { status: 413, headers })
-    const html = injectHtmlNavigationBridge(readFileSync(resolution.path, 'utf8'))
+    let html: string
+    try {
+      html = injectHtmlNavigationBridge(readFileSync(descriptor, 'utf8'))
+      closeSync(descriptor)
+    } catch (error) {
+      try { closeSync(descriptor) } catch { /* already closed */ }
+      throw error
+    }
     headers.set('Content-Length', String(Buffer.byteLength(html)))
     return new Response(html, { status: 200, headers })
   }
