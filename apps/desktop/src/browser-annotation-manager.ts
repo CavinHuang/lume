@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { type WebContents } from 'electron'
@@ -359,6 +359,47 @@ export class BrowserAnnotationManager {
     return readFileSync(path)
   }
 
+  /**
+   * 历史存量孤儿截图全量 GC(#188)。引用并集 = store 会话 refs ∪ thread 历史(transcript) refs，
+   * 并集之外且 mtime 超过宽限期的文件才删——宽限期覆盖「截图已写、引用尚未落盘」的竞态窗口
+   * (prepareScreenshot 写文件到 store 落盘为毫秒级；saveReviewScreenshot 的 ref 经工具结果
+   * 落 transcript 为一次回合，分钟级)。朴素只扫 store 会误删不经 store 的
+   * saveReviewScreenshot 产物与已提交聊天的附件引用。
+   * 删除失败静默留待下次(与 #130 的 try/catch 约定一致)。
+   */
+  runOrphanScreenshotSweep(graceMs = 3_600_000): { scanned: number; deleted: number } {
+    const configDir = this.options.configDir()
+    const keep = this.store.collectAllScreenshotRefs()
+    collectTranscriptScreenshotRefs(configDir, keep)
+    const resourcesRoot = join(configDir, 'browser', 'review-resources')
+    let scanned = 0
+    let deleted = 0
+    if (!existsSync(resourcesRoot)) return { scanned, deleted }
+    const now = Date.now()
+    for (const threadEntry of readdirSafe(resourcesRoot)) {
+      if (!threadEntry.isDirectory()) continue
+      const threadId = threadEntry.name
+      if (!isSafeThreadId(threadId)) continue
+      const threadDir = join(resourcesRoot, threadId)
+      let remaining = 0
+      for (const fileEntry of readdirSafe(threadDir)) {
+        const filename = fileEntry.name
+        if (!fileEntry.isFile() || !/^[a-f0-9-]{36}\.png$/i.test(filename)) continue
+        scanned += 1
+        const ref = `browser-review-screenshot:${threadId}:${filename.slice(0, -4)}`
+        const path = join(threadDir, filename)
+        if (keep.has(ref)) { remaining += 1; continue }
+        try {
+          if (now - statSync(path).mtimeMs < graceMs) { remaining += 1; continue }
+          unlinkSync(path)
+          deleted += 1
+        } catch { /* EPERM/EBUSY 等占用失败留待下次 */ }
+      }
+      if (remaining === 0) { try { rmdirSync(threadDir) } catch { /* 非空或占用 */ } }
+    }
+    return { scanned, deleted }
+  }
+
   private syncGuest(tab: AnnotationRuntimeTab, snapshot: BrowserAnnotationSessionSnapshot): void {
     if (!tab.webContents || tab.webContents.isDestroyed()) return
     // Task 71：交互 flag 用 !== undefined 守卫（与 theme 的 truthy 守卫不同）——false 是有效值
@@ -447,6 +488,45 @@ export class BrowserAnnotationManager {
 
 function text(value: unknown, max: number): string { return typeof value === 'string' ? value.trim().slice(0, max) : '' }
 function isRecord(value: unknown): value is Record<string, unknown> { return Boolean(value && typeof value === 'object' && !Array.isArray(value)) }
+
+// thread 历史(transcript)引用源(#188)：refs 是唯一字符串，文本正则扫描即可，
+// 不依赖消息 schema 嵌套位置。真源为 agent/runtime-core/sessions/<id>/；
+// agent-workspaces/*/threads/ 为历史布局，一并扫描兜底。读取失败(占用/损坏)跳过该文件。
+const SCREENSHOT_REF_PATTERN = /browser-review-screenshot:[A-Za-z0-9._-]{1,200}:[a-f0-9-]{36}/g
+function collectTranscriptScreenshotRefs(configDir: string, into: Set<string>): void {
+  const scanSessionDir = (sessionDir: string): void => {
+    for (const name of ['transcript.json', 'transcript.jsonl']) {
+      const path = join(sessionDir, name)
+      try {
+        if (!existsSync(path)) continue
+        const content = readFileSync(path, 'utf8')
+        for (const match of content.matchAll(SCREENSHOT_REF_PATTERN)) into.add(match[0])
+      } catch { /* 跳过不可读文件 */ }
+    }
+  }
+  const scanSessionDirs = (directory: string): void => {
+    for (const entry of readdirSafe(directory)) {
+      if (entry.isDirectory()) scanSessionDir(join(directory, entry.name))
+    }
+  }
+  // 真源：agent/runtime-core/sessions/<id>/
+  const runtimeCoreSessions = join(configDir, 'agent', 'runtime-core', 'sessions')
+  if (existsSync(runtimeCoreSessions)) scanSessionDirs(runtimeCoreSessions)
+  // 历史布局兜底：agent-workspaces/<slug>/threads/<id>/ 与 legacy <slug>/<id>/
+  const workspacesRoot = join(configDir, 'agent-workspaces')
+  if (!existsSync(workspacesRoot)) return
+  for (const slugEntry of readdirSafe(workspacesRoot)) {
+    if (!slugEntry.isDirectory()) continue
+    const slugDir = join(workspacesRoot, slugEntry.name)
+    const threadsDir = join(slugDir, 'threads')
+    if (existsSync(threadsDir)) scanSessionDirs(threadsDir)
+    else scanSessionDirs(slugDir)
+  }
+}
+
+function readdirSafe(directory: string): { name: string; isDirectory: () => boolean; isFile: () => boolean }[] {
+  try { return readdirSync(directory, { withFileTypes: true }) } catch { return [] }
+}
 function isSafeThreadId(value: string): boolean { return isSafeBrowserAnnotationThreadId(value) }
 function sanitizeRect(value: Record<string, unknown>): { x: number; y: number; width: number; height: number } { return { x: bounded(value.x), y: bounded(value.y), width: Math.max(0, bounded(value.width)), height: Math.max(0, bounded(value.height)) } }
 function bounded(value: unknown): number { return typeof value === 'number' && Number.isFinite(value) ? Math.max(-100_000, Math.min(100_000, value)) : 0 }
