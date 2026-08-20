@@ -9,6 +9,7 @@ export {
   highlightCode,
   highlightCodeSync,
   highlightToTokens,
+  isHighlighterReady,
   type HighlightOptions,
   type HighlightResult,
   type HighlightToken,
