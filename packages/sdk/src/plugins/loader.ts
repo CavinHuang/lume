@@ -2,6 +2,7 @@ import { access, readFile } from 'fs/promises'
 import { execFile } from 'child_process'
 import { isAbsolute, join, relative, resolve } from 'path'
 import { pathToFileURL } from 'url'
+import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type {
   AgentDefinition,
   AgentOptions,
@@ -121,7 +122,7 @@ export function buildCommandToolDefinition(
           timeout,
           maxBuffer: 1024 * 1024,
           env: {
-            ...process.env,
+            ...getDefaultEnvironment(),
             PLUGIN_INPUT: payload,
             ...(contribution.env ?? {}),
             ...(context.toolConfig?.env && typeof context.toolConfig.env === 'object'
@@ -177,7 +178,7 @@ async function executeSandboxedCommandTool(input: {
         timeoutMs: input.timeout,
         stdio: ['ignore', 'pipe', 'pipe'],
         env: {
-          ...process.env,
+          ...getDefaultEnvironment(),
           PLUGIN_INPUT: input.payload,
           ...(input.env ?? {}),
           ...(input.context.toolConfig?.env && typeof input.context.toolConfig.env === 'object'
@@ -245,7 +246,7 @@ function commandToolFromManifest(manifest: CommandToolManifest, pluginPath: stri
           timeout,
           maxBuffer: 1024 * 1024,
           env: {
-            ...process.env,
+            ...getDefaultEnvironment(),
             PLUGIN_INPUT: payload,
             ...(context.toolConfig?.env && typeof context.toolConfig.env === 'object'
               ? context.toolConfig.env as Record<string, string>
