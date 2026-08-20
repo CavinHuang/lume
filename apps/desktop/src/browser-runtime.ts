@@ -42,6 +42,7 @@ import { BrowserCredentialVault } from "./browser-credentials"
 import { BrowserWorkspaceStore } from "./browser-workspace-store"
 import { BrowserReferenceGrantStore } from "./browser-reference-grants"
 import { BrowserAnnotationManager } from "./browser-annotation-manager"
+import { buildBrowserSemanticTree, type BrowserSemanticLine, type BrowserSemanticRef } from "./browser-semantic-snapshot"
 
 type BrowserEvent = { method: string; params: Record<string, unknown> }
 type BrowserRuntimeOptions = {
@@ -159,6 +160,25 @@ type BrowserPageAssetInventory = {
   assets: BrowserPageAsset[]
 }
 
+type BrowserSemanticRefSession = {
+  byIdentity: Map<string, string>
+  entries: Map<string, BrowserSemanticRef & { generation: number; tabId: string }>
+  nextRef: number
+}
+
+type BrowserSemanticSnapshotCursor = {
+  generation: number
+  limit: number
+  lines: BrowserSemanticLine[]
+  offset: number
+  refs: BrowserSemanticRef[]
+  sessionId: string
+  snapshotId: string
+  tabId: string
+  title: string
+  url: string
+}
+
 type BrowserAuthSession = {
   window: BrowserWindow
   tabId: string
@@ -203,6 +223,8 @@ export class BrowserRuntime {
   private readonly workspaces: BrowserWorkspaceStore
   private readonly referenceGrants = new BrowserReferenceGrantStore()
   private readonly annotations: BrowserAnnotationManager
+  private readonly semanticRefSessions = new Map<string, BrowserSemanticRefSession>()
+  private readonly semanticSnapshotCursors = new Map<string, BrowserSemanticSnapshotCursor>()
   private annotationSweepTimer: ReturnType<typeof setTimeout> | null = null
   private annotationSweepInterval: ReturnType<typeof setInterval> | null = null
   private agentPluginEnabled = false
@@ -301,6 +323,7 @@ export class BrowserRuntime {
       { id: "tabs", description: "Create, close, switch and inspect in-app tabs." },
       { id: "navigation", description: "Navigate and control ordinary HTTP(S) pages." },
       { id: "locator-actions", description: "Use the constrained snapshot and locator input facade." },
+      { id: "semanticSnapshot", description: "Read a compact accessibility-tree snapshot with stable element references." },
       { id: "screenshot", description: "Capture viewport or full-page screenshots." },
       { id: "agentCursor", description: "Show the virtual Agent cursor for controlled actions." },
       { id: "guardedUpload", description: "Upload only task-bound Lume file references after confirmation." },
@@ -781,6 +804,7 @@ export class BrowserRuntime {
     }
     if (!GUEST_OPTIONAL_METHODS.has(method)) await this.waitForGuest(tab)
     if (method === "snapshot") return this.snapshot(tab)
+    if (method === "semanticSnapshot") return this.semanticSnapshot(tab, params, context)
     if (method === "wait:download") return this.waitForDownload(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
     if (method === "download:path") return this.downloadPath(context, String(params.downloadId ?? params.download_id ?? ""), boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
     if (method === "wait:filechooser") return this.waitForFileChooser(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
@@ -1020,6 +1044,8 @@ export class BrowserRuntime {
     this.guestMounts.clear()
     this.downloadRefs.clear()
     this.pageAssetInventories.clear()
+    this.semanticRefSessions.clear()
+    this.semanticSnapshotCursors.clear()
     for (const policy of this.ownedSessionPolicies) {
       policy.disposed = true
       policy.session.webRequest.onBeforeRequest(null)
@@ -2711,6 +2737,90 @@ export class BrowserRuntime {
       return { truncated: true, byteLength: text.length, hint: "DOM snapshot too large for one read; use tab.screenshot() for visual context or playwright locators to target specific elements" }
     }
     return result
+  }
+
+  private async semanticSnapshot(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): Promise<unknown> {
+    const requestedCursor = typeof params.cursor === "string" ? params.cursor : undefined
+    if (requestedCursor) {
+      const cached = this.semanticSnapshotCursors.get(requestedCursor)
+      this.semanticSnapshotCursors.delete(requestedCursor)
+      if (!cached
+        || cached.sessionId !== context.browserSessionId
+        || cached.tabId !== tab.tabId
+        || cached.generation !== tab.generation) throw browserError("stale_target")
+      return this.semanticSnapshotPage(cached)
+    }
+
+    const result = await withDebugger(browserContents(tab), async (debuggerRef) => {
+      await debuggerRef.sendCommand("DOM.enable")
+      await debuggerRef.sendCommand("Accessibility.enable")
+      return debuggerRef.sendCommand("Accessibility.getFullAXTree") as Promise<{ nodes?: unknown }>
+    })
+    const session = this.semanticRefSessions.get(context.browserSessionId) ?? {
+      byIdentity: new Map<string, string>(),
+      entries: new Map<string, BrowserSemanticRef & { generation: number; tabId: string }>(),
+      nextRef: 1,
+    }
+    this.semanticRefSessions.set(context.browserSessionId, session)
+    const tree = buildBrowserSemanticTree(result.nodes, {
+      interactiveOnly: params.interactiveOnly === true || params.interactive_only === true,
+      allocateRef: (entry) => {
+        const identity = `${tab.tabId}\u0000${tab.generation}\u0000${entry.backendNodeId}`
+        let ref = session.byIdentity.get(identity)
+        if (!ref) {
+          ref = `e${session.nextRef++}`
+          session.byIdentity.set(identity, ref)
+        }
+        session.entries.set(ref, { ...entry, ref, generation: tab.generation, tabId: tab.tabId })
+        return ref
+      },
+    })
+    return this.semanticSnapshotPage({
+      generation: tab.generation,
+      limit: boundedNumber(params.limit ?? 400, 50, 1_000),
+      lines: tree.lines,
+      offset: 0,
+      refs: tree.refs,
+      sessionId: context.browserSessionId,
+      snapshotId: randomUUID(),
+      tabId: tab.tabId,
+      title: tab.title,
+      url: tab.url,
+    })
+  }
+
+  private semanticSnapshotPage(snapshot: BrowserSemanticSnapshotCursor): Record<string, unknown> {
+    const end = Math.min(snapshot.lines.length, snapshot.offset + snapshot.limit)
+    const lines = snapshot.lines.slice(snapshot.offset, end)
+    const visibleRefs = new Set(lines.flatMap((line) => line.ref ? [line.ref] : []))
+    const refs = Object.fromEntries(snapshot.refs
+      .filter((entry) => visibleRefs.has(entry.ref))
+      .map((entry) => [entry.ref, {
+        role: entry.role,
+        name: entry.name,
+        ...(entry.nth !== undefined ? { nth: entry.nth } : {}),
+      }]))
+    let nextCursor: string | undefined
+    if (end < snapshot.lines.length) {
+      nextCursor = randomUUID()
+      this.semanticSnapshotCursors.set(nextCursor, { ...snapshot, offset: end })
+      while (this.semanticSnapshotCursors.size > 100) {
+        const oldest = this.semanticSnapshotCursors.keys().next().value
+        if (typeof oldest !== "string") break
+        this.semanticSnapshotCursors.delete(oldest)
+      }
+    }
+    return {
+      snapshot_id: snapshot.snapshotId,
+      tab_id: snapshot.tabId,
+      navigation_generation: snapshot.generation,
+      url: snapshot.url,
+      title: snapshot.title,
+      tree: lines.map((line) => line.text).join("\n"),
+      refs,
+      range: { from: snapshot.offset, to: end, total: snapshot.lines.length },
+      ...(nextCursor ? { next_cursor: nextCursor } : {}),
+    }
   }
 
   private async screenshot(tab: BrowserTab, params: Record<string, unknown>): Promise<string> {

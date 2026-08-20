@@ -133,6 +133,16 @@ describe("create-lume-tools", () => {
     expect(result.availableToolNames).toContain("mcp__node_repl__js");
     expect(toolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeTrue();
     expect(toolNames).not.toContain("js");
+    expect(toolNames).toContain("mcp__browser__list_tabs");
+    expect(toolNames).toContain("mcp__browser__open");
+    expect(toolNames).toContain("mcp__browser__switch_tab");
+    expect(toolNames).toContain("mcp__browser__snapshot");
+  });
+
+  test("does not expose task-owned Browser tools to subagents", () => {
+    const result = createLumeRuntimeTools({ ...baseInput(), threadType: "subagent" });
+
+    expect(result.customTools.some((tool) => tool.name.startsWith("mcp__browser__"))).toBeFalse();
   });
 
   test("does not mark the Browser executor as a permanently visible core tool", () => {
