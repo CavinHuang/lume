@@ -24,7 +24,7 @@ import { ScrollMinimap, type MinimapItem } from './ScrollMinimap'
 import { summarizeMessageForPreview } from '@/components/app-shell/ThreadMiniMapPopover'
 import type { TodoBlockData } from './runtime-message-view'
 import { threadMessagesCache } from './thread-messages-cache'
-import { useBootstrapGeneralSettings, useSyncGeneralSettingsAfterPersonalize } from '@/lib/use-general-settings'
+import { useBootstrapGeneralSettings, useSyncGeneralSettingsAfterPersonalize } from '@/hooks/use-general-settings'
 import {
   collectNewRuntimeMessageIds,
   collectConversationMinimapItems,
@@ -401,7 +401,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
         key={`runtime-event-${msg.id}`}
         data-message-id={msg.id}
         data-message-role={msg.type}
-        className="mx-auto w-full max-w-[920px]"
+        className="mx-auto w-full max-w-[920px] [content-visibility:auto] [contain-intrinsic-size:auto_160px]"
       >
         <RuntimeEventContentBlock
           message={msg}

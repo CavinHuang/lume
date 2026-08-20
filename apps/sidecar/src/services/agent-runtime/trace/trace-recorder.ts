@@ -32,12 +32,18 @@ export type TraceRecorderEvent =
   | { type: "trace.started"; trace: LumeTrace }
   | { type: "trace.ended"; trace: LumeTrace }
   | { type: "span.started"; trace: LumeTrace; span: LumeTraceSpan }
-  | { type: "span.ended"; trace: LumeTrace; span: LumeTraceSpan }
+  | { type: "span.ended"; trace: LumeTrace; span: LumeTraceSpan };
 
 export class TraceRecorder {
   private readonly createId: () => string;
   private readonly now: () => string;
-  private readonly spanTraceIds = new Map<string, string>();
+  /**
+   * 内存缓存：recorder 是本 session 内 span/trace 的唯一写方，缓存对象即磁盘最后版本。
+   * 避免每次 span 操作全量解析 spans.jsonl（O(n²)）。startSpan 返回值与缓存同引用，
+   * 消费方（run-observer 等）视作只读。endTrace 时随 trace 一并清理（Map 迭代中删当前项安全）。
+   */
+  private readonly traces = new Map<string, LumeTrace>();
+  private readonly spans = new Map<string, LumeTraceSpan>();
   private readonly onEvent?: (event: TraceRecorderEvent) => void;
 
   constructor(
@@ -66,11 +72,13 @@ export class TraceRecorder {
       metadata: input.metadata
     };
     await this.store.create(trace);
+    this.traces.set(trace.id, trace);
     this.onEvent?.({ type: "trace.started", trace });
     return trace;
   }
 
   async endTrace(traceId: string, status: LumeTrace["status"]): Promise<void> {
+    // 每 run 一次，保留读盘取完整 trace
     const trace = await this.store.get(traceId);
     const endedAt = this.now();
     await this.store.update(traceId, {
@@ -78,6 +86,10 @@ export class TraceRecorder {
       endedAt
     });
     if (trace) this.onEvent?.({ type: "trace.ended", trace: { ...trace, status, endedAt } });
+    this.traces.delete(traceId);
+    for (const [spanId, span] of this.spans) {
+      if (span.traceId === traceId) this.spans.delete(spanId);
+    }
   }
 
   async startSpan(input: StartSpanInput): Promise<LumeTraceSpan> {
@@ -93,13 +105,36 @@ export class TraceRecorder {
       metadata: input.metadata
     };
     await this.store.appendSpan(input.traceId, span);
-    this.spanTraceIds.set(span.id, input.traceId);
-    const trace = await this.store.get(input.traceId);
-    if (trace) this.onEvent?.({ type: "span.started", trace, span });
+    this.spans.set(span.id, span);
+    // onEvent 消费方只读 trace 的 id/runId/threadId 等标识字段，不读 spans 新鲜度
+    const trace = this.traces.get(input.traceId);
+    if (trace) {
+      this.onEvent?.({ type: "span.started", trace, span });
+      return span;
+    }
+    const loaded = await this.store.get(input.traceId);
+    if (loaded) this.onEvent?.({ type: "span.started", trace: loaded, span });
     return span;
   }
 
   async endSpan(spanId: string, output?: unknown): Promise<void> {
+    const cached = this.spans.get(spanId);
+    if (cached) {
+      const endedAt = this.now();
+      const ended: LumeTraceSpan = {
+        ...cached,
+        status: "completed",
+        endedAt,
+        durationMs: calculateDurationMs(cached.startedAt, endedAt),
+        output
+      };
+      this.spans.set(spanId, ended);
+      // 追加完整终态版本：readSpans 同 id 后行覆盖前行，与 updateSpan 等价
+      await this.store.appendSpan(ended.traceId, ended);
+      const trace = this.traces.get(ended.traceId);
+      if (trace) this.onEvent?.({ type: "span.ended", trace, span: ended });
+      return;
+    }
     const span = await this.findSpan(spanId);
     if (!span) return;
     const endedAt = this.now();
@@ -118,6 +153,22 @@ export class TraceRecorder {
   }
 
   async failSpan(spanId: string, error: unknown): Promise<void> {
+    const cached = this.spans.get(spanId);
+    if (cached) {
+      const endedAt = this.now();
+      const failed: LumeTraceSpan = {
+        ...cached,
+        status: "failed",
+        endedAt,
+        durationMs: calculateDurationMs(cached.startedAt, endedAt),
+        error: normalizeError(error)
+      };
+      this.spans.set(spanId, failed);
+      await this.store.appendSpan(failed.traceId, failed);
+      const trace = this.traces.get(failed.traceId);
+      if (trace) this.onEvent?.({ type: "span.ended", trace, span: failed });
+      return;
+    }
     const span = await this.findSpan(spanId);
     if (!span) return;
     const endedAt = this.now();
@@ -154,14 +205,9 @@ export class TraceRecorder {
   }
 
   private async findSpan(spanId: string): Promise<LumeTraceSpan | null> {
-    const traceId = this.spanTraceIds.get(spanId);
-    if (traceId) {
-      const trace = await this.store.get(traceId);
-      return trace?.spans.find((item) => item.id === spanId) ?? null;
-    }
-    // Spans are stored inside trace documents; trace ids are not globally indexed yet.
-    // Runtime integration keeps span ids scoped to the active trace, so this method
-    // scans only traces in the current session store.
+    const cached = this.spans.get(spanId);
+    if (cached) return cached;
+    // 外部 span（非本 recorder 启动）：扫描 session store，保持旧路径
     const anyStore = this.store as unknown as { listByThread?: (threadId: string) => Promise<LumeTrace[]> };
     if (!anyStore.listByThread) return null;
     const knownTraces = await collectKnownTraces(this.store);

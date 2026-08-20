@@ -1,3 +1,5 @@
+import { type QuotedSelection, type QuotedSelectionSourceType } from '@/atoms'
+
 /**
  * 划线引用序列化（Quoted Selection serialization）
  *
@@ -9,7 +11,6 @@
  * 便于反解；blockquote 做不到。
  */
 
-import type { QuotedSelection, QuotedSelectionSourceType } from '@/atoms/quoted-selection'
 
 export interface ParsedQuotedSelectionRef {
   path: string

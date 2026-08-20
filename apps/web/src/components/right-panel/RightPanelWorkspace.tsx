@@ -58,7 +58,7 @@ import {
   type ThreadBrowserWorkspace,
 } from './right-panel-browser-state'
 import { CodingReviewPanel } from './CodingReviewPanel'
-import type { CodingReviewPanelState } from '@/atoms/right-panel-atoms'
+import { type CodingReviewPanelState } from '@/atoms'
 
 const PLACEHOLDER_LABELS: Record<RightPanelFunction, string> = {
   browser: '浏览器', files: '文件', chat: '问答',

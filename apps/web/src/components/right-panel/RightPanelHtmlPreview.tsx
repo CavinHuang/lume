@@ -86,6 +86,8 @@ export function RightPanelHtmlPreview({
         return
       }
       if (!limiter.allow()) return
+      // 非 http/https 的 href(iframe 内任意 scheme 链接)无默认浏览器语义,不弹确认框
+      if (!/^https?:\/\//i.test(message.href)) return
       setPendingExternal(message.href)
     }
     window.addEventListener('message', handleMessage)

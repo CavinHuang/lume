@@ -11,6 +11,9 @@ import {
   updateAskUserApprovalSession
 } from "./ask-user-service";
 import { listPendingRuntimeCoreInterruptions } from "./interruption-index";
+import { createLogger } from "../../infra/logger";
+
+const log = createLogger("ask-user-question-session");
 
 const pendingAskUserQuestionResolvers = new Map<
   string,
@@ -49,6 +52,11 @@ export function setAskUserQuestionApprovalSession(toolUseId: string, approvalSes
     originalThreadId: pending.threadId,
     approvalThreadId: normalized,
     request: pending.request
+  }).catch((error) => {
+    log.warn("Failed to update ask-user approval session", {
+      toolUseId,
+      error: error instanceof Error ? error.message : String(error)
+    });
   });
 }
 
@@ -77,12 +85,22 @@ export function waitForAskUserQuestionAnswers(
       }
       pendingAskUserQuestionResolvers.delete(toolUseId);
       signal.removeEventListener("abort", onAbort);
-      await resolveAskUserInterruption({
-        threadId,
-        toolUseId,
-        canceled: result.status !== "answered",
-        answers: result.answers ?? undefined
-      });
+      try {
+        await resolveAskUserInterruption({
+          threadId,
+          toolUseId,
+          canceled: result.status !== "answered",
+          answers: result.answers ?? undefined
+        });
+      } catch (error) {
+        // 持久化失败只降级冷启动恢复能力；resolve 必须仍被执行（在 try 之外），
+        // 否则 timeout 已清除、abort 监听已摘除，等待方将无限悬挂
+        log.warn("Failed to resolve ask-user interruption", {
+          toolUseId,
+          threadId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
       resolve(result);
     };
 
@@ -124,7 +142,12 @@ export function waitForAskUserQuestionAnswers(
       timeout
     });
     signal.addEventListener("abort", onAbort, { once: true });
-    void persistAskUserInterruption(request);
+    void persistAskUserInterruption(request).catch((error) => {
+      log.warn("Failed to persist ask-user interruption", {
+        toolUseId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
     emit(request);
   });
 }
@@ -171,6 +194,11 @@ export function cancelPendingAskUserQuestionBySession(threadId: string): void {
       threadId: pending.threadId,
       toolUseId,
       canceled: true
+    }).catch((error) => {
+      log.warn("Failed to resolve cancelled ask-user interruption", {
+        toolUseId,
+        error: error instanceof Error ? error.message : String(error)
+      });
     });
     pending.resolve({ status: "canceled", answers: null });
     pendingAskUserQuestionResolvers.delete(toolUseId);

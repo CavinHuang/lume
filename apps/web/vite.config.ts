@@ -34,9 +34,6 @@ function disable3DmolStringCallbacks(): Plugin {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), disable3DmolStringCallbacks()],
-  // 暴露 AGENT_ 前缀进程环境变量给渲染进程;默认 VITE_ 前缀保持不变。
-  // (原唯一消费者 AGENT_LIFECYCLE_EVENTS 已随批次5 T7c 退役,前缀保留无害)
-  envPrefix: ['VITE_', 'AGENT_'],
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
   },
@@ -62,7 +59,11 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          return id.replace(/\\/g, '/').includes('/3dmol/') ? 'pdb-viewer' : undefined
+          const normalized = id.replace(/\\/g, '/')
+          if (normalized.includes('/3dmol/')) return 'pdb-viewer'
+          // pierre editor 内核体量大且被消息流/右面板静态引用，独立 chunk 隔离缓存、并行加载
+          if (normalized.includes('@pierre/diffs')) return 'pierre-diffs'
+          return undefined
         },
       },
     },

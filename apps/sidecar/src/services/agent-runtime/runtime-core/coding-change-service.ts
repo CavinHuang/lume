@@ -1731,7 +1731,9 @@ function runGitCommand(args: string[], cwd: string): Promise<string | null> {
     try {
       child = spawn("git", ["-c", "core.quotePath=false", ...args], {
         cwd,
-        stdio: ["ignore", "pipe", "pipe"],
+        // stderr 无人消费：pipe 会在 git 写满 OS 管道缓冲后挂死（如 Windows autocrlf 的逐文件告警），
+        // 本函数从不读 stderr，直接丢弃（与 runGitBuffer/runGitSearchDiff 一致）。
+        stdio: ["ignore", "pipe", "ignore"],
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
       });
     } catch {
@@ -1739,7 +1741,6 @@ function runGitCommand(args: string[], cwd: string): Promise<string | null> {
       return;
     }
     child.stdout?.setEncoding("utf8");
-    child.stderr?.setEncoding("utf8");
     let stdout = "";
     child.stdout?.on("data", (chunk) => { stdout += chunk; });
     const timeout = setTimeout(() => {

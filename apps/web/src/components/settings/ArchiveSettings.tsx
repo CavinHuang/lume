@@ -13,7 +13,7 @@ import type { AgentThreadMeta } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { cn } from '@/lib/utils'
 import { agentWorkspacesAtom } from '@/atoms'
-import { useReleaseThreadState } from '@/hooks/use-release-thread-state'
+import { useReleaseThreadState } from '@/hooks/useReleaseThreadState'
 import { sidecarCall } from '@/lib/desktop-api'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 

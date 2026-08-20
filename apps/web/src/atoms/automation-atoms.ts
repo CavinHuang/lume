@@ -3,7 +3,6 @@ import type { AutomationJob, AutomationRun } from '@lume/shared'
 
 export const automationJobsAtom = atom<AutomationJob[]>([])
 export const automationRunsAtom = atom<AutomationRun[]>([])
-export const automationLoadingAtom = atom(false)
 
 /**
  * 跨视图"预选自动化任务"通道。

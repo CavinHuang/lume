@@ -1,9 +1,9 @@
+import { createPlanningTodo } from '@/lib/desktop-api/planning-todo'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { createPlanningTodo } from '@/lib/desktop-api/planning-todo'
 import { getCurrentWindow } from '@/lib/desktop-runtime/window'
 import type { AgentWorkspace } from '@lume/shared'
 

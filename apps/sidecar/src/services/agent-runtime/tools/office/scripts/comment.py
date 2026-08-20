@@ -8,14 +8,19 @@ COMMENTS_IDS_PATH = "word/commentsIds.xml"
 COMMENTS_RELS_PATH = "word/_rels/comments.xml.rels"
 
 
+def xml_escape(value: str) -> str:
+    # 先转义 & 避免二次替换；author 进入双引号属性值，" 必须转义
+    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
 def add_comment(unpacked_dir: str, comment_id: int, text: str, author: str = "Assistant", parent_id: int | None = None):
     root = Path(unpacked_dir)
     comments_path = root / COMMENTS_PATH
     if not comments_path.exists():
         raise ValueError(f"Missing {COMMENTS_PATH}")
     body = comments_path.read_text(encoding="utf-8")
-    safe_text = text.replace("&", "&").replace("<", "<").replace(">", ">")
-    safe_author = author.replace("&", "&").replace("<", "<").replace(">", ">")
+    safe_text = xml_escape(text)
+    safe_author = xml_escape(author)
     insert = (
         f'<w:comment w:id="{comment_id}" w:author="{safe_author}" w:date="2026-01-01T00:00:00Z" '
         f'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'

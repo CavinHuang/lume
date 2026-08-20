@@ -93,7 +93,7 @@ import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig } from "../../s
 import { createLumeRuntimeTools } from "../tools/create-lume-tools";
 import { createSdkWebTools } from "../tools/web/create-web-tools";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
-import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
+import { clampSubagentPermissionMode, resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
 import { buildSubagentWorkContext, resolveSubagentDispatchPolicy } from "../../agent/subagents/subagent-dispatch-policy";
@@ -486,11 +486,12 @@ async function runSidecarSubagent(input: {
   }
 
   const { runAgentRuntime } = await import("./attempt");
-  const childPermissionMode = (
-    typeof input.toolInput.mode === "string"
-      ? input.toolInput.mode
-      : input.permissionMode
-  ) as AgentSendInput["permissionMode"] | undefined;
+  // 收口契约：模型可控的子代理权限模式一律经此钳制，子级特权不得高于父线程
+  // （sendAgentMessage 直派子代理的路径当前均非模型可控，不在此范围）
+  const requestedPermissionMode = typeof input.toolInput.mode === "string" ? input.toolInput.mode : undefined;
+  const childPermissionMode = clampSubagentPermissionMode(requestedPermissionMode, input.permissionMode);
+  const permissionModeAdjusted = requestedPermissionMode !== undefined
+    && requestedPermissionMode !== childPermissionMode;
   let textOutput = "";
   let lastAssistantMessage = "";
   const toolCalls: string[] = [];
@@ -597,16 +598,20 @@ async function runSidecarSubagent(input: {
     errorMessage: subagentErrorMessage,
     status: subagentStatus
   });
+  // 钳制/归一发生时向模型声明实际生效的模式，避免其误以为拿到了更高权限而重试
+  const outputWithModeNote = permissionModeAdjusted && childPermissionMode
+    ? `${finalized.output}\n\n[子代理权限模式: ${requestedPermissionMode} → ${childPermissionMode}（不得超过父线程权限）]`
+    : finalized.output;
 
   return {
     status: subagentStatus,
-    output: finalized.output,
+    output: outputWithModeNote,
     ...(finalized.lastAssistantMessage ? { completionSummary: finalized.lastAssistantMessage } : {}),
     ...(subagentErrorMessage ? { error: subagentErrorMessage } : {}),
     result: {
       type: "tool_result",
       tool_use_id: "",
-      content: finalized.output,
+      content: outputWithModeNote,
       ...(subagentStatus !== "completed" ? { is_error: true } : {})
     }
   };
@@ -948,7 +953,7 @@ function buildRuntimeCoreTools(input: {
       const parentThreadId = context.sessionId ?? "";
       const policy = resolveSubagentSpawnPolicy({
         parentThreadId,
-        parentPermissionMode: toolInput.mode
+        parentPermissionMode: permissionMode
       });
       if (!policy.ok) {
         return { type: "tool_result" as const, tool_use_id: "", content: policy.error ?? "spawn policy rejected", is_error: true };
@@ -1143,7 +1148,7 @@ function buildRuntimeCoreTools(input: {
       const parentThreadId = context.sessionId ?? "";
       const policy = resolveSubagentSpawnPolicy({
         parentThreadId,
-        parentPermissionMode: toolInput.mode
+        parentPermissionMode: permissionMode
       });
       if (!policy.ok) {
         return { type: "tool_result" as const, tool_use_id: "", content: policy.error ?? "spawn policy rejected", is_error: true };
@@ -1824,8 +1829,36 @@ export function publishCodingReportToBus(input: {
     });
 }
 
+/**
+ * 包装器：session 工厂中途抛错（fallback 重试、指纹不匹配、连接初始化失败等）时，
+ * 上层 catch（LumeRunner）拿不到 session 无法 dispose——这里按 LIFO 执行已注册的
+ * 资源清理后 rethrow，避免泄漏 MCP 子进程 / FS watcher / worker。成功路径由
+ * session.dispose() 负责清理，pendingCleanup 随返回值丢弃。
+ */
 export async function createRuntimeCoreSession(
   input: CreateRuntimeCoreSessionInput
+): Promise<CreateRuntimeCoreSessionResult> {
+  const pendingCleanup: Array<() => Promise<unknown> | void> = [];
+  try {
+    return await createRuntimeCoreSessionImpl(input, pendingCleanup);
+  } catch (error) {
+    for (let index = pendingCleanup.length - 1; index >= 0; index -= 1) {
+      try {
+        await pendingCleanup[index]!();
+      } catch (cleanupError) {
+        log.warn("createRuntimeCoreSession 失败路径清理出错", {
+          sessionId: input.lumeSessionId,
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+        });
+      }
+    }
+    throw error;
+  }
+}
+
+async function createRuntimeCoreSessionImpl(
+  input: CreateRuntimeCoreSessionInput,
+  pendingCleanup: Array<() => Promise<unknown> | void>
 ): Promise<CreateRuntimeCoreSessionResult> {
   const boundSubagentIdentity = resolveBoundSubagentIdentity(input);
   const sessionDir = getRuntimeCoreSessionDir(input.lumeSessionId, input.agentDir);
@@ -1840,6 +1873,7 @@ export async function createRuntimeCoreSession(
     turnId: typeof input.messageMetadata?.turnId === "string" ? input.messageMetadata.turnId : undefined,
     userMessageId: typeof input.messageMetadata?.messageId === "string" ? input.messageMetadata.messageId : undefined,
   });
+  pendingCleanup.push(() => codingRunTracker.dispose());
   await codingRunTracker.initialize();
   let approvalRequestCount = 0;
   const getCodingReport = (): CodingVerificationReport & RuntimeCodingReport => {
@@ -1907,6 +1941,13 @@ export async function createRuntimeCoreSession(
         reason: "后台命令已持久化，恢复时重新附着而不重复执行。",
         createdAt: now,
         updatedAt: now
+      }).catch((error) => {
+        // fire-and-forget 持久化失败（AV 锁/磁盘满等）只降级恢复能力，不允许变成未处理拒绝崩进程
+        log.warn("Failed to persist background continuation checkpoint", {
+          sessionId: input.lumeSessionId,
+          runId: input.runId,
+          error: error instanceof Error ? error.message : String(error)
+        });
       });
     }
     publishCodingReport();
@@ -2157,6 +2198,10 @@ export async function createRuntimeCoreSession(
         reason: error instanceof Error ? error.message : String(error),
       }],
     }));
+  // createRuntimeTools 恒 resolve（内部失败也留下已 spawn 的子进程 state），失败清理须无条件注册
+  if (!askWikiOnly) {
+    pendingCleanup.push(() => pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG));
+  }
   const enabledPlugins = buildEnabledPluginContext(registeredPlugins, runtimePluginAssembly);
   const workspaceMcpRuntime = input.workspaceSlug && !askWikiOnly
     ? await workspaceMcpManager.createRuntimeTools(input.workspaceSlug).catch((error) => ({
@@ -2168,6 +2213,9 @@ export async function createRuntimeCoreSession(
       }]
     }))
     : { tools: [], diagnostics: [] };
+  if (input.workspaceSlug && !askWikiOnly && input.processSandbox?.processIsolation?.enabled) {
+    pendingCleanup.push(() => workspaceMcpManager.disposeWorkspace(input.workspaceSlug!));
+  }
   const pluginAwareMcpResourceTools = input.workspaceSlug && pluginAssembly.mcpServers.length > 0
     ? createPluginAwareMcpResourceTools({
       workspaceSlug: input.workspaceSlug,
@@ -2530,6 +2578,11 @@ export async function createRuntimeCoreSession(
   };
 
   const agent = createAgent(agentOptions);
+  pendingCleanup.push(() => agent.close());
+  pendingCleanup.push(() => {
+    clearRuntimeToolDescriptors(input.lumeSessionId);
+    clearRuntimeFileAccessLedger(input.lumeSessionId);
+  });
   await agent.getInitializationResult();
   const resolvedTools = getResolvedAgentTools(agent, toolset.tools);
 

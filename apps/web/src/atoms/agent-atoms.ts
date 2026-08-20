@@ -21,9 +21,8 @@ export function createThreadSliceFamily<T>(
 }
 
 export const agentThreadsAtom = atom<AgentThreadMeta[]>([])
-export const currentThreadIdAtom = atom<string | null>(null)
 
-export type StreamingState = 'idle' | 'streaming' | 'errored'
+type StreamingState = 'idle' | 'streaming' | 'errored'
 export const agentStreamingStatesAtom = atom<Record<string, StreamingState>>({})
 export const agentStreamingStatesFamily = createThreadSliceFamily(agentStreamingStatesAtom)
 /**
@@ -57,7 +56,7 @@ export const agentPlanModePhaseAtom = atom<Record<string, PlanModePhaseChangedEv
 export const agentPlanModePhaseFamily = createThreadSliceFamily(agentPlanModePhaseAtom)
 export const agentErrorMessagesAtom = atom<Record<string, string>>({})
 
-export type AgentThreadPermissionMode = NonNullable<AgentSendInput['permissionMode']>
+type AgentThreadPermissionMode = NonNullable<AgentSendInput['permissionMode']>
 /**
  * 每会话手动权限模式覆盖：按 threadId 落 localStorage。
  * 否则 renderer 重新加载后丢失，重进会话会被 plan phase 或全局默认覆盖（issue #28）。

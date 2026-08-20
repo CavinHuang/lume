@@ -21,7 +21,7 @@ import { DIFF_AWARE_MARKDOWN_COMPONENTS } from '@/components/markdown/DiffAwareM
 import { WEREAD_KEY_PAGE_URL, type ReadingAddBookInput, type ReadingLibrarySnapshot, type ReadingNoteSummary, type ReadingSearchResult, type ReadingSourceKind } from '@lume/shared'
 import { activeTabIdAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom, welcomePromptSeedAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { openExternal, revealPathInSystem, saveBinaryFileDialog } from '@/lib/desktop-api'
+import { openExternal, openExternalScheme, revealPathInSystem, saveBinaryFileDialog } from '@/lib/desktop-api'
 import {
   addReadingBook,
   getReadingSnapshot,
@@ -811,7 +811,7 @@ function WereadBookPanel({
   const openBook = async () => {
     if (!book.openUrl) return
     try {
-      await openExternal(book.openUrl)
+      await openExternalScheme(book.openUrl, 'weread')
     } catch (error) {
       console.error('[ReadingView] 打开微信读书书籍失败:', error)
       toast.error('打开微信读书失败')

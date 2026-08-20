@@ -1,3 +1,5 @@
+import { getEffectiveLumeConfig, updateWebSearchConfig } from '@/lib/desktop-api/lume-config'
+import { testSearchBackend } from '@/lib/desktop-api/system'
 import * as React from 'react'
 import { Check, Eye, EyeOff, Loader2, Save, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
@@ -10,8 +12,6 @@ import type {
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
-import { getEffectiveLumeConfig, updateWebSearchConfig } from '@/lib/desktop-api/lume-config'
-import { testSearchBackend } from '@/lib/desktop-api/system'
 
 import { Input } from '@/components/ui/input'
 interface ProviderMeta {

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -72,6 +73,21 @@ interface RuntimeCoreSessionManagerState {
   entries: RuntimeCoreEntry[];
 }
 
+export type RuntimeCoreAppendMessageInput = {
+  role: "user" | "assistant" | "toolResult";
+  content: unknown;
+  timestamp?: number;
+  provider?: string;
+  channelProvider?: string;
+  model?: string;
+  toolCallId?: string;
+  toolName?: string;
+  isError?: boolean;
+  api?: string;
+  stopReason?: string;
+  usage?: unknown;
+};
+
 export interface RuntimeCoreSessionManager {
   getSessionId(): string;
   getSessionDir(): string;
@@ -79,20 +95,9 @@ export interface RuntimeCoreSessionManager {
   getEntries(): RuntimeCoreEntry[];
   appendModelChange(provider: string, modelId: string): void;
   appendThinkingLevelChange(level: string): void;
-  appendMessage(message: {
-    role: "user" | "assistant" | "toolResult";
-    content: unknown;
-    timestamp?: number;
-    provider?: string;
-    channelProvider?: string;
-    model?: string;
-    toolCallId?: string;
-    toolName?: string;
-    isError?: boolean;
-    api?: string;
-    stopReason?: string;
-    usage?: unknown;
-  }): string;
+  appendMessage(message: RuntimeCoreAppendMessageInput): string;
+  /** 批量追加（fork/导入 rebuild）：一次读改写，替代逐条 appendMessage 的 O(n²)。 */
+  appendMessages(messages: RuntimeCoreAppendMessageInput[]): string[];
   appendCompaction(
     summary: string,
     leafId?: string,
@@ -170,9 +175,35 @@ function readStoredData(sessionDir: string, sessionId: string, cwd: string): Run
 }
 
 function writeStoredData(sessionDir: string, data: RuntimeCoreStoredData): void {
+  writeTranscriptJson(sessionDir, data);
+  rewriteTranscriptJsonl(sessionDir, data);
+}
+
+function writeTranscriptJson(sessionDir: string, data: RuntimeCoreStoredData): void {
   writeTextAtomic(getTranscriptJsonPath(sessionDir), JSON.stringify(data, null, 2));
+}
+
+function rewriteTranscriptJsonl(sessionDir: string, data: RuntimeCoreStoredData): void {
   const jsonlPayload = data.sessionMessages.map((message) => JSON.stringify(message)).join("\n");
   writeTextAtomic(getTranscriptJsonlPath(sessionDir), jsonlPayload);
+}
+
+/**
+ * jsonl 追加单行（SDK resume 输入）。写方（writeStoredData 与 SDK saveSession）历史格式均无尾换行，
+ * append 前补齐分隔；行数与 json 脱节（如崩溃截断）时返回 false 由调用方退回全量重写。
+ */
+function tryAppendTranscriptJsonlLine(
+  sessionDir: string,
+  message: RuntimeCoreStoredSessionMessage,
+  expectedExistingCount: number
+): boolean {
+  const path = getTranscriptJsonlPath(sessionDir);
+  const existing = existsSync(path) ? readFileSync(path, "utf-8") : "";
+  const existingCount = existing.split("\n").filter((line) => line.trim().length > 0).length;
+  if (existingCount !== expectedExistingCount) return false;
+  const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+  appendFileSync(path, `${prefix}${JSON.stringify(message)}\n`, "utf-8");
+  return true;
 }
 
 function readState(sessionDir: string): RuntimeCoreSessionManagerState {
@@ -204,6 +235,33 @@ function extractNormalizedMessages(sessionMessages: RuntimeCoreStoredSessionMess
     });
   }
   return messages;
+}
+
+function applyStoredMessage(data: RuntimeCoreStoredData, message: RuntimeCoreAppendMessageInput, uuid: string): void {
+  if (message.role === "assistant" && message.provider && message.model) {
+    data.metadata.model = `${message.provider}/${message.model}`;
+  }
+  const sessionMessageContent = message.role === "toolResult"
+    ? [{
+        type: "tool_result",
+        tool_use_id: message.toolCallId ?? uuid,
+        tool_name: message.toolName,
+        content: message.content,
+        is_error: message.isError === true
+      }]
+    : message.content;
+  data.sessionMessages.push({
+    uuid,
+    role: message.role === "toolResult" ? "user" : message.role,
+    timestamp: toIsoFromTimestamp(message.timestamp),
+    content: sessionMessageContent
+  });
+}
+
+function finalizeStoredData(data: RuntimeCoreStoredData): void {
+  data.messages = extractNormalizedMessages(data.sessionMessages);
+  data.metadata.messageCount = data.messages.length;
+  data.metadata.updatedAt = new Date().toISOString();
 }
 
 function toIsoFromTimestamp(timestamp?: number): string {
@@ -330,7 +388,8 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
     const data = readStoredData(this.sessionDir, this.sessionId, this.cwd);
     data.metadata.model = `${provider}/${modelId}`;
     data.metadata.updatedAt = new Date().toISOString();
-    writeStoredData(this.sessionDir, data);
+    // 只改元数据，jsonl 内容不变，跳过其全量重写
+    writeTranscriptJson(this.sessionDir, data);
   }
 
   appendThinkingLevelChange(level: string): void {
@@ -343,45 +402,29 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
     writeState(this.sessionDir, state);
   }
 
-  appendMessage(message: {
-    role: "user" | "assistant" | "toolResult";
-    content: unknown;
-    timestamp?: number;
-    provider?: string;
-    channelProvider?: string;
-    model?: string;
-    toolCallId?: string;
-    toolName?: string;
-    isError?: boolean;
-    api?: string;
-    stopReason?: string;
-    usage?: unknown;
-  }): string {
-    const uuid = randomUUID();
+  appendMessage(message: RuntimeCoreAppendMessageInput): string {
+    return this.appendMessages([message])[0]!;
+  }
+
+  appendMessages(messages: RuntimeCoreAppendMessageInput[]): string[] {
     const data = readStoredData(this.sessionDir, this.sessionId, this.cwd);
-    if (message.role === "assistant" && message.provider && message.model) {
-      data.metadata.model = `${message.provider}/${message.model}`;
+    const uuids: string[] = [];
+    for (const message of messages) {
+      const uuid = randomUUID();
+      uuids.push(uuid);
+      applyStoredMessage(data, message, uuid);
     }
-    const sessionMessageContent = message.role === "toolResult"
-      ? [{
-          type: "tool_result",
-          tool_use_id: message.toolCallId ?? uuid,
-          tool_name: message.toolName,
-          content: message.content,
-          is_error: message.isError === true
-        }]
-      : message.content;
-    data.sessionMessages.push({
-      uuid,
-      role: message.role === "toolResult" ? "user" : message.role,
-      timestamp: toIsoFromTimestamp(message.timestamp),
-      content: sessionMessageContent
-    });
-    data.messages = extractNormalizedMessages(data.sessionMessages);
-    data.metadata.messageCount = data.messages.length;
-    data.metadata.updatedAt = new Date().toISOString();
-    writeStoredData(this.sessionDir, data);
-    return uuid;
+    finalizeStoredData(data);
+    if (messages.length === 1) {
+      // 单条：jsonl 只追加一行（含换行守卫），json 仍为状态源全量写
+      writeTranscriptJson(this.sessionDir, data);
+      if (!tryAppendTranscriptJsonlLine(this.sessionDir, data.sessionMessages[data.sessionMessages.length - 1]!, data.sessionMessages.length - 1)) {
+        rewriteTranscriptJsonl(this.sessionDir, data);
+      }
+    } else {
+      writeStoredData(this.sessionDir, data);
+    }
+    return uuids;
   }
 
   appendCompaction(
