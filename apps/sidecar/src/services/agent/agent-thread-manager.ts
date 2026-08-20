@@ -834,7 +834,8 @@ export function cleanupExpiredTrash(): number {
 }
 
 /** 清空回收站：永久删除所有 status === "trashed" 的线程（不限时间），返回清理数量 */
-export function emptyTrash(): number {
+/** 清空回收站；返回被永久删除的 threadId 列表（调用方据此释放各线程的进程级状态）。 */
+export function emptyTrash(): string[] {
   const index = readIndex();
   const toDelete = index.threads.filter((t) => t.status === "trashed");
 
@@ -845,7 +846,7 @@ export function emptyTrash(): number {
   if (toDelete.length > 0) {
     log.info("emptied thread trash", { count: toDelete.length });
   }
-  return toDelete.length;
+  return toDelete.map((thread) => thread.id);
 }
 
 export function truncateAgentMessagesFrom(threadId: string, messageId: string): AgentMessage[] {

@@ -112,7 +112,6 @@ export interface MemoryV2Store {
       tags?: string[];
     };
   }): { ok: true; id: string; path: string; entryId?: string; entryPath?: string };
-  readMemoryMarkdown(scope: MemoryV2Scope, workspaceSlug?: string): string;
   appendDaily(input: {
     scope: MemoryV2Scope;
     workspaceSlug?: string;
@@ -140,7 +139,6 @@ export function createMemoryV2Store(): MemoryV2Store {
     listEntries,
     listPending,
     resolvePending,
-    readMemoryMarkdown,
     appendDaily,
     appendRunArchive
   };
@@ -547,11 +545,6 @@ export function resolvePending(input: {
     entryId: entry.frontmatter.id,
     entryPath: entry.path
   };
-}
-
-export function readMemoryMarkdown(scope: MemoryV2Scope, workspaceSlug?: string): string {
-  const path = ensureMemoryFile(scope, workspaceSlug);
-  return readFileSync(path, "utf-8");
 }
 
 export function appendDaily(input: {

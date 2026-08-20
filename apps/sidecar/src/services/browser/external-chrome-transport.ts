@@ -51,7 +51,6 @@ export class ExternalChromeTransport implements BrowserMainTransport {
   private peer: BridgePeer | null = null;
   private startPromise: Promise<void> | null = null;
   private readonly pending = new Map<string, Pending>();
-  private readonly seenIds = new Set<string>();
   private sequence = 1;
   private generation = 1;
   private closed = false;
@@ -102,8 +101,6 @@ export class ExternalChromeTransport implements BrowserMainTransport {
     const peer = this.peer;
     if (!peer) throw new Error("browser_unavailable");
     const id = `lume-broker-${Date.now()}-${this.sequence++}`;
-    if (this.seenIds.has(id)) throw new Error("browser_replay_rejected");
-    this.seenIds.add(id);
     const mapped = mapExternalChromeRequest(request);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

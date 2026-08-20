@@ -360,15 +360,6 @@ export class MemoryCommandService {
     return this.record({ actor: "consolidation", workspaceSlug: input.workspaceSlug }, input.scope, "updated", [updated], "已标记 1 条可能过期记忆", true, [snapshot(entry)]);
   }
 
-  supersedeDuplicate(input: {
-    workspaceSlug: string;
-    duplicateId: string;
-    keptId: string;
-    scope: MemoryV2Scope;
-  }): MemoryV2MutationReceipt {
-    return this.mergeDuplicate(input);
-  }
-
   mergeDuplicate(input: {
     workspaceSlug: string;
     duplicateId: string;
