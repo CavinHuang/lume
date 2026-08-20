@@ -1,5 +1,6 @@
 import { access, readFile } from 'fs/promises'
 import { execFile } from 'child_process'
+import type { ExecFileOptionsWithStringEncoding } from 'child_process'
 import { isAbsolute, join, relative, resolve } from 'path'
 import { pathToFileURL } from 'url'
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js'
@@ -62,6 +63,24 @@ function isCommandToolManifest(value: unknown): value is CommandToolManifest {
   return typeof record.name === 'string' && typeof record.command === 'string'
 }
 
+/**
+ * Windows can't execFile() npm's .cmd/.bat shims (EINVAL since Node hardened
+ * CVE-2024-27980), and extensionless commands resolve to those shims on PATH.
+ * Route everything but .exe/.com through cmd.exe while keeping execFile's
+ * timeout/maxBuffer handling (#227).
+ */
+function execCommandTool(
+  command: string,
+  args: string[],
+  options: ExecFileOptionsWithStringEncoding,
+  callback: (error: Error | null, stdout: string, stderr: string) => void,
+) {
+  if (process.platform === 'win32' && !/\.(exe|com)$/i.test(command)) {
+    return execFile('cmd.exe', ['/d', '/s', '/c', command, ...args], options, callback)
+  }
+  return execFile(command, args, options, callback)
+}
+
 function normalizeManifestTools(
   tools: unknown,
   pluginPath: string,
@@ -117,9 +136,10 @@ export function buildCommandToolDefinition(
         })
       }
       return await new Promise((resolveResult) => {
-        const child = execFile(contribution.command, args, {
+        const child = execCommandTool(contribution.command, args, {
           cwd,
           timeout,
+          encoding: 'utf8',
           maxBuffer: 1024 * 1024,
           env: {
             ...getDefaultEnvironment(),
@@ -241,9 +261,10 @@ function commandToolFromManifest(manifest: CommandToolManifest, pluginPath: stri
       const cwd = manifest.cwd ? resolve(pluginPath, manifest.cwd) : pluginPath
       const args = [...(manifest.args ?? []), payload]
       return await new Promise((resolveResult) => {
-        const child = execFile(manifest.command, args, {
+        const child = execCommandTool(manifest.command, args, {
           cwd,
           timeout,
+          encoding: 'utf8',
           maxBuffer: 1024 * 1024,
           env: {
             ...getDefaultEnvironment(),
@@ -397,10 +418,12 @@ export async function loadPlugins(
             }
           }
         }
-      } catch {
+      } catch (error) {
         if (commandOnly) {
+          console.warn(`[plugin:loader] failed to load command plugin "${spec.name}" from ${pluginPath}:`, error)
           continue
         }
+        console.warn(`[plugin:loader] manifest/entry failed for "${spec.name}" at ${pluginPath}:`, error)
         // Fall through to module loading.
       }
     }
@@ -439,6 +462,9 @@ export async function loadPlugins(
         hooksOnly: plugin.lume?.hooksOnly ?? false,
       });
       loaded.push(plugin)
+    } else if (!commandOnly) {
+      // A plugin spec that resolves to nothing used to disappear silently (#227).
+      console.warn(`[plugin:loader] plugin "${spec.name}" at ${pluginPath} has no loadable manifest or entry module`)
     }
   }
 
