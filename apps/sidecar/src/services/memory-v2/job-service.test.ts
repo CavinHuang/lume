@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { MemoryJobService } from "./job-service";
+import { getMemoryV2ScopePaths } from "./paths";
 
 let root: string;
 
@@ -79,6 +80,93 @@ describe("MemoryJobService", () => {
     expect(service.cancel("demo", started.jobId)?.status).toBe("cancelled");
     await Bun.sleep(50);
     expect(service.get("demo", started.jobId)?.status).toBe("cancelled");
+  });
+
+  test("list 清理过期终态 job，保留活跃与 completedAt 缺失的终态 job", () => {
+    const { jobsDir } = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: "demo" });
+    mkdirSync(jobsDir, { recursive: true });
+    const stalePath = join(jobsDir, "job-stale.json");
+    const missingAtPath = join(jobsDir, "job-missing-at.json");
+    const freshPath = join(jobsDir, "job-fresh.json");
+    const runningPath = join(jobsDir, "job-running.json");
+    writeFileSync(stalePath, JSON.stringify({
+      jobId: "stale", kind: "turn_extract", workspaceSlug: "demo",
+      status: "completed", createdAt: Date.now() - 9 * 24 * 3600 * 1000,
+      completedAt: Date.now() - 8 * 24 * 3600 * 1000, manual: true
+    }), "utf-8");
+    writeFileSync(missingAtPath, JSON.stringify({
+      jobId: "missing-at", kind: "turn_extract", workspaceSlug: "demo",
+      status: "failed", createdAt: Date.now() - 9 * 24 * 3600 * 1000, manual: true
+    }), "utf-8");
+    writeFileSync(freshPath, JSON.stringify({
+      jobId: "fresh", kind: "turn_extract", workspaceSlug: "demo",
+      status: "completed", createdAt: Date.now() - 1000,
+      completedAt: Date.now() - 500, manual: true
+    }), "utf-8");
+    writeFileSync(runningPath, JSON.stringify({
+      jobId: "running", kind: "turn_extract", workspaceSlug: "demo",
+      status: "running", createdAt: Date.now() - 9 * 24 * 3600 * 1000, manual: true
+    }), "utf-8");
+
+    const jobs = new MemoryJobService().list("demo").map((job) => job.jobId);
+    expect(jobs).toContain("fresh");
+    expect(jobs).toContain("missing-at");
+    expect(jobs).toContain("running");
+    expect(jobs).not.toContain("stale");
+    expect(existsSync(stalePath)).toBe(false);
+    expect(existsSync(freshPath)).toBe(true);
+  });
+
+  test("写穿缓存：缓存命中窗口内 list 不再读盘", () => {
+    const { jobsDir } = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: "demo" });
+    mkdirSync(jobsDir, { recursive: true });
+    const jobPath = join(jobsDir, "job-cached.json");
+    writeFileSync(jobPath, JSON.stringify({
+      jobId: "cached", kind: "turn_extract", workspaceSlug: "demo",
+      status: "completed", createdAt: Date.now() - 1000,
+      completedAt: Date.now() - 500, manual: true
+    }), "utf-8");
+
+    const service = new MemoryJobService();
+    expect(service.list("demo").map((job) => job.jobId)).toEqual(["cached"]);
+    // 外部删盘上文件（缓存窗口 1h 内）
+    rmSync(jobPath);
+    // 仍返回缓存结果——证明未读盘
+    expect(service.list("demo").map((job) => job.jobId)).toEqual(["cached"]);
+  });
+
+  test("写穿缓存：write 后同实例 list 反映新状态", async () => {
+    const service = new MemoryJobService();
+    service.list("demo"); // 预热缓存
+    const started = service.start({
+      kind: "entries",
+      workspaceSlug: "demo",
+      run: async () => ({ done: true })
+    });
+    await waitForTerminal(service, "demo", started.jobId);
+    const fromCache = service.list("demo").find((job) => job.jobId === started.jobId);
+    expect(fromCache?.status).toBe("completed");
+  });
+
+  test("缓存 key 含目录：LUME_CONFIG_DIR 切换后同 slug 不串数据", () => {
+    const service = new MemoryJobService();
+    const run = async () => ({ ok: true });
+    const first = service.start({ kind: "entries", workspaceSlug: "demo", run });
+    service.list("demo"); // 预热缓存
+
+    // 切到全新配置目录（同 slug），缓存不得命中旧目录数据
+    const otherRoot = mkdtempSync(join(tmpdir(), "lume-memory-jobs-b-"));
+    process.env.LUME_CONFIG_DIR = otherRoot;
+    try {
+      const second = service.start({ kind: "entries", workspaceSlug: "demo", run });
+      expect(second.jobId).not.toBe(first.jobId);
+      const ids = service.list("demo").map((job) => job.jobId);
+      expect(ids).toContain(second.jobId);
+      expect(ids).not.toContain(first.jobId);
+    } finally {
+      process.env.LUME_CONFIG_DIR = root;
+      rmSync(otherRoot, { recursive: true, force: true });
+    }
   });
 });
 

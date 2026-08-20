@@ -28,7 +28,10 @@ export function createSdkOfficeTools(): ToolDefinition[] {
         const original = args.original ? resolveInputPath(requiredString(args.original, "original"), context.cwd) : "";
         const autoRepair = args.autoRepair === true;
         const author = typeof args.author === "string" && args.author.trim().length > 0 ? args.author.trim() : "Claude";
-        const result = await executor.runPythonScript("validate.py", [path, "--original", original, "--auto-repair", "--author", author]);
+        // autoRepair 接线：仅显式传 true 才执行修复写回（validate.py 唯一写路径在 --auto-repair 分支）
+        const validateArgs = [path, "--original", original, "--author", author];
+        if (autoRepair) validateArgs.push("--auto-repair");
+        const result = await executor.runPythonScript("validate.py", validateArgs);
         const data = safeParseJson(result.stdout ?? "");
         if (!data || typeof data !== "object") {
           return {
@@ -180,7 +183,8 @@ export function createSdkOfficeTools(): ToolDefinition[] {
         if (!result.ok) {
           return { ok: false, error: result.stderr ?? "office_convert failed" };
         }
-        const outputPath = resolvePath(outputDir, `${basename(path).split('.').shift()}.${target}`);
+        // 与 convertWithSoffice 内部产物名计算共用（剥最后一段扩展名），report.v2.docx → report.v2.pdf
+        const outputPath = executor.convertOutputPath(path, outputDir, target);
         return {
           ok: true,
           path,
