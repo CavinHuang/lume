@@ -1,8 +1,7 @@
 import type { BrowserLocator, BrowserLocatorStep, BrowserTextMatcher } from "../../../packages/shared/src/types/browser-runtime"
 
 export type ResolvedBrowserTarget = { x: number; y: number; width: number; height: number; tagName: string; role?: string; editable: boolean; enabled: boolean }
-export type BrowserLocatorQuery = "target" | "element" | "evaluate" | "count" | "allTextContents" | "readAll" | "getAttribute" | "innerText" | "textContent" | "inputValue" | "isVisible" | "isEnabled" | "isChecked"
-  | "click" | "doubleClick" | "fill" | "type" | "press" | "select" | "check" | "uncheck" | "scroll"
+export type BrowserLocatorQuery = "target" | "element" | "evaluate" | "count" | "allTextContents" | "readAll" | "getAttribute" | "innerText" | "textContent" | "inputValue" | "editableValue" | "isVisible" | "isEnabled" | "isChecked" | "select"
 
 export function isBrowserLocator(value: unknown): value is BrowserLocator {
   return Boolean(value) && typeof value === "object" && Array.isArray((value as { steps?: unknown }).steps)
@@ -93,45 +92,16 @@ function queryLocatorInPage(locator: BrowserLocator, operation: BrowserLocatorQu
     if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement)) throw new Error("action_denied")
     return element.value
   }
+  if (operation === "editableValue") {
+    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) return element.value
+    if ((element as HTMLElement).isContentEditable) return element.textContent || ""
+    throw new Error("action_denied")
+  }
   if (operation === "isVisible") return visible(element)
   if (operation === "isEnabled") return enabled(element)
-  if (operation === "isChecked") return (element instanceof HTMLInputElement && ["checkbox", "radio"].includes(element.type)) ? element.checked : false
-  if (operation === "click" || operation === "doubleClick") {
-    if (!(element instanceof HTMLElement)) throw new Error("action_denied")
-    element.click()
-    if (operation === "doubleClick") {
-      element.click()
-      element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }))
-    }
-    return true
-  }
-  if (operation === "fill" || operation === "type") {
-    const text = argument || ""
-    const replace = operation === "fill"
-    if (element instanceof HTMLInputElement) {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set
-      if (!setter) throw new Error("action_denied")
-      setter.call(element, replace ? text : element.value + text)
-    } else if (element instanceof HTMLTextAreaElement) {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set
-      if (!setter) throw new Error("action_denied")
-      setter.call(element, replace ? text : element.value + text)
-    } else if ((element as HTMLElement).isContentEditable) {
-      element.textContent = replace ? text : (element.textContent || "") + text
-    } else throw new Error("action_denied")
-    element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: replace ? "insertReplacementText" : "insertText", data: text }))
-    return true
-  }
-  if (operation === "press") {
-    if (!(element instanceof HTMLElement)) throw new Error("action_denied")
-    element.focus({ preventScroll: true })
-    const parts = (argument || "Enter").split("+")
-    const key = parts.pop() || "Enter"
-    const options = { key, bubbles: true, cancelable: true, ctrlKey: parts.includes("Control") || parts.includes("Ctrl"), metaKey: parts.includes("Meta"), altKey: parts.includes("Alt"), shiftKey: parts.includes("Shift") }
-    const proceed = element.dispatchEvent(new KeyboardEvent("keydown", options))
-    if (proceed && (key === "Enter" || key === " ") && (element instanceof HTMLButtonElement || element instanceof HTMLAnchorElement || (element instanceof HTMLInputElement && ["button", "submit", "reset", "checkbox", "radio"].includes(element.type)))) element.click()
-    element.dispatchEvent(new KeyboardEvent("keyup", options))
-    return true
+  if (operation === "isChecked") {
+    if (!(element instanceof HTMLInputElement) || !["checkbox", "radio"].includes(element.type)) throw new Error("action_denied")
+    return element.checked
   }
   if (operation === "select") {
     if (!(element instanceof HTMLSelectElement)) throw new Error("action_denied")
@@ -141,18 +111,13 @@ function queryLocatorInPage(locator: BrowserLocator, operation: BrowserLocatorQu
     element.dispatchEvent(new Event("change", { bubbles: true }))
     return true
   }
-  if (operation === "check" || operation === "uncheck") {
-    if (!(element instanceof HTMLInputElement) || !["checkbox", "radio"].includes(element.type)) throw new Error("action_denied")
-    const checked = operation === "check"
-    if (element.checked !== checked) element.click()
-    return true
-  }
-  if (operation === "scroll") {
-    ;(element as HTMLElement).scrollIntoView({ block: "center", inline: "center" })
-    return true
-  }
   if (!visible(element) || !enabled(element)) throw new Error("action_denied")
-  const rect = (element as HTMLElement).getBoundingClientRect()
+  let rect = (element as HTMLElement).getBoundingClientRect()
+  const view = element.ownerDocument.defaultView
+  if (view && (rect.bottom <= 0 || rect.right <= 0 || rect.top >= view.innerHeight || rect.left >= view.innerWidth)) {
+    ;(element as HTMLElement).scrollIntoView({ block: "center", inline: "center" })
+    rect = (element as HTMLElement).getBoundingClientRect()
+  }
   const x = Math.max(rect.left, Math.min(rect.right, rect.left + rect.width / 2))
   const y = Math.max(rect.top, Math.min(rect.bottom, rect.top + rect.height / 2))
   const ownerDocument = element.ownerDocument
@@ -167,5 +132,8 @@ function queryLocatorInPage(locator: BrowserLocator, operation: BrowserLocatorQu
     topY += frameRect.top
     frame = frame.ownerDocument.defaultView?.frameElement
   }
-  return { x: topX, y: topY, width: rect.width, height: rect.height, tagName: element.tagName.toLowerCase(), role: role(element), editable: element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement || (element as HTMLElement).isContentEditable, enabled: enabled(element) }
+  const editable = (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)
+    ? !element.readOnly && !element.disabled
+    : (element as HTMLElement).isContentEditable
+  return { x: topX, y: topY, width: rect.width, height: rect.height, tagName: element.tagName.toLowerCase(), role: role(element), editable, enabled: enabled(element) }
 }
