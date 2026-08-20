@@ -530,6 +530,176 @@ describe("QueryEngine turn limits", () => {
     })
   })
 
+  test("blocks a third mutation when normalized input and result are unchanged", async () => {
+    let calls = 0
+    const provider = new StaticProvider([
+      {
+        content: [{
+          type: "tool_use",
+          id: "navigate-1",
+          name: "Navigate",
+          input: { url: "https://example.com/search?q=lume", options: { wait: true } }
+        }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{
+          type: "tool_use",
+          id: "navigate-2",
+          name: "Navigate",
+          input: { options: { wait: true }, url: "https://example.com/search?q=lume" }
+        }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{
+          type: "tool_use",
+          id: "navigate-3",
+          name: "Navigate",
+          input: { url: "https://example.com/search?q=lume", options: { wait: true } }
+        }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "Search page is already open." }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    ])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Navigate",
+        description: "navigate",
+        inputSchema: { type: "object", properties: {} },
+        isReadOnly: () => false,
+        async call() {
+          calls++
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            content: JSON.stringify({ operation_id: `navigate-${calls}`, tab_id: `tab-${calls}` }),
+            _meta: { repeatGuard: { state: { url: "https://example.com/search?q=lume", title: "Search" } } }
+          }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 8,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "success",
+      is_error: false,
+      num_turns: 4
+    })
+    expect(calls).toBe(2)
+    expect(engine.getMessages()).toContainEqual(expect.objectContaining({
+      role: "user",
+      content: [expect.objectContaining({
+        tool_use_id: "navigate-3",
+        is_error: true,
+        content: expect.stringContaining("Do not retry the unchanged call"),
+        _meta: expect.objectContaining({
+          error: { code: "repeated_tool_call", retryable: false }
+        })
+      })]
+    }))
+  })
+
+  test("stops early when the model ignores repeated-call feedback", async () => {
+    let calls = 0
+    const repeatedCall = (id: string): CreateMessageResponse => ({
+      content: [{ type: "tool_use", id, name: "Navigate", input: { url: "https://example.com" } }],
+      stopReason: "tool_use",
+      usage: { input_tokens: 1, output_tokens: 1 }
+    })
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        repeatedCall("navigate-1"),
+        repeatedCall("navigate-2"),
+        repeatedCall("navigate-3"),
+        repeatedCall("navigate-4")
+      ]),
+      tools: [{
+        name: "Navigate",
+        description: "navigate",
+        inputSchema: { type: "object", properties: {} },
+        isReadOnly: () => false,
+        async call() {
+          calls++
+          return { type: "tool_result", tool_use_id: "", content: "same page state" }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 80,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "error_completion_guard",
+      is_error: true,
+      num_turns: 4
+    })
+    expect(calls).toBe(2)
+  })
+
+  test("allows repeated mutation input while the result state keeps changing", async () => {
+    let calls = 0
+    const repeatedCall = (id: string): CreateMessageResponse => ({
+      content: [{ type: "tool_use", id, name: "Advance", input: { target: "next" } }],
+      stopReason: "tool_use",
+      usage: { input_tokens: 1, output_tokens: 1 }
+    })
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        repeatedCall("advance-1"),
+        repeatedCall("advance-2"),
+        repeatedCall("advance-3"),
+        {
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        }
+      ]),
+      tools: [{
+        name: "Advance",
+        description: "advance",
+        inputSchema: { type: "object", properties: {} },
+        isReadOnly: () => false,
+        async call() {
+          calls++
+          return { type: "tool_result", tool_use_id: "", content: `state-${calls}` }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 8,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "success",
+      is_error: false,
+      num_turns: 4
+    })
+    expect(calls).toBe(3)
+  })
+
   test("preserves provider tool-call result order across concurrent and serial tools", async () => {
     const engine = new QueryEngine({
       cwd: process.cwd(),
