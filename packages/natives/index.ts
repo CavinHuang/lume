@@ -137,7 +137,17 @@ type NativeModule = {
   listWorkspace(options: Record<string, unknown>): Promise<Record<string, unknown>>;
   fuzzyFind(options: Record<string, unknown>): Promise<Record<string, unknown>>;
   invalidateFsScanCache(path?: string): void;
-  summarize(options: NativeSummarizeOptions): NativeSummaryResult;
+  // napi-derive exposes the Rust snake_case options as camelCase at the FFI
+  // boundary; the old snake_case declaration here masked the mismatch (#239).
+  summarize(options: {
+    code: string;
+    lang?: string;
+    path?: string;
+    minBodyLines?: number;
+    minCommentLines?: number;
+    unfoldUntilLines?: number;
+    unfoldLimitLines?: number;
+  }): NativeSummaryResult;
   analyzeBash?(command: string): NativeBashAnalysis;
 };
 
@@ -610,7 +620,17 @@ export function nativeSummarize(
   if (!native) return null;
 
   try {
-    return native.summarize(options);
+    // napi-derive maps Rust snake_case fields to camelCase at the FFI boundary;
+    // passing snake_case keys through silently dropped every threshold (#239).
+    return native.summarize({
+      code: options.code,
+      lang: options.lang,
+      path: options.path,
+      minBodyLines: options.min_body_lines,
+      minCommentLines: options.min_comment_lines,
+      unfoldUntilLines: options.unfold_until_lines,
+      unfoldLimitLines: options.unfold_limit_lines,
+    });
   } catch {
     return null;
   }

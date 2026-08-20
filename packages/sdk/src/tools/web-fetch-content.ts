@@ -140,9 +140,20 @@ export async function renderStructuredBinary(bytes: Uint8Array, contentType: str
   if (kind === "pdf") {
     const mupdf = await import("mupdf");
     const document = mupdf.Document.openDocument(Buffer.from(bytes), "application/pdf");
-    const pages: string[] = [];
-    for (let index = 0; index < Math.min(document.countPages(), 100); index++) pages.push(document.loadPage(index).toStructuredText().asText().trim());
-    return { kind, title: document.getMetaData("info:Title") || undefined, markdown: pages.filter(Boolean).join("\n\n") };
+    try {
+      const pages: string[] = [];
+      for (let index = 0; index < Math.min(document.countPages(), 100); index++) {
+        const page = document.loadPage(index);
+        const text = page.toStructuredText().asText().trim();
+        page.destroy();
+        pages.push(text);
+      }
+      return { kind, title: document.getMetaData("info:Title") || undefined, markdown: pages.filter(Boolean).join("\n\n") };
+    } finally {
+      // mupdf documents/pages live in a WASM heap; without destroy every fetch
+      // of a PDF permanently grows sidecar memory (#245)
+      document.destroy();
+    }
   }
   if (kind === "docx") {
     const mammoth = (await import("mammoth")).default;
