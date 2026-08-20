@@ -1548,6 +1548,8 @@ export interface AgentOptions {
   settingSources?: SettingSource[]
   /** Plugin configurations */
   plugins?: Array<{ name: string; path?: string; config?: Record<string, unknown>; kind?: 'command' | 'module' | 'any' }>
+  /** Extra roots (absolute) outside cwd from which plugins may be loaded */
+  pluginRoots?: string[]
   /** Additional working directories */
   additionalDirectories?: string[]
   /** Default agent to use */

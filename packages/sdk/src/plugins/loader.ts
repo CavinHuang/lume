@@ -1,6 +1,6 @@
 import { access, readFile } from 'fs/promises'
 import { execFile } from 'child_process'
-import { join, resolve } from 'path'
+import { isAbsolute, join, relative, resolve } from 'path'
 import { pathToFileURL } from 'url'
 import type {
   AgentDefinition,
@@ -333,13 +333,28 @@ async function resolveHooksConfig(
 export async function loadPlugins(
   cwd: string,
   pluginSpecs: AgentOptions['plugins'] = [],
+  pluginRoots: string[] = [],
 ): Promise<LoadedPlugin[]> {
   const loaded: LoadedPlugin[] = []
+  const allowedRoots = [resolve(cwd), ...pluginRoots.map((root) => resolve(root))]
 
   for (const spec of pluginSpecs || []) {
     const pluginPath = (spec as { path?: string }).path
       ? resolve(cwd, (spec as { path?: string }).path as string)
       : resolve(cwd, spec.name)
+    // Plugin specs can come from project settings.json; without a boundary a
+    // poisoned repo would make the SDK import() arbitrary code (#202).
+    const insideAllowedRoot = allowedRoots.some((root) => {
+      const rel = relative(root, pluginPath)
+      const normalized = process.platform === 'win32' ? rel.toLowerCase() : rel
+      return normalized !== '' ? !normalized.startsWith('..') && !isAbsolute(normalized) : true
+    })
+    if (!insideAllowedRoot) {
+      console.warn(
+        `[plugin:loader] skipping plugin "${spec.name}" at ${pluginPath}: outside cwd and pluginRoots`,
+      )
+      continue
+    }
     const commandOnly = (spec as { kind?: string }).kind === 'command'
 
     const manifestPath = join(pluginPath, 'plugin.json')
