@@ -54,12 +54,20 @@ export async function checkPublicWebHost(url: string): Promise<string | null> {
   } catch {
     return `Invalid URL: ${url}`;
   }
-  if (!hostname) return `Invalid URL: ${url}`;
-  const addresses = isIP(hostname)
-    ? [hostname]
-    : (await lookup(hostname, { all: true, verbatim: true })).map((item) => item.address);
-  if (addresses.length === 0 || addresses.some((address) => !isPublicIpAddress(address))) {
-    return `sandbox denied network access to ${hostname}`;
+  // Node 的 URL.hostname 对 IPv6 保留方括号（"[::1]"），剥掉再判
+  const bare = hostname.replace(/^\[/, "").replace(/\]$/, "");
+  if (!bare) return `Invalid URL: ${url}`;
+  let addresses: string[] | null;
+  if (isIP(bare)) {
+    addresses = [bare];
+  } else {
+    // DNS 解析失败按拒绝处理（fail closed），不让异常逃逸到 fetch 调用链
+    addresses = await lookup(bare, { all: true, verbatim: true })
+      .then((items) => items.map((item) => item.address))
+      .catch(() => null);
+  }
+  if (!addresses || addresses.length === 0 || addresses.some((address) => !isPublicIpAddress(address))) {
+    return `sandbox denied network access to ${bare}`;
   }
   return null;
 }
