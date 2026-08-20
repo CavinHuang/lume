@@ -389,6 +389,12 @@ app.whenReady().then(async () => {
       staleTargetObserved = actionResult.status === 'rejected'
     }
     check(staleTargetObserved, 'navigation race allowed an action against a stale target')
+    await view.loadURL(origin + '/')
+    const queuedNavigation = call('navigate', { tabId: 'fixture-tab', url: origin + '/queued-navigation' })
+    const queuedOldPageAction = call('fill', { tabId: 'fixture-tab', locator: locator('#name'), text: 'must-not-run' })
+    const [queuedNavigationResult, queuedActionResult] = await Promise.allSettled([queuedNavigation, queuedOldPageAction])
+    check(queuedNavigationResult.status === 'fulfilled', 'queued navigation did not complete')
+    check(queuedActionResult.status === 'rejected' && String(queuedActionResult.reason?.code ?? queuedActionResult.reason?.message).includes('stale_target'), 'an old-page action ran after queued navigation')
     const beforeCrash = await call('get', { tabId: 'fixture-tab' })
     setStage('crash-recovery')
     view.forcefullyCrashRenderer()

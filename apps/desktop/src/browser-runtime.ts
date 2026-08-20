@@ -43,6 +43,7 @@ import { BrowserWorkspaceStore } from "./browser-workspace-store"
 import { BrowserReferenceGrantStore } from "./browser-reference-grants"
 import { BrowserAnnotationManager } from "./browser-annotation-manager"
 import { dispatchBrowserClick, dispatchBrowserKey, dispatchBrowserText, focusBrowserPoint } from "./browser-cdp-input"
+import { BrowserActionQueue } from "./browser-action-queue"
 
 type BrowserEvent = { method: string; params: Record<string, unknown> }
 type BrowserRuntimeOptions = {
@@ -204,6 +205,7 @@ export class BrowserRuntime {
   private readonly workspaces: BrowserWorkspaceStore
   private readonly referenceGrants = new BrowserReferenceGrantStore()
   private readonly annotations: BrowserAnnotationManager
+  private readonly actionQueue = new BrowserActionQueue()
   private annotationSweepTimer: ReturnType<typeof setTimeout> | null = null
   private annotationSweepInterval: ReturnType<typeof setInterval> | null = null
   private agentPluginEnabled = false
@@ -747,38 +749,47 @@ export class BrowserRuntime {
     if ((method === "contactFill" || method === "upload" || method === "filechooser:setFiles" || method === "content:export" || method === "pageAssets:bundle" || method === "cdp" || method === "clipboard:read" || method === "clipboard:readText" || method === "clipboard:write" || method === "clipboard:writeText") && params.__policyRequired !== true) throw browserError("confirmation_unavailable")
     if (params.__policyRequired === true) this.consumePolicyToken(String(params.__policyConfirmation ?? ""), String(params.__policyBindingHash ?? ""))
     if (MUTATING_METHODS.has(method)) {
-      const operationId = request.idempotencyKey || request.requestId || randomUUID()
-      this.journal.write({
-        operationId,
-        method,
-        tabGeneration: tab.generation,
-        parameterHash: keyedParameterHash(method, params),
-        status: "prepared",
-        timestamp: Date.now(),
+      const queuedGeneration = tab.generation
+      const queueKey = context.actor === "agent"
+        ? `agent:${context.browserSessionId}`
+        : `user:${tab.tabId}`
+      return this.actionQueue.run(queueKey, async () => {
+        if (this.tabs.get(tab.tabId) !== tab) throw browserError("tab_not_found")
+        if (tab.generation !== queuedGeneration) throw browserError("stale_target")
+        if (context.actor === "agent" && !canAgentUse(tab, context.browserSessionId, context.browserTurnId, tab.generation)) throw browserError("action_denied")
+        const operationId = request.idempotencyKey || request.requestId || randomUUID()
+        this.journal.write({
+          operationId,
+          method,
+          tabGeneration: tab.generation,
+          parameterHash: keyedParameterHash(method, params),
+          status: "prepared",
+          timestamp: Date.now(),
+        })
+        try {
+          const result = await this.dispatchAction(tab, method, params, context)
+          this.journal.write({
+            operationId,
+            method,
+            tabGeneration: tab.generation,
+            parameterHash: keyedParameterHash(method, params),
+            status: "committed",
+            timestamp: Date.now(),
+          })
+          this.journal.complete(operationId)
+          return result
+        } catch (error) {
+          this.journal.write({
+            operationId,
+            method,
+            tabGeneration: tab.generation,
+            parameterHash: keyedParameterHash(method, params),
+            status: "executed_unknown",
+            timestamp: Date.now(),
+          })
+          throw error
+        }
       })
-      try {
-        const result = await this.dispatchAction(tab, method, params, context)
-        this.journal.write({
-          operationId,
-          method,
-          tabGeneration: tab.generation,
-          parameterHash: keyedParameterHash(method, params),
-          status: "committed",
-          timestamp: Date.now(),
-        })
-        this.journal.complete(operationId)
-        return result
-      } catch (error) {
-        this.journal.write({
-          operationId,
-          method,
-          tabGeneration: tab.generation,
-          parameterHash: keyedParameterHash(method, params),
-          status: "executed_unknown",
-          timestamp: Date.now(),
-        })
-        throw error
-      }
     }
     if (!GUEST_OPTIONAL_METHODS.has(method)) await this.waitForGuest(tab)
     if (method === "snapshot") return this.snapshot(tab)
