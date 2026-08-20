@@ -131,7 +131,12 @@ export function loadProcessJobs(root: string): ProcessJob[] {
     if (!parsed) continue
     const current = jobs.get(parsed.id)
     if (!current || (parsed.updatedAt ?? 0) >= (current.updatedAt ?? 0)) {
-      jobs.set(parsed.id, { ...current, ...parsed, stop: current?.stop })
+      // A worker's last-ditch "running" write (boot update or heartbeat racing
+      // a stop) must not resurrect a job the host already marked terminal.
+      const resurrected = current && current.status !== 'running' && parsed.status === 'running'
+      if (!resurrected) {
+        jobs.set(parsed.id, { ...current, ...parsed, stop: current?.stop })
+      }
     }
     const job = jobs.get(parsed.id)!
     loaded.push(job)
@@ -371,6 +376,8 @@ function refreshProcessJob(id: string): void {
   if (!current?.jobDir) return
   const persisted = readPersistedJob(join(current.jobDir, 'state.json'))
   if (!persisted || (persisted.updatedAt ?? 0) < (current.updatedAt ?? 0)) return
+  // Ignore stale worker "running" writes that land after a terminal update.
+  if (current.status !== 'running' && persisted.status === 'running') return
   jobs.set(id, { ...current, ...persisted, stop: current.stop })
 }
 
@@ -399,7 +406,8 @@ function isPersistedWorkerAlive(job: ProcessJob): boolean {
     && job.workerIdentity === `${job.processToken}:${processIdentity}`
 }
 
-function stopPersistedWorker(job: ProcessJob): void {
+/** Terminate a durable worker and its whole command process tree. */
+export function stopPersistedWorker(job: ProcessJob): void {
   if (!job.workerPid || job.workerPid <= 0) return
   if (job.workerIdentity && !isPersistedWorkerAlive(job)) return
   if (process.platform === 'win32') {

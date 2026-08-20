@@ -24,6 +24,29 @@ describe("BashTool shell invocation", () => {
     expect(BashTool.isReadOnly?.({ command: "powershell -Command Set-Content out.txt x" })).toBeFalse();
   });
 
+  test("rejects write and execute argument forms of whitelisted executables", () => {
+    // find
+    expect(BashTool.isReadOnly?.({ command: "find . -name '*.ts'" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "find . -name x -delete" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "find . -fprint results.txt" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "find . -exec rm {} \\;" })).toBeFalse();
+    // sed
+    expect(BashTool.isReadOnly?.({ command: "sed -n '10p' file.txt" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "sed 's/a/b/w /tmp/out' file.txt" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "sed '/pattern/w /tmp/out' file.txt" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "sed -i 's/a/b/' file.txt" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "sed 's/x/date/e' file.txt" })).toBeFalse();
+    // A `w` inside a pattern or replacement, or inside a path, stays read-only.
+    expect(BashTool.isReadOnly?.({ command: "sed 's/w/x/g' file.txt" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "sed 's/a/b w /' file.txt" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "sed -n '1p' /var/www/with w space.txt" })).toBeTrue();
+    // sort (grep -o is a different executable and unaffected)
+    expect(BashTool.isReadOnly?.({ command: "sort input.txt" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "sort -o out.txt input.txt" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "sort --output=out.txt input.txt" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "grep -o pattern file.txt" })).toBeTrue();
+  });
+
   test("uses PowerShell on Windows instead of requiring bash", () => {
     expect(resolveShellInvocation("echo hi", "win32", { ComSpec: "C:\\Windows\\System32\\cmd.exe" })).toEqual({
       command: "powershell.exe",
