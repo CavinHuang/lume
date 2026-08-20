@@ -58,6 +58,43 @@ describe("ContextAssembler", () => {
     expect(result.runtimeContext).not.toContain("prefer the installed lume-chrome");
   });
 
+  test("prefers built-in Browser tools without activating the legacy skill", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "browser-tools-thread",
+      runId: "browser-tools-run",
+      userMessage: "打开百度搜索agent",
+      resolvedModelId: "test-model",
+      availableTools: [
+        "mcp__browser__list_tabs",
+        "mcp__browser__open",
+        "mcp__browser__switch_tab",
+        "mcp__browser__snapshot",
+        "mcp__browser__run_script",
+        "mcp__node_repl__js",
+        "mcp__computer_use__click"
+      ],
+      browserRuntimeAvailable: true,
+      browserContinuity: {
+        tabId: "agent-tab-1",
+        url: "https://x.com/home",
+        title: "Home / X",
+        profileKind: "agent",
+        handoffStatus: "deliverable",
+        visible: true,
+        lifecycle: "active"
+      },
+      tokenBudget: 8_000,
+    });
+
+    expect(result.runtimeContext).toContain("mcp__browser__list_tabs");
+    expect(result.runtimeContext).toContain("whole user request, including all internal Agent iterations");
+    expect(result.runtimeContext).toContain("do not activate browser:browser");
+    expect(result.runtimeContext).toContain("Take a fresh snapshot before reading or acting");
+    expect(result.runtimeContext).not.toContain("exact skill name browser:browser");
+    expect(result.runtimeContext).not.toContain("browser.tabs.resumeHandoff()");
+    expect(result.runtimeContext).not.toContain("mcp__computer_use__list_apps");
+  });
+
   test("does not advertise Browser when node_repl lacks the bundled runtime", async () => {
     const result = await new ContextAssembler().assemble({
       threadId: "node-repl-only-thread",

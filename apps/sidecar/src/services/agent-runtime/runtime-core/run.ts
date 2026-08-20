@@ -80,7 +80,6 @@ import {
 } from "../plugins/plugin-manager.js";
 import {
   assemblePluginRuntime,
-  type PluginRuntimeAssembly,
 } from "../plugins/runtime-bridge.js";
 import { PluginPermissionRuntime } from "../plugins/permission-runtime.js";
 import {
@@ -631,10 +630,7 @@ async function createRuntimeCoreSessionImpl(
     modelRef: input.modelRef,
   });
   const pluginAssembly = await assemblePluginRuntime(registeredPlugins);
-  const runtimePluginAssembly: PluginRuntimeAssembly = {
-    ...pluginAssembly,
-    skills: filterComputerUseSkills(pluginAssembly.skills, computerUseSurface),
-  };
+  const surfaceSkills = filterComputerUseSkills(pluginAssembly.skills, computerUseSurface);
 
   // Phase 3d: build agentOptions.hooks from resolved plugin hooks. Shell-command hooks
   // are gate-aware (§8.1): checkSensitiveCapability(hook:event:matcher) before spawn.
@@ -733,10 +729,6 @@ async function createRuntimeCoreSessionImpl(
       pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG),
     );
   }
-  const enabledPlugins = buildEnabledPluginContext(
-    registeredPlugins,
-    runtimePluginAssembly,
-  );
   const workspaceMcpRuntime =
     input.workspaceSlug && !askWikiOnly
       ? await workspaceMcpManager
@@ -821,6 +813,14 @@ async function createRuntimeCoreSessionImpl(
       ...(pluginMcpRuntime.diagnostics ?? []),
     ],
   });
+  const runtimeSkills = toolset.availableToolNames.includes("mcp__browser__snapshot")
+    && !input.browserAttachments?.length
+    ? surfaceSkills.filter((skill) => skill.name !== "browser:browser")
+    : surfaceSkills;
+  const enabledPlugins = buildEnabledPluginContext(
+    registeredPlugins,
+    { ...pluginAssembly, skills: runtimeSkills },
+  );
   const contextTokenBudget = input.resolvedModel?.contextWindow ?? 32_000;
   const beforeContextResult = await executeWorkflowHookSafely(
     input.workflowHooks,
@@ -1174,7 +1174,7 @@ async function createRuntimeCoreSessionImpl(
     includePartialMessages: true,
     skillsDirectories: resolveSkillDirectories(input.cwd, input.workspaceSlug),
     shouldLoadFilesystemSkill: createRuntimeSkillFilter(input.workspaceSlug),
-    skills: runtimePluginAssembly.skills,
+    skills: runtimeSkills,
     resolveRuntimeTools: (tools, runtimeContext) =>
       ToolRuntime.resolveDynamicTools({
         tools,
