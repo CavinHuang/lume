@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import {
   type ImAccount,
   type ImAccountCreateInput,
@@ -11,6 +12,7 @@ import {
 import { getImConfigPath } from "../infra/config-paths";
 import { decryptSecret, encryptSecret } from "../infra/secret-crypto";
 import { createLogger } from "../infra/logger";
+import { withIndexMutationLock } from "../infra/index-mutation-lock";
 
 const CONFIG_VERSION = 1;
 const log = createLogger("im-config");
@@ -41,25 +43,70 @@ function normalizeOptional(value: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
-function readConfig(): ImConfig {
+// ---------------------------------------------------------------------------
+// 读写与并发控制（#158）：原子写 + 0o600 + 损坏备份 + 持锁 RMW。
+// 读函数不持锁（rename 后的整文件一致快照）；变更函数走 mutateConfig（withIndexMutationLock
+// 非重入，锁内一律调无锁变体——upsertImAccountFromLogin 内部转调即此场景）。
+// ---------------------------------------------------------------------------
+function imConfigLockPath(): string {
+  return `${getImConfigPath()}.lock`;
+}
+
+/** 仅 JSON.parse 失败（真损坏）才备份重建；瞬态 IO 读错误不备份，防止把好文件"备份后清空"。 */
+function backupCorruptFile(filePath: string): void {
+  const backupPath = `${filePath}.corrupt-${Date.now()}`;
+  try {
+    renameSync(filePath, backupPath);
+    log.warn("backed up corrupt IM config", { backupPath });
+  } catch (error) {
+    log.warn("failed to back up corrupt IM config", { backupPath, error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+function readConfigUnlocked(): ImConfig {
   const path = getImConfigPath();
   if (!existsSync(path)) {
     return { version: CONFIG_VERSION, accounts: [] };
   }
+  let raw: string;
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8")) as Partial<ImConfig>;
-    return {
-      version: Math.max(parsed.version ?? CONFIG_VERSION, CONFIG_VERSION),
-      accounts: Array.isArray(parsed.accounts) ? parsed.accounts : []
-    };
+    raw = readFileSync(path, "utf-8");
   } catch (error) {
     log.error("failed to read IM configuration", { error });
     return { version: CONFIG_VERSION, accounts: [] };
   }
+  try {
+    const parsed = JSON.parse(raw) as Partial<ImConfig>;
+    return {
+      version: Math.max(parsed.version ?? CONFIG_VERSION, CONFIG_VERSION),
+      accounts: Array.isArray(parsed.accounts) ? parsed.accounts : []
+    };
+  } catch {
+    // 文件截断损坏：先备份再重建，防止后续写操作把空配置落盘静默清空全部账号（含加密 token）
+    backupCorruptFile(path);
+    return { version: CONFIG_VERSION, accounts: [] };
+  }
 }
 
-function writeConfig(config: ImConfig): void {
-  writeFileSync(getImConfigPath(), JSON.stringify(config, null, 2), "utf-8");
+function writeConfigUnlocked(config: ImConfig): void {
+  const path = getImConfigPath();
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(temporary, JSON.stringify(config, null, 2), "utf-8");
+  try {
+    chmodSync(temporary, 0o600);
+  } catch {
+    // Windows 基本忽略 POSIX 权限位，失败不阻断写入
+  }
+  renameSync(temporary, path);
+}
+
+function readConfig(): ImConfig {
+  return readConfigUnlocked();
+}
+
+function mutateConfig<T>(action: (config: ImConfig) => T): T {
+  return withIndexMutationLock(imConfigLockPath(), () => action(readConfigUnlocked()));
 }
 
 function toPublicAccount(account: StoredImAccount): ImAccount {
@@ -124,7 +171,56 @@ export function getImAccountSecret(id: string): string {
 }
 
 export function createImAccount(input: ImAccountCreateInput): ImAccount {
-  const config = readConfig();
+  return mutateConfig((config) => {
+    const now = Date.now();
+    const account: StoredImAccount = {
+      id: randomUUID(),
+      provider: input.provider,
+      accountKey: normalizeOptional(input.accountKey),
+      label: normalizeImAccountLabel(input),
+      uin: normalizeOptional(input.uin),
+      workspaceId: normalizeOptional(input.workspaceId),
+      baseUrl: normalizeBaseUrl(input.provider, input.baseUrl),
+      enabled: input.enabled ?? false,
+      status: "stopped",
+      encryptedToken: encryptSecret(input.token.trim()),
+      createdAt: now,
+      updatedAt: now
+    };
+    config.accounts.push(account);
+    writeConfigUnlocked(config);
+    return toPublicAccount(account);
+  });
+}
+
+export function upsertImAccountFromLogin(input: ImAccountCreateInput): ImAccount {
+  // 整个 upsert 持一把锁：两次独立持锁的 find+create/update 之间并发登录会产生重复账号
+  return mutateConfig((config) => {
+    const accountKey = normalizeOptional(input.accountKey);
+    if (!accountKey) {
+      return createImAccountUnlocked(config, input);
+    }
+    const existing = config.accounts.find((account) =>
+      account.provider === input.provider && account.accountKey === accountKey
+    );
+    if (!existing) {
+      return createImAccountUnlocked(config, input);
+    }
+    return updateImAccountUnlocked(config, existing.id, {
+      accountKey,
+      label: input.label,
+      token: input.token,
+      uin: input.uin,
+      workspaceId: input.workspaceId,
+      baseUrl: input.baseUrl,
+      enabled: input.enabled ?? existing.enabled,
+      status: "stopped",
+      lastError: null
+    });
+  });
+}
+
+function createImAccountUnlocked(config: ImConfig, input: ImAccountCreateInput): ImAccount {
   const now = Date.now();
   const account: StoredImAccount = {
     id: randomUUID(),
@@ -141,36 +237,15 @@ export function createImAccount(input: ImAccountCreateInput): ImAccount {
     updatedAt: now
   };
   config.accounts.push(account);
-  writeConfig(config);
+  writeConfigUnlocked(config);
   return toPublicAccount(account);
 }
 
-export function upsertImAccountFromLogin(input: ImAccountCreateInput): ImAccount {
-  const accountKey = normalizeOptional(input.accountKey);
-  if (!accountKey) {
-    return createImAccount(input);
-  }
-  const existing = readConfig().accounts.find((account) =>
-    account.provider === input.provider && account.accountKey === accountKey
-  );
-  if (!existing) {
-    return createImAccount(input);
-  }
-  return updateImAccount(existing.id, {
-    accountKey,
-    label: input.label,
-    token: input.token,
-    uin: input.uin,
-    workspaceId: input.workspaceId,
-    baseUrl: input.baseUrl,
-    enabled: input.enabled ?? existing.enabled,
-    status: "stopped",
-    lastError: null
-  });
+export function updateImAccount(id: string, input: ImAccountUpdateInput): ImAccount {
+  return mutateConfig((config) => updateImAccountUnlocked(config, id, input));
 }
 
-export function updateImAccount(id: string, input: ImAccountUpdateInput): ImAccount {
-  const config = readConfig();
+function updateImAccountUnlocked(config: ImConfig, id: string, input: ImAccountUpdateInput): ImAccount {
   const index = config.accounts.findIndex((item) => item.id === id);
   if (index === -1) {
     throw new Error(`IM 账号不存在: ${id}`);
@@ -195,18 +270,19 @@ export function updateImAccount(id: string, input: ImAccountUpdateInput): ImAcco
     updatedAt: Date.now()
   };
   config.accounts[index] = updated;
-  writeConfig(config);
+  writeConfigUnlocked(config);
   return toPublicAccount(updated);
 }
 
 export function deleteImAccount(id: string): void {
-  const config = readConfig();
-  const index = config.accounts.findIndex((item) => item.id === id);
-  if (index === -1) {
-    throw new Error(`IM 账号不存在: ${id}`);
-  }
-  config.accounts.splice(index, 1);
-  writeConfig(config);
+  mutateConfig((config) => {
+    const index = config.accounts.findIndex((item) => item.id === id);
+    if (index === -1) {
+      throw new Error(`IM 账号不存在: ${id}`);
+    }
+    config.accounts.splice(index, 1);
+    writeConfigUnlocked(config);
+  });
 }
 
 export function listImAccountsForWorkspace(workspaceId: string): ImAccount[] {
@@ -214,24 +290,25 @@ export function listImAccountsForWorkspace(workspaceId: string): ImAccount[] {
 }
 
 export function clearImAccountWorkspaceBindings(workspaceId: string): ImAccount[] {
-  const config = readConfig();
-  let changed = false;
-  const now = Date.now();
-  const affectedIds = new Set<string>();
-  const updatedAccounts = config.accounts.map((account) => {
-    if (account.workspaceId !== workspaceId) return account;
-    changed = true;
-    affectedIds.add(account.id);
-    return {
-      ...account,
-      workspaceId: undefined,
-      updatedAt: now
-    };
+  return mutateConfig((config) => {
+    let changed = false;
+    const now = Date.now();
+    const affectedIds = new Set<string>();
+    const updatedAccounts = config.accounts.map((account) => {
+      if (account.workspaceId !== workspaceId) return account;
+      changed = true;
+      affectedIds.add(account.id);
+      return {
+        ...account,
+        workspaceId: undefined,
+        updatedAt: now
+      };
+    });
+    if (changed) {
+      writeConfigUnlocked({ ...config, accounts: updatedAccounts });
+    }
+    return updatedAccounts
+      .filter((account) => affectedIds.has(account.id))
+      .map(toPublicAccount);
   });
-  if (changed) {
-    writeConfig({ ...config, accounts: updatedAccounts });
-  }
-  return updatedAccounts
-    .filter((account) => affectedIds.has(account.id))
-    .map(toPublicAccount);
 }

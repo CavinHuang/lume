@@ -709,4 +709,49 @@ describe("im-message-router", () => {
       }),
     ]);
   });
+
+  test("同一 messageId 重投只路由一次，不同 messageId 正常路由（#157）", async () => {
+    const sent: AgentSendInput[] = [];
+    const deps = {
+      createThread(title: string) {
+        return { id: "thread-dedup" };
+      },
+      sendMessage(input: AgentSendInput) {
+        sent.push(input);
+      },
+    };
+
+    const first = await routeInboundImMessage({
+      provider: "dingtalk",
+      accountId: "account-dedup",
+      peerKind: "dm",
+      peerId: "user-dedup",
+      text: "original",
+      messageId: "msg-1"
+    }, deps);
+    expect(first).toEqual({ threadId: "thread-dedup" });
+
+    // 服务端重投同一消息：不再触发 sendMessage，返回已绑定 threadId
+    const duplicate = await routeInboundImMessage({
+      provider: "dingtalk",
+      accountId: "account-dedup",
+      peerKind: "dm",
+      peerId: "user-dedup",
+      text: "original",
+      messageId: "msg-1"
+    }, deps);
+    expect(duplicate).toEqual({ threadId: "thread-dedup" });
+
+    const second = await routeInboundImMessage({
+      provider: "dingtalk",
+      accountId: "account-dedup",
+      peerKind: "dm",
+      peerId: "user-dedup",
+      text: "next",
+      messageId: "msg-2"
+    }, deps);
+    expect(second).toEqual({ threadId: "thread-dedup" });
+
+    expect(sent.map((item) => item.userMessage)).toEqual(["original", "next"]);
+  });
 });

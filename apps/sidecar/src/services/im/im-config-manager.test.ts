@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -121,5 +121,36 @@ describe("im-config-manager", () => {
     deleteImAccount(first.id);
 
     expect(listImAccounts().map((account) => account.id)).toEqual([second.id]);
+  });
+
+  test("损坏的配置文件先备份再重建，不静默清空（#158）", () => {
+    createImAccount({
+      provider: "weixin",
+      label: "损坏前账号",
+      token: "token-x",
+      enabled: true
+    });
+    expect(listImAccounts()).toHaveLength(1);
+
+    // 模拟文件截断损坏
+    const configPath = getImConfigPath();
+    writeFileSync(configPath, "{ \"version\": 1, \"accounts\": [ { \"id\": \"abc\"", "utf-8");
+
+    // 读路径触发备份重建
+    const afterCorrupt = listImAccounts();
+    expect(afterCorrupt).toEqual([]);
+
+    // 备份保留损坏现场（截断内容），原路径可重新写入
+    const backups = readdirSync(tempConfigDir).filter((name) => name.startsWith("im.json.corrupt-"));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(tempConfigDir, backups[0]!), "utf-8")).toContain("abc");
+
+    const recreated = createImAccount({
+      provider: "weixin",
+      label: "重建后账号",
+      token: "token-y",
+      enabled: false
+    });
+    expect(listImAccounts().map((account) => account.id)).toEqual([recreated.id]);
   });
 });

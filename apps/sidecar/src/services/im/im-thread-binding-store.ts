@@ -1,7 +1,9 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { ImPeerRef, ImThreadBinding } from "@lume/shared";
 import { getImThreadBindingsPath } from "../infra/config-paths";
 import { createLogger } from "../infra/logger";
+import { withIndexMutationLock } from "../infra/index-mutation-lock";
 
 const CONFIG_VERSION = 1;
 const log = createLogger("im-thread-bindings");
@@ -17,25 +19,62 @@ export interface UpsertImThreadBindingInput extends ImPeerRef {
   contextToken?: string;
 }
 
-function readConfig(): ImThreadBindingConfig {
+// 读写与并发控制（#158）：原子写 + 0o600 + 损坏备份 + 持锁 RMW；读不持锁（rename 后整文件一致快照）
+function bindingStoreLockPath(): string {
+  return `${getImThreadBindingsPath()}.lock`;
+}
+
+/** 仅 JSON.parse 失败（真损坏）才备份重建；瞬态 IO 读错误不备份，防止把好文件"备份后清空"。 */
+function backupCorruptFile(filePath: string): void {
+  const backupPath = `${filePath}.corrupt-${Date.now()}`;
+  try {
+    renameSync(filePath, backupPath);
+    log.warn("backed up corrupt IM thread bindings", { backupPath });
+  } catch (error) {
+    log.warn("failed to back up corrupt IM thread bindings", { backupPath, error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+function readConfigUnlocked(): ImThreadBindingConfig {
   const path = getImThreadBindingsPath();
   if (!existsSync(path)) {
     return { version: CONFIG_VERSION, bindings: [] };
   }
+  let raw: string;
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8")) as Partial<ImThreadBindingConfig>;
-    return {
-      version: Math.max(parsed.version ?? CONFIG_VERSION, CONFIG_VERSION),
-      bindings: Array.isArray(parsed.bindings) ? parsed.bindings : []
-    };
+    raw = readFileSync(path, "utf-8");
   } catch (error) {
     log.error("failed to read IM thread bindings", { error });
     return { version: CONFIG_VERSION, bindings: [] };
   }
+  try {
+    const parsed = JSON.parse(raw) as Partial<ImThreadBindingConfig>;
+    return {
+      version: Math.max(parsed.version ?? CONFIG_VERSION, CONFIG_VERSION),
+      bindings: Array.isArray(parsed.bindings) ? parsed.bindings : []
+    };
+  } catch {
+    // 损坏先备份再重建，防止后续写入把空绑定落盘导致全部 IM 会话割裂
+    backupCorruptFile(path);
+    return { version: CONFIG_VERSION, bindings: [] };
+  }
 }
 
-function writeConfig(config: ImThreadBindingConfig): void {
-  writeFileSync(getImThreadBindingsPath(), JSON.stringify(config, null, 2), "utf-8");
+function writeConfigUnlocked(config: ImThreadBindingConfig): void {
+  const path = getImThreadBindingsPath();
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(temporary, JSON.stringify(config, null, 2), "utf-8");
+  try {
+    chmodSync(temporary, 0o600);
+  } catch {
+    // Windows 基本忽略 POSIX 权限位，失败不阻断写入
+  }
+  renameSync(temporary, path);
+}
+
+function mutateConfig<T>(action: (config: ImThreadBindingConfig) => T): T {
+  return withIndexMutationLock(bindingStoreLockPath(), () => action(readConfigUnlocked()));
 }
 
 export function createImBindingKey(ref: ImPeerRef): string {
@@ -43,69 +82,72 @@ export function createImBindingKey(ref: ImPeerRef): string {
 }
 
 export function listImThreadBindings(): ImThreadBinding[] {
-  return readConfig().bindings;
+  return readConfigUnlocked().bindings;
 }
 
 export function getImThreadBindingByPeer(ref: ImPeerRef): ImThreadBinding | null {
   const key = createImBindingKey(ref);
-  return readConfig().bindings.find((binding) => binding.key === key) ?? null;
+  return readConfigUnlocked().bindings.find((binding) => binding.key === key) ?? null;
 }
 
 export function getImThreadBindingByThreadId(threadId: string): ImThreadBinding | null {
-  return readConfig().bindings.find((binding) => binding.threadId === threadId) ?? null;
+  return readConfigUnlocked().bindings.find((binding) => binding.threadId === threadId) ?? null;
 }
 
 export function upsertImThreadBinding(input: UpsertImThreadBindingInput): ImThreadBinding {
-  const config = readConfig();
-  const key = createImBindingKey(input);
-  const now = Date.now();
-  const index = config.bindings.findIndex((binding) => binding.key === key);
-  if (index >= 0) {
-    const existing = config.bindings[index] as ImThreadBinding;
-    const updated: ImThreadBinding = {
-      ...existing,
-      peerName: input.peerName ?? existing.peerName,
-      contextToken: input.contextToken ?? existing.contextToken,
+  return mutateConfig((config) => {
+    const key = createImBindingKey(input);
+    const now = Date.now();
+    const index = config.bindings.findIndex((binding) => binding.key === key);
+    if (index >= 0) {
+      const existing = config.bindings[index] as ImThreadBinding;
+      const updated: ImThreadBinding = {
+        ...existing,
+        peerName: input.peerName ?? existing.peerName,
+        contextToken: input.contextToken ?? existing.contextToken,
+        updatedAt: now
+      };
+      config.bindings[index] = updated;
+      writeConfigUnlocked(config);
+      return updated;
+    }
+
+    const binding: ImThreadBinding = {
+      key,
+      provider: input.provider,
+      accountId: input.accountId,
+      peerKind: input.peerKind,
+      peerId: input.peerId,
+      peerName: input.peerName,
+      threadId: input.threadId,
+      contextToken: input.contextToken,
+      createdAt: now,
       updatedAt: now
     };
-    config.bindings[index] = updated;
-    writeConfig(config);
-    return updated;
-  }
-
-  const binding: ImThreadBinding = {
-    key,
-    provider: input.provider,
-    accountId: input.accountId,
-    peerKind: input.peerKind,
-    peerId: input.peerId,
-    peerName: input.peerName,
-    threadId: input.threadId,
-    contextToken: input.contextToken,
-    createdAt: now,
-    updatedAt: now
-  };
-  config.bindings.push(binding);
-  writeConfig(config);
-  return binding;
+    config.bindings.push(binding);
+    writeConfigUnlocked(config);
+    return binding;
+  });
 }
 
 export function deleteImThreadBindingsForAccount(accountId: string): void {
-  const config = readConfig();
-  const nextBindings = config.bindings.filter((binding) => binding.accountId !== accountId);
-  if (nextBindings.length === config.bindings.length) return;
-  writeConfig({ ...config, bindings: nextBindings });
+  mutateConfig((config) => {
+    const nextBindings = config.bindings.filter((binding) => binding.accountId !== accountId);
+    if (nextBindings.length === config.bindings.length) return;
+    writeConfigUnlocked({ ...config, bindings: nextBindings });
+  });
 }
 
 export function listImThreadBindingsForThreadIds(threadIds: Set<string>): ImThreadBinding[] {
-  return readConfig().bindings.filter((binding) => threadIds.has(binding.threadId));
+  return readConfigUnlocked().bindings.filter((binding) => threadIds.has(binding.threadId));
 }
 
 export function deleteImThreadBindingsForThreadIds(threadIds: Set<string>): ImThreadBinding[] {
-  const config = readConfig();
-  const removed = config.bindings.filter((binding) => threadIds.has(binding.threadId));
-  if (removed.length === 0) return [];
-  const nextBindings = config.bindings.filter((binding) => !threadIds.has(binding.threadId));
-  writeConfig({ ...config, bindings: nextBindings });
-  return removed;
+  return mutateConfig((config) => {
+    const removed = config.bindings.filter((binding) => threadIds.has(binding.threadId));
+    if (removed.length === 0) return [];
+    const nextBindings = config.bindings.filter((binding) => !threadIds.has(binding.threadId));
+    writeConfigUnlocked({ ...config, bindings: nextBindings });
+    return removed;
+  });
 }
