@@ -128,17 +128,20 @@ describe('RuntimeEvent UI boundary', () => {
 
   test('stable markdown rendering stays centralized in the canonical message renderer', () => {
     const contentBlock = source('apps/web/src/components/agent/RuntimeEventContentBlock.tsx')
+    const markdownModule = source('apps/web/src/components/agent/message-blocks/markdown.tsx')
     const subagentPanel = source('apps/web/src/components/agent/SubagentInlinePanel.tsx')
 
-    expect(contentBlock).toContain('const SmoothText = memo(')
+    // 拆分后 SmoothText 单一实现位于 message-blocks/markdown，主渲染器统一消费（#141）
+    expect(markdownModule).toContain('export const SmoothText = memo(')
+    expect(contentBlock).toContain("from './message-blocks/markdown'")
     expect(subagentPanel).toContain('RuntimeEventContentBlock')
     expect(subagentPanel).not.toContain('SubagentMarkdown')
   })
 
   test('streaming markdown updates are throttled at the message renderer boundary', () => {
-    const contentBlock = source('apps/web/src/components/agent/RuntimeEventContentBlock.tsx')
+    const markdownModule = source('apps/web/src/components/agent/message-blocks/markdown.tsx')
 
-    expect(contentBlock).toContain('MARKDOWN_STREAM_MIN_DELAY_MS')
-    expect(contentBlock).toContain('minDelay: MARKDOWN_STREAM_MIN_DELAY_MS')
+    expect(markdownModule).toContain('MARKDOWN_STREAM_MIN_DELAY_MS')
+    expect(markdownModule).toContain('minDelay: MARKDOWN_STREAM_MIN_DELAY_MS')
   })
 })
