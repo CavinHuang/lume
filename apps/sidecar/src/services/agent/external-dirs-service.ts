@@ -6,6 +6,7 @@ import {
   getConfigDir,
   getAgentFileContextRootPath,
 } from "../infra/config-paths";
+import { isPathWithinRoot } from "../agent-runtime/permissions/permission-rules";
 import { createLogger } from "../infra/logger";
 
 const log = createLogger("agent-external-dirs");
@@ -164,8 +165,22 @@ export function removeExternalDir(scope: AttachmentScope, absolutePath: string):
   writePersistedExternalDirMap(scope, persisted);
 }
 
-export function listExternalDirEntries(absolutePath: string): ExternalDirEntryItem[] {
+export function listExternalDirEntries(scope: AttachmentScope, absolutePath: string): ExternalDirEntryItem[] {
   const resolved = resolve(absolutePath);
+  // 注册表校验：仅允许列举该 scope 已附加目录（自身或后代）内的路径，防渲染层枚举任意本机目录
+  let registeredRoots: string[] = [];
+  try {
+    registeredRoots = Object.keys(readPersistedExternalDirMap(scope));
+  } catch (error) {
+    if (error instanceof ExternalDirsReadError) {
+      log.warn("failed to read external dirs metadata", { metadataPath: error.metadataPath, error: error.cause ?? error });
+    } else {
+      throw error;
+    }
+  }
+  if (!registeredRoots.some((root) => resolved === root || isPathWithinRoot(resolved, root))) {
+    throw new Error("目录未在附加目录中，拒绝列举");
+  }
   let stats;
   try {
     stats = lstatSync(resolved);

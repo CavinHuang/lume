@@ -104,7 +104,7 @@ describe("external-dirs-service", () => {
     expect(existsSync(join(docsDir, "note.txt"))).toBeTrue();
   });
 
-  test("listExternalDirEntries 单层只读", () => {
+  test("listExternalDirEntries 单层只读（须命中注册表）", () => {
     createTempConfigDir();
     const sourceRoot = createTempSourceDir("lume-external-source-");
     const root = join(sourceRoot, "root");
@@ -114,7 +114,10 @@ describe("external-dirs-service", () => {
     writeFileSync(join(root, "sub", "inner.txt"), "inner", "utf-8");
     symlinkSync(join(root, "sub"), join(root, "link"), "junction");
 
-    const entries = listExternalDirEntries(root);
+    const scope: AttachmentScope = { kind: "workspace", workspaceSlug: "ws" };
+    upsertExternalDir(scope, root);
+
+    const entries = listExternalDirEntries(scope, root);
     const names = entries.map((entry) => entry.name);
     expect(names).toContain("a.txt");
     expect(names).toContain("sub");
@@ -127,7 +130,28 @@ describe("external-dirs-service", () => {
     expect(entries.find((entry) => entry.name === "a.txt")?.modifiedAt).toBeString();
     expect(entries.find((entry) => entry.name === "sub")?.isDirectory).toBeTrue();
 
-    expect(() => listExternalDirEntries(join(root, "link"))).toThrow("符号链接");
-    expect(() => listExternalDirEntries(join(root, "missing"))).toThrow("不存在");
+    // 注册根的后代可列举；symlink 与不存在路径在注册表校验之后仍被拒
+    expect(listExternalDirEntries(scope, join(root, "sub")).map((entry) => entry.name)).toEqual(["inner.txt"]);
+    expect(() => listExternalDirEntries(scope, join(root, "link"))).toThrow("符号链接");
+    expect(() => listExternalDirEntries(scope, join(root, "missing"))).toThrow("不存在");
+  });
+
+  test("listExternalDirEntries 拒绝未注册路径与其他 scope 注册路径", () => {
+    createTempConfigDir();
+    const sourceRoot = createTempSourceDir("lume-external-source-");
+    const registered = join(sourceRoot, "registered");
+    const unregistered = join(sourceRoot, "unregistered");
+    mkdirSync(registered, { recursive: true });
+    mkdirSync(unregistered, { recursive: true });
+    writeFileSync(join(unregistered, "secret.txt"), "x", "utf-8");
+
+    const threadScope: AttachmentScope = { kind: "thread", workspaceSlug: "ws", threadId: "thread-a" };
+    const workspaceScope: AttachmentScope = { kind: "workspace", workspaceSlug: "ws" };
+    upsertExternalDir(threadScope, registered);
+
+    // 未注册目录（如 C:\Users\<u>\.ssh）拒绝
+    expect(() => listExternalDirEntries(threadScope, unregistered)).toThrow("未在附加目录中");
+    // 注册在别的 scope 也不行
+    expect(() => listExternalDirEntries(workspaceScope, registered)).toThrow("未在附加目录中");
   });
 });

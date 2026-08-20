@@ -12,7 +12,13 @@ import {
   updateChannel
 } from "../services/channel/channel-manager";
 import type { RpcHandler } from "./types";
-import { asObject, asString } from "./validation";
+import { asObject, asString, validateInput } from "./validation";
+import {
+  channelCreateInputSchema,
+  channelDeleteParamsSchema,
+  channelUpdateParamsSchema,
+  fetchModelsInputSchema
+} from "./schemas";
 import {
   answerConnectionOAuthPrompt,
   cancelConnectionOAuthLogin,
@@ -23,22 +29,15 @@ import {
 export function createChannelHandlers(): Record<string, RpcHandler> {
   return {
     [CHANNEL_IPC_CHANNELS.LIST]: async () => listChannels(),
-    [CHANNEL_IPC_CHANNELS.CREATE]: async (params) => createChannel(params as ChannelCreateInput),
+    [CHANNEL_IPC_CHANNELS.CREATE]: async (params) =>
+      createChannel(validateInput(channelCreateInputSchema, params, CHANNEL_IPC_CHANNELS.CREATE) as ChannelCreateInput),
     [CHANNEL_IPC_CHANNELS.UPDATE]: async (params) => {
-      const payload = asObject(params);
-      const id = asString(payload.id);
-      if (!id) {
-        throw new Error("缺少 channel id");
-      }
-      return updateChannel(id, (payload.input ?? {}) as ChannelUpdateInput);
+      const input = validateInput(channelUpdateParamsSchema, params, CHANNEL_IPC_CHANNELS.UPDATE);
+      return updateChannel(input.id, input.input as ChannelUpdateInput);
     },
     [CHANNEL_IPC_CHANNELS.DELETE]: async (params) => {
-      const payload = asObject(params);
-      const id = asString(payload.id);
-      if (!id) {
-        throw new Error("缺少 channel id");
-      }
-      deleteChannel(id);
+      const input = validateInput(channelDeleteParamsSchema, params, CHANNEL_IPC_CHANNELS.DELETE);
+      deleteChannel(input.id);
       return { ok: true };
     },
     [CHANNEL_IPC_CHANNELS.DECRYPT_KEY]: async (params) => {
@@ -57,8 +56,10 @@ export function createChannelHandlers(): Record<string, RpcHandler> {
       }
       return testChannel(channelId);
     },
-    [CHANNEL_IPC_CHANNELS.TEST_DIRECT]: async (params) => testChannelDirect(params as FetchModelsInput),
-    [CHANNEL_IPC_CHANNELS.FETCH_MODELS]: async (params) => fetchModels(params as FetchModelsInput),
+    [CHANNEL_IPC_CHANNELS.TEST_DIRECT]: async (params) =>
+      testChannelDirect(validateInput(fetchModelsInputSchema, params, CHANNEL_IPC_CHANNELS.TEST_DIRECT) as FetchModelsInput),
+    [CHANNEL_IPC_CHANNELS.FETCH_MODELS]: async (params) =>
+      fetchModels(validateInput(fetchModelsInputSchema, params, CHANNEL_IPC_CHANNELS.FETCH_MODELS) as FetchModelsInput),
     [CHANNEL_IPC_CHANNELS.SYNC_MODELS]: async (params) => {
       const payload = asObject(params);
       const channelId = asString(payload.channelId);

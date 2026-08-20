@@ -1,5 +1,5 @@
 import { parseLumeCapabilityReference } from "@lume/agent-sdk";
-import { AGENT_ATTACHMENT_LIMITS, normalizeMcpTransport, type InspectMarketSourceRef, type PluginSourceRef, type SkillMarketSourceRef } from "@lume/shared";
+import { AGENT_ATTACHMENT_LIMITS, normalizeMcpTransport, type InspectMarketSourceRef, type PluginSourceRef, type ProviderType, type SkillMarketSourceRef } from "@lume/shared";
 import { idSchema, optionalIdSchema, z } from "./validation";
 
 const relativeThreadPathSchema = z.string()
@@ -735,7 +735,7 @@ export const memoryRememberToolInputSchema = z.object({
   workspaceSlug: idSchema,
   scope: memoryScopeInputSchema.optional(),
   kind: memoryKindSchema.optional(),
-  content: z.string().min(1),
+  content: z.string().min(1).max(2 * 1024 * 1024),
   title: z.string().optional(),
   tags: z.array(z.string()).optional(),
   importance: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
@@ -1765,7 +1765,11 @@ export const externalDirAddInputSchema = z.discriminatedUnion("kind", [
   externalDirWorkspaceScopeSchema.extend({ absolutePath: externalDirPathSchema }).strict()
 ]);
 export const externalDirRemoveInputSchema = externalDirAddInputSchema;
-export const externalDirEntriesInputSchema = z.object({ absolutePath: externalDirPathSchema }).strict();
+// 列举必须携带 scope：service 校验 absolutePath 命中该 scope 注册表（自身或后代）后才列举
+export const externalDirEntriesInputSchema = z.discriminatedUnion("kind", [
+  externalDirThreadScopeSchema.extend({ absolutePath: externalDirPathSchema }).strict(),
+  externalDirWorkspaceScopeSchema.extend({ absolutePath: externalDirPathSchema }).strict()
+]);
 export const legacyFileRefConversionInputSchema = z.discriminatedUnion("recordKind", [
   z.object({ recordKind: z.literal("thread-attachment"), threadId: idSchema, workspaceSlug: optionalIdSchema, legacyRelativePath: z.string().min(1) }).strict(),
   z.object({ recordKind: z.literal("memory-source"), workspaceSlug: idSchema, legacyRelativePath: z.string().min(1) }).strict()
@@ -1814,6 +1818,11 @@ export const searchWorkspaceFilesInputSchema = z.object({
   rootPath: z.string().optional()
 });
 
+// 单文件 base64 上限（25MB × 4/3 + padding 余量）；批总量对齐 service 层 maxTotalBytes 限额
+const attachmentDataBase64Schema = z.string().max(Math.ceil(AGENT_ATTACHMENT_LIMITS.maxFileBytes * 4 / 3) + 4);
+const attachmentTotalBytesRefine = (files: Array<{ data?: string }>) =>
+  files.reduce((total, file) => total + (file.data?.length ?? 0), 0) <= Math.ceil(AGENT_ATTACHMENT_LIMITS.maxTotalBytes * 4 / 3);
+
 export const saveFilesToThreadInputSchema = z.object({
   workspaceSlug: optionalIdSchema,
   threadId: idSchema,
@@ -1823,22 +1832,26 @@ export const saveFilesToThreadInputSchema = z.object({
     filename: z.string().min(1),
     mediaType: z.string().min(1).optional(),
     size: z.number().int().min(0).max(AGENT_ATTACHMENT_LIMITS.maxFileBytes).optional(),
-    data: z.string().max(Math.ceil(AGENT_ATTACHMENT_LIMITS.maxFileBytes * 4 / 3) + 4).optional(),
+    data: attachmentDataBase64Schema.optional(),
     sourcePath: z.string().min(1).optional()
   }).refine((file) => file.data !== undefined || !!file.sourcePath, {
     message: "文件必须提供 data 或 sourcePath"
   })).max(AGENT_ATTACHMENT_LIMITS.maxCount)
+}).refine(({ files }) => attachmentTotalBytesRefine(files), {
+  message: `附件总大小超过 ${Math.floor(AGENT_ATTACHMENT_LIMITS.maxTotalBytes / 1024 / 1024)}MB 上限`
 });
 
 export const saveFilesToWorkspaceInputSchema = z.object({
   workspaceSlug: idSchema,
   files: z.array(z.object({
     filename: z.string().min(1),
-    data: z.string().optional(),
+    data: attachmentDataBase64Schema.optional(),
     sourcePath: z.string().min(1).optional()
   }).refine((file) => !!file.data || !!file.sourcePath, {
     message: "文件必须提供 data 或 sourcePath"
-  }))
+  })).max(AGENT_ATTACHMENT_LIMITS.maxCount)
+}).refine(({ files }) => attachmentTotalBytesRefine(files), {
+  message: `附件总大小超过 ${Math.floor(AGENT_ATTACHMENT_LIMITS.maxTotalBytes / 1024 / 1024)}MB 上限`
 });
 
 export const copyFolderToThreadInputSchema = z.object({
@@ -1931,7 +1944,8 @@ export const readBootstrapFileInputSchema = z.object({
 export const writeBootstrapFileInputSchema = z.object({
   workspaceSlug: idSchema,
   fileType: bootstrapFileTypeSchema,
-  content: z.string()
+  // 引导文件是文本（CLAUDE.md/AGENTS.md 等），10MB 对齐 fileSelectionEdit 限额足够
+  content: z.string().max(10 * 1024 * 1024)
 });
 
 export const proxySettingsInputSchema = z.object({
@@ -2099,4 +2113,86 @@ export const checkBridgeStatusInputSchema = z.object({
   pluginId: bridgePluginIdSchema,
   version: bridgeVersionSchema,
   verify: verifySchema,
+}).strict();
+
+// ---------------------------------------------------------------------------
+// Channel 系 RPC 入参（#155：此前 channel-handlers 全裸 cast，畸形入参 TypeError + 任意字段持久化）
+// 枚举为 shared 字面量 union 的运行时镜像（shared 无 const 数组）；新增 ProviderType 需同步此处
+// ---------------------------------------------------------------------------
+const channelProviderTypeSchema = z.enum([
+  "anthropic", "anthropic-compatible", "openai", "openai-codex", "github-copilot", "xai", "jina",
+  "siliconflow", "openrouter", "deepseek", "google", "zai", "zai-coding-plan", "moonshot",
+  "minimax", "minimax-cn", "doubao", "qwen", "qwen-portal", "kimi-coding", "ollama", "lmstudio",
+  "opencode", "custom", "aliyun-coding-plan", "volcengine-coding-plan", "minimax-token-plan",
+  "xiaomi-token-plan", "stepfun", "stepfun-coding-plan"
+] as const satisfies readonly ProviderType[]);
+const channelProtocolSchema = z.enum([
+  "openai-completions", "openai-responses", "openai-codex-responses", "anthropic-messages", "google-generative-ai"
+] as const);
+const channelAuthTypeSchema = z.enum(["api-key", "oauth", "none"] as const);
+const channelApiFamilySchema = z.enum(["anthropic", "openai", "google"] as const);
+const channelOpenAiApiModeSchema = z.enum(["chat-completions", "responses"] as const);
+const channelHealthStatusSchema = z.enum(["unknown", "available", "unavailable"] as const);
+const channelSyncStatusSchema = z.enum(["idle", "syncing", "success", "error"] as const);
+
+const channelModelSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  alias: z.string().optional(),
+  capabilities: z.object({
+    chat: z.boolean().optional(),
+    embedding: z.boolean().optional(),
+    vision: z.boolean().optional(),
+    tool: z.boolean().optional(),
+    reasoning: z.boolean().optional(),
+    rerank: z.boolean().optional(),
+    image: z.boolean().optional()
+  }).strict().optional(),
+  protocol: channelProtocolSchema.optional(),
+  source: z.enum(["discovered", "manual"]).optional(),
+  contextWindow: z.number().int().positive().optional(),
+  maxOutputTokens: z.number().int().positive().optional(),
+  enabled: z.boolean()
+}).strict();
+
+export const channelCreateInputSchema = z.object({
+  name: z.string().min(1),
+  provider: channelProviderTypeSchema,
+  protocol: channelProtocolSchema.optional(),
+  authType: channelAuthTypeSchema.optional(),
+  accountLabel: z.string().optional(),
+  baseUrl: z.string().min(1),
+  // 明文 API Key；未修改时 renderer 传空串，不得加 min(1)
+  apiKey: z.string(),
+  models: z.array(channelModelSchema),
+  defaultModelId: z.string().optional(),
+  fallbackModelIds: z.array(z.string()).optional(),
+  apiFamily: channelApiFamilySchema.optional(),
+  openaiApiMode: channelOpenAiApiModeSchema.optional(),
+  providerId: z.string().optional(),
+  enabled: z.boolean()
+}).strict();
+
+export const channelUpdateInputSchema = channelCreateInputSchema.partial().extend({
+  healthStatus: channelHealthStatusSchema.optional(),
+  healthMessage: z.string().optional(),
+  lastTestedAt: z.number().optional(),
+  syncStatus: channelSyncStatusSchema.optional(),
+  syncMessage: z.string().optional(),
+  lastSyncedAt: z.number().optional()
+}).strict();
+
+export const channelUpdateParamsSchema = z.object({
+  id: idSchema,
+  input: channelUpdateInputSchema
+}).strict();
+
+export const channelDeleteParamsSchema = z.object({ id: idSchema }).strict();
+
+export const fetchModelsInputSchema = z.object({
+  provider: channelProviderTypeSchema,
+  baseUrl: z.string().min(1),
+  apiKey: z.string(),
+  apiFamily: channelApiFamilySchema.optional(),
+  openaiApiMode: channelOpenAiApiModeSchema.optional()
 }).strict();
