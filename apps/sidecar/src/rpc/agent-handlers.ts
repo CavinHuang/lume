@@ -1973,7 +1973,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.LIST_EXTERNAL_DIR_ENTRIES]: async (params) => {
       const input = validateInput(externalDirEntriesInputSchema, params, AGENT_IPC_CHANNELS.LIST_EXTERNAL_DIR_ENTRIES);
-      return listExternalDirEntries(input.absolutePath);
+      return listExternalDirEntries(input, input.absolutePath);
     },
     [AGENT_IPC_CHANNELS.MOVE_FILE_REF]: async (params) => {
       const input = validateInput(fileRefMoveInputSchema, params, AGENT_IPC_CHANNELS.MOVE_FILE_REF);

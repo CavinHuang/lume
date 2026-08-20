@@ -25,6 +25,7 @@ import { saveFilesToAgentSession } from "../agent/agent-files-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createLogger, writeLogRecord } from "../infra/logger";
 import { getImAccount } from "./im-config-manager";
+import { hasSeenImMessage, rememberImMessage } from "./im-seen-message-store";
 import {
   getImThreadBindingByPeer,
   getImThreadBindingByThreadId,
@@ -532,6 +533,14 @@ export async function routeInboundImMessage(
   deps: ImMessageRouterDeps = {}
 ): Promise<{ threadId: string }> {
   log.info("收到入站消息", { provider: message.provider, accountId: message.accountId, peerId: message.peerId, peerKind: message.peerKind, peerName: message.peerName, textLength: message.text.length });
+
+  // 统一去重（#157）：四渠道 at-least-once 重投（WS 重连/服务端重试/进程重启）只处理一次。
+  // messageId 缺失（部分事件类型无 id）跳过去重，避免 key 塌缩吞掉整账号消息。
+  if (message.messageId && hasSeenImMessage(message.provider, message.accountId, message.messageId)) {
+    log.info("重复消息，跳过路由", { provider: message.provider, accountId: message.accountId, messageId: message.messageId });
+    const existingBinding = getImThreadBindingByPeer(message);
+    return { threadId: existingBinding?.threadId ?? "" };
+  }
   const existing = getImThreadBindingByPeer(message);
   const approvalCommand = parseImApprovalCommand(message.text);
   if (existing && approvalCommand.type !== "none") {
@@ -632,6 +641,11 @@ export async function routeInboundImMessage(
       }
     }
   });
+
+  // 路由成功后才标记已见：微信渠道靠 cursor 重投失败消息，若先标记再失败会丢消息
+  if (message.messageId) {
+    rememberImMessage(message.provider, message.accountId, message.messageId);
+  }
 
   return { threadId: binding.threadId };
 }

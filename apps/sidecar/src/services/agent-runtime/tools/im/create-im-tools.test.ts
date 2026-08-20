@@ -5,6 +5,19 @@ import { join } from "node:path";
 import { createSdkImTools } from "./create-im-tools";
 import { upsertImThreadBinding } from "../../../im/im-thread-binding-store";
 import { getToolMetadata } from "../tool-metadata";
+import { WikiSafeHttpFetchService } from "../../../wiki/safe-http-fetch";
+
+/** 构造器 DI 的安全抓取 fake：resolve 固定公网地址，request 返回固定 PNG 头。 */
+function makeFakeFetcher(addresses: string[] = ["93.184.216.34"]) {
+  return new WikiSafeHttpFetchService({
+    resolve: async (hostname) => addresses.map((address, index) => ({ address, family: index === 1 ? 6 : 4 })),
+    request: async () => ({
+      status: 200,
+      headers: { "content-type": "image/png" },
+      body: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+    }),
+  });
+}
 
 describe("create-im-tools", () => {
   let prevConfigDir: string | undefined;
@@ -103,6 +116,7 @@ describe("create-im-tools", () => {
     const mediaSent: Array<{ mediaType: string; fileName: string }> = [];
     const tools = createSdkImTools({
       threadId: "thread-img-tool",
+      mediaFetcher: makeFakeFetcher(),
       sendMediaMessage: async (input) => {
         mediaSent.push({ mediaType: input.mediaType, fileName: input.fileName });
         return { ok: true };
@@ -111,24 +125,16 @@ describe("create-im-tools", () => {
     const tool = tools.find(t => t.name === "send_im_media");
     if (!tool) throw new Error("send_im_media tool missing");
 
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { status: 200, statusText: "OK" })) as unknown as typeof fetch;
+    const result = await tool.call({
+      image_url: "https://example.com/photo.jpg",
+    }, { cwd: "/tmp" } as never);
 
-    try {
-      const result = await tool.call({
-        image_url: "https://example.com/photo.jpg",
-      }, { cwd: "/tmp" } as never);
-
-      const parsed = JSON.parse(String(result.content));
-      expect(parsed.ok).toBe(true);
-      expect(parsed.type).toBe("image");
-      expect(mediaSent).toHaveLength(1);
-      expect(mediaSent[0]?.mediaType).toBe("image");
-      expect(mediaSent[0]?.fileName).toBe("photo.jpg");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    const parsed = JSON.parse(String(result.content));
+    expect(parsed.ok).toBe(true);
+    expect(parsed.type).toBe("image");
+    expect(mediaSent).toHaveLength(1);
+    expect(mediaSent[0]?.mediaType).toBe("image");
+    expect(mediaSent[0]?.fileName).toBe("photo.jpg");
   });
 
   test("send_im_media sends file via local path", async () => {
@@ -156,7 +162,7 @@ describe("create-im-tools", () => {
 
     const result = await tool.call({
       file_path: tempFile,
-    }, { cwd: "/tmp" } as never);
+    }, { cwd: tempConfigDir } as never);
 
     const parsed = JSON.parse(String(result.content));
     expect(parsed.ok).toBe(true);
@@ -193,19 +199,92 @@ describe("create-im-tools", () => {
     const tool = tools.find(t => t.name === "send_im_media");
     if (!tool) throw new Error("send_im_media tool missing");
 
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { status: 200 })) as unknown as typeof fetch;
+    const result = await tool.call({
+      image_url: "https://example.com/img.png",
+    }, { cwd: "/tmp" } as never);
+
+    expect(result).toMatchObject({ type: "tool_result", is_error: true });
+    expect(String(result.content)).toContain("未绑定 IM 会话");
+  });
+
+  test("send_im_media rejects when both image_url and file_path provided", async () => {
+    upsertImThreadBinding({
+      provider: "weixin",
+      accountId: "account-both",
+      peerKind: "dm",
+      peerId: "user-both",
+      threadId: "thread-both-tool",
+    });
+    const tools = createSdkImTools({
+      threadId: "thread-both-tool",
+      mediaFetcher: makeFakeFetcher(),
+      sendMediaMessage: async () => ({ ok: true }),
+    });
+    const tool = tools.find(t => t.name === "send_im_media");
+    if (!tool) throw new Error("send_im_media tool missing");
+
+    const result = await tool.call({
+      image_url: "https://example.com/a.png",
+      file_path: "C:/Windows/win.ini",
+    }, { cwd: tempConfigDir } as never);
+
+    expect(result).toMatchObject({ type: "tool_result", is_error: true });
+    expect(String(result.content)).toContain("只能提供一个");
+  });
+
+  test("send_im_media rejects file_path outside workspace and files root", async () => {
+    upsertImThreadBinding({
+      provider: "weixin",
+      accountId: "account-escape",
+      peerKind: "dm",
+      peerId: "user-escape",
+      threadId: "thread-escape-tool",
+    });
+    const outsideFile = join(tempConfigDir, "..", "lume-im-escape-target.txt");
+    writeFileSync(outsideFile, "secret");
+
+    const tools = createSdkImTools({
+      threadId: "thread-escape-tool",
+      filesRoot: join(tempConfigDir, "files-root"),
+      sendMediaMessage: async () => ({ ok: true }),
+    });
+    const tool = tools.find(t => t.name === "send_im_media");
+    if (!tool) throw new Error("send_im_media tool missing");
 
     try {
       const result = await tool.call({
-        image_url: "https://example.com/img.png",
-      }, { cwd: "/tmp" } as never);
+        file_path: outsideFile,
+      }, { cwd: join(tempConfigDir, "workspace") } as never);
 
       expect(result).toMatchObject({ type: "tool_result", is_error: true });
-      expect(String(result.content)).toContain("未绑定 IM 会话");
+      expect(String(result.content)).toContain("仅允许工作区或线程文件根");
     } finally {
-      globalThis.fetch = originalFetch;
+      rmSync(outsideFile, { force: true });
     }
+  });
+
+  test("send_im_media rejects image_url resolving to private network", async () => {
+    upsertImThreadBinding({
+      provider: "weixin",
+      accountId: "account-ssrf",
+      peerKind: "dm",
+      peerId: "user-ssrf",
+      threadId: "thread-ssrf-tool",
+    });
+    const tools = createSdkImTools({
+      threadId: "thread-ssrf-tool",
+      // DNS 解析返回云元数据端点地址
+      mediaFetcher: makeFakeFetcher(["169.254.169.254"]),
+      sendMediaMessage: async () => ({ ok: true }),
+    });
+    const tool = tools.find(t => t.name === "send_im_media");
+    if (!tool) throw new Error("send_im_media tool missing");
+
+    const result = await tool.call({
+      image_url: "https://metadata.example.com/token",
+    }, { cwd: "/tmp" } as never);
+
+    expect(result).toMatchObject({ type: "tool_result", is_error: true });
+    expect(String(result.content)).toContain("下载图片失败");
   });
 });
