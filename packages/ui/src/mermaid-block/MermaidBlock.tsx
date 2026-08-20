@@ -135,7 +135,9 @@ export function getResizedMermaidHeight(startHeight: number, deltaY: number): nu
 }
 
 export function stripStylesheetImports(svg: string): string {
-  return svg.replace(/@import\s+url\((?:'[^']*'|"[^"]*"|[^)]*)\)\s*;?/gi, '')
+  // CSS 规范允许字符串形式 @import "foo.css";（不带 url()），两种形式都要剥。
+  // 要求 @import 后紧跟空白 + url(/引号，避免误杀节点标签里的 user@important.com 之类文本。
+  return svg.replace(/@import\s+(?:url\([^)]*\)|'[^']*'|"[^"]*")\s*;?/gi, '')
 }
 
 /**
