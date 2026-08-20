@@ -19,10 +19,15 @@ describe("createBrowserMcpTools", () => {
     } as any
     const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
 
-    const opened = await call(tools, "mcp__browser__open", { url: "https://example.com" })
+    const openTool = tools.find((tool) => tool.name === "mcp__browser__open")!
+    const openResult = await openTool.call({ url: "https://example.com" }, { toolUseId: "open-1" } as any)
+    const opened = JSON.parse(String(openResult.content))
     const snapshot = await call(tools, "mcp__browser__snapshot", {})
 
     expect(opened.active_tab_id).toBe("tab-1")
+    expect(openResult._meta?.repeatGuard).toEqual({
+      state: { ok: true, tool: "open", url: "https://example.com", title: "tab-1", generation: 1 }
+    })
     expect(snapshot.observation.snapshot_id).toBe("snap-1")
     expect(calls.map((request) => request.method)).toEqual(["create_tab", "list_tabs", "browser_snapshot"])
     expect(new Set(calls.map((request) => request.browserSessionId))).toEqual(new Set(["browser-tools:thread-1"]))

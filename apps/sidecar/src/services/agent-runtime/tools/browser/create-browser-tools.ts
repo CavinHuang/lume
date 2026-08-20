@@ -69,7 +69,7 @@ export function createBrowserMcpTools(input: {
             operation_id: operationId,
             session_id: session.browserSessionId,
             ...result,
-          })
+          }, false, repeatGuardState(name, result))
         } catch (error) {
           const code = browserErrorCode(error)
           const message = error instanceof Error && error.message && error.message !== code ? error.message.slice(0, 4_000) : code
@@ -79,7 +79,7 @@ export function createBrowserMcpTools(input: {
             code,
             message,
             retryable: code === "browser_unavailable" || code === "stale_target",
-          }, true)
+          }, true, { ok: false, tool: name, code, message })
         }
       },
     } satisfies ToolDefinition
@@ -196,12 +196,28 @@ function browserErrorCode(error: unknown): string {
   return /^[a-z][a-z0-9_]{1,80}$/.test(message) ? message : "browser_internal_error"
 }
 
-function toolResult(toolUseId: string, value: unknown, isError = false): ToolResult {
+function repeatGuardState(name: BrowserToolName, result: Record<string, unknown>): unknown {
+  if (name === "open" || name === "switch_tab") {
+    const tab = asRecord(result.tab)
+    return {
+      ok: true,
+      tool: name,
+      url: tab.url ?? null,
+      title: tab.title ?? null,
+      generation: tab.generation ?? null,
+    }
+  }
+  if (name === "run_script") return { ok: true, tool: name, value: result.value ?? null }
+  return result
+}
+
+function toolResult(toolUseId: string, value: unknown, isError = false, repeatState?: unknown): ToolResult {
   return {
     type: "tool_result",
     tool_use_id: toolUseId,
     content: JSON.stringify(value),
     ...(isError ? { is_error: true } : {}),
+    ...(repeatState !== undefined ? { _meta: { repeatGuard: { state: repeatState } } } : {}),
   }
 }
 
