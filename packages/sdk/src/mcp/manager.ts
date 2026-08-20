@@ -379,20 +379,22 @@ async function defaultTransportFactory(
   config: NormalizedMcpServerConfig
 ): Promise<unknown> {
   if (config.transport === 'stdio') {
+    // Never hand the host's full environment (API keys, tokens) to third-party
+    // server processes; the official SDK default is a minimal safe subset (#201).
+    const { StdioClientTransport, getDefaultEnvironment } = await import('@modelcontextprotocol/sdk/client/stdio.js');
     if (config.sandbox?.processIsolation?.enabled) {
       return new SandboxedStdioClientTransport({
         command: config.command ?? '',
         args: config.args ?? [],
-        env: { ...process.env, ...config.env } as Record<string, string>,
+        env: { ...getDefaultEnvironment(), ...config.env } as Record<string, string>,
         cwd: config.cwd,
         sandbox: config.sandbox,
       });
     }
-    const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
     return new StdioClientTransport({
       command: config.command ?? '',
       args: config.args ?? [],
-      env: { ...process.env, ...config.env } as Record<string, string>
+      env: { ...getDefaultEnvironment(), ...config.env } as Record<string, string>
     });
   }
 

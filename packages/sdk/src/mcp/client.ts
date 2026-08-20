@@ -43,20 +43,21 @@ export async function connectMCPServer(
 
     if (!config.type || config.type === 'stdio') {
       const stdioConfig = config as Extract<McpServerConfig, { type?: 'stdio' }>
+      // Minimal safe env subset, not the host's full environment (#201)
+      const { StdioClientTransport, getDefaultEnvironment } = await import('@modelcontextprotocol/sdk/client/stdio.js')
       if (stdioConfig.sandbox?.processIsolation?.enabled) {
         transport = new SandboxedStdioClientTransport({
           command: stdioConfig.command,
           args: stdioConfig.args || [],
-          env: { ...process.env, ...stdioConfig.env } as Record<string, string>,
+          env: { ...getDefaultEnvironment(), ...stdioConfig.env } as Record<string, string>,
           cwd: stdioConfig.cwd,
           sandbox: stdioConfig.sandbox,
         })
       } else {
-        const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
         transport = new StdioClientTransport({
           command: stdioConfig.command,
           args: stdioConfig.args || [],
-          env: { ...process.env, ...stdioConfig.env } as Record<string, string>,
+          env: { ...getDefaultEnvironment(), ...stdioConfig.env } as Record<string, string>,
           cwd: stdioConfig.cwd,
         })
       }

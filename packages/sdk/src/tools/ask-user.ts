@@ -147,17 +147,22 @@ function formatFallbackAnswer(request: AskUserQuestionRequest): AskUserQuestionR
 
 async function invokeHandler(
   request: AskUserQuestionRequest,
-): Promise<AskUserQuestionResponse> {
-  if (request.answers && Object.keys(request.answers).length > 0) {
+  hostAnswersTrusted: boolean,
+): Promise<AskUserQuestionResponse & { source: 'host' | 'fallback' }> {
+  // `answers` riding along in the model's tool input is untrusted — it is a
+  // forged-answer channel unless the host injected it via canUseTool
+  // updatedInput (#196).
+  if (hostAnswersTrusted && request.answers && Object.keys(request.answers).length > 0) {
     return {
       questions: request.questions,
       answers: request.answers,
       ...(request.annotations ? { annotations: request.annotations } : {}),
+      source: 'host',
     }
   }
 
   if (!questionHandler) {
-    return formatFallbackAnswer(request)
+    return { ...formatFallbackAnswer(request), source: 'fallback' }
   }
 
   const handlerArity = questionHandler.length
@@ -176,6 +181,7 @@ async function invokeHandler(
     return {
       questions: request.questions,
       answers: { [firstQuestion.question]: legacyResult },
+      source: 'host',
     }
   }
 
@@ -185,9 +191,10 @@ async function invokeHandler(
     return {
       questions: request.questions,
       answers: { [firstQuestion?.question || 'question']: result },
+      source: 'host',
     }
   }
-  return result
+  return { ...result, source: 'host' }
 }
 
 export const AskUserQuestionTool: ToolDefinition = {
@@ -284,20 +291,23 @@ export const AskUserQuestionTool: ToolDefinition = {
     }
 
     try {
-      const response = await invokeHandler(request)
+      const response = await invokeHandler(request, context.permissionUpdatedInput === true)
       const answerText = Object.entries(response.answers)
         .map(([question, answer]) => `"${question}"="${answer}"`)
         .join(', ')
+      const nonInteractive = response.source === 'fallback'
 
       return {
         type: 'tool_result',
         tool_use_id: '',
         content: JSON.stringify({
-          status: 'answered',
+          status: nonInteractive ? 'answered_non_interactive' : 'answered',
           questions: response.questions,
           answers: response.answers,
           ...(response.annotations ? { annotations: response.annotations } : {}),
-          message: `User has answered your questions: ${answerText}. You can now continue with the user's answers in mind.`,
+          message: nonInteractive
+            ? `Non-interactive session without a question handler; defaulting to the first options: ${answerText}. These are NOT real user answers — confirm with the user before acting on them.`
+            : `User has answered your questions: ${answerText}. You can now continue with the user's answers in mind.`,
         }),
       }
     } catch (err: any) {

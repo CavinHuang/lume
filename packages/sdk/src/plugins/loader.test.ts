@@ -104,3 +104,74 @@ describe("buildCommandToolDefinition", () => {
     expect(def.inputSchema).toEqual({ type: "object", properties: {} });
   });
 });
+
+describe("loadPlugins path boundary (#202)", () => {
+  test("skips plugin specs resolving outside cwd without pluginRoots", async () => {
+    const root = join(tmpdir(), `lume-plugin-boundary-${crypto.randomUUID()}`);
+    const outside = join(root, "..", `outside-${crypto.randomUUID()}`);
+    const pluginDir = join(outside, "evil");
+    await mkdir(pluginDir, { recursive: true });
+    await writeFile(
+      join(pluginDir, "plugin.json"),
+      JSON.stringify({ name: "evil", tools: [] }),
+      "utf-8",
+    );
+
+    const plugins = await loadPlugins(root, [{ name: "evil", path: pluginDir }]);
+    expect(plugins).toEqual([]);
+
+    const allowed = await loadPlugins(root, [{ name: "evil", path: pluginDir }], [outside]);
+    expect(allowed.map((p) => p.name)).toEqual(["evil"]);
+  });
+
+  test("loads plugins nested inside cwd as before", async () => {
+    const root = join(tmpdir(), `lume-plugin-inside-${crypto.randomUUID()}`);
+    const pluginDir = join(root, ".lume", "plugins", "inner");
+    await mkdir(pluginDir, { recursive: true });
+    await writeFile(
+      join(pluginDir, "plugin.json"),
+      JSON.stringify({ name: "inner", tools: [] }),
+      "utf-8",
+    );
+
+    const plugins = await loadPlugins(root, [{ name: "inner", path: ".lume/plugins/inner" }]);
+    expect(plugins.map((p) => p.name)).toEqual(["inner"]);
+  });
+});
+
+describe("plugin command tool child env (#201)", () => {
+  test("child gets the safe default env plus PLUGIN_INPUT, not host secrets", async () => {
+    const root = join(tmpdir(), `lume-plugin-env-${crypto.randomUUID()}`);
+    const pluginDir = join(root, "probe");
+    await mkdir(pluginDir, { recursive: true });
+    await writeFile(
+      join(pluginDir, "plugin.json"),
+      JSON.stringify({
+        name: "probe",
+        tools: [{
+          name: "env_probe",
+          description: "Probe child env",
+          command: process.execPath,
+          args: ["-e", "process.stdout.write(JSON.stringify({ canary: process.env.LUME_TEST_SECRET ?? null, hasPath: typeof process.env.PATH === 'string', input: process.env.PLUGIN_INPUT ?? null }))"],
+          inputSchema: { type: "object", properties: {} },
+        }],
+      }),
+      "utf-8",
+    );
+
+    process.env.LUME_TEST_SECRET = "leak-me";
+    try {
+      const plugins = await loadPlugins(root, [{ name: "probe" }]);
+      const result = await plugins[0]!.tools![0]!.call(
+        { value: "ok" },
+        { cwd: root, toolUseId: "env-probe-1" },
+      );
+      const probe = JSON.parse(String((result as { content: unknown }).content));
+      expect(probe.canary).toBeNull();
+      expect(probe.hasPath).toBe(true);
+      expect(probe.input).toBe(JSON.stringify({ value: "ok" }));
+    } finally {
+      delete process.env.LUME_TEST_SECRET;
+    }
+  });
+});

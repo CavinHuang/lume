@@ -6,6 +6,7 @@
  */
 
 import { countStringTokens } from '@lume/natives'
+import { findModelMeta, type ModelPricing } from '@lume/shared'
 
 /**
  * 按消息对象引用缓存 token 计数。依赖消息不可变（追加 / 整体替换，非原地改内容）：
@@ -168,7 +169,7 @@ export function getContextWindowSize(model: string): number {
   // OpenAI model context windows
   if (model.includes('gpt-4o')) return 128_000
   if (model.includes('gpt-4-turbo')) return 128_000
-  if (model.includes('gpt-4-1')) return 1_000_000
+  if (model.includes('gpt-4.1') || model.includes('gpt-4-1')) return 1_000_000
   if (model.includes('gpt-4')) return 128_000
   if (model.includes('gpt-3.5')) return 16_385
   if (model.includes('o1')) return 200_000
@@ -212,7 +213,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   'gpt-4o': { input: 2.5 / 1_000_000, output: 10 / 1_000_000 },
   'gpt-4o-mini': { input: 0.15 / 1_000_000, output: 0.6 / 1_000_000 },
   'gpt-4-turbo': { input: 10 / 1_000_000, output: 30 / 1_000_000 },
-  'gpt-4-1': { input: 2 / 1_000_000, output: 8 / 1_000_000 },
+  'gpt-4.1': { input: 2 / 1_000_000, output: 8 / 1_000_000 },
   'o1': { input: 15 / 1_000_000, output: 60 / 1_000_000 },
   'o3': { input: 10 / 1_000_000, output: 40 / 1_000_000 },
   'o4-mini': { input: 1.1 / 1_000_000, output: 4.4 / 1_000_000 },
@@ -225,13 +226,28 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
 /**
  * Estimate cost from usage and model.
  */
+// Longest-key-first: `find` in insertion order made 'gpt-4o-mini' match 'gpt-4o'
+const PRICING_ENTRIES = [...Object.entries(MODEL_PRICING)].sort(
+  ([a], [b]) => b.length - a.length,
+)
+
+/** shared registry prices are USD per 1M tokens; MODEL_PRICING is per token */
+function sharedPricingToPerToken(pricing: ModelPricing | undefined) {
+  if (!pricing || pricing.input <= 0 || pricing.output <= 0) return undefined
+  return { input: pricing.input / 1_000_000, output: pricing.output / 1_000_000 }
+}
+
 export function estimateCost(
   model: string,
   usage: { input_tokens: number; output_tokens: number },
 ): number {
-  const pricing = Object.entries(MODEL_PRICING).find(([key]) =>
-    model.includes(key),
-  )?.[1] ?? { input: 3 / 1_000_000, output: 15 / 1_000_000 }
+  const pricing =
+    PRICING_ENTRIES.find(([key]) => model.includes(key))?.[1] ??
+    sharedPricingToPerToken(findModelMeta(model)?.pricing) ?? {
+      // rough estimate fallback — the costUSD contract requires a number
+      input: 3 / 1_000_000,
+      output: 15 / 1_000_000,
+    }
 
   return usage.input_tokens * pricing.input + usage.output_tokens * pricing.output
 }

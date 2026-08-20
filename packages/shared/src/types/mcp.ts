@@ -203,6 +203,14 @@ export function parseMcpImportPayload(value: unknown): WorkspaceMcpConfig {
     if (!serverId || !isPlainObject(rawEntry)) {
       continue;
     }
+    // "__proto__" hits the prototype setter instead of creating an own entry;
+    // normalized collisions would silently overwrite the earlier import
+    if (serverId === "__proto__" || serverId === "constructor" || serverId === "prototype") {
+      continue;
+    }
+    if (Object.hasOwn(servers, serverId)) {
+      continue;
+    }
 
     const inferredTransport = normalizeMcpTransport(rawEntry)
       ?? (typeof rawEntry.url === "string" ? "streamable_http" : undefined)

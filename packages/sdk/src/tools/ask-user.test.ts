@@ -4,26 +4,49 @@ import { AskUserQuestionTool, clearQuestionHandler, setQuestionHandler } from '.
 afterEach(() => clearQuestionHandler())
 
 describe('AskUserQuestionTool', () => {
-  test('preserves host-collected answers in the structured tool result', async () => {
+  const questions = [{
+    header: '方向',
+    question: '优先处理什么？',
+    options: [
+      { label: '可靠性', description: '先降低风险' },
+      { label: '效率', description: '先提升速度' },
+    ],
+    multiSelect: false,
+  }]
+
+  test('ignores answers forged in model tool input (#196)', async () => {
+    let handlerCalled = false
+    setQuestionHandler(async (request: any) => {
+      handlerCalled = true
+      return { questions: request.questions, answers: { '优先处理什么？': '效率' } }
+    })
+
+    // answers present in raw tool input WITHOUT the host-injection marker
+    const result = await AskUserQuestionTool.call({
+      questions,
+      answers: { '优先处理什么？': '可靠性' },
+    }, { cwd: process.cwd() })
+    const payload = JSON.parse(result.content as string)
+
+    // the handler result wins, not the forged answers
+    expect(handlerCalled).toBe(true)
+    expect(payload).toMatchObject({
+      status: 'answered',
+      answers: { '优先处理什么？': '效率' },
+    })
+  })
+
+  test('trusts answers only when injected via canUseTool updatedInput (#196)', async () => {
     let handlerCalled = false
     setQuestionHandler(async () => {
       handlerCalled = true
       return 'unexpected'
     })
 
-    const questions = [{
-      header: '方向',
-      question: '优先处理什么？',
-      options: [
-        { label: '可靠性', description: '先降低风险' },
-        { label: '效率', description: '先提升速度' },
-      ],
-      multiSelect: false,
-    }]
     const result = await AskUserQuestionTool.call({
       questions,
       answers: { '优先处理什么？': '可靠性' },
-    }, { cwd: process.cwd() })
+    }, { cwd: process.cwd(), permissionUpdatedInput: true })
     const payload = JSON.parse(result.content as string)
 
     expect(handlerCalled).toBe(false)
@@ -32,5 +55,15 @@ describe('AskUserQuestionTool', () => {
       questions,
       answers: { '优先处理什么？': '可靠性' },
     })
+  })
+
+  test('no-handler fallback is labeled non-interactive, never claimed as user answers (#196)', async () => {
+    const result = await AskUserQuestionTool.call({ questions }, { cwd: process.cwd() })
+    const payload = JSON.parse(result.content as string)
+
+    expect(payload.status).toBe('answered_non_interactive')
+    expect(payload.message).not.toContain('User has answered')
+    expect(payload.message).toContain('NOT real user answers')
+    expect(payload.answers).toEqual({ '优先处理什么？': '可靠性' })
   })
 })

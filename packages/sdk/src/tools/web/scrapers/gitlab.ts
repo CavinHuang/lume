@@ -314,7 +314,7 @@ async function renderGitLabMR(
 	}
 
 	md += `\n---\n\n## Description\n\n`;
-	md += mr.description ? htmlToBasicMarkdown(mr.description) : "*No description*";
+	md += mr.description ? await htmlToBasicMarkdown(mr.description) : "*No description*";
 
 	return { content: md, ok: true };
 }
