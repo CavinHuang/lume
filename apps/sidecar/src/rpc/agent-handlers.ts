@@ -438,7 +438,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     const runStore = createFileBackedLumeRunStateStore(resolveRuntimeSessionDir(threadId));
     const active = await runStore.findActiveByThread(threadId);
     if (active) return active.runId;
-    const runs = await runStore.listByThread(threadId);
+    const runs = await runStore.listStatesByThread(threadId);
     return runs.at(-1)?.runId ?? null;
   };
 
@@ -667,7 +667,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     // 只看线程最近一个 run 的 continuation 状态。
     // tool_running / waiting_background 不进横幅触发集：审批与后台等待已有
     // 专门的交互提示（TOOL_PERMISSION_REQUEST / 后台状态），横幅会造成双重提示。
-    const lastRun = (await runStore.listByThread(input.threadId)).at(-1);
+    const lastRun = (await runStore.listStatesByThread(input.threadId)).at(-1);
     if (lastRun) {
       const continuation = await continuationStore.get(lastRun.runId);
       if (continuation && continuation.status === "interrupted") {
@@ -1009,7 +1009,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const sessionDir = resolveRuntimeSessionDir(input.threadId);
       const runStore = createFileBackedLumeRunStateStore(sessionDir);
       const continuationStore = createFileBackedRunContinuationStore(sessionDir);
-      const runs = await runStore.listByThread(input.threadId);
+      const runs = await runStore.listStatesByThread(input.threadId);
       return {
         runs: await Promise.all(runs.map(async (run) => {
           const continuation = await continuationStore.get(run.runId);
@@ -1025,7 +1025,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
             model: run.model,
             usage: run.usage,
             pendingInterruptionCount: run.pendingInterruptions.length,
-            generatedItemCount: run.generatedItems.length,
+            generatedItemCount: await runStore.countItems(run.runId),
             continuation: continuation
               ? {
                   status: continuation.status,

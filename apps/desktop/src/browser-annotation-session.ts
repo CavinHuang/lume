@@ -375,6 +375,21 @@ export class BrowserAnnotationSessionStore {
     if (refs.size) this.onDiscardedScreenshots?.(evicted.threadId, [...refs])
   }
 
+  /**
+   * 全量会话当前引用的截图 ref 集合（内存态=活跃引用源），孤儿 GC 三源并集之一(#188)。
+   * comments[].screenshotRef 之外也收快照顶层 screenshotRef（write 持久化的派生字段，防御性收取）。
+   */
+  collectAllScreenshotRefs(): Set<string> {
+    const refs = new Set<string>()
+    for (const session of this.sessions.values()) {
+      if (typeof session.screenshotRef === 'string') refs.add(session.screenshotRef)
+      for (const comment of session.comments) {
+        if (typeof comment.screenshotRef === 'string') refs.add(comment.screenshotRef)
+      }
+    }
+    return refs
+  }
+
   private restore(): void {
     if (!existsSync(this.path)) return
     try {

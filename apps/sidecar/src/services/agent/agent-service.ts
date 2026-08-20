@@ -305,24 +305,19 @@ function hasTurnLimitedMarker(item: unknown): boolean {
   );
 }
 
-function isTurnLimitedRun(latestRun: LumeRunState | null): LumeRunState | null {
-  return latestRun?.status === "completed" && latestRun.generatedItems.some(hasTurnLimitedMarker)
-    ? latestRun
-    : null;
-}
-
-function isStaleRunningRun(latestRun: LumeRunState | null): LumeRunState | null {
-  return latestRun && STALE_RUN_STATUSES.has(latestRun.status) && latestRun.input.userMessage.trim().length > 0
-    ? latestRun
-    : null;
-}
-
 async function resolveModelFacingUserMessage(threadId: string, userMessage: string): Promise<string> {
-  // 两个判定都只消费 latestRun,一次扫描共用(store 每次全目录 readdirSync + 逐 run 读盘)
-  const runs = await createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId)).listByThread(threadId);
-  const latestRun = runs.at(-1) ?? null;
-  const staleRun = isStaleRunningRun(latestRun);
-  const turnLimitedRun = isTurnLimitedRun(latestRun);
+  // 轻量列表一次（不解析 items）定位 latest；两个判定互斥（stale 系 vs completed），
+  // 命中后再单独取 items——避免全量 listByThread 逐 run 读盘
+  const store = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
+  const latest = (await store.listStatesByThread(threadId)).at(-1);
+  let staleRun: LumeRunState | null = null;
+  let turnLimitedRun: LumeRunState | null = null;
+  if (latest && STALE_RUN_STATUSES.has(latest.status) && latest.input.userMessage.trim().length > 0) {
+    staleRun = (await store.get(latest.runId)) ?? latest;
+  } else if (latest?.status === "completed") {
+    const withItems = await store.get(latest.runId);
+    turnLimitedRun = withItems && withItems.generatedItems.some(hasTurnLimitedMarker) ? withItems : null;
+  }
   const recoveryContext = staleRun
     ? buildStaleRunRecoveryContext(staleRun)
     : turnLimitedRun

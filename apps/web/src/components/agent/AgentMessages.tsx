@@ -24,7 +24,7 @@ import { ScrollMinimap, type MinimapItem } from './ScrollMinimap'
 import { summarizeMessageForPreview } from '@/components/app-shell/ThreadMiniMapPopover'
 import type { TodoBlockData } from './runtime-message-view'
 import { threadMessagesCache } from './thread-messages-cache'
-import { useBootstrapGeneralSettings, useSyncGeneralSettingsAfterPersonalize } from '@/lib/use-general-settings'
+import { useBootstrapGeneralSettings, useSyncGeneralSettingsAfterPersonalize } from '@/hooks/use-general-settings'
 import {
   collectNewRuntimeMessageIds,
   collectConversationMinimapItems,

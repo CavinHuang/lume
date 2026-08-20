@@ -14,7 +14,7 @@ import { toast } from 'sonner'
 import { agentSideChatMapAtom, agentThreadsAtom, currentWorkspaceIdAtom, quotedSelectionMapAtom, rightPanelLayoutAtom, rightPanelWorkspaceActionAtom, type QuotedSelection } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
 import { AGENT_IPC_CHANNELS, type AgentThreadMeta } from '@lume/shared'
-import { useQuotedSelection } from '@/hooks/use-quoted-selection'
+import { useQuotedSelection } from '@/hooks/useQuotedSelection'
 import { SelectionActionPopover } from '@/components/selection/SelectionActionPopover'
 
 const MAX_AGENT_HISTORY_QUOTED_CHARS = 2000

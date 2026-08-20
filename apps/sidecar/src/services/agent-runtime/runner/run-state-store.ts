@@ -10,14 +10,33 @@ import {
 import { join } from "node:path";
 import { ACTIVE_RUN_STATUSES, type LumeRunState } from "./run-state";
 import type { LumeRunItem } from "./run-items";
+import { runHasAssistantMessage } from "./run-item-events";
+
+/** 线程级 todo 最新快照（recordTodoState 写入，readLatestTodoState 优先读取）。 */
+export interface LumeTodoSnapshot {
+  todos: Array<{ content: string; activeForm: string; status: "pending" | "in_progress" | "completed" }>;
+  currentActiveForm: string | null;
+  runId: string;
+  createdAt: string;
+}
 
 export interface LumeRunStateStore {
   create(state: LumeRunState): Promise<void>;
   get(runId: string): Promise<LumeRunState | null>;
+  /** 只读 state.json（不解析 items.jsonl）——读取 state 字段（如 usage）的轻量路径。 */
+  getState(runId: string): Promise<LumeRunState | null>;
   update(runId: string, patch: Partial<LumeRunState>): Promise<void>;
   appendItem(runId: string, item: LumeRunItem): Promise<void>;
   listByThread(threadId: string): Promise<LumeRunState[]>;
+  /** 只读各 run 的 state.json（generatedItems 恒空）——列表/判定类调用的轻量路径。 */
+  listStatesByThread(threadId: string): Promise<LumeRunState[]>;
+  /** items.jsonl 行计数（不 JSON.parse）——展示层条数。 */
+  countItems(runId: string): Promise<number>;
+  /** 终态收敛：run 已有 assistant_message 时滤掉 model_stream delta 行（对 hydrate 投影透明）。 */
+  compactModelStreamItems(runId: string): Promise<void>;
   findActiveByThread(threadId: string): Promise<LumeRunState | null>;
+  saveTodoSnapshot(threadId: string, snapshot: LumeTodoSnapshot): void;
+  readTodoSnapshot(threadId: string): LumeTodoSnapshot | null;
 }
 
 function writeTextAtomic(path: string, payload: string): void {
@@ -52,9 +71,11 @@ function readJsonlFile<T>(path: string): T[] {
 }
 
 class FileBackedLumeRunStateStore implements LumeRunStateStore {
+  private readonly sessionDir: string;
   private readonly runsDir: string;
 
   constructor(sessionDir: string) {
+    this.sessionDir = sessionDir;
     this.runsDir = join(sessionDir, "runs");
     mkdirSync(this.runsDir, { recursive: true });
   }
@@ -80,6 +101,10 @@ class FileBackedLumeRunStateStore implements LumeRunStateStore {
       ...state,
       generatedItems: readJsonlFile<LumeRunItem>(this.itemsPath(runId))
     };
+  }
+
+  async getState(runId: string): Promise<LumeRunState | null> {
+    return readJsonFile<LumeRunState>(this.statePath(runId));
   }
 
   async update(runId: string, patch: Partial<LumeRunState>): Promise<void> {
@@ -109,11 +134,9 @@ class FileBackedLumeRunStateStore implements LumeRunStateStore {
   }
 
   async listByThread(threadId: string): Promise<LumeRunState[]> {
-    if (!existsSync(this.runsDir)) return [];
+    const runIds = this.listRunFileIds();
     const states: LumeRunState[] = [];
-    for (const file of readdirSync(this.runsDir)) {
-      if (!file.endsWith(".json") || file.endsWith(".items.json") || file.endsWith(".continuation.json")) continue;
-      const runId = file.slice(0, -".json".length);
+    for (const runId of runIds) {
       const state = await this.get(runId);
       if (state?.threadId === threadId) {
         states.push(state);
@@ -124,9 +147,56 @@ class FileBackedLumeRunStateStore implements LumeRunStateStore {
     );
   }
 
+  async listStatesByThread(threadId: string): Promise<LumeRunState[]> {
+    const runIds = this.listRunFileIds();
+    const states: LumeRunState[] = [];
+    for (const runId of runIds) {
+      const state = readJsonFile<LumeRunState>(this.statePath(runId));
+      if (state?.threadId === threadId) {
+        states.push(state);
+      }
+    }
+    return states.sort((a, b) =>
+      a.createdAt.localeCompare(b.createdAt) || a.runId.localeCompare(b.runId)
+    );
+  }
+
+  async countItems(runId: string): Promise<number> {
+    const path = this.itemsPath(runId);
+    if (!existsSync(path)) return 0;
+    return readFileSync(path, "utf-8").split("\n").filter((line) => line.trim().length > 0).length;
+  }
+
+  async compactModelStreamItems(runId: string): Promise<void> {
+    const path = this.itemsPath(runId);
+    if (!existsSync(path)) return;
+    const items = readJsonlFile<LumeRunItem>(path);
+    // 与 hydrate 投影同一判定：无 assistant_message 的 run 依赖 model_stream 重建文本，不裁
+    if (items.length === 0 || !runHasAssistantMessage(items)) return;
+    const retained = items.filter((item) => item.type !== "model_stream");
+    if (retained.length === items.length) return;
+    writeTextAtomic(path, retained.map((item) => JSON.stringify(item)).join("\n") + "\n");
+  }
+
   async findActiveByThread(threadId: string): Promise<LumeRunState | null> {
-    const states = await this.listByThread(threadId);
+    const states = await this.listStatesByThread(threadId);
     return states.find((state) => ACTIVE_RUN_STATUSES.has(state.status)) ?? null;
+  }
+
+  saveTodoSnapshot(threadId: string, snapshot: LumeTodoSnapshot): void {
+    writeTextAtomic(this.todoSnapshotPath(threadId), JSON.stringify(snapshot, null, 2));
+  }
+
+  readTodoSnapshot(threadId: string): LumeTodoSnapshot | null {
+    return readJsonFile<LumeTodoSnapshot>(this.todoSnapshotPath(threadId));
+  }
+
+  /** runs/ 目录下的 run state 文件 id 列表（排除 items/continuation 及非 run 文件）。 */
+  private listRunFileIds(): string[] {
+    if (!existsSync(this.runsDir)) return [];
+    return readdirSync(this.runsDir)
+      .filter((file) => file.endsWith(".json") && !file.endsWith(".items.json") && !file.endsWith(".continuation.json"))
+      .map((file) => file.slice(0, -".json".length));
   }
 
   private statePath(runId: string): string {
@@ -135,6 +205,11 @@ class FileBackedLumeRunStateStore implements LumeRunStateStore {
 
   private itemsPath(runId: string): string {
     return join(this.runsDir, `${runId}.items.jsonl`);
+  }
+
+  /** runs/ 目录外的线程级快照，避免污染 runs/ 扫描。 */
+  private todoSnapshotPath(threadId: string): string {
+    return join(this.sessionDir, `todo-latest-${threadId}.json`);
   }
 }
 

@@ -319,6 +319,17 @@ export class LumeRunObserver {
       };
       // T7a:todo.state_updated 已迁事件总线,旧路只落盘 item(hydrate replay 消费),不再投影
       await this.stateStore.appendItem(this.state.runId, item);
+      try {
+        // 线程级最新快照：readLatestTodoState 免全量扫描历史 items；写失败走读时回退，低危静默
+        this.stateStore.saveTodoSnapshot(this.state.threadId, {
+          todos: state.todos,
+          currentActiveForm: state.currentActiveForm,
+          runId: this.state.runId,
+          createdAt
+        });
+      } catch {
+        // 快照缺失时 readLatestTodoState 回退全量扫描，功能不受损
+      }
     });
   }
 
@@ -499,13 +510,18 @@ export class LumeRunObserver {
       };
     }
     await this.stateStore.update(this.state.runId, patch);
+    // 终态收敛：enqueue 到队尾（与 appendItem 串行）。已有 assistant_message 的 run
+    // 滤掉 model_stream delta 行——对 hydrate 投影透明（includeModelStreamText=false 分支）。
+    this.enqueue(async () => {
+      await this.stateStore.compactModelStreamItems(this.state.runId);
+    });
     if (this.modelSpan) {
       if (status === "failed") {
         await this.traceRecorder.failSpan(this.modelSpan.id, error ?? "model call failed");
       } else {
         await this.traceRecorder.endSpan(this.modelSpan.id, {
           status,
-          usage: (await this.stateStore.get(this.state.runId))?.usage
+          usage: (await this.stateStore.getState(this.state.runId))?.usage
         });
       }
       this.modelSpan = undefined;

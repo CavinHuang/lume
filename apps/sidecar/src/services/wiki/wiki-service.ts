@@ -27,6 +27,7 @@ import { WIKI_CAPABILITIES } from "./wiki-capabilities";
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_BATCH_BYTES = 250 * 1024 * 1024;
 const MAX_FILES = 500;
+const WIKI_READ_RECONCILE_THROTTLE_MS = 30_000;
 
 export interface WikiAgentProposalInput {
   action: "create" | "update" | "replace_page";
@@ -57,13 +58,25 @@ export class WikiService {
   }
   private readonly safeFetch: WikiSafeHttpFetchService;
   private externalEditTimer?: ReturnType<typeof setTimeout>;
+  private lastReconcileAt = 0;
 
   ownerSubject(): WikiTrustedSubject { return { kind: "desktop_owner", subjectId: "local-owner", workspaceIds: [], allowInbox: true, allowAll: true }; }
+
+  /**
+   * RPC 读路径的 reconcile 节流：全量 vault 读+逐页解析成本高，而 externalEditWatcher
+   * （fs.watch + 150ms 防抖直调 coordinator，不受本节流影响）已兜底外部编辑的即时生效。
+   * 执行时错误照常冒泡（保持读路径 fail-closed 语义），只在成功后刷新时间戳。
+   */
+  private ensureReconciled(): void {
+    if (Date.now() - this.lastReconcileAt < WIKI_READ_RECONCILE_THROTTLE_MS) return;
+    this.coordinator.reconcileExternalOwnership();
+    this.lastReconcileAt = Date.now();
+  }
 
   getSnapshot(): WikiSnapshot {
     this.coordinator.markdown.ensureLayout();
     this.coordinator.recoverInterrupted();
-    this.coordinator.reconcileExternalOwnership();
+    this.ensureReconciled();
     const pages = this.coordinator.markdown.listPages();
     const generation = this.index.ensureFresh();
     if (this.findings.length === 0) this.findings = new WikiLintService(this.coordinator.markdown, undefined, new Set(listAgentWorkspaces().map((workspace) => workspace.id))).run(generation);
@@ -77,7 +90,7 @@ export class WikiService {
   }
 
   async search(input: WikiSearchInput, subject = this.ownerSubject()): Promise<WikiSearchResult[]> {
-    this.coordinator.reconcileExternalOwnership();
+    this.ensureReconciled();
     const visible = this.coordinator.markdown.listPages().filter((page) => page.status !== "trashed"
       && (input.scope.kind !== "page" || page.id === input.scope.pageId)
       && pageAllowed(page.frontmatter, subject, input.scope));
@@ -85,7 +98,7 @@ export class WikiService {
   }
 
   read(pageId: string, scope: WikiSearchInput["scope"], subject = this.ownerSubject()): WikiReadResult {
-    this.coordinator.reconcileExternalOwnership();
+    this.ensureReconciled();
     const pages = this.coordinator.markdown.listPages();
     const page = pages.find((item) => item.id === pageId);
     if (!page || (scope.kind === "page" && scope.pageId !== page.id) || !pageAllowed(page.frontmatter, subject, scope)) throw new Error("Wiki 页面不存在或未授权");
@@ -331,7 +344,10 @@ export class WikiService {
         if (this.externalEditTimer) clearTimeout(this.externalEditTimer);
         this.externalEditTimer = setTimeout(() => {
           this.externalEditTimer = undefined;
-          try { this.coordinator.reconcileExternalOwnership(); } catch { /* Next read retries and fails closed. */ }
+          try {
+            this.coordinator.reconcileExternalOwnership();
+            this.lastReconcileAt = Date.now(); // 读路径紧随其后不必重复跑
+          } catch { /* Next read retries and fails closed. */ }
         }, 150);
         this.externalEditTimer.unref?.();
       });

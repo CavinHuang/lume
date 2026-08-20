@@ -1,3 +1,4 @@
+import { createChannel, syncChannelModels } from '@/lib/desktop-api/channel'
 import * as React from 'react'
 import { Check, ChevronLeft, Loader2, Search } from 'lucide-react'
 import type { Channel, OpenAiApiMode, ProviderApiFamily, ProviderType } from '@lume/shared'
@@ -8,7 +9,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ChannelProviderIcon } from '@/components/model-selection/provider-icon-map'
-import { createChannel, syncChannelModels } from '@/lib/desktop-api/channel'
 import { cn } from '@/lib/utils'
 import { ConnectionOAuthLogin } from './ConnectionOAuthLogin'
 

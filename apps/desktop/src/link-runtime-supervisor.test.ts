@@ -102,3 +102,41 @@ test('#127 健康等待期内进程已退出时不再 kill/killProcessTree', asy
     await supervisor.stop()
   }
 })
+
+test('#187 旧 start 的 catch 不得毒化重启后的健康进程', async () => {
+  const { supervisor, forks } = await createHarness()
+  const realFetch = globalThis.fetch
+  const healthy = () => ({ ok: true, json: async () => ({ success: true, data: { ok: true, runtime: 'oomol-connect' } }) })
+  // start#1 的首次健康探测挂起；期间 fork#1 崩溃 → exit handler 调度 restartTimer(1s)
+  // → start#2 fork#2 立即健康 → online；随后释放 start#1 的挂起探测（拿到的是 #2 的响应）
+  let resolveFirstProbe: ((value: unknown) => void) | null = null
+  let probeCount = 0
+  globalThis.fetch = (async () => {
+    probeCount += 1
+    if (probeCount === 1) return new Promise((resolve) => { resolveFirstProbe = resolve })
+    return healthy()
+  }) as unknown as typeof fetch
+  try {
+    const firstStart = supervisor.initialize()
+    // 等 start#1 进入健康轮询后击杀 fork#1
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    forks[0]?.emit('exit')
+    // 等 restartTimer(1s) 触发 start#2 并上线
+    const deadline = Date.now() + 10_000
+    while (supervisor.getState().phase !== 'online' && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    expect(supervisor.getState().phase).toBe('online')
+    expect(forks.length).toBe(2)
+    // 释放旧 start 的挂起探测：旧 start 拿到健康响应但 child 已是 #2
+    resolveFirstProbe?.(healthy())
+    // 修复后：旧 start 被 start#2 的代际 bump 失效，静默 resolve，不 publish crashed、不置 stopping
+    const resolved = await firstStart
+    expect(resolved.phase).toBe('online')
+    expect(supervisor.getState().phase).toBe('online')
+    expect(supervisor.getState().lastError).toBeUndefined()
+  } finally {
+    globalThis.fetch = realFetch
+    await supervisor.stop()
+  }
+})

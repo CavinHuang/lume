@@ -3,6 +3,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFileBackedLumeRunStateStore } from "./run-state-store";
+import { projectRunStateToRuntimeEvents } from "./run-item-events";
+import { readLatestTodoState } from "./todo-state";
 import type { LumeRunState } from "./run-state";
 
 function makeState(runId: string, status: LumeRunState["status"]): LumeRunState {
@@ -121,5 +123,77 @@ describe("run-state-store", () => {
     const stored = await store.get("run-u2");
     expect(stored?.generatedItems.map((i) => i.id)).toEqual(["orig-1", "new-2"]);
     expect((stored?.generatedItems[0] as any).handoff).toBe(true);
+  });
+
+  test("listStatesByThread 不解析 items 且排序与 listByThread 一致", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-run-state-store-"));
+    const store = createFileBackedLumeRunStateStore(dir);
+    await store.create(makeState("run-b", "running"));
+    await store.appendItem("run-b", { type: "system_event", id: "item-b", name: "n", createdAt: "2026-04-29T00:00:01.000Z" });
+    await store.create(makeState("run-a", "completed"));
+
+    const states = await store.listStatesByThread("thread-1");
+    expect(states.map((state) => state.runId)).toEqual(["run-a", "run-b"]);
+    expect(states.every((state) => state.generatedItems.length === 0)).toBe(true);
+    expect((await store.getState("run-b"))?.generatedItems.length).toBe(0);
+    expect(await store.countItems("run-b")).toBe(1);
+    expect(await store.countItems("run-a")).toBe(0);
+  });
+
+  test("compactModelStreamItems：有 assistant_message 时滤掉 model_stream，无则不动", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-run-state-store-"));
+    const store = createFileBackedLumeRunStateStore(dir);
+    await store.create(makeState("run-with-final", "completed"));
+    await store.appendItem("run-with-final", { type: "model_stream", id: "d1", event: { type: "stream_event" } as any, createdAt: "2026-04-29T00:00:01.000Z" });
+    await store.appendItem("run-with-final", { type: "assistant_message", id: "a1", content: [{ type: "text", text: "final answer" }] as any, createdAt: "2026-04-29T00:00:02.000Z" });
+    await store.appendItem("run-with-final", { type: "model_stream", id: "d2", event: { type: "stream_event" } as any, createdAt: "2026-04-29T00:00:03.000Z" });
+
+    await store.compactModelStreamItems("run-with-final");
+    expect((await store.get("run-with-final"))?.generatedItems.map((i) => i.id)).toEqual(["a1"]);
+
+    // 无 assistant_message：依赖 model_stream 重建文本，不裁
+    await store.create(makeState("run-no-final", "failed"));
+    await store.appendItem("run-no-final", { type: "model_stream", id: "d3", event: { type: "stream_event" } as any, createdAt: "2026-04-29T00:00:01.000Z" });
+    await store.compactModelStreamItems("run-no-final");
+    expect((await store.get("run-no-final"))?.generatedItems.map((i) => i.id)).toEqual(["d3"]);
+  });
+
+  test("compact 后 hydrate 投影不变（有 assistant_message 的 run）", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-run-state-store-"));
+    const store = createFileBackedLumeRunStateStore(dir);
+    await store.create(makeState("run-proj", "completed"));
+    await store.appendItem("run-proj", { type: "model_stream", id: "d1", event: { type: "stream_event" } as any, createdAt: "2026-04-29T00:00:01.000Z" });
+    await store.appendItem("run-proj", { type: "assistant_message", id: "a1", content: [{ type: "text", text: "final answer" }] as any, createdAt: "2026-04-29T00:00:02.000Z" });
+
+    const before = projectRunStateToRuntimeEvents((await store.get("run-proj"))!);
+    await store.compactModelStreamItems("run-proj");
+    const after = projectRunStateToRuntimeEvents((await store.get("run-proj"))!);
+    expect(after).toEqual(before);
+  });
+
+  test("todo 快照 save/read 往返，readLatestTodoState 优先快照", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-run-state-store-"));
+    const store = createFileBackedLumeRunStateStore(dir);
+    store.saveTodoSnapshot("thread-s", {
+      todos: [{ content: "Step", activeForm: "Doing", status: "in_progress" }],
+      currentActiveForm: "Doing",
+      runId: "r1",
+      createdAt: "2026-04-29T00:00:00.000Z"
+    });
+    expect(store.readTodoSnapshot("thread-s")?.todos[0]?.content).toBe("Step");
+
+    // 快照优先：即使 items 里有更新的 todo_state 也返回快照（快照由唯一写点同步更新）
+    await store.create(makeState("run-s", "completed"));
+    await store.appendItem("run-s", {
+      type: "todo_state",
+      id: "t-newer",
+      todos: [{ content: "Stale item path", activeForm: "x", status: "pending" }],
+      currentActiveForm: "x",
+      createdAt: "2026-04-29T00:00:09.000Z"
+    });
+    expect(await readLatestTodoState({ sessionDir: dir, threadId: "thread-s" })).toEqual({
+      todos: [{ content: "Step", activeForm: "Doing", status: "in_progress" }],
+      currentActiveForm: "Doing"
+    });
   });
 });

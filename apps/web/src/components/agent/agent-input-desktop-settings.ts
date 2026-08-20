@@ -1,5 +1,5 @@
-import type { Tab } from '@/atoms/tab-atoms'
 
+import { type Tab } from '@/atoms'
 export const DESKTOP_ASSISTANT_SETTINGS_TAB = 'desktop-assistant'
 const SETTINGS_TAB_ID = '__settings__'
 

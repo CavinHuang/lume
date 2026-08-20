@@ -1,3 +1,4 @@
+import type { ThreadBrowserWorkspace } from '@/components/right-panel/right-panel-browser-state'
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
 import type { AgentBrowserAnchor, AgentBrowserAnnotationAttachment, AgentBrowserDesignChangeAttachment, CodingGitAction, CodingReviewSummary, CodingTurnPhase, CodingVerificationRecord, FileRef, RuntimeCodingFileChange } from '@lume/shared'
@@ -9,7 +10,6 @@ import {
   type ThreadFileWorkspace,
   type RightPanelFileTab,
 } from '@/components/right-panel/right-panel-files-state'
-import type { ThreadBrowserWorkspace } from '@/components/right-panel/right-panel-browser-state'
 import { activeTabIdAtom, tabsAtom } from './tab-atoms'
 import {
   closeRightPanelTab,

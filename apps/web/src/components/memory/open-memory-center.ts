@@ -1,5 +1,5 @@
-import type { Tab } from '@/atoms/tab-atoms'
 import type { MemoryCenterDeepLink } from './memory-center-state'
+import { type Tab } from '@/atoms'
 
 export const MEMORY_CENTER_TAB_ID = '__proactive__'
 

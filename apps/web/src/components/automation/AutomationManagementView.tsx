@@ -1,3 +1,4 @@
+import { listChannels } from '@/lib/desktop-api/channel'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
@@ -37,7 +38,6 @@ import {
   ShadcnSelectValue,
 } from '@/components/ui/shadcn-select'
 import { agentWorkspacesAtom, tabsAtom, activeTabIdAtom, welcomePromptSeedAtom } from '@/atoms'
-import { automationJobsAtom, automationRunsAtom, pendingAutomationJobIdAtom } from '@/atoms/automation-atoms'
 import { THINKING_LEVEL_OPTIONS } from '@/components/settings/agent-settings-state'
 import { useAutomationListeners } from '@/hooks/useAutomationListeners'
 import { upsertWelcomeTab } from '@/components/app-shell/LeftSidebar'
@@ -49,13 +49,13 @@ import {
   toggleAutomationJob,
   updateAutomationJob,
 } from '@/lib/desktop-api/automation'
-import { listChannels } from '@/lib/desktop-api/channel'
 import type { AutomationJob, AutomationRun, AutomationSchedule, Channel } from '@lume/shared'
 import { openAutomationRunReplay } from './automation-run-replay'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { automationJobsAtom, automationRunsAtom, pendingAutomationJobIdAtom } from '@/atoms'
 interface WorkspaceOption {
   id: string
   name: string

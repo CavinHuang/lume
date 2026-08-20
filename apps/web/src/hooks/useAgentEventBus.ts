@@ -1,6 +1,6 @@
+import { getAgentEvents, onAgentEvents } from '@/lib/desktop-api/agent'
 import { useEffect, useRef } from 'react'
 import type { SdkEventEnvelope } from '@lume/shared'
-import { getAgentEvents, onAgentEvents } from '@/lib/desktop-api/agent'
 
 /** snapshot = 首次挂载/线程切回的初始拉取回放;push = 实时推送与空洞补拉。 */
 export type AgentEventBusSource = 'snapshot' | 'push'

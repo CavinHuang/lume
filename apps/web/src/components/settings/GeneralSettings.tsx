@@ -1,3 +1,4 @@
+import { openLumeConfigSourceFile } from '@/lib/desktop-api/lume-config'
 import * as React from 'react'
 import { useAtom, useSetAtom } from 'jotai'
 import {
@@ -19,7 +20,6 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom } from '@/atoms'
-import { openLumeConfigSourceFile } from '@/lib/desktop-api/lume-config'
 import { getGeneralSettings, getProxySettings, saveProxySettings, updateGeneralSettings } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 import {

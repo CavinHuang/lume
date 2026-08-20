@@ -1,17 +1,17 @@
+import { requestSessionCodingDiff } from '@/components/right-panel/coding-diff-cache'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSetAtom } from 'jotai'
 import { FileDiff, Loader2, TriangleAlert } from 'lucide-react'
 import { AGENT_IPC_CHANNELS, type CodingDiffPayload, type RuntimeCodingFileChange, type RuntimeCodingReport } from '@lume/shared'
 import { codingReviewPanelActionAtom } from '@/atoms'
-import { codingReviewFileKey } from '@/atoms/right-panel-atoms'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { PierreDiffView } from '@/components/diff/PierreDiffView'
-import { requestSessionCodingDiff } from '@/components/right-panel/coding-diff-cache'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { sidecarCall } from '@/lib/desktop-api'
 import type { OpenThreadFile } from './AgentFileReference'
+import { codingReviewFileKey } from '@/atoms'
 
 const INITIAL_FILE_LIMIT = 5
 

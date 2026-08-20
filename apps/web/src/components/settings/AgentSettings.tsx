@@ -1,3 +1,7 @@
+import { createChannel, listChannels, updateChannel, deleteChannel } from '@/lib/desktop-api/channel'
+import { getMemoryRuntimeConfig, updateMemoryRuntimeConfig } from '@/lib/desktop-api/memory'
+import { syncModelMeta } from '@/lib/desktop-api/model'
+import { getReadingSnapshot, updateReadingSettings } from '@/lib/desktop-api/reading'
 import * as React from 'react'
 import {
   Activity,
@@ -45,7 +49,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { useModelMetaReload, useModelMetaVersion } from '@/lib/model-meta-context'
-import { createChannel, listChannels, updateChannel, deleteChannel } from '@/lib/desktop-api/channel'
 import {
   getEffectiveLumeConfig,
   updateAgentModelStrategy,
@@ -60,9 +63,6 @@ import {
   updateSubagentModelStrategy,
   type LumeModelPurpose,
 } from '@/lib/desktop-api/lume-config'
-import { getMemoryRuntimeConfig, updateMemoryRuntimeConfig } from '@/lib/desktop-api/memory'
-import { syncModelMeta } from '@/lib/desktop-api/model'
-import { getReadingSnapshot, updateReadingSettings } from '@/lib/desktop-api/reading'
 import { ChannelProviderIcon } from '@/components/model-selection/provider-icon-map'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
 import { ChannelForm } from './ChannelForm'

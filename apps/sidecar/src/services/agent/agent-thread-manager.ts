@@ -6,6 +6,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync
 } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -44,7 +45,8 @@ import { extractAssistantReasoningText, extractRenderableAssistantText } from ".
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath,
-  hasRuntimeCoreSessionTranscript
+  hasRuntimeCoreSessionTranscript,
+  type RuntimeCoreAppendMessageInput
 } from "../agent-runtime/runtime-core/session-store";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createLogger } from "../infra/logger";
@@ -126,31 +128,52 @@ function backupCorruptFile(filePath: string, label: string): void {
   }
 }
 
+/**
+ * 线程索引读缓存：key 含 resolved path（LUME_CONFIG_DIR 可变），mtime+size 失效。
+ * 返回 structuredClone 深拷贝——withThreadIndexMutation 的 fn 会原地 mutate 索引对象，
+ * 缓存对象不可被调用方污染。跨进程（其他 sidecar 实例）写盘由 mtime+size 兜底。
+ */
+let indexCache: { path: string; mtimeMs: number; size: number; index: AgentThreadsIndex } | null = null;
+
+function normalizeParsedIndex(parsed: unknown): AgentThreadsIndex {
+  const record = parsed as AgentThreadsIndex | { version?: number; sessions?: AgentThreadMeta[] };
+  const version = typeof record.version === "number" ? record.version : INDEX_VERSION;
+  if (Array.isArray((record as AgentThreadsIndex).threads)) {
+    return { version, threads: (record as AgentThreadsIndex).threads };
+  }
+  return {
+    version,
+    threads: Array.isArray((record as { sessions?: AgentThreadMeta[] }).sessions)
+      ? (record as { sessions: AgentThreadMeta[] }).sessions
+      : []
+  };
+}
+
 function readIndex(): AgentThreadsIndex {
   const indexPath = getAgentSessionsIndexPath();
-  if (!existsSync(indexPath)) {
+  let stat: { mtimeMs: number; size: number } | undefined;
+  try {
+    stat = statSync(indexPath);
+  } catch {
+    stat = undefined;
+  }
+  if (stat && indexCache && indexCache.path === indexPath
+    && indexCache.mtimeMs === stat.mtimeMs && indexCache.size === stat.size) {
+    return structuredClone(indexCache.index);
+  }
+  if (!stat) {
+    indexCache = null;
     return { version: INDEX_VERSION, threads: [] };
   }
 
   try {
-    const parsed = JSON.parse(readFileSync(indexPath, "utf-8")) as
-      | AgentThreadsIndex
-      | { version?: number; sessions?: AgentThreadMeta[] };
-    if (Array.isArray((parsed as AgentThreadsIndex).threads)) {
-      return {
-        version: typeof parsed.version === "number" ? parsed.version : INDEX_VERSION,
-        threads: (parsed as AgentThreadsIndex).threads
-      };
-    }
-    return {
-      version: typeof parsed.version === "number" ? parsed.version : INDEX_VERSION,
-      threads: Array.isArray((parsed as { sessions?: AgentThreadMeta[] }).sessions)
-        ? (parsed as { sessions: AgentThreadMeta[] }).sessions
-        : []
-    };
+    const index = normalizeParsedIndex(JSON.parse(readFileSync(indexPath, "utf-8")));
+    indexCache = { path: indexPath, mtimeMs: stat.mtimeMs, size: stat.size, index };
+    return structuredClone(index);
   } catch (error) {
     log.error("failed to read thread index", { error, indexPath });
     backupCorruptFile(indexPath, "Agent 线程");
+    indexCache = null;
     return { version: INDEX_VERSION, threads: [] };
   }
 }
@@ -159,6 +182,7 @@ function writeIndex(index: AgentThreadsIndex): void {
   const indexPath = getAgentSessionsIndexPath();
   try {
     writeTextAtomic(indexPath, JSON.stringify(index, null, 2));
+    indexCache = null;
   } catch (error) {
     log.error("failed to write thread index", { error, indexPath });
     throw new Error("写入 Agent 线程索引失败");
@@ -945,12 +969,13 @@ function rebuildRuntimeCoreTranscript(threadId: string, messages: AgentMessage[]
     return;
   }
   const sessionManager = createOrResumeRuntimeCoreSessionManager(resolveAgentThreadCwd(threadId), threadId);
+  const batch: RuntimeCoreAppendMessageInput[] = [];
   for (const message of messages) {
     if (!message.content.trim()) {
       continue;
     }
     if (message.role === "user") {
-      sessionManager.appendMessage({
+      batch.push({
         role: "user",
         content: [{ type: "text", text: message.content }],
         timestamp: message.createdAt
@@ -969,7 +994,7 @@ function rebuildRuntimeCoreTranscript(threadId: string, messages: AgentMessage[]
       if (message.content.trim()) {
         contentBlocks.push({ type: "text", text: message.content });
       }
-      sessionManager.appendMessage({
+      batch.push({
         role: "assistant",
         provider,
         model,
@@ -988,6 +1013,8 @@ function rebuildRuntimeCoreTranscript(threadId: string, messages: AgentMessage[]
       });
     }
   }
+  // 单次读改写（fork/导入数百条时避免逐条全量重写的 O(n²)）
+  sessionManager.appendMessages(batch);
 }
 
 function resolveTranscriptAppendModel(model: string | undefined): {
