@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { RuntimeCodingReport, SdkEventEnvelope } from "@lume/shared";
 import { getThreadEventBus } from "../events/thread-event-bus";
 import { getRuntimeCoreSessionDir } from "./session-store";
-import { publishCodingReportToBus, publishLspDiagnosticsToBus } from "./run";
+import { publishCodingReportToBus, publishLspDiagnosticsToBus } from "./run-background";
 
 function lspDiagnosticsMessage(fields: Record<string, unknown> = {}) {
   return {

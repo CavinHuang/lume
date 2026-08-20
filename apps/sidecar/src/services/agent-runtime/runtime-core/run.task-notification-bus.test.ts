@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { SdkEventEnvelope } from "@lume/shared";
 import { getThreadEventBus } from "../events/thread-event-bus";
 import { getRuntimeCoreSessionDir } from "./session-store";
-import { publishBackgroundTaskNotificationToBus } from "./run";
+import { publishBackgroundTaskNotificationToBus } from "./run-background";
 
 function lateNotification(fields: Record<string, unknown> = {}) {
   return {

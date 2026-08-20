@@ -7,6 +7,7 @@ import {
 } from "../../agent/agent-stream-accumulator";
 import { createLogger } from "../../infra/logger";
 import { getThreadEventBus } from "../events/thread-event-bus";
+import { publishRunDomainEvent } from "../events/bus-bridge";
 import type { AgentRuntimeEmitter } from "./types";
 import type { LumeRunObserver } from "./run-observer";
 
@@ -210,24 +211,14 @@ export function createObservedRuntimeEmitter(
       // T7c 起恒开);T7a 后旧路投影已删,item 记录仅供 hydrate replay。
       // runId 取 Lume run id,detail.state 与回调载荷同引用。
       if (bus) {
-        const threadId = observer.getThreadId();
-        const runId = observer.getRunId();
         const detail: TodoStateDetail = { type: "todo.state", state };
-        void getThreadEventBus(bus.sessionDir)
-          .publish(threadId, runId, {
-            runId,
-            turnId: null,
-            ts: Date.now(),
-            kind: "run",
-            phase: "event",
-            detail
-          })
-          .catch((error) => {
-            log.warn("todo.state 总线 publish 失败", {
-              threadId,
-              error: error instanceof Error ? error.message : String(error)
-            });
-          });
+        publishRunDomainEvent({
+          sessionDir: bus.sessionDir,
+          threadId: observer.getThreadId(),
+          runId: observer.getRunId(),
+          label: "todo.state",
+          detail
+        });
       }
     },
     onToolPermissionRequest: (request) => {

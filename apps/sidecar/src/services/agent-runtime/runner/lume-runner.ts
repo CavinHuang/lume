@@ -19,6 +19,7 @@ import {
   normalizeRuntimeCoreQueryPermissionMode
 } from "./run-loop";
 import { getThreadEventBus } from "../events/thread-event-bus";
+import { publishRunDomainEvent } from "../events/bus-bridge";
 import { createLogger } from "../../infra/logger";
 import { LumeRunObserver } from "./run-observer";
 import { fromAgentRuntimeRunResult } from "./run-result";
@@ -107,22 +108,7 @@ export function publishAdvisorReviewedToBus(input: {
 }): void {
   const detail: AdvisorReviewedDetail = { type: "advisor.reviewed", review: input.review };
   if (input.review.summary) detail.summary = input.review.summary;
-  void getThreadEventBus(input.sessionDir)
-    .publish(input.threadId, input.runId, {
-      runId: input.runId,
-      turnId: null,
-      ts: Date.now(),
-      kind: "run",
-      phase: "event",
-      detail
-    })
-    .catch((error) => {
-      log.warn("advisor.reviewed 总线 publish 失败", {
-        threadId: input.threadId,
-        runId: input.runId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    });
+  publishRunDomainEvent({ sessionDir: input.sessionDir, threadId: input.threadId, runId: input.runId, label: "advisor.reviewed", detail });
 }
 
 export class LumeRunner {
@@ -659,21 +645,13 @@ export class LumeRunner {
     // sessionDir 与 run-loop tee 一致,保证同一 bus 单例与单调 seq。
     const threadId = this.observer.getThreadId();
     const runId = this.observer.getRunId();
-    void getThreadEventBus(getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir))
-      .publish(threadId, runId, {
-        runId,
-        turnId: null,
-        ts: Date.now(),
-        kind: "run",
-        phase: "event",
-        detail: { type: "memory.context.used", items: event.items }
-      })
-      .catch((error) => {
-        log.warn("memory.context.used 总线 publish 失败", {
-          threadId,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      });
+    publishRunDomainEvent({
+      sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir),
+      threadId,
+      runId,
+      label: "memory.context.used",
+      detail: { type: "memory.context.used", items: event.items }
+    });
   }
 
   async abort(): Promise<AgentRuntimeRunResult> {

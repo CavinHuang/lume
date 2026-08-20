@@ -19,13 +19,22 @@ import {
   statSync,
   watch,
   type FSWatcher,
-  writeFileSync
+  writeFileSync,
 } from "node:fs";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
-import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { lstat, readdir, realpath, stat } from "node:fs/promises";
+import {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
+import { lstat, readdir, stat } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import type {
   AttachWorkspaceResourceToThreadInput,
@@ -37,29 +46,24 @@ import type {
   FileEntry,
   FileRef,
   FileRefChangedEvent,
-  FileRefReadResult,
-  FileReferenceBinding,
-  GuardedFileRef,
-  GuardedFileRefErrorCode,
-  GuardedFileRefValidationResult,
   FileSearchResult,
-  WriteFileRefInput,
-  WriteFileRefResult,
   WorkspaceCopyFolderInput,
-  WorkspaceSaveFilesInput
+  WorkspaceSaveFilesInput,
 } from "@lume/shared";
 import { AGENT_ATTACHMENT_LIMITS } from "@lume/shared";
 import {
   getAgentThreadRootPath,
-  getAgentFileContextRootPath,
   getAgentWorkspacePath,
-  getAgentWorkspacesDir
+  getAgentWorkspacesDir,
 } from "../infra/config-paths";
 import { getMemoryV2ScopePaths } from "../memory-v2/paths";
 import { listMemorySourceFilesForScope } from "../memory-v2/source-files";
-import { resolveAgentThreadLumeWorkDir, resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
+import {
+  resolveAgentThreadLumeWorkDir,
+  resolveAgentThreadWorkdir,
+} from "./agent-workdir-resolver";
 import { getAgentThreadMeta } from "./agent-thread-manager";
-import { getAgentWorkspace, getAgentWorkspaceBySlug } from "./agent-workspace-manager";
+import { getAgentWorkspaceBySlug } from "./agent-workspace-manager";
 import {
   assertAttachmentMetadataHealthy,
   deleteAttachmentMeta,
@@ -69,27 +73,35 @@ import {
   readWorkspaceAttachmentMeta,
   upsertAttachmentMeta,
   type AttachmentScope,
-  type ThreadAttachmentScope
+  type ThreadAttachmentScope,
 } from "./agent-attachment-meta-service";
+import {
+  isWithin,
+  resolveWorkspaceResourcesDir,
+  validatePathSegment,
+} from "./agent-file-paths";
+import {
+  authorizedFileRefWatchKey,
+  enrichEntryWithFileRef,
+  fileWatchGroups,
+  fileWatchKeysById,
+  markAuthorizedFileRefSelfWrite,
+  normalizeAuthorizedRelativePath,
+  readFileRefDocument,
+  resolveAuthorizedFileRef,
+  resolveFileRefRoot,
+  selfWrites,
+  GuardedFileRefError,
+  type FileRefNotificationEmitter,
+  type FileWatchGroup,
+} from "./agent-file-ref";
 
-function validatePathSegment(value: string, label: string): void {
-  if (!/^[a-zA-Z0-9._-]+$/.test(value)) {
-    throw new Error(`${label} 非法`);
-  }
-}
+export * from "./agent-file-ref";
 
-function isWithin(basePath: string, targetPath: string): boolean {
-  const base = resolve(basePath);
-  const target = resolve(targetPath);
-  if (process.platform === "win32") {
-    const b = base.toLowerCase();
-    const t = target.toLowerCase();
-    return t === b || t.startsWith(`${b}${sep}`);
-  }
-  return target === base || target.startsWith(`${base}${sep}`);
-}
-
-function resolveSessionDir(workspaceSlug: string | undefined, sessionId: string): string {
+function resolveSessionDir(
+  workspaceSlug: string | undefined,
+  sessionId: string,
+): string {
   validatePathSegment(sessionId, "sessionId");
   try {
     return resolveAgentThreadLumeWorkDir(sessionId);
@@ -100,17 +112,15 @@ function resolveSessionDir(workspaceSlug: string | undefined, sessionId: string)
   }
 }
 
-function resolveWorkspaceResourcesDir(workspaceSlug: string): string {
-  validatePathSegment(workspaceSlug, "workspaceSlug");
-  return join(getAgentWorkspacePath(workspaceSlug), "resources");
-}
-
 function resolveWorkspaceRootDir(workspaceSlug: string): string {
   validatePathSegment(workspaceSlug, "workspaceSlug");
   return getAgentWorkspacePath(workspaceSlug);
 }
 
-function getThreadAttachmentScope(workspaceSlug: string | undefined, sessionId: string): ThreadAttachmentScope {
+function getThreadAttachmentScope(
+  workspaceSlug: string | undefined,
+  sessionId: string,
+): ThreadAttachmentScope {
   const thread = getAgentThreadMeta(sessionId);
   if (thread) {
     const fileContextId = thread.fileContextId?.trim() || thread.id;
@@ -119,21 +129,28 @@ function getThreadAttachmentScope(workspaceSlug: string | undefined, sessionId: 
       kind: "thread",
       workspaceSlug: workspaceSlug ?? fileContextId,
       threadId: sessionId,
-      fileContextId
+      fileContextId,
     };
   }
   if (!workspaceSlug) throw new Error(`Agent 线程不存在: ${sessionId}`);
   return { kind: "thread", workspaceSlug, threadId: sessionId };
 }
 
-function resolveExistingProjectTarget(workspaceSlug: string, targetPath?: string): string {
+function resolveExistingProjectTarget(
+  workspaceSlug: string,
+  targetPath?: string,
+): string {
   validatePathSegment(workspaceSlug, "workspaceSlug");
   const workspace = getAgentWorkspaceBySlug(workspaceSlug);
   if (!workspace?.projectPath) {
     throw new Error("项目尚未绑定本地目录");
   }
   const projectRoot = realpathSync(workspace.projectPath);
-  const candidate = resolveSafePathWithin(projectRoot, targetPath, "目标路径超出项目目录");
+  const candidate = resolveSafePathWithin(
+    projectRoot,
+    targetPath,
+    "目标路径超出项目目录",
+  );
   if (!existsSync(candidate)) {
     throw new Error("目标不存在");
   }
@@ -148,9 +165,16 @@ function getWorkspaceAttachmentScope(workspaceSlug: string): AttachmentScope {
   return { kind: "workspace", workspaceSlug };
 }
 
-function isExternalSourcePath(workspaceSlug: string | undefined, sourcePath: string, threadId?: string): boolean {
+function isExternalSourcePath(
+  workspaceSlug: string | undefined,
+  sourcePath: string,
+  threadId?: string,
+): boolean {
   if (threadId) {
-    return !isWithin(resolveSessionDir(workspaceSlug, threadId), resolve(sourcePath));
+    return !isWithin(
+      resolveSessionDir(workspaceSlug, threadId),
+      resolve(sourcePath),
+    );
   }
   if (!workspaceSlug) return true;
   const workspaceRoot = resolve(getAgentWorkspacePath(workspaceSlug));
@@ -160,7 +184,7 @@ function isExternalSourcePath(workspaceSlug: string | undefined, sourcePath: str
 function enrichEntriesWithAttachmentMeta(
   entries: FileEntry[],
   rootPath: string,
-  metadataByRelativePath: Record<string, ExternalAttachmentMeta>
+  metadataByRelativePath: Record<string, ExternalAttachmentMeta>,
 ): FileEntry[] {
   return entries.map((entry) => {
     const relPath = relative(rootPath, entry.path).split(sep).join("/");
@@ -169,13 +193,20 @@ function enrichEntriesWithAttachmentMeta(
   });
 }
 
-export function resolveWorkspaceSlugBySessionId(sessionId: string): string | null {
+export function resolveWorkspaceSlugBySessionId(
+  sessionId: string,
+): string | null {
   validatePathSegment(sessionId, "sessionId");
   const workspacesDir = getAgentWorkspacesDir();
   if (!existsSync(workspacesDir)) return null;
   for (const entry of readdirSync(workspacesDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const threadRootCandidate = join(workspacesDir, entry.name, "threads", sessionId);
+    const threadRootCandidate = join(
+      workspacesDir,
+      entry.name,
+      "threads",
+      sessionId,
+    );
     if (existsSync(threadRootCandidate)) {
       return entry.name;
     }
@@ -188,16 +219,32 @@ export function resolveWorkspaceSlugBySessionId(sessionId: string): string | nul
 
 export const resolveWorkspaceSlugByThreadId = resolveWorkspaceSlugBySessionId;
 
-function resolveSafeTarget(workspaceSlug: string | undefined, sessionId: string, targetPath?: string): string {
+function resolveSafeTarget(
+  workspaceSlug: string | undefined,
+  sessionId: string,
+  targetPath?: string,
+): string {
   const sessionDir = resolveSessionDir(workspaceSlug, sessionId);
-  return resolveSafePathWithin(sessionDir, targetPath, "目标路径超出线程工作目录");
+  return resolveSafePathWithin(
+    sessionDir,
+    targetPath,
+    "目标路径超出线程工作目录",
+  );
 }
 
-function resolveSafePath(basePath: string, targetPath?: string, errorMessage = "目标路径超出允许范围"): string {
+function resolveSafePath(
+  basePath: string,
+  targetPath?: string,
+  errorMessage = "目标路径超出允许范围",
+): string {
   return resolveSafePathWithin(basePath, targetPath, errorMessage);
 }
 
-function resolveSafePathWithin(basePath: string, targetPath?: string, errorMessage = "目标路径超出允许范围"): string {
+function resolveSafePathWithin(
+  basePath: string,
+  targetPath?: string,
+  errorMessage = "目标路径超出允许范围",
+): string {
   const base = resolve(basePath);
   if (!targetPath || targetPath.trim().length === 0) return base;
   const trimmed = targetPath.trim();
@@ -208,503 +255,65 @@ function resolveSafePathWithin(basePath: string, targetPath?: string, errorMessa
   return resolved;
 }
 
-export interface ResolvedAuthorizedFileRef {
-  ref: FileRef;
-  relativePath: string;
-  rootPath: string;
-  absolutePath: string;
-}
-
-export class GuardedFileRefError extends Error {
-  constructor(readonly code: GuardedFileRefErrorCode, message: string) {
-    super(`[${code}] ${message}`);
-    this.name = "GuardedFileRefError";
-  }
-}
-
-export class AuthorizedFileRefError extends Error {
-  constructor(readonly code: Exclude<GuardedFileRefErrorCode, "BINDING_CHANGED" | "KIND_MISMATCH">, message: string) {
-    super(message);
-    this.name = "AuthorizedFileRefError";
-  }
-}
-
-export function createProjectRootFingerprint(projectRoot: string): string {
-  const canonical = realpathSync(projectRoot);
-  const platformKey = process.platform === "win32" ? canonical.toLowerCase() : canonical;
-  return createHash("sha256").update(platformKey).digest("hex");
-}
-
-export function createFileReferenceBinding(threadId: string): FileReferenceBinding {
-  const thread = getAgentThreadMeta(threadId);
-  if (!thread) throw new Error(`Agent 线程不存在: ${threadId}`);
-  const workdir = resolveAgentThreadWorkdir(threadId);
-  const workspace = thread.workspaceId ? getAgentWorkspace(thread.workspaceId) : undefined;
-  return {
-    ...(workspace?.slug ? { workspaceSlug: workspace.slug } : {}),
-    ...(workdir.projectRoot ? { projectRootFingerprint: createProjectRootFingerprint(workdir.projectRoot) } : {}),
-    fileContextId: workdir.fileContextId
-  };
-}
-
-export function resolveGuardedFileRef(guarded: GuardedFileRef): ResolvedAuthorizedFileRef {
-  assertCurrentGuardBinding(guarded);
-  try {
-    const resolved = resolveAuthorizedFileRef(guarded.ref);
-    const isDirectory = statSync(resolved.absolutePath).isDirectory();
-    if ((guarded.expectedKind === "directory") !== isDirectory) {
-      throw new GuardedFileRefError("KIND_MISMATCH", guarded.expectedKind === "directory" ? "目标不是目录" : "目标不是文件");
-    }
-    return resolved;
-  } catch (error) {
-    if (error instanceof GuardedFileRefError) throw error;
-    if (error instanceof AuthorizedFileRefError) throw new GuardedFileRefError(error.code, error.message);
-    throw new GuardedFileRefError("IO_ERROR", error instanceof Error ? error.message : String(error));
-  }
-}
-
-function assertCurrentGuardBinding(guarded: GuardedFileRef): void {
-  const thread = getAgentThreadMeta(guarded.guard.consumerThreadId);
-  if (!thread) throw new GuardedFileRefError("UNAVAILABLE", "引用所属线程不可用");
-  if (guarded.guard.kind === "session") {
-    if (guarded.ref.source !== "session" || guarded.ref.scopeId !== guarded.guard.expectedFileContextId) {
-      throw new GuardedFileRefError("OUT_OF_SCOPE", "会话引用与 guard 不一致");
-    }
-    const currentFileContextId = thread.fileContextId?.trim() || thread.id;
-    if (currentFileContextId !== guarded.guard.expectedFileContextId) {
-      throw new GuardedFileRefError("BINDING_CHANGED", "引用来自原会话，当前线程文件上下文已改变");
-    }
-    return;
-  }
-  if (guarded.ref.source !== "project"
-    || guarded.ref.scopeId !== guarded.guard.workspaceSlug) {
-    throw new GuardedFileRefError("OUT_OF_SCOPE", "项目引用与 guard 不一致");
-  }
-  const workspace = thread.workspaceId ? getAgentWorkspace(thread.workspaceId) : undefined;
-  if (!workspace || workspace.slug !== guarded.guard.workspaceSlug || !workspace.projectPath) {
-    throw new GuardedFileRefError("BINDING_CHANGED", "线程项目绑定已改变");
-  }
-  let fingerprint: string;
-  try {
-    fingerprint = createProjectRootFingerprint(workspace.projectPath);
-  } catch {
-    throw new GuardedFileRefError("UNAVAILABLE", "当前项目目录不可用");
-  }
-  if (fingerprint !== guarded.guard.expectedProjectRootFingerprint) {
-    throw new GuardedFileRefError("BINDING_CHANGED", "项目根目录绑定已改变");
-  }
-}
-
-export function validateGuardedFileRef(guarded: GuardedFileRef): GuardedFileRefValidationResult {
-  try {
-    return { ok: true, entry: statResolvedFileRef(resolveGuardedFileRef(guarded)) };
-  } catch (error) {
-    const guardedError = error instanceof GuardedFileRefError
-      ? error
-      : new GuardedFileRefError("IO_ERROR", error instanceof Error ? error.message : String(error));
-    return { ok: false, code: guardedError.code, message: guardedError.message.replace(/^\[[A-Z_]+\]\s*/, "") };
-  }
-}
-
-export function statGuardedFileRef(guarded: GuardedFileRef): FileEntry {
-  return statResolvedFileRef(resolveGuardedFileRef(guarded));
-}
-
-export function readGuardedFileRef(
-  guarded: GuardedFileRef
-): Extract<FileRefReadResult, { kind: "text" }> {
-  const resolved = resolveGuardedFileRef(guarded);
-  if (!statSync(resolved.absolutePath).isFile()) throw new GuardedFileRefError("KIND_MISMATCH", "目标不是文件");
-  const result = readFileRefDocument(resolved, false);
-  if (result.kind !== "text") throw new GuardedFileRefError("KIND_MISMATCH", "目标不是可预览文本文件");
-  return result;
-}
-
-export function listGuardedFileRefDirectory(guarded: GuardedFileRef): FileEntry[] {
-  const resolved = resolveGuardedFileRef(guarded);
-  if (!statSync(resolved.absolutePath).isDirectory()) throw new GuardedFileRefError("KIND_MISMATCH", "目标不是目录");
-  return listResolvedDirectory(resolved);
-}
-
-export function normalizeAuthorizedRelativePath(input: string): string {
-  if (input.includes("\0") || isAbsolute(input) || /^[a-zA-Z]:/.test(input) || input.startsWith("\\\\")) {
-    throw new AuthorizedFileRefError("OUT_OF_SCOPE", "FileRef 路径必须是安全相对路径");
-  }
-  const parts: string[] = [];
-  for (const part of input.replace(/\\/g, "/").split("/")) {
-    if (!part || part === ".") continue;
-    if (part === "..") throw new AuthorizedFileRefError("OUT_OF_SCOPE", "FileRef 路径不能越过授权根目录");
-    parts.push(part);
-  }
-  return parts.join("/");
-}
-
-function resolveFileRefRoot(ref: FileRef): string {
-  validatePathSegment(ref.scopeId.replace(/^workspace:/, ""), "scopeId");
-  if (ref.source === "session") return getAgentFileContextRootPath(ref.scopeId);
-  if (ref.source === "legacy") return resolveWorkspaceResourcesDir(ref.scopeId);
-  if (ref.source === "project") {
-    const workspace = getAgentWorkspaceBySlug(ref.scopeId);
-    if (!workspace?.projectPath) throw new AuthorizedFileRefError("UNAVAILABLE", "项目尚未绑定本地目录");
-    return workspace.projectPath;
-  }
-  if (ref.scopeId === "global") return getMemoryV2ScopePaths({ scope: "global" }).root;
-  if (ref.scopeId.startsWith("workspace:")) {
-    return getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: ref.scopeId.slice("workspace:".length) }).root;
-  }
-  throw new AuthorizedFileRefError("OUT_OF_SCOPE", "memory FileRef scopeId 非法");
-}
-
-/** Resolve a renderer-safe FileRef and reject symlink/junction traversal at every existing segment. */
-export function resolveAuthorizedFileRef(ref: FileRef): ResolvedAuthorizedFileRef {
-  const relativePath = normalizeAuthorizedRelativePath(ref.relativePath);
-  const lexicalRoot = resolve(resolveFileRefRoot(ref));
-  if (!existsSync(lexicalRoot)) throw new AuthorizedFileRefError("UNAVAILABLE", "FileRef 授权根目录不存在");
-  let rootPath: string;
-  try {
-    rootPath = realpathSync(lexicalRoot);
-  } catch (error) {
-    throw mapAuthorizedFileSystemError(error, "FileRef 授权根目录不可用", "UNAVAILABLE");
-  }
-  let cursor = rootPath;
-  for (const segment of relativePath.split("/").filter(Boolean)) {
-    cursor = join(cursor, segment);
-    if (!existsSync(cursor)) throw new AuthorizedFileRefError("NOT_FOUND", "FileRef 目标不存在");
-    try {
-      if (lstatSync(cursor).isSymbolicLink()) throw new AuthorizedFileRefError("OUT_OF_SCOPE", "FileRef 不允许符号链接或 junction");
-    } catch (error) {
-      if (error instanceof AuthorizedFileRefError) throw error;
-      throw mapAuthorizedFileSystemError(error, "FileRef 目标不可用");
-    }
-  }
-  let absolutePath: string;
-  try {
-    absolutePath = relativePath ? realpathSync(cursor) : rootPath;
-  } catch (error) {
-    throw mapAuthorizedFileSystemError(error, "FileRef 目标不可用");
-  }
-  if (!isWithin(rootPath, absolutePath)) throw new AuthorizedFileRefError("OUT_OF_SCOPE", "FileRef 目标超出授权根目录");
-  return { ref: { ...ref, relativePath }, relativePath, rootPath, absolutePath };
-}
-
-/** Resolve BrowserClient upload inputs against the current thread's project/session roots. */
-export function resolveAuthorizedBrowserUploadPaths(threadId: string, inputs: string[]): string[] {
-  const thread = getAgentThreadMeta(threadId);
-  if (!thread) throw new AuthorizedFileRefError("UNAVAILABLE", "浏览器上传所属线程不可用");
-  const fileContextId = thread.fileContextId?.trim() || thread.id;
-  const workspace = thread.workspaceId ? getAgentWorkspace(thread.workspaceId) : undefined;
-  const roots = [
-    ...(workspace?.projectPath ? [{ source: "project" as const, scopeId: workspace.slug, root: realpathSync(workspace.projectPath) }] : []),
-    { source: "session" as const, scopeId: fileContextId, root: realpathSync(getAgentFileContextRootPath(fileContextId)) },
-  ];
-  return inputs.slice(0, 20).map((input) => {
-    const encoded = input.startsWith("lume-file-ref:") ? input.slice("lume-file-ref:".length) : "";
-    let ref: FileRef | undefined;
-    if (encoded) {
-      try {
-        const parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as Partial<FileRef>;
-        if ((parsed.source === "project" || parsed.source === "session")
-          && typeof parsed.scopeId === "string"
-          && typeof parsed.relativePath === "string") {
-          ref = { source: parsed.source, scopeId: parsed.scopeId, relativePath: parsed.relativePath };
-        }
-      } catch { /* malformed references remain unauthorized */ }
-      if (!ref) throw new AuthorizedFileRefError("OUT_OF_SCOPE", "浏览器上传 FileRef 非法");
-    } else {
-      const candidateInput = input.trim();
-      if (!candidateInput) throw new AuthorizedFileRefError("OUT_OF_SCOPE", "浏览器上传路径为空");
-      for (const root of roots) {
-        const candidate = resolve(isAbsolute(candidateInput) ? candidateInput : join(root.root, candidateInput));
-        if (!isWithin(root.root, candidate)) continue;
-        ref = {
-          source: root.source,
-          scopeId: root.scopeId,
-          relativePath: relative(root.root, candidate).split(sep).join("/"),
-        };
-        break;
-      }
-      if (!ref) throw new AuthorizedFileRefError("OUT_OF_SCOPE", "浏览器上传路径不属于当前任务");
-    }
-    if (ref.source === "project" && (!workspace || ref.scopeId !== workspace.slug)) {
-      throw new AuthorizedFileRefError("OUT_OF_SCOPE", "浏览器上传项目引用与当前任务不一致");
-    }
-    if (ref.source === "session" && ref.scopeId !== fileContextId) {
-      throw new AuthorizedFileRefError("OUT_OF_SCOPE", "浏览器上传会话引用与当前任务不一致");
-    }
-    const resolved = resolveAuthorizedFileRef(ref);
-    const metadata = lstatSync(resolved.absolutePath);
-    if (!metadata.isFile() || metadata.isSymbolicLink()) throw new AuthorizedFileRefError("OUT_OF_SCOPE", "浏览器上传目标必须是普通文件");
-    if (metadata.size > 100 * 1024 * 1024) throw new AuthorizedFileRefError("OUT_OF_SCOPE", "浏览器上传文件超过 100 MB");
-    return resolved.absolutePath;
-  });
-}
-
-function mapAuthorizedFileSystemError(
-  error: unknown,
-  fallbackMessage: string,
-  fallbackCode: AuthorizedFileRefError["code"] = "IO_ERROR"
-): AuthorizedFileRefError {
-  const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
-  if (code === "ENOENT" || code === "ENOTDIR") return new AuthorizedFileRefError("NOT_FOUND", fallbackMessage);
-  if (code === "EACCES" || code === "EPERM") return new AuthorizedFileRefError("OUT_OF_SCOPE", fallbackMessage);
-  return new AuthorizedFileRefError(fallbackCode, fallbackMessage);
-}
-
-export function listAuthorizedFileRefDirectory(ref: FileRef): FileEntry[] {
-  const resolved = resolveAuthorizedFileRef(ref);
-  if (!statSync(resolved.absolutePath).isDirectory()) throw new Error("FileRef 目标不是目录");
-  return listResolvedDirectory(resolved);
-}
-
-function listResolvedDirectory(resolved: ResolvedAuthorizedFileRef): FileEntry[] {
-  const entries = readdirSync(resolved.absolutePath, { withFileTypes: true }).map((entry) => ({
-    name: entry.name,
-    path: join(resolved.absolutePath, entry.name),
-    isDirectory: entry.isDirectory()
-  } satisfies FileEntry));
-  entries.sort((left, right) => left.isDirectory === right.isDirectory
-    ? left.name.localeCompare(right.name, "en")
-    : left.isDirectory ? -1 : 1);
-  return entries.map((entry) => enrichEntryWithFileRef(entry, resolved.rootPath, resolved.ref.source, resolved.ref.scopeId));
-}
-
-export function statAuthorizedFileRef(ref: FileRef): FileEntry {
-  return statResolvedFileRef(resolveAuthorizedFileRef(ref));
-}
-
-function statResolvedFileRef(resolved: ResolvedAuthorizedFileRef): FileEntry {
-  const metadata = lstatSync(resolved.absolutePath);
-  return {
-    name: basename(resolved.absolutePath),
-    path: resolved.relativePath,
-    isDirectory: metadata.isDirectory(),
-    ref: resolved.ref,
-    size: metadata.isFile() ? metadata.size : undefined,
-    modifiedAt: metadata.mtime.toISOString()
-  };
-}
-
-export function readAuthorizedFileRef(ref: FileRef): FileRefReadResult {
-  const resolved = resolveAuthorizedFileRef(ref);
-  if (!statSync(resolved.absolutePath).isFile()) throw new Error("FileRef 目标不是文件");
-  return readFileRefDocument(resolved, ref.source === "project" || ref.source === "session");
-}
-
-export function writeAuthorizedFileRef(input: WriteFileRefInput): WriteFileRefResult {
-  if (input.ref.source !== "project" && input.ref.source !== "session") {
-    throw new Error("该文件来源为只读");
-  }
-  const resolved = resolveAuthorizedFileRef(input.ref);
-  const metadata = statSync(resolved.absolutePath);
-  if (!metadata.isFile()) throw new Error("FileRef 目标不是文件");
-  if (metadata.size > FILE_EDITABLE_LIMIT_BYTES) throw new Error("超过 10 MB 的文件不能编辑");
-  if (Math.abs(metadata.mtimeMs - input.expectedMtimeMs) > 0.5) {
-    return { outcome: "conflict", mtimeMs: metadata.mtimeMs, size: metadata.size };
-  }
-  const document = readFileRefDocument(resolved, true);
-  if (document.kind !== "text" || !document.editable) throw new Error("该文件编码不支持编辑");
-  const normalized = normalizeLineEndings(input.content, document.lineEnding);
-  const encoded = encodeTextDocument(normalized, document.encoding, document.bom);
-  if (encoded.byteLength > FILE_EDITABLE_LIMIT_BYTES) {
-    throw new Error("保存内容超过 10 MB 编辑上限");
-  }
-  const temporaryPath = join(
-    dirname(resolved.absolutePath),
-    `.lume-${basename(resolved.absolutePath)}-${randomUUID()}.tmp`
-  );
-  try {
-    writeFileSync(temporaryPath, encoded, { mode: metadata.mode });
-    const checked = resolveAuthorizedFileRef(input.ref);
-    const current = statSync(checked.absolutePath);
-    if (Math.abs(current.mtimeMs - input.expectedMtimeMs) > 0.5) {
-      return { outcome: "conflict", mtimeMs: current.mtimeMs, size: current.size };
-    }
-    renameSync(temporaryPath, checked.absolutePath);
-    const saved = statSync(checked.absolutePath);
-    markAuthorizedFileRefSelfWrite(input.ref, saved.mtimeMs, saved.size);
-    return { outcome: "saved", mtimeMs: saved.mtimeMs, size: saved.size };
-  } finally {
-    if (existsSync(temporaryPath)) rmSync(temporaryPath, { force: true });
-  }
-}
-
-const FILE_EDITABLE_LIMIT_BYTES = 10 * 1024 * 1024;
-const FILE_LOAD_LIMIT_BYTES = 20 * 1024 * 1024;
-
-function readFileRefDocument(resolved: ResolvedAuthorizedFileRef, allowEditing: boolean): FileRefReadResult {
-  const metadata = statSync(resolved.absolutePath);
-  const mimeType = inferFileMimeType(resolved.absolutePath);
-  if (metadata.size > FILE_LOAD_LIMIT_BYTES) {
-    return {
-      kind: "too-large",
-      size: metadata.size,
-      mtimeMs: metadata.mtimeMs,
-      mimeType,
-      editable: false,
-      truncated: true
-    };
-  }
-  const bytes = readFileSync(resolved.absolutePath);
-  const decoded = decodeTextDocument(bytes);
-  if (!decoded) {
-    return {
-      kind: "binary",
-      size: metadata.size,
-      mtimeMs: metadata.mtimeMs,
-      mimeType,
-      editable: false,
-      truncated: true
-    };
-  }
-  return {
-    kind: "text",
-    content: decoded.content,
-    size: metadata.size,
-    mtimeMs: metadata.mtimeMs,
-    mimeType,
-    encoding: decoded.encoding,
-    bom: decoded.bom,
-    lineEnding: detectLineEnding(decoded.content),
-    editable: allowEditing && metadata.size <= FILE_EDITABLE_LIMIT_BYTES,
-    truncated: false
-  };
-}
-
-function decodeTextDocument(bytes: Buffer): {
-  content: string;
-  encoding: "utf-8" | "utf-16le";
-  bom: boolean;
-} | null {
-  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
-    return { content: bytes.subarray(2).toString("utf16le"), encoding: "utf-16le", bom: true };
-  }
-  const hasUtf8Bom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
-  const contentBytes = hasUtf8Bom ? bytes.subarray(3) : bytes;
-  if (contentBytes.subarray(0, Math.min(contentBytes.length, 8192)).includes(0)) return null;
-  try {
-    return {
-      content: new TextDecoder("utf-8", { fatal: true }).decode(contentBytes),
-      encoding: "utf-8",
-      bom: hasUtf8Bom
-    };
-  } catch {
-    return null;
-  }
-}
-
-function detectLineEnding(content: string): "lf" | "crlf" | "mixed" | "none" {
-  const crlf = (content.match(/\r\n/g) ?? []).length;
-  const lf = (content.match(/(?<!\r)\n/g) ?? []).length;
-  if (crlf > 0 && lf > 0) return "mixed";
-  if (crlf > 0) return "crlf";
-  if (lf > 0) return "lf";
-  return "none";
-}
-
-function normalizeLineEndings(content: string, lineEnding: "lf" | "crlf" | "mixed" | "none"): string {
-  if (lineEnding === "lf") return content.replace(/\r\n/g, "\n");
-  if (lineEnding === "crlf") return content.replace(/\r?\n/g, "\r\n");
-  return content;
-}
-
-function encodeTextDocument(content: string, encoding: "utf-8" | "utf-16le", bom: boolean): Buffer {
-  const body = Buffer.from(content, encoding === "utf-16le" ? "utf16le" : "utf8");
-  if (!bom) return body;
-  return Buffer.concat([
-    encoding === "utf-16le" ? Buffer.from([0xff, 0xfe]) : Buffer.from([0xef, 0xbb, 0xbf]),
-    body
-  ]);
-}
-
-function inferFileMimeType(path: string): string {
-  const extension = extname(path).toLowerCase();
-  return ({
-    ".md": "text/markdown",
-    ".markdown": "text/markdown",
-    ".html": "text/html",
-    ".htm": "text/html",
-    ".json": "application/json",
-    ".svg": "image/svg+xml",
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".pdf": "application/pdf",
-    ".mp4": "video/mp4",
-    ".webm": "video/webm",
-    ".mov": "video/quicktime",
-    ".pdb": "chemical/x-pdb"
-  } as Record<string, string>)[extension] ?? "text/plain";
-}
-
-type FileRefNotificationEmitter = (method: string, params: unknown) => void;
-interface FileWatchGroup {
-  watcher: FSWatcher;
-  ref: FileRef;
-  absolutePath: string;
-  subscriptions: Map<string, FileRefNotificationEmitter>;
-}
-
-const fileWatchGroups = new Map<string, FileWatchGroup>();
-const fileWatchKeysById = new Map<string, string>();
-const selfWrites = new Map<string, { until: number; mtimeMs: number; size: number }>();
-
-function authorizedFileRefWatchKey(ref: FileRef): string {
-  const path = normalizeAuthorizedRelativePath(ref.relativePath);
-  const normalized = process.platform === "win32" ? path.toLowerCase() : path;
-  return `${ref.source}:${ref.scopeId}:${normalized}`;
-}
-
-function markAuthorizedFileRefSelfWrite(ref: FileRef, mtimeMs: number, size: number): void {
-  const key = authorizedFileRefWatchKey(ref);
-  if (!fileWatchGroups.has(key)) return;
-  selfWrites.set(key, { until: Date.now() + 1_000, mtimeMs, size });
-}
-
 export function watchAuthorizedFileRef(
   ref: FileRef,
-  emit: FileRefNotificationEmitter
+  emit: FileRefNotificationEmitter,
 ): { watchId: string } {
   const resolved = resolveAuthorizedFileRef(ref);
-  if (!statSync(resolved.absolutePath).isFile()) throw new Error("FileRef 目标不是文件");
+  if (!statSync(resolved.absolutePath).isFile())
+    throw new Error("FileRef 目标不是文件");
   const key = authorizedFileRefWatchKey(ref);
   let group = fileWatchGroups.get(key);
   if (!group) {
     const subscriptions = new Map<string, FileRefNotificationEmitter>();
-    const watcher = watch(dirname(resolved.absolutePath), (eventType, filename) => {
-      if (filename && String(filename).toLowerCase() !== basename(resolved.absolutePath).toLowerCase()) return;
-      const currentGroup = fileWatchGroups.get(key);
-      if (!currentGroup) return;
-      let change: FileRefChangedEvent["change"] = "deleted";
-      let mtimeMs: number | undefined;
-      let size: number | undefined;
-      try {
-        const metadata = statSync(currentGroup.absolutePath);
-        mtimeMs = metadata.mtimeMs;
-        size = metadata.size;
-        change = eventType === "rename" ? "renamed" : "changed";
-      } catch {
-        // The file may disappear between the directory event and stat.
-      }
-      const selfWrite = selfWrites.get(key);
-      if (selfWrite
-        && selfWrite.until >= Date.now()
-        && mtimeMs === selfWrite.mtimeMs
-        && size === selfWrite.size) {
-        return;
-      }
-      selfWrites.delete(key);
-      for (const [watchId, notify] of currentGroup.subscriptions) {
-        notify("agent:file-ref-changed", {
-          watchId,
-          ref: currentGroup.ref,
-          change,
-          ...(mtimeMs === undefined ? {} : { mtimeMs })
-        } satisfies FileRefChangedEvent);
-      }
-    });
-    group = { watcher, ref: resolved.ref, absolutePath: resolved.absolutePath, subscriptions };
+    const watcher = watch(
+      dirname(resolved.absolutePath),
+      (eventType, filename) => {
+        if (
+          filename &&
+          String(filename).toLowerCase() !==
+            basename(resolved.absolutePath).toLowerCase()
+        )
+          return;
+        const currentGroup = fileWatchGroups.get(key);
+        if (!currentGroup) return;
+        let change: FileRefChangedEvent["change"] = "deleted";
+        let mtimeMs: number | undefined;
+        let size: number | undefined;
+        try {
+          const metadata = statSync(currentGroup.absolutePath);
+          mtimeMs = metadata.mtimeMs;
+          size = metadata.size;
+          change = eventType === "rename" ? "renamed" : "changed";
+        } catch {
+          // The file may disappear between the directory event and stat.
+        }
+        const selfWrite = selfWrites.get(key);
+        if (
+          selfWrite &&
+          selfWrite.until >= Date.now() &&
+          mtimeMs === selfWrite.mtimeMs &&
+          size === selfWrite.size
+        ) {
+          return;
+        }
+        selfWrites.delete(key);
+        for (const [watchId, notify] of currentGroup.subscriptions) {
+          notify("agent:file-ref-changed", {
+            watchId,
+            ref: currentGroup.ref,
+            change,
+            ...(mtimeMs === undefined ? {} : { mtimeMs }),
+          } satisfies FileRefChangedEvent);
+        }
+      },
+    );
+    group = {
+      watcher,
+      ref: resolved.ref,
+      absolutePath: resolved.absolutePath,
+      subscriptions,
+    };
     fileWatchGroups.set(key, group);
   }
   const watchId = randomUUID();
@@ -727,93 +336,128 @@ export function unwatchAuthorizedFileRef(watchId: string): { ok: true } {
   return { ok: true };
 }
 
-export function renameAuthorizedFileRef(ref: FileRef, newName: string): { ok: true; ref: FileRef } {
+export function renameAuthorizedFileRef(
+  ref: FileRef,
+  newName: string,
+): { ok: true; ref: FileRef } {
   assertWritableFileRef(ref);
   const resolved = resolveAuthorizedFileRef(ref);
   if (!resolved.relativePath) throw new Error("不能重命名 FileRef 根目录");
   const target = join(dirname(resolved.absolutePath), validateNewName(newName));
   if (existsSync(target)) throw new Error("目标路径已存在同名文件");
   renameSync(resolved.absolutePath, target);
-  return { ok: true, ref: { ...ref, relativePath: relative(resolved.rootPath, target).split(sep).join("/") } };
+  return {
+    ok: true,
+    ref: {
+      ...ref,
+      relativePath: relative(resolved.rootPath, target).split(sep).join("/"),
+    },
+  };
 }
 
-export function moveAuthorizedFileRef(ref: FileRef, targetDirectory: FileRef): { ok: true; ref: FileRef } {
+export function moveAuthorizedFileRef(
+  ref: FileRef,
+  targetDirectory: FileRef,
+): { ok: true; ref: FileRef } {
   assertWritableFileRef(ref);
   assertWritableFileRef(targetDirectory);
-  if (ref.scopeId !== targetDirectory.scopeId) throw new Error("不能跨 FileRef scope 移动");
+  if (ref.scopeId !== targetDirectory.scopeId)
+    throw new Error("不能跨 FileRef scope 移动");
   const source = resolveAuthorizedFileRef(ref);
   const directory = resolveAuthorizedFileRef(targetDirectory);
   if (!source.relativePath) throw new Error("不能移动 FileRef 根目录");
-  if (!statSync(directory.absolutePath).isDirectory()) throw new Error("目标目录不存在");
-  if (statSync(source.absolutePath).isDirectory() && isWithin(source.absolutePath, directory.absolutePath)) {
+  if (!statSync(directory.absolutePath).isDirectory())
+    throw new Error("目标目录不存在");
+  if (
+    statSync(source.absolutePath).isDirectory() &&
+    isWithin(source.absolutePath, directory.absolutePath)
+  ) {
     throw new Error("不能将目录移动到自身或其子目录");
   }
   const target = join(directory.absolutePath, basename(source.absolutePath));
   if (existsSync(target)) throw new Error("目标路径已存在同名文件");
   movePathWithFallback(source.absolutePath, target);
-  return { ok: true, ref: { ...ref, relativePath: relative(source.rootPath, target).split(sep).join("/") } };
+  return {
+    ok: true,
+    ref: {
+      ...ref,
+      relativePath: relative(source.rootPath, target).split(sep).join("/"),
+    },
+  };
 }
 
 export function deleteAuthorizedFileRef(ref: FileRef): { ok: true } {
   assertWritableFileRef(ref);
   const resolved = resolveAuthorizedFileRef(ref);
   if (!resolved.relativePath) throw new Error("不能删除 FileRef 根目录");
-  rmSync(resolved.absolutePath, { recursive: statSync(resolved.absolutePath).isDirectory(), force: true });
+  rmSync(resolved.absolutePath, {
+    recursive: statSync(resolved.absolutePath).isDirectory(),
+    force: true,
+  });
   return { ok: true };
 }
 
-export function convertLegacyFileRef(input:
-  | { recordKind: 'thread-attachment'; threadId: string; workspaceSlug?: string; legacyRelativePath: string }
-  | { recordKind: 'memory-source'; workspaceSlug: string; legacyRelativePath: string }
+export function convertLegacyFileRef(
+  input:
+    | {
+        recordKind: "thread-attachment";
+        threadId: string;
+        workspaceSlug?: string;
+        legacyRelativePath: string;
+      }
+    | {
+        recordKind: "memory-source";
+        workspaceSlug: string;
+        legacyRelativePath: string;
+      },
 ): FileRef {
-  if (input.recordKind === 'thread-attachment') {
+  if (input.recordKind === "thread-attachment") {
     const root = resolveSessionDir(input.workspaceSlug, input.threadId);
-    const target = resolveSafePathWithin(root, input.legacyRelativePath, "旧附件路径超出线程目录");
+    const target = resolveSafePathWithin(
+      root,
+      input.legacyRelativePath,
+      "旧附件路径超出线程目录",
+    );
     if (!existsSync(target)) throw new Error("旧附件不存在");
     const context = resolveAgentThreadWorkdir(input.threadId);
     const candidate: FileRef = {
-      source: 'session',
+      source: "session",
       scopeId: context.fileContextId,
-      relativePath: relative(resolve(root), resolve(target)).split(sep).join('/')
+      relativePath: relative(resolve(root), resolve(target))
+        .split(sep)
+        .join("/"),
     };
     return resolveAuthorizedFileRef(candidate).ref;
   }
   const target = realpathSync(input.legacyRelativePath);
-  const workspaceRoot = realpathSync(getMemoryV2ScopePaths({ scope: 'workspace', workspaceSlug: input.workspaceSlug }).root);
-  const globalRoot = realpathSync(getMemoryV2ScopePaths({ scope: 'global' }).root);
+  const workspaceRoot = realpathSync(
+    getMemoryV2ScopePaths({
+      scope: "workspace",
+      workspaceSlug: input.workspaceSlug,
+    }).root,
+  );
+  const globalRoot = realpathSync(
+    getMemoryV2ScopePaths({ scope: "global" }).root,
+  );
   if (isWithin(workspaceRoot, target)) {
-    return { source: 'memory', scopeId: `workspace:${input.workspaceSlug}`, relativePath: relative(workspaceRoot, target).split(sep).join('/') };
+    return {
+      source: "memory",
+      scopeId: `workspace:${input.workspaceSlug}`,
+      relativePath: relative(workspaceRoot, target).split(sep).join("/"),
+    };
   }
   if (isWithin(globalRoot, target)) {
-    return { source: 'memory', scopeId: 'global', relativePath: relative(globalRoot, target).split(sep).join('/') };
+    return {
+      source: "memory",
+      scopeId: "global",
+      relativePath: relative(globalRoot, target).split(sep).join("/"),
+    };
   }
   throw new Error("旧记忆来源超出授权目录");
 }
 
 function assertWritableFileRef(ref: FileRef): void {
   if (ref.source !== "session") throw new Error("该文件来源为只读");
-}
-
-function enrichEntryWithFileRef(
-  entry: FileEntry,
-  rootPath: string,
-  source: FileRef["source"],
-  scopeId: string
-): FileEntry {
-  const relativePath = relative(rootPath, entry.path).split(sep).join("/");
-  const ref: FileRef = { source, scopeId, relativePath };
-  try {
-    const metadata = lstatSync(entry.path);
-    if (metadata.isSymbolicLink()) return { ...entry, isDirectory: false, ref };
-    return {
-      ...entry,
-      ref,
-      size: metadata.isFile() ? metadata.size : undefined,
-      modifiedAt: metadata.mtime.toISOString()
-    };
-  } catch {
-    return { ...entry, ref };
-  }
 }
 
 function validateNewName(newName: string): string {
@@ -851,13 +495,20 @@ function movePathWithFallback(sourcePath: string, targetPath: string): void {
   }
 }
 
-export function getAgentSessionPath(workspaceSlug: string | undefined, sessionId: string): string {
+export function getAgentSessionPath(
+  workspaceSlug: string | undefined,
+  sessionId: string,
+): string {
   return resolveSessionDir(workspaceSlug, sessionId);
 }
 
 export const getAgentThreadPath = getAgentSessionPath;
 
-export function toThreadRelativePath(workspaceSlug: string | undefined, sessionId: string, targetPath: string): string {
+export function toThreadRelativePath(
+  workspaceSlug: string | undefined,
+  sessionId: string,
+  targetPath: string,
+): string {
   const sessionDir = resolveSessionDir(workspaceSlug, sessionId);
   const resolved = resolve(targetPath);
   if (!isWithin(sessionDir, resolved)) {
@@ -866,7 +517,11 @@ export function toThreadRelativePath(workspaceSlug: string | undefined, sessionI
   return relative(sessionDir, resolved).split(sep).join("/");
 }
 
-export function resolveThreadAttachmentPath(workspaceSlug: string | undefined, sessionId: string, threadPath: string): string {
+export function resolveThreadAttachmentPath(
+  workspaceSlug: string | undefined,
+  sessionId: string,
+  threadPath: string,
+): string {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, threadPath);
   if (!existsSync(resolved) || !statSync(resolved).isFile()) {
     throw new Error("附件文件不存在");
@@ -881,20 +536,24 @@ export function getWorkspaceResourcesDirectory(workspaceSlug: string): string {
 export function listAgentDirectory(
   workspaceSlug: string | undefined,
   sessionId: string,
-  targetPath?: string
+  targetPath?: string,
 ): FileEntry[] {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   if (!existsSync(resolved)) return [];
   const sessionRoot = resolveSessionDir(workspaceSlug, sessionId);
   const threadScope = getThreadAttachmentScope(workspaceSlug, sessionId);
-  const attachmentMeta = readThreadAttachmentMeta(threadScope.workspaceSlug, sessionId, threadScope.fileContextId);
+  const attachmentMeta = readThreadAttachmentMeta(
+    threadScope.workspaceSlug,
+    sessionId,
+    threadScope.fileContextId,
+  );
 
   const items = readdirSync(resolved, { withFileTypes: true }).map((entry) => {
     const fullPath = join(resolved, entry.name);
     return {
       name: entry.name,
       path: fullPath,
-      isDirectory: entry.isDirectory()
+      isDirectory: entry.isDirectory(),
     } satisfies FileEntry;
   });
 
@@ -903,16 +562,30 @@ export function listAgentDirectory(
     return a.name.localeCompare(b.name, "en");
   });
 
-  return enrichEntriesWithAttachmentMeta(items, sessionRoot, attachmentMeta)
-    .map((entry) => enrichEntryWithFileRef(entry, sessionRoot, "session", threadScope.fileContextId ?? sessionId));
+  return enrichEntriesWithAttachmentMeta(
+    items,
+    sessionRoot,
+    attachmentMeta,
+  ).map((entry) =>
+    enrichEntryWithFileRef(
+      entry,
+      sessionRoot,
+      "session",
+      threadScope.fileContextId ?? sessionId,
+    ),
+  );
 }
 
 export function listWorkspaceDirectory(
   workspaceSlug: string,
-  targetPath?: string
+  targetPath?: string,
 ): FileEntry[] {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
-  const resolved = resolveSafePath(resourcesDir, targetPath, "目标路径超出工作区共享目录");
+  const resolved = resolveSafePath(
+    resourcesDir,
+    targetPath,
+    "目标路径超出工作区共享目录",
+  );
   if (!existsSync(resolved)) return [];
   const attachmentMeta = readWorkspaceAttachmentMeta(workspaceSlug);
 
@@ -921,7 +594,7 @@ export function listWorkspaceDirectory(
     return {
       name: entry.name,
       path: fullPath,
-      isDirectory: entry.isDirectory()
+      isDirectory: entry.isDirectory(),
     } satisfies FileEntry;
   });
 
@@ -930,26 +603,39 @@ export function listWorkspaceDirectory(
     return a.name.localeCompare(b.name, "en");
   });
 
-  return enrichEntriesWithAttachmentMeta(items, resourcesDir, attachmentMeta)
-    .map((entry) => enrichEntryWithFileRef(entry, resourcesDir, "legacy", workspaceSlug));
+  return enrichEntriesWithAttachmentMeta(
+    items,
+    resourcesDir,
+    attachmentMeta,
+  ).map((entry) =>
+    enrichEntryWithFileRef(entry, resourcesDir, "legacy", workspaceSlug),
+  );
 }
 
-export function listProjectDirectory(workspaceSlug: string, targetPath?: string): FileEntry[] {
+export function listProjectDirectory(
+  workspaceSlug: string,
+  targetPath?: string,
+): FileEntry[] {
   const resolved = resolveExistingProjectTarget(workspaceSlug, targetPath);
   if (!statSync(resolved).isDirectory()) {
     throw new Error("目标不是目录");
   }
-  const items = readdirSync(resolved, { withFileTypes: true }).map((entry) => ({
-    name: entry.name,
-    path: join(resolved, entry.name),
-    isDirectory: entry.isDirectory()
-  } satisfies FileEntry));
+  const items = readdirSync(resolved, { withFileTypes: true }).map(
+    (entry) =>
+      ({
+        name: entry.name,
+        path: join(resolved, entry.name),
+        isDirectory: entry.isDirectory(),
+      }) satisfies FileEntry,
+  );
   items.sort((a, b) => {
     if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
     return a.name.localeCompare(b.name, "en");
   });
   const projectRoot = resolveExistingProjectTarget(workspaceSlug);
-  return items.map((entry) => enrichEntryWithFileRef(entry, projectRoot, "project", workspaceSlug));
+  return items.map((entry) =>
+    enrichEntryWithFileRef(entry, projectRoot, "project", workspaceSlug),
+  );
 }
 
 function assertLegacyExportSourceSafe(path: string): void {
@@ -966,17 +652,22 @@ function assertLegacyExportSourceSafe(path: string): void {
 export function exportLegacyResourceToProject(
   workspaceSlug: string,
   targetPath: string,
-  conflict: "error"
+  conflict: "error",
 ): { ok: true; path: string } {
   if (conflict !== "error") {
     throw new Error("旧版资源导出必须显式使用不覆盖策略");
   }
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
-  const lexicalSource = resolveSafePathWithin(resourcesDir, targetPath, "源路径超出旧版资源目录");
+  const lexicalSource = resolveSafePathWithin(
+    resourcesDir,
+    targetPath,
+    "源路径超出旧版资源目录",
+  );
   if (!existsSync(lexicalSource)) throw new Error("旧版资源不存在");
   assertLegacyExportSourceSafe(lexicalSource);
   const source = realpathSync(lexicalSource);
-  if (!isWithin(realpathSync(resourcesDir), source)) throw new Error("源路径超出旧版资源目录");
+  if (!isWithin(realpathSync(resourcesDir), source))
+    throw new Error("源路径超出旧版资源目录");
 
   const projectRoot = resolveExistingProjectTarget(workspaceSlug);
   const destination = join(projectRoot, basename(source));
@@ -991,7 +682,7 @@ export function exportLegacyResourceToProject(
       filter: (sourcePath) => {
         assertLegacyExportSourceSafe(sourcePath);
         return true;
-      }
+      },
     });
     if (!isWithin(projectRoot, realpathSync(staging))) {
       throw new Error("导出目标超出项目目录");
@@ -1005,21 +696,31 @@ export function exportLegacyResourceToProject(
 }
 
 /** 复制式晋升：session/memory/legacy → project 根，源保留，同名报错。 */
-export function promoteFileRefToProject(ref: FileRef, workspaceSlug: string): { ok: true; path: string } {
+export function promoteFileRefToProject(
+  ref: FileRef,
+  workspaceSlug: string,
+): { ok: true; path: string } {
   if (ref.source === "project") throw new Error("项目文件无需晋升");
   const rootPath = resolveFileRefRoot(ref);
-  const lexicalSource = resolveSafePathWithin(rootPath, ref.relativePath, "源路径超出来源目录");
+  const lexicalSource = resolveSafePathWithin(
+    rootPath,
+    ref.relativePath,
+    "源路径超出来源目录",
+  );
   // IPC 边界防御：schema 的 relativePath 是裸 z.string()，空串/"." 会被 resolveSafePathWithin
   // 解析回 scope 根——禁止晋升整个来源根目录（否则 .context 内部元数据会被复制进项目）
-  if (lexicalSource === resolve(rootPath)) throw new Error("不能晋升来源根目录");
+  if (lexicalSource === resolve(rootPath))
+    throw new Error("不能晋升来源根目录");
   if (!existsSync(lexicalSource)) throw new Error("源文件不存在");
   assertLegacyExportSourceSafe(lexicalSource);
   const source = realpathSync(lexicalSource);
-  if (!isWithin(realpathSync(rootPath), source)) throw new Error("源路径超出来源目录");
+  if (!isWithin(realpathSync(rootPath), source))
+    throw new Error("源路径超出来源目录");
 
   const projectRoot = resolveExistingProjectTarget(workspaceSlug);
   const destination = join(projectRoot, basename(source));
-  if (existsSync(destination)) throw new Error("项目目录已存在同名文件，未覆盖任何内容");
+  if (existsSync(destination))
+    throw new Error("项目目录已存在同名文件，未覆盖任何内容");
   const staging = join(projectRoot, `.lume-promote-${randomUUID()}`);
   try {
     cpSync(source, staging, {
@@ -1028,9 +729,10 @@ export function promoteFileRefToProject(ref: FileRef, workspaceSlug: string): { 
       filter: (sourcePath) => {
         assertLegacyExportSourceSafe(sourcePath);
         return true;
-      }
+      },
     });
-    if (!isWithin(projectRoot, realpathSync(staging))) throw new Error("晋升目标超出项目目录");
+    if (!isWithin(projectRoot, realpathSync(staging)))
+      throw new Error("晋升目标超出项目目录");
     renameSync(staging, destination);
     return { ok: true, path: destination };
   } catch (error) {
@@ -1040,10 +742,14 @@ export function promoteFileRefToProject(ref: FileRef, workspaceSlug: string): { 
 }
 export function listWorkspaceRootDirectory(
   workspaceSlug: string,
-  targetPath?: string
+  targetPath?: string,
 ): FileEntry[] {
   const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
-  const resolved = resolveSafePath(workspaceRoot, targetPath, "目标路径超出工作区根目录");
+  const resolved = resolveSafePath(
+    workspaceRoot,
+    targetPath,
+    "目标路径超出工作区根目录",
+  );
   if (!existsSync(resolved)) return [];
 
   const items = readdirSync(resolved, { withFileTypes: true }).map((entry) => {
@@ -1051,7 +757,7 @@ export function listWorkspaceRootDirectory(
     return {
       name: entry.name,
       path: fullPath,
-      isDirectory: entry.isDirectory()
+      isDirectory: entry.isDirectory(),
     } satisfies FileEntry;
   });
 
@@ -1066,7 +772,7 @@ export function listWorkspaceRootDirectory(
 export function deleteAgentFile(
   workspaceSlug: string | undefined,
   sessionId: string,
-  targetPath: string
+  targetPath: string,
 ): { ok: true } {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   const rootPath = resolveSessionDir(workspaceSlug, sessionId);
@@ -1075,23 +781,32 @@ export function deleteAgentFile(
   }
   if (!existsSync(resolved)) return { ok: true };
 
-  assertAttachmentMetadataHealthy(getThreadAttachmentScope(workspaceSlug, sessionId));
+  assertAttachmentMetadataHealthy(
+    getThreadAttachmentScope(workspaceSlug, sessionId),
+  );
   const stat = statSync(resolved);
   if (stat.isDirectory()) {
     rmSync(resolved, { recursive: true, force: true });
   } else {
     rmSync(resolved, { force: true });
   }
-  deleteAttachmentMeta(getThreadAttachmentScope(workspaceSlug, sessionId), resolved);
+  deleteAttachmentMeta(
+    getThreadAttachmentScope(workspaceSlug, sessionId),
+    resolved,
+  );
   return { ok: true };
 }
 
 export function deleteWorkspaceFile(
   workspaceSlug: string,
-  targetPath: string
+  targetPath: string,
 ): { ok: true } {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
-  const resolved = resolveSafePath(resourcesDir, targetPath, "目标路径超出工作区共享目录");
+  const resolved = resolveSafePath(
+    resourcesDir,
+    targetPath,
+    "目标路径超出工作区共享目录",
+  );
   if (resolve(resolved) === resolve(resourcesDir)) {
     throw new Error("不能删除工作区共享根目录");
   }
@@ -1110,10 +825,14 @@ export function deleteWorkspaceFile(
 
 export function deleteWorkspaceRootFile(
   workspaceSlug: string,
-  targetPath: string
+  targetPath: string,
 ): { ok: true } {
   const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
-  const resolved = resolveSafePath(workspaceRoot, targetPath, "目标路径超出工作区根目录");
+  const resolved = resolveSafePath(
+    workspaceRoot,
+    targetPath,
+    "目标路径超出工作区根目录",
+  );
   if (resolve(resolved) === resolve(workspaceRoot)) {
     throw new Error("不能删除工作区根目录");
   }
@@ -1132,7 +851,7 @@ export function renameAgentFile(
   workspaceSlug: string | undefined,
   sessionId: string,
   targetPath: string,
-  newName: string
+  newName: string,
 ): { ok: true; path: string } {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   const rootPath = resolveSessionDir(workspaceSlug, sessionId);
@@ -1150,19 +869,29 @@ export function renameAgentFile(
   if (existsSync(nextPath)) {
     throw new Error("目标名称已存在");
   }
-  assertAttachmentMetadataHealthy(getThreadAttachmentScope(workspaceSlug, sessionId));
+  assertAttachmentMetadataHealthy(
+    getThreadAttachmentScope(workspaceSlug, sessionId),
+  );
   movePathWithFallback(resolved, nextPath);
-  moveAttachmentMeta(getThreadAttachmentScope(workspaceSlug, sessionId), resolved, nextPath);
+  moveAttachmentMeta(
+    getThreadAttachmentScope(workspaceSlug, sessionId),
+    resolved,
+    nextPath,
+  );
   return { ok: true, path: nextPath };
 }
 
 export function renameWorkspaceFile(
   workspaceSlug: string,
   targetPath: string,
-  newName: string
+  newName: string,
 ): { ok: true; path: string } {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
-  const resolved = resolveSafePath(resourcesDir, targetPath, "目标路径超出工作区共享目录");
+  const resolved = resolveSafePath(
+    resourcesDir,
+    targetPath,
+    "目标路径超出工作区共享目录",
+  );
   if (resolve(resolved) === resolve(resourcesDir)) {
     throw new Error("不能重命名工作区共享根目录");
   }
@@ -1179,17 +908,25 @@ export function renameWorkspaceFile(
   }
   assertAttachmentMetadataHealthy(getWorkspaceAttachmentScope(workspaceSlug));
   movePathWithFallback(resolved, nextPath);
-  moveAttachmentMeta(getWorkspaceAttachmentScope(workspaceSlug), resolved, nextPath);
+  moveAttachmentMeta(
+    getWorkspaceAttachmentScope(workspaceSlug),
+    resolved,
+    nextPath,
+  );
   return { ok: true, path: nextPath };
 }
 
 export function renameWorkspaceRootFile(
   workspaceSlug: string,
   targetPath: string,
-  newName: string
+  newName: string,
 ): { ok: true; path: string } {
   const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
-  const resolved = resolveSafePath(workspaceRoot, targetPath, "目标路径超出工作区根目录");
+  const resolved = resolveSafePath(
+    workspaceRoot,
+    targetPath,
+    "目标路径超出工作区根目录",
+  );
   if (resolve(resolved) === resolve(workspaceRoot)) {
     throw new Error("不能重命名工作区根目录");
   }
@@ -1212,11 +949,15 @@ export function moveAgentFile(
   workspaceSlug: string | undefined,
   sessionId: string,
   targetPath: string,
-  targetDir: string
+  targetDir: string,
 ): { ok: true; path: string } {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   const rootPath = resolveSessionDir(workspaceSlug, sessionId);
-  const resolvedTargetDir = resolveSafeTarget(workspaceSlug, sessionId, targetDir);
+  const resolvedTargetDir = resolveSafeTarget(
+    workspaceSlug,
+    sessionId,
+    targetDir,
+  );
 
   if (resolve(resolved) === resolve(rootPath)) {
     throw new Error("不能移动线程根目录");
@@ -1224,7 +965,10 @@ export function moveAgentFile(
   if (!existsSync(resolved)) {
     throw new Error("目标不存在");
   }
-  if (!existsSync(resolvedTargetDir) || !statSync(resolvedTargetDir).isDirectory()) {
+  if (
+    !existsSync(resolvedTargetDir) ||
+    !statSync(resolvedTargetDir).isDirectory()
+  ) {
     throw new Error("目标目录不存在");
   }
 
@@ -1239,20 +983,34 @@ export function moveAgentFile(
     throw new Error("目标路径已存在同名文件");
   }
 
-  assertAttachmentMetadataHealthy(getThreadAttachmentScope(workspaceSlug, sessionId));
+  assertAttachmentMetadataHealthy(
+    getThreadAttachmentScope(workspaceSlug, sessionId),
+  );
   movePathWithFallback(resolved, nextPath);
-  moveAttachmentMeta(getThreadAttachmentScope(workspaceSlug, sessionId), resolved, nextPath);
+  moveAttachmentMeta(
+    getThreadAttachmentScope(workspaceSlug, sessionId),
+    resolved,
+    nextPath,
+  );
   return { ok: true, path: nextPath };
 }
 
 export function moveWorkspaceFile(
   workspaceSlug: string,
   targetPath: string,
-  targetDir: string
+  targetDir: string,
 ): { ok: true; path: string } {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
-  const resolved = resolveSafePath(resourcesDir, targetPath, "目标路径超出工作区共享目录");
-  const resolvedTargetDir = resolveSafePath(resourcesDir, targetDir, "目标路径超出工作区共享目录");
+  const resolved = resolveSafePath(
+    resourcesDir,
+    targetPath,
+    "目标路径超出工作区共享目录",
+  );
+  const resolvedTargetDir = resolveSafePath(
+    resourcesDir,
+    targetDir,
+    "目标路径超出工作区共享目录",
+  );
 
   if (resolve(resolved) === resolve(resourcesDir)) {
     throw new Error("不能移动工作区共享根目录");
@@ -1260,7 +1018,10 @@ export function moveWorkspaceFile(
   if (!existsSync(resolved)) {
     throw new Error("目标不存在");
   }
-  if (!existsSync(resolvedTargetDir) || !statSync(resolvedTargetDir).isDirectory()) {
+  if (
+    !existsSync(resolvedTargetDir) ||
+    !statSync(resolvedTargetDir).isDirectory()
+  ) {
     throw new Error("目标目录不存在");
   }
 
@@ -1277,18 +1038,30 @@ export function moveWorkspaceFile(
 
   assertAttachmentMetadataHealthy(getWorkspaceAttachmentScope(workspaceSlug));
   movePathWithFallback(resolved, nextPath);
-  moveAttachmentMeta(getWorkspaceAttachmentScope(workspaceSlug), resolved, nextPath);
+  moveAttachmentMeta(
+    getWorkspaceAttachmentScope(workspaceSlug),
+    resolved,
+    nextPath,
+  );
   return { ok: true, path: nextPath };
 }
 
 export function moveWorkspaceRootFile(
   workspaceSlug: string,
   targetPath: string,
-  targetDir: string
+  targetDir: string,
 ): { ok: true; path: string } {
   const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
-  const resolved = resolveSafePath(workspaceRoot, targetPath, "目标路径超出工作区根目录");
-  const resolvedTargetDir = resolveSafePath(workspaceRoot, targetDir, "目标路径超出工作区根目录");
+  const resolved = resolveSafePath(
+    workspaceRoot,
+    targetPath,
+    "目标路径超出工作区根目录",
+  );
+  const resolvedTargetDir = resolveSafePath(
+    workspaceRoot,
+    targetDir,
+    "目标路径超出工作区根目录",
+  );
 
   if (resolve(resolved) === resolve(workspaceRoot)) {
     throw new Error("不能移动工作区根目录");
@@ -1296,7 +1069,10 @@ export function moveWorkspaceRootFile(
   if (!existsSync(resolved)) {
     throw new Error("目标不存在");
   }
-  if (!existsSync(resolvedTargetDir) || !statSync(resolvedTargetDir).isDirectory()) {
+  if (
+    !existsSync(resolvedTargetDir) ||
+    !statSync(resolvedTargetDir).isDirectory()
+  ) {
     throw new Error("目标目录不存在");
   }
 
@@ -1318,7 +1094,7 @@ export function moveWorkspaceRootFile(
 function spawnDetached(command: string, args: string[]): void {
   const child = spawn(command, args, {
     detached: true,
-    stdio: "ignore"
+    stdio: "ignore",
   });
   child.unref();
 }
@@ -1350,7 +1126,7 @@ function showInSystemFolder(resolvedPath: string): void {
 export function openAgentPath(
   workspaceSlug: string | undefined,
   sessionId: string,
-  targetPath: string
+  targetPath: string,
 ): { ok: true } {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   if (!existsSync(resolved)) {
@@ -1362,10 +1138,14 @@ export function openAgentPath(
 
 export function openWorkspacePath(
   workspaceSlug: string,
-  targetPath: string
+  targetPath: string,
 ): { ok: true } {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
-  const resolved = resolveSafePath(resourcesDir, targetPath, "目标路径超出工作区共享目录");
+  const resolved = resolveSafePath(
+    resourcesDir,
+    targetPath,
+    "目标路径超出工作区共享目录",
+  );
   if (!existsSync(resolved)) {
     throw new Error("目标不存在");
   }
@@ -1375,10 +1155,14 @@ export function openWorkspacePath(
 
 export function openWorkspaceRootPath(
   workspaceSlug: string,
-  targetPath: string
+  targetPath: string,
 ): { ok: true } {
   const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
-  const resolved = resolveSafePath(workspaceRoot, targetPath, "目标路径超出工作区根目录");
+  const resolved = resolveSafePath(
+    workspaceRoot,
+    targetPath,
+    "目标路径超出工作区根目录",
+  );
   if (!existsSync(resolved)) {
     throw new Error("目标不存在");
   }
@@ -1389,7 +1173,7 @@ export function openWorkspaceRootPath(
 export function previewAgentPath(
   workspaceSlug: string | undefined,
   sessionId: string,
-  targetPath: string
+  targetPath: string,
 ): { ok: true } {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   if (!existsSync(resolved)) {
@@ -1401,10 +1185,14 @@ export function previewAgentPath(
 
 export function previewWorkspacePath(
   workspaceSlug: string,
-  targetPath: string
+  targetPath: string,
 ): { ok: true } {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
-  const resolved = resolveSafePath(resourcesDir, targetPath, "目标路径超出工作区共享目录");
+  const resolved = resolveSafePath(
+    resourcesDir,
+    targetPath,
+    "目标路径超出工作区共享目录",
+  );
   if (!existsSync(resolved)) {
     throw new Error("目标不存在");
   }
@@ -1415,7 +1203,10 @@ export function previewWorkspacePath(
 /** 预览直读路径的载入上限（与 readFileRefDocument 的 FILE_LOAD_LIMIT 对齐；statSync 前置防大文件全量载入阻塞事件循环）。 */
 const PREVIEW_LOAD_LIMIT_BYTES = 20 * 1024 * 1024;
 
-function readPreviewableText(resolvedPath: string): { content: string; truncated: boolean } {
+function readPreviewableText(resolvedPath: string): {
+  content: string;
+  truncated: boolean;
+} {
   if (statSync(resolvedPath).size > PREVIEW_LOAD_LIMIT_BYTES) {
     throw new Error("文件过大，暂不支持预览（上限 20MB）");
   }
@@ -1435,7 +1226,7 @@ function readPreviewableText(resolvedPath: string): { content: string; truncated
 export function readAgentPath(
   workspaceSlug: string | undefined,
   sessionId: string,
-  targetPath: string
+  targetPath: string,
 ): { content: string; truncated: boolean } {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   if (!existsSync(resolved)) {
@@ -1447,7 +1238,7 @@ export function readAgentPath(
 export function readAgentFileData(
   workspaceSlug: string | undefined,
   sessionId: string,
-  targetPath: string
+  targetPath: string,
 ): { data: string; size: number } {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   if (!existsSync(resolved) || !statSync(resolved).isFile()) {
@@ -1456,16 +1247,20 @@ export function readAgentFileData(
   const bytes = readFileSync(resolved);
   return {
     data: bytes.toString("base64"),
-    size: bytes.byteLength
+    size: bytes.byteLength,
   };
 }
 
 export function readWorkspacePath(
   workspaceSlug: string,
-  targetPath: string
+  targetPath: string,
 ): { content: string; truncated: boolean } {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
-  const resolved = resolveSafePath(resourcesDir, targetPath, "目标路径超出工作区共享目录");
+  const resolved = resolveSafePath(
+    resourcesDir,
+    targetPath,
+    "目标路径超出工作区共享目录",
+  );
   if (!existsSync(resolved)) {
     throw new Error("目标不存在");
   }
@@ -1474,10 +1269,14 @@ export function readWorkspacePath(
 
 export function readWorkspaceFileData(
   workspaceSlug: string,
-  targetPath: string
+  targetPath: string,
 ): { data: string; size: number } {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
-  const resolved = resolveSafePath(resourcesDir, targetPath, "目标路径超出工作区共享目录");
+  const resolved = resolveSafePath(
+    resourcesDir,
+    targetPath,
+    "目标路径超出工作区共享目录",
+  );
   if (!existsSync(resolved) || !statSync(resolved).isFile()) {
     throw new Error("目标不存在");
   }
@@ -1487,7 +1286,7 @@ export function readWorkspaceFileData(
 
 export function readProjectPath(
   workspaceSlug: string,
-  targetPath: string
+  targetPath: string,
 ): { content: string; truncated: boolean } {
   const resolved = resolveExistingProjectTarget(workspaceSlug, targetPath);
   if (!statSync(resolved).isFile()) {
@@ -1498,7 +1297,7 @@ export function readProjectPath(
 
 export function readProjectFileData(
   workspaceSlug: string,
-  targetPath: string
+  targetPath: string,
 ): { data: string; size: number } {
   const resolved = resolveExistingProjectTarget(workspaceSlug, targetPath);
   if (!statSync(resolved).isFile()) {
@@ -1508,22 +1307,32 @@ export function readProjectFileData(
   return { data: bytes.toString("base64"), size: bytes.byteLength };
 }
 
-export function openProjectPath(workspaceSlug: string, targetPath: string): { ok: true } {
+export function openProjectPath(
+  workspaceSlug: string,
+  targetPath: string,
+): { ok: true } {
   openInSystem(resolveExistingProjectTarget(workspaceSlug, targetPath));
   return { ok: true };
 }
 
-export function showProjectPathInFolder(workspaceSlug: string, targetPath: string): { ok: true } {
+export function showProjectPathInFolder(
+  workspaceSlug: string,
+  targetPath: string,
+): { ok: true } {
   showInSystemFolder(resolveExistingProjectTarget(workspaceSlug, targetPath));
   return { ok: true };
 }
 
 export function readWorkspaceRootPath(
   workspaceSlug: string,
-  targetPath: string
+  targetPath: string,
 ): { content: string; truncated: boolean } {
   const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
-  const resolved = resolveSafePath(workspaceRoot, targetPath, "目标路径超出工作区根目录");
+  const resolved = resolveSafePath(
+    workspaceRoot,
+    targetPath,
+    "目标路径超出工作区根目录",
+  );
   if (!existsSync(resolved)) {
     throw new Error("目标不存在");
   }
@@ -1533,7 +1342,7 @@ export function readWorkspaceRootPath(
 export function showAgentPathInFolder(
   workspaceSlug: string | undefined,
   sessionId: string,
-  targetPath: string
+  targetPath: string,
 ): { ok: true } {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   if (!existsSync(resolved)) {
@@ -1545,10 +1354,14 @@ export function showAgentPathInFolder(
 
 export function showWorkspacePathInFolder(
   workspaceSlug: string,
-  targetPath: string
+  targetPath: string,
 ): { ok: true } {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
-  const resolved = resolveSafePath(resourcesDir, targetPath, "目标路径超出工作区共享目录");
+  const resolved = resolveSafePath(
+    resourcesDir,
+    targetPath,
+    "目标路径超出工作区共享目录",
+  );
   if (!existsSync(resolved)) {
     throw new Error("目标不存在");
   }
@@ -1559,10 +1372,23 @@ export function showWorkspacePathInFolder(
 function scanWorkspaceFiles(
   rootPath: string,
   query: string,
-  limit: number
+  limit: number,
 ): FileSearchResult {
-  const ignoreDirs = new Set(["node_modules", ".git", "dist", ".next", "__pycache__", ".venv", "build", ".cache"]);
-  const allEntries: Array<{ name: string; path: string; type: "file" | "dir" }> = [];
+  const ignoreDirs = new Set([
+    "node_modules",
+    ".git",
+    "dist",
+    ".next",
+    "__pycache__",
+    ".venv",
+    "build",
+    ".cache",
+  ]);
+  const allEntries: Array<{
+    name: string;
+    path: string;
+    type: "file" | "dir";
+  }> = [];
   const safeRoot = resolve(rootPath);
 
   function scan(dir: string, depth: number): void {
@@ -1581,7 +1407,7 @@ function scanWorkspaceFiles(
       allEntries.push({
         name: item.name,
         path: relPath,
-        type: item.isDirectory() ? "dir" : "file"
+        type: item.isDirectory() ? "dir" : "file",
       });
       if (item.isDirectory()) {
         scan(fullPath, depth + 1);
@@ -1625,15 +1451,25 @@ export function searchAgentWorkspaceFiles(
   sessionId: string,
   query: string,
   limit = 20,
-  rootPath?: string
+  rootPath?: string,
 ): FileSearchResult {
   const root = resolveSafeTarget(workspaceSlug, sessionId, rootPath);
-  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(200, Math.floor(limit))) : 20;
+  const safeLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.min(200, Math.floor(limit)))
+    : 20;
   return scanWorkspaceFiles(root, query, safeLimit);
 }
 
 const DEFAULT_SEARCH_EXCLUDED_DIRS = new Set([
-  ".git", "node_modules", ".venv", "dist", "build", ".next", "coverage", "__pycache__", ".cache"
+  ".git",
+  "node_modules",
+  ".venv",
+  "dist",
+  "build",
+  ".next",
+  "coverage",
+  "__pycache__",
+  ".cache",
 ]);
 
 export async function searchAuthorizedFiles(
@@ -1645,14 +1481,20 @@ export async function searchAuthorizedFiles(
     maxEntries?: number;
     maxMs?: number;
     signal?: AbortSignal;
-  } = {}
+  } = {},
 ): Promise<FileSearchResult> {
-  if (rootRef.source === "memory" && !normalizeAuthorizedRelativePath(rootRef.relativePath)) {
-    if (options.signal?.aborted) throw new DOMException("File search aborted", "AbortError");
+  if (
+    rootRef.source === "memory" &&
+    !normalizeAuthorizedRelativePath(rootRef.relativePath)
+  ) {
+    if (options.signal?.aborted)
+      throw new DOMException("File search aborted", "AbortError");
     const limit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 200)));
     const queryText = query.trim().toLocaleLowerCase("en-US");
     const sourceFiles = listMemorySourceFilesForScope(rootRef.scopeId);
-    const matched = sourceFiles.filter((entry) => entry.ref.relativePath.toLocaleLowerCase("en-US").includes(queryText));
+    const matched = sourceFiles.filter((entry) =>
+      entry.ref.relativePath.toLocaleLowerCase("en-US").includes(queryText),
+    );
     return {
       entries: matched.slice(0, limit).map((entry) => ({
         name: basename(entry.ref.relativePath),
@@ -1681,7 +1523,8 @@ export async function searchAuthorizedFiles(
   let truncated = false;
 
   while (queue.length > 0) {
-    if (options.signal?.aborted) throw new DOMException("File search aborted", "AbortError");
+    if (options.signal?.aborted)
+      throw new DOMException("File search aborted", "AbortError");
     if (scanned >= maxEntries || Date.now() >= deadline) {
       truncated = true;
       break;
@@ -1694,7 +1537,8 @@ export async function searchAuthorizedFiles(
       continue;
     }
     for (const item of items) {
-      if (options.signal?.aborted) throw new DOMException("File search aborted", "AbortError");
+      if (options.signal?.aborted)
+        throw new DOMException("File search aborted", "AbortError");
       if (scanned >= maxEntries || Date.now() >= deadline) {
         truncated = true;
         break;
@@ -1708,11 +1552,20 @@ export async function searchAuthorizedFiles(
         continue;
       }
       if (metadata.isSymbolicLink()) continue;
-      const relativePath = relative(resolvedRoot.rootPath, absolutePath).split(sep).join("/");
+      const relativePath = relative(resolvedRoot.rootPath, absolutePath)
+        .split(sep)
+        .join("/");
       const isDirectory = metadata.isDirectory();
-      if (isDirectory && !options.includeExcluded && DEFAULT_SEARCH_EXCLUDED_DIRS.has(item.name.toLowerCase())) continue;
+      if (
+        isDirectory &&
+        !options.includeExcluded &&
+        DEFAULT_SEARCH_EXCLUDED_DIRS.has(item.name.toLowerCase())
+      )
+        continue;
       if (isDirectory) queue.push(absolutePath);
-      const haystack = `${item.name}\n${relativePath}`.toLocaleLowerCase("en-US");
+      const haystack = `${item.name}\n${relativePath}`.toLocaleLowerCase(
+        "en-US",
+      );
       if (!normalizedQuery || haystack.includes(normalizedQuery)) {
         matched += 1;
         if (entries.length < limit) {
@@ -1720,19 +1573,22 @@ export async function searchAuthorizedFiles(
             name: item.name,
             path: relativePath,
             type: isDirectory ? "dir" : "file",
-            ref: { ...rootRef, relativePath }
+            ref: { ...rootRef, relativePath },
           });
         } else {
           truncated = true;
         }
       }
-      if (scanned % 100 === 0) await new Promise<void>((resolveYield) => setImmediate(resolveYield));
+      if (scanned % 100 === 0)
+        await new Promise<void>((resolveYield) => setImmediate(resolveYield));
     }
   }
   return { entries, total: matched, truncated, scanned };
 }
 
-export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedFile[] {
+export function saveFilesToAgentSession(
+  input: AgentSaveFilesInput,
+): AgentSavedFile[] {
   const sessionDir = resolveSessionDir(input.workspaceSlug, input.threadId);
   const results: AgentSavedFile[] = [];
   const scope = getThreadAttachmentScope(input.workspaceSlug, input.threadId);
@@ -1750,7 +1606,11 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
       }
       mkdirSync(dirname(targetPath), { recursive: true });
       writeFileSync(targetPath, bytes);
-      const threadPath = toThreadRelativePath(input.workspaceSlug, input.threadId, targetPath);
+      const threadPath = toThreadRelativePath(
+        input.workspaceSlug,
+        input.threadId,
+        targetPath,
+      );
       results.push({
         ...(file.id ? { id: file.id } : {}),
         filename: file.filename,
@@ -1759,14 +1619,28 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
         mediaType,
         size: bytes.byteLength,
         contentHash,
-        ...(scope.fileContextId ? {
-          ref: { source: "session" as const, scopeId: scope.fileContextId, relativePath: threadPath }
-        } : {})
+        ...(scope.fileContextId
+          ? {
+              ref: {
+                source: "session" as const,
+                scopeId: scope.fileContextId,
+                relativePath: threadPath,
+              },
+            }
+          : {}),
       });
-      if (file.sourcePath && file.sourcePath.trim() && isExternalSourcePath(input.workspaceSlug, file.sourcePath, input.threadId)) {
+      if (
+        file.sourcePath &&
+        file.sourcePath.trim() &&
+        isExternalSourcePath(
+          input.workspaceSlug,
+          file.sourcePath,
+          input.threadId,
+        )
+      ) {
         upsertAttachmentMeta(scope, targetPath, {
           label: "外部附加",
-          absoluteSourcePath: resolve(file.sourcePath)
+          absoluteSourcePath: resolve(file.sourcePath),
         });
       } else {
         deleteAttachmentMeta(scope, targetPath);
@@ -1774,7 +1648,8 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
     }
   } catch (error) {
     for (const saved of results) {
-      if (existsSync(saved.targetPath)) rmSync(saved.targetPath, { force: true });
+      if (existsSync(saved.targetPath))
+        rmSync(saved.targetPath, { force: true });
       deleteAttachmentMeta(scope, saved.targetPath);
     }
     throw error;
@@ -1784,10 +1659,15 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
 }
 
 /** Desktop attachment path: copy through bounded streams instead of buffering each file in memory. */
-export async function saveFilesToAgentSessionStreamed(input: AgentSaveFilesInput): Promise<AgentSavedFile[]> {
-  if (input.files.some((file) => !file.sourcePath?.trim())) return saveFilesToAgentSession(input);
+export async function saveFilesToAgentSessionStreamed(
+  input: AgentSaveFilesInput,
+): Promise<AgentSavedFile[]> {
+  if (input.files.some((file) => !file.sourcePath?.trim()))
+    return saveFilesToAgentSession(input);
   if (input.files.length > AGENT_ATTACHMENT_LIMITS.maxCount) {
-    throw new Error(`每条消息最多添加 ${AGENT_ATTACHMENT_LIMITS.maxCount} 个附件`);
+    throw new Error(
+      `每条消息最多添加 ${AGENT_ATTACHMENT_LIMITS.maxCount} 个附件`,
+    );
   }
 
   const opened = input.files.map((file) => openStreamedAttachmentSource(file));
@@ -1808,26 +1688,40 @@ export async function saveFilesToAgentSessionStreamed(input: AgentSaveFilesInput
       const targetPath = input.clientSubmissionId
         ? resolveUniqueAttachmentTarget(sessionDir, item.file.filename)
         : resolve(join(sessionDir, item.file.filename));
-      if (!isWithin(sessionDir, targetPath)) throw new Error(`文件路径越界: ${item.file.filename}`);
+      if (!isWithin(sessionDir, targetPath))
+        throw new Error(`文件路径越界: ${item.file.filename}`);
       mkdirSync(dirname(targetPath), { recursive: true });
       const temporaryPath = `${targetPath}.${randomUUID()}.part`;
       temporaryPaths.push(temporaryPath);
       const hash = createHash("sha256");
       let copiedBytes = 0;
-      const reader = createReadStream(item.sourcePath, { fd: item.fd, autoClose: false, start: 0 });
+      const reader = createReadStream(item.sourcePath, {
+        fd: item.fd,
+        autoClose: false,
+        start: 0,
+      });
       reader.on("data", (chunk: Buffer) => {
         copiedBytes += chunk.byteLength;
         hash.update(chunk);
       });
       await pipeline(reader, createWriteStream(temporaryPath, { flags: "wx" }));
       const after = fstatSync(item.fd);
-      if (copiedBytes !== item.size || after.size !== item.size
-        || after.dev !== item.dev || after.ino !== item.ino || after.mtimeMs !== item.mtimeMs) {
+      if (
+        copiedBytes !== item.size ||
+        after.size !== item.size ||
+        after.dev !== item.dev ||
+        after.ino !== item.ino ||
+        after.mtimeMs !== item.mtimeMs
+      ) {
         throw new Error(`源文件在读取时发生变化: ${item.file.filename}`);
       }
       renameSync(temporaryPath, targetPath);
       temporaryPaths.splice(temporaryPaths.indexOf(temporaryPath), 1);
-      const threadPath = toThreadRelativePath(input.workspaceSlug, input.threadId, targetPath);
+      const threadPath = toThreadRelativePath(
+        input.workspaceSlug,
+        input.threadId,
+        targetPath,
+      );
       results.push({
         ...(item.file.id ? { id: item.file.id } : {}),
         filename: item.file.filename,
@@ -1836,21 +1730,38 @@ export async function saveFilesToAgentSessionStreamed(input: AgentSaveFilesInput
         mediaType: item.mediaType,
         size: item.size,
         contentHash: hash.digest("hex"),
-        ...(scope.fileContextId ? {
-          ref: { source: "session" as const, scopeId: scope.fileContextId, relativePath: threadPath }
-        } : {})
+        ...(scope.fileContextId
+          ? {
+              ref: {
+                source: "session" as const,
+                scopeId: scope.fileContextId,
+                relativePath: threadPath,
+              },
+            }
+          : {}),
       });
-      if (isExternalSourcePath(input.workspaceSlug, item.sourcePath, input.threadId)) {
-        upsertAttachmentMeta(scope, targetPath, { label: "外部附加", absoluteSourcePath: item.sourcePath });
+      if (
+        isExternalSourcePath(
+          input.workspaceSlug,
+          item.sourcePath,
+          input.threadId,
+        )
+      ) {
+        upsertAttachmentMeta(scope, targetPath, {
+          label: "外部附加",
+          absoluteSourcePath: item.sourcePath,
+        });
       } else {
         deleteAttachmentMeta(scope, targetPath);
       }
     }
     return results;
   } catch (error) {
-    for (const path of temporaryPaths) if (existsSync(path)) rmSync(path, { force: true });
+    for (const path of temporaryPaths)
+      if (existsSync(path)) rmSync(path, { force: true });
     for (const saved of results) {
-      if (existsSync(saved.targetPath)) rmSync(saved.targetPath, { force: true });
+      if (existsSync(saved.targetPath))
+        rmSync(saved.targetPath, { force: true });
       deleteAttachmentMeta(scope, saved.targetPath);
     }
     throw error;
@@ -1859,7 +1770,9 @@ export async function saveFilesToAgentSessionStreamed(input: AgentSaveFilesInput
   }
 }
 
-function openStreamedAttachmentSource(file: AgentSaveFilesInput["files"][number]): {
+function openStreamedAttachmentSource(
+  file: AgentSaveFilesInput["files"][number],
+): {
   file: AgentSaveFilesInput["files"][number];
   sourcePath: string;
   fd: number;
@@ -1870,22 +1783,33 @@ function openStreamedAttachmentSource(file: AgentSaveFilesInput["files"][number]
   mediaType: string;
 } {
   const sourcePath = resolve(file.sourcePath!);
-  if (!existsSync(sourcePath)) throw new Error(`源文件不存在: ${file.filename}`);
+  if (!existsSync(sourcePath))
+    throw new Error(`源文件不存在: ${file.filename}`);
   const linkMetadata = lstatSync(sourcePath);
-  if (linkMetadata.isSymbolicLink() || !linkMetadata.isFile()) throw new Error(`只允许附加普通文件: ${file.filename}`);
+  if (linkMetadata.isSymbolicLink() || !linkMetadata.isFile())
+    throw new Error(`只允许附加普通文件: ${file.filename}`);
   const fd = openSync(sourcePath, "r");
   try {
     const stats = fstatSync(fd);
-    if (!stats.isFile() || stats.dev !== linkMetadata.dev || stats.ino !== linkMetadata.ino) {
+    if (
+      !stats.isFile() ||
+      stats.dev !== linkMetadata.dev ||
+      stats.ino !== linkMetadata.ino
+    ) {
       throw new Error(`源文件在读取前发生变化: ${file.filename}`);
     }
-    if (stats.size > AGENT_ATTACHMENT_LIMITS.maxFileBytes) throw new Error(`${file.filename} 超过 25 MB`);
-    if (file.size !== undefined && file.size !== stats.size) throw new Error(`${file.filename} 在添加后发生变化，请重新选择`);
+    if (stats.size > AGENT_ATTACHMENT_LIMITS.maxFileBytes)
+      throw new Error(`${file.filename} 超过 25 MB`);
+    if (file.size !== undefined && file.size !== stats.size)
+      throw new Error(`${file.filename} 在添加后发生变化，请重新选择`);
     const header = Buffer.alloc(Math.min(stats.size, 1024));
     if (header.byteLength > 0) readSync(fd, header, 0, header.byteLength, 0);
     const detectedImageType = detectImageMediaType(header);
     const declaredMediaType = file.mediaType?.trim().toLowerCase();
-    if (declaredMediaType?.startsWith("image/") && detectedImageType !== declaredMediaType) {
+    if (
+      declaredMediaType?.startsWith("image/") &&
+      detectedImageType !== declaredMediaType
+    ) {
       throw new Error(`${file.filename} 的图片内容与类型不匹配`);
     }
     return {
@@ -1896,7 +1820,8 @@ function openStreamedAttachmentSource(file: AgentSaveFilesInput["files"][number]
       ino: stats.ino,
       mtimeMs: stats.mtimeMs,
       size: stats.size,
-      mediaType: detectedImageType ?? declaredMediaType ?? "application/octet-stream"
+      mediaType:
+        detectedImageType ?? declaredMediaType ?? "application/octet-stream",
     };
   } catch (error) {
     closeSync(fd);
@@ -1904,14 +1829,18 @@ function openStreamedAttachmentSource(file: AgentSaveFilesInput["files"][number]
   }
 }
 
-function prepareAgentAttachmentFiles(files: AgentSaveFilesInput["files"]): Array<{
+function prepareAgentAttachmentFiles(
+  files: AgentSaveFilesInput["files"],
+): Array<{
   file: AgentSaveFilesInput["files"][number];
   bytes: Buffer;
   mediaType: string;
   contentHash: string;
 }> {
   if (files.length > AGENT_ATTACHMENT_LIMITS.maxCount) {
-    throw new Error(`每条消息最多添加 ${AGENT_ATTACHMENT_LIMITS.maxCount} 个附件`);
+    throw new Error(
+      `每条消息最多添加 ${AGENT_ATTACHMENT_LIMITS.maxCount} 个附件`,
+    );
   }
 
   let totalBytes = 0;
@@ -1932,21 +1861,29 @@ function prepareAgentAttachmentFiles(files: AgentSaveFilesInput["files"]): Array
 
     const detectedImageType = detectImageMediaType(bytes);
     const declaredMediaType = file.mediaType?.trim().toLowerCase();
-    if (declaredMediaType?.startsWith("image/") && detectedImageType !== declaredMediaType) {
+    if (
+      declaredMediaType?.startsWith("image/") &&
+      detectedImageType !== declaredMediaType
+    ) {
       throw new Error(`${file.filename} 的图片内容与类型不匹配`);
     }
     return {
       file,
       bytes,
-      mediaType: detectedImageType ?? declaredMediaType ?? "application/octet-stream",
+      mediaType:
+        detectedImageType ?? declaredMediaType ?? "application/octet-stream",
       contentHash: createHash("sha256").update(bytes).digest("hex"),
     };
   });
 }
 
-function readAttachmentSourceSnapshot(sourcePath: string, filename: string): Buffer {
+function readAttachmentSourceSnapshot(
+  sourcePath: string,
+  filename: string,
+): Buffer {
   const resolvedSourcePath = resolve(sourcePath);
-  if (!existsSync(resolvedSourcePath)) throw new Error(`源文件不存在: ${filename}`);
+  if (!existsSync(resolvedSourcePath))
+    throw new Error(`源文件不存在: ${filename}`);
   const linkMetadata = lstatSync(resolvedSourcePath);
   if (linkMetadata.isSymbolicLink() || !linkMetadata.isFile()) {
     throw new Error(`只允许附加普通文件: ${filename}`);
@@ -1955,8 +1892,11 @@ function readAttachmentSourceSnapshot(sourcePath: string, filename: string): Buf
   const fd = openSync(resolvedSourcePath, "r");
   try {
     const openedMetadata = fstatSync(fd);
-    if (!openedMetadata.isFile()
-      || (linkMetadata.dev !== openedMetadata.dev || linkMetadata.ino !== openedMetadata.ino)) {
+    if (
+      !openedMetadata.isFile() ||
+      linkMetadata.dev !== openedMetadata.dev ||
+      linkMetadata.ino !== openedMetadata.ino
+    ) {
       throw new Error(`源文件在读取前发生变化: ${filename}`);
     }
     if (openedMetadata.size > AGENT_ATTACHMENT_LIMITS.maxFileBytes) {
@@ -1968,51 +1908,118 @@ function readAttachmentSourceSnapshot(sourcePath: string, filename: string): Buf
   }
 }
 
-function decodeAttachmentBase64(data: string | undefined, filename: string): Buffer {
+function decodeAttachmentBase64(
+  data: string | undefined,
+  filename: string,
+): Buffer {
   if (data === undefined) throw new Error(`缺少文件内容: ${filename}`);
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) {
+  if (
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+      data,
+    )
+  ) {
     throw new Error(`文件内容编码无效: ${filename}`);
   }
   const bytes = Buffer.from(data, "base64");
-  if (bytes.toString("base64") !== data) throw new Error(`文件内容编码无效: ${filename}`);
+  if (bytes.toString("base64") !== data)
+    throw new Error(`文件内容编码无效: ${filename}`);
   return bytes;
 }
 
 function detectImageMediaType(bytes: Buffer): string | undefined {
-  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
-  if (bytes.length >= 6 && ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"))) return "image/gif";
-  if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
-  if (bytes.length >= 2 && bytes.subarray(0, 2).toString("ascii") === "BM") return "image/bmp";
+  if (
+    bytes.length >= 8 &&
+    bytes
+      .subarray(0, 8)
+      .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  )
+    return "image/png";
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff
+  )
+    return "image/jpeg";
+  if (
+    bytes.length >= 6 &&
+    ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"))
+  )
+    return "image/gif";
+  if (
+    bytes.length >= 12 &&
+    bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+    bytes.subarray(8, 12).toString("ascii") === "WEBP"
+  )
+    return "image/webp";
+  if (bytes.length >= 2 && bytes.subarray(0, 2).toString("ascii") === "BM")
+    return "image/bmp";
   // AVIF / HEIC(HEIF)\uFF1AISO BMFF\uFF0Coffset 4-8 \u4E3A "ftyp"\uFF0C8-12 \u4E3A major brand\uFF08\u89C1 #14\uFF09
   if (bytes.length >= 12 && bytes.subarray(4, 8).toString("ascii") === "ftyp") {
     const brand = bytes.subarray(8, 12).toString("ascii");
     if (brand === "avif" || brand === "avis") return "image/avif";
-    if (brand === "heic" || brand === "heix" || brand === "heim" || brand === "heis" || brand === "mif1" || brand === "msf1") return "image/heic";
+    if (
+      brand === "heic" ||
+      brand === "heix" ||
+      brand === "heim" ||
+      brand === "heis" ||
+      brand === "mif1" ||
+      brand === "msf1"
+    )
+      return "image/heic";
   }
   // ICO\uFF08.cur \u4E3A 00 00 02 00\uFF0C\u6B64\u5904\u4EC5\u8BA4\u56FE\u6807\uFF09
-  if (bytes.length >= 4 && bytes[0] === 0x00 && bytes[1] === 0x00 && bytes[2] === 0x01 && bytes[3] === 0x00) return "image/x-icon";
+  if (
+    bytes.length >= 4 &&
+    bytes[0] === 0x00 &&
+    bytes[1] === 0x00 &&
+    bytes[2] === 0x01 &&
+    bytes[3] === 0x00
+  )
+    return "image/x-icon";
   // TIFF\uFF08\u542B DNG/NEF \u7B49 TIFF \u884D\u751F\uFF09\uFF1A\u5C0F\u7AEF II*\0 \u6216\u5927\u7AEF MM\0*
-  if (bytes.length >= 4 && ((bytes[0] === 0x49 && bytes[1] === 0x49 && bytes[2] === 0x2a && bytes[3] === 0x00)
-    || (bytes[0] === 0x4d && bytes[1] === 0x4d && bytes[2] === 0x00 && bytes[3] === 0x2a))) return "image/tiff";
-  const textPrefix = bytes.subarray(0, Math.min(bytes.length, 1024)).toString("utf8").replace(/^\uFEFF/, "").trimStart();
-  if (/^(?:<\?xml[^>]*>\s*)?<svg(?:\s|>)/i.test(textPrefix)) return "image/svg+xml";
+  if (
+    bytes.length >= 4 &&
+    ((bytes[0] === 0x49 &&
+      bytes[1] === 0x49 &&
+      bytes[2] === 0x2a &&
+      bytes[3] === 0x00) ||
+      (bytes[0] === 0x4d &&
+        bytes[1] === 0x4d &&
+        bytes[2] === 0x00 &&
+        bytes[3] === 0x2a))
+  )
+    return "image/tiff";
+  const textPrefix = bytes
+    .subarray(0, Math.min(bytes.length, 1024))
+    .toString("utf8")
+    .replace(/^\uFEFF/, "")
+    .trimStart();
+  if (/^(?:<\?xml[^>]*>\s*)?<svg(?:\s|>)/i.test(textPrefix))
+    return "image/svg+xml";
   return undefined;
 }
 
-function resolveUniqueAttachmentTarget(sessionDir: string, filename: string): string {
+function resolveUniqueAttachmentTarget(
+  sessionDir: string,
+  filename: string,
+): string {
   const initial = resolve(join(sessionDir, filename));
   if (!existsSync(initial)) return initial;
   const extension = extname(filename);
   const stem = basename(filename, extension);
   for (let suffix = 2; suffix < 10_000; suffix += 1) {
-    const candidate = resolve(join(sessionDir, `${stem} (${suffix})${extension}`));
+    const candidate = resolve(
+      join(sessionDir, `${stem} (${suffix})${extension}`),
+    );
     if (!existsSync(candidate)) return candidate;
   }
   throw new Error(`无法为附件分配唯一文件名: ${filename}`);
 }
 
-export function saveFilesToWorkspace(input: WorkspaceSaveFilesInput): AgentSavedFile[] {
+export function saveFilesToWorkspace(
+  input: WorkspaceSaveFilesInput,
+): AgentSavedFile[] {
   const resourcesDir = resolveWorkspaceResourcesDir(input.workspaceSlug);
   const results: AgentSavedFile[] = [];
   const scope = getWorkspaceAttachmentScope(input.workspaceSlug);
@@ -2026,7 +2033,10 @@ export function saveFilesToWorkspace(input: WorkspaceSaveFilesInput): AgentSaved
     mkdirSync(dirname(targetPath), { recursive: true });
     if (file.sourcePath && file.sourcePath.trim()) {
       const resolvedSourcePath = resolve(file.sourcePath);
-      if (!existsSync(resolvedSourcePath) || !statSync(resolvedSourcePath).isFile()) {
+      if (
+        !existsSync(resolvedSourcePath) ||
+        !statSync(resolvedSourcePath).isFile()
+      ) {
         throw new Error(`源文件不存在: ${file.filename}`);
       }
       copyFileSync(resolvedSourcePath, targetPath);
@@ -2037,10 +2047,14 @@ export function saveFilesToWorkspace(input: WorkspaceSaveFilesInput): AgentSaved
       throw new Error(`缺少文件内容: ${file.filename}`);
     }
     results.push({ filename: file.filename, targetPath });
-    if (file.sourcePath && file.sourcePath.trim() && isExternalSourcePath(input.workspaceSlug, file.sourcePath)) {
+    if (
+      file.sourcePath &&
+      file.sourcePath.trim() &&
+      isExternalSourcePath(input.workspaceSlug, file.sourcePath)
+    ) {
       upsertAttachmentMeta(scope, targetPath, {
         label: "外部附加",
-        absoluteSourcePath: resolve(file.sourcePath)
+        absoluteSourcePath: resolve(file.sourcePath),
       });
     } else {
       deleteAttachmentMeta(scope, targetPath);
@@ -2050,7 +2064,9 @@ export function saveFilesToWorkspace(input: WorkspaceSaveFilesInput): AgentSaved
   return results;
 }
 
-export function saveFilesToWorkspaceRoot(input: WorkspaceSaveFilesInput): AgentSavedFile[] {
+export function saveFilesToWorkspaceRoot(
+  input: WorkspaceSaveFilesInput,
+): AgentSavedFile[] {
   const workspaceRoot = resolveWorkspaceRootDir(input.workspaceSlug);
   const results: AgentSavedFile[] = [];
 
@@ -2062,7 +2078,10 @@ export function saveFilesToWorkspaceRoot(input: WorkspaceSaveFilesInput): AgentS
     mkdirSync(dirname(targetPath), { recursive: true });
     if (file.sourcePath && file.sourcePath.trim()) {
       const resolvedSourcePath = resolve(file.sourcePath);
-      if (!existsSync(resolvedSourcePath) || !statSync(resolvedSourcePath).isFile()) {
+      if (
+        !existsSync(resolvedSourcePath) ||
+        !statSync(resolvedSourcePath).isFile()
+      ) {
         throw new Error(`源文件不存在: ${file.filename}`);
       }
       copyFileSync(resolvedSourcePath, targetPath);
@@ -2078,7 +2097,9 @@ export function saveFilesToWorkspaceRoot(input: WorkspaceSaveFilesInput): AgentS
   return results;
 }
 
-export function copyFolderToSession(input: AgentCopyFolderInput): AgentSavedFile[] {
+export function copyFolderToSession(
+  input: AgentCopyFolderInput,
+): AgentSavedFile[] {
   const sessionDir = resolveSessionDir(input.workspaceSlug, input.threadId);
   const sourcePath = resolve(input.sourcePath);
   if (!existsSync(sourcePath)) {
@@ -2088,7 +2109,8 @@ export function copyFolderToSession(input: AgentCopyFolderInput): AgentSavedFile
     throw new Error("源目录不存在");
   }
 
-  const folderName = sourcePath.split(/[\\/]/).filter(Boolean).pop() ?? "folder";
+  const folderName =
+    sourcePath.split(/[\\/]/).filter(Boolean).pop() ?? "folder";
   const targetDir = resolve(join(sessionDir, folderName));
   if (!isWithin(sessionDir, targetDir)) {
     throw new Error("目标路径越界");
@@ -2097,13 +2119,19 @@ export function copyFolderToSession(input: AgentCopyFolderInput): AgentSavedFile
     throw new Error("目标路径已存在同名文件");
   }
 
-  assertAttachmentMetadataHealthy(getThreadAttachmentScope(input.workspaceSlug, input.threadId));
+  assertAttachmentMetadataHealthy(
+    getThreadAttachmentScope(input.workspaceSlug, input.threadId),
+  );
   cpSync(sourcePath, targetDir, { recursive: true });
   if (isExternalSourcePath(input.workspaceSlug, sourcePath, input.threadId)) {
-    upsertAttachmentMeta(getThreadAttachmentScope(input.workspaceSlug, input.threadId), targetDir, {
-      label: "外部附加",
-      absoluteSourcePath: sourcePath
-    });
+    upsertAttachmentMeta(
+      getThreadAttachmentScope(input.workspaceSlug, input.threadId),
+      targetDir,
+      {
+        label: "外部附加",
+        absoluteSourcePath: sourcePath,
+      },
+    );
   }
 
   const results: AgentSavedFile[] = [];
@@ -2122,7 +2150,9 @@ export function copyFolderToSession(input: AgentCopyFolderInput): AgentSavedFile
   return results;
 }
 
-export function copyFolderToWorkspace(input: WorkspaceCopyFolderInput): AgentSavedFile[] {
+export function copyFolderToWorkspace(
+  input: WorkspaceCopyFolderInput,
+): AgentSavedFile[] {
   const resourcesDir = resolveWorkspaceResourcesDir(input.workspaceSlug);
   const sourcePath = resolve(input.sourcePath);
   if (!existsSync(sourcePath)) {
@@ -2132,7 +2162,8 @@ export function copyFolderToWorkspace(input: WorkspaceCopyFolderInput): AgentSav
     throw new Error("源目录不存在");
   }
 
-  const folderName = sourcePath.split(/[\\/]/).filter(Boolean).pop() ?? "folder";
+  const folderName =
+    sourcePath.split(/[\\/]/).filter(Boolean).pop() ?? "folder";
   const targetDir = resolve(join(resourcesDir, folderName));
   if (!isWithin(resourcesDir, targetDir)) {
     throw new Error("目标路径越界");
@@ -2141,13 +2172,19 @@ export function copyFolderToWorkspace(input: WorkspaceCopyFolderInput): AgentSav
     throw new Error("目标路径已存在同名文件");
   }
 
-  assertAttachmentMetadataHealthy(getWorkspaceAttachmentScope(input.workspaceSlug));
+  assertAttachmentMetadataHealthy(
+    getWorkspaceAttachmentScope(input.workspaceSlug),
+  );
   cpSync(sourcePath, targetDir, { recursive: true });
   if (isExternalSourcePath(input.workspaceSlug, sourcePath)) {
-    upsertAttachmentMeta(getWorkspaceAttachmentScope(input.workspaceSlug), targetDir, {
-      label: "外部附加",
-      absoluteSourcePath: sourcePath
-    });
+    upsertAttachmentMeta(
+      getWorkspaceAttachmentScope(input.workspaceSlug),
+      targetDir,
+      {
+        label: "外部附加",
+        absoluteSourcePath: sourcePath,
+      },
+    );
   }
 
   const results: AgentSavedFile[] = [];
@@ -2167,12 +2204,19 @@ export function copyFolderToWorkspace(input: WorkspaceCopyFolderInput): AgentSav
 }
 
 export function attachWorkspaceResourceToThread(
-  input: AttachWorkspaceResourceToThreadInput
+  input: AttachWorkspaceResourceToThreadInput,
 ): AttachWorkspaceResourceToThreadResult {
   const workspaceScope = getWorkspaceAttachmentScope(input.workspaceSlug);
-  const threadScope = getThreadAttachmentScope(input.workspaceSlug, input.threadId);
+  const threadScope = getThreadAttachmentScope(
+    input.workspaceSlug,
+    input.threadId,
+  );
   const resourcesDir = resolveWorkspaceResourcesDir(input.workspaceSlug);
-  const sourcePath = resolveSafePath(resourcesDir, input.sourcePath, "目标路径超出工作区共享目录");
+  const sourcePath = resolveSafePath(
+    resourcesDir,
+    input.sourcePath,
+    "目标路径超出工作区共享目录",
+  );
   const sessionDir = resolveSessionDir(input.workspaceSlug, input.threadId);
   if (!existsSync(sourcePath)) {
     throw new Error("目标不存在");
