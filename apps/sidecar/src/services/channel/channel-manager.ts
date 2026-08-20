@@ -16,6 +16,7 @@ import {
 import { getSuggestedProviderModels, normalizeChannelModel, parseConnectionModelRef, PROVIDER_API_FAMILIES } from "@lume/shared";
 import { parseModelRef } from "./model-selection";
 import { createLogger } from "../infra/logger";
+import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import type {
   Channel,
   ChannelCreateInput,
@@ -41,28 +42,57 @@ function fetchConnection(input: string, init: RequestInit = {}): Promise<Respons
   });
 }
 
-function readConfig(): ChannelsConfig {
+// ---------------------------------------------------------------------------
+// 配置读写与并发控制（#159）
+//
+// readConfig 是热路径（listChannels 被每次模型解析调用），保持无锁快读；
+// 仅当归一化需要回写时才拿锁做 RMW（锁内重读，避免覆盖并发写入）。
+// create/update/delete 全程持锁（withIndexMutationLock 非重入：锁内一律走
+// readConfigUnlocked/writeConfigUnlocked，禁止再调公开版）。testChannel 的网络部分
+// 在锁外，仅最终 health 字段写回经公开 updateChannel 进锁，并发编辑天然保留。
+// ---------------------------------------------------------------------------
+function channelsLockPath(): string {
+  return `${getChannelsPath()}.lock`;
+}
+
+function readConfigUnlocked(): { config: ChannelsConfig; changed: boolean } {
   const configPath = getChannelsPath();
-  if (!existsSync(configPath)) return { version: CONFIG_VERSION, channels: [] };
+  if (!existsSync(configPath)) return { config: { version: CONFIG_VERSION, channels: [] }, changed: false };
   try {
     const raw = readFileSync(configPath, "utf-8");
     const parsed = JSON.parse(raw) as ChannelsConfig;
     const normalized = normalizeChannelsConfig(parsed);
-    if (normalized.changed) {
-      writeConfig(normalized.config);
-    }
-    return normalized.config;
+    return { config: normalized.config, changed: normalized.changed };
   } catch (error) {
     log.error("failed to read channel configuration", { error });
-    return { version: CONFIG_VERSION, channels: [] };
+    return { config: { version: CONFIG_VERSION, channels: [] }, changed: false };
   }
 }
 
-function writeConfig(config: ChannelsConfig): void {
+function writeConfigUnlocked(config: ChannelsConfig): void {
   const configPath = getChannelsPath();
   const temporary = `${configPath}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(temporary, JSON.stringify(config, null, 2), { encoding: "utf-8", flag: "wx" });
   renameSync(temporary, configPath);
+}
+
+function readConfig(): ChannelsConfig {
+  const unlocked = readConfigUnlocked();
+  if (!unlocked.changed) return unlocked.config;
+  return withIndexMutationLock(channelsLockPath(), () => {
+    const latest = readConfigUnlocked();
+    if (latest.changed) {
+      writeConfigUnlocked(latest.config);
+    }
+    return latest.config;
+  });
+}
+
+/** 持锁 read-modify-write；action 内通过 writeConfigUnlocked 写回。 */
+function mutateConfig<T>(action: (config: ChannelsConfig) => T): T {
+  return withIndexMutationLock(channelsLockPath(), () => {
+    return action(readConfigUnlocked().config);
+  });
 }
 
 function normalizeProviderForStorage(provider: string): Channel["provider"] {
@@ -167,131 +197,134 @@ export function isChannelConnectionUsable(channel: Channel): boolean {
 }
 
 export function createChannel(input: ChannelCreateInput): Channel {
-  const config = readConfig();
-  const now = Date.now();
-  const normalizedProvider = normalizeProviderForStorage(input.provider);
-  const normalizedDefaultModelId = input.defaultModelId?.trim() || undefined;
-  const normalizedFallbackModelIds = (input.fallbackModelIds ?? [])
-    .map((id) => id.trim())
-    .filter((id) => id.length > 0);
-  const id = randomUUID();
-  if (input.apiKey.trim()) setConnectionApiKey(id, input.apiKey);
-  const channel: Channel = {
-    id,
-    name: input.name,
-    provider: normalizedProvider,
-    protocol: input.protocol ?? resolveConnectionProtocol(
-      normalizedProvider,
-      input.baseUrl,
-      input.apiFamily,
-      input.openaiApiMode,
-    ),
-    authType: input.apiKey.trim() ? "api-key" : (input.authType ?? "none"),
-    ...(input.accountLabel?.trim() ? { accountLabel: input.accountLabel.trim() } : {}),
-    baseUrl: input.baseUrl.trim().replace(/\/+$/, ""),
-    apiKey: "",
-    models: input.models.map((model) => normalizeChannelModel({
-      ...model,
-      source: model.source ?? "manual",
-      provider: normalizedProvider
-    })),
-    defaultModelId: normalizedDefaultModelId,
-    fallbackModelIds: normalizedFallbackModelIds,
-    enabled: input.enabled,
-    createdAt: now,
-    updatedAt: now,
-    ...(input.apiFamily ? { apiFamily: input.apiFamily } : {}),
-    ...(input.openaiApiMode ? { openaiApiMode: input.openaiApiMode } : {}),
-    ...(input.providerId ? { providerId: input.providerId } : {}),
-  };
-  config.channels.push(channel);
-  writeConfig(config);
-  return toChannelView(channel);
+  return mutateConfig((config) => {
+    const now = Date.now();
+    const normalizedProvider = normalizeProviderForStorage(input.provider);
+    const normalizedDefaultModelId = input.defaultModelId?.trim() || undefined;
+    const normalizedFallbackModelIds = (input.fallbackModelIds ?? [])
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0);
+    const id = randomUUID();
+    if (input.apiKey.trim()) setConnectionApiKey(id, input.apiKey);
+    const channel: Channel = {
+      id,
+      name: input.name,
+      provider: normalizedProvider,
+      protocol: input.protocol ?? resolveConnectionProtocol(
+        normalizedProvider,
+        input.baseUrl,
+        input.apiFamily,
+        input.openaiApiMode,
+      ),
+      authType: input.apiKey.trim() ? "api-key" : (input.authType ?? "none"),
+      ...(input.accountLabel?.trim() ? { accountLabel: input.accountLabel.trim() } : {}),
+      baseUrl: input.baseUrl.trim().replace(/\/+$/, ""),
+      apiKey: "",
+      models: input.models.map((model) => normalizeChannelModel({
+        ...model,
+        source: model.source ?? "manual",
+        provider: normalizedProvider
+      })),
+      defaultModelId: normalizedDefaultModelId,
+      fallbackModelIds: normalizedFallbackModelIds,
+      enabled: input.enabled,
+      createdAt: now,
+      updatedAt: now,
+      ...(input.apiFamily ? { apiFamily: input.apiFamily } : {}),
+      ...(input.openaiApiMode ? { openaiApiMode: input.openaiApiMode } : {}),
+      ...(input.providerId ? { providerId: input.providerId } : {}),
+    };
+    config.channels.push(channel);
+    writeConfigUnlocked(config);
+    return toChannelView(channel);
+  });
 }
 
 export function updateChannel(id: string, input: ChannelUpdateInput): Channel {
-  const config = readConfig();
-  const idx = config.channels.findIndex((c) => c.id === id);
-  if (idx === -1) throw new Error(`渠道不存在: ${id}`);
-  const existing = config.channels[idx] as Channel;
-  const provider = input.provider ? normalizeProviderForStorage(input.provider) : existing.provider;
-  const oauthProviderChanged = provider !== existing.provider && existing.authType === "oauth";
-  const connectionChanged = input.provider !== undefined
-    || input.baseUrl !== undefined
-    || input.apiKey !== undefined
-    || input.authType !== undefined
-    || input.apiFamily !== undefined
-    || input.openaiApiMode !== undefined
-    || input.providerId !== undefined;
-  if (input.apiKey?.trim()) {
-    setConnectionApiKey(id, input.apiKey);
-    deleteConnectionOAuthCredential(id);
-  } else if (input.authType === "none" || oauthProviderChanged) {
-    deleteConnectionCredentials(id);
-  }
-  const protocol = input.protocol ?? (
-    input.provider !== undefined
+  return mutateConfig((config) => {
+    const idx = config.channels.findIndex((c) => c.id === id);
+    if (idx === -1) throw new Error(`渠道不存在: ${id}`);
+    const existing = config.channels[idx] as Channel;
+    const provider = input.provider ? normalizeProviderForStorage(input.provider) : existing.provider;
+    const oauthProviderChanged = provider !== existing.provider && existing.authType === "oauth";
+    const connectionChanged = input.provider !== undefined
       || input.baseUrl !== undefined
+      || input.apiKey !== undefined
+      || input.authType !== undefined
       || input.apiFamily !== undefined
       || input.openaiApiMode !== undefined
-      ? resolveConnectionProtocol(
-        provider,
-        input.baseUrl ?? existing.baseUrl,
-        input.apiFamily ?? existing.apiFamily,
-        input.openaiApiMode ?? existing.openaiApiMode,
-      )
-      : existing.protocol
-  );
-  const updated: Channel = {
-    ...existing,
-    ...input,
-    provider,
-    protocol,
-    ...(input.accountLabel !== undefined ? { accountLabel: input.accountLabel.trim() || undefined } : {}),
-    ...(input.apiKey?.trim() ? { authType: "api-key" as const, accountLabel: undefined } : {}),
-    ...(input.authType === "none" ? { accountLabel: undefined } : {}),
-    ...(oauthProviderChanged && !input.apiKey?.trim()
-      ? { authType: "none" as const, accountLabel: undefined }
-      : {}),
-    ...(connectionChanged
-      ? { healthStatus: "unknown" as const, healthMessage: undefined, lastTestedAt: undefined }
-      : {}),
-    baseUrl: input.baseUrl ? input.baseUrl.trim().replace(/\/+$/, "") : existing.baseUrl,
-    apiKey: input.apiKey?.trim() ? "" : existing.apiKey,
-    ...(input.models
-      ? {
-          models: input.models.map((model) => normalizeChannelModel({
-            ...model,
-            source: model.source ?? "manual",
-            provider: input.provider ? normalizeProviderForStorage(input.provider) : existing.provider
-          }))
-        }
-      : {}),
-    ...(input.defaultModelId !== undefined
-      ? { defaultModelId: input.defaultModelId.trim() || undefined }
-      : {}),
-    ...(input.fallbackModelIds !== undefined
-      ? {
-          fallbackModelIds: input.fallbackModelIds
-            .map((id) => id.trim())
-            .filter((id) => id.length > 0)
-        }
-      : {}),
-    ...(input.apiFamily !== undefined ? { apiFamily: input.apiFamily } : {}),
-    updatedAt: Date.now()
-  };
-  config.channels[idx] = updated;
-  writeConfig(config);
-  return toChannelView(updated);
+      || input.providerId !== undefined;
+    if (input.apiKey?.trim()) {
+      setConnectionApiKey(id, input.apiKey);
+      deleteConnectionOAuthCredential(id);
+    } else if (input.authType === "none" || oauthProviderChanged) {
+      deleteConnectionCredentials(id);
+    }
+    const protocol = input.protocol ?? (
+      input.provider !== undefined
+        || input.baseUrl !== undefined
+        || input.apiFamily !== undefined
+        || input.openaiApiMode !== undefined
+        ? resolveConnectionProtocol(
+          provider,
+          input.baseUrl ?? existing.baseUrl,
+          input.apiFamily ?? existing.apiFamily,
+          input.openaiApiMode ?? existing.openaiApiMode,
+        )
+        : existing.protocol
+    );
+    const updated: Channel = {
+      ...existing,
+      ...input,
+      provider,
+      protocol,
+      ...(input.accountLabel !== undefined ? { accountLabel: input.accountLabel.trim() || undefined } : {}),
+      ...(input.apiKey?.trim() ? { authType: "api-key" as const, accountLabel: undefined } : {}),
+      ...(input.authType === "none" ? { accountLabel: undefined } : {}),
+      ...(oauthProviderChanged && !input.apiKey?.trim()
+        ? { authType: "none" as const, accountLabel: undefined }
+        : {}),
+      ...(connectionChanged
+        ? { healthStatus: "unknown" as const, healthMessage: undefined, lastTestedAt: undefined }
+        : {}),
+      baseUrl: input.baseUrl ? input.baseUrl.trim().replace(/\/+$/, "") : existing.baseUrl,
+      apiKey: input.apiKey?.trim() ? "" : existing.apiKey,
+      ...(input.models
+        ? {
+            models: input.models.map((model) => normalizeChannelModel({
+              ...model,
+              source: model.source ?? "manual",
+              provider: input.provider ? normalizeProviderForStorage(input.provider) : existing.provider
+            }))
+          }
+        : {}),
+      ...(input.defaultModelId !== undefined
+        ? { defaultModelId: input.defaultModelId.trim() || undefined }
+        : {}),
+      ...(input.fallbackModelIds !== undefined
+        ? {
+            fallbackModelIds: input.fallbackModelIds
+              .map((id) => id.trim())
+              .filter((id) => id.length > 0)
+          }
+        : {}),
+      ...(input.apiFamily !== undefined ? { apiFamily: input.apiFamily } : {}),
+      updatedAt: Date.now()
+    };
+    config.channels[idx] = updated;
+    writeConfigUnlocked(config);
+    return toChannelView(updated);
+  });
 }
 
 export function deleteChannel(id: string): void {
-  const config = readConfig();
-  const idx = config.channels.findIndex((c) => c.id === id);
-  if (idx === -1) throw new Error(`渠道不存在: ${id}`);
-  config.channels.splice(idx, 1);
-  writeConfig(config);
-  deleteConnectionCredentials(id);
+  mutateConfig((config) => {
+    const idx = config.channels.findIndex((c) => c.id === id);
+    if (idx === -1) throw new Error(`渠道不存在: ${id}`);
+    config.channels.splice(idx, 1);
+    writeConfigUnlocked(config);
+    deleteConnectionCredentials(id);
+  });
 }
 
 export function decryptApiKey(channelId: string): string {

@@ -7,6 +7,9 @@ import {
 } from "./im-config-manager";
 import { getImProvider, type ImWorker } from "./provider-registry";
 import { routeInboundImMessage } from "./im-message-router";
+import { createLogger } from "../infra/logger";
+
+const log = createLogger("im-runtime");
 
 let providersLoaded = false;
 /**
@@ -57,7 +60,10 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
         await routeInboundImMessage(m);
       },
       updateAccount: (id, input) => {
-        void updateAccountFn(id, input);
+        // utilityProcess 下 unhandledRejection=throw，回写失败不能崩进程（如账号已被删除）
+        void Promise.resolve(updateAccountFn(id, input)).catch((error: unknown) => {
+          log.warn("worker 状态回写失败", { id, error: errorMessage(error) });
+        });
       },
     });
   });
@@ -110,9 +116,12 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
       if (!worker) return;
       worker.stop();
       workers.delete(accountId);
-      void updateAccountFn(accountId, {
+      void Promise.resolve(updateAccountFn(accountId, {
         status: "stopped",
         lastStoppedAt: Date.now()
+      })).catch((error: unknown) => {
+        // stopAll 触发时账号可能已被删除（updateImAccount throw），floating reject 会崩进程
+        log.warn("停止状态回写失败", { accountId, error: errorMessage(error) });
       });
     },
 

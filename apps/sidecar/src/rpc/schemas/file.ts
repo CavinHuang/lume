@@ -174,9 +174,15 @@ export const externalDirAddInputSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 export const externalDirRemoveInputSchema = externalDirAddInputSchema;
-export const externalDirEntriesInputSchema = z
-  .object({ absolutePath: externalDirPathSchema })
-  .strict();
+// 列举必须携带 scope：service 校验 absolutePath 命中该 scope 注册表（自身或后代）后才列举
+export const externalDirEntriesInputSchema = z.discriminatedUnion("kind", [
+  externalDirThreadScopeSchema
+    .extend({ absolutePath: externalDirPathSchema })
+    .strict(),
+  externalDirWorkspaceScopeSchema
+    .extend({ absolutePath: externalDirPathSchema })
+    .strict(),
+]);
 export const legacyFileRefConversionInputSchema = z.discriminatedUnion(
   "recordKind",
   [
@@ -227,50 +233,68 @@ export const searchWorkspaceFilesInputSchema = z.object({
   rootPath: z.string().optional(),
 });
 
-export const saveFilesToThreadInputSchema = z.object({
-  workspaceSlug: optionalIdSchema,
-  threadId: idSchema,
-  clientSubmissionId: idSchema.optional(),
-  files: z
-    .array(
-      z
-        .object({
-          id: idSchema.optional(),
-          filename: z.string().min(1),
-          mediaType: z.string().min(1).optional(),
-          size: z
-            .number()
-            .int()
-            .min(0)
-            .max(AGENT_ATTACHMENT_LIMITS.maxFileBytes)
-            .optional(),
-          data: z
-            .string()
-            .max(Math.ceil((AGENT_ATTACHMENT_LIMITS.maxFileBytes * 4) / 3) + 4)
-            .optional(),
-          sourcePath: z.string().min(1).optional(),
-        })
-        .refine((file) => file.data !== undefined || !!file.sourcePath, {
-          message: "文件必须提供 data 或 sourcePath",
-        }),
-    )
-    .max(AGENT_ATTACHMENT_LIMITS.maxCount),
-});
+// 单文件 base64 上限（25MB × 4/3 + padding 余量）；批总量对齐 service 层 maxTotalBytes 限额
+const attachmentTotalBytesRefine = (files: Array<{ data?: string }>) =>
+  files.reduce((total, file) => total + (file.data?.length ?? 0), 0) <=
+  Math.ceil((AGENT_ATTACHMENT_LIMITS.maxTotalBytes * 4) / 3);
 
-export const saveFilesToWorkspaceInputSchema = z.object({
-  workspaceSlug: idSchema,
-  files: z.array(
-    z
-      .object({
-        filename: z.string().min(1),
-        data: z.string().optional(),
-        sourcePath: z.string().min(1).optional(),
-      })
-      .refine((file) => !!file.data || !!file.sourcePath, {
-        message: "文件必须提供 data 或 sourcePath",
-      }),
-  ),
-});
+export const saveFilesToThreadInputSchema = z
+  .object({
+    workspaceSlug: optionalIdSchema,
+    threadId: idSchema,
+    clientSubmissionId: idSchema.optional(),
+    files: z
+      .array(
+        z
+          .object({
+            id: idSchema.optional(),
+            filename: z.string().min(1),
+            mediaType: z.string().min(1).optional(),
+            size: z
+              .number()
+              .int()
+              .min(0)
+              .max(AGENT_ATTACHMENT_LIMITS.maxFileBytes)
+              .optional(),
+            data: z
+              .string()
+              .max(Math.ceil((AGENT_ATTACHMENT_LIMITS.maxFileBytes * 4) / 3) + 4)
+              .optional(),
+            sourcePath: z.string().min(1).optional(),
+          })
+          .refine((file) => file.data !== undefined || !!file.sourcePath, {
+            message: "文件必须提供 data 或 sourcePath",
+          }),
+      )
+      .max(AGENT_ATTACHMENT_LIMITS.maxCount),
+  })
+  .refine(({ files }) => attachmentTotalBytesRefine(files), {
+    message: `附件总大小超过 ${Math.floor(AGENT_ATTACHMENT_LIMITS.maxTotalBytes / 1024 / 1024)}MB 上限`,
+  });
+
+export const saveFilesToWorkspaceInputSchema = z
+  .object({
+    workspaceSlug: idSchema,
+    files: z
+      .array(
+        z
+          .object({
+            filename: z.string().min(1),
+            data: z
+              .string()
+              .max(Math.ceil((AGENT_ATTACHMENT_LIMITS.maxFileBytes * 4) / 3) + 4)
+              .optional(),
+            sourcePath: z.string().min(1).optional(),
+          })
+          .refine((file) => !!file.data || !!file.sourcePath, {
+            message: "文件必须提供 data 或 sourcePath",
+          }),
+      )
+      .max(AGENT_ATTACHMENT_LIMITS.maxCount),
+  })
+  .refine(({ files }) => attachmentTotalBytesRefine(files), {
+    message: `附件总大小超过 ${Math.floor(AGENT_ATTACHMENT_LIMITS.maxTotalBytes / 1024 / 1024)}MB 上限`,
+  });
 
 export const copyFolderToThreadInputSchema = z.object({
   sourcePath: idSchema,

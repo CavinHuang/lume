@@ -783,6 +783,7 @@ export function UnifiedFileTree({
         {!query.trim() && (
           <ExternalDirsSection
             dirs={externalDirs}
+            getScopeInput={externalScopeInput}
             onRemove={(scope, absolutePath) => void removeExternalDir(scope, absolutePath)}
           />
         )}

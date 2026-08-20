@@ -25,28 +25,36 @@ export interface ExternalDirsByScope {
   workspace: ExternalDirEntry[]
 }
 
+/** sidecar 端 externalDirEntriesInputSchema 的 scope 判别联合（列举请求需携带 scope 供注册表校验） */
+export type ExternalDirScopeInput =
+  | { kind: 'thread'; workspaceSlug: string; threadId: string; fileContextId?: string }
+  | { kind: 'workspace'; workspaceSlug: string }
+
 const EXTERNAL_DIR_SECTIONS: { scope: keyof ExternalDirsByScope; label: string }[] = [
   { scope: 'thread', label: '附加目录（会话）' },
   { scope: 'workspace', label: '附加目录（工作区·共享）' },
 ]
 
-export function ExternalDirsSection({ dirs, onRemove }: {
+export function ExternalDirsSection({ dirs, onRemove, getScopeInput }: {
   dirs: ExternalDirsByScope
   onRemove: (scope: keyof ExternalDirsByScope, absolutePath: string) => void
+  getScopeInput: (scope: keyof ExternalDirsByScope) => ExternalDirScopeInput | null
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [entriesCache, setEntriesCache] = useState<Record<string, ExternalDirEntryItem[]>>({})
 
-  const toggle = async (absolutePath: string) => {
+  const toggle = async (scope: keyof ExternalDirsByScope, absolutePath: string) => {
     const next = new Set(expanded)
     if (next.has(absolutePath)) next.delete(absolutePath)
     else {
       next.add(absolutePath)
       if (!(absolutePath in entriesCache)) {
+        const scopeInput = getScopeInput(scope)
+        if (!scopeInput) return
         try {
           const entries = await sidecarCall<ExternalDirEntryItem[]>(
             AGENT_IPC_CHANNELS.LIST_EXTERNAL_DIR_ENTRIES,
-            { absolutePath },
+            { ...scopeInput, absolutePath },
           )
           setEntriesCache((cache) => ({ ...cache, [absolutePath]: entries }))
         } catch (error) {
@@ -87,7 +95,7 @@ export function ExternalDirsSection({ dirs, onRemove }: {
                 available={entry.available}
                 expanded={expanded}
                 entriesCache={entriesCache}
-                onToggle={(path) => void toggle(path)}
+                onToggle={(scope, path) => void toggle(scope, path)}
                 onRemove={onRemove}
               />
             ))}
@@ -108,7 +116,7 @@ function ExternalDirRow(props: {
   available: boolean
   expanded: Set<string>
   entriesCache: Record<string, ExternalDirEntryItem[]>
-  onToggle: (path: string) => void
+  onToggle: (scope: keyof ExternalDirsByScope, path: string) => void
   onRemove: (scope: keyof ExternalDirsByScope, path: string) => void
 }) {
   const { path, name, isDirectory, available } = props
@@ -120,14 +128,14 @@ function ExternalDirRow(props: {
       <div
         className="group flex h-7 items-center gap-1 pr-1 text-[12px] hover:bg-foreground/[0.05]"
         style={{ paddingLeft: 6 + props.depth * 12 }}
-        onClick={() => { if (isDirectory && available) props.onToggle(path) }}
+        onClick={() => { if (isDirectory && available) props.onToggle(props.scope, path) }}
       >
         <Button
           variant="ghost"
           size="icon-sm"
           className="size-5 shrink-0"
           disabled={!isDirectory || !available}
-          onClick={(event) => { event.stopPropagation(); if (isDirectory && available) props.onToggle(path) }}
+          onClick={(event) => { event.stopPropagation(); if (isDirectory && available) props.onToggle(props.scope, path) }}
         >
           <ChevronDown size={12} className={cn('transition-transform', !open && '-rotate-90')} />
         </Button>

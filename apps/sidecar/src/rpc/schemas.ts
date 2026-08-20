@@ -1,5 +1,5 @@
 import { parseLumeCapabilityReference } from "@lume/agent-sdk";
-import { normalizeMcpTransport } from "@lume/shared";
+import { normalizeMcpTransport, type ProviderType } from "@lume/shared";
 import { idSchema, optionalIdSchema, z } from "./validation";
 import {
   relativeThreadPathSchema,
@@ -846,7 +846,7 @@ export const memoryRememberToolInputSchema = z.object({
   workspaceSlug: idSchema,
   scope: memoryScopeInputSchema.optional(),
   kind: memoryKindSchema.optional(),
-  content: z.string().min(1),
+  content: z.string().min(1).max(2 * 1024 * 1024),
   title: z.string().optional(),
   tags: z.array(z.string()).optional(),
   importance: z
@@ -1571,7 +1571,8 @@ export const readBootstrapFileInputSchema = z.object({
 export const writeBootstrapFileInputSchema = z.object({
   workspaceSlug: idSchema,
   fileType: bootstrapFileTypeSchema,
-  content: z.string(),
+  // 引导文件是文本（CLAUDE.md/AGENTS.md 等），10MB 对齐 fileSelectionEdit 限额足够
+  content: z.string().max(10 * 1024 * 1024)
 });
 
 export const proxySettingsInputSchema = z.object({
@@ -1748,3 +1749,86 @@ export const readLogFileInputSchema = z
 export const lumeConfigEffectiveInputSchema = z.object({
   workspaceSlug: optionalIdSchema,
 });
+
+
+// ---------------------------------------------------------------------------
+// Channel 系 RPC 入参（#155：此前 channel-handlers 全裸 cast，畸形入参 TypeError + 任意字段持久化）
+// 枚举为 shared 字面量 union 的运行时镜像（shared 无 const 数组）；新增 ProviderType 需同步此处
+// ---------------------------------------------------------------------------
+const channelProviderTypeSchema = z.enum([
+  "anthropic", "anthropic-compatible", "openai", "openai-codex", "github-copilot", "xai", "jina",
+  "siliconflow", "openrouter", "deepseek", "google", "zai", "zai-coding-plan", "moonshot",
+  "minimax", "minimax-cn", "doubao", "qwen", "qwen-portal", "kimi-coding", "ollama", "lmstudio",
+  "opencode", "custom", "aliyun-coding-plan", "volcengine-coding-plan", "minimax-token-plan",
+  "xiaomi-token-plan", "stepfun", "stepfun-coding-plan"
+] as const satisfies readonly ProviderType[]);
+const channelProtocolSchema = z.enum([
+  "openai-completions", "openai-responses", "openai-codex-responses", "anthropic-messages", "google-generative-ai"
+] as const);
+const channelAuthTypeSchema = z.enum(["api-key", "oauth", "none"] as const);
+const channelApiFamilySchema = z.enum(["anthropic", "openai", "google"] as const);
+const channelOpenAiApiModeSchema = z.enum(["chat-completions", "responses"] as const);
+const channelHealthStatusSchema = z.enum(["unknown", "available", "unavailable"] as const);
+const channelSyncStatusSchema = z.enum(["idle", "syncing", "success", "error"] as const);
+
+const channelModelSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  alias: z.string().optional(),
+  capabilities: z.object({
+    chat: z.boolean().optional(),
+    embedding: z.boolean().optional(),
+    vision: z.boolean().optional(),
+    tool: z.boolean().optional(),
+    reasoning: z.boolean().optional(),
+    rerank: z.boolean().optional(),
+    image: z.boolean().optional()
+  }).strict().optional(),
+  protocol: channelProtocolSchema.optional(),
+  source: z.enum(["discovered", "manual"]).optional(),
+  contextWindow: z.number().int().positive().optional(),
+  maxOutputTokens: z.number().int().positive().optional(),
+  enabled: z.boolean()
+}).strict();
+
+export const channelCreateInputSchema = z.object({
+  name: z.string().min(1),
+  provider: channelProviderTypeSchema,
+  protocol: channelProtocolSchema.optional(),
+  authType: channelAuthTypeSchema.optional(),
+  accountLabel: z.string().optional(),
+  baseUrl: z.string().min(1),
+  // 明文 API Key；未修改时 renderer 传空串，不得加 min(1)
+  apiKey: z.string(),
+  models: z.array(channelModelSchema),
+  defaultModelId: z.string().optional(),
+  fallbackModelIds: z.array(z.string()).optional(),
+  apiFamily: channelApiFamilySchema.optional(),
+  openaiApiMode: channelOpenAiApiModeSchema.optional(),
+  providerId: z.string().optional(),
+  enabled: z.boolean()
+}).strict();
+
+export const channelUpdateInputSchema = channelCreateInputSchema.partial().extend({
+  healthStatus: channelHealthStatusSchema.optional(),
+  healthMessage: z.string().optional(),
+  lastTestedAt: z.number().optional(),
+  syncStatus: channelSyncStatusSchema.optional(),
+  syncMessage: z.string().optional(),
+  lastSyncedAt: z.number().optional()
+}).strict();
+
+export const channelUpdateParamsSchema = z.object({
+  id: idSchema,
+  input: channelUpdateInputSchema
+}).strict();
+
+export const channelDeleteParamsSchema = z.object({ id: idSchema }).strict();
+
+export const fetchModelsInputSchema = z.object({
+  provider: channelProviderTypeSchema,
+  baseUrl: z.string().min(1),
+  apiKey: z.string(),
+  apiFamily: channelApiFamilySchema.optional(),
+  openaiApiMode: channelOpenAiApiModeSchema.optional()
+}).strict();

@@ -1,16 +1,29 @@
 import type { ToolDefinition } from "@lume/agent-sdk";
 import type { ImThreadBinding } from "@lume/shared";
-import { readFileSync } from "node:fs";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { getImThreadBindingByThreadId } from "../../../im/im-thread-binding-store";
 import { sendBoundImTextMessage, sendBoundImMediaMessage } from "../../../im/im-send-service";
 import { createSdkJsonResultTool } from "../sdk-tool-result";
 import { createLogger } from "../../../infra/logger";
+import { isPathWithinRoot } from "../../permissions/permission-rules";
+import { WikiSafeHttpFetchService } from "../../../wiki/safe-http-fetch";
 
 const log = createLogger("im-tool");
 
+/** URL 图片抓取上限：IM 平台媒体上传普遍在 10MB 量级，超限直接拒绝。 */
+const IM_URL_MEDIA_MAX_BYTES = 10 * 1024 * 1024;
+/** 本地文件发送上限：对齐附件限额（AGENT_ATTACHMENT_LIMITS.maxFileBytes）。 */
+const IM_FILE_MEDIA_MAX_BYTES = 25 * 1024 * 1024;
+/** 复用 wiki 的安全抓取（DNS 全公网校验+固定 IP 连接+大小上限）；忽略代理 fail-closed 策略，保持 fetch 直连语义。 */
+const imMediaFetcher = new WikiSafeHttpFetchService();
+
 export interface CreateImToolsInput {
   threadId: string;
+  /** 线程文件根目录（lumeWorkDir/files，image_gen 等产物落点）；与工具 ctx.cwd 共同构成 file_path 允许根。 */
+  filesRoot?: string;
+  /** URL 媒体安全抓取器；测试经构造器 DI 注入（node:http+dns 无法用 globalThis.fetch mock）。 */
+  mediaFetcher?: WikiSafeHttpFetchService;
   sendTextMessage?: (input: {
     binding: ImThreadBinding;
     text: string;
@@ -74,8 +87,8 @@ export function createSdkImTools(input: CreateImToolsInput): ToolDefinition[] {
       description: `Send an image or file to the IM conversation bound to this Lume thread. Use this when you need to share a generated image, chart, diagram, or file with the user on the other end. The destination is fixed by the current thread binding.
 
 Supports:
-- image_url: Download an image from a URL and send it
-- file_path: Read a local file and send it as an attachment
+- image_url: Download an image from a public http(s) URL and send it (private-network addresses are blocked, max 10MB)
+- file_path: Read a local file and send it as an attachment (must be inside the workspace or the thread files root, max 25MB)
 
 Provide exactly one of image_url or file_path. You may optionally include a caption.`,
       inputSchema: {
@@ -86,7 +99,7 @@ Provide exactly one of image_url or file_path. You may optionally include a capt
           caption: { type: "string", description: "Optional caption text to send before the media." },
         },
       },
-      async call(args) {
+      async call(args, context) {
         const binding = getImThreadBindingByThreadId(input.threadId);
         if (!binding) {
           log.warn("发送媒体失败：线程未绑定 IM 会话", { threadId: input.threadId });
@@ -97,6 +110,9 @@ Provide exactly one of image_url or file_path. You may optionally include a capt
         const filePath = typeof args.file_path === "string" && args.file_path.trim() ? args.file_path.trim() : undefined;
         const caption = typeof args.caption === "string" && args.caption.trim() ? args.caption.trim() : undefined;
 
+        if (imageUrl && filePath) {
+          throw new Error("image_url 与 file_path 只能提供一个。");
+        }
         if (!imageUrl && !filePath) {
           throw new Error("必须提供 image_url 或 file_path 之一。");
         }
@@ -105,18 +121,20 @@ Provide exactly one of image_url or file_path. You may optionally include a capt
 
         const sendMediaMessage = input.sendMediaMessage ?? sendBoundImMediaMessage;
 
-        // Image via URL
+        // Image via URL — 安全抓取：scheme/端口/DNS 私网校验 + 固定 IP 连接 + 大小上限
         if (imageUrl) {
-          const response = await fetch(imageUrl);
-          if (!response.ok) {
-            throw new Error(`下载图片失败: ${response.status} ${response.statusText}`);
+          let fetched;
+          try {
+            fetched = await (input.mediaFetcher ?? imMediaFetcher).fetch(imageUrl, { maxBytes: IM_URL_MEDIA_MAX_BYTES, proxyPolicy: "ignore" });
+          } catch (error) {
+            throw new Error(`下载图片失败: ${error instanceof Error ? error.message : String(error)}`);
           }
-          const fileData = Buffer.from(await response.arrayBuffer());
+          const fileData = Buffer.from(fetched.body);
           await sendMediaMessage({
             binding,
             mediaType: "image",
             fileData,
-            fileName: extractFileName(imageUrl, "image.jpg"),
+            fileName: extractFileName(fetched.finalUrl, "image.jpg"),
             caption,
           });
           return {
@@ -128,10 +146,26 @@ Provide exactly one of image_url or file_path. You may optionally include a capt
           };
         }
 
-        // File via local path — infer media type from extension
+        // File via local path — 仅允许工作区（ctx.cwd）或线程文件根内的文件，realpath 防符号链接逃逸
         if (filePath) {
-          const fileData = readFileSync(filePath);
-          const ext = basename(filePath).split(".").pop()?.toLowerCase() ?? "";
+          const resolved = await realpath(filePath).catch(() => null);
+          if (!resolved) {
+            throw new Error(`文件不存在: ${filePath}`);
+          }
+          const allowedRoots = await Promise.all(
+            [context.cwd, input.filesRoot]
+              .filter((root): root is string => Boolean(root))
+              .map((root) => realpath(root).catch(() => null)),
+          );
+          if (!allowedRoots.some((root) => root !== null && isPathWithinRoot(resolved, root))) {
+            throw new Error("file_path 仅允许工作区或线程文件根目录内的文件。");
+          }
+          const info = await stat(resolved);
+          if (info.size > IM_FILE_MEDIA_MAX_BYTES) {
+            throw new Error(`文件超过 ${Math.floor(IM_FILE_MEDIA_MAX_BYTES / 1024 / 1024)}MB 上限。`);
+          }
+          const fileData = await readFile(resolved);
+          const ext = basename(resolved).split(".").pop()?.toLowerCase() ?? "";
           const mediaType: "image" | "file" =
             ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext)
               ? "image"
@@ -140,7 +174,7 @@ Provide exactly one of image_url or file_path. You may optionally include a capt
             binding,
             mediaType,
             fileData,
-            fileName: basename(filePath),
+            fileName: basename(resolved),
             caption,
           });
           return {
