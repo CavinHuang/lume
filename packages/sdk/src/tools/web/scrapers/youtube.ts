@@ -97,6 +97,23 @@ function cleanVttToText(vtt: string): string {
 }
 
 /**
+ * List files in the same directory as `prefix` whose name starts with the
+ * prefix basename (optionally filtered by suffix). The sidecar bundle runs in
+ * a Node runtime, where Bun-only APIs throw a ReferenceError (#233).
+ */
+async function listTmpFiles(prefix: string, suffix?: string): Promise<string[]> {
+	try {
+		const names = await fs.readdir(path.dirname(prefix));
+		const base = path.basename(prefix);
+		return names
+			.filter((name) => name.startsWith(base) && (!suffix || name.endsWith(suffix)))
+			.map((name) => path.join(path.dirname(prefix), name));
+	} catch {
+		return [];
+	}
+}
+
+/**
  * Handle YouTube URLs - fetch metadata and transcript
  */
 export const handleYouTube: SpecialHandler = async (
@@ -247,10 +264,10 @@ export const handleYouTube: SpecialHandler = async (
 			);
 
 			if (subResult.ok) {
-				// Find the downloaded subtitle file using glob
-				const subFiles = await Array.fromAsync(new Bun.Glob(`${tmpBase}*.vtt`).scan({ absolute: true }));
+				// Find the downloaded subtitle file
+				const subFiles = await listTmpFiles(tmpBase, ".vtt");
 				if (subFiles.length > 0) {
-					const vttContent = await Bun.file(subFiles[0]).text();
+					const vttContent = await fs.readFile(subFiles[0], "utf-8");
 					transcript = cleanVttToText(vttContent);
 					transcriptSource = "manual";
 					notes.push("Using manual subtitles");
@@ -279,9 +296,9 @@ export const handleYouTube: SpecialHandler = async (
 			);
 
 			if (autoResult.ok) {
-				const subFiles = await Array.fromAsync(new Bun.Glob(`${tmpBase}*.vtt`).scan({ absolute: true }));
+				const subFiles = await listTmpFiles(tmpBase, ".vtt");
 				if (subFiles.length > 0) {
-					const vttContent = await Bun.file(subFiles[0]).text();
+					const vttContent = await fs.readFile(subFiles[0], "utf-8");
 					transcript = cleanVttToText(vttContent);
 					transcriptSource = "auto-generated";
 					notes.push("Using auto-generated captions");
@@ -290,7 +307,7 @@ export const handleYouTube: SpecialHandler = async (
 		}
 	} finally {
 		// Cleanup temp files (fire-and-forget with error suppression)
-		Array.fromAsync(new Bun.Glob(`${tmpBase}*`).scan({ absolute: true }))
+		listTmpFiles(tmpBase)
 			.then(tmpFiles => Promise.all(tmpFiles.map(f => fs.unlink(f).catch(() => {}))))
 			.catch(() => {});
 	}
