@@ -399,7 +399,11 @@ export class PluginMarketService {
       throw new PluginMarketError("source_not_found", "plugin install requires source or itemId");
     }
     const source = await this.resolveInspectSource(requestedSource);
-    const inspected = await this.inspectPluginSource(input.workspaceSlug, source);
+    // 直传 github 分支 ref 时，inspect（算 permissionsHash）与 stage（tarball 再下载）是两次独立下载，
+    // 分支推进可架空权限审批（TOCTOU）。先 pin 到 commit SHA 再 inspect+stage 保证同一不可变提交；
+    // recordInstalledPlugin 仍记录原始 ref，保留 updatePlugin 沿分支跟进新版本的能力（转调本方法时再次 pin）。
+    const pinnedSource = await this.pinGithubSourceCommit(source);
+    const inspected = await this.inspectPluginSource(input.workspaceSlug, pinnedSource);
     if (input.acceptedPermissionsHash !== inspected.permissionsHash) {
       throw new PluginMarketError(
         "permission_review_required",
@@ -409,7 +413,7 @@ export class PluginMarketService {
     }
 
     try {
-      const installedRoot = await this.stageInstall(source, inspected.normalized);
+      const installedRoot = await this.stageInstall(pinnedSource, inspected.normalized);
       await this.recordInstalledPlugin({
         plugin: inspected.normalized,
         source,
@@ -1229,6 +1233,13 @@ export class PluginMarketService {
     }
     const resolvedRef = ref;
     return { ...parsed, ref: await this.resolveGitHubCommitSha(parsed.owner, parsed.repo, resolvedRef) };
+  }
+
+  /** github source 的分支/tag ref 解析为 commit SHA（已 pin 的原样返回），保证 inspect 与 stage 指向同一不可变提交。 */
+  private async pinGithubSourceCommit(source: PluginSourceRef): Promise<PluginSourceRef> {
+    if (source.type !== "github" || /^[a-f0-9]{40}$/i.test(source.ref)) return source;
+    const sha = await this.resolveGitHubCommitSha(source.owner, source.repo, source.ref);
+    return { ...source, ref: sha };
   }
 
   private async resolveGitHubCommitSha(owner: string, repo: string, ref: string): Promise<string> {

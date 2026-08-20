@@ -1129,8 +1129,13 @@ describe("PluginMarketService", () => {
   });
 
   test("github install reports tarball download failures", async () => {
+    const sha = "a".repeat(40);
+    const tarballUrls: string[] = [];
     const fetchImpl = (async (url: string) => {
-      if (url.includes("/git/trees/main")) {
+      if (url.includes("/commits/main")) {
+        return Response.json({ sha });
+      }
+      if (url.includes("/git/trees/")) {
         return Response.json({ tree: [{ path: "lume-plugin.json", type: "blob" }] });
       }
       if (url.includes("raw.githubusercontent.com")) {
@@ -1141,6 +1146,7 @@ describe("PluginMarketService", () => {
         }), { status: 200 });
       }
       if (url.includes("/tarball/")) {
+        tarballUrls.push(url);
         return new Response("nope", { status: 500 });
       }
       return Response.json({ default_branch: "main" });
@@ -1157,5 +1163,8 @@ describe("PluginMarketService", () => {
       source: { type: "github", owner: "acme", repo: "plugin", ref: "main", url: "https://github.com/acme/plugin" },
       acceptedPermissionsHash: inspected.permissionsHash
     })).rejects.toMatchObject({ code: "install_failed" });
+    // 安装阶段的 tarball 下载必须 pin 到 commit SHA（而非分支名），
+    // 保证权限审批（permissionsHash）与落盘代码指向同一提交
+    expect(tarballUrls).toEqual([`https://api.github.com/repos/acme/plugin/tarball/${sha}`]);
   });
 });
