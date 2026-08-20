@@ -51,26 +51,63 @@ describe("browser CDP input", () => {
     ])
   })
 
+  test("dispatches Enter as a native text-producing key event", async () => {
+    const sender = recorder()
+
+    await dispatchBrowserKey(sender, "Enter")
+
+    expect(sender.calls.map((call) => [call.params.type, call.params.key, call.params.text])).toEqual([
+      ["keyDown", "Enter", "\r"],
+      ["keyUp", "Enter", undefined],
+    ])
+  })
+
   test("focuses the deepest DOM node at a page coordinate", async () => {
     const sender = recorder({ backendNodeId: 42 })
 
+    await focusBrowserPoint(sender, { x: 10.2, y: 20.7 })
+
+    expect(sender.calls.map((call) => call.method)).toEqual([
+      "DOM.enable",
+      "DOM.getNodeForLocation",
+      "DOM.focus",
+      "DOM.resolveNode",
+      "Runtime.callFunctionOn",
+      "Runtime.releaseObject",
+    ])
+    expect(sender.calls[1]?.params).toEqual({ x: 10, y: 21, includeUserAgentShadowDOM: true })
+    expect(sender.calls[2]?.params).toEqual({ backendNodeId: 42 })
+    expect(sender.calls[5]?.params).toEqual({ objectId: "object-1" })
+  })
+
+  test("focuses the associated control when the physical hit node is a label", async () => {
+    const sender = recorder({ backendNodeId: 42 }, true)
+
     await focusBrowserPoint(sender, { x: 10, y: 20 })
 
-    expect(sender.calls).toEqual([
-      { method: "DOM.enable", params: {} },
-      { method: "DOM.getNodeForLocation", params: { x: 10, y: 20, includeUserAgentShadowDOM: true } },
-      { method: "DOM.focus", params: { backendNodeId: 42 } },
+    expect(sender.calls.map((call) => call.method)).toEqual([
+      "DOM.enable",
+      "DOM.getNodeForLocation",
+      "DOM.focus",
+      "DOM.resolveNode",
+      "Runtime.callFunctionOn",
+      "Runtime.releaseObject",
     ])
+    expect(sender.calls.find((call) => call.method === "Runtime.callFunctionOn")?.params.functionDeclaration).toContain("label?.control")
   })
 })
 
-function recorder(result: unknown = {}): BrowserCdpCommandSender & { calls: Array<{ method: string; params: Record<string, unknown> }> } {
+function recorder(result: unknown = {}, failFocus = false): BrowserCdpCommandSender & { calls: Array<{ method: string; params: Record<string, unknown> }> } {
   const calls: Array<{ method: string; params: Record<string, unknown> }> = []
   return {
     calls,
     async sendCommand(method, params = {}) {
       calls.push({ method, params })
-      return method === "DOM.getNodeForLocation" ? result : {}
+      if (method === "DOM.getNodeForLocation") return result
+      if (method === "DOM.focus" && failFocus) throw new Error("Element is not focusable")
+      if (method === "DOM.resolveNode") return { object: { objectId: "object-1" } }
+      if (method === "Runtime.callFunctionOn") return { result: { value: true } }
+      return {}
     },
   }
 }

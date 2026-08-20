@@ -48,7 +48,21 @@ function queryLocatorInPage(locator: BrowserLocator, operation: BrowserLocatorQu
     return item.mode === "exact" ? value === item.value : value.includes(item.value)
   }
   const role = (element: Element) => element.getAttribute("role") || ({ A: "link", BUTTON: "button", INPUT: (element as HTMLInputElement).type === "checkbox" ? "checkbox" : "textbox", TEXTAREA: "textbox", SELECT: "combobox" } as Record<string, string>)[element.tagName] || "generic"
-  const name = (element: Element) => element.getAttribute("aria-label") || (element as HTMLElement).innerText || element.textContent || ""
+  const normalizedText = (value: string | null | undefined) => (value || "").replace(/\s+/g, " ").trim()
+  const name = (element: Element) => {
+    const labelledBy = normalizedText((element.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
+      .map(id => element.ownerDocument.getElementById(id)?.textContent || "").join(" "))
+    if (labelledBy) return labelledBy
+    const ariaLabel = normalizedText(element.getAttribute("aria-label"))
+    if (ariaLabel) return ariaLabel
+    const labels = "labels" in element && element.labels ? Array.from(element.labels as NodeListOf<HTMLLabelElement>) : []
+    const label = normalizedText(labels.map(item => (item as HTMLElement).innerText || item.textContent || "").join(" "))
+    if (label) return label
+    if (element instanceof HTMLInputElement && ["button", "submit", "reset"].includes(element.type) && element.value) return normalizedText(element.value)
+    const content = normalizedText((element as HTMLElement).innerText || element.textContent)
+    if (content) return content
+    return normalizedText(element.getAttribute("title") || element.getAttribute("placeholder") || element.getAttribute("alt"))
+  }
   const visible = (element: Element) => { const rect = (element as HTMLElement).getBoundingClientRect(); const style = getComputedStyle(element); return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" }
   const enabled = (element: Element) => !(element as HTMLButtonElement).disabled && element.getAttribute("aria-disabled") !== "true"
   const all = (scope: Element | Document, selector = "*") => Array.from(scope.querySelectorAll(selector))
@@ -122,7 +136,8 @@ function queryLocatorInPage(locator: BrowserLocator, operation: BrowserLocatorQu
   const y = Math.max(rect.top, Math.min(rect.bottom, rect.top + rect.height / 2))
   const ownerDocument = element.ownerDocument
   const top = ownerDocument.elementFromPoint(x, y)
-  if (top && top !== element && !element.contains(top)) throw new Error("action_denied")
+  const hitLabel = top instanceof HTMLElement ? top.closest("label") : null
+  if (top && top !== element && !element.contains(top) && (!(hitLabel instanceof HTMLLabelElement) || hitLabel.control !== element)) throw new Error("action_denied")
   let topX = x
   let topY = y
   let frame = ownerDocument.defaultView?.frameElement

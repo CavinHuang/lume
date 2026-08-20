@@ -52,12 +52,36 @@ export async function dispatchBrowserClick(
 export async function focusBrowserPoint(sender: BrowserCdpCommandSender, point: BrowserCdpPoint): Promise<void> {
   await sender.sendCommand("DOM.enable")
   const located = await sender.sendCommand("DOM.getNodeForLocation", {
-    x: point.x,
-    y: point.y,
+    x: Math.round(point.x),
+    y: Math.round(point.y),
     includeUserAgentShadowDOM: true,
   }) as { backendNodeId?: unknown }
   if (!Number.isInteger(located.backendNodeId)) throw Object.assign(new Error("stale_target"), { code: "stale_target" })
-  await sender.sendCommand("DOM.focus", { backendNodeId: located.backendNodeId })
+  await sender.sendCommand("DOM.focus", { backendNodeId: located.backendNodeId }).catch(() => undefined)
+  // DOM.focus may succeed without changing focus for labels and nested presentation nodes.
+  // Resolve the exact hit node to verify focus and redirect associated labels to their control.
+  const resolved = await sender.sendCommand("DOM.resolveNode", { backendNodeId: located.backendNodeId }) as { object?: { objectId?: unknown } }
+  const objectId = typeof resolved.object?.objectId === "string" ? resolved.object.objectId : ""
+  if (!objectId) throw Object.assign(new Error("stale_target"), { code: "stale_target" })
+  try {
+    const focused = await sender.sendCommand("Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: `function() {
+        const element = this.nodeType === 1 ? this : this.parentElement;
+        if (!element) return false;
+        const label = element.closest?.("label");
+        const target = label?.control || element.closest?.("input,textarea,select,button,a[href],[tabindex],[contenteditable=true]") || element;
+        if (typeof target.focus !== "function") return false;
+        target.focus({ preventScroll: true });
+        const active = target.ownerDocument?.activeElement;
+        return active === target || Boolean(active && target.contains?.(active));
+      }`,
+      returnByValue: true,
+    }) as { result?: { value?: unknown } }
+    if (focused.result?.value !== true) throw Object.assign(new Error("stale_target"), { code: "stale_target" })
+  } finally {
+    await sender.sendCommand("Runtime.releaseObject", { objectId }).catch(() => undefined)
+  }
 }
 
 export async function dispatchBrowserText(
@@ -87,23 +111,15 @@ export async function dispatchBrowserKey(sender: BrowserCdpCommandSender, keySpe
     })
   }
 
+  const text = parsed.key.text && (activeModifiers & 7) === 0 ? parsed.key.text : undefined
   await sender.sendCommand("Input.dispatchKeyEvent", {
-    type: "rawKeyDown",
+    type: text ? "keyDown" : "rawKeyDown",
     key: parsed.key.key,
     code: parsed.key.code,
+    ...(text ? { text, unmodifiedText: text } : {}),
     modifiers: activeModifiers,
     windowsVirtualKeyCode: parsed.key.virtualKeyCode,
   })
-  if (parsed.key.text && (activeModifiers & 7) === 0) {
-    await sender.sendCommand("Input.dispatchKeyEvent", {
-      type: "char",
-      key: parsed.key.key,
-      code: parsed.key.code,
-      text: parsed.key.text,
-      unmodifiedText: parsed.key.text,
-      modifiers: activeModifiers,
-    })
-  }
   await sender.sendCommand("Input.dispatchKeyEvent", {
     type: "keyUp",
     key: parsed.key.key,
@@ -144,7 +160,7 @@ function keyDefinition(value: string, shifted: boolean): KeyDefinition {
   const aliases: Record<string, KeyDefinition> = {
     Backspace: { key: "Backspace", code: "Backspace", virtualKeyCode: 8 },
     Delete: { key: "Delete", code: "Delete", virtualKeyCode: 46 },
-    Enter: { key: "Enter", code: "Enter", virtualKeyCode: 13 },
+    Enter: { key: "Enter", code: "Enter", text: "\r", virtualKeyCode: 13 },
     Escape: { key: "Escape", code: "Escape", virtualKeyCode: 27 },
     Space: { key: " ", code: "Space", text: " ", virtualKeyCode: 32 },
     Tab: { key: "Tab", code: "Tab", virtualKeyCode: 9 },
