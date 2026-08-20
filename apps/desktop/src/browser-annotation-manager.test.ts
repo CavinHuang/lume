@@ -1,6 +1,6 @@
 // Task 43: manager onGuestMessage editor 命令（editor-submit/cancel/delete）的 TDD 测试。
 // 编辑器分支走 store+syncGuest+emit，不调 BrowserWindow/popup，故 getParentWindow→null 即可。
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, mock, test } from 'bun:test'
@@ -938,6 +938,67 @@ describe('#130 孤儿截图清理接线', () => {
         })
       }
       expect(existsSync(pngPath)).toBe(false)
+    })
+  })
+})
+
+// #188:历史存量孤儿截图全量 GC。引用并集 = store 会话 ∪ transcript 文本扫描 ∪ mtime 宽限。
+// 朴素只扫 store 会误删 saveReviewScreenshot 产物与已提交聊天附件的引用。
+describe('#188 孤儿截图全量 GC', () => {
+  const OLD = new Date(Date.now() - 2 * 3_600_000)
+
+  function png(directory: string, threadId: string, uuid: string, old = true): string {
+    const path = join(directory, 'browser', 'review-resources', threadId, `${uuid}.png`)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, Buffer.from('png'))
+    if (old) utimesSync(path, OLD, OLD)
+    return path
+  }
+
+  test('三源并集之外且超宽限的才删；store/transcript 引用与新鲜文件保留', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      const storeUuid = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa'
+      const transcriptUuid = 'bbbbbbbb-2222-4222-8222-bbbbbbbb2222'
+      const orphanUuid = 'cccccccc-3333-4333-8333-cccccccccccc'
+      const freshOrphanUuid = 'dddddddd-4444-4444-8444-dddddddddddd'
+
+      // 源1:store 会话引用
+      manager.store.saveComment({
+        id: 'comment-store',
+        origin: 'browser-annotation' as const,
+        tab: { id: 'tab-1', origin: 'browser-tab' as const, backend: 'iab' as const, browserId: 'lume-iab' as const, tabId: 'tab-1', title: 'Example', url: ANCHOR.url, generation: 1, ownerThreadId: 'thread-1' },
+        anchor: ANCHOR,
+        body: 'kept by store',
+        screenshotRef: `browser-review-screenshot:thread-1:${storeUuid}`,
+      })
+      // 源2:transcript 引用(runtime-core 布局)
+      const transcriptDir = join(directory, 'agent', 'runtime-core', 'sessions', 'thread-1')
+      mkdirSync(transcriptDir, { recursive: true })
+      writeFileSync(join(transcriptDir, 'transcript.jsonl'), JSON.stringify({
+        message: { parts: [{ type: 'browser-annotation', attachment: { screenshotRef: `browser-review-screenshot:thread-1:${transcriptUuid}` } }] },
+      }))
+
+      const keptStore = png(directory, 'thread-1', storeUuid)
+      const keptTranscript = png(directory, 'thread-1', transcriptUuid)
+      const orphan = png(directory, 'thread-1', orphanUuid)
+      const freshOrphan = png(directory, 'thread-1', freshOrphanUuid, false)
+      const keepallNote = join(directory, 'browser', 'review-resources', 'thread-1', 'notes.txt')
+      writeFileSync(keepallNote, 'not a screenshot')
+      // 线程已删除(无任何引用源)的目录整体孤儿
+      const deadThreadOrphan = png(directory, 'thread-gone', 'eeeeeeee-5555-4555-8555-eeeeeeeeeeee')
+
+      const result = manager.runOrphanScreenshotSweep()
+
+      expect(existsSync(keptStore)).toBe(true)
+      expect(existsSync(keptTranscript)).toBe(true)
+      expect(existsSync(freshOrphan)).toBe(true)
+      expect(existsSync(keepallNote)).toBe(true)
+      expect(existsSync(orphan)).toBe(false)
+      expect(existsSync(deadThreadOrphan)).toBe(false)
+      expect(existsSync(join(directory, 'browser', 'review-resources', 'thread-gone'))).toBe(false)
+      expect(result.scanned).toBe(5)
+      expect(result.deleted).toBe(2)
     })
   })
 })
