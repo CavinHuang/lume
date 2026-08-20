@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import YAML from "yaml";
 import {
@@ -869,15 +869,40 @@ function writeYamlAtomic(path: string, payload: string): void {
   }
 }
 
+// lume.yaml 读取缓存：getEffectiveLumeConfig 调用面 48 处且多数在 run 热路径，
+// 每次全量读盘 + YAML.parse/stringify。以 path 为键（getLumeConfigYamlPath 实时读
+// LUME_CONFIG_DIR，测试同进程切目录时仅 mtime+size 可能跨目录同值串缓存）；键在
+// 写盘之后采样（normalize 写盘会改 mtime，读前采样则永久 miss）。
+// 返回对象是缓存共享引用：调用方不得原地修改——唯一 mutate 方 updateLumeConfigSection
+// 写盘后 refresh 覆盖，最终一致。
+const lumeConfigCache = new Map<string, { mtimeMs: number; size: number; value: LumeConfigFile }>();
+
+function refreshLumeConfigCache(path: string, value: LumeConfigFile): void {
+  try {
+    const stats = statSync(path);
+    lumeConfigCache.set(path, { mtimeMs: stats.mtimeMs, size: stats.size, value });
+  } catch {
+    lumeConfigCache.delete(path);
+  }
+}
+
 function readOrCreateLumeConfig(): LumeConfigFile {
   const path = getLumeConfigYamlPath();
   if (!existsSync(path)) {
     const defaultConfig = createDefaultLumeConfig();
     writeYamlAtomic(path, YAML.stringify(defaultConfig));
+    refreshLumeConfigCache(path, defaultConfig);
     return defaultConfig;
   }
 
   try {
+    const cached = lumeConfigCache.get(path);
+    if (cached) {
+      const stats = statSync(path);
+      if (cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+        return cached.value;
+      }
+    }
     const raw = readConfigFileContent(path);
     const normalized = normalizeLumeConfigFile(YAML.parse(raw) as unknown);
     const normalizedYaml = YAML.stringify(normalized);
@@ -886,6 +911,7 @@ function readOrCreateLumeConfig(): LumeConfigFile {
     if (normalizedYaml !== raw) {
       writeYamlAtomic(path, normalizedYaml);
     }
+    refreshLumeConfigCache(path, normalized);
     return normalized;
   } catch (error) {
     log.warn("failed to parse lume.yaml; using default config", { error });
@@ -1138,6 +1164,8 @@ export function updateLumeConfigSection(input: UpdateLumeConfigSectionInput): Lu
   assignPath(target as Record<string, unknown>, input.path, input.value);
   const normalized = normalizeLumeConfigFile(file);
   writeYamlAtomic(getLumeConfigYamlPath(), YAML.stringify(normalized));
+  // file 是缓存共享引用且已被 mutate，写盘后立即以 normalized 刷新缓存防污染
+  refreshLumeConfigCache(getLumeConfigYamlPath(), normalized);
 
   appendAuditEntry({
     at: new Date().toISOString(),

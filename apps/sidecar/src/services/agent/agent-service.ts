@@ -305,29 +305,24 @@ function hasTurnLimitedMarker(item: unknown): boolean {
   );
 }
 
-async function findTurnLimitedRun(threadId: string): Promise<LumeRunState | null> {
-  const store = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
-  const runs = await store.listByThread(threadId);
-  const latestRun = runs.at(-1);
+function isTurnLimitedRun(latestRun: LumeRunState | null): LumeRunState | null {
   return latestRun?.status === "completed" && latestRun.generatedItems.some(hasTurnLimitedMarker)
     ? latestRun
     : null;
 }
 
-async function findStaleRunningRun(threadId: string): Promise<LumeRunState | null> {
-  const store = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
-  const runs = await store.listByThread(threadId);
-  const latestRun = runs.at(-1);
+function isStaleRunningRun(latestRun: LumeRunState | null): LumeRunState | null {
   return latestRun && STALE_RUN_STATUSES.has(latestRun.status) && latestRun.input.userMessage.trim().length > 0
     ? latestRun
     : null;
 }
 
 async function resolveModelFacingUserMessage(threadId: string, userMessage: string): Promise<string> {
-  const [staleRun, turnLimitedRun] = await Promise.all([
-    findStaleRunningRun(threadId),
-    findTurnLimitedRun(threadId)
-  ]);
+  // 两个判定都只消费 latestRun,一次扫描共用(store 每次全目录 readdirSync + 逐 run 读盘)
+  const runs = await createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId)).listByThread(threadId);
+  const latestRun = runs.at(-1) ?? null;
+  const staleRun = isStaleRunningRun(latestRun);
+  const turnLimitedRun = isTurnLimitedRun(latestRun);
   const recoveryContext = staleRun
     ? buildStaleRunRecoveryContext(staleRun)
     : turnLimitedRun

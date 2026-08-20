@@ -32,7 +32,7 @@ export async function listThreadRuntimeEvents(input: {
 }): Promise<AgentThreadRuntimeEventsResult> {
   const runs = await createFileBackedLumeRunStateStore(input.sessionDir).listByThread(input.threadId);
   // F4 分界:总线快照非空 → 该线程历史单读总线,已迁类不再投影;空/缺 → 全量旧投影
-  const busHasEvents = (await getThreadEventBus(input.sessionDir).read(input.threadId)).length > 0;
+  const busHasEvents = getThreadEventBus(input.sessionDir).hasEvents(input.threadId);
   const runEvents = runs
     .flatMap(projectRunStateToReplayEvents)
     .filter((event) => !busHasEvents || RETAINED_HYDRATE_EVENT_TYPES.has(event.type));

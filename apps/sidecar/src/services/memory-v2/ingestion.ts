@@ -257,7 +257,20 @@ export async function ingestWorkspaceMemoryFiles(input: {
       });
       continue;
     }
-    const file = readWorkspacePath(input.workspaceSlug, path);
+    // 超限抛错只跳过该文件，不能中断整批 workspace 记忆摄取
+    let file: { content: string; truncated: boolean };
+    try {
+      file = readWorkspacePath(input.workspaceSlug, path);
+    } catch (error) {
+      skippedActions.suppressed += 1;
+      skippedItems.push({
+        sourcePath: sourceRef,
+        statement: path,
+        action: "suppressed",
+        reason: error instanceof Error ? error.message : "读取文件失败"
+      });
+      continue;
+    }
     sources.push({
       id: `workspace:${path}`,
       kind: "workspace_file",
@@ -431,7 +444,20 @@ export async function ingestExternalMemorySources(
         });
         continue;
       }
-      const file = readWorkspacePath(input.workspaceSlug, source.path);
+      // 超限抛错只跳过该文件，不能中断整批 workspace 记忆摄取
+      let file: { content: string; truncated: boolean };
+      try {
+        file = readWorkspacePath(input.workspaceSlug, source.path);
+      } catch (error) {
+        skippedActions.suppressed += 1;
+        skippedItems.push({
+          sourcePath: sourceRef,
+          statement: source.path,
+          action: "suppressed",
+          reason: error instanceof Error ? error.message : "读取文件失败"
+        });
+        continue;
+      }
       sources.push({
         id: `workspace:${source.path}`,
         kind: "workspace_file",
