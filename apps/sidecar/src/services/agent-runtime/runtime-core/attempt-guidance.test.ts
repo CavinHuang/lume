@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runGuidanceStore } from "../guidance/run-guidance-store";
-import { createCanUseToolHandler } from "./attempt";
+import { createCanUseToolHandler } from "../permissions/can-use-tool";
 
 describe("runtime-core attempt guidance", () => {
   let previousConfigDir: string | undefined;

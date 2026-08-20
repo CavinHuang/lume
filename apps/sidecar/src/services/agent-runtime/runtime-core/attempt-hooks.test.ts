@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveWorkflowPermissionHookResult } from "./attempt";
+import { resolveWorkflowPermissionHookResult } from "../permissions/can-use-tool";
 
 const event = {
   event: "permission.beforeDecision" as const,
