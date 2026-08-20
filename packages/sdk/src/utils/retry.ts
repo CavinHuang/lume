@@ -93,7 +93,25 @@ export async function withRetry<T>(
         retryDelayMs: delay,
         error: err,
       })
-      await new Promise((resolve) => setTimeout(resolve, delay))
+      // Backoff must stay abortable: a fixed sleep would pin the caller for
+      // up to maxDelayMs (30s) after the user cancels (#231).
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timer)
+          reject(new Error('Aborted'))
+        }
+        const timer = setTimeout(() => {
+          abortSignal?.removeEventListener('abort', onAbort)
+          resolve()
+        }, delay)
+        if (abortSignal) {
+          if (abortSignal.aborted) {
+            onAbort()
+            return
+          }
+          abortSignal.addEventListener('abort', onAbort, { once: true })
+        }
+      })
     }
   }
 
