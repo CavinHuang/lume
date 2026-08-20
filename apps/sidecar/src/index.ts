@@ -24,7 +24,8 @@ import {
   writeLogRecord
 } from "./services/infra/logger";
 import { assertSidecarNativeRuntime } from "./services/infra/native-runtime";
-import { createProcessRpcTransport } from "./rpc/process-transport";
+import { createProcessRpcTransport, MAX_RPC_MESSAGE_BYTES } from "./rpc/process-transport";
+import { classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
 import { createReverseRpcRenderClient } from "./services/agent-runtime/tools/web/reverse-rpc-render-client";
 import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/render-client-holder";
 import { setPersistedSettingsMutationWriter } from "./services/system/settings-store";
@@ -169,6 +170,13 @@ function envAutostartEnabled(key: string, defaultEnabled: boolean): boolean {
 }
 
 async function handleRpcLine(line: string): Promise<void> {
+  // 统一 chokepoint：超限消息不进 JSON.parse（防解析期超量内存分配）
+  if (line.length > MAX_RPC_MESSAGE_BYTES) {
+    writeResponse({
+      error: { code: "E_MESSAGE_TOO_LARGE", message: "RPC message exceeds size limit." }
+    });
+    return;
+  }
   let payload: JsonRpcRequest;
   try {
     payload = JSON.parse(line) as JsonRpcRequest;
@@ -180,21 +188,21 @@ async function handleRpcLine(line: string): Promise<void> {
   }
 
   if (payload.id !== undefined && !payload.method) {
-    const pending = pendingBrowserMainRequests.get(String(payload.id));
-    if (!pending) return;
     const responsePayload = payload as JsonRpcResponse & { browserRpc?: { sequence?: unknown; mac?: unknown } };
     const sequence = responsePayload.browserRpc?.sequence;
     const mac = responsePayload.browserRpc?.mac;
     const body = responsePayload.error ? { ok: false, error: responsePayload.error.code } : { ok: true, result: responsePayload.result };
-    if (typeof sequence !== "number" || sequence !== browserRpcInboundSequence + 1 || !verifyBrowserRpcMac("main->sidecar", sequence, String(payload.id), body, mac)) {
-      clearTimeout(pending.timeout);
-      pendingBrowserMainRequests.delete(String(payload.id));
+    const macOk = typeof sequence === "number" && verifyBrowserRpcMac("main->sidecar", sequence, String(payload.id), body, mac);
+    const verdict = classifyBrowserRpcResponse(typeof sequence === "number" ? sequence : 0, macOk, browserRpcInboundSequence);
+    if (verdict === "advance") browserRpcInboundSequence = sequence as number;
+    const pending = pendingBrowserMainRequests.get(String(payload.id));
+    if (!pending) return; // 迟到响应（请求已超时删除）：advance 已治愈序列号，丢弃结果
+    clearTimeout(pending.timeout);
+    pendingBrowserMainRequests.delete(String(payload.id));
+    if (verdict === "reject-pending") {
       pending.reject(new Error("browser transport authentication failed"));
       return;
     }
-    browserRpcInboundSequence = sequence;
-    clearTimeout(pending.timeout);
-    pendingBrowserMainRequests.delete(String(payload.id));
     const response = responsePayload;
     if (response.error) pending.reject(new Error("browser request failed"));
     else pending.resolve(response.result);
