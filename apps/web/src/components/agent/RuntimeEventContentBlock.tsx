@@ -295,7 +295,7 @@ function ExpressionActionIcon({ id }: { id: ExpressionActionId }) {
   return <ListChecks size={14} strokeWidth={1.9} />
 }
 
-export function ExpressionActionBar({
+function ExpressionActionBar({
   actions,
   messageId,
   threadId,
@@ -704,7 +704,7 @@ function UserMessageBlock({
   )
 }
 
-export interface AgentRoleInstructionMessage {
+interface AgentRoleInstructionMessage {
   role: AgentRoleDefinition
   task: string
 }
