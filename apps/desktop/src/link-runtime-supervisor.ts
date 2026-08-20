@@ -62,6 +62,10 @@ export function createLinkRuntimeSupervisor(input: {
     if (!persisted.port) throw new Error("link_port_missing");
     // 并发守卫必须覆盖整个 async 区间：置 starting 要在 await isPortFree 之前，
     // 否则两次并发 start 都能通过最上面的 child/starting 检查，各自 fork 出孤儿进程(#126)
+    // 代际隔离：新 start 使旧 start 的 isCurrent 失效——健康等待期内崩溃→exit 调度 restart→
+    // 旧 start 轮询到新进程健康响应时，其 catch 不得把 stopping/publish 落到新进程头上(#187)。
+    // bump 必须在守卫之后：守卫早返回路径让位给现任 start，不得使其失效。
+    operationGeneration += 1;
     publish("starting");
     const generation = operationGeneration;
     const isCurrent = () => generation === operationGeneration && persisted.enabled && persisted.mode === "local";
@@ -143,6 +147,8 @@ export function createLinkRuntimeSupervisor(input: {
 
   async function connectRemote(): Promise<LinkRuntimeState> {
     if (state.phase === "starting") return state;
+    // 与 start() 对称的代际隔离：新连接尝试使旧 connectRemote 的 stale catch 失效(#187)
+    operationGeneration += 1;
     const origin = persisted.remoteOrigin;
     if (!origin) { publish("offline", "Existing deployment URL is not configured."); await bootstrapDelivery; return state; }
     const generation = operationGeneration;

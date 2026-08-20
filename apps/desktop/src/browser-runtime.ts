@@ -203,6 +203,8 @@ export class BrowserRuntime {
   private readonly workspaces: BrowserWorkspaceStore
   private readonly referenceGrants = new BrowserReferenceGrantStore()
   private readonly annotations: BrowserAnnotationManager
+  private annotationSweepTimer: ReturnType<typeof setTimeout> | null = null
+  private annotationSweepInterval: ReturnType<typeof setInterval> | null = null
   private agentPluginEnabled = false
   private cursorOverlay: BrowserWindow | null = null
   private cursorState: { x: number; y: number; pulse: boolean } | null = null
@@ -278,6 +280,15 @@ export class BrowserRuntime {
       },
     })
     void this.restoreBrowserExtensions()
+    // 历史存量孤儿截图 GC(#188)：启动后延迟跑一次 + 每 24h 一次，unref 不阻塞退出；
+    // 增量丢弃路径(FIFO 淘汰/评论截断)已由 #130 即时清理，此处只兜存量
+    this.annotationSweepTimer = setTimeout(() => {
+      this.annotationSweepTimer = null
+      this.annotations.runOrphanScreenshotSweep()
+    }, 30_000)
+    this.annotationSweepTimer.unref?.()
+    this.annotationSweepInterval = setInterval(() => this.annotations.runOrphanScreenshotSweep(), 24 * 60 * 60_000)
+    this.annotationSweepInterval.unref?.()
     app.on("login", this.loginHandler)
     app.on("certificate-error", this.certificateErrorHandler)
     app.on("select-client-certificate", this.clientCertificateHandler)
@@ -985,6 +996,8 @@ export class BrowserRuntime {
   }
 
   destroy(): void {
+    if (this.annotationSweepTimer) { clearTimeout(this.annotationSweepTimer); this.annotationSweepTimer = null }
+    if (this.annotationSweepInterval) { clearInterval(this.annotationSweepInterval); this.annotationSweepInterval = null }
     this.annotations.destroy()
     this.hideAgentCursor()
     if (this.cursorOverlay && !this.cursorOverlay.isDestroyed()) this.cursorOverlay.close()
