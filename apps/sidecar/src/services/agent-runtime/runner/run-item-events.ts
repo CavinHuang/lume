@@ -7,6 +7,17 @@ import type { LumeRunItem } from "./run-items";
 import type { LumeRunState } from "./run-state";
 import { inferToolMetadata } from "../tools/tool-metadata";
 
+/**
+ * hydrate 投影与终态裁剪共用的判定：run 是否已有带文本的 assistant_message。
+ * 无 assistant_message 的 run 依赖 model_stream delta 重建文本（PR#109 语义），
+ * 该类 run 不可裁剪 model_stream items。
+ */
+export function runHasAssistantMessage(items: LumeRunItem[]): boolean {
+  return items.some((item) =>
+    item.type === "assistant_message" && extractText(item.content).trim().length > 0
+  );
+}
+
 export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEvent[] {
   if (isRuntimeContinuationRun(run)) {
     return [];
@@ -56,9 +67,7 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
     });
   }
 
-  const hasAssistantMessage = run.generatedItems.some((item) =>
-    item.type === "assistant_message" && extractText(item.content).trim().length > 0
-  );
+  const hasAssistantMessage = runHasAssistantMessage(run.generatedItems);
 
   for (let index = 0; index < run.generatedItems.length; index += 1) {
     const item = withInferredSubagentOwner(run.generatedItems, index);
