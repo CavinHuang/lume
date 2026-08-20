@@ -158,7 +158,7 @@ import {
 import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
 import { persistAbortContinuation } from "../interruption/abort-continuation";
 import { classifyToolKind } from "../interruption/approval-service";
-import { getThreadEventBus } from "../events/thread-event-bus";
+import { publishRunDomainEvent } from "../events/bus-bridge";
 import {
   collectAppendContextEffects,
   type LumeWorkflowHookExecutionResult
@@ -1737,22 +1737,7 @@ export function publishBackgroundTaskNotificationToBus(input: {
   if (typeof notification.message === "string") detail.message = notification.message;
   if (typeof notification.summary === "string") detail.summary = notification.summary;
   if (notification.execution !== undefined) detail.execution = notification.execution;
-  void getThreadEventBus(input.sessionDir)
-    .publish(input.threadId, input.runId, {
-      runId: input.runId,
-      turnId: null,
-      ts: Date.now(),
-      kind: "run",
-      phase: "event",
-      detail
-    })
-    .catch((error) => {
-      log.warn("background.task 总线 publish 失败", {
-        threadId: input.threadId,
-        runId: input.runId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    });
+  publishRunDomainEvent({ ...input, label: "background.task", detail });
 }
 
 /**
@@ -1780,22 +1765,7 @@ export function publishLspDiagnosticsToBus(input: {
     diagnostics: message.diagnostics,
     ...(typeof message.tool_use_id === "string" ? { toolUseId: message.tool_use_id } : {})
   };
-  void getThreadEventBus(input.sessionDir)
-    .publish(input.threadId, input.runId, {
-      runId: input.runId,
-      turnId: null,
-      ts: Date.now(),
-      kind: "run",
-      phase: "event",
-      detail
-    })
-    .catch((error) => {
-      log.warn("lsp.diagnostics 总线 publish 失败", {
-        threadId: input.threadId,
-        runId: input.runId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    });
+  publishRunDomainEvent({ ...input, label: "lsp.diagnostics", detail });
 }
 
 /**
@@ -1811,22 +1781,7 @@ export function publishCodingReportToBus(input: {
   report: RuntimeCodingReport;
 }): void {
   const detail: CodingReportDetail = { type: "coding.report", report: input.report };
-  void getThreadEventBus(input.sessionDir)
-    .publish(input.threadId, input.runId, {
-      runId: input.runId,
-      turnId: null,
-      ts: Date.now(),
-      kind: "run",
-      phase: "event",
-      detail
-    })
-    .catch((error) => {
-      log.warn("coding.report 总线 publish 失败", {
-        threadId: input.threadId,
-        runId: input.runId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    });
+  publishRunDomainEvent({ sessionDir: input.sessionDir, threadId: input.threadId, runId: input.runId, label: "coding.report", detail });
 }
 
 /**
