@@ -357,12 +357,10 @@ export class LumeRunner {
         questions: AgentAskUserQuestionQuestion[];
         answers?: Record<string, string>;
       }) => {
-        if (request.answers && typeof request.answers === "object") {
-          return {
-            questions: request.questions,
-            answers: request.answers as Record<string, string>
-          };
-        }
+        // Real answers arrive via canUseTool updatedInput (attempt.ts) and
+        // never reach this handler; echoing request.answers back here would
+        // resurrect the forged-answer channel (#196).
+        void request;
         throw new Error("AskUserQuestion answers missing");
       }) as any);
       await agent.setModel(prepared.modelResolution.resolvedModelId);

@@ -872,6 +872,9 @@ export interface ToolContext {
   /** Update the active working directory for subsequent tool calls in this session. */
   setWorkingDirectory?: (cwd: string) => void
   toolUseId?: string
+  /** True when the engine replaced the tool input via canUseTool updatedInput —
+   *  only then may a tool trust host-injected fields (e.g. AskUserQuestion answers). */
+  permissionUpdatedInput?: boolean
   additionalDirectories?: string[]
   sandbox?: SandboxSettings
   toolConfig?: Record<string, unknown>

@@ -1898,6 +1898,7 @@ export class QueryEngine {
         }
         if (permission.updatedInput !== undefined) {
           block = { ...block, input: permission.updatedInput }
+          toolContext.permissionUpdatedInput = true
         }
       } catch (err: any) {
         if (toolContext.abortSignal?.aborted) throw new Error('aborted')
