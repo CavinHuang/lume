@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { SdkEventEnvelope, SdkEventKind, SdkEventPhase, SdkLifecycleEvent } from "@lume/shared"
-import { getThreadEventBus, ThreadEventBus } from "./thread-event-bus.js"
+import { getThreadEventBus, releaseThreadEventBus, ThreadEventBus } from "./thread-event-bus.js"
 
 let dir: string
 afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); dir = undefined as any })
@@ -100,5 +100,46 @@ describe("ThreadEventBus", () => {
     await bus.publish("th1", "r1", skeletonEvent("message", "update", { type: "message.update", delta: null, partial: { text: "a", toolUses: [] } }))
     await bus.publish("th1", "r1", skeletonEvent("message", "end", { type: "message.end", message: { role: "assistant", content: [] } }))
     expect(received.map((e) => e.phase)).toEqual(["update", "end"])
+  })
+
+  test("hasEvents 与 readFile 截断语义严格一致（F4 分叉判空捷径）", async () => {
+    dir = mkdtempSync(join(tmpdir(), "bus-"))
+    const bus = new ThreadEventBus(dir)
+    expect(bus.hasEvents("th1")).toBe(false) // 文件缺失
+
+    await bus.publish("th1", "r1", skeletonEvent("run", "start"))
+    expect(bus.hasEvents("th1")).toBe(true)
+
+    // 首行即毒行：size>0 但 readFile 截断为空——hasEvents 必须同样判空，
+    // 否则 F4 分叉误判走总线单读，历史两侧（旧投影被裁 + read 也空）都读不到
+    const poisoned = join(dir, "th2.events.jsonl")
+    await Bun.write(poisoned, "not-json\n")
+    expect(bus.hasEvents("th2")).toBe(false)
+
+    // 全空行同 false
+    const blank = join(dir, "th3.events.jsonl")
+    await Bun.write(blank, "\n\n")
+    expect(bus.hasEvents("th3")).toBe(false)
+  })
+
+  test("releaseThreadEventBus 释放线程 state 与实例，重建后 nextSeq 从文件续读", async () => {
+    dir = mkdtempSync(join(tmpdir(), "bus-release-"))
+    const bus = getThreadEventBus(dir)
+    const seq1 = await bus.publish("th1", "r1", skeletonEvent("run", "start"))
+
+    let delivered = 0
+    bus.subscribe("th1", () => { delivered += 1 })
+    releaseThreadEventBus(dir, "th1")
+
+    // 释放后同 bus 实例再 publish（模拟未预期复用）不再触达旧 listener
+    await bus.publish("th1", "r1", skeletonEvent("message", "end"))
+    expect(delivered).toBe(0)
+
+    // 重建实例：seq 从落盘文件续读（两条事件都在），不重置
+    const rebuilt = getThreadEventBus(dir)
+    const all = await rebuilt.read("th1")
+    expect(all.map((e) => e.seq)).toEqual([seq1, seq1 + 1])
+    const seq3 = await rebuilt.publish("th1", "r1", skeletonEvent("run", "end"))
+    expect(seq3).toBe(seq1 + 2)
   })
 })

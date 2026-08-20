@@ -14,7 +14,7 @@ import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest
 } from "../../agent/subagents/subagent-run-registry";
-import { buildBackgroundTaskResultsContext, buildSidecarSubagentRunContext, buildWaitForDelegationsResult, canDelegateFromThread, deriveDelegateTitle, resolveTaskThreadInitialTitle } from "./run";
+import { buildBackgroundTaskResultsContext, buildSidecarSubagentRunContext, buildWaitForDelegationsResult, canDelegateFromThread, deriveDelegateTitle } from "./run";
 
 describe("DelegateTool child thread", () => {
   let prevConfigDir: string | undefined;
@@ -335,33 +335,6 @@ describe("TaskTool child thread (sidebar-visible)", () => {
     const child = createAgentThreadWithModelRef("子任务", undefined, undefined, "ws-1", parent.id);
     archiveAgentThread(parent.id);
     expect(getAgentThreadMeta(child.id)?.status).toBe("archived");
-  });
-
-  test("resolveTaskThreadInitialTitle：description 非空时优先用 description", () => {
-    expect(resolveTaskThreadInitialTitle({ description: "探索代码库", prompt: "探索代码库并报告依赖" }))
-      .toBe("探索代码库");
-  });
-
-  test("resolveTaskThreadInitialTitle：description 缺失时用 prompt（≤20 字原样）", () => {
-    expect(resolveTaskThreadInitialTitle({ prompt: "探索代码库并报告依赖关系图" }))
-      .toBe("探索代码库并报告依赖关系图");
-  });
-
-  test("resolveTaskThreadInitialTitle：prompt 超长时按码点截断到 20 字（不切断 emoji 代理对）", () => {
-    const long = "探索代码库并报告依赖关系图以及模块划分情况和调用链路的更多细节";
-    const result = resolveTaskThreadInitialTitle({ prompt: long });
-    expect(result).toBe(Array.from(long).slice(0, 20).join(""));
-    expect(Array.from(result ?? "").length).toBe(20);
-  });
-
-  test("resolveTaskThreadInitialTitle：description 仅空白时回退到 prompt", () => {
-    expect(resolveTaskThreadInitialTitle({ description: "   \t  ", prompt: "清理无用导入" }))
-      .toBe("清理无用导入");
-  });
-
-  test("resolveTaskThreadInitialTitle：description 与 prompt 皆空时返回 undefined", () => {
-    expect(resolveTaskThreadInitialTitle({})).toBeUndefined();
-    expect(resolveTaskThreadInitialTitle({ description: "  ", prompt: "" })).toBeUndefined();
   });
 });
 

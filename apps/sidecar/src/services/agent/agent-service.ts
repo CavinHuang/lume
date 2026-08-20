@@ -305,28 +305,19 @@ function hasTurnLimitedMarker(item: unknown): boolean {
   );
 }
 
-async function findTurnLimitedRun(threadId: string): Promise<LumeRunState | null> {
-  const store = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
-  // 轻量列表（不解析 items）定位最后一个 run，命中 completed 再单独取 items 判 marker
-  const latest = (await store.listStatesByThread(threadId)).at(-1);
-  if (latest?.status !== "completed") return null;
-  const withItems = await store.get(latest.runId);
-  return withItems && withItems.generatedItems.some(hasTurnLimitedMarker) ? withItems : null;
-}
-
-async function findStaleRunningRun(threadId: string): Promise<LumeRunState | null> {
-  const store = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
-  // 轻量列表判定（state.json 含 status/input）；命中后取 items 供恢复摘要
-  const latest = (await store.listStatesByThread(threadId)).at(-1);
-  if (!latest || !STALE_RUN_STATUSES.has(latest.status) || latest.input.userMessage.trim().length === 0) return null;
-  return (await store.get(latest.runId)) ?? latest;
-}
-
 async function resolveModelFacingUserMessage(threadId: string, userMessage: string): Promise<string> {
-  const [staleRun, turnLimitedRun] = await Promise.all([
-    findStaleRunningRun(threadId),
-    findTurnLimitedRun(threadId)
-  ]);
+  // 轻量列表一次（不解析 items）定位 latest；两个判定互斥（stale 系 vs completed），
+  // 命中后再单独取 items——避免全量 listByThread 逐 run 读盘
+  const store = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
+  const latest = (await store.listStatesByThread(threadId)).at(-1);
+  let staleRun: LumeRunState | null = null;
+  let turnLimitedRun: LumeRunState | null = null;
+  if (latest && STALE_RUN_STATUSES.has(latest.status) && latest.input.userMessage.trim().length > 0) {
+    staleRun = (await store.get(latest.runId)) ?? latest;
+  } else if (latest?.status === "completed") {
+    const withItems = await store.get(latest.runId);
+    turnLimitedRun = withItems && withItems.generatedItems.some(hasTurnLimitedMarker) ? withItems : null;
+  }
   const recoveryContext = staleRun
     ? buildStaleRunRecoveryContext(staleRun)
     : turnLimitedRun

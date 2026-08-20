@@ -7,7 +7,7 @@ import { buildRuntimeAttemptLogData } from "../../agent/agent-log-summary";
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { resolveChannelModelBinding } from "../../channel/channel-manager";
 import { resolveMockAttempt } from "./mock-attempt";
-import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter } from "../runner/types";
+import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter, RunRuntimeCoreAttemptOptions } from "../runner/types";
 import { resolveSubagentInteractiveLabel } from "./subagent-interactive-display";
 import { hasRuntimeCoreSessionTranscript } from "./session-store";
 import {
@@ -56,11 +56,6 @@ import { PluginPermissionRuntime } from "../plugins/permission-runtime.js";
 import { DEFAULT_PLUGIN_STATE_PATH, FilePluginStateStore } from "../plugins/plugin-state-store.js";
 import { evaluatePluginSensitiveGate } from "../plugins/sensitive-gate.js";
 import { SidecarPluginManager } from "../plugins/plugin-manager.js";
-
-interface RunRuntimeCoreAttemptOptions {
-  registerAbort: (threadId: string, abort: () => Promise<void>) => void;
-  unregisterAbort: (threadId: string) => void;
-}
 
 const log = createLogger("runtime-core-attempt");
 const toolInputGuardrails = new LumeGuardrailRunner(builtinToolInputGuardrails);

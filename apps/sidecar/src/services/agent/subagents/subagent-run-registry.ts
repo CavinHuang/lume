@@ -8,7 +8,7 @@ import {
   type SubagentRunStatus,
   type SubagentRunStoreSchema,
   type UpdateSubagentRunInput
-} from "./subagent-run.types";
+} from "./subagent-run-types";
 
 // ─── Observability helpers (migrated from subagent-observability.ts) ───
 

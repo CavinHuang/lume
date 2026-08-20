@@ -2912,24 +2912,3 @@ export function deriveDelegateTitle(
   }
   return originalTitle;
 }
-
-/**
- * Task 工具派生子会话时的初始侧栏标题解析。
- *
- * 策略：description 非空→用 description（LLM 写的短摘要，侧栏最易识别）；
- * 否则取 prompt 前 20 字（码点安全，与 deriveDelegateTitle 同策略，不切断 emoji 代理对）；
- * 两者皆空→返回 undefined（由 createAgentThreadWithModelRef 兜底为 "新 Agent 线程"）。
- *
- * 初始标题是临时态：完成时还会经 deriveDelegateTitle 用输出摘要覆盖
- * （见 sidecarAgentTool.onSubagentEnd），故优先保证"进行中可识别"而非完美。
- */
-export function resolveTaskThreadInitialTitle(toolInput: Record<string, unknown>): string | undefined {
-  const description = typeof toolInput.description === "string" ? toolInput.description.trim() : "";
-  if (description) return description;
-
-  const prompt = typeof toolInput.prompt === "string" ? toolInput.prompt.trim() : "";
-  if (!prompt) return undefined;
-
-  const folded = prompt.replace(/\s+/g, " ");
-  return Array.from(folded).slice(0, 20).join("");
-}

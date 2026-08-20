@@ -9,7 +9,7 @@ import {
   resolveToolApprovalInterruption,
   updateToolApprovalSession
 } from "./approval-service";
-import { listPendingRuntimeCoreInterruptions } from "./interruption-index";
+import { listPendingRuntimeCoreInterruptions } from "./interruption-pending";
 import { runtimePermissionSessionStore } from "../permissions/permission-session";
 import { createLogger } from "../../infra/logger";
 
