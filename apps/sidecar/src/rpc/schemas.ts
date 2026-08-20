@@ -1789,20 +1789,6 @@ export const moveFileInputSchema = z.object({
   targetDir: idSchema
 });
 
-export const attachedPathInputSchema = z.object({
-  path: idSchema
-});
-
-export const renameAttachedFileInputSchema = z.object({
-  path: idSchema,
-  newName: z.string().min(1)
-});
-
-export const moveAttachedFileInputSchema = z.object({
-  path: idSchema,
-  targetDir: idSchema
-});
-
 export const promoteFileToWorkspaceInputSchema = z.object({
   workspaceSlug: idSchema,
   threadId: idSchema,

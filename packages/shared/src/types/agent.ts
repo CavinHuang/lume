@@ -1952,8 +1952,6 @@ export const AGENT_IPC_CHANNELS = {
   LIST_ARCHIVED_THREADS: 'agent:list-archived-threads',
   /** 列出回收站线程 */
   LIST_TRASHED_THREADS: 'agent:list-trashed-threads',
-  /** 清理过期回收站条目 */
-  CLEANUP_EXPIRED_TRASH: 'agent:cleanup-expired-trash',
   /** 清空回收站（永久删除全部已 trash 线程） */
   EMPTY_TRASH: 'agent:empty-trash',
   /** 从指定消息开始截断线程（包含该消息） */

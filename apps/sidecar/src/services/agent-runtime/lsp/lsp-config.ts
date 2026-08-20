@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -28,14 +29,27 @@ export async function resolveRuntimeLspConfig(input: {
 }
 
 async function loadProjectLspConfig(cwd: string): Promise<LumeConfigLspSection | undefined> {
+  // Config lookup is bounded by the containing git repository; with no .git
+  // anywhere up the chain only cwd itself is consulted. Temp/shared ancestor
+  // directories must not be able to spawn servers (#203).
+  let boundary = resolve(cwd);
+  for (let dir = boundary; ; ) {
+    if (existsSync(join(dir, ".git"))) {
+      boundary = dir;
+      break;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+
   let directory = resolve(cwd);
   while (true) {
     const direct = await readFirstConfig(directory, ["lsp.json", ".lsp.json", "lsp.yaml", ".lsp.yaml", "lsp.yml", ".lsp.yml"]);
     const lume = await readFirstConfig(join(directory, ".lume"), ["lsp.json", "lsp.yaml", "lsp.yml"]);
     if (direct || lume) return mergeLspSections(lume, direct);
-    const parent = dirname(directory);
-    if (parent === directory) return undefined;
-    directory = parent;
+    if (directory === boundary) return undefined;
+    directory = dirname(directory);
   }
 }
 

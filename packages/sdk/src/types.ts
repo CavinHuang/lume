@@ -872,6 +872,9 @@ export interface ToolContext {
   /** Update the active working directory for subsequent tool calls in this session. */
   setWorkingDirectory?: (cwd: string) => void
   toolUseId?: string
+  /** True when the engine replaced the tool input via canUseTool updatedInput —
+   *  only then may a tool trust host-injected fields (e.g. AskUserQuestion answers). */
+  permissionUpdatedInput?: boolean
   additionalDirectories?: string[]
   sandbox?: SandboxSettings
   toolConfig?: Record<string, unknown>
@@ -1548,6 +1551,8 @@ export interface AgentOptions {
   settingSources?: SettingSource[]
   /** Plugin configurations */
   plugins?: Array<{ name: string; path?: string; config?: Record<string, unknown>; kind?: 'command' | 'module' | 'any' }>
+  /** Extra roots (absolute) outside cwd from which plugins may be loaded */
+  pluginRoots?: string[]
   /** Additional working directories */
   additionalDirectories?: string[]
   /** Default agent to use */

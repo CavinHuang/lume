@@ -1,7 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import {
   DEFAULT_LSP_SERVERS,
   findLspWorkspaceRoot,
@@ -345,6 +346,20 @@ async function resolveLspServerConfigsForFileUncached(cwd: string, toolConfig?: 
 }
 
 async function readProjectLspServers(cwd: string): Promise<Record<string, unknown> | undefined> {
+  // Config lookup is bounded by the containing git repository; with no .git
+  // anywhere up the chain only cwd itself is consulted. Temp/shared ancestor
+  // directories must not be able to spawn servers (#203).
+  let boundary = resolve(cwd)
+  for (let dir = boundary; ; ) {
+    if (existsSync(join(dir, '.git'))) {
+      boundary = dir
+      break
+    }
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+
   let directory = resolve(cwd)
   while (true) {
     for (const filename of ['lsp.json', '.lsp.json', '.lume/lsp.json']) {
@@ -358,9 +373,8 @@ async function readProjectLspServers(cwd: string): Promise<Record<string, unknow
         // A project-local config is optional; continue with the parent directory.
       }
     }
-    const parent = dirname(directory)
-    if (parent === directory) return undefined
-    directory = parent
+    if (directory === boundary) return undefined
+    directory = dirname(directory)
   }
 }
 

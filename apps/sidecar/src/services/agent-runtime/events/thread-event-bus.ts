@@ -78,6 +78,25 @@ export class ThreadEventBus {
     return afterSeq === undefined ? all : all.filter((e) => e.seq > afterSeq)
   }
 
+  /**
+   * 判空捷径(F4 分叉用):与 readFile 的截断语义严格一致——逐行找到第一条非空行,
+   * JSON.parse 成功即有事件、失败(毒行)即无;全空行/文件缺失为无。不做全量对象分配。
+   */
+  hasEvents(threadId: string): boolean {
+    const file = this.file(threadId)
+    if (!existsSync(file)) return false
+    for (const line of readFileSync(file, "utf8").split("\n")) {
+      if (!line) continue
+      try {
+        JSON.parse(line)
+        return true
+      } catch {
+        return false
+      }
+    }
+    return false
+  }
+
   private file(threadId: string): string {
     return join(this.sessionDir, `${threadId}.events.jsonl`)
   }
@@ -97,6 +116,19 @@ export class ThreadEventBus {
       this.threads.set(threadId, st)
     }
     return st
+  }
+
+  /** 释放线程 state（清挂起的微批 timer）；落盘文件不动，重建时 seq 从文件续读。 */
+  releaseThread(threadId: string): void {
+    const st = this.threads.get(threadId)
+    if (!st) return
+    if (st.coalesceTimer) clearTimeout(st.coalesceTimer)
+    this.threads.delete(threadId)
+  }
+
+  /** 是否已不持有任何线程 state（instances 卸载条件）。 */
+  isEmpty(): boolean {
+    return this.threads.size === 0
   }
 
   /**
@@ -159,4 +191,16 @@ export function getThreadEventBus(sessionDir: string): ThreadEventBus {
   let bus = instances.get(sessionDir)
   if (!bus) instances.set(sessionDir, (bus = new ThreadEventBus(sessionDir)))
   return bus
+}
+
+/**
+ * 线程硬删除路径释放该线程的总线 state（清挂起的微批 timer 与 listeners）；
+ * 该 bus 不再持有任何线程时从 instances 卸载（sessionDir 按 threadId 一一派生，无共享）。
+ * 再次 getThreadEventBus 会重建，nextSeq 从落盘文件续读——不影响同 sessionDir 其他线程。
+ */
+export function releaseThreadEventBus(sessionDir: string, threadId: string): void {
+  const bus = instances.get(sessionDir)
+  if (!bus) return
+  bus.releaseThread(threadId)
+  if (bus.isEmpty()) instances.delete(sessionDir)
 }

@@ -119,7 +119,7 @@ ${code}
     });
   }
 
-  async runPython(args: string[], options: { timeoutMs: number; outputEncoding?: BufferEncoding } = { timeoutMs: 20 * 60 * 1000, outputEncoding: "utf-8" }): Promise<OfficeToolExecutorResult> {
+  async runPython(args: string[], options: { timeoutMs: number; outputEncoding?: BufferEncoding; env?: Record<string, string | undefined> } = { timeoutMs: 20 * 60 * 1000, outputEncoding: "utf-8" }): Promise<OfficeToolExecutorResult> {
     const commands = ["python3", "python3.11", "python"];
     for (const command of commands) {
       try {
@@ -128,7 +128,11 @@ ${code}
           outputEncoding: options.outputEncoding
         });
         if (!probe.ok) continue;
-        return await this.runCommand(command, args, options);
+        // import validators 会在源码树再生 __pycache__/.pyc，禁写字节码（默认在前，未来 options.env 优先）
+        return await this.runCommand(command, args, {
+          ...options,
+          env: { PYTHONDONTWRITEBYTECODE: "1", ...options.env },
+        });
       } catch {
         // try next python candidate
       }

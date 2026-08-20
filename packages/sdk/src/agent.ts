@@ -734,7 +734,7 @@ export class Agent {
     }
 
     this.refreshResolvedConfig()
-    this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins)
+    this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins, this.cfg.pluginRoots)
     console.debug(`[plugin:agent] plugins loaded`, {
       count: this.loadedPlugins.length,
       names: this.loadedPlugins.map((p) => p.name),
@@ -1582,7 +1582,7 @@ export class Agent {
   async reloadPlugins(): Promise<ReloadPluginsResult> {
     await this.setupDone
 
-    this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins)
+    this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins, this.cfg.pluginRoots)
     this.registerPluginSkills()
     await this.registerFilesystemSkills({
       cwd: this.cfg.cwd || process.cwd(),

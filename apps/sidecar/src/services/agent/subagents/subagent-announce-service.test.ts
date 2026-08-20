@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createAgentThread, getAgentThreadMessages } from "../../agent/agent-thread-manager";
 import { announceSubagentCompletion, subscribeSubagentAnnounceEvent } from "./subagent-announce-service";
-import type { SubagentRun } from "./subagent-run.types";
+import type { SubagentRun } from "./subagent-run-types";
 
 let previousConfigDir: string | undefined;
 

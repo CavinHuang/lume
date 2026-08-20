@@ -5,7 +5,7 @@ import {
 } from "../../agent/agent-thread-manager";
 import { createLogger } from "../../infra/logger";
 import { subagentLogFields } from "./subagent-run-registry";
-import type { SubagentRun } from "./subagent-run.types";
+import type { SubagentRun } from "./subagent-run-types";
 import { releaseSubagentThreadBinding } from "./subagent-thread-binding";
 
 // ─── Announce service ───

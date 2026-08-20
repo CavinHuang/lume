@@ -72,7 +72,9 @@ async function runCommand(command: string, args: string[], context: ReaderContex
 
 async function runParallel(context: ReaderContext, configuredApiKey?: string): Promise<string | null> {
   const apiKey = configuredApiKey || process.env.PARALLEL_API_KEY;
-  if (!apiKey || ensureNetworkAllowed("https://api.parallel.ai", context.sandbox)) return null;
+  // The proxy fetches context.url on our behalf — the target itself must pass
+  // the domain whitelist, not just the proxy host (#200)
+  if (!apiKey || ensureNetworkAllowed(context.url, context.sandbox) || ensureNetworkAllowed("https://api.parallel.ai", context.sandbox)) return null;
   const requestSignal = context.signal ?? AbortSignal.timeout(Math.min(context.timeoutMs, 10000));
   const response = await context.fetchImpl("https://api.parallel.ai/v1beta/extract", {
     method: "POST",
@@ -103,7 +105,8 @@ async function runParallel(context: ReaderContext, configuredApiKey?: string): P
 
 async function runJina(context: ReaderContext, configuredApiKey?: string): Promise<string | null> {
   const endpoint = `https://r.jina.ai/${context.url}`;
-  if (ensureNetworkAllowed(endpoint, context.sandbox)) return null;
+  // Check the target URL too: r.jina.ai fetches it server-side (#200)
+  if (ensureNetworkAllowed(context.url, context.sandbox) || ensureNetworkAllowed(endpoint, context.sandbox)) return null;
   const headers: Record<string, string> = { Accept: "text/markdown" };
   const apiKey = configuredApiKey || process.env.JINA_API_KEY;
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;

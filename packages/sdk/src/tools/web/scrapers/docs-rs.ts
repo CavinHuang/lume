@@ -311,7 +311,7 @@ async function readCachedRustdocCrate(
 ): Promise<{ crate: RustdocCrate; fetchedAt: string } | null> {
 	const cachePath = getDocsRsCachePath(target);
 	try {
-		const [jsonStr, stat] = await Promise.all([Bun.file(cachePath).text(), fs.stat(cachePath)]);
+		const [jsonStr, stat] = await Promise.all([fs.readFile(cachePath, "utf-8"), fs.stat(cachePath)]);
 		const crate = tryParseJson<RustdocCrate>(jsonStr);
 		if (!crate?.index) return null;
 		return { crate, fetchedAt: stat.mtime.toISOString() };
@@ -325,7 +325,8 @@ async function readCachedRustdocCrate(
 async function writeCachedRustdocCrate(target: DocsRsTarget, json: string): Promise<void> {
 	const cachePath = getDocsRsCachePath(target);
 	try {
-		await Bun.write(cachePath, json);
+		await fs.mkdir(path.dirname(cachePath), { recursive: true });
+		await fs.writeFile(cachePath, json, "utf-8");
 	} catch (err) {
 		logger.warn("Failed to write docs.rs cache", { path: cachePath, error: String(err) });
 	}

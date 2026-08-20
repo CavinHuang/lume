@@ -5,7 +5,7 @@ import type {
 import { createHash } from "node:crypto";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import type { LumeInterruption } from "./interruption";
-import { listPendingRuntimeCoreInterruptionRecords } from "./interruption-index";
+import { listPendingRuntimeCoreInterruptionRecords } from "./interruption-pending";
 import {
   createFileBackedLumeInterruptionStore,
   resolveFileBackedInterruptionSync

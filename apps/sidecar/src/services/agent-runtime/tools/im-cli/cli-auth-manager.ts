@@ -23,6 +23,8 @@ export interface CliAuthManagerDeps {
   spawn?: CliAuthSpawnFn;
   ensureBinary?: EnsureBinaryFn;
   sessionId?: () => string;
+  /** 终态会话的延迟清理窗口（保留 UI 轮询终态的读取时间），测试可注入小值 */
+  cleanupDelayMs?: number;
 }
 
 export interface CliAuthManager {
@@ -39,6 +41,7 @@ export interface CliAuthManager {
 }
 
 interface AuthSession {
+  sessionKey: string;
   provider: string;
   authUrl?: string;
   phase: CliAuthPhase;
@@ -47,6 +50,7 @@ interface AuthSession {
   authProc?: ChildProcess;
   statusProc?: ChildProcess;
   timeoutTimer?: NodeJS.Timeout;
+  cleanupTimer?: NodeJS.Timeout;
   resolved?: boolean;
 }
 
@@ -80,7 +84,19 @@ export function createCliAuthManager(deps: CliAuthManagerDeps = {}): CliAuthMana
   const spawnFn = deps.spawn ?? spawnCli;
   const ensureBinaryFn = deps.ensureBinary ?? ensureBinary;
   const sessionId = deps.sessionId ?? randomUUID;
+  const cleanupDelayMs = deps.cleanupDelayMs ?? 60_000;
   const sessions = new Map<string, AuthSession>();
+
+  /**
+   * 置终态并调度延迟清理:终态(connected/error)会话无后续转移,保留 cleanupDelayMs
+   * 供 UI 轮询读取,随后从 sessions 释放——防进程级 Map 只增不减。
+   */
+  function setTerminal(session: AuthSession, phase: "connected" | "error", error?: string): void {
+    session.phase = phase;
+    if (error !== undefined) session.error = error;
+    if (session.cleanupTimer) clearTimeout(session.cleanupTimer);
+    session.cleanupTimer = setTimeout(() => sessions.delete(session.sessionKey), cleanupDelayMs);
+  }
 
   function runStatusAndFinalize(
     session: AuthSession,
@@ -102,24 +118,22 @@ export function createCliAuthManager(deps: CliAuthManagerDeps = {}): CliAuthMana
       if (session.phase !== "authorizing") return; // 已被取消/超时/停止置终态
       const { connected, profile } = config.parseAuthStatus(statusOut);
       if (connected) {
-        session.phase = "connected";
         session.profile = profile;
+        setTerminal(session, "connected");
       } else {
-        session.phase = "error";
-        session.error = "授权未完成(CLI status 未确认连接)";
+        setTerminal(session, "error", "授权未完成(CLI status 未确认连接)");
       }
     });
     statusProc.on("error", () => {
       if (session.phase !== "authorizing") return;
-      session.phase = "error";
-      session.error = "状态确认命令启动失败";
+      setTerminal(session, "error", "状态确认命令启动失败");
     });
   }
 
   return {
     async startAuth(config, userDataRoot, platform, arch, binaryDeps) {
       const sessionKey = sessionId();
-      const session: AuthSession = { provider: config.provider, phase: "authorizing" };
+      const session: AuthSession = { sessionKey, provider: config.provider, phase: "authorizing" };
       sessions.set(sessionKey, session);
 
       let binaryPath: string;
@@ -127,9 +141,9 @@ export function createCliAuthManager(deps: CliAuthManagerDeps = {}): CliAuthMana
         const r = await ensureBinaryFn(config, userDataRoot, platform, arch, binaryDeps);
         binaryPath = r.path;
       } catch (e) {
-        session.phase = "error";
-        session.error = `CLI 未就绪: ${errorMessage(e)}`;
-        return { sessionKey, error: session.error };
+        const error = `CLI 未就绪: ${errorMessage(e)}`;
+        setTerminal(session, "error", error);
+        return { sessionKey, error };
       }
 
       const env = buildCliAuthEnv(config, userDataRoot);
@@ -143,8 +157,7 @@ export function createCliAuthManager(deps: CliAuthManagerDeps = {}): CliAuthMana
       session.timeoutTimer = setTimeout(() => {
         killSession(session);
         if (session.phase === "authorizing") {
-          session.phase = "error";
-          session.error = "授权超时";
+          setTerminal(session, "error", "授权超时");
         }
       }, config.authTimeoutMs);
 
@@ -173,8 +186,7 @@ export function createCliAuthManager(deps: CliAuthManagerDeps = {}): CliAuthMana
         authProc.on("error", () => {
           clearTimeout(session.timeoutTimer);
           if (session.phase === "authorizing") {
-            session.phase = "error";
-            session.error = "授权命令启动失败";
+            setTerminal(session, "error", "授权命令启动失败");
           }
           done({ sessionKey, error: session.error });
         });
@@ -187,9 +199,9 @@ export function createCliAuthManager(deps: CliAuthManagerDeps = {}): CliAuthMana
             return;
           }
           if (code !== 0 && code !== null) {
-            session.phase = "error";
-            session.error = `授权命令退出码 ${code}`;
-            done({ sessionKey, error: session.error });
+            const error = `授权命令退出码 ${code}`;
+            setTerminal(session, "error", error);
+            done({ sessionKey, error });
             return;
           }
           // exit 0(含信号 kill 的 null):resolve startAuth,跑 statusCommand 定 phase
@@ -217,8 +229,7 @@ export function createCliAuthManager(deps: CliAuthManagerDeps = {}): CliAuthMana
       if (!session) return;
       killSession(session);
       if (session.phase === "authorizing") {
-        session.phase = "error";
-        session.error = "用户取消";
+        setTerminal(session, "error", "用户取消");
       }
     },
 
@@ -226,6 +237,7 @@ export function createCliAuthManager(deps: CliAuthManagerDeps = {}): CliAuthMana
       for (const session of sessions.values()) {
         // 标记终态,避免 kill 触发的 close 回调再跑 statusCommand
         session.phase = "error";
+        if (session.cleanupTimer) clearTimeout(session.cleanupTimer);
         killSession(session);
       }
       sessions.clear();

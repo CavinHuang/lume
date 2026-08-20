@@ -48,3 +48,9 @@ export interface AgentRuntimeRunParams {
     abortSignal?: AbortSignal;
   };
 }
+
+/** attempt 执行器的中止注册回调（attempt.ts / lume-runner.ts / mock-attempt.ts 三处共享）。 */
+export interface RunRuntimeCoreAttemptOptions {
+  registerAbort: (threadId: string, abort: () => Promise<void>) => void;
+  unregisterAbort: (threadId: string) => void;
+}

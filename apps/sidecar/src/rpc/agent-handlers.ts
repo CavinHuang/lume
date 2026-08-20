@@ -34,7 +34,6 @@ import {
   permanentlyDeleteAgentThread,
   listArchivedThreads,
   listTrashedThreads,
-  cleanupExpiredTrash,
   emptyTrash,
 } from "../services/agent/agent-thread-manager";
 import { getAgentMessageVersions } from "../services/agent/agent-message-versioning-service";
@@ -186,7 +185,7 @@ import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tra
 import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runtime-core/attempt";
 import { createOrResumeRuntimeCoreSessionManager, getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
 import { detectSessionDanglingToolUses } from "../services/agent-runtime/runtime-core/run";
-import { getThreadEventBus } from "../services/agent-runtime/events/thread-event-bus";
+import { getThreadEventBus, releaseThreadEventBus } from "../services/agent-runtime/events/thread-event-bus";
 import { resolveAgentThreadWorkdir } from "../services/agent/agent-workdir-resolver";
 import {
   applyCodingDiffAction,
@@ -418,13 +417,20 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
   // agent:events 推送桥：每线程建立一次进程级订阅（去重防重复注册）。
   // 不随单次 run 退订——覆盖排队消息/恢复等所有 run 入口，且规避
   // run 结束瞬间 16ms 微批 update 尚未 flush 就退订的推送丢失。
-  const agentEventsBridgedThreads = new Set<string>();
+  // 线程硬删除时经 releaseThreadEventBridge 退订（恢复路径 run 入口会重新 ensure）。
+  const agentEventsBridgeUnsubs = new Map<string, () => void>();
   const ensureAgentEventsBridge = (threadId: string): void => {
-    if (agentEventsBridgedThreads.has(threadId)) return;
-    agentEventsBridgedThreads.add(threadId);
-    getThreadEventBus(resolveRuntimeSessionDir(threadId)).subscribe(threadId, (envelope) => {
+    if (agentEventsBridgeUnsubs.has(threadId)) return;
+    const unsubscribe = getThreadEventBus(resolveRuntimeSessionDir(threadId)).subscribe(threadId, (envelope) => {
       context.writeNotification(AGENT_IPC_CHANNELS.EVENTS, envelope);
     });
+    agentEventsBridgeUnsubs.set(threadId, unsubscribe);
+  };
+  /** 线程硬删除路径统一释放：退订事件桥 + 释放该线程的总线 state（bus 实例随之按 sessionDir 卸载）。 */
+  const releaseThreadEventBridge = (threadId: string): void => {
+    agentEventsBridgeUnsubs.get(threadId)?.();
+    agentEventsBridgeUnsubs.delete(threadId);
+    releaseThreadEventBus(resolveRuntimeSessionDir(threadId), threadId);
   };
 
   const resolveRunIdForThread = async (threadId: string, runId?: string): Promise<string | null> => {
@@ -901,6 +907,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       deleteAgentThread(input.threadId);
       getAgentRuntimeStatusManager().clearSession(input.threadId);
       context.planModePhaseTracker.clearSession(input.threadId);
+      releaseThreadEventBridge(input.threadId);
       return { ok: true };
     },
     [AGENT_IPC_CHANNELS.ARCHIVE_THREAD]: async (params) => {
@@ -927,18 +934,16 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       permanentlyDeleteAgentThread(input.threadId);
       getAgentRuntimeStatusManager().clearSession(input.threadId);
       context.planModePhaseTracker.clearSession(input.threadId);
+      releaseThreadEventBridge(input.threadId);
       return { ok: true };
     },
     [AGENT_IPC_CHANNELS.LIST_ARCHIVED_THREADS]: async () => listArchivedThreads(),
     [AGENT_IPC_CHANNELS.LIST_TRASHED_THREADS]: async () => listTrashedThreads(),
-    [AGENT_IPC_CHANNELS.CLEANUP_EXPIRED_TRASH]: async () => {
-      const count = cleanupExpiredTrash();
-      return { cleanedCount: count };
-    },
     [AGENT_IPC_CHANNELS.EMPTY_TRASH]: async () => {
-      const count = emptyTrash();
-      log.info("[Agent 线程] 清空回收站", { count });
-      return { cleanedCount: count };
+      const deletedThreadIds = emptyTrash();
+      for (const threadId of deletedThreadIds) releaseThreadEventBridge(threadId);
+      log.info("[Agent 线程] 清空回收站", { count: deletedThreadIds.length });
+      return { cleanedCount: deletedThreadIds.length };
     },
     [AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS]: async (params) => {
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS);

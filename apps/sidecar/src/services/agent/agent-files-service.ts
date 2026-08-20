@@ -1412,7 +1412,13 @@ export function previewWorkspacePath(
   return { ok: true };
 }
 
+/** 预览直读路径的载入上限（与 readFileRefDocument 的 FILE_LOAD_LIMIT 对齐；statSync 前置防大文件全量载入阻塞事件循环）。 */
+const PREVIEW_LOAD_LIMIT_BYTES = 20 * 1024 * 1024;
+
 function readPreviewableText(resolvedPath: string): { content: string; truncated: boolean } {
+  if (statSync(resolvedPath).size > PREVIEW_LOAD_LIMIT_BYTES) {
+    throw new Error("文件过大，暂不支持预览（上限 20MB）");
+  }
   const bytes = readFileSync(resolvedPath);
   const limit = 512 * 1024;
   const sampled = bytes.subarray(0, Math.min(bytes.length, 2048));

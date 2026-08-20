@@ -536,6 +536,18 @@ describe("agent-files-service file ops", () => {
     expect(() => readAgentPath(workspaceSlug, sessionId, "../plan.md")).toThrow("目标路径超出线程工作目录");
   });
 
+  test("readAgentPath 超过 20MB 上限时抛错且不全量载入", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-preview-limit";
+    const sessionId = "session-preview-limit";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+    mkdirSync(sessionDir, { recursive: true });
+    // 21MB 全零文件：statSync 前置检查保证不会读入内存（写盘仅几十 ms）
+    writeFileSync(join(sessionDir, "big.txt"), Buffer.alloc(21 * 1024 * 1024, 0x61));
+
+    expect(() => readAgentPath(workspaceSlug, sessionId, "big.txt")).toThrow("文件过大");
+  });
+
   test("线程附件路径 helper 应转换线程内路径并拒绝越界或缺失文件", () => {
     createTempConfigDir();
     const workspaceSlug = "workspace-attachment-paths";

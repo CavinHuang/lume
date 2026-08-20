@@ -465,9 +465,11 @@ describe("agent-thread-manager advanced ops", () => {
 
     expect(listTrashedThreads()).toHaveLength(2);
 
-    const cleanedCount = emptyTrash();
+    const deletedThreadIds = emptyTrash();
 
-    expect(cleanedCount).toBe(2);
+    expect(deletedThreadIds).toHaveLength(2);
+    expect(deletedThreadIds).toContain(trashed1.id);
+    expect(deletedThreadIds).toContain(trashed2.id);
     expect(listTrashedThreads()).toHaveLength(0);
 
     // 已 trash 线程应从索引中彻底移除
@@ -480,11 +482,11 @@ describe("agent-thread-manager advanced ops", () => {
     expect(listAgentThreads().map((t) => t.id)).toContain(activeThread.id);
   });
 
-  test("emptyTrash 在回收站为空时应返回 0", () => {
+  test("emptyTrash 在回收站为空时应返回空列表", () => {
     const active = createAgentThread("仅活跃");
 
     expect(listTrashedThreads()).toHaveLength(0);
-    expect(emptyTrash()).toBe(0);
+    expect(emptyTrash()).toEqual([]);
     expect(getAgentThreadMeta(active.id)).toBeDefined();
   });
 

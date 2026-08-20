@@ -96,7 +96,9 @@ export function parseSwiftLintDiagnostics(
 }
 
 function quote(value: string): string {
-  return `"${value.replace(/"/g, '\\"')}"`
+  // Double quotes leave backticks and $(...) live in both POSIX sh and
+  // PowerShell; single-quote with '' escaping instead (#198)
+  return /^[a-zA-Z0-9_./:\\-]+$/.test(value) ? value : `'${value.replace(/'/g, "''")}'`
 }
 
 function toolOutput(result: { content?: unknown }): string {
