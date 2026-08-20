@@ -1,13 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   createAgentThread,
   getAgentThreadMeta
 } from "./agent-thread-manager";
-import { resolveAgentThreadLumeWorkDir } from "./agent-workdir-resolver";
-import { getAgentSessionsIndexPath, getAgentWorkspacesDir } from "../infra/config-paths";
+import { getAgentSessionsIndexPath } from "../infra/config-paths";
 
 describe("线程索引读缓存（#170）", () => {
   let previousConfigDir: string | undefined;
@@ -73,44 +72,6 @@ describe("线程索引读缓存（#170）", () => {
       rmSync(dirB, { recursive: true, force: true });
       process.env.LUME_CONFIG_DIR = tempConfigDir;
     }
-  });
-});
-
-describe("workdir resolver legacy root 收敛 memo（#170）", () => {
-  let previousConfigDir: string | undefined;
-  let tempConfigDir = "";
-
-  beforeEach(() => {
-    previousConfigDir = process.env.LUME_CONFIG_DIR;
-    tempConfigDir = mkdtempSync(join(tmpdir(), "lume-agent-workdir-memo-"));
-    process.env.LUME_CONFIG_DIR = tempConfigDir;
-  });
-
-  afterEach(() => {
-    if (previousConfigDir === undefined) {
-      delete process.env.LUME_CONFIG_DIR;
-    } else {
-      process.env.LUME_CONFIG_DIR = previousConfigDir;
-    }
-    if (tempConfigDir) {
-      rmSync(tempConfigDir, { recursive: true, force: true });
-      tempConfigDir = "";
-    }
-  });
-
-  test("收敛后外部重建 legacy root，本进程不再回收（已注明的取舍）", () => {
-    const created = createAgentThread("memo 测试");
-    const first = resolveAgentThreadLumeWorkDir(created.id);
-    expect(first).toBeTruthy(); // 无 legacy root：ensureFileContextDirs + memo
-
-    // converged 后外部重建 legacy root
-    const legacyRoot = join(getAgentWorkspacesDir(), "default", "threads", created.id);
-    mkdirSync(legacyRoot, { recursive: true });
-    writeFileSync(join(legacyRoot, "leftover.txt"), "x", "utf-8");
-
-    // 取舍：本进程内不再扫描回收，仍返回新结构目录
-    const second = resolveAgentThreadLumeWorkDir(created.id);
-    expect(second).toBe(first);
   });
 });
 

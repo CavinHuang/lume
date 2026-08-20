@@ -46,8 +46,9 @@ export class MemoryJobService {
   private readonly locations = new Map<string, string>();
   private readonly executions = new Map<string, Promise<void>>();
   /**
-   * list 结果写穿缓存（key=workspaceSlug）。本进程内 write() 是唯一变更落盘点
-   * （start/cancel/execute/recoverInterrupted 均经 write），jobs 目录由 sidecar 独占。
+   * list 结果写穿缓存（key=resolved jobsDir，不能只用 workspaceSlug——
+   * LUME_CONFIG_DIR 可变时同 slug 会跨目录串数据）。本进程内 write() 是唯一
+   * 变更落盘点（start/cancel/execute/recoverInterrupted 均经 write），jobs 目录由 sidecar 独占。
    */
   private readonly cache = new Map<string, { jobs: MemoryJobRecord[]; lastSweptAt: number }>();
 
@@ -104,11 +105,11 @@ export class MemoryJobService {
 
   list(workspaceSlug: string): MemoryJobRecord[] {
     const now = Date.now();
-    const cached = this.cache.get(workspaceSlug);
+    const { jobsDir } = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug });
+    const cached = this.cache.get(jobsDir);
     if (cached && now - cached.lastSweptAt < TERMINAL_JOB_SWEEP_INTERVAL_MS) {
       return cached.jobs.slice();
     }
-    const { jobsDir } = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug });
     const jobs: MemoryJobRecord[] = [];
     for (const name of readdirSync(jobsDir)) {
       if (!name.startsWith("job-") || !name.endsWith(".json")) continue;
@@ -130,7 +131,7 @@ export class MemoryJobService {
       jobs.push(job);
     }
     jobs.sort((a, b) => b.createdAt - a.createdAt);
-    this.cache.set(workspaceSlug, { jobs, lastSweptAt: now });
+    this.cache.set(jobsDir, { jobs, lastSweptAt: now });
     for (const job of jobs) this.locations.set(job.jobId, workspaceSlug);
     return jobs.slice();
   }
@@ -244,7 +245,8 @@ export class MemoryJobService {
 
   /** 写穿：缓存未预热不预填（下次 list 读盘自然含新 job），已预热则原地替换并保持 createdAt 降序。 */
   private updateCache(job: MemoryJobRecord): void {
-    const cached = this.cache.get(job.workspaceSlug);
+    const { jobsDir } = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: job.workspaceSlug });
+    const cached = this.cache.get(jobsDir);
     if (!cached) return;
     const rest = cached.jobs.filter((existing) => existing.jobId !== job.jobId);
     let insertAt = rest.findIndex((existing) => existing.createdAt < job.createdAt);

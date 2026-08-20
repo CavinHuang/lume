@@ -147,6 +147,27 @@ describe("MemoryJobService", () => {
     const fromCache = service.list("demo").find((job) => job.jobId === started.jobId);
     expect(fromCache?.status).toBe("completed");
   });
+
+  test("缓存 key 含目录：LUME_CONFIG_DIR 切换后同 slug 不串数据", () => {
+    const service = new MemoryJobService();
+    const run = async () => ({ ok: true });
+    const first = service.start({ kind: "entries", workspaceSlug: "demo", run });
+    service.list("demo"); // 预热缓存
+
+    // 切到全新配置目录（同 slug），缓存不得命中旧目录数据
+    const otherRoot = mkdtempSync(join(tmpdir(), "lume-memory-jobs-b-"));
+    process.env.LUME_CONFIG_DIR = otherRoot;
+    try {
+      const second = service.start({ kind: "entries", workspaceSlug: "demo", run });
+      expect(second.jobId).not.toBe(first.jobId);
+      const ids = service.list("demo").map((job) => job.jobId);
+      expect(ids).toContain(second.jobId);
+      expect(ids).not.toContain(first.jobId);
+    } finally {
+      process.env.LUME_CONFIG_DIR = root;
+      rmSync(otherRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 async function waitForTerminal(

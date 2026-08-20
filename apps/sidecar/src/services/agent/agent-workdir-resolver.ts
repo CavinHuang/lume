@@ -115,32 +115,17 @@ function snapshotDirectory(root: string): { files: number; bytes: number } {
   return { files, bytes };
 }
 
-/**
- * 进程内"legacy root 已收敛"memo：确认 legacy 目录不存在后跳过每次 resolve 的
- * 全 workspace 扫描（readdir 全部 slug + 每 slug 2 次 existsSync/statSync）。
- * 取舍：converged 后外部若再写 legacy root，本进程不回收（下次进程启动会）。
- */
-const legacyRootConverged = new Set<string>();
-
 function migrateLegacyThreadRoot(thread: AgentThreadMeta, workspace?: AgentWorkspace): string {
   const fileContextId = getThreadFileContextId(thread);
   const target = join(getAgentFileContextsDir(), fileContextId);
   const marker = join(target, MIGRATION_MARKER);
   if (existsSync(marker)) {
-    if (legacyRootConverged.has(thread.id)) return target;
-    if (recoverPostMigrationLegacyRoot(thread, workspace, target)) {
-      legacyRootConverged.add(thread.id);
-    }
-    return target;
-  }
-  if (legacyRootConverged.has(thread.id)) {
-    ensureFileContextDirs(fileContextId);
+    recoverPostMigrationLegacyRoot(thread, workspace, target);
     return target;
   }
   const source = findLegacyThreadRoot(thread.id, workspace);
   if (!source) {
     ensureFileContextDirs(fileContextId);
-    legacyRootConverged.add(thread.id);
     return target;
   }
 
@@ -173,14 +158,13 @@ function migrateLegacyThreadRoot(thread: AgentThreadMeta, workspace?: AgentWorks
   }
 }
 
-/** 返回 legacy root 是否已收敛（不存在或恢复后已清空删除；conflicts 遗留/恢复失败不算）。 */
 function recoverPostMigrationLegacyRoot(
   thread: AgentThreadMeta,
   workspace: AgentWorkspace | undefined,
   target: string
-): boolean {
+): void {
   const source = findLegacyThreadRoot(thread.id, workspace);
-  if (!source || resolve(source) === resolve(target)) return true;
+  if (!source || resolve(source) === resolve(target)) return;
 
   try {
     withIndexMutationLock(`${target}.migration.lock`, () => {
@@ -204,9 +188,7 @@ function recoverPostMigrationLegacyRoot(
       threadId: thread.id,
       error: error instanceof Error ? error.message : String(error)
     });
-    return false;
   }
-  return !existsSync(source);
 }
 
 function moveMissingLegacyEntries(sourceDir: string, targetDir: string): { moved: number; conflicts: number } {
