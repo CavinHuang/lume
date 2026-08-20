@@ -123,19 +123,16 @@ const server = createServer((request, response) => {
     <output id="result"></output>
     <iframe id="cross-origin-frame" src="\${frameOrigin}/"></iframe>
     <script>
-      document.modelContext = {
-        getTools: () => [{
-          name: 'set_result',
-          title: 'Set result',
-          description: 'Updates the fixture result.',
-          inputSchema: JSON.stringify({ type: 'object', properties: { value: { type: 'string' } } }),
-        }],
-        executeTool: (_tool, input) => {
-          const value = JSON.parse(input);
+      window.__lumeWebMcpModelContext.registerTool({
+        name: 'set_result',
+        title: 'Set result',
+        description: 'Updates the fixture result.',
+        inputSchema: { type: 'object', properties: { value: { type: 'string' } } },
+        execute: value => {
           document.querySelector('#result').textContent = value.value;
-          return JSON.stringify({ applied: value.value });
+          return { applied: value.value };
         },
-      };
+      });
     </script>\`)
 })
 

@@ -3873,7 +3873,7 @@ export async function invokeWebMcpTool(tab: BrowserTab, params: Record<string, u
       .then((tools) => {
         const tool = tools.find((candidate) => candidate.name === ${JSON.stringify(toolName)});
         if (!tool) throw new Error(${JSON.stringify(`WebMCP tool not found: ${toolName}`)});
-        return modelContext.executeTool(tool, ${JSON.stringify(encodedInput)});
+        return modelContext.executeTool({ name: tool.name }, ${JSON.stringify(encodedInput)});
       })
       .then((result) => {
         if (result == null || typeof result !== "string") return result ?? null;

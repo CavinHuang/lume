@@ -96,7 +96,7 @@ describe('invokeWebMcpTool contextIsolation fallback', () => {
   test('优先读 window.__lumeWebMcpModelContext.executeTool', async () => {
     let captured: { tool?: unknown; input?: unknown } = {}
     ;(window as unknown as Record<string, unknown>).__lumeWebMcpModelContext = {
-      getTools: () => [{ name: 'echo' }],
+      getTools: () => [{ name: 'echo', inputSchema: null, origin: 'https://x.test' }],
       executeTool: async (tool: unknown, input: unknown) => {
         captured = { tool, input }
         return JSON.stringify({ ok: true, input })
