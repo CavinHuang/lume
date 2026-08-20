@@ -10,7 +10,7 @@ import {
   resolveAskUserInterruption,
   updateAskUserApprovalSession
 } from "./ask-user-service";
-import { listPendingRuntimeCoreInterruptions } from "./interruption-index";
+import { listPendingRuntimeCoreInterruptions } from "./interruption-pending";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("ask-user-question-session");

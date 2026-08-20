@@ -8,24 +8,16 @@ import { waitForToolPermissionDecision } from "../interruption/tool-permission-s
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
 import { createRuntimeCoreSession } from "./run";
-import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter } from "../runner/types";
+import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter, RunRuntimeCoreAttemptOptions } from "../runner/types";
 import type { resolveRuntimeCoreChannelModel } from "./model";
+import type { PreparedRuntimeCoreAttempt } from "./prepare-attempt";
 import { updateRuntimeThreadMetaIfPresent } from "./thread-meta-target";
 
-interface RunRuntimeCoreAttemptOptions {
-  registerAbort: (threadId: string, abort: () => Promise<void>) => void;
-  unregisterAbort: (threadId: string) => void;
-}
-
-interface PreparedRuntimeCoreAttempt {
-  agentCwd: string;
-  agentDir: string;
-  workspaceName?: string;
-  workspaceSlug?: string;
-  modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
-  channelProvider?: string;
-  apiKey: string;
-}
+/** mock 场景只消费导出接口的子集；Pick 派生以跟踪字段演进（channelProvider 可选→必填，消费点入参可选，兼容）。 */
+type MockPreparedAttempt = Pick<
+  PreparedRuntimeCoreAttempt,
+  "agentCwd" | "agentDir" | "workspaceName" | "workspaceSlug" | "modelResolution" | "channelProvider" | "apiKey"
+>;
 
 const log = createLogger("runtime-core-mock");
 
@@ -39,7 +31,7 @@ export function resolveMockAttempt(
   params: AgentRuntimeRunParams,
   emit: AgentRuntimeEmitter,
   options: RunRuntimeCoreAttemptOptions,
-  prepared: PreparedRuntimeCoreAttempt
+  prepared: MockPreparedAttempt
 ) => Promise<AgentRuntimeRunResult>) | null {
   if (process.env.LUME_AGENT_RUNTIME_MOCK_ERROR === "1") {
     return (_params, emit) => Promise.resolve(runRuntimeCoreMockErrorAttempt(emit));
@@ -76,7 +68,7 @@ export function runRuntimeCoreMockErrorAttempt(
 export async function runRuntimeCoreMockSuccessAttempt(
   params: AgentRuntimeRunParams,
   emit: AgentRuntimeEmitter,
-  prepared: PreparedRuntimeCoreAttempt
+  prepared: MockPreparedAttempt
 ): Promise<AgentRuntimeRunResult> {
   const { input, runtime } = params;
   const mockText = (process.env.LUME_AGENT_RUNTIME_MOCK_TEXT || "Lume runtime-core mock success").trim();
@@ -283,7 +275,7 @@ export async function maybeEmitMockSubagentAnnounce(threadId: string): Promise<v
 export async function runRuntimeCoreMockCompactionAttempt(
   params: AgentRuntimeRunParams,
   emit: AgentRuntimeEmitter,
-  prepared: PreparedRuntimeCoreAttempt
+  prepared: MockPreparedAttempt
 ): Promise<AgentRuntimeRunResult> {
   const { input, runtime } = params;
   const summary = (process.env.LUME_AGENT_RUNTIME_MOCK_COMPACTION_SUMMARY || "mock compaction summary").trim();
@@ -359,7 +351,7 @@ export async function runRuntimeCoreMockDelayedAttempt(
   emit: AgentRuntimeEmitter,
   options: RunRuntimeCoreAttemptOptions,
   delayMs: number,
-  prepared: PreparedRuntimeCoreAttempt
+  prepared: MockPreparedAttempt
 ): Promise<AgentRuntimeRunResult> {
   const { input, runtime } = params;
   const mockText = (process.env.LUME_AGENT_RUNTIME_MOCK_TEXT || "Lume runtime-core delayed mock").trim();

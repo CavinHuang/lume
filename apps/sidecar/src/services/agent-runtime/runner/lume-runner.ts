@@ -1,10 +1,10 @@
-import { clearQuestionHandler, setQuestionHandler, type ApiType, type CanUseToolFn, type FileCheckpoint, type SandboxSettings } from "@lume/agent-sdk";
+import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn, type FileCheckpoint, type SandboxSettings } from "@lume/agent-sdk";
 import { createHash } from "node:crypto";
-import type { AdvisorReviewedDetail, LumeConfigHooksInternalSection, OpenAiApiMode, SDKMessage } from "@lume/shared";
+import type { AdvisorReviewedDetail, LumeConfigHooksInternalSection, SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
-import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter } from "./types";
+import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter, RunRuntimeCoreAttemptOptions } from "./types";
 import { resolveAgentThinkingLevel } from "./model-capabilities";
-import type { resolveRuntimeCoreChannelModel } from "../runtime-core/model";
+import type { PreparedRuntimeCoreAttempt } from "../runtime-core/prepare-attempt";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import { persistCodingRunCheckpoint } from "../runtime-core/coding-run-checkpoint-service";
 import {
@@ -55,29 +55,6 @@ import { WIKI_CAPABILITIES } from "../../wiki/wiki-capabilities";
 import { resolveConfiguredAdditionalDirectories } from "../permissions/permission-config";
 
 const log = createLogger("lume-runner");
-
-interface PreparedRuntimeCoreAttempt {
-  agentCwd: string;
-  lumeWorkDir: string;
-  filesRoot: string;
-  plansRoot: string;
-  artifactsRoot: string;
-  projectRoot?: string;
-  fileContextId: string;
-  agentDir: string;
-  workspaceName?: string;
-  workspaceSlug?: string;
-  modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
-  openaiApiMode?: OpenAiApiMode;
-  apiType?: ApiType;
-  channelProvider: string;
-  apiKey: string;
-}
-
-interface RunRuntimeCoreAttemptOptions {
-  registerAbort: (threadId: string, abort: () => Promise<void>) => void;
-  unregisterAbort: (threadId: string) => void;
-}
 
 interface RuntimeSessionRunInput {
   params: AgentRuntimeRunParams;
