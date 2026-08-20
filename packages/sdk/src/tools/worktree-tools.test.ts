@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -50,5 +50,27 @@ describe("worktree lifecycle", () => {
     execFileSync("git", ["clean", "-fd"], { cwd: worktree.path });
     removeManagedWorktree(worktree.id);
     expect(existsSync(worktree.path)).toBe(false);
+  });
+
+  test("refuses worktree paths outside the allowed roots (#199)", { timeout: 30_000 }, () => {
+    // nest the repo so dirname(repoRoot) is not the shared tmpdir itself
+    const nest = mkdtempSync(join(tmpdir(), "lume-worktree-nest-"));
+    roots.push(nest);
+    const root = join(nest, "repo");
+    mkdirSync(root);
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    execFileSync("git", ["-c", "user.email=test@example.com", "-c", "user.name=Lume Test", "commit", "--allow-empty", "-qm", "initial"], { cwd: root });
+
+    const arbitrary = mkdtempSync(join(tmpdir(), "lume-worktree-arbitrary-"));
+    roots.push(arbitrary);
+    // neither under dirname(repoRoot) nor dirname(originalCwd)
+    expect(() => createManagedWorktree({ cwd: root, branch: "lume-arb", path: join(arbitrary, "drop") })).toThrow(/allowed worktree roots/);
+
+    // sibling of the repo root stays allowed (default convention)
+    const branch = `lume-sibling-${basename(root)}`;
+    const sibling = join(dirname(root), `.worktree-${branch}`);
+    roots.push(sibling);
+    const worktree = createManagedWorktree({ cwd: root, branch, path: sibling });
+    expect(existsSync(worktree.path)).toBe(true);
   });
 });
