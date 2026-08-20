@@ -313,6 +313,44 @@ describe("AgentTool parallel execution", () => {
       && event.task_id === taskId
     )).toHaveLength(1)
   })
+
+  test("AgentTool input is validated against unsafe and unknown cwd paths (#195)", async () => {
+    expect(AgentTool.inputSchema.properties).not.toHaveProperty("resume")
+
+    const unc = await AgentTool.call(
+      { prompt: "child", description: "d", cwd: "\\\\server\\share\\x", mode: "bypassPermissions" } as never,
+      { cwd: process.cwd(), provider: new StaticProvider([]), model: "test-model", apiType: "anthropic-messages", sessionId: "s" },
+    )
+    expect(unc.is_error).toBe(true)
+
+    const missing = await AgentTool.call(
+      { prompt: "child", description: "d", cwd: join(tmpdir(), `no-such-dir-${Date.now()}`), mode: "bypassPermissions" },
+      { cwd: process.cwd(), provider: new StaticProvider([]), model: "test-model", apiType: "anthropic-messages", sessionId: "s" },
+    )
+    expect(missing.is_error).toBe(true)
+
+    const deniedRoot = join(tmpdir(), `agent-tool-deny-${Date.now()}`)
+    mkdirSync(deniedRoot)
+    try {
+      const denied = await AgentTool.call(
+        { prompt: "child", description: "d", cwd: deniedRoot, mode: "bypassPermissions" },
+        {
+          cwd: process.cwd(),
+          provider: new StaticProvider([]),
+          model: "test-model",
+          apiType: "anthropic-messages",
+          sessionId: "s",
+          sandbox: {
+            enabled: true,
+            filesystem: { allowWrite: [], denyRead: [deniedRoot], denyWrite: [] },
+          },
+        },
+      )
+      expect(denied.is_error).toBe(true)
+    } finally {
+      rmSync(deniedRoot, { recursive: true, force: true })
+    }
+  })
 })
 
 async function waitFor(predicate: () => boolean): Promise<void> {
