@@ -1,3 +1,5 @@
+import { listChannels } from '@/lib/desktop-api/channel'
+import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -13,7 +15,6 @@ import { ChevronDown, Search } from 'lucide-react'
 import { useAtom, useAtomValue } from 'jotai'
 import { agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
-import { listChannels } from '@/lib/desktop-api/channel'
 import { cn } from '@/lib/utils'
 import { ModelOptionList } from '@/components/model-selection/ModelOptionList'
 import { ChannelProviderIcon } from '@/components/model-selection/provider-icon-map'
@@ -28,7 +29,6 @@ import {
 } from '@/components/model-selection/model-selection-state'
 import type { ModelOptionGroup, ModelSelectionOption } from '@/components/model-selection/model-selection-state'
 import { AGENT_IPC_CHANNELS, type AgentThreadMeta, type Channel, type LumeConfigAgentDefaultStrategy } from '@lume/shared'
-import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
 import { useModelMetaVersion } from '@/lib/model-meta-context'
 
 interface ModelPickerProps {

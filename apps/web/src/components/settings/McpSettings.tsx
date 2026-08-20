@@ -4,6 +4,7 @@
  * 通过 agent:get-mcp-config / agent:save-mcp-config 管理当前工作区的 MCP 配置。
  */
 
+import { openLumeConfigSourceFile } from '@/lib/desktop-api/lume-config'
 import * as React from 'react'
 import { useAtomValue } from 'jotai'
 import { toast } from 'sonner'
@@ -38,7 +39,6 @@ import {
   saveMcpConfig,
   testMcpServer,
 } from '@/lib/desktop-api'
-import { openLumeConfigSourceFile } from '@/lib/desktop-api/lume-config'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

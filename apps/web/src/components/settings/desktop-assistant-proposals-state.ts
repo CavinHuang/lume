@@ -1,5 +1,5 @@
 import type { DesktopContextTarget, DesktopProactiveProposal } from '@lume/shared'
-import type { Tab } from '@/atoms/tab-atoms'
+import { type Tab } from '@/atoms'
 
 export function buildDesktopProposalWelcomeState({
   proposal,

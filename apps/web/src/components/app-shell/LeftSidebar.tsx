@@ -1,3 +1,4 @@
+import { countPlanningTodos, onPlanningTodoChange } from '@/lib/desktop-api/planning-todo'
 import { useAtom, useSetAtom } from 'jotai'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -12,7 +13,7 @@ import {
   tabsAtom,
   workspacePinnedIdsAtom,
 } from '@/atoms'
-import { useReleaseThreadState } from '@/hooks/use-release-thread-state'
+import { useReleaseThreadState } from '@/hooks/useReleaseThreadState'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
@@ -22,11 +23,9 @@ import {
   sidecarCall,
   syncDesktopTrayState,
 } from '@/lib/desktop-api'
-import type { Tab } from '@/atoms/tab-atoms'
 import type { AgentThreadMeta, AgentWorkspace, AgentWorkspaceRemovalImpact, AgentWorkspaceRemoveMode } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { LumeSidebar } from './LumeSidebar'
-import { countPlanningTodos, onPlanningTodoChange } from '@/lib/desktop-api/planning-todo'
 import {
   buildLumeSidebarViewModel,
   type LumeSidebarFooterActionId,
@@ -39,6 +38,7 @@ import {
   toggleAllWorkspaces,
   toggleWorkspaceExpansion,
 } from './left-sidebar-state'
+import { type Tab } from '@/atoms'
 
 export function deriveRecentTrayThreads(threads: AgentThreadMeta[]) {
   return threads

@@ -1,3 +1,4 @@
+import { listPlanningTodos } from '@/lib/desktop-api/planning-todo'
 import { ReactRenderer } from '@tiptap/react'
 import { sidecarCall } from '@/lib/desktop-api'
 import { MentionList } from './MentionList'
@@ -7,7 +8,6 @@ import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion
 import type { MentionItem } from './slash-command-state'
 import type { ListInvocableCapabilitiesResult } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
-import { listPlanningTodos } from '@/lib/desktop-api/planning-todo'
 import { toast } from 'sonner'
 import type { EditorOptions } from '@tiptap/core'
 import { fetchLinkConnectionMentionItems, insertLinkConnectionMention } from './link-connection-mentions'

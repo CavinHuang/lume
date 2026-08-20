@@ -1,3 +1,4 @@
+import { applyWikiDraft, cancelWikiDraft, createAskWikiThread, createWikiEditDraft, createWikiImportDraft, createWikiPrivacyPurgeDraft, getWikiCapabilities, getWikiSnapshot, prepareWikiRuntime, previewWikiPrivacyPurge, readWikiPage, resolveWikiPending, runWikiLint, searchWiki, undoWikiBatch } from '@/lib/desktop-api/wiki'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { XMarkdown } from '@ant-design/x-markdown'
@@ -15,7 +16,6 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { openFileDialog, openFolderDialog, openExternalScheme, revealPathInSystem } from '@/lib/desktop-api'
-import { applyWikiDraft, cancelWikiDraft, createAskWikiThread, createWikiEditDraft, createWikiImportDraft, createWikiPrivacyPurgeDraft, getWikiCapabilities, getWikiSnapshot, prepareWikiRuntime, previewWikiPrivacyPurge, readWikiPage, resolveWikiPending, runWikiLint, searchWiki, undoWikiBatch } from '@/lib/desktop-api/wiki'
 import { cn } from '@/lib/utils'
 import { countWikiPages, defaultAskWikiScope, filterWikiPages, type WikiFolderFilter } from './wiki-view-state'
 

@@ -1,3 +1,4 @@
+import { createFileTreeRevealRequest, settleFileTreeReveal } from '@/components/right-panel/right-panel-files-state'
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
@@ -28,7 +29,6 @@ import {
 } from './agent-file-drop'
 import { abortStagedAttachment, sidecarCall } from '@/lib/desktop-api'
 import type { OpenThreadFile } from './AgentFileReference'
-import { createFileTreeRevealRequest, settleFileTreeReveal } from '@/components/right-panel/right-panel-files-state'
 import { pendingAttachmentRejectionMessage, validatePendingAttachmentBatch } from './pending-attachment-validation'
 import { ThreadImageLightbox, type ThreadImageLightboxAttachment } from './ThreadImageLightbox'
 interface AgentViewProps {

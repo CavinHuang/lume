@@ -22,7 +22,7 @@ import {
 } from '@/atoms'
 import { setThemeMode, setThemePalette } from '@/lib/theme-mode'
 import { setChatFontScale } from '@/lib/chat-font-scale'
-import { useBootstrapGeneralSettings } from '@/lib/use-general-settings'
+import { useBootstrapGeneralSettings } from '@/hooks/use-general-settings'
 import { cn } from '@/lib/utils'
 import {
   THEME_MODE_OPTIONS,

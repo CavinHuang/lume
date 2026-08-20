@@ -1,9 +1,9 @@
+import { listAutomationJobs, listAutomationRuns } from '@/lib/desktop-api/automation'
 import { useEffect } from 'react'
 import { useSetAtom } from 'jotai'
 import { listen } from '@/lib/desktop-runtime/event'
-import { automationJobsAtom, automationRunsAtom } from '@/atoms/automation-atoms'
-import { listAutomationJobs, listAutomationRuns } from '@/lib/desktop-api/automation'
 import type { AutomationRun } from '@lume/shared'
+import { automationJobsAtom, automationRunsAtom } from '@/atoms'
 
 export function useAutomationListeners() {
   const setJobs = useSetAtom(automationJobsAtom)

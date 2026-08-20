@@ -1,3 +1,4 @@
+import { listAutomationJobs } from '@/lib/desktop-api/automation'
 import { useAtomValue } from 'jotai'
 import { ChevronLeft, ChevronRight, Clock3, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -23,7 +24,6 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { listAutomationJobs } from '@/lib/desktop-api/automation'
 import {
   createPlanningCalendarEvent,
   createPlanningGroup,

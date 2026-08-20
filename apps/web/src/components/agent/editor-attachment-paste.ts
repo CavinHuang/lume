@@ -1,10 +1,10 @@
+import { stageAttachmentFile } from '@/lib/desktop-api/native'
 import { isImageAttachment } from './AgentAttachmentGrid'
 import {
   validatePendingAttachmentBatch,
   type PendingAttachmentLike,
   type PendingAttachmentRejectionReason,
 } from './pending-attachment-validation'
-import { stageAttachmentFile } from '@/lib/desktop-api/native'
 
 export interface PastedPendingAttachment {
   id: string
