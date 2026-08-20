@@ -147,8 +147,62 @@ describe('LSP tool boundaries', () => {
       ].join('\n'))
 
       expect(await workspaceDiagnosticsCommand(root)).toBe(
-        'go build "./service-a/..." "./service b/..."',
+        // paths with spaces are single-quoted ('' escaping), plain paths stay bare (#198)
+        "go build ./service-a/... './service b/...'",
       )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  test('refuses resource operations outside workspace roots and UNC targets (#197)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'lume-lsp-resource-guard-'))
+    const outside = join(root, '..', `lume-lsp-resource-out-${Date.now()}`)
+    try {
+      await mkdir(outside)
+      await writeFile(join(outside, 'a.ts'), 'x')
+
+      const ctx = { cwd: root } as never
+
+      // delete of a directory outside every root: refused
+      await expect(applyWorkspaceEdit({
+        documentChanges: [{ kind: 'delete', uri: pathToFileURL(outside).toString(), options: { recursive: true } }],
+      }, ctx)).rejects.toThrow(/workspace roots/)
+
+      // delete of the workspace root itself: refused (strict)
+      await expect(applyWorkspaceEdit({
+        documentChanges: [{ kind: 'delete', uri: pathToFileURL(root).toString(), options: { recursive: true } }],
+      }, ctx)).rejects.toThrow(/workspace root/)
+
+      // UNC paths reach the unsafe-path screening before any filesystem call
+      await expect(applyWorkspaceEdit({
+        documentChanges: [{ kind: 'create', uri: 'file://server/share/evil.ts' }],
+      }, ctx)).rejects.toThrow()
+
+      // the outside victim survived everything
+      expect(await stat(join(outside, 'a.ts'))).toBeTruthy()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  test('drops go.work use entries that carry shell metacharacters (#198)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'lume-lsp-go-work-inject-'))
+    try {
+      await writeFile(join(root, 'go.work'), [
+        'go 1.22',
+        'use (',
+        '  ./api',
+        '  "./x$(curl evil)"',
+        '  "./y`id`"',
+        ')',
+      ].join('\n'))
+
+      const command = await workspaceDiagnosticsCommand(root)
+      expect(command).toBe('go build ./api/...')
+      expect(command).not.toContain('$(')
+      expect(command).not.toContain('`')
     } finally {
       await rm(root, { recursive: true, force: true })
     }

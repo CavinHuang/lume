@@ -11,7 +11,7 @@ import { basename, dirname, isAbsolute, relative, resolve, join, sep } from 'nod
 import { pathToFileURL } from 'node:url'
 import { defineTool } from './types.js'
 import type { ToolContext } from '../types.js'
-import { ensurePathAllowed } from '../utils/pathing.js'
+import { ensurePathAllowed, getUnsafeFilePathReason } from '../utils/pathing.js'
 import {
   applyTextEdits,
   collectLspDiagnostics,
@@ -393,8 +393,11 @@ function createLspTool(allowWrite: boolean) {
         }
         case 'renameFile': {
           const newPath = resolve(context.cwd, String(input.new_path))
-          const writeError = ensurePathAllowed(newPath, 'write', context.sandbox, context.additionalDirectories)
-          if (writeError) return { data: writeError, is_error: true }
+          try {
+            assertResourcePathAllowed(newPath, context)
+          } catch (err: any) {
+            return { data: String(err?.message ?? err), is_error: true }
+          }
           const files = [{ oldUri: uriFor(filePath!), newUri: uriFor(newPath) }]
           const edits = await requestAll<LspWorkspaceEdit | null>('workspace/willRenameFiles', { files })
           const merged = mergeRenameWorkspaceEdits(
@@ -608,7 +611,10 @@ function parseGoWorkUsePaths(content: string): string[] {
     }
     if (line.startsWith('use ')) paths.push(unquoteGoPath(line.slice(4).trim()))
   }
-  return [...new Set(paths.filter(Boolean))]
+  // Module paths come from the repo's go.work; anything outside the plain
+  // module charset (spaces allowed — quoteShellArgument handles them) is a
+  // shell-injection vector, not a module (#198)
+  return [...new Set(paths.filter((p) => /^[A-Za-z0-9._/@\\ -]+$/.test(p)))]
 }
 
 function unquoteGoPath(value: string): string {
@@ -616,7 +622,8 @@ function unquoteGoPath(value: string): string {
 }
 
 function quoteShellArgument(value: string): string {
-  return `"${value.replace(/"/g, '\\"')}"`
+  // Single-quote with '' escaping; POSIX double quotes leave ` and $() live (#198)
+  return /^[a-zA-Z0-9_./:\\-]+$/.test(value) ? value : `'${value.replace(/'/g, "''")}'`
 }
 
 function toolResultText(result: { content?: unknown; data?: unknown }): unknown {
@@ -935,7 +942,7 @@ export async function applyWorkspaceEdit(edit: LspWorkspaceEdit | null | undefin
       if (!(await load(step.path))) throw new Error(`LSP edit target does not exist: ${step.path}`)
       virtual.set(step.path, applyTextEdits(virtual.get(step.path)!, step.edits))
     } else if (step.kind === 'create') {
-      assertWriteAllowed(step.path, context)
+      assertResourcePathAllowed(step.path, context, step.options?.overwrite === true)
       const present = await load(step.path)
       if (present && step.options?.ignoreIfExists) {
         ignored.add(step)
@@ -946,8 +953,8 @@ export async function applyWorkspaceEdit(edit: LspWorkspaceEdit | null | undefin
       virtual.set(step.path, '')
       if (!original.has(step.path)) original.set(step.path, '')
     } else if (step.kind === 'rename') {
-      assertWriteAllowed(step.oldPath, context)
-      assertWriteAllowed(step.newPath, context)
+      assertResourcePathAllowed(step.oldPath, context)
+      assertResourcePathAllowed(step.newPath, context, step.options?.overwrite === true)
       if (!(await load(step.oldPath))) throw new Error(`LSP rename source does not exist: ${step.oldPath}`)
       const targetPresent = await load(step.newPath)
       if (targetPresent && step.options?.ignoreIfExists) {
@@ -983,7 +990,7 @@ export async function applyWorkspaceEdit(edit: LspWorkspaceEdit | null | undefin
         original.delete(step.oldPath)
       }
     } else {
-      assertWriteAllowed(step.path, context)
+      assertResourcePathAllowed(step.path, context, true)
       if (!(await load(step.path))) {
         if (step.options?.ignoreIfNotExists) {
           ignored.add(step)
@@ -1071,8 +1078,29 @@ export async function applyWorkspaceEdit(edit: LspWorkspaceEdit | null | undefin
 }
 
 function assertWriteAllowed(filePath: string, context: ToolContext): void {
+  // Same unsafe-path screening Read/Write/Edit apply (UNC/SMB, device paths)
+  const unsafeReason = getUnsafeFilePathReason(filePath)
+  if (unsafeReason) throw new Error(unsafeReason)
   const sandboxError = ensurePathAllowed(filePath, 'write', context.sandbox, context.additionalDirectories)
   if (sandboxError) throw new Error(sandboxError)
+}
+
+/**
+ * Resource operations (create/rename/delete) mutate whole paths, so beyond the
+ * write screening they must stay inside the workspace roots (#197). With
+ * `strictInside`, the operation may not target a root itself (recursive
+ * deletes and overwrite-rm of an entire workspace root are refused).
+ */
+function assertResourcePathAllowed(filePath: string, context: ToolContext, strictInside = false): void {
+  assertWriteAllowed(filePath, context)
+  const roots = [context.cwd, ...(context.additionalDirectories ?? [])]
+  const containingRoot = roots.find((root) => isPathInsideOrEqual(root, filePath))
+  if (!containingRoot) {
+    throw new Error(`LSP resource operations must stay inside the workspace roots: ${filePath}`)
+  }
+  if (strictInside && isPathInsideOrEqual(filePath, containingRoot)) {
+    throw new Error(`LSP resource operation refuses to replace or delete a workspace root: ${filePath}`)
+  }
 }
 
 function isPathInsideOrEqual(parentPath: string, candidatePath: string): boolean {
