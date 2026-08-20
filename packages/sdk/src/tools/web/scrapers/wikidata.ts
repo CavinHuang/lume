@@ -266,10 +266,10 @@ async function resolveEntityLabels(
 		try {
 			const result = await loadPage(apiUrl, { timeout: Math.min(timeout, 10), signal });
 			if (result.ok) {
-				const data = JSON.parse(result.content) as {
+				const data = tryParseJson<{
 					entities: Record<string, { labels?: Record<string, { value: string }> }>;
-				};
-				for (const [id, entity] of Object.entries(data.entities)) {
+				}>(result.content);
+				for (const [id, entity] of Object.entries(data?.entities ?? {})) {
 					const label = entity.labels?.en?.value;
 					if (label) labels[id] = label;
 				}

@@ -4,7 +4,13 @@ import { isIP } from 'node:net'
 import type { SandboxSettings } from '../types.js'
 
 function normalizePath(path: string): string {
-  return normalize(path).replace(/\\/g, '/').toLowerCase()
+  const normalized = normalize(path).replace(/\\/g, '/')
+  // Fold case only on case-insensitive filesystems; on Linux the old unconditional
+  // toLowerCase let ROOT-case variants of the root directory pass containment (#246)
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    return normalized.toLowerCase()
+  }
+  return normalized
 }
 
 async function pathExists(path: string): Promise<boolean> {

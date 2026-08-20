@@ -994,15 +994,14 @@ export class Agent {
     // The finally block below flushes whatever is still pending.
     const persistScheduler = createPersistScheduler(200, () =>
       this.persistCurrentSession(cwd, opts).then(() => undefined))
+    // The host may reuse one session-level AbortSignal across many runs; detach
+    // the forwarder when this run ends so listeners don't pile up on it (#244).
+    const forwardAbort = () => abortCtrl.abort(opts.abortSignal?.reason)
     if (opts.abortSignal) {
       if (opts.abortSignal.aborted) {
         abortCtrl.abort(opts.abortSignal.reason)
       } else {
-        opts.abortSignal.addEventListener(
-          'abort',
-          () => abortCtrl.abort(opts.abortSignal?.reason),
-          { once: true },
-        )
+        opts.abortSignal.addEventListener('abort', forwardAbort, { once: true })
       }
     }
 
@@ -1189,6 +1188,7 @@ export class Agent {
       // saveSession that races with both the awaited write and readers of the
       // session file.
       await persistScheduler.cancel()
+      opts.abortSignal?.removeEventListener('abort', forwardAbort)
       this.history = engine.getMessages()
       this.lastContextUsage = engine.getContextUsage()
       this.currentEngine = null

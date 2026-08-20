@@ -1211,7 +1211,7 @@ export class QueryEngine {
                   delta: { type: 'text_delta', text: chunk.text },
                 },
                 parent_tool_use_id: null,
-                session_id: this.config.sessionId,
+                session_id: this.sessionId,
               }
               // Legacy format - kept for backward compatibility
               yield {
@@ -1233,7 +1233,7 @@ export class QueryEngine {
                   delta: { type: 'thinking_delta', thinking: chunk.thinking },
                 },
                 parent_tool_use_id: null,
-                session_id: this.config.sessionId,
+                session_id: this.sessionId,
               }
             }
             if (chunk.type === 'retry_state') {
