@@ -524,6 +524,15 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
         limit: input.limit,
       },
     }
+    case "browser_run_script": return {
+      method: "agentScript:evaluate",
+      params: {
+        ...params,
+        script: input.script,
+        arg: input.arg,
+        timeoutMs: input.timeout_ms ?? input.timeoutMs,
+      },
+    }
     case "playwright_element_info": return { method: "elementInfo", params: { ...params, ...options } }
     case "playwright_element_screenshot": return { method: "elementScreenshot", params: { ...params, ...options } }
     case "playwright_evaluate": return { method: "evaluate:readonly", params: { ...params, timeoutMs: input.timeoutMs ?? input.timeout_ms ?? options.timeoutMs } }

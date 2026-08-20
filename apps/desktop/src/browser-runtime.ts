@@ -43,6 +43,7 @@ import { BrowserWorkspaceStore } from "./browser-workspace-store"
 import { BrowserReferenceGrantStore } from "./browser-reference-grants"
 import { BrowserAnnotationManager } from "./browser-annotation-manager"
 import { buildBrowserSemanticTree, type BrowserSemanticLine, type BrowserSemanticRef } from "./browser-semantic-snapshot"
+import { normalizeBrowserAgentScriptResult, prepareBrowserAgentScript, type BrowserAgentScriptResult } from "./browser-agent-script"
 
 type BrowserEvent = { method: string; params: Record<string, unknown> }
 type BrowserRuntimeOptions = {
@@ -195,7 +196,7 @@ const MUTATING_METHODS = new Set([
   ...browserMutatingRuntimeMethods(),
   "navigate", "back", "forward", "reload", "click", "doubleClick", "hover", "fill", "type", "typeActive",
   "press", "pressActive", "select", "check", "uncheck", "scroll", "drag", "contactFill", "dialog:handle",
-  "upload", "pageAssets:bundle", "webmcp:invoke",
+  "upload", "pageAssets:bundle", "webmcp:invoke", "agentScript:evaluate",
 ])
 const GUEST_OPTIONAL_METHODS = new Set([
   "url", "title", "site-info", "dialog:get", "wait:download", "download:path",
@@ -324,6 +325,7 @@ export class BrowserRuntime {
       { id: "navigation", description: "Navigate and control ordinary HTTP(S) pages." },
       { id: "locator-actions", description: "Use the constrained snapshot and locator input facade." },
       { id: "semanticSnapshot", description: "Read a compact accessibility-tree snapshot with stable element references." },
+      { id: "agentScript", description: "Run a bounded, confirmed Agent script in an isolated world on its task-owned tab." },
       { id: "screenshot", description: "Capture viewport or full-page screenshots." },
       { id: "agentCursor", description: "Show the virtual Agent cursor for controlled actions." },
       { id: "guardedUpload", description: "Upload only task-bound Lume file references after confirmation." },
@@ -766,7 +768,7 @@ export class BrowserRuntime {
     if ((method === "reload" || method === "hardReload") && (!tab.webContents || tab.webContents.isDestroyed() || tab.guestState === "gone")) {
       return this.recoverGuest(tab)
     }
-    if ((method === "contactFill" || method === "upload" || method === "filechooser:setFiles" || method === "content:export" || method === "pageAssets:bundle" || method === "cdp" || method === "clipboard:read" || method === "clipboard:readText" || method === "clipboard:write" || method === "clipboard:writeText") && params.__policyRequired !== true) throw browserError("confirmation_unavailable")
+    if ((method === "contactFill" || method === "upload" || method === "filechooser:setFiles" || method === "content:export" || method === "pageAssets:bundle" || method === "cdp" || method === "agentScript:evaluate" || method === "clipboard:read" || method === "clipboard:readText" || method === "clipboard:write" || method === "clipboard:writeText") && params.__policyRequired !== true) throw browserError("confirmation_unavailable")
     if (params.__policyRequired === true) this.consumePolicyToken(String(params.__policyConfirmation ?? ""), String(params.__policyBindingHash ?? ""))
     if (MUTATING_METHODS.has(method)) {
       const operationId = request.idempotencyKey || request.requestId || randomUUID()
@@ -1663,6 +1665,7 @@ export class BrowserRuntime {
     if (method === "content:export") return this.exportPageContent(tab, context)
     if (method === "pageAssets:bundle") return this.bundlePageAssets(tab, params, context)
     if (method === "webmcp:invoke") return invokeWebMcpTool(tab, params)
+    if (method === "agentScript:evaluate") return this.evaluateAgentScript(tab, params, context)
     if (method === "typeActive") { await this.applyTextToActive(tab, String(params.text ?? "")); return { ok: true } }
     if (method === "pressActive") { await this.dispatchKey(tab, String(params.key ?? "Enter")); return { ok: true } }
     if (["click", "doubleClick", "hover", "scroll", "drag", "fill", "type", "press", "select", "check", "uncheck"].includes(method)) {
@@ -3108,6 +3111,29 @@ export class BrowserRuntime {
     })) as { result?: { value?: unknown }; exceptionDetails?: unknown }
     if (result.exceptionDetails) throw browserError("action_denied")
     return result.result?.value
+  }
+
+  private async evaluateAgentScript(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): Promise<BrowserAgentScriptResult> {
+    if (context.actor !== "agent" || tab.profileKind !== "agent" || tab.ownerThreadId !== context.threadId) throw browserError("action_denied")
+    const generation = tab.generation
+    const call = prepareBrowserAgentScript(params)
+    const result = await withDebugger(browserContents(tab), async (debuggerRef) => {
+      const frameTree = await debuggerRef.sendCommand("Page.getFrameTree") as { frameTree?: { frame?: { id?: string } } }
+      const frameId = frameTree.frameTree?.frame?.id
+      if (!frameId) throw browserError("stale_target")
+      const isolated = await debuggerRef.sendCommand("Page.createIsolatedWorld", {
+        frameId,
+        worldName: `lume-agent-script:${randomUUID()}`,
+        grantUniveralAccess: false,
+      }) as { executionContextId?: number }
+      if (!isolated.executionContextId || generation !== tab.generation) throw browserError("stale_target")
+      return debuggerRef.sendCommand("Runtime.evaluate", {
+        contextId: isolated.executionContextId,
+        ...call,
+      })
+    }, call.timeout + 2_000)
+    if (generation !== tab.generation) throw browserError("stale_target")
+    return normalizeBrowserAgentScriptResult(result)
   }
 
   private readConsoleLogs(tab: BrowserTab, params: Record<string, unknown>): { logs: BrowserTab["consoleLogs"] } {

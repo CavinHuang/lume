@@ -43,6 +43,47 @@ describe("createBrowserMcpTools", () => {
     expect(listed.tabs.map((tab: BrowserTabDescriptor) => tab.tabId)).toEqual(["mine"])
     expect(switched.active_tab_id).toBe("mine")
   })
+
+  test("runs a bounded script only on the locked task tab", async () => {
+    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
+    const tab = agentTab("locked-tab", "thread-1")
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
+        calls.push(request)
+        if (request.method === "list_tabs") return [tab]
+        if (request.method === "browser_run_script") return { status: "completed", value: { title: "Example" } }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    const result = await call(tools, "mcp__browser__run_script", { script: "return { title: document.title }", arg: { expected: true } })
+
+    expect(result.value).toEqual({ title: "Example" })
+    expect(calls.at(-1)).toMatchObject({
+      method: "browser_run_script",
+      params: { tabId: "locked-tab", script: "return { title: document.title }", arg: { expected: true } },
+    })
+  })
+
+  test("returns script exceptions as structured tool errors", async () => {
+    const tab = agentTab("locked-tab", "thread-1")
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string }) => request.method === "list_tabs"
+        ? [tab]
+        : { status: "exception", exception: { message: "Error: boom" } },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    const tool = tools.find((candidate) => candidate.name === "mcp__browser__run_script")!
+    const raw = await tool.call({ script: "throw new Error('boom')" }, { toolUseId: "script-error" } as any)
+    const result = JSON.parse(String(raw.content))
+
+    expect(raw.is_error).toBeTrue()
+    expect(result).toMatchObject({ ok: false, code: "script_exception", message: "Error: boom" })
+  })
 })
 
 async function call(tools: ReturnType<typeof createBrowserMcpTools>, name: string, args: Record<string, unknown>): Promise<any> {

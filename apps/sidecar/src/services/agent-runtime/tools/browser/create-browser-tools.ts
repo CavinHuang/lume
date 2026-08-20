@@ -7,7 +7,7 @@ import { getBrowserToolSessionRegistry, type BrowserToolSessionRegistry } from "
 
 export const BROWSER_MCP_SERVER_ID = "browser"
 const WRAPPER_PREFIX = `mcp__${BROWSER_MCP_SERVER_ID}__`
-export const BROWSER_TOOL_NAMES = ["list_tabs", "open", "switch_tab", "snapshot"] as const
+export const BROWSER_TOOL_NAMES = ["list_tabs", "open", "switch_tab", "snapshot", "run_script"] as const
 export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number]
 
 type BrowserToolBroker = Pick<BrowserBroker, "dispatch" | "listBackends">
@@ -47,13 +47,14 @@ export function createBrowserMcpTools(input: {
         source: "mcp",
         category: readOnly ? "read" : "execute",
         capability: "mcp",
-        riskLevel: name === "open" ? "medium" : "low",
-        sideEffects: name === "open" ? "desktop" : "none",
+        riskLevel: name === "run_script" ? "high" : name === "open" ? "medium" : "low",
+        sideEffects: name === "open" || name === "run_script" ? "desktop" : "none",
         allowedInPlanMode: readOnly,
         isReadOnly: readOnly,
         isConcurrencySafe: false,
         requiresApprovalByDefault: false,
         executionPolicy: { allowBackground: false },
+        resultPolicy: { maxChars: 50_000 },
         mcpServerId: BROWSER_MCP_SERVER_ID,
         builtin: true,
       },
@@ -71,11 +72,12 @@ export function createBrowserMcpTools(input: {
           })
         } catch (error) {
           const code = browserErrorCode(error)
+          const message = error instanceof Error && error.message && error.message !== code ? error.message.slice(0, 4_000) : code
           return toolResult(operationId, {
             ok: false,
             operation_id: operationId,
             code,
-            message: code,
+            message,
             retryable: code === "browser_unavailable" || code === "stale_target",
           }, true)
         }
@@ -110,6 +112,23 @@ async function executeTool(
     return { active_tab_id: tab.tabId, tab }
   }
   if (!activeTab) throw new Error("tab_not_found")
+  if (name === "run_script") {
+    const script = stringValue(args.script)
+    if (!script || script.length > 50_000) throw new Error("invalid_browser_request")
+    const execution = await dispatch(broker, "browser_run_script", {
+      tabId: activeTab.tabId,
+      script,
+      arg: args.arg ?? null,
+      ...(Number.isInteger(args.timeout_ms) ? { timeout_ms: args.timeout_ms } : {}),
+    }) as { status?: unknown; value?: unknown; exception?: unknown }
+    if (execution?.status === "exception") {
+      const exception = asRecord(execution.exception)
+      const message = typeof exception.message === "string" ? exception.message.slice(0, 4_000) : "Script execution failed"
+      throw Object.assign(new Error(message), { code: "script_exception" })
+    }
+    if (execution?.status !== "completed") throw new Error("browser_internal_error")
+    return { active_tab_id: activeTab.tabId, value: execution.value ?? null }
+  }
   const snapshot = await dispatch(broker, "browser_snapshot", {
     tabId: activeTab.tabId,
     interactive_only: args.interactive_only === true,
@@ -153,6 +172,11 @@ function toolSchema(name: BrowserToolName): ToolInputSchema {
     cursor: { type: "string", description: "Opaque next_cursor returned by the previous snapshot page." },
     limit: { type: "integer", minimum: 50, maximum: 1000, default: 400, description: "Maximum semantic-tree lines in this page." },
   })
+  if (name === "run_script") return object({
+    script: { type: "string", maxLength: 50000, description: "JavaScript function body. Use arg for JSON input and return a JSON-serializable value." },
+    arg: { description: "Optional JSON-serializable value exposed to the script as arg." },
+    timeout_ms: { type: "integer", minimum: 100, maximum: 10000, default: 5000, description: "Execution timeout in milliseconds." },
+  }, ["script"])
   return object({})
 }
 
@@ -162,6 +186,7 @@ function describeTool(name: BrowserToolName): string {
     open: "Open a URL in a new Agent-owned in-app browser tab and lock subsequent browser tools to it.",
     switch_tab: "Explicitly switch the Agent's locked browser target to another Agent-owned tab.",
     snapshot: "Read the active tab as a compact accessibility-tree snapshot. Interactive nodes have refs such as [ref=e12]; later browser actions use @e12. Call this before interacting. Continue large snapshots with next_cursor.",
+    run_script: "Run a bounded JavaScript function body in an isolated world on the locked Agent tab. The script receives JSON input as arg and must return a JSON-serializable value. Prefer semantic Browser tools for ordinary interaction. Script execution requires the browser action confirmation gate.",
   })[name]
 }
 

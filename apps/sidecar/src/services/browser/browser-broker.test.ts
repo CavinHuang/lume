@@ -54,6 +54,32 @@ test("broker obtains and binds one-time confirmation for consequential actions",
   await assert.rejects(() => broker.dispatch({ method: "click", params: { semanticIntent: "Pay now" }, browserSessionId: "s", browserTurnId: "t" }), /action_denied/);
 });
 
+test("Agent scripts require confirmation and stay bound to the selected tab", async () => {
+  const calls: any[] = []
+  const broker = new BrowserBroker({ request: async (request) => {
+    calls.push(request)
+    if (request.method === "policy:confirm") return { approved: true, token: "script-token" }
+    return { status: "completed", value: { title: "Example" } }
+  } })
+  broker.setPluginState({ browserEnabled: true })
+
+  const result = await broker.dispatch({
+    method: "browser_run_script",
+    params: { tabId: "tab-1", script: "return document.title", arg: null, timeout_ms: 1_000 },
+    tabId: "tab-1",
+    threadId: "thread-1",
+    browserSessionId: "s",
+    browserTurnId: "t",
+  })
+
+  assert.deepEqual(result, { status: "completed", value: { title: "Example" } })
+  assert.equal(calls[0].method, "policy:confirm")
+  assert.equal(calls[1].method, "agentScript:evaluate")
+  assert.equal(calls[1].context.tabId, "tab-1")
+  assert.equal(calls[1].params.__policyRequired, true)
+  assert.equal(calls[1].params.__policyConfirmation, "script-token")
+})
+
 test("agent-created in-app tabs are bound to the owning thread workspace", async () => {
   const calls: any[] = [];
   const broker = new BrowserBroker({ request: async (request) => {

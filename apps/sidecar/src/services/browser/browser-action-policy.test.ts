@@ -19,6 +19,11 @@ test("browser policy allows ordinary controls and confirms consequential intent"
   assert.equal(classifyBrowserAction("playwright_file_chooser_set_files").category, "file")
   assert.equal(classifyBrowserAction("tab_page_assets_bundle").category, "file")
   assert.equal(classifyBrowserAction("tab_cdp_call").category, "authorize")
+  assert.deepEqual(classifyBrowserAction("browser_run_script"), {
+    decision: "confirm",
+    category: "authorize",
+    preview: "在当前 Agent 任务标签页执行 JavaScript",
+  })
 })
 
 test("browser policy hands payment and CAPTCHA back to the user", () => {

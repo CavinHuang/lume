@@ -11,6 +11,7 @@ const EXPLICIT_CONFIRM = new Map<string, BrowserActionPolicyDecision["category"]
   ["upload", "file"], ["download", "file"], ["contactFill", "credential"],
   ["tab_page_assets_bundle", "file"],
   ["webmcp_invoke_tool", "authorize"],
+  ["browser_run_script", "authorize"],
   ["tab_cdp_call", "authorize"], ["tab_cdp_send", "authorize"],
 ])
 
@@ -85,6 +86,7 @@ function isPrivateBrowserUrl(value: unknown): boolean {
 function safeOrigin(value: unknown): string | undefined { try { return typeof value === "string" ? new URL(value).origin : undefined } catch { return undefined } }
 
 function preview(method: string, params: Record<string, unknown>): string {
+  if (method === "browser_run_script") return "在当前 Agent 任务标签页执行 JavaScript"
   const intent = [params.semanticIntent, params.intent, params.description, params.label].find((value): value is string => typeof value === "string" && Boolean(value.trim()))
   return `${method}: ${(intent ?? "执行受保护的浏览器动作").replace(/[\r\n\t]+/g, " ").slice(0, 240)}`
 }

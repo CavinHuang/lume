@@ -137,6 +137,7 @@ describe("create-lume-tools", () => {
     expect(toolNames).toContain("mcp__browser__open");
     expect(toolNames).toContain("mcp__browser__switch_tab");
     expect(toolNames).toContain("mcp__browser__snapshot");
+    expect(toolNames).toContain("mcp__browser__run_script");
   });
 
   test("does not expose task-owned Browser tools to subagents", () => {
