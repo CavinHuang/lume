@@ -3,6 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BashTool, interpretShellExit, looksLikeInteractivePrompt } from "./bash";
+import { analyzeBashCommand } from "../utils/bash-command-analysis";
 import { clearTasks, TaskOutputTool } from "./task-tools";
 import {
   createProcessJobRecord,
@@ -24,7 +25,11 @@ describe("BashTool shell invocation", () => {
     expect(BashTool.isReadOnly?.({ command: "powershell -Command Set-Content out.txt x" })).toBeFalse();
   });
 
-  test("rejects write and execute argument forms of whitelisted executables", () => {
+  // CI 无 natives 二进制（dist 不入库），analyzeBashCommand 走 parse-unavailable 回退：
+  // 白名单加速只在 native 解析可用时生效；回退路径对 find/sed/sort 一律 fail-closed（见下一测试）。
+  const nativeBashAvailable = analyzeBashCommand("echo probe").status !== "parse-unavailable";
+
+  test.skipIf(!nativeBashAvailable)("rejects write and execute argument forms of whitelisted executables", () => {
     // find
     expect(BashTool.isReadOnly?.({ command: "find . -name '*.ts'" })).toBeTrue();
     expect(BashTool.isReadOnly?.({ command: "find . -name x -delete" })).toBeFalse();
@@ -45,6 +50,16 @@ describe("BashTool shell invocation", () => {
     expect(BashTool.isReadOnly?.({ command: "sort -o out.txt input.txt" })).toBeFalse();
     expect(BashTool.isReadOnly?.({ command: "sort --output=out.txt input.txt" })).toBeFalse();
     expect(BashTool.isReadOnly?.({ command: "grep -o pattern file.txt" })).toBeTrue();
+  });
+
+  // 与上一测试互补：native 解析不可用（无二进制）时，find/sed/sort 整体退回
+  // parse-unavailable 的 PowerShell 白名单回退——这些可执行文件不在回退白名单中，
+  // 一律判非只读（fail-closed：宁可失去并发加速，不放过写形态）。
+  test.skipIf(nativeBashAvailable)("falls back to fail-closed for find/sed/sort when native parsing is unavailable", () => {
+    expect(BashTool.isReadOnly?.({ command: "find . -name '*.ts'" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "find . -name x -delete" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "sed -n '10p' file.txt" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "sort input.txt" })).toBeFalse();
   });
 
   test("uses PowerShell on Windows instead of requiring bash", () => {
