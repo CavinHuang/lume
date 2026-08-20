@@ -606,7 +606,8 @@ async function fetchGitHubJobLogs(
 	const token = $env.GITHUB_TOKEN || $env.GH_TOKEN;
 	if (token) headers.Authorization = `Bearer ${token}`;
 
-	// 302 → signed log URL on a different origin; fetch strips Authorization on the cross-origin hop.
+	// 302 → signed log URL on a different origin; loadPage follows redirects
+	// manually and strips Authorization on cross-origin hops.
 	const result = await loadPage(`https://api.github.com/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`, {
 		timeout,
 		headers,

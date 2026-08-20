@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -19,18 +20,22 @@ export interface ScraperRuntime {
   storage?: AgentStorage | null;
 }
 
-let activeRuntime: ScraperRuntime | undefined;
+// Per-request runtime store: a module-level variable would race when the main
+// agent and parallel subagents run web-fetch concurrently in one process (one
+// finishing clears the runtime the other still needs), so scope it per async
+// call chain instead.
+const scraperRuntimeStore = new AsyncLocalStorage<ScraperRuntime>();
 
-export function setScraperRuntime(runtime: ScraperRuntime | undefined): void {
-  activeRuntime = runtime;
+export function runWithScraperRuntime<T>(runtime: ScraperRuntime, fn: () => Promise<T>): Promise<T> {
+  return scraperRuntimeStore.run(runtime, fn);
 }
 
 export function getScraperRuntime(): ScraperRuntime | undefined {
-  return activeRuntime;
+  return scraperRuntimeStore.getStore();
 }
 
 export function getRuntimeFetch(): FetchImpl {
-  const runtime = activeRuntime;
+  const runtime = scraperRuntimeStore.getStore();
   const implementation = runtime?.fetchImpl ?? fetch;
   return async (input, init = {}) => {
     const target = input;
@@ -207,7 +212,7 @@ export async function runtimeLoadPage(url: string, options: {
   maxBytes?: number;
   signal?: AbortSignal;
 } = {}) {
-  const runtime = activeRuntime;
+  const runtime = scraperRuntimeStore.getStore();
   return lumeLoadPage(url, {
     fetchImpl: runtime?.fetchImpl ?? fetch,
     timeoutMs: Math.max(1, Math.round((options.timeout ?? 20) * 1000)),
@@ -221,7 +226,7 @@ export async function runtimeLoadPage(url: string, options: {
 }
 
 export async function runtimeLoadBinary(url: string, options: { timeout?: number; maxBytes?: number; signal?: AbortSignal } = {}) {
-  const runtime = activeRuntime;
+  const runtime = scraperRuntimeStore.getStore();
   return lumeLoadBinary(url, {
     fetchImpl: runtime?.fetchImpl ?? fetch,
     timeoutMs: Math.max(1, Math.round((options.timeout ?? 20) * 1000)),

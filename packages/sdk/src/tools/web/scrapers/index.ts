@@ -253,7 +253,7 @@ export const specialHandlers: SpecialHandler[] = [
 
 
 
-import { setScraperRuntime, type AgentStorage } from "./compat.js";
+import { runWithScraperRuntime, type AgentStorage } from "./compat.js";
 import type { RenderResult } from "./types.js";
 import type { SandboxSettings } from "../../../types.js";
 import type { FetchImpl } from "../../web-fetch-http.js";
@@ -280,8 +280,7 @@ export const specialHandlerNames = [
 
 export async function handleSpecialUrl(url: string, context: ScraperContext): Promise<RenderResult | null> {
   const timeout = Math.max(0.001, context.timeoutMs / 1000);
-  setScraperRuntime({ fetchImpl: context.fetchImpl, sandbox: context.sandbox, storage: context.storage });
-  try {
+  return runWithScraperRuntime({ fetchImpl: context.fetchImpl, sandbox: context.sandbox, storage: context.storage }, async () => {
     for (const handler of specialHandlers) {
       try {
         const result = await handler(url, timeout, context.signal, context.storage);
@@ -291,7 +290,5 @@ export async function handleSpecialUrl(url: string, context: ScraperContext): Pr
       }
     }
     return null;
-  } finally {
-    setScraperRuntime(undefined);
-  }
+  });
 }
