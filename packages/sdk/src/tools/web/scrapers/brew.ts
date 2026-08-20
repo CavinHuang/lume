@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatNumber, loadPage } from "./types.js";
 
@@ -87,7 +88,8 @@ export const handleBrew: SpecialHandler = async (
 		let md: string;
 
 		if (isFormula) {
-			const formula: BrewFormula = JSON.parse(result.content);
+			const formula: BrewFormula | null = tryParseJson<BrewFormula>(result.content);
+			if (!formula) return null;
 
 			md = `# ${formula.full_name || formula.name}\n\n`;
 			if (formula.desc) md += `${formula.desc}\n\n`;
@@ -131,7 +133,8 @@ export const handleBrew: SpecialHandler = async (
 				md += `\n## Caveats\n\n${formula.caveats}\n`;
 			}
 		} else {
-			const cask: BrewCask = JSON.parse(result.content);
+			const cask: BrewCask | null = tryParseJson<BrewCask>(result.content);
+			if (!cask) return null;
 
 			const displayName = cask.name?.[0] || cask.token;
 			md = `# ${displayName}\n\n`;
