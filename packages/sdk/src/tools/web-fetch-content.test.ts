@@ -10,6 +10,13 @@ describe("renderStructuredBinary", () => {
     expect(result?.markdown).toContain("Hello archive");
   });
 
+  test("aborts archives whose uncompressed entries exceed the budget (#219)", async () => {
+    const big = new Uint8Array(40 * 1024 * 1024);
+    const archive = zipSync({ "a.bin": big, "b.bin": big });
+    expect(renderStructuredBinary(archive, "application/zip", "https://example.com/a.zip"))
+      .rejects.toThrow("uncompressed size exceeds");
+  });
+
   test("converts a minimal DOCX fixture through Mammoth", async () => {
     const docx = zipSync({
       "[Content_Types].xml": strToU8("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>"),

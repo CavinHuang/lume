@@ -86,7 +86,7 @@ describe("AnthropicProvider", () => {
     })
   })
 
-  test("applies official five-minute cache markers and runtime system messages", async () => {
+  test("applies official five-minute cache markers and hoists runtime system content", async () => {
     let request: Record<string, any> | undefined
     const provider = new AnthropicProvider({ apiKey: "sk-test" })
     ;(provider as any).client = {
@@ -121,13 +121,76 @@ describe("AnthropicProvider", () => {
       },
     })
 
-    expect(request?.system).toEqual([{
-      type: "text",
-      text: "stable system",
-      cache_control: { type: "ephemeral", ttl: "5m" },
+    // runtimeRole:'system' 的内容并入顶层 system（messages 数组不接受 role:'system'）
+    expect(request?.system).toEqual([
+      {
+        type: "text",
+        text: "stable system",
+        cache_control: { type: "ephemeral", ttl: "5m" },
+      },
+      {
+        type: "text",
+        text: "<lume_runtime_context>\ncurrent runtime\n</lume_runtime_context>",
+      },
+    ])
+    // cache_control 只能挂 content block：顶层不再出现，落到最后一条消息的最后一个 block
+    expect(request?.cache_control).toBeUndefined()
+    expect(request?.messages).toEqual([
+      { role: "user", content: "old question" },
+      { role: "assistant", content: "old answer" },
+      {
+        role: "user",
+        content: [{
+          type: "text",
+          text: "new question",
+          cache_control: { type: "ephemeral", ttl: "5m" },
+        }],
+      },
+    ])
+  })
+
+  test("marks the last content block of the last message when cacheConversation is on", async () => {
+    let request: Record<string, any> | undefined
+    const provider = new AnthropicProvider({ apiKey: "sk-test" })
+    ;(provider as any).client = {
+      messages: {
+        create: async (value: Record<string, any>) => {
+          request = value
+          return {
+            content: [{ type: "text", text: "ok" }],
+            stop_reason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }
+        },
+      },
+    }
+
+    await provider.createMessage({
+      model: "claude-test",
+      maxTokens: 100,
+      system: "",
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" } },
+          { type: "text", text: "hello" },
+        ],
+      }],
+      promptCache: {
+        strategy: "anthropic-ephemeral",
+        ttl: "5m",
+        cacheConversation: true,
+      },
+    })
+
+    expect(request?.cache_control).toBeUndefined()
+    expect(request?.messages).toEqual([{
+      role: "user",
+      content: [
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" } },
+        { type: "text", text: "hello", cache_control: { type: "ephemeral", ttl: "5m" } },
+      ],
     }])
-    expect(request?.cache_control).toEqual({ type: "ephemeral", ttl: "5m" })
-    expect(request?.messages[2]).toEqual({ role: "system", content: "current runtime" })
   })
 
   test("does not send Anthropic cache extensions to compatible endpoints by default", async () => {

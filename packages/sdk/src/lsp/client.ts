@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -155,9 +155,14 @@ export function setLspIdleTimeout(timeoutMs: number | null | undefined): void {
 }
 
 function ensureIdleChecker(): void {
-  if (idleChecker) clearInterval(idleChecker)
-  idleChecker = undefined
-  if (idleTimeoutMs !== null) {
+  if (idleTimeoutMs === null) {
+    if (idleChecker) clearInterval(idleChecker)
+    idleChecker = undefined
+    return
+  }
+  // Recreating the interval on every file operation would restart the 60s
+  // countdown and let busy sessions postpone idle disposal forever.
+  if (!idleChecker) {
     idleChecker = setInterval(() => {
       void Promise.all([...clients.entries()].map(async ([key, pending]) => {
         const client = await pending.catch(() => undefined)
@@ -421,10 +426,11 @@ async function resolveAvailableServer(
     cwd: server.cwd ?? root,
     enabled: useLspmux,
   })
+  const shim = wrapWindowsCommandShim(wrapped.command, wrapped.args)
   return {
     ...server,
-    command: wrapped.command,
-    args: wrapped.args,
+    command: shim?.command ?? wrapped.command,
+    args: shim?.args ?? wrapped.args,
     cwd: server.cwd ?? root,
     ...(wrapped.env ? { env: wrapped.env } : {}),
     lspmux: wrapped.lspmux,
@@ -476,6 +482,32 @@ export async function getLspClientsForFile(cwd: string, config?: Record<string, 
 function isTransientLspFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return /timed out|aborted|cancelled/i.test(message)
+}
+
+// child_process cannot spawn .cmd/.bat shims directly on Windows (EINVAL), so
+// resolveAvailableServer routes them through cmd.exe.
+// ponytail: arguments beyond the command path are not cmd-escaped (quotes or
+// spaces would trip cmd's /s quote stripping); LSP server args never carry
+// embedded quotes.
+function wrapWindowsCommandShim(command: string, args: string[]): { command: string; args: string[] } | undefined {
+  if (process.platform !== 'win32') return undefined
+  if (!/\.(cmd|bat)$/i.test(command)) return undefined
+  return { command: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', command, ...args] }
+}
+
+// Killing a cmd.exe shim wrapper alone orphans the real server behind it, so
+// the whole tree goes down on Windows. spawnSync keeps the kill synchronous
+// with dispose instead of racing process-exit observers.
+function killLspProcessTree(child: ChildProcessWithoutNullStreams): void {
+  if (process.platform === 'win32' && child.pid !== undefined) {
+    try {
+      spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+      return
+    } catch {
+      // Fall through to a direct kill if taskkill is unavailable.
+    }
+  }
+  child.kill()
 }
 
 export async function getLspClient(cwd: string, config?: Record<string, unknown>, filePath?: string): Promise<LspClient> {
@@ -645,7 +677,7 @@ export class LspClient {
     try {
       await client.initialize()
     } catch (error) {
-      child.kill()
+      killLspProcessTree(child)
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Unable to start LSP server "${server.command}": ${detail}`)
     }
@@ -836,7 +868,7 @@ export class LspClient {
     } catch {
       // The process is still forcibly terminated below.
     } finally {
-      if (this.process.exitCode === null) this.process.kill()
+      if (this.process.exitCode === null) killLspProcessTree(this.process)
       this.fail(new Error('LSP client disposed'))
       await Promise.race([this.exited, new Promise((resolve) => setTimeout(resolve, 250))])
     }
@@ -1004,11 +1036,13 @@ export class LspClient {
   }
 
   private async withDocumentLock<T>(uri: string, operation: () => Promise<T>): Promise<T> {
-    const existing = clientLocks.get(uri)
-    if (existing) await existing
+    // Publish the new tail before awaiting the previous lock, otherwise every
+    // waiter observes the same head and the chain stops serializing (#221).
+    const previous = clientLocks.get(uri) ?? Promise.resolve()
     let release!: () => void
     const lock = new Promise<void>((resolve) => { release = resolve })
     clientLocks.set(uri, lock)
+    await previous.catch(() => undefined)
     try { return await operation() } finally {
       release()
       if (clientLocks.get(uri) === lock) clientLocks.delete(uri)

@@ -1,5 +1,6 @@
 import { access, readdir } from 'fs/promises'
 import { resolve, isAbsolute, normalize, basename, dirname } from 'path'
+import { isIP } from 'node:net'
 import type { SandboxSettings } from '../types.js'
 
 function normalizePath(path: string): string {
@@ -124,14 +125,62 @@ export function getHostnameFromUrl(url: string): string | null {
   }
 }
 
+/** 公网地址判定（自 sidecar wiki 服务移入单源维护）：拦截私网/回环/链路本地/CGNAT/基准测试等保留段。 */
+export function isPublicIpAddress(address: string): boolean {
+  const family = isIP(address)
+  if (family === 4) {
+    const parts = address.split('.').map(Number)
+    const [a, b] = parts
+    if (a === 0 || a === 10 || a === 127 || a! >= 224) return false
+    if (a === 100 && b! >= 64 && b! <= 127) return false
+    if (a === 169 && b === 254) return false
+    if (a === 172 && b! >= 16 && b! <= 31) return false
+    if (a === 192 && (b === 0 || b === 168)) return false
+    if (a === 198 && (b === 18 || b === 19)) return false
+    return true
+  }
+  if (family === 6) {
+    const value = address.toLowerCase().split('%')[0]!
+    if (value === '::' || value === '::1') return false
+    if (value.startsWith('fc') || value.startsWith('fd') || /^fe[89ab]/.test(value)) return false
+    if (value.startsWith('ff') || value.startsWith('2001:db8')) return false
+    if (value.startsWith('::ffff:')) return isPublicIpAddress(value.slice(7))
+    return true
+  }
+  return false
+}
+
+function isExplicitlyAllowedHost(hostname: string, sandbox?: SandboxSettings): boolean {
+  const allowedDomains = sandbox?.network?.allowedDomains || []
+  return allowedDomains.some((domain) => {
+    const normalizedDomain = domain.toLowerCase()
+    return hostname === normalizedDomain || hostname.endsWith(`.${normalizedDomain}`)
+  })
+}
+
 export function ensureNetworkAllowed(
   url: string,
   sandbox?: SandboxSettings,
 ): string | null {
-  if (!sandbox?.enabled || !sandbox.network) return null
-
   const hostname = getHostnameFromUrl(url)
-  if (!hostname) return `Invalid URL: ${url}`
+  if (!hostname) {
+    if (!sandbox?.enabled || !sandbox.network) return null
+    return `Invalid URL: ${url}`
+  }
+
+  // 字面 IP 形式的私网/回环/链路本地地址一律拦截（防 SSRF 探测内网/云元数据端点），
+  // 无论 sandbox 是否启用；用户在 allowedDomains 显式放行的 host 保留绕过路径。
+  // 已知天花板：hostname 解析到私网地址的形态不在本函数覆盖（需要 DNS 判定，
+  // 会破坏本地 fake-IP/离线解析环境），由 sidecar 注入的 fetchImpl 守卫收口。
+  if (!isExplicitlyAllowedHost(hostname, sandbox)) {
+    // Node 的 URL.hostname 对 IPv6 保留方括号（"[::1]"），剥掉再判
+    const bare = hostname.replace(/^\[/, '').replace(/\]$/, '')
+    if (isIP(bare) && !isPublicIpAddress(bare)) {
+      return `Sandbox denied network access to ${hostname}`
+    }
+  }
+
+  if (!sandbox?.enabled || !sandbox.network) return null
 
   const allowedDomains = sandbox.network.allowedDomains || []
   if (

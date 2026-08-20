@@ -47,6 +47,37 @@ describe("search tools", () => {
     expect(String(noMatch.content)).toContain("No matches found");
   });
 
+  test("Grep fallback stops collecting output once the pagination budget is satisfied", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-search-earlystop-"));
+    roots.push(root);
+    await writeFile(join(root, "matches.txt"), "seed\n", "utf8");
+
+    // A configured ripgrep command forces the process fallback path; the
+    // emitter prints far more entries than the requested window.
+    const emitter = [
+      "-e",
+      "for (let i = 1; i <= 50000; i += 1) console.log(`file-${i}.txt`);",
+    ];
+    const result = await GrepTool.call({
+      pattern: "needle",
+      path: root,
+      offset: 0,
+      head_limit: 5,
+    }, {
+      cwd: root,
+      sandbox: { ripgrep: { command: process.execPath, args: emitter } },
+    } as any);
+
+    expect(result.is_error).toBeFalsy();
+    const meta = result._meta?.search as any;
+    expect(meta.engine).toBe("rg");
+    expect(meta.truncated).toBe(true);
+    const payload = JSON.parse(String(result.content));
+    expect(payload.matches).toHaveLength(5);
+    // The search process was killed early instead of buffering all output.
+    expect(payload.total_matches).toBeLessThan(50000);
+  });
+
   test("Glob reports truncation instead of silently dropping matches", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-search-tools-"));
     roots.push(root);

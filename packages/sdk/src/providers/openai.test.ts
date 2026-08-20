@@ -447,4 +447,94 @@ describe("OpenAIProvider", () => {
       cache_creation_input_tokens: 0,
     })
   })
+
+  test("returns empty response instead of crashing when 200 body has no choices", async () => {
+    globalThis.fetch = (async () => {
+      // 网关 200 + 无 choices 的 body：不能 TypeError，要落到空响应守卫
+      return new Response(JSON.stringify({ id: "chatcmpl-test" }), { status: 200, headers: { "content-type": "application/json" } })
+    }) as typeof fetch
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test", retryConfig: fastRetry })
+    const result = await provider.createMessage({
+      model: "gpt-test",
+      maxTokens: 100,
+      system: "",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [],
+    })
+
+    expect(result.content).toEqual([{ type: "text", text: "" }])
+    expect(result.stopReason).toBe("end_turn")
+  })
+
+  test("skips malformed SSE data frames without killing the stream", async () => {
+    globalThis.fetch = (async () => {
+      const stream = [
+        'data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}',
+        "data: {broken-json",
+        'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}',
+        "data: [DONE]",
+        "",
+      ].join("\n\n")
+      return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } })
+    }) as typeof fetch
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test", retryConfig: fastRetry })
+    const generator = provider.createMessageStream({
+      model: "gpt-test",
+      maxTokens: 100,
+      system: "",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [],
+    })
+
+    const events = []
+    let final
+    while (true) {
+      const next = await generator.next()
+      if (next.done) {
+        final = next.value
+        break
+      }
+      events.push(next.value)
+    }
+
+    expect(events).toContainEqual({ type: "text_delta", text: "ok" })
+    expect(final?.content).toEqual([{ type: "text", text: "ok" }])
+  })
+
+  test("frames CRLF-separated SSE streams", async () => {
+    globalThis.fetch = (async () => {
+      const stream = [
+        'data: {"choices":[{"index":0,"delta":{"content":"crlf-ok"},"finish_reason":null}]}',
+        'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}',
+        "data: [DONE]",
+        "",
+      ].join("\r\n\r\n")
+      return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } })
+    }) as typeof fetch
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test", retryConfig: fastRetry })
+    const generator = provider.createMessageStream({
+      model: "gpt-test",
+      maxTokens: 100,
+      system: "",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [],
+    })
+
+    const events = []
+    let final
+    while (true) {
+      const next = await generator.next()
+      if (next.done) {
+        final = next.value
+        break
+      }
+      events.push(next.value)
+    }
+
+    expect(events).toContainEqual({ type: "text_delta", text: "crlf-ok" })
+    expect(final?.content).toEqual([{ type: "text", text: "crlf-ok" }])
+  })
 })

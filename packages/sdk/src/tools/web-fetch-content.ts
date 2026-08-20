@@ -4,6 +4,7 @@ import { createTurndown, extractArticleMarkdown } from "./html-to-markdown.js";
 
 const require = createRequire(import.meta.url);
 const MAX_ARCHIVE_ENTRIES = 100;
+const MAX_ARCHIVE_UNCOMPRESSED_BYTES = 64 * 1024 * 1024;
 const MAX_TEXT_ENTRY_BYTES = 512 * 1024;
 
 export interface StructuredBinaryResult {
@@ -43,7 +44,22 @@ function archiveText(name: string, bytes: Uint8Array): string | null {
 }
 
 function zipEntries(bytes: Uint8Array): Record<string, Uint8Array> {
-  return unzipSync(bytes) as Record<string, Uint8Array>;
+  // The filter runs before each entry is decompressed and reports the
+  // uncompressed size from the central directory, so entries beyond the
+  // entry/byte budget are never inflated into memory (zip bombs abort).
+  let entries = 0;
+  let totalBytes = 0;
+  return unzipSync(bytes, {
+    filter: (file) => {
+      if (entries >= MAX_ARCHIVE_ENTRIES) return false;
+      if (totalBytes + file.originalSize > MAX_ARCHIVE_UNCOMPRESSED_BYTES) {
+        throw new Error(`zip archive uncompressed size exceeds ${MAX_ARCHIVE_UNCOMPRESSED_BYTES} bytes`);
+      }
+      entries += 1;
+      totalBytes += file.originalSize;
+      return true;
+    },
+  }) as Record<string, Uint8Array>;
 }
 
 function renderZip(bytes: Uint8Array, url: string, kind: string): StructuredBinaryResult {

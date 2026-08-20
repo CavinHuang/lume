@@ -13,41 +13,86 @@ import type {
   CreateMessageStreamEvent,
 } from './types.js'
 
+// Runtime messages hoisted to the top-level system param (the messages array
+// rejects role:'system'; system content is billed and cached as a system block).
+function collectRuntimeSystemText(params: CreateMessageParams): string | null {
+  if (params.promptCache?.runtimeRole !== 'system') return null
+  const parts: string[] = []
+  for (const message of params.messages) {
+    if (message.role !== 'runtime') continue
+    parts.push(typeof message.content === 'string'
+      ? message.content
+      : message.content.filter((block) => block.type === 'text').map((block) => block.text).join('\n'))
+  }
+  return parts.length > 0 ? parts.join('\n') : null
+}
+
 function toAnthropicSystem(params: CreateMessageParams): string | Array<Record<string, unknown>> {
-  if (!params.promptCache?.cacheStableSystem || !params.system) return params.system
-  return [{
+  const runtimeText = collectRuntimeSystemText(params)
+  if (!runtimeText) {
+    if (!params.promptCache?.cacheStableSystem || !params.system) return params.system
+    return [{
+      type: 'text',
+      text: params.system,
+      cache_control: { type: 'ephemeral', ttl: params.promptCache.ttl ?? '5m' },
+    }]
+  }
+  const blocks: Array<Record<string, unknown>> = []
+  if (params.system) {
+    blocks.push(
+      params.promptCache?.cacheStableSystem
+        ? {
+            type: 'text',
+            text: params.system,
+            cache_control: { type: 'ephemeral', ttl: params.promptCache.ttl ?? '5m' },
+          }
+        : { type: 'text', text: params.system },
+    )
+  }
+  blocks.push({
     type: 'text',
-    text: params.system,
-    cache_control: { type: 'ephemeral', ttl: params.promptCache.ttl ?? '5m' },
-  }]
+    text: `<lume_runtime_context>\n${runtimeText}\n</lume_runtime_context>`,
+  })
+  return blocks
 }
 
 function toAnthropicMessages(params: CreateMessageParams): Array<Record<string, unknown>> {
-  return params.messages.map((message) => {
-    if (message.role !== 'runtime') return message as unknown as Record<string, unknown>
-    const content = typeof message.content === 'string'
-      ? message.content
-      : message.content.filter((block) => block.type === 'text').map((block) => block.text).join('\n')
-    if (params.promptCache?.runtimeRole === 'system') {
-      return { role: 'system', content }
-    }
-    return {
-      role: 'user',
-      content: `<lume_runtime_context>\n${content}\n</lume_runtime_context>`,
-    }
-  })
+  const hoistRuntimeSystem = params.promptCache?.runtimeRole === 'system'
+  return params.messages
+    .filter((message) => !hoistRuntimeSystem || message.role !== 'runtime')
+    .map((message) => {
+      if (message.role !== 'runtime') return message as unknown as Record<string, unknown>
+      const content = typeof message.content === 'string'
+        ? message.content
+        : message.content.filter((block) => block.type === 'text').map((block) => block.text).join('\n')
+      return {
+        role: 'user',
+        content: `<lume_runtime_context>\n${content}\n</lume_runtime_context>`,
+      }
+    })
 }
 
 function applyAnthropicCachePolicy(
   requestParams: Record<string, unknown>,
   params: CreateMessageParams,
 ): void {
-  if (params.promptCache?.cacheConversation) {
-    requestParams.cache_control = {
-      type: 'ephemeral',
-      ttl: params.promptCache.ttl ?? '5m',
-    }
+  if (!params.promptCache?.cacheConversation) return
+  // cache_control belongs on a content block, not the request top level: mark
+  // the last block of the last message (second cache breakpoint after system).
+  const messages = requestParams.messages as Array<Record<string, unknown>>
+  const last = messages[messages.length - 1]
+  if (!last) return
+  const cacheControl = { type: 'ephemeral', ttl: params.promptCache.ttl ?? '5m' }
+  let blocks: Array<Record<string, unknown>>
+  if (typeof last.content === 'string') {
+    blocks = [{ type: 'text', text: last.content }]
+  } else if (Array.isArray(last.content) && last.content.length > 0) {
+    blocks = [...last.content]
+  } else {
+    return
   }
+  blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: cacheControl }
+  messages[messages.length - 1] = { ...last, content: blocks }
 }
 
 export class AnthropicProvider implements LLMProvider {

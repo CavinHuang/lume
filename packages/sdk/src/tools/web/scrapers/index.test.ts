@@ -126,4 +126,48 @@ describe("Scraper runtime portability and regression pins", () => {
     expect(fetches).toBe(1);
     expect(second?.notes).toContain("Loaded from docs.rs rustdoc JSON cache");
   });
+
+  test("concurrent handleSpecialUrl calls keep isolated runtimes (#205)", async () => {
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((resolve) => { releaseA = resolve; });
+    const callsA: string[] = [];
+    const callsB: string[] = [];
+    const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+    const fetchA = async (url: string) => {
+      callsA.push(url);
+      // Hold A mid-handler until B has fully completed.
+      if (callsA.length === 1) await gateA;
+      if (url.includes("/git/trees/")) return json({ tree: [] });
+      if (url.endsWith("/readme")) return json({ content: "", encoding: "base64" });
+      return json({ full_name: "a/b", description: "fixture", stargazers_count: 0, forks_count: 0, open_issues_count: 0, default_branch: "main", language: null, license: null });
+    };
+    const fetchB = async (url: string) => {
+      callsB.push(url);
+      return new Response("{}", { status: 404 });
+    };
+    const a = handleSpecialUrl("https://github.com/a/b", { timeoutMs: 5000, fetchImpl: fetchA });
+    const b = handleSpecialUrl("https://gitlab.com/x/y", { timeoutMs: 5000, fetchImpl: fetchB });
+    // B finishing must not clear the runtime A still needs for its remaining
+    // subrequests (the old module-level singleton was reset in a finally).
+    await b;
+    releaseA();
+    const result = await a;
+    expect(result?.method).toBe("github-repo");
+    expect(callsA.length).toBeGreaterThanOrEqual(2);
+    expect(callsB.length).toBeGreaterThanOrEqual(1);
+    expect(callsA.every((url) => url.includes("api.github.com") || url.includes("github.com"))).toBe(true);
+  });
+
+  test("scraper handlers cannot probe private-network IP hosts (#206)", async () => {
+    const fetched: string[] = [];
+    const result = await handleSpecialUrl("http://10.0.0.5/@user", {
+      timeoutMs: 1000,
+      fetchImpl: async (url) => {
+        fetched.push(String(url));
+        return new Response(JSON.stringify({ uri: "10.0.0.5", title: "fake-instance" }), { headers: { "content-type": "application/json" } });
+      },
+    });
+    expect(result).toBeNull();
+    expect(fetched).toEqual([]);
+  });
 });

@@ -133,10 +133,28 @@ function nextUrl(response: Response, currentUrl: string): string | null {
   }
 }
 
+function urlOrigin(value: string): string | null {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+// Redirects are followed manually, so credentials would otherwise be re-sent
+// to whatever host the server points at; keep Authorization same-origin only.
+function stripAuthorization(headers: Record<string, string>): void {
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === "authorization") delete headers[key];
+  }
+}
+
 export async function loadPage(url: string, options: LoadPageOptions): Promise<LoadPageResult> {
   const timeoutMs = options.timeoutMs ?? 30000;
   const maxBytes = options.maxBytes ?? MAX_FETCH_BYTES;
   const userAgents = options.userAgents ?? DEFAULT_USER_AGENTS;
+  const initialOrigin = urlOrigin(url);
+  const extraHeaders: Record<string, string> = { ...options.headers };
   let currentUrl = url;
   let redirects = 0;
   let retried429 = false;
@@ -170,7 +188,7 @@ export async function loadPage(url: string, options: LoadPageOptions): Promise<L
           Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
           "Accept-Language": "en-US,en;q=0.5",
           "Accept-Encoding": "identity",
-          ...options.headers,
+          ...extraHeaders,
         },
       });
       const redirect = response.status >= 300 && response.status < 400 ? nextUrl(response, currentUrl) : null;
@@ -189,6 +207,7 @@ export async function loadPage(url: string, options: LoadPageOptions): Promise<L
             error: redirectAllowed,
           };
         }
+        if (urlOrigin(redirect) !== initialOrigin) stripAuthorization(extraHeaders);
         currentUrl = redirect;
         attempt--;
         continue;
@@ -244,6 +263,8 @@ export async function loadBinary(url: string, options: LoadPageOptions): Promise
   const timeoutMs = options.timeoutMs ?? 30000;
   const maxBytes = options.maxBytes ?? MAX_FETCH_BYTES;
   const userAgent = options.userAgents?.[0] ?? DEFAULT_USER_AGENTS[1];
+  const initialOrigin = urlOrigin(url);
+  const extraHeaders: Record<string, string> = { ...options.headers };
   let currentUrl = url;
   let redirects = 0;
 
@@ -261,7 +282,7 @@ export async function loadBinary(url: string, options: LoadPageOptions): Promise
           "User-Agent": userAgent,
           Accept: "*/*",
           "Accept-Encoding": "identity",
-          ...options.headers,
+          ...extraHeaders,
         },
       });
       const redirect = response.status >= 300 && response.status < 400 ? nextUrl(response, currentUrl) : null;
@@ -269,6 +290,7 @@ export async function loadBinary(url: string, options: LoadPageOptions): Promise
         if (++redirects > MAX_REDIRECTS) throw new Error(`too many redirects (>${MAX_REDIRECTS})`);
         const redirectAllowed = ensureNetworkAllowed(redirect, options.sandbox);
         if (redirectAllowed) return { ok: false, status: response.status, bytes: new Uint8Array(), contentType: "", finalUrl: currentUrl, headers: response.headers, error: redirectAllowed };
+        if (urlOrigin(redirect) !== initialOrigin) stripAuthorization(extraHeaders);
         await response.body?.cancel().catch(() => undefined);
         currentUrl = redirect;
         continue;

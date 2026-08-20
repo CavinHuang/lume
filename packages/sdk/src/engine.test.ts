@@ -2281,3 +2281,53 @@ describe("QueryEngine skill catalog injection", () => {
     expect(runtimeMessages.some((m: any) => String(m.content).includes("<available_skills>"))).toBe(false)
   })
 });
+
+describe("QueryEngine getContextUsage", () => {
+  const dummyTool = {
+    name: "Bash",
+    description: "run a command",
+    inputSchema: { type: "object", properties: {} },
+    async call() {
+      return { type: "tool_result" as const, tool_use_id: "", content: "ok" }
+    },
+  }
+
+  test("pairs tool_result tokens with the originating tool via tool_use id", () => {
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([]),
+      tools: [dummyTool],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+    })
+    engine.messages.push(
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "tool_use", id: "tu-1", name: "Bash", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "tu-1", content: "result payload" }] },
+    )
+
+    const usage = engine.getContextUsage()
+    const byName = new Map(usage.messageBreakdown.toolCallsByType.map((entry) => [entry.name, entry]))
+    expect(byName.get("Bash")?.callTokens).toBeGreaterThan(0)
+    expect(byName.get("Bash")?.resultTokens).toBeGreaterThan(0)
+    expect(byName.has("tool_result")).toBe(false)
+  })
+
+  test("honors config.contextWindow override instead of the model lookup", () => {
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([]),
+      tools: [dummyTool],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      contextWindow: 12345,
+    })
+    engine.messages.push({ role: "user", content: "go" })
+
+    expect(engine.getContextUsage().maxTokens).toBe(12345)
+  })
+});

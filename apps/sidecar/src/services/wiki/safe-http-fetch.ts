@@ -2,6 +2,7 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { request as httpRequest, type ClientRequest, type RequestOptions } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
+import { isPublicIpAddress } from "@lume/agent-sdk";
 
 export interface WikiSafeFetchResult {
   finalUrl: string;
@@ -113,26 +114,5 @@ function hasProxyEnvironment(): boolean {
   return ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"].some((key) => Boolean(process.env[key]?.trim()));
 }
 
-export function isPublicIpAddress(address: string): boolean {
-  const family = isIP(address);
-  if (family === 4) {
-    const parts = address.split(".").map(Number);
-    const [a, b] = parts;
-    if (a === 0 || a === 10 || a === 127 || a! >= 224) return false;
-    if (a === 100 && b! >= 64 && b! <= 127) return false;
-    if (a === 169 && b === 254) return false;
-    if (a === 172 && b! >= 16 && b! <= 31) return false;
-    if (a === 192 && (b === 0 || b === 168)) return false;
-    if (a === 198 && (b === 18 || b === 19)) return false;
-    return true;
-  }
-  if (family === 6) {
-    const value = address.toLowerCase().split("%")[0]!;
-    if (value === "::" || value === "::1") return false;
-    if (value.startsWith("fc") || value.startsWith("fd") || /^fe[89ab]/.test(value)) return false;
-    if (value.startsWith("ff") || value.startsWith("2001:db8")) return false;
-    if (value.startsWith("::ffff:")) return isPublicIpAddress(value.slice(7));
-    return true;
-  }
-  return false;
-}
+// 公网判定单源移入 @lume/agent-sdk（scraper 私网拦截共用），此处保留转发导出
+export { isPublicIpAddress };

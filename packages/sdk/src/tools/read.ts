@@ -176,6 +176,16 @@ export const FileReadTool = defineTool({
         }
       }
 
+      // Reject oversized whole-file reads before loading them into memory.
+      const maxBytes = configuredPositiveNumber(context, 'readMaxBytes', DEFAULT_MAX_TEXT_BYTES)
+      if (fileStat.size > maxBytes) {
+        return {
+          data: `Error: Read output for ${filePath} is ${fileStat.size} bytes, exceeding the ${maxBytes}-byte limit. Use offset and limit to read a smaller range.`,
+          is_error: true,
+          _meta: { read: { filePath, truncated: false, bytes: fileStat.size, maxBytes } },
+        }
+      }
+
       const textFile = await readTextFile(filePath)
       if (context.abortSignal?.aborted) throw new DOMException('Operation aborted', 'AbortError')
       const content = textFile.content

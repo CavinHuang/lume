@@ -243,6 +243,20 @@ describe("file tools", () => {
     expect(result._meta?.read).toMatchObject({ totalLines: 0, partial: false });
   });
 
+  test("counts a trailing newline without inventing an extra line", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "trailing.txt");
+    await writeFile(filePath, "alpha\nbeta\n", "utf8");
+
+    const result = await FileReadTool.call({ file_path: filePath, offset: 0, limit: 2 }, { cwd: root });
+    expect(result.is_error).toBeFalsy();
+    // "alpha\nbeta\n" is exactly two lines; the old range reader counted three
+    // and made Read claim a remaining line that does not exist.
+    expect(result._meta?.read).toMatchObject({ totalLines: 2, partial: true });
+    expect(String(result.content)).toContain("beta");
+  });
+
   test("rejects known binary files instead of decoding them as text", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
