@@ -1,6 +1,8 @@
 node_modules
 .DS_Store
 dist
+# bundled browser dist 是有意入库的上游构建快照(见该目录 README),解除上方 dist 规则
+!apps/sidecar/bundled-plugins/browser/dist
 out
 .next
 target
