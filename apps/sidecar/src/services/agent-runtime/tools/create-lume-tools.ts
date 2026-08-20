@@ -163,7 +163,8 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     workspaceId: input.workspaceId,
   });
   const imTools = createSdkImTools({
-    threadId: input.threadId
+    threadId: input.threadId,
+    ...(input.filesRoot ? { filesRoot: input.filesRoot } : {})
   });
   const imCliBaseDir = getImCliBaseDir();
   const imCliDeps = { userDataRoot: imCliBaseDir, platform: process.platform, arch: process.arch };

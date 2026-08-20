@@ -15,6 +15,11 @@ export interface WikiSafeHttpFetchOptions {
   connectTimeoutMs?: number;
   totalTimeoutMs?: number;
   maxBytes?: number;
+  /**
+   * 代理环境策略：fail-closed（默认，wiki 语义——本服务直连不走代理，代理环境下拒绝抓取）
+   * 或 ignore（调用方明确接受直连语义，如 IM 媒体下载——Node fetch 本就不走代理环境变量）。
+   */
+  proxyPolicy?: "fail-closed" | "ignore";
 }
 
 interface LookupAddress { address: string; family: 4 | 6 }
@@ -25,7 +30,7 @@ export class WikiSafeHttpFetchService {
   constructor(private readonly deps: { resolve?: Resolver; request?: Requester } = {}) {}
 
   async fetch(rawUrl: string, options: WikiSafeHttpFetchOptions = {}): Promise<WikiSafeFetchResult> {
-    if (hasProxyEnvironment()) throw new Error("Wiki URL 导入在代理环境中 fail closed；请先用 WebFetch 保存本地资产再导入");
+    if (options.proxyPolicy !== "ignore" && hasProxyEnvironment()) throw new Error("Wiki URL 导入在代理环境中 fail closed；请先用 WebFetch 保存本地资产再导入");
     const maxRedirects = options.maxRedirects ?? 5;
     const requestOptions = {
       connectTimeoutMs: options.connectTimeoutMs ?? 8_000,
