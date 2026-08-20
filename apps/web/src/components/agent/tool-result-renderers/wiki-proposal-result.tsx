@@ -1,9 +1,9 @@
+import { applyWikiDraft, cancelWikiDraft, getWikiDraftStatus } from '@/lib/desktop-api/wiki'
 import { useEffect, useState } from 'react'
 import type { WikiDraftStatus, WikiProposalSummaryV1 } from '@lume/shared'
 import { Check, FilePlus2, LoaderCircle, ShieldAlert, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { applyWikiDraft, cancelWikiDraft, getWikiDraftStatus } from '@/lib/desktop-api/wiki'
 
 interface Props {
   result: unknown

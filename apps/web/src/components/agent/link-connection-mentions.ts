@@ -1,6 +1,6 @@
+import { listLinkConnections, listLinkProviders } from '@/lib/desktop-api/link'
 import type { Editor } from '@tiptap/core'
 import type { LinkConnectionSummary, LinkProviderSummary } from '@lume/shared'
-import { listLinkConnections, listLinkProviders } from '@/lib/desktop-api/link'
 import type { MentionItem } from './slash-command-state'
 
 let cachedCatalog: { expiresAt: number; value: Promise<{ connections: LinkConnectionSummary[]; providers: LinkProviderSummary[] }> } | null = null

@@ -1,3 +1,4 @@
+import { RightPanelWindowControls } from '@/components/right-panel/RightPanelWindowControls'
 import { Button } from '@/components/ui/button'
 /**
  * TitleBar - 桌面端自定义标题栏（实体栏）
@@ -11,7 +12,6 @@ import { Button } from '@/components/ui/button'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { PanelLeft, Search, Sparkles } from 'lucide-react'
 import { activeTabIdAtom, commandPaletteOpenAtom, sidebarCollapsedAtom, tabsAtom } from '@/atoms'
-import { RightPanelWindowControls } from '@/components/right-panel/RightPanelWindowControls'
 import {
   isCustomWindowControlsPlatform,
   isMacosDesktopShell,

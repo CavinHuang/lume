@@ -1,9 +1,9 @@
+import { completePlanningTodo, deletePlanningTodo, reopenPlanningTodo, restorePlanningTodo, updatePlanningTodo } from '@/lib/desktop-api/planning-todo'
 import { useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { ExternalLink, Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { agentWorkspacesAtom, activeTabIdAtom, tabsAtom } from '@/atoms'
-import { completePlanningTodo, deletePlanningTodo, reopenPlanningTodo, restorePlanningTodo, updatePlanningTodo } from '@/lib/desktop-api/planning-todo'
 import { toast } from 'sonner'
 import { DefaultResult } from './default-result'
 

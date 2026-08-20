@@ -1,3 +1,4 @@
+import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEditor } from '@tiptap/react'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
@@ -32,7 +33,6 @@ import {
   type LumeConfigThinkingLevel,
 } from '@lume/shared'
 import { LUME_CONFIG_IPC_CHANNELS } from '@lume/shared'
-import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { LumeWelcomeSurface } from './LumeWelcomeSurface'
 import { buildWelcomeSurfaceViewModel, DEFAULT_WELCOME_SUGGESTIONS } from './welcome-surface-view-model'
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'

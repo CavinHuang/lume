@@ -1,3 +1,4 @@
+import { getMemorySettingsSnapshot, resolveMemoryPending } from '@/lib/desktop-api/memory-center'
 import { useCallback, useEffect, useState } from 'react'
 import { useAtom, useAtomValue } from 'jotai'
 import {
@@ -16,7 +17,6 @@ import {
   memoryCenterVersionAtom,
 } from '@/atoms'
 import { Button } from '@/components/ui/button'
-import { getMemorySettingsSnapshot, resolveMemoryPending } from '@/lib/desktop-api/memory-center'
 import {
   actOnSuggestion,
   deleteSuggestion,
