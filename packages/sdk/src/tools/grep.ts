@@ -23,7 +23,11 @@ interface SearchProcessResult {
   error?: Error
   timedOut?: boolean
   aborted?: boolean
+  earlyStopped?: boolean
 }
+
+/** Hard ceiling on fallback stdout capture so runaway output cannot exhaust memory. */
+const MAX_CAPTURE_BYTES = 10 * 1024 * 1024
 
 export const GrepTool = defineTool({
   name: 'Grep',
@@ -172,21 +176,24 @@ async function runFallbackSearch({
   context: Parameters<NonNullable<typeof GrepTool['call']>>[1]
 }): Promise<{ data: string; is_error?: boolean; _meta?: Record<string, unknown> }> {
   const args = buildRgArgs(input, outputMode, searchPath)
+  // Stop the fallback engine as soon as the pagination window is satisfied so
+  // broad patterns cannot stream the whole repository into memory.
+  const stopAfterEntries = headLimit > 0 ? offset + headLimit : undefined
   const ripgrep = resolveRipgrepInvocation(context.sandbox)
-  const rg = await runSearchProcess(ripgrep.command, [...ripgrep.args, ...args], context.abortSignal)
+  const rg = await runSearchProcess(ripgrep.command, [...ripgrep.args, ...args], context.abortSignal, stopAfterEntries)
   if (isCommandNotFound(rg.error) && ripgrep.source === 'system' && isNativeAvailable()) {
     const native = await runNativeSearch(input, searchPath, outputMode, offset, headLimit)
     if (native) return native
   }
   const processResult = isCommandNotFound(rg.error)
-    ? await runSearchProcess('grep', buildGrepArgs(input, outputMode, searchPath), context.abortSignal)
+    ? await runSearchProcess('grep', buildGrepArgs(input, outputMode, searchPath), context.abortSignal, stopAfterEntries)
     : rg
   const engine = processResult === rg ? 'rg' : 'grep'
 
   if (processResult.aborted) return { data: 'Grep aborted.', is_error: true }
   if (processResult.timedOut) return { data: `Grep timed out after ${SEARCH_TIMEOUT_MS}ms.`, is_error: true }
   if (processResult.error) return { data: `Error: grep unavailable: ${processResult.error.message}`, is_error: true }
-  if (processResult.code !== 0 && processResult.code !== 1) {
+  if (!processResult.earlyStopped && processResult.code !== 0 && processResult.code !== 1) {
     return { data: `Error: grep failed${processResult.stderr ? `: ${processResult.stderr.trim()}` : ''}`, is_error: true }
   }
 
@@ -201,7 +208,7 @@ async function runFallbackSearch({
   }
   const total = allEntries.length
   const matches = headLimit > 0 ? allEntries.slice(offset, offset + headLimit) : allEntries.slice(offset)
-  const truncated = offset + matches.length < total
+  const truncated = processResult.earlyStopped === true || offset + matches.length < total
   return {
     data: JSON.stringify({
       pattern: input.pattern,
@@ -284,7 +291,7 @@ function buildGrepArgs(input: any, outputMode: SearchMode, searchPath: string): 
   return args
 }
 
-function runSearchProcess(command: string, args: string[], signal?: AbortSignal): Promise<SearchProcessResult> {
+function runSearchProcess(command: string, args: string[], signal?: AbortSignal, stopAfterEntries?: number): Promise<SearchProcessResult> {
   return new Promise((resolve) => {
     const proc = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
     const stdout: Buffer[] = []
@@ -292,6 +299,9 @@ function runSearchProcess(command: string, args: string[], signal?: AbortSignal)
     let settled = false
     let timedOut = false
     let aborted = false
+    let earlyStopped = false
+    let capturedBytes = 0
+    let entries = 0
     const finish = (result: SearchProcessResult) => {
       if (settled) return
       settled = true
@@ -299,9 +309,10 @@ function runSearchProcess(command: string, args: string[], signal?: AbortSignal)
       signal?.removeEventListener('abort', onAbort)
       resolve(result)
     }
-    const kill = (kind: 'timeout' | 'abort') => {
+    const kill = (kind: 'timeout' | 'abort' | 'limit') => {
       if (settled) return
       if (kind === 'timeout') timedOut = true
+      else if (kind === 'limit') earlyStopped = true
       else aborted = true
       proc.kill()
     }
@@ -309,15 +320,31 @@ function runSearchProcess(command: string, args: string[], signal?: AbortSignal)
     const timer = setTimeout(() => kill('timeout'), SEARCH_TIMEOUT_MS)
     timer.unref?.()
     signal?.addEventListener('abort', onAbort, { once: true })
-    proc.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk))
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      stdout.push(chunk)
+      capturedBytes += chunk.length
+      entries += countNewlines(chunk)
+      if (!settled && ((stopAfterEntries !== undefined && entries >= stopAfterEntries) || capturedBytes >= MAX_CAPTURE_BYTES)) {
+        kill('limit')
+      }
+    })
     proc.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk))
-    proc.on('error', (error) => finish({ code: null, stdout: '', stderr: '', error, timedOut, aborted }))
+    proc.on('error', (error) => finish({ code: null, stdout: '', stderr: '', error, timedOut, aborted, earlyStopped }))
     proc.on('close', (code) => finish({
       code,
       stdout: Buffer.concat(stdout).toString('utf8'),
       stderr: Buffer.concat(stderr).toString('utf8'),
       timedOut,
       aborted,
+      earlyStopped,
     }))
   })
+}
+
+function countNewlines(chunk: Buffer): number {
+  let count = 0
+  for (let i = 0; i < chunk.length; i += 1) {
+    if (chunk[i] === 0x0a) count += 1
+  }
+  return count
 }
