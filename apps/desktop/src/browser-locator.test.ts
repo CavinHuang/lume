@@ -31,6 +31,13 @@ describe("browser locator semantics", () => {
 
     expect(target).toMatchObject({ x: 110, y: 40, editable: true })
   })
+
+  test("maps submit inputs to the button role and value name", () => {
+    const window = new Window()
+    window.document.body.innerHTML = '<input type="submit" value="百度一下">'
+
+    expect(browserQuery(window)({ version: 1, steps: [{ kind: "role", role: "button", name: "百度一下", exact: true }] }, "count")).toBe(1)
+  })
 })
 
 function browserQuery(window: Window): (locator: BrowserLocator, operation?: BrowserLocatorQuery, argument?: string) => unknown {

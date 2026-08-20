@@ -1698,6 +1698,12 @@ export class BrowserRuntime {
           await this.dispatchScroll(tab, target, params)
         } else if (method === "drag") {
           await this.dispatchDrag(tab, target, params)
+        // Electron can drop a second root-session pointer sequence routed into
+        // a child frame. Focus + native Enter preserves browser activation for
+        // semantic buttons and links without falling back to element.click().
+        } else if (method === "click" && isBrowserLocator(params.locator) && splitFrameLocator(params.locator) && (target.role === "button" || target.tagName === "a")) {
+          await this.executeFrameLocatorQuery(tab, params.locator, "focus")
+          await this.dispatchKey(tab, "Enter")
         } else {
           await this.dispatchMouse(tab, method, target)
         }
@@ -2385,18 +2391,28 @@ export class BrowserRuntime {
         grantUniveralAccess: false,
       }) as { executionContextId?: number }
       if (!isolated.executionContextId || generation !== tab.generation) throw browserError("stale_target")
-      let evaluated: { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } }
+      let evaluated: { result?: { objectId?: string; value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } }
       evaluated = await debuggerRef.sendCommand("Runtime.evaluate", {
         contextId: isolated.executionContextId,
         expression: evaluation
           ? locatorReadonlyExpression(parts.locator, evaluation.script, evaluation.arg)
-          : `(${browserLocatorScript()})(${JSON.stringify(parts.locator)},${JSON.stringify(operation)},${JSON.stringify(argument)})`,
-        returnByValue: true,
+          : `(${browserLocatorScript()})(${JSON.stringify(parts.locator)},${JSON.stringify(operation === "focus" ? "element" : operation)},${JSON.stringify(argument)})`,
+        returnByValue: operation !== "focus",
         awaitPromise: true,
         ...(evaluation ? { throwOnSideEffect: true, timeout: evaluation.timeoutMs } : {}),
-      }) as { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } }
+      }) as { result?: { objectId?: string; value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } }
       if (evaluated.exceptionDetails) throw browserError(evaluation ? readonlyLocatorExceptionCode(evaluated.exceptionDetails) : frameLocatorExceptionCode(evaluated.exceptionDetails))
       if (generation !== tab.generation) throw browserError("stale_target")
+      if (operation === "focus") {
+        const objectId = evaluated.result?.objectId
+        if (!objectId) throw browserError("stale_target")
+        try {
+          await debuggerRef.sendCommand("DOM.focus", { objectId })
+        } finally {
+          await debuggerRef.sendCommand("Runtime.releaseObject", { objectId }).catch(() => undefined)
+        }
+        return true
+      }
       const value = evaluated.result?.value
       if (operation === "target" && isRecord(value)) return {
         ...value,

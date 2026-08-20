@@ -1,7 +1,7 @@
 import type { BrowserLocator, BrowserLocatorStep, BrowserTextMatcher } from "../../../packages/shared/src/types/browser-runtime"
 
 export type ResolvedBrowserTarget = { x: number; y: number; width: number; height: number; tagName: string; role?: string; editable: boolean; enabled: boolean }
-export type BrowserLocatorQuery = "target" | "element" | "evaluate" | "count" | "allTextContents" | "readAll" | "getAttribute" | "innerText" | "textContent" | "inputValue" | "editableValue" | "isVisible" | "isEnabled" | "isChecked" | "select"
+export type BrowserLocatorQuery = "target" | "element" | "focus" | "evaluate" | "count" | "allTextContents" | "readAll" | "getAttribute" | "innerText" | "textContent" | "inputValue" | "editableValue" | "isVisible" | "isEnabled" | "isChecked" | "select"
 
 export function isBrowserLocator(value: unknown): value is BrowserLocator {
   return Boolean(value) && typeof value === "object" && Array.isArray((value as { steps?: unknown }).steps)
@@ -47,7 +47,17 @@ function queryLocatorInPage(locator: BrowserLocator, operation: BrowserLocatorQu
     if (item.mode === "regex") { try { return new RegExp(item.value).test(value) } catch { return false } }
     return item.mode === "exact" ? value === item.value : value.includes(item.value)
   }
-  const role = (element: Element) => element.getAttribute("role") || ({ A: "link", BUTTON: "button", INPUT: (element as HTMLInputElement).type === "checkbox" ? "checkbox" : "textbox", TEXTAREA: "textbox", SELECT: "combobox" } as Record<string, string>)[element.tagName] || "generic"
+  const role = (element: Element) => {
+    const explicit = element.getAttribute("role")
+    if (explicit) return explicit
+    if (element instanceof HTMLInputElement) {
+      if (["button", "submit", "reset", "image"].includes(element.type)) return "button"
+      if (element.type === "checkbox") return "checkbox"
+      if (element.type === "radio") return "radio"
+      return "textbox"
+    }
+    return ({ A: "link", BUTTON: "button", TEXTAREA: "textbox", SELECT: "combobox" } as Record<string, string>)[element.tagName] || "generic"
+  }
   const normalizedText = (value: string | null | undefined) => (value || "").replace(/\s+/g, " ").trim()
   const name = (element: Element) => {
     const labelledBy = normalizedText((element.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
