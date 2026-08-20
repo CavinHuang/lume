@@ -153,4 +153,27 @@ describe("runtime LSP config", () => {
       await rm(bare, { recursive: true, force: true });
     }
   });
+
+  test("does not read configs above the containing git repository (#203)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-lsp-boundary-"));
+    const sub = join(root, "sub");
+    try {
+      // No .git anywhere: only cwd is consulted, the ancestor config is ignored
+      await mkdir(sub, { recursive: true });
+      await writeFile(join(root, "lsp.json"), JSON.stringify({
+        servers: { ancestor: { command: "ancestor-ls" } },
+      }));
+
+      const noGit = await resolveRuntimeLspConfig({ cwd: sub, plugins: [] });
+      expect(noGit.servers?.ancestor).toBeUndefined();
+
+      // With .git at root, the root config is reachable from a subdirectory,
+      // and configs above the git root stay invisible
+      await mkdir(join(root, ".git"));
+      const withGit = await resolveRuntimeLspConfig({ cwd: sub, plugins: [] });
+      expect(withGit.servers?.ancestor?.command).toBe("ancestor-ls");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
