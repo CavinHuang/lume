@@ -21,7 +21,11 @@ function collectTests(directory) {
   return tests;
 }
 
-const tests = collectTests(sourceRoot)
+// scripts/lib 下的测试曾长期不在收集范围（CI 盲区），一并纳入
+const tests = [
+  ...collectTests(sourceRoot),
+  ...collectTests(join(packageRoot, "scripts", "lib")),
+]
   .map((path) => relative(repositoryRoot, path))
   .sort();
 
