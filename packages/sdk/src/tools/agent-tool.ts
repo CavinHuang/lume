@@ -8,7 +8,9 @@
 import type { ToolDefinition, ToolContext, ToolResult, AgentDefinition, SDKMessage } from '../types.js'
 import { QueryEngine } from '../engine.js'
 import { createProvider, type ApiType } from '../providers/index.js'
-import { loadSession } from '../session.js'
+import { stat } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { ensurePathAllowed, getUnsafeFilePathReason } from '../utils/pathing.js'
 import { finalizeSubagentOutputFromState, summarizeSubagentAssistantEvent } from './subagent-output.js'
 import { annotateSubagentStreamingEvent } from './agent-tool-events.js'
 import { getSkill } from '../skills/registry.js'
@@ -124,10 +126,6 @@ export const AgentTool: ToolDefinition = {
         type: 'number',
         description: 'Optional max turn override for this agent',
       },
-      resume: {
-        type: 'string',
-        description: 'Optional session ID to resume for this subagent',
-      },
       name: {
         type: 'string',
         description: 'Name for the spawned agent',
@@ -182,6 +180,26 @@ export const AgentTool: ToolDefinition = {
     const { createExecuteTool, createToolSearchTool, isToolSearchEnabled } = await import('./tool-search.js')
     const agentType = input.subagent_type || 'general-purpose'
     let effectiveCwd = input.cwd || context.cwd
+    if (input.cwd) {
+      // The cwd is model output — reject unsafe paths (UNC/SMB, device paths)
+      // and directories outside the sandbox's allowed roots (#195)
+      const unsafeReason = getUnsafeFilePathReason(input.cwd)
+      if (unsafeReason) {
+        return { type: 'tool_result', tool_use_id: '', content: `Invalid input for tool "Agent": ${unsafeReason}`, is_error: true }
+      }
+      const resolvedCwd = resolve(input.cwd)
+      const denied = ensurePathAllowed(resolvedCwd, 'read', context.sandbox, context.additionalDirectories)
+      if (denied) {
+        return { type: 'tool_result', tool_use_id: '', content: `Invalid input for tool "Agent": ${denied}`, is_error: true }
+      }
+      try {
+        const st = await stat(resolvedCwd)
+        if (!st.isDirectory()) throw new Error('not a directory')
+        effectiveCwd = resolvedCwd
+      } catch {
+        return { type: 'tool_result', tool_use_id: '', content: `Invalid input for tool "Agent": cwd is not an existing directory: ${resolvedCwd}`, is_error: true }
+      }
+    }
 
     // Find agent definition
     const agentDef = registeredAgents[agentType] || BUILTIN_AGENTS[agentType]
@@ -294,6 +312,11 @@ export const AgentTool: ToolDefinition = {
         systemPrompt,
         maxTurns: input.max_turns || agentDef?.maxTurns || 10,
         maxTokens: 16384,
+        // Subagents inherit the parent's sandbox and directory grants —
+        // otherwise every sandbox rule is void for their tools (#195)
+        sandbox: context.sandbox,
+        additionalDirectories: context.additionalDirectories,
+        toolConfig: context.toolConfig,
         canUseTool: async (tool) => {
           if (input.mode === 'plan') {
             return { behavior: tool.isReadOnly?.() ? 'allow' : 'deny', message: 'Plan mode subagent is read-only' }
@@ -308,13 +331,6 @@ export const AgentTool: ToolDefinition = {
         permissionMode: input.mode,
         abortSignal: activeAbortSignal,
       })
-
-      if (input.resume) {
-        const sessionData = await loadSession(input.resume)
-        if (sessionData?.messages?.length) {
-          engine.messages.push(...sessionData.messages)
-        }
-      }
 
       let resultText = ''
       let lastAssistantMessage = ''

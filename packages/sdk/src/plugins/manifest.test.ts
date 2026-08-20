@@ -1,5 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { parseManifest, inferDefaults, validateManifest } from "./manifest.js";
+import { parseManifest, inferDefaults, validateManifest, validatePluginPath } from "./manifest.js";
+
+describe("validatePluginPath (#202)", () => {
+  test("accepts ordinary relative paths", () => {
+    expect(() => validatePluginPath("./skills/a.md", "skills")).not.toThrow();
+  });
+
+  test("rejects traversal via backslash segments on Windows-style input", () => {
+    expect(() => validatePluginPath(".\\..\\..\\evil", "mcpServers")).toThrow();
+    expect(() => validatePluginPath("./a\\..\\..\\b", "skills")).toThrow();
+    expect(() => validatePluginPath("./x\\..\\..\\evil", "hooks")).toThrow();
+  });
+
+  test("still rejects slash traversal and absolute paths", () => {
+    expect(() => validatePluginPath("../../evil", "skills")).toThrow();
+    expect(() => validatePluginPath("/etc/passwd", "skills")).toThrow();
+  });
+});
 
 describe("LumePluginManifest", () => {
   test("parses a minimal valid manifest", () => {

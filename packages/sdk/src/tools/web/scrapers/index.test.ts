@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { handleSpecialUrl, specialHandlerNames } from "./index.js";
 
 describe("WebFetch special handlers", () => {
@@ -64,5 +67,63 @@ describe("WebFetch special handlers", () => {
       fetchImpl: async () => new Response("unavailable", { status: 503 }),
     });
     expect(result).toBeNull();
+  });
+});
+
+describe("Scraper runtime portability and regression pins", () => {
+  test("youtube/docs-rs sources contain no Bun-only globals (sidecar bundles target Node) (#233/#234)", () => {
+    for (const file of ["youtube.ts", "docs-rs.ts"]) {
+      const src = readFileSync(join(import.meta.dir, file), "utf-8");
+      // bun:test runs under Bun where `Bun` exists, so runtime tests cannot
+      // catch this class of breakage — pin it at the source level.
+      expect(src.match(/\bBun\./), file).toBeNull();
+    }
+  });
+
+  test("gitlab MR description renders markdown, not [object Promise] (#235)", async () => {
+    const mr = {
+      title: "Fix bug",
+      description: "<p>hello <b>world</b></p>",
+      state: "merged",
+      author: { name: "Alice", username: "alice" },
+      created_at: "2024-01-01T00:00:00Z",
+      updated_at: "2024-01-02T00:00:00Z",
+      source_branch: "feat",
+      target_branch: "main",
+      labels: [],
+      upvotes: 1,
+      downvotes: 0,
+      user_comments_count: 0,
+      user_notes_count: 0,
+      draft: false,
+      merge_status: "can_be_merged",
+    };
+    const fetchImpl = async (url: string) => {
+      if (url.includes("/merge_requests/5")) {
+        return new Response(JSON.stringify(mr), { headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ id: 1 }), { headers: { "content-type": "application/json" } });
+    };
+    const result = await handleSpecialUrl("https://gitlab.com/o/r/-/merge_requests/5", { timeoutMs: 2000, fetchImpl });
+    expect(result?.content).toContain("hello");
+    expect(result?.content).not.toContain("[object Promise]");
+  });
+
+  test("docs.rs rustdoc JSON cache round-trips across calls (#234)", async () => {
+    const crate = `demo-cache-${Date.now()}`;
+    const json = JSON.stringify({ index: { "0": { id: "0", name: crate, inner: {} } }, root: "0" });
+    let fetches = 0;
+    const fetchImpl = async () => {
+      fetches++;
+      return new Response(gzipSync(Buffer.from(json)));
+    };
+    const url = `https://docs.rs/${crate}/1.0.0/${crate}/index.html`;
+    const first = await handleSpecialUrl(url, { timeoutMs: 2000, fetchImpl });
+    expect(first?.method).toBe("docs.rs");
+    const second = await handleSpecialUrl(url, { timeoutMs: 2000, fetchImpl });
+    // Cache hit: no second network fetch, and the cache note proves the
+    // read path worked (mkdir + writeFile landed the file).
+    expect(fetches).toBe(1);
+    expect(second?.notes).toContain("Loaded from docs.rs rustdoc JSON cache");
   });
 });

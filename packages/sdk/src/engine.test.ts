@@ -587,6 +587,63 @@ describe("QueryEngine turn limits", () => {
       expect.objectContaining({ tool_use_id: "concurrent-1", content: "concurrent result" })
     ])
   })
+
+  // #210: NaN made every concurrent batch empty (all tools "did not return a
+  // result"); '0' made the batch loop spin forever.
+  for (const badValue of ["0", "garbage"]) {
+    test(`invalid AGENT_SDK_MAX_TOOL_CONCURRENCY=${badValue} degrades to serial instead of failing or hanging`, async () => {
+      const previous = process.env.AGENT_SDK_MAX_TOOL_CONCURRENCY
+      process.env.AGENT_SDK_MAX_TOOL_CONCURRENCY = badValue
+      try {
+        const engine = new QueryEngine({
+          cwd: process.cwd(),
+          model: "test-model",
+          provider: new StaticProvider([
+            {
+              content: [{ type: "tool_use", id: "concurrent-1", name: "Concurrent", input: {} }],
+              stopReason: "tool_use",
+              usage: { input_tokens: 1, output_tokens: 1 }
+            },
+            {
+              content: [{ type: "text", text: "done" }],
+              stopReason: "end_turn",
+              usage: { input_tokens: 1, output_tokens: 1 }
+            }
+          ]),
+          tools: [
+            {
+              name: "Concurrent",
+              description: "concurrent tool",
+              inputSchema: { type: "object", properties: {} },
+              isConcurrencySafe: () => true,
+              async call() {
+                return { type: "tool_result" as const, tool_use_id: "", content: "concurrent result" }
+              }
+            }
+          ],
+          systemPrompt: "test",
+          maxTurns: 2,
+          maxTokens: 256,
+          includePartialMessages: false,
+          canUseTool: async () => ({ behavior: "allow" })
+        })
+
+        await collectResult(engine)
+
+        const toolResultMessage = engine.getMessages().find((message) =>
+          message.role === "user" &&
+          Array.isArray(message.content) &&
+          message.content.every((block: any) => block.type === "tool_result")
+        )
+        expect(toolResultMessage?.content).toEqual([
+          expect.objectContaining({ tool_use_id: "concurrent-1", content: "concurrent result" })
+        ])
+      } finally {
+        if (previous === undefined) delete process.env.AGENT_SDK_MAX_TOOL_CONCURRENCY
+        else process.env.AGENT_SDK_MAX_TOOL_CONCURRENCY = previous
+      }
+    })
+  }
 })
 
 describe("QueryEngine context controller", () => {

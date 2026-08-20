@@ -58,3 +58,21 @@ test("masks secret headers and env values", () => {
     DEBUG: "1"
   });
 });
+
+test("rejects prototype-polluting server ids without replacing the prototype (#204)", () => {
+  const payload = JSON.parse('{"mcpServers":{"__proto__":{"command":"x"},"constructor":{"command":"y"}}}');
+  const parsed = parseMcpImportPayload(payload);
+  expect(Object.keys(parsed.servers)).toEqual([]);
+  expect(Object.getPrototypeOf(parsed.servers) === Object.prototype).toBe(true);
+});
+
+test("first server wins on normalized id collision (#204)", () => {
+  const parsed = parseMcpImportPayload({
+    mcpServers: {
+      "My Server": { command: "first" },
+      "my:server": { command: "second" }
+    }
+  });
+  expect(Object.keys(parsed.servers)).toEqual(["my-server"]);
+  expect(parsed.servers["my-server"].command).toBe("first");
+});

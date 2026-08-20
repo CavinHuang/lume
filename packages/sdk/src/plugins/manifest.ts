@@ -2,7 +2,7 @@ export function validatePluginPath(value: string, field: string): void {
   if (!value.startsWith("./")) {
     throw new Error(`Invalid ${field}: path must start with "./"`);
   }
-  const segments = value.slice(2).split("/");
+  const segments = value.slice(2).split(/[\\/]/);
   for (const segment of segments) {
     if (segment === "..") {
       throw new Error(`Invalid ${field}: path must not contain ".."`);

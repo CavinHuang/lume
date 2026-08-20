@@ -6,7 +6,8 @@ import { execFileSync } from 'child_process'
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path'
-import type { ToolDefinition, ToolResult } from '../types.js'
+import type { ToolContext, ToolDefinition, ToolResult } from '../types.js'
+import { ensurePathAllowed, getUnsafeFilePathReason } from '../utils/pathing.js'
 
 export interface ManagedWorktree {
   id: string
@@ -77,10 +78,30 @@ function canonicalizePath(path: string): string {
   return resolve(canonicalBase, ...missingSegments)
 }
 
-function assertWorktreePath(repoRoot: string, worktreePath: string): void {
-  const relativePath = relative(canonicalizePath(repoRoot), canonicalizePath(worktreePath))
-  if (!relativePath || (!relativePath.startsWith('..' + '\\') && !relativePath.startsWith('../') && !isAbsolute(relativePath))) {
-    throw new Error('Worktree path must be outside the main repository')
+/**
+ * Allowed worktree roots: the parents of the repo and of the original cwd
+ * (the default `.worktree-<branch>` sibling convention), plus an optional
+ * host-designated root via LUME_WORKTREE_ROOT. The path is model input —
+ * without a whitelist it could materialize the whole repository anywhere on
+ * disk (#199).
+ */
+function allowedWorktreeRoots(repoRoot: string, originalCwd: string): string[] {
+  const roots = [dirname(resolve(repoRoot)), dirname(resolve(originalCwd))]
+  const configured = process.env.LUME_WORKTREE_ROOT
+  if (configured) roots.push(resolve(configured))
+  return roots
+}
+
+function assertWorktreePath(repoRoot: string, originalCwd: string, worktreePath: string): void {
+  const canonical = canonicalizePath(worktreePath)
+  const insideRepo = relative(canonicalizePath(repoRoot), canonical)
+  const escapesRepo = insideRepo.startsWith('..') || isAbsolute(insideRepo)
+  const withinRoot = allowedWorktreeRoots(repoRoot, originalCwd).some((root) => {
+    const rel = relative(canonicalizePath(root), canonical)
+    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+  })
+  if (!escapesRepo || !withinRoot) {
+    throw new Error(`Worktree path must be outside the main repository and inside one of the allowed worktree roots (repo parent or cwd parent${process.env.LUME_WORKTREE_ROOT ? ' or LUME_WORKTREE_ROOT' : ''})`)
   }
 }
 
@@ -99,7 +120,7 @@ export function createManagedWorktree(input: {
   const branch = input.branch || `lume-worktree-${Date.now()}`
   assertValidBranch(branch)
   const worktreePath = resolve(input.path || join(originalCwd, '..', `.worktree-${branch}`))
-  assertWorktreePath(repoRoot, worktreePath)
+  assertWorktreePath(repoRoot, originalCwd, worktreePath)
 
   const existing = [...activeWorktrees.values(), ...loadRegistry()].find((item) => item.branch === branch || item.path === worktreePath)
   if (existing && existsSync(existing.path)) {
@@ -152,6 +173,12 @@ export function removeManagedWorktree(id: string, keep = false): ManagedWorktree
     saveRegistry(loadRegistry().filter((item) => item.id !== id))
     return worktree
   }
+  // The registry file is writable by the Write tool; a poisoned entry must
+  // not turn `git worktree remove` into an arbitrary-directory delete (#199).
+  // Beyond the root whitelist, git itself refuses paths that are not
+  // registered worktrees of the target repository.
+  const anchorRoot = worktree.repoRoot ?? worktree.originalCwd
+  assertWorktreePath(anchorRoot, worktree.originalCwd, worktree.path)
   if (isWorktreeDirty(worktree.path)) throw new Error('Worktree has uncommitted or untracked changes; keep it or clean it explicitly before removal')
   execFileSync('git', ['worktree', 'remove', worktree.path], {
     cwd: worktree.repoRoot ?? worktree.originalCwd,
@@ -178,6 +205,13 @@ export const EnterWorktreeTool: ToolDefinition = {
   async prompt() { return 'Create an isolated git worktree for parallel work.' },
   async call(input: any, context: { cwd: string; setWorkingDirectory?: (cwd: string) => void }): Promise<ToolResult> {
     try {
+      if (input.path) {
+        const toolContext = context as ToolContext
+        const unsafeReason = getUnsafeFilePathReason(String(input.path))
+        if (unsafeReason) throw new Error(unsafeReason)
+        const sandboxError = ensurePathAllowed(resolve(context.cwd, String(input.path)), 'write', toolContext.sandbox, toolContext.additionalDirectories)
+        if (sandboxError) throw new Error(sandboxError)
+      }
       const worktree = createManagedWorktree({ cwd: context.cwd, branch: input.branch, path: input.path })
       context.setWorkingDirectory?.(worktree.path)
       return {

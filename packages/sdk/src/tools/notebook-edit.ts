@@ -12,7 +12,7 @@
 import { readFile, writeFile, rename, rm, stat } from 'fs/promises'
 import { resolve, dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
-import { ensurePathAllowed } from '../utils/pathing.js'
+import { ensurePathAllowed, getUnsafeFilePathReason } from '../utils/pathing.js'
 import { prepareLspWritethrough } from '../lsp/writethrough.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 
@@ -126,6 +126,10 @@ export const NotebookEditTool = defineTool({
   },
   async call(input, context) {
     const notebookPath = resolveNotebookPath(input, context.cwd)
+    const unsafeReason = getUnsafeFilePathReason(input.notebook_path || input.file_path)
+    if (unsafeReason) {
+      return { data: unsafeReason, is_error: true }
+    }
     const sandboxError = ensurePathAllowed(
       notebookPath,
       'write',

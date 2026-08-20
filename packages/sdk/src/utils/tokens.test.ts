@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { isNativeAvailable } from "@lume/natives"
+import { findModelMeta } from "@lume/shared"
 
-const { estimateMessagesTokens, estimateTokens, __resetMessageTokenCacheForTests } = await import("./tokens.js")
+const { estimateCost, estimateMessagesTokens, estimateTokens, getContextWindowSize, __resetMessageTokenCacheForTests } = await import("./tokens.js")
 
 describe("token estimation", () => {
   beforeEach(() => {
@@ -65,5 +66,36 @@ describe("estimateMessagesTokens per-message cache", () => {
     expect(estimateMessagesTokens(after)).toBe(
       estimateTokens("compacted summary") + estimateTokens("resumed"),
     )
+  })
+})
+
+describe("estimateCost / getContextWindowSize (#229)", () => {
+  test("gpt-4o-mini uses its own pricing, not the gpt-4o prefix match", () => {
+    // 16.7x over-billing regression pin
+    expect(estimateCost("gpt-4o-mini", { input_tokens: 1e6, output_tokens: 1e6 })).toBeCloseTo(0.15 + 0.6)
+    expect(estimateCost("gpt-4o", { input_tokens: 1e6, output_tokens: 1e6 })).toBeCloseTo(2.5 + 10)
+    // dated variants still resolve to the family rate
+    expect(estimateCost("gpt-4o-2024-11-20", { input_tokens: 1e6, output_tokens: 1e6 })).toBeCloseTo(2.5 + 10)
+  })
+
+  test("gpt-4.1 family keys resolve (dotted ids are the real model ids)", () => {
+    expect(estimateCost("gpt-4.1", { input_tokens: 1e6, output_tokens: 1e6 })).toBeCloseTo(2 + 8)
+    expect(getContextWindowSize("gpt-4.1")).toBe(1_000_000)
+    expect(getContextWindowSize("gpt-4.1-mini")).toBe(1_000_000)
+  })
+
+  test("unlisted models fall back to the shared registry pricing, not the flat default", () => {
+    // pick a model that only exists in the shared registry, priced differently from 3/15
+    const meta = findModelMeta("glm-4.6")
+    if (meta?.pricing) {
+      const cost = estimateCost("glm-4.6", { input_tokens: 1e6, output_tokens: 1e6 })
+      expect(cost).toBeCloseTo(meta.pricing.input + meta.pricing.output)
+      expect(cost).not.toBeCloseTo(3 + 15)
+    }
+  })
+
+  test("known window heuristics stay stable", () => {
+    expect(getContextWindowSize("gpt-4o")).toBe(128_000)
+    expect(getContextWindowSize("claude-opus-4-5")).toBe(200_000)
   })
 })

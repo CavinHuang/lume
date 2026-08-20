@@ -1624,9 +1624,12 @@ export class QueryEngine {
       },
     }
 
-    const MAX_CONCURRENCY = parseInt(
+    const parsedConcurrency = parseInt(
       process.env.AGENT_SDK_MAX_TOOL_CONCURRENCY || '10',
+      10,
     )
+    // NaN/0/negative would silently skip every concurrent batch or spin forever
+    const MAX_CONCURRENCY = Number.isInteger(parsedConcurrency) && parsedConcurrency > 0 ? parsedConcurrency : 10
 
     const hasSkillActivation = toolUseBlocks.some((block) => block.name === 'Skill')
     if (hasSkillActivation && toolUseBlocks.length > 1) {
@@ -1895,6 +1898,7 @@ export class QueryEngine {
         }
         if (permission.updatedInput !== undefined) {
           block = { ...block, input: permission.updatedInput }
+          toolContext.permissionUpdatedInput = true
         }
       } catch (err: any) {
         if (toolContext.abortSignal?.aborted) throw new Error('aborted')
