@@ -59,8 +59,9 @@ interface SecCompany {
 function extractCik(url: URL): string | null {
 	const { hostname, pathname, searchParams } = url;
 
-	// Check hostname
-	if (!hostname.includes("sec.gov")) return null;
+	// exact host match: substring match let sec.gov.evil.com through (#236)
+	const host = hostname.replace(/^www\./, "");
+	if (host !== "sec.gov" && !host.endsWith(".sec.gov")) return null;
 
 	// Pattern: ?CIK=xxx or ?cik=xxx
 	const cikParam = searchParams.get("CIK") || searchParams.get("cik");
@@ -163,8 +164,9 @@ export const handleSecEdgar: SpecialHandler = async (
 	try {
 		const parsed = new URL(url);
 
-		// Check if it's an SEC URL
-		if (!parsed.hostname.includes("sec.gov")) return null;
+		// exact host match (see extractCik); extractCik re-checks, this is the fast gate
+		const host = parsed.hostname.replace(/^www\./, "");
+		if (host !== "sec.gov" && !host.endsWith(".sec.gov")) return null;
 
 		// Extract CIK from URL
 		const cik = extractCik(parsed);
