@@ -1175,6 +1175,12 @@ export class QueryEngine {
       try {
         if (this.config.includePartialMessages && this.provider.createMessageStream) {
           const stream = this.provider.createMessageStream(providerRequest)
+          // 流重试 delta 抑制（#160）：已转发过 delta 的流一旦中途重试（或路由切换），
+          // 重试成功后会从头重发全量 delta，继续转发会让 UI 出现重复前缀、并污染
+          // 无 assistant.final 回放路径的重建文本。抑制后 UI 保留旧前缀直到 done 的
+          // 完整 response 落地（最终一致性由 done 保证）。retry 前无 delta 则不抑制。
+          let emittedAnyDelta = false
+          let suppressStreamDeltas = false
 
           while (true) {
             // Soft abort mid-stream: the response is incomplete and no tool_use
@@ -1187,8 +1193,15 @@ export class QueryEngine {
             }
 
             const chunk = next.value as CreateMessageStreamEvent
+            if (chunk.type === 'retry_state' && chunk.phase === 'waiting' && emittedAnyDelta) {
+              suppressStreamDeltas = true
+            }
+            if ((chunk.type === 'text_delta' || chunk.type === 'thinking_delta') && suppressStreamDeltas) {
+              continue
+            }
             if (chunk.type === 'text_delta' && chunk.text) {
               firstResponseAt ??= performance.now()
+              emittedAnyDelta = true
               // Official Claude Agent SDK format (stream_event)
               yield {
                 type: 'stream_event',
@@ -1211,6 +1224,7 @@ export class QueryEngine {
             }
             if (chunk.type === 'thinking_delta' && chunk.thinking) {
               firstResponseAt ??= performance.now()
+              emittedAnyDelta = true
               yield {
                 type: 'stream_event',
                 event: {
