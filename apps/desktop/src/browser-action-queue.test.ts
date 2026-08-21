@@ -34,4 +34,20 @@ describe("BrowserActionQueue", () => {
     await expect(first).rejects.toThrow("failed")
     await expect(second).resolves.toBe("recovered")
   })
+
+  test("cancels queued actions without replaying them after user takeover", async () => {
+    const queue = new BrowserActionQueue()
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const first = queue.run("session-1", () => firstGate)
+    const second = queue.run("session-1", async () => "must-not-run")
+
+    await Promise.resolve()
+    queue.cancel("session-1")
+    const cancelled = second.then(() => undefined, (error: Error) => error)
+    releaseFirst()
+
+    await expect(first).resolves.toBeUndefined()
+    expect((await cancelled)?.message).toBe("user_takeover_required")
+  })
 })

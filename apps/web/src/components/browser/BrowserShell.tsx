@@ -667,6 +667,12 @@ export function BrowserShell({
     setActiveTabId('__settings__')
   }
 
+  const resumeAgentControl = () => {
+    void browserRuntime<BrowserTabDescriptor>({ method: 'agentControl:resume', params: { tabId } })
+      .then((next) => acceptDescriptor(next))
+      .catch(() => toast.error('无法将浏览器交还给 Agent'))
+  }
+
   const beginViewportResize = (axis: ViewportResizeAxis, event: ReactPointerEvent<HTMLElement>) => {
     event.preventDefault()
     const startX = event.clientX
@@ -1366,6 +1372,14 @@ export function BrowserShell({
           </>
         )}
       </div>
+
+      {descriptor.agentControlState === 'paused_by_user' && (
+        <div className="flex min-h-10 shrink-0 items-center gap-3 border-b border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-foreground">
+          <ShieldAlert className="size-4 shrink-0 text-amber-500" />
+          <span className="min-w-0 flex-1">你已接管此标签页，Agent 浏览器操作已暂停。</span>
+          <Button type="button" variant="outline" size="sm" className="h-7 shrink-0" onClick={resumeAgentControl}>交还给 Agent</Button>
+        </div>
+      )}
 
       {surface === 'right-panel' && ownerThreadId && commentsPanelOpen && annotationComments.length > 0 && (
         <div

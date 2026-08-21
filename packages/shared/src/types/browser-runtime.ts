@@ -9,7 +9,7 @@ export type BrowserErrorCode =
   | "incompatible_protocol" | "browser_unavailable" | "invalid_browser_request"
   | "invalid_url" | "private_origin_confirmation_required" | "stale_target"
   | "tab_not_found" | "tab_generation_changed" | "confirmation_unavailable" | "reference_grant_expired"
-  | "action_denied" | "strict_locator_violation" | "actionability_failed" | "dialog_blocking"
+  | "action_denied" | "strict_locator_violation" | "actionability_failed" | "dialog_blocking" | "user_takeover_required"
   | "unsupported" | "executed_unknown" | "browser_internal_error";
 
 export interface BrowserProtocolHandshake {
@@ -74,6 +74,7 @@ export interface BrowserTabDescriptor {
   surface: "main" | "right-panel" | null;
   shareable?: boolean;
   agentClaimed?: boolean;
+  agentControlState?: "active" | "paused_by_user";
   handoffStatus?: "handoff" | "deliverable";
   guestState?: "unmounted" | "attaching" | "ready" | "gone";
   viewportRevision?: number;

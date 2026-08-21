@@ -426,7 +426,7 @@ function stableJson(value: unknown): string {
 }
 function stableBrowserErrorCode(error: unknown): string {
   const value = error instanceof Error ? error.message : ""
-  return new Set(["browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "strict_locator_violation", "actionability_failed", "dialog_blocking", "unsupported", "executed_unknown"]).has(value) ? value : "browser_internal_error"
+  return new Set(["browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "strict_locator_violation", "actionability_failed", "dialog_blocking", "user_takeover_required", "unsupported", "executed_unknown"]).has(value) ? value : "browser_internal_error"
 }
 
 function inferBackend(explicit: "iab" | "extension" | undefined, params: Record<string, unknown> | undefined): "iab" | "extension" {

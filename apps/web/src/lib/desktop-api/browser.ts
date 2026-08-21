@@ -26,6 +26,7 @@ export type BrowserRuntimeMethod =
   | 'annotation:session' | 'annotation:mode' | 'annotation:delete' | 'annotation:clear' | 'annotation:migrate' | 'annotation:preview' | 'annotation:screenshot:prepare' | 'annotation:screenshot:read' | 'annotation:submit' | 'annotation:resolve' | 'annotation:mark-read'
   | 'workspace:list' | 'workspace:get' | 'workspace:activate' | 'workspace:reorder' | 'workspace:restore-closed' | 'workspace:import-legacy'
   | 'dialog:handle'
+  | 'agentControl:resume'
   | 'upload'
 
 export function browserRuntime<T = unknown>(input: {
