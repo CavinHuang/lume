@@ -1,5 +1,6 @@
 export interface BrowserSemanticRef {
   backendNodeId: number
+  frameId?: string
   name: string
   nth?: number
   ref: string
@@ -19,6 +20,7 @@ export interface BrowserSemanticTree {
 type AxValue = { value?: unknown }
 type AxProperty = { name?: unknown; value?: AxValue }
 type AxNode = {
+  __frameId?: unknown
   backendDOMNodeId?: unknown
   childIds?: unknown
   ignored?: unknown
@@ -68,6 +70,7 @@ export function buildBrowserSemanticTree(
     seenRoleNames.set(key, nth + 1)
     const input = {
       backendNodeId: backendNodeId(node)!,
+      ...(typeof node.__frameId === "string" ? { frameId: node.__frameId } : {}),
       name,
       ...(duplicateCounts.get(key)! > 1 ? { nth } : {}),
       role,

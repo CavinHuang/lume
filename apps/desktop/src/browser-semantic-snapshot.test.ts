@@ -40,4 +40,15 @@ describe("buildBrowserSemanticTree", () => {
       '  - button "Submit" [ref=e43] [disabled]',
     ].join("\n"))
   })
+
+  test("keeps cross-frame nodes in one tree and binds their frame identity", () => {
+    const tree = buildBrowserSemanticTree([
+      ...nodes,
+      { nodeId: "frame-root", __frameId: "frame-2", role: { value: "RootWebArea" }, name: { value: "Embedded" }, childIds: ["frame-button"] },
+      { nodeId: "frame-button", __frameId: "frame-2", backendDOMNodeId: 81, role: { value: "button" }, name: { value: "Frame apply" } },
+    ], { interactiveOnly: true, allocateRef: ({ backendNodeId }) => `e${backendNodeId}` })
+
+    expect(tree.lines.map((line) => line.text)).toContain('  - button "Frame apply" [ref=e81]')
+    expect(tree.refs.find((ref) => ref.ref === "e81")).toMatchObject({ backendNodeId: 81, frameId: "frame-2" })
+  })
 })

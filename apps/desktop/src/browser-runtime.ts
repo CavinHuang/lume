@@ -180,6 +180,11 @@ type BrowserSemanticSnapshotCursor = {
   url: string
 }
 
+type BrowserCdpFrameTree = {
+  childFrames?: BrowserCdpFrameTree[]
+  frame?: { id?: string }
+}
+
 type BrowserAuthSession = {
   window: BrowserWindow
   tabId: string
@@ -2861,7 +2866,24 @@ export class BrowserRuntime {
     const result = await withDebugger(browserContents(tab), async (debuggerRef) => {
       await debuggerRef.sendCommand("DOM.enable")
       await debuggerRef.sendCommand("Accessibility.enable")
-      return debuggerRef.sendCommand("Accessibility.getFullAXTree") as Promise<{ nodes?: unknown }>
+      const page = await debuggerRef.sendCommand("Page.getFrameTree") as { frameTree?: BrowserCdpFrameTree }
+      const frameIds = browserFrameIds(page.frameTree)
+      const batches = await Promise.all(frameIds.map(async (frameId) => {
+        try {
+          const tree = await debuggerRef.sendCommand("Accessibility.getFullAXTree", { frameId }) as { nodes?: unknown }
+          return Array.isArray(tree.nodes)
+            ? tree.nodes.map((node) => isRecord(node) ? {
+                ...node,
+                __frameId: frameId,
+                ...(typeof node.nodeId === "string" ? { nodeId: `${frameId}:${node.nodeId}` } : {}),
+                ...(Array.isArray(node.childIds) ? { childIds: node.childIds.map((id) => `${frameId}:${String(id)}`) } : {}),
+              } : node)
+            : []
+        } catch {
+          return []
+        }
+      }))
+      return { nodes: batches.flat() }
     })
     const session: BrowserSemanticRefSession = this.semanticRefSessions.get(context.browserSessionId) ?? {
       byIdentity: new Map<string, string>(),
@@ -2873,7 +2895,7 @@ export class BrowserRuntime {
     const tree = buildBrowserSemanticTree(result.nodes, {
       interactiveOnly: params.interactiveOnly === true || params.interactive_only === true,
       allocateRef: (entry) => {
-        const identity = `${tab.tabId}\u0000${tab.generation}\u0000${entry.backendNodeId}`
+        const identity = `${tab.tabId}\u0000${tab.generation}\u0000${entry.frameId ?? ""}\u0000${entry.backendNodeId}`
         let ref = session.byIdentity.get(identity)
         if (!ref) {
           ref = `e${session.nextRef++}`
@@ -4204,6 +4226,14 @@ async function browserPromiseTimeout<T>(promise: Promise<T>, timeoutMs: number):
   } finally {
     if (timer) clearTimeout(timer)
   }
+}
+
+function browserFrameIds(tree: BrowserCdpFrameTree | undefined): string[] {
+  if (!tree) return []
+  return [
+    ...(typeof tree.frame?.id === "string" ? [tree.frame.id] : []),
+    ...(tree.childFrames ?? []).flatMap(browserFrameIds),
+  ]
 }
 
 function splitFrameLocator(locator: BrowserLocator): { frameSelectors: string[]; locator: BrowserLocator } | undefined {

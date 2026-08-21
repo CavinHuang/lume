@@ -342,6 +342,19 @@ app.whenReady().then(async () => {
       semanticRef: applyRef,
       semanticSnapshotId: semanticSnapshot.snapshot_id,
     }), 'stale_target', 'a ref from an older snapshot remained actionable')
+    const earlyFrameLocator = selector => ({ version: 1, steps: [{ kind: 'frame', selector: '#cross-origin-frame' }, { kind: 'css', selector }] })
+    await call('locator:waitFor', { tabId: 'fixture-tab', locator: earlyFrameLocator('#frame-name'), state: 'visible', timeoutMs: 3000 })
+    await call('fill', { tabId: 'fixture-tab', locator: earlyFrameLocator('#frame-name'), text: 'Semantic Frame Agent' })
+    const frameSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    const frameApplyRef = Object.entries(frameSnapshot.refs).find(([, value]) => value.role === 'button' && value.name === 'Frame apply')?.[0]
+    check(typeof frameApplyRef === 'string', 'semantic snapshot did not include the cross-origin frame button')
+    await call('click', {
+      tabId: 'fixture-tab',
+      locator: earlyFrameLocator('#frame-submit'),
+      semanticRef: frameApplyRef,
+      semanticSnapshotId: frameSnapshot.snapshot_id,
+    })
+    check(await call('locator:innerText', { tabId: 'fixture-tab', locator: earlyFrameLocator('#frame-result') }) === 'Semantic Frame Agent', 'cross-origin semantic ref did not resolve its backend node')
     const webMcpTools = await call('webmcp:list', { tabId: 'fixture-tab' })
     check(webMcpTools.tools.length === 1 && webMcpTools.tools[0].name === 'set_result' && webMcpTools.tools[0].input_schema.type === 'object', 'WebMCP tools were not normalized')
     const webMcpResult = await call('webmcp:invoke', { tabId: 'fixture-tab', toolName: 'set_result', input: { value: 'WebMCP Agent' } })
