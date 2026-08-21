@@ -54,6 +54,8 @@ import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { createWikiProtectedSandbox, resolveWikiRuntimeCapability } from "../../wiki/wiki-runtime-capability";
 import { WIKI_CAPABILITIES } from "../../wiki/wiki-capabilities";
 import { resolveConfiguredAdditionalDirectories } from "../permissions/permission-config";
+import { getActiveBrowserBroker } from "../../browser/browser-broker-holder";
+import { getBrowserToolSessionRegistry } from "../tools/browser/browser-tool-session";
 
 const log = createLogger("lume-runner");
 
@@ -382,8 +384,20 @@ export class LumeRunner {
       clearQuestionHandler();
       askUserAbortController.abort();
       runtime.abortSignal?.removeEventListener("abort", onParentAbort);
-      await session.dispose();
-      options.unregisterAbort(runtime.sessionId);
+      try {
+        await session.dispose();
+      } finally {
+        const browserSession = getBrowserToolSessionRegistry().take(runtime.sessionId);
+        if (browserSession) {
+          await getActiveBrowserBroker()?.dispatch({
+            method: "finalize_tabs",
+            threadId: runtime.sessionId,
+            browserSessionId: browserSession.browserSessionId,
+            browserTurnId: browserSession.browserTurnId,
+          }).catch(() => undefined);
+        }
+        options.unregisterAbort(runtime.sessionId);
+      }
     }
   }
 

@@ -24,7 +24,11 @@ export class BrowserToolSessionRegistry {
     return session
   }
 
-  release(threadId: string): void { this.sessions.delete(threadId) }
+  take(threadId: string): BrowserToolSession | undefined {
+    const session = this.sessions.get(threadId)
+    this.sessions.delete(threadId)
+    return session
+  }
 }
 
 const registry = new BrowserToolSessionRegistry()
