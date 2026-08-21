@@ -94,6 +94,8 @@ describe("ContextAssembler", () => {
     expect(result.runtimeContext).toContain("Take a fresh snapshot before reading or acting");
     expect(result.runtimeContext).toContain("Each action returns a fresh snapshot");
     expect(result.runtimeContext).toContain("use only refs from the newest snapshot");
+    expect(result.runtimeContext).toContain("user_takeover_required");
+    expect(result.runtimeContext).toContain("never retry or switch to computer-use");
     expect(result.runtimeContext).not.toContain("exact skill name browser:browser");
     expect(result.runtimeContext).not.toContain("browser.tabs.resumeHandoff()");
     expect(result.runtimeContext).not.toContain("mcp__computer_use__list_apps");
