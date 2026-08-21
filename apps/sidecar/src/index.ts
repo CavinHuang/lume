@@ -78,7 +78,8 @@ function requestBrowserMain(request: import("@lume/shared").BrowserActionRequest
       : BROWSER_REQUEST_TIMEOUT_MS;
     const timeout = setTimeout(() => {
       pendingBrowserMainRequests.delete(request.requestId);
-      reject(new Error("browser request timed out"));
+      // 请求已送达 desktop，变更型动作可能已执行——不能与"未执行"塌缩为同一错误码
+      reject(Object.assign(new Error("browser request timed out"), { code: "executed_unknown" }));
     }, timeoutMs);
     pendingBrowserMainRequests.set(request.requestId, { resolve, reject, timeout });
     rpcTransport.send(JSON.stringify({

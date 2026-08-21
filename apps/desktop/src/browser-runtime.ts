@@ -248,7 +248,7 @@ export class BrowserRuntime {
   private readonly sessionNames = new Map<string, string>()
   private readonly claimSnapshots = new Map<string, { tabId: string; providerTabId?: string; title: string; url: string; generation: number }>()
   private readonly downloadWaiters = new Map<string, BrowserDownloadWaiter[]>()
-  private readonly downloadResults = new Map<string, { browserSessionId: string; browserTurnId: string; state: "pending" | "completed" | "failed"; fileRef?: string; waiters: Array<(value: string | null) => void> }>()
+  private readonly downloadResults = new Map<string, { browserSessionId: string; browserTurnId: string; state: "pending" | "completed" | "failed" | "cancelled" | "interrupted"; fileRef?: string; waiters: Array<(value: string | null) => void> }>()
   private readonly fileChooserWaiters = new Map<string, BrowserFileChooserWaiter[]>()
   private readonly fileChoosers = new Map<string, BrowserFileChooserEntry>()
   private readonly pageAssetInventories = new Map<string, BrowserPageAssetInventory>()
@@ -1589,7 +1589,7 @@ export class BrowserRuntime {
       if (agent && completed && recentAgent) this.downloadRefs.set(prepared.id, { path: prepared.finalPath, browserSessionId: recentAgent.browserSessionId, browserTurnId: recentAgent.browserTurnId })
       const downloadResult = this.downloadResults.get(prepared.id)
       if (downloadResult) {
-        downloadResult.state = completed ? "completed" : "failed"
+        downloadResult.state = completed ? "completed" : electronState === "cancelled" ? "cancelled" : "interrupted"
         downloadResult.fileRef = completed ? `browser-download:${prepared.id}` : undefined
         for (const resolveWaiter of downloadResult.waiters.splice(0)) resolveWaiter(downloadResult.fileRef ?? null)
       }
@@ -2007,12 +2007,12 @@ export class BrowserRuntime {
     })
   }
 
-  private async downloadPath(context: BrowserRequestContext, downloadId: string, timeoutMs: number): Promise<{ path: string | null }> {
+  private async downloadPath(context: BrowserRequestContext, downloadId: string, timeoutMs: number): Promise<{ path: string | null; state: string }> {
     if (context.actor !== "agent") throw browserError("action_denied")
     const result = this.downloadResults.get(downloadId)
     if (!result || result.browserSessionId !== context.browserSessionId || result.browserTurnId !== context.browserTurnId) throw browserError("action_denied")
-    if (result.state === "completed") return { path: result.fileRef ?? null }
-    if (result.state === "failed") return { path: null }
+    if (result.state === "completed") return { path: result.fileRef ?? null, state: "completed" }
+    if (result.state !== "pending") return { path: null, state: result.state }
     return {
       path: await new Promise<string | null>((resolve) => {
         const timer = setTimeout(() => {
@@ -2025,6 +2025,8 @@ export class BrowserRuntime {
         }
         result.waiters.push(finish)
       }),
+      // 超时且无终态 → 仍在下载；waiter 拿到值时 state 亦已是终态
+      state: this.downloadResults.get(downloadId)?.state ?? "pending",
     }
   }
 

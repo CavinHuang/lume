@@ -82,6 +82,7 @@ export function createBrowserMcpTools(input: {
           return toolResult(operationId, {
             ok: false,
             operation_id: operationId,
+            active_tab_id: session.activeTabId ?? null,
             code,
             message,
             retryable: code === "browser_unavailable" || code === "stale_target",
@@ -189,8 +190,8 @@ async function executeTool(
   }
   if (name === "upload") {
     const target = semanticTarget(session, activeTab, args.ref)
-    const files = Array.isArray(args.files) ? args.files.filter((value): value is string => Boolean(stringValue(value))).slice(0, 20) : []
-    if (!files.length) throw new Error("invalid_browser_request")
+    const files = Array.isArray(args.files) ? args.files.filter((value): value is string => Boolean(stringValue(value))) : []
+    if (!files.length || files.length > 20) throw new Error("invalid_browser_request")
     const timeoutMs = boundedTimeout(args.timeout_ms)
     const chooserPromise = dispatch(broker, "playwright_wait_for_file_chooser", { tabId: activeTab.tabId, timeout_ms: timeoutMs })
     const [chooser, click] = await Promise.all([
@@ -205,6 +206,10 @@ async function executeTool(
     ])
     const chooserId = stringValue(asRecord(chooser).file_chooser_id)
     if (!chooserId) throw new Error("browser_internal_error")
+    // 单文件 input 传多个文件会被页面静默丢弃，须在设置前明确拒绝
+    if (files.length > 1 && asRecord(chooser).is_multiple !== true) {
+      throw Object.assign(new Error("file input accepts a single file"), { code: "invalid_browser_request" })
+    }
     const upload = await dispatch(broker, "playwright_file_chooser_set_files", {
       tabId: activeTab.tabId,
       file_chooser_id: chooserId,
@@ -213,6 +218,17 @@ async function executeTool(
     return observeAfterMutation(activeTab.tabId, { click, upload, count: files.length }, broker, dispatch, session)
   }
   if (name === "download") {
+    // 查询模式：对既有 download_id 只读状态，不重复点击触发下载
+    const existingId = stringValue(args.download_id)
+    if (existingId) {
+      const resolved = asRecord(await dispatch(broker, "playwright_download_path", {
+        tabId: activeTab.tabId,
+        download_id: existingId,
+        timeout_ms: boundedTimeout(args.timeout_ms),
+      }))
+      const fileRef = stringValue(resolved.path)
+      return { active_tab_id: activeTab.tabId, download_id: existingId, state: fileRef ? "completed" : stringValue(resolved.state) || "in_progress", file_ref: fileRef || null }
+    }
     const target = semanticTarget(session, activeTab, args.ref)
     const timeoutMs = boundedTimeout(args.timeout_ms)
     const downloadPromise = dispatch(broker, "playwright_wait_for_download", { tabId: activeTab.tabId, timeout_ms: timeoutMs })
@@ -234,8 +250,13 @@ async function executeTool(
       timeout_ms: timeoutMs,
     }))
     const fileRef = stringValue(resolved.path)
-    if (!fileRef) throw new Error("download_failed")
-    return observeAfterMutation(activeTab.tabId, { click, download_id: downloadId, file_ref: fileRef }, broker, dispatch, session)
+    const state = stringValue(resolved.state)
+    // 超时未拿到终态 → 下载仍在进行：点击已成功，不误报 download_failed，模型可用 download_id 查询
+    if (!fileRef && (!state || state === "pending")) {
+      return observeAfterMutation(activeTab.tabId, { click, download_id: downloadId, state: "in_progress" }, broker, dispatch, session)
+    }
+    if (!fileRef) throw Object.assign(new Error(`download ${state}`), { code: "download_failed" })
+    return observeAfterMutation(activeTab.tabId, { click, download_id: downloadId, file_ref: fileRef, state: "completed" }, broker, dispatch, session)
   }
   if (name === "fill_secret") {
     const target = semanticTarget(session, activeTab, args.ref)
@@ -324,8 +345,9 @@ function toolSchema(name: BrowserToolName): ToolInputSchema {
   }, ["ref", "files"])
   if (name === "download") return object({
     ref: refSchema(),
+    download_id: { type: "string", description: "Query the state of an existing download instead of clicking a new control. Provide either download_id or ref." },
     timeout_ms: { type: "integer", minimum: 100, maximum: 30000, default: 10000 },
-  }, ["ref"])
+  })
   if (name === "fill_secret") return object({
     ref: refSchema(),
     secret_id: { type: "string", maxLength: 200, description: "Credential id returned by list_secrets for the current site." },
@@ -392,7 +414,7 @@ function describeTool(name: BrowserToolName): string {
     scroll: "Scroll at an element from the latest snapshot, then return a fresh interactive snapshot.",
     screenshot: "Capture the locked Agent tab as an image for visual inspection. Set annotated=true after snapshot to label visible elements with the same refs used by semantic actions. Screenshots are observation only.",
     upload: "Click a file control from the latest snapshot, wait for its chooser, and upload task-authorized files as one coordinated operation. Requires confirmation.",
-    download: "Click a download control from the latest snapshot, wait for the resulting download, and return a task-scoped browser-download file ref.",
+    download: "Click a download control from the latest snapshot and wait for the resulting download; returns state in_progress with a download_id when the timeout expires first — re-call with only download_id to poll. Downloaded files return as task-scoped browser-download file refs.",
     list_secrets: "List saved credential metadata available for the locked tab's exact origin. Secret values are never returned.",
     fill_secret: "Fill a saved secret into an editable ref without exposing the value to the model, transcript, trace, or tool arguments. Requires confirmation.",
     dialog: "Read the JavaScript dialog currently blocking the locked Agent tab, if any.",

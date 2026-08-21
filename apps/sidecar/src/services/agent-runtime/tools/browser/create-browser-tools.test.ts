@@ -240,6 +240,59 @@ describe("createBrowserMcpTools", () => {
     expect(methods).toContain("playwright_download_path")
   })
 
+  test("reports in-progress downloads instead of failing, and polls them by download_id", async () => {
+    const tab = agentTab("locked-tab", "thread-1")
+    let snapshotNumber = 0
+    let polled = false
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
+        if (request.method === "list_tabs") return [tab]
+        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
+        if (request.method === "playwright_wait_for_download") return { download_id: "download-1" }
+        if (request.method === "playwright_locator_click") return { ok: true }
+        if (request.method === "playwright_download_path") {
+          if (request.params?.download_id && polled) return { path: "browser-download:00000000-0000-0000-0000-000000000002", state: "completed" }
+          polled = true
+          return { path: null, state: "pending" }
+        }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    await call(tools, "mcp__browser__snapshot", {})
+    const timedOut = await rawCall(tools, "mcp__browser__download", { ref: "e1" })
+    const pending = JSON.parse(String(timedOut.content))
+    const polledResult = await rawCall(tools, "mcp__browser__download", { download_id: "download-1" })
+    const completed = JSON.parse(String(polledResult.content))
+
+    expect(timedOut.isError).toBeFalsy()
+    expect(pending.action).toMatchObject({ download_id: "download-1", state: "in_progress" })
+    expect(completed).toMatchObject({ ok: true, download_id: "download-1", state: "completed", file_ref: "browser-download:00000000-0000-0000-0000-000000000002" })
+  })
+
+  test("rejects multi-file upload to a single-file chooser", async () => {
+    const tab = agentTab("locked-tab", "thread-1")
+    let snapshotNumber = 0
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
+        if (request.method === "list_tabs") return [tab]
+        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
+        if (request.method === "playwright_wait_for_file_chooser") return { file_chooser_id: "chooser-1", is_multiple: false }
+        if (request.method === "playwright_locator_click") return { ok: true }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    await call(tools, "mcp__browser__snapshot", {})
+    const result = await rawCall(tools, "mcp__browser__upload", { ref: "e1", files: ["files/a.pdf", "files/b.pdf"] })
+
+    expect(JSON.parse(String(result.content))).toMatchObject({ ok: false, code: "invalid_browser_request", active_tab_id: "locked-tab" })
+  })
+
   test("fills a saved password without exposing its value to the tool call", async () => {
     const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
     const tab = agentTab("locked-tab", "thread-1")
