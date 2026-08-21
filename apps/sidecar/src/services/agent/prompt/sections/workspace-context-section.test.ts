@@ -41,7 +41,7 @@ describe("workspace-context-section", () => {
       sessionType: "main"
     });
 
-    expect(section).toContain("## Workspace Context");
+    expect(section).toContain("## 工作区上下文");
     expect(section).toContain("## WORKSPACE.md");
     expect(section).toContain("Prompt runtime.");
     expect(section).not.toContain("## USER.md");
@@ -62,7 +62,7 @@ describe("workspace-context-section", () => {
       sessionType: "main"
     });
 
-    expect(section).toContain("## Memory Brief");
+    expect(section).toContain("## 记忆摘要");
     expect(section).toContain("- Durable preference.");
     expect(section).not.toContain("## MEMORY.md");
     expect(section).not.toContain("## memory/(recent days).md");
@@ -81,9 +81,9 @@ describe("workspace-context-section", () => {
       sessionType: "main"
     });
 
-    expect(section).toContain("## Persona Brief");
-    expect(section).toContain("The following style notes may affect tone only");
-    expect(section).toContain("Use them subtly. Do not roleplay them.");
+    expect(section).toContain("## 人设摘要");
+    expect(section).toContain("以下风格注记只影响语气");
+    expect(section).toContain("低调运用，不要角色扮演");
     expect(section).toContain("- Natural and direct.");
     expect(section).toContain("- Name: Lume");
     expect(section).not.toContain("## SOUL.md");

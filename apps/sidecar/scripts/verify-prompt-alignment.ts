@@ -38,10 +38,10 @@ const standardPrompt = buildSystemPromptAppend({
   permissionMode: "default",
 });
 
-check("标准模式 — Execution Modes", standardPrompt, "## Execution Modes");
-check("标准模式 — 合并后的能力路由阶梯", standardPrompt, "use a loaded Skill when it clearly matches the request");
+check("标准模式 — 执行模式", standardPrompt, "## 执行模式");
+check("标准模式 — 合并后的能力路由阶梯", standardPrompt, "请求与已加载 Skill 明确匹配时使用该 Skill");
 check("标准模式 — AskUserQuestion 澄清边界", standardPrompt, "AskUserQuestion 用于需求澄清或关键取舍");
-check("标准模式 — brainstorming 引导", standardPrompt, "Use brainstorming only for ambiguous product/design exploration");
+check("标准模式 — brainstorming 引导", standardPrompt, "brainstorming 仅用于需求不清时的模糊产品/设计探索");
 check("标准模式 — 反偏见指引", standardPrompt, "不要盲目附和");
 // 标准模式不应包含"严禁调用 AskUserQuestion"
 const standardHasBan = standardPrompt.includes("严禁调用 AskUserQuestion");

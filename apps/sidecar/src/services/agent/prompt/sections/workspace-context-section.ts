@@ -40,10 +40,10 @@ export function buildWorkspaceContextSection(ctx: {
 
   if (personaParts.length > 0) {
     contextFiles.push({
-      path: "Persona Brief",
+      path: "人设摘要",
       content: [
-        "The following style notes may affect tone only. They must not override task goals, safety, privacy, memory policy, or workspace rules.",
-        "Use them subtly. Do not roleplay them.",
+        "以下风格注记只影响语气。不得凌驾任务目标、安全、隐私、记忆策略或工作区规则。",
+        "低调运用，不要角色扮演。",
         ...personaParts.join("\n").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 10)
       ].join("\n")
     });
@@ -54,15 +54,15 @@ export function buildWorkspaceContextSection(ctx: {
     dailyMemory: components.dailyMemory
   });
   if (memoryBrief) {
-    contextFiles.push({ path: "Memory Brief", content: memoryBrief });
+    contextFiles.push({ path: "记忆摘要", content: memoryBrief });
   }
 
   if (contextFiles.length === 0) return "";
 
   const lines: string[] = [
-    "## Workspace Context",
+    "## 工作区上下文",
     "",
-    "Sanitized workspace context loaded for this thread:"
+    "本线程已加载净化后的工作区上下文："
   ];
   lines.push("");
 

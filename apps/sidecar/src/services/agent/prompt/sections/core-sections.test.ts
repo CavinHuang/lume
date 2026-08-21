@@ -5,7 +5,7 @@ describe("core prompt sections", () => {
   test("includes afterglow protocol and boundaries", () => {
     const section = buildConversationStyleSection();
 
-    expect(section).toContain("## Conversation Style");
+    expect(section).toContain("## 交流风格");
     expect(section).toContain("余光");
     expect(section).toContain("⟡");
     expect(section).toContain("最多 1 条");

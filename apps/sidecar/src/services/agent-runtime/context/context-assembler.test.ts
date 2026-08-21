@@ -204,7 +204,7 @@ describe("ContextAssembler", () => {
       tokenBudget: 1000
     });
 
-    expect(result.systemPrompt).toContain("You are Lume.");
+    expect(result.systemPrompt).toContain("你是 Lume。");
     expect(result.dynamicContext).toContain("<thread_state>");
     expect(result.memoryContext).toBe("");
     expect(result.budget.total).toBe(1000);

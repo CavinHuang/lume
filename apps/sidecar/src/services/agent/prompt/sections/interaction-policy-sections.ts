@@ -26,8 +26,8 @@ export function buildUncertaintySection(permissionMode?: InteractionPermissionMo
 先基于上下文做合理判断；只有关键不确定才提问。
 - AskUserQuestion 用于需求澄清或关键取舍，不用于普通确认
 - 提问时提供清晰选项和简短影响说明
-- Use brainstorming only for ambiguous product/design exploration when requirements are unclear
-- Skip brainstorming for direct critique, simple analysis, obvious edits, or implementation follow-through
+- brainstorming 仅用于需求不清时的模糊产品/设计探索
+- 直接评审、简单分析、显而易见的编辑或实现跟进不要用 brainstorming
 - 发现用户的假设或判断可能有误时，主动指出并提供依据，不要盲目附和`;
 }
 
@@ -49,7 +49,7 @@ export function buildBrowserFirstSection(availableTools: Set<string>): string | 
     return null;
   }
 
-  return `## Browser-First Tool Policy (Mandatory)
+  return `## 浏览器优先工具策略（强制）
 
 当用户请求“使用我的浏览器 / 使用浏览器 profile / 在当前页面继续操作 / 继续上一步浏览器任务”时：
 1. 必须优先使用 browser 工具，不要直接改用 WebSearch。

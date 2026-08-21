@@ -8,10 +8,10 @@ export function buildRuntimeSection(ctx: {
   chatType?: "direct" | "group" | "channel";
 }): string {
   return [
-    "## Runtime",
+    "## 运行时",
     `mode=${ctx.promptMode} | threadType=${ctx.sessionType} | chatType=${ctx.chatType ?? "direct"}`,
     "",
-    "Runtime metadata such as threadId, workspaceId, channelId, modelId, and file paths is operational context for locating files, logs, and thread data.",
-    "Do not use or reveal runtime metadata as the user's identity, profile, or answer to questions like \"who am I\" unless the user explicitly asks for runtime/debug details."
+    "threadId、workspaceId、channelId、modelId 与文件路径等运行时元数据仅是定位文件、日志和线程数据的操作上下文。",
+    "除非用户明确要求运行时/调试细节，否则不要把运行时元数据当作用户的身份或画像，也不要用它回答“我是谁”这类问题。"
   ].join("\n");
 }

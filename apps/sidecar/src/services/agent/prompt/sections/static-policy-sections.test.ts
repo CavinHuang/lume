@@ -9,26 +9,26 @@ describe("static policy sections", () => {
   });
 
   test("long-form prose is delegated to the writing agent", () => {
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("hand off to the writing agent before drafting");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("先移交给 writer 角色再动笔");
   });
 
   test("main agent should directly create subagents for complex specialized work", () => {
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("Use SubAgents proactively");
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("multi-step, context-heavy, or cross-domain");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("主动使用子代理");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("重上下文或跨领域");
     expect(CLAUDE_PLAN_MODE_SECTION).toContain("explorer -> planner -> specialist -> code-reviewer");
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("Ask first only when");
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("Built-ins include explorer, planner, code-reviewer, researcher");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("仅在目标含糊");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("内置角色包括 explorer、planner、code-reviewer、researcher");
   });
 
   test("capability ladder keeps memory and web lookups conditional", () => {
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("use memory tools only when prior context is needed");
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("use WebSearch/WebFetch for current public information");
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("parallelizable or review tasks");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("仅在需要且尚未加载先前上下文时才用记忆工具");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("需要最新公开信息时使用 WebSearch/WebFetch");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("可并行或需要评审的任务");
   });
 
   test("coding loop keeps verification hard rules", () => {
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("never piped through grep, findstr, Select-String, head, or tail");
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("do not poll for its output");
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("Never commit, push, reset, clean, or delete a branch automatically");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("绝不接 grep、findstr、Select-String、head 或 tail 管道");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("不要轮询其输出");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("绝不作为编码收尾自动 commit、push、reset、clean 或删除分支");
   });
 });
