@@ -10,7 +10,7 @@ const WRAPPER_PREFIX = `mcp__${BROWSER_MCP_SERVER_ID}__`
 export const BROWSER_TOOL_NAMES = [
   "list_tabs", "open", "switch_tab", "navigate", "back", "forward", "reload", "snapshot",
   "click", "double_click", "hover", "fill", "type", "press", "select", "check", "scroll",
-  "screenshot", "upload", "download", "dialog", "handle_dialog", "run_script",
+  "screenshot", "upload", "download", "list_secrets", "fill_secret", "dialog", "handle_dialog", "run_script",
 ] as const
 export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number]
 
@@ -36,7 +36,7 @@ export function createBrowserMcpTools(input: {
   })
 
   return BROWSER_TOOL_NAMES.map((name) => {
-    const readOnly = name === "list_tabs" || name === "snapshot" || name === "screenshot" || name === "dialog"
+    const readOnly = name === "list_tabs" || name === "snapshot" || name === "screenshot" || name === "list_secrets" || name === "dialog"
     return {
       name: `${WRAPPER_PREFIX}${name}`,
       description: describeTool(name),
@@ -51,7 +51,7 @@ export function createBrowserMcpTools(input: {
         source: "mcp",
         category: readOnly ? "read" : "execute",
         capability: "mcp",
-        riskLevel: name === "run_script" ? "high" : name === "open" || name === "upload" || name === "download" ? "medium" : "low",
+        riskLevel: name === "run_script" || name === "fill_secret" ? "high" : name === "open" || name === "upload" || name === "download" ? "medium" : "low",
         sideEffects: readOnly ? "none" : "desktop",
         allowedInPlanMode: readOnly,
         isReadOnly: readOnly,
@@ -154,6 +154,9 @@ async function executeTool(
       full_page: fullPage,
     }
   }
+  if (name === "list_secrets") {
+    return { active_tab_id: activeTab.tabId, secrets: await dispatch(broker, "browser_list_secrets", { tabId: activeTab.tabId }) }
+  }
   if (isNavigationTool(name)) {
     const url = name === "navigate" ? stringValue(args.url) : undefined
     if (name === "navigate" && !url) throw new Error("invalid_url")
@@ -223,6 +226,20 @@ async function executeTool(
     const fileRef = stringValue(resolved.path)
     if (!fileRef) throw new Error("download_failed")
     return observeAfterMutation(activeTab.tabId, { click, download_id: downloadId, file_ref: fileRef }, broker, dispatch, session)
+  }
+  if (name === "fill_secret") {
+    const target = semanticTarget(session, activeTab, args.ref)
+    const secretId = stringValue(args.secret_id)
+    if (!secretId) throw new Error("invalid_browser_request")
+    const action = await dispatch(broker, "browser_fill_secret", {
+      tabId: activeTab.tabId,
+      secret_id: secretId,
+      locator: target.locator,
+      semanticRef: target.refId,
+      semanticSnapshotId: target.snapshotId,
+      semanticIntent: `${target.ref.role} ${target.ref.name}`.trim(),
+    })
+    return observeAfterMutation(activeTab.tabId, action, broker, dispatch, session)
   }
   if (isActionTool(name)) {
     const target = semanticTarget(session, activeTab, args.ref)
@@ -294,6 +311,10 @@ function toolSchema(name: BrowserToolName): ToolInputSchema {
     ref: refSchema(),
     timeout_ms: { type: "integer", minimum: 100, maximum: 30000, default: 10000 },
   }, ["ref"])
+  if (name === "fill_secret") return object({
+    ref: refSchema(),
+    secret_id: { type: "string", maxLength: 200, description: "Credential id returned by list_secrets for the current site." },
+  }, ["ref", "secret_id"])
   if (name === "click") return object({ ref: refSchema() }, ["ref"])
   if (name === "double_click") return object({ ref: refSchema() }, ["ref"])
   if (name === "hover") return object({ ref: refSchema() }, ["ref"])
@@ -357,6 +378,8 @@ function describeTool(name: BrowserToolName): string {
     screenshot: "Capture the locked Agent tab as an image for visual inspection. Prefer snapshot refs for interaction; screenshots are observation only.",
     upload: "Click a file control from the latest snapshot, wait for its chooser, and upload task-authorized files as one coordinated operation. Requires confirmation.",
     download: "Click a download control from the latest snapshot, wait for the resulting download, and return a task-scoped browser-download file ref.",
+    list_secrets: "List saved credential metadata available for the locked tab's exact origin. Secret values are never returned.",
+    fill_secret: "Fill a saved secret into an editable ref without exposing the value to the model, transcript, trace, or tool arguments. Requires confirmation.",
     dialog: "Read the JavaScript dialog currently blocking the locked Agent tab, if any.",
     handle_dialog: "Accept or dismiss the current JavaScript dialog, then return a fresh interactive snapshot.",
     run_script: "Run a bounded JavaScript function body in an isolated world on the locked Agent tab. The script receives JSON input as arg and must return a JSON-serializable value. Prefer semantic Browser tools for ordinary interaction. Script execution requires the browser action confirmation gate.",

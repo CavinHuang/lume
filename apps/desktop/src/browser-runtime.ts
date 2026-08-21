@@ -199,7 +199,7 @@ const MUTATING_METHODS = new Set([
   "upload", "pageAssets:bundle", "webmcp:invoke", "agentScript:evaluate",
 ])
 const GUEST_OPTIONAL_METHODS = new Set([
-  "url", "title", "site-info", "dialog:get", "wait:download", "download:path",
+  "url", "title", "site-info", "dialog:get", "secrets:list", "wait:download", "download:path",
   "screenshot:attachment:delete", "clipboard:read", "clipboard:readText", "clipboard:write", "clipboard:writeText",
   "annotation:session", "annotation:mode", "annotation:clear", "annotation:delete",
   "annotation:preview", "annotation:screenshot:prepare", "annotation:submit", "annotation:screenshot:read",
@@ -768,7 +768,7 @@ export class BrowserRuntime {
     if ((method === "reload" || method === "hardReload") && (!tab.webContents || tab.webContents.isDestroyed() || tab.guestState === "gone")) {
       return this.recoverGuest(tab)
     }
-    if ((method === "contactFill" || method === "upload" || method === "filechooser:setFiles" || method === "content:export" || method === "pageAssets:bundle" || method === "cdp" || method === "agentScript:evaluate" || method === "clipboard:read" || method === "clipboard:readText" || method === "clipboard:write" || method === "clipboard:writeText") && params.__policyRequired !== true) throw browserError("confirmation_unavailable")
+    if ((method === "contactFill" || method === "secretFill" || method === "upload" || method === "filechooser:setFiles" || method === "content:export" || method === "pageAssets:bundle" || method === "cdp" || method === "agentScript:evaluate" || method === "clipboard:read" || method === "clipboard:readText" || method === "clipboard:write" || method === "clipboard:writeText") && params.__policyRequired !== true) throw browserError("confirmation_unavailable")
     if (params.__policyRequired === true) this.consumePolicyToken(String(params.__policyConfirmation ?? ""), String(params.__policyBindingHash ?? ""))
     if (MUTATING_METHODS.has(method)) {
       const operationId = request.idempotencyKey || request.requestId || randomUUID()
@@ -807,6 +807,10 @@ export class BrowserRuntime {
     if (!GUEST_OPTIONAL_METHODS.has(method)) await this.waitForGuest(tab)
     if (method === "snapshot") return this.snapshot(tab)
     if (method === "semanticSnapshot") return this.semanticSnapshot(tab, params, context)
+    if (method === "secrets:list") {
+      const origin = safeOrigin(tab.url)
+      return origin ? this.credentials.listPasswords().filter((entry) => entry.origin === origin) : []
+    }
     if (method === "wait:download") return this.waitForDownload(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
     if (method === "download:path") return this.downloadPath(context, String(params.downloadId ?? params.download_id ?? ""), boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
     if (method === "wait:filechooser") return this.waitForFileChooser(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
@@ -1659,6 +1663,7 @@ export class BrowserRuntime {
       return { ok: true }
     }
     if (method === "contactFill") return this.fillSavedContact(tab, params)
+    if (method === "secretFill") return this.fillSavedPassword(tab, params, context)
     if (method === "upload") return this.uploadFileRefs(tab, params, context)
     if (method === "filechooser:setFiles") return this.setFileChooserFiles(tab, params, context)
     if (method === "downloadMedia") return this.downloadMedia(tab, params, context)
@@ -1919,10 +1924,17 @@ export class BrowserRuntime {
     return { status: "submitted" }
   }
 
-  private async fillSecret(tab: BrowserTab, params: Record<string, unknown>, value: string): Promise<void> {
+  private async fillSavedPassword(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): Promise<{ status: "submitted" }> {
+    const value = this.credentials.passwordForOrigin(String(params.secretId ?? ""), tab.url)
+    if (!value) throw browserError("action_denied")
+    await this.fillSecret(tab, params, value, context)
+    return { status: "submitted" }
+  }
+
+  private async fillSecret(tab: BrowserTab, params: Record<string, unknown>, value: string, context?: BrowserRequestContext): Promise<void> {
     const generation = tab.generation
     const inputSequence = tab.inputSequence
-    const target = await this.resolveTarget(tab, params)
+    const target = await this.resolveTarget(tab, params, context)
     if (!target.editable || tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
     tab.inputSequence += 1
     tab.agentDispatching = true

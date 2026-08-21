@@ -533,6 +533,11 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
         timeoutMs: input.timeout_ms ?? input.timeoutMs,
       },
     }
+    case "browser_list_secrets": return { method: "secrets:list", params }
+    case "browser_fill_secret": return {
+      method: "secretFill",
+      params: { ...params, secretId: input.secret_id ?? input.secretId },
+    }
     case "playwright_element_info": return { method: "elementInfo", params: { ...params, ...options } }
     case "playwright_element_screenshot": return { method: "elementScreenshot", params: { ...params, ...options } }
     case "playwright_evaluate": return { method: "evaluate:readonly", params: { ...params, timeoutMs: input.timeoutMs ?? input.timeout_ms ?? options.timeoutMs } }

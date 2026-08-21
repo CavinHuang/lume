@@ -515,6 +515,36 @@ test("broker normalizes media downloads and confirmed file chooser uploads", asy
   assert.equal(calls.at(-1).params.__policyRequired, true)
 })
 
+test("broker confirms secret filling while never accepting a secret value", async () => {
+  const calls: any[] = []
+  const broker = new BrowserBroker({ request: async (request) => {
+    calls.push(request)
+    if (request.method === "policy:confirm") return { approved: true, token: "credential-token" }
+    if (request.method === "secrets:list") return [{ id: "secret-1", origin: "https://example.test", username: "alice" }]
+    return { status: "submitted" }
+  } })
+  broker.setPluginState({ browserEnabled: true })
+
+  const listed = await broker.dispatch({
+    method: "browser_list_secrets",
+    params: { tabId: "tab-1" },
+    browserSessionId: "s",
+    browserTurnId: "t",
+  })
+  await broker.dispatch({
+    method: "browser_fill_secret",
+    params: { tabId: "tab-1", secret_id: "secret-1", semanticRef: "e1", semanticSnapshotId: "snap-1" },
+    browserSessionId: "s",
+    browserTurnId: "t",
+  })
+
+  assert.deepEqual(listed, [{ id: "secret-1", origin: "https://example.test", username: "alice" }])
+  assert.equal(calls.at(-2).method, "policy:confirm")
+  assert.equal(calls.at(-1).method, "secretFill")
+  assert.equal(calls.at(-1).params.secretId, "secret-1")
+  assert.equal(JSON.stringify(calls).includes("password-value"), false)
+})
+
 test("iab descriptor keeps internal WebMCP out of public capabilities", () => {
   const broker = new BrowserBroker({ request: async () => ({}) })
   broker.setPluginState({ browserEnabled: true })

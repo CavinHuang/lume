@@ -29,6 +29,7 @@ test("browser policy allows ordinary controls and confirms consequential intent"
 test("browser policy hands payment and CAPTCHA back to the user", () => {
   assert.equal(classifyBrowserAction("purchase").decision, "deny")
   assert.equal(classifyBrowserAction("contactFill").decision, "confirm")
+  assert.deepEqual(classifyBrowserAction("browser_fill_secret", {}, "secretFill"), { decision: "confirm", category: "credential", preview: "browser_fill_secret: 执行受保护的浏览器动作" })
   assert.equal(classifyBrowserAction("navigate_tab_url", { url: "http://127.0.0.1:3000" }).decision, "confirm")
   assert.deepEqual(classifyBrowserAction("navigate_tab_url", { url: "https://example.com" }), { decision: "confirm", category: "browse", preview: "打开网站：https://example.com" })
   assert.equal(classifyBrowserAction("click", { semanticIntent: "Pay now" }).decision, "deny")

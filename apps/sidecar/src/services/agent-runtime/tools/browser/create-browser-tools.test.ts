@@ -194,6 +194,33 @@ describe("createBrowserMcpTools", () => {
     expect(methods).toContain("playwright_download_path")
   })
 
+  test("fills a saved password without exposing its value to the tool call", async () => {
+    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
+    const tab = agentTab("locked-tab", "thread-1")
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
+        calls.push(request)
+        if (request.method === "list_tabs") return [tab]
+        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${calls.length}`)
+        if (request.method === "browser_list_secrets") return [{ id: "secret-1", origin: "https://example.com", username: "alice" }]
+        if (request.method === "browser_fill_secret") return { status: "submitted" }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    const secrets = await call(tools, "mcp__browser__list_secrets", {})
+    await call(tools, "mcp__browser__snapshot", {})
+    const filled = await call(tools, "mcp__browser__fill_secret", { ref: "e1", secret_id: "secret-1" })
+
+    expect(secrets.secrets).toEqual([{ id: "secret-1", origin: "https://example.com", username: "alice" }])
+    expect(filled.action).toEqual({ status: "submitted" })
+    const fill = calls.find((request) => request.method === "browser_fill_secret")
+    expect(fill).toMatchObject({ params: { secret_id: "secret-1", semanticRef: "e1" } })
+    expect(JSON.stringify(fill)).not.toContain("password-value")
+  })
+
   test("rejects refs without a current snapshot or after the locked tab disappears", async () => {
     const tab = agentTab("locked-tab", "thread-1")
     let tabs = [tab]
