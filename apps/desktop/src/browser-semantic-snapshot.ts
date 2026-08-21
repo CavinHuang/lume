@@ -33,7 +33,7 @@ type AxNode = {
 const INTERACTIVE_ROLES = new Set([
   "button", "checkbox", "combobox", "gridcell", "link", "listbox", "menuitem",
   "menuitemcheckbox", "menuitemradio", "option", "radio", "scrollbar", "searchbox",
-  "slider", "spinbutton", "switch", "tab", "textbox", "treeitem",
+  "slider", "spinbutton", "switch", "tab", "textbox", "treeitem", "clickable", "focusable",
 ])
 
 const CONTENT_ROLES = new Set([

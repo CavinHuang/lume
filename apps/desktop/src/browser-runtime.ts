@@ -185,6 +185,10 @@ type BrowserCdpFrameTree = {
   frame?: { id?: string }
 }
 
+type BrowserCdpDebugger = {
+  sendCommand(method: string, params?: Record<string, unknown>): Promise<unknown>
+}
+
 type BrowserAuthSession = {
   window: BrowserWindow
   tabId: string
@@ -2883,7 +2887,22 @@ export class BrowserRuntime {
           return []
         }
       }))
-      return { nodes: batches.flat() }
+      const supplements = await Promise.all(frameIds.map((frameId) => this.cursorInteractiveAxNodes(debuggerRef, frameId)))
+      const nodes = batches.flat()
+      const byBackendNode = new Map(nodes.flatMap((node) => isRecord(node) && Number.isInteger(node.backendDOMNodeId)
+        ? [[`${String(node.__frameId ?? "")}\u0000${Number(node.backendDOMNodeId)}`, node] as const]
+        : []))
+      for (const supplement of supplements.flat()) {
+        if (!isRecord(supplement)) continue
+        const existing = byBackendNode.get(`${String(supplement.__frameId ?? "")}\u0000${Number(supplement.backendDOMNodeId)}`)
+        if (existing) {
+          existing.role = supplement.role
+          existing.name = supplement.name
+        } else {
+          nodes.push(supplement)
+        }
+      }
+      return { nodes }
     })
     const session: BrowserSemanticRefSession = this.semanticRefSessions.get(context.browserSessionId) ?? {
       byIdentity: new Map<string, string>(),
@@ -2917,6 +2936,89 @@ export class BrowserRuntime {
       title: tab.title,
       url: tab.url,
     })
+  }
+
+  private async cursorInteractiveAxNodes(debuggerRef: BrowserCdpDebugger, frameId: string): Promise<unknown[]> {
+    let arrayObjectId: string | undefined
+    const elementObjectIds: string[] = []
+    try {
+      const isolated = await debuggerRef.sendCommand("Page.createIsolatedWorld", {
+        frameId,
+        worldName: "lume-semantic-snapshot",
+        grantUniveralAccess: false,
+      }) as { executionContextId?: number }
+      if (!isolated.executionContextId) return []
+      const evaluated = await debuggerRef.sendCommand("Runtime.evaluate", {
+        contextId: isolated.executionContextId,
+        expression: `(() => {
+          const nativeTags = new Set(["a", "button", "input", "select", "textarea", "details", "summary"])
+          const nativeRoles = new Set(["button", "link", "textbox", "checkbox", "radio", "combobox", "listbox", "menuitem", "menuitemcheckbox", "menuitemradio", "option", "searchbox", "slider", "spinbutton", "switch", "tab", "treeitem"])
+          return Array.from(document.querySelectorAll("*")).filter((element) => {
+            if (element.closest('[hidden], [aria-hidden="true"]')) return false
+            if (nativeTags.has(element.tagName.toLowerCase()) || nativeRoles.has((element.getAttribute("role") || "").toLowerCase())) return false
+            const style = getComputedStyle(element)
+            const pointer = style.cursor === "pointer"
+            const onclick = element.hasAttribute("onclick") || element.onclick !== null
+            const tabindex = element.hasAttribute("tabindex") && element.getAttribute("tabindex") !== "-1"
+            const editable = element.isContentEditable
+            if (!pointer && !onclick && !tabindex && !editable) return false
+            if (pointer && !onclick && !tabindex && !editable && element.parentElement && getComputedStyle(element.parentElement).cursor === "pointer") return false
+            const rect = element.getBoundingClientRect()
+            return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden"
+          }).slice(0, 500)
+        })()`,
+        returnByValue: false,
+      }) as { result?: { objectId?: string }; exceptionDetails?: unknown }
+      if (evaluated.exceptionDetails || !evaluated.result?.objectId) return []
+      arrayObjectId = evaluated.result.objectId
+      const properties = await debuggerRef.sendCommand("Runtime.getProperties", {
+        objectId: arrayObjectId,
+        ownProperties: true,
+      }) as { result?: Array<{ name?: string; value?: { objectId?: string } }> }
+      for (const property of properties.result ?? []) {
+        if (!/^\d+$/.test(property.name ?? "") || !property.value?.objectId) continue
+        elementObjectIds.push(property.value.objectId)
+      }
+      return (await Promise.all(elementObjectIds.map(async (objectId, index) => {
+        try {
+          const [described, inspected] = await Promise.all([
+            debuggerRef.sendCommand("DOM.describeNode", { objectId }) as Promise<{ node?: { backendNodeId?: number } }>,
+            debuggerRef.sendCommand("Runtime.callFunctionOn", {
+              objectId,
+              functionDeclaration: `function () {
+                const style = getComputedStyle(this)
+                const pointer = style.cursor === "pointer"
+                const onclick = this.hasAttribute("onclick") || this.onclick !== null
+                const editable = this.isContentEditable
+                return {
+                  name: (this.getAttribute("aria-label") || this.innerText || this.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 500),
+                  role: editable ? "textbox" : pointer || onclick ? "clickable" : "focusable",
+                }
+              }`,
+              returnByValue: true,
+            }) as Promise<{ result?: { value?: unknown }; exceptionDetails?: unknown }>,
+          ])
+          const backendNodeId = described.node?.backendNodeId
+          const details = isRecord(inspected.result?.value) ? inspected.result.value : {}
+          if (!Number.isInteger(backendNodeId) || typeof details.role !== "string") return undefined
+          return {
+            __frameId: frameId,
+            backendDOMNodeId: backendNodeId,
+            childIds: [],
+            name: { value: typeof details.name === "string" ? details.name : "" },
+            nodeId: `cursor:${frameId}:${backendNodeId}:${index}`,
+            role: { value: details.role },
+          }
+        } catch {
+          return undefined
+        }
+      }))).flatMap((node) => node ? [node] : [])
+    } catch {
+      return []
+    } finally {
+      await Promise.all(elementObjectIds.map((objectId) => debuggerRef.sendCommand("Runtime.releaseObject", { objectId }).catch(() => undefined)))
+      if (arrayObjectId) await debuggerRef.sendCommand("Runtime.releaseObject", { objectId: arrayObjectId }).catch(() => undefined)
+    }
   }
 
   private semanticSnapshotPage(snapshot: BrowserSemanticSnapshotCursor): Record<string, unknown> {

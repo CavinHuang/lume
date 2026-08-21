@@ -51,4 +51,16 @@ describe("buildBrowserSemanticTree", () => {
     expect(tree.lines.map((line) => line.text)).toContain('  - button "Frame apply" [ref=e81]')
     expect(tree.refs.find((ref) => ref.ref === "e81")).toMatchObject({ backendNodeId: 81, frameId: "frame-2" })
   })
+
+  test("assigns refs to DOM-supplemented clickable and focusable nodes", () => {
+    const tree = buildBrowserSemanticTree([
+      { nodeId: "cursor-1", __frameId: "main", backendDOMNodeId: 91, role: { value: "clickable" }, name: { value: "Custom card" } },
+      { nodeId: "cursor-2", __frameId: "main", backendDOMNodeId: 92, role: { value: "focusable" }, name: { value: "Custom focus" } },
+    ], { interactiveOnly: true, allocateRef: ({ backendNodeId }) => `e${backendNodeId}` })
+
+    expect(tree.lines.map((line) => line.text)).toEqual([
+      '- clickable "Custom card" [ref=e91]',
+      '- focusable "Custom focus" [ref=e92]',
+    ])
+  })
 })
