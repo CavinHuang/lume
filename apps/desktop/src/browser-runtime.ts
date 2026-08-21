@@ -45,6 +45,7 @@ import { BrowserAnnotationManager } from "./browser-annotation-manager"
 import { dispatchBrowserClick, dispatchBrowserKey, dispatchBrowserText, focusBrowserPoint, type BrowserCdpCommandSender } from "./browser-cdp-input"
 import { BrowserActionQueue } from "./browser-action-queue"
 import { BrowserInputLedger } from "./browser-input-ledger"
+import { detectBrowserActionEffect, type BrowserActionEffect, type BrowserActionEffectSnapshot } from "./browser-action-effect"
 
 type BrowserEvent = { method: string; params: Record<string, unknown> }
 type BrowserRuntimeOptions = {
@@ -219,7 +220,7 @@ export class BrowserRuntime {
   private readonly sessionNames = new Map<string, string>()
   private readonly claimSnapshots = new Map<string, { tabId: string; providerTabId?: string; title: string; url: string; generation: number }>()
   private readonly downloadWaiters = new Map<string, BrowserDownloadWaiter[]>()
-  private readonly downloadResults = new Map<string, { browserSessionId: string; browserTurnId: string; state: "pending" | "completed" | "failed"; fileRef?: string; waiters: Array<(value: string | null) => void> }>()
+  private readonly downloadResults = new Map<string, { browserSessionId: string; browserTurnId: string; tabId: string; state: "pending" | "completed" | "failed"; fileRef?: string; waiters: Array<(value: string | null) => void> }>()
   private readonly fileChooserWaiters = new Map<string, BrowserFileChooserWaiter[]>()
   private readonly fileChoosers = new Map<string, BrowserFileChooserEntry>()
   private readonly pageAssetInventories = new Map<string, BrowserPageAssetInventory>()
@@ -587,6 +588,48 @@ export class BrowserRuntime {
         return result
       },
     }
+  }
+
+  private async captureActionEffect(tab: BrowserTab): Promise<BrowserActionEffectSnapshot> {
+    const domRevision = await this.browserDomRevision(tab)
+    return {
+      ...(tab.dialogInfo?.id ? { dialogId: tab.dialogInfo.id } : {}),
+      domRevision,
+      downloadIds: [...this.downloadResults].flatMap(([id, result]) => result.tabId === tab.tabId ? [id] : []),
+      generation: tab.generation,
+      lifecycle: tab.lifecycle,
+      popupCount: [...this.popupTokens.values()].filter((popup) => popup.sourceTabId === tab.tabId).length,
+      tabIds: [...this.tabs.values()].flatMap((candidate) => candidate.openerTabId === tab.tabId ? [candidate.tabId] : []),
+      url: tab.url,
+    }
+  }
+
+  private async waitForActionEffect(tab: BrowserTab, before: BrowserActionEffectSnapshot, agent: boolean): Promise<BrowserActionEffect> {
+    const deadline = Date.now() + 300
+    do {
+      if (agent && agentControlPaused(tab)) throw browserError("user_takeover_required")
+      await delay(50)
+      const effect = detectBrowserActionEffect(before, await this.captureActionEffect(tab))
+      if (effect) return effect
+    } while (Date.now() < deadline)
+    return { kind: "no_detectable_change" }
+  }
+
+  private async browserDomRevision(tab: BrowserTab): Promise<number> {
+    try {
+      const value = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(() => {
+        const key = "__lumeBrowserActionEffect";
+        const root = globalThis;
+        if (!root[key]) {
+          const state = { revision: 0 };
+          const observer = new MutationObserver(() => { state.revision += 1; });
+          observer.observe(document, { attributes: true, characterData: true, childList: true, subtree: true });
+          root[key] = state;
+        }
+        return root[key].revision;
+      })()` }], true)
+      return Number.isInteger(value) ? Number(value) : -1
+    } catch { return -1 }
   }
 
   async dispatch(request: BrowserActionRequest): Promise<unknown> {
@@ -1551,6 +1594,7 @@ export class BrowserRuntime {
       this.downloadResults.set(prepared.id, {
         browserSessionId: recentAgent.browserSessionId,
         browserTurnId: recentAgent.browserTurnId,
+        tabId: tab.tabId,
         state: "pending",
         waiters: [],
       })
@@ -1729,6 +1773,7 @@ export class BrowserRuntime {
       const autoWaitMs = rawAutoWait === 0 ? 0 : (boundedNumber(rawAutoWait, 0, 30_000) || 3_000)
       const target = await this.resolveTargetWithAutoWait(tab, generation, params, autoWaitMs)
       if (tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
+      const effectBefore = await this.captureActionEffect(tab)
       tab.inputSequence += 1
       tab.agentDispatching = context.actor === "agent"
       try {
@@ -1780,7 +1825,8 @@ export class BrowserRuntime {
       } finally {
         tab.agentDispatching = false
       }
-      return { ok: true, inputSequence: tab.inputSequence }
+      const effect = await this.waitForActionEffect(tab, effectBefore, context.actor === "agent")
+      return { ok: true, inputSequence: tab.inputSequence, effect }
     }
     throw browserError("unsupported")
   }
