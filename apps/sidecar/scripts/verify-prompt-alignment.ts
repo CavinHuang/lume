@@ -32,7 +32,6 @@ function section(title: string) {
 // === 场景 1: 标准模式（default permissionMode） ===
 section("场景 1: 标准模式 System Prompt");
 const standardPrompt = buildSystemPromptAppend({
-  workspaceName: "测试工作区",
   workspaceSlug: "test-ws",
   sessionId: "test-session-001",
   availableTools: ["read", "write", "edit", "bash", "memory.search", "memory.read", "memory.remember", "browser", "web_search"],
@@ -40,7 +39,7 @@ const standardPrompt = buildSystemPromptAppend({
 });
 
 check("标准模式 — Execution Modes", standardPrompt, "## Execution Modes");
-check("标准模式 — Capability Routing", standardPrompt, "## Capability Routing");
+check("标准模式 — 合并后的能力路由阶梯", standardPrompt, "use a loaded Skill when it clearly matches the request");
 check("标准模式 — AskUserQuestion 澄清边界", standardPrompt, "AskUserQuestion 用于需求澄清或关键取舍");
 check("标准模式 — brainstorming 引导", standardPrompt, "Use brainstorming only for ambiguous product/design exploration");
 check("标准模式 — 反偏见指引", standardPrompt, "不要盲目附和");
@@ -62,7 +61,6 @@ check("标准模式 — code-reviewer 角色", standardPrompt, "code-reviewer");
 // === 场景 2: bypassPermissions 模式 ===
 section("场景 2: bypassPermissions 模式 System Prompt");
 const autoPrompt = buildSystemPromptAppend({
-  workspaceName: "测试工作区",
   workspaceSlug: "test-ws",
   sessionId: "test-session-002",
   availableTools: ["read", "write", "edit", "bash"],
@@ -77,7 +75,6 @@ check("P0-3: 自动模式 — 保留反偏见指引", autoPrompt, "不要盲目�
 // === 场景 3: plan 模式 ===
 section("场景 3: plan 模式 System Prompt");
 const planPrompt = buildSystemPromptAppend({
-  workspaceName: "测试工作区",
   workspaceSlug: "test-ws",
   sessionId: "test-session-003",
   availableTools: ["read", "write", "edit", "bash"],
@@ -125,7 +122,6 @@ try {
 // === 场景 5: 无记忆工具时不注入记忆章节 ===
 section("场景 5: 无记忆工具时的 Prompt");
 const noMemPrompt = buildSystemPromptAppend({
-  workspaceName: "测试工作区",
   workspaceSlug: "test-ws",
   sessionId: "test-session-005",
   availableTools: ["read", "write", "edit"],
@@ -153,7 +149,6 @@ if (!noMemHasRecall) {
 section("Token 开销估算");
 
 const basePrompt = buildSystemPromptAppend({
-  workspaceName: "测试工作区",
   workspaceSlug: "test-ws",
   sessionId: "base-session",
   availableTools: ["read", "write", "edit", "bash", "memory.search", "memory.read", "memory.remember"],

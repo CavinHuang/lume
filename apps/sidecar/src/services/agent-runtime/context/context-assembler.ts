@@ -131,7 +131,6 @@ export class ContextAssembler {
   ): Promise<ContextAssemblyResult> {
     const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
     const systemPromptAppend = buildSystemPromptAppend({
-      workspaceName: input.workspaceName,
       workspaceSlug: input.workspaceSlug,
       sessionId: input.threadId,
       sessionType: input.threadType,

@@ -56,9 +56,9 @@ describe("agent-prompt-builder", () => {
     });
     expect(prompt).toContain("## Execution Modes");
     expect(prompt).toContain("Direct Mode");
-    expect(prompt).toContain("Explore Mode");
     expect(prompt).toContain("Plan Mode");
     expect(prompt).toContain("Execute Mode");
+    expect(prompt).not.toContain("## Capability Routing");
     expect(prompt).not.toContain("## Agentic Execution");
     expect(prompt).not.toContain("## Commitment Enforcement");
     expect(prompt).not.toContain("## Proactive Updates");
@@ -138,42 +138,41 @@ describe("agent-prompt-builder", () => {
     expect(prompt).not.toContain("指定 model: \"haiku\" 降低成本");
   });
 
-  test("buildSystemPromptAppend 应注入 skills-first capability routing", () => {
+  test("buildSystemPromptAppend 应注入 skills-first 的能力路由阶梯", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-skills-first",
       workspaceSlug: "demo-workspace",
       availableTools: ["read", "write", "task"]
     });
-    expect(prompt).toContain("## Capability Routing");
-    expect(prompt).toContain("Use a loaded Skill when it clearly matches the request.");
+    expect(prompt).toContain("## Execution Modes");
+    expect(prompt).toContain("use a loaded Skill when it clearly matches the request");
   });
 
-  test("buildSystemPromptAppend 应注入合并后的 capability routing", () => {
+  test("buildSystemPromptAppend 能力阶梯保留 memory/web 条件查找", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-capability-order",
       availableTools: ["browser", "memory.search", "memory.read", "web_search", "web_fetch", "read", "write"]
     });
-    expect(prompt).toContain("## Capability Routing");
-    expect(prompt).toContain("1. Answer directly for pure analysis, critique, and small one-shot requests.");
-    expect(prompt).toContain("Use memory tools only when prior context is needed and not already loaded.");
-    expect(prompt).toContain("Use WebSearch/WebFetch for current public external information.");
+    expect(prompt).toContain("## Execution Modes");
+    expect(prompt).toContain("use memory tools only when prior context is needed and not already loaded");
+    expect(prompt).toContain("use WebSearch/WebFetch for current public information");
     expect(prompt).not.toContain("## Capability Routing Order");
   });
 
   test("buildSystemPromptAppend 应注入新的行为导向身份主句与自然交互规范", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-persona-style",
+      workspaceSlug: "demo-workspace",
       availableTools: ["read", "write"]
     });
     expect(prompt).toContain("You are Lume. You help the user think, build, organize, and move work forward in this local-first workspace.");
     expect(prompt).toContain("## Core Behavior");
-    expect(prompt).toContain("Lume should feel natural, useful, and present without acting like a scripted persona.");
+    expect(prompt).toContain("ask one focused question");
     expect(prompt).toContain("不要客服腔，不要夸张寒暄");
     expect(prompt).toContain("不要为了显得友好而机械复述用户的问题");
     expect(prompt).toContain("直接进入任务");
     expect(prompt).toContain("一个必要问题");
     expect(prompt).toContain("不要说成资料库字段缺失");
-    expect(prompt).toContain("## 系统配置");
     expect(prompt).toContain("~/.lume/lume.yaml");
   });
 
@@ -237,18 +236,22 @@ describe("agent-prompt-builder", () => {
     expect(buildContentPresentationSection({ sessionId: "channel", chatType: "channel" })).toBeNull();
   });
 
-  test("buildSystemPromptAppend 应包含 loaded context policy", () => {
-    const prompt = buildSystemPromptAppend({
+  test("loaded context 规则并入 Memory 段且无记忆工具时不注入", () => {
+    const withMemory = buildSystemPromptAppend({
       sessionId: "session-2",
+      availableTools: ["memory.search", "memory.read"]
+    });
+    expect(withMemory).toContain("## Memory");
+    expect(withMemory).toContain("Use loaded workspace context and memory briefs first");
+    const withoutMemory = buildSystemPromptAppend({
+      sessionId: "session-2b",
       availableTools: []
     });
-    expect(prompt).toContain("## Loaded Context Policy");
-    expect(prompt).toContain("Use loaded workspace context and memory briefs first.");
-    expect(prompt).toContain("Read deeper workspace, memory, or source files only when exact details are needed");
-    expect(prompt).not.toContain("## Thread Bootstrap (Mandatory)");
-    expect(prompt).not.toContain("workspace-files/.context/");
-    expect(prompt).toContain("## Safety");
-    expect(prompt).toContain("## Runtime");
+    expect(withoutMemory).not.toContain("Use loaded workspace context and memory briefs first");
+    expect(withoutMemory).not.toContain("## Thread Bootstrap (Mandatory)");
+    expect(withoutMemory).not.toContain("workspace-files/.context/");
+    expect(withoutMemory).toContain("## Safety");
+    expect(withoutMemory).toContain("## Runtime");
   });
 
   test("buildSystemPromptAppend 应始终以 agent 身份主句开头", () => {
@@ -278,7 +281,7 @@ describe("agent-prompt-builder", () => {
     });
     expect(prompt).toContain(LUME_AGENT_IDENTITY_LINE);
     expect(prompt).toContain("## Tooling");
-    expect(prompt).toContain("Available tools are provided by the runtime tool schema");
+    expect(prompt).toContain("do not invent tool names");
     expect(prompt).not.toContain("- memory.search");
     expect(prompt).toContain("## Workspace");
     expect(prompt).toContain("System config entry: ~/.lume/lume.yaml");
@@ -293,7 +296,6 @@ describe("agent-prompt-builder", () => {
   test("buildSystemPromptAppend 在 workspace 上下文中应仅声明真实系统配置路径", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "thread-xyz",
-      workspaceName: "Demo",
       workspaceSlug: "demo",
       availableTools: ["read", "write"]
     });
@@ -308,7 +310,7 @@ describe("agent-prompt-builder", () => {
       availableTools: ["memory.read", "Write", "read", "AskUserQuestion", "memory.search", "write"]
     });
 
-    expect(prompt).toContain("Tool names are case-sensitive");
+    expect(prompt).toContain("Call only tools actually exposed by the runtime tool schema");
     expect(prompt).not.toContain("- read");
     expect(prompt).not.toContain("- Write");
     expect(prompt).not.toContain("- AskUserQuestion");
@@ -469,7 +471,6 @@ describe("agent-prompt-builder", () => {
 
     const prompt = buildSystemPromptAppend({
       sessionId: "session-sanitized-context",
-      workspaceName: "Prompt Sanitized Workspace",
       workspaceSlug,
       chatType: "direct",
       availableTools: ["read"]

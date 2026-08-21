@@ -1379,14 +1379,13 @@ describe("runtime-core run", () => {
 
     const systemPrompt = result.session.agent.state.systemPrompt;
     expect(systemPrompt).toContain("You are Lume. You help the user think, build, organize, and move work forward in this local-first workspace.");
-    expect(systemPrompt).toContain("## Loaded Context Policy");
-    expect(systemPrompt).toContain("## 系统配置");
+    expect(systemPrompt).toContain("## 工作区");
     expect(systemPrompt).toContain("~/.lume/lume.yaml");
     expect(systemPrompt).not.toContain(".lume-config");
     expect(systemPrompt).toContain("## Workspace Context");
     expect(systemPrompt).toContain("## AGENTS.md");
     expect(systemPrompt).toContain("Always verify edits before final output.");
-    expect(systemPrompt).toContain("Available tools are provided by the runtime tool schema");
+    expect(systemPrompt).toContain("do not invent tool names");
     expect(systemPrompt).not.toContain("<thread_state>");
     expect(result.runtimeContext).toContain("<thread_state>");
     expect(result.runtimeContext).toContain("threadType: main");

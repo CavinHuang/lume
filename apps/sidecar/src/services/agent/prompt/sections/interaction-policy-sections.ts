@@ -4,14 +4,9 @@ export function buildUncertaintySection(permissionMode?: InteractionPermissionMo
   if (permissionMode === "bypassPermissions") {
     return `## 不确定性处理
 
-当前用户使用的是完全自动模式（所有工具调用自动批准）。
-
-**⚠️ 严禁调用 AskUserQuestion 工具！**
-**当你遇到不确定的情况时：**
-- **停下来，直接在回复文本中向用户提问**，等待用户回复后再继续
-- 列出你考虑的选项和各自的利弊，让用户决策
-- **绝对不要**调用 AskUserQuestion 工具，改为在普通文本回复中提问
-- 发现用户的假设或判断可能有误时，主动指出并提供依据，不要盲目附和`;
+当前用户使用的是完全自动模式（所有工具调用自动批准），严禁调用 AskUserQuestion。
+遇到不确定的情况时，停下来，直接在回复文本中向用户提问，列出选项和各自的利弊，等待用户回复后再继续。
+发现用户的假设或判断可能有误时，主动指出并提供依据，不要盲目附和。`;
   }
 
   if (permissionMode === "plan") {
@@ -73,43 +68,37 @@ export function buildOfficeToolsSection(availableTools: Set<string>): string | n
 
   if (!hasOfficeTools) return null;
 
+  const routes: string[] = [];
+  if (availableTools.has("xlsx_create")) {
+    routes.push("- xlsx 读取/分析/创建/修改 → xlsx_create");
+  }
+  if (availableTools.has("office_unpack") || availableTools.has("info_extract")) {
+    routes.push("- docx 读取/分析 → office_unpack 或 info_extract");
+  }
+  if (availableTools.has("docx_create")) {
+    routes.push("- 创建 docx → docx_create");
+  }
+  if (availableTools.has("pptx_create")) {
+    routes.push("- 创建 pptx → pptx_create");
+  }
+  if (availableTools.has("pdf_create")) {
+    routes.push("- 创建 PDF → pdf_create");
+  }
+  if (availableTools.has("office_convert")) {
+    routes.push("- 格式转换（xlsx→pdf、docx→pdf 等）→ office_convert");
+  }
+  if (availableTools.has("info_extract")) {
+    routes.push("- 提取文档关键信息（合同、简历、报告等）→ info_extract");
+  }
+  if (availableTools.has("office_validate")) {
+    routes.push("- 校验文档结构 → office_validate");
+  }
+
   return `## Office 文档处理策略（强制）
 
 当用户上传或提及 Office 文档（xlsx、docx、pptx、pdf）时，必须优先使用内置的 Office 工具，不要通过 bash 执行 Python 代码来处理文档。
 
-**工具选择指南：**
+${routes.join("\n")}
 
-- **读取/分析 xlsx 数据** → 使用 xlsx_create 工具，code 参数传入 openpyxl Python 代码，无需 output_path，用 print() 输出结果
-- **修改 xlsx 文件** → 使用 xlsx_create 工具，提供 output_path 保存修改后的文件
-- **创建新 xlsx 文件** → 使用 xlsx_create 工具，提供 output_path 指定输出路径
-- **读取/分析 docx 内容** → 使用 office_unpack 解包后读取 XML，或用 info_extract 提取结构化信息
-- **创建 docx 文档** → 使用 docx_create 工具
-- **创建 pptx 演示文稿** → 使用 pptx_create 工具
-- **创建 PDF 文档** → 使用 pdf_create 工具
-- **格式转换**（xlsx→pdf、docx→pdf 等）→ 使用 office_convert 工具
-- **提取文档关键信息**（合同、简历、报告等）→ 使用 info_extract 工具
-- **校验文档结构** → 使用 office_validate 工具
-- **底层 XML 操作**（高级）→ office_unpack → 编辑 XML → office_pack
-
-**xlsx_create 读取数据示例（无需 output_path）：**
-\`\`\`python
-import openpyxl
-wb = openpyxl.load_workbook("已有文件.xlsx")
-ws = wb.active
-for row in ws.iter_rows(values_only=True):
-    print(row)  # print() 输出会作为工具返回结果
-\`\`\`
-
-**xlsx_create 创建/修改文件示例（需要 output_path）：**
-\`\`\`python
-import openpyxl
-wb = openpyxl.load_workbook("已有文件.xlsx")
-ws = wb.active
-ws["A1"] = "新值"
-wb.save(output_path)  # output_path 由工具自动注入
-\`\`\`
-
-仅在以下情况才回退到 bash + Python：
-- Office 工具明确不可用（被工具策略禁用）
-- 需要使用 openpyxl/docx 不支持的特殊库（如 pandas 复杂数据分析）`;
+仅在 Office 工具明确不可用（被工具策略禁用）或需要 openpyxl/docx 不支持的特殊库（如 pandas 复杂数据分析）时才回退 bash + Python。`;
 }

@@ -12,7 +12,6 @@ import { renderSkillManifestLines } from "./prompt/context/skill-manifest-builde
 import { buildMemorySections } from "./prompt/sections/memory-sections";
 import {
   CLAUDE_PLAN_MODE_SECTION,
-  buildCapabilityPolicySections,
   buildExecutionPolicySections
 } from "./prompt/sections/static-policy-sections";
 import {
@@ -28,11 +27,8 @@ import { buildWorkspaceContextSection } from "./prompt/sections/workspace-contex
 import {
   buildAutomationSection,
   buildConversationStyleSection,
-  buildKnowledgeMaintenanceSection,
   buildLumeAgentSection,
   buildSafetySection,
-  buildSystemConfigSection,
-  buildThreadBootstrapSection,
   buildWorkspaceRulesSection
 } from "./prompt/sections/core-sections";
 
@@ -225,7 +221,6 @@ export function loadCustomAgents(workspaceSlug?: string): Record<string, AgentDe
 export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
 
 interface SystemPromptContext {
-  workspaceName?: string;
   workspaceSlug?: string;
   sessionId: string;
   sessionType?: ThreadType;
@@ -339,20 +334,15 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
     return sections.join("\n\n");
   }
 
-  sections.push(buildLumeAgentSection(ctx));
+  sections.push(buildLumeAgentSection());
 
   sections.push(buildToolingSection(ctx.availableTools).join("\n"));
 
-  sections.push(buildSystemConfigSection());
-
-  if (ctx.workspaceName && ctx.workspaceSlug) {
-    const workspaceRules = buildWorkspaceRulesSection(ctx);
-    if (workspaceRules) {
-      sections.push(workspaceRules);
-    }
+  const workspaceRules = buildWorkspaceRulesSection(ctx.workspaceSlug);
+  if (workspaceRules) {
+    sections.push(workspaceRules);
   }
 
-  sections.push(buildKnowledgeMaintenanceSection());
   sections.push(buildConversationStyleSection());
 
   const contentPresentationSection = buildContentPresentationSection(ctx);
@@ -362,10 +352,7 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
 
   sections.push(buildTodoSection());
 
-  sections.push(
-    ...buildExecutionPolicySections(),
-    ...buildCapabilityPolicySections()
-  );
+  sections.push(...buildExecutionPolicySections());
 
   if (ctx.automationExecution) {
     sections.push(buildAutomationSection());
@@ -379,8 +366,6 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
   }
 
   sections.push(buildSafetySection());
-
-  sections.push(buildThreadBootstrapSection());
 
   const availableTools = new Set((ctx.availableTools ?? []).map((item) => canonicalizeAgentToolName(item)));
   const browserFirstSection = buildBrowserFirstSection(availableTools);

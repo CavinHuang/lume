@@ -7,21 +7,14 @@ describe('buildTodoSection', () => {
     expect(typeof out).toBe('string')
     expect(out.startsWith('## ')).toBe(true)
   })
+  test('scopes usage to multi-step work', () => {
+    expect(buildTodoSection()).toContain('multi-step work')
+    expect(buildTodoSection()).toContain('skip for single trivial or purely conversational requests')
+  })
   test('contains the exactly-one-in_progress rule', () => {
-    expect(buildTodoSection()).toContain('EXACTLY ONE task in_progress')
+    expect(buildTodoSection()).toContain('exactly one task in_progress')
   })
-  test('contains the do-not-batch rule', () => {
-    expect(buildTodoSection()).toContain('do not batch')
-  })
-  test('requires a final TodoWrite reconciliation', () => {
-    expect(buildTodoSection()).toContain('Before any final answer')
-    expect(buildTodoSection()).toContain('no task may remain pending or in_progress')
-  })
-  test('contains the blocked-creates-new-task rule', () => {
-    expect(buildTodoSection()).toContain('blocked')
-    expect(buildTodoSection()).toContain('new task')
-  })
-  test('requires both content and activeForm', () => {
-    expect(buildTodoSection()).toContain('activeForm')
+  test('tasks are marked completed immediately', () => {
+    expect(buildTodoSection()).toContain('the moment they are done')
   })
 })

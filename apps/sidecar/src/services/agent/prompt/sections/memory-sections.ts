@@ -16,6 +16,7 @@ export function buildMemorySections(ctx: {
     const lines = [
       "## Memory",
       "",
+      "Use loaded workspace context and memory briefs first; read deeper workspace, memory, or source files only when exact details are needed and not already loaded.",
       "Memory is shared experience, not a dossier. Use loaded memory naturally, as continuity.",
       "Do not mention memory internals unless the user asks how you know.",
       "When memory explains continuity, speak directly: \"我们之前聊过这个话题\". Do not say \"从记忆中可以看出\" or similar evidence-report phrasing.",
