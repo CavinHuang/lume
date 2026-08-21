@@ -9,6 +9,7 @@ export interface BrowserSemanticRef {
 
 export interface BrowserSemanticLine {
   ref?: string
+  scopeRefs: string[]
   text: string
 }
 
@@ -81,7 +82,7 @@ export function buildBrowserSemanticTree(
   const lines: BrowserSemanticLine[] = []
   const visited = new Set<string>()
   const hasInteractiveDescendant = descendantPredicate(byId, refsByNodeId)
-  const render = (node: AxNode, depth: number, parentName = "") => {
+  const render = (node: AxNode, depth: number, parentName = "", scopeRefs: string[] = []) => {
     const nodeId = typeof node.nodeId === "string" ? node.nodeId : ""
     if (nodeId && visited.has(nodeId)) return
     if (nodeId) visited.add(nodeId)
@@ -95,15 +96,17 @@ export function buildBrowserSemanticTree(
     const meaningful = Boolean(ref) || CONTENT_ROLES.has(role) || Boolean(name && role !== "generic")
     const keepForInteractiveTree = !options.interactiveOnly || Boolean(ref) || (nodeId ? hasInteractiveDescendant(nodeId) : false)
     const shouldRender = !flatten && !duplicateText && meaningful && keepForInteractiveTree
+    const childScopeRefs = ref ? [...scopeRefs, ref.ref] : scopeRefs
 
     if (shouldRender) {
       lines.push({
         ...(ref ? { ref: ref.ref } : {}),
+        scopeRefs: childScopeRefs,
         text: `${"  ".repeat(depth)}- ${renderNode(node, ref)}`,
       })
     }
     const childDepth = shouldRender ? depth + 1 : depth
-    for (const child of children) render(child, childDepth, name || parentName)
+    for (const child of children) render(child, childDepth, name || parentName, childScopeRefs)
   }
 
   for (const root of roots.length ? roots : nodes.slice(0, 1)) render(root, 0)

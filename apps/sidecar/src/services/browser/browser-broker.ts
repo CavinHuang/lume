@@ -529,6 +529,8 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
       params: {
         ...params,
         interactiveOnly: input.interactive_only ?? input.interactiveOnly,
+        scopeRef: input.scope_ref ?? input.scopeRef,
+        snapshotId: input.snapshot_id ?? input.snapshotId,
         cursor: input.cursor,
         limit: input.limit,
       },

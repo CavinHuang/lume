@@ -166,6 +166,7 @@ type BrowserSemanticRefSession = {
   entries: Map<string, BrowserSemanticRef & { generation: number; snapshotId: string; tabId: string }>
   mainFrameId?: string
   nextRef: number
+  snapshot?: BrowserSemanticSnapshotCursor
 }
 
 type BrowserSemanticSnapshotCursor = {
@@ -2873,6 +2874,23 @@ export class BrowserRuntime {
         || cached.generation !== tab.generation) throw browserError("stale_target")
       return this.semanticSnapshotPage(cached)
     }
+    const requestedScope = params.scopeRef ?? params.scope_ref
+    if (requestedScope !== undefined) {
+      const scopeRef = normalizeSemanticRef(requestedScope)
+      const snapshotId = typeof params.snapshotId === "string" ? params.snapshotId : typeof params.snapshot_id === "string" ? params.snapshot_id : ""
+      const cached = this.semanticRefSessions.get(context.browserSessionId)?.snapshot
+      if (!scopeRef || !snapshotId || !cached
+        || cached.snapshotId !== snapshotId
+        || cached.tabId !== tab.tabId
+        || cached.generation !== tab.generation
+        || !cached.refs.some((entry) => entry.ref === scopeRef)) throw browserError("stale_target")
+      return this.semanticSnapshotPage({
+        ...cached,
+        limit: boundedNumber(params.limit ?? cached.limit, 50, 1_000),
+        lines: cached.lines.filter((line) => line.scopeRefs.includes(scopeRef)),
+        offset: 0,
+      })
+    }
 
     const result = await withDebugger(browserContents(tab), async (debuggerRef) => {
       await debuggerRef.sendCommand("DOM.enable")
@@ -2932,7 +2950,7 @@ export class BrowserRuntime {
         return ref
       },
     })
-    return this.semanticSnapshotPage({
+    const snapshot = {
       generation: tab.generation,
       limit: boundedNumber(params.limit ?? 400, 50, 1_000),
       lines: tree.lines,
@@ -2943,7 +2961,9 @@ export class BrowserRuntime {
       tabId: tab.tabId,
       title: tab.title,
       url: tab.url,
-    })
+    }
+    session.snapshot = snapshot
+    return this.semanticSnapshotPage(snapshot)
   }
 
   private async cursorInteractiveAxNodes(debuggerRef: BrowserCdpDebugger, frameId: string): Promise<unknown[]> {
@@ -4425,6 +4445,11 @@ function browserFrameIds(tree: BrowserCdpFrameTree | undefined): string[] {
     ...(typeof tree.frame?.id === "string" ? [tree.frame.id] : []),
     ...(tree.childFrames ?? []).flatMap(browserFrameIds),
   ]
+}
+
+function normalizeSemanticRef(value: unknown): string {
+  const ref = typeof value === "string" ? value.trim().replace(/^@/, "") : ""
+  return /^e[1-9][0-9]*$/.test(ref) ? ref : ""
 }
 
 function splitFrameLocator(locator: BrowserLocator): { frameSelectors: string[]; locator: BrowserLocator } | undefined {

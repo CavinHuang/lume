@@ -336,7 +336,10 @@ app.whenReady().then(async () => {
       semanticSnapshotId: semanticSnapshot.snapshot_id,
     })
     check(await view.executeJavaScript("document.querySelector('#result').textContent") === 'Lume Agent', 'semantic ref did not resolve the exact backend node')
-    await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    const currentSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    const currentApplyRef = Object.entries(currentSnapshot.refs).find(([, value]) => value.role === 'button' && value.name === 'Apply')?.[0]
+    const scopedSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', scope_ref: '@' + currentApplyRef, snapshot_id: currentSnapshot.snapshot_id })
+    check(scopedSnapshot.tree.includes('Apply') && !scopedSnapshot.tree.includes('Name'), 'semantic snapshot scope did not isolate the requested ref subtree')
     await checkRejects(() => call('click', {
       tabId: 'fixture-tab',
       locator: locator('#submit'),

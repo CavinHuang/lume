@@ -63,4 +63,15 @@ describe("buildBrowserSemanticTree", () => {
       '- focusable "Custom focus" [ref=e92]',
     ])
   })
+
+  test("tracks ref ancestry for scoped subtree reads", () => {
+    const tree = buildBrowserSemanticTree([
+      { nodeId: "root", role: { value: "RootWebArea" }, childIds: ["list"] },
+      { nodeId: "list", backendDOMNodeId: 91, role: { value: "listbox" }, name: { value: "Projects" }, childIds: ["option"] },
+      { nodeId: "option", backendDOMNodeId: 92, role: { value: "option" }, name: { value: "Lume" } },
+    ], { allocateRef: ({ backendNodeId }) => `e${backendNodeId}` })
+
+    expect(tree.lines.find((line) => line.ref === "e91")?.scopeRefs).toEqual(["e91"])
+    expect(tree.lines.find((line) => line.ref === "e92")?.scopeRefs).toEqual(["e91", "e92"])
+  })
 })

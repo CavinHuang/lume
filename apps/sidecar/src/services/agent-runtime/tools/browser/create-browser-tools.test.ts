@@ -23,13 +23,16 @@ describe("createBrowserMcpTools", () => {
     const openResult = await openTool.call({ url: "https://example.com" }, { toolUseId: "open-1" } as any)
     const opened = JSON.parse(String(openResult.content))
     const snapshot = await call(tools, "mcp__browser__snapshot", {})
+    const scoped = await call(tools, "mcp__browser__snapshot", { scope_ref: "@e1" })
 
     expect(opened.active_tab_id).toBe("tab-1")
     expect(openResult._meta?.repeatGuard).toEqual({
       state: { ok: true, tool: "open", url: "https://example.com", title: "tab-1", generation: 1 }
     })
     expect(snapshot.observation.snapshot_id).toBe("snap-1")
-    expect(calls.map((request) => request.method)).toEqual(["create_tab", "list_tabs", "browser_snapshot"])
+    expect(scoped.observation.refs.e1).toMatchObject({ role: "textbox", name: "Search" })
+    expect(calls.at(-1)).toMatchObject({ method: "browser_snapshot", params: { tabId: "tab-1", scope_ref: "@e1", snapshot_id: "snap-1" } })
+    expect(calls.map((request) => request.method)).toEqual(["create_tab", "list_tabs", "browser_snapshot", "list_tabs", "browser_snapshot"])
     expect(new Set(calls.map((request) => request.browserSessionId))).toEqual(new Set(["browser-tools:thread-1"]))
     expect(new Set(calls.map((request) => request.browserTurnId))).toEqual(new Set(["browser-tools:thread-1"]))
   })

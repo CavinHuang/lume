@@ -263,13 +263,16 @@ async function executeTool(
     })
     return observeAfterMutation(activeTab.tabId, action, broker, dispatch, session)
   }
+  const scopeRef = stringValue(args.scope_ref)
+  if (scopeRef && !session.snapshot) throw new Error("stale_target")
   const snapshot = await dispatch(broker, "browser_snapshot", {
     tabId: activeTab.tabId,
     interactive_only: args.interactive_only === true,
+    ...(scopeRef ? { scope_ref: scopeRef, snapshot_id: session.snapshot!.snapshotId } : {}),
     ...(stringValue(args.cursor) ? { cursor: stringValue(args.cursor) } : {}),
     ...(Number.isInteger(args.limit) ? { limit: args.limit } : {}),
   })
-  rememberSnapshot(session, snapshot, Boolean(stringValue(args.cursor)))
+  rememberSnapshot(session, snapshot, Boolean(stringValue(args.cursor) || scopeRef))
   return { active_tab_id: activeTab.tabId, observation: snapshot }
 }
 
@@ -306,6 +309,7 @@ function toolSchema(name: BrowserToolName): ToolInputSchema {
   if (name === "navigate") return object({ url: { type: "string", description: "HTTP(S) URL to load in the locked Agent tab." } }, ["url"])
   if (name === "snapshot") return object({
     interactive_only: { type: "boolean", default: false, description: "Return only interactive nodes and their semantic ancestors." },
+    scope_ref: { type: "string", pattern: "^@?e[1-9][0-9]*$", description: "Return only the subtree rooted at a ref from the previous snapshot." },
     cursor: { type: "string", description: "Opaque next_cursor returned by the previous snapshot page." },
     limit: { type: "integer", minimum: 50, maximum: 1000, default: 400, description: "Maximum semantic-tree lines in this page." },
   })
