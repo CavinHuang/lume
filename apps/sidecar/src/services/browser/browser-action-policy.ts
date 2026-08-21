@@ -2,8 +2,10 @@ import { browserApiPolicyForRuntimeMethod } from "@lume/shared"
 
 export type BrowserActionPolicyDecision = {
   decision: "allow" | "confirm" | "deny"
-  category?: "browse" | "submit" | "send" | "delete" | "purchase" | "authorize" | "file" | "clipboard" | "credential" | "history" | "payment" | "captcha"
+  category?: "browse" | "submit" | "send" | "delete" | "purchase" | "authorize" | "file" | "clipboard" | "credential" | "history" | "payment" | "captcha" | "mfa"
   preview?: string
+  /** deny 时的稳定错误码；缺省 action_denied。CAPTCHA/MFA/硬件密钥返回 user_action_required，模型须停下等用户 */
+  errorCode?: "user_action_required"
 }
 
 const EXPLICIT_CONFIRM = new Map<string, BrowserActionPolicyDecision["category"]>([
@@ -18,7 +20,7 @@ const EXPLICIT_CONFIRM = new Map<string, BrowserActionPolicyDecision["category"]
 export function classifyBrowserAction(method: string, params: Record<string, unknown> = {}, runtimeMethod = canonicalActionMethod(method)): BrowserActionPolicyDecision {
   const actionMethod = canonicalActionMethod(method)
   if (method === "purchase") return { decision: "deny", category: "payment", preview: "支付或购买必须由用户完成" }
-  if (method === "captcha") return { decision: "deny", category: "captcha", preview: "CAPTCHA 必须由用户完成" }
+  if (method === "captcha") return { decision: "deny", category: "captcha", preview: "CAPTCHA 必须由用户完成", errorCode: "user_action_required" }
   if ((method === "navigate" || method === "goto" || method === "navigate_tab_url") && isPrivateBrowserUrl(params.url)) {
     return { decision: "confirm", category: "authorize", preview: `打开本地或私有地址：${safeOrigin(params.url) ?? "未知地址"}` }
   }
@@ -39,7 +41,10 @@ export function classifyBrowserAction(method: string, params: Record<string, unk
     return { decision: "confirm", category, preview: preview(method, params) }
   }
   const intent = [params.semanticIntent, params.intent, params.description, params.label].filter((value): value is string => typeof value === "string").join(" ").slice(0, 512)
-  if (/captcha|验证码|人机验证/i.test(intent)) return { decision: "deny", category: "captcha", preview: "CAPTCHA 必须由用户完成" }
+  if (/captcha|验证码|人机验证/i.test(intent)) return { decision: "deny", category: "captcha", preview: "CAPTCHA 必须由用户完成", errorCode: "user_action_required" }
+  if (/mfa|otp|two[- ]factor|2fa|passkey|security[- ]?key|hardware[- ]?key|authenticator code|verification code|动态口令|硬件密钥|多因素/i.test(intent)) {
+    return { decision: "deny", category: "mfa", preview: "MFA、硬件密钥等验证步骤必须由用户完成", errorCode: "user_action_required" }
+  }
   if (/payment|pay now|付款|支付|转账|银行卡/i.test(intent)) return { decision: "deny", category: "payment", preview: "支付确认必须由用户完成" }
   if (!new Set(["click", "doubleClick", "press", "select", "check", "uncheck", "fill", "type"]).has(actionMethod)) return { decision: "allow" }
   const categories: Array<[RegExp, BrowserActionPolicyDecision["category"]]> = [

@@ -35,3 +35,12 @@ test("browser policy hands payment and CAPTCHA back to the user", () => {
   assert.equal(classifyBrowserAction("click", { semanticIntent: "Pay now" }).decision, "deny")
   assert.equal(classifyBrowserAction("click", { description: "完成 CAPTCHA" }).decision, "deny")
 })
+
+test("browser policy returns user_action_required for captcha and MFA gates", () => {
+  assert.equal(classifyBrowserAction("captcha").errorCode, "user_action_required")
+  assert.equal(classifyBrowserAction("click", { description: "完成 CAPTCHA" }).errorCode, "user_action_required")
+  assert.equal(classifyBrowserAction("fill", { semanticIntent: "textbox Enter OTP code" }).errorCode, "user_action_required")
+  assert.equal(classifyBrowserAction("fill", { semanticIntent: "textbox 两步验证 security key" }).category, "mfa")
+  // 普通 deny（支付）不带 errorCode，保持 action_denied
+  assert.equal(classifyBrowserAction("click", { semanticIntent: "Pay now" }).errorCode, undefined)
+})
