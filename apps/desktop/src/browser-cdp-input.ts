@@ -54,7 +54,9 @@ export async function focusBrowserPoint(sender: BrowserCdpCommandSender, point: 
   const located = await sender.sendCommand("DOM.getNodeForLocation", {
     x: Math.round(point.x),
     y: Math.round(point.y),
-    includeUserAgentShadowDOM: true,
+    // UA shadow descendants cannot become document.activeElement; focus and
+    // verify the owning form control instead of its internal presentation node.
+    includeUserAgentShadowDOM: false,
   }) as { backendNodeId?: unknown }
   if (!Number.isInteger(located.backendNodeId)) throw Object.assign(new Error("stale_target"), { code: "stale_target" })
   await sender.sendCommand("DOM.focus", { backendNodeId: located.backendNodeId }).catch(() => undefined)

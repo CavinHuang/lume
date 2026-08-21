@@ -75,7 +75,7 @@ describe("browser CDP input", () => {
       "Runtime.callFunctionOn",
       "Runtime.releaseObject",
     ])
-    expect(sender.calls[1]?.params).toEqual({ x: 10, y: 21, includeUserAgentShadowDOM: true })
+    expect(sender.calls[1]?.params).toEqual({ x: 10, y: 21, includeUserAgentShadowDOM: false })
     expect(sender.calls[2]?.params).toEqual({ backendNodeId: 42 })
     expect(sender.calls[5]?.params).toEqual({ objectId: "object-1" })
   })
