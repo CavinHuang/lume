@@ -17,7 +17,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { join } from "node:path";
 import { getWorkspaceResourcesPath } from "../../../infra/config-paths";
-import { isPublicIpAddress } from "../../../wiki/safe-http-fetch";
+import { isFakeIpRange, isPublicIpAddress } from "@lume/agent-sdk";
 
 export const WEB_TOOL_NAMES = [
   "WebSearch",
@@ -45,6 +45,8 @@ const hasProxyEnvironment = PROXY_ENV_KEYS.some((key) => Boolean(process.env[key
  * 返回拒绝原因，放行时为 null。
  * 已知天花板：check-then-fetch 无法防 DNS rebinding（undici 会重新解析）；
  * 固定 IP 连接（如 wiki 的 WikiSafeHttpFetchService）是升级路径。
+ * fake-IP 豁免：TUN 代理下 DNS 全量返回 198.18.0.0/15 虚拟映射（不指向真实内网），
+ * 该段在 DNS 判定中按公网放行；URL 字面 IP 直写该段仍由 SDK ensureNetworkAllowed 拦截。
  */
 export async function checkPublicWebHost(url: string): Promise<string | null> {
   if (hasProxyEnvironment) return null;
@@ -66,7 +68,11 @@ export async function checkPublicWebHost(url: string): Promise<string | null> {
       .then((items) => items.map((item) => item.address))
       .catch(() => null);
   }
-  if (!addresses || addresses.length === 0 || addresses.some((address) => !isPublicIpAddress(address))) {
+  // URL 字面 IP 直写 fake-IP 段仍是探测行为，照拦；仅 DNS 解析结果豁免（TUN 代理虚拟映射不指向真实内网）
+  if (isIP(bare)) {
+    if (!isPublicIpAddress(bare)) return `sandbox denied network access to ${bare}`;
+  } else if (!addresses || addresses.length === 0
+    || addresses.some((address) => !isPublicIpAddress(address) && !isFakeIpRange(address))) {
     return `sandbox denied network access to ${bare}`;
   }
   return null;

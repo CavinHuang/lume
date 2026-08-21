@@ -20,4 +20,10 @@ describe("checkPublicWebHost", () => {
   test("denies malformed URLs", async () => {
     expect(await checkPublicWebHost("not-a-url")).toContain("Invalid URL");
   });
+
+  // fake-IP 豁免只作用于 DNS 解析分支；URL 字面直写 fake-IP 段仍是探测行为，必须拦截
+  test("denies fake-IP range written as a literal IP", async () => {
+    expect(await checkPublicWebHost("http://198.18.0.1/")).toContain("sandbox denied");
+    expect(await checkPublicWebHost("http://198.19.1.1/")).toContain("sandbox denied");
+  });
 });
