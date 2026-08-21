@@ -272,6 +272,15 @@ export class LumeRunObserver {
       });
       for (const item of items) {
         await this.stateStore.appendItem(this.state.runId, item);
+        // tool_result 落盘后回写对应 tool_call 终态,否则 items 里 tool_call 恒停在 pending
+        if (item.type === "tool_result") {
+          await this.stateStore.settleToolCall(
+            this.state.runId,
+            item.toolCallId,
+            item.isError === true ? "failed" : "completed",
+            item.createdAt
+          );
+        }
         // T7a:已迁类(assistant/tool/todo/advisor/lsp/compaction 等)的 live 投影删除,
         // live 由事件总线经适配器驱动;唯一保留的 item 级 live 投影是裁定保留类
         // usage.updated(system_event name=result)。item 记录照常落盘(run state/trace 消费)。
@@ -293,9 +302,11 @@ export class LumeRunObserver {
         const cumulative = billing.cumulative;
         await this.stateStore.update(this.state.runId, {
           usage: {
+            // 口径统一:in/out/total 全部取计费累计(billing.cumulative),
+            // 最新上下文快照单独放 context——此前 total 混用 context 导致三者不可核对
             inputTokens: cumulative.inputTokens,
             outputTokens: cumulative.outputTokens,
-            totalTokens: context.totalTokens,
+            totalTokens: cumulative.totalTokens,
             costUSD: billing.totalCostUSD,
             context,
             billing
@@ -627,7 +638,9 @@ export class LumeRunObserver {
       const isError = Boolean((message.result as { is_error?: boolean }).is_error);
       if (isError) {
         await this.traceRecorder.failSpan(spanId, {
-          message: String(message.result.output || "tool call failed")
+          // 结构化 output 直接 String() 会得到 [object Object];summarizeTraceOutput
+          // 做安全 JSON 序列化 + 脱敏 + 截断
+          message: summarizeTraceOutput(message.result.output || "tool call failed")
         });
       } else {
         await this.traceRecorder.endSpan(spanId, {

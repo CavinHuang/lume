@@ -69,9 +69,11 @@ async function* teeLifecycleProjection(
       for await (const event of projectLifecycle(projected, { runId: target.runId })) {
         // F3 互斥标记:见到 run.end 即通知调用方终值已由投影链交付
         if (event.kind === "run" && event.phase === "end") target.onRunEnd?.();
-        // 前提钉死:bus.publish 当前全同步(appendFileSync 后 resolve),resolve 即持久化完成。
-        // 若改为真异步 fs,promise 化的 publish 在此 fire-and-forget 会让 finally 的 await pump
-        // 不再等事件落盘——run 尾事件将静默丢失;重构前必须同步改造 tee(pump 内 await publish)。
+        // 前提钉死(#257 后语义):bus.publish 对非 update 相位同步落盘后 resolve;对 update
+        // 相位 resolve 即已入持久折叠缓冲(≤500ms 窗口,且任何非 update 相位先冲盘)。投影链
+        // 终点必发 run.end(非 update),tee finally 的 await pump 排空即 run 边界全部落盘。
+        // 若改为真异步 fs,fire-and-forget 的 publish 会让 await pump 不再等落盘——改前必须
+        // 同步改造 tee(pump 内 await publish)。
         // 用 .catch 而非同步 try/catch:后者对异步 reject 无效,.catch 兼容两种时序。
         void bus.publish(target.threadId, (event as SdkLifecycleEvent<SdkLifecycleDetail>).runId, event)
           .catch((error) => {
