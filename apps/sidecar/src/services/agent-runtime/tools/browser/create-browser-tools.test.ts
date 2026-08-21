@@ -72,6 +72,34 @@ describe("createBrowserMcpTools", () => {
     })
   })
 
+  test("navigates only the locked tab and handles blocking dialogs explicitly", async () => {
+    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
+    const tab = agentTab("locked-tab", "thread-1")
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
+        calls.push(request)
+        if (request.method === "list_tabs") return [tab]
+        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${calls.length}`)
+        if (request.method === "navigate_tab_url") return { ...tab, url: "https://example.org/" }
+        if (request.method === "tab_get_js_dialog") return { id: "dialog-1", type: "confirm", message: "Continue?" }
+        if (request.method === "tab_handle_js_dialog") return { ok: true }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    const navigated = await call(tools, "mcp__browser__navigate", { url: "https://example.org/" })
+    const dialog = await call(tools, "mcp__browser__dialog", {})
+    const handled = await call(tools, "mcp__browser__handle_dialog", { dialog_id: "dialog-1", accept: false })
+
+    expect(calls.find((request) => request.method === "navigate_tab_url")).toMatchObject({ params: { tabId: "locked-tab", url: "https://example.org/" } })
+    expect(dialog.dialog).toMatchObject({ id: "dialog-1", type: "confirm" })
+    expect(calls.find((request) => request.method === "tab_handle_js_dialog")).toMatchObject({ params: { tabId: "locked-tab", dialog_id: "dialog-1", action: "dismiss" } })
+    expect(navigated.observation.snapshot_id).toStartWith("snap-")
+    expect(handled.observation.snapshot_id).toStartWith("snap-")
+  })
+
   test("resolves snapshot refs into semantic actions and observes after every action", async () => {
     const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
     const tab = agentTab("locked-tab", "thread-1")

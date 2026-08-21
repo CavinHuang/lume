@@ -136,13 +136,20 @@ describe("create-lume-tools", () => {
     expect(toolNames).toContain("mcp__browser__list_tabs");
     expect(toolNames).toContain("mcp__browser__open");
     expect(toolNames).toContain("mcp__browser__switch_tab");
+    expect(toolNames).toContain("mcp__browser__navigate");
+    expect(toolNames).toContain("mcp__browser__back");
+    expect(toolNames).toContain("mcp__browser__forward");
+    expect(toolNames).toContain("mcp__browser__reload");
     expect(toolNames).toContain("mcp__browser__snapshot");
     expect(toolNames).toContain("mcp__browser__click");
     expect(toolNames).toContain("mcp__browser__fill");
+    expect(toolNames).toContain("mcp__browser__type");
     expect(toolNames).toContain("mcp__browser__press");
     expect(toolNames).toContain("mcp__browser__select");
     expect(toolNames).toContain("mcp__browser__check");
     expect(toolNames).toContain("mcp__browser__scroll");
+    expect(toolNames).toContain("mcp__browser__dialog");
+    expect(toolNames).toContain("mcp__browser__handle_dialog");
     expect(toolNames).toContain("mcp__browser__run_script");
   });
 

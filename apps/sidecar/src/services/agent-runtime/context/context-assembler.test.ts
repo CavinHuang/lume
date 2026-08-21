@@ -92,8 +92,9 @@ describe("ContextAssembler", () => {
     expect(result.runtimeContext).toContain("whole user request, including all internal Agent iterations");
     expect(result.runtimeContext).toContain("do not activate browser:browser");
     expect(result.runtimeContext).toContain("Take a fresh snapshot before reading or acting");
-    expect(result.runtimeContext).toContain("Each action returns a fresh snapshot");
+    expect(result.runtimeContext).toContain("Each mutation returns a fresh snapshot");
     expect(result.runtimeContext).toContain("use only refs from the newest snapshot");
+    expect(result.runtimeContext).toContain("dialog and handle_dialog");
     expect(result.runtimeContext).toContain("user_takeover_required");
     expect(result.runtimeContext).toContain("never retry or switch to computer-use");
     expect(result.runtimeContext).not.toContain("exact skill name browser:browser");

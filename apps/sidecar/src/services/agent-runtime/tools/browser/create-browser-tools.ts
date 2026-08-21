@@ -7,7 +7,11 @@ import { getBrowserToolSessionRegistry, type BrowserToolSessionRegistry } from "
 
 export const BROWSER_MCP_SERVER_ID = "browser"
 const WRAPPER_PREFIX = `mcp__${BROWSER_MCP_SERVER_ID}__`
-export const BROWSER_TOOL_NAMES = ["list_tabs", "open", "switch_tab", "snapshot", "click", "fill", "press", "select", "check", "scroll", "run_script"] as const
+export const BROWSER_TOOL_NAMES = [
+  "list_tabs", "open", "switch_tab", "navigate", "back", "forward", "reload", "snapshot",
+  "click", "double_click", "hover", "fill", "type", "press", "select", "check", "scroll",
+  "dialog", "handle_dialog", "run_script",
+] as const
 export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number]
 
 type BrowserToolBroker = Pick<BrowserBroker, "dispatch" | "listBackends">
@@ -32,7 +36,7 @@ export function createBrowserMcpTools(input: {
   })
 
   return BROWSER_TOOL_NAMES.map((name) => {
-    const readOnly = name === "list_tabs" || name === "snapshot"
+    const readOnly = name === "list_tabs" || name === "snapshot" || name === "dialog"
     return {
       name: `${WRAPPER_PREFIX}${name}`,
       description: describeTool(name),
@@ -115,6 +119,9 @@ async function executeTool(
     return { active_tab_id: tab.tabId, tab }
   }
   if (!activeTab) throw new Error("tab_not_found")
+  if (name === "dialog") {
+    return { active_tab_id: activeTab.tabId, dialog: await dispatch(broker, "tab_get_js_dialog", { tabId: activeTab.tabId }) ?? null }
+  }
   if (name === "run_script") {
     const script = stringValue(args.script)
     if (!script || script.length > 50_000) throw new Error("invalid_browser_request")
@@ -132,6 +139,26 @@ async function executeTool(
     if (execution?.status !== "completed") throw new Error("browser_internal_error")
     return { active_tab_id: activeTab.tabId, value: execution.value ?? null }
   }
+  if (isNavigationTool(name)) {
+    const url = name === "navigate" ? stringValue(args.url) : undefined
+    if (name === "navigate" && !url) throw new Error("invalid_url")
+    const navigation = await dispatch(broker, navigationBrokerMethod(name), {
+      tabId: activeTab.tabId,
+      ...(url ? { url } : {}),
+    })
+    return observeAfterMutation(activeTab.tabId, navigation, broker, dispatch, session)
+  }
+  if (name === "handle_dialog") {
+    const dialogId = stringValue(args.dialog_id)
+    if (!dialogId) throw new Error("invalid_browser_request")
+    const action = await dispatch(broker, "tab_handle_js_dialog", {
+      tabId: activeTab.tabId,
+      dialog_id: dialogId,
+      action: args.accept === false ? "dismiss" : "accept",
+      ...(typeof args.prompt_text === "string" ? { prompt_text: args.prompt_text } : {}),
+    })
+    return observeAfterMutation(activeTab.tabId, action, broker, dispatch, session)
+  }
   if (isActionTool(name)) {
     const target = semanticTarget(session, activeTab, args.ref)
     const action = await dispatch(broker, actionBrokerMethod(name, args), {
@@ -140,24 +167,7 @@ async function executeTool(
       semanticIntent: `${target.ref.role} ${target.ref.name}`.trim(),
       ...actionParams(name, args),
     })
-    try {
-      const observation = await dispatch(broker, "browser_snapshot", {
-        tabId: activeTab.tabId,
-        interactive_only: true,
-        limit: 400,
-      })
-      rememberSnapshot(session, observation)
-      return { active_tab_id: activeTab.tabId, action, observation }
-    } catch (error) {
-      session.snapshot = undefined
-      return {
-        active_tab_id: activeTab.tabId,
-        action,
-        observation: null,
-        observation_error: browserErrorCode(error),
-        requires_snapshot: true,
-      }
-    }
+    return observeAfterMutation(activeTab.tabId, action, broker, dispatch, session)
   }
   const snapshot = await dispatch(broker, "browser_snapshot", {
     tabId: activeTab.tabId,
@@ -199,15 +209,22 @@ function toolSchema(name: BrowserToolName): ToolInputSchema {
   })
   if (name === "open") return object({ url: { type: "string", description: "HTTP(S) URL to open in a new Agent-owned tab." } }, ["url"])
   if (name === "switch_tab") return object({ tab_id: { type: "string", description: "Agent-owned tab_id returned by list_tabs or open." } }, ["tab_id"])
+  if (name === "navigate") return object({ url: { type: "string", description: "HTTP(S) URL to load in the locked Agent tab." } }, ["url"])
   if (name === "snapshot") return object({
     interactive_only: { type: "boolean", default: false, description: "Return only interactive nodes and their semantic ancestors." },
     cursor: { type: "string", description: "Opaque next_cursor returned by the previous snapshot page." },
     limit: { type: "integer", minimum: 50, maximum: 1000, default: 400, description: "Maximum semantic-tree lines in this page." },
   })
   if (name === "click") return object({ ref: refSchema() }, ["ref"])
+  if (name === "double_click") return object({ ref: refSchema() }, ["ref"])
+  if (name === "hover") return object({ ref: refSchema() }, ["ref"])
   if (name === "fill") return object({
     ref: refSchema(),
     text: { type: "string", maxLength: 100000, description: "Replacement text for the editable element." },
+  }, ["ref", "text"])
+  if (name === "type") return object({
+    ref: refSchema(),
+    text: { type: "string", maxLength: 100000, description: "Text to append to the editable element." },
   }, ["ref", "text"])
   if (name === "press") return object({
     ref: refSchema(),
@@ -226,6 +243,11 @@ function toolSchema(name: BrowserToolName): ToolInputSchema {
     delta_x: { type: "number", minimum: -10000, maximum: 10000, default: 0 },
     delta_y: { type: "number", minimum: -10000, maximum: 10000, description: "Vertical wheel distance; positive scrolls down." },
   }, ["ref", "delta_y"])
+  if (name === "handle_dialog") return object({
+    dialog_id: { type: "string", description: "Dialog id returned by the dialog tool." },
+    accept: { type: "boolean", default: true },
+    prompt_text: { type: "string", maxLength: 10000, description: "Optional text for a prompt dialog." },
+  }, ["dialog_id"])
   if (name === "run_script") return object({
     script: { type: "string", maxLength: 50000, description: "JavaScript function body. Use arg for JSON input and return a JSON-serializable value." },
     arg: { description: "Optional JSON-serializable value exposed to the script as arg." },
@@ -239,13 +261,22 @@ function describeTool(name: BrowserToolName): string {
     list_tabs: "List only tabs owned by this Agent task and show the locked active tab.",
     open: "Open a URL in a new Agent-owned in-app browser tab and lock subsequent browser tools to it.",
     switch_tab: "Explicitly switch the Agent's locked browser target to another Agent-owned tab.",
+    navigate: "Navigate the locked Agent tab to a URL, then return a fresh interactive snapshot.",
+    back: "Go back in the locked Agent tab, then return a fresh interactive snapshot.",
+    forward: "Go forward in the locked Agent tab, then return a fresh interactive snapshot.",
+    reload: "Reload the locked Agent tab, then return a fresh interactive snapshot.",
     snapshot: "Read the active tab as a compact accessibility-tree snapshot. Interactive nodes have refs such as [ref=e12]; later browser actions use @e12. Call this before interacting. Continue large snapshots with next_cursor.",
     click: "Click an element from the latest snapshot by ref, then return a fresh interactive snapshot.",
+    double_click: "Double-click an element from the latest snapshot by ref, then return a fresh interactive snapshot.",
+    hover: "Hover an element from the latest snapshot by ref, then return a fresh interactive snapshot.",
     fill: "Replace the value of an editable element from the latest snapshot, then return a fresh interactive snapshot.",
+    type: "Append text to an editable element from the latest snapshot, then return a fresh interactive snapshot.",
     press: "Press a key or chord on an element from the latest snapshot, then return a fresh interactive snapshot.",
     select: "Select an option value on a control from the latest snapshot, then return a fresh interactive snapshot.",
     check: "Set the checked state of a checkbox or radio from the latest snapshot, then return a fresh interactive snapshot.",
     scroll: "Scroll at an element from the latest snapshot, then return a fresh interactive snapshot.",
+    dialog: "Read the JavaScript dialog currently blocking the locked Agent tab, if any.",
+    handle_dialog: "Accept or dismiss the current JavaScript dialog, then return a fresh interactive snapshot.",
     run_script: "Run a bounded JavaScript function body in an isolated world on the locked Agent tab. The script receives JSON input as arg and must return a JSON-serializable value. Prefer semantic Browser tools for ordinary interaction. Script execution requires the browser action confirmation gate.",
   })[name]
 }
@@ -282,10 +313,15 @@ function repeatGuardState(name: BrowserToolName, result: Record<string, unknown>
   return result
 }
 
-type BrowserActionToolName = Exclude<BrowserToolName, "list_tabs" | "open" | "switch_tab" | "snapshot" | "run_script">
+type BrowserActionToolName = "click" | "double_click" | "hover" | "fill" | "type" | "press" | "select" | "check" | "scroll"
+type BrowserNavigationToolName = "navigate" | "back" | "forward" | "reload"
 
 function isActionTool(name: BrowserToolName): name is BrowserActionToolName {
-  return new Set<BrowserToolName>(["click", "fill", "press", "select", "check", "scroll"]).has(name)
+  return new Set<BrowserToolName>(["click", "double_click", "hover", "fill", "type", "press", "select", "check", "scroll"]).has(name)
+}
+
+function isNavigationTool(name: BrowserToolName): name is BrowserNavigationToolName {
+  return name === "navigate" || name === "back" || name === "forward" || name === "reload"
 }
 
 function refSchema(): Record<string, unknown> {
@@ -316,7 +352,10 @@ function semanticTarget(
 
 function actionBrokerMethod(name: BrowserActionToolName, args: Record<string, unknown>): string {
   if (name === "click") return "playwright_locator_click"
+  if (name === "double_click") return "playwright_locator_dblclick"
+  if (name === "hover") return "playwright_locator_hover"
   if (name === "fill") return "playwright_locator_fill"
+  if (name === "type") return "playwright_locator_type"
   if (name === "press") return "playwright_locator_press"
   if (name === "select") return "playwright_locator_select_option"
   if (name === "check") return args.checked === false ? "playwright_locator_uncheck" : "playwright_locator_check"
@@ -324,11 +363,41 @@ function actionBrokerMethod(name: BrowserActionToolName, args: Record<string, un
 }
 
 function actionParams(name: BrowserActionToolName, args: Record<string, unknown>): Record<string, unknown> {
-  if (name === "fill") return { text: String(args.text ?? "") }
+  if (name === "fill" || name === "type") return { text: String(args.text ?? "") }
   if (name === "press") return { key: String(args.key ?? "Enter") }
   if (name === "select") return { value: String(args.value ?? "") }
   if (name === "scroll") return { deltaX: finiteNumber(args.delta_x), deltaY: finiteNumber(args.delta_y) }
   return {}
+}
+
+function navigationBrokerMethod(name: BrowserNavigationToolName): string {
+  if (name === "navigate") return "navigate_tab_url"
+  if (name === "back") return "navigate_tab_back"
+  if (name === "forward") return "navigate_tab_forward"
+  return "navigate_tab_reload"
+}
+
+async function observeAfterMutation(
+  tabId: string,
+  action: unknown,
+  broker: BrowserToolBroker,
+  dispatch: (broker: BrowserToolBroker, method: string, params?: Record<string, unknown>) => Promise<unknown>,
+  session: ReturnType<BrowserToolSessionRegistry["getOrCreate"]>,
+): Promise<Record<string, unknown>> {
+  try {
+    const observation = await dispatch(broker, "browser_snapshot", { tabId, interactive_only: true, limit: 400 })
+    rememberSnapshot(session, observation)
+    return { active_tab_id: tabId, action, observation }
+  } catch (error) {
+    session.snapshot = undefined
+    return {
+      active_tab_id: tabId,
+      action,
+      observation: null,
+      observation_error: browserErrorCode(error),
+      requires_snapshot: true,
+    }
+  }
 }
 
 function rememberSnapshot(
