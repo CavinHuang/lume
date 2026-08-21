@@ -1349,11 +1349,10 @@ export class BrowserRuntime {
       tab.url = stripUrl(url)
       tab.securityState = securityStateForUrl(tab.url)
       tab.lastOpenedAt = new Date().toISOString()
-      tab.generation += 1
-      tab.inputSequence += 1
+      // in-page 导航（pushState/hash）不替换文档：backendNodeId 与语义引用在同一文档内保持有效，
+      // 不递增 generation 以免误杀仍可用的 ref（真实失效由命中测试兜底）。
       tab.domNodes = undefined
-      if (tab.context?.actor === "agent") tab.agentLease = { browserSessionId: tab.context.browserSessionId, browserTurnId: tab.context.browserTurnId, generation: tab.generation }
-      else tab.agentLease = undefined
+      if (tab.context?.actor !== "agent") tab.agentLease = undefined
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
       this.annotations.onGuestReady(tab)
       this.rememberTab(tab)
