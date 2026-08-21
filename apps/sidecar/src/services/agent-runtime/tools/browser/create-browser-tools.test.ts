@@ -177,13 +177,15 @@ describe("createBrowserMcpTools", () => {
 
     await call(tools, "mcp__browser__snapshot", {})
     const uploaded = await call(tools, "mcp__browser__upload", { ref: "e1", files: ["files/report.pdf"] })
-    const downloaded = await call(tools, "mcp__browser__download", { ref: "e1" })
+    const downloadResult = await rawCall(tools, "mcp__browser__download", { ref: "e1" })
+    const downloaded = JSON.parse(String(downloadResult.content))
 
     expect(calls.find((request) => request.method === "playwright_file_chooser_set_files")).toMatchObject({
       params: { tabId: "locked-tab", file_chooser_id: "chooser-1", files: ["files/report.pdf"] },
     })
     expect(uploaded.action.count).toBe(1)
     expect(downloaded.action.file_ref).toBe("browser-download:00000000-0000-0000-0000-000000000001")
+    expect(downloadResult._meta?.repeatGuard.state.file_ref).toBe("browser-download:00000000-0000-0000-0000-000000000001")
     const methods = calls.map((request) => request.method)
     expect(methods).toContain("playwright_wait_for_file_chooser")
     expect(methods).toContain("playwright_wait_for_download")

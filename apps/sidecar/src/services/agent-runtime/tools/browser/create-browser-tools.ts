@@ -377,9 +377,12 @@ function repeatGuardState(name: BrowserToolName, result: Record<string, unknown>
   if (name === "run_script") return { ok: true, tool: name, value: result.value ?? null }
   if (isActionTool(name) || name === "upload" || name === "download") {
     const observation = asRecord(result.observation)
+    const action = asRecord(result.action)
     return {
       ok: true,
       tool: name,
+      ...(name === "upload" ? { count: action.count ?? null } : {}),
+      ...(name === "download" ? { file_ref: action.file_ref ?? null } : {}),
       requires_snapshot: result.requires_snapshot === true,
       snapshot_id: observation.snapshot_id ?? null,
       generation: observation.navigation_generation ?? null,
