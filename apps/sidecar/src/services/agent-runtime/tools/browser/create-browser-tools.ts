@@ -61,6 +61,9 @@ export function createBrowserMcpTools(input: {
         resultPolicy: { maxChars: 50_000 },
         mcpServerId: BROWSER_MCP_SERVER_ID,
         builtin: true,
+        // 任务级常驻工具（系统提示词承诺全程直接调用），必须留在 core 注入池而非 deferred 池，
+        // 否则未经历 ToolSearch 提升的工具会报 Unknown tool（link 工具同模式）
+        requiredDuringSkillScope: true,
       },
       async call(rawArgs, context) {
         const operationId = context.toolUseId || randomUUID()
@@ -74,7 +77,7 @@ export function createBrowserMcpTools(input: {
             operation_id: operationId,
             session_id: session.browserSessionId,
             ...result,
-          }, false, repeatGuardState(name, result))
+          }, false, repeatGuardState(name, result, args))
         } catch (error) {
           const code = browserErrorCode(error)
           if (code === "stale_target" || code === "tab_not_found") session.snapshot = undefined
@@ -103,10 +106,14 @@ async function executeTool(
   if (name === "open") {
     const url = stringValue(args.url)
     if (!url) throw new Error("invalid_url")
-    const tab = await dispatch(broker, "create_tab", { options: { url } }) as BrowserTabDescriptor
-    session.activeTabId = tab.tabId
+    // broker 对 create_tab 的返回做 extension 协议归一化为 { id }，须解出 tabId
+    const created = asRecord(await dispatch(broker, "create_tab", { options: { url } }))
+    const createdTab = asRecord(created.tab) as unknown as BrowserTabDescriptor | null
+    const tabId = stringValue(created.id) || stringValue(createdTab?.tabId)
+    if (!tabId) throw new Error("browser_internal_error")
+    session.activeTabId = tabId
     session.snapshot = undefined
-    return { active_tab_id: tab.tabId, tab }
+    return { active_tab_id: tabId, tab: createdTab?.tabId ? createdTab : { id: tabId } }
   }
 
   const tabs = await ownedAgentTabs(broker, dispatch, session.threadId)
@@ -122,7 +129,9 @@ async function executeTool(
   }
   if (!activeTab) throw new Error("tab_not_found")
   if (name === "dialog") {
-    return { active_tab_id: activeTab.tabId, dialog: await dispatch(broker, "tab_get_js_dialog", { tabId: activeTab.tabId }) ?? null }
+    // broker 对 tab_get_js_dialog 的返回归一化为 { dialog }，须解包
+    const dialogResult = asRecord(await dispatch(broker, "tab_get_js_dialog", { tabId: activeTab.tabId }))
+    return { active_tab_id: activeTab.tabId, dialog: dialogResult.dialog ?? null }
   }
   if (name === "run_script") {
     const script = stringValue(args.script)
@@ -303,8 +312,12 @@ async function ownedAgentTabs(
   threadId: string,
 ): Promise<BrowserTabDescriptor[]> {
   const result = await dispatch(broker, "list_tabs")
-  if (!Array.isArray(result)) throw new Error("browser_internal_error")
-  return result
+  // broker 对 list_tabs 的返回做 extension 协议归一化为 { tabs }，须解包
+  const wrapped = asRecord(result).tabs
+  if (!Array.isArray(result) && !Array.isArray(wrapped)) throw new Error("browser_internal_error")
+  const list: unknown[] = Array.isArray(result) ? result : wrapped as unknown[]
+  if (!list) throw new Error("browser_internal_error")
+  return list
     .filter((value): value is BrowserTabDescriptor => Boolean(value) && typeof value === "object" && !Array.isArray(value))
     .filter((tab) => tab.backend === "iab" && tab.profileKind === "agent" && tab.ownerThreadId === threadId)
     .sort((left, right) => Number(right.visible) - Number(left.visible)
@@ -429,13 +442,14 @@ function browserErrorCode(error: unknown): string {
   return /^[a-z][a-z0-9_]{1,80}$/.test(message) ? message : "browser_internal_error"
 }
 
-function repeatGuardState(name: BrowserToolName, result: Record<string, unknown>): unknown {
+function repeatGuardState(name: BrowserToolName, result: Record<string, unknown>, args: Record<string, unknown> = {}): unknown {
   if (name === "open" || name === "switch_tab") {
+    // create_tab 经 broker 归一化只剩 id，url 以工具入参为准
     const tab = asRecord(result.tab)
     return {
       ok: true,
       tool: name,
-      url: tab.url ?? null,
+      url: stringValue(args.url) || tab.url || null,
       title: tab.title ?? null,
       generation: tab.generation ?? null,
     }

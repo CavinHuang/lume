@@ -860,12 +860,12 @@ function descriptorId(value: unknown): string {
   return typeof descriptor.id === "string" ? descriptor.id : typeof descriptor.tabId === "string" ? descriptor.tabId : ""
 }
 
-function descriptorResult(value: unknown): { id: string; title?: string; url?: string } {
+function descriptorResult(value: unknown): { id: string; [key: string]: unknown } {
   if (!value || typeof value !== "object") return { id: "" }
-  const descriptor = value as { id?: unknown; tabId?: unknown; title?: unknown; url?: unknown }
-  return {
-    id: descriptorId(value),
-    ...(typeof descriptor.title === "string" && descriptor.title ? { title: descriptor.title } : {}),
-    ...(typeof descriptor.url === "string" && descriptor.url ? { url: descriptor.url } : {}),
-  }
+  // 保留原 descriptor 全部字段（任务级浏览器工具需要 backend/profileKind/ownerThreadId 等），
+  // 仅注入 id 别名；extension 消费者只读 id/title/url，超集兼容
+  const descriptor = { ...(value as Record<string, unknown>) }
+  const id = descriptorId(value)
+  if (id) descriptor.id = id
+  return descriptor as { id: string }
 }

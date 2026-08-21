@@ -11,8 +11,8 @@ describe("createBrowserMcpTools", () => {
       listBackends: () => [{ backend: "iab" }],
       dispatch: async (request: typeof calls[number]) => {
         calls.push(request)
-        if (request.method === "create_tab") return tab
-        if (request.method === "list_tabs") return [tab]
+        if (request.method === "create_tab") return { id: tab.tabId }
+        if (request.method === "list_tabs") return { tabs: [tab] }
         if (request.method === "browser_snapshot") return semanticSnapshot("tab-1")
         throw new Error("unsupported")
       },
@@ -27,7 +27,7 @@ describe("createBrowserMcpTools", () => {
 
     expect(opened.active_tab_id).toBe("tab-1")
     expect(openResult._meta?.repeatGuard).toEqual({
-      state: { ok: true, tool: "open", url: "https://example.com", title: "tab-1", generation: 1 }
+      state: { ok: true, tool: "open", url: "https://example.com", title: null, generation: null }
     })
     expect(snapshot.observation.snapshot_id).toBe("snap-1")
     expect(scoped.observation.refs.e1).toMatchObject({ role: "textbox", name: "Search" })
@@ -59,7 +59,7 @@ describe("createBrowserMcpTools", () => {
       listBackends: () => [{ backend: "iab" }],
       dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
         calls.push(request)
-        if (request.method === "list_tabs") return [tab]
+        if (request.method === "list_tabs") return { tabs: [tab] }
         if (request.method === "browser_run_script") return { status: "completed", value: { title: "Example" } }
         throw new Error("unsupported")
       },
@@ -82,10 +82,10 @@ describe("createBrowserMcpTools", () => {
       listBackends: () => [{ backend: "iab" }],
       dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
         calls.push(request)
-        if (request.method === "list_tabs") return [tab]
+        if (request.method === "list_tabs") return { tabs: [tab] }
         if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${calls.length}`)
         if (request.method === "navigate_tab_url") return { ...tab, url: "https://example.org/" }
-        if (request.method === "tab_get_js_dialog") return { id: "dialog-1", type: "confirm", message: "Continue?" }
+        if (request.method === "tab_get_js_dialog") return { dialog: { id: "dialog-1", type: "confirm", message: "Continue?" } }
         if (request.method === "tab_handle_js_dialog") return { ok: true }
         throw new Error("unsupported")
       },
@@ -111,7 +111,7 @@ describe("createBrowserMcpTools", () => {
       listBackends: () => [{ backend: "iab" }],
       dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
         calls.push(request)
-        if (request.method === "list_tabs") return [tab]
+        if (request.method === "list_tabs") return { tabs: [tab] }
         if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
         if (request.method === "playwright_locator_fill") return { ok: true }
         throw new Error("unsupported")
@@ -143,7 +143,7 @@ describe("createBrowserMcpTools", () => {
     const broker = {
       listBackends: () => [{ backend: "iab" }],
       dispatch: async (request: { method: string }) => {
-        if (request.method === "list_tabs") return [tab]
+        if (request.method === "list_tabs") return { tabs: [tab] }
         if (request.method === "tab_screenshot") return { data: pixels }
         throw new Error("unsupported")
       },
@@ -168,7 +168,7 @@ describe("createBrowserMcpTools", () => {
       listBackends: () => [{ backend: "iab" }],
       dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
         calls.push(request)
-        if (request.method === "list_tabs") return [tab]
+        if (request.method === "list_tabs") return { tabs: [tab] }
         if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, "snap-1")
         if (request.method === "tab_screenshot") return { data: pixels, annotated_refs: ["@e1"] }
         throw new Error("unsupported")
@@ -192,7 +192,7 @@ describe("createBrowserMcpTools", () => {
     const tools = createBrowserMcpTools({
       broker: {
         listBackends: () => [{ backend: "iab" }],
-        dispatch: async (request: { method: string }) => request.method === "list_tabs" ? [tab] : undefined,
+        dispatch: async (request: { method: string }) => request.method === "list_tabs" ? { tabs: [tab] } : undefined,
       } as any,
       sessionRegistry: new BrowserToolSessionRegistry(),
       threadId: "thread-1",
@@ -211,7 +211,7 @@ describe("createBrowserMcpTools", () => {
       listBackends: () => [{ backend: "iab" }],
       dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
         calls.push(request)
-        if (request.method === "list_tabs") return [tab]
+        if (request.method === "list_tabs") return { tabs: [tab] }
         if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
         if (request.method === "playwright_wait_for_file_chooser") return { file_chooser_id: "chooser-1", is_multiple: false }
         if (request.method === "playwright_file_chooser_set_files") return {}
@@ -247,7 +247,7 @@ describe("createBrowserMcpTools", () => {
     const broker = {
       listBackends: () => [{ backend: "iab" }],
       dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        if (request.method === "list_tabs") return [tab]
+        if (request.method === "list_tabs") return { tabs: [tab] }
         if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
         if (request.method === "playwright_wait_for_download") return { download_id: "download-1" }
         if (request.method === "playwright_locator_click") return { ok: true }
@@ -278,7 +278,7 @@ describe("createBrowserMcpTools", () => {
     const broker = {
       listBackends: () => [{ backend: "iab" }],
       dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        if (request.method === "list_tabs") return [tab]
+        if (request.method === "list_tabs") return { tabs: [tab] }
         if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
         if (request.method === "playwright_wait_for_file_chooser") return { file_chooser_id: "chooser-1", is_multiple: false }
         if (request.method === "playwright_locator_click") return { ok: true }
@@ -300,7 +300,7 @@ describe("createBrowserMcpTools", () => {
       listBackends: () => [{ backend: "iab" }],
       dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
         calls.push(request)
-        if (request.method === "list_tabs") return [tab]
+        if (request.method === "list_tabs") return { tabs: [tab] }
         if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${calls.length}`)
         if (request.method === "browser_list_secrets") return [{ id: "secret-1", origin: "https://example.com", username: "alice" }]
         if (request.method === "browser_fill_secret") return { status: "submitted" }
@@ -352,7 +352,7 @@ describe("createBrowserMcpTools", () => {
     const broker = {
       listBackends: () => [{ backend: "iab" }],
       dispatch: async (request: { method: string }) => {
-        if (request.method === "list_tabs") return [tab]
+        if (request.method === "list_tabs") return { tabs: [tab] }
         if (request.method === "browser_snapshot") {
           if (++snapshots === 1) return semanticSnapshot(tab.tabId)
           throw new Error("stale_target")
