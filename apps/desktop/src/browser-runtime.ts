@@ -2693,7 +2693,9 @@ export class BrowserRuntime {
         const hit = await debuggerRef.sendCommand("DOM.getNodeForLocation", {
           x: Math.round(x),
           y: Math.round(y),
-          includeUserAgentShadowDOM: true,
+          // 不穿透 shadow DOM：文本 input 的中心点会命中其 UA shadow 内部节点，
+          // 该节点与 input 的 contains 跨 shadow 边界恒为 false，会导致 input 永久 action_denied。
+          includeUserAgentShadowDOM: false,
         }) as { backendNodeId?: number }
         if (!hit.backendNodeId) throw browserError("action_denied")
         if (hit.backendNodeId !== entry.backendNodeId) {
@@ -2703,7 +2705,7 @@ export class BrowserRuntime {
           try {
             const containment = await debuggerRef.sendCommand("Runtime.callFunctionOn", {
               objectId,
-              functionDeclaration: "function (hit) { return this === hit || this.contains(hit) }",
+              functionDeclaration: "function (hit) { let node = hit; while (node) { if (node === this || this.contains(node)) return true; const root = node.getRootNode(); node = root instanceof ShadowRoot ? root.host : null } return false }",
               arguments: [{ objectId: hitObjectId }],
               returnByValue: true,
             }) as { result?: { value?: unknown } }

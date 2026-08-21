@@ -336,6 +336,17 @@ app.whenReady().then(async () => {
       semanticSnapshotId: semanticSnapshot.snapshot_id,
     })
     check(await view.executeJavaScript("document.querySelector('#result').textContent") === 'Lume Agent', 'semantic ref did not resolve the exact backend node')
+    const semanticNameRef = Object.entries(semanticSnapshot.refs).find(([, value]) => value.role === 'textbox' && value.name === 'Name')?.[0]
+    check(typeof semanticNameRef === 'string', 'semantic snapshot did not expose the Name textbox ref')
+    await call('fill', {
+      tabId: 'fixture-tab',
+      locator: locator('#name'),
+      semanticRef: semanticNameRef,
+      semanticSnapshotId: semanticSnapshot.snapshot_id,
+      text: 'Semantic Ref Fill',
+    })
+    check(await view.executeJavaScript("document.querySelector('#name').value") === 'Semantic Ref Fill', 'semantic ref fill did not resolve the textbox backend node')
+    await view.executeJavaScript("document.querySelector('#name').value = 'Lume Agent'")
     const currentSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
     const currentApplyRef = Object.entries(currentSnapshot.refs).find(([, value]) => value.role === 'button' && value.name === 'Apply')?.[0]
     const scopedSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', scope_ref: '@' + currentApplyRef, snapshot_id: currentSnapshot.snapshot_id })
