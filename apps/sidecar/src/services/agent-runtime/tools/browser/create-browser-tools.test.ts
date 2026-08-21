@@ -371,6 +371,39 @@ describe("createBrowserMcpTools", () => {
     expect(result).toMatchObject({ ok: true, action: { ok: true }, observation: null, observation_error: "stale_target", requires_snapshot: true })
   })
 
+  test("stops browser mutations after a non-retryable action repeats on the same page", async () => {
+    const tab = agentTab("locked-tab", "thread-1")
+    let actionCalls = 0
+    let snapshotNumber = 0
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string }) => {
+        if (request.method === "list_tabs") return { tabs: [tab] }
+        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
+        if (request.method === "playwright_locator_click") {
+          actionCalls += 1
+          throw Object.assign(new Error("actionability_failed"), { code: "actionability_failed" })
+        }
+        if (request.method === "playwright_locator_fill") throw new Error("unexpected_action")
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    const firstSnapshot = await rawCall(tools, "mcp__browser__snapshot", {})
+    await rawCall(tools, "mcp__browser__click", { ref: "e1" })
+    const secondSnapshot = await rawCall(tools, "mcp__browser__snapshot", {})
+    await rawCall(tools, "mcp__browser__click", { ref: "e1" })
+    const blocked = await rawCall(tools, "mcp__browser__fill", { ref: "e1", text: "retry" })
+    const blockedResult = JSON.parse(String(blocked.content))
+
+    expect(actionCalls).toBe(2)
+    expect(blocked.is_error).toBeTrue()
+    expect(blockedResult).toMatchObject({ ok: false, code: "repeated_action_failure", retryable: false })
+    expect(firstSnapshot._meta?.repeatGuard.state).toEqual(secondSnapshot._meta?.repeatGuard.state)
+    expect(firstSnapshot._meta?.repeatGuard.state).not.toHaveProperty("snapshot_id")
+  })
+
   test("returns script exceptions as structured tool errors", async () => {
     const tab = agentTab("locked-tab", "thread-1")
     const broker = {

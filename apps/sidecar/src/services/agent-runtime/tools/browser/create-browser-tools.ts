@@ -67,10 +67,24 @@ export function createBrowserMcpTools(input: {
       },
       async call(rawArgs, context) {
         const operationId = context.toolUseId || randomUUID()
+        const args = asRecord(rawArgs)
+        if (isActionTool(name) && session.blockedActionLoop) {
+          const blocked = session.blockedActionLoop
+          return toolResult(operationId, {
+            ok: false,
+            operation_id: operationId,
+            active_tab_id: session.activeTabId ?? null,
+            code: "repeated_action_failure",
+            message: `Browser actions stopped after ${blocked.tool} repeatedly failed with ${blocked.code} on @${blocked.ref}. Do not retry browser actions until the page navigates or the user intervenes.`,
+            retryable: false,
+          }, true, { ok: false, tool: name, code: "repeated_action_failure", blocked_by: blocked.tool, ref: blocked.ref })
+        }
         try {
           const broker = resolveBroker()
-          const args = asRecord(rawArgs)
           const result = await executeTool(name, args, broker, dispatch, session)
+          if (name === "open" || name === "switch_tab" || isNavigationTool(name) || name === "handle_dialog") clearActionFailures(session)
+          const failureKey = actionFailureKey(name, args, session)
+          if (failureKey === session.lastNonRetryableActionFailure?.key) session.lastNonRetryableActionFailure = undefined
           if (name === "screenshot") return screenshotToolResult(operationId, session.browserSessionId, result)
           return toolResult(operationId, {
             ok: true,
@@ -82,13 +96,32 @@ export function createBrowserMcpTools(input: {
           const code = browserErrorCode(error)
           if (code === "stale_target" || code === "tab_not_found") session.snapshot = undefined
           const message = error instanceof Error && error.message && error.message !== code ? error.message.slice(0, 4_000) : code
+          const retryable = code === "browser_unavailable" || code === "stale_target"
+          const failureKey = !retryable ? actionFailureKey(name, args, session) : undefined
+          if (failureKey) {
+            const previous = session.lastNonRetryableActionFailure
+            const current = session.lastNonRetryableActionFailure = {
+              attempts: previous?.key === failureKey ? previous.attempts + 1 : 1,
+              code,
+              key: failureKey,
+            }
+            if (current.attempts >= 2 && session.snapshot) {
+              session.blockedActionLoop = {
+                code,
+                generation: session.snapshot.generation,
+                ref: String(args.ref).replace(/^@/, ""),
+                tabId: session.snapshot.tabId,
+                tool: name,
+              }
+            }
+          }
           return toolResult(operationId, {
             ok: false,
             operation_id: operationId,
             active_tab_id: session.activeTabId ?? null,
             code,
             message,
-            retryable: code === "browser_unavailable" || code === "stale_target",
+            retryable,
           }, true, { ok: false, tool: name, code, message })
         }
       },
@@ -454,6 +487,16 @@ function repeatGuardState(name: BrowserToolName, result: Record<string, unknown>
       generation: tab.generation ?? null,
     }
   }
+  if (name === "snapshot") {
+    const observation = asRecord(result.observation)
+    return {
+      ok: true,
+      tool: name,
+      tab_id: observation.tab_id ?? null,
+      generation: observation.navigation_generation ?? null,
+      tree: observation.tree ?? null,
+    }
+  }
   if (name === "run_script") return { ok: true, tool: name, value: result.value ?? null }
   if (isActionTool(name) || name === "upload" || name === "download") {
     const observation = asRecord(result.observation)
@@ -571,6 +614,8 @@ function rememberSnapshot(
   const tabId = stringValue(observation.tab_id)
   const generation = Number(observation.navigation_generation)
   if (!snapshotId || !tabId || !Number.isInteger(generation)) throw new Error("browser_internal_error")
+  const blocked = session.blockedActionLoop
+  if (blocked && (blocked.tabId !== tabId || blocked.generation !== generation)) clearActionFailures(session)
   const refs = Object.fromEntries(Object.entries(asRecord(observation.refs)).flatMap(([key, raw]) => {
     const ref = asRecord(raw)
     const role = stringValue(ref.role)
@@ -580,6 +625,21 @@ function rememberSnapshot(
   }))
   const previous = append && session.snapshot?.snapshotId === snapshotId ? session.snapshot.refs : {}
   session.snapshot = { snapshotId, tabId, generation, refs: { ...previous, ...refs } }
+}
+
+function actionFailureKey(
+  name: BrowserToolName,
+  args: Record<string, unknown>,
+  session: ReturnType<BrowserToolSessionRegistry["getOrCreate"]>,
+): string | undefined {
+  const ref = isActionTool(name) ? stringValue(args.ref)?.replace(/^@/, "") : undefined
+  const snapshot = session.snapshot
+  return ref && snapshot ? JSON.stringify([name, ref, snapshot.tabId, snapshot.generation]) : undefined
+}
+
+function clearActionFailures(session: ReturnType<BrowserToolSessionRegistry["getOrCreate"]>): void {
+  session.blockedActionLoop = undefined
+  session.lastNonRetryableActionFailure = undefined
 }
 
 function toolResult(toolUseId: string, value: unknown, isError = false, repeatState?: unknown): ToolResult {

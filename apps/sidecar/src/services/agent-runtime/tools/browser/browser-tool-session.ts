@@ -1,7 +1,15 @@
 export interface BrowserToolSession {
   activeTabId?: string
+  blockedActionLoop?: {
+    code: string
+    generation: number
+    ref: string
+    tabId: string
+    tool: string
+  }
   browserSessionId: string
   browserTurnId: string
+  lastNonRetryableActionFailure?: { attempts: number; code: string; key: string }
   snapshot?: {
     generation: number
     refs: Record<string, { name: string; nth?: number; role: string }>
