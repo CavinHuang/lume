@@ -1421,6 +1421,8 @@ export class BrowserRuntime {
     })
     wc.on("before-mouse-event", (_event, mouse) => {
       if (this.inputLedger.consumeMouse(tab.tabId, mouse)) return
+      // 滚动与纯指针移动是查看型交互（如用户展开侧边栏观察 Agent 操作），不构成用户接管
+      if (mouse.type !== "mouseDown" && mouse.type !== "mouseUp") return
       tab.inputSequence += 1
       if (mouse.type === "mouseDown" && (mouse.button === "left" || mouse.button === "middle")) tab.lastUserActivationAt = Date.now()
       this.pauseAgentControl(tab)
