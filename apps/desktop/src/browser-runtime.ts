@@ -1811,12 +1811,15 @@ export class BrowserRuntime {
           const text = String(params.text ?? "")
           if (text.length > 100_000) throw browserError("invalid_browser_request")
           if (!target.editable) throw browserError("action_denied")
-          const before = isBrowserLocator(params.locator)
+          // 语义引用已做命中验证；locator 仅是工具层的兜底定位，用它做值验证会在
+          // 同角色多元素页面上 strict 多匹配，被 executeLocatorQuery 兜底映射成 stale_target。
+          const verifyByLocator = isBrowserLocator(params.locator) && params.semanticRef === undefined
+          const before = verifyByLocator
             ? String(await this.executeLocatorQuery(tab, params, "editableValue"))
             : undefined
           await this.dispatchMouse(tab, "click", target)
           await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), text, { platform: process.platform, replace: method === "fill" }))
-          if (isBrowserLocator(params.locator)) {
+          if (verifyByLocator) {
             const observed = String(await this.executeLocatorQuery(tab, params, "editableValue"))
             const expected = method === "fill" ? text : `${before ?? ""}${text}`
             if (observed !== expected) throw browserError("actionability_failed")
