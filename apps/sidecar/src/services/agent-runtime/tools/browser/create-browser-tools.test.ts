@@ -132,6 +132,64 @@ describe("createBrowserMcpTools", () => {
     expect(result.observation.snapshot_id).toBe("snap-2")
   })
 
+  test("returns screenshots as transient image content without putting pixels in text", async () => {
+    const tab = agentTab("locked-tab", "thread-1")
+    const pixels = Buffer.from("jpeg-pixels").toString("base64")
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string }) => {
+        if (request.method === "list_tabs") return [tab]
+        if (request.method === "tab_screenshot") return { data: pixels }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    const result = await rawCall(tools, "mcp__browser__screenshot", {})
+
+    expect(result.content[0].text).not.toContain(pixels)
+    expect(result.content[1]).toMatchObject({
+      type: "image",
+      source: { type: "base64", media_type: "image/jpeg", data: pixels },
+      _meta: { persist: false },
+    })
+  })
+
+  test("coordinates file chooser uploads and click-triggered downloads", async () => {
+    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
+    const tab = agentTab("locked-tab", "thread-1")
+    let snapshotNumber = 0
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
+        calls.push(request)
+        if (request.method === "list_tabs") return [tab]
+        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
+        if (request.method === "playwright_wait_for_file_chooser") return { file_chooser_id: "chooser-1", is_multiple: false }
+        if (request.method === "playwright_file_chooser_set_files") return {}
+        if (request.method === "playwright_wait_for_download") return { download_id: "download-1" }
+        if (request.method === "playwright_download_path") return { path: "browser-download:00000000-0000-0000-0000-000000000001" }
+        if (request.method === "playwright_locator_click") return { ok: true }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    await call(tools, "mcp__browser__snapshot", {})
+    const uploaded = await call(tools, "mcp__browser__upload", { ref: "e1", files: ["files/report.pdf"] })
+    const downloaded = await call(tools, "mcp__browser__download", { ref: "e1" })
+
+    expect(calls.find((request) => request.method === "playwright_file_chooser_set_files")).toMatchObject({
+      params: { tabId: "locked-tab", file_chooser_id: "chooser-1", files: ["files/report.pdf"] },
+    })
+    expect(uploaded.action.count).toBe(1)
+    expect(downloaded.action.file_ref).toBe("browser-download:00000000-0000-0000-0000-000000000001")
+    const methods = calls.map((request) => request.method)
+    expect(methods).toContain("playwright_wait_for_file_chooser")
+    expect(methods).toContain("playwright_wait_for_download")
+    expect(methods).toContain("playwright_download_path")
+  })
+
   test("rejects refs without a current snapshot or after the locked tab disappears", async () => {
     const tab = agentTab("locked-tab", "thread-1")
     let tabs = [tab]

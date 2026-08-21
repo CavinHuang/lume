@@ -148,6 +148,9 @@ describe("create-lume-tools", () => {
     expect(toolNames).toContain("mcp__browser__select");
     expect(toolNames).toContain("mcp__browser__check");
     expect(toolNames).toContain("mcp__browser__scroll");
+    expect(toolNames).toContain("mcp__browser__screenshot");
+    expect(toolNames).toContain("mcp__browser__upload");
+    expect(toolNames).toContain("mcp__browser__download");
     expect(toolNames).toContain("mcp__browser__dialog");
     expect(toolNames).toContain("mcp__browser__handle_dialog");
     expect(toolNames).toContain("mcp__browser__run_script");

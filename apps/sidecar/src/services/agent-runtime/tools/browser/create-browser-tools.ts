@@ -10,7 +10,7 @@ const WRAPPER_PREFIX = `mcp__${BROWSER_MCP_SERVER_ID}__`
 export const BROWSER_TOOL_NAMES = [
   "list_tabs", "open", "switch_tab", "navigate", "back", "forward", "reload", "snapshot",
   "click", "double_click", "hover", "fill", "type", "press", "select", "check", "scroll",
-  "dialog", "handle_dialog", "run_script",
+  "screenshot", "upload", "download", "dialog", "handle_dialog", "run_script",
 ] as const
 export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number]
 
@@ -36,7 +36,7 @@ export function createBrowserMcpTools(input: {
   })
 
   return BROWSER_TOOL_NAMES.map((name) => {
-    const readOnly = name === "list_tabs" || name === "snapshot" || name === "dialog"
+    const readOnly = name === "list_tabs" || name === "snapshot" || name === "screenshot" || name === "dialog"
     return {
       name: `${WRAPPER_PREFIX}${name}`,
       description: describeTool(name),
@@ -51,7 +51,7 @@ export function createBrowserMcpTools(input: {
         source: "mcp",
         category: readOnly ? "read" : "execute",
         capability: "mcp",
-        riskLevel: name === "run_script" ? "high" : name === "open" ? "medium" : "low",
+        riskLevel: name === "run_script" ? "high" : name === "open" || name === "upload" || name === "download" ? "medium" : "low",
         sideEffects: readOnly ? "none" : "desktop",
         allowedInPlanMode: readOnly,
         isReadOnly: readOnly,
@@ -68,6 +68,7 @@ export function createBrowserMcpTools(input: {
           const broker = resolveBroker()
           const args = asRecord(rawArgs)
           const result = await executeTool(name, args, broker, dispatch, session)
+          if (name === "screenshot") return screenshotToolResult(operationId, session.browserSessionId, result)
           return toolResult(operationId, {
             ok: true,
             operation_id: operationId,
@@ -139,6 +140,20 @@ async function executeTool(
     if (execution?.status !== "completed") throw new Error("browser_internal_error")
     return { active_tab_id: activeTab.tabId, value: execution.value ?? null }
   }
+  if (name === "screenshot") {
+    const fullPage = args.full_page === true
+    const screenshot = asRecord(await dispatch(broker, "tab_screenshot", {
+      tabId: activeTab.tabId,
+      fullPage,
+    }))
+    const data = stringValue(screenshot.data)
+    if (!data) throw new Error("browser_internal_error")
+    return {
+      active_tab_id: activeTab.tabId,
+      image: { data, media_type: fullPage ? "image/png" : "image/jpeg" },
+      full_page: fullPage,
+    }
+  }
   if (isNavigationTool(name)) {
     const url = name === "navigate" ? stringValue(args.url) : undefined
     if (name === "navigate" && !url) throw new Error("invalid_url")
@@ -158,6 +173,52 @@ async function executeTool(
       ...(typeof args.prompt_text === "string" ? { prompt_text: args.prompt_text } : {}),
     })
     return observeAfterMutation(activeTab.tabId, action, broker, dispatch, session)
+  }
+  if (name === "upload") {
+    const target = semanticTarget(session, activeTab, args.ref)
+    const files = Array.isArray(args.files) ? args.files.filter((value): value is string => Boolean(stringValue(value))).slice(0, 20) : []
+    if (!files.length) throw new Error("invalid_browser_request")
+    const timeoutMs = boundedTimeout(args.timeout_ms)
+    const chooserPromise = dispatch(broker, "playwright_wait_for_file_chooser", { tabId: activeTab.tabId, timeout_ms: timeoutMs })
+    const [chooser, click] = await Promise.all([
+      chooserPromise,
+      dispatch(broker, "playwright_locator_click", {
+        tabId: activeTab.tabId,
+        locator: target.locator,
+        semanticIntent: `${target.ref.role} ${target.ref.name}`.trim(),
+      }),
+    ])
+    const chooserId = stringValue(asRecord(chooser).file_chooser_id)
+    if (!chooserId) throw new Error("browser_internal_error")
+    const upload = await dispatch(broker, "playwright_file_chooser_set_files", {
+      tabId: activeTab.tabId,
+      file_chooser_id: chooserId,
+      files,
+    })
+    return observeAfterMutation(activeTab.tabId, { click, upload, count: files.length }, broker, dispatch, session)
+  }
+  if (name === "download") {
+    const target = semanticTarget(session, activeTab, args.ref)
+    const timeoutMs = boundedTimeout(args.timeout_ms)
+    const downloadPromise = dispatch(broker, "playwright_wait_for_download", { tabId: activeTab.tabId, timeout_ms: timeoutMs })
+    const [download, click] = await Promise.all([
+      downloadPromise,
+      dispatch(broker, "playwright_locator_click", {
+        tabId: activeTab.tabId,
+        locator: target.locator,
+        semanticIntent: `${target.ref.role} ${target.ref.name}`.trim(),
+      }),
+    ])
+    const downloadId = stringValue(asRecord(download).download_id)
+    if (!downloadId) throw new Error("browser_internal_error")
+    const resolved = asRecord(await dispatch(broker, "playwright_download_path", {
+      tabId: activeTab.tabId,
+      download_id: downloadId,
+      timeout_ms: timeoutMs,
+    }))
+    const fileRef = stringValue(resolved.path)
+    if (!fileRef) throw new Error("download_failed")
+    return observeAfterMutation(activeTab.tabId, { click, download_id: downloadId, file_ref: fileRef }, broker, dispatch, session)
   }
   if (isActionTool(name)) {
     const target = semanticTarget(session, activeTab, args.ref)
@@ -215,6 +276,18 @@ function toolSchema(name: BrowserToolName): ToolInputSchema {
     cursor: { type: "string", description: "Opaque next_cursor returned by the previous snapshot page." },
     limit: { type: "integer", minimum: 50, maximum: 1000, default: 400, description: "Maximum semantic-tree lines in this page." },
   })
+  if (name === "screenshot") return object({
+    full_page: { type: "boolean", default: false, description: "Capture the full scrollable page instead of the current viewport." },
+  })
+  if (name === "upload") return object({
+    ref: refSchema(),
+    files: { type: "array", minItems: 1, maxItems: 20, items: { type: "string" }, description: "Task-authorized file paths or browser-download file refs." },
+    timeout_ms: { type: "integer", minimum: 100, maximum: 30000, default: 10000 },
+  }, ["ref", "files"])
+  if (name === "download") return object({
+    ref: refSchema(),
+    timeout_ms: { type: "integer", minimum: 100, maximum: 30000, default: 10000 },
+  }, ["ref"])
   if (name === "click") return object({ ref: refSchema() }, ["ref"])
   if (name === "double_click") return object({ ref: refSchema() }, ["ref"])
   if (name === "hover") return object({ ref: refSchema() }, ["ref"])
@@ -275,6 +348,9 @@ function describeTool(name: BrowserToolName): string {
     select: "Select an option value on a control from the latest snapshot, then return a fresh interactive snapshot.",
     check: "Set the checked state of a checkbox or radio from the latest snapshot, then return a fresh interactive snapshot.",
     scroll: "Scroll at an element from the latest snapshot, then return a fresh interactive snapshot.",
+    screenshot: "Capture the locked Agent tab as an image for visual inspection. Prefer snapshot refs for interaction; screenshots are observation only.",
+    upload: "Click a file control from the latest snapshot, wait for its chooser, and upload task-authorized files as one coordinated operation. Requires confirmation.",
+    download: "Click a download control from the latest snapshot, wait for the resulting download, and return a task-scoped browser-download file ref.",
     dialog: "Read the JavaScript dialog currently blocking the locked Agent tab, if any.",
     handle_dialog: "Accept or dismiss the current JavaScript dialog, then return a fresh interactive snapshot.",
     run_script: "Run a bounded JavaScript function body in an isolated world on the locked Agent tab. The script receives JSON input as arg and must return a JSON-serializable value. Prefer semantic Browser tools for ordinary interaction. Script execution requires the browser action confirmation gate.",
@@ -299,7 +375,7 @@ function repeatGuardState(name: BrowserToolName, result: Record<string, unknown>
     }
   }
   if (name === "run_script") return { ok: true, tool: name, value: result.value ?? null }
-  if (isActionTool(name)) {
+  if (isActionTool(name) || name === "upload" || name === "download") {
     const observation = asRecord(result.observation)
     return {
       ok: true,
@@ -431,6 +507,24 @@ function toolResult(toolUseId: string, value: unknown, isError = false, repeatSt
   }
 }
 
+function screenshotToolResult(toolUseId: string, sessionId: string, result: Record<string, unknown>): ToolResult {
+  const image = asRecord(result.image)
+  const data = stringValue(image.data)
+  const mediaType = stringValue(image.media_type)
+  if (!data || !mediaType) throw new Error("browser_internal_error")
+  const screenshotId = `browser-screenshot:${randomUUID()}`
+  return {
+    type: "tool_result",
+    tool_use_id: toolUseId,
+    content: [
+      { type: "text", text: JSON.stringify({ ok: true, operation_id: toolUseId, session_id: sessionId, active_tab_id: result.active_tab_id, full_page: result.full_page, screenshot_id: screenshotId }) },
+      { type: "image", source: { type: "base64", media_type: mediaType, data }, _meta: { persist: false, screenshotId } },
+    ],
+    _meta: { repeatGuard: { state: { ok: true, tool: "screenshot", active_tab_id: result.active_tab_id, full_page: result.full_page } } },
+  }
+}
+
 function stringValue(value: unknown): string | undefined { return typeof value === "string" && value.trim() ? value.trim() : undefined }
 function finiteNumber(value: unknown): number { return typeof value === "number" && Number.isFinite(value) ? value : 0 }
+function boundedTimeout(value: unknown): number { return typeof value === "number" && Number.isInteger(value) ? Math.max(100, Math.min(30_000, value)) : 10_000 }
 function asRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {} }
