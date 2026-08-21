@@ -13,7 +13,7 @@ describe("createBrowserMcpTools", () => {
         calls.push(request)
         if (request.method === "create_tab") return tab
         if (request.method === "list_tabs") return [tab]
-        if (request.method === "browser_snapshot") return { snapshot_id: "snap-1", tree: '- textbox "Search" [ref=e1]' }
+        if (request.method === "browser_snapshot") return semanticSnapshot("tab-1")
         throw new Error("unsupported")
       },
     } as any
@@ -72,6 +72,89 @@ describe("createBrowserMcpTools", () => {
     })
   })
 
+  test("resolves snapshot refs into semantic actions and observes after every action", async () => {
+    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
+    const tab = agentTab("locked-tab", "thread-1")
+    let snapshotNumber = 0
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
+        calls.push(request)
+        if (request.method === "list_tabs") return [tab]
+        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
+        if (request.method === "playwright_locator_fill") return { ok: true }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    await call(tools, "mcp__browser__snapshot", { interactive_only: true })
+    const result = await call(tools, "mcp__browser__fill", { ref: "@e1", text: "agent" })
+
+    expect(calls.at(-2)).toMatchObject({
+      method: "playwright_locator_fill",
+      params: {
+        tabId: "locked-tab",
+        text: "agent",
+        semanticIntent: "textbox Search",
+        locator: { version: 1, steps: [{ kind: "role", role: "textbox", name: "Search", exact: true }] },
+      },
+    })
+    expect(calls.at(-1)).toMatchObject({ method: "browser_snapshot", params: { tabId: "locked-tab", interactive_only: true } })
+    expect(result.observation.snapshot_id).toBe("snap-2")
+  })
+
+  test("rejects refs without a current snapshot or after the locked tab disappears", async () => {
+    const tab = agentTab("locked-tab", "thread-1")
+    let tabs = [tab]
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string }) => {
+        if (request.method === "list_tabs") return tabs
+        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId)
+        throw new Error("unexpected_action")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    const beforeSnapshot = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
+    await call(tools, "mcp__browser__snapshot", {})
+    tabs = [agentTab("different-tab", "thread-1")]
+    const afterClose = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
+    const stillLocked = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
+
+    expect(JSON.parse(String(beforeSnapshot.content)).code).toBe("stale_target")
+    expect(JSON.parse(String(afterClose.content)).code).toBe("tab_not_found")
+    expect(JSON.parse(String(stillLocked.content)).code).toBe("tab_not_found")
+    expect(beforeSnapshot.is_error).toBeTrue()
+    expect(afterClose.is_error).toBeTrue()
+  })
+
+  test("does not report a completed action as failed when its follow-up snapshot fails", async () => {
+    const tab = agentTab("locked-tab", "thread-1")
+    let snapshots = 0
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string }) => {
+        if (request.method === "list_tabs") return [tab]
+        if (request.method === "browser_snapshot") {
+          if (++snapshots === 1) return semanticSnapshot(tab.tabId)
+          throw new Error("stale_target")
+        }
+        if (request.method === "playwright_locator_click") return { ok: true }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    await call(tools, "mcp__browser__snapshot", {})
+    const raw = await rawCall(tools, "mcp__browser__click", { ref: "e1" })
+    const result = JSON.parse(String(raw.content))
+
+    expect(raw.is_error).toBeUndefined()
+    expect(result).toMatchObject({ ok: true, action: { ok: true }, observation: null, observation_error: "stale_target", requires_snapshot: true })
+  })
+
   test("returns script exceptions as structured tool errors", async () => {
     const tab = agentTab("locked-tab", "thread-1")
     const broker = {
@@ -92,10 +175,24 @@ describe("createBrowserMcpTools", () => {
 })
 
 async function call(tools: ReturnType<typeof createBrowserMcpTools>, name: string, args: Record<string, unknown>): Promise<any> {
+  const result = await rawCall(tools, name, args)
+  return JSON.parse(String(result.content))
+}
+
+async function rawCall(tools: ReturnType<typeof createBrowserMcpTools>, name: string, args: Record<string, unknown>): Promise<any> {
   const tool = tools.find((candidate) => candidate.name === name)
   if (!tool) throw new Error(`missing tool ${name}`)
-  const result = await tool.call(args, { toolUseId: `call-${name}` } as any)
-  return JSON.parse(String(result.content))
+  return tool.call(args, { toolUseId: `call-${name}` } as any)
+}
+
+function semanticSnapshot(tabId: string, snapshotId = "snap-1") {
+  return {
+    snapshot_id: snapshotId,
+    tab_id: tabId,
+    navigation_generation: 1,
+    tree: '- textbox "Search" [ref=e1]',
+    refs: { e1: { role: "textbox", name: "Search" } },
+  }
 }
 
 function agentTab(tabId: string, ownerThreadId: string): BrowserTabDescriptor {

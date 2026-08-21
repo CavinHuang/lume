@@ -2,6 +2,12 @@ export interface BrowserToolSession {
   activeTabId?: string
   browserSessionId: string
   browserTurnId: string
+  snapshot?: {
+    generation: number
+    refs: Record<string, { name: string; nth?: number; role: string }>
+    snapshotId: string
+    tabId: string
+  }
   threadId: string
 }
 

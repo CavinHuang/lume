@@ -69,6 +69,8 @@ describe("ContextAssembler", () => {
         "mcp__browser__open",
         "mcp__browser__switch_tab",
         "mcp__browser__snapshot",
+        "mcp__browser__click",
+        "mcp__browser__fill",
         "mcp__browser__run_script",
         "mcp__node_repl__js",
         "mcp__computer_use__click"
@@ -90,6 +92,8 @@ describe("ContextAssembler", () => {
     expect(result.runtimeContext).toContain("whole user request, including all internal Agent iterations");
     expect(result.runtimeContext).toContain("do not activate browser:browser");
     expect(result.runtimeContext).toContain("Take a fresh snapshot before reading or acting");
+    expect(result.runtimeContext).toContain("Each action returns a fresh snapshot");
+    expect(result.runtimeContext).toContain("use only refs from the newest snapshot");
     expect(result.runtimeContext).not.toContain("exact skill name browser:browser");
     expect(result.runtimeContext).not.toContain("browser.tabs.resumeHandoff()");
     expect(result.runtimeContext).not.toContain("mcp__computer_use__list_apps");
