@@ -164,6 +164,7 @@ type BrowserPageAssetInventory = {
 type BrowserSemanticRefSession = {
   byIdentity: Map<string, string>
   entries: Map<string, BrowserSemanticRef & { generation: number; snapshotId: string; tabId: string }>
+  mainFrameId?: string
   nextRef: number
 }
 
@@ -872,7 +873,13 @@ export class BrowserRuntime {
     if (method === "wait:url") return this.waitForUrl(tab, String(params.url ?? ""), boundedNumber(params.timeoutMs ?? (params.options as Record<string, unknown> | undefined)?.timeoutMs, 0, 30_000) || 10_000)
     if (method === "wait:load") return this.waitForLoad(tab, boundedNumber(params.timeoutMs, 0, 30_000) || 10_000)
     if (method === "wait:timeout") { await delay(boundedNumber(params.timeoutMs, 0, 30_000)); return undefined }
-    if (method === "screenshot") return this.screenshot(tab, params)
+    if (method === "screenshot") {
+      if (params.annotated === true) {
+        if (params.fullPage === true) throw browserError("invalid_browser_request")
+        return this.annotatedScreenshot(tab, String(params.semanticSnapshotId ?? ""), context)
+      }
+      return this.screenshot(tab, params)
+    }
     if (method === "screenshot:save") return this.saveScreenshot(tab, params)
     if (method === "screenshot:attachment") return this.saveReviewScreenshot(tab, params, context)
     if (method === "screenshot:attachment:delete") return this.deleteReviewScreenshot(tab, params, context)
@@ -2902,13 +2909,14 @@ export class BrowserRuntime {
           nodes.push(supplement)
         }
       }
-      return { nodes }
+      return { mainFrameId: frameIds[0], nodes }
     })
     const session: BrowserSemanticRefSession = this.semanticRefSessions.get(context.browserSessionId) ?? {
       byIdentity: new Map<string, string>(),
       entries: new Map(),
       nextRef: 1,
     }
+    session.mainFrameId = result.mainFrameId
     this.semanticRefSessions.set(context.browserSessionId, session)
     const snapshotId = randomUUID()
     const tree = buildBrowserSemanticTree(result.nodes, {
@@ -3077,12 +3085,92 @@ export class BrowserRuntime {
     }
   }
 
+  private async annotatedScreenshot(tab: BrowserTab, snapshotId: string, context: BrowserRequestContext): Promise<{ data: string; annotated_refs: string[] }> {
+    const session = this.semanticRefSessions.get(context.browserSessionId)
+    const entries = [...(session?.entries.entries() ?? [])]
+      .filter(([, entry]) => entry.snapshotId === snapshotId
+        && entry.tabId === tab.tabId
+        && entry.generation === tab.generation
+        && entry.frameId === session?.mainFrameId)
+      .slice(0, 100)
+    if (!snapshotId || !entries.length) throw browserError("stale_target")
+
+    const source = await this.screenshot(tab, { fullPage: false })
+    const labels = await withDebugger(browserContents(tab), async (debuggerRef) => {
+      const resolved: Array<{ ref: string; x: number; y: number; width: number; height: number }> = []
+      for (const [ref, entry] of entries) {
+        try {
+          const box = await debuggerRef.sendCommand("DOM.getBoxModel", { backendNodeId: entry.backendNodeId }) as { model?: { border?: number[]; content?: number[] } }
+          const quad = box.model?.border ?? box.model?.content
+          if (!Array.isArray(quad) || quad.length < 8) continue
+          const xs = [quad[0], quad[2], quad[4], quad[6]].map(Number)
+          const ys = [quad[1], quad[3], quad[5], quad[7]].map(Number)
+          if ([...xs, ...ys].some((value) => !Number.isFinite(value))) continue
+          const x = Math.min(...xs)
+          const y = Math.min(...ys)
+          const width = Math.max(...xs) - x
+          const height = Math.max(...ys) - y
+          if (width > 0 && height > 0) resolved.push({ ref: `@${ref}`, x, y, width, height })
+        } catch {
+          // A detached main-frame node is omitted without invalidating other labels.
+        }
+      }
+      return resolved
+    })
+    const rendered = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(() => new Promise((resolve, reject) => {
+      const image = new Image()
+      image.onload = () => {
+        const canvas = document.createElement("canvas")
+        canvas.width = image.naturalWidth
+        canvas.height = image.naturalHeight
+        const context = canvas.getContext("2d")
+        if (!context) { reject(new Error("canvas unavailable")); return }
+        context.drawImage(image, 0, 0)
+        const scaleX = image.naturalWidth / Math.max(1, innerWidth)
+        const scaleY = image.naturalHeight / Math.max(1, innerHeight)
+        context.font = (14 * Math.max(scaleX, scaleY)) + "px ui-monospace, monospace"
+        context.textBaseline = "top"
+        const annotatedRefs = []
+        for (const label of ${JSON.stringify(labels)}) {
+          const x = label.x * scaleX
+          const y = label.y * scaleY
+          const width = label.width * scaleX
+          const height = label.height * scaleY
+          if (x + width < 0 || y + height < 0 || x > canvas.width || y > canvas.height) continue
+          annotatedRefs.push(label.ref)
+          context.strokeStyle = "#ff2d55"
+          context.lineWidth = Math.max(2, 2 * Math.max(scaleX, scaleY))
+          context.strokeRect(x, y, width, height)
+          const metrics = context.measureText(label.ref)
+          const padding = 3 * Math.max(scaleX, scaleY)
+          const labelHeight = 18 * Math.max(scaleX, scaleY)
+          const labelY = Math.max(0, y - labelHeight)
+          context.fillStyle = "#ff2d55"
+          context.fillRect(Math.max(0, x), labelY, metrics.width + padding * 2, labelHeight)
+          context.fillStyle = "#ffffff"
+          context.fillText(label.ref, Math.max(0, x) + padding, labelY + padding)
+        }
+        resolve({
+          data: canvas.toDataURL("image/png").slice("data:image/png;base64,".length),
+          annotatedRefs,
+        })
+      }
+      image.onerror = () => reject(new Error("image decode failed"))
+      image.src = "data:image/jpeg;base64,${source}"
+    }))()` }], true)
+    if (!isRecord(rendered) || typeof rendered.data !== "string" || !rendered.data) throw browserError("browser_internal_error")
+    const annotatedRefs = Array.isArray(rendered.annotatedRefs)
+      ? rendered.annotatedRefs.filter((ref): ref is string => typeof ref === "string")
+      : []
+    return { data: rendered.data, annotated_refs: annotatedRefs }
+  }
+
   private async saveScreenshot(tab: BrowserTab, params: Record<string, unknown>): Promise<{ saved: boolean }> {
     const win = this.options.getWindow()
     if (!win || win.isDestroyed()) throw browserError("browser_unavailable")
     const selected = await dialog.showSaveDialog(win, { defaultPath: `lume-page-${Date.now()}.png`, filters: [{ name: "PNG", extensions: ["png"] }] })
     if (selected.canceled || !selected.filePath) return { saved: false }
-    const data = await this.screenshot(tab, { ...params, fullPage: true })
+    const data = await this.screenshot(tab, { ...params, annotated: false, fullPage: true })
     // screenshot 可能返回 jpeg（fallback 链），此处契约是 .png 文件——重编码保一致
     writeFileSync(selected.filePath, nativeImage.createFromBuffer(Buffer.from(data, "base64")).toPNG())
     return { saved: true }
@@ -3096,7 +3184,8 @@ export class BrowserRuntime {
     const directory = join(this.options.configDir(), "browser", "review-resources", ownerThreadId)
     mkdirSync(directory, { recursive: true })
     // screenshot 恒返回 jpeg（视口路径），此处契约是 .png 文件——重编码保一致
-    const data = nativeImage.createFromBuffer(Buffer.from(await this.screenshot(tab, { fullPage: false }), "base64")).toPNG()
+    const screenshot = await this.screenshot(tab, { annotated: false, fullPage: false })
+    const data = nativeImage.createFromBuffer(Buffer.from(screenshot, "base64")).toPNG()
     if (!data.length || data.length > 20 * 1024 * 1024) throw browserError("browser_internal_error")
     writeFileSync(join(directory, `${id}.png`), data, { mode: 0o600 })
     return { screenshotRef: `browser-review-screenshot:${ownerThreadId}:${id}` }

@@ -499,7 +499,16 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "navigate_tab_reload": return { method: "reload", params }
     case "tab_url": return { method: "url", params }
     case "tab_title": return { method: "title", params }
-    case "tab_screenshot": return { method: "screenshot", params: { ...params, ...options, fullPage: options.fullPage === true || params.fullPage === true } }
+    case "tab_screenshot": return {
+      method: "screenshot",
+      params: {
+        ...params,
+        ...options,
+        fullPage: options.fullPage === true || params.fullPage === true,
+        annotated: input.annotated === true || params.annotated === true,
+        semanticSnapshotId: input.semanticSnapshotId ?? params.semanticSnapshotId,
+      },
+    }
     case "tab_content": return { method: "content", params: { ...params, format: input.content_type === "html" ? "html" : "text" } }
     case "tab_content_export": return { method: "content:export", params }
     case "tab_content_export_gsuite": return { method: "content:exportGsuite", params: { ...params, format: input.format ?? input.type ?? options.format } }

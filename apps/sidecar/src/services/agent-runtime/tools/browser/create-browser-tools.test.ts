@@ -157,6 +157,49 @@ describe("createBrowserMcpTools", () => {
     })
   })
 
+  test("binds annotated screenshots to refs from the latest snapshot", async () => {
+    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
+    const tab = agentTab("locked-tab", "thread-1")
+    const pixels = Buffer.from("png-pixels").toString("base64")
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
+        calls.push(request)
+        if (request.method === "list_tabs") return [tab]
+        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, "snap-1")
+        if (request.method === "tab_screenshot") return { data: pixels, annotated_refs: ["@e1"] }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    await call(tools, "mcp__browser__snapshot", {})
+    const result = await rawCall(tools, "mcp__browser__screenshot", { annotated: true })
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "tab_screenshot",
+      params: { tabId: "locked-tab", annotated: true, fullPage: false, semanticSnapshotId: "snap-1" },
+    })
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ annotated: true, snapshot_id: "snap-1", annotated_refs: ["@e1"] })
+    expect(result.content[1]).toMatchObject({ type: "image", source: { media_type: "image/png", data: pixels } })
+  })
+
+  test("requires a fresh snapshot before an annotated screenshot", async () => {
+    const tab = agentTab("locked-tab", "thread-1")
+    const tools = createBrowserMcpTools({
+      broker: {
+        listBackends: () => [{ backend: "iab" }],
+        dispatch: async (request: { method: string }) => request.method === "list_tabs" ? [tab] : undefined,
+      } as any,
+      sessionRegistry: new BrowserToolSessionRegistry(),
+      threadId: "thread-1",
+    })
+
+    const result = await rawCall(tools, "mcp__browser__screenshot", { annotated: true })
+
+    expect(JSON.parse(String(result.content))).toMatchObject({ ok: false, code: "snapshot_required" })
+  })
+
   test("coordinates file chooser uploads and click-triggered downloads", async () => {
     const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
     const tab = agentTab("locked-tab", "thread-1")

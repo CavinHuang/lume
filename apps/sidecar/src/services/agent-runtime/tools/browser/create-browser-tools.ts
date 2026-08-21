@@ -142,16 +142,26 @@ async function executeTool(
   }
   if (name === "screenshot") {
     const fullPage = args.full_page === true
+    const annotated = args.annotated === true
+    if (annotated && fullPage) throw new Error("invalid_browser_request")
+    if (annotated && !session.snapshot) throw new Error("snapshot_required")
     const screenshot = asRecord(await dispatch(broker, "tab_screenshot", {
       tabId: activeTab.tabId,
       fullPage,
+      annotated,
+      ...(annotated ? { semanticSnapshotId: session.snapshot!.snapshotId } : {}),
     }))
     const data = stringValue(screenshot.data)
     if (!data) throw new Error("browser_internal_error")
     return {
       active_tab_id: activeTab.tabId,
-      image: { data, media_type: fullPage ? "image/png" : "image/jpeg" },
+      image: { data, media_type: fullPage || annotated ? "image/png" : "image/jpeg" },
       full_page: fullPage,
+      annotated,
+      ...(annotated ? {
+        snapshot_id: session.snapshot!.snapshotId,
+        annotated_refs: Array.isArray(screenshot.annotated_refs) ? screenshot.annotated_refs : [],
+      } : {}),
     }
   }
   if (name === "list_secrets") {
@@ -301,6 +311,7 @@ function toolSchema(name: BrowserToolName): ToolInputSchema {
   })
   if (name === "screenshot") return object({
     full_page: { type: "boolean", default: false, description: "Capture the full scrollable page instead of the current viewport." },
+    annotated: { type: "boolean", default: false, description: "Label visible elements with refs from the latest snapshot. Requires snapshot first and cannot be combined with full_page." },
   })
   if (name === "upload") return object({
     ref: refSchema(),
@@ -375,7 +386,7 @@ function describeTool(name: BrowserToolName): string {
     select: "Select an option value on a control from the latest snapshot, then return a fresh interactive snapshot.",
     check: "Set the checked state of a checkbox or radio from the latest snapshot, then return a fresh interactive snapshot.",
     scroll: "Scroll at an element from the latest snapshot, then return a fresh interactive snapshot.",
-    screenshot: "Capture the locked Agent tab as an image for visual inspection. Prefer snapshot refs for interaction; screenshots are observation only.",
+    screenshot: "Capture the locked Agent tab as an image for visual inspection. Set annotated=true after snapshot to label visible elements with the same refs used by semantic actions. Screenshots are observation only.",
     upload: "Click a file control from the latest snapshot, wait for its chooser, and upload task-authorized files as one coordinated operation. Requires confirmation.",
     download: "Click a download control from the latest snapshot, wait for the resulting download, and return a task-scoped browser-download file ref.",
     list_secrets: "List saved credential metadata available for the locked tab's exact origin. Secret values are never returned.",
@@ -551,7 +562,7 @@ function screenshotToolResult(toolUseId: string, sessionId: string, result: Reco
     type: "tool_result",
     tool_use_id: toolUseId,
     content: [
-      { type: "text", text: JSON.stringify({ ok: true, operation_id: toolUseId, session_id: sessionId, active_tab_id: result.active_tab_id, full_page: result.full_page, screenshot_id: screenshotId }) },
+      { type: "text", text: JSON.stringify({ ok: true, operation_id: toolUseId, session_id: sessionId, active_tab_id: result.active_tab_id, full_page: result.full_page, annotated: result.annotated === true, snapshot_id: result.snapshot_id, annotated_refs: result.annotated_refs, screenshot_id: screenshotId }) },
       { type: "image", source: { type: "base64", media_type: mediaType, data }, _meta: { persist: false, screenshotId } },
     ],
     _meta: { repeatGuard: { state: { ok: true, tool: "screenshot", active_tab_id: result.active_tab_id, full_page: result.full_page } } },

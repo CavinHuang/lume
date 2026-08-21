@@ -359,6 +359,13 @@ app.whenReady().then(async () => {
     const supplementedSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
     const customCardRef = Object.entries(supplementedSnapshot.refs).find(([, value]) => value.role === 'clickable' && value.name === 'Custom card')?.[0]
     check(typeof customCardRef === 'string', 'semantic snapshot did not supplement a cursor-pointer element')
+    const annotatedScreenshot = await call('screenshot', {
+      tabId: 'fixture-tab',
+      annotated: true,
+      semanticSnapshotId: supplementedSnapshot.snapshot_id,
+    })
+    check(typeof annotatedScreenshot.data === 'string' && annotatedScreenshot.data.length > 100, 'annotated screenshot was empty')
+    check(annotatedScreenshot.annotated_refs.includes('@' + customCardRef), 'annotated screenshot did not reuse the semantic ref')
     await call('click', {
       tabId: 'fixture-tab',
       locator: locator('#custom-card'),
