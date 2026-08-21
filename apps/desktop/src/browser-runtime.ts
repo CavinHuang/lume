@@ -2896,6 +2896,10 @@ export class BrowserRuntime {
       })
     }
 
+    // 导航边界（open 新 tab / click 触发跳转 / 新 tab 打开）后立即采集会拿到空树或旧页 DOM——
+    // best-effort 等待加载完成再采集；超时仍返回当前状态，不阻塞快照链路。cursor/scope 命中缓存的路径无需等待。
+    await this.waitForLoad(tab, 3_000).catch(() => undefined)
+
     const result = await withDebugger(browserContents(tab), async (debuggerRef) => {
       await debuggerRef.sendCommand("DOM.enable")
       await debuggerRef.sendCommand("Accessibility.enable")
@@ -3083,7 +3087,11 @@ export class BrowserRuntime {
       tree: lines.map((line) => line.text).join("\n"),
       refs,
       range: { from: snapshot.offset, to: end, total: snapshot.lines.length },
-      ...(nextCursor ? { next_cursor: nextCursor } : {}),
+      // 显式引导翻页：实测模型拿到 next_cursor 却不消费、误把 limit 当起点，停在第一页
+      ...(nextCursor ? {
+        next_cursor: nextCursor,
+        continue_hint: `${end}/${snapshot.lines.length} lines shown; pass next_cursor as the snapshot tool's cursor argument to read the remaining ${snapshot.lines.length - end} lines`,
+      } : {}),
     }
   }
 
