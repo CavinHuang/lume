@@ -323,6 +323,25 @@ app.whenReady().then(async () => {
     await call('click', { tabId: 'fixture-tab', locator: locator('#submit') })
     const pageResult = await view.executeJavaScript("document.querySelector('#result').textContent")
     check(pageResult === 'Lume Agent', 'locator fill/click did not update the page')
+    setStage('semantic-ref')
+    const semanticSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    const applyRef = Object.entries(semanticSnapshot.refs).find(([, value]) => value.role === 'button' && value.name === 'Apply')?.[0]
+    check(typeof applyRef === 'string', 'semantic snapshot did not expose the Apply button ref')
+    await view.executeJavaScript("document.querySelector('#result').textContent = ''")
+    await call('click', {
+      tabId: 'fixture-tab',
+      locator: locator('#submit'),
+      semanticRef: applyRef,
+      semanticSnapshotId: semanticSnapshot.snapshot_id,
+    })
+    check(await view.executeJavaScript("document.querySelector('#result').textContent") === 'Lume Agent', 'semantic ref did not resolve the exact backend node')
+    await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    await checkRejects(() => call('click', {
+      tabId: 'fixture-tab',
+      locator: locator('#submit'),
+      semanticRef: applyRef,
+      semanticSnapshotId: semanticSnapshot.snapshot_id,
+    }), 'stale_target', 'a ref from an older snapshot remained actionable')
     const webMcpTools = await call('webmcp:list', { tabId: 'fixture-tab' })
     check(webMcpTools.tools.length === 1 && webMcpTools.tools[0].name === 'set_result' && webMcpTools.tools[0].input_schema.type === 'object', 'WebMCP tools were not normalized')
     const webMcpResult = await call('webmcp:invoke', { tabId: 'fixture-tab', toolName: 'set_result', input: { value: 'WebMCP Agent' } })

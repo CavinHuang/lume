@@ -185,6 +185,8 @@ async function executeTool(
       dispatch(broker, "playwright_locator_click", {
         tabId: activeTab.tabId,
         locator: target.locator,
+        semanticRef: target.refId,
+        semanticSnapshotId: target.snapshotId,
         semanticIntent: `${target.ref.role} ${target.ref.name}`.trim(),
       }),
     ])
@@ -206,6 +208,8 @@ async function executeTool(
       dispatch(broker, "playwright_locator_click", {
         tabId: activeTab.tabId,
         locator: target.locator,
+        semanticRef: target.refId,
+        semanticSnapshotId: target.snapshotId,
         semanticIntent: `${target.ref.role} ${target.ref.name}`.trim(),
       }),
     ])
@@ -225,6 +229,8 @@ async function executeTool(
     const action = await dispatch(broker, actionBrokerMethod(name, args), {
       tabId: activeTab.tabId,
       locator: target.locator,
+      semanticRef: target.refId,
+      semanticSnapshotId: target.snapshotId,
       semanticIntent: `${target.ref.role} ${target.ref.name}`.trim(),
       ...actionParams(name, args),
     })
@@ -411,7 +417,7 @@ function semanticTarget(
   session: ReturnType<BrowserToolSessionRegistry["getOrCreate"]>,
   tab: BrowserTabDescriptor,
   value: unknown,
-): { locator: { version: 1; steps: Array<Record<string, unknown>> }; ref: { name: string; nth?: number; role: string } } {
+): { locator: { version: 1; steps: Array<Record<string, unknown>> }; ref: { name: string; nth?: number; role: string }; refId: string; snapshotId: string } {
   const key = stringValue(value)?.replace(/^@/, "")
   const snapshot = session.snapshot
   if (!key || !snapshot || snapshot.tabId !== tab.tabId || snapshot.generation !== tab.generation) throw new Error("stale_target")
@@ -419,6 +425,8 @@ function semanticTarget(
   if (!ref) throw new Error("stale_target")
   return {
     ref,
+    refId: key,
+    snapshotId: snapshot.snapshotId,
     locator: {
       version: 1,
       steps: [

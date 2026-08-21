@@ -124,6 +124,8 @@ describe("createBrowserMcpTools", () => {
       params: {
         tabId: "locked-tab",
         text: "agent",
+        semanticRef: "e1",
+        semanticSnapshotId: "snap-1",
         semanticIntent: "textbox Search",
         locator: { version: 1, steps: [{ kind: "role", role: "textbox", name: "Search", exact: true }] },
       },

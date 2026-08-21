@@ -163,7 +163,7 @@ type BrowserPageAssetInventory = {
 
 type BrowserSemanticRefSession = {
   byIdentity: Map<string, string>
-  entries: Map<string, BrowserSemanticRef & { generation: number; tabId: string }>
+  entries: Map<string, BrowserSemanticRef & { generation: number; snapshotId: string; tabId: string }>
   nextRef: number
 }
 
@@ -1691,7 +1691,7 @@ export class BrowserRuntime {
       // 显式 timeoutMs:0 = 关闭 auto-wait（boundedNumber 的 || 3_000 会吞掉 0）
       const rawAutoWait = params.timeoutMs ?? params.timeout_ms
       const autoWaitMs = rawAutoWait === 0 ? 0 : (boundedNumber(rawAutoWait, 0, 30_000) || 3_000)
-      const target = await this.resolveTargetWithAutoWait(tab, generation, params, autoWaitMs)
+      const target = await this.resolveTargetWithAutoWait(tab, generation, params, autoWaitMs, context)
       if (tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
       tab.inputSequence += 1
       tab.agentDispatching = true
@@ -1949,7 +1949,7 @@ export class BrowserRuntime {
     })
     const generation = tab.generation
     const inputSequence = tab.inputSequence
-    const target = await this.resolveTarget(tab, params)
+    const target = await this.resolveTarget(tab, params, context)
     if (target.tagName.toLowerCase() !== "input" || tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
     await withDebugger(browserContents(tab), async (debuggerRef) => {
       const located = await debuggerRef.sendCommand("DOM.getNodeForLocation", { x: Math.round(target.x), y: Math.round(target.y) }) as { backendNodeId?: number }
@@ -2072,7 +2072,7 @@ export class BrowserRuntime {
     if (nodeId && (!node || node.generation !== tab.generation)) throw browserError("stale_target")
     const target = node
       ? { x: node.x, y: node.y }
-      : await this.resolveTarget(tab, params)
+      : await this.resolveTarget(tab, params, context)
     const generation = tab.generation
     const mediaUrl = await withDebugger(browserContents(tab), async (debuggerRef) => {
       const located = await debuggerRef.sendCommand("DOM.getNodeForLocation", {
@@ -2591,7 +2591,11 @@ export class BrowserRuntime {
     }
   }
 
-  private async resolveTarget(tab: BrowserTab, params: Record<string, unknown>): Promise<ResolvedBrowserTarget> {
+  private async resolveTarget(tab: BrowserTab, params: Record<string, unknown>, context?: BrowserRequestContext): Promise<ResolvedBrowserTarget> {
+    if (typeof params.semanticRef === "string" || typeof params.semanticSnapshotId === "string") {
+      if (!context) throw browserError("invalid_browser_request")
+      return this.resolveSemanticRefTarget(tab, params, context)
+    }
     if (params.locator === undefined) return { x: boundedNumber(params.x, 0, 100_000), y: boundedNumber(params.y, 0, 100_000), width: 1, height: 1, tagName: "", editable: true, enabled: true }
     if (!isBrowserLocator(params.locator)) throw browserError("invalid_browser_request")
     try {
@@ -2607,6 +2611,92 @@ export class BrowserRuntime {
     }
   }
 
+  private async resolveSemanticRefTarget(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): Promise<ResolvedBrowserTarget> {
+    const ref = typeof params.semanticRef === "string" ? params.semanticRef : ""
+    const snapshotId = typeof params.semanticSnapshotId === "string" ? params.semanticSnapshotId : ""
+    const entry = this.semanticRefSessions.get(context.browserSessionId)?.entries.get(ref)
+    if (!ref || !snapshotId || !entry
+      || entry.snapshotId !== snapshotId
+      || entry.tabId !== tab.tabId
+      || entry.generation !== tab.generation) throw browserError("stale_target")
+
+    return withDebugger(browserContents(tab), async (debuggerRef) => {
+      await debuggerRef.sendCommand("DOM.scrollIntoViewIfNeeded", { backendNodeId: entry.backendNodeId }).catch(() => undefined)
+      const resolved = await debuggerRef.sendCommand("DOM.resolveNode", { backendNodeId: entry.backendNodeId }) as { object?: { objectId?: string } }
+      const objectId = resolved.object?.objectId
+      if (!objectId) throw browserError("stale_target")
+      try {
+        const inspected = await debuggerRef.sendCommand("Runtime.callFunctionOn", {
+          objectId,
+          functionDeclaration: `function () {
+            const rect = this.getBoundingClientRect()
+            const style = getComputedStyle(this)
+            const enabled = !("disabled" in this && this.disabled) && this.getAttribute("aria-disabled") !== "true"
+            return {
+              editable: this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement || this instanceof HTMLSelectElement || this.isContentEditable,
+              enabled,
+              role: this.getAttribute("role") || undefined,
+              tagName: String(this.tagName || "").toLowerCase(),
+              visible: rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden",
+            }
+          }`,
+          returnByValue: true,
+        }) as { result?: { value?: unknown }; exceptionDetails?: unknown }
+        if (inspected.exceptionDetails) throw browserError("stale_target")
+        const details = isRecord(inspected.result?.value) ? inspected.result.value : {}
+        if (details.visible !== true || details.enabled === false) throw browserError("action_denied")
+
+        const box = await debuggerRef.sendCommand("DOM.getBoxModel", { backendNodeId: entry.backendNodeId }) as { model?: { border?: number[]; content?: number[] } }
+        const quad = box.model?.content ?? box.model?.border
+        if (!Array.isArray(quad) || quad.length < 8) throw browserError("stale_target")
+        const xs = [quad[0], quad[2], quad[4], quad[6]].map(Number)
+        const ys = [quad[1], quad[3], quad[5], quad[7]].map(Number)
+        if ([...xs, ...ys].some((value) => !Number.isFinite(value))) throw browserError("stale_target")
+        const left = Math.min(...xs)
+        const right = Math.max(...xs)
+        const top = Math.min(...ys)
+        const bottom = Math.max(...ys)
+        const x = left + (right - left) / 2
+        const y = top + (bottom - top) / 2
+
+        const hit = await debuggerRef.sendCommand("DOM.getNodeForLocation", {
+          x: Math.round(x),
+          y: Math.round(y),
+          includeUserAgentShadowDOM: true,
+        }) as { backendNodeId?: number }
+        if (!hit.backendNodeId) throw browserError("action_denied")
+        if (hit.backendNodeId !== entry.backendNodeId) {
+          const hitResolved = await debuggerRef.sendCommand("DOM.resolveNode", { backendNodeId: hit.backendNodeId }) as { object?: { objectId?: string } }
+          const hitObjectId = hitResolved.object?.objectId
+          if (!hitObjectId) throw browserError("action_denied")
+          try {
+            const containment = await debuggerRef.sendCommand("Runtime.callFunctionOn", {
+              objectId,
+              functionDeclaration: "function (hit) { return this === hit || this.contains(hit) }",
+              arguments: [{ objectId: hitObjectId }],
+              returnByValue: true,
+            }) as { result?: { value?: unknown } }
+            if (containment.result?.value !== true) throw browserError("action_denied")
+          } finally {
+            await debuggerRef.sendCommand("Runtime.releaseObject", { objectId: hitObjectId }).catch(() => undefined)
+          }
+        }
+        return {
+          x,
+          y,
+          width: right - left,
+          height: bottom - top,
+          tagName: typeof details.tagName === "string" ? details.tagName : "",
+          ...(typeof details.role === "string" ? { role: details.role } : {}),
+          editable: details.editable === true,
+          enabled: details.enabled !== false,
+        }
+      } finally {
+        await debuggerRef.sendCommand("Runtime.releaseObject", { objectId }).catch(() => undefined)
+      }
+    })
+  }
+
   // auto-wait：在 timeoutMs 内重试 resolveTarget，让 locator 操作自动等元素就绪（对齐 Codex mI 循环）。
   // 检查项复用 resolveTarget 已有的 visible/enabled/obstruction；多匹配(strict)不重试立即抛；导航靠 generation 识别。
   private async resolveTargetWithAutoWait(
@@ -2614,21 +2704,23 @@ export class BrowserRuntime {
     generation: number,
     params: Record<string, unknown>,
     timeoutMs: number,
+    context?: BrowserRequestContext,
   ): Promise<ResolvedBrowserTarget> {
     // 坐标点目标(无 locator)或 timeoutMs<=0(关闭等待)：直通 one-shot
-    if (timeoutMs <= 0 || params.locator === undefined || !isBrowserLocator(params.locator)) {
-      return this.resolveTarget(tab, params)
+    if (timeoutMs <= 0 || (params.locator === undefined && params.semanticRef === undefined)) {
+      return this.resolveTarget(tab, params, context)
     }
     const deadline = Date.now() + timeoutMs
     while (true) {
       if (tab.generation !== generation) throw browserError("stale_target")
       try {
-        return await this.resolveTarget(tab, params)
+        return await this.resolveTarget(tab, params, context)
       } catch (error) {
         const message = error instanceof Error ? error.message : ""
         if (message.includes("invalid_browser_request")) throw browserError("invalid_browser_request")
         if (message.includes("strict_locator_violation")) throw browserError("strict_locator_violation")
         if (message.includes("tab_not_found")) throw browserError("tab_not_found")
+        if (params.semanticRef !== undefined && message.includes("stale_target")) throw browserError("stale_target")
         // resolveTarget 的 action_denied 仅表示目标暂时不可见、不可用或被遮挡；具体动作的永久拒绝发生在后续 dispatch。
         if (Date.now() >= deadline) throw browserError("actionability_failed")
         await delay(50)
@@ -2759,12 +2851,13 @@ export class BrowserRuntime {
       await debuggerRef.sendCommand("Accessibility.enable")
       return debuggerRef.sendCommand("Accessibility.getFullAXTree") as Promise<{ nodes?: unknown }>
     })
-    const session = this.semanticRefSessions.get(context.browserSessionId) ?? {
+    const session: BrowserSemanticRefSession = this.semanticRefSessions.get(context.browserSessionId) ?? {
       byIdentity: new Map<string, string>(),
-      entries: new Map<string, BrowserSemanticRef & { generation: number; tabId: string }>(),
+      entries: new Map(),
       nextRef: 1,
     }
     this.semanticRefSessions.set(context.browserSessionId, session)
+    const snapshotId = randomUUID()
     const tree = buildBrowserSemanticTree(result.nodes, {
       interactiveOnly: params.interactiveOnly === true || params.interactive_only === true,
       allocateRef: (entry) => {
@@ -2774,7 +2867,7 @@ export class BrowserRuntime {
           ref = `e${session.nextRef++}`
           session.byIdentity.set(identity, ref)
         }
-        session.entries.set(ref, { ...entry, ref, generation: tab.generation, tabId: tab.tabId })
+        session.entries.set(ref, { ...entry, ref, generation: tab.generation, snapshotId, tabId: tab.tabId })
         return ref
       },
     })
@@ -2785,7 +2878,7 @@ export class BrowserRuntime {
       offset: 0,
       refs: tree.refs,
       sessionId: context.browserSessionId,
-      snapshotId: randomUUID(),
+      snapshotId,
       tabId: tab.tabId,
       title: tab.title,
       url: tab.url,
