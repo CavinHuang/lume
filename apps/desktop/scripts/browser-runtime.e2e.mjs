@@ -292,6 +292,8 @@ app.whenReady().then(async () => {
     const takenOver = await userCall('get', { tabId: 'fixture-tab' })
     check(takenOver.agentControlState === 'paused_by_user', 'real user input did not pause Agent browser control')
     await checkRejects(() => call('url', { tabId: 'fixture-tab' }), 'user_takeover_required', 'Agent kept controlling a user-taken-over tab')
+    await checkRejects(() => call('ensure', { tabId: 'takeover-side-tab' }), 'user_takeover_required', 'Agent opened a side tab to bypass a user takeover')
+    await checkRejects(() => call('close', { tabId: 'fixture-tab' }), 'user_takeover_required', 'Agent closed a tab the user had taken over')
     const resumedControl = await userCall('agentControl:resume', { tabId: 'fixture-tab' })
     check(resumedControl.agentControlState === 'active' && resumedControl.generation > takenOver.generation, 'explicit user resume did not invalidate old Agent page state')
     if (process.env.LUME_BROWSER_POPUP_ONLY === '1') {

@@ -545,6 +545,15 @@ export class BrowserRuntime {
 
   resetAgentCursor(): void { this.hideAgentCursor() }
 
+  // 用户接管是会话级暂停：同 session 任意 tab 处于 paused_by_user 时，
+  // Agent 不得开新 Tab 或认领其他 Tab 绕开暂停继续操作。
+  private hasPausedTakeoverTab(browserSessionId: string): boolean {
+    for (const tab of this.tabs.values()) {
+      if (tab.agentLease?.browserSessionId === browserSessionId && tab.agentControlState === "paused_by_user") return true
+    }
+    return false
+  }
+
   private pauseAgentControl(tab: BrowserTab): void {
     if (!tab.agentLease || tab.agentControlState === "paused_by_user") return
     const lease = tab.agentLease
@@ -731,7 +740,10 @@ export class BrowserRuntime {
       return { ok: true }
     }
     if (method.startsWith("workspace:")) return this.dispatchWorkspace(method, params, context)
-    if (method === "ensure") return this.ensureTab(String(params.tabId ?? randomUUID()), context, params)
+    if (method === "ensure") {
+      if (context.actor === "agent" && this.hasPausedTakeoverTab(context.browserSessionId)) throw browserError("user_takeover_required")
+      return this.ensureTab(String(params.tabId ?? randomUUID()), context, params)
+    }
     if (method === "mount:prepare") return this.prepareGuestMount(String(params.tabId ?? context.tabId ?? ""), context)
     if (method === "mount:release") return this.releaseGuestMount(String(params.tabId ?? context.tabId ?? ""), context, String(params.mountToken ?? ""))
     if (method === "get") return publicTab(this.requireTab(String(params.tabId ?? context.tabId ?? ""), context))
@@ -745,8 +757,18 @@ export class BrowserRuntime {
     if (method === "finalize") return this.finalizeTabs(context, params)
     if (method === "share") return this.shareTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (method === "unshare") return this.unshareTab(String(params.tabId ?? context.tabId ?? ""), context)
-    if (method === "claim") return this.claimTab(String(params.tabId ?? context.tabId ?? ""), context, params)
-    if (method === "close") return this.closeTab(String(params.tabId ?? context.tabId ?? ""), context)
+    if (method === "claim") {
+      if (context.actor === "agent" && this.hasPausedTakeoverTab(context.browserSessionId)) throw browserError("user_takeover_required")
+      return this.claimTab(String(params.tabId ?? context.tabId ?? ""), context, params)
+    }
+    if (method === "close") {
+      // 被用户接管的 Tab 所有权已转移，Agent 不得关闭用户正在查看的页面
+      if (context.actor === "agent") {
+        const closeTarget = this.tabs.get(String(params.tabId ?? context.tabId ?? ""))
+        if (closeTarget?.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
+      }
+      return this.closeTab(String(params.tabId ?? context.tabId ?? ""), context)
+    }
     if (method === "bounds") return this.updateBounds(String(params.tabId ?? context.tabId ?? ""), params)
     if (method === "visible") return this.setVisible(String(params.tabId ?? context.tabId ?? ""), params.visible === true)
     if (method === "move-owner") {
@@ -1054,7 +1076,14 @@ export class BrowserRuntime {
     }
     if (method === "tweaks:apply") return this.applyPageTweaks(tab, params, context)
     if (method === "tweaks:reset") return this.resetPageTweaks(tab, params, context)
-    if (method === "cdp") return this.cdp(tab, params)
+    if (method === "cdp") {
+      // Agent 的 CDP 调用与语义动作共用同 session 单写者队列，
+      // 且输入类命令须登记 inputLedger，否则会被误判为真实用户输入触发接管。
+      if (context.actor === "agent") {
+        return this.actionQueue.run(`agent:${context.browserSessionId}`, () => this.cdp(tab, params, true))
+      }
+      return this.cdp(tab, params)
+    }
     if (method === "url") return tab.url
     if (method === "title") return tab.title
     throw browserError("unsupported")
@@ -3129,7 +3158,7 @@ export class BrowserRuntime {
     void restore.catch(() => undefined)
   }
 
-  private async cdp(tab: BrowserTab, params: Record<string, unknown>): Promise<unknown> {
+  private async cdp(tab: BrowserTab, params: Record<string, unknown>, agentInput = false): Promise<unknown> {
     if (!this.settings.advancedCdpEnabled || !shouldInstallAdvancedCdpPolicy(tab.partition)) throw browserError("action_denied")
     const origin = safeOrigin(tab.url)
     if (origin && this.settings.sitePermissionOverrides?.[origin]?.cdp !== "allow") throw browserError("action_denied")
@@ -3141,7 +3170,10 @@ export class BrowserRuntime {
       const url = String((commandParams as Record<string, unknown>).url ?? "")
       return this.navigate(tab, url, tab.context ?? userContext())
     }
-    const result = await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand(method, commandParams))
+    const result = await withDebugger(browserContents(tab), (debuggerRef) => {
+      if (agentInput) this.inputLedger.expectCommand(tab.tabId, method, commandParams as Record<string, unknown>)
+      return debuggerRef.sendCommand(method, commandParams)
+    })
     if (Buffer.byteLength(JSON.stringify(result ?? null)) > 2 * 1024 * 1024) throw browserError("browser_internal_error")
     return result
   }
