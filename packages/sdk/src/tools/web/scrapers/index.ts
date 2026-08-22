@@ -253,7 +253,7 @@ export const specialHandlers: SpecialHandler[] = [
 
 
 
-import { setScraperRuntime, type AgentStorage } from "./compat.js";
+import { runWithScraperRuntime, type AgentStorage } from "./compat.js";
 import type { RenderResult } from "./types.js";
 import type { SandboxSettings } from "../../../types.js";
 import type { FetchImpl } from "../../web-fetch-http.js";
@@ -280,18 +280,20 @@ export const specialHandlerNames = [
 
 export async function handleSpecialUrl(url: string, context: ScraperContext): Promise<RenderResult | null> {
   const timeout = Math.max(0.001, context.timeoutMs / 1000);
-  setScraperRuntime({ fetchImpl: context.fetchImpl, sandbox: context.sandbox, storage: context.storage });
-  try {
+  // Aggregate budget: handlers used to each enjoy the full timeout, so a URL
+  // nobody handles burned k×timeout before the generic fallback (#237).
+  const deadline = Date.now() + context.timeoutMs;
+  return runWithScraperRuntime({ fetchImpl: context.fetchImpl, sandbox: context.sandbox, storage: context.storage }, async () => {
     for (const handler of specialHandlers) {
+      const remainingSec = (deadline - Date.now()) / 1000;
+      if (remainingSec <= 0) return null;
       try {
-        const result = await handler(url, timeout, context.signal, context.storage);
+        const result = await handler(url, Math.min(timeout, remainingSec), context.signal, context.storage);
         if (result) return result;
       } catch (error) {
         if (context.signal?.aborted) throw error;
       }
     }
     return null;
-  } finally {
-    setScraperRuntime(undefined);
-  }
+  });
 }

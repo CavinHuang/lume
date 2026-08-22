@@ -5,6 +5,8 @@ import {
   detectAcceptLanguage,
   isBingBlockedPage,
   parseBingResultItem,
+  clampProviderLimit,
+  WebSearchTool,
   ENGINE_TIMEOUT_MS
 } from "./web-search";
 import type { WebSearchProviderName } from "./web-search";
@@ -124,5 +126,31 @@ describe("engine timeout config", () => {
       expect(ENGINE_TIMEOUT_MS[name]).toBeGreaterThan(0);
     }
     expect(ENGINE_TIMEOUT_MS.tavily).toBeGreaterThan(ENGINE_TIMEOUT_MS.brave);
+  });
+});
+
+describe("num_results clamping (#220)", () => {
+  test("clamps num_results to 1..10 with a default of 5", () => {
+    expect(clampProviderLimit(100000)).toBe(10);
+    expect(clampProviderLimit(0)).toBe(5);
+    expect(clampProviderLimit(-3)).toBe(1);
+    expect(clampProviderLimit(3.7)).toBe(3);
+    expect(clampProviderLimit(Number.NaN)).toBe(5);
+  });
+});
+
+describe("WebSearchTool input validation (#220)", () => {
+  test("rejects missing or non-string query", async () => {
+    for (const input of [{}, { query: "" }, { query: "  " }, { query: 42 }]) {
+      const out = await WebSearchTool.call(input as any, { sandbox: undefined } as any);
+      expect(out.is_error).toBe(true);
+      expect((out.content as string).toLowerCase()).toContain("query is required");
+    }
+  });
+
+  test("rejects non-number num_results", async () => {
+    const out = await WebSearchTool.call({ query: "lume", num_results: "10" } as any, { sandbox: undefined } as any);
+    expect(out.is_error).toBe(true);
+    expect((out.content as string).toLowerCase()).toContain("num_results must be a number");
   });
 });

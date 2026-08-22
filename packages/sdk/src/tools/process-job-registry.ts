@@ -5,6 +5,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
@@ -14,6 +15,15 @@ import type { ToolDefinition, ToolExecutionMetadata, ToolResult } from '../types
 import { defineTool } from './types.js'
 
 export type ProcessJobStatus = 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted'
+
+// Hydrate/identity caches for frequent ProcessOutput/ProcessStop polling (#241).
+const IDENTITY_CACHE_TTL_MS = 5_000
+const HYDRATE_THROTTLE_MS = 500
+const identityCache = new Map<number, { identity: string | undefined; at: number }>()
+const persistedJobCache = new Map<string, { mtimeMs: number; parsed: ProcessJob }>()
+let lastHydrateAt = 0
+let lastHydrateRoot = ''
+let lastHydrateResult: ProcessJob[] = []
 
 export interface ProcessJob {
   version?: 2
@@ -122,6 +132,12 @@ export function stopProcessJob(job: ProcessJob): void {
 
 export function loadProcessJobs(root: string): ProcessJob[] {
   const jobsRoot = resolve(root)
+  // Throttle full directory scans: durable-bash polls and ProcessOutput calls
+  // hit this on every tool call; within the window reuse the last result (#241).
+  const now = Date.now()
+  if (jobsRoot === lastHydrateRoot && now - lastHydrateAt < HYDRATE_THROTTLE_MS) {
+    return lastHydrateResult
+  }
   if (!existsSync(jobsRoot)) return []
   const loaded: ProcessJob[] = []
   for (const entry of readdirSync(jobsRoot, { withFileTypes: true })) {
@@ -131,7 +147,12 @@ export function loadProcessJobs(root: string): ProcessJob[] {
     if (!parsed) continue
     const current = jobs.get(parsed.id)
     if (!current || (parsed.updatedAt ?? 0) >= (current.updatedAt ?? 0)) {
-      jobs.set(parsed.id, { ...current, ...parsed, stop: current?.stop })
+      // A worker's last-ditch "running" write (boot update or heartbeat racing
+      // a stop) must not resurrect a job the host already marked terminal.
+      const resurrected = current && current.status !== 'running' && parsed.status === 'running'
+      if (!resurrected) {
+        jobs.set(parsed.id, { ...current, ...parsed, stop: current?.stop })
+      }
     }
     const job = jobs.get(parsed.id)!
     loaded.push(job)
@@ -145,6 +166,9 @@ export function loadProcessJobs(root: string): ProcessJob[] {
       })
     }
   }
+  lastHydrateAt = now
+  lastHydrateRoot = jobsRoot
+  lastHydrateResult = loaded
   return loaded
 }
 
@@ -166,6 +190,11 @@ export function clearProcessJobs(): void {
   for (const id of terminalWaiters.keys()) notifyTerminalWaiters(id, undefined)
   jobs.clear()
   counter = 0
+  identityCache.clear()
+  persistedJobCache.clear()
+  lastHydrateAt = 0
+  lastHydrateRoot = ''
+  lastHydrateResult = []
 }
 
 export function waitForProcessJobTerminal(
@@ -371,13 +400,21 @@ function refreshProcessJob(id: string): void {
   if (!current?.jobDir) return
   const persisted = readPersistedJob(join(current.jobDir, 'state.json'))
   if (!persisted || (persisted.updatedAt ?? 0) < (current.updatedAt ?? 0)) return
+  // Ignore stale worker "running" writes that land after a terminal update.
+  if (current.status !== 'running' && persisted.status === 'running') return
   jobs.set(id, { ...current, ...persisted, stop: current.stop })
 }
 
 function readPersistedJob(statePath: string): ProcessJob | undefined {
   try {
+    // mtime short-circuit: repeated hydrates of an unchanged state.json skip
+    // read+parse entirely (#241); stat is far cheaper than the full read.
+    const mtimeMs = statSync(statePath).mtimeMs
+    const cached = persistedJobCache.get(statePath)
+    if (cached && cached.mtimeMs === mtimeMs) return cached.parsed
     const parsed = JSON.parse(readFileSync(statePath, 'utf8')) as ProcessJob
     if (parsed.version !== 2 || typeof parsed.id !== 'string' || typeof parsed.status !== 'string') return undefined
+    persistedJobCache.set(statePath, { mtimeMs, parsed })
     return parsed
   } catch {
     return undefined
@@ -399,7 +436,8 @@ function isPersistedWorkerAlive(job: ProcessJob): boolean {
     && job.workerIdentity === `${job.processToken}:${processIdentity}`
 }
 
-function stopPersistedWorker(job: ProcessJob): void {
+/** Terminate a durable worker and its whole command process tree. */
+export function stopPersistedWorker(job: ProcessJob): void {
   if (!job.workerPid || job.workerPid <= 0) return
   if (job.workerIdentity && !isPersistedWorkerAlive(job)) return
   if (process.platform === 'win32') {
@@ -423,6 +461,19 @@ function stopPersistedWorker(job: ProcessJob): void {
 
 function readProcessIdentity(pid: number): string | undefined {
   if (!Number.isInteger(pid) || pid <= 0) return undefined
+  // Identity probes are only reached for processes that passed kill(pid, 0),
+  // so a live process's identity is stable; cache it so frequent ProcessOutput
+  // polls don't spawn a PowerShell per call (0.3-1s sync each) (#241).
+  // ponytail: TTL bounds the pid-reuse window where a recycled pid would
+  // wrongly match the previous occupant's identity.
+  const hit = identityCache.get(pid)
+  if (hit && Date.now() - hit.at < IDENTITY_CACHE_TTL_MS) return hit.identity
+  const identity = probeProcessIdentity(pid)
+  identityCache.set(pid, { identity, at: Date.now() })
+  return identity
+}
+
+function probeProcessIdentity(pid: number): string | undefined {
   if (process.platform === 'linux') {
     try {
       const statLine = readFileSync(`/proc/${pid}/stat`, 'utf8')

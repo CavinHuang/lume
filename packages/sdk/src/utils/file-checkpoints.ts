@@ -22,6 +22,12 @@ export interface FileCheckpoint {
 
 export type FileCheckpointState = Record<string, FileCheckpoint>
 
+// Workspace scans repeat for every qualifying tool call within one user
+// message. Cache the last collected path list so only the first call walks
+// the directory tree; later calls reuse it and dedupe against captured files.
+// Single-entry (last key wins) so a growing session does not accumulate scans.
+const workspaceScanCache = new WeakMap<FileCheckpointState, { key: string; paths: string[] }>()
+
 const WORKSPACE_CHECKPOINT_EXCLUDED_DIRECTORIES = new Set([
   '.git', 'node_modules', '.next', '.turbo', '.cache', 'dist', 'build', 'coverage', 'out', 'artifacts', 'files', 'plans', '.context'
 ])
@@ -35,10 +41,18 @@ export async function captureWorkspaceFileSnapshots(
   const maxFiles = options.maxFiles ?? 10_000
   const maxFileSizeBytes = options.maxFileSizeBytes ?? 4 * 1024 * 1024
   const maxTotalBytes = options.maxTotalBytes ?? 64 * 1024 * 1024
-  const paths: string[] = []
-  for (const root of roots) {
-    await collectWorkspaceFiles(resolve(root), paths, maxFiles)
-    if (paths.length >= maxFiles) break
+  const cacheKey = `${userMessageId} ${JSON.stringify(roots)}`
+  const cached = workspaceScanCache.get(state)
+  let paths: string[]
+  if (cached && cached.key === cacheKey) {
+    paths = cached.paths
+  } else {
+    paths = []
+    for (const root of roots) {
+      await collectWorkspaceFiles(resolve(root), paths, maxFiles)
+      if (paths.length >= maxFiles) break
+    }
+    workspaceScanCache.set(state, { key: cacheKey, paths })
   }
   const checkpoint = state[userMessageId] || {
     userMessageId,

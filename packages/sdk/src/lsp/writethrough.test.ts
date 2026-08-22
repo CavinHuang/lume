@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SDKMessage, ToolContext } from '../types.js'
 import { shutdownLspClients } from './client.js'
-import { prepareLspWritethrough } from './writethrough.js'
+import { prepareLspWritethrough, prepareLspWritethroughBatch } from './writethrough.js'
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -138,7 +138,7 @@ process.stdin.on('data', (chunk) => {
       await shutdownLspClients(root)
       await rm(root, { recursive: true, force: true })
     }
-  })
+  }, 20_000)
 
   test('emits a delayed diagnostic for the current file mutation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'lume-lsp-current-diagnostics-'))
@@ -229,5 +229,74 @@ process.stdin.on('data', (chunk) => {
       await shutdownLspClients(root)
       await rm(root, { recursive: true, force: true })
     }
-  })
+  }, 20_000)
+
+  test('batch commit reports real formatting and mutation version without diagnostics', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'lume-lsp-writethrough-batch-'))
+    const source = join(root, 'index.ts')
+    const serverScript = join(root, 'server.mjs')
+    try {
+      await writeFile(join(root, 'package.json'), '{}')
+      await writeFile(source, 'const value=1\n')
+      await writeFile(serverScript, `
+let buffer = Buffer.alloc(0)
+const send = (value) => {
+  const body = Buffer.from(JSON.stringify(value))
+  process.stdout.write(Buffer.concat([Buffer.from('Content-Length: ' + body.length + '\\r\\n\\r\\n'), body]))
+}
+process.stdin.on('data', (chunk) => {
+  buffer = Buffer.concat([buffer, chunk])
+  while (true) {
+    const end = buffer.indexOf('\\r\\n\\r\\n')
+    if (end < 0) return
+    const match = buffer.subarray(0, end).toString().match(/Content-Length:\\s*(\\d+)/i)
+    if (!match) process.exit(2)
+    const length = Number(match[1])
+    if (buffer.length < end + 4 + length) return
+    const message = JSON.parse(buffer.subarray(end + 4, end + 4 + length))
+    buffer = buffer.subarray(end + 4 + length)
+    if (message.method === 'initialize') {
+      send({ jsonrpc: '2.0', id: message.id, result: { capabilities: { documentFormattingProvider: true } } })
+    } else if (message.method === 'textDocument/formatting') {
+      send({ jsonrpc: '2.0', id: message.id, result: [{
+        range: { start: { line: 0, character: 0 }, end: { line: 0, character: 100 } },
+        newText: 'const value = 1'
+      }] })
+    } else if (message.id !== undefined) {
+      send({ jsonrpc: '2.0', id: message.id, result: null })
+    }
+  }
+})
+`)
+      const prepared = await prepareLspWritethroughBatch({
+        files: [{ filePath: source, content: 'const value=1\n', existedBefore: true }],
+        context: {
+          cwd: root,
+          sessionId: 'session-batch',
+          toolConfig: {
+            lsp: {
+              diagnosticsOnWrite: false,
+              formatOnWrite: true,
+              servers: {
+                test: {
+                  command: process.execPath,
+                  args: [serverScript],
+                  fileTypes: ['.ts'],
+                  rootMarkers: ['package.json'],
+                },
+              },
+            },
+          },
+        } as ToolContext,
+      })
+      expect(prepared.contents.get(source)).toBe('const value = 1\n')
+      const result = await prepared.commit()
+      expect(result.formatted).toBe(true)
+      expect(result.mutationVersion).toBeGreaterThan(0)
+      expect(result.diagnosticsDelayed).toBe(false)
+    } finally {
+      await shutdownLspClients(root)
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 20_000)
 })

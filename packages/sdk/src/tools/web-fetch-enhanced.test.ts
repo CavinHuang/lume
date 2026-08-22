@@ -85,4 +85,37 @@ describe("runWebFetch — content types", () => {
     expect(out.data).toContain("## First");
     expect(out.data).toContain("Hello feed");
   });
+
+  test("html format output is truncated like markdown (#219)", async () => {
+    const fetchImpl = (async () => new Response(`<html><body>${"x".repeat(150000)}</body></html>`, { headers: { "content-type": "text/html" } })) as any;
+    const out = await runWebFetch({ url: "https://example.com/big", format: "html" }, ctx, { fetchImpl });
+    expect(out.is_error).toBeFalsy();
+    expect((out.data as string).length).toBeLessThanOrEqual(100000 + "\n\n[content truncated]".length);
+    expect(out.data).toContain("[content truncated]");
+  });
+
+  test("image binary fetch failure is an error, not a success (#219)", async () => {
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "base64");
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      if (calls === 1) return new Response(png, { headers: { "content-type": "image/png" } });
+      return new Response("boom", { status: 500 });
+    }) as any;
+    const out = await runWebFetch({ url: "https://example.com/pixel.png" }, ctx, { fetchImpl });
+    expect(out.is_error).toBe(true);
+    expect(out.data).toContain("Image fetch failed");
+  });
+
+  test("structured binary fetch failure is an error, not a success (#219)", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      if (calls === 1) return new Response("PK", { headers: { "content-type": "application/zip" } });
+      return new Response("boom", { status: 500 });
+    }) as any;
+    const out = await runWebFetch({ url: "https://example.com/a.zip" }, ctx, { fetchImpl });
+    expect(out.is_error).toBe(true);
+    expect(out.data).toContain("zip resource");
+  });
 });

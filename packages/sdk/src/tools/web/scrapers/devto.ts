@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatIsoDate, formatNumber, htmlToBasicMarkdown, loadPage } from "./types.js";
 
@@ -47,7 +48,7 @@ export const handleDevTo: SpecialHandler = async (
 			const result = await loadPage(apiUrl, { timeout, signal });
 			if (!result.ok) return null;
 
-			const articles = JSON.parse(result.content) as DevToArticle[];
+			const articles = tryParseJson<DevToArticle[]>(result.content);
 			if (!articles?.length) return null;
 
 			let md = `# dev.to/t/${tag}\n\n`;
@@ -80,7 +81,7 @@ export const handleDevTo: SpecialHandler = async (
 			const result = await loadPage(apiUrl, { timeout, signal });
 			if (!result.ok) return null;
 
-			const articles = JSON.parse(result.content) as DevToArticle[];
+			const articles = tryParseJson<DevToArticle[]>(result.content);
 			if (!articles?.length) return null;
 
 			let md = `# dev.to/${username}\n\n`;
@@ -113,7 +114,7 @@ export const handleDevTo: SpecialHandler = async (
 			const result = await loadPage(apiUrl, { timeout, signal });
 			if (!result.ok) return null;
 
-			const article = JSON.parse(result.content) as DevToArticle;
+			const article = tryParseJson<DevToArticle>(result.content);
 			if (!article?.title) return null;
 
 			const tags = article.tag_list || article.tags || [];

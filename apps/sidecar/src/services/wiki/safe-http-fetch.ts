@@ -2,6 +2,7 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { request as httpRequest, type ClientRequest, type RequestOptions } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
+import { isFakeIpRange, isPublicIpAddress } from "@lume/agent-sdk";
 
 export interface WikiSafeFetchResult {
   finalUrl: string;
@@ -40,7 +41,8 @@ export class WikiSafeHttpFetchService {
     let current = normalizeUrl(rawUrl);
     for (let redirect = 0; redirect <= maxRedirects; redirect += 1) {
       const addresses = await (this.deps.resolve ?? resolvePublicAddresses)(current.hostname);
-      if (addresses.length === 0 || addresses.some((address) => !isPublicIpAddress(address.address))) throw new Error("Wiki URL DNS 结果包含非公网或混合地址");
+      // fake-IP 段（TUN 代理虚拟映射，不指向真实内网）在 DNS 判定中按公网放行，固定连接经 TUN 还原域名转发
+      if (addresses.length === 0 || addresses.some((address) => !isPublicIpAddress(address.address) && !isFakeIpRange(address.address))) throw new Error("Wiki URL DNS 结果包含非公网或混合地址");
       const selected = addresses[0]!;
       const response = await (this.deps.request ?? requestFixedAddress)(current, selected, requestOptions);
       if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -113,26 +115,5 @@ function hasProxyEnvironment(): boolean {
   return ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"].some((key) => Boolean(process.env[key]?.trim()));
 }
 
-export function isPublicIpAddress(address: string): boolean {
-  const family = isIP(address);
-  if (family === 4) {
-    const parts = address.split(".").map(Number);
-    const [a, b] = parts;
-    if (a === 0 || a === 10 || a === 127 || a! >= 224) return false;
-    if (a === 100 && b! >= 64 && b! <= 127) return false;
-    if (a === 169 && b === 254) return false;
-    if (a === 172 && b! >= 16 && b! <= 31) return false;
-    if (a === 192 && (b === 0 || b === 168)) return false;
-    if (a === 198 && (b === 18 || b === 19)) return false;
-    return true;
-  }
-  if (family === 6) {
-    const value = address.toLowerCase().split("%")[0]!;
-    if (value === "::" || value === "::1") return false;
-    if (value.startsWith("fc") || value.startsWith("fd") || /^fe[89ab]/.test(value)) return false;
-    if (value.startsWith("ff") || value.startsWith("2001:db8")) return false;
-    if (value.startsWith("::ffff:")) return isPublicIpAddress(value.slice(7));
-    return true;
-  }
-  return false;
-}
+// 公网判定单源移入 @lume/agent-sdk（scraper 私网拦截共用），此处保留转发导出
+export { isPublicIpAddress };

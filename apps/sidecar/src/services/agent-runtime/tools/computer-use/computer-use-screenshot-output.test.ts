@@ -56,7 +56,8 @@ describe("saveComputerUseScreenshots", () => {
       }],
     });
     expect(second[0]!.screenshotId).toBe(saved[0]!.screenshotId);
-    expect(second[0]!.filename).not.toBe(saved[0]!.filename);
+    // #257 内容 hash 去重:同内容截图复用同一文件,不再每轮落一份相同二进制
+    expect(second[0]!.filename).toBe(saved[0]!.filename);
   });
 
   test("rejects unsupported screenshot media types", () => {

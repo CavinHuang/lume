@@ -8,6 +8,7 @@ import {
   getLspClient,
   getLspClientsForFile,
   languageIdForPath,
+  LspClient,
   parseLspMessages,
   resolveLspServerConfigsForFile,
   shutdownLspClients,
@@ -141,6 +142,64 @@ describe('LSP protocol helpers', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  test('serializes concurrent document lock operations', async () => {
+    const client = Object.create(LspClient.prototype) as LspClient
+    const events: string[] = []
+    const operation = (name: string) => async () => {
+      events.push(`start:${name}`)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      events.push(`end:${name}`)
+    }
+    await Promise.all([
+      client['withDocumentLock']('file:///lock-demo', operation('a')),
+      client['withDocumentLock']('file:///lock-demo', operation('b')),
+      client['withDocumentLock']('file:///lock-demo', operation('c')),
+    ])
+    expect(events).toEqual([
+      'start:a', 'end:a',
+      'start:b', 'end:b',
+      'start:c', 'end:c',
+    ])
+  })
+
+  test('spawns .cmd server shims through cmd.exe on Windows', async () => {
+    if (process.platform !== 'win32') return
+    const root = await mkdtemp(join(tmpdir(), 'lume-lsp-cmd-shim-'))
+    const script = join(root, 'server.mjs')
+    const shim = join(root, 'server.cmd')
+    const source = join(root, 'index.ts')
+    try {
+      await writeFile(join(root, 'package.json'), '{}')
+      await writeFile(source, '')
+      await writeFile(script, `
+let buffer = Buffer.alloc(0)
+const send = (value) => {
+  const body = Buffer.from(JSON.stringify(value))
+  process.stdout.write(Buffer.concat([Buffer.from('Content-Length: ' + body.length + '\\r\\n\\r\\n'), body]))
+}
+process.stdin.on('data', (chunk) => {
+  buffer = Buffer.concat([buffer, chunk])
+  const end = buffer.indexOf('\\r\\n\\r\\n')
+  if (end < 0) return
+  const match = buffer.subarray(0, end).toString().match(/Content-Length:\\s*(\\d+)/i)
+  if (!match) process.exit(2)
+  const message = JSON.parse(buffer.subarray(end + 4, end + 4 + Number(match[1])))
+  buffer = Buffer.alloc(0)
+  if (message.method === 'initialize') send({ jsonrpc: '2.0', id: message.id, result: { capabilities: {} } })
+  else if (message.method === 'shutdown' || message.id !== undefined) send({ jsonrpc: '2.0', id: message.id, result: null })
+})
+`)
+      await writeFile(shim, `@"${process.execPath}" "%~dp0server.mjs" %*\r\n`)
+      const client = await getLspClient(root, { lsp: { servers: {
+        test: { command: shim, fileTypes: ['.ts'], rootMarkers: ['package.json'] },
+      } } }, source)
+      expect(client.state).toBe('ready')
+    } finally {
+      await shutdownLspClients(root)
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 20_000)
 
   test('synchronizes documents, serves configuration sections and shuts down cleanly', async () => {
     const root = await mkdtemp(join(tmpdir(), 'lume-lsp-client-'))
