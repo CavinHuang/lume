@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { lstatSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileEditTool } from "./edit";
@@ -8,6 +9,18 @@ import { FileWriteTool } from "./write";
 import { NotebookEditTool } from "./notebook-edit";
 import { FileStateCache } from "../utils/fileCache";
 import { captureFileSnapshots, collectCheckpointPaths, requiresWorkspaceCheckpoint, rewindCheckpoint } from "../utils/file-checkpoints";
+
+// Windows needs admin or Developer Mode for real symlinks; probe once and
+// skip the symlink-specific tests where creation is not permitted.
+const symlinkProbeDir = mkdtempSync(join(tmpdir(), "lume-file-tools-probe-"));
+let symlinksSupported = false;
+try {
+  symlinkSync("target", join(symlinkProbeDir, "probe"), "file");
+  symlinksSupported = true;
+} catch {
+  // keep the suite green on locked-down Windows environments
+}
+afterAll(() => rmSync(symlinkProbeDir, { recursive: true, force: true }));
 
 const roots: string[] = [];
 
@@ -385,6 +398,74 @@ describe("file tools", () => {
     expect(pageResult.is_error).toBeFalsy();
     expect((pageResult.content as any[]).some((block) => block.type === "image")).toBe(true);
     expect(pageResult._meta?.read).toMatchObject({ kind: "pdf", pages: [1] });
+  });
+
+  test("writes through a symlink to its target instead of replacing the link (#367)", { skip: !symlinksSupported }, async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    await writeFile(join(root, "target.txt"), "before\n", "utf8");
+    await symlink(join(root, "target.txt"), join(root, "link.txt"), "file");
+
+    const result = await FileWriteTool.call({ file_path: join(root, "link.txt"), content: "after\n" }, { cwd: root });
+
+    expect(result.is_error).toBeFalsy();
+    expect(lstatSync(join(root, "link.txt")).isSymbolicLink()).toBe(true);
+    expect(await readFile(join(root, "target.txt"), "utf8")).toBe("after\n");
+  });
+
+  test("edits through a symlink while keeping the link intact (#367)", { skip: !symlinksSupported }, async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    await writeFile(join(root, "target.txt"), "alpha\nbeta\n", "utf8");
+    await symlink(join(root, "target.txt"), join(root, "link.txt"), "file");
+
+    const result = await FileEditTool.call(
+      { file_path: join(root, "link.txt"), old_string: "beta", new_string: "updated" },
+      { cwd: root },
+    );
+
+    expect(result.is_error).toBeFalsy();
+    expect(lstatSync(join(root, "link.txt")).isSymbolicLink()).toBe(true);
+    expect(await readFile(join(root, "target.txt"), "utf8")).toBe("alpha\nupdated\n");
+  });
+
+  test("rejects a dangling symlink instead of silently replacing it (#367)", { skip: !symlinksSupported }, async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    await symlink(join(root, "missing-target.txt"), join(root, "dangling.txt"), "file");
+
+    const write = await FileWriteTool.call({ file_path: join(root, "dangling.txt"), content: "x\n" }, { cwd: root });
+    const edit = await FileEditTool.call(
+      { file_path: join(root, "dangling.txt"), old_string: "x", new_string: "y" },
+      { cwd: root },
+    );
+
+    expect(write.is_error).toBe(true);
+    expect(edit.is_error).toBe(true);
+    expect(lstatSync(join(root, "dangling.txt")).isSymbolicLink()).toBe(true);
+  });
+
+  test("re-checks the sandbox against a symlink's resolved target (#367)", { skip: !symlinksSupported }, async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    await mkdir(join(root, "in"));
+    await mkdir(join(root, "out"));
+    await writeFile(join(root, "out", "secret.txt"), "keep\n", "utf8");
+    await symlink(join(root, "out", "secret.txt"), join(root, "in", "link.txt"), "file");
+    const sandboxContext = {
+      cwd: root,
+      sandbox: { enabled: true, filesystem: { allowWrite: [join(root, "in")] } },
+    } as any;
+
+    const result = await FileWriteTool.call(
+      { file_path: join(root, "in", "link.txt"), content: "clobber\n" },
+      sandboxContext,
+    );
+
+    expect(result.is_error).toBe(true);
+    expect(String(result.content)).toContain("denied");
+    expect(await readFile(join(root, "out", "secret.txt"), "utf8")).toBe("keep\n");
+    expect(realpathSync(join(root, "in", "link.txt"))).toBe(realpathSync(join(root, "out", "secret.txt")));
   });
 
   test("refuses to overwrite a fully read file after an external change", async () => {

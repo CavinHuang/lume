@@ -1,4 +1,4 @@
-import { access, readdir } from 'fs/promises'
+import { readdir, stat } from 'fs/promises'
 import { existsSync, readlinkSync, realpathSync } from 'node:fs'
 import { resolve, isAbsolute, normalize, basename, dirname } from 'path'
 import { isIP } from 'node:net'
@@ -16,7 +16,9 @@ function normalizePath(path: string): string {
 
 async function pathExists(path: string): Promise<boolean> {
   try {
-    await access(path)
+    // 显式 follow 的 stat：Bun 的 access 对悬空 symlink 也返回成功，断链会被
+    // 误判存在并解析到目标路径隐式创建文件；必须按不存在处理，交给写入侧报错
+    await stat(path)
     return true
   } catch {
     return false
