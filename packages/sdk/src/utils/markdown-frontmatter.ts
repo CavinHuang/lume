@@ -47,13 +47,18 @@ export function parseMarkdownFrontmatter(
           if (nextLine === '---') break
           const trimmed = nextLine.trim()
           if (!trimmed) continue
-          if (!nextLine.startsWith(' ') && !nextLine.startsWith('\t')) break
+          // Standard YAML allows top-level list items; scanning stops at the
+          // next key-shaped line or the closing fence (#350).
           if (!trimmed.startsWith('- ')) break
           const item = trimmed.slice(2).trim()
           if (item) items.push(item)
         }
         frontmatter[key] = items.join(',')
-        if (items.length > 0) {
+        if (items.length === 0) {
+          console.warn(
+            `[frontmatter] list value for key "${key}" has no "- " items; key is empty`,
+          )
+        } else {
           index = nextIndex - 1
         }
       } else {

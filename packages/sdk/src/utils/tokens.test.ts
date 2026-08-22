@@ -127,4 +127,16 @@ describe("estimateCost / getContextWindowSize (#229)", () => {
     expect(getContextWindowSize("gpt-4o")).toBe(128_000)
     expect(getContextWindowSize("claude-opus-4-5")).toBe(200_000)
   })
+
+  test("models missing from the table fall back to the shared registry (#366)", () => {
+    // gemini-2.5-pro has a 1M window in the catalog but no table entry.
+    const meta = findModelMeta("gemini-2.5-pro")
+    expect(meta?.contextWindow).toBeTruthy()
+    expect(getContextWindowSize("gemini-2.5-pro")).toBe(meta!.contextWindow)
+    expect(getContextWindowSize("gemini-2.5-pro")).not.toBe(200_000)
+  })
+
+  test("unknown models still land on the flat default", () => {
+    expect(getContextWindowSize("definitely-not-a-model-12345")).toBe(200_000)
+  })
 })
