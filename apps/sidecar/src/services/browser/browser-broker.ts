@@ -429,7 +429,7 @@ function stableBrowserErrorCode(error: unknown): string {
     ? (error as { code: string }).code
     : ""
   const value = structuredCode || (error instanceof Error ? error.message : "")
-  return new Set(["browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "user_action_required", "strict_locator_violation", "actionability_failed", "dialog_blocking", "user_takeover_required", "unsupported", "executed_unknown"]).has(value) ? value : "browser_internal_error"
+  return new Set(["browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "stale_snapshot_cursor", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "user_action_required", "strict_locator_violation", "actionability_failed", "dialog_blocking", "user_takeover_required", "element_not_visible", "element_disabled", "element_occluded", "element_readonly", "unsupported", "executed_unknown"]).has(value) ? value : "browser_internal_error"
 }
 
 function inferBackend(explicit: "iab" | "extension" | undefined, params: Record<string, unknown> | undefined): "iab" | "extension" {

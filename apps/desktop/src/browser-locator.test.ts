@@ -38,6 +38,34 @@ describe("browser locator semantics", () => {
 
     expect(browserQuery(window)({ version: 1, steps: [{ kind: "role", role: "button", name: "百度一下", exact: true }] }, "count")).toBe(1)
   })
+
+  test("reports distinct stable codes for invisible, disabled, occluded, and readonly targets", () => {
+    const hidden = new Window()
+    hidden.document.body.innerHTML = '<input id="kw" title="搜索" style="display:none">'
+    expect(() => browserQuery(hidden)(roleTextbox("搜索"), "target")).toThrow("element_not_visible")
+
+    const disabled = new Window()
+    disabled.document.body.innerHTML = '<button disabled>提交</button>'
+    const disabledButton = disabled.document.querySelector("button") as unknown as HTMLButtonElement
+    disabledButton.getBoundingClientRect = () => rect(10, 20, 120, 36)
+    expect(() => browserQuery(disabled)({ version: 1, steps: [{ kind: "role", role: "button", name: "提交", exact: true }] }, "target")).toThrow("element_disabled")
+
+    const occluded = new Window()
+    occluded.document.body.innerHTML = '<input id="kw" title="搜索"><div id="cover" style="position:absolute;width:400px;height:60px"></div>'
+    const coveredInput = occluded.document.querySelector("#kw") as unknown as HTMLInputElement
+    coveredInput.getBoundingClientRect = () => rect(10, 20, 200, 40)
+    Object.defineProperty(occluded.document, "elementFromPoint", { value: () => occluded.document.querySelector("#cover") })
+    expect(() => browserQuery(occluded)(roleTextbox("搜索"), "target")).toThrow("element_occluded")
+
+    const readonly = new Window()
+    readonly.document.body.innerHTML = '<label for="kw">搜索</label><input id="kw" readonly>'
+    const input = readonly.document.querySelector("#kw") as unknown as HTMLInputElement
+    input.getBoundingClientRect = () => rect(10, 20, 200, 40)
+    Object.defineProperty(readonly.document, "elementFromPoint", { value: () => input })
+    const target = browserQuery(readonly)(roleTextbox("搜索"), "target") as { readOnly?: boolean; editable: boolean }
+
+    expect(target).toMatchObject({ readOnly: true, editable: false })
+  })
 })
 
 function browserQuery(window: Window): (locator: BrowserLocator, operation?: BrowserLocatorQuery, argument?: string) => unknown {

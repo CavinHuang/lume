@@ -44,3 +44,8 @@ test("browser policy returns user_action_required for captcha and MFA gates", ()
   // 普通 deny（支付）不带 errorCode，保持 action_denied
   assert.equal(classifyBrowserAction("click", { semanticIntent: "Pay now" }).errorCode, undefined)
 })
+
+test("download status polling is a read-only query and never asks for confirmation", () => {
+  // 下载本身的审批在 Electron will-download 处；轮询 download:path 只读状态，弹确认框会打断轮询链路
+  assert.equal(classifyBrowserAction("playwright_download_path", { tabId: "tab-1", download_id: "download-1" }, "download:path").decision, "allow")
+})
