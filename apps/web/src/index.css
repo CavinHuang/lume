@@ -153,25 +153,6 @@
 
 /* x-markdown dark mode — 变量由 dark.css 的 .x-markdown-dark 选择器提供 */
 
-/* Wiki 操作栏按内容区宽度切换，避免侧栏占用空间后仍按整个窗口宽度判断。 */
-.wiki-main {
-  container: wiki-main / inline-size;
-}
-
-.wiki-main-actions-compact {
-  display: none;
-}
-
-@container wiki-main (max-width: 900px) {
-  .wiki-main-actions {
-    display: none;
-  }
-
-  .wiki-main-actions-compact {
-    display: flex;
-  }
-}
-
 /* x-markdown 宽度约束 — 表格和代码块不超出父容器 */
 .x-markdown table:not(pre) {
   width: 100%;
