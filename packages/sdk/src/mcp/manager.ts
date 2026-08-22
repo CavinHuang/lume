@@ -66,12 +66,16 @@ export interface McpReadResourceResult {
 export interface McpClientLike {
   connect(transport: unknown): Promise<void>;
   listTools?(): Promise<{ tools?: Array<{ name: string; description?: string; inputSchema?: unknown }> }>;
-  callTool?(input: { name: string; arguments: Record<string, unknown> }, options?: { signal?: AbortSignal }): Promise<unknown>;
-  listResources?(params?: unknown, options?: { signal?: AbortSignal }): Promise<{ resources?: Array<Record<string, unknown>> }>;
-  readResource?(input: { uri: string }, options?: { signal?: AbortSignal }): Promise<{ contents?: unknown[] }>;
+  callTool?(input: { name: string; arguments: Record<string, unknown> }, options?: { signal?: AbortSignal; timeout?: number }): Promise<unknown>;
+  listResources?(params?: unknown, options?: { signal?: AbortSignal; timeout?: number }): Promise<{ resources?: Array<Record<string, unknown>> }>;
+  readResource?(input: { uri: string }, options?: { signal?: AbortSignal; timeout?: number }): Promise<{ contents?: unknown[] }>;
   close?(): Promise<void>;
-  /** 连接意外关闭回调（stdio server 崩溃/远端断开）；用于把状态打回 failed 自愈（#403）。 */
-  onclose?(listener: () => void): void;
+  /**
+   * 连接意外关闭回调字段（stdio server 崩溃/远端断开）；用于把状态打回 failed 自愈（#403）。
+   * SDK Protocol.onclose 是零参回调字段（_onclose() 直接调用），不是注册方法——manager
+   * 连接成功后直接赋值（#455）。
+   */
+  onclose?: () => void;
 }
 
 export type McpClientFactory = (
@@ -305,6 +309,7 @@ async function withTimeout<T>(
     timer = setTimeout(() => {
       settle(() => reject(createMcpError('timeout', `MCP operation timed out after ${timeoutMs}ms`)));
     }, timeoutMs);
+    timer.unref?.(); // 不让挂起中的预算计时器拖住进程退出（#455 P3）
     signal?.addEventListener('abort', onAbort, { once: true });
 
     promise.then(
@@ -361,6 +366,7 @@ async function withRequestTimeout<T>(
       controller.abort();
       settle(() => reject(createMcpError('timeout', `MCP operation timed out after ${timeoutMs}ms`)));
     }, timeoutMs);
+    timer.unref?.(); // 不让挂起中的预算计时器拖住进程退出（#455 P3）
     signal?.addEventListener('abort', onAbort, { once: true });
 
     request.then(
@@ -639,7 +645,7 @@ export class McpClientManager {
     if (serverId) {
       const state = await this.getConnectedState(serverId);
       const result = await withRequestTimeout(
-        (requestSignal) => Promise.resolve(state.client?.listResources?.(undefined, { signal: requestSignal }) ?? { resources: [] }),
+        (requestSignal) => Promise.resolve(state.client?.listResources?.(undefined, { signal: requestSignal, timeout: this.defaultCallTimeoutMs }) ?? { resources: [] }),
         this.defaultCallTimeoutMs
       );
       return { resources: result.resources ?? [] };
@@ -658,7 +664,7 @@ export class McpClientManager {
   async readResource(serverId: string, uri: string): Promise<McpReadResourceResult> {
     const state = await this.getConnectedState(serverId);
     const result = await withRequestTimeout(
-      (requestSignal) => Promise.resolve(state.client?.readResource?.({ uri }, { signal: requestSignal }) ?? { contents: [] }),
+      (requestSignal) => Promise.resolve(state.client?.readResource?.({ uri }, { signal: requestSignal, timeout: this.defaultCallTimeoutMs }) ?? { contents: [] }),
       this.defaultCallTimeoutMs
     );
     return { contents: result.contents ?? [] };
@@ -672,10 +678,15 @@ export class McpClientManager {
     didRetry: boolean
   ): Promise<McpCallResult> {
     const state = await this.getConnectedState(serverId);
+    // SDK Protocol.request 无条件套 options?.timeout ?? 60_000：预算必须透传进
+    // options，否则 >60s 的配置预算永远被 SDK 内建 60s 先爆（#455 P2）。
+    const budgetMs = options.timeoutMs ?? this.defaultCallTimeoutMs;
     try {
       const result = await withRequestTimeout(
-        (requestSignal) => Promise.resolve(state.client?.callTool?.({ name: originalToolName, arguments: args }, { signal: requestSignal })),
-        options.timeoutMs ?? this.defaultCallTimeoutMs,
+        (requestSignal) => Promise.resolve(
+          state.client?.callTool?.({ name: originalToolName, arguments: args }, { signal: requestSignal, timeout: budgetMs })
+        ),
+        budgetMs,
         options.signal
       );
       // A disconnect racing an in-flight call nulls state.client and the
@@ -752,7 +763,10 @@ export class McpClientManager {
       // 死连接自愈：server 进程崩溃后 status 原样停留 connected，ensureConnected
       // 短路、资源读持续报错且工具清单陈旧。onclose 把状态打回 failed，让下一次
       // ensureConnected 走正常重连（#403）。
-      client.onclose?.(() => {
+      // SDK Protocol.onclose 是回调字段（onclose?: () => void，_onclose() 零参调用）
+      // 而非注册方法；此前 client.onclose?.(listener) 对裸 SDK client 恒为 no-op，
+      // 监听从未武装（#455）。必须直接赋值。
+      client.onclose = () => {
         if (state.client !== client || !isCurrent()) return;
         void this.closeState(state).then(() => {
           if (!isCurrent()) return;
@@ -760,7 +774,7 @@ export class McpClientManager {
           state.error = { code: 'transport_error', message: `MCP server "${serverId}" connection closed unexpectedly` };
           state.lastCheckedAt = Date.now();
         });
-      });
+      };
     } catch (error) {
       if (state.client === client) {
         await this.closeState(state);
