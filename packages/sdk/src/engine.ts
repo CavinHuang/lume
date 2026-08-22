@@ -1503,7 +1503,7 @@ export class QueryEngine {
           this.messages.push({
             role: 'user',
             content:
-              'Your previous response did not match the requested JSON schema. Return only valid JSON matching the schema exactly, with no markdown fences or extra commentary.',
+              'Your previous response did not match the requested JSON schema. Your response must begin with `{` as the very first character — no prose, markdown fences, or commentary before it — and contain only valid JSON matching the schema exactly.',
           })
           continue
         }
