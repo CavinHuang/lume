@@ -1,0 +1,2 @@
+{"id":"ee08aea3-7f23-4713-8f08-63f7439b4e46","createdAt":"2026-08-22T09:48:03.108Z","pluginId":"same","version":"1.5.0","type":"needs_review","summary":"Plugin same needs review (permissions hash mismatch)","metadata":{"reason":"hash-mismatch"}}
+{"id":"32dd388a-11fa-4f69-a58a-a62f32e00239","createdAt":"2026-08-22T09:48:03.128Z","pluginId":"alpha","version":"1.0.0","type":"needs_review","summary":"Plugin alpha needs review (permissions hash mismatch)","metadata":{"reason":"hash-mismatch"}}

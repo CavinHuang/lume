@@ -1,0 +1,21 @@
+{
+  "version": 3,
+  "tools": {
+    "allow": [
+      "group:memory",
+      "group:memory-write"
+    ]
+  },
+  "citations": "auto",
+  "proactiveWrite": true,
+  "backgroundExtraction": true,
+  "autoDream": true,
+  "recallNotice": "collapsed",
+  "sources": [
+    "memory"
+  ],
+  "extraPaths": [],
+  "retrieval": {
+    "semantic": "auto"
+  }
+}

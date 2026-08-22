@@ -1,0 +1,43 @@
+{
+  "id": "ask_user:tool-use-proxy",
+  "threadId": "parent-session",
+  "type": "ask_user",
+  "status": "approved",
+  "title": "需要用户回答",
+  "message": "请选择",
+  "payload": {
+    "threadId": "parent-session",
+    "toolUseId": "tool-use-proxy",
+    "questions": [
+      {
+        "header": "问题1",
+        "question": "请选择",
+        "options": [
+          {
+            "label": "A",
+            "description": "选项A"
+          },
+          {
+            "label": "B",
+            "description": "选项B"
+          }
+        ],
+        "multiSelect": false
+      }
+    ],
+    "originThreadId": "child-session"
+  },
+  "source": {
+    "toolCallId": "tool-use-proxy"
+  },
+  "createdAt": "2026-08-22T09:47:58.485Z",
+  "updatedAt": "2026-08-22T09:47:58.490Z",
+  "originThreadId": "child-session",
+  "resolution": {
+    "decision": "answer",
+    "answer": {
+      "问题1": "B"
+    }
+  },
+  "resolvedAt": "2026-08-22T09:47:58.490Z"
+}

@@ -9,7 +9,6 @@ import {
   type ApiType,
   type ContentBlockParam,
   type ToolResult,
-  type SandboxSettings,
   createTodoTool,
   type ToolDefinition,
   type PersistedToolContinuation,
@@ -45,7 +44,6 @@ import {
 import { createConnectionPiAiRoute } from "../../model-runtime/connection-provider";
 import {
   getWorkspaceMcpManager,
-  WorkspaceMcpManager,
 } from "../../mcp/workspace-mcp-manager";
 import type { MemoryV2RecallItem } from "../../memory-v2/types";
 import {
@@ -60,7 +58,6 @@ import { getSidecarRenderClient } from "../tools/web/render-client-holder";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
 import { buildSubagentWorkContext } from "../../agent/subagents/subagent-dispatch-policy";
-import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDir,
@@ -226,8 +223,6 @@ export interface CreateRuntimeCoreSessionInput {
     result: LumeWorkflowHookExecutionResult,
   ) => Promise<void> | void;
   trace?: ContextAssemblyInput["trace"];
-  wikiProposalEnabled?: boolean;
-  processSandbox?: SandboxSettings;
   toolConfig?: Record<string, unknown>;
   abortSignal?: AbortSignal;
 }
@@ -693,7 +688,6 @@ async function createRuntimeCoreSessionImpl(
     capabilities: pluginAssembly.hooks,
     runtime: hookPermissionRuntime,
     workspaceSlug: input.workspaceSlug,
-    sandbox: input.processSandbox,
   });
   const agentHooks = { ...pluginAgentHooks };
   const advisorConfig = getEffectiveLumeConfig(input.workspaceSlug).models
@@ -743,20 +737,10 @@ async function createRuntimeCoreSessionImpl(
   const pluginMcpManager = buildPluginMcpManager(pluginAssembly.mcpServers, {
     permissionRuntime: pluginMcpPermissionRuntime,
     workspaceSlug: input.workspaceSlug,
-    stdioSandbox: input.processSandbox,
     stdioCwd: input.cwd,
   });
-  const askWikiOnly =
-    getAgentThreadMeta(input.lumeSessionId)?.wikiProfile?.kind === "ask-wiki";
-  const workspaceMcpManager = input.processSandbox?.processIsolation?.enabled
-    ? new WorkspaceMcpManager({
-        stdioSandbox: input.processSandbox,
-        stdioCwd: input.cwd,
-      })
-    : getWorkspaceMcpManager();
-  const pluginMcpRuntime = askWikiOnly
-    ? { tools: [], diagnostics: [] }
-    : await pluginMcpManager
+  const workspaceMcpManager = getWorkspaceMcpManager();
+  const pluginMcpRuntime = await pluginMcpManager
         .createRuntimeTools(PLUGIN_MCP_WORKSPACE_SLUG, {
           includeManagementTools: false,
           toolMetadataProvider: (serverId) => {
@@ -776,31 +760,24 @@ async function createRuntimeCoreSessionImpl(
           ],
         }));
   // createRuntimeTools 恒 resolve（内部失败也留下已 spawn 的子进程 state），失败清理须无条件注册
-  if (!askWikiOnly) {
-    pendingCleanup.push(() =>
-      pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG),
-    );
-  }
-  const workspaceMcpRuntime =
-    input.workspaceSlug && !askWikiOnly
-      ? await workspaceMcpManager
-          .createRuntimeTools(input.workspaceSlug)
-          .catch((error) => ({
-            tools: [],
-            diagnostics: [
-              {
-                pluginName: "MCP",
-                severity: "warning" as const,
-                reason: error instanceof Error ? error.message : String(error),
-              },
-            ],
-          }))
-      : { tools: [], diagnostics: [] };
-  if (
-    input.workspaceSlug &&
-    !askWikiOnly &&
-    input.processSandbox?.processIsolation?.enabled
-  ) {
+  pendingCleanup.push(() =>
+    pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG),
+  );
+  const workspaceMcpRuntime = input.workspaceSlug
+    ? await workspaceMcpManager
+        .createRuntimeTools(input.workspaceSlug)
+        .catch((error) => ({
+          tools: [],
+          diagnostics: [
+            {
+              pluginName: "MCP",
+              severity: "warning" as const,
+              reason: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        }))
+    : { tools: [], diagnostics: [] };
+  if (input.workspaceSlug) {
     pendingCleanup.push(() =>
       workspaceMcpManager.disposeWorkspace(input.workspaceSlug!),
     );
@@ -854,7 +831,6 @@ async function createRuntimeCoreSessionImpl(
     })),
     pluginCommandTools: pluginAssembly.commandToolDefinitions,
     pluginMcpTools: pluginMcpRuntime.tools,
-    wikiProposalEnabled: input.wikiProposalEnabled,
     abortSignal: input.abortSignal,
     mcpTools: replaceMcpResourceTools(
       workspaceMcpRuntime.tools,
@@ -1319,14 +1295,11 @@ async function createRuntimeCoreSessionImpl(
           error: error instanceof Error ? error.message : String(error),
         });
       }
-      if (
-        input.workspaceSlug &&
-        input.processSandbox?.processIsolation?.enabled
-      ) {
+      if (input.workspaceSlug) {
         await workspaceMcpManager
           .disposeWorkspace(input.workspaceSlug)
           .catch((error) => {
-            log.warn("Sandboxed workspace MCP dispose failed", {
+            log.warn("Workspace MCP dispose failed", {
               sessionId: input.lumeSessionId,
               error: error instanceof Error ? error.message : String(error),
             });

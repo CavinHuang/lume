@@ -1,0 +1,31 @@
+{
+  "id": "tool_approval:req-policy",
+  "threadId": "s-policy",
+  "type": "tool_approval",
+  "status": "rejected",
+  "title": "确认执行 Bash",
+  "message": "需要确认",
+  "payload": {
+    "threadId": "s-policy",
+    "requestId": "req-policy",
+    "toolUseId": "tool-policy",
+    "toolName": "Bash",
+    "risk": "high",
+    "reason": "需要确认",
+    "canAllowAlways": false,
+    "input": {
+      "command": "git status"
+    }
+  },
+  "source": {
+    "toolName": "Bash",
+    "toolCallId": "tool-policy"
+  },
+  "createdAt": "2026-08-22T09:47:59.943Z",
+  "updatedAt": "2026-08-22T09:47:59.946Z",
+  "resolution": {
+    "decision": "reject",
+    "rememberDecision": false
+  },
+  "resolvedAt": "2026-08-22T09:47:59.946Z"
+}

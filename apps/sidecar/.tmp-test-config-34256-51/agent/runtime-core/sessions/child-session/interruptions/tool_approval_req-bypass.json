@@ -1,0 +1,32 @@
+{
+  "id": "tool_approval:req-bypass",
+  "threadId": "parent-session",
+  "type": "tool_approval",
+  "status": "approved",
+  "title": "确认执行 Bash",
+  "message": "需要确认",
+  "payload": {
+    "threadId": "parent-session",
+    "requestId": "req-bypass",
+    "toolUseId": "tool-bypass",
+    "toolName": "Bash",
+    "risk": "high",
+    "reason": "需要确认",
+    "input": {
+      "command": "echo hi"
+    },
+    "originThreadId": "child-session"
+  },
+  "source": {
+    "toolName": "Bash",
+    "toolCallId": "tool-bypass"
+  },
+  "createdAt": "2026-08-22T09:47:59.957Z",
+  "updatedAt": "2026-08-22T09:47:59.961Z",
+  "originThreadId": "child-session",
+  "resolution": {
+    "decision": "approve",
+    "rememberDecision": false
+  },
+  "resolvedAt": "2026-08-22T09:47:59.961Z"
+}

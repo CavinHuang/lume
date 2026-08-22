@@ -83,7 +83,6 @@ import { resolveSubagentDispatchPolicy } from "../../agent/subagents/subagent-di
 import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
 import {
   createAgentThreadWithModelRef,
-  getAgentThreadMeta,
   updateAgentThreadMeta,
 } from "../../agent/agent-thread-manager";
 import { getRuntimeCoreSessionDir } from "./session-store";
@@ -237,7 +236,6 @@ export function buildRuntimeCoreTools(input: {
   pluginCommandTools?: ToolDefinition[];
   /** Plugin MCP tool definitions (Phase MCP Merge-A) from the plugin-scoped MCP manager. */
   pluginMcpTools?: ToolDefinition[];
-  wikiProposalEnabled?: boolean;
   abortSignal?: AbortSignal;
 }): RuntimeCoreToolset {
   const permissionMode = input.permissionMode ?? "default";
@@ -306,11 +304,8 @@ export function buildRuntimeCoreTools(input: {
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitDesktopActionVisualEvent: input.emitRuntimeEvent,
     emitToolPermissionRequest: input.emitToolPermissionRequest ?? (() => {}),
-    wikiProposalEnabled: input.wikiProposalEnabled,
     planningExecutionContext,
   });
-  const askWikiOnly =
-    getAgentThreadMeta(input.sessionId)?.wikiProfile?.kind === "ask-wiki";
 
   const policyInput = {
     provider: input.provider,
@@ -970,9 +965,7 @@ export function buildRuntimeCoreTools(input: {
     policyInput,
     pluginDiagnostics: input.pluginDiagnostics,
     mcpDiagnostics: input.mcpDiagnostics,
-    groups: askWikiOnly
-      ? [{ source: "lume", tools: lumeTools.customTools as ToolDefinition[] }]
-      : [
+    groups: [
           { source: "sdk", tools: baseTools },
           { source: "task", tools: taskLoopTools },
           { source: "lume", tools: lumeTools.customTools as ToolDefinition[] },

@@ -1,0 +1,43 @@
+{
+  "id": "ask_user:ask-1",
+  "threadId": "parent-thread",
+  "type": "ask_user",
+  "status": "approved",
+  "title": "需要用户回答",
+  "message": "pick",
+  "payload": {
+    "threadId": "parent-thread",
+    "toolUseId": "ask-1",
+    "questions": [
+      {
+        "header": "Q1",
+        "question": "pick",
+        "options": [
+          {
+            "label": "A",
+            "description": "A"
+          },
+          {
+            "label": "B",
+            "description": "B"
+          }
+        ],
+        "multiSelect": false
+      }
+    ],
+    "originThreadId": "child-thread-a"
+  },
+  "source": {
+    "toolCallId": "ask-1"
+  },
+  "createdAt": "2026-08-22T09:47:39.790Z",
+  "updatedAt": "2026-08-22T09:47:39.816Z",
+  "originThreadId": "child-thread-a",
+  "resolution": {
+    "decision": "answer",
+    "answer": {
+      "pick": "A"
+    }
+  },
+  "resolvedAt": "2026-08-22T09:47:39.816Z"
+}

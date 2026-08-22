@@ -44,7 +44,7 @@ const hasProxyEnvironment = PROXY_ENV_KEYS.some((key) => Boolean(process.env[key
  * 校验 URL 目标主机解析到的全部地址均为公网地址（防 SSRF 探测内网/云元数据端点）。
  * 返回拒绝原因，放行时为 null。
  * 已知天花板：check-then-fetch 无法防 DNS rebinding（undici 会重新解析）；
- * 固定 IP 连接（如 wiki 的 WikiSafeHttpFetchService）是升级路径。
+ * 固定 IP 连接（如 infra 的 SafeHttpFetchService）是升级路径。
  * fake-IP 豁免：TUN 代理下 DNS 全量返回 198.18.0.0/15 虚拟映射（不指向真实内网），
  * 该段在 DNS 判定中按公网放行；URL 字面 IP 直写该段仍由 SDK ensureNetworkAllowed 拦截。
  */
