@@ -1036,11 +1036,18 @@ export class QueryEngine {
     }
 
     // Runtime context is persisted in history but remains an internal message.
+    // Each turn re-emits the full runtime context (policy text plus per-turn
+    // state snapshots), so only the latest copy is kept, re-appended just
+    // before the new user turn: older copies carry no information the newest
+    // one does not, and retaining them would grow history linearly over a long
+    // session. Compaction rebuilds history on the same single-latest-copy
+    // assumption.
     if (this.config.runtimeContext?.trim()) {
-      if (autoCompacted) {
-        this.messages = this.messages.filter((message) => message.role !== 'runtime')
-      }
-      this.messages.push({ role: 'runtime', content: this.config.runtimeContext.trim() })
+      const nextRuntime: NormalizedMessageParam = { role: 'runtime', content: this.config.runtimeContext.trim() }
+      this.messages = [
+        ...this.messages.filter((message) => message.role !== 'runtime'),
+        nextRuntime,
+      ]
     }
 
     // Exact cold-start continuations resume at the persisted tool boundary,

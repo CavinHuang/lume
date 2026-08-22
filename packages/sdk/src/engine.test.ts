@@ -1025,6 +1025,40 @@ describe("QueryEngine context controller", () => {
     expect(runtimeMessages).toEqual([{ role: "runtime", content: "latest runtime" }]);
   });
 
+  test("replaces the previous runtime context on the next turn without compaction", async () => {
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "text", text: "first" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "second" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    ]);
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "stable system",
+      runtimeContext: "turn one context",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    await collectResult(engine);
+    engine.config.runtimeContext = "turn two context";
+    await collectResult(engine);
+
+    const runtimeMessages = provider.requests[1]?.messages.filter((message) => message.role === "runtime");
+    expect(runtimeMessages).toEqual([{ role: "runtime", content: "turn two context" }]);
+  });
+
   test("runs slash compact as a manual kernel compaction without calling the provider", async () => {
     const provider = new StaticProvider([]);
     const engine = new QueryEngine({
