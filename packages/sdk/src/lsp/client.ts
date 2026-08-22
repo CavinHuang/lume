@@ -410,6 +410,15 @@ function normalizeServerConfig(name: string, value: unknown, workspaceRoot: stri
     priority: typeof record.priority === 'number' ? record.priority : 0,
     role: record.role === 'linter' ? 'linter' : record.role === 'primary' ? 'primary' : undefined,
     adapter: record.adapter === 'swiftlint' ? 'swiftlint' : undefined,
+    // Explicit per-server environment passthrough; merged over the minimal
+    // default spawn environment, never the host environment (#380).
+    ...(record.env && typeof record.env === 'object' && !Array.isArray(record.env)
+      ? {
+          env: Object.fromEntries(
+            Object.entries(record.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+          ),
+        }
+      : {}),
     ...(typeof record.cwd === 'string' && record.cwd.trim() ? { cwd: resolve(workspaceRoot, record.cwd) } : {}),
   }
 }
@@ -439,7 +448,8 @@ async function resolveAvailableServer(
     command: shim?.command ?? wrapped.command,
     args: shim?.args ?? wrapped.args,
     cwd: server.cwd ?? root,
-    ...(wrapped.env ? { env: wrapped.env } : {}),
+    // Merge instead of replace so configured env survives mux wrapping (#380).
+    ...(server.env || wrapped.env ? { env: { ...server.env, ...wrapped.env } } : {}),
     lspmux: wrapped.lspmux,
   }
 }
