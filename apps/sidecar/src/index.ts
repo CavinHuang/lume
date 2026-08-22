@@ -469,6 +469,18 @@ async function boot(): Promise<void> {
         error: { message: error instanceof Error ? error.message : String(error) }
       });
     });
+  // 冷启动预热：把首条消息的模块加载/MCP 冷连接挪到启动后的空闲期（fire-and-forget）
+  void import("./services/warmup/cold-start-warmup")
+    .then(({ startColdStartWarmup }) => startColdStartWarmup())
+    .catch((error) => {
+      writeLogRecord({
+        level: "warn",
+        context: "sidecar.warmup",
+        event: "cold_start_warmup.start_failed",
+        message: "cold start warmup could not be started",
+        error: { message: error instanceof Error ? error.message : String(error) }
+      });
+    });
   // 启动时清理过期回收站条目
   try { cleanupExpiredTrash(); } catch { /* non-critical */ }
   try { reconcilePlanningStartOperations(); } catch { /* retried on the next start or idempotent request */ }
