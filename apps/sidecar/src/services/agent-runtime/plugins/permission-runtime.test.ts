@@ -73,6 +73,133 @@ describe("PluginPermissionRuntime.checkSensitiveCapability", () => {
       expect(result.decision).toBe("allow");
     });
   });
+
+  test("ignores an allow recorded under a different permissions hash (#344)", async () => {
+    await withRuntime(async (runtime, store) => {
+      await store.write(
+        stateWith("acme", {
+          // Accepted hash moved on to h2; the merged record still carries an
+          // allow that was granted while h1 was current.
+          activeVersion: "2.0.0",
+          versions: {
+            "2.0.0": {
+              pluginId: "acme",
+              version: "2.0.0",
+              source: { type: "local", path: "/p" },
+              installedRoot: "/p",
+              installedAt: "2026-01-02T00:00:00Z",
+              permissionsHash: "h2",
+              sensitiveApprovals: [],
+            },
+          },
+          approvalsByHash: {
+            h1: {
+              permissionsHash: "h1",
+              sensitiveApprovals: [
+                { key: "commandTool:echo", scope: "global", decision: "allow", createdAt: "2026-01-01T00:00:00Z", permissionsHash: "h1" },
+              ],
+            },
+          },
+        }),
+      );
+      const result = await runtime.checkSensitiveCapability({
+        pluginId: "acme",
+        key: "commandTool:echo",
+      });
+      expect(result.decision).toBe("ask");
+    });
+  });
+
+  test("treats empty-hash approvals as wildcards for legacy records (#344)", async () => {
+    await withRuntime(async (runtime, store) => {
+      await store.write(
+        stateWith("acme", {
+          activeVersion: "1.0.0",
+          versions: {
+            "1.0.0": {
+              pluginId: "acme",
+              version: "1.0.0",
+              source: { type: "local", path: "/p" },
+              installedRoot: "/p",
+              installedAt: "2026-01-01T00:00:00Z",
+              permissionsHash: "h",
+              sensitiveApprovals: [
+                { key: "commandTool:echo", scope: "global", decision: "allow", createdAt: "2026-01-01T00:00:00Z", permissionsHash: "" },
+              ],
+            },
+          },
+        }),
+      );
+      const result = await runtime.checkSensitiveCapability({
+        pluginId: "acme",
+        key: "commandTool:echo",
+      });
+      expect(result.decision).toBe("allow");
+    });
+  });
+
+  test("surfaces the accepted permissions hash so allow_always records can be stamped (#344 follow-up)", async () => {
+    await withRuntime(async (runtime, store) => {
+      await store.write(
+        stateWith("acme", {
+          activeVersion: "1.0.0",
+          versions: {
+            "1.0.0": {
+              pluginId: "acme",
+              version: "1.0.0",
+              source: { type: "local", path: "/p" },
+              installedRoot: "/p",
+              installedAt: "2026-01-01T00:00:00Z",
+              permissionsHash: "h",
+              sensitiveApprovals: [],
+            },
+          },
+        }),
+      );
+      const result = await runtime.checkSensitiveCapability({
+        pluginId: "acme",
+        key: "commandTool:echo",
+      });
+      expect(result.permissionsHash).toBe("h");
+    });
+  });
+
+  test("still honors a deny from the current hash even when an older allow exists (#344)", async () => {
+    await withRuntime(async (runtime, store) => {
+      await store.write(
+        stateWith("acme", {
+          activeVersion: "2.0.0",
+          versions: {
+            "2.0.0": {
+              pluginId: "acme",
+              version: "2.0.0",
+              source: { type: "local", path: "/p" },
+              installedRoot: "/p",
+              installedAt: "2026-01-02T00:00:00Z",
+              permissionsHash: "h2",
+              sensitiveApprovals: [
+                { key: "commandTool:echo", scope: "workspace", workspaceSlug: "ws", decision: "deny", createdAt: "2026-01-02T00:00:00Z", permissionsHash: "h2" },
+              ],
+            },
+          },
+          approvalsByHash: {
+            h1: {
+              permissionsHash: "h1",
+              sensitiveApprovals: [
+                { key: "commandTool:echo", scope: "global", decision: "allow", createdAt: "2026-01-01T00:00:00Z", permissionsHash: "" },
+              ],
+            },
+          },
+        }),
+      );
+      const result = await runtime.checkSensitiveCapability({
+        pluginId: "acme",
+        key: "commandTool:echo",
+        workspaceSlug: "ws",
+      });
+      expect(result.decision).toBe("deny");
+    });
+  });
 });
 
 describe("PluginPermissionRuntime.appendSensitiveApproval", () => {

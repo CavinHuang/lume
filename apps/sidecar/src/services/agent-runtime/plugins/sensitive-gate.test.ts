@@ -106,6 +106,21 @@ describe("evaluatePluginSensitiveGate", () => {
     expect(result.capabilityKey).toBe("commandTool:echo");
   });
 
+  test("ask decision surfaces the runtime's permissions hash so allow_always records can be stamped (#344 follow-up)", async () => {
+    const runtime = {
+      async checkSensitiveCapability(): Promise<SensitiveCheckResult> {
+        return { decision: "ask", reason: "no prior approval", permissionsHash: "h-current" };
+      },
+    } as unknown as PluginPermissionRuntime;
+    const result = await evaluatePluginSensitiveGate({
+      descriptor: descriptor("echo", "acme"),
+      runtime,
+      workspaceSlug: "ws",
+    });
+    expect(result.decision).toBe("ask");
+    expect(result.permissionsHash).toBe("h-current");
+  });
+
   test("ask decision for a plugin-MCP tool carries mcpServer capabilityKey", async () => {
     const result = await evaluatePluginSensitiveGate({
       descriptor: mcpDescriptor("mcp__acme:api__search", "acme", "acme:api"),

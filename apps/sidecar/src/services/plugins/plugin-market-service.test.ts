@@ -209,6 +209,58 @@ describe("PluginMarketService", () => {
     }));
   });
 
+  test("installing a new permissions hash prunes approval bundles from older hashes (#344)", async () => {
+    const pluginRoot = join(root, "source", "prune");
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "prune",
+      version: "1.0.0",
+      commandTools: [{ name: "prune_echo", command: "echo", args: ["hi"] }],
+      permissions: { tools: { allow: ["Read"] } }
+    });
+    const statePath = join(root, "plugins-state.json");
+    // Seed an approval bundle recorded under a previous, now-stale hash.
+    await writeJson(statePath, {
+      plugins: {
+        prune: {
+          pluginId: "prune",
+          versions: {},
+          approvalsByHash: {
+            stalehash: {
+              permissionsHash: "stalehash",
+              sensitiveApprovals: [
+                {
+                  key: "commandTool:prune_echo",
+                  scope: "global",
+                  decision: "allow",
+                  createdAt: "2026-01-01T00:00:00Z",
+                  permissionsHash: "stalehash"
+                }
+              ]
+            }
+          }
+        }
+      }
+    });
+
+    const service = makeService(root);
+    const inspected = await service.inspectMarketSource({
+      workspaceSlug: "default",
+      source: { type: "local", path: pluginRoot }
+    });
+    expect(inspected.permissionsHash).not.toBe("stalehash");
+
+    await service.installMarketItem({
+      workspaceSlug: "default",
+      kind: "plugin",
+      source: { type: "local", path: pluginRoot },
+      acceptedPermissionsHash: inspected.permissionsHash
+    });
+
+    const state = await new FilePluginStateStore(statePath).read();
+    expect(Object.keys(state.plugins.prune?.approvalsByHash ?? {})).toEqual([inspected.permissionsHash]);
+  });
+
   test("blocks uninstall of enabled plugin unless forced", async () => {
     const pluginRoot = join(root, "source", "enabled-plugin");
     await writeJson(join(pluginRoot, "lume-plugin.json"), {
