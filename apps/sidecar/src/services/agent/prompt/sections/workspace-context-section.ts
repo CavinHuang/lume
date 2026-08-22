@@ -59,15 +59,11 @@ export function buildWorkspaceContextSection(ctx: {
 
   if (contextFiles.length === 0) return "";
 
-  const lines: string[] = [
-    "## 工作区上下文",
-    "",
-    "本线程已加载净化后的工作区上下文："
-  ];
-  lines.push("");
+  // 子块之间只留单个空行，末尾不带空行（避免与外层 \n\n 拼出双空行）
+  const lines: string[] = ["## 工作区上下文"];
 
   for (const file of contextFiles) {
-    lines.push(`## ${file.path}`, "", file.content, "");
+    lines.push("", `## ${file.path}`, "", file.content);
   }
 
   return lines.join("\n");

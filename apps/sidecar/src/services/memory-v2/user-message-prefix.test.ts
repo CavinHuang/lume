@@ -50,16 +50,13 @@ describe("memory-v2 user message prefix", () => {
       reason: "recent daily memory"
     }]);
 
-    expect(prefix).toContain("If a recalled daily/run note only shows the user asked the same question before");
-    expect(prefix).toContain("say naturally that you have discussed or tested this topic before");
-    expect(prefix).toContain("For user identity questions");
-    expect(prefix).toContain("For assistant identity questions");
-    expect(prefix).toContain("没有一个真正能叫出你的称呼");
-    expect(prefix).toContain("Do not turn missing identity memory into profile-system wording");
-    expect(prefix).toContain("目前我这边还没有记录你的身份信息");
-    expect(prefix).toContain("Do not infer identity from runtime metadata");
-    expect(prefix).toContain("Do not say phrases like");
-    expect(prefix).toContain("从记忆中可以看出");
+    expect(prefix).toContain("若召回的 daily/run 记录只表明用户问过同样的问题");
+    expect(prefix).toContain("仅在召回 user/self 身份或称呼 claim 时才陈述事实");
+    expect(prefix).toContain("assistant/self.preferred_name");
+    // 记忆使用哲学/身份未知措辞由静态 prompt「## 记忆」段单点声明，召回前缀不再重复
+    expect(prefix).not.toContain("Use recalled memory naturally");
+    expect(prefix).not.toContain("Do not turn missing identity memory");
+    expect(prefix).not.toContain("没有一个真正能叫出你的称呼");
   });
 
   test("does not promote daily or run state snippets into the profile section", () => {
@@ -438,7 +435,7 @@ describe("memory-v2 user message prefix", () => {
     });
 
     expect(context.userMessageForModel).toContain("<user_voice>");
-    expect(context.userMessageForModel).toContain("Treat <user_voice> as tone and writing-style guidance only");
+    expect(context.userMessageForModel).toContain("<user_voice> 仅约束语气与文风");
     expect(context.userMessageForModel).toContain("user/self.writing_style = 简洁、有温度");
   });
 
@@ -494,7 +491,7 @@ describe("memory-v2 user message prefix", () => {
     expect(userProfileIdx).toBeGreaterThan(-1);
     expect(personaProfileIdx).toBeGreaterThan(userProfileIdx);
     // 头部指令含 persona_profile 规则
-    expect(prefix).toContain("Treat <persona_profile> as a synthesized overview");
+    expect(prefix).toContain("<persona_profile> 是用户画像的综合概览");
     // 演进轨迹不应注入（仅 summary + preferences + interactionRules）
     expect(section).not.toContain("2026-08 偏好 TS");
   });
