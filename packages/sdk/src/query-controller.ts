@@ -29,17 +29,21 @@ function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {
 
 class AsyncInputQueue implements AsyncIterable<QueryInput> {
   private items: QueryInput[] = []
-  private resolvers: Array<(value: IteratorResult<QueryInput>) => void> = []
+  private waiters: Array<{
+    resolve: (value: IteratorResult<QueryInput>) => void
+    reject: (reason?: unknown) => void
+  }> = []
   private closed = false
+  private failure: { reason: unknown } | null = null
 
   push(item: QueryInput): void {
     if (this.closed) {
       throw new Error('Query input stream is closed')
     }
 
-    const resolver = this.resolvers.shift()
-    if (resolver) {
-      resolver({ done: false, value: item })
+    const waiter = this.waiters.shift()
+    if (waiter) {
+      waiter.resolve({ done: false, value: item })
       return
     }
 
@@ -49,9 +53,19 @@ class AsyncInputQueue implements AsyncIterable<QueryInput> {
   close(): void {
     if (this.closed) return
     this.closed = true
-    while (this.resolvers.length > 0) {
-      const resolver = this.resolvers.shift()
-      resolver?.({ done: true, value: undefined as never })
+    while (this.waiters.length > 0) {
+      const waiter = this.waiters.shift()
+      waiter?.resolve({ done: true, value: undefined as never })
+    }
+  }
+
+  /** Fault the queue: pending and future reads reject with the given reason. */
+  fail(reason: unknown): void {
+    if (this.closed || this.failure) return
+    this.failure = { reason }
+    while (this.waiters.length > 0) {
+      const waiter = this.waiters.shift()
+      waiter?.reject(reason)
     }
   }
 
@@ -61,12 +75,16 @@ class AsyncInputQueue implements AsyncIterable<QueryInput> {
       return { done: false, value: item }
     }
 
+    if (this.failure) {
+      throw this.failure.reason
+    }
+
     if (this.closed) {
       return { done: true, value: undefined as never }
     }
 
-    return new Promise<IteratorResult<QueryInput>>((resolve) => {
-      this.resolvers.push(resolve)
+    return new Promise<IteratorResult<QueryInput>>((resolve, reject) => {
+      this.waiters.push({ resolve, reject })
     })
   }
 
@@ -89,11 +107,18 @@ export class QueryController implements Query {
     this.stream = runner(this.queue)
 
     if (initialInput !== undefined) {
-      void this.streamInput(initialInput).finally(() => {
-        if (!isAsyncIterable<QueryInput>(initialInput)) {
-          this.queue.close()
-        }
-      })
+      // A throwing input source must not become an unhandledRejection with the
+      // runner left pending forever: fault the queue so the error surfaces as
+      // an iterator error inside the message stream.
+      void this.streamInput(initialInput)
+        .catch((error) => {
+          this.queue.fail(error)
+        })
+        .finally(() => {
+          if (!isAsyncIterable<QueryInput>(initialInput)) {
+            this.queue.close()
+          }
+        })
     }
   }
 

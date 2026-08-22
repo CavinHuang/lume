@@ -127,9 +127,8 @@ export type CreateMessageStreamEvent =
  *
  * - **Protocol conversion.** Translate the normalized (Anthropic-like)
  *   request/response shapes in this file to and from the provider's native
- *   API. `apiType` declares which protocol; the engine surfaces it in
- *   `auth_status` and `getApiType()` but performs no protocol handling
- *   itself.
+ *   API. `apiType` declares which protocol; the engine surfaces it via
+ *   `getApiType()` but performs no protocol handling itself.
  * - **Credentials & retry.** The provider owns keys, base URLs, and
  *   transport-level retries. The engine does not retry provider errors
  *   except its own prompt-too-long compaction path.

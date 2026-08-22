@@ -10,6 +10,7 @@ import {
   recordSkillUsage,
   restoreSkillVersion,
 } from "./evolution";
+import { withFileMutationLock } from "../utils/file-mutation-lock";
 
 function makeSkillFile(content = "# Demo Skill\n\nUse carefully.") {
   const root = join(tmpdir(), `sdk-skill-evolution-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -129,5 +130,77 @@ describe("skill evolution", () => {
     const versions = await listSkillVersions(skillPath);
 
     expect(versions.map((version) => version.filename)).toEqual(["SKILL_20260605_010203_abcd.md"]);
+  });
+
+  test("applySkillImprovement 中止写入当技能文件在模型调用窗口被外部修改", async () => {
+    const { root, skillPath } = makeSkillFile("# Demo Skill\n\nOriginal.");
+    roots.push(root);
+    const externalContent = "# Demo Skill\n\nExternal edit during model call.";
+
+    const result = await applySkillImprovement({
+      skillPath,
+      updates: [{ section: "Rules", change: "Use the new rule", reason: "Test" }],
+      callModel: async () => {
+        // Simulate an external writer landing inside the long model-call window.
+        writeFileSync(skillPath, externalContent, "utf-8");
+        return "<updated_file># Demo Skill\n\nNew rule.</updated_file>";
+      },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("外部修改");
+    expect(readFileSync(skillPath, "utf-8")).toBe(externalContent);
+    expect(existsSync(join(dirname(skillPath), "versions"))).toBe(true);
+    const versionFiles = await readdir(join(dirname(skillPath), "versions"));
+    expect(versionFiles).toHaveLength(0);
+  });
+
+  test("applySkillImprovement 排队等待既有文件锁后正常写入", async () => {
+    const { root, skillPath } = makeSkillFile("# Demo Skill\n\nOld rule.");
+    roots.push(root);
+
+    let releaseExternal!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseExternal = resolve;
+    });
+    const externalHolder = withFileMutationLock(skillPath, async () => {
+      await gate;
+    });
+
+    const applyPromise = applySkillImprovement({
+      skillPath,
+      updates: [{ section: "Rules", change: "Use the new rule", reason: "Test" }],
+      callModel: async () => "<updated_file># Demo Skill\n\nNew rule.</updated_file>",
+    });
+
+    releaseExternal();
+    await Promise.all([externalHolder, applyPromise.then((result) => {
+      expect(result.success).toBe(true);
+      expect(readFileSync(skillPath, "utf-8")).toBe("# Demo Skill\n\nNew rule.");
+    })]);
+  });
+
+  test("restoreSkillVersion 备份当前内容失败即中止，不再覆盖", async () => {
+    const { root, skillDir } = makeSkillFile();
+    roots.push(root);
+    // Target skill file does not exist, so the pre-restore backup cannot succeed.
+    const skillPath = join(skillDir, "SKILL.md");
+    rmSync(skillPath);
+    const versionsDir = join(skillDir, "versions");
+    mkdirSync(versionsDir, { recursive: true });
+    writeFileSync(
+      join(versionsDir, "2026-08-22_010203_abcd1234.md"),
+      "# Demo Skill\n\nBackup content.",
+      "utf-8"
+    );
+
+    const restored = await restoreSkillVersion({
+      skillPath,
+      filename: "2026-08-22_010203_abcd1234.md",
+    });
+
+    expect(restored.success).toBe(false);
+    expect(restored.error).toContain("备份当前内容失败");
+    expect(existsSync(skillPath)).toBe(false);
   });
 });
