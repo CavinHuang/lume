@@ -7,7 +7,6 @@
 
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'fs/promises'
 import { join, resolve } from 'path'
-import { clearLspWritethroughState } from './lsp/writethrough.js'
 import type { NormalizedMessageParam } from './providers/types.js'
 import type {
   FileCheckpointState,
@@ -447,7 +446,6 @@ export async function appendToSession(
 }
 
 export async function deleteSession(sessionId: string): Promise<boolean> {
-  clearLspWritethroughState(sessionId)
   let deleted = false
   try {
     for (const root of getSessionDirCandidates()) {

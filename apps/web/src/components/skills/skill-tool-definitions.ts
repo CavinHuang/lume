@@ -3,7 +3,6 @@ export type SkillSystemToolGroupId =
   | 'file-read'
   | 'file-write'
   | 'search'
-  | 'code-intelligence'
   | 'web'
   | 'data'
   | 'memory'

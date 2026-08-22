@@ -9,6 +9,7 @@ import type {
   MemoryMutationResult
 } from "@lume/shared";
 import { claimFromEntry, claimKey, normalizeMemoryV2Claim } from "./claim";
+import { containsSecret } from "./redact";
 import { createMemoryV2Store, readActivation, type MemoryV2Store } from "./markdown-store";
 import { getMemoryV2ScopePaths } from "./paths";
 import { shouldSuppressDurableMemory, smartAddMemoryV2Candidate } from "./smart-add";
@@ -74,7 +75,7 @@ export class MemoryCommandService {
         runId: input.runId,
         recordIds: input.evidenceRefs?.flatMap((ref) => ref.id ? [ref.id] : []),
         sourcePaths: input.evidenceRefs?.flatMap((ref) => ref.path ? [ref.path] : []),
-        quote: sanitizeEvidenceQuote(input.evidenceRefs?.find((ref) => ref.quote)?.quote)
+        quote: input.evidenceRefs?.find((ref) => ref.quote)?.quote
       },
       evidenceRefs: input.evidenceRefs
     };
@@ -147,7 +148,7 @@ export class MemoryCommandService {
       evidence: {
         recordIds: input.evidenceRefs?.flatMap((ref) => ref.id ? [ref.id] : []),
         sourcePaths: input.evidenceRefs?.flatMap((ref) => ref.path ? [ref.path] : []),
-        quote: sanitizeEvidenceQuote(input.evidenceRefs?.find((ref) => ref.quote)?.quote)
+        quote: input.evidenceRefs?.find((ref) => ref.quote)?.quote
       },
       evidenceRefs: input.evidenceRefs
     };
@@ -603,22 +604,6 @@ function inferSemanticRole(content: string, legacyKind?: string, facets?: string
 function legacyKindForRole(role: MemoryV2SemanticRole): MemoryV2Kind {
   if (role === "preference" || role === "decision" || role === "lesson" || role === "state") return role;
   return "fact";
-}
-
-function containsSecret(content: string): boolean {
-  return /(?:api[_-]?key|token|password|密码|验证码|secret)\s*[:=]\s*\S+|\bsk-[A-Za-z0-9_-]{16,}\b/i.test(content)
-    || /\b(?:ghp|gho|ghu|ghs)_[A-Za-z0-9]{20,}\b/.test(content)
-    || /\bgithub_pat_[A-Za-z0-9_]{20,}\b/.test(content)
-    || /\bAKIA[0-9A-Z]{16}\b/.test(content)
-    || /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(content)
-    || /\bBearer\s+eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\./i.test(content)
-    || /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/.test(content);
-}
-
-/** 证据原文先过密钥过滤：statement 滤了但整条源消息 quote 会明文进 frontmatter 并注入 prompt（#408）。 */
-function sanitizeEvidenceQuote(quote: string | undefined): string | undefined {
-  if (!quote) return undefined;
-  return containsSecret(quote) ? "[证据原文含疑似密钥，已省略]" : quote;
 }
 
 function strongerConfidence(left: MemoryV2Confidence, right: MemoryV2Confidence): MemoryV2Confidence {

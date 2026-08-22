@@ -210,32 +210,6 @@ export const DEFAULT_LUME_WEB_SEARCH: LumeConfigWebSearchSection = {
   }
 }
 
-export interface LumeLspServerConfig {
-  disabled?: boolean
-  command?: string
-  args?: string[]
-  cwd?: string
-  fileTypes?: string[]
-  rootMarkers?: string[]
-  initOptions?: Record<string, unknown>
-  settings?: Record<string, unknown>
-  requestTimeoutMs?: number
-  warmupTimeoutMs?: number
-  priority?: number
-  role?: "primary" | "linter"
-}
-
-export interface LumeConfigLspSection {
-  enabled?: boolean
-  lazy?: boolean
-  diagnosticsOnWrite?: boolean
-  diagnosticsDeduplicate?: boolean
-  formatOnWrite?: boolean
-  idleTimeoutMs?: number
-  useLspmux?: "auto" | "off"
-  servers?: Record<string, LumeLspServerConfig>
-}
-
 export interface LumeConfigSectionSet {
   models?: LumeConfigModelsSection
   agent?: LumeConfigAgentSection
@@ -247,7 +221,6 @@ export interface LumeConfigSectionSet {
   permissions?: LumeConfigPermissionsSection
   hooks?: LumeConfigHooksSection
   webSearch?: LumeConfigWebSearchSection
-  lsp?: LumeConfigLspSection
 }
 
 export interface LumeConfigFile extends LumeConfigSectionSet {

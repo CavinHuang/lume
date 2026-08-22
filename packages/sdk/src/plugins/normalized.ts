@@ -23,7 +23,6 @@ export interface PluginDiagnostic {
     | "duplicate_plugin_ignored"
     | "permission_review_required"
     | "capability_filtered"
-    | "lsp_config_invalid"
     | "mcp_start_failed"
     | "orphaned_install"
     | "command_tool_invalid";
@@ -53,7 +52,6 @@ export interface PluginManifestCapabilities {
   skills: PluginSkillContribution[];
   hooksConfigPath?: string;
   mcpServersConfigPath?: string;
-  lspServersConfigPath?: string;
   commandTools: CommandToolContribution[];
 }
 
@@ -155,7 +153,6 @@ function normalizeLumeManifest(
       })),
       ...(manifest.hooks ? { hooksConfigPath: manifest.hooks } : {}),
       ...(manifest.mcpServers ? { mcpServersConfigPath: manifest.mcpServers } : {}),
-      ...(manifest.lspServers ? { lspServersConfigPath: manifest.lspServers } : {}),
       commandTools,
     },
     permissions: manifest.permissions ?? {},
