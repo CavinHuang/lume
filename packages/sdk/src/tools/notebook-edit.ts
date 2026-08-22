@@ -173,7 +173,10 @@ export const NotebookEditTool = defineTool({
           : findCellIndex(cells, input.cell_id)
 
       if (editMode === 'insert') {
-        const insertAfterIndex = targetIndex
+        // Omitted anchor inserts at the beginning; explicit anchors insert after
+        // the resolved cell (negative cell_number keeps the prepend branch).
+        const anchorOmitted = input.cell_id === undefined && input.cell_number === undefined
+        const insertAfterIndex = anchorOmitted ? -1 : targetIndex
         const newCell: NotebookCell = {
           id: `cell-${crypto.randomUUID()}`,
           cell_type: input.cell_type || 'code',
@@ -220,6 +223,7 @@ export const NotebookEditTool = defineTool({
         isPartialView: false,
       })
 
+      // Only a summary of the changed cell is returned; read the file for full contents.
       return {
         data: JSON.stringify({
           new_source: editMode === 'delete' ? '' : (targetCell ? readCellSource(targetCell) : newSource),
@@ -228,8 +232,6 @@ export const NotebookEditTool = defineTool({
           language: inferLanguage(notebook),
           edit_mode: editMode,
           notebook_path: notebookPath,
-          original_file: originalFile,
-          updated_file: updatedFile,
         }),
         _meta: {
           file: { path: notebookPath, overwritten: true, checkpointable: true, checkpointId: context.currentUserMessageId },
