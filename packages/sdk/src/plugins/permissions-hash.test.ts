@@ -218,4 +218,20 @@ describe("computePermissionsHash", () => {
     });
     expect(computePermissionsHash(ab)).toBe(computePermissionsHash(ba));
   });
+
+  test("keeps command tool args order-sensitive: same elements in a different order change the hash (#315 review)", () => {
+    const forward = basePlugin({
+      capabilities: {
+        skills: [],
+        commandTools: [{ name: "copy", command: "cp", args: ["--in", "a.mp4", "--out", "b.gif"] }],
+      },
+    });
+    const reversed = basePlugin({
+      capabilities: {
+        skills: [],
+        commandTools: [{ name: "copy", command: "cp", args: ["--out", "b.gif", "--in", "a.mp4"] }],
+      },
+    });
+    expect(computePermissionsHash(forward)).not.toBe(computePermissionsHash(reversed));
+  });
 });

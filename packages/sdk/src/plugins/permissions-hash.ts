@@ -64,7 +64,9 @@ function canonicalSummary(plugin: NormalizedPlugin): PermissionSummary {
   return {
     pluginId: plugin.pluginId,
     manifestFormat: plugin.manifestFormat,
-    permissions: plugin.permissions,
+    // Permission lists (read/write patterns, outbound hosts, tool allow/deny/
+    // ask) are unordered sets and are sorted for order-independent hashing.
+    permissions: deepSortStringArrays(plugin.permissions),
     capabilities: {
       skills: [...plugin.capabilities.skills]
         .sort((a, b) => a.root.localeCompare(b.root))
@@ -92,16 +94,13 @@ function capabilityFileHash(plugin: NormalizedPlugin, path: string | undefined):
 /**
  * Recursively canonicalize a value for stable serialization:
  *   - object keys sorted ascending
- *   - arrays of strings sorted
- *   - arrays of non-strings canonicalized element-wise, order preserved
- *     (execution-relevant arrays like command args keep their order; command
- *     tools themselves are pre-sorted by name in canonicalSummary).
+ *   - arrays keep their order. Execution-relevant sequences like commandTool
+ *     args are position-sensitive (reordering `cp A B` into `cp B A` must
+ *     change the hash), and order-insensitive collections are pre-sorted by
+ *     canonicalSummary / deepSortStringArrays instead.
  */
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) {
-    if (value.every((item) => typeof item === "string")) {
-      return [...value].sort();
-    }
     return value.map(canonicalize);
   }
   if (value && typeof value === "object") {
@@ -110,6 +109,24 @@ function canonicalize(value: unknown): unknown {
       sorted[key] = canonicalize((value as Record<string, unknown>)[key]);
     }
     return sorted;
+  }
+  return value;
+}
+
+/** Deeply sort string arrays inside a value — permission lists are unordered sets. */
+function deepSortStringArrays(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    if (value.every((item) => typeof item === "string")) {
+      return [...value].sort();
+    }
+    return value.map(deepSortStringArrays);
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = deepSortStringArrays(entry);
+    }
+    return out;
   }
   return value;
 }
