@@ -150,7 +150,7 @@ export function isRateLimitError(err: any): boolean {
  */
 export function formatApiError(err: any): string {
   if (isAuthError(err)) {
-    return 'Authentication failed. Check your CODEANY_API_KEY.'
+    return 'Authentication failed. Check the credentials configured on your LLM provider.'
   }
   if (isRateLimitError(err)) {
     return 'Rate limit exceeded. Please retry after a short wait.'
