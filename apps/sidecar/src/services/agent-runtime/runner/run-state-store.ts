@@ -72,6 +72,38 @@ function readJsonlFile<T>(path: string): T[] {
     .filter((item): item is T => item !== null);
 }
 
+/**
+ * tool_call 终态侧车行：settleToolCall 只 append 此记录（O(1)），
+ * 读取投影时物化回对应 tool_call 行，finalize compact 时随重写一次性收敛掉。
+ */
+interface ToolSettleRecord {
+  type: "tool_settled";
+  toolCallId: string;
+  status: "completed" | "failed";
+  endedAt: string;
+}
+
+/** 物化侧车终态到 tool_call 行并剔除侧车行；无侧车行时原数组原样返回（零分配快路）。 */
+function projectSettledItems(items: LumeRunItem[]): LumeRunItem[] {
+  let settles: Map<string, ToolSettleRecord> | null = null;
+  const retained: LumeRunItem[] = [];
+  for (const item of items) {
+    const record = item as unknown as Partial<ToolSettleRecord>;
+    if (record.type === "tool_settled" && typeof record.toolCallId === "string") {
+      // 同 id 多条取最新（后到终态胜出）
+      (settles ??= new Map()).set(record.toolCallId, record as ToolSettleRecord);
+    } else {
+      retained.push(item);
+    }
+  }
+  if (!settles) return items;
+  return retained.map((item) => {
+    if (item.type !== "tool_call") return item;
+    const settle = settles.get(item.id);
+    return settle ? { ...item, status: settle.status, endedAt: settle.endedAt } : item;
+  });
+}
+
 class FileBackedLumeRunStateStore implements LumeRunStateStore {
   private readonly sessionDir: string;
   private readonly runsDir: string;
@@ -101,7 +133,7 @@ class FileBackedLumeRunStateStore implements LumeRunStateStore {
     if (!state) return null;
     return {
       ...state,
-      generatedItems: readJsonlFile<LumeRunItem>(this.itemsPath(runId))
+      generatedItems: projectSettledItems(readJsonlFile<LumeRunItem>(this.itemsPath(runId)))
     };
   }
 
@@ -136,17 +168,12 @@ class FileBackedLumeRunStateStore implements LumeRunStateStore {
   }
 
   async settleToolCall(runId: string, toolCallId: string, status: "completed" | "failed", endedAt: string): Promise<void> {
-    const path = this.itemsPath(runId);
-    if (!existsSync(path)) return;
-    const items = readJsonlFile<LumeRunItem>(path);
-    let settled = false;
-    const next = items.map((item) => {
-      if (item.type !== "tool_call" || item.id !== toolCallId || settled) return item;
-      settled = true;
-      return { ...item, status, endedAt } as LumeRunItem;
-    });
-    if (!settled) return;
-    writeTextAtomic(path, next.map((item) => JSON.stringify(item)).join("\n") + "\n");
+    // append-only 侧车行（O(1)）：不再全量读改写 items.jsonl——每条 tool_result 触发的
+    // 整文件重写在长 run 下是 O(N²) IO。物化时机：读取投影（get）与 finalize compact。
+    // 目标行不存在时记录成孤儿侧车行，投影时自然丢弃——与原"找不到静默"语义一致。
+    if (!existsSync(this.itemsPath(runId))) return;
+    const record: ToolSettleRecord = { type: "tool_settled", toolCallId, status, endedAt };
+    appendFileSync(this.itemsPath(runId), JSON.stringify(record) + "\n", "utf-8");
   }
 
   async listByThread(threadId: string): Promise<LumeRunState[]> {
@@ -180,7 +207,11 @@ class FileBackedLumeRunStateStore implements LumeRunStateStore {
   async countItems(runId: string): Promise<number> {
     const path = this.itemsPath(runId);
     if (!existsSync(path)) return 0;
-    return readFileSync(path, "utf-8").split("\n").filter((line) => line.trim().length > 0).length;
+    // 侧车行不是用户可见 item，排除之（JSON.stringify 无空格序列化，子串匹配可靠）
+    return readFileSync(path, "utf-8")
+      .split("\n")
+      .filter((line) => line.trim().length > 0 && !line.includes('"type":"tool_settled"'))
+      .length;
   }
 
   async compactModelStreamItems(runId: string): Promise<void> {
@@ -189,8 +220,11 @@ class FileBackedLumeRunStateStore implements LumeRunStateStore {
     const items = readJsonlFile<LumeRunItem>(path);
     // 与 hydrate 投影同一判定：无 assistant_message 的 run 依赖 model_stream 重建文本，不裁
     if (items.length === 0 || !runHasAssistantMessage(items)) return;
-    const retained = items.filter((item) => item.type !== "model_stream");
-    if (retained.length === items.length) return;
+    // finalize 收敛一并物化侧车终态：重写后文件回归纯净形态（tool_call 行自带终态，无侧车行）
+    const filtered = items.filter((item) => item.type !== "model_stream");
+    const retained = projectSettledItems(filtered);
+    // 无 delta 可裁且无侧车行待物化（投影快路原引用返回）才免重写
+    if (filtered.length === items.length && retained === filtered) return;
     writeTextAtomic(path, retained.map((item) => JSON.stringify(item)).join("\n") + "\n");
   }
 
