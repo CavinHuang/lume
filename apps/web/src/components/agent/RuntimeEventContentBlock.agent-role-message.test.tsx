@@ -103,8 +103,7 @@ describe('user agent role invocation messages', () => {
         text={`${quotedBlock}请检查 @Gmail · work`}
         messageParts={[
           { type: 'text', text: quotedBlock },
-          { type: 'text', text: '请检查 ' },
-          { type: 'link_connection_ref', schemaVersion: 1, service: 'gmail', connectionName: 'work', displayText: 'Gmail · work' },
+          { type: 'text', text: '请检查 @Gmail · work' },
         ]}
       />,
     )

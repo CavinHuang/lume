@@ -2,7 +2,7 @@ import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
 import type { DesktopContextTarget } from '@lume/shared'
 
-export type TabType = 'agent' | 'settings' | 'welcome' | 'automation' | 'skills' | 'reading' | 'lume' | 'todo' | 'file' | 'browser' | 'proactive' | 'link'
+export type TabType = 'agent' | 'settings' | 'welcome' | 'automation' | 'skills' | 'reading' | 'lume' | 'todo' | 'file' | 'browser' | 'proactive'
 export type SettingsTab = 'channel' | 'agent' | 'mcp' | 'about'
 export type FileTabSource = 'workspace' | 'thread' | 'local'
 
@@ -40,10 +40,6 @@ export const capabilityDetailTargetAtom = atom<{
 } | null>(null)
 export const settingsInitialTabAtom = atom<string | null>(null)
 export const archiveInitialViewAtom = atom<'archive' | 'trash' | null>(null)
-export const linkProviderTargetAtom = atom<{
-  service: string
-  connectionName?: string
-} | null>(null)
 
 export function setTabDesktopContextTarget(tabs: Tab[], tabId: string, target: DesktopContextTarget): Tab[] {
   return tabs.map((tab) => (

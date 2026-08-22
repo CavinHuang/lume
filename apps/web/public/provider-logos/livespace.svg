@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" role="img" aria-label="Livespace">
-  <rect width="120" height="120" rx="20" fill="#fff"/>
-  <g transform="translate(-55.5 -10) scale(4.5)">
-    <path fill="#4FD465" fill-rule="evenodd" clip-rule="evenodd" d="M32.7213 7.94333C29.9066 7.49827 27.9468 8.20341 26.8077 10.0587C25.92 11.5045 25.3529 13.9413 25.1064 17.3692L25.0977 23.1983L30.6032 12.181L32.7213 7.94333Z"/>
-    <path fill="#24293B" d="M30.6044 12.1802L25.098 23.1981L18.6006 10.1811H21.7016L25.0977 17.3693L26.7329 13.8902C27.3366 12.6057 28.7236 11.8762 30.1298 12.1035L30.6044 12.1802Z"/>
-  </g>
-</svg>

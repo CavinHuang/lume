@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 64 64" role="img" aria-label="Yuandian">
-  <rect width="64" height="64" rx="14" fill="#005EB8"/>
-  <path d="M18 16h8l6.2 13.1L38.5 16h7.5L35.8 36.1V48h-7.2V36.1L18 16z" fill="#fff"/>
-  <path d="M42 31.5c5.2 0 9.5 3.2 9.5 8.1S47.2 48 42 48h-9.2V31.5H42zm-.4 11c2 0 3.3-1.1 3.3-2.9s-1.3-2.8-3.3-2.8H39v5.7h2.6z" fill="#C8A84B"/>
-</svg>

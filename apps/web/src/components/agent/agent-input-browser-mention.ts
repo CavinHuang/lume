@@ -5,7 +5,6 @@ import { listBrowserReferenceCandidates } from '@/lib/desktop-api'
 import { MentionList, type MentionListRef } from './MentionList'
 import { type MentionItem } from './slash-command-state'
 import { buildAgentRoleMentionItems } from './agent-input-role-recommendations'
-import { fetchLinkConnectionMentionItems, insertLinkConnectionMention } from './link-connection-mentions'
 import { fetchFileMentionItems } from './agent-file-mentions'
 
 const browserSuggestionCache = new Map<string, { expiresAt: number; value: Promise<BrowserReferenceCandidate[]> }>()
@@ -33,13 +32,12 @@ async function fetchAgentAndFileSuggestions(
   const agentItems = buildAgentRoleMentionItems(query)
   const normalizedQuery = query.trim().toLowerCase()
   try {
-    const [connectorItems, browserCandidates, fileItems] = await Promise.all([
-      fetchLinkConnectionMentionItems(query),
+    const [browserCandidates, fileItems] = await Promise.all([
       getBrowserSuggestionCandidates(threadId),
       fetchFileMentionItems(query, workspaceSlug, threadId),
     ])
     const browserItems = buildBrowserMentionItems(browserCandidates, normalizedQuery)
-    return [...agentItems, ...connectorItems, ...browserItems, ...fileItems]
+    return [...agentItems, ...browserItems, ...fileItems]
   } catch {
     return agentItems
   }
@@ -124,12 +122,6 @@ export function createAgentSuggestionRenderer(
         })
       }
 
-      const selectLinkConnectionReference = (item: MentionItem) => {
-        const props = currentProps
-        if (!props) return
-        insertLinkConnectionMention(props.editor, props.range, item)
-      }
-
       return {
         onStart: (props: SuggestionProps) => {
           currentProps = props
@@ -140,7 +132,7 @@ export function createAgentSuggestionRenderer(
           document.body.appendChild(wrapper)
 
           component = new ReactRenderer(MentionList, {
-            props: { ...props, trigger: '@' as const, onBrowserReferenceSelect: selectBrowserReference, onLinkConnectionReferenceSelect: selectLinkConnectionReference },
+            props: { ...props, trigger: '@' as const, onBrowserReferenceSelect: selectBrowserReference },
             editor: props.editor,
           })
           wrapper.appendChild(component.element)
@@ -150,7 +142,7 @@ export function createAgentSuggestionRenderer(
 
         onUpdate: (props: SuggestionProps) => {
           currentProps = props
-          component?.updateProps({ ...props, trigger: '@' as const, onBrowserReferenceSelect: selectBrowserReference, onLinkConnectionReferenceSelect: selectLinkConnectionReference })
+          component?.updateProps({ ...props, trigger: '@' as const, onBrowserReferenceSelect: selectBrowserReference })
           if (wrapper) updateMentionPosition(wrapper, props)
         },
 
