@@ -1,5 +1,6 @@
 import type { SandboxSettings } from '../types.js';
 import { SandboxedStdioClientTransport } from './sandboxed-stdio-transport.js';
+import { buildMcpToolName, normalizeMcpServerId, shortHash } from './naming.js';
 
 export type McpTransportKind = 'stdio' | 'sse' | 'streamable_http';
 export type McpClientStatus = 'idle' | 'connecting' | 'connected' | 'failed';
@@ -227,43 +228,16 @@ function cloneConfig(config: NormalizedMcpServerConfig): NormalizedMcpServerConf
   };
 }
 
-function normalizeServerId(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'server';
-}
-
-function normalizeToolName(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '') || 'tool';
-}
-
-function shortHash(value: string): string {
-  let hash = 2166136261;
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36).padStart(6, '0').slice(0, 6);
-}
-
 function buildWrapperName(serverId: string, originalToolName: string, takenNames: Set<string>): string {
-  const serverNamespace = normalizeServerId(serverId);
-  const toolNamespace = normalizeToolName(originalToolName);
-  const base = `mcp__${serverNamespace}__${toolNamespace}`;
+  // buildMcpToolName applies the shared normalization + length clamp so the
+  // wrapper name is always a legal provider tool name (#326).
+  const base = buildMcpToolName(serverId, originalToolName);
   if (!takenNames.has(base)) {
     takenNames.add(base);
     return base;
   }
 
-  const suffix = shortHash(`${serverNamespace}\0${originalToolName}`);
+  const suffix = shortHash(`${normalizeMcpServerId(serverId)}\0${originalToolName}`);
   let candidate = `${base}_${suffix}`;
   let counter = 2;
   while (takenNames.has(candidate)) {
@@ -277,9 +251,12 @@ function buildWrapperName(serverId: string, originalToolName: string, takenNames
 function buildToolDetails(
   serverId: string,
   config: NormalizedMcpServerConfig,
-  tools: Array<{ name: string; description?: string; inputSchema?: unknown }>
+  tools: Array<{ name: string; description?: string; inputSchema?: unknown }>,
+  // Manager-wide, not per-server: server ids are case-folded by
+  // normalizeServerId, so two servers can normalize identically and must not
+  // mint colliding wrapper names that silently shadow each other (#325).
+  takenNames: Set<string>
 ): McpToolDetail[] {
-  const takenNames = new Set<string>();
   return tools.map((tool) => {
     const wrapperName = buildWrapperName(serverId, tool.name, takenNames);
     return {
@@ -438,12 +415,37 @@ function normalizeCallResult(result: unknown): McpCallResult {
   };
 }
 
-async function defaultClientFactory(serverId: string): Promise<McpClientLike> {
-  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+/**
+ * Test seam for the lazily-imported official MCP client constructor. Mocking
+ * the whole '@modelcontextprotocol/sdk/client/index.js' module would leak into
+ * every other test file sharing bun's single test process.
+ */
+type McpSdkClientCtor = new (
+  info: { name: string; version: string },
+  options: unknown
+) => unknown;
+let sdkClientCtor: McpSdkClientCtor | undefined;
+
+export function setDefaultMcpSdkClientConstructor(ctor: McpSdkClientCtor | undefined): void {
+  sdkClientCtor = ctor;
+}
+
+async function defaultClientFactory(
+  serverId: string,
+  options: { onToolsListChanged?: () => Promise<void> | void } = {}
+): Promise<McpClientLike> {
+  const Client: McpSdkClientCtor = sdkClientCtor
+    ?? ((await import('@modelcontextprotocol/sdk/client/index.js')).Client as unknown as McpSdkClientCtor);
   return new Client(
     { name: `lume-agent-sdk-${serverId}`, version: '1.0.0' },
-    {}
-  ) as McpClientLike;
+    {
+      // Subscribe to tools/list_changed so dynamically added/removed tools do
+      // not leave a permanently stale tool list until the next reconnect (#384).
+      listChanged: options.onToolsListChanged
+        ? { tools: { onChanged: async () => { await options.onToolsListChanged?.(); } } }
+        : {},
+    }
+  ) as unknown as McpClientLike;
 }
 
 async function defaultTransportFactory(
@@ -492,9 +494,14 @@ export class McpClientManager {
   private readonly failureRetryBaseMs: number;
   private readonly failureRetryMaxMs: number;
   private readonly servers = new Map<string, ServerState>();
+  // Instance-wide registry of already-issued wrapper tool names so servers
+  // whose ids normalize identically cannot mint colliding tools (#325).
+  private readonly takenWrapperNames = new Set<string>();
 
   constructor(options: McpClientManagerOptions = {}) {
-    this.clientFactory = options.clientFactory ?? defaultClientFactory;
+    this.clientFactory = options.clientFactory ?? ((serverId) => defaultClientFactory(serverId, {
+      onToolsListChanged: () => this.refreshToolsAfterListChanged(serverId),
+    }));
     this.transportFactory = options.transportFactory ?? defaultTransportFactory;
     this.defaultConnectTimeoutMs = options.defaultConnectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     this.defaultCallTimeoutMs = options.defaultCallTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
@@ -507,7 +514,8 @@ export class McpClientManager {
     if (existing && configsEqual(existing.config, config)) {
       return;
     }
-    if (existing?.client) {
+    if (existing) {
+      this.releaseToolNames(existing);
       void this.closeState(existing);
     }
     this.servers.set(serverId, {
@@ -531,19 +539,21 @@ export class McpClientManager {
     }
   }
 
-  async connect(serverId: string): Promise<void> {
-    await this.ensureConnected(serverId);
+  async connect(serverId: string, options: { force?: boolean } = {}): Promise<void> {
+    await this.ensureConnected(serverId, options);
   }
 
-  async ensureConnected(serverId: string): Promise<void> {
+  async ensureConnected(serverId: string, options: { force?: boolean } = {}): Promise<void> {
     const state = this.getStateOrThrow(serverId);
     if (state.status === 'connected' && state.client) {
       return;
     }
     // #312:failed 负缓存——退避窗口内不发起连接,快速抛缓存错误
     //(waitForConnections 的调用方 catch 吞掉,run 启动不再被挂死服务器卡满 timeout)
+    // Manual probes pass force to bypass the gate.
     if (
-      state.status === 'failed'
+      !options.force
+      && state.status === 'failed'
       && state.nextRetryAt !== undefined
       && Date.now() < state.nextRetryAt
     ) {
@@ -573,6 +583,7 @@ export class McpClientManager {
       return;
     }
     state.generation += 1;
+    this.releaseToolNames(state);
     await this.closeState(state);
     state.status = 'idle';
     state.tools = [];
@@ -667,6 +678,12 @@ export class McpClientManager {
         options.timeoutMs ?? this.defaultCallTimeoutMs,
         options.signal
       );
+      // A disconnect racing an in-flight call nulls state.client and the
+      // optional chain yields undefined; a legal empty MCP result is always
+      // an object, so undefined can only mean "no result" (#375).
+      if (result === undefined) {
+        throw createMcpError('protocol_error', `MCP tool call returned no result: ${serverId}/${originalToolName}`);
+      }
       return normalizeCallResult(result);
     } catch (error) {
       const classified = classifyError(error);
@@ -724,7 +741,7 @@ export class McpClientManager {
       );
       if (!isCurrent()) throw createMcpError('aborted', `MCP connection was superseded: ${serverId}`);
 
-      state.tools = buildToolDetails(serverId, state.config, toolList.tools ?? []);
+      this.replaceStateTools(state, serverId, toolList.tools ?? []);
       state.status = 'connected';
       state.error = undefined;
       state.failureCount = 0;
@@ -764,6 +781,51 @@ export class McpClientManager {
         );
       }
       throw classified;
+    }
+  }
+
+  /**
+   * Swap a server's tool list while keeping the manager-wide wrapper-name
+   * registry consistent: the previous names are released before new ones are
+   * claimed (#325).
+   */
+  private replaceStateTools(
+    state: ServerState,
+    serverId: string,
+    tools: Array<{ name: string; description?: string; inputSchema?: unknown }>
+  ): void {
+    this.releaseToolNames(state);
+    state.tools = buildToolDetails(serverId, state.config, tools, this.takenWrapperNames);
+  }
+
+  /**
+   * Re-pull listTools after a tools/list_changed notification. Generation and
+   * client identity checks discard stale notifications that raced a
+   * disconnect/reconnect (#384).
+   */
+  private async refreshToolsAfterListChanged(serverId: string): Promise<void> {
+    const state = this.servers.get(serverId);
+    const client = state?.client;
+    if (!state || !client) return;
+    const generation = state.generation;
+    try {
+      const toolList = await withTimeout(
+        Promise.resolve(client.listTools?.() ?? { tools: [] }),
+        this.defaultConnectTimeoutMs
+      );
+      if (this.servers.get(serverId) !== state || state.generation !== generation || state.client !== client) {
+        return;
+      }
+      this.replaceStateTools(state, serverId, toolList.tools ?? []);
+    } catch {
+      // Keep the last good tool list; connection errors surface through the
+      // next callTool/listResources path.
+    }
+  }
+
+  private releaseToolNames(state: ServerState): void {
+    for (const tool of state.tools) {
+      this.takenWrapperNames.delete(tool.wrapperName);
     }
   }
 

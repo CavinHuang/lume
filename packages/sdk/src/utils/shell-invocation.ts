@@ -2,6 +2,14 @@ import { spawnSync } from 'node:child_process'
 
 let discoveredWindowsBashPath: string | null | undefined
 
+/**
+ * Classify a resolved shell executable. Shared so every caller that builds
+ * shell command lines agrees on which dialect will actually run them (#328).
+ */
+export function shellKind(shellCommand: string): 'bash' | 'powershell' {
+  return /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(shellCommand) ? 'powershell' : 'bash'
+}
+
 export function resolveShellInvocation(
   command: string,
   platform: NodeJS.Platform = process.platform,
