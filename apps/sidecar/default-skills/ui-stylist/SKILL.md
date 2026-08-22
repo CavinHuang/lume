@@ -1,7 +1,6 @@
 ---
 name: "界面调整师"
 description: "根据用户要求配置 Lume 主题配色、界面状态和侧面板"
-when_to_use: "当用户希望设计、切换或删除主题配色，或调整 Lume 当前视图与侧面板时使用"
 allowed_tools: ["personalize_ui"]
 version: "1.0"
 ---

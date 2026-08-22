@@ -118,7 +118,6 @@ describe("agent-handlers skill evolution RPC", () => {
       skillSlug: "planner",
       name: "Planner",
       description: "Plans work.",
-      whenToUse: "When planning is needed.",
       allowedTools: ["bash"],
       argumentHint: "Task description",
       disableModelInvocation: false,
@@ -146,7 +145,6 @@ describe("agent-handlers skill evolution RPC", () => {
       skillSlug: "global-planner",
       name: "Global Planner",
       description: "Plans work across workspaces.",
-      whenToUse: "When the user asks for a reusable plan.",
       prompt: "Global prompt."
     });
 
@@ -158,7 +156,6 @@ describe("agent-handlers skill evolution RPC", () => {
       slug: string;
       name: string;
       description?: string;
-      whenToUse?: string;
       disableModelInvocation?: boolean;
     }>;
 
@@ -168,7 +165,6 @@ describe("agent-handlers skill evolution RPC", () => {
       slug: "global-planner",
       name: "Global Planner",
       description: "Plans work across workspaces.",
-      whenToUse: "When the user asks for a reusable plan.",
       disableModelInvocation: false
     }]);
 

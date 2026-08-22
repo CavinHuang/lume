@@ -1,7 +1,6 @@
 ---
 name: "代码审查员工作流程（审岳）"
 description: "审岳（Yue Shen）专属审查 Skill：识别代码回归、边界条件、测试缺口和职责漂移"
-when_to_use: "当角色为 code-reviewer / 审岳时自动加载，无需手动调用"
 allowed_tools: ["read_file", "glob", "grep", "bash"]
 version: "1.0"
 ---

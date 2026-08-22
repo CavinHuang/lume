@@ -51,7 +51,6 @@ describe("workspace-skill-editor-service", () => {
       skillSlug: "planner",
       name: "Planning Helper",
       description: "Turns rough asks into executable plans.",
-      whenToUse: "When the user asks for a plan.",
       allowedTools: ["bash", "read_file", "bash", ""],
       argumentHint: "Describe the target change",
       disableModelInvocation: true,
@@ -67,7 +66,6 @@ describe("workspace-skill-editor-service", () => {
       slug: "planner",
       name: "Planning Helper",
       description: "Turns rough asks into executable plans.",
-      whenToUse: "When the user asks for a plan.",
       allowedTools: ["bash", "read_file"],
       argumentHint: "Describe the target change",
       disableModelInvocation: true,
@@ -87,7 +85,6 @@ describe("workspace-skill-editor-service", () => {
       skillSlug: "global-planner",
       name: "Global Planner",
       description: "Plans work across workspaces.",
-      whenToUse: "When the user asks for a reusable plan.",
       prompt: "Global guidance."
     });
 
@@ -114,7 +111,6 @@ describe("workspace-skill-editor-service", () => {
         skillSlug: "project-planner",
         name: "Project Planner",
         description: "Plans work for this project.",
-        whenToUse: "When this project needs a plan.",
         prompt: "Project guidance."
       });
 
@@ -129,7 +125,6 @@ describe("workspace-skill-editor-service", () => {
         slug: "project-planner",
         name: "Project Planner",
         description: "Plans work for this project.",
-        whenToUse: "When this project needs a plan.",
         disableModelInvocation: false
       });
 
@@ -176,7 +171,6 @@ describe("workspace-skill-editor-service", () => {
         slug: "project-legacy",
         name: "Project Legacy",
         description: "Legacy project skill.",
-        whenToUse: "When legacy project work needs help."
       });
 
       const detail = getEditableSkill({
@@ -195,7 +189,6 @@ describe("workspace-skill-editor-service", () => {
         skillSlug: "project-legacy",
         name: "Project Legacy",
         description: "Updated legacy project skill.",
-        whenToUse: "When updated legacy project work needs help.",
         prompt: "Updated legacy project prompt."
       });
 
@@ -222,9 +215,8 @@ describe("workspace-skill-editor-service", () => {
       skillSlug: "empty-planner",
       name: "Empty Planner",
       description: "",
-      whenToUse: "When planning is needed.",
       prompt: "Plan carefully."
-    })).rejects.toThrow("描述、触发条件和提示词内容不能为空");
+    })).rejects.toThrow("描述和提示词内容不能为空");
 
     expect(existsSync(join(getWorkspaceSkillsDir("demo"), "empty-planner", "SKILL.md"))).toBe(false);
   });
@@ -275,7 +267,6 @@ describe("workspace-skill-editor-service", () => {
       slug: "legacy-planner",
       name: "Legacy Planner",
       description: "Legacy global skill.",
-      whenToUse: "When legacy work needs a plan."
     });
 
     const detail = getEditableSkill({
@@ -292,7 +283,6 @@ describe("workspace-skill-editor-service", () => {
       skillSlug: "legacy-planner",
       name: "Legacy Planner",
       description: "Updated legacy global skill.",
-      whenToUse: "When updated legacy work needs a plan.",
       prompt: "Updated legacy prompt."
     });
 
@@ -373,7 +363,6 @@ describe("workspace-skill-editor-service", () => {
       ...input,
       name: "Changed",
       description: "Changed by settings.",
-      whenToUse: "When changing market skills.",
       prompt: "Changed."
     })).rejects.toThrow("市场管理的 Skill 请在技能市场中管理");
     expect(() => deleteEditableSkill(input)).toThrow("市场管理的 Skill 请在技能市场中管理");
@@ -422,7 +411,6 @@ describe("workspace-skill-editor-service", () => {
       skillSlug: "planner",
       name: "Planner",
       description: "Plans work.",
-      whenToUse: "When planning is needed.",
       allowedTools: [],
       prompt: "New guidance."
     });
@@ -431,7 +419,6 @@ describe("workspace-skill-editor-service", () => {
       slug: "planner",
       name: "Planner",
       description: "Plans work.",
-      whenToUse: "When planning is needed.",
       disableModelInvocation: false
     });
     expect(readFileSync(skillPath, "utf-8")).toContain("New guidance.\n");

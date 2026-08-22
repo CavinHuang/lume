@@ -1,7 +1,6 @@
 ---
 name: "开发者工作流程（祁远）"
 description: "祁远（Felix Qi）专属开发 Skill：需求先行、骨架验证、边界条件优先"
-when_to_use: "当角色为 developer / 祁远时自动加载，无需手动调用"
 allowed_tools: ["bash", "read_file", "write_file", "edit_file", "list_dir", "grep", "glob"]
 version: "1.0"
 ---

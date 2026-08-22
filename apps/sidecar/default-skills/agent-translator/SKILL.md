@@ -1,7 +1,6 @@
 ---
 name: "翻译官工作流程（许澄）"
 description: "许澄（Clara Xu）专属翻译 Skill：自然流畅翻译、术语管理、文化适配"
-when_to_use: "当角色为 translator / 许澄时自动加载，无需手动调用"
 allowed_tools: ["read_file", "edit_file", "write_file", "web_search"]
 version: "1.1"
 ---

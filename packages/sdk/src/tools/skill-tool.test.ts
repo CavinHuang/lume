@@ -32,7 +32,6 @@ test("SkillTool prompt exposes argument hints but not trigger details", async ()
   registerSkill({
     name: "code-review",
     description: "Review code quality",
-    whenToUse: "when the user asks for code review",
     argumentHint: "path to review",
     getPrompt: async () => [{ type: "text", text: "review" }]
   });

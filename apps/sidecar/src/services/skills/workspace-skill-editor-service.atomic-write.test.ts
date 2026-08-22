@@ -56,7 +56,6 @@ describe("workspace-skill-editor-service atomic writes", () => {
       skillSlug: "planner",
       name: "Planner",
       description: "Plans work.",
-      whenToUse: "When planning is needed.",
       prompt: "Plan carefully."
     });
 

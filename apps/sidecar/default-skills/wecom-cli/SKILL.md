@@ -1,7 +1,6 @@
 ---
 name: "企业微信 IM 操作"
 description: "通过 wecom_cli 工具操作企业微信:发消息、查通讯录、管理应用、读取素材等。wecom-cli 子命令参考。"
-when_to_use: "当需要企业微信中发送消息、查询通讯录、管理应用、读取素材等操作时"
 allowed_tools: ["wecom_cli"]
 version: "1.0"
 ---

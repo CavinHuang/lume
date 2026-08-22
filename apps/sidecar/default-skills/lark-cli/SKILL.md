@@ -1,7 +1,6 @@
 ---
 name: "飞书企业 IM 操作"
 description: "通过 feishu_cli 工具操作飞书:发消息、查日历、读文档、查通讯录、多维表格等。lark-cli 子命令参考。"
-when_to_use: "当需要在飞书中发送消息、查询日历日程、读取飞书文档、查询通讯录/组织架构、管理多维表格等企业 IM 操作时"
 allowed_tools: ["feishu_cli"]
 version: "1.0"
 ---

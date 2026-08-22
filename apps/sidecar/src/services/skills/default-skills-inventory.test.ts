@@ -5,23 +5,21 @@ import { BUILTIN_AGENT_ROLES } from "@lume/shared";
 import { parseSkillFrontmatter } from "./skill-frontmatter";
 
 describe("default skills inventory", () => {
-  test("every bundled default skill declares Alice core trigger fields", () => {
+  test("every bundled default skill declares Alice core fields", () => {
     for (const slug of listDefaultSkillSlugs()) {
       const { meta } = readDefaultSkill(slug);
 
       expect(meta.name, `${slug} name`).toBeTruthy();
       expect(meta.description, `${slug} description`).toBeTruthy();
-      expect(meta.whenToUse, `${slug} when_to_use`).toBeTruthy();
     }
   });
 
-  test("bundles Alice-compatible general skills with required trigger metadata and scoped tools", () => {
+  test("bundles Alice-compatible general skills with required metadata and scoped tools", () => {
     for (const slug of ALICE_COMPATIBLE_GENERAL_SKILLS) {
       const { meta } = readDefaultSkill(slug);
 
       expect(meta.name).toBeTruthy();
       expect(meta.description).toBeTruthy();
-      expect(meta.whenToUse).toBeTruthy();
       expect(meta.version).toBeTruthy();
       expect(meta.allowedTools?.length ?? 0).toBeGreaterThan(0);
     }
@@ -44,7 +42,6 @@ describe("default skills inventory", () => {
     expect(meta.slug).toBe("image-gen");
     expect(meta.name).toBe("图片生成");
     expect(meta.description).toContain("生成");
-    expect(meta.whenToUse).toContain("生成图片");
     expect(meta.disableModelInvocation).toBeFalsy();
     expect(meta.allowedTools ?? []).toContain("image_gen");
     expect(meta.allowedTools ?? []).toContain("list_image_models");
@@ -57,7 +54,6 @@ describe("default skills inventory", () => {
 
     expect(meta.name).toBe("Lume Mermaid 图解");
     expect(meta.description).toContain("beautiful-mermaid");
-    expect(meta.whenToUse).toContain("系统架构");
     expect(content).toContain('不要写成 `A["带引号文本"]`');
     expect(content).toContain("不要使用 `<br/>`");
     expect(content).toContain("只在关闭 `subgraph` 时使用 `end`");
@@ -69,7 +65,6 @@ describe("default skills inventory", () => {
 
     expect(meta.name).toBe("lume-infographic");
     expect(meta.description).toContain("不按内容长度触发");
-    expect(meta.whenToUse).toContain("信息图比普通文字、列表或表格更清晰");
     expect(content).toContain("每次回复最多输出一张");
     expect(content).toContain("relation-dagre-flow-tb-badge-card");
     expect(content).toContain("禁止 HTML、外链脚本、URL");
@@ -136,7 +131,6 @@ describe("default skills inventory", () => {
       const { meta } = readDefaultSkill(role.defaultSkillName);
 
       expect(meta.slug).toBe(role.defaultSkillName);
-      expect(meta.whenToUse).toContain(`角色为 ${role.id}`);
       expect(meta.version, `${role.defaultSkillName} version`).toBeTruthy();
       expect(meta.allowedTools?.length ?? 0, `${role.defaultSkillName} allowed_tools`).toBeGreaterThan(0);
     }

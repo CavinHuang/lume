@@ -1,7 +1,6 @@
 ---
 name: "代码审查"
 description: "只读审阅当前 Coding Turn 的变更，输出可定位的结构化发现"
-when_to_use: "当用户要求 code review、审查代码、检查代码质量时使用"
 allowed_tools: ["read_file", "bash"]
 version: "2.0"
 ---

@@ -310,7 +310,6 @@ export interface SkillMeta {
   slug: string
   name: string
   description?: string
-  whenToUse?: string
   allowedTools?: string[]
   argumentHint?: string
   disableModelInvocation?: boolean
@@ -670,7 +669,6 @@ export interface SaveWorkspaceSkillInput extends WorkspaceSkillInput {
   storageScope?: SkillStorageScope
   name: string
   description?: string
-  whenToUse?: string
   allowedTools?: string[]
   argumentHint?: string
   disableModelInvocation?: boolean

@@ -40,7 +40,6 @@ export const saveSkillInputSchema = z
     skillSlug: z.string().trim().min(1),
     name: z.string(),
     description: z.string().optional(),
-    whenToUse: z.string().optional(),
     allowedTools: z.array(z.string()).optional(),
     argumentHint: z.string().optional(),
     disableModelInvocation: z.boolean().optional(),

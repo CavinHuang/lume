@@ -48,9 +48,6 @@ export interface SkillDefinition {
   /** Absolute path to the source SKILL.md when loaded from the filesystem */
   sourcePath?: string
 
-  /** When the model should invoke this skill (used in system prompt) */
-  whenToUse?: string
-
   /** Hint for expected arguments */
   argumentHint?: string
 

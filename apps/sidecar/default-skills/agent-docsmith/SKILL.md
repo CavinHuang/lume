@@ -1,7 +1,6 @@
 ---
 name: "文档工程师工作流程（阮知）"
 description: "基于文件与脚本处理 Office/PDF 文档结构、校验线索和转换草稿的标准 SOP"
-when_to_use: "当角色为 docsmith / 阮知时自动加载，无需手动调用"
 version: "1.0"
 allowed_tools:
   - read_file

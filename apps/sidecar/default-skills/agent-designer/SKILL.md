@@ -1,7 +1,6 @@
 ---
 name: "前端设计工程师工作流程（林澄）"
 description: "林澄（Nora Lin）专属 Skill：从设计到代码一手搞定——HTML/CSS/JS 页面、数据可视化、SVG、邮件模板、落地页"
-when_to_use: "当角色为 designer / 林澄时自动加载，无需手动调用"
 allowed_tools: ["read_file", "edit_file", "write_file", "list_dir", "glob", "grep", "bash", "web_fetch", "office_validate", "office_unpack", "office_pack"]
 version: "2.1"
 ---

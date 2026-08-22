@@ -63,8 +63,6 @@ export function parseSkillFrontmatter(content: string, slug: string): SkillMeta 
 
   const name = pickString(parsed, "name");
   const description = pickString(parsed, "description");
-  const whenToUse = pickString(parsed, "when_to_use", "whenToUse", "when-to-use")
-    ?? pickString(metadata, "when_to_use", "whenToUse", "when-to-use");
   const allowedTools = pickStringList(parsed, "allowed_tools", "allowedTools", "allowed-tools");
   const argumentHint = pickString(parsed, "argument_hint", "argumentHint", "argument-hint");
   const disableModelInvocation = pickBoolean(parsed, "disable_model_invocation", "disableModelInvocation");
@@ -75,7 +73,6 @@ export function parseSkillFrontmatter(content: string, slug: string): SkillMeta 
     ...meta,
     ...(name ? { name } : {}),
     ...(description ? { description } : {}),
-    ...(whenToUse ? { whenToUse } : {}),
     ...(allowedTools && allowedTools.length > 0 ? { allowedTools } : {}),
     ...(argumentHint ? { argumentHint } : {}),
     ...(disableModelInvocation !== undefined ? { disableModelInvocation } : {}),

@@ -7,7 +7,6 @@ export interface SkillSettingsDraft {
   skillSlug: string
   name: string
   description: string
-  whenToUse: string
   allowedToolsText: string
   argumentHint: string
   disableModelInvocation: boolean
@@ -31,7 +30,6 @@ export function filterSkillSettingsItems<T extends SkillMeta>(skills: T[], query
       skill.slug,
       skill.name,
       skill.description,
-      skill.whenToUse,
       skill.argumentHint,
       ...(skill.allowedTools ?? []),
     ]
@@ -105,7 +103,6 @@ export function buildSkillDraftFromMeta(
     skillSlug: skill.slug,
     name: skill.name,
     description: skill.description ?? '',
-    whenToUse: skill.whenToUse ?? '',
     allowedToolsText: formatAllowedToolDraft(skill.allowedTools),
     argumentHint: skill.argumentHint ?? '',
     disableModelInvocation: skill.disableModelInvocation ?? false,
@@ -121,7 +118,6 @@ export function createEmptySkillDraft(storageScope: SkillStorageScope = 'workspa
     skillSlug: '',
     name: '',
     description: '',
-    whenToUse: '',
     allowedToolsText: '',
     argumentHint: '',
     disableModelInvocation: false,
@@ -134,8 +130,8 @@ export function getSkillDraftValidationError(draft: SkillSettingsDraft): string 
   if (!draft.skillSlug.trim() || !draft.name.trim()) {
     return '技能 ID 和展示名称不能为空'
   }
-  if (!draft.description.trim() || !draft.whenToUse.trim() || !draft.prompt.trim()) {
-    return '描述、触发条件和提示词内容不能为空'
+  if (!draft.description.trim() || !draft.prompt.trim()) {
+    return '描述和提示词内容不能为空'
   }
   return null
 }
