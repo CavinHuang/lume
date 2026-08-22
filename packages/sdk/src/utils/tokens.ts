@@ -179,6 +179,11 @@ export function getContextWindowSize(model: string): number {
   // DeepSeek models
   if (model.includes('deepseek')) return 128_000
 
+  // Fall back to the shared model registry so catalogued models with windows
+  // outside the table above (e.g. gemini/qwen 1M) resolve correctly (#366).
+  const meta = findModelMeta(model)
+  if (meta?.contextWindow && meta.contextWindow > 0) return meta.contextWindow
+
   // Default
   return 200_000
 }
