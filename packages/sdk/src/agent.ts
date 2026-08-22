@@ -291,7 +291,7 @@ export class Agent {
   private loadedCommands: CommandDefinition[] = []
   private fileCheckpointState: FileCheckpointState = {}
   private latestUserMessageId: string | undefined
-  private lastContextUsage: ContextUsageResult | null = null
+  private lastUsageEngine: QueryEngine | null = null
   private queuedSdkEvents: SDKMessage[] = []
   private readonly skillRegistry: SkillRegistry
 
@@ -1053,7 +1053,9 @@ export class Agent {
       await persistScheduler.cancel()
       opts.abortSignal?.removeEventListener('abort', forwardAbort)
       this.history = engine.getMessages()
-      this.lastContextUsage = engine.getContextUsage()
+      // Keep only the engine reference: the full token estimation runs
+      // lazily when a host actually calls getContextUsage (#386).
+      this.lastUsageEngine = engine
       this.currentEngine = null
       if (compactionBoundarySeen) {
         this.sessionMessages = sessionMessagesFromHistory(this.history, this.sessionMessages)
@@ -1345,8 +1347,8 @@ export class Agent {
     if (this.currentEngine) {
       return this.currentEngine.getContextUsage()
     }
-    if (this.lastContextUsage) {
-      return this.lastContextUsage
+    if (this.lastUsageEngine) {
+      return this.lastUsageEngine.getContextUsage()
     }
     const init = await this.getInitializationResult()
     return {

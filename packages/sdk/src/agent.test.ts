@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createAgent, sessionMessagesFromHistory } from "./agent.js"
+import { QueryEngine } from "./engine.js"
 import { SkillTool } from "./tools/skill-tool.js"
 import type { SDKMessage, ToolDefinition } from "./types.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
@@ -1505,5 +1506,35 @@ describe("Agent session message uuid realignment (#363)", () => {
     // The surviving real messages keep their own uuids.
     expect(rebuilt[1]!.uuid).toBe("a-mid")
     expect(rebuilt[2]!.uuid).toBe("u-6")
+  })
+})
+
+describe("Agent lazy context usage estimation (#386)", () => {
+  test("run completion does not estimate tokens; getContextUsage computes on demand", async () => {
+    const provider = new StaticProvider()
+    const agent = createAgent({ persistSession: false, tools: [], provider })
+    const spy = spyOn(QueryEngine.prototype, "getContextUsage")
+
+    try {
+      for await (const _event of agent.query("hello")) {
+        // drain query
+      }
+
+      // The per-run finally must not run the full-message token estimation
+      // when no host ever reads usage.
+      expect(spy).toHaveBeenCalledTimes(0)
+
+      const usage = await agent.getContextUsage()
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(usage.totalTokens).toBeGreaterThan(0)
+      expect(usage.messageBreakdown.assistantMessageTokens).toBeGreaterThan(0)
+
+      // Each on-demand read recomputes against the retained engine.
+      await agent.getContextUsage()
+      expect(spy).toHaveBeenCalledTimes(2)
+    } finally {
+      spy.mockRestore()
+      await agent.close()
+    }
   })
 })
