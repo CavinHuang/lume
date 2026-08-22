@@ -8,7 +8,6 @@
 import type { SDKMessage } from "@lume/agent-sdk"
 import type { LumeRuntimeEvent } from "./runtime-event"
 import type { LumeConfigThinkingLevel } from "./lume-config"
-import type { WikiSearchScope } from "./wiki"
 import type { McpTransportType } from "./mcp"
 import type { PluginMarketplaceAsset } from "./plugin-market"
 import type { PlanningOperationEnvelope, PlanningTodoRefPart } from "./planning-todo"
@@ -179,11 +178,6 @@ export interface AgentThreadMeta {
   runtimeThreadId?: string
   /** 所属工作区 ID */
   workspaceId?: string
-  /** 由 sidecar 签发的 Wiki 专用会话能力；renderer 不能自行构造。 */
-  wikiProfile?: {
-    kind: 'ask-wiki'
-    scope: WikiSearchScope
-  }
   /** Sidecar-issued capability for a private memory maintenance thread. */
   memoryProfile?: {
     kind: 'dream'

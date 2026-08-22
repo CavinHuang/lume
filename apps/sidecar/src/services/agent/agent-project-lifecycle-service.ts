@@ -38,7 +38,6 @@ import {
 import { getWorkspaceMcpManager } from "../mcp/workspace-mcp-manager";
 import { getAgentFileContextRootPath } from "../infra/config-paths";
 import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
-import { getWikiService } from "../wiki/wiki-service";
 import { getPlanningTodoStore } from "../planning/planning-todo-store";
 import { agentLifecycleLocks } from "./agent-lifecycle-lock-manager";
 
@@ -190,8 +189,6 @@ export async function removeProject(input: {
 
   await drainProjectRuntime(workspace, threads);
   materializeThreadFileContexts(threads);
-  // Wiki 归档是 destructive sequence 的前置条件；失败时项目保持存在。
-  getWikiService().archiveWorkspace(input.workspaceId);
 
   const planningResult = planningStore.removeWorkspace(input.workspaceId, input.mode);
   planningCommitted = true;

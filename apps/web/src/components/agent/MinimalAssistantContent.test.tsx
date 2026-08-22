@@ -204,36 +204,6 @@ describe('MinimalAssistantContent', () => {
     expect(markup).not.toContain('2 个工具调用')
   })
 
-  test('shows a completed Wiki proposal without expanding the process line', () => {
-    const message: RuntimeMessageView = {
-      id: 'assistant-wiki',
-      type: 'assistant',
-      text: '',
-      thinking: '',
-      status: 'completed',
-      toolCalls: [],
-      blocks: [{
-        type: 'tool_call',
-        id: 'tool:wiki-1',
-        toolCall: {
-          id: 'wiki-1',
-          toolName: 'wiki.propose_changes',
-          input: { action: 'create' },
-          status: 'completed',
-          output: JSON.stringify({ data: { id: 'draft-1' } }),
-        },
-      }],
-    }
-
-    const markup = renderMessage(
-      <RuntimeEventContentBlock message={message} threadId="thread-wiki" />,
-    )
-
-    expect(markup).toContain('data-wiki-proposal-result="true"')
-    expect(markup).toContain('data-tool-result-renderer="wiki.propose_changes"')
-    expect(markup).not.toContain('1 个工具调用')
-  })
-
   test('completed group shows frozen duration and no running clock', () => {
     const message: RuntimeMessageView = {
       id: 'assistant-done',
