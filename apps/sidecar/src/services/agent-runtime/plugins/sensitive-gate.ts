@@ -14,6 +14,12 @@ export interface SensitiveGateResult {
   /** Present when decision is "ask": the plugin + capability to confirm interactively. */
   pluginId?: string;
   capabilityKey?: string;
+  /**
+   * Permissions hash the decision was evaluated against (#344 follow-up) —
+   * surfaced so an interactive allow_always can stamp it onto the persisted
+   * approval instead of a wildcard empty hash.
+   */
+  permissionsHash?: string;
 }
 
 /**
@@ -67,7 +73,13 @@ export async function evaluatePluginSensitiveGate(
     return { decision: "allow" };
   }
   if (result.decision === "ask") {
-    return { decision: "ask", pluginId, capabilityKey: key, reason: result.reason };
+    return {
+      decision: "ask",
+      pluginId,
+      capabilityKey: key,
+      reason: result.reason,
+      ...(result.permissionsHash ? { permissionsHash: result.permissionsHash } : {}),
+    };
   }
 
   return {

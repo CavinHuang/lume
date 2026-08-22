@@ -3,10 +3,10 @@
  * 插件敏感能力审批 / AskUserQuestion 会话 / workflow hook / subagent 策略 /
  * 自动化暂停五段权限逻辑与工具输入 guardrail 网关。
  */
-import { type CanUseToolFn } from "@lume/agent-sdk";
+import { isHardDeniedTool, type CanUseToolFn } from "@lume/agent-sdk";
 import { randomUUID } from "node:crypto";
 import type { AgentToolPermissionRequest } from "@lume/shared";
-import type { SensitiveCapabilityKey } from "@lume/agent-sdk";
+import type { PluginPermissions, SensitiveCapabilityKey } from "@lume/agent-sdk";
 import { createLogger } from "../../infra/logger";
 import type {
   AgentRuntimeRunParams,
@@ -193,6 +193,28 @@ export function createCanUseToolHandler(
       runtimePermissionSessionStore.isBypassed(params.runtime.sessionId);
     const sourcePluginId = (tool as { runtimeMetadata?: { pluginId?: string } })
       .runtimeMetadata?.pluginId;
+
+    // §8.2 hard deny: a tool listed in its source plugin's
+    // permissions.tools.deny is blocked unconditionally — bypassPermissions
+    // must not override it (wires isHardDeniedTool, which previously had no
+    // production caller, #345).
+    const sourcePermissions = pluginInterceptorContexts?.find(
+      (ctx) => ctx.pluginName === sourcePluginId,
+    )?.permissions;
+    if (
+      sourcePluginId &&
+      sourcePermissions &&
+      isHardDeniedTool(sourcePermissions as PluginPermissions, toolName)
+    ) {
+      log.warn("Tool call blocked by plugin hard deny", {
+        toolName,
+        pluginId: sourcePluginId,
+      });
+      return {
+        behavior: "deny" as const,
+        message: `Plugin "${sourcePluginId}" hard-denied tool "${toolName}".`,
+      };
+    }
 
     // Plugin permission interceptor: run before global PermissionEngine
     for (const interceptor of pluginInterceptors) {
@@ -405,9 +427,13 @@ export function createCanUseToolHandler(
           },
         );
         if (pluginDecision === "allow_always") {
-          // Persist workspace-scoped approval so the next attempt's checkSensitiveCapability returns allow.
-          // resolveSensitiveApproval matches only key+scope+workspaceSlug+decision (not permissionsHash),
-          // so an empty hash is functionally safe; the real acceptedHash is private to PluginPermissionRuntime.
+          // Persist a workspace-scoped approval so the next attempt's
+          // checkSensitiveCapability returns allow. The record is stamped with
+          // the hash the gate evaluated against (#344 follow-up): #344's hash
+          // filter treats only EMPTY hashes as legacy wildcards, so writing ""
+          // here would exempt the main approval path from hash scoping. The
+          // empty-string fallback covers degenerate records without any
+          // accepted hash (pre-existing data).
           try {
             await pluginPermissionRuntime.appendSensitiveApproval({
               pluginId: gateResult.pluginId,
@@ -419,7 +445,7 @@ export function createCanUseToolHandler(
                   : {}),
                 decision: "allow",
                 createdAt: new Date().toISOString(),
-                permissionsHash: "",
+                permissionsHash: gateResult.permissionsHash ?? "",
               },
             });
           } catch (error) {

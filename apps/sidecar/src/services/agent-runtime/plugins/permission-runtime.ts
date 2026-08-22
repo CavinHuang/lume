@@ -16,6 +16,12 @@ export interface PluginPermissionRuntimeInput {
 export interface SensitiveCheckResult {
   decision: "allow" | "deny" | "ask";
   reason: string;
+  /**
+   * The permissions hash this decision was evaluated against (#344 follow-up):
+   * approvals persisted from an interactive allow_always must be stamped with
+   * it so #344's hash filter keeps them scoped to the approved configuration.
+   */
+  permissionsHash?: string;
 }
 
 export interface RuntimeStateResult {
@@ -46,13 +52,27 @@ export class PluginPermissionRuntime {
     if (!record) {
       return { decision: "ask", reason: "no install or reviewed external state" };
     }
-    const approvals = collectSensitiveApprovals(record);
+    // Approvals only count for the currently accepted permissions hash (#344):
+    // an allow recorded under a hash the plugin has drifted away from must not
+    // satisfy the same capability key after re-review. Empty hashes are treated
+    // as wildcards for compatibility with pre-existing records.
+    const currentHash = resolveAcceptedHash(record);
+    const approvals = collectSensitiveApprovals(record).filter(
+      (approval) =>
+        approval.permissionsHash === "" || approval.permissionsHash === currentHash,
+    );
     const decision = resolveSensitiveApproval(params.key, approvals, {
       workspaceSlug: params.workspaceSlug,
     });
     return {
       decision,
-      reason: decision === "ask" ? "no prior approval for this capability" : `prior ${decision}`,
+      reason:
+        decision === "ask"
+          ? approvals.some((a) => a.key === params.key)
+            ? "prior approval is for a different permissions hash; re-review required"
+            : "no prior approval for this capability"
+          : `prior ${decision}`,
+      ...(currentHash !== undefined ? { permissionsHash: currentHash } : {}),
     };
   }
 
