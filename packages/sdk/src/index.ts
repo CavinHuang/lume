@@ -127,7 +127,6 @@ export {
   // Discovery
   ToolSearchTool,
   CORE_TOOL_NAMES,
-  splitDeferredTools,
 
   // LSP
   LSPTool,
@@ -469,11 +468,6 @@ export type {
   TaskMutationResult,
   TaskToolName,
 } from './tools/task-tools.js'
-
-export {
-  registerAgents,
-  clearAgents,
-} from './tools/agent-tool.js'
 
 export {
   summarizeSubagentAssistantEvent,

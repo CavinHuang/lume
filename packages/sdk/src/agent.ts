@@ -31,7 +31,6 @@ import {
   getAllBaseTools,
 } from './tools/index.js'
 import { applyOverrides, createToolRegistry } from './tools/registry.js'
-import { registerAgents } from './tools/agent-tool.js'
 import {
   saveSession,
   loadSession,
@@ -525,8 +524,8 @@ export class Agent {
   }
 
   /**
-   * Reload state derived from cfg.cwd: resolved provider config, skills, and
-   * agents. Runs from setup() and again after setCwd(). Must not rebuild cfg
+   * Reload state derived from cfg.cwd: resolved provider config and skills.
+   * Runs from setup() and again after setCwd(). Must not rebuild cfg
    * (runtime mutations like setModel or setPermissionMode live there) nor
    * re-run the session resume/fork branch.
    */
@@ -540,13 +539,6 @@ export class Agent {
     })
     this.registerExplicitSkills()
     this.resetHookRegistry()
-
-    const mergedAgents = {
-      ...(this.cfg.agents || {}),
-    }
-    if (Object.keys(mergedAgents).length > 0) {
-      registerAgents(mergedAgents)
-    }
   }
 
   private getEffectiveOptions(overrides?: Partial<AgentOptions>): AgentOptions {
