@@ -14,6 +14,7 @@ import {
   deleteAgentThread,
   getAgentThreadMeta,
   getAgentThreadMessages,
+  getAgentThreadSDKMessages,
   getRecentAgentThreadMessages,
   listAllAgentThreads,
   listAgentThreads,
@@ -419,6 +420,17 @@ export function createAgentHandlers(
       {
         runStateStore,
         continuationStore,
+        // 崩溃恢复(#411③):后台任务终态通知由 background-process-recovery 落盘
+        // transcript,按 processJobId 取回供 waiting_background checkpoint 转换
+        resolveBackgroundNotification: async (processJobId) => {
+          const notification = getAgentThreadSDKMessages(input.threadId).find(
+            (message) =>
+              message.type === "system" &&
+              message.subtype === "task_notification" &&
+              message.task_id === processJobId,
+          );
+          return notification;
+        },
       },
       async (checkpoint, state) => {
         // interrupted（软中止 checkpoint）：engine 已为被中断工具补 error 占位

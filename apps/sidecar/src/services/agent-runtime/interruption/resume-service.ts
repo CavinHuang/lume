@@ -1,3 +1,4 @@
+import type { SDKMessage } from "@lume/shared";
 import type { RunContinuationState } from "../runner/run-continuation";
 import type { LumeRunState } from "../runner/run-state";
 import type { RunContinuationStore } from "../runner/run-continuation-store";
@@ -23,6 +24,12 @@ export class LumeResumeService {
     private readonly stores?: {
       runStateStore: LumeRunStateStore;
       continuationStore: RunContinuationStore;
+      /**
+       * 崩溃恢复(#411③):按 processJobId 取后台任务已持久化的终态通知
+       * (background-process-recovery 服务在重启后落盘 transcript);
+       * undefined = 尚无持久化终态(任务可能仍活着)。
+       */
+      resolveBackgroundNotification?: (processJobId: string) => Promise<SDKMessage | undefined>;
     },
     private readonly continueRunFromCheckpoint?: ContinueRunFromCheckpoint
   ) {}
@@ -88,13 +95,44 @@ export class LumeResumeService {
 
     if (continuation.version === 2 && continuation.status === "waiting_background") {
       if (continuation.checkpoint.syntheticToolResult === undefined) {
-        return {
-          status: "waiting_background",
-          error: continuation.reason ?? "后台任务仍在运行，已重新附着且不会重复执行命令。"
+        // 崩溃后 live 终态监听(run.handleAsyncEvent)已不在:查 recovery 服务落盘的
+        // 持久化终态通知,有则与 live 同形转换(ready_to_resume + syntheticToolResult),
+        // 让恢复真正发生;无则任务可能仍活着(durable 跨重启),如实返回等待态。
+        const notification = continuation.checkpoint.processJobId
+          ? await this.stores.resolveBackgroundNotification?.(continuation.checkpoint.processJobId)
+          : undefined;
+        if (!notification || typeof notification !== "object") {
+          return {
+            status: "waiting_background",
+            error: "后台任务尚未产生持久化终态；若任务仍在运行，终态落盘后再次恢复即可继续。"
+          };
+        }
+        const record = notification as unknown as Record<string, unknown>;
+        const synthetic = {
+          type: "tool_result",
+          tool_use_id:
+            (typeof record.tool_use_id === "string" && record.tool_use_id)
+            || continuation.checkpoint.toolCallId
+            || "",
+          content: record.message ?? record.summary ?? "",
+          ...(record.status === "failed" || record.status === "stopped" || record.status === "interrupted"
+            ? { is_error: true }
+            : {}),
+          ...(record.execution && typeof record.execution === "object"
+            ? { _meta: { execution: record.execution } }
+            : {}),
         };
+        await this.stores.continuationStore.update(input.runId, {
+          status: "ready_to_resume",
+          checkpoint: { ...continuation.checkpoint, step: "after_tool_result", syntheticToolResult: synthetic },
+          reason: "后台命令已进入终态（崩溃恢复）。"
+        });
+        continuation.status = "ready_to_resume";
+        continuation.checkpoint = { ...continuation.checkpoint, step: "after_tool_result", syntheticToolResult: synthetic };
+      } else {
+        await this.stores.continuationStore.update(input.runId, { status: "ready_to_resume" });
+        continuation.status = "ready_to_resume";
       }
-      await this.stores.continuationStore.update(input.runId, { status: "ready_to_resume" });
-      continuation.status = "ready_to_resume";
     }
 
     if (

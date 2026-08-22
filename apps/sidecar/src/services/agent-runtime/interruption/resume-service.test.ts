@@ -310,6 +310,95 @@ describe("LumeResumeService", () => {
     expect((await continuationStore.get("run-1"))?.status).toBe("resumed");
   });
 
+  test("waiting_background(#411③):有持久化终态通知时转换为可续跑 checkpoint", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-resume-bg-terminal-"));
+    const runStateStore = createFileBackedLumeRunStateStore(dir);
+    const continuationStore = createFileBackedRunContinuationStore(dir);
+    await runStateStore.create(makeRunState());
+    await continuationStore.upsert({
+      version: 2,
+      runId: "run-1",
+      threadId: "thread-1",
+      status: "waiting_background",
+      checkpoint: {
+        step: "waiting_for_tool_result",
+        toolCallId: "tool-1",
+        toolName: "Bash",
+        toolKind: "execute",
+        processJobId: "job-1"
+      },
+      reason: "后台命令已持久化，恢复时重新附着而不重复执行。",
+      createdAt: "2026-04-29T00:00:00.000Z",
+      updatedAt: "2026-04-29T00:00:00.000Z"
+    });
+
+    let received: RunContinuationState | undefined;
+    const result = await new LumeResumeService(
+      {
+        runStateStore,
+        continuationStore,
+        resolveBackgroundNotification: async (processJobId) => ({
+          type: "system",
+          subtype: "task_notification",
+          task_id: processJobId,
+          tool_use_id: "tool-1",
+          status: "completed",
+          message: "done",
+          session_id: "thread-1"
+        } as any),
+      },
+      async (checkpoint) => {
+        received = checkpoint;
+        return { finalOutput: "resumed" };
+      }
+    ).resumeRun({ runId: "run-1" });
+
+    expect(result.status).toBe("resumed");
+    // 与 live handleAsyncEvent 同形:syntheticToolResult 从终态通知构造,step 推进
+    expect(received?.status).toBe("ready_to_resume");
+    expect(received?.checkpoint.step).toBe("after_tool_result");
+    const synthetic = received?.checkpoint.syntheticToolResult as Record<string, unknown>;
+    expect(synthetic.tool_use_id).toBe("tool-1");
+    expect(synthetic.content).toBe("done");
+    expect(synthetic.is_error).toBeUndefined();
+    expect((await continuationStore.get("run-1"))?.status).toBe("resumed");
+  });
+
+  test("waiting_background(#411③):无终态通知时如实返回等待态且不改动 checkpoint", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-resume-bg-waiting-"));
+    const runStateStore = createFileBackedLumeRunStateStore(dir);
+    const continuationStore = createFileBackedRunContinuationStore(dir);
+    await runStateStore.create(makeRunState());
+    await continuationStore.upsert({
+      version: 2,
+      runId: "run-1",
+      threadId: "thread-1",
+      status: "waiting_background",
+      checkpoint: {
+        step: "waiting_for_tool_result",
+        toolCallId: "tool-1",
+        toolName: "Bash",
+        toolKind: "execute",
+        processJobId: "job-1"
+      },
+      reason: "后台命令已持久化，恢复时重新附着而不重复执行。",
+      createdAt: "2026-04-29T00:00:00.000Z",
+      updatedAt: "2026-04-29T00:00:00.000Z"
+    });
+
+    const result = await new LumeResumeService(
+      {
+        runStateStore,
+        continuationStore,
+        resolveBackgroundNotification: async () => undefined,
+      },
+      async () => ({ finalOutput: "should-not-run" })
+    ).resumeRun({ runId: "run-1" });
+
+    expect(result.status).toBe("waiting_background");
+    expect((await continuationStore.get("run-1"))?.status).toBe("waiting_background");
+  });
+
   test("does not replay a V2 side-effect tool with an unknown result", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lume-resume-v2-unknown-"));
     const runStateStore = createFileBackedLumeRunStateStore(dir);
