@@ -1278,21 +1278,6 @@ export interface ListSessionsOptions {
   offset?: number
 }
 
-export interface GetSessionMessagesOptions {
-  dir?: string
-  limit?: number
-  offset?: number
-  includeSystemMessages?: boolean
-}
-
-export interface GetSessionInfoOptions {
-  dir?: string
-}
-
-export interface SessionMutationOptions {
-  dir?: string
-}
-
 export interface ForkSessionOptions {
   dir?: string
   upToMessageId?: string
@@ -1320,15 +1305,6 @@ export interface Query {
       | SDKUserMessage
       | AsyncIterable<string | ContentBlockParam[] | SDKUserMessage>,
   ): Promise<void>
-  interrupt(): Promise<void>
-  setPermissionMode(mode: PermissionMode): Promise<void>
-  setModel(model?: string): Promise<void>
-  setMaxThinkingTokens(maxThinkingTokens: number | null): Promise<void>
-  setCwd(cwd: string): Promise<void>
-  getInitializationResult(): Promise<InitializationResult>
-  getContextUsage(): Promise<ContextUsageResult>
-  rewindFiles(userMessageId: string, dryRun?: boolean): Promise<RewindFilesResult>
-  stopTask(taskId: string): Promise<void>
 }
 
 export interface AgentOptions {

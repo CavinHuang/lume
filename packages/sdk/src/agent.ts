@@ -1011,21 +1011,7 @@ export class Agent {
       }
     }.bind(this)
 
-    return new QueryController(
-      {
-        interrupt: () => this.interrupt(),
-        setPermissionMode: (mode) => this.setPermissionMode(mode),
-        setModel: (model) => this.setModel(model),
-        setMaxThinkingTokens: (tokens) => this.setMaxThinkingTokens(tokens),
-        setCwd: (cwd) => this.setCwd(cwd),
-        getInitializationResult: () => this.getInitializationResult(),
-        getContextUsage: () => this.getContextUsage(),
-        rewindFiles: (userMessageId, dryRun) => this.rewindFiles(userMessageId, dryRun),
-        stopTask: (taskId) => this.stopTask(taskId),
-      },
-      runner,
-      initialInput,
-    )
+    return new QueryController(runner, initialInput)
   }
 
   query(
@@ -1350,18 +1336,4 @@ export class Agent {
 
 export function createAgent(options: AgentOptions = {}): Agent {
   return new Agent(options)
-}
-
-export function query(params: {
-  prompt: QueryInput | AsyncIterable<QueryInput>
-  options?: AgentOptions
-}): QueryHandle {
-  const ephemeral = createAgent(params.options)
-  return (ephemeral as any).buildQueryHandle(
-    params.prompt,
-    undefined,
-    async () => {
-      await ephemeral.close()
-    },
-  ) as QueryHandle
 }

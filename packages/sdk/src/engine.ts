@@ -61,7 +61,6 @@ import {
   withRetry,
   isPromptTooLongError,
 } from './utils/retry.js'
-import { getSystemContext, getUserContext } from './utils/context.js'
 import {
   hydrateEphemeralImageReferences,
   collectInternalContextBlocks,
@@ -386,28 +385,6 @@ async function buildSystemPrompt(config: QueryEngineConfig): Promise<string> {
     for (const [name, def] of Object.entries(config.agents)) {
       parts.push(`- **${name}**: ${def.description}`)
     }
-  }
-
-  // System context (git status, etc.)
-  try {
-    const sysCtx = await getSystemContext(config.cwd)
-    if (sysCtx) {
-      parts.push('\n# Environment\n')
-      parts.push(sysCtx)
-    }
-  } catch {
-    // Context is best-effort
-  }
-
-  // User context (AGENT.md, date)
-  try {
-    const userCtx = await getUserContext(config.cwd)
-    if (userCtx) {
-      parts.push('\n# Project Context\n')
-      parts.push(userCtx)
-    }
-  } catch {
-    // Context is best-effort
   }
 
   // Working directory

@@ -25,7 +25,7 @@
 // High-level Agent API
 // --------------------------------------------------------------------------
 
-export { Agent, createAgent, query } from './agent.js'
+export { Agent, createAgent } from './agent.js'
 export { rewindCheckpoint } from './utils/file-checkpoints.js'
 export type { FileCheckpoint, FileCheckpointState, FileSnapshot } from './utils/file-checkpoints.js'
 export { QueryController } from './query-controller.js'
@@ -333,27 +333,8 @@ export {
   loadSession,
   listSessions,
   forkSession,
-  getSessionMessages,
-  getSessionInfo,
-  renameSession,
-  tagSession,
-  appendToSession,
-  deleteSession,
 } from './session.js'
 export type { SessionMetadata, SessionData } from './session.js'
-
-// --------------------------------------------------------------------------
-// Context Utilities
-// --------------------------------------------------------------------------
-
-export {
-  getSystemContext,
-  getUserContext,
-  getGitStatus,
-  readProjectContextContent,
-  discoverProjectContextFiles,
-  clearContextCache,
-} from './utils/context.js'
 
 // --------------------------------------------------------------------------
 // Settings Utilities
@@ -611,9 +592,6 @@ export type {
   AskUserQuestionRequest,
   AskUserQuestionResponse,
   ListSessionsOptions,
-  GetSessionMessagesOptions,
-  GetSessionInfoOptions,
-  SessionMutationOptions,
   ForkSessionOptions,
   ForkSessionResult,
   SessionMessage,
