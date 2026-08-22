@@ -1,0 +1,91 @@
+---
+import { getCollection, render, type CollectionEntry } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+import { counterpartPath, languages, t, type Lang } from '../../i18n/ui';
+
+interface Props {
+  lang: Lang;
+  entry?: CollectionEntry<'docs'>;
+}
+const { lang, entry } = Astro.props;
+
+const base = lang === 'zh' ? '' : '/en';
+const all = (await getCollection('docs', (e) => e.data.lang === lang)).sort(
+  (a, b) => a.data.order - b.data.order || a.id.localeCompare(b.id),
+);
+
+// 互译：同 slug 的另一语言版本存在才显示切换链接
+const slug = entry?.id.slice(3); // 去掉 "zh/" / "en/" 前缀
+let translated: string | undefined;
+if (entry) {
+  const otherLang = lang === 'zh' ? 'en' : 'zh';
+  const found = (await getCollection('docs')).find(
+    (e) => e.id === `${otherLang}/${slug}`,
+  );
+  translated = found ? counterpartPath(Astro.url.pathname) : undefined;
+}
+
+const Content = entry ? (await render(entry)).Content : undefined;
+---
+
+<Base title={entry ? entry.data.title : t(lang, 'docs.title')} description={entry?.data.description ?? t(lang, 'docs.desc')}>
+  <div class="mx-auto flex max-w-6xl flex-col gap-10 px-4 py-12 sm:px-6 lg:flex-row">
+    <!-- 侧边目录 -->
+    <aside class="lg:w-56 lg:shrink-0">
+      <nav class="lg:sticky lg:top-20" aria-label={t(lang, 'docs.index')}>
+        <p class="text-ui font-semibold text-fg">{t(lang, 'docs.index')}</p>
+        <ul class="mt-3 space-y-1 border-l border-border text-ui">
+          {all.map((doc) => (
+            <li>
+              <a
+                href={`${base}/docs/${doc.id.slice(3)}`}
+                aria-current={doc.id === entry?.id ? 'page' : undefined}
+                class:list={[
+                  '-ml-px block border-l-2 py-1 pl-3 transition-colors',
+                  doc.id === entry?.id
+                    ? 'border-accent font-medium text-accent'
+                    : 'border-transparent text-fg-muted hover:border-border-strong hover:text-fg',
+                ]}
+              >
+                {doc.data.title}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+    </aside>
+
+    <!-- 正文 / 目录页 -->
+    <div class="min-w-0 flex-1">
+      {entry && Content ? (
+        <>
+          <article class="prose max-w-3xl">
+            <Content />
+          </article>
+          <p class="mt-10 border-t border-border pt-5 text-ui">
+            <a href={translated ? translated : `${lang === 'zh' ? '/en' : ''}/docs/`} class="text-accent hover:text-accent-strong">
+              {translated ? languages[lang === 'zh' ? 'en' : 'zh'] : t(lang, 'docs.backToDocs')}
+            </a>
+          </p>
+        </>
+      ) : (
+        <div class="max-w-3xl">
+          <h1 class="text-display font-bold tracking-tight text-fg">{t(lang, 'docs.title')}</h1>
+          <p class="mt-4 text-body-lg text-fg-muted">{t(lang, 'docs.desc')}</p>
+          <ul class="mt-8 space-y-3">
+            {all.map((doc) => (
+              <li class="rounded-xl border border-border bg-surface p-4 transition-colors hover:border-border-strong">
+                <a href={`${base}/docs/${doc.id.slice(3)}`} class="text-body-lg font-medium text-fg hover:text-accent">
+                  {doc.data.title}
+                </a>
+                {doc.data.description && (
+                  <p class="mt-1 text-ui text-fg-muted">{doc.data.description}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  </div>
+</Base>
