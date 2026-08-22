@@ -476,6 +476,28 @@ describe("createBrowserMcpTools", () => {
     expect(result).toMatchObject({ ok: false, code: "stale_snapshot_cursor", retryable: true })
     expect(JSON.parse(String(afterExpiry.content)).code).toBe("stale_target")
   })
+
+  test("drops the cached snapshot when the user takes over the page", async () => {
+    const tab = agentTab("locked-tab", "thread-1")
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string }) => {
+        if (request.method === "list_tabs") return { tabs: [tab] }
+        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId)
+        if (request.method === "playwright_locator_click") throw Object.assign(new Error("user_takeover_required"), { code: "user_takeover_required" })
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    await call(tools, "mcp__browser__snapshot", {})
+    const takeover = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
+    const afterTakeover = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
+
+    expect(JSON.parse(String(takeover.content)).code).toBe("user_takeover_required")
+    // 接管后旧 ref 不可用：缓存快照已清，重试必须先重新观察
+    expect(JSON.parse(String(afterTakeover.content)).code).toBe("stale_target")
+  })
 })
 
 async function call(tools: ReturnType<typeof createBrowserMcpTools>, name: string, args: Record<string, unknown>): Promise<any> {

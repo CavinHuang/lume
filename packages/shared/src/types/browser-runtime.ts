@@ -10,6 +10,7 @@ export type BrowserErrorCode =
   | "invalid_url" | "private_origin_confirmation_required" | "stale_target" | "stale_snapshot_cursor"
   | "tab_not_found" | "tab_generation_changed" | "confirmation_unavailable" | "reference_grant_expired"
   | "action_denied" | "user_action_required" | "strict_locator_violation" | "actionability_failed" | "dialog_blocking" | "user_takeover_required"
+  | "element_not_visible" | "element_disabled" | "element_occluded" | "element_readonly"
   | "unsupported" | "executed_unknown" | "browser_internal_error";
 
 export interface BrowserProtocolHandshake {

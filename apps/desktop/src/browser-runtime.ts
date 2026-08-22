@@ -1808,6 +1808,13 @@ export class BrowserRuntime {
     return [...this.tabs.values()].find((tab) => tab.webContents === contents)
   }
 
+  /** 非输入类动作（对话框/凭据填充/上传）的 effect 捕获：与输入类动作同样区分 dispatched 与页面 effect */
+  private async withActionEffect<T extends object>(tab: BrowserTab, agent: boolean, run: () => Promise<T>): Promise<T & { effect: BrowserActionEffect }> {
+    const before = await this.captureActionEffect(tab)
+    const result = await run()
+    return { ...result, effect: await this.waitForActionEffect(tab, before, agent) }
+  }
+
   private async dispatchAction(tab: BrowserTab, method: string, params: Record<string, unknown>, context: BrowserRequestContext): Promise<unknown> {
     if (method === "browserAuth:request") {
       await this.waitForGuest(tab)
@@ -1841,15 +1848,17 @@ export class BrowserRuntime {
     if (method === "reload") return browserContents(tab).reload()
     if (method === "dialog:handle") {
       if (!tab.dialogInfo || params.dialogId !== tab.dialogInfo.id) throw browserError("stale_target")
-      await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.handleJavaScriptDialog", { accept: params.accept === true, ...(typeof params.promptText === "string" ? { promptText: params.promptText.slice(0, 10_000) } : {}) }))
-      tab.dialogOpen = false
-      tab.dialogInfo = undefined
-      return { ok: true }
+      return this.withActionEffect(tab, context.actor === "agent", async () => {
+        await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.handleJavaScriptDialog", { accept: params.accept === true, ...(typeof params.promptText === "string" ? { promptText: params.promptText.slice(0, 10_000) } : {}) }))
+        tab.dialogOpen = false
+        tab.dialogInfo = undefined
+        return { ok: true }
+      })
     }
-    if (method === "contactFill") return this.fillSavedContact(tab, params)
-    if (method === "secretFill") return this.fillSavedPassword(tab, params, context)
-    if (method === "upload") return this.uploadFileRefs(tab, params, context)
-    if (method === "filechooser:setFiles") return this.setFileChooserFiles(tab, params, context)
+    if (method === "contactFill") return this.withActionEffect(tab, context.actor === "agent", () => this.fillSavedContact(tab, params))
+    if (method === "secretFill") return this.withActionEffect(tab, context.actor === "agent", () => this.fillSavedPassword(tab, params, context))
+    if (method === "upload") return this.withActionEffect(tab, context.actor === "agent", () => this.uploadFileRefs(tab, params, context))
+    if (method === "filechooser:setFiles") return this.withActionEffect(tab, context.actor === "agent", () => this.setFileChooserFiles(tab, params, context))
     if (method === "downloadMedia") return this.downloadMedia(tab, params, context)
     if (method === "content:export") return this.exportPageContent(tab, context)
     if (method === "pageAssets:bundle") return this.bundlePageAssets(tab, params, context)
@@ -1878,7 +1887,8 @@ export class BrowserRuntime {
         if (method === "fill" || method === "type") {
           const text = String(params.text ?? "")
           if (text.length > 100_000) throw browserError("invalid_browser_request")
-          if (!target.editable) throw browserError("action_denied")
+          // readonly 输入框 insertText 无效果且无值验证兜底，须在写入前拒绝，否则假成功
+          if (!target.editable) throw browserError(target.readOnly ? "element_readonly" : "action_denied")
           // 语义引用已做命中验证；locator 仅是工具层的兜底定位，用它做值验证会在
           // 同角色多元素页面上 strict 多匹配，被 executeLocatorQuery 兜底映射成 stale_target。
           const verifyByLocator = isBrowserLocator(params.locator) && params.semanticRef === undefined
@@ -2140,7 +2150,8 @@ export class BrowserRuntime {
     const generation = tab.generation
     const inputSequence = tab.inputSequence
     const target = await this.resolveTarget(tab, params, context)
-    if (!target.editable || tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
+    if (!target.editable) throw browserError(target.readOnly ? "element_readonly" : "action_denied")
+    if (tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
     tab.inputSequence += 1
     tab.agentDispatching = true
     try {
@@ -2593,7 +2604,7 @@ export class BrowserRuntime {
       // 已带 code 的 browserError（含 withDebugger 归类的 tab_not_found/stale_target）原样透传，避免被改写
       if (error && typeof error === "object" && "code" in error) throw error
       const message = error instanceof Error ? error.message : ""
-      const code = ["stale_target", "strict_locator_violation", "action_denied", "tab_not_found"].find((value) => message.includes(value)) ?? "stale_target"
+      const code = ["stale_target", "strict_locator_violation", "element_not_visible", "element_disabled", "element_occluded", "element_readonly", "action_denied", "tab_not_found"].find((value) => message.includes(value)) ?? "stale_target"
       throw browserError(code as BrowserErrorCode)
     }
   }
@@ -2730,7 +2741,7 @@ export class BrowserRuntime {
       // 已带 code 的 browserError（含 withDebugger 归类的 tab_not_found/stale_target）原样透传，避免被改写
       if (error && typeof error === "object" && "code" in error) throw error
       const message = error instanceof Error ? error.message : ""
-      const code = ["stale_target", "strict_locator_violation", "action_denied", "tab_not_found"].find((value) => message.includes(value)) ?? "stale_target"
+      const code = ["stale_target", "strict_locator_violation", "element_not_visible", "element_disabled", "element_occluded", "element_readonly", "action_denied", "tab_not_found"].find((value) => message.includes(value)) ?? "stale_target"
       throw browserError(code as BrowserErrorCode)
     }
   }
@@ -2758,6 +2769,7 @@ export class BrowserRuntime {
             const enabled = !("disabled" in this && this.disabled) && this.getAttribute("aria-disabled") !== "true"
             return {
               editable: this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement || this instanceof HTMLSelectElement || this.isContentEditable,
+              readOnly: this instanceof HTMLInputElement && this.readOnly === true,
               enabled,
               role: this.getAttribute("role") || undefined,
               tagName: String(this.tagName || "").toLowerCase(),
@@ -2768,7 +2780,9 @@ export class BrowserRuntime {
         }) as { result?: { value?: unknown }; exceptionDetails?: unknown }
         if (inspected.exceptionDetails) throw browserError("stale_target")
         const details = isRecord(inspected.result?.value) ? inspected.result.value : {}
-        if (details.visible !== true || details.enabled === false) throw browserError("action_denied")
+        // 细分前置拒绝原因：模型可据此决定等待（不可见/遮挡）、放弃（禁用）或换目标（只读）
+        if (details.visible !== true) throw browserError("element_not_visible")
+        if (details.enabled === false) throw browserError("element_disabled")
 
         const box = await debuggerRef.sendCommand("DOM.getBoxModel", { backendNodeId: entry.backendNodeId }) as { model?: { border?: number[]; content?: number[] } }
         const quad = box.model?.content ?? box.model?.border
@@ -2790,11 +2804,11 @@ export class BrowserRuntime {
           // 该节点与 input 的 contains 跨 shadow 边界恒为 false，会导致 input 永久 action_denied。
           includeUserAgentShadowDOM: false,
         }) as { backendNodeId?: number }
-        if (!hit.backendNodeId) throw browserError("action_denied")
+        if (!hit.backendNodeId) throw browserError("element_occluded")
         if (hit.backendNodeId !== entry.backendNodeId) {
           const hitResolved = await debuggerRef.sendCommand("DOM.resolveNode", { backendNodeId: hit.backendNodeId }) as { object?: { objectId?: string } }
           const hitObjectId = hitResolved.object?.objectId
-          if (!hitObjectId) throw browserError("action_denied")
+          if (!hitObjectId) throw browserError("element_occluded")
           try {
             const containment = await debuggerRef.sendCommand("Runtime.callFunctionOn", {
               objectId,
@@ -2802,7 +2816,7 @@ export class BrowserRuntime {
               arguments: [{ objectId: hitObjectId }],
               returnByValue: true,
             }) as { result?: { value?: unknown } }
-            if (containment.result?.value !== true) throw browserError("action_denied")
+            if (containment.result?.value !== true) throw browserError("element_occluded")
           } finally {
             await debuggerRef.sendCommand("Runtime.releaseObject", { objectId: hitObjectId }).catch(() => undefined)
           }
@@ -2815,6 +2829,7 @@ export class BrowserRuntime {
           tagName: typeof details.tagName === "string" ? details.tagName : "",
           ...(typeof details.role === "string" ? { role: details.role } : {}),
           editable: details.editable === true,
+          ...(details.readOnly === true ? { readOnly: true } : {}),
           enabled: details.enabled !== false,
         }
       } finally {
@@ -2838,6 +2853,7 @@ export class BrowserRuntime {
     }
     const deadline = Date.now() + timeoutMs
     let previousTarget: ResolvedBrowserTarget | undefined
+    let lastActionabilityCode: BrowserErrorCode = "actionability_failed"
     while (true) {
       if (tab.generation !== generation) throw browserError("stale_target")
       try {
@@ -2851,9 +2867,13 @@ export class BrowserRuntime {
         if (message.includes("strict_locator_violation")) throw browserError("strict_locator_violation")
         if (message.includes("tab_not_found")) throw browserError("tab_not_found")
         if (params.semanticRef !== undefined && message.includes("stale_target")) throw browserError("stale_target")
-        // resolveTarget 的 action_denied 仅表示目标暂时不可见、不可用或被遮挡；具体动作的永久拒绝发生在后续 dispatch。
+        // resolveTarget 的细分拒绝码（不可见/禁用/遮挡等）表示目标暂未就绪；重试到超时后原样抛出，
+        // 让模型拿到准确原因而不是笼统的 actionability_failed。
+        for (const code of ["element_not_visible", "element_disabled", "element_occluded", "element_readonly", "action_denied"] as const) {
+          if (message.includes(code)) { lastActionabilityCode = code; break }
+        }
       }
-      if (Date.now() >= deadline) throw browserError("actionability_failed")
+      if (Date.now() >= deadline) throw browserError(lastActionabilityCode)
       await delay(50)
     }
   }

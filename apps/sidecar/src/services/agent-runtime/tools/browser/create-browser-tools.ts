@@ -94,7 +94,7 @@ export function createBrowserMcpTools(input: {
           }, false, repeatGuardState(name, result, args))
         } catch (error) {
           const code = browserErrorCode(error)
-          if (code === "stale_target" || code === "stale_snapshot_cursor" || code === "tab_not_found") session.snapshot = undefined
+          if (code === "stale_target" || code === "stale_snapshot_cursor" || code === "tab_not_found" || code === "user_takeover_required") session.snapshot = undefined
           const message = error instanceof Error && error.message && error.message !== code ? error.message.slice(0, 4_000) : code
           const retryable = code === "browser_unavailable" || code === "stale_target" || code === "stale_snapshot_cursor"
           const failureKey = !retryable ? actionFailureKey(name, args, session) : undefined
@@ -217,7 +217,8 @@ async function executeTool(
       tabId: activeTab.tabId,
       ...(url ? { url } : {}),
     })
-    return observeAfterMutation(activeTab.tabId, navigation, broker, dispatch, session)
+    // 导航调用在 loadURL 完成后才返回，effect:navigation 是既成事实而非预测
+    return observeAfterMutation(activeTab.tabId, { ...(asRecord(navigation)), effect: "navigation" }, broker, dispatch, session)
   }
   if (name === "handle_dialog") {
     const dialogId = stringValue(args.dialog_id)
