@@ -1,8 +1,11 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import { spawn } from 'node:child_process'
+import { MAX_FETCH_BYTES } from './web-fetch-http.js'
 
-const execFileAsync = promisify(execFile)
 const STATUS_SENTINEL = '__SDK_STATUS__:'
+// curl emits response headers + body + status sentinel; keep headroom above
+// the 50MB fetch body budget instead of a hard-coded 4MB execFile maxBuffer.
+const MAX_CURL_OUTPUT_BYTES = MAX_FETCH_BYTES + 8 * 1024 * 1024
+const MAX_STDERR_CHARS = 8 * 1024
 
 function shouldBypassProxy(targetUrl: string, noProxy?: string): boolean {
   const hostname = new URL(targetUrl).hostname.toLowerCase()
@@ -25,6 +28,50 @@ function resolveProxyUrl(targetUrl: string): string | null {
     return httpsProxy ?? httpProxy ?? null
   }
   return httpProxy ?? null
+}
+
+interface CurlRunResult {
+  stdout: Buffer
+  stderr: string
+}
+
+function runCurl(args: string[], options: { input?: string; signal?: AbortSignal }): Promise<CurlRunResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.platform === 'win32' ? 'curl.exe' : 'curl', args, {
+      signal: options.signal,
+      windowsHide: true,
+    })
+    let settled = false
+    let stdout = Buffer.alloc(0)
+    let stderr = ''
+    const fail = (error: Error) => {
+      if (settled) return
+      settled = true
+      child.kill()
+      reject(error)
+    }
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (settled) return
+      stdout = Buffer.concat([stdout, chunk])
+      if (stdout.length > MAX_CURL_OUTPUT_BYTES) {
+        fail(new Error(`curl output exceeds ${MAX_CURL_OUTPUT_BYTES} bytes`))
+      }
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      if (stderr.length < MAX_STDERR_CHARS) stderr += chunk.toString()
+    })
+    child.on('error', fail)
+    child.on('close', () => {
+      if (!settled) {
+        settled = true
+        resolve({ stdout, stderr })
+      }
+    })
+    // curl may exit before consuming stdin (e.g. on an early error); the
+    // close/error handlers settle the promise either way.
+    child.stdin.on('error', () => undefined)
+    child.stdin.end(options.input)
+  })
 }
 
 async function fetchViaCurl(input: string, init: RequestInit = {}, proxyUrl: string): Promise<Response> {
@@ -52,20 +99,21 @@ async function fetchViaCurl(input: string, init: RequestInit = {}, proxyUrl: str
     args.push('--header', `${key}: ${value}`)
   })
 
-  if (typeof init.body === 'string') {
-    args.push('--data-raw', init.body)
+  // Bodies travel on stdin (--data-binary @-): request bodies are unbounded and
+  // Windows caps a single argv entry around 32K chars, so large POST payloads
+  // must never ride on the command line.
+  const stdinBody = typeof init.body === 'string' ? init.body : undefined
+  if (stdinBody !== undefined) {
+    args.push('--data-binary', '@-')
   }
 
   args.push('--write-out', `\n${STATUS_SENTINEL}%{http_code}`)
 
-  const { stdout, stderr } = await execFileAsync(process.platform === 'win32' ? 'curl.exe' : 'curl', args, {
-    maxBuffer: 1024 * 1024 * 4,
-    signal: init.signal ?? undefined,
-  })
+  const { stdout, stderr } = await runCurl(args, { input: stdinBody, signal: init.signal ?? undefined })
   const output = stdout.toString()
   const markerIndex = output.lastIndexOf(STATUS_SENTINEL)
   if (markerIndex < 0) {
-    throw new Error(stderr?.toString().trim() || 'curl returned invalid output')
+    throw new Error(stderr?.trim() || 'curl returned invalid output')
   }
   let body = output.slice(0, markerIndex)
   const statusText = output.slice(markerIndex + STATUS_SENTINEL.length).trim()
