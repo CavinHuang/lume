@@ -28,6 +28,7 @@ const submitAskUserQuestionAnswersMock = mock(() => submitAskUserQuestionAnswers
 mock.module("../services/agent/agent-service", () => ({
   appendAgentMessage: async () => ({ queued: false }),
   sendAgentMessage: sendAgentMessageMock,
+  dispatchAgentRun: async () => ({ ok: true, mode: "sent", queuedCount: 0 }),
   generateAgentTitle: async () => undefined,
   generateWelcomeSuggestions: async () => [],
   listAgentMessageQueue: () => [],
