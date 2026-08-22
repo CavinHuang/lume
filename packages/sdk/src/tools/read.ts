@@ -176,6 +176,16 @@ export const FileReadTool = defineTool({
         }
       }
 
+      // Reject oversized whole-file reads before loading them into memory.
+      const maxBytes = configuredPositiveNumber(context, 'readMaxBytes', DEFAULT_MAX_TEXT_BYTES)
+      if (fileStat.size > maxBytes) {
+        return {
+          data: `Error: Read output for ${filePath} is ${fileStat.size} bytes, exceeding the ${maxBytes}-byte limit. Use offset and limit to read a smaller range.`,
+          is_error: true,
+          _meta: { read: { filePath, truncated: false, bytes: fileStat.size, maxBytes } },
+        }
+      }
+
       const textFile = await readTextFile(filePath)
       if (context.abortSignal?.aborted) throw new DOMException('Operation aborted', 'AbortError')
       const content = textFile.content
@@ -333,71 +343,81 @@ async function readPdf(
   }
   const mupdf = await import('mupdf')
   const document = mupdf.Document.openDocument(Buffer.from(bytes), 'application/pdf')
-  const totalPages = document.countPages()
-  const selectedPages = pageSpec === undefined
-    ? undefined
-    : parsePageRanges(String(pageSpec))
+  try {
+    const totalPages = document.countPages()
+    const selectedPages = pageSpec === undefined
+      ? undefined
+      : parsePageRanges(String(pageSpec))
 
-  if (!selectedPages) {
-    if (totalPages > MAX_PDF_PAGES) {
+    if (!selectedPages) {
+      if (totalPages > MAX_PDF_PAGES) {
+        return {
+          data: `Error: This PDF has ${totalPages} pages. Use the pages parameter to read a range (for example, pages: "1-5"). Maximum ${MAX_PDF_PAGES} pages per request.`,
+          is_error: true,
+        }
+      }
+      const textPreview: string[] = []
+      for (let pageIndex = 0; pageIndex < Math.min(totalPages, 100); pageIndex++) {
+        throwIfAborted(signal)
+        try {
+          const page = document.loadPage(pageIndex)
+          const text = page.toStructuredText().asText().trim()
+          page.destroy()
+          if (text) textPreview.push(text)
+        } catch {
+          // Image-only or malformed pages can still be sent as a PDF document.
+        }
+        if (textPreview.join('\n\n').length >= MAX_PDF_TEXT_PREVIEW) break
+      }
+      const preview = textPreview.join('\n\n').slice(0, MAX_PDF_TEXT_PREVIEW)
       return {
-        data: `Error: This PDF has ${totalPages} pages. Use the pages parameter to read a range (for example, pages: "1-5"). Maximum ${MAX_PDF_PAGES} pages per request.`,
-        is_error: true,
+        data: {
+          content: [
+            {
+              type: 'text',
+              text: `[PDF file: ${filePath} (${totalPages} page${totalPages === 1 ? '' : 's'})]${preview ? `\n\n${preview}` : ''}`,
+            },
+            {
+              type: 'document',
+              source: { type: 'base64', media_type: 'application/pdf', data: bytes.toString('base64') },
+            },
+          ],
+        },
+        _meta: { read: { kind: 'pdf', filePath, size: bytes.byteLength, totalPages, multimodal: true } },
       }
     }
-    const textPreview: string[] = []
-    for (let pageIndex = 0; pageIndex < Math.min(totalPages, 100); pageIndex++) {
+
+    if (selectedPages.length > MAX_PDF_PAGES) {
+      return { data: `Error: PDF page selection contains ${selectedPages.length} pages; maximum is ${MAX_PDF_PAGES}.`, is_error: true }
+    }
+    const invalidPage = selectedPages.find((page) => page >= totalPages)
+    if (invalidPage !== undefined) {
+      return { data: `Error: PDF page ${invalidPage + 1} is outside the document (1-${totalPages}).`, is_error: true }
+    }
+
+    const content: Array<Record<string, unknown>> = [
+      { type: 'text', text: `[PDF pages ${selectedPages.map((page) => page + 1).join(', ')} from ${filePath}]` },
+    ]
+    for (const pageIndex of selectedPages) {
       throwIfAborted(signal)
-      try {
-        const text = document.loadPage(pageIndex).toStructuredText().asText().trim()
-        if (text) textPreview.push(text)
-      } catch {
-        // Image-only or malformed pages can still be sent as a PDF document.
-      }
-      if (textPreview.join('\n\n').length >= MAX_PDF_TEXT_PREVIEW) break
+      const page = document.loadPage(pageIndex)
+      const pixmap = page.toPixmap(mupdf.Matrix.scale(1.5, 1.5), mupdf.ColorSpace.DeviceRGB, false, false)
+      content.push({
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: Buffer.from(pixmap.asPNG()).toString('base64') },
+        _meta: { page: pageIndex + 1 },
+      })
+      pixmap.destroy()
+      page.destroy()
     }
-    const preview = textPreview.join('\n\n').slice(0, MAX_PDF_TEXT_PREVIEW)
     return {
-      data: {
-        content: [
-          {
-            type: 'text',
-            text: `[PDF file: ${filePath} (${totalPages} page${totalPages === 1 ? '' : 's'})]${preview ? `\n\n${preview}` : ''}`,
-          },
-          {
-            type: 'document',
-            source: { type: 'base64', media_type: 'application/pdf', data: bytes.toString('base64') },
-          },
-        ],
-      },
-      _meta: { read: { kind: 'pdf', filePath, size: bytes.byteLength, totalPages, multimodal: true } },
+      data: { content },
+      _meta: { read: { kind: 'pdf', filePath, size: bytes.byteLength, totalPages, pages: selectedPages.map((page) => page + 1), multimodal: true } },
     }
-  }
-
-  if (selectedPages.length > MAX_PDF_PAGES) {
-    return { data: `Error: PDF page selection contains ${selectedPages.length} pages; maximum is ${MAX_PDF_PAGES}.`, is_error: true }
-  }
-  const invalidPage = selectedPages.find((page) => page >= totalPages)
-  if (invalidPage !== undefined) {
-    return { data: `Error: PDF page ${invalidPage + 1} is outside the document (1-${totalPages}).`, is_error: true }
-  }
-
-  const content: Array<Record<string, unknown>> = [
-    { type: 'text', text: `[PDF pages ${selectedPages.map((page) => page + 1).join(', ')} from ${filePath}]` },
-  ]
-  for (const pageIndex of selectedPages) {
-    throwIfAborted(signal)
-    const page = document.loadPage(pageIndex)
-    const pixmap = page.toPixmap(mupdf.Matrix.scale(1.5, 1.5), mupdf.ColorSpace.DeviceRGB, false, false)
-    content.push({
-      type: 'image',
-      source: { type: 'base64', media_type: 'image/png', data: Buffer.from(pixmap.asPNG()).toString('base64') },
-      _meta: { page: pageIndex + 1 },
-    })
-  }
-  return {
-    data: { content },
-    _meta: { read: { kind: 'pdf', filePath, size: bytes.byteLength, totalPages, pages: selectedPages.map((page) => page + 1), multimodal: true } },
+  } finally {
+    // mupdf documents/pages/pixmaps live in a WASM heap; destroy or every Read
+    // of a PDF permanently grows sidecar memory (#245)
+    document.destroy()
   }
 }
 

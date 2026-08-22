@@ -8,9 +8,12 @@
  * - Date injection
  */
 
-import { execSync } from 'child_process'
+import { exec } from 'child_process'
+import { promisify } from 'util'
 import { readFile, stat } from 'fs/promises'
 import { join } from 'path'
+
+const execAsync = promisify(exec)
 
 // Memoization cache
 let cachedGitStatus: string | null = null
@@ -28,33 +31,36 @@ export async function getGitStatus(cwd: string): Promise<string> {
   try {
     const parts: string[] = []
 
-    const gitExec = (cmd: string, timeoutMs = 5000): string | null => {
+    // Async since this runs while building the first system prompt: the sync
+    // version froze every IPC request on the shared sidecar loop (#243).
+    const gitExec = async (cmd: string, timeoutMs = 5000): Promise<string | null> => {
       try {
-        return execSync(cmd, {
-          cwd, timeout: timeoutMs, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
-        }).trim()
+        const { stdout } = await execAsync(cmd, {
+          cwd, timeout: timeoutMs, encoding: 'utf-8',
+        })
+        return stdout.trim()
       } catch {
         return null
       }
     }
 
     // Check if this is a git repo at all
-    if (!gitExec('git rev-parse --git-dir')) return ''
+    if (!await gitExec('git rev-parse --git-dir')) return ''
 
     // Current branch
-    const branch = gitExec('git rev-parse --abbrev-ref HEAD')
+    const branch = await gitExec('git rev-parse --abbrev-ref HEAD')
     if (branch) parts.push(`Current branch: ${branch}`)
 
     // Main branch detection
-    const mainBranch = detectMainBranch(cwd)
+    const mainBranch = await detectMainBranch(cwd)
     if (mainBranch) parts.push(`Main branch: ${mainBranch}`)
 
     // Git user
-    const user = gitExec('git config user.name', 3000)
+    const user = await gitExec('git config user.name', 3000)
     if (user) parts.push(`Git user: ${user}`)
 
     // Status (staged + unstaged)
-    const status = gitExec('git status --short')
+    const status = await gitExec('git status --short')
     if (status) {
       const truncated = status.length > 2000
         ? status.slice(0, 2000) + '\n...(truncated)'
@@ -63,9 +69,9 @@ export async function getGitStatus(cwd: string): Promise<string> {
     }
 
     // Recent commits (only if HEAD exists)
-    const hasHead = gitExec('git rev-parse HEAD')
+    const hasHead = await gitExec('git rev-parse HEAD')
     if (hasHead) {
-      const log = gitExec('git log --oneline -5 --no-decorate')
+      const log = await gitExec('git log --oneline -5 --no-decorate')
       if (log) parts.push(`Recent commits:\n${log}`)
     }
 
@@ -81,11 +87,12 @@ export async function getGitStatus(cwd: string): Promise<string> {
 /**
  * Detect the main branch name (main or master).
  */
-function detectMainBranch(cwd: string): string | null {
+async function detectMainBranch(cwd: string): Promise<string | null> {
   try {
-    const branches = execSync('git branch -l main master', {
-      cwd, timeout: 3000, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim()
+    const { stdout } = await execAsync('git branch -l main master', {
+      cwd, timeout: 3000, encoding: 'utf-8',
+    })
+    const branches = stdout.trim()
     if (branches.includes('main')) return 'main'
     if (branches.includes('master')) return 'master'
     return null

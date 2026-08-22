@@ -346,6 +346,8 @@ export class LumeRunner {
         permissionMode: normalizeRuntimeCoreQueryPermissionMode(input.permissionMode),
         includePartialMessages: true,
         sandbox: sandbox ?? createWikiProtectedSandbox(),
+        // usageIdentity.runId 用真实 Lume runId(此前回落 sessionId=threadId,无法按 run 聚合)
+        runId: this.observer.getRunId(),
         ...(runtime.abortSignal ? { abortSignal: runtime.abortSignal } : {}),
         ...(maxTurns === undefined ? {} : { maxTurns })
       });

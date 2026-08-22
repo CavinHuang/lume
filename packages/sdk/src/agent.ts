@@ -291,6 +291,9 @@ export class Agent {
     initBundledSkills()
     this.skillRegistry = new SkillRegistry(getAllSkills())
     this.setupDone = this.setup()
+    // Keep the original promise for awaiters, but mark it handled so a setup
+    // failure nobody awaited yet does not crash as an unhandledRejection.
+    this.setupDone.catch(() => {})
   }
 
   private readEnv(key: string): string | undefined {
@@ -733,6 +736,19 @@ export class Agent {
       )
     }
 
+    await this.refreshCwdDependentState()
+    await this.resumeSessionIfNeeded()
+    await this.rebuildToolPool()
+  }
+
+  /**
+   * Reload state derived from cfg.cwd: resolved provider config, plugins,
+   * skills, commands, agents, and MCP connections. Runs from setup() and again
+   * after setCwd(). Must not rebuild cfg (runtime mutations like setModel or
+   * setPermissionMode live there) nor re-run the session resume/fork branch.
+   */
+  private async refreshCwdDependentState(): Promise<void> {
+    const cwd = this.cfg.cwd || process.cwd()
     this.refreshResolvedConfig()
     this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins, this.cfg.pluginRoots)
     console.debug(`[plugin:agent] plugins loaded`, {
@@ -762,8 +778,6 @@ export class Agent {
     }
 
     await this.syncMcpConnections()
-    await this.resumeSessionIfNeeded()
-    await this.rebuildToolPool()
   }
 
   private getEffectiveOptions(overrides?: Partial<AgentOptions>): AgentOptions {
@@ -944,6 +958,9 @@ export class Agent {
     prompt: QueryInput,
     overrides?: Partial<AgentOptions>,
   ): AsyncGenerator<SDKMessage, void> {
+    // currentEngine (not abortCtrl, which is never cleared after a run) is
+    // the accurate in-flight marker: set before the loop, cleared in finally.
+    if (this.currentEngine) throw new Error('agent is running')
     await this.setupDone
 
     const opts = this.getEffectiveOptions(overrides)
@@ -977,15 +994,14 @@ export class Agent {
     // The finally block below flushes whatever is still pending.
     const persistScheduler = createPersistScheduler(200, () =>
       this.persistCurrentSession(cwd, opts).then(() => undefined))
+    // The host may reuse one session-level AbortSignal across many runs; detach
+    // the forwarder when this run ends so listeners don't pile up on it (#244).
+    const forwardAbort = () => abortCtrl.abort(opts.abortSignal?.reason)
     if (opts.abortSignal) {
       if (opts.abortSignal.aborted) {
         abortCtrl.abort(opts.abortSignal.reason)
       } else {
-        opts.abortSignal.addEventListener(
-          'abort',
-          () => abortCtrl.abort(opts.abortSignal?.reason),
-          { once: true },
-        )
+        opts.abortSignal.addEventListener('abort', forwardAbort, { once: true })
       }
     }
 
@@ -1094,7 +1110,12 @@ export class Agent {
         }
         this.queuedSdkEvents.push(event)
       },
-      currentUserMessageId: userMessage?.uuid ?? `command:${this.sid}:compact`,
+      // Continuation runs produce no user message; derive the checkpoint key
+      // from the first dangling tool_use id so each resumed run gets its own
+      // baseline instead of polluting a shared per-session bucket.
+      currentUserMessageId: userMessage?.uuid ?? (opts.toolContinuations?.length
+        ? `continuation:${opts.toolContinuations[0]!.toolCall.id}`
+        : `command:${this.sid}:compact`),
       fileCheckpointState: this.fileCheckpointState,
       enableFileCheckpointing: opts.enableFileCheckpointing === true,
       mcpServerStatuses: this.collectMcpServerStatuses().map((status) => ({
@@ -1167,6 +1188,7 @@ export class Agent {
       // saveSession that races with both the awaited write and readers of the
       // session file.
       await persistScheduler.cancel()
+      opts.abortSignal?.removeEventListener('abort', forwardAbort)
       this.history = engine.getMessages()
       this.lastContextUsage = engine.getContextUsage()
       this.currentEngine = null
@@ -1380,7 +1402,11 @@ export class Agent {
   async setCwd(cwd: string): Promise<void> {
     this.cfg.cwd = cwd
     this.baseOptions.cwd = cwd
-    this.setupDone = this.setup()
+    // Refresh cwd-derived state only: a full setup() would rebuild cfg from
+    // settings (reverting runtime changes like setModel) and re-run the resume
+    // branch (silently forking a resumed session a second time).
+    this.setupDone = this.refreshCwdDependentState().then(() => this.rebuildToolPool())
+    this.setupDone.catch(() => {})
     await this.setupDone
   }
 

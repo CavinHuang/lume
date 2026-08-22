@@ -186,7 +186,8 @@ export const handleBluesky: SpecialHandler = async (
 
 				if (!result.ok) return null;
 
-				const data = JSON.parse(result.content) as { thread: ThreadViewPost };
+				const data = tryParseJson<{ thread: ThreadViewPost }>(result.content);
+				if (!data) return null;
 				const thread = data.thread;
 
 				if (!thread.post) return null;
@@ -230,7 +231,8 @@ export const handleBluesky: SpecialHandler = async (
 
 			if (!result.ok) return null;
 
-			const profile = JSON.parse(result.content) as BlueskyProfile;
+			const profile = tryParseJson<BlueskyProfile>(result.content);
+			if (!profile) return null;
 
 			let md = `# ${profile.displayName || profile.handle}\n\n`;
 			md += `**@${profile.handle}**\n\n`;

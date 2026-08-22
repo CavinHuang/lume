@@ -387,8 +387,8 @@ export const handleDocsRs: SpecialHandler = async (
 	const jsonUrl = `https://docs.rs/crate/${target.crateName}/${target.version}/json.gz`;
 
 	let crate_: RustdocCrate | null;
+	const { signal: requestSignal, dispose } = ptree.combineSignals(signal, timeout * 1000);
 	try {
-		const requestSignal = ptree.combineSignals(signal, timeout * 1000);
 		const response = await getRuntimeFetch()(jsonUrl, {
 			signal: requestSignal,
 			headers: { "User-Agent": "omp-web-fetch/1.0", Accept: "application/gzip" },
@@ -421,6 +421,8 @@ export const handleDocsRs: SpecialHandler = async (
 	} catch {
 		if (signal?.aborted) throw new ToolAbortError();
 		return null;
+	} finally {
+		dispose();
 	}
 	if (!crate_?.index) return null;
 

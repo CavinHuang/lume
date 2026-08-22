@@ -55,6 +55,16 @@ describe("PluginPermissions", () => {
         true,
       );
     });
+
+    test("rejects .. traversal that would otherwise satisfy the pattern (#246)", () => {
+      expect(
+        matchPathGlob(
+          `${pluginRoot}/data/../../outside/secret.txt`,
+          ["./data/**"],
+          pluginRoot,
+        ),
+      ).toBe(false);
+    });
   });
 
   describe("checkFilesystemPermission", () => {

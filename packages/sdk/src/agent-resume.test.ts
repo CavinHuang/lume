@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createAgent } from "./agent.js"
-import { saveSession } from "./session.js"
+import { loadSession, saveSession } from "./session.js"
 import { buildResumeContinuations, type DanglingToolUse } from "./interrupt-recovery.js"
 import type { ToolDefinition } from "./types.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
@@ -173,6 +173,73 @@ describe("Agent dangling history repair on next prompt", () => {
     const results = payload.match(/"tool_use_id":\s*"tool-crash-1"/g) ?? []
     expect(results).toHaveLength(1)
     expect(payload).toContain("interrupted before completion")
+    await agent.close()
+  })
+})
+
+describe("Agent.resumeInterruptedRun file checkpoints", () => {
+  test("continuation runs key checkpoints by the dangling tool_use id, not a shared compact key", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "sdk-agent-resume-ckpt-"))
+    tempDirs.push(tempDir)
+    process.env.OPEN_AGENT_SDK_HOME = join(tempDir, "sdk-home")
+    const sessionId = `resume-ckpt-${crypto.randomUUID()}`
+
+    await saveSession(sessionId, [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "tool-ckpt-1", name: "Bash", input: { command: "ls" } }],
+      },
+      // tool-ckpt-1 has no tool_result → dangling
+    ], { cwd: tempDir, model: "test-model" })
+
+    class ToolThenEndProvider implements LLMProvider {
+      readonly apiType = "anthropic-messages" as const
+      private index = 0
+
+      async createMessage(_params: CreateMessageParams): Promise<CreateMessageResponse> {
+        this.index += 1
+        if (this.index === 1) {
+          return {
+            content: [{ type: "tool_use", id: "bash-run-1", name: "Bash", input: { command: "echo hi" } }],
+            stopReason: "tool_use",
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }
+        }
+        return {
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }
+      }
+    }
+
+    const bashTool: ToolDefinition = {
+      name: "Bash",
+      description: "run a command",
+      inputSchema: { type: "object", properties: {} },
+      async call() {
+        return { type: "tool_result", tool_use_id: "", content: "command output" }
+      },
+    }
+    const agent = createAgent({
+      resume: sessionId,
+      persistSession: true,
+      enableFileCheckpointing: true,
+      tools: [bashTool],
+      cwd: tempDir,
+      model: "test-model",
+      provider: new ToolThenEndProvider(),
+    })
+
+    for await (const _event of agent.resumeInterruptedRun()) {
+      // drain
+    }
+
+    const session = await loadSession(sessionId)
+    const keys = Object.keys(session?.checkpoints ?? {})
+    expect(keys).toContain("continuation:tool-ckpt-1")
+    expect(keys.some((key) => key.endsWith(":compact"))).toBe(false)
     await agent.close()
   })
 })

@@ -363,13 +363,20 @@ export class OpenAIProvider implements LLMProvider {
     ): Promise<Array<CreateMessageStreamEvent>> => {
       const events: Array<CreateMessageStreamEvent> = []
       while (true) {
-        const separatorIndex = buffer.indexOf('\n\n')
+        const lfIndex = buffer.indexOf('\n\n')
+        const crlfIndex = buffer.indexOf('\r\n\r\n')
+        const separatorIndex = lfIndex === -1
+          ? crlfIndex
+          : crlfIndex === -1
+            ? lfIndex
+            : Math.min(lfIndex, crlfIndex)
         if (separatorIndex === -1) {
           break
         }
 
+        const separatorLength = separatorIndex === crlfIndex ? 4 : 2
         const frame = buffer.slice(0, separatorIndex)
-        buffer = buffer.slice(separatorIndex + 2)
+        buffer = buffer.slice(separatorIndex + separatorLength)
 
         for (const line of frame.split('\n')) {
           const trimmed = line.trim()
@@ -379,7 +386,12 @@ export class OpenAIProvider implements LLMProvider {
           if (data === '[DONE]') {
             continue
           }
-          const parsed = JSON.parse(data) as OpenAIStreamChunk
+          let parsed: OpenAIStreamChunk
+          try {
+            parsed = JSON.parse(data) as OpenAIStreamChunk
+          } catch {
+            continue
+          }
           events.push(...await handleChunk(parsed))
         }
       }
@@ -392,7 +404,12 @@ export class OpenAIProvider implements LLMProvider {
           if (!trimmed.startsWith('data:')) continue
           const data = trimmed.slice(5).trim()
           if (!data || data === '[DONE]') continue
-          const parsed = JSON.parse(data) as OpenAIStreamChunk
+          let parsed: OpenAIStreamChunk
+          try {
+            parsed = JSON.parse(data) as OpenAIStreamChunk
+          } catch {
+            continue
+          }
           events.push(...await handleChunk(parsed))
         }
       }
@@ -693,7 +710,7 @@ export class OpenAIProvider implements LLMProvider {
     thinkingDisabled: boolean,
     toolNames: OpenAIToolNames,
   ): CreateMessageResponse {
-    const choice = data.choices[0]
+    const choice = data.choices?.[0]
     if (!choice) {
       return {
         content: [{ type: 'text', text: '' }],

@@ -31,6 +31,17 @@ const diagnosticLedger = new Map<string, Set<string>>()
 const INLINE_DIAGNOSTICS_TIMEOUT_MS = 500
 const DELAYED_DIAGNOSTICS_TIMEOUT_MS = 12_000
 
+/** Drop per-session writethrough bookkeeping once the session is gone (#223). */
+export function clearLspWritethroughState(sessionId: string): void {
+  const prefix = `${sessionId}\0`
+  for (const key of [...mutationVersions.keys()]) {
+    if (key.startsWith(prefix)) mutationVersions.delete(key)
+  }
+  for (const key of [...diagnosticLedger.keys()]) {
+    if (key.startsWith(prefix)) diagnosticLedger.delete(key)
+  }
+}
+
 export async function prepareLspWritethrough(input: {
   filePath: string
   content: string
@@ -44,7 +55,7 @@ export async function prepareLspWritethrough(input: {
   const clients = await withTimeout(
     getLspClientsForFile(input.context.cwd, input.context.toolConfig, filePath),
     lsp.warmupTimeoutMs,
-  ).catch(() => [] as LspClient[])
+  ).catch(unavailableClients)
 
   const beforeSequence = new Map(clients.map((client) => [client.serverName, client.getDiagnosticsSequence()]))
   let content = input.content
@@ -191,7 +202,7 @@ export async function prepareLspWritethroughBatch(input: {
     const clients = await withTimeout(
       getLspClientsForFile(input.context.cwd, input.context.toolConfig, filePath),
       lsp.warmupTimeoutMs,
-    ).catch(() => [] as LspClient[])
+    ).catch(unavailableClients)
     const before = new Map(clients.map((client) => [client.serverName, client.getDiagnosticsSequence()]))
     const versions = new Map<string, number>()
     for (const client of clients) {
@@ -251,9 +262,9 @@ export async function prepareLspWritethroughBatch(input: {
       if (!lsp.diagnosticsOnWrite) {
         return {
           servers: allClients.map((client) => client.serverName),
-          formatted: false,
+          formatted: input.files.some((file) => contents.get(resolve(file.filePath)) !== file.content),
           diagnosticsDelayed: false,
-          mutationVersion: 0,
+          mutationVersion: Math.max(0, ...records.map((record) => record.mutationVersion)),
         }
       }
       const pending = records.map((record) => Promise.all([
@@ -383,6 +394,12 @@ async function summarizeDiagnostics(
     }
   }
   return summary
+}
+
+function unavailableClients(error: unknown): LspClient[] {
+  // The write proceeds without LSP, but a failing server start must not vanish.
+  console.error(`[LSP] ${error instanceof Error ? error.message : String(error)}`)
+  return []
 }
 
 function lspOptions(context: ToolContext): {

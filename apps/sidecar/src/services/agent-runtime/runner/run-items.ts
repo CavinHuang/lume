@@ -38,6 +38,8 @@ export interface LumeToolCallItem {
   status: "pending" | "approved" | "running" | "completed" | "failed" | "denied";
   traceSpanId?: string;
   createdAt: string;
+  /** tool_result 到达时回写的终态时间戳（此前 status 恒停在 pending） */
+  endedAt?: string;
 }
 
 export interface LumeToolResultItem {

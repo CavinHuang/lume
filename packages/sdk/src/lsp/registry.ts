@@ -214,7 +214,7 @@ export async function resolveLspExecutable(command: string, workspaceRoot: strin
 
 async function executableFile(candidate: string): Promise<string | undefined> {
   const extensions = process.platform === 'win32'
-    ? ['', ...(process.env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM').split(';').map((value) => value.toLowerCase())]
+    ? [...windowsExecutableExtensions(), '']
     : ['']
   for (const extension of extensions) {
     const path = candidate.toLowerCase().endsWith(extension) ? candidate : `${candidate}${extension}`
@@ -226,6 +226,21 @@ async function executableFile(candidate: string): Promise<string | undefined> {
     }
   }
   return undefined
+}
+
+// Only .exe/.com binaries are directly spawnable on Windows; .cmd/.bat shims
+// need the cmd.exe wrapper from the client, and the extensionless
+// node_modules/.bin shell scripts cannot run at all, so probe last.
+function windowsExecutableExtensions(): string[] {
+  const pathext = (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
+    .split(';')
+    .map((value) => value.toLowerCase())
+    .filter(Boolean)
+  const rank = (extension: string): number =>
+    extension === '.exe' || extension === '.com' ? 0
+      : extension === '.cmd' || extension === '.bat' ? 1
+      : 2
+  return pathext.sort((left, right) => rank(left) - rank(right))
 }
 
 async function directoryHasMarker(directory: string, markers: string[]): Promise<boolean> {

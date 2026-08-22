@@ -161,6 +161,14 @@ async function resolveAndLoadLanguage(highlighter: ShikiHighlighter, lang: strin
 }
 
 /**
+ * Cheap readiness probe: true when the sync token path can produce a result.
+ * Lets callers avoid a full tokenize just to discover it would be thrown away (#240).
+ */
+export function isHighlighterReady(): boolean {
+  return cachedHighlighter !== null
+}
+
+/**
  * 异步高亮代码，返回 HTML 字符串（首次初始化 + 按需加载语言时使用）
  */
 export async function highlightCode(options: HighlightOptions): Promise<HighlightResult> {

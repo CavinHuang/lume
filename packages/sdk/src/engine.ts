@@ -481,7 +481,9 @@ export class QueryEngine {
     return {
       threadId: this.sessionId,
       callerKind,
-      runId: this.sessionId,
+      // runId 用真实 run 标识(config.runId 由 Agent.run opts 透传);
+      // 缺省回落 sessionId——此前恒用 sessionId 导致 usageIdentity 无法按 run 聚合
+      runId: this.config.runId ?? this.sessionId,
       responseId: crypto.randomUUID(),
       ...options,
     }
@@ -1211,7 +1213,7 @@ export class QueryEngine {
                   delta: { type: 'text_delta', text: chunk.text },
                 },
                 parent_tool_use_id: null,
-                session_id: this.config.sessionId,
+                session_id: this.sessionId,
               }
               // Legacy format - kept for backward compatibility
               yield {
@@ -1233,7 +1235,7 @@ export class QueryEngine {
                   delta: { type: 'thinking_delta', thinking: chunk.thinking },
                 },
                 parent_tool_use_id: null,
-                session_id: this.config.sessionId,
+                session_id: this.sessionId,
               }
             }
             if (chunk.type === 'retry_state') {
@@ -1999,7 +2001,7 @@ export class QueryEngine {
         cwd: toolContext.cwd,
       })
       if (toolContext.abortSignal?.aborted) throw new Error('aborted')
-      if (this.config.fileCheckpointState && this.config.currentUserMessageId) {
+      if (this.config.enableFileCheckpointing === true && this.config.fileCheckpointState && this.config.currentUserMessageId) {
         if (requiresWorkspaceCheckpoint(block.name)) {
           await captureWorkspaceFileSnapshots(
             this.config.fileCheckpointState,
@@ -2139,7 +2141,7 @@ export class QueryEngine {
     const messageTokens = estimateMessagesTokens(this.messages)
     const systemTokens = estimateSystemPromptTokens(systemPrompt)
     const totalTokens = messageTokens + systemTokens
-    const maxTokens = getContextWindowSize(this.config.model)
+    const maxTokens = this.getContextWindow()
     const toolTokens = this.config.tools.reduce(
       (sum, tool) => sum + Math.ceil((tool.description.length + tool.name.length) / 4),
       0,
@@ -2162,6 +2164,16 @@ export class QueryEngine {
     let assistantMessageTokens = 0
     let userMessageTokens = 0
 
+    // Pair tool_result blocks with their originating tool name via the
+    // assistant tool_use id (tool_use_id is an id, not a tool name).
+    const toolUseNames = new Map<string, string>()
+    for (const message of this.messages) {
+      if (message.role !== 'assistant' || !Array.isArray(message.content)) continue
+      for (const block of message.content as any[]) {
+        if (block.type === 'tool_use') toolUseNames.set(block.id, block.name)
+      }
+    }
+
     for (const message of this.messages) {
       const content = Array.isArray(message.content) ? message.content : [{ type: 'text', text: String(message.content) }]
       for (const block of content as any[]) {
@@ -2174,10 +2186,10 @@ export class QueryEngine {
         } else if (block.type === 'tool_result') {
           const estimated = Math.ceil(JSON.stringify(block).length / 4)
           toolResultTokens += estimated
-          const matchingTool = this.config.tools.find((tool) => tool.name === block.tool_use_id) // best-effort only
-          const entry = toolCallsByType.get(matchingTool?.name || 'tool_result') || { callTokens: 0, resultTokens: 0 }
+          const toolName = toolUseNames.get(block.tool_use_id) || 'tool_result'
+          const entry = toolCallsByType.get(toolName) || { callTokens: 0, resultTokens: 0 }
           entry.resultTokens += estimated
-          toolCallsByType.set(matchingTool?.name || 'tool_result', entry)
+          toolCallsByType.set(toolName, entry)
         } else if (message.role === 'assistant') {
           assistantMessageTokens += Math.ceil(JSON.stringify(block).length / 4)
         } else {

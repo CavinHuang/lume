@@ -211,15 +211,7 @@ function validateMisfirePolicy(value: AutomationSchedule["misfirePolicy"]): void
 
 function zonedCronValues(date: Date, timezone?: string): number[] {
   const resolvedTimezone = resolveTimezone(timezone);
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: resolvedTimezone,
-    minute: "2-digit",
-    hour: "2-digit",
-    hourCycle: "h23",
-    day: "2-digit",
-    month: "2-digit",
-    weekday: "short"
-  }).formatToParts(date);
+  const parts = getCronPartsFormatter(resolvedTimezone).formatToParts(date);
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(values.weekday ?? "");
   return [
@@ -232,13 +224,43 @@ function zonedCronValues(date: Date, timezone?: string): number[] {
 }
 
 function zonedMinuteKey(date: Date, timezone: string): string {
-  return new Intl.DateTimeFormat("sv-SE", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).format(date);
+  return getMinuteKeyFormatter(timezone).format(date);
+}
+
+// formatter 构造占逐分钟扫描的绝对大头——按 timezone 缓存实例后复用 formatToParts/format
+const cronPartsFormatters = new Map<string, Intl.DateTimeFormat>();
+const minuteKeyFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function getCronPartsFormatter(timezone: string): Intl.DateTimeFormat {
+  let formatter = cronPartsFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      minute: "2-digit",
+      hour: "2-digit",
+      hourCycle: "h23",
+      day: "2-digit",
+      month: "2-digit",
+      weekday: "short"
+    });
+    cronPartsFormatters.set(timezone, formatter);
+  }
+  return formatter;
+}
+
+function getMinuteKeyFormatter(timezone: string): Intl.DateTimeFormat {
+  let formatter = minuteKeyFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    });
+    minuteKeyFormatters.set(timezone, formatter);
+  }
+  return formatter;
 }
