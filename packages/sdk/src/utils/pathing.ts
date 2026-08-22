@@ -182,7 +182,7 @@ export function getHostnameFromUrl(url: string): string | null {
   }
 }
 
-/** 公网地址判定（自 sidecar wiki 服务移入单源维护）：拦截私网/回环/链路本地/CGNAT/基准测试等保留段。 */
+/** 公网地址判定（单源维护）：拦截私网/回环/链路本地/CGNAT/基准测试等保留段。 */
 export function isPublicIpAddress(address: string): boolean {
   const family = isIP(address)
   if (family === 4) {

@@ -113,6 +113,27 @@ export function validateCronExpression(expr: string): void {
   });
 }
 
+/**
+ * 日/月组合是否至少存在一个可命中的日期（闰年上界保守放行 2/29）。
+ * 字段各自合法但组合永假（如 `0 9 31 2 *` 二月无 31 日）会让逐分钟扫描
+ * 空转满一年才返回 null，创建/改期时同步卡顿数秒（#408）。
+ * dom 与 dow 同时受限时 cron 取 OR 语义——dow 自身总能提供命中日期，直接可行。
+ */
+export function cronDateFeasible(expr: string): boolean {
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5) return true;
+  const domField = parts[2]!;
+  const monthField = parts[3]!;
+  const dowField = parts[4]!;
+  if (domField.trim() === "*" || monthField.trim() === "*" || dowField.trim() !== "*") return true;
+  const domSpec = CRON_FIELD_SPECS[2]!;
+  const monthSpec = CRON_FIELD_SPECS[3]!;
+  const days = Array.from({ length: 31 }, (_, i) => i + 1).filter((d) => cronFieldMatches(domField, domSpec, d));
+  const months = Array.from({ length: 12 }, (_, i) => i + 1).filter((m) => cronFieldMatches(monthField, monthSpec, m));
+  const daysInMonthLeap = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return months.some((m) => days.some((d) => d <= daysInMonthLeap[m - 1]!));
+}
+
 export function matchCronExpression(expr: string, date: Date, timezone?: string): boolean {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return false;
@@ -125,6 +146,9 @@ export function matchCronExpression(expr: string, date: Date, timezone?: string)
 
 export function getNextCronRunAt(expr: string, fromMs: number, timezone?: string): number | null {
   validateCronExpression(expr);
+  // 永假组合直接短路返回 null（scheduleJob 对 null 即不排程），
+  // 不再逐分钟空转满年（#408）
+  if (!cronDateFeasible(expr)) return null;
   const resolvedTimezone = resolveTimezone(timezone);
   const candidate = new Date(fromMs);
   candidate.setSeconds(0, 0);
@@ -153,6 +177,10 @@ export function validateAutomationSchedule(schedule: AutomationSchedule): void {
       throw new Error("cron 类型任务缺少 cronExpr");
     }
     validateCronExpression(schedule.cronExpr);
+    // 创建/改期即拒绝永假组合，而非静默永不执行（#408）
+    if (!cronDateFeasible(schedule.cronExpr)) {
+      throw new Error(`cron 表达式的日/月组合永不可能命中: ${schedule.cronExpr}`);
+    }
     resolveTimezone(schedule.timezone);
     validateMisfirePolicy(schedule.misfirePolicy);
     return;

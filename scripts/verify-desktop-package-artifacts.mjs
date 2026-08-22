@@ -143,56 +143,14 @@ function verifySidecarResources(files, desktopTarget) {
   if (!onnxRuntimeNative) fail("missing packaged ONNX Runtime native binding");
   const sharpNative = files.find((file) => /\/resources\/sidecar\/node_modules\/@img\/sharp-[^/]+\/lib\/sharp-[^/]+\.node$/i.test(file));
   if (!sharpNative) fail("missing packaged sharp native binding");
-  const sidecarBundle = files.find((file) => /\/resources\/sidecar\/index\.mjs$/i.test(file));
-  const sidecarSource = sidecarBundle ? readFileSync(sidecarBundle, "utf8") : "";
-  for (const marker of ["wiki:privileged-apply-draft", "wiki.propose_changes", "system.wiki-privileged-credential"]) {
-    if (!sidecarSource.includes(marker)) fail(`packaged sidecar is missing Wiki runtime marker: ${marker}`);
-  }
   const skillsArchive = files.find((file) => /\/resources\/default-skills\.tar$/i.test(file));
   if (!skillsArchive) fail("missing packaged default-skills.tar");
-  const archive = readFileSync(skillsArchive);
-  const wikiSkillPath = listTarEntries(archive).find((entry) => /(^|\/)agent-wiki\/SKILL\.md$/.test(entry));
-  if (!wikiSkillPath) {
-    fail("packaged default skills are missing agent-wiki/SKILL.md");
-  }
-  const wikiSkill = readTarEntry(archive, wikiSkillPath)?.toString("utf8") ?? "";
-  if (!wikiSkill.includes("当前线程未获得该工具") || !wikiSkill.includes("wiki.search")) {
-    fail("packaged agent-wiki skill is stale or missing runtime tool guidance");
-  }
   if (desktopTarget === "x86_64-pc-windows-msvc") {
     const windowsSandbox = /\/resources\/sidecar\/node_modules\/@microsoft\/mxc-sdk\/bin\/x64\/wxc-exec\.exe$/i;
     if (!files.some((file) => windowsSandbox.test(file))) {
       fail("missing packaged Windows MXC sandbox runtime");
     }
   }
-}
-
-function listTarEntries(buffer) {
-  const entries = [];
-  for (let offset = 0; offset + 512 <= buffer.length;) {
-    const header = buffer.subarray(offset, offset + 512);
-    if (header.every((byte) => byte === 0)) break;
-    const name = header.subarray(0, 100).toString("utf8").replace(/\0.*$/, "");
-    const prefix = header.subarray(345, 500).toString("utf8").replace(/\0.*$/, "");
-    const size = Number.parseInt(header.subarray(124, 136).toString("ascii").replace(/\0.*$/, "").trim() || "0", 8);
-    entries.push(prefix ? `${prefix}/${name}` : name);
-    offset += 512 + Math.ceil(size / 512) * 512;
-  }
-  return entries;
-}
-
-function readTarEntry(buffer, target) {
-  for (let offset = 0; offset + 512 <= buffer.length;) {
-    const header = buffer.subarray(offset, offset + 512);
-    if (header.every((byte) => byte === 0)) break;
-    const name = header.subarray(0, 100).toString("utf8").replace(/\0.*$/, "");
-    const prefix = header.subarray(345, 500).toString("utf8").replace(/\0.*$/, "");
-    const path = prefix ? `${prefix}/${name}` : name;
-    const size = Number.parseInt(header.subarray(124, 136).toString("ascii").replace(/\0.*$/, "").trim() || "0", 8);
-    if (path === target) return buffer.subarray(offset + 512, offset + 512 + size);
-    offset += 512 + Math.ceil(size / 512) * 512;
-  }
-  return undefined;
 }
 
 function nativeResourceTarget(desktopTarget) {

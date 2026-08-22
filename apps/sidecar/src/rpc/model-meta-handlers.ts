@@ -42,6 +42,11 @@ export function createModelMetaHandlers(): Record<string, RpcHandler> {
       if (!res.ok) throw new Error(`fetch models.dev: HTTP ${res.status}`)
       const catalog = (await res.json()) as Catalog
       const generated = buildGeneratedFromCatalog(catalog)
+      // 空结果说明 catalog 形状非预期（CDN 错误体/API 变更），拒绝落盘——
+      // 原子覆盖完好的 generated 层会让用户更新操作静默摧毁数据层（#406）
+      if (!Array.isArray(generated) || generated.length === 0) {
+        throw new Error("models.dev catalog 解析结果为空，已保留现有 model-meta 数据")
+      }
       await atomicWriteGenerated(join(getConfigDir(), GENERATED_FILE), generated)
       setModelMeta(generated)
       return generated

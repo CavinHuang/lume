@@ -11,7 +11,6 @@ import { LumeRunner, resolveRuntimeCoreMaxTurns } from "./lume-runner";
 import type { LumeRunState } from "./run-state";
 import { createMemoryV2Store } from "../../memory-v2/markdown-store";
 import { getMemoryV2ScopePaths } from "../../memory-v2/paths";
-import { getWikiProtectedRootPath } from "../../infra/config-paths";
 import { setActiveBrowserBroker } from "../../browser/browser-broker-holder";
 import { getBrowserToolSessionRegistry } from "../tools/browser/browser-tool-session";
 
@@ -1045,13 +1044,7 @@ describe("LumeRunner", () => {
     await registeredAbort?.();
 
     expect(result).toEqual({ status: "completed" });
-    expect(queryOptions?.sandbox).toEqual({
-      enabled: true,
-      filesystem: {
-        denyRead: [getWikiProtectedRootPath()],
-        denyWrite: [getWikiProtectedRootPath()]
-      }
-    });
+    expect(queryOptions?.sandbox).toBeUndefined();
     expect(events).toEqual(["sdk:assistant", "complete"]);
     expect(lifecycle).toEqual([
       "registerAbort",

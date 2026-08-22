@@ -1344,6 +1344,16 @@ export function ensureIslandWindow() {
     onReady: () => getAgentIslandService().repush(),
   })
   islandWindow = win
+  // 岛窗携完整 preload 且在受信窗口集合内，与主窗/quickInput 同规格挂安全闸：
+  // will-navigate/will-frame-navigate 拦截 + 统一 windowOpenHandler（#395）。
+  attachWebContentsSecurity(win, {
+    allowNavigation: (url) => isAllowedMainFrameNavigation(url, {
+      appIsPackaged: app.isPackaged,
+      appProtocolOrigin: APP_PROTOCOL_ORIGIN,
+      devServerUrl: getDevServerUrl(),
+      webEntryPath: getWebEntryPath(),
+    }),
+  })
   win.on('closed', () => {
     if (islandWindow === win) islandWindow = null
   })
@@ -1976,21 +1986,6 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
         throw error
       }
     }
-    case 'desktop_wiki_get_proposal_summary':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-get-proposal-summary', { draftId: payload.draftId })
-    case 'desktop_wiki_apply_draft':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-apply-draft', payload)
-    case 'desktop_wiki_resolve_pending':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-resolve-pending', payload)
-    case 'desktop_wiki_get_undo_summary':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-get-undo-summary', { batchId: payload.batchId })
-    case 'desktop_wiki_undo_batch':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-undo-batch', payload)
     case 'desktop_sync_window_behavior': {
       requireMainWindowSender(context, 'desktop_sync_window_behavior')
       if (!mainWindowLifecycle.acceptWindowBehaviorRevision(payload?.generation, payload?.revision)) return null
@@ -2239,6 +2234,8 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       return { available: getDiagnosticContentStore().isAvailable(), lease: diagnosticCapture, deleted }
     }
     case 'desktop_diagnostic_decrypt':
+      // 解密的是会话明文，与 connection_vault_* 同级敏感：仅主窗可调。
+      requireMainWindowSender(context, 'desktop_diagnostic_decrypt')
       return getDiagnosticContentStore().decrypt(payload.recordId)
     case 'desktop_diagnostic_delete':
       return { deleted: await getDiagnosticContentStore().clear() }
@@ -2393,6 +2390,9 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       const destinationPath = payload.dest
       validateMigrationTarget(sourcePath, destinationPath)
       await sidecarHost.stop()
+      // 拷贝窗口内拒绝 renderer IPC 触发的惰性重启：新进程边跑边被拷贝会令
+      // 目录校验失配、目的目录被删（#412）。
+      sidecarHost.setMigrationInProgress(true)
       const sourceStats = dirStats(sourcePath)
       try {
         const { copiedFiles, copiedBytes } = copyDirRecursive(sourcePath, destinationPath, (progress) => {
@@ -2412,6 +2412,8 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       } catch (error) {
         rmSync(destinationPath, { recursive: true, force: true })
         throw error
+      } finally {
+        sidecarHost.setMigrationInProgress(false)
       }
     }
     case 'data_apply_migration': {
@@ -2474,7 +2476,8 @@ function createSidecarHost({ onNotification }) {
   let nextId = 1
   let pending = new Map()
   let stopRequested = false
-  let wikiPrivilegedCredential = null
+  let migrationInProgress = false
+  let privilegedCredential = null
 
   function rejectAllPending(error) {
     for (const entry of pending.values()) {
@@ -2567,6 +2570,8 @@ function createSidecarHost({ onNotification }) {
   }
 
   async function start() {
+    // 数据目录迁移拷贝期间拒绝惰性重启：新进程边跑边被拷贝会令校验失配（#412）
+    if (migrationInProgress) throw new Error('数据目录迁移进行中，sidecar 暂不启动')
     if (started) {
       await started
       return
@@ -2605,7 +2610,7 @@ function createSidecarHost({ onNotification }) {
         if (child === runningChild) {
           child = null
           started = null
-          wikiPrivilegedCredential = null
+          privilegedCredential = null
         }
         runningChild.kill()
         settleStart(error)
@@ -2625,14 +2630,14 @@ function createSidecarHost({ onNotification }) {
         if (payload && payload.method === SIDECAR_READY_METHOD && payload.id === undefined) {
           didReady = true
           try {
-            wikiPrivilegedCredential = randomBytes(32).toString('base64url')
+            privilegedCredential = randomBytes(32).toString('base64url')
             runningChild.postMessage(JSON.stringify({
-              method: 'system.wiki-privileged-credential',
-              params: { credential: wikiPrivilegedCredential },
+              method: 'system.privileged-credential',
+              params: { credential: privilegedCredential },
             }))
           } catch (error) {
-            wikiPrivilegedCredential = null
-            writeMainLog('error', 'desktop.wiki.security', 'credential.delivery_failed', 'failed to initialize Wiki privileged channel', {
+            privilegedCredential = null
+            writeMainLog('error', 'desktop.sidecar.security', 'credential.delivery_failed', 'failed to initialize privileged channel', {
               data: { error },
             })
           }
@@ -2861,7 +2866,7 @@ function createSidecarHost({ onNotification }) {
         if (child === runningChild) {
           child = null
           started = null
-          wikiPrivilegedCredential = null
+          privilegedCredential = null
         }
       })
     })
@@ -2914,19 +2919,13 @@ function createSidecarHost({ onNotification }) {
     })
   }
 
-  async function callWikiPrivileged(method, request) {
-    await start()
-    if (!wikiPrivilegedCredential) throw new Error('Wiki privileged channel unavailable')
-    return call(method, { credential: wikiPrivilegedCredential, request })
-  }
-
   async function callPluginPackagePrivileged(method, request) {
     await start()
-    if (!wikiPrivilegedCredential) throw new Error('Plugin package privileged channel unavailable')
+    if (!privilegedCredential) throw new Error('Plugin package privileged channel unavailable')
     if (typeof method !== 'string' || !method.startsWith('plugin-package:privileged-')) {
       throw new Error('Invalid plugin package privileged method')
     }
-    return call(method, { credential: wikiPrivilegedCredential, request })
+    return call(method, { credential: privilegedCredential, request })
   }
 
   async function notifyBrowserSettings(settings) {
@@ -2940,7 +2939,7 @@ function createSidecarHost({ onNotification }) {
     const runningChild = child
     child = null
     started = null
-    wikiPrivilegedCredential = null
+    privilegedCredential = null
     rejectAllPending(new Error('sidecar stopped'))
     await new Promise<void>((resolveStop) => {
       const timeout = setTimeout(resolveStop, 3_000)
@@ -2958,10 +2957,12 @@ function createSidecarHost({ onNotification }) {
   return {
     start,
     call,
-    callWikiPrivileged,
     callPluginPackagePrivileged,
     notifyBrowserSettings,
     stop,
+    setMigrationInProgress: (value) => {
+      migrationInProgress = value
+    },
   }
 }
 

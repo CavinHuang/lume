@@ -1,6 +1,6 @@
 import type { AgentThreadMeta, AgentWorkspace } from '@lume/shared'
 
-export type LumeSidebarTopActionId = 'new-chat' | 'lume' | 'skills' | 'connectors' | 'automations' | 'todos' | 'proactive'
+export type LumeSidebarTopActionId = 'new-chat' | 'lume' | 'skills' | 'automations' | 'todos' | 'proactive'
 export type LumeSidebarFooterActionId = 'recycle-bin' | 'settings'
 export const UNASSIGNED_THREADS_WORKSPACE_ID = '__unassigned__'
 const UNASSIGNED_THREADS_WORKSPACE_NAME = '普通会话'
