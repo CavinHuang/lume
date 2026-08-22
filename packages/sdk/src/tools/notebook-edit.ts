@@ -223,6 +223,7 @@ export const NotebookEditTool = defineTool({
         isPartialView: false,
       })
 
+      // Only a summary of the changed cell is returned; read the file for full contents.
       return {
         data: JSON.stringify({
           new_source: editMode === 'delete' ? '' : (targetCell ? readCellSource(targetCell) : newSource),
@@ -231,8 +232,6 @@ export const NotebookEditTool = defineTool({
           language: inferLanguage(notebook),
           edit_mode: editMode,
           notebook_path: notebookPath,
-          original_file: originalFile,
-          updated_file: updatedFile,
         }),
         _meta: {
           file: { path: notebookPath, overwritten: true, checkpointable: true, checkpointId: context.currentUserMessageId },

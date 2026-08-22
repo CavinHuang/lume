@@ -83,4 +83,21 @@ describe("NotebookEditTool insert anchoring", () => {
     const deletedNotebook = JSON.parse(await readFile(deletePath, "utf-8"));
     expect(deletedNotebook.cells.map((cell: { id?: string }) => cell.id)).toEqual(["b"]);
   });
+
+  test("result summary does not embed the full original or updated notebook", async () => {
+    const filePath = await makeNotebookFile(["a"]);
+
+    const result = await NotebookEditTool.call(
+      { notebook_path: filePath, cell_id: "a", new_source: "# next", edit_mode: "replace" },
+      { cwd: roots[0]! },
+    );
+
+    expect(result.is_error).toBeFalsy();
+    const summary = JSON.parse(String(result.content));
+    expect(summary.cell_id).toBe("a");
+    expect(summary.new_source).toBe("# next");
+    expect(summary.notebook_path).toBe(filePath);
+    expect(summary).not.toHaveProperty("original_file");
+    expect(summary).not.toHaveProperty("updated_file");
+  });
 });
