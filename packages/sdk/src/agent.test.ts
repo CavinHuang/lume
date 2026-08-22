@@ -131,7 +131,7 @@ describe("Agent provider configuration", () => {
     await agent.close()
   })
 
-  test("auth_status reports the injected provider's apiType", async () => {
+  test("auth_status is no longer emitted for host-injected provider runs", async () => {
     const provider = new CapturingProvider()
     const agent = createAgent({ persistSession: false, tools: [], provider })
 
@@ -140,10 +140,7 @@ describe("Agent provider configuration", () => {
       events.push(event)
     }
 
-    const authStatus = events.find((event) => event.type === "auth_status") as any
-    expect(authStatus).toBeDefined()
-    expect(authStatus.error).toBeUndefined()
-    expect(authStatus.output).toEqual(["Using anthropic-messages credentials"])
+    expect(events.find((event) => event.type === "auth_status")).toBeUndefined()
     await agent.close()
   })
 
@@ -1344,6 +1341,45 @@ describe("Agent session persistence", () => {
     }
 
     expect(sawUserMessageBeforeProviderResponse).toBe(true)
+    await agent.close()
+  })
+})
+
+describe("auth_status emission", () => {
+  test("host-injected provider 不再发射 auth_status（软中止路径）", async () => {
+    const provider = new CapturingProvider()
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      provider,
+      model: "host/model-a",
+    })
+    const controller = new AbortController()
+    controller.abort(new Error("stopped"))
+
+    const events: SDKMessage[] = []
+    for await (const event of agent.query("hello", { abortSignal: controller.signal })) {
+      events.push(event)
+    }
+
+    expect(events.some((event) => event.type === "auth_status")).toBe(false)
+    await agent.close()
+  })
+
+  test("未注入 provider 的运行入口 fail-fast，不产生任何事件流", async () => {
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      model: "host/model-a",
+    })
+
+    const drain = async () => {
+      for await (const _event of agent.query("hello")) {
+        // drain
+      }
+    }
+    await expect(drain()).rejects.toThrow("No LLMProvider configured")
+
     await agent.close()
   })
 })
