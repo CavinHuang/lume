@@ -55,8 +55,8 @@ import {
   SkillRegistry,
 } from './skills/index.js'
 import { createSkillTool } from './tools/skill-tool.js'
-import { createProvider, type LLMProvider, type ApiType } from './providers/index.js'
-import type { NormalizedMessageParam } from './providers/types.js'
+import type { LLMProvider, ApiType, NormalizedMessageParam } from './providers/types.js'
+import { unconfiguredProvider } from './providers/unconfigured-provider.js'
 import {
   loadSettingsFromSources,
   mergeAgentOptions,
@@ -285,7 +285,7 @@ export class Agent {
     this.baseOptions = { ...options }
     this.cfg = { ...options }
     this.sid = this.cfg.sessionId ?? crypto.randomUUID()
-    this.provider = createProvider('anthropic-messages', {})
+    this.provider = unconfiguredProvider()
     this.hookRegistry = createHookRegistry()
     initBundledSkills()
     this.skillRegistry = new SkillRegistry(getAllSkills())
@@ -378,10 +378,7 @@ export class Agent {
     this.apiCredentials = this.pickCredentials()
     this.modelId = this.cfg.model ?? this.readEnv('CODEANY_MODEL') ?? 'claude-sonnet-4-6'
     this.apiType = this.resolveApiType()
-    this.provider = this.cfg.provider ?? createProvider(this.apiType, {
-      apiKey: this.apiCredentials.key,
-      baseURL: this.apiCredentials.baseUrl,
-    })
+    this.provider = this.cfg.provider ?? unconfiguredProvider()
     if (this.cfg.sessionId) {
       this.sid = this.cfg.sessionId
     }
@@ -1016,11 +1013,9 @@ export class Agent {
 
     let provider = this.provider
     if (overrides?.apiType || overrides?.apiKey || overrides?.baseURL) {
-      const resolvedApiType = overrides.apiType ?? this.apiType
-      provider = createProvider(resolvedApiType, {
-        apiKey: overrides.apiKey ?? this.apiCredentials.key,
-        baseURL: overrides.baseURL ?? this.apiCredentials.baseUrl,
-      })
+      throw new Error(
+        'Per-run provider overrides are no longer supported. Pass options.provider to the Agent instead.',
+      )
     }
 
     const normalizedPrompt = normalizePromptInput(prompt)

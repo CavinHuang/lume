@@ -4,44 +4,34 @@
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
-Open-source Agent SDK that runs the full agent loop **in-process** — no subprocess or CLI required. Supports both **Anthropic** and **OpenAI-compatible** APIs. Deploy anywhere: cloud, serverless, Docker, CI/CD. The runtime is fully in-process; it does not depend on the Claude Code CLI.
+Open-source Agent SDK that runs the full agent loop **in-process** — no subprocess or CLI required. Deploy anywhere: cloud, serverless, Docker, CI/CD. The runtime is fully in-process; it does not depend on the Claude Code CLI.
 
 Also available in **Go**: [open-agent-sdk-go](https://github.com/codeany-ai/open-agent-sdk-go)
 
 ## Get started
 
-```bash
-npm install @codeany/open-agent-sdk
-```
+The SDK does not ship built-in HTTP providers. The host injects an `LLMProvider` implementation (see `providers/types.ts` for the contract — `createMessage()` plus optional `countTokens()` / `createMessageStream()`):
 
-Set your API key:
+```typescript
+import { createAgent, type LLMProvider } from "@lume/agent-sdk";
 
-```bash
-export CODEANY_API_KEY=your-api-key
-```
+const myProvider: LLMProvider = {
+  apiType: "anthropic-messages",
+  async createMessage(params) {
+    // Call your LLM endpoint and map the response to the normalized shape
+    // { content, stopReason, usage: { input_tokens, output_tokens } }
+    throw new Error("not implemented");
+  },
+};
 
-### OpenAI-compatible models
-
-Works with OpenAI, DeepSeek, Qwen, Mistral, or any OpenAI-compatible endpoint:
-
-```bash
-export CODEANY_API_TYPE=openai-completions
-export CODEANY_API_KEY=sk-...
-export CODEANY_BASE_URL=https://api.openai.com/v1
-export CODEANY_MODEL=gpt-4o
-```
-
-### Third-party Anthropic-compatible providers
-
-```bash
-export CODEANY_BASE_URL=https://openrouter.ai/api
-export CODEANY_API_KEY=sk-or-...
-export CODEANY_MODEL=anthropic/claude-sonnet-4
+const agent = createAgent({ provider: myProvider, model: "claude-sonnet-4-6" });
 ```
 
 ## Quick start
 
 ### One-shot query (streaming + control methods)
+
+Requires a host-injected `provider` (see [Get started](#get-started)); omitted here for brevity.
 
 ```typescript
 import { query } from "@codeany/open-agent-sdk";
@@ -82,21 +72,7 @@ console.log(
 
 ### OpenAI / GPT models
 
-```typescript
-import { createAgent } from "@codeany/open-agent-sdk";
-
-const agent = createAgent({
-  apiType: "openai-completions",
-  model: "gpt-4o",
-  apiKey: "sk-...",
-  baseURL: "https://api.openai.com/v1",
-});
-
-const result = await agent.prompt("What files are in this project?");
-console.log(result.text);
-```
-
-The `apiType` is auto-detected from model name — models containing `gpt-`, `o1`, `o3`, `deepseek`, `qwen`, `mistral`, etc. automatically use `openai-completions`.
+Use any model by injecting the matching host-provided `LLMProvider` (the `apiType` on the provider routes protocol handling); the `model` option selects the model ID.
 
 ### Multi-turn conversation
 
@@ -296,15 +272,6 @@ This SDK is designed for long-lived services, serverless handlers, CI jobs, and 
 
 The `sandbox` option currently provides application-level filesystem and network guards inside SDK tools. It is not equivalent to Claude Code's full sandbox runtime. In particular, it does not provide OS-level process isolation or the full managed-policy enforcement described in the official secure deployment docs.
 
-### Web UI
-
-A built-in web feature explorer is included for testing:
-
-```bash
-npx tsx examples/web/server.ts
-# Open http://localhost:8081
-```
-
 ## API reference
 
 ### Top-level functions
@@ -319,7 +286,6 @@ npx tsx examples/web/server.ts
 | `getAllBaseTools()`                   | Get all 35+ built-in tools                                     |
 | `registerSkill(definition)`           | Register a custom skill                                        |
 | `getAllSkills()`                       | Get all registered skills                                      |
-| `createProvider(apiType, opts)`        | Create an LLM provider directly                                |
 | `createHookRegistry(config)`          | Create a hook registry for lifecycle events                    |
 | `listSessions()`                      | List persisted sessions                                        |
 | `forkSession(id)`                     | Fork a session for branching                                   |
@@ -365,6 +331,7 @@ npx tsx examples/web/server.ts
 
 | Option               | Type                                    | Default                | Description                                                          |
 | -------------------- | --------------------------------------- | ---------------------- | -------------------------------------------------------------------- |
+| `provider`           | `LLMProvider`                           | —                      | Host-owned provider implementation. Required — the SDK ships no built-in HTTP providers; when set, protocol and credentials are not resolved by the SDK |
 | `apiType`            | `string`                                | auto-detected          | `'anthropic-messages'` or `'openai-completions'`                     |
 | `model`              | `string`                                | `claude-sonnet-4-6`    | LLM model ID                                                         |
 | `apiKey`             | `string`                                | `CODEANY_API_KEY`      | API key                                                              |
@@ -400,12 +367,14 @@ npx tsx examples/web/server.ts
 
 ### Environment variables
 
+Legacy credential hints — surfaced in `auth_status` output only; they no longer construct a provider.
+
 | Variable             | Description                                              |
 | -------------------- | -------------------------------------------------------- |
-| `CODEANY_API_KEY`    | API key (required)                                       |
+| `CODEANY_API_KEY`    | API key hint                                             |
 | `CODEANY_API_TYPE`   | `anthropic-messages` (default) or `openai-completions`   |
 | `CODEANY_MODEL`      | Default model override                                   |
-| `CODEANY_BASE_URL`   | Custom API endpoint                                      |
+| `CODEANY_BASE_URL`   | Custom API endpoint hint                                 |
 | `CODEANY_AUTH_TOKEN` | Alternative auth token                                   |
 
 ## Built-in tools
@@ -474,9 +443,9 @@ Register custom skills with `registerSkill()`.
          │               │               │
    ┌─────▼─────┐  ┌─────▼─────┐  ┌─────▼─────┐
    │  Provider  │  │  35 Tools │  │    MCP     │
-   │ Anthropic  │  │ Bash,Read │  │  Servers   │
-   │  OpenAI    │  │ Edit,...  │  │ stdio/SSE/ │
-   │ DeepSeek   │  │ + Skills  │  │ HTTP/SDK   │
+   │ Host-     │  │ Bash,Read │  │  Servers   │
+   │ injected  │  │ Edit,...  │  │ stdio/SSE/ │
+   │LLMProvider│  │ + Skills  │  │ HTTP/SDK   │
    └───────────┘  └───────────┘  └───────────┘
 ```
 
@@ -484,7 +453,7 @@ Register custom skills with `registerSkill()`.
 
 | Component             | Description                                                        |
 | --------------------- | ------------------------------------------------------------------ |
-| **Provider layer**    | Abstracts Anthropic / OpenAI API differences                       |
+| **Provider layer**    | Host-injected `LLMProvider` contract (`providers/types.ts`)        |
 | **QueryEngine**       | Core agentic loop with auto-compact, retry, tool orchestration     |
 | **Skill system**      | Reusable prompt templates with 5 bundled skills                    |
 | **Hook system**       | 20 lifecycle events integrated into the engine                     |
@@ -495,38 +464,6 @@ Register custom skills with `registerSkill()`.
 | **File cache**        | LRU cache (100 entries, 25 MB) for file reads                      |
 | **Session storage**   | Persist / resume / fork sessions on disk                           |
 | **Context injection** | Git status + AGENT.md automatically injected into system prompt    |
-
-## Examples
-
-| #   | File                                  | Description                            |
-| --- | ------------------------------------- | -------------------------------------- |
-| 01  | `examples/01-simple-query.ts`         | Streaming query with event handling    |
-| 02  | `examples/02-multi-tool.ts`           | Multi-tool orchestration (Glob + Bash) |
-| 03  | `examples/03-multi-turn.ts`           | Multi-turn session persistence         |
-| 04  | `examples/04-prompt-api.ts`           | Blocking `prompt()` API                |
-| 05  | `examples/05-custom-system-prompt.ts` | Custom system prompt                   |
-| 06  | `examples/06-mcp-server.ts`           | MCP server integration                 |
-| 07  | `examples/07-custom-tools.ts`         | Custom tools with `defineTool()`       |
-| 08  | `examples/08-official-api-compat.ts`  | `query()` API pattern                  |
-| 09  | `examples/09-subagents.ts`            | Subagent delegation                    |
-| 10  | `examples/10-permissions.ts`          | Read-only agent with tool restrictions |
-| 11  | `examples/11-custom-mcp-tools.ts`     | `tool()` + `createSdkMcpServer()`      |
-| 12  | `examples/12-skills.ts`              | Skill system usage                     |
-| 13  | `examples/13-hooks.ts`               | Lifecycle hooks                        |
-| 14  | `examples/14-openai-compat.ts`       | OpenAI / DeepSeek models               |
-| web | `examples/web/`                       | Browser-based feature explorer for the SDK |
-
-Run any example:
-
-```bash
-npx tsx examples/01-simple-query.ts
-```
-
-Start the web UI:
-
-```bash
-npx tsx examples/web/server.ts
-```
 
 ## Star History
 
