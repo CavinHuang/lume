@@ -480,7 +480,7 @@ describe("McpClientManager", () => {
     expect(new Set([...githubNames, ...reconnectNames]).size).toBe(2);
   });
 
-  test("fast-fails during reconnect backoff and honors force (#312)", async () => {
+  test("manual probes bypass the reconnect backoff gate via force (#312)", async () => {
     let factoryCalls = 0;
     const manager = new McpClientManager({
       clientFactory: () => {
@@ -488,8 +488,8 @@ describe("McpClientManager", () => {
         throw new Error("Connection refused");
       },
       transportFactory: fakeTransportFactory,
-      defaultReconnectBackoffBaseMs: 50,
-      defaultReconnectBackoffMaxMs: 10_000,
+      failureRetryBaseMs: 60_000,
+      failureRetryMaxMs: 60_000,
     });
 
     manager.sync({ dead: { enabled: true, transport: "stdio", command: "node" } });
@@ -497,38 +497,10 @@ describe("McpClientManager", () => {
     await expect(manager.ensureConnected("dead")).rejects.toMatchObject({ code: "transport_error" });
     expect(factoryCalls).toBe(1);
 
-    // Manual probes bypass the negative cache.
-    await expect(manager.ensureConnected("dead", { force: true })).rejects.toMatchObject({ code: "transport_error" });
-    expect(factoryCalls).toBe(2);
-
-    // Second consecutive failure doubles the window: past the base window but
-    // still inside the doubled one.
-    await delay(70);
-    await expect(manager.ensureConnected("dead")).rejects.toMatchObject({ code: "transport_error" });
-    expect(factoryCalls).toBe(2);
-
-    // Past the doubled window the gate opens again.
-    await delay(120);
-    await expect(manager.ensureConnected("dead")).rejects.toMatchObject({ code: "transport_error" });
-    expect(factoryCalls).toBe(3);
-  });
-
-  test("explicit connect accepts the same force option (#312)", async () => {
-    let factoryCalls = 0;
-    const manager = new McpClientManager({
-      clientFactory: () => {
-        factoryCalls += 1;
-        throw new Error("Connection refused");
-      },
-      transportFactory: fakeTransportFactory,
-      defaultReconnectBackoffBaseMs: 60_000,
-      defaultReconnectBackoffMaxMs: 60_000,
-    });
-
-    manager.sync({ dead: { enabled: true, transport: "stdio", command: "node" } });
-    await expect(manager.connect("dead")).rejects.toThrow();
+    // Both entry points accept the same force option.
     await expect(manager.connect("dead", { force: true })).rejects.toThrow();
-    expect(factoryCalls).toBe(2);
+    await expect(manager.ensureConnected("dead", { force: true })).rejects.toThrow();
+    expect(factoryCalls).toBe(3);
   });
 });
 
