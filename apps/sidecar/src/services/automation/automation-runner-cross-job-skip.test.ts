@@ -15,8 +15,8 @@ import { join } from "node:path";
  */
 
 mock.module("../agent/agent-service", () => ({
-  // 永不 resolve：executeJob 停在 await sendAgentMessage，job 留在 runningJobs
-  sendAgentMessage: () => new Promise<void>(() => {})
+  // 永不 resolve：executeJob 停在 await dispatchAgentRun，job 留在 runningJobs
+  dispatchAgentRun: () => new Promise<void>(() => {})
 }));
 
 mock.module("../channel/channel-manager", () => ({

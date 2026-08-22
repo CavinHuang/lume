@@ -239,6 +239,21 @@ export function createAgentHandlers(
     releaseThreadEventBus(resolveRuntimeSessionDir(threadId), threadId);
   };
 
+  /**
+   * 运行中护栏：短宽限期等待自然收尾后仍活跃则拒绝。
+   * 删除/永久删除/移动/回收站共用，防止 run 写入被删目录（#282/#397）。
+   */
+  const assertThreadNotRunningAfterGrace = async (
+    threadId: string,
+    action: string,
+  ): Promise<void> => {
+    if (!isAgentRuntimeSessionActive(threadId)) return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (isAgentRuntimeSessionActive(threadId)) {
+      throw new Error(`线程正在运行中，请停止后再${action}。`);
+    }
+  };
+
   const resolveRunIdForThread = async (
     threadId: string,
     runId?: string,
@@ -797,12 +812,7 @@ export function createAgentHandlers(
         params,
         AGENT_IPC_CHANNELS.MOVE_THREAD,
       );
-      if (isAgentRuntimeSessionActive(input.threadId)) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        if (isAgentRuntimeSessionActive(input.threadId)) {
-          throw new Error("线程正在运行中，请停止后再移动。");
-        }
-      }
+      await assertThreadNotRunningAfterGrace(input.threadId, "移动");
       return moveAgentThreadToWorkspace(input.threadId, input.workspaceId);
     },
     [AGENT_IPC_CHANNELS.DELETE_THREAD]: async (params) => {
@@ -811,12 +821,7 @@ export function createAgentHandlers(
         params,
         AGENT_IPC_CHANNELS.DELETE_THREAD,
       );
-      if (isAgentRuntimeSessionActive(input.threadId)) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        if (isAgentRuntimeSessionActive(input.threadId)) {
-          throw new Error("线程正在运行中，请停止后再删除。");
-        }
-      }
+      await assertThreadNotRunningAfterGrace(input.threadId, "删除");
       log.info("[Agent 线程] 删除", { threadId: input.threadId.slice(0, 8) });
       deleteAgentThread(input.threadId);
       getAgentRuntimeStatusManager().clearSession(input.threadId);
@@ -847,6 +852,8 @@ export function createAgentHandlers(
         params,
         AGENT_IPC_CHANNELS.TRASH_THREAD,
       );
+      // 回收站仅改 meta，但清空回收站会硬删——入口即拦截，堵住 EMPTY_TRASH 绕行（#397）。
+      await assertThreadNotRunningAfterGrace(input.threadId, "移入回收站");
       log.info("[Agent 线程] 移入回收站", {
         threadId: input.threadId.slice(0, 8),
       });
@@ -866,6 +873,7 @@ export function createAgentHandlers(
         params,
         AGENT_IPC_CHANNELS.PERMANENTLY_DELETE_THREAD,
       );
+      await assertThreadNotRunningAfterGrace(input.threadId, "永久删除");
       log.info("[Agent 线程] 永久删除", {
         threadId: input.threadId.slice(0, 8),
       });
@@ -879,6 +887,15 @@ export function createAgentHandlers(
       listArchivedThreads(),
     [AGENT_IPC_CHANNELS.LIST_TRASHED_THREADS]: async () => listTrashedThreads(),
     [AGENT_IPC_CHANNELS.EMPTY_TRASH]: async () => {
+      // 清空回收站会对每个 trashed 线程硬删；运行中的先拒绝（#397）。
+      const activeTrashedCount = listTrashedThreads().filter(
+        (thread) => isAgentRuntimeSessionActive(thread.id),
+      ).length;
+      if (activeTrashedCount > 0) {
+        throw new Error(
+          `回收站中 ${activeTrashedCount} 个线程正在运行，请先停止再清空回收站。`,
+        );
+      }
       const deletedThreadIds = emptyTrash();
       for (const threadId of deletedThreadIds)
         releaseThreadEventBridge(threadId);
