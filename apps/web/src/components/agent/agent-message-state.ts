@@ -362,20 +362,29 @@ function withPersistedUserMessage(
 function readPersistedMessageParts(metadata: Record<string, unknown> | undefined): AgentUserMessagePart[] {
   const raw = metadata?.messageParts
   if (!Array.isArray(raw)) return []
-  return raw.filter((item): item is AgentUserMessagePart => {
-    if (!item || typeof item !== 'object') return false
+  const parts: AgentUserMessagePart[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
     const part = item as Record<string, unknown>
-    return (part.type === 'text' && typeof part.text === 'string')
-      || (part.type === 'capability_ref'
-        && typeof part.occurrenceId === 'string'
-        && typeof part.uri === 'string')
-      || (part.type === 'planning_todo_ref'
-        && part.schemaVersion === 1
-        && typeof part.uri === 'string'
-        && typeof part.todoId === 'string'
-        && (part.relation === 'mentioned' || part.relation === 'primary')
-        && typeof part.displayText === 'string')
-  })
+    if (part.type === 'text' && typeof part.text === 'string') {
+      parts.push(item as AgentUserMessagePart)
+    } else if (part.type === 'capability_ref'
+      && typeof part.occurrenceId === 'string'
+      && typeof part.uri === 'string') {
+      parts.push(item as AgentUserMessagePart)
+    } else if (part.type === 'planning_todo_ref'
+      && part.schemaVersion === 1
+      && typeof part.uri === 'string'
+      && typeof part.todoId === 'string'
+      && (part.relation === 'mentioned' || part.relation === 'primary')
+      && typeof part.displayText === 'string') {
+      parts.push(item as AgentUserMessagePart)
+    } else if (part.type === 'link_connection_ref' && typeof part.displayText === 'string' && part.displayText) {
+      // 旧版连接器提及降级为可见文本，保持与 message.text 的拼接一致（避免渲染截断）
+      parts.push({ type: 'text', text: `@${part.displayText}` })
+    }
+  }
+  return parts
 }
 
 function readPersistedCapabilityReferences(metadata: Record<string, unknown> | undefined): AgentCapabilityReferenceView[] {

@@ -26,7 +26,7 @@ import {
 } from '@/lib/desktop-api'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFamily, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentQueueInterruptedAtom, agentQueueInterruptedFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, queuedAttachmentPreviewUrlAtom, settingsInitialTabAtom, tabsAtom, quotedSelectionMapAtom, quotedSelectionFamily } from '@/atoms'
-import { isEmptyDraft, prependHistory, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
+import { isEmptyDraft, prependHistory, removeDraft, sanitizeDraftJSON, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 import { buildQuotedSelectionBlock } from '@/lib/quoted-selection'
 import { QuotedSelectionChip } from './QuotedSelectionChip'
 import { debounce } from 'throttle-debounce'
@@ -748,7 +748,7 @@ export function AgentInput({
     const editing = editingQueuedMessageRef.current
     if (!editor || !editing) return
     if (restoreDraft && editing.previousDraft && !isEmptyDraft(editing.previousDraft)) {
-      editor.commands.setContent(editing.previousDraft, { emitUpdate: false })
+      editor.commands.setContent(sanitizeDraftJSON(editing.previousDraft) ?? { type: 'doc', content: [] }, { emitUpdate: false })
     } else {
       editor.commands.clearContent(false)
     }
@@ -766,7 +766,7 @@ export function AgentInput({
     const json = draftRef.current
     try {
       if (json && !isEmptyDraft(json)) {
-        editor.commands.setContent(json, { emitUpdate: false })
+        editor.commands.setContent(sanitizeDraftJSON(json) ?? { type: 'doc', content: [] }, { emitUpdate: false })
       } else {
         editor.commands.clearContent(false)
       }
@@ -1242,7 +1242,7 @@ export function AgentInput({
     isNavigatingHistoryRef.current = true
     try {
       if (json && !isEmptyDraft(json)) {
-        editor.commands.setContent(json, { emitUpdate: false })
+        editor.commands.setContent(sanitizeDraftJSON(json) ?? { type: 'doc', content: [] }, { emitUpdate: false })
       } else {
         editor.commands.clearContent(false)
       }
