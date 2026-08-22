@@ -21,7 +21,7 @@ import { defineTool } from './types.js'
 import type { ToolContext, ToolExecutionMetadata, ToolResult } from '../types.js'
 import { bundledRipgrepDirectory } from '../utils/ripgrep.js'
 import { analyzeBashCommand } from '../utils/bash-command-analysis.js'
-import { resolveShellInvocation } from '../utils/shell-invocation.js'
+import { resolveShellInvocation, shellKind } from '../utils/shell-invocation.js'
 import { spawnWithProcessSandbox, terminateProcessTree } from '../utils/process-sandbox.js'
 
 const MAX_OUTPUT_BYTES = 50 * 1024 * 1024
@@ -1090,10 +1090,6 @@ async function readIncrementalFile(path: string, offset: number): Promise<{ chun
   } catch {
     return { chunk: Buffer.alloc(0), nextOffset: offset }
   }
-}
-
-function shellKind(command: string): 'bash' | 'powershell' {
-  return /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(command) ? 'powershell' : 'bash'
 }
 
 function getShellDialectError(command: string, shellCommand: string): string | undefined {

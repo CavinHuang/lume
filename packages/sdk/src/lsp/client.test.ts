@@ -11,6 +11,7 @@ import {
   LspClient,
   parseLspMessages,
   resolveLspServerConfigsForFile,
+  setLspWriteTimeout,
   shutdownLspClients,
   warmupLspClients,
 } from './client.js'
@@ -163,6 +164,54 @@ describe('LSP protocol helpers', () => {
     ])
   })
 
+  test('fails the client when the server never drains stdin writes (#327)', async () => {
+    setLspWriteTimeout(30)
+    try {
+      const client = Object.create(LspClient.prototype) as any
+      client.writeQueue = Promise.resolve()
+      client.lastActivity = 0
+      client.dead = false
+      client.initialized = true
+      client.disposed = false
+      client.pending = new Map()
+      let dead = false
+      client.onDead = () => { dead = true }
+      // Accepts the write but never invokes the callback: a wedged pipe.
+      client.process = { stdin: { writable: true, write: () => undefined } }
+
+      await expect(client['send']({ jsonrpc: '2.0', method: 'test/hang' })).rejects.toThrow(/timed out/i)
+      expect(dead).toBe(true)
+      expect(client.dead).toBe(true)
+    } finally {
+      setLspWriteTimeout(10_000)
+    }
+  })
+
+  test('resolves send once the write callback fires and leaves the client alive (#327)', async () => {
+    setLspWriteTimeout(30)
+    try {
+      const client = Object.create(LspClient.prototype) as any
+      client.writeQueue = Promise.resolve()
+      client.lastActivity = 0
+      client.dead = false
+      client.initialized = true
+      client.disposed = false
+      client.pending = new Map()
+      let dead = false
+      client.onDead = () => { dead = true }
+      client.process = { stdin: { writable: true, write: (_body: Buffer, callback: () => void) => callback() } }
+
+      await expect(client['send']({ jsonrpc: '2.0', method: 'test/ok' })).resolves.toBeUndefined()
+      expect(dead).toBe(false)
+
+      // The timer must be released after success rather than firing later.
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      expect(dead).toBe(false)
+    } finally {
+      setLspWriteTimeout(10_000)
+    }
+  })
+
   test('spawns .cmd server shims through cmd.exe on Windows', async () => {
     if (process.platform !== 'win32') return
     const root = await mkdtemp(join(tmpdir(), 'lume-lsp-cmd-shim-'))
@@ -276,6 +325,71 @@ process.stdin.on('data', (chunk) => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  test('spawns servers with the minimal default environment plus explicit env, not the host environment (#380)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'lume-lsp-env-'))
+    const secretName = 'LUME_LSP_ENV_PROBE_SECRET'
+    const previousSecret = process.env[secretName]
+    process.env[secretName] = 'top-secret-value'
+    try {
+      const script = join(root, 'server.mjs')
+      const source = join(root, 'index.ts')
+      await writeFile(join(root, 'package.json'), '{}')
+      await writeFile(source, '')
+      await writeFile(script, `
+let buffer = Buffer.alloc(0)
+const send = (value) => {
+  const body = Buffer.from(JSON.stringify(value))
+  process.stdout.write(Buffer.concat([Buffer.from('Content-Length: ' + body.length + '\\r\\n\\r\\n'), body]))
+}
+process.stdin.on('data', (chunk) => {
+  buffer = Buffer.concat([buffer, chunk])
+  while (true) {
+    const end = buffer.indexOf('\\r\\n\\r\\n')
+    if (end < 0) return
+    const match = buffer.subarray(0, end).toString().match(/Content-Length:\\s*(\\d+)/i)
+    if (!match) process.exit(2)
+    const message = JSON.parse(buffer.subarray(end + 4, end + 4 + Number(match[1])))
+    buffer = buffer.subarray(end + 4 + Number(match[1]))
+    if (message.method === 'initialize') send({ jsonrpc: '2.0', id: message.id, result: { capabilities: {} } })
+    else if (message.method === 'shutdown' || (message.id !== undefined && !message.method)) send({ jsonrpc: '2.0', id: message.id, result: null })
+    else if (message.method === 'test/env') {
+      send({ jsonrpc: '2.0', id: message.id, result: {
+        secret: process.env.LUME_LSP_ENV_PROBE_SECRET ?? null,
+        marker: process.env.LUME_LSP_ENV_PROBE_MARKER ?? null,
+        hasPath: typeof process.env.PATH === 'string' && process.env.PATH.length > 0,
+      } })
+    }
+  }
+})
+`)
+      const config = {
+        lsp: {
+          servers: {
+            test: {
+              command: process.execPath,
+              args: [script],
+              fileTypes: ['.ts'],
+              rootMarkers: ['package.json'],
+              env: { LUME_LSP_ENV_PROBE_MARKER: 'passed-through' },
+            },
+          },
+        },
+      }
+      const client = await getLspClient(root, config, source)
+      const env = await client.request<{ secret: string | null; marker: string | null; hasPath: boolean }>('test/env', {})
+      // Host-only variables must not leak into the project-configured server;
+      // the explicit per-server env is the opt-in passthrough.
+      expect(env.secret).toBeNull()
+      expect(env.marker).toBe('passed-through')
+      expect(env.hasPath).toBe(true)
+    } finally {
+      if (previousSecret === undefined) delete process.env[secretName]
+      else process.env[secretName] = previousSecret
+      await shutdownLspClients(root)
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 20_000)
 
   test('warms up a configured server and never rejects when none matches', async () => {
     const root = await mkdtemp(join(tmpdir(), 'lume-lsp-warmup-'))

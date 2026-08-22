@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 import type { LspDiagnosticBatch, ToolContext } from '../types.js'
 import { findLspWorkspaceRoot, resolveLspExecutable } from './registry.js'
+import { resolveShellInvocation, shellKind } from '../utils/shell-invocation.js'
 
 export async function collectLspAdapterDiagnostics(
   filePath: string,
@@ -19,10 +20,15 @@ export async function collectLspAdapterDiagnostics(
   if (!root) return undefined
   const command = await resolveLspExecutable(configured.command ?? 'swiftlint', root, configured.cwd)
   if (!command) return undefined
+  const cliCommand = `${quote(command)} lint --path ${quote(resolve(filePath))} --quiet --reporter json`
+  // PowerShell needs an explicit call operator to invoke a quoted path, but a
+  // leading '&' is a syntax error in Git Bash — pick the operator from the
+  // shell the Bash tool will actually resolve, not from the platform (#328).
+  const callOperator = shellKind(resolveShellInvocation(cliCommand).command) === 'powershell' ? '& ' : ''
   const result = await context.executeNestedTool({
     toolName: 'Bash',
     params: {
-      command: `${process.platform === 'win32' ? '& ' : ''}${quote(command)} lint --path ${quote(resolve(filePath))} --quiet --reporter json`,
+      command: `${callOperator}${cliCommand}`,
       purpose: 'lsp-diagnostics',
       description: 'SwiftLint diagnostics',
     },

@@ -10,7 +10,7 @@ import {
   supportsLspFile,
   type LspServerRole,
 } from './registry.js'
-import { wrapRustAnalyzerWithLspmux } from './lspmux.js'
+import { invalidateLspmuxCache, wrapRustAnalyzerWithLspmux } from './lspmux.js'
 
 export interface LspPosition {
   line: number
@@ -121,6 +121,13 @@ const failedStarts = new Map<string, { until: number; error: Error }>()
 const resolutionCache = new Map<string, { until: number; value: Promise<ResolvedLspServerConfig[]> }>()
 let idleTimeoutMs: number | null = 10 * 60_000
 let idleChecker: ReturnType<typeof setInterval> | undefined
+// Upper bound for one stdin write; a wedged language-server pipe must fail
+// the client instead of hanging Write/Edit forever (#327).
+let writeTimeoutMs = 10_000
+
+export function setLspWriteTimeout(timeoutMs: number): void {
+  writeTimeoutMs = Math.max(1, timeoutMs)
+}
 
 export type LspClientState = 'initializing' | 'ready' | 'failed' | 'restarting' | 'disposed'
 
@@ -403,6 +410,15 @@ function normalizeServerConfig(name: string, value: unknown, workspaceRoot: stri
     priority: typeof record.priority === 'number' ? record.priority : 0,
     role: record.role === 'linter' ? 'linter' : record.role === 'primary' ? 'primary' : undefined,
     adapter: record.adapter === 'swiftlint' ? 'swiftlint' : undefined,
+    // Explicit per-server environment passthrough; merged over the minimal
+    // default spawn environment, never the host environment (#380).
+    ...(record.env && typeof record.env === 'object' && !Array.isArray(record.env)
+      ? {
+          env: Object.fromEntries(
+            Object.entries(record.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+          ),
+        }
+      : {}),
     ...(typeof record.cwd === 'string' && record.cwd.trim() ? { cwd: resolve(workspaceRoot, record.cwd) } : {}),
   }
 }
@@ -432,7 +448,8 @@ async function resolveAvailableServer(
     command: shim?.command ?? wrapped.command,
     args: shim?.args ?? wrapped.args,
     cwd: server.cwd ?? root,
-    ...(wrapped.env ? { env: wrapped.env } : {}),
+    // Merge instead of replace so configured env survives mux wrapping (#380).
+    ...(server.env || wrapped.env ? { env: { ...server.env, ...wrapped.env } } : {}),
     lspmux: wrapped.lspmux,
   }
 }
@@ -682,6 +699,9 @@ export class LspClient {
       await client.initialize()
     } catch (error) {
       killLspProcessTree(child)
+      // A failed mux'd start must not keep serving a stale "running" probe;
+      // invalidate so the next resolution falls back to a direct connection (#374).
+      if (server.lspmux) invalidateLspmuxCache(resolve(server.cwd ?? cwd))
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Unable to start LSP server "${server.command}": ${detail}`)
     }
@@ -942,7 +962,28 @@ export class LspClient {
       })
     })
     this.writeQueue = write.catch(() => undefined)
-    return write
+    // Every notification path funnels through here, so one timeout + fail()
+    // covers them all: a wedged pipe marks the client dead and routes every
+    // caller into the existing restart chain instead of hanging forever (#327).
+    let timer: ReturnType<typeof setTimeout> | undefined
+    return Promise.race([
+      write,
+      new Promise<never>((_, reject) => {
+        // No unref here: bun's test runner never fires unref'd timers, and
+        // this one is always released by the settle handlers below anyway.
+        timer = setTimeout(() => reject(new Error(`LSP server write timed out after ${writeTimeoutMs}ms`)), writeTimeoutMs)
+      }),
+    ]).then(
+      (value) => {
+        clearTimeout(timer)
+        return value
+      },
+      (error) => {
+        clearTimeout(timer)
+        this.fail(error instanceof Error ? error : new Error(String(error)))
+        throw error
+      },
+    )
   }
 
   private onOutput(chunk: Buffer): void {
