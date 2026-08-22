@@ -31,6 +31,8 @@ export async function connectMCPServer(
   name: string,
   config: McpServerConfig,
 ): Promise<MCPConnection> {
+  // #311:提前声明,catch 清理时可安全引用(错误可能发生在 Client 构造之前)
+  let client: any
   try {
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
     const {
@@ -78,7 +80,7 @@ export async function connectMCPServer(
     }
 
     let connection: MCPConnection
-    const client = new Client(
+    client = new Client(
       { name: `agent-sdk-${name}`, version: '1.0.0' },
       {
         capabilities: (config as any).onElicitation
@@ -184,6 +186,13 @@ export async function connectMCPServer(
     return connection
   } catch (err: any) {
     console.error(`[MCP] Failed to connect to "${name}": ${err.message}`)
+    // #311:connect/listTools 半途失败不清理会泄漏 stdio 子进程——占位 close 是
+    // 空函数,closeAllConnections 收不回,每次重试多一个孤儿。best-effort 关闭。
+    try {
+      await client?.close()
+    } catch {
+      // ignore cleanup errors
+    }
     return {
       name,
       status: 'error',
