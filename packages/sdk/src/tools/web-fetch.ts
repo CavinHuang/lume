@@ -395,6 +395,7 @@ export async function runWebFetch(
       effectiveImageMode,
       fetchImpl,
       context.sandbox,
+      context.abortSignal,
     );
 
     const markdownResult = await renderGenericHtml(
