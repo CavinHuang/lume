@@ -153,6 +153,26 @@ import {
   waitForWindowReady,
 } from './tray-window-runtime'
 
+// 单实例锁(#290)：双开会产生两个 sidecar 并发写同一 ~/.lume 数据目录——
+// sessions/memory/audit 的 JSONL 与 sqlite 均无跨进程锁（仅 settings 有
+// lockfile），追加交错与 seq 续读错乱难以归因。第二实例直接退出，由首实例
+// 聚焦既有窗口承接。锁必须最早申请：早于任何顶层初始化副作用（开库、
+// spawn 等），否则第二实例会在拿锁前就产生盘写。
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      await captureQuickInputContext()
+      await createMainWindow()
+      return
+    }
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    await showMainWindow()
+  })
+}
+
 app.commandLine.appendSwitch('disable-quic')
 app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp')
 
@@ -3207,25 +3227,6 @@ app.on('child-process-gone', (_event, details) => {
     data: { type: details.type, reason: details.reason, exitCode: details.exitCode, serviceName: details.serviceName },
   })
 })
-
-// 单实例锁(#290)：双开会产生两个 sidecar 并发写同一 ~/.lume 数据目录——
-// sessions/memory/audit 的 JSONL 与 sqlite 均无跨进程锁（仅 settings 有
-// lockfile），追加交错与 seq 续读错乱难以归因。第二实例直接退出，由首实例
-// 聚焦既有窗口承接。锁必须在 app ready 前申请。
-const gotSingleInstanceLock = app.requestSingleInstanceLock()
-if (!gotSingleInstanceLock) {
-  app.quit()
-} else {
-  app.on('second-instance', async () => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      await captureQuickInputContext()
-      await createMainWindow()
-      return
-    }
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    await showMainWindow()
-  })
-}
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
