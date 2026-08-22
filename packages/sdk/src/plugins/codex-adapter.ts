@@ -13,8 +13,10 @@ export const CODEX_EVENT_MAP: Record<string, string> = {
   Stop: "Stop",
 };
 
+// Real built-in tool names: checkToolPermission is exact-match, so legacy
+// aliases like FileWrite/FileEdit/AgentTool never matched anything (#316).
 const CODEX_ALLOWED_TOOLS = [
-  "FileRead",
+  "Read",
   "Glob",
   "Grep",
   "WebFetch",
@@ -27,12 +29,12 @@ const CODEX_ALLOWED_TOOLS = [
 
 const CODEX_DENIED_TOOLS = [
   "Bash",
-  "FileWrite",
-  "FileEdit",
+  "Write",
+  "Edit",
   "NotebookEdit",
   "EnterWorktree",
   "ExitWorktree",
-  "AgentTool",
+  "Agent",
   "SendMessage",
 ];
 

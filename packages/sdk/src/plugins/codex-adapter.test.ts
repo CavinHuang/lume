@@ -42,8 +42,8 @@ describe("CodexAdapter", () => {
     expect(result.permissions.mcpServers.register).toBe(true);
     expect(result.permissions.shell.allow).toBe(true);
     expect(result.permissions.tools.deny).toContain("Bash");
-    expect(result.permissions.tools.deny).toContain("FileWrite");
-    expect(result.permissions.tools.allow).toContain("FileRead");
+    expect(result.permissions.tools.deny).toContain("Write");
+    expect(result.permissions.tools.allow).toContain("Read");
     expect(result.permissions.tools.allow).toContain("Glob");
     expect(result.lume.hooksOnly).toBe(false);
   });
