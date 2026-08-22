@@ -124,6 +124,58 @@ describe("QueryEngine cancellation", () => {
   })
 })
 
+describe("QueryEngine max_output_tokens recovery", () => {
+  test("pairs a truncated tool_use with a placeholder result before continuing (#304)", async () => {
+    const provider = new StaticProvider([
+      {
+        content: [
+          { type: "text", text: "partial" },
+          { type: "tool_use", id: "tool-1", name: "Echo", input: { payload: "truncated-by-limit" } },
+        ],
+        stopReason: "max_tokens",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Echo",
+        description: "echo",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "echo" }
+        },
+      }],
+      systemPrompt: "test",
+      maxTurns: 4,
+      maxTokens: 256,
+    })
+
+    await collectEvents(engine)
+
+    expect(provider.requests).toHaveLength(2)
+    // The continuation request must carry the paired tool_result; otherwise
+    // the provider rejects the dangling tool_use with an unrecoverable 400.
+    const trailing = provider.requests[1]!.messages.at(-1) as {
+      role: string
+      content: Array<{ type: string; tool_use_id?: string; text?: string }>
+    }
+    expect(trailing.role).toBe("user")
+    const placeholder = trailing.content.find((block) => block.type === "tool_result")
+    expect(placeholder?.tool_use_id).toBe("tool-1")
+    expect(
+      trailing.content.some((block) => block.type === "text" && block.text?.includes("Please continue")),
+    ).toBe(true)
+  })
+})
+
 describe("QueryEngine turn limits", () => {
   test("executes a persisted approved tool exactly once before the resumed model request", async () => {
     let calls = 0

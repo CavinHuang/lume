@@ -1453,12 +1453,31 @@ export class QueryEngine {
         response.stopReason === 'max_tokens' &&
         maxOutputRecoveryAttempts < MAX_OUTPUT_RECOVERY
       ) {
+        // A truncated turn can end mid-tool_use; leaving it unanswered makes
+        // the next request invalid (provider 400) with no recovery path.
+        // Close them with placeholder results before continuing (#304).
+        const pendingToolUse = response.content.filter(
+          (block): block is ToolUseBlock => block.type === 'tool_use',
+        )
         maxOutputRecoveryAttempts++
-        // Add continuation prompt
-        this.messages.push({
-          role: 'user',
-          content: 'Please continue from where you left off.',
-        })
+        if (pendingToolUse.length > 0) {
+          this.messages.push({
+            role: 'user',
+            content: [
+              ...pendingToolUse.map((block) => createInterruptedToolResult(block)),
+              {
+                type: 'text',
+                text: 'Please continue from where you left off.',
+              },
+            ],
+          })
+        } else {
+          // Add continuation prompt
+          this.messages.push({
+            role: 'user',
+            content: 'Please continue from where you left off.',
+          })
+        }
         continue
       }
 
