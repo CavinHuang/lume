@@ -1188,12 +1188,7 @@ async function createRuntimeCoreSessionImpl(
     }
   }
   const agentOptions: AgentOptions = {
-    apiType,
     provider: createRoutingPiAiProvider(providerRoutes),
-    apiKey: input.apiKey,
-    ...(input.resolvedModel?.baseUrl
-      ? { baseURL: input.resolvedModel.baseUrl }
-      : {}),
     model: input.resolvedModel?.id ?? input.resolvedModelId,
     contextWindow: input.resolvedModel?.contextWindow ?? 32_000,
     cwd: input.cwd,

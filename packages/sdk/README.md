@@ -61,7 +61,7 @@ console.log(usage.totalTokens);
 ```typescript
 import { createAgent } from "@codeany/open-agent-sdk";
 
-const agent = createAgent({ model: "claude-sonnet-4-6" });
+const agent = createAgent({ provider: myProvider, model: "claude-sonnet-4-6" });
 const result = await agent.prompt("What files are in this project?");
 
 console.log(result.text);
@@ -79,7 +79,7 @@ Use any model by injecting the matching host-provided `LLMProvider` (the `apiTyp
 ```typescript
 import { createAgent } from "@codeany/open-agent-sdk";
 
-const agent = createAgent({ maxTurns: 5 });
+const agent = createAgent({ provider: myProvider, maxTurns: 5 });
 
 const r1 = await agent.prompt(
   'Create a file /tmp/hello.txt with "Hello World"',
@@ -331,11 +331,8 @@ The `sandbox` option currently provides application-level filesystem and network
 
 | Option               | Type                                    | Default                | Description                                                          |
 | -------------------- | --------------------------------------- | ---------------------- | -------------------------------------------------------------------- |
-| `provider`           | `LLMProvider`                           | —                      | Host-owned provider implementation. Required — the SDK ships no built-in HTTP providers; when set, protocol and credentials are not resolved by the SDK |
-| `apiType`            | `string`                                | auto-detected          | `'anthropic-messages'` or `'openai-completions'`                     |
+| `provider`           | `LLMProvider`                           | —                      | Host-owned provider implementation. Required for any run — the SDK ships no built-in HTTP providers; protocol and credentials are not resolved by the SDK |
 | `model`              | `string`                                | `claude-sonnet-4-6`    | LLM model ID                                                         |
-| `apiKey`             | `string`                                | `CODEANY_API_KEY`      | API key                                                              |
-| `baseURL`            | `string`                                | —                      | Custom API endpoint                                                  |
 | `cwd`                | `string`                                | `process.cwd()`        | Working directory                                                    |
 | `systemPrompt`       | `string`                                | —                      | System prompt override                                               |
 | `appendSystemPrompt` | `string`                                | —                      | Append to default system prompt                                      |
@@ -367,15 +364,11 @@ The `sandbox` option currently provides application-level filesystem and network
 
 ### Environment variables
 
-Legacy credential hints — surfaced in `auth_status` output only; they no longer construct a provider.
+Credentials live in the injected provider, not the SDK. The remaining variable:
 
 | Variable             | Description                                              |
 | -------------------- | -------------------------------------------------------- |
-| `CODEANY_API_KEY`    | API key hint                                             |
-| `CODEANY_API_TYPE`   | `anthropic-messages` (default) or `openai-completions`   |
 | `CODEANY_MODEL`      | Default model override                                   |
-| `CODEANY_BASE_URL`   | Custom API endpoint hint                                 |
-| `CODEANY_AUTH_TOKEN` | Alternative auth token                                   |
 
 ## Built-in tools
 
