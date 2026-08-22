@@ -129,10 +129,6 @@ export {
   CORE_TOOL_NAMES,
   splitDeferredTools,
 
-  // LSP
-  LSPTool,
-  LSPApplyTool,
-
   // Todo
   createTodoTool,
 
@@ -150,51 +146,6 @@ export {
   waitForProcessJobTerminal,
   type ProcessJob,
 } from './tools/process-job-registry.js'
-
-// LSP protocol and client manager
-export {
-  collectLspDiagnostics,
-  encodeLspMessage,
-  getLspClient,
-  getLspClientsForFile,
-  notifyLspFileChanged,
-  notifyLspFileClosed,
-  notifyLspWatchedFiles,
-  requestLspClients,
-  resolveLspServerConfig,
-  resolveLspServerConfigsForFile,
-  setLspIdleTimeout,
-  shutdownLspClients,
-  warmupLspClients,
-} from './lsp/client.js'
-export type {
-  LspAggregatedDiagnostic,
-  LspClient,
-  LspClientState,
-  LspCreateFile,
-  LspDeleteFile,
-  LspDiagnostic,
-  LspLocation,
-  LspLocationLink,
-  LspPosition,
-  LspRange,
-  LspRenameFile,
-  LspServerCapabilities,
-  LspServerConfig,
-  LspServerStatus,
-  LspTextDocumentEdit,
-  LspTextEdit,
-  LspWatchedFileChange,
-  LspWorkspaceEdit,
-} from './lsp/client.js'
-export {
-  DEFAULT_LSP_SERVERS,
-  findLspWorkspaceRoot,
-  resolveLspExecutable,
-  supportsLspFile,
-} from './lsp/registry.js'
-export type { LspRegistryServer, LspServerRole } from './lsp/registry.js'
-export { clearLspWritethroughState } from './lsp/writethrough.js'
 
 // --------------------------------------------------------------------------
 // MCP Client

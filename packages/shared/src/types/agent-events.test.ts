@@ -5,7 +5,6 @@ import type {
   BackgroundTaskNotificationDetail,
   CodingReportDetail,
   ContextCompactionDetail,
-  LspDiagnosticsDetail,
   MemoryContextUsedDetail,
   MessageUpdateDetail,
   PlanPreviewDetail,
@@ -250,35 +249,6 @@ describe("batch 5 domain detail types", () => {
     // summary is optional
     const bare: AdvisorReviewedDetail = { type: "advisor.reviewed", review: { severity: "clear" } }
     expect(bare.summary).toBeUndefined()
-  })
-
-  test("LspDiagnosticsDetail fields aligned with the legacy runtime event", () => {
-    const d: LspDiagnosticsDetail = {
-      type: "lsp.diagnostics",
-      filePath: "src/a.ts",
-      mutationVersion: 2,
-      sha256: "abc",
-      delayed: false,
-      diagnostics: {
-        servers: ["tsconfig"],
-        total: 1,
-        errors: 1,
-        warnings: 0,
-        truncated: false,
-        items: [{ message: "oops", range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } } }],
-      },
-    }
-    const detail: SdkLifecycleDetail = d
-    expect(detail.type).toBe("lsp.diagnostics")
-    if (detail.type === "lsp.diagnostics") {
-      expect(detail.toolUseId).toBeUndefined()
-      expect(detail.filePath).toBe("src/a.ts")
-      expect(detail.mutationVersion).toBe(2)
-      expect(detail.sha256).toBe("abc")
-      expect(detail.delayed).toBe(false)
-      expect(detail.diagnostics.errors).toBe(1)
-      expect(detail.diagnostics.items).toHaveLength(1)
-    }
   })
 
   test("CodingReportDetail fields and union membership", () => {

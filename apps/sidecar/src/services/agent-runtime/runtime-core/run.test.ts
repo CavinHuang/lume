@@ -545,7 +545,6 @@ describe("runtime-core run", () => {
     expect(toolNames).toContain("TaskStop");
     expect(toolNames).toContain("ProcessOutput");
     expect(toolNames).toContain("ProcessStop");
-    expect(toolNames).toContain("LSPApply");
     expect(toolNames).not.toContain("TaskReport");
     expect(toolNames).not.toContain("read");
     expect(toolNames).not.toContain("write");
@@ -576,7 +575,7 @@ describe("runtime-core run", () => {
     });
 
     const toolNames = availableToolNames(result);
-    for (const toolName of ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "NotebookEdit", "LSP", "LSPApply", "ProcessOutput", "ProcessStop"]) {
+    for (const toolName of ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "NotebookEdit", "ProcessOutput", "ProcessStop"]) {
       expect(toolNames).toContain(toolName);
     }
     for (const toolName of ["WebSearch", "WebFetch", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]) {

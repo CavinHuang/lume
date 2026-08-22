@@ -6,7 +6,6 @@ import { readFile, stat } from 'fs/promises'
 import { defineTool } from './types.js'
 import type { ToolContext } from '../types.js'
 import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
-import { prepareLspWritethrough } from '../lsp/writethrough.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 import { countLineChanges } from '../utils/line-change-stats.js'
 import { withFileMutationLock } from '../utils/file-mutation-lock.js'
@@ -107,11 +106,8 @@ export const FileEditTool = defineTool({
         }
         const match = matches[0]!
         content = replaceRanges(content, [match], new_string, old_string.length)
-        const lsp = await prepareLspWritethrough({ filePath, content, context, existedBefore: true })
-        content = lsp.content
         const lineChanges = countLineChanges(decoded.content, content)
         await writeFileAtomic(filePath, encodeTextFile(content, decoded), assertWriteAllowed(context))
-        const lspResult = await lsp.commit()
         await updateFileState(context, filePath, content)
         return {
           data: {
@@ -130,17 +126,13 @@ export const FileEditTool = defineTool({
               ...(match.normalized ? { normalizedQuotes: true } : {}),
               ...lineChanges,
             },
-            lsp: lspResult,
           },
         }
       } else {
         const count = matches.length
         content = replaceRanges(content, matches, new_string, old_string.length)
-        const lsp = await prepareLspWritethrough({ filePath, content, context, existedBefore: true })
-        content = lsp.content
         const lineChanges = countLineChanges(decoded.content, content)
         await writeFileAtomic(filePath, encodeTextFile(content, decoded), assertWriteAllowed(context))
-        const lspResult = await lsp.commit()
         await updateFileState(context, filePath, content)
         return {
           data: {
@@ -159,7 +151,6 @@ export const FileEditTool = defineTool({
               ...(matches.some((match) => match.normalized) ? { normalizedQuotes: true } : {}),
               ...lineChanges,
             },
-            lsp: lspResult,
           },
         }
       }

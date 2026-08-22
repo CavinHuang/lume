@@ -26,8 +26,6 @@ export function isToolInGroup(toolName: string, groupId: string): boolean {
       return ['write', 'edit', 'notebook_edit'].includes(toolName)
     case 'search':
       return ['find', 'grep', 'ls'].includes(toolName)
-    case 'code-intelligence':
-      return toolName === 'lsp'
     case 'web':
       return ['web_search', 'web_fetch'].includes(toolName)
     case 'data':
@@ -129,13 +127,6 @@ export const SYSTEM_TOOL_GROUPS: SystemToolGroup[] = [
     label: '搜索',
     description: '文件内容与路径搜索',
     count: countToolsByGroup('search'),
-    locked: true,
-  },
-  {
-    id: 'code-intelligence',
-    label: '代码智能',
-    description: 'LSP 代码理解与符号查询',
-    count: countToolsByGroup('code-intelligence'),
     locked: true,
   },
   {
