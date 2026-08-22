@@ -145,6 +145,16 @@ const CodeLine = React.memo(function CodeLine({ tokens, rawLine }: CodeLineProps
       )}
     </span>
   )
+}, (prev, next) => {
+  // 上游每次节流更新都产出新数组引用，浅比较恒失效；按渲染输出等价性
+  // 比较（content+color 决定 DOM），未变行跳过重渲染（#410）
+  if (prev.rawLine !== next.rawLine || prev.tokens.length !== next.tokens.length) return false
+  for (let i = 0; i < prev.tokens.length; i++) {
+    const a = prev.tokens[i]
+    const b = next.tokens[i]
+    if (a!.content !== b!.content || a!.color !== b!.color) return false
+  }
+  return true
 })
 
 // ===== 主组件 =====

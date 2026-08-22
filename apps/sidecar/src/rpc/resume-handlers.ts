@@ -5,6 +5,7 @@ import {
   truncateAgentMessagesFrom,
 } from "../services/agent/agent-thread-manager";
 import { getThreadEventBus } from "../services/agent-runtime/events/thread-event-bus";
+import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runtime-core/attempt";
 import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runner/run-continuation-store";
 import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runner/run-state-store";
 import type { ResumeRunResult } from "../services/agent-runtime/interruption/resume-service";
@@ -175,6 +176,10 @@ export function createResumeHandlers(
         params,
         AGENT_IPC_CHANNELS.TRUNCATE_THREAD_MESSAGES_FROM,
       );
+      // 截断直接替换 transcript，运行中执行会与 run 写入互踩（#397）。
+      if (isAgentRuntimeSessionActive(input.threadId)) {
+        throw new Error("线程正在运行中，请停止后再截断消息。");
+      }
       return truncateAgentMessagesFrom(input.threadId, input.messageId);
     },
     [AGENT_IPC_CHANNELS.CLEAR_THREAD]: async (params) => {

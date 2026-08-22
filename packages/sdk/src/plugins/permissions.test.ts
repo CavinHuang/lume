@@ -65,6 +65,20 @@ describe("PluginPermissions", () => {
         ),
       ).toBe(false);
     });
+
+    test("rejects absolute paths outside plugin root even for ** patterns (#301)", () => {
+      expect(matchPathGlob("/etc/passwd", ["./**"], pluginRoot)).toBe(false);
+      expect(
+        matchPathGlob("/home/user/.lume/plugins/cache/other-plugin/1.0.0/file.txt", ["./**"], pluginRoot),
+      ).toBe(false);
+      expect(
+        matchPathGlob(
+          "/home/user/.lume/plugins/cache/my-plugin/1.0.0/any/depth/file.txt",
+          ["./**"],
+          pluginRoot,
+        ),
+      ).toBe(true);
+    });
   });
 
   describe("checkFilesystemPermission", () => {

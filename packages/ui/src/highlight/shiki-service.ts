@@ -116,6 +116,11 @@ function getHighlighter(): Promise<ShikiHighlighter> {
     }).then((hl) => {
       cachedHighlighter = hl
       return hl
+    }).catch((error) => {
+      // 初始化失败不得永久缓存 rejected promise：否则此后每个代码块都走
+      // 异步兜底并逐 chunk 刷错误，永无高亮。置空允许下次调用重试（#410）。
+      highlighterPromise = null
+      throw error
     })
   }
   return highlighterPromise
