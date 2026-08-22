@@ -181,25 +181,6 @@ const hooks = createHookRegistry({
 
 28 lifecycle events including `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Setup`, `SessionStart`, `SessionEnd`, `Stop`, `StopFailure`, `SubagentStart`, `SubagentStop`, `UserPromptSubmit`, `PermissionRequest`, `PermissionDenied`, `TaskCreated`, `TaskCompleted`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`, `CwdChanged`, `FileChanged`, `Notification`, `PreCompact`, `PostCompact`, `TeammateIdle`, `Elicitation`, `ElicitationResult`, and `InstructionsLoaded`.
 
-### MCP server integration
-
-```typescript
-import { createAgent } from "@codeany/open-agent-sdk";
-
-const agent = createAgent({
-  mcpServers: {
-    filesystem: {
-      command: "npx",
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-    },
-  },
-});
-
-const result = await agent.prompt("List files in /tmp");
-console.log(result.text);
-await agent.close();
-```
-
 ### Subagents
 
 ```typescript
@@ -291,10 +272,6 @@ The `sandbox` option currently provides application-level filesystem and network
 | `query.setCwd(cwd)`              | Change working directory                              |
 | `query.getInitializationResult()`| Get supported commands, agents, models                |
 | `query.getContextUsage()`        | Get context usage breakdown                           |
-| `query.mcpServerStatus()`        | Inspect MCP server status                             |
-| `query.setMcpServers(servers)`   | Replace dynamically managed MCP servers               |
-| `query.reconnectMcpServer(name)` | Reconnect a single MCP server                         |
-| `query.toggleMcpServer(name,on)` | Enable or disable a single MCP server                 |
 | `query.reloadPlugins()`          | Reload plugins from disk                              |
 | `query.rewindFiles(messageId)`   | Rewind file changes captured since a user message     |
 | `query.stopTask(taskId)`         | Stop a background task                                |
@@ -317,7 +294,6 @@ The `sandbox` option currently provides application-level filesystem and network
 | `maxBudgetUsd`       | `number`                                | —                      | Spending cap                                                         |
 | `thinking`           | `ThinkingConfig`                        | `{ type: 'adaptive' }` | Extended thinking                                                    |
 | `effort`             | `string`                                | `high`                 | Reasoning effort: `low` / `medium` / `high` / `max`                  |
-| `mcpServers`         | `Record<string, McpServerConfig>`       | —                      | MCP server connections                                               |
 | `agents`             | `Record<string, AgentDefinition>`       | —                      | Subagent definitions                                                 |
 | `hooks`              | `Record<string, HookCallbackMatcher[]>` | —                      | Lifecycle hooks                                                      |
 | `resume`             | `string`                                | —                      | Resume session by ID                                                 |

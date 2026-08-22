@@ -221,7 +221,6 @@ export interface SDKSystemMessage {
   tools: string[]
   model: string
   cwd: string
-  mcp_servers: Array<{ name: string; status: string }>
   permission_mode: string
   permissionMode?: PermissionMode
   agents?: string[]
