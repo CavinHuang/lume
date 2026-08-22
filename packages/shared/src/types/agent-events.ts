@@ -181,35 +181,6 @@ export interface AdvisorReviewedDetail {
   review: unknown
 }
 
-export interface LspDiagnosticsDetail {
-  type: 'lsp.diagnostics'
-  /** Fields aligned with the legacy LspDiagnosticsUpdatedRuntimeEvent. */
-  toolUseId?: string
-  filePath: string
-  mutationVersion: number
-  sha256: string
-  delayed: boolean
-  diagnostics: {
-    servers: string[]
-    total: number
-    errors: number
-    warnings: number
-    truncated: boolean
-    items: Array<{
-      server?: string
-      source?: string
-      severity?: 1 | 2 | 3 | 4
-      code?: string | number
-      message: string
-      range: {
-        start: { line: number; character: number }
-        end: { line: number; character: number }
-      }
-    }>
-    artifact?: unknown
-  }
-}
-
 export interface CodingReportDetail {
   type: 'coding.report'
   /** Legacy RuntimeCodingReport payload (T1 verdict: migrated; dual-entry with run.completed). */
@@ -229,7 +200,6 @@ export type SdkLifecycleDetail =
   | TodoStateDetail
   | TaskProgressDetail
   | AdvisorReviewedDetail
-  | LspDiagnosticsDetail
   | CodingReportDetail
 
 /** Result of AGENT_IPC_CHANNELS.GET_EVENTS. */

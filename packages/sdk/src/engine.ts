@@ -81,21 +81,6 @@ import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { FileStateCache } from './utils/fileCache.js'
 import { createExecuteTool, createToolSearchTool } from './tools/tool-search.js'
 
-function renderLspDiagnosticsForModel(
-  event: Extract<SDKMessage, { type: 'system'; subtype: 'lsp_diagnostics' }>,
-): string {
-  const header = `Delayed LSP diagnostics for ${event.file_path} (mutation ${event.mutation_version})`
-  if (event.diagnostics.items.length === 0) return `${header}: no new diagnostics`
-  return [
-    header,
-    ...event.diagnostics.items.map((diagnostic) => {
-      const position = `${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}`
-      const severity = diagnostic.severity === 1 ? 'error' : diagnostic.severity === 2 ? 'warning' : 'info'
-      return `- ${position} ${severity}${diagnostic.code !== undefined ? ` [${diagnostic.code}]` : ''}: ${diagnostic.message}`
-    }),
-  ].join('\n')
-}
-
 // ============================================================================
 // Tool format conversion
 // ============================================================================
@@ -460,7 +445,6 @@ export class QueryEngine {
   }> = []
   private fileStateCache = new FileStateCache()
   private workingDirectory: string
-  private pendingLspDiagnostics: Array<Extract<SDKMessage, { type: 'system'; subtype: 'lsp_diagnostics' }>> = []
   /** Tool calls skipped or interrupted by an abort during the current run. */
   private abortedPendingToolCalls: Array<{ id: string; name: string; input: unknown }> = []
   private repeatedToolCalls = new Map<string, RepeatedToolCallState>()
@@ -1188,15 +1172,6 @@ export class QueryEngine {
       const apiMessages = await this.microCompactForProvider(
         normalizeMessagesForAPI(hydratedMessages) as NormalizedMessageParam[],
       )
-      const delayedLspDiagnostics = this.pendingLspDiagnostics.splice(0)
-      if (delayedLspDiagnostics.length > 0) {
-        apiMessages.push({
-          role: 'runtime',
-          content: `<internal_context type="lsp_diagnostics">\n${delayedLspDiagnostics
-            .map((event) => renderLspDiagnosticsForModel(event))
-            .join('\n\n')}\n</internal_context>`,
-        })
-      }
       const transientRuntimeContext = [
         internalContextBlocks.length > 0
           ? `<internal_context type="compaction">\n${internalContextBlocks.join('\n\n')}\n</internal_context>`
@@ -2044,8 +2019,7 @@ export class QueryEngine {
         context.emitEvent?.(event)
         return
       }
-      if (event.type === 'system' && (event.subtype === 'task_notification' || event.subtype === 'lsp_diagnostics')) {
-        if (event.subtype === 'lsp_diagnostics') this.pendingLspDiagnostics.push(event)
+      if (event.type === 'system' && event.subtype === 'task_notification') {
         try {
           this.config.onAsyncEvent?.(event)
         } catch {

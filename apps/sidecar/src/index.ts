@@ -1,5 +1,4 @@
 import { argv } from "node:process";
-import { shutdownLspClients } from "@lume/agent-sdk";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
 import { seedDefaultSkills } from "./services/skills/default-skills-seeder";
@@ -494,7 +493,6 @@ async function boot(): Promise<void> {
     await Promise.allSettled([
       getWorkspaceMcpManager().disposeAll(),
       stopAutomationRunner(),
-      shutdownLspClients(),
       externalChromeTransport?.close() ?? Promise.resolve(),
     ]);
     const { memoryJobService } = await import("./services/memory-v2/job-service");

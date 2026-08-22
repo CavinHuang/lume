@@ -397,7 +397,6 @@ Credentials live in the injected provider, not the SDK. The remaining variable:
 | **McpAuth**                                | Start MCP authentication flows               |
 | **CronCreate/Delete/List**                 | Scheduled task management                    |
 | **RemoteTrigger**                          | Remote agent triggers                        |
-| **LSP**                                    | Language Server Protocol (code intelligence) |
 | **Config**                                 | Get/set session config by setting key        |
 | **TodoWrite**                              | Replace the session todo list                |
 

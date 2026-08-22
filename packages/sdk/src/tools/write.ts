@@ -6,7 +6,6 @@ import { writeFile, mkdir, rename, rm, readFile, stat } from 'fs/promises'
 import { dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
 import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
-import { prepareLspWritethrough } from '../lsp/writethrough.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 import { countLineChanges } from '../utils/line-change-stats.js'
 import { withFileMutationLock } from '../utils/file-mutation-lock.js'
@@ -93,19 +92,8 @@ export const FileWriteTool = defineTool({
           }
         }
       }
-      const lsp = await prepareLspWritethrough({ filePath, content, context, existedBefore: overwritten })
-      content = lsp.content
-      bytes = Buffer.byteLength(content, 'utf8')
-      if (bytes > maxBytes) {
-        return {
-          data: `Error: LSP-formatted content for ${filePath} exceeds the ${maxBytes}-byte limit.`,
-          is_error: true,
-          _meta: { file: { path: filePath, rejected: 'size', bytes, maxBytes } },
-        }
-      }
       encoded = existingEncoding ? encodeTextFile(content, existingEncoding) : Buffer.from(content, 'utf8')
       await writeFileAtomic(filePath, encoded)
-      const lspResult = await lsp.commit()
 
       const updated = await stat(filePath)
       context.fileStateCache?.set(filePath, {
@@ -135,7 +123,6 @@ export const FileWriteTool = defineTool({
             checkpointId: context.currentUserMessageId,
             ...lineChanges,
           },
-          lsp: lspResult,
         },
       }
     } catch (err: any) {

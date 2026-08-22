@@ -31,7 +31,7 @@ import type { AgentEventBusSource } from './useAgentEventBus'
  *   而非 SDK 流,由 sidecar lume-runner 第二注入路径直发)
  * - background.task → background.task.completed(批次4,late task_notification 旁路
  *   + projector 主流双入口;streaming 副作用见 consumeBusEnvelope)
- * - todo.state/advisor.reviewed/lsp.diagnostics/coding.report → 旧路同形事件(批次5,
+ * - todo.state/advisor.reviewed/coding.report → 旧路同形事件(批次5,
  *   sidecar 第二入口双发,载荷同引用;字段对齐 run-item-events 对应构造)
  * - context.compaction 三态 → 同名三事件(批次4;trigger 真值+outcome 已由 projector
  *   透传(加固批次 detail.trigger/detail.outcome,adapter outcome 取 isError 等价),
@@ -324,25 +324,6 @@ export function adaptLifecycleEvent(
       ...(nonEmptyString(review.details) ? { details: nonEmptyString(review.details) } : {}),
       modelRef: nonEmptyString(review.modelRef) ?? 'unknown',
       ...(typeof review.durationMs === 'number' ? { durationMs: review.durationMs } : {}),
-    }]
-  }
-
-  // 批次5:lsp.diagnostics → 旧路 lsp.diagnostics.updated。T2 detail 字段已与旧路逐字
-  // 对齐(强类型直通);filePath/sha256 缺失丢弃——同旧路 gate(T4 注入侧同 gate,双保险)。
-  if (detail.type === 'lsp.diagnostics') {
-    if (!detail.filePath || !detail.sha256) return []
-    return [{
-      id: `lifecycle:${envelope.seq}:lsp.diagnostics.updated`,
-      type: 'lsp.diagnostics.updated' as const,
-      ...base,
-      ...(detail.toolUseId !== undefined ? { toolUseId: detail.toolUseId } : {}),
-      filePath: detail.filePath,
-      mutationVersion: detail.mutationVersion,
-      sha256: detail.sha256,
-      delayed: detail.delayed,
-      // detail.diagnostics.artifact 标注为 unknown(T4 透传 SDK 批次原引用),运行时与
-      // 旧路同构——引用透传,宽标注处 cast(同批次3 items 模式)
-      diagnostics: detail.diagnostics as Extract<LumeRuntimeEvent, { type: 'lsp.diagnostics.updated' }>['diagnostics'],
     }]
   }
 

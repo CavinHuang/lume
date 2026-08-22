@@ -13,7 +13,6 @@ import { readFile, writeFile, rename, rm, stat } from 'fs/promises'
 import { resolve, dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
 import { ensurePathAllowed, getUnsafeFilePathReason } from '../utils/pathing.js'
-import { prepareLspWritethrough } from '../lsp/writethrough.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 
 type NotebookCell = {
@@ -209,10 +208,7 @@ export const NotebookEditTool = defineTool({
       ensureCellIds(cells)
       const targetCell = cells[targetIndex]
       let updatedFile = JSON.stringify(notebook, null, 1)
-      const lsp = await prepareLspWritethrough({ filePath: notebookPath, content: updatedFile, context, existedBefore: true })
-      updatedFile = lsp.content
       await writeFileAtomic(notebookPath, encodeTextFile(updatedFile, decoded))
-      const lspResult = await lsp.commit()
       const updatedStat = await stat(notebookPath)
       context.fileStateCache?.set(notebookPath, {
         content: updatedFile,
@@ -233,7 +229,6 @@ export const NotebookEditTool = defineTool({
         }),
         _meta: {
           file: { path: notebookPath, overwritten: true, checkpointable: true, checkpointId: context.currentUserMessageId },
-          lsp: lspResult,
         },
       }
     } catch (err: any) {

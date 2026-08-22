@@ -28,9 +28,7 @@ import {
   FileWriteTool,
   GlobTool,
   GrepTool,
-  LSPTool,
   NotebookEditTool,
-  LSPApplyTool,
   ProcessOutputTool,
   ProcessStopTool,
   EnterWorktreeTool,
@@ -192,8 +190,6 @@ function createBaseSdkAlignedTools(
     ProcessStopTool,
     NotebookEditTool,
     SkillTool,
-    LSPTool,
-    LSPApplyTool,
     EnterWorktreeTool,
     ExitWorktreeTool,
   ];

@@ -46,13 +46,6 @@ export interface CodingVerificationReport {
   verificationNoEvidenceAttempts?: number;
   verificationRecords?: CodingVerificationRecord[];
   recommendedVerificationCommands?: string[];
-  lspDiagnostics?: {
-    files: string[];
-    total: number;
-    errors: number;
-    warnings: number;
-    updatedAt: string;
-  };
   gitActions?: CodingGitAction[];
   approvalRequestCount?: number;
   turnId?: string;
@@ -82,12 +75,6 @@ interface PersistedCodingRunState {
   verificationNoEvidenceAttempts?: number;
   fileChangeStats?: Record<string, FileChangeStats>;
   verificationRecords?: CodingVerificationRecord[];
-  lspDiagnostics?: Record<string, {
-    total: number;
-    errors: number;
-    warnings: number;
-    updatedAt: string;
-  }>;
   gitActions?: CodingGitAction[];
 }
 
@@ -140,12 +127,6 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   let disposed = false;
   let successfulShellObserved = false;
   const verificationRecords: CodingVerificationRecord[] = [];
-  const lspDiagnostics = new Map<string, {
-    total: number;
-    errors: number;
-    warnings: number;
-    updatedAt: string;
-  }>();
   const gitActions: CodingGitAction[] = [];
   let recommendedVerificationCommands: string[] = [];
 
@@ -196,7 +177,6 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       verificationNoEvidenceAttempts,
       fileChangeStats: Object.fromEntries(fileChangeStats),
       verificationRecords,
-      lspDiagnostics: Object.fromEntries(lspDiagnostics),
       gitActions
     };
   }
@@ -274,10 +254,6 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
         }
       }
       verificationRecords.splice(0, verificationRecords.length, ...(state.verificationRecords ?? []).slice(-8));
-      for (const [path, diagnostics] of Object.entries(state.lspDiagnostics ?? {})) {
-        if (!diagnostics || typeof diagnostics !== "object") continue;
-        lspDiagnostics.set(path, diagnostics);
-      }
       gitActions.splice(0, gitActions.length, ...(state.gitActions ?? []).slice(-16));
     } catch {
       // Missing, corrupt, partial, or oversized legacy state establishes a fresh baseline.
@@ -303,7 +279,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     const toolStillRunning = task?.status
       ? task.status === "running"
       : execution?.terminationReason === "running";
-    if (["bash", "write", "edit", "notebookedit", "lsp"].includes(name)) {
+    if (["bash", "write", "edit", "notebookedit"].includes(name)) {
       workspaceMonitor.finishTool(name, task?.id, name === "bash" && toolStillRunning);
     }
     if (isProcessOutput && !toolStillRunning) {
@@ -351,7 +327,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       }
     }
     const bashMutation = name === "bash" && isLikelyMutationCommand(input);
-    if ((["write", "edit", "notebookedit", "lsp"].includes(name) || bashMutation) && input.result.is_error !== true) {
+    if ((["write", "edit", "notebookedit"].includes(name) || bashMutation) && input.result.is_error !== true) {
       mutationObserved = true;
       if (name !== "bash") {
         const path = readMutationPath(input.input, input.result, options.workspaceRoot, workspaceRoots);
@@ -504,16 +480,6 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   }
 
   function observeAsyncEvent(message: SDKMessage): boolean {
-    if (message.type === "system" && message.subtype === "lsp_diagnostics") {
-      lspDiagnostics.set(message.file_path, {
-        total: message.diagnostics.total,
-        errors: message.diagnostics.errors,
-        warnings: message.diagnostics.warnings,
-        updatedAt: new Date().toISOString()
-      });
-      persist();
-      return true;
-    }
     if (message.type !== "system" || message.subtype !== "task_notification" || !message.execution) {
       return false;
     }
@@ -570,7 +536,6 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
         ?? fileChanges.reduce((sum, change) => sum + (change.addedLines ?? 0), 0);
       const totalRemovedLines = authoritativeChangeSet?.totalRemovedLines
         ?? fileChanges.reduce((sum, change) => sum + (change.removedLines ?? 0), 0);
-      const lspEntries = [...lspDiagnostics.entries()];
       return {
         phase: getCodingTurnPhase(),
         status: verificationStatus,
@@ -587,17 +552,6 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
         verificationRepairAttempts,
         verificationNoEvidenceAttempts,
         verificationRecords: [...verificationRecords],
-        ...(lspEntries.length > 0 ? {
-          lspDiagnostics: {
-            files: lspEntries.map(([path]) => displayWorkspacePath(path, options.workspaceRoot)),
-            total: lspEntries.reduce((sum, [, diagnostics]) => sum + diagnostics.total, 0),
-            errors: lspEntries.reduce((sum, [, diagnostics]) => sum + diagnostics.errors, 0),
-            warnings: lspEntries.reduce((sum, [, diagnostics]) => sum + diagnostics.warnings, 0),
-            updatedAt: lspEntries.reduce((latest, [, diagnostics]) =>
-              diagnostics.updatedAt > latest ? diagnostics.updatedAt : latest, ""
-            )
-          }
-        } : {}),
         ...(recommendedVerificationCommands.length > 0 ? { recommendedVerificationCommands } : {}),
         gitActions: [...gitActions],
         ...(options.turnId ? { turnId: options.turnId } : {}),

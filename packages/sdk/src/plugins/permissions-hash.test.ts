@@ -1,7 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { computePermissionsHash } from "./permissions-hash.js";
 import type { NormalizedPlugin } from "./normalized.js";
 
@@ -50,35 +47,6 @@ describe("computePermissionsHash", () => {
       basePlugin({ permissions: { tools: { deny: ["Bash"] } } }),
     );
     expect(before).not.toBe(after);
-  });
-
-  test("changes when the reviewed LSP config path changes", () => {
-    const before = computePermissionsHash(basePlugin({
-      capabilities: { skills: [], commandTools: [], lspServersConfigPath: "./lsp.json" },
-    }));
-    const after = computePermissionsHash(basePlugin({
-      capabilities: { skills: [], commandTools: [], lspServersConfigPath: "./lsp-v2.json" },
-    }));
-    expect(before).not.toBe(after);
-  });
-
-  test("changes when the reviewed LSP config content changes", () => {
-    const root = mkdtempSync(join(tmpdir(), "lume-plugin-lsp-hash-"));
-    try {
-      mkdirSync(join(root, "config"));
-      const path = join(root, "config", "lsp.json");
-      const plugin = basePlugin({
-        root,
-        capabilities: { skills: [], commandTools: [], lspServersConfigPath: "./config/lsp.json" },
-      });
-      writeFileSync(path, '{"servers":{"ts":{"command":"ts-a"}}}');
-      const before = computePermissionsHash(plugin);
-      writeFileSync(path, '{"servers":{"ts":{"command":"ts-b"}}}');
-      const after = computePermissionsHash(plugin);
-      expect(before).not.toBe(after);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
   });
 
   test("is order-independent for permission tool lists", () => {

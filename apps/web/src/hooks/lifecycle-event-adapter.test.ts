@@ -574,50 +574,6 @@ test('advisor.reviewed → 旧路同形:severity 白名单外丢弃,summary/mode
   expect(Object.keys(fallback[0] as object)).not.toContain('durationMs')
 })
 
-test('lsp.diagnostics → lsp.diagnostics.updated:字段逐字对齐;filePath/sha256 缺失丢弃', () => {
-  const state = createLifecycleAdapterState()
-  const diagnostics = {
-    servers: ['tsserver'],
-    total: 2,
-    errors: 1,
-    warnings: 1,
-    truncated: false,
-    items: [{ message: 'TS2304', range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } } }],
-  }
-  const events = adaptLifecycleEvent(envelope(1, 'run', 'event', null, {
-    type: 'lsp.diagnostics',
-    filePath: 'src/a.ts',
-    mutationVersion: 3,
-    sha256: 'abc',
-    delayed: true,
-    toolUseId: 'call-9',
-    diagnostics,
-  }), state)
-  expect(events).toEqual([{
-    id: 'lifecycle:1:lsp.diagnostics.updated',
-    type: 'lsp.diagnostics.updated',
-    threadId: 't1',
-    runId: 'r1',
-    createdAt: new Date(TS + 1).toISOString(),
-    toolUseId: 'call-9',
-    filePath: 'src/a.ts',
-    mutationVersion: 3,
-    sha256: 'abc',
-    delayed: true,
-    diagnostics,
-  }])
-  expect((events[0] as { diagnostics: unknown }).diagnostics).toBe(diagnostics)
-
-  expect(adaptLifecycleEvent(envelope(2, 'run', 'event', null, {
-    type: 'lsp.diagnostics',
-    filePath: '',
-    mutationVersion: 0,
-    sha256: 'x',
-    delayed: false,
-    diagnostics,
-  }), state)).toEqual([])
-})
-
 test('coding.report → coding.report.updated:report 同引用透传', () => {
   const state = createLifecycleAdapterState()
   const report = {

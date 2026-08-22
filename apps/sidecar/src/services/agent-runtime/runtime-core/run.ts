@@ -14,8 +14,6 @@ import {
   type ToolDefinition,
   type PersistedToolContinuation,
   type NormalizedMessageParam,
-  setLspIdleTimeout,
-  warmupLspClients,
   detectDanglingToolUses,
   buildResumeContinuations,
 } from "@lume/agent-sdk";
@@ -88,7 +86,6 @@ import {
   FilePluginStateStore,
 } from "../plugins/plugin-state-store.js";
 import { buildPluginAgentHooks } from "../plugins/plugin-hooks-bridge.js";
-import { resolveRuntimeLspConfig } from "../lsp/lsp-config.js";
 import {
   buildPluginMcpManager,
   buildPluginIdIndex,
@@ -143,7 +140,6 @@ import {
   isTerminalProcessJob,
   publishBackgroundTaskNotificationToBus,
   publishCodingReportToBus,
-  publishLspDiagnosticsToBus,
   waitForProcessJobToFinish,
   type BackgroundTaskResult,
 } from "./run-background";
@@ -547,15 +543,6 @@ async function createRuntimeCoreSessionImpl(
         event,
       });
     }
-    // 批次5 第二入口:lsp_diagnostics 同批再上总线(与 task_notification 同构旁路)
-    if (event.type === "system" && event.subtype === "lsp_diagnostics") {
-      publishLspDiagnosticsToBus({
-        sessionDir,
-        threadId: input.lumeSessionId,
-        runId,
-        event,
-      });
-    }
     try {
       input.emitSdkMessage?.(event);
     } catch (error) {
@@ -636,40 +623,6 @@ async function createRuntimeCoreSessionImpl(
     // Do not auto-load project-local .lume/plugins just because the Agent cwd is a real project.
     directories: pluginConfig.directories,
   });
-  const discoveredLspConfig = await resolveRuntimeLspConfig({
-    cwd: input.cwd,
-    user: getEffectiveLumeConfig(input.workspaceSlug).lsp,
-    plugins: registeredPlugins,
-  });
-  const runLspConfig =
-    input.toolConfig?.lsp &&
-    typeof input.toolConfig.lsp === "object" &&
-    !Array.isArray(input.toolConfig.lsp)
-      ? (input.toolConfig.lsp as Record<string, unknown>)
-      : undefined;
-  const lspConfig = {
-    ...discoveredLspConfig,
-    ...(runLspConfig ?? {}),
-    ...(discoveredLspConfig.servers ||
-    (runLspConfig?.servers && typeof runLspConfig.servers === "object")
-      ? {
-          servers: {
-            ...(discoveredLspConfig.servers ?? {}),
-            ...(runLspConfig?.servers &&
-            typeof runLspConfig.servers === "object"
-              ? (runLspConfig.servers as Record<string, unknown>)
-              : {}),
-          },
-        }
-      : {}),
-  };
-  setLspIdleTimeout(lspConfig.idleTimeoutMs);
-  // 默认保持懒启动；lazy: false 时在 run 启动阶段后台预热 rootMarkers 匹配的
-  // server（warmupLspClients 内置 5s race，慢环境自动放行），首个 Write/Edit
-  // 不再付 language server 冷启动代价。fire-and-forget，不阻塞首事件。
-  if (lspConfig.enabled !== false && lspConfig.lazy === false) {
-    void warmupLspClients(input.cwd, { lsp: lspConfig }).catch(() => undefined);
-  }
   const computerUsePlugin = registeredPlugins.find(
     (plugin) => plugin.pluginId === "computer-use",
   );
@@ -1135,8 +1088,7 @@ async function createRuntimeCoreSessionImpl(
     ? [persistedContinuation]
     : danglingFallbackContinuations;
   const runtimeToolConfig = {
-    ...(input.toolConfig ?? {}),
-    ...(Object.keys(lspConfig).length > 0 ? { lsp: lspConfig } : {}),
+    ...input.toolConfig,
   };
 
   const apiType =

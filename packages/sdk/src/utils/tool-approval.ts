@@ -11,7 +11,6 @@ const TOOL_ALIASES: Record<string, string | string[]> = {
   listdir: ['Glob', 'ls'],
   listmcpresources: 'ListMcpResourcesTool',
   listmcpresourcestool: 'ListMcpResourcesTool',
-  lsp: 'LSP',
   notebookedit: 'NotebookEdit',
   read: 'Read',
   readfile: 'Read',
