@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import type {
   LumeDiagnosticCaptureSettings,
   SensitiveDiagnosticEnvelope,
-} from '../../../../packages/shared/src/types/logging'
+} from '@lume/shared'
 
 const MAX_CONTENT_BYTES = 1024 * 1024
 const MAX_TOTAL_BYTES = 100 * 1024 * 1024

@@ -16,7 +16,7 @@ import type {
   ExportLogsResult,
   ReadLogFileInput,
   ReadLogFileResult,
-} from '../../../../packages/shared/src/types/general-settings'
+} from '@lume/shared'
 import type {
   LumeLogBatch,
   LumeLogEventInput,
@@ -24,8 +24,8 @@ import type {
   LumeLogLevel,
   LumeLogSource,
   LumeLoggingSettings,
-} from '../../../../packages/shared/src/types/logging'
-import { LUME_LOGGING_DEFAULTS, LUME_LOG_SCHEMA_VERSION } from '../../../../packages/shared/src/types/logging'
+} from '@lume/shared'
+import { LUME_LOGGING_DEFAULTS, LUME_LOG_SCHEMA_VERSION } from '@lume/shared'
 
 const LEVEL_ORDER: Record<LumeLogLevel, number> = {
   trace: 0,

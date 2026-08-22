@@ -347,6 +347,77 @@ describe("QueryEngine turn limits", () => {
     ])
   })
 
+  test("delivers live events immediately while a tool runs and closes the channel after it returns", async () => {
+    const liveEvents: SDKMessage[] = []
+    let liveEmitDuringCall: NonNullable<ToolContext["emitLiveEvent"]> | undefined
+    let resolveTool: (() => void) | undefined
+    const toolGate = new Promise<void>((resolve) => { resolveTool = resolve })
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "tool_use", id: "long-1", name: "LongCmd", input: {} }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    ])
+    let sawFirstLiveBeforeToolReturn = false
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "LongCmd",
+        description: "long running command",
+        inputSchema: { type: "object", properties: {} },
+        async call(_input, context) {
+          liveEmitDuringCall = context.emitLiveEvent
+          context.emitLiveEvent?.({
+            type: "system",
+            subtype: "task_progress",
+            task_id: "task_live",
+            description: "tick 1",
+            session_id: "session"
+          })
+          sawFirstLiveBeforeToolReturn = liveEvents.length > 0
+          await toolGate
+          return { type: "tool_result" as const, tool_use_id: "", content: "finished" }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      onLiveEvent: (event) => liveEvents.push(event)
+    })
+
+    const collected = collectEvents(engine)
+    // Give the tool call a chance to start and emit before resolving the gate.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    resolveTool?.()
+    const events = await collected
+
+    expect(sawFirstLiveBeforeToolReturn).toBe(true)
+    expect(liveEvents).toHaveLength(1)
+    expect(liveEvents[0]).toMatchObject({ subtype: "task_progress", task_id: "task_live" })
+    // Live events bypass the deferred stream entirely.
+    expect(events.filter((event) => event.type === "system" && (event as { subtype?: string }).subtype === "task_progress")).toHaveLength(0)
+
+    // Channel is closed once the tool call returned.
+    liveEmitDuringCall?.({
+      type: "system",
+      subtype: "task_progress",
+      task_id: "task_live",
+      description: "late tick",
+      session_id: "session"
+    })
+    expect(liveEvents).toHaveLength(1)
+  })
+
   test("injects delayed LSP diagnostics into the next model request without starting a hidden turn", async () => {
     const provider = new StaticProvider([
       {
@@ -650,6 +721,7 @@ describe("QueryEngine turn limits", () => {
     await expect(collectResult(engine)).resolves.toMatchObject({
       subtype: "error_completion_guard",
       is_error: true,
+      errorCode: "repeated_tool_call",
       num_turns: 4
     })
     expect(calls).toBe(2)
@@ -698,6 +770,384 @@ describe("QueryEngine turn limits", () => {
       num_turns: 4
     })
     expect(calls).toBe(3)
+  })
+
+  test("keeps the blocked counter across alternating stalled signatures", async () => {
+    const calls = { a: 0, b: 0 }
+    const stalledCall = (id: string, variant: "a" | "b"): CreateMessageResponse => ({
+      content: [{
+        type: "tool_use",
+        id,
+        name: "Edit",
+        input: variant === "a" ? { file: "a.txt" } : { file: "b.txt" }
+      }],
+      stopReason: "tool_use",
+      usage: { input_tokens: 1, output_tokens: 1 }
+    })
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        stalledCall("edit-a1", "a"),
+        stalledCall("edit-b1", "b"),
+        stalledCall("edit-a2", "a"),
+        stalledCall("edit-b2", "b"),
+        // Both signatures are now at count=2; alternating re-attempts must hit
+        // the global consecutive counter instead of resetting it per signature.
+        stalledCall("edit-a3", "a"),
+        stalledCall("edit-b3", "b")
+      ]),
+      tools: [{
+        name: "Edit",
+        description: "edit",
+        inputSchema: { type: "object", properties: {} },
+        isReadOnly: () => false,
+        async call(input: any) {
+          if (input.file === "a.txt") calls.a++
+          else calls.b++
+          return { type: "tool_result", tool_use_id: "", content: "unchanged state" }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 80,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    // Each signature only reaches count=2 on its own turn, so per-signature
+    // bookkeeping alone would never stop; the global consecutive counter must.
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "error_completion_guard",
+      is_error: true,
+      errorCode: "repeated_tool_call"
+    })
+    // Each signature executes exactly twice to build up equivalence; every
+    // re-attempt after that is refused without executing.
+    expect(calls.a).toBe(2)
+    expect(calls.b).toBe(2)
+  })
+
+  test("skips remaining same-batch tools after the repeat guard stops", async () => {
+    const calls = { navigate: 0, write: 0 }
+    const navigateCall = (id: string): CreateMessageResponse => ({
+      content: [{ type: "tool_use", id, name: "Navigate", input: { url: "https://example.com" } }],
+      stopReason: "tool_use",
+      usage: { input_tokens: 1, output_tokens: 1 }
+    })
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        navigateCall("nav-1"),
+        navigateCall("nav-2"),
+        navigateCall("nav-3"),
+        {
+          content: [
+            { type: "tool_use", id: "nav-4", name: "Navigate", input: { url: "https://example.com" } },
+            { type: "tool_use", id: "write-4", name: "Write", input: { path: "x.txt", content: "hi" } }
+          ],
+          stopReason: "tool_use",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        },
+        {
+          content: [{ type: "text", text: "stopped" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        }
+      ]),
+      tools: [
+        {
+          name: "Navigate",
+          description: "navigate",
+          inputSchema: { type: "object", properties: {} },
+          isReadOnly: () => false,
+          async call() {
+            calls.navigate++
+            return { type: "tool_result", tool_use_id: "", content: "same page" }
+          }
+        },
+        {
+          name: "Write",
+          description: "write",
+          inputSchema: { type: "object", properties: {} },
+          isReadOnly: () => false,
+          async call() {
+            calls.write++
+            return { type: "tool_result", tool_use_id: "", content: "written" }
+          }
+        }
+      ],
+      systemPrompt: "test",
+      maxTurns: 80,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    // The 4th Navigate hits the hard stop inside the same batch as Write;
+    // Write must not execute (no side effects after the stop decision) and
+    // still needs a paired tool_result.
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "error_completion_guard",
+      is_error: true
+    })
+    expect(calls.navigate).toBe(2)
+    expect(calls.write).toBe(0)
+    expect(engine.getMessages()).toContainEqual(expect.objectContaining({
+      role: "user",
+      content: expect.arrayContaining([expect.objectContaining({
+        tool_use_id: "write-4",
+        is_error: true,
+        content: expect.stringContaining("Skipped")
+      })])
+    }))
+  })
+
+  test("blocks repeated equivalent failures of read-only tools without stopping the run", async () => {
+    let calls = 0
+    const grepCall = (id: string): CreateMessageResponse => ({
+      content: [{ type: "tool_use", id, name: "Grep", input: { pattern: "foo" } }],
+      stopReason: "tool_use",
+      usage: { input_tokens: 1, output_tokens: 1 }
+    })
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        grepCall("grep-1"),
+        grepCall("grep-2"),
+        grepCall("grep-3"),
+        grepCall("grep-4"),
+        {
+          content: [{ type: "text", text: "giving up" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        }
+      ]),
+      tools: [{
+        name: "Grep",
+        description: "grep",
+        inputSchema: { type: "object", properties: {} },
+        isReadOnly: () => true,
+        async call() {
+          calls++
+          return { type: "tool_result", tool_use_id: "", content: "connect ETIMEDOUT", is_error: true }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 80,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    // Equivalent failures are refused from the third identical call on, but a
+    // transient failure never escalates to terminating the whole run.
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "success",
+      is_error: false
+    })
+    expect(calls).toBe(2)
+    expect(engine.getMessages()).toContainEqual(expect.objectContaining({
+      role: "user",
+      content: [expect.objectContaining({
+        tool_use_id: "grep-3",
+        is_error: true,
+        content: expect.stringContaining("Do not retry the unchanged call")
+      })]
+    }))
+  })
+
+  test("recognizes equivalent read-only results via repeatGuard state in concurrent batches", async () => {
+    let calls = 0
+    const snapshotCall = (id: string): CreateMessageResponse => ({
+      content: [{ type: "tool_use", id, name: "Snapshot", input: { tab: "main" } }],
+      stopReason: "tool_use",
+      usage: { input_tokens: 1, output_tokens: 1 }
+    })
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        snapshotCall("snap-1"),
+        snapshotCall("snap-2"),
+        snapshotCall("snap-3"),
+        {
+          content: [{ type: "text", text: "page unchanged" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        }
+      ]),
+      tools: [{
+        name: "Snapshot",
+        description: "snapshot",
+        inputSchema: { type: "object", properties: {} },
+        isReadOnly: () => true,
+        async call() {
+          calls++
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            content: JSON.stringify({ operation_id: `op-${calls}`, tree: "same-dom" }),
+            _meta: { repeatGuard: { state: { ok: true, tool: "snapshot", tree: "same-dom" } } }
+          }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 80,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    // Volatile operation ids differ per call, but the exposed stable state is
+    // equal — the concurrent read-only path must honor it and refuse #3.
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "success",
+      is_error: false,
+      num_turns: 4
+    })
+    expect(calls).toBe(2)
+  })
+
+  test("does not count permission denials toward equivalence", async () => {
+    let executions = 0
+    let permissionCalls = 0
+    const bashCall = (id: string): CreateMessageResponse => ({
+      content: [{ type: "tool_use", id, name: "Bash", input: { command: "npm install" } }],
+      stopReason: "tool_use",
+      usage: { input_tokens: 1, output_tokens: 1 }
+    })
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        bashCall("bash-1"),
+        bashCall("bash-2"),
+        bashCall("bash-3"),
+        {
+          content: [{ type: "text", text: "installed" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        }
+      ]),
+      tools: [{
+        name: "Bash",
+        description: "bash",
+        inputSchema: { type: "object", properties: {} },
+        isReadOnly: () => false,
+        async call() {
+          executions++
+          return { type: "tool_result", tool_use_id: "", content: "done" }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 80,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => {
+        permissionCalls++
+        return permissionCalls <= 2
+          ? { behavior: "deny", message: "Not approved yet" }
+          : { behavior: "allow" }
+      }
+    })
+
+    // The third identical call must reach canUseTool again (user changed their
+    // mind) instead of being refused by repeat-guard accounting.
+    const result = await collectResult(engine)
+    expect(result).toMatchObject({
+      subtype: "success",
+      is_error: false
+    })
+    expect(permissionCalls).toBe(3)
+    expect(executions).toBe(1)
+    expect(result.permission_denials).toHaveLength(2)
+  })
+
+  test("fresh successful progress resets the consecutive blocked counter", async () => {
+    const calls = { editA: 0, editB: 0, status: 0 }
+    const editACall = (id: string): CreateMessageResponse => ({
+      content: [{ type: "tool_use", id, name: "Edit", input: { file: "a.txt" } }],
+      stopReason: "tool_use",
+      usage: { input_tokens: 1, output_tokens: 1 }
+    })
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        editACall("a1"),
+        editACall("a2"),
+        editACall("a3-blocked"),
+        {
+          content: [{ type: "tool_use", id: "status-1", name: "Status", input: {} }],
+          stopReason: "tool_use",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        },
+        {
+          content: [{ type: "tool_use", id: "b1", name: "Edit", input: { file: "b.txt" } }],
+          stopReason: "tool_use",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        },
+        {
+          content: [{ type: "tool_use", id: "b2", name: "Edit", input: { file: "b.txt" } }],
+          stopReason: "tool_use",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        },
+        {
+          content: [{ type: "tool_use", id: "b3-blocked", name: "Edit", input: { file: "b.txt" } }],
+          stopReason: "tool_use",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        },
+        {
+          content: [{ type: "text", text: "moved on" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        }
+      ]),
+      tools: [
+        {
+          name: "Edit",
+          description: "edit",
+          inputSchema: { type: "object", properties: {} },
+          isReadOnly: () => false,
+          async call(input: any) {
+            if (input.file === "a.txt") {
+              calls.editA++
+              return { type: "tool_result", tool_use_id: "", content: "still failing", is_error: true }
+            }
+            calls.editB++
+            return { type: "tool_result", tool_use_id: "", content: "still failing b", is_error: true }
+          }
+        },
+        {
+          name: "Status",
+          description: "status",
+          inputSchema: { type: "object", properties: {} },
+          isReadOnly: () => false,
+          async call() {
+            calls.status++
+            return { type: "tool_result", tool_use_id: "", content: "clean tree" }
+          }
+        }
+      ],
+      systemPrompt: "test",
+      maxTurns: 80,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    // The Status success between the two stalls proves real progress, so the
+    // second stall starts counting from one instead of immediately stopping.
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "success",
+      is_error: false
+    })
+    expect(calls.editA).toBe(2)
+    expect(calls.status).toBe(1)
+    expect(calls.editB).toBe(2)
   })
 
   test("preserves provider tool-call result order across concurrent and serial tools", async () => {

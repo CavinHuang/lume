@@ -64,6 +64,8 @@ export type { McpSdkServerConfig } from './sdk-mcp-server.js'
 // --------------------------------------------------------------------------
 
 export { QueryEngine } from './engine.js'
+export { withRepeatGuardState, readRepeatGuardState } from './repeat-guard.js'
+export type { RepeatGuardMeta } from './repeat-guard.js'
 export { resolveShellInvocation } from './utils/shell-invocation.js'
 export { analyzeBashCommand, normalizeExecutable } from './utils/bash-command-analysis.js'
 export type { BashCommandAnalysis, BashCommandSegment, BashParseStatus } from './utils/bash-command-analysis.js'
@@ -81,14 +83,9 @@ export type {
 } from './utils/process-sandbox.js'
 
 // --------------------------------------------------------------------------
-// LLM Providers (Anthropic + OpenAI)
+// LLM Provider Contract (host-injected implementations)
 // --------------------------------------------------------------------------
 
-export {
-  createProvider,
-  AnthropicProvider,
-  OpenAIProvider,
-} from './providers/index.js'
 export type {
   ApiType,
   LLMProvider,
@@ -100,7 +97,7 @@ export type {
   NormalizedContentBlock,
   NormalizedTool,
   NormalizedResponseBlock,
-} from './providers/index.js'
+} from './providers/types.js'
 
 // --------------------------------------------------------------------------
 // Tool System (30+ tools)
