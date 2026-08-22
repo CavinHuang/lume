@@ -19,7 +19,6 @@ import { getPermissionDeniedSummary } from "../permissions/permission-denials";
 import type { TraceRecorder } from "../trace/trace-recorder";
 import { DEFAULT_CONTEXT_BUDGET, type ContextBudget } from "./context-budget";
 import { buildMessageAttachmentBrief } from "./message-attachments";
-import { isLinkRuntimeOnline } from "../../link/link-client";
 
 export interface ContextAssemblyInput {
   threadId: string;
@@ -276,10 +275,7 @@ export class ContextAssembler {
       : "";
     const systemPrompt = [
       agentSystemPrompt,
-      systemPromptAppend,
-      isLinkRuntimeOnline()
-        ? "OpenConnector Link 通过且仅通过四个 link_* 工具连接第三方 SaaS 应用：先 link_search_actions，再 link_inspect_actions，然后 link_call_action。用户指明某个连接时必须使用该确切命名的连接，绝不回退到其他账号。授权错误表示需要在 Lume 中重新连接，不要尝试其他凭据或端点。Link 不替代本地文件工具、浏览器工具、URL 抓取或网络搜索。"
-        : ""
+      systemPromptAppend
     ]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");
