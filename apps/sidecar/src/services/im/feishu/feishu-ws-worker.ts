@@ -65,6 +65,10 @@ export function parseFeishuEvent(
       rawText = "";
     }
   }
+  // 群聊 @ 门控：绑定群内任何成员的任何文本都触发完整 run 会造成回复风暴。
+  // 启发式要求消息带 @ 提及（通常即 @ 机器人）；按 open_id 精确匹配需注入
+  // 机器人自身身份，留作升级点（#405）。
+  if (message.chat_type !== "p2p" && !/<at[\s>]/.test(rawText)) return null;
   const text = stripFeishuMentions(rawText);
   if (!text) return null;
   return {

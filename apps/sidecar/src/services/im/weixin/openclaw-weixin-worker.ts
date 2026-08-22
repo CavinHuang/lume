@@ -101,12 +101,20 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
       rememberMessage(update.messageId);
     }
     cursor = batch.cursor ?? cursor;
-    await updateAccount(input.account.id, {
-      status: "running",
-      ...(cursor ? { cursor } : {}),
-      ...(lastContextToken(batch.updates) ? { contextToken: lastContextToken(batch.updates) } : {}),
-      lastError: null
-    });
+    // 仅状态实际变化时回写：每轮询周期无条件写盘 ≈ 每账号 1 次/秒的
+    // tmp+rename 磨损，且与其它持锁变更竞争（#405）
+    const nextContextToken = lastContextToken(batch.updates);
+    const contextTokenChanged = nextContextToken !== undefined && nextContextToken !== input.account.contextToken;
+    const cursorChanged = cursor !== undefined && cursor !== input.account.cursor;
+    const needsStatusWrite = input.account.status !== "running" || Boolean(input.account.lastError);
+    if (needsStatusWrite || cursorChanged || contextTokenChanged) {
+      await updateAccount(input.account.id, {
+        status: "running",
+        ...(cursorChanged ? { cursor } : {}),
+        ...(contextTokenChanged ? { contextToken: nextContextToken } : {}),
+        lastError: null
+      });
+    }
   }
 
   async function loop(): Promise<void> {

@@ -37,6 +37,8 @@ export function parseWecomEvent(
   if (!body) return null;
   const rawText = body.text?.content?.trim();
   if (!rawText) return null;
+  // 群聊 @ 门控（#405，启发式同 feishu/dingtalk）
+  if (body.chattype === "group" && !rawText.includes("@")) return null;
   // 企微 @ 机器人前缀清理
   const text = rawText.replace(/^@\S+\s*/, "").trim() || rawText;
   return {

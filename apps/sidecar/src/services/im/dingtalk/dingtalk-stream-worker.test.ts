@@ -58,9 +58,9 @@ describe("createDingtalkStreamWorker", () => {
     expect(calls).toEqual(["register", "connect"]);
     expect(handler()).not.toBeNull();
 
-    // 触发事件(data 为 object,parseDingtalkEvent 兼容 string|object)
+    // 触发事件(data 为 object,parseDingtalkEvent 兼容 string|object)；群聊须带 @ 门控（#405）
     const result = handler()!({
-      data: { conversationId: "c1", conversationType: "2", text: { content: " hi " }, senderStaffId: "s1", sessionWebhook: "https://hw", msgId: "m1", conversationName: "群A" },
+      data: { conversationId: "c1", conversationType: "2", text: { content: "@机器人 hi" }, senderStaffId: "s1", sessionWebhook: "https://hw", msgId: "m1", conversationName: "群A" },
     });
     expect(result).toEqual({ status: "SUCCESS" });
     expect(routes).toHaveLength(1);
@@ -146,6 +146,15 @@ describe("parseDingtalkEvent", () => {
       makeAccount(),
     );
     expect(msg?.text).toBe("你好");
+  });
+
+  it("群聊无 @ 门控直接忽略（#405）", () => {
+    expect(
+      parseDingtalkEvent(
+        { data: { conversationId: "c", conversationType: "2", text: { content: "普通群聊" }, senderStaffId: "s", sessionWebhook: "hw", msgId: "m" } },
+        makeAccount(),
+      ),
+    ).toBeNull();
   });
 
   it("无文本返回 null", () => {

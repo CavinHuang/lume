@@ -68,6 +68,8 @@ export function parseDingtalkEvent(
   if (!data) return null;
   const rawText = data.text?.content?.trim();
   if (!rawText) return null;
+  // 群聊 @ 门控（#405，启发式同 feishu/wecom）
+  if (data.conversationType !== "1" && !rawText.includes("@")) return null;
   // 钉钉机器人文案常带 @机器人 前缀,简单清理
   const text = rawText.replace(/^@\S+\s*/, "").trim() || rawText;
   return {

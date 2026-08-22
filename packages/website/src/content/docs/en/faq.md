@@ -15,7 +15,7 @@ Anything behind an OpenAI-compatible API — OpenAI, Anthropic, Gemini, DeepSeek
 
 ## Which platforms?
 
-Installers are available for Windows and macOS; Linux builds are on the way. See the [download page](/en/download/).
+Installers are available for Windows and macOS; Linux builds are on the way. See the [download page](../../download/).
 
 ## Is it free?
 

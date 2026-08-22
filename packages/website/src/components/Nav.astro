@@ -1,5 +1,6 @@
 ---
 import { t, type Lang } from '../i18n/ui';
+import { withBase } from '../lib/site';
 import ThemeToggle from './ThemeToggle.astro';
 import LangSwitch from './LangSwitch.astro';
 
@@ -8,19 +9,19 @@ interface Props {
 }
 const { lang } = Astro.props;
 
-// 英文页都在 /en/ 前缀下，中文页无前缀
-const base = Astro.url.pathname.startsWith('/en') ? '/en' : '';
+// 英文页都在 /en/ 前缀下，中文页无前缀；再统一补 GitHub Pages 的 base 前缀
+const langPrefix = lang === 'zh' ? '' : '/en';
 const links = [
-  { href: `${base}/#features`, label: t(lang, 'nav.features') },
-  { href: `${base}/docs`, label: t(lang, 'nav.docs') },
-  { href: `${base}/changelog`, label: t(lang, 'nav.changelog') },
+  { href: withBase(`${langPrefix}/#features`), label: t(lang, 'nav.features') },
+  { href: withBase(`${langPrefix}/docs`), label: t(lang, 'nav.docs') },
+  { href: withBase(`${langPrefix}/changelog`), label: t(lang, 'nav.changelog') },
 ];
 ---
 
 <header class="sticky top-0 z-40 border-b border-border bg-bg/85 backdrop-blur">
   <nav class="mx-auto flex h-14 max-w-6xl items-center gap-6 px-4 sm:px-6">
-    <a href={`${base}/`} class="flex items-center gap-2 font-semibold">
-      <img src="/logo.png" alt="Lume" class="h-6 w-6 rounded-md" />
+    <a href={withBase(`${langPrefix}/`)} class="flex items-center gap-2 font-semibold">
+      <img src={withBase('/logo.png')} alt="Lume" class="h-6 w-6 rounded-md" />
       <span class="text-body-lg">Lume</span>
     </a>
     <div class="hidden items-center gap-5 text-ui text-fg-muted sm:flex">
@@ -45,7 +46,7 @@ const links = [
       <LangSwitch />
       <ThemeToggle />
       <a
-        href={`${base}/download`}
+        href={withBase(`${langPrefix}/download`)}
         class="ml-1 rounded-lg bg-accent px-3.5 py-1.5 text-ui font-medium text-accent-fg transition-colors hover:bg-accent-strong"
       >
         {t(lang, 'nav.download')}
