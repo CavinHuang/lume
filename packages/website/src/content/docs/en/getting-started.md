@@ -7,7 +7,7 @@ order: 1
 
 ## Install
 
-Grab the latest build from the [download page](/en/download/):
+Grab the latest build from the [download page](../../download/):
 
 - **Windows**: download the `.exe` installer and follow the wizard.
 - **macOS**: pick the Apple Silicon or Intel `.dmg`, open it and drag Lume into Applications.

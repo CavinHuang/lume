@@ -3,6 +3,9 @@ import { defineConfig } from 'astro/config';
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
+  // GitHub Pages 项目页：https://cavinhuang.github.io/lume/ ；换自定义域名时清掉 base 即可
+  site: 'https://cavinhuang.github.io',
+  base: '/lume',
   // 中文为默认语言（无前缀），英文挂 /en/ 前缀
   i18n: {
     defaultLocale: 'zh',
