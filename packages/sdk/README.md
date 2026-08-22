@@ -92,32 +92,6 @@ console.log(r2.text);
 console.log(`Session messages: ${agent.getMessages().length}`);
 ```
 
-### Custom tools (Zod schema)
-
-```typescript
-import { z } from "zod";
-import { query, tool, createSdkMcpServer } from "@codeany/open-agent-sdk";
-
-const getWeather = tool(
-  "get_weather",
-  "Get the temperature for a city",
-  { city: z.string().describe("City name") },
-  async ({ city }) => ({
-    content: [{ type: "text", text: `${city}: 22°C, sunny` }],
-  }),
-);
-
-const server = createSdkMcpServer({ name: "weather", tools: [getWeather] });
-
-for await (const msg of query({
-  prompt: "What is the weather in Tokyo?",
-  options: { mcpServers: { weather: server } },
-})) {
-  if (msg.type === "result")
-    console.log(`Done: $${msg.total_cost_usd?.toFixed(4)}`);
-}
-```
-
 ### Custom tools (low-level)
 
 ```typescript
@@ -280,8 +254,6 @@ The `sandbox` option currently provides application-level filesystem and network
 | ------------------------------------- | -------------------------------------------------------------- |
 | `query({ prompt, options })`          | One-shot streaming query, returns a Query control object       |
 | `createAgent(options)`                | Create a reusable agent with session persistence               |
-| `tool(name, desc, schema, handler)`   | Create a tool with Zod schema validation                       |
-| `createSdkMcpServer({ name, tools })` | Bundle tools into an in-process MCP server                     |
 | `defineTool(config)`                  | Low-level tool definition helper                               |
 | `getAllBaseTools()`                   | Get all 35+ built-in tools                                     |
 | `registerSkill(definition)`           | Register a custom skill                                        |

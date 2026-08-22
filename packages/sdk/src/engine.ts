@@ -1031,7 +1031,6 @@ export class QueryEngine {
       tools: this.config.tools.map(t => t.name),
       model: this.config.model,
       cwd: this.workingDirectory,
-      mcp_servers: this.config.mcpServerStatuses || [],
       permission_mode: this.config.permissionMode || 'bypassPermissions',
       permissionMode: this.config.permissionMode || 'bypassPermissions',
       agents: this.config.agents ? Object.keys(this.config.agents) : [],
@@ -2511,16 +2510,6 @@ export class QueryEngine {
       gridRows,
       model: this.config.model,
       memoryFiles: [],
-      mcpTools: (this.config.mcpServerStatuses || []).flatMap((server) =>
-        this.config.tools
-          .filter((tool) => tool.name.startsWith(`mcp__${server.name}__`))
-          .map((tool) => ({
-            name: tool.name,
-            serverName: server.name,
-            tokens: Math.ceil((tool.description.length + tool.name.length) / 4),
-            isLoaded: server.status === 'connected',
-          })),
-      ),
       deferredBuiltinTools: (this.config.deferredTools ?? []).map((tool) => ({
         name: tool.name,
         tokens: Math.ceil((tool.description.length + tool.name.length) / 4),

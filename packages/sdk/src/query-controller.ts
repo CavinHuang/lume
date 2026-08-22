@@ -14,10 +14,6 @@ type QueryControllerMethods = {
   setCwd: Query['setCwd']
   getInitializationResult: Query['getInitializationResult']
   getContextUsage: Query['getContextUsage']
-  mcpServerStatus: Query['mcpServerStatus']
-  setMcpServers: Query['setMcpServers']
-  reconnectMcpServer: Query['reconnectMcpServer']
-  toggleMcpServer: Query['toggleMcpServer']
   reloadPlugins: Query['reloadPlugins']
   rewindFiles: Query['rewindFiles']
   stopTask: Query['stopTask']
@@ -141,29 +137,6 @@ export class QueryController implements Query {
 
   async getContextUsage(): ReturnType<Query['getContextUsage']> {
     return this.methods.getContextUsage()
-  }
-
-  async mcpServerStatus(): ReturnType<Query['mcpServerStatus']> {
-    return this.methods.mcpServerStatus()
-  }
-
-  async setMcpServers(
-    servers: Parameters<Query['setMcpServers']>[0],
-  ): ReturnType<Query['setMcpServers']> {
-    return this.methods.setMcpServers(servers)
-  }
-
-  async reconnectMcpServer(
-    serverName: string,
-  ): ReturnType<Query['reconnectMcpServer']> {
-    return this.methods.reconnectMcpServer(serverName)
-  }
-
-  async toggleMcpServer(
-    serverName: string,
-    enabled: boolean,
-  ): ReturnType<Query['toggleMcpServer']> {
-    return this.methods.toggleMcpServer(serverName, enabled)
   }
 
   async reloadPlugins(): ReturnType<Query['reloadPlugins']> {

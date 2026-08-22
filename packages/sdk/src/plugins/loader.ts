@@ -7,7 +7,6 @@ import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js
 import type {
   AgentDefinition,
   AgentOptions,
-  McpServerConfig,
   ToolDefinition,
   ToolResult,
 } from '../types.js'
@@ -34,7 +33,7 @@ export interface LoadedPlugin {
   tools?: ToolDefinition[]
   agents?: Record<string, AgentDefinition>
   hooks?: HookConfig
-  mcpServers?: Record<string, McpServerConfig>
+  mcpServers?: Record<string, unknown>
   skills?: SkillDefinition[]
   commands?: CommandDefinition[]
   config?: Record<string, unknown>

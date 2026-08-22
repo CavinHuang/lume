@@ -1058,73 +1058,6 @@ export type CanUseToolFn = (
 ) => Promise<CanUseToolResult>
 
 // --------------------------------------------------------------------------
-// MCP Types
-// --------------------------------------------------------------------------
-
-export type McpServerConfig =
-  | McpStdioConfig
-  | McpSseConfig
-  | McpHttpConfig
-
-export interface McpStdioConfig {
-  type?: 'stdio'
-  command: string
-  args?: string[]
-  env?: Record<string, string>
-  cwd?: string
-  sandbox?: SandboxSettings
-  onElicitation?: McpElicitationHandler
-  onResourceUpdate?: McpResourceUpdateHandler
-}
-
-export interface McpSseConfig {
-  type: 'sse'
-  url: string
-  headers?: Record<string, string>
-  onElicitation?: McpElicitationHandler
-  onResourceUpdate?: McpResourceUpdateHandler
-}
-
-export interface McpHttpConfig {
-  type: 'http' | 'streamable_http'
-  url: string
-  headers?: Record<string, string>
-  onElicitation?: McpElicitationHandler
-  onResourceUpdate?: McpResourceUpdateHandler
-}
-
-export interface McpElicitationRequest {
-  serverName: string
-  message: string
-  mode?: 'form' | 'url'
-  url?: string
-  elicitationId?: string
-  requestedSchema?: Record<string, unknown>
-}
-
-export interface McpElicitationResponse {
-  action: 'accept' | 'decline' | 'cancel'
-  content?: Record<string, unknown>
-}
-
-export type McpElicitationHandler = (
-  request: McpElicitationRequest,
-) => Promise<McpElicitationResponse>
-
-export interface McpResourceUpdate {
-  serverName: string
-  kind: 'resources' | 'tools' | 'elicitation_complete'
-  uri?: string
-  tool?: string
-  reason?: string
-  elicitationId?: string
-}
-
-export type McpResourceUpdateHandler = (
-  update: McpResourceUpdate,
-) => void | Promise<void>
-
-// --------------------------------------------------------------------------
 // Agent Types
 // --------------------------------------------------------------------------
 
@@ -1247,14 +1180,6 @@ export interface InitializationResult {
   plugins?: Array<{ name: string; path: string; source?: string }>
 }
 
-export interface MCPServerStatus {
-  name: string
-  status: 'connected' | 'disconnected' | 'error'
-  enabled: boolean
-  tools: string[]
-  error?: string
-}
-
 export interface ContextUsageCategory {
   name: string
   tokens: number
@@ -1278,7 +1203,6 @@ export interface ContextUsageResult {
   }>>
   model: string
   memoryFiles: Array<{ path: string; type: string; tokens: number }>
-  mcpTools: Array<{ name: string; serverName: string; tokens: number; isLoaded?: boolean }>
   deferredBuiltinTools?: Array<{ name: string; tokens: number; isLoaded: boolean }>
   systemTools?: Array<{ name: string; tokens: number }>
   systemPromptSections?: Array<{ name: string; tokens: number }>
@@ -1352,8 +1276,6 @@ export interface ReloadPluginsResult {
   commands: SlashCommand[]
   agents: Array<{ name: string; description: string }>
   plugins: Array<{ name: string; path: string; source?: string }>
-  mcpServers: MCPServerStatus[]
-  error_count: number
 }
 
 export interface ListSessionsOptions {
@@ -1411,14 +1333,6 @@ export interface Query {
   setCwd(cwd: string): Promise<void>
   getInitializationResult(): Promise<InitializationResult>
   getContextUsage(): Promise<ContextUsageResult>
-  mcpServerStatus(): Promise<MCPServerStatus[]>
-  setMcpServers(servers: Record<string, McpServerConfig | any>): Promise<{
-    added: string[]
-    removed: string[]
-    errors: Record<string, string>
-  }>
-  reconnectMcpServer(serverName: string): Promise<MCPServerStatus | null>
-  toggleMcpServer(serverName: string, enabled: boolean): Promise<MCPServerStatus | null>
   reloadPlugins(): Promise<ReloadPluginsResult>
   rewindFiles(userMessageId: string, dryRun?: boolean): Promise<RewindFilesResult>
   stopTask(taskId: string): Promise<void>
@@ -1517,8 +1431,6 @@ export interface AgentOptions {
   allowedTools?: string[]
   /** Tool names to deny */
   disallowedTools?: string[]
-  /** MCP server configurations */
-  mcpServers?: Record<string, McpServerConfig | any> // supports McpSdkServerConfig
   /** Custom subagent definitions */
   agents?: Record<string, AgentDefinition>
   /** Maximum tokens for responses */
@@ -1666,7 +1578,6 @@ export interface QueryEngineConfig {
   skillRegistry?: import('./skills/registry.js').SkillRegistry
   currentUserMessageId?: string
   fileCheckpointState?: import('./utils/file-checkpoints.js').FileCheckpointState
-  mcpServerStatuses?: Array<{ name: string; status: string }>
   initialization?: {
     slashCommands?: string[]
     skills?: string[]
