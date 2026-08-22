@@ -167,6 +167,12 @@ export interface SDKResultMessage {
   permission_denials?: SDKPermissionDenial[]
   structured_output?: unknown
   errors?: string[]
+  /**
+   * Machine-readable code for guard-driven stops, e.g. 'repeated_tool_call'
+   * for an SDK internal repeat-guard stop. Lets hosts attribute such
+   * terminations structurally instead of matching on error message text.
+   */
+  errorCode?: string
   /** @deprecated Use total_cost_usd */
   cost?: number
 }
@@ -1423,17 +1429,8 @@ export interface AgentOptions {
   threadType?: 'main' | 'subagent' | 'group' | 'channel'
   /** LLM model ID */
   model?: string
-  /**
-   * API type: 'anthropic-messages' or 'openai-completions'.
-   * Falls back to CODEANY_API_TYPE env var. Default: 'anthropic-messages'.
-   */
-  apiType?: import('./providers/types.js').ApiType
-  /** Host-owned provider implementation. When set, protocol and credentials are not resolved by the SDK. */
+  /** Host-owned provider implementation. Required for any run: the SDK ships no built-in HTTP providers; when set, protocol and credentials are not resolved by the SDK. */
   provider?: import('./providers/types.js').LLMProvider
-  /** API key. Falls back to CODEANY_API_KEY env var. */
-  apiKey?: string
-  /** API base URL override */
-  baseURL?: string
   /** Working directory for file/shell tools */
   cwd?: string
   /** System prompt override or preset */
@@ -1620,7 +1617,7 @@ export interface QueryResult {
 export interface QueryEngineConfig {
   cwd: string
   model: string
-  /** LLM provider instance (created from apiType) */
+  /** LLM provider instance (host-injected) */
   provider: import('./providers/types.js').LLMProvider
   tools: ToolDefinition[]
   /** Tools omitted from the provider schema and reachable only through ExecuteTool. */

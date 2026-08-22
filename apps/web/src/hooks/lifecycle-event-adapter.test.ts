@@ -156,6 +156,21 @@ test('run.end stopReason=aborted → run.cancelled(批次5 翻转:projector 已�
   }])
 })
 
+test('run.end error_completion_guard → run.failed 固定中文文案(不渲染字面量枚举)', () => {
+  const state = createLifecycleAdapterState()
+  expect(adaptLifecycleEvent(runEnd(1, { stopReason: 'error_completion_guard', isError: true }), state)).toEqual([{
+    id: 'lifecycle:1:run.failed',
+    type: 'run.failed',
+    threadId: 't1',
+    runId: 'r1',
+    createdAt: new Date(TS + 1).toISOString(),
+    error: {
+      code: 'repeated_tool_call',
+      message: '本轮检测到重复执行相同操作，已由保护机制停止；当前进度已保存。',
+    },
+  }])
+})
+
 test('tool.start 映射 tool.started:字段对齐旧路(inputPreview=input,riskLevel 省略)', () => {
   const state = createLifecycleAdapterState()
   const events = adaptLifecycleEvent(toolStart(2), state)
@@ -673,28 +688,4 @@ test('tool.end meta.execution → execution/resultRef(批次2.1 补;web 最小�
   const failed = adaptLifecycleEvent(toolEnd(5, { isError: true, meta: { execution } }), state)[0] as Extract<LumeRuntimeEvent, { type: 'tool.failed' }>
   expect(failed.execution).toEqual(execution)
   expect(failed.resultRef).toBeDefined()
-})
-
-test('tool.end meta.link → linkAuthorization(Fix round 1:合法透传/非法丢弃)', () => {
-  const state = createLifecycleAdapterState()
-  const link = {
-    kind: 'link_authorization_required',
-    service: 'github',
-    actionId: 'act-1',
-    threadId: 't1',
-    errorCode: 'oauth_expired',
-    connectionName: 'gh-main',
-  }
-  const completed = adaptLifecycleEvent(toolEnd(1, { meta: { link } }), state)[0] as Extract<LumeRuntimeEvent, { type: 'tool.completed' }>
-  expect(completed.linkAuthorization).toEqual(link)
-
-  // 形态不合法(缺必填 errorCode)→ 省略字段
-  const bad = adaptLifecycleEvent(toolEnd(2, {
-    meta: { link: { kind: 'link_authorization_required', service: 'github', actionId: 'a', threadId: 't' } },
-  }), state)[0]
-  expect(Object.keys(bad as object)).not.toContain('linkAuthorization')
-
-  // tool.failed 同样携带(对齐旧路两分支)
-  const failed = adaptLifecycleEvent(toolEnd(3, { isError: true, meta: { link } }), state)[0] as Extract<LumeRuntimeEvent, { type: 'tool.failed' }>
-  expect(failed.linkAuthorization).toEqual(link)
 })

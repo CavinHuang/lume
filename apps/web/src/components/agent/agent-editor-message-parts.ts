@@ -34,15 +34,6 @@ function serializeInline(node: JSONContent, parts: AgentUserMessagePart[]): void
     if (todoId && uri && displayText) parts.push({ type: 'planning_todo_ref', schemaVersion: 1, uri, todoId, relation, displayText })
     return
   }
-  if (node.type === 'linkConnectionMention') {
-    const service = typeof node.attrs?.service === 'string' ? node.attrs.service : ''
-    const connectionName = typeof node.attrs?.connectionName === 'string' ? node.attrs.connectionName : ''
-    const displayText = typeof node.attrs?.displayText === 'string' ? node.attrs.displayText : ''
-    if (service && connectionName && displayText) {
-      parts.push({ type: 'link_connection_ref', schemaVersion: 1, service, connectionName, displayText })
-    }
-    return
-  }
   if (node.type === 'mention') {
     const label = typeof node.attrs?.label === 'string' ? node.attrs.label : node.attrs?.id
     appendText(parts, `@${typeof label === 'string' ? label : ''}`)
@@ -80,16 +71,13 @@ export function serializeAgentEditorMessage(
       ? part.text
       : part.type === 'planning_todo_ref'
         ? `&${part.displayText}`
-        : part.type === 'link_connection_ref'
-          ? `@${part.displayText}`
-          : part.uri).join(''),
+        : part.uri).join(''),
     messageParts,
   }
 }
 
 function visibleReferenceText(part: Exclude<AgentUserMessagePart, { type: 'text' }>): string {
   if (part.type === 'planning_todo_ref') return `&${part.displayText}`
-  if (part.type === 'link_connection_ref') return `@${part.displayText}`
   return part.uri
 }
 

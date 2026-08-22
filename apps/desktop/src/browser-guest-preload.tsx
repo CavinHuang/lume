@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentBrowserDesignDeclaration } from '../../../packages/shared/src/types/agent'
+import type { AgentBrowserDesignDeclaration } from '@lume/shared'
 import { createWebMcpShim } from './webmcp-shim'
 import { AnnotationOverlay } from './browser-overlay/AnnotationOverlay'
 import { createGuestBridge } from './browser-overlay/guest-state'

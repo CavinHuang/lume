@@ -35,5 +35,4 @@ export * from "./browser-runtime";
 export * from "./agent-island";
 export * from "./suggestion";
 export * from "./persona";
-export * from "./link";
 export * from "./renderer-allowlist";

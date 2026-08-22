@@ -33,7 +33,6 @@ import type { TrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
 import { createPlanningTodoTools } from "./planning/create-planning-todo-tools";
 import { createSuggestionTools } from "./suggest/create-suggestion-tools";
 import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
-import { createLinkTools } from "./link/create-link-tools";
 import { createBrowserMcpTools } from "./browser/create-browser-tools";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
@@ -235,14 +234,6 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const browserTools = input.threadType === "subagent"
     ? []
     : createBrowserMcpTools({ threadId: input.threadId });
-  const preferredLinkConnections = resolvePreferredLinkConnections(input.messageMetadata?.linkConnectionReferences);
-  const linkTools = createLinkTools({
-    threadId: input.threadId,
-    runId: input.runId,
-    emitToolPermissionRequest: input.emitToolPermissionRequest,
-    preferredConnections: preferredLinkConnections,
-    promoteToActiveSchema: Object.keys(preferredLinkConnections).length > 0,
-  });
   const customTools = [
     ...memoryTools,
     ...dreamEvidenceTools,
@@ -263,27 +254,14 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...planningTodoTools,
     ...computerUseTools,
   ];
-  const visibleCustomTools = [...customTools, ...linkTools];
-  const customToolNames = visibleCustomTools.map((tool) => tool.name);
+  const customToolNames = customTools.map((tool) => tool.name);
 
   return {
-    customTools: visibleCustomTools,
+    customTools,
     availableToolNames: [
       ...BASE_RUNTIME_TOOL_NAMES,
       ...AUTOMATION_TOOL_NAMES,
       ...customToolNames
     ]
   };
-}
-
-function resolvePreferredLinkConnections(value: unknown): Record<string, string> {
-  const preferred: Record<string, string> = {};
-  if (!Array.isArray(value)) return preferred;
-  for (const item of value) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-    const { service, connectionName } = item as Record<string, unknown>;
-    if (typeof service !== "string" || typeof connectionName !== "string" || preferred[service]) continue;
-    preferred[service] = connectionName;
-  }
-  return preferred;
 }

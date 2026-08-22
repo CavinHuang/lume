@@ -1001,7 +1001,7 @@ export function AgentInput({
     const quotedBlock = quotedSelectionSnapshot ? buildQuotedSelectionBlock(quotedSelectionSnapshot) : ''
     const text = quotedBlock + baseText
     // messageParts 须与 userMessage 一致（sidecar 校验 parts 拼接 == userMessage）；引用 prepend 为 text part
-    const hasStructuredParts = serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref' || part.type === 'link_connection_ref')
+    const hasStructuredParts = serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
     const messageParts = quotedBlock && hasStructuredParts
       ? [{ type: 'text' as const, text: quotedBlock }, ...serialized.messageParts]
       : serialized.messageParts
@@ -2016,18 +2016,6 @@ function setEditorMessageParts(
       activeContent().push({
         type: 'planningTodoMention',
         attrs: { schemaVersion: part.schemaVersion, uri: part.uri, todoId: part.todoId, relation: part.relation, displayText: part.displayText },
-      })
-      continue
-    }
-    if (part.type === 'link_connection_ref') {
-      activeContent().push({
-        type: 'linkConnectionMention',
-        attrs: {
-          schemaVersion: part.schemaVersion,
-          service: part.service,
-          connectionName: part.connectionName,
-          displayText: part.displayText,
-        },
       })
       continue
     }

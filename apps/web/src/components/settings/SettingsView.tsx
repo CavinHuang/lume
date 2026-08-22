@@ -25,7 +25,6 @@ import { WebSearchSettings } from './WebSearchSettings'
 import { ArchiveSettings } from './ArchiveSettings'
 import { SkillsSettings } from './SkillsSettings'
 import { BrowserSettings } from './BrowserSettings'
-import { LinkRuntimeSettings } from './LinkRuntimeSettings'
 import {
   SETTINGS_NAV_ITEMS,
   SETTINGS_PAGE_SUBTITLES,
@@ -102,7 +101,6 @@ export function SettingsView() {
           {tab === 'agents' && <AgentsSettings />}
           {tab === 'skills' && <SkillsSettings />}
           {tab === 'browser' && <BrowserSettings onOpenSkills={() => setTab('skills')} />}
-          {tab === 'link-runtime' && <LinkRuntimeSettings />}
           {tab === 'workspaces' && <WorkspacesSettings />}
           {tab === 'memory' && <MemorySettings />}
           {tab === 'reading' && <ReadingSettings />}

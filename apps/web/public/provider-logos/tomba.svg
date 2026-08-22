@@ -1,7 +1,0 @@
-<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tomba">
-  <g transform="translate(18 18) scale(2.885)">
-    <path fill="red" d="M11.648 11.643h5.824v5.824h-5.824z"/>
-    <path fill="#1853db" d="M29.12 16.01v13.1H0V0h13.11v5.09H5.1v18.93h18.93v-8.01h5.09z"/>
-    <path fill="red" d="M29.12 0v13.1h-5.09V5.09h-8.01V0h13.1z"/>
-  </g>
-</svg>

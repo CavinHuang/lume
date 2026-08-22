@@ -24,8 +24,8 @@ import {
   type BrowserTabDescriptor,
   type BrowserViewportPreset,
   type BrowserViewportState,
-} from "../../../packages/shared/src/types/browser-runtime"
-import { BROWSER_API_REGISTRY, browserApiSupportForBackend, browserMutatingRuntimeMethods } from "../../../packages/shared/src/browser-api-registry"
+} from '@lume/shared'
+import { BROWSER_API_REGISTRY, browserApiSupportForBackend, browserMutatingRuntimeMethods } from '@lume/shared'
 import {
   selectBrowserPartition,
   shouldInstallAdvancedCdpPolicy,

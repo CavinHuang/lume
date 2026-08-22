@@ -306,7 +306,7 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="mb-1 mt-1 max-h-[min(40vh,360px)] overflow-y-auto rounded-md bg-foreground/[0.03] p-2">
             <ToolExecutionDetails toolCall={toolCall} onOpenThreadFile={onOpenThreadFile} />
-            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} linkAuthorization={toolCall.linkAuthorization} />
+            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
           </div>
         </AnimatedCollapsiblePanel>
       )}

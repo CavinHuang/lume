@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, posix, win32 } from 'node:path'
-import type { PluginSetupInstaller } from '../../../packages/shared/src/types/plugin-market'
+import type { PluginSetupInstaller } from '@lume/shared'
 
 export interface ChromeNativeHostInstallPlan {
   hostName: string

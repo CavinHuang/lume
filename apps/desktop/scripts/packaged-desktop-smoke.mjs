@@ -50,13 +50,7 @@ try {
     throw new Error(`Packaged Lume renderer did not initialize: ${JSON.stringify(renderer)}`)
   }
   const resourcesRoot = join(resolve(executable, ".."), "resources")
-  const openConnectorMetadata = join(resourcesRoot, "openconnector", "lume-resource.json")
-  if (!existsSync(openConnectorMetadata)) throw new Error("Packaged OpenConnector resource metadata is missing")
-  await evaluate(target.webSocketDebuggerUrl, `globalThis.electronAPI.invoke("connection_vault_setup", { password: "packaged-smoke-password" })`)
-  const linkRuntime = await evaluate(target.webSocketDebuggerUrl, `globalThis.electronAPI.invoke("link_runtime_enable")`)
-  if (linkRuntime?.phase !== "online") throw new Error(`Packaged OpenConnector runtime did not start: ${JSON.stringify(linkRuntime)}`)
-  await evaluate(target.webSocketDebuggerUrl, `globalThis.electronAPI.invoke("link_runtime_disable")`)
-  console.log(JSON.stringify({ ok: true, renderer: true, sidecarBundle: existsSync(join(resourcesRoot, "sidecar", "index.mjs")), openConnector: JSON.parse(readFileSync(openConnectorMetadata, "utf8")).version, linkRuntime: linkRuntime.phase }))
+  console.log(JSON.stringify({ ok: true, renderer: true, sidecarBundle: existsSync(join(resourcesRoot, "sidecar", "index.mjs")) }))
 } finally {
   if (child?.pid) {
     spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" })
