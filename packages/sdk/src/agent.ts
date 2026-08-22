@@ -1105,6 +1105,7 @@ export class Agent {
         }
         this.queuedSdkEvents.push(event)
       },
+      onLiveEvent: opts.onLiveEvent,
       // Continuation runs produce no user message; derive the checkpoint key
       // from the first dangling tool_use id so each resumed run gets its own
       // baseline instead of polluting a shared per-session bucket.

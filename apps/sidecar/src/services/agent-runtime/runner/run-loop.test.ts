@@ -206,6 +206,85 @@ describe("tee lifecycle 接线:骨架事件 runId=Lume runId(批次5 Task 6)", (
       .toEqual(new Set(["lume-run-tee-1"]));
   });
 
+  test("live 注入(#285):工具期直通事件经同一条投影链到达总线,主流不经过", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "run-loop-live-inject-"));
+    dirs.push(agentDir);
+    const threadId = "run-loop-live-inject";
+    const sessionDir = getRuntimeCoreSessionDir(threadId, agentDir);
+    const published: SdkEventEnvelope[] = [];
+    const mainStreamSeen: SDKMessage[] = [];
+    getThreadEventBus(sessionDir).subscribe(threadId, (envelope) => {
+      published.push(envelope);
+    });
+
+    let inject: ((message: SDKMessage) => void) | undefined;
+    let releaseMain: (() => void) | undefined;
+    const mainGate = new Promise<void>((resolve) => { releaseMain = resolve; });
+
+    // 模拟工具执行期:第一条消息后主流挂起,此时 SDK 经 onLiveEvent 直通注入
+    async function* gatedStream(): AsyncIterable<SDKMessage> {
+      yield {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "working" }] }
+      } as SDKMessage;
+      await mainGate;
+    }
+
+    const consumption = consumeRuntimeCoreQueryStream({
+      query: gatedStream(),
+      emit: { onSdkMessage: (message) => mainStreamSeen.push(message) },
+      lifecycle: { threadId, sessionDir, runId: "lume-run-live-1" },
+      onLiveInject: (register) => { inject = register; }
+    });
+
+    // 等 tee 启动(inject 注册)+首条消息投影落盘
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline && !inject) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    inject?.({
+      type: "system",
+      subtype: "task_progress",
+      task_id: "task_live_1",
+      description: "tick",
+      session_id: threadId
+    } as SDKMessage);
+
+    // 投影泵异步排空:轮询等待 live 事件折叠为 task.progress 骨架事件落总线
+    const progressDeadline = Date.now() + 2_000;
+    while (
+      Date.now() < progressDeadline
+      && !published.some((envelope) => JSON.stringify(envelope.detail ?? {}).includes("task.progress"))
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    releaseMain?.();
+    const result = await consumption;
+
+    expect(result).toEqual({ status: "completed" });
+    // 主流只含 generator 产出,live 事件不经主流
+    expect(mainStreamSeen).toHaveLength(1);
+
+    const progressEvents = published.filter((envelope) =>
+      JSON.stringify(envelope.detail ?? {}).includes("task.progress")
+    );
+    expect(progressEvents.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(progressEvents.map((envelope) => envelope.runId)))
+      .toEqual(new Set(["lume-run-live-1"]));
+
+    // 流结束后注入失效:迟到进度被丢弃且不影响已交付的终值序列
+    inject?.({
+      type: "system",
+      subtype: "task_progress",
+      task_id: "task_live_late",
+      description: "late tick",
+      session_id: threadId
+    } as SDKMessage);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(published.some((envelope) => JSON.stringify(envelope.detail ?? {}).includes("task_live_late"))).toBe(false);
+  });
+
   test("run 中途抛错:tee 注入投影链,run.end 标 error 而非 aborted(F3)", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "run-loop-tee-error-"));
     dirs.push(agentDir);
