@@ -349,3 +349,29 @@ describe("BashTool shell invocation", () => {
     await expect(waiting).rejects.toThrow("aborted");
   });
 });
+
+describe("BashTool #381 background timeout semantics", () => {
+  test("explicit timeout still terminates a background command", async () => {
+    clearTasks();
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-bg-timeout-"));
+    // 按实际解析的 shell 选命令(本机 Windows 可能配置了 POSIX bash,平台判断不可靠)
+    const command = /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(resolveShellInvocation("").command)
+      ? "Start-Sleep -Seconds 30"
+      : "sleep 30";
+
+    const context = {
+      cwd: root,
+      sessionId: "background-explicit-timeout",
+      artifactsRoot: join(root, "artifacts"),
+      emitEvent: () => {},
+    };
+    // worker spawn+到时击杀有秒级延迟,600ms 太紧会与 worker 启动竞态,用 2s;
+    // Windows taskkill 树杀耗时可到数十秒,等待给足余量
+    const started = await BashTool.call({ command, run_in_background: true, timeout: 2000 }, context);
+    const taskId = String(started.content).match(/task_\d+/)?.[0];
+    expect(taskId).toBeTruthy();
+
+    const completed = await TaskOutputTool.call({ task_id: taskId, block: true, timeout: 60_000 }, context);
+    expect(completed._meta?.execution).toMatchObject({ outcome: "timed_out", terminationReason: "timeout" });
+  }, 90_000);
+});
