@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { MAX_FETCH_BYTES } from './web-fetch-http.js'
 
 const STATUS_SENTINEL = '__SDK_STATUS__:'
@@ -75,69 +78,84 @@ function runCurl(args: string[], options: { input?: string; signal?: AbortSignal
 }
 
 async function fetchViaCurl(input: string, init: RequestInit = {}, proxyUrl: string): Promise<Response> {
-  const args = [
-    '--silent',
-    '--show-error',
-    '--max-time',
-    '30',
-    '--connect-timeout',
-    '12',
-    '--proxy',
-    proxyUrl,
-    '--request',
-    init.method ?? 'GET',
-    input,
-  ]
-  if (init.redirect === 'manual') {
-    args.push('--max-redirs', '0', '--dump-header', '-')
-  } else {
-    args.splice(2, 0, '--location')
-  }
+  // Body and headers go to temp files and stdout carries only the tiny status
+  // sentinel: gluing the body onto the -w stream made the byte-exact result
+  // depend on how each curl build interleaves writes, and text-decoding the
+  // stream corrupted binary responses.
+  const dir = await mkdtemp(join(tmpdir(), 'lume-curl-'))
+  const bodyPath = join(dir, 'body')
+  const headerPath = join(dir, 'headers')
+  try {
+    const args = [
+      '--silent',
+      '--show-error',
+      '--max-time',
+      '30',
+      '--connect-timeout',
+      '12',
+      '--proxy',
+      proxyUrl,
+      '--request',
+      init.method ?? 'GET',
+      input,
+    ]
+    if (init.redirect === 'manual') {
+      args.push('--max-redirs', '0', '--dump-header', headerPath)
+    } else {
+      args.splice(2, 0, '--location')
+    }
 
-  const headers = new Headers(init.headers)
-  headers.forEach((value, key) => {
-    args.push('--header', `${key}: ${value}`)
-  })
+    const headers = new Headers(init.headers)
+    headers.forEach((value, key) => {
+      args.push('--header', `${key}: ${value}`)
+    })
 
-  // Bodies travel on stdin (--data-binary @-): request bodies are unbounded and
-  // Windows caps a single argv entry around 32K chars, so large POST payloads
-  // must never ride on the command line.
-  const stdinBody = typeof init.body === 'string' ? init.body : undefined
-  if (stdinBody !== undefined) {
-    args.push('--data-binary', '@-')
-  }
+    // Bodies travel on stdin (--data-binary @-): request bodies are unbounded and
+    // Windows caps a single argv entry around 32K chars, so large POST payloads
+    // must never ride on the command line.
+    const stdinBody = typeof init.body === 'string' ? init.body : undefined
+    if (stdinBody !== undefined) {
+      args.push('--data-binary', '@-')
+    }
 
-  args.push('--write-out', `\n${STATUS_SENTINEL}%{http_code}`)
+    args.push('--output', bodyPath)
+    args.push('--write-out', `\n${STATUS_SENTINEL}%{http_code}`)
 
-  const { stdout, stderr } = await runCurl(args, { input: stdinBody, signal: init.signal ?? undefined })
-  const output = stdout.toString()
-  const markerIndex = output.lastIndexOf(STATUS_SENTINEL)
-  if (markerIndex < 0) {
-    throw new Error(stderr?.trim() || 'curl returned invalid output')
-  }
-  let body = output.slice(0, markerIndex)
-  const statusText = output.slice(markerIndex + STATUS_SENTINEL.length).trim()
-  const status = Number.parseInt(statusText, 10)
-  let responseHeaders = new Headers({
-    'content-type': headers.get('content-type') ?? 'text/plain; charset=utf-8',
-  })
-  if (init.redirect === 'manual') {
-    const headerEnd = body.search(/\r?\n\r?\n/)
-    if (headerEnd >= 0) {
-      const headerText = body.slice(0, headerEnd)
-      body = body.slice(headerEnd).replace(/^\r?\n\r?\n/, '')
+    const { stdout, stderr } = await runCurl(args, { input: stdinBody, signal: init.signal ?? undefined })
+    const output = stdout.toString()
+    const markerIndex = output.lastIndexOf(STATUS_SENTINEL)
+    if (markerIndex < 0) {
+      throw new Error(stderr?.trim() || 'curl returned invalid output')
+    }
+    const statusText = output.slice(markerIndex + STATUS_SENTINEL.length).trim()
+    const status = Number.parseInt(statusText, 10)
+    let body: Buffer
+    try {
+      body = await readFile(bodyPath)
+    } catch {
+      throw new Error(stderr?.trim() || 'curl returned invalid output')
+    }
+    let responseHeaders = new Headers({
+      'content-type': headers.get('content-type') ?? 'text/plain; charset=utf-8',
+    })
+    if (init.redirect === 'manual') {
+      const headerText = await readFile(headerPath, 'utf8').catch(() => '')
+      const blockEnd = headerText.search(/\r?\n\r?\n/)
+      const headerBlock = blockEnd >= 0 ? headerText.slice(0, blockEnd) : headerText
       const parsedHeaders = new Headers()
-      for (const line of headerText.split(/\r?\n/).slice(1)) {
+      for (const line of headerBlock.split(/\r?\n/).slice(1)) {
         const separator = line.indexOf(':')
         if (separator > 0) parsedHeaders.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim())
       }
       responseHeaders = parsedHeaders
     }
+    return new Response(new Uint8Array(body), {
+      status: Number.isFinite(status) ? status : 599,
+      headers: responseHeaders,
+    })
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined)
   }
-  return new Response(body, {
-    status: Number.isFinite(status) ? status : 599,
-    headers: responseHeaders,
-  })
 }
 
 export async function sdkFetch(input: string, init?: RequestInit): Promise<Response> {
