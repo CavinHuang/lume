@@ -4,12 +4,15 @@ import { getApplicableActivities } from "./routine-activities"
 import { writeRoutine, readRoutine } from "./routine-store"
 import { generateRoutinePlanWithLlm, type LlmRoutinePlan } from "./routine-llm-adapter"
 import { createLogger } from "../infra/logger"
+
+import { localDateKey } from "./routine-date"
 import { getPlanningTodoStore } from "../planning/planning-todo-store"
 
 const log = createLogger("routine")
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10)
+  // 本地时区日期键，替代 UTC toISOString 键（#408）
+  return localDateKey()
 }
 
 function collectRoutineContext(): RoutineContext {

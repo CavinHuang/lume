@@ -108,6 +108,12 @@ export function useGlobalAgentListeners() {
   const tabs = useAtomValue(tabsAtom)
   const activeTabId = useAtomValue(activeTabIdAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  // 监听 handler 内经 ref 读取：effect deps 含 tabs/currentWorkspaceId 会让
+  // 全局订阅随切 tab/标题更新高频退订重订，退订-重订间隙的保留类事件可丢（#409）
+  const tabsRef = useRef(tabs)
+  tabsRef.current = tabs
+  const currentWorkspaceIdRef = useRef(currentWorkspaceId)
+  currentWorkspaceIdRef.current = currentWorkspaceId
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const setWelcomePromptSeed = useSetAtom(welcomePromptSeedAtom)
   const setSuggestionsVersion = useSetAtom(suggestionsVersionAtom)
@@ -305,8 +311,8 @@ export function useGlobalAgentListeners() {
               const next = buildDesktopProposalOpenRequestState({
                 proposalId,
                 proposals: Array.isArray(proposals) ? proposals : [],
-                tabs,
-                currentWorkspaceId,
+                tabs: tabsRef.current,
+                currentWorkspaceId: currentWorkspaceIdRef.current,
               })
               if (!next) return
               setTabs(next.tabs)
@@ -453,5 +459,5 @@ export function useGlobalAgentListeners() {
         setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
       }
     }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setTabs, tabs, currentWorkspaceId, setActiveTabId, setWelcomePromptSeed, setSuggestionsVersion, setMemoryCenterVersion, enqueueRuntimeEvent])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setTabs, setActiveTabId, setWelcomePromptSeed, setSuggestionsVersion, setMemoryCenterVersion, enqueueRuntimeEvent])
 }

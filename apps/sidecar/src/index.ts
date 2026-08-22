@@ -31,9 +31,8 @@ import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/rende
 import { setPersistedSettingsMutationWriter } from "./services/system/settings-store";
 import { setLogDigestPolicy } from "./services/infra/log-digest";
 import type { LumeLogDigestPolicy } from "@lume/shared";
+import { installPrivilegedCredential } from "./services/infra/privileged-auth";
 import { installConnectionVaultKey } from "./services/channel/connection-credential-store";
-import { installWikiPrivilegedCredential } from "./services/wiki/privileged-auth";
-import { markWikiProposalSecurityGateAvailable } from "./services/wiki/wiki-capabilities";
 import { createBrowserBroker } from "./services/browser/browser-broker";
 import { setActiveBrowserBroker } from "./services/browser/browser-broker-holder";
 import { ExternalChromeTransport } from "./services/browser/external-chrome-transport";
@@ -232,9 +231,8 @@ async function handleRpcLine(line: string): Promise<void> {
     return;
   }
 
-  if (method === "system.wiki-privileged-credential") {
-    installWikiPrivilegedCredential((payload.params as { credential?: unknown } | null)?.credential);
-    markWikiProposalSecurityGateAvailable();
+  if (method === "system.privileged-credential") {
+    installPrivilegedCredential((payload.params as { credential?: unknown } | null)?.credential);
     return;
   }
 

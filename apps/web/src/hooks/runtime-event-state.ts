@@ -19,10 +19,12 @@ export function appendRuntimeEvent(
   event: LumeRuntimeEvent,
 ): RuntimeEventState {
   const current = prev[event.threadId]
-  if (isDuplicateSubmittedUserEvent(current?.events ?? [], event)) {
-    return prev
-  }
-  const events = trimRuntimeEvents(orderedAppend(current?.events ?? [], event))
+  const resolution = resolveSubmittedUserEvent(current?.events ?? [], event)
+  if (resolution.action === 'skip') return prev
+  const base = current?.events ?? []
+  const events = trimRuntimeEvents(resolution.action === 'replace'
+    ? sortRuntimeEvents(base.map((existing, index) => index === resolution.index ? event : existing))
+    : orderedAppend(base, event))
   return {
     ...prev,
     [event.threadId]: {
@@ -50,7 +52,12 @@ export function appendRuntimeEvents(
     const current = next[threadId]
     let acc = current?.events ?? []
     for (const event of list) {
-      if (isDuplicateSubmittedUserEvent(acc, event)) continue
+      const resolution = resolveSubmittedUserEvent(acc, event)
+      if (resolution.action === 'skip') continue
+      if (resolution.action === 'replace') {
+        acc = sortRuntimeEvents(acc.map((existing, index) => index === resolution.index ? event : existing))
+        continue
+      }
       acc = orderedAppend(acc, event)
     }
     const trimmed = trimRuntimeEvents(acc)
@@ -134,9 +141,11 @@ function mergeHydratedRuntimeEvents(
   const seenIds = new Set<string>()
   for (const event of [...persistedEvents, ...liveEvents]) {
     if (seenIds.has(event.id)) continue
-    if (isDuplicateSubmittedUserEvent(merged, event)) continue
+    const resolution = resolveSubmittedUserEvent(merged, event)
+    if (resolution.action === 'skip') continue
+    if (resolution.action === 'replace') merged[resolution.index] = event
+    else merged.push(event)
     seenIds.add(event.id)
-    merged.push(event)
   }
   // 回放按内容块/流事件逐条产出 delta，不像 live 路径边流边合并，计数远更膨胀——
   // 直接 trim 会把头部 turn 的正文 delta 丢掉（回放没有 assistant.final 兜底重建，
@@ -202,22 +211,41 @@ function sameRuntimeEvent(a: LumeRuntimeEvent, b: LumeRuntimeEvent | undefined):
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
-function isDuplicateSubmittedUserEvent(
+function isOptimisticSubmission(event: LumeRuntimeEvent): boolean {
+  return event.id.startsWith('optimistic:') || event.runId.startsWith('optimistic:')
+}
+
+type SubmittedUserResolution =
+  | { action: 'skip' }
+  | { action: 'replace'; index: number }
+  | { action: 'append' }
+
+/**
+ * message.user.submitted 去重三态判定(#414)：text+30s 窗口只服务「乐观双写副本 ↔
+ * 权威事件」配对——同侧相遇（双乐观/双权威）即使同文本同窗口也是两次独立提交，
+ * 不得互杀（30 秒内重发同文本的第二条气泡曾被整体吞掉）。权威者胜：新事件为权威
+ * 时替换乐观副本（继承槽位，携带真实 runId/messageId）；新事件为乐观时跳过（权威
+ * 已在）。messageId 精确相等仍无条件 skip（IM 渠道 raw/model-expanded 双写）。
+ */
+function resolveSubmittedUserEvent(
   events: LumeRuntimeEvent[],
   next: LumeRuntimeEvent,
-): boolean {
-  if (next.type !== 'message.user.submitted') return false
-  return events.some((event) => (
-    event.type === 'message.user.submitted'
-    && event.threadId === next.threadId
-    && (
-      (event.messageId && next.messageId && event.messageId === next.messageId)
-      || (
-        event.text === next.text
-        && Math.abs(Date.parse(event.createdAt) - Date.parse(next.createdAt)) < 30_000
-      )
-    )
-  ))
+): SubmittedUserResolution {
+  if (next.type !== 'message.user.submitted') return { action: 'append' }
+  const nextOptimistic = isOptimisticSubmission(next)
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index]
+    if (event.type !== 'message.user.submitted' || event.threadId !== next.threadId) continue
+    if (event.messageId && next.messageId && event.messageId === next.messageId) return { action: 'skip' }
+    if (
+      event.text === next.text
+      && Math.abs(Date.parse(event.createdAt) - Date.parse(next.createdAt)) < 30_000
+      && isOptimisticSubmission(event) !== nextOptimistic
+    ) {
+      return nextOptimistic ? { action: 'skip' } : { action: 'replace', index }
+    }
+  }
+  return { action: 'append' }
 }
 
 function runtimeEventOrder(event: LumeRuntimeEvent): number {

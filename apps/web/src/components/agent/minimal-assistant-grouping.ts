@@ -10,7 +10,6 @@ export type AssistantSegment =
   | { kind: 'memory_mutation'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
   | { kind: 'ask_user_question'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
   | { kind: 'image_tools'; blocks: Array<Extract<RuntimeAssistantBlock, { type: 'tool_call' }>> }
-  | { kind: 'wiki_proposal'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
 
 export function groupAssistantBlocksForMinimal(blocks: RuntimeAssistantBlock[]): AssistantSegment[] {
   const segments: AssistantSegment[] = []
@@ -36,12 +35,6 @@ export function groupAssistantBlocksForMinimal(blocks: RuntimeAssistantBlock[]):
       flushProcess()
       flushImages()
       segments.push({ kind: 'ask_user_question', block })
-      continue
-    }
-    if (block.type === 'tool_call' && isCompletedWikiProposal(block)) {
-      flushProcess()
-      flushImages()
-      segments.push({ kind: 'wiki_proposal', block })
       continue
     }
     if (block.type === 'tool_call' && isMemoryMutation(block)) {
@@ -73,7 +66,6 @@ export type StandardAssistantSegment =
   | { kind: 'memory_mutation'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
   | { kind: 'ask_user_question'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
   | { kind: 'image_tools'; blocks: Array<Extract<RuntimeAssistantBlock, { type: 'tool_call' }>> }
-  | { kind: 'wiki_proposal'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
 
 /** 标准模式只合并相邻图片生成调用，其余块保持原有逐块展示。 */
 export function groupAssistantBlocksForStandard(blocks: RuntimeAssistantBlock[]): StandardAssistantSegment[] {
@@ -91,11 +83,6 @@ export function groupAssistantBlocksForStandard(blocks: RuntimeAssistantBlock[])
     if (block.type === 'tool_call' && isAskUserQuestion(block)) {
       flushImages()
       segments.push({ kind: 'ask_user_question', block })
-      continue
-    }
-    if (block.type === 'tool_call' && isCompletedWikiProposal(block)) {
-      flushImages()
-      segments.push({ kind: 'wiki_proposal', block })
       continue
     }
     if (block.type === 'tool_call' && isMemoryMutation(block)) {
@@ -118,13 +105,6 @@ export function isAskUserQuestion(
   block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }>,
 ): boolean {
   return block.toolCall.toolName === 'AskUserQuestion'
-}
-
-function isCompletedWikiProposal(
-  block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }>,
-): boolean {
-  return block.toolCall.toolName === 'wiki.propose_changes'
-    && block.toolCall.status === 'completed'
 }
 
 function isMemoryMutation(block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }>): boolean {

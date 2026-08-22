@@ -1658,6 +1658,9 @@ export class QueryEngine {
       type: 'result',
       subtype: endSubtype,
       session_id: this.sessionId,
+      // 用户中止显式携带 stop_reason：projector/web 端按此归一为 aborted，
+      // 不再与 error_during_execution 的失败语义混同（#401）。
+      ...(runAborted ? { stop_reason: 'aborted' as const } : {}),
       is_error: endSubtype !== 'success',
       num_turns: this.turnCount,
       total_cost_usd: this.totalCost,

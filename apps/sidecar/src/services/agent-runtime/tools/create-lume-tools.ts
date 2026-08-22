@@ -26,10 +26,6 @@ import { getComputerUseSessionRegistry } from "./computer-use/computer-use-sessi
 import type { ResolvedComputerUseSurface } from "./computer-use/computer-use-surface";
 import { createComputerUseRequestBridge } from "./node-repl/node-repl-computer-use-bridge";
 import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
-import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
-import { createWikiProposalTool, createWikiReadTools } from "./wiki/create-wiki-tools";
-import { resolveTrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
-import type { TrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
 import { createPlanningTodoTools } from "./planning/create-planning-todo-tools";
 import { createSuggestionTools } from "./suggest/create-suggestion-tools";
 import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
@@ -54,13 +50,11 @@ export interface CreateLumeRuntimeToolsInput {
   chatType?: AgentSendInput["chatType"];
   workspaceSlug?: string;
   permissionMode?: AgentSendInput["permissionMode"];
-  messageMetadata?: Record<string, unknown>;
   originalUserInstruction?: string;
   computerUseSurface?: ResolvedComputerUseSurface;
   memoryToolPolicy?: MemoryToolPolicy;
   includeCitations: boolean;
   automationExecution?: boolean;
-  wikiProposalEnabled?: boolean;
   planningExecutionContext?: ExecutionSurfaceContext;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
@@ -75,56 +69,8 @@ export interface CreateLumeRuntimeToolsOutput {
   availableToolNames: string[];
 }
 
-export function createOrdinaryWikiTools(input: {
-  profile?: TrustedWikiRuntimeProfile;
-  proposalEnabled?: boolean;
-  creatorThreadId?: string;
-}): ToolDefinition[] {
-  if (!input.profile || input.profile.explicit) return [];
-  return [
-    ...createWikiReadTools(input.profile.scope),
-    createWikiProposalTool(input.profile.scope, {
-      creatorThreadId: input.creatorThreadId,
-      creatorProfile: "ordinary-agent",
-      securityGateAvailable: input.proposalEnabled === true,
-    }),
-  ];
-}
-
-export function createWikiToolsForTrustedProfile(input: {
-  profile?: TrustedWikiRuntimeProfile;
-  proposalEnabled?: boolean;
-  creatorThreadId?: string;
-}): ToolDefinition[] {
-  if (!input.profile) return [];
-  if (!input.profile.explicit) return createOrdinaryWikiTools(input);
-  return [
-    ...createWikiReadTools(input.profile.scope),
-    createWikiProposalTool(input.profile.scope, {
-      creatorThreadId: input.creatorThreadId,
-      creatorProfile: "ask-wiki",
-      securityGateAvailable: input.proposalEnabled === true,
-    }),
-  ];
-}
-
 export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): CreateLumeRuntimeToolsOutput {
   const threadMeta = getAgentThreadMeta(input.threadId);
-  const wikiProfile = resolveTrustedWikiRuntimeProfile({
-    threadMeta,
-    workspaceId: input.workspaceId,
-    workspaceExists: Boolean(input.workspaceId && getAgentWorkspace(input.workspaceId)),
-    threadType: input.threadType,
-    chatType: input.chatType
-  });
-  if (wikiProfile?.explicit) {
-    const customTools = createWikiToolsForTrustedProfile({
-      profile: wikiProfile,
-      proposalEnabled: input.wikiProposalEnabled,
-      creatorThreadId: input.threadId,
-    });
-    return { customTools, availableToolNames: customTools.map((tool) => tool.name) };
-  }
   const writeAllowed = input.threadType !== "subagent" && input.chatType !== "group" && input.chatType !== "channel";
   const dreamProfile = threadMeta?.memoryProfile?.kind === "dream" ? threadMeta.memoryProfile : undefined;
   const enabledMemoryToolNames = [
@@ -218,11 +164,6 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const nodeReplTools = computerUseSurface === "sky"
     ? allNodeReplTools.filter((tool) => tool.name === "mcp__node_repl__js")
     : allNodeReplTools;
-  const ordinaryWikiTools = createOrdinaryWikiTools({
-    profile: wikiProfile,
-    proposalEnabled: input.wikiProposalEnabled,
-    creatorThreadId: input.threadId,
-  });
   // Planning Todo is a trusted capability. A runtime without a sidecar-issued
   // surface context must not even receive the tool definitions.
   const planningTodoTools = input.planningExecutionContext && input.planningExecutionContext.surface !== "subagent"
@@ -250,7 +191,6 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...imageGenTools,
     ...nodeReplTools,
     ...browserTools,
-    ...ordinaryWikiTools,
     ...planningTodoTools,
     ...computerUseTools,
   ];

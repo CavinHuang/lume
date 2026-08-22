@@ -36,45 +36,6 @@ function descriptor(overrides: Partial<LumeToolDescriptor> = {}): LumeToolDescri
 }
 
 describe("ToolExecutionGateway", () => {
-  test("denies protected roots before bypass permissions and PermissionRuntime", async () => {
-    const root = mkdtempSync(join(tmpdir(), "lume-gateway-"));
-    const wiki = join(root, "wiki");
-    mkdirSync(wiki);
-    let permissionCalls = 0;
-    const gateway = new ToolExecutionGateway({
-      guardrails: guardrail({ behavior: "allow" }),
-      permissionRuntime: {
-        async authorize() {
-          permissionCalls += 1;
-          return {
-            status: "allow",
-            reasonCode: "runtime_allow",
-            riskLevel: "low",
-            explanation: "runtime allowed"
-          };
-        }
-      } as Pick<PermissionRuntime, "authorize">
-    });
-
-    try {
-      await expect(gateway.authorize({
-        toolName: "Read",
-        descriptor: descriptor({ name: "Read", canonicalName: "read" }),
-        input: { file_path: join(wiki, "secret.md") },
-        permissionMode: "bypassPermissions",
-        protectedRoots: [wiki],
-        context: { threadId: "thread-1", cwd: root }
-      })).resolves.toMatchObject({
-        status: "deny",
-        reasonCode: "protected_root",
-        risk: "high"
-      });
-      expect(permissionCalls).toBe(0);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   test("delegates permission decisions to PermissionRuntime", async () => {
     const gateway = new ToolExecutionGateway({
       guardrails: guardrail({ behavior: "allow" }),

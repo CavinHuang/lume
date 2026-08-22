@@ -6,6 +6,8 @@ export interface AgentRuntimeKernelDispatch<TInput extends { threadId: string; u
   abortSignal?: AbortSignal;
   onExecutionStarted?: () => void;
   priority?: "user" | "background";
+  /** 由 execute 实现消费的透传开关（如 appendUserMessage），随队列项一并保留。 */
+  executeHints?: { appendUserMessage?: boolean };
 }
 
 export interface AgentRuntimeKernelQueuedDispatch<TInput extends { threadId: string; userMessage: string }, TEmit>
@@ -43,6 +45,11 @@ export interface AgentRuntimeKernelOptions<TInput extends { threadId: string; us
   onQueuedBlocked?: (dispatch: AgentRuntimeKernelQueuedDispatch<TInput, TEmit>, error: unknown) => void;
   createQueuedDispatchId?: () => string;
   now?: () => number;
+  /**
+   * kernel 之外的线程占用面（如直调执行器的互斥包装）。占用期间新派发入队、
+   * 队列不启动，直到占用方调用 notifyThreadReleased（#398）。
+   */
+  isThreadOccupied?: (threadId: string) => boolean;
 }
 
 export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: string }, TEmit> {
@@ -58,15 +65,20 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
   dispatch(
     input: TInput,
     emit: TEmit,
-    options?: { onExecutionStarted?: () => void; priority?: "user" | "background" }
+    options?: { onExecutionStarted?: () => void; priority?: "user" | "background"; executeHints?: { appendUserMessage?: boolean } }
   ): AgentRuntimeKernelDispatchResult {
     const dispatch = {
       input,
       emit,
       onExecutionStarted: options?.onExecutionStarted,
-      priority: options?.priority ?? "user"
+      priority: options?.priority ?? "user",
+      ...(options?.executeHints ? { executeHints: options.executeHints } : {})
     };
-    if (this.activeThreads.has(input.threadId) || this.getQueuedCount(input.threadId) > 0) {
+    if (
+      this.activeThreads.has(input.threadId)
+      || this.options.isThreadOccupied?.(input.threadId)
+      || this.getQueuedCount(input.threadId) > 0
+    ) {
       const queue = this.queuedDispatches.get(input.threadId) ?? [];
       const queuedDispatch = this.createQueuedDispatch(dispatch);
       queue.push(queuedDispatch);
@@ -99,6 +111,23 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
     if (!controller) return false;
     controller.abort(new Error("Agent run stopped"));
     return true;
+  }
+
+  /** 直接调用方（互斥包装）释放线程后调用，唤醒被占用挡住的队列。 */
+  notifyThreadReleased(threadId: string): void {
+    this.scheduleStartNext(threadId);
+  }
+
+  /** 等待线程完全空闲（无 kernel 活跃 run、无外部占用）。用于需要同步语义的派发方。 */
+  async waitForThreadIdle(threadId: string): Promise<void> {
+    while (
+      this.activeThreads.has(threadId)
+      || this.options.isThreadOccupied?.(threadId)
+    ) {
+      const tasks = Array.from(this.running);
+      if (tasks.length === 0) break;
+      await Promise.allSettled(tasks);
+    }
   }
 
   getQueueRevision(threadId: string): number {
@@ -296,6 +325,7 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
   private async startNextQueued(threadId: string): Promise<void> {
     if (this.activeThreads.has(threadId)) return;
     if (this.paused.has(threadId)) return;
+    if (this.options.isThreadOccupied?.(threadId)) return;
     const queue = this.queuedDispatches.get(threadId) ?? [];
     const first = queue[0];
     const next = first?.priority === "background"
