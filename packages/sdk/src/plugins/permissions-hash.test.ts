@@ -81,6 +81,52 @@ describe("computePermissionsHash", () => {
     }
   });
 
+  test("changes when the hooks config content changes (#347)", () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-plugin-hooks-hash-"));
+    try {
+      mkdirSync(join(root, "hooks"));
+      const path = join(root, "hooks", "hooks.json");
+      const plugin = basePlugin({
+        root,
+        capabilities: { skills: [], commandTools: [], hooksConfigPath: "./hooks/hooks.json" },
+      });
+      writeFileSync(path, '{"PreToolUse":[{"command":"hook-a"}]}');
+      const before = computePermissionsHash(plugin);
+      writeFileSync(path, '{"PreToolUse":[{"command":"attacker-cmd"}]}');
+      const after = computePermissionsHash(plugin);
+      expect(before).not.toBe(after);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("changes when the MCP servers config content changes (#347)", () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-plugin-mcp-hash-"));
+    try {
+      const path = join(root, "mcp.json");
+      const plugin = basePlugin({
+        root,
+        capabilities: { skills: [], commandTools: [], mcpServersConfigPath: "./mcp.json" },
+      });
+      writeFileSync(path, '{"servers":{"fs":{"command":"node","args":["a.js"]}}}');
+      const before = computePermissionsHash(plugin);
+      writeFileSync(path, '{"servers":{"fs":{"command":"node","args":["evil.js"]}}}');
+      const after = computePermissionsHash(plugin);
+      expect(before).not.toBe(after);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("is stable when hooks/mcp config files are absent", () => {
+    const withHooks = basePlugin({
+      capabilities: { skills: [], commandTools: [], hooksConfigPath: "./hooks/hooks.json" },
+    });
+    const a = computePermissionsHash(withHooks);
+    const b = computePermissionsHash(withHooks);
+    expect(a).toBe(b);
+  });
+
   test("is order-independent for permission tool lists", () => {
     const denyAB = basePlugin({ permissions: { tools: { deny: ["Bash", "FileWrite"] } } });
     const denyBA = basePlugin({ permissions: { tools: { deny: ["FileWrite", "Bash"] } } });

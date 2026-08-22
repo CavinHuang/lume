@@ -17,10 +17,12 @@ import type { NormalizedPlugin } from "./normalized.js";
  * enablement state. A pure version bump that keeps permissions/capabilities
  * unchanged may reuse a previous approval.
  *
- * Command tools are fully resolved in NormalizedPlugin, so they contribute
- * their full execution config including env values and metadata (#315):
- * flipping metadata.isReadOnly changes permission classification and swapping
- * an env value rewrites what the approved command talks to.
+ * Hooks/MCP/LSP config files contribute both their path and their content
+ * hash (#347): hooks and MCP servers are command-execution entry points, so a
+ * post-approval edit of hooks.json / mcp.json must force a re-review just like
+ * a commandTool change does. Command tools are fully resolved in
+ * NormalizedPlugin, so they contribute their full execution config including
+ * env values and metadata (#315).
  */
 export function computePermissionsHash(plugin: NormalizedPlugin): string {
   return createHash("sha256").update(stableStringify(canonicalSummary(plugin))).digest("hex");
@@ -33,7 +35,9 @@ interface PermissionSummary {
   capabilities: {
     skills: string[];
     hooksConfigPath: string | null;
+    hooksConfigHash: string | null;
     mcpServersConfigPath: string | null;
+    mcpServersConfigHash: string | null;
     lspServersConfigPath: string | null;
     lspServersConfigHash: string | null;
     commandTools: Array<Record<string, unknown>>;
@@ -66,7 +70,9 @@ function canonicalSummary(plugin: NormalizedPlugin): PermissionSummary {
         .sort((a, b) => a.root.localeCompare(b.root))
         .map((skill) => skill.root),
       hooksConfigPath: plugin.capabilities.hooksConfigPath ?? null,
+      hooksConfigHash: capabilityFileHash(plugin, plugin.capabilities.hooksConfigPath),
       mcpServersConfigPath: plugin.capabilities.mcpServersConfigPath ?? null,
+      mcpServersConfigHash: capabilityFileHash(plugin, plugin.capabilities.mcpServersConfigPath),
       lspServersConfigPath: plugin.capabilities.lspServersConfigPath ?? null,
       lspServersConfigHash: capabilityFileHash(plugin, plugin.capabilities.lspServersConfigPath),
       commandTools,
