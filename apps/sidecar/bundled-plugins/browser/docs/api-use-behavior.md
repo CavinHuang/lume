@@ -1,5 +1,5 @@
 # API use behavior
 
-Use `agent.browsers.getDefault()` for Lume's shared persistent in-app browser profile. Create or select a tab through `browser.tabs`, then prefer Playwright role, label, placeholder, text, test-id, or CSS locators over coordinates. Use `browser.tabs.new({ sessionKind: "agent-task" })` only for explicitly requested isolated browsing.
+Control pages through the built-in `mcp__browser__*` tools: `list_tabs`/`open`/`switch_tab` for tabs, `snapshot` for observation, and ref-based actions such as `click`, `fill`, `select`, and `press`. Prefer refs from the latest snapshot over coordinates or CSS selectors. `mcp__node_repl__js` with `browser-client.mjs` remains a diagnostics entry point when the built-in tools are unavailable.
 
-Keep reusable browser and tab bindings in the persistent runtime. Use `nodeRepl.write(JSON.stringify(value))` for observations because bare final expressions are not returned.
+Keep observations compact. Report counts and the requested items, not entire page trees, and re-observe after every navigation before claiming an action succeeded.

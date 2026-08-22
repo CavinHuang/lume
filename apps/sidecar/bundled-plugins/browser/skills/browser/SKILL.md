@@ -1,6 +1,6 @@
 ---
 name: browser
-description: Control pages in Lume's shared persistent in-app browser profile
+description: Control pages in Lume's shared persistent in-app browser profile through built-in browser tools
 activate-tools:
   - mcp__node_repl__js
 ---
@@ -9,71 +9,36 @@ activate-tools:
 
 Use this skill for ordinary live web navigation and interaction. The Browser runtime is built into Lume and defaults to the shared persistent `iab` profile, so logins and site storage survive Lume restarts while tab control remains scoped to the current task. Use external Chrome only when the user explicitly requests Chrome or needs its current Chrome tabs, profile, or extensions.
 
-Treat connection setup as internal. Do not mention Node REPL, JavaScript sessions, module imports, or Browser Broker in user-facing updates unless the user asks about the implementation.
+Treat connection setup as internal. Do not mention Browser Broker or runtime plumbing in user-facing updates unless the user asks about the implementation.
 
-Every user turn starts with fresh JavaScript bindings and deferred Browser tool activation. In every turn, invoke this Skill before calling `mcp__node_repl__js`. The first `mcp__node_repl__js` call after loading the Skill must repeat the trusted client bootstrap, even when the transcript contains `agent`, `browser`, or `tab` bindings from an earlier turn.
+## Primary control loop: observe → act → observe
 
-Use this complete bootstrap and resumption block for that first browser call:
+The `mcp__browser__*` tools are available for the whole user request. Never write browser JavaScript for ordinary interaction.
 
-```js
-if (!globalThis.agent?.browsers) {
-  var { setupLumeBrowserRuntime } = await import("${PLUGIN_DIR}/scripts/browser-client.mjs");
-  await setupLumeBrowserRuntime({ globals: globalThis });
-}
-var browser = await agent.browsers.getDefault();
-var resumedTabs = await browser.tabs.resumeHandoff();
-var tab = resumedTabs[0]
-  ?? await browser.tabs.selected();
-if (!tab) tab = await browser.tabs.new();
-if ((await tab.url()) !== "https://example.com") await tab.goto("https://example.com");
-nodeRepl.write(JSON.stringify({ title: await tab.title(), url: await tab.url() }));
-```
+1. Start with `mcp__browser__list_tabs` to reuse the task's locked tab, or `mcp__browser__open` (url) when no suitable tab exists.
+2. Call `mcp__browser__snapshot` before interacting. Interactive nodes carry refs such as `[ref=e12]`.
+3. Act by ref: `mcp__browser__click` / `double_click` / `hover` / `fill` / `type` / `press` / `select` / `check` / `scroll` with `ref: "@e12"`.
+4. Every mutation tool returns a fresh interactive snapshot of the post-action page. Read it before the next action, and use only refs from the newest snapshot.
 
-Set `timeout_ms` to `300000` on browser `mcp__node_repl__js` calls. Navigation can wait for an action-time confirmation, so the default tool timeout is too short.
-Set `title` to a short user-facing description such as `读取 X 首页` or `打开 GitHub Issue`; never expose the runtime implementation in that title.
+Large or dense pages: follow the snapshot's `next_cursor` by passing it as the `cursor` argument until the tree is exhausted; drill into one subtree with `scope_ref`; request `interactive_only: true` first when you only need actionable controls. `mcp__browser__screenshot` with `annotated: true` labels visible elements with the same refs for visual inspection — screenshots are never interaction targets.
 
-The in-app browser profile and handed-off tabs persist across turns; JavaScript bindings persist only within the current turn. Use `var` for reusable top-level bindings, and return observations with `nodeRepl.write(JSON.stringify(value))`; bare final expressions are invisible.
+## Tab semantics
 
-Only use `await browser.tabs.new({ sessionKind: "agent-task" })` when the user explicitly asks for an isolated or temporary session. That session intentionally does not retain login state after Lume exits.
+The session locks one active tab. `open` creates a new Agent-owned tab and locks it; `switch_tab` is the only way to move between Agent-owned tabs. A click that opens a new tab does not switch the lock — call `list_tabs`, then `switch_tab`. Navigation on the locked tab uses `navigate` / `back` / `forward` / `reload`.
 
-For follow-up requests such as "continue", "read the latest posts", "click the third item", or "scroll down", keep using the resumed tab. Do not create a duplicate merely because the new turn has a new browser turn id. If an old binding returns `action_denied` or `tab_not_found`, discard it, call `browser.tabs.resumeHandoff()` once, select the visible result, and retry the observation.
+## Dialogs, files, and credentials
 
-Prefer semantic Playwright locators and re-observe after navigation or a failed action:
+- A blocking JavaScript dialog makes other actions return `dialog_blocking`. Read it with `mcp__browser__dialog`, then resolve it with `mcp__browser__handle_dialog`.
+- Downloads: `mcp__browser__download` clicks a download control and waits for the file; when it returns `in_progress`, re-call with only `download_id` to poll. Completed files come back as task-scoped `file_ref` values you can pass to upload or read tools.
+- Uploads: `mcp__browser__upload` takes a ref plus task-authorized file paths or browser-download `file_ref` values, and coordinates the file chooser itself.
+- Credentials: call `mcp__browser__list_secrets` for the current origin, then `mcp__browser__fill_secret` with the returned `secret_id`. Never type passwords, OTPs, or tokens into `fill`/`type`.
 
-```js
-var snapshot = await tab.playwright.domSnapshot();
-nodeRepl.write(JSON.stringify(snapshot));
-var search = tab.playwright.getByRole("textbox", { name: "Search" });
-await search.fill("Lume");
-await search.press("Enter");
-```
+## Failure and takeover handling
 
-For reading, prefer bounded visible text over dumping a full raw DOM snapshot:
+On `stale_target`, take a new snapshot and retry with the fresh refs. On `user_action_required` (MFA, CAPTCHA, hardware keys, payment), stop and ask the user to complete the step; do not retry it. On `user_takeover_required` or `paused_by_user`, the user has taken the page — stop all browser actions, say so, and wait until the user explicitly returns control. When a tool returns `repeated_action_failure`, do not retry the same action; report what blocked it.
 
-```js
-var text = await tab.playwright.locator("body").innerText();
-nodeRepl.write(JSON.stringify({ url: await tab.url(), title: await tab.title(), text: text.slice(0, 20000) }));
-```
+## Diagnostics fallback
 
-For virtualized feeds or result lists, collect and deduplicate semantic items over a bounded number of scrolls. Start with `article`, `main article`, or another role/label derived from the live page; do not assume one selector works on every site:
+Only when the `mcp__browser__*` tools are unavailable or a tool insists the runtime is broken, fall back to the Node REPL client: load this Skill, then in the first `mcp__node_repl__js` call bootstrap with `${PLUGIN_DIR}/scripts/browser-client.mjs` (`setupLumeBrowserRuntime`), resume via `browser.tabs.resumeHandoff()`, set `timeout_ms` to `300000`, and return observations with `nodeRepl.write(JSON.stringify(value))`. Treat this as a diagnostic entry point, not the default control path.
 
-```js
-var seen = new Set();
-var items = [];
-for (var round = 0; round < 8 && items.length < 10; round += 1) {
-  var visibleItems = await tab.playwright.locator("article").allTextContents();
-  for (var itemText of visibleItems) {
-    var normalized = itemText.trim();
-    if (normalized && !seen.has(normalized)) { seen.add(normalized); items.push(normalized); }
-  }
-  if (items.length < 10) {
-    await tab.cua.scroll({ scrollX: 0, scrollY: 800 });
-    await tab.playwright.waitForTimeout(500);
-  }
-}
-nodeRepl.write(JSON.stringify({ collected: items.length, items: items.slice(0, 10) }));
-```
-
-Keep observations compact. Return counts and the requested items, not entire page trees. Re-observe after every navigation and after each scroll batch before claiming that an item was found or an action succeeded.
-
-Read `await browser.documentation()` once before interaction and `await agent.documentation.get("confirmations")` before consequential actions. If setup or resumption fails, refresh the runtime and retry once; only then report the exact stable error. Never claim Lume has no browser before attempting this runtime, and do not fall back to shell-driven UI automation or tool search for a replacement browser.
+Never claim Lume has no browser before attempting the built-in tools, and do not fall back to shell-driven UI automation or tool search for a replacement browser.

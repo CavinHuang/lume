@@ -26,17 +26,20 @@ describe("bundled browser plugin", () => {
       skills: ["./skills"],
     });
     const skill = readFileSync(resolve(ROOT, "skills/browser/SKILL.md"), "utf8");
+    // 主控制路径必须是内置 mcp__browser__* 工具（#260）：观察→动作→观察
+    expect(skill).toContain("mcp__browser__snapshot");
+    expect(skill).toContain("observe → act → observe");
+    expect(skill).toContain("Never write browser JavaScript for ordinary interaction");
+    expect(skill).toContain("next_cursor");
+    expect(skill).toContain("A click that opens a new tab does not switch the lock");
+    expect(skill).toContain("mcp__browser__handle_dialog");
+    expect(skill).toContain("mcp__browser__fill_secret");
+    expect(skill).toContain("user_takeover_required");
+    // Node REPL 仅保留为诊断入口（#260：兼容与诊断，非默认控制路径）
     expect(skill).toContain("setupLumeBrowserRuntime");
-    expect(skill).toContain("agent.browsers.getDefault()");
     expect(skill).toContain("browser.tabs.resumeHandoff()");
-    expect(skill).toContain('browser.tabs.new({ sessionKind: "agent-task" })');
-    expect(skill).toContain("browser.tabs.new()");
-    expect(skill).toContain("Every user turn starts with fresh JavaScript bindings");
-    expect(skill).toContain("The first `mcp__node_repl__js` call after loading the Skill must repeat");
-    expect(skill).toContain("JavaScript bindings persist only within the current turn");
-    expect(skill).toContain("Set `timeout_ms` to `300000`");
-    expect(skill).toContain("nodeRepl.write(JSON.stringify");
-    expect(skill).toContain("Never claim Lume has no browser before attempting this runtime");
+    expect(skill).toContain("diagnostic entry point, not the default control path");
+    expect(skill).toContain("Never claim Lume has no browser before attempting the built-in tools");
   });
 
 });
