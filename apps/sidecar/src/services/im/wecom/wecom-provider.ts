@@ -2,6 +2,7 @@ import type { ImProviderDefinition } from "../provider-registry";
 import { registerImProvider } from "../provider-registry";
 import { createWecomWsWorker } from "./wecom-ws-worker";
 import { getWecomClient } from "./wecom-client-pool";
+import { splitImMessage } from "../outbound-segment";
 
 /**
  * 企业微信 IM provider:
@@ -25,10 +26,13 @@ export const wecomProvider: ImProviderDefinition = {
       return { ok: false, error: "企业微信长连接未建立(worker 未运行或已停止),无法回复" };
     }
     try {
-      await wsClient.sendMessage(input.peerId, {
-        msgtype: "markdown",
-        markdown: { content: input.text },
-      });
+      // 企微 markdown 单条上限 4096 字节，超限整条被拒——按字节分段（#405）
+      for (const segment of splitImMessage(input.text, { maxBytes: 3800 })) {
+        await wsClient.sendMessage(input.peerId, {
+          msgtype: "markdown",
+          markdown: { content: segment },
+        });
+      }
       return { ok: true };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };

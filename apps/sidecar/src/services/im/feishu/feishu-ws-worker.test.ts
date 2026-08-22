@@ -105,7 +105,7 @@ describe("createFeishuWsWorker", () => {
     worker.start();
     const handler = getDispatcher()!.handles.get("im.message.receive_v1")!;
     handler({
-      message: { chat_id: "oc_g", chat_type: "group", message_type: "text", content: JSON.stringify({ text: "群消息" }) },
+      message: { chat_id: "oc_g", chat_type: "group", message_type: "text", content: JSON.stringify({ text: "<at user_id=\"ou_bot\">@Bot</at> 群消息" }) },
     });
     expect((routes[0] as { peerKind: string }).peerKind).toBe("group");
   });

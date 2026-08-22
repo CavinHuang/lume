@@ -1,4 +1,5 @@
 import { createLogger } from "../../infra/logger";
+import { splitImMessage } from "../outbound-segment";
 
 const log = createLogger("im-dingtalk-api");
 
@@ -25,14 +26,16 @@ export async function sendDingtalkText(
     return { ok: false, error: "缺少 sessionWebhook(钉钉会话已过期或未提供),无法回复" };
   }
   try {
-    const res = await fetchImpl(input.contextToken, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ msgtype: "text", text: { content: input.text } }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      return { ok: false, error: `钉钉回复 HTTP ${res.status}: ${body}` };
+    for (const segment of splitImMessage(input.text, { maxChars: 3000 })) {
+      const res = await fetchImpl(input.contextToken, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ msgtype: "text", text: { content: segment } }),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        return { ok: false, error: `钉钉回复 HTTP ${res.status}: ${body}` };
+      }
     }
     return { ok: true };
   } catch (error) {
