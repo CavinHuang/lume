@@ -777,11 +777,8 @@ async function createRuntimeCoreSessionImpl(
           ],
         }))
     : { tools: [], diagnostics: [] };
-  if (input.workspaceSlug) {
-    pendingCleanup.push(() =>
-      workspaceMcpManager.disposeWorkspace(input.workspaceSlug!),
-    );
-  }
+  // workspaceMcpManager 是进程级单例：runtime 连接跨会话复用，会话结束不做 per-session dispose
+  // （此前仅 Wiki Phase B 的 transient 沙箱 manager 需要清理，随功能移除一并消失）。
   const pluginAwareMcpResourceTools =
     input.workspaceSlug && pluginAssembly.mcpServers.length > 0
       ? createPluginAwareMcpResourceTools({
@@ -1294,16 +1291,6 @@ async function createRuntimeCoreSessionImpl(
           sessionId: input.lumeSessionId,
           error: error instanceof Error ? error.message : String(error),
         });
-      }
-      if (input.workspaceSlug) {
-        await workspaceMcpManager
-          .disposeWorkspace(input.workspaceSlug)
-          .catch((error) => {
-            log.warn("Workspace MCP dispose failed", {
-              sessionId: input.lumeSessionId,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          });
       }
       clearRuntimeToolDescriptors(input.lumeSessionId);
       clearRuntimeFileAccessLedger(input.lumeSessionId);
