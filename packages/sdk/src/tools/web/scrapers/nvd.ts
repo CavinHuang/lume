@@ -82,7 +82,7 @@ export const handleNvd: SpecialHandler = async (
 ): Promise<RenderResult | null> => {
 	try {
 		const parsed = new URL(url);
-		if (!parsed.hostname.includes("nvd.nist.gov")) return null;
+		if (parsed.hostname.replace(/^www\./, "") !== "nvd.nist.gov") return null;
 
 		// Extract CVE ID from /vuln/detail/{CVE-ID}
 		const match = parsed.pathname.match(/\/vuln\/detail\/(CVE-\d{4}-\d+)/i);

@@ -99,7 +99,7 @@ export const handleWikidata: SpecialHandler = async (
 ): Promise<RenderResult | null> => {
 	try {
 		const parsed = new URL(url);
-		if (!parsed.hostname.includes("wikidata.org")) return null;
+		if (parsed.hostname.replace(/^www\./, "") !== "wikidata.org") return null;
 
 		// Extract Q-id from /wiki/Q123 or /entity/Q123
 		const qidMatch = parsed.pathname.match(/\/(?:wiki|entity)\/(Q\d+)/i);

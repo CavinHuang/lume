@@ -46,7 +46,15 @@ function extractPaperId(url: string): string | null {
 }
 
 export const handleSemanticScholar: SpecialHandler = async (url: string, timeout: number, signal?: AbortSignal) => {
-	if (!url.includes("semanticscholar.org")) return null;
+	// Exact-host gate: substring matching on the full URL let attacker URLs
+	// carrying the domain anywhere in the query hijack the handler (#371)
+	let host = "";
+	try {
+		host = new URL(url).hostname.replace(/^www\./, "");
+	} catch {
+		return null;
+	}
+	if (!["semanticscholar.org", "api.semanticscholar.org"].includes(host)) return null;
 
 	const paperId = extractPaperId(url);
 	if (!paperId) {

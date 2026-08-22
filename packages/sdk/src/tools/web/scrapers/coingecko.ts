@@ -38,7 +38,7 @@ export const handleCoinGecko: SpecialHandler = async (
 ): Promise<RenderResult | null> => {
 	try {
 		const parsed = new URL(url);
-		if (!parsed.hostname.includes("coingecko.com")) return null;
+		if (parsed.hostname.replace(/^www\./, "") !== "coingecko.com") return null;
 
 		// Extract coin ID from /coins/{id} or /en/coins/{id}
 		const match = parsed.pathname.match(/^(?:\/[a-z]{2})?\/coins\/([^/?#]+)/);

@@ -76,7 +76,7 @@ export const handleOpenLibrary: SpecialHandler = async (
 ): Promise<RenderResult | null> => {
 	try {
 		const parsed = new URL(url);
-		if (!parsed.hostname.includes("openlibrary.org")) return null;
+		if (parsed.hostname.replace(/^www\./, "") !== "openlibrary.org") return null;
 
 		const fetchedAt = new Date().toISOString();
 		const path = parsed.pathname;
