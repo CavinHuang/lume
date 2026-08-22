@@ -49,9 +49,6 @@ test("renderer IPC commands are explicitly allowlisted", () => {
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("sidecar_call"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop:save-plugin-package"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop:install-plugin-package"), true);
-  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop_wiki_apply_draft"), true);
-  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop_wiki_resolve_pending"), true);
-  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop_wiki_undo_batch"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("data_export_zip"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("write_web_log"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("quick_input_get_context"), true);
@@ -124,18 +121,6 @@ test("renderer may inspect browser backend availability without invoking browser
   assert.equal(validateRendererSidecarMethod("browser:create-reference-grant"), "browser:create-reference-grant");
   assert.equal(validateRendererSidecarMethod("browser:revoke-reference-grant"), "browser:revoke-reference-grant");
   assert.throws(() => validateRendererSidecarMethod("browser:broker"), /unsupported renderer sidecar method/);
-});
-
-test("Wiki formal mutations use a main-process credential and reject generic RPC", () => {
-  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
-  assert.throws(() => validateRendererSidecarMethod("wiki:privileged-apply-draft"), /privileged RPC/);
-  assert.match(mainSource, /randomBytes\(32\)\.toString\('base64url'\)/);
-  assert.match(mainSource, /system\.wiki-privileged-credential/);
-  assert.match(mainSource, /callWikiPrivileged\('wiki:privileged-apply-draft'/);
-  assert.match(mainSource, /requireMainWindowSender\(context, command\)/);
-  assert.equal(mainSource.includes("LUME_WIKI_PRIVILEGED"), false);
-  const nodeReplSource = readFileSync(resolve(DESKTOP_ROOT, "..", "sidecar", "src", "services", "agent-runtime", "tools", "node-repl", "node-repl-runtime-manager.ts"), "utf8");
-  assert.match(nodeReplSource, /delete env\.LUME_WIKI_PRIVILEGED_CREDENTIAL/);
 });
 
 test("plugin package writes are main-owned and unavailable through generic RPC", () => {

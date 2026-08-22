@@ -1014,9 +1014,6 @@ function StandardAssistantContent({
     if (segment.kind === 'memory_mutation') {
       return <MemoryMutationStatusLine key={segment.block.id} toolCall={segment.block.toolCall} />
     }
-    if (segment.kind === 'wiki_proposal') {
-      return <WikiProposalBlock key={segment.block.id} block={segment.block} />
-    }
     const block = segment.block
     return (
       <RuntimeEventAssistantBlockItem
@@ -1103,22 +1100,6 @@ function ImageGenerationGroup({
   )
 }
 
-function WikiProposalBlock({
-  block,
-}: {
-  block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }>
-}) {
-  return (
-    <div data-wiki-proposal-result="true" className="w-full max-w-[460px]">
-      <ToolResultRenderer
-        toolName={block.toolCall.toolName}
-        input={asRecord(block.toolCall.input)}
-        result={parseToolCallOutput(block.toolCall.output)}
-      />
-    </div>
-  )
-}
-
 function MinimalAssistantContent({
   blocks,
   threadId,
@@ -1147,9 +1128,6 @@ function MinimalAssistantContent({
         }
         if (segment.kind === 'memory_mutation') {
           return <MemoryMutationStatusLine key={segment.block.id} toolCall={segment.block.toolCall} />
-        }
-        if (segment.kind === 'wiki_proposal') {
-          return <WikiProposalBlock key={segment.block.id} block={segment.block} />
         }
         if (segment.kind === 'inline') {
           const block = segment.block

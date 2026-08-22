@@ -372,7 +372,6 @@ function extendNodeReplSandbox(options: JsonlNodeReplRuntimeClientOptions): Sand
 
 export function buildNodeReplChildEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env = { ...base };
-  delete env.LUME_WIKI_PRIVILEGED_CREDENTIAL;
   const bundledRoot = base.LUME_BUNDLED_PLUGINS_DIR?.trim();
   const bundledClients = bundledRoot
     ? [

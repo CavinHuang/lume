@@ -151,7 +151,6 @@ describe("default skills inventory", () => {
 });
 
 const ALICE_COMPATIBLE_GENERAL_SKILLS = [
-  "agent-wiki",
   "code-review",
   "explain-code",
   "image-gen",
@@ -178,10 +177,6 @@ const RUNTIME_BACKED_SKILL_TOOLS = new Set([
   "read_file",
   "web_fetch",
   "web_search",
-  "wiki.follow_links",
-  "wiki.propose_changes",
-  "wiki.read",
-  "wiki.search",
   "write_file"
 ]);
 
