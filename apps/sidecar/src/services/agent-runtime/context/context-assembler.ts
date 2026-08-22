@@ -274,21 +274,24 @@ export class ContextAssembler {
         `<planning_todo_context trust="untrusted">\n${JSON.stringify(input.planningTodoContext).replaceAll("<", "\\u003c")}\n</planning_todo_context>`
       ].join("\n")
       : "";
+    // 固定策略文本（内容只由工具集/能力开关决定，回合内逐字不变）进入稳定
+    // system prompt 前缀：可被 prompt cache 覆盖，且不会随每条 runtime 消息
+    // 在历史中重复。browserContinuity 等含逐回合数据的块仍留在 runtimeContext。
     const systemPrompt = [
       agentSystemPrompt,
       systemPromptAppend,
       isLinkRuntimeOnline()
         ? "OpenConnector Link 通过且仅通过四个 link_* 工具连接第三方 SaaS 应用：先 link_search_actions，再 link_inspect_actions，然后 link_call_action。用户指明某个连接时必须使用该确切命名的连接，绝不回退到其他账号。授权错误表示需要在 Lume 中重新连接，不要尝试其他凭据或端点。Link 不替代本地文件工具、浏览器工具、URL 抓取或网络搜索。"
-        : ""
+        : "",
+      desktopContextPolicy,
+      desktopComputerUsePolicy,
+      browserFallbackPolicy
     ]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");
     const runtimeContext = [
       dynamicContext,
       permissionDeniedContext,
-      desktopContextPolicy,
-      desktopComputerUsePolicy,
-      browserFallbackPolicy,
       browserContinuityPolicy,
       todoStateContext,
       planningTodoContext

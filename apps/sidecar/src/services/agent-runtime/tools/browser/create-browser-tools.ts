@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { withRepeatGuardState } from "@lume/agent-sdk"
 import type { ToolDefinition, ToolInputSchema, ToolResult } from "@lume/agent-sdk"
 import type { BrowserBackendDescriptor, BrowserTabDescriptor } from "@lume/shared"
 import type { BrowserBroker } from "../../../browser/browser-broker"
@@ -94,9 +95,9 @@ export function createBrowserMcpTools(input: {
           }, false, repeatGuardState(name, result, args))
         } catch (error) {
           const code = browserErrorCode(error)
-          if (code === "stale_target" || code === "tab_not_found") session.snapshot = undefined
+          if (code === "stale_target" || code === "stale_snapshot_cursor" || code === "tab_not_found" || code === "user_takeover_required") session.snapshot = undefined
           const message = error instanceof Error && error.message && error.message !== code ? error.message.slice(0, 4_000) : code
-          const retryable = code === "browser_unavailable" || code === "stale_target"
+          const retryable = code === "browser_unavailable" || code === "stale_target" || code === "stale_snapshot_cursor"
           const failureKey = !retryable ? actionFailureKey(name, args, session) : undefined
           if (failureKey) {
             const previous = session.lastNonRetryableActionFailure
@@ -217,7 +218,8 @@ async function executeTool(
       tabId: activeTab.tabId,
       ...(url ? { url } : {}),
     })
-    return observeAfterMutation(activeTab.tabId, navigation, broker, dispatch, session)
+    // 导航调用在 loadURL 完成后才返回，effect:navigation 是既成事实而非预测
+    return observeAfterMutation(activeTab.tabId, { ...(asRecord(navigation)), effect: "navigation" }, broker, dispatch, session)
   }
   if (name === "handle_dialog") {
     const dialogId = stringValue(args.dialog_id)
@@ -252,6 +254,17 @@ async function executeTool(
     if (files.length > 1 && asRecord(chooser).is_multiple !== true) {
       throw Object.assign(new Error("file input accepts a single file"), { code: "invalid_browser_request" })
     }
+    // input 声明 accept 时拒绝类型不匹配的路径文件；browser-download 引用文件名在 desktop 侧，此处放行
+    const acceptedTypes = stringValue(asRecord(chooser).accept)
+    if (acceptedTypes) {
+      const rejected = files.find((file) => !file.startsWith("browser-download:") && !matchesAcceptedFileTypes(file, acceptedTypes))
+      if (rejected) {
+        throw Object.assign(
+          new Error(`upload rejected: ${rejected.split(/[\\/]/).pop()} does not match the file input's accepted types (${acceptedTypes})`),
+          { code: "invalid_browser_request" },
+        )
+      }
+    }
     const upload = await dispatch(broker, "playwright_file_chooser_set_files", {
       tabId: activeTab.tabId,
       file_chooser_id: chooserId,
@@ -269,7 +282,13 @@ async function executeTool(
         timeout_ms: boundedTimeout(args.timeout_ms),
       }))
       const fileRef = stringValue(resolved.path)
-      return { active_tab_id: activeTab.tabId, download_id: existingId, state: fileRef ? "completed" : stringValue(resolved.state) || "in_progress", file_ref: fileRef || null }
+      return {
+        active_tab_id: activeTab.tabId,
+        download_id: existingId,
+        state: fileRef ? "completed" : stringValue(resolved.state) || "in_progress",
+        file_ref: fileRef || null,
+        ...downloadMetadata(resolved),
+      }
     }
     const target = semanticTarget(session, activeTab, args.ref)
     const timeoutMs = boundedTimeout(args.timeout_ms)
@@ -295,10 +314,10 @@ async function executeTool(
     const state = stringValue(resolved.state)
     // 超时未拿到终态 → 下载仍在进行：点击已成功，不误报 download_failed，模型可用 download_id 查询
     if (!fileRef && (!state || state === "pending")) {
-      return observeAfterMutation(activeTab.tabId, { click, download_id: downloadId, state: "in_progress" }, broker, dispatch, session)
+      return observeAfterMutation(activeTab.tabId, { click, download_id: downloadId, state: "in_progress", ...downloadMetadata(resolved) }, broker, dispatch, session)
     }
     if (!fileRef) throw Object.assign(new Error(`download ${state}`), { code: "download_failed" })
-    return observeAfterMutation(activeTab.tabId, { click, download_id: downloadId, file_ref: fileRef, state: "completed" }, broker, dispatch, session)
+    return observeAfterMutation(activeTab.tabId, { click, download_id: downloadId, file_ref: fileRef, state: "completed", ...downloadMetadata(resolved) }, broker, dispatch, session)
   }
   if (name === "fill_secret") {
     const target = semanticTarget(session, activeTab, args.ref)
@@ -459,7 +478,7 @@ function describeTool(name: BrowserToolName): string {
     check: "Set the checked state of a checkbox or radio from the latest snapshot, then return a fresh interactive snapshot.",
     scroll: "Scroll at an element from the latest snapshot, then return a fresh interactive snapshot.",
     screenshot: "Capture the locked Agent tab as an image for visual inspection. Set annotated=true after snapshot to label visible elements with the same refs used by semantic actions. Screenshots are observation only.",
-    upload: "Click a file control from the latest snapshot, wait for its chooser, and upload task-authorized files as one coordinated operation. Requires confirmation.",
+    upload: "Click a file control from the latest snapshot, wait for its chooser, and upload task-authorized files as one coordinated operation. Files must match the control's accepted types. Requires confirmation.",
     download: "Click a download control from the latest snapshot and wait for the resulting download; returns state in_progress with a download_id when the timeout expires first — re-call with only download_id to poll. Downloaded files return as task-scoped browser-download file refs.",
     list_secrets: "List saved credential metadata available for the locked tab's exact origin. Secret values are never returned.",
     fill_secret: "Fill a saved secret into an editable ref without exposing the value to the model, transcript, trace, or tool arguments. Requires confirmation.",
@@ -581,6 +600,42 @@ function navigationBrokerMethod(name: BrowserNavigationToolName): string {
   return "navigate_tab_reload"
 }
 
+/** 下载状态查询的只读元数据：来源/文件名/MIME/大小，供模型判断产物与进度 */
+function downloadMetadata(resolved: Record<string, unknown>): Record<string, unknown> {
+  const filename = stringValue(resolved.filename)
+  const mimeType = stringValue(resolved.mime_type)
+  const origin = stringValue(resolved.origin)
+  return {
+    ...(filename ? { filename } : {}),
+    ...(mimeType ? { mime_type: mimeType } : {}),
+    ...(origin ? { origin } : {}),
+    ...(Number.isFinite(resolved.total_bytes) ? { total_bytes: resolved.total_bytes } : {}),
+    ...(Number.isFinite(resolved.received_bytes) ? { received_bytes: resolved.received_bytes } : {}),
+  }
+}
+
+/** accept token（扩展名/通配 MIME/常见精确 MIME）到扩展名集合的映射；未收录的精确 MIME 放行避免误拒 */
+const ACCEPTED_TYPE_EXTENSIONS: Record<string, ReadonlySet<string>> = {
+  "image/*": new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "ico", "heic"]),
+  "video/*": new Set(["mp4", "webm", "mov", "avi", "mkv", "m4v"]),
+  "audio/*": new Set(["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"]),
+  "application/pdf": new Set(["pdf"]),
+  "text/plain": new Set(["txt"]),
+  "text/csv": new Set(["csv"]),
+  "application/json": new Set(["json"]),
+  "application/zip": new Set(["zip"]),
+}
+
+function matchesAcceptedFileTypes(file: string, accept: string): boolean {
+  const tokens = accept.split(",").map((token) => token.trim().toLowerCase()).filter(Boolean)
+  if (!tokens.length) return true
+  const extension = (file.split(/[\\/]/).pop() ?? "").toLowerCase()
+  const suffix = extension.slice(extension.lastIndexOf(".") + 1)
+  return tokens.some((token) => token.startsWith(".")
+    ? suffix === token.slice(1)
+    : ACCEPTED_TYPE_EXTENSIONS[token]?.has(suffix) === true)
+}
+
 async function observeAfterMutation(
   tabId: string,
   action: unknown,
@@ -643,13 +698,13 @@ function clearActionFailures(session: ReturnType<BrowserToolSessionRegistry["get
 }
 
 function toolResult(toolUseId: string, value: unknown, isError = false, repeatState?: unknown): ToolResult {
-  return {
+  const result: ToolResult = {
     type: "tool_result",
     tool_use_id: toolUseId,
     content: JSON.stringify(value),
     ...(isError ? { is_error: true } : {}),
-    ...(repeatState !== undefined ? { _meta: { repeatGuard: { state: repeatState } } } : {}),
   }
+  return repeatState === undefined ? result : withRepeatGuardState(result, repeatState)
 }
 
 function screenshotToolResult(toolUseId: string, sessionId: string, result: Record<string, unknown>): ToolResult {
@@ -658,15 +713,14 @@ function screenshotToolResult(toolUseId: string, sessionId: string, result: Reco
   const mediaType = stringValue(image.media_type)
   if (!data || !mediaType) throw new Error("browser_internal_error")
   const screenshotId = `browser-screenshot:${randomUUID()}`
-  return {
+  return withRepeatGuardState({
     type: "tool_result",
     tool_use_id: toolUseId,
     content: [
       { type: "text", text: JSON.stringify({ ok: true, operation_id: toolUseId, session_id: sessionId, active_tab_id: result.active_tab_id, full_page: result.full_page, annotated: result.annotated === true, snapshot_id: result.snapshot_id, annotated_refs: result.annotated_refs, screenshot_id: screenshotId }) },
       { type: "image", source: { type: "base64", media_type: mediaType, data }, _meta: { persist: false, screenshotId } },
     ],
-    _meta: { repeatGuard: { state: { ok: true, tool: "screenshot", active_tab_id: result.active_tab_id, full_page: result.full_page } } },
-  }
+  }, { ok: true, tool: "screenshot", active_tab_id: result.active_tab_id, full_page: result.full_page })
 }
 
 function stringValue(value: unknown): string | undefined { return typeof value === "string" && value.trim() ? value.trim() : undefined }

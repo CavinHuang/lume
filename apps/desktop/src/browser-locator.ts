@@ -1,6 +1,6 @@
-import type { BrowserLocator, BrowserLocatorStep, BrowserTextMatcher } from "../../../packages/shared/src/types/browser-runtime"
+import type { BrowserLocator, BrowserLocatorStep, BrowserTextMatcher } from '@lume/shared'
 
-export type ResolvedBrowserTarget = { x: number; y: number; width: number; height: number; tagName: string; role?: string; editable: boolean; enabled: boolean }
+export type ResolvedBrowserTarget = { x: number; y: number; width: number; height: number; tagName: string; role?: string; editable: boolean; enabled: boolean; readOnly?: boolean }
 export type BrowserLocatorQuery = "target" | "element" | "focus" | "evaluate" | "count" | "allTextContents" | "readAll" | "getAttribute" | "innerText" | "textContent" | "inputValue" | "editableValue" | "isVisible" | "isEnabled" | "isChecked" | "select"
 
 export function isBrowserLocator(value: unknown): value is BrowserLocator {
@@ -135,7 +135,8 @@ function queryLocatorInPage(locator: BrowserLocator, operation: BrowserLocatorQu
     element.dispatchEvent(new Event("change", { bubbles: true }))
     return true
   }
-  if (!visible(element) || !enabled(element)) throw new Error("action_denied")
+  if (!visible(element)) throw new Error("element_not_visible")
+  if (!enabled(element)) throw new Error("element_disabled")
   let rect = (element as HTMLElement).getBoundingClientRect()
   const view = element.ownerDocument.defaultView
   if (view && (rect.bottom <= 0 || rect.right <= 0 || rect.top >= view.innerHeight || rect.left >= view.innerWidth)) {
@@ -147,7 +148,7 @@ function queryLocatorInPage(locator: BrowserLocator, operation: BrowserLocatorQu
   const ownerDocument = element.ownerDocument
   const top = ownerDocument.elementFromPoint(x, y)
   const hitLabel = top instanceof HTMLElement ? top.closest("label") : null
-  if (top && top !== element && !element.contains(top) && (!(hitLabel instanceof HTMLLabelElement) || hitLabel.control !== element)) throw new Error("action_denied")
+  if (top && top !== element && !element.contains(top) && (!(hitLabel instanceof HTMLLabelElement) || hitLabel.control !== element)) throw new Error("element_occluded")
   let topX = x
   let topY = y
   let frame = ownerDocument.defaultView?.frameElement
@@ -157,8 +158,9 @@ function queryLocatorInPage(locator: BrowserLocator, operation: BrowserLocatorQu
     topY += frameRect.top
     frame = frame.ownerDocument.defaultView?.frameElement
   }
+  const isInput = element instanceof HTMLInputElement
   const editable = (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)
     ? !element.readOnly && !element.disabled
     : (element as HTMLElement).isContentEditable
-  return { x: topX, y: topY, width: rect.width, height: rect.height, tagName: element.tagName.toLowerCase(), role: role(element), editable, enabled: enabled(element) }
+  return { x: topX, y: topY, width: rect.width, height: rect.height, tagName: element.tagName.toLowerCase(), role: role(element), ...(isInput && element.readOnly ? { readOnly: true } : {}), editable, enabled: enabled(element) }
 }

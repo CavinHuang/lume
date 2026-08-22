@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, statSync, 
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { type WebContents } from 'electron'
-import type { AgentBrowserAnchor, AgentBrowserAnnotationAttachment, AgentBrowserDesignChangeAttachment, AgentBrowserDesignDeclaration, BrowserAnnotationSessionSnapshot } from '../../../packages/shared/src/types/agent'
-import type { BrowserTabDescriptor } from '../../../packages/shared/src/types/browser-runtime'
+import type { AgentBrowserAnchor, AgentBrowserAnnotationAttachment, AgentBrowserDesignChangeAttachment, AgentBrowserDesignDeclaration, BrowserAnnotationSessionSnapshot } from '@lume/shared'
+import type { BrowserTabDescriptor } from '@lume/shared'
 import { BrowserAnnotationSessionStore } from './browser-annotation-session'
 import { isSafeBrowserAnnotationThreadId } from './browser-annotation-security'
 

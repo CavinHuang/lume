@@ -5,7 +5,7 @@
 import {
   LOCAL_RENDERER_SIDECAR_METHODS,
   SHARED_RENDERER_SIDECAR_METHODS,
-} from "../../../packages/shared/src/types/renderer-allowlist";
+} from '@lume/shared';
 
 export const PUBLIC_RENDERER_SIDECAR_METHODS = new Set([
   ...SHARED_RENDERER_SIDECAR_METHODS,

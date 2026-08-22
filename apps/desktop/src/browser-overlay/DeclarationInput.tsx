@@ -7,7 +7,7 @@
 //     - width / height（5c Task 73：dimensions 比例锁需要 scrub）
 //     - margin/padding longhand（marginTop 等；shorthand margin 仍走 text 分支）
 //   fontFamily / fontWeight / 其他（含 shorthand margin/padding） → combobox（text + datalist）
-import type { AgentBrowserDesignDeclaration } from '../../../../packages/shared/src/types/agent'
+import type { AgentBrowserDesignDeclaration } from '@lume/shared'
 import { useScrub } from './useScrub'
 
 const isColor = (p: string): boolean => p === 'color' || p.endsWith('Color')

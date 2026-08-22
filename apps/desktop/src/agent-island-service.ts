@@ -5,7 +5,7 @@
  * 本 service 是订阅/聚合/推送壳，按 spec §6.3 不强求单测，端到端验证在 Task 11。
  */
 import type { BrowserWindow } from 'electron'
-import type { AgentRuntimePhase } from '../../../packages/shared/src/types/agent'
+import type { AgentRuntimePhase } from '@lume/shared'
 import type {
   AgentIslandIntent,
   AgentIslandInteractionKind,
@@ -14,15 +14,15 @@ import type {
   AgentIslandRecentSession,
   AgentIslandState,
   NativeAgentIslandSnapshot,
-} from '../../../packages/shared/src/types/agent-island'
+} from '@lume/shared'
 import type {
   ActivePlanningReminder,
   PlanningTodo,
   PlanningTodoListResult,
-} from '../../../packages/shared/src/types/planning-todo'
+} from '@lume/shared'
 import {
   AGENT_ISLAND_IPC_CHANNELS,
-} from '../../../packages/shared/src/types/agent-island'
+} from '@lume/shared'
 import {
   buildSnapshot,
   buildVisibilityKey,
@@ -35,8 +35,8 @@ import {
   projectRecentSessions,
   pushActivityLine,
   selectHoverDelay,
-} from '../../../packages/shared/src/agent-island-projections'
-import type { IslandSessionInput } from '../../../packages/shared/src/agent-island-projections'
+} from '@lume/shared'
+import type { IslandSessionInput } from '@lume/shared'
 
 const PUSH_THROTTLE_MS = 80
 const AGENT_STREAM_PUSH_THROTTLE_MS = 2000

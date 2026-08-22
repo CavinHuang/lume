@@ -13,7 +13,7 @@ import { createRoot } from 'react-dom/client'
 import type { ReactNode } from 'react'
 const { DesignEditor } = await import('./DesignEditor')
 import type { ActiveDesignChange } from './DesignEditor'
-import type { AgentBrowserAnchor, AgentBrowserDesignDeclaration } from '../../../../packages/shared/src/types/agent'
+import type { AgentBrowserAnchor, AgentBrowserDesignDeclaration } from '@lume/shared'
 
 function render(node: ReactNode): HTMLElement {
   const container = document.createElement('div'); document.body.append(container)

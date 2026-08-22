@@ -811,6 +811,12 @@ export function createAgentHandlers(
         params,
         AGENT_IPC_CHANNELS.DELETE_THREAD,
       );
+      if (isAgentRuntimeSessionActive(input.threadId)) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        if (isAgentRuntimeSessionActive(input.threadId)) {
+          throw new Error("线程正在运行中，请停止后再删除。");
+        }
+      }
       log.info("[Agent 线程] 删除", { threadId: input.threadId.slice(0, 8) });
       deleteAgentThread(input.threadId);
       getAgentRuntimeStatusManager().clearSession(input.threadId);

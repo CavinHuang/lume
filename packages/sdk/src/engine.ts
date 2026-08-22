@@ -71,6 +71,7 @@ import {
   stripInternalContextBlocks,
 } from './utils/messages.js'
 import type { HookRegistry, HookInput, HookExecutionResult } from './hooks.js'
+import { readRepeatGuardState } from './repeat-guard.js'
 import { buildStructuredOutputInstruction, parseStructuredOutput } from './utils/structured-output.js'
 import { captureFileSnapshots, captureWorkspaceFileSnapshots, collectCheckpointPaths, requiresWorkspaceCheckpoint } from './utils/file-checkpoints.js'
 import { generatePromptSuggestion } from './utils/prompt-suggestions.js'
@@ -118,6 +119,66 @@ interface ToolUseBlock {
   response_item_id?: string
   name: string
   input: any
+}
+
+interface RepeatedToolCallState {
+  resultSignature: string
+  equivalentResultCount: number
+  isError: boolean
+}
+
+const MAX_EQUIVALENT_MUTATION_RESULTS = 2
+const MAX_BLOCKED_REPEAT_ATTEMPTS = 2
+
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value) ?? String(value)
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(',')}]`
+  }
+  return `{${Object.keys(value as Record<string, unknown>)
+    .sort()
+    .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
+    .map((key) => `${JSON.stringify(key)}:${stableSerialize((value as Record<string, unknown>)[key])}`)
+    .join(',')}}`
+}
+
+function toolCallSignature(block: ToolUseBlock): string {
+  return `${block.name}\0${stableSerialize(block.input)}`
+}
+
+function toolResultSignature(result: ToolResult): string {
+  // Tools whose public result contains volatile operation ids may expose the
+  // stable state that matters for progress via withRepeatGuardState().
+  const stableState = readRepeatGuardState(result) ?? result.content
+  return stableSerialize({
+    state: stableState,
+    isError: result.is_error === true,
+  })
+}
+
+// Deterministic refusals are user or policy decisions rather than tool
+// outcomes; they must not count toward result equivalence so that a later
+// identical call still reaches canUseTool (e.g. after the user changes their
+// mind or the permission mode is relaxed mid-run).
+const REPEAT_GUARD_EXEMPT_ERROR_CODES = new Set(['permission_denied', 'invalid_input'])
+
+function isDeterministicRefusal(result: ToolResult): boolean {
+  const error = result._meta?.error
+  if (!error || typeof error !== 'object') return false
+  const code = (error as { code?: unknown }).code
+  return typeof code === 'string' && REPEAT_GUARD_EXEMPT_ERROR_CODES.has(code)
+}
+
+function createRepeatGuardSkippedToolResult(block: ToolUseBlock): ToolResult & { tool_name: string } {
+  return {
+    type: 'tool_result',
+    tool_use_id: block.id,
+    content: `Skipped: tool "${block.name}" was not executed because the agent was stopped after repeating identical tool calls.`,
+    is_error: true,
+    tool_name: block.name,
+  }
 }
 
 function extractAssistantText(response: CreateMessageResponse): string {
@@ -402,6 +463,8 @@ export class QueryEngine {
   private pendingLspDiagnostics: Array<Extract<SDKMessage, { type: 'system'; subtype: 'lsp_diagnostics' }>> = []
   /** Tool calls skipped or interrupted by an abort during the current run. */
   private abortedPendingToolCalls: Array<{ id: string; name: string; input: unknown }> = []
+  private repeatedToolCalls = new Map<string, RepeatedToolCallState>()
+  private blockedRepeatAttempts = 0
 
   constructor(config: QueryEngineConfig) {
     this.config = config
@@ -994,11 +1057,18 @@ export class QueryEngine {
     }
 
     // Runtime context is persisted in history but remains an internal message.
+    // Each turn re-emits the full runtime context (policy text plus per-turn
+    // state snapshots), so only the latest copy is kept, re-appended just
+    // before the new user turn: older copies carry no information the newest
+    // one does not, and retaining them would grow history linearly over a long
+    // session. Compaction rebuilds history on the same single-latest-copy
+    // assumption.
     if (this.config.runtimeContext?.trim()) {
-      if (autoCompacted) {
-        this.messages = this.messages.filter((message) => message.role !== 'runtime')
-      }
-      this.messages.push({ role: 'runtime', content: this.config.runtimeContext.trim() })
+      const nextRuntime: NormalizedMessageParam = { role: 'runtime', content: this.config.runtimeContext.trim() }
+      this.messages = [
+        ...this.messages.filter((message) => message.role !== 'runtime'),
+        nextRuntime,
+      ]
     }
 
     // Exact cold-start continuations resume at the persisted tool boundary,
@@ -1007,6 +1077,8 @@ export class QueryEngine {
     // Reset per-run abort bookkeeping before any tool execution (continuations
     // included) so run_aborted reflects this run's interrupted tool calls.
     this.abortedPendingToolCalls = []
+    this.repeatedToolCalls.clear()
+    this.blockedRepeatAttempts = 0
 
     if (!this.config.toolContinuations?.length) {
       protectedMessageIndex = this.messages.length
@@ -1461,7 +1533,7 @@ export class QueryEngine {
       maxOutputRecoveryAttempts = 0
 
       // Execute tools (concurrent read-only, serial mutations)
-      const { results: toolResults, events: toolEvents, toolsUsed } =
+      const { results: toolResults, events: toolEvents, toolsUsed, repeatGuardStop } =
         await this.executeTools(toolUseBlocks)
       for (const toolEvent of toolEvents) {
         yield toolEvent
@@ -1493,6 +1565,11 @@ export class QueryEngine {
           ...(r._meta ? { _meta: r._meta } : {}),
         })),
       })
+
+      if (repeatGuardStop) {
+        completionGuardStop = repeatGuardStop
+        break
+      }
 
       if (response.stopReason === 'end_turn') break
 
@@ -1577,6 +1654,10 @@ export class QueryEngine {
         : structuredOutputRetriesExceeded
           ? ['Structured output validation failed after retry attempts.']
         : undefined,
+      // Structured attribution for guard-driven stops so hosts can tell an SDK
+      // internal repeat-guard stop ('repeated_tool_call') apart from their own
+      // completionGuard policy stops without matching on English messages.
+      ...(completionGuardStop?.errorCode ? { errorCode: completionGuardStop.errorCode } : {}),
     }
 
     if (this.config.promptSuggestions && textContent) {
@@ -1610,6 +1691,7 @@ export class QueryEngine {
     results: (ToolResult & { tool_name?: string })[]
     events: SDKMessage[]
     toolsUsed: string[]
+    repeatGuardStop?: { message: string; errorCode: string }
   }> {
     const events: SDKMessage[] = []
     const toolsUsed: string[] = []
@@ -1650,13 +1732,20 @@ export class QueryEngine {
     const hasSkillActivation = toolUseBlocks.some((block) => block.name === 'Skill')
     if (hasSkillActivation && toolUseBlocks.length > 1) {
       const resultsById = new Map<string, ToolResult & { tool_name?: string }>()
+      let repeatGuardStop: { message: string; errorCode: string } | undefined
 
       for (const block of toolUseBlocks.filter((item) => item.name === 'Skill')) {
         if (this.config.abortSignal?.aborted) break // soft abort: skip remaining activations
+        if (repeatGuardStop) {
+          // The guard already decided to stop this run: pair the remaining
+          // tool_use blocks with skipped placeholders instead of executing.
+          resultsById.set(block.id, createRepeatGuardSkippedToolResult(block))
+          continue
+        }
         const tool = this.config.tools.find((t) => t.name === block.name)
         let result
         try {
-          result = await this.executeSingleTool(block, tool, context)
+          result = await this.executeToolWithRepeatGuard(block, tool, context)
         } catch (error) {
           if (!this.config.abortSignal?.aborted) throw error
           this.abortedPendingToolCalls.push({ id: block.id, name: block.name, input: block.input })
@@ -1665,6 +1754,9 @@ export class QueryEngine {
         resultsById.set(block.id, result.result)
         events.push(...result.events)
         toolsUsed.push(...result.toolsUsed)
+        // Sticky on purpose: once the guard decides to stop, later successful
+        // tools in the same batch must not clear that decision.
+        if (result.repeatGuardStop) repeatGuardStop ??= result.repeatGuardStop
       }
 
       for (const block of toolUseBlocks.filter((item) => item.name !== 'Skill')) {
@@ -1683,6 +1775,7 @@ export class QueryEngine {
         }),
         events,
         toolsUsed,
+        ...(repeatGuardStop ? { repeatGuardStop } : {}),
       }
     }
 
@@ -1702,23 +1795,54 @@ export class QueryEngine {
     const results: Array<(ToolResult & { tool_name?: string }) | undefined> =
       new Array(toolUseBlocks.length)
 
-    // Execute concurrent tools (batched by MAX_CONCURRENCY)
+    // Sticky across both phases: once the guard decides to stop, later
+    // successful tools must not clear it and nothing else may execute.
+    let repeatGuardStop: { message: string; errorCode: string } | undefined
+
+    // Execute concurrent tools (batched by MAX_CONCURRENCY). Read-only calls go
+    // through the same repeat guard as mutations so repeated equivalent results
+    // — including failures — are refused without burning real executions.
     for (let i = 0; i < concurrent.length; i += MAX_CONCURRENCY) {
       if (this.config.abortSignal?.aborted) break // soft abort: skip not-yet-started batches
+      if (repeatGuardStop) break // guard decided to stop: no further execution
       const batch = concurrent.slice(i, i + MAX_CONCURRENCY)
+
+      // Pre-check signatures synchronously before spawning parallel work.
+      const executable: typeof batch = []
+      let guardStoppedHere = false
+      for (const item of batch) {
+        if (guardStoppedHere) {
+          results[item.index] = createRepeatGuardSkippedToolResult(item.block)
+          continue
+        }
+        const blocked = this.repeatGuardPreCheck(item.block)
+        if (!blocked) {
+          executable.push(item)
+          continue
+        }
+        results[item.index] = blocked.result
+        events.push(...blocked.events)
+        if (blocked.repeatGuardStop) {
+          repeatGuardStop ??= blocked.repeatGuardStop
+          guardStoppedHere = true
+        }
+      }
+      if (executable.length === 0 || repeatGuardStop) continue
+
       const batchResults = await Promise.allSettled(
-        batch.map((item) =>
+        executable.map((item) =>
           this.executeSingleTool(item.block, item.tool, context),
         ),
       )
       for (const [batchIndex, batchResult] of batchResults.entries()) {
-        const item = batch[batchIndex]
+        const item = executable[batchIndex]
         if (!item) continue
         if (batchResult.status === 'fulfilled') {
           // Keep completed results even if the abort fired while awaiting.
           results[item.index] = batchResult.value.result
           events.push(...batchResult.value.events)
           toolsUsed.push(...batchResult.value.toolsUsed)
+          this.repeatGuardPostRecord(item.block, batchResult.value.result)
         } else if (this.config.abortSignal?.aborted) {
           // Interrupted mid-flight: pair with an error placeholder.
           this.abortedPendingToolCalls.push({ id: item.block.id, name: item.block.name, input: item.block.input })
@@ -1732,9 +1856,15 @@ export class QueryEngine {
     // Execute serial tools sequentially
     for (const item of serial) {
       if (this.config.abortSignal?.aborted) break // soft abort: skip remaining serial tools
+      if (repeatGuardStop) {
+        // The guard already decided to stop this run: pair the remaining
+        // tool_use blocks with skipped placeholders instead of executing.
+        results[item.index] = createRepeatGuardSkippedToolResult(item.block)
+        continue
+      }
       let result
       try {
-        result = await this.executeSingleTool(item.block, item.tool, context)
+        result = await this.executeToolWithRepeatGuard(item.block, item.tool, context)
       } catch (error) {
         if (!this.config.abortSignal?.aborted) throw error
         this.abortedPendingToolCalls.push({ id: item.block.id, name: item.block.name, input: item.block.input })
@@ -1743,6 +1873,9 @@ export class QueryEngine {
       results[item.index] = result.result
       events.push(...result.events)
       toolsUsed.push(...result.toolsUsed)
+      // Sticky on purpose: once the guard decides to stop, later successful
+      // tools in the same batch must not clear that decision.
+      if (result.repeatGuardStop) repeatGuardStop ??= result.repeatGuardStop
     }
 
     return {
@@ -1764,7 +1897,105 @@ export class QueryEngine {
       }),
       events,
       toolsUsed,
+      ...(repeatGuardStop ? { repeatGuardStop } : {}),
     }
+  }
+
+  /**
+   * Repeat guard, refusal half: when the same call has already produced an
+   * equivalent result twice, synthesize a refusal without executing. The
+   * blocked counter is global and consecutive across signatures — alternating
+   * between two stalled calls or interleaving unrelated successful tools no
+   * longer resets it. Only fresh successful progress (see postRecord) clears it.
+   */
+  private repeatGuardPreCheck(
+    block: ToolUseBlock,
+  ): {
+    result: ToolResult & { tool_name?: string }
+    events: SDKMessage[]
+    toolsUsed: string[]
+    repeatGuardStop?: { message: string; errorCode: string }
+  } | undefined {
+    const signature = toolCallSignature(block)
+    const previous = this.repeatedToolCalls.get(signature)
+    if (!previous || previous.equivalentResultCount < MAX_EQUIVALENT_MUTATION_RESULTS) return undefined
+
+    this.blockedRepeatAttempts++
+    const message =
+      `Runtime repeat guard: "${block.name}" with the same input already returned an equivalent result twice, so this call was not executed. `
+      + 'Do not retry the unchanged call. Use the existing result as evidence: finish if the user goal is satisfied, or inspect current state and choose a materially different action.'
+    // Hard stop is reserved for repeated SUCCESSFUL results: the model got its
+    // answer and keeps repeating the same call anyway. An equivalent error may
+    // be a transient failure worth retrying once conditions change, so keep
+    // only refusing there and let maxTurns remain the backstop.
+    const shouldStop =
+      this.blockedRepeatAttempts >= MAX_BLOCKED_REPEAT_ATTEMPTS && !previous.isError
+    return {
+      result: {
+        type: 'tool_result',
+        tool_use_id: block.id,
+        tool_name: block.name,
+        content: message,
+        is_error: true,
+        _meta: {
+          error: { code: 'repeated_tool_call', retryable: false },
+          repeatGuard: {
+            equivalentResults: previous.equivalentResultCount,
+            blockedAttempts: this.blockedRepeatAttempts,
+          },
+        },
+      },
+      events: [],
+      toolsUsed: [],
+      ...(shouldStop ? {
+        repeatGuardStop: {
+          errorCode: 'repeated_tool_call',
+          message: `Agent stopped after retrying the unchanged "${block.name}" call despite repeat-guard feedback.`,
+        },
+      } : {}),
+    }
+  }
+
+  /**
+   * Repeat guard, bookkeeping half: record the result signature for this call
+   * and clear the global blocked counter on fresh successful progress.
+   *
+   * Progress means either a first-seen call succeeding or a previously-seen
+   * call returning a different successful result — evidence that state moved.
+   * Note the deliberate boundary: a command whose output changes every time
+   * can still reset the counter; this is a stall guard, not an adversarial one.
+   */
+  private repeatGuardPostRecord(block: ToolUseBlock, result: ToolResult): void {
+    if (isDeterministicRefusal(result)) return
+    const signature = toolCallSignature(block)
+    const newSignature = toolResultSignature(result)
+    const previous = this.repeatedToolCalls.get(signature)
+    this.repeatedToolCalls.set(signature, {
+      resultSignature: newSignature,
+      equivalentResultCount:
+        previous?.resultSignature === newSignature ? previous.equivalentResultCount + 1 : 1,
+      isError: result.is_error === true,
+    })
+    if (!result.is_error && (!previous || previous.resultSignature !== newSignature)) {
+      this.blockedRepeatAttempts = 0
+    }
+  }
+
+  private async executeToolWithRepeatGuard(
+    block: ToolUseBlock,
+    tool: ToolDefinition | undefined,
+    context: ToolContext,
+  ): Promise<{
+    result: ToolResult & { tool_name?: string }
+    events: SDKMessage[]
+    toolsUsed: string[]
+    repeatGuardStop?: { message: string; errorCode: string }
+  }> {
+    const blocked = this.repeatGuardPreCheck(block)
+    if (blocked) return blocked
+    const execution = await this.executeSingleTool(block, tool, context)
+    this.repeatGuardPostRecord(block, execution.result)
+    return execution
   }
 
   /**
@@ -1797,6 +2028,22 @@ export class QueryEngine {
           this.config.onAsyncEvent?.(event)
         } catch {
           // Host event delivery must not break terminal process cleanup.
+        }
+      }
+    }
+    // Live channel: delivered to the host immediately while the tool runs,
+    // bypassing the deferred batch buffer. Closed once the tool call returns —
+    // post-return progress belongs to the async channel above. Only mounted
+    // when the host listens: tools fall back to emitEvent otherwise, so
+    // hosts without onLiveEvent keep the buffered (persistable) behavior.
+    if (this.config.onLiveEvent) {
+      const deliverLive = this.config.onLiveEvent
+      toolContext.emitLiveEvent = (event) => {
+        if (!toolCallActive) return
+        try {
+          deliverLive(event)
+        } catch {
+          // Live delivery must not break tool execution.
         }
       }
     }
@@ -1907,6 +2154,7 @@ export class QueryEngine {
               content: permission.message || `Permission denied for tool "${block.name}"`,
               is_error: true,
               tool_name: block.name,
+              _meta: { error: { code: 'permission_denied', retryable: false } },
             },
             events,
             toolsUsed,
@@ -1946,6 +2194,7 @@ export class QueryEngine {
               content: `Invalid input for tool "${block.name}": ${validationError}`,
               is_error: true,
               tool_name: block.name,
+              _meta: { error: { code: 'invalid_input', retryable: true } },
             },
             events,
             toolsUsed,

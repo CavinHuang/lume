@@ -1,4 +1,4 @@
-import type { LinkRuntimeConfigurationInput, LinkRuntimeDiagnostic, LinkRuntimeMode, LinkRuntimeState } from "../../../packages/shared/src/types/link";
+import type { LinkRuntimeConfigurationInput, LinkRuntimeDiagnostic, LinkRuntimeMode, LinkRuntimeState } from '@lume/shared';
 import type { UtilityProcess } from "electron";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";

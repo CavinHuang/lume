@@ -140,9 +140,9 @@ import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { createLinkRuntimeSupervisor } from './link-runtime-supervisor'
 import { discoverChromeProfiles, importChromeProfile, importConnectedChromeCookies, type ImportedCookie } from './browser-import'
-import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '../../../packages/shared/src/types/logging'
-import { nativeEventToIntent } from '../../../packages/shared/src/types/agent-island'
-import type { AgentIslandIntent, NativeAgentIslandSnapshot } from '../../../packages/shared/src/types/agent-island'
+import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '@lume/shared'
+import { nativeEventToIntent } from '@lume/shared'
+import type { AgentIslandIntent, NativeAgentIslandSnapshot } from '@lume/shared'
 import {
   createAsyncSingleFlight,
   createEventRateLimiter,

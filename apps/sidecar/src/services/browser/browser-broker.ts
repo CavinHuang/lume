@@ -222,6 +222,9 @@ export class BrowserBroker {
     const commandParams = backend === "extension" && input.method === "tab_browser_auth_request"
       ? canonicalExtensionBrowserAuthParams(input.params ?? {})
       : normalized.params
+    // `__policy*` / `__authorizedFiles` 等保留键只能由 broker 在 confirm/授权后注入；
+    // 入口统一剥掉调用方携带的同名键，防止沙箱直调时伪造授权通道（如绕过上传根目录约束）
+    for (const key of Object.keys(commandParams)) if (key.startsWith("__")) delete commandParams[key]
     const tabId = input.tabId ?? (typeof commandParams.tabId === "string" ? commandParams.tabId : undefined)
     const transport = backend === "extension" ? this.extension : this.main
     if (!transport || (backend === "extension" && (!this.extensionBackendEnabled || !this.chromePluginEnabled || !this.extensionConnected))) throw new Error("browser_unavailable")
@@ -429,7 +432,7 @@ function stableBrowserErrorCode(error: unknown): string {
     ? (error as { code: string }).code
     : ""
   const value = structuredCode || (error instanceof Error ? error.message : "")
-  return new Set(["browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "user_action_required", "strict_locator_violation", "actionability_failed", "dialog_blocking", "user_takeover_required", "unsupported", "executed_unknown"]).has(value) ? value : "browser_internal_error"
+  return new Set(["browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "stale_snapshot_cursor", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "user_action_required", "strict_locator_violation", "actionability_failed", "dialog_blocking", "user_takeover_required", "element_not_visible", "element_disabled", "element_occluded", "element_readonly", "unsupported", "executed_unknown"]).has(value) ? value : "browser_internal_error"
 }
 
 function inferBackend(explicit: "iab" | "extension" | undefined, params: Record<string, unknown> | undefined): "iab" | "extension" {

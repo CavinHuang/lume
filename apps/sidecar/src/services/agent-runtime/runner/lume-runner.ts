@@ -63,7 +63,8 @@ interface RuntimeSessionRunInput {
   params: AgentRuntimeRunParams;
   prepared: PreparedRuntimeCoreAttempt;
   runtimeSession: Pick<CreateRuntimeCoreSessionResult, "agent" | "session" | "tools" | "userMessageForModel" | "memoryContextUsedItems">
-    & Partial<Pick<CreateRuntimeCoreSessionResult, "getVerificationStatus" | "getVerificationReport" | "refreshCodingChangeSet" | "getLatestFileCheckpoint" | "getBaselineCommit" | "getBaselineCommits" | "getWorkspaceRoots">>;
+    & Partial<Pick<CreateRuntimeCoreSessionResult, "getVerificationStatus" | "getVerificationReport" | "refreshCodingChangeSet" | "getLatestFileCheckpoint" | "getBaselineCommit" | "getBaselineCommits" | "getWorkspaceRoots">>
+    & Partial<Pick<CreateRuntimeCoreSessionResult, "setLiveEventSink">>;
   options: RunRuntimeCoreAttemptOptions;
   sandbox?: SandboxSettings;
   createCanUseTool: (
@@ -211,6 +212,9 @@ export class LumeRunner {
       getBaselineCommit?: () => string | undefined;
       getBaselineCommits?: () => Record<string, string>;
       getWorkspaceRoots?: () => string[];
+    },
+    live?: {
+      setSink: (sink: ((event: unknown) => void) | null) => void;
     }
   ): Promise<AgentRuntimeRunResult> {
     const result = await consumeRuntimeCoreQueryStream({
@@ -223,6 +227,9 @@ export class LumeRunner {
         runId: this.observer.getRunId(),
         // F3 互斥:projector 交付 run.end 即置位,后续 fail() 不再补发终值
         onRunEnd: () => { this.busRunEndEmitted = true; }
+      },
+      onLiveInject: (inject) => {
+        live?.setSink(inject as (event: unknown) => void);
       }
     });
     // Soft abort no longer throws from the SDK: it fills interrupted tool
@@ -360,6 +367,9 @@ export class LumeRunner {
         getBaselineCommit: runtimeSession.getBaselineCommit,
         getBaselineCommits: runtimeSession.getBaselineCommits,
         getWorkspaceRoots: runtimeSession.getWorkspaceRoots
+      }, {
+        // Live 事件汇(#285):消费开始时把 tee 投影队列接到 session 桥上
+        setSink: (sink) => runtimeSession.setLiveEventSink?.(sink)
       });
       if (streamResult.status !== "completed") {
         return streamResult;
