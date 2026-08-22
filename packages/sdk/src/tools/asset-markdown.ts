@@ -6,7 +6,19 @@ export interface AssetFileInput {
 }
 
 function yamlString(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  // Keep the value on one legal YAML double-quoted line: escape the backslash
+  // and quote, then newlines/tabs, then every remaining C0 control char and DEL.
+  const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  let out = "";
+  for (const char of escaped) {
+    const code = char.charCodeAt(0)!;
+    if (code === 10) out += "\\n";
+    else if (code === 13) out += "\\r";
+    else if (code === 9) out += "\\t";
+    else if (code < 32 || code === 127) out += `\\x${code.toString(16).padStart(2, "0")}`;
+    else out += char;
+  }
+  return `"${out}"`;
 }
 
 /** Build index.md content: YAML frontmatter (source/fetched_at[/title]) + markdown body. */
