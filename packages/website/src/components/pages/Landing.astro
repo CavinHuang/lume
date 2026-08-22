@@ -2,6 +2,7 @@
 import Base from '../../layouts/Base.astro';
 import { REPO_URL } from '../../lib/site';
 import { t, type Lang, type UiKey } from '../../i18n/ui';
+import { withBase } from '../../lib/site';
 
 interface Props {
   lang: Lang;
@@ -42,7 +43,7 @@ const features = [
       <p class="mx-auto mt-5 max-w-xl text-body-lg text-fg-muted">{t(lang, 'hero.subtitle')}</p>
       <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
         <a
-          href={`${lang === 'zh' ? '' : '/en'}/download`}
+          href={withBase(`${lang === 'zh' ? '' : '/en'}/download`)}
           class="rounded-xl bg-accent px-5 py-2.5 text-body-lg font-medium text-accent-fg shadow-(--shadow-card) transition-colors hover:bg-accent-strong"
         >
           {t(lang, 'hero.ctaDownload')}
@@ -61,7 +62,7 @@ const features = [
         class="relative mx-auto mt-14 max-w-4xl rounded-2xl border border-border bg-surface p-2 shadow-(--shadow-card)"
       >
         <img
-          src="/screenshot.png"
+          src={withBase('/screenshot.png')}
           alt={t(lang, 'hero.screenshotAlt')}
           width="1456"
           height="816"
@@ -197,7 +198,7 @@ for await (const event of agent.query('Read package.json and summarize the proje
       <h2 class="text-headline font-semibold tracking-tight text-fg">{t(lang, 'cta.title')}</h2>
       <p class="mt-3 text-body-lg text-fg-muted">{t(lang, 'cta.desc')}</p>
       <a
-        href={`${lang === 'zh' ? '' : '/en'}/download`}
+        href={withBase(`${lang === 'zh' ? '' : '/en'}/download`)}
         class="mt-7 inline-block rounded-xl bg-accent px-6 py-3 text-body-lg font-medium text-accent-fg shadow-(--shadow-card) transition-colors hover:bg-accent-strong"
       >
         {t(lang, 'cta.button')}

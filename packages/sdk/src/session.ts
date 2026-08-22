@@ -5,7 +5,7 @@
  * file checkpoints for rewind support.
  */
 
-import { mkdir, readFile, readdir, rm, writeFile } from 'fs/promises'
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'fs/promises'
 import { join, resolve } from 'path'
 import { clearLspWritethroughState } from './lsp/writethrough.js'
 import type { NormalizedMessageParam } from './providers/types.js'
@@ -54,6 +54,25 @@ function getTranscriptJsonlPath(dir: string): string {
   return join(dir, 'transcript.jsonl')
 }
 
+function getMetaJsonPath(dir: string): string {
+  return join(dir, 'meta.json')
+}
+
+/**
+ * tmp+rename 原子替换：裸 writeFile 打开即截断，进程崩溃会留下半截
+ * transcript，loadSession 解析失败后整个会话被静默丢弃（#293/#306）。
+ */
+async function writeFileAtomic(filePath: string, content: string): Promise<void> {
+  const tempPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`
+  try {
+    await writeFile(tempPath, content, 'utf-8')
+    await rename(tempPath, filePath)
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined)
+    throw error
+  }
+}
+
 function getSessionDirCandidates(): string[] {
   const candidates: string[] = []
   const override = process.env.OPEN_AGENT_SDK_HOME || process.env.CODEANY_HOME
@@ -72,33 +91,46 @@ function getSessionDirCandidates(): string[] {
 
 async function resolveExistingSessionPath(sessionId: string): Promise<string | null> {
   for (const root of getSessionDirCandidates()) {
-    const candidate = getTranscriptJsonPath(join(root, sessionId))
-    try {
-      await readFile(candidate, 'utf-8')
-      return join(root, sessionId)
-    } catch {
-      // Try the next candidate.
+    const dir = join(root, sessionId)
+    for (const candidate of [getTranscriptJsonPath(dir), getTranscriptJsonlPath(dir), getMetaJsonPath(dir)]) {
+      try {
+        await readFile(candidate, 'utf-8')
+        return dir
+      } catch {
+        // Try the next candidate.
+      }
     }
   }
   return null
+}
+
+function normalizeSessionMetadata(
+  sessionId: string,
+  metadata: Partial<SessionMetadata>,
+): SessionMetadata {
+  return {
+    id: sessionId,
+    cwd: metadata.cwd || process.cwd(),
+    model: metadata.model || 'claude-sonnet-4-6',
+    createdAt: metadata.createdAt || new Date().toISOString(),
+    updatedAt: metadata.updatedAt || new Date().toISOString(),
+    messageCount: metadata.messageCount ?? 0,
+    summary: metadata.summary,
+    tag: metadata.tag,
+    forkedFrom: metadata.forkedFrom,
+  }
 }
 
 function normalizeSessionData(
   sessionId: string,
   data: Partial<SessionData>,
 ): SessionData {
+  const metadata = normalizeSessionMetadata(sessionId, {
+    ...data.metadata,
+    messageCount: data.metadata?.messageCount ?? data.messages?.length ?? 0,
+  })
   return {
-    metadata: {
-      id: sessionId,
-      cwd: data.metadata?.cwd || process.cwd(),
-      model: data.metadata?.model || 'claude-sonnet-4-6',
-      createdAt: data.metadata?.createdAt || new Date().toISOString(),
-      updatedAt: data.metadata?.updatedAt || new Date().toISOString(),
-      messageCount: data.metadata?.messageCount ?? data.messages?.length ?? 0,
-      summary: data.metadata?.summary,
-      tag: data.metadata?.tag,
-      forkedFrom: data.metadata?.forkedFrom,
-    },
+    metadata,
     messages: data.messages || [],
     sessionMessages: data.sessionMessages || [],
     checkpoints: data.checkpoints || {},
@@ -139,8 +171,9 @@ export async function saveSession(
     const dir = join(root, sessionId)
     try {
       await mkdir(dir, { recursive: true })
-      await writeFile(getTranscriptJsonPath(dir), payload, 'utf-8')
-      await writeFile(getTranscriptJsonlPath(dir), jsonlPayload, 'utf-8')
+      await writeFileAtomic(getTranscriptJsonPath(dir), payload)
+      await writeFileAtomic(getTranscriptJsonlPath(dir), jsonlPayload)
+      await writeFileAtomic(getMetaJsonPath(dir), JSON.stringify(data.metadata, null, 2))
       return
     } catch (err) {
       lastError = err
@@ -191,35 +224,101 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
 
-export async function loadSession(sessionId: string): Promise<SessionData | null> {
-  try {
-    const existingPath = await resolveExistingSessionPath(sessionId)
-    if (!existingPath) return null
-    const content = await readFile(getTranscriptJsonPath(existingPath), 'utf-8')
-    const parsed = normalizeSessionData(sessionId, JSON.parse(content) as SessionData)
+function parseJsonlSessionMessages(jsonl: string): SessionMessage[] {
+  const messages: SessionMessage[] = []
+  for (const line of jsonl.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
     try {
-      const jsonl = await readFile(getTranscriptJsonlPath(existingPath), 'utf-8')
-      const sessionMessages = jsonl
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as SessionMessage)
-      if (sessionMessages.length > 0) {
-        parsed.sessionMessages = sessionMessages
-      }
+      messages.push(JSON.parse(trimmed) as SessionMessage)
     } catch {
-      // Older sessions may not have jsonl transcripts yet.
+      // 一行撕裂不影响其余行：jsonl 逐行独立，跳过坏行继续重建。
     }
-    return parsed
+  }
+  return messages
+}
+
+/**
+ * transcript.json 半截损坏时，用逐行独立的 transcript.jsonl 兜底重建，
+ * 避免 resume 静默弃恢复（#293/#306）。
+ */
+async function rebuildSessionFromJsonl(
+  sessionDir: string,
+  sessionId: string,
+): Promise<SessionData | null> {
+  try {
+    const jsonl = await readFile(getTranscriptJsonlPath(sessionDir), 'utf-8')
+    const sessionMessages = parseJsonlSessionMessages(jsonl)
+    if (sessionMessages.length === 0) return null
+    const messages = sessionMessages
+      .filter(
+        (message): message is SessionMessage & { role: NormalizedMessageParam['role'] } =>
+          message.role === 'user' || message.role === 'assistant' || message.role === 'runtime',
+      )
+      .map((message) => ({ role: message.role, content: message.content as NormalizedMessageParam['content'] }))
+    return {
+      metadata: normalizeSessionMetadata(sessionId, {
+        createdAt: sessionMessages[0]?.timestamp,
+        updatedAt: sessionMessages[sessionMessages.length - 1]?.timestamp,
+        messageCount: messages.length,
+      }),
+      messages,
+      sessionMessages,
+      checkpoints: {},
+    }
   } catch {
     return null
   }
 }
 
+export async function loadSession(sessionId: string): Promise<SessionData | null> {
+  const existingPath = await resolveExistingSessionPath(sessionId)
+  if (!existingPath) return null
+
+  let parsed: SessionData | null
+  try {
+    const content = await readFile(getTranscriptJsonPath(existingPath), 'utf-8')
+    parsed = normalizeSessionData(sessionId, JSON.parse(content) as SessionData)
+  } catch {
+    // transcript.json 缺失或半截损坏 → jsonl 兜底；两者皆不可用才放弃。
+    parsed = await rebuildSessionFromJsonl(existingPath, sessionId)
+  }
+  if (!parsed) return null
+  try {
+    const jsonl = await readFile(getTranscriptJsonlPath(existingPath), 'utf-8')
+    const sessionMessages = parseJsonlSessionMessages(jsonl)
+    if (sessionMessages.length > 0) {
+      parsed.sessionMessages = sessionMessages
+    }
+  } catch {
+    // Older sessions may not have jsonl transcripts yet.
+  }
+  return parsed
+}
+
+/**
+ * 轻量元数据读取（meta.json），listSessions 不必为每个会话解析全量
+ * transcript；meta.json 缺失或损坏时由调用方回退 loadSession。
+ */
+async function readSessionMetadata(sessionId: string): Promise<SessionMetadata | null> {
+  for (const root of getSessionDirCandidates()) {
+    try {
+      const content = await readFile(getMetaJsonPath(join(root, sessionId)), 'utf-8')
+      return normalizeSessionMetadata(sessionId, JSON.parse(content) as Partial<SessionMetadata>)
+    } catch {
+      // Try the next candidate / fall back to the full load.
+    }
+  }
+  return null
+}
+
 function matchesDir(session: SessionMetadata, dir?: string): boolean {
   if (!dir) return true
-  const target = resolve(dir)
-  const cwd = resolve(session.cwd)
+  // win32 盘符/路径大小写会漂移（d:\ vs D:\），先折叠再比较，否则 continue 过滤为空丢历史（#362）
+  const fold = (value: string): string =>
+    process.platform === 'win32' ? value.toLowerCase() : value
+  const target = fold(resolve(dir))
+  const cwd = fold(resolve(session.cwd))
   return cwd === target || cwd.startsWith(`${target}\\`) || cwd.startsWith(`${target}/`)
 }
 
@@ -240,11 +339,11 @@ export async function listSessions(
 
       for (const entry of entries) {
         if (seen.has(entry)) continue
-        const data = await loadSession(entry)
-        if (!data?.metadata) continue
-        if (!matchesDir(data.metadata, options.dir)) continue
+        const metadata = (await readSessionMetadata(entry)) ?? (await loadSession(entry))?.metadata
+        if (!metadata) continue
+        if (!matchesDir(metadata, options.dir)) continue
         seen.add(entry)
-        sessions.push(data.metadata)
+        sessions.push(metadata)
       }
     }
 

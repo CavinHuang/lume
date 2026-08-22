@@ -3,6 +3,7 @@ import '../styles/global.css';
 import Nav from '../components/Nav.astro';
 import Footer from '../components/Footer.astro';
 import { getLangFromUrl } from '../i18n/ui';
+import { withBase } from '../lib/site';
 
 interface Props {
   title: string;
@@ -20,11 +21,11 @@ const lang = getLangFromUrl(Astro.url);
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href={withBase('/favicon.svg')} />
     <meta name="generator" content={Astro.generator} />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
-    <meta property="og:image" content="/screenshot.png" />
+    <meta property="og:image" content={withBase('/screenshot.png')} />
     <!-- 首屏前定主题，避免闪白/闪黑 -->
     <script is:inline>
       (() => {

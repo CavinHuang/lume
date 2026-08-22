@@ -13,6 +13,8 @@ export interface DecodedTextFile {
 export interface TextFileRange {
   content: string;
   totalLines: number;
+  /** true = 窗口凑满提前停读；totalLines 只是已观察行数的下界，不是文件总行数。 */
+  truncated: boolean;
 }
 
 export async function readTextFile(filePath: string): Promise<DecodedTextFile> {
@@ -30,6 +32,7 @@ export async function readTextFileRange(
   const selectedLines: string[] = [];
   let buffer = "";
   let totalLines = 0;
+  let truncated = false;
 
   const consumeLine = (line: string): void => {
     const normalized = line.replace(/\r$/, "");
@@ -54,8 +57,9 @@ export async function readTextFileRange(
 
     // The requested window is complete; stop reading so huge files are not
     // streamed to EOF just to satisfy a small offset/limit. totalLines then
-    // reflects the lines observed so far.
+    // only lower-bounds the file; truncated tells callers it is not exact (#314).
     if (limit > 0 && selectedLines.length >= limit) {
+      truncated = true;
       stream.destroy();
       break;
     }
@@ -71,7 +75,7 @@ export async function readTextFileRange(
     selectedLines[0] = selectedLines[0].slice(1);
   }
 
-  return { content: selectedLines.join("\n"), totalLines };
+  return { content: selectedLines.join("\n"), totalLines, truncated };
 }
 
 function throwIfAborted(signal: AbortSignal | undefined, stream?: NodeJS.ReadableStream): void {

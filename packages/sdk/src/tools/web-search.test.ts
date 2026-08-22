@@ -6,6 +6,7 @@ import {
   isBingBlockedPage,
   parseBingResultItem,
   clampProviderLimit,
+  enrichResultsWithContent,
   WebSearchTool,
   ENGINE_TIMEOUT_MS
 } from "./web-search";
@@ -152,5 +153,37 @@ describe("WebSearchTool input validation (#220)", () => {
     const out = await WebSearchTool.call({ query: "lume", num_results: "10" } as any, { sandbox: undefined } as any);
     expect(out.is_error).toBe(true);
     expect((out.content as string).toLowerCase()).toContain("num_results must be a number");
+  });
+});
+
+describe("abort wiring (#343)", () => {
+  test("an already-aborted signal stops the provider loop before any network call", async () => {
+    // Sandbox denies the search host (non-matching allowlist) so an unfixed
+    // build could never leak a real request here either; the assertion is that
+    // we report the abort itself.
+    const savedProviders = process.env.LUME_WEB_SEARCH_PROVIDERS;
+    process.env.LUME_WEB_SEARCH_PROVIDERS = "duckduckgo";
+    try {
+      const controller = new AbortController();
+      controller.abort();
+      const out = await WebSearchTool.call(
+        { query: "lume" },
+        { sandbox: { enabled: true, network: { allowedDomains: ["example.com"] } }, abortSignal: controller.signal } as any
+      );
+      expect(out.is_error).toBe(true);
+      expect(out.content as string).toContain("aborted");
+    } finally {
+      if (savedProviders === undefined) delete process.env.LUME_WEB_SEARCH_PROVIDERS;
+      else process.env.LUME_WEB_SEARCH_PROVIDERS = savedProviders;
+    }
+  });
+
+  test("enrichment skips page fetches once aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const results = [{ title: "t", url: "https://example.com/a", snippet: "s" }];
+    const enriched = await enrichResultsWithContent(results, undefined, controller.signal);
+    expect(enriched).toHaveLength(1);
+    expect(enriched[0].content).toBeUndefined();
   });
 });
