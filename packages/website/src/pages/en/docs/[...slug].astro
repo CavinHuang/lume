@@ -1,0 +1,22 @@
+---
+import { getCollection, type CollectionEntry } from 'astro:content';
+import DocsPage from '../../../components/pages/DocsPage.astro';
+
+export async function getStaticPaths() {
+  const docs = await getCollection('docs', (entry) => entry.id.startsWith('en/'));
+  const paths: {
+    params: { slug: string | undefined };
+    props: { entry: CollectionEntry<'docs'> | undefined };
+  }[] = docs.map((entry) => ({
+    params: { slug: entry.id.slice(3) },
+    props: { entry },
+  }));
+  // /en/docs 无 slug → 目录页
+  paths.push({ params: { slug: undefined }, props: { entry: undefined } });
+  return paths;
+}
+
+const { entry } = Astro.props as { entry?: CollectionEntry<'docs'> };
+---
+
+<DocsPage lang="en" entry={entry} />
