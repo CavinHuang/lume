@@ -41,8 +41,14 @@ export async function loadSettingsFromSources(
       const content = await readFile(filePath, 'utf-8')
       const parsed = JSON.parse(content) as Partial<AgentOptions> & Record<string, unknown>
       loaded.push({ source, path: filePath, settings: parsed })
-    } catch {
-      // Missing or invalid settings files are ignored by design.
+    } catch (error) {
+      // A missing file simply means no settings at that level and stays silent.
+      // Anything else (corrupt JSON, permissions) must not fail open quietly (#354).
+      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+        console.warn(
+          `[settings] Ignoring unreadable settings file ${filePath}: ${(error as Error)?.message ?? error}`,
+        )
+      }
     }
   }
 
