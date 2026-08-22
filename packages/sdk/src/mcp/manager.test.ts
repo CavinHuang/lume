@@ -403,3 +403,116 @@ describe("McpClientManager", () => {
     await expect(manager.callTool("local", "boom", {})).rejects.toMatchObject({ code: "protocol_error" });
   });
 });
+
+describe("McpClientManager #312 failed 负缓存", () => {
+  function createFailingFactory() {
+    let connectCalls = 0;
+    const clientFactory: McpClientFactory = () => ({
+      async connect() {
+        connectCalls += 1;
+        throw new Error("spawn ok but protocol hangs");
+      },
+      async listTools() {
+        return { tools: [] };
+      },
+      async callTool() {
+        return { content: [] };
+      },
+      async close() {}
+    });
+    return { clientFactory, get connectCalls() { return connectCalls; } };
+  }
+
+  function failingConfig(): NormalizedMcpServerConfig {
+    return {
+      serverId: "hang",
+      name: "hang",
+      transport: "stdio",
+      enabled: true,
+      command: "whatever",
+      args: []
+    } as unknown as NormalizedMcpServerConfig;
+  }
+
+  test("退避窗口内 ensureConnected 快速抛缓存错误且不重连", async () => {
+    const factory = createFailingFactory();
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: fakeTransportFactory,
+      failureRetryBaseMs: 10_000,
+      failureRetryMaxMs: 60_000
+    });
+    manager.register("hang", failingConfig());
+
+    await expect(manager.ensureConnected("hang")).rejects.toThrow("protocol hangs");
+    expect(factory.connectCalls).toBe(1);
+
+    const startedAt = Date.now();
+    await expect(manager.ensureConnected("hang")).rejects.toThrow(/backing off|protocol hangs/);
+    // 负缓存命中:未发起新连接,且几乎零耗时(不再卡 connect timeout)
+    expect(factory.connectCalls).toBe(1);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  test("连续失败指数退避,窗口过后允许重试", async () => {
+    const factory = createFailingFactory();
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: fakeTransportFactory,
+      failureRetryBaseMs: 20,
+      failureRetryMaxMs: 60
+    });
+    manager.register("hang", failingConfig());
+
+    await expect(manager.ensureConnected("hang")).rejects.toThrow(); // failure 1 → backoff 20ms
+    await expect(manager.ensureConnected("hang")).rejects.toThrow(); // 窗口内,不重连
+    expect(factory.connectCalls).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await expect(manager.ensureConnected("hang")).rejects.toThrow("protocol hangs"); // 窗口过,真连
+    expect(factory.connectCalls).toBe(2);
+  });
+
+  test("disconnect 清除负缓存,立即允许重试", async () => {
+    const factory = createFailingFactory();
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: fakeTransportFactory,
+      failureRetryBaseMs: 10_000
+    });
+    manager.register("hang", failingConfig());
+    await expect(manager.ensureConnected("hang")).rejects.toThrow();
+    await expect(manager.ensureConnected("hang")).rejects.toThrow();
+    expect(factory.connectCalls).toBe(1);
+
+    await manager.disconnect("hang");
+    await expect(manager.ensureConnected("hang")).rejects.toThrow("protocol hangs");
+    expect(factory.connectCalls).toBe(2);
+  });
+
+  test("连接成功后负缓存清零", async () => {
+    let shouldFail = true;
+    const clientFactory: McpClientFactory = () => ({
+      async connect() {
+        if (shouldFail) throw new Error("transient");
+      },
+      async listTools() {
+        return { tools: [] };
+      },
+      async callTool() {
+        return { content: [] };
+      },
+      async close() {}
+    });
+    const manager = new McpClientManager({
+      clientFactory,
+      transportFactory: fakeTransportFactory,
+      failureRetryBaseMs: 20
+    });
+    manager.register("flaky", failingConfig());
+    await expect(manager.ensureConnected("flaky")).rejects.toThrow();
+    shouldFail = false;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await manager.ensureConnected("flaky");
+    expect(manager.getStatus().flaky?.status).toBe("connected");
+  });
+});
