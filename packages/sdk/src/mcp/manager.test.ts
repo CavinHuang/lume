@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   McpClientManager,
   type McpClientFactory,
+  type McpClientLike,
   type McpTransportFactory,
   type NormalizedMcpServerConfig
 } from "./manager.js";
@@ -514,5 +515,112 @@ describe("McpClientManager #312 failed 负缓存", () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     await manager.ensureConnected("flaky");
     expect(manager.getStatus().flaky?.status).toBe("connected");
+  });
+});
+
+describe("McpClientManager #455 onclose 武装", () => {
+  function createOncloseCapturingFactory() {
+    const clients: McpClientLike[] = [];
+    const clientFactory: McpClientFactory = () => {
+      // fake client 不预置 onclose 字段——模拟裸 SDK Client 的初始状态
+      // （Protocol.onclose 初始为 undefined）。旧实现 client.onclose?.(listener)
+      // 对这种 client 是静默 no-op，监听从未武装。
+      const client: McpClientLike = {
+        async connect() {},
+        async listTools() {
+          return { tools: [] };
+        },
+        async callTool() {
+          return { content: [] };
+        },
+        async close() {}
+      };
+      clients.push(client);
+      return client;
+    };
+    return { clientFactory, clients };
+  }
+
+  test("连接成功后 onclose 被赋值为函数，触发后 status 打回 failed", async () => {
+    const { clientFactory, clients } = createOncloseCapturingFactory();
+    const manager = new McpClientManager({ clientFactory, transportFactory: fakeTransportFactory });
+
+    manager.sync({ local: { enabled: true, transport: "stdio", command: "node" } });
+    await manager.ensureConnected("local");
+    expect(manager.getStatus().local?.status).toBe("connected");
+
+    // 注册动作确实发生：onclose 字段必须被赋值（旧实现此处恒为 undefined）
+    const client = clients[0]!;
+    expect(typeof client.onclose).toBe("function");
+
+    // 模拟 stdio server 崩溃：SDK _onclose() 零参调用字段
+    client.onclose!();
+    await delay(0);
+
+    expect(manager.getStatus().local?.status).toBe("failed");
+    expect(manager.getStatus().local?.error?.code).toBe("transport_error");
+
+    // 打回 failed 后下次 ensureConnected 走正常重连（不落 #437 负缓存）
+    await manager.ensureConnected("local");
+    expect(clients).toHaveLength(2);
+    expect(manager.getStatus().local?.status).toBe("connected");
+    expect(typeof clients[1]!.onclose).toBe("function");
+  });
+
+  test("重连后旧 client 的 stale onclose 不影响新连接", async () => {
+    const { clientFactory, clients } = createOncloseCapturingFactory();
+    const manager = new McpClientManager({ clientFactory, transportFactory: fakeTransportFactory });
+
+    manager.sync({ local: { enabled: true, transport: "stdio", command: "node" } });
+    await manager.ensureConnected("local");
+    const staleClient = clients[0]!;
+
+    await manager.disconnect("local");
+    await manager.ensureConnected("local");
+    expect(clients[1]).not.toBe(staleClient);
+    expect(manager.getStatus().local?.status).toBe("connected");
+
+    staleClient.onclose!();
+    await delay(0);
+
+    expect(manager.getStatus().local?.status).toBe("connected");
+  });
+
+  test("callTool 把配置预算透传进 SDK options.timeout（#455 P2）", async () => {
+    const seenOptions: Array<{ signal?: AbortSignal; timeout?: number } | undefined> = [];
+    const manager = new McpClientManager({
+      clientFactory: () => ({
+        async connect() {},
+        async listTools() {
+          return { tools: [] };
+        },
+        async callTool(_input, options) {
+          seenOptions.push(options);
+          return { content: [] };
+        },
+        async listResources(_params, options) {
+          seenOptions.push(options);
+          return { resources: [] };
+        },
+        async readResource(_input, options) {
+          seenOptions.push(options);
+          return { contents: [] };
+        },
+        async close() {}
+      }),
+      transportFactory: fakeTransportFactory
+    });
+
+    manager.sync({ local: { enabled: true, transport: "stdio", command: "node" } });
+    await manager.callTool("local", "tool", {}, { timeoutMs: 1234 });
+    // 显式预算透传：SDK Protocol.request 否则无条件套 60s 默认，>60s 配置永不生效
+    expect(seenOptions[0]?.timeout).toBe(1234);
+
+    seenOptions.length = 0;
+    await manager.callTool("local", "tool", {});
+    await manager.listResources("local");
+    await manager.readResource("local", "file://a");
+    // 默认预算同样透传（listResources/readResource 走同一 SDK request 底座）
+    expect(seenOptions.map((options) => options?.timeout)).toEqual([30_000, 30_000, 30_000]);
   });
 });
