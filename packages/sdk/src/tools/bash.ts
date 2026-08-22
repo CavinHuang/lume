@@ -499,7 +499,11 @@ async function startDirectShellTask({
       attachedTaskId = taskId
       registerProcessStopHandler(taskId, () => stop('aborted'))
       progressTimer = setInterval(() => {
-        context.emitEvent?.({
+        // Prefer the live channel: progress is only meaningful while the
+        // command is still running, and buffering it until the tool batch
+        // completes would defeat the heartbeat. Fall back to the deferred
+        // channel when the host has no live receiver.
+        ;(context.emitLiveEvent ?? context.emitEvent)?.({
           type: 'system', subtype: 'task_progress', task_id: taskId, description: subject,
           last_tool_name: 'Bash', usage: { total_tokens: 0, tool_uses: 1, duration_ms: Date.now() - startedAt },
           session_id: context.sessionId || '',
@@ -782,7 +786,8 @@ async function startDurableShellTask({
       updateProcessJob(taskId, { subject, description: redactSensitiveText(command) })
       registerProcessStopHandler(taskId, stop)
       progressTimer = setInterval(() => {
-        context.emitEvent?.({
+        // Live channel preferred — see the promote() heartbeat above.
+        ;(context.emitLiveEvent ?? context.emitEvent)?.({
           type: 'system',
           subtype: 'task_progress',
           task_id: taskId,

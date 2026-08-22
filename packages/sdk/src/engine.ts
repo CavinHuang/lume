@@ -1921,6 +1921,22 @@ export class QueryEngine {
         }
       }
     }
+    // Live channel: delivered to the host immediately while the tool runs,
+    // bypassing the deferred batch buffer. Closed once the tool call returns —
+    // post-return progress belongs to the async channel above. Only mounted
+    // when the host listens: tools fall back to emitEvent otherwise, so
+    // hosts without onLiveEvent keep the buffered (persistable) behavior.
+    if (this.config.onLiveEvent) {
+      const deliverLive = this.config.onLiveEvent
+      toolContext.emitLiveEvent = (event) => {
+        if (!toolCallActive) return
+        try {
+          deliverLive(event)
+        } catch {
+          // Live delivery must not break tool execution.
+        }
+      }
+    }
     toolContext.executeNestedTool = async ({ toolName, params }) => {
       const target = this.config.tools.find((candidate) => candidate.name === toolName)
         ?? this.config.deferredTools?.find((candidate) => candidate.name === toolName)
