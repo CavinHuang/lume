@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
-import type { BrowserActor, BrowserAuditEvent, BrowserBackendType, BrowserErrorCode } from "../../../packages/shared/src/types/browser-runtime"
+import type { BrowserActor, BrowserAuditEvent, BrowserBackendType, BrowserErrorCode } from '@lume/shared'
 
 const MAX_EVENT_BYTES = 8 * 1024
 const MAX_SESSION_BYTES = 2 * 1024 * 1024

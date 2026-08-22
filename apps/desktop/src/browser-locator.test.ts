@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Window } from "happy-dom"
 import { browserLocatorScript, type BrowserLocatorQuery } from "./browser-locator"
-import type { BrowserLocator } from "../../../packages/shared/src/types/browser-runtime"
+import type { BrowserLocator } from '@lume/shared'
 
 describe("browser locator semantics", () => {
   test("resolves textbox names from aria-labelledby, label, title and placeholder", () => {
