@@ -61,7 +61,8 @@ async function isMastodonInstance(hostname: string, timeout: number, signal?: Ab
 			signal,
 		});
 		if (!result.ok) return false;
-		const data = JSON.parse(result.content);
+		const data = tryParseJson<Record<string, any>>(result.content);
+		if (!data) return false;
 		// Mastodon instances return uri/domain field
 		return !!(data.uri || data.domain || data.title);
 	} catch {

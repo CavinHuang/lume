@@ -122,7 +122,7 @@ export const handleW3c: SpecialHandler = async (
 			const editorsResult = await loadPage(editorsUrl, { timeout: Math.min(timeout, 10), signal });
 			if (editorsResult.ok) {
 				try {
-					const editorsPayload = asRecord(JSON.parse(editorsResult.content));
+					const editorsPayload = asRecord(tryParseJson<unknown>(editorsResult.content));
 					editors = editorsPayload ? extractEditors(editorsPayload) : [];
 				} catch {}
 			}

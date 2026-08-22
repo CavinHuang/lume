@@ -1,4 +1,5 @@
 import { readFile } from 'fs/promises'
+import { homedir } from 'os'
 import { join } from 'path'
 import type { AgentOptions, SettingSource } from '../types.js'
 
@@ -8,10 +9,12 @@ export interface LoadedSettingsSource {
   settings: Partial<AgentOptions> & Record<string, unknown>
 }
 
-function getSettingsFileForSource(cwd: string, source: SettingSource): string {
+export function getSettingsFileForSource(cwd: string, source: SettingSource): string {
   switch (source) {
+    // 'user' must not mirror 'project' (same cwd file read twice) — the
+    // user-level settings source would never load (#230).
     case 'user':
-      return join(cwd, 'settings.json')
+      return join(homedir(), '.lume', 'settings.json')
     case 'project':
       return join(cwd, 'settings.json')
     case 'local':

@@ -12,6 +12,8 @@ import type { LumeRunState } from "./run-state";
 import { createMemoryV2Store } from "../../memory-v2/markdown-store";
 import { getMemoryV2ScopePaths } from "../../memory-v2/paths";
 import { getWikiProtectedRootPath } from "../../infra/config-paths";
+import { setActiveBrowserBroker } from "../../browser/browser-broker-holder";
+import { getBrowserToolSessionRegistry } from "../tools/browser/browser-tool-session";
 
 function createTestParams(threadId: string): AgentRuntimeRunParams {
   return {
@@ -144,6 +146,8 @@ describe("LumeRunner", () => {
   const dirs: string[] = [];
 
   afterEach(() => {
+    setActiveBrowserBroker(null);
+    getBrowserToolSessionRegistry().take("thread-1");
     for (const dir of dirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -978,7 +982,7 @@ describe("LumeRunner", () => {
     expect(traceJson).not.toContain("secret-token");
   });
 
-  test("runRuntimeSession registers abort, runs query, updates thread meta, and disposes session", async () => {
+  test("runRuntimeSession disposes the SDK session and finalizes its browser tabs", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-session-"));
     dirs.push(agentDir);
     const events: string[] = [];
@@ -986,6 +990,13 @@ describe("LumeRunner", () => {
     const lifecycle: string[] = [];
     let registeredAbort: (() => Promise<void>) | undefined;
     let queryOptions: { sandbox?: unknown } | undefined;
+    getBrowserToolSessionRegistry().getOrCreate("thread-1");
+    setActiveBrowserBroker({
+      dispatch: async (request: { method: string; browserSessionId?: string }) => {
+        lifecycle.push(`browser:${request.method}:${request.browserSessionId}`);
+        return {};
+      }
+    } as any);
 
     const result = await runner.runRuntimeSession({
       params: createTestParams("thread-1"),
@@ -1047,6 +1058,7 @@ describe("LumeRunner", () => {
       "setModel:model-1",
       "thinking:4096",
       "dispose",
+      "browser:finalize_tabs:browser-tools:thread-1",
       "unregisterAbort",
       "interrupt"
     ]);

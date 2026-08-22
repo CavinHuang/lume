@@ -2526,6 +2526,8 @@ function createSidecarHost({ onNotification }) {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       LUME_CONFIG_DIR: configDir,
+      // session manifest 版本清单消费(#256):sidecar 写 manifest.json 时读取
+      LUME_APP_VERSION: app.getVersion(),
       LUME_DEFAULT_SKILLS_AUTOSTART: 'true',
       LUME_BROWSER_RPC_SECRET: browserRpcSecret.toString('base64url'),
       ...(chromeBridge ? {

@@ -117,22 +117,38 @@ const server = createServer((request, response) => {
     <label>Name <input id="name" aria-label="Name"></label>
     <button id="submit" onclick="document.querySelector('#result').textContent=document.querySelector('#name').value">Apply</button>
     <button id="annotation-target" onclick="document.querySelector('#annotation-result').textContent='clicked'">Annotation target</button>
+    <div id="custom-card" style="cursor:pointer;margin-top:200px" onclick="document.querySelector('#annotation-result').textContent='custom-card'">Custom card</div>
     <button id="open-popup" onclick="window.open('/popup', 'oauth-popup', 'width=520,height=640')">Open popup</button>
     <output id="annotation-result"></output>
     <a id="download" href="/download" download="fixture.txt">Download</a>
     <output id="result"></output>
     <iframe id="cross-origin-frame" src="\${frameOrigin}/"></iframe>
+    <form id="search-form" style="display:none;position:fixed;right:8px;bottom:8px;width:260px;height:70px">
+      <div style="position:relative;width:260px;height:40px">
+        <input id="kw" name="wd" title="搜索" placeholder="请输入搜索内容" style="box-sizing:border-box;width:260px;height:40px">
+        <label for="kw" style="position:absolute;inset:0;color:transparent">搜索</label>
+      </div>
+      <button id="su" type="submit">百度一下</button>
+    </form>
+    <output id="search-result"></output>
     <script>
-      window.__lumeWebMcpModelContext.registerTool({
-        name: 'set_result',
-        title: 'Set result',
-        description: 'Updates the fixture result.',
-        inputSchema: { type: 'object', properties: { value: { type: 'string' } } },
-        execute: value => {
-          document.querySelector('#result').textContent = value.value;
-          return { applied: value.value };
-        },
+      document.querySelector('#search-form').addEventListener('submit', event => {
+        event.preventDefault();
+        document.querySelector('#search-result').textContent = document.querySelector('#kw').value;
       });
+      document.modelContext = {
+        getTools: () => [{
+          name: 'set_result',
+          title: 'Set result',
+          description: 'Updates the fixture result.',
+          inputSchema: JSON.stringify({ type: 'object', properties: { value: { type: 'string' } } }),
+        }],
+        executeTool: (_tool, input) => {
+          const value = JSON.parse(input);
+          document.querySelector('#result').textContent = value.value;
+          return JSON.stringify({ applied: value.value });
+        },
+      };
     </script>\`)
 })
 
@@ -262,7 +278,8 @@ app.whenReady().then(async () => {
     const navigatedUrl = await call('url', { tabId: 'fixture-tab' })
     check(navigatedUrl.startsWith(origin), 'fixture navigation failed: ' + JSON.stringify(navigatedUrl))
     setStage('popup-policy')
-    await call('click', { tabId: 'fixture-tab', locator: { version: 1, steps: [{ kind: 'css', selector: '#open-popup' }] } })
+    const popupAction = await call('click', { tabId: 'fixture-tab', locator: { version: 1, steps: [{ kind: 'css', selector: '#open-popup' }] } })
+    check(popupAction.effect?.kind === 'new_tab_requested', 'Agent action did not report its popup effect')
     await waitUntil(() => events.some(event => event.method === 'browser:popup-request' && event.params?.tabId === 'fixture-tab'))
     check(BrowserWindow.getAllWindows().length === 1, 'Agent-triggered popup bypassed confirmation')
     const popupCreated = new Promise(resolvePopup => view.once('did-create-window', resolvePopup))
@@ -273,6 +290,13 @@ app.whenReady().then(async () => {
     await popupWindow.webContents.executeJavaScript(\`new Promise(resolve => document.readyState === 'complete' ? resolve() : addEventListener('load', resolve, { once: true }))\`)
     check(await popupWindow.webContents.executeJavaScript(\`document.querySelector('#opener').textContent\`) === 'present', 'user popup lost its opener relationship')
     popupWindow.close()
+    const takenOver = await userCall('get', { tabId: 'fixture-tab' })
+    check(takenOver.agentControlState === 'paused_by_user', 'real user input did not pause Agent browser control')
+    await checkRejects(() => call('url', { tabId: 'fixture-tab' }), 'user_takeover_required', 'Agent kept controlling a user-taken-over tab')
+    await checkRejects(() => call('ensure', { tabId: 'takeover-side-tab' }), 'user_takeover_required', 'Agent opened a side tab to bypass a user takeover')
+    await checkRejects(() => call('close', { tabId: 'fixture-tab' }), 'user_takeover_required', 'Agent closed a tab the user had taken over')
+    const resumedControl = await userCall('agentControl:resume', { tabId: 'fixture-tab' })
+    check(resumedControl.agentControlState === 'active' && resumedControl.generation > takenOver.generation, 'explicit user resume did not invalidate old Agent page state')
     if (process.env.LUME_BROWSER_POPUP_ONLY === '1') {
       writeFileSync(resultPath, JSON.stringify({ ok: true, assertions }))
       return
@@ -306,6 +330,18 @@ app.whenReady().then(async () => {
     const geolocationPermission = await view.executeJavaScript("new Promise(resolve => navigator.geolocation.getCurrentPosition(() => resolve('allowed'), error => resolve(error.code === 1 ? 'denied' : 'other'), { timeout: 1000 }))")
     check(geolocationPermission === 'denied', 'agent browser session did not deny site permissions')
     const locator = selector => ({ version: 1, steps: [{ kind: 'css', selector }] })
+    await view.executeJavaScript("document.querySelector('#search-form').style.display = 'block'")
+    const searchByRole = { version: 1, steps: [{ kind: 'role', role: 'textbox', name: '搜索', exact: true }] }
+    await call('fill', { tabId: 'fixture-tab', locator: searchByRole, text: 'agent loop' })
+    check(await call('locator:inputValue', { tabId: 'fixture-tab', locator: locator('#kw') }) === 'agent loop', 'role textbox fill did not resolve the associated search label')
+    await call('press', { tabId: 'fixture-tab', locator: searchByRole, key: 'Enter' })
+    check(await call('locator:innerText', { tabId: 'fixture-tab', locator: locator('#search-result') }) === 'agent loop', 'search textbox Enter did not submit the form')
+    check(view.getURL() === origin + '/', 'search textbox Enter unexpectedly navigated: ' + view.getURL())
+    await call('fill', { tabId: 'fixture-tab', locator: locator('#kw'), text: 'Lume browser' })
+    await call('click', { tabId: 'fixture-tab', locator: locator('#su') })
+    check(await call('locator:innerText', { tabId: 'fixture-tab', locator: locator('#search-result') }) === 'Lume browser', 'CSS search textbox fill did not submit the expected value')
+    check(view.getURL() === origin + '/', 'search button unexpectedly navigated: ' + view.getURL())
+    await view.executeJavaScript("document.querySelector('#search-form').style.display = 'none'")
     await call('fill', { tabId: 'fixture-tab', locator: locator('#name'), text: 'Lume Agent' })
     const inputValue = await view.executeJavaScript("document.querySelector('#name').value")
     check(inputValue === 'Lume Agent', 'locator fill did not update the input: ' + JSON.stringify(inputValue))
@@ -314,12 +350,75 @@ app.whenReady().then(async () => {
     check(await call('locator:evaluate', { tabId: 'fixture-tab', locator: locator('#name'), expression: '(element, suffix) => element.value + suffix', arg: '!' }) === 'Lume Agent!', 'locator evaluate did not receive the strict element')
     await checkRejects(() => call('locator:evaluate', { tabId: 'fixture-tab', locator: locator('#name'), expression: '(element) => { element.value = \"mutated\"; return element.value }' }), 'action_denied', 'locator evaluate allowed a side effect')
     check(await call('locator:inputValue', { tabId: 'fixture-tab', locator: locator('#name') }) === 'Lume Agent', 'rejected locator evaluate changed the page')
-    check(await call('locator:count', { tabId: 'fixture-tab', locator: locator('button') }) === 3, 'locator count was incorrect')
+    check(await call('locator:count', { tabId: 'fixture-tab', locator: locator('button') }) === 4, 'locator count was incorrect')
     await call('locator:waitFor', { tabId: 'fixture-tab', locator: locator('#submit'), state: 'visible', timeoutMs: 1000 })
     await call('wait:url', { tabId: 'fixture-tab', url: origin + '/*', timeoutMs: 1000 })
     await call('click', { tabId: 'fixture-tab', locator: locator('#submit') })
     const pageResult = await view.executeJavaScript("document.querySelector('#result').textContent")
     check(pageResult === 'Lume Agent', 'locator fill/click did not update the page')
+    setStage('semantic-ref')
+    const semanticSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    const applyRef = Object.entries(semanticSnapshot.refs).find(([, value]) => value.role === 'button' && value.name === 'Apply')?.[0]
+    check(typeof applyRef === 'string', 'semantic snapshot did not expose the Apply button ref')
+    await view.executeJavaScript("document.querySelector('#result').textContent = ''")
+    await call('click', {
+      tabId: 'fixture-tab',
+      locator: locator('#submit'),
+      semanticRef: applyRef,
+      semanticSnapshotId: semanticSnapshot.snapshot_id,
+    })
+    check(await view.executeJavaScript("document.querySelector('#result').textContent") === 'Lume Agent', 'semantic ref did not resolve the exact backend node')
+    const semanticNameRef = Object.entries(semanticSnapshot.refs).find(([, value]) => value.role === 'textbox' && value.name === 'Name')?.[0]
+    check(typeof semanticNameRef === 'string', 'semantic snapshot did not expose the Name textbox ref')
+    await call('fill', {
+      tabId: 'fixture-tab',
+      locator: locator('#name'),
+      semanticRef: semanticNameRef,
+      semanticSnapshotId: semanticSnapshot.snapshot_id,
+      text: 'Semantic Ref Fill',
+    })
+    check(await view.executeJavaScript("document.querySelector('#name').value") === 'Semantic Ref Fill', 'semantic ref fill did not resolve the textbox backend node')
+    await view.executeJavaScript("document.querySelector('#name').value = 'Lume Agent'")
+    const currentSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    const currentApplyRef = Object.entries(currentSnapshot.refs).find(([, value]) => value.role === 'button' && value.name === 'Apply')?.[0]
+    const scopedSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', scope_ref: '@' + currentApplyRef, snapshot_id: currentSnapshot.snapshot_id })
+    check(scopedSnapshot.tree.includes('Apply') && !scopedSnapshot.tree.includes('Name'), 'semantic snapshot scope did not isolate the requested ref subtree')
+    await checkRejects(() => call('click', {
+      tabId: 'fixture-tab',
+      locator: locator('#submit'),
+      semanticRef: applyRef,
+      semanticSnapshotId: semanticSnapshot.snapshot_id,
+    }), 'stale_target', 'a ref from an older snapshot remained actionable')
+    const earlyFrameLocator = selector => ({ version: 1, steps: [{ kind: 'frame', selector: '#cross-origin-frame' }, { kind: 'css', selector }] })
+    await call('locator:waitFor', { tabId: 'fixture-tab', locator: earlyFrameLocator('#frame-name'), state: 'visible', timeoutMs: 3000 })
+    await call('fill', { tabId: 'fixture-tab', locator: earlyFrameLocator('#frame-name'), text: 'Semantic Frame Agent' })
+    const frameSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    const frameApplyRef = Object.entries(frameSnapshot.refs).find(([, value]) => value.role === 'button' && value.name === 'Frame apply')?.[0]
+    check(typeof frameApplyRef === 'string', 'semantic snapshot did not include the cross-origin frame button')
+    await call('click', {
+      tabId: 'fixture-tab',
+      locator: earlyFrameLocator('#frame-submit'),
+      semanticRef: frameApplyRef,
+      semanticSnapshotId: frameSnapshot.snapshot_id,
+    })
+    check(await call('locator:innerText', { tabId: 'fixture-tab', locator: earlyFrameLocator('#frame-result') }) === 'Semantic Frame Agent', 'cross-origin semantic ref did not resolve its backend node')
+    const supplementedSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    const customCardRef = Object.entries(supplementedSnapshot.refs).find(([, value]) => value.role === 'clickable' && value.name === 'Custom card')?.[0]
+    check(typeof customCardRef === 'string', 'semantic snapshot did not supplement a cursor-pointer element')
+    const annotatedScreenshot = await call('screenshot', {
+      tabId: 'fixture-tab',
+      annotated: true,
+      semanticSnapshotId: supplementedSnapshot.snapshot_id,
+    })
+    check(typeof annotatedScreenshot.data === 'string' && annotatedScreenshot.data.length > 100, 'annotated screenshot was empty')
+    check(annotatedScreenshot.annotated_refs.includes('@' + customCardRef), 'annotated screenshot did not reuse the semantic ref')
+    await call('click', {
+      tabId: 'fixture-tab',
+      locator: locator('#custom-card'),
+      semanticRef: customCardRef,
+      semanticSnapshotId: supplementedSnapshot.snapshot_id,
+    })
+    check(await view.executeJavaScript("document.querySelector('#annotation-result').textContent") === 'custom-card', 'supplemented cursor-pointer ref was not actionable')
     const webMcpTools = await call('webmcp:list', { tabId: 'fixture-tab' })
     check(webMcpTools.tools.length === 1 && webMcpTools.tools[0].name === 'set_result' && webMcpTools.tools[0].input_schema.type === 'object', 'WebMCP tools were not normalized')
     const webMcpResult = await call('webmcp:invoke', { tabId: 'fixture-tab', toolName: 'set_result', input: { value: 'WebMCP Agent' } })
@@ -362,6 +461,12 @@ app.whenReady().then(async () => {
       staleTargetObserved = actionResult.status === 'rejected'
     }
     check(staleTargetObserved, 'navigation race allowed an action against a stale target')
+    await view.loadURL(origin + '/')
+    const queuedNavigation = call('navigate', { tabId: 'fixture-tab', url: origin + '/queued-navigation' })
+    const queuedOldPageAction = call('fill', { tabId: 'fixture-tab', locator: locator('#name'), text: 'must-not-run' })
+    const [queuedNavigationResult, queuedActionResult] = await Promise.allSettled([queuedNavigation, queuedOldPageAction])
+    check(queuedNavigationResult.status === 'fulfilled', 'queued navigation did not complete')
+    check(queuedActionResult.status === 'rejected' && String(queuedActionResult.reason?.code ?? queuedActionResult.reason?.message).includes('stale_target'), 'an old-page action ran after queued navigation')
     const beforeCrash = await call('get', { tabId: 'fixture-tab' })
     setStage('crash-recovery')
     view.forcefullyCrashRenderer()

@@ -230,7 +230,7 @@ export class BrowserBroker {
     const previous = this.queues.get(queueKey) ?? Promise.resolve()
     const execute = async () => {
       const policy = classifyBrowserAction(input.method, input.params, normalized.method)
-      if (policy.decision === "deny") throw new Error("action_denied")
+      if (policy.decision === "deny") throw new Error(policy.errorCode ?? "action_denied")
       let confirmationToken: string | undefined
       let bindingHash: string | undefined
       if (policy.decision === "confirm") {
@@ -425,8 +425,11 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value) ?? "null"
 }
 function stableBrowserErrorCode(error: unknown): string {
-  const value = error instanceof Error ? error.message : ""
-  return new Set(["browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "strict_locator_violation", "actionability_failed", "dialog_blocking", "unsupported", "executed_unknown"]).has(value) ? value : "browser_internal_error"
+  const structuredCode = error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : ""
+  const value = structuredCode || (error instanceof Error ? error.message : "")
+  return new Set(["browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "user_action_required", "strict_locator_violation", "actionability_failed", "dialog_blocking", "user_takeover_required", "unsupported", "executed_unknown"]).has(value) ? value : "browser_internal_error"
 }
 
 function inferBackend(explicit: "iab" | "extension" | undefined, params: Record<string, unknown> | undefined): "iab" | "extension" {
@@ -499,7 +502,16 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "navigate_tab_reload": return { method: "reload", params }
     case "tab_url": return { method: "url", params }
     case "tab_title": return { method: "title", params }
-    case "tab_screenshot": return { method: "screenshot", params: { ...params, ...options, fullPage: options.fullPage === true || params.fullPage === true } }
+    case "tab_screenshot": return {
+      method: "screenshot",
+      params: {
+        ...params,
+        ...options,
+        fullPage: options.fullPage === true || params.fullPage === true,
+        annotated: input.annotated === true || params.annotated === true,
+        semanticSnapshotId: input.semanticSnapshotId ?? params.semanticSnapshotId,
+      },
+    }
     case "tab_content": return { method: "content", params: { ...params, format: input.content_type === "html" ? "html" : "text" } }
     case "tab_content_export": return { method: "content:export", params }
     case "tab_content_export_gsuite": return { method: "content:exportGsuite", params: { ...params, format: input.format ?? input.type ?? options.format } }
@@ -515,6 +527,31 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "tab_clipboard_write": return { method: "clipboard:write", params }
     case "tab_clipboard_write_text": return { method: "clipboard:writeText", params }
     case "playwright_dom_snapshot": return { method: "snapshot", params }
+    case "browser_snapshot": return {
+      method: "semanticSnapshot",
+      params: {
+        ...params,
+        interactiveOnly: input.interactive_only ?? input.interactiveOnly,
+        scopeRef: input.scope_ref ?? input.scopeRef,
+        snapshotId: input.snapshot_id ?? input.snapshotId,
+        cursor: input.cursor,
+        limit: input.limit,
+      },
+    }
+    case "browser_run_script": return {
+      method: "agentScript:evaluate",
+      params: {
+        ...params,
+        script: input.script,
+        arg: input.arg,
+        timeoutMs: input.timeout_ms ?? input.timeoutMs,
+      },
+    }
+    case "browser_list_secrets": return { method: "secrets:list", params }
+    case "browser_fill_secret": return {
+      method: "secretFill",
+      params: { ...params, secretId: input.secret_id ?? input.secretId },
+    }
     case "playwright_element_info": return { method: "elementInfo", params: { ...params, ...options } }
     case "playwright_element_screenshot": return { method: "elementScreenshot", params: { ...params, ...options } }
     case "playwright_evaluate": return { method: "evaluate:readonly", params: { ...params, timeoutMs: input.timeoutMs ?? input.timeout_ms ?? options.timeoutMs } }
@@ -826,12 +863,12 @@ function descriptorId(value: unknown): string {
   return typeof descriptor.id === "string" ? descriptor.id : typeof descriptor.tabId === "string" ? descriptor.tabId : ""
 }
 
-function descriptorResult(value: unknown): { id: string; title?: string; url?: string } {
+function descriptorResult(value: unknown): { id: string; [key: string]: unknown } {
   if (!value || typeof value !== "object") return { id: "" }
-  const descriptor = value as { id?: unknown; tabId?: unknown; title?: unknown; url?: unknown }
-  return {
-    id: descriptorId(value),
-    ...(typeof descriptor.title === "string" && descriptor.title ? { title: descriptor.title } : {}),
-    ...(typeof descriptor.url === "string" && descriptor.url ? { url: descriptor.url } : {}),
-  }
+  // 保留原 descriptor 全部字段（任务级浏览器工具需要 backend/profileKind/ownerThreadId 等），
+  // 仅注入 id 别名；extension 消费者只读 id/title/url，超集兼容
+  const descriptor = { ...(value as Record<string, unknown>) }
+  const id = descriptorId(value)
+  if (id) descriptor.id = id
+  return descriptor as { id: string }
 }

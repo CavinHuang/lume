@@ -32,7 +32,9 @@ export const handleReddit: SpecialHandler = async (
 ): Promise<RenderResult | null> => {
 	try {
 		const parsed = new URL(url);
-		if (!parsed.hostname.includes("reddit.com")) return null;
+		// exact host match: substring match let reddit.com.evil.com through (#236)
+		const host = parsed.hostname.replace(/^www\./, "");
+		if (host !== "reddit.com" && !host.endsWith(".reddit.com")) return null;
 
 		const fetchedAt = new Date().toISOString();
 

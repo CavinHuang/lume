@@ -31,6 +31,7 @@ import type {
   FileReferenceBinding,
 } from "@lume/shared";
 import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   buildBuiltinAgents,
@@ -80,7 +81,6 @@ import {
 } from "../plugins/plugin-manager.js";
 import {
   assemblePluginRuntime,
-  type PluginRuntimeAssembly,
 } from "../plugins/runtime-bridge.js";
 import { PluginPermissionRuntime } from "../plugins/permission-runtime.js";
 import {
@@ -271,6 +271,53 @@ export interface CreateRuntimeCoreSessionResult {
  * 资源清理后 rethrow，避免泄漏 MCP 子进程 / FS watcher / worker。成功路径由
  * session.dispose() 负责清理，pendingCleanup 随返回值丢弃。
  */
+/** 进程内已写 manifest 的 sessionDir——清单是进程环境快照,同进程只写一次 */
+const sessionManifestWritten = new Set<string>();
+
+/**
+ * session 目录版本清单(#256):导出/排障时确定复现所需版本。
+ * appVersion 由 desktop 经 LUME_APP_VERSION 注入(独立运行 sidecar 时缺省)。
+ */
+function writeSessionManifestOnce(
+  sessionDir: string,
+  plugins: ReadonlyArray<{ pluginId: string; version: string }>,
+): void {
+  if (sessionManifestWritten.has(sessionDir)) return;
+  sessionManifestWritten.add(sessionDir);
+  try {
+    writeFileSync(
+      join(sessionDir, "manifest.json"),
+      JSON.stringify(
+        {
+          v: 1,
+          ...(process.env.LUME_APP_VERSION?.trim()
+            ? { appVersion: process.env.LUME_APP_VERSION.trim() }
+            : {}),
+          plugins: plugins
+            .map((plugin) => ({ id: plugin.pluginId, version: plugin.version }))
+            .sort((a, b) => a.id.localeCompare(b.id)),
+          runtime: {
+            node: process.versions.node,
+            ...(process.versions.bun ? { bun: process.versions.bun } : {}),
+            platform: process.platform,
+            arch: process.arch,
+          },
+          createdAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+  } catch (error) {
+    // 清单缺失只影响排障复现信息,不影响运行——静默降级
+    log.warn("session manifest 写入失败", {
+      sessionDir,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export async function createRuntimeCoreSession(
   input: CreateRuntimeCoreSessionInput,
 ): Promise<CreateRuntimeCoreSessionResult> {
@@ -631,10 +678,8 @@ async function createRuntimeCoreSessionImpl(
     modelRef: input.modelRef,
   });
   const pluginAssembly = await assemblePluginRuntime(registeredPlugins);
-  const runtimePluginAssembly: PluginRuntimeAssembly = {
-    ...pluginAssembly,
-    skills: filterComputerUseSkills(pluginAssembly.skills, computerUseSurface),
-  };
+  writeSessionManifestOnce(sessionDir, registeredPlugins);
+  const surfaceSkills = filterComputerUseSkills(pluginAssembly.skills, computerUseSurface);
 
   // Phase 3d: build agentOptions.hooks from resolved plugin hooks. Shell-command hooks
   // are gate-aware (§8.1): checkSensitiveCapability(hook:event:matcher) before spawn.
@@ -733,10 +778,6 @@ async function createRuntimeCoreSessionImpl(
       pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG),
     );
   }
-  const enabledPlugins = buildEnabledPluginContext(
-    registeredPlugins,
-    runtimePluginAssembly,
-  );
   const workspaceMcpRuntime =
     input.workspaceSlug && !askWikiOnly
       ? await workspaceMcpManager
@@ -821,6 +862,14 @@ async function createRuntimeCoreSessionImpl(
       ...(pluginMcpRuntime.diagnostics ?? []),
     ],
   });
+  const runtimeSkills = toolset.availableToolNames.includes("mcp__browser__snapshot")
+    && !input.browserAttachments?.length
+    ? surfaceSkills.filter((skill) => skill.name !== "browser:browser")
+    : surfaceSkills;
+  const enabledPlugins = buildEnabledPluginContext(
+    registeredPlugins,
+    { ...pluginAssembly, skills: runtimeSkills },
+  );
   const contextTokenBudget = input.resolvedModel?.contextWindow ?? 32_000;
   const beforeContextResult = await executeWorkflowHookSafely(
     input.workflowHooks,
@@ -1174,7 +1223,7 @@ async function createRuntimeCoreSessionImpl(
     includePartialMessages: true,
     skillsDirectories: resolveSkillDirectories(input.cwd, input.workspaceSlug),
     shouldLoadFilesystemSkill: createRuntimeSkillFilter(input.workspaceSlug),
-    skills: runtimePluginAssembly.skills,
+    skills: runtimeSkills,
     resolveRuntimeTools: (tools, runtimeContext) =>
       ToolRuntime.resolveDynamicTools({
         tools,

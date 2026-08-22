@@ -341,4 +341,65 @@ describe("McpClientManager", () => {
 
     await expect(manager.ensureConnected("local")).rejects.toMatchObject({ code: "timeout" });
   });
+
+  test("aborts the underlying callTool request on timeout (#226)", async () => {
+    let seenSignal: AbortSignal | undefined;
+    let release!: () => void;
+    const hanging = new Promise<unknown>((resolve) => { release = () => resolve({ content: [] }); });
+    const manager = new McpClientManager({
+      clientFactory: () => ({
+        async connect() {},
+        async listTools() { return { tools: [] }; },
+        async callTool(_input, options) {
+          seenSignal = options?.signal;
+          return hanging;
+        },
+        async close() {},
+      }),
+      transportFactory: fakeTransportFactory,
+    });
+
+    manager.sync({ local: { enabled: true, transport: "stdio", command: "node" } });
+    await expect(manager.callTool("local", "slow", {}, { timeoutMs: 5 })).rejects.toMatchObject({ code: "timeout" });
+    release();
+
+    expect(seenSignal?.aborted).toBe(true);
+  });
+
+  test("getStatus toolDetails is a copy, not the live tool list (#226)", async () => {
+    const factory = createFakeMcpFactory({
+      tools: [
+        { name: "zeta", inputSchema: { type: "object" } },
+        { name: "alpha", inputSchema: { type: "object" } }
+      ]
+    });
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory
+    });
+
+    manager.sync({ local: { enabled: true, transport: "stdio", command: "node" } });
+    await manager.ensureConnected("local");
+
+    const status = manager.getStatus();
+    status.local?.toolDetails.reverse();
+    (status.local?.toolDetails as unknown[]).length = 0;
+
+    expect(manager.getStatus().local?.toolDetails.map((tool) => tool.originalName)).toEqual(["zeta", "alpha"]);
+  });
+
+  test("does not misclassify token-limit messages as auth errors (#226)", async () => {
+    const manager = new McpClientManager({
+      clientFactory: () => ({
+        async connect() {},
+        async listTools() { return { tools: [] }; },
+        async callTool() { throw new Error("exceeded token limit: 1000000 > 200000"); },
+        async close() {},
+      }),
+      transportFactory: fakeTransportFactory,
+    });
+
+    manager.sync({ local: { enabled: true, transport: "stdio", command: "node" } });
+    await expect(manager.callTool("local", "boom", {})).rejects.toMatchObject({ code: "protocol_error" });
+  });
 });

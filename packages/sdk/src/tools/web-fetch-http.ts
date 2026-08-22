@@ -193,6 +193,8 @@ export async function loadPage(url: string, options: LoadPageOptions): Promise<L
       });
       const redirect = response.status >= 300 && response.status < 400 ? nextUrl(response, currentUrl) : null;
       if (redirect) {
+        // 3xx bodies are never read; cancel so the pooled connection is released (#237)
+        await response.body?.cancel().catch(() => undefined);
         if (++redirects > MAX_REDIRECTS) throw new Error(`too many redirects (>${MAX_REDIRECTS})`);
         const redirectAllowed = ensureNetworkAllowed(redirect, options.sandbox);
         if (redirectAllowed) {
@@ -287,6 +289,8 @@ export async function loadBinary(url: string, options: LoadPageOptions): Promise
       });
       const redirect = response.status >= 300 && response.status < 400 ? nextUrl(response, currentUrl) : null;
       if (redirect) {
+        // same as loadPage: release the 3xx body before following (#237)
+        await response.body?.cancel().catch(() => undefined);
         if (++redirects > MAX_REDIRECTS) throw new Error(`too many redirects (>${MAX_REDIRECTS})`);
         const redirectAllowed = ensureNetworkAllowed(redirect, options.sandbox);
         if (redirectAllowed) return { ok: false, status: response.status, bytes: new Uint8Array(), contentType: "", finalUrl: currentUrl, headers: response.headers, error: redirectAllowed };

@@ -27,10 +27,14 @@ export const handleTwitter: SpecialHandler = async (
 
 		const fetchedAt = new Date().toISOString();
 
-		// Try Nitter instances
+		// Try Nitter instances, sharing one budget: each instance used to get a
+		// full timeout, so an all-down fleet burned k×10s before falling back (#237)
+		const deadlineMs = Date.now() + timeout * 1000;
 		for (const instance of NITTER_INSTANCES) {
+			const remainingSec = (deadlineMs - Date.now()) / 1000;
+			if (remainingSec <= 0.5) break;
 			const nitterUrl = `https://${instance}${parsed.pathname}`;
-			const result = await loadPage(nitterUrl, { timeout: Math.min(timeout, 10), signal });
+			const result = await loadPage(nitterUrl, { timeout: Math.min(remainingSec, 10), signal });
 
 			if (result.ok && result.content.length > 500) {
 				// Parse the Nitter HTML

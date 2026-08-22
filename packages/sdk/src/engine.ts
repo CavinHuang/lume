@@ -481,7 +481,9 @@ export class QueryEngine {
     return {
       threadId: this.sessionId,
       callerKind,
-      runId: this.sessionId,
+      // runId 用真实 run 标识(config.runId 由 Agent.run opts 透传);
+      // 缺省回落 sessionId——此前恒用 sessionId 导致 usageIdentity 无法按 run 聚合
+      runId: this.config.runId ?? this.sessionId,
       responseId: crypto.randomUUID(),
       ...options,
     }
@@ -1211,7 +1213,7 @@ export class QueryEngine {
                   delta: { type: 'text_delta', text: chunk.text },
                 },
                 parent_tool_use_id: null,
-                session_id: this.config.sessionId,
+                session_id: this.sessionId,
               }
               // Legacy format - kept for backward compatibility
               yield {
@@ -1233,7 +1235,7 @@ export class QueryEngine {
                   delta: { type: 'thinking_delta', thinking: chunk.thinking },
                 },
                 parent_tool_use_id: null,
-                session_id: this.config.sessionId,
+                session_id: this.sessionId,
               }
             }
             if (chunk.type === 'retry_state') {
