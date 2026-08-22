@@ -30,10 +30,12 @@ export interface InterceptorResult {
 
 const log = createLogger("plugin-permission");
 
+// Real built-in tool names: FileRead/FileWrite/FileEdit are legacy aliases the
+// SDK never dispatches, so they would never reach this gate (#316).
 const FILESYSTEM_TOOLS = new Set([
-  "FileRead",
-  "FileWrite",
-  "FileEdit",
+  "Read",
+  "Write",
+  "Edit",
   "NotebookEdit",
   "Glob",
   "Grep",
@@ -108,7 +110,7 @@ export function createPluginPermissionInterceptor(
         (toolInput as Record<string, unknown>)?.path;
       if (typeof pathInput === "string" && perms.filesystem) {
         const op =
-          toolName === "FileRead" || toolName === "Glob" || toolName === "Grep"
+          toolName === "Read" || toolName === "Glob" || toolName === "Grep"
             ? "read"
             : "write";
         const fsDecision = checkFilesystemPermission(
