@@ -156,6 +156,21 @@ test('run.end stopReason=aborted → run.cancelled(批次5 翻转:projector 已�
   }])
 })
 
+test('run.end error_completion_guard → run.failed 固定中文文案(不渲染字面量枚举)', () => {
+  const state = createLifecycleAdapterState()
+  expect(adaptLifecycleEvent(runEnd(1, { stopReason: 'error_completion_guard', isError: true }), state)).toEqual([{
+    id: 'lifecycle:1:run.failed',
+    type: 'run.failed',
+    threadId: 't1',
+    runId: 'r1',
+    createdAt: new Date(TS + 1).toISOString(),
+    error: {
+      code: 'repeated_tool_call',
+      message: '本轮检测到重复执行相同操作，已由保护机制停止；当前进度已保存。',
+    },
+  }])
+})
+
 test('tool.start 映射 tool.started:字段对齐旧路(inputPreview=input,riskLevel 省略)', () => {
   const state = createLifecycleAdapterState()
   const events = adaptLifecycleEvent(toolStart(2), state)
