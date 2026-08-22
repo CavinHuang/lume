@@ -7,7 +7,7 @@ import type {
   AutomationRunNowInput
 } from "@lume/shared";
 import { createAgentThreadWithModelRef, getAgentThreadMeta, updateAgentThreadMeta } from "../agent/agent-thread-manager";
-import { sendAgentMessage } from "../agent/agent-service";
+import { dispatchAgentRun } from "../agent/agent-service";
 import { advanceAutomationJobSchedule, listAutomationJobs, recordAutomationJobRun, updateAutomationJob } from "./automation-manager";
 import { resolveChannelModelBinding } from "../channel/channel-manager";
 import { getAutomationRunsPath } from "../infra/config-paths";
@@ -174,7 +174,9 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
     let runtimeError: string | null = null;
     let waitingForApproval = false;
     let waitingForUser = false;
-    await sendAgentMessage(
+    // 经 kernel 派发：与用户消息共用线程互斥与队列，绑定线程忙时排队
+    // （background 让位用户）而非并发互踩（#398）。
+    await dispatchAgentRun(
       {
         threadId,
         userMessage: job.prompt,
@@ -206,7 +208,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
           waitingForApproval = true;
         }
       },
-      { appendUserMessage: false }
+      { priority: "background", appendUserMessage: false }
     );
 
     if (runtimeError) {
