@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   compactConversation,
   createAutoCompactState,
+  microCompactMessages,
   prepareCompaction,
   serializeConversation,
   shouldAutoCompact,
@@ -230,5 +231,78 @@ describe("context compaction", () => {
     expect(result.compactedMessages).toContain(messages[3]);
     expect(result.compactedMessages).toContain(messages[4]);
     expect(JSON.stringify(result.compactedMessages)).not.toContain("x".repeat(5_000));
+  });
+});
+
+describe("microCompactMessages (#364)", () => {
+  const budget = 100;
+
+  test("still truncates oversized string tool results", () => {
+    const long = "x".repeat(300);
+    const [msg] = microCompactMessages(
+      [{ role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: long }] }],
+      budget,
+    );
+    const block = msg.content[0];
+    expect(block.type).toBe("tool_result");
+    expect(block.content.length).toBeLessThan(long.length);
+    expect(block.content).toContain("...(truncated)...");
+  });
+
+  test("truncates oversized text blocks inside array tool results", () => {
+    const long = "y".repeat(300);
+    const [msg] = microCompactMessages([
+      {
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: "t2",
+          content: [
+            { type: "text", text: long },
+            { type: "text", text: "keep me" },
+          ],
+        }],
+      },
+    ], budget);
+    const content = msg.content[0].content;
+    expect(content[0].text.length).toBeLessThan(long.length);
+    expect(content[0].text).toContain("...(truncated)...");
+    expect(content[1].text).toBe("keep me");
+  });
+
+  test("replaces image and document blocks with sized placeholders (#364)", () => {
+    const imageData = "z".repeat(500);
+    const pdfData = "q".repeat(50);
+    const imageBlock = { type: "image", source: { type: "base64", media_type: "image/png", data: imageData } };
+    const docBlock = { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfData } };
+    const [msg] = microCompactMessages([
+      {
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: "t3",
+          content: [imageBlock, docBlock, { type: "text", text: "short" }],
+        }],
+      },
+    ], budget);
+
+    const content = msg.content[0].content;
+    expect(content[0].type).toBe("text");
+    expect(content[0].text).toContain("image");
+    expect(content[0].text).toContain(String(JSON.stringify(imageBlock).length));
+    expect(content[1].type).toBe("text");
+    expect(content[1].text).toContain("document");
+    // The heavy payloads are gone from the message entirely.
+    expect(JSON.stringify(content)).not.toContain(imageData.slice(0, 32));
+    expect(JSON.stringify(content)).not.toContain(pdfData);
+    expect(content[2].text).toBe("short");
+  });
+
+  test("leaves messages without oversized tool results untouched in shape", () => {
+    const messages = [
+      { role: "user", content: "plain string" },
+      { role: "assistant", content: [{ type: "text", text: "reply" }] },
+    ];
+    expect(microCompactMessages(messages, budget)[0]).toBe(messages[0]);
   });
 });
