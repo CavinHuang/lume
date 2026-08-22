@@ -11,7 +11,6 @@ export function buildRuntimeSection(ctx: {
     "## 运行时",
     `mode=${ctx.promptMode} | threadType=${ctx.sessionType} | chatType=${ctx.chatType ?? "direct"}`,
     "",
-    "threadId、workspaceId、channelId、modelId 与文件路径等运行时元数据仅是定位文件、日志和线程数据的操作上下文。",
-    "除非用户明确要求运行时/调试细节，否则不要把运行时元数据当作用户的身份或画像，也不要用它回答“我是谁”这类问题。"
+    "threadId、workspaceId、channelId 与文件路径仅用于定位文件、日志和线程数据；除非用户明确要求运行时/调试细节，不要把它们当作用户的身份或画像。"
   ].join("\n");
 }

@@ -18,7 +18,8 @@ import {
   buildBrowserFirstSection,
   buildOfficeToolsSection,
   buildPlanModeSection,
-  buildUncertaintySection
+  buildUncertaintySection,
+  hasOfficeToolSet
 } from "./prompt/sections/interaction-policy-sections";
 import { buildToolingSection } from "./prompt/sections/tooling-section";
 import { buildTodoSection } from "./prompt/sections/todo-section";
@@ -263,9 +264,10 @@ export function buildContentPresentationSection(
   if (resolveSessionType(ctx) !== "main") return null;
 
   const surface = ctx.automationExecution ? "自动化任务的最终结果" : "主对话的最终回复";
+  // 表达形式的元规则（最小形式/按信息密度选择）由「## 表达策略」单点声明
   return `## 内容呈现
 
-在${surface}中，按信息密度和结构关系选择表达形式，不按篇幅长短机械触发。
+在${surface}中：
 - 当多维对比、连续阶段、时间线、层级、关联网络、指标组合或分类概览用视觉布局能显著降低理解成本时，调用已加载的 \`lume-infographic\` Skill，并遵循其安全 DSL。
 - “至少三个要点”只表示可以评估信息图，不构成强制触发；普通列表、表格或文字更清楚时不要生成。
 - 信息图只能补充正文，不能替代必要解释；每次回复最多输出一个 \`infographic\` fenced code block。
@@ -450,15 +452,14 @@ export function buildDynamicContext(ctx: DynamicContext): string {
   sections.push(`当前时间: ${timeStr}`);
 
   const sessionLines: string[] = [];
+  // title 与 modelRef/modelId 不注入：占位标题零信息，模型对自身 modelId 无可执行动作，
+  // 反而诱发「用运行时元数据回答我是谁」的误用（见 ## 运行时 段告诫）
   if (ctx.sessionId) sessionLines.push(`threadId: ${ctx.sessionId}`);
-  if (ctx.sessionTitle) sessionLines.push(`title: ${ctx.sessionTitle}`);
   if (ctx.sessionType) sessionLines.push(`threadType: ${ctx.sessionType}`);
   if (ctx.chatType) sessionLines.push(`chatType: ${ctx.chatType}`);
   if (ctx.parentSessionId) sessionLines.push(`parentThreadId: ${ctx.parentSessionId}`);
   if (ctx.workspaceId) sessionLines.push(`workspaceId: ${ctx.workspaceId}`);
   if (ctx.channelId) sessionLines.push(`channelId: ${ctx.channelId}`);
-  if (ctx.modelRef) sessionLines.push(`modelRef: ${ctx.modelRef}`);
-  if (ctx.modelId) sessionLines.push(`modelId: ${ctx.modelId}`);
   if (sessionLines.length > 0) {
     sections.push(`<thread_state>\n${sessionLines.join("\n")}\n</thread_state>`);
   }
@@ -486,15 +487,12 @@ export function buildDynamicContext(ctx: DynamicContext): string {
     if (skills.length > 0) {
       lines.push(...renderSkillManifestLines({
         workspaceSlug: ctx.workspaceSlug,
-        skills
+        skills,
+        hasOfficeTools: hasOfficeToolSet(new Set((ctx.availableTools ?? []).map((item) => canonicalizeAgentToolName(item))))
       }));
 
-      const hasSkillCreator = skills.some((s) => s.slug === "skill-creator");
-      if (hasSkillCreator) {
-        lines.push("");
-        lines.push("<skill_improvement_hint>");
-        lines.push("skill-creator is available for durable skill changes. Mention it only when a reusable improvement pattern is clear.");
-        lines.push("</skill_improvement_hint>");
+      if (skills.some((s) => s.slug === "skill-creator")) {
+        lines.push("- 出现可复用的 Skill 改进模式时，用 skill-creator 做持久化修改");
       }
     }
 
@@ -518,20 +516,18 @@ export function buildDynamicContext(ctx: DynamicContext): string {
   }
 
   if (ctx.projectRoot || ctx.lumeWorkDir) {
+    // 两根目录的绝对路径已由上方 <working_directory>/<lume_working_directory> 给出，此处不再重复
     const lines = [
       "<file_reference_protocol>",
       "在主回复、子 Agent 回复和计划 Markdown 中引用本地文件时，只使用行内代码协议，不要创建 Markdown 链接。",
       ...(ctx.projectRoot ? [
-        `项目根目录: ${ctx.projectRoot}`,
-        "项目根目录内的已知路径写作 `@project/<relative-path>`。"
+        "项目根目录 = 上方 <working_directory>；根目录内的已知路径写作 `@project/<relative-path>`。"
       ] : []),
       ...(ctx.lumeWorkDir ? [
-        `会话文件上下文根目录: ${ctx.lumeWorkDir}`,
-        "会话文件上下文内的已知路径写作 `@session/<relative-path>`。"
+        "会话文件上下文根目录 = 上方 <lume_working_directory>；根目录内的已知路径写作 `@session/<relative-path>`。"
       ] : []),
-      "路径使用 /，移除绝对根前缀；只引用确认位于对应根目录内的目标。",
+      "路径使用 /，移除绝对根前缀；只引用确认位于对应根目录内的目标，不要引用根目录之外的绝对路径。",
       "文本或源码可追加 #L42 或 #L42-L48；目录引用以 / 结尾且不带行号。",
-      "不要引用这两个根目录之外的绝对路径，也不要继续输出无前缀的旧版会话路径。",
       "</file_reference_protocol>"
     ];
     sections.push(lines.join("\n"));
@@ -549,14 +545,14 @@ function compactPromptText(text?: string, maxLength = 120): string {
 function renderEnabledPluginLines(plugins: EnabledPluginContextItem[]): string[] {
   if (plugins.length === 0) return [];
   const lines = [
-    "Enabled Plugins:",
+    "已启用插件：",
   ];
 
   for (const plugin of plugins) {
     const label = plugin.displayName && plugin.displayName !== plugin.pluginId
       ? `${plugin.pluginId} (${plugin.displayName})`
       : plugin.pluginId;
-    lines.push(`- ${label}: ${compactPromptText(plugin.description) || "enabled plugin"}`);
+    lines.push(`- ${label}: ${compactPromptText(plugin.description) || "已启用插件"}`);
     if (plugin.skills.length > 0) {
       lines.push(`  skills: ${plugin.skills.map((skill) => skill.name).join(", ")}`);
     }
@@ -567,9 +563,7 @@ function renderEnabledPluginLines(plugins: EnabledPluginContextItem[]): string[]
       ];
       lines.push(`  runtime: ${runtimeEntries.join(", ")}`);
     }
-    if (plugin.diagnostics.length > 0) {
-      lines.push(`  diagnostics: ${plugin.diagnostics.map((item) => compactPromptText(item, 100)).join("; ")}`);
-    }
+    // diagnostics 是插件健康状态，模型无法据此行动，不注入 prompt
   }
 
   return lines;

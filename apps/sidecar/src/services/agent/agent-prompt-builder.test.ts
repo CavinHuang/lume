@@ -167,11 +167,10 @@ describe("agent-prompt-builder", () => {
     });
     expect(prompt).toContain("你是 Lume。你在这个本地优先的工作区里帮助用户思考、构建、整理并推进工作。");
     expect(prompt).toContain("## 核心行为");
-    expect(prompt).toContain("只问一个聚焦的问题");
+    expect(prompt).toContain("以当下合适的方式与用户协作");
     expect(prompt).toContain("不要客服腔，不要夸张寒暄");
     expect(prompt).toContain("不要为了显得友好而机械复述用户的问题");
     expect(prompt).toContain("直接进入任务");
-    expect(prompt).toContain("一个必要问题");
     expect(prompt).toContain("不要说成资料库字段缺失");
     expect(prompt).toContain("~/.lume/lume.yaml");
   });
@@ -226,7 +225,7 @@ describe("agent-prompt-builder", () => {
       automationExecution: true
     });
 
-    expect(direct).toContain("不按篇幅长短机械触发");
+    expect(direct).toContain("只表示可以评估信息图");
     expect(direct).toContain("`lume-infographic` Skill");
     expect(direct).toContain("最多输出一个 `infographic`");
     expect(automation).toContain("自动化任务的最终结果");
@@ -242,12 +241,12 @@ describe("agent-prompt-builder", () => {
       availableTools: ["memory.search", "memory.read"]
     });
     expect(withMemory).toContain("## 记忆");
-    expect(withMemory).toContain("优先使用已加载的工作区上下文与记忆摘要");
+    expect(withMemory).toContain("记忆是共同经历，不是档案");
     const withoutMemory = buildSystemPromptAppend({
       sessionId: "session-2b",
       availableTools: []
     });
-    expect(withoutMemory).not.toContain("优先使用已加载的工作区上下文与记忆摘要");
+    expect(withoutMemory).not.toContain("## 记忆");
     expect(withoutMemory).not.toContain("## Thread Bootstrap (Mandatory)");
     expect(withoutMemory).not.toContain("workspace-files/.context/");
     expect(withoutMemory).toContain("## 安全契约");
@@ -369,18 +368,18 @@ describe("agent-prompt-builder", () => {
 
     expect(dynamic).toContain("<thread_state>");
     expect(dynamic).toContain("threadId: agent-session-1");
-    expect(dynamic).toContain("title: Execution Planning");
+    expect(dynamic).not.toContain("title:");
     expect(dynamic).toContain("threadType: main");
     expect(dynamic).toContain("chatType: direct");
     expect(dynamic).toContain("parentThreadId: root-session");
     expect(dynamic).toContain("workspaceId: workspace-1");
     expect(dynamic).toContain("channelId: channel-1");
-    expect(dynamic).toContain("modelId: claude-sonnet-4-5");
+    expect(dynamic).not.toContain("modelId:");
+    expect(dynamic).not.toContain("modelRef:");
     expect(dynamic).toContain("<workspace_state>");
-    expect(dynamic).toContain("Loaded Skills:");
-    expect(dynamic).toContain("Use a loaded Skill only when it clearly matches the user's request");
-    expect(dynamic).toContain("Only fall back to raw tool composition when no suitable Skill fits");
-    expect(dynamic).toContain(`Skill call prefix: lume-workspace-${workspaceSlug}:`);
+    expect(dynamic).toContain("已加载 Skill：");
+    expect(dynamic).not.toContain("Use a loaded Skill only when it clearly matches");
+    expect(dynamic).toContain(`- Skill 调用前缀: lume-workspace-${workspaceSlug}:`);
     expect(dynamic).toContain("- planner (Planner):");
     expect(dynamic).not.toContain(`lume-workspace-${workspaceSlug}:planner`);
     expect(dynamic).toContain("<working_directory>D:/workspace/projects/ai-projects/lume</working_directory>");
@@ -431,7 +430,7 @@ describe("agent-prompt-builder", () => {
       }]
     });
 
-    expect(dynamic).toContain("Enabled Plugins:");
+    expect(dynamic).toContain("已启用插件：");
     expect(dynamic).toContain("obsidian-bridge (Obsidian Bridge)");
     expect(dynamic).toContain("obsidian-bridge:vault-doctor");
     expect(dynamic).toContain("mcp:obsidian-bridge:obsidian-bridge");
@@ -450,12 +449,12 @@ describe("agent-prompt-builder", () => {
         ...roots,
       });
       expect(dynamic).toContain("<file_reference_protocol>");
-      expect(dynamic).toContain("项目根目录: D:/work/demo");
-      expect(dynamic).toContain("会话文件上下文根目录: D:/lume/threads/thread-1");
+      expect(dynamic).toContain("项目根目录 = 上方 <working_directory>");
+      expect(dynamic).toContain("会话文件上下文根目录 = 上方 <lume_working_directory>");
       expect(dynamic).toContain("`@project/<relative-path>`");
       expect(dynamic).toContain("`@session/<relative-path>`");
       expect(dynamic).toContain("不要创建 Markdown 链接");
-      expect(dynamic).toContain("不要引用这两个根目录之外的绝对路径");
+      expect(dynamic).toContain("不要引用根目录之外的绝对路径");
     }
   });
 
@@ -485,7 +484,7 @@ describe("agent-prompt-builder", () => {
     expect(prompt).not.toContain("## HEARTBEAT.md");
     expect(prompt).not.toContain("Ping the user every morning.");
     expect(prompt).toContain("当前工作目录由 runtime context 提供");
-    expect(prompt).toContain("不要把运行时元数据当作用户的身份或画像");
+    expect(prompt).toContain("不要把它们当作用户的身份或画像");
   });
 
   test("brainstorming 与 loaded skills 应弱触发并压缩 manifest", () => {
@@ -520,9 +519,9 @@ describe("agent-prompt-builder", () => {
 
     expect(prompt).toContain("brainstorming 仅用于需求不清时的模糊产品/设计探索");
     expect(prompt).not.toContain("特别是在触发 brainstorming / 头脑风暴类 Skill 时，**必须**");
-    expect(dynamic).toContain(`Skill call prefix: lume-workspace-${workspaceSlug}:`);
+    expect(dynamic).toContain(`- Skill 调用前缀: lume-workspace-${workspaceSlug}:`);
     expect(dynamic).toContain("- brainstorming:");
-    expect(dynamic).toContain("ambiguous product/design exploration");
+    expect(dynamic).toContain("需求不清时的模糊产品/设计探索");
     expect(dynamic).not.toContain("Use this before any creative work");
   });
 });

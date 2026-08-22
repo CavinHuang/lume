@@ -945,7 +945,7 @@ describe("runtime-core run", () => {
       permissionMode: "plan"
     });
 
-    expect(result.runtimeContext).toContain("Enabled Plugins:");
+    expect(result.runtimeContext).toContain("已启用插件：");
     expect(result.runtimeContext).toContain("obsidian-bridge");
     expect(result.runtimeContext).toContain("obsidian_status");
 
@@ -1390,7 +1390,9 @@ describe("runtime-core run", () => {
     expect(result.runtimeContext).toContain("<thread_state>");
     expect(result.runtimeContext).toContain("threadType: main");
     expect(result.runtimeContext).toContain("chatType: direct");
-    expect(result.runtimeContext).toContain("modelId: claude-sonnet-4-5");
+    // modelId/title 属模型无可执行动作的噪音元数据，不再注入 thread_state
+    expect(result.runtimeContext).not.toContain("modelId:");
+    expect(result.runtimeContext).not.toContain("title:");
     expect(result.runtimeContext).not.toContain("Preferred capability route:");
     expect(result.runtimeContext).toContain("<working_directory>");
 

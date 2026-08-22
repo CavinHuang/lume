@@ -60,45 +60,23 @@ export function buildBrowserFirstSection(availableTools: Set<string>): string | 
 4. 回退到 WebSearch 时，必须在回复中明确说明回退原因（例如：relay 未连接 / 浏览器线程不可用）。`;
 }
 
-export function buildOfficeToolsSection(availableTools: Set<string>): string | null {
-  const hasOfficeTools = availableTools.has("xlsx_create")
+export function hasOfficeToolSet(availableTools: Set<string>): boolean {
+  return availableTools.has("xlsx_create")
     || availableTools.has("office_unpack")
     || availableTools.has("office_convert")
     || availableTools.has("info_extract");
+}
 
-  if (!hasOfficeTools) return null;
+export function buildOfficeToolsSection(availableTools: Set<string>): string | null {
+  if (!hasOfficeToolSet(availableTools)) return null;
 
-  const routes: string[] = [];
-  if (availableTools.has("xlsx_create")) {
-    routes.push("- xlsx 读取/分析/创建/修改 → xlsx_create");
-  }
-  if (availableTools.has("office_unpack") || availableTools.has("info_extract")) {
-    routes.push("- docx 读取/分析 → office_unpack 或 info_extract");
-  }
-  if (availableTools.has("docx_create")) {
-    routes.push("- 创建 docx → docx_create");
-  }
-  if (availableTools.has("pptx_create")) {
-    routes.push("- 创建 pptx → pptx_create");
-  }
-  if (availableTools.has("pdf_create")) {
-    routes.push("- 创建 PDF → pdf_create");
-  }
-  if (availableTools.has("office_convert")) {
-    routes.push("- 格式转换（xlsx→pdf、docx→pdf 等）→ office_convert");
-  }
-  if (availableTools.has("info_extract")) {
-    routes.push("- 提取文档关键信息（合同、简历、报告等）→ info_extract");
-  }
-  if (availableTools.has("office_validate")) {
-    routes.push("- 校验文档结构 → office_validate");
-  }
+  // 具体工具的路由教学由各工具 schema description 承载（xlsx_create/office_unpack 等均自足），
+  // 此段只声明意图层规则与回退条件
+  const officeToolNames = ["xlsx_create", "office_unpack", "docx_create", "pptx_create", "pdf_create", "office_convert", "info_extract", "office_validate"]
+    .filter((name) => availableTools.has(name));
 
   return `## Office 文档处理策略（强制）
 
-当用户上传或提及 Office 文档（xlsx、docx、pptx、pdf）时，必须优先使用内置的 Office 工具，不要通过 bash 执行 Python 代码来处理文档。
-
-${routes.join("\n")}
-
+当用户上传或提及 Office 文档（xlsx、docx、pptx、pdf）时，必须优先使用内置的 Office 工具（${officeToolNames.join("、")}），不要通过 bash 执行 Python 代码来处理文档。
 仅在 Office 工具明确不可用（被工具策略禁用）或需要 openpyxl/docx 不支持的特殊库（如 pandas 复杂数据分析）时才回退 bash + Python。`;
 }

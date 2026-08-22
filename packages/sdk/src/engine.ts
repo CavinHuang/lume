@@ -290,7 +290,7 @@ function compactionStageMessage(stage: AgentContextCompactionStage): string {
 
 async function buildSystemPrompt(config: QueryEngineConfig): Promise<string> {
   const deferredToolGuide = config.deferredTools?.length
-    ? '\n\nSome tools are deferred to keep your context focused. Use ToolSearch to discover them; matched tools become natively callable on your next turn — call them directly by name. Do not claim a capability is unavailable before searching when the visible tools do not cover the task.'
+    ? '\n\n部分工具已延迟加载以保持上下文精简。用 ToolSearch 发现它们；匹配的工具在下一回合即可直接按名称调用。可见工具不覆盖任务时，先搜索再判断，不要未搜索就宣称能力不可用。'
     : ''
   if (config.systemPrompt) {
     const structuredOutputInstruction = buildStructuredOutputInstruction(
@@ -2148,7 +2148,7 @@ export class QueryEngine {
     const skillFrontmatter = skills.map((skill) => ({
       name: skill.name,
       source: 'runtime',
-      tokens: Math.ceil((skill.name.length + skill.description.length + (skill.whenToUse?.length || 0)) / 4),
+      tokens: Math.ceil((skill.name.length + skill.description.length) / 4),
     }))
     const systemTools = this.config.tools
       .filter((tool) => !tool.name.startsWith('mcp__'))
