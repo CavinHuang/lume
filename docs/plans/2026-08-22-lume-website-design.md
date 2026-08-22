@@ -57,7 +57,7 @@ packages/website/
 │   ├── pages/                # index / download / changelog/index / docs/[...slug] + en/ 镜像
 │   ├── content/
 │   │   ├── docs/{zh,en}/…md  # 同 slug 中英映射，页面内互切
-│   │   └── changelog/*.md    # frontmatter 带 lang 与 date
+│   │   └── changelog/*.md    # frontmatter 带 version 与 date；正文保持发布原文（语言中立）
 │   └── i18n/ui.ts            # UI 字典 zh/en + t(lang, key)
 ```
 
