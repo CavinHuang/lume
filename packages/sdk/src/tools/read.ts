@@ -152,7 +152,9 @@ export const FileReadTool = defineTool({
         const ranged = await readTextFileRange(filePath, offset, limit, context.abortSignal)
         const textLimitError = validateTextLimits(ranged.content, filePath, context)
         if (textLimitError) return textLimitError
-        const isPartialView = hasExplicitRange || offset > 0 || offset + limit < ranged.totalLines
+        // truncated 时窗口凑满提前停读，totalLines 只是下界：
+        // 强制 partial 视图，且不谎报精确的 remainingLines（#314）。
+        const isPartialView = hasExplicitRange || offset > 0 || ranged.truncated
         context.fileStateCache?.set(filePath, {
           content: ranged.content,
           timestamp: fileStat.mtimeMs,
@@ -170,9 +172,18 @@ export const FileReadTool = defineTool({
             offset,
             limit,
             totalLines: ranged.totalLines,
-            remainingLines: Math.max(0, ranged.totalLines - offset - limit),
+            ...(ranged.truncated ? {} : { remainingLines: Math.max(0, ranged.totalLines - offset - limit) }),
           },
-          _meta: { read: { offset, limit, totalLines: ranged.totalLines, partial: isPartialView, summarized: false } },
+          _meta: {
+            read: {
+              offset,
+              limit,
+              totalLines: ranged.totalLines,
+              partial: isPartialView,
+              summarized: false,
+              ...(ranged.truncated ? { truncated: true } : {}),
+            },
+          },
         }
       }
 

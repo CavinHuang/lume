@@ -257,6 +257,28 @@ describe("file tools", () => {
     expect(String(result.content)).toContain("beta");
   });
 
+  test("treats a windowed read that stopped early as a partial view (#314)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "long.txt");
+    // 600 padded lines exceed both the default 500-line window and a single
+    // stream chunk, so the ranged reader stops early with an unverified count;
+    // .txt is not summarized, so Read takes the ranged path.
+    await writeFile(
+      filePath,
+      Array.from({ length: 600 }, (_, i) => `line-${i} ${"x".repeat(150)}`).join("\n"),
+      "utf8",
+    );
+    const cache = new FileStateCache();
+
+    const result = await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
+
+    expect(result.is_error).toBeFalsy();
+    expect(result._meta?.read).toMatchObject({ partial: true, truncated: true });
+    // The stale-read guard must not mistake the window for the whole file.
+    expect(cache.get(filePath)?.isPartialView).toBe(true);
+  });
+
   test("rejects known binary files instead of decoding them as text", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
