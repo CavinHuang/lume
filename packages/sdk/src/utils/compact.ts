@@ -729,13 +729,18 @@ function compactToolResultContent(blocks: any[], maxToolResultChars: number): an
           + item.text.slice(-maxToolResultChars / 2),
       }
     }
+    // Only shed media blocks that actually exceed the budget — small images
+    // must reach the model or visual ability regresses (#364).
     if (item?.type === 'image' || item?.type === 'document') {
-      changed = true
       const originalChars = safeJsonLength(item)
-      return {
-        type: 'text',
-        text: `[${item.type} omitted by micro-compaction: original ${item.type} was ${originalChars} chars]`,
+      if (originalChars > maxToolResultChars) {
+        changed = true
+        return {
+          type: 'text',
+          text: `[${item.type} omitted by micro-compaction: original ${item.type} was ${originalChars} chars]`,
+        }
       }
+      return item
     }
     return item
   })

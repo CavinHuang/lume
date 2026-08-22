@@ -270,9 +270,11 @@ describe("microCompactMessages (#364)", () => {
     expect(content[1].text).toBe("keep me");
   });
 
-  test("replaces image and document blocks with sized placeholders (#364)", () => {
+  test("replaces only oversized media blocks; small images stay intact (#364)", () => {
     const imageData = "z".repeat(500);
-    const pdfData = "q".repeat(50);
+    const pdfData = "q".repeat(200);
+    // Well under the 100-char budget once serialized.
+    const smallImage = { type: "image", source: { type: "base64", media_type: "image/png", data: "abc" } };
     const imageBlock = { type: "image", source: { type: "base64", media_type: "image/png", data: imageData } };
     const docBlock = { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfData } };
     const [msg] = microCompactMessages([
@@ -281,21 +283,22 @@ describe("microCompactMessages (#364)", () => {
         content: [{
           type: "tool_result",
           tool_use_id: "t3",
-          content: [imageBlock, docBlock, { type: "text", text: "short" }],
+          content: [smallImage, imageBlock, docBlock, { type: "text", text: "short" }],
         }],
       },
     ], budget);
 
     const content = msg.content[0].content;
-    expect(content[0].type).toBe("text");
-    expect(content[0].text).toContain("image");
-    expect(content[0].text).toContain(String(JSON.stringify(imageBlock).length));
+    expect(content[0]).toEqual(smallImage);
     expect(content[1].type).toBe("text");
-    expect(content[1].text).toContain("document");
+    expect(content[1].text).toContain("image");
+    expect(content[1].text).toContain(String(JSON.stringify(imageBlock).length));
+    expect(content[2].type).toBe("text");
+    expect(content[2].text).toContain("document");
     // The heavy payloads are gone from the message entirely.
     expect(JSON.stringify(content)).not.toContain(imageData.slice(0, 32));
-    expect(JSON.stringify(content)).not.toContain(pdfData);
-    expect(content[2].text).toBe("short");
+    expect(JSON.stringify(content)).not.toContain(pdfData.slice(0, 32));
+    expect(content[3].text).toBe("short");
   });
 
   test("leaves messages without oversized tool results untouched in shape", () => {
