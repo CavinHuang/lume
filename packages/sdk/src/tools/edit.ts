@@ -72,8 +72,16 @@ export const FileEditTool = defineTool({
       const decoded = decodeTextFile(await readFile(filePath))
       let content = decoded.content
 
+      // 与 Write 对齐的 stale-read 防护：此前仅全量视图做内容比对，
+      // 部分视图完全裸奔；补上 mtime/size 底线后两种视图都有硬校验（#333）。
+      const existing = await stat(filePath)
       const previousRead = context.fileStateCache?.get(filePath)
-      if (previousRead && !previousRead.isPartialView && previousRead.content !== content) {
+      const changedSinceRead = previousRead && (
+        previousRead.timestamp !== existing.mtimeMs
+        || (previousRead.size !== undefined && previousRead.size !== existing.size)
+        || (!previousRead.isPartialView && previousRead.content !== content)
+      )
+      if (changedSinceRead) {
         return {
           data: `Error: File has been modified since it was read: ${filePath}. The earlier edit may have succeeded or another process changed it. Read the file again before attempting another Edit.`,
           is_error: true,

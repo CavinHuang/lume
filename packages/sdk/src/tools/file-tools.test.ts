@@ -128,6 +128,44 @@ describe("file tools", () => {
     expect(result.content).toContain("modified since it was read");
   });
 
+  test("rejects an edit after a partial read when the file changed (#333)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "partial.txt");
+    const cache = new FileStateCache();
+    await writeFile(filePath, "line-0\nline-1\nline-2\n", "utf8");
+
+    await FileReadTool.call({ file_path: filePath, offset: 0, limit: 1 }, { cwd: root, fileStateCache: cache });
+    await writeFile(filePath, "line-0\nchanged-1\nchanged-2\n", "utf8");
+    const result = await FileEditTool.call(
+      { file_path: filePath, old_string: "changed-2", new_string: "updated" },
+      { cwd: root, fileStateCache: cache },
+    );
+
+    // Partial views skip the content comparison but the mtime/size floor must
+    // still reject the stale edit.
+    expect(result.is_error).toBe(true);
+    expect(result.content).toContain("modified since it was read");
+    expect(result._meta?.file).toMatchObject({ conflict: "stale_read", retryable: true });
+  });
+
+  test("allows an edit after a partial read when the file is untouched (#333)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "partial-clean.txt");
+    const cache = new FileStateCache();
+    await writeFile(filePath, "alpha\nbeta\n", "utf8");
+
+    await FileReadTool.call({ file_path: filePath, offset: 0, limit: 1 }, { cwd: root, fileStateCache: cache });
+    const result = await FileEditTool.call(
+      { file_path: filePath, old_string: "beta", new_string: "updated" },
+      { cwd: root, fileStateCache: cache },
+    );
+
+    expect(result.is_error).toBeFalsy();
+    expect(await readFile(filePath, "utf8")).toBe("alpha\nupdated\n");
+  });
+
   test("reads only the requested line range into the tool result", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
