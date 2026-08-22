@@ -4336,7 +4336,7 @@ function normalizeBrowserMethod(method: string): string {
 export async function listWebMcpTools(tab: BrowserTab): Promise<{ tools: Array<Record<string, unknown>> }> {
   const generation = tab.generation
   const value = await browserContents(tab).executeJavaScript(`(async () => {
-    const modelContext = window.__lumeWebMcpModelContext ?? document.modelContext ?? navigator.modelContext;
+    const modelContext = document.modelContext ?? window.__lumeWebMcpModelContext ?? navigator.modelContext;
     if (!modelContext || typeof modelContext.getTools !== "function") return [];
     return (await Promise.resolve(modelContext.getTools())).map((tool) => ({
       name: tool.name,
@@ -4366,7 +4366,7 @@ export async function invokeWebMcpTool(tab: BrowserTab, params: Record<string, u
   const timeoutMs = timeoutValue === undefined ? 10_000 : boundedNumber(timeoutValue, 1, 30_000)
   const generation = tab.generation
   const script = `(() => {
-    const modelContext = window.__lumeWebMcpModelContext ?? document.modelContext ?? navigator.modelContext;
+    const modelContext = document.modelContext ?? window.__lumeWebMcpModelContext ?? navigator.modelContext;
     if (!modelContext || typeof modelContext.getTools !== "function" || typeof modelContext.executeTool !== "function") {
       throw new Error("WebMCP modelContext is unavailable in the current page.");
     }
@@ -4374,7 +4374,7 @@ export async function invokeWebMcpTool(tab: BrowserTab, params: Record<string, u
       .then((tools) => {
         const tool = tools.find((candidate) => candidate.name === ${JSON.stringify(toolName)});
         if (!tool) throw new Error(${JSON.stringify(`WebMCP tool not found: ${toolName}`)});
-        return modelContext.executeTool(tool, ${JSON.stringify(encodedInput)});
+        return modelContext.executeTool({ name: tool.name }, ${JSON.stringify(encodedInput)});
       })
       .then((result) => {
         if (result == null || typeof result !== "string") return result ?? null;
