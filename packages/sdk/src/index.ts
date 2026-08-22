@@ -64,6 +64,8 @@ export type { McpSdkServerConfig } from './sdk-mcp-server.js'
 // --------------------------------------------------------------------------
 
 export { QueryEngine } from './engine.js'
+export { withRepeatGuardState, readRepeatGuardState } from './repeat-guard.js'
+export type { RepeatGuardMeta } from './repeat-guard.js'
 export { resolveShellInvocation } from './utils/shell-invocation.js'
 export { analyzeBashCommand, normalizeExecutable } from './utils/bash-command-analysis.js'
 export type { BashCommandAnalysis, BashCommandSegment, BashParseStatus } from './utils/bash-command-analysis.js'
