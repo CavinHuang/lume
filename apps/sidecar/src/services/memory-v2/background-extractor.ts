@@ -39,8 +39,12 @@ export interface BackgroundMemoryExtractionRequest {
 
 interface ThreadQueueState {
   running: boolean;
-  trailing?: BackgroundMemoryExtractionRequest;
+  /** 待提取队列（FIFO）。单槽 trailing 会覆盖中间轮次——每轮请求只带当轮 items，覆盖即永久丢证（#408）。 */
+  pending: BackgroundMemoryExtractionRequest[];
 }
+
+/** 提取失败的批次暂存，并入该线程下一次提取，避免静默丢轮（#408）。 */
+const carriedBatches = new Map<string, LumeRunItem[][]>();
 
 interface ExtractionCursor {
   threadId: string;
@@ -69,9 +73,9 @@ interface BackgroundExtractionResult {
 export function enqueueBackgroundMemoryExtraction(input: BackgroundMemoryExtractionRequest): void {
   if (!getMemoryRuntimeConfig().backgroundExtraction) return;
   if (input.threadType === "subagent" || input.chatType === "group" || input.chatType === "channel") return;
-  const state = queues.get(input.threadId) ?? { running: false };
+  const state = queues.get(input.threadId) ?? { running: false, pending: [] };
   if (state.running) {
-    state.trailing = input;
+    state.pending.push(input);
     queues.set(input.threadId, state);
     return;
   }
@@ -101,10 +105,10 @@ async function runQueued(input: BackgroundMemoryExtractionRequest): Promise<void
   } finally {
     const state = queues.get(input.threadId);
     if (!state) return;
-    const trailing = state.trailing;
-    if (trailing) {
-      state.trailing = undefined;
-      setTimeout(() => void runQueued(trailing), 0);
+    const next = state.pending.shift();
+    if (next) {
+      // FIFO 逐轮提取：每轮请求只含当轮 items，覆盖式单槽会丢中间轮（#408）
+      setTimeout(() => void runQueued(next), 0);
       return;
     }
     queues.delete(input.threadId);
@@ -130,7 +134,12 @@ async function runExtraction(
   signal: AbortSignal
 ): Promise<BackgroundExtractionResult> {
   signal.throwIfAborted();
-  const sources = extractionSources(input.items);
+  // 失败批次的 items 并入本轮：请求只带当轮 items，cursor 又停在旧位，
+  // 不回放则失败轮的证据永久缺席（#408）
+  const carried = carriedBatches.get(input.threadId) ?? [];
+  carriedBatches.delete(input.threadId);
+  const mergedItems = [...carried.flat(), ...input.items];
+  const sources = extractionSources(mergedItems);
   const cursor = readCursor(input);
   if (cursor.lastRunId === input.runId && (cursor.status === "completed" || cursor.status === "skipped")) {
     return { scannedItems: 0, changedItems: 0 };
@@ -233,6 +242,8 @@ async function runExtraction(
     });
     return { scannedItems: sources.length, changedItems: changed.length };
   } catch (error) {
+    // 本批 items 暂存待下次提取：cursor 不前进，但请求式扫描不会重放旧轮（#408）
+    carriedBatches.set(input.threadId, [...(carriedBatches.get(input.threadId) ?? []), input.items]);
     writeCursor(input, {
       ...cursor,
       status: "failed",
