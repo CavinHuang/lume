@@ -1,9 +1,9 @@
-import { describe, expect, test, mock } from "bun:test";
-import { McpClientManager } from "./manager.js";
+import { describe, expect, test } from "bun:test";
+import { McpClientManager, setDefaultMcpSdkClientConstructor } from "./manager.js";
 
-// Intercept the lazily-imported official Client so the test can observe the
-// constructor options the default factory passes (the listChanged wiring is
-// exactly what issue #384 requires) and drive its onChanged callback.
+// Injected through the module seam instead of mock.module: replacing the
+// whole SDK client module would leak into every other suite sharing bun's
+// single test process.
 class FakeMcpClient {
   static instances: FakeMcpClient[] = [];
   tools: Array<{ name: string; inputSchema?: unknown }> = [];
@@ -33,7 +33,7 @@ class FakeMcpClient {
   }
 }
 
-mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({ Client: FakeMcpClient }));
+setDefaultMcpSdkClientConstructor(FakeMcpClient as any);
 
 const config = { enabled: true, transport: "streamable_http", url: "http://127.0.0.1:8787/mcp" } as const;
 

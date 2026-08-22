@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { type ChildProcess, spawn } from 'node:child_process'
 import { basename, resolve } from 'node:path'
 import { resolveLspExecutable } from './registry.js'
 
@@ -6,6 +6,22 @@ interface LspmuxProbe {
   checkedAt: number
   command?: string
   running: boolean
+}
+
+// Test seam so suites can inject a fake probe process instead of mocking the
+// whole node:child_process module (which pollutes every other test in the
+// shared bun test process).
+type ProbeSpawn = (
+  command: string,
+  args: string[],
+  options: { cwd: string }
+) => Pick<ChildProcess, 'once' | 'kill'>
+const defaultProbeSpawn: ProbeSpawn = (command, args, options) =>
+  spawn(command, args, { cwd: options.cwd, windowsHide: true, stdio: 'ignore' })
+let probeSpawn: ProbeSpawn = defaultProbeSpawn
+
+export function setLspmuxProbeSpawn(impl: ProbeSpawn | undefined): void {
+  probeSpawn = impl ?? defaultProbeSpawn
 }
 
 // Positive results expire quickly so a stopped daemon is picked up within
@@ -60,7 +76,7 @@ async function detectLspmux(cwd: string): Promise<{ command?: string; running: b
     return next
   }
   const running = await new Promise<boolean>((resolvePromise) => {
-    const child = spawn(command, ['status'], { cwd, windowsHide: true, stdio: 'ignore' })
+    const child = probeSpawn(command, ['status'], { cwd })
     const timer = setTimeout(() => {
       child.kill()
       resolvePromise(false)

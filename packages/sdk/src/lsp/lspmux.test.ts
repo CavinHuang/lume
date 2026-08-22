@@ -1,8 +1,9 @@
-import { describe, expect, test, mock } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { EventEmitter } from 'node:events'
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { invalidateLspmuxCache, setLspmuxCacheTtls, setLspmuxProbeSpawn, wrapRustAnalyzerWithLspmux } from './lspmux.js'
 
 const spawnCalls: Array<{ command: string; args: string[] }> = []
 let nextExitCode: number | null = 0
@@ -22,10 +23,14 @@ function fakeSpawn(command: string, args: string[]): FakeChild {
   return child
 }
 
-// Intercept the probe spawn before importing the module under test.
-mock.module('node:child_process', () => ({ spawn: fakeSpawn }))
+// Injected through the module seam: mocking node:child_process itself would
+// pollute every other suite sharing bun's test process.
+setLspmuxProbeSpawn(fakeSpawn as any)
 
-const { invalidateLspmuxCache, setLspmuxCacheTtls, wrapRustAnalyzerWithLspmux } = await import('./lspmux.js')
+afterEach(() => {
+  nextExitCode = 0
+  nextSpawnError = undefined
+})
 
 async function makeWorkspace(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'lume-lspmux-'))
