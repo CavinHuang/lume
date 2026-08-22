@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { createSdkImTools } from "./create-im-tools";
 import { upsertImThreadBinding } from "../../../im/im-thread-binding-store";
 import { getToolMetadata } from "../tool-metadata";
-import { WikiSafeHttpFetchService } from "../../../wiki/safe-http-fetch";
+import { SafeHttpFetchService } from "../../../infra/safe-http-fetch";
 
 /** 构造器 DI 的安全抓取 fake：resolve 固定公网地址，request 返回固定 PNG 头。 */
 function makeFakeFetcher(addresses: string[] = ["93.184.216.34"]) {
-  return new WikiSafeHttpFetchService({
+  return new SafeHttpFetchService({
     resolve: async (hostname) => addresses.map((address, index) => ({ address, family: index === 1 ? 6 : 4 })),
     request: async () => ({
       status: 200,
