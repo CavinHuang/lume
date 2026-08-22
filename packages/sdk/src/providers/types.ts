@@ -118,6 +118,43 @@ export type CreateMessageStreamEvent =
 // Provider Interface
 // --------------------------------------------------------------------------
 
+/**
+ * Host-owned LLM provider contract. The SDK ships no built-in HTTP
+ * providers — the host injects one implementation of this interface via
+ * `createAgent({ provider })`.
+ *
+ * Provider obligations (the engine relies on all of these):
+ *
+ * - **Protocol conversion.** Translate the normalized (Anthropic-like)
+ *   request/response shapes in this file to and from the provider's native
+ *   API. `apiType` declares which protocol; the engine surfaces it in
+ *   `auth_status` and `getApiType()` but performs no protocol handling
+ *   itself.
+ * - **Credentials & retry.** The provider owns keys, base URLs, and
+ *   transport-level retries. The engine does not retry provider errors
+ *   except its own prompt-too-long compaction path.
+ * - **Usage normalization.** `usage.input_tokens` / `output_tokens` must be
+ *   populated with real provider counts; they feed billing records and the
+ *   `result` event. Cache fields are optional.
+ * - **Thinking mapping.** When the engine requests `thinking`, map the
+ *   provider's reasoning output back as `{ type: 'thinking' }` blocks if
+ *   the provider emits them; silently dropping reasoning is acceptable but
+ *   degrades extended-thinking flows.
+ * - **Prompt cache policy.** When `params.promptCache` is set, honor the
+ *   strategy (`anthropic-ephemeral`, `openrouter-sticky`, or `implicit`)
+ *   where the provider supports it. Ignoring it silently multiplies real
+ *   long-session cost.
+ * - **Abort.** Honor `params.abortSignal`: cancel the underlying request
+ *   promptly so a user interrupt stops in-flight work.
+ *
+ * Optional methods degrade as follows when omitted:
+ *
+ * - `createMessageStream` — streaming requests silently fall back to a
+ *   blocking `createMessage` call: no `text_delta` partial events, and the
+ *   `includePartialMessages` engine flag has nothing to forward.
+ * - `countTokens` — token accounting falls back to the SDK's heuristic
+ *   estimator.
+ */
 export interface LLMProvider {
   /** The API type this provider implements. */
   readonly apiType: ApiType
@@ -128,7 +165,12 @@ export interface LLMProvider {
   /** Send a message and get a response. */
   createMessage(params: CreateMessageParams): Promise<CreateMessageResponse>
 
-  /** Stream partial output when supported by the provider. */
+  /**
+   * Stream partial output when supported by the provider. Emits
+   * `text_delta` / `thinking_delta` / `retry_state` events and resolves to
+   * the final response. When absent, the engine silently degrades to a
+   * blocking `createMessage` call.
+   */
   createMessageStream?(
     params: CreateMessageParams,
   ): AsyncGenerator<CreateMessageStreamEvent, CreateMessageResponse>

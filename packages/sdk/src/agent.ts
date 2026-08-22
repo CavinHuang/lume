@@ -55,8 +55,8 @@ import {
   SkillRegistry,
 } from './skills/index.js'
 import { createSkillTool } from './tools/skill-tool.js'
-import { createProvider, type LLMProvider, type ApiType } from './providers/index.js'
-import type { NormalizedMessageParam } from './providers/types.js'
+import type { LLMProvider, ApiType, NormalizedMessageParam } from './providers/types.js'
+import { isUnconfiguredProvider, unconfiguredProvider } from './providers/unconfigured-provider.js'
 import {
   loadSettingsFromSources,
   mergeAgentOptions,
@@ -256,8 +256,6 @@ export class Agent {
   private toolRegistry = createToolRegistry()
   private unregisterRuntimeTools: (() => void) | null = null
   private modelId = 'claude-sonnet-4-6'
-  private apiType: ApiType = 'anthropic-messages'
-  private apiCredentials: { key?: string; baseUrl?: string } = {}
   private provider: LLMProvider
   private mcpLinks: MCPConnection[] = []
   private history: NormalizedMessageParam[] = []
@@ -285,7 +283,7 @@ export class Agent {
     this.baseOptions = { ...options }
     this.cfg = { ...options }
     this.sid = this.cfg.sessionId ?? crypto.randomUUID()
-    this.provider = createProvider('anthropic-messages', {})
+    this.provider = unconfiguredProvider()
     this.hookRegistry = createHookRegistry()
     initBundledSkills()
     this.skillRegistry = new SkillRegistry(getAllSkills())
@@ -299,89 +297,9 @@ export class Agent {
     return process.env[key] || undefined
   }
 
-  private pickCredentials(): { key?: string; baseUrl?: string } {
-    const envMap = this.cfg.env
-    return {
-      key:
-        this.cfg.apiKey ??
-        envMap?.CODEANY_API_KEY ??
-        envMap?.CODEANY_AUTH_TOKEN ??
-        this.readEnv('CODEANY_API_KEY') ??
-        this.readEnv('CODEANY_AUTH_TOKEN'),
-      baseUrl:
-        this.cfg.baseURL ??
-        envMap?.CODEANY_BASE_URL ??
-        this.readEnv('CODEANY_BASE_URL'),
-    }
-  }
-
-  private resolveApiType(): ApiType {
-    if (this.cfg.apiType) return this.cfg.apiType
-
-    const envType =
-      this.cfg.env?.CODEANY_API_TYPE ??
-      this.readEnv('CODEANY_API_TYPE')
-    if (
-      envType === 'openai-completions' ||
-      envType === 'anthropic-messages' ||
-      envType === 'deepseek-chat-completions' ||
-      envType === 'openai-responses'
-    ) {
-      return envType
-    }
-
-    const baseUrl = (
-      this.apiCredentials.baseUrl ??
-      this.cfg.baseURL ??
-      this.cfg.env?.CODEANY_BASE_URL ??
-      this.readEnv('CODEANY_BASE_URL') ??
-      ''
-    ).toLowerCase()
-    if (baseUrl) {
-      if (baseUrl.includes('/anthropic') || /\/messages\/?$/.test(baseUrl)) {
-        return 'anthropic-messages'
-      }
-      if (baseUrl.includes('api.deepseek.com')) {
-        return 'deepseek-chat-completions'
-      }
-      if (baseUrl.includes('/chat/completions')) {
-        return 'openai-completions'
-      }
-      if (baseUrl.includes('/responses')) {
-        return 'openai-responses'
-      }
-    }
-
-    const model = this.modelId.toLowerCase()
-    if (
-      model.includes('gpt-') ||
-      model.includes('o1') ||
-      model.includes('o3') ||
-      model.includes('o4') ||
-      model.includes('qwen') ||
-      model.includes('yi-') ||
-      model.includes('glm') ||
-      model.includes('mistral') ||
-      model.includes('gemma')
-    ) {
-      return 'openai-completions'
-    }
-
-    if (model.includes('deepseek')) {
-      return 'deepseek-chat-completions'
-    }
-
-    return 'anthropic-messages'
-  }
-
   private refreshResolvedConfig(): void {
-    this.apiCredentials = this.pickCredentials()
     this.modelId = this.cfg.model ?? this.readEnv('CODEANY_MODEL') ?? 'claude-sonnet-4-6'
-    this.apiType = this.resolveApiType()
-    this.provider = this.cfg.provider ?? createProvider(this.apiType, {
-      apiKey: this.apiCredentials.key,
-      baseURL: this.apiCredentials.baseUrl,
-    })
+    this.provider = this.cfg.provider ?? unconfiguredProvider()
     if (this.cfg.sessionId) {
       this.sid = this.cfg.sessionId
     }
@@ -958,6 +876,29 @@ export class Agent {
     if (this.currentEngine) throw new Error('agent is running')
     await this.setupDone
 
+    // Fail fast before any listener is attached, the user message is
+    // persisted, or a run is set up: a missing provider must reject the
+    // prompt() call, not surface as a silent empty-success result event.
+    // The legacy credential keys are typed away in AgentOptions but still
+    // checked at runtime so pre-contract hosts get a clear error instead
+    // of silently ignored options.
+    const legacyOverrideKeys = overrides as Record<string, unknown> | undefined
+    if (
+      overrides?.provider ||
+      legacyOverrideKeys?.apiType ||
+      legacyOverrideKeys?.apiKey ||
+      legacyOverrideKeys?.baseURL
+    ) {
+      throw new Error(
+        'Per-run provider overrides are no longer supported. Pass options.provider to createAgent() instead.',
+      )
+    }
+    if (isUnconfiguredProvider(this.provider)) {
+      throw new Error(
+        'No LLMProvider configured. Pass options.provider to createAgent() — the SDK ships no built-in HTTP providers.',
+      )
+    }
+
     const opts = this.getEffectiveOptions(overrides)
     const cwd = opts.cwd || process.cwd()
 
@@ -1014,14 +955,7 @@ export class Agent {
 
     const { tools, deferredTools } = this.getRunTools(opts, overrides)
 
-    let provider = this.provider
-    if (overrides?.apiType || overrides?.apiKey || overrides?.baseURL) {
-      const resolvedApiType = overrides.apiType ?? this.apiType
-      provider = createProvider(resolvedApiType, {
-        apiKey: overrides.apiKey ?? this.apiCredentials.key,
-        baseURL: overrides.baseURL ?? this.apiCredentials.baseUrl,
-      })
-    }
+    const provider = this.provider
 
     const normalizedPrompt = normalizePromptInput(prompt)
     const modelFacingPrompt = normalizedPrompt
@@ -1091,7 +1025,7 @@ export class Agent {
         })),
         outputStyle: opts.outputStyle || 'text',
         claudeCodeVersion: 'open-agent-sdk/0.2.0',
-        apiKeySource: this.apiCredentials.key ? 'configured' : 'missing',
+        apiKeySource: 'configured',
       },
       sandbox: opts.sandbox,
       toolConfig: opts.toolConfig,
@@ -1131,13 +1065,13 @@ export class Agent {
       yield queued
     }
 
+    // A host-injected provider is guaranteed by the entry check above; the
+    // provider's own apiType is the authoritative protocol (cfg.apiType/env
+    // sniffing no longer exists to contradict it).
     yield {
       type: 'auth_status',
       isAuthenticating: false,
-      output: this.apiCredentials.key
-        ? [`Using ${this.apiType} credentials`]
-        : ['No API key configured'],
-      error: this.apiCredentials.key ? undefined : 'Missing API key',
+      output: [`Using ${provider.apiType} credentials`],
       session_id: this.sid,
     }
 
@@ -1411,7 +1345,7 @@ export class Agent {
   }
 
   getApiType(): ApiType {
-    return this.apiType
+    return this.provider.apiType
   }
 
   async stopTask(taskId: string): Promise<void> {
@@ -1443,6 +1377,12 @@ export class Agent {
     await this.setupDone
 
     const commands = this.getInitializationCommands()
+    // Reflect the host provider injection, not legacy apiKey fields: the
+    // provider carries credentials now, so an injected provider IS the
+    // configured credential source.
+    const credentialSource = isUnconfiguredProvider(this.provider)
+      ? 'missing'
+      : 'configured'
 
     return {
       commands,
@@ -1457,8 +1397,8 @@ export class Agent {
       available_output_styles: ['text', 'json', 'streamlined'],
       models: getDefaultModels(),
       account: {
-        tokenSource: this.apiCredentials.key ? 'configured' : 'missing',
-        apiKeySource: this.apiCredentials.key ? 'configured' : 'missing',
+        tokenSource: credentialSource,
+        apiKeySource: credentialSource,
       },
       slash_commands: commands.map((command) => command.name),
       skills: this.skillRegistry.getUserInvocable().map((skill) => skill.name),
