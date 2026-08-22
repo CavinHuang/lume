@@ -35,11 +35,11 @@ export function isToolInGroup(toolName: string, groupId: string): boolean {
     case 'memory':
       return ['memory.search', 'memory.read', 'memory.remember', 'memory.forget'].includes(toolName)
     case 'agent':
-      return ['agent_spawn', 'send_message', 'team_create', 'team_delete', 'skill'].includes(toolName)
+      return ['agent_spawn', 'skill'].includes(toolName)
     case 'task':
       return ['task_create', 'task_list', 'task_update', 'task_get', 'task_stop', 'task_output'].includes(toolName)
     case 'automation':
-      return ['cron_set', 'automation_set'].includes(toolName)
+      return toolName === 'automation_set'
     case 'user-interaction':
       return ['ask_user_question', 'todo_write'].includes(toolName)
     case 'channel':
