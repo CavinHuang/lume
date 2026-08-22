@@ -1473,12 +1473,31 @@ export class QueryEngine {
         response.stopReason === 'max_tokens' &&
         maxOutputRecoveryAttempts < MAX_OUTPUT_RECOVERY
       ) {
+        // A truncated turn can end mid-tool_use; leaving it unanswered makes
+        // the next request invalid (provider 400) with no recovery path.
+        // Close them with placeholder results before continuing (#304).
+        const pendingToolUse = response.content.filter(
+          (block): block is ToolUseBlock => block.type === 'tool_use',
+        )
         maxOutputRecoveryAttempts++
-        // Add continuation prompt
-        this.messages.push({
-          role: 'user',
-          content: 'Please continue from where you left off.',
-        })
+        if (pendingToolUse.length > 0) {
+          this.messages.push({
+            role: 'user',
+            content: [
+              ...pendingToolUse.map((block) => createInterruptedToolResult(block)),
+              {
+                type: 'text',
+                text: 'Please continue from where you left off.',
+              },
+            ],
+          })
+        } else {
+          // Add continuation prompt
+          this.messages.push({
+            role: 'user',
+            content: 'Please continue from where you left off.',
+          })
+        }
         continue
       }
 
@@ -1639,6 +1658,9 @@ export class QueryEngine {
       type: 'result',
       subtype: endSubtype,
       session_id: this.sessionId,
+      // 用户中止显式携带 stop_reason：projector/web 端按此归一为 aborted，
+      // 不再与 error_during_execution 的失败语义混同（#401）。
+      ...(runAborted ? { stop_reason: 'aborted' as const } : {}),
       is_error: endSubtype !== 'success',
       num_turns: this.turnCount,
       total_cost_usd: this.totalCost,

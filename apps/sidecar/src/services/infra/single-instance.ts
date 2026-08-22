@@ -58,10 +58,20 @@ function isPidAlive(pid: number): boolean {
 function getProcessCommand(pid: number): string {
   try {
     if (process.platform === "win32") {
-      const r = spawnSync("wmic", ["process", "where", `ProcessId=${pid}`, "get", "CommandLine", "/format:list"], {
+      const wmic = spawnSync("wmic", ["process", "where", `ProcessId=${pid}`, "get", "CommandLine", "/format:list"], {
         encoding: "utf-8"
       });
-      return (r.stdout ?? "").trim();
+      const wmicOut = (wmic.stdout ?? "").trim();
+      // WMIC 在 Win11 24H2+ 干净安装上默认移除；回退 PowerShell CIM 查询，
+      // 否则 isSidecarProcess 恒 false、旧实例永不被接管（#407）。
+      if (wmic.status === 0 && wmicOut) return wmicOut;
+      const ps = spawnSync(
+        "powershell",
+        ["-NoProfile", "-NonInteractive", "-Command",
+          `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`],
+        { encoding: "utf-8" },
+      );
+      return (ps.stdout ?? "").trim();
     }
     const r = spawnSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf-8" });
     return (r.stdout ?? "").trim();

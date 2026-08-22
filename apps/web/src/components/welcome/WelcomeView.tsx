@@ -16,6 +16,7 @@ import {
   welcomePromptSeedAtom,
 } from '@/atoms'
 import { abortStagedAttachment, sidecarCall, agentSend, getQuickInputContext, isTerminalAgentSubmissionError, openFileDialog, onSidecarEvent } from '@/lib/desktop-api'
+import { sanitizeDraftJSON, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 import { PermissionModePicker } from '@/components/agent/PermissionModePicker'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
@@ -241,7 +242,7 @@ export function WelcomeView({
 
   const editor = useEditor({
     extensions: createPromptEditorExtensions({
-      placeholder: '描述你想完成的任务，使用 @ 引用已连接账户或项目文件…',
+      placeholder: '描述你想完成的任务，使用 @ 引用项目文件或浏览器标签…',
       agentSuggestion: createSuggestionRenderer('@', '__welcome__', '@', getWorkspaceSlug, setMentionSuggestionOpen),
       capabilitySuggestion: createSuggestionRenderer('/', '__welcome__', '/', getWorkspaceSlug, setMentionSuggestionOpen, executeSlashCommand),
     }),
@@ -308,7 +309,8 @@ export function WelcomeView({
       }
       const parsed = JSON.parse(stored) as { doc?: unknown }
       if (!parsed.doc) return
-      editor.commands.setContent(parsed.doc as Parameters<typeof editor.commands.setContent>[0])
+      const doc = sanitizeDraftJSON(parsed.doc as AgentInputDraftJSON) ?? { type: 'doc' as const, content: [] }
+      editor.commands.setContent(doc)
       setEditorText(editor.getText())
     } catch {
       localStorage.removeItem(draftStorageKey)
@@ -462,7 +464,7 @@ export function WelcomeView({
         threadId: meta.id,
         userMessage: text,
         clientSubmissionId,
-        ...(serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'link_connection_ref')
+        ...(serialized.messageParts.some((part) => part.type === 'capability_ref')
           ? { messageParts: serialized.messageParts }
           : {}),
         thinkingLevel,

@@ -403,4 +403,51 @@ describe("AgentRuntimeKernel", () => {
 
     releases.get("next")!();
   });
+
+  test("isThreadOccupied 占用期间派发入队，notifyThreadReleased 唤醒（#398）", async () => {
+    const started: string[] = [];
+    let occupied = true;
+    const kernel = new AgentRuntimeKernel<TestInput, TestEmitter>({
+      isThreadOccupied: () => occupied,
+      execute: async (dispatch) => {
+        started.push(dispatch.input.userMessage);
+      },
+      onDispatchError: () => undefined
+    });
+
+    // 外部占用中：新派发必须入队而非并发启动
+    const result = kernel.dispatch({ threadId: "thread-x", userMessage: "queued" }, { onError: () => undefined });
+    expect(result.mode).toBe("queued");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(started).toEqual([]);
+
+    occupied = false;
+    kernel.notifyThreadReleased("thread-x");
+    await waitFor(() => started.includes("queued"));
+  });
+
+  test("waitForThreadIdle 等待 execute 完成后返回", async () => {
+    let resolveRun!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resolveRun = resolve;
+    });
+    const kernel = new AgentRuntimeKernel<TestInput, TestEmitter>({
+      execute: async () => {
+        await gate;
+      },
+      onDispatchError: () => undefined
+    });
+
+    kernel.dispatch({ threadId: "thread-y", userMessage: "run" }, { onError: () => undefined });
+    let idle = false;
+    const waiting = kernel.waitForThreadIdle("thread-y").then(() => {
+      idle = true;
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(idle).toBe(false);
+
+    resolveRun();
+    await waiting;
+    expect(idle).toBe(true);
+  });
 });

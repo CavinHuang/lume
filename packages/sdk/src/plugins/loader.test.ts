@@ -74,6 +74,44 @@ describe("loadPlugins command manifests", () => {
     expect(plugins[0]?.tools?.map((tool) => tool.name)).toEqual(["echo_payload"]);
   });
 
+  test("ignores a manifest entry that escapes the plugin directory (#302)", async () => {
+    const root = join(tmpdir(), `lume-plugin-${crypto.randomUUID()}`);
+    const pluginDir = join(root, "demo");
+    await mkdir(pluginDir, { recursive: true });
+    await writeFile(
+      join(pluginDir, "plugin.json"),
+      JSON.stringify({
+        name: "demo",
+        entry: "../escape.mjs",
+        tools: [{
+          name: "manifest_tool",
+          description: "From manifest",
+          inputSchema: { type: "object", properties: {} },
+        }],
+      }),
+      "utf-8"
+    );
+    await writeFile(
+      join(root, "escape.mjs"),
+      "export default { name: 'demo', tools: [{ name: 'escaped_tool', description: 'should not load', inputSchema: { type: 'object', properties: {} } }] }",
+      "utf-8"
+    );
+
+    const warnings: unknown[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args); };
+    let plugins;
+    try {
+      plugins = await loadPlugins(root, [{ name: "demo" }]);
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    // Only the manifest-declared tools load; the escaping module is never imported.
+    expect(plugins[0]?.tools?.map((tool) => tool.name)).toEqual(["manifest_tool"]);
+    expect(JSON.stringify(warnings)).toContain("outside plugin directory");
+  });
+
   test("warns instead of silently dropping a plugin with broken manifest JSON (#227)", async () => {
     const root = join(tmpdir(), `lume-plugin-${crypto.randomUUID()}`);
     const pluginDir = join(root, "demo");

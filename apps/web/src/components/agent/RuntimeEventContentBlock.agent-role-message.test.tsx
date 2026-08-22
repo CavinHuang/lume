@@ -96,15 +96,14 @@ describe('user agent role invocation messages', () => {
     expect(markup).not.toContain('subagent_type')
   })
 
-  test('renders quoted connector messages without exposing the quoted XML twice', () => {
+  test('renders quoted context without exposing the quoted XML twice', () => {
     const quotedBlock = '<quoted_context source="agent-history" label="历史消息" message_id="m1" role="assistant">\n引用内容\n</quoted_context>\n\n'
     const markup = renderToStaticMarkup(
       <UserAgentRoleInvocationContent
         text={`${quotedBlock}请检查 @Gmail · work`}
         messageParts={[
           { type: 'text', text: quotedBlock },
-          { type: 'text', text: '请检查 ' },
-          { type: 'link_connection_ref', schemaVersion: 1, service: 'gmail', connectionName: 'work', displayText: 'Gmail · work' },
+          { type: 'text', text: '请检查 @Gmail · work' },
         ]}
       />,
     )

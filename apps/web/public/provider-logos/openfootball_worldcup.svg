@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" role="img" aria-label="OpenFootball World Cup">
-  <rect width="120" height="120" rx="20" fill="#0f7a3d"/>
-  <circle cx="60" cy="54" r="28" fill="#ffffff"/>
-  <path d="M60 28v52M35.5 45h49M35.5 63h49M42 36c11 9 25 9 36 0M42 72c11-9 25-9 36 0" fill="none" stroke="#0f7a3d" stroke-width="5" stroke-linecap="round"/>
-  <path d="M60 26c-13 15-13 41 0 56M60 26c13 15 13 41 0 56" fill="none" stroke="#0f7a3d" stroke-width="5" stroke-linecap="round"/>
-  <text x="60" y="103" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#ffffff">OPEN</text>
-</svg>

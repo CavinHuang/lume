@@ -138,7 +138,6 @@ import { DiagnosticContentStore } from './logging/diagnostic-content-store'
 import { createLogContentDigest, createSidecarLogDigestPolicy, isSafeStorageSecure } from './logging/log-digest-policy'
 import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
-import { createLinkRuntimeSupervisor } from './link-runtime-supervisor'
 import { discoverChromeProfiles, importChromeProfile, importConnectedChromeCookies, type ImportedCookie } from './browser-import'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '@lume/shared'
 import { nativeEventToIntent } from '@lume/shared'
@@ -296,7 +295,6 @@ let rememberedQuickInputDesktopTarget: {
   rememberedAt: number
 } | null = null
 let desktopHostSupervisor: ReturnType<typeof createDesktopHostSupervisor> | null = null
-let linkRuntimeSupervisor: ReturnType<typeof createLinkRuntimeSupervisor> | null = null
 let desktopHostState: DesktopHostState = { available: false, reason: 'desktop host has not started' }
 let loggingService: LoggingService | null = null
 let settingsBroker: SettingsBroker | null = null
@@ -1366,6 +1364,16 @@ export function ensureIslandWindow() {
     onReady: () => getAgentIslandService().repush(),
   })
   islandWindow = win
+  // 岛窗携完整 preload 且在受信窗口集合内，与主窗/quickInput 同规格挂安全闸：
+  // will-navigate/will-frame-navigate 拦截 + 统一 windowOpenHandler（#395）。
+  attachWebContentsSecurity(win, {
+    allowNavigation: (url) => isAllowedMainFrameNavigation(url, {
+      appIsPackaged: app.isPackaged,
+      appProtocolOrigin: APP_PROTOCOL_ORIGIN,
+      devServerUrl: getDevServerUrl(),
+      webEntryPath: getWebEntryPath(),
+    }),
+  })
   win.on('closed', () => {
     if (islandWindow === win) islandWindow = null
   })
@@ -1775,40 +1783,6 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       await agentIslandService?.handleIntent(payload as AgentIslandIntent)
       return null
     }
-    case 'link_runtime_state':
-      requireMainWindowSender(context, 'link_runtime_state')
-      return linkRuntimeSupervisor?.getState() ?? { enabled: false, mode: 'local', phase: 'disabled', port: null, origin: null, remoteOrigin: null, adminTokenConfigured: false, runtimeTokenConfigured: false, version: '1.3.5', dataDirectory: join(resolveConfigDir(), 'link-runtime', 'openconnector', 'data'), restartCount: 0 }
-    case 'link_runtime_enable':
-      requireMainWindowSender(context, 'link_runtime_enable')
-      if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
-      return linkRuntimeSupervisor.enable()
-    case 'link_runtime_disable':
-      requireMainWindowSender(context, 'link_runtime_disable')
-      if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
-      return linkRuntimeSupervisor.disable()
-    case 'link_runtime_restart':
-      requireMainWindowSender(context, 'link_runtime_restart')
-      if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
-      return linkRuntimeSupervisor.restart()
-    case 'link_runtime_diagnose':
-      requireMainWindowSender(context, 'link_runtime_diagnose')
-      if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
-      return linkRuntimeSupervisor.diagnose()
-    case 'link_runtime_change_port':
-      requireMainWindowSender(context, 'link_runtime_change_port')
-      if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
-      return linkRuntimeSupervisor.changePort(Number(payload.port))
-    case 'link_runtime_configure':
-      requireMainWindowSender(context, 'link_runtime_configure')
-      if (!linkRuntimeSupervisor) throw new Error('link_runtime_unavailable')
-      return linkRuntimeSupervisor.configure({
-        mode: payload.mode,
-        ...(typeof payload.origin === 'string' ? { origin: payload.origin } : {}),
-        ...(typeof payload.adminToken === 'string' ? { adminToken: payload.adminToken } : {}),
-        ...(typeof payload.runtimeToken === 'string' ? { runtimeToken: payload.runtimeToken } : {}),
-        ...(payload.clearAdminToken === true ? { clearAdminToken: true } : {}),
-        ...(payload.clearRuntimeToken === true ? { clearRuntimeToken: true } : {}),
-      })
     case 'sidecar_call': {
       validateRendererSidecarMethod(payload.method)
       if (payload.method !== 'agent:send-thread-message') {
@@ -2295,6 +2269,8 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       return { available: getDiagnosticContentStore().isAvailable(), lease: diagnosticCapture, deleted }
     }
     case 'desktop_diagnostic_decrypt':
+      // 解密的是会话明文，与 connection_vault_* 同级敏感：仅主窗可调。
+      requireMainWindowSender(context, 'desktop_diagnostic_decrypt')
       return getDiagnosticContentStore().decrypt(payload.recordId)
     case 'desktop_diagnostic_delete':
       return { deleted: await getDiagnosticContentStore().clear() }
@@ -2449,6 +2425,9 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       const destinationPath = payload.dest
       validateMigrationTarget(sourcePath, destinationPath)
       await sidecarHost.stop()
+      // 拷贝窗口内拒绝 renderer IPC 触发的惰性重启：新进程边跑边被拷贝会令
+      // 目录校验失配、目的目录被删（#412）。
+      sidecarHost.setMigrationInProgress(true)
       const sourceStats = dirStats(sourcePath)
       try {
         const { copiedFiles, copiedBytes } = copyDirRecursive(sourcePath, destinationPath, (progress) => {
@@ -2468,6 +2447,8 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       } catch (error) {
         rmSync(destinationPath, { recursive: true, force: true })
         throw error
+      } finally {
+        sidecarHost.setMigrationInProgress(false)
       }
     }
     case 'data_apply_migration': {
@@ -2530,6 +2511,7 @@ function createSidecarHost({ onNotification }) {
   let nextId = 1
   let pending = new Map()
   let stopRequested = false
+  let migrationInProgress = false
   let wikiPrivilegedCredential = null
 
   function rejectAllPending(error) {
@@ -2623,6 +2605,8 @@ function createSidecarHost({ onNotification }) {
   }
 
   async function start() {
+    // 数据目录迁移拷贝期间拒绝惰性重启：新进程边跑边被拷贝会令校验失配（#412）
+    if (migrationInProgress) throw new Error('数据目录迁移进行中，sidecar 暂不启动')
     if (started) {
       await started
       return
@@ -2714,9 +2698,6 @@ function createSidecarHost({ onNotification }) {
               })
             }
           }
-          void linkRuntimeSupervisor?.syncBootstrap().catch((error) => {
-            writeMainLog('warn', 'desktop.link', 'bootstrap.delivery_failed', 'failed to deliver Link bootstrap to sidecar', { data: { error } })
-          })
           logDesktopStartup('sidecar reported system.ready', 'sidecar.ready')
           settleStart()
           return
@@ -3021,6 +3002,9 @@ function createSidecarHost({ onNotification }) {
     callPluginPackagePrivileged,
     notifyBrowserSettings,
     stop,
+    setMigrationInProgress: (value) => {
+      migrationInProgress = value
+    },
   }
 }
 
@@ -3264,19 +3248,6 @@ app.whenReady().then(async () => {
   desktopHostState = await startDesktopHost()
   await sidecarHost.start()
   await unlockConnectionVaultStore()
-  linkRuntimeSupervisor = createLinkRuntimeSupervisor({
-    configDir,
-    resourceDir: app.isPackaged ? join(process.resourcesPath, 'openconnector') : join(DESKTOP_ROOT, 'resources', 'openconnector'),
-    getMasterKey: () => connectionVaultKey,
-    fork: (modulePath, args, options) => utilityProcess.fork(modulePath, args, options),
-    emit: (state) => emitRendererEvent('link:runtime', state),
-    installBootstrap: async (bootstrap) => { await sidecarHost.call('system.link-bootstrap', bootstrap) },
-    killProcessTree: (pid) => {
-      if (!Number.isSafeInteger(pid) || pid <= 0) return
-      if (process.platform === 'win32') spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
-      else { try { process.kill(pid, 'SIGKILL') } catch {} }
-    },
-  })
   await sidecarHost.notifyBrowserSettings?.(browserRuntime.getSettings())
   logDesktopStartup('sidecar ready', 'sidecar.ready')
   pageRenderer = new PageRenderer()
@@ -3284,9 +3255,6 @@ app.whenReady().then(async () => {
   registerDesktopContextPowerEvents()
   await captureQuickInputContext()
   await createMainWindow()
-  void linkRuntimeSupervisor.initialize().catch((error) => {
-    writeMainLog('warn', 'desktop.link', 'runtime.autostart_failed', 'Link runtime autostart failed', { data: { error } })
-  })
   // Agent 灵动岛 service（Task 7）：主窗口就绪后启动，开始响应 sidecar intent。
   await getAgentIslandService().start()
   // Phase 2：启动渲染面（macOS 26+ 优先 native，否则 Electron 窗）。native 4s 未 ready 由 host 回退。
@@ -3336,7 +3304,6 @@ app.on('will-quit', async () => {
   browserRuntime?.destroy()
   browserRuntime = null
   desktopHostSupervisor?.stop()
-  await linkRuntimeSupervisor?.stop('offline')
   await sidecarHost.stop()
   writeMainLog('info', 'desktop.lifecycle', 'app.stopping', 'app stopping')
   await loggingService?.close()

@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { posix } from 'node:path'
 import { spawn as spawnProcess } from 'node:child_process'
 import { createDesktopHostSpawnConfig, createDesktopHostTokenFilePath } from './sidecar-process'
-import { nextLinkCrashState } from './link-runtime-supervisor'
 
 export type DesktopHostState =
   | { available: true; endpoint: string; token: string }
@@ -12,6 +11,11 @@ export type DesktopHostState =
 
 // 稳定运行该时长后清零崩溃窗口,视为一次健康启动(#124)
 const STABLE_RUN_MS = 10_000
+
+export function nextCrashState(previous: number[], now: number): { crashTimes: number[]; shouldRestart: boolean; delayMs: number } {
+  const crashTimes = [...previous.filter((time) => now - time < 5 * 60_000), now]
+  return { crashTimes, shouldRestart: crashTimes.length < 3, delayMs: 2 ** Math.max(0, crashTimes.length - 1) * 1000 }
+}
 
 interface DesktopHostSupervisorOptions {
   binaryPath: string
@@ -83,7 +87,7 @@ export function createDesktopHostSupervisor({
     child = null
     // 稳定运行过一段时间才算「健康」,清零崩溃窗口——避免 spawn 即崩的循环把退避清零(#124)
     if (spawnedAt && now() - spawnedAt >= STABLE_RUN_MS) crashTimes = []
-    const crash = nextLinkCrashState(crashTimes, now())
+    const crash = nextCrashState(crashTimes, now())
     crashTimes = crash.crashTimes
     state = {
       available: false,
@@ -126,7 +130,7 @@ export function createDesktopHostSupervisor({
     async start() {
       if (state?.available && child) return state
       // 手动 start 视为显式拉起:取消挂起的重启定时器(否则与 timer 双 spawn 产生孤儿)
-      // 并清零崩溃窗口(对齐 link-runtime-supervisor 的 restart 语义)
+      // 并清零崩溃窗口(与退避重启语义一致)
       if (restartTimer) { cancelSchedule(restartTimer); restartTimer = null }
       crashTimes = []
       if (!exists(binaryPath)) {

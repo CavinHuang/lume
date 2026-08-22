@@ -6,8 +6,6 @@
   "scripts": {
     "dev": "vite --port 3000 --host",
     "build": "tsc --noEmit && vite build",
-    "generate:link-icons": "node scripts/generate-link-icons.mjs",
-    "sync:oomol-provider-logos": "bun scripts/sync-oomol-provider-logos.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun run test:unit",
     "test:unit": "bun scripts/run-unit-tests.mjs",

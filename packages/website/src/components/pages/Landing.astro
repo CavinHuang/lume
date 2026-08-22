@@ -1,0 +1,207 @@
+---
+import Base from '../../layouts/Base.astro';
+import { REPO_URL } from '../../lib/site';
+import { t, type Lang, type UiKey } from '../../i18n/ui';
+
+interface Props {
+  lang: Lang;
+}
+const { lang } = Astro.props;
+
+const features = [
+  { key: 'local', icon: 'drive' },
+  { key: 'memory', icon: 'memory' },
+  { key: 'personas', icon: 'users' },
+  { key: 'skills', icon: 'blocks' },
+  { key: 'tools', icon: 'terminal' },
+  { key: 'automation', icon: 'clock' },
+  { key: 'im', icon: 'chat' },
+  { key: 'models', icon: 'cpu' },
+] as const;
+---
+
+<Base title={t(lang, 'hero.title')} description={t(lang, 'hero.subtitle')}>
+  <!-- Hero -->
+  <section class="relative overflow-hidden">
+    <div
+      class="pointer-events-none absolute inset-0"
+      aria-hidden="true"
+      style={`background:
+        radial-gradient(600px 320px at 20% -10%, var(--glow-1), transparent 70%),
+        radial-gradient(700px 360px at 85% 0%, var(--glow-2), transparent 70%);`}
+    >
+    </div>
+    <div class="relative mx-auto max-w-6xl px-4 pt-16 pb-12 text-center sm:px-6 sm:pt-24">
+      <p class="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-micro font-medium text-fg-muted">
+        <span class="h-1.5 w-1.5 rounded-full bg-accent"></span>
+        {t(lang, 'hero.badge')}
+      </p>
+      <h1 class="mx-auto mt-5 max-w-3xl text-display font-bold tracking-tight text-fg sm:text-display-lg">
+        {t(lang, 'hero.title')}
+      </h1>
+      <p class="mx-auto mt-5 max-w-xl text-body-lg text-fg-muted">{t(lang, 'hero.subtitle')}</p>
+      <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
+        <a
+          href={`${lang === 'zh' ? '' : '/en'}/download`}
+          class="rounded-xl bg-accent px-5 py-2.5 text-body-lg font-medium text-accent-fg shadow-(--shadow-card) transition-colors hover:bg-accent-strong"
+        >
+          {t(lang, 'hero.ctaDownload')}
+        </a>
+        <a
+          href={REPO_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="rounded-xl border border-border bg-surface px-5 py-2.5 text-body-lg font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
+        >
+          {t(lang, 'hero.ctaGithub')}
+        </a>
+      </div>
+
+      <div
+        class="relative mx-auto mt-14 max-w-4xl rounded-2xl border border-border bg-surface p-2 shadow-(--shadow-card)"
+      >
+        <img
+          src="/screenshot.png"
+          alt={t(lang, 'hero.screenshotAlt')}
+          width="1456"
+          height="816"
+          loading="eager"
+          class="w-full rounded-xl border border-border"
+        />
+      </div>
+    </div>
+  </section>
+
+  <!-- 为什么是 Lume -->
+  <section class="border-y border-border bg-bg-subtle">
+    <div class="mx-auto max-w-3xl px-4 py-16 sm:px-6 sm:py-20">
+      <h2 class="text-headline font-semibold tracking-tight text-fg">{t(lang, 'why.title')}</h2>
+      <p class="mt-5 text-body leading-loose text-fg-muted">{t(lang, 'why.para1')}</p>
+      <p class="mt-4 text-body leading-loose text-fg-muted">{t(lang, 'why.para2')}</p>
+    </div>
+  </section>
+
+  <!-- 核心特性 -->
+  <section id="features" class="scroll-mt-16">
+    <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-20">
+      <h2 class="text-center text-headline font-semibold tracking-tight text-fg">
+        {t(lang, 'features.title')}
+      </h2>
+      <div class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {features.map((feature) => (
+          <div class="rounded-2xl border border-border bg-surface p-5 transition-colors hover:border-border-strong">
+            <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-soft text-accent">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="h-5 w-5"
+                aria-hidden="true"
+              >
+                {feature.icon === 'drive' && (
+                  <>
+                    <rect x="3" y="4" width="18" height="7" rx="2"></rect>
+                    <rect x="3" y="13" width="18" height="7" rx="2"></rect>
+                    <path d="M7 7.5h.01M7 16.5h.01"></path>
+                  </>
+                )}
+                {feature.icon === 'memory' && (
+                  <>
+                    <ellipse cx="12" cy="6" rx="8" ry="3"></ellipse>
+                    <path d="M4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6"></path>
+                    <path d="M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"></path>
+                  </>
+                )}
+                {feature.icon === 'users' && (
+                  <>
+                    <circle cx="9" cy="8" r="3.25"></circle>
+                    <path d="M3.5 19c0-3 2.5-4.75 5.5-4.75S14.5 16 14.5 19"></path>
+                    <path d="M15.5 5.4a3.25 3.25 0 0 1 0 5.2M17.5 14.4c1.8.7 3 2.2 3 4.6"></path>
+                  </>
+                )}
+                {feature.icon === 'blocks' && (
+                  <>
+                    <rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect>
+                    <rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect>
+                    <rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect>
+                    <path d="M17 13.5v7M13.5 17h7"></path>
+                  </>
+                )}
+                {feature.icon === 'terminal' && (
+                  <>
+                    <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+                    <path d="m7 9 3 3-3 3M12.5 15H17"></path>
+                  </>
+                )}
+                {feature.icon === 'clock' && (
+                  <>
+                    <circle cx="12" cy="12" r="8.5"></circle>
+                    <path d="M12 7.5V12l3 2"></path>
+                  </>
+                )}
+                {feature.icon === 'chat' && (
+                  <>
+                    <path
+                      d="M21 11.75c0 4-4.03 7.25-9 7.25-1.06 0-2.08-.15-3.02-.43L4 20l1.28-3.42C4.05 15.35 3 13.65 3 11.75 3 7.74 7.03 4.5 12 4.5s9 3.24 9 7.25Z"
+                    ></path>
+                  </>
+                )}
+                {feature.icon === 'cpu' && (
+                  <>
+                    <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+                    <rect x="10" y="10" width="4" height="4"></rect>
+                    <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"></path>
+                  </>
+                )}
+              </svg>
+            </div>
+            <h3 class="mt-4 text-body-lg font-semibold text-fg">
+              {t(lang, `features.${feature.key}.title` as UiKey)}
+            </h3>
+            <p class="mt-1.5 text-ui leading-relaxed text-fg-muted">
+              {t(lang, `features.${feature.key}.desc` as UiKey)}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Agent SDK -->
+  <section class="border-y border-border bg-bg-subtle">
+    <div class="mx-auto grid max-w-6xl items-center gap-10 px-4 py-16 sm:px-6 sm:py-20 lg:grid-cols-2">
+      <div>
+        <h2 class="text-headline font-semibold tracking-tight text-fg">{t(lang, 'sdk.title')}</h2>
+        <p class="mt-4 text-body leading-loose text-fg-muted">{t(lang, 'sdk.desc')}</p>
+      </div>
+      <pre
+        class="overflow-x-auto rounded-2xl border border-border bg-surface p-5 text-caption leading-relaxed text-fg-muted shadow-(--shadow-card)"><code>{`import { createAgent } from '@lume/agent-sdk'
+
+const agent = createAgent({
+  model: 'claude-sonnet-4-6',
+  maxTurns: 10,
+})
+
+for await (const event of agent.query('Read package.json and summarize the project.')) {
+  // 流式事件：assistant 文本 / 工具调用 / result 统计
+}`}</code></pre>
+    </div>
+  </section>
+
+  <!-- 底部 CTA -->
+  <section>
+    <div class="mx-auto max-w-6xl px-4 py-16 text-center sm:px-6 sm:py-20">
+      <h2 class="text-headline font-semibold tracking-tight text-fg">{t(lang, 'cta.title')}</h2>
+      <p class="mt-3 text-body-lg text-fg-muted">{t(lang, 'cta.desc')}</p>
+      <a
+        href={`${lang === 'zh' ? '' : '/en'}/download`}
+        class="mt-7 inline-block rounded-xl bg-accent px-6 py-3 text-body-lg font-medium text-accent-fg shadow-(--shadow-card) transition-colors hover:bg-accent-strong"
+      >
+        {t(lang, 'cta.button')}
+      </a>
+    </div>
+  </section>
+</Base>

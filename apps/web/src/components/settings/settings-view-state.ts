@@ -5,7 +5,6 @@ import {
   Cog,
   Database,
   Globe,
-  Plug,
   HardDrive,
   Bot,
   Keyboard,
@@ -41,7 +40,6 @@ export type SettingsViewTab =
   | 'logs'
   | 'archive'
   | 'browser'
-  | 'link-runtime'
 
 export const SETTINGS_NAV_ITEMS: Array<{
   id: SettingsViewTab
@@ -54,7 +52,6 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { id: 'agents', label: 'Agents', icon: Bot },
   { id: 'skills', label: '技能管理', icon: Puzzle },
   { id: 'browser', label: '浏览器', icon: Globe },
-  { id: 'link-runtime', label: 'Link 运行时', icon: Plug },
   { id: 'workspaces', label: '工作区', icon: Users },
   { id: 'memory', label: '记忆设置', icon: Database },
   { id: 'reading', label: '读书', icon: BookOpen },
@@ -90,7 +87,6 @@ export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
   logs: '应用日志',
   archive: '归档与回收站',
   browser: '浏览器',
-  'link-runtime': 'OpenConnector Link',
 }
 
 export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
@@ -113,5 +109,4 @@ export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
   logs: '查看应用、Agent、工具调用、MCP 与 Skill 加载运行日志',
   archive: '查看已归档的会话，恢复或永久删除，管理回收站',
   browser: '管理内置浏览器、Agent 控制和外部 Chrome 能力',
-  'link-runtime': '管理加密、仅本机监听的 OpenConnector 运行时',
 }

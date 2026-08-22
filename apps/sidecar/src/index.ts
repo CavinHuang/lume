@@ -42,7 +42,6 @@ import { closePlanningTodoStore } from "./services/planning/planning-todo-store"
 import { reconcilePlanningStartOperations } from "./services/planning/planning-start-service";
 import { closePlanningCalendarStore } from "./services/planning/planning-calendar-store";
 import { startPlanningReminderScheduler, stopPlanningReminderScheduler } from "./services/planning/planning-reminder-scheduler";
-import { installLinkRuntimeBootstrap } from "./services/link/link-client";
 import { getNodeReplRuntimeRegistry } from "./services/agent-runtime/tools/node-repl/node-repl-runtime-registry";
 
 const rpcTransport = createProcessRpcTransport(
@@ -242,17 +241,6 @@ async function handleRpcLine(line: string): Promise<void> {
   if (method === "system.connection-vault-key") {
     installConnectionVaultKey((payload.params as { key?: unknown } | null)?.key);
     if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
-    return;
-  }
-
-  if (method === "system.link-bootstrap") {
-    try {
-      installLinkRuntimeBootstrap(payload.params);
-      writeNotification("link:runtime-changed", { phase: (payload.params as { phase?: unknown } | null)?.phase });
-      if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
-    } catch (error) {
-      if (payload.id !== undefined) writeResponse({ id: payload.id, error: { code: "E_LINK_BOOTSTRAP", message: error instanceof Error ? error.message : "invalid link bootstrap" } });
-    }
     return;
   }
 

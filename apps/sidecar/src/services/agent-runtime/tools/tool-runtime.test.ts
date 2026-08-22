@@ -111,7 +111,7 @@ describe("ToolRuntime", () => {
   test("appends SDK-generated descriptors without dropping deferred tool descriptors", () => {
     const sessionId = `tool-runtime-generated-${crypto.randomUUID()}`;
     ToolRuntime.resolveDynamicTools({
-      tools: [makeTool("Read"), makeTool("link_list_apps")],
+      tools: [makeTool("Read"), makeTool("custom_search")],
       cwd: "/tmp",
       sessionId,
       policyInput: {}
@@ -122,7 +122,7 @@ describe("ToolRuntime", () => {
       sessionId
     });
 
-    expect(getRuntimeToolDescriptor(sessionId, "link_list_apps")).toBeDefined();
+    expect(getRuntimeToolDescriptor(sessionId, "custom_search")).toBeDefined();
     expect(getRuntimeToolDescriptor(sessionId, "ToolSearch")).toMatchObject({
       name: "ToolSearch",
       metadata: { allowedInPlanMode: true, requiresApprovalByDefault: false }

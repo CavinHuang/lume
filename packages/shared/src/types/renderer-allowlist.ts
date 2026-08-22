@@ -87,7 +87,6 @@ export const SHARED_RENDERER_SIDECAR_METHODS: ReadonlySet<string> = new Set(
 
 /**
  * 派生集之外的本地增量（desktop 侧全量消费，契约测试双向 == 断言）：
- * - link:* —— Link 连接器通道未建 *_IPC_CHANNELS 常量；
  * - browser:* —— BROWSER_IPC_CHANNELS 走桌面专属入口，被派生规则排除的四个只读 method；
  * - lume-config:changed —— CHANGED 通知 key 被派生规则排除，但 renderer 经 sidecar_call 订阅；
  * - healthcheck —— runtime IPC_CHANNELS 之外的裸方法。
@@ -95,22 +94,6 @@ export const SHARED_RENDERER_SIDECAR_METHODS: ReadonlySet<string> = new Set(
  * 三个死条目已删——批次5 T7b 评审核实全仓无 handler。）
  */
 export const LOCAL_RENDERER_SIDECAR_METHODS: readonly string[] = [
-  "link:providers-list",
-  "link:providers-search",
-  "link:provider-detail",
-  "link:connections-list",
-  "link:connection-upsert",
-  "link:connection-delete",
-  "link:oauth-configs",
-  "link:oauth-sessions",
-  "link:oauth-config-save",
-  "link:oauth-start",
-  "link:oauth-status",
-  "link:oauth-cancel",
-  "link:actions-list",
-  "link:action-detail",
-  "link:runs-list",
-  "link:run-detail",
   "browser:backends",
   "browser:reference-candidates",
   "browser:create-reference-grant",

@@ -1,6 +1,6 @@
 import type { AgentThreadMeta, AgentWorkspace } from '@lume/shared'
 
-export type LumeSidebarTopActionId = 'new-chat' | 'lume' | 'skills' | 'connectors' | 'automations' | 'todos' | 'proactive'
+export type LumeSidebarTopActionId = 'new-chat' | 'lume' | 'skills' | 'automations' | 'todos' | 'proactive'
 export type LumeSidebarFooterActionId = 'recycle-bin' | 'settings'
 export const UNASSIGNED_THREADS_WORKSPACE_ID = '__unassigned__'
 const UNASSIGNED_THREADS_WORKSPACE_NAME = '普通会话'
@@ -87,7 +87,6 @@ export function buildLumeSidebarViewModel({
     { id: 'new-chat', label: '新建聊天', icon: 'square-pen', kind: 'button', shortcut: 'Ctrl N' },
     { id: 'lume', label: 'Lume', icon: 'bot', kind: 'button', active: activeTabId === '__lume__' },
     { id: 'skills', label: '技能 / 插件', icon: 'box', kind: 'button', active: activeTabId === '__skills__' },
-    { id: 'connectors', label: '连接器', icon: 'plug', kind: 'button', active: activeTabId === '__link__' },
     {
       id: 'automations',
       label: '自动化',

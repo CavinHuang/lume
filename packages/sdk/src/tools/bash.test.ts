@@ -50,6 +50,22 @@ describe("BashTool shell invocation", () => {
     expect(BashTool.isReadOnly?.({ command: "sort -o out.txt input.txt" })).toBeFalse();
     expect(BashTool.isReadOnly?.({ command: "sort --output=out.txt input.txt" })).toBeFalse();
     expect(BashTool.isReadOnly?.({ command: "grep -o pattern file.txt" })).toBeTrue();
+    // git: only listing forms of branch/diff are reads (#300)
+    expect(BashTool.isReadOnly?.({ command: "git branch" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "git branch -a" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "git branch --list" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "git branch -D feature/x" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "git branch new-branch" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "git branch --move old new" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "git branch --set-upstream-to=origin/main" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "git diff HEAD~1" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "git diff --output=patch.diff" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "git diff --output patch.diff" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "git diff --ext-diff" })).toBeFalse();
+    // uniq: a second operand names the output file it writes (#300)
+    expect(BashTool.isReadOnly?.({ command: "uniq input.txt" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "uniq -c input.txt" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "uniq input.txt output.txt" })).toBeFalse();
   });
 
   // 与上一测试互补：native 解析不可用（无二进制）时，find/sed/sort 整体退回
@@ -60,6 +76,9 @@ describe("BashTool shell invocation", () => {
     expect(BashTool.isReadOnly?.({ command: "find . -name x -delete" })).toBeFalse();
     expect(BashTool.isReadOnly?.({ command: "sed -n '10p' file.txt" })).toBeFalse();
     expect(BashTool.isReadOnly?.({ command: "sort input.txt" })).toBeFalse();
+    // 回退无法解析参数，branch/diff 的变异形态必须 fail-closed（#300）
+    expect(BashTool.isReadOnly?.({ command: "git branch -D feature/x" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "git diff --output=patch.diff" })).toBeFalse();
   });
 
   test("uses PowerShell on Windows instead of requiring bash", () => {
@@ -329,4 +348,30 @@ describe("BashTool shell invocation", () => {
 
     await expect(waiting).rejects.toThrow("aborted");
   });
+});
+
+describe("BashTool #381 background timeout semantics", () => {
+  test("explicit timeout still terminates a background command", async () => {
+    clearTasks();
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-bg-timeout-"));
+    // 按实际解析的 shell 选命令(本机 Windows 可能配置了 POSIX bash,平台判断不可靠)
+    const command = /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(resolveShellInvocation("").command)
+      ? "Start-Sleep -Seconds 30"
+      : "sleep 30";
+
+    const context = {
+      cwd: root,
+      sessionId: "background-explicit-timeout",
+      artifactsRoot: join(root, "artifacts"),
+      emitEvent: () => {},
+    };
+    // worker spawn+到时击杀有秒级延迟,600ms 太紧会与 worker 启动竞态,用 2s;
+    // Windows taskkill 树杀耗时可到数十秒,等待给足余量
+    const started = await BashTool.call({ command, run_in_background: true, timeout: 2000 }, context);
+    const taskId = String(started.content).match(/task_\d+/)?.[0];
+    expect(taskId).toBeTruthy();
+
+    const completed = await TaskOutputTool.call({ task_id: taskId, block: true, timeout: 60_000 }, context);
+    expect(completed._meta?.execution).toMatchObject({ outcome: "timed_out", terminationReason: "timeout" });
+  }, 90_000);
 });

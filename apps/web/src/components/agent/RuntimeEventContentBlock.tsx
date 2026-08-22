@@ -31,7 +31,6 @@ import { Textarea } from '@/components/ui/textarea'
 import type { OpenThreadFile } from './AgentFileReference'
 import { CodingTurnFileChangesSummary } from './CodingTurnFileChangesSummary'
 import { MEMORY_CENTER_TAB_ID, memoryCenterTarget, upsertMemoryCenterTab } from '@/components/memory/open-memory-center'
-import { LinkConnectionChip } from '@/components/link/LinkConnectionChip'
 import { remapAgentMessagePartsForEditedText } from './agent-editor-message-parts'
 import { CopyFeedbackState, getAssistantCopyText, getCopyTextWithoutAfterglow, showTemporaryCopiedFeedback } from './message-blocks/copy-text'
 import { compactMemoryCitationLabel, groupMemoryCitationItems, normalizeMemoryCitationPath } from './message-blocks/memory-citation'
@@ -756,7 +755,7 @@ export function UserAgentRoleInvocationContent({
     </div>
   ) : null
 
-  if (messageParts?.some((part) => part.type === 'capability_ref' || part.type === 'link_connection_ref')) {
+  if (messageParts?.some((part) => part.type === 'capability_ref')) {
     return (
       <div className="min-w-0">
         {quoteMarks}
@@ -850,17 +849,6 @@ function CapabilityMessageText({
           let available = true
           try { validatePlanningTodoRefPart(part) } catch { available = false }
           return <span key={index} data-planning-todo-unavailable={!available || undefined} className={cn('mx-0.5 inline-flex rounded-md border px-1.5 py-0.5 align-baseline text-[13px]', available ? 'border-border' : 'border-destructive/50 text-muted-foreground')} title={available ? part.uri : '此 Planning Todo 引用已不可用'}>&amp;{available ? part.displayText : '待办不可用'}</span>
-        }
-        if (part.type === 'link_connection_ref') {
-          return (
-            <LinkConnectionChip
-              key={`${part.service}:${part.connectionName}:${index}`}
-              service={part.service}
-              connectionName={part.connectionName}
-              displayText={part.displayText}
-              className="mx-0.5"
-            />
-          )
         }
         const reference = referencesByUri.get(part.uri)
         const isPlugin = reference?.kind === 'plugin'
@@ -1506,7 +1494,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain border-t border-[var(--lume-border-subtle)] p-3">
             <ToolExecutionDetails toolCall={toolCall} onOpenThreadFile={onOpenThreadFile} />
-            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} linkAuthorization={toolCall.linkAuthorization} />
+            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
           </div>
         </AnimatedCollapsiblePanel>
       )}

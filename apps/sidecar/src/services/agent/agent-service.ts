@@ -67,7 +67,7 @@ import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { createAutoTitleJob } from "../agent-runtime/service-runtime/auto-title-job";
 import { getServiceRuntime } from "../agent-runtime/service-runtime/service-runtime";
-import { AgentRuntimeKernel, AgentRuntimeKernelQueueConflictError, type AgentRuntimeKernelQueuedDispatch } from "../agent-runtime/kernel/agent-runtime-kernel";
+import { AgentRuntimeKernel, AgentRuntimeKernelQueueConflictError, type AgentRuntimeKernelDispatchResult, type AgentRuntimeKernelQueuedDispatch } from "../agent-runtime/kernel/agent-runtime-kernel";
 import { runGuidanceStore } from "../agent-runtime/guidance/run-guidance-store";
 import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../agent-runtime/runtime-core/session-store";
 import { isAgentRuntimeSessionActive } from "../agent-runtime/runtime-core/attempt";
@@ -78,7 +78,7 @@ import type { LumeRunState } from "../agent-runtime/runner/run-state";
 import { emitAgentNotification, emitDiagnosticContent } from "./agent-notification-service";
 import { createFileReferenceBinding } from "./agent-files-service";
 import { getActiveBrowserBroker } from "../browser/browser-broker-holder";
-import { buildLinkConnectionReferenceContext, normalizeAgentUserMessage } from "./agent-user-message-parts";
+import { normalizeAgentUserMessage } from "./agent-user-message-parts";
 import { getPlanningTodoStore } from "../planning/planning-todo-store";
 import { addPlanningAuthorizedTodo, authorizePlanningOperation, finishPlanningExecutionRun, resolvePlanningExecutionContext } from "../planning/planning-execution-context";
 import { materializeCapabilityReferences } from "./invocable-capability-catalog";
@@ -131,9 +131,11 @@ const VISIBLE_HISTORY_CONTINUATION_TAIL_COUNT = 8;
 
 const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter>({
   validateQueued: validateQueuedAgentDispatch,
+  isThreadOccupied: (threadId) => directRunThreads.has(threadId),
   execute: async (dispatch) => {
     try {
       await sendAgentMessage(dispatch.input, dispatch.emit, {
+        ...(dispatch.executeHints?.appendUserMessage === false ? { appendUserMessage: false } : {}),
         ...(dispatch.abortSignal ? { abortSignal: dispatch.abortSignal } : {})
       });
     } finally {
@@ -188,10 +190,6 @@ async function validateQueuedAgentDispatch(
   dispatch.input.messageMetadata = {
     ...(dispatch.input.messageMetadata ?? {}),
     capabilityFingerprints: projection.fingerprints,
-    linkConnectionReferences: normalized.linkConnectionReferences.map(({ service, connectionName }) => ({
-      service,
-      connectionName,
-    })),
   };
 }
 
@@ -231,10 +229,6 @@ export async function prepareAgentDispatchInput(input: AgentSendInput): Promise<
       messageMetadata: {
         ...(input.messageMetadata ?? {}),
         ...(projection.references.length > 0 ? { capabilityFingerprints: projection.fingerprints } : {}),
-        linkConnectionReferences: normalized.linkConnectionReferences.map(({ service, connectionName }) => ({
-          service,
-          connectionName,
-        })),
       },
     };
   } catch (error) {
@@ -747,7 +741,48 @@ function projectAssistantMessageFromSdkMessages(input: {
 }
 
 
+/**
+ * kernel 之外的线程占用面：resume/automation 等直调 sendAgentMessage 的路径
+ * 与 kernel 派发共用同一互斥，杜绝同线程双 run 并发（#398）。
+ */
+const directRunThreads = new Set<string>();
+
+/**
+ * 经 kernel 派发一条消息并等待其执行完成。automation 等需要同步语义的
+ * 直调方入口：占用时自动排队（background 让位用户消息）而非失败。
+ */
+export async function dispatchAgentRun(
+  input: AgentSendInput,
+  emit: AgentStreamEmitter,
+  options?: { priority?: "user" | "background"; appendUserMessage?: boolean }
+): Promise<AgentRuntimeKernelDispatchResult> {
+  const result = agentRuntimeKernel.dispatch(input, emit, {
+    ...(options?.priority ? { priority: options.priority } : {}),
+    ...(options?.appendUserMessage === false ? { executeHints: { appendUserMessage: false } } : {})
+  });
+  await agentRuntimeKernel.waitForThreadIdle(input.threadId);
+  return result;
+}
+
 export async function sendAgentMessage(
+  input: AgentSendInput,
+  emit: AgentStreamEmitter,
+  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal } = {}
+): Promise<void> {
+  const { threadId } = input;
+  if (directRunThreads.has(threadId)) {
+    throw new Error("该线程已有运行中的回合，请等待完成或停止后再试");
+  }
+  directRunThreads.add(threadId);
+  try {
+    await runSendAgentMessage(input, emit, options);
+  } finally {
+    directRunThreads.delete(threadId);
+    agentRuntimeKernel.notifyThreadReleased(threadId);
+  }
+}
+
+async function runSendAgentMessage(
   input: AgentSendInput,
   emit: AgentStreamEmitter,
   options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal } = {}
@@ -791,10 +826,6 @@ export async function sendAgentMessage(
   }
   if (capabilityProjection.context) {
     modelFacingUserMessage = [capabilityProjection.context, modelFacingUserMessage].filter(Boolean).join("\n\n");
-  }
-  const linkConnectionContext = buildLinkConnectionReferenceContext(normalizedUserMessage.linkConnectionReferences);
-  if (linkConnectionContext) {
-    modelFacingUserMessage = [linkConnectionContext, modelFacingUserMessage].filter(Boolean).join("\n\n");
   }
   if (!isManualCompactCommand) {
     const pendingBackgroundTasks = buildPendingBackgroundTaskContext(getAgentThreadSDKMessages(threadId));
@@ -861,10 +892,6 @@ export async function sendAgentMessage(
       capabilityFingerprints: capabilityProjection.fingerprints,
       capabilityReferenceViews: capabilityProjection.references,
     } : {}),
-    linkConnectionReferences: normalizedUserMessage.linkConnectionReferences.map(({ service, connectionName }) => ({
-      service,
-      connectionName,
-    })),
     browserContinuity: browserContinuity ?? null,
     toolPolicy: mergeToolPolicies(
       existingToolPolicy,

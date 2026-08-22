@@ -56,7 +56,7 @@ export const BashTool = defineTool({
     type: 'object',
     properties: {
       command: { type: 'string', description: 'The shell command to execute. Use one shell dialect per command; on Windows without configured POSIX Bash, prefer PowerShell syntax and do not use cmd.exe or POSIX-only redirection.' },
-      timeout: { type: 'number', description: 'Optional timeout in milliseconds (max 600000, default 120000)' },
+      timeout: { type: 'number', description: 'Optional timeout in milliseconds (max 600000). When omitted the command runs without a process timeout.' },
       description: { type: 'string', description: 'Short description for background task tracking' },
       run_in_background: { type: 'boolean', description: 'Run the command in the background and return a task ID immediately' },
       purpose: { type: 'string', description: 'Optional execution purpose, e.g. verification' },
@@ -73,7 +73,12 @@ export const BashTool = defineTool({
   },
   async call(input, context) {
     const command = String(input.command)
-    const timeoutMs = Math.min(Number(input.timeout ?? 120_000), 600_000)
+    // #381:未显式传 timeout 不设进程超时——前台等待只有 15s 即转后台,默认
+    // 120s 的唯一生效点是击杀后台长任务(dev server/watcher),与"continue in
+    // the background"语义矛盾;显式 timeout 仍尊重(上限 600s)。
+    const timeoutMs = input.timeout === undefined
+      ? undefined
+      : Math.min(Number(input.timeout), 600_000)
     const purpose = typeof input.purpose === 'string' && input.purpose.trim() ? input.purpose.trim() : undefined
     const verificationError = purpose?.toLowerCase() === 'verification'
       ? getVerificationPipelineError(command)
@@ -165,8 +170,26 @@ const READ_ONLY_EXECUTABLES = new Set([
 function isReadOnlySegment(executable: string, args: string[]): boolean {
   if (!READ_ONLY_EXECUTABLES.has(executable)) return false
   if (executable === 'git') {
-    const subcommand = args.find((arg) => !arg.startsWith('-'))
-    return subcommand !== undefined && new Set(['branch', 'diff', 'log', 'show', 'status']).has(subcommand)
+    const subcommandIndex = args.findIndex((arg) => !arg.startsWith('-'))
+    if (subcommandIndex < 0) return false
+    const subcommand = args[subcommandIndex]!
+    if (!new Set(['branch', 'diff', 'log', 'show', 'status']).has(subcommand)) return false
+    const rest = args.slice(subcommandIndex + 1)
+    if (subcommand === 'branch') {
+      // Only listing forms are reads: an operand names a branch to create,
+      // and delete/move/copy/set-upstream flags mutate refs (#300).
+      if (rest.some((arg) => !arg.startsWith('-') && arg !== '--')) return false
+      return !rest.some((arg) => (
+        /^-[dDmMcCu]/.test(arg)
+        || /^--(?:delete|move|copy|set-upstream(?:-to)?|edit-description|track)\b/.test(arg)
+      ))
+    }
+    if (subcommand === 'diff') {
+      // --output writes the diff to a file; --ext-diff executes a
+      // repo-config-controlled external diff command (#300).
+      return !rest.some((arg) => arg === '--output' || arg.startsWith('--output=') || arg === '--ext-diff')
+    }
+    return true
   }
   // These whitelist members have argument forms that mutate or execute;
   // reject them so they cannot race Edit/Write as "read-only" work.
@@ -179,6 +202,10 @@ function isReadOnlySegment(executable: string, args: string[]): boolean {
     // grep -o is unrelated: grep arguments are never checked here.
     || (arg.startsWith('-') && !arg.startsWith('--') && arg.includes('o'))
   ))
+  if (executable === 'uniq') {
+    // uniq [INPUT [OUTPUT]] — a second operand names the output file it writes (#300).
+    return args.filter((arg) => !arg.startsWith('-') && arg !== '--').length <= 1
+  }
   return true
 }
 
@@ -320,12 +347,15 @@ function isReadOnlyPowerShell(command: string): boolean {
   if (!normalized || /[>`]|>>|\$\(|;|\b(?:Set|Remove|Copy|Move|New|Add|Clear|Out|Start|Stop|Invoke|Install|Update)-[A-Za-z]+\b/i.test(normalized)) {
     return false
   }
-  return /^(?:Get-(?:ChildItem|Content|Location|Item|ItemProperty|Process|Service|Command|Date|Help|Member|Variable|Acl|FileHash|AuthenticodeSignature|ComputerInfo)|Select-String|Where-Object|Test-Path|Resolve-Path|Measure-Object|Sort-Object|Format-(?:Table|List)|Write-Output|Write-Host|git\s+(?:status|diff|log|show|branch)|(?:ls|dir|type|cat|pwd|where|findstr)\b)/i.test(normalized)
+  // Unparsed strings cannot be arg-checked, so only git subcommands whose
+  // common forms never take mutation targets survive here; branch/diff move
+  // to the parsed path only (#300).
+  return /^(?:Get-(?:ChildItem|Content|Location|Item|ItemProperty|Process|Service|Command|Date|Help|Member|Variable|Acl|FileHash|AuthenticodeSignature|ComputerInfo)|Select-String|Where-Object|Test-Path|Resolve-Path|Measure-Object|Sort-Object|Format-(?:Table|List)|Write-Output|Write-Host|git\s+(?:status|log|show)\b|(?:ls|dir|type|cat|pwd|where|findstr)\b)/i.test(normalized)
 }
 
 async function startShellTask(input: {
   command: string
-  timeoutMs: number
+  timeoutMs?: number
   purpose?: string
   context: ToolContext
 }) {
@@ -342,7 +372,7 @@ async function startDirectShellTask({
   context,
 }: {
   command: string
-  timeoutMs: number
+  timeoutMs?: number
   purpose?: string
   context: ToolContext
 }) {
@@ -549,7 +579,7 @@ async function startDurableShellTask({
   context,
 }: {
   command: string
-  timeoutMs: number
+  timeoutMs?: number
   purpose?: string
   context: ToolContext
 }) {
@@ -597,7 +627,8 @@ async function startDurableShellTask({
     command: shell.command,
     args: shell.args,
     cwd: context.cwd,
-    timeoutMs,
+    // #381:undefined 时省略字段——worker setTimeout(fn, undefined) 会立即击杀
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     maxOutputBytes: MAX_OUTPUT_BYTES,
     processToken,
     statePath: join(jobDir, 'state.json'),
@@ -614,7 +645,8 @@ async function startDurableShellTask({
   const worker = spawnWithProcessSandbox(process.execPath, ['-e', PROCESS_JOB_WORKER_SOURCE, specPath], {
     cwd: context.cwd,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    timeoutMs: timeoutMs + 10_000,
+    // #381:worker 比命令超时多 10s 兜底;命令无超时则 worker 同样无界
+    ...(timeoutMs !== undefined ? { timeoutMs: timeoutMs + 10_000 } : {}),
     detached: true,
     stdio: 'ignore',
   }, sandbox)

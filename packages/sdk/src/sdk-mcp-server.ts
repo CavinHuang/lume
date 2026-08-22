@@ -17,7 +17,7 @@
  *     tools: [weatherTool],
  *   })
  *
- *   // Use as MCP server config:
+ *   // Use as MCP server config (provider omitted — host-injected, see README):
  *   const agent = createAgent({
  *     mcpServers: { weather: server },
  *   })
