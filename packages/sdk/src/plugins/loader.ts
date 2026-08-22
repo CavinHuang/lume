@@ -17,6 +17,16 @@ import type { CommandDefinition } from '../commands/types.js'
 import type { CommandToolContribution } from './normalized.js'
 import { spawnWithProcessSandbox } from '../utils/process-sandbox.js'
 
+/**
+ * True when `candidate` resolves inside `root` (case-insensitive on Windows).
+ * Shared boundary check for plugin-declared paths (#302).
+ */
+function isInsidePath(root: string, candidate: string): boolean {
+  const rel = relative(resolve(root), resolve(candidate))
+  const normalized = process.platform === 'win32' ? rel.toLowerCase() : rel
+  return normalized !== '' ? !normalized.startsWith('..') && !isAbsolute(normalized) : true
+}
+
 export interface LoadedPlugin {
   name: string
   path: string
@@ -321,8 +331,13 @@ async function resolveHooksConfig(
     return hooksField as HookConfig
   }
 
-  // String path — read and parse the hooks file
+  // String path — read and parse the hooks file. Same containment rule as
+  // manifest.entry: the value comes from the plugin's own plugin.json (#302).
   const hooksPath = resolve(pluginPath, hooksField as string)
+  if (!isInsidePath(pluginPath, hooksPath)) {
+    console.warn(`[plugin:loader] hooks path for ${pluginPath} points outside the plugin directory; ignoring`)
+    return undefined
+  }
   try {
     const raw = JSON.parse(await readFile(hooksPath, 'utf-8')) as Record<string, unknown>
     // Codex format: { "hooks": { "EventName": [...] } }
@@ -366,11 +381,7 @@ export async function loadPlugins(
       : resolve(cwd, spec.name)
     // Plugin specs can come from project settings.json; without a boundary a
     // poisoned repo would make the SDK import() arbitrary code (#202).
-    const insideAllowedRoot = allowedRoots.some((root) => {
-      const rel = relative(root, pluginPath)
-      const normalized = process.platform === 'win32' ? rel.toLowerCase() : rel
-      return normalized !== '' ? !normalized.startsWith('..') && !isAbsolute(normalized) : true
-    })
+    const insideAllowedRoot = allowedRoots.some((root) => isInsidePath(root, pluginPath))
     if (!insideAllowedRoot) {
       console.warn(
         `[plugin:loader] skipping plugin "${spec.name}" at ${pluginPath}: outside cwd and pluginRoots`,
@@ -407,14 +418,22 @@ export async function loadPlugins(
           lume: manifest.lume,
         }
         if (!commandOnly && manifest.entry) {
-          const modulePlugin = await loadPluginModule(resolve(pluginPath, manifest.entry))
-          if (modulePlugin) {
-            plugin = {
-              ...plugin,
-              ...modulePlugin,
-              name: modulePlugin.name || plugin.name,
-              path: pluginPath,
-              config: spec.config,
+          // manifest.entry comes from the plugin's own plugin.json; without a
+          // containment check "../../x.mjs" would import() code outside the
+          // plugin directory (#302).
+          const entryPath = resolve(pluginPath, manifest.entry)
+          if (!isInsidePath(pluginPath, entryPath)) {
+            console.warn(`[plugin:loader] skipping entry for "${spec.name}": outside plugin directory`)
+          } else {
+            const modulePlugin = await loadPluginModule(entryPath)
+            if (modulePlugin) {
+              plugin = {
+                ...plugin,
+                ...modulePlugin,
+                name: modulePlugin.name || plugin.name,
+                path: pluginPath,
+                config: spec.config,
+              }
             }
           }
         }

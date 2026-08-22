@@ -67,4 +67,14 @@ describe("extractArticleMarkdown", () => {
     expect(result!.content).toContain("A");
     expect(result!.content).toContain("B");
   });
+
+  test("caps hostile rowspan/colspan expansion (#303)", () => {
+    const html = `<article><table>
+      <tr><td rowspan="99999999" colspan="99999999">x</td></tr>
+    </table></article>`;
+    const result = extractArticleMarkdown(html, "https://example.com/hostile");
+    expect(result).not.toBeNull();
+    // Expansion is capped: a bounded grid instead of a hostile allocation.
+    expect(result!.content.split("\n").length).toBeLessThan(250);
+  });
 });
