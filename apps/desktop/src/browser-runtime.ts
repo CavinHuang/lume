@@ -142,6 +142,8 @@ type BrowserFileChooserEntry = {
   tabId: string
   backendNodeId: number
   isMultiple: boolean
+  /** input 的 accept 属性（异步尽力补充）；设置文件前据此拒绝类型不匹配的上传 */
+  accept?: string
   browserSessionId: string
   browserTurnId: string
   generation: number
@@ -254,7 +256,7 @@ export class BrowserRuntime {
   private readonly sessionNames = new Map<string, string>()
   private readonly claimSnapshots = new Map<string, { tabId: string; providerTabId?: string; title: string; url: string; generation: number }>()
   private readonly downloadWaiters = new Map<string, BrowserDownloadWaiter[]>()
-  private readonly downloadResults = new Map<string, { browserSessionId: string; browserTurnId: string; tabId: string; state: "pending" | "completed" | "failed" | "cancelled" | "interrupted"; fileRef?: string; waiters: Array<(value: string | null) => void> }>()
+  private readonly downloadResults = new Map<string, { browserSessionId: string; browserTurnId: string; tabId: string; state: "pending" | "completed" | "failed" | "cancelled" | "interrupted"; fileRef?: string; filename: string; mimeType?: string; origin?: string; totalBytes: number; receivedBytes: number; waiters: Array<(value: string | null) => void> }>()
   private readonly fileChooserWaiters = new Map<string, BrowserFileChooserWaiter[]>()
   private readonly fileChoosers = new Map<string, BrowserFileChooserEntry>()
   private readonly pageAssetInventories = new Map<string, BrowserPageAssetInventory>()
@@ -1559,7 +1561,14 @@ export class BrowserRuntime {
             this.disableFileChooserInterceptIfIdle(tab.tabId)
           }, FILE_CHOOSER_IDLE_EXPIRY_MS)
           this.fileChoosers.set(fileChooserId, chooser)
-          waiter.resolve({ file_chooser_id: fileChooserId, is_multiple: isMultiple })
+          // accept 尽力读取（限时），随 chooser 响应返回供上传前类型校验；读不到则缺省不校验
+          void Promise.race([
+            this.readFileChooserAccept(tab, backendNodeId).catch(() => undefined),
+            new Promise<undefined>((resolve) => setTimeout(resolve, 1_500)),
+          ]).then((accept) => {
+            if (accept && this.fileChoosers.get(fileChooserId) === chooser) chooser.accept = accept
+            waiter.resolve({ file_chooser_id: fileChooserId, is_multiple: isMultiple, ...(accept ? { accept } : {}) })
+          })
         }
       })
     } catch { /* debugger capability remains unavailable for this tab */ }
@@ -1675,6 +1684,11 @@ export class BrowserRuntime {
         browserTurnId: recentAgent.browserTurnId,
         tabId: tab.tabId,
         state: "pending",
+        filename: prepared.filename,
+        mimeType: item.getMimeType() || undefined,
+        origin: safeOrigin(item.getURL()),
+        totalBytes: Math.max(0, item.getTotalBytes()),
+        receivedBytes: item.getReceivedBytes(),
         waiters: [],
       })
       const waiters = this.downloadWaiters.get(tab.tabId) ?? []
@@ -1704,6 +1718,8 @@ export class BrowserRuntime {
       },
     })
     item.on("updated", () => {
+      const liveResult = this.downloadResults.get(prepared.id)
+      if (liveResult) liveResult.receivedBytes = item.getReceivedBytes()
       if (agent && quotaId && !this.downloadQuota.update(sessionId, quotaId, item.getReceivedBytes())) {
         quotaExceeded = true
         item.cancel()
@@ -1741,6 +1757,7 @@ export class BrowserRuntime {
       if (downloadResult) {
         downloadResult.state = completed ? "completed" : electronState === "cancelled" ? "cancelled" : "interrupted"
         downloadResult.fileRef = completed ? `browser-download:${prepared.id}` : undefined
+        downloadResult.receivedBytes = item.getReceivedBytes()
         for (const resolveWaiter of downloadResult.waiters.splice(0)) resolveWaiter(downloadResult.fileRef ?? null)
       }
       this.options.emit({
@@ -2178,26 +2195,36 @@ export class BrowserRuntime {
     })
   }
 
-  private async downloadPath(context: BrowserRequestContext, downloadId: string, timeoutMs: number): Promise<{ path: string | null; state: string }> {
+  private async downloadPath(context: BrowserRequestContext, downloadId: string, timeoutMs: number): Promise<Record<string, unknown>> {
     if (context.actor !== "agent") throw browserError("action_denied")
     const result = this.downloadResults.get(downloadId)
     if (!result || result.browserSessionId !== context.browserSessionId || result.browserTurnId !== context.browserTurnId) throw browserError("action_denied")
-    if (result.state === "completed") return { path: result.fileRef ?? null, state: "completed" }
-    if (result.state !== "pending") return { path: null, state: result.state }
+    // 轮询是只读状态查询：来源/文件名/MIME/大小随结果返回，模型据此判断下载产物与进度
+    const metadata = (entry: typeof result) => ({
+      filename: entry.filename,
+      ...(entry.mimeType ? { mime_type: entry.mimeType } : {}),
+      ...(entry.origin ? { origin: entry.origin } : {}),
+      total_bytes: entry.totalBytes,
+      received_bytes: entry.receivedBytes,
+    })
+    if (result.state === "completed") return { path: result.fileRef ?? null, state: "completed", ...metadata(result) }
+    if (result.state !== "pending") return { path: null, state: result.state, ...metadata(result) }
+    const path = await new Promise<string | null>((resolve) => {
+      const timer = setTimeout(() => {
+        result.waiters = result.waiters.filter((waiter) => waiter !== finish)
+        resolve(null)
+      }, timeoutMs)
+      const finish = (value: string | null) => {
+        clearTimeout(timer)
+        resolve(value)
+      }
+      result.waiters.push(finish)
+    })
+    // 超时且无终态 → 仍在下载；waiter 拿到值时 state 亦已是终态
     return {
-      path: await new Promise<string | null>((resolve) => {
-        const timer = setTimeout(() => {
-          result.waiters = result.waiters.filter((waiter) => waiter !== finish)
-          resolve(null)
-        }, timeoutMs)
-        const finish = (value: string | null) => {
-          clearTimeout(timer)
-          resolve(value)
-        }
-        result.waiters.push(finish)
-      }),
-      // 超时且无终态 → 仍在下载；waiter 拿到值时 state 亦已是终态
+      path,
       state: this.downloadResults.get(downloadId)?.state ?? "pending",
+      ...metadata(this.downloadResults.get(downloadId) ?? result),
     }
   }
 
@@ -2265,6 +2292,25 @@ export class BrowserRuntime {
       this.fileChoosers.delete(chooserId)
       await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false })).catch(() => undefined)
     }
+  }
+
+  private async readFileChooserAccept(tab: BrowserTab, backendNodeId: number): Promise<string | undefined> {
+    return await withDebugger(browserContents(tab), async (debuggerRef) => {
+      const resolved = await debuggerRef.sendCommand("DOM.resolveNode", { backendNodeId }) as { object?: { objectId?: string } }
+      const objectId = resolved.object?.objectId
+      if (!objectId) return undefined
+      try {
+        const called = await debuggerRef.sendCommand("Runtime.callFunctionOn", {
+          objectId,
+          functionDeclaration: "function () { return this instanceof HTMLInputElement && this.accept ? String(this.accept).slice(0, 500) : null; }",
+          returnByValue: true,
+        }) as { result?: { value?: unknown } }
+        const value = called.result?.value
+        return typeof value === "string" && value.trim() ? value.trim() : undefined
+      } finally {
+        await debuggerRef.sendCommand("Runtime.releaseObject", { objectId }).catch(() => undefined)
+      }
+    })
   }
 
   private async downloadMedia(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): Promise<Record<string, never>> {
@@ -2882,7 +2928,7 @@ export class BrowserRuntime {
       if (!cached
         || cached.sessionId !== context.browserSessionId
         || cached.tabId !== tab.tabId
-        || cached.generation !== tab.generation) throw browserError("stale_target")
+        || cached.generation !== tab.generation) throw browserError("stale_snapshot_cursor")
       return this.semanticSnapshotPage(cached)
     }
     const requestedScope = params.scopeRef ?? params.scope_ref
@@ -2894,7 +2940,7 @@ export class BrowserRuntime {
         || cached.snapshotId !== snapshotId
         || cached.tabId !== tab.tabId
         || cached.generation !== tab.generation
-        || !cached.refs.some((entry) => entry.ref === scopeRef)) throw browserError("stale_target")
+        || !cached.refs.some((entry) => entry.ref === scopeRef)) throw browserError("stale_snapshot_cursor")
       return this.semanticSnapshotPage({
         ...cached,
         limit: boundedNumber(params.limit ?? cached.limit, 50, 1_000),

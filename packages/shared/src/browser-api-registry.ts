@@ -49,7 +49,7 @@ export const BROWSER_API_REGISTRY = [
   api("PlaywrightAPI.evaluate", "evaluate:readonly", ["iab", "extension"], false, "none", "Evaluate read-only JavaScript in an isolated context."),
   api("PlaywrightAPI.frameLocator", "frameLocator", ["iab", "extension"], false, "none", "Resolve a strict frame locator."),
   api("PlaywrightAPI.waitForEvent", "wait:event", ["iab", "extension"], false, "none", "Wait for a bounded browser event."),
-  api("PlaywrightDownload.path", "download:path", ["iab", "extension"], false, "download", "Resolve an authorized browser download reference."),
+  api("PlaywrightDownload.path", "download:path", ["iab", "extension"], false, "none", "Resolve an authorized browser download reference."),
   api("PlaywrightFileChooser.setFiles", "filechooser:setFiles", ["iab", "extension"], true, "upload", "Set authorized FileRefs on a file chooser."),
   api("PlaywrightLocator.evaluate", "locator:evaluate", ["iab", "extension"], false, "none", "Evaluate a read-only expression for a strict locator."),
   api("PlaywrightLocator.downloadMedia", "downloadMedia", ["iab", "extension"], true, "download", "Download media from a strict locator."),
