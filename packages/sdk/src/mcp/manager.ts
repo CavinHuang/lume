@@ -69,6 +69,8 @@ export interface McpClientLike {
   listResources?(params?: unknown, options?: { signal?: AbortSignal }): Promise<{ resources?: Array<Record<string, unknown>> }>;
   readResource?(input: { uri: string }, options?: { signal?: AbortSignal }): Promise<{ contents?: unknown[] }>;
   close?(): Promise<void>;
+  /** 连接意外关闭回调（stdio server 崩溃/远端断开）；用于把状态打回 failed 自愈（#403）。 */
+  onclose?(listener: () => void): void;
 }
 
 export type McpClientFactory = (
@@ -86,6 +88,10 @@ export interface McpClientManagerOptions {
   transportFactory?: McpTransportFactory;
   defaultConnectTimeoutMs?: number;
   defaultCallTimeoutMs?: number;
+  /** #312:failed 负缓存退避基数(默认 5s,指数 ×2) */
+  failureRetryBaseMs?: number;
+  /** #312:failed 负缓存退避封顶(默认 60s) */
+  failureRetryMaxMs?: number;
 }
 
 interface ServerState {
@@ -98,6 +104,10 @@ interface ServerState {
   connectingPromise?: Promise<void>;
   lastConnectedAt?: number;
   lastCheckedAt?: number;
+  /** #312:连续失败次数(成功清零),驱动指数退避 */
+  failureCount?: number;
+  /** #312:负缓存水位,此前不发起连接直接抛缓存错误 */
+  nextRetryAt?: number;
 }
 
 class McpManagerError extends Error {
@@ -112,6 +122,10 @@ class McpManagerError extends Error {
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 const DEFAULT_CALL_TIMEOUT_MS = 30_000;
+// #312:failed 负缓存退避——协议挂死/npx 冷启动超时的服务器每 run 全量重连会让
+// waitForConnections 卡满 connect timeout(多服务器放大为 N×30s)。指数退避封顶 60s。
+const FAILURE_RETRY_BASE_MS = 5_000;
+const FAILURE_RETRY_MAX_MS = 60_000;
 const MAX_TEXT_CHARS = 200_000;
 const TRUNCATED_SUFFIX = '\n[truncated]';
 
@@ -475,6 +489,8 @@ export class McpClientManager {
   private readonly transportFactory: McpTransportFactory;
   private readonly defaultConnectTimeoutMs: number;
   private readonly defaultCallTimeoutMs: number;
+  private readonly failureRetryBaseMs: number;
+  private readonly failureRetryMaxMs: number;
   private readonly servers = new Map<string, ServerState>();
 
   constructor(options: McpClientManagerOptions = {}) {
@@ -482,6 +498,8 @@ export class McpClientManager {
     this.transportFactory = options.transportFactory ?? defaultTransportFactory;
     this.defaultConnectTimeoutMs = options.defaultConnectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     this.defaultCallTimeoutMs = options.defaultCallTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
+    this.failureRetryBaseMs = options.failureRetryBaseMs ?? FAILURE_RETRY_BASE_MS;
+    this.failureRetryMaxMs = options.failureRetryMaxMs ?? FAILURE_RETRY_MAX_MS;
   }
 
   register(serverId: string, config: NormalizedMcpServerConfig): void {
@@ -522,6 +540,18 @@ export class McpClientManager {
     if (state.status === 'connected' && state.client) {
       return;
     }
+    // #312:failed 负缓存——退避窗口内不发起连接,快速抛缓存错误
+    //(waitForConnections 的调用方 catch 吞掉,run 启动不再被挂死服务器卡满 timeout)
+    if (
+      state.status === 'failed'
+      && state.nextRetryAt !== undefined
+      && Date.now() < state.nextRetryAt
+    ) {
+      throw createMcpError(
+        state.error?.code ?? 'transport_error',
+        state.error?.message ?? `MCP server "${serverId}" recently failed; backing off before retry`,
+      );
+    }
     if (state.connectingPromise) {
       return state.connectingPromise;
     }
@@ -547,6 +577,9 @@ export class McpClientManager {
     state.status = 'idle';
     state.tools = [];
     state.error = undefined;
+    // 显式断开/重配后允许立即重试(#312:清负缓存)
+    state.failureCount = 0;
+    state.nextRetryAt = undefined;
   }
 
   async dispose(): Promise<void> {
@@ -694,8 +727,23 @@ export class McpClientManager {
       state.tools = buildToolDetails(serverId, state.config, toolList.tools ?? []);
       state.status = 'connected';
       state.error = undefined;
+      state.failureCount = 0;
+      state.nextRetryAt = undefined;
       state.lastConnectedAt = Date.now();
       state.lastCheckedAt = Date.now();
+
+      // 死连接自愈：server 进程崩溃后 status 原样停留 connected，ensureConnected
+      // 短路、资源读持续报错且工具清单陈旧。onclose 把状态打回 failed，让下一次
+      // ensureConnected 走正常重连（#403）。
+      client.onclose?.(() => {
+        if (state.client !== client || !isCurrent()) return;
+        void this.closeState(state).then(() => {
+          if (!isCurrent()) return;
+          state.status = 'failed';
+          state.error = { code: 'transport_error', message: `MCP server "${serverId}" connection closed unexpectedly` };
+          state.lastCheckedAt = Date.now();
+        });
+      });
     } catch (error) {
       if (state.client === client) {
         await this.closeState(state);
@@ -707,6 +755,13 @@ export class McpClientManager {
         state.status = 'failed';
         state.error = { code: classified.code, message: classified.message };
         state.lastCheckedAt = Date.now();
+        // #312:失败计数+指数退避水位(基数 ×2 封顶)
+        const failures = (state.failureCount ?? 0) + 1;
+        state.failureCount = failures;
+        state.nextRetryAt = Date.now() + Math.min(
+          this.failureRetryMaxMs,
+          this.failureRetryBaseMs * 2 ** (failures - 1),
+        );
       }
       throw classified;
     }

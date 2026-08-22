@@ -100,10 +100,14 @@ const heartbeat = setInterval(() => {
   updateState({ status: 'running', heartbeatAt: Date.now(), childPid: child.pid })
 }, 2000)
 
-const timeout = setTimeout(() => {
-  timedOut = true
-  stopTree(child)
-}, spec.timeoutMs)
+// #381:spec.timeoutMs 缺省(后台任务未显式传 timeout)时不设到时击杀;
+// setTimeout(fn, undefined) 会立即触发,必须条件化。
+const timeout = spec.timeoutMs
+  ? setTimeout(() => {
+    timedOut = true
+    stopTree(child)
+  }, spec.timeoutMs)
+  : undefined
 
 function capture(stream, chunk) {
   const bytes = Buffer.from(chunk)
@@ -131,7 +135,7 @@ function finish(code, spawnError) {
   if (finished) return
   finished = true
   clearInterval(heartbeat)
-  clearTimeout(timeout)
+  if (timeout) clearTimeout(timeout)
   stdoutStream.end()
   stderrStream.end()
   outputStream.end()

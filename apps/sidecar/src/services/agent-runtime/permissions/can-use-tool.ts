@@ -27,7 +27,6 @@ import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 import { builtinToolInputGuardrails } from "../guardrails/builtin-tool-guardrails";
 import { LumeGuardrailRunner } from "../guardrails/guardrail-runner";
 import { ToolExecutionGateway } from "../tools/tool-execution-gateway";
-import { getWikiProtectedRootPath } from "../../infra/config-paths";
 import { getRuntimeToolDescriptor } from "../tools/tool-descriptor-session";
 import { type PreparedRuntimeCoreAttempt } from "../runtime-core/prepare-attempt";
 import { persistToolApprovalInterruption } from "../interruption/approval-service";
@@ -540,7 +539,6 @@ export function createCanUseToolHandler(
       classifierEnabled: config.permissions?.classifier?.enabled ?? false,
       permissionRules,
       privateWriteRoots,
-      protectedRoots: [getWikiProtectedRootPath()],
       context: {
         threadId: params.runtime.sessionId,
         cwd: prepared.agentCwd,

@@ -546,6 +546,8 @@ export class BrowserRuntime {
         const contents = tab.webContents
         const browserSession = contents?.session ?? session.fromPartition(tab.partition)
         if (contents) closeWebContentsAfterRenderer(contents)
+        // 与 closeTab 同款清理：挂起的 download/fileChooser/mount waiter 不应等超时（#412）
+        this.clearTabWaiters(tabId)
         this.tabs.delete(tabId)
         this.disposeOwnedSessionIfUnused(tab.partition, browserSession)
         this.options.emit({ method: "browser:tab-closed", params: { tabId } })
