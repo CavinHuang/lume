@@ -389,3 +389,25 @@ test("应解析 Alice SKILL.md 中的 YAML 多行文本字段", async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("getPrompt 展开参数时保持 $&/$$ 等替换序列字面不变", async () => {
+  const root = join(tmpdir(), `sdk-skills-replace-patterns-${Date.now()}`);
+  const skillDir = join(root, "echo");
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(
+    join(skillDir, "SKILL.md"),
+    "---\nname: echo\ndescription: demo\n---\nARG:${ARG}:END",
+    "utf-8"
+  );
+
+  try {
+    const skills = await loadFilesystemSkills({ cwd: process.cwd(), roots: [root] });
+    const skill = skills.find((item) => item.name === "echo");
+    const args = "$& $` $$ $' $<name>";
+    await expect(skill?.getPrompt(args, { cwd: process.cwd() } as any)).resolves.toEqual([
+      { type: "text", text: `ARG:${args}:END` },
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
