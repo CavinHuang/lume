@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { unzipSync } from "fflate";
+import { Unzip, UnzipInflate, UnzipPassThrough } from "fflate";
 import { createTurndown, extractArticleMarkdown } from "./html-to-markdown.js";
 
 const require = createRequire(import.meta.url);
@@ -43,23 +43,57 @@ function archiveText(name: string, bytes: Uint8Array): string | null {
   return text.length > 0 ? text.slice(0, MAX_TEXT_ENTRY_BYTES) : null;
 }
 
-function zipEntries(bytes: Uint8Array): Record<string, Uint8Array> {
-  // The filter runs before each entry is decompressed and reports the
-  // uncompressed size from the central directory, so entries beyond the
-  // entry/byte budget are never inflated into memory (zip bombs abort).
-  let entries = 0;
+function concatChunks(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+export function zipEntries(bytes: Uint8Array): Record<string, Uint8Array> {
+  // Stream the archive and meter each entry's REAL inflated byte count via
+  // ondata. Central-directory size claims are untrusted — a lying header must
+  // not steer the buffer budget, and once the byte ceiling is hit we simply
+  // stop pushing compressed input, so the remaining entries are never
+  // inflated (zip bombs abort instead of spinning the CPU).
+  const entries = new Map<string, Uint8Array>();
+  let accepted = 0;
   let totalBytes = 0;
-  return unzipSync(bytes, {
-    filter: (file) => {
-      if (entries >= MAX_ARCHIVE_ENTRIES) return false;
-      if (totalBytes + file.originalSize > MAX_ARCHIVE_UNCOMPRESSED_BYTES) {
-        throw new Error(`zip archive uncompressed size exceeds ${MAX_ARCHIVE_UNCOMPRESSED_BYTES} bytes`);
+  let failure: string | null = null;
+
+  const unzip = new Unzip((file) => {
+    if (failure || accepted >= MAX_ARCHIVE_ENTRIES || !file.name || file.name.endsWith("/")) return;
+    accepted += 1;
+    const chunks: Uint8Array[] = [];
+    file.ondata = (err, data, final) => {
+      if (err) {
+        failure ??= err.message;
+        return;
       }
-      entries += 1;
-      totalBytes += file.originalSize;
-      return true;
-    },
-  }) as Record<string, Uint8Array>;
+      totalBytes += data.byteLength;
+      if (totalBytes > MAX_ARCHIVE_UNCOMPRESSED_BYTES) {
+        failure ??= `zip archive uncompressed size exceeds ${MAX_ARCHIVE_UNCOMPRESSED_BYTES} bytes`;
+        chunks.length = 0;
+        return;
+      }
+      chunks.push(data);
+      if (final) entries.set(file.name, concatChunks(chunks));
+    };
+    file.start();
+  });
+  unzip.register(UnzipInflate);
+  unzip.register(UnzipPassThrough);
+
+  const CHUNK_SIZE = 1 << 16;
+  for (let offset = 0; offset < bytes.length && !failure; offset += CHUNK_SIZE) {
+    unzip.push(bytes.subarray(offset, offset + CHUNK_SIZE), offset + CHUNK_SIZE >= bytes.length);
+  }
+  if (failure) throw new Error(failure);
+  return Object.fromEntries(entries);
 }
 
 function renderZip(bytes: Uint8Array, url: string, kind: string): StructuredBinaryResult {

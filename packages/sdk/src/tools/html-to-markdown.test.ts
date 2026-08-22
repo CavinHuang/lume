@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { extractArticleMarkdown } from "./html-to-markdown";
+import { extractArticleMarkdown, normalizeTablesHtml } from "./html-to-markdown";
 
 describe("extractArticleMarkdown", () => {
   test("extracts article title and converts to markdown", () => {
@@ -76,5 +76,31 @@ describe("extractArticleMarkdown", () => {
     expect(result).not.toBeNull();
     // Expansion is capped: a bounded grid instead of a hostile allocation.
     expect(result!.content.split("\n").length).toBeLessThan(250);
+  });
+});
+
+describe("normalizeTablesHtml span budgets (#303)", () => {
+  test("absurd rowspan/colspan attributes are clamped and cannot explode the grid", () => {
+    const html = `<table><tr><td rowspan="99999999" colspan="99999999">x</td></tr></table>`;
+    const out = normalizeTablesHtml(html);
+    expect(out).toContain("x");
+    expect(out).not.toContain("rowspan");
+    expect(out.length).toBeLessThan(500_000); // clamped to a 100×100 grid, not millions of cells
+  });
+
+  test("a table whose clamped expansion exceeds the cell budget is left untouched", () => {
+    // 30 cells × (100×100) = 300,000 grid slots, past the 250k budget → skip normalization
+    const cells = Array.from({ length: 30 }, (_, i) => `<td rowspan="100" colspan="100">c${i}</td>`).join("");
+    const html = `<table><tr>${cells}</tr></table>`;
+    const out = normalizeTablesHtml(html);
+    expect(out).toContain('rowspan="100"');
+    expect(out).toContain('colspan="100"');
+  });
+
+  test("large-but-legal merged grids still expand", () => {
+    const html = `<table><tr><td rowspan="50" colspan="50">cell</td></tr></table>`;
+    const out = normalizeTablesHtml(html);
+    expect(out).not.toContain("rowspan");
+    expect(out).not.toContain("colspan");
   });
 });

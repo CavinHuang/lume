@@ -59,7 +59,7 @@ function isPlaceholder(src: string): boolean {
   return src.startsWith("data:image/svg"); // common transparent placeholder
 }
 
-function sniffExt(contentType: string, url: string): string {
+export function sniffExt(contentType: string, url: string): string {
   const ct = contentType.toLowerCase();
   if (ct.includes("png")) return ".png";
   if (ct.includes("jpeg") || ct.includes("jpg")) return ".jpg";
@@ -94,10 +94,14 @@ export interface LocalizeResult {
   failed: number;
 }
 
+/** Upper bound on image downloads per page; a huge gallery must not stall a fetch. */
+const MAX_IMAGE_DOWNLOADS = 50;
+
 /**
  * Walk <img> in html: resolve lazy src, optionally download (Referer = page origin,
  * anti-hotlink), rewrite to lume-file:// local path. Runs BEFORE Readability/Turndown
- * so converted Markdown keeps working image links.
+ * so converted Markdown keeps working image links. Stops early when `signal`
+ * aborts or after MAX_IMAGE_DOWNLOADS downloads.
  */
 export async function downloadAndLocalizeImages(
   html: string,
@@ -106,6 +110,7 @@ export async function downloadAndLocalizeImages(
   mode: ImageMode,
   fetchImpl: FetchImpl,
   sandbox?: SandboxSettings,
+  signal?: AbortSignal,
 ): Promise<LocalizeResult> {
   if (mode === "off") return { html, downloaded: 0, failed: 0 };
 
@@ -115,12 +120,14 @@ export async function downloadAndLocalizeImages(
 
   let downloaded = 0;
   let failed = 0;
+  let downloadAttempts = 0;
 
   if (mode === "download") {
     try { await mkdir(imagesDir, { recursive: true }); } catch { /* ignore */ }
   }
 
   for (const img of Array.from(doc.querySelectorAll("img"))) {
+    if (signal?.aborted) break;
     const src = resolveImgSrc(img as unknown as HTMLImageElement);
     if (!src) continue;
     let absUrl: string;
@@ -133,6 +140,7 @@ export async function downloadAndLocalizeImages(
     }
 
     // mode === "download"
+    if (downloadAttempts >= MAX_IMAGE_DOWNLOADS) break;
     // Sandbox: only fetch images that are (a) same-origin as the page, (b) on the
     // whitelisted CDN host set, or (c) explicitly allowed by the network sandbox.
     // Otherwise skip the download (degrade to the original URL), do NOT throw.
@@ -142,11 +150,13 @@ export async function downloadAndLocalizeImages(
       failed++;
       continue;
     }
+    downloadAttempts++;
     try {
       const res = await loadBinary(absUrl, {
         fetchImpl,
         maxBytes: 20 * 1024 * 1024,
         timeoutMs: 15000,
+        signal,
         sandbox: ALLOWED_IMAGE_HOSTS.has(new URL(absUrl).hostname.toLowerCase()) ? undefined : sandbox,
         headers: {
           ...(origin ? { Referer: `${origin}/` } : {}),

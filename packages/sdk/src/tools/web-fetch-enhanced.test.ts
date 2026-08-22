@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { runWebFetch } from "./web-fetch.js";
+import { llmCandidates, runWebFetch } from "./web-fetch.js";
 import type { RenderClient } from "./render-client.js";
 import { createNoopRenderClient } from "./render-client.js";
 
@@ -37,6 +37,40 @@ describe("runWebFetch — render fallback", () => {
   });
 });
 
+describe("run-level deadline and probe budget (#373)", () => {
+  test("llms.txt candidates are capped for deep paths", () => {
+    expect(llmCandidates("https://a.com/x/y/z/w/v/u/t/deep").length).toBeLessThanOrEqual(6);
+    expect(llmCandidates("https://a.com/")).toHaveLength(3);
+  });
+
+  test("once the deadline is spent, speculative probes are skipped entirely", async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(String(url));
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      return new Response(fakeArticleHtml("word ".repeat(40)), { headers: { "content-type": "text/html" } });
+    }) as any;
+    const slowCtx = { sandbox: undefined, toolConfig: { webFetch: { timeoutMs: 400 } } } as any;
+    const out = await runWebFetch({ url: "https://slow.example/a" }, slowCtx, { fetchImpl });
+    expect(out.is_error).toBeFalsy();
+    // Only the primary request may fire; .md / content-negotiation / llms.txt
+    // probes must be skipped once the deadline leaves no usable budget.
+    expect(urls.every((url) => url === "https://slow.example/a")).toBe(true);
+  });
+
+  test("with a healthy budget the speculative probes still run", async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(String(url));
+      if (!String(url).endsWith("/a")) return new Response("not found", { status: 404 });
+      return new Response(fakeArticleHtml("word ".repeat(40)), { headers: { "content-type": "text/html" } });
+    }) as any;
+    const out = await runWebFetch({ url: "https://probe.example/a" }, ctx, { fetchImpl });
+    expect(out.is_error).toBeFalsy();
+    expect(urls.some((url) => url.endsWith(".md"))).toBe(true);
+  });
+});
+
 describe("runWebFetch — assets", () => {
   test("writes index.md with frontmatter when resolveAssetDir provided", async () => {
     const fs = await import("node:fs/promises");
@@ -65,6 +99,39 @@ describe("runWebFetch — content types", () => {
     expect(out.is_error).toBeFalsy();
     expect((out.data as any).content[0].type).toBe("image");
     expect((out.data as any).content[0].mimeType).toBe("image/png");
+  });
+
+  test("images above the inline threshold are saved to the asset dir instead of base64 (#372)", async () => {
+    const fs = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "lume-wf-img-"));
+    try {
+      const bigPng = Buffer.alloc(5 * 1024 * 1024 + 1, 1); // just past the inline threshold
+      const fetchImpl = (async () => new Response(bigPng, { headers: { "content-type": "image/png" } })) as any;
+      const out = await runWebFetch(
+        { url: "https://example.com/huge.png" },
+        ctx,
+        { fetchImpl, resolveAssetDir: () => dir },
+      );
+      expect(typeof out.data).toBe("string");
+      expect(out.data as string).toContain("too large to inline");
+      expect(out.data as string).toContain("lume-file://file/");
+      const imagesDir = path.join(dir, "images");
+      const files = await fs.readdir(imagesDir);
+      expect(files.some((f) => f.endsWith(".png"))).toBe(true);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an oversized image with no asset dir degrades to text instead of base64 (#372)", async () => {
+    const bigPng = Buffer.alloc(6 * 1024 * 1024, 1);
+    const fetchImpl = (async () => new Response(bigPng, { headers: { "content-type": "image/png" } })) as any;
+    const out = await runWebFetch({ url: "https://example.com/huge.png" }, ctx, { fetchImpl });
+    expect(out.is_error).toBeFalsy();
+    expect(typeof out.data).toBe("string");
+    expect(out.data as string).toContain("too large to inline");
   });
 
   test("prefers a declared Markdown alternate", async () => {

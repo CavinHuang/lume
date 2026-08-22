@@ -135,4 +135,36 @@ describe("downloadAndLocalizeImages", () => {
     expect(out.failed).toBe(0);
     await tmp.rm(dir, { recursive: true, force: true });
   });
+
+  test("caps downloads at 50 images per page (#342)", async () => {
+    const tmp = await import("node:fs/promises");
+    const dir = await tmp.mkdtemp((await import("node:os")).tmpdir() + "/lume-img-");
+    const png1x1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "base64");
+    const fetched: string[] = [];
+    const fakeFetch = (async (url: string) => { fetched.push(url); return new Response(png1x1, { status: 200, headers: { "content-type": "image/png" } }); }) as any;
+    const html = Array.from({ length: 60 }, (_, i) => `<img src="https://example.com/i/${i}.png">`).join("");
+    const out = await downloadAndLocalizeImages(html, "https://example.com/page", dir, "download", fakeFetch);
+    expect(fetched.length).toBe(50);
+    expect(out.downloaded).toBe(50);
+    await tmp.rm(dir, { recursive: true, force: true });
+  });
+
+  test("stops downloading once the signal aborts mid-page (#342)", async () => {
+    const tmp = await import("node:fs/promises");
+    const dir = await tmp.mkdtemp((await import("node:os")).tmpdir() + "/lume-img-");
+    const png1x1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "base64");
+    const controller = new AbortController();
+    let calls = 0;
+    const fakeFetch = (async (url: string) => {
+      calls++;
+      if (calls === 3) controller.abort();
+      return new Response(png1x1, { status: 200, headers: { "content-type": "image/png" } });
+    }) as any;
+    const html = Array.from({ length: 20 }, (_, i) => `<img src="https://example.com/i/${i}.png">`).join("");
+    const out = await downloadAndLocalizeImages(html, "https://example.com/page", dir, "download", fakeFetch, undefined, controller.signal);
+    expect(calls).toBe(3);
+    expect(out.downloaded).toBe(2);
+    expect(out.failed).toBe(1);
+    await tmp.rm(dir, { recursive: true, force: true });
+  });
 });

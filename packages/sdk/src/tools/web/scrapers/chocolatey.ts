@@ -44,7 +44,7 @@ export const handleChocolatey: SpecialHandler = async (
 ): Promise<RenderResult | null> => {
 	try {
 		const parsed = new URL(url);
-		if (!parsed.hostname.includes("chocolatey.org")) return null;
+		if (!["chocolatey.org", "community.chocolatey.org"].includes(parsed.hostname.replace(/^www\./, ""))) return null;
 
 		// Extract package name from /packages/{name} or /packages/{name}/{version}
 		const match = parsed.pathname.match(/^\/packages\/([^/]+)(?:\/([^/]+))?/);

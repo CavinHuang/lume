@@ -73,7 +73,7 @@ export const handleTerraform: SpecialHandler = async (
 ): Promise<RenderResult | null> => {
 	try {
 		const parsed = new URL(url);
-		if (!parsed.hostname.includes("registry.terraform.io")) return null;
+		if (parsed.hostname.replace(/^www\./, "") !== "registry.terraform.io") return null;
 
 		const fetchedAt = new Date().toISOString();
 
