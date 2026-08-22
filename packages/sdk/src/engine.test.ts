@@ -779,6 +779,51 @@ describe("QueryEngine turn limits", () => {
     expect(calls).toBe(2)
   })
 
+  test("alternating between two blocked signatures still trips the breaker (#358)", async () => {
+    const calls = { A: 0, B: 0 }
+    const call = (id: string, name: "Alpha" | "Bravo"): CreateMessageResponse => ({
+      content: [{ type: "tool_use", id, name, input: {} }],
+      stopReason: "tool_use",
+      usage: { input_tokens: 1, output_tokens: 1 }
+    })
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        call("a-1", "Alpha"),
+        call("b-1", "Bravo"),
+        call("a-2", "Alpha"),
+        call("b-2", "Bravo"),
+        call("a-3", "Alpha"), // blocked: first breaker hit
+        call("b-3", "Bravo") // blocked: second breaker hit ends the run
+      ]),
+      tools: (["Alpha", "Bravo"] as const).map((name) => ({
+        name,
+        description: `${name} tool`,
+        inputSchema: { type: "object", properties: {} },
+        isReadOnly: () => false,
+        async call() {
+          calls[name === "Alpha" ? "A" : "B"] += 1
+          return { type: "tool_result", tool_use_id: "", content: `unchanged ${name}` }
+        }
+      })),
+      systemPrompt: "test",
+      maxTurns: 80,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    // Old behavior alternated the counter reset between signatures and never
+    // stopped; now the second blocked attempt (any signature) ends the run.
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "error_completion_guard",
+      is_error: true
+    })
+    expect(calls.A).toBe(2)
+    expect(calls.B).toBe(2)
+  })
+
   test("allows repeated mutation input while the result state keeps changing", async () => {
     let calls = 0
     const repeatedCall = (id: string): CreateMessageResponse => ({
@@ -1827,6 +1872,63 @@ describe("QueryEngine context controller", () => {
       type: "result",
       subtype: "error_during_execution",
       is_error: true
+    }));
+  });
+
+  test("compacts again when the tool loop outgrows the window a second time (#353)", async () => {
+    let calls = 0;
+    let compactions = 0;
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages",
+      async createMessage() {
+        calls += 1;
+        if (calls === 1 || calls === 2) {
+          const error = new Error("prompt is too long") as Error & { status: number };
+          error.status = 400;
+          throw error;
+        }
+        return {
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        };
+      }
+    };
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      contextController: {
+        shouldAutoCompact: () => false,
+        async compactConversation({ messages }) {
+          compactions += 1;
+          return {
+            compactedMessages: [
+              { role: "user", content: `[Previous conversation summary]\n\nsummary ${compactions}` },
+              ...messages.slice(-1)
+            ],
+            summary: `summary ${compactions}`
+          };
+        }
+      }
+    });
+
+    const events = await collectEvents(engine, "loop grew again");
+
+    // A second too-long after one successful compaction must trigger another
+    // compaction instead of terminating the run.
+    expect(compactions).toBe(2);
+    expect(calls).toBe(3);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "result",
+      subtype: "success",
+      is_error: false
     }));
   });
 });
@@ -3063,3 +3165,361 @@ describe("QueryEngine getContextUsage", () => {
     expect(engine.getContextUsage().maxTokens).toBe(12345)
   })
 });
+
+describe("QueryEngine max_tokens continuation (#304/#361)", () => {
+  test("pairs truncated tool_use blocks with placeholders before the continuation prompt", async () => {
+    const provider = new StaticProvider([
+      {
+        content: [
+          { type: "text", text: "partial answer" },
+          { type: "tool_use", id: "trunc-1", name: "Read", input: { file_path: "a.ts" } },
+        ],
+        stopReason: "max_tokens",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+      {
+        content: [{ type: "text", text: "continued" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          throw new Error("must not execute a truncated tool call")
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 3,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "success",
+      is_error: false
+    })
+
+    const secondRequest = provider.requests[1]
+    // The truncated assistant tool_use is answered by an error placeholder
+    // paired with the continuation prompt in one user message (#304).
+    expect(secondRequest?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "user",
+        content: [
+          expect.objectContaining({
+            type: "tool_result",
+            tool_use_id: "trunc-1",
+            is_error: true
+          }),
+          expect.objectContaining({
+            type: "text",
+            text: "Please continue from where you left off."
+          })
+        ]
+      })
+    ]))
+  })
+
+  test("maps an exhausted truncated continuation to error_max_output_tokens instead of success", async () => {
+    const truncated = (): CreateMessageResponse => ({
+      content: [{ type: "text", text: "still going and" }],
+      stopReason: "max_tokens",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    })
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([truncated(), truncated(), truncated(), truncated()]),
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 10,
+      maxTokens: 256,
+      includePartialMessages: false
+    })
+
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "error_max_output_tokens",
+      is_error: true
+    })
+  })
+
+  test("executes truncated tool calls once the continuation budget is spent", async () => {
+    let calls = 0
+    const truncatedText = (): CreateMessageResponse => ({
+      content: [{ type: "text", text: "still going and" }],
+      stopReason: "max_tokens",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    })
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        truncatedText(),
+        truncatedText(),
+        truncatedText(),
+        {
+          // Continuations exhausted: a truncated tool_use still executes.
+          content: [{ type: "tool_use", id: "t-1", name: "Bash", input: {} }],
+          stopReason: "max_tokens",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        },
+        {
+          content: [{ type: "text", text: "done after tools" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        }
+      ]),
+      tools: [{
+        name: "Bash",
+        description: "bash",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          calls += 1
+          return { type: "tool_result", tool_use_id: "", content: `result ${calls}` }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 8,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "success",
+      is_error: false
+    })
+    expect(calls).toBe(1)
+  })
+})
+
+describe("QueryEngine non-stream retry events (#360)", () => {
+  function flakyProvider(failures: number): { provider: LLMProvider; calls(): number } {
+    let count = 0
+    return {
+      calls: () => count,
+      provider: {
+        apiType: "anthropic-messages" as const,
+        async createMessage() {
+          count += 1
+          if (count <= failures) {
+            const error = new Error("overloaded") as Error & { status: number }
+            error.status = 503
+            throw error
+          }
+          return {
+            content: [{ type: "text", text: "ok" }],
+            stopReason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 }
+          }
+        }
+      }
+    }
+  }
+
+  test("delivers api_retry through onAsyncEvent while the backoff is still running", async () => {
+    const { provider, calls } = flakyProvider(1)
+    const asyncEvents: SDKMessage[] = []
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      onAsyncEvent: (event) => asyncEvents.push(event)
+    })
+
+    const running = collectEvents(engine)
+    // Poll until the second attempt starts; by then attempt 1 must already
+    // have been delivered instead of waiting for withRetry to unwind.
+    for (let i = 0; i < 200 && calls() < 2; i++) {
+      await wait(25)
+    }
+    expect(calls()).toBe(2)
+    expect(asyncEvents).toHaveLength(1)
+    expect(asyncEvents[0]).toMatchObject({ subtype: "api_retry", attempt: 1, error_status: 503 })
+
+    const events = await running
+    // Already delivered via onAsyncEvent — not duplicated into the stream.
+    expect(events.filter((event) => (event as { subtype?: string }).subtype === "api_retry")).toHaveLength(0)
+  }, 20_000)
+
+  test("buffers api_retry into the stream when no host callback is configured", async () => {
+    const { provider } = flakyProvider(1)
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false
+    })
+
+    const events = await collectEvents(engine)
+    const retries = events.filter((event) =>
+      event.type === "system" && (event as { subtype?: string }).subtype === "api_retry"
+    ) as Array<{ attempt: number; error_status: number | null }>
+    expect(retries).toHaveLength(1)
+    expect(retries[0]).toMatchObject({ attempt: 1, error_status: 503 })
+  }, 20_000)
+})
+
+describe("QueryEngine delayed diagnostics persistence (#359)", () => {
+  test("re-injects pending diagnostics after a prompt-too-long compaction retry", async () => {
+    let calls = 0
+    const requests: CreateMessageParams[] = []
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages",
+      async createMessage(params) {
+        requests.push(params)
+        calls += 1
+        if (calls === 2) {
+          const error = new Error("prompt is too long") as Error & { status: number }
+          error.status = 400
+          throw error
+        }
+        if (calls === 1) {
+          return {
+            content: [
+              { type: "tool_use", id: "edit-9", name: "Edit", input: {} },
+              { type: "tool_use", id: "settle-9", name: "Settle", input: {} },
+            ],
+            stopReason: "tool_use",
+            usage: { input_tokens: 1, output_tokens: 1 }
+          }
+        }
+        return {
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        }
+      }
+    }
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Edit",
+        description: "edit",
+        inputSchema: { type: "object", properties: {} },
+        async call(_input, context) {
+          setTimeout(() => {
+            context.emitEvent?.({
+              type: "system",
+              subtype: "lsp_diagnostics",
+              session_id: "session",
+              tool_use_id: "edit-9",
+              file_path: "src/example.ts",
+              mutation_version: 1,
+              sha256: "abc",
+              delayed: true,
+              diagnostics: {
+                servers: ["typescript-language-server"],
+                total: 1,
+                errors: 1,
+                warnings: 0,
+                truncated: false,
+                items: [{
+                  severity: 1,
+                  message: "Cannot find name 'missing'.",
+                  range: { start: { line: 2, character: 4 }, end: { line: 2, character: 11 } }
+                }]
+              }
+            })
+          }, 0)
+          return { type: "tool_result" as const, tool_use_id: "", content: "edited" }
+        }
+      }, {
+        name: "Settle",
+        description: "settle",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          // Give the deferred diagnostics emission room to land after Edit
+          // returned but before the next provider request.
+          await wait(30)
+          return { type: "tool_result" as const, tool_use_id: "", content: "settled" }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 3,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      contextController: {
+        shouldAutoCompact: () => false,
+        async compactConversation({ messages }) {
+          return {
+            compactedMessages: [
+              { role: "user", content: "[Previous conversation summary]\n\nretry summary" },
+              ...messages.slice(-1)
+            ],
+            summary: "retry summary"
+          }
+        }
+      }
+    })
+
+    await expect(collectResult(engine)).resolves.toMatchObject({ subtype: "success" })
+
+    const diagnosticRuntime = (request?: { messages: unknown[] }) =>
+      JSON.stringify((request?.messages ?? []).filter((message: any) => message.role === "runtime"))
+    // Injected before the failed request…
+    expect(diagnosticRuntime(requests[1])).toContain("Cannot find name 'missing'.")
+    // …and still present on the compaction retry after it.
+    expect(diagnosticRuntime(requests[2])).toContain("Cannot find name 'missing'.")
+  })
+})
+
+describe("QueryEngine cost estimation (#352)", () => {
+  test("includes cache read/write tokens in billing totals", async () => {
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "ok" }],
+      stopReason: "end_turn",
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 1000,
+        cache_read_input_tokens: 1_000_000,
+        cache_creation_input_tokens: 100_000
+      }
+    }])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "claude-sonnet-4-6",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false
+    })
+
+    const result = await collectResult(engine) as unknown as {
+      billingUsage: { totalCostUSD: number; cumulative: { totalTokens: number } }
+      modelUsage: Record<string, { costUSD: number }>
+    }
+
+    const expected =
+      1000 * 3 / 1e6
+      + 1000 * 15 / 1e6
+      + 1_000_000 * 3 / 1e6 * 0.1
+      + 100_000 * 3 / 1e6 * 1.25
+    expect(result.billingUsage.totalCostUSD).toBeCloseTo(expected, 10)
+    expect(result.modelUsage["claude-sonnet-4-6"]?.costUSD).toBeCloseTo(expected, 10)
+    expect(result.billingUsage.cumulative.totalTokens).toBe(1_102_000)
+  })
+})
+

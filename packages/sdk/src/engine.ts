@@ -495,6 +495,8 @@ export class QueryEngine {
     const costUSD = estimateCost(this.config.model, {
       input_tokens: normalized.inputTokens,
       output_tokens: normalized.outputTokens,
+      cache_read_input_tokens: normalized.cacheReadInputTokens,
+      cache_creation_input_tokens: normalized.cacheCreationInputTokens,
     })
     this.totalUsage.input_tokens += normalized.inputTokens
     this.totalUsage.output_tokens += normalized.outputTokens
@@ -1165,6 +1167,7 @@ export class QueryEngine {
     let structuredOutputRetriesExceeded = false
     let completedNaturally = false
     let completionGuardStop: { message: string; errorCode?: string } | undefined
+    let maxTokensExhausted = false
     let maxOutputRecoveryAttempts = 0
     const MAX_OUTPUT_RECOVERY = 3
     let structuredOutputRetryAttempts = 0
@@ -1188,7 +1191,10 @@ export class QueryEngine {
       const apiMessages = await this.microCompactForProvider(
         normalizeMessagesForAPI(hydratedMessages) as NormalizedMessageParam[],
       )
-      const delayedLspDiagnostics = this.pendingLspDiagnostics.splice(0)
+      // Non-destructive read: the request may still fail (prompt-too-long
+      // compaction retry) and the diagnostics must survive for the next
+      // attempt. Cleared only once a response actually came back.
+      const delayedLspDiagnostics = [...this.pendingLspDiagnostics]
       if (delayedLspDiagnostics.length > 0) {
         apiMessages.push({
           role: 'runtime',
@@ -1351,7 +1357,7 @@ export class QueryEngine {
                     : status === 500 || status === 502 || status === 503 || status === 529
                       ? 'server_error'
                       : 'unknown'
-              retryEvents.push({
+              const event: SDKMessage = {
                 type: 'system',
                 subtype: 'api_retry',
                 attempt: retry.attempt,
@@ -1360,11 +1366,23 @@ export class QueryEngine {
                 error_status: status,
                 error: errorType,
                 session_id: this.sessionId,
-              })
+              }
+              retryEvents.push(event)
+              // Deliver through the async channel immediately so hosts see
+              // retries as they happen instead of after the whole backoff
+              // sequence (matching the streaming path). The buffer is only a
+              // fallback for engines without a host callback.
+              try {
+                this.config.onAsyncEvent?.(event)
+              } catch {
+                // Host event delivery must not break the retry loop.
+              }
             },
           )
-          for (const retryEvent of retryEvents) {
-            yield retryEvent
+          if (!this.config.onAsyncEvent) {
+            for (const retryEvent of retryEvents) {
+              yield retryEvent
+            }
           }
         }
       } catch (err: any) {
@@ -1377,8 +1395,11 @@ export class QueryEngine {
           error: err?.message || 'Unknown provider error',
         })
         for (const event of stopFailureHooks.events) yield event
-        // Handle prompt-too-long by compacting
-        if (isPromptTooLongError(err) && !this.compactState.compacted) {
+        // Handle prompt-too-long by compacting. Gate on consecutive compaction
+        // failures (reset to 0 on success) instead of the one-shot `compacted`
+        // flag: a tool loop can outgrow the window a second time, and repeated
+        // failures trip the breaker on their own.
+        if (isPromptTooLongError(err) && this.compactState.consecutiveFailures < 3) {
           try {
             const compacted = yield* this.runCompaction('prompt_too_long', protectedMessageIndex)
             if (compacted) {
@@ -1409,6 +1430,8 @@ export class QueryEngine {
         return
       }
 
+      // The request succeeded: diagnostics injected above are consumed.
+      this.pendingLspDiagnostics = []
       this.messages = releaseEphemeralImageReferences(this.messages as any[]) as NormalizedMessageParam[]
 
       // Track API timing
@@ -1469,36 +1492,42 @@ export class QueryEngine {
       yield summarizeAssistantTurn(response, this.sessionId)
 
       // Handle max_output_tokens recovery
-      if (
-        response.stopReason === 'max_tokens' &&
-        maxOutputRecoveryAttempts < MAX_OUTPUT_RECOVERY
-      ) {
+      if (response.stopReason === 'max_tokens') {
         // A truncated turn can end mid-tool_use; leaving it unanswered makes
         // the next request invalid (provider 400) with no recovery path.
         // Close them with placeholder results before continuing (#304).
         const pendingToolUse = response.content.filter(
           (block): block is ToolUseBlock => block.type === 'tool_use',
         )
-        maxOutputRecoveryAttempts++
-        if (pendingToolUse.length > 0) {
-          this.messages.push({
-            role: 'user',
-            content: [
-              ...pendingToolUse.map((block) => createInterruptedToolResult(block)),
-              {
-                type: 'text',
-                text: 'Please continue from where you left off.',
-              },
-            ],
-          })
-        } else {
-          // Add continuation prompt
-          this.messages.push({
-            role: 'user',
-            content: 'Please continue from where you left off.',
-          })
+        if (maxOutputRecoveryAttempts < MAX_OUTPUT_RECOVERY) {
+          maxOutputRecoveryAttempts++
+          if (pendingToolUse.length > 0) {
+            this.messages.push({
+              role: 'user',
+              content: [
+                ...pendingToolUse.map((block) => createInterruptedToolResult(block)),
+                {
+                  type: 'text',
+                  text: 'Please continue from where you left off.',
+                },
+              ],
+            })
+          } else {
+            // Add continuation prompt
+            this.messages.push({
+              role: 'user',
+              content: 'Please continue from where you left off.',
+            })
+          }
+          continue
         }
-        continue
+        // Continuation budget exhausted on a truncated, tool-free answer:
+        // report it as an error instead of dressing truncation up as success.
+        if (pendingToolUse.length === 0) {
+          maxTokensExhausted = true
+          break
+        }
+      }
       }
 
       // Check for tool use
@@ -1631,6 +1660,8 @@ export class QueryEngine {
       ? 'error_during_execution'
       : budgetExceeded
       ? 'error_max_budget_usd'
+      : maxTokensExhausted
+        ? 'error_max_output_tokens'
       : structuredOutputRetriesExceeded
         ? 'error_max_structured_output_retries'
       : completionGuardStop
@@ -1675,6 +1706,8 @@ export class QueryEngine {
         ? [completionGuardStop.message]
         : structuredOutputRetriesExceeded
           ? ['Structured output validation failed after retry attempts.']
+        : maxTokensExhausted
+          ? ['Response reached the output token limit and continuation attempts were exhausted.']
         : undefined,
       // Structured attribution for guard-driven stops so hosts can tell an SDK
       // internal repeat-guard stop ('repeated_tool_call') apart from their own
