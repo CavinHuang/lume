@@ -33,7 +33,7 @@ import {
 } from "./browser-runtime-policy"
 import { browserLocatorScript, isBrowserLocator, validateBrowserLocator, type BrowserLocatorQuery, type ResolvedBrowserTarget } from "./browser-locator"
 import { createCursorUpdateScript } from "./browser-cursor"
-import { canAgentClaim, canAgentUse, revokeSharedLease } from "./browser-sharing-policy"
+import { canAgentClaim, canAgentResumeHandoff, canAgentUse, revokeSharedLease } from "./browser-sharing-policy"
 import { isIP } from "node:net"
 import { BrowserNetworkGuard, isPublicAddress } from "./browser-network-guard"
 import { BrowserAuditLog } from "./browser-audit"
@@ -4071,8 +4071,9 @@ export class BrowserRuntime {
     if (context.actor !== "agent") throw browserError("action_denied")
     const resumed: BrowserTabDescriptor[] = []
     const candidates = [...this.tabs.values()]
-      .filter((tab) => tab.handoff?.browserSessionId === context.browserSessionId
-        && (tab.handoff.status === "handoff" || tab.handoff.status === "deliverable"))
+      // 用户接管中的 tab（paused_by_user）同样带 handoff 标记，不得被 agent 恢复；
+      // 恢复入口只有用户的 agentControl:resume（actor=user）
+      .filter((tab) => canAgentResumeHandoff(tab, context.browserSessionId))
       .sort((left, right) => Number(right.visible) - Number(left.visible)
         || String(right.lastOpenedAt ?? "").localeCompare(String(left.lastOpenedAt ?? "")))
     for (const tab of candidates) {
