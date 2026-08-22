@@ -64,7 +64,7 @@ describe("isHardDeniedTool", () => {
 
   test("returns false when deny list is absent or does not contain the tool", () => {
     expect(isHardDeniedTool({}, "Bash")).toBe(false);
-    expect(isHardDeniedTool({ tools: { deny: ["FileWrite"] } }, "Bash")).toBe(false);
+    expect(isHardDeniedTool({ tools: { deny: ["Write"] } }, "Bash")).toBe(false);
   });
 });
 
