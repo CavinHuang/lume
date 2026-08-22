@@ -1818,3 +1818,17 @@ export const fetchModelsInputSchema = z.object({
   apiFamily: channelApiFamilySchema.optional(),
   openaiApiMode: channelOpenAiApiModeSchema.optional()
 }).strict();
+
+export const channelIdParamsSchema = z.object({ channelId: idSchema }).strict();
+
+export const connectionIdParamsSchema = z.object({ connectionId: idSchema }).strict();
+
+export const oauthSessionIdParamsSchema = z.object({ sessionId: idSchema }).strict();
+
+export const oauthAnswerParamsSchema = z.object({
+  sessionId: idSchema,
+  promptId: idSchema,
+  value: z.string().optional()
+}).strict();
+
+export const oauthCancelParamsSchema = z.object({ sessionId: idSchema.optional() }).strict();
