@@ -69,7 +69,6 @@ import { loadCommandDefinitions, commandDefinitionsToSlashCommands } from './com
 import type { CommandDefinition } from './commands/types.js'
 import type { FileCheckpoint, FileCheckpointState } from './utils/file-checkpoints.js'
 import { rewindCheckpoint } from './utils/file-checkpoints.js'
-import { getDefaultModels } from './utils/models.js'
 import { getContextWindowSize } from './utils/tokens.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { createExecuteTool, createToolSearchTool, isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
@@ -1453,7 +1452,7 @@ export class Agent {
       })),
       output_style: 'text',
       available_output_styles: ['text', 'json', 'streamlined'],
-      models: getDefaultModels(),
+      models: [],
       account: {
         tokenSource: credentialSource,
         apiKeySource: credentialSource,
