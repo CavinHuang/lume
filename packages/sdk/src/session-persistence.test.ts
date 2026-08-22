@@ -111,4 +111,15 @@ describe("session persistence", () => {
     expect(sessions.map((item) => item.id)).toContain("legacy-no-meta")
     expect(sessions[0]?.messageCount).toBe(1)
   })
+
+  test.skipIf(process.platform !== "win32")("matchesDir folds drive-letter and path case on win32 (#362)", async () => {
+    const sessionsRoot = useTempSdkHome()
+    // 存入小写盘符，查询用大写盘符 + 混合大小写路径
+    await saveSession("case-drift", [{ role: "user", content: "hi" }], { cwd: join(sessionsRoot.toLowerCase(), "Sub") })
+
+    const flipped = join(sessionsRoot.toUpperCase(), "sub")
+    const sessions = await listSessions({ dir: flipped })
+
+    expect(sessions.map((item) => item.id)).toContain("case-drift")
+  })
 })

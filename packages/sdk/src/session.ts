@@ -314,8 +314,11 @@ async function readSessionMetadata(sessionId: string): Promise<SessionMetadata |
 
 function matchesDir(session: SessionMetadata, dir?: string): boolean {
   if (!dir) return true
-  const target = resolve(dir)
-  const cwd = resolve(session.cwd)
+  // win32 盘符/路径大小写会漂移（d:\ vs D:\），先折叠再比较，否则 continue 过滤为空丢历史（#362）
+  const fold = (value: string): string =>
+    process.platform === 'win32' ? value.toLowerCase() : value
+  const target = fold(resolve(dir))
+  const cwd = fold(resolve(session.cwd))
   return cwd === target || cwd.startsWith(`${target}\\`) || cwd.startsWith(`${target}/`)
 }
 
