@@ -18,33 +18,54 @@ function writeJsonAtomic(path, value) {
   fs.renameSync(temporary, path)
 }
 
-function readProcessIdentity(pid) {
+// Identity must use the OS birth time (StartTime), not a JS-uptime estimate:
+// the registry probes the same value, so bootstrap delay cannot skew the
+// comparison (#313). Probed asynchronously so a slow PowerShell start never
+// delays the command spawn; until it lands the state simply has no identity,
+// which the registry treats as alive.
+let workerIdentity
+
+function readProcessIdentity(pid, callback) {
   if (process.platform === 'linux') {
     try {
       const statLine = fs.readFileSync('/proc/' + pid + '/stat', 'utf8')
       const processNameEnd = statLine.lastIndexOf(')')
       const fieldsAfterName = statLine.slice(processNameEnd + 2).trim().split(/\s+/)
-      return fieldsAfterName[19] ? 'linux:' + fieldsAfterName[19] : undefined
+      callback(fieldsAfterName[19] ? 'linux:' + fieldsAfterName[19] : undefined)
     } catch {
-      return undefined
+      callback(undefined)
     }
+    return
   }
   if (process.platform === 'win32') {
-    return 'win32:' + Math.floor((Date.now() - process.uptime() * 1000) / 1000)
+    try {
+      cp.execFile('powershell.exe', [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        '([DateTimeOffset]((Get-Process -Id ' + pid + ' -ErrorAction Stop).StartTime.ToUniversalTime())).ToUnixTimeSeconds()'
+      ], { encoding: 'utf8', windowsHide: true, timeout: 10000 }, (error, stdout) => {
+        const ticks = error ? '' : String(stdout || '').trim()
+        callback(ticks ? 'win32:' + ticks : undefined)
+      })
+    } catch {
+      callback(undefined)
+    }
+    return
   }
   try {
-    const startedAt = cp.execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+    cp.execFile('ps', ['-o', 'lstart=', '-p', String(pid)], {
       encoding: 'utf8',
       timeout: 5000
-    }).trim().replace(/\s+/g, ' ')
-    return startedAt ? process.platform + ':' + startedAt : undefined
+    }, (error, stdout) => {
+      const startedAt = error ? '' : String(stdout || '').trim().replace(/\s+/g, ' ')
+      callback(startedAt ? process.platform + ':' + startedAt : undefined)
+    })
   } catch {
-    return undefined
+    callback(undefined)
   }
 }
-
-const processIdentity = readProcessIdentity(process.pid)
-const workerIdentity = processIdentity ? spec.processToken + ':' + processIdentity : undefined
 
 function updateState(patch) {
   let current = {}
@@ -88,6 +109,12 @@ function stopTree(child) {
 }
 
 updateState({ status: 'running', heartbeatAt: Date.now(), startedAt })
+readProcessIdentity(process.pid, (identity) => {
+  workerIdentity = identity ? spec.processToken + ':' + identity : undefined
+  try {
+    if (!finished) updateState({})
+  } catch {}
+})
 const child = cp.spawn(spec.command, spec.args, {
   cwd: spec.cwd,
   env: process.env,
