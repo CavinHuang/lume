@@ -181,14 +181,36 @@ export class HookRegistry {
     const events: HookExecutionResult['events'] = []
 
     for (const def of definitions) {
+      const hookId = crypto.randomUUID()
+      const hookName = def.command || def.matcher || 'inline-hook'
+
       // Check matcher for tool-specific hooks
       if (def.matcher && input.toolName) {
-        const regex = new RegExp(def.matcher)
+        let regex: RegExp
+        try {
+          regex = new RegExp(def.matcher)
+        } catch (err: any) {
+          // An invalid matcher must not take down the whole event: report the
+          // def as failed and keep executing the remaining hooks.
+          const message = `Invalid matcher: ${err?.message || String(err)}`
+          console.error(`[Hook] ${event} hook failed: ${message}`)
+          events.push({
+            type: 'system',
+            subtype: 'hook_response',
+            hook_id: hookId,
+            hook_name: hookName,
+            hook_event: event,
+            output: '',
+            stdout: '',
+            stderr: message,
+            outcome: 'error',
+            session_id: input.sessionId || '',
+          })
+          continue
+        }
         if (!regex.test(input.toolName)) continue
       }
 
-      const hookId = crypto.randomUUID()
-      const hookName = def.command || def.matcher || 'inline-hook'
       events.push({
         type: 'system',
         subtype: 'hook_started',
@@ -203,12 +225,21 @@ export class HookRegistry {
 
         if (def.handler) {
           // Function handler
-          output = await Promise.race([
-            def.handler(input),
-            new Promise<void>((_, reject) =>
-              setTimeout(() => reject(new Error('Hook timeout')), def.timeout || 30000),
-            ),
-          ])
+          let timeoutTimer: ReturnType<typeof setTimeout> | undefined
+          try {
+            const handlerPromise = def.handler(input)
+            // Defensive: after a timeout, a late rejection of the handler must
+            // never surface as an unhandledRejection outside the race below.
+            handlerPromise.catch(() => {})
+            output = await Promise.race([
+              handlerPromise,
+              new Promise<void>((_, reject) => {
+                timeoutTimer = setTimeout(() => reject(new Error('Hook timeout')), def.timeout || 30000)
+              }),
+            ])
+          } finally {
+            clearTimeout(timeoutTimer)
+          }
         } else if (def.command) {
           // Shell command handler
           const shellResult = await executeShellHook(
