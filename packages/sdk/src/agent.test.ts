@@ -96,6 +96,73 @@ afterEach(() => {
   clearSkills()
 })
 
+describe("Agent provider configuration", () => {
+  test("prompt() rejects loudly when no provider is injected", async () => {
+    const agent = createAgent({ persistSession: false, tools: [] })
+
+    await expect(agent.prompt("hello")).rejects.toThrow("No LLMProvider configured")
+    expect(agent.getMessages()).toHaveLength(0)
+    await agent.close()
+  })
+
+  test("per-run provider overrides throw before the abort listener is attached", async () => {
+    const provider = new CapturingProvider()
+    const agent = createAgent({ persistSession: false, tools: [], provider })
+    const controller = new AbortController()
+    const signal = controller.signal
+    let listenerAdds = 0
+    const originalAdd = signal.addEventListener.bind(signal)
+    ;(signal as any).addEventListener = (...args: unknown[]) => {
+      listenerAdds += 1
+      return (originalAdd as any)(...args)
+    }
+
+    await expect(
+      (async () => {
+        for await (const _event of agent.query("hello", {
+          abortSignal: signal,
+          apiKey: "sk-legacy",
+        } as any)) {
+          // drain
+        }
+      })(),
+    ).rejects.toThrow("Per-run provider overrides are no longer supported")
+    expect(listenerAdds).toBe(0)
+    await agent.close()
+  })
+
+  test("auth_status reports the injected provider's apiType", async () => {
+    const provider = new CapturingProvider()
+    const agent = createAgent({ persistSession: false, tools: [], provider })
+
+    const events: SDKMessage[] = []
+    for await (const event of agent.query("hello")) {
+      events.push(event)
+    }
+
+    const authStatus = events.find((event) => event.type === "auth_status") as any
+    expect(authStatus).toBeDefined()
+    expect(authStatus.error).toBeUndefined()
+    expect(authStatus.output).toEqual(["Using anthropic-messages credentials"])
+    await agent.close()
+  })
+
+  test("initialization account reflects provider injection, not apiKey fields", async () => {
+    const bare = createAgent({ persistSession: false, tools: [] })
+    const bareInit = await bare.getInitializationResult()
+    expect(bareInit.account.apiKeySource).toBe("missing")
+    expect(bareInit.account.tokenSource).toBe("missing")
+    await bare.close()
+
+    const provider = new CapturingProvider()
+    const configured = createAgent({ persistSession: false, tools: [], provider })
+    const configuredInit = await configured.getInitializationResult()
+    expect(configuredInit.account.apiKeySource).toBe("configured")
+    expect(configuredInit.account.tokenSource).toBe("configured")
+    await configured.close()
+  })
+})
+
 describe("Agent runtime tool resolver", () => {
   test("does not start a query when the parent signal is already aborted", async () => {
     const provider = new CapturingProvider()
@@ -830,6 +897,7 @@ describe("Agent session persistence", () => {
       persistSession: true,
       tools: [],
       cwd: tempDir,
+      provider: new StaticProvider(),
       contextController: {
         shouldAutoCompact: () => false,
         async compactConversation() {
