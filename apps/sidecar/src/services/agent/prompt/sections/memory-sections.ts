@@ -50,7 +50,7 @@ export function buildMemorySections(ctx: {
 - 用户偏好名：claim subject=user/self, predicate=preferred_name, object=<名字>
 - 用户给助手起的昵称：claim subject=assistant/self, predicate=preferred_name, object=<昵称>
 昵称 claim 属于用户偏好；不要当作产品身份变更。
-不要保存：进行中的任务/Todo/计划、代码/Wiki/Skills 里现成可得的事实、临时执行细节、无依据的助手猜测、密钥、敏感个人数据（除非明确要求），以及用户说不要记住的任何内容。
+不要保存：进行中的任务/Todo/计划、代码/Skills 里现成可得的事实、临时执行细节、无依据的助手猜测、密钥、敏感个人数据（除非明确要求），以及用户说不要记住的任何内容。
 除非对话或工具结果直接支持，绝不持久化助手的推断。`
       );
     }

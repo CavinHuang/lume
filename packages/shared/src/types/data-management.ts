@@ -84,7 +84,7 @@ export const DATA_CATEGORY_META: DataCategoryMeta[] = [
   {
     key: "business",
     label: "业务数据",
-    subtitle: "读书 · 自动化 · 日程 · Wiki",
+    subtitle: "读书 · 自动化 · 日程",
     rebuildable: false,
     sensitive: false,
   },
@@ -139,7 +139,7 @@ export const DATA_CATEGORY_SCAN_SPEC: DataCategoryScanSpec[] = [
   },
   {
     key: "business",
-    scanPaths: ["reading", "routine", "automation", "wiki"],
+    scanPaths: ["reading", "routine", "automation"],
     skipSubdirs: [],
   },
   {
