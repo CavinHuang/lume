@@ -1348,6 +1348,10 @@ export class BrowserRuntime {
         return { action: "deny" }
       }
       const activationToken = randomUUID()
+      // 过期 token 顺手清扫：无淘汰路径的 Map 只会随弹窗请求缓涨（#404）
+      for (const [token, popup] of this.popupTokens) {
+        if (popup.expiresAt <= Date.now()) this.popupTokens.delete(token)
+      }
       this.popupTokens.set(activationToken, { sourceTabId: tab.tabId, url: stripUrl(url), expiresAt: Date.now() + 60_000 })
       this.options.emit({ method: "browser:popup-request", params: { tabId: tab.tabId, activationToken, origin: safeOrigin(url), url: stripUrl(url) } })
       return { action: "deny" }
@@ -4022,6 +4026,8 @@ export class BrowserRuntime {
     tab.webContents = null
     this.tabs.delete(tabId)
     this.disposeOwnedSessionIfUnused(tab.partition, browserSession)
+    // 关 tab 即修剪其旧代语义引用，索引不随快照次数无界增长（#404）
+    if (tab.context?.browserSessionId) this.pruneSemanticRefSession(tab.context.browserSessionId)
     this.options.emit({ method: "browser:tab-closed", params: { tabId, ownerThreadId: tab.ownerThreadId, profileKind: tab.profileKind } })
     if (contents) closeWebContentsAfterRenderer(contents)
     this.enforceBackgroundLimit()
@@ -4108,7 +4114,42 @@ export class BrowserRuntime {
       if (tab.context?.actor === "agent" || tab.agentLease?.browserSessionId !== context.browserSessionId || tab.agentLease.browserTurnId !== context.browserTurnId) continue
       this.releaseTabs(context, { tabIds: [tab.tabId] })
     }
+    // 回收本 turn 的会话级状态：快照 claim/下载结果/引用索引只增不减会随
+    // 高频 agent 浏览缓涨（#404）
+    this.clearClaimSnapshots(context)
+    for (const [id, result] of this.downloadResults) {
+      if (result.browserSessionId === context.browserSessionId && result.browserTurnId === context.browserTurnId) {
+        for (const waiter of result.waiters.splice(0)) waiter(null)
+        this.downloadResults.delete(id)
+      }
+    }
+    for (const [id, ref] of this.downloadRefs) {
+      if (ref.browserSessionId === context.browserSessionId && ref.browserTurnId === context.browserTurnId) {
+        this.downloadRefs.delete(id)
+      }
+    }
+    this.pruneSemanticRefSession(context.browserSessionId)
     return { ok: true }
+  }
+
+  /**
+   * 修剪语义引用索引：identity 按 tab+generation 累积、entries 按新快照累积，
+   * 换代/关 tab 后旧条目永不再命中。仅保留仍存活 tab+generation 的条目（#404）。
+   */
+  private pruneSemanticRefSession(browserSessionId: string): void {
+    const session = this.semanticRefSessions.get(browserSessionId)
+    if (!session) return
+    const live = new Set<string>()
+    for (const tab of this.tabs.values()) live.add(`${tab.tabId} ${tab.generation}`)
+    for (const [identity, ref] of session.byIdentity) {
+      const entry = session.entries.get(ref)
+      if (entry && live.has(`${entry.tabId} ${entry.generation}`)) continue
+      session.byIdentity.delete(identity)
+      session.entries.delete(ref)
+    }
+    if (session.byIdentity.size === 0 && session.entries.size === 0) {
+      this.semanticRefSessions.delete(browserSessionId)
+    }
   }
 
   private disposeOwnedSessionIfUnused(partition: string, browserSession: Electron.Session): void {
