@@ -121,6 +121,13 @@ const failedStarts = new Map<string, { until: number; error: Error }>()
 const resolutionCache = new Map<string, { until: number; value: Promise<ResolvedLspServerConfig[]> }>()
 let idleTimeoutMs: number | null = 10 * 60_000
 let idleChecker: ReturnType<typeof setInterval> | undefined
+// Upper bound for one stdin write; a wedged language-server pipe must fail
+// the client instead of hanging Write/Edit forever (#327).
+let writeTimeoutMs = 10_000
+
+export function setLspWriteTimeout(timeoutMs: number): void {
+  writeTimeoutMs = Math.max(1, timeoutMs)
+}
 
 export type LspClientState = 'initializing' | 'ready' | 'failed' | 'restarting' | 'disposed'
 
@@ -945,7 +952,28 @@ export class LspClient {
       })
     })
     this.writeQueue = write.catch(() => undefined)
-    return write
+    // Every notification path funnels through here, so one timeout + fail()
+    // covers them all: a wedged pipe marks the client dead and routes every
+    // caller into the existing restart chain instead of hanging forever (#327).
+    let timer: ReturnType<typeof setTimeout> | undefined
+    return Promise.race([
+      write,
+      new Promise<never>((_, reject) => {
+        // No unref here: bun's test runner never fires unref'd timers, and
+        // this one is always released by the settle handlers below anyway.
+        timer = setTimeout(() => reject(new Error(`LSP server write timed out after ${writeTimeoutMs}ms`)), writeTimeoutMs)
+      }),
+    ]).then(
+      (value) => {
+        clearTimeout(timer)
+        return value
+      },
+      (error) => {
+        clearTimeout(timer)
+        this.fail(error instanceof Error ? error : new Error(String(error)))
+        throw error
+      },
+    )
   }
 
   private onOutput(chunk: Buffer): void {

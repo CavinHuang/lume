@@ -11,6 +11,7 @@ import {
   LspClient,
   parseLspMessages,
   resolveLspServerConfigsForFile,
+  setLspWriteTimeout,
   shutdownLspClients,
   warmupLspClients,
 } from './client.js'
@@ -161,6 +162,54 @@ describe('LSP protocol helpers', () => {
       'start:b', 'end:b',
       'start:c', 'end:c',
     ])
+  })
+
+  test('fails the client when the server never drains stdin writes (#327)', async () => {
+    setLspWriteTimeout(30)
+    try {
+      const client = Object.create(LspClient.prototype) as any
+      client.writeQueue = Promise.resolve()
+      client.lastActivity = 0
+      client.dead = false
+      client.initialized = true
+      client.disposed = false
+      client.pending = new Map()
+      let dead = false
+      client.onDead = () => { dead = true }
+      // Accepts the write but never invokes the callback: a wedged pipe.
+      client.process = { stdin: { writable: true, write: () => undefined } }
+
+      await expect(client['send']({ jsonrpc: '2.0', method: 'test/hang' })).rejects.toThrow(/timed out/i)
+      expect(dead).toBe(true)
+      expect(client.dead).toBe(true)
+    } finally {
+      setLspWriteTimeout(10_000)
+    }
+  })
+
+  test('resolves send once the write callback fires and leaves the client alive (#327)', async () => {
+    setLspWriteTimeout(30)
+    try {
+      const client = Object.create(LspClient.prototype) as any
+      client.writeQueue = Promise.resolve()
+      client.lastActivity = 0
+      client.dead = false
+      client.initialized = true
+      client.disposed = false
+      client.pending = new Map()
+      let dead = false
+      client.onDead = () => { dead = true }
+      client.process = { stdin: { writable: true, write: (_body: Buffer, callback: () => void) => callback() } }
+
+      await expect(client['send']({ jsonrpc: '2.0', method: 'test/ok' })).resolves.toBeUndefined()
+      expect(dead).toBe(false)
+
+      // The timer must be released after success rather than firing later.
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      expect(dead).toBe(false)
+    } finally {
+      setLspWriteTimeout(10_000)
+    }
   })
 
   test('spawns .cmd server shims through cmd.exe on Windows', async () => {
