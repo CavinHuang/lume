@@ -7,7 +7,7 @@ import { sendBoundImTextMessage, sendBoundImMediaMessage } from "../../../im/im-
 import { createSdkJsonResultTool } from "../sdk-tool-result";
 import { createLogger } from "../../../infra/logger";
 import { isPathWithinRoot } from "../../permissions/permission-rules";
-import { WikiSafeHttpFetchService } from "../../../wiki/safe-http-fetch";
+import { SafeHttpFetchService } from "../../../infra/safe-http-fetch";
 
 const log = createLogger("im-tool");
 
@@ -15,15 +15,15 @@ const log = createLogger("im-tool");
 const IM_URL_MEDIA_MAX_BYTES = 10 * 1024 * 1024;
 /** 本地文件发送上限：对齐附件限额（AGENT_ATTACHMENT_LIMITS.maxFileBytes）。 */
 const IM_FILE_MEDIA_MAX_BYTES = 25 * 1024 * 1024;
-/** 复用 wiki 的安全抓取（DNS 全公网校验+固定 IP 连接+大小上限）；忽略代理 fail-closed 策略，保持 fetch 直连语义。 */
-const imMediaFetcher = new WikiSafeHttpFetchService();
+/** 安全抓取（DNS 全公网校验+固定 IP 连接+大小上限）；忽略代理 fail-closed 策略，保持 fetch 直连语义。 */
+const imMediaFetcher = new SafeHttpFetchService();
 
 export interface CreateImToolsInput {
   threadId: string;
   /** 线程文件根目录（lumeWorkDir/files，image_gen 等产物落点）；与工具 ctx.cwd 共同构成 file_path 允许根。 */
   filesRoot?: string;
   /** URL 媒体安全抓取器；测试经构造器 DI 注入（node:http+dns 无法用 globalThis.fetch mock）。 */
-  mediaFetcher?: WikiSafeHttpFetchService;
+  mediaFetcher?: SafeHttpFetchService;
   sendTextMessage?: (input: {
     binding: ImThreadBinding;
     text: string;

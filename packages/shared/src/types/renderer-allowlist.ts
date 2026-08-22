@@ -29,7 +29,6 @@ import { IPC_CHANNELS as RUNTIME_IPC_CHANNELS } from "./runtime"
 import { SUGGESTION_IPC_CHANNELS } from "./suggestion"
 import { SYSTEM_CONFIG_IPC_CHANNELS } from "./system-config"
 import { UI_STATE_IPC_CHANNELS } from "./ui-state"
-import { WIKI_IPC_CHANNELS } from "./wiki"
 
 /** 通知类 key：不可作为 renderer RPC method 暴露 */
 const NOTIFICATION_CHANNEL_KEYS = new Set(["CHANGED", "REMINDER_DUE", "EVENTS"])
@@ -67,7 +66,6 @@ const PUBLIC_CHANNEL_SOURCES = [
   SYSTEM_CONFIG_IPC_CHANNELS,
   UI_STATE_IPC_CHANNELS,
   WEREAD_IPC_CHANNELS,
-  WIKI_IPC_CHANNELS,
 ]
 
 /** shared 通道派生的 renderer 可调用 method 集；desktop 在此之上加本地增量 */

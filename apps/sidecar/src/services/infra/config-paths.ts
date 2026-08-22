@@ -371,19 +371,6 @@ export function getRoutineRunsPath(): string {
   return join(getRoutineDir(), "runs.jsonl");
 }
 
-/** Wiki is a central vault and is intentionally not nested under any workspace. */
-export function getWikiProtectedRootPath(): string {
-  return join(getConfigDir(), "wiki");
-}
-
-export function getWikiRootPath(): string {
-  return ensureDir(getWikiProtectedRootPath(), "Wiki 目录");
-}
-
-export function getWikiRuntimeProbePath(): string {
-  return ensureDir(join(getGlobalMetaPath(), "wiki-runtime-probe"), "Wiki 运行环境探针目录");
-}
-
 export function getPluginsCacheDir(): string {
   return ensureDir(join(getConfigDir(), "plugins", "cache"), "插件缓存目录");
 }

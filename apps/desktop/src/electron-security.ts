@@ -20,9 +20,8 @@ export {
 export function validateRendererSidecarMethod(method) {
   if (typeof method !== 'string' || !method) throw new Error('invalid sidecar method')
   if (
-    method.startsWith('wiki:privileged-')
-    || method.startsWith('plugin-package:privileged-')
-    || method === 'system.wiki-privileged-credential'
+    method.startsWith('plugin-package:privileged-')
+    || method === 'system.privileged-credential'
     || method === 'agent:export-plugin-artifact'
     || method === 'agent:download-bridge-asset'
   ) {

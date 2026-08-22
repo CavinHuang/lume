@@ -2,7 +2,7 @@
  * useQuotedSelection — 通用文本选区采集 hook
  *
  * 把 Proma 三处重复的「selectionchange + pointerup/keyup + 80ms 去抖」采集逻辑
- * DRY 成一个可参数化挂载的 hook。各采集源（Agent 历史 / 文件预览 / wiki…）
+ * DRY 成一个可参数化挂载的 hook。各采集源（Agent 历史 / 文件预览 / 读书…）
  * 只需提供 rootRef + 可选的选区获取/上下文提取策略。
  *
  * 设计要点：

@@ -1,4 +1,5 @@
 import { readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
 const packageRoot = join(import.meta.dir, "..");
@@ -39,6 +40,7 @@ async function worker() {
     const file = tests[cursor++];
     // 每子进程独立 LUME_CONFIG_DIR:并行 worker 共享 HOME 会锁冲突
     // (planning.sqlite 等共享 SQLite "database is locked"——CI 实证)。
+    // 目录放 os.tmpdir():仓库内曾误提交过整批测试残留(含 sqlite 二进制)。
     const proc = Bun.spawn({
       cmd: ["bun", "test", file],
       cwd: repositoryRoot,
@@ -47,8 +49,7 @@ async function worker() {
       env: {
         ...process.env,
         LUME_CONFIG_DIR: join(
-          import.meta.dir,
-          `..`,
+          tmpdir(),
           `.tmp-test-config-${process.pid}-${cursor}`,
         ),
       },
