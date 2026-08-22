@@ -1158,13 +1158,16 @@ export function getEffectivePluginRuntimeConfig(workspaceSlug?: string): Effecti
 
 export function updateLumeConfigSection(input: UpdateLumeConfigSectionInput): LumeEffectiveConfig {
   const file = readOrCreateLumeConfig();
+  // 深拷贝后再 mutate：直接改缓存共享引用时，一旦写盘失败（EACCES/磁盘满），
+  // 缓存将持有从未落盘的幻影配置且按 mtime+size 判定"有效"（#406）
+  const working = structuredClone(file);
   const target = input.workspaceSlug
-    ? ensureWorkspaceSection(file, input.workspaceSlug)
-    : file;
+    ? ensureWorkspaceSection(working, input.workspaceSlug)
+    : working;
   assignPath(target as Record<string, unknown>, input.path, input.value);
-  const normalized = normalizeLumeConfigFile(file);
+  const normalized = normalizeLumeConfigFile(working);
   writeYamlAtomic(getLumeConfigYamlPath(), YAML.stringify(normalized));
-  // file 是缓存共享引用且已被 mutate，写盘后立即以 normalized 刷新缓存防污染
+  // 以落盘内容刷新缓存
   refreshLumeConfigCache(getLumeConfigYamlPath(), normalized);
 
   appendAuditEntry({

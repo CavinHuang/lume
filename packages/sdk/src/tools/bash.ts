@@ -56,7 +56,7 @@ export const BashTool = defineTool({
     type: 'object',
     properties: {
       command: { type: 'string', description: 'The shell command to execute. Use one shell dialect per command; on Windows without configured POSIX Bash, prefer PowerShell syntax and do not use cmd.exe or POSIX-only redirection.' },
-      timeout: { type: 'number', description: 'Optional timeout in milliseconds (max 600000, default 120000)' },
+      timeout: { type: 'number', description: 'Optional timeout in milliseconds (max 600000). When omitted the command runs without a process timeout.' },
       description: { type: 'string', description: 'Short description for background task tracking' },
       run_in_background: { type: 'boolean', description: 'Run the command in the background and return a task ID immediately' },
       purpose: { type: 'string', description: 'Optional execution purpose, e.g. verification' },
@@ -73,7 +73,12 @@ export const BashTool = defineTool({
   },
   async call(input, context) {
     const command = String(input.command)
-    const timeoutMs = Math.min(Number(input.timeout ?? 120_000), 600_000)
+    // #381:未显式传 timeout 不设进程超时——前台等待只有 15s 即转后台,默认
+    // 120s 的唯一生效点是击杀后台长任务(dev server/watcher),与"continue in
+    // the background"语义矛盾;显式 timeout 仍尊重(上限 600s)。
+    const timeoutMs = input.timeout === undefined
+      ? undefined
+      : Math.min(Number(input.timeout), 600_000)
     const purpose = typeof input.purpose === 'string' && input.purpose.trim() ? input.purpose.trim() : undefined
     const verificationError = purpose?.toLowerCase() === 'verification'
       ? getVerificationPipelineError(command)
@@ -350,7 +355,7 @@ function isReadOnlyPowerShell(command: string): boolean {
 
 async function startShellTask(input: {
   command: string
-  timeoutMs: number
+  timeoutMs?: number
   purpose?: string
   context: ToolContext
 }) {
@@ -367,7 +372,7 @@ async function startDirectShellTask({
   context,
 }: {
   command: string
-  timeoutMs: number
+  timeoutMs?: number
   purpose?: string
   context: ToolContext
 }) {
@@ -574,7 +579,7 @@ async function startDurableShellTask({
   context,
 }: {
   command: string
-  timeoutMs: number
+  timeoutMs?: number
   purpose?: string
   context: ToolContext
 }) {
@@ -622,7 +627,8 @@ async function startDurableShellTask({
     command: shell.command,
     args: shell.args,
     cwd: context.cwd,
-    timeoutMs,
+    // #381:undefined 时省略字段——worker setTimeout(fn, undefined) 会立即击杀
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     maxOutputBytes: MAX_OUTPUT_BYTES,
     processToken,
     statePath: join(jobDir, 'state.json'),
@@ -639,7 +645,8 @@ async function startDurableShellTask({
   const worker = spawnWithProcessSandbox(process.execPath, ['-e', PROCESS_JOB_WORKER_SOURCE, specPath], {
     cwd: context.cwd,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    timeoutMs: timeoutMs + 10_000,
+    // #381:worker 比命令超时多 10s 兜底;命令无超时则 worker 同样无界
+    ...(timeoutMs !== undefined ? { timeoutMs: timeoutMs + 10_000 } : {}),
     detached: true,
     stdio: 'ignore',
   }, sandbox)
