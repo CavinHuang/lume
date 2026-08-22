@@ -69,6 +69,8 @@ export interface McpClientLike {
   listResources?(params?: unknown, options?: { signal?: AbortSignal }): Promise<{ resources?: Array<Record<string, unknown>> }>;
   readResource?(input: { uri: string }, options?: { signal?: AbortSignal }): Promise<{ contents?: unknown[] }>;
   close?(): Promise<void>;
+  /** 连接意外关闭回调（stdio server 崩溃/远端断开）；用于把状态打回 failed 自愈（#403）。 */
+  onclose?(listener: () => void): void;
 }
 
 export type McpClientFactory = (
@@ -729,6 +731,19 @@ export class McpClientManager {
       state.nextRetryAt = undefined;
       state.lastConnectedAt = Date.now();
       state.lastCheckedAt = Date.now();
+
+      // 死连接自愈：server 进程崩溃后 status 原样停留 connected，ensureConnected
+      // 短路、资源读持续报错且工具清单陈旧。onclose 把状态打回 failed，让下一次
+      // ensureConnected 走正常重连（#403）。
+      client.onclose?.(() => {
+        if (state.client !== client || !isCurrent()) return;
+        void this.closeState(state).then(() => {
+          if (!isCurrent()) return;
+          state.status = 'failed';
+          state.error = { code: 'transport_error', message: `MCP server "${serverId}" connection closed unexpectedly` };
+          state.lastCheckedAt = Date.now();
+        });
+      });
     } catch (error) {
       if (state.client === client) {
         await this.closeState(state);

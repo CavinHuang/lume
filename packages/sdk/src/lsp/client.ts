@@ -667,9 +667,13 @@ export class LspClient {
   }
 
   static async start(cwd: string, server: ResolvedLspServerConfig, onDead = () => undefined): Promise<LspClient> {
+    // #380:LSP 命令可来自项目内 lsp.json(readProjectLspServers),全量
+    // process.env 会向项目可控进程泄漏 API key/token——与 MCP stdio 路径对齐,
+    // 走官方最小环境集 + server.env 显式合并
+    const { getDefaultEnvironment } = await import('@modelcontextprotocol/sdk/client/stdio.js')
     const child = spawn(server.command, server.args, {
       cwd: server.cwd ?? cwd,
-      env: server.env ? { ...process.env, ...server.env } : process.env,
+      env: { ...getDefaultEnvironment(), ...server.env },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     })
