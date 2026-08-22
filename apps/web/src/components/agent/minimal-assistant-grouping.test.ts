@@ -29,11 +29,6 @@ const imageTool = (id: string): RuntimeAssistantBlock => ({
   id,
   toolCall: { id, toolName: 'image_gen', input: {}, status: 'completed' },
 })
-const wikiProposal = (id: string, status: 'running' | 'completed' = 'completed'): RuntimeAssistantBlock => ({
-  type: 'tool_call',
-  id,
-  toolCall: { id, toolName: 'wiki.propose_changes', input: {}, status },
-})
 const think = (id: string): RuntimeAssistantBlock => ({ type: 'thinking', id, text: `k-${id}` })
 const plan = (id: string): RuntimeAssistantBlock => ({
   type: 'plan_preview',
@@ -106,15 +101,6 @@ describe('groupAssistantBlocksForMinimal', () => {
     }
   })
 
-  test('completed Wiki proposals leave the collapsible process as a persistent result', () => {
-    const result = groupAssistantBlocksForMinimal([
-      tool('1'),
-      wikiProposal('2'),
-      tool('3'),
-    ])
-
-    expect(result.map((segment) => segment.kind)).toEqual(['process', 'wiki_proposal', 'process'])
-  })
 
   test('memory mutations leave the collapsible process as a lightweight status', () => {
     expect(groupAssistantBlocksForMinimal([
@@ -132,9 +118,6 @@ describe('groupAssistantBlocksForMinimal', () => {
     expect(result.map((segment) => segment.kind)).toEqual(['process', 'ask_user_question', 'process'])
   })
 
-  test('keeps a running Wiki proposal in the process group', () => {
-    expect(groupAssistantBlocksForMinimal([wikiProposal('1', 'running')])[0]?.kind).toBe('process')
-  })
 
   test('empty input returns no segments', () => {
     const result = groupAssistantBlocksForMinimal([])
@@ -157,11 +140,6 @@ describe('groupAssistantBlocksForStandard', () => {
     }
   })
 
-  test('promotes completed Wiki proposals without grouping other tools', () => {
-    const result = groupAssistantBlocksForStandard([tool('1'), wikiProposal('2')])
-
-    expect(result.map((segment) => segment.kind)).toEqual(['inline', 'wiki_proposal'])
-  })
 
   test('renders AskUserQuestion as a standalone standard segment', () => {
     const result = groupAssistantBlocksForStandard([tool('1'), askUserQuestion('2')])
