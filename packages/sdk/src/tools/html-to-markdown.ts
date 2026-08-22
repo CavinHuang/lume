@@ -43,6 +43,18 @@ function normalizeCell(cell: HTMLElement): void {
 }
 
 /**
+ * Upper bound for rowspan/colspan expansion: the values come from remote HTML,
+ * and an unbounded span would allocate a hostile number of grid cells (#303).
+ * 100 keeps the worst-case grid (100×100 per merged cell) trivial to render;
+ * real-world merged cells span single digits.
+ */
+const MAX_SPAN = 100;
+
+function clampSpan(attribute: string | null): number {
+  return Math.min(MAX_SPAN, Math.max(1, Number.parseInt(attribute ?? "1", 10) || 1));
+}
+
+/**
  * Normalize HTML tables before Turndown. GFM has no representation for merged
  * cells, so colspan/rowspan are expanded into a deterministic rectangular grid
  * and the merged value is kept in the first slot only.
@@ -65,8 +77,8 @@ export function normalizeTablesHtml(html: string, url = "https://lume.invalid/")
         (child): child is HTMLElement => child.tagName === "TD" || child.tagName === "TH",
       )) {
         while (currentRow[colIndex]) colIndex++;
-        const rowSpan = Math.max(1, Number.parseInt(cell.getAttribute("rowspan") ?? "1", 10) || 1);
-        const colSpan = Math.max(1, Number.parseInt(cell.getAttribute("colspan") ?? "1", 10) || 1);
+        const rowSpan = clampSpan(cell.getAttribute("rowspan"));
+        const colSpan = clampSpan(cell.getAttribute("colspan"));
         primary.add(`${rowIndex}:${colIndex}`);
         for (let r = 0; r < rowSpan; r++) {
           const targetRow = grid[rowIndex + r] ??= [];

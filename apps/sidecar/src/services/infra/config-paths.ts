@@ -363,7 +363,8 @@ export function getRoutineSchedulesDir(): string {
 }
 
 export function getRoutineSchedulePath(date: string): string {
-  return join(getRoutineSchedulesDir(), `${date}.json`);
+  // date 来自 renderer 入参（GET_BY_DATE），与其余段同规格校验，堵路径穿越（#407）
+  return join(getRoutineSchedulesDir(), `${assertSafeSegment(date, "routine date")}.json`);
 }
 
 export function getRoutineRunsPath(): string {

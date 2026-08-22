@@ -90,9 +90,32 @@ export function consumeBusEnvelope(
   const state = ctx.adapterStatesByThread.get(threadId) ?? createLifecycleAdapterState()
   ctx.adapterStatesByThread.set(threadId, state)
   const events = adaptLifecycleEvent(envelope, state)
+  const applyTerminalStreamingEffects = () => {
+    for (const event of events) {
+      if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
+        ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
+      } else if (event.type === 'run.cancelled') {
+        // 批次5:旧路该类型的 streaming idle + queue-interrupted(Resume 横幅)副作用
+        // 随跳过清单接管移到总线版
+        ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
+        ctx.onRunCancelled?.(threadId)
+      } else if (event.type === 'run.failed') {
+        ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'errored' }))
+        ctx.setErrorMessages((prev) => ({ ...prev, [threadId]: event.error.message }))
+      } else if (event.type === 'background.task.completed') {
+        // 批次4:对齐旧路 useGlobalAgentListeners background.task.completed 分支的映射
+        // (跳过清单接管该类型后,streaming 副作用由总线版承担)
+        ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: event.status === 'failed' ? 'errored' : 'idle' }))
+      }
+    }
+  }
   if (source === 'snapshot') {
-    // F4:注入但不动 streaming 态——历史回放不得把线程卡在流式/错误态
+    // F4:注入但不动 streaming 态——历史回放不得把线程置为流式/错误态。
+    // #416:终态副作用(清残留 streaming→idle/errored)仍要执行——切走线程的 push
+    // 丢失、run 在后台完成后切回,afterSeq 快照是终态唯一来源,不清则线程永久卡
+    // streaming(输入框停按钮悬空)。快照只禁止"置 streaming",不禁止"清 streaming"。
     for (const event of events) ctx.enqueueRuntimeEvent(event)
+    applyTerminalStreamingEffects()
     return
   }
   for (const event of events) ctx.enqueueRuntimeEvent(event)
@@ -103,23 +126,7 @@ export function consumeBusEnvelope(
       prev[threadId] === 'streaming' ? prev : { ...prev, [threadId]: 'streaming' }
     ))
   }
-  for (const event of events) {
-    if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
-      ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
-    } else if (event.type === 'run.cancelled') {
-      // 批次5:旧路该类型的 streaming idle + queue-interrupted(Resume 横幅)副作用
-      // 随跳过清单接管移到总线版
-      ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
-      ctx.onRunCancelled?.(threadId)
-    } else if (event.type === 'run.failed') {
-      ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'errored' }))
-      ctx.setErrorMessages((prev) => ({ ...prev, [threadId]: event.error.message }))
-    } else if (event.type === 'background.task.completed') {
-      // 批次4:对齐旧路 useGlobalAgentListeners background.task.completed 分支的映射
-      // (跳过清单接管该类型后,streaming 副作用由总线版承担)
-      ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: event.status === 'failed' ? 'errored' : 'idle' }))
-    }
-  }
+  applyTerminalStreamingEffects()
 }
 
 /** 有状态纯函数:按事件顺序调用,state 由调用方持有(每线程一份)。 */

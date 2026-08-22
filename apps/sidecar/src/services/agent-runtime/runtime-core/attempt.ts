@@ -129,7 +129,35 @@ export async function runRuntimeCoreAttempt(
 
 // ─── Agent Runtime runner (migrated from runner/run.ts) ───
 
-const activePiSessions = new Map<string, { abort: () => Promise<void> }>();
+interface ActiveRuntimeSessionEntry {
+  abort: () => Promise<void>;
+  /** 占位标记：run 尚在准备阶段（真实 abort 句柄未就绪）。 */
+  placeholder?: boolean;
+  /** 占位期间被 stop 过；升级为真实句柄时需补触发中止。 */
+  aborted?: boolean;
+}
+
+const activePiSessions = new Map<string, ActiveRuntimeSessionEntry>();
+
+/**
+ * run 开始准备即占位活动标记：MCP 冷连接等重准备阶段可达数十秒，
+ * 删除/移动/清空护栏依赖此标记全程可见（#396）。
+ */
+export function acquireRuntimeActivityPlaceholder(threadId: string): void {
+  const entry: ActiveRuntimeSessionEntry = {
+    abort: async () => {
+      entry.aborted = true;
+    },
+    placeholder: true,
+  };
+  activePiSessions.set(threadId, entry);
+}
+
+/** 回收占位标记（仅占位形态；真实句柄由 unregisterAbort 删除）。 */
+export function releaseRuntimeActivityPlaceholder(threadId: string): void {
+  const entry = activePiSessions.get(threadId);
+  if (entry?.placeholder) activePiSessions.delete(threadId);
+}
 
 export function resolveRuntimeModelAttemptParams(
   params: AgentRuntimeRunParams,
@@ -165,14 +193,28 @@ export async function runAgentRuntime(
   params: AgentRuntimeRunParams,
   emit: AgentRuntimeEmitter,
 ): Promise<AgentRuntimeRunResult> {
-  const result = await runRuntimeCoreAttempt(params, emit, {
-    registerAbort: (sessionId, abort) => {
-      activePiSessions.set(sessionId, { abort });
-    },
-    unregisterAbort: (sessionId) => {
-      activePiSessions.delete(sessionId);
-    },
-  });
+  const threadKey = params.input.threadId;
+  acquireRuntimeActivityPlaceholder(threadKey);
+  let result: AgentRuntimeRunResult;
+  try {
+    result = await runRuntimeCoreAttempt(params, emit, {
+      registerAbort: (sessionId, abort) => {
+        // 升级占位为真实句柄；准备阶段被 stop 过的 run 在此补触发中止。
+        const placeholder = activePiSessions.get(sessionId);
+        activePiSessions.set(sessionId, { abort });
+        if (placeholder?.placeholder && placeholder.aborted) {
+          void abort().catch(() => undefined);
+        }
+      },
+      unregisterAbort: (sessionId) => {
+        activePiSessions.delete(sessionId);
+      },
+    });
+  } finally {
+    // 准备阶段失败（如会话创建抛错）时占位仍残留，必须清理；
+    // 正常路径此条目已由 unregisterAbort 删除，此处仅回收占位形态。
+    releaseRuntimeActivityPlaceholder(threadKey);
+  }
   if (result.status === "errored") {
     emit.onError(
       `Agent Runtime 执行失败: ${result.errorMessage ?? "未知错误"}`,
@@ -224,7 +266,9 @@ export async function stopAgentRuntime(threadId: string): Promise<boolean> {
     return false;
   }
   await active.abort();
-  activePiSessions.delete(threadId);
+  // 占位标记保留在位：升级为真实句柄时依据 aborted 补触发中止；
+  // 提前删除会让护栏窗口重开且丢失中止信号（#396）。
+  if (!active.placeholder) activePiSessions.delete(threadId);
   return true;
 }
 
