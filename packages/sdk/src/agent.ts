@@ -1064,15 +1064,9 @@ export class Agent {
       yield queued
     }
 
-    // A host-injected provider is guaranteed by the entry check above; the
-    // provider's own apiType is the authoritative protocol (cfg.apiType/env
-    // sniffing no longer exists to contradict it).
-    yield {
-      type: 'auth_status',
-      isAuthenticating: false,
-      output: [`Using ${provider.apiType} credentials`],
-      session_id: this.sid,
-    }
+    // No auth_status event: the entry check above guarantees a host-injected
+    // provider, the SDK owns no credentials, and no consumer ever read this
+    // event — it was pure dead weight on every run.
 
     let persistedSessionEvent: SDKMessage | null = null
     let compactionBoundarySeen = false
@@ -1343,6 +1337,7 @@ export class Agent {
     return this.sid
   }
 
+  /** Resolved API type of the active (host-injected or fallback) provider config. */
   getApiType(): ApiType {
     return this.provider.apiType
   }
