@@ -122,7 +122,12 @@ export function createManagedWorktree(input: {
   const worktreePath = resolve(input.path || join(originalCwd, '..', `.worktree-${branch}`))
   assertWorktreePath(repoRoot, originalCwd, worktreePath)
 
-  const existing = [...activeWorktrees.values(), ...loadRegistry()].find((item) => item.branch === branch || item.path === worktreePath)
+  // 注册表全局共享，分支名去重必须约束在同一仓库内：跨仓库同名分支
+  // 撞上会把 worktree 静默复用到别家项目目录（#335）。路径命中天然同位，不受此限。
+  const thisRepo = canonicalizePath(repoRoot ?? dirname(originalCwd))
+  const existing = [...activeWorktrees.values(), ...loadRegistry()].find((item) =>
+    (item.branch === branch && canonicalizePath(item.repoRoot ?? dirname(item.originalCwd)) === thisRepo)
+    || item.path === worktreePath)
   if (existing && existsSync(existing.path)) {
     activeWorktrees.set(existing.id, existing)
     return existing

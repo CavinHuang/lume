@@ -10,7 +10,7 @@ Also available in **Go**: [open-agent-sdk-go](https://github.com/codeany-ai/open
 
 ## Get started
 
-The SDK does not ship built-in HTTP providers. The host injects an `LLMProvider` implementation (see `providers/types.ts` for the contract — `createMessage()` plus optional `countTokens()` / `createMessageStream()`):
+The SDK does not ship built-in HTTP providers. The host injects an `LLMProvider` implementation (see `providers/types.ts` for the contract — `createMessage()` plus optional `createMessageStream()`):
 
 ```typescript
 import { createAgent, type LLMProvider } from "@lume/agent-sdk";
@@ -226,6 +226,20 @@ This SDK is designed for long-lived services, serverless handlers, CI jobs, and 
 ### Secure deployment note
 
 The `sandbox` option currently provides application-level filesystem and network guards inside SDK tools. It is not equivalent to Claude Code's full sandbox runtime. In particular, it does not provide OS-level process isolation or the full managed-policy enforcement described in the official secure deployment docs.
+
+### Plugin trust model
+
+Plugins are **trusted code, not sandboxed content**. Understand the following before installing one:
+
+- **In-process execution.** A plugin's JS entry module is loaded with `import()` inside the host process (`packages/sdk/src/plugins/loader.ts`). The entry module runs with the full capabilities of the host — filesystem, network, environment variables, and Node APIs. There is no process isolation, no worker boundary, and no sandbox around it.
+- **Installation grants authority ahead of any gate.** The permission system (sensitive-capability approvals, permission hashes, tool allow/deny lists) governs *declared* capabilities such as command tools, MCP servers, and hooks. By the time any of those gates run, the entry module's code is already executing with host privileges.
+- **Installing a plugin is equivalent to granting it the host's full permissions.** Supply-chain risk for an installed plugin equals full compromise of the application embedding this SDK. Only install plugins from sources you trust.
+
+What the SDK does constrain:
+
+- **Load roots.** Plugins only load from the working directory or explicitly configured `pluginRoots`; manifest-declared entry modules are held to the same boundary.
+- **Re-review on change.** A plugin's permissions hash covers its declared permissions and capability configuration (command tools including env/metadata/args order, hooks/MCP/LSP config file contents). Changing any of them flips the plugin back to needs-review before it loads again.
+- **Command tools.** These run out-of-process with a minimal default environment, an optional OS-level process sandbox, a timeout, and a 1 MiB output cap — unlike entry modules, they are not given host privileges by default.
 
 ## API reference
 

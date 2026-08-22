@@ -66,4 +66,32 @@ describe('AskUserQuestionTool', () => {
     expect(payload.message).toContain('NOT real user answers')
     expect(payload.answers).toEqual({ '优先处理什么？': '可靠性' })
   })
+
+  test('an interrupted run cancels the question instead of reporting a decline (#330)', async () => {
+    setQuestionHandler(() => new Promise(() => { /* host handler never settles */ }))
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(), 20)
+
+    const result = await AskUserQuestionTool.call(
+      { questions },
+      { cwd: process.cwd(), abortSignal: controller.signal },
+    )
+
+    expect(result.is_error).toBe(true)
+    expect(String(result.content)).toContain('interrupted')
+    expect(String(result.content)).not.toContain('User declined')
+  })
+
+  test('a failing handler still reports a decline, not an interruption (#330)', async () => {
+    setQuestionHandler(async () => {
+      throw new Error('handler exploded')
+    })
+
+    const result = await AskUserQuestionTool.call({ questions }, { cwd: process.cwd() })
+
+    expect(result.is_error).toBe(true)
+    expect(String(result.content)).toContain('User declined')
+    expect(String(result.content)).toContain('handler exploded')
+    expect(String(result.content)).not.toContain('interrupted')
+  })
 })

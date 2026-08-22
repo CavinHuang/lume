@@ -420,18 +420,15 @@ export const AgentTool: ToolDefinition = {
       effectiveCwd = worktree.path
     }
 
-    const runManagedSubagent = async () => {
-      prepareWorktree()
-      const output = await runSubagent()
-      return output
-    }
-
     try {
       if (input.run_in_background) {
         const controller = new AbortController()
         activeAbortSignal = controller.signal
         const parentAbortHandler = () => controller.abort()
         context.abortSignal?.addEventListener('abort', parentAbortHandler, { once: true })
+        // Prepare the worktree before the record exists so the job metadata
+        // carries the worktree from birth (#377).
+        prepareWorktree()
         backgroundTask = createProcessJobRecord({
           subject: input.description,
           description: input.prompt,
@@ -451,7 +448,7 @@ export const AgentTool: ToolDefinition = {
           session_id: context.sessionId || '',
         })
 
-        void runManagedSubagent()
+        void runSubagent()
           .then(async (output) => {
             const status = subagentStatus === 'completed' ? 'completed' : subagentStatus === 'aborted' ? 'stopped' : 'failed'
             updateProcessJob(backgroundTask!.id, {
@@ -516,7 +513,8 @@ export const AgentTool: ToolDefinition = {
         }
       }
 
-      const output = await runManagedSubagent()
+      prepareWorktree()
+      const output = await runSubagent()
       const finalStatus = subagentStatus as 'completed' | 'errored' | 'aborted'
       const errored = finalStatus === 'errored'
       const aborted = finalStatus === 'aborted'

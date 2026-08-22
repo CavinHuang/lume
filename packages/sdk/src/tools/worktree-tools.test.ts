@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -72,5 +72,37 @@ describe("worktree lifecycle", () => {
     roots.push(sibling);
     const worktree = createManagedWorktree({ cwd: root, branch, path: sibling });
     expect(existsSync(worktree.path)).toBe(true);
+  });
+
+  test("does not reuse another repository's worktree on a branch-name collision (#335)", { timeout: 60_000 }, () => {
+    const initRepo = (parent: string): string => {
+      mkdirSync(parent, { recursive: true });
+      execFileSync("git", ["init", "-q"], { cwd: parent });
+      execFileSync("git", ["-c", "user.email=test@example.com", "-c", "user.name=Lume Test", "commit", "--allow-empty", "-qm", "initial"], { cwd: parent });
+      return parent;
+    };
+
+    // Two independent repos sharing one registry; identical branch name.
+    const nestA = mkdtempSync(join(tmpdir(), "lume-wt-repo-a-"));
+    const nestB = mkdtempSync(join(tmpdir(), "lume-wt-repo-b-"));
+    roots.push(nestA, nestB);
+    const repoA = initRepo(join(nestA, "repo"));
+    const repoB = initRepo(join(nestB, "repo"));
+
+    const first = createManagedWorktree({ cwd: repoA, branch: "shared-feature" });
+    roots.push(first.path);
+    const second = createManagedWorktree({ cwd: repoB, branch: "shared-feature" });
+    roots.push(second.path);
+
+    // The second create must materialize its own worktree under repo B's
+    // parent, not silently return repo A's entry.
+    expect(second.id).not.toBe(first.id);
+    expect(second.path).not.toBe(first.path);
+    expect(existsSync(second.path)).toBe(true);
+    expect(realpathSync(dirname(second.path))).toBe(realpathSync(nestB));
+
+    // Same-repo dedupe still reuses the existing entry.
+    const again = createManagedWorktree({ cwd: repoA, branch: "shared-feature" });
+    expect(again.id).toBe(first.id);
   });
 });

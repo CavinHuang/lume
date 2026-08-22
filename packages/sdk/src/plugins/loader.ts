@@ -73,6 +73,34 @@ function isCommandToolManifest(value: unknown): value is CommandToolManifest {
 }
 
 /**
+ * cmd.exe re-parses the whole tail after /c with its own grammar; MSVCRT-style
+ * argument quoting does not protect against %VAR% expansion or the & | < > ^
+ * operators. Node's .bat/.cmd EINVAL hardening exists for exactly this reason,
+ * so the model-controlled JSON payload is refused outright when it carries cmd
+ * metacharacters and would run through cmd.exe (fail-closed, #317).
+ * Manifest-declared command/args are reviewed content (hashed into the
+ * permissions hash), so they are not audited here. Exported for tests.
+ */
+export function findUnsafeCmdArgument(args: string[]): string | undefined {
+  return args.find((arg) => /%[^%]*%|[&|<>^\r\n]/.test(arg))
+}
+
+/** Returns the offending payload fragment when a command tool call must be blocked (#317). */
+function unsafeCmdPayload(command: string, payload: string): string | undefined {
+  if (process.platform !== 'win32' || /\.(exe|com)$/i.test(command)) return undefined
+  return findUnsafeCmdArgument([payload])
+}
+
+function blockedCmdPayloadResult(command: string, unsafe: string, toolUseId: string | undefined): ToolResult {
+  return {
+    type: 'tool_result',
+    tool_use_id: toolUseId ?? '',
+    content: `Plugin command "${command}" was blocked: it runs via cmd.exe on Windows and the payload ${JSON.stringify(unsafe)} contains cmd metacharacters (%VAR%, &, |, <, >, ^, newline). Use a .exe/.com executable or enable process isolation.`,
+    is_error: true,
+  }
+}
+
+/**
  * Windows can't execFile() npm's .cmd/.bat shims (EINVAL since Node hardened
  * CVE-2024-27980), and extensionless commands resolve to those shims on PATH.
  * Route everything but .exe/.com through cmd.exe while keeping execFile's
@@ -133,6 +161,10 @@ export function buildCommandToolDefinition(
       const timeout = Math.max(1, contribution.timeoutMs ?? 30_000)
       const cwd = contribution.cwd ? resolve(pluginRoot, contribution.cwd) : pluginRoot
       const args = [...(contribution.args ?? []), payload]
+      const unsafePayload = unsafeCmdPayload(contribution.command, payload)
+      if (unsafePayload !== undefined) {
+        return blockedCmdPayloadResult(contribution.command, unsafePayload, context.toolUseId)
+      }
       if (context.sandbox?.processIsolation?.enabled) {
         return executeSandboxedCommandTool({
           command: contribution.command,
@@ -269,6 +301,10 @@ function commandToolFromManifest(manifest: CommandToolManifest, pluginPath: stri
       const timeout = Math.max(1, manifest.timeoutMs ?? 30_000)
       const cwd = manifest.cwd ? resolve(pluginPath, manifest.cwd) : pluginPath
       const args = [...(manifest.args ?? []), payload]
+      const unsafePayload = unsafeCmdPayload(manifest.command, payload)
+      if (unsafePayload !== undefined) {
+        return blockedCmdPayloadResult(manifest.command, unsafePayload, context.toolUseId)
+      }
       return await new Promise((resolveResult) => {
         const child = execCommandTool(manifest.command, args, {
           cwd,

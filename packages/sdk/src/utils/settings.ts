@@ -1,6 +1,6 @@
 import { readFile } from 'fs/promises'
 import { homedir } from 'os'
-import { join } from 'path'
+import { isAbsolute, join, resolve } from 'path'
 import type { AgentOptions, SettingSource } from '../types.js'
 
 export interface LoadedSettingsSource {
@@ -9,12 +9,19 @@ export interface LoadedSettingsSource {
   settings: Partial<AgentOptions> & Record<string, unknown>
 }
 
+function resolveUserConfigDir(): string {
+  const configured = process.env.LUME_CONFIG_DIR?.trim()
+  if (!configured) return join(homedir(), '.lume')
+  return isAbsolute(configured) ? configured : resolve(process.cwd(), configured)
+}
+
 export function getSettingsFileForSource(cwd: string, source: SettingSource): string {
   switch (source) {
     // 'user' must not mirror 'project' (same cwd file read twice) — the
-    // user-level settings source would never load (#230).
+    // user-level settings source would never load (#230). It honors
+    // LUME_CONFIG_DIR like every other user-level path in the SDK (#291).
     case 'user':
-      return join(homedir(), '.lume', 'settings.json')
+      return join(resolveUserConfigDir(), 'settings.json')
     case 'project':
       return join(cwd, 'settings.json')
     case 'local':
@@ -34,8 +41,14 @@ export async function loadSettingsFromSources(
       const content = await readFile(filePath, 'utf-8')
       const parsed = JSON.parse(content) as Partial<AgentOptions> & Record<string, unknown>
       loaded.push({ source, path: filePath, settings: parsed })
-    } catch {
-      // Missing or invalid settings files are ignored by design.
+    } catch (error) {
+      // A missing file simply means no settings at that level and stays silent.
+      // Anything else (corrupt JSON, permissions) must not fail open quietly (#354).
+      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+        console.warn(
+          `[settings] Ignoring unreadable settings file ${filePath}: ${(error as Error)?.message ?? error}`,
+        )
+      }
     }
   }
 
