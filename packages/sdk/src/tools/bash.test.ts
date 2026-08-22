@@ -50,6 +50,22 @@ describe("BashTool shell invocation", () => {
     expect(BashTool.isReadOnly?.({ command: "sort -o out.txt input.txt" })).toBeFalse();
     expect(BashTool.isReadOnly?.({ command: "sort --output=out.txt input.txt" })).toBeFalse();
     expect(BashTool.isReadOnly?.({ command: "grep -o pattern file.txt" })).toBeTrue();
+    // git: only listing forms of branch/diff are reads (#300)
+    expect(BashTool.isReadOnly?.({ command: "git branch" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "git branch -a" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "git branch --list" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "git branch -D feature/x" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "git branch new-branch" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "git branch --move old new" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "git branch --set-upstream-to=origin/main" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "git diff HEAD~1" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "git diff --output=patch.diff" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "git diff --output patch.diff" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "git diff --ext-diff" })).toBeFalse();
+    // uniq: a second operand names the output file it writes (#300)
+    expect(BashTool.isReadOnly?.({ command: "uniq input.txt" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "uniq -c input.txt" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "uniq input.txt output.txt" })).toBeFalse();
   });
 
   // 与上一测试互补：native 解析不可用（无二进制）时，find/sed/sort 整体退回
@@ -60,6 +76,9 @@ describe("BashTool shell invocation", () => {
     expect(BashTool.isReadOnly?.({ command: "find . -name x -delete" })).toBeFalse();
     expect(BashTool.isReadOnly?.({ command: "sed -n '10p' file.txt" })).toBeFalse();
     expect(BashTool.isReadOnly?.({ command: "sort input.txt" })).toBeFalse();
+    // 回退无法解析参数，branch/diff 的变异形态必须 fail-closed（#300）
+    expect(BashTool.isReadOnly?.({ command: "git branch -D feature/x" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "git diff --output=patch.diff" })).toBeFalse();
   });
 
   test("uses PowerShell on Windows instead of requiring bash", () => {

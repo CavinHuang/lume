@@ -387,7 +387,6 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       ...(existing?.riskLevel ? { riskLevel: existing.riskLevel } : {}),
       ...(event.execution ? { execution: event.execution } : {}),
       ...(event.resultRef ? { resultRef: event.resultRef } : {}),
-      ...(event.linkAuthorization ? { linkAuthorization: event.linkAuthorization } : {}),
       ...(existing?.subagentRunId ? { subagentRunId: existing.subagentRunId } : {}),
       ...(existing?.toolName === 'Agent' || event.toolName === 'Agent'
         ? { subagentStatus: isError ? 'errored' as const : 'completed' as const }

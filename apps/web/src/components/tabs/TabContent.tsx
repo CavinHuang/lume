@@ -10,7 +10,6 @@ import { SkillsMarketView } from '@/components/skills/SkillsMarketView'
 import { WelcomeView } from '@/components/welcome/WelcomeView'
 import { BrowserTabView } from './BrowserTabView'
 import { TodoView } from '@/components/todo/TodoView'
-import { LinkView } from '@/components/link/LinkView'
 
 export function TabContent() {
   const tabs = useAtomValue(tabsAtom)
@@ -71,7 +70,6 @@ export function TabContent() {
   }
 
   if (activeTab.type === 'todo') return <TodoView workspaceId={activeTab.workspaceId} todoId={activeTab.todoId} initialTitle={activeTab.todoPrefill} />
-  if (activeTab.type === 'link') return <LinkView />
 
   if (activeTab.type === 'proactive') {
     return <ProactiveHub />

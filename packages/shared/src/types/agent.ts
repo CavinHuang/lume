@@ -816,14 +816,6 @@ export interface AgentTraceContext {
   linkedTraceId?: string
 }
 
-export interface AgentLinkConnectionRefPart {
-  type: 'link_connection_ref'
-  schemaVersion: 1
-  service: string
-  connectionName: string
-  displayText: string
-}
-
 /**
  * Agent 发送消息的输入参数
  */
@@ -837,7 +829,6 @@ export type AgentUserMessagePart =
       occurrenceId: string
       uri: string
     }
-  | AgentLinkConnectionRefPart
   | PlanningTodoRefPart
 
 export interface AgentCapabilityReferenceView {

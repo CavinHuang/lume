@@ -462,7 +462,7 @@ export function WelcomeView({
         threadId: meta.id,
         userMessage: text,
         clientSubmissionId,
-        ...(serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'link_connection_ref')
+        ...(serialized.messageParts.some((part) => part.type === 'capability_ref')
           ? { messageParts: serialized.messageParts }
           : {}),
         thinkingLevel,

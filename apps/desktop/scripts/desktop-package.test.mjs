@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { assertArchiveChecksum } from '../../../scripts/openconnector-resource-integrity.mjs'
 
 const DESKTOP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO_ROOT = resolve(DESKTOP_ROOT, '..', '..')
@@ -79,9 +78,6 @@ test('packaged desktop smoke uses an isolated profile and verifies the renderer'
   assert.match(source, /--user-data-dir=/)
   assert.match(source, /DevToolsActivePort/)
   assert.match(source, /document\.readyState/)
-  assert.match(source, /connection_vault_setup/)
-  assert.match(source, /link_runtime_enable/)
-  assert.match(source, /linkRuntime\?\.phase !== "online"/)
 })
 
 test('live Chrome import smoke reports only aggregate encrypted-database compatibility', () => {
@@ -283,39 +279,6 @@ test('desktop package limits the Agent Island helper to macOS resources', () => 
   assert.match(helper, /if !displayAvailable \{[\s\S]*"type": "ready", "protocol": 1/)
 })
 
-test('desktop package builds and verifies the pinned OpenConnector resource', () => {
-  const workflow = readFileSync(resolve(REPO_ROOT, '.github/workflows/release-desktop.yml'), 'utf8')
-  const preparationSteps = workflow.match(/- name: Prepare desktop bundle resources[\s\S]*?(?=\n\s+- name:)/g) ?? []
-  const inputVerifier = readFileSync(resolve(REPO_ROOT, 'scripts/verify-desktop-package-inputs.mjs'), 'utf8')
-  const artifactVerifier = readFileSync(resolve(REPO_ROOT, 'scripts/verify-desktop-package-artifacts.mjs'), 'utf8')
-
-  assert.deepEqual(pkg.build.extraResources.find((entry) => entry.to === 'openconnector'), {
-    from: 'resources/openconnector',
-    to: 'openconnector',
-  })
-  const manifest = JSON.parse(readFileSync(resolve(REPO_ROOT, 'scripts/openconnector-resource.json'), 'utf8'))
-  assert.equal(manifest.version, '1.3.5')
-  assert.equal(manifest.commit, '5719a69468c698c7cb8108e062ff64ecef8a2e65')
-  assert.match(manifest.archiveSha256, /^[a-f0-9]{64}$/)
-  const buildScript = readFileSync(resolve(REPO_ROOT, 'scripts/build-openconnector-resources.mjs'), 'utf8')
-  assert.match(buildScript, /runtime-.*archiveSha256/)
-  assert.match(buildScript, /"prune", "--omit=dev", "--workspaces=false"/)
-  assert.match(buildScript, /"migrations"/)
-  assertContainsBefore(pkg.scripts.package, 'build-openconnector-resources.mjs', 'build-openconnector-bundle.mjs')
-  assertContainsBefore(pkg.scripts.package, 'build-openconnector-bundle.mjs --verify', 'run-electron-builder.mjs')
-  assert.equal(preparationSteps.length, 2)
-  for (const step of preparationSteps) {
-    assertContainsBefore(step, 'build-openconnector-resources.mjs', 'build-openconnector-bundle.mjs')
-    assertContainsBefore(step, 'build-openconnector-bundle.mjs', 'build-openconnector-bundle.mjs --verify')
-  }
-  assert.match(inputVerifier, /resources", "openconnector", "openconnector\.mjs"/)
-  assert.match(artifactVerifier, /verifyOpenConnectorResources/)
-})
-
-test('OpenConnector resource verification fails closed on a checksum mismatch', () => {
-  assert.throws(() => assertArchiveChecksum(fileURLToPath(import.meta.url), '0'.repeat(64)), /checksum mismatch/)
-})
-
 test('desktop-host resource build ships the cursor reference license notice', () => {
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
 
@@ -484,11 +447,4 @@ test('desktop dev builds desktop-host resources before launching Electron', () =
   assert.match(script, /build-desktop-host-resources\.mjs/)
   assertContainsBefore(script, 'spawnSync("node", [buildDesktopHostResourcesScript]', 'spawn(electronBin')
   assert.match(script, /LUME_COMPUTER_USE_BUNDLE_VARIANT:\s*["']dev["']/)
-})
-
-test('desktop dev builds pinned OpenConnector resources before launching Electron', () => {
-  const script = readFileSync(resolve(DESKTOP_ROOT, 'scripts/dev.ts'), 'utf8')
-
-  assert.match(script, /build-openconnector-resources\.mjs/)
-  assertContainsBefore(script, 'spawnSync("node", [buildOpenConnectorResourcesScript]', 'spawn(electronBin')
 })

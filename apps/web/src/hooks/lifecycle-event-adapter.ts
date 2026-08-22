@@ -1,6 +1,5 @@
 import type {
   FileResultRef,
-  LinkAuthorizationSignal,
   MemoryContextUsedRuntimeEvent,
   SdkLifecycleDetail,
   LumeRuntimeEvent,
@@ -21,10 +20,9 @@ import type { AgentEventBusSource } from './useAgentEventBus'
  * - tool.start → tool.started(inputPreview = detail.input;riskLevel 省略——web 侧无
  *   inferToolMetadata,投影对缺省容忍,徽章不渲染)
  * - tool.end → isError ? tool.failed(error.message = output) : tool.completed
- *   (resultPreview = output);execution/resultRef 批次2.1 补齐、linkAuthorization
- *   Fix round 1 补齐——均从 detail.meta(engine _meta)做 web 侧最小归一(校验对齐
- *   旧路 normalizeToolExecutionMetadata/sanitizeLinkAuthorization;session fileRef
- *   富化为 sidecar 专属,减配留档)
+ *   (resultPreview = output);execution/resultRef 批次2.1 补齐——从 detail.meta
+ *   (engine _meta)做 web 侧最小归一(校验对齐旧路 normalizeToolExecutionMetadata;
+ *   session fileRef 富化为 sidecar 专属,减配留档)
  * - run.start → run.started(批次5 翻转此前"不产"分支;workspaceId/workspaceSlug/model
  *   信封不携带,RunStartedRuntimeEvent 全可选,减配留档)
  * - run.end → max_turns → run.turn_limited;aborted → run.cancelled(批次5 翻转:
@@ -209,9 +207,6 @@ export function adaptLifecycleEvent(
     // 省略;session fileRef 富化(sidecar sessionArtifactFileRef)是 sidecar 专属,减配留档。
     const execution = normalizeToolExecutionMetadata(detail.meta?.execution)
     const resultRef = execution?.resultRef
-    // Fix round 1:linkAuthorization 从 detail.meta.link 补映射(sanitizeLinkAuthorization
-    // 同款校验;删旧路后无其他来源,Link 授权横幅依赖此链)。
-    const linkAuthorization = sanitizeLinkAuthorization(detail.meta?.link)
     if (detail.isError) {
       return [{
         id: `lifecycle:${envelope.seq}:tool.failed`,
@@ -222,7 +217,6 @@ export function adaptLifecycleEvent(
         error: { code: 'tool_error', message: detail.output },
         ...(execution ? { execution } : {}),
         ...(resultRef ? { resultRef } : {}),
-        ...(linkAuthorization ? { linkAuthorization } : {}),
       }]
     }
     return [{
@@ -234,7 +228,6 @@ export function adaptLifecycleEvent(
       resultPreview: detail.output,
       ...(execution ? { execution } : {}),
       ...(resultRef ? { resultRef } : {}),
-      ...(linkAuthorization ? { linkAuthorization } : {}),
     }]
   }
 
@@ -554,21 +547,6 @@ function normalizeFileResultRef(value: unknown): FileResultRef | undefined {
 
 function isSemanticOutcome(value: unknown): value is 'no_matches' | 'condition_false' | 'files_differ' {
   return typeof value === 'string' && TOOL_SEMANTIC_OUTCOMES.has(value)
-}
-
-/** 与旧路 run-observer sanitizeLinkAuthorization 同款(kind+四必填 string 校验后透传)。 */
-function sanitizeLinkAuthorization(value: unknown): LinkAuthorizationSignal | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
-  const input = value as Record<string, unknown>
-  if (input.kind !== 'link_authorization_required' || typeof input.service !== 'string' || typeof input.actionId !== 'string' || typeof input.threadId !== 'string' || typeof input.errorCode !== 'string') return undefined
-  return {
-    kind: 'link_authorization_required',
-    service: input.service,
-    actionId: input.actionId,
-    threadId: input.threadId,
-    errorCode: input.errorCode,
-    ...(typeof input.connectionName === 'string' ? { connectionName: input.connectionName } : {}),
-  }
 }
 
 /** 与旧路 projectAssistantMessageFinalRuntimeEvent 对齐:只留非空 text/thinking 块。 */

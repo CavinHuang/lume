@@ -52,7 +52,6 @@ export interface LumeToolResultItem {
   subagentRunId?: string;
   isError?: boolean;
   execution?: Record<string, unknown>;
-  linkAuthorization?: import("@lume/shared").LinkAuthorizationSignal;
   traceSpanId?: string;
   createdAt: string;
 }
