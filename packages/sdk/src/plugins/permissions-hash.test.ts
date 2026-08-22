@@ -124,4 +124,52 @@ describe("computePermissionsHash", () => {
     );
     expect(before).not.toBe(after);
   });
+
+  test("changes when a command tool's env value changes (#315)", () => {
+    const staging = computePermissionsHash(basePlugin({
+      capabilities: {
+        skills: [],
+        commandTools: [{ name: "echo", command: "node", env: { TARGET: "staging" } }],
+      },
+    }));
+    const prod = computePermissionsHash(basePlugin({
+      capabilities: {
+        skills: [],
+        commandTools: [{ name: "echo", command: "node", env: { TARGET: "prod.example.internal" } }],
+      },
+    }));
+    expect(staging).not.toBe(prod);
+  });
+
+  test("changes when a command tool's metadata changes (#315)", () => {
+    const readOnly = computePermissionsHash(basePlugin({
+      capabilities: {
+        skills: [],
+        commandTools: [{ name: "echo", command: "node", metadata: { isReadOnly: true } }],
+      },
+    }));
+    const mutable = computePermissionsHash(basePlugin({
+      capabilities: {
+        skills: [],
+        commandTools: [{ name: "echo", command: "node", metadata: { isReadOnly: false } }],
+      },
+    }));
+    expect(readOnly).not.toBe(mutable);
+  });
+
+  test("is order-independent for env keys of a command tool (#315)", () => {
+    const ab = basePlugin({
+      capabilities: {
+        skills: [],
+        commandTools: [{ name: "echo", command: "node", env: { A: "1", B: "2" } }],
+      },
+    });
+    const ba = basePlugin({
+      capabilities: {
+        skills: [],
+        commandTools: [{ name: "echo", command: "node", env: { B: "2", A: "1" } }],
+      },
+    });
+    expect(computePermissionsHash(ab)).toBe(computePermissionsHash(ba));
+  });
 });

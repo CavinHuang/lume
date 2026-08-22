@@ -17,10 +17,10 @@ import type { NormalizedPlugin } from "./normalized.js";
  * enablement state. A pure version bump that keeps permissions/capabilities
  * unchanged may reuse a previous approval.
  *
- * Phase 2 scope: hooks/mcp contribute their config PATH only (resolved file
- * contents arrive with PluginCapabilityResolver in Phase 3, at which point the
- * summary input expands). Command tools are already fully resolved in
- * NormalizedPlugin, so they contribute their full execution config.
+ * Command tools are fully resolved in NormalizedPlugin, so they contribute
+ * their full execution config including env values and metadata (#315):
+ * flipping metadata.isReadOnly changes permission classification and swapping
+ * an env value rewrites what the approved command talks to.
  */
 export function computePermissionsHash(plugin: NormalizedPlugin): string {
   return createHash("sha256").update(stableStringify(canonicalSummary(plugin))).digest("hex");
@@ -49,7 +49,11 @@ function canonicalSummary(plugin: NormalizedPlugin): PermissionSummary {
       args: tool.args ?? null,
       cwd: tool.cwd ?? null,
       timeoutMs: tool.timeoutMs ?? null,
-      envKeys: tool.env ? Object.keys(tool.env).sort() : [],
+      // Full key/value pairs and metadata: flipping metadata.isReadOnly changes
+      // permission classification and swapping an env value rewrites what the
+      // approved command talks to — both must force a re-review (#315).
+      env: tool.env ?? null,
+      metadata: tool.metadata ?? null,
       inputSchema: tool.inputSchema ?? null,
     }));
 
