@@ -22,6 +22,18 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * Map/lock 键归一：win32/darwin 文件系统大小写不敏感，统一小写折叠，
+ * 避免异写法路径绕过互斥或缓存命中（#334）。口径与 normalizePath 一致。
+ */
+export function toPathKey(path: string): string {
+  const normalized = normalize(resolve(path)).replace(/\\/g, '/')
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    return normalized.toLowerCase()
+  }
+  return normalized
+}
+
 export function isPathWithinRoot(path: string, root: string): boolean {
   const normalizedPath = normalizePath(path)
   const normalizedRoot = normalizePath(root)
