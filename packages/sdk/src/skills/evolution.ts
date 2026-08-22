@@ -1,6 +1,7 @@
 import { appendFile, copyFile, mkdir, readdir, readFile, rename, unlink, writeFile } from 'fs/promises'
 import { randomUUID } from 'crypto'
 import { basename, dirname, join } from 'path'
+import { withFileMutationLock } from '../utils/file-mutation-lock.js'
 
 export interface SkillUsageInput {
   skillName: string
@@ -118,72 +119,85 @@ export async function applySkillImprovement(input: {
     return { success: false, error: '没有改进建议' }
   }
 
-  let currentContent: string
-  try {
-    currentContent = await readFile(input.skillPath, 'utf-8')
-  } catch {
-    return { success: false, error: `无法读取技能文件：${input.skillPath}` }
-  }
+  // Serialize the whole read→backup→model-call→rename window against other
+  // in-process mutations; external writers are caught by the snapshot
+  // re-check below.
+  return withFileMutationLock(input.skillPath, async () => {
+    let currentContent: string
+    try {
+      currentContent = await readFile(input.skillPath, 'utf-8')
+    } catch {
+      return { success: false, error: `无法读取技能文件：${input.skillPath}` }
+    }
 
-  if (!currentContent.trim()) {
-    return { success: false, error: '技能文件内容为空' }
-  }
+    if (!currentContent.trim()) {
+      return { success: false, error: '技能文件内容为空' }
+    }
 
-  const versionsDir = await ensureVersionsDir(input.skillPath)
-  const versionPath = await createVersionPath(input.skillPath)
-  await copyFile(input.skillPath, versionPath)
+    const versionsDir = await ensureVersionsDir(input.skillPath)
+    const versionPath = await createVersionPath(input.skillPath)
+    await copyFile(input.skillPath, versionPath)
 
-  const updateList = input.updates
-    .map((update) => `- ${update.section}: ${update.change}`)
-    .join('\n')
+    const updateList = input.updates
+      .map((update) => `- ${update.section}: ${update.change}`)
+      .join('\n')
 
-  let updatedContent: string | null
-  try {
-    const response = await input.callModel({
-      systemPrompt: APPLY_SYSTEM_PROMPT,
-      userPrompt: [
-        'Current content:',
+    let updatedContent: string | null
+    try {
+      const response = await input.callModel({
+        systemPrompt: APPLY_SYSTEM_PROMPT,
+        userPrompt: [
+          'Current content:',
+          currentContent,
+          '',
+          'Updates:',
+          updateList,
+        ].join('\n'),
         currentContent,
-        '',
-        'Updates:',
         updateList,
-      ].join('\n'),
-      currentContent,
-      updateList,
-    })
-    updatedContent = extractTaggedContent(response, 'updated_file')
-  } catch (error) {
-    await unlink(versionPath).catch(() => undefined)
-    return { success: false, error: `模型调用失败：${errorMessage(error)}` }
-  }
+      })
+      updatedContent = extractTaggedContent(response, 'updated_file')
+    } catch (error) {
+      await unlink(versionPath).catch(() => undefined)
+      return { success: false, error: `模型调用失败：${errorMessage(error)}` }
+    }
 
-  if (!updatedContent) {
-    await unlink(versionPath).catch(() => undefined)
-    return { success: false, error: '模型未返回 <updated_file> 标签，中止写入' }
-  }
+    if (!updatedContent) {
+      await unlink(versionPath).catch(() => undefined)
+      return { success: false, error: '模型未返回 <updated_file> 标签，中止写入' }
+    }
 
-  const ratio = currentContent.length > 100
-    ? updatedContent.length / currentContent.length
-    : 1
-  const warning = ratio < 0.5
-    ? `内容缩减幅度较大（${Math.round(100 * (1 - ratio))}%），已自动备份旧版本`
-    : undefined
-  const tempPath = `${input.skillPath}.${randomUUID().slice(0, 8)}.tmp`
+    // The model call is a long window; abort rather than silently overwrite
+    // when the file changed on disk since our snapshot.
+    const latestContent = await readFile(input.skillPath, 'utf-8').catch(() => null)
+    if (latestContent !== currentContent) {
+      await unlink(versionPath).catch(() => undefined)
+      return { success: false, error: '技能文件在改进期间被外部修改，已中止写入' }
+    }
 
-  try {
-    await writeFile(tempPath, updatedContent, 'utf-8')
-    await rename(tempPath, input.skillPath)
-  } catch (error) {
-    await unlink(tempPath).catch(() => undefined)
-    return { success: false, error: `写入文件失败：${errorMessage(error)}` }
-  }
+    const ratio = currentContent.length > 100
+      ? updatedContent.length / currentContent.length
+      : 1
+    const warning = ratio < 0.5
+      ? `内容缩减幅度较大（${Math.round(100 * (1 - ratio))}%），已自动备份旧版本`
+      : undefined
+    const tempPath = `${input.skillPath}.${randomUUID().slice(0, 8)}.tmp`
 
-  await pruneVersions(versionsDir).catch(() => undefined)
-  return {
-    success: true,
-    versionPath,
-    ...(warning ? { warning } : {}),
-  }
+    try {
+      await writeFile(tempPath, updatedContent, 'utf-8')
+      await rename(tempPath, input.skillPath)
+    } catch (error) {
+      await unlink(tempPath).catch(() => undefined)
+      return { success: false, error: `写入文件失败：${errorMessage(error)}` }
+    }
+
+    await pruneVersions(versionsDir).catch(() => undefined)
+    return {
+      success: true,
+      versionPath,
+      ...(warning ? { warning } : {}),
+    }
+  })
 }
 
 export async function listSkillVersions(skillPath: string): Promise<SkillVersionInfo[]> {
@@ -205,7 +219,13 @@ export async function restoreSkillVersion(input: {
   }
 
   const currentBackup = await createVersionPath(input.skillPath)
-  await copyFile(input.skillPath, currentBackup).catch(() => undefined)
+  // Backing up the current content is the only rollback for the restore below:
+  // if it fails, abort instead of overwriting the file unrecoverably.
+  try {
+    await copyFile(input.skillPath, currentBackup)
+  } catch (error) {
+    return { success: false, error: `备份当前内容失败，已中止恢复：${errorMessage(error)}` }
+  }
 
   const tempPath = `${input.skillPath}.${randomUUID().slice(0, 8)}.tmp`
   try {
