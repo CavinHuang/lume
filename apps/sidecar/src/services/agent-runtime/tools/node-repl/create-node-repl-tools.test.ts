@@ -223,6 +223,44 @@ describe("createNodeReplTools", () => {
     }
   });
 
+  test("user takeover errors never trigger the automatic handoff resume retry", async () => {
+    const dispatched: any[] = [];
+    setActiveBrowserBroker({
+      async dispatch(request: any) {
+        dispatched.push(request);
+        throw Object.assign(new Error("user_takeover_required"), { code: "user_takeover_required" });
+      }
+    } as any);
+    const tools = createNodeReplTools({
+      sessionId: "thread-1",
+      cwd: "D:/repo",
+      registry: {
+        async exec(_threadId, _input, options) {
+          await options?.browserRequest?.(
+            { method: "tab_title", params: { tabId: "tab-1" } },
+            new AbortController().signal,
+          );
+          return { content: [{ type: "text", text: "unreachable" }] };
+        },
+        async addModuleDir() { return true; },
+        async reset() {},
+        async shutdown() {},
+        debugSnapshot() { return null; },
+      },
+    });
+
+    try {
+      await expect(tools.find((tool) => tool.name === "js")!.call(
+        { code: "await tab.title()" },
+        { ...makeToolContext(), runId: "run-3" },
+      )).rejects.toThrow();
+      // 接管暂停只能由用户显式恢复，桥接层不得借自动重试复活被接管的页面
+      expect(dispatched.map((request) => request.method)).toEqual(["tab_title"]);
+    } finally {
+      setActiveBrowserBroker(null);
+    }
+  });
+
   test("MCP wrapper exposes node_repl tools with MCP names and metadata", async () => {
     const tools = createNodeReplMcpTools({
       sessionId: "thread-1",
