@@ -80,9 +80,10 @@ type QueryInput = string | ContentBlockParam[] | SDKUserMessage
 function toSessionMessage(
   role: SessionMessage['role'],
   content: unknown,
+  uuid?: string,
 ): SessionMessage {
   return {
-    uuid: crypto.randomUUID(),
+    uuid: uuid ?? crypto.randomUUID(),
     role,
     timestamp: new Date().toISOString(),
     content,
@@ -240,10 +241,44 @@ function normalizeSessionMessageContent(
   return message.content as NormalizedMessageParam['content']
 }
 
-function sessionMessagesFromHistory(
+export function sessionMessagesFromHistory(
   messages: NormalizedMessageParam[],
+  previous?: SessionMessage[],
 ): SessionMessage[] {
-  return messages.map((message) => toSessionMessage(message.role, message.content))
+  // Realign with the previous list so rebuilt messages keep their original
+  // uuids — fileCheckpointState is keyed by user-message uuid, and fresh
+  // uuids here would orphan every checkpoint (#363). Alignment pairs each
+  // role from the END: compaction prepends a synthetic summary user message,
+  // so only the trailing messages correspond 1:1 with what came before.
+  const previousUuidsByRole = new Map<string, string[]>()
+  for (const message of previous ?? []) {
+    const uuids = previousUuidsByRole.get(message.role) ?? []
+    uuids.push(message.uuid)
+    previousUuidsByRole.set(message.role, uuids)
+  }
+  const indicesByRole = new Map<string, number[]>()
+  messages.forEach((message, index) => {
+    const indices = indicesByRole.get(message.role) ?? []
+    indices.push(index)
+    indicesByRole.set(message.role, indices)
+  })
+  const uuidByIndex = new Map<number, string>()
+  for (const [role, indices] of indicesByRole) {
+    const uuids = previousUuidsByRole.get(role) ?? []
+    const paired = Math.min(indices.length, uuids.length)
+    for (let offset = 0; offset < paired; offset++) {
+      uuidByIndex.set(
+        indices[indices.length - paired + offset]!,
+        uuids[uuids.length - paired + offset]!,
+      )
+    }
+  }
+  return messages.map((message, index) =>
+    toSessionMessage(
+      message.role as SessionMessage['role'],
+      message.content,
+      uuidByIndex.get(index),
+    ))
 }
 
 export class Agent {
@@ -265,6 +300,8 @@ export class Agent {
   private sid: string
   private abortCtrl: AbortController | null = null
   private currentEngine: QueryEngine | null = null
+  /** Synchronous in-flight marker: set at run entry, cleared when the run ends. */
+  private runLocked = false
   private hookRegistry: HookRegistry
   private loadedSettings: LoadedSettingsSource[] = []
   private loadedPlugins: LoadedPlugin[] = []
@@ -871,9 +908,24 @@ export class Agent {
     prompt: QueryInput,
     overrides?: Partial<AgentOptions>,
   ): AsyncGenerator<SDKMessage, void> {
+    // A synchronous flag closes the TOCTOU window: the engine assignment sits
+    // several awaits deep, so two lazily-started queries could both pass a
+    // pure currentEngine check and fork the same session into two engines (#357).
+    if (this.runLocked || this.currentEngine) throw new Error('agent is running')
+    this.runLocked = true
+    try {
+      yield* this.runSinglePromptLocked(prompt, overrides)
+    } finally {
+      this.runLocked = false
+    }
+  }
+
+  private async *runSinglePromptLocked(
+    prompt: QueryInput,
+    overrides?: Partial<AgentOptions>,
+  ): AsyncGenerator<SDKMessage, void> {
     // currentEngine (not abortCtrl, which is never cleared after a run) is
     // the accurate in-flight marker: set before the loop, cleared in finally.
-    if (this.currentEngine) throw new Error('agent is running')
     await this.setupDone
 
     // Fail fast before any listener is attached, the user message is
@@ -1117,10 +1169,10 @@ export class Agent {
       this.lastContextUsage = engine.getContextUsage()
       this.currentEngine = null
       if (compactionBoundarySeen) {
-        this.sessionMessages = sessionMessagesFromHistory(this.history)
+        this.sessionMessages = sessionMessagesFromHistory(this.history, this.sessionMessages)
       }
       if (opts.toolContinuations?.length) {
-        this.sessionMessages = sessionMessagesFromHistory(this.history)
+        this.sessionMessages = sessionMessagesFromHistory(this.history, this.sessionMessages)
       }
       persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
     }
