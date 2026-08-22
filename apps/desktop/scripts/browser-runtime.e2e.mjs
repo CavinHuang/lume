@@ -117,6 +117,7 @@ const server = createServer((request, response) => {
     <label>Name <input id="name" aria-label="Name"></label>
     <button id="submit" onclick="document.querySelector('#result').textContent=document.querySelector('#name').value">Apply</button>
     <button id="annotation-target" onclick="document.querySelector('#annotation-result').textContent='clicked'">Annotation target</button>
+    <div id="custom-card" style="cursor:pointer;margin-top:200px" onclick="document.querySelector('#annotation-result').textContent='custom-card'">Custom card</div>
     <button id="open-popup" onclick="window.open('/popup', 'oauth-popup', 'width=520,height=640')">Open popup</button>
     <output id="annotation-result"></output>
     <a id="download" href="/download" download="fixture.txt">Download</a>
@@ -323,6 +324,69 @@ app.whenReady().then(async () => {
     await call('click', { tabId: 'fixture-tab', locator: locator('#submit') })
     const pageResult = await view.executeJavaScript("document.querySelector('#result').textContent")
     check(pageResult === 'Lume Agent', 'locator fill/click did not update the page')
+    setStage('semantic-ref')
+    const semanticSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    const applyRef = Object.entries(semanticSnapshot.refs).find(([, value]) => value.role === 'button' && value.name === 'Apply')?.[0]
+    check(typeof applyRef === 'string', 'semantic snapshot did not expose the Apply button ref')
+    await view.executeJavaScript("document.querySelector('#result').textContent = ''")
+    await call('click', {
+      tabId: 'fixture-tab',
+      locator: locator('#submit'),
+      semanticRef: applyRef,
+      semanticSnapshotId: semanticSnapshot.snapshot_id,
+    })
+    check(await view.executeJavaScript("document.querySelector('#result').textContent") === 'Lume Agent', 'semantic ref did not resolve the exact backend node')
+    const semanticNameRef = Object.entries(semanticSnapshot.refs).find(([, value]) => value.role === 'textbox' && value.name === 'Name')?.[0]
+    check(typeof semanticNameRef === 'string', 'semantic snapshot did not expose the Name textbox ref')
+    await call('fill', {
+      tabId: 'fixture-tab',
+      locator: locator('#name'),
+      semanticRef: semanticNameRef,
+      semanticSnapshotId: semanticSnapshot.snapshot_id,
+      text: 'Semantic Ref Fill',
+    })
+    check(await view.executeJavaScript("document.querySelector('#name').value") === 'Semantic Ref Fill', 'semantic ref fill did not resolve the textbox backend node')
+    await view.executeJavaScript("document.querySelector('#name').value = 'Lume Agent'")
+    const currentSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    const currentApplyRef = Object.entries(currentSnapshot.refs).find(([, value]) => value.role === 'button' && value.name === 'Apply')?.[0]
+    const scopedSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', scope_ref: '@' + currentApplyRef, snapshot_id: currentSnapshot.snapshot_id })
+    check(scopedSnapshot.tree.includes('Apply') && !scopedSnapshot.tree.includes('Name'), 'semantic snapshot scope did not isolate the requested ref subtree')
+    await checkRejects(() => call('click', {
+      tabId: 'fixture-tab',
+      locator: locator('#submit'),
+      semanticRef: applyRef,
+      semanticSnapshotId: semanticSnapshot.snapshot_id,
+    }), 'stale_target', 'a ref from an older snapshot remained actionable')
+    const earlyFrameLocator = selector => ({ version: 1, steps: [{ kind: 'frame', selector: '#cross-origin-frame' }, { kind: 'css', selector }] })
+    await call('locator:waitFor', { tabId: 'fixture-tab', locator: earlyFrameLocator('#frame-name'), state: 'visible', timeoutMs: 3000 })
+    await call('fill', { tabId: 'fixture-tab', locator: earlyFrameLocator('#frame-name'), text: 'Semantic Frame Agent' })
+    const frameSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    const frameApplyRef = Object.entries(frameSnapshot.refs).find(([, value]) => value.role === 'button' && value.name === 'Frame apply')?.[0]
+    check(typeof frameApplyRef === 'string', 'semantic snapshot did not include the cross-origin frame button')
+    await call('click', {
+      tabId: 'fixture-tab',
+      locator: earlyFrameLocator('#frame-submit'),
+      semanticRef: frameApplyRef,
+      semanticSnapshotId: frameSnapshot.snapshot_id,
+    })
+    check(await call('locator:innerText', { tabId: 'fixture-tab', locator: earlyFrameLocator('#frame-result') }) === 'Semantic Frame Agent', 'cross-origin semantic ref did not resolve its backend node')
+    const supplementedSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    const customCardRef = Object.entries(supplementedSnapshot.refs).find(([, value]) => value.role === 'clickable' && value.name === 'Custom card')?.[0]
+    check(typeof customCardRef === 'string', 'semantic snapshot did not supplement a cursor-pointer element')
+    const annotatedScreenshot = await call('screenshot', {
+      tabId: 'fixture-tab',
+      annotated: true,
+      semanticSnapshotId: supplementedSnapshot.snapshot_id,
+    })
+    check(typeof annotatedScreenshot.data === 'string' && annotatedScreenshot.data.length > 100, 'annotated screenshot was empty')
+    check(annotatedScreenshot.annotated_refs.includes('@' + customCardRef), 'annotated screenshot did not reuse the semantic ref')
+    await call('click', {
+      tabId: 'fixture-tab',
+      locator: locator('#custom-card'),
+      semanticRef: customCardRef,
+      semanticSnapshotId: supplementedSnapshot.snapshot_id,
+    })
+    check(await view.executeJavaScript("document.querySelector('#annotation-result').textContent") === 'custom-card', 'supplemented cursor-pointer ref was not actionable')
     const webMcpTools = await call('webmcp:list', { tabId: 'fixture-tab' })
     check(webMcpTools.tools.length === 1 && webMcpTools.tools[0].name === 'set_result' && webMcpTools.tools[0].input_schema.type === 'object', 'WebMCP tools were not normalized')
     const webMcpResult = await call('webmcp:invoke', { tabId: 'fixture-tab', toolName: 'set_result', input: { value: 'WebMCP Agent' } })

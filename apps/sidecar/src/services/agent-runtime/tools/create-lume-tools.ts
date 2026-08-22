@@ -34,6 +34,7 @@ import { createPlanningTodoTools } from "./planning/create-planning-todo-tools";
 import { createSuggestionTools } from "./suggest/create-suggestion-tools";
 import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
 import { createLinkTools } from "./link/create-link-tools";
+import { createBrowserMcpTools } from "./browser/create-browser-tools";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
@@ -231,6 +232,9 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const computerUseTools = computerUseSurface === "mcp"
     ? allComputerUseTools
     : [];
+  const browserTools = input.threadType === "subagent"
+    ? []
+    : createBrowserMcpTools({ threadId: input.threadId });
   const preferredLinkConnections = resolvePreferredLinkConnections(input.messageMetadata?.linkConnectionReferences);
   const linkTools = createLinkTools({
     threadId: input.threadId,
@@ -254,6 +258,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...suggestionTools,
     ...imageGenTools,
     ...nodeReplTools,
+    ...browserTools,
     ...ordinaryWikiTools,
     ...planningTodoTools,
     ...computerUseTools,

@@ -42,6 +42,8 @@ import { BrowserCredentialVault } from "./browser-credentials"
 import { BrowserWorkspaceStore } from "./browser-workspace-store"
 import { BrowserReferenceGrantStore } from "./browser-reference-grants"
 import { BrowserAnnotationManager } from "./browser-annotation-manager"
+import { buildBrowserSemanticTree, type BrowserSemanticLine, type BrowserSemanticRef } from "./browser-semantic-snapshot"
+import { normalizeBrowserAgentScriptResult, prepareBrowserAgentScript, type BrowserAgentScriptResult } from "./browser-agent-script"
 
 type BrowserEvent = { method: string; params: Record<string, unknown> }
 type BrowserRuntimeOptions = {
@@ -159,6 +161,36 @@ type BrowserPageAssetInventory = {
   assets: BrowserPageAsset[]
 }
 
+type BrowserSemanticRefSession = {
+  byIdentity: Map<string, string>
+  entries: Map<string, BrowserSemanticRef & { generation: number; snapshotId: string; tabId: string }>
+  mainFrameId?: string
+  nextRef: number
+  snapshot?: BrowserSemanticSnapshotCursor
+}
+
+type BrowserSemanticSnapshotCursor = {
+  generation: number
+  limit: number
+  lines: BrowserSemanticLine[]
+  offset: number
+  refs: BrowserSemanticRef[]
+  sessionId: string
+  snapshotId: string
+  tabId: string
+  title: string
+  url: string
+}
+
+type BrowserCdpFrameTree = {
+  childFrames?: BrowserCdpFrameTree[]
+  frame?: { id?: string }
+}
+
+type BrowserCdpDebugger = {
+  sendCommand(method: string, params?: Record<string, unknown>): Promise<unknown>
+}
+
 type BrowserAuthSession = {
   window: BrowserWindow
   tabId: string
@@ -175,10 +207,10 @@ const MUTATING_METHODS = new Set([
   ...browserMutatingRuntimeMethods(),
   "navigate", "back", "forward", "reload", "click", "doubleClick", "hover", "fill", "type", "typeActive",
   "press", "pressActive", "select", "check", "uncheck", "scroll", "drag", "contactFill", "dialog:handle",
-  "upload", "pageAssets:bundle", "webmcp:invoke",
+  "upload", "pageAssets:bundle", "webmcp:invoke", "agentScript:evaluate",
 ])
 const GUEST_OPTIONAL_METHODS = new Set([
-  "url", "title", "site-info", "dialog:get", "wait:download", "download:path",
+  "url", "title", "site-info", "dialog:get", "secrets:list", "wait:download", "download:path",
   "screenshot:attachment:delete", "clipboard:read", "clipboard:readText", "clipboard:write", "clipboard:writeText",
   "annotation:session", "annotation:mode", "annotation:clear", "annotation:delete",
   "annotation:preview", "annotation:screenshot:prepare", "annotation:submit", "annotation:screenshot:read",
@@ -203,6 +235,8 @@ export class BrowserRuntime {
   private readonly workspaces: BrowserWorkspaceStore
   private readonly referenceGrants = new BrowserReferenceGrantStore()
   private readonly annotations: BrowserAnnotationManager
+  private readonly semanticRefSessions = new Map<string, BrowserSemanticRefSession>()
+  private readonly semanticSnapshotCursors = new Map<string, BrowserSemanticSnapshotCursor>()
   private annotationSweepTimer: ReturnType<typeof setTimeout> | null = null
   private annotationSweepInterval: ReturnType<typeof setInterval> | null = null
   private agentPluginEnabled = false
@@ -214,7 +248,7 @@ export class BrowserRuntime {
   private readonly sessionNames = new Map<string, string>()
   private readonly claimSnapshots = new Map<string, { tabId: string; providerTabId?: string; title: string; url: string; generation: number }>()
   private readonly downloadWaiters = new Map<string, BrowserDownloadWaiter[]>()
-  private readonly downloadResults = new Map<string, { browserSessionId: string; browserTurnId: string; state: "pending" | "completed" | "failed"; fileRef?: string; waiters: Array<(value: string | null) => void> }>()
+  private readonly downloadResults = new Map<string, { browserSessionId: string; browserTurnId: string; state: "pending" | "completed" | "failed" | "cancelled" | "interrupted"; fileRef?: string; waiters: Array<(value: string | null) => void> }>()
   private readonly fileChooserWaiters = new Map<string, BrowserFileChooserWaiter[]>()
   private readonly fileChoosers = new Map<string, BrowserFileChooserEntry>()
   private readonly pageAssetInventories = new Map<string, BrowserPageAssetInventory>()
@@ -301,6 +335,8 @@ export class BrowserRuntime {
       { id: "tabs", description: "Create, close, switch and inspect in-app tabs." },
       { id: "navigation", description: "Navigate and control ordinary HTTP(S) pages." },
       { id: "locator-actions", description: "Use the constrained snapshot and locator input facade." },
+      { id: "semanticSnapshot", description: "Read a compact accessibility-tree snapshot with stable element references." },
+      { id: "agentScript", description: "Run a bounded, confirmed Agent script in an isolated world on its task-owned tab." },
       { id: "screenshot", description: "Capture viewport or full-page screenshots." },
       { id: "agentCursor", description: "Show the virtual Agent cursor for controlled actions." },
       { id: "guardedUpload", description: "Upload only task-bound Lume file references after confirmation." },
@@ -743,7 +779,7 @@ export class BrowserRuntime {
     if ((method === "reload" || method === "hardReload") && (!tab.webContents || tab.webContents.isDestroyed() || tab.guestState === "gone")) {
       return this.recoverGuest(tab)
     }
-    if ((method === "contactFill" || method === "upload" || method === "filechooser:setFiles" || method === "content:export" || method === "pageAssets:bundle" || method === "cdp" || method === "clipboard:read" || method === "clipboard:readText" || method === "clipboard:write" || method === "clipboard:writeText") && params.__policyRequired !== true) throw browserError("confirmation_unavailable")
+    if ((method === "contactFill" || method === "secretFill" || method === "upload" || method === "filechooser:setFiles" || method === "content:export" || method === "pageAssets:bundle" || method === "cdp" || method === "agentScript:evaluate" || method === "clipboard:read" || method === "clipboard:readText" || method === "clipboard:write" || method === "clipboard:writeText") && params.__policyRequired !== true) throw browserError("confirmation_unavailable")
     if (params.__policyRequired === true) this.consumePolicyToken(String(params.__policyConfirmation ?? ""), String(params.__policyBindingHash ?? ""))
     if (MUTATING_METHODS.has(method)) {
       const operationId = request.idempotencyKey || request.requestId || randomUUID()
@@ -781,6 +817,11 @@ export class BrowserRuntime {
     }
     if (!GUEST_OPTIONAL_METHODS.has(method)) await this.waitForGuest(tab)
     if (method === "snapshot") return this.snapshot(tab)
+    if (method === "semanticSnapshot") return this.semanticSnapshot(tab, params, context)
+    if (method === "secrets:list") {
+      const origin = safeOrigin(tab.url)
+      return origin ? this.credentials.listPasswords().filter((entry) => entry.origin === origin) : []
+    }
     if (method === "wait:download") return this.waitForDownload(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
     if (method === "download:path") return this.downloadPath(context, String(params.downloadId ?? params.download_id ?? ""), boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
     if (method === "wait:filechooser") return this.waitForFileChooser(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
@@ -833,7 +874,13 @@ export class BrowserRuntime {
     if (method === "wait:url") return this.waitForUrl(tab, String(params.url ?? ""), boundedNumber(params.timeoutMs ?? (params.options as Record<string, unknown> | undefined)?.timeoutMs, 0, 30_000) || 10_000)
     if (method === "wait:load") return this.waitForLoad(tab, boundedNumber(params.timeoutMs, 0, 30_000) || 10_000)
     if (method === "wait:timeout") { await delay(boundedNumber(params.timeoutMs, 0, 30_000)); return undefined }
-    if (method === "screenshot") return this.screenshot(tab, params)
+    if (method === "screenshot") {
+      if (params.annotated === true) {
+        if (params.fullPage === true) throw browserError("invalid_browser_request")
+        return this.annotatedScreenshot(tab, String(params.semanticSnapshotId ?? ""), context)
+      }
+      return this.screenshot(tab, params)
+    }
     if (method === "screenshot:save") return this.saveScreenshot(tab, params)
     if (method === "screenshot:attachment") return this.saveReviewScreenshot(tab, params, context)
     if (method === "screenshot:attachment:delete") return this.deleteReviewScreenshot(tab, params, context)
@@ -1020,6 +1067,8 @@ export class BrowserRuntime {
     this.guestMounts.clear()
     this.downloadRefs.clear()
     this.pageAssetInventories.clear()
+    this.semanticRefSessions.clear()
+    this.semanticSnapshotCursors.clear()
     for (const policy of this.ownedSessionPolicies) {
       policy.disposed = true
       policy.session.webRequest.onBeforeRequest(null)
@@ -1540,7 +1589,7 @@ export class BrowserRuntime {
       if (agent && completed && recentAgent) this.downloadRefs.set(prepared.id, { path: prepared.finalPath, browserSessionId: recentAgent.browserSessionId, browserTurnId: recentAgent.browserTurnId })
       const downloadResult = this.downloadResults.get(prepared.id)
       if (downloadResult) {
-        downloadResult.state = completed ? "completed" : "failed"
+        downloadResult.state = completed ? "completed" : electronState === "cancelled" ? "cancelled" : "interrupted"
         downloadResult.fileRef = completed ? `browser-download:${prepared.id}` : undefined
         for (const resolveWaiter of downloadResult.waiters.splice(0)) resolveWaiter(downloadResult.fileRef ?? null)
       }
@@ -1631,12 +1680,14 @@ export class BrowserRuntime {
       return { ok: true }
     }
     if (method === "contactFill") return this.fillSavedContact(tab, params)
+    if (method === "secretFill") return this.fillSavedPassword(tab, params, context)
     if (method === "upload") return this.uploadFileRefs(tab, params, context)
     if (method === "filechooser:setFiles") return this.setFileChooserFiles(tab, params, context)
     if (method === "downloadMedia") return this.downloadMedia(tab, params, context)
     if (method === "content:export") return this.exportPageContent(tab, context)
     if (method === "pageAssets:bundle") return this.bundlePageAssets(tab, params, context)
     if (method === "webmcp:invoke") return invokeWebMcpTool(tab, params)
+    if (method === "agentScript:evaluate") return this.evaluateAgentScript(tab, params, context)
     if (method === "typeActive") { await this.applyTextToActive(tab, String(params.text ?? "")); return { ok: true } }
     if (method === "pressActive") { await this.dispatchKey(tab, String(params.key ?? "Enter")); return { ok: true } }
     if (["click", "doubleClick", "hover", "scroll", "drag", "fill", "type", "press", "select", "check", "uncheck"].includes(method)) {
@@ -1662,7 +1713,7 @@ export class BrowserRuntime {
       // 显式 timeoutMs:0 = 关闭 auto-wait（boundedNumber 的 || 3_000 会吞掉 0）
       const rawAutoWait = params.timeoutMs ?? params.timeout_ms
       const autoWaitMs = rawAutoWait === 0 ? 0 : (boundedNumber(rawAutoWait, 0, 30_000) || 3_000)
-      const target = await this.resolveTargetWithAutoWait(tab, generation, params, autoWaitMs)
+      const target = await this.resolveTargetWithAutoWait(tab, generation, params, autoWaitMs, context)
       if (tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
       tab.inputSequence += 1
       tab.agentDispatching = true
@@ -1890,10 +1941,17 @@ export class BrowserRuntime {
     return { status: "submitted" }
   }
 
-  private async fillSecret(tab: BrowserTab, params: Record<string, unknown>, value: string): Promise<void> {
+  private async fillSavedPassword(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): Promise<{ status: "submitted" }> {
+    const value = this.credentials.passwordForOrigin(String(params.secretId ?? ""), tab.url)
+    if (!value) throw browserError("action_denied")
+    await this.fillSecret(tab, params, value, context)
+    return { status: "submitted" }
+  }
+
+  private async fillSecret(tab: BrowserTab, params: Record<string, unknown>, value: string, context?: BrowserRequestContext): Promise<void> {
     const generation = tab.generation
     const inputSequence = tab.inputSequence
-    const target = await this.resolveTarget(tab, params)
+    const target = await this.resolveTarget(tab, params, context)
     if (!target.editable || tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
     tab.inputSequence += 1
     tab.agentDispatching = true
@@ -1920,7 +1978,7 @@ export class BrowserRuntime {
     })
     const generation = tab.generation
     const inputSequence = tab.inputSequence
-    const target = await this.resolveTarget(tab, params)
+    const target = await this.resolveTarget(tab, params, context)
     if (target.tagName.toLowerCase() !== "input" || tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
     await withDebugger(browserContents(tab), async (debuggerRef) => {
       const located = await debuggerRef.sendCommand("DOM.getNodeForLocation", { x: Math.round(target.x), y: Math.round(target.y) }) as { backendNodeId?: number }
@@ -1949,12 +2007,12 @@ export class BrowserRuntime {
     })
   }
 
-  private async downloadPath(context: BrowserRequestContext, downloadId: string, timeoutMs: number): Promise<{ path: string | null }> {
+  private async downloadPath(context: BrowserRequestContext, downloadId: string, timeoutMs: number): Promise<{ path: string | null; state: string }> {
     if (context.actor !== "agent") throw browserError("action_denied")
     const result = this.downloadResults.get(downloadId)
     if (!result || result.browserSessionId !== context.browserSessionId || result.browserTurnId !== context.browserTurnId) throw browserError("action_denied")
-    if (result.state === "completed") return { path: result.fileRef ?? null }
-    if (result.state === "failed") return { path: null }
+    if (result.state === "completed") return { path: result.fileRef ?? null, state: "completed" }
+    if (result.state !== "pending") return { path: null, state: result.state }
     return {
       path: await new Promise<string | null>((resolve) => {
         const timer = setTimeout(() => {
@@ -1967,6 +2025,8 @@ export class BrowserRuntime {
         }
         result.waiters.push(finish)
       }),
+      // 超时且无终态 → 仍在下载；waiter 拿到值时 state 亦已是终态
+      state: this.downloadResults.get(downloadId)?.state ?? "pending",
     }
   }
 
@@ -2043,7 +2103,7 @@ export class BrowserRuntime {
     if (nodeId && (!node || node.generation !== tab.generation)) throw browserError("stale_target")
     const target = node
       ? { x: node.x, y: node.y }
-      : await this.resolveTarget(tab, params)
+      : await this.resolveTarget(tab, params, context)
     const generation = tab.generation
     const mediaUrl = await withDebugger(browserContents(tab), async (debuggerRef) => {
       const located = await debuggerRef.sendCommand("DOM.getNodeForLocation", {
@@ -2562,7 +2622,11 @@ export class BrowserRuntime {
     }
   }
 
-  private async resolveTarget(tab: BrowserTab, params: Record<string, unknown>): Promise<ResolvedBrowserTarget> {
+  private async resolveTarget(tab: BrowserTab, params: Record<string, unknown>, context?: BrowserRequestContext): Promise<ResolvedBrowserTarget> {
+    if (typeof params.semanticRef === "string" || typeof params.semanticSnapshotId === "string") {
+      if (!context) throw browserError("invalid_browser_request")
+      return this.resolveSemanticRefTarget(tab, params, context)
+    }
     if (params.locator === undefined) return { x: boundedNumber(params.x, 0, 100_000), y: boundedNumber(params.y, 0, 100_000), width: 1, height: 1, tagName: "", editable: true, enabled: true }
     if (!isBrowserLocator(params.locator)) throw browserError("invalid_browser_request")
     try {
@@ -2578,6 +2642,94 @@ export class BrowserRuntime {
     }
   }
 
+  private async resolveSemanticRefTarget(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): Promise<ResolvedBrowserTarget> {
+    const ref = typeof params.semanticRef === "string" ? params.semanticRef : ""
+    const snapshotId = typeof params.semanticSnapshotId === "string" ? params.semanticSnapshotId : ""
+    const entry = this.semanticRefSessions.get(context.browserSessionId)?.entries.get(ref)
+    if (!ref || !snapshotId || !entry
+      || entry.snapshotId !== snapshotId
+      || entry.tabId !== tab.tabId
+      || entry.generation !== tab.generation) throw browserError("stale_target")
+
+    return withDebugger(browserContents(tab), async (debuggerRef) => {
+      await debuggerRef.sendCommand("DOM.scrollIntoViewIfNeeded", { backendNodeId: entry.backendNodeId }).catch(() => undefined)
+      const resolved = await debuggerRef.sendCommand("DOM.resolveNode", { backendNodeId: entry.backendNodeId }) as { object?: { objectId?: string } }
+      const objectId = resolved.object?.objectId
+      if (!objectId) throw browserError("stale_target")
+      try {
+        const inspected = await debuggerRef.sendCommand("Runtime.callFunctionOn", {
+          objectId,
+          functionDeclaration: `function () {
+            const rect = this.getBoundingClientRect()
+            const style = getComputedStyle(this)
+            const enabled = !("disabled" in this && this.disabled) && this.getAttribute("aria-disabled") !== "true"
+            return {
+              editable: this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement || this instanceof HTMLSelectElement || this.isContentEditable,
+              enabled,
+              role: this.getAttribute("role") || undefined,
+              tagName: String(this.tagName || "").toLowerCase(),
+              visible: rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden",
+            }
+          }`,
+          returnByValue: true,
+        }) as { result?: { value?: unknown }; exceptionDetails?: unknown }
+        if (inspected.exceptionDetails) throw browserError("stale_target")
+        const details = isRecord(inspected.result?.value) ? inspected.result.value : {}
+        if (details.visible !== true || details.enabled === false) throw browserError("action_denied")
+
+        const box = await debuggerRef.sendCommand("DOM.getBoxModel", { backendNodeId: entry.backendNodeId }) as { model?: { border?: number[]; content?: number[] } }
+        const quad = box.model?.content ?? box.model?.border
+        if (!Array.isArray(quad) || quad.length < 8) throw browserError("stale_target")
+        const xs = [quad[0], quad[2], quad[4], quad[6]].map(Number)
+        const ys = [quad[1], quad[3], quad[5], quad[7]].map(Number)
+        if ([...xs, ...ys].some((value) => !Number.isFinite(value))) throw browserError("stale_target")
+        const left = Math.min(...xs)
+        const right = Math.max(...xs)
+        const top = Math.min(...ys)
+        const bottom = Math.max(...ys)
+        const x = left + (right - left) / 2
+        const y = top + (bottom - top) / 2
+
+        const hit = await debuggerRef.sendCommand("DOM.getNodeForLocation", {
+          x: Math.round(x),
+          y: Math.round(y),
+          // 不穿透 shadow DOM：文本 input 的中心点会命中其 UA shadow 内部节点，
+          // 该节点与 input 的 contains 跨 shadow 边界恒为 false，会导致 input 永久 action_denied。
+          includeUserAgentShadowDOM: false,
+        }) as { backendNodeId?: number }
+        if (!hit.backendNodeId) throw browserError("action_denied")
+        if (hit.backendNodeId !== entry.backendNodeId) {
+          const hitResolved = await debuggerRef.sendCommand("DOM.resolveNode", { backendNodeId: hit.backendNodeId }) as { object?: { objectId?: string } }
+          const hitObjectId = hitResolved.object?.objectId
+          if (!hitObjectId) throw browserError("action_denied")
+          try {
+            const containment = await debuggerRef.sendCommand("Runtime.callFunctionOn", {
+              objectId,
+              functionDeclaration: "function (hit) { let node = hit; while (node) { if (node === this || this.contains(node)) return true; const root = node.getRootNode(); node = root instanceof ShadowRoot ? root.host : null } return false }",
+              arguments: [{ objectId: hitObjectId }],
+              returnByValue: true,
+            }) as { result?: { value?: unknown } }
+            if (containment.result?.value !== true) throw browserError("action_denied")
+          } finally {
+            await debuggerRef.sendCommand("Runtime.releaseObject", { objectId: hitObjectId }).catch(() => undefined)
+          }
+        }
+        return {
+          x,
+          y,
+          width: right - left,
+          height: bottom - top,
+          tagName: typeof details.tagName === "string" ? details.tagName : "",
+          ...(typeof details.role === "string" ? { role: details.role } : {}),
+          editable: details.editable === true,
+          enabled: details.enabled !== false,
+        }
+      } finally {
+        await debuggerRef.sendCommand("Runtime.releaseObject", { objectId }).catch(() => undefined)
+      }
+    })
+  }
+
   // auto-wait：在 timeoutMs 内重试 resolveTarget，让 locator 操作自动等元素就绪（对齐 Codex mI 循环）。
   // 检查项复用 resolveTarget 已有的 visible/enabled/obstruction；多匹配(strict)不重试立即抛；导航靠 generation 识别。
   private async resolveTargetWithAutoWait(
@@ -2585,21 +2737,23 @@ export class BrowserRuntime {
     generation: number,
     params: Record<string, unknown>,
     timeoutMs: number,
+    context?: BrowserRequestContext,
   ): Promise<ResolvedBrowserTarget> {
     // 坐标点目标(无 locator)或 timeoutMs<=0(关闭等待)：直通 one-shot
-    if (timeoutMs <= 0 || params.locator === undefined || !isBrowserLocator(params.locator)) {
-      return this.resolveTarget(tab, params)
+    if (timeoutMs <= 0 || (params.locator === undefined && params.semanticRef === undefined)) {
+      return this.resolveTarget(tab, params, context)
     }
     const deadline = Date.now() + timeoutMs
     while (true) {
       if (tab.generation !== generation) throw browserError("stale_target")
       try {
-        return await this.resolveTarget(tab, params)
+        return await this.resolveTarget(tab, params, context)
       } catch (error) {
         const message = error instanceof Error ? error.message : ""
         if (message.includes("invalid_browser_request")) throw browserError("invalid_browser_request")
         if (message.includes("strict_locator_violation")) throw browserError("strict_locator_violation")
         if (message.includes("tab_not_found")) throw browserError("tab_not_found")
+        if (params.semanticRef !== undefined && message.includes("stale_target")) throw browserError("stale_target")
         // resolveTarget 的 action_denied 仅表示目标暂时不可见、不可用或被遮挡；具体动作的永久拒绝发生在后续 dispatch。
         if (Date.now() >= deadline) throw browserError("actionability_failed")
         await delay(50)
@@ -2713,6 +2867,234 @@ export class BrowserRuntime {
     return result
   }
 
+  private async semanticSnapshot(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): Promise<unknown> {
+    const requestedCursor = typeof params.cursor === "string" ? params.cursor : undefined
+    if (requestedCursor) {
+      const cached = this.semanticSnapshotCursors.get(requestedCursor)
+      this.semanticSnapshotCursors.delete(requestedCursor)
+      if (!cached
+        || cached.sessionId !== context.browserSessionId
+        || cached.tabId !== tab.tabId
+        || cached.generation !== tab.generation) throw browserError("stale_target")
+      return this.semanticSnapshotPage(cached)
+    }
+    const requestedScope = params.scopeRef ?? params.scope_ref
+    if (requestedScope !== undefined) {
+      const scopeRef = normalizeSemanticRef(requestedScope)
+      const snapshotId = typeof params.snapshotId === "string" ? params.snapshotId : typeof params.snapshot_id === "string" ? params.snapshot_id : ""
+      const cached = this.semanticRefSessions.get(context.browserSessionId)?.snapshot
+      if (!scopeRef || !snapshotId || !cached
+        || cached.snapshotId !== snapshotId
+        || cached.tabId !== tab.tabId
+        || cached.generation !== tab.generation
+        || !cached.refs.some((entry) => entry.ref === scopeRef)) throw browserError("stale_target")
+      return this.semanticSnapshotPage({
+        ...cached,
+        limit: boundedNumber(params.limit ?? cached.limit, 50, 1_000),
+        lines: cached.lines.filter((line) => line.scopeRefs.includes(scopeRef)),
+        offset: 0,
+      })
+    }
+
+    // 导航边界（open 新 tab / click 触发跳转 / 新 tab 打开）后立即采集会拿到空树或旧页 DOM——
+    // best-effort 等待加载完成再采集；超时仍返回当前状态，不阻塞快照链路。cursor/scope 命中缓存的路径无需等待。
+    await this.waitForLoad(tab, 3_000).catch(() => undefined)
+
+    const result = await withDebugger(browserContents(tab), async (debuggerRef) => {
+      await debuggerRef.sendCommand("DOM.enable")
+      await debuggerRef.sendCommand("Accessibility.enable")
+      const page = await debuggerRef.sendCommand("Page.getFrameTree") as { frameTree?: BrowserCdpFrameTree }
+      const frameIds = browserFrameIds(page.frameTree)
+      const batches = await Promise.all(frameIds.map(async (frameId) => {
+        try {
+          const tree = await debuggerRef.sendCommand("Accessibility.getFullAXTree", { frameId }) as { nodes?: unknown }
+          return Array.isArray(tree.nodes)
+            ? tree.nodes.map((node) => isRecord(node) ? {
+                ...node,
+                __frameId: frameId,
+                ...(typeof node.nodeId === "string" ? { nodeId: `${frameId}:${node.nodeId}` } : {}),
+                ...(Array.isArray(node.childIds) ? { childIds: node.childIds.map((id) => `${frameId}:${String(id)}`) } : {}),
+              } : node)
+            : []
+        } catch {
+          return []
+        }
+      }))
+      const supplements = await Promise.all(frameIds.map((frameId) => this.cursorInteractiveAxNodes(debuggerRef, frameId)))
+      const nodes = batches.flat()
+      const byBackendNode = new Map(nodes.flatMap((node) => isRecord(node) && Number.isInteger(node.backendDOMNodeId)
+        ? [[`${String(node.__frameId ?? "")}\u0000${Number(node.backendDOMNodeId)}`, node] as const]
+        : []))
+      for (const supplement of supplements.flat()) {
+        if (!isRecord(supplement)) continue
+        const existing = byBackendNode.get(`${String(supplement.__frameId ?? "")}\u0000${Number(supplement.backendDOMNodeId)}`)
+        if (existing) {
+          existing.role = supplement.role
+          existing.name = supplement.name
+        } else {
+          nodes.push(supplement)
+        }
+      }
+      return { mainFrameId: frameIds[0], nodes }
+    })
+    const session: BrowserSemanticRefSession = this.semanticRefSessions.get(context.browserSessionId) ?? {
+      byIdentity: new Map<string, string>(),
+      entries: new Map(),
+      nextRef: 1,
+    }
+    session.mainFrameId = result.mainFrameId
+    this.semanticRefSessions.set(context.browserSessionId, session)
+    const snapshotId = randomUUID()
+    const tree = buildBrowserSemanticTree(result.nodes, {
+      interactiveOnly: params.interactiveOnly === true || params.interactive_only === true,
+      allocateRef: (entry) => {
+        const identity = `${tab.tabId}\u0000${tab.generation}\u0000${entry.frameId ?? ""}\u0000${entry.backendNodeId}`
+        let ref = session.byIdentity.get(identity)
+        if (!ref) {
+          ref = `e${session.nextRef++}`
+          session.byIdentity.set(identity, ref)
+        }
+        session.entries.set(ref, { ...entry, ref, generation: tab.generation, snapshotId, tabId: tab.tabId })
+        return ref
+      },
+    })
+    const snapshot = {
+      generation: tab.generation,
+      limit: boundedNumber(params.limit ?? 400, 50, 1_000),
+      lines: tree.lines,
+      offset: 0,
+      refs: tree.refs,
+      sessionId: context.browserSessionId,
+      snapshotId,
+      tabId: tab.tabId,
+      title: tab.title,
+      url: tab.url,
+    }
+    session.snapshot = snapshot
+    return this.semanticSnapshotPage(snapshot)
+  }
+
+  private async cursorInteractiveAxNodes(debuggerRef: BrowserCdpDebugger, frameId: string): Promise<unknown[]> {
+    let arrayObjectId: string | undefined
+    const elementObjectIds: string[] = []
+    try {
+      const isolated = await debuggerRef.sendCommand("Page.createIsolatedWorld", {
+        frameId,
+        worldName: "lume-semantic-snapshot",
+        grantUniveralAccess: false,
+      }) as { executionContextId?: number }
+      if (!isolated.executionContextId) return []
+      const evaluated = await debuggerRef.sendCommand("Runtime.evaluate", {
+        contextId: isolated.executionContextId,
+        expression: `(() => {
+          const nativeTags = new Set(["a", "button", "input", "select", "textarea", "details", "summary"])
+          const nativeRoles = new Set(["button", "link", "textbox", "checkbox", "radio", "combobox", "listbox", "menuitem", "menuitemcheckbox", "menuitemradio", "option", "searchbox", "slider", "spinbutton", "switch", "tab", "treeitem"])
+          return Array.from(document.querySelectorAll("*")).filter((element) => {
+            if (element.closest('[hidden], [aria-hidden="true"]')) return false
+            if (nativeTags.has(element.tagName.toLowerCase()) || nativeRoles.has((element.getAttribute("role") || "").toLowerCase())) return false
+            const style = getComputedStyle(element)
+            const pointer = style.cursor === "pointer"
+            const onclick = element.hasAttribute("onclick") || element.onclick !== null
+            const tabindex = element.hasAttribute("tabindex") && element.getAttribute("tabindex") !== "-1"
+            const editable = element.isContentEditable
+            if (!pointer && !onclick && !tabindex && !editable) return false
+            if (pointer && !onclick && !tabindex && !editable && element.parentElement && getComputedStyle(element.parentElement).cursor === "pointer") return false
+            const rect = element.getBoundingClientRect()
+            return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden"
+          }).slice(0, 500)
+        })()`,
+        returnByValue: false,
+      }) as { result?: { objectId?: string }; exceptionDetails?: unknown }
+      if (evaluated.exceptionDetails || !evaluated.result?.objectId) return []
+      arrayObjectId = evaluated.result.objectId
+      const properties = await debuggerRef.sendCommand("Runtime.getProperties", {
+        objectId: arrayObjectId,
+        ownProperties: true,
+      }) as { result?: Array<{ name?: string; value?: { objectId?: string } }> }
+      for (const property of properties.result ?? []) {
+        if (!/^\d+$/.test(property.name ?? "") || !property.value?.objectId) continue
+        elementObjectIds.push(property.value.objectId)
+      }
+      return (await Promise.all(elementObjectIds.map(async (objectId, index) => {
+        try {
+          const [described, inspected] = await Promise.all([
+            debuggerRef.sendCommand("DOM.describeNode", { objectId }) as Promise<{ node?: { backendNodeId?: number } }>,
+            debuggerRef.sendCommand("Runtime.callFunctionOn", {
+              objectId,
+              functionDeclaration: `function () {
+                const style = getComputedStyle(this)
+                const pointer = style.cursor === "pointer"
+                const onclick = this.hasAttribute("onclick") || this.onclick !== null
+                const editable = this.isContentEditable
+                return {
+                  name: (this.getAttribute("aria-label") || this.innerText || this.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 500),
+                  role: editable ? "textbox" : pointer || onclick ? "clickable" : "focusable",
+                }
+              }`,
+              returnByValue: true,
+            }) as Promise<{ result?: { value?: unknown }; exceptionDetails?: unknown }>,
+          ])
+          const backendNodeId = described.node?.backendNodeId
+          const details = isRecord(inspected.result?.value) ? inspected.result.value : {}
+          if (!Number.isInteger(backendNodeId) || typeof details.role !== "string") return undefined
+          return {
+            __frameId: frameId,
+            backendDOMNodeId: backendNodeId,
+            childIds: [],
+            name: { value: typeof details.name === "string" ? details.name : "" },
+            nodeId: `cursor:${frameId}:${backendNodeId}:${index}`,
+            role: { value: details.role },
+          }
+        } catch {
+          return undefined
+        }
+      }))).flatMap((node) => node ? [node] : [])
+    } catch {
+      return []
+    } finally {
+      await Promise.all(elementObjectIds.map((objectId) => debuggerRef.sendCommand("Runtime.releaseObject", { objectId }).catch(() => undefined)))
+      if (arrayObjectId) await debuggerRef.sendCommand("Runtime.releaseObject", { objectId: arrayObjectId }).catch(() => undefined)
+    }
+  }
+
+  private semanticSnapshotPage(snapshot: BrowserSemanticSnapshotCursor): Record<string, unknown> {
+    const end = Math.min(snapshot.lines.length, snapshot.offset + snapshot.limit)
+    const lines = snapshot.lines.slice(snapshot.offset, end)
+    const visibleRefs = new Set(lines.flatMap((line) => line.ref ? [line.ref] : []))
+    const refs = Object.fromEntries(snapshot.refs
+      .filter((entry) => visibleRefs.has(entry.ref))
+      .map((entry) => [entry.ref, {
+        role: entry.role,
+        name: entry.name,
+        ...(entry.nth !== undefined ? { nth: entry.nth } : {}),
+      }]))
+    let nextCursor: string | undefined
+    if (end < snapshot.lines.length) {
+      nextCursor = randomUUID()
+      this.semanticSnapshotCursors.set(nextCursor, { ...snapshot, offset: end })
+      while (this.semanticSnapshotCursors.size > 100) {
+        const oldest = this.semanticSnapshotCursors.keys().next().value
+        if (typeof oldest !== "string") break
+        this.semanticSnapshotCursors.delete(oldest)
+      }
+    }
+    return {
+      snapshot_id: snapshot.snapshotId,
+      tab_id: snapshot.tabId,
+      navigation_generation: snapshot.generation,
+      url: snapshot.url,
+      title: snapshot.title,
+      tree: lines.map((line) => line.text).join("\n"),
+      refs,
+      range: { from: snapshot.offset, to: end, total: snapshot.lines.length },
+      // 显式引导翻页：实测模型拿到 next_cursor 却不消费、误把 limit 当起点，停在第一页
+      ...(nextCursor ? {
+        next_cursor: nextCursor,
+        continue_hint: `${end}/${snapshot.lines.length} lines shown; pass next_cursor as the snapshot tool's cursor argument to read the remaining ${snapshot.lines.length - end} lines`,
+      } : {}),
+    }
+  }
+
   private async screenshot(tab: BrowserTab, params: Record<string, unknown>): Promise<string> {
     if (params.fullPage === true) {
       const result = await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "png", captureBeyondViewport: true }), 8_000) as { data?: string }
@@ -2735,12 +3117,92 @@ export class BrowserRuntime {
     }
   }
 
+  private async annotatedScreenshot(tab: BrowserTab, snapshotId: string, context: BrowserRequestContext): Promise<{ data: string; annotated_refs: string[] }> {
+    const session = this.semanticRefSessions.get(context.browserSessionId)
+    const entries = [...(session?.entries.entries() ?? [])]
+      .filter(([, entry]) => entry.snapshotId === snapshotId
+        && entry.tabId === tab.tabId
+        && entry.generation === tab.generation
+        && entry.frameId === session?.mainFrameId)
+      .slice(0, 100)
+    if (!snapshotId || !entries.length) throw browserError("stale_target")
+
+    const source = await this.screenshot(tab, { fullPage: false })
+    const labels = await withDebugger(browserContents(tab), async (debuggerRef) => {
+      const resolved: Array<{ ref: string; x: number; y: number; width: number; height: number }> = []
+      for (const [ref, entry] of entries) {
+        try {
+          const box = await debuggerRef.sendCommand("DOM.getBoxModel", { backendNodeId: entry.backendNodeId }) as { model?: { border?: number[]; content?: number[] } }
+          const quad = box.model?.border ?? box.model?.content
+          if (!Array.isArray(quad) || quad.length < 8) continue
+          const xs = [quad[0], quad[2], quad[4], quad[6]].map(Number)
+          const ys = [quad[1], quad[3], quad[5], quad[7]].map(Number)
+          if ([...xs, ...ys].some((value) => !Number.isFinite(value))) continue
+          const x = Math.min(...xs)
+          const y = Math.min(...ys)
+          const width = Math.max(...xs) - x
+          const height = Math.max(...ys) - y
+          if (width > 0 && height > 0) resolved.push({ ref: `@${ref}`, x, y, width, height })
+        } catch {
+          // A detached main-frame node is omitted without invalidating other labels.
+        }
+      }
+      return resolved
+    })
+    const rendered = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(() => new Promise((resolve, reject) => {
+      const image = new Image()
+      image.onload = () => {
+        const canvas = document.createElement("canvas")
+        canvas.width = image.naturalWidth
+        canvas.height = image.naturalHeight
+        const context = canvas.getContext("2d")
+        if (!context) { reject(new Error("canvas unavailable")); return }
+        context.drawImage(image, 0, 0)
+        const scaleX = image.naturalWidth / Math.max(1, innerWidth)
+        const scaleY = image.naturalHeight / Math.max(1, innerHeight)
+        context.font = (14 * Math.max(scaleX, scaleY)) + "px ui-monospace, monospace"
+        context.textBaseline = "top"
+        const annotatedRefs = []
+        for (const label of ${JSON.stringify(labels)}) {
+          const x = label.x * scaleX
+          const y = label.y * scaleY
+          const width = label.width * scaleX
+          const height = label.height * scaleY
+          if (x + width < 0 || y + height < 0 || x > canvas.width || y > canvas.height) continue
+          annotatedRefs.push(label.ref)
+          context.strokeStyle = "#ff2d55"
+          context.lineWidth = Math.max(2, 2 * Math.max(scaleX, scaleY))
+          context.strokeRect(x, y, width, height)
+          const metrics = context.measureText(label.ref)
+          const padding = 3 * Math.max(scaleX, scaleY)
+          const labelHeight = 18 * Math.max(scaleX, scaleY)
+          const labelY = Math.max(0, y - labelHeight)
+          context.fillStyle = "#ff2d55"
+          context.fillRect(Math.max(0, x), labelY, metrics.width + padding * 2, labelHeight)
+          context.fillStyle = "#ffffff"
+          context.fillText(label.ref, Math.max(0, x) + padding, labelY + padding)
+        }
+        resolve({
+          data: canvas.toDataURL("image/png").slice("data:image/png;base64,".length),
+          annotatedRefs,
+        })
+      }
+      image.onerror = () => reject(new Error("image decode failed"))
+      image.src = "data:image/jpeg;base64,${source}"
+    }))()` }], true)
+    if (!isRecord(rendered) || typeof rendered.data !== "string" || !rendered.data) throw browserError("browser_internal_error")
+    const annotatedRefs = Array.isArray(rendered.annotatedRefs)
+      ? rendered.annotatedRefs.filter((ref): ref is string => typeof ref === "string")
+      : []
+    return { data: rendered.data, annotated_refs: annotatedRefs }
+  }
+
   private async saveScreenshot(tab: BrowserTab, params: Record<string, unknown>): Promise<{ saved: boolean }> {
     const win = this.options.getWindow()
     if (!win || win.isDestroyed()) throw browserError("browser_unavailable")
     const selected = await dialog.showSaveDialog(win, { defaultPath: `lume-page-${Date.now()}.png`, filters: [{ name: "PNG", extensions: ["png"] }] })
     if (selected.canceled || !selected.filePath) return { saved: false }
-    const data = await this.screenshot(tab, { ...params, fullPage: true })
+    const data = await this.screenshot(tab, { ...params, annotated: false, fullPage: true })
     // screenshot 可能返回 jpeg（fallback 链），此处契约是 .png 文件——重编码保一致
     writeFileSync(selected.filePath, nativeImage.createFromBuffer(Buffer.from(data, "base64")).toPNG())
     return { saved: true }
@@ -2754,7 +3216,8 @@ export class BrowserRuntime {
     const directory = join(this.options.configDir(), "browser", "review-resources", ownerThreadId)
     mkdirSync(directory, { recursive: true })
     // screenshot 恒返回 jpeg（视口路径），此处契约是 .png 文件——重编码保一致
-    const data = nativeImage.createFromBuffer(Buffer.from(await this.screenshot(tab, { fullPage: false }), "base64")).toPNG()
+    const screenshot = await this.screenshot(tab, { annotated: false, fullPage: false })
+    const data = nativeImage.createFromBuffer(Buffer.from(screenshot, "base64")).toPNG()
     if (!data.length || data.length > 20 * 1024 * 1024) throw browserError("browser_internal_error")
     writeFileSync(join(directory, `${id}.png`), data, { mode: 0o600 })
     return { screenshotRef: `browser-review-screenshot:${ownerThreadId}:${id}` }
@@ -2998,6 +3461,29 @@ export class BrowserRuntime {
     })) as { result?: { value?: unknown }; exceptionDetails?: unknown }
     if (result.exceptionDetails) throw browserError("action_denied")
     return result.result?.value
+  }
+
+  private async evaluateAgentScript(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): Promise<BrowserAgentScriptResult> {
+    if (context.actor !== "agent" || tab.profileKind !== "agent" || tab.ownerThreadId !== context.threadId) throw browserError("action_denied")
+    const generation = tab.generation
+    const call = prepareBrowserAgentScript(params)
+    const result = await withDebugger(browserContents(tab), async (debuggerRef) => {
+      const frameTree = await debuggerRef.sendCommand("Page.getFrameTree") as { frameTree?: { frame?: { id?: string } } }
+      const frameId = frameTree.frameTree?.frame?.id
+      if (!frameId) throw browserError("stale_target")
+      const isolated = await debuggerRef.sendCommand("Page.createIsolatedWorld", {
+        frameId,
+        worldName: `lume-agent-script:${randomUUID()}`,
+        grantUniveralAccess: false,
+      }) as { executionContextId?: number }
+      if (!isolated.executionContextId || generation !== tab.generation) throw browserError("stale_target")
+      return debuggerRef.sendCommand("Runtime.evaluate", {
+        contextId: isolated.executionContextId,
+        ...call,
+      })
+    }, call.timeout + 2_000)
+    if (generation !== tab.generation) throw browserError("stale_target")
+    return normalizeBrowserAgentScriptResult(result)
   }
 
   private readConsoleLogs(tab: BrowserTab, params: Record<string, unknown>): { logs: BrowserTab["consoleLogs"] } {
@@ -3963,6 +4449,19 @@ async function browserPromiseTimeout<T>(promise: Promise<T>, timeoutMs: number):
   } finally {
     if (timer) clearTimeout(timer)
   }
+}
+
+function browserFrameIds(tree: BrowserCdpFrameTree | undefined): string[] {
+  if (!tree) return []
+  return [
+    ...(typeof tree.frame?.id === "string" ? [tree.frame.id] : []),
+    ...(tree.childFrames ?? []).flatMap(browserFrameIds),
+  ]
+}
+
+function normalizeSemanticRef(value: unknown): string {
+  const ref = typeof value === "string" ? value.trim().replace(/^@/, "") : ""
+  return /^e[1-9][0-9]*$/.test(ref) ? ref : ""
 }
 
 function splitFrameLocator(locator: BrowserLocator): { frameSelectors: string[]; locator: BrowserLocator } | undefined {
