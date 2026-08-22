@@ -125,9 +125,13 @@ export function markProcessJobContinuationConsumed(id: string): boolean {
   return true
 }
 
-export function stopProcessJob(job: ProcessJob): void {
-  if (job.stop) job.stop()
-  else stopPersistedWorker(job)
+/** Returns whether a stop was actually initiated (#331). */
+export function stopProcessJob(job: ProcessJob): boolean {
+  if (job.stop) {
+    job.stop()
+    return true
+  }
+  return stopPersistedWorker(job)
 }
 
 export function loadProcessJobs(root: string): ProcessJob[] {
@@ -267,10 +271,20 @@ export const ProcessStopTool: ToolDefinition = defineTool({
     if (job.status !== 'running') {
       return { type: 'tool_result', tool_use_id: '', content: `Process job is already ${job.status}: ${job.id}`, _meta: { task: { id: job.id, status: job.status, kind: job.taskType || 'process' } } }
     }
-    markProcessJobNotified(job.id)
-    stopProcessJob(job)
-    updateProcessJob(job.id, { status: 'stopped' })
-    return { type: 'tool_result', tool_use_id: '', content: `Process job stopped: ${job.id}`, _meta: { task: { id: job.id, status: 'stopped', kind: job.taskType || 'process' } } }
+    const stopped = stopProcessJob(job)
+    if (stopped) {
+      // Consume the pending notification only when a stop was actually
+      // initiated; a no-op stop must not fabricate a terminal state (#332).
+      markProcessJobNotified(job.id)
+      updateProcessJob(job.id, { status: 'stopped' })
+      return { type: 'tool_result', tool_use_id: '', content: `Process job stopped: ${job.id}`, _meta: { task: { id: job.id, status: 'stopped', kind: job.taskType || 'process' } } }
+    }
+    const latest = getProcessJob(job.id)
+    if (!latest) return { type: 'tool_result', tool_use_id: '', content: `Process job not found: ${id}`, is_error: true }
+    if (latest.status !== 'running') {
+      return { type: 'tool_result', tool_use_id: '', content: `Process job is already ${latest.status}: ${latest.id}`, _meta: { task: { id: latest.id, status: latest.status, kind: latest.taskType || 'process' } } }
+    }
+    return { type: 'tool_result', tool_use_id: '', content: `Failed to stop process job: ${job.id}. The worker process is not running or could not be signalled; the job remains running.`, is_error: true, _meta: { task: { id: job.id, status: job.status, kind: job.taskType || 'process' } } }
   },
 })
 
@@ -301,8 +315,17 @@ export const ProcessOutputTool: ToolDefinition = defineTool({
     if (!job) return { data: `Process job not found: ${id}`, is_error: true }
     const block = input.block !== false
     const timeout = Math.min(Math.max(Number(input.timeout ?? 30_000), 0), 600_000)
+    let abortedWhileBlocking = false
     if (block && job.status === 'running') {
-      job = await waitForProcessJobTerminal(id, timeout)
+      try {
+        job = await waitForProcessJobTerminal(id, timeout, context.abortSignal)
+      } catch {
+        // The run was interrupted while blocked; return immediately instead of
+        // waiting out the full timeout (#331).
+        abortedWhileBlocking = true
+        job = getProcessJob(id)
+        if (!job) return { data: `Process job not found: ${id}`, is_error: true }
+      }
       if (!job) return { data: `Process job not found: ${id}`, is_error: true }
     }
     const offset = Number(input.offset ?? 0)
@@ -326,7 +349,9 @@ export const ProcessOutputTool: ToolDefinition = defineTool({
     }
     return {
       data: {
-        retrieval_status: job.status === 'running' ? (block ? 'timeout' : 'not_ready') : 'success',
+        retrieval_status: abortedWhileBlocking
+          ? 'aborted'
+          : job.status === 'running' ? (block ? 'timeout' : 'not_ready') : 'success',
         process: { process_id: job.id, task_id: job.id, status: job.status, kind: job.taskType || 'process', output: output.text || '(no output yet)' },
       },
       ...(job.metadata?.execution && typeof job.metadata.execution === 'object'
@@ -423,7 +448,8 @@ function readPersistedJob(statePath: string): ProcessJob | undefined {
 
 function isPersistedWorkerAlive(job: ProcessJob): boolean {
   if (!job.workerPid || job.workerPid <= 0) return false
-  if (job.heartbeatAt && Date.now() - job.heartbeatAt > 15_000) return false
+  // Probe the OS first: a stale heartbeat (sleep/hibernate resume, busy event
+  // loop) is not proof of death, while kill(pid, 0) is (#329).
   try {
     process.kill(job.workerPid, 0)
   } catch {
@@ -433,33 +459,59 @@ function isPersistedWorkerAlive(job: ProcessJob): boolean {
   if (!job.processToken) return false
   const processIdentity = readProcessIdentity(job.workerPid)
   return processIdentity !== undefined
-    && job.workerIdentity === `${job.processToken}:${processIdentity}`
+    && persistedWorkerIdentityMatches(job.processToken, job.workerIdentity, processIdentity)
+}
+
+/**
+ * Whether a worker's self-reported identity matches a fresh probe of the pid.
+ * Exact match first; win32 creation seconds tolerate a one-second skew because
+ * the worker estimates its birth from JS uptime, which trails the OS
+ * StartTime by the runtime bootstrap delay (#313).
+ */
+export function persistedWorkerIdentityMatches(
+  processToken: string,
+  workerIdentity: string,
+  processIdentity: string,
+): boolean {
+  if (!processToken || !workerIdentity || !processIdentity) return false
+  if (workerIdentity === `${processToken}:${processIdentity}`) return true
+  const workerSuffix = workerIdentity.startsWith(`${processToken}:`)
+    ? workerIdentity.slice(processToken.length + 1)
+    : undefined
+  if (!workerSuffix) return false
+  const workerSeconds = /^win32:(\d+)$/.exec(workerSuffix)?.[1]
+  const probeSeconds = /^win32:(\d+)$/.exec(processIdentity)?.[1]
+  return workerSeconds !== undefined && probeSeconds !== undefined
+    && Math.abs(Number(workerSeconds) - Number(probeSeconds)) <= 1
 }
 
 /** Terminate a durable worker and its whole command process tree. */
-export function stopPersistedWorker(job: ProcessJob): void {
-  if (!job.workerPid || job.workerPid <= 0) return
-  if (job.workerIdentity && !isPersistedWorkerAlive(job)) return
+export function stopPersistedWorker(job: ProcessJob): boolean {
+  if (!job.workerPid || job.workerPid <= 0) return false
+  if (job.workerIdentity && !isPersistedWorkerAlive(job)) return false
   if (process.platform === 'win32') {
     const child = spawn('taskkill', ['/PID', String(job.workerPid), '/T', '/F'], {
       stdio: 'ignore',
       windowsHide: true,
     })
     child.unref()
-    return
+    return true
   }
   try {
     process.kill(-job.workerPid, 'SIGTERM')
+    return true
   } catch {
     try {
       process.kill(job.workerPid, 'SIGTERM')
+      return true
     } catch {
       // Process already exited.
+      return false
     }
   }
 }
 
-function readProcessIdentity(pid: number): string | undefined {
+export function readProcessIdentity(pid: number): string | undefined {
   if (!Number.isInteger(pid) || pid <= 0) return undefined
   // Identity probes are only reached for processes that passed kill(pid, 0),
   // so a live process's identity is stable; cache it so frequent ProcessOutput
@@ -467,7 +519,11 @@ function readProcessIdentity(pid: number): string | undefined {
   // ponytail: TTL bounds the pid-reuse window where a recycled pid would
   // wrongly match the previous occupant's identity.
   const hit = identityCache.get(pid)
-  if (hit && Date.now() - hit.at < IDENTITY_CACHE_TTL_MS) return hit.identity
+  if (hit) {
+    if (Date.now() - hit.at < IDENTITY_CACHE_TTL_MS) return hit.identity
+    // Drop expired entries on read instead of letting them accumulate (#376).
+    identityCache.delete(pid)
+  }
   const identity = probeProcessIdentity(pid)
   identityCache.set(pid, { identity, at: Date.now() })
   return identity
