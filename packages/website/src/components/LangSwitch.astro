@@ -1,14 +1,15 @@
 ---
 import { counterpartPath, getLangFromUrl, languages, t } from '../i18n/ui';
+import { stripBase, withBase } from '../lib/site';
 
 const lang = getLangFromUrl(Astro.url);
-const target = counterpartPath(Astro.url.pathname);
-// 链接文案是「你要切过去的语言」
 const other = lang === 'zh' ? 'en' : 'zh';
+
+// 链接文案是「你要切过去的语言」
 ---
 
 <a
-  href={target}
+  href={withBase(counterpartPath(stripBase(Astro.url.pathname)))}
   hreflang={other}
   aria-label={t(lang, 'lang.switch')}
   class="rounded-lg px-2 py-1.5 text-ui text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg"

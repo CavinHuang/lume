@@ -197,6 +197,31 @@ async function invokeHandler(
   return { ...result, source: 'host' }
 }
 
+/**
+ * Reject as soon as the run is interrupted instead of waiting on the host
+ * handler indefinitely (#330). The listener is removed once the promise
+ * settles so the signal does not leak across questions.
+ */
+function raceWithAbort<T>(promise: Promise<T>, abortSignal?: AbortSignal): Promise<T> {
+  if (!abortSignal) return promise
+  return new Promise<T>((resolve, reject) => {
+    if (abortSignal.aborted) {
+      reject(new Error('aborted'))
+      return
+    }
+    const onAbort = () => reject(new Error('aborted'))
+    abortSignal.addEventListener('abort', onAbort, { once: true })
+    const settle = (fn: () => void) => {
+      abortSignal.removeEventListener('abort', onAbort)
+      fn()
+    }
+    promise.then(
+      (value) => settle(() => resolve(value)),
+      (error) => settle(() => reject(error)),
+    )
+  })
+}
+
 export const AskUserQuestionTool: ToolDefinition = {
   name: 'AskUserQuestion',
   description:
@@ -291,7 +316,10 @@ export const AskUserQuestionTool: ToolDefinition = {
     }
 
     try {
-      const response = await invokeHandler(request, context.permissionUpdatedInput === true)
+      const response = await raceWithAbort(
+        invokeHandler(request, context.permissionUpdatedInput === true),
+        context.abortSignal,
+      )
       const answerText = Object.entries(response.answers)
         .map(([question, answer]) => `"${question}"="${answer}"`)
         .join(', ')
@@ -311,10 +339,14 @@ export const AskUserQuestionTool: ToolDefinition = {
         }),
       }
     } catch (err: any) {
+      // An interrupted run is not a user decline; report it as such (#330).
+      const aborted = err?.message === 'aborted' || context.abortSignal?.aborted
       return {
         type: 'tool_result',
         tool_use_id: '',
-        content: `User declined to answer questions: ${err.message}`,
+        content: aborted
+          ? 'Question was cancelled because the run was interrupted before the user answered.'
+          : `User declined to answer questions: ${err.message}`,
         is_error: true,
       }
     }

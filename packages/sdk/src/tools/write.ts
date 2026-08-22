@@ -2,16 +2,20 @@
  * FileWriteTool - Write/create files
  */
 
-import { writeFile, mkdir, rename, rm, readFile, stat } from 'fs/promises'
-import { dirname, basename, join } from 'path'
+import { mkdir, readFile, stat } from 'fs/promises'
+import { dirname } from 'path'
 import { defineTool } from './types.js'
+import type { ToolContext } from '../types.js'
 import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
-import { prepareLspWritethrough } from '../lsp/writethrough.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 import { countLineChanges } from '../utils/line-change-stats.js'
 import { withFileMutationLock } from '../utils/file-mutation-lock.js'
+import { writeFileAtomic } from '../utils/fs-atomic.js'
 
 const DEFAULT_MAX_WRITE_BYTES = 4 * 1024 * 1024
+
+const assertWriteAllowed = (context: ToolContext) => (resolvedPath: string): string | null =>
+  ensurePathAllowed(resolvedPath, 'write', context.sandbox, context.additionalDirectories)
 
 export const FileWriteTool = defineTool({
   name: 'Write',
@@ -93,19 +97,8 @@ export const FileWriteTool = defineTool({
           }
         }
       }
-      const lsp = await prepareLspWritethrough({ filePath, content, context, existedBefore: overwritten })
-      content = lsp.content
-      bytes = Buffer.byteLength(content, 'utf8')
-      if (bytes > maxBytes) {
-        return {
-          data: `Error: LSP-formatted content for ${filePath} exceeds the ${maxBytes}-byte limit.`,
-          is_error: true,
-          _meta: { file: { path: filePath, rejected: 'size', bytes, maxBytes } },
-        }
-      }
       encoded = existingEncoding ? encodeTextFile(content, existingEncoding) : Buffer.from(content, 'utf8')
-      await writeFileAtomic(filePath, encoded)
-      const lspResult = await lsp.commit()
+      await writeFileAtomic(filePath, encoded, assertWriteAllowed(context))
 
       const updated = await stat(filePath)
       context.fileStateCache?.set(filePath, {
@@ -135,7 +128,6 @@ export const FileWriteTool = defineTool({
             checkpointId: context.currentUserMessageId,
             ...lineChanges,
           },
-          lsp: lspResult,
         },
       }
     } catch (err: any) {
@@ -143,18 +135,6 @@ export const FileWriteTool = defineTool({
     } })
   },
 })
-
-async function writeFileAtomic(filePath: string, content: Uint8Array): Promise<void> {
-  const dir = dirname(filePath)
-  const tempPath = join(dir, `.${basename(filePath)}.${crypto.randomUUID()}.tmp`)
-  try {
-    await writeFile(tempPath, content)
-    await rename(tempPath, filePath)
-  } catch (error) {
-    await rm(tempPath, { force: true }).catch(() => undefined)
-    throw error
-  }
-}
 
 function configuredPositiveNumber(context: { toolConfig?: Record<string, unknown> }, key: string, fallback: number): number {
   const value = context.toolConfig?.[key]

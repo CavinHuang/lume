@@ -358,8 +358,7 @@ function isMutationTool(canonicalName: string): boolean {
   return canonicalName === "write"
     || canonicalName === "edit"
     || canonicalName === "notebookedit"
-    || canonicalName === "bash"
-    || canonicalName === "lsp";
+    || canonicalName === "bash";
 }
 
 function readInputPath(input: unknown): string | undefined {

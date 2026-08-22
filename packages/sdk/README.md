@@ -92,32 +92,6 @@ console.log(r2.text);
 console.log(`Session messages: ${agent.getMessages().length}`);
 ```
 
-### Custom tools (Zod schema)
-
-```typescript
-import { z } from "zod";
-import { query, tool, createSdkMcpServer } from "@codeany/open-agent-sdk";
-
-const getWeather = tool(
-  "get_weather",
-  "Get the temperature for a city",
-  { city: z.string().describe("City name") },
-  async ({ city }) => ({
-    content: [{ type: "text", text: `${city}: 22°C, sunny` }],
-  }),
-);
-
-const server = createSdkMcpServer({ name: "weather", tools: [getWeather] });
-
-for await (const msg of query({
-  prompt: "What is the weather in Tokyo?",
-  options: { mcpServers: { weather: server } },
-})) {
-  if (msg.type === "result")
-    console.log(`Done: $${msg.total_cost_usd?.toFixed(4)}`);
-}
-```
-
 ### Custom tools (low-level)
 
 ```typescript
@@ -207,25 +181,6 @@ const hooks = createHookRegistry({
 
 28 lifecycle events including `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Setup`, `SessionStart`, `SessionEnd`, `Stop`, `StopFailure`, `SubagentStart`, `SubagentStop`, `UserPromptSubmit`, `PermissionRequest`, `PermissionDenied`, `TaskCreated`, `TaskCompleted`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`, `CwdChanged`, `FileChanged`, `Notification`, `PreCompact`, `PostCompact`, `TeammateIdle`, `Elicitation`, `ElicitationResult`, and `InstructionsLoaded`.
 
-### MCP server integration
-
-```typescript
-import { createAgent } from "@codeany/open-agent-sdk";
-
-const agent = createAgent({
-  mcpServers: {
-    filesystem: {
-      command: "npx",
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-    },
-  },
-});
-
-const result = await agent.prompt("List files in /tmp");
-console.log(result.text);
-await agent.close();
-```
-
 ### Subagents
 
 ```typescript
@@ -294,8 +249,6 @@ What the SDK does constrain:
 | ------------------------------------- | -------------------------------------------------------------- |
 | `query({ prompt, options })`          | One-shot streaming query, returns a Query control object       |
 | `createAgent(options)`                | Create a reusable agent with session persistence               |
-| `tool(name, desc, schema, handler)`   | Create a tool with Zod schema validation                       |
-| `createSdkMcpServer({ name, tools })` | Bundle tools into an in-process MCP server                     |
 | `defineTool(config)`                  | Low-level tool definition helper                               |
 | `getAllBaseTools()`                   | Get all 35+ built-in tools                                     |
 | `registerSkill(definition)`           | Register a custom skill                                        |
@@ -333,10 +286,6 @@ What the SDK does constrain:
 | `query.setCwd(cwd)`              | Change working directory                              |
 | `query.getInitializationResult()`| Get supported commands, agents, models                |
 | `query.getContextUsage()`        | Get context usage breakdown                           |
-| `query.mcpServerStatus()`        | Inspect MCP server status                             |
-| `query.setMcpServers(servers)`   | Replace dynamically managed MCP servers               |
-| `query.reconnectMcpServer(name)` | Reconnect a single MCP server                         |
-| `query.toggleMcpServer(name,on)` | Enable or disable a single MCP server                 |
 | `query.reloadPlugins()`          | Reload plugins from disk                              |
 | `query.rewindFiles(messageId)`   | Rewind file changes captured since a user message     |
 | `query.stopTask(taskId)`         | Stop a background task                                |
@@ -359,7 +308,6 @@ What the SDK does constrain:
 | `maxBudgetUsd`       | `number`                                | —                      | Spending cap                                                         |
 | `thinking`           | `ThinkingConfig`                        | `{ type: 'adaptive' }` | Extended thinking                                                    |
 | `effort`             | `string`                                | `high`                 | Reasoning effort: `low` / `medium` / `high` / `max`                  |
-| `mcpServers`         | `Record<string, McpServerConfig>`       | —                      | MCP server connections                                               |
 | `agents`             | `Record<string, AgentDefinition>`       | —                      | Subagent definitions                                                 |
 | `hooks`              | `Record<string, HookCallbackMatcher[]>` | —                      | Lifecycle hooks                                                      |
 | `resume`             | `string`                                | —                      | Resume session by ID                                                 |
@@ -411,7 +359,6 @@ Credentials live in the injected provider, not the SDK. The remaining variable:
 | **McpAuth**                                | Start MCP authentication flows               |
 | **CronCreate/Delete/List**                 | Scheduled task management                    |
 | **RemoteTrigger**                          | Remote agent triggers                        |
-| **LSP**                                    | Language Server Protocol (code intelligence) |
 | **Config**                                 | Get/set session config by setting key        |
 | **TodoWrite**                              | Replace the session todo list                |
 

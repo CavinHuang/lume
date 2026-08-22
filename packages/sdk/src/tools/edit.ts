@@ -2,15 +2,17 @@
  * FileEditTool - Precise string replacement in files
  */
 
-import { readFile, stat, writeFile, rename, rm } from 'fs/promises'
-import { dirname, basename, join } from 'path'
+import { readFile, stat } from 'fs/promises'
 import { defineTool } from './types.js'
 import type { ToolContext } from '../types.js'
 import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
-import { prepareLspWritethrough } from '../lsp/writethrough.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 import { countLineChanges } from '../utils/line-change-stats.js'
 import { withFileMutationLock } from '../utils/file-mutation-lock.js'
+import { writeFileAtomic } from '../utils/fs-atomic.js'
+
+const assertWriteAllowed = (context: ToolContext) => (resolvedPath: string): string | null =>
+  ensurePathAllowed(resolvedPath, 'write', context.sandbox, context.additionalDirectories)
 
 export const FileEditTool = defineTool({
   name: 'Edit',
@@ -72,8 +74,16 @@ export const FileEditTool = defineTool({
       const decoded = decodeTextFile(await readFile(filePath))
       let content = decoded.content
 
+      // 与 Write 对齐的 stale-read 防护：此前仅全量视图做内容比对，
+      // 部分视图完全裸奔；补上 mtime/size 底线后两种视图都有硬校验（#333）。
+      const existing = await stat(filePath)
       const previousRead = context.fileStateCache?.get(filePath)
-      if (previousRead && !previousRead.isPartialView && previousRead.content !== content) {
+      const changedSinceRead = previousRead && (
+        previousRead.timestamp !== existing.mtimeMs
+        || (previousRead.size !== undefined && previousRead.size !== existing.size)
+        || (!previousRead.isPartialView && previousRead.content !== content)
+      )
+      if (changedSinceRead) {
         return {
           data: `Error: File has been modified since it was read: ${filePath}. The earlier edit may have succeeded or another process changed it. Read the file again before attempting another Edit.`,
           is_error: true,
@@ -96,11 +106,8 @@ export const FileEditTool = defineTool({
         }
         const match = matches[0]!
         content = replaceRanges(content, [match], new_string, old_string.length)
-        const lsp = await prepareLspWritethrough({ filePath, content, context, existedBefore: true })
-        content = lsp.content
         const lineChanges = countLineChanges(decoded.content, content)
-        await writeFileAtomic(filePath, encodeTextFile(content, decoded))
-        const lspResult = await lsp.commit()
+        await writeFileAtomic(filePath, encodeTextFile(content, decoded), assertWriteAllowed(context))
         await updateFileState(context, filePath, content)
         return {
           data: {
@@ -119,17 +126,13 @@ export const FileEditTool = defineTool({
               ...(match.normalized ? { normalizedQuotes: true } : {}),
               ...lineChanges,
             },
-            lsp: lspResult,
           },
         }
       } else {
         const count = matches.length
         content = replaceRanges(content, matches, new_string, old_string.length)
-        const lsp = await prepareLspWritethrough({ filePath, content, context, existedBefore: true })
-        content = lsp.content
         const lineChanges = countLineChanges(decoded.content, content)
-        await writeFileAtomic(filePath, encodeTextFile(content, decoded))
-        const lspResult = await lsp.commit()
+        await writeFileAtomic(filePath, encodeTextFile(content, decoded), assertWriteAllowed(context))
         await updateFileState(context, filePath, content)
         return {
           data: {
@@ -148,7 +151,6 @@ export const FileEditTool = defineTool({
               ...(matches.some((match) => match.normalized) ? { normalizedQuotes: true } : {}),
               ...lineChanges,
             },
-            lsp: lspResult,
           },
         }
       }
@@ -196,18 +198,6 @@ function normalizeQuotes(value: string): string {
   return value
     .replace(/[“”＂]/g, '"')
     .replace(/[‘’＇]/g, "'")
-}
-
-async function writeFileAtomic(filePath: string, content: Uint8Array): Promise<void> {
-  const dir = dirname(filePath)
-  const tempPath = join(dir, `.${basename(filePath)}.${crypto.randomUUID()}.tmp`)
-  try {
-    await writeFile(tempPath, content)
-    await rename(tempPath, filePath)
-  } catch (error) {
-    await rm(tempPath, { force: true }).catch(() => undefined)
-    throw error
-  }
 }
 
 async function updateFileState(context: ToolContext, filePath: string, content: string): Promise<void> {

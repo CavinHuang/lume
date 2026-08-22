@@ -1,9 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createAutomationJob } from "./automation-manager";
-import { listAutomationRuns, resolveAutomationModelKind, runAutomationJobNow, stopAutomationRunner } from "./automation-runner-service";
+import {
+  listAutomationRuns,
+  refreshAutomationRunnerJobs,
+  resolveAutomationModelKind,
+  runAutomationJobNow,
+  scheduledJobIdsForTests,
+  startAutomationRunner,
+  stopAutomationRunner
+} from "./automation-runner-service";
 
 describe("resolveAutomationModelKind", () => {
   it("routine 系统动作 → routine 模型", () => {
@@ -70,5 +78,52 @@ describe("automation-runner-service", () => {
     expect(existsSync(runsPath)).toBeTrue();
     const lines = readFileSync(runsPath, "utf-8").trim().split("\n");
     expect(lines.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("存量坏 job 不毒化整轮刷新：好 job 正常调度，坏 job 被跳过 (#452)", async () => {
+    const good = createAutomationJob({
+      name: "正常任务",
+      schedule: { type: "interval", intervalMs: 60_000 },
+      prompt: "测试"
+    });
+    // 直接改写索引模拟旧版放行的存量数据（现行 create/update 已拒绝这些输入）
+    const indexPath = join(tempConfigDir, "automation", "jobs.json");
+    const index = JSON.parse(readFileSync(indexPath, "utf-8")) as { version: number; jobs: Array<Record<string, unknown>> };
+    index.jobs.push(
+      {
+        id: "legacy-infeasible",
+        name: "永假 cron 存量任务",
+        enabled: true,
+        schedule: { type: "cron", cronExpr: "0 9 31 2 *" },
+        prompt: "x",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        nextRunAt: null
+      },
+      {
+        id: "legacy-corrupt",
+        name: "schedule 缺失存量任务",
+        enabled: true,
+        schedule: null,
+        prompt: "x",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        nextRunAt: Date.now() - 1000
+      }
+    );
+    writeFileSync(indexPath, JSON.stringify(index), "utf-8");
+
+    // 修复前：scheduleJob 内 getNextAutomationRunAt 抛错（或访问 null.schedule），
+    // refresh 先 clearSchedules 再遍历 → 整轮中断，好 job 定时器被清且不补
+    await expect(startAutomationRunner()).resolves.toBeUndefined();
+
+    const scheduled = scheduledJobIdsForTests();
+    expect(scheduled).toContain(good.id);
+    expect(scheduled).not.toContain("legacy-infeasible");
+    expect(scheduled).not.toContain("legacy-corrupt");
+
+    // 重复刷新同样安全
+    await refreshAutomationRunnerJobs();
+    expect(scheduledJobIdsForTests()).toContain(good.id);
   });
 });

@@ -50,7 +50,6 @@ import {
 } from "../agent-runtime/runtime-core/session-store";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createLogger } from "../infra/logger";
-import { clearLspWritethroughState } from "@lume/agent-sdk";
 
 interface AgentThreadsIndex {
   version: number;
@@ -696,8 +695,6 @@ function deleteAgentThreadLocked(id: string): void {
   }
 
   getAgentSubmissionStore().deleteThread(id);
-  // sidecar 删会话不经 sdk deleteSession，LSP 写透状态需在此一并回收（防常驻进程 Map 膨胀）。
-  clearLspWritethroughState(id);
   if (cleanupPending) {
     planningStore.advanceOperation(operationId, { phase: "cleanup_pending", status: "partial", recoverable: true, threadId: id, error: "thread file cleanup pending" });
   } else {

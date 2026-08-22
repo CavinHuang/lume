@@ -42,24 +42,6 @@ export type {
 } from './capability-references.js'
 
 // --------------------------------------------------------------------------
-// Tool Helper (Zod-based tool creation, compatible with official SDK)
-// --------------------------------------------------------------------------
-
-export { tool, sdkToolToToolDefinition } from './tool-helper.js'
-export type {
-  ToolAnnotations,
-  CallToolResult,
-  SdkMcpToolDefinition,
-} from './tool-helper.js'
-
-// --------------------------------------------------------------------------
-// In-Process MCP Server
-// --------------------------------------------------------------------------
-
-export { createSdkMcpServer, isSdkServerConfig } from './sdk-mcp-server.js'
-export type { McpSdkServerConfig } from './sdk-mcp-server.js'
-
-// --------------------------------------------------------------------------
 // Core Engine
 // --------------------------------------------------------------------------
 
@@ -108,7 +90,6 @@ export {
   getAllBaseTools,
   filterTools,
   filterDisallowedTools,
-  assembleToolPool,
 
   // Helpers
   defineTool,
@@ -148,10 +129,6 @@ export {
   CORE_TOOL_NAMES,
   splitDeferredTools,
 
-  // LSP
-  LSPTool,
-  LSPApplyTool,
-
   // Todo
   createTodoTool,
 
@@ -170,57 +147,10 @@ export {
   type ProcessJob,
 } from './tools/process-job-registry.js'
 
-// LSP protocol and client manager
-export {
-  collectLspDiagnostics,
-  encodeLspMessage,
-  getLspClient,
-  getLspClientsForFile,
-  notifyLspFileChanged,
-  notifyLspFileClosed,
-  notifyLspWatchedFiles,
-  requestLspClients,
-  resolveLspServerConfig,
-  resolveLspServerConfigsForFile,
-  setLspIdleTimeout,
-  shutdownLspClients,
-  warmupLspClients,
-} from './lsp/client.js'
-export type {
-  LspAggregatedDiagnostic,
-  LspClient,
-  LspClientState,
-  LspCreateFile,
-  LspDeleteFile,
-  LspDiagnostic,
-  LspLocation,
-  LspLocationLink,
-  LspPosition,
-  LspRange,
-  LspRenameFile,
-  LspServerCapabilities,
-  LspServerConfig,
-  LspServerStatus,
-  LspTextDocumentEdit,
-  LspTextEdit,
-  LspWatchedFileChange,
-  LspWorkspaceEdit,
-} from './lsp/client.js'
-export {
-  DEFAULT_LSP_SERVERS,
-  findLspWorkspaceRoot,
-  resolveLspExecutable,
-  supportsLspFile,
-} from './lsp/registry.js'
-export type { LspRegistryServer, LspServerRole } from './lsp/registry.js'
-export { clearLspWritethroughState } from './lsp/writethrough.js'
-
 // --------------------------------------------------------------------------
 // MCP Client
 // --------------------------------------------------------------------------
 
-export { connectMCPServer, closeAllConnections } from './mcp/client.js'
-export type { MCPConnection } from './mcp/client.js'
 export { McpClientManager } from './mcp/manager.js'
 export type {
   McpCallResult,
@@ -615,12 +545,6 @@ export type {
   CanUseToolFn,
   CanUseToolResult,
 
-  // MCP types
-  McpServerConfig,
-  McpStdioConfig,
-  McpSseConfig,
-  McpHttpConfig,
-
   // Agent types
   AgentOptions,
   AgentContextController,
@@ -641,7 +565,6 @@ export type {
   AgentProgressUsage,
   ModelUsage,
   InitializationResult,
-  MCPServerStatus,
   ContextUsageResult,
   RewindFilesResult,
   ReloadPluginsResult,
@@ -680,11 +603,6 @@ export type {
 
   // Model info
   ModelInfo,
-  McpElicitationRequest,
-  McpElicitationResponse,
-  McpElicitationHandler,
-  McpResourceUpdate,
-  McpResourceUpdateHandler,
 
   // Slash commands & agent info
   SlashCommand,

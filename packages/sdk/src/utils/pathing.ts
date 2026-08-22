@@ -1,4 +1,5 @@
-import { access, readdir } from 'fs/promises'
+import { readdir, stat } from 'fs/promises'
+import { existsSync, readlinkSync, realpathSync } from 'node:fs'
 import { resolve, isAbsolute, normalize, basename, dirname } from 'path'
 import { isIP } from 'node:net'
 import type { SandboxSettings } from '../types.js'
@@ -15,11 +16,25 @@ function normalizePath(path: string): string {
 
 async function pathExists(path: string): Promise<boolean> {
   try {
-    await access(path)
+    // 显式 follow 的 stat：Bun 的 access 对悬空 symlink 也返回成功，断链会被
+    // 误判存在并解析到目标路径隐式创建文件；必须按不存在处理，交给写入侧报错
+    await stat(path)
     return true
   } catch {
     return false
   }
+}
+
+/**
+ * Map/lock 键归一：win32/darwin 文件系统大小写不敏感，统一小写折叠，
+ * 避免异写法路径绕过互斥或缓存命中（#334）。口径与 normalizePath 一致。
+ */
+export function toPathKey(path: string): string {
+  const normalized = normalize(resolve(path)).replace(/\\/g, '/')
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    return normalized.toLowerCase()
+  }
+  return normalized
 }
 
 export function isPathWithinRoot(path: string, root: string): boolean {
@@ -76,6 +91,34 @@ export async function suggestNearbyPaths(filePath: string, limit = 3): Promise<s
   }
 }
 
+/**
+ * realpath 规范化（同步）：存在前缀做 realpathSync.native 解析，缺失尾部段
+ * 原样拼回；悬空 symlink 的 existsSync 为 false 但链接本体仍按其目标解析，
+ * 否则"经 symlink 写入尚不存在的外部目标"会绕过沙箱比对（#336）。
+ */
+function canonicalizePath(input: string): string {
+  let current = resolve(input)
+  const tailSegments: string[] = []
+  // 链跳上限防 symlink 环；超限按词法兜底（宁可漏判不挂死）
+  for (let hop = 0; hop < 32; hop += 1) {
+    if (existsSync(current)) {
+      return resolve(realpathSync.native(current), ...tailSegments)
+    }
+    try {
+      const linkTarget = readlinkSync(current)
+      current = resolve(dirname(current), linkTarget)
+      continue
+    } catch {
+      // 非 symlink 或不可读：当作缺失段向上走
+    }
+    const parent = dirname(current)
+    if (parent === current) break
+    tailSegments.unshift(basename(current))
+    current = parent
+  }
+  return resolve(current, ...tailSegments)
+}
+
 export async function resolveInputPath(
   cwd: string,
   inputPath: string,
@@ -84,7 +127,8 @@ export async function resolveInputPath(
   const candidates = resolveCandidatePaths(cwd, inputPath, additionalDirectories)
   for (const candidate of candidates) {
     if (await pathExists(candidate)) {
-      return candidate
+      // 收口处 realpath：词法判定看不见 symlink 指向 deny 区的路径（#336）
+      return canonicalizePath(candidate)
     }
   }
   return candidates[0] || resolve(cwd, inputPath)
@@ -98,23 +142,30 @@ export function ensurePathAllowed(
 ): string | null {
   if (!sandbox?.enabled) return null
 
+  // 目标与沙箱根都 canonicalize 后比对，symlink 指向 deny/allow 区外也能拦住（#336）。
+  // # ponytail: 判定后仍存 check-then-use TOCTOU 天花板——路径可在判定后瞬间被
+  // 替换成 symlink；根治需 fd 级 IO（openat2/RESOLVE_BENEATH）或打开后 fstat 复核，
+  // 升级时把收口挪到各 tool 的文件句柄创建处。
+  const canonicalPath = canonicalizePath(path)
+  const within = (root: string): boolean => isPathWithinRoot(canonicalPath, canonicalizePath(root))
+
   const roots = additionalDirectories
   const fsRules = sandbox.filesystem
 
   if (mode === 'read') {
-    if (fsRules?.denyRead?.some((root) => isPathWithinRoot(path, root))) {
+    if (fsRules?.denyRead?.some((root) => within(root))) {
       return `Sandbox denied read access to ${path}`
     }
     return null
   }
 
-  if (fsRules?.denyWrite?.some((root) => isPathWithinRoot(path, root))) {
+  if (fsRules?.denyWrite?.some((root) => within(root))) {
     return `Sandbox denied write access to ${path}`
   }
 
   if (fsRules?.allowWrite && fsRules.allowWrite.length > 0) {
     const allowedRoots = [...fsRules.allowWrite, ...roots]
-    const allowed = allowedRoots.some((root) => isPathWithinRoot(path, root))
+    const allowed = allowedRoots.some((root) => within(root))
     if (!allowed) {
       return `Sandbox denied write access to ${path}`
     }

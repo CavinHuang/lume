@@ -82,20 +82,6 @@ describe('system-tools-state', () => {
     expect('policyEntry' in row!).toBe(false)
   })
 
-  test('keeps code intelligence visible as a locked read-only tool group', () => {
-    const rows = buildSystemToolRows(['group:lsp'])
-    const row = rows.find((item) => item.id === 'code-intelligence')
-
-    expect(row).toMatchObject({
-      label: '代码智能',
-      description: 'LSP 代码理解与符号查询',
-      count: 1,
-      enabled: true,
-      locked: true,
-    })
-    expect('policyEntry' in row!).toBe(false)
-  })
-
   test('counts the locked Agent group as sub-agent dispatch plus skill invocation', () => {
     const rows = buildSystemToolRows()
 

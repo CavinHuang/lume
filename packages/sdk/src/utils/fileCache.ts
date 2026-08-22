@@ -6,7 +6,7 @@
  * avoiding redundant reads.
  */
 
-import { normalize, resolve } from 'path'
+import { toPathKey } from './pathing.js'
 
 /**
  * Cached file state.
@@ -39,7 +39,7 @@ export class FileStateCache {
    * Normalize a file path for cache lookup.
    */
   private normalizePath(filePath: string): string {
-    return normalize(resolve(filePath))
+    return toPathKey(filePath)
   }
 
   /**

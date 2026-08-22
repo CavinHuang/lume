@@ -17,7 +17,7 @@ import type { NormalizedPlugin } from "./normalized.js";
  * enablement state. A pure version bump that keeps permissions/capabilities
  * unchanged may reuse a previous approval.
  *
- * Hooks/MCP/LSP config files contribute both their path and their content
+ * Hooks/MCP config files contribute both their path and their content
  * hash (#347): hooks and MCP servers are command-execution entry points, so a
  * post-approval edit of hooks.json / mcp.json must force a re-review just like
  * a commandTool change does. Command tools are fully resolved in
@@ -38,8 +38,6 @@ interface PermissionSummary {
     hooksConfigHash: string | null;
     mcpServersConfigPath: string | null;
     mcpServersConfigHash: string | null;
-    lspServersConfigPath: string | null;
-    lspServersConfigHash: string | null;
     commandTools: Array<Record<string, unknown>>;
   };
 }
@@ -75,8 +73,6 @@ function canonicalSummary(plugin: NormalizedPlugin): PermissionSummary {
       hooksConfigHash: capabilityFileHash(plugin, plugin.capabilities.hooksConfigPath),
       mcpServersConfigPath: plugin.capabilities.mcpServersConfigPath ?? null,
       mcpServersConfigHash: capabilityFileHash(plugin, plugin.capabilities.mcpServersConfigPath),
-      lspServersConfigPath: plugin.capabilities.lspServersConfigPath ?? null,
-      lspServersConfigHash: capabilityFileHash(plugin, plugin.capabilities.lspServersConfigPath),
       commandTools,
     },
   };

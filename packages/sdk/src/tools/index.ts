@@ -43,9 +43,6 @@ import { AskUserQuestionTool } from './ask-user.js'
 // Discovery
 import { ToolSearchTool } from './tool-search.js'
 
-// LSP
-import { LSPApplyTool, LSPTool } from './lsp-tool.js'
-
 // Todo
 import { createTodoTool } from './todo-tool.js'
 
@@ -88,10 +85,6 @@ const ALL_TOOLS: ToolDefinition[] = [
   // Discovery
   ToolSearchTool,
 
-  // LSP
-  LSPTool,
-  LSPApplyTool,
-
   // Skill
   SkillTool,
 ]
@@ -99,7 +92,7 @@ const ALL_TOOLS: ToolDefinition[] = [
 /** Schemas always sent to the provider when deferred tool loading is enabled. */
 export const CORE_TOOL_NAMES = new Set([
   'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'NotebookEdit',
-  'WebFetch', 'WebSearch', 'Agent', 'AskUserQuestion', 'Skill', 'LSP', 'LSPApply',
+  'WebFetch', 'WebSearch', 'Agent', 'AskUserQuestion', 'Skill',
   'ProcessOutput', 'ProcessStop', 'TaskOutput', 'TaskStop', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
 ])
 
@@ -149,27 +142,6 @@ export function filterDisallowedTools(
   return tools.filter((tool) => !matchesAnyToolPattern(tool.name, disallowedTools))
 }
 
-/**
- * Assemble tool pool: base tools + MCP tools, with deduplication.
- */
-export function assembleToolPool(
-  baseTools: ToolDefinition[],
-  mcpTools: ToolDefinition[] = [],
-  _allowedTools?: string[],
-  disallowedTools?: string[],
-): ToolDefinition[] {
-  const combined = [...baseTools, ...mcpTools]
-
-  // Deduplicate by name (later definitions override)
-  const byName = new Map<string, ToolDefinition>()
-  for (const tool of combined) {
-    byName.set(tool.name, tool)
-  }
-
-  let tools = Array.from(byName.values())
-  return filterDisallowedTools(tools, disallowedTools)
-}
-
 // Re-export individual tools
 export {
   // Core
@@ -196,9 +168,6 @@ export {
   AskUserQuestionTool,
   // Discovery
   ToolSearchTool,
-  // LSP
-  LSPTool,
-  LSPApplyTool,
   // Todo
   createTodoTool,
   // Skill
@@ -215,8 +184,6 @@ export function splitDeferredTools(tools: ToolDefinition[]): {
   registry.preset("default").setCore([...CORE_TOOL_NAMES]);
   return registry.agent("adapter").view().split();
 }
-
-export type { LspWorkspaceEditPreview } from './lsp-tool.js'
 
 // Re-export helpers
 export { defineTool, toApiTool } from './types.js'

@@ -81,21 +81,6 @@ import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { FileStateCache } from './utils/fileCache.js'
 import { createExecuteTool, createToolSearchTool } from './tools/tool-search.js'
 
-function renderLspDiagnosticsForModel(
-  event: Extract<SDKMessage, { type: 'system'; subtype: 'lsp_diagnostics' }>,
-): string {
-  const header = `Delayed LSP diagnostics for ${event.file_path} (mutation ${event.mutation_version})`
-  if (event.diagnostics.items.length === 0) return `${header}: no new diagnostics`
-  return [
-    header,
-    ...event.diagnostics.items.map((diagnostic) => {
-      const position = `${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}`
-      const severity = diagnostic.severity === 1 ? 'error' : diagnostic.severity === 2 ? 'warning' : 'info'
-      return `- ${position} ${severity}${diagnostic.code !== undefined ? ` [${diagnostic.code}]` : ''}: ${diagnostic.message}`
-    }),
-  ].join('\n')
-}
-
 // ============================================================================
 // Tool format conversion
 // ============================================================================
@@ -460,7 +445,6 @@ export class QueryEngine {
   }> = []
   private fileStateCache = new FileStateCache()
   private workingDirectory: string
-  private pendingLspDiagnostics: Array<Extract<SDKMessage, { type: 'system'; subtype: 'lsp_diagnostics' }>> = []
   /** Tool calls skipped or interrupted by an abort during the current run. */
   private abortedPendingToolCalls: Array<{ id: string; name: string; input: unknown }> = []
   private repeatedToolCalls = new Map<string, RepeatedToolCallState>()
@@ -1033,7 +1017,6 @@ export class QueryEngine {
       tools: this.config.tools.map(t => t.name),
       model: this.config.model,
       cwd: this.workingDirectory,
-      mcp_servers: this.config.mcpServerStatuses || [],
       permission_mode: this.config.permissionMode || 'bypassPermissions',
       permissionMode: this.config.permissionMode || 'bypassPermissions',
       agents: this.config.agents ? Object.keys(this.config.agents) : [],
@@ -1191,18 +1174,6 @@ export class QueryEngine {
       const apiMessages = await this.microCompactForProvider(
         normalizeMessagesForAPI(hydratedMessages) as NormalizedMessageParam[],
       )
-      // Non-destructive read: the request may still fail (prompt-too-long
-      // compaction retry) and the diagnostics must survive for the next
-      // attempt. Cleared only once a response actually came back.
-      const delayedLspDiagnostics = [...this.pendingLspDiagnostics]
-      if (delayedLspDiagnostics.length > 0) {
-        apiMessages.push({
-          role: 'runtime',
-          content: `<internal_context type="lsp_diagnostics">\n${delayedLspDiagnostics
-            .map((event) => renderLspDiagnosticsForModel(event))
-            .join('\n\n')}\n</internal_context>`,
-        })
-      }
       const transientRuntimeContext = [
         internalContextBlocks.length > 0
           ? `<internal_context type="compaction">\n${internalContextBlocks.join('\n\n')}\n</internal_context>`
@@ -1430,8 +1401,6 @@ export class QueryEngine {
         return
       }
 
-      // The request succeeded: diagnostics injected above are consumed.
-      this.pendingLspDiagnostics = []
       this.messages = releaseEphemeralImageReferences(this.messages as any[]) as NormalizedMessageParam[]
 
       // Track API timing
@@ -1550,7 +1519,7 @@ export class QueryEngine {
           this.messages.push({
             role: 'user',
             content:
-              'Your previous response did not match the requested JSON schema. Return only valid JSON matching the schema exactly, with no markdown fences or extra commentary.',
+              'Your previous response did not match the requested JSON schema. Your response must begin with `{` as the very first character — no prose, markdown fences, or commentary before it — and contain only valid JSON matching the schema exactly.',
           })
           continue
         }
@@ -2076,8 +2045,7 @@ export class QueryEngine {
         context.emitEvent?.(event)
         return
       }
-      if (event.type === 'system' && (event.subtype === 'task_notification' || event.subtype === 'lsp_diagnostics')) {
-        if (event.subtype === 'lsp_diagnostics') this.pendingLspDiagnostics.push(event)
+      if (event.type === 'system' && event.subtype === 'task_notification') {
         try {
           this.config.onAsyncEvent?.(event)
         } catch {
@@ -2543,16 +2511,6 @@ export class QueryEngine {
       gridRows,
       model: this.config.model,
       memoryFiles: [],
-      mcpTools: (this.config.mcpServerStatuses || []).flatMap((server) =>
-        this.config.tools
-          .filter((tool) => tool.name.startsWith(`mcp__${server.name}__`))
-          .map((tool) => ({
-            name: tool.name,
-            serverName: server.name,
-            tokens: Math.ceil((tool.description.length + tool.name.length) / 4),
-            isLoaded: server.status === 'connected',
-          })),
-      ),
       deferredBuiltinTools: (this.config.deferredTools ?? []).map((tool) => ({
         name: tool.name,
         tokens: Math.ceil((tool.description.length + tool.name.length) / 4),

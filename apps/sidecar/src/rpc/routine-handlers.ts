@@ -3,12 +3,15 @@ import type { RpcHandler } from "./types"
 import { readRoutine } from "../services/routine/routine-store"
 import { generateDailyRoutine } from "../services/routine/routine-generator"
 import { triggerRoutineEntry, scheduleRoutineEntries, syncRoutineStatus } from "../services/routine/routine-executor"
+import { localDateKey } from "../services/routine/routine-date"
 import { createLogger } from "../services/infra/logger"
 
 const log = createLogger("routine-rpc")
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10)
+  // 本地时区日期键，与 runner/generator 同域；UTC 键会让当地晚间读空、
+  // 晨间 REGENERATE 写到昨日文件（#408/#451）
+  return localDateKey()
 }
 
 export function createRoutineHandlers(): Record<string, RpcHandler> {

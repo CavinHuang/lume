@@ -31,8 +31,8 @@ import { createDiagnosticLogSummary, createLogger, type Logger } from "../infra/
 
 export interface WorkspaceSdkMcpManager {
   sync(configs: Record<string, NormalizedMcpServerConfig>): void;
-  connect?(serverId: string): Promise<void>;
-  ensureConnected?(serverId: string): Promise<void>;
+  connect?(serverId: string, options?: { force?: boolean }): Promise<void>;
+  ensureConnected?(serverId: string, options?: { force?: boolean }): Promise<void>;
   disconnect(serverId: string): Promise<void>;
   dispose(): Promise<void>;
   getStatus(): Record<string, McpClientServerStatus>;
@@ -377,7 +377,8 @@ export class WorkspaceMcpManager {
     const state = this.ensureWorkspaceState(workspaceSlug);
     state.sdk.sync(this.normalizedConfigs(config));
     try {
-      await (state.sdk.connect ?? state.sdk.ensureConnected)?.call(state.sdk, serverId);
+      // Manual probes bypass the manager's reconnect backoff (#312).
+      await (state.sdk.connect ?? state.sdk.ensureConnected)?.call(state.sdk, serverId, { force: true });
     } catch (error) {
       // 连接失败的底层错误常内嵌 URL/凭据片段；与其余 MCP 路径一致经脱敏再下发，
       // 且错误码归一，不把原文直抛 renderer（#403）
