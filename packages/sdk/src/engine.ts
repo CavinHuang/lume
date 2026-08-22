@@ -120,6 +120,45 @@ interface ToolUseBlock {
   input: any
 }
 
+interface RepeatedToolCallState {
+  resultSignature: string
+  equivalentResultCount: number
+}
+
+const MAX_EQUIVALENT_MUTATION_RESULTS = 2
+const MAX_BLOCKED_REPEAT_ATTEMPTS = 2
+
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value) ?? String(value)
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(',')}]`
+  }
+  return `{${Object.keys(value as Record<string, unknown>)
+    .sort()
+    .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
+    .map((key) => `${JSON.stringify(key)}:${stableSerialize((value as Record<string, unknown>)[key])}`)
+    .join(',')}}`
+}
+
+function toolCallSignature(block: ToolUseBlock): string {
+  return `${block.name}\0${stableSerialize(block.input)}`
+}
+
+function toolResultSignature(result: ToolResult): string {
+  // Tools whose public result contains volatile operation ids may expose the
+  // stable state that matters for progress under _meta.repeatGuard.state.
+  const repeatGuard = result._meta?.repeatGuard
+  const stableState = repeatGuard && typeof repeatGuard === 'object' && 'state' in repeatGuard
+    ? (repeatGuard as { state: unknown }).state
+    : result.content
+  return stableSerialize({
+    state: stableState,
+    isError: result.is_error === true,
+  })
+}
+
 function extractAssistantText(response: CreateMessageResponse): string {
   return response.content
     .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
@@ -402,6 +441,9 @@ export class QueryEngine {
   private pendingLspDiagnostics: Array<Extract<SDKMessage, { type: 'system'; subtype: 'lsp_diagnostics' }>> = []
   /** Tool calls skipped or interrupted by an abort during the current run. */
   private abortedPendingToolCalls: Array<{ id: string; name: string; input: unknown }> = []
+  private repeatedToolCalls = new Map<string, RepeatedToolCallState>()
+  private lastBlockedToolCallSignature?: string
+  private blockedRepeatAttempts = 0
 
   constructor(config: QueryEngineConfig) {
     this.config = config
@@ -1007,6 +1049,9 @@ export class QueryEngine {
     // Reset per-run abort bookkeeping before any tool execution (continuations
     // included) so run_aborted reflects this run's interrupted tool calls.
     this.abortedPendingToolCalls = []
+    this.repeatedToolCalls.clear()
+    this.lastBlockedToolCallSignature = undefined
+    this.blockedRepeatAttempts = 0
 
     if (!this.config.toolContinuations?.length) {
       protectedMessageIndex = this.messages.length
@@ -1461,7 +1506,7 @@ export class QueryEngine {
       maxOutputRecoveryAttempts = 0
 
       // Execute tools (concurrent read-only, serial mutations)
-      const { results: toolResults, events: toolEvents, toolsUsed } =
+      const { results: toolResults, events: toolEvents, toolsUsed, repeatGuardStop } =
         await this.executeTools(toolUseBlocks)
       for (const toolEvent of toolEvents) {
         yield toolEvent
@@ -1493,6 +1538,11 @@ export class QueryEngine {
           ...(r._meta ? { _meta: r._meta } : {}),
         })),
       })
+
+      if (repeatGuardStop) {
+        completionGuardStop = repeatGuardStop
+        break
+      }
 
       if (response.stopReason === 'end_turn') break
 
@@ -1610,6 +1660,7 @@ export class QueryEngine {
     results: (ToolResult & { tool_name?: string })[]
     events: SDKMessage[]
     toolsUsed: string[]
+    repeatGuardStop?: { message: string; errorCode: string }
   }> {
     const events: SDKMessage[] = []
     const toolsUsed: string[] = []
@@ -1650,13 +1701,14 @@ export class QueryEngine {
     const hasSkillActivation = toolUseBlocks.some((block) => block.name === 'Skill')
     if (hasSkillActivation && toolUseBlocks.length > 1) {
       const resultsById = new Map<string, ToolResult & { tool_name?: string }>()
+      let repeatGuardStop: { message: string; errorCode: string } | undefined
 
       for (const block of toolUseBlocks.filter((item) => item.name === 'Skill')) {
         if (this.config.abortSignal?.aborted) break // soft abort: skip remaining activations
         const tool = this.config.tools.find((t) => t.name === block.name)
         let result
         try {
-          result = await this.executeSingleTool(block, tool, context)
+          result = await this.executeMutationToolWithRepeatGuard(block, tool, context)
         } catch (error) {
           if (!this.config.abortSignal?.aborted) throw error
           this.abortedPendingToolCalls.push({ id: block.id, name: block.name, input: block.input })
@@ -1665,6 +1717,8 @@ export class QueryEngine {
         resultsById.set(block.id, result.result)
         events.push(...result.events)
         toolsUsed.push(...result.toolsUsed)
+        if (result.repeatGuardStop) repeatGuardStop = result.repeatGuardStop
+        else if (result.toolsUsed.length > 0) repeatGuardStop = undefined
       }
 
       for (const block of toolUseBlocks.filter((item) => item.name !== 'Skill')) {
@@ -1683,6 +1737,7 @@ export class QueryEngine {
         }),
         events,
         toolsUsed,
+        ...(repeatGuardStop ? { repeatGuardStop } : {}),
       }
     }
 
@@ -1730,11 +1785,12 @@ export class QueryEngine {
     }
 
     // Execute serial tools sequentially
+    let repeatGuardStop: { message: string; errorCode: string } | undefined
     for (const item of serial) {
       if (this.config.abortSignal?.aborted) break // soft abort: skip remaining serial tools
       let result
       try {
-        result = await this.executeSingleTool(item.block, item.tool, context)
+        result = await this.executeMutationToolWithRepeatGuard(item.block, item.tool, context)
       } catch (error) {
         if (!this.config.abortSignal?.aborted) throw error
         this.abortedPendingToolCalls.push({ id: item.block.id, name: item.block.name, input: item.block.input })
@@ -1743,6 +1799,8 @@ export class QueryEngine {
       results[item.index] = result.result
       events.push(...result.events)
       toolsUsed.push(...result.toolsUsed)
+      if (result.repeatGuardStop) repeatGuardStop = result.repeatGuardStop
+      else if (result.toolsUsed.length > 0) repeatGuardStop = undefined
     }
 
     return {
@@ -1764,7 +1822,70 @@ export class QueryEngine {
       }),
       events,
       toolsUsed,
+      ...(repeatGuardStop ? { repeatGuardStop } : {}),
     }
+  }
+
+  private async executeMutationToolWithRepeatGuard(
+    block: ToolUseBlock,
+    tool: ToolDefinition | undefined,
+    context: ToolContext,
+  ): Promise<{
+    result: ToolResult & { tool_name?: string }
+    events: SDKMessage[]
+    toolsUsed: string[]
+    repeatGuardStop?: { message: string; errorCode: string }
+  }> {
+    const signature = toolCallSignature(block)
+    const previous = this.repeatedToolCalls.get(signature)
+    if (previous && previous.equivalentResultCount >= MAX_EQUIVALENT_MUTATION_RESULTS) {
+      if (this.lastBlockedToolCallSignature === signature) {
+        this.blockedRepeatAttempts++
+      } else {
+        this.lastBlockedToolCallSignature = signature
+        this.blockedRepeatAttempts = 1
+      }
+      const message =
+        `Runtime repeat guard: "${block.name}" with the same input already returned an equivalent result twice, so this call was not executed. `
+        + 'Do not retry the unchanged call. Use the existing result as evidence: finish if the user goal is satisfied, or inspect current state and choose a materially different action.'
+      const shouldStop = this.blockedRepeatAttempts >= MAX_BLOCKED_REPEAT_ATTEMPTS
+      return {
+        result: {
+          type: 'tool_result',
+          tool_use_id: block.id,
+          tool_name: block.name,
+          content: message,
+          is_error: true,
+          _meta: {
+            error: { code: 'repeated_tool_call', retryable: false },
+            repeatGuard: {
+              equivalentResults: previous.equivalentResultCount,
+              blockedAttempts: this.blockedRepeatAttempts,
+            },
+          },
+        },
+        events: [],
+        toolsUsed: [],
+        ...(shouldStop ? {
+          repeatGuardStop: {
+            errorCode: 'repeated_tool_call',
+            message: `Agent stopped after retrying the unchanged "${block.name}" call despite repeat-guard feedback.`,
+          },
+        } : {}),
+      }
+    }
+
+    this.lastBlockedToolCallSignature = undefined
+    this.blockedRepeatAttempts = 0
+    const execution = await this.executeSingleTool(block, tool, context)
+    const resultSignature = toolResultSignature(execution.result)
+    this.repeatedToolCalls.set(signature, {
+      resultSignature,
+      equivalentResultCount: previous?.resultSignature === resultSignature
+        ? previous.equivalentResultCount + 1
+        : 1,
+    })
+    return execution
   }
 
   /**
