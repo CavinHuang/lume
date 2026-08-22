@@ -27,9 +27,14 @@ describe("getSettingsFileForSource LUME_CONFIG_DIR (#291)", () => {
   });
 
   test("'user' follows LUME_CONFIG_DIR when set", () => {
-    process.env.LUME_CONFIG_DIR = join("D:", "custom-lume");
+    // Must be genuinely absolute per platform: a drive-letter path is relative
+    // on POSIX and would resolve against cwd.
+    const configDir = process.platform === "win32"
+      ? join("D:\\", "custom-lume")
+      : "/tmp/custom-lume";
+    process.env.LUME_CONFIG_DIR = configDir;
     expect(getSettingsFileForSource(join("D:", "proj"), "user")).toBe(
-      join("D:", "custom-lume", "settings.json"),
+      join(configDir, "settings.json"),
     );
   });
 
