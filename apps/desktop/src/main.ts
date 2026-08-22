@@ -1344,6 +1344,16 @@ export function ensureIslandWindow() {
     onReady: () => getAgentIslandService().repush(),
   })
   islandWindow = win
+  // 岛窗携完整 preload 且在受信窗口集合内，与主窗/quickInput 同规格挂安全闸：
+  // will-navigate/will-frame-navigate 拦截 + 统一 windowOpenHandler（#395）。
+  attachWebContentsSecurity(win, {
+    allowNavigation: (url) => isAllowedMainFrameNavigation(url, {
+      appIsPackaged: app.isPackaged,
+      appProtocolOrigin: APP_PROTOCOL_ORIGIN,
+      devServerUrl: getDevServerUrl(),
+      webEntryPath: getWebEntryPath(),
+    }),
+  })
   win.on('closed', () => {
     if (islandWindow === win) islandWindow = null
   })
@@ -2239,6 +2249,8 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       return { available: getDiagnosticContentStore().isAvailable(), lease: diagnosticCapture, deleted }
     }
     case 'desktop_diagnostic_decrypt':
+      // 解密的是会话明文，与 connection_vault_* 同级敏感：仅主窗可调。
+      requireMainWindowSender(context, 'desktop_diagnostic_decrypt')
       return getDiagnosticContentStore().decrypt(payload.recordId)
     case 'desktop_diagnostic_delete':
       return { deleted: await getDiagnosticContentStore().clear() }
@@ -2393,6 +2405,9 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       const destinationPath = payload.dest
       validateMigrationTarget(sourcePath, destinationPath)
       await sidecarHost.stop()
+      // 拷贝窗口内拒绝 renderer IPC 触发的惰性重启：新进程边跑边被拷贝会令
+      // 目录校验失配、目的目录被删（#412）。
+      sidecarHost.setMigrationInProgress(true)
       const sourceStats = dirStats(sourcePath)
       try {
         const { copiedFiles, copiedBytes } = copyDirRecursive(sourcePath, destinationPath, (progress) => {
@@ -2412,6 +2427,8 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       } catch (error) {
         rmSync(destinationPath, { recursive: true, force: true })
         throw error
+      } finally {
+        sidecarHost.setMigrationInProgress(false)
       }
     }
     case 'data_apply_migration': {
@@ -2474,6 +2491,7 @@ function createSidecarHost({ onNotification }) {
   let nextId = 1
   let pending = new Map()
   let stopRequested = false
+  let migrationInProgress = false
   let wikiPrivilegedCredential = null
 
   function rejectAllPending(error) {
@@ -2567,6 +2585,8 @@ function createSidecarHost({ onNotification }) {
   }
 
   async function start() {
+    // 数据目录迁移拷贝期间拒绝惰性重启：新进程边跑边被拷贝会令校验失配（#412）
+    if (migrationInProgress) throw new Error('数据目录迁移进行中，sidecar 暂不启动')
     if (started) {
       await started
       return
@@ -2962,6 +2982,9 @@ function createSidecarHost({ onNotification }) {
     callPluginPackagePrivileged,
     notifyBrowserSettings,
     stop,
+    setMigrationInProgress: (value) => {
+      migrationInProgress = value
+    },
   }
 }
 
