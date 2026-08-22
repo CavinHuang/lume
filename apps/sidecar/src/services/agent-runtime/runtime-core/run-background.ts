@@ -1,7 +1,7 @@
 /**
  * runtime-core 后台任务收尾与总线第二入口发布(#177 自 run.ts 拆出,纯移动):
  * process job 等待/终态判定、background.task 结果上下文构造、
- * background.task / lsp.diagnostics / coding.report 领域事件发布。
+ * background.task / coding.report 领域事件发布。
  */
 import {
   waitForProcessJobTerminal,
@@ -13,7 +13,6 @@ import type {
   RuntimeCodingReport,
   BackgroundTaskNotificationDetail,
   CodingReportDetail,
-  LspDiagnosticsDetail,
 } from "@lume/shared";
 import { normalizeBackgroundTaskStatus } from "@lume/shared";
 import { join } from "node:path";
@@ -109,39 +108,6 @@ export function publishBackgroundTaskNotificationToBus(input: {
   if (notification.execution !== undefined)
     detail.execution = notification.execution;
   publishRunDomainEvent({ ...input, label: "background.task", detail });
-}
-
-/**
- * 批次5 第二入口:lsp_diagnostics(system 异步事件)在旧路(coding-run-tracker 观察 +
- * run-item-events 投影 lsp.diagnostics.updated RuntimeEvent)之外,flag on 时经
- * ThreadEventBus 再发一份 lsp.diagnostics 领域事件——字段与旧路逐一对齐
- * (toolUseId←tool_use_id、filePath←file_path 等);filePath/sha256 缺失丢弃,
- * 同旧路 gate(run-item-events lsp_diagnostics 分支)。T7c 起恒开(批次1 flag 已退役)。
- */
-export function publishLspDiagnosticsToBus(input: {
-  sessionDir: string;
-  threadId: string;
-  runId: string;
-  event: SDKMessage;
-}): void {
-  // SDKLspDiagnosticsMessage 未从 @lume/agent-sdk index 导出,与 engine 同法经 Extract 取型
-  const message = input.event as Extract<
-    SDKMessage,
-    { type: "system"; subtype: "lsp_diagnostics" }
-  >;
-  if (!message.file_path || !message.sha256) return;
-  const detail: LspDiagnosticsDetail = {
-    type: "lsp.diagnostics",
-    filePath: message.file_path,
-    mutationVersion: message.mutation_version,
-    sha256: message.sha256,
-    delayed: message.delayed === true,
-    diagnostics: message.diagnostics,
-    ...(typeof message.tool_use_id === "string"
-      ? { toolUseId: message.tool_use_id }
-      : {}),
-  };
-  publishRunDomainEvent({ ...input, label: "lsp.diagnostics", detail });
 }
 
 /**

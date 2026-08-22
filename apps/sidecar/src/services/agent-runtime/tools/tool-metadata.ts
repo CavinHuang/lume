@@ -616,14 +616,6 @@ registerToolMetadata({
   allowedInPlanMode: false
 });
 
-// LSP 工具
-registerToolMetadata({
-  name: "LSP",
-  category: "read",
-  riskLevel: "low",
-  description: "LSP 代码智能"
-});
-
 // Task 工具（启动子 Agent）
 registerToolMetadata({
   name: "Task",

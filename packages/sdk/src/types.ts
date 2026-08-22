@@ -70,7 +70,6 @@ export type SDKMessage =
   | SDKStatusMessage
   | SDKTaskNotificationMessage
   | SDKMemorySavedMessage
-  | SDKLspDiagnosticsMessage
   | SDKRateLimitEvent
   | SDKHookStartedMessage
   | SDKHookProgressMessage
@@ -239,46 +238,6 @@ export interface SDKRunAbortedMessage {
   subtype: 'run_aborted'
   session_id: string
   pending_tool_calls: Array<{ id: string; name: string; input: unknown }>
-}
-
-export interface SDKLspDiagnosticsMessage {
-  type: 'system'
-  subtype: 'lsp_diagnostics'
-  session_id?: string
-  tool_use_id?: string
-  file_path: string
-  mutation_version: number
-  sha256: string
-  delayed: boolean
-  diagnostics: LspDiagnosticBatch
-}
-
-export interface LspDiagnosticBatch {
-  servers: string[]
-  total: number
-  errors: number
-  warnings: number
-  truncated: boolean
-  items: Array<{
-    server?: string
-    source?: string
-    severity?: 1 | 2 | 3 | 4
-    code?: string | number
-    message: string
-    range: {
-      start: { line: number; character: number }
-      end: { line: number; character: number }
-    }
-  }>
-  artifact?: FileResultRef
-}
-
-export interface LspWritethroughResult {
-  servers: string[]
-  formatted: boolean
-  diagnostics?: LspDiagnosticBatch
-  diagnosticsDelayed: boolean
-  mutationVersion: number
 }
 
 export type AgentContextCompactionTrigger = 'auto' | 'manual' | 'prompt_too_long'

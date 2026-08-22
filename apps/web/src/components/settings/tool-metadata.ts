@@ -220,15 +220,6 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     riskLevel: 'low',
   },
 
-  // === LSP ===
-  lsp: {
-    name: 'lsp',
-    label: 'LSP',
-    description: 'LSP 代码智能查询',
-    category: 'read',
-    riskLevel: 'low',
-  },
-
   // === Todo ===
   todo_write: {
     name: 'todo_write',

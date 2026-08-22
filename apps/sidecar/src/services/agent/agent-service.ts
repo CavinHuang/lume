@@ -564,7 +564,6 @@ function shouldPersistAssistantTurnSdkMessage(message: SDKMessage): boolean {
     || message.subtype === "task_started"
     || message.subtype === "task_progress"
     || message.subtype === "task_notification"
-    || message.subtype === "lsp_diagnostics"
   );
 }
 

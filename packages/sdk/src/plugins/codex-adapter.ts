@@ -68,9 +68,8 @@ export function adaptCodexPlugin(
   // Fail-closed permission mapping (#346): capabilities are granted only when
   // the manifest explicitly declares the driving field — MCP registration only
   // with mcpServers, hook events only with hooks, and shell stays off (the
-  // format has no shell field; shell.allow gates LSP code execution). Missing
-  // fields fall back to the same defaults lume manifests get from
-  // inferDefaults (all denied).
+  // format has no shell field). Missing fields fall back to the same defaults
+  // lume manifests get from inferDefaults (all denied).
   const declaresMcpServers = typeof codex.mcpServers === "string";
   const declaresHooks = typeof codex.hooks === "string";
 

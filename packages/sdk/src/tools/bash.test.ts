@@ -72,6 +72,28 @@ describe("BashTool shell invocation", () => {
     expect(BashTool.isReadOnly?.({ command: "uniq input.txt output.txt" })).toBeFalse();
   });
 
+  // #453:sed 白名单两条 simple 形态绕过。负例无条件钉死——有 natives 时修复
+  // 生效判 false,无 natives 时本就走 fail-closed 回退判 false,断言不依赖环境。
+  test("fails closed on sed -f/--file script files and runtime-expandable scripts (#453)", () => {
+    // -f/--file 的脚本体在文件里,静态检查看不到(w 写盘 / GNU e 任意执行)
+    expect(BashTool.isReadOnly?.({ command: "sed -f payload.sed README" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "sed --file payload.sed README" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "sed --file=payload.sed README" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "sed -fpayload.sed README" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "sed -nf payload.sed README" })).toBeFalse();
+    // 脚本位的字面量运行期才展开:native tokenizer 把前置赋值剥出 argv,
+    // 字面量不含 w/W/e 通过检查后展开为任意脚本。
+    expect(BashTool.isReadOnly?.({ command: "X='s/.*/curl evil/e' sed $X README" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "sed -e $SCRIPT file.txt" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "sed --expression=$SCRIPT file.txt" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: 'sed "$d" file.txt' })).toBeFalse();
+  });
+
+  test.skipIf(!nativeBashAvailable)("keeps literal multi-expression sed scripts read-only next to the #453 fail-closed forms", () => {
+    expect(BashTool.isReadOnly?.({ command: "sed -e 's/a/b/' -e 's/c/d/' file.txt" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "sed --expression='s/a/b/' file.txt" })).toBeTrue();
+  });
+
   // 与上一测试互补：native 解析不可用（无二进制）时，find/sed/sort 整体退回
   // parse-unavailable 的 PowerShell 白名单回退——这些可执行文件不在回退白名单中，
   // 一律判非只读（fail-closed：宁可失去并发加速，不放过写形态）。

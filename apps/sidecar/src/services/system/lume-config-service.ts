@@ -89,14 +89,6 @@ function createDefaultLumeConfig(): LumeConfigFile {
       internal: { ...DEFAULT_INTERNAL_HOOKS }
     },
     webSearch: { ...DEFAULT_LUME_WEB_SEARCH },
-    lsp: {
-      enabled: true,
-      diagnosticsOnWrite: true,
-      diagnosticsDeduplicate: true,
-      formatOnWrite: false,
-      idleTimeoutMs: 10 * 60_000,
-      useLspmux: "auto"
-    },
     workspaces: {}
   };
 }
@@ -655,39 +647,6 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
   if (isPlainObject(value.webSearch)) {
     next.webSearch = normalizeWebSearchSection(value.webSearch);
   }
-  if (isPlainObject(value.lsp)) {
-    const servers = isPlainObject(value.lsp.servers)
-      ? Object.fromEntries(Object.entries(value.lsp.servers).flatMap(([name, server]) => {
-        if (!name.trim() || !isPlainObject(server)) return [];
-        return [[name, {
-          ...(typeof server.disabled === "boolean" ? { disabled: server.disabled } : {}),
-          ...(typeof server.command === "string" ? { command: server.command } : {}),
-          ...(Array.isArray(server.args) ? { args: normalizeStringArray(server.args) } : {}),
-          ...(typeof server.cwd === "string" ? { cwd: server.cwd } : {}),
-          ...(Array.isArray(server.fileTypes) ? { fileTypes: normalizeStringArray(server.fileTypes) } : {}),
-          ...(Array.isArray(server.rootMarkers) ? { rootMarkers: normalizeStringArray(server.rootMarkers) } : {}),
-          ...(isPlainObject(server.initOptions) ? { initOptions: server.initOptions } : {}),
-          ...(isPlainObject(server.settings) ? { settings: server.settings } : {}),
-          ...(typeof server.requestTimeoutMs === "number" ? { requestTimeoutMs: server.requestTimeoutMs } : {}),
-          ...(typeof server.warmupTimeoutMs === "number" ? { warmupTimeoutMs: server.warmupTimeoutMs } : {}),
-          ...(typeof server.priority === "number" ? { priority: server.priority } : {}),
-          ...(server.role === "primary" || server.role === "linter"
-            ? { role: server.role as "primary" | "linter" }
-            : {})
-        }]];
-      }))
-      : undefined;
-    next.lsp = {
-      ...(typeof value.lsp.enabled === "boolean" ? { enabled: value.lsp.enabled } : {}),
-      ...(typeof value.lsp.lazy === "boolean" ? { lazy: value.lsp.lazy } : {}),
-      ...(typeof value.lsp.diagnosticsOnWrite === "boolean" ? { diagnosticsOnWrite: value.lsp.diagnosticsOnWrite } : {}),
-      ...(typeof value.lsp.diagnosticsDeduplicate === "boolean" ? { diagnosticsDeduplicate: value.lsp.diagnosticsDeduplicate } : {}),
-      ...(typeof value.lsp.formatOnWrite === "boolean" ? { formatOnWrite: value.lsp.formatOnWrite } : {}),
-      ...(typeof value.lsp.idleTimeoutMs === "number" ? { idleTimeoutMs: value.lsp.idleTimeoutMs } : {}),
-      ...(value.lsp.useLspmux === "auto" || value.lsp.useLspmux === "off" ? { useLspmux: value.lsp.useLspmux } : {}),
-      ...(servers ? { servers } : {})
-    };
-  }
 
   return next;
 }
@@ -830,14 +789,6 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
     webSearch: {
       ...(DEFAULT_LUME_WEB_SEARCH),
       ...(base.webSearch ?? {})
-    },
-    lsp: {
-      ...(fallback.lsp ?? {}),
-      ...(base.lsp ?? {}),
-      servers: {
-        ...(fallback.lsp?.servers ?? {}),
-        ...(base.lsp?.servers ?? {})
-      }
     },
     workspaces
   };
@@ -1111,14 +1062,6 @@ export function getEffectiveLumeConfig(workspaceSlug?: string): LumeEffectiveCon
       providers: {
         ...(file.webSearch?.providers ?? {}),
         ...(overlay?.webSearch?.providers ?? {})
-      }
-    },
-    lsp: {
-      ...(file.lsp ?? {}),
-      ...(overlay?.lsp ?? {}),
-      servers: {
-        ...(file.lsp?.servers ?? {}),
-        ...(overlay?.lsp?.servers ?? {})
       }
     }
   };

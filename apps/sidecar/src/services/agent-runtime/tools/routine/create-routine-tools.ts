@@ -7,6 +7,7 @@ import {
   generateDailyRoutine,
 } from "../../../routine/routine-generator";
 import { scheduleRoutineEntries } from "../../../routine/routine-executor";
+import { localDateKey } from "../../../routine/routine-date";
 import { createSdkJsonResultTool } from "../sdk-tool-result";
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -22,7 +23,9 @@ function asNumber(value: unknown): number | undefined {
 }
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  // 本地时区日期键，与 runner/generator 同域；UTC 键会让当地晚间读空、
+  // 写读不一致（#408/#451）
+  return localDateKey()
 }
 
 // ─── Tools ──────────────────────────────────────────────────────────

@@ -451,35 +451,6 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
     const event = projectBackgroundTaskNotificationRuntimeEvent(run.threadId, payload, item.createdAt);
     return event ? [event] : [];
   }
-  if (item.name === "lsp_diagnostics") {
-    const diagnostics = asRecord(payload.diagnostics);
-    const filePath = stringValue(payload.file_path, "");
-    const sha256 = stringValue(payload.sha256, "");
-    if (!filePath || !sha256) return [];
-    return [{
-      id: `${run.runId}:${item.id}:lsp.diagnostics.updated`,
-      type: "lsp.diagnostics.updated",
-      threadId: run.threadId,
-      runId: run.runId,
-      createdAt: item.createdAt,
-      ...(typeof payload.tool_use_id === "string" ? { toolUseId: payload.tool_use_id } : {}),
-      filePath,
-      mutationVersion: numberValue(payload.mutation_version),
-      sha256,
-      delayed: payload.delayed === true,
-      diagnostics: {
-        servers: Array.isArray(diagnostics.servers) ? diagnostics.servers.filter((value): value is string => typeof value === "string") : [],
-        total: numberValue(diagnostics.total),
-        errors: numberValue(diagnostics.errors),
-        warnings: numberValue(diagnostics.warnings),
-        truncated: diagnostics.truncated === true,
-        items: Array.isArray(diagnostics.items) ? diagnostics.items as Extract<LumeRuntimeEvent, { type: "lsp.diagnostics.updated" }>["diagnostics"]["items"] : [],
-        ...(diagnostics.artifact && typeof diagnostics.artifact === "object"
-          ? { artifact: diagnostics.artifact as Extract<LumeRuntimeEvent, { type: "lsp.diagnostics.updated" }>["diagnostics"]["artifact"] }
-          : {})
-      }
-    }];
-  }
   if (item.name === "context_compaction_started") {
     return [{
       id: `${run.runId}:${item.id}:context.compaction.started`,

@@ -117,15 +117,18 @@ export function validateCronExpression(expr: string): void {
  * 日/月组合是否至少存在一个可命中的日期（闰年上界保守放行 2/29）。
  * 字段各自合法但组合永假（如 `0 9 31 2 *` 二月无 31 日）会让逐分钟扫描
  * 空转满一年才返回 null，创建/改期时同步卡顿数秒（#408）。
- * dom 与 dow 同时受限时 cron 取 OR 语义——dow 自身总能提供命中日期，直接可行。
+ *
+ * dom/dow 语义与 matchCronExpression 保持一致取 AND：dow 受限不再直接放行，
+ * `0 9 31 2 1`（二月三十一日且周一）这类表达式实际永假。AND 语义下 dow 永远
+ * 无法让组合永假——任何存在的日期都会在数年内轮遍每个星期几——故可行性
+ * 只由 dom×month 决定（#452）。
  */
 export function cronDateFeasible(expr: string): boolean {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return true;
   const domField = parts[2]!;
   const monthField = parts[3]!;
-  const dowField = parts[4]!;
-  if (domField.trim() === "*" || monthField.trim() === "*" || dowField.trim() !== "*") return true;
+  if (domField.trim() === "*" || monthField.trim() === "*") return true;
   const domSpec = CRON_FIELD_SPECS[2]!;
   const monthSpec = CRON_FIELD_SPECS[3]!;
   const days = Array.from({ length: 31 }, (_, i) => i + 1).filter((d) => cronFieldMatches(domField, domSpec, d));
@@ -206,7 +209,14 @@ export function validateAutomationSchedule(schedule: AutomationSchedule): void {
 }
 
 export function getNextAutomationRunAt(schedule: AutomationSchedule, fromMs = Date.now(), anchorMs = fromMs): number | null {
-  validateAutomationSchedule(schedule);
+  // 存量坏 schedule（旧版放行的永假 cron、无效时区等）返回 null 跳过调度而非抛：
+  // 本函数在 refresh 轮询路径上，抛错会毒化整轮刷新（#452）。创建/改期入口仍由
+  // validateAutomationSchedule 显式拒绝。
+  try {
+    validateAutomationSchedule(schedule);
+  } catch {
+    return null;
+  }
   if (schedule.type === "manual") return null;
   if (schedule.type === "once") return schedule.runAt ?? null;
   if (schedule.type === "interval") {
