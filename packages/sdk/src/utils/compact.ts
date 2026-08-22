@@ -315,11 +315,20 @@ export function prepareCompaction(
     ? messages[protectedMessageIndex]
     : undefined
 
+  // The protected message is re-inserted verbatim after the summary; drop it
+  // from the serialized ranges so it is not summarized (and duplicated) too.
+  const inSummarizedRange = (message: NormalizedMessageParam[]): NormalizedMessageParam[] =>
+    protectedUserMessage
+      ? message.filter((item) => item !== protectedUserMessage)
+      : message
+
   return {
-    messagesToSummarize: messages.slice(boundaryStart, historyEnd),
-    turnPrefixMessages: cutPoint.isSplitTurn
-      ? messages.slice(cutPoint.turnStartIndex, cutPoint.firstKeptIndex)
-      : [],
+    messagesToSummarize: inSummarizedRange(messages.slice(boundaryStart, historyEnd)),
+    turnPrefixMessages: inSummarizedRange(
+      cutPoint.isSplitTurn
+        ? messages.slice(cutPoint.turnStartIndex, cutPoint.firstKeptIndex)
+        : [],
+    ),
     retainedTail: messages.slice(cutPoint.firstKeptIndex),
     previousSummary,
     isSplitTurn: cutPoint.isSplitTurn,
@@ -691,7 +700,8 @@ export function microCompactMessages(
     if (!Array.isArray(msg.content)) return msg
 
     const content = (msg.content as any[]).map((block: any) => {
-      if (block.type === 'tool_result' && typeof block.content === 'string') {
+      if (block?.type !== 'tool_result') return block
+      if (typeof block.content === 'string') {
         if (block.content.length > maxToolResultChars) {
           return {
             ...block,
@@ -701,10 +711,55 @@ export function microCompactMessages(
               + block.content.slice(-maxToolResultChars / 2),
           }
         }
+        return block
+      }
+      // Array-form tool results (images, web-fetch payloads, ...) previously
+      // passed through unbounded and blew up the provider request (#364).
+      if (Array.isArray(block.content)) {
+        return { ...block, content: compactToolResultContent(block.content, maxToolResultChars) }
       }
       return block
     })
 
     return { ...msg, content }
   })
+}
+
+function compactToolResultContent(blocks: any[], maxToolResultChars: number): any[] {
+  let changed = false
+  const next = blocks.map((item: any) => {
+    if (item?.type === 'text' && typeof item.text === 'string' && item.text.length > maxToolResultChars) {
+      changed = true
+      return {
+        ...item,
+        text:
+          item.text.slice(0, maxToolResultChars / 2)
+          + '\n...(truncated)...\n'
+          + item.text.slice(-maxToolResultChars / 2),
+      }
+    }
+    // Only shed media blocks that actually exceed the budget — small images
+    // must reach the model or visual ability regresses (#364).
+    if (item?.type === 'image' || item?.type === 'document') {
+      const originalChars = safeJsonLength(item)
+      if (originalChars > maxToolResultChars) {
+        changed = true
+        return {
+          type: 'text',
+          text: `[${item.type} omitted by micro-compaction: original ${item.type} was ${originalChars} chars]`,
+        }
+      }
+      return item
+    }
+    return item
+  })
+  return changed ? next : blocks
+}
+
+function safeJsonLength(value: unknown): number {
+  try {
+    return JSON.stringify(value)?.length ?? 0
+  } catch {
+    return 0
+  }
 }

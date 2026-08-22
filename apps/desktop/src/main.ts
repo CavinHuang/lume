@@ -139,6 +139,7 @@ import { createLogContentDigest, createSidecarLogDigestPolicy, isSafeStorageSecu
 import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { discoverChromeProfiles, importChromeProfile, importConnectedChromeCookies, type ImportedCookie } from './browser-import'
+import type { BrowserSettings } from '@lume/shared'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '@lume/shared'
 import { nativeEventToIntent } from '@lume/shared'
 import type { AgentIslandIntent, NativeAgentIslandSnapshot } from '@lume/shared'
@@ -151,6 +152,26 @@ import {
   validateTrayStatePayload,
   waitForWindowReady,
 } from './tray-window-runtime'
+
+// 单实例锁(#290)：双开会产生两个 sidecar 并发写同一 ~/.lume 数据目录——
+// sessions/memory/audit 的 JSONL 与 sqlite 均无跨进程锁（仅 settings 有
+// lockfile），追加交错与 seq 续读错乱难以归因。第二实例直接退出，由首实例
+// 聚焦既有窗口承接。锁必须最早申请：早于任何顶层初始化副作用（开库、
+// spawn 等），否则第二实例会在拿锁前就产生盘写。
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      await captureQuickInputContext()
+      await createMainWindow()
+      return
+    }
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    await showMainWindow()
+  })
+}
 
 app.commandLine.appendSwitch('disable-quic')
 app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp')
@@ -1986,21 +2007,6 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
         throw error
       }
     }
-    case 'desktop_wiki_get_proposal_summary':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-get-proposal-summary', { draftId: payload.draftId })
-    case 'desktop_wiki_apply_draft':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-apply-draft', payload)
-    case 'desktop_wiki_resolve_pending':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-resolve-pending', payload)
-    case 'desktop_wiki_get_undo_summary':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-get-undo-summary', { batchId: payload.batchId })
-    case 'desktop_wiki_undo_batch':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-undo-batch', payload)
     case 'desktop_sync_window_behavior': {
       requireMainWindowSender(context, 'desktop_sync_window_behavior')
       if (!mainWindowLifecycle.acceptWindowBehaviorRevision(payload?.generation, payload?.revision)) return null
@@ -2492,7 +2498,7 @@ function createSidecarHost({ onNotification }) {
   let pending = new Map()
   let stopRequested = false
   let migrationInProgress = false
-  let wikiPrivilegedCredential = null
+  let privilegedCredential = null
 
   function rejectAllPending(error) {
     for (const entry of pending.values()) {
@@ -2625,7 +2631,7 @@ function createSidecarHost({ onNotification }) {
         if (child === runningChild) {
           child = null
           started = null
-          wikiPrivilegedCredential = null
+          privilegedCredential = null
         }
         runningChild.kill()
         settleStart(error)
@@ -2645,14 +2651,14 @@ function createSidecarHost({ onNotification }) {
         if (payload && payload.method === SIDECAR_READY_METHOD && payload.id === undefined) {
           didReady = true
           try {
-            wikiPrivilegedCredential = randomBytes(32).toString('base64url')
+            privilegedCredential = randomBytes(32).toString('base64url')
             runningChild.postMessage(JSON.stringify({
-              method: 'system.wiki-privileged-credential',
-              params: { credential: wikiPrivilegedCredential },
+              method: 'system.privileged-credential',
+              params: { credential: privilegedCredential },
             }))
           } catch (error) {
-            wikiPrivilegedCredential = null
-            writeMainLog('error', 'desktop.wiki.security', 'credential.delivery_failed', 'failed to initialize Wiki privileged channel', {
+            privilegedCredential = null
+            writeMainLog('error', 'desktop.sidecar.security', 'credential.delivery_failed', 'failed to initialize privileged channel', {
               data: { error },
             })
           }
@@ -2881,7 +2887,7 @@ function createSidecarHost({ onNotification }) {
         if (child === runningChild) {
           child = null
           started = null
-          wikiPrivilegedCredential = null
+          privilegedCredential = null
         }
       })
     })
@@ -2934,19 +2940,13 @@ function createSidecarHost({ onNotification }) {
     })
   }
 
-  async function callWikiPrivileged(method, request) {
-    await start()
-    if (!wikiPrivilegedCredential) throw new Error('Wiki privileged channel unavailable')
-    return call(method, { credential: wikiPrivilegedCredential, request })
-  }
-
   async function callPluginPackagePrivileged(method, request) {
     await start()
-    if (!wikiPrivilegedCredential) throw new Error('Plugin package privileged channel unavailable')
+    if (!privilegedCredential) throw new Error('Plugin package privileged channel unavailable')
     if (typeof method !== 'string' || !method.startsWith('plugin-package:privileged-')) {
       throw new Error('Invalid plugin package privileged method')
     }
-    return call(method, { credential: wikiPrivilegedCredential, request })
+    return call(method, { credential: privilegedCredential, request })
   }
 
   async function notifyBrowserSettings(settings) {
@@ -2960,7 +2960,7 @@ function createSidecarHost({ onNotification }) {
     const runningChild = child
     child = null
     started = null
-    wikiPrivilegedCredential = null
+    privilegedCredential = null
     rejectAllPending(new Error('sidecar stopped'))
     await new Promise<void>((resolveStop) => {
       const timeout = setTimeout(resolveStop, 3_000)
@@ -2978,7 +2978,6 @@ function createSidecarHost({ onNotification }) {
   return {
     start,
     call,
-    callWikiPrivileged,
     callPluginPackagePrivileged,
     notifyBrowserSettings,
     stop,
@@ -3193,6 +3192,7 @@ app.on('child-process-gone', (_event, details) => {
 })
 
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) return
   logDesktopStartup('app ready', 'app.ready')
   registerAppProtocol()
   registerFileProtocol()
@@ -3201,7 +3201,7 @@ app.whenReady().then(async () => {
     getWindow: () => mainWindow,
     configDir: () => configDir,
     emit: (event) => emitRendererEvent('browser:event', event),
-    initialSettings: getPersistedBrowserSettings() as Partial<import('../../../packages/shared/src/types/browser-runtime').BrowserSettings>,
+    initialSettings: getPersistedBrowserSettings() as Partial<BrowserSettings>,
     persistSettings: persistBrowserSettings,
     isAgentPluginEnabled: () => agentBrowserPluginEnabled,
     journalEncryption: {

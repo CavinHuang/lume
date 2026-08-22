@@ -13,8 +13,10 @@ export const CODEX_EVENT_MAP: Record<string, string> = {
   Stop: "Stop",
 };
 
+// Real built-in tool names: checkToolPermission is exact-match, so legacy
+// aliases like FileWrite/FileEdit/AgentTool never matched anything (#316).
 const CODEX_ALLOWED_TOOLS = [
-  "FileRead",
+  "Read",
   "Glob",
   "Grep",
   "WebFetch",
@@ -27,12 +29,12 @@ const CODEX_ALLOWED_TOOLS = [
 
 const CODEX_DENIED_TOOLS = [
   "Bash",
-  "FileWrite",
-  "FileEdit",
+  "Write",
+  "Edit",
   "NotebookEdit",
   "EnterWorktree",
   "ExitWorktree",
-  "AgentTool",
+  "Agent",
   "SendMessage",
 ];
 
@@ -63,6 +65,14 @@ export function adaptCodexPlugin(
       ? (codex.skills as string[])
       : undefined;
 
+  // Fail-closed permission mapping (#346): capabilities are granted only when
+  // the manifest explicitly declares the driving field — MCP registration only
+  // with mcpServers, hook events only with hooks, and shell stays off (the
+  // format has no shell field). Missing fields fall back to the same defaults
+  // lume manifests get from inferDefaults (all denied).
+  const declaresMcpServers = typeof codex.mcpServers === "string";
+  const declaresHooks = typeof codex.hooks === "string";
+
   return {
     schema: "lume-plugin/v1",
     name,
@@ -77,13 +87,13 @@ export function adaptCodexPlugin(
     permissions: {
       filesystem: { read: ["./**"], write: ["./data/**"] },
       network: { outbound: [] },
-      mcpServers: { register: true },
-      shell: { allow: true },
+      mcpServers: { register: declaresMcpServers },
+      shell: { allow: false },
       tools: {
         allow: [...CODEX_ALLOWED_TOOLS],
         deny: [...CODEX_DENIED_TOOLS],
       },
-      hooks: { events: Object.keys(CODEX_EVENT_MAP) },
+      ...(declaresHooks ? { hooks: { events: Object.keys(CODEX_EVENT_MAP) } } : {}),
     },
     lume: { hooksOnly: false },
   };

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { execSync } from "node:child_process"
 import { QueryEngine } from "../engine.js"
 import { AgentTool, clearAgents, registerAgents } from "./agent-tool.js"
-import { ProcessOutputTool } from "./process-job-registry.js"
+import { ProcessOutputTool, getProcessJob } from "./process-job-registry.js"
 import { clearSkills, registerSkill } from "../skills/registry.js"
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -313,6 +314,65 @@ describe("AgentTool parallel execution", () => {
       && event.task_id === taskId
     )).toHaveLength(1)
   })
+
+  test("background agents record worktree metadata at creation (#377)", async () => {
+    const repoDir = join(tmpdir(), `lume-agent-bg-wt-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+    mkdirSync(repoDir, { recursive: true })
+    execSync("git init", { cwd: repoDir, stdio: "ignore" })
+    execSync("git -c user.email=t@lume.test -c user.name=t commit --allow-empty -m init", {
+      cwd: repoDir,
+      stdio: "ignore",
+    })
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages",
+      createMessage: async () => ({
+        content: [{ type: "text", text: "child done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      })
+    }
+
+    let createdWorktreePath: string | undefined
+    try {
+      const started = await AgentTool.call({
+        prompt: "worktree child task",
+        description: "bg worktree",
+        mode: "bypassPermissions",
+        run_in_background: true,
+        isolation: "worktree"
+      }, {
+        cwd: repoDir,
+        provider,
+        model: "test-model",
+        apiType: "anthropic-messages",
+        sessionId: "parent-thread"
+      })
+
+      expect(started.is_error).toBeFalsy()
+      expect(String(started.content)).toContain("Background agent started")
+      // The start response itself already carries the worktree.
+      const metaWorktree = (started._meta as { worktree?: { path?: string } } | undefined)?.worktree
+      expect(metaWorktree?.path).toContain(".worktree-")
+      createdWorktreePath = metaWorktree?.path
+
+      const taskId = (started._meta?.task as { id?: string } | undefined)?.id
+      expect(taskId).toBeString()
+      await ProcessOutputTool.call({ task_id: taskId, block: true, timeout: 10_000 }, {
+        cwd: repoDir,
+        sessionId: "parent-thread",
+      })
+
+      const job = getProcessJob(taskId!)
+      expect(job?.status).toBe("completed")
+      // The record carried the worktree from birth, not only after completion.
+      expect((job?.metadata?.worktree as { path?: string } | undefined)?.path).toContain(".worktree-")
+    } finally {
+      if (createdWorktreePath) {
+        rmSync(createdWorktreePath, { recursive: true, force: true })
+      }
+      rmSync(repoDir, { recursive: true, force: true })
+    }
+  }, 30_000)
 
   test("AgentTool input is validated against unsafe and unknown cwd paths (#195)", async () => {
     expect(AgentTool.inputSchema.properties).not.toHaveProperty("resume")

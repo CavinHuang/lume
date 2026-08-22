@@ -3,6 +3,31 @@ import { aesEcbDecrypt, parseAesKey } from "./weixin/openclaw-weixin-cdn";
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
+/** 入站媒体上限：对端可发平台上限内的大文件，全量进内存（Buffer+base64 ≈ ×2）会放大峰值（#405）。 */
+const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
+
+/** 流式下载并强制字节上限；超限返回 null（调用方降级为占位文本）。 */
+async function downloadCapped(response: Response): Promise<Buffer | null> {
+  const declared = Number.parseInt(response.headers.get("content-length") ?? "", 10);
+  if (Number.isFinite(declared) && declared > MAX_MEDIA_BYTES) return null;
+  const body = response.body;
+  if (!body) return null;
+  const chunks: Buffer[] = [];
+  let total = 0;
+  const reader = body.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_MEDIA_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}
+
 /** 若带 aesKey，则按腾讯 CDN 协议 AES-128-ECB 解密；否则视为明文原样返回。 */
 function decryptIfEncrypted(data: Buffer, aesKey: string | undefined): Buffer {
   if (!aesKey) return data;
@@ -49,7 +74,10 @@ async function resolveImageContent(
     if (!response.ok) {
       return { type: "text", text: "[图片: 下载失败]" };
     }
-    const data = Buffer.from(await response.arrayBuffer());
+    const data = await downloadCapped(response);
+    if (!data) {
+      return { type: "text", text: "[图片: 过大，未下载]" };
+    }
     if (options?.saveMedia) {
       const mediaType = normalizeImageMediaType(response.headers.get("content-type"));
       const ext = imageExtensionFor(mediaType);
@@ -86,7 +114,10 @@ async function resolveFileContent(
     if (!response.ok) {
       return { type: "text", text: `[文件: ${content.fileName}（下载失败）]` };
     }
-    const data = Buffer.from(await response.arrayBuffer());
+    const data = await downloadCapped(response);
+    if (!data) {
+      return { type: "text", text: `[文件: ${content.fileName}（过大，未下载）]` };
+    }
     const mediaType = deriveFileMediaType(content.fileName);
     const threadPath = await options.saveMedia({
       filename: content.fileName || `im-file-${index}`,

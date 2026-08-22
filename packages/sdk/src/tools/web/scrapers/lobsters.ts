@@ -73,7 +73,7 @@ function renderComments(comments: LobstersComment[], maxDepth = 5): string {
 export const handleLobsters: SpecialHandler = async (url: string, timeout: number, signal?: AbortSignal) => {
 	try {
 		const parsed = new URL(url);
-		if (!parsed.hostname.includes("lobste.rs")) return null;
+		if (parsed.hostname.replace(/^www\./, "") !== "lobste.rs") return null;
 
 		const fetchedAt = new Date().toISOString();
 		let jsonUrl = "";

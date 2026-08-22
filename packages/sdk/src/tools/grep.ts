@@ -279,12 +279,19 @@ function buildRgArgs(input: any, outputMode: SearchMode, searchPath: string): st
   return args
 }
 
-function buildGrepArgs(input: any, outputMode: SearchMode, searchPath: string): string[] {
+export function buildGrepArgs(input: any, outputMode: SearchMode, searchPath: string): string[] {
   const args = ['-r']
   if (input['-i']) args.push('-i')
   if (outputMode === 'files_with_matches') args.push('-l')
   if (outputMode === 'count') args.push('-c')
   if (outputMode === 'content' && input['-n'] !== false) args.push('-n')
+  // Context lines: GNU/BSD grep supports -A/-B/-C natively. Note the entries
+  // counting below differs from rg/native engines: context lines appear as
+  // extra stdout entries, so total_matches here counts output lines, not matches.
+  if (input['-A']) args.push('-A', String(input['-A']))
+  if (input['-B']) args.push('-B', String(input['-B']))
+  const ctx = input['-C'] ?? input.context
+  if (ctx) args.push('-C', String(ctx))
   if (input.glob) args.push('--include', input.glob)
   for (const directory of EXCLUDED_DIRS) args.push('--exclude-dir', directory)
   args.push('--', input.pattern, searchPath)

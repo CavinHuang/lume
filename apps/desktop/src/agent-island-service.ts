@@ -1,7 +1,7 @@
 /**
  * Agent 灵动岛 service：订阅 sidecar 通知、聚合会话状态、节流推送快照到岛屿窗口。
  *
- * 纯投影逻辑见 packages/shared/src/agent-island-projections.ts（Task 3，已单测）。
+ * 纯投影逻辑见 `@lume/shared` 的 agent-island-projections 模块（Task 3，已单测）。
  * 本 service 是订阅/聚合/推送壳，按 spec §6.3 不强求单测，端到端验证在 Task 11。
  */
 import type { BrowserWindow } from 'electron'

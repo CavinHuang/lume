@@ -128,15 +128,30 @@ const GUANLAN_TIMEOUT_MS = 20000
 const MAX_GUANLAN_STDERR_CHARS = 2000
 const MAX_GUANLAN_STDOUT_CHARS = 200000
 
-async function fetchPageContent(
+/**
+ * Combine the caller's abort signal with the provider's fixed timeout so a
+ * user cancellation cuts through every provider request (#343).
+ */
+function requestSignal(userSignal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs)
+  if (!userSignal || userSignal.aborted) return userSignal ?? timeoutSignal
+  return typeof AbortSignal.any === 'function'
+    ? AbortSignal.any([userSignal, timeoutSignal])
+    : timeoutSignal
+}
+
+export async function fetchPageContent(
   url: string,
-  sandbox: unknown
+  sandbox: unknown,
+  signal?: AbortSignal
 ): Promise<string | null> {
+  if (signal?.aborted) return null
   // loadPage enforces the sandbox check and a byte cap on the response body.
   const result = await loadPage(url, {
     fetchImpl: sdkFetch,
     timeoutMs: 8000,
     maxBytes: MAX_PAGE_FETCH_BYTES,
+    signal,
     sandbox: sandbox as never,
     headers: {
       'User-Agent':
@@ -150,20 +165,21 @@ async function fetchPageContent(
   return truncateContent(cleaned, MAX_CONTENT_CHARS)
 }
 
-async function enrichResultsWithContent(
+export async function enrichResultsWithContent(
   results: SearchResult[],
-  sandbox: unknown
+  sandbox: unknown,
+  signal?: AbortSignal
 ): Promise<SearchResult[]> {
   const toFetch = results.filter((r) => !r.content || r.content.length < 50)
   if (toFetch.length === 0) return results
 
   const enriched = new Map<string, string | null | undefined>()
 
-  // Fetch in batches of MAX_CONCURRENT_FETCHES
-  for (let i = 0; i < toFetch.length; i += MAX_CONCURRENT_FETCHES) {
+  // Fetch in batches of MAX_CONCURRENT_FETCHES, bailing out once aborted.
+  for (let i = 0; i < toFetch.length && !signal?.aborted; i += MAX_CONCURRENT_FETCHES) {
     const batch = toFetch.slice(i, i + MAX_CONCURRENT_FETCHES)
     const contents = await Promise.all(
-      batch.map((r) => fetchPageContent(r.url, sandbox))
+      batch.map((r) => fetchPageContent(r.url, sandbox, signal))
     )
     batch.forEach((r, j) => enriched.set(r.url, contents[j]))
   }
@@ -335,7 +351,7 @@ function decodeDuckDuckGoRedirectUrl(rawUrl: string): string {
   }
 }
 
-async function searchWithBrave(query: string, numResults: number, sandbox: unknown) {
+async function searchWithBrave(query: string, numResults: number, sandbox: unknown, signal?: AbortSignal) {
   const apiKey = getEnvKey(['BRAVE_API_KEY', 'LUME_BRAVE_API_KEY'])
   if (!apiKey) return null
   const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${Math.max(1, Math.min(numResults || 5, 10))}`
@@ -343,7 +359,7 @@ async function searchWithBrave(query: string, numResults: number, sandbox: unkno
   if (sandboxError) return { data: sandboxError, is_error: true } as const
   const response = await sdkFetch(url, {
     headers: { 'x-subscription-token': apiKey, accept: 'application/json' },
-    signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS.brave),
+    signal: requestSignal(signal, ENGINE_TIMEOUT_MS.brave),
   })
   if (!response.ok) throw new Error(`Brave search failed: HTTP ${response.status}`)
   const payload = await response.json() as {
@@ -355,7 +371,7 @@ async function searchWithBrave(query: string, numResults: number, sandbox: unkno
   return { data: results, is_error: false } as const
 }
 
-async function searchWithTavily(query: string, numResults: number, sandbox: unknown) {
+async function searchWithTavily(query: string, numResults: number, sandbox: unknown, signal?: AbortSignal) {
   const apiKey = getEnvKey(['TAVILY_API_KEY', 'LUME_TAVILY_API_KEY'])
   if (!apiKey) return null
   const url = 'https://api.tavily.com/search'
@@ -368,7 +384,7 @@ async function searchWithTavily(query: string, numResults: number, sandbox: unkn
       api_key: apiKey, query, search_depth: 'basic',
       max_results: Math.max(1, Math.min(numResults || 5, 10)),
     }),
-    signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS.tavily),
+    signal: requestSignal(signal, ENGINE_TIMEOUT_MS.tavily),
   })
   if (!response.ok) throw new Error(`Tavily search failed: HTTP ${response.status}`)
   const payload = await response.json() as {
@@ -380,7 +396,7 @@ async function searchWithTavily(query: string, numResults: number, sandbox: unkn
   return { data: results, is_error: false } as const
 }
 
-async function searchWithExa(query: string, numResults: number, sandbox: unknown) {
+async function searchWithExa(query: string, numResults: number, sandbox: unknown, signal?: AbortSignal) {
   const apiKey = getEnvKey(['EXA_API_KEY', 'LUME_EXA_API_KEY'])
   if (!apiKey) return null
   const url = 'https://api.exa.ai/search'
@@ -394,7 +410,7 @@ async function searchWithExa(query: string, numResults: number, sandbox: unknown
       numResults: Math.max(1, Math.min(numResults || 5, 10)),
       contents: { text: { maxCharacters: 1000 } },
     }),
-    signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS.exa),
+    signal: requestSignal(signal, ENGINE_TIMEOUT_MS.exa),
   })
   if (!response.ok) throw new Error(`Exa search failed: HTTP ${response.status}`)
   const payload = await response.json() as {
@@ -409,7 +425,7 @@ async function searchWithExa(query: string, numResults: number, sandbox: unknown
   return { data: results, is_error: false } as const
 }
 
-async function searchWithPipellm(query: string, numResults: number, sandbox: unknown) {
+async function searchWithPipellm(query: string, numResults: number, sandbox: unknown, signal?: AbortSignal) {
   const apiKey = getEnvKey(['PIPELLM_API_KEY', 'LUME_PIPELLM_API_KEY'])
   if (!apiKey) return null
   const url = 'https://api.pipellm.com/v1/search'
@@ -419,7 +435,7 @@ async function searchWithPipellm(query: string, numResults: number, sandbox: unk
     method: 'POST',
     headers: { 'authorization': `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({ query, max_results: Math.max(1, Math.min(numResults || 5, 10)) }),
-    signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS.pipellm),
+    signal: requestSignal(signal, ENGINE_TIMEOUT_MS.pipellm),
   })
   if (!response.ok) throw new Error(`PipeLLM search failed: HTTP ${response.status}`)
   const payload = await response.json() as {
@@ -431,7 +447,7 @@ async function searchWithPipellm(query: string, numResults: number, sandbox: unk
   return { data: results, is_error: false } as const
 }
 
-async function searchWithZhipu(query: string, numResults: number, sandbox: unknown) {
+async function searchWithZhipu(query: string, numResults: number, sandbox: unknown, signal?: AbortSignal) {
   const apiKey = getEnvKey(['ZHIPU_API_KEY', 'LUME_ZHIPU_API_KEY'])
   if (!apiKey) return null
   const url = 'https://open.bigmodel.cn/api/paas/v4/web_search'
@@ -441,7 +457,7 @@ async function searchWithZhipu(query: string, numResults: number, sandbox: unkno
     method: 'POST',
     headers: { 'authorization': `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({ query, count: Math.max(1, Math.min(numResults || 5, 10)) }),
-    signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS.zhipu),
+    signal: requestSignal(signal, ENGINE_TIMEOUT_MS.zhipu),
   })
   if (!response.ok) throw new Error(`Zhipu search failed: HTTP ${response.status}`)
   const payload = await response.json() as {
@@ -457,13 +473,13 @@ async function searchWithZhipu(query: string, numResults: number, sandbox: unkno
   return { data: results, is_error: false } as const
 }
 
-async function searchWithDuckDuckGo(query: string, numResults: number, sandbox: unknown) {
+async function searchWithDuckDuckGo(query: string, numResults: number, sandbox: unknown, signal?: AbortSignal) {
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
   const sandboxError = ensureNetworkAllowed(url, sandbox as never)
   if (sandboxError) return { data: sandboxError, is_error: true } as const
   const response = await sdkFetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AgentSDK/1.0)' },
-    signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS.duckduckgo),
+    signal: requestSignal(signal, ENGINE_TIMEOUT_MS.duckduckgo),
   })
   if (!response.ok) throw new Error(`DuckDuckGo search failed: HTTP ${response.status}`)
 
@@ -536,7 +552,7 @@ export function parseBingResultItem(itemHtml: string): SearchResult | null {
   return { title, url, snippet: snippet || undefined };
 }
 
-async function searchWithBing(query: string, numResults: number, sandbox: unknown) {
+async function searchWithBing(query: string, numResults: number, sandbox: unknown, signal?: AbortSignal) {
   const lang = detectAcceptLanguage(query);
   const hosts = ["cn.bing.com", "www.bing.com"] as const;
   let html = "";
@@ -551,7 +567,7 @@ async function searchWithBing(query: string, numResults: number, sandbox: unknow
         "Accept": "text/html,application/xhtml+xml",
         "Accept-Language": lang,
       },
-      signal: AbortSignal.timeout(10000),
+      signal: requestSignal(signal, 10000),
       redirect: "follow",
     });
     if (response.ok) {
@@ -614,15 +630,16 @@ export const WebSearchTool = defineTool({
       const numResults = clampProviderLimit(
         typeof input.num_results === 'number' ? input.num_results : 5
       )
+      const userSignal = context.abortSignal
       const providerAttempts: Record<WebSearchProviderName, () => Promise<unknown>> = {
         guanlan: () => searchWithGuanlan(query, numResults),
-        exa: () => searchWithExa(query, numResults, context.sandbox),
-        pipellm: () => searchWithPipellm(query, numResults, context.sandbox),
-        zhipu: () => searchWithZhipu(query, numResults, context.sandbox),
-        tavily: () => searchWithTavily(query, numResults, context.sandbox),
-        brave: () => searchWithBrave(query, numResults, context.sandbox),
-        duckduckgo: () => searchWithDuckDuckGo(query, numResults, context.sandbox),
-        bing: () => searchWithBing(query, numResults, context.sandbox),
+        exa: () => searchWithExa(query, numResults, context.sandbox, userSignal),
+        pipellm: () => searchWithPipellm(query, numResults, context.sandbox, userSignal),
+        zhipu: () => searchWithZhipu(query, numResults, context.sandbox, userSignal),
+        tavily: () => searchWithTavily(query, numResults, context.sandbox, userSignal),
+        brave: () => searchWithBrave(query, numResults, context.sandbox, userSignal),
+        duckduckgo: () => searchWithDuckDuckGo(query, numResults, context.sandbox, userSignal),
+        bing: () => searchWithBing(query, numResults, context.sandbox, userSignal),
       }
       const attempts = resolveEnabledWebSearchProviders()
         .map((provider) => providerAttempts[provider])
@@ -631,6 +648,10 @@ export const WebSearchTool = defineTool({
       let lastError: unknown = null
 
       for (const attempt of attempts) {
+        if (userSignal?.aborted) {
+          lastError = new Error('request aborted')
+          break
+        }
         try {
           const result = await attempt()
           if (isSearchProviderResult(result) && result.is_error !== true) {
@@ -649,7 +670,7 @@ export const WebSearchTool = defineTool({
       // Enrich results without content by fetching pages
       const needsEnrichment = rawResults.some((r) => !r.content || r.content.length < 50)
       const enriched = needsEnrichment
-        ? await enrichResultsWithContent(rawResults.slice(0, numResults), context.sandbox)
+        ? await enrichResultsWithContent(rawResults.slice(0, numResults), context.sandbox, userSignal)
         : rawResults
 
       return { data: enriched }

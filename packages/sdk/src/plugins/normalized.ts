@@ -78,8 +78,10 @@ export interface NormalizePluginManifestsInput {
   legacyManifest?: Record<string, unknown>;
 }
 
+// Real built-in tool names: checkToolPermission is exact-match, so legacy
+// aliases like FileWrite/FileEdit/AgentTool never matched anything (#316).
 const LEGACY_ALLOWED_TOOLS = [
-  "FileRead",
+  "Read",
   "Glob",
   "Grep",
   "WebFetch",
@@ -92,12 +94,12 @@ const LEGACY_ALLOWED_TOOLS = [
 
 const LEGACY_DENIED_TOOLS = [
   "Bash",
-  "FileWrite",
-  "FileEdit",
+  "Write",
+  "Edit",
   "NotebookEdit",
   "EnterWorktree",
   "ExitWorktree",
-  "AgentTool",
+  "Agent",
   "SendMessage",
 ];
 

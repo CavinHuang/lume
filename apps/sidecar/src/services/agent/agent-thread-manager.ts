@@ -64,7 +64,6 @@ type FileContextMode = "newRoot" | "inherit" | "fork";
 interface CreateAgentThreadOptions {
   fileContextMode?: FileContextMode;
   fileContextId?: string;
-  wikiProfile?: AgentThreadMeta["wikiProfile"];
   memoryProfile?: AgentThreadMeta["memoryProfile"];
   planningOperationId?: string;
   planningTodoId?: string;
@@ -321,7 +320,6 @@ export function createAgentThreadWithModelRef(
       modelId,
       modelSelectionSource: explicitSelectionProvided ? "thread-override" : "inherited",
       workspaceId,
-      wikiProfile: options?.wikiProfile,
       memoryProfile: options?.memoryProfile,
       ...(options?.planningOperationId ? { createdByPlanningOperationId: options.planningOperationId } : {}),
       ...(options?.planningTodoId ? { planningTodoId: options.planningTodoId } : {}),

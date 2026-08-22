@@ -1,0 +1,37 @@
+/**
+ * 出站 IM 文本分段：各渠道对单条消息有长度上限（企微 markdown 4096 字节、
+ * 钉钉 webhook 数千字节、飞书文本保守 4000 字符），整条发送超限直接被拒
+ * 且无自动分段（#405）。
+ */
+
+export interface ImSegmentLimit {
+  /** 每段最大字符数 */
+  maxChars?: number;
+  /** 每段最大 UTF-8 字节数（多字节字符不跨段切分） */
+  maxBytes?: number;
+}
+
+/** 按上限把长文本切段；不超限原样返回单段。空文本返回空数组由调用方兜底。 */
+export function splitImMessage(text: string, limit: ImSegmentLimit): string[] {
+  const maxChars = limit.maxChars ?? Number.MAX_SAFE_INTEGER;
+  const maxBytes = limit.maxBytes ?? Number.MAX_SAFE_INTEGER;
+  if (Buffer.byteLength(text, "utf8") <= maxBytes && text.length <= maxChars) {
+    return [text];
+  }
+
+  const segments: string[] = [];
+  let current = "";
+  let currentBytes = 0;
+  for (const char of text) {
+    const charBytes = Buffer.byteLength(char, "utf8");
+    if (current && (current.length + 1 > maxChars || currentBytes + charBytes > maxBytes)) {
+      segments.push(current);
+      current = "";
+      currentBytes = 0;
+    }
+    current += char;
+    currentBytes += charBytes;
+  }
+  if (current) segments.push(current);
+  return segments;
+}

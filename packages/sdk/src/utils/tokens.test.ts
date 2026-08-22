@@ -84,6 +84,35 @@ describe("estimateCost / getContextWindowSize (#229)", () => {
     expect(getContextWindowSize("gpt-4.1-mini")).toBe(1_000_000)
   })
 
+  test("cache reads bill at 0.1x and cache writes at 1.25x of the input price (#352)", () => {
+    // sonnet input price = 3 USD / 1M tokens
+    expect(estimateCost("claude-sonnet-4-6", {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_input_tokens: 1_000_000,
+    })).toBeCloseTo(3 * 0.1)
+    expect(estimateCost("claude-sonnet-4-6", {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_creation_input_tokens: 1_000_000,
+    })).toBeCloseTo(3 * 1.25)
+    expect(estimateCost("claude-sonnet-4-6", {
+      input_tokens: 100,
+      output_tokens: 10,
+      cache_read_input_tokens: 500_000,
+      cache_creation_input_tokens: 20_000,
+    })).toBeCloseTo(
+      100 * 3 / 1e6
+      + 10 * 15 / 1e6
+      + 500_000 * 3 / 1e6 * 0.1
+      + 20_000 * 3 / 1e6 * 1.25,
+    )
+    // absent cache fields keep the plain io cost
+    expect(estimateCost("claude-sonnet-4-6", { input_tokens: 100, output_tokens: 10 })).toBeCloseTo(
+      100 * 3 / 1e6 + 10 * 15 / 1e6,
+    )
+  })
+
   test("unlisted models fall back to the shared registry pricing, not the flat default", () => {
     // pick a model that only exists in the shared registry, priced differently from 3/15
     const meta = findModelMeta("glm-4.6")
@@ -97,5 +126,17 @@ describe("estimateCost / getContextWindowSize (#229)", () => {
   test("known window heuristics stay stable", () => {
     expect(getContextWindowSize("gpt-4o")).toBe(128_000)
     expect(getContextWindowSize("claude-opus-4-5")).toBe(200_000)
+  })
+
+  test("models missing from the table fall back to the shared registry (#366)", () => {
+    // gemini-2.5-pro has a 1M window in the catalog but no table entry.
+    const meta = findModelMeta("gemini-2.5-pro")
+    expect(meta?.contextWindow).toBeTruthy()
+    expect(getContextWindowSize("gemini-2.5-pro")).toBe(meta!.contextWindow)
+    expect(getContextWindowSize("gemini-2.5-pro")).not.toBe(200_000)
+  })
+
+  test("unknown models still land on the flat default", () => {
+    expect(getContextWindowSize("definitely-not-a-model-12345")).toBe(200_000)
   })
 })

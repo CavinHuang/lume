@@ -42,24 +42,6 @@ export type {
 } from './capability-references.js'
 
 // --------------------------------------------------------------------------
-// Tool Helper (Zod-based tool creation, compatible with official SDK)
-// --------------------------------------------------------------------------
-
-export { tool, sdkToolToToolDefinition } from './tool-helper.js'
-export type {
-  ToolAnnotations,
-  CallToolResult,
-  SdkMcpToolDefinition,
-} from './tool-helper.js'
-
-// --------------------------------------------------------------------------
-// In-Process MCP Server
-// --------------------------------------------------------------------------
-
-export { createSdkMcpServer, isSdkServerConfig } from './sdk-mcp-server.js'
-export type { McpSdkServerConfig } from './sdk-mcp-server.js'
-
-// --------------------------------------------------------------------------
 // Core Engine
 // --------------------------------------------------------------------------
 
@@ -108,7 +90,6 @@ export {
   getAllBaseTools,
   filterTools,
   filterDisallowedTools,
-  assembleToolPool,
 
   // Helpers
   defineTool,
@@ -170,8 +151,6 @@ export {
 // MCP Client
 // --------------------------------------------------------------------------
 
-export { connectMCPServer, closeAllConnections } from './mcp/client.js'
-export type { MCPConnection } from './mcp/client.js'
 export { McpClientManager } from './mcp/manager.js'
 export type {
   McpCallResult,
@@ -566,12 +545,6 @@ export type {
   CanUseToolFn,
   CanUseToolResult,
 
-  // MCP types
-  McpServerConfig,
-  McpStdioConfig,
-  McpSseConfig,
-  McpHttpConfig,
-
   // Agent types
   AgentOptions,
   AgentContextController,
@@ -592,7 +565,6 @@ export type {
   AgentProgressUsage,
   ModelUsage,
   InitializationResult,
-  MCPServerStatus,
   ContextUsageResult,
   RewindFilesResult,
   ReloadPluginsResult,
@@ -631,11 +603,6 @@ export type {
 
   // Model info
   ModelInfo,
-  McpElicitationRequest,
-  McpElicitationResponse,
-  McpElicitationHandler,
-  McpResourceUpdate,
-  McpResourceUpdateHandler,
 
   // Slash commands & agent info
   SlashCommand,

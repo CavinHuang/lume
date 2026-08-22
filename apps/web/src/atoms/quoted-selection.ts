@@ -12,7 +12,7 @@ import { createThreadSliceFamily } from './agent-atoms'
  */
 
 /** 选中文本引用的来源类型 */
-export type QuotedSelectionSourceType = 'agent-history' | 'file' | 'wiki' | 'reading'
+export type QuotedSelectionSourceType = 'agent-history' | 'file' | 'reading'
 
 /** 从历史消息 / 预览面板中选中的文本引用 */
 export interface QuotedSelection {

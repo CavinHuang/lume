@@ -7,7 +7,7 @@ order: 1
 
 ## 安装
 
-前往[下载页](/download/)获取最新安装包：
+前往[下载页](../../download/)获取最新安装包：
 
 - **Windows**：下载 `.exe` 安装程序，按向导完成安装。
 - **macOS**：根据芯片选择 Apple Silicon 或 Intel 版 `.dmg`，打开后将 Lume 拖入「应用程序」。

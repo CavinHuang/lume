@@ -136,7 +136,9 @@ async function renderListing(ids: number[], timeout: number, title: string, sign
 
 export const handleHackerNews: SpecialHandler = async (url, timeout, signal) => {
 	const parsed = new URL(url);
-	if (!parsed.hostname.includes("news.ycombinator.com")) return null;
+	// Exact-host gate: substring matching let lookalike hosts such as
+	// news.ycombinator.com.evil.io hijack the handler (#371)
+	if (parsed.hostname.replace(/^www\./, "") !== "news.ycombinator.com") return null;
 
 	const notes: string[] = [];
 	let content = "";

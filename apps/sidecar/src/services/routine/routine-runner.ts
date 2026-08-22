@@ -4,6 +4,7 @@ import { syncRoutineStatus } from "./routine-executor"
 import { readRoutine } from "./routine-store"
 import { createLogger } from "../infra/logger"
 
+import { localDateKey } from "./routine-date"
 const log = createLogger("routine")
 
 const ROUTINE_GENERATE_HOUR = 8
@@ -14,7 +15,8 @@ let syncTimer: ReturnType<typeof setInterval> | null = null
 let runnerStarted = false
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10)
+  // 本地时区日期键，替代 UTC toISOString 键（#408）
+  return localDateKey()
 }
 
 function scheduleNextGeneration(): void {

@@ -10,7 +10,6 @@ import type {
   AgentOptions,
   ContextUsageResult,
   InitializationResult,
-  MCPServerStatus,
   Message,
   PermissionMode,
   Query as QueryHandle,
@@ -23,24 +22,16 @@ import type {
   SlashCommand,
   ToolDefinition,
   CanUseToolFn,
-  McpServerConfig,
   ContentBlockParam,
 } from './types.js'
 import { QueryEngine } from './engine.js'
 import { createPersistScheduler } from './persist-scheduler.js'
 import {
-  assembleToolPool,
   CORE_TOOL_NAMES,
   filterTools,
   getAllBaseTools,
 } from './tools/index.js'
 import { applyOverrides, createToolRegistry } from './tools/registry.js'
-import {
-  closeAllConnections,
-  connectMCPServer,
-  type MCPConnection,
-} from './mcp/client.js'
-import { isSdkServerConfig } from './sdk-mcp-server.js'
 import { registerAgents } from './tools/agent-tool.js'
 import {
   saveSession,
@@ -69,7 +60,6 @@ import { loadCommandDefinitions, commandDefinitionsToSlashCommands } from './com
 import type { CommandDefinition } from './commands/types.js'
 import type { FileCheckpoint, FileCheckpointState } from './utils/file-checkpoints.js'
 import { rewindCheckpoint } from './utils/file-checkpoints.js'
-import { getDefaultModels } from './utils/models.js'
 import { getContextWindowSize } from './utils/tokens.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { createExecuteTool, createToolSearchTool, isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
@@ -80,9 +70,10 @@ type QueryInput = string | ContentBlockParam[] | SDKUserMessage
 function toSessionMessage(
   role: SessionMessage['role'],
   content: unknown,
+  uuid?: string,
 ): SessionMessage {
   return {
-    uuid: crypto.randomUUID(),
+    uuid: uuid ?? crypto.randomUUID(),
     role,
     timestamp: new Date().toISOString(),
     content,
@@ -99,26 +90,6 @@ function normalizePromptInput(prompt: QueryInput): string | ContentBlockParam[] 
     return prompt.message.content as string | ContentBlockParam[]
   }
   return prompt as string | ContentBlockParam[]
-}
-
-function createDisconnectedMcpConnection(
-  name: string,
-  config: McpServerConfig | any,
-  tools: ToolDefinition[] = [],
-  enabled = false,
-): MCPConnection {
-  return {
-    name,
-    status: 'disconnected',
-    enabled,
-    config,
-    tools,
-    listResources: async () => [],
-    readResource: async () => undefined,
-    subscribeResource: async () => {},
-    unsubscribeResource: async () => {},
-    close: async () => {},
-  }
 }
 
 function extractSummary(messages: Message[]): string | undefined {
@@ -240,10 +211,55 @@ function normalizeSessionMessageContent(
   return message.content as NormalizedMessageParam['content']
 }
 
-function sessionMessagesFromHistory(
+function isCompactionSummaryMessage(message: NormalizedMessageParam): boolean {
+  return Array.isArray(message.content)
+    && message.content.some((block: any) =>
+      block?.type === 'text' && block?._meta?.contextBlock === 'compaction')
+}
+
+export function sessionMessagesFromHistory(
   messages: NormalizedMessageParam[],
+  previous?: SessionMessage[],
 ): SessionMessage[] {
-  return messages.map((message) => toSessionMessage(message.role, message.content))
+  // Realign with the previous list so rebuilt messages keep their original
+  // uuids — fileCheckpointState is keyed by user-message uuid, and fresh
+  // uuids here would orphan every checkpoint (#363). Alignment pairs each
+  // role from the END: compaction prepends a synthetic summary user message,
+  // so only the trailing messages correspond 1:1 with what came before.
+  // Synthetic summaries never participate in pairing: when the previous list
+  // holds more same-role entries than the rebuilt history (the normal
+  // compaction shape), tail pairing would hand them a swallowed message's
+  // uuid and let rewindFiles restore unrelated snapshots.
+  const previousUuidsByRole = new Map<string, string[]>()
+  for (const message of previous ?? []) {
+    const uuids = previousUuidsByRole.get(message.role) ?? []
+    uuids.push(message.uuid)
+    previousUuidsByRole.set(message.role, uuids)
+  }
+  const indicesByRole = new Map<string, number[]>()
+  messages.forEach((message, index) => {
+    if (isCompactionSummaryMessage(message)) return
+    const indices = indicesByRole.get(message.role) ?? []
+    indices.push(index)
+    indicesByRole.set(message.role, indices)
+  })
+  const uuidByIndex = new Map<number, string>()
+  for (const [role, indices] of indicesByRole) {
+    const uuids = previousUuidsByRole.get(role) ?? []
+    const paired = Math.min(indices.length, uuids.length)
+    for (let offset = 0; offset < paired; offset++) {
+      uuidByIndex.set(
+        indices[indices.length - paired + offset]!,
+        uuids[uuids.length - paired + offset]!,
+      )
+    }
+  }
+  return messages.map((message, index) =>
+    toSessionMessage(
+      message.role as SessionMessage['role'],
+      message.content,
+      uuidByIndex.get(index),
+    ))
 }
 
 export class Agent {
@@ -257,7 +273,6 @@ export class Agent {
   private unregisterRuntimeTools: (() => void) | null = null
   private modelId = 'claude-sonnet-4-6'
   private provider: LLMProvider
-  private mcpLinks: MCPConnection[] = []
   private history: NormalizedMessageParam[] = []
   private messageLog: Message[] = []
   private sessionMessages: SessionMessage[] = []
@@ -265,6 +280,8 @@ export class Agent {
   private sid: string
   private abortCtrl: AbortController | null = null
   private currentEngine: QueryEngine | null = null
+  /** Synchronous in-flight marker: set at run entry, cleared when the run ends. */
+  private runLocked = false
   private hookRegistry: HookRegistry
   private loadedSettings: LoadedSettingsSource[] = []
   private loadedPlugins: LoadedPlugin[] = []
@@ -275,7 +292,6 @@ export class Agent {
   private fileCheckpointState: FileCheckpointState = {}
   private latestUserMessageId: string | undefined
   private lastContextUsage: ContextUsageResult | null = null
-  private disabledMcpServers = new Set<string>()
   private queuedSdkEvents: SDKMessage[] = []
   private readonly skillRegistry: SkillRegistry
 
@@ -418,15 +434,6 @@ export class Agent {
     })
   }
 
-  private getPluginMcpServers(): Record<string, McpServerConfig | any> {
-    const merged: Record<string, McpServerConfig | any> = {}
-    for (const plugin of this.loadedPlugins) {
-      if (plugin.lume?.hooksOnly) continue
-      Object.assign(merged, plugin.mcpServers || {})
-    }
-    return merged
-  }
-
   private buildBaseToolPool(options: AgentOptions = this.cfg): ToolDefinition[] {
     const pluginTools = this.getPluginTools()
     const bindSkillRegistry = (tool: ToolDefinition) => tool.name === 'Skill'
@@ -447,92 +454,15 @@ export class Agent {
     return filterTools(pool, undefined, options.disallowedTools)
   }
 
-  private getConfiguredMcpServers(): Record<string, McpServerConfig | any> {
-    return {
-      ...(this.cfg.mcpServers || {}),
-      ...this.getPluginMcpServers(),
-    }
-  }
-
-  private async syncMcpConnections(): Promise<void> {
-    await closeAllConnections(this.mcpLinks)
-    this.mcpLinks = []
-
-    const configs = this.getConfiguredMcpServers()
-    for (const [name, config] of Object.entries(configs)) {
-      const originalResourceUpdate = (config as any).onResourceUpdate
-      const wrappedConfig = {
-        ...config,
-        onResourceUpdate: async (update: any) => {
-          if (update.kind === 'elicitation_complete' && update.elicitationId) {
-            this.queuedSdkEvents.push({
-              type: 'system',
-              subtype: 'elicitation_complete',
-              mcp_server_name: name,
-              elicitation_id: update.elicitationId,
-              session_id: this.sid,
-            })
-          } else {
-            this.queuedSdkEvents.push({
-              type: 'system',
-              subtype: 'status',
-              message: `MCP ${name} ${update.kind} updated`,
-              session_id: this.sid,
-              permissionMode: this.cfg.permissionMode,
-            })
-          }
-          await originalResourceUpdate?.(update)
-        },
-      }
-
-      if (this.disabledMcpServers.has(name)) {
-        const tools = isSdkServerConfig(wrappedConfig) ? wrappedConfig.tools : []
-        this.mcpLinks.push(createDisconnectedMcpConnection(name, wrappedConfig, tools, false))
-        continue
-      }
-
-      if (isSdkServerConfig(wrappedConfig)) {
-        this.mcpLinks.push({
-          name,
-          status: 'connected',
-          enabled: true,
-          config: wrappedConfig,
-          tools: wrappedConfig.tools,
-          listResources: async () => [],
-          readResource: async () => undefined,
-          subscribeResource: async () => {},
-          unsubscribeResource: async () => {},
-          close: async () => {},
-        })
-        continue
-      }
-
-      const connection = await connectMCPServer(name, wrappedConfig)
-      connection.enabled = true
-      connection.config = wrappedConfig
-      this.mcpLinks.push(connection)
-    }
-
-  }
-
   private async rebuildToolPool(options: AgentOptions = this.cfg): Promise<void> {
-    const baseTools = this.buildBaseToolPool(options)
-    const mcpTools = this.mcpLinks
-      .filter((conn) => conn.enabled && conn.status === 'connected')
-      .flatMap((conn) => conn.tools)
+    // buildBaseToolPool 已按 disallowedTools 过滤；内置 MCP 链移除后无外部工具并入。
+    const assembledTools = this.buildBaseToolPool(options)
     const runtimeContext = {
       cwd: options.cwd || process.cwd(),
       sessionId: this.sid,
       permissionMode: options.permissionMode,
       threadType: options.threadType,
     }
-
-    const assembledTools = assembleToolPool(
-      baseTools,
-      mcpTools,
-      undefined,
-      options.disallowedTools,
-    )
     const runtimeTools = options.resolveRuntimeTools
       ? await options.resolveRuntimeTools(assembledTools, runtimeContext)
       : assembledTools
@@ -692,8 +622,6 @@ export class Agent {
     if (Object.keys(mergedAgents).length > 0) {
       registerAgents(mergedAgents)
     }
-
-    await this.syncMcpConnections()
   }
 
   private getEffectiveOptions(overrides?: Partial<AgentOptions>): AgentOptions {
@@ -871,9 +799,24 @@ export class Agent {
     prompt: QueryInput,
     overrides?: Partial<AgentOptions>,
   ): AsyncGenerator<SDKMessage, void> {
+    // A synchronous flag closes the TOCTOU window: the engine assignment sits
+    // several awaits deep, so two lazily-started queries could both pass a
+    // pure currentEngine check and fork the same session into two engines (#357).
+    if (this.runLocked || this.currentEngine) throw new Error('agent is running')
+    this.runLocked = true
+    try {
+      yield* this.runSinglePromptLocked(prompt, overrides)
+    } finally {
+      this.runLocked = false
+    }
+  }
+
+  private async *runSinglePromptLocked(
+    prompt: QueryInput,
+    overrides?: Partial<AgentOptions>,
+  ): AsyncGenerator<SDKMessage, void> {
     // currentEngine (not abortCtrl, which is never cleared after a run) is
     // the accurate in-flight marker: set before the loop, cleared in finally.
-    if (this.currentEngine) throw new Error('agent is running')
     await this.setupDone
 
     // Fail fast before any listener is attached, the user message is
@@ -1048,10 +991,6 @@ export class Agent {
         : `command:${this.sid}:compact`),
       fileCheckpointState: this.fileCheckpointState,
       enableFileCheckpointing: opts.enableFileCheckpointing === true,
-      mcpServerStatuses: this.collectMcpServerStatuses().map((status) => ({
-        name: status.name,
-        status: status.status,
-      })),
       contextController: opts.contextController,
       completionGuard: opts.completionGuard,
     })
@@ -1065,15 +1004,9 @@ export class Agent {
       yield queued
     }
 
-    // A host-injected provider is guaranteed by the entry check above; the
-    // provider's own apiType is the authoritative protocol (cfg.apiType/env
-    // sniffing no longer exists to contradict it).
-    yield {
-      type: 'auth_status',
-      isAuthenticating: false,
-      output: [`Using ${provider.apiType} credentials`],
-      session_id: this.sid,
-    }
+    // No auth_status event: the entry check above guarantees a host-injected
+    // provider, the SDK owns no credentials, and no consumer ever read this
+    // event — it was pure dead weight on every run.
 
     let persistedSessionEvent: SDKMessage | null = null
     let compactionBoundarySeen = false
@@ -1123,10 +1056,10 @@ export class Agent {
       this.lastContextUsage = engine.getContextUsage()
       this.currentEngine = null
       if (compactionBoundarySeen) {
-        this.sessionMessages = sessionMessagesFromHistory(this.history)
+        this.sessionMessages = sessionMessagesFromHistory(this.history, this.sessionMessages)
       }
       if (opts.toolContinuations?.length) {
-        this.sessionMessages = sessionMessagesFromHistory(this.history)
+        this.sessionMessages = sessionMessagesFromHistory(this.history, this.sessionMessages)
       }
       persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
     }
@@ -1176,10 +1109,6 @@ export class Agent {
         setCwd: (cwd) => this.setCwd(cwd),
         getInitializationResult: () => this.getInitializationResult(),
         getContextUsage: () => this.getContextUsage(),
-        mcpServerStatus: () => this.mcpServerStatus(),
-        setMcpServers: (servers) => this.setMcpServers(servers),
-        reconnectMcpServer: (serverName) => this.reconnectMcpServer(serverName),
-        toggleMcpServer: (serverName, enabled) => this.toggleMcpServer(serverName, enabled),
         reloadPlugins: () => this.reloadPlugins(),
         rewindFiles: (userMessageId, dryRun) => this.rewindFiles(userMessageId, dryRun),
         stopTask: (taskId) => this.stopTask(taskId),
@@ -1344,6 +1273,7 @@ export class Agent {
     return this.sid
   }
 
+  /** Resolved API type of the active (host-injected or fallback) provider config. */
   getApiType(): ApiType {
     return this.provider.apiType
   }
@@ -1395,7 +1325,7 @@ export class Agent {
       })),
       output_style: 'text',
       available_output_styles: ['text', 'json', 'streamlined'],
-      models: getDefaultModels(),
+      models: [],
       account: {
         tokenSource: credentialSource,
         apiKeySource: credentialSource,
@@ -1432,7 +1362,6 @@ export class Agent {
       gridRows: [],
       model: this.modelId,
       memoryFiles: [],
-      mcpTools: [],
       deferredBuiltinTools: [],
       systemTools: [],
       systemPromptSections: [],
@@ -1470,77 +1399,6 @@ export class Agent {
     }
   }
 
-  private collectMcpServerStatuses(): MCPServerStatus[] {
-    const configs = this.getConfiguredMcpServers()
-    return Object.entries(configs).map(([name, config]) => {
-      const live = this.mcpLinks.find((conn) => conn.name === name)
-      return {
-        name,
-        status: this.disabledMcpServers.has(name)
-          ? 'disconnected'
-          : live?.status || 'disconnected',
-        enabled: !this.disabledMcpServers.has(name),
-        tools: live?.tools.map((tool) => tool.name) || (isSdkServerConfig(config)
-          ? config.tools.map((tool) => tool.name)
-          : []),
-        error: live?.error,
-      }
-    })
-  }
-
-  async mcpServerStatus(): Promise<MCPServerStatus[]> {
-    await this.setupDone
-    return this.collectMcpServerStatuses()
-  }
-
-  async setMcpServers(
-    servers: Record<string, McpServerConfig | any>,
-  ): Promise<{ added: string[]; removed: string[]; errors: Record<string, string> }> {
-    await this.setupDone
-
-    const previous = new Set(Object.keys(this.cfg.mcpServers || {}))
-    const next = new Set(Object.keys(servers))
-    const added = [...next].filter((name) => !previous.has(name))
-    const removed = [...previous].filter((name) => !next.has(name))
-    const errors: Record<string, string> = {}
-
-    this.cfg.mcpServers = { ...servers }
-    for (const name of removed) {
-      this.disabledMcpServers.delete(name)
-    }
-
-    await this.syncMcpConnections()
-    await this.rebuildToolPool()
-
-    for (const status of this.collectMcpServerStatuses()) {
-      if (status.status === 'error' && status.error) {
-        errors[status.name] = status.error
-      }
-    }
-
-    return { added, removed, errors }
-  }
-
-  async reconnectMcpServer(serverName: string): Promise<MCPServerStatus | null> {
-    await this.setupDone
-    this.disabledMcpServers.delete(serverName)
-    await this.syncMcpConnections()
-    await this.rebuildToolPool()
-    return this.collectMcpServerStatuses().find((status) => status.name === serverName) || null
-  }
-
-  async toggleMcpServer(serverName: string, enabled: boolean): Promise<MCPServerStatus | null> {
-    await this.setupDone
-    if (enabled) {
-      this.disabledMcpServers.delete(serverName)
-    } else {
-      this.disabledMcpServers.add(serverName)
-    }
-    await this.syncMcpConnections()
-    await this.rebuildToolPool()
-    return this.collectMcpServerStatuses().find((status) => status.name === serverName) || null
-  }
-
   async reloadPlugins(): Promise<ReloadPluginsResult> {
     await this.setupDone
 
@@ -1557,7 +1415,6 @@ export class Agent {
       ...this.getPluginCommands(),
     ]
     this.resetHookRegistry()
-    await this.syncMcpConnections()
     await this.rebuildToolPool()
 
     const mergedAgents = {
@@ -1579,8 +1436,6 @@ export class Agent {
         path: plugin.path,
         source: plugin.source,
       })),
-      mcpServers: this.collectMcpServerStatuses(),
-      error_count: this.collectMcpServerStatuses().filter((status) => status.status === 'error').length,
     }
   }
 
@@ -1625,14 +1480,9 @@ export class Agent {
       }
     }
 
-    try {
-      await closeAllConnections(this.mcpLinks)
-    } finally {
-      this.mcpLinks = []
-      this.unregisterFileSkills()
-      this.unregisterExplicitSkills()
-      this.unregisterPluginSkills()
-    }
+    this.unregisterFileSkills()
+    this.unregisterExplicitSkills()
+    this.unregisterPluginSkills()
   }
 }
 

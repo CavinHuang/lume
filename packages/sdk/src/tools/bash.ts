@@ -102,8 +102,17 @@ export const BashTool = defineTool({
         },
       }
     }
-    const blocked = findBlockedCommand(command, context.sandbox?.excludedCommands ?? [])
-    if (blocked) return { data: `Sandbox blocked command prefix "${blocked}"`, is_error: true }
+    const excluded = context.sandbox?.excludedCommands ?? []
+    if (excluded.length > 0) {
+      const blocked = checkExcludedCommands(command, excluded)
+      if (blocked === 'complex') {
+        return {
+          data: `Sandbox refused compound command: excluded commands (${excluded.join(", ")}) cannot be verified inside $(), subshells, or multi-statement syntax. Run it as simple commands.`,
+          is_error: true,
+        }
+      }
+      if (blocked) return { data: `Sandbox blocked command prefix "${blocked}"`, is_error: true }
+    }
     const shell = resolveShellInvocation(command)
     const dialectError = getShellDialectError(command, shell.command)
     if (dialectError) {
@@ -156,10 +165,14 @@ function isReadOnlyShellInput(input: unknown, _context?: ToolContext): boolean {
       && !analysis.hasRedirection
   }
 
-  // PowerShell is intentionally parsed conservatively by the native Bash
-  // parser. Cover the small, unambiguous inspection subset so Windows reads
-  // do not inherit Bash's blanket mutating classification.
-  return isReadOnlyPowerShell(normalized)
+  // Non-provable syntax falls back per dialect (#300): Bash has no safe
+  // fallback (compound and piped forms escape any first-word whitelist), so it
+  // fails closed. PowerShell keeps its conservative inspection subset — either
+  // the command invokes powershell/pwsh explicitly or the resolved shell for
+  // this platform is PowerShell.
+  const runsPowerShell = /^\s*(?:powershell|pwsh)(?:\.exe)?(?:\s|$)/i.test(normalized)
+    || shellKind(resolveShellInvocation(normalized).command) === 'powershell'
+  return runsPowerShell ? isReadOnlyPowerShell(normalized) : false
 }
 
 const READ_ONLY_EXECUTABLES = new Set([
@@ -344,7 +357,10 @@ function isReadOnlyPowerShell(command: string): boolean {
   const normalized = command
     .replace(/^\s*(?:powershell|pwsh)(?:\.exe)?\s+(?:-NoLogo\s+|-NoProfile\s+|-NonInteractive\s+)*-Command\s+/i, '')
     .trim()
-  if (!normalized || /[>`]|>>|\$\(|;|\b(?:Set|Remove|Copy|Move|New|Add|Clear|Out|Start|Stop|Invoke|Install|Update)-[A-Za-z]+\b/i.test(normalized)) {
+  // Reject pipeline (`|`), chaining/call (`&`), the ForEach-Object alias `%`,
+  // script-block braces, and line breaks so piped or nested payloads cannot
+  // ride behind a whitelisted first word (#300).
+  if (!normalized || /[>`]|>>|\$\(|[;&|%{}\r\n]|\b(?:Set|Remove|Copy|Move|New|Add|Clear|Out|Start|Stop|Invoke|Install|Update)-[A-Za-z]+\b/i.test(normalized)) {
     return false
   }
   // Unparsed strings cannot be arg-checked, so only git subcommands whose
@@ -460,8 +476,8 @@ async function startDirectShellTask({
     if (terminationReason === 'completed') terminationReason = reason
     terminateProcessTree(proc, { detached: true })
   }
-  const timeoutTimer = setTimeout(() => stop('timeout'), timeoutMs)
-  timeoutTimer.unref?.()
+  const timeoutTimer = timeoutMs !== undefined ? setTimeout(() => stop('timeout'), timeoutMs) : undefined
+  timeoutTimer?.unref?.()
   const abortHandler = () => stop('aborted')
   context.abortSignal?.addEventListener('abort', abortHandler, { once: true })
   proc.stdout?.on('data', (chunk: Buffer) => appendOutput('stdout', chunk))
@@ -471,7 +487,7 @@ async function startDirectShellTask({
     const finish = async (code: number | null, spawnError?: string) => {
       if (settled) return
       settled = true
-      clearTimeout(timeoutTimer)
+      if (timeoutTimer) clearTimeout(timeoutTimer)
       context.abortSignal?.removeEventListener('abort', abortHandler)
       if (progressTimer) clearInterval(progressTimer)
       const stdoutTail = stdoutDecoder.end()
@@ -661,6 +677,8 @@ async function startDurableShellTask({
   let outputOffset = 0
   let stdoutOffset = 0
   let stderrOffset = 0
+  const stdoutDecoder = new StringDecoder('utf8')
+  const stderrDecoder = new StringDecoder('utf8')
   let stdoutPreview = ''
   let stderrPreview = ''
   let progressTimer: ReturnType<typeof setInterval> | undefined
@@ -690,29 +708,33 @@ async function startDurableShellTask({
     const before = stdoutOffset + stderrOffset + outputOffset
     const stdout = await readIncrementalFile(stdoutFile, stdoutOffset)
     stdoutOffset = stdout.nextOffset
-    if (stdout.text) {
+    if (stdout.chunk.length > 0) {
       lastOutputAt = Date.now()
-      stdoutPreview = appendPreview(stdoutPreview, stdout.text)
+      // Streamed decode keeps multibyte sequences that straddle block
+      // boundaries intact (#368).
+      const text = stdoutDecoder.write(stdout.chunk)
+      stdoutPreview = appendPreview(stdoutPreview, text)
       context.emitEvent?.({
         type: 'system',
         subtype: 'local_command_output',
-        content: boundedPreview(stdout.text),
+        content: boundedPreview(text),
         session_id: context.sessionId || '',
       })
     }
     const stderr = await readIncrementalFile(stderrFile, stderrOffset)
     stderrOffset = stderr.nextOffset
-    if (stderr.text) {
+    if (stderr.chunk.length > 0) {
       lastOutputAt = Date.now()
-      stderrPreview = appendPreview(stderrPreview, stderr.text)
+      const text = stderrDecoder.write(stderr.chunk)
+      stderrPreview = appendPreview(stderrPreview, text)
       context.emitEvent?.({
         type: 'system',
         subtype: 'local_command_output',
-        content: boundedPreview(stderr.text),
+        content: boundedPreview(text),
         session_id: context.sessionId || '',
       })
     }
-    const combined = await readIncrementalFile(outputFile, outputOffset, false)
+    const combined = await readIncrementalFile(outputFile, outputOffset)
     outputOffset = combined.nextOffset
     return stdoutOffset + stderrOffset + outputOffset !== before
   }
@@ -762,6 +784,10 @@ async function startDurableShellTask({
         // Drain the worker's final writes to EOF; a single bounded read can
         // lose tail output written just before the process exited.
         while (await emitNewOutput()) { /* drain until no new bytes */ }
+        const stdoutTail = stdoutDecoder.end()
+        const stderrTail = stderrDecoder.end()
+        if (stdoutTail) stdoutPreview = appendPreview(stdoutPreview, stdoutTail)
+        if (stderrTail) stderrPreview = appendPreview(stderrPreview, stderrTail)
         const execution = normalizePersistedExecution(
           command,
           purpose,
@@ -1035,24 +1061,23 @@ function formatShellResult(
   ].filter(Boolean).join('\n') || '(no output)'
 }
 
-async function readIncrementalFile(path: string, offset: number, decode = true): Promise<{ text: string; nextOffset: number }> {
+async function readIncrementalFile(path: string, offset: number): Promise<{ chunk: Buffer; nextOffset: number }> {
   try {
     const info = await stat(path)
-    if (info.size <= offset) return { text: '', nextOffset: offset }
+    if (info.size <= offset) return { chunk: Buffer.alloc(0), nextOffset: offset }
     const length = Math.min(info.size - offset, 65_536)
     const buffer = Buffer.alloc(length)
     const file = await open(path, 'r')
     try {
       const { bytesRead } = await file.read(buffer, 0, length, offset)
-      return {
-        text: decode ? buffer.subarray(0, bytesRead).toString('utf8') : '',
-        nextOffset: offset + bytesRead,
-      }
+      // Raw bytes: the caller owns decoding so multibyte sequences that span
+      // the 64KB block boundary do not turn into U+FFFD (#368).
+      return { chunk: buffer.subarray(0, bytesRead), nextOffset: offset + bytesRead }
     } finally {
       await file.close()
     }
   } catch {
-    return { text: '', nextOffset: offset }
+    return { chunk: Buffer.alloc(0), nextOffset: offset }
   }
 }
 
@@ -1086,19 +1111,16 @@ function withBundledRipgrepSandbox(sandbox: ToolContext['sandbox']): ToolContext
   }
 }
 
-function findBlockedCommand(command: string, excluded: string[]): string | undefined {
+/** 'complex' = non-provable syntax; otherwise the matched excluded executable. */
+function checkExcludedCommands(command: string, excluded: string[]): string | 'complex' | undefined {
   const lower = new Set(excluded.map((value) => value.toLowerCase()))
-  if (lower.size === 0) return undefined
   const analysis = analyzeBashCommand(command)
-  if (analysis.status === 'simple') {
-    return analysis.commands.map((segment) => segment.executable).find((name) => lower.has(name))
+  if (analysis.status !== 'simple') {
+    // Command substitution, subshells, and nested statements can hide an
+    // excluded executable from any textual scan; refuse rather than miss one (#338).
+    return 'complex'
   }
-  const matches = command.matchAll(/(?:^|[;&|]\s*|\n\s*)(?:(?:[A-Za-z_][\w]*=\S+)\s+)*(?:['"]([^'"]+)['"]|(\S+))/g)
-  for (const match of matches) {
-    const name = (match[1] || match[2] || '').split(/[\\/]/).pop()?.replace(/\.(?:exe|cmd|bat)$/i, '').toLowerCase()
-    if (name && lower.has(name)) return name
-  }
-  return undefined
+  return analysis.commands.map((segment) => segment.executable).find((name) => lower.has(name))
 }
 
 function appendPreview(current: string, value: string): string {

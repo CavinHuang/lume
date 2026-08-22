@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createAgent } from "./agent.js"
+import { createAgent, sessionMessagesFromHistory } from "./agent.js"
 import { SkillTool } from "./tools/skill-tool.js"
 import type { SDKMessage, ToolDefinition } from "./types.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
@@ -131,7 +131,7 @@ describe("Agent provider configuration", () => {
     await agent.close()
   })
 
-  test("auth_status reports the injected provider's apiType", async () => {
+  test("auth_status is no longer emitted for host-injected provider runs", async () => {
     const provider = new CapturingProvider()
     const agent = createAgent({ persistSession: false, tools: [], provider })
 
@@ -140,10 +140,7 @@ describe("Agent provider configuration", () => {
       events.push(event)
     }
 
-    const authStatus = events.find((event) => event.type === "auth_status") as any
-    expect(authStatus).toBeDefined()
-    expect(authStatus.error).toBeUndefined()
-    expect(authStatus.output).toEqual(["Using anthropic-messages credentials"])
+    expect(events.find((event) => event.type === "auth_status")).toBeUndefined()
     await agent.close()
   })
 
@@ -1345,5 +1342,168 @@ describe("Agent session persistence", () => {
 
     expect(sawUserMessageBeforeProviderResponse).toBe(true)
     await agent.close()
+  })
+})
+
+describe("auth_status emission", () => {
+  test("host-injected provider 不再发射 auth_status（软中止路径）", async () => {
+    const provider = new CapturingProvider()
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      provider,
+      model: "host/model-a",
+    })
+    const controller = new AbortController()
+    controller.abort(new Error("stopped"))
+
+    const events: SDKMessage[] = []
+    for await (const event of agent.query("hello", { abortSignal: controller.signal })) {
+      events.push(event)
+    }
+
+    expect(events.some((event) => event.type === "auth_status")).toBe(false)
+    await agent.close()
+  })
+
+  test("未注入 provider 的运行入口 fail-fast，不产生任何事件流", async () => {
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      model: "host/model-a",
+    })
+
+    const drain = async () => {
+      for await (const _event of agent.query("hello")) {
+        // drain
+      }
+    }
+    await expect(drain()).rejects.toThrow("No LLMProvider configured")
+
+    await agent.close()
+  })
+})
+
+describe("Agent concurrent run lock (#357)", () => {
+  test("rejects a second query while the first run is still initializing", async () => {
+    const provider = new CapturingProvider()
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      provider,
+      model: "host/model-a",
+    })
+    await agent.getInitializationResult()
+
+    const first = (agent.query("first") as any)[Symbol.asyncIterator]() as AsyncIterator<SDKMessage>
+    const second = (agent.query("second") as any)[Symbol.asyncIterator]() as AsyncIterator<SDKMessage>
+    // Start both generators in the same tick: the first one grabs the run
+    // lock synchronously, so the second must be rejected before either
+    // engine is even constructed.
+    const firstStart = first.next()
+    const secondOutcome = await second.next().then(
+      () => "allowed",
+      (error: Error) => error.message,
+    )
+    expect(secondOutcome).toBe("agent is running")
+
+    // The first run completes normally.
+    let done = await firstStart
+    while (!done.done) {
+      done = await first.next()
+    }
+    expect(provider.requests).toHaveLength(1)
+
+    // The lock is released: a follow-up query runs fine.
+    for await (const _event of agent.query("third")) {
+      // drain
+    }
+    expect(provider.requests).toHaveLength(2)
+    await agent.close()
+  })
+})
+
+describe("Agent session message uuid realignment (#363)", () => {
+  test("rebuilds session messages after a compaction boundary without rotating user uuids", async () => {
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      provider: new CapturingProvider(),
+      model: "host/model-a",
+    })
+    await agent.getInitializationResult()
+
+    for await (const _event of agent.query("checkpoint anchor request", {
+      contextController: {
+        shouldAutoCompact: () => true,
+        async compactConversation() {
+          return {
+            compactedMessages: [
+              { role: "user", content: "[Previous conversation summary]\n\nanchor summary" },
+            ],
+            summary: "anchor summary",
+          }
+        },
+      },
+    })) {
+      // drain
+    }
+
+    const loggedUserUuid = ((agent.getMessages().find((message) => message.type === "user") as any) as { uuid: string }).uuid
+    const rebuilt = (agent as any).sessionMessages as Array<{ uuid: string; role: string; content: unknown }>
+    expect(rebuilt.map((message) => message.role)).toEqual(["user", "user", "assistant"])
+    // The rebuilt latest user message keeps its original uuid, so
+    // fileCheckpointState lookups keyed by that uuid still hit.
+    expect(rebuilt[1]!.uuid).toBe(loggedUserUuid)
+    expect(JSON.stringify(rebuilt[1]!.content)).toContain("checkpoint anchor request")
+
+    await agent.close()
+  })
+
+  test("pairs roles from the end and falls back to fresh uuids past the old list", () => {
+    const history = [
+      { role: "user", content: "one" },
+      { role: "assistant", content: "two" },
+      { role: "user", content: "three" },
+    ] as any[]
+    const previous = [
+      { uuid: "u-1", role: "user", timestamp: "t", content: "one" },
+      { uuid: "a-1", role: "assistant", timestamp: "t", content: "two" },
+    ] as any[]
+
+    const rebuilt = sessionMessagesFromHistory(history, previous)
+
+    // Trailing messages map onto the previous list; the leading extra user
+    // (e.g. a synthetic compaction summary) gets a fresh uuid.
+    expect(rebuilt.map((message) => message.uuid)).toEqual([expect.any(String), "a-1", "u-1"])
+  })
+
+  test("never hands an old uuid to a synthetic compaction summary when history shrank (#363)", () => {
+    const oldUuids = ["u-1", "u-2", "u-3", "u-4", "u-5", "u-6"]
+    const history = [
+      {
+        role: "user",
+        content: [{ type: "text", text: "checkpoint summary", _meta: { contextBlock: "compaction" } }],
+      },
+      { role: "assistant", content: "mid answer" },
+      { role: "user", content: "latest question" },
+    ] as any[]
+    const previous = [
+      ...oldUuids.map((uuid) => ({ uuid, role: "user", timestamp: "t", content: `request ${uuid}` })),
+      { uuid: "a-mid", role: "assistant", timestamp: "t", content: "older answer" },
+    ] as any[]
+
+    const rebuilt = sessionMessagesFromHistory(history, previous)
+
+    // The summary is synthetic — it must take a fresh uuid instead of stealing
+    // one from a swallowed user message (rewindFiles would otherwise restore
+    // unrelated snapshots through it).
+    const summaryUuid = rebuilt[0]!.uuid
+    for (const uuid of oldUuids) {
+      expect(summaryUuid).not.toBe(uuid)
+    }
+    // The surviving real messages keep their own uuids.
+    expect(rebuilt[1]!.uuid).toBe("a-mid")
+    expect(rebuilt[2]!.uuid).toBe("u-6")
   })
 })

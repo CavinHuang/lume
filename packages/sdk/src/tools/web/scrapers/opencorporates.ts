@@ -87,7 +87,7 @@ export const handleOpenCorporates: SpecialHandler = async (
 ): Promise<RenderResult | null> => {
 	try {
 		const parsed = new URL(url);
-		if (!parsed.hostname.includes("opencorporates.com")) return null;
+		if (parsed.hostname.replace(/^www\./, "") !== "opencorporates.com") return null;
 
 		// Extract jurisdiction and company number from /companies/{jurisdiction}/{number}
 		const match = parsed.pathname.match(/^\/companies\/([^/]+)\/([^/]+)/);

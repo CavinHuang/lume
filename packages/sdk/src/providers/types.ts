@@ -130,9 +130,12 @@ export type CreateMessageStreamEvent =
  *   API. `apiType` declares which protocol; the engine surfaces it in
  *   `auth_status` and `getApiType()` but performs no protocol handling
  *   itself.
- * - **Credentials & retry.** The provider owns keys, base URLs, and
- *   transport-level retries. The engine does not retry provider errors
- *   except its own prompt-too-long compaction path.
+ * - **Credentials & retry.** The provider owns keys and base URLs. Retry
+ *   ownership splits by path: streaming requests own their transport-level
+ *   retries (surfaced via `retry_state` events), while blocking
+ *   `createMessage` calls are retried by the engine itself on transient
+ *   failures (429/5xx/connection errors) with bounded backoff — hosts must
+ *   not stack another retry layer on that path or retries multiply.
  * - **Usage normalization.** `usage.input_tokens` / `output_tokens` must be
  *   populated with real provider counts; they feed billing records and the
  *   `result` event. Cache fields are optional.
@@ -152,15 +155,10 @@ export type CreateMessageStreamEvent =
  * - `createMessageStream` — streaming requests silently fall back to a
  *   blocking `createMessage` call: no `text_delta` partial events, and the
  *   `includePartialMessages` engine flag has nothing to forward.
- * - `countTokens` — token accounting falls back to the SDK's heuristic
- *   estimator.
  */
 export interface LLMProvider {
   /** The API type this provider implements. */
   readonly apiType: ApiType
-
-  /** Count request input tokens with the provider API when supported. */
-  countTokens?(params: CreateMessageParams): Promise<number | null>
 
   /** Send a message and get a response. */
   createMessage(params: CreateMessageParams): Promise<CreateMessageResponse>
