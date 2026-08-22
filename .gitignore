@@ -61,3 +61,5 @@ tmp-ui-audit/
 
 # playwright MCP 会话快照，不入库
 .playwright-mcp/
+# sidecar 单测隔离目录（已移至 os.tmpdir()，防误提交）
+.tmp-test-config-*/

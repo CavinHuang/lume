@@ -1,3 +1,0 @@
-{"at":"2026-08-22T09:49:18.719Z","round":1,"response":[{"type":"tool_use","id":"memory-search-1","name":"memory.search","input":{"query":"中文偏好","maxResults":3}}]}
-{"at":"2026-08-22T09:49:18.742Z","round":1,"tool":"memory.search","toolUseId":"memory-search-1","result":"{\n  \"results\": []\n}","isError":false}
-{"at":"2026-08-22T09:49:18.744Z","round":2,"response":[{"type":"text","text":"{\"shouldExtract\":true,\"candidates\":[{\"sourceId\":\"source-a\",\"kind\":\"preference\",\"targetScope\":\"global\",\"statement\":\"用户偏好使用中文沟通\",\"confidence\":\"high\",\"sourceRole\":\"user\",\"sourceText\":\"我通常使用中文沟通\",\"reason\":\"User stated a durable language preference.\"}]}"}]}
