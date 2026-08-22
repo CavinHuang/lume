@@ -273,18 +273,21 @@ export class ContextAssembler {
         `<planning_todo_context trust="untrusted">\n${JSON.stringify(input.planningTodoContext).replaceAll("<", "\\u003c")}\n</planning_todo_context>`
       ].join("\n")
       : "";
+    // 固定策略文本（内容只由工具集/能力开关决定，回合内逐字不变）进入稳定
+    // system prompt 前缀：可被 prompt cache 覆盖，且不会随每条 runtime 消息
+    // 在历史中重复。browserContinuity 等含逐回合数据的块仍留在 runtimeContext。
     const systemPrompt = [
       agentSystemPrompt,
-      systemPromptAppend
+      systemPromptAppend,
+      desktopContextPolicy,
+      desktopComputerUsePolicy,
+      browserFallbackPolicy
     ]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");
     const runtimeContext = [
       dynamicContext,
       permissionDeniedContext,
-      desktopContextPolicy,
-      desktopComputerUsePolicy,
-      browserFallbackPolicy,
       browserContinuityPolicy,
       todoStateContext,
       planningTodoContext

@@ -261,6 +261,9 @@ export interface CreateRuntimeCoreSessionResult {
   getBaselineCommits: () => Record<string, string>;
   getVerificationReport: () => import("./coding-run-tracker").CodingVerificationReport;
   refreshCodingChangeSet: () => Promise<unknown>;
+  /** 注册 SDK live 事件汇(#285):runner 开始消费查询流时把 tee 投影队列
+   * 接进来;传 null 解除(流结束)。 */
+  setLiveEventSink: (sink: ((event: unknown) => void) | null) => void;
   getLatestFileCheckpoint: () => FileCheckpoint | undefined;
   getWorkspaceRoots: () => string[];
 }
@@ -1268,6 +1271,14 @@ async function createRuntimeCoreSessionImpl(
     enableFileCheckpointing,
   };
 
+  // Live 事件桥(#285):SDK 工具执行期直通的进度事件先落在本桥,runner 侧
+  // 开始消费查询流时经 setLiveEventSink 把 tee 投影队列接进来。sink 未接时
+  // (消费未开始/已结束)事件静默丢弃——进度本就是瞬态信号。
+  const liveEventBridge: { sink: ((event: SDKMessage) => void) | null } = { sink: null };
+  agentOptions.onLiveEvent = (event) => {
+    liveEventBridge.sink?.(event);
+  };
+
   const agent = createAgent(agentOptions);
   pendingCleanup.push(() => agent.close());
   pendingCleanup.push(() => {
@@ -1356,6 +1367,9 @@ async function createRuntimeCoreSessionImpl(
     refreshCodingChangeSet: codingRunTracker.refreshChangeSet,
     getLatestFileCheckpoint: () => agent.getLatestFileCheckpoint(),
     getVerificationReport: getCodingReport,
+    setLiveEventSink: (sink) => {
+      liveEventBridge.sink = sink;
+    },
   };
 }
 

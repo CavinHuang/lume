@@ -347,6 +347,77 @@ describe("QueryEngine turn limits", () => {
     ])
   })
 
+  test("delivers live events immediately while a tool runs and closes the channel after it returns", async () => {
+    const liveEvents: SDKMessage[] = []
+    let liveEmitDuringCall: NonNullable<ToolContext["emitLiveEvent"]> | undefined
+    let resolveTool: (() => void) | undefined
+    const toolGate = new Promise<void>((resolve) => { resolveTool = resolve })
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "tool_use", id: "long-1", name: "LongCmd", input: {} }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    ])
+    let sawFirstLiveBeforeToolReturn = false
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "LongCmd",
+        description: "long running command",
+        inputSchema: { type: "object", properties: {} },
+        async call(_input, context) {
+          liveEmitDuringCall = context.emitLiveEvent
+          context.emitLiveEvent?.({
+            type: "system",
+            subtype: "task_progress",
+            task_id: "task_live",
+            description: "tick 1",
+            session_id: "session"
+          })
+          sawFirstLiveBeforeToolReturn = liveEvents.length > 0
+          await toolGate
+          return { type: "tool_result" as const, tool_use_id: "", content: "finished" }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      onLiveEvent: (event) => liveEvents.push(event)
+    })
+
+    const collected = collectEvents(engine)
+    // Give the tool call a chance to start and emit before resolving the gate.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    resolveTool?.()
+    const events = await collected
+
+    expect(sawFirstLiveBeforeToolReturn).toBe(true)
+    expect(liveEvents).toHaveLength(1)
+    expect(liveEvents[0]).toMatchObject({ subtype: "task_progress", task_id: "task_live" })
+    // Live events bypass the deferred stream entirely.
+    expect(events.filter((event) => event.type === "system" && (event as { subtype?: string }).subtype === "task_progress")).toHaveLength(0)
+
+    // Channel is closed once the tool call returned.
+    liveEmitDuringCall?.({
+      type: "system",
+      subtype: "task_progress",
+      task_id: "task_live",
+      description: "late tick",
+      session_id: "session"
+    })
+    expect(liveEvents).toHaveLength(1)
+  })
+
   test("injects delayed LSP diagnostics into the next model request without starting a hidden turn", async () => {
     const provider = new StaticProvider([
       {
@@ -1023,6 +1094,40 @@ describe("QueryEngine context controller", () => {
 
     const runtimeMessages = provider.requests[0]?.messages.filter((message) => message.role === "runtime");
     expect(runtimeMessages).toEqual([{ role: "runtime", content: "latest runtime" }]);
+  });
+
+  test("replaces the previous runtime context on the next turn without compaction", async () => {
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "text", text: "first" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "second" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    ]);
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "stable system",
+      runtimeContext: "turn one context",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    await collectResult(engine);
+    engine.config.runtimeContext = "turn two context";
+    await collectResult(engine);
+
+    const runtimeMessages = provider.requests[1]?.messages.filter((message) => message.role === "runtime");
+    expect(runtimeMessages).toEqual([{ role: "runtime", content: "turn two context" }]);
   });
 
   test("runs slash compact as a manual kernel compaction without calling the provider", async () => {

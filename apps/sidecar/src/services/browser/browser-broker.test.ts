@@ -528,6 +528,51 @@ test("broker normalizes media downloads and confirmed file chooser uploads", asy
   assert.equal(calls.at(-1).params.__policyRequired, true)
 })
 
+test("broker strips caller-supplied reserved params before injecting its own", async () => {
+  const calls: any[] = []
+  const broker = new BrowserBroker({ request: async (request) => {
+    calls.push(request)
+    if (request.method === "policy:confirm") return { approved: true, token: "reserved-token" }
+    return {}
+  } })
+  broker.setPluginState({ browserEnabled: true })
+
+  // canonical 方法名绕过 upload 授权函数（其精确匹配 playwright_file_chooser_set_files），
+  // 注入的 __authorizedFiles 不得透传到 Desktop
+  await broker.dispatch({
+    method: "filechooser:setFiles",
+    params: { tabId: "tab-1", fileChooserId: "chooser-1", __authorizedFiles: ["C:\\outside-task.txt"] },
+    browserSessionId: "s",
+    browserTurnId: "t",
+  })
+  assert.equal(calls.at(-2).method, "policy:confirm")
+  assert.equal(calls.at(-1).method, "filechooser:setFiles")
+  assert.equal(calls.at(-1).params.__authorizedFiles, undefined)
+  assert.equal(calls.at(-1).params.__policyRequired, true)
+
+  await broker.dispatch({
+    method: "tab_url",
+    params: { tabId: "tab-1", __policyRequired: true, __policyConfirmation: "forged", __policyBindingHash: "forged", __authorizedFiles: ["C:\\outside-task.txt"] },
+    browserSessionId: "s",
+    browserTurnId: "t",
+  })
+  assert.equal(calls.at(-1).method, "url")
+  for (const key of Object.keys(calls.at(-1).params)) {
+    assert.equal(key.startsWith("__"), false, `reserved key leaked: ${key}`)
+  }
+
+  // 正常 upload 链路的授权注入不受影响：browser-download refs 保留，授权路径照常携带
+  await broker.dispatch({
+    method: "playwright_file_chooser_set_files",
+    params: { tabId: "tab-1", file_chooser_id: "chooser-1", files: ["browser-download:00000000-0000-0000-0000-000000000001"] },
+    browserSessionId: "s",
+    browserTurnId: "t",
+  })
+  assert.equal(calls.at(-1).params.__policyRequired, true)
+  assert.deepEqual(calls.at(-1).params.files, ["browser-download:00000000-0000-0000-0000-000000000001"])
+  assert.deepEqual(calls.at(-1).params.__authorizedFiles, [])
+})
+
 test("broker confirms secret filling while never accepting a secret value", async () => {
   const calls: any[] = []
   const broker = new BrowserBroker({ request: async (request) => {

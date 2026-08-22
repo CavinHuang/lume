@@ -1036,11 +1036,18 @@ export class QueryEngine {
     }
 
     // Runtime context is persisted in history but remains an internal message.
+    // Each turn re-emits the full runtime context (policy text plus per-turn
+    // state snapshots), so only the latest copy is kept, re-appended just
+    // before the new user turn: older copies carry no information the newest
+    // one does not, and retaining them would grow history linearly over a long
+    // session. Compaction rebuilds history on the same single-latest-copy
+    // assumption.
     if (this.config.runtimeContext?.trim()) {
-      if (autoCompacted) {
-        this.messages = this.messages.filter((message) => message.role !== 'runtime')
-      }
-      this.messages.push({ role: 'runtime', content: this.config.runtimeContext.trim() })
+      const nextRuntime: NormalizedMessageParam = { role: 'runtime', content: this.config.runtimeContext.trim() }
+      this.messages = [
+        ...this.messages.filter((message) => message.role !== 'runtime'),
+        nextRuntime,
+      ]
     }
 
     // Exact cold-start continuations resume at the persisted tool boundary,
@@ -1918,6 +1925,22 @@ export class QueryEngine {
           this.config.onAsyncEvent?.(event)
         } catch {
           // Host event delivery must not break terminal process cleanup.
+        }
+      }
+    }
+    // Live channel: delivered to the host immediately while the tool runs,
+    // bypassing the deferred batch buffer. Closed once the tool call returns —
+    // post-return progress belongs to the async channel above. Only mounted
+    // when the host listens: tools fall back to emitEvent otherwise, so
+    // hosts without onLiveEvent keep the buffered (persistable) behavior.
+    if (this.config.onLiveEvent) {
+      const deliverLive = this.config.onLiveEvent
+      toolContext.emitLiveEvent = (event) => {
+        if (!toolCallActive) return
+        try {
+          deliverLive(event)
+        } catch {
+          // Live delivery must not break tool execution.
         }
       }
     }
