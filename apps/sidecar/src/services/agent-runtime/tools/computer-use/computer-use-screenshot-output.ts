@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { toThreadRelativePath } from "../../../agent/agent-files-service";
 import { resolveAgentThreadWorkdir } from "../../../agent/agent-workdir-resolver";
@@ -50,9 +50,12 @@ export function saveComputerUseScreenshots(input: {
     const capturedAt = Date.now();
     const hostScreenshotId = typeof screenshot.id === "string" ? screenshot.id : "";
     const screenshotId = hostScreenshotId || `screenshot:${randomUUID()}`;
-    const filename = `${capturedAt}-${randomUUID().slice(0, 8)}.${extension}`;
+    // 文件名=内容 hash(#257):同页面重复截图天然复用同一文件,不再每轮落一份相同二进制
+    const filename = `${createHash("sha256").update(bytes).digest("hex").slice(0, 32)}.${extension}`;
     const absPath = join(dir, filename);
-    writeFileSync(absPath, bytes);
+    if (!existsSync(absPath)) {
+      writeFileSync(absPath, bytes);
+    }
     const threadPath = toThreadRelativePath(input.workspaceSlug, input.threadId, absPath);
     let fileRef: FileRef | undefined;
     try {

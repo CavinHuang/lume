@@ -481,7 +481,9 @@ export class QueryEngine {
     return {
       threadId: this.sessionId,
       callerKind,
-      runId: this.sessionId,
+      // runId 用真实 run 标识(config.runId 由 Agent.run opts 透传);
+      // 缺省回落 sessionId——此前恒用 sessionId 导致 usageIdentity 无法按 run 聚合
+      runId: this.config.runId ?? this.sessionId,
       responseId: crypto.randomUUID(),
       ...options,
     }

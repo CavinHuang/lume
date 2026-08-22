@@ -216,6 +216,10 @@ describe("runtime-core run", () => {
       expect(result.session.getActiveToolNames()).not.toContain("mcp__node_repl__js");
       expect(result.session.getActiveToolNames()).toContain("Bash");
       expect(result.runtimeContext).not.toContain("Preferred capability route:");
+      expect(result.runtimeContext).toContain("mcp__browser__list_tabs");
+      expect(result.runtimeContext).toContain("do not activate browser:browser");
+      const runtimeSkills = (result.agent as any).baseOptions.skills as Array<{ name: string }>;
+      expect(runtimeSkills.map((skill) => skill.name)).not.toContain("browser:browser");
       const deferredTools = (result.agent as unknown as { deferredToolPool: ToolDefinition[] }).deferredToolPool;
       expect(deferredTools.map((tool) => tool.name)).toContain("mcp__node_repl__js");
     } finally {

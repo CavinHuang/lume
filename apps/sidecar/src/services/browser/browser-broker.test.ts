@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { BrowserBroker } from "./browser-broker";
+import { BrowserRpcError } from "../../rpc/browser-rpc-sequence";
 
 test("extension backend is absent until browser/chrome plugins, setting, and live host agree", async () => {
   const calls: unknown[] = [];
@@ -16,6 +17,18 @@ test("extension backend is absent until browser/chrome plugins, setting, and liv
   assert.equal(extension.apiSupportOverrides["BrowserUser.history"], false);
   assert.equal((await broker.dispatch({ method: "list", browserSessionId: "s", browserTurnId: "t", backend: "extension" }) as { backend: string }).backend, "extension");
   assert.equal(calls.length, 0);
+});
+
+test("broker preserves a structured Desktop browser error code", async () => {
+  const broker = new BrowserBroker({
+    request: async () => { throw new BrowserRpcError("actionability_failed", "browser request failed"); },
+  });
+  broker.setPluginState({ browserEnabled: true });
+
+  await assert.rejects(
+    () => broker.dispatch({ method: "playwright_locator_fill", params: { tabId: "tab-1", locator: { version: 1, steps: [{ kind: "css", selector: "#kw" }] }, value: "agent loop" }, browserSessionId: "s", browserTurnId: "t" }),
+    /actionability_failed/,
+  );
 });
 
 test("connected Chrome cookie export is capability-gated, user-only, and paged", async () => {
@@ -53,6 +66,32 @@ test("broker obtains and binds one-time confirmation for consequential actions",
   assert.notEqual(calls[0].params.bindingHash, calls[2].params.bindingHash);
   await assert.rejects(() => broker.dispatch({ method: "click", params: { semanticIntent: "Pay now" }, browserSessionId: "s", browserTurnId: "t" }), /action_denied/);
 });
+
+test("Agent scripts require confirmation and stay bound to the selected tab", async () => {
+  const calls: any[] = []
+  const broker = new BrowserBroker({ request: async (request) => {
+    calls.push(request)
+    if (request.method === "policy:confirm") return { approved: true, token: "script-token" }
+    return { status: "completed", value: { title: "Example" } }
+  } })
+  broker.setPluginState({ browserEnabled: true })
+
+  const result = await broker.dispatch({
+    method: "browser_run_script",
+    params: { tabId: "tab-1", script: "return document.title", arg: null, timeout_ms: 1_000 },
+    tabId: "tab-1",
+    threadId: "thread-1",
+    browserSessionId: "s",
+    browserTurnId: "t",
+  })
+
+  assert.deepEqual(result, { status: "completed", value: { title: "Example" } })
+  assert.equal(calls[0].method, "policy:confirm")
+  assert.equal(calls[1].method, "agentScript:evaluate")
+  assert.equal(calls[1].context.tabId, "tab-1")
+  assert.equal(calls[1].params.__policyRequired, true)
+  assert.equal(calls[1].params.__policyConfirmation, "script-token")
+})
 
 test("agent-created in-app tabs are bound to the owning thread workspace", async () => {
   const calls: any[] = [];
@@ -116,18 +155,22 @@ test("canonical BrowserClient commands select and normalize the requested backen
   await broker.dispatch({ method: "playwright_locator_inner_text", params: { browserId: "lume-iab", tabId: "tab-1", locator: { version: 1, steps: [{ kind: "css", selector: "output" }] } }, browserSessionId: "s", browserTurnId: "t" })
   assert.equal(mainCalls.filter((request) => request.method !== "handshake")[1].method, "locator:innerText")
 
+  await broker.dispatch({ method: "browser_snapshot", params: { browserId: "lume-iab", tabId: "tab-1", interactive_only: true, limit: 200 }, browserSessionId: "s", browserTurnId: "t" })
+  assert.equal(mainCalls.filter((request) => request.method !== "handshake")[2].method, "semanticSnapshot")
+  assert.equal(mainCalls.filter((request) => request.method !== "handshake")[2].params.interactiveOnly, true)
+
   await broker.dispatch({ method: "playwright_locator_evaluate", params: { browserId: "lume-iab", tabId: "tab-1", locator: { version: 1, steps: [{ kind: "css", selector: "output" }] }, expression: "(element) => element.textContent", options: { timeoutMs: 321 } }, browserSessionId: "s", browserTurnId: "t" })
-  assert.equal(mainCalls.filter((request) => request.method !== "handshake")[2].method, "locator:evaluate")
-  assert.equal(mainCalls.filter((request) => request.method !== "handshake")[2].params.timeoutMs, 321)
+  assert.equal(mainCalls.filter((request) => request.method !== "handshake")[3].method, "locator:evaluate")
+  assert.equal(mainCalls.filter((request) => request.method !== "handshake")[3].params.timeoutMs, 321)
 
   await broker.dispatch({ method: "playwright_locator_click", params: { browserId: "lume-iab", tabId: "tab-1", selector: "iframe#preview >> internal:control=enter-frame >> internal:role=button[name=\"Save\"s]" }, browserSessionId: "s", browserTurnId: "t" })
-  assert.deepEqual(mainCalls.filter((request) => request.method !== "handshake")[3].params.locator.steps, [
+  assert.deepEqual(mainCalls.filter((request) => request.method !== "handshake")[4].params.locator.steps, [
     { kind: "frame", selector: "iframe#preview" },
     { kind: "role", role: "button", name: "Save", exact: true },
   ])
 
   await broker.dispatch({ method: "cua_keypress", params: { browserId: "lume-iab", tabId: "tab-1", key: "Enter" }, browserSessionId: "s", browserTurnId: "t" })
-  assert.equal(mainCalls.filter((request) => request.method !== "handshake")[4].method, "pressActive")
+  assert.equal(mainCalls.filter((request) => request.method !== "handshake")[5].method, "pressActive")
 
   const screenshot = await broker.dispatch({ method: "tab_screenshot", params: { browserId: "lume-iab", tabId: "tab-1" }, browserSessionId: "s", browserTurnId: "t" })
   assert.deepEqual(screenshot, { data: "cG5n" })
@@ -483,6 +526,36 @@ test("broker normalizes media downloads and confirmed file chooser uploads", asy
   assert.equal(calls.at(-1).method, "cdp")
   assert.equal(calls.at(-1).params.method, "Runtime.evaluate")
   assert.equal(calls.at(-1).params.__policyRequired, true)
+})
+
+test("broker confirms secret filling while never accepting a secret value", async () => {
+  const calls: any[] = []
+  const broker = new BrowserBroker({ request: async (request) => {
+    calls.push(request)
+    if (request.method === "policy:confirm") return { approved: true, token: "credential-token" }
+    if (request.method === "secrets:list") return [{ id: "secret-1", origin: "https://example.test", username: "alice" }]
+    return { status: "submitted" }
+  } })
+  broker.setPluginState({ browserEnabled: true })
+
+  const listed = await broker.dispatch({
+    method: "browser_list_secrets",
+    params: { tabId: "tab-1" },
+    browserSessionId: "s",
+    browserTurnId: "t",
+  })
+  await broker.dispatch({
+    method: "browser_fill_secret",
+    params: { tabId: "tab-1", secret_id: "secret-1", semanticRef: "e1", semanticSnapshotId: "snap-1" },
+    browserSessionId: "s",
+    browserTurnId: "t",
+  })
+
+  assert.deepEqual(listed, [{ id: "secret-1", origin: "https://example.test", username: "alice" }])
+  assert.equal(calls.at(-2).method, "policy:confirm")
+  assert.equal(calls.at(-1).method, "secretFill")
+  assert.equal(calls.at(-1).params.secretId, "secret-1")
+  assert.equal(JSON.stringify(calls).includes("password-value"), false)
 })
 
 test("iab descriptor keeps internal WebMCP out of public capabilities", () => {

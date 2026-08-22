@@ -29,6 +29,8 @@ export const BROWSER_API_REGISTRY = [
   api("Tab.markDeliverable", "mark", ["iab", "extension"], true, "none", "Mark a tab as a deliverable."),
   api("Tab.markHandoff", "mark", ["iab", "extension"], true, "none", "Mark a tab for user handoff."),
   api("Tab.browserAuth", "browserAuth:request", ["iab", "extension"], true, "credentials", "Collect and submit credentials through backend-owned secure UI.", "browserAuth"),
+  api("BrowserSecrets.list", "secrets:list", ["iab"], false, "none", "List saved credential metadata for the current origin."),
+  api("BrowserSecrets.fill", "secretFill", ["iab"], true, "credentials", "Fill a saved secret without exposing its value to the agent."),
   api("Tab.clipboard", "clipboard", ["iab", "extension"], false, "clipboard", "Access the session clipboard facade."),
   api("TabClipboardAPI.read", "clipboard:read", ["iab", "extension"], false, "clipboard", "Read approved clipboard data."),
   api("TabClipboardAPI.readText", "clipboard:readText", ["iab", "extension"], false, "clipboard", "Read approved clipboard text."),

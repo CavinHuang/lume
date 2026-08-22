@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyBrowserRpcResponse } from "./browser-rpc-sequence";
+import { browserRpcErrorFromPayload, classifyBrowserRpcResponse } from "./browser-rpc-sequence";
 
 describe("classifyBrowserRpcResponse（#156 序列号单调判定）", () => {
   test("正常路径：MAC 有效且序号 = 当前 +1 → advance", () => {
@@ -19,5 +19,21 @@ describe("classifyBrowserRpcResponse（#156 序列号单调判定）", () => {
 
   test("MAC 失败：任何序号都拒绝", () => {
     expect(classifyBrowserRpcResponse(9, false, 0)).toBe("reject-pending");
+  });
+});
+
+describe("browserRpcErrorFromPayload（#252 错误码传播）", () => {
+  test("保留 Desktop 返回的稳定错误码", () => {
+    const error = browserRpcErrorFromPayload({ code: "actionability_failed" });
+
+    expect(error.code).toBe("actionability_failed");
+    expect(error.message).toBe("actionability_failed");
+  });
+
+  test("无效错误载荷安全退化为 browser_internal_error", () => {
+    const error = browserRpcErrorFromPayload(undefined);
+
+    expect(error.code).toBe("browser_internal_error");
+    expect(error.message).toBe("browser_internal_error");
   });
 });
