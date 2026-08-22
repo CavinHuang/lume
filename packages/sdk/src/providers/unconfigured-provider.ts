@@ -8,7 +8,7 @@
 
 import type { ApiType, LLMProvider } from './types.js'
 
-const UNCONFIGURED_FLAG = '__unconfiguredProvider'
+const UNCONFIGURED_FLAG = Symbol('unconfiguredProvider')
 
 /**
  * Sentinel provider returned when no host provider is injected. Carries a
