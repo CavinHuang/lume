@@ -67,6 +67,39 @@ describe("runWebFetch — content types", () => {
     expect((out.data as any).content[0].mimeType).toBe("image/png");
   });
 
+  test("images above the inline threshold are saved to the asset dir instead of base64 (#372)", async () => {
+    const fs = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "lume-wf-img-"));
+    try {
+      const bigPng = Buffer.alloc(5 * 1024 * 1024 + 1, 1); // just past the inline threshold
+      const fetchImpl = (async () => new Response(bigPng, { headers: { "content-type": "image/png" } })) as any;
+      const out = await runWebFetch(
+        { url: "https://example.com/huge.png" },
+        ctx,
+        { fetchImpl, resolveAssetDir: () => dir },
+      );
+      expect(typeof out.data).toBe("string");
+      expect(out.data as string).toContain("too large to inline");
+      expect(out.data as string).toContain("lume-file://file/");
+      const imagesDir = path.join(dir, "images");
+      const files = await fs.readdir(imagesDir);
+      expect(files.some((f) => f.endsWith(".png"))).toBe(true);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an oversized image with no asset dir degrades to text instead of base64 (#372)", async () => {
+    const bigPng = Buffer.alloc(6 * 1024 * 1024, 1);
+    const fetchImpl = (async () => new Response(bigPng, { headers: { "content-type": "image/png" } })) as any;
+    const out = await runWebFetch({ url: "https://example.com/huge.png" }, ctx, { fetchImpl });
+    expect(out.is_error).toBeFalsy();
+    expect(typeof out.data).toBe("string");
+    expect(out.data as string).toContain("too large to inline");
+  });
+
   test("prefers a declared Markdown alternate", async () => {
     const markdown = "# Alternate\n\n" + "content ".repeat(40);
     const fetchImpl = (async (url: string) => {

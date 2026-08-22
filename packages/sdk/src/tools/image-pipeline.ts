@@ -59,7 +59,7 @@ function isPlaceholder(src: string): boolean {
   return src.startsWith("data:image/svg"); // common transparent placeholder
 }
 
-function sniffExt(contentType: string, url: string): string {
+export function sniffExt(contentType: string, url: string): string {
   const ct = contentType.toLowerCase();
   if (ct.includes("png")) return ".png";
   if (ct.includes("jpeg") || ct.includes("jpg")) return ".jpg";

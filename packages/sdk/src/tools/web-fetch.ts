@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { XMLParser } from "fast-xml-parser";
 import { defineTool } from "./types.js";
 import type { ToolContext, ToolResultContentBlock } from "../types.js";
@@ -5,7 +8,7 @@ import { ensureNetworkAllowed } from "../utils/pathing.js";
 import { sdkFetch } from "./web-request.js";
 import { extractArticleMarkdown } from "./html-to-markdown.js";
 import { shouldRender, type RenderMode } from "./render-judge.js";
-import { downloadAndLocalizeImages, type ImageMode } from "./image-pipeline.js";
+import { downloadAndLocalizeImages, lumeFileUrl, sniffExt, type ImageMode } from "./image-pipeline.js";
 import { buildAssetFile } from "./asset-markdown.js";
 import { createNoopRenderClient, type RenderClient } from "./render-client.js";
 import {
@@ -20,6 +23,9 @@ import { contentKind, renderStructuredBinary } from "./web-fetch-content.js";
 const MAX_FETCH_CHARS = 100000;
 const MAX_RAW_HTML_CHARS = 10_000_000;
 const DEFAULT_TIMEOUT_MS = 30000;
+// Base64 inflates ~4/3x and the whole payload lands in model context; larger
+// images are parked on disk and referenced instead.
+const IMAGE_INLINE_MAX_BYTES = 5 * 1024 * 1024;
 const XML = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" });
 
 export interface WebFetchInput {
@@ -337,10 +343,27 @@ export async function runWebFetch(
         if (!binary.ok || binary.error) {
           return { data: `Image fetch failed: ${binary.error || `HTTP ${binary.status}`}\nURL: ${finalUrl}`, is_error: true };
         }
+        const mimeType = binary.contentType || response.contentType || "application/octet-stream";
+        if (binary.bytes.byteLength > IMAGE_INLINE_MAX_BYTES) {
+          const oversizedNote = `Image too large to inline (${binary.bytes.byteLength} bytes)`;
+          const assetDir = deps.resolveAssetDir?.(requestedUrl) ?? null;
+          if (assetDir) {
+            try {
+              const imagesDir = `${assetDir}/images`.replace(/\\/g, "/");
+              await mkdir(imagesDir, { recursive: true });
+              const name = createHash("sha256").update(binary.bytes).digest("hex").slice(0, 16)
+                + sniffExt(mimeType, finalUrl);
+              const imagePath = join(imagesDir, name);
+              await writeFile(imagePath, binary.bytes);
+              return { data: `${oversizedNote}; saved to ${lumeFileUrl(imagePath)}\nURL: ${finalUrl}` };
+            } catch { /* fall through to text degradation */ }
+          }
+          return { data: `${oversizedNote}\nURL: ${finalUrl}` };
+        }
         const image: ToolResultContentBlock = {
           type: "image",
           data: Buffer.from(binary.bytes).toString("base64"),
-          mimeType: binary.contentType || response.contentType || "application/octet-stream",
+          mimeType,
         };
         return { data: { content: [image] } };
       }
