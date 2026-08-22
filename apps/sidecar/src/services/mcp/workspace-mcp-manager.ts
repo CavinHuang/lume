@@ -376,7 +376,15 @@ export class WorkspaceMcpManager {
     }
     const state = this.ensureWorkspaceState(workspaceSlug);
     state.sdk.sync(this.normalizedConfigs(config));
-    await (state.sdk.connect ?? state.sdk.ensureConnected)?.call(state.sdk, serverId);
+    try {
+      await (state.sdk.connect ?? state.sdk.ensureConnected)?.call(state.sdk, serverId);
+    } catch (error) {
+      // 连接失败的底层错误常内嵌 URL/凭据片段；与其余 MCP 路径一致经脱敏再下发，
+      // 且错误码归一，不把原文直抛 renderer（#403）
+      const entry = config.servers[serverId];
+      const publicError = mapPublicError(error, entry);
+      throw new PublicMcpError(publicError.code, publicError.message);
+    }
     const status = this.getStatus(workspaceSlug).find((item) => item.serverId === serverId);
     if (!status) {
       throw new PublicMcpError("not_found", `MCP server not found: ${serverId}`);
