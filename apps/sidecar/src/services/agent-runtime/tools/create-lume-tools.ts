@@ -50,7 +50,6 @@ export interface CreateLumeRuntimeToolsInput {
   chatType?: AgentSendInput["chatType"];
   workspaceSlug?: string;
   permissionMode?: AgentSendInput["permissionMode"];
-  messageMetadata?: Record<string, unknown>;
   originalUserInstruction?: string;
   computerUseSurface?: ResolvedComputerUseSurface;
   memoryToolPolicy?: MemoryToolPolicy;

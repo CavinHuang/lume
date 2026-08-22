@@ -291,7 +291,6 @@ export function buildRuntimeCoreTools(input: {
     chatType: input.chatType,
     workspaceSlug: input.workspaceSlug,
     permissionMode,
-    messageMetadata: input.messageMetadata,
     originalUserInstruction: input.originalUserInstruction,
     computerUseSurface: input.computerUseSurface,
     memoryToolPolicy: memoryRuntimeConfig.toolPolicy,
