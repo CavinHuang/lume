@@ -15,3 +15,19 @@ export function classifyBrowserRpcResponse(
   if (!macOk || sequence <= inboundSequence) return "reject-pending";
   return "advance";
 }
+
+export class BrowserRpcError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message = code) {
+    super(message);
+    this.name = "BrowserRpcError";
+    this.code = code;
+  }
+}
+
+export function browserRpcErrorFromPayload(error: { code?: unknown; message?: unknown } | undefined): BrowserRpcError {
+  const code = typeof error?.code === "string" && error.code ? error.code : "browser_internal_error";
+  const message = typeof error?.message === "string" && error.message ? error.message : code;
+  return new BrowserRpcError(code, message);
+}
