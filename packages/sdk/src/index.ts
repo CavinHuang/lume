@@ -83,14 +83,9 @@ export type {
 } from './utils/process-sandbox.js'
 
 // --------------------------------------------------------------------------
-// LLM Providers (Anthropic + OpenAI)
+// LLM Provider Contract (host-injected implementations)
 // --------------------------------------------------------------------------
 
-export {
-  createProvider,
-  AnthropicProvider,
-  OpenAIProvider,
-} from './providers/index.js'
 export type {
   ApiType,
   LLMProvider,
@@ -102,7 +97,7 @@ export type {
   NormalizedContentBlock,
   NormalizedTool,
   NormalizedResponseBlock,
-} from './providers/index.js'
+} from './providers/types.js'
 
 // --------------------------------------------------------------------------
 // Tool System (30+ tools)
