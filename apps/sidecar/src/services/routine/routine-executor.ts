@@ -6,10 +6,12 @@ import { getActivityExecutor } from "./routine-activities"
 import { readRoutine, writeRoutine, appendRoutineRun, listAutomationRunsForJob, getLatestAssistantResponse } from "./routine-store"
 import { createLogger } from "../infra/logger"
 
+import { localDateKey } from "./routine-date"
 const log = createLogger("routine")
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10)
+  // 本地时区日期键，替代 UTC toISOString 键（#408）
+  return localDateKey()
 }
 
 export async function scheduleRoutineEntries(routine: DailyRoutine): Promise<DailyRoutine> {
