@@ -1,4 +1,4 @@
-import type { BrowserLocator, BrowserLocatorStep, BrowserTextMatcher } from "../../../packages/shared/src/types/browser-runtime"
+import type { BrowserLocator, BrowserLocatorStep, BrowserTextMatcher } from '@lume/shared'
 
 export type ResolvedBrowserTarget = { x: number; y: number; width: number; height: number; tagName: string; role?: string; editable: boolean; enabled: boolean; readOnly?: boolean }
 export type BrowserLocatorQuery = "target" | "element" | "focus" | "evaluate" | "count" | "allTextContents" | "readAll" | "getAttribute" | "innerText" | "textContent" | "inputValue" | "editableValue" | "isVisible" | "isEnabled" | "isChecked" | "select"

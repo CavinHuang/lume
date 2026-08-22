@@ -13,7 +13,7 @@
 import { useState } from 'react'
 import { deriveSectionGroups } from './sectionGroups'
 import { DeclarationInput } from './DeclarationInput'
-import type { AgentBrowserAnchor, AgentBrowserDesignDeclaration } from '../../../../packages/shared/src/types/agent'
+import type { AgentBrowserAnchor, AgentBrowserDesignDeclaration } from '@lume/shared'
 
 export type ActiveDesignChange = {
   id: string

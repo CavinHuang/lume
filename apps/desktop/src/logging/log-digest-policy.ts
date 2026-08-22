@@ -1,5 +1,5 @@
 import { createHmac, randomBytes as nodeRandomBytes } from 'node:crypto'
-import type { LumeLogDigestPolicy } from '../../../../packages/shared/src/types/logging'
+import type { LumeLogDigestPolicy } from '@lume/shared'
 import { loadOrCreateDesktopContextKey } from '../desktop-context-key'
 
 interface SafeStorageLike {

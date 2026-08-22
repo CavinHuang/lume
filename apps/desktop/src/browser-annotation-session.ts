@@ -6,7 +6,7 @@ import type {
   AgentBrowserDesignChangeAttachment,
   AgentBrowserDesignDeclaration,
   BrowserAnnotationSessionSnapshot,
-} from '../../../packages/shared/src/types/agent'
+} from '@lume/shared'
 
 type StoredSession = BrowserAnnotationSessionSnapshot
 
