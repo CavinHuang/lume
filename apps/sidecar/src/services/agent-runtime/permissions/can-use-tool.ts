@@ -428,9 +428,13 @@ export function createCanUseToolHandler(
           },
         );
         if (pluginDecision === "allow_always") {
-          // Persist workspace-scoped approval so the next attempt's checkSensitiveCapability returns allow.
-          // resolveSensitiveApproval matches only key+scope+workspaceSlug+decision (not permissionsHash),
-          // so an empty hash is functionally safe; the real acceptedHash is private to PluginPermissionRuntime.
+          // Persist a workspace-scoped approval so the next attempt's
+          // checkSensitiveCapability returns allow. The record is stamped with
+          // the hash the gate evaluated against (#344 follow-up): #344's hash
+          // filter treats only EMPTY hashes as legacy wildcards, so writing ""
+          // here would exempt the main approval path from hash scoping. The
+          // empty-string fallback covers degenerate records without any
+          // accepted hash (pre-existing data).
           try {
             await pluginPermissionRuntime.appendSensitiveApproval({
               pluginId: gateResult.pluginId,
@@ -442,7 +446,7 @@ export function createCanUseToolHandler(
                   : {}),
                 decision: "allow",
                 createdAt: new Date().toISOString(),
-                permissionsHash: "",
+                permissionsHash: gateResult.permissionsHash ?? "",
               },
             });
           } catch (error) {

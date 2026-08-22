@@ -16,6 +16,12 @@ export interface PluginPermissionRuntimeInput {
 export interface SensitiveCheckResult {
   decision: "allow" | "deny" | "ask";
   reason: string;
+  /**
+   * The permissions hash this decision was evaluated against (#344 follow-up):
+   * approvals persisted from an interactive allow_always must be stamped with
+   * it so #344's hash filter keeps them scoped to the approved configuration.
+   */
+  permissionsHash?: string;
 }
 
 export interface RuntimeStateResult {
@@ -66,6 +72,7 @@ export class PluginPermissionRuntime {
             ? "prior approval is for a different permissions hash; re-review required"
             : "no prior approval for this capability"
           : `prior ${decision}`,
+      ...(currentHash !== undefined ? { permissionsHash: currentHash } : {}),
     };
   }
 

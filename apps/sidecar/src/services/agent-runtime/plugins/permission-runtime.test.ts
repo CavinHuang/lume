@@ -138,6 +138,32 @@ describe("PluginPermissionRuntime.checkSensitiveCapability", () => {
     });
   });
 
+  test("surfaces the accepted permissions hash so allow_always records can be stamped (#344 follow-up)", async () => {
+    await withRuntime(async (runtime, store) => {
+      await store.write(
+        stateWith("acme", {
+          activeVersion: "1.0.0",
+          versions: {
+            "1.0.0": {
+              pluginId: "acme",
+              version: "1.0.0",
+              source: { type: "local", path: "/p" },
+              installedRoot: "/p",
+              installedAt: "2026-01-01T00:00:00Z",
+              permissionsHash: "h",
+              sensitiveApprovals: [],
+            },
+          },
+        }),
+      );
+      const result = await runtime.checkSensitiveCapability({
+        pluginId: "acme",
+        key: "commandTool:echo",
+      });
+      expect(result.permissionsHash).toBe("h");
+    });
+  });
+
   test("still honors a deny from the current hash even when an older allow exists (#344)", async () => {
     await withRuntime(async (runtime, store) => {
       await store.write(
