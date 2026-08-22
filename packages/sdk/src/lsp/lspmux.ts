@@ -1,8 +1,34 @@
 import { spawn } from 'node:child_process'
-import { basename } from 'node:path'
+import { basename, resolve } from 'node:path'
 import { resolveLspExecutable } from './registry.js'
 
-let cached: { checkedAt: number; command?: string; running: boolean } | undefined
+interface LspmuxProbe {
+  checkedAt: number
+  command?: string
+  running: boolean
+}
+
+// Positive results expire quickly so a stopped daemon is picked up within
+// seconds; negative results stick longer because every probe spawns a
+// process. The cache is keyed by cwd — probes are per-workspace, so one
+// module-wide entry made daemons in other workspaces appear (or vanish)
+// wrongly (#374).
+let positiveTtlMs = 30_000
+let negativeTtlMs = 5 * 60_000
+const probes = new Map<string, LspmuxProbe>()
+
+export function setLspmuxCacheTtls(ttls: { positiveMs?: number; negativeMs?: number }): void {
+  if (ttls.positiveMs !== undefined) positiveTtlMs = ttls.positiveMs
+  if (ttls.negativeMs !== undefined) negativeTtlMs = ttls.negativeMs
+}
+
+export function invalidateLspmuxCache(cwd?: string): void {
+  if (cwd === undefined) {
+    probes.clear()
+  } else {
+    probes.delete(resolve(cwd))
+  }
+}
 
 export async function wrapRustAnalyzerWithLspmux(input: {
   command: string
@@ -24,27 +50,31 @@ export async function wrapRustAnalyzerWithLspmux(input: {
 }
 
 async function detectLspmux(cwd: string): Promise<{ command?: string; running: boolean }> {
-  if (cached && Date.now() - cached.checkedAt < 5 * 60_000) return cached
+  const key = resolve(cwd)
+  const cached = probes.get(key)
+  if (cached && Date.now() - cached.checkedAt < (cached.running ? positiveTtlMs : negativeTtlMs)) return cached
   const command = await resolveLspExecutable('lspmux', cwd)
   if (!command) {
-    cached = { checkedAt: Date.now(), running: false }
-    return cached
+    const next: LspmuxProbe = { checkedAt: Date.now(), running: false }
+    probes.set(key, next)
+    return next
   }
-  const running = await new Promise<boolean>((resolve) => {
+  const running = await new Promise<boolean>((resolvePromise) => {
     const child = spawn(command, ['status'], { cwd, windowsHide: true, stdio: 'ignore' })
     const timer = setTimeout(() => {
       child.kill()
-      resolve(false)
+      resolvePromise(false)
     }, 1_000)
     child.once('error', () => {
       clearTimeout(timer)
-      resolve(false)
+      resolvePromise(false)
     })
     child.once('exit', (code) => {
       clearTimeout(timer)
-      resolve(code === 0)
+      resolvePromise(code === 0)
     })
   })
-  cached = { checkedAt: Date.now(), command, running }
-  return cached
+  const next: LspmuxProbe = { checkedAt: Date.now(), command, running }
+  probes.set(key, next)
+  return next
 }

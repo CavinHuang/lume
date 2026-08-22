@@ -10,7 +10,7 @@ import {
   supportsLspFile,
   type LspServerRole,
 } from './registry.js'
-import { wrapRustAnalyzerWithLspmux } from './lspmux.js'
+import { invalidateLspmuxCache, wrapRustAnalyzerWithLspmux } from './lspmux.js'
 
 export interface LspPosition {
   line: number
@@ -682,6 +682,9 @@ export class LspClient {
       await client.initialize()
     } catch (error) {
       killLspProcessTree(child)
+      // A failed mux'd start must not keep serving a stale "running" probe;
+      // invalidate so the next resolution falls back to a direct connection (#374).
+      if (server.lspmux) invalidateLspmuxCache(resolve(server.cwd ?? cwd))
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Unable to start LSP server "${server.command}": ${detail}`)
     }
