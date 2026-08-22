@@ -43,8 +43,17 @@ interface ThreadQueueState {
   pending: BackgroundMemoryExtractionRequest[];
 }
 
-/** 提取失败的批次暂存，并入该线程下一次提取，避免静默丢轮（#408）。 */
+/**
+ * 提取失败的批次暂存，并入该线程下一次提取，避免静默丢轮（#408）。
+ * 仅内存态：提取成功即消费；skip/幂等短路路径退回（#450）；进程重启后丢失
+ * （恢复链路只回放 interrupted 任务，failed 暂存批不重建）。
+ */
 const carriedBatches = new Map<string, LumeRunItem[][]>();
+
+/** 测试专用：读取线程失败暂存批快照（#450 回归钉死）。 */
+export function carriedBatchesForTests(threadId: string): LumeRunItem[][] {
+  return [...(carriedBatches.get(threadId) ?? [])];
+}
 
 interface ExtractionCursor {
   threadId: string;
@@ -138,21 +147,29 @@ async function runExtraction(
   // 不回放则失败轮的证据永久缺席（#408）
   const carried = carriedBatches.get(input.threadId) ?? [];
   carriedBatches.delete(input.threadId);
+  // 本轮未实际提取而提前返回时把暂存批退回：已并入 mergedItems 的 carried 批
+  // 若随 skip/幂等短路一起被 cursor 消费，证据将静默丢失（#450）。
+  const restowCarried = () => {
+    if (carried.length > 0) carriedBatches.set(input.threadId, carried);
+  };
   const mergedItems = [...carried.flat(), ...input.items];
   const sources = extractionSources(mergedItems);
   const cursor = readCursor(input);
   if (cursor.lastRunId === input.runId && (cursor.status === "completed" || cursor.status === "skipped")) {
+    restowCarried();
     return { scannedItems: 0, changedItems: 0 };
   }
   const fromSequence = cursor.cursor;
   const toSequence = fromSequence + sources.length;
   const idempotencyKey = `${input.threadId}:${fromSequence}:${toSequence}`;
   if (cursor.lastIdempotencyKey === idempotencyKey && cursor.status === "completed") {
+    restowCarried();
     return { scannedItems: 0, changedItems: 0 };
   }
   writeCursor(input, { ...cursor, status: "running", updatedAt: new Date().toISOString() });
 
   if (hasMemoryMutationForRun({ workspaceSlug: input.workspaceSlug, runId: input.runId, actor: "main_agent" })) {
+    restowCarried();
     writeCursor(input, completedCursor(cursor, input, toSequence, idempotencyKey, "skipped"));
     return { scannedItems: sources.length, changedItems: 0 };
   }
@@ -242,8 +259,10 @@ async function runExtraction(
     });
     return { scannedItems: sources.length, changedItems: changed.length };
   } catch (error) {
-    // 本批 items 暂存待下次提取：cursor 不前进，但请求式扫描不会重放旧轮（#408）
-    carriedBatches.set(input.threadId, [...(carriedBatches.get(input.threadId) ?? []), input.items]);
+    // 本批 items 连同先前暂存批一起退回（get 已在开头取空，必须用局部 carried，
+    // 否则连败一轮即把更早的暂存批静默清空——#450）：cursor 不前进，但请求式
+    // 扫描不会重放旧轮（#408）
+    carriedBatches.set(input.threadId, [...carried, input.items]);
     writeCursor(input, {
       ...cursor,
       status: "failed",
