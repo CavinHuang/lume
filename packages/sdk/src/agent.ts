@@ -241,6 +241,12 @@ function normalizeSessionMessageContent(
   return message.content as NormalizedMessageParam['content']
 }
 
+function isCompactionSummaryMessage(message: NormalizedMessageParam): boolean {
+  return Array.isArray(message.content)
+    && message.content.some((block: any) =>
+      block?.type === 'text' && block?._meta?.contextBlock === 'compaction')
+}
+
 export function sessionMessagesFromHistory(
   messages: NormalizedMessageParam[],
   previous?: SessionMessage[],
@@ -250,6 +256,10 @@ export function sessionMessagesFromHistory(
   // uuids here would orphan every checkpoint (#363). Alignment pairs each
   // role from the END: compaction prepends a synthetic summary user message,
   // so only the trailing messages correspond 1:1 with what came before.
+  // Synthetic summaries never participate in pairing: when the previous list
+  // holds more same-role entries than the rebuilt history (the normal
+  // compaction shape), tail pairing would hand them a swallowed message's
+  // uuid and let rewindFiles restore unrelated snapshots.
   const previousUuidsByRole = new Map<string, string[]>()
   for (const message of previous ?? []) {
     const uuids = previousUuidsByRole.get(message.role) ?? []
@@ -258,6 +268,7 @@ export function sessionMessagesFromHistory(
   }
   const indicesByRole = new Map<string, number[]>()
   messages.forEach((message, index) => {
+    if (isCompactionSummaryMessage(message)) return
     const indices = indicesByRole.get(message.role) ?? []
     indices.push(index)
     indicesByRole.set(message.role, indices)

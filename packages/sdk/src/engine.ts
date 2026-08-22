@@ -1528,7 +1528,6 @@ export class QueryEngine {
           break
         }
       }
-      }
 
       // Check for tool use
       const toolUseBlocks = response.content.filter(

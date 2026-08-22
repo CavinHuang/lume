@@ -1477,5 +1477,34 @@ describe("Agent session message uuid realignment (#363)", () => {
     // (e.g. a synthetic compaction summary) gets a fresh uuid.
     expect(rebuilt.map((message) => message.uuid)).toEqual([expect.any(String), "a-1", "u-1"])
   })
+
+  test("never hands an old uuid to a synthetic compaction summary when history shrank (#363)", () => {
+    const oldUuids = ["u-1", "u-2", "u-3", "u-4", "u-5", "u-6"]
+    const history = [
+      {
+        role: "user",
+        content: [{ type: "text", text: "checkpoint summary", _meta: { contextBlock: "compaction" } }],
+      },
+      { role: "assistant", content: "mid answer" },
+      { role: "user", content: "latest question" },
+    ] as any[]
+    const previous = [
+      ...oldUuids.map((uuid) => ({ uuid, role: "user", timestamp: "t", content: `request ${uuid}` })),
+      { uuid: "a-mid", role: "assistant", timestamp: "t", content: "older answer" },
+    ] as any[]
+
+    const rebuilt = sessionMessagesFromHistory(history, previous)
+
+    // The summary is synthetic — it must take a fresh uuid instead of stealing
+    // one from a swallowed user message (rewindFiles would otherwise restore
+    // unrelated snapshots through it).
+    const summaryUuid = rebuilt[0]!.uuid
+    for (const uuid of oldUuids) {
+      expect(summaryUuid).not.toBe(uuid)
+    }
+    // The surviving real messages keep their own uuids.
+    expect(rebuilt[1]!.uuid).toBe("a-mid")
+    expect(rebuilt[2]!.uuid).toBe("u-6")
+  })
 })
 >>>>>>> eb623a707 (🐛 fix(sdk): 会话运行同步锁与压缩重建 uuid 回填 (#357 #363))
