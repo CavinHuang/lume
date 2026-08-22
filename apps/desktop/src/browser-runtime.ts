@@ -24,6 +24,7 @@ import {
   type BrowserTabDescriptor,
   type BrowserViewportPreset,
   type BrowserViewportState,
+  type BrowserWorkspaceDescriptor,
 } from '@lume/shared'
 import { BROWSER_API_REGISTRY, browserApiSupportForBackend, browserMutatingRuntimeMethods } from '@lume/shared'
 import {
@@ -1187,7 +1188,7 @@ export class BrowserRuntime {
     if (tab.ownerThreadId && (tab.profileKind === "user" || Boolean(tab.handoff))) this.emitWorkspace(this.workspaces.get(tab.ownerThreadId))
   }
 
-  private emitWorkspace(descriptor: import("../../../packages/shared/src/types/browser-runtime").BrowserWorkspaceDescriptor): void {
+  private emitWorkspace(descriptor: BrowserWorkspaceDescriptor): void {
     this.options.emit({ method: "browser:workspace-changed", params: descriptor as unknown as Record<string, unknown> })
   }
 
