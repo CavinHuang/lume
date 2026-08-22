@@ -116,6 +116,40 @@ describe("memory-v2 markdown store", () => {
     });
   });
 
+  test("redacts secret-bearing quotes when merging evidence refs (#449)", () => {
+    const secretQuote = "password=hunter2supersecret";
+    const entry = writeEntry({
+      kind: "fact",
+      targetScope: "workspace",
+      statement: "部署在 staging 环境",
+      confidence: "high",
+      appliesWhen: { workspaceSlug: "demo" }
+    });
+    expect(readFileSync(entry.path, "utf-8")).not.toContain("hunter2supersecret");
+
+    const updated = updateEntry({
+      scope: "workspace",
+      workspaceSlug: "demo",
+      id: entry.frontmatter.id,
+      evidenceRefs: [{ type: "user_message", id: "msg-9", quote: secretQuote }]
+    });
+    expect(updated.frontmatter.evidence_refs.find((ref) => ref.id === "msg-9")?.quote).toBe("[证据原文含疑似密钥，已省略]");
+    const persisted = readFileSync(entry.path, "utf-8");
+    expect(persisted).not.toContain(secretQuote);
+    expect(persisted).toContain("[证据原文含疑似密钥，已省略]");
+
+    const statusUpdated = createMemoryV2Store().updateEntryStatus({
+      scope: "workspace",
+      workspaceSlug: "demo",
+      id: entry.frontmatter.id,
+      status: "suspected_stale",
+      evidenceRefs: [{ type: "user_message", id: "msg-10", quote: "api_key = AKIAIOSFODNN7EXAMPLE" }]
+    });
+    const persistedStatus = readFileSync(statusUpdated.path, "utf-8");
+    expect(persistedStatus).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    expect(persistedStatus).toContain("[证据原文含疑似密钥，已省略]");
+  });
+
   test("manually deletes an entry and removes stale relations from neighbors", () => {
     const first = writeEntry({
       kind: "fact",

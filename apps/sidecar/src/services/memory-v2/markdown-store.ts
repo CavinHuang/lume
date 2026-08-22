@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import YAML from "yaml";
 import { getMemoryV2ScopePaths, type MemoryV2ScopePaths } from "./paths";
 import { inferMemoryV2Claim, normalizeMemoryV2Claim } from "./claim";
+import { redactEvidenceQuote } from "./redact";
 import type {
   MemoryV2Activation,
   MemoryV2Candidate,
@@ -194,7 +195,7 @@ export function writeEntry(candidate: MemoryV2Candidate, input: {
     valid_from: null,
     valid_to: null,
     activation: input.activation ? { ...input.activation } : { ...DEFAULT_ACTIVATION },
-    evidence_refs: input.evidenceRefs ?? evidenceRefsFromCandidate(candidate),
+    evidence_refs: sanitizeEvidenceRefs(input.evidenceRefs ?? evidenceRefsFromCandidate(candidate)),
     ...(candidate.claim ? { claim: candidate.claim } : {})
   };
   const filename = `${now.slice(0, 10)}-${id}.md`;
@@ -227,7 +228,7 @@ export function updateEntryStatus(input: {
         ? entry.frontmatter.superseded_by
         : input.supersededBy,
       evidence_refs: input.evidenceRefs
-        ? uniqueEvidenceRefs([...entry.frontmatter.evidence_refs, ...input.evidenceRefs])
+        ? sanitizeEvidenceRefs(uniqueEvidenceRefs([...entry.frontmatter.evidence_refs, ...input.evidenceRefs]))
         : entry.frontmatter.evidence_refs,
       updated: new Date().toISOString(),
       revision: entry.frontmatter.revision + 1
@@ -306,7 +307,7 @@ export function updateEntry(input: {
       valid_to: input.validTo === undefined ? entry.frontmatter.valid_to : input.validTo,
       activation: nextActivation,
       evidence_refs: input.evidenceRefs
-        ? uniqueEvidenceRefs([...entry.frontmatter.evidence_refs, ...input.evidenceRefs])
+        ? sanitizeEvidenceRefs(uniqueEvidenceRefs([...entry.frontmatter.evidence_refs, ...input.evidenceRefs]))
         : entry.frontmatter.evidence_refs,
       ...(nextClaim ? { claim: nextClaim } : {}),
       updated: new Date().toISOString(),
@@ -326,6 +327,11 @@ function uniqueEvidenceRefs(refs: MemoryV2EvidenceRef[]): MemoryV2EvidenceRef[] 
     seen.add(key);
     return true;
   });
+}
+
+/** evidence_refs[].quote 是真实落盘通道（frontmatter → memory.read 回吐），写入前逐 ref 过滤密钥（#449）。 */
+function sanitizeEvidenceRefs(refs: MemoryV2EvidenceRef[]): MemoryV2EvidenceRef[] {
+  return refs.map((ref) => (ref.quote ? { ...ref, quote: redactEvidenceQuote(ref.quote) } : ref));
 }
 
 export function moveEntryScope(input: {
@@ -420,7 +426,7 @@ export function writePending(input: {
           record_ids: input.candidate.evidence.recordIds
         }
       : undefined,
-    evidence_refs: input.candidate.evidenceRefs,
+    evidence_refs: input.candidate.evidenceRefs ? sanitizeEvidenceRefs(input.candidate.evidenceRefs) : undefined,
     status: "open"
   };
   const pendingDir = pendingTypeDir(paths, input.type);

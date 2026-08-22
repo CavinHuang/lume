@@ -318,6 +318,23 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
 }
 
 function scheduleJob(job: AutomationJob): void {
+  try {
+    scheduleJobInner(job);
+  } catch (error) {
+    // 单个坏 job（如旧版放行的永假 cron 存量数据）不得毒化整轮刷新：
+    // refresh 先 clearSchedules 再遍历，此处抛错会清光其余定时器且每次刷新复现（#452）
+    writeLogRecord({
+      level: "error",
+      context: "automation.runner",
+      event: "automation.schedule_job_failed",
+      message: `自动化任务调度失败，已跳过: ${job.name}`,
+      status: "error",
+      data: { automationJobId: job.id, error: error instanceof Error ? error.message : String(error) }
+    });
+  }
+}
+
+function scheduleJobInner(job: AutomationJob): void {
   if (!job.enabled) return;
   const runtimeState = readAutomationRuntimeState(job.id);
   if (runningJobs.has(job.id)
@@ -355,6 +372,11 @@ function scheduleJob(job: AutomationJob): void {
     });
   }, delay);
   jobDisposers.set(job.id, () => clearTimeout(timer));
+}
+
+/** 测试专用：当前已挂定时器的 job id 快照（#452 回归钉死）。 */
+export function scheduledJobIdsForTests(): string[] {
+  return [...jobDisposers.keys()];
 }
 
 export async function refreshAutomationRunnerJobs(): Promise<void> {
