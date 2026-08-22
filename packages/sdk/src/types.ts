@@ -167,6 +167,12 @@ export interface SDKResultMessage {
   permission_denials?: SDKPermissionDenial[]
   structured_output?: unknown
   errors?: string[]
+  /**
+   * Machine-readable code for guard-driven stops, e.g. 'repeated_tool_call'
+   * for an SDK internal repeat-guard stop. Lets hosts attribute such
+   * terminations structurally instead of matching on error message text.
+   */
+  errorCode?: string
   /** @deprecated Use total_cost_usd */
   cost?: number
 }
