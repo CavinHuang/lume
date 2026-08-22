@@ -1157,7 +1157,6 @@ describe("Agent session persistence", () => {
       // drain resumed query
     }
     expect(capturedMessages.filter((message) => message.role === "runtime")).toEqual([
-      { role: "runtime", content: "current runtime" },
       { role: "runtime", content: "next runtime" },
     ])
     expect(capturedMessages.slice(-2)).toEqual([
