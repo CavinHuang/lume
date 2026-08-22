@@ -27,4 +27,23 @@ describe("buildAssetFile", () => {
     const out = buildAssetFile({ source: 'https://a.com/?"x=1', fetchedAt: "2026-07-09T00:00:00Z", markdown: "b" });
     expect(out).toContain('source: "https://a.com/?\\"x=1"');
   });
+
+  test("escapes newlines, tabs, carriage returns, and NUL in title onto one line", () => {
+    const title = [
+      "line1", "\n", "line2", "\t", "tab", "\r", "cr",
+      String.fromCharCode(0), "bell",
+    ].join("");
+    const out = buildAssetFile({ source: "https://a.com", fetchedAt: "2026-07-09T00:00:00Z", title, markdown: "b" });
+    // Every newline inside the title value is escaped, so the frontmatter stays
+    // on legal single lines delimited by exactly two --- markers.
+    expect(out.split("\n").filter((line) => line === "---")).toHaveLength(2);
+    const titleLine = out.split("\n").find((line) => line.startsWith("title:"));
+    expect(titleLine).toBe('title: "line1\\nline2\\ttab\\rcr\\x00bell"');
+  });
+
+  test("escapes DEL and other C0 control characters as hex escapes", () => {
+    const title = ["a", String.fromCharCode(127), "b", String.fromCharCode(7), "c"].join("");
+    const out = buildAssetFile({ source: "https://a.com", fetchedAt: "2026-07-09T00:00:00Z", title, markdown: "b" });
+    expect(out).toContain('title: "a\\x7fb\\x07c"');
+  });
 });

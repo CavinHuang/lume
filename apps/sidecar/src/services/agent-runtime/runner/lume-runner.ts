@@ -1,4 +1,4 @@
-import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn, type FileCheckpoint, type SandboxSettings } from "@lume/agent-sdk";
+import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn, type FileCheckpoint } from "@lume/agent-sdk";
 import { createHash } from "node:crypto";
 import type { AdvisorReviewedDetail, LumeConfigHooksInternalSection, SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
@@ -51,8 +51,6 @@ import {
 } from "../../memory-v2/conversation-summary";
 import type { LumeRunState } from "./run-state";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
-import { createWikiProtectedSandbox, resolveWikiRuntimeCapability } from "../../wiki/wiki-runtime-capability";
-import { WIKI_CAPABILITIES } from "../../wiki/wiki-capabilities";
 import { resolveConfiguredAdditionalDirectories } from "../permissions/permission-config";
 import { getActiveBrowserBroker } from "../../browser/browser-broker-holder";
 import { getBrowserToolSessionRegistry } from "../tools/browser/browser-tool-session";
@@ -66,7 +64,6 @@ interface RuntimeSessionRunInput {
     & Partial<Pick<CreateRuntimeCoreSessionResult, "getVerificationStatus" | "getVerificationReport" | "refreshCodingChangeSet" | "getLatestFileCheckpoint" | "getBaselineCommit" | "getBaselineCommits" | "getWorkspaceRoots">>
     & Partial<Pick<CreateRuntimeCoreSessionResult, "setLiveEventSink">>;
   options: RunRuntimeCoreAttemptOptions;
-  sandbox?: SandboxSettings;
   createCanUseTool: (
     askUserSignal: AbortSignal,
     workflowHooks?: LumeWorkflowHookRuntimeLike
@@ -300,7 +297,6 @@ export class LumeRunner {
     prepared,
     runtimeSession,
     options,
-    sandbox,
     createCanUseTool
   }: RuntimeSessionRunInput): Promise<AgentRuntimeRunResult> {
     const { input, runtime } = params;
@@ -352,7 +348,6 @@ export class LumeRunner {
         canUseTool,
         permissionMode: normalizeRuntimeCoreQueryPermissionMode(input.permissionMode),
         includePartialMessages: true,
-        sandbox: sandbox ?? createWikiProtectedSandbox(),
         // usageIdentity.runId 用真实 Lume runId(此前回落 sessionId=threadId,无法按 run 聚合)
         runId: this.observer.getRunId(),
         ...(runtime.abortSignal ? { abortSignal: runtime.abortSignal } : {}),
@@ -423,20 +418,7 @@ export class LumeRunner {
     const { input, runtime } = params;
     if (runtime.abortSignal?.aborted) return this.abort();
     let runtimeSession: CreateRuntimeCoreSessionResult | undefined;
-    let sandbox: SandboxSettings | undefined;
     try {
-      const wikiCapability = await resolveWikiRuntimeCapability({
-        threadId: runtime.sessionId,
-        cwd: prepared.agentCwd,
-        lumeWorkDir: prepared.lumeWorkDir,
-        filesRoot: prepared.filesRoot,
-        plansRoot: prepared.plansRoot,
-        artifactsRoot: prepared.artifactsRoot,
-        workspaceId: runtime.workspaceId,
-        threadType: runtime.threadType,
-        chatType: input.chatType
-      });
-      sandbox = wikiCapability.sandbox;
       if (runtime.abortSignal?.aborted) return this.abort();
       runtimeSession = await createRuntimeSession({
         lumeSessionId: runtime.sessionId,
@@ -511,12 +493,10 @@ export class LumeRunner {
         workflowHooks: this.workflowHooks,
         applyWorkflowHookEffects: (result) => this.applyWorkflowHookEffects(result),
         trace: this.observer.getContextAssemblyTrace(),
-        wikiProposalEnabled: WIKI_CAPABILITIES.askWikiProposal,
-        processSandbox: sandbox,
         abortSignal: runtime.abortSignal
       });
     } catch (error) {
-      // F3:createRuntimeCoreSession(或 wiki 能力解析)失败时查询流从未启动,
+      // F3:createRuntimeCoreSession 失败时查询流从未启动,
       // projector 未开 run → 总线无终值;fromActiveRun 又抑制旧路合成 run.failed
       // → web 静默失败。收编进 fail():补发 run.end{error} + observer 落终态。
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -537,7 +517,6 @@ export class LumeRunner {
       prepared,
       runtimeSession: session,
       options,
-      sandbox,
       createCanUseTool
     });
   }

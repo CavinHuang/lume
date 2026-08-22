@@ -91,6 +91,9 @@ export function useAgentEventBus(threadId: string, options: UseAgentEventBusOpti
         pending = pending.filter((e) => e.seq > localMax)
       } catch (error) {
         console.error(`[useAgentEventBus] snapshot pull failed: ${threadId}`, error)
+        // 失败也要置位：pulled 恒 false 会让后续 push 的 seq 空洞不触发
+        // refetchAll，事件堆在 pending 永不投递，对话冻结到重进线程（#409）
+        pulled = true
       }
     }
     void pull()

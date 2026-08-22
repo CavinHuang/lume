@@ -207,7 +207,8 @@ export async function loadFilesystemSkills(
             ...(version ? { version } : {}),
             fingerprint: createHash('sha256').update(raw).digest('hex'),
           },
-          getPrompt: async (args) => [{ type: 'text', text: body.replaceAll('${ARG}', args) }],
+          // Function replacement keeps `$&`/`$$`-style sequences in args literal.
+          getPrompt: async (args) => [{ type: 'text', text: body.replaceAll('${ARG}', () => args) }],
         })
       } catch {
         // Ignore unreadable or invalid skill files.

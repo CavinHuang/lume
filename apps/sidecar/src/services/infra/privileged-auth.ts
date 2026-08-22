@@ -1,23 +1,23 @@
 import { timingSafeEqual } from "node:crypto";
 
-export class WikiPrivilegedCredentialGate {
+export class PrivilegedCredentialGate {
   private credential: Buffer | undefined;
 
   install(value: unknown): void {
     if (this.credential) return;
     if (typeof value !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(value)) {
-      throw new Error("Wiki privileged credential 非法");
+      throw new Error("privileged credential 非法");
     }
     this.credential = Buffer.from(value, "utf8");
   }
 
   assert(value: unknown): void {
     if (!this.credential || typeof value !== "string") {
-      throw new Error("WIKI_PRIVILEGED_UNAVAILABLE: Wiki 正式确认通道不可用");
+      throw new Error("PRIVILEGED_UNAVAILABLE: 特权确认通道不可用");
     }
     const candidate = Buffer.from(value, "utf8");
     if (candidate.length !== this.credential.length || !timingSafeEqual(candidate, this.credential)) {
-      throw new Error("WIKI_PRIVILEGED_DENIED: Wiki 正式确认凭证无效");
+      throw new Error("PRIVILEGED_DENIED: 特权确认凭证无效");
     }
   }
 
@@ -26,16 +26,16 @@ export class WikiPrivilegedCredentialGate {
   }
 }
 
-const gate = new WikiPrivilegedCredentialGate();
+const gate = new PrivilegedCredentialGate();
 
-export function installWikiPrivilegedCredential(value: unknown): void {
+export function installPrivilegedCredential(value: unknown): void {
   gate.install(value);
 }
 
-export function assertWikiPrivilegedCredential(value: unknown): void {
+export function assertPrivilegedCredential(value: unknown): void {
   gate.assert(value);
 }
 
-export function wikiPrivilegedCredentialReady(): boolean {
+export function privilegedCredentialReady(): boolean {
   return gate.ready();
 }

@@ -8,7 +8,6 @@ import type {
   PermissionRule
 } from "../permissions/permission-types";
 import type { LumeToolDescriptor, LumeToolRiskLevel } from "./tool-types";
-import { evaluateProtectedRootAccess } from "./protected-root-policy";
 
 export type ToolExecutionAuthorization =
   | {
@@ -46,7 +45,6 @@ export interface ToolExecutionGatewayInput {
   classifierEnabled?: boolean;
   permissionRules?: PermissionRule[];
   privateWriteRoots?: string[];
-  protectedRoots?: string[];
   context: LumeGuardrailContext;
 }
 
@@ -61,20 +59,6 @@ export class ToolExecutionGateway {
   }
 
   async authorize(input: ToolExecutionGatewayInput): Promise<ToolExecutionAuthorization> {
-    const protectedRootDecision = evaluateProtectedRootAccess({
-      descriptor: input.descriptor,
-      rawInput: input.input,
-      cwd: input.context.cwd ?? process.cwd(),
-      protectedRoots: input.protectedRoots ?? [],
-    });
-    if (protectedRootDecision) {
-      return {
-        status: "deny",
-        message: protectedRootDecision.message,
-        reasonCode: protectedRootDecision.reasonCode,
-        risk: "high",
-      };
-    }
     const permissionDecision = await this.permissionRuntime.authorize({
       descriptor: input.descriptor,
       input: input.input,
