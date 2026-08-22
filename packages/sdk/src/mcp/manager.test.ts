@@ -402,6 +402,134 @@ describe("McpClientManager", () => {
     manager.sync({ local: { enabled: true, transport: "stdio", command: "node" } });
     await expect(manager.callTool("local", "boom", {})).rejects.toMatchObject({ code: "protocol_error" });
   });
+
+  test("throws protocol_error when a racing disconnect yields no result (#375)", async () => {
+    const manager = new McpClientManager({
+      clientFactory: () => ({
+        async connect() {},
+        async listTools() { return { tools: [] }; },
+        async callTool() { return undefined; },
+        async close() {},
+      }),
+      transportFactory: fakeTransportFactory,
+    });
+
+    manager.sync({ ghost: { enabled: true, transport: "stdio", command: "node" } });
+    await expect(manager.callTool("ghost", "vanish", {})).rejects.toMatchObject({ code: "protocol_error" });
+  });
+
+  test("accepts an empty-object MCP result as a legal successful call (#375)", async () => {
+    const manager = new McpClientManager({
+      clientFactory: () => ({
+        async connect() {},
+        async listTools() { return { tools: [] }; },
+        async callTool() { return {}; },
+        async close() {},
+      }),
+      transportFactory: fakeTransportFactory,
+    });
+
+    manager.sync({ quiet: { enabled: true, transport: "stdio", command: "node" } });
+    const result = await manager.callTool("quiet", "noop", {});
+    expect(result.text).toBe("{}");
+    expect(result.isError).toBeUndefined();
+  });
+
+  test("dedupes wrapper names across servers that normalize identically (#325)", async () => {
+    const factory = createFakeMcpFactory({ tools: [{ name: "search" }] });
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory
+    });
+
+    manager.sync({
+      GitHub: { enabled: true, transport: "stdio", command: "node" },
+      github: { enabled: true, transport: "stdio", command: "node" }
+    });
+    await manager.ensureConnected("GitHub");
+    await manager.ensureConnected("github");
+
+    const names = manager.getTools().map((tool) => tool.wrapperName);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).toContain("mcp__github__search");
+    expect(names.some((name) => /^mcp__github__search_[a-z0-9]{6}$/.test(name))).toBe(true);
+  });
+
+  test("reclaims released wrapper names after disconnect (#325)", async () => {
+    const factory = createFakeMcpFactory({ tools: [{ name: "search" }] });
+    const manager = new McpClientManager({
+      clientFactory: factory.clientFactory,
+      transportFactory: factory.transportFactory
+    });
+
+    manager.sync({
+      GitHub: { enabled: true, transport: "stdio", command: "node" },
+      github: { enabled: true, transport: "stdio", command: "node" }
+    });
+    await manager.ensureConnected("GitHub");
+    await manager.ensureConnected("github");
+    await manager.disconnect("GitHub");
+    await manager.connect("GitHub");
+
+    const githubNames = manager.getTools("github").map((tool) => tool.wrapperName);
+    const reconnectNames = manager.getTools("GitHub").map((tool) => tool.wrapperName);
+    // The surviving server keeps its suffixed name; the reconnected one may
+    // take the freed base name again.
+    expect(githubNames[0]).toMatch(/^mcp__github__search_[a-z0-9]{6}$/);
+    expect(reconnectNames).toContain("mcp__github__search");
+    expect(new Set([...githubNames, ...reconnectNames]).size).toBe(2);
+  });
+
+  test("fast-fails during reconnect backoff and honors force (#312)", async () => {
+    let factoryCalls = 0;
+    const manager = new McpClientManager({
+      clientFactory: () => {
+        factoryCalls += 1;
+        throw new Error("Connection refused");
+      },
+      transportFactory: fakeTransportFactory,
+      defaultReconnectBackoffBaseMs: 50,
+      defaultReconnectBackoffMaxMs: 10_000,
+    });
+
+    manager.sync({ dead: { enabled: true, transport: "stdio", command: "node" } });
+    await expect(manager.ensureConnected("dead")).rejects.toMatchObject({ code: "transport_error" });
+    await expect(manager.ensureConnected("dead")).rejects.toMatchObject({ code: "transport_error" });
+    expect(factoryCalls).toBe(1);
+
+    // Manual probes bypass the negative cache.
+    await expect(manager.ensureConnected("dead", { force: true })).rejects.toMatchObject({ code: "transport_error" });
+    expect(factoryCalls).toBe(2);
+
+    // Second consecutive failure doubles the window: past the base window but
+    // still inside the doubled one.
+    await delay(70);
+    await expect(manager.ensureConnected("dead")).rejects.toMatchObject({ code: "transport_error" });
+    expect(factoryCalls).toBe(2);
+
+    // Past the doubled window the gate opens again.
+    await delay(120);
+    await expect(manager.ensureConnected("dead")).rejects.toMatchObject({ code: "transport_error" });
+    expect(factoryCalls).toBe(3);
+  });
+
+  test("explicit connect accepts the same force option (#312)", async () => {
+    let factoryCalls = 0;
+    const manager = new McpClientManager({
+      clientFactory: () => {
+        factoryCalls += 1;
+        throw new Error("Connection refused");
+      },
+      transportFactory: fakeTransportFactory,
+      defaultReconnectBackoffBaseMs: 60_000,
+      defaultReconnectBackoffMaxMs: 60_000,
+    });
+
+    manager.sync({ dead: { enabled: true, transport: "stdio", command: "node" } });
+    await expect(manager.connect("dead")).rejects.toThrow();
+    await expect(manager.connect("dead", { force: true })).rejects.toThrow();
+    expect(factoryCalls).toBe(2);
+  });
 });
 
 describe("McpClientManager #312 failed 负缓存", () => {
