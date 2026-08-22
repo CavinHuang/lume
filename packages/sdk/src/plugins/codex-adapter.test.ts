@@ -28,7 +28,7 @@ describe("CodexAdapter", () => {
     expect(result.mcpServers).toBe("./mcp.json");
   });
 
-  test("infers Codex-compatible permissions", () => {
+  test("maps declared capabilities only: mcpServers drives registration, shell stays off (#346)", () => {
     const codex = {
       name: "linear",
       version: "1.0.0",
@@ -40,12 +40,26 @@ describe("CodexAdapter", () => {
 
     const result = adaptCodexPlugin(codex, "/plugin/root");
     expect(result.permissions.mcpServers.register).toBe(true);
-    expect(result.permissions.shell.allow).toBe(true);
+    expect(result.permissions.shell.allow).toBe(false);
+    expect(result.permissions.hooks?.events.length).toBeGreaterThan(0);
     expect(result.permissions.tools.deny).toContain("Bash");
     expect(result.permissions.tools.deny).toContain("Write");
     expect(result.permissions.tools.allow).toContain("Read");
     expect(result.permissions.tools.allow).toContain("Glob");
     expect(result.lume.hooksOnly).toBe(false);
+  });
+
+  test("defaults to denied when capability fields are absent (#346)", () => {
+    const codex = {
+      name: "bare",
+      version: "1.0.0",
+      interface: {},
+    };
+
+    const result = adaptCodexPlugin(codex, "/plugin/root");
+    expect(result.permissions.mcpServers.register).toBe(false);
+    expect(result.permissions.shell.allow).toBe(false);
+    expect(result.permissions.hooks).toBeUndefined();
   });
 
   test("maps Codex hooks events to Lume equivalents", () => {
@@ -93,8 +107,8 @@ describe("CodexAdapter", () => {
     expect(result.skills).toBeUndefined();
     expect(result.hooks).toBeUndefined();
     expect(result.mcpServers).toBeUndefined();
-    expect(result.permissions.mcpServers.register).toBe(true);
-    expect(result.permissions.shell.allow).toBe(true);
+    expect(result.permissions.mcpServers.register).toBe(false);
+    expect(result.permissions.shell.allow).toBe(false);
   });
 
   test("CODEX_EVENT_MAP contains all 10 events", () => {
