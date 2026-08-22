@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { runWebFetch } from "./web-fetch.js";
+import { llmCandidates, runWebFetch } from "./web-fetch.js";
 import type { RenderClient } from "./render-client.js";
 import { createNoopRenderClient } from "./render-client.js";
 
@@ -34,6 +34,40 @@ describe("runWebFetch — render fallback", () => {
     const fetchImpl = (async () => new Response(`<html><body><div id="app"></div></body></html>`, { headers: { "content-type": "text/html" } })) as any;
     const out = await runWebFetch({ url: "https://example.com/a" }, ctx, { fetchImpl, renderClient: createNoopRenderClient() });
     expect(out.data).toMatch(/static|render/i);
+  });
+});
+
+describe("run-level deadline and probe budget (#373)", () => {
+  test("llms.txt candidates are capped for deep paths", () => {
+    expect(llmCandidates("https://a.com/x/y/z/w/v/u/t/deep").length).toBeLessThanOrEqual(6);
+    expect(llmCandidates("https://a.com/")).toHaveLength(3);
+  });
+
+  test("once the deadline is spent, speculative probes are skipped entirely", async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(String(url));
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      return new Response(fakeArticleHtml("word ".repeat(40)), { headers: { "content-type": "text/html" } });
+    }) as any;
+    const slowCtx = { sandbox: undefined, toolConfig: { webFetch: { timeoutMs: 400 } } } as any;
+    const out = await runWebFetch({ url: "https://slow.example/a" }, slowCtx, { fetchImpl });
+    expect(out.is_error).toBeFalsy();
+    // Only the primary request may fire; .md / content-negotiation / llms.txt
+    // probes must be skipped once the deadline leaves no usable budget.
+    expect(urls.every((url) => url === "https://slow.example/a")).toBe(true);
+  });
+
+  test("with a healthy budget the speculative probes still run", async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(String(url));
+      if (!String(url).endsWith("/a")) return new Response("not found", { status: 404 });
+      return new Response(fakeArticleHtml("word ".repeat(40)), { headers: { "content-type": "text/html" } });
+    }) as any;
+    const out = await runWebFetch({ url: "https://probe.example/a" }, ctx, { fetchImpl });
+    expect(out.is_error).toBeFalsy();
+    expect(urls.some((url) => url.endsWith(".md"))).toBe(true);
   });
 });
 

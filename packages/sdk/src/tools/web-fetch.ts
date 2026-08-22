@@ -26,6 +26,8 @@ const DEFAULT_TIMEOUT_MS = 30000;
 // Base64 inflates ~4/3x and the whole payload lands in model context; larger
 // images are parked on disk and referenced instead.
 const IMAGE_INLINE_MAX_BYTES = 5 * 1024 * 1024;
+/** A probe with less than this budget left cannot finish meaningfully. */
+const MIN_PROBE_MS = 2000;
 const XML = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" });
 
 export interface WebFetchInput {
@@ -123,7 +125,10 @@ function alternateLinks(html: string, pageUrl: string): string[] {
   return links;
 }
 
-function llmCandidates(url: string): string[] {
+/** Deep paths can enumerate one candidate pair per segment; keep probing sane. */
+const MAX_LLM_CANDIDATES = 6;
+
+export function llmCandidates(url: string): string[] {
   try {
     const parsed = new URL(url);
     const path = parsed.pathname.replace(/\/+$/, "");
@@ -135,7 +140,7 @@ function llmCandidates(url: string): string[] {
       const scope = `/${segments.slice(0, i).join("/")}/`;
       result.push(`${parsed.origin}${scope}llms.txt`, `${parsed.origin}${scope}llms.md`);
     }
-    return result;
+    return result.slice(0, MAX_LLM_CANDIDATES);
   } catch {
     return [];
   }
@@ -200,56 +205,67 @@ async function renderGenericHtml(
   fetchImpl: FetchImpl,
   preference: ReaderPreference,
   signal: AbortSignal | undefined,
-  timeoutMs: number,
+  deadlineAt: number,
 ): Promise<RenderedContent | null> {
-  const alternates = alternateLinks(html, url);
-  for (const candidate of alternates) {
-    const result = await fetchTextCandidate(candidate, {
-      signal,
-      sandbox: context.sandbox,
-      fetchImpl,
-      timeoutMs: Math.min(timeoutMs, 10000),
-    });
-    if (!result || result.content.trim().length < 100 || isHtmlResponse(result.contentType, result.content)) continue;
-    if (/rss|atom|feed|xml/i.test(result.contentType)) {
-      const feed = await parseFeed(result.content);
-      if (feed) return { title: "", markdown: feed, method: "alternate-feed", finalUrl: result.finalUrl };
-    } else if (/markdown|text\/plain/i.test(result.contentType) || candidate.endsWith(".md")) {
-      return { title: "", markdown: result.content, method: "alternate-markdown", finalUrl: result.finalUrl };
+  // Every speculative probe shares the run-level deadline; once too little
+  // time remains for a probe to finish meaningfully, skip it entirely.
+  const remaining = () => Math.max(0, deadlineAt - Date.now());
+  const canProbe = () => remaining() >= MIN_PROBE_MS;
+
+  if (canProbe()) {
+    const alternates = alternateLinks(html, url);
+    for (const candidate of alternates) {
+      const result = await fetchTextCandidate(candidate, {
+        signal,
+        sandbox: context.sandbox,
+        fetchImpl,
+        timeoutMs: Math.min(10000, remaining()),
+      });
+      if (!result || result.content.trim().length < 100 || isHtmlResponse(result.contentType, result.content)) continue;
+      if (/rss|atom|feed|xml/i.test(result.contentType)) {
+        const feed = await parseFeed(result.content);
+        if (feed) return { title: "", markdown: feed, method: "alternate-feed", finalUrl: result.finalUrl };
+      } else if (/markdown|text\/plain/i.test(result.contentType) || candidate.endsWith(".md")) {
+        return { title: "", markdown: result.content, method: "alternate-markdown", finalUrl: result.finalUrl };
+      }
     }
   }
 
-  for (const candidate of markdownCandidates(url)) {
-    const result = await fetchTextCandidate(candidate, {
-      signal,
-      sandbox: context.sandbox,
-      fetchImpl,
-      timeoutMs: Math.min(timeoutMs, 10000),
-      }, { Accept: "text/markdown, text/plain;q=0.9" });
-    if (result && result.content.trim().length > 100 && !isHtmlResponse(result.contentType, result.content)) {
-      return { title: "", markdown: result.content, method: "url-markdown", finalUrl: result.finalUrl };
+  if (canProbe()) {
+    for (const candidate of markdownCandidates(url)) {
+      const result = await fetchTextCandidate(candidate, {
+        signal,
+        sandbox: context.sandbox,
+        fetchImpl,
+        timeoutMs: Math.min(10000, remaining()),
+        }, { Accept: "text/markdown, text/plain;q=0.9" });
+      if (result && result.content.trim().length > 100 && !isHtmlResponse(result.contentType, result.content)) {
+        return { title: "", markdown: result.content, method: "url-markdown", finalUrl: result.finalUrl };
+      }
     }
   }
 
-  const negotiated = await fetchTextCandidate(url, {
-    signal,
-    sandbox: context.sandbox,
-    fetchImpl,
-    timeoutMs: Math.min(timeoutMs, 10000),
-  }, { Accept: "text/markdown, text/plain;q=0.9, text/html;q=0.8" });
-  if (negotiated && negotiated.content.trim().length > 100 && !isHtmlResponse(negotiated.contentType, negotiated.content)) {
-    if (/rss|atom|feed|xml/i.test(negotiated.contentType)) {
-      const feed = await parseFeed(negotiated.content);
-      if (feed) return { title: "", markdown: feed, method: "negotiated-feed", finalUrl: negotiated.finalUrl };
-    } else {
-      return { title: "", markdown: negotiated.content, method: "content-negotiation", finalUrl: negotiated.finalUrl };
+  if (canProbe()) {
+    const negotiated = await fetchTextCandidate(url, {
+      signal,
+      sandbox: context.sandbox,
+      fetchImpl,
+      timeoutMs: Math.min(10000, remaining()),
+    }, { Accept: "text/markdown, text/plain;q=0.9, text/html;q=0.8" });
+    if (negotiated && negotiated.content.trim().length > 100 && !isHtmlResponse(negotiated.contentType, negotiated.content)) {
+      if (/rss|atom|feed|xml/i.test(negotiated.contentType)) {
+        const feed = await parseFeed(negotiated.content);
+        if (feed) return { title: "", markdown: feed, method: "negotiated-feed", finalUrl: negotiated.finalUrl };
+      } else {
+        return { title: "", markdown: negotiated.content, method: "content-negotiation", finalUrl: negotiated.finalUrl };
+      }
     }
   }
 
   const readerResult = await renderHtmlToMarkdown({
     url,
     html,
-    timeoutMs,
+    timeoutMs: Math.max(250, remaining()),
     signal,
     sandbox: context.sandbox,
     fetchImpl,
@@ -261,15 +277,17 @@ async function renderGenericHtml(
     method: readerResult.method,
   };
 
-  for (const candidate of llmCandidates(url)) {
-    const result = await fetchTextCandidate(candidate, {
-      signal,
-      sandbox: context.sandbox,
-      fetchImpl,
-      timeoutMs: Math.min(timeoutMs, 5000),
-    });
-    if (result && result.content.trim().length > 100 && !isHtmlResponse(result.contentType, result.content)) {
-      return { title: "", markdown: result.content, method: "llms.txt", finalUrl: result.finalUrl };
+  if (canProbe()) {
+    for (const candidate of llmCandidates(url)) {
+      const result = await fetchTextCandidate(candidate, {
+        signal,
+        sandbox: context.sandbox,
+        fetchImpl,
+        timeoutMs: Math.min(5000, remaining()),
+      });
+      if (result && result.content.trim().length > 100 && !isHtmlResponse(result.contentType, result.content)) {
+        return { title: "", markdown: result.content, method: "llms.txt", finalUrl: result.finalUrl };
+      }
     }
   }
 
@@ -297,6 +315,12 @@ export async function runWebFetch(
   const fetchImpl = deps.fetchImpl ?? sdkFetch;
   const renderClient = deps.renderClient ?? createNoopRenderClient();
   const timeoutMs = readTimeout(context);
+  // Run-level deadline: every request inside this fetch gets whatever time
+  // remains instead of a fresh full-timeout budget, so redirects, UA retries,
+  // and speculative probes together stay bounded (#373).
+  const deadlineAt = Date.now() + timeoutMs;
+  const remainingMs = () => Math.max(0, deadlineAt - Date.now());
+  const boundedRemaining = () => Math.max(250, remainingMs());
 
   const sandboxError = ensureNetworkAllowed(requestedUrl, context.sandbox);
   if (sandboxError) return { data: sandboxError, is_error: true };
@@ -305,7 +329,7 @@ export async function runWebFetch(
     if (format !== "html") {
       const { handleSpecialUrl } = await import("./web/scrapers/index.js");
       const special = await handleSpecialUrl(requestedUrl, {
-        timeoutMs,
+        timeoutMs: boundedRemaining(),
         signal: context.abortSignal,
         sandbox: context.sandbox,
         fetchImpl,
@@ -318,7 +342,7 @@ export async function runWebFetch(
       }
     }
     const response = await loadPage(requestedUrl, {
-      timeoutMs,
+      timeoutMs: boundedRemaining(),
       maxBytes: MAX_FETCH_BYTES,
       signal: context.abortSignal,
       sandbox: context.sandbox,
@@ -336,7 +360,7 @@ export async function runWebFetch(
         const binary = await loadBinary(finalUrl, {
           fetchImpl,
           maxBytes: 20 * 1024 * 1024,
-          timeoutMs,
+          timeoutMs: boundedRemaining(),
           signal: context.abortSignal,
           sandbox: context.sandbox,
         });
@@ -372,7 +396,7 @@ export async function runWebFetch(
         const binary = await loadBinary(finalUrl, {
           fetchImpl,
           maxBytes: MAX_FETCH_BYTES,
-          timeoutMs,
+          timeoutMs: boundedRemaining(),
           signal: context.abortSignal,
           sandbox: context.sandbox,
         });
@@ -396,7 +420,7 @@ export async function runWebFetch(
     let finalHtml = rawContent;
     let renderNote = "";
     if (shouldRender(rawContent, renderMode)) {
-      const rendered = await renderClient.renderUrl(finalUrl, { timeoutMs: Math.min(45000, timeoutMs) });
+      const rendered = await renderClient.renderUrl(finalUrl, { timeoutMs: Math.min(45000, boundedRemaining()) });
       if (rendered.ok === true) {
         if (!ensureNetworkAllowed(rendered.finalUrl, context.sandbox)) {
           finalHtml = rendered.html.slice(0, MAX_RAW_HTML_CHARS);
@@ -428,7 +452,7 @@ export async function runWebFetch(
       fetchImpl,
       readerPreference,
       context.abortSignal,
-      timeoutMs,
+      deadlineAt,
     );
     const title = markdownResult?.title ?? "";
     let markdown = markdownResult?.markdown ?? cleanText(
