@@ -17,10 +17,12 @@ import type { NormalizedPlugin } from "./normalized.js";
  * enablement state. A pure version bump that keeps permissions/capabilities
  * unchanged may reuse a previous approval.
  *
- * Phase 2 scope: hooks/mcp contribute their config PATH only (resolved file
- * contents arrive with PluginCapabilityResolver in Phase 3, at which point the
- * summary input expands). Command tools are already fully resolved in
- * NormalizedPlugin, so they contribute their full execution config.
+ * Hooks/MCP/LSP config files contribute both their path and their content
+ * hash (#347): hooks and MCP servers are command-execution entry points, so a
+ * post-approval edit of hooks.json / mcp.json must force a re-review just like
+ * a commandTool change does. Command tools are fully resolved in
+ * NormalizedPlugin, so they contribute their full execution config including
+ * env values and metadata (#315).
  */
 export function computePermissionsHash(plugin: NormalizedPlugin): string {
   return createHash("sha256").update(stableStringify(canonicalSummary(plugin))).digest("hex");
@@ -33,7 +35,9 @@ interface PermissionSummary {
   capabilities: {
     skills: string[];
     hooksConfigPath: string | null;
+    hooksConfigHash: string | null;
     mcpServersConfigPath: string | null;
+    mcpServersConfigHash: string | null;
     lspServersConfigPath: string | null;
     lspServersConfigHash: string | null;
     commandTools: Array<Record<string, unknown>>;
@@ -49,20 +53,28 @@ function canonicalSummary(plugin: NormalizedPlugin): PermissionSummary {
       args: tool.args ?? null,
       cwd: tool.cwd ?? null,
       timeoutMs: tool.timeoutMs ?? null,
-      envKeys: tool.env ? Object.keys(tool.env).sort() : [],
+      // Full key/value pairs and metadata: flipping metadata.isReadOnly changes
+      // permission classification and swapping an env value rewrites what the
+      // approved command talks to — both must force a re-review (#315).
+      env: tool.env ?? null,
+      metadata: tool.metadata ?? null,
       inputSchema: tool.inputSchema ?? null,
     }));
 
   return {
     pluginId: plugin.pluginId,
     manifestFormat: plugin.manifestFormat,
-    permissions: plugin.permissions,
+    // Permission lists (read/write patterns, outbound hosts, tool allow/deny/
+    // ask) are unordered sets and are sorted for order-independent hashing.
+    permissions: deepSortStringArrays(plugin.permissions),
     capabilities: {
       skills: [...plugin.capabilities.skills]
         .sort((a, b) => a.root.localeCompare(b.root))
         .map((skill) => skill.root),
       hooksConfigPath: plugin.capabilities.hooksConfigPath ?? null,
+      hooksConfigHash: capabilityFileHash(plugin, plugin.capabilities.hooksConfigPath),
       mcpServersConfigPath: plugin.capabilities.mcpServersConfigPath ?? null,
+      mcpServersConfigHash: capabilityFileHash(plugin, plugin.capabilities.mcpServersConfigPath),
       lspServersConfigPath: plugin.capabilities.lspServersConfigPath ?? null,
       lspServersConfigHash: capabilityFileHash(plugin, plugin.capabilities.lspServersConfigPath),
       commandTools,
@@ -82,16 +94,13 @@ function capabilityFileHash(plugin: NormalizedPlugin, path: string | undefined):
 /**
  * Recursively canonicalize a value for stable serialization:
  *   - object keys sorted ascending
- *   - arrays of strings sorted
- *   - arrays of non-strings canonicalized element-wise, order preserved
- *     (execution-relevant arrays like command args keep their order; command
- *     tools themselves are pre-sorted by name in canonicalSummary).
+ *   - arrays keep their order. Execution-relevant sequences like commandTool
+ *     args are position-sensitive (reordering `cp A B` into `cp B A` must
+ *     change the hash), and order-insensitive collections are pre-sorted by
+ *     canonicalSummary / deepSortStringArrays instead.
  */
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) {
-    if (value.every((item) => typeof item === "string")) {
-      return [...value].sort();
-    }
     return value.map(canonicalize);
   }
   if (value && typeof value === "object") {
@@ -100,6 +109,24 @@ function canonicalize(value: unknown): unknown {
       sorted[key] = canonicalize((value as Record<string, unknown>)[key]);
     }
     return sorted;
+  }
+  return value;
+}
+
+/** Deeply sort string arrays inside a value — permission lists are unordered sets. */
+function deepSortStringArrays(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    if (value.every((item) => typeof item === "string")) {
+      return [...value].sort();
+    }
+    return value.map(deepSortStringArrays);
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = deepSortStringArrays(entry);
+    }
+    return out;
   }
   return value;
 }

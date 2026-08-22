@@ -1736,6 +1736,11 @@ export class PluginMarketService {
       permissionsHash: input.permissionsHash,
       sensitiveApprovals,
     };
+    // Accepting this hash retires approval bundles recorded under older hashes
+    // (#344): stale allow/deny records must not survive a permission change.
+    for (const hash of Object.keys(record.approvalsByHash)) {
+      if (hash !== input.permissionsHash) delete record.approvalsByHash[hash];
+    }
     record.approvalsByHash[input.permissionsHash] ??= {
       permissionsHash: input.permissionsHash,
       permissionsAcceptedAt: now,
@@ -2381,10 +2386,10 @@ function summarizePermissions(
     [...toolAllow, ...toolAsk].some((tool) =>
       [
         "Bash",
-        "FileWrite",
-        "FileEdit",
+        "Write",
+        "Edit",
         "NotebookEdit",
-        "AgentTool",
+        "Agent",
         "SendMessage",
       ].includes(tool),
     )
