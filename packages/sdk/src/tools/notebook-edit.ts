@@ -173,7 +173,10 @@ export const NotebookEditTool = defineTool({
           : findCellIndex(cells, input.cell_id)
 
       if (editMode === 'insert') {
-        const insertAfterIndex = targetIndex
+        // Omitted anchor inserts at the beginning; explicit anchors insert after
+        // the resolved cell (negative cell_number keeps the prepend branch).
+        const anchorOmitted = input.cell_id === undefined && input.cell_number === undefined
+        const insertAfterIndex = anchorOmitted ? -1 : targetIndex
         const newCell: NotebookCell = {
           id: `cell-${crypto.randomUUID()}`,
           cell_type: input.cell_type || 'code',
