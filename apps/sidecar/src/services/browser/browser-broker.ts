@@ -222,6 +222,9 @@ export class BrowserBroker {
     const commandParams = backend === "extension" && input.method === "tab_browser_auth_request"
       ? canonicalExtensionBrowserAuthParams(input.params ?? {})
       : normalized.params
+    // `__policy*` / `__authorizedFiles` 等保留键只能由 broker 在 confirm/授权后注入；
+    // 入口统一剥掉调用方携带的同名键，防止沙箱直调时伪造授权通道（如绕过上传根目录约束）
+    for (const key of Object.keys(commandParams)) if (key.startsWith("__")) delete commandParams[key]
     const tabId = input.tabId ?? (typeof commandParams.tabId === "string" ? commandParams.tabId : undefined)
     const transport = backend === "extension" ? this.extension : this.main
     if (!transport || (backend === "extension" && (!this.extensionBackendEnabled || !this.chromePluginEnabled || !this.extensionConnected))) throw new Error("browser_unavailable")
