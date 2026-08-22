@@ -42,16 +42,44 @@ function normalizeCell(cell: HTMLElement): void {
     .replace(/<\/p>\s*<p[^>]*>/gi, " ");
 }
 
-/**
- * Upper bound for rowspan/colspan expansion: the values come from remote HTML,
- * and an unbounded span would allocate a hostile number of grid cells (#303).
- * 100 keeps the worst-case grid (100×100 per merged cell) trivial to render;
- * real-world merged cells span single digits.
- */
+/** Per-cell upper bound for rowspan/colspan (HTML spec clamps similarly). */
 const MAX_SPAN = 100;
+/** Expanded-grid budget; tables beyond it skip normalization untouched. */
+const MAX_TABLE_GRID_CELLS = 250_000;
 
 function clampSpan(attribute: string | null): number {
   return Math.min(MAX_SPAN, Math.max(1, Number.parseInt(attribute ?? "1", 10) || 1));
+}
+
+/**
+ * Expand rowspan/colspan into a rectangular grid, or return null when the
+ * expansion would blow past the cell budget (hostile span attributes must not
+ * materialize millions of grid slots).
+ */
+function buildTableGrid(rows: HTMLElement[]): { grid: Array<Array<HTMLElement | undefined>>; primary: Set<string> } | null {
+  const grid: Array<Array<HTMLElement | undefined>> = [];
+  const primary = new Set<string>();
+  let placedCells = 0;
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    const currentRow = grid[rowIndex] ??= [];
+    let colIndex = 0;
+    for (const cell of Array.from(rows[rowIndex]!.children).filter(
+      (child): child is HTMLElement => child.tagName === "TD" || child.tagName === "TH",
+    )) {
+      while (currentRow[colIndex]) colIndex++;
+      const rowSpan = clampSpan(cell.getAttribute("rowspan"));
+      const colSpan = clampSpan(cell.getAttribute("colspan"));
+      primary.add(`${rowIndex}:${colIndex}`);
+      placedCells += rowSpan * colSpan;
+      if (placedCells > MAX_TABLE_GRID_CELLS) return null;
+      for (let r = 0; r < rowSpan; r++) {
+        const targetRow = grid[rowIndex + r] ??= [];
+        for (let c = 0; c < colSpan; c++) targetRow[colIndex + c] ??= cell;
+      }
+      colIndex += colSpan;
+    }
+  }
+  return { grid, primary };
 }
 
 /**
@@ -68,27 +96,12 @@ export function normalizeTablesHtml(html: string, url = "https://lume.invalid/")
     if (rows.length === 0) continue;
     for (const cell of Array.from(table.querySelectorAll("td,th"))) normalizeCell(cell as HTMLElement);
 
-    const grid: Array<Array<HTMLElement | undefined>> = [];
-    const primary = new Set<string>();
-    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-      const currentRow = grid[rowIndex] ??= [];
-      let colIndex = 0;
-      for (const cell of Array.from(rows[rowIndex]!.children).filter(
-        (child): child is HTMLElement => child.tagName === "TD" || child.tagName === "TH",
-      )) {
-        while (currentRow[colIndex]) colIndex++;
-        const rowSpan = clampSpan(cell.getAttribute("rowspan"));
-        const colSpan = clampSpan(cell.getAttribute("colspan"));
-        primary.add(`${rowIndex}:${colIndex}`);
-        for (let r = 0; r < rowSpan; r++) {
-          const targetRow = grid[rowIndex + r] ??= [];
-          for (let c = 0; c < colSpan; c++) targetRow[colIndex + c] ??= cell;
-        }
-        colIndex += colSpan;
-      }
-    }
+    const expanded = buildTableGrid(rows as HTMLElement[]);
+    if (!expanded) continue;
+    const { grid, primary } = expanded;
 
-    const width = Math.max(...grid.map(row => row.length));
+    let width = 0;
+    for (const row of grid) if (row.length > width) width = row.length;
     const normalizedRows = grid.map((row, rowIndex) => {
       const tr = doc.createElement("tr");
       for (let colIndex = 0; colIndex < width; colIndex++) {

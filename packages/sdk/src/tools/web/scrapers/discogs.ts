@@ -257,7 +257,7 @@ export const handleDiscogs: SpecialHandler = async (
 ): Promise<RenderResult | null> => {
 	try {
 		const parsed = new URL(url);
-		if (!parsed.hostname.includes("discogs.com")) return null;
+		if (parsed.hostname.replace(/^www\./, "") !== "discogs.com") return null;
 
 		// Match release or master URLs
 		// Patterns: /release/{id}, /master/{id}

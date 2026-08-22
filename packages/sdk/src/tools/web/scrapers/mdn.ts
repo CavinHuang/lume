@@ -112,8 +112,8 @@ async function convertMDNBody(sections: MDNSection[]): Promise<string> {
 export const handleMDN: SpecialHandler = async (url: string, timeout: number, signal?: AbortSignal) => {
 	const urlObj = new URL(url);
 
-	// Only handle developer.mozilla.org
-	if (!urlObj.hostname.includes("developer.mozilla.org")) {
+	// Only handle developer.mozilla.org (exact host, not substring)
+	if (urlObj.hostname.replace(/^www\./, "") !== "developer.mozilla.org") {
 		return null;
 	}
 
