@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getConnectionCredentialsPath } from "../infra/config-paths";
+import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import type { OAuthCredential } from "@earendil-works/pi-ai";
 
 interface ConnectionCredentialRecord {
@@ -73,11 +74,15 @@ function updateRecord(
   connectionId: string,
   update: (current: ConnectionCredentialRecord) => ConnectionCredentialRecord | undefined,
 ): void {
-  const store = readStore();
-  const next = update(store.credentials[connectionId] ?? {});
-  if (next && Object.keys(next).length > 0) store.credentials[connectionId] = next;
-  else delete store.credentials[connectionId];
-  writeStore(store);
+  // 读改写全程持锁：并发更新（如 OAuth 刷新与另一连接 setApiKey）无锁时整文件
+  // 互相覆盖、丢一侧凭据——同仓 im-config/channel-manager 均已持锁，唯此处曾漏（#405）
+  withIndexMutationLock(`${getConnectionCredentialsPath()}.lock`, () => {
+    const store = readStore();
+    const next = update(store.credentials[connectionId] ?? {});
+    if (next && Object.keys(next).length > 0) store.credentials[connectionId] = next;
+    else delete store.credentials[connectionId];
+    writeStore(store);
+  });
 }
 
 export function hasConnectionApiKey(connectionId: string): boolean {

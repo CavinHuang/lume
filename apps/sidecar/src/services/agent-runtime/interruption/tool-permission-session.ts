@@ -145,6 +145,11 @@ export function waitForToolPermissionDecision(
 export function submitToolPermissionDecision(input: AgentToolPermissionResponseInput): boolean {
   const shouldBypassThread = input.threadPermissionMode === "bypassPermissions" && input.decision !== "deny";
   const pending = pendingToolPermissionResolvers.get(input.requestId);
+  // 归属校验：requestId 仅在绑定线程与桌面端披露，但 IM `/approve` 用审批者
+  // 自己 peer 的 binding.threadId 提交——不校验则知道 requestId 即可跨线程批准（#405）
+  if (pending && pending.threadId !== input.threadId) {
+    throw new Error("该审批请求不属于当前线程，请在发起请求的会话中处理");
+  }
   if (!pending) {
     const persisted = findPersistedToolPermissionRequest(input.threadId, input.requestId);
     if (input.decision === "allow_always" && persisted?.canAllowAlways === false) {
