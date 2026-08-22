@@ -315,11 +315,20 @@ export function prepareCompaction(
     ? messages[protectedMessageIndex]
     : undefined
 
+  // The protected message is re-inserted verbatim after the summary; drop it
+  // from the serialized ranges so it is not summarized (and duplicated) too.
+  const inSummarizedRange = (message: NormalizedMessageParam[]): NormalizedMessageParam[] =>
+    protectedUserMessage
+      ? message.filter((item) => item !== protectedUserMessage)
+      : message
+
   return {
-    messagesToSummarize: messages.slice(boundaryStart, historyEnd),
-    turnPrefixMessages: cutPoint.isSplitTurn
-      ? messages.slice(cutPoint.turnStartIndex, cutPoint.firstKeptIndex)
-      : [],
+    messagesToSummarize: inSummarizedRange(messages.slice(boundaryStart, historyEnd)),
+    turnPrefixMessages: inSummarizedRange(
+      cutPoint.isSplitTurn
+        ? messages.slice(cutPoint.turnStartIndex, cutPoint.firstKeptIndex)
+        : [],
+    ),
     retainedTail: messages.slice(cutPoint.firstKeptIndex),
     previousSummary,
     isSplitTurn: cutPoint.isSplitTurn,

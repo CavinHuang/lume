@@ -232,6 +232,61 @@ describe("context compaction", () => {
     expect(result.compactedMessages).toContain(messages[4]);
     expect(JSON.stringify(result.compactedMessages)).not.toContain("x".repeat(5_000));
   });
+
+  test("drops the protected user message from both summarized ranges (#365)", () => {
+    const messages = [
+      { role: "user", content: "PROTECTED_REQUEST" },
+      { role: "assistant", content: [{ type: "tool_use", id: "t-1", name: "Grep", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t-1", content: "r".repeat(8_000) }] },
+      { role: "user", content: "recent question" },
+      { role: "assistant", content: [{ type: "tool_use", id: "t-2", name: "Read", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t-2", content: "current" }] },
+    ] as any[];
+
+    const preparation = prepareCompaction(messages, {
+      keepRecentTokens: 50,
+      protectedMessageIndex: 0,
+    });
+
+    expect(preparation).toBeDefined();
+    expect(preparation!.isSplitTurn).toBeFalse();
+    expect(preparation!.protectedUserMessage).toBe(messages[0]);
+    // The message is kept verbatim in the output, so summarizing it too would
+    // duplicate it; it must not appear in either serialized range.
+    expect(preparation!.messagesToSummarize).not.toContain(messages[0]);
+    expect(preparation!.turnPrefixMessages).not.toContain(messages[0]);
+    expect(preparation!.retainedTail[0]).toBe(messages[3]);
+  });
+
+  test("inserts the protected request exactly once after a split-turn summary (#365)", async () => {
+    const MARKER = "PROTECTED_REQUEST_MARKER";
+    const { provider, requests } = providerWithSummary(VALID_TURN_PREFIX_SUMMARY);
+    const messages = [
+      { role: "user", content: `${MARKER} plus background `.repeat(500) },
+      { role: "assistant", content: [{ type: "tool_use", id: "g-1", name: "Grep", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "g-1", content: "x".repeat(60_000) }] },
+      { role: "assistant", content: [{ type: "tool_use", id: "g-2", name: "Read", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "g-2", content: "current" }] },
+    ] as any[];
+
+    const result = await compactConversation(
+      provider,
+      "test-model",
+      messages,
+      createAutoCompactState(),
+      { keepRecentTokens: 50, trigger: "manual", protectedMessageIndex: 0 },
+    );
+
+    expect(result.compacted).toBeTrue();
+    expect(result.compactedMessages[1]).toBe(messages[0]);
+    // The verbatim copy survives, but the original text must not also be
+    // baked into the generated summary.
+    expect(JSON.stringify(result.compactedMessages[0])).not.toContain(MARKER);
+    const prefixRequest = requests.find((request: any) =>
+      String(request.messages[0].content).includes("PREFIX of a turn"));
+    expect(prefixRequest).toBeDefined();
+    expect(prefixRequest.messages[0].content).not.toContain(MARKER);
+  });
 });
 
 describe("microCompactMessages (#364)", () => {
