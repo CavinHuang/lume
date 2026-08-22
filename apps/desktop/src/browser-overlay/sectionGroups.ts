@@ -5,7 +5,7 @@
 //   - rowGap / columnGap / gap → flex-spacing
 //   - 其他 → declaration
 // 保持输入顺序，已处理 property 不重复（首次出现决定归属）。
-import type { AgentBrowserDesignDeclaration } from '../../../../packages/shared/src/types/agent'
+import type { AgentBrowserDesignDeclaration } from '@lume/shared'
 
 export type SectionGroup =
   | { kind: 'dimensions'; width?: AgentBrowserDesignDeclaration; height?: AgentBrowserDesignDeclaration }

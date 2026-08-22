@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
-import type { BrowserTabDescriptor, BrowserWorkspaceDescriptor } from "../../../packages/shared/src/types/browser-runtime"
+import type { BrowserTabDescriptor, BrowserWorkspaceDescriptor } from '@lume/shared'
 
 type PersistedBrowserTab = Pick<BrowserTabDescriptor,
   "tabId" | "ownerThreadId" | "profileKind" | "url" | "title" | "faviconUrl" | "navigationEntries" |

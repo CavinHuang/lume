@@ -3,7 +3,7 @@
 // marginTop/paddingTop 等），而非 Codex 原版的 kebab-case。
 import { describe, test, expect } from 'bun:test'
 import { deriveSectionGroups } from './sectionGroups'
-import type { AgentBrowserDesignDeclaration } from '../../../../packages/shared/src/types/agent'
+import type { AgentBrowserDesignDeclaration } from '@lume/shared'
 
 const d = (property: string, value = 'v', previousValue = 'p'): AgentBrowserDesignDeclaration => ({ property, value, previousValue })
 

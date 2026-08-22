@@ -1,4 +1,4 @@
-import type { BrowserRequestContext } from "../../../packages/shared/src/types/browser-runtime"
+import type { BrowserRequestContext } from '@lume/shared'
 
 export type BrowserSessionKind = "shared" | "agent-task" | "advanced-cdp"
 

@@ -3,7 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { NativeAgentIslandEvent, NativeAgentIslandSnapshot } from '../../../packages/shared/src/types/agent-island'
+import type { NativeAgentIslandEvent, NativeAgentIslandSnapshot } from '@lume/shared'
 
 const PROTOCOL = 1
 const READY_TIMEOUT_MS = 4_000
