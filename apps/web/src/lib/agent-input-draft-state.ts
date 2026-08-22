@@ -58,3 +58,21 @@ export function isEmptyDraft(json: AgentInputDraftJSON | undefined): boolean {
   if (!json) return true
   return extractText(json).trim().length === 0
 }
+
+/**
+ * 迁移净化：把旧版本落盘的 linkConnectionMention 节点降级为纯文本（@displayText）。
+ * tiptap 的 setContent 遇到 schema 未注册的节点会在内部吞掉 RangeError 并把整篇
+ * 文档替换为空（errorOnInvalidContent 默认 false），用户草稿会整体丢失——任何把
+ * 持久化 JSON 喂给 setContent 的路径都必须先过这道净化。
+ */
+export function sanitizeDraftJSON(json: AgentInputDraftJSON): AgentInputDraftJSON | null {
+  if (json.type === 'linkConnectionMention') {
+    const displayText = typeof json.attrs?.displayText === 'string' ? json.attrs.displayText.trim() : ''
+    return displayText ? { type: 'text', text: `@${displayText}` } : null
+  }
+  if (!Array.isArray(json.content)) return json
+  const content = json.content
+    .map(sanitizeDraftJSON)
+    .filter((node): node is AgentInputDraftJSON => node !== null)
+  return { ...json, content }
+}

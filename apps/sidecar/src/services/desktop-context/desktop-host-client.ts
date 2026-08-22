@@ -56,7 +56,13 @@ export class DesktopHostRpcClient {
   }
 
   start(): Promise<void> {
-    this.#startPromise ??= this.#start();
+    this.#startPromise ??= this.#start().catch((error) => {
+      // 首连失败不得永久缓存 rejected promise：close/onDisconnect 在此之前
+      // 根本未接线，毒化的 #startPromise 会让此后所有 invoke 永远
+      // unavailable 直到 sidecar 重启。置空允许下次调用重试（#407）。
+      this.#startPromise = null;
+      throw error;
+    });
     return this.#startPromise;
   }
 
