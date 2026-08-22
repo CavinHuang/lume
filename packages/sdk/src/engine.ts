@@ -963,13 +963,6 @@ export class QueryEngine {
       return
     }
 
-    yield {
-      type: 'system',
-      subtype: 'session_state_changed',
-      state: 'running',
-      session_id: this.sessionId,
-    }
-
     if (this.isManualCompactPrompt(prompt)) {
       const compacted = yield* this.runCompaction('manual')
       yield {
@@ -984,12 +977,6 @@ export class QueryEngine {
         cost: this.totalCost,
         ...(!compacted ? { errors: ['Context compaction failed; the original context was preserved.'] } : {}),
       } as SDKMessage
-      yield {
-        type: 'system',
-        subtype: 'session_state_changed',
-        state: 'idle',
-        session_id: this.sessionId,
-      }
       return
     }
 
@@ -1379,12 +1366,6 @@ export class QueryEngine {
           cost: this.totalCost,
           errors: [err?.message || 'Unknown provider error'],
         }
-        yield {
-          type: 'system',
-          subtype: 'session_state_changed',
-          state: 'idle',
-          session_id: this.sessionId,
-        }
         return
       }
 
@@ -1679,13 +1660,6 @@ export class QueryEngine {
           session_id: this.sessionId,
         }
       }
-    }
-
-    yield {
-      type: 'system',
-      subtype: 'session_state_changed',
-      state: 'idle',
-      session_id: this.sessionId,
     }
   }
 

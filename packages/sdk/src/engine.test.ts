@@ -1312,10 +1312,7 @@ describe("QueryEngine context controller", () => {
     });
 
     const iterator = engine.submitMessage("run");
-    expect((await iterator.next()).value).toMatchObject({
-      type: "system",
-      subtype: "session_state_changed"
-    });
+    // session_state_changed was retired (#413): init is now the first event.
     expect((await iterator.next()).value).toMatchObject({
       type: "system",
       subtype: "init"

@@ -85,7 +85,6 @@ export type SDKMessage =
   | SDKStreamlinedTextMessage
   | SDKStreamlinedToolUseSummaryMessage
   | SDKToolUseSummaryMessage
-  | SDKSessionStateChangedMessage
   | SDKLocalCommandOutputMessage
   | SDKElicitationCompleteMessage
   | SDKRunAbortedMessage
@@ -139,7 +138,7 @@ export interface SDKResultMessage {
     | 'error_max_budget_usd'
     | 'error_max_output_tokens'
     | 'error_max_structured_output_retries'
-    | string
+    | 'error_completion_guard'
   uuid?: string
   session_id?: string
   is_error?: boolean
@@ -651,14 +650,6 @@ export interface SDKToolUseSummaryMessage {
   type: 'tool_use_summary'
   summary: string
   preceding_tool_use_ids: string[]
-  uuid?: string
-  session_id: string
-}
-
-export interface SDKSessionStateChangedMessage {
-  type: 'system'
-  subtype: 'session_state_changed'
-  state: 'idle' | 'running' | 'requires_action'
   uuid?: string
   session_id: string
 }

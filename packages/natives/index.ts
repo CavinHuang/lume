@@ -424,7 +424,11 @@ export function assertNativeAvailable(): NativeDiagnostics {
 export function countTokens(input: TokenCountInput): TokenCountResult | null {
   const native = loadNative();
   if (!native) return null;
-  return native.countTokens(input);
+  try {
+    return native.countTokens(input);
+  } catch {
+    return null;
+  }
 }
 
 export function countStringTokens(text: string, model?: string): number {
@@ -457,7 +461,7 @@ export async function nativeGrep(
 export function nativeSearch(
   content: string,
   pattern: string,
-  options?: { ignore_case?: boolean; context?: number; max_count?: number },
+  options?: { ignore_case?: boolean; multiline?: boolean; context?: number; max_count?: number },
 ): NativeGrepMatch[] | null {
   const native = loadNative();
   if (!native) return null;

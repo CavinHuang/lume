@@ -1538,3 +1538,44 @@ describe("Agent lazy context usage estimation (#386)", () => {
     }
   })
 })
+
+describe("Agent queued async events across runs (#413)", () => {
+  const fakeAsyncEvent = () =>
+    ({ type: "system", subtype: "task_notification", session_id: "s" }) as SDKMessage
+
+  test("abandoning a run mid-stream drops pending async events", async () => {
+    const provider = new StaticProvider()
+    const agent = createAgent({ persistSession: false, tools: [], provider })
+
+    let abandoned = false
+    for await (const _event of agent.query("hello")) {
+      if (abandoned) break
+      // An async event lands in the queue while the consumer is still
+      // iterating, then the consumer abandons the generator.
+      ;(agent as any).queuedSdkEvents.push(fakeAsyncEvent())
+      abandoned = true
+    }
+
+    expect((agent as any).queuedSdkEvents).toHaveLength(0)
+    await agent.close()
+  })
+
+  test("completed runs still deliver queued async events", async () => {
+    const provider = new StaticProvider()
+    const agent = createAgent({ persistSession: false, tools: [], provider })
+
+    const seen: SDKMessage[] = []
+    let injected = false
+    for await (const event of agent.query("hello")) {
+      seen.push(event)
+      if (!injected) {
+        ;(agent as any).queuedSdkEvents.push(fakeAsyncEvent())
+        injected = true
+      }
+    }
+
+    expect(seen.some((event) => event.type === "system" && event.subtype === "task_notification")).toBe(true)
+    expect((agent as any).queuedSdkEvents).toHaveLength(0)
+    await agent.close()
+  })
+})

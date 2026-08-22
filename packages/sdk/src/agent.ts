@@ -1010,6 +1010,7 @@ export class Agent {
 
     let persistedSessionEvent: SDKMessage | null = null
     let compactionBoundarySeen = false
+    let runCompleted = false
     try {
       for await (const event of engine.submitMessage(modelFacingPrompt)) {
         if (event.type === 'assistant') {
@@ -1044,7 +1045,14 @@ export class Agent {
           yield queued
         }
       }
+      runCompleted = true
     } finally {
+      if (!runCompleted) {
+        // Consumer abandoned the generator mid-run (break / close): pending
+        // async events can no longer be delivered and must not leak into the
+        // next run's event stream.
+        this.queuedSdkEvents.length = 0
+      }
       // Drop any pending debounced write and wait out one already in flight:
       // the awaited persistCurrentSession below writes the same (or fresher)
       // state. Flushing here instead would launch a concurrent fire-and-forget
@@ -1066,11 +1074,14 @@ export class Agent {
       persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
     }
 
+    // Drain before the final yields: once the consumer stops iterating, the
+    // queue must be empty either way — leftover async events belong to this
+    // dead run, not the next one.
+    const tailQueued = this.drainQueuedSdkEvents()
     if (persistedSessionEvent) {
       yield persistedSessionEvent
     }
-
-    for (const queued of this.drainQueuedSdkEvents()) {
+    for (const queued of tailQueued) {
       yield queued
     }
   }

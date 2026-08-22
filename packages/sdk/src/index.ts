@@ -524,7 +524,6 @@ export type {
   SDKStreamlinedTextMessage,
   SDKStreamlinedToolUseSummaryMessage,
   SDKToolUseSummaryMessage,
-  SDKSessionStateChangedMessage,
   SDKLocalCommandOutputMessage,
   SDKElicitationCompleteMessage,
 
