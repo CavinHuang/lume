@@ -1976,21 +1976,6 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
         throw error
       }
     }
-    case 'desktop_wiki_get_proposal_summary':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-get-proposal-summary', { draftId: payload.draftId })
-    case 'desktop_wiki_apply_draft':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-apply-draft', payload)
-    case 'desktop_wiki_resolve_pending':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-resolve-pending', payload)
-    case 'desktop_wiki_get_undo_summary':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-get-undo-summary', { batchId: payload.batchId })
-    case 'desktop_wiki_undo_batch':
-      requireMainWindowSender(context, command)
-      return sidecarHost.callWikiPrivileged('wiki:privileged-undo-batch', payload)
     case 'desktop_sync_window_behavior': {
       requireMainWindowSender(context, 'desktop_sync_window_behavior')
       if (!mainWindowLifecycle.acceptWindowBehaviorRevision(payload?.generation, payload?.revision)) return null
@@ -2474,7 +2459,7 @@ function createSidecarHost({ onNotification }) {
   let nextId = 1
   let pending = new Map()
   let stopRequested = false
-  let wikiPrivilegedCredential = null
+  let privilegedCredential = null
 
   function rejectAllPending(error) {
     for (const entry of pending.values()) {
@@ -2605,7 +2590,7 @@ function createSidecarHost({ onNotification }) {
         if (child === runningChild) {
           child = null
           started = null
-          wikiPrivilegedCredential = null
+          privilegedCredential = null
         }
         runningChild.kill()
         settleStart(error)
@@ -2625,14 +2610,14 @@ function createSidecarHost({ onNotification }) {
         if (payload && payload.method === SIDECAR_READY_METHOD && payload.id === undefined) {
           didReady = true
           try {
-            wikiPrivilegedCredential = randomBytes(32).toString('base64url')
+            privilegedCredential = randomBytes(32).toString('base64url')
             runningChild.postMessage(JSON.stringify({
-              method: 'system.wiki-privileged-credential',
-              params: { credential: wikiPrivilegedCredential },
+              method: 'system.privileged-credential',
+              params: { credential: privilegedCredential },
             }))
           } catch (error) {
-            wikiPrivilegedCredential = null
-            writeMainLog('error', 'desktop.wiki.security', 'credential.delivery_failed', 'failed to initialize Wiki privileged channel', {
+            privilegedCredential = null
+            writeMainLog('error', 'desktop.sidecar.security', 'credential.delivery_failed', 'failed to initialize privileged channel', {
               data: { error },
             })
           }
@@ -2861,7 +2846,7 @@ function createSidecarHost({ onNotification }) {
         if (child === runningChild) {
           child = null
           started = null
-          wikiPrivilegedCredential = null
+          privilegedCredential = null
         }
       })
     })
@@ -2914,19 +2899,13 @@ function createSidecarHost({ onNotification }) {
     })
   }
 
-  async function callWikiPrivileged(method, request) {
-    await start()
-    if (!wikiPrivilegedCredential) throw new Error('Wiki privileged channel unavailable')
-    return call(method, { credential: wikiPrivilegedCredential, request })
-  }
-
   async function callPluginPackagePrivileged(method, request) {
     await start()
-    if (!wikiPrivilegedCredential) throw new Error('Plugin package privileged channel unavailable')
+    if (!privilegedCredential) throw new Error('Plugin package privileged channel unavailable')
     if (typeof method !== 'string' || !method.startsWith('plugin-package:privileged-')) {
       throw new Error('Invalid plugin package privileged method')
     }
-    return call(method, { credential: wikiPrivilegedCredential, request })
+    return call(method, { credential: privilegedCredential, request })
   }
 
   async function notifyBrowserSettings(settings) {
@@ -2940,7 +2919,7 @@ function createSidecarHost({ onNotification }) {
     const runningChild = child
     child = null
     started = null
-    wikiPrivilegedCredential = null
+    privilegedCredential = null
     rejectAllPending(new Error('sidecar stopped'))
     await new Promise<void>((resolveStop) => {
       const timeout = setTimeout(resolveStop, 3_000)
@@ -2958,7 +2937,6 @@ function createSidecarHost({ onNotification }) {
   return {
     start,
     call,
-    callWikiPrivileged,
     callPluginPackagePrivileged,
     notifyBrowserSettings,
     stop,
