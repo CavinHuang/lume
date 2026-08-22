@@ -277,7 +277,7 @@ export class LumeRunner {
       } : {})
     } satisfies AgentRuntimeRunResult;
     if (resultWithCoding.status === "turn_limited") {
-      this.observer.recordTurnLimited(resultWithCoding.errorMessage);
+      this.observer.recordTurnLimited(resultWithCoding.errorMessage, resultWithCoding.terminationReason);
       await this.observer.flush();
       // T7a:run.turn_limited 已迁事件总线(run.end{stopReason:'max_turns'}),旧路 emit 删除
       return this.finalizeResult(resultWithCoding);
