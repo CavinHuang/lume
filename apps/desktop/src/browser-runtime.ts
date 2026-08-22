@@ -44,6 +44,10 @@ import { BrowserReferenceGrantStore } from "./browser-reference-grants"
 import { BrowserAnnotationManager } from "./browser-annotation-manager"
 import { buildBrowserSemanticTree, type BrowserSemanticLine, type BrowserSemanticRef } from "./browser-semantic-snapshot"
 import { normalizeBrowserAgentScriptResult, prepareBrowserAgentScript, type BrowserAgentScriptResult } from "./browser-agent-script"
+import { dispatchBrowserClick, dispatchBrowserKey, dispatchBrowserText, focusBrowserPoint, type BrowserCdpCommandSender } from "./browser-cdp-input"
+import { BrowserActionQueue } from "./browser-action-queue"
+import { BrowserInputLedger } from "./browser-input-ledger"
+import { detectBrowserActionEffect, type BrowserActionEffect, type BrowserActionEffectSnapshot } from "./browser-action-effect"
 
 type BrowserEvent = { method: string; params: Record<string, unknown> }
 type BrowserRuntimeOptions = {
@@ -237,6 +241,8 @@ export class BrowserRuntime {
   private readonly annotations: BrowserAnnotationManager
   private readonly semanticRefSessions = new Map<string, BrowserSemanticRefSession>()
   private readonly semanticSnapshotCursors = new Map<string, BrowserSemanticSnapshotCursor>()
+  private readonly actionQueue = new BrowserActionQueue()
+  private readonly inputLedger = new BrowserInputLedger()
   private annotationSweepTimer: ReturnType<typeof setTimeout> | null = null
   private annotationSweepInterval: ReturnType<typeof setInterval> | null = null
   private agentPluginEnabled = false
@@ -248,7 +254,7 @@ export class BrowserRuntime {
   private readonly sessionNames = new Map<string, string>()
   private readonly claimSnapshots = new Map<string, { tabId: string; providerTabId?: string; title: string; url: string; generation: number }>()
   private readonly downloadWaiters = new Map<string, BrowserDownloadWaiter[]>()
-  private readonly downloadResults = new Map<string, { browserSessionId: string; browserTurnId: string; state: "pending" | "completed" | "failed" | "cancelled" | "interrupted"; fileRef?: string; waiters: Array<(value: string | null) => void> }>()
+  private readonly downloadResults = new Map<string, { browserSessionId: string; browserTurnId: string; tabId: string; state: "pending" | "completed" | "failed" | "cancelled" | "interrupted"; fileRef?: string; waiters: Array<(value: string | null) => void> }>()
   private readonly fileChooserWaiters = new Map<string, BrowserFileChooserWaiter[]>()
   private readonly fileChoosers = new Map<string, BrowserFileChooserEntry>()
   private readonly pageAssetInventories = new Map<string, BrowserPageAssetInventory>()
@@ -575,6 +581,102 @@ export class BrowserRuntime {
 
   resetAgentCursor(): void { this.hideAgentCursor() }
 
+  // 用户接管是会话级暂停：同 session 任意 tab 处于 paused_by_user 时，
+  // Agent 不得开新 Tab 或认领其他 Tab 绕开暂停继续操作。
+  private hasPausedTakeoverTab(browserSessionId: string): boolean {
+    for (const tab of this.tabs.values()) {
+      if (tab.agentLease?.browserSessionId === browserSessionId && tab.agentControlState === "paused_by_user") return true
+    }
+    return false
+  }
+
+  private pauseAgentControl(tab: BrowserTab): void {
+    if (!tab.agentLease || tab.agentControlState === "paused_by_user") return
+    const lease = tab.agentLease
+    tab.agentControlState = "paused_by_user"
+    tab.handoff = { browserSessionId: lease.browserSessionId, status: "handoff", reason: "user_takeover" }
+    tab.generation += 1
+    tab.inputSequence += 1
+    tab.agentLease = { ...lease, generation: tab.generation }
+    this.inputLedger.clear(tab.tabId)
+    this.actionQueue.cancel(`agent:${lease.browserSessionId}`)
+    this.hideAgentCursor()
+    this.options.emit({ method: "browser:user-takeover", params: { tabId: tab.tabId, generation: tab.generation } })
+    this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+    this.rememberTab(tab)
+  }
+
+  private resumeAgentControl(tabId: string, context: BrowserRequestContext): BrowserTabDescriptor {
+    if (context.actor !== "user") throw browserError("action_denied")
+    const tab = this.tabs.get(tabId)
+    if (!tab || tab.agentControlState !== "paused_by_user" || !tab.agentLease) throw browserError("invalid_browser_request")
+    tab.agentControlState = "active"
+    if (tab.handoff?.reason === "user_takeover") tab.handoff = undefined
+    tab.generation += 1
+    tab.inputSequence += 1
+    tab.agentLease = { ...tab.agentLease, generation: tab.generation }
+    this.inputLedger.clear(tab.tabId)
+    this.options.emit({ method: "browser:agent-control-resumed", params: { tabId: tab.tabId, generation: tab.generation } })
+    this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+    this.rememberTab(tab)
+    return publicTab(tab)
+  }
+
+  private expectedAgentInputSender(tab: BrowserTab, sender: BrowserCdpCommandSender): BrowserCdpCommandSender {
+    if (!tab.agentDispatching) return sender
+    return {
+      sendCommand: async (method, params = {}) => {
+        if (agentControlPaused(tab)) throw browserError("user_takeover_required")
+        this.inputLedger.expectCommand(tab.tabId, method, params)
+        const result = await sender.sendCommand(method, params)
+        if (agentControlPaused(tab)) throw browserError("user_takeover_required")
+        return result
+      },
+    }
+  }
+
+  private async captureActionEffect(tab: BrowserTab): Promise<BrowserActionEffectSnapshot> {
+    const domRevision = await this.browserDomRevision(tab)
+    return {
+      ...(tab.dialogInfo?.id ? { dialogId: tab.dialogInfo.id } : {}),
+      domRevision,
+      downloadIds: [...this.downloadResults].flatMap(([id, result]) => result.tabId === tab.tabId ? [id] : []),
+      generation: tab.generation,
+      lifecycle: tab.lifecycle,
+      popupCount: [...this.popupTokens.values()].filter((popup) => popup.sourceTabId === tab.tabId).length,
+      tabIds: [...this.tabs.values()].flatMap((candidate) => candidate.openerTabId === tab.tabId ? [candidate.tabId] : []),
+      url: tab.url,
+    }
+  }
+
+  private async waitForActionEffect(tab: BrowserTab, before: BrowserActionEffectSnapshot, agent: boolean): Promise<BrowserActionEffect> {
+    const deadline = Date.now() + 300
+    do {
+      if (agent && agentControlPaused(tab)) throw browserError("user_takeover_required")
+      await delay(50)
+      const effect = detectBrowserActionEffect(before, await this.captureActionEffect(tab))
+      if (effect) return effect
+    } while (Date.now() < deadline)
+    return { kind: "no_detectable_change" }
+  }
+
+  private async browserDomRevision(tab: BrowserTab): Promise<number> {
+    try {
+      const value = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(() => {
+        const key = "__lumeBrowserActionEffect";
+        const root = globalThis;
+        if (!root[key]) {
+          const state = { revision: 0 };
+          const observer = new MutationObserver(() => { state.revision += 1; });
+          observer.observe(document, { attributes: true, characterData: true, childList: true, subtree: true });
+          root[key] = state;
+        }
+        return root[key].revision;
+      })()` }], true)
+      return Number.isInteger(value) ? Number(value) : -1
+    } catch { return -1 }
+  }
+
   async dispatch(request: BrowserActionRequest): Promise<unknown> {
     const context = validateContext(request.context)
     const startedAt = Date.now()
@@ -674,7 +776,10 @@ export class BrowserRuntime {
       return { ok: true }
     }
     if (method.startsWith("workspace:")) return this.dispatchWorkspace(method, params, context)
-    if (method === "ensure") return this.ensureTab(String(params.tabId ?? randomUUID()), context, params)
+    if (method === "ensure") {
+      if (context.actor === "agent" && this.hasPausedTakeoverTab(context.browserSessionId)) throw browserError("user_takeover_required")
+      return this.ensureTab(String(params.tabId ?? randomUUID()), context, params)
+    }
     if (method === "mount:prepare") return this.prepareGuestMount(String(params.tabId ?? context.tabId ?? ""), context)
     if (method === "mount:release") return this.releaseGuestMount(String(params.tabId ?? context.tabId ?? ""), context, String(params.mountToken ?? ""))
     if (method === "get") return publicTab(this.requireTab(String(params.tabId ?? context.tabId ?? ""), context))
@@ -688,8 +793,18 @@ export class BrowserRuntime {
     if (method === "finalize") return this.finalizeTabs(context, params)
     if (method === "share") return this.shareTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (method === "unshare") return this.unshareTab(String(params.tabId ?? context.tabId ?? ""), context)
-    if (method === "claim") return this.claimTab(String(params.tabId ?? context.tabId ?? ""), context, params)
-    if (method === "close") return this.closeTab(String(params.tabId ?? context.tabId ?? ""), context)
+    if (method === "claim") {
+      if (context.actor === "agent" && this.hasPausedTakeoverTab(context.browserSessionId)) throw browserError("user_takeover_required")
+      return this.claimTab(String(params.tabId ?? context.tabId ?? ""), context, params)
+    }
+    if (method === "close") {
+      // 被用户接管的 Tab 所有权已转移，Agent 不得关闭用户正在查看的页面
+      if (context.actor === "agent") {
+        const closeTarget = this.tabs.get(String(params.tabId ?? context.tabId ?? ""))
+        if (closeTarget?.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
+      }
+      return this.closeTab(String(params.tabId ?? context.tabId ?? ""), context)
+    }
     if (method === "bounds") return this.updateBounds(String(params.tabId ?? context.tabId ?? ""), params)
     if (method === "visible") return this.setVisible(String(params.tabId ?? context.tabId ?? ""), params.visible === true)
     if (method === "move-owner") {
@@ -773,8 +888,11 @@ export class BrowserRuntime {
       if (context.actor !== "user") throw browserError("action_denied")
       return this.annotations.migrate(params.sessions)
     }
+    if (method === "agentControl:resume") return this.resumeAgentControl(String(params.tabId ?? context.tabId ?? ""), context)
 
     const tab = this.requireTab(String(params.tabId ?? context.tabId ?? ""), context)
+    if (context.actor === "agent" && tab.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
+    if (context.actor === "user" && tab.agentLease && MUTATING_METHODS.has(method)) this.pauseAgentControl(tab)
     if (tab.dialogOpen && method !== "dialog:handle" && method !== "dialog:get") throw browserError("dialog_blocking")
     if ((method === "reload" || method === "hardReload") && (!tab.webContents || tab.webContents.isDestroyed() || tab.guestState === "gone")) {
       return this.recoverGuest(tab)
@@ -782,38 +900,55 @@ export class BrowserRuntime {
     if ((method === "contactFill" || method === "secretFill" || method === "upload" || method === "filechooser:setFiles" || method === "content:export" || method === "pageAssets:bundle" || method === "cdp" || method === "agentScript:evaluate" || method === "clipboard:read" || method === "clipboard:readText" || method === "clipboard:write" || method === "clipboard:writeText") && params.__policyRequired !== true) throw browserError("confirmation_unavailable")
     if (params.__policyRequired === true) this.consumePolicyToken(String(params.__policyConfirmation ?? ""), String(params.__policyBindingHash ?? ""))
     if (MUTATING_METHODS.has(method)) {
-      const operationId = request.idempotencyKey || request.requestId || randomUUID()
-      this.journal.write({
-        operationId,
-        method,
-        tabGeneration: tab.generation,
-        parameterHash: keyedParameterHash(method, params),
-        status: "prepared",
-        timestamp: Date.now(),
+      const queuedGeneration = tab.generation
+      const queueKey = context.actor === "agent"
+        ? `agent:${context.browserSessionId}`
+        : `user:${tab.tabId}`
+      return this.actionQueue.run(queueKey, async () => {
+        if (this.tabs.get(tab.tabId) !== tab) throw browserError("tab_not_found")
+        if (tab.generation !== queuedGeneration) throw browserError("stale_target")
+        if (context.actor === "agent" && tab.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
+        if (context.actor === "agent" && !canAgentUse(tab, context.browserSessionId, context.browserTurnId, tab.generation)) throw browserError("action_denied")
+        const operationId = request.idempotencyKey || request.requestId || randomUUID()
+        this.journal.write({
+          operationId,
+          method,
+          tabGeneration: tab.generation,
+          parameterHash: keyedParameterHash(method, params),
+          status: "prepared",
+          timestamp: Date.now(),
+        })
+        if (context.actor === "agent") tab.agentDispatching = true
+        try {
+          const result = await this.dispatchAction(tab, method, params, context)
+          if (context.actor === "agent" && tab.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
+          this.journal.write({
+            operationId,
+            method,
+            tabGeneration: tab.generation,
+            parameterHash: keyedParameterHash(method, params),
+            status: "committed",
+            timestamp: Date.now(),
+          })
+          this.journal.complete(operationId)
+          return result
+        } catch (error) {
+          this.journal.write({
+            operationId,
+            method,
+            tabGeneration: tab.generation,
+            parameterHash: keyedParameterHash(method, params),
+            status: "executed_unknown",
+            timestamp: Date.now(),
+          })
+          throw error
+        } finally {
+          if (context.actor === "agent") {
+            tab.agentDispatching = false
+            this.inputLedger.clear(tab.tabId)
+          }
+        }
       })
-      try {
-        const result = await this.dispatchAction(tab, method, params, context)
-        this.journal.write({
-          operationId,
-          method,
-          tabGeneration: tab.generation,
-          parameterHash: keyedParameterHash(method, params),
-          status: "committed",
-          timestamp: Date.now(),
-        })
-        this.journal.complete(operationId)
-        return result
-      } catch (error) {
-        this.journal.write({
-          operationId,
-          method,
-          tabGeneration: tab.generation,
-          parameterHash: keyedParameterHash(method, params),
-          status: "executed_unknown",
-          timestamp: Date.now(),
-        })
-        throw error
-      }
     }
     if (!GUEST_OPTIONAL_METHODS.has(method)) await this.waitForGuest(tab)
     if (method === "snapshot") return this.snapshot(tab)
@@ -854,7 +989,12 @@ export class BrowserRuntime {
     if (method === "clipboard:write") return this.writeBrowserClipboard(params)
     if (method === "dom:visible") return this.visibleDom(tab)
     if (method === "dom:click" || method === "dom:doubleClick" || method === "dom:scroll") return this.dispatchDomAction(tab, method, params)
-    if (method === "dom:type") { await this.applyTextToActive(tab, String(params.text ?? "")); return {} }
+    if (method === "dom:type") {
+      const text = String(params.text ?? "")
+      if (text.length > 100_000) throw browserError("invalid_browser_request")
+      await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), text, { platform: process.platform, replace: false }))
+      return {}
+    }
     if (method === "dom:keypress") {
       const keys = Array.isArray(params.keys) ? params.keys.filter((value): value is string => typeof value === "string") : []
       for (const key of keys.slice(0, 100)) await this.dispatchKey(tab, key)
@@ -983,7 +1123,14 @@ export class BrowserRuntime {
     }
     if (method === "tweaks:apply") return this.applyPageTweaks(tab, params, context)
     if (method === "tweaks:reset") return this.resetPageTweaks(tab, params, context)
-    if (method === "cdp") return this.cdp(tab, params)
+    if (method === "cdp") {
+      // Agent 的 CDP 调用与语义动作共用同 session 单写者队列，
+      // 且输入类命令须登记 inputLedger，否则会被误判为真实用户输入触发接管。
+      if (context.actor === "agent") {
+        return this.actionQueue.run(`agent:${context.browserSessionId}`, () => this.cdp(tab, params, true))
+      }
+      return this.cdp(tab, params)
+    }
     if (method === "url") return tab.url
     if (method === "title") return tab.title
     throw browserError("unsupported")
@@ -1085,6 +1232,7 @@ export class BrowserRuntime {
       if (context.actor === "agent") {
         if (!existing.agentLease && existing.shareable && existing.partition === "persist:lume-browser") {
           existing.agentLease = { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, generation: existing.generation }
+          existing.agentControlState = "active"
         }
         if (!existing.agentLease || existing.agentLease.browserSessionId !== context.browserSessionId || existing.agentLease.browserTurnId !== context.browserTurnId) throw browserError("action_denied")
       }
@@ -1127,7 +1275,7 @@ export class BrowserRuntime {
       viewportRevision: 0,
       webContents: null,
       partition,
-      ...(agentOwned ? { context, agentLease: { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, generation: 1 } } : {}),
+      ...(agentOwned ? { context, agentLease: { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, generation: 1 }, agentControlState: "active" as const } : {}),
       inputSequence: 0,
       navigationStack: Array.isArray(params.navigationEntries)
         ? params.navigationEntries.filter((value): value is string => typeof value === "string" && /^https?:/i.test(value)).map(stripUrl).filter(Boolean).slice(-200)
@@ -1250,11 +1398,10 @@ export class BrowserRuntime {
       tab.url = stripUrl(url)
       tab.securityState = securityStateForUrl(tab.url)
       tab.lastOpenedAt = new Date().toISOString()
-      tab.generation += 1
-      tab.inputSequence += 1
+      // in-page 导航（pushState/hash）不替换文档：backendNodeId 与语义引用在同一文档内保持有效，
+      // 不递增 generation 以免误杀仍可用的 ref（真实失效由命中测试兜底）。
       tab.domNodes = undefined
-      if (tab.context?.actor === "agent") tab.agentLease = { browserSessionId: tab.context.browserSessionId, browserTurnId: tab.context.browserTurnId, generation: tab.generation }
-      else tab.agentLease = undefined
+      if (tab.context?.actor !== "agent") tab.agentLease = undefined
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
       this.annotations.onGuestReady(tab)
       this.rememberTab(tab)
@@ -1303,6 +1450,7 @@ export class BrowserRuntime {
       this.enforceBackgroundLimit()
     })
     wc.on("before-input-event", (event, input) => {
+      if (this.inputLedger.consumeKey(tab.tabId, input)) return
       const key = input.key.toLowerCase()
       const modifier = input.control || input.meta
       const action = modifier && key === "l"
@@ -1312,19 +1460,20 @@ export class BrowserRuntime {
           : (modifier && key === "r") || key === "f5"
             ? input.shift ? "hard-reload" : "reload"
             : undefined
-      if (!tab.agentDispatching) {
-        tab.inputSequence += 1
-        if (!action && input.type === "keyDown" && !input.isAutoRepeat) tab.lastUserActivationAt = Date.now()
-      }
+      tab.inputSequence += 1
+      if (!action && input.type === "keyDown" && !input.isAutoRepeat) tab.lastUserActivationAt = Date.now()
+      this.pauseAgentControl(tab)
       if (!action) return
       event.preventDefault()
       this.options.emit({ method: "browser:shortcut", params: { tabId: tab.tabId, action } })
     })
     wc.on("before-mouse-event", (_event, mouse) => {
-      if (!tab.agentDispatching) {
-        tab.inputSequence += 1
-        if (mouse.type === "mouseDown" && (mouse.button === "left" || mouse.button === "middle")) tab.lastUserActivationAt = Date.now()
-      }
+      if (this.inputLedger.consumeMouse(tab.tabId, mouse)) return
+      // 滚动与纯指针移动是查看型交互（如用户展开侧边栏观察 Agent 操作），不构成用户接管
+      if (mouse.type !== "mouseDown" && mouse.type !== "mouseUp") return
+      tab.inputSequence += 1
+      if (mouse.type === "mouseDown" && (mouse.button === "left" || mouse.button === "middle")) tab.lastUserActivationAt = Date.now()
+      this.pauseAgentControl(tab)
     })
     wc.on("page-title-updated", (_event, title) => {
       tab.title = title.slice(0, 256)
@@ -1524,6 +1673,7 @@ export class BrowserRuntime {
       this.downloadResults.set(prepared.id, {
         browserSessionId: recentAgent.browserSessionId,
         browserTurnId: recentAgent.browserTurnId,
+        tabId: tab.tabId,
         state: "pending",
         waiters: [],
       })
@@ -1688,61 +1838,79 @@ export class BrowserRuntime {
     if (method === "pageAssets:bundle") return this.bundlePageAssets(tab, params, context)
     if (method === "webmcp:invoke") return invokeWebMcpTool(tab, params)
     if (method === "agentScript:evaluate") return this.evaluateAgentScript(tab, params, context)
-    if (method === "typeActive") { await this.applyTextToActive(tab, String(params.text ?? "")); return { ok: true } }
+    if (method === "typeActive") {
+      const text = String(params.text ?? "")
+      if (text.length > 100_000) throw browserError("invalid_browser_request")
+      await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), text, { platform: process.platform, replace: false }))
+      return { ok: true }
+    }
     if (method === "pressActive") { await this.dispatchKey(tab, String(params.key ?? "Enter")); return { ok: true } }
     if (["click", "doubleClick", "hover", "scroll", "drag", "fill", "type", "press", "select", "check", "uncheck"].includes(method)) {
       if (context.actor === "agent" && !context.capability) throw browserError("action_denied")
       const generation = tab.generation
       const inputSequence = tab.inputSequence
-      if (isBrowserLocator(params.locator)
-        && splitFrameLocator(params.locator)
-        && ["click", "doubleClick", "scroll", "fill", "type", "press", "select", "check", "uncheck"].includes(method)) {
-        if (tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
-        const argument = method === "fill" || method === "type"
-          ? String(params.text ?? "")
-          : method === "press"
-            ? String(params.key ?? "Enter")
-            : method === "select"
-              ? JSON.stringify(Array.isArray(params.value) ? params.value : [String(params.value ?? "")])
-              : undefined
-        const rawFrameAutoWait = params.timeoutMs ?? params.timeout_ms
-        const frameAutoWaitMs = rawFrameAutoWait === 0 ? 0 : (boundedNumber(rawFrameAutoWait, 0, 30_000) || 3_000)
-        await this.runFrameLocatorActionWithAutoWait(tab, generation, inputSequence, params, method as BrowserLocatorQuery, argument, frameAutoWaitMs)
-        return { ok: true, inputSequence: tab.inputSequence }
-      }
       // 显式 timeoutMs:0 = 关闭 auto-wait（boundedNumber 的 || 3_000 会吞掉 0）
       const rawAutoWait = params.timeoutMs ?? params.timeout_ms
       const autoWaitMs = rawAutoWait === 0 ? 0 : (boundedNumber(rawAutoWait, 0, 30_000) || 3_000)
       const target = await this.resolveTargetWithAutoWait(tab, generation, params, autoWaitMs, context)
       if (tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
+      const effectBefore = await this.captureActionEffect(tab)
       tab.inputSequence += 1
-      tab.agentDispatching = true
+      tab.agentDispatching = context.actor === "agent"
       try {
         if (method === "fill" || method === "type") {
           const text = String(params.text ?? "")
           if (text.length > 100_000) throw browserError("invalid_browser_request")
+          if (!target.editable) throw browserError("action_denied")
+          // 语义引用已做命中验证；locator 仅是工具层的兜底定位，用它做值验证会在
+          // 同角色多元素页面上 strict 多匹配，被 executeLocatorQuery 兜底映射成 stale_target。
+          const verifyByLocator = isBrowserLocator(params.locator) && params.semanticRef === undefined
+          const before = verifyByLocator
+            ? String(await this.executeLocatorQuery(tab, params, "editableValue"))
+            : undefined
           await this.dispatchMouse(tab, "click", target)
-          await this.applyText(tab, target, text, method === "fill")
+          await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), text, { platform: process.platform, replace: method === "fill" }))
+          if (verifyByLocator) {
+            const observed = String(await this.executeLocatorQuery(tab, params, "editableValue"))
+            const expected = method === "fill" ? text : `${before ?? ""}${text}`
+            if (observed !== expected) throw browserError("actionability_failed")
+          }
         } else if (method === "press") {
-          await this.dispatchMouse(tab, "hover", target)
-          await this.pressTarget(tab, target, String(params.key ?? "Enter"))
+          await withDebugger(browserContents(tab), async (debuggerRef) => {
+            await focusBrowserPoint(debuggerRef, target)
+            await dispatchBrowserKey(this.expectedAgentInputSender(tab, debuggerRef), String(params.key ?? "Enter"))
+          })
         } else if (method === "select") {
-          await this.dispatchMouse(tab, "click", target)
-          await this.applySelect(tab, params)
+          if (!isBrowserLocator(params.locator)) throw browserError("invalid_browser_request")
+          const values = Array.isArray(params.value) ? params.value : [String(params.value ?? "")]
+          await this.executeLocatorQuery(tab, params, "select", JSON.stringify(values))
+          const observed = String(await this.executeLocatorQuery(tab, params, "inputValue"))
+          if (values.length === 1 && observed !== String(values[0] ?? "")) throw browserError("actionability_failed")
         } else if (method === "check" || method === "uncheck") {
-          await this.dispatchMouse(tab, method === "check" ? "click" : "click", target)
-          await this.applyChecked(tab, params, method === "check")
+          if (!isBrowserLocator(params.locator)) throw browserError("invalid_browser_request")
+          const desired = method === "check"
+          const before = Boolean(await this.executeLocatorQuery(tab, params, "isChecked"))
+          if (before !== desired) await this.dispatchMouse(tab, "click", target)
+          const observed = Boolean(await this.executeLocatorQuery(tab, params, "isChecked"))
+          if (observed !== desired) throw browserError("actionability_failed")
         } else if (method === "scroll") {
           await this.dispatchScroll(tab, target, params)
         } else if (method === "drag") {
           await this.dispatchDrag(tab, target, params)
+        // Electron can drop a second root-session pointer sequence routed into
+        // a child frame. Focus + native Enter preserves browser activation for
+        // semantic buttons and links without falling back to element.click().
+        } else if (method === "click" && isBrowserLocator(params.locator) && splitFrameLocator(params.locator) && (target.role === "button" || target.tagName === "a")) {
+          await this.executeFrameLocatorQuery(tab, params.locator, "focus")
+          await this.dispatchKey(tab, "Enter")
         } else {
           await this.dispatchMouse(tab, method, target)
         }
       } finally {
         tab.agentDispatching = false
       }
-      return { ok: true, inputSequence: tab.inputSequence }
+      const effect = await this.waitForActionEffect(tab, effectBefore, context.actor === "agent")
+      return { ok: true, inputSequence: tab.inputSequence, effect }
     }
     throw browserError("unsupported")
   }
@@ -1898,7 +2066,7 @@ export class BrowserRuntime {
           const target = targets.get(field.id)
           if (value === undefined || !target) continue
           await this.dispatchMouse(tab, "click", target)
-          await this.applyText(tab, target, value, true)
+          await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), value, { platform: process.platform, replace: true }))
         }
         const submit = auth.request.submit
         if (submit?.kind === "click") {
@@ -1908,7 +2076,10 @@ export class BrowserRuntime {
           const targetField = auth.request.fields.find((field) => field.id === submit.fieldId) ?? [...auth.request.fields].reverse().find((field) => values.has(field.id))
           const target = targetField ? targets.get(targetField.id) : undefined
           if (!target) throw browserError("stale_target")
-          await this.pressTarget(tab, target, "Enter")
+          await withDebugger(browserContents(tab), async (debuggerRef) => {
+            await focusBrowserPoint(debuggerRef, target)
+            await dispatchBrowserKey(this.expectedAgentInputSender(tab, debuggerRef), "Enter")
+          })
         }
       } finally {
         tab.agentDispatching = false
@@ -1958,7 +2129,7 @@ export class BrowserRuntime {
     try {
       await this.dispatchMouse(tab, "click", target)
       if (tab.generation !== generation) throw browserError("stale_target")
-      await this.applyText(tab, target, value, true)
+      await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), value, { platform: process.platform, replace: true }))
     } finally { tab.agentDispatching = false }
   }
 
@@ -2316,144 +2487,21 @@ export class BrowserRuntime {
     const x = boundedNumber(params.x, 0, 100_000)
     const y = boundedNumber(params.y, 0, 100_000)
     this.showAgentCursor(tab, x, y, method === "click" || method === "doubleClick")
-    if (method === "click" || method === "doubleClick") {
-      const clicked = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{
-        code: `(() => {
-          let frameDocument = document;
-          let x = ${JSON.stringify(x)};
-          let y = ${JSON.stringify(y)};
-          let element = null;
-          for (let depth = 0; depth < 8; depth += 1) {
-            element = frameDocument.elementFromPoint(x, y);
-            if (!(element instanceof frameDocument.defaultView.Element)) return false;
-            if (!["iframe", "frame"].includes(element.tagName.toLowerCase()) || !element.contentDocument) break;
-            const rect = element.getBoundingClientRect();
-            x -= rect.left;
-            y -= rect.top;
-            frameDocument = element.contentDocument;
-          }
-          if (!(element instanceof frameDocument.defaultView.Element)) return false;
-          const win = frameDocument.defaultView;
-          if (typeof element.click === "function") element.click();
-          else element.dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true, view: win }));
-          if (${JSON.stringify(method === "doubleClick")}) {
-            if (typeof element.click === "function") element.click();
-            else element.dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true, view: win }));
-            element.dispatchEvent(new win.MouseEvent("dblclick", { bubbles: true, cancelable: true, view: win, detail: 2 }));
-          }
-          return true;
-        })()`,
-      }], true)
-      if (!clicked) throw browserError("stale_target")
-      return
-    }
     await withDebugger(browserContents(tab), async (debuggerRef) => {
-      await debuggerRef.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y })
-      if (method === "hover") return
+      const sender = this.expectedAgentInputSender(tab, debuggerRef)
+      if (method === "click" || method === "doubleClick") {
+        await dispatchBrowserClick(sender, { x, y }, method === "doubleClick" ? 2 : 1)
+      } else {
+        await sender.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y })
+      }
     })
   }
 
   private async dispatchKey(tab: BrowserTab, key: string, modifiers: string[] = []): Promise<void> {
-    await withDebugger(browserContents(tab), async (debuggerRef) => {
-      const modifier = modifiers.includes("CTRL") ? 2 : modifiers.includes("META") ? 4 : 0
-      await debuggerRef.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key, modifiers: modifier })
-      await debuggerRef.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key, modifiers: modifier })
-    })
-  }
-
-  private async applyText(tab: BrowserTab, target: ResolvedBrowserTarget, text: string, replace: boolean): Promise<void> {
-    const applied = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{
-      code: `(() => {
-        let frameDocument = document;
-        let x = ${JSON.stringify(target.x)};
-        let y = ${JSON.stringify(target.y)};
-        let element = null;
-        for (let depth = 0; depth < 8; depth += 1) {
-          element = frameDocument.elementFromPoint(x, y);
-          if (!(element instanceof frameDocument.defaultView.HTMLElement)) return false;
-          if (!["iframe", "frame"].includes(element.tagName.toLowerCase()) || !element.contentDocument) break;
-          const rect = element.getBoundingClientRect();
-          x -= rect.left;
-          y -= rect.top;
-          frameDocument = element.contentDocument;
-        }
-        if (!(element instanceof frameDocument.defaultView.HTMLElement)) return false;
-        const win = frameDocument.defaultView;
-        const text = ${JSON.stringify(text)};
-        const replace = ${JSON.stringify(replace)};
-        element.focus({ preventScroll: true });
-        const nextValue = current => replace ? text : current + text;
-        if (element instanceof win.HTMLInputElement) {
-          const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, "value")?.set;
-          if (!setter) return false;
-          setter.call(element, nextValue(element.value));
-        } else if (element instanceof win.HTMLTextAreaElement) {
-          const setter = Object.getOwnPropertyDescriptor(win.HTMLTextAreaElement.prototype, "value")?.set;
-          if (!setter) return false;
-          setter.call(element, nextValue(element.value));
-        } else if (element.isContentEditable) {
-          element.textContent = nextValue(element.textContent || "");
-        } else {
-          return false;
-        }
-        element.dispatchEvent(new win.InputEvent("input", { bubbles: true, inputType: replace ? "insertReplacementText" : "insertText", data: text }));
-        return true;
-      })()`,
-    }], true)
-    if (!applied) throw browserError("stale_target")
-  }
-
-  private async applyTextToActive(tab: BrowserTab, text: string): Promise<void> {
-    if (text.length > 100_000) throw browserError("invalid_browser_request")
-    const applied = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(() => {
-      const element = document.activeElement;
-      if (!(element instanceof HTMLElement)) return false;
-      if (element instanceof HTMLInputElement) {
-        const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
-        if (!descriptor?.set) return false;
-        descriptor.set.call(element, element.value + ${JSON.stringify(text)});
-      } else if (element instanceof HTMLTextAreaElement) {
-        const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
-        if (!descriptor?.set) return false;
-        descriptor.set.call(element, element.value + ${JSON.stringify(text)});
-      } else if (element.isContentEditable) element.textContent = (element.textContent || "") + ${JSON.stringify(text)};
-      else return false;
-      element.dispatchEvent(new Event("input", { bubbles: true }));
-      return true;
-    })()` }], true)
-    if (!applied) throw browserError("stale_target")
-  }
-
-  private async pressTarget(tab: BrowserTab, target: ResolvedBrowserTarget, keySpec: string): Promise<void> {
+    const normalizedModifiers = modifiers.flatMap((modifier) => ({ CTRL: "Control", META: "Meta", ALT: "Alt", SHIFT: "Shift" })[modifier.toUpperCase()] ?? [])
+    const keySpec = [...normalizedModifiers, key].join("+")
     if (!keySpec || keySpec.length > 128) throw browserError("invalid_browser_request")
-    const pressed = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(() => {
-      const element = document.elementFromPoint(${JSON.stringify(target.x)}, ${JSON.stringify(target.y)});
-      if (!(element instanceof HTMLElement)) return false;
-      element.focus({ preventScroll: true });
-      if (document.activeElement !== element && !element.contains(document.activeElement)) return false;
-      const parts = ${JSON.stringify(keySpec)}.split("+");
-      const key = parts.pop() || "Enter";
-      const options = {
-        key,
-        bubbles: true,
-        cancelable: true,
-        ctrlKey: parts.includes("Control") || parts.includes("Ctrl"),
-        metaKey: parts.includes("Meta"),
-        altKey: parts.includes("Alt"),
-        shiftKey: parts.includes("Shift"),
-      };
-      const proceed = element.dispatchEvent(new KeyboardEvent("keydown", options));
-      if (proceed && (key === "Enter" || key === " ")) {
-        if (element instanceof HTMLButtonElement || element instanceof HTMLAnchorElement || (element instanceof HTMLInputElement && ["button", "submit", "reset", "checkbox", "radio"].includes(element.type))) {
-          HTMLElement.prototype.click.call(element);
-        } else if (key === "Enter" && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
-          element.form?.requestSubmit();
-        }
-      }
-      element.dispatchEvent(new KeyboardEvent("keyup", options));
-      return true;
-    })()` }], true)
-    if (!pressed) throw browserError("stale_target")
+    await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserKey(this.expectedAgentInputSender(tab, debuggerRef), keySpec))
   }
 
   private async queryLocator(tab: BrowserTab, operation: string, params: Record<string, unknown>): Promise<unknown> {
@@ -2509,7 +2557,6 @@ export class BrowserRuntime {
     locator: BrowserLocator,
     operation: BrowserLocatorQuery,
     argument?: string,
-    actionGuard?: { generation: number; inputSequence: number },
   ): Promise<unknown> {
     const parts = splitFrameLocator(locator)
     if (!parts) throw browserError("invalid_browser_request")
@@ -2554,28 +2601,28 @@ export class BrowserRuntime {
         grantUniveralAccess: false,
       }) as { executionContextId?: number }
       if (!isolated.executionContextId || generation !== tab.generation) throw browserError("stale_target")
-      if (actionGuard) {
-        if (tab.generation !== actionGuard.generation || tab.inputSequence !== actionGuard.inputSequence) throw browserError("stale_target")
-        tab.inputSequence += 1
-        actionGuard.inputSequence = tab.inputSequence
-        tab.agentDispatching = true
-      }
-      let evaluated: { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } }
-      try {
-        evaluated = await debuggerRef.sendCommand("Runtime.evaluate", {
-          contextId: isolated.executionContextId,
-          expression: evaluation
-            ? locatorReadonlyExpression(parts.locator, evaluation.script, evaluation.arg)
-            : `(${browserLocatorScript()})(${JSON.stringify(parts.locator)},${JSON.stringify(operation)},${JSON.stringify(argument)})`,
-          returnByValue: true,
-          awaitPromise: true,
-          ...(evaluation ? { throwOnSideEffect: true, timeout: evaluation.timeoutMs } : {}),
-        }) as { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } }
-      } finally {
-        if (actionGuard) tab.agentDispatching = false
-      }
+      let evaluated: { result?: { objectId?: string; value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } }
+      evaluated = await debuggerRef.sendCommand("Runtime.evaluate", {
+        contextId: isolated.executionContextId,
+        expression: evaluation
+          ? locatorReadonlyExpression(parts.locator, evaluation.script, evaluation.arg)
+          : `(${browserLocatorScript()})(${JSON.stringify(parts.locator)},${JSON.stringify(operation === "focus" ? "element" : operation)},${JSON.stringify(argument)})`,
+        returnByValue: operation !== "focus",
+        awaitPromise: true,
+        ...(evaluation ? { throwOnSideEffect: true, timeout: evaluation.timeoutMs } : {}),
+      }) as { result?: { objectId?: string; value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } }
       if (evaluated.exceptionDetails) throw browserError(evaluation ? readonlyLocatorExceptionCode(evaluated.exceptionDetails) : frameLocatorExceptionCode(evaluated.exceptionDetails))
       if (generation !== tab.generation) throw browserError("stale_target")
+      if (operation === "focus") {
+        const objectId = evaluated.result?.objectId
+        if (!objectId) throw browserError("stale_target")
+        try {
+          await debuggerRef.sendCommand("DOM.focus", { objectId })
+        } finally {
+          await debuggerRef.sendCommand("Runtime.releaseObject", { objectId }).catch(() => undefined)
+        }
+        return true
+      }
       const value = evaluated.result?.value
       if (operation === "target" && isRecord(value)) return {
         ...value,
@@ -2744,61 +2791,30 @@ export class BrowserRuntime {
       return this.resolveTarget(tab, params, context)
     }
     const deadline = Date.now() + timeoutMs
+    let previousTarget: ResolvedBrowserTarget | undefined
     while (true) {
       if (tab.generation !== generation) throw browserError("stale_target")
       try {
-        return await this.resolveTarget(tab, params, context)
+        const target = await this.resolveTarget(tab, params, context)
+        if (previousTarget && browserTargetsStable(previousTarget, target)) return target
+        previousTarget = target
       } catch (error) {
+        previousTarget = undefined
         const message = error instanceof Error ? error.message : ""
         if (message.includes("invalid_browser_request")) throw browserError("invalid_browser_request")
         if (message.includes("strict_locator_violation")) throw browserError("strict_locator_violation")
         if (message.includes("tab_not_found")) throw browserError("tab_not_found")
         if (params.semanticRef !== undefined && message.includes("stale_target")) throw browserError("stale_target")
         // resolveTarget 的 action_denied 仅表示目标暂时不可见、不可用或被遮挡；具体动作的永久拒绝发生在后续 dispatch。
-        if (Date.now() >= deadline) throw browserError("actionability_failed")
-        await delay(50)
       }
-    }
-  }
-
-  // frame-locator action 的 auto-wait 包装（executeFrameLocatorQuery 单次查询无重试）
-  private async runFrameLocatorActionWithAutoWait(
-    tab: BrowserTab,
-    generation: number,
-    inputSequence: number,
-    params: Record<string, unknown>,
-    operation: BrowserLocatorQuery,
-    argument: string | undefined,
-    timeoutMs: number,
-  ): Promise<void> {
-    if (!isBrowserLocator(params.locator)) throw browserError("invalid_browser_request")
-    const locator = params.locator
-    const actionGuard = { generation, inputSequence }
-    if (timeoutMs <= 0) {
-      await this.executeFrameLocatorQuery(tab, locator, operation, argument, actionGuard)
-      return
-    }
-    const deadline = Date.now() + timeoutMs
-    while (true) {
-      if (tab.generation !== generation || tab.inputSequence !== actionGuard.inputSequence) throw browserError("stale_target")
-      try {
-        await this.executeFrameLocatorQuery(tab, locator, operation, argument, actionGuard)
-        return
-      } catch (error) {
-        const message = error instanceof Error ? error.message : ""
-        if (message.includes("invalid_browser_request")) throw browserError("invalid_browser_request")
-        if (message.includes("strict_locator_violation")) throw browserError("strict_locator_violation")
-        if (message.includes("tab_not_found")) throw browserError("tab_not_found")
-        if (message.includes("action_denied")) throw browserError("action_denied")
-        if (Date.now() >= deadline) throw browserError("actionability_failed")
-        await delay(50)
-      }
+      if (Date.now() >= deadline) throw browserError("actionability_failed")
+      await delay(50)
     }
   }
 
   private async dispatchScroll(tab: BrowserTab, target: ResolvedBrowserTarget, params: Record<string, unknown>): Promise<void> {
     await this.dispatchMouse(tab, "hover", target)
-    await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Input.dispatchMouseEvent", {
+    await withDebugger(browserContents(tab), (debuggerRef) => this.expectedAgentInputSender(tab, debuggerRef).sendCommand("Input.dispatchMouseEvent", {
       type: "mouseWheel", x: target.x, y: target.y, deltaX: boundedNumber(params.deltaX, -10000, 10000), deltaY: boundedNumber(params.deltaY ?? params.y, -10000, 10000),
     }))
   }
@@ -2808,10 +2824,11 @@ export class BrowserRuntime {
     const endY = boundedNumber(params.toY ?? params.y2, 0, 100_000)
     await this.showAgentCursor(tab, target.x, target.y, false)
     await withDebugger(browserContents(tab), async (debuggerRef) => {
-      await debuggerRef.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: target.x, y: target.y })
-      await debuggerRef.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: target.x, y: target.y, button: "left", clickCount: 1 })
-      await debuggerRef.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: endX, y: endY, button: "left" })
-      await debuggerRef.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: endX, y: endY, button: "left", clickCount: 1 })
+      const sender = this.expectedAgentInputSender(tab, debuggerRef)
+      await sender.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: target.x, y: target.y })
+      await sender.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: target.x, y: target.y, button: "left", clickCount: 1 })
+      await sender.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: endX, y: endY, button: "left" })
+      await sender.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: endX, y: endY, button: "left", clickCount: 1 })
     })
     this.showAgentCursor(tab, endX, endY, false)
   }
@@ -2844,16 +2861,6 @@ export class BrowserRuntime {
   private hideAgentCursor(): void {
     this.cursorState = null
     if (this.cursorOverlay && !this.cursorOverlay.isDestroyed()) this.cursorOverlay.hide()
-  }
-
-  private async applySelect(tab: BrowserTab, params: Record<string, unknown>): Promise<void> {
-    const values = Array.isArray(params.value) ? params.value.filter((value): value is string => typeof value === "string") : [String(params.value ?? "")]
-    await browserContents(tab).executeJavaScript(`(values => { const select = document.activeElement; if (!(select instanceof HTMLSelectElement)) throw new Error("action_denied"); for (const option of Array.from(select.options)) option.selected = values.includes(option.value); select.dispatchEvent(new Event("input", { bubbles: true })); select.dispatchEvent(new Event("change", { bubbles: true })); })(${JSON.stringify(values)})`, true)
-  }
-
-  private async applyChecked(tab: BrowserTab, params: Record<string, unknown>, checked: boolean): Promise<void> {
-    if (!params.locator) return
-    await browserContents(tab).executeJavaScript(`(locator => { const el = document.activeElement; if (!(el instanceof HTMLInputElement) || !["checkbox", "radio"].includes(el.type)) throw new Error("action_denied"); if (el.checked !== ${checked}) el.click(); })(${JSON.stringify(params.locator)})`, true)
   }
 
   private async snapshot(tab: BrowserTab): Promise<unknown> {
@@ -3641,7 +3648,7 @@ export class BrowserRuntime {
     void restore.catch(() => undefined)
   }
 
-  private async cdp(tab: BrowserTab, params: Record<string, unknown>): Promise<unknown> {
+  private async cdp(tab: BrowserTab, params: Record<string, unknown>, agentInput = false): Promise<unknown> {
     if (!this.settings.advancedCdpEnabled || !shouldInstallAdvancedCdpPolicy(tab.partition)) throw browserError("action_denied")
     const origin = safeOrigin(tab.url)
     if (origin && this.settings.sitePermissionOverrides?.[origin]?.cdp !== "allow") throw browserError("action_denied")
@@ -3653,7 +3660,10 @@ export class BrowserRuntime {
       const url = String((commandParams as Record<string, unknown>).url ?? "")
       return this.navigate(tab, url, tab.context ?? userContext())
     }
-    const result = await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand(method, commandParams))
+    const result = await withDebugger(browserContents(tab), (debuggerRef) => {
+      if (agentInput) this.inputLedger.expectCommand(tab.tabId, method, commandParams as Record<string, unknown>)
+      return debuggerRef.sendCommand(method, commandParams)
+    })
     if (Buffer.byteLength(JSON.stringify(result ?? null)) > 2 * 1024 * 1024) throw browserError("browser_internal_error")
     return result
   }
@@ -3916,6 +3926,7 @@ export class BrowserRuntime {
     this.claimSnapshots.delete(snapshotKey)
     tab.context = context
     tab.agentLease = { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, generation: tab.generation }
+    tab.agentControlState = "active"
     void this.setTabSuspended(tab, false)
     this.options.emit({ method: "browser:tab-share-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
     return publicTab(tab)
@@ -3956,6 +3967,7 @@ export class BrowserRuntime {
       this.restoreAgentViewportOverride(tab, context)
       tab.context = undefined
       tab.agentLease = undefined
+      tab.agentControlState = undefined
       tab.generation += 1
       tab.inputSequence += 1
     }
@@ -4000,6 +4012,7 @@ export class BrowserRuntime {
     for (const tab of candidates) {
       tab.context = context
       tab.agentLease = { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, generation: tab.generation }
+      tab.agentControlState = "active"
       if (tab.handoff?.status === "handoff") tab.handoff = undefined
       resumed.push(publicTab(tab))
     }
@@ -4273,6 +4286,8 @@ function canContextUseTab(tab: BrowserTab, context: BrowserRequestContext): bool
   return context.actor === "user" || (canAgentUse(tab, context.browserSessionId, context.browserTurnId, tab.generation) && (!context.tabId || context.tabId === tab.tabId))
 }
 
+function agentControlPaused(tab: BrowserTab): boolean { return tab.agentControlState === "paused_by_user" }
+
 function annotationThreadId(tab: BrowserTab, params: Record<string, unknown>): string {
   const value = typeof params.threadId === "string" ? params.threadId.trim() : (tab.ownerThreadId ?? "")
   if (!/^[a-zA-Z0-9._-]{1,200}$/.test(value) || (tab.ownerThreadId && tab.ownerThreadId !== value)) throw browserError("action_denied")
@@ -4307,7 +4322,7 @@ function stableBrowserErrorCode(error: unknown): BrowserErrorCode {
 
 const BROWSER_ERROR_CODES = new Set<BrowserErrorCode>([
   "incompatible_protocol", "browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "unsupported", "executed_unknown", "browser_internal_error",
-  "strict_locator_violation", "actionability_failed", "dialog_blocking",
+  "strict_locator_violation", "actionability_failed", "dialog_blocking", "user_takeover_required",
 ])
 
 function safeOrigin(value: string): string | undefined {
@@ -4657,6 +4672,13 @@ function sanitizeSiteOverrides(value: Record<string, unknown>): Record<string, "
 
 function finiteNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0
+}
+
+function browserTargetsStable(left: ResolvedBrowserTarget, right: ResolvedBrowserTarget): boolean {
+  return Math.abs(left.x - right.x) <= 0.5
+    && Math.abs(left.y - right.y) <= 0.5
+    && Math.abs(left.width - right.width) <= 0.5
+    && Math.abs(left.height - right.height) <= 0.5
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
