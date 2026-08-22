@@ -5,6 +5,7 @@ import {
   prependHistory,
   removeDraft,
   removeHistory,
+  sanitizeDraftJSON,
   upsertDraft,
   type AgentInputDraftJSON,
 } from './agent-input-draft-state'
@@ -66,5 +67,41 @@ describe('agent-input-draft-state', () => {
     expect(isEmptyDraft(p(''))).toBe(true)
     expect(isEmptyDraft(p('   '))).toBe(true)
     expect(isEmptyDraft(p('hello'))).toBe(false)
+  })
+
+  test('sanitizeDraftJSON 把 linkConnectionMention 降级为可见文本，其余结构原样保留', () => {
+    const legacy: AgentInputDraftJSON = {
+      type: 'doc',
+      content: [{
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: '请检查 ' },
+          { type: 'linkConnectionMention', attrs: { schemaVersion: 1, service: 'gmail', connectionName: 'work', displayText: 'Gmail · work' } },
+          { type: 'text', text: ' 并总结' },
+        ],
+      }],
+    }
+    const sanitized = sanitizeDraftJSON(legacy)
+    expect(sanitized).toEqual({
+      type: 'doc',
+      content: [{
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: '请检查 ' },
+          { type: 'text', text: '@Gmail · work' },
+          { type: 'text', text: ' 并总结' },
+        ],
+      }],
+    })
+    // 无 content 的节点（text 等）原样透传
+    expect(sanitizeDraftJSON({ type: 'text', text: 'hi' })).toEqual({ type: 'text', text: 'hi' })
+  })
+
+  test('sanitizeDraftJSON 丢弃无 displayText 的提及节点，避免喂给 setContent 空文本节点', () => {
+    const sanitized = sanitizeDraftJSON({
+      type: 'paragraph',
+      content: [{ type: 'linkConnectionMention', attrs: {} }],
+    })
+    expect(sanitized).toEqual({ type: 'paragraph', content: [] })
   })
 })

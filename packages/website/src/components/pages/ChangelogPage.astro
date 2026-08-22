@@ -1,0 +1,53 @@
+---
+import { getCollection, render } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+import { REPO_URL } from '../../lib/site';
+import { t, type Lang } from '../../i18n/ui';
+
+interface Props {
+  lang: Lang;
+}
+const { lang } = Astro.props;
+
+const entries = (await getCollection('changelog')).sort(
+  (a, b) => b.data.date.valueOf() - a.data.date.valueOf(),
+);
+const rendered = await Promise.all(
+  entries.map(async (entry) => ({
+    entry,
+    Content: (await render(entry)).Content,
+  })),
+);
+---
+
+<Base title={t(lang, 'changelog.title')} description={t(lang, 'changelog.desc')}>
+  <section class="mx-auto max-w-3xl px-4 py-14 sm:px-6 sm:py-20">
+    <h1 class="text-display font-bold tracking-tight text-fg">{t(lang, 'changelog.title')}</h1>
+    <p class="mt-4 text-body-lg text-fg-muted">{t(lang, 'changelog.desc')}</p>
+
+    <div class="mt-12 space-y-10">
+      {rendered.map(({ entry, Content }) => (
+        <article id={entry.data.version} class="scroll-mt-20 rounded-2xl border border-border bg-surface p-6 shadow-(--shadow-card)">
+          <header class="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 class="text-title font-semibold text-fg">
+              <a
+                href={`${REPO_URL}/releases/tag/${entry.data.version}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="hover:text-accent"
+              >
+                {entry.data.title}
+              </a>
+            </h2>
+            <time datetime={entry.data.date.toISOString().slice(0, 10)} class="text-caption text-fg-faint">
+              {entry.data.date.toISOString().slice(0, 10)}
+            </time>
+          </header>
+          <div class="prose mt-4">
+            <Content />
+          </div>
+        </article>
+      ))}
+    </div>
+  </section>
+</Base>

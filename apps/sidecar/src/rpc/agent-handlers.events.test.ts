@@ -14,6 +14,7 @@ import { resetPlanningTodoStoreForTests } from "../services/planning/planning-to
 mock.module("../services/agent/agent-service", () => ({
   appendAgentMessage: async () => ({ queued: false }),
   sendAgentMessage: async () => undefined,
+  dispatchAgentRun: async () => ({ ok: true, mode: "sent", queuedCount: 0 }),
   generateAgentTitle: async () => undefined,
   generateWelcomeSuggestions: async () => [],
   listAgentMessageQueue: () => [],

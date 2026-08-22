@@ -115,7 +115,7 @@ describe('runtime-event-state', () => {
 
   test('deduplicates optimistic and sidecar submitted user RuntimeEvents', () => {
     const first = appendRuntimeEvent({}, runtimeEvent({
-      id: 'optimistic',
+      id: 'optimistic:thread-1:t0', runId: 'optimistic:thread-1:t0',
       type: 'message.user.submitted',
       text: 'hello',
       createdAt: '2026-05-11T00:00:00.000Z',
@@ -128,7 +128,7 @@ describe('runtime-event-state', () => {
     }))
 
     expect(next['thread-1']?.events).toEqual([
-      expect.objectContaining({ id: 'optimistic', type: 'message.user.submitted', text: 'hello' }),
+      expect.objectContaining({ id: 'persisted', type: 'message.user.submitted', text: 'hello' }),
     ])
   })
 
@@ -158,7 +158,7 @@ describe('runtime-event-state', () => {
     // 乐观追加后，后端先推 assistant.delta（使 acc.at(-1) 不再是 user submit），
     // 再推真实 user submit → 必须按全局去重，不能因 at(-1) 已变而重复。
     const first = appendRuntimeEvent({}, runtimeEvent({
-      id: 'optimistic',
+      id: 'optimistic:thread-1:t0', runId: 'optimistic:thread-1:t0',
       type: 'message.user.submitted',
       text: 'hello',
       createdAt: '2026-05-11T00:00:00.000Z',
@@ -178,14 +178,14 @@ describe('runtime-event-state', () => {
 
     const userSubmits = next['thread-1']?.events.filter((e) => e.type === 'message.user.submitted') ?? []
     expect(userSubmits).toHaveLength(1)
-    expect(userSubmits[0]?.id).toBe('optimistic')
+    expect(userSubmits[0]?.id).toBe('persisted')
   })
 
   test('appendRuntimeEvents 全局去重 user submit：批量内含 delta 也不重复', () => {
     // 乐观追加已在 atom，后端 rAF 批量推送 [assistant.delta, 真实 user submit]
     // → 必须按 acc 全局去重（真实路径：RUNTIME_EVENT 批量 flush）。
     const first = appendRuntimeEvent({}, runtimeEvent({
-      id: 'optimistic',
+      id: 'optimistic:thread-1:t0', runId: 'optimistic:thread-1:t0',
       type: 'message.user.submitted',
       text: 'hello',
       createdAt: '2026-05-11T00:00:00.000Z',
@@ -197,7 +197,7 @@ describe('runtime-event-state', () => {
 
     const userSubmits = next['thread-1']?.events.filter((e) => e.type === 'message.user.submitted') ?? []
     expect(userSubmits).toHaveLength(1)
-    expect(userSubmits[0]?.id).toBe('optimistic')
+    expect(userSubmits[0]?.id).toBe('persisted')
   })
 
   test('hydrates persisted RuntimeEvents into empty thread state', () => {
@@ -518,7 +518,7 @@ describe('appendRuntimeEvents (批量)', () => {
 
   test('批量也去重 optimistic 与 sidecar 的重复 user submit', () => {
     const optimistic = runtimeEvent({
-      id: 'optimistic',
+      id: 'optimistic:thread-1:t0', runId: 'optimistic:thread-1:t0',
       type: 'message.user.submitted',
       text: 'hello',
       createdAt: '2026-05-11T00:00:00.000Z',
@@ -537,7 +537,7 @@ describe('appendRuntimeEvents (批量)', () => {
     sequential = appendRuntimeEvent(sequential, persisted)
 
     expect(batched['thread-1']?.events).toEqual([
-      expect.objectContaining({ id: 'optimistic', type: 'message.user.submitted', text: 'hello' }),
+      expect.objectContaining({ id: 'persisted', type: 'message.user.submitted', text: 'hello' }),
     ])
     expect(batched['thread-1']?.events.length).toBe(sequential['thread-1']?.events.length)
   })
@@ -567,5 +567,80 @@ describe('appendRuntimeEvents (批量)', () => {
     sequential = appendRuntimeEvent(sequential, userApersisted)
 
     expect(batched.t1.events.length).toBe(sequential.t1.events.length)
+  })
+})
+
+describe('runtime-event-state #414 同文本快速重发', () => {
+  // 生产形态：乐观事件无 messageId；权威事件 id 为 `${runId}:message.user.submitted`
+  function optimisticSubmit(text: string, createdAt: string, seq: number): LumeRuntimeEvent {
+    return {
+      id: `optimistic:thread-1:${createdAt}`,
+      type: 'message.user.submitted',
+      threadId: 'thread-1',
+      runId: `optimistic:thread-1:${createdAt}`,
+      createdAt,
+      text,
+    } as LumeRuntimeEvent
+  }
+  function persistedSubmit(text: string, createdAt: string, seq: number): LumeRuntimeEvent {
+    return {
+      id: `run-${seq}:message.user.submitted`,
+      type: 'message.user.submitted',
+      threadId: 'thread-1',
+      runId: `run-${seq}`,
+      createdAt,
+      text,
+    } as LumeRuntimeEvent
+  }
+
+  test('30 秒内重发同文本：第二条乐观与第二条权威都存活', () => {
+    let state = appendRuntimeEvent({}, optimisticSubmit('继续', '2026-05-11T00:00:00.000Z', 0))
+    state = appendRuntimeEvent(state, persistedSubmit('继续', '2026-05-11T00:00:01.000Z', 1))
+    state = appendRuntimeEvent(state, optimisticSubmit('继续', '2026-05-11T00:00:10.000Z', 0))
+    state = appendRuntimeEvent(state, persistedSubmit('继续', '2026-05-11T00:00:11.000Z', 2))
+
+    const submits = state['thread-1']?.events.filter((e) => e.type === 'message.user.submitted') ?? []
+    expect(submits.map((e) => e.id)).toEqual([
+      'run-1:message.user.submitted',
+      'run-2:message.user.submitted',
+    ])
+  })
+
+  test('权威未到达前两次乐观同文本都保留', () => {
+    let state = appendRuntimeEvent({}, optimisticSubmit('继续', '2026-05-11T00:00:00.000Z', 0))
+    state = appendRuntimeEvent(state, optimisticSubmit('继续', '2026-05-11T00:00:10.000Z', 0))
+
+    const submits = state['thread-1']?.events.filter((e) => e.type === 'message.user.submitted') ?? []
+    expect(submits.length).toBe(2)
+  })
+
+  test('乐观后到且权威已在窗口内同文本 → 乐观跳过', () => {
+    let state = appendRuntimeEvent({}, persistedSubmit('继续', '2026-05-11T00:00:01.000Z', 1))
+    state = appendRuntimeEvent(state, optimisticSubmit('继续', '2026-05-11T00:00:00.000Z', 0))
+
+    const submits = state['thread-1']?.events.filter((e) => e.type === 'message.user.submitted') ?? []
+    expect(submits.map((e) => e.id)).toEqual(['run-1:message.user.submitted'])
+  })
+
+  test('hydrate 合并：持久层双权威 + live 双乐观 → 只剩权威两条', () => {
+    const persisted = [
+      persistedSubmit('继续', '2026-05-11T00:00:01.000Z', 1),
+      persistedSubmit('继续', '2026-05-11T00:00:11.000Z', 2),
+    ]
+    const live = [
+      optimisticSubmit('继续', '2026-05-11T00:00:00.000Z', 0),
+      optimisticSubmit('继续', '2026-05-11T00:00:10.000Z', 0),
+    ]
+    const state = hydrateRuntimeEvents({}, { threadId: 'thread-1', events: persisted } as AgentThreadRuntimeEventsResult)
+    const merged = hydrateRuntimeEvents(state, { threadId: 'thread-1', events: persisted } as AgentThreadRuntimeEventsResult)
+
+    // live 乐观经 append 进入后与 persisted 权威合并
+    let withLive = appendRuntimeEvent(merged, live[0])
+    withLive = appendRuntimeEvent(withLive, live[1])
+    const submits = withLive['thread-1']?.events.filter((e) => e.type === 'message.user.submitted') ?? []
+    expect(submits.map((e) => e.id)).toEqual([
+      'run-1:message.user.submitted',
+      'run-2:message.user.submitted',
+    ])
   })
 })
