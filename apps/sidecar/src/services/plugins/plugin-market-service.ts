@@ -2386,10 +2386,10 @@ function summarizePermissions(
     [...toolAllow, ...toolAsk].some((tool) =>
       [
         "Bash",
-        "FileWrite",
-        "FileEdit",
+        "Write",
+        "Edit",
         "NotebookEdit",
-        "AgentTool",
+        "Agent",
         "SendMessage",
       ].includes(tool),
     )

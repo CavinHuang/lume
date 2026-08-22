@@ -7,7 +7,7 @@ describe("createPluginPermissionInterceptor", () => {
       pluginName: "demo",
       pluginRoot: "/plugins/demo",
       permissions: {
-        tools: { deny: ["Bash", "FileWrite"] },
+        tools: { deny: ["Bash", "Write"] },
       },
     });
 
@@ -26,12 +26,12 @@ describe("createPluginPermissionInterceptor", () => {
       pluginName: "demo",
       pluginRoot: "/plugins/demo",
       permissions: {
-        tools: { allow: ["FileRead", "Glob"] },
+        tools: { allow: ["Read", "Glob"] },
       },
     });
 
     const result = await interceptor({
-      toolName: "FileRead",
+      toolName: "Read",
       input: { file_path: "/plugins/demo/data/notes.md" },
       context: { cwd: "/project", threadId: "t1", sourcePluginId: "demo" },
     });
@@ -44,7 +44,7 @@ describe("createPluginPermissionInterceptor", () => {
       pluginName: "demo",
       pluginRoot: "/plugins/demo",
       permissions: {
-        tools: { allow: ["FileRead"] },
+        tools: { allow: ["Read"] },
       },
     });
 
@@ -68,7 +68,7 @@ describe("createPluginPermissionInterceptor", () => {
     });
 
     const result = await interceptor({
-      toolName: "FileRead",
+      toolName: "Read",
       input: { file_path: "/plugins/demo/secret.json" },
       context: { cwd: "/project", threadId: "t1", sourcePluginId: "demo" },
     });
@@ -86,7 +86,7 @@ describe("createPluginPermissionInterceptor", () => {
     });
 
     const result = await interceptor({
-      toolName: "FileRead",
+      toolName: "Read",
       input: { file_path: "/plugins/demo/data/config.json" },
       context: { cwd: "/project", threadId: "t1", sourcePluginId: "demo" },
     });
@@ -120,7 +120,7 @@ describe("createPluginPermissionInterceptor", () => {
     });
 
     const result = await interceptor({
-      toolName: "FileRead",
+      toolName: "Read",
       input: { file_path: "/any/path" },
       context: { cwd: "/project", threadId: "t1", sourcePluginId: "demo" },
     });
