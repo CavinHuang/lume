@@ -330,8 +330,7 @@ function uniqueEvidenceRefs(refs: MemoryV2EvidenceRef[]): MemoryV2EvidenceRef[] 
 }
 
 /** evidence_refs[].quote 是真实落盘通道（frontmatter → memory.read 回吐），写入前逐 ref 过滤密钥（#449）。 */
-function sanitizeEvidenceRefs(refs: MemoryV2EvidenceRef[] | undefined): MemoryV2EvidenceRef[] | undefined {
-  if (!refs) return refs;
+function sanitizeEvidenceRefs(refs: MemoryV2EvidenceRef[]): MemoryV2EvidenceRef[] {
   return refs.map((ref) => (ref.quote ? { ...ref, quote: redactEvidenceQuote(ref.quote) } : ref));
 }
 
@@ -427,7 +426,7 @@ export function writePending(input: {
           record_ids: input.candidate.evidence.recordIds
         }
       : undefined,
-    evidence_refs: sanitizeEvidenceRefs(input.candidate.evidenceRefs),
+    evidence_refs: input.candidate.evidenceRefs ? sanitizeEvidenceRefs(input.candidate.evidenceRefs) : undefined,
     status: "open"
   };
   const pendingDir = pendingTypeDir(paths, input.type);
