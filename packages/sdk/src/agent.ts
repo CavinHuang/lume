@@ -70,7 +70,6 @@ import type { CommandDefinition } from './commands/types.js'
 import type { FileCheckpoint, FileCheckpointState } from './utils/file-checkpoints.js'
 import { rewindCheckpoint } from './utils/file-checkpoints.js'
 import { getDefaultModels } from './utils/models.js'
-import { setMcpConnections } from './tools/mcp-resource-tools.js'
 import { getContextWindowSize } from './utils/tokens.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { createExecuteTool, createToolSearchTool, isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
@@ -596,7 +595,6 @@ export class Agent {
       this.mcpLinks.push(connection)
     }
 
-    setMcpConnections(this.mcpLinks.filter((conn) => conn.enabled))
   }
 
   private async rebuildToolPool(options: AgentOptions = this.cfg): Promise<void> {
@@ -810,8 +808,6 @@ export class Agent {
       'Grep',
       'WebFetch',
       'WebSearch',
-      'ListMcpResourcesTool',
-      'ReadMcpResourceTool',
       'TaskOutput',
       'TaskGet',
       'TaskList',
@@ -823,7 +819,6 @@ export class Agent {
       'Edit',
       'NotebookEdit',
       'TodoWrite',
-      'Config',
     ])
     const privilegedNames = new Set([
       'Bash',
@@ -994,15 +989,14 @@ export class Agent {
     // The finally block below flushes whatever is still pending.
     const persistScheduler = createPersistScheduler(200, () =>
       this.persistCurrentSession(cwd, opts).then(() => undefined))
+    // The host may reuse one session-level AbortSignal across many runs; detach
+    // the forwarder when this run ends so listeners don't pile up on it (#244).
+    const forwardAbort = () => abortCtrl.abort(opts.abortSignal?.reason)
     if (opts.abortSignal) {
       if (opts.abortSignal.aborted) {
         abortCtrl.abort(opts.abortSignal.reason)
       } else {
-        opts.abortSignal.addEventListener(
-          'abort',
-          () => abortCtrl.abort(opts.abortSignal?.reason),
-          { once: true },
-        )
+        opts.abortSignal.addEventListener('abort', forwardAbort, { once: true })
       }
     }
 
@@ -1189,6 +1183,7 @@ export class Agent {
       // saveSession that races with both the awaited write and readers of the
       // session file.
       await persistScheduler.cancel()
+      opts.abortSignal?.removeEventListener('abort', forwardAbort)
       this.history = engine.getMessages()
       this.lastContextUsage = engine.getContextUsage()
       this.currentEngine = null

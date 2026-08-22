@@ -1,7 +1,6 @@
 ---
 name: "Skill 生成器"
 description: "帮用户创建、优化或评测 Lume Skill（SKILL.md 提示词模板）"
-when_to_use: "当用户说「帮我创建一个 skill」「我想做一个技能」「帮我写个 SKILL.md」「优化这个 skill」「评测 skill 效果」时使用"
 allowed_tools: ["read_file", "write_file", "edit_file", "list_dir", "bash"]
 version: "1.0"
 ---
@@ -23,7 +22,6 @@ version: "1.0"
 ---
 name: "展示名称"
 description: "一句话描述 skill 的作用（模型靠这句话判断是否调用）"
-when_to_use: "具体触发条件，越精确越好"
 allowed_tools: ["read_file", "bash"]  # 可选，限制 skill 执行时可用的工具
 version: "1.0"
 disable_model_invocation: false  # true 则只允许用户在 / 面板选择 lume-skill://skill 触发
@@ -73,14 +71,13 @@ argument_hint: "请告诉我要分析的文件路径"  # 可选，提示用户�
 ### 优化已有 Skill
 
 1. 用 `read_file` 读取现有 SKILL.md
-2. 分析问题（描述不清晰？触发条件太宽泛？提示词歧义？）
+2. 分析问题（描述不清晰？提示词歧义？）
 3. 给出改进建议并征求用户确认
 4. 用 `edit_file` 更新文件
 
 ## 好 Skill 的标准
 
 - **description 精准**：模型靠 description 决定是否调用，要一句话说清楚做什么
-- **when_to_use 具体**：列出触发词和场景，避免误触发
 - **allowed_tools 最小化**：只开放 skill 真正需要的工具
 - **提示词结构化**：用标题、列表、代码块让 AI 更容易遵循
 - **处理无参数情况**：用户没传参时，主动询问或用工具读取上下文

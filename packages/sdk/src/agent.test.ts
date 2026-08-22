@@ -661,7 +661,6 @@ describe("Agent skill slash commands", () => {
         "---",
         'name: "文件代码审查"',
         'description: "Filesystem code review"',
-        'when_to_use: "When reviewing code from disk"',
         "---",
         "",
         "Filesystem prompt."

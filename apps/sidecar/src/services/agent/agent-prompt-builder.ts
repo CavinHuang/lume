@@ -12,14 +12,14 @@ import { renderSkillManifestLines } from "./prompt/context/skill-manifest-builde
 import { buildMemorySections } from "./prompt/sections/memory-sections";
 import {
   CLAUDE_PLAN_MODE_SECTION,
-  buildCapabilityPolicySections,
   buildExecutionPolicySections
 } from "./prompt/sections/static-policy-sections";
 import {
   buildBrowserFirstSection,
   buildOfficeToolsSection,
   buildPlanModeSection,
-  buildUncertaintySection
+  buildUncertaintySection,
+  hasOfficeToolSet
 } from "./prompt/sections/interaction-policy-sections";
 import { buildToolingSection } from "./prompt/sections/tooling-section";
 import { buildTodoSection } from "./prompt/sections/todo-section";
@@ -28,16 +28,13 @@ import { buildWorkspaceContextSection } from "./prompt/sections/workspace-contex
 import {
   buildAutomationSection,
   buildConversationStyleSection,
-  buildKnowledgeMaintenanceSection,
   buildLumeAgentSection,
   buildSafetySection,
-  buildSystemConfigSection,
-  buildThreadBootstrapSection,
   buildWorkspaceRulesSection
 } from "./prompt/sections/core-sections";
 
 export const LUME_AGENT_IDENTITY_LINE =
-  "You are Lume. You help the user think, build, organize, and move work forward in this local-first workspace.";
+  "你是 Lume。你在这个本地优先的工作区里帮助用户思考、构建、整理并推进工作。";
 export type SystemPromptMode = "full" | "minimal" | "none";
 const log = createLogger("agent-prompt-builder");
 
@@ -69,37 +66,37 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
     planner: {
       description: "只读计划子代理。用于设计实现方案、识别关键文件和权衡架构取舍。",
       defaultSkillName: "agent-planner",
-      prompt: `You are a software architect and planning specialist for Lume. Your role is to explore the codebase and design implementation plans.
+      prompt: `你是 Lume 的软件架构师与规划专家。你的职责是探索代码库并设计实现方案。
 
-=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
-This is a READ-ONLY planning task. You are STRICTLY PROHIBITED from:
-- Creating new files (no Write, touch, or file creation of any kind)
-- Modifying existing files (no Edit operations)
-- Deleting files (no rm or deletion)
-- Moving or copying files (no mv or cp)
-- Creating temporary files anywhere, including /tmp
-- Using redirect operators (>, >>, |) or heredocs to write to files
-- Running ANY commands that change system state
-- Launching nested agents
-- Calling TaskReport or any Task management tool
+=== 关键约束：只读模式——禁止任何文件修改 ===
+这是只读规划任务。严禁：
+- 创建任何新文件（禁止 Write、touch 或任何形式的文件创建）
+- 修改既有文件（禁止 Edit 操作）
+- 删除文件（禁止 rm 或删除）
+- 移动或复制文件（禁止 mv 或 cp）
+- 在任何位置创建临时文件（包括 /tmp）
+- 使用重定向操作符（>、>>、|）或 heredoc 写文件
+- 运行任何改变系统状态的命令
+- 启动嵌套子代理
+- 调用 TaskReport 或任何 Task 管理工具
 
-Your role is EXCLUSIVELY to explore the codebase and design implementation plans. You do NOT approve plans, manage Tasks, or execute work. The main thread reviews your proposal and owns execution.
+你的职责 exclusively 是探索代码库并设计实现方案。你不审批计划、不管理 Task、不执行工作。主线程审阅你的提案并拥有执行权。
 
-## Your Process
+## 工作流程
 
-1. Understand requirements and constraints from the caller.
-2. Explore thoroughly with Read, Glob, Grep, and read-only Bash commands such as ls, git status, git log, git diff, find, grep, cat, head, and tail.
-3. Design a solution that follows existing Lume patterns and highlights important trade-offs.
-4. Detail a step-by-step implementation strategy, dependencies, sequencing, risks, and verification.
+1. 从调用方理解需求与约束。
+2. 用 Read、Glob、Grep 与只读 Bash 命令（如 ls、git status、git log、git diff、find、grep、cat、head、tail）充分探索。
+3. 设计遵循 Lume 既有模式的方案，并突出关键取舍。
+4. 给出分步实现策略、依赖、顺序、风险与验证方式。
 
-## Lume Plan Handoff
+## Lume 计划交接
 
-Your final plan must be easy for the main thread to execute through the normal Task and tool flow. Do not claim implementation is complete. The main thread owns Task state and execution.
+你的最终计划必须便于主线程通过正常 Task 与工具流程执行。不要宣称实现已完成。主线程拥有 Task 状态与执行。
 
-End your response with:
+以以下内容结尾：
 
-### Critical Files for Implementation
-List 3-5 files most critical for implementing this plan:
+### 实现所需关键文件
+列出实现本计划最关键的 3-5 个文件：
 - path/to/file1.ts
 - path/to/file2.ts
 - path/to/file3.ts`,
@@ -225,7 +222,6 @@ export function loadCustomAgents(workspaceSlug?: string): Record<string, AgentDe
 export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
 
 interface SystemPromptContext {
-  workspaceName?: string;
   workspaceSlug?: string;
   sessionId: string;
   sessionType?: ThreadType;
@@ -268,9 +264,10 @@ export function buildContentPresentationSection(
   if (resolveSessionType(ctx) !== "main") return null;
 
   const surface = ctx.automationExecution ? "自动化任务的最终结果" : "主对话的最终回复";
-  return `## Content Presentation
+  // 表达形式的元规则（最小形式/按信息密度选择）由「## 表达策略」单点声明
+  return `## 内容呈现
 
-在${surface}中，按信息密度和结构关系选择表达形式，不按篇幅长短机械触发。
+在${surface}中：
 - 当多维对比、连续阶段、时间线、层级、关联网络、指标组合或分类概览用视觉布局能显著降低理解成本时，调用已加载的 \`lume-infographic\` Skill，并遵循其安全 DSL。
 - “至少三个要点”只表示可以评估信息图，不构成强制触发；普通列表、表格或文字更清楚时不要生成。
 - 信息图只能补充正文，不能替代必要解释；每次回复最多输出一个 \`infographic\` fenced code block。
@@ -296,17 +293,17 @@ function buildMinimalSections(ctx: SystemPromptContext): string[] {
 
   lines.push(
     "",
-    "## Workspace",
-    "Primary workspace is provided by runtime context."
+    "## 工作区",
+    "主工作区由 runtime context 提供。"
   );
-  lines.push("Session managed files are provided by the Lume working directory in runtime context.");
-  lines.push("System config entry: ~/.lume/lume.yaml");
+  lines.push("会话管理文件由 runtime context 中的 Lume 工作目录提供。");
+  lines.push("系统配置入口: ~/.lume/lume.yaml");
 
   lines.push("", buildRuntimeSection(ctx, "minimal"));
   if (ctx.automationExecution) {
     lines.push(
       "",
-      "## Automation Non-Interactive Mode",
+      "## 自动化无交互模式",
       "当前由定时任务触发，禁止用户交互。",
       "- 不要调用 AskUserQuestion",
       "- 不要等待权限确认或人工输入",
@@ -339,20 +336,15 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
     return sections.join("\n\n");
   }
 
-  sections.push(buildLumeAgentSection(ctx));
+  sections.push(buildLumeAgentSection());
 
   sections.push(buildToolingSection(ctx.availableTools).join("\n"));
 
-  sections.push(buildSystemConfigSection());
-
-  if (ctx.workspaceName && ctx.workspaceSlug) {
-    const workspaceRules = buildWorkspaceRulesSection(ctx);
-    if (workspaceRules) {
-      sections.push(workspaceRules);
-    }
+  const workspaceRules = buildWorkspaceRulesSection(ctx.workspaceSlug);
+  if (workspaceRules) {
+    sections.push(workspaceRules);
   }
 
-  sections.push(buildKnowledgeMaintenanceSection());
   sections.push(buildConversationStyleSection());
 
   const contentPresentationSection = buildContentPresentationSection(ctx);
@@ -362,10 +354,7 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
 
   sections.push(buildTodoSection());
 
-  sections.push(
-    ...buildExecutionPolicySections(),
-    ...buildCapabilityPolicySections()
-  );
+  sections.push(...buildExecutionPolicySections());
 
   if (ctx.automationExecution) {
     sections.push(buildAutomationSection());
@@ -379,8 +368,6 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
   }
 
   sections.push(buildSafetySection());
-
-  sections.push(buildThreadBootstrapSection());
 
   const availableTools = new Set((ctx.availableTools ?? []).map((item) => canonicalizeAgentToolName(item)));
   const browserFirstSection = buildBrowserFirstSection(availableTools);
@@ -465,15 +452,14 @@ export function buildDynamicContext(ctx: DynamicContext): string {
   sections.push(`当前时间: ${timeStr}`);
 
   const sessionLines: string[] = [];
+  // title 与 modelRef/modelId 不注入：占位标题零信息，模型对自身 modelId 无可执行动作，
+  // 反而诱发「用运行时元数据回答我是谁」的误用（见 ## 运行时 段告诫）
   if (ctx.sessionId) sessionLines.push(`threadId: ${ctx.sessionId}`);
-  if (ctx.sessionTitle) sessionLines.push(`title: ${ctx.sessionTitle}`);
   if (ctx.sessionType) sessionLines.push(`threadType: ${ctx.sessionType}`);
   if (ctx.chatType) sessionLines.push(`chatType: ${ctx.chatType}`);
   if (ctx.parentSessionId) sessionLines.push(`parentThreadId: ${ctx.parentSessionId}`);
   if (ctx.workspaceId) sessionLines.push(`workspaceId: ${ctx.workspaceId}`);
   if (ctx.channelId) sessionLines.push(`channelId: ${ctx.channelId}`);
-  if (ctx.modelRef) sessionLines.push(`modelRef: ${ctx.modelRef}`);
-  if (ctx.modelId) sessionLines.push(`modelId: ${ctx.modelId}`);
   if (sessionLines.length > 0) {
     sections.push(`<thread_state>\n${sessionLines.join("\n")}\n</thread_state>`);
   }
@@ -501,15 +487,12 @@ export function buildDynamicContext(ctx: DynamicContext): string {
     if (skills.length > 0) {
       lines.push(...renderSkillManifestLines({
         workspaceSlug: ctx.workspaceSlug,
-        skills
+        skills,
+        hasOfficeTools: hasOfficeToolSet(new Set((ctx.availableTools ?? []).map((item) => canonicalizeAgentToolName(item))))
       }));
 
-      const hasSkillCreator = skills.some((s) => s.slug === "skill-creator");
-      if (hasSkillCreator) {
-        lines.push("");
-        lines.push("<skill_improvement_hint>");
-        lines.push("skill-creator is available for durable skill changes. Mention it only when a reusable improvement pattern is clear.");
-        lines.push("</skill_improvement_hint>");
+      if (skills.some((s) => s.slug === "skill-creator")) {
+        lines.push("- 出现可复用的 Skill 改进模式时，用 skill-creator 做持久化修改");
       }
     }
 
@@ -533,20 +516,18 @@ export function buildDynamicContext(ctx: DynamicContext): string {
   }
 
   if (ctx.projectRoot || ctx.lumeWorkDir) {
+    // 两根目录的绝对路径已由上方 <working_directory>/<lume_working_directory> 给出，此处不再重复
     const lines = [
       "<file_reference_protocol>",
       "在主回复、子 Agent 回复和计划 Markdown 中引用本地文件时，只使用行内代码协议，不要创建 Markdown 链接。",
       ...(ctx.projectRoot ? [
-        `项目根目录: ${ctx.projectRoot}`,
-        "项目根目录内的已知路径写作 `@project/<relative-path>`。"
+        "项目根目录 = 上方 <working_directory>；根目录内的已知路径写作 `@project/<relative-path>`。"
       ] : []),
       ...(ctx.lumeWorkDir ? [
-        `会话文件上下文根目录: ${ctx.lumeWorkDir}`,
-        "会话文件上下文内的已知路径写作 `@session/<relative-path>`。"
+        "会话文件上下文根目录 = 上方 <lume_working_directory>；根目录内的已知路径写作 `@session/<relative-path>`。"
       ] : []),
-      "路径使用 /，移除绝对根前缀；只引用确认位于对应根目录内的目标。",
+      "路径使用 /，移除绝对根前缀；只引用确认位于对应根目录内的目标，不要引用根目录之外的绝对路径。",
       "文本或源码可追加 #L42 或 #L42-L48；目录引用以 / 结尾且不带行号。",
-      "不要引用这两个根目录之外的绝对路径，也不要继续输出无前缀的旧版会话路径。",
       "</file_reference_protocol>"
     ];
     sections.push(lines.join("\n"));
@@ -564,14 +545,14 @@ function compactPromptText(text?: string, maxLength = 120): string {
 function renderEnabledPluginLines(plugins: EnabledPluginContextItem[]): string[] {
   if (plugins.length === 0) return [];
   const lines = [
-    "Enabled Plugins:",
+    "已启用插件：",
   ];
 
   for (const plugin of plugins) {
     const label = plugin.displayName && plugin.displayName !== plugin.pluginId
       ? `${plugin.pluginId} (${plugin.displayName})`
       : plugin.pluginId;
-    lines.push(`- ${label}: ${compactPromptText(plugin.description) || "enabled plugin"}`);
+    lines.push(`- ${label}: ${compactPromptText(plugin.description) || "已启用插件"}`);
     if (plugin.skills.length > 0) {
       lines.push(`  skills: ${plugin.skills.map((skill) => skill.name).join(", ")}`);
     }
@@ -582,9 +563,7 @@ function renderEnabledPluginLines(plugins: EnabledPluginContextItem[]): string[]
       ];
       lines.push(`  runtime: ${runtimeEntries.join(", ")}`);
     }
-    if (plugin.diagnostics.length > 0) {
-      lines.push(`  diagnostics: ${plugin.diagnostics.map((item) => compactPromptText(item, 100)).join("; ")}`);
-    }
+    // diagnostics 是插件健康状态，模型无法据此行动，不注入 prompt
   }
 
   return lines;

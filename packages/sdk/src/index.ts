@@ -122,10 +122,8 @@ export {
   FileReadTool,
   FileWriteTool,
   FileEditTool,
-  FindFilesTool,
   GlobTool,
   GrepTool,
-  ListWorkspaceTreeTool,
   NotebookEditTool,
 
   // Web
@@ -138,9 +136,6 @@ export {
 
   // Agent & Multi-agent
   AgentTool,
-  SendMessageTool,
-  TeamCreateTool,
-  TeamDeleteTool,
 
   // Persistent Tasks are host-bound through createTaskTools.
 
@@ -156,21 +151,9 @@ export {
   CORE_TOOL_NAMES,
   splitDeferredTools,
 
-  // MCP Resources
-  ListMcpResourcesTool,
-  ReadMcpResourceTool,
-  SubscribeMcpResourceTool,
-  UnsubscribeMcpResourceTool,
-  SubscribePollingTool,
-  UnsubscribePollingTool,
-  McpAuthTool,
-
   // LSP
   LSPTool,
   LSPApplyTool,
-
-  // Config
-  ConfigTool,
 
   // Todo
   createTodoTool,
@@ -517,20 +500,6 @@ export type {
 } from './tools/task-tools.js'
 
 export {
-  getAllTeams,
-  getTeam,
-  clearTeams,
-} from './tools/team-tools.js'
-export type { Team } from './tools/team-tools.js'
-
-export {
-  readMailbox,
-  writeToMailbox,
-  clearMailboxes,
-} from './tools/send-message.js'
-export type { AgentMessage } from './tools/send-message.js'
-
-export {
   registerAgents,
   clearAgents,
 } from './tools/agent-tool.js'
@@ -561,16 +530,6 @@ export {
   isToolSearchEnabled,
 } from './tools/tool-search.js'
 
-export {
-  setMcpConnections,
-} from './tools/mcp-resource-tools.js'
-
-export {
-  getConfig,
-  setConfig,
-  clearConfig,
-} from './tools/config-tool.js'
-
 export type { TodoItem, TodoStatus, TodoState } from './tools/todo-tool.js'
 
 // --------------------------------------------------------------------------
@@ -582,7 +541,7 @@ export * from './tools/render-client.js'
 // WebFetch internals (enhanced WebFetch assembly in sidecar needs these)
 export { runWebFetch, type WebFetchInput, type WebFetchDeps } from './tools/web-fetch.js'
 export { sdkFetch } from './tools/web-request.js'
-export { isPublicIpAddress } from './utils/pathing.js'
+export { isFakeIpRange, isPublicIpAddress } from './utils/pathing.js'
 export type { FetchImpl } from './tools/web-fetch-http.js'
 export { extractArticleMarkdown } from './tools/html-to-markdown.js'
 export {

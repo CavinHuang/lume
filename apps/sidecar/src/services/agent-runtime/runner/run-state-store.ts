@@ -27,6 +27,8 @@ export interface LumeRunStateStore {
   getState(runId: string): Promise<LumeRunState | null>;
   update(runId: string, patch: Partial<LumeRunState>): Promise<void>;
   appendItem(runId: string, item: LumeRunItem): Promise<void>;
+  /** tool_result 落盘后回写对应 tool_call 行的终态（completed/failed）；找不到时静默。 */
+  settleToolCall(runId: string, toolCallId: string, status: "completed" | "failed", endedAt: string): Promise<void>;
   listByThread(threadId: string): Promise<LumeRunState[]>;
   /** 只读各 run 的 state.json（generatedItems 恒空）——列表/判定类调用的轻量路径。 */
   listStatesByThread(threadId: string): Promise<LumeRunState[]>;
@@ -131,6 +133,20 @@ class FileBackedLumeRunStateStore implements LumeRunStateStore {
   async appendItem(runId: string, item: LumeRunItem): Promise<void> {
     if (!existsSync(this.statePath(runId))) return;
     appendFileSync(this.itemsPath(runId), JSON.stringify(item) + "\n", "utf-8");
+  }
+
+  async settleToolCall(runId: string, toolCallId: string, status: "completed" | "failed", endedAt: string): Promise<void> {
+    const path = this.itemsPath(runId);
+    if (!existsSync(path)) return;
+    const items = readJsonlFile<LumeRunItem>(path);
+    let settled = false;
+    const next = items.map((item) => {
+      if (item.type !== "tool_call" || item.id !== toolCallId || settled) return item;
+      settled = true;
+      return { ...item, status, endedAt } as LumeRunItem;
+    });
+    if (!settled) return;
+    writeTextAtomic(path, next.map((item) => JSON.stringify(item)).join("\n") + "\n");
   }
 
   async listByThread(threadId: string): Promise<LumeRunState[]> {

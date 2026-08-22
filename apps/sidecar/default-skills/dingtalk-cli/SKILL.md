@@ -1,7 +1,6 @@
 ---
 name: "钉钉企业 IM 操作"
 description: "通过 dingtalk_cli 工具操作钉钉:发消息、查日历、读文档、查通讯录等。dws CLI 子命令参考。"
-when_to_use: "当需要在钉钉中发送消息、查询日历日程、读取钉钉文档、查询通讯录/组织架构、管理待办等企业 IM 操作时"
 allowed_tools: ["dingtalk_cli"]
 version: "1.0"
 ---

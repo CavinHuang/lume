@@ -2,7 +2,6 @@
 name: "lume-infographic"
 description: "为 Lume 最终回复生成安全的 AntV Infographic DSL。仅在多维对比、阶段、时间线、层级、关系、指标或分类等高信息密度结构确实能通过视觉布局提升理解时使用；不按内容长度触发"
 metadata:
-  when_to_use: "当主对话或自动化任务的最终内容包含多个需要同时理解的实体、阶段、指标或关系，并且信息图比普通文字、列表或表格更清晰时使用"
   version: "1.0"
 ---
 

@@ -73,6 +73,45 @@ describe("loadPlugins command manifests", () => {
 
     expect(plugins[0]?.tools?.map((tool) => tool.name)).toEqual(["echo_payload"]);
   });
+
+  test("warns instead of silently dropping a plugin with broken manifest JSON (#227)", async () => {
+    const root = join(tmpdir(), `lume-plugin-${crypto.randomUUID()}`);
+    const pluginDir = join(root, "demo");
+    await mkdir(pluginDir, { recursive: true });
+    await writeFile(join(pluginDir, "plugin.json"), "{ not valid json", "utf-8");
+
+    const warnings: unknown[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args); };
+    try {
+      const plugins = await loadPlugins(root, [{ name: "demo" }]);
+      expect(plugins).toHaveLength(0);
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(JSON.stringify(warnings)).toContain("demo");
+  });
+
+  test("warns when a plugin spec resolves to nothing loadable (#227)", async () => {
+    const root = join(tmpdir(), `lume-plugin-${crypto.randomUUID()}`);
+    const pluginDir = join(root, "empty");
+    await mkdir(pluginDir, { recursive: true });
+
+    const warnings: unknown[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args); };
+    try {
+      const plugins = await loadPlugins(root, [{ name: "empty" }]);
+      expect(plugins).toHaveLength(0);
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(JSON.stringify(warnings)).toContain("no loadable manifest or entry module");
+  });
 });
 
 const contribution: CommandToolContribution = {

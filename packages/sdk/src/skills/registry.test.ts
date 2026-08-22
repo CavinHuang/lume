@@ -73,7 +73,6 @@ test("formatSkillsForPrompt exposes argument hints but not trigger details for m
   registerSkill({
     name: "code-review",
     description: "Review code",
-    whenToUse: "when the user asks for code review",
     argumentHint: "path to review",
     getPrompt: async () => [{ type: "text", text: "review" }]
   });

@@ -150,8 +150,15 @@ function formatOutput(contentType: string, oEmbed: SpotifyOEmbedResponse, og: Op
 }
 
 export const handleSpotify: SpecialHandler = async (url: string, timeout: number, signal?: AbortSignal) => {
-	// Check if this is a Spotify URL
-	if (!url.includes("open.spotify.com/")) {
+	// hostname check, not substring: url.includes() let open.spotify.com.evil.io
+	// through and rendered attacker content as a trusted "track" (#236)
+	let host = "";
+	try {
+		host = new URL(url).hostname.replace(/^www\./, "");
+	} catch {
+		return null;
+	}
+	if (host !== "open.spotify.com") {
 		return null;
 	}
 

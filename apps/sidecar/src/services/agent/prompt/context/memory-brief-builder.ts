@@ -33,21 +33,18 @@ export function buildMemoryBrief(input: MemoryBriefInput): string {
   const recent = uniqueTake(extractMeaningfulLines(input.dailyMemory), 4);
   if (durable.length === 0 && recent.length === 0) return "";
 
-  const lines = [
-    "Memory is shared experience, not a dossier.",
-    "Use loaded memory naturally. If current shared work state, progress, prior decisions, or next steps are unclear, use memory search when available.",
-    "Do not treat a new thread as a new relationship; continuity can come from memory."
-  ];
+  // 仅承载数据；使用记忆的行为规则由静态 prompt 的「## 记忆」段单点声明
+  const lines: string[] = [];
 
   if (durable.length > 0) {
-    lines.push("", "Durable:");
+    lines.push("长期：");
     for (const item of durable) {
       lines.push(`- ${item}`);
     }
   }
 
   if (recent.length > 0) {
-    lines.push("", "Recent:");
+    lines.push(...(lines.length > 0 ? [""] : []), "近期：");
     for (const item of recent) {
       lines.push(`- ${item}`);
     }

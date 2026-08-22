@@ -62,6 +62,18 @@ function buildLookupMap(registry: ModelMeta[]): Map<string, ModelMeta> {
 }
 
 let lookupMap = buildLookupMap(MODEL_META_REGISTRY)
+/** Pre-lowercased key table: the miss path used to lowercase every key per candidate (#242). */
+let lookupLowerMap = buildLowerLookupMap(lookupMap)
+/** Prefix-match results cached per candidate; rebuilt when the registry changes. */
+const prefixMatchCache = new Map<string, ModelMeta | undefined>()
+
+function buildLowerLookupMap(map: Map<string, ModelMeta>): Map<string, ModelMeta> {
+  const lower = new Map<string, ModelMeta>()
+  for (const [key, meta] of map) {
+    lower.set(key.toLowerCase(), meta)
+  }
+  return lower
+}
 
 /**
  * 运行时替换 registry：接收未 merge 的原始 generated，内部应用 override 后重建 lookupMap。
@@ -70,6 +82,8 @@ let lookupMap = buildLookupMap(MODEL_META_REGISTRY)
 export function setModelMeta(generated: ModelMeta[]): void {
   MODEL_META_REGISTRY = mergeModelMeta(generated, MODEL_OVERRIDES)
   lookupMap = buildLookupMap(MODEL_META_REGISTRY)
+  lookupLowerMap = buildLowerLookupMap(lookupMap)
+  prefixMatchCache.clear()
 }
 
 /** Strip provider prefix (e.g., "anthropic/claude-sonnet-4-5" → "claude-sonnet-4-5") */
@@ -106,15 +120,28 @@ export function findModelMeta(modelId: string): ModelMeta | undefined {
     const exact = lookupMap.get(candidate)
     if (exact) return exact
 
-    const lower = candidate.toLowerCase()
-    for (const [key, meta] of lookupMap) {
-      if (key.toLowerCase() === lower) return meta
+    const byLower = lookupLowerMap.get(candidate.toLowerCase())
+    if (byLower) return byLower
+
+    if (prefixMatchCache.has(candidate)) {
+      const cached = prefixMatchCache.get(candidate)
+      if (cached) return cached
+      continue
     }
 
+    let matched: ModelMeta | undefined
     for (const meta of MODEL_META_REGISTRY) {
-      if (candidate.startsWith(meta.id) || meta.id.startsWith(candidate)) return meta
-      if (meta.aliases?.some((alias) => candidate.startsWith(alias) || alias.startsWith(candidate))) return meta
+      if (candidate.startsWith(meta.id) || meta.id.startsWith(candidate)) {
+        matched = meta
+        break
+      }
+      if (meta.aliases?.some((alias) => candidate.startsWith(alias) || alias.startsWith(candidate))) {
+        matched = meta
+        break
+      }
     }
+    prefixMatchCache.set(candidate, matched)
+    if (matched) return matched
   }
 
   return undefined

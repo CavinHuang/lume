@@ -65,9 +65,9 @@ export interface McpReadResourceResult {
 export interface McpClientLike {
   connect(transport: unknown): Promise<void>;
   listTools?(): Promise<{ tools?: Array<{ name: string; description?: string; inputSchema?: unknown }> }>;
-  callTool?(input: { name: string; arguments: Record<string, unknown> }): Promise<unknown>;
-  listResources?(): Promise<{ resources?: Array<Record<string, unknown>> }>;
-  readResource?(input: { uri: string }): Promise<{ contents?: unknown[] }>;
+  callTool?(input: { name: string; arguments: Record<string, unknown> }, options?: { signal?: AbortSignal }): Promise<unknown>;
+  listResources?(params?: unknown, options?: { signal?: AbortSignal }): Promise<{ resources?: Array<Record<string, unknown>> }>;
+  readResource?(input: { uri: string }, options?: { signal?: AbortSignal }): Promise<{ contents?: unknown[] }>;
   close?(): Promise<void>;
 }
 
@@ -136,7 +136,9 @@ function classifyError(error: unknown, fallback: McpClientErrorCode = 'protocol_
   if (code === 'ABORT_ERR') {
     return createMcpError('aborted', message || 'MCP operation aborted');
   }
-  if (/401|403|unauthorized|forbidden|auth|api key|token/i.test(message)) {
+  // Bare 'auth'/'token' matched unrelated messages like "exceeded token limit"
+  // and steered users toward API-key fixes; keep the word list explicit (#226).
+  if (/\b401\b|\b403\b|unauthorized|forbidden|api[ _-]?key/i.test(message)) {
     return createMcpError('auth_error', message);
   }
   if (/timed out|timeout/i.test(message)) {
@@ -321,6 +323,62 @@ async function withTimeout<T>(
   });
 }
 
+/**
+ * Like withTimeout, but the timed-out operation is an MCP request: aborting
+ * the signal makes the official SDK client emit notifications/cancelled and
+ * drop the entry from its pending map, while the race still protects callers
+ * whose client ignores the signal. Without this, slow servers accumulated
+ * permanently-pending requests on every timeout (#226).
+ */
+async function withRequestTimeout<T>(
+  makeRequest: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<T> {
+  if (signal?.aborted) {
+    throw createMcpError('aborted', 'MCP operation aborted');
+  }
+
+  const controller = new AbortController();
+  const request = makeRequest(controller.signal);
+  request.catch(() => undefined); // losing the race must not surface as an unhandled rejection
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const cleanup = () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const settle = (fn: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      fn();
+    };
+    const onAbort = () => {
+      controller.abort();
+      settle(() => reject(createMcpError('aborted', 'MCP operation aborted')));
+    };
+
+    timer = setTimeout(() => {
+      controller.abort();
+      settle(() => reject(createMcpError('timeout', `MCP operation timed out after ${timeoutMs}ms`)));
+    }, timeoutMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+
+    request.then(
+      (value) => settle(() => resolve(value)),
+      (error) => settle(() => reject(error))
+    );
+  });
+}
+
 function truncateText(text: string): { text: string; truncated: boolean } {
   if (text.length <= MAX_TEXT_CHARS) {
     return { text, truncated: false };
@@ -394,6 +452,7 @@ async function defaultTransportFactory(
     return new StdioClientTransport({
       command: config.command ?? '',
       args: config.args ?? [],
+      cwd: config.cwd,
       env: { ...getDefaultEnvironment(), ...config.env } as Record<string, string>
     });
   }
@@ -505,7 +564,9 @@ export class McpClientManager {
         enabled: state.config.enabled,
         status: state.status,
         tools: state.tools.map((tool) => tool.originalName),
-        toolDetails: state.tools,
+        // Copy the entries: handing out the live array lets callers sort/splice
+        // the manager's internal tool list (#226).
+        toolDetails: state.tools.map((tool) => ({ ...tool })),
         ...(state.error ? { error: state.error } : {}),
         ...(state.lastConnectedAt ? { lastConnectedAt: state.lastConnectedAt } : {}),
         ...(state.lastCheckedAt ? { lastCheckedAt: state.lastCheckedAt } : {})
@@ -533,8 +594,8 @@ export class McpClientManager {
   async listResources(serverId?: string): Promise<McpListResourcesResult> {
     if (serverId) {
       const state = await this.getConnectedState(serverId);
-      const result = await withTimeout(
-        Promise.resolve(state.client?.listResources?.() ?? { resources: [] }),
+      const result = await withRequestTimeout(
+        (requestSignal) => Promise.resolve(state.client?.listResources?.(undefined, { signal: requestSignal }) ?? { resources: [] }),
         this.defaultCallTimeoutMs
       );
       return { resources: result.resources ?? [] };
@@ -552,8 +613,8 @@ export class McpClientManager {
 
   async readResource(serverId: string, uri: string): Promise<McpReadResourceResult> {
     const state = await this.getConnectedState(serverId);
-    const result = await withTimeout(
-      Promise.resolve(state.client?.readResource?.({ uri }) ?? { contents: [] }),
+    const result = await withRequestTimeout(
+      (requestSignal) => Promise.resolve(state.client?.readResource?.({ uri }, { signal: requestSignal }) ?? { contents: [] }),
       this.defaultCallTimeoutMs
     );
     return { contents: result.contents ?? [] };
@@ -568,8 +629,8 @@ export class McpClientManager {
   ): Promise<McpCallResult> {
     const state = await this.getConnectedState(serverId);
     try {
-      const result = await withTimeout(
-        Promise.resolve(state.client?.callTool?.({ name: originalToolName, arguments: args })),
+      const result = await withRequestTimeout(
+        (requestSignal) => Promise.resolve(state.client?.callTool?.({ name: originalToolName, arguments: args }, { signal: requestSignal })),
         options.timeoutMs ?? this.defaultCallTimeoutMs,
         options.signal
       );

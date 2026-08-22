@@ -11,9 +11,14 @@ interface CommandRule {
   reason: string;
 }
 
+/** rm 递归标志：短选项簇含 r/R（-r/-rf/-fr），或 GNU 长选项 */
+const RM_RECURSIVE_FLAG = String.raw`(?:-[^\s]*[rR][^\s]*|--recursive|--recurse)`;
+/** rm 选项区：零到多个选项 token（短簇/长选项/-- 分隔符），空白分隔 */
+const RM_OPTIONS = String.raw`(?:(?:-{1,2}[^\s]+)\s+)*`;
+
 const HARD_DENY_BASH_RULES: CommandRule[] = [
-  { pattern: /\brm\s+(?:-[^\s]*r[^\s]*f[^\s]*|-[^\s]*f[^\s]*r[^\s]*)\s+\/(?:\s|$|[;&|])/, reason: "禁止删除根目录" },
-  { pattern: /\brm\s+(?:-[^\s]*r[^\s]*f[^\s]*|-[^\s]*f[^\s]*r[^\s]*)\s+(?:~|\$HOME)(?:\s|$|[;&|])/, reason: "禁止删除用户主目录" },
+  { pattern: new RegExp(String.raw`\brm\s+${RM_OPTIONS}${RM_RECURSIVE_FLAG}\s+${RM_OPTIONS}\/(?:\s|$|[;&|])`), reason: "禁止删除根目录" },
+  { pattern: new RegExp(String.raw`\brm\s+${RM_OPTIONS}${RM_RECURSIVE_FLAG}\s+${RM_OPTIONS}(?:~|\$HOME)(?:\s|$|[;&|])`), reason: "禁止删除用户主目录" },
   { pattern: /:\s*\(\s*\)\s*\{.*\}\s*;.*:/, reason: "禁止 fork bomb" },
   { pattern: />\s*\/dev\/sd[a-z]/, reason: "禁止写入块设备" }
 ];
@@ -23,7 +28,7 @@ const FORCE_CONFIRM_BASH_RULES: CommandRule[] = [
   { pattern: /\bgit\s+push\b/, reason: "git push 会向外部远端发布内容，需要用户确认" },
   { pattern: /\bgit\s+reset\s+--hard\b/, reason: "git reset --hard 会丢弃本地改动，需要用户确认" },
   { pattern: /\bgit\s+clean\s+-[^\s]*[fd][^\s]*\b/, reason: "git clean 会删除未跟踪文件，需要用户确认" },
-  { pattern: /\brm\s+(?:-[^\s]*r[^\s]*f[^\s]*|-[^\s]*f[^\s]*r[^\s]*)\s+["']?[^/\s][^;&|]*["']?(?:\s|$|[;&|])/, reason: "递归强制删除文件需要用户确认" },
+  { pattern: new RegExp(String.raw`\brm\s+${RM_OPTIONS}${RM_RECURSIVE_FLAG}\s+${RM_OPTIONS}["']?[^/\s][^;&|]*["']?(?:\s|$|[;&|])`), reason: "递归强制删除文件需要用户确认" },
   { pattern: /\b(?:curl|wget)\b[\s\S]*\|\s*(?:sh|bash)\b/, reason: "远程脚本管道执行需要用户确认" },
   { pattern: /\b(?:open|xdg-open|start)\s+https?:\/\//, reason: "打开外部 URL 需要用户确认" }
 ];
@@ -81,10 +86,15 @@ export function evaluateRuntimeToolSafety(toolName: string, input: unknown): Run
   return { behavior: "allow" };
 }
 
+/** rm 递归标志：短选项簇含 r/R，或 GNU 长选项（与正则层规则保持同一判定口径） */
+function isRecursiveRmFlag(arg: string): boolean {
+  return /^-(?!-)[^\s]*[rR]/.test(arg) || arg === "--recursive" || arg === "--recurse";
+}
+
 function evaluateStructuredBashSafety(analysis: ReturnType<typeof analyzeBashCommand>): RuntimeToolSafetyDecision | undefined {
   for (const segment of analysis.commands) {
     const [executable, ...args] = segment.argv;
-    if (segment.executable === "rm" && args.some((arg) => /^-[^-]*[rR]/.test(arg))) {
+    if (segment.executable === "rm" && args.some(isRecursiveRmFlag)) {
       const targets = args.filter((arg) => !arg.startsWith("-"));
       if (targets.some((target) => target === "/" || target === "~" || target === "$HOME")) {
         return { behavior: "deny", reason: "禁止递归删除根目录或用户主目录" };

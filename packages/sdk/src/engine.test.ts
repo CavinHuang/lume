@@ -2189,6 +2189,32 @@ describe("QueryEngine usage records", () => {
     });
   });
 
+  test("usageIdentity.runId prefers config.runId over sessionId (#256)", async () => {
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "done" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 10, output_tokens: 5 }
+    }]);
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "gpt-4o-mini",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      sessionId: "thread-runid",
+      runId: "run-42"
+    });
+
+    const events = await collectEvents(engine);
+    const assistant = events.find((event) => (event as { type?: string }).type === "assistant") as any;
+    // 此前恒用 sessionId(=threadId),无法按 run 聚合 usage
+    expect(assistant.usageIdentity).toMatchObject({ threadId: "thread-runid", runId: "run-42" });
+  });
+
   test("includes per-provider-call usage records in the final result", async () => {
     const provider = new StaticProvider([
       {

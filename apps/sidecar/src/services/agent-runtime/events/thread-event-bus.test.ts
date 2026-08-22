@@ -14,7 +14,7 @@ const skeletonEvent = (kind: SdkEventKind, phase: SdkEventPhase, detail: unknown
 })
 
 describe("ThreadEventBus", () => {
-  test("assigns monotonic seq per thread and persists append-only", async () => {
+  test("assigns monotonic seq per thread and reads pending updates from buffer", async () => {
     dir = mkdtempSync(join(tmpdir(), "bus-"))
     const bus = getThreadEventBus(dir)
     const s1 = await bus.publish("th1", "r1", skeletonEvent("message", "update"))
@@ -23,8 +23,9 @@ describe("ThreadEventBus", () => {
     expect(s2).toBe(s1 + 1)
     expect(other).toBe(1) // per-thread seq
 
+    // 持久折叠(#257):同 key update 只保留最新一条,read 从缓冲归并可见
     const all = await bus.read("th1")
-    expect(all.map((e) => e.seq)).toEqual([1, 2])
+    expect(all.map((e) => e.seq)).toEqual([s2])
     const first = all[0]
     expect(first?.threadId).toBe("th1")
     expect(first?.v).toBe(1)
@@ -39,7 +40,7 @@ describe("ThreadEventBus", () => {
     expect(inc.map((e) => e.seq)).toEqual([2])
   })
 
-  test("coalesces same kind+phase updates within 16ms window", async () => {
+  test("coalesces same kind+phase updates within 16ms window (push and persist)", async () => {
     dir = mkdtempSync(join(tmpdir(), "bus-"))
     const bus = getThreadEventBus(dir)
     const received: SdkEventEnvelope[] = []
@@ -47,10 +48,26 @@ describe("ThreadEventBus", () => {
     await bus.publish("th1", "r1", skeletonEvent("message", "update", { type: "message.update", delta: null, partial: { text: "a", toolUses: [] } }))
     await bus.publish("th1", "r1", skeletonEvent("message", "update", { type: "message.update", delta: null, partial: { text: "ab", toolUses: [] } }))
     await new Promise((r) => setTimeout(r, 40))
-    // 持久化 2 条(都落盘),推送只收到最后一条(折叠)
+    // 推送只收到最后一条(UI 折叠),窗口到期后磁盘也只有最新累计态(持久折叠)
     expect(received).toHaveLength(1)
     expect((received[0]?.detail as { partial: { text: string } }).partial.text).toBe("ab")
-    expect((await bus.read("th1")).length).toBe(2)
+    const persisted = await bus.read("th1")
+    expect(persisted.length).toBe(1)
+    expect((persisted[0]?.detail as { partial: { text: string } }).partial.text).toBe("ab")
+  })
+
+  test("non-update phase flushes pending updates to disk in order (run tail not lost)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "bus-"))
+    const bus = getThreadEventBus(dir)
+    const seq1 = await bus.publish("th1", "r1", skeletonEvent("message", "update", { type: "message.update", delta: null, partial: { text: "a", toolUses: [] } }))
+    const seq2 = await bus.publish("th1", "r1", skeletonEvent("message", "update", { type: "message.update", delta: null, partial: { text: "ab", toolUses: [] } }))
+    await bus.publish("th1", "r1", skeletonEvent("message", "end", { type: "message.end", message: { role: "assistant", content: [] } }))
+    // end 相位先把挂起 update 冲盘再写自身:磁盘 seq 有洞(1 被折叠)但单调,update 早于 end
+    const all = await bus.read("th1")
+    expect(all.map((e) => e.seq)).toEqual([seq2, seq2 + 1])
+    expect(all[0]?.phase).toBe("update")
+    expect(all[1]?.phase).toBe("end")
+    expect(seq2).toBe(seq1 + 1)
   })
 
   test("non-update phases are pushed immediately without coalescing", async () => {
@@ -120,6 +137,27 @@ describe("ThreadEventBus", () => {
     const blank = join(dir, "th3.events.jsonl")
     await Bun.write(blank, "\n\n")
     expect(bus.hasEvents("th3")).toBe(false)
+  })
+
+  test("releaseThread flushes pending updates before dropping thread state", async () => {
+    dir = mkdtempSync(join(tmpdir(), "bus-release-flush-"))
+    const bus = getThreadEventBus(dir)
+    const seq = await bus.publish("th1", "r1", skeletonEvent("message", "update"))
+    releaseThreadEventBus(dir, "th1")
+    // 释放即冲盘:重建实例(不靠窗口)能读到挂起的 update
+    const rebuilt = getThreadEventBus(dir)
+    const all = await rebuilt.read("th1")
+    expect(all.map((e) => e.seq)).toEqual([seq])
+    const next = await rebuilt.publish("th1", "r1", skeletonEvent("run", "end"))
+    expect(next).toBe(seq + 1)
+  })
+
+  test("hasEvents counts pending persist buffer when file is empty", async () => {
+    dir = mkdtempSync(join(tmpdir(), "bus-has-"))
+    const bus = new ThreadEventBus(dir)
+    // 首条事件是 update(极端:投影链未发 run.start)且尚未过窗口——文件空但缓冲有事件
+    await bus.publish("th1", "r1", skeletonEvent("message", "update"))
+    expect(bus.hasEvents("th1")).toBe(true)
   })
 
   test("releaseThreadEventBus 释放线程 state 与实例，重建后 nextSeq 从文件续读", async () => {

@@ -133,6 +133,35 @@ describe("create-lume-tools", () => {
     expect(result.availableToolNames).toContain("mcp__node_repl__js");
     expect(toolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeTrue();
     expect(toolNames).not.toContain("js");
+    expect(toolNames).toContain("mcp__browser__list_tabs");
+    expect(toolNames).toContain("mcp__browser__open");
+    expect(toolNames).toContain("mcp__browser__switch_tab");
+    expect(toolNames).toContain("mcp__browser__navigate");
+    expect(toolNames).toContain("mcp__browser__back");
+    expect(toolNames).toContain("mcp__browser__forward");
+    expect(toolNames).toContain("mcp__browser__reload");
+    expect(toolNames).toContain("mcp__browser__snapshot");
+    expect(toolNames).toContain("mcp__browser__click");
+    expect(toolNames).toContain("mcp__browser__fill");
+    expect(toolNames).toContain("mcp__browser__type");
+    expect(toolNames).toContain("mcp__browser__press");
+    expect(toolNames).toContain("mcp__browser__select");
+    expect(toolNames).toContain("mcp__browser__check");
+    expect(toolNames).toContain("mcp__browser__scroll");
+    expect(toolNames).toContain("mcp__browser__screenshot");
+    expect(toolNames).toContain("mcp__browser__upload");
+    expect(toolNames).toContain("mcp__browser__download");
+    expect(toolNames).toContain("mcp__browser__list_secrets");
+    expect(toolNames).toContain("mcp__browser__fill_secret");
+    expect(toolNames).toContain("mcp__browser__dialog");
+    expect(toolNames).toContain("mcp__browser__handle_dialog");
+    expect(toolNames).toContain("mcp__browser__run_script");
+  });
+
+  test("does not expose task-owned Browser tools to subagents", () => {
+    const result = createLumeRuntimeTools({ ...baseInput(), threadType: "subagent" });
+
+    expect(result.customTools.some((tool) => tool.name.startsWith("mcp__browser__"))).toBeFalse();
   });
 
   test("does not mark the Browser executor as a permanently visible core tool", () => {

@@ -205,7 +205,6 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
           slug: item.slug,
           name: item.name,
           description: item.description ?? '',
-          whenToUse: '',
           storageScope: 'workspace' as SkillStorageScope,
           managementSurface: 'market' as const,
           sourceType: 'built-in' as const,
@@ -366,7 +365,6 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
         ...(draft.storageScope === 'project' && projectCwd ? { cwd: projectCwd } : {}),
         name,
         description: draft.description,
-        whenToUse: draft.whenToUse,
         allowedTools: normalizeAllowedToolDraft(draft.allowedToolsText),
         argumentHint: draft.argumentHint,
         disableModelInvocation: draft.disableModelInvocation,
@@ -635,9 +633,6 @@ const SkillSettingsRow = ({
         {skill.description && (
           <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-[var(--text-3)]">{skill.description}</p>
         )}
-        {skill.whenToUse && (
-          <p className="mt-1 line-clamp-1 text-[13px] italic leading-5 text-[var(--text-1)]">{skill.whenToUse}</p>
-        )}
         {skill.allowedTools && skill.allowedTools.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-2">
             {skill.allowedTools.slice(0, 8).map((tool) => (
@@ -808,15 +803,6 @@ const SkillEditor = ({
             value={draft.description}
             onChange={(event) => updateDraft({ description: event.target.value })}
             placeholder="帮助用户创建、优化或评测 Skill"
-            className="h-12 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 text-[14px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_50%,var(--border-strong))]"
-          />
-        </SkillEditorField>
-
-        <SkillEditorField label="触发条件">
-          <Input
-            value={draft.whenToUse}
-            onChange={(event) => updateDraft({ whenToUse: event.target.value })}
-            placeholder="当用户说「帮我创建一个 skill」时"
             className="h-12 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 text-[14px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_50%,var(--border-strong))]"
           />
         </SkillEditorField>

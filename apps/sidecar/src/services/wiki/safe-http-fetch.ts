@@ -2,7 +2,7 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { request as httpRequest, type ClientRequest, type RequestOptions } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
-import { isPublicIpAddress } from "@lume/agent-sdk";
+import { isFakeIpRange, isPublicIpAddress } from "@lume/agent-sdk";
 
 export interface WikiSafeFetchResult {
   finalUrl: string;
@@ -41,7 +41,8 @@ export class WikiSafeHttpFetchService {
     let current = normalizeUrl(rawUrl);
     for (let redirect = 0; redirect <= maxRedirects; redirect += 1) {
       const addresses = await (this.deps.resolve ?? resolvePublicAddresses)(current.hostname);
-      if (addresses.length === 0 || addresses.some((address) => !isPublicIpAddress(address.address))) throw new Error("Wiki URL DNS 结果包含非公网或混合地址");
+      // fake-IP 段（TUN 代理虚拟映射，不指向真实内网）在 DNS 判定中按公网放行，固定连接经 TUN 还原域名转发
+      if (addresses.length === 0 || addresses.some((address) => !isPublicIpAddress(address.address) && !isFakeIpRange(address.address))) throw new Error("Wiki URL DNS 结果包含非公网或混合地址");
       const selected = addresses[0]!;
       const response = await (this.deps.request ?? requestFixedAddress)(current, selected, requestOptions);
       if ([301, 302, 303, 307, 308].includes(response.status)) {

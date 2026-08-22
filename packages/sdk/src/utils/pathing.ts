@@ -4,7 +4,13 @@ import { isIP } from 'node:net'
 import type { SandboxSettings } from '../types.js'
 
 function normalizePath(path: string): string {
-  return normalize(path).replace(/\\/g, '/').toLowerCase()
+  const normalized = normalize(path).replace(/\\/g, '/')
+  // Fold case only on case-insensitive filesystems; on Linux the old unconditional
+  // toLowerCase let ROOT-case variants of the root directory pass containment (#246)
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    return normalized.toLowerCase()
+  }
+  return normalized
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -148,6 +154,17 @@ export function isPublicIpAddress(address: string): boolean {
     return true
   }
   return false
+}
+
+/**
+ * fake-IP 段（198.18.0.0/15 基准测试保留段）判定：TUN 代理（Clash/sing-box fake-ip 模式）
+ * 的 DNS 会把所有域名映射到该段，实际流量经代理出网，不指向任何真实内网。
+ * DNS 解析后的判定用它豁免，避免代理环境下全域名被误判私网；字面 IP 守卫不豁免。
+ */
+export function isFakeIpRange(address: string): boolean {
+  if (isIP(address) !== 4) return false
+  const [a, b] = address.split('.').map(Number)
+  return a === 198 && (b === 18 || b === 19)
 }
 
 function isExplicitlyAllowedHost(hostname: string, sandbox?: SandboxSettings): boolean {

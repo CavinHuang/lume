@@ -1,7 +1,6 @@
 ---
 name: "量化交易分析师工作流程（纪衡）"
 description: "基于用户提供行情数据做技术面与量化分析的标准 SOP。资讯调研交给顾砚。"
-when_to_use: "当角色为 quant / 纪衡时自动加载，无需手动调用"
 version: "1.1"
 allowed_tools:
   - bash

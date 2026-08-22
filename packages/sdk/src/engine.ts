@@ -329,7 +329,7 @@ function compactionStageMessage(stage: AgentContextCompactionStage): string {
 
 async function buildSystemPrompt(config: QueryEngineConfig): Promise<string> {
   const deferredToolGuide = config.deferredTools?.length
-    ? '\n\nSome tools are deferred to keep your context focused. Use ToolSearch to discover them; matched tools become natively callable on your next turn — call them directly by name. Do not claim a capability is unavailable before searching when the visible tools do not cover the task.'
+    ? '\n\n部分工具已延迟加载以保持上下文精简。用 ToolSearch 发现它们；匹配的工具在下一回合即可直接按名称调用。可见工具不覆盖任务时，先搜索再判断，不要未搜索就宣称能力不可用。'
     : ''
   if (config.systemPrompt) {
     const structuredOutputInstruction = buildStructuredOutputInstruction(
@@ -523,7 +523,9 @@ export class QueryEngine {
     return {
       threadId: this.sessionId,
       callerKind,
-      runId: this.sessionId,
+      // runId 用真实 run 标识(config.runId 由 Agent.run opts 透传);
+      // 缺省回落 sessionId——此前恒用 sessionId 导致 usageIdentity 无法按 run 聚合
+      runId: this.config.runId ?? this.sessionId,
       responseId: crypto.randomUUID(),
       ...options,
     }
@@ -1256,7 +1258,7 @@ export class QueryEngine {
                   delta: { type: 'text_delta', text: chunk.text },
                 },
                 parent_tool_use_id: null,
-                session_id: this.config.sessionId,
+                session_id: this.sessionId,
               }
               // Legacy format - kept for backward compatibility
               yield {
@@ -1278,7 +1280,7 @@ export class QueryEngine {
                   delta: { type: 'thinking_delta', thinking: chunk.thinking },
                 },
                 parent_tool_use_id: null,
-                session_id: this.config.sessionId,
+                session_id: this.sessionId,
               }
             }
             if (chunk.type === 'retry_state') {
@@ -2269,7 +2271,7 @@ export class QueryEngine {
     const skillFrontmatter = skills.map((skill) => ({
       name: skill.name,
       source: 'runtime',
-      tokens: Math.ceil((skill.name.length + skill.description.length + (skill.whenToUse?.length || 0)) / 4),
+      tokens: Math.ceil((skill.name.length + skill.description.length) / 4),
     }))
     const systemTools = this.config.tools
       .filter((tool) => !tool.name.startsWith('mcp__'))

@@ -1,7 +1,6 @@
 ---
 name: "探索员工作流程（陆寻）"
 description: "陆寻（Lucas Lu）专属探索 Skill：只读收集代码库结构、文件线索和实现上下文"
-when_to_use: "当角色为 explorer / 陆寻时自动加载，无需手动调用"
 allowed_tools: ["read_file", "list_dir", "glob", "grep"]
 version: "1.0"
 ---

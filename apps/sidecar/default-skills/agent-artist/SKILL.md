@@ -1,7 +1,6 @@
 ---
 name: "画师工作流程（白洛）"
 description: "白洛（Lio Bai）专属视觉创作 Skill：图像 brief、提示词工程、风格一致性、多方向选择"
-when_to_use: "当角色为 artist / 白洛时自动加载，无需手动调用"
 allowed_tools: ["read_file", "edit_file", "write_file", "image_gen", "list_image_models"]
 version: "2.1"
 ---

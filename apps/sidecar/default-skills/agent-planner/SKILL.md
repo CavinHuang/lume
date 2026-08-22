@@ -1,7 +1,6 @@
 ---
 name: "规划师工作流程（沈策）"
 description: "沈策（Sera Shen）专属规划 Skill：只读拆解实现路径、架构取舍和验证步骤"
-when_to_use: "当角色为 planner / 沈策时自动加载，无需手动调用"
 allowed_tools: ["read_file", "list_dir", "glob", "grep"]
 version: "1.0"
 ---

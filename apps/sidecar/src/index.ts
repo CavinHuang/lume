@@ -25,7 +25,7 @@ import {
 } from "./services/infra/logger";
 import { assertSidecarNativeRuntime } from "./services/infra/native-runtime";
 import { createProcessRpcTransport, MAX_RPC_MESSAGE_BYTES } from "./rpc/process-transport";
-import { classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
+import { browserRpcErrorFromPayload, classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
 import { createReverseRpcRenderClient } from "./services/agent-runtime/tools/web/reverse-rpc-render-client";
 import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/render-client-holder";
 import { setPersistedSettingsMutationWriter } from "./services/system/settings-store";
@@ -78,7 +78,8 @@ function requestBrowserMain(request: import("@lume/shared").BrowserActionRequest
       : BROWSER_REQUEST_TIMEOUT_MS;
     const timeout = setTimeout(() => {
       pendingBrowserMainRequests.delete(request.requestId);
-      reject(new Error("browser request timed out"));
+      // 请求已送达 desktop，变更型动作可能已执行——不能与"未执行"塌缩为同一错误码
+      reject(Object.assign(new Error("browser request timed out"), { code: "executed_unknown" }));
     }, timeoutMs);
     pendingBrowserMainRequests.set(request.requestId, { resolve, reject, timeout });
     rpcTransport.send(JSON.stringify({
@@ -204,7 +205,7 @@ async function handleRpcLine(line: string): Promise<void> {
       return;
     }
     const response = responsePayload;
-    if (response.error) pending.reject(new Error("browser request failed"));
+    if (response.error) pending.reject(browserRpcErrorFromPayload(response.error));
     else pending.resolve(response.result);
     return;
   }
@@ -465,6 +466,18 @@ async function boot(): Promise<void> {
         context: "memory-v2.job-recovery",
         event: "memory.job_recovery_failed",
         message: "memory jobs could not be recovered during startup",
+        error: { message: error instanceof Error ? error.message : String(error) }
+      });
+    });
+  // 冷启动预热：把首条消息的模块加载/MCP 冷连接挪到启动后的空闲期（fire-and-forget）
+  void import("./services/warmup/cold-start-warmup")
+    .then(({ startColdStartWarmup }) => startColdStartWarmup())
+    .catch((error) => {
+      writeLogRecord({
+        level: "warn",
+        context: "sidecar.warmup",
+        event: "cold_start_warmup.start_failed",
+        message: "cold start warmup could not be started",
         error: { message: error instanceof Error ? error.message : String(error) }
       });
     });

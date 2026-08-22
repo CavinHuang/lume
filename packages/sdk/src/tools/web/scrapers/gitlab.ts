@@ -160,7 +160,7 @@ async function renderGitLabFile(
 	signal?: AbortSignal,
 ): Promise<{ content: string; ok: boolean }> {
 	const encodedPath = encodeURIComponent(gl.path!);
-	const apiUrl = `https://gitlab.com/api/v4/projects/${projectId}/repository/files/${encodedPath}/raw?ref=${gl.ref}`;
+	const apiUrl = `https://gitlab.com/api/v4/projects/${projectId}/repository/files/${encodedPath}/raw?ref=${encodeURIComponent(gl.ref ?? "HEAD")}`;
 
 	const result = await loadPage(apiUrl, { timeout, signal });
 	if (!result.ok) return { content: "", ok: false };
@@ -177,7 +177,7 @@ async function renderGitLabTree(
 	timeout: number,
 	signal?: AbortSignal,
 ): Promise<{ content: string; ok: boolean }> {
-	const apiUrl = `https://gitlab.com/api/v4/projects/${projectId}/repository/tree?ref=${gl.ref}&path=${gl.path || ""}&per_page=100`;
+	const apiUrl = `https://gitlab.com/api/v4/projects/${projectId}/repository/tree?ref=${encodeURIComponent(gl.ref ?? "HEAD")}&path=${encodeURIComponent(gl.path || "")}&per_page=100`;
 
 	const result = await loadPage(apiUrl, { timeout, signal });
 	if (!result.ok) return { content: "", ok: false };

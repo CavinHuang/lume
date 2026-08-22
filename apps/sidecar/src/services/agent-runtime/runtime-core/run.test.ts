@@ -216,6 +216,10 @@ describe("runtime-core run", () => {
       expect(result.session.getActiveToolNames()).not.toContain("mcp__node_repl__js");
       expect(result.session.getActiveToolNames()).toContain("Bash");
       expect(result.runtimeContext).not.toContain("Preferred capability route:");
+      expect(result.runtimeContext).toContain("mcp__browser__list_tabs");
+      expect(result.runtimeContext).toContain("do not activate browser:browser");
+      const runtimeSkills = (result.agent as any).baseOptions.skills as Array<{ name: string }>;
+      expect(runtimeSkills.map((skill) => skill.name)).not.toContain("browser:browser");
       const deferredTools = (result.agent as unknown as { deferredToolPool: ToolDefinition[] }).deferredToolPool;
       expect(deferredTools.map((tool) => tool.name)).toContain("mcp__node_repl__js");
     } finally {
@@ -774,8 +778,8 @@ describe("runtime-core run", () => {
     });
 
     const systemPrompt = result.session.agent.state.systemPrompt;
-    expect(systemPrompt).toStartWith("You are a software architect and planning specialist for Lume.");
-    expect(systemPrompt).toContain("READ-ONLY MODE - NO FILE MODIFICATIONS");
+    expect(systemPrompt).toStartWith("你是 Lume 的软件架构师与规划专家。");
+    expect(systemPrompt).toContain("只读模式——禁止任何文件修改");
     expect(systemPrompt).not.toContain("executing one bound Subagent Task");
     expect(systemPrompt).not.toContain("Before ending this run, call TaskReport");
 
@@ -945,7 +949,7 @@ describe("runtime-core run", () => {
       permissionMode: "plan"
     });
 
-    expect(result.runtimeContext).toContain("Enabled Plugins:");
+    expect(result.runtimeContext).toContain("已启用插件：");
     expect(result.runtimeContext).toContain("obsidian-bridge");
     expect(result.runtimeContext).toContain("obsidian_status");
 
@@ -1378,20 +1382,21 @@ describe("runtime-core run", () => {
     });
 
     const systemPrompt = result.session.agent.state.systemPrompt;
-    expect(systemPrompt).toContain("You are Lume. You help the user think, build, organize, and move work forward in this local-first workspace.");
-    expect(systemPrompt).toContain("## Loaded Context Policy");
-    expect(systemPrompt).toContain("## 系统配置");
+    expect(systemPrompt).toContain("你是 Lume。你在这个本地优先的工作区里帮助用户思考、构建、整理并推进工作。");
+    expect(systemPrompt).toContain("## 工作区");
     expect(systemPrompt).toContain("~/.lume/lume.yaml");
     expect(systemPrompt).not.toContain(".lume-config");
-    expect(systemPrompt).toContain("## Workspace Context");
+    expect(systemPrompt).toContain("## 工作区上下文");
     expect(systemPrompt).toContain("## AGENTS.md");
     expect(systemPrompt).toContain("Always verify edits before final output.");
-    expect(systemPrompt).toContain("Available tools are provided by the runtime tool schema");
+    expect(systemPrompt).toContain("不要发明工具名");
     expect(systemPrompt).not.toContain("<thread_state>");
     expect(result.runtimeContext).toContain("<thread_state>");
     expect(result.runtimeContext).toContain("threadType: main");
     expect(result.runtimeContext).toContain("chatType: direct");
-    expect(result.runtimeContext).toContain("modelId: claude-sonnet-4-5");
+    // modelId/title 属模型无可执行动作的噪音元数据，不再注入 thread_state
+    expect(result.runtimeContext).not.toContain("modelId:");
+    expect(result.runtimeContext).not.toContain("title:");
     expect(result.runtimeContext).not.toContain("Preferred capability route:");
     expect(result.runtimeContext).toContain("<working_directory>");
 

@@ -1,7 +1,6 @@
 ---
 name: "小说家工作流程（温序）"
 description: "温序（Wren Wen）专属小说创作 Skill：冷启动建档、有状态续写、伏笔追踪、防穿帮检查"
-when_to_use: "当角色为 novelist / 温序时自动加载，无需手动调用"
 allowed_tools:
   - read_file
   - write_file

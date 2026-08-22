@@ -12,10 +12,10 @@ import {
 } from './skill-settings-state'
 
 describe('skill-settings-state', () => {
-  test('filters workspace skills by name, slug, description, trigger, and tools', () => {
+  test('filters workspace skills by name, slug, description, and tools', () => {
     const skills = [
       { slug: 'code-review', name: '代码审查', description: '检查代码质量', allowedTools: ['read_file'] },
-      { slug: 'writer', name: '写作工作流', whenToUse: '当用户要写文章', allowedTools: ['web_search'] },
+      { slug: 'writer', name: '写作工作流', description: '当用户要写文章', allowedTools: ['web_search'] },
     ]
 
     expect(filterSkillSettingsItems(skills, 'review').map((item) => item.slug)).toEqual(['code-review'])
@@ -57,7 +57,6 @@ describe('skill-settings-state', () => {
       skillSlug: 'planner',
       name: 'Planner',
       description: 'Plans work',
-      whenToUse: '',
       allowedToolsText: 'bash, read_file',
       argumentHint: '',
       disableModelInvocation: true,
@@ -87,15 +86,13 @@ describe('skill-settings-state', () => {
       skillSlug: 'planner',
       name: 'Planner',
       description: '',
-      whenToUse: 'When planning is needed.',
       prompt: 'Plan carefully.',
-    })).toBe('描述、触发条件和提示词内容不能为空')
+    })).toBe('描述和提示词内容不能为空')
     expect(getSkillDraftValidationError({
       ...createEmptySkillDraft(),
       skillSlug: 'planner',
       name: 'Planner',
       description: 'Plans work.',
-      whenToUse: 'When planning is needed.',
       prompt: 'Plan carefully.',
     })).toBeNull()
   })

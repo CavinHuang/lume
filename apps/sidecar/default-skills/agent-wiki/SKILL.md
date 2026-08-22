@@ -1,7 +1,6 @@
 ---
 name: "Wiki 知识库"
 description: "通过默认可用的受保护 Wiki 工具检索知识，或为用户明确要求沉淀的内容创建待确认草案"
-when_to_use: "当用户说「存到 Wiki」「归档到 Wiki」「记到知识库」「保存到 Wiki」「查询 Wiki」「整理知识库」时触发"
 allowed_tools: ["wiki.search", "wiki.read", "wiki.follow_links", "wiki.propose_changes"]
 version: "3.2"
 ---

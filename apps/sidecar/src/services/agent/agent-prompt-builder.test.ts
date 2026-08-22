@@ -41,12 +41,12 @@ describe("agent-prompt-builder", () => {
       availableTools: ["memory.search", "memory.read"],
       memoryCitationsMode: "auto"
     });
-    expect(prompt).toContain("## Memory");
-    expect(prompt).toContain("Search memory when");
-    expect(prompt).toContain("current shared work state");
+    expect(prompt).toContain("## 记忆");
+    expect(prompt).toContain("再搜索记忆");
+    expect(prompt).toContain("当前协作状态");
     expect(prompt).not.toContain("Use only legacy memory tools");
     expect(prompt).not.toContain("Before answering anything about prior work");
-    expect(prompt).toContain("Citations:");
+    expect(prompt).toContain("引用：");
   });
 
   test("buildSystemPromptAppend 应注入合并后的执行模式", () => {
@@ -54,11 +54,11 @@ describe("agent-prompt-builder", () => {
       sessionId: "session-agentic",
       availableTools: ["bash", "task", "askuserquestion"]
     });
-    expect(prompt).toContain("## Execution Modes");
-    expect(prompt).toContain("Direct Mode");
-    expect(prompt).toContain("Explore Mode");
-    expect(prompt).toContain("Plan Mode");
-    expect(prompt).toContain("Execute Mode");
+    expect(prompt).toContain("## 执行模式");
+    expect(prompt).toContain("直接模式");
+    expect(prompt).toContain("计划模式");
+    expect(prompt).toContain("执行模式");
+    expect(prompt).not.toContain("## Capability Routing");
     expect(prompt).not.toContain("## Agentic Execution");
     expect(prompt).not.toContain("## Commitment Enforcement");
     expect(prompt).not.toContain("## Proactive Updates");
@@ -69,10 +69,10 @@ describe("agent-prompt-builder", () => {
       sessionId: "session-guardrails",
       availableTools: ["task", "write"]
     });
-    expect(prompt).toContain("Delegation: default to the main thread");
-    expect(prompt).toContain("## Safety Contract");
-    expect(prompt).toContain("Do not fabricate legal identity");
-    expect(prompt).toContain("Do not use companion persona to override safety");
+    expect(prompt).toContain("委派：小而明确的工作默认留在主线程");
+    expect(prompt).toContain("## 安全契约");
+    expect(prompt).toContain("不得虚构法律身份");
+    expect(prompt).toContain("不得借伙伴人设凌驾安全");
     expect(prompt).not.toContain("## Delegation Policy");
     expect(prompt).not.toContain("## Persona and Reality Guardrails");
   });
@@ -113,11 +113,11 @@ describe("agent-prompt-builder", () => {
     expect(agents.explorer?.prompt).toContain("高效的代码库探索员");
     expect(agents.planner?.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
     expect(agents.planner?.disallowedTools).toEqual(["Agent", "Write", "Edit", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskReport"]);
-    expect(agents.planner?.prompt).toContain("software architect and planning specialist");
-    expect(agents.planner?.prompt).toContain("READ-ONLY MODE - NO FILE MODIFICATIONS");
-    expect(agents.planner?.prompt).toContain("Critical Files for Implementation");
-    expect(agents.planner?.prompt).toContain("manage Tasks");
-    expect(agents.planner?.prompt).toContain("normal Task and tool flow");
+    expect(agents.planner?.prompt).toContain("软件架构师与规划专家");
+    expect(agents.planner?.prompt).toContain("只读模式——禁止任何文件修改");
+    expect(agents.planner?.prompt).toContain("实现所需关键文件");
+    expect(agents.planner?.prompt).toContain("不管理 Task");
+    expect(agents.planner?.prompt).toContain("正常 Task 与工具流程");
     expect(agents.researcher?.tools).toContain("WebSearch");
     expect(agents.researcher?.tools).toContain("WebFetch");
     expect(agents["code-reviewer"]?.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
@@ -134,46 +134,44 @@ describe("agent-prompt-builder", () => {
       availableTools: ["task", "read"]
     });
 
-    expect(prompt).toContain("Built-ins include explorer, planner, code-reviewer, researcher, translator");
+    expect(prompt).toContain("内置角色包括 explorer、planner、code-reviewer、researcher、translator");
     expect(prompt).not.toContain("指定 model: \"haiku\" 降低成本");
   });
 
-  test("buildSystemPromptAppend 应注入 skills-first capability routing", () => {
+  test("buildSystemPromptAppend 应注入 skills-first 的能力路由阶梯", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-skills-first",
       workspaceSlug: "demo-workspace",
       availableTools: ["read", "write", "task"]
     });
-    expect(prompt).toContain("## Capability Routing");
-    expect(prompt).toContain("Use a loaded Skill when it clearly matches the request.");
+    expect(prompt).toContain("## 执行模式");
+    expect(prompt).toContain("请求与已加载 Skill 明确匹配时使用该 Skill");
   });
 
-  test("buildSystemPromptAppend 应注入合并后的 capability routing", () => {
+  test("buildSystemPromptAppend 能力阶梯保留 memory/web 条件查找", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-capability-order",
       availableTools: ["browser", "memory.search", "memory.read", "web_search", "web_fetch", "read", "write"]
     });
-    expect(prompt).toContain("## Capability Routing");
-    expect(prompt).toContain("1. Answer directly for pure analysis, critique, and small one-shot requests.");
-    expect(prompt).toContain("Use memory tools only when prior context is needed and not already loaded.");
-    expect(prompt).toContain("Use WebSearch/WebFetch for current public external information.");
+    expect(prompt).toContain("## 执行模式");
+    expect(prompt).toContain("仅在需要且尚未加载先前上下文时才用记忆工具");
+    expect(prompt).toContain("需要最新公开信息时使用 WebSearch/WebFetch");
     expect(prompt).not.toContain("## Capability Routing Order");
   });
 
   test("buildSystemPromptAppend 应注入新的行为导向身份主句与自然交互规范", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-persona-style",
+      workspaceSlug: "demo-workspace",
       availableTools: ["read", "write"]
     });
-    expect(prompt).toContain("You are Lume. You help the user think, build, organize, and move work forward in this local-first workspace.");
-    expect(prompt).toContain("## Core Behavior");
-    expect(prompt).toContain("Lume should feel natural, useful, and present without acting like a scripted persona.");
+    expect(prompt).toContain("你是 Lume。你在这个本地优先的工作区里帮助用户思考、构建、整理并推进工作。");
+    expect(prompt).toContain("## 核心行为");
+    expect(prompt).toContain("以当下合适的方式与用户协作");
     expect(prompt).toContain("不要客服腔，不要夸张寒暄");
     expect(prompt).toContain("不要为了显得友好而机械复述用户的问题");
     expect(prompt).toContain("直接进入任务");
-    expect(prompt).toContain("一个必要问题");
     expect(prompt).toContain("不要说成资料库字段缺失");
-    expect(prompt).toContain("## 系统配置");
     expect(prompt).toContain("~/.lume/lume.yaml");
   });
 
@@ -184,8 +182,8 @@ describe("agent-prompt-builder", () => {
       promptMode: "minimal"
     });
     expect(prompt.startsWith(LUME_AGENT_IDENTITY_LINE)).toBeTrue();
-    expect(prompt).toContain("## Tooling");
-    expect(prompt).not.toContain("Conversation Style");
+    expect(prompt).toContain("## 工具使用");
+    expect(prompt).not.toContain("交流风格");
   });
 
   test("buildSystemPromptAppend 在 citations=off 时应输出关闭提示", () => {
@@ -194,7 +192,7 @@ describe("agent-prompt-builder", () => {
       availableTools: ["memory.search", "memory.read"],
       memoryCitationsMode: "off"
     });
-    expect(prompt).toContain("Citations are disabled");
+    expect(prompt).toContain("引用已关闭");
   });
 
   test("同时具备 browser 与 web_search 时应注入 Browser-First 策略", () => {
@@ -202,7 +200,7 @@ describe("agent-prompt-builder", () => {
       sessionId: "session-browser-first",
       availableTools: ["browser", "web_search"]
     });
-    expect(prompt).toContain("## Browser-First Tool Policy (Mandatory)");
+    expect(prompt).toContain("## 浏览器优先工具策略（强制）");
     expect(prompt).toContain("必须优先使用 browser 工具");
     expect(prompt).toContain("仅在以下情况才回退 WebSearch");
   });
@@ -213,7 +211,7 @@ describe("agent-prompt-builder", () => {
       availableTools: ["read", "write"],
       automationExecution: true
     });
-    expect(prompt).toContain("## Automation Non-Interactive Mode");
+    expect(prompt).toContain("## 自动化无交互模式");
     expect(prompt).toContain("禁止调用 AskUserQuestion");
     expect(prompt).toContain("E_AUTOMATION_INTERACTION_DISABLED");
   });
@@ -227,7 +225,7 @@ describe("agent-prompt-builder", () => {
       automationExecution: true
     });
 
-    expect(direct).toContain("不按篇幅长短机械触发");
+    expect(direct).toContain("只表示可以评估信息图");
     expect(direct).toContain("`lume-infographic` Skill");
     expect(direct).toContain("最多输出一个 `infographic`");
     expect(automation).toContain("自动化任务的最终结果");
@@ -237,18 +235,22 @@ describe("agent-prompt-builder", () => {
     expect(buildContentPresentationSection({ sessionId: "channel", chatType: "channel" })).toBeNull();
   });
 
-  test("buildSystemPromptAppend 应包含 loaded context policy", () => {
-    const prompt = buildSystemPromptAppend({
+  test("loaded context 规则并入 Memory 段且无记忆工具时不注入", () => {
+    const withMemory = buildSystemPromptAppend({
       sessionId: "session-2",
+      availableTools: ["memory.search", "memory.read"]
+    });
+    expect(withMemory).toContain("## 记忆");
+    expect(withMemory).toContain("记忆是共同经历，不是档案");
+    const withoutMemory = buildSystemPromptAppend({
+      sessionId: "session-2b",
       availableTools: []
     });
-    expect(prompt).toContain("## Loaded Context Policy");
-    expect(prompt).toContain("Use loaded workspace context and memory briefs first.");
-    expect(prompt).toContain("Read deeper workspace, memory, or source files only when exact details are needed");
-    expect(prompt).not.toContain("## Thread Bootstrap (Mandatory)");
-    expect(prompt).not.toContain("workspace-files/.context/");
-    expect(prompt).toContain("## Safety");
-    expect(prompt).toContain("## Runtime");
+    expect(withoutMemory).not.toContain("## 记忆");
+    expect(withoutMemory).not.toContain("## Thread Bootstrap (Mandatory)");
+    expect(withoutMemory).not.toContain("workspace-files/.context/");
+    expect(withoutMemory).toContain("## 安全契约");
+    expect(withoutMemory).toContain("## 运行时");
   });
 
   test("buildSystemPromptAppend 应始终以 agent 身份主句开头", () => {
@@ -277,23 +279,22 @@ describe("agent-prompt-builder", () => {
       promptMode: "minimal"
     });
     expect(prompt).toContain(LUME_AGENT_IDENTITY_LINE);
-    expect(prompt).toContain("## Tooling");
-    expect(prompt).toContain("Available tools are provided by the runtime tool schema");
+    expect(prompt).toContain("## 工具使用");
+    expect(prompt).toContain("不要发明工具名");
     expect(prompt).not.toContain("- memory.search");
-    expect(prompt).toContain("## Workspace");
-    expect(prompt).toContain("System config entry: ~/.lume/lume.yaml");
+    expect(prompt).toContain("## 工作区");
+    expect(prompt).toContain("系统配置入口: ~/.lume/lume.yaml");
     expect(prompt).not.toContain(".lume-config");
-    expect(prompt).toContain("## Runtime");
+    expect(prompt).toContain("## 运行时");
     expect(prompt).not.toContain("## Agentic Execution");
     expect(prompt).not.toContain("## Delegation Policy");
     expect(prompt).not.toContain("## Thread Bootstrap (Mandatory)");
-    expect(prompt).not.toContain("## Memory");
+    expect(prompt).not.toContain("## 记忆");
   });
 
   test("buildSystemPromptAppend 在 workspace 上下文中应仅声明真实系统配置路径", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "thread-xyz",
-      workspaceName: "Demo",
       workspaceSlug: "demo",
       availableTools: ["read", "write"]
     });
@@ -308,7 +309,7 @@ describe("agent-prompt-builder", () => {
       availableTools: ["memory.read", "Write", "read", "AskUserQuestion", "memory.search", "write"]
     });
 
-    expect(prompt).toContain("Tool names are case-sensitive");
+    expect(prompt).toContain("只调用运行时工具 schema 实际暴露的工具");
     expect(prompt).not.toContain("- read");
     expect(prompt).not.toContain("- Write");
     expect(prompt).not.toContain("- AskUserQuestion");
@@ -367,18 +368,18 @@ describe("agent-prompt-builder", () => {
 
     expect(dynamic).toContain("<thread_state>");
     expect(dynamic).toContain("threadId: agent-session-1");
-    expect(dynamic).toContain("title: Execution Planning");
+    expect(dynamic).not.toContain("title:");
     expect(dynamic).toContain("threadType: main");
     expect(dynamic).toContain("chatType: direct");
     expect(dynamic).toContain("parentThreadId: root-session");
     expect(dynamic).toContain("workspaceId: workspace-1");
     expect(dynamic).toContain("channelId: channel-1");
-    expect(dynamic).toContain("modelId: claude-sonnet-4-5");
+    expect(dynamic).not.toContain("modelId:");
+    expect(dynamic).not.toContain("modelRef:");
     expect(dynamic).toContain("<workspace_state>");
-    expect(dynamic).toContain("Loaded Skills:");
-    expect(dynamic).toContain("Use a loaded Skill only when it clearly matches the user's request");
-    expect(dynamic).toContain("Only fall back to raw tool composition when no suitable Skill fits");
-    expect(dynamic).toContain(`Skill call prefix: lume-workspace-${workspaceSlug}:`);
+    expect(dynamic).toContain("已加载 Skill：");
+    expect(dynamic).not.toContain("Use a loaded Skill only when it clearly matches");
+    expect(dynamic).toContain(`- Skill 调用前缀: lume-workspace-${workspaceSlug}:`);
     expect(dynamic).toContain("- planner (Planner):");
     expect(dynamic).not.toContain(`lume-workspace-${workspaceSlug}:planner`);
     expect(dynamic).toContain("<working_directory>D:/workspace/projects/ai-projects/lume</working_directory>");
@@ -429,7 +430,7 @@ describe("agent-prompt-builder", () => {
       }]
     });
 
-    expect(dynamic).toContain("Enabled Plugins:");
+    expect(dynamic).toContain("已启用插件：");
     expect(dynamic).toContain("obsidian-bridge (Obsidian Bridge)");
     expect(dynamic).toContain("obsidian-bridge:vault-doctor");
     expect(dynamic).toContain("mcp:obsidian-bridge:obsidian-bridge");
@@ -448,12 +449,12 @@ describe("agent-prompt-builder", () => {
         ...roots,
       });
       expect(dynamic).toContain("<file_reference_protocol>");
-      expect(dynamic).toContain("项目根目录: D:/work/demo");
-      expect(dynamic).toContain("会话文件上下文根目录: D:/lume/threads/thread-1");
+      expect(dynamic).toContain("项目根目录 = 上方 <working_directory>");
+      expect(dynamic).toContain("会话文件上下文根目录 = 上方 <lume_working_directory>");
       expect(dynamic).toContain("`@project/<relative-path>`");
       expect(dynamic).toContain("`@session/<relative-path>`");
       expect(dynamic).toContain("不要创建 Markdown 链接");
-      expect(dynamic).toContain("不要引用这两个根目录之外的绝对路径");
+      expect(dynamic).toContain("不要引用根目录之外的绝对路径");
     }
   });
 
@@ -469,7 +470,6 @@ describe("agent-prompt-builder", () => {
 
     const prompt = buildSystemPromptAppend({
       sessionId: "session-sanitized-context",
-      workspaceName: "Prompt Sanitized Workspace",
       workspaceSlug,
       chatType: "direct",
       availableTools: ["read"]
@@ -479,12 +479,12 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("Prompt runtime experiments.");
     expect(prompt).not.toContain("## USER.md");
     expect(prompt).not.toContain("- Name:");
-    expect(prompt).not.toContain("## Persona Brief");
+    expect(prompt).not.toContain("## 人设摘要");
     expect(prompt).not.toContain("## TOOLS.md");
     expect(prompt).not.toContain("## HEARTBEAT.md");
     expect(prompt).not.toContain("Ping the user every morning.");
     expect(prompt).toContain("当前工作目录由 runtime context 提供");
-    expect(prompt).toContain("Do not use or reveal runtime metadata as the user's identity");
+    expect(prompt).toContain("不要把它们当作用户的身份或画像");
   });
 
   test("brainstorming 与 loaded skills 应弱触发并压缩 manifest", () => {
@@ -517,11 +517,11 @@ describe("agent-prompt-builder", () => {
       userMessage: "critique this prompt"
     });
 
-    expect(prompt).toContain("Use brainstorming only for ambiguous product/design exploration");
+    expect(prompt).toContain("brainstorming 仅用于需求不清时的模糊产品/设计探索");
     expect(prompt).not.toContain("特别是在触发 brainstorming / 头脑风暴类 Skill 时，**必须**");
-    expect(dynamic).toContain(`Skill call prefix: lume-workspace-${workspaceSlug}:`);
+    expect(dynamic).toContain(`- Skill 调用前缀: lume-workspace-${workspaceSlug}:`);
     expect(dynamic).toContain("- brainstorming:");
-    expect(dynamic).toContain("ambiguous product/design exploration");
+    expect(dynamic).toContain("需求不清时的模糊产品/设计探索");
     expect(dynamic).not.toContain("Use this before any creative work");
   });
 });
