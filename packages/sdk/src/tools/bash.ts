@@ -165,8 +165,26 @@ const READ_ONLY_EXECUTABLES = new Set([
 function isReadOnlySegment(executable: string, args: string[]): boolean {
   if (!READ_ONLY_EXECUTABLES.has(executable)) return false
   if (executable === 'git') {
-    const subcommand = args.find((arg) => !arg.startsWith('-'))
-    return subcommand !== undefined && new Set(['branch', 'diff', 'log', 'show', 'status']).has(subcommand)
+    const subcommandIndex = args.findIndex((arg) => !arg.startsWith('-'))
+    if (subcommandIndex < 0) return false
+    const subcommand = args[subcommandIndex]!
+    if (!new Set(['branch', 'diff', 'log', 'show', 'status']).has(subcommand)) return false
+    const rest = args.slice(subcommandIndex + 1)
+    if (subcommand === 'branch') {
+      // Only listing forms are reads: an operand names a branch to create,
+      // and delete/move/copy/set-upstream flags mutate refs (#300).
+      if (rest.some((arg) => !arg.startsWith('-') && arg !== '--')) return false
+      return !rest.some((arg) => (
+        /^-[dDmMcCu]/.test(arg)
+        || /^--(?:delete|move|copy|set-upstream(?:-to)?|edit-description|track)\b/.test(arg)
+      ))
+    }
+    if (subcommand === 'diff') {
+      // --output writes the diff to a file; --ext-diff executes a
+      // repo-config-controlled external diff command (#300).
+      return !rest.some((arg) => arg === '--output' || arg.startsWith('--output=') || arg === '--ext-diff')
+    }
+    return true
   }
   // These whitelist members have argument forms that mutate or execute;
   // reject them so they cannot race Edit/Write as "read-only" work.
@@ -179,6 +197,10 @@ function isReadOnlySegment(executable: string, args: string[]): boolean {
     // grep -o is unrelated: grep arguments are never checked here.
     || (arg.startsWith('-') && !arg.startsWith('--') && arg.includes('o'))
   ))
+  if (executable === 'uniq') {
+    // uniq [INPUT [OUTPUT]] — a second operand names the output file it writes (#300).
+    return args.filter((arg) => !arg.startsWith('-') && arg !== '--').length <= 1
+  }
   return true
 }
 
@@ -320,7 +342,10 @@ function isReadOnlyPowerShell(command: string): boolean {
   if (!normalized || /[>`]|>>|\$\(|;|\b(?:Set|Remove|Copy|Move|New|Add|Clear|Out|Start|Stop|Invoke|Install|Update)-[A-Za-z]+\b/i.test(normalized)) {
     return false
   }
-  return /^(?:Get-(?:ChildItem|Content|Location|Item|ItemProperty|Process|Service|Command|Date|Help|Member|Variable|Acl|FileHash|AuthenticodeSignature|ComputerInfo)|Select-String|Where-Object|Test-Path|Resolve-Path|Measure-Object|Sort-Object|Format-(?:Table|List)|Write-Output|Write-Host|git\s+(?:status|diff|log|show|branch)|(?:ls|dir|type|cat|pwd|where|findstr)\b)/i.test(normalized)
+  // Unparsed strings cannot be arg-checked, so only git subcommands whose
+  // common forms never take mutation targets survive here; branch/diff move
+  // to the parsed path only (#300).
+  return /^(?:Get-(?:ChildItem|Content|Location|Item|ItemProperty|Process|Service|Command|Date|Help|Member|Variable|Acl|FileHash|AuthenticodeSignature|ComputerInfo)|Select-String|Where-Object|Test-Path|Resolve-Path|Measure-Object|Sort-Object|Format-(?:Table|List)|Write-Output|Write-Host|git\s+(?:status|log|show)\b|(?:ls|dir|type|cat|pwd|where|findstr)\b)/i.test(normalized)
 }
 
 async function startShellTask(input: {

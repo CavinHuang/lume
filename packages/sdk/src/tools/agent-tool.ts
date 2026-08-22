@@ -7,7 +7,7 @@
 
 import type { ToolDefinition, ToolContext, ToolResult, AgentDefinition, SDKMessage } from '../types.js'
 import { QueryEngine } from '../engine.js'
-import { createProvider, type ApiType } from '../providers/index.js'
+import { unconfiguredProvider } from '../providers/unconfigured-provider.js'
 import { stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { ensurePathAllowed, getUnsafeFilePathReason } from '../utils/pathing.js'
@@ -262,15 +262,9 @@ export const AgentTool: ToolDefinition = {
       }).catch(() => undefined)
     }
 
-    // Inherit provider and model from parent agent context, fall back to env vars
+    // Inherit provider and model from parent agent context
     const subModel = input.model || context.model || process.env.CODEANY_MODEL || 'claude-sonnet-4-6'
-    const provider = context.provider ?? createProvider(
-      (context.apiType || process.env.CODEANY_API_TYPE as ApiType) || 'anthropic-messages',
-      {
-        apiKey: process.env.CODEANY_API_KEY,
-        baseURL: process.env.CODEANY_BASE_URL,
-      },
-    )
+    const provider = context.provider ?? unconfiguredProvider()
 
     const agentId = typeof input.subagent_run_id === 'string' && input.subagent_run_id.trim().length > 0
       ? input.subagent_run_id.trim()

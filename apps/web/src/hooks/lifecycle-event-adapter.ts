@@ -1,6 +1,5 @@
 import type {
   FileResultRef,
-  LinkAuthorizationSignal,
   MemoryContextUsedRuntimeEvent,
   SdkLifecycleDetail,
   LumeRuntimeEvent,
@@ -21,10 +20,9 @@ import type { AgentEventBusSource } from './useAgentEventBus'
  * - tool.start → tool.started(inputPreview = detail.input;riskLevel 省略——web 侧无
  *   inferToolMetadata,投影对缺省容忍,徽章不渲染)
  * - tool.end → isError ? tool.failed(error.message = output) : tool.completed
- *   (resultPreview = output);execution/resultRef 批次2.1 补齐、linkAuthorization
- *   Fix round 1 补齐——均从 detail.meta(engine _meta)做 web 侧最小归一(校验对齐
- *   旧路 normalizeToolExecutionMetadata/sanitizeLinkAuthorization;session fileRef
- *   富化为 sidecar 专属,减配留档)
+ *   (resultPreview = output);execution/resultRef 批次2.1 补齐——从 detail.meta
+ *   (engine _meta)做 web 侧最小归一(校验对齐旧路 normalizeToolExecutionMetadata;
+ *   session fileRef 富化为 sidecar 专属,减配留档)
  * - run.start → run.started(批次5 翻转此前"不产"分支;workspaceId/workspaceSlug/model
  *   信封不携带,RunStartedRuntimeEvent 全可选,减配留档)
  * - run.end → max_turns → run.turn_limited;aborted → run.cancelled(批次5 翻转:
@@ -92,9 +90,32 @@ export function consumeBusEnvelope(
   const state = ctx.adapterStatesByThread.get(threadId) ?? createLifecycleAdapterState()
   ctx.adapterStatesByThread.set(threadId, state)
   const events = adaptLifecycleEvent(envelope, state)
+  const applyTerminalStreamingEffects = () => {
+    for (const event of events) {
+      if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
+        ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
+      } else if (event.type === 'run.cancelled') {
+        // 批次5:旧路该类型的 streaming idle + queue-interrupted(Resume 横幅)副作用
+        // 随跳过清单接管移到总线版
+        ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
+        ctx.onRunCancelled?.(threadId)
+      } else if (event.type === 'run.failed') {
+        ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'errored' }))
+        ctx.setErrorMessages((prev) => ({ ...prev, [threadId]: event.error.message }))
+      } else if (event.type === 'background.task.completed') {
+        // 批次4:对齐旧路 useGlobalAgentListeners background.task.completed 分支的映射
+        // (跳过清单接管该类型后,streaming 副作用由总线版承担)
+        ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: event.status === 'failed' ? 'errored' : 'idle' }))
+      }
+    }
+  }
   if (source === 'snapshot') {
-    // F4:注入但不动 streaming 态——历史回放不得把线程卡在流式/错误态
+    // F4:注入但不动 streaming 态——历史回放不得把线程置为流式/错误态。
+    // #416:终态副作用(清残留 streaming→idle/errored)仍要执行——切走线程的 push
+    // 丢失、run 在后台完成后切回,afterSeq 快照是终态唯一来源,不清则线程永久卡
+    // streaming(输入框停按钮悬空)。快照只禁止"置 streaming",不禁止"清 streaming"。
     for (const event of events) ctx.enqueueRuntimeEvent(event)
+    applyTerminalStreamingEffects()
     return
   }
   for (const event of events) ctx.enqueueRuntimeEvent(event)
@@ -105,23 +126,7 @@ export function consumeBusEnvelope(
       prev[threadId] === 'streaming' ? prev : { ...prev, [threadId]: 'streaming' }
     ))
   }
-  for (const event of events) {
-    if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
-      ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
-    } else if (event.type === 'run.cancelled') {
-      // 批次5:旧路该类型的 streaming idle + queue-interrupted(Resume 横幅)副作用
-      // 随跳过清单接管移到总线版
-      ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
-      ctx.onRunCancelled?.(threadId)
-    } else if (event.type === 'run.failed') {
-      ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'errored' }))
-      ctx.setErrorMessages((prev) => ({ ...prev, [threadId]: event.error.message }))
-    } else if (event.type === 'background.task.completed') {
-      // 批次4:对齐旧路 useGlobalAgentListeners background.task.completed 分支的映射
-      // (跳过清单接管该类型后,streaming 副作用由总线版承担)
-      ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: event.status === 'failed' ? 'errored' : 'idle' }))
-    }
-  }
+  applyTerminalStreamingEffects()
 }
 
 /** 有状态纯函数:按事件顺序调用,state 由调用方持有(每线程一份)。 */
@@ -209,9 +214,6 @@ export function adaptLifecycleEvent(
     // 省略;session fileRef 富化(sidecar sessionArtifactFileRef)是 sidecar 专属,减配留档。
     const execution = normalizeToolExecutionMetadata(detail.meta?.execution)
     const resultRef = execution?.resultRef
-    // Fix round 1:linkAuthorization 从 detail.meta.link 补映射(sanitizeLinkAuthorization
-    // 同款校验;删旧路后无其他来源,Link 授权横幅依赖此链)。
-    const linkAuthorization = sanitizeLinkAuthorization(detail.meta?.link)
     if (detail.isError) {
       return [{
         id: `lifecycle:${envelope.seq}:tool.failed`,
@@ -222,7 +224,6 @@ export function adaptLifecycleEvent(
         error: { code: 'tool_error', message: detail.output },
         ...(execution ? { execution } : {}),
         ...(resultRef ? { resultRef } : {}),
-        ...(linkAuthorization ? { linkAuthorization } : {}),
       }]
     }
     return [{
@@ -234,7 +235,6 @@ export function adaptLifecycleEvent(
       resultPreview: detail.output,
       ...(execution ? { execution } : {}),
       ...(resultRef ? { resultRef } : {}),
-      ...(linkAuthorization ? { linkAuthorization } : {}),
     }]
   }
 
@@ -554,21 +554,6 @@ function normalizeFileResultRef(value: unknown): FileResultRef | undefined {
 
 function isSemanticOutcome(value: unknown): value is 'no_matches' | 'condition_false' | 'files_differ' {
   return typeof value === 'string' && TOOL_SEMANTIC_OUTCOMES.has(value)
-}
-
-/** 与旧路 run-observer sanitizeLinkAuthorization 同款(kind+四必填 string 校验后透传)。 */
-function sanitizeLinkAuthorization(value: unknown): LinkAuthorizationSignal | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
-  const input = value as Record<string, unknown>
-  if (input.kind !== 'link_authorization_required' || typeof input.service !== 'string' || typeof input.actionId !== 'string' || typeof input.threadId !== 'string' || typeof input.errorCode !== 'string') return undefined
-  return {
-    kind: 'link_authorization_required',
-    service: input.service,
-    actionId: input.actionId,
-    threadId: input.threadId,
-    errorCode: input.errorCode,
-    ...(typeof input.connectionName === 'string' ? { connectionName: input.connectionName } : {}),
-  }
 }
 
 /** 与旧路 projectAssistantMessageFinalRuntimeEvent 对齐:只留非空 text/thinking 块。 */

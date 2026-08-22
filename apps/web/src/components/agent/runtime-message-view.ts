@@ -1,4 +1,4 @@
-import type { AgentCapabilityReferenceView, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentUserMessagePart, FileReferenceBinding, FileReferenceProtocolVersion, ImPeerKind, ImProvider, LinkAuthorizationSignal, LumeRuntimeEvent, RuntimeCodingReport, ToolExecutionMetadata } from '@lume/shared'
+import type { AgentCapabilityReferenceView, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentUserMessagePart, FileReferenceBinding, FileReferenceProtocolVersion, ImPeerKind, ImProvider, LumeRuntimeEvent, RuntimeCodingReport, ToolExecutionMetadata } from '@lume/shared'
 import type { MemoryCenterDeepLink } from '@/components/memory/memory-center-state'
 
 export interface RuntimeToolCallView {
@@ -16,7 +16,6 @@ export interface RuntimeToolCallView {
   riskLevel?: 'low' | 'medium' | 'high'
   execution?: ToolExecutionMetadata
   resultRef?: ToolExecutionMetadata['resultRef']
-  linkAuthorization?: LinkAuthorizationSignal
 }
 
 export type TaskProgressViewEvent = Extract<LumeRuntimeEvent, { type: 'task.progress' }>

@@ -1,0 +1,95 @@
+---
+import Base from '../../layouts/Base.astro';
+import { RELEASES_URL, VERSION, downloads } from '../../lib/site';
+import { t, type Lang } from '../../i18n/ui';
+
+interface Props {
+  lang: Lang;
+}
+const { lang } = Astro.props;
+---
+
+<Base title={t(lang, 'download.title')} description={t(lang, 'download.desc')}>
+  <section class="mx-auto max-w-6xl px-4 py-14 sm:px-6 sm:py-20">
+    <div class="text-center">
+      <h1 class="text-display font-bold tracking-tight text-fg">{t(lang, 'download.title')}</h1>
+      <p class="mt-4 text-body-lg text-fg-muted">{t(lang, 'download.desc')}</p>
+    </div>
+
+    <div class="mx-auto mt-12 grid max-w-4xl gap-4 md:grid-cols-3">
+      <!-- Windows -->
+      <div class="flex flex-col rounded-2xl border border-border bg-surface p-6 text-center shadow-(--shadow-card)">
+        <h2 class="text-title font-semibold text-fg">{t(lang, 'download.windows')}</h2>
+        <p class="mt-1.5 text-caption text-fg-muted">{t(lang, 'download.windowsDesc')}</p>
+        <a
+          href={downloads.windows.url}
+          class="mt-6 inline-block rounded-xl bg-accent px-5 py-2.5 text-body-lg font-medium text-accent-fg transition-colors hover:bg-accent-strong"
+        >
+          {t(lang, 'hero.ctaDownload')}
+        </a>
+        <p class="mt-3 truncate text-micro text-fg-faint" title={downloads.windows.file}>
+          {downloads.windows.file}
+        </p>
+      </div>
+
+      <!-- macOS -->
+      <div class="flex flex-col rounded-2xl border border-border bg-surface p-6 text-center shadow-(--shadow-card)">
+        <h2 class="text-title font-semibold text-fg">{t(lang, 'download.macos')}</h2>
+        <p class="mt-1.5 text-caption text-fg-muted">&nbsp;</p>
+        <div class="mt-6 flex flex-col gap-2.5">
+          <a
+            href={downloads.macAppleSilicon.url}
+            class="rounded-xl bg-accent px-5 py-2.5 text-body-lg font-medium text-accent-fg transition-colors hover:bg-accent-strong"
+          >
+            {t(lang, 'download.macAppleSilicon')}
+          </a>
+          <a
+            href={downloads.macIntel.url}
+            class="rounded-xl border border-border px-5 py-2.5 text-body-lg font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
+          >
+            {t(lang, 'download.macIntel')}
+          </a>
+        </div>
+        <p class="mt-3 truncate text-micro text-fg-faint" title={downloads.macAppleSilicon.file}>
+          Lume-{VERSION}-*.dmg
+        </p>
+      </div>
+
+      <!-- Linux -->
+      <div class="flex flex-col rounded-2xl border border-dashed border-border bg-bg-subtle p-6 text-center">
+        <h2 class="text-title font-semibold text-fg">{t(lang, 'download.linux')}</h2>
+        <p class="mt-1.5 text-caption text-fg-muted">&nbsp;</p>
+        <p class="mt-6 rounded-xl border border-border bg-surface px-5 py-2.5 text-body-lg text-fg-muted">
+          {t(lang, 'download.linuxSoon')}
+        </p>
+        <a
+          href={RELEASES_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="mt-3 text-ui text-accent hover:text-accent-strong"
+        >
+          GitHub Releases →
+        </a>
+      </div>
+    </div>
+
+    <!-- 安装说明 -->
+    <div class="mx-auto mt-12 max-w-4xl rounded-2xl border border-border bg-surface p-6">
+      <h2 class="text-title font-semibold text-fg">{t(lang, 'download.installTitle')}</h2>
+      <ul class="mt-4 space-y-2.5 text-body leading-relaxed text-fg-muted">
+        <li><strong class="font-semibold text-fg">{t(lang, 'download.windows')}：</strong>{t(lang, 'download.windowsInstall')}</li>
+        <li><strong class="font-semibold text-fg">{t(lang, 'download.macos')}：</strong>{t(lang, 'download.macInstall')}</li>
+      </ul>
+      <p class="mt-5">
+        <a
+          href={RELEASES_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-ui text-accent hover:text-accent-strong"
+        >
+          {t(lang, 'download.allReleases')}
+        </a>
+      </p>
+    </div>
+  </section>
+</Base>

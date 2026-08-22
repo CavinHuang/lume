@@ -279,6 +279,18 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     setVisibleThreadMessages(threadMessagesCache.get(threadId) ?? [])
   }, [threadId])
 
+  // #415:/clear 清空后立即清投影——sidecar clear 不广播事件,AgentInput 发
+  // window 事件解耦(两处宿主 AgentView/RightPanelWorkspace 零接线)
+  useEffect(() => {
+    const onThreadCleared = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId?: string }>).detail
+      if (detail?.threadId !== threadId) return
+      setVisibleThreadMessages([])
+    }
+    window.addEventListener('lume:thread-cleared', onThreadCleared)
+    return () => window.removeEventListener('lume:thread-cleared', onThreadCleared)
+  }, [threadId])
+
   useEffect(() => {
     let cancelled = false
     const requestedThreadId = threadId

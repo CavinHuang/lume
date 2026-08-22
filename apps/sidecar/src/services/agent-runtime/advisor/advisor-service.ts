@@ -36,7 +36,6 @@ export async function runAdvisor(input: AdvisorRunInput): Promise<AdvisorReview 
   const startedAt = performance.now();
   const provider = createLazyConnectionLlmProvider({ connectionId: binding.channel.id, modelId: binding.modelId });
   const agent = createAgent({
-    apiType: provider.apiType,
     provider,
     model: binding.modelId,
     cwd: input.cwd,

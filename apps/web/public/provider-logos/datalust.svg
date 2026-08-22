@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400" role="img" aria-labelledby="title">
-  <title id="title">Datalust Seq</title>
-  <g transform="translate(125.5 45) scale(2.2) translate(-535.5 -67.8)">
-    <polygon fill="#FBA018" points="535.5,121.8 585.8,108.4 603.2,154.5 554,168.6" />
-    <polygon fill="#E84100" points="603.2,154.5 535.5,208.5 535.5,121.8 561.5,154.5" />
-    <polygon fill="#AAEACD" points="603.2,154.5 603.2,67.8 535.5,121.8 577.2,121.8" />
-  </g>
-</svg>

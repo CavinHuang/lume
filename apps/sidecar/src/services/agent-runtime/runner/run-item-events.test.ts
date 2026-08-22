@@ -29,26 +29,6 @@ function baseRun(overrides: Partial<LumeRunState> = {}): LumeRunState {
 }
 
 describe("projectRunStateToRuntimeEvents", () => {
-  test("persists only the sanitized Link authorization signal on failed tool results", () => {
-    const events = projectRunItemToRuntimeEvents(baseRun(), {
-      type: "tool_result",
-      id: "result-1",
-      toolCallId: "tool-1",
-      toolName: "link_call_action",
-      output: "authorization required",
-      isError: true,
-      linkAuthorization: {
-        kind: "link_authorization_required",
-        service: "github",
-        actionId: "github.create_issue",
-        connectionName: "work",
-        threadId: "thread-1",
-        errorCode: "connection_not_found"
-      },
-      createdAt: "2026-04-30T00:00:02.000Z"
-    }, { includeAssistantText: true, includeAssistantThinking: true, includeModelStreamText: true });
-    expect(events[0]).toMatchObject({ type: "tool.failed", linkAuthorization: { service: "github", connectionName: "work", threadId: "thread-1" } });
-  });
   test("projects a parent background task completion as a dedicated runtime event", () => {
     const events = projectRunItemToRuntimeEvents(baseRun(), {
       type: "system_event",

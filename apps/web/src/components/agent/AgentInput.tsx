@@ -52,7 +52,8 @@ import {
   type BrowserTabDescriptor,
   type BrowserAnnotationSessionSnapshot,
 } from '@lume/shared'
-import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
+import { appendRuntimeEvent, removeRuntimeEvents } from '@/hooks/runtime-event-state'
+import { threadMessagesCache } from './thread-messages-cache'
 import { useModelMetaVersion } from '@/lib/model-meta-context'
 import { formatFileRefMention, parseFileRefDragData } from './file-ref-drag'
 import { browserAnnotationPreview, browserAnnotationTargetLabel, browserTabFromAttachment, createAgentSuggestionRenderer, invalidateBrowserSuggestionCache, sameBrowserTab } from './agent-input-browser-mention'
@@ -808,11 +809,12 @@ export function AgentInput({
   const doClear = useCallback(async () => {
     try {
       await sidecarCall(AGENT_IPC_CHANNELS.CLEAR_THREAD, { threadId })
-      setRuntimeEvents((prev) => {
-        const next = { ...prev }
-        delete next[threadId]
-        return next
-      })
+      // removeRuntimeEvents 同步清 hydrate 指纹（手动 delete 会残留指纹，#415）
+      setRuntimeEvents((prev) => removeRuntimeEvents(prev, threadId))
+      threadMessagesCache.invalidate(threadId)
+      // AgentMessages 兄弟组件立即清空 visibleThreadMessages 投影（否则旧对话
+      // 整场驻留到下次切 tab；sidecar clear 不广播事件，走 window 事件解耦）
+      window.dispatchEvent(new CustomEvent('lume:thread-cleared', { detail: { threadId } }))
       setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
       setMessageQueues((prev) => {
         const next = { ...prev }
@@ -1001,7 +1003,7 @@ export function AgentInput({
     const quotedBlock = quotedSelectionSnapshot ? buildQuotedSelectionBlock(quotedSelectionSnapshot) : ''
     const text = quotedBlock + baseText
     // messageParts 须与 userMessage 一致（sidecar 校验 parts 拼接 == userMessage）；引用 prepend 为 text part
-    const hasStructuredParts = serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref' || part.type === 'link_connection_ref')
+    const hasStructuredParts = serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
     const messageParts = quotedBlock && hasStructuredParts
       ? [{ type: 'text' as const, text: quotedBlock }, ...serialized.messageParts]
       : serialized.messageParts
@@ -2016,18 +2018,6 @@ function setEditorMessageParts(
       activeContent().push({
         type: 'planningTodoMention',
         attrs: { schemaVersion: part.schemaVersion, uri: part.uri, todoId: part.todoId, relation: part.relation, displayText: part.displayText },
-      })
-      continue
-    }
-    if (part.type === 'link_connection_ref') {
-      activeContent().push({
-        type: 'linkConnectionMention',
-        attrs: {
-          schemaVersion: part.schemaVersion,
-          service: part.service,
-          connectionName: part.connectionName,
-          displayText: part.displayText,
-        },
       })
       continue
     }
