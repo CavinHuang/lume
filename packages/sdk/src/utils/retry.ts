@@ -57,6 +57,40 @@ export function getRetryDelay(attempt: number, config: RetryConfig = DEFAULT_RET
 }
 
 /**
+ * Hard cap for server-provided Retry-After delays (#351).
+ */
+export const MAX_RETRY_AFTER_DELAY_MS = 120_000
+
+/**
+ * Parse a Retry-After header value (delta-seconds or HTTP-date) into
+ * milliseconds. Returns undefined when the value is absent or unparseable (#351).
+ */
+export function parseRetryAfterHeader(value: string | null | undefined): number | undefined {
+  if (!value) return undefined
+  const seconds = Number(value)
+  if (Number.isFinite(seconds)) return Math.max(seconds, 0) * 1000
+  const dateMs = Date.parse(value)
+  if (Number.isNaN(dateMs)) return undefined
+  return Math.max(dateMs - Date.now(), 0)
+}
+
+/**
+ * Delay before the next retry attempt: the server-provided Retry-After hint
+ * when present (clamped to a hard cap), exponential backoff otherwise (#351).
+ */
+export function computeRetryDelay(
+  err: unknown,
+  attempt: number,
+  config: RetryConfig = DEFAULT_RETRY_CONFIG,
+): number {
+  const retryAfterMs = (err as { retryAfterMs?: unknown })?.retryAfterMs
+  if (typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs)) {
+    return Math.min(Math.max(retryAfterMs, 0), MAX_RETRY_AFTER_DELAY_MS)
+  }
+  return getRetryDelay(attempt, config)
+}
+
+/**
  * Execute a function with retries.
  */
 export async function withRetry<T>(
@@ -86,7 +120,7 @@ export async function withRetry<T>(
       }
 
       // Wait before retry
-      const delay = getRetryDelay(attempt, config)
+      const delay = computeRetryDelay(err, attempt, config)
       await onRetry?.({
         attempt: attempt + 1,
         maxRetries: config.maxRetries,
