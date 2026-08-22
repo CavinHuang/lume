@@ -2,6 +2,7 @@
 import { getCollection, render, type CollectionEntry } from 'astro:content';
 import Base from '../../layouts/Base.astro';
 import { counterpartPath, languages, t, type Lang } from '../../i18n/ui';
+import { stripBase, withBase } from '../../lib/site';
 
 interface Props {
   lang: Lang;
@@ -22,7 +23,9 @@ if (entry) {
   const found = (await getCollection('docs')).find(
     (e) => e.id === `${otherLang}/${slug}`,
   );
-  translated = found ? counterpartPath(Astro.url.pathname) : undefined;
+  translated = found
+    ? withBase(counterpartPath(stripBase(Astro.url.pathname)))
+    : undefined;
 }
 
 const Content = entry ? (await render(entry)).Content : undefined;
@@ -38,7 +41,7 @@ const Content = entry ? (await render(entry)).Content : undefined;
           {all.map((doc) => (
             <li>
               <a
-                href={`${base}/docs/${doc.id.slice(3)}`}
+                href={withBase(`${base}/docs/${doc.id.slice(3)}`)}
                 aria-current={doc.id === entry?.id ? 'page' : undefined}
                 class:list={[
                   '-ml-px block border-l-2 py-1 pl-3 transition-colors',
@@ -63,7 +66,12 @@ const Content = entry ? (await render(entry)).Content : undefined;
             <Content />
           </article>
           <p class="mt-10 border-t border-border pt-5 text-ui">
-            <a href={translated ? translated : `${lang === 'zh' ? '/en' : ''}/docs/`} class="text-accent hover:text-accent-strong">
+            <a
+              href={translated
+                ? translated
+                : withBase(`${lang === 'zh' ? '/en' : ''}/docs/`)}
+              class="text-accent hover:text-accent-strong"
+            >
               {translated ? languages[lang === 'zh' ? 'en' : 'zh'] : t(lang, 'docs.backToDocs')}
             </a>
           </p>
@@ -75,7 +83,10 @@ const Content = entry ? (await render(entry)).Content : undefined;
           <ul class="mt-8 space-y-3">
             {all.map((doc) => (
               <li class="rounded-xl border border-border bg-surface p-4 transition-colors hover:border-border-strong">
-                <a href={`${base}/docs/${doc.id.slice(3)}`} class="text-body-lg font-medium text-fg hover:text-accent">
+                <a
+                  href={withBase(`${base}/docs/${doc.id.slice(3)}`)}
+                  class="text-body-lg font-medium text-fg hover:text-accent"
+                >
                   {doc.data.title}
                 </a>
                 {doc.data.description && (

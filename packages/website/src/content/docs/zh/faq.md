@@ -15,7 +15,7 @@ order: 5
 
 ## 支持哪些平台？
 
-Windows 与 macOS 提供安装包，Linux 安装包在制作中。详见[下载页](/download/)。
+Windows 与 macOS 提供安装包，Linux 安装包在制作中。详见[下载页](../../download/)。
 
 ## 收费吗？
 
