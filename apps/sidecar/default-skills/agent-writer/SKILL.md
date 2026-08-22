@@ -1,7 +1,6 @@
 ---
 name: "作家工作流程（江岚）"
 description: "江岚（Rowan Jiang）专属写作 Skill：结构优先、多版本交付、场景适配"
-when_to_use: "当角色为 writer / 江岚时自动加载，无需手动调用"
 allowed_tools: ["read_file", "edit_file", "write_file", "web_search", "web_fetch"]
 version: "1.1"
 ---

@@ -44,13 +44,13 @@ describe("ContextAssembler", () => {
     });
 
     expect(result.runtimeContext).not.toContain("Preferred capability route:");
-    expect(result.runtimeContext).toContain("shared persistent in-app Browser runtime is available");
-    expect(result.runtimeContext).toContain("exact skill name browser:browser (without a workspace prefix)");
-    expect(result.runtimeContext).toContain("deferred tool activation reset for every new user turn");
-    expect(result.runtimeContext).toContain("Never call mcp__node_repl__js before loading the Skill in the current turn");
-    expect(result.runtimeContext).toContain("include its full bootstrap block in the first mcp__node_repl__js call");
-    expect(result.runtimeContext).toContain("Do not claim browser automation is unavailable before attempting it");
-    expect(result.runtimeContext).toContain("defaults to the iab backend");
+    expect(result.runtimeContext).toContain("共享常驻内置浏览器运行时");
+    expect(result.runtimeContext).toContain("确切 skill 名 browser:browser（不带工作区前缀）");
+    expect(result.runtimeContext).toContain("延迟工具激活在每个用户回合重置");
+    expect(result.runtimeContext).toContain("绝不在未加载 Skill 的回合调用 mcp__node_repl__js");
+    expect(result.runtimeContext).toContain("再在首次 mcp__node_repl__js 调用中包含其完整 bootstrap 块");
+    expect(result.runtimeContext).toContain("未尝试前不要宣称浏览器自动化不可用");
+    expect(result.runtimeContext).toContain("默认 iab 后端");
     expect(result.runtimeContext).toContain("browser.tabs.resumeHandoff()");
     expect(result.runtimeContext).toContain('"tabId":"agent-tab-1"');
     expect(result.runtimeContext).toContain("Continue that tab instead of creating a duplicate");
@@ -113,8 +113,8 @@ describe("ContextAssembler", () => {
       tokenBudget: 8_000,
     });
 
-    expect(result.runtimeContext).not.toContain("shared persistent in-app Browser runtime is available");
-    expect(result.runtimeContext).toContain("No Browser runtime tool is available for this turn");
+    expect(result.runtimeContext).not.toContain("共享常驻内置浏览器运行时");
+    expect(result.runtimeContext).toContain("本回合无浏览器运行时工具");
   });
 
   test("injects desktop context as explicitly untrusted user data", async () => {
@@ -156,7 +156,7 @@ describe("ContextAssembler", () => {
       }
     });
 
-    expect(result.runtimeContext).toContain("authoritative current TodoWrite snapshot");
+    expect(result.runtimeContext).toContain("本会话当前 TodoWrite 的权威快照");
     expect(result.runtimeContext).toContain('<todo_state source="lume_runtime">');
     expect(result.runtimeContext).toContain('"content":"Run tests"');
     expect(result.userMessageForModel).toBe("继续");
@@ -248,7 +248,7 @@ describe("ContextAssembler", () => {
       tokenBudget: 1000
     });
 
-    expect(result.systemPrompt).toContain("You are Lume.");
+    expect(result.systemPrompt).toContain("你是 Lume。");
     expect(result.dynamicContext).toContain("<thread_state>");
     expect(result.memoryContext).toBe("");
     expect(result.budget.total).toBe(1000);

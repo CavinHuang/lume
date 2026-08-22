@@ -176,7 +176,6 @@ export async function loadFilesystemSkills(
             body.split(/\r?\n/).find(Boolean) ||
             `Skill ${skillName}`,
           ...(aliases ? { aliases } : {}),
-          whenToUse: pickFrontmatterString(parsed.frontmatter, 'when_to_use', 'whenToUse', 'when-to-use'),
           argumentHint: pickFrontmatterString(parsed.frontmatter, 'argument_hint', 'argumentHint', 'argument-hint'),
           version,
           allowedTools,

@@ -211,7 +211,6 @@ test("应按 slug 注册 Alice 风格 SKILL.md 字段并保留展示名别名", 
       "---",
       'name: "代码审查"',
       'description: "审查代码质量"',
-      'when_to_use: "当用户要求 code review 时使用"',
       'allowed_tools: ["Read", "Bash"]',
       'activate_tools: ["mcp__node_repl__js"]',
       'argument_hint: "请提供文件路径"',
@@ -233,7 +232,6 @@ test("应按 slug 注册 Alice 风格 SKILL.md 字段并保留展示名别名", 
     expect(skill).toBeDefined();
     expect(skill?.aliases).toContain("代码审查");
     expect(skill?.description).toBe("审查代码质量");
-    expect(skill?.whenToUse).toBe("当用户要求 code review 时使用");
     expect(skill?.argumentHint).toBe("请提供文件路径");
     expect(skill?.allowedTools).toEqual(["Read", "Bash"]);
     expect(skill?.activatedTools).toEqual(["mcp__node_repl__js"]);
@@ -373,9 +371,6 @@ test("应解析 Alice SKILL.md 中的 YAML 多行文本字段", async () => {
       "description: |",
       "  多源交叉验证。",
       "  自动归档证据。",
-      "when_to_use: >",
-      "  当用户要求调研",
-      "  或需要事实核查时使用",
       "---",
       "Research with care.",
     ].join("\n"),
@@ -390,7 +385,6 @@ test("应解析 Alice SKILL.md 中的 YAML 多行文本字段", async () => {
 
     const skill = skills.find((item) => item.name === "researcher");
     expect(skill?.description).toBe("多源交叉验证。\n自动归档证据。");
-    expect(skill?.whenToUse).toBe("当用户要求调研 或需要事实核查时使用");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

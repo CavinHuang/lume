@@ -13,19 +13,18 @@ describe("memory-sections", () => {
     });
     const prompt = sections.join("\n\n");
 
-    expect(prompt).toContain("## Memory");
-    expect(prompt).toContain("Search memory when");
-    expect(prompt).toContain("current shared work state");
-    expect(prompt).toContain("what we are doing now");
-    expect(prompt).toContain("make one compact memory.search call before answering");
-    expect(prompt).toContain("what we were doing");
-    expect(prompt).toContain("do not claim it is a fresh thread");
+    expect(prompt).toContain("## 记忆");
+    expect(prompt).toContain("再搜索记忆");
+    expect(prompt).toContain("当前协作状态");
+    expect(prompt).toContain("我们在做什么");
+    expect(prompt).toContain("先做一次紧凑的 memory.search 再回答");
+    expect(prompt).toContain("不要宣称这是全新线程");
     expect(prompt).toContain("我们之前聊过这个话题");
-    expect(prompt).toContain("Do not say \"从记忆中可以看出\"");
-    expect(prompt).toContain("do not sound like a profile system");
-    expect(prompt).toContain("instead of saying \"身份信息\"");
+    expect(prompt).toContain("不要说\"从记忆中可以看出\"");
+    expect(prompt).toContain("不要像档案系统一样说话");
+    expect(prompt).toContain("不要说\"身份信息\"");
     expect(prompt).not.toContain("Before answering anything about prior work");
-    expect(prompt).toContain("Citations:");
+    expect(prompt).toContain("引用：");
   });
 
   test("respects disabled memory citations", () => {
@@ -34,7 +33,7 @@ describe("memory-sections", () => {
       citationsMode: "off"
     });
 
-    expect(sections.join("\n\n")).toContain("Citations are disabled");
+    expect(sections.join("\n\n")).toContain("引用已关闭");
   });
 
   test("write rules are durable-only and avoid task-by-task memory spam", () => {
@@ -42,8 +41,8 @@ describe("memory-sections", () => {
       availableTools: new Set(["memory.remember"])
     }).join("\n\n");
 
-    expect(prompt).toContain("durable preference");
-    expect(prompt).toContain("use memory.remember");
+    expect(prompt).toContain("持久身份事实、偏好");
+    expect(prompt).toContain("使用 memory.remember");
     expect(prompt).toContain("claim");
     expect(prompt).toContain("user/self");
     expect(prompt).toContain("assistant/self");

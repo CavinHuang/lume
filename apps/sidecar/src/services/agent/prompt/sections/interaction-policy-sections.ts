@@ -4,14 +4,9 @@ export function buildUncertaintySection(permissionMode?: InteractionPermissionMo
   if (permissionMode === "bypassPermissions") {
     return `## 不确定性处理
 
-当前用户使用的是完全自动模式（所有工具调用自动批准）。
-
-**⚠️ 严禁调用 AskUserQuestion 工具！**
-**当你遇到不确定的情况时：**
-- **停下来，直接在回复文本中向用户提问**，等待用户回复后再继续
-- 列出你考虑的选项和各自的利弊，让用户决策
-- **绝对不要**调用 AskUserQuestion 工具，改为在普通文本回复中提问
-- 发现用户的假设或判断可能有误时，主动指出并提供依据，不要盲目附和`;
+当前用户使用的是完全自动模式（所有工具调用自动批准），严禁调用 AskUserQuestion。
+遇到不确定的情况时，停下来，直接在回复文本中向用户提问，列出选项和各自的利弊，等待用户回复后再继续。
+发现用户的假设或判断可能有误时，主动指出并提供依据，不要盲目附和。`;
   }
 
   if (permissionMode === "plan") {
@@ -31,8 +26,8 @@ export function buildUncertaintySection(permissionMode?: InteractionPermissionMo
 先基于上下文做合理判断；只有关键不确定才提问。
 - AskUserQuestion 用于需求澄清或关键取舍，不用于普通确认
 - 提问时提供清晰选项和简短影响说明
-- Use brainstorming only for ambiguous product/design exploration when requirements are unclear
-- Skip brainstorming for direct critique, simple analysis, obvious edits, or implementation follow-through
+- brainstorming 仅用于需求不清时的模糊产品/设计探索
+- 直接评审、简单分析、显而易见的编辑或实现跟进不要用 brainstorming
 - 发现用户的假设或判断可能有误时，主动指出并提供依据，不要盲目附和`;
 }
 
@@ -54,7 +49,7 @@ export function buildBrowserFirstSection(availableTools: Set<string>): string | 
     return null;
   }
 
-  return `## Browser-First Tool Policy (Mandatory)
+  return `## 浏览器优先工具策略（强制）
 
 当用户请求“使用我的浏览器 / 使用浏览器 profile / 在当前页面继续操作 / 继续上一步浏览器任务”时：
 1. 必须优先使用 browser 工具，不要直接改用 WebSearch。
@@ -65,51 +60,23 @@ export function buildBrowserFirstSection(availableTools: Set<string>): string | 
 4. 回退到 WebSearch 时，必须在回复中明确说明回退原因（例如：relay 未连接 / 浏览器线程不可用）。`;
 }
 
-export function buildOfficeToolsSection(availableTools: Set<string>): string | null {
-  const hasOfficeTools = availableTools.has("xlsx_create")
+export function hasOfficeToolSet(availableTools: Set<string>): boolean {
+  return availableTools.has("xlsx_create")
     || availableTools.has("office_unpack")
     || availableTools.has("office_convert")
     || availableTools.has("info_extract");
+}
 
-  if (!hasOfficeTools) return null;
+export function buildOfficeToolsSection(availableTools: Set<string>): string | null {
+  if (!hasOfficeToolSet(availableTools)) return null;
+
+  // 具体工具的路由教学由各工具 schema description 承载（xlsx_create/office_unpack 等均自足），
+  // 此段只声明意图层规则与回退条件
+  const officeToolNames = ["xlsx_create", "office_unpack", "docx_create", "pptx_create", "pdf_create", "office_convert", "info_extract", "office_validate"]
+    .filter((name) => availableTools.has(name));
 
   return `## Office 文档处理策略（强制）
 
-当用户上传或提及 Office 文档（xlsx、docx、pptx、pdf）时，必须优先使用内置的 Office 工具，不要通过 bash 执行 Python 代码来处理文档。
-
-**工具选择指南：**
-
-- **读取/分析 xlsx 数据** → 使用 xlsx_create 工具，code 参数传入 openpyxl Python 代码，无需 output_path，用 print() 输出结果
-- **修改 xlsx 文件** → 使用 xlsx_create 工具，提供 output_path 保存修改后的文件
-- **创建新 xlsx 文件** → 使用 xlsx_create 工具，提供 output_path 指定输出路径
-- **读取/分析 docx 内容** → 使用 office_unpack 解包后读取 XML，或用 info_extract 提取结构化信息
-- **创建 docx 文档** → 使用 docx_create 工具
-- **创建 pptx 演示文稿** → 使用 pptx_create 工具
-- **创建 PDF 文档** → 使用 pdf_create 工具
-- **格式转换**（xlsx→pdf、docx→pdf 等）→ 使用 office_convert 工具
-- **提取文档关键信息**（合同、简历、报告等）→ 使用 info_extract 工具
-- **校验文档结构** → 使用 office_validate 工具
-- **底层 XML 操作**（高级）→ office_unpack → 编辑 XML → office_pack
-
-**xlsx_create 读取数据示例（无需 output_path）：**
-\`\`\`python
-import openpyxl
-wb = openpyxl.load_workbook("已有文件.xlsx")
-ws = wb.active
-for row in ws.iter_rows(values_only=True):
-    print(row)  # print() 输出会作为工具返回结果
-\`\`\`
-
-**xlsx_create 创建/修改文件示例（需要 output_path）：**
-\`\`\`python
-import openpyxl
-wb = openpyxl.load_workbook("已有文件.xlsx")
-ws = wb.active
-ws["A1"] = "新值"
-wb.save(output_path)  # output_path 由工具自动注入
-\`\`\`
-
-仅在以下情况才回退到 bash + Python：
-- Office 工具明确不可用（被工具策略禁用）
-- 需要使用 openpyxl/docx 不支持的特殊库（如 pandas 复杂数据分析）`;
+当用户上传或提及 Office 文档（xlsx、docx、pptx、pdf）时，必须优先使用内置的 Office 工具（${officeToolNames.join("、")}），不要通过 bash 执行 Python 代码来处理文档。
+仅在 Office 工具明确不可用（被工具策略禁用）或需要 openpyxl/docx 不支持的特殊库（如 pandas 复杂数据分析）时才回退 bash + Python。`;
 }

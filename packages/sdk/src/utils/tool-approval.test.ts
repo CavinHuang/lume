@@ -6,8 +6,6 @@ test("matches Alice-style lowercase tool aliases to SDK tool names", () => {
   expect(matchesToolPattern("Bash", "bash")).toBe(true);
   expect(matchesToolPattern("Glob", "glob")).toBe(true);
   expect(matchesToolPattern("Grep", "grep")).toBe(true);
-  expect(matchesToolPattern("FindFiles", "find_files")).toBe(true);
-  expect(matchesToolPattern("ListWorkspaceTree", "list_workspace_tree")).toBe(true);
   expect(matchesToolPattern("WebSearch", "web_search")).toBe(true);
   expect(matchesToolPattern("ListMcpResourcesTool", "list_mcp_resources")).toBe(true);
 });

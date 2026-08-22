@@ -133,27 +133,6 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     category: 'execute',
     riskLevel: 'medium',
   },
-  send_message: {
-    name: 'send_message',
-    label: 'SendMessage',
-    description: '向其他会话发送消息',
-    category: 'execute',
-    riskLevel: 'medium',
-  },
-  team_create: {
-    name: 'team_create',
-    label: 'TeamCreate',
-    description: '创建 Agent 团队',
-    category: 'control',
-    riskLevel: 'medium',
-  },
-  team_delete: {
-    name: 'team_delete',
-    label: 'TeamDelete',
-    description: '删除 Agent 团队',
-    category: 'control',
-    riskLevel: 'medium',
-  },
 
   // === 任务 ===
   task_create: {
@@ -240,41 +219,6 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     category: 'read',
     riskLevel: 'low',
   },
-  subscribe_mcp_resource: {
-    name: 'subscribe_mcp_resource',
-    label: 'SubscribeMcpResource',
-    description: '订阅 MCP 资源更新',
-    category: 'control',
-    riskLevel: 'low',
-  },
-  unsubscribe_mcp_resource: {
-    name: 'unsubscribe_mcp_resource',
-    label: 'UnsubscribeMcpResource',
-    description: '取消订阅 MCP 资源',
-    category: 'control',
-    riskLevel: 'low',
-  },
-  subscribe_polling: {
-    name: 'subscribe_polling',
-    label: 'SubscribePolling',
-    description: '订阅轮询更新',
-    category: 'control',
-    riskLevel: 'low',
-  },
-  unsubscribe_polling: {
-    name: 'unsubscribe_polling',
-    label: 'UnsubscribePolling',
-    description: '取消轮询订阅',
-    category: 'control',
-    riskLevel: 'low',
-  },
-  mcp_auth: {
-    name: 'mcp_auth',
-    label: 'McpAuth',
-    description: 'MCP 认证',
-    category: 'control',
-    riskLevel: 'low',
-  },
 
   // === LSP ===
   lsp: {
@@ -283,15 +227,6 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     description: 'LSP 代码智能查询',
     category: 'read',
     riskLevel: 'low',
-  },
-
-  // === 配置 ===
-  config: {
-    name: 'config',
-    label: 'Config',
-    description: '读取和修改 Lume 配置',
-    category: 'control',
-    riskLevel: 'high',
   },
 
   // === Todo ===
@@ -343,13 +278,6 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
   },
 
   // === 定时任务 ===
-  cron_set: {
-    name: 'cron_set',
-    label: 'Cron',
-    description: '设置定时任务（创建/更新/删除/启停）',
-    category: 'write',
-    riskLevel: 'medium',
-  },
   automation_set: {
     name: 'automation_set',
     label: 'Automation',

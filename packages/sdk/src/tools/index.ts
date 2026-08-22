@@ -1,8 +1,8 @@
 /**
  * Tool Registry - All built-in tool definitions
  *
- * 30+ tools covering file I/O, execution, search, web, agents,
- * tasks, teams, messaging, worktree, planning, scheduling, and more.
+ * Tools covering file I/O, execution, search, web, agents,
+ * tasks, worktree, planning, scheduling, and more.
  */
 
 import type { ToolDefinition } from '../types.js'
@@ -14,11 +14,9 @@ import { BashTool } from './bash.js'
 import { FileReadTool } from './read.js'
 import { FileWriteTool } from './write.js'
 import { FileEditTool } from './edit.js'
-import { FindFilesTool } from './find-files.js'
 import { GlobTool } from './glob.js'
 import { GrepTool } from './grep.js'
 import { NotebookEditTool } from './notebook-edit.js'
-import { ListWorkspaceTreeTool } from './workspace-tree.js'
 
 // Web
 import { WebFetchTool } from './web-fetch.js'
@@ -32,8 +30,6 @@ import {
 
 // Agent & Multi-agent
 import { AgentTool } from './agent-tool.js'
-import { SendMessageTool } from './send-message.js'
-import { TeamCreateTool, TeamDeleteTool } from './team-tools.js'
 
 // Persistent Tasks are host-bound through createTaskTools and are not part of
 // the SDK's unscoped base tool pool.
@@ -47,22 +43,8 @@ import { AskUserQuestionTool } from './ask-user.js'
 // Discovery
 import { ToolSearchTool } from './tool-search.js'
 
-// MCP Resources
-import {
-  ListMcpResourcesTool,
-  ReadMcpResourceTool,
-  SubscribeMcpResourceTool,
-  UnsubscribeMcpResourceTool,
-  SubscribePollingTool,
-  UnsubscribePollingTool,
-  McpAuthTool,
-} from './mcp-resource-tools.js'
-
 // LSP
 import { LSPApplyTool, LSPTool } from './lsp-tool.js'
-
-// Config
-import { ConfigTool } from './config-tool.js'
 
 // Todo
 import { createTodoTool } from './todo-tool.js'
@@ -79,10 +61,8 @@ const ALL_TOOLS: ToolDefinition[] = [
   FileReadTool,
   FileWriteTool,
   FileEditTool,
-  FindFilesTool,
   GlobTool,
   GrepTool,
-  ListWorkspaceTreeTool,
   NotebookEditTool,
 
   // Web
@@ -95,9 +75,6 @@ const ALL_TOOLS: ToolDefinition[] = [
 
   // Agent & Multi-agent
   AgentTool,
-  SendMessageTool,
-  TeamCreateTool,
-  TeamDeleteTool,
 
   // Internal process controls are intentionally not model-visible.
 
@@ -111,21 +88,9 @@ const ALL_TOOLS: ToolDefinition[] = [
   // Discovery
   ToolSearchTool,
 
-  // MCP Resources
-  ListMcpResourcesTool,
-  ReadMcpResourceTool,
-  SubscribeMcpResourceTool,
-  UnsubscribeMcpResourceTool,
-  SubscribePollingTool,
-  UnsubscribePollingTool,
-  McpAuthTool,
-
   // LSP
   LSPTool,
   LSPApplyTool,
-
-  // Config
-  ConfigTool,
 
   // Skill
   SkillTool,
@@ -212,10 +177,8 @@ export {
   FileReadTool,
   FileWriteTool,
   FileEditTool,
-  FindFilesTool,
   GlobTool,
   GrepTool,
-  ListWorkspaceTreeTool,
   NotebookEditTool,
   WebFetchTool,
   WebSearchTool,
@@ -225,9 +188,6 @@ export {
   GuanlanResearchTool,
   // Agent
   AgentTool,
-  SendMessageTool,
-  TeamCreateTool,
-  TeamDeleteTool,
   // Persistent Tasks are host-bound; see createTaskTools.
   // Worktree
   EnterWorktreeTool,
@@ -236,19 +196,9 @@ export {
   AskUserQuestionTool,
   // Discovery
   ToolSearchTool,
-  // MCP
-  ListMcpResourcesTool,
-  ReadMcpResourceTool,
-  SubscribeMcpResourceTool,
-  UnsubscribeMcpResourceTool,
-  SubscribePollingTool,
-  UnsubscribePollingTool,
-  McpAuthTool,
   // LSP
   LSPTool,
   LSPApplyTool,
-  // Config
-  ConfigTool,
   // Todo
   createTodoTool,
   // Skill

@@ -1,7 +1,6 @@
 ---
 name: "解释代码"
 description: "用通俗易懂的语言解释代码的逻辑和工作原理"
-when_to_use: "当用户说看不懂代码、让我解释某段代码时使用"
 allowed_tools: ["read_file"]
 version: "1.0"
 ---

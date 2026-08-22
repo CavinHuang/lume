@@ -1,7 +1,6 @@
 ---
 name: executing-plans
 description: Use when you have a written implementation plan to execute in a separate session with review checkpoints
-when_to_use: "当已有书面实施计划，需要按批次执行并在检查点复核时使用"
 ---
 
 # Executing Plans

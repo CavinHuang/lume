@@ -1,7 +1,6 @@
 ---
 name: "图片生成"
 description: "使用 image_gen 工具生成或编辑图片，并把生成的图片展示给用户"
-when_to_use: "当用户说生成图片、画一张、AI 画图、文生图、垫图、参考这张图改风格、做海报/插画/视觉稿时使用"
 allowed_tools: ["image_gen", "list_image_models"]
 version: "0.2"
 ---

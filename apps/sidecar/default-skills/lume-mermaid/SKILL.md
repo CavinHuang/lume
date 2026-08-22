@@ -1,7 +1,6 @@
 ---
 name: "Lume Mermaid 图解"
 description: "生成兼容 Lume 当前 beautiful-mermaid 渲染器的 Mermaid 图表，覆盖流程图、架构图、依赖图、层级图、时序图、状态图、类图和 ER 图"
-when_to_use: "当回答需要 Mermaid、画成图，或需要用图解释流程、分支、系统架构、模块关系、调用链、状态变化时使用"
 version: "1.0"
 ---
 

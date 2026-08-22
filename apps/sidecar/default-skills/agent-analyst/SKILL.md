@@ -1,7 +1,6 @@
 ---
 name: "分析师工作流程（唐栩）"
 description: "唐栩（Mason Tang）专属数据分析 Skill：定义先行、Python 可复现分析、三层结论"
-when_to_use: "当角色为 analyst / 唐栩时自动加载，无需手动调用"
 allowed_tools: ["bash", "read_file", "edit_file", "write_file", "glob", "grep", "web_search", "web_fetch"]
 version: "1.4"
 ---

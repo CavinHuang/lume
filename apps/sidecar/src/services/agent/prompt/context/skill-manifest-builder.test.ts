@@ -4,7 +4,7 @@ import { compactSkillDescription, renderSkillManifestLines } from "./skill-manif
 describe("skill-manifest-builder", () => {
   test("uses weak trigger copy for brainstorming", () => {
     expect(compactSkillDescription("brainstorming", "Use this before any creative work.")).toBe(
-      "ambiguous product/design exploration when requirements are unclear"
+      "需求不清时的模糊产品/设计探索"
     );
   });
 
@@ -19,12 +19,39 @@ describe("skill-manifest-builder", () => {
       ]
     });
 
-    expect(lines).toContain("Loaded Skills:");
-    expect(lines).toContain("- Skill call prefix: lume-workspace-demo:");
-    expect(lines).toContain("- Call skills as <prefix><skill-slug>; list below shows slugs only to save prompt tokens");
+    expect(lines).toContain("已加载 Skill：");
+    expect(lines).toContain("- Skill 调用前缀: lume-workspace-demo:");
+    expect(lines).toContain("- 以 <前缀><skill-slug> 调用；下表仅列 slug 以节省 prompt token");
+    // Skill 匹配时机的指令由静态 prompt「## 执行模式」段单点声明
+    expect(lines.join("\n")).not.toContain("clearly matches");
+    expect(lines.join("\n")).not.toContain("raw tool composition");
     expect(lines).toContain("- planner: Breaks work into clear execution plans.");
     expect(lines.join("\n")).not.toContain("Additional details");
     expect(lines.join("\n").match(/lume-workspace-demo:/g)).toHaveLength(1);
+  });
+
+  test("hides office file skills when built-in office tools exist", () => {
+    const skills = [
+      { slug: "xlsx", description: "Use this skill any time a spreadsheet file is the primary input or output." },
+      { slug: "pdf", description: "Use this skill whenever the user wants to do anything with PDF files." },
+      { slug: "planner", description: "Breaks work into clear execution plans." }
+    ];
+    const withOfficeTools = renderSkillManifestLines({
+      workspaceSlug: "demo",
+      skills,
+      hasOfficeTools: true
+    }).join("\n");
+    expect(withOfficeTools).not.toContain("- xlsx:");
+    expect(withOfficeTools).not.toContain("- pdf:");
+    expect(withOfficeTools).toContain("- planner:");
+
+    const withoutOfficeTools = renderSkillManifestLines({
+      workspaceSlug: "demo",
+      skills,
+      hasOfficeTools: false
+    }).join("\n");
+    expect(withoutOfficeTools).toContain("- xlsx:");
+    expect(withoutOfficeTools).toContain("- pdf:");
   });
 
   test("renders display names alongside skill ids", () => {
@@ -49,7 +76,6 @@ describe("skill-manifest-builder", () => {
         {
           slug: "planner",
           description: "Breaks work into clear execution plans.",
-          whenToUse: "when the user asks for a plan",
           argumentHint: "pass the target feature"
         },
         {

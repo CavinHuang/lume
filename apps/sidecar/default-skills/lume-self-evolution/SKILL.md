@@ -1,7 +1,6 @@
 ---
 name: lume自我进化
 description: "Lume 自我进化原则。用于约束 agent 如何沉淀系统配置到 ~/.lume/lume.yaml、如何按新记忆模型更新和蒸馏全局/workspace/thread 记忆，以及如何持续保持 workspace/thread 文件结构的稳定、克制与可解释。"
-when_to_use: "当需要把稳定偏好沉淀为 Lume 配置、更新记忆模型，或治理 workspace/thread 文件结构时使用"
 ---
 
 # Lume 自我进化

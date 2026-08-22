@@ -1,7 +1,6 @@
 ---
 name: brainstorming
 description: "You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation."
-when_to_use: "当用户要创建功能、构建组件、添加能力、修改行为，且需求还需要先澄清设计时使用"
 ---
 
 # Brainstorming Ideas Into Designs

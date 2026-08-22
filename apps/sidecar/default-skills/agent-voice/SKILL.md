@@ -1,7 +1,6 @@
 ---
 name: "配音师工作流程（宋澈）"
 description: "宋澈（Miles Song）专属配音 Skill：口播节奏优化、标注系统、多风格适配"
-when_to_use: "当角色为 voice / 宋澈时自动加载，无需手动调用"
 allowed_tools: ["read_file", "edit_file", "write_file"]
 version: "1.1"
 ---

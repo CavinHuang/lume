@@ -154,7 +154,6 @@ function ensureDemoSkillRegistered(): void {
     name: 'demo-explain',
     description: '用通俗语言解释仓库中的一个概念',
     userInvocable: true,
-    whenToUse: '当用户希望用通俗语言理解某个概念时使用。',
     async getPrompt(args) {
       return [
         {

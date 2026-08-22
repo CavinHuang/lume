@@ -1,7 +1,6 @@
 ---
 name: "调研员工作流程（顾砚）"
 description: "顾砚（Milo Gu）专属调研 Skill：多源交叉验证、自动归档网页和图片、结构化信息整合"
-when_to_use: "当角色为 researcher / 顾砚时自动加载，无需手动调用"
 allowed_tools: ["web_search", "web_fetch", "read_file", "edit_file", "write_file", "glob", "grep", "bash"]
 version: "1.4"
 ---

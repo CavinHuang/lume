@@ -5,16 +5,16 @@ describe("core prompt sections", () => {
   test("includes afterglow protocol and boundaries", () => {
     const section = buildConversationStyleSection();
 
-    expect(section).toContain("## Conversation Style");
+    expect(section).toContain("## 交流风格");
     expect(section).toContain("余光");
     expect(section).toContain("⟡");
     expect(section).toContain("最多 1 条");
-    expect(section).toContain("不能承载必要信息");
-    expect(section).toContain("不要出现在工具结果、代码块、文件内容");
+    expect(section).toContain("不承载必要信息");
+    expect(section).toContain("不进入工具结果、代码块、文件内容");
     expect(section).toContain("记忆、总结或上下文压缩");
   });
 
-  test("selects the smallest useful expression form and gates proactive image generation", () => {
+  test("selects the smallest useful expression form without hardcoded tool references", () => {
     const section = buildConversationStyleSection();
 
     expect(section).toContain("简单事实和单一结论使用简洁文字");
@@ -25,9 +25,7 @@ describe("core prompt sections", () => {
     expect(section).toContain("Skill 不可用时改用简洁文字或表格");
     expect(section).not.toContain("节点文本使用引号");
     expect(section).not.toContain("accTitle");
-    expect(section).toContain("明确要求生成图片");
-    expect(section).toContain("先说明用途并请求确认");
-    expect(section).toContain("用户明确指定的表达形式始终优先");
+    expect(section).not.toContain("image_gen");
   });
 
   test("requires rendered overviews instead of ASCII walls for complex architecture explanations", () => {

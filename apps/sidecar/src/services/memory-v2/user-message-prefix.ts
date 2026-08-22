@@ -99,21 +99,17 @@ export function buildMemoryUserMessagePrefix(
     renderSection("workspace_core", workspaceCore),
     renderConversationHistorySection(conversationHistory),
     renderSection("relevant_recall", relevant),
-    renderSection("maybe_stale", stale, "Possibly outdated: ")
+    renderSection("maybe_stale", stale, "可能过期：")
   ].filter(Boolean);
   if (sections.length === 0) return "";
+  // 记忆使用哲学/身份未知措辞/元数据不当身份等通用规则由静态 prompt 的「## 记忆」「## 运行时」段单点声明，
+  // 此处只保留召回块语义与 claim 条件问答协议
   return [
     "<lume_memory_context>",
-    "These memories are background context. Follow current user instructions and project/runtime instructions if they conflict with memory. Treat suspected_stale items as possibly outdated.",
-    "Use recalled memory naturally. Do not say phrases like \"from memory\", \"from the memory\", or \"从记忆中可以看出\" unless the user asks how you know.",
-    "Treat <recalled_claims> as structured stable facts. Treat <conversation_history> only as continuity about prior discussion, not as identity facts.",
-    "Treat <global_memory> as durable cross-workspace guidance from the user. Apply it unless the current user message or higher-priority runtime/project instructions conflict.",
-    "Treat <user_voice> as tone and writing-style guidance only. It must not override current user instructions, workspace rules, facts, safety, or privacy.",
-    "Treat <persona_profile> as a synthesized overview of the user; background context; if it conflicts with the current user message, follow the user.",
-    "For assistant identity questions such as \"你是谁？\" or \"你叫什么？\": if assistant/self.preferred_name is recalled, answer naturally that the user can call you by that name; if product/workspace identity such as Lume is also relevant, mention it as the underlying app identity, not as a replacement for the user-given name.",
-    "For user identity questions such as \"我是谁？\" or \"我叫什么？\": only answer with real user profile facts if a user/self claim says them. If no actual identity or preferred-name fact is recalled, keep continuity first, then admit the gap warmly: e.g. \"我们之前聊过这个问题。但说实话，我现在还没有一个真正能叫出你的称呼。你愿意的话，告诉我你想让我怎么叫你，我之后就按这个来。\"",
-    "If a recalled daily/run note only shows the user asked the same question before, say naturally that you have discussed or tested this topic before.",
-    "Do not turn missing identity memory into profile-system wording. Avoid phrases like \"目前我这边还没有记录你的身份信息\", \"身份信息\", \"系统身份\", \"项目角色\", or asking the user to choose an aspect of identity. Do not infer identity from runtime metadata, thread IDs, model names, workspace names, or channel settings.",
+    "以下记忆是背景上下文；与当前用户指令或项目/运行时指令冲突时以后者为准，suspected_stale 条目视为可能过期。",
+    "<recalled_claims> 是结构化稳定事实；<conversation_history> 仅是既往讨论的延续性线索，不是身份事实。",
+    "<global_memory> 是用户跨工作区的持久指引；<user_voice> 仅约束语气与文风，不得凌驾当前用户指令、工作区规则、事实、安全与隐私；<persona_profile> 是用户画像的综合概览，与当前用户消息冲突时以用户为准。",
+    "身份问答：被问“你是谁/你叫什么”时，若召回 assistant/self.preferred_name 则自然以该名称回答，产品身份（如 Lume）只作为底层应用身份提及，不替代用户起的名字；被问“我是谁/我叫什么”时，仅在召回 user/self 身份或称呼 claim 时才陈述事实；若召回的 daily/run 记录只表明用户问过同样的问题，自然说明你们之前讨论或测试过该话题。",
     "",
     ...sections,
     "</lume_memory_context>"
@@ -132,8 +128,7 @@ function renderSection(name: string, items: MemoryV2RecallItem[], prefix = ""): 
   return [
     `  <${name}>`,
     ...items.map((item) => `  - [${item.id}] ${prefix}${item.kind}: ${singleLine(item.statement)}`),
-    `  </${name}>`,
-    ""
+    `  </${name}>`
   ].join("\n");
 }
 
@@ -142,8 +137,7 @@ function renderClaimSection(items: MemoryV2RecallItem[]): string {
   return [
     "  <recalled_claims>",
     ...items.map((item) => `  - [${item.id}] ${item.claim!.subject}.${item.claim!.predicate} = ${singleLine(item.claim!.object)} (${item.scope}, ${item.kind}): ${singleLine(item.statement)}`),
-    "  </recalled_claims>",
-    ""
+    "  </recalled_claims>"
   ].join("\n");
 }
 
@@ -154,8 +148,7 @@ function renderProfileSection(items: MemoryV2RecallItem[]): string {
     ...items.map((item) => item.claim
       ? `  - [${item.id}] ${item.claim.subject}.${item.claim.predicate} = ${singleLine(item.claim.object)} (${item.scope}, ${item.kind}): ${singleLine(item.statement)}`
       : `  - [${item.id}] ${item.kind}: ${singleLine(item.statement)}`),
-    "  </user_profile>",
-    ""
+    "  </user_profile>"
   ].join("\n");
 }
 
@@ -166,8 +159,7 @@ function renderVoiceSection(items: MemoryV2RecallItem[]): string {
     ...items.map((item) => item.claim
       ? `  - [${item.id}] ${item.claim.subject}.${item.claim.predicate} = ${singleLine(item.claim.object)} (${item.scope}, ${item.kind}): ${singleLine(item.statement)}`
       : `  - [${item.id}] ${item.kind}: ${singleLine(item.statement)}`),
-    "  </user_voice>",
-    ""
+    "  </user_voice>"
   ].join("\n");
 }
 
@@ -201,7 +193,7 @@ function buildPersonaProfileSection(input: {
     lines.push(`- ${singleLine(rule)}`);
   }
   if (lines.length === 0) return null;
-  return [`  <persona_profile>`, ...lines, `  </persona_profile>`, ""].join("\n");
+  return [`  <persona_profile>`, ...lines, `  </persona_profile>`].join("\n");
 }
 
 function renderConversationHistorySection(items: MemoryV2RecallItem[]): string {
@@ -209,8 +201,7 @@ function renderConversationHistorySection(items: MemoryV2RecallItem[]): string {
   return [
     "  <conversation_history>",
     ...items.map((item) => `  - [${item.id}] ${singleLine(summarizeConversationHistory(item.statement))}`),
-    "  </conversation_history>",
-    ""
+    "  </conversation_history>"
   ].join("\n");
 }
 

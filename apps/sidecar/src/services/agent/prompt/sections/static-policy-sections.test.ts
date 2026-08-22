@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CAPABILITY_ROUTING_SECTION, CLAUDE_PLAN_MODE_SECTION } from "./static-policy-sections";
+import { CLAUDE_PLAN_MODE_SECTION } from "./static-policy-sections";
 
 describe("static policy sections", () => {
   test("agent role handoff instructions mention explicit subagent_type routing", () => {
@@ -8,25 +8,27 @@ describe("static policy sections", () => {
     expect(CLAUDE_PLAN_MODE_SECTION).toContain("designer");
   });
 
-  test("main agent should proactively recommend fitting built-in agents", () => {
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("proactively recommend");
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("built-in SubAgent");
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("before drafting");
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain('subagent_type "writer"');
+  test("long-form prose is delegated to the writing agent", () => {
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("先移交给 writer 角色再动笔");
   });
 
   test("main agent should directly create subagents for complex specialized work", () => {
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("directly use the Agent tool");
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("create the appropriate SubAgent");
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("multi-step, context-heavy, or cross-domain");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("主动使用子代理");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("重上下文或跨领域");
     expect(CLAUDE_PLAN_MODE_SECTION).toContain("explorer -> planner -> specialist -> code-reviewer");
-    expect(CLAUDE_PLAN_MODE_SECTION).toContain("Ask first only when");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("仅在目标含糊");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("内置角色包括 explorer、planner、code-reviewer、researcher");
   });
 
-  test("capability routing prefers subagents when specialization materially helps", () => {
-    expect(CAPABILITY_ROUTING_SECTION).toContain("Prefer SubAgents when specialization");
-    expect(CAPABILITY_ROUTING_SECTION).toContain("context isolation");
-    expect(CAPABILITY_ROUTING_SECTION).toContain("parallelism");
-    expect(CAPABILITY_ROUTING_SECTION).toContain("review");
+  test("capability ladder keeps memory and web lookups conditional", () => {
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("仅在需要且尚未加载先前上下文时才用记忆工具");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("需要最新公开信息时使用 WebSearch/WebFetch");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("可并行或需要评审的任务");
+  });
+
+  test("coding loop keeps verification hard rules", () => {
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("绝不接 grep、findstr、Select-String、head 或 tail 管道");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("不要轮询其输出");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("绝不作为编码收尾自动 commit、push、reset、clean 或删除分支");
   });
 });

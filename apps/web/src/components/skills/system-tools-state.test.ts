@@ -61,7 +61,7 @@ describe('system-tools-state', () => {
     expect(rows.find((row) => row.id === 'automation')).toMatchObject({
       label: '定时任务',
       description: 'AI 创建和管理定时执行的任务',
-      count: 2,
+      count: 1,
       enabled: false,
       locked: false,
       policyEntry: 'group:automation',
@@ -102,7 +102,7 @@ describe('system-tools-state', () => {
     expect(rows.find((row) => row.id === 'agent')).toMatchObject({
       label: 'Agent',
       description: '子 Agent 调度与技能调用',
-      count: 5,
+      count: 2,
       enabled: true,
       locked: true,
     })

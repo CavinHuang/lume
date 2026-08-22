@@ -277,8 +277,8 @@ function validateSkillInput(input: SaveWorkspaceSkillInput): void {
   if (!input.name.trim()) {
     throw new Error("技能 ID 和展示名称不能为空");
   }
-  if (!trimOptional(input.description) || !trimOptional(input.whenToUse) || !input.prompt.trim()) {
-    throw new Error("描述、触发条件和提示词内容不能为空");
+  if (!trimOptional(input.description) || !input.prompt.trim()) {
+    throw new Error("描述和提示词内容不能为空");
   }
 }
 
@@ -288,13 +288,11 @@ function buildSkillContent(input: SaveWorkspaceSkillInput, skillSlug: string): s
     disable_model_invocation: input.disableModelInvocation ?? false
   };
   const description = trimOptional(input.description);
-  const whenToUse = trimOptional(input.whenToUse);
   const allowedTools = normalizeAllowedTools(input.allowedTools);
   const argumentHint = trimOptional(input.argumentHint);
   const version = trimOptional(input.version);
 
   if (description) frontmatter.description = description;
-  if (whenToUse) frontmatter.when_to_use = whenToUse;
   if (allowedTools) frontmatter.allowed_tools = allowedTools;
   if (argumentHint) frontmatter.argument_hint = argumentHint;
   if (version) frontmatter.version = version;
