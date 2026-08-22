@@ -51,12 +51,18 @@ export function matchesToolPattern(
 ): boolean {
   if (!pattern) return false
   if (pattern.endsWith('*')) {
-    return toolName.startsWith(pattern.slice(0, -1))
+    // Case-insensitive prefix match on the raw names: alias normalization here
+    // would strip the mcp__ structure from wildcard prefixes (#379).
+    const prefix = pattern.slice(0, -1).toLowerCase()
+    return toolName.toLowerCase().startsWith(prefix)
   }
   if (toolName === pattern) return true
   const toolNames = canonicalToolNames(toolName)
   const patternNames = canonicalToolNames(pattern)
-  return toolNames.some((name) => patternNames.includes(name))
+  // Case-insensitive so unknown MCP-style names match regardless of casing (#379).
+  return toolNames.some((name) =>
+    patternNames.some((patternName) => patternName.toLowerCase() === name.toLowerCase()),
+  )
 }
 
 export function matchesAnyToolPattern(
