@@ -21,14 +21,14 @@ import {
   validateRendererSidecarMethod,
 } from "../src/electron-security.ts";
 import { PUBLIC_RENDERER_SIDECAR_METHODS } from "../src/renderer-sidecar-methods.ts";
-import { LOCAL_RENDERER_SIDECAR_METHODS } from "../../../packages/shared/src/types/renderer-allowlist.ts";
+import { LOCAL_RENDERER_SIDECAR_METHODS } from '@lume/shared';
 import {
   createPluginAssetRegistry,
   pluginAssetTokenFromUrl,
   scopePluginAssetUrls,
 } from "../src/plugin-asset-registry.ts";
-import * as sharedIpc from "../../../packages/shared/src/types/index.ts";
-import { BROWSER_IPC_CHANNELS } from "../../../packages/shared/src/types/browser-runtime.ts";
+import * as sharedIpc from '@lume/shared';
+import { BROWSER_IPC_CHANNELS } from '@lume/shared';
 import {
   createPreviewProtocolResponse,
   createPreviewScopeRegistry,

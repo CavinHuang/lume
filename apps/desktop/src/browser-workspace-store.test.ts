@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import { BrowserWorkspaceStore } from './browser-workspace-store'
-import type { BrowserTabDescriptor } from '../../../packages/shared/src/types/browser-runtime'
+import type { BrowserTabDescriptor } from '@lume/shared'
 
 function makeTab(tabId: string, url = 'https://example.test/'): BrowserTabDescriptor {
   return {

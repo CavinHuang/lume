@@ -163,5 +163,7 @@
       }
     ]
   },
-  "dependencies": {}
+  "dependencies": {
+    "@lume/shared": "workspace:*"
+  }
 }
