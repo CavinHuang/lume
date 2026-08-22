@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { withRepeatGuardState } from "@lume/agent-sdk"
 import type { ToolDefinition, ToolInputSchema, ToolResult } from "@lume/agent-sdk"
 import type { BrowserBackendDescriptor, BrowserTabDescriptor } from "@lume/shared"
 import type { BrowserBroker } from "../../../browser/browser-broker"
@@ -697,13 +698,13 @@ function clearActionFailures(session: ReturnType<BrowserToolSessionRegistry["get
 }
 
 function toolResult(toolUseId: string, value: unknown, isError = false, repeatState?: unknown): ToolResult {
-  return {
+  const result: ToolResult = {
     type: "tool_result",
     tool_use_id: toolUseId,
     content: JSON.stringify(value),
     ...(isError ? { is_error: true } : {}),
-    ...(repeatState !== undefined ? { _meta: { repeatGuard: { state: repeatState } } } : {}),
   }
+  return repeatState === undefined ? result : withRepeatGuardState(result, repeatState)
 }
 
 function screenshotToolResult(toolUseId: string, sessionId: string, result: Record<string, unknown>): ToolResult {
@@ -712,15 +713,14 @@ function screenshotToolResult(toolUseId: string, sessionId: string, result: Reco
   const mediaType = stringValue(image.media_type)
   if (!data || !mediaType) throw new Error("browser_internal_error")
   const screenshotId = `browser-screenshot:${randomUUID()}`
-  return {
+  return withRepeatGuardState({
     type: "tool_result",
     tool_use_id: toolUseId,
     content: [
       { type: "text", text: JSON.stringify({ ok: true, operation_id: toolUseId, session_id: sessionId, active_tab_id: result.active_tab_id, full_page: result.full_page, annotated: result.annotated === true, snapshot_id: result.snapshot_id, annotated_refs: result.annotated_refs, screenshot_id: screenshotId }) },
       { type: "image", source: { type: "base64", media_type: mediaType, data }, _meta: { persist: false, screenshotId } },
     ],
-    _meta: { repeatGuard: { state: { ok: true, tool: "screenshot", active_tab_id: result.active_tab_id, full_page: result.full_page } } },
-  }
+  }, { ok: true, tool: "screenshot", active_tab_id: result.active_tab_id, full_page: result.full_page })
 }
 
 function stringValue(value: unknown): string | undefined { return typeof value === "string" && value.trim() ? value.trim() : undefined }

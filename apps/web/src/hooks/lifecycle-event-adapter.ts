@@ -423,6 +423,20 @@ function adaptRunEnd(
       ...base,
     }
   }
+  // 防护性终止(error_completion_guard):SDK 内部重复调用熔断与宿主自有
+  // completionGuard stop 共用该 subtype。engine 的 errors[0] 文案不进 projector
+  // detail,这里映射为固定中文文案,避免向用户渲染字面量枚举。
+  if (detail.stopReason?.includes('completion_guard')) {
+    return {
+      id: `lifecycle:${envelope.seq}:run.failed`,
+      type: 'run.failed',
+      ...base,
+      error: {
+        code: 'repeated_tool_call',
+        message: '本轮检测到重复执行相同操作，已由保护机制停止；当前进度已保存。',
+      },
+    }
+  }
   if (detail.isError) {
     return {
       id: `lifecycle:${envelope.seq}:run.failed`,
