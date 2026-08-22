@@ -104,11 +104,24 @@ describe("BashTool shell invocation", () => {
     expect(BashTool.isReadOnly?.({ command: "powershell -Command Get-ChildItem" })).toBeTrue();
   });
 
+  test("rejects newline-separated statements behind a whitelisted PowerShell first word (#300)", () => {
+    // A second statement rides behind the whitelisted first word.
+    expect(BashTool.isReadOnly?.({ command: "powershell -Command Get-Date\n(Get-Content victim.txt).Delete()" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "powershell -Command Get-Date\r\nRemove-Item victim.txt" })).toBeFalse();
+    // Single-line inspection commands are unaffected.
+    expect(BashTool.isReadOnly?.({ command: "powershell -Command Get-Date" })).toBeTrue();
+  });
+
   test("refuses sandbox-excluded commands hidden inside complex syntax (#338)", async () => {
     const context = { cwd: tmpdir(), sandbox: { excludedCommands: ["curl"] } };
     const simple = await BashTool.call({ command: "curl http://example.com", timeout: 1_000 }, context);
     expect(simple.is_error).toBeTrue();
-    expect(simple.content).toContain("Sandbox blocked");
+    // 无 natives 时连单命令也无法证明 simple，同样走 compound 拒绝（#338 fail-closed）。
+    if (nativeBashAvailable) {
+      expect(simple.content).toContain("Sandbox blocked");
+    } else {
+      expect(simple.content).toContain("compound");
+    }
 
     const substitution = await BashTool.call({ command: "echo $(curl http://example.com)", timeout: 1_000 }, context);
     expect(substitution.is_error).toBeTrue();
@@ -118,6 +131,11 @@ describe("BashTool shell invocation", () => {
 
     const subshell = await BashTool.call({ command: "(curl http://example.com)", timeout: 1_000 }, context);
     expect(subshell.is_error).toBeTrue();
+
+    // Complex refusals use the generic message and never claim a specific
+    // prefix matched.
+    expect(String(substitution.content)).toContain("compound");
+    expect(String(substitution.content)).not.toContain('prefix "');
   });
 
   test("uses PowerShell on Windows instead of requiring bash", () => {

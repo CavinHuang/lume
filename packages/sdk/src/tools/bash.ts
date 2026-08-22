@@ -102,8 +102,17 @@ export const BashTool = defineTool({
         },
       }
     }
-    const blocked = findBlockedCommand(command, context.sandbox?.excludedCommands ?? [])
-    if (blocked) return { data: `Sandbox blocked command prefix "${blocked}"`, is_error: true }
+    const excluded = context.sandbox?.excludedCommands ?? []
+    if (excluded.length > 0) {
+      const blocked = checkExcludedCommands(command, excluded)
+      if (blocked === 'complex') {
+        return {
+          data: `Sandbox refused compound command: excluded commands (${excluded.join(", ")}) cannot be verified inside $(), subshells, or multi-statement syntax. Run it as simple commands.`,
+          is_error: true,
+        }
+      }
+      if (blocked) return { data: `Sandbox blocked command prefix "${blocked}"`, is_error: true }
+    }
     const shell = resolveShellInvocation(command)
     const dialectError = getShellDialectError(command, shell.command)
     if (dialectError) {
@@ -349,9 +358,9 @@ function isReadOnlyPowerShell(command: string): boolean {
     .replace(/^\s*(?:powershell|pwsh)(?:\.exe)?\s+(?:-NoLogo\s+|-NoProfile\s+|-NonInteractive\s+)*-Command\s+/i, '')
     .trim()
   // Reject pipeline (`|`), chaining/call (`&`), the ForEach-Object alias `%`,
-  // and script-block braces so piped or nested payloads cannot ride behind a
-  // whitelisted first word (#300).
-  if (!normalized || /[>`]|>>|\$\(|[;&|%{}]|\b(?:Set|Remove|Copy|Move|New|Add|Clear|Out|Start|Stop|Invoke|Install|Update)-[A-Za-z]+\b/i.test(normalized)) {
+  // script-block braces, and line breaks so piped or nested payloads cannot
+  // ride behind a whitelisted first word (#300).
+  if (!normalized || /[>`]|>>|\$\(|[;&|%{}\r\n]|\b(?:Set|Remove|Copy|Move|New|Add|Clear|Out|Start|Stop|Invoke|Install|Update)-[A-Za-z]+\b/i.test(normalized)) {
     return false
   }
   // Unparsed strings cannot be arg-checked, so only git subcommands whose
@@ -1102,14 +1111,14 @@ function withBundledRipgrepSandbox(sandbox: ToolContext['sandbox']): ToolContext
   }
 }
 
-function findBlockedCommand(command: string, excluded: string[]): string | undefined {
+/** 'complex' = non-provable syntax; otherwise the matched excluded executable. */
+function checkExcludedCommands(command: string, excluded: string[]): string | 'complex' | undefined {
   const lower = new Set(excluded.map((value) => value.toLowerCase()))
-  if (lower.size === 0) return undefined
   const analysis = analyzeBashCommand(command)
   if (analysis.status !== 'simple') {
-    // Command substitution, subshells, and nested quotes can hide an excluded
-    // executable from any textual scan; refuse rather than miss one (#338).
-    return excluded[0]
+    // Command substitution, subshells, and nested statements can hide an
+    // excluded executable from any textual scan; refuse rather than miss one (#338).
+    return 'complex'
   }
   return analysis.commands.map((segment) => segment.executable).find((name) => lower.has(name))
 }
