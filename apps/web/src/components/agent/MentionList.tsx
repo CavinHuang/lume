@@ -6,7 +6,7 @@ import { getMcpConfig, getMcpStatus } from '@/lib/desktop-api'
 import { buildMcpServerRows, type McpServerRow, type McpUiStatus } from '@/components/settings/mcp-settings-state'
 
 import { Button } from '@/components/ui/button'
-import { ProviderIcon } from '@/components/link/ProviderIcon'
+
 interface MentionListProps {
   items: MentionItem[]
   command: (item: MentionItem & { occurrenceId?: string }) => void
@@ -15,7 +15,6 @@ interface MentionListProps {
   /** 选中即执行命令（executeOnSelect）时触发，替代插入 mention 文本 */
   onCommandExecute?: (id: string) => void
   onBrowserReferenceSelect?: (item: MentionItem) => void
-  onLinkConnectionReferenceSelect?: (item: MentionItem) => void
 }
 
 export interface MentionListRef {
@@ -23,7 +22,7 @@ export interface MentionListRef {
 }
 
 export const MentionList = forwardRef<MentionListRef, MentionListProps>(
-  function MentionList({ items, command, trigger = '/', getWorkspaceSlug, onCommandExecute, onBrowserReferenceSelect, onLinkConnectionReferenceSelect }, ref) {
+  function MentionList({ items, command, trigger = '/', getWorkspaceSlug, onCommandExecute, onBrowserReferenceSelect }, ref) {
     const [selectedIndex, setSelectedIndex] = useState(0)
     const [panelMode, setPanelMode] = useState<'commands' | 'mcp-status'>('commands')
     const [mcpRows, setMcpRows] = useState<McpServerRow[]>([])
@@ -89,10 +88,6 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         onBrowserReferenceSelect(item)
         return
       }
-      if (item.type === 'connector' && onLinkConnectionReferenceSelect) {
-        onLinkConnectionReferenceSelect(item)
-        return
-      }
       if (item.id === 'mcp' && item.type === 'command') {
         setPanelMode('mcp-status')
         setMcpSelectedIndex(0)
@@ -107,7 +102,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         ...item,
         ...(item.uri ? { occurrenceId: crypto.randomUUID() } : {}),
       })
-    }, [displayItems, command, fetchMcpData, onBrowserReferenceSelect, onCommandExecute, onLinkConnectionReferenceSelect])
+    }, [displayItems, command, fetchMcpData, onBrowserReferenceSelect, onCommandExecute])
 
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }: { event: KeyboardEvent }) => {
@@ -302,7 +297,6 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 function getMentionSectionLabel(section: MentionItem['section']): string {
   if (section === 'capability') return '动作'
   if (section === 'agent') return 'Agents'
-  if (section === 'connector') return '已连接账户'
   if (section === 'browser-tab') return '内置浏览器'
   if (section === 'chrome-page') return 'Chrome 最近标签'
   if (section === 'project-file') return '项目文件'
@@ -315,9 +309,6 @@ function getMentionSectionLabel(section: MentionItem['section']): string {
 
 function MentionItemIcon({ item }: { item: MentionItem }) {
   const [failed, setFailed] = useState(false)
-  if (item.type === 'connector' && item.service) {
-    return <ProviderIcon service={item.service} displayName={item.title} iconUrl={item.iconUrl} size={18} />
-  }
   if (item.iconUrl && !failed) {
     return <img src={item.iconUrl} alt="" className="size-4 rounded object-contain" onError={() => setFailed(true)} />
   }

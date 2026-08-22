@@ -375,11 +375,6 @@ function readPersistedMessageParts(metadata: Record<string, unknown> | undefined
         && typeof part.todoId === 'string'
         && (part.relation === 'mentioned' || part.relation === 'primary')
         && typeof part.displayText === 'string')
-      || (part.type === 'link_connection_ref'
-        && part.schemaVersion === 1
-        && typeof part.service === 'string'
-        && typeof part.connectionName === 'string'
-        && typeof part.displayText === 'string')
   })
 }
 

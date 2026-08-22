@@ -1,9 +1,0 @@
-<svg width="120" height="120" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SuperSaaS">
-  <rect width="1024" height="1024" rx="120" fill="#ffffff"/>
-  <g transform="translate(48 0)">
-    <path d="M321 95H95c-52 0-95 43-95 96v392c0 53 43 96 95 96h226c53 0 96-43 96-96V191c0-53-43-96-96-96Z" fill="#7D7DFF"/>
-    <path d="M95 774h322v155c0 52-43 95-96 95H95c-52 0-95-43-95-95v-60c0-52 43-95 95-95Z" fill="#1F4FFF"/>
-    <path d="M607 0h226c53 0 96 43 96 95v60c0 52-43 95-96 95H512V95c0-52 43-95 95-95Z" fill="#25F278"/>
-    <path d="M833 345H607c-52 0-95 43-95 96v392c0 53 43 96 95 96h226c53 0 96-43 96-96V441c0-53-43-96-96-96Z" fill="#7D7DFF"/>
-  </g>
-</svg>

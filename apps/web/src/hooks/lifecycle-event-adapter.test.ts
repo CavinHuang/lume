@@ -674,27 +674,3 @@ test('tool.end meta.execution → execution/resultRef(批次2.1 补;web 最小�
   expect(failed.execution).toEqual(execution)
   expect(failed.resultRef).toBeDefined()
 })
-
-test('tool.end meta.link → linkAuthorization(Fix round 1:合法透传/非法丢弃)', () => {
-  const state = createLifecycleAdapterState()
-  const link = {
-    kind: 'link_authorization_required',
-    service: 'github',
-    actionId: 'act-1',
-    threadId: 't1',
-    errorCode: 'oauth_expired',
-    connectionName: 'gh-main',
-  }
-  const completed = adaptLifecycleEvent(toolEnd(1, { meta: { link } }), state)[0] as Extract<LumeRuntimeEvent, { type: 'tool.completed' }>
-  expect(completed.linkAuthorization).toEqual(link)
-
-  // 形态不合法(缺必填 errorCode)→ 省略字段
-  const bad = adaptLifecycleEvent(toolEnd(2, {
-    meta: { link: { kind: 'link_authorization_required', service: 'github', actionId: 'a', threadId: 't' } },
-  }), state)[0]
-  expect(Object.keys(bad as object)).not.toContain('linkAuthorization')
-
-  // tool.failed 同样携带(对齐旧路两分支)
-  const failed = adaptLifecycleEvent(toolEnd(3, { isError: true, meta: { link } }), state)[0] as Extract<LumeRuntimeEvent, { type: 'tool.failed' }>
-  expect(failed.linkAuthorization).toEqual(link)
-})

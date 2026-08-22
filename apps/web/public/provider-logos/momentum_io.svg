@@ -1,9 +1,0 @@
-<svg width="120" height="120" viewBox="-6 -10 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M26.8185 30.297C23.7713 28.5455 20.0228 28.5455 16.9755 30.297L9.94194 34.3399C5.51842 36.8825 0 33.6894 0 28.5872L7.84484e-07 6.64517C9.67476e-07 1.54296 5.51842 -1.65016 9.94194 0.892473L16.9756 4.93541C20.0228 6.68695 23.7714 6.68695 26.8186 4.93541L33.8522 0.892514C38.2757 -1.65012 43.7941 1.543 43.7941 6.64521V28.5873C43.7941 33.6895 38.2757 36.8826 33.8522 34.3399L26.8185 30.297Z" fill="url(#momentum-gradient)" />
-  <defs>
-    <linearGradient id="momentum-gradient" x1="21.8971" y1="0" x2="21.8971" y2="35.2324" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0BCEFB" />
-      <stop offset="1" stop-color="#0EDC9E" />
-    </linearGradient>
-  </defs>
-</svg>

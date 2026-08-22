@@ -15,18 +15,15 @@ import { TodoResult } from './todo-result'
 import { DefaultResult } from './default-result'
 import { WikiProposalResult } from './wiki-proposal-result'
 import { PlanningTodoResult } from './planning-todo-result'
-import { LinkResult } from './link-result'
-import type { LinkAuthorizationSignal } from '@lume/shared'
 
 interface ToolResultRendererProps {
   toolName: string
   input: Record<string, unknown>
   result: unknown
   imagePresentation?: 'default' | 'gallery'
-  linkAuthorization?: LinkAuthorizationSignal
 }
 
-export function ToolResultRenderer({ toolName, input, result, imagePresentation, linkAuthorization }: ToolResultRendererProps): ReactNode {
+export function ToolResultRenderer({ toolName, input, result, imagePresentation }: ToolResultRendererProps): ReactNode {
   switch (toolName) {
     case 'Bash': return <BashResult input={input} result={result} />
     case 'Read': return <ReadResult input={input} result={result} />
@@ -60,11 +57,6 @@ export function ToolResultRenderer({ toolName, input, result, imagePresentation,
     case 'PlanningTodoDelete':
     case 'PlanningTodoRestore':
       return <PlanningTodoResult toolName={toolName} input={input} result={result} />
-    case 'link_list_apps':
-    case 'link_search_actions':
-    case 'link_inspect_actions':
-    case 'link_call_action':
-      return <LinkResult toolName={toolName} input={input} result={result} authorization={linkAuthorization} />
     default: return <DefaultResult toolName={toolName} input={input} result={result} />
   }
 }
