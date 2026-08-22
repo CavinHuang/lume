@@ -196,6 +196,10 @@ export function cancelConnectionOAuthLogin(sessionId: string): void {
   session.updatedAt = Date.now();
 }
 
+// 并发刷新 single-flight：同一连接的并发 run/testChannel 同时发现 token 过期时，
+// 复用同一次 refresh——rotation 型 provider 下后写覆盖先写会吊销整 grant（#400）。
+const inFlightOAuthRefreshes = new Map<string, Promise<OAuthCredential>>();
+
 export async function resolveConnectionOAuthAuth(
   connectionId: string,
   signal?: AbortSignal,
@@ -208,16 +212,30 @@ export async function resolveConnectionOAuthAuth(
   let credential = getConnectionOAuthCredential(connectionId);
   if (!credential) return undefined;
   if (credential.expires <= Date.now() + 60_000) {
-    const connectionUpdatedAt = channel.updatedAt;
-    credential = await provider.auth.oauth.refresh(credential, signal);
-    const current = getChannelById(connectionId);
-    if (!current
-      || current.authType !== "oauth"
-      || current.updatedAt !== connectionUpdatedAt
-      || getConnectionOAuthProviderId(current) !== providerId) {
-      throw new Error("connection_oauth_connection_changed");
+    let refreshPromise = inFlightOAuthRefreshes.get(connectionId);
+    if (!refreshPromise) {
+      const connectionUpdatedAt = channel.updatedAt;
+      refreshPromise = (async () => {
+        const refreshed = await provider.auth.oauth.refresh(getConnectionOAuthCredential(connectionId)!, signal);
+        const current = getChannelById(connectionId);
+        if (!current
+          || current.authType !== "oauth"
+          || current.updatedAt !== connectionUpdatedAt
+          || getConnectionOAuthProviderId(current) !== providerId) {
+          throw new Error("connection_oauth_connection_changed");
+        }
+        setConnectionOAuthCredential(connectionId, refreshed);
+        return refreshed;
+      })();
+      inFlightOAuthRefreshes.set(connectionId, refreshPromise);
+      try {
+        credential = await refreshPromise;
+      } finally {
+        inFlightOAuthRefreshes.delete(connectionId);
+      }
+    } else {
+      credential = await refreshPromise;
     }
-    setConnectionOAuthCredential(connectionId, credential);
   }
   return { providerId, auth: await provider.auth.oauth.toAuth(credential as OAuthCredential) };
 }

@@ -7,7 +7,7 @@ import type {
   AutomationRunNowInput
 } from "@lume/shared";
 import { createAgentThreadWithModelRef, getAgentThreadMeta, updateAgentThreadMeta } from "../agent/agent-thread-manager";
-import { sendAgentMessage } from "../agent/agent-service";
+import { dispatchAgentRun } from "../agent/agent-service";
 import { advanceAutomationJobSchedule, listAutomationJobs, recordAutomationJobRun, updateAutomationJob } from "./automation-manager";
 import { resolveChannelModelBinding } from "../channel/channel-manager";
 import { getAutomationRunsPath } from "../infra/config-paths";
@@ -116,6 +116,8 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
   }, 5_000);
   heartbeat.unref?.();
   let threadId: string | undefined;
+  // job 绑定的是用户会话线程时，跑完不得归档——那是用户正在用的聊天（#402）
+  let threadIsBound = false;
   const traceContext = {
     submissionId: randomUUID(),
     traceId: randomUUID(),
@@ -138,6 +140,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
     const boundThreadId = job.threadId?.trim();
     if (boundThreadId && getAgentThreadMeta(boundThreadId)) {
       threadId = boundThreadId;
+      threadIsBound = true;
     } else {
       const thread = createAgentThreadWithModelRef(
         `[自动化] ${job.name}`,
@@ -174,7 +177,9 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
     let runtimeError: string | null = null;
     let waitingForApproval = false;
     let waitingForUser = false;
-    await sendAgentMessage(
+    // 经 kernel 派发：与用户消息共用线程互斥与队列，绑定线程忙时排队
+    // （background 让位用户）而非并发互踩（#398）。
+    await dispatchAgentRun(
       {
         threadId,
         userMessage: job.prompt,
@@ -183,7 +188,9 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
         modelRef,
         channelId,
         modelId,
-        permissionMode: "bypassPermissions",
+        // 模型自建 job（source=manual）不带无人值守 bypass：permissionMode 缺省
+        // 时由 agent-service 回落用户配置，会话内注入不再能沉淀永久免审批通道（#394）。
+        ...(job.source === "manual" ? {} : { permissionMode: "bypassPermissions" as const }),
         traceContext,
         messageMetadata: {
           automationJobId: job.id,
@@ -206,7 +213,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
           waitingForApproval = true;
         }
       },
-      { appendUserMessage: false }
+      { priority: "background", appendUserMessage: false }
     );
 
     if (runtimeError) {
@@ -236,7 +243,8 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
       keepForInteraction: waitingForInteraction
     });
     // Keep interactive runs visible so the user can resolve their checkpoint.
-    if (threadId && !waitingForInteraction) {
+    // 绑定用户线程的 job 只借用会话，跑完不归档（#402）。
+    if (threadId && !threadIsBound && !waitingForInteraction) {
       try { updateAgentThreadMeta(threadId, { status: "archived" }); } catch { /* ignore */ }
     }
   }
@@ -245,7 +253,18 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
   try {
     latestJob = recordAutomationJobRun({ id: job.id, startedAt });
   } catch {
-    // ignore status write failure
+    // 写失败时 lastRunAt/nextRunAt 不推进，照常 refresh 会按 stale 计划立即补跑，
+    // 无人值守任务将反复重跑直至写恢复（Windows rename EBUSY 高发）。宁可显式
+    // 暂停并告知用户，也不静默循环执行带权限的 LLM 任务（#399）。
+    try {
+      latestJob = updateAutomationJob({
+        id: job.id,
+        enabled: false,
+        disabledReason: "执行记录写入失败，已自动暂停以防重复执行；排查磁盘/权限后可重新启用",
+      });
+    } catch {
+      // 索引彻底不可写时仅能放弃本周期；下次触发若写恢复则正常
+    }
   }
   if (job.schedule.type === "once") {
     try {

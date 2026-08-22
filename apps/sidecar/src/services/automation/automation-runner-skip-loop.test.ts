@@ -11,13 +11,13 @@ import { join } from "node:path";
  * 速率自转（线上单任务 1–2 分钟内数万条 skip）。
  *
  * 本文件用 mock.module 单独隔离（process-global，避免污染其它测试文件），
- * 让 sendAgentMessage 永不 resolve 模拟“长任务在飞”，再手动触发一次 refresh
+ * 让 dispatchAgentRun 永不 resolve 模拟“长任务在飞”，再手动触发一次 refresh
  * 点燃回路，断言 skip 条目有界（旧代码会瞬间产生数百条）。
  */
 
 mock.module("../agent/agent-service", () => ({
-  // 永不 resolve：executeJob 停在 await sendAgentMessage，job 留在 runningJobs
-  sendAgentMessage: () => new Promise<void>(() => {})
+  // 永不 resolve：executeJob 停在 await dispatchAgentRun，job 留在 runningJobs
+  dispatchAgentRun: () => new Promise<void>(() => {})
 }));
 
 mock.module("../channel/channel-manager", () => ({

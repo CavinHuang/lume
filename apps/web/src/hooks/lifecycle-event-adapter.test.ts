@@ -375,11 +375,11 @@ test('consumeBusEnvelope streaming 副作用:background.task completed→idle、
   consumeBusEnvelope(backgroundTask(2, { status: 'failed' }), 'push', ctx)
   expect(ctx.streaming).toEqual({ t1: 'errored' })
 
-  // snapshot 版:F4 起注入事件,但维持不置位
+  // snapshot 版:F4 起注入事件;#416 起终态副作用(清 streaming→idle/errored)同 push
   const snapshotCtx = createContext()
   consumeBusEnvelope(backgroundTask(1, { status: 'completed' }), 'snapshot', snapshotCtx)
   expect(snapshotCtx.enqueued.map((event) => event.type)).toEqual(['background.task.completed'])
-  expect(snapshotCtx.streaming).toEqual({})
+  expect(snapshotCtx.streaming).toEqual({ t1: 'idle' })
 })
 
 // ── consumeBusEnvelope:总线消费副作用(seq 去重 / snapshot 入队不置位 / push 全量) ──
@@ -503,7 +503,7 @@ test('run.start → run.started:翻转此前"不产"分支(工作区/模型三�
   }])
 })
 
-test('consumeBusEnvelope run.cancelled 置 idle 并触发 onRunCancelled(snapshot 不触发)', () => {
+test('consumeBusEnvelope run.cancelled 置 idle 并触发 onRunCancelled(snapshot 同副作用,#416)', () => {
   const ctx = createContext()
   const cancelled: string[] = []
   ctx.onRunCancelled = (threadId) => cancelled.push(threadId)
@@ -512,12 +512,15 @@ test('consumeBusEnvelope run.cancelled 置 idle 并触发 onRunCancelled(snapsho
   expect(ctx.streaming).toEqual({ t1: 'idle' })
   expect(cancelled).toEqual(['t1'])
 
+  // #416:snapshot 回放 run.cancelled 同样清残留 streaming + 触发 Resume 横幅旁路
+  // (幂等且队列非空才置位,见 useGlobalAgentListeners onRunCancelled)
   const snapshotCtx = createContext()
-  snapshotCtx.onRunCancelled = (threadId) => cancelled.push(threadId)
+  const snapshotCancelled: string[] = []
+  snapshotCtx.onRunCancelled = (threadId) => snapshotCancelled.push(threadId)
   consumeBusEnvelope(runEnd(1, { stopReason: 'aborted' }), 'snapshot', snapshotCtx)
   expect(snapshotCtx.enqueued.map((event) => event.type)).toEqual(['run.cancelled'])
-  expect(snapshotCtx.streaming).toEqual({})
-  expect(cancelled).toEqual(['t1'])
+  expect(snapshotCtx.streaming).toEqual({ t1: 'idle' })
+  expect(snapshotCancelled).toEqual(['t1'])
 })
 
 test('todo.state → todo.state_updated:载荷同引用透传', () => {
@@ -688,4 +691,30 @@ test('tool.end meta.execution → execution/resultRef(批次2.1 补;web 最小�
   const failed = adaptLifecycleEvent(toolEnd(5, { isError: true, meta: { execution } }), state)[0] as Extract<LumeRuntimeEvent, { type: 'tool.failed' }>
   expect(failed.execution).toEqual(execution)
   expect(failed.resultRef).toBeDefined()
+})
+
+// ── #416:切走线程后台完成后切回,snapshot 终态必须清残留 streaming ──
+
+test('snapshot run.end 终态清残留 streaming→idle(不置 streaming 的保证不变)', () => {
+  const ctx = createContext()
+  // 模拟切走前已置 streaming,run 在后台完成
+  ctx.setStreamingStates((prev) => ({ ...prev, t1: 'streaming' }))
+  consumeBusEnvelope(runEnd(1, { stopReason: 'end_turn' }), 'snapshot', ctx)
+  expect(ctx.enqueued.map((event) => event.type)).toEqual(['run.completed'])
+  expect(ctx.streaming).toEqual({ t1: 'idle' })
+})
+
+test('snapshot run.failed 清残留 streaming→errored 并写错误信息', () => {
+  const ctx = createContext()
+  ctx.setStreamingStates((prev) => ({ ...prev, t1: 'streaming' }))
+  consumeBusEnvelope(runEnd(1, { stopReason: 'error_during_execution', isError: true }), 'snapshot', ctx)
+  expect(ctx.streaming).toEqual({ t1: 'errored' })
+  expect(ctx.errors).toEqual({ t1: 'error_during_execution' })
+})
+
+test('snapshot 纯消息回放(悬空 run 无终态)不置也不清 streaming(既有保证回归)', () => {
+  const ctx = createContext()
+  consumeBusEnvelope(messageStart(1), 'snapshot', ctx)
+  consumeBusEnvelope(messageUpdate(2, 'partial'), 'snapshot', ctx)
+  expect(ctx.streaming).toEqual({})
 })

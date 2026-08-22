@@ -43,6 +43,7 @@ mock.module("../services/agent/agent-service", () => ({
     return { ok: true, mode: "sent", queuedCount: 0 };
   },
   sendAgentMessage: async () => undefined,
+  dispatchAgentRun: async () => ({ ok: true, mode: "sent", queuedCount: 0 }),
   generateAgentTitle: async () => undefined,
   generateWelcomeSuggestions: async () => [],
   listAgentMessageQueue: () => [],
