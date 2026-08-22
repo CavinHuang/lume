@@ -1739,34 +1739,57 @@ export class QueryEngine {
     // NaN/0/negative would silently skip every concurrent batch or spin forever
     const MAX_CONCURRENCY = Number.isInteger(parsedConcurrency) && parsedConcurrency > 0 ? parsedConcurrency : 10
 
+    // Sticky across both execution phases: once the guard decides to stop,
+    // later successful tools must not clear it and nothing else may execute.
+    let repeatGuardStop: { message: string; errorCode: string } | undefined
+
+    // Shared pipeline for the two sequential phases (skill activations and
+    // serial mutations): soft-abort break, guard-stop placeholders,
+    // interrupted-call fallback, and the events/toolsUsed fan-out.
+    // Returns true when the caller must break out (soft abort).
+    const runSequentialItem = async (
+      block: ToolUseBlock,
+      tool: ToolDefinition | undefined,
+      storeResult: (result: ToolResult & { tool_name?: string }) => void,
+    ): Promise<boolean> => {
+      if (this.config.abortSignal?.aborted) return true // soft abort: skip remaining tools
+      if (repeatGuardStop) {
+        // The guard already decided to stop this run: pair the remaining
+        // tool_use blocks with skipped placeholders instead of executing.
+        storeResult(createRepeatGuardSkippedToolResult(block))
+        return false
+      }
+      let outcome
+      try {
+        outcome = await this.executeToolWithRepeatGuard(block, tool, context)
+      } catch (error) {
+        if (!this.config.abortSignal?.aborted) throw error
+        this.abortedPendingToolCalls.push({ id: block.id, name: block.name, input: block.input })
+        outcome = {
+          result: createInterruptedToolResult(block),
+          events: [] as SDKMessage[],
+          toolsUsed: [] as string[],
+          repeatGuardStop: undefined,
+        }
+      }
+      storeResult(outcome.result)
+      events.push(...outcome.events)
+      toolsUsed.push(...outcome.toolsUsed)
+      if (outcome.repeatGuardStop) repeatGuardStop ??= outcome.repeatGuardStop
+      return false
+    }
+
     const hasSkillActivation = toolUseBlocks.some((block) => block.name === 'Skill')
     if (hasSkillActivation && toolUseBlocks.length > 1) {
       const resultsById = new Map<string, ToolResult & { tool_name?: string }>()
-      let repeatGuardStop: { message: string; errorCode: string } | undefined
 
       for (const block of toolUseBlocks.filter((item) => item.name === 'Skill')) {
-        if (this.config.abortSignal?.aborted) break // soft abort: skip remaining activations
-        if (repeatGuardStop) {
-          // The guard already decided to stop this run: pair the remaining
-          // tool_use blocks with skipped placeholders instead of executing.
-          resultsById.set(block.id, createRepeatGuardSkippedToolResult(block))
-          continue
-        }
-        const tool = this.config.tools.find((t) => t.name === block.name)
-        let result
-        try {
-          result = await this.executeToolWithRepeatGuard(block, tool, context)
-        } catch (error) {
-          if (!this.config.abortSignal?.aborted) throw error
-          this.abortedPendingToolCalls.push({ id: block.id, name: block.name, input: block.input })
-          result = { result: createInterruptedToolResult(block), events: [] as SDKMessage[], toolsUsed: [] as string[] }
-        }
-        resultsById.set(block.id, result.result)
-        events.push(...result.events)
-        toolsUsed.push(...result.toolsUsed)
-        // Sticky on purpose: once the guard decides to stop, later successful
-        // tools in the same batch must not clear that decision.
-        if (result.repeatGuardStop) repeatGuardStop ??= result.repeatGuardStop
+        const aborted = await runSequentialItem(
+          block,
+          this.config.tools.find((t) => t.name === block.name),
+          (result) => resultsById.set(block.id, result),
+        )
+        if (aborted) break
       }
 
       for (const block of toolUseBlocks.filter((item) => item.name !== 'Skill')) {
@@ -1805,10 +1828,6 @@ export class QueryEngine {
     const results: Array<(ToolResult & { tool_name?: string }) | undefined> =
       new Array(toolUseBlocks.length)
 
-    // Sticky across both phases: once the guard decides to stop, later
-    // successful tools must not clear it and nothing else may execute.
-    let repeatGuardStop: { message: string; errorCode: string } | undefined
-
     // Execute concurrent tools (batched by MAX_CONCURRENCY). Read-only calls go
     // through the same repeat guard as mutations so repeated equivalent results
     // — including failures — are refused without burning real executions.
@@ -1831,7 +1850,6 @@ export class QueryEngine {
           continue
         }
         results[item.index] = blocked.result
-        events.push(...blocked.events)
         if (blocked.repeatGuardStop) {
           repeatGuardStop ??= blocked.repeatGuardStop
           guardStoppedHere = true
@@ -1865,27 +1883,12 @@ export class QueryEngine {
 
     // Execute serial tools sequentially
     for (const item of serial) {
-      if (this.config.abortSignal?.aborted) break // soft abort: skip remaining serial tools
-      if (repeatGuardStop) {
-        // The guard already decided to stop this run: pair the remaining
-        // tool_use blocks with skipped placeholders instead of executing.
-        results[item.index] = createRepeatGuardSkippedToolResult(item.block)
-        continue
-      }
-      let result
-      try {
-        result = await this.executeToolWithRepeatGuard(item.block, item.tool, context)
-      } catch (error) {
-        if (!this.config.abortSignal?.aborted) throw error
-        this.abortedPendingToolCalls.push({ id: item.block.id, name: item.block.name, input: item.block.input })
-        result = { result: createInterruptedToolResult(item.block), events: [] as SDKMessage[], toolsUsed: [] as string[] }
-      }
-      results[item.index] = result.result
-      events.push(...result.events)
-      toolsUsed.push(...result.toolsUsed)
-      // Sticky on purpose: once the guard decides to stop, later successful
-      // tools in the same batch must not clear that decision.
-      if (result.repeatGuardStop) repeatGuardStop ??= result.repeatGuardStop
+      const aborted = await runSequentialItem(
+        item.block,
+        item.tool,
+        (result) => { results[item.index] = result },
+      )
+      if (aborted) break
     }
 
     return {
@@ -1922,8 +1925,6 @@ export class QueryEngine {
     block: ToolUseBlock,
   ): {
     result: ToolResult & { tool_name?: string }
-    events: SDKMessage[]
-    toolsUsed: string[]
     repeatGuardStop?: { message: string; errorCode: string }
   } | undefined {
     const signature = toolCallSignature(block)
@@ -1955,8 +1956,6 @@ export class QueryEngine {
           },
         },
       },
-      events: [],
-      toolsUsed: [],
       ...(shouldStop ? {
         repeatGuardStop: {
           errorCode: 'repeated_tool_call',
@@ -2002,7 +2001,12 @@ export class QueryEngine {
     repeatGuardStop?: { message: string; errorCode: string }
   }> {
     const blocked = this.repeatGuardPreCheck(block)
-    if (blocked) return blocked
+    if (blocked) {
+      // A guard refusal executes nothing: no side effects, so no events and
+      // no toolsUsed — constructed here so callers can fan out uniformly
+      // instead of relying on an empty-array invariant of the pre-check.
+      return { ...blocked, events: [], toolsUsed: [] }
+    }
     const execution = await this.executeSingleTool(block, tool, context)
     this.repeatGuardPostRecord(block, execution.result)
     return execution
