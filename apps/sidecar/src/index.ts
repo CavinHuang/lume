@@ -25,7 +25,7 @@ import {
 } from "./services/infra/logger";
 import { assertSidecarNativeRuntime } from "./services/infra/native-runtime";
 import { createProcessRpcTransport, MAX_RPC_MESSAGE_BYTES } from "./rpc/process-transport";
-import { classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
+import { browserRpcErrorFromPayload, classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
 import { createReverseRpcRenderClient } from "./services/agent-runtime/tools/web/reverse-rpc-render-client";
 import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/render-client-holder";
 import { setPersistedSettingsMutationWriter } from "./services/system/settings-store";
@@ -205,7 +205,7 @@ async function handleRpcLine(line: string): Promise<void> {
       return;
     }
     const response = responsePayload;
-    if (response.error) pending.reject(new Error("browser request failed"));
+    if (response.error) pending.reject(browserRpcErrorFromPayload(response.error));
     else pending.resolve(response.result);
     return;
   }

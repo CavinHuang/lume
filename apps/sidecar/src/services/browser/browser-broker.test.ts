@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { BrowserBroker } from "./browser-broker";
+import { BrowserRpcError } from "../../rpc/browser-rpc-sequence";
 
 test("extension backend is absent until browser/chrome plugins, setting, and live host agree", async () => {
   const calls: unknown[] = [];
@@ -16,6 +17,18 @@ test("extension backend is absent until browser/chrome plugins, setting, and liv
   assert.equal(extension.apiSupportOverrides["BrowserUser.history"], false);
   assert.equal((await broker.dispatch({ method: "list", browserSessionId: "s", browserTurnId: "t", backend: "extension" }) as { backend: string }).backend, "extension");
   assert.equal(calls.length, 0);
+});
+
+test("broker preserves a structured Desktop browser error code", async () => {
+  const broker = new BrowserBroker({
+    request: async () => { throw new BrowserRpcError("actionability_failed", "browser request failed"); },
+  });
+  broker.setPluginState({ browserEnabled: true });
+
+  await assert.rejects(
+    () => broker.dispatch({ method: "playwright_locator_fill", params: { tabId: "tab-1", locator: { version: 1, steps: [{ kind: "css", selector: "#kw" }] }, value: "agent loop" }, browserSessionId: "s", browserTurnId: "t" }),
+    /actionability_failed/,
+  );
 });
 
 test("connected Chrome cookie export is capability-gated, user-only, and paged", async () => {
