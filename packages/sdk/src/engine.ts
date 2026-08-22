@@ -72,6 +72,7 @@ import {
 } from './utils/messages.js'
 import type { HookRegistry, HookInput, HookExecutionResult } from './hooks.js'
 import { readRepeatGuardState } from './repeat-guard.js'
+import { stableSerialize } from '@lume/shared'
 import { buildStructuredOutputInstruction, parseStructuredOutput } from './utils/structured-output.js'
 import { captureFileSnapshots, captureWorkspaceFileSnapshots, collectCheckpointPaths, requiresWorkspaceCheckpoint } from './utils/file-checkpoints.js'
 import { generatePromptSuggestion } from './utils/prompt-suggestions.js'
@@ -114,20 +115,6 @@ interface RepeatedToolCallState {
 
 const MAX_EQUIVALENT_MUTATION_RESULTS = 2
 const MAX_BLOCKED_REPEAT_ATTEMPTS = 2
-
-function stableSerialize(value: unknown): string {
-  if (value === null || typeof value !== 'object') {
-    return JSON.stringify(value) ?? String(value)
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableSerialize(item)).join(',')}]`
-  }
-  return `{${Object.keys(value as Record<string, unknown>)
-    .sort()
-    .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
-    .map((key) => `${JSON.stringify(key)}:${stableSerialize((value as Record<string, unknown>)[key])}`)
-    .join(',')}}`
-}
 
 function toolCallSignature(block: ToolUseBlock): string {
   return `${block.name}\0${stableSerialize(block.input)}`
