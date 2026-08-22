@@ -46,14 +46,16 @@ export function matchPathGlob(
   for (const pattern of patterns) {
     const relativePattern = pattern.startsWith("./") ? pattern.slice(2) : pattern;
     // Match either the plugin-root-anchored pattern or the root-stripped path;
-    // relative inputs keep matching the relative pattern as-is.
+    // relative inputs keep matching the relative pattern as-is. An absolute
+    // path outside pluginRoot must not fall through to relative-pattern
+    // matching, or a `**` pattern would allow every path on disk (#301).
     if (globToRegex(canonicalPath(pluginRoot, relativePattern)).test(normalizedAbs)) return true;
     const stripped = isAbsolute
       ? (normalizedAbs.startsWith(`${normalizedRoot}/`)
         ? normalizedAbs.slice(normalizedRoot.length + 1)
-        : normalizedAbs)
+        : undefined)
       : absolutePath.replace(/\\/g, "/");
-    if (globToRegex(relativePattern).test(stripped)) return true;
+    if (stripped !== undefined && globToRegex(relativePattern).test(stripped)) return true;
   }
   return false;
 }
