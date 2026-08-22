@@ -272,18 +272,18 @@ async function rebuildSessionFromJsonl(
 }
 
 export async function loadSession(sessionId: string): Promise<SessionData | null> {
-  let existingPath: string | null = null
-  let parsed: SessionData | null = null
+  const existingPath = await resolveExistingSessionPath(sessionId)
+  if (!existingPath) return null
+
+  let parsed: SessionData | null
   try {
-    existingPath = await resolveExistingSessionPath(sessionId)
-    if (!existingPath) return null
     const content = await readFile(getTranscriptJsonPath(existingPath), 'utf-8')
     parsed = normalizeSessionData(sessionId, JSON.parse(content) as SessionData)
   } catch {
     // transcript.json 缺失或半截损坏 → jsonl 兜底；两者皆不可用才放弃。
-    parsed = existingPath ? await rebuildSessionFromJsonl(existingPath, sessionId) : null
-    if (!parsed) return null
+    parsed = await rebuildSessionFromJsonl(existingPath, sessionId)
   }
+  if (!parsed) return null
   try {
     const jsonl = await readFile(getTranscriptJsonlPath(existingPath), 'utf-8')
     const sessionMessages = parseJsonlSessionMessages(jsonl)
