@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { SandboxSettings, ToolContext } from "../types.js";
 import { ensureNetworkAllowed } from "../utils/pathing.js";
@@ -9,6 +12,8 @@ const execFileAsync = promisify(execFile);
 
 export type ReaderPreference = "auto" | "native" | "trafilatura" | "lynx" | "parallel" | "jina";
 
+export type CommandRunner = (command: string, args: string[], context: ReaderContext) => Promise<string | null>;
+
 export interface ReaderContext {
   url: string;
   html: string;
@@ -17,6 +22,8 @@ export interface ReaderContext {
   sandbox?: SandboxSettings;
   fetchImpl: FetchImpl;
   toolContext: ToolContext;
+  /** Test seam: overrides the subprocess runner used by external readers. */
+  commandRunner?: CommandRunner;
 }
 
 export interface ReaderResult {
@@ -68,6 +75,14 @@ async function runCommand(command: string, args: string[], context: ReaderContex
   } catch {
     return null;
   }
+}
+
+/** Park the already-fetched HTML on disk so external readers parse locally. */
+async function writeTempHtmlFile(html: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "lume-reader-"));
+  const file = join(dir, "page.html");
+  await writeFile(file, html, "utf8");
+  return file;
 }
 
 async function runParallel(context: ReaderContext, configuredApiKey?: string): Promise<string | null> {
@@ -126,32 +141,46 @@ export async function renderHtmlToMarkdown(
 ): Promise<ReaderResult | null> {
   const configured = configuredReader(context.toolContext);
   const order = providerOrder(preference);
-  for (const method of order) {
-    if (context.signal?.aborted) throw new Error("request aborted");
-    try {
-      let content: string | null = null;
-      let title = "";
-      if (method === "native") {
-        const article = extractArticleMarkdown(context.html, context.url);
-        content = article?.content ?? null;
-        title = article?.title ?? "";
-      } else if (method === "trafilatura") {
-        content = await runCommand("trafilatura", ["-u", context.url, "--output-format", "markdown"], context);
-      } else if (method === "lynx") {
-        content = await runCommand("lynx", ["-dump", "-nolist", "-width", "250", context.url], context);
-      } else if (method === "parallel") {
-        if (preference === "auto" && typeof configured.parallelApiKey !== "string" && !process.env.PARALLEL_API_KEY) continue;
-        content = await runParallel(context, typeof configured.parallelApiKey === "string" ? configured.parallelApiKey : undefined);
-      } else if (method === "jina") {
-        if (preference === "auto" && typeof configured.jinaApiKey !== "string" && !process.env.JINA_API_KEY) continue;
-        content = await runJina(context, typeof configured.jinaApiKey === "string" ? configured.jinaApiKey : undefined);
+  const run = context.commandRunner ?? runCommand;
+  // trafilatura/lynx previously fetched context.url themselves, so an allowed
+  // host could 302 them straight at an internal address with no guard re-check.
+  // Hand them the HTML we already fetched via the guarded path instead; the
+  // binaries parse a local temp file and never touch the network.
+  let tempHtmlPath: string | null = null;
+  try {
+    for (const method of order) {
+      if (context.signal?.aborted) throw new Error("request aborted");
+      try {
+        let content: string | null = null;
+        let title = "";
+        if (method === "native") {
+          const article = extractArticleMarkdown(context.html, context.url);
+          content = article?.content ?? null;
+          title = article?.title ?? "";
+        } else if (method === "trafilatura") {
+          tempHtmlPath ??= await writeTempHtmlFile(context.html);
+          content = await run("trafilatura", [tempHtmlPath, "--output-format", "markdown"], context);
+        } else if (method === "lynx") {
+          tempHtmlPath ??= await writeTempHtmlFile(context.html);
+          content = await run("lynx", ["-dump", "-nolist", "-width", "250", tempHtmlPath], context);
+        } else if (method === "parallel") {
+          if (preference === "auto" && typeof configured.parallelApiKey !== "string" && !process.env.PARALLEL_API_KEY) continue;
+          content = await runParallel(context, typeof configured.parallelApiKey === "string" ? configured.parallelApiKey : undefined);
+        } else if (method === "jina") {
+          if (preference === "auto" && typeof configured.jinaApiKey !== "string" && !process.env.JINA_API_KEY) continue;
+          content = await runJina(context, typeof configured.jinaApiKey === "string" ? configured.jinaApiKey : undefined);
+        }
+        if (usable(content)) return { title, content: content.trim(), method };
+      } catch {
+        // A reader is deliberately best-effort; the next reader or raw fallback wins.
       }
-      if (usable(content)) return { title, content: content.trim(), method };
-    } catch {
-      // A reader is deliberately best-effort; the next reader or raw fallback wins.
+    }
+    return null;
+  } finally {
+    if (tempHtmlPath) {
+      await rm(dirname(tempHtmlPath), { recursive: true, force: true }).catch(() => undefined);
     }
   }
-  return null;
 }
 
 export function isLowQualityReaderOutput(content: string): boolean {

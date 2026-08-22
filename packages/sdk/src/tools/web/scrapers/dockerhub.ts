@@ -42,7 +42,7 @@ export const handleDockerHub: SpecialHandler = async (
 ): Promise<RenderResult | null> => {
 	try {
 		const parsed = new URL(url);
-		if (!parsed.hostname.includes("hub.docker.com")) return null;
+		if (parsed.hostname.replace(/^www\./, "") !== "hub.docker.com") return null;
 
 		let namespace: string;
 		let repository: string;

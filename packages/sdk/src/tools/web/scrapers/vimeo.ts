@@ -73,7 +73,7 @@ function extractVideoId(url: string): string | null {
 export const handleVimeo: SpecialHandler = async (url: string, timeout: number, signal?: AbortSignal) => {
 	try {
 		const parsed = new URL(url);
-		if (!parsed.hostname.includes("vimeo.com")) return null;
+		if (!["vimeo.com", "player.vimeo.com"].includes(parsed.hostname.replace(/^www\./, ""))) return null;
 
 		const videoId = extractVideoId(url);
 		if (!videoId) return null;

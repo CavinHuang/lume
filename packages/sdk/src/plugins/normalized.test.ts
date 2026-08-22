@@ -70,7 +70,7 @@ describe("normalizePluginManifests", () => {
     expect(result.manifestFormat).toBe("codex");
     expect(result.displayName).toBe("Codex Plugin");
     expect(result.permissions.mcpServers?.register).toBe(true);
-    expect(result.permissions.shell?.allow).toBe(true);
+    expect(result.permissions.shell?.allow).toBe(false);
     expect(result.permissions.tools?.deny).toContain("Bash");
   });
 

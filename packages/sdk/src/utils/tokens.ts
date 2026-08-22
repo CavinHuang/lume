@@ -179,6 +179,11 @@ export function getContextWindowSize(model: string): number {
   // DeepSeek models
   if (model.includes('deepseek')) return 128_000
 
+  // Fall back to the shared model registry so catalogued models with windows
+  // outside the table above (e.g. gemini/qwen 1M) resolve correctly (#366).
+  const meta = findModelMeta(model)
+  if (meta?.contextWindow && meta.contextWindow > 0) return meta.contextWindow
+
   // Default
   return 200_000
 }
@@ -239,7 +244,12 @@ function sharedPricingToPerToken(pricing: ModelPricing | undefined) {
 
 export function estimateCost(
   model: string,
-  usage: { input_tokens: number; output_tokens: number },
+  usage: {
+    input_tokens: number
+    output_tokens: number
+    cache_read_input_tokens?: number
+    cache_creation_input_tokens?: number
+  },
 ): number {
   const pricing =
     PRICING_ENTRIES.find(([key]) => model.includes(key))?.[1] ??
@@ -249,5 +259,14 @@ export function estimateCost(
       output: 15 / 1_000_000,
     }
 
-  return usage.input_tokens * pricing.input + usage.output_tokens * pricing.output
+  // Cache reads bill at ~10% of the input price, cache writes at a 25% premium;
+  // ignoring them understated totalCost and let maxBudgetUsd trip too late.
+  const cacheRead = usage.cache_read_input_tokens ?? 0
+  const cacheWrite = usage.cache_creation_input_tokens ?? 0
+  return (
+    usage.input_tokens * pricing.input
+    + usage.output_tokens * pricing.output
+    + cacheRead * pricing.input * 0.1
+    + cacheWrite * pricing.input * 1.25
+  )
 }

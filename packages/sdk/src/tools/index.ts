@@ -149,27 +149,6 @@ export function filterDisallowedTools(
   return tools.filter((tool) => !matchesAnyToolPattern(tool.name, disallowedTools))
 }
 
-/**
- * Assemble tool pool: base tools + MCP tools, with deduplication.
- */
-export function assembleToolPool(
-  baseTools: ToolDefinition[],
-  mcpTools: ToolDefinition[] = [],
-  _allowedTools?: string[],
-  disallowedTools?: string[],
-): ToolDefinition[] {
-  const combined = [...baseTools, ...mcpTools]
-
-  // Deduplicate by name (later definitions override)
-  const byName = new Map<string, ToolDefinition>()
-  for (const tool of combined) {
-    byName.set(tool.name, tool)
-  }
-
-  let tools = Array.from(byName.values())
-  return filterDisallowedTools(tools, disallowedTools)
-}
-
 // Re-export individual tools
 export {
   // Core

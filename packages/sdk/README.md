@@ -10,7 +10,7 @@ Also available in **Go**: [open-agent-sdk-go](https://github.com/codeany-ai/open
 
 ## Get started
 
-The SDK does not ship built-in HTTP providers. The host injects an `LLMProvider` implementation (see `providers/types.ts` for the contract — `createMessage()` plus optional `countTokens()` / `createMessageStream()`):
+The SDK does not ship built-in HTTP providers. The host injects an `LLMProvider` implementation (see `providers/types.ts` for the contract — `createMessage()` plus optional `createMessageStream()`):
 
 ```typescript
 import { createAgent, type LLMProvider } from "@lume/agent-sdk";
@@ -90,32 +90,6 @@ const r2 = await agent.prompt("Read back the file you just created");
 console.log(r2.text);
 
 console.log(`Session messages: ${agent.getMessages().length}`);
-```
-
-### Custom tools (Zod schema)
-
-```typescript
-import { z } from "zod";
-import { query, tool, createSdkMcpServer } from "@codeany/open-agent-sdk";
-
-const getWeather = tool(
-  "get_weather",
-  "Get the temperature for a city",
-  { city: z.string().describe("City name") },
-  async ({ city }) => ({
-    content: [{ type: "text", text: `${city}: 22°C, sunny` }],
-  }),
-);
-
-const server = createSdkMcpServer({ name: "weather", tools: [getWeather] });
-
-for await (const msg of query({
-  prompt: "What is the weather in Tokyo?",
-  options: { mcpServers: { weather: server } },
-})) {
-  if (msg.type === "result")
-    console.log(`Done: $${msg.total_cost_usd?.toFixed(4)}`);
-}
 ```
 
 ### Custom tools (low-level)
@@ -207,25 +181,6 @@ const hooks = createHookRegistry({
 
 28 lifecycle events including `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Setup`, `SessionStart`, `SessionEnd`, `Stop`, `StopFailure`, `SubagentStart`, `SubagentStop`, `UserPromptSubmit`, `PermissionRequest`, `PermissionDenied`, `TaskCreated`, `TaskCompleted`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`, `CwdChanged`, `FileChanged`, `Notification`, `PreCompact`, `PostCompact`, `TeammateIdle`, `Elicitation`, `ElicitationResult`, and `InstructionsLoaded`.
 
-### MCP server integration
-
-```typescript
-import { createAgent } from "@codeany/open-agent-sdk";
-
-const agent = createAgent({
-  mcpServers: {
-    filesystem: {
-      command: "npx",
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-    },
-  },
-});
-
-const result = await agent.prompt("List files in /tmp");
-console.log(result.text);
-await agent.close();
-```
-
 ### Subagents
 
 ```typescript
@@ -272,6 +227,20 @@ This SDK is designed for long-lived services, serverless handlers, CI jobs, and 
 
 The `sandbox` option currently provides application-level filesystem and network guards inside SDK tools. It is not equivalent to Claude Code's full sandbox runtime. In particular, it does not provide OS-level process isolation or the full managed-policy enforcement described in the official secure deployment docs.
 
+### Plugin trust model
+
+Plugins are **trusted code, not sandboxed content**. Understand the following before installing one:
+
+- **In-process execution.** A plugin's JS entry module is loaded with `import()` inside the host process (`packages/sdk/src/plugins/loader.ts`). The entry module runs with the full capabilities of the host — filesystem, network, environment variables, and Node APIs. There is no process isolation, no worker boundary, and no sandbox around it.
+- **Installation grants authority ahead of any gate.** The permission system (sensitive-capability approvals, permission hashes, tool allow/deny lists) governs *declared* capabilities such as command tools, MCP servers, and hooks. By the time any of those gates run, the entry module's code is already executing with host privileges.
+- **Installing a plugin is equivalent to granting it the host's full permissions.** Supply-chain risk for an installed plugin equals full compromise of the application embedding this SDK. Only install plugins from sources you trust.
+
+What the SDK does constrain:
+
+- **Load roots.** Plugins only load from the working directory or explicitly configured `pluginRoots`; manifest-declared entry modules are held to the same boundary.
+- **Re-review on change.** A plugin's permissions hash covers its declared permissions and capability configuration (command tools including env/metadata/args order, hooks/MCP/LSP config file contents). Changing any of them flips the plugin back to needs-review before it loads again.
+- **Command tools.** These run out-of-process with a minimal default environment, an optional OS-level process sandbox, a timeout, and a 1 MiB output cap — unlike entry modules, they are not given host privileges by default.
+
 ## API reference
 
 ### Top-level functions
@@ -280,8 +249,6 @@ The `sandbox` option currently provides application-level filesystem and network
 | ------------------------------------- | -------------------------------------------------------------- |
 | `query({ prompt, options })`          | One-shot streaming query, returns a Query control object       |
 | `createAgent(options)`                | Create a reusable agent with session persistence               |
-| `tool(name, desc, schema, handler)`   | Create a tool with Zod schema validation                       |
-| `createSdkMcpServer({ name, tools })` | Bundle tools into an in-process MCP server                     |
 | `defineTool(config)`                  | Low-level tool definition helper                               |
 | `getAllBaseTools()`                   | Get all 35+ built-in tools                                     |
 | `registerSkill(definition)`           | Register a custom skill                                        |
@@ -319,10 +286,6 @@ The `sandbox` option currently provides application-level filesystem and network
 | `query.setCwd(cwd)`              | Change working directory                              |
 | `query.getInitializationResult()`| Get supported commands, agents, models                |
 | `query.getContextUsage()`        | Get context usage breakdown                           |
-| `query.mcpServerStatus()`        | Inspect MCP server status                             |
-| `query.setMcpServers(servers)`   | Replace dynamically managed MCP servers               |
-| `query.reconnectMcpServer(name)` | Reconnect a single MCP server                         |
-| `query.toggleMcpServer(name,on)` | Enable or disable a single MCP server                 |
 | `query.reloadPlugins()`          | Reload plugins from disk                              |
 | `query.rewindFiles(messageId)`   | Rewind file changes captured since a user message     |
 | `query.stopTask(taskId)`         | Stop a background task                                |
@@ -345,7 +308,6 @@ The `sandbox` option currently provides application-level filesystem and network
 | `maxBudgetUsd`       | `number`                                | —                      | Spending cap                                                         |
 | `thinking`           | `ThinkingConfig`                        | `{ type: 'adaptive' }` | Extended thinking                                                    |
 | `effort`             | `string`                                | `high`                 | Reasoning effort: `low` / `medium` / `high` / `max`                  |
-| `mcpServers`         | `Record<string, McpServerConfig>`       | —                      | MCP server connections                                               |
 | `agents`             | `Record<string, AgentDefinition>`       | —                      | Subagent definitions                                                 |
 | `hooks`              | `Record<string, HookCallbackMatcher[]>` | —                      | Lifecycle hooks                                                      |
 | `resume`             | `string`                                | —                      | Resume session by ID                                                 |
