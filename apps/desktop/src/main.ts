@@ -139,6 +139,7 @@ import { createLogContentDigest, createSidecarLogDigestPolicy, isSafeStorageSecu
 import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { discoverChromeProfiles, importChromeProfile, importConnectedChromeCookies, type ImportedCookie } from './browser-import'
+import type { BrowserSettings } from '@lume/shared'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '@lume/shared'
 import { nativeEventToIntent } from '@lume/shared'
 import type { AgentIslandIntent, NativeAgentIslandSnapshot } from '@lume/shared'
@@ -3200,7 +3201,7 @@ app.whenReady().then(async () => {
     getWindow: () => mainWindow,
     configDir: () => configDir,
     emit: (event) => emitRendererEvent('browser:event', event),
-    initialSettings: getPersistedBrowserSettings() as Partial<import('../../../packages/shared/src/types/browser-runtime').BrowserSettings>,
+    initialSettings: getPersistedBrowserSettings() as Partial<BrowserSettings>,
     persistSettings: persistBrowserSettings,
     isAgentPluginEnabled: () => agentBrowserPluginEnabled,
     journalEncryption: {
