@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { collectLspAdapterDiagnostics, parseSwiftLintDiagnostics } from './adapters.js'
@@ -62,11 +62,16 @@ describe('SwiftLint LSP adapter', () => {
       await writeFile(join(root, '.swiftlint.yml'), '')
       const swiftlint = join(root, process.platform === 'win32' ? 'swiftlint.cmd' : 'swiftlint')
       await writeFile(swiftlint, '')
+      // resolveLspExecutable requires the exec bit on POSIX; without it the
+      // adapter silently finds no swiftlint and returns undefined.
+      if (process.platform !== 'win32') await chmod(swiftlint, 0o755)
 
       let captured: string | undefined
       const context = {
         cwd: root,
-        toolConfig: {},
+        // Pin the executable explicitly so resolution never falls through to
+        // a real swiftlint installed on the machine's PATH.
+        toolConfig: { lsp: { servers: { swiftlint: { command: swiftlint } } } },
         executeNestedTool: async (invocation: { params: { command: string } }) => {
           captured = invocation.params.command
           return { content: '[]' }
