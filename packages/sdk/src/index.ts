@@ -396,6 +396,9 @@ export {
   isRateLimitError,
   formatApiError,
   getRetryDelay,
+  computeRetryDelay,
+  parseRetryAfterHeader,
+  MAX_RETRY_AFTER_DELAY_MS,
   DEFAULT_RETRY_CONFIG,
 } from './utils/retry.js'
 export type { RetryConfig } from './utils/retry.js'

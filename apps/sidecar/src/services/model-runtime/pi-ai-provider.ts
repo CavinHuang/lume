@@ -21,6 +21,7 @@ import type {
   NormalizedMessageParam,
   NormalizedResponseBlock,
 } from "@lume/agent-sdk";
+import { parseRetryAfterHeader } from "@lume/agent-sdk";
 
 type PiTextApi = "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai";
 
@@ -288,12 +289,7 @@ function toResponse(message: AssistantMessage): CreateMessageResponse {
 }
 
 function retryAfterMs(headers: Record<string, string> | undefined): number | undefined {
-  const raw = headers?.["retry-after"] ?? headers?.["Retry-After"];
-  if (!raw) return undefined;
-  const seconds = Number(raw);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
-  const date = Date.parse(raw);
-  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+  return parseRetryAfterHeader(headers?.["retry-after"] ?? headers?.["Retry-After"]);
 }
 
 function structuredOutputTransform(api: PiTextApi, schema: Record<string, unknown> | undefined) {
