@@ -187,14 +187,16 @@ export function hasSkill(name: string): boolean {
  * Remove a skill.
  */
 export function unregisterSkill(name: string): boolean {
-  const skill = skills.get(name)
+  // Locate via getSkill (normalize/alias/prefix fallbacks) like the class-based
+  // registry does: an exact-only lookup left normalized entries unremovable (#232).
+  const skill = getSkill(name)
   if (!skill) return false
 
   normalizedNames.delete(normalizeSkillKey(skill.name))
 
   unregisterSkillAliases(skill)
 
-  return skills.delete(name)
+  return skills.delete(skill.name)
 }
 
 /**

@@ -27,7 +27,6 @@ const SUPPORTED_SETTINGS = new Set([
   'terminalProgressBarEnabled',
   'todoFeatureEnabled',
   'model',
-  'permissionMode',
   'permissions.defaultMode',
   'alwaysThinkingEnabled',
   'language',
@@ -42,7 +41,6 @@ const SUPPORTED_SETTINGS = new Set([
   'enableFileCheckpointing',
   'thinking.budgetTokens',
   'thinking.type',
-  'sandbox.enabled',
   'sandbox.network.allowedDomains',
   'additionalDirectories',
   'maxTurns',
@@ -171,10 +169,7 @@ export const ConfigTool: ToolDefinition = {
     }
 
     if (normalized.value === undefined && input?.action !== 'set') {
-      const derived = setting === 'permissionMode'
-        ? context.permissionMode
-        : undefined
-      const current = getNestedValue(setting) ?? derived
+      const current = getNestedValue(setting)
       return {
         type: 'tool_result',
         tool_use_id: '',

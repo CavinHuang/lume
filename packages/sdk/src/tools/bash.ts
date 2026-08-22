@@ -12,6 +12,7 @@ import {
   processJobsRootForArtifacts,
   registerProcessStopHandler,
   removeProcessJob,
+  stopPersistedWorker,
   unregisterProcessStopHandler,
   updateProcessJob,
 } from './process-job-registry.js'
@@ -163,9 +164,153 @@ const READ_ONLY_EXECUTABLES = new Set([
 
 function isReadOnlySegment(executable: string, args: string[]): boolean {
   if (!READ_ONLY_EXECUTABLES.has(executable)) return false
-  if (executable !== 'git') return true
-  const subcommand = args.find((arg) => !arg.startsWith('-'))
-  return subcommand !== undefined && new Set(['branch', 'diff', 'log', 'show', 'status']).has(subcommand)
+  if (executable === 'git') {
+    const subcommand = args.find((arg) => !arg.startsWith('-'))
+    return subcommand !== undefined && new Set(['branch', 'diff', 'log', 'show', 'status']).has(subcommand)
+  }
+  // These whitelist members have argument forms that mutate or execute;
+  // reject them so they cannot race Edit/Write as "read-only" work.
+  if (executable === 'find') return !args.some((arg) => /^-(?:delete|exec|execdir|ok|okdir|fls|fprint)/.test(arg))
+  if (executable === 'sed') return isReadOnlySedArgs(args)
+  if (executable === 'sort') return !args.some((arg) => (
+    arg === '--output'
+    || arg.startsWith('--output=')
+    // No other short sort flag is "o", so any short cluster containing it is -o.
+    // grep -o is unrelated: grep arguments are never checked here.
+    || (arg.startsWith('-') && !arg.startsWith('--') && arg.includes('o'))
+  ))
+  return true
+}
+
+function isReadOnlySedArgs(args: string[]): boolean {
+  if (args.some((arg) => /^(-i|--in-place)/.test(arg))) return false
+  return !sedScriptArgs(args).some(sedScriptWritesFile)
+}
+
+/** Collect the script arguments (not the input file paths) sed will execute. */
+function sedScriptArgs(args: string[]): string[] {
+  const scripts: string[] = []
+  let pending: 'script' | 'skip' | undefined
+  let sawScript = false
+  let endOfOptions = false
+  for (const arg of args) {
+    if (pending) {
+      if (pending === 'script') scripts.push(arg)
+      pending = undefined
+      continue
+    }
+    if (!endOfOptions && arg === '--') {
+      endOfOptions = true
+      continue
+    }
+    if (!endOfOptions && arg.startsWith('--')) {
+      if (arg.startsWith('--expression=')) {
+        scripts.push(arg.slice('--expression='.length))
+        sawScript = true
+      } else if (arg === '--expression') {
+        pending = 'script'
+        sawScript = true
+      } else if (arg === '--file') {
+        // --file names a script file; the next argument is not a script body.
+        pending = 'skip'
+      }
+      continue
+    }
+    if (!endOfOptions && arg.startsWith('-') && arg.length > 1) {
+      const cluster = arg.slice(1)
+      const flagIndex = cluster.search(/[ef]/)
+      if (flagIndex >= 0) {
+        if (flagIndex < cluster.length - 1) {
+          if (cluster[flagIndex] === 'e') {
+            scripts.push(cluster.slice(flagIndex + 1))
+            sawScript = true
+          }
+        } else {
+          pending = cluster[flagIndex] === 'e' ? 'script' : 'skip'
+          if (cluster[flagIndex] === 'e') sawScript = true
+        }
+      }
+      continue
+    }
+    if (!sawScript) {
+      scripts.push(arg)
+      sawScript = true
+    }
+  }
+  return scripts
+}
+
+/**
+ * Recognize sed script forms that write files or execute commands: a
+ * standalone `w`/`W`/`e` command or the same as an `s` suffix. Only command
+ * positions are inspected, so patterns, replacements, append text, and file
+ * paths that merely contain those letters do not trip the check.
+ */
+function sedScriptWritesFile(script: string): boolean {
+  const isDangerousCommand = (char: string | undefined) => char === 'w' || char === 'W' || char === 'e'
+  const length = script.length
+  let i = 0
+  let atCommand = true
+  while (i < length) {
+    const char = script[i]!
+    if (char === ';' || char === '\n') {
+      atCommand = true
+      i += 1
+      continue
+    }
+    if (!atCommand) {
+      i += 1
+      continue
+    }
+    if (char === ' ' || char === '\t' || char === '{' || char === '}' || char === '!') {
+      i += 1
+      continue
+    }
+    if (char === '#') {
+      while (i < length && script[i] !== '\n') i += 1
+      continue
+    }
+    // Addresses: /re/, line numbers, $, ranges, and custom \cREc delimiters.
+    if (char === '/') {
+      i += 1
+      while (i < length && script[i] !== '/') i += script[i] === '\\' ? 2 : 1
+      i += 1
+      continue
+    }
+    if (char === '\\') {
+      const delimiter = script[i + 1]
+      i += 2
+      while (i < length && script[i] !== delimiter) i += script[i] === '\\' ? 2 : 1
+      i += 1
+      continue
+    }
+    if ((char >= '0' && char <= '9') || char === '$' || char === ',') {
+      i += 1
+      continue
+    }
+    if (isDangerousCommand(char)) return true
+    if (char === 's' || char === 'y') {
+      const delimiter = script[i + 1]
+      if (!delimiter) return false
+      i += 2
+      // s has two fields (regex, replacement); y has three (src, dst, then a
+      // closing delimiter). Each field scan ends at its own delimiter.
+      for (let field = 0; field < (char === 's' ? 2 : 3); field += 1) {
+        while (i < length && script[i] !== delimiter) i += script[i] === '\\' ? 2 : 1
+        i += 1
+      }
+      while (i < length && /[a-zA-Z0-9]/.test(script[i]!)) {
+        if (isDangerousCommand(script[i])) return true
+        i += 1
+      }
+      continue
+    }
+    // Any other command consumes the rest of the line as its argument
+    // (r/w-style filenames, labels, a\i\c text).
+    atCommand = false
+    i += 1
+  }
+  return false
 }
 
 function isReadOnlyPowerShell(command: string): boolean {
@@ -489,7 +634,24 @@ async function startDurableShellTask({
   let backgroundCompletionHandled = false
   const startedAt = Date.now()
 
-  const emitNewOutput = async () => {
+  // Async spawn failures (e.g. EMFILE) surface as an 'error' event; without a
+  // listener they become an uncaughtException and take down the host process.
+  worker.once('error', () => {
+    if (getProcessJob(job.id)?.status !== 'running') return
+    const execution = normalizePersistedExecution(command, purpose, shellType, outputFile, {
+      version: 2,
+      outcome: 'failed',
+      terminationReason: 'spawn_error',
+      exitCode: null,
+      durationMs: Date.now() - startedAt,
+      command: redactSensitiveText(command),
+      shell: shellType,
+    }, startedAt)
+    updateProcessJob(job.id, { status: 'failed', metadata: { execution } })
+  })
+
+  const emitNewOutput = async (): Promise<boolean> => {
+    const before = stdoutOffset + stderrOffset + outputOffset
     const stdout = await readIncrementalFile(stdoutFile, stdoutOffset)
     stdoutOffset = stdout.nextOffset
     if (stdout.text) {
@@ -516,6 +678,7 @@ async function startDurableShellTask({
     }
     const combined = await readIncrementalFile(outputFile, outputOffset, false)
     outputOffset = combined.nextOffset
+    return stdoutOffset + stderrOffset + outputOffset !== before
   }
 
   const completeBackgroundTask = (result: ShellTaskResult) => {
@@ -560,7 +723,9 @@ async function startDurableShellTask({
         clearInterval(poll)
         if (settled) return
         settled = true
-        await emitNewOutput()
+        // Drain the worker's final writes to EOF; a single bounded read can
+        // lose tail output written just before the process exited.
+        while (await emitNewOutput()) { /* drain until no new bytes */ }
         const execution = normalizePersistedExecution(
           command,
           purpose,
@@ -588,12 +753,10 @@ async function startDurableShellTask({
   const stop = () => {
     const latest = getProcessJob(job.id)
     if (!latest || latest.status !== 'running') return
-    try {
-      worker.kill('SIGTERM')
-    } catch {
-      // The durable worker may already have exited between the state read and
-      // the signal. Its persisted result remains the source of truth.
-    }
+    // A direct signal would only reach the worker (on Windows TerminateProcess
+    // kills exactly one process); the registry helper tears down the whole
+    // command process tree.
+    stopPersistedWorker(latest)
     const execution = normalizePersistedExecution(command, purpose, shellType, outputFile, {
       version: 2,
       outcome: 'cancelled',
@@ -661,7 +824,9 @@ async function promoteToBackground(task: ShellTask, description: unknown, contex
   const subject = typeof description === 'string' && description.trim() ? description.trim() : 'Background shell command'
   const job = task.job ?? createProcessJobRecord({
       subject,
-      description: task.command,
+      // Redact at creation so a crash between record creation and the
+      // follow-up update cannot leave plaintext credentials in state.json.
+      description: redactSensitiveText(task.command),
       status: 'running',
       threadId: context.sessionId,
       runId: context.runId,
@@ -800,7 +965,9 @@ function applySemanticOutcome(
   execution: ToolExecutionMetadata,
   interpretation: ReturnType<typeof interpretShellExit>,
 ): ToolExecutionMetadata {
-  if (!interpretation.semanticOutcome || execution.version !== 2) return execution
+  // Without a real exit code (timeout/abort/spawn error) the semantic reading
+  // of an exit status cannot apply; doing so would flip failures to succeeded.
+  if (typeof execution.exitCode !== 'number' || !interpretation.semanticOutcome || execution.version !== 2) return execution
   return {
     ...execution,
     outcome: 'succeeded' as const,

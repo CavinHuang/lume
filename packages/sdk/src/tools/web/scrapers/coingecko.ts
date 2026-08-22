@@ -81,9 +81,9 @@ export const handleCoinGecko: SpecialHandler = async (
 		let md = `# ${coin.name} (${coin.symbol.toUpperCase()})\n\n`;
 
 		// Price and market data
-		if (market?.current_price?.usd !== undefined) {
+		if (market?.current_price?.usd != null) {
 			md += `**Price:** $${formatPrice(market.current_price.usd)}`;
-			if (market.price_change_percentage_24h !== undefined) {
+			if (typeof market.price_change_percentage_24h === "number") {
 				const change = market.price_change_percentage_24h;
 				const sign = change >= 0 ? "+" : "";
 				md += ` (${sign}${change.toFixed(2)}% 24h)`;
@@ -99,7 +99,7 @@ export const handleCoinGecko: SpecialHandler = async (
 			md += `**24h Volume:** $${formatNumber(market.total_volume.usd)}\n`;
 		}
 
-		if (market?.ath?.usd !== undefined) {
+		if (market?.ath?.usd != null) {
 			md += `**All-Time High:** $${formatPrice(market.ath.usd)}`;
 			if (market.ath_date?.usd) {
 				const athDate = new Date(market.ath_date.usd).toLocaleDateString("en-US", {

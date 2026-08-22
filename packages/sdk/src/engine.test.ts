@@ -2019,6 +2019,32 @@ describe("QueryEngine usage records", () => {
     });
   });
 
+  test("usageIdentity.runId prefers config.runId over sessionId (#256)", async () => {
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "done" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 10, output_tokens: 5 }
+    }]);
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "gpt-4o-mini",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      sessionId: "thread-runid",
+      runId: "run-42"
+    });
+
+    const events = await collectEvents(engine);
+    const assistant = events.find((event) => (event as { type?: string }).type === "assistant") as any;
+    // 此前恒用 sessionId(=threadId),无法按 run 聚合 usage
+    expect(assistant.usageIdentity).toMatchObject({ threadId: "thread-runid", runId: "run-42" });
+  });
+
   test("includes per-provider-call usage records in the final result", async () => {
     const provider = new StaticProvider([
       {
@@ -2279,5 +2305,55 @@ describe("QueryEngine skill catalog injection", () => {
 
     const runtimeMessages = provider.requests[0].messages.filter((m: any) => m.role === "runtime")
     expect(runtimeMessages.some((m: any) => String(m.content).includes("<available_skills>"))).toBe(false)
+  })
+});
+
+describe("QueryEngine getContextUsage", () => {
+  const dummyTool = {
+    name: "Bash",
+    description: "run a command",
+    inputSchema: { type: "object", properties: {} },
+    async call() {
+      return { type: "tool_result" as const, tool_use_id: "", content: "ok" }
+    },
+  }
+
+  test("pairs tool_result tokens with the originating tool via tool_use id", () => {
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([]),
+      tools: [dummyTool],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+    })
+    engine.messages.push(
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "tool_use", id: "tu-1", name: "Bash", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "tu-1", content: "result payload" }] },
+    )
+
+    const usage = engine.getContextUsage()
+    const byName = new Map(usage.messageBreakdown.toolCallsByType.map((entry) => [entry.name, entry]))
+    expect(byName.get("Bash")?.callTokens).toBeGreaterThan(0)
+    expect(byName.get("Bash")?.resultTokens).toBeGreaterThan(0)
+    expect(byName.has("tool_result")).toBe(false)
+  })
+
+  test("honors config.contextWindow override instead of the model lookup", () => {
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([]),
+      tools: [dummyTool],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      contextWindow: 12345,
+    })
+    engine.messages.push({ role: "user", content: "go" })
+
+    expect(engine.getContextUsage().maxTokens).toBe(12345)
   })
 });

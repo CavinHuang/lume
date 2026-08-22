@@ -20,7 +20,7 @@
  */
 
 import * as React from 'react'
-import { highlightCode, highlightToTokens, useCodeTheme } from '../highlight/index'
+import { highlightCode, highlightToTokens, isHighlighterReady, useCodeTheme } from '../highlight/index'
 import type { HighlightToken, HighlightTokensResult } from '../highlight/index'
 
 /** react-markdown 传入的 <code> 元素 props */
@@ -173,10 +173,19 @@ export function CodeBlock({ children, onCopy }: CodeBlockProps): React.ReactElem
   const pendingCodeRef = React.useRef(trimmedCode)
   const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastUpdateRef = React.useRef(Date.now())
+  const firstRenderRef = React.useRef(true)
 
   pendingCodeRef.current = trimmedCode
 
   React.useEffect(() => {
+    // 首轮渲染的结果已由 useState 初始化器产出（就绪时必然非 null），无需重算；
+    // 未就绪时仍走下方的异步兜底
+    if (firstRenderRef.current) {
+      firstRenderRef.current = false
+      lastUpdateRef.current = Date.now()
+      if (isHighlighterReady()) return
+    }
+
     const now = Date.now()
     const elapsed = now - lastUpdateRef.current
 
@@ -189,13 +198,15 @@ export function CodeBlock({ children, onCopy }: CodeBlockProps): React.ReactElem
       }
     }
 
-    // 同步路径可用时
-    const syncResult = highlightToTokens({ code: trimmedCode, language: langOrText, theme: theme.name })
-    if (syncResult) {
+    // 就绪探测代替全量 tokenize：节流命中分支只关心"能不能算"，不需要算出结果
+    if (isHighlighterReady()) {
       if (elapsed >= THROTTLE_MS) {
-        // 距上次更新已超过节流间隔，立即执行
-        lastUpdateRef.current = now
-        setTokenResult(syncResult)
+        // 距上次更新已超过节流间隔，立即执行（此刻才真正需要结果）
+        const syncResult = highlightToTokens({ code: trimmedCode, language: langOrText, theme: theme.name })
+        if (syncResult) {
+          lastUpdateRef.current = now
+          setTokenResult(syncResult)
+        }
       } else if (!timerRef.current) {
         // 安排延迟执行，确保最终状态正确
         timerRef.current = setTimeout(() => {

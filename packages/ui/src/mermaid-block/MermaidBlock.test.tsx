@@ -34,4 +34,16 @@ describe('MermaidBlock', () => {
 
     expect(stripStylesheetImports(svg)).toBe("<svg><style> text { fill: black; font-family: 'Inter', system-ui; }</style></svg>")
   })
+
+  test('removes string-form stylesheet imports (CSS allows @import "foo.css"; without url())', () => {
+    const svg = `<svg><style>@import "https://evil.example/hook.css"; @import 'https://evil.example/2.css'; text { fill: black; }</style></svg>`
+
+    expect(stripStylesheetImports(svg)).toBe('<svg><style>  text { fill: black; }</style></svg>')
+  })
+
+  test('keeps ordinary CSS and label text containing @import-like words', () => {
+    const svg = `<svg><style> text { fill: black; font-family: 'Inter'; }</style><text>user@important.com</text></svg>`
+
+    expect(stripStylesheetImports(svg)).toBe(svg)
+  })
 })

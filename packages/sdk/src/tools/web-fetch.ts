@@ -335,7 +335,7 @@ export async function runWebFetch(
           sandbox: context.sandbox,
         });
         if (!binary.ok || binary.error) {
-          return { data: `Image fetch failed: ${binary.error || `HTTP ${binary.status}`}\nURL: ${finalUrl}` };
+          return { data: `Image fetch failed: ${binary.error || `HTTP ${binary.status}`}\nURL: ${finalUrl}`, is_error: true };
         }
         const image: ToolResultContentBlock = {
           type: "image",
@@ -357,18 +357,18 @@ export async function runWebFetch(
           const structured = await renderStructuredBinary(binary.bytes, binary.contentType || response.contentType, finalUrl);
           if (structured?.markdown) return { data: finalizeMarkdown(structured.markdown) };
         }
-        return { data: `${structuredKind} resource (${response.contentType || "unknown MIME"}, ${rawContent.length} bytes)\nURL: ${finalUrl}` };
+        return { data: `${structuredKind} resource (${response.contentType || "unknown MIME"}, ${rawContent.length} bytes)\nURL: ${finalUrl}`, is_error: true };
       }
       if (isFeedResponse(response.contentType, rawContent)) {
         const feed = await parseFeed(rawContent);
         return { data: finalizeMarkdown(feed ?? rawContent) };
       }
       if (response.contentType.includes("json")) {
-        try { return { data: JSON.stringify(JSON.parse(rawContent), null, 2) }; } catch { /* return source */ }
+        try { return { data: finalizeMarkdown(JSON.stringify(JSON.parse(rawContent), null, 2)) }; } catch { /* return source */ }
       }
-      return { data: rawContent || "(empty response)" };
+      return { data: finalizeMarkdown(rawContent || "(empty response)") };
     }
-    if (format === "html") return { data: rawContent };
+    if (format === "html") return { data: finalizeMarkdown(rawContent) };
 
     let finalHtml = rawContent;
     let renderNote = "";

@@ -12,10 +12,31 @@ let mcpConnections: MCPConnection[] = []
 const mcpResourceSubscriptions = new Map<string, Set<string>>()
 const mcpPollingSubscriptions = new Map<string, NodeJS.Timeout>()
 
+// Polling timers are unbounded work: a cap keeps a model loop over
+// SubscribePolling from parking hundreds of permanent timers (#228).
+const MAX_POLLING_SUBSCRIPTIONS = 50
+
+function pollingServer(key: string): string {
+  return key.slice(0, key.indexOf(':'))
+}
+
+function stopPollingTimer(key: string, timer: NodeJS.Timeout): void {
+  clearInterval(timer)
+  mcpPollingSubscriptions.delete(key)
+}
+
 /**
  * Set MCP connections for resource access.
  */
 export function setMcpConnections(connections: MCPConnection[]): void {
+  // Timers close over the old connections; dropping the table without
+  // clearing them leaks one spinning timer per subscription (#228).
+  const liveServers = new Set(connections.map((connection) => connection.name))
+  for (const [key, timer] of mcpPollingSubscriptions) {
+    if (!liveServers.has(pollingServer(key))) {
+      stopPollingTimer(key, timer)
+    }
+  }
   mcpConnections = connections
 }
 
@@ -274,6 +295,13 @@ export const SubscribePollingTool: ToolDefinition = {
     const existing = mcpPollingSubscriptions.get(key)
     if (existing) {
       clearInterval(existing)
+    } else if (mcpPollingSubscriptions.size >= MAX_POLLING_SUBSCRIPTIONS) {
+      return {
+        type: 'tool_result',
+        tool_use_id: '',
+        content: `Polling subscription limit reached (${MAX_POLLING_SUBSCRIPTIONS}); unsubscribe one first.`,
+        is_error: true,
+      }
     }
 
     const intervalMs = Math.max(200, Math.min(Number(input.interval_ms || 1000), 60000))
@@ -315,8 +343,7 @@ export const UnsubscribePollingTool: ToolDefinition = {
     const key = `${input.server}:${input.uri}`
     const timer = mcpPollingSubscriptions.get(key)
     if (timer) {
-      clearInterval(timer)
-      mcpPollingSubscriptions.delete(key)
+      stopPollingTimer(key, timer)
     }
 
     return {

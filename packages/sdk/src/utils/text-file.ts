@@ -30,7 +30,6 @@ export async function readTextFileRange(
   const selectedLines: string[] = [];
   let buffer = "";
   let totalLines = 0;
-  let endedWithNewline = false;
 
   const consumeLine = (line: string): void => {
     const normalized = line.replace(/\r$/, "");
@@ -45,20 +44,26 @@ export async function readTextFileRange(
     const text = String(chunk);
     if (!text) continue;
     buffer += text;
-    endedWithNewline = false;
 
     let newlineIndex = buffer.indexOf("\n");
     while (newlineIndex >= 0) {
       consumeLine(buffer.slice(0, newlineIndex));
       buffer = buffer.slice(newlineIndex + 1);
-      endedWithNewline = true;
       newlineIndex = buffer.indexOf("\n");
+    }
+
+    // The requested window is complete; stop reading so huge files are not
+    // streamed to EOF just to satisfy a small offset/limit. totalLines then
+    // reflects the lines observed so far.
+    if (limit > 0 && selectedLines.length >= limit) {
+      stream.destroy();
+      break;
     }
   }
 
   throwIfAborted(signal, stream)
 
-  if (buffer.length > 0 || endedWithNewline) {
+  if (buffer.length > 0) {
     consumeLine(buffer);
   }
 

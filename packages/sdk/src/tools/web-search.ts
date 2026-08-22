@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path'
 import { defineTool } from './types.js'
 import { ensureNetworkAllowed } from '../utils/pathing.js'
 import { sdkFetch } from './web-request.js'
+import { loadPage } from './web-fetch-http.js'
 
 export interface SearchResult {
   title: string
@@ -121,6 +122,7 @@ function truncateContent(text: string, maxChars: number): string {
 }
 
 const MAX_CONTENT_CHARS = 1500
+const MAX_PAGE_FETCH_BYTES = 5 * 1024 * 1024
 const MAX_CONCURRENT_FETCHES = 3
 const GUANLAN_TIMEOUT_MS = 20000
 const MAX_GUANLAN_STDERR_CHARS = 2000
@@ -130,25 +132,22 @@ async function fetchPageContent(
   url: string,
   sandbox: unknown
 ): Promise<string | null> {
-  const sandboxError = ensureNetworkAllowed(url, sandbox as never)
-  if (sandboxError) return null
-  try {
-    const response = await sdkFetch(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      },
-      signal: AbortSignal.timeout(8000),
-    })
-    if (!response.ok) return null
-    const html = await response.text()
-    const cleaned = extractMainContent(html)
-    return truncateContent(cleaned, MAX_CONTENT_CHARS)
-  } catch {
-    return null
-  }
+  // loadPage enforces the sandbox check and a byte cap on the response body.
+  const result = await loadPage(url, {
+    fetchImpl: sdkFetch,
+    timeoutMs: 8000,
+    maxBytes: MAX_PAGE_FETCH_BYTES,
+    sandbox: sandbox as never,
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      Accept: 'text/html,application/xhtml+xml',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    },
+  })
+  if (!result.ok) return null
+  const cleaned = extractMainContent(result.content)
+  return truncateContent(cleaned, MAX_CONTENT_CHARS)
 }
 
 async function enrichResultsWithContent(
@@ -280,7 +279,7 @@ function readResultString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-function clampProviderLimit(numResults: number): number {
+export function clampProviderLimit(numResults: number): number {
   return Math.max(1, Math.min(Math.trunc(numResults || 5), 10))
 }
 
@@ -599,11 +598,22 @@ export const WebSearchTool = defineTool({
   },
   isReadOnly: true,
   isConcurrencySafe: true,
+  validateInput(input) {
+    if (!input || typeof input !== 'object') return 'Input must be an object.'
+    if (typeof input.query !== 'string' || !input.query.trim()) return 'query is required.'
+    if (input.num_results !== undefined && typeof input.num_results !== 'number') {
+      return 'num_results must be a number.'
+    }
+  },
   async call(input, context) {
     const { query } = input
 
     try {
-      const numResults = typeof input.num_results === 'number' ? input.num_results : 5
+      // Clamp once so every provider (including the DuckDuckGo fallback) and
+      // the enrichment loop honor the 1..10 budget.
+      const numResults = clampProviderLimit(
+        typeof input.num_results === 'number' ? input.num_results : 5
+      )
       const providerAttempts: Record<WebSearchProviderName, () => Promise<unknown>> = {
         guanlan: () => searchWithGuanlan(query, numResults),
         exa: () => searchWithExa(query, numResults, context.sandbox),

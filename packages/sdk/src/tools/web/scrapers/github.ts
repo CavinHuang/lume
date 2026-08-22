@@ -107,7 +107,10 @@ export function parseGitHubUrl(url: string): GitHubUrl | null {
  * Convert GitHub blob URL to raw URL
  */
 function toRawGitHubUrl(gh: GitHubUrl): string {
-	return `https://raw.githubusercontent.com/${gh.owner}/${gh.repo}/${gh.ref}/${gh.path}`;
+	// blob/tree URLs always carry a ref segment; guard anyway so a malformed
+	// URL can't paste "undefined" into the path.
+	const ref = gh.ref ?? "HEAD";
+	return `https://raw.githubusercontent.com/${gh.owner}/${gh.repo}/${ref}/${gh.path}`;
 }
 
 /**
@@ -118,9 +121,10 @@ export async function fetchGitHubApi(
 	timeout: number,
 	signal?: AbortSignal,
 ): Promise<{ data: unknown; ok: boolean }> {
+	// One sub-request per page: each undisposed combineSignals leaves a
+	// listener on the shared parent signal (#237).
+	const { signal: requestSignal, dispose } = ptree.combineSignals(signal, timeout * 1000);
 	try {
-		const requestSignal = ptree.combineSignals(signal, timeout * 1000);
-
 		const headers: Record<string, string> = {
 			Accept: "application/vnd.github.v3+json",
 			"User-Agent": "omp-web-fetch/1.0",
@@ -144,6 +148,8 @@ export async function fetchGitHubApi(
 		return { data: await response.json(), ok: true };
 	} catch {
 		return { data: null, ok: false };
+	} finally {
+		dispose();
 	}
 }
 
@@ -215,7 +221,7 @@ async function renderGitHubIssue(
 	};
 
 	let md = `# ${issue.title}\n\n`;
-	md += `**#${issue.number}** · ${issue.state} · opened by @${issue.user.login}\n`;
+	md += `**#${issue.number}** · ${issue.state} · opened by @${issue.user?.login ?? "(deleted)"}\n`;
 	md += `Created: ${issue.created_at} · Updated: ${issue.updated_at}\n`;
 	if (issue.labels.length > 0) {
 		md += `Labels: ${issue.labels.map(l => l.name).join(", ")}\n`;
@@ -232,7 +238,7 @@ async function renderGitHubIssue(
 				issue.comments > comments.length ? `${comments.length} of ${issue.comments}` : `${comments.length}`;
 			md += `## Comments (${commentCount})\n\n`;
 			for (const comment of comments) {
-				md += `### @${comment.user.login} · ${comment.created_at}\n\n`;
+				md += `### @${comment.user?.login ?? "(deleted)"} · ${comment.created_at}\n\n`;
 				md += `${comment.body}\n\n---\n\n`;
 			}
 		}
@@ -381,7 +387,7 @@ async function renderGitHubTree(
 
 	// Fetch directory contents
 	const contentsResult = await fetchGitHubApi(
-		`/repos/${gh.owner}/${gh.repo}/contents/${dirPath}?ref=${ref}`,
+		`/repos/${gh.owner}/${gh.repo}/contents/${dirPath}?ref=${encodeURIComponent(ref)}`,
 		timeout,
 		signal,
 	);
@@ -606,7 +612,8 @@ async function fetchGitHubJobLogs(
 	const token = $env.GITHUB_TOKEN || $env.GH_TOKEN;
 	if (token) headers.Authorization = `Bearer ${token}`;
 
-	// 302 → signed log URL on a different origin; fetch strips Authorization on the cross-origin hop.
+	// 302 → signed log URL on a different origin; loadPage follows redirects
+	// manually and strips Authorization on cross-origin hops.
 	const result = await loadPage(`https://api.github.com/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`, {
 		timeout,
 		headers,

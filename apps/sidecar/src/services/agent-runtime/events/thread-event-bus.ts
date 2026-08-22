@@ -1,6 +1,9 @@
 /**
  * ThreadEventBus —— 线程级事件总线:seq 单写者分配 + append-only jsonl 持久化 + 16ms 微批推送。
- * 原则:持久化即承诺(publish 在 appendFileSync 完成后 resolve),推送只是加速(read 永远可回放)。
+ * 持久化承诺(#257):非 update 相位即时落盘(publish 在 appendFileSync 后 resolve);
+ * update 相位(流式累计 partial)进入持久折叠缓冲——同 key 只保留最新一条,由
+ * 后续非 update 相位、PERSIST_COALESCE_MS 窗口或 releaseThread 落盘。
+ * 此前每个流式 delta 的累计全文都同步写盘,长会话 events 体积近二次增长(~74% 字节浪费)。
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -9,6 +12,9 @@ import type { SdkEventEnvelope, SdkLifecycleEvent } from "@lume/shared"
 /** update 相位微批窗口(ms):同 kind:phase:turnId 的折叠窗口 */
 const UPDATE_COALESCE_MS = 16
 
+/** update 相位持久折叠窗口(ms):崩溃时最多丢该窗口内的流式过渡态(终值由非 update 相位兜底落盘) */
+const PERSIST_COALESCE_MS = 500
+
 interface ThreadState {
   /** 下一个待分配的 seq(初始化 = 文件最后一条合法行 seq + 1) */
   nextSeq: number
@@ -16,6 +22,9 @@ interface ThreadState {
   /** 微批缓冲:key=`kind:phase:turnId`,value=最新 envelope;同 key 替换即"折叠后 partial" */
   coalesceBuffer: Map<string, SdkEventEnvelope>
   coalesceTimer: ReturnType<typeof setTimeout> | null
+  /** 持久折叠缓冲:与 coalesceBuffer 同 key 语义,但负责落盘——折叠后磁盘每个 key 每窗口只有最新累计态 */
+  persistBuffer: Map<string, SdkEventEnvelope>
+  persistTimer: ReturnType<typeof setTimeout> | null
 }
 
 export class ThreadEventBus {
@@ -28,11 +37,12 @@ export class ThreadEventBus {
   }
 
   /**
-   * 盖信封、append 落盘、入微批队列;返回分配的 seq(落盘成功后 resolve)。
-   * 约束(调用方依赖,勿静默破坏):本方法必须保持"同步落盘后 resolve"——resolve 即
-   * 持久化完成。run-loop 的 tee 对 publish 是 fire-and-forget(.catch 兜底),只靠
-   * pump 排空保证事件全部落盘;若改为真异步 fs(如 fs.promises),resolve 将先于
-   * 落盘,tee 的 await pump 不再等落盘,run 尾事件会静默丢失——改前必须同步改造 tee。
+   * 盖信封、入持久队列、入微批队列;返回分配的 seq。
+   * 约束(调用方依赖,勿静默破坏):非 update 相位必须"同步落盘后 resolve"——resolve 即
+   * 持久化完成;update 相位 resolve 即已进入持久折叠缓冲(最多 PERSIST_COALESCE_MS 后落盘,
+   * 且任何后续非 update 相位先冲盘,run 尾(run.end)不丢)。run-loop 的 tee 对 publish 是
+   * fire-and-forget(.catch 兜底),靠 pump 排空保证事件全部落盘;若改为真异步 fs(如
+   * fs.promises),resolve 将先于落盘,tee 的 await pump 不再等落盘——改前必须同步改造 tee。
    */
   publish(threadId: string, runId: string, event: SdkLifecycleEvent): Promise<number> {
     const st = this.state(threadId)
@@ -48,17 +58,23 @@ export class ThreadEventBus {
       phase: event.phase,
       detail: event.detail,
     }
-    // 同步 append:resolve 即代表已持久化
-    appendFileSync(this.file(threadId), JSON.stringify(envelope) + "\n")
 
     if (event.phase === "update") {
+      // 持久折叠:同 key 只留最新累计态,由窗口/后续非 update 落盘——磁盘不再存每个 delta 的累计全文
       const key = `${event.kind}:${event.phase}:${event.turnId ?? ""}`
+      st.persistBuffer.set(key, envelope)
+      if (!st.persistTimer) {
+        st.persistTimer = setTimeout(() => this.flushPersist(threadId, st), PERSIST_COALESCE_MS)
+      }
       st.coalesceBuffer.set(key, envelope)
       if (!st.coalesceTimer) {
         st.coalesceTimer = setTimeout(() => this.flush(st), UPDATE_COALESCE_MS)
       }
     } else {
-      // 非 update 相位:先冲掉挂起的 update(保序——同 turn 的 message.end 必须晚于其 update),再立即推
+      // 非 update 相位:先冲掉挂起的 update(保序——同 turn 的 message.end 必须晚于其 update),
+      // 再同步 append 本事件——run 边界(run.end/turn.end)到达即全部落盘
+      this.flushPersist(threadId, st)
+      appendFileSync(this.file(threadId), JSON.stringify(envelope) + "\n")
       this.flush(st)
       this.dispatch(st, envelope)
     }
@@ -72,9 +88,9 @@ export class ThreadEventBus {
     return () => st.listeners.delete(listener)
   }
 
-  /** 快照/续传:seq > afterSeq 的全部已持久化事件(afterSeq 缺省=全部=回放)。 */
+  /** 快照/续传:seq > afterSeq 的全部事件(文件 + 未落盘的持久折叠缓冲,按 seq 归并)。 */
   async read(threadId: string, afterSeq?: number): Promise<SdkEventEnvelope[]> {
-    const all = this.readFile(threadId)
+    const all = [...this.readFile(threadId), ...this.pendingEnvelopes(threadId)].sort((a, b) => a.seq - b.seq)
     return afterSeq === undefined ? all : all.filter((e) => e.seq > afterSeq)
   }
 
@@ -84,17 +100,19 @@ export class ThreadEventBus {
    */
   hasEvents(threadId: string): boolean {
     const file = this.file(threadId)
-    if (!existsSync(file)) return false
-    for (const line of readFileSync(file, "utf8").split("\n")) {
-      if (!line) continue
-      try {
-        JSON.parse(line)
-        return true
-      } catch {
-        return false
+    if (existsSync(file)) {
+      for (const line of readFileSync(file, "utf8").split("\n")) {
+        if (!line) continue
+        try {
+          JSON.parse(line)
+          return true
+        } catch {
+          return false
+        }
       }
     }
-    return false
+    // 文件空/缺失:持久折叠缓冲里有挂起事件同样算有(F4 分叉不能误判为旧线程)
+    return this.pendingEnvelopes(threadId).length > 0
   }
 
   private file(threadId: string): string {
@@ -112,16 +130,19 @@ export class ThreadEventBus {
         listeners: new Set(),
         coalesceBuffer: new Map(),
         coalesceTimer: null,
+        persistBuffer: new Map(),
+        persistTimer: null,
       }
       this.threads.set(threadId, st)
     }
     return st
   }
 
-  /** 释放线程 state（清挂起的微批 timer）；落盘文件不动，重建时 seq 从文件续读。 */
+  /** 释放线程 state（清挂起 timer 前先冲盘持久缓冲）；落盘文件不动，重建时 seq 从文件续读。 */
   releaseThread(threadId: string): void {
     const st = this.threads.get(threadId)
     if (!st) return
+    this.flushPersist(threadId, st)
     if (st.coalesceTimer) clearTimeout(st.coalesceTimer)
     this.threads.delete(threadId)
   }
@@ -160,7 +181,24 @@ export class ThreadEventBus {
     return out
   }
 
-  /** 冲微批:按插入序推给 listeners */
+  /** 持久折叠缓冲的挂起事件(按 seq 升序;不触达 state,空线程返回空) */
+  private pendingEnvelopes(threadId: string): SdkEventEnvelope[] {
+    const st = this.threads.get(threadId)
+    if (!st || st.persistBuffer.size === 0) return []
+    return [...st.persistBuffer.values()].sort((a, b) => a.seq - b.seq)
+  }
+
+  /** 冲持久折叠缓冲:按插入序 append 落盘(Map 迭代=插入序;同 key 替换不改变原插入位) */
+  private flushPersist(threadId: string, st: ThreadState): void {
+    if (st.persistTimer) {
+      clearTimeout(st.persistTimer)
+      st.persistTimer = null
+    }
+    if (st.persistBuffer.size === 0) return
+    const lines = [...st.persistBuffer.values()].map((envelope) => JSON.stringify(envelope) + "\n").join("")
+    st.persistBuffer.clear()
+    appendFileSync(this.file(threadId), lines)
+  }
   private flush(st: ThreadState): void {
     if (st.coalesceTimer) {
       clearTimeout(st.coalesceTimer)

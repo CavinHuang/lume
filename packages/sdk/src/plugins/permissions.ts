@@ -1,3 +1,5 @@
+import { resolve } from "path";
+
 /** Simple glob-to-regex converter supporting * and ** patterns. */
 function globToRegex(pattern: string): RegExp {
   const escaped = pattern
@@ -6,6 +8,14 @@ function globToRegex(pattern: string): RegExp {
     .replace(/\*/g, "[^/]*")
     .replace(/__DOUBLESTAR__/g, ".*");
   return new RegExp(`^${escaped}$`);
+}
+
+/**
+ * Resolve to a canonical portable path (`/` separators) so `..` segments and
+ * Windows separator mixes can't smuggle a path past pattern matching (#246).
+ */
+function canonicalPath(...segments: string[]): string {
+  return resolve(...segments).replace(/\\/g, "/");
 }
 
 export type PermissionDecision = "allow" | "deny" | "ask" | undefined;
@@ -18,13 +28,7 @@ export function resolvePluginPath(
   path: string,
   pluginRoot: string,
 ): string {
-  if (path.startsWith("./")) {
-    return `${pluginRoot}/${path.slice(2)}`;
-  }
-  if (path.startsWith(pluginRoot)) {
-    return path;
-  }
-  return `${pluginRoot}/${path}`;
+  return canonicalPath(pluginRoot, path);
 }
 
 /**
@@ -36,19 +40,20 @@ export function matchPathGlob(
   patterns: string[],
   pluginRoot: string,
 ): boolean {
+  const isAbsolute = absolutePath.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(absolutePath);
+  const normalizedAbs = canonicalPath(absolutePath);
+  const normalizedRoot = canonicalPath(pluginRoot);
   for (const pattern of patterns) {
     const relativePattern = pattern.startsWith("./") ? pattern.slice(2) : pattern;
-    // Build regex that matches either:
-    // 1. The absolute path with pluginRoot as prefix
-    // 2. The absolute path directly (if it already contains the root)
-    const regex = globToRegex(`${pluginRoot}/${relativePattern}`);
-    if (regex.test(absolutePath)) return true;
-    // Also try matching against the path stripped of pluginRoot prefix
-    const stripped = absolutePath.startsWith(pluginRoot)
-      ? absolutePath.slice(pluginRoot.length + 1)
-      : absolutePath;
-    const strippedRegex = globToRegex(relativePattern);
-    if (strippedRegex.test(stripped)) return true;
+    // Match either the plugin-root-anchored pattern or the root-stripped path;
+    // relative inputs keep matching the relative pattern as-is.
+    if (globToRegex(canonicalPath(pluginRoot, relativePattern)).test(normalizedAbs)) return true;
+    const stripped = isAbsolute
+      ? (normalizedAbs.startsWith(`${normalizedRoot}/`)
+        ? normalizedAbs.slice(normalizedRoot.length + 1)
+        : normalizedAbs)
+      : absolutePath.replace(/\\/g, "/");
+    if (globToRegex(relativePattern).test(stripped)) return true;
   }
   return false;
 }

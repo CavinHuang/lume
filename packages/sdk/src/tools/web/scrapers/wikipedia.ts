@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, loadPage } from "./types.js";
 
@@ -30,14 +31,16 @@ export const handleWikipedia: SpecialHandler = async (
 		let md = "";
 
 		if (summaryResult.ok) {
-			const summary = JSON.parse(summaryResult.content) as {
+			const summary = tryParseJson<{
 				title: string;
 				description?: string;
 				extract: string;
-			};
-			md = `# ${summary.title}\n\n`;
-			if (summary.description) md += `*${summary.description}*\n\n`;
-			md += `${summary.extract}\n\n---\n\n`;
+			}>(summaryResult.content);
+			if (summary) {
+				md = `# ${summary.title}\n\n`;
+				if (summary.description) md += `*${summary.description}*\n\n`;
+				md += `${summary.extract}\n\n---\n\n`;
+			}
 		}
 
 		// Get full article content via mobile-html or parse API
