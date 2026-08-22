@@ -8,8 +8,6 @@ import { createToolDescriptorsFromDefinitions } from "./tool-source";
 import { getRuntimeFileAccessLedger } from "./file-access-ledger";
 import { wrapToolDefinitionWithRuntimePolicies } from "./tool-runtime-wrapper";
 import { createLogger } from "../../infra/logger";
-import { getWikiProtectedRootPath } from "../../infra/config-paths";
-import { wrapToolWithProtectedRootPolicy } from "./protected-root-policy";
 import {
   appendRuntimeToolDescriptors,
   setRuntimeToolDescriptors
@@ -198,13 +196,7 @@ function materializeRuntimeTools(input: {
             cwd: input.cwd,
             fileLedger: getRuntimeFileAccessLedger()
           });
-    if (descriptor.canonicalName === "askuserquestion") return runtimeTool;
-    return wrapToolWithProtectedRootPolicy({
-      descriptor,
-      tool: runtimeTool,
-      cwd: input.cwd,
-      protectedRoots: [getWikiProtectedRootPath()]
-    });
+    return runtimeTool;
   });
 }
 

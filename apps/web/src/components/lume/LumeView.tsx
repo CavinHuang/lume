@@ -1,19 +1,18 @@
 import { useState } from 'react'
-import { BookOpen, CalendarDays, Library } from 'lucide-react'
+import { BookOpen, CalendarDays } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { ReadingView } from '../reading/ReadingView'
 import { RoutinePanel } from '../routine/RoutinePanel'
-import { WikiView } from '../wiki/WikiView'
 
-type LumeFeature = 'reading' | 'routine' | 'wiki'
+type LumeFeature = 'reading' | 'routine'
 const STORAGE_KEY = 'lume:last-feature'
 
 export function LumeView() {
   const [feature, setFeatureState] = useState<LumeFeature>(() => {
     const saved = globalThis.localStorage?.getItem(STORAGE_KEY)
-    return saved === 'routine' || saved === 'wiki' ? saved : 'reading'
+    return saved === 'routine' ? saved : 'reading'
   })
   const setFeature = (next: LumeFeature) => {
     setFeatureState(next)
@@ -22,7 +21,6 @@ export function LumeView() {
   const items: Array<{ id: LumeFeature; label: string; icon: typeof BookOpen }> = [
     { id: 'reading', label: '一起读书', icon: BookOpen },
     { id: 'routine', label: '今日日程', icon: CalendarDays },
-    { id: 'wiki', label: 'Wiki', icon: Library },
   ]
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--background)]">
@@ -43,7 +41,6 @@ export function LumeView() {
             <main className="mx-auto w-full max-w-[980px] px-5 py-7 lg:px-8"><RoutinePanel /></main>
           </ScrollArea>
         )}
-        {feature === 'wiki' && <WikiView />}
       </div>
     </div>
   )

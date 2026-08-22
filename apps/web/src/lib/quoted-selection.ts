@@ -51,7 +51,7 @@ function sanitizeQuotedText(value: string): string {
 /**
  * 把一条 QuotedSelection 序列化为 prepend 用的 XML 块。
  * - file 来源 → <quoted_file path="…">
- * - 其余（agent-history/wiki/reading）→ <quoted_context source label message_id role>
+ * - 其余（agent-history/reading）→ <quoted_context source label message_id role>
  */
 export function buildQuotedSelectionBlock(quotedSelection: QuotedSelection): string {
   const safeText = sanitizeQuotedText(quotedSelection.text)
@@ -70,7 +70,6 @@ export function buildQuotedSelectionBlock(quotedSelection: QuotedSelection): str
 
 function normalizeContextSourceType(value: string | undefined): QuotedSelectionSourceType {
   if (value === 'file') return 'file'
-  if (value === 'wiki') return 'wiki'
   if (value === 'reading') return 'reading'
   return 'agent-history'
 }

@@ -11,7 +11,7 @@ import { readPluginAuditEntries } from "../services/agent-runtime/plugins/plugin
 import { getEffectivePluginRuntimeConfig } from "../services/system/lume-config-service";
 import { createDefaultPluginMarketService } from "../services/plugins/plugin-market-service";
 import { createDefaultPluginBridgeService } from "../services/plugins/plugin-bridge-service";
-import { assertWikiPrivilegedCredential } from "../services/wiki/privileged-auth";
+import { assertPrivilegedCredential } from "../services/infra/privileged-auth";
 import { getPluginAuditPath } from "../services/infra/config-paths";
 import { createLogger } from "../services/infra/logger";
 import {
@@ -208,7 +208,7 @@ export function createPluginHandlers(
         params,
         PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS.PREPARE,
       );
-      assertWikiPrivilegedCredential(input.credential);
+      assertPrivilegedCredential(input.credential);
       return createDefaultPluginMarketService().preparePluginPackage(
         input.request,
       );
@@ -219,7 +219,7 @@ export function createPluginHandlers(
         params,
         PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS.FINALIZE,
       );
-      assertWikiPrivilegedCredential(input.credential);
+      assertPrivilegedCredential(input.credential);
       return createDefaultPluginMarketService().finalizePluginPackage(
         input.request,
       );
@@ -230,7 +230,7 @@ export function createPluginHandlers(
         params,
         PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS.REVOKE,
       );
-      assertWikiPrivilegedCredential(input.credential);
+      assertPrivilegedCredential(input.credential);
       return createDefaultPluginMarketService().revokePluginPackage(
         input.request,
       );
