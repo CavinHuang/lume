@@ -22,6 +22,11 @@ interface ConsumeRuntimeCoreQueryStreamInput {
    * onRunEnd(F3):projector 产出 run.end 终值时回调——LumeRunner 据此在异常
    * 路径跳过终值补发,保证同一 run 只有一个总线终值。 */
   lifecycle?: { threadId: string; sessionDir: string; runId: string; onRunEnd?: () => void };
+  /** Live 注入通道(#285):SDK 工具执行期直通的事件(task_progress 等)绕过
+   * 主流 generator,经此入口进入同一条投影链——projectLifecycle 单源折叠、
+   * 总线 update 相位照常持久折叠。注册时机:消费开始前由本函数回调一次,
+   * 传入 inject;主流结束后注入自动失效(投影泵已排空退出)。 */
+  onLiveInject?: (inject: (message: SDKMessage) => void) => void;
 }
 
 /**
@@ -32,7 +37,8 @@ interface ConsumeRuntimeCoreQueryStreamInput {
  */
 async function* teeLifecycleProjection(
   query: AsyncIterable<SDKMessage>,
-  target: { threadId: string; sessionDir: string; runId: string; onRunEnd?: () => void }
+  target: { threadId: string; sessionDir: string; runId: string; onRunEnd?: () => void },
+  onLiveInjectReady?: (inject: (message: SDKMessage) => void) => void
 ): AsyncGenerator<SDKMessage> {
   const bus = getThreadEventBus(target.sessionDir);
   const pending: SDKMessage[] = [];
@@ -64,6 +70,14 @@ async function* teeLifecycleProjection(
     wake = null;
     resolve?.();
   };
+  // Live 注入(#285):工具执行期直通事件与主流共用同一条投影链——projectLifecycle
+  // 单源折叠、总线 update 相位照常持久折叠。run 结束后迟到的进度事件直接丢弃
+  // (投影泵已排空,无消费者)。
+  onLiveInjectReady?.((message) => {
+    if (finished) return;
+    pending.push(message);
+    notifyProjected();
+  });
   const pump = (async () => {
     try {
       for await (const event of projectLifecycle(projected, { runId: target.runId })) {
@@ -129,10 +143,13 @@ export function normalizeRuntimeCoreQueryPermissionMode(
 export async function consumeRuntimeCoreQueryStream({
   query,
   emit,
-  lifecycle
+  lifecycle,
+  onLiveInject
 }: ConsumeRuntimeCoreQueryStreamInput) {
   const accumulator = createAgentStreamAccumulatorState();
-  const source = lifecycle ? teeLifecycleProjection(query, lifecycle) : query;
+  const source = lifecycle
+    ? teeLifecycleProjection(query, lifecycle, onLiveInject)
+    : query;
 
   for await (const message of source) {
     emit.onSdkMessage(message);
