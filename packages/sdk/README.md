@@ -10,7 +10,7 @@ Also available in **Go**: [open-agent-sdk-go](https://github.com/codeany-ai/open
 
 ## Get started
 
-The SDK does not ship built-in HTTP providers. The host injects an `LLMProvider` implementation (see `providers/types.ts` for the contract — `createMessage()` plus optional `countTokens()` / `createMessageStream()`):
+The SDK does not ship built-in HTTP providers. The host injects an `LLMProvider` implementation (see `providers/types.ts` for the contract — `createMessage()` plus optional `createMessageStream()`):
 
 ```typescript
 import { createAgent, type LLMProvider } from "@lume/agent-sdk";

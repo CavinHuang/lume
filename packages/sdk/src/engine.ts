@@ -1037,7 +1037,7 @@ export class QueryEngine {
       permission_mode: this.config.permissionMode || 'bypassPermissions',
       permissionMode: this.config.permissionMode || 'bypassPermissions',
       agents: this.config.agents ? Object.keys(this.config.agents) : [],
-      apiKeySource: this.config.initialization?.apiKeySource || (process.env.CODEANY_API_KEY ? 'env' : 'unknown'),
+      apiKeySource: this.config.initialization?.apiKeySource || 'unknown',
       slash_commands: this.config.initialization?.slashCommands || [],
       skills: this.config.initialization?.skills || [],
       plugins: this.config.initialization?.plugins || [],
