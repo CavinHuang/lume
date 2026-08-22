@@ -179,7 +179,7 @@ const hooks = createHookRegistry({
 });
 ```
 
-28 lifecycle events including `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Setup`, `SessionStart`, `SessionEnd`, `Stop`, `StopFailure`, `SubagentStart`, `SubagentStop`, `UserPromptSubmit`, `PermissionRequest`, `PermissionDenied`, `TaskCreated`, `TaskCompleted`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`, `CwdChanged`, `FileChanged`, `Notification`, `PreCompact`, `PostCompact`, `TeammateIdle`, `Elicitation`, `ElicitationResult`, and `InstructionsLoaded`.
+18 lifecycle events including `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Setup`, `SessionStart`, `SessionEnd`, `Stop`, `StopFailure`, `SubagentStart`, `SubagentStop`, `UserPromptSubmit`, `PermissionRequest`, `PermissionDenied`, `TaskCreated`, `TaskCompleted`, `ConfigChange`, `PreCompact`, and `PostCompact`.
 
 ### Subagents
 
@@ -231,13 +231,13 @@ The `sandbox` option currently provides application-level filesystem and network
 
 Plugins are **trusted code, not sandboxed content**. Understand the following before installing one:
 
-- **In-process execution.** A plugin's JS entry module is loaded with `import()` inside the host process (`packages/sdk/src/plugins/loader.ts`). The entry module runs with the full capabilities of the host — filesystem, network, environment variables, and Node APIs. There is no process isolation, no worker boundary, and no sandbox around it.
-- **Installation grants authority ahead of any gate.** The permission system (sensitive-capability approvals, permission hashes, tool allow/deny lists) governs *declared* capabilities such as command tools, MCP servers, and hooks. By the time any of those gates run, the entry module's code is already executing with host privileges.
+- **In-process execution.** A host-side plugin runtime may load a plugin's JS entry module with `import()` inside the host process. Such an entry module runs with the full capabilities of the host — filesystem, network, environment variables, and Node APIs. There is no process isolation, no worker boundary, and no sandbox around it. The SDK core itself does not execute plugin entry modules; it validates manifests and builds command-tool definitions only.
+- **Installation grants authority ahead of any gate.** The permission system (sensitive-capability approvals, permission hashes, tool allow/deny lists) governs *declared* capabilities such as command tools, MCP servers, and hooks. By the time any of those gates run, any entry-module code is already executing with host privileges.
 - **Installing a plugin is equivalent to granting it the host's full permissions.** Supply-chain risk for an installed plugin equals full compromise of the application embedding this SDK. Only install plugins from sources you trust.
 
 What the SDK does constrain:
 
-- **Load roots.** Plugins only load from the working directory or explicitly configured `pluginRoots`; manifest-declared entry modules are held to the same boundary.
+- **Command tools.** These run out-of-process with a minimal default environment, an optional OS-level process sandbox, a timeout, and a 1 MiB output cap — unlike entry modules, they are not given host privileges by default.
 - **Re-review on change.** A plugin's permissions hash covers its declared permissions and capability configuration (command tools including env/metadata/args order, hooks/MCP/LSP config file contents). Changing any of them flips the plugin back to needs-review before it loads again.
 - **Command tools.** These run out-of-process with a minimal default environment, an optional OS-level process sandbox, a timeout, and a 1 MiB output cap — unlike entry modules, they are not given host privileges by default.
 
@@ -286,7 +286,6 @@ What the SDK does constrain:
 | `query.setCwd(cwd)`              | Change working directory                              |
 | `query.getInitializationResult()`| Get supported commands, agents, models                |
 | `query.getContextUsage()`        | Get context usage breakdown                           |
-| `query.reloadPlugins()`          | Reload plugins from disk                              |
 | `query.rewindFiles(messageId)`   | Rewind file changes captured since a user message     |
 | `query.stopTask(taskId)`         | Stop a background task                                |
 

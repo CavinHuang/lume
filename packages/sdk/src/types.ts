@@ -1272,12 +1272,6 @@ export interface RewindFilesResult {
   deletions?: number
 }
 
-export interface ReloadPluginsResult {
-  commands: SlashCommand[]
-  agents: Array<{ name: string; description: string }>
-  plugins: Array<{ name: string; path: string; source?: string }>
-}
-
 export interface ListSessionsOptions {
   dir?: string
   limit?: number
@@ -1333,7 +1327,6 @@ export interface Query {
   setCwd(cwd: string): Promise<void>
   getInitializationResult(): Promise<InitializationResult>
   getContextUsage(): Promise<ContextUsageResult>
-  reloadPlugins(): Promise<ReloadPluginsResult>
   rewindFiles(userMessageId: string, dryRun?: boolean): Promise<RewindFilesResult>
   stopTask(taskId: string): Promise<void>
 }

@@ -18,13 +18,8 @@
  * - TaskCreated: task created
  * - TaskCompleted: task finished
  * - ConfigChange: settings changed
- * - CwdChanged: working directory changed
- * - FileChanged: file modified
- * - Notification: system notification
  */
 
-import { spawn } from 'child_process'
-import { resolveShellInvocation } from './utils/shell-invocation.js'
 import type {
   SDKHookProgressMessage,
   SDKHookResponseMessage,
@@ -51,17 +46,8 @@ export const HOOK_EVENTS = [
   'TaskCreated',
   'TaskCompleted',
   'ConfigChange',
-  'WorktreeCreate',
-  'WorktreeRemove',
-  'CwdChanged',
-  'FileChanged',
-  'Notification',
   'PreCompact',
   'PostCompact',
-  'TeammateIdle',
-  'Elicitation',
-  'ElicitationResult',
-  'InstructionsLoaded',
 ] as const
 
 export type HookEvent = typeof HOOK_EVENTS[number]
@@ -240,40 +226,6 @@ export class HookRegistry {
           } finally {
             clearTimeout(timeoutTimer)
           }
-        } else if (def.command) {
-          // Shell command handler
-          const shellResult = await executeShellHook(
-            def.command,
-            input,
-            def.timeout || 30000,
-          )
-          output = shellResult.output
-          if (shellResult.stdout || shellResult.stderr || shellResult.renderedOutput) {
-            events.push({
-              type: 'system',
-              subtype: 'hook_progress',
-              hook_id: hookId,
-              hook_name: hookName,
-              hook_event: event,
-              stdout: shellResult.stdout,
-              stderr: shellResult.stderr,
-              output: shellResult.renderedOutput,
-              session_id: input.sessionId || '',
-            })
-          }
-          events.push({
-            type: 'system',
-            subtype: 'hook_response',
-            hook_id: hookId,
-            hook_name: hookName,
-            hook_event: event,
-            output: shellResult.renderedOutput,
-            stdout: shellResult.stdout,
-            stderr: shellResult.stderr,
-            exit_code: shellResult.exitCode,
-            outcome: shellResult.exitCode === 0 ? 'success' : 'error',
-            session_id: input.sessionId || '',
-          })
         }
 
         if (output) {
@@ -331,82 +283,6 @@ export class HookRegistry {
   clear(): void {
     this.hooks.clear()
   }
-}
-
-/**
- * Execute a shell command as a hook.
- */
-async function executeShellHook(
-  command: string,
-  input: HookInput,
-  timeout: number,
-): Promise<{
-  output?: HookOutput
-  stdout: string
-  stderr: string
-  renderedOutput: string
-  exitCode?: number
-}> {
-  return new Promise((resolve) => {
-    const shell = resolveShellInvocation(command)
-    const proc = spawn(shell.command, shell.args, {
-      timeout,
-      env: {
-        ...process.env,
-        HOOK_EVENT: input.event,
-        HOOK_TOOL_NAME: input.toolName || '',
-        HOOK_SESSION_ID: input.sessionId || '',
-        HOOK_CWD: input.cwd || '',
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
-
-    // Send input as JSON on stdin
-    proc.stdin?.write(JSON.stringify(input))
-    proc.stdin?.end()
-
-    const chunks: Buffer[] = []
-    const stderrChunks: Buffer[] = []
-    proc.stdout?.on('data', (d: Buffer) => chunks.push(d))
-    proc.stderr?.on('data', (d: Buffer) => stderrChunks.push(d))
-
-    proc.on('close', (code) => {
-      const stdout = Buffer.concat(chunks).toString('utf-8').trim()
-      const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim()
-      const renderedOutput = [stdout, stderr].filter(Boolean).join('\n').trim()
-
-      try {
-        const output = stdout
-          ? (JSON.parse(stdout) as HookOutput)
-          : undefined
-        resolve({
-          output,
-          stdout,
-          stderr,
-          renderedOutput,
-          exitCode: code === null ? undefined : code,
-        })
-      } catch {
-        // Non-JSON output treated as message
-        resolve({
-          output: renderedOutput ? { message: renderedOutput } : undefined,
-          stdout,
-          stderr,
-          renderedOutput,
-          exitCode: code === null ? undefined : code,
-        })
-      }
-    })
-
-    proc.on('error', (err) =>
-      resolve({
-        stdout: '',
-        stderr: err.message,
-        renderedOutput: err.message,
-        exitCode: undefined,
-      }),
-    )
-  })
 }
 
 /**

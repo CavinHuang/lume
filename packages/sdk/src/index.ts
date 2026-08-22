@@ -217,14 +217,9 @@ export type {
 } from './mcp/manager.js'
 
 // --------------------------------------------------------------------------
-// Slash Commands
+// Filesystem Skills
 // --------------------------------------------------------------------------
 
-export {
-  loadCommandDefinitions,
-  commandDefinitionsToSlashCommands,
-} from './commands/fs-loader.js'
-export type { CommandDefinition } from './commands/types.js'
 export { loadFilesystemSkills } from './skills/fs-loader.js'
 
 // --------------------------------------------------------------------------
@@ -616,7 +611,6 @@ export type {
   InitializationResult,
   ContextUsageResult,
   RewindFilesResult,
-  ReloadPluginsResult,
   AskUserQuestion,
   QuestionOption,
   AskUserQuestionAnnotations,

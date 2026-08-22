@@ -14,7 +14,6 @@ import type {
   PermissionMode,
   Query as QueryHandle,
   QueryResult,
-  ReloadPluginsResult,
   RewindFilesResult,
   SDKMessage,
   SDKUserMessage,
@@ -54,10 +53,7 @@ import {
   type LoadedSettingsSource,
 } from './utils/settings.js'
 import { QueryController } from './query-controller.js'
-import { loadPlugins, type LoadedPlugin } from './plugins/loader.js'
 import { loadFilesystemSkills } from './skills/fs-loader.js'
-import { loadCommandDefinitions, commandDefinitionsToSlashCommands } from './commands/fs-loader.js'
-import type { CommandDefinition } from './commands/types.js'
 import type { FileCheckpoint, FileCheckpointState } from './utils/file-checkpoints.js'
 import { rewindCheckpoint } from './utils/file-checkpoints.js'
 import { getContextWindowSize } from './utils/tokens.js'
@@ -284,11 +280,8 @@ export class Agent {
   private runLocked = false
   private hookRegistry: HookRegistry
   private loadedSettings: LoadedSettingsSource[] = []
-  private loadedPlugins: LoadedPlugin[] = []
-  private pluginSkillNames = new Set<string>()
   private explicitSkillNames = new Set<string>()
   private fileSkillNames = new Set<string>()
-  private loadedCommands: CommandDefinition[] = []
   private fileCheckpointState: FileCheckpointState = {}
   private latestUserMessageId: string | undefined
   private lastContextUsage: ContextUsageResult | null = null
@@ -342,39 +335,6 @@ export class Agent {
         }
       }
     }
-
-    for (const plugin of this.loadedPlugins) {
-      if (!plugin.hooks) continue
-      const hookCount = Object.values(plugin.hooks).reduce((sum, defs) => sum + defs.length, 0)
-      console.debug(`[plugin:agent] registering hooks for "${plugin.name}"`, {
-        events: Object.keys(plugin.hooks),
-        totalHooks: hookCount,
-      });
-      this.hookRegistry.registerFromConfig(plugin.hooks)
-    }
-  }
-
-  private unregisterPluginSkills(): void {
-    for (const name of this.pluginSkillNames) {
-      this.skillRegistry.unregister(name)
-    }
-    this.pluginSkillNames.clear()
-  }
-
-  private registerPluginSkills(): void {
-    this.unregisterPluginSkills()
-    for (const plugin of this.loadedPlugins) {
-      if (plugin.lume?.hooksOnly) continue
-      const skills = plugin.skills || []
-      console.debug(`[plugin:agent] registering skills for "${plugin.name}"`, {
-        count: skills.length,
-        names: skills.map((s) => s.name),
-      });
-      for (const skill of skills) {
-        this.skillRegistry.register(skill)
-        this.pluginSkillNames.add(skill.name)
-      }
-    }
   }
 
   private unregisterExplicitSkills(): void {
@@ -412,30 +372,7 @@ export class Agent {
     }
   }
 
-  private getPluginAgents(): Record<string, NonNullable<AgentOptions['agents']>[string]> {
-    const merged: Record<string, NonNullable<AgentOptions['agents']>[string]> = {}
-    for (const plugin of this.loadedPlugins) {
-      Object.assign(merged, plugin.agents || {})
-    }
-    return merged
-  }
-
-  private getPluginTools(): ToolDefinition[] {
-    return this.loadedPlugins.flatMap((plugin) => {
-      if (plugin.lume?.hooksOnly) return []
-      return plugin.tools || []
-    })
-  }
-
-  private getPluginCommands(): CommandDefinition[] {
-    return this.loadedPlugins.flatMap((plugin) => {
-      if (plugin.lume?.hooksOnly) return []
-      return plugin.commands || []
-    })
-  }
-
   private buildBaseToolPool(options: AgentOptions = this.cfg): ToolDefinition[] {
-    const pluginTools = this.getPluginTools()
     const bindSkillRegistry = (tool: ToolDefinition) => tool.name === 'Skill'
       ? createSkillTool(this.skillRegistry)
       : tool
@@ -444,11 +381,11 @@ export class Agent {
     let pool: ToolDefinition[]
 
     if (!raw || (typeof raw === 'object' && !Array.isArray(raw) && 'type' in raw)) {
-      pool = [...baseTools, ...pluginTools]
+      pool = [...baseTools]
     } else if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'string') {
-      pool = filterTools([...baseTools, ...pluginTools], raw as string[])
+      pool = filterTools([...baseTools], raw as string[])
     } else {
-      pool = [...(raw as ToolDefinition[]).map(bindSkillRegistry), ...pluginTools]
+      pool = [...(raw as ToolDefinition[]).map(bindSkillRegistry)]
     }
 
     return filterTools(pool, undefined, options.disallowedTools)
@@ -588,35 +525,23 @@ export class Agent {
   }
 
   /**
-   * Reload state derived from cfg.cwd: resolved provider config, plugins,
-   * skills, commands, agents, and MCP connections. Runs from setup() and again
-   * after setCwd(). Must not rebuild cfg (runtime mutations like setModel or
-   * setPermissionMode live there) nor re-run the session resume/fork branch.
+   * Reload state derived from cfg.cwd: resolved provider config, skills, and
+   * agents. Runs from setup() and again after setCwd(). Must not rebuild cfg
+   * (runtime mutations like setModel or setPermissionMode live there) nor
+   * re-run the session resume/fork branch.
    */
   private async refreshCwdDependentState(): Promise<void> {
     const cwd = this.cfg.cwd || process.cwd()
     this.refreshResolvedConfig()
-    this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins, this.cfg.pluginRoots)
-    console.debug(`[plugin:agent] plugins loaded`, {
-      count: this.loadedPlugins.length,
-      names: this.loadedPlugins.map((p) => p.name),
-      hooksOnly: this.loadedPlugins.filter((p) => p.lume?.hooksOnly).map((p) => p.name),
-    });
-    this.registerPluginSkills()
     await this.registerFilesystemSkills({
       cwd,
       roots: this.cfg.skillsDirectories,
       shouldLoadSkill: this.cfg.shouldLoadFilesystemSkill,
     })
     this.registerExplicitSkills()
-    this.loadedCommands = [
-      ...(await loadCommandDefinitions(cwd)),
-      ...this.getPluginCommands(),
-    ]
     this.resetHookRegistry()
 
     const mergedAgents = {
-      ...this.getPluginAgents(),
       ...(this.cfg.agents || {}),
     }
     if (Object.keys(mergedAgents).length > 0) {
@@ -947,7 +872,6 @@ export class Agent {
       includePartialMessages: opts.includePartialMessages ?? false,
       abortSignal: this.abortCtrl.signal,
       agents: {
-        ...this.getPluginAgents(),
         ...(opts.agents || {}),
       },
       hookRegistry: this.hookRegistry,
@@ -961,11 +885,6 @@ export class Agent {
       initialization: {
         slashCommands: this.getInitializationCommands().map((command) => command.name),
         skills: this.skillRegistry.getUserInvocable().map((skill) => skill.name),
-        plugins: this.loadedPlugins.map((plugin) => ({
-          name: plugin.name,
-          path: plugin.path,
-          source: plugin.source,
-        })),
         outputStyle: opts.outputStyle || 'text',
         claudeCodeVersion: 'open-agent-sdk/0.2.0',
         apiKeySource: 'configured',
@@ -1109,7 +1028,6 @@ export class Agent {
         setCwd: (cwd) => this.setCwd(cwd),
         getInitializationResult: () => this.getInitializationResult(),
         getContextUsage: () => this.getContextUsage(),
-        reloadPlugins: () => this.reloadPlugins(),
         rewindFiles: (userMessageId, dryRun) => this.rewindFiles(userMessageId, dryRun),
         stopTask: (taskId) => this.stopTask(taskId),
       },
@@ -1291,9 +1209,8 @@ export class Agent {
       { name: '/mcp', description: 'Inspect MCP server status' },
       { name: '/reload-plugins', description: 'Reload plugins from disk' },
     ]
-    const fileAndPluginCommands = commandDefinitionsToSlashCommands(this.loadedCommands)
     const byName = new Map<string, SlashCommand>()
-    for (const command of [...builtins, ...fileAndPluginCommands]) {
+    for (const command of builtins) {
       byName.set(command.name, {
         name: command.name,
         description: command.description,
@@ -1317,7 +1234,6 @@ export class Agent {
     return {
       commands,
       agents: Object.entries({
-        ...this.getPluginAgents(),
         ...(this.cfg.agents || {}),
       }).map(([name, agent]) => ({
         name,
@@ -1332,11 +1248,6 @@ export class Agent {
       },
       slash_commands: commands.map((command) => command.name),
       skills: this.skillRegistry.getUserInvocable().map((skill) => skill.name),
-      plugins: this.loadedPlugins.map((plugin) => ({
-        name: plugin.name,
-        path: plugin.path,
-        source: plugin.source,
-      })),
     }
   }
 
@@ -1399,46 +1310,6 @@ export class Agent {
     }
   }
 
-  async reloadPlugins(): Promise<ReloadPluginsResult> {
-    await this.setupDone
-
-    this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins, this.cfg.pluginRoots)
-    this.registerPluginSkills()
-    await this.registerFilesystemSkills({
-      cwd: this.cfg.cwd || process.cwd(),
-      roots: this.cfg.skillsDirectories,
-      shouldLoadSkill: this.cfg.shouldLoadFilesystemSkill,
-    })
-    this.registerExplicitSkills()
-    this.loadedCommands = [
-      ...(await loadCommandDefinitions(this.cfg.cwd || process.cwd())),
-      ...this.getPluginCommands(),
-    ]
-    this.resetHookRegistry()
-    await this.rebuildToolPool()
-
-    const mergedAgents = {
-      ...this.getPluginAgents(),
-      ...(this.cfg.agents || {}),
-    }
-    if (Object.keys(mergedAgents).length > 0) {
-      registerAgents(mergedAgents)
-    }
-
-    return {
-      commands: (await this.getInitializationResult()).commands,
-      agents: Object.entries(mergedAgents).map(([name, agent]) => ({
-        name,
-        description: agent.description,
-      })),
-      plugins: this.loadedPlugins.map((plugin) => ({
-        name: plugin.name,
-        path: plugin.path,
-        source: plugin.source,
-      })),
-    }
-  }
-
   async rewindFiles(
     userMessageId: string,
     dryRun = false,
@@ -1482,7 +1353,6 @@ export class Agent {
 
     this.unregisterFileSkills()
     this.unregisterExplicitSkills()
-    this.unregisterPluginSkills()
   }
 }
 

@@ -14,7 +14,6 @@ type QueryControllerMethods = {
   setCwd: Query['setCwd']
   getInitializationResult: Query['getInitializationResult']
   getContextUsage: Query['getContextUsage']
-  reloadPlugins: Query['reloadPlugins']
   rewindFiles: Query['rewindFiles']
   stopTask: Query['stopTask']
 }
@@ -162,10 +161,6 @@ export class QueryController implements Query {
 
   async getContextUsage(): ReturnType<Query['getContextUsage']> {
     return this.methods.getContextUsage()
-  }
-
-  async reloadPlugins(): ReturnType<Query['reloadPlugins']> {
-    return this.methods.reloadPlugins()
   }
 
   async rewindFiles(
