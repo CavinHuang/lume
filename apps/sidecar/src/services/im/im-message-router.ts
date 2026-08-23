@@ -68,7 +68,7 @@ export interface ImMessageRouterDeps {
 type ImAgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   onMessageAppended?: (event: AgentMessageAppendedEvent) => void;
-  onComplete: (payload?: { reason?: "max_turns" }) => void;
+  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" }) => void;
   onError: (error: string) => void;
   onTitleUpdated: (title: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;

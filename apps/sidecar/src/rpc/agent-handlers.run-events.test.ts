@@ -7,7 +7,7 @@ import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tra
 import { resetPlanningTodoStoreForTests } from "../services/planning/planning-todo-store";
 
 const appendedInputs: unknown[] = [];
-let mockCompletePayload: { reason?: "max_turns" } | undefined;
+let mockCompletePayload: { reason?: "max_turns" | "repeat_guard" } | undefined;
 const mockRuntimeEvents: unknown[] = [
   {
     id: "runtime-1",
@@ -29,7 +29,7 @@ const mockRuntimeEvents: unknown[] = [
 mock.module("../services/agent/agent-service", () => ({
   appendAgentMessage: (input: unknown, emit: {
     onRuntimeEvent?: (event: unknown) => void;
-    onComplete: (payload?: { reason?: "max_turns" }) => void;
+    onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" }) => void;
   }, options?: { onExecutionStarted?: () => void }) => {
     appendedInputs.push(input);
     options?.onExecutionStarted?.();

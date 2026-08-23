@@ -79,6 +79,46 @@ describe("runtime-core run loop", () => {
     });
   });
 
+  test("#392:repeat guard 硬停映射为带标记的 turn_limited 而非 errored", async () => {
+    const result = await consumeRuntimeCoreQueryStream({
+      query: stream([{
+        type: "result",
+        subtype: "error_completion_guard",
+        is_error: true,
+        errors: ['Agent stopped after retrying the unchanged "bash" call despite repeat-guard feedback.'],
+        errorCode: "repeated_tool_call"
+      } as SDKMessage]),
+      emit: {
+        onSdkMessage: () => {}
+      }
+    });
+
+    expect(result).toEqual({
+      status: "turn_limited",
+      errorMessage: 'Agent stopped after retrying the unchanged "bash" call despite repeat-guard feedback.',
+      terminationReason: "repeat_guard"
+    });
+  });
+
+  test("#392:宿主自有 completionGuard stop(无 errorCode)保持 errored", async () => {
+    const result = await consumeRuntimeCoreQueryStream({
+      query: stream([{
+        type: "result",
+        subtype: "error_completion_guard",
+        is_error: true,
+        errors: ["host policy stop"]
+      } as SDKMessage]),
+      emit: {
+        onSdkMessage: () => {}
+      }
+    });
+
+    expect(result).toEqual({
+      status: "errored",
+      errorMessage: "host policy stop"
+    });
+  });
+
   test("rejects usage-only streams without renderable output", async () => {
     const result = await consumeRuntimeCoreQueryStream({
       query: stream([{
