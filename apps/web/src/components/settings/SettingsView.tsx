@@ -113,13 +113,13 @@ export function SettingsView() {
               desc="快捷键配置会在后续版本回到这里，自动化入口已移到侧边栏。"
             />
           )}
-          {tab === 'integrations' && (
+          {tab === 'integrations' && <McpSettings />}
+          {tab === 'im-integrations' && (
             <>
               <ConnectorSettings />
-              <McpSettings />
+              <ImSettings />
             </>
           )}
-          {tab === 'im-integrations' && <ImSettings />}
           {tab === 'web-search' && <WebSearchSettings />}
           {tab === 'updates' && <VersionUpdateSettings />}
           {tab === 'data' && <DataManagementSettings />}

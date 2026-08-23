@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { toast } from 'sonner'
-import { ExternalLink, Loader2, Mail } from 'lucide-react'
+import { ExternalLink, Loader2, Mail, RefreshCw } from 'lucide-react'
 import type { ConnectorSetupField, ConnectorSetupWithStatus } from '@lume/shared'
 import {
   disconnectConnector,
@@ -16,14 +16,47 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
-/** 连接器设置区:卡片完全由 provider definition 下发的向导描述渲染。 */
+/** 状态色与 ImSettings 的 tone 体系一致。 */
+const statusTone: Record<'connected' | 'authorizing' | 'error' | 'idle', string> = {
+  connected: 'border-[color:color-mix(in_oklab,var(--lume-success)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-success)_8%,var(--surface-1))] text-[var(--lume-success)]',
+  authorizing: 'border-[color:color-mix(in_oklab,var(--lume-warning)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-warning)_8%,var(--surface-1))] text-[var(--lume-warning)]',
+  error: 'border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))] text-[var(--lume-danger)]',
+  idle: 'border-[var(--border)] text-[var(--text-2)]',
+}
+
+type ConnectorTone = keyof typeof statusTone
+
+function toneFor(setup: ConnectorSetupWithStatus): ConnectorTone {
+  if (setup.lastError) return 'error'
+  if (setup.authorizing) return 'authorizing'
+  if (setup.connected) return 'connected'
+  return 'idle'
+}
+
+const TONE_LABEL: Record<ConnectorTone, string> = {
+  connected: '已连接',
+  authorizing: '授权中…',
+  error: '异常',
+  idle: '未连接',
+}
+
+/** 邮箱连接器设置区:卡片完全由 provider definition 下发的向导描述渲染,布局对齐 IM 通道面板。 */
 export function ConnectorSettings() {
   const [setups, setSetups] = React.useState<ConnectorSetupWithStatus[]>([])
+  const [loadError, setLoadError] = React.useState<string | null>(null)
+  const [loading, setLoading] = React.useState(true)
 
   const refresh = React.useCallback(() => {
+    setLoading(true)
     void getConnectorSetups()
-      .then(setSetups)
-      .catch(() => {})
+      .then((next) => {
+        setSetups(next)
+        setLoadError(null)
+      })
+      .catch((error) => {
+        setLoadError(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => setLoading(false))
   }, [])
 
   React.useEffect(() => {
@@ -31,11 +64,42 @@ export function ConnectorSettings() {
   }, [refresh])
 
   return (
-    <>
-      {setups.map((setup) => (
-        <ConnectorCard key={setup.service} setup={setup} onChanged={refresh} />
-      ))}
-    </>
+    <section className="lume-panel">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex size-8 items-center justify-center rounded-[8px] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--brand)]">
+            <Mail size={16} />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-[14px] font-semibold text-[var(--text-1)]">邮箱连接器</h3>
+            <p className="text-[12px] text-[var(--text-3)]">
+              {loadError ? '加载失败' : `${setups.filter((setup) => setup.connected).length}/${setups.length} 个已连接`}
+            </p>
+          </div>
+        </div>
+        <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
+          {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          刷新
+        </Button>
+      </div>
+
+      <div className="p-4">
+        <div className="space-y-2">
+          {loading ? (
+            <div className="flex h-28 items-center justify-center text-[13px] text-[var(--text-3)]">
+              <Loader2 className="mr-2 size-4 animate-spin" />
+              加载中
+            </div>
+          ) : loadError ? (
+            <div className="lume-subpanel border-dashed p-6 text-center text-[13px] text-[var(--lume-danger)]">
+              连接器加载失败:{loadError}
+            </div>
+          ) : setups.map((setup) => (
+            <ConnectorCard key={setup.service} setup={setup} onChanged={refresh} />
+          ))}
+        </div>
+      </div>
+    </section>
   )
 }
 
@@ -82,15 +146,12 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
         setStatus((prev) => ({ ...prev, authorizing: true, lastError: undefined }))
       } else {
         // custom 型:保存即触发服务端连接测试,失败直接抛错
-        setStatus({ ...setup, connected: true })
         try {
           await saveConnectorCredential({ service: setup.service, values: trimmed })
-        } catch (error) {
-          setStatus(setup)
-          throw error
+        } finally {
+          setValues({})
         }
       }
-      setValues({})
       onChanged()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '保存失败')
@@ -112,56 +173,61 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
     }
   }
 
+  const tone = toneFor(status)
+
   return (
-    <section className="lume-panel p-4 mb-4">
-      <header className="flex items-center gap-2">
-        <Mail className="size-4 text-[var(--text-2)]" />
-        <h3 className="text-body font-medium text-[var(--text-1)]">{setup.displayName}</h3>
-        {status.connected ? (
-          <Badge variant="outline" className="text-caption">{status.accountLabel ?? '已连接'}</Badge>
-        ) : status.authorizing ? (
-          <Badge variant="outline" className="text-caption">授权中…</Badge>
-        ) : null}
-      </header>
+    <div className="lume-subpanel p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-[13px] font-semibold text-[var(--text-1)]">{status.displayName}</span>
+          {status.accountLabel && status.connected ? (
+            <span className="truncate text-[12px] text-[var(--text-3)]">{status.accountLabel}</span>
+          ) : null}
+        </div>
+        <Badge variant="outline" className={`shrink-0 text-[12px] ${statusTone[tone]}`}>{TONE_LABEL[tone]}</Badge>
+      </div>
 
       {/* 配置指引:OAuth 型渲染注册步骤,custom 型由字段 description 承载 */}
-      {setup.clientSetup ? (
-        <ol className="mt-2 space-y-1 text-caption leading-5 text-[var(--text-2)] list-decimal pl-4">
-          {setup.clientSetup.steps.map((step, index) => (
-            <li key={index}>{step}</li>
-          ))}
-        </ol>
-      ) : null}
-      {!setup.clientSetup && !status.connected
-        ? setup.fields.map((field) => (
-            <p key={field.key} className="mt-2 text-caption leading-5 text-[var(--text-2)]">{field.description}</p>
-          ))
-        : null}
-      {setup.clientSetup?.docsUrl ? (
-        <button
-          type="button"
-          className="mt-1 inline-flex items-center gap-0.5 text-caption underline text-[var(--text-2)]"
-          onClick={() => void openExternal(setup.clientSetup!.docsUrl!)}
-        >
-          打开配置页面 <ExternalLink className="size-3" />
-        </button>
+      {!status.connected ? (
+        <>
+          {status.clientSetup ? (
+            <ol className="mt-2 space-y-0.5 pl-4 text-[12px] leading-5 text-[var(--text-3)] list-decimal">
+              {status.clientSetup.steps.map((step, index) => (
+                <li key={index}>{step}</li>
+              ))}
+            </ol>
+          ) : (
+            status.fields.map((field) => (
+              <p key={field.key} className="mt-1.5 text-[12px] leading-5 text-[var(--text-3)]">{field.description}</p>
+            ))
+          )}
+          {status.clientSetup?.docsUrl ? (
+            <button
+              type="button"
+              className="mt-1 inline-flex items-center gap-0.5 text-[12px] underline text-[var(--text-3)] hover:text-[var(--text-2)]"
+              onClick={() => void openExternal(status.clientSetup!.docsUrl!)}
+            >
+              打开配置页面 <ExternalLink className="size-3" />
+            </button>
+          ) : null}
+        </>
       ) : null}
 
       {status.lastError ? (
-        <p className="mt-2 text-caption text-[var(--lume-danger)]">{status.lastError}</p>
+        <p className="mt-2 text-[12px] text-[var(--lume-danger)]">{status.lastError}</p>
       ) : null}
 
       {status.connected ? (
-        <footer className="mt-3">
+        <footer className="mt-2.5 flex items-center gap-2">
           <Button size="sm" variant="outline" disabled={busy} onClick={() => void handleDisconnect()}>
             断开连接
           </Button>
         </footer>
       ) : (
-        <div className="mt-3 grid gap-3 max-w-md">
+        <div className="mt-2.5 grid gap-2.5 max-w-md">
           {formFields.map((field) => (
-            <div key={field.key} className="grid gap-1.5">
-              <Label htmlFor={`${setup.service}-${field.key}`} className="text-caption">{field.label}</Label>
+            <div key={field.key} className="grid gap-1">
+              <Label htmlFor={`${setup.service}-${field.key}`} className="text-[12px]">{field.label}</Label>
               <Input
                 id={`${setup.service}-${field.key}`}
                 type={field.inputType === 'password' ? 'password' : 'text'}
@@ -174,13 +240,11 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
           <div>
             <Button size="sm" disabled={busy || !formComplete} onClick={() => void handleSave()}>
               {busy ? <Loader2 className="size-4 animate-spin" /> : null}
-              {setup.authKind === 'oauth2'
-                ? '保存并发起授权'
-                : '连接并验证'}
+              {setup.authKind === 'oauth2' ? '保存并发起授权' : '连接并验证'}
             </Button>
           </div>
         </div>
       )}
-    </section>
+    </div>
   )
 }
