@@ -444,6 +444,7 @@ export function ImSettings() {
       </div>
       )}
 
+      {!collapsed && (
       <div className="border-t border-[var(--border)] p-4">
         <div className="mb-2 flex items-baseline gap-2">
           <p className="text-[13px] font-semibold text-[var(--text-1)]">企业 CLI 能力</p>
@@ -457,6 +458,7 @@ export function ImSettings() {
             return (
               <div key={provider} className="lume-subpanel flex items-center justify-between gap-3 px-3 py-2.5">
                 <div className="flex min-w-0 items-center gap-2">
+                  <ProviderBrandIcon provider={provider} size={16} />
                   <span className="text-[13px] font-medium text-[var(--text-1)]">{IM_PROVIDER_LABELS[provider]}</span>
                   <Badge variant="outline" className={cn('rounded-[6px]', toneClassName[badge.tone])}>{badge.label}</Badge>
                   {session?.profile && <span className="truncate text-[12px] text-[var(--text-3)]">{session.profile}</span>}
@@ -477,6 +479,7 @@ export function ImSettings() {
           })}
         </div>
       </div>
+      )}
 
       <Dialog open={addDialogOpen} onOpenChange={handleAddDialogOpenChange}>
         <DialogContent className="sm:max-w-[520px]">

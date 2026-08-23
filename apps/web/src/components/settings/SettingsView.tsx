@@ -115,10 +115,10 @@ export function SettingsView() {
           )}
           {tab === 'integrations' && <McpSettings />}
           {tab === 'im-integrations' && (
-            <>
+            <div className="space-y-4">
               <ConnectorSettings />
               <ImSettings />
-            </>
+            </div>
           )}
           {tab === 'web-search' && <WebSearchSettings />}
           {tab === 'updates' && <VersionUpdateSettings />}
