@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { clearSkills, formatSkillsForPrompt, getSkill, hasSkill, registerSkill } from "./registry";
+import { SkillRegistry, clearSkills, formatSkillsForPrompt, getSkill, hasSkill, registerSkill, unregisterSkill } from "./registry";
 
 afterEach(() => {
   clearSkills();
@@ -135,4 +135,28 @@ test("renderSkillCatalog drops entries beyond the character budget", () => {
 test("renderSkillCatalog includes display-name alias when present", () => {
   const catalog = renderSkillCatalog([def("code-review", "Review code", { aliases: ["代码审查"] })]);
   expect(catalog).toContain("- code-review (代码审查): Review code");
+});
+
+test("global function API shares the singleton store (#389 单轨)", () => {
+  registerSkill({
+    name: "shared-probe",
+    description: "Probe",
+    getPrompt: async () => [{ type: "text", text: "x" }]
+  });
+
+  expect(getSkill("SHARED-PROBE")?.name).toBe("shared-probe");
+  expect(unregisterSkill("lume-ws:shared-probe")).toBe(true);
+  expect(hasSkill("shared-probe")).toBe(false);
+});
+
+test("SkillRegistry instances stay isolated from the global singleton", () => {
+  registerSkill({
+    name: "only-global",
+    description: "Global only",
+    getPrompt: async () => [{ type: "text", text: "x" }]
+  });
+
+  const isolated = new SkillRegistry();
+  expect(isolated.get("only-global")).toBeUndefined();
+  expect(hasSkill("only-global")).toBe(true);
 });
