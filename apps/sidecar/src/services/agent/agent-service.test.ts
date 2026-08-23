@@ -328,7 +328,7 @@ mock.module("../agent-runtime/runtime-core/attempt", () => ({
       } as SDKMessage);
       emit.onSdkMessage({
         type: "result",
-        subtype: "error",
+        subtype: "error_during_execution",
         error: "network failed",
       } as SDKMessage);
       emit.onError("network failed");
@@ -981,6 +981,82 @@ describe("agent-service", () => {
     expect(modelMessage).not.toContain("请继续完成上一轮未完成的原始任务");
     expect((runAgentRuntimeCalls.at(-1) as { runtime?: { visibleUserMessage?: string } })?.runtime?.visibleUserMessage)
       .toBe("继续");
+  });
+
+  test("sendAgentMessage 对 repeat guard 硬停注入 repeat_guard 恢复上下文", async () => {
+    const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
+    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runner/run-state-store");
+    const thread = createAgentThread("repeat guard continue", "channel-test");
+    const sessionDir = getRuntimeCoreSessionDir(thread.id);
+    await createFileBackedLumeRunStateStore(sessionDir).create({
+      version: 1,
+      runId: "run-repeat-guard",
+      threadId: thread.id,
+      rootAgentId: "runtime-core",
+      currentAgentId: "runtime-core",
+      status: "completed",
+      currentStep: {
+        id: "step-finalize",
+        type: "finalize",
+        status: "completed",
+        startedAt: "2026-08-23T00:00:00.000Z",
+        endedAt: "2026-08-23T00:00:00.000Z"
+      },
+      input: {
+        userMessage: "original task",
+        permissionMode: "default"
+      },
+      generatedItems: [{
+        type: "system_event",
+        id: "turn-limited",
+        name: "turn_limited",
+        payload: {
+          reason: 'Agent stopped after retrying the unchanged "bash" call despite repeat-guard feedback.',
+          terminationReason: "repeat_guard"
+        },
+        createdAt: "2026-08-23T00:00:00.000Z"
+      }],
+      pendingInterruptions: [],
+      approvals: {
+        alwaysAllowedTools: []
+      },
+      traceId: "trace-1",
+      model: {
+        provider: "provider",
+        modelId: "model-test"
+      },
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0
+      },
+      createdAt: "2026-08-23T00:00:00.000Z",
+      updatedAt: "2026-08-23T00:00:00.000Z",
+      completedAt: "2026-08-23T00:00:00.000Z"
+    });
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "换个方式重试",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    expect(getAgentThreadMessages(thread.id)[0]?.content).toBe("换个方式重试");
+    const modelMessage = (runAgentRuntimeCalls.at(-1) as { input?: { userMessage?: string } })?.input?.userMessage ?? "";
+    expect(modelMessage).toContain('<runtime-recovery-state reason="repeat_guard">');
+    expect(modelMessage).toContain("重复执行相同操作被保护机制停止");
+    expect(modelMessage).not.toContain('reason="turn_limit"');
+    expect(modelMessage.endsWith("换个方式重试")).toBeTrue();
   });
 
   test("失败运行不应把临时 assistant 结果写回会话上下文", async () => {

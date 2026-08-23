@@ -4,8 +4,10 @@
 
 export * from "./runtime";
 export * from "./channel";
+export * from "./file-ref";
 export * from "./agent";
 export * from "./agent-events";
+export * from "./sdk-protocol";
 export * from "./mcp";
 export * from "./agent-roles";
 export * from "./agent-loop";

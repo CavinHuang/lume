@@ -1312,10 +1312,7 @@ describe("QueryEngine context controller", () => {
     });
 
     const iterator = engine.submitMessage("run");
-    expect((await iterator.next()).value).toMatchObject({
-      type: "system",
-      subtype: "session_state_changed"
-    });
+    // session_state_changed was retired (#413): init is now the first event.
     expect((await iterator.next()).value).toMatchObject({
       type: "system",
       subtype: "init"
@@ -3074,6 +3071,34 @@ describe("QueryEngine getContextUsage", () => {
     engine.messages.push({ role: "user", content: "go" })
 
     expect(engine.getContextUsage().maxTokens).toBe(12345)
+  })
+
+  test("tool schema token estimate includes inputSchema (#389)", () => {
+    const buildEngine = (inputSchema: Record<string, unknown>) =>
+      new QueryEngine({
+        cwd: process.cwd(),
+        model: "test-model",
+        provider: new StaticProvider([]),
+        tools: [{ ...dummyTool, name: "Bash", inputSchema }],
+        systemPrompt: "test",
+        maxTurns: 1,
+        maxTokens: 100000,
+      })
+
+    const bigSchemaUsage = buildEngine({
+      type: "object",
+      properties: Object.fromEntries(
+        Array.from({ length: 40 }, (_, i) => [`property${i}`, { type: "string" }]),
+      ),
+    }).getContextUsage()
+    const smallSchemaUsage = buildEngine({ type: "object", properties: {} }).getContextUsage()
+
+    const toolsTokens = (usage: ReturnType<QueryEngine["getContextUsage"]>) =>
+      usage.gridRows?.flatMap((row) => row).find((cell) => cell.categoryName === "tools")?.tokens ?? 0
+
+    // 口径与 getDeferredToolTokenCount 一致：schema 变大必须推高估算，
+    // 不依赖 native 计数是否可用（双态稳健）。
+    expect(toolsTokens(bigSchemaUsage)).toBeGreaterThan(toolsTokens(smallSchemaUsage))
   })
 });
 

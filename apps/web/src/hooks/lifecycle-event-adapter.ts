@@ -412,17 +412,19 @@ function adaptRunEnd(
     }
   }
   // 防护性终止(error_completion_guard):SDK 内部重复调用熔断与宿主自有
-  // completionGuard stop 共用该 subtype。engine 的 errors[0] 文案不进 projector
-  // detail,这里映射为固定中文文案,避免向用户渲染字面量枚举。
+  // completionGuard stop 共用该 subtype,#472 起靠 projector 透传的 errorCode
+  // 分流文案;无码(旧事件)回落 repeat-guard 文案。
   if (detail.stopReason?.includes('completion_guard')) {
+    const guardCopy = detail.errorCode === 'verification_inconclusive'
+      ? { code: 'verification_inconclusive', message: '验证结果无法确认，已由保护机制停止；当前进度已保存。' }
+      : detail.errorCode === 'verification_failed_after_repair'
+        ? { code: 'verification_failed_after_repair', message: '验证在自动修复后仍未通过，已由保护机制停止；当前进度已保存。' }
+        : { code: 'repeated_tool_call', message: '本轮检测到重复执行相同操作，已由保护机制停止；当前进度已保存。' }
     return {
       id: `lifecycle:${envelope.seq}:run.failed`,
       type: 'run.failed',
       ...base,
-      error: {
-        code: 'repeated_tool_call',
-        message: '本轮检测到重复执行相同操作，已由保护机制停止；当前进度已保存。',
-      },
+      error: guardCopy,
     }
   }
   if (detail.isError) {

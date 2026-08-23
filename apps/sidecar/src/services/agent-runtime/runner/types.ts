@@ -9,7 +9,7 @@ import type { LumeRuntimeEvent } from "@lume/shared";
 export interface AgentRuntimeEmitter {
   onSdkMessage: (message: SDKMessage) => void;
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
-  onComplete: (payload?: { reason?: "max_turns" }) => void;
+  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" }) => void;
   onError: (error: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   onBrowserAuthRequest: (request: AgentBrowserAuthRequest) => void;
@@ -23,6 +23,10 @@ export type AgentRuntimeRunStatus = "completed" | "aborted" | "errored" | "turn_
 export interface AgentRuntimeRunResult {
   status: AgentRuntimeRunStatus;
   errorMessage?: string;
+  /** turn_limited 收场的细分标记：SDK repeat guard 硬停（repeated_tool_call）
+   * 映射为带标记的 turn_limited 而非新增状态枚举——恢复上下文与 onComplete
+   * reason 据此区分文案，其余状态消费者不受影响。 */
+  terminationReason?: "repeat_guard";
   verificationStatus?: "not_required" | "unverified" | "verified" | "failed";
   codingReport?: RuntimeCodingReport;
 }

@@ -163,6 +163,17 @@ export async function consumeRuntimeCoreQueryStream({
           errorMessage: errorMessage || "Agent SDK 达到最大回合数，本轮需要继续执行。"
         };
       }
+      // #392:SDK 内部 repeat guard 硬停（error_completion_guard + errorCode
+      // repeated_tool_call）映射为带标记的 turn_limited 而非泛化 errored——
+      // 进度照 turn_limit 语义持久化，下条消息可注入恢复上下文；宿主自有
+      // completionGuard stop 同样带结构化 errorCode，靠取值区分，保持 errored 不变。
+      if (message.subtype === "error_completion_guard" && message.errorCode === "repeated_tool_call") {
+        return {
+          status: "turn_limited" as const,
+          errorMessage: errorMessage || "Agent 因重复执行相同操作被保护机制停止。",
+          terminationReason: "repeat_guard" as const
+        };
+      }
       return {
         status: "errored" as const,
         errorMessage: errorMessage || "Agent SDK 执行失败"

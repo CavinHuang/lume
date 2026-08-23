@@ -30,8 +30,13 @@ function getAutoToolSearchPercentage(): number {
   return Number.isNaN(parsed) ? 10 : Math.max(0, Math.min(100, parsed))
 }
 
+/** 单工具 token 口径：name + description + inputSchema 全算（#389）。 */
+export function estimateToolTokens(tool: ToolDefinition): number {
+  return estimateTokens(tool.name) + estimateTokens(tool.description) + estimateTokens(JSON.stringify(tool.inputSchema))
+}
+
 export function getDeferredToolTokenCount(tools: ToolDefinition[]): number {
-  return tools.reduce((total, tool) => total + estimateTokens(tool.name) + estimateTokens(tool.description) + estimateTokens(JSON.stringify(tool.inputSchema)), 0)
+  return tools.reduce((total, tool) => total + estimateToolTokens(tool), 0)
 }
 
 export function shouldEnableAutomaticToolSearch(tools: ToolDefinition[], model: string): boolean {

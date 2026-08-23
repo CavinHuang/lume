@@ -3,6 +3,7 @@ import { existsSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import type { AgentSavedFile, AgentSendInput, AgentSubmissionReceipt, AgentThreadMessageDispatchResult } from "@lume/shared";
+import { stableSerialize } from "@lume/shared";
 import { getConfigDir } from "../infra/config-paths";
 import { writeLogRecord } from "../infra/logger";
 
@@ -440,19 +441,7 @@ export function hashAgentSubmission(input: AgentSendInput): string {
     workspaceId: input.workspaceId,
     messageMetadata: input.messageMetadata,
   };
-  return createHash("sha256").update(stableStringify(payload)).digest("hex");
-}
-
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .filter(([, item]) => item !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
+  return createHash("sha256").update(stableSerialize(payload)).digest("hex");
 }
 
 function rowToReceipt(row: SubmissionRow): AgentSubmissionReceipt {
