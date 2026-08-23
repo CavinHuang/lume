@@ -523,6 +523,9 @@ export type {
   SDKToolUseSummaryMessage,
   SDKLocalCommandOutputMessage,
   SDKElicitationCompleteMessage,
+  SDKContextCompactionProgressMessage,
+  SDKMemorySavedMessage,
+  SDKRunAbortedMessage,
 
   // Tool types
   ToolDefinition,
