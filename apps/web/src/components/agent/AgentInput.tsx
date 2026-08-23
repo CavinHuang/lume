@@ -776,6 +776,7 @@ export function AgentInput({
   const voiceDictation = useVoiceDictation({
     onCommit: handleVoiceDictationCommit,
     onOpenSettings: handleOpenVoiceDictationSettings,
+    respondsToGlobalToggle: true,
   })
 
   // 录音期间 Esc 取消本次听写（capture 拦截，避免编辑器/弹层先消费按键）。

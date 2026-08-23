@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSetAtom } from 'jotai'
-import { Check, ChevronRight, Pencil } from 'lucide-react'
+import { Check, ChevronRight, Mic, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { agentPendingInteractiveAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
@@ -8,6 +8,7 @@ import { AGENT_IPC_CHANNELS, type AgentAskUserQuestionRequest } from '@lume/shar
 import { removePendingAskUserQuestion } from '@/hooks/pending-interactive-state'
 import { getSubagentDisplayLabel } from './subagent-label'
 import { InteractiveOverlayFrame, shouldSubmitInteractiveOverlayOnEnter } from './InteractiveOverlayFrame'
+import { useVoiceDictation } from '@/components/voice-dictation/use-voice-dictation'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -81,6 +82,10 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
     setCustomAnswer('')
     select(activeQuestion.question, answer)
   }
+  // 自定义回答支持口述：听写结果追加到输入框，与手动输入同路径提交。
+  const voiceDictation = useVoiceDictation({
+    onCommit: (text) => setCustomAnswer((current) => (current && !/\s$/u.test(current) ? `${current} ${text}` : current + text)),
+  })
 
   useEffect(() => {
     if (hidden || typeof window === 'undefined') return
@@ -186,11 +191,46 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                   />
                   <Button
                     variant="ghost"
+                    size="icon"
+                    type="button"
+                    onClick={() => {
+                      if (voiceDictation.status === 'recording' || voiceDictation.status === 'connecting') void voiceDictation.stop()
+                      else if (voiceDictation.status !== 'stopping') void voiceDictation.start()
+                    }}
+                    title={voiceDictation.isActive ? '结束听写' : '语音输入'}
+                    className={cn(
+                      'size-6 shrink-0 rounded-md',
+                      voiceDictation.isActive
+                        ? 'text-[var(--lume-danger)]'
+                        : 'text-[var(--lume-text-muted)] hover:text-[var(--lume-text-secondary)]',
+                    )}
+                  >
+                    {voiceDictation.status === 'recording' ? (
+                      <span className="flex h-3 items-center gap-[2px]" aria-hidden>
+                        {[0.6, 1, 0.75].map((scale, index) => (
+                          <span
+                            key={index}
+                            className="w-[2px] rounded-full bg-current transition-[height] duration-100"
+                            style={{ height: `${Math.max(3, Math.round(voiceDictation.volume * scale * 12))}px` }}
+                          />
+                        ))}
+                      </span>
+                    ) : (
+                      <Mic size={12} className={cn(voiceDictation.isActive && 'animate-pulse')} />
+                    )}
+                  </Button>
+                  {voiceDictation.transcript && voiceDictation.isActive && (
+                    <span className="max-w-32 shrink-0 truncate text-[11px] text-[var(--lume-text-muted)]" role="status">
+                      {voiceDictation.transcript}
+                    </span>
+                  )}
+                  <Button
+                    variant="ghost"
                     size="xs"
                     type="button"
                     disabled={!customAnswer.trim()}
                     onClick={submitCustomAnswer}
-                    className="text-[var(--lume-text-secondary)]"
+                    className="shrink-0 text-[var(--lume-text-secondary)]"
                   >
                     确认
                   </Button>

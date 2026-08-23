@@ -37,11 +37,18 @@ const FINAL_COMMIT_DELAY_MS = 180
 // ASR 未就绪期间的音频缓存上限（chunk 数），防连接异常时无限膨胀。
 const MAX_QUEUED_CHUNKS = 60
 
+// 跨实例互斥：同一时刻只允许一个听写会话（主进程虽支持多 session 并存，
+// 双路并发上传只会造成体验混乱）。新会话开始时自动取消其他实例的活跃会话。
+let activeSessionOwner: symbol | null = null
+let activeSessionCancel: (() => void) | null = null
+
 interface UseVoiceDictationOptions {
   /** 输出方式为 lume-input 时，最终文本经此回调追加到输入框草稿。 */
   onCommit: (text: string) => void
   /** 凭证未配置时 toast 的跳转动作（打开设置页）。 */
   onOpenSettings?: () => void
+  /** 是否响应 Alt+V 全局快捷键切换；多入口并存时只让主输入框响应。 */
+  respondsToGlobalToggle?: boolean
 }
 
 /** 录音已进行的秒数（mm:ss 展示用）。 */
@@ -75,7 +82,9 @@ function getMicrophoneErrorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '无法启动麦克风'
 }
 
-export function useVoiceDictation({ onCommit, onOpenSettings }: UseVoiceDictationOptions) {
+export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalToggle = false }: UseVoiceDictationOptions) {
+  const instanceTokenRef = React.useRef(Symbol('voice-dictation-instance'))
+  const cancelRecordingRef = React.useRef<(() => void) | null>(null)
   const [status, setStatus] = React.useState<VoiceDictationHookStatus>('idle')
   const [transcript, setTranscript] = React.useState('')
   const [volume, setVolume] = React.useState(0)
@@ -136,6 +145,10 @@ export function useVoiceDictation({ onCommit, onOpenSettings }: UseVoiceDictatio
 
   /** 归零所有会话状态回到 idle。 */
   const settleIdle = React.useCallback(() => {
+    if (activeSessionOwner === instanceTokenRef.current) {
+      activeSessionOwner = null
+      activeSessionCancel = null
+    }
     if (commitTimerRef.current) {
       clearTimeout(commitTimerRef.current)
       commitTimerRef.current = null
@@ -308,6 +321,12 @@ export function useVoiceDictation({ onCommit, onOpenSettings }: UseVoiceDictatio
   }, [settleIdle])
 
   const startRecording = React.useCallback(async (): Promise<void> => {
+    // 单会话互斥：其他入口（问询卡等）正在听写时先取消，再开本实例的会话。
+    if (activeSessionOwner !== instanceTokenRef.current && activeSessionCancel) {
+      activeSessionCancel()
+    }
+    activeSessionOwner = instanceTokenRef.current
+    activeSessionCancel = () => cancelRecordingRef.current?.()
     stoppingRef.current = false
     asrReadyRef.current = false
     queuedAudioRef.current = []
@@ -393,6 +412,7 @@ export function useVoiceDictation({ onCommit, onOpenSettings }: UseVoiceDictatio
     if (sessionId) void invoke('voice_dictation_cancel', { sessionId }).catch(() => {})
     settleIdle()
   }, [settleIdle])
+  cancelRecordingRef.current = cancelRecording
 
   // 组件级事件订阅：转写合并 / 会话状态 / 服务端断线自动续录。
   React.useEffect(() => {
@@ -445,8 +465,9 @@ export function useVoiceDictation({ onCommit, onOpenSettings }: UseVoiceDictatio
       // connecting/recording 状态以本地采集就绪为准，不覆盖本地状态机。
     })
 
-    // Alt+V 全局快捷键：活跃输入框切换录音（TabContent 只挂载活跃 tab，无多实例竞态）。
-    const unlistenToggle = listen<null>('voice-dictation:toggle', () => {
+    // Alt+V 全局快捷键：仅指定响应的入口（主输入框）切换，避免多入口同时开会话。
+    const unlistenToggle = respondsToGlobalToggle
+      ? listen<null>('voice-dictation:toggle', () => {
       if (cancelled) return
       const current = statusRef.current
       if (current === 'recording' || current === 'connecting') {
@@ -457,12 +478,18 @@ export function useVoiceDictation({ onCommit, onOpenSettings }: UseVoiceDictatio
         void startRecording()
       }
     })
+      : null
 
     return () => {
       cancelled = true
       unlistenTranscript.then((fn) => fn())
       unlistenState.then((fn) => fn())
-      unlistenToggle.then((fn) => fn())
+      if (unlistenToggle) unlistenToggle.then((fn) => fn())
+      // 本实例仍持有活跃会话时，卸载路径同样释放互斥登记。
+      if (activeSessionOwner === instanceTokenRef.current) {
+        activeSessionOwner = null
+        activeSessionCancel = null
+      }
       // 卸载时作废会话并通知主进程终止 ASR 连接。
       const sessionId = sessionIdRef.current
       if (sessionId && !discardRef.current) {
