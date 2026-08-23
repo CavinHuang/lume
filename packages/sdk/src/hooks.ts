@@ -18,9 +18,6 @@
  * - TaskCreated: task created
  * - TaskCompleted: task finished
  * - ConfigChange: settings changed
- * - CwdChanged: working directory changed
- * - FileChanged: file modified
- * - Notification: system notification
  */
 
 import { spawn } from 'child_process'
@@ -51,17 +48,8 @@ export const HOOK_EVENTS = [
   'TaskCreated',
   'TaskCompleted',
   'ConfigChange',
-  'WorktreeCreate',
-  'WorktreeRemove',
-  'CwdChanged',
-  'FileChanged',
-  'Notification',
   'PreCompact',
   'PostCompact',
-  'TeammateIdle',
-  'Elicitation',
-  'ElicitationResult',
-  'InstructionsLoaded',
 ] as const
 
 export type HookEvent = typeof HOOK_EVENTS[number]

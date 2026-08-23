@@ -168,14 +168,9 @@ export type {
 } from './mcp/manager.js'
 
 // --------------------------------------------------------------------------
-// Slash Commands
+// Skills
 // --------------------------------------------------------------------------
 
-export {
-  loadCommandDefinitions,
-  commandDefinitionsToSlashCommands,
-} from './commands/fs-loader.js'
-export type { CommandDefinition } from './commands/types.js'
 export { loadFilesystemSkills } from './skills/fs-loader.js'
 
 // --------------------------------------------------------------------------
