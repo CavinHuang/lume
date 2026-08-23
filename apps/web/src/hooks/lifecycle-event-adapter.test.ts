@@ -171,6 +171,36 @@ test('run.end error_completion_guard → run.failed 固定中文文案(不渲染
   }])
 })
 
+test('run.end error_completion_guard + errorCode=verification_inconclusive → 验证未确认文案(#472 来源分流)', () => {
+  const state = createLifecycleAdapterState()
+  expect(adaptLifecycleEvent(runEnd(1, { stopReason: 'error_completion_guard', isError: true, errorCode: 'verification_inconclusive' }), state)).toEqual([{
+    id: 'lifecycle:1:run.failed',
+    type: 'run.failed',
+    threadId: 't1',
+    runId: 'r1',
+    createdAt: new Date(TS + 1).toISOString(),
+    error: {
+      code: 'verification_inconclusive',
+      message: '验证结果无法确认，已由保护机制停止；当前进度已保存。',
+    },
+  }])
+})
+
+test('run.end error_completion_guard + errorCode=verification_failed_after_repair → 修复后验证失败文案(#472 来源分流)', () => {
+  const state = createLifecycleAdapterState()
+  expect(adaptLifecycleEvent(runEnd(1, { stopReason: 'error_completion_guard', isError: true, errorCode: 'verification_failed_after_repair' }), state)).toEqual([{
+    id: 'lifecycle:1:run.failed',
+    type: 'run.failed',
+    threadId: 't1',
+    runId: 'r1',
+    createdAt: new Date(TS + 1).toISOString(),
+    error: {
+      code: 'verification_failed_after_repair',
+      message: '验证在自动修复后仍未通过，已由保护机制停止；当前进度已保存。',
+    },
+  }])
+})
+
 test('tool.start 映射 tool.started:字段对齐旧路(inputPreview=input,riskLevel 省略)', () => {
   const state = createLifecycleAdapterState()
   const events = adaptLifecycleEvent(toolStart(2), state)

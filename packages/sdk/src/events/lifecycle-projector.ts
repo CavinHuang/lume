@@ -394,6 +394,9 @@ export async function* projectLifecycle(
       isError: result.is_error === true || result.subtype.startsWith('error_'),
       numTurns: result.num_turns ?? 0,
     }
+    // #472:guard-driven stop 的结构化码透传(SDK repeat-guard vs 宿主 verification
+    // stop 共用 error_completion_guard subtype,靠它区分),web 端文案分流依赖此值。
+    if (result.errorCode !== undefined) detail.errorCode = result.errorCode
     if (result.usage !== undefined) detail.usage = result.usage as unknown as Record<string, unknown>
     if (result.total_cost_usd !== undefined) detail.costUSD = result.total_cost_usd
     return [emit('run', 'end', null, detail)]
