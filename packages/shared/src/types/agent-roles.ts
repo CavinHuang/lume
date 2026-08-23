@@ -11,7 +11,6 @@ export type AgentRoleId =
   | "analyst"
   | "quant"
   | "novelist"
-  | "docsmith"
   | "developer";
 
 export interface AgentRoleConcurrency {
@@ -204,7 +203,7 @@ export const BUILTIN_AGENT_ROLES: AgentRoleDefinition[] = [
     concurrency: {
       defaultReadOnly: false,
       outputTypes: ["audio", "text"],
-      canParallelWith: ["researcher", "translator", "artist", "analyst", "designer", "novelist", "developer", "quant", "docsmith"]
+      canParallelWith: ["researcher", "translator", "artist", "analyst", "designer", "novelist", "developer", "quant"]
     },
     keywords: ["配音", "TTS", "朗读", "播客", "语音", "播报", "有声", "脚本"],
     systemPrompt: `你是宋澈（Miles Song），Lume 团队里的配音与口播脚本专家。
@@ -230,7 +229,7 @@ export const BUILTIN_AGENT_ROLES: AgentRoleDefinition[] = [
     concurrency: {
       defaultReadOnly: false,
       outputTypes: ["html", "css", "js", "pptx", "docx", "svg"],
-      canParallelWith: ["researcher", "translator", "writer", "voice", "artist", "analyst", "novelist", "developer", "quant", "docsmith"]
+      canParallelWith: ["researcher", "translator", "writer", "voice", "artist", "analyst", "novelist", "developer", "quant"]
     },
     keywords: ["设计", "排版", "HTML", "CSS", "UI", "页面", "模板", "邮件", "PPT", "演示", "Word", "文档排版", "合同", "信纸", "幻灯片", "deck", "slides", "docx", "pptx", "落地页", "landing", "前端", "可视化", "dashboard", "仪表盘", "信息图", "SVG", "图表页面", "交互"],
     systemPrompt: `你是林澄（Nora Lin），Lume 团队里的设计工程师。
@@ -254,7 +253,7 @@ export const BUILTIN_AGENT_ROLES: AgentRoleDefinition[] = [
     concurrency: {
       defaultReadOnly: false,
       outputTypes: ["image"],
-      canParallelWith: ["researcher", "translator", "writer", "voice", "designer", "analyst", "novelist", "developer", "quant", "docsmith"]
+      canParallelWith: ["researcher", "translator", "writer", "voice", "designer", "analyst", "novelist", "developer", "quant"]
     },
     keywords: ["画", "插画", "图片", "生图", "视觉", "配图", "图像", "image", "头像", "封面"],
     systemPrompt: `你是白洛（Lio Bai），Lume 团队里的视觉画师。
@@ -280,7 +279,7 @@ export const BUILTIN_AGENT_ROLES: AgentRoleDefinition[] = [
     concurrency: {
       defaultReadOnly: false,
       outputTypes: ["python", "data", "chart", "xlsx"],
-      canParallelWith: ["researcher", "translator", "writer", "voice", "designer", "artist", "novelist", "developer", "quant", "docsmith"]
+      canParallelWith: ["researcher", "translator", "writer", "voice", "designer", "artist", "novelist", "developer", "quant"]
     },
     keywords: ["分析", "数据", "统计", "Python", "pandas", "图表", "可视化", "Excel", "CSV", "天气", "气温", "降水", "表格", "报表", "财务", "xlsx", "spreadsheet", "formula", "公式"],
     systemPrompt: `你是唐栩（Mason Tang），Lume 团队里的数据分析师。
@@ -328,7 +327,7 @@ export const BUILTIN_AGENT_ROLES: AgentRoleDefinition[] = [
     concurrency: {
       defaultReadOnly: false,
       outputTypes: ["markdown", "text"],
-      canParallelWith: ["researcher", "translator", "writer", "voice", "designer", "artist", "analyst", "developer", "quant", "docsmith"]
+      canParallelWith: ["researcher", "translator", "writer", "voice", "designer", "artist", "analyst", "developer", "quant"]
     },
     keywords: ["小说", "故事", "续写", "下一章", "人物设定", "世界观", "伏笔", "剧情", "角色", "novel", "fiction", "创作", "连载", "章节", "大纲"],
     systemPrompt: `你是温序（Wren Wen），Lume 团队里的小说家。
@@ -339,29 +338,6 @@ export const BUILTIN_AGENT_ROLES: AgentRoleDefinition[] = [
 - 冷启动时问清故事方向、主角起点和写作节奏。
 - 续写时先读取已有设定和章节。
 - 输出要保留叙事张力，而不是只给设定表。`
-  },
-  {
-    id: "docsmith",
-    name: "Iris Ruan",
-    displayName: "阮知",
-    title: "文档工程师",
-    description: "PPT、Word、Excel、PDF 的工程级创建、校验、修复和转换。",
-    avatarAsset: "docsmith.jpg",
-    defaultSkillName: "agent-docsmith",
-    defaultBackground: false,
-    concurrency: {
-      defaultReadOnly: false,
-      outputTypes: ["ooxml"],
-      canParallelWith: ["researcher", "translator", "voice", "designer", "artist", "analyst", "novelist", "quant", "developer"]
-    },
-    keywords: ["解包", "打包", "解压", "OOXML", "unpack", "pack", "校验", "文档修复", "格式转换", "PDF", "合并PDF", "拆分PDF", "pdf", "批注", "comment", "水印", "加密", "文档工程", "extract_style", "设计规范", "提取风格", "PPT", "ppt", "演示文稿", "幻灯片", "Word", "word", "Excel", "excel", "文档", "docx", "pptx", "xlsx"],
-    systemPrompt: `你是阮知（Iris Ruan），Lume 团队里的文档工程师。
-
-职责：
-- 做 PPT、Word、Excel、PDF 的工程级操作。
-- 创建、解包、编辑、校验、打包和格式转换。
-- 处理批注、修订、缩略图、水印和文档修复。
-- 与设计工程师协作时，设计判断由设计师主导，你负责文档工程可靠性。`
   },
   {
     id: "developer",
@@ -375,7 +351,7 @@ export const BUILTIN_AGENT_ROLES: AgentRoleDefinition[] = [
     concurrency: {
       defaultReadOnly: false,
       outputTypes: ["code", "script"],
-      canParallelWith: ["researcher", "translator", "voice", "designer", "artist", "analyst", "novelist", "quant", "docsmith"]
+      canParallelWith: ["researcher", "translator", "voice", "designer", "artist", "analyst", "novelist", "quant"]
     },
     keywords: ["开发", "代码", "编程", "脚本", "API", "调试", "bug", "重构", "TypeScript", "Node"],
     systemPrompt: `你是祁远（Felix Qi），Lume 团队里的开发者。

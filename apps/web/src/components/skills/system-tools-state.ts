@@ -44,26 +44,6 @@ export function isToolInGroup(toolName: string, groupId: string): boolean {
       return toolName === 'send_im_message'
     case 'evolution':
       return toolName === 'personalize_ui'
-    case 'office':
-      return [
-        'office_validate',
-        'office_unpack',
-        'office_pack',
-        'office_clean',
-        'office_convert',
-        'docx_create',
-        'pptx_create',
-        'xlsx_create',
-        'pdf_create',
-        'docx_comment',
-        'pptx_add_slide',
-        'xlsx_recalc',
-        'pdf_tools',
-        'office_extract_style',
-        'office_accept_changes',
-        'info_extract',
-        'office_thumbnail',
-      ].includes(toolName)
     case 'reading':
       return [
         'lume_reading_snapshot',
@@ -196,14 +176,6 @@ export const SYSTEM_TOOL_GROUPS: SystemToolGroup[] = [
     count: countToolsByGroup('evolution'),
     locked: false,
     policyEntry: 'group:evolution',
-  },
-  {
-    id: 'office',
-    label: 'Office 文档',
-    description: 'Office/PDF 文档结构校验、解包与打包',
-    count: countToolsByGroup('office'),
-    locked: false,
-    policyEntry: 'group:office',
   },
   {
     id: 'reading',

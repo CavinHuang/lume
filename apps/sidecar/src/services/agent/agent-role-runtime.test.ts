@@ -7,7 +7,6 @@ describe("agent role runtime mapping", () => {
 
     expect(Object.keys(agents)).toContain("developer");
     expect(Object.keys(agents)).toContain("designer");
-    expect(Object.keys(agents)).toContain("docsmith");
     expect(agents.developer?.description).toContain("全栈开发");
     expect(agents.designer?.prompt).toContain("林澄");
     expect(agents.developer?.model).toBe("inherit");
