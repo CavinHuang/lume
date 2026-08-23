@@ -279,12 +279,13 @@ export class Agent {
   private unregisterRuntimeTools: (() => void) | null = null
   private modelId = 'claude-sonnet-4-6'
   private provider: LLMProvider
-  private history: NormalizedMessageParam[] = []
   /** 消息日志出处集合：resume 载入的历史不计入本进程日志（保持原增量维护语义）。 */
   private loggedMessageUuids = new Set<string>()
   private sessionMessages: SessionMessage[] = []
-  /** 磁盘单一来源开关：sessionMessages 是否覆盖完整对话（legacy resume 后为 false）。 */
-  private sessionMessagesAuthoritative = true
+  /** resume 载入时 json messages 快照：dangling tool_result 的跨轨修补源（json 写先于 jsonl，崩溃窗口内可能更新）。 */
+  private resumeStoredMessages: NormalizedMessageParam[] = []
+  /** legacy 会话标记：载入时无 sessionMessages 轨，派生源缺载入前缀。 */
+  private legacyResumeMode = false
   private setupDone: Promise<void>
   private sid: string
   private abortCtrl: AbortController | null = null
@@ -506,19 +507,11 @@ export class Agent {
       this.cfg.resumeSessionAt,
     )
 
-    const resumedHistory = resumedSessionMessages.length > 0
-      ? normalizeHistoryFromSessionMessages(resumedSessionMessages)
-      : sessionData.messages
-    this.history = restoreMissingToolResults(
-      resumedHistory,
-      sessionData.messages,
-      resumedSessionMessages,
-    )
     this.sessionMessages = resumedSessionMessages.length > 0
       ? resumedSessionMessages
       : (sessionData.sessionMessages || [])
-    // legacy 会话没有 sessionMessages 轨，派生源不完整时退回 history 直写
-    this.sessionMessagesAuthoritative = this.sessionMessages.length > 0
+    this.resumeStoredMessages = sessionData.messages ?? []
+    this.legacyResumeMode = this.sessionMessages.length === 0
     this.fileCheckpointState = sessionData.checkpoints || {}
     this.sid = resumeId
   }
@@ -682,7 +675,7 @@ export class Agent {
     cwd: string,
     opts: AgentOptions,
   ): Promise<SDKMessage | null> {
-    if (opts.persistSession === false || (this.history.length === 0 && this.sessionMessages.length === 0)) {
+    if (opts.persistSession === false || this.getPersistedHistory().length === 0) {
       return null
     }
 
@@ -838,6 +831,9 @@ export class Agent {
     const normalizedPrompt = normalizePromptInput(prompt)
     const modelFacingPrompt = normalizedPrompt
     const isManualCompactCommand = typeof normalizedPrompt === 'string' && normalizedPrompt.trim() === '/compact'
+    // 本轮输入入轨前的哨位：seed 派生只取哨位之前的历史，本轮输入由引擎自行追加，
+    // 否则派生视图与引擎各带一份造成请求重复（#297-④ 单一历史）。
+    const preRunInputCount = this.sessionMessages.length
     const runtimeMessage = !isManualCompactCommand && opts.runtimeContext?.trim()
       ? toSessionMessage('runtime', opts.runtimeContext.trim())
       : null
@@ -924,7 +920,7 @@ export class Agent {
     })
     this.currentEngine = engine
 
-    for (const msg of this.history) {
+    for (const msg of this.buildRunHistory(preRunInputCount)) {
       engine.messages.push(msg)
     }
 
@@ -983,7 +979,7 @@ export class Agent {
       // session file.
       await persistScheduler.cancel()
       opts.abortSignal?.removeEventListener('abort', forwardAbort)
-      this.history = engine.getMessages()
+      const finalEngineMessages = engine.getMessages()
       // Keep only the engine reference: the full token estimation runs
       // lazily when a host actually calls getContextUsage (#386).
       this.lastUsageEngine = engine
@@ -993,11 +989,10 @@ export class Agent {
       // the host stopped iterating) and must not survive into the next run's
       // drain windows.
       this.asyncEventEpoch++
-      if (compactionBoundarySeen) {
-        this.sessionMessages = sessionMessagesFromHistory(this.history, this.sessionMessages)
-      }
-      if (opts.toolContinuations?.length) {
-        this.sessionMessages = sessionMessagesFromHistory(this.history, this.sessionMessages)
+      // compaction 重写与 continuation 注入只存在于引擎视图：把权威轨
+      // 对齐回引擎真值（尾配对保 uuid，#363）。
+      if (compactionBoundarySeen || opts.toolContinuations?.length) {
+        this.sessionMessages = sessionMessagesFromHistory(finalEngineMessages, this.sessionMessages)
       }
       persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
     }
@@ -1085,13 +1080,28 @@ export class Agent {
   }
 
   /**
-   * transcript.json 的 messages 由 sessionMessages 派生（单一历史 + 派生投影，
-   * #297-④）；仅 legacy resume（载入时无 sessionMessages 轨）保留 history 直写。
+   * 单一历史(#297-④)：sessionMessages 是唯一权威轨，LLM 请求视图在每次
+   * run 前从它派生（含 dangling 修补注入），不再长驻第三份内存拷贝。
+   * fromIndex 之前的条目才进入派生视图（本轮输入由引擎自行追加）；
+   * system 事件扫描始终用全量 sms。
+   */
+  private buildRunHistory(fromIndex = 0): NormalizedMessageParam[] {
+    return restoreMissingToolResults(
+      normalizeHistoryFromSessionMessages(this.sessionMessages.slice(0, fromIndex)),
+      this.resumeStoredMessages,
+      this.sessionMessages,
+    )
+  }
+
+  /**
+   * transcript.json 的 messages 由 sessionMessages 派生（磁盘单一来源，
+   * 与 jsonl 轨同源）；legacy resume 时派生源缺载入前缀，拼接载入快照。
    */
   private getPersistedHistory(): NormalizedMessageParam[] {
-    return this.sessionMessagesAuthoritative
-      ? normalizeHistoryFromSessionMessages(this.sessionMessages)
-      : this.history
+    const derived = normalizeHistoryFromSessionMessages(this.sessionMessages)
+    return this.legacyResumeMode
+      ? [...this.resumeStoredMessages, ...derived]
+      : derived
   }
 
   getMessages(): Message[] {
@@ -1118,9 +1128,10 @@ export class Agent {
   }
 
   clear(): void {
-    this.history = []
     this.loggedMessageUuids.clear()
     this.sessionMessages = []
+    this.resumeStoredMessages = []
+    this.legacyResumeMode = false
     this.fileCheckpointState = {}
   }
 
@@ -1130,10 +1141,11 @@ export class Agent {
 
   /**
    * Fill dangling trailing tool_use blocks with error placeholders so the
-   * session is provider-clean. Returns true when history changed.
+   * session is provider-clean. Returns true when sessionMessages changed.
+   * 只写权威轨（sessionMessages）：请求视图由 buildRunHistory 派生时自然带上。
    */
   private repairDanglingToolUses(): boolean {
-    const dangling = detectDanglingToolUses(this.history)
+    const dangling = detectDanglingToolUses(this.buildRunHistory())
     if (dangling.length === 0) return false
     const blocks = dangling.map((use) => ({
       type: 'tool_result' as const,
@@ -1141,7 +1153,6 @@ export class Agent {
       content: INTERRUPTED_TOOL_PLACEHOLDER,
       is_error: true,
     }))
-    this.history.push({ role: 'user', content: blocks })
     this.sessionMessages.push(toSessionMessage('user', blocks))
     return true
   }
@@ -1294,9 +1305,10 @@ export class Agent {
   async close(): Promise<void> {
     await this.setupDone.catch(() => undefined)
 
-    if (this.cfg.persistSession !== false && this.history.length > 0) {
+    const persistedHistory = this.getPersistedHistory()
+    if (this.cfg.persistSession !== false && persistedHistory.length > 0) {
       try {
-        await saveSession(this.sid, this.getPersistedHistory(), {
+        await saveSession(this.sid, persistedHistory, {
           cwd: this.cfg.cwd || process.cwd(),
           model: this.modelId,
           summary: extractSummary(this.getMessages()),
