@@ -283,6 +283,8 @@ export class Agent {
   /** 消息日志出处集合：resume 载入的历史不计入本进程日志（保持原增量维护语义）。 */
   private loggedMessageUuids = new Set<string>()
   private sessionMessages: SessionMessage[] = []
+  /** 磁盘单一来源开关：sessionMessages 是否覆盖完整对话（legacy resume 后为 false）。 */
+  private sessionMessagesAuthoritative = true
   private setupDone: Promise<void>
   private sid: string
   private abortCtrl: AbortController | null = null
@@ -515,6 +517,8 @@ export class Agent {
     this.sessionMessages = resumedSessionMessages.length > 0
       ? resumedSessionMessages
       : (sessionData.sessionMessages || [])
+    // legacy 会话没有 sessionMessages 轨，派生源不完整时退回 history 直写
+    this.sessionMessagesAuthoritative = this.sessionMessages.length > 0
     this.fileCheckpointState = sessionData.checkpoints || {}
     this.sid = resumeId
   }
@@ -683,7 +687,7 @@ export class Agent {
     }
 
     try {
-      await saveSession(this.sid, this.history, {
+      await saveSession(this.sid, this.getPersistedHistory(), {
         cwd,
         model: opts.model || this.modelId,
         summary: extractSummary(this.getMessages()),
@@ -1080,6 +1084,16 @@ export class Agent {
     }
   }
 
+  /**
+   * transcript.json 的 messages 由 sessionMessages 派生（单一历史 + 派生投影，
+   * #297-④）；仅 legacy resume（载入时无 sessionMessages 轨）保留 history 直写。
+   */
+  private getPersistedHistory(): NormalizedMessageParam[] {
+    return this.sessionMessagesAuthoritative
+      ? normalizeHistoryFromSessionMessages(this.sessionMessages)
+      : this.history
+  }
+
   getMessages(): Message[] {
     const log: Message[] = []
     for (const message of this.sessionMessages) {
@@ -1282,7 +1296,7 @@ export class Agent {
 
     if (this.cfg.persistSession !== false && this.history.length > 0) {
       try {
-        await saveSession(this.sid, this.history, {
+        await saveSession(this.sid, this.getPersistedHistory(), {
           cwd: this.cfg.cwd || process.cwd(),
           model: this.modelId,
           summary: extractSummary(this.getMessages()),
