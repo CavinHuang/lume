@@ -87,7 +87,7 @@ function impactFor(workspaceId: string, threads: AgentThreadMeta[]): AgentWorksp
 async function stopAndDrainThreads(threadIds: string[], timeoutMs = DEFAULT_DRAIN_TIMEOUT_MS): Promise<void> {
   if (threadIds.length === 0) return;
   const { stopAgent } = await import("./agent-service");
-  const runtime = await import("../agent-runtime/runtime-core/attempt");
+  const runtime = await import("../agent-runtime/attempt");
   for (const threadId of threadIds) {
     await stopAgent(threadId);
   }

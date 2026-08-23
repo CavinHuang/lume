@@ -87,7 +87,7 @@ import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
 import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, writeLogRecord } from "../services/infra/logger";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
-import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runtime-core/attempt";
+import { isAgentRuntimeSessionActive } from "../services/agent-runtime/attempt";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDir,

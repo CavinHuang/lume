@@ -443,7 +443,7 @@ export function buildRuntimeCoreTools(input: {
           },
           execute: async ({ run, session, task, feedback, signal }) => {
             const stopChild = () => {
-              void import("./attempt")
+              void import("../attempt")
                 .then((module) => module.stopAgentRuntime(session.threadId))
                 .catch(() => undefined);
             };
@@ -835,7 +835,7 @@ export function buildRuntimeCoreTools(input: {
         // ★ 注册 completion 信号量，供 WaitForDelegations 感知完成（须在 resolve 之前注册）
         getSubagentRunRegistry().createDelegationCompletion(subagentRun.runId);
         const stopBackgroundSubagent = () => {
-          void import("./attempt")
+          void import("../attempt")
             .then((module) => module.stopAgentRuntime(childMeta.id))
             .catch(() => undefined);
         };
@@ -889,7 +889,7 @@ export function buildRuntimeCoreTools(input: {
           childThreadId: childMeta.id,
           timeoutMs: resolveForegroundSubagentTimeoutMs(),
           stopSubagent: async (threadId: string) => {
-            const { stopAgentRuntime } = await import("./attempt");
+            const { stopAgentRuntime } = await import("../attempt");
             return stopAgentRuntime(threadId);
           },
         });

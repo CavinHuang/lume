@@ -1,5 +1,5 @@
-import { resolveChannelModelBinding } from "../../channel/channel-manager";
-import { getEffectiveLumeConfig } from "../../system/lume-config-service";
+import { resolveChannelModelBinding } from "../channel/channel-manager";
+import { getEffectiveLumeConfig } from "../system/lume-config-service";
 
 export function resolveMockRuntimeModelAttemptParams<T extends {
   runtime?: {

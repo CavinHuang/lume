@@ -6,7 +6,7 @@ import type { AgentMessageAppendedEvent, SDKMessage } from "@lume/shared";
 import {
   isMockRuntimeModelFallbackRetryable,
   resolveMockRuntimeModelAttemptParams
-} from "../agent-runtime/runtime-core/attempt-test-helpers";
+} from "../agent-runtime/attempt-test-helpers";
 
 const heldRunResolvers = new Map<string, () => void>();
 const runAgentRuntimeCalls: unknown[] = [];
@@ -255,7 +255,7 @@ async function waitForMockSessionActive(threadId: string): Promise<void> {
   throw new Error(`mock runtime session never became active: ${threadId}`);
 }
 
-mock.module("../agent-runtime/runtime-core/attempt", () => ({
+mock.module("../agent-runtime/attempt", () => ({
   runAgentRuntime: async (
     params: unknown,
     emit: {

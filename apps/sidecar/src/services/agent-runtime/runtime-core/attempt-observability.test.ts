@@ -8,7 +8,7 @@ import { createChannel } from "../../channel/channel-manager";
 import { installConnectionVaultKey } from "../../channel/connection-credential-store";
 import { getAgentSessionWorkspacePath } from "../../infra/config-paths";
 import { getRuntimeCoreSessionDir } from "./session-store";
-import { runRuntimeCoreAttempt } from "./attempt";
+import { runRuntimeCoreAttempt } from "../attempt";
 
 describe("runtime-core attempt observability", () => {
   const prevConfigDir = process.env.LUME_CONFIG_DIR;

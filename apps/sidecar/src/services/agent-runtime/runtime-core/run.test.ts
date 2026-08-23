@@ -15,7 +15,7 @@ import {
   runForegroundSubagentWithTimeout
 } from "./run-subagent";
 import { resolvePromptCachePolicy } from "./run-tools";
-import { runRuntimeCoreAttempt } from "./attempt";
+import { runRuntimeCoreAttempt } from "../attempt";
 import { prepareRuntimeCoreAttempt } from "./prepare-attempt";
 import { getRuntimeCoreSessionDir } from "./session-store";
 import { getAgentSessionWorkspacePath, getAgentWorkspacePath, getAliceUserSkillsDir, getDefaultSkillsDir } from "../../infra/config-paths";

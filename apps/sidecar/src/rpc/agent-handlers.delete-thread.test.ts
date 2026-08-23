@@ -7,7 +7,7 @@ import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tra
 
 let runtimeSessionActive = false;
 
-mock.module("../services/agent-runtime/runtime-core/attempt", () => ({
+mock.module("../services/agent-runtime/attempt", () => ({
   isAgentRuntimeSessionActive: () => runtimeSessionActive
 }));
 

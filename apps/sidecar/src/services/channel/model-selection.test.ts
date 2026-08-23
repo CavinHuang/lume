@@ -6,7 +6,7 @@ import { AGENT_IPC_CHANNELS, buildConnectionModelRef } from "@lume/shared";
 import {
   isMockRuntimeModelFallbackRetryable,
   resolveMockRuntimeModelAttemptParams
-} from "../agent-runtime/runtime-core/attempt-test-helpers";
+} from "../agent-runtime/attempt-test-helpers";
 import {
   normalizeProviderId,
   parseModelRef,
@@ -23,7 +23,7 @@ const capturedRuntimeCalls: Array<{
   runtime?: { modelRef?: string; channelId?: string };
 }> = [];
 
-mock.module("../agent-runtime/runtime-core/attempt", () => ({
+mock.module("../agent-runtime/attempt", () => ({
   runAgentRuntime: async (
     params: {
       input?: { channelId?: string; modelId?: string };

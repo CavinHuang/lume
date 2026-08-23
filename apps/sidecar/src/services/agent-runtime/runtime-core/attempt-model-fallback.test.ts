@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { createChannel } from "../../channel/channel-manager";
 import { installConnectionVaultKey } from "../../channel/connection-credential-store";
 import { updateLumeConfigSection } from "../../system/lume-config-service";
-import { isRuntimeModelFallbackRetryable, resolveRuntimeModelAttemptParams } from "./attempt";
+import { isRuntimeModelFallbackRetryable, resolveRuntimeModelAttemptParams } from "../attempt";
 import type { AgentRuntimeRunParams } from "../runner/types";
 
 describe("resolveRuntimeModelAttemptParams", () => {

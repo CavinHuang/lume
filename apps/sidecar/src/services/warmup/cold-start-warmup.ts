@@ -15,7 +15,7 @@ export function startColdStartWarmup(): void {
   void (async () => {
     const startedAt = Date.now();
     // 1. 预加载 runtime-core 模块树（首条消息原本要在请求路径上动态 import）
-    await import("../agent-runtime/runtime-core/attempt");
+    await import("../agent-runtime/attempt");
     // 2. 后台预连所有已配置 workspace 的 MCP server（不等待连接完成）
     let slugs: string[] = [];
     try {
