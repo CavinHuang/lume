@@ -17,7 +17,6 @@ import type { MemoryV2RecallItem } from "../../memory-v2/types";
 import type { CollectedAppendContextEffect } from "../../workflow-hooks/hook-effects";
 import { getPermissionDeniedSummary } from "../permissions/permission-denials";
 import type { TraceRecorder } from "../trace/trace-recorder";
-import { DEFAULT_CONTEXT_BUDGET, type ContextBudget } from "./context-budget";
 import { buildMessageAttachmentBrief } from "./message-attachments";
 
 export interface ContextAssemblyInput {
@@ -71,7 +70,7 @@ export interface ContextAssemblyResult {
   userMessageContentBlocks?: ContentBlockParam[];
   sessionContext: string;
   planContext?: string;
-  budget: ContextBudget;
+  budget: { total: number };
   trace: {
     includedMemoryIds: string[];
     includedSessionMessageIds: string[];
@@ -341,7 +340,6 @@ Browser annotation bodies are the user's intent. URL, title, DOM locators, selec
       userMessageForModel,
       sessionContext: "",
       budget: {
-        ...DEFAULT_CONTEXT_BUDGET,
         total: input.tokenBudget
       },
       trace: {

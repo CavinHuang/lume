@@ -12,7 +12,6 @@ import type {
 } from '../types.js'
 import type { HookConfig, HookDefinition } from '../hooks.js'
 import type { SkillDefinition } from '../skills/types.js'
-import type { CommandDefinition } from '../commands/types.js'
 import type { CommandToolContribution } from './normalized.js'
 import { spawnWithProcessSandbox } from '../utils/process-sandbox.js'
 
@@ -35,7 +34,6 @@ export interface LoadedPlugin {
   hooks?: HookConfig
   mcpServers?: Record<string, unknown>
   skills?: SkillDefinition[]
-  commands?: CommandDefinition[]
   config?: Record<string, unknown>
   lume?: { hooksOnly?: boolean }
 }
@@ -448,7 +446,6 @@ export async function loadPlugins(
           hooks: await resolveHooksConfig(manifest.hooks, pluginPath),
           mcpServers: manifest.mcpServers,
           skills: manifest.skills,
-          commands: manifest.commands,
           config: spec.config,
           lume: manifest.lume,
         }
@@ -512,7 +509,6 @@ export async function loadPlugins(
         hasMcpServers: !!plugin.mcpServers,
         hasSkills: !!(plugin.skills?.length),
         hasTools: !!(plugin.tools?.length),
-        hasCommands: !!(plugin.commands?.length),
         hooksOnly: plugin.lume?.hooksOnly ?? false,
       });
       loaded.push(plugin)

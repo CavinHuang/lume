@@ -168,14 +168,9 @@ export type {
 } from './mcp/manager.js'
 
 // --------------------------------------------------------------------------
-// Slash Commands
+// Skills
 // --------------------------------------------------------------------------
 
-export {
-  loadCommandDefinitions,
-  commandDefinitionsToSlashCommands,
-} from './commands/fs-loader.js'
-export type { CommandDefinition } from './commands/types.js'
 export { loadFilesystemSkills } from './skills/fs-loader.js'
 
 // --------------------------------------------------------------------------
@@ -396,6 +391,9 @@ export {
   isRateLimitError,
   formatApiError,
   getRetryDelay,
+  computeRetryDelay,
+  parseRetryAfterHeader,
+  MAX_RETRY_AFTER_DELAY_MS,
   DEFAULT_RETRY_CONFIG,
 } from './utils/retry.js'
 export type { RetryConfig } from './utils/retry.js'

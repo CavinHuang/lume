@@ -369,14 +369,15 @@ export class LumeRunObserver {
     });
   }
 
-  recordTurnLimited(reason?: string): void {
+  recordTurnLimited(reason?: string, terminationReason?: "repeat_guard"): void {
     this.enqueue(async () => {
       const item: LumeRunItem = {
         type: "system_event",
         id: "turn-limited",
         name: "turn_limited",
         payload: {
-          reason
+          reason,
+          ...(terminationReason ? { terminationReason } : {})
         },
         createdAt: new Date().toISOString()
       };

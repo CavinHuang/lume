@@ -87,7 +87,7 @@ import { getAgentSubmissionStore } from "./agent-submission-store";
 type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   onMessageAppended?: (event: AgentMessageAppendedEvent) => void;
-  onComplete: (payload?: { reason?: "max_turns" }) => void;
+  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" }) => void;
   /** options.fromActiveRun=true 表示错误来自 run 执行链(runtime 会话内失败)——
    * 终值已由事件总线 run.end{isError} 单源交付,消费方不得再合成 run.failed(T7c)。 */
   onError: (error: string, options?: { fromActiveRun?: boolean }) => void;
@@ -299,6 +299,20 @@ function hasTurnLimitedMarker(item: unknown): boolean {
   );
 }
 
+/** #392:repeat guard 硬停落盘的 turn_limited item 带 terminationReason 标记,
+ * 恢复上下文据此区分文案(reason="repeat_guard" vs reason="turn_limit")。 */
+function isRepeatGuardLimitedItem(item: unknown): boolean {
+  if (!item || typeof item !== "object") return false;
+  const record = item as Record<string, unknown>;
+  if (record.type !== "system_event" || record.name !== "turn_limited") return false;
+  const payload = record.payload;
+  return Boolean(
+    payload
+    && typeof payload === "object"
+    && (payload as Record<string, unknown>).terminationReason === "repeat_guard"
+  );
+}
+
 async function resolveModelFacingUserMessage(threadId: string, userMessage: string): Promise<string> {
   // 轻量列表一次（不解析 items）定位 latest；两个判定互斥（stale 系 vs completed），
   // 命中后再单独取 items——避免全量 listByThread 逐 run 读盘
@@ -306,16 +320,22 @@ async function resolveModelFacingUserMessage(threadId: string, userMessage: stri
   const latest = (await store.listStatesByThread(threadId)).at(-1);
   let staleRun: LumeRunState | null = null;
   let turnLimitedRun: LumeRunState | null = null;
+  let turnLimitedRepeatGuard = false;
   if (latest && STALE_RUN_STATUSES.has(latest.status) && latest.input.userMessage.trim().length > 0) {
     staleRun = (await store.get(latest.runId)) ?? latest;
   } else if (latest?.status === "completed") {
     const withItems = await store.get(latest.runId);
-    turnLimitedRun = withItems && withItems.generatedItems.some(hasTurnLimitedMarker) ? withItems : null;
+    if (withItems && withItems.generatedItems.some(hasTurnLimitedMarker)) {
+      turnLimitedRun = withItems;
+      turnLimitedRepeatGuard = withItems.generatedItems.some(isRepeatGuardLimitedItem);
+    }
   }
   const recoveryContext = staleRun
     ? buildStaleRunRecoveryContext(staleRun)
     : turnLimitedRun
-      ? buildTurnLimitedRecoveryContext(turnLimitedRun)
+      ? turnLimitedRepeatGuard
+        ? buildRepeatGuardRecoveryContext(turnLimitedRun)
+        : buildTurnLimitedRecoveryContext(turnLimitedRun)
       : null;
   const visibleHistory = buildVisibleHistoryContext(threadId);
   const context = [recoveryContext, visibleHistory].filter((part): part is string => Boolean(part));
@@ -339,6 +359,15 @@ function buildTurnLimitedRecoveryContext(run: LumeRunState): string {
     '<runtime-recovery-state reason="turn_limit">',
     `原始任务：${compactRuntimeText(run.input.userMessage, 800)}`,
     "上次运行达到了轮次上限。该状态仅供参考；以当前用户消息为准。",
+    "</runtime-recovery-state>"
+  ].join("\n\n");
+}
+
+function buildRepeatGuardRecoveryContext(run: LumeRunState): string {
+  return [
+    '<runtime-recovery-state reason="repeat_guard">',
+    `原始任务：${compactRuntimeText(run.input.userMessage, 800)}`,
+    "上次运行因重复执行相同操作被保护机制停止，建议调整指令以避免重复操作。该状态仅供参考；以当前用户消息为准。",
     "</runtime-recovery-state>"
   ].join("\n\n");
 }
@@ -1260,12 +1289,15 @@ async function runSendAgentMessage(
     emit.onComplete();
   }
   if (runtimeResult.status === "turn_limited") {
-    log.info("[Agent 会话] 运行达到最大回合数，等待继续执行", {
+    const repeatGuardStop = runtimeResult.terminationReason === "repeat_guard";
+    log.info(repeatGuardStop
+      ? "[Agent 会话] 运行因重复操作保护机制停止，进度已保留"
+      : "[Agent 会话] 运行达到最大回合数，等待继续执行", {
       threadId: threadId.slice(0, 8),
       persistedSdkMessageCount: persistedSdkMessages.length
     });
     runtimeStatusManager.markCompleted(threadId);
-    emit.onComplete({ reason: "max_turns" });
+    emit.onComplete({ reason: repeatGuardStop ? "repeat_guard" : "max_turns" });
   }
   if (runtimeResult.status === "aborted") {
     log.warn("[Agent 会话] 运行中止", {

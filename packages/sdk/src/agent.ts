@@ -56,8 +56,6 @@ import {
 import { QueryController } from './query-controller.js'
 import { loadPlugins, type LoadedPlugin } from './plugins/loader.js'
 import { loadFilesystemSkills } from './skills/fs-loader.js'
-import { loadCommandDefinitions, commandDefinitionsToSlashCommands } from './commands/fs-loader.js'
-import type { CommandDefinition } from './commands/types.js'
 import type { FileCheckpoint, FileCheckpointState } from './utils/file-checkpoints.js'
 import { rewindCheckpoint } from './utils/file-checkpoints.js'
 import { getContextWindowSize } from './utils/tokens.js'
@@ -288,7 +286,6 @@ export class Agent {
   private pluginSkillNames = new Set<string>()
   private explicitSkillNames = new Set<string>()
   private fileSkillNames = new Set<string>()
-  private loadedCommands: CommandDefinition[] = []
   private fileCheckpointState: FileCheckpointState = {}
   private latestUserMessageId: string | undefined
   private lastUsageEngine: QueryEngine | null = null
@@ -430,13 +427,6 @@ export class Agent {
     return this.loadedPlugins.flatMap((plugin) => {
       if (plugin.lume?.hooksOnly) return []
       return plugin.tools || []
-    })
-  }
-
-  private getPluginCommands(): CommandDefinition[] {
-    return this.loadedPlugins.flatMap((plugin) => {
-      if (plugin.lume?.hooksOnly) return []
-      return plugin.commands || []
     })
   }
 
@@ -615,10 +605,6 @@ export class Agent {
       shouldLoadSkill: this.cfg.shouldLoadFilesystemSkill,
     })
     this.registerExplicitSkills()
-    this.loadedCommands = [
-      ...(await loadCommandDefinitions(cwd)),
-      ...this.getPluginCommands(),
-    ]
     this.resetHookRegistry()
 
     const mergedAgents = {
@@ -1319,16 +1305,7 @@ export class Agent {
       { name: '/mcp', description: 'Inspect MCP server status' },
       { name: '/reload-plugins', description: 'Reload plugins from disk' },
     ]
-    const fileAndPluginCommands = commandDefinitionsToSlashCommands(this.loadedCommands)
-    const byName = new Map<string, SlashCommand>()
-    for (const command of [...builtins, ...fileAndPluginCommands]) {
-      byName.set(command.name, {
-        name: command.name,
-        description: command.description,
-        ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
-      })
-    }
-    return Array.from(byName.values())
+    return builtins
   }
 
   async getInitializationResult(): Promise<InitializationResult> {
@@ -1438,10 +1415,6 @@ export class Agent {
       shouldLoadSkill: this.cfg.shouldLoadFilesystemSkill,
     })
     this.registerExplicitSkills()
-    this.loadedCommands = [
-      ...(await loadCommandDefinitions(this.cfg.cwd || process.cwd())),
-      ...this.getPluginCommands(),
-    ]
     this.resetHookRegistry()
     await this.rebuildToolPool()
 
