@@ -23,7 +23,7 @@ const capturedRuntimeCalls: Array<{
   runtime?: { modelRef?: string; channelId?: string };
 }> = [];
 
-mock.module("../agent-runtime/runtime-core/attempt", () => ({
+mock.module("../agent-runtime/runner/attempt", () => ({
   runAgentRuntime: async (
     params: {
       input?: { channelId?: string; modelId?: string };

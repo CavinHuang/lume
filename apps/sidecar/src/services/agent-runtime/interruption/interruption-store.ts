@@ -8,8 +8,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type { LumeInterruption } from "./interruption";
-import { ACTIVE_RUN_STATUSES, type LumeRunState } from "../runner/run-state";
-import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
+import { ACTIVE_RUN_STATUSES, type LumeRunState } from "../runtime-core/run-state";
+import { createFileBackedLumeRunStateStore } from "../runtime-core/run-state-store";
 
 export interface LumeInterruptionStore {
   upsert(interruption: LumeInterruption): Promise<void>;

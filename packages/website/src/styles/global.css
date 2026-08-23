@@ -101,6 +101,32 @@ body {
   background: var(--accent-soft);
 }
 
+/* ---- 头像 marquee：内容渲染两份，位移 -50% 实现无缝循环 ---- */
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.animate-marquee {
+  animation: marquee 48s linear infinite;
+}
+.marquee-mask:hover .animate-marquee {
+  animation-play-state: paused;
+}
+
+/* ---- 集群条头像 hover 上浮 ---- */
+.avatar-chip {
+  transition:
+    transform 0.2s ease,
+    border-color 0.2s ease;
+}
+.avatar-chip:hover {
+  transform: translateY(-4px);
+}
+
 /* ---- markdown 正文（docs / changelog），不引 typography 插件的最小 prose ---- */
 .prose {
   color: var(--fg-muted);

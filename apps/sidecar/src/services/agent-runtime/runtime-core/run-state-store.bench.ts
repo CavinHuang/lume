@@ -1,4 +1,4 @@
-// 手动基准脚本：bun apps/sidecar/src/services/agent-runtime/runner/run-state-store.bench.ts
+// 手动基准脚本：bun apps/sidecar/src/services/agent-runtime/runtime-core/run-state-store.bench.ts
 // 不被 bun test 自动收集；用于量化 appendItem 改造前后的耗时差异。
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";

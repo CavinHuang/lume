@@ -15,7 +15,7 @@ import { resolveChannelModelBinding } from "../channel/channel-manager";
 import { createAgentThreadWithModelRef, getAgentThreadSDKMessages } from "../agent/agent-thread-manager";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { sendAgentMessage } from "../agent/agent-service";
-import { getSubagentCoordinator } from "../agent/subagents/subagent-coordinator";
+import { getSubagentCoordinator } from "../agent-runtime/subagents/subagent-coordinator";
 import { claimFromEntry, claimKey, normalizeMemoryV2Claim } from "./claim";
 import { MemoryCommandService } from "./command-service";
 import { areMemoryStatementsSimilar } from "./dedupe";

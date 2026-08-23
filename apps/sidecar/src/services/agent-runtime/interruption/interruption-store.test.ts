@@ -6,8 +6,8 @@ import {
   createFileBackedLumeInterruptionStore,
   resolveFileBackedInterruptionSync
 } from "./interruption-store";
-import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
-import type { LumeRunState } from "../runner/run-state";
+import { createFileBackedLumeRunStateStore } from "../runtime-core/run-state-store";
+import type { LumeRunState } from "../runtime-core/run-state";
 
 function makeRunState(runId: string): LumeRunState {
   const now = "2026-04-29T00:00:00.000Z";

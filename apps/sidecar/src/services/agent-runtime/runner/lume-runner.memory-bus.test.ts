@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKMessage, SdkEventEnvelope } from "@lume/shared";
-import type { AgentRuntimeRunParams, AgentRuntimeEmitter } from "./types";
+import type { AgentRuntimeRunParams, AgentRuntimeEmitter } from "../runtime-core/types";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import { getThreadEventBus } from "../events/thread-event-bus";
 import { LumeRunner } from "./lume-runner";

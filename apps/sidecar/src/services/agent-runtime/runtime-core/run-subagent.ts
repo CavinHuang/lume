@@ -4,6 +4,7 @@
  * 前台超时执行、task_ref 校验与委托守卫。
  */
 import type { CreateRuntimeCoreSessionInput } from "./run";
+import { getRuntimeCoreEntry } from "./runtime-entry";
 import {
   type Agent,
   type ApiType,
@@ -34,13 +35,10 @@ import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import {
   clampSubagentPermissionMode,
   resolveSubagentSpawnPolicy,
-} from "../../agent/subagents/subagent-policy";
-import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
-import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
-import {
-  createAgentThreadWithModelRef,
-  getAgentThreadMeta,
-} from "../../agent/agent-thread-manager";
+} from "../subagents/subagent-policy";
+import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
+import { getSubagentCoordinator } from "../subagents/subagent-coordinator";
+import { getRuntimeHostPorts } from "../host-ports";
 import { FileBackedTaskStore } from "../task/task-store";
 
 const DEFAULT_FOREGROUND_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
@@ -262,7 +260,7 @@ export async function runSidecarSubagent(input: {
     };
   }
 
-  const { runAgentRuntime } = await import("./attempt");
+  const { runAgentRuntime } = getRuntimeCoreEntry();
   // 收口契约：模型可控的子代理权限模式一律经此钳制，子级特权不得高于父线程
   // （sendAgentMessage 直派子代理的路径当前均非模型可控，不在此范围）
   const requestedPermissionMode =
@@ -736,7 +734,7 @@ export async function runTaskLinkedSubagent(input: {
   let childThreadId: string | undefined;
   let execution: Awaited<ReturnType<typeof runSidecarSubagent>>;
   try {
-    const childMeta = createAgentThreadWithModelRef(
+    const childMeta = getRuntimeHostPorts().createThreadWithModelRef(
       typeof input.toolInput.description === "string"
         ? input.toolInput.description
         : "Task executor",
@@ -749,8 +747,8 @@ export async function runTaskLinkedSubagent(input: {
     );
     childThreadId = childMeta.id;
     taskExecutorStopHandlers.set(executorRef, () => {
-      void import("./attempt")
-        .then((module) => module.stopAgentRuntime(childMeta.id))
+      Promise.resolve()
+        .then(() => getRuntimeCoreEntry().stopAgentRuntime(childMeta.id))
         .catch(() => undefined);
     });
     const forwardedInput = { ...input.toolInput };
@@ -853,7 +851,7 @@ export function canDelegateFromThread(parentThreadId: string): {
 } {
   const parentRun =
     getSubagentRunRegistry().getLatestByChildThread(parentThreadId);
-  const parentMeta = getAgentThreadMeta(parentThreadId);
+  const parentMeta = getRuntimeHostPorts().getThreadMeta(parentThreadId);
   if (parentRun || parentMeta?.parentThreadId) {
     return {
       ok: false,

@@ -13,6 +13,7 @@ const { lang } = Astro.props;
 const langPrefix = lang === 'zh' ? '' : '/en';
 const links = [
   { href: withBase(`${langPrefix}/#features`), label: t(lang, 'nav.features') },
+  { href: withBase(`${langPrefix}/#team`), label: t(lang, 'nav.team') },
   { href: withBase(`${langPrefix}/docs`), label: t(lang, 'nav.docs') },
   { href: withBase(`${langPrefix}/changelog`), label: t(lang, 'nav.changelog') },
 ];

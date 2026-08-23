@@ -2,9 +2,9 @@ import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn, type FileC
 import { createHash } from "node:crypto";
 import type { AdvisorReviewedDetail, LumeConfigHooksInternalSection, SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
-import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter, RunRuntimeCoreAttemptOptions } from "./types";
-import { resolveAgentThinkingLevel } from "./model-capabilities";
-import type { PreparedRuntimeCoreAttempt } from "../runtime-core/prepare-attempt";
+import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter, RunRuntimeCoreAttemptOptions } from "../runtime-core/types";
+import { resolveAgentThinkingLevel } from "../runtime-core/model-capabilities";
+import type { PreparedRuntimeCoreAttempt } from "./prepare-attempt";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import { persistCodingRunCheckpoint } from "../runtime-core/coding-run-checkpoint-service";
 import {
@@ -49,7 +49,7 @@ import {
   summarizeMemoryConversationFallback,
   type MemoryConversationSummarizer
 } from "../../memory-v2/conversation-summary";
-import type { LumeRunState } from "./run-state";
+import type { LumeRunState } from "../runtime-core/run-state";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { resolveConfiguredAdditionalDirectories } from "../permissions/permission-config";
 import { getActiveBrowserBroker } from "../../browser/browser-broker-holder";

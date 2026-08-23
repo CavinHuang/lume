@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { createChannel } from "../../channel/channel-manager";
 import { installConnectionVaultKey } from "../../channel/connection-credential-store";
 import { updateLumeConfigSection } from "../../system/lume-config-service";
-import { isRuntimeModelFallbackRetryable, resolveRuntimeModelAttemptParams } from "./attempt";
-import type { AgentRuntimeRunParams } from "../runner/types";
+import { isRuntimeModelFallbackRetryable, resolveRuntimeModelAttemptParams } from "../runner/attempt";
+import type { AgentRuntimeRunParams } from "./types";
 
 describe("resolveRuntimeModelAttemptParams", () => {
   let previousConfigDir: string | undefined;
