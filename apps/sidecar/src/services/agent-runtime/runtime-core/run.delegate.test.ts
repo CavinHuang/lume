@@ -16,7 +16,7 @@ import {
 } from "../subagents/subagent-run-registry";
 import { buildBackgroundTaskResultsContext } from "./run-background";
 import { buildSidecarSubagentRunContext, canDelegateFromThread, deriveDelegateTitle } from "./run-subagent";
-import { buildWaitForDelegationsResult } from "./run-tools";
+import { buildWaitForDelegationsResult } from "./delegation-result";
 
 describe("DelegateTool child thread", () => {
   let prevConfigDir: string | undefined;
