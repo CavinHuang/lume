@@ -18,8 +18,6 @@ const WANTED = [
   { key: "gmail", set: "logos", name: "google-gmail" },
   { key: "qq_mail", set: "fa6-brands", name: "qq" },
   { key: "weixin", set: "simple-icons", name: "wechat" },
-  { key: "dingtalk", set: "arcticons", name: "dingtalk" },
-  { key: "wecom", set: "arcticons", name: "wecom" },
 ];
 
 const cache = new Map();
@@ -36,9 +34,11 @@ for (const item of WANTED) {
   out.push(`  ${item.key}: { body: ${JSON.stringify(icon.body)}, viewBox: "0 0 ${width} ${height}" },`);
 }
 
-/** iconify 无收录的品牌(官方标志矢量),从仓库内资产读取;飞书官方三色标,几何描摹自社区渠道图标。 */
+/** iconify 无官方彩色版收录的品牌(官方标志矢量,几何取自社区渠道图标描摹),从仓库内资产读取。 */
 const MANUAL_ASSETS = [
   { key: "feishu", asset: "feishu.svg" },
+  { key: "dingtalk", asset: "dingtalk.svg" },
+  { key: "wecom", asset: "wecom.svg" },
 ];
 
 function loadManualAsset(file) {
@@ -55,7 +55,7 @@ for (const item of MANUAL_ASSETS) {
 }
 
 const content = `// 由 scripts/extract-connector-brand-icons.mjs 生成;勿手改,重跑脚本再生成。
-// 来源:@iconify-json/{logos,fa6-brands,simple-icons,arcticons}(devDependencies)与 scripts/assets/(手工品牌资产,飞书官方标)。
+// 来源:@iconify-json/{logos,fa6-brands,simple-icons}(devDependencies)与 scripts/assets/(手工品牌资产:飞书/钉钉/企微官方标)。
 export interface ConnectorBrandIcon {
   /** SVG 内部元素(iconify body)。 */
   body: string;

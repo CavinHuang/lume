@@ -61,7 +61,7 @@ import {
 } from './im-settings-state'
 import { ConnectorBrandIcon } from './connector-brand-icon'
 
-/** IM provider → 品牌图标 service key(arcticons/simple-icons 抽取集 + scripts/assets 手工资产)。 */
+/** IM provider → 品牌图标 service key(iconify 抽取集 + scripts/assets 官方标资产)。 */
 const IM_PROVIDER_ICON_SERVICE: Partial<Record<ImProvider, string>> = {
   weixin: 'weixin',
   feishu: 'feishu',
