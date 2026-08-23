@@ -26,7 +26,6 @@ export type {
   AgentContextCompactionMetadata,
   AgentContextCompactionStage,
   AgentContextCompactionTrigger,
-  AgentProgressUsage,
   BillingUsageRecord,
   BillingUsageSummary,
   CompactionFailureReason,
