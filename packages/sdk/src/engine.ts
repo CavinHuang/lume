@@ -25,6 +25,7 @@ import type {
   AgentContextCompactionMetadata,
   AgentContextCompactionStage,
   AgentContextCompactionTrigger,
+  SDKAssistantMessageError,
   SDKUsageRecord,
   BillingUsageRecord,
   BillingUsageSummary,
@@ -80,7 +81,7 @@ import { resolve } from 'path'
 import { getModelInvocableSkills, getUserInvocableSkills, renderSkillCatalog } from './skills/index.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { FileStateCache } from './utils/fileCache.js'
-import { createExecuteTool, createToolSearchTool } from './tools/tool-search.js'
+import { createExecuteTool, createToolSearchTool, estimateToolTokens, getDeferredToolTokenCount } from './tools/tool-search.js'
 
 // ============================================================================
 // Tool format conversion
@@ -315,6 +316,19 @@ function mergeCompactionMetadata(
 function compactionStageMessage(stage: AgentContextCompactionStage): string {
   if (stage === 'summarizing') return '正在生成上下文摘要'
   return '正在恢复压缩后的上下文'
+}
+
+/** 流式与非流式两条 retry 路径共用的 api_retry 错误分类（#389 去重）。 */
+function classifyRetryError(status: number | null): SDKAssistantMessageError {
+  return status === 429
+    ? 'rate_limit'
+    : status === 400
+      ? 'invalid_request'
+      : status === 401 || status === 403
+        ? 'authentication_failed'
+        : status === 500 || status === 502 || status === 503 || status === 529
+          ? 'server_error'
+          : 'unknown'
 }
 
 // ============================================================================
@@ -555,10 +569,9 @@ export class QueryEngine {
   }
 
   private estimateToolSchemaTokens(): number {
-    return this.config.tools.reduce(
-      (sum, tool) => sum + Math.ceil((tool.description.length + tool.name.length) / 4),
-      0,
-    )
+    // 与 tool-search 的 getDeferredToolTokenCount 同一口径：name + description +
+    // inputSchema 全算（#389）。此前漏 inputSchema 导致 contextUsage 低估工具占比。
+    return getDeferredToolTokenCount(this.config.tools)
   }
 
   private createContextUsage(): ContextUsageSnapshot {
@@ -1263,15 +1276,7 @@ export class QueryEngine {
             }
             if (chunk.type === 'retry_state') {
               const status = chunk.errorStatus
-              const errorType = status === 429
-                ? 'rate_limit'
-                : status === 400
-                  ? 'invalid_request'
-                  : status === 401 || status === 403
-                    ? 'authentication_failed'
-                    : status === 500 || status === 502 || status === 503 || status === 529
-                      ? 'server_error'
-                      : 'unknown'
+              const errorType = classifyRetryError(status)
               yield {
                 type: 'system',
                 subtype: 'api_retry',
@@ -1293,15 +1298,7 @@ export class QueryEngine {
             this.config.abortSignal,
             async (retry) => {
               const status = typeof retry.error?.status === 'number' ? retry.error.status : null
-              const errorType = status === 429
-                ? 'rate_limit'
-                : status === 400
-                  ? 'invalid_request'
-                  : status === 401 || status === 403
-                    ? 'authentication_failed'
-                    : status === 500 || status === 502 || status === 503 || status === 529
-                      ? 'server_error'
-                      : 'unknown'
+              const errorType = classifyRetryError(status)
               const event: SDKMessage = {
                 type: 'system',
                 subtype: 'api_retry',
@@ -2378,10 +2375,7 @@ export class QueryEngine {
     const systemTokens = estimateSystemPromptTokens(systemPrompt)
     const totalTokens = messageTokens + systemTokens
     const maxTokens = this.getContextWindow()
-    const toolTokens = this.config.tools.reduce(
-      (sum, tool) => sum + Math.ceil((tool.description.length + tool.name.length) / 4),
-      0,
-    )
+    const toolTokens = this.estimateToolSchemaTokens()
     const skills = this.config.skillRegistry?.getUserInvocable() ?? getUserInvocableSkills()
     const skillFrontmatter = skills.map((skill) => ({
       name: skill.name,
@@ -2392,7 +2386,7 @@ export class QueryEngine {
       .filter((tool) => !tool.name.startsWith('mcp__'))
       .map((tool) => ({
         name: tool.name,
-        tokens: Math.ceil((tool.name.length + tool.description.length) / 4),
+        tokens: estimateToolTokens(tool),
       }))
     const toolCallsByType = new Map<string, { callTokens: number; resultTokens: number }>()
     let toolCallTokens = 0
@@ -2478,7 +2472,7 @@ export class QueryEngine {
       memoryFiles: [],
       deferredBuiltinTools: (this.config.deferredTools ?? []).map((tool) => ({
         name: tool.name,
-        tokens: Math.ceil((tool.description.length + tool.name.length) / 4),
+        tokens: estimateToolTokens(tool),
         isLoaded: false,
       })),
       systemTools,
