@@ -5,8 +5,11 @@ import { sidecarCall } from './system'
 export const getConnectorStatus = (service: string) =>
   sidecarCall<ConnectorStatus>(CONNECTOR_IPC_CHANNELS.GET_STATUS, { service })
 
-export const saveConnectorClientConfig = (input: { clientId: string; clientSecret: string }) =>
+export const saveConnectorClientConfig = (input: { service: string; clientId: string; clientSecret: string }) =>
   sidecarCall<ConnectorStatus>(CONNECTOR_IPC_CHANNELS.SAVE_CLIENT_CONFIG, input)
+
+export const saveConnectorCredential = (input: { service: string; values: Record<string, string> }) =>
+  sidecarCall<ConnectorStatus>(CONNECTOR_IPC_CHANNELS.SAVE_CREDENTIAL, input)
 
 export const startConnectorAuth = (service: string) =>
   sidecarCall<{ authorizationUrl: string; status: ConnectorStatus }>(CONNECTOR_IPC_CHANNELS.START_AUTH, { service })

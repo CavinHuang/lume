@@ -49,7 +49,7 @@ export function GmailSettings() {
     if (!clientId.trim() || !clientSecret.trim()) return
     setBusy(true)
     try {
-      setStatus(await saveConnectorClientConfig({ clientId: clientId.trim(), clientSecret: clientSecret.trim() }))
+      setStatus(await saveConnectorClientConfig({ service: GMAIL_SERVICE, clientId: clientId.trim(), clientSecret: clientSecret.trim() }))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '保存失败')
     } finally {
