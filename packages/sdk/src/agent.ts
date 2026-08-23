@@ -201,6 +201,28 @@ function isCompactionSummaryMessage(message: NormalizedMessageParam): boolean {
       block?.type === 'text' && block?._meta?.contextBlock === 'compaction')
 }
 
+/**
+ * messageLog 不再独立维护：由 sessionMessages 按出处投影重建。
+ * 仅两处 live 写入点登记 uuid（user 提交 / assistant 事件），因此
+ * compaction 摘要、continuation 注入、tool_result 载体等合成条目
+ * 天然不入日志，无需内容嗅探。
+ */
+function isLoggedAssistantContent(content: unknown): boolean {
+  return Boolean(
+    content
+    && typeof content === 'object'
+    && !Array.isArray(content)
+    && (content as { role?: unknown }).role === 'assistant',
+  )
+}
+
+function wrapAssistantLogMessage(content: unknown): Extract<Message, { type: 'assistant' }>['message'] {
+  if (isLoggedAssistantContent(content)) {
+    return content as Extract<Message, { type: 'assistant' }>['message']
+  }
+  return { role: 'assistant', content } as Extract<Message, { type: 'assistant' }>['message']
+}
+
 export function sessionMessagesFromHistory(
   messages: NormalizedMessageParam[],
   previous?: SessionMessage[],
@@ -258,8 +280,11 @@ export class Agent {
   private modelId = 'claude-sonnet-4-6'
   private provider: LLMProvider
   private history: NormalizedMessageParam[] = []
-  private messageLog: Message[] = []
+  /** 消息日志出处集合：resume 载入的历史不计入本进程日志（保持原增量维护语义）。 */
+  private loggedMessageUuids = new Set<string>()
   private sessionMessages: SessionMessage[] = []
+  /** 磁盘单一来源开关：sessionMessages 是否覆盖完整对话（legacy resume 后为 false）。 */
+  private sessionMessagesAuthoritative = true
   private setupDone: Promise<void>
   private sid: string
   private abortCtrl: AbortController | null = null
@@ -492,6 +517,8 @@ export class Agent {
     this.sessionMessages = resumedSessionMessages.length > 0
       ? resumedSessionMessages
       : (sessionData.sessionMessages || [])
+    // legacy 会话没有 sessionMessages 轨，派生源不完整时退回 history 直写
+    this.sessionMessagesAuthoritative = this.sessionMessages.length > 0
     this.fileCheckpointState = sessionData.checkpoints || {}
     this.sid = resumeId
   }
@@ -660,10 +687,10 @@ export class Agent {
     }
 
     try {
-      await saveSession(this.sid, this.history, {
+      await saveSession(this.sid, this.getPersistedHistory(), {
         cwd,
         model: opts.model || this.modelId,
-        summary: extractSummary(this.messageLog),
+        summary: extractSummary(this.getMessages()),
         sessionMessages: this.sessionMessages,
         checkpoints: this.fileCheckpointState,
       })
@@ -823,12 +850,7 @@ export class Agent {
     if (userMessage) {
       this.latestUserMessageId = userMessage.uuid
       this.sessionMessages.push(userMessage)
-      this.messageLog.push({
-        type: 'user',
-        message: { role: 'user', content: normalizedPrompt },
-        uuid: userMessage.uuid,
-        timestamp: userMessage.timestamp,
-      })
+      this.loggedMessageUuids.add(userMessage.uuid)
       await this.persistCurrentSession(cwd, opts)
     }
 
@@ -922,12 +944,7 @@ export class Agent {
         if (event.type === 'assistant') {
           const assistantMessage = toSessionMessage('assistant', event.message)
           this.sessionMessages.push(assistantMessage)
-          this.messageLog.push({
-            type: 'assistant',
-            message: event.message,
-            uuid: assistantMessage.uuid,
-            timestamp: assistantMessage.timestamp,
-          })
+          this.loggedMessageUuids.add(assistantMessage.uuid)
           persistScheduler.schedule()
         } else if (event.type === 'tool_result') {
           this.sessionMessages.push(toSessionMessage('user', [{
@@ -1063,17 +1080,46 @@ export class Agent {
       usage: { input_tokens: collected.tokens.in, output_tokens: collected.tokens.out },
       num_turns: collected.turns,
       duration_ms: Math.round(performance.now() - t0),
-      messages: [...this.messageLog],
+      messages: [...this.getMessages()],
     }
   }
 
+  /**
+   * transcript.json 的 messages 由 sessionMessages 派生（单一历史 + 派生投影，
+   * #297-④）；仅 legacy resume（载入时无 sessionMessages 轨）保留 history 直写。
+   */
+  private getPersistedHistory(): NormalizedMessageParam[] {
+    return this.sessionMessagesAuthoritative
+      ? normalizeHistoryFromSessionMessages(this.sessionMessages)
+      : this.history
+  }
+
   getMessages(): Message[] {
-    return [...this.messageLog]
+    const log: Message[] = []
+    for (const message of this.sessionMessages) {
+      if (!this.loggedMessageUuids.has(message.uuid)) continue
+      if (message.role === 'assistant') {
+        log.push({
+          type: 'assistant',
+          message: wrapAssistantLogMessage(message.content),
+          uuid: message.uuid,
+          timestamp: message.timestamp,
+        })
+      } else if (message.role === 'user') {
+        log.push({
+          type: 'user',
+          message: { role: 'user', content: message.content } as Extract<Message, { type: 'user' }>['message'],
+          uuid: message.uuid,
+          timestamp: message.timestamp,
+        })
+      }
+    }
+    return log
   }
 
   clear(): void {
     this.history = []
-    this.messageLog = []
+    this.loggedMessageUuids.clear()
     this.sessionMessages = []
     this.fileCheckpointState = {}
   }
@@ -1250,10 +1296,10 @@ export class Agent {
 
     if (this.cfg.persistSession !== false && this.history.length > 0) {
       try {
-        await saveSession(this.sid, this.history, {
+        await saveSession(this.sid, this.getPersistedHistory(), {
           cwd: this.cfg.cwd || process.cwd(),
           model: this.modelId,
-          summary: extractSummary(this.messageLog),
+          summary: extractSummary(this.getMessages()),
           sessionMessages: this.sessionMessages,
           checkpoints: this.fileCheckpointState,
         })
