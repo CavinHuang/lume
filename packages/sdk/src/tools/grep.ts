@@ -302,13 +302,17 @@ export function buildGrepArgs(input: any, outputMode: SearchMode, searchPath: st
   if (input['-B']) args.push('-B', String(input['-B']))
   const ctx = input['-C'] ?? input.context
   if (ctx) args.push('-C', String(ctx))
-  if (input.glob) args.push('--include', input.glob)
-  // rg/native 通道默认跳过隐藏条目(#473):--exclude='.*' 让 grep 回退同样
+  // 等号形式是硬约束而非风格:Windows 上直接 spawn 的 grep 是 MSYS 二进制,
+  // 运行时会把裸通配参数(`.*`)按 CWD 展开,argv 整体错位——pattern 被当
+  // 文件、搜索目录落回进程 CWD(#483)。等号拼进同一 token 后 glob 无文件名
+  // 可匹配,原样透传;GNU/BSD grep 均支持该形式。
+  if (input.glob) args.push(`--include=${input.glob}`)
+  // rg/native 通道默认跳过隐藏条目(#473):--exclude=.* 让 grep 回退同样
   // 跳过点前缀文件(GNU grep 连同名目录一起跳过,BSD grep 只作用于文件,故
   // EXCLUDED_DIRS 六个点前缀目录仍由下方 --exclude-dir 显式兜底)。.gitignore
   // 尊重不做:grep 无原生支持,自实现解析超出本通道范围。
-  args.push('--exclude', '.*')
-  for (const directory of EXCLUDED_DIRS) args.push('--exclude-dir', directory)
+  args.push('--exclude=.*')
+  for (const directory of EXCLUDED_DIRS) args.push(`--exclude-dir=${directory}`)
   args.push('--', input.pattern, searchPath)
   return args
 }

@@ -25,6 +25,9 @@ afterEach(async () => {
 });
 
 describe("search tools", () => {
+  // 该测试走环境引擎(natives 缺失时落到 PATH 上的 rg/grep)。Windows 下
+  // Git-Bash 的 MSYS grep.exe 冷启动单次 spawn 可达 ~3s(#483),两次调用
+  // 会顶穿 bun 默认 5s 测试超时,故显式放宽;引擎本身行为不受影响。
   test("Grep exposes pagination and preserves no-match success semantics", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-search-tools-"));
     roots.push(root);
@@ -45,7 +48,7 @@ describe("search tools", () => {
     const noMatch = await GrepTool.call({ pattern: "missing", path: root }, { cwd: root });
     expect(noMatch.is_error).toBeFalsy();
     expect(String(noMatch.content)).toContain("No matches found");
-  });
+  }, 20_000);
 
   test("Grep fallback stops collecting output once the pagination budget is satisfied", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-search-earlystop-"));
