@@ -280,6 +280,8 @@ app.whenReady().then(async () => {
     setStage('popup-policy')
     const popupAction = await call('click', { tabId: 'fixture-tab', locator: { version: 1, steps: [{ kind: 'css', selector: '#open-popup' }] } })
     check(popupAction.effect?.kind === 'new_tab_requested', 'Agent action did not report its popup effect')
+    check(events.some(event => event.method === 'browser:agent-dispatching' && event.params?.tabId === 'fixture-tab' && event.params?.active === true), 'Agent dispatching state was not broadcast')
+    check(events.some(event => event.method === 'browser:agent-dispatching' && event.params?.tabId === 'fixture-tab' && event.params?.active === false), 'Agent idle state was not broadcast')
     await waitUntil(() => events.some(event => event.method === 'browser:popup-request' && event.params?.tabId === 'fixture-tab'))
     check(BrowserWindow.getAllWindows().length === 1, 'Agent-triggered popup bypassed confirmation')
     const popupCreated = new Promise(resolvePopup => view.once('did-create-window', resolvePopup))
@@ -290,13 +292,10 @@ app.whenReady().then(async () => {
     await popupWindow.webContents.executeJavaScript(\`new Promise(resolve => document.readyState === 'complete' ? resolve() : addEventListener('load', resolve, { once: true }))\`)
     check(await popupWindow.webContents.executeJavaScript(\`document.querySelector('#opener').textContent\`) === 'present', 'user popup lost its opener relationship')
     popupWindow.close()
-    const takenOver = await userCall('get', { tabId: 'fixture-tab' })
-    check(takenOver.agentControlState === 'paused_by_user', 'real user input did not pause Agent browser control')
-    await checkRejects(() => call('url', { tabId: 'fixture-tab' }), 'user_takeover_required', 'Agent kept controlling a user-taken-over tab')
-    await checkRejects(() => call('ensure', { tabId: 'takeover-side-tab' }), 'user_takeover_required', 'Agent opened a side tab to bypass a user takeover')
-    await checkRejects(() => call('close', { tabId: 'fixture-tab' }), 'user_takeover_required', 'Agent closed a tab the user had taken over')
-    const resumedControl = await userCall('agentControl:resume', { tabId: 'fixture-tab' })
-    check(resumedControl.agentControlState === 'active' && resumedControl.generation > takenOver.generation, 'explicit user resume did not invalidate old Agent page state')
+    // 共同操作模式：用户点击不再暂停 Agent 控制，Agent 请求继续可用
+    const afterUserClick = await userCall('get', { tabId: 'fixture-tab' })
+    check(afterUserClick.agentControlState === 'active', 'user input paused Agent browser control')
+    check((await call('url', { tabId: 'fixture-tab' })).startsWith(origin), 'user click invalidated Agent requests')
     if (process.env.LUME_BROWSER_POPUP_ONLY === '1') {
       writeFileSync(resultPath, JSON.stringify({ ok: true, assertions }))
       return
