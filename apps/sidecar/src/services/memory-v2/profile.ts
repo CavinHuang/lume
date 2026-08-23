@@ -78,7 +78,8 @@ export function isProfileEntry(entry: MemoryV2Entry): boolean {
 
 export function isProfileRecallItem(item: MemoryV2RecallItem): boolean {
   if (item.reason === "profile memory") return true;
-  if (item.kind !== "preference" && item.kind !== "fact") return false;
+  // 与旧 kind 判定等价：kind∈{preference,fact} ⟺ role∉{decision,lesson,state}
+  if (item.semanticRole === "decision" || item.semanticRole === "lesson" || item.semanticRole === "state") return false;
   return isPreferredNameMemory({
     statement: item.statement
   });
@@ -97,6 +98,7 @@ export function memoryEntryToRecallItem(entry: MemoryV2Entry, reason = "profile 
   return {
     id: entry.frontmatter.id,
     kind: entry.frontmatter.kind,
+    semanticRole: entry.frontmatter.semantic_role,
     scope: entry.frontmatter.scope,
     status: entry.frontmatter.status === "suspected_stale" ? "suspected_stale" : "active",
     statement: entry.statement,
