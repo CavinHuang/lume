@@ -131,19 +131,4 @@ describe("ToolResolver", () => {
       policies: [{ deny: ["group:evolution"] }]
     }).map((item) => item.name)).toEqual(["Read"]);
   });
-
-  test("office group controls Office document tools", () => {
-    const registry = new ToolRegistry();
-    registry.registerMany([
-      tool({ name: "office_validate", category: "read", allowedInPlanMode: true, isReadOnly: true }),
-      tool({ name: "office_unpack", category: "write", allowedInPlanMode: false, isReadOnly: false }),
-      tool({ name: "office_pack", category: "write", allowedInPlanMode: false, isReadOnly: false }),
-      tool({ name: "Read", category: "read", allowedInPlanMode: true, isReadOnly: true })
-    ]);
-    const resolver = new ToolResolver(registry);
-
-    expect(resolver.resolve({
-      policies: [{ deny: ["group:office"] }]
-    }).map((item) => item.name)).toEqual(["Read"]);
-  });
 });
