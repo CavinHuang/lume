@@ -130,7 +130,22 @@ const STALE_RUN_PROGRESS_HEAD_COUNT = 6;
 const STALE_RUN_PROGRESS_TAIL_COUNT = 10;
 const VISIBLE_HISTORY_CONTINUATION_TAIL_COUNT = 8;
 
-const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter>({
+let cachedAgentRuntimeKernel: AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter> | null = null;
+
+/**
+ * #297 子项②：kernel 惰性单例。模块导入不再触发实例化（构造器虽纯，
+ * 顶层 new 会把本模块变成导入即带副作用的测试串扰源，rpc 层被迫整体
+ * mock.module）；首次使用时才装配，回调闭包语义与共享实例语义不变。
+ */
+function getAgentRuntimeKernel(): AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter> {
+  if (!cachedAgentRuntimeKernel) {
+    cachedAgentRuntimeKernel = createAgentRuntimeKernel();
+  }
+  return cachedAgentRuntimeKernel;
+}
+
+function createAgentRuntimeKernel(): AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter> {
+  return new AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter>({
   validateQueued: validateQueuedAgentDispatch,
   isThreadOccupied: (threadId) => directRunThreads.has(threadId),
   execute: async (dispatch) => {
@@ -165,7 +180,8 @@ const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmi
       data: { queuedMessageId: dispatch.id, reason: error instanceof Error ? error.message : String(error) }
     });
   }
-});
+  });
+}
 
 async function validateQueuedAgentDispatch(
   dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInput, AgentStreamEmitter>
@@ -785,11 +801,11 @@ export async function dispatchAgentRun(
   emit: AgentStreamEmitter,
   options?: { priority?: "user" | "background"; appendUserMessage?: boolean }
 ): Promise<AgentRuntimeKernelDispatchResult> {
-  const result = agentRuntimeKernel.dispatch(input, emit, {
+  const result = getAgentRuntimeKernel().dispatch(input, emit, {
     ...(options?.priority ? { priority: options.priority } : {}),
     ...(options?.appendUserMessage === false ? { executeHints: { appendUserMessage: false } } : {})
   });
-  await agentRuntimeKernel.waitForThreadIdle(input.threadId);
+  await getAgentRuntimeKernel().waitForThreadIdle(input.threadId);
   return result;
 }
 
@@ -807,7 +823,7 @@ export async function sendAgentMessage(
     await runSendAgentMessage(input, emit, options);
   } finally {
     directRunThreads.delete(threadId);
-    agentRuntimeKernel.notifyThreadReleased(threadId);
+    getAgentRuntimeKernel().notifyThreadReleased(threadId);
   }
 }
 
@@ -1505,13 +1521,13 @@ export function appendAgentMessage(
       data: { clientSubmissionId: receipt.clientSubmissionId, receiptStatus: receipt.status }
     });
     if (receipt.status === "queued") {
-      const queued = agentRuntimeKernel.listQueued(input.threadId)
+      const queued = getAgentRuntimeKernel().listQueued(input.threadId)
         .find((item) => item.id === receipt.queuedMessageId);
       if (queued) {
         return {
           ok: true,
           mode: "queued",
-          queuedCount: agentRuntimeKernel.listQueued(input.threadId).length,
+          queuedCount: getAgentRuntimeKernel().listQueued(input.threadId).length,
           queuedMessage: toQueuedMessage(queued)
         };
       }
@@ -1520,7 +1536,7 @@ export function appendAgentMessage(
       return {
         ok: true,
         mode: "sent",
-        queuedCount: agentRuntimeKernel.listQueued(input.threadId).length
+        queuedCount: getAgentRuntimeKernel().listQueued(input.threadId).length
       };
     }
     throw new Error(`提交 ${receipt.clientSubmissionId} 已终结：${receipt.status}`);
@@ -1580,14 +1596,14 @@ export function appendAgentMessage(
         threadId: input.threadId,
         text: input.userMessage,
         createdAt: Date.now(),
-        revision: agentRuntimeKernel.getQueueRevision(input.threadId),
+        revision: getAgentRuntimeKernel().getQueueRevision(input.threadId),
         status: "queued",
         attachmentsBrief: summarizeGuidanceAttachments(dispatchInput)
       });
       return {
         ok: true,
         mode: "queued",
-        queuedCount: agentRuntimeKernel.listQueued(input.threadId).length,
+        queuedCount: getAgentRuntimeKernel().listQueued(input.threadId).length,
         queuedMessage: undefined,
         submissionId: clientSubmissionId
       };
@@ -1598,7 +1614,7 @@ export function appendAgentMessage(
         .then((module) => module.stopAgentRuntime(input.threadId))
         .catch(() => undefined);
     }
-    const result = agentRuntimeKernel.dispatch(dispatchInput, trackedEmit, {
+    const result = getAgentRuntimeKernel().dispatch(dispatchInput, trackedEmit, {
       priority: options?.priority,
       onExecutionStarted: () => {
         options?.onExecutionStarted?.();
@@ -1622,16 +1638,16 @@ export function getAgentSubmissionReceipt(clientSubmissionId: string) {
 export function listAgentMessageQueue(threadId: string): AgentMessageQueueSnapshot {
   return {
     threadId,
-    revision: agentRuntimeKernel.getQueueRevision(threadId),
-    queuedMessages: agentRuntimeKernel.listQueued(threadId).map(toQueuedMessage),
+    revision: getAgentRuntimeKernel().getQueueRevision(threadId),
+    queuedMessages: getAgentRuntimeKernel().listQueued(threadId).map(toQueuedMessage),
     pendingGuidance: runGuidanceStore.listPending(threadId),
-    paused: agentRuntimeKernel.isPaused(threadId)
+    paused: getAgentRuntimeKernel().isPaused(threadId)
   };
 }
 
 export function reorderAgentMessageQueue(input: AgentReorderMessageQueueInput): AgentMessageQueueOperationResult {
   return runQueueOperation(input.queueOperationId, input.threadId, () => {
-    agentRuntimeKernel.reorderQueued(input.threadId, input.orderedMessageIds, input.expectedRevision);
+    getAgentRuntimeKernel().reorderQueued(input.threadId, input.orderedMessageIds, input.expectedRevision);
   });
 }
 
@@ -1641,9 +1657,9 @@ export function removeQueuedAgentMessage(input: AgentRemoveQueuedMessageInput): 
 
 export function retryQueuedAgentMessage(input: AgentRetryQueuedMessageInput): AgentMessageQueueOperationResult {
   return runQueueOperation(input.queueOperationId, input.threadId, () => {
-    const retried = agentRuntimeKernel.retryQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
+    const retried = getAgentRuntimeKernel().retryQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
     if (!retried) {
-      throw new AgentRuntimeKernelQueueConflictError(agentRuntimeKernel.getQueueRevision(input.threadId));
+      throw new AgentRuntimeKernelQueueConflictError(getAgentRuntimeKernel().getQueueRevision(input.threadId));
     }
     writeLogRecord({
       level: "info",
@@ -1660,19 +1676,19 @@ export function retryQueuedAgentMessage(input: AgentRetryQueuedMessageInput): Ag
 
 /** STOP 中断:暂停队列派发(不自动 startNextQueued)。手动 emit(pause 不改 count,不会自动推送)。 */
 export function pauseAgentQueue(threadId: string): void {
-  agentRuntimeKernel.pauseQueue(threadId);
+  getAgentRuntimeKernel().pauseQueue(threadId);
   emitAgentMessageQueueChanged(threadId);
 }
 
 /** Resume:解除暂停并派发队列首项。返回最新 snapshot。 */
 export function resumeAgentQueue(input: AgentResumeQueueInput): AgentMessageQueueOperationResult {
-  agentRuntimeKernel.resumeQueue(input.threadId);
+  getAgentRuntimeKernel().resumeQueue(input.threadId);
   emitAgentMessageQueueChanged(input.threadId);
   return { ok: true, snapshot: listAgentMessageQueue(input.threadId) };
 }
 
 function removeQueuedAgentMessageUnchecked(input: AgentRemoveQueuedMessageInput): Omit<AgentMessageQueueOperationResult, "ok" | "snapshot"> {
-  const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
+  const removed = getAgentRuntimeKernel().removeQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
   if (removed) {
     if (removed.input.clientSubmissionId) {
       getAgentSubmissionStore().transition(removed.input.clientSubmissionId, "rejected", "queue_removed");
@@ -1697,7 +1713,7 @@ function removeQueuedAgentMessageUnchecked(input: AgentRemoveQueuedMessageInput)
 export function promoteQueuedAgentMessageToGuidance(
   input: AgentPromoteQueuedMessageToGuidanceInput
 ): AgentMessageQueueOperationResult {
-  const candidate = agentRuntimeKernel.listQueued(input.threadId).find((item) => item.id === input.queuedMessageId);
+  const candidate = getAgentRuntimeKernel().listQueued(input.threadId).find((item) => item.id === input.queuedMessageId);
   if (!candidate || !candidate.input.userMessage.trim()) {
     return { ok: false, snapshot: listAgentMessageQueue(input.threadId) };
   }
@@ -1707,7 +1723,7 @@ export function promoteQueuedAgentMessageToGuidance(
 function promoteQueuedAgentMessageToGuidanceUnchecked(
   input: AgentPromoteQueuedMessageToGuidanceInput
 ): Omit<AgentMessageQueueOperationResult, "ok" | "snapshot"> {
-  const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
+  const removed = getAgentRuntimeKernel().removeQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
   const attachmentsBrief = removed ? summarizeGuidanceAttachments(removed.input) : undefined;
   const promotedGuidance = removed
     ? runGuidanceStore.addQueuedDispatch({ ...removed, ...(attachmentsBrief ? { attachmentsBrief } : {}) })
@@ -1732,10 +1748,10 @@ function promoteQueuedAgentMessageToGuidanceUnchecked(
 
 export function updateQueuedAgentMessage(input: AgentUpdateQueuedMessageInput): AgentMessageQueueOperationResult {
   return runQueueOperation(input.queueOperationId, input.threadId, () => {
-    const current = agentRuntimeKernel.listQueued(input.threadId)
+    const current = getAgentRuntimeKernel().listQueued(input.threadId)
       .find((item) => item.id === input.queuedMessageId);
     const { capabilityFingerprints: _staleFingerprints, ...messageMetadata } = current?.input.messageMetadata ?? {};
-    const updated = agentRuntimeKernel.updateQueued(input.threadId, input.queuedMessageId, input.expectedRevision, {
+    const updated = getAgentRuntimeKernel().updateQueued(input.threadId, input.queuedMessageId, input.expectedRevision, {
       userMessage: input.userMessage,
       ...(input.messageParts ? { messageParts: input.messageParts } : {}),
       ...(input.messageAttachments ? { messageAttachments: input.messageAttachments } : {}),
@@ -1744,7 +1760,7 @@ export function updateQueuedAgentMessage(input: AgentUpdateQueuedMessageInput): 
       messageMetadata
     });
     if (!updated) {
-      throw new AgentRuntimeKernelQueueConflictError(agentRuntimeKernel.getQueueRevision(input.threadId));
+      throw new AgentRuntimeKernelQueueConflictError(getAgentRuntimeKernel().getQueueRevision(input.threadId));
     }
     writeLogRecord({
       level: "info",
@@ -1760,11 +1776,11 @@ export function updateQueuedAgentMessage(input: AgentUpdateQueuedMessageInput): 
 }
 
 export async function waitForAgentRuntimeKernelIdleForTest(): Promise<void> {
-  await agentRuntimeKernel.waitForIdleForTest();
+  await getAgentRuntimeKernel().waitForIdleForTest();
 }
 
 export function resetAgentRuntimeKernelForTest(): void {
-  agentRuntimeKernel.resetForTest();
+  getAgentRuntimeKernel().resetForTest();
   runGuidanceStore.resetForTest();
   queueOperationResults.clear();
 }
@@ -1831,7 +1847,7 @@ function restoreUnconsumedGuidanceToQueue(threadId: string): void {
   if (dispatches.length === 0) {
     return;
   }
-  agentRuntimeKernel.prependQueuedDispatches(threadId, dispatches);
+  getAgentRuntimeKernel().prependQueuedDispatches(threadId, dispatches);
   emitAgentMessageQueueChanged(threadId);
 }
 
@@ -1880,7 +1896,7 @@ function toQueuedMessage(dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInp
 }
 
 export async function stopAgent(threadId: string): Promise<boolean> {
-  const dispatchStopped = agentRuntimeKernel.cancelActive(threadId);
+  const dispatchStopped = getAgentRuntimeKernel().cancelActive(threadId);
   const sessionStateManager = getSessionStateManager();
   sessionStateManager.delete(threadId);
   getAgentRuntimeStatusManager().markIdle(threadId);
