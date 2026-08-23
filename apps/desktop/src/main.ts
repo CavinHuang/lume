@@ -60,6 +60,7 @@ import {
   ensureFile,
   exportZip,
   getQuickInputUrl,
+  getVoiceIndicatorUrl,
   parseJsonFile,
   readWindowBehaviorFromConfigDir,
   normalizeWindowBehavior,
@@ -85,6 +86,7 @@ import {
   testVoiceAsrConnection,
 } from './voice-asr-service'
 import { readVoiceDictationSettings, updateVoiceDictationSettings } from './voice-dictation-settings-service'
+import { pasteTextAtCurrentCursor } from './text-insertion-service'
 import type { VoiceDictationSettingsUpdate } from '@lume/shared'
 import {
   AttachmentStageRegistry,
@@ -1655,6 +1657,85 @@ function sendVoiceDictationEvent(ownerWebContentsId: number | undefined, channel
   }
 }
 
+// 语音听写指示条：system-cursor 模式下从外部应用 Alt+V 唤起，无焦点悬浮显示听写状态。
+let voiceIndicatorWindow: BrowserWindow | null = null
+let voiceIndicatorPendingToggle = false
+
+function ensureVoiceIndicatorWindow(): BrowserWindow {
+  if (voiceIndicatorWindow && !voiceIndicatorWindow.isDestroyed()) return voiceIndicatorWindow
+  const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const width = 380
+  const height = 84
+  const workArea = cursorDisplay.workArea
+  const win = new BrowserWindow({
+    width,
+    height,
+    x: workArea.x + Math.round((workArea.width - width) / 2),
+    y: workArea.y + workArea.height - height - 48,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    focusable: false,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    webPreferences: createSecureWebPreferences({
+      preload: resolve(DESKTOP_ROOT, 'dist', 'preload', 'preload.cjs'),
+    }),
+  })
+  win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'pop-up-menu' : 'screen-saver')
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  attachWebContentsSecurity(win, {
+    allowNavigation: (url) => isAllowedMainFrameNavigation(url, {
+      appIsPackaged: app.isPackaged,
+      appProtocolOrigin: APP_PROTOCOL_ORIGIN,
+      devServerUrl: getDevServerUrl(),
+      webEntryPath: getWebEntryPath(),
+    }),
+  })
+  win.on('closed', () => {
+    if (voiceIndicatorWindow === win) voiceIndicatorWindow = null
+  })
+  void win.loadURL(getVoiceIndicatorUrl({
+    appIsPackaged: app.isPackaged,
+    appProtocolOrigin: APP_PROTOCOL_ORIGIN,
+    devServerUrl: getDevServerUrl(),
+  }))
+  voiceIndicatorWindow = win
+  return win
+}
+
+function hideVoiceIndicatorWindow(): void {
+  voiceIndicatorPendingToggle = false
+  if (voiceIndicatorWindow && !voiceIndicatorWindow.isDestroyed()) {
+    voiceIndicatorWindow.hide()
+  }
+}
+
+/** 指示条 toggle 派发：新建窗口需等 renderer 监听器装好（did-finish-load + 缓冲），并去重连按。 */
+function sendVoiceIndicatorToggle(): void {
+  const win = ensureVoiceIndicatorWindow()
+  const send = (): void => {
+    voiceIndicatorPendingToggle = false
+    if (win.isDestroyed()) return
+    win.showInactive()
+    win.webContents.send('lume:event:voice-dictation:indicator-toggle')
+  }
+  if (win.webContents.isLoading()) {
+    if (voiceIndicatorPendingToggle) return
+    voiceIndicatorPendingToggle = true
+    win.webContents.once('did-finish-load', () => setTimeout(send, 120))
+  } else {
+    send()
+  }
+}
+
 async function dispatchCommand(command, payload: Record<string, any> = {}, context: { ownerWebContentsId?: number } = {}) {
   switch (command) {
     case 'connection_vault_status': {
@@ -1860,6 +1941,14 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       const granted = await systemPreferences.askForMediaAccess('microphone')
       return { status: granted ? 'granted' : 'denied', platform: process.platform }
     }
+    case 'voice_dictation_commit_cursor': {
+      const text = typeof payload.text === 'string' ? payload.text : ''
+      if (!text) return { success: false, mode: 'clipboard', message: '没有可提交的听写文本' }
+      return pasteTextAtCurrentCursor(text)
+    }
+    case 'voice_dictation_hide_indicator':
+      hideVoiceIndicatorWindow()
+      return null
     case 'desktop_flash_window': {
       // 听写完成时窗口不在前台 → 任务栏闪烁提醒（Windows）/ Dock 跳动（macOS）。
       const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
@@ -3339,10 +3428,22 @@ app.whenReady().then(async () => {
     writeMainLog('error', 'desktop.quick_input', 'shortcut.registration_failed', 'globalShortcut Alt+L 注册失败（可能被其他程序占用）')
   }
 
-  // Alt+V 全局唤起语音听写：先把主窗口带到前台，再通知活跃输入框切换录音。
+  // Alt+V 全局唤起语音听写。system-cursor 输出且主窗口不在前台时走无焦点指示条
+  // （保持当前应用焦点，录完直接粘贴到原光标）；否则前置主窗口由输入框接手。
   const voiceDictationShortcutRegistered = globalShortcut.register('Alt+V', () => {
     void (async () => {
       try {
+        let outputMode: VoiceDictationSettingsUpdate['outputMode']
+        try {
+          outputMode = readVoiceDictationSettings(getSettingsBroker()).outputMode
+        } catch {
+          outputMode = undefined
+        }
+        const mainWinFocused = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused())
+        if (outputMode === 'system-cursor' && !mainWinFocused) {
+          sendVoiceIndicatorToggle()
+          return
+        }
         if (!mainWindow || mainWindow.isDestroyed()) {
           await createMainWindow()
         } else {

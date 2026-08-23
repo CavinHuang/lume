@@ -180,6 +180,16 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
         .catch((error: unknown) => toast.error(`写入剪贴板失败: ${error instanceof Error ? error.message : '未知错误'}`))
       return
     }
+    if (mode === 'system-cursor') {
+      // 写入唤起时前台应用的光标处；自动粘贴失败时主进程已把文本保留在剪贴板。
+      invoke<{ success: boolean; message: string }>('voice_dictation_commit_cursor', { text: finalText })
+        .then((result) => {
+          if (result.success) toast.success(result.message)
+          else toast.warning(result.message)
+        })
+        .catch((error: unknown) => toast.error(`写入光标失败: ${error instanceof Error ? error.message : '未知错误'}`))
+      return
+    }
     onCommitRef.current(finalText)
   }, [settleIdle])
 

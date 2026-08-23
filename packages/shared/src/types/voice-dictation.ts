@@ -6,8 +6,13 @@
  * （renderer 在 start 时快照，主进程在 start 时冻结）。
  */
 
-/** 听写结果输出方式：追加到 Lume 输入框草稿，或复制到剪贴板。 */
-export type VoiceDictationOutputMode = 'lume-input' | 'clipboard'
+/**
+ * 听写结果输出方式：
+ * - lume-input：追加到 Lume 输入框草稿
+ * - clipboard：复制到剪贴板
+ * - system-cursor：写入唤起听写时的前台应用光标处（Lume 内部发起时退化为 lume-input）
+ */
+export type VoiceDictationOutputMode = 'lume-input' | 'clipboard' | 'system-cursor'
 
 export interface VoiceDictationSettings {
   /** ASR 服务 APP ID（X-Api-App-Key 请求头） */

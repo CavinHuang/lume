@@ -26,8 +26,12 @@ function coerceString(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback
 }
 
+const VALID_OUTPUT_MODES = new Set(['lume-input', 'clipboard', 'system-cursor'])
+
 function coerceOutputMode(value: unknown): VoiceDictationSettings['outputMode'] {
-  return value === 'clipboard' ? 'clipboard' : 'lume-input'
+  return typeof value === 'string' && VALID_OUTPUT_MODES.has(value)
+    ? value as VoiceDictationSettings['outputMode']
+    : 'lume-input'
 }
 
 export function readVoiceDictationSettings(broker: SettingsBroker): VoiceDictationSettings {

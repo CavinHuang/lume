@@ -170,8 +170,8 @@ export function VoiceDictationSettings() {
             className="w-full resize-y rounded-lg border border-[var(--lume-border-subtle)] bg-transparent px-2 py-1.5 text-[13px] leading-6 text-[var(--text-1)]"
           />
         </SettingsRow>
-        <SettingsRow label="结果输出" hint="听写结束后文字的去向">
-          <div className="flex gap-2 pt-1">
+        <SettingsRow label="结果输出" hint="「写入当前应用」：在 Lume 之外按 Alt+V 唤起听写，结束后粘贴到当时的前台应用光标处（Windows 首次使用需允许；macOS 需辅助功能权限）">
+          <div className="flex flex-wrap gap-2 pt-1">
             <Button
               variant={settings.outputMode === 'lume-input' ? 'secondary' : 'ghost'}
               type="button"
@@ -179,6 +179,14 @@ export function VoiceDictationSettings() {
               onClick={() => void applyUpdate({ outputMode: 'lume-input' })}
             >
               追加到输入框
+            </Button>
+            <Button
+              variant={settings.outputMode === 'system-cursor' ? 'secondary' : 'ghost'}
+              type="button"
+              className="h-8 px-3 text-[13px]"
+              onClick={() => void applyUpdate({ outputMode: 'system-cursor' })}
+            >
+              写入当前应用
             </Button>
             <Button
               variant={settings.outputMode === 'clipboard' ? 'secondary' : 'ghost'}

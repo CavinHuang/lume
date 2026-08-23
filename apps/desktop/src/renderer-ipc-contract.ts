@@ -81,6 +81,8 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'voice_dictation_cancel',
   'voice_dictation_check_microphone',
   'voice_dictation_request_microphone',
+  'voice_dictation_commit_cursor',
+  'voice_dictation_hide_indicator',
   'desktop_flash_window',
 ])
 
@@ -96,6 +98,7 @@ export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   'voice-dictation:state',
   'voice-dictation:transcript',
   'voice-dictation:toggle',
+  'voice-dictation:indicator-toggle',
 ])
 
 export function validateRendererInvokeCommand(command) {
