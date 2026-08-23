@@ -293,6 +293,12 @@ export class Agent {
   private latestUserMessageId: string | undefined
   private lastUsageEngine: QueryEngine | null = null
   private queuedSdkEvents: SDKMessage[] = []
+  // Generation marker for the async-event queue: advanced when a run's
+  // finally completes. Each run's onAsyncEvent closure captures the value
+  // from before its run, so a late background task_notification firing after
+  // the host abandoned iteration (or between runs) is recognized as stale and
+  // dropped instead of leaking into the next run's event stream.
+  private asyncEventEpoch = 0
   private readonly skillRegistry: SkillRegistry
 
   constructor(options: AgentOptions = {}) {
@@ -924,6 +930,9 @@ export class Agent {
       await this.persistCurrentSession(cwd, opts)
     }
 
+    // Captured before the engine exists: once this run's finally advances the
+    // epoch, closures holding the stale value are recognized as dead runs'.
+    const sdkEventEpoch = this.asyncEventEpoch
     const engine = new QueryEngine({
       cwd,
       model: opts.model || this.modelId,
@@ -980,6 +989,7 @@ export class Agent {
           opts.onAsyncEvent(event)
           return
         }
+        if (sdkEventEpoch !== this.asyncEventEpoch) return
         this.queuedSdkEvents.push(event)
       },
       onLiveEvent: opts.onLiveEvent,
@@ -1065,6 +1075,11 @@ export class Agent {
       // lazily when a host actually calls getContextUsage (#386).
       this.lastUsageEngine = engine
       this.currentEngine = null
+      // Invalidate this run's async-event closures: anything they enqueue from
+      // here on is post-run residue (late background task_notification after
+      // the host stopped iterating) and must not survive into the next run's
+      // drain windows.
+      this.asyncEventEpoch++
       if (compactionBoundarySeen) {
         this.sessionMessages = sessionMessagesFromHistory(this.history, this.sessionMessages)
       }

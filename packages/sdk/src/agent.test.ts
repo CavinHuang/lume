@@ -1604,4 +1604,31 @@ describe("Agent queued async events across runs (#413)", () => {
     expect((agent as any).queuedSdkEvents).toHaveLength(0)
     await agent.close()
   })
+
+  test("late background notification after abandoned iteration never enters the queue", async () => {
+    const provider = new StaticProvider()
+    const agent = createAgent({ persistSession: false, tools: [], provider })
+
+    for await (const _event of agent.query("hello")) {
+      break // host abandons mid-stream
+    }
+
+    // Simulate executeSingleTool's post-tool notification path firing after
+    // the host gave up: a background task_notification delivered through the
+    // dead run's captured onAsyncEvent closure.
+    const engine = (agent as any).lastUsageEngine as QueryEngine
+    ;(engine.config.onAsyncEvent as (event: SDKMessage) => void)(fakeAsyncEvent())
+
+    // The closure belongs to a finished generation: dropped, not enqueued...
+    expect((agent as any).queuedSdkEvents).toHaveLength(0)
+
+    // ...and nothing leaks into the next run's stream either.
+    const seen: SDKMessage[] = []
+    for await (const event of agent.query("hello")) {
+      seen.push(event)
+    }
+    expect(seen.some((event) => event.type === "system" && event.subtype === "task_notification")).toBe(false)
+    expect((agent as any).queuedSdkEvents).toHaveLength(0)
+    await agent.close()
+  })
 })
