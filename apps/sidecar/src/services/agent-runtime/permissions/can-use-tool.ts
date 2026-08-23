@@ -28,7 +28,7 @@ import { builtinToolInputGuardrails } from "../guardrails/builtin-tool-guardrail
 import { LumeGuardrailRunner } from "../guardrails/guardrail-runner";
 import { ToolExecutionGateway } from "../tools/tool-execution-gateway";
 import { getRuntimeToolDescriptor } from "../tools/tool-descriptor-session";
-import { type PreparedRuntimeCoreAttempt } from "../runtime-core/prepare-attempt";
+import { type PreparedRuntimeCoreAttempt } from "../runner/prepare-attempt";
 import { persistToolApprovalInterruption } from "../interruption/approval-service";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { recordPermissionDenial } from "./permission-denials";

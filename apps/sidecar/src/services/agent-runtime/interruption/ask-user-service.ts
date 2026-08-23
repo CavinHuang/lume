@@ -10,7 +10,7 @@ import {
   createFileBackedLumeInterruptionStore,
   resolveFileBackedInterruptionSync
 } from "./interruption-store";
-import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
+import { createFileBackedRunContinuationStore } from "../runtime-core/run-continuation-store";
 
 export interface PersistedAskUserInterruptionResolution {
   handledBy: "persisted";

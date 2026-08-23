@@ -10,7 +10,7 @@ import type {
   RuntimeCodingReport
 } from "@lume/shared";
 import type { LumeInterruption } from "../interruption/interruption";
-import type { LumeRunItem } from "./run-items";
+import type { LumeRunItem } from "../runner/run-items";
 
 export type LumeRunStatus =
   | "created"

@@ -262,7 +262,7 @@ export async function runSidecarSubagent(input: {
     };
   }
 
-  const { runAgentRuntime } = await import("./attempt");
+  const { runAgentRuntime } = await import("../runner/attempt");
   // 收口契约：模型可控的子代理权限模式一律经此钳制，子级特权不得高于父线程
   // （sendAgentMessage 直派子代理的路径当前均非模型可控，不在此范围）
   const requestedPermissionMode =
@@ -749,7 +749,7 @@ export async function runTaskLinkedSubagent(input: {
     );
     childThreadId = childMeta.id;
     taskExecutorStopHandlers.set(executorRef, () => {
-      void import("./attempt")
+      void import("../runner/attempt")
         .then((module) => module.stopAgentRuntime(childMeta.id))
         .catch(() => undefined);
     });

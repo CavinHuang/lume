@@ -255,7 +255,7 @@ async function waitForMockSessionActive(threadId: string): Promise<void> {
   throw new Error(`mock runtime session never became active: ${threadId}`);
 }
 
-mock.module("../agent-runtime/runtime-core/attempt", () => ({
+mock.module("../agent-runtime/runner/attempt", () => ({
   runAgentRuntime: async (
     params: unknown,
     emit: {
@@ -910,7 +910,7 @@ describe("agent-service", () => {
     const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");
     const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
-    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runner/run-state-store");
+    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runtime-core/run-state-store");
     const thread = createAgentThread("turn limited continue", "channel-test");
     const sessionDir = getRuntimeCoreSessionDir(thread.id);
     await createFileBackedLumeRunStateStore(sessionDir).create({
@@ -987,7 +987,7 @@ describe("agent-service", () => {
     const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");
     const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
-    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runner/run-state-store");
+    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runtime-core/run-state-store");
     const thread = createAgentThread("repeat guard continue", "channel-test");
     const sessionDir = getRuntimeCoreSessionDir(thread.id);
     await createFileBackedLumeRunStateStore(sessionDir).create({
@@ -1110,7 +1110,7 @@ describe("agent-service", () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");
     const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
-    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runner/run-state-store");
+    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runtime-core/run-state-store");
     const thread = createAgentThread("stale running continue", "channel-test");
     const sessionDir = getRuntimeCoreSessionDir(thread.id);
     await createFileBackedLumeRunStateStore(sessionDir).create({

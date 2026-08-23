@@ -1,17 +1,17 @@
 import {
   appendSdkMessage,
   createAgentStreamAccumulatorState
-} from "../../agent/agent-stream-accumulator";
+} from "./agent-stream-accumulator";
 import { createLogger } from "../../infra/logger";
 import { waitForAskUserQuestionAnswers } from "../interruption/ask-user-question-session";
 import { waitForToolPermissionDecision } from "../interruption/tool-permission-session";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
-import { createRuntimeCoreSession } from "./run";
-import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter, RunRuntimeCoreAttemptOptions } from "../runner/types";
-import type { resolveRuntimeCoreChannelModel } from "./model";
+import { createRuntimeCoreSession } from "../runtime-core/run";
+import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter, RunRuntimeCoreAttemptOptions } from "./types";
+import type { resolveRuntimeCoreChannelModel } from "../runtime-core/model";
 import type { PreparedRuntimeCoreAttempt } from "./prepare-attempt";
-import { updateRuntimeThreadMetaIfPresent } from "./thread-meta-target";
+import { updateRuntimeThreadMetaIfPresent } from "../runtime-core/thread-meta-target";
 
 /** mock 场景只消费导出接口的子集；Pick 派生以跟踪字段演进（channelProvider 可选→必填，消费点入参可选，兼容）。 */
 type MockPreparedAttempt = Pick<

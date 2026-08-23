@@ -1,10 +1,10 @@
 import type { AgentThreadRuntimeEventsResult, LumeRuntimeEvent } from "@lume/shared";
 import { projectRunStateToRuntimeEvents } from "../runner/run-item-events";
-import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
+import { createFileBackedLumeRunStateStore } from "../runtime-core/run-state-store";
 import { createFileBackedTaskStore } from "../task/task-store";
 import { getThreadEventBus } from "../events/thread-event-bus";
 import { getAgentThreadSDKMessages } from "../../agent/agent-thread-manager";
-import type { LumeRunState } from "../runner/run-state";
+import type { LumeRunState } from "../runtime-core/run-state";
 
 /**
  * F4:events.jsonl 有事件(总线恒开后创建的线程)时,run 投影只保留未迁总线的类——

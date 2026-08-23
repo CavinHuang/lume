@@ -5,7 +5,7 @@ import { appendAgentMessage } from "../agent/agent-service";
 import { createAgentNotificationEmitter } from "../agent/agent-notification-service";
 import { getAgentSubmissionStore } from "../agent/agent-submission-store";
 import { createAgentThreadWithModelRef, deleteAgentThread, getAgentThreadMessages } from "../agent/agent-thread-manager";
-import { isAgentRuntimeSessionActive } from "../agent-runtime/runtime-core/attempt";
+import { isAgentRuntimeSessionActive } from "../agent-runtime/runner/attempt";
 import { issuePlanningScopeGrant, registerPlanningExecutionContext } from "./planning-execution-context";
 import { getPlanningTodoStore } from "./planning-todo-store";
 

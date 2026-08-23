@@ -1,4 +1,4 @@
-import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
+import { createFileBackedRunContinuationStore } from "../runtime-core/run-continuation-store";
 import { classifyToolKind, hashToolInput } from "./approval-service";
 
 export interface AbortContinuationInput {

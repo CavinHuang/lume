@@ -8,7 +8,7 @@ import type { LumeWorkflowHookEvent } from "../../workflow-hooks/hook-events";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import { getThreadEventBus } from "../events/thread-event-bus";
 import { LumeRunner, resolveRuntimeCoreMaxTurns } from "./lume-runner";
-import type { LumeRunState } from "./run-state";
+import type { LumeRunState } from "../runtime-core/run-state";
 import { createMemoryV2Store } from "../../memory-v2/markdown-store";
 import { getMemoryV2ScopePaths } from "../../memory-v2/paths";
 import { setActiveBrowserBroker } from "../../browser/browser-broker-holder";

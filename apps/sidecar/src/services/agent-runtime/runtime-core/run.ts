@@ -109,8 +109,8 @@ import {
   cloneTodoState,
   getTodoCompletionBlocker,
   readLatestTodoState,
-} from "../runner/todo-state";
-import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
+} from "./todo-state";
+import { createFileBackedRunContinuationStore } from "./run-continuation-store";
 import { persistAbortContinuation } from "../interruption/abort-continuation";
 import { classifyToolKind } from "../interruption/approval-service";
 import {

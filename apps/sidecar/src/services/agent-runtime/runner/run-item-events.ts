@@ -4,7 +4,7 @@ import type { FileReferenceBinding, LumeRuntimeEvent, RuntimeNormalizedUsage } f
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { getAgentFileContextRootPath } from "../../infra/config-paths";
 import type { LumeRunItem } from "./run-items";
-import type { LumeRunState } from "./run-state";
+import type { LumeRunState } from "../runtime-core/run-state";
 import { inferToolMetadata } from "../tools/tool-metadata";
 
 /**
