@@ -1,6 +1,6 @@
 import type { Api, KnownProvider, Model } from "../runner/model-types";
 import { findModelMeta } from "@lume/shared";
-import { resolveModelCandidatesForChannel } from "../../channel/model-selection";
+import { resolveModelCandidatesForChannel } from "./model-candidates";
 import { adaptModelCapabilities, resolveAgentThinkingLevel } from "../runner/model-capabilities";
 import { prioritizeProvidersForBaseUrl, shouldApplyChannelBaseUrl } from "../runner/provider-routing";
 import { resolveRuntimeProviderCandidates } from "../runner/provider-resolution";

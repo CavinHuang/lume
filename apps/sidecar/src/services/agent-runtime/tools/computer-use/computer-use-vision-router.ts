@@ -1,6 +1,6 @@
 import { type LLMProvider } from "@lume/agent-sdk";
 import { readFile } from "node:fs/promises";
-import { resolveChannelModelBinding } from "../../../channel/channel-manager";
+import { channelStore } from "../../agent-channel-store-holder";
 import { createLazyConnectionLlmProvider } from "../../../model-runtime/connection-provider";
 import { getEffectiveLumeConfig } from "../../../system/lume-config-service";
 import { createLogger } from "../../../infra/logger";
@@ -96,7 +96,7 @@ export function createComputerUseVisionRouter(input: {
   const attempts = refs.flatMap((modelRef, index) => {
     if (seen.has(modelRef)) return [];
     seen.add(modelRef);
-    const binding = resolveChannelModelBinding(modelRef, "chat");
+    const binding = channelStore().resolveModelBinding(modelRef, "chat");
     if (!binding) return [];
     const provider = createLazyConnectionLlmProvider({
       connectionId: binding.channel.id,

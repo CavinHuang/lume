@@ -29,6 +29,7 @@ import { createReverseRpcRenderClient } from "./services/agent-runtime/tools/web
 import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/render-client-holder";
 import { registerAgentThreadStore } from "./services/agent-runtime/agent-thread-store-holder";
 import { registerAgentWorkspaceStore } from "./services/agent-runtime/agent-workspace-store-holder";
+import { registerAgentChannelStore } from "./services/agent-runtime/agent-channel-store-holder";
 import {
   createAgentThreadWithModelRef,
   getAgentThreadMeta,
@@ -38,6 +39,13 @@ import {
   updateAgentThreadMeta
 } from "./services/agent/agent-thread-manager";
 import { getAgentWorkspace } from "./services/agent/agent-workspace-manager";
+import {
+  decryptApiKey,
+  getChannelById,
+  isChannelConnectionUsable,
+  listChannels,
+  resolveChannelModelBinding
+} from "./services/channel/channel-manager";
 import { setPersistedSettingsMutationWriter } from "./services/system/settings-store";
 import { setLogDigestPolicy } from "./services/infra/log-digest";
 import type { LumeLogDigestPolicy } from "@lume/shared";
@@ -159,6 +167,13 @@ registerAgentThreadStore({
 });
 registerAgentWorkspaceStore({
   get: getAgentWorkspace
+});
+registerAgentChannelStore({
+  list: listChannels,
+  getById: getChannelById,
+  isConnectionUsable: isChannelConnectionUsable,
+  decryptApiKey: decryptApiKey,
+  resolveModelBinding: resolveChannelModelBinding
 });
 const externalChromeTransport = process.env.LUME_CHROME_BRIDGE_ENDPOINT && process.env.LUME_CHROME_BRIDGE_PAIRING_ID && process.env.LUME_CHROME_BRIDGE_GENERATION && process.env.LUME_CHROME_BRIDGE_HOST_PATH && process.env.LUME_CHROME_BRIDGE_HOST_SHA256
   ? new ExternalChromeTransport({

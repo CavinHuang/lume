@@ -45,9 +45,8 @@ import {
 } from "../../mcp/workspace-mcp-manager";
 import type { MemoryV2RecallItem } from "../../memory-v2/types";
 import {
-  getChannelById,
-  resolveChannelModelBinding,
-} from "../../channel/channel-manager";
+  channelStore,
+} from "../agent-channel-store-holder";
 import {
   getEffectiveLumeConfig,
   getEffectivePluginRuntimeConfig,
@@ -603,7 +602,7 @@ async function createRuntimeCoreSessionImpl(
   const computerUseConfig = getEffectiveLumeConfig(input.workspaceSlug).models
     ?.computerUse;
   const channelProvider = input.modelRef
-    ? (resolveChannelModelBinding(input.modelRef, "chat")?.channel.provider ??
+    ? (channelStore().resolveModelBinding(input.modelRef, "chat")?.channel.provider ??
       input.provider)
     : input.provider;
   const computerUseSurface = resolveComputerUseSurface({
@@ -1067,7 +1066,7 @@ async function createRuntimeCoreSessionImpl(
   const apiType =
     input.apiType ?? resolveSdkApiType(input.provider, input.openaiApiMode);
   const primaryChannel = input.channelId
-    ? getChannelById(input.channelId)
+    ? channelStore().getById(input.channelId)
     : undefined;
   const providerRoutes: PiAiProviderRoute[] = [
     primaryChannel
@@ -1092,7 +1091,7 @@ async function createRuntimeCoreSessionImpl(
     getEffectiveLumeConfig(input.workspaceSlug).models?.agent
       ?.fallbackModelRefs ?? [];
   for (const fallbackRef of configuredFallbackRefs) {
-    const binding = resolveChannelModelBinding(fallbackRef, "chat");
+    const binding = channelStore().resolveModelBinding(fallbackRef, "chat");
     if (!binding) continue;
     if (
       binding.channel.id === input.channelId &&

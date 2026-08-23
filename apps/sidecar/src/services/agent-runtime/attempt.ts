@@ -1,7 +1,7 @@
 import { createLogger } from "../infra/logger";
 import { buildRuntimeAttemptLogData } from "./agent-log-summary";
 import { workspaceStore } from "./agent-workspace-store-holder";
-import { resolveChannelModelBinding } from "../channel/channel-manager";
+import { channelStore } from "./agent-channel-store-holder";
 import { resolveMockAttempt } from "./runtime-core/mock-attempt";
 import type {
   AgentRuntimeRunParams,
@@ -174,7 +174,7 @@ export function resolveRuntimeModelAttemptParams(
   ];
   for (const modelRef of refs) {
     if (modelRef === params.runtime.modelRef) continue;
-    const binding = resolveChannelModelBinding(modelRef, "chat");
+    const binding = channelStore().resolveModelBinding(modelRef, "chat");
     if (!binding) continue;
     attempts.push({
       ...params,

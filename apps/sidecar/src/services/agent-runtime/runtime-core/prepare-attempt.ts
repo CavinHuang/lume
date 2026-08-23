@@ -1,6 +1,6 @@
 import { workspaceStore } from "../agent-workspace-store-holder";
 import { threadStore } from "../agent-thread-store-holder";
-import { decryptApiKey, isChannelConnectionUsable, listChannels, resolveChannelModelBinding } from "../../channel/channel-manager";
+import { channelStore } from "../agent-channel-store-holder";
 import { resolveAgentThreadWorkdir, type ResolvedAgentWorkdir } from "../agent-workdir-resolver";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult } from "../runner/types";
 import { resolveRuntimeCoreChannelModel } from "./model";
@@ -32,9 +32,9 @@ export async function prepareRuntimeCoreAttempt(
   params: AgentRuntimeRunParams
 ): Promise<PreparedRuntimeCoreAttempt | AgentRuntimeRunResult> {
   const { runtime } = params;
-  const boundModel = resolveChannelModelBinding(runtime.modelRef ?? "", "chat", runtime.channelId);
-  const channel = boundModel?.channel ?? listChannels().find((item) => (
-    item.id === runtime.channelId && isChannelConnectionUsable(item)
+  const boundModel = channelStore().resolveModelBinding(runtime.modelRef ?? "", "chat", runtime.channelId);
+  const channel = boundModel?.channel ?? channelStore().list().find((item) => (
+    item.id === runtime.channelId && channelStore().isConnectionUsable(item)
   ));
   if (!channel) {
     return { status: "errored", errorMessage: "runtime-core 未找到可用渠道。" };
@@ -47,7 +47,7 @@ export async function prepareRuntimeCoreAttempt(
 
   let apiKey = "";
   try {
-    apiKey = decryptApiKey(channel.id);
+    apiKey = channelStore().decryptApiKey(channel.id);
   } catch {
     return { status: "errored", errorMessage: "runtime-core 解密 API Key 失败。" };
   }

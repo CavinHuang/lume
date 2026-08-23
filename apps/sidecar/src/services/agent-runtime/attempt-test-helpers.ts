@@ -1,4 +1,4 @@
-import { resolveChannelModelBinding } from "../channel/channel-manager";
+import { channelStore } from "./agent-channel-store-holder";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 
 export function resolveMockRuntimeModelAttemptParams<T extends {
@@ -13,7 +13,7 @@ export function resolveMockRuntimeModelAttemptParams<T extends {
   const attempts: T[] = [params];
   for (const modelRef of refs) {
     if (modelRef === params.runtime?.modelRef) continue;
-    const binding = resolveChannelModelBinding(modelRef, "chat");
+    const binding = channelStore().resolveModelBinding(modelRef, "chat");
     if (!binding) continue;
     attempts.push({
       ...params,

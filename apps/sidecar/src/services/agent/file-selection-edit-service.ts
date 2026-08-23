@@ -1,7 +1,8 @@
 import type { FileSelectionEditInput, FileSelectionEditResult } from "@lume/shared";
 import { listChannels, resolveChannelModelBinding } from "../channel/channel-manager";
 import { createConnectionLlmProvider } from "../model-runtime/connection-provider";
-import { resolveAgentDefaultStrategy, resolveChannelDefaultModelId } from "../channel/model-selection";
+import { resolveAgentDefaultStrategy } from "../channel/model-selection";
+import { resolveChannelDefaultModelId } from "../agent-runtime/runtime-core/model-candidates";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { getAgentThreadMeta } from "./agent-thread-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";

@@ -29,7 +29,7 @@ import type {
 } from "@lume/shared";
 import { join, resolve } from "node:path";
 import { resolveConfiguredConnectionApiType } from "../../model-runtime/connection-provider";
-import { resolveChannelModelBinding } from "../../channel/channel-manager";
+import { channelStore } from "../agent-channel-store-holder";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import {
   clampSubagentPermissionMode,
@@ -103,7 +103,7 @@ export function resolveSubagentModelOverride(input: {
     return { source: "inherit" };
   }
 
-  const binding = resolveChannelModelBinding(candidate, "chat");
+  const binding = channelStore().resolveModelBinding(candidate, "chat");
   if (!binding) {
     return { source };
   }

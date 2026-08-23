@@ -1,5 +1,5 @@
 import type { Channel, ProviderType } from "@lume/shared";
-import { decryptApiKey, resolveChannelModelBinding } from "../../../channel/channel-manager";
+import { channelStore } from "../../agent-channel-store-holder";
 import { getEffectiveLumeConfig } from "../../../system/lume-config-service";
 import { resolveThreadAttachmentPath } from "../../../agent/agent-files-service";
 import { createLogger } from "../../../infra/logger";
@@ -45,10 +45,10 @@ export interface ImageGenDeps {
 
 const defaultDeps: ImageGenDeps = {
   resolveBinding: (modelRef) => {
-    const binding = resolveChannelModelBinding(modelRef);
+    const binding = channelStore().resolveModelBinding(modelRef);
     return binding ? { channel: binding.channel, modelId: binding.modelId } : null;
   },
-  decryptKey: decryptApiKey,
+  decryptKey: (channelId) => channelStore().decryptApiKey(channelId),
   callHttp: callImageHttp,
   readModelRefs: (ws) =>
     getEffectiveLumeConfig(ws).models?.imageGeneration?.priorityModelRefs ?? [],
