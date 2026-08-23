@@ -21,7 +21,6 @@ describe("agent roles registry", () => {
       "analyst",
       "quant",
       "novelist",
-      "docsmith",
       "developer"
     ]);
 
@@ -42,10 +41,9 @@ describe("agent roles registry", () => {
       matchedKeywords: ["调研", "核查", "信息", "资料", "竞品"]
     }]);
 
-    expect(suggestAgentRoles("做一个 PPT dashboard 数据可视化页面").map((item) => item.roleId).slice(0, 3)).toEqual([
+    expect(suggestAgentRoles("做一个 PPT dashboard 数据可视化页面").map((item) => item.roleId).slice(0, 2)).toEqual([
       "designer",
-      "analyst",
-      "docsmith"
+      "analyst"
     ]);
   });
 
@@ -53,6 +51,5 @@ describe("agent roles registry", () => {
     expect(canAgentRolesRunInParallel("researcher", "developer")).toBe(true);
     expect(canAgentRolesRunInParallel("writer", "designer")).toBe(true);
     expect(canAgentRolesRunInParallel("writer", "developer")).toBe(false);
-    expect(canAgentRolesRunInParallel("writer", "docsmith")).toBe(false);
   });
 });

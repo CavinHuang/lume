@@ -51,8 +51,6 @@ export const ui = {
     'team.quant.desc': '市场数据、技术指标、量化策略和金融资讯分析。',
     'team.novelist.role': '小说家',
     'team.novelist.desc': '长篇小说、世界观、大纲、章节续写和伏笔管理。',
-    'team.docsmith.role': '文档工程师',
-    'team.docsmith.desc': 'PPT、Word、Excel、PDF 的工程级创建、校验、修复和转换。',
     'team.developer.role': '开发者',
     'team.developer.desc': '全栈开发、脚本自动化、调试、重构和代码审查。',
 
@@ -168,8 +166,6 @@ export const ui = {
     'team.quant.desc': 'Market data, technical indicators, quant strategies and financial news analysis.',
     'team.novelist.role': 'Novelist',
     'team.novelist.desc': 'Long fiction, worldbuilding, outlines, chapter continuation and foreshadowing.',
-    'team.docsmith.role': 'Docs Engineer',
-    'team.docsmith.desc': 'Engineering-grade creation, validation, repair and conversion of PPT, Word, Excel and PDF.',
     'team.developer.role': 'Developer',
     'team.developer.desc': 'Full-stack development, scripting, debugging, refactoring and code review.',
 

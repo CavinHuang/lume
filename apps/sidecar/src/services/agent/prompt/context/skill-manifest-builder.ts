@@ -27,14 +27,9 @@ function formatSkillManifestName(skill: Pick<SkillManifestItem, "slug" | "name">
     : skill.slug;
 }
 
-// 内置 Office 工具存在时，文档类 skill 的"凡处理文件即调 skill"教学与 Office 工具策略
-// 的"优先内置工具"指令直接竞争，从清单中隐藏（Skill 本身仍可被显式调用）
-const OFFICE_FILE_SKILL_SLUGS = new Set(["docx", "pdf", "pptx", "xlsx"]);
-
 export function renderSkillManifestLines(ctx: {
   workspaceSlug: string;
   skills: SkillManifestItem[];
-  hasOfficeTools?: boolean;
 }): string[] {
   const modelInvocableSkills = ctx.skills.filter((skill) => skill.disableModelInvocation !== true);
   if (modelInvocableSkills.length === 0) return [];
@@ -48,7 +43,6 @@ export function renderSkillManifestLines(ctx: {
   ];
 
   for (const skill of modelInvocableSkills) {
-    if (ctx.hasOfficeTools && OFFICE_FILE_SKILL_SLUGS.has(skill.slug)) continue;
     const compactDescription = compactSkillDescription(skill.slug, skill.description);
     const desc = compactDescription ? `: ${compactDescription}` : "";
     const args = compactText(skill.argumentHint, 72);
