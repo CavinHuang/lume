@@ -79,6 +79,7 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'voice_dictation_audio_chunk',
   'voice_dictation_stop',
   'voice_dictation_cancel',
+  'desktop_flash_window',
 ])
 
 export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
@@ -92,6 +93,7 @@ export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   'agent:island:state',
   'voice-dictation:state',
   'voice-dictation:transcript',
+  'voice-dictation:toggle',
 ])
 
 export function validateRendererInvokeCommand(command) {

@@ -135,6 +135,10 @@ export function useVoiceDictation({ onCommit, onOpenSettings }: UseVoiceDictatio
   const commitText = React.useCallback((text: string) => {
     const finalText = text.trim()
     const mode = settingsRef.current?.outputMode ?? 'lume-input'
+    // 窗口不在前台时任务栏/Dock 提醒听写已完成。
+    if (typeof document !== 'undefined' && !document.hasFocus()) {
+      void invoke('desktop_flash_window', null).catch(() => {})
+    }
     settleIdle()
     if (!finalText) {
       toast.info('未识别到语音内容')
@@ -403,10 +407,24 @@ export function useVoiceDictation({ onCommit, onOpenSettings }: UseVoiceDictatio
       // connecting/recording 状态以本地采集就绪为准，不覆盖本地状态机。
     })
 
+    // Alt+V 全局快捷键：活跃输入框切换录音（TabContent 只挂载活跃 tab，无多实例竞态）。
+    const unlistenToggle = listen<null>('voice-dictation:toggle', () => {
+      if (cancelled) return
+      const current = statusRef.current
+      if (current === 'recording' || current === 'connecting') {
+        void stopRecording()
+        return
+      }
+      if (current === 'idle') {
+        void startRecording()
+      }
+    })
+
     return () => {
       cancelled = true
       unlistenTranscript.then((fn) => fn())
       unlistenState.then((fn) => fn())
+      unlistenToggle.then((fn) => fn())
       // 卸载时作废会话并通知主进程终止 ASR 连接。
       const sessionId = sessionIdRef.current
       if (sessionId && !discardRef.current) {
@@ -415,7 +433,7 @@ export function useVoiceDictation({ onCommit, onOpenSettings }: UseVoiceDictatio
       invalidateSession()
       cleanupAudio()
     }
-  }, [cleanupAudio, failStart, invalidateSession, scheduleCommit, startAsrSession])
+  }, [cleanupAudio, failStart, invalidateSession, scheduleCommit, startAsrSession, startRecording, stopRecording])
 
   return {
     status,

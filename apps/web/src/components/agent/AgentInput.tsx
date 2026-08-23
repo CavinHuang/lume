@@ -1689,11 +1689,18 @@ export function AgentInput({
                     <span className="shrink-0 font-mono text-xs tabular-nums text-[var(--lume-text-secondary)]">
                       {formatVoiceElapsed(voiceDictation.elapsedSeconds)}
                     </span>
-                    <div className="h-3 w-16 shrink-0 overflow-hidden rounded-full bg-[color:color-mix(in_oklab,var(--lume-text-secondary)_18%,transparent)]">
-                      <div
-                        className="h-full rounded-full bg-[var(--lume-danger)] transition-[width] duration-100"
-                        style={{ width: `${Math.round(voiceDictation.volume * 100)}%` }}
-                      />
+                    <div
+                      className="flex h-3.5 shrink-0 items-end gap-[2px]"
+                      style={{ opacity: 0.25 + voiceDictation.volume * 0.75 }}
+                      aria-hidden
+                    >
+                      {[0, 1, 2, 3].map((index) => (
+                        <span
+                          key={index}
+                          className="voice-dictation-bar h-full w-[3px] rounded-full bg-[var(--lume-danger)]"
+                          style={{ animationDelay: `${index * 120}ms` }}
+                        />
+                      ))}
                     </div>
                     <div className="min-w-0 flex-1 truncate text-xs text-[var(--lume-text-secondary)]">
                       {voiceDictation.transcript || (voiceDictation.status === 'connecting' ? '正在连接语音识别…' : voiceDictation.status === 'stopping' ? '正在整理转写…' : '正在听写，Esc 取消')}
@@ -2006,10 +2013,10 @@ export function AgentInput({
                       ? 'border-[color:color-mix(in_oklab,var(--lume-danger)_42%,var(--lume-border-strong))] bg-[color:color-mix(in_oklab,var(--lume-danger)_10%,var(--lume-bg-elevated))] text-[var(--lume-danger)]'
                       : 'border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_72%,transparent)] text-[var(--lume-text-secondary)] hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-text-primary)]',
                   )}
-                  title={voiceDictation.status === 'recording' ? '结束听写' : '语音输入'}
+                  title={voiceDictation.isActive ? '结束听写（Alt+V）' : '语音输入（Alt+V）'}
                   type="button"
                 >
-                  <Mic size={13} />
+                  {voiceDictation.isActive ? <Square size={10} /> : <Mic size={13} />}
                 </Button>
                 <fieldset disabled={Boolean(editingQueuedMessage)} className="contents">
                   <ModelPicker threadId={threadId} />

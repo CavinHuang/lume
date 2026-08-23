@@ -84,12 +84,31 @@ export function VoiceDictationSettings() {
 
   return (
     <div className="max-w-[720px] space-y-4">
-      <div className="flex items-start gap-3 rounded-xl border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)] px-4 py-3">
-        <Mic size={16} className="mt-0.5 shrink-0 text-[var(--text-3)]" />
-        <p className="text-[13px] leading-6 text-[var(--text-2)]">
-          在输入框点击麦克风按钮即可语音输入，转写文本实时显示并追加到光标处。
-          语音识别由云端流式服务完成，音频将在录音期间上传至所配置的服务商。
-        </p>
+      <div className="space-y-2.5 rounded-xl border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)] px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Mic size={15} className="shrink-0 text-[var(--text-2)]" />
+          <span className="text-[13px] font-medium text-[var(--text-1)]">识别服务</span>
+          <span className="rounded-md bg-[color:color-mix(in_oklab,var(--brand)_12%,transparent)] px-1.5 py-0.5 text-xs text-[var(--brand)]">
+            字节跳动火山引擎 · 流式语音识别大模型
+          </span>
+        </div>
+        <ol className="list-decimal space-y-1 pl-5 text-[13px] leading-6 text-[var(--text-2)]">
+          <li>
+            前往
+            <button
+              type="button"
+              className="mx-1 inline-flex items-center gap-0.5 text-[var(--brand)] hover:underline"
+              onClick={() => void invoke('open_external', { url: 'https://console.volcengine.com/speech/service/' })}
+            >
+              火山引擎语音服务控制台
+              <ExternalLink size={11} />
+            </button>
+            开通「流式语音识别大模型」服务（有免费试用额度）
+          </li>
+          <li>在应用管理中创建应用，拿到 APP ID 与 Access Token</li>
+          <li>Resource ID 填 <code className="rounded bg-[var(--surface-3)] px-1 py-0.5 text-xs">volcengine_input_common</code>（或你开通的服务实例 ID）</li>
+          <li>填好下方凭证后点「测试连接」，然后在输入框点麦克风或按 <kbd className="rounded border border-[var(--lume-border-subtle)] bg-[var(--surface-3)] px-1 text-xs">Alt+V</kbd> 开始听写</li>
+        </ol>
       </div>
 
       <div className="lume-panel divide-y divide-[var(--lume-border-subtle)] px-4 py-1">
@@ -167,16 +186,7 @@ export function VoiceDictationSettings() {
           测试连接
         </Button>
         {saving ? <span className="text-xs text-[var(--text-3)]">正在保存…</span> : null}
-        <Button
-          variant="ghost"
-          type="button"
-          className="h-8 px-2 text-xs text-[var(--text-3)]"
-          onClick={() => void invoke('open_external', { url: 'https://console.volcengine.com/speech/service/' })}
-        >
-          前往控制台获取凭证
-          <ExternalLink size={12} className="ml-1" />
-        </Button>
-        <span className="text-xs text-[var(--text-3)]">文本框失焦后自动保存；修改在下次听写会话生效</span>
+        <span className="text-xs text-[var(--text-3)]">文本框失焦后自动保存；修改在下次听写会话生效。全局快捷键 Alt+V 可随时唤起听写。</span>
       </div>
     </div>
   )

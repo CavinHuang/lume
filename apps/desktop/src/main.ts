@@ -1847,6 +1847,20 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       if (sessionId) await cancelVoiceAsrSession(sessionId)
       return null
     }
+    case 'desktop_flash_window': {
+      // 听写完成时窗口不在前台 → 任务栏闪烁提醒（Windows）/ Dock 跳动（macOS）。
+      const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+      if (!win || win.isFocused()) return null
+      win.flashFrame(true)
+      setTimeout(() => {
+        try {
+          if (!win.isDestroyed()) win.flashFrame(false)
+        } catch {
+          // 窗口销毁竞态，忽略。
+        }
+      }, 3000)
+      return null
+    }
     case 'sidecar_call': {
       validateRendererSidecarMethod(payload.method)
       if (payload.method !== 'agent:send-thread-message') {
@@ -3310,6 +3324,28 @@ app.whenReady().then(async () => {
   })
   if (!quickInputShortcutRegistered) {
     writeMainLog('error', 'desktop.quick_input', 'shortcut.registration_failed', 'globalShortcut Alt+L 注册失败（可能被其他程序占用）')
+  }
+
+  // Alt+V 全局唤起语音听写：先把主窗口带到前台，再通知活跃输入框切换录音。
+  const voiceDictationShortcutRegistered = globalShortcut.register('Alt+V', () => {
+    void (async () => {
+      try {
+        if (!mainWindow || mainWindow.isDestroyed()) {
+          await createMainWindow()
+        } else {
+          await showMainWindow()
+        }
+        const win = mainWindow
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('lume:event:voice-dictation:toggle')
+        }
+      } catch (error) {
+        writeMainLog('error', 'desktop.voice_dictation', 'shortcut.toggle_failed', 'voice dictation shortcut failed', { data: { error } })
+      }
+    })()
+  })
+  if (!voiceDictationShortcutRegistered) {
+    writeMainLog('error', 'desktop.voice_dictation', 'shortcut.registration_failed', 'globalShortcut Alt+V 注册失败（可能被其他程序占用）')
   }
 }).catch((error) => {
   logDesktopStartup(`startup failed: ${error.stack ?? error}`, 'app.start_failed', 'fatal')
