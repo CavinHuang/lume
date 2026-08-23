@@ -5,8 +5,9 @@
  * file checkpoints for rewind support.
  */
 
-import { mkdir, readFile, readdir, rename, rm, writeFile } from 'fs/promises'
+import { mkdir, readFile, readdir, rm } from 'fs/promises'
 import { join, resolve } from 'path'
+import { writeFileAtomic as writeFileAtomicShared } from './utils/fs-atomic.js'
 import type { NormalizedMessageParam } from './providers/types.js'
 import type {
   FileCheckpointState,
@@ -60,16 +61,10 @@ function getMetaJsonPath(dir: string): string {
 /**
  * tmp+rename 原子替换：裸 writeFile 打开即截断，进程崩溃会留下半截
  * transcript，loadSession 解析失败后整个会话被静默丢弃（#293/#306）。
+ * 实现收敛到 utils/fs-atomic 单源（#389）。
  */
 async function writeFileAtomic(filePath: string, content: string): Promise<void> {
-  const tempPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`
-  try {
-    await writeFile(tempPath, content, 'utf-8')
-    await rename(tempPath, filePath)
-  } catch (error) {
-    await rm(tempPath, { force: true }).catch(() => undefined)
-    throw error
-  }
+  return writeFileAtomicShared(filePath, Buffer.from(content, 'utf-8'))
 }
 
 function getSessionDirCandidates(): string[] {
@@ -388,10 +383,11 @@ export async function forkSession(
   return { sessionId: forkId }
 }
 
-function sliceSessionMessages(
+export function sliceSessionMessages(
   messages: SessionMessage[],
-  upToMessageId: string,
+  upToMessageId?: string,
 ): SessionMessage[] {
+  if (!upToMessageId) return messages
   const index = messages.findIndex((message) => message.uuid === upToMessageId)
   if (index === -1) return messages
   return messages.slice(0, index + 1)

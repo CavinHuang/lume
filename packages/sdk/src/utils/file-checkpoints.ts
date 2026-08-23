@@ -1,6 +1,7 @@
-import { mkdir, readFile, readdir, rm, stat, writeFile, rename } from 'fs/promises'
-import { basename, dirname, join, normalize, resolve } from 'path'
+import { mkdir, readFile, readdir, rm, stat } from 'fs/promises'
+import { dirname, join, normalize, resolve } from 'path'
 import { decodeTextFile, encodeTextFile } from './text-file.js'
+import { writeFileAtomic } from './fs-atomic.js'
 
 export interface FileSnapshot {
   path: string
@@ -251,6 +252,7 @@ export async function rewindCheckpoint(
               bom: snapshot.bom === true,
             })
           : next
+        await mkdir(dirname(snapshot.path), { recursive: true })
         await writeFileAtomic(snapshot.path, encoded)
       }
     } else {
@@ -268,17 +270,5 @@ export async function rewindCheckpoint(
     skippedFiles,
     insertions,
     deletions,
-  }
-}
-
-async function writeFileAtomic(filePath: string, content: Uint8Array): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true })
-  const tempPath = join(dirname(filePath), `.${basename(filePath)}.${crypto.randomUUID()}.tmp`)
-  try {
-    await writeFile(tempPath, content)
-    await rename(tempPath, filePath)
-  } catch (error) {
-    await rm(tempPath, { force: true }).catch(() => undefined)
-    throw error
   }
 }

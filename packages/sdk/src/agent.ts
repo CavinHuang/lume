@@ -37,6 +37,7 @@ import {
   saveSession,
   loadSession,
   listSessions,
+  sliceSessionMessages,
   forkSession as forkStoredSession,
 } from './session.js'
 import { createHookRegistry, type HookRegistry } from './hooks.js'
@@ -99,16 +100,6 @@ function extractSummary(messages: Message[]): string | undefined {
     .map((block: any) => block.text)
     .join('\n')
     .slice(0, 500) || undefined
-}
-
-function sliceSessionMessages(
-  messages: SessionMessage[],
-  upToMessageId?: string,
-): SessionMessage[] {
-  if (!upToMessageId) return messages
-  const index = messages.findIndex((message) => message.uuid === upToMessageId)
-  if (index === -1) return messages
-  return messages.slice(0, index + 1)
 }
 
 function normalizeHistoryFromSessionMessages(

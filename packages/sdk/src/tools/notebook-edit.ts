@@ -9,11 +9,12 @@
  * - edit_mode
  */
 
-import { readFile, writeFile, rename, rm, stat } from 'fs/promises'
+import { readFile, stat } from 'fs/promises'
 import { resolve, dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
 import { ensurePathAllowed, getUnsafeFilePathReason } from '../utils/pathing.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
+import { writeFileAtomic } from '../utils/fs-atomic.js'
 
 type NotebookCell = {
   id?: string
@@ -238,14 +239,3 @@ export const NotebookEditTool = defineTool({
     }
   },
 })
-
-async function writeFileAtomic(filePath: string, content: Uint8Array): Promise<void> {
-  const tempPath = join(dirname(filePath), `.${basename(filePath)}.${crypto.randomUUID()}.tmp`)
-  try {
-    await writeFile(tempPath, content)
-    await rename(tempPath, filePath)
-  } catch (error) {
-    await rm(tempPath, { force: true }).catch(() => undefined)
-    throw error
-  }
-}

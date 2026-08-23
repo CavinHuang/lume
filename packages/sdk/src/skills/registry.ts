@@ -17,7 +17,7 @@ export class SkillRegistry {
     for (const definition of definitions) this.register(definition)
   }
 
-  register(definition: SkillDefinition): void {
+  register(definition: SkillDefinition): SkillDefinition | undefined {
     const normalizedName = normalizeSkillKey(definition.name)
     const previousName = this.normalizedNames.get(normalizedName) ?? definition.name
     const previous = this.skills.get(previousName)
@@ -30,6 +30,7 @@ export class SkillRegistry {
     for (const alias of definition.aliases ?? []) {
       this.aliases.set(normalizeSkillKey(alias), definition.name)
     }
+    return previous
   }
 
   get(name: string): SkillDefinition | undefined {
@@ -75,14 +76,8 @@ export class SkillRegistry {
   }
 }
 
-/** Internal skill store */
-const skills: Map<string, SkillDefinition> = new Map()
-
-/** Lowercase skill name -> canonical skill name */
-const normalizedNames: Map<string, string> = new Map()
-
-/** Alias -> skill name mapping */
-const aliases: Map<string, string> = new Map()
+/** Global singleton backing the module-level convenience functions (#389). */
+const globalRegistry = new SkillRegistry()
 
 function stripWorkspacePrefix(name: string): string {
   const separatorIndex = name.lastIndexOf(':')
@@ -94,38 +89,13 @@ function normalizeSkillKey(name: string): string {
   return name.trim().toLowerCase()
 }
 
-function unregisterSkillAliases(skill: SkillDefinition): void {
-  if (!skill.aliases) return
-  for (const alias of skill.aliases) {
-    aliases.delete(normalizeSkillKey(alias))
-  }
-}
-
 /**
  * Register a skill definition.
  */
 export function registerSkill(definition: SkillDefinition): void {
-  const normalizedName = normalizeSkillKey(definition.name)
-  const previousName = normalizedNames.get(normalizedName) ?? definition.name
-  const previous = skills.get(previousName)
-  if (previous) {
-    unregisterSkillAliases(previous)
-    if (previousName !== definition.name) {
-      skills.delete(previousName)
-    }
-    if (previous.name !== definition.name) {
-      console.warn(`[SkillRegistry] Overwriting skill "${previous.name}" with "${definition.name}"`)
-    }
-  }
-
-  skills.set(definition.name, definition)
-  normalizedNames.set(normalizedName, definition.name)
-
-  // Register aliases
-  if (definition.aliases) {
-    for (const alias of definition.aliases) {
-      aliases.set(normalizeSkillKey(alias), definition.name)
-    }
+  const previous = globalRegistry.register(definition)
+  if (previous && previous.name !== definition.name) {
+    console.warn(`[SkillRegistry] Overwriting skill "${previous.name}" with "${definition.name}"`)
   }
 }
 
@@ -133,47 +103,28 @@ export function registerSkill(definition: SkillDefinition): void {
  * Get a skill by name or alias.
  */
 export function getSkill(name: string): SkillDefinition | undefined {
-  // Direct lookup
-  const direct = skills.get(name)
-  if (direct) return direct
-
-  const normalizedName = normalizeSkillKey(name)
-  const normalizedSkillName = normalizedNames.get(normalizedName)
-  if (normalizedSkillName) return skills.get(normalizedSkillName)
-
-  // Alias lookup
-  const resolved = aliases.get(normalizedName)
-  if (resolved) return skills.get(resolved)
-
-  const unprefixed = stripWorkspacePrefix(name)
-  if (unprefixed !== name) {
-    return getSkill(unprefixed)
-  }
-
-  return undefined
+  return globalRegistry.get(name)
 }
 
 /**
  * Get all registered skills.
  */
 export function getAllSkills(): SkillDefinition[] {
-  return Array.from(skills.values())
+  return globalRegistry.getAll()
 }
 
 /**
  * Get all user-invocable skills (for /command listing).
  */
 export function getUserInvocableSkills(): SkillDefinition[] {
-  return getAllSkills().filter(
-    (s) => s.userInvocable !== false && (!s.isEnabled || s.isEnabled()),
-  )
+  return globalRegistry.getUserInvocable()
 }
 
 /**
  * Get skills that the model may see and invoke automatically.
  */
 export function getModelInvocableSkills(): SkillDefinition[] {
-  return getUserInvocableSkills().filter((s) => s.disableModelInvocation !== true)
+  return globalRegistry.getModelInvocable()
 }
 
 /**
@@ -187,25 +138,14 @@ export function hasSkill(name: string): boolean {
  * Remove a skill.
  */
 export function unregisterSkill(name: string): boolean {
-  // Locate via getSkill (normalize/alias/prefix fallbacks) like the class-based
-  // registry does: an exact-only lookup left normalized entries unremovable (#232).
-  const skill = getSkill(name)
-  if (!skill) return false
-
-  normalizedNames.delete(normalizeSkillKey(skill.name))
-
-  unregisterSkillAliases(skill)
-
-  return skills.delete(skill.name)
+  return globalRegistry.unregister(name)
 }
 
 /**
  * Clear all skills (for testing).
  */
 export function clearSkills(): void {
-  skills.clear()
-  normalizedNames.clear()
-  aliases.clear()
+  globalRegistry.clear()
 }
 
 /**
