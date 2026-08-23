@@ -31,6 +31,23 @@ describe("buildGrepArgs", () => {
     expect(args).not.toContain("-B");
     expect(args).not.toContain("-C");
   });
+
+  test("skips hidden files and excludes every VCS directory (#473)", () => {
+    // rg/native 通道默认跳过隐藏条目;grep 回退用 --exclude='.*' 收窄点前缀
+    // 文件,EXCLUDED_DIRS 各目录必须有对应 --exclude-dir(BSD grep 的
+    // --exclude 不作用于目录)。.gitignore 尊重是已知残留,不在此通道实现。
+    const args = buildGrepArgs({ pattern: "x" }, "files_with_matches", "/tmp");
+    const excludeIndex = args.indexOf("--exclude");
+    expect(excludeIndex).toBeGreaterThanOrEqual(0);
+    expect(args[excludeIndex + 1]).toBe(".*");
+    for (const directory of EXCLUDED_DIRS) {
+      let covered = false;
+      for (let i = 0; i < args.length - 1; i += 1) {
+        if (args[i] === "--exclude-dir" && args[i + 1] === directory) covered = true;
+      }
+      expect(covered).toBeTrue();
+    }
+  });
 });
 
 describe("buildNativeSearchOptions", () => {
