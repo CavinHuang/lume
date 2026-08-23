@@ -604,22 +604,7 @@ export class BrowserRuntime {
     return false
   }
 
-  private pauseAgentControl(tab: BrowserTab): void {
-    if (!tab.agentLease || tab.agentControlState === "paused_by_user") return
-    const lease = tab.agentLease
-    tab.agentControlState = "paused_by_user"
-    tab.handoff = { browserSessionId: lease.browserSessionId, status: "handoff", reason: "user_takeover" }
-    tab.generation += 1
-    tab.inputSequence += 1
-    tab.agentLease = { ...lease, generation: tab.generation }
-    this.inputLedger.clear(tab.tabId)
-    this.actionQueue.cancel(`agent:${lease.browserSessionId}`)
-    this.hideAgentCursor()
-    this.options.emit({ method: "browser:user-takeover", params: { tabId: tab.tabId, generation: tab.generation } })
-    this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
-    this.rememberTab(tab)
-  }
-
+  // 共同操作模式：用户输入不再触发接管暂停，paused_by_user 仅保留为协议兼容状态（当前无置入路径）。
   private resumeAgentControl(tabId: string, context: BrowserRequestContext): BrowserTabDescriptor {
     if (context.actor !== "user") throw browserError("action_denied")
     const tab = this.tabs.get(tabId)
@@ -906,7 +891,6 @@ export class BrowserRuntime {
 
     const tab = this.requireTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (context.actor === "agent" && tab.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
-    if (context.actor === "user" && tab.agentLease && MUTATING_METHODS.has(method)) this.pauseAgentControl(tab)
     if (tab.dialogOpen && method !== "dialog:handle" && method !== "dialog:get") throw browserError("dialog_blocking")
     if ((method === "reload" || method === "hardReload") && (!tab.webContents || tab.webContents.isDestroyed() || tab.guestState === "gone")) {
       return this.recoverGuest(tab)
@@ -937,6 +921,7 @@ export class BrowserRuntime {
           const activeAt = tab.lastUserActivationAt
           if (this.humanizedInput && activeAt !== undefined && Date.now() - activeAt < 2_000) await delay(250 + Math.random() * 450)
           tab.agentDispatching = true
+          this.options.emit({ method: "browser:agent-dispatching", params: { tabId: tab.tabId, active: true } })
         }
         try {
           const result = await this.dispatchAction(tab, method, params, context)
@@ -964,6 +949,7 @@ export class BrowserRuntime {
         } finally {
           if (context.actor === "agent") {
             tab.agentDispatching = false
+            this.options.emit({ method: "browser:agent-dispatching", params: { tabId: tab.tabId, active: false } })
             this.inputLedger.clear(tab.tabId)
           }
         }
@@ -1486,18 +1472,17 @@ export class BrowserRuntime {
             : undefined
       tab.inputSequence += 1
       if (!action && input.type === "keyDown" && !input.isAutoRepeat) tab.lastUserActivationAt = Date.now()
-      this.pauseAgentControl(tab)
       if (!action) return
       event.preventDefault()
       this.options.emit({ method: "browser:shortcut", params: { tabId: tab.tabId, action } })
     })
     wc.on("before-mouse-event", (_event, mouse) => {
       if (this.inputLedger.consumeMouse(tab.tabId, mouse)) return
-      // 滚动与纯指针移动是查看型交互（如用户展开侧边栏观察 Agent 操作），不构成用户接管
+      // 滚动与纯指针移动是查看型交互，不计入用户操作
       if (mouse.type !== "mouseDown" && mouse.type !== "mouseUp") return
+      // 共同操作模式：用户点击不再暂停 Agent 控制，用户与 Agent 可同时操作同一标签页
       tab.inputSequence += 1
       if (mouse.type === "mouseDown" && (mouse.button === "left" || mouse.button === "middle")) tab.lastUserActivationAt = Date.now()
-      this.pauseAgentControl(tab)
     })
     wc.on("page-title-updated", (_event, title) => {
       tab.title = title.slice(0, 256)

@@ -101,6 +101,7 @@ export function BrowserShell({
   const deviceCanvasRef = useRef<HTMLDivElement | null>(null)
   const responsiveViewportSizeRef = useRef<{ width: number; height: number } | null>(null)
   const annotationModeRef = useRef(false)
+  const agentIdleTimerRef = useRef<number | null>(null)
   const addressInputRef = useRef<HTMLInputElement | null>(null)
   const dataManagersRef = useRef<BrowserDataManagersHandle | null>(null)
   const currentUrlRef = useRef(initialUrl)
@@ -139,6 +140,7 @@ export function BrowserShell({
   const [downloadNoticeCount, setDownloadNoticeCount] = useState(0)
   const [pageDialog, setPageDialog] = useState<BrowserPageDialog | null>(null)
   const [pageDialogBusy, setPageDialogBusy] = useState(false)
+  const [agentControlling, setAgentControlling] = useState(false)
   const showSuggestions = addressFocused && suggestions.length > 0
   const reviewSession = reviewSessions[draftKey]
   const reviewItems = reviewSession?.items ?? []
@@ -280,6 +282,15 @@ export function BrowserShell({
         setAnnotationMode(true)
       }
       if (event.method === 'browser:tab-changed') acceptDescriptor(event.params as unknown as BrowserTabDescriptor)
+      if (event.method === 'browser:agent-dispatching' && event.params.tabId === tabId) {
+        if (agentIdleTimerRef.current !== null) {
+          clearTimeout(agentIdleTimerRef.current)
+          agentIdleTimerRef.current = null
+        }
+        if (event.params.active === true) setAgentControlling(true)
+        // 动作间隙防闪烁：短暂空闲视为连续控制
+        else agentIdleTimerRef.current = window.setTimeout(() => { agentIdleTimerRef.current = null; setAgentControlling(false) }, 800)
+      }
       if (event.method === 'browser:find-result') {
         setFindResult({
           activeMatchOrdinal: Number(event.params.activeMatchOrdinal) || 0,
@@ -356,6 +367,12 @@ export function BrowserShell({
     return () => {
       disposed = true
       stopListening?.()
+      if (agentIdleTimerRef.current !== null) {
+        clearTimeout(agentIdleTimerRef.current)
+        agentIdleTimerRef.current = null
+      }
+      // 切换标签页后指示器不跨页残留
+      setAgentControlling(false)
       if (established) {
         if (descriptorRef.current.guestState === 'ready') {
           void browserRuntime<{ x: number; y: number }>({ method: 'scroll:get', params: { tabId } })
@@ -665,12 +682,6 @@ export function BrowserShell({
       ? tabs
       : [...tabs, { id: '__settings__', type: 'settings', title: '设置' }])
     setActiveTabId('__settings__')
-  }
-
-  const resumeAgentControl = () => {
-    void browserRuntime<BrowserTabDescriptor>({ method: 'agentControl:resume', params: { tabId } })
-      .then((next) => acceptDescriptor(next))
-      .catch(() => toast.error('无法将浏览器交还给 Agent'))
   }
 
   const beginViewportResize = (axis: ViewportResizeAxis, event: ReactPointerEvent<HTMLElement>) => {
@@ -1369,17 +1380,15 @@ export function BrowserShell({
         )}
         </div>
         {descriptor.isLoading && <div className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-primary/15"><div className="h-full w-full animate-pulse bg-primary" /></div>}
+        {agentControlling && (
+          <div className="pointer-events-none absolute right-3 top-3 z-[9999] flex items-center gap-1.5 rounded-full border border-border bg-popover/90 px-2.5 py-1 shadow-sm backdrop-blur">
+            <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-primary" />
+            <span className="text-micro text-popover-foreground">Lume 正在控制</span>
+          </div>
+        )}
           </>
         )}
       </div>
-
-      {descriptor.agentControlState === 'paused_by_user' && (
-        <div className="flex min-h-10 shrink-0 items-center gap-3 border-b border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-foreground">
-          <ShieldAlert className="size-4 shrink-0 text-amber-500" />
-          <span className="min-w-0 flex-1">你已接管此标签页，Agent 浏览器操作已暂停。</span>
-          <Button type="button" variant="outline" size="sm" className="h-7 shrink-0" onClick={resumeAgentControl}>交还给 Agent</Button>
-        </div>
-      )}
 
       {surface === 'right-panel' && ownerThreadId && commentsPanelOpen && annotationComments.length > 0 && (
         <div
