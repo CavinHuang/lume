@@ -66,7 +66,6 @@ export type SDKMessage =
   | SDKTaskProgressMessage
   | SDKPromptSuggestionMessage
   | SDKApiRetryMessage
-  | SDKPostTurnSummaryMessage
   | SDKStreamlinedTextMessage
   | SDKStreamlinedToolUseSummaryMessage
   | SDKToolUseSummaryMessage
@@ -548,22 +547,6 @@ export interface SDKPermissionDenial {
   tool_name: string
   tool_use_id: string
   tool_input: Record<string, unknown>
-}
-
-export interface SDKPostTurnSummaryMessage {
-  type: 'system'
-  subtype: 'post_turn_summary'
-  summarizes_uuid: string
-  status_category: 'blocked' | 'waiting' | 'completed' | 'review_ready' | 'failed'
-  status_detail: string
-  is_noteworthy: boolean
-  title: string
-  description: string
-  recent_action: string
-  needs_action: string
-  artifact_urls: string[]
-  uuid?: string
-  session_id: string
 }
 
 export interface SDKStreamlinedTextMessage {

@@ -3094,7 +3094,7 @@ describe("QueryEngine getContextUsage", () => {
     const smallSchemaUsage = buildEngine({ type: "object", properties: {} }).getContextUsage()
 
     const toolsTokens = (usage: ReturnType<QueryEngine["getContextUsage"]>) =>
-      usage.gridRows?.flatMap((row) => row).find((cell) => cell.categoryName === "tools")?.tokens ?? 0
+      usage.categories.find((category) => category.name === "tools")?.tokens ?? 0
 
     // 口径与 getDeferredToolTokenCount 一致：schema 变大必须推高估算，
     // 不依赖 native 计数是否可用（双态稳健）。

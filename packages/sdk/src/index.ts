@@ -381,7 +381,6 @@ export type {
   SDKTaskProgressMessage,
   SDKPromptSuggestionMessage,
   SDKApiRetryMessage,
-  SDKPostTurnSummaryMessage,
   SDKStreamlinedTextMessage,
   SDKStreamlinedToolUseSummaryMessage,
   SDKToolUseSummaryMessage,
