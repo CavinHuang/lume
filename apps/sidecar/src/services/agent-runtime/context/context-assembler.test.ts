@@ -325,6 +325,7 @@ describe("ContextAssembler", () => {
             usedMemoryItems: [{
               id: "mem-1",
               kind: "preference",
+              semanticRole: "preference",
               scope: "global",
               status: "active",
               statement: "remembered",

@@ -108,7 +108,7 @@ export function buildPersonaFromRules(entries: MemoryV2Entry[]): string {
 
   const preferences: string[] = [];
   for (const entry of entries) {
-    if (entry.frontmatter.kind !== "preference") continue;
+    if (entry.frontmatter.semantic_role !== "preference") continue;
     preferences.push(entry.statement);
     if (preferences.length >= 5) break;
   }

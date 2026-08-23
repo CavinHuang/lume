@@ -24,9 +24,9 @@ import {
 } from "./claim";
 import type {
   MemoryV2Entry,
-  MemoryV2Kind,
   MemoryV2RecallItem,
-  MemoryV2Scope
+  MemoryV2Scope,
+  MemoryV2SemanticRole
 } from "./types";
 import { MemoryCommandService } from "./command-service";
 
@@ -172,6 +172,7 @@ function entryRecallCandidates(entries: MemoryV2Entry[]): MemoryV2RecallItem[] {
   return entries.map((entry) => ({
     id: entry.frontmatter.id,
     kind: entry.frontmatter.kind,
+    semanticRole: entry.frontmatter.semantic_role,
     scope: entry.frontmatter.scope,
     status: entry.frontmatter.status === "suspected_stale" ? "suspected_stale" : "active",
     statement: entry.statement,
@@ -200,6 +201,7 @@ function markdownRecallCandidates(input: {
         items.push({
           id: `${scope}:MEMORY.md`,
           kind: "state",
+          semanticRole: "state",
           scope,
           status: "active",
           statement: text,
@@ -218,6 +220,7 @@ function markdownRecallCandidates(input: {
         items.push({
           id: `${scope}:daily:${path}`,
           kind: "state",
+          semanticRole: "state",
           scope,
           status: "active",
           statement: text,
@@ -234,6 +237,7 @@ function markdownRecallCandidates(input: {
           items.push({
             id: `${scope}:run:${path}`,
             kind: "state",
+            semanticRole: "state",
             scope,
             status: "active",
             statement: text,
@@ -250,6 +254,7 @@ function markdownRecallCandidates(input: {
       if (text) items.push({
         id: "workspace:brief",
         kind: "state",
+        semanticRole: "state",
         scope,
         status: "active",
         statement: text,
@@ -267,6 +272,7 @@ function markdownRecallCandidates(input: {
         if (text) items.push({
           id: `workspace:capsule:${capsule}`,
           kind: "state",
+          semanticRole: "state",
           scope,
           status: "active",
           statement: text,
@@ -340,7 +346,7 @@ function scoreRecallItem(
   const lexical = itemTokens.reduce((score, token) => score + (queryTokens.has(token) ? 1 : 0), 0);
   const semanticScore = semanticIntentBoost(item, intent);
   const historyScore = queryPlan.includeConversationHistory && isConversationHistoryRecallItem(item) ? 3 : 0;
-  const kindScore = kindIntentBoost(item.kind, intent);
+  const kindScore = roleIntentBoost(item.semanticRole, intent);
   if (claimScore === 0 && lexical === 0 && semanticScore === 0 && historyScore === 0 && kindScore === 0 && !item.pinned) return 0;
   const pathScore = [...queryTokens].some((token) => item.path.toLowerCase().includes(token)) ? 1.5 : 0;
   const pinnedScore = item.pinned ? 2 : 0;
@@ -356,17 +362,19 @@ function isConversationHistoryRecallItem(item: MemoryV2RecallItem): boolean {
     || item.id.includes(":run:");
 }
 
-function kindIntentBoost(kind: MemoryV2Kind, intent: MemoryV2SearchIntent): number {
-  const boosts: Record<MemoryV2SearchIntent, Partial<Record<MemoryV2Kind, number>>> = {
-    architecture: { decision: 3, fact: 2, lesson: 2 },
+// identity/constraint 继承 fact 分值：legacyKindForRole 曾把它们压缩成 fact，
+// 保持存量排序语义不变；按 role 细分调分待评测度量（#298）后再做。
+function roleIntentBoost(role: MemoryV2SemanticRole, intent: MemoryV2SearchIntent): number {
+  const boosts: Record<MemoryV2SearchIntent, Partial<Record<MemoryV2SemanticRole, number>>> = {
+    architecture: { decision: 3, fact: 2, lesson: 2, identity: 2, constraint: 2 },
     continue_task: { state: 3, decision: 1 },
-    identity: { preference: 3, fact: 2 },
+    identity: { preference: 3, fact: 2, identity: 2, constraint: 2 },
     preference: { preference: 3 },
-    debug: { lesson: 3, fact: 1 },
-    commit: { preference: 2, fact: 1, state: 1 },
+    debug: { lesson: 3, fact: 1, identity: 1, constraint: 1 },
+    commit: { preference: 2, fact: 1, state: 1, identity: 1, constraint: 1 },
     general: {}
   };
-  return boosts[intent][kind] ?? 0;
+  return boosts[intent][role] ?? 0;
 }
 
 function semanticIntentBoost(item: MemoryV2RecallItem, intent: MemoryV2SearchIntent): number {
@@ -374,7 +382,9 @@ function semanticIntentBoost(item: MemoryV2RecallItem, intent: MemoryV2SearchInt
   const text = `${item.statement} ${(item.path ?? "")}`.toLowerCase();
   const nameLikeMemory = /preferred[-_\s]?name|nickname|call me|called|my name|user name|名字|称呼|叫我|叫作|叫做/.test(text);
   if (!nameLikeMemory) return 0;
-  return item.kind === "preference" || item.kind === "fact" ? 5 : 2;
+  // 与旧 kind 判定等价：kind∈{preference,fact} ⟺ role∉{decision,lesson,state}
+  // （identity/constraint 的 kind 曾被压缩成 fact）
+  return item.semanticRole === "decision" || item.semanticRole === "lesson" || item.semanticRole === "state" ? 2 : 5;
 }
 
 function recentDailyFiles(dir: string, maxDays: number): string[] {
