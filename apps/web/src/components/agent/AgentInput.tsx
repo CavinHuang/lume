@@ -1689,16 +1689,12 @@ export function AgentInput({
                     <span className="shrink-0 font-mono text-xs tabular-nums text-[var(--lume-text-secondary)]">
                       {formatVoiceElapsed(voiceDictation.elapsedSeconds)}
                     </span>
-                    <div
-                      className="flex h-3.5 shrink-0 items-end gap-[2px]"
-                      style={{ opacity: 0.25 + voiceDictation.volume * 0.75 }}
-                      aria-hidden
-                    >
-                      {[0, 1, 2, 3].map((index) => (
+                    <div className="flex h-3.5 shrink-0 items-center gap-[2px]" aria-hidden>
+                      {[0.6, 1, 0.75, 0.9].map((scale, index) => (
                         <span
                           key={index}
-                          className="voice-dictation-bar h-full w-[3px] rounded-full bg-[var(--lume-danger)]"
-                          style={{ animationDelay: `${index * 120}ms` }}
+                          className="w-[3px] rounded-full bg-[var(--lume-danger)] transition-[height] duration-100"
+                          style={{ height: `${Math.max(3, Math.round(voiceDictation.volume * scale * 14))}px` }}
                         />
                       ))}
                     </div>
@@ -2016,7 +2012,21 @@ export function AgentInput({
                   title={voiceDictation.isActive ? '结束听写（Alt+V）' : '语音输入（Alt+V）'}
                   type="button"
                 >
-                  {voiceDictation.isActive ? <Square size={10} /> : <Mic size={13} />}
+                  {voiceDictation.status === 'connecting' || voiceDictation.status === 'stopping' ? (
+                    <LoaderCircle size={12} className="animate-spin" />
+                  ) : voiceDictation.status === 'recording' ? (
+                    <span className="flex h-3 items-center gap-[2px]" aria-hidden>
+                      {[0.6, 1, 0.75, 0.9].map((scale, index) => (
+                        <span
+                          key={index}
+                          className="w-[2px] rounded-full bg-current transition-[height] duration-100"
+                          style={{ height: `${Math.max(3, Math.round(voiceDictation.volume * scale * 12))}px` }}
+                        />
+                      ))}
+                    </span>
+                  ) : (
+                    <Mic size={13} />
+                  )}
                 </Button>
                 <fieldset disabled={Boolean(editingQueuedMessage)} className="contents">
                   <ModelPicker threadId={threadId} />

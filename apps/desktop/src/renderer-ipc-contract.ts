@@ -79,6 +79,8 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'voice_dictation_audio_chunk',
   'voice_dictation_stop',
   'voice_dictation_cancel',
+  'voice_dictation_check_microphone',
+  'voice_dictation_request_microphone',
   'desktop_flash_window',
 ])
 

@@ -52,9 +52,26 @@ export function formatVoiceElapsed(totalSeconds: number): string {
 }
 
 function getMicrophoneErrorMessage(error: unknown): string {
-  const name = error instanceof Error ? error.name : ''
-  if (name === 'NotAllowedError') return '麦克风权限被拒绝，请在系统设置中允许 Lume 使用麦克风'
-  if (name === 'NotReadableError') return '麦克风被其他应用占用，请关闭占用后重试'
+  if (error instanceof DOMException) {
+    switch (error.name) {
+      case 'NotAllowedError':
+      case 'PermissionDeniedError':
+        return '麦克风权限被系统阻止，请在系统设置中允许 Lume 访问麦克风'
+      case 'NotFoundError':
+      case 'DevicesNotFoundError':
+        return '没有检测到可用麦克风，请检查输入设备是否已连接并启用'
+      case 'NotReadableError':
+      case 'TrackStartError':
+        return '麦克风当前无法读取，可能被其他应用占用或被系统隐私设置阻止'
+      case 'OverconstrainedError':
+      case 'ConstraintNotSatisfiedError':
+        return '当前麦克风不支持请求的采集参数，请切换输入设备后重试'
+      case 'SecurityError':
+        return '当前窗口被系统阻止访问麦克风，请检查应用权限设置'
+      default:
+        break
+    }
+  }
   return error instanceof Error && error.message ? error.message : '无法启动麦克风'
 }
 
@@ -313,6 +330,27 @@ export function useVoiceDictation({ onCommit, onOpenSettings }: UseVoiceDictatio
     if (!settings.appId || !settings.accessToken || !settings.resourceId) {
       failStart('语音输入尚未配置，请先填写识别服务凭证', { missingCredentials: true })
       return
+    }
+
+    // macOS 系统级 TCC 权限预检：已拒绝直接指路系统设置；首次使用主动弹授权框。
+    // Windows/Linux 返回 unsupported，由 getUserMedia 触发系统授权。
+    try {
+      const permission = await invoke<{ status: string }>('voice_dictation_check_microphone', null)
+      if (!shouldProceed()) return
+      if (permission.status === 'denied') {
+        failStart('麦克风权限已被系统阻止，请在系统设置中允许 Lume 访问麦克风')
+        return
+      }
+      if (permission.status === 'not-determined') {
+        const requested = await invoke<{ status: string }>('voice_dictation_request_microphone', null)
+        if (!shouldProceed()) return
+        if (requested.status !== 'granted') {
+          failStart('需要麦克风权限才能使用语音输入')
+          return
+        }
+      }
+    } catch {
+      // 预检失败不阻断：交给 getUserMedia 的错误路径兜底。
     }
 
     const sessionId = crypto.randomUUID()

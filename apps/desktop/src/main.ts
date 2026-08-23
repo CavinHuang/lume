@@ -14,6 +14,7 @@ import {
   screen,
   session,
   shell,
+  systemPreferences,
   utilityProcess,
   webContents,
 } from 'electron'
@@ -1846,6 +1847,18 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
       if (sessionId) await cancelVoiceAsrSession(sessionId)
       return null
+    }
+    case 'voice_dictation_check_microphone': {
+      // macOS 有系统级 TCC 权限可查；Windows/Linux 返回 unsupported，由 getUserMedia 触发授权。
+      if (process.platform !== 'darwin') return { status: 'unsupported', platform: process.platform }
+      const raw = systemPreferences.getMediaAccessStatus('microphone')
+      const status = raw === 'granted' || raw === 'denied' || raw === 'not-determined' ? raw : 'denied'
+      return { status, platform: process.platform }
+    }
+    case 'voice_dictation_request_microphone': {
+      if (process.platform !== 'darwin') return { status: 'unsupported', platform: process.platform }
+      const granted = await systemPreferences.askForMediaAccess('microphone')
+      return { status: granted ? 'granted' : 'denied', platform: process.platform }
     }
     case 'desktop_flash_window': {
       // 听写完成时窗口不在前台 → 任务栏闪烁提醒（Windows）/ Dock 跳动（macOS）。

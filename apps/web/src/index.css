@@ -1425,14 +1425,3 @@
   opacity: 1;
   transform: translateX(-50%) scale(1);
 }
-
-/* 语音听写：录音中音量条脉动（高度由 CSS 动画驱动，音量调制整组透明度）。 */
-@keyframes voice-dictation-bar {
-  0% { transform: scaleY(0.3); }
-  100% { transform: scaleY(1); }
-}
-
-.voice-dictation-bar {
-  transform-origin: bottom;
-  animation: voice-dictation-bar 0.9s ease-in-out infinite alternate;
-}

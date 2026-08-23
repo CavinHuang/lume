@@ -43,12 +43,19 @@ export function VoiceDictationSettings() {
   const [settings, setSettings] = React.useState<VoiceDictationSettings | null>(null)
   const [saving, setSaving] = React.useState(false)
   const [testing, setTesting] = React.useState(false)
+  const [micDenied, setMicDenied] = React.useState(false)
 
   React.useEffect(() => {
     invoke<VoiceDictationSettings>('voice_dictation_get_settings', null)
       .then(setSettings)
       .catch((error: unknown) => toast.error(`读取语音输入设置失败: ${error instanceof Error ? error.message : '未知错误'}`))
+    // macOS：系统级麦克风权限已被拒时显示指引；Windows/Linux 无对应查询（unsupported）。
+    invoke<{ status: string }>('voice_dictation_check_microphone', null)
+      .then((permission) => setMicDenied(permission.status === 'denied'))
+      .catch(() => undefined)
   }, [])
+
+  const credentialsComplete = Boolean(settings && settings.appId && settings.accessToken && settings.resourceId)
 
   const applyUpdate = React.useCallback(async (updates: VoiceDictationSettingsUpdate) => {
     setSaving(true)
@@ -84,6 +91,11 @@ export function VoiceDictationSettings() {
 
   return (
     <div className="max-w-[720px] space-y-4">
+      {micDenied && (
+        <div className="rounded-xl border border-[color:color-mix(in_oklab,var(--lume-danger)_36%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,transparent)] px-4 py-3 text-[13px] leading-6 text-[var(--text-1)]">
+          系统已拒绝 Lume 访问麦克风。请打开「系统设置 → 隐私与安全性 → 麦克风」允许 Lume 后重试。
+        </div>
+      )}
       <div className="space-y-2.5 rounded-xl border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)] px-4 py-3">
         <div className="flex items-center gap-2">
           <Mic size={15} className="shrink-0 text-[var(--text-2)]" />
@@ -105,9 +117,9 @@ export function VoiceDictationSettings() {
             </button>
             开通「流式语音识别大模型」服务（有免费试用额度）
           </li>
-          <li>在应用管理中创建应用，拿到 APP ID 与 Access Token</li>
+          <li>在语音服务的应用管理中创建应用并授权该服务，拿到 APP ID 与 Access Token</li>
           <li>Resource ID 填 <code className="rounded bg-[var(--surface-3)] px-1 py-0.5 text-xs">volcengine_input_common</code>（或你开通的服务实例 ID）</li>
-          <li>填好下方凭证后点「测试连接」，然后在输入框点麦克风或按 <kbd className="rounded border border-[var(--lume-border-subtle)] bg-[var(--surface-3)] px-1 text-xs">Alt+V</kbd> 开始听写</li>
+          <li>对照下方逐项填写凭证，点「测试连接」，然后在输入框点麦克风或按 <kbd className="rounded border border-[var(--lume-border-subtle)] bg-[var(--surface-3)] px-1 text-xs">Alt+V</kbd> 开始听写</li>
         </ol>
       </div>
 
@@ -181,7 +193,13 @@ export function VoiceDictationSettings() {
       </div>
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <Button variant="outline" type="button" disabled={testing || saving} onClick={() => void handleTest()}>
+        <Button
+          variant="outline"
+          type="button"
+          disabled={testing || saving || !credentialsComplete}
+          title={credentialsComplete ? undefined : '请先填写完整的 APP ID、Access Token 和 Resource ID'}
+          onClick={() => void handleTest()}
+        >
           {testing ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
           测试连接
         </Button>

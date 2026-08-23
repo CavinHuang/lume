@@ -53,3 +53,12 @@ export interface VoiceDictationTestResult {
   success: boolean
   message: string
 }
+
+/**
+ * 系统级麦克风权限状态。macOS 经 systemPreferences 查询/请求；
+ * Windows/Linux 无对应 API（'unsupported'），由 getUserMedia 触发系统授权。
+ */
+export interface VoiceDictationMicPermission {
+  status: 'granted' | 'denied' | 'not-determined' | 'unsupported'
+  platform: NodeJS.Platform
+}
