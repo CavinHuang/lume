@@ -1,4 +1,4 @@
-import type { Channel, LumeConfigAgentDefaultStrategy, ProviderType } from "@lume/shared";
+import type { LumeConfigAgentDefaultStrategy, ProviderType } from "@lume/shared";
 
 // 纯函数簇已下移 runtime-core/model-candidates(#289 分层切边);此处 re-export 维持既有 import 路径。
 export {
