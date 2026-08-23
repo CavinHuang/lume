@@ -11,6 +11,7 @@ import { GeneralSettings } from './GeneralSettings'
 import { AppearanceSettings } from './AppearanceSettings'
 import { AgentSettings } from './AgentSettings'
 import { AgentsSettings } from './AgentsSettings'
+import { GmailSettings } from './GmailSettings'
 import { McpSettings } from './McpSettings'
 import { ImSettings } from './ImSettings'
 import { PermissionSettings } from './PermissionSettings'
@@ -112,7 +113,12 @@ export function SettingsView() {
               desc="快捷键配置会在后续版本回到这里，自动化入口已移到侧边栏。"
             />
           )}
-          {tab === 'integrations' && <McpSettings />}
+          {tab === 'integrations' && (
+            <>
+              <GmailSettings />
+              <McpSettings />
+            </>
+          )}
           {tab === 'im-integrations' && <ImSettings />}
           {tab === 'web-search' && <WebSearchSettings />}
           {tab === 'updates' && <VersionUpdateSettings />}
