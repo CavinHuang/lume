@@ -1,5 +1,9 @@
 import { parseLumeCapabilityReference } from "@lume/agent-sdk";
-import { normalizeMcpTransport, type ProviderType } from "@lume/shared";
+import {
+  fileRefSchema as sharedFileRefSchema,
+  normalizeMcpTransport,
+  type ProviderType,
+} from "@lume/shared";
 import { idSchema, optionalIdSchema, z } from "./validation";
 import {
   relativeThreadPathSchema,
@@ -57,13 +61,12 @@ const agentDiffCommentAttachmentSchema = z
     id: z.string().trim().min(1).max(128),
     origin: z.literal("diff"),
     intent: z.enum(["comment", "context", "modify"]).optional(),
-    fileRef: z
-      .object({
-        source: z.enum(["project", "session", "memory", "legacy"]),
+    // FileRef 形状单源 @lume/shared（#288）；diff 评论场景长度上限按现状叠加（无 trim，保持既有接受面）
+    fileRef: sharedFileRefSchema
+      .extend({
         scopeId: z.string().min(1).max(256),
         relativePath: z.string().max(4096),
       })
-      .strict()
       .optional(),
     position: z
       .object({

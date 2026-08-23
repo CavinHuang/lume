@@ -108,6 +108,24 @@ function toPiApi(apiType: ApiType): PiTextApi {
   return apiType === "deepseek-chat-completions" ? "openai-completions" : apiType;
 }
 
+/**
+ * 模型推理能力与"本次请求是否要思考"是两件事,不得混判。
+ *
+ * pi-ai 的 openai 兼容层里,所有 thinkingFormat 分支(zai/qwen/deepseek/openrouter/
+ * responses…)都以 `model.reasoning === true` 为前提才会向请求体写入思考参数——
+ * 包括"关闭"(zai: `thinking:{type:"disabled"}`、qwen: `enable_thinking:false`、
+ * responses: `reasoning:{effort:"none"}`)。此前 disabled 时把 capability 判成
+ * false,导致所有分支被跳过、请求体一个思考参数都不带,GLM/Qwen 等服务端默认
+ * 开思考的模型照想不误(用户选"关闭"依然出 reasoning)。
+ *
+ * 能力未知(undefined)时按 true 处理:与非 disabled 请求的原行为一致
+ * (`undefined ?? true !== 'disabled'` 本来就恒为 true),且对确实不支持推理的
+ * 模型无害——各分支在无 reasoningEffort 时只会落空或写 undefined 字段。
+ */
+export function resolvePiModelReasoningCapability(supportsReasoning: boolean | undefined): boolean {
+  return supportsReasoning ?? true;
+}
+
 export function resolvePiModelInput(messages: NormalizedMessageParam[]): Array<"text" | "image"> {
   for (const message of messages) {
     if (!Array.isArray(message.content)) continue;
@@ -348,7 +366,7 @@ export class PiAiProvider implements LLMProvider {
       api,
       provider: this.options.providerId,
       baseUrl: this.options.baseUrl,
-      reasoning: this.options.supportsReasoning ?? params.thinking?.type !== "disabled",
+      reasoning: resolvePiModelReasoningCapability(this.options.supportsReasoning),
       input: resolvePiModelInput(params.messages),
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: this.options.contextWindow ?? 128_000,
