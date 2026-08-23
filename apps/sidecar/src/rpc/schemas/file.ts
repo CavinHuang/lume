@@ -1,39 +1,18 @@
-import { AGENT_ATTACHMENT_LIMITS } from "@lume/shared";
+import {
+  AGENT_ATTACHMENT_LIMITS,
+  fileSelectionEditInputSchema,
+  guardedFileRefSchema,
+  writeFileRefInputSchema,
+} from "@lume/shared";
 import { idSchema, optionalIdSchema, z } from "../validation";
 import { rendererFileRefSchema } from "./shared";
 
-const guardedProjectFileRefSchema = z
-  .object({
-    ref: rendererFileRefSchema
-      .extend({ source: z.literal("project") })
-      .strict(),
-    expectedKind: z.enum(["file", "directory"]),
-    guard: z
-      .object({
-        kind: z.literal("project"),
-        workspaceSlug: idSchema,
-        expectedProjectRootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-        consumerThreadId: idSchema,
-      })
-      .strict(),
-  })
-  .strict();
-
-const guardedSessionFileRefSchema = z
-  .object({
-    ref: rendererFileRefSchema
-      .extend({ source: z.literal("session") })
-      .strict(),
-    expectedKind: z.enum(["file", "directory"]),
-    guard: z
-      .object({
-        kind: z.literal("session"),
-        consumerThreadId: idSchema,
-        expectedFileContextId: idSchema,
-      })
-      .strict(),
-  })
-  .strict();
+// FileRef 写入/选区编辑/guarded 契约单源在 @lume/shared（#288），按 sidecar 历史命名转发。
+export {
+  writeFileRefInputSchema as fileRefWriteInputSchema,
+  fileSelectionEditInputSchema,
+  guardedFileRefSchema,
+};
 
 export const workspacePathInputSchema = z.object({
   workspaceSlug: idSchema,
@@ -82,50 +61,9 @@ export const pathFileInputSchema = z.object({
 export const fileRefSchema = rendererFileRefSchema;
 
 export const fileRefInputSchema = z.object({ ref: fileRefSchema }).strict();
-export const fileRefWriteInputSchema = z
-  .object({
-    ref: fileRefSchema,
-    content: z.string().max(20 * 1024 * 1024),
-    expectedMtimeMs: z.number().finite().nonnegative(),
-  })
-  .strict();
-export const fileSelectionEditInputSchema = z
-  .object({
-    threadId: idSchema,
-    ref: fileRefSchema,
-    content: z.string().max(10 * 1024 * 1024),
-    startOffset: z.number().int().nonnegative(),
-    endOffset: z.number().int().nonnegative(),
-    instruction: z.string().trim().min(1).max(4_000),
-  })
-  .strict()
-  .superRefine((input, ctx) => {
-    if (
-      input.endOffset < input.startOffset ||
-      input.endOffset > input.content.length
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["endOffset"],
-        message: "选区范围无效",
-      });
-      return;
-    }
-    if (input.endOffset - input.startOffset > 32 * 1024) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["endOffset"],
-        message: "选区不能超过 32 KB",
-      });
-    }
-  });
 export const fileRefUnwatchInputSchema = z
   .object({ watchId: z.string().uuid() })
   .strict();
-export const guardedFileRefSchema = z.union([
-  guardedProjectFileRefSchema,
-  guardedSessionFileRefSchema,
-]);
 export const guardedFileRefInputSchema = z
   .object({ guardedRef: guardedFileRefSchema })
   .strict();
