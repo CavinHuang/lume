@@ -1,4 +1,4 @@
-import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
+import { getRuntimeHostPorts } from "../host-ports";
 
 function normalizeSessionId(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -28,7 +28,7 @@ export function resolveSubagentThreadBinding(
   input: ResolveSubagentThreadBindingInput
 ): ResolvedSubagentThreadBinding {
   const requestedDelivery = normalizeSessionId(input.requestedDeliverySessionId);
-  const resolvedDelivery = requestedDelivery && getAgentThreadMeta(requestedDelivery)
+  const resolvedDelivery = requestedDelivery && getRuntimeHostPorts().getThreadMeta(requestedDelivery)
     ? requestedDelivery
     : input.parentThreadId;
   const threadRequested = input.threadRequested === true;

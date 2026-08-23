@@ -1,4 +1,4 @@
-import type { AgentRuntimeRunResult } from "./types";
+import type { AgentRuntimeRunResult } from "../runtime-core/types";
 import type { LumeRunStatus } from "../runtime-core/run-state";
 
 export interface LumeRunResult {

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKMessage } from "@lume/shared";
-import type { AgentRuntimeRunParams, AgentRuntimeEmitter } from "./types";
+import type { AgentRuntimeRunParams, AgentRuntimeEmitter } from "../runtime-core/types";
 import type { LumeWorkflowHookEvent } from "../../workflow-hooks/hook-events";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import { getThreadEventBus } from "../events/thread-event-bus";

@@ -60,7 +60,7 @@ import type {
 import { readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
-import { type EnabledPluginContextItem } from "../../agent/agent-prompt-builder";
+import type { EnabledPluginContextItem } from "../host-ports";
 import {
   getAliceUserSkillsDir,
   getDefaultSkillsDir,
@@ -78,11 +78,9 @@ import { resolveSubagentSpawnPolicy } from "../subagents/subagent-policy";
 import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
 import { getSubagentCoordinator } from "../subagents/subagent-coordinator";
 import { resolveSubagentDispatchPolicy } from "../subagents/subagent-dispatch-policy";
+import { getRuntimeCoreEntry } from "./runtime-entry";
 import { announceSubagentCompletion } from "../subagents/subagent-announce-service";
-import {
-  createAgentThreadWithModelRef,
-  updateAgentThreadMeta,
-} from "../../agent/agent-thread-manager";
+import { getRuntimeHostPorts } from "../host-ports";
 import { getRuntimeCoreSessionDir } from "./session-store";
 import { createMainTaskTools } from "../task/task-tools";
 import { ToolRuntime, type ToolRuntimeDiagnostic } from "../tools/tool-runtime";
@@ -430,7 +428,7 @@ export function buildRuntimeCoreTools(input: {
               )
             : undefined,
           createSession: ({ subagentId, title, agentType }) => {
-            const child = createAgentThreadWithModelRef(
+            const child = getRuntimeHostPorts().createThreadWithModelRef(
               title,
               modelOverride.modelRef,
               modelOverride.channelId ?? input.channelId,
@@ -443,8 +441,8 @@ export function buildRuntimeCoreTools(input: {
           },
           execute: async ({ run, session, task, feedback, signal }) => {
             const stopChild = () => {
-              void import("../runner/attempt")
-                .then((module) => module.stopAgentRuntime(session.threadId))
+              void Promise.resolve()
+                .then(() => getRuntimeCoreEntry().stopAgentRuntime(session.threadId))
                 .catch(() => undefined);
             };
             signal.addEventListener("abort", stopChild, { once: true });
@@ -735,7 +733,7 @@ export function buildRuntimeCoreTools(input: {
         workspaceSlug: input.workspaceSlug,
       });
       // ★ 关键差异：创建会话栏可见的子会话 thread（带 parentThreadId）
-      const childMeta = createAgentThreadWithModelRef(
+      const childMeta = getRuntimeHostPorts().createThreadWithModelRef(
         typeof toolInput.thread_title === "string"
           ? toolInput.thread_title
           : typeof toolInput.description === "string"
@@ -779,7 +777,7 @@ export function buildRuntimeCoreTools(input: {
           if (run) await announceSubagentCompletion({ run });
           const newTitle = deriveDelegateTitle(childMeta.title, output);
           if (newTitle && newTitle !== childMeta.title) {
-            updateAgentThreadMeta(childMeta.id, { title: newTitle });
+            getRuntimeHostPorts().updateThreadMeta(childMeta.id, { title: newTitle });
           }
         },
       };
@@ -835,8 +833,8 @@ export function buildRuntimeCoreTools(input: {
         // ★ 注册 completion 信号量，供 WaitForDelegations 感知完成（须在 resolve 之前注册）
         getSubagentRunRegistry().createDelegationCompletion(subagentRun.runId);
         const stopBackgroundSubagent = () => {
-          void import("../runner/attempt")
-            .then((module) => module.stopAgentRuntime(childMeta.id))
+          void Promise.resolve()
+            .then(() => getRuntimeCoreEntry().stopAgentRuntime(childMeta.id))
             .catch(() => undefined);
         };
         input.abortSignal?.addEventListener("abort", stopBackgroundSubagent, {
@@ -889,8 +887,7 @@ export function buildRuntimeCoreTools(input: {
           childThreadId: childMeta.id,
           timeoutMs: resolveForegroundSubagentTimeoutMs(),
           stopSubagent: async (threadId: string) => {
-            const { stopAgentRuntime } = await import("../runner/attempt");
-            return stopAgentRuntime(threadId);
+            return getRuntimeCoreEntry().stopAgentRuntime(threadId);
           },
         });
         await enrichedContext.onSubagentEnd?.({

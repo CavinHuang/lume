@@ -1,8 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
+import { getRuntimeHostPorts } from "../../host-ports";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { toThreadRelativePath } from "../../../agent/agent-files-service";
-import { resolveAgentThreadWorkdir } from "../../../agent/agent-workdir-resolver";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
 import type { FileRef } from "@lume/shared";
 
@@ -56,12 +55,12 @@ export function saveComputerUseScreenshots(input: {
     if (!existsSync(absPath)) {
       writeFileSync(absPath, bytes);
     }
-    const threadPath = toThreadRelativePath(input.workspaceSlug, input.threadId, absPath);
+    const threadPath = getRuntimeHostPorts().toThreadRelativePath(input.workspaceSlug, input.threadId, absPath);
     let fileRef: FileRef | undefined;
     try {
       fileRef = {
         source: "session",
-        scopeId: resolveAgentThreadWorkdir(input.threadId).fileContextId,
+        scopeId: getRuntimeHostPorts().resolveThreadWorkdir(input.threadId).fileContextId,
         relativePath: threadPath,
       };
     } catch {
@@ -87,7 +86,7 @@ export function saveComputerUseScreenshots(input: {
 
 function resolveFilesRoot(workspaceSlug: string | undefined, threadId: string): string {
   try {
-    return resolveAgentThreadWorkdir(threadId).filesRoot;
+    return getRuntimeHostPorts().resolveThreadWorkdir(threadId).filesRoot;
   } catch {
     if (!workspaceSlug) {
       throw new Error("无法解析普通会话文件目录");

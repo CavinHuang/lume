@@ -16,8 +16,8 @@ import { TraceRecorder, type TraceRecorderEvent } from "../trace/trace-recorder"
 import { redactTracePayload, summarizeTraceOutput } from "../trace/trace-redaction";
 import { createFileBackedLumeTraceStore } from "../trace/trace-store";
 import type { LumeTraceSpan } from "../trace/trace-types";
-import type { LumeRunItem } from "./run-items";
-import { projectRunItemToRuntimeEvents } from "./run-item-events";
+import type { LumeRunItem } from "../runtime-core/run-items";
+import { projectRunItemToRuntimeEvents } from "../runtime-core/run-item-events";
 import type { LumeRunState, LumeRunStatus } from "../runtime-core/run-state";
 import { createFileBackedLumeRunStateStore, type LumeRunStateStore } from "../runtime-core/run-state-store";
 import { stripMemoryUserMessagePrefix } from "../../memory-v2/user-message-prefix";

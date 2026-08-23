@@ -8,7 +8,7 @@ import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { sendAgentMessage } from "../agent/agent-service";
 import { getSubagentCoordinator } from "../agent-runtime/subagents/subagent-coordinator";
 import { emitAgentNotification } from "../agent/agent-notification-service";
-import type { LumeRunItem } from "../agent-runtime/runner/run-items";
+import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
 import { MemoryCommandService, hasMemoryMutationForRun } from "./command-service";
 import {
   buildBatchExtractionUserPrompt,

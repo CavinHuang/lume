@@ -73,7 +73,7 @@ import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../ag
 import { isAgentRuntimeSessionActive } from "../agent-runtime/runner/attempt";
 import { createCodingTurnRecord } from "../agent-runtime/runtime-core/coding-turn-store";
 import { createFileBackedLumeRunStateStore } from "../agent-runtime/runtime-core/run-state-store";
-import type { LumeRunItem } from "../agent-runtime/runner/run-items";
+import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
 import type { LumeRunState } from "../agent-runtime/runtime-core/run-state";
 import { emitAgentNotification, emitDiagnosticContent } from "./agent-notification-service";
 import { createFileReferenceBinding } from "./agent-files-service";

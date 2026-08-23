@@ -1,8 +1,5 @@
 import type { AgentSubagentCompletionEvent } from "@lume/shared";
-import {
-  getAgentThreadMeta,
-  updateAgentThreadMeta
-} from "../../agent/agent-thread-manager";
+import { getRuntimeHostPorts } from "../host-ports";
 import { createLogger } from "../../infra/logger";
 import { subagentLogFields } from "./subagent-run-registry";
 import type { SubagentRun } from "./subagent-run-types";
@@ -79,7 +76,7 @@ export async function announceSubagentCompletion(params: {
 }): Promise<SubagentAnnounceResult> {
   const run = params.run;
   const targetSessionId = run.deliveryThreadId ?? run.parentThreadId;
-  const targetMeta = getAgentThreadMeta(targetSessionId);
+  const targetMeta = getRuntimeHostPorts().getThreadMeta(targetSessionId);
   if (!targetMeta) {
     log.warn("announce skipped: target session not found", subagentLogFields(run, {
       event: "announce_skipped",
@@ -95,7 +92,7 @@ export async function announceSubagentCompletion(params: {
   let lastError = "";
   for (let attempt = 1; attempt <= ANNOUNCE_MAX_RETRIES; attempt += 1) {
     try {
-      updateAgentThreadMeta(targetSessionId, {});
+      getRuntimeHostPorts().updateThreadMeta(targetSessionId, {});
       log.info("announce delivered", subagentLogFields(run, {
         event: "announce_delivered",
         deliveryThreadId: targetSessionId,

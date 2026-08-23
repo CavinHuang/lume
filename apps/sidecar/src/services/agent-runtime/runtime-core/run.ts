@@ -30,10 +30,7 @@ import type {
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import {
-  buildBuiltinAgents,
-  loadCustomAgents,
-} from "../../agent/agent-prompt-builder";
+import { getRuntimeHostPorts } from "../host-ports";
 import { createLogger } from "../../infra/logger";
 import {
   createRoutingPiAiProvider,
@@ -590,8 +587,8 @@ async function createRuntimeCoreSessionImpl(
     input.agentDir,
   );
   const agents = {
-    ...buildBuiltinAgents(),
-    ...loadCustomAgents(input.workspaceSlug),
+    ...getRuntimeHostPorts().buildBuiltinAgents(),
+    ...getRuntimeHostPorts().loadCustomAgents(input.workspaceSlug),
   };
   const subagentDefinition = input.subagentType
     ? agents[input.subagentType]

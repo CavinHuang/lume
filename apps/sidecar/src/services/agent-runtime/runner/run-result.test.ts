@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { fromAgentRuntimeRunResult } from "./run-result";
-import type { AgentRuntimeRunResult } from "./types";
+import type { AgentRuntimeRunResult } from "../runtime-core/types";
 
 describe("fromAgentRuntimeRunResult", () => {
   test("#392:repeat guard 收场(带标记 turn_limited)落 completed 而非 failed", () => {

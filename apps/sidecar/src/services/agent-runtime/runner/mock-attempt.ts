@@ -8,7 +8,7 @@ import { waitForToolPermissionDecision } from "../interruption/tool-permission-s
 import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
 import { announceSubagentCompletion } from "../subagents/subagent-announce-service";
 import { createRuntimeCoreSession } from "../runtime-core/run";
-import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter, RunRuntimeCoreAttemptOptions } from "./types";
+import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter, RunRuntimeCoreAttemptOptions } from "../runtime-core/types";
 import type { resolveRuntimeCoreChannelModel } from "../runtime-core/model";
 import type { PreparedRuntimeCoreAttempt } from "./prepare-attempt";
 import { updateRuntimeThreadMetaIfPresent } from "../runtime-core/thread-meta-target";

@@ -11,7 +11,7 @@ import { createLogger } from "../../infra/logger";
 import type {
   AgentRuntimeRunParams,
   AgentRuntimeEmitter,
-} from "../runner/types";
+} from "../runtime-core/types";
 import { resolveSubagentInteractiveLabel } from "../runtime-core/subagent-interactive-display";
 import {
   markToolFingerprintAllowed,

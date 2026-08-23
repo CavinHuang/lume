@@ -1,7 +1,7 @@
 import type { Channel, ProviderType } from "@lume/shared";
+import { getRuntimeHostPorts } from "../../host-ports";
 import { decryptApiKey, resolveChannelModelBinding } from "../../../channel/channel-manager";
 import { getEffectiveLumeConfig } from "../../../system/lume-config-service";
-import { resolveThreadAttachmentPath } from "../../../agent/agent-files-service";
 import { createLogger } from "../../../infra/logger";
 import { callImageHttp } from "./image-gen-http";
 import { saveImageOutput } from "./image-gen-output";
@@ -52,7 +52,7 @@ const defaultDeps: ImageGenDeps = {
   callHttp: callImageHttp,
   readModelRefs: (ws) =>
     getEffectiveLumeConfig(ws).models?.imageGeneration?.priorityModelRefs ?? [],
-  resolveRef: resolveThreadAttachmentPath,
+  resolveRef: (...args) => getRuntimeHostPorts().resolveThreadAttachmentPath(...args),
   saveOutput: saveImageOutput,
 };
 

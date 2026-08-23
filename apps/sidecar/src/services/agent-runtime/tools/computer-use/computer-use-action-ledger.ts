@@ -3,10 +3,10 @@ import type {
   DesktopActionLedgerEntry,
   Window as ComputerUseWindow,
 } from "@lume/shared";
+import { getRuntimeHostPorts } from "../../host-ports";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { resolveAgentThreadWorkdir } from "../../../agent/agent-workdir-resolver";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
 import { createLogger } from "../../../infra/logger";
 
@@ -174,7 +174,7 @@ export class ComputerUseActionLedger {
 
 function resolveFilesRoot(workspaceSlug: string, threadId: string): string {
   try {
-    return resolveAgentThreadWorkdir(threadId).filesRoot;
+    return getRuntimeHostPorts().resolveThreadWorkdir(threadId).filesRoot;
   } catch {
     return getAgentThreadFilesPath(workspaceSlug, threadId);
   }

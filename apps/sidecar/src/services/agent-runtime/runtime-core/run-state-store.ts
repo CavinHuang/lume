@@ -9,8 +9,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { ACTIVE_RUN_STATUSES, type LumeRunState } from "./run-state";
-import type { LumeRunItem } from "../runner/run-items";
-import { runHasAssistantMessage } from "../runner/run-item-events";
+import type { LumeRunItem } from "./run-items";
+import { runHasAssistantMessage } from "./run-item-events";
 
 /** 线程级 todo 最新快照（recordTodoState 写入，readLatestTodoState 优先读取）。 */
 export interface LumeTodoSnapshot {

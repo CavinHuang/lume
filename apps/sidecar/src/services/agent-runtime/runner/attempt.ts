@@ -1,5 +1,5 @@
 import { createLogger } from "../../infra/logger";
-import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
+import { getRuntimeHostPorts } from "../host-ports";
 import { resolveChannelModelBinding } from "../../channel/channel-manager";
 import { resolveMockAttempt } from "./mock-attempt";
 import type {
@@ -7,7 +7,7 @@ import type {
   AgentRuntimeRunResult,
   AgentRuntimeEmitter,
   RunRuntimeCoreAttemptOptions,
-} from "./types";
+} from "../runtime-core/types";
 import { buildRuntimeAttemptLogData } from "./attempt-log-summary";
 import { hasRuntimeCoreSessionTranscript } from "../runtime-core/session-store";
 import { LumeRunner } from "./lume-runner";
@@ -163,7 +163,7 @@ export function resolveRuntimeModelAttemptParams(
   params: AgentRuntimeRunParams,
 ): AgentRuntimeRunParams[] {
   const workspaceSlug = params.runtime.workspaceId
-    ? getAgentWorkspace(params.runtime.workspaceId)?.slug
+    ? getRuntimeHostPorts().getWorkspace(params.runtime.workspaceId)?.slug
     : undefined;
   const fallbackRefs =
     getEffectiveLumeConfig(workspaceSlug).models?.agent?.fallbackModelRefs ??

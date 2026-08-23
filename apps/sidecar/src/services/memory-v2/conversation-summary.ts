@@ -1,7 +1,7 @@
 import { type ApiType, type LLMProvider } from "@lume/agent-sdk";
 import { stripAfterglowLines } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
-import type { LumeRunItem } from "../agent-runtime/runner/run-items";
+import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
 import type { LumeRunState } from "../agent-runtime/runtime-core/run-state";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { resolveMemoryExtractionModelRefs } from "./extraction";

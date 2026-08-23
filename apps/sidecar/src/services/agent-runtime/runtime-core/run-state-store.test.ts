@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFileBackedLumeRunStateStore } from "./run-state-store";
-import { projectRunStateToRuntimeEvents } from "../runner/run-item-events";
+import { projectRunStateToRuntimeEvents } from "./run-item-events";
 import { readLatestTodoState } from "./todo-state";
 import type { LumeRunState } from "./run-state";
 

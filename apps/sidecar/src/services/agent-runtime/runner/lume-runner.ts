@@ -2,7 +2,7 @@ import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn, type FileC
 import { createHash } from "node:crypto";
 import type { AdvisorReviewedDetail, LumeConfigHooksInternalSection, SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
-import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter, RunRuntimeCoreAttemptOptions } from "./types";
+import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter, RunRuntimeCoreAttemptOptions } from "../runtime-core/types";
 import { resolveAgentThinkingLevel } from "../runtime-core/model-capabilities";
 import type { PreparedRuntimeCoreAttempt } from "./prepare-attempt";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";

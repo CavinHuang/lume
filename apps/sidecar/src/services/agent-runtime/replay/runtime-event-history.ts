@@ -1,9 +1,9 @@
 import type { AgentThreadRuntimeEventsResult, LumeRuntimeEvent } from "@lume/shared";
-import { projectRunStateToRuntimeEvents } from "../runner/run-item-events";
+import { getRuntimeHostPorts } from "../host-ports";
+import { projectRunStateToRuntimeEvents } from "../runtime-core/run-item-events";
 import { createFileBackedLumeRunStateStore } from "../runtime-core/run-state-store";
 import { createFileBackedTaskStore } from "../task/task-store";
 import { getThreadEventBus } from "../events/thread-event-bus";
-import { getAgentThreadSDKMessages } from "../../agent/agent-thread-manager";
 import type { LumeRunState } from "../runtime-core/run-state";
 
 /**
@@ -38,7 +38,7 @@ export async function listThreadRuntimeEvents(input: {
     .filter((event) => !busHasEvents || RETAINED_HYDRATE_EVENT_TYPES.has(event.type));
   const taskEvents = createFileBackedTaskStore(input.sessionDir, { taskListId: input.threadId }).listEvents();
   // T7a:background.task.completed 已迁事件总线,不再从 SDK log 投影(保留类照旧)
-  const memoryChangedEvents = getAgentThreadSDKMessages(input.threadId)
+  const memoryChangedEvents = getRuntimeHostPorts().getThreadSDKMessages(input.threadId)
     .filter((message) => message.type === "system" && message.subtype === "memory_saved")
     .map((message): Extract<LumeRuntimeEvent, { type: "memory.changed" }> => ({
       id: `${message.run_id}:memory.changed:${message.mutation_ids[0] ?? message.uuid ?? message.created_at}`,

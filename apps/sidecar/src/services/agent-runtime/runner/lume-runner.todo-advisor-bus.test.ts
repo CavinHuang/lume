@@ -8,7 +8,7 @@ import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import { createObservedRuntimeEmitter } from "./run-loop";
 import { publishAdvisorReviewedToBus } from "./lume-runner";
 import type { LumeRunObserver } from "./run-observer";
-import type { AgentRuntimeEmitter } from "./types";
+import type { AgentRuntimeEmitter } from "../runtime-core/types";
 
 function baseEmitter(overrides: Partial<AgentRuntimeEmitter> = {}): AgentRuntimeEmitter {
   return {
