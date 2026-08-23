@@ -328,7 +328,7 @@ mock.module("../agent-runtime/runtime-core/attempt", () => ({
       } as SDKMessage);
       emit.onSdkMessage({
         type: "result",
-        subtype: "error",
+        subtype: "error_during_execution",
         error: "network failed",
       } as SDKMessage);
       emit.onError("network failed");

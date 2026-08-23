@@ -109,6 +109,9 @@ function stripConnectionPrefix(id: string): string {
  * Returns undefined for unknown models.
  */
 export function findModelMeta(modelId: string): ModelMeta | undefined {
+  // Empty input would hit the first registry entry via the prefix branch
+  // (`meta.id.startsWith("")` is always true).
+  if (!modelId) return undefined
   const connectionModelId = stripConnectionPrefix(modelId)
   const candidates = [...new Set([
     modelId,
