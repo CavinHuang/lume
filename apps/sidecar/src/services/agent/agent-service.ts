@@ -71,6 +71,7 @@ import { AgentRuntimeKernel, AgentRuntimeKernelQueueConflictError, type AgentRun
 import { runGuidanceStore } from "../agent-runtime/guidance/run-guidance-store";
 import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../agent-runtime/runtime-core/session-store";
 import { isAgentRuntimeSessionActive } from "../agent-runtime/runner/attempt";
+import type { AgentRuntimeRunResult } from "../agent-runtime/runtime-core/types";
 import { createCodingTurnRecord } from "../agent-runtime/runtime-core/coding-turn-store";
 import { createFileBackedLumeRunStateStore } from "../agent-runtime/runtime-core/run-state-store";
 import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
@@ -810,18 +811,225 @@ export async function sendAgentMessage(
   }
 }
 
-async function runSendAgentMessage(
-  input: AgentSendInput,
-  emit: AgentStreamEmitter,
-  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal } = {}
-): Promise<void> {
-  const { threadId, userMessage } = input;
-  const completeIfAborted = () => {
-    if (!options.abortSignal?.aborted) return false;
+/** #297 子项②:发送收尾段——transcript 落盘/assistant 版本/coding turn 记录/终态标记/auto title。 */
+async function finalizeAgentSendStage({
+  runtimeResult,
+  runtimeCompleted,
+  prepared,
+  persistedSdkMessages,
+  fileReferenceBinding,
+  input,
+  threadId,
+  userMessage,
+  emit
+}: {
+  runtimeResult: AgentRuntimeRunResult;
+  runtimeCompleted: boolean;
+  prepared: PreparedAgentSend;
+  persistedSdkMessages: SDKMessage[];
+  fileReferenceBinding: ReturnType<typeof createFileReferenceBinding>;
+  input: AgentSendInput;
+  threadId: string;
+  userMessage: string;
+  emit: AgentStreamEmitter;
+}): Promise<void> {
+  const {
+    resolvedChannelId,
+    resolvedModelId,
+    activeTurnId,
+    activeTurnStartedAt,
+    shouldTryAutoTitle,
+    sendStartTime,
+    correlation,
+    effectiveLumeConfig,
+    boundModel,
+    sessionStateManager,
+    runtimeStatusManager
+  } = prepared;
+  let visibleAssistantMessageId: string | undefined;
+  const shouldPersistRunTranscript = runtimeResult.status === "completed" || runtimeResult.status === "turn_limited";
+  if (shouldPersistRunTranscript && persistedSdkMessages.length > 0) {
+    appendAgentThreadSDKMessages(threadId, persistedSdkMessages);
+  }
+  if ((runtimeResult.status === "completed" || runtimeResult.status === "turn_limited") && activeTurnId) {
+    const latestAssistantMessage = projectAssistantMessageFromSdkMessages({
+      threadId,
+      sdkMessages: persistedSdkMessages,
+      modelId: resolvedModelId
+    }) ?? resolveLatestAssistantTranscriptMessage(threadId);
+    if (latestAssistantMessage) {
+      const visibleAssistantMessage = createAssistantMessageVersion({
+        sessionId: threadId,
+        turnId: activeTurnId,
+        message: { ...latestAssistantMessage, fileReferenceBinding, fileReferenceProtocolVersion: FILE_REFERENCE_PROTOCOL_VERSION }
+      });
+      if (visibleAssistantMessage) {
+        visibleAssistantMessageId = visibleAssistantMessage.id;
+        if (runtimeResult.codingReport?.runId) {
+          const runStore = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
+          const codingRun = await runStore.get(runtimeResult.codingReport.runId);
+          if (codingRun?.codingReport) {
+            await runStore.update(runtimeResult.codingReport.runId, {
+              codingReport: {
+                ...codingRun.codingReport,
+                assistantMessageId: visibleAssistantMessage.id
+              }
+            });
+          }
+        }
+        emit.onMessageAppended?.({
+          threadId,
+          message: visibleAssistantMessage,
+          traceId: input.traceContext?.traceId,
+          submissionId: input.traceContext?.submissionId
+        });
+        writeLogRecord({
+          level: "info",
+          kind: "trace",
+          context: "agent.persistence",
+          event: "assistant.persisted",
+          message: "assistant message persisted",
+          status: "ok",
+          ...correlation,
+          messageId: visibleAssistantMessage.id,
+          data: {
+            ...buildAgentContentLogData("assistant", visibleAssistantMessage.content),
+            modelId: resolvedModelId
+          }
+        });
+        if (input.traceContext?.traceId) {
+          emitDiagnosticContent({
+            captureType: "assistant_message",
+            threadId,
+            traceId: input.traceContext.traceId,
+            messageId: visibleAssistantMessage.id,
+            content: visibleAssistantMessage.content
+          });
+        }
+      }
+    }
+  }
+  if (
+    runtimeResult.codingReport?.turnId
+    && runtimeResult.codingReport.userMessageId
+    && (
+      runtimeResult.codingReport.workspaceChanged
+      || runtimeResult.codingReport.pendingBackground
+      || (runtimeResult.codingReport.gitActions?.length ?? 0) > 0
+    )
+  ) {
+    const report = runtimeResult.codingReport;
+    const turnId = report.turnId!;
+    await createCodingTurnRecord(getRuntimeCoreSessionDir(threadId), {
+      turnId,
+      threadId,
+      userMessageId: report.userMessageId!,
+      ...(visibleAssistantMessageId ? { assistantMessageId: visibleAssistantMessageId } : {}),
+      runIds: report.runId ? [report.runId] : [],
+      startedAt: activeTurnStartedAt ?? new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      checkpointId: report.checkpointId,
+      baselineCommit: report.baselineCommit,
+      changedFiles: report.fileChanges ?? report.changeSet?.files ?? report.changedFiles.map((path: string) => ({ path })),
+      verificationStatus: toCodingTurnVerificationStatus(report),
+      verificationRepairAttempts: report.verificationRepairAttempts ?? 0,
+      approvalRequestCount: report.approvalRequestCount ?? 0,
+      rewindState: report.rewindState ?? "unavailable",
+      phase: report.phase,
+      verificationRecords: report.verificationRecords,
+      gitActions: report.gitActions,
+      review: report.review,
+      terminationReason: report.terminationReason
+    });
+  }
+  if (runtimeCompleted && runtimeResult.status === "completed") {
+    log.info("[Agent 会话] 运行完成", {
+      threadId: threadId.slice(0, 8),
+      durationMs: Date.now() - sendStartTime,
+      persistedSdkMessageCount: persistedSdkMessages.length,
+      visibleAssistantTurnCreated: activeTurnId !== null,
+      autoTitlePending: shouldTryAutoTitle
+    });
+    writeLogRecord({
+      level: "info",
+      kind: "trace",
+      context: "agent.runtime",
+      event: "agent.execution.completed",
+      message: "agent execution completed",
+      status: "ok",
+      durationMs: Date.now() - sendStartTime,
+      ...correlation,
+      messageId: visibleAssistantMessageId,
+      data: { persistedSdkMessageCount: persistedSdkMessages.length }
+    });
+    runtimeStatusManager.markCompleted(threadId);
     emit.onComplete();
-    return true;
-  };
-  if (completeIfAborted()) return;
+  }
+  if (runtimeResult.status === "turn_limited") {
+    const repeatGuardStop = runtimeResult.terminationReason === "repeat_guard";
+    log.info(repeatGuardStop
+      ? "[Agent 会话] 运行因重复操作保护机制停止，进度已保留"
+      : "[Agent 会话] 运行达到最大回合数，等待继续执行", {
+      threadId: threadId.slice(0, 8),
+      persistedSdkMessageCount: persistedSdkMessages.length
+    });
+    runtimeStatusManager.markCompleted(threadId);
+    emit.onComplete({ reason: repeatGuardStop ? "repeat_guard" : "max_turns" });
+  }
+  if (runtimeResult.status === "aborted") {
+    log.warn("[Agent 会话] 运行中止", {
+      threadId: threadId.slice(0, 8),
+      durationMs: Date.now() - sendStartTime,
+      persistedSdkMessageCount: persistedSdkMessages.length
+    });
+  }
+  if (runtimeResult.status === "errored") {
+    log.error("[Agent 会话] 运行失败", {
+      threadId: threadId.slice(0, 8),
+      durationMs: Date.now() - sendStartTime,
+      persistedSdkMessageCount: persistedSdkMessages.length,
+      errorMessage: runtimeResult.errorMessage
+    });
+  }
+  if (runtimeResult.status === "completed" && shouldTryAutoTitle) {
+    const titleModelRef = effectiveLumeConfig.models?.title?.defaultModelRef;
+    const job = createAutoTitleJob({
+      threadId,
+      fallbackUserMessage: userMessage,
+      // 未配置专用 title 模型时回退到当前会话的渠道/模型，确保 LLM 标题生成始终可触发
+      generateTitle: (sourceText) => generateAgentTitle(
+        titleModelRef
+          ? { sourceText, modelRef: titleModelRef }
+          : { sourceText, channelId: resolvedChannelId, modelId: boundModel?.modelId ?? resolvedModelId }
+      ),
+      onTitleUpdated: (title) => {
+        emit.onTitleUpdated(title);
+      }
+    });
+    if (job) {
+      getServiceRuntime().schedule(job);
+    }
+  }
+}
+
+/** #297 子项②:sendAgentMessage 准备段——归一化/能力投影/模型选择/元数据合并/用户消息落盘/前置校验。 */
+type PrepareAgentSendOutcome = PreparedAgentSend | null;
+
+async function prepareAgentSendStage({
+  input,
+  emit,
+  options,
+  threadId,
+  userMessage,
+  completeIfAborted
+}: {
+  input: AgentSendInput;
+  emit: AgentStreamEmitter;
+  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal };
+  threadId: string;
+  userMessage: string;
+  completeIfAborted: () => boolean;
+}): Promise<PrepareAgentSendOutcome> {
   const messageHistoryBeforeSend = getAgentThreadMessages(threadId);
   const assistantTurnCountBeforeSend = messageHistoryBeforeSend.filter((item) => item.role === "assistant").length;
   const threadMeta = getAgentThreadMeta(threadId);
@@ -834,7 +1042,7 @@ async function runSendAgentMessage(
   registerPlanningTodoReferences(input.trustedPlanningClientSubmissionId, normalizedUserMessage.parts);
   const isManualCompactCommand = input.messageMetadata?.manualCommand === "compact";
   let modelFacingUserMessage = await resolveModelFacingUserMessage(threadId, normalizedUserMessage.modelMessage);
-  if (completeIfAborted()) return;
+  if (completeIfAborted()) return null;
   if (!isManualCompactCommand && normalizedUserMessage.modelMessage.trim() === "/compact") {
     modelFacingUserMessage = `The user entered the literal text /compact without selecting the compact action. Respond to it as ordinary text.`;
   }
@@ -844,7 +1052,7 @@ async function runSendAgentMessage(
     references: normalizedUserMessage.capabilityReferences,
     modelMessage: normalizedUserMessage.modelMessage,
   });
-  if (completeIfAborted()) return;
+  if (completeIfAborted()) return null;
   const expectedFingerprints = input.messageMetadata?.capabilityFingerprints;
   if (
     Array.isArray(expectedFingerprints)
@@ -900,7 +1108,6 @@ async function runSendAgentMessage(
   void options.allowResumeRetry;
   let activeTurnId: string | null = null;
   let activeTurnStartedAt: string | null = null;
-  const persistedSdkMessages: SDKMessage[] = [];
   let userSdkMessage: SDKMessage | null = null;
 
   const browserContinuity = await getActiveBrowserBroker()?.getThreadAgentContinuity(threadId).catch(() => undefined);
@@ -1051,8 +1258,6 @@ async function runSendAgentMessage(
     });
   }
   runtimeStatusManager.markStreaming(threadId);
-  let runtimeCompleted = false;
-  let visibleAssistantMessageId: string | undefined;
 
   if (!resolvedChannelId || !resolvedModelId) {
     const msg = "Agent Runtime 缺少 channelId/modelId。";
@@ -1073,8 +1278,101 @@ async function runSendAgentMessage(
       ...correlation,
       data: { channelId: resolvedChannelId, modelId: resolvedModelId }
     });
-    return;
+    return null;
   }
+
+    return {
+      threadMeta,
+      effectiveWorkspaceId,
+      effectiveWorkspace,
+      normalizedUserMessage,
+      modelFacingUserMessage,
+      isManualCompactCommand,
+      effectiveLumeConfig,
+      boundModel,
+      resolvedChannelId,
+      resolvedModelId,
+      canonicalModelRef,
+      shouldTryAutoTitle,
+      runtimeMessageMetadata,
+      activeTurnId,
+      activeTurnStartedAt,
+      sendStartTime,
+      correlation,
+      sessionStateManager,
+      runtimeStatusManager
+    };
+}
+
+interface PreparedAgentSend {
+  threadMeta: ReturnType<typeof getAgentThreadMeta>;
+  effectiveWorkspaceId?: string;
+  effectiveWorkspace?: ReturnType<typeof getAgentWorkspace>;
+  normalizedUserMessage: ReturnType<typeof normalizeAgentUserMessage>;
+  modelFacingUserMessage: string;
+  isManualCompactCommand: boolean;
+  effectiveLumeConfig: ReturnType<typeof getEffectiveLumeConfig>;
+  boundModel: NonNullable<ReturnType<typeof resolveChannelModelBinding>> | null | undefined;
+  resolvedChannelId: string;
+  resolvedModelId: string;
+  canonicalModelRef?: string;
+  shouldTryAutoTitle: boolean;
+  runtimeMessageMetadata: Record<string, unknown>;
+  activeTurnId: string | null;
+  activeTurnStartedAt: string | null;
+  sendStartTime: number;
+  correlation: {
+    traceId?: string;
+    submissionId?: string;
+    threadId: string;
+    origin?: string;
+  };
+  sessionStateManager: ReturnType<typeof getSessionStateManager>;
+  runtimeStatusManager: ReturnType<typeof getAgentRuntimeStatusManager>;
+}
+
+async function runSendAgentMessage(
+  input: AgentSendInput,
+  emit: AgentStreamEmitter,
+  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal } = {}
+): Promise<void> {
+  const { threadId, userMessage } = input;
+  const completeIfAborted = () => {
+    if (!options.abortSignal?.aborted) return false;
+    emit.onComplete();
+    return true;
+  };
+  if (completeIfAborted()) return;
+  const prepared = await prepareAgentSendStage({
+    input,
+    emit,
+    options,
+    threadId,
+    userMessage,
+    completeIfAborted
+  });
+  if (prepared === null) return;
+  const {
+    resolvedChannelId,
+    resolvedModelId,
+    canonicalModelRef,
+    modelFacingUserMessage,
+    runtimeMessageMetadata,
+    activeTurnId,
+    activeTurnStartedAt,
+    shouldTryAutoTitle,
+    sendStartTime,
+    correlation,
+    effectiveLumeConfig,
+    boundModel,
+    effectiveWorkspaceId,
+    sessionStateManager,
+    runtimeStatusManager
+  } = prepared;
+  const persistedSdkMessages: SDKMessage[] = [];
+  let runtimeCompleted = false;
+  let visibleAssistantMessageId: string | undefined;
+
   const { runAgentRuntime } = await import("../agent-runtime/runner/attempt");
   if (completeIfAborted()) return;
   const fileReferenceBinding = createFileReferenceBinding(threadId);
@@ -1170,170 +1468,17 @@ async function runSendAgentMessage(
       emit.onToolPermissionRequest(request);
     }
   });
-  const shouldPersistRunTranscript = runtimeResult.status === "completed" || runtimeResult.status === "turn_limited";
-  if (shouldPersistRunTranscript && persistedSdkMessages.length > 0) {
-    appendAgentThreadSDKMessages(threadId, persistedSdkMessages);
-  }
-  if ((runtimeResult.status === "completed" || runtimeResult.status === "turn_limited") && activeTurnId) {
-    const latestAssistantMessage = projectAssistantMessageFromSdkMessages({
-      threadId,
-      sdkMessages: persistedSdkMessages,
-      modelId: resolvedModelId
-    }) ?? resolveLatestAssistantTranscriptMessage(threadId);
-    if (latestAssistantMessage) {
-      const visibleAssistantMessage = createAssistantMessageVersion({
-        sessionId: threadId,
-        turnId: activeTurnId,
-        message: { ...latestAssistantMessage, fileReferenceBinding, fileReferenceProtocolVersion: FILE_REFERENCE_PROTOCOL_VERSION }
-      });
-      if (visibleAssistantMessage) {
-        visibleAssistantMessageId = visibleAssistantMessage.id;
-        if (runtimeResult.codingReport?.runId) {
-          const runStore = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
-          const codingRun = await runStore.get(runtimeResult.codingReport.runId);
-          if (codingRun?.codingReport) {
-            await runStore.update(runtimeResult.codingReport.runId, {
-              codingReport: {
-                ...codingRun.codingReport,
-                assistantMessageId: visibleAssistantMessage.id
-              }
-            });
-          }
-        }
-        emit.onMessageAppended?.({
-          threadId,
-          message: visibleAssistantMessage,
-          traceId: input.traceContext?.traceId,
-          submissionId: input.traceContext?.submissionId
-        });
-        writeLogRecord({
-          level: "info",
-          kind: "trace",
-          context: "agent.persistence",
-          event: "assistant.persisted",
-          message: "assistant message persisted",
-          status: "ok",
-          ...correlation,
-          messageId: visibleAssistantMessage.id,
-          data: {
-            ...buildAgentContentLogData("assistant", visibleAssistantMessage.content),
-            modelId: resolvedModelId
-          }
-        });
-        if (input.traceContext?.traceId) {
-          emitDiagnosticContent({
-            captureType: "assistant_message",
-            threadId,
-            traceId: input.traceContext.traceId,
-            messageId: visibleAssistantMessage.id,
-            content: visibleAssistantMessage.content
-          });
-        }
-      }
-    }
-  }
-  if (
-    runtimeResult.codingReport?.turnId
-    && runtimeResult.codingReport.userMessageId
-    && (
-      runtimeResult.codingReport.workspaceChanged
-      || runtimeResult.codingReport.pendingBackground
-      || (runtimeResult.codingReport.gitActions?.length ?? 0) > 0
-    )
-  ) {
-    const report = runtimeResult.codingReport;
-    const turnId = report.turnId!;
-    await createCodingTurnRecord(getRuntimeCoreSessionDir(threadId), {
-      turnId,
-      threadId,
-      userMessageId: report.userMessageId!,
-      ...(visibleAssistantMessageId ? { assistantMessageId: visibleAssistantMessageId } : {}),
-      runIds: report.runId ? [report.runId] : [],
-      startedAt: activeTurnStartedAt ?? new Date().toISOString(),
-      finishedAt: new Date().toISOString(),
-      checkpointId: report.checkpointId,
-      baselineCommit: report.baselineCommit,
-      changedFiles: report.fileChanges ?? report.changeSet?.files ?? report.changedFiles.map((path) => ({ path })),
-      verificationStatus: toCodingTurnVerificationStatus(report),
-      verificationRepairAttempts: report.verificationRepairAttempts ?? 0,
-      approvalRequestCount: report.approvalRequestCount ?? 0,
-      rewindState: report.rewindState ?? "unavailable",
-      phase: report.phase,
-      verificationRecords: report.verificationRecords,
-      gitActions: report.gitActions,
-      review: report.review,
-      terminationReason: report.terminationReason
-    });
-  }
-  if (runtimeCompleted && runtimeResult.status === "completed") {
-    log.info("[Agent 会话] 运行完成", {
-      threadId: threadId.slice(0, 8),
-      durationMs: Date.now() - sendStartTime,
-      persistedSdkMessageCount: persistedSdkMessages.length,
-      visibleAssistantTurnCreated: activeTurnId !== null,
-      autoTitlePending: shouldTryAutoTitle
-    });
-    writeLogRecord({
-      level: "info",
-      kind: "trace",
-      context: "agent.runtime",
-      event: "agent.execution.completed",
-      message: "agent execution completed",
-      status: "ok",
-      durationMs: Date.now() - sendStartTime,
-      ...correlation,
-      messageId: visibleAssistantMessageId,
-      data: { persistedSdkMessageCount: persistedSdkMessages.length }
-    });
-    runtimeStatusManager.markCompleted(threadId);
-    emit.onComplete();
-  }
-  if (runtimeResult.status === "turn_limited") {
-    const repeatGuardStop = runtimeResult.terminationReason === "repeat_guard";
-    log.info(repeatGuardStop
-      ? "[Agent 会话] 运行因重复操作保护机制停止，进度已保留"
-      : "[Agent 会话] 运行达到最大回合数，等待继续执行", {
-      threadId: threadId.slice(0, 8),
-      persistedSdkMessageCount: persistedSdkMessages.length
-    });
-    runtimeStatusManager.markCompleted(threadId);
-    emit.onComplete({ reason: repeatGuardStop ? "repeat_guard" : "max_turns" });
-  }
-  if (runtimeResult.status === "aborted") {
-    log.warn("[Agent 会话] 运行中止", {
-      threadId: threadId.slice(0, 8),
-      durationMs: Date.now() - sendStartTime,
-      persistedSdkMessageCount: persistedSdkMessages.length
-    });
-  }
-  if (runtimeResult.status === "errored") {
-    log.error("[Agent 会话] 运行失败", {
-      threadId: threadId.slice(0, 8),
-      durationMs: Date.now() - sendStartTime,
-      persistedSdkMessageCount: persistedSdkMessages.length,
-      errorMessage: runtimeResult.errorMessage
-    });
-  }
-  if (runtimeResult.status === "completed" && shouldTryAutoTitle) {
-    const titleModelRef = effectiveLumeConfig.models?.title?.defaultModelRef;
-    const job = createAutoTitleJob({
-      threadId,
-      fallbackUserMessage: userMessage,
-      // 未配置专用 title 模型时回退到当前会话的渠道/模型，确保 LLM 标题生成始终可触发
-      generateTitle: (sourceText) => generateAgentTitle(
-        titleModelRef
-          ? { sourceText, modelRef: titleModelRef }
-          : { sourceText, channelId: resolvedChannelId, modelId: boundModel?.modelId ?? resolvedModelId }
-      ),
-      onTitleUpdated: (title) => {
-        emit.onTitleUpdated(title);
-      }
-    });
-    if (job) {
-      getServiceRuntime().schedule(job);
-    }
-  }
-  return;
+  await finalizeAgentSendStage({
+    runtimeResult,
+    runtimeCompleted,
+    prepared,
+    persistedSdkMessages,
+    fileReferenceBinding,
+    input,
+    threadId,
+    userMessage,
+    emit
+  });
 }
 
 export function appendAgentMessage(
