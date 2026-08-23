@@ -17,7 +17,6 @@ import { getImCliBaseDir } from "../../infra/config-paths";
 import { resolveEnabledMemoryToolNames } from "./tool-policy-matcher";
 import { createSdkReadingTools } from "./reading/create-reading-tools";
 import { createPersonalizeUiTool } from "./ui/create-personalize-ui-tool";
-import { createSdkOfficeTools } from "./office/create-office-tools";
 import { createRoutineTools } from "./routine/create-routine-tools";
 import { createImageGenTools } from "./image-gen/create-image-gen-tools";
 import { createNodeReplMcpTools } from "./node-repl/create-node-repl-tools";
@@ -121,7 +120,6 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   ];
   const readingTools = createSdkReadingTools();
   const uiTools = [createPersonalizeUiTool({ threadId: input.threadId })];
-  const officeTools = createSdkOfficeTools();
   const routineTools = createRoutineTools({
     workspaceId: input.workspaceId,
   });
@@ -185,7 +183,6 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...imCliTools,
     ...readingTools,
     ...uiTools,
-    ...officeTools,
     ...routineTools,
     ...suggestionTools,
     ...imageGenTools,

@@ -9,10 +9,10 @@ import {
 describe('agents settings state', () => {
   test('metrics summarize built-in role capabilities', () => {
     expect(buildAgentRoleMetrics().map((item) => [item.label, item.value])).toEqual([
-      ['内置角色', '14'],
+      ['内置角色', '13'],
       ['只读角色', '6'],
       ['后台运行', '6'],
-      ['可写角色', '8'],
+      ['可写角色', '7'],
     ])
   })
 
@@ -20,7 +20,7 @@ describe('agents settings state', () => {
     expect(filterAgentRoles('沈策').map((role) => role.id)).toEqual(['planner'])
     expect(filterAgentRoles('林澄').map((role) => role.id)).toEqual(['designer'])
     expect(filterAgentRoles('developer').map((role) => role.id)).toEqual(['developer'])
-    expect(filterAgentRoles('agent-docsmith').map((role) => role.id)).toEqual(['docsmith'])
+    expect(filterAgentRoles('agent-novelist').map((role) => role.id)).toEqual(['novelist'])
   })
 
   test('recommendation preview includes labels and matched keywords', () => {
@@ -47,7 +47,6 @@ describe('agents settings state', () => {
       'code-reviewer',
       'designer',
       'developer',
-      'docsmith',
       'explorer',
       'novelist',
       'planner',

@@ -31,7 +31,7 @@ Lume 内置 11 位有独立风格与专长的角色——开发者、作家、�
 
 ## 工具集
 
-Agent 可用的完整工具：文件系统（Read / Write / Edit / Glob / Grep）、Bash（超时控制 + 后台执行）、Office 文档（docx / pptx / xlsx / pdf 的创建编辑与 OOXML 修复）、Web 搜索与抓取、图片生成。
+Agent 可用的完整工具：文件系统（Read / Write / Edit / Glob / Grep）、Bash（超时控制 + 后台执行）、Web 搜索与抓取、图片生成。
 
 ## 自动化与 IM
 

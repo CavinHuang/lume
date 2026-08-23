@@ -2,7 +2,6 @@ import { spawn, type ChildProcess } from "node:child_process";
 
 /**
  * 通用 IM CLI 执行器:spawn 指定 binary,统一处理 env 净化/合并、超时、stdout/stderr 收集。
- * 参照 office/office-tool-executor.ts 的 runCommand 模式。
  */
 
 export interface CliExecOptions {
