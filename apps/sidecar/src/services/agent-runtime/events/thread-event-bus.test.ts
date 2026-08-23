@@ -119,6 +119,26 @@ describe("ThreadEventBus", () => {
     expect(received.map((e) => e.phase)).toEqual(["update", "end"])
   })
 
+  test("增量 read(#411):水位内 afterSeq 走快路,结果与全量一致;早于水位回退全量", async () => {
+    dir = mkdtempSync(join(tmpdir(), "bus-incr-"))
+    const bus = getThreadEventBus(dir)
+    await bus.publish("th1", "r1", skeletonEvent("run", "start"))
+    await bus.publish("th1", "r1", skeletonEvent("message", "end"))
+    // 首次 read 建立水位(全量)
+    expect((await bus.read("th1")).map((e) => e.seq)).toEqual([1, 2])
+    // 水位内增量:只读新字节段
+    await bus.publish("th1", "r1", skeletonEvent("turn", "end"))
+    const inc = await bus.read("th1", 2)
+    expect(inc.map((e) => e.seq)).toEqual([3])
+    // 早于水位的 afterSeq:回退全量仍可答
+    const old = await bus.read("th1", 0)
+    expect(old.map((e) => e.seq)).toEqual([1, 2, 3])
+    // releaseThread 后水位随 state 失效,重建后全量续读不丢
+    releaseThreadEventBus(dir, "th1")
+    await bus.publish("th1", "r2", skeletonEvent("run", "end"))
+    expect((await bus.read("th1")).map((e) => e.seq)).toEqual([1, 2, 3, 4])
+  })
+
   test("hasEvents 与 readFile 截断语义严格一致（F4 分叉判空捷径）", async () => {
     dir = mkdtempSync(join(tmpdir(), "bus-"))
     const bus = new ThreadEventBus(dir)

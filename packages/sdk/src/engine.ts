@@ -25,6 +25,7 @@ import type {
   AgentContextCompactionMetadata,
   AgentContextCompactionStage,
   AgentContextCompactionTrigger,
+  SDKAssistantMessageError,
   SDKUsageRecord,
   BillingUsageRecord,
   BillingUsageSummary,
@@ -71,6 +72,7 @@ import {
 } from './utils/messages.js'
 import type { HookRegistry, HookInput, HookExecutionResult } from './hooks.js'
 import { readRepeatGuardState } from './repeat-guard.js'
+import { stableSerialize } from '@lume/shared'
 import { buildStructuredOutputInstruction, parseStructuredOutput } from './utils/structured-output.js'
 import { captureFileSnapshots, captureWorkspaceFileSnapshots, collectCheckpointPaths, requiresWorkspaceCheckpoint } from './utils/file-checkpoints.js'
 import { generatePromptSuggestion } from './utils/prompt-suggestions.js'
@@ -78,22 +80,7 @@ import { resolve } from 'path'
 import { getModelInvocableSkills, getUserInvocableSkills, renderSkillCatalog } from './skills/index.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { FileStateCache } from './utils/fileCache.js'
-import { createExecuteTool, createToolSearchTool } from './tools/tool-search.js'
-
-function renderLspDiagnosticsForModel(
-  event: Extract<SDKMessage, { type: 'system'; subtype: 'lsp_diagnostics' }>,
-): string {
-  const header = `Delayed LSP diagnostics for ${event.file_path} (mutation ${event.mutation_version})`
-  if (event.diagnostics.items.length === 0) return `${header}: no new diagnostics`
-  return [
-    header,
-    ...event.diagnostics.items.map((diagnostic) => {
-      const position = `${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}`
-      const severity = diagnostic.severity === 1 ? 'error' : diagnostic.severity === 2 ? 'warning' : 'info'
-      return `- ${position} ${severity}${diagnostic.code !== undefined ? ` [${diagnostic.code}]` : ''}: ${diagnostic.message}`
-    }),
-  ].join('\n')
-}
+import { createExecuteTool, createToolSearchTool, estimateToolTokens, getDeferredToolTokenCount } from './tools/tool-search.js'
 
 // ============================================================================
 // Tool format conversion
@@ -128,20 +115,6 @@ interface RepeatedToolCallState {
 
 const MAX_EQUIVALENT_MUTATION_RESULTS = 2
 const MAX_BLOCKED_REPEAT_ATTEMPTS = 2
-
-function stableSerialize(value: unknown): string {
-  if (value === null || typeof value !== 'object') {
-    return JSON.stringify(value) ?? String(value)
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableSerialize(item)).join(',')}]`
-  }
-  return `{${Object.keys(value as Record<string, unknown>)
-    .sort()
-    .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
-    .map((key) => `${JSON.stringify(key)}:${stableSerialize((value as Record<string, unknown>)[key])}`)
-    .join(',')}}`
-}
 
 function toolCallSignature(block: ToolUseBlock): string {
   return `${block.name}\0${stableSerialize(block.input)}`
@@ -344,6 +317,19 @@ function compactionStageMessage(stage: AgentContextCompactionStage): string {
   return '正在恢复压缩后的上下文'
 }
 
+/** 流式与非流式两条 retry 路径共用的 api_retry 错误分类（#389 去重）。 */
+function classifyRetryError(status: number | null): SDKAssistantMessageError {
+  return status === 429
+    ? 'rate_limit'
+    : status === 400
+      ? 'invalid_request'
+      : status === 401 || status === 403
+        ? 'authentication_failed'
+        : status === 500 || status === 502 || status === 503 || status === 529
+          ? 'server_error'
+          : 'unknown'
+}
+
 // ============================================================================
 // System Prompt Builder
 // ============================================================================
@@ -437,7 +423,6 @@ export class QueryEngine {
   }> = []
   private fileStateCache = new FileStateCache()
   private workingDirectory: string
-  private pendingLspDiagnostics: Array<Extract<SDKMessage, { type: 'system'; subtype: 'lsp_diagnostics' }>> = []
   /** Tool calls skipped or interrupted by an abort during the current run. */
   private abortedPendingToolCalls: Array<{ id: string; name: string; input: unknown }> = []
   private repeatedToolCalls = new Map<string, RepeatedToolCallState>()
@@ -561,10 +546,9 @@ export class QueryEngine {
   }
 
   private estimateToolSchemaTokens(): number {
-    return this.config.tools.reduce(
-      (sum, tool) => sum + Math.ceil((tool.description.length + tool.name.length) / 4),
-      0,
-    )
+    // 与 tool-search 的 getDeferredToolTokenCount 同一口径：name + description +
+    // inputSchema 全算（#389）。此前漏 inputSchema 导致 contextUsage 低估工具占比。
+    return getDeferredToolTokenCount(this.config.tools)
   }
 
   private createContextUsage(): ContextUsageSnapshot {
@@ -969,13 +953,6 @@ export class QueryEngine {
       return
     }
 
-    yield {
-      type: 'system',
-      subtype: 'session_state_changed',
-      state: 'running',
-      session_id: this.sessionId,
-    }
-
     if (this.isManualCompactPrompt(prompt)) {
       const compacted = yield* this.runCompaction('manual')
       yield {
@@ -990,12 +967,6 @@ export class QueryEngine {
         cost: this.totalCost,
         ...(!compacted ? { errors: ['Context compaction failed; the original context was preserved.'] } : {}),
       } as SDKMessage
-      yield {
-        type: 'system',
-        subtype: 'session_state_changed',
-        state: 'idle',
-        session_id: this.sessionId,
-      }
       return
     }
 
@@ -1167,18 +1138,6 @@ export class QueryEngine {
       const apiMessages = await this.microCompactForProvider(
         normalizeMessagesForAPI(hydratedMessages) as NormalizedMessageParam[],
       )
-      // Non-destructive read: the request may still fail (prompt-too-long
-      // compaction retry) and the diagnostics must survive for the next
-      // attempt. Cleared only once a response actually came back.
-      const delayedLspDiagnostics = [...this.pendingLspDiagnostics]
-      if (delayedLspDiagnostics.length > 0) {
-        apiMessages.push({
-          role: 'runtime',
-          content: `<internal_context type="lsp_diagnostics">\n${delayedLspDiagnostics
-            .map((event) => renderLspDiagnosticsForModel(event))
-            .join('\n\n')}\n</internal_context>`,
-        })
-      }
       const transientRuntimeContext = [
         internalContextBlocks.length > 0
           ? `<internal_context type="compaction">\n${internalContextBlocks.join('\n\n')}\n</internal_context>`
@@ -1294,15 +1253,7 @@ export class QueryEngine {
             }
             if (chunk.type === 'retry_state') {
               const status = chunk.errorStatus
-              const errorType = status === 429
-                ? 'rate_limit'
-                : status === 400
-                  ? 'invalid_request'
-                  : status === 401 || status === 403
-                    ? 'authentication_failed'
-                    : status === 500 || status === 502 || status === 503 || status === 529
-                      ? 'server_error'
-                      : 'unknown'
+              const errorType = classifyRetryError(status)
               yield {
                 type: 'system',
                 subtype: 'api_retry',
@@ -1324,15 +1275,7 @@ export class QueryEngine {
             this.config.abortSignal,
             async (retry) => {
               const status = typeof retry.error?.status === 'number' ? retry.error.status : null
-              const errorType = status === 429
-                ? 'rate_limit'
-                : status === 400
-                  ? 'invalid_request'
-                  : status === 401 || status === 403
-                    ? 'authentication_failed'
-                    : status === 500 || status === 502 || status === 503 || status === 529
-                      ? 'server_error'
-                      : 'unknown'
+              const errorType = classifyRetryError(status)
               const event: SDKMessage = {
                 type: 'system',
                 subtype: 'api_retry',
@@ -1397,17 +1340,9 @@ export class QueryEngine {
           cost: this.totalCost,
           errors: [err?.message || 'Unknown provider error'],
         }
-        yield {
-          type: 'system',
-          subtype: 'session_state_changed',
-          state: 'idle',
-          session_id: this.sessionId,
-        }
         return
       }
 
-      // The request succeeded: diagnostics injected above are consumed.
-      this.pendingLspDiagnostics = []
       this.messages = releaseEphemeralImageReferences(this.messages as any[]) as NormalizedMessageParam[]
 
       // Track API timing
@@ -1700,13 +1635,6 @@ export class QueryEngine {
         }
       }
     }
-
-    yield {
-      type: 'system',
-      subtype: 'session_state_changed',
-      state: 'idle',
-      session_id: this.sessionId,
-    }
   }
 
   /**
@@ -1759,34 +1687,57 @@ export class QueryEngine {
     // NaN/0/negative would silently skip every concurrent batch or spin forever
     const MAX_CONCURRENCY = Number.isInteger(parsedConcurrency) && parsedConcurrency > 0 ? parsedConcurrency : 10
 
+    // Sticky across both execution phases: once the guard decides to stop,
+    // later successful tools must not clear it and nothing else may execute.
+    let repeatGuardStop: { message: string; errorCode: string } | undefined
+
+    // Shared pipeline for the two sequential phases (skill activations and
+    // serial mutations): soft-abort break, guard-stop placeholders,
+    // interrupted-call fallback, and the events/toolsUsed fan-out.
+    // Returns true when the caller must break out (soft abort).
+    const runSequentialItem = async (
+      block: ToolUseBlock,
+      tool: ToolDefinition | undefined,
+      storeResult: (result: ToolResult & { tool_name?: string }) => void,
+    ): Promise<boolean> => {
+      if (this.config.abortSignal?.aborted) return true // soft abort: skip remaining tools
+      if (repeatGuardStop) {
+        // The guard already decided to stop this run: pair the remaining
+        // tool_use blocks with skipped placeholders instead of executing.
+        storeResult(createRepeatGuardSkippedToolResult(block))
+        return false
+      }
+      let outcome
+      try {
+        outcome = await this.executeToolWithRepeatGuard(block, tool, context)
+      } catch (error) {
+        if (!this.config.abortSignal?.aborted) throw error
+        this.abortedPendingToolCalls.push({ id: block.id, name: block.name, input: block.input })
+        outcome = {
+          result: createInterruptedToolResult(block),
+          events: [] as SDKMessage[],
+          toolsUsed: [] as string[],
+          repeatGuardStop: undefined,
+        }
+      }
+      storeResult(outcome.result)
+      events.push(...outcome.events)
+      toolsUsed.push(...outcome.toolsUsed)
+      if (outcome.repeatGuardStop) repeatGuardStop ??= outcome.repeatGuardStop
+      return false
+    }
+
     const hasSkillActivation = toolUseBlocks.some((block) => block.name === 'Skill')
     if (hasSkillActivation && toolUseBlocks.length > 1) {
       const resultsById = new Map<string, ToolResult & { tool_name?: string }>()
-      let repeatGuardStop: { message: string; errorCode: string } | undefined
 
       for (const block of toolUseBlocks.filter((item) => item.name === 'Skill')) {
-        if (this.config.abortSignal?.aborted) break // soft abort: skip remaining activations
-        if (repeatGuardStop) {
-          // The guard already decided to stop this run: pair the remaining
-          // tool_use blocks with skipped placeholders instead of executing.
-          resultsById.set(block.id, createRepeatGuardSkippedToolResult(block))
-          continue
-        }
-        const tool = this.config.tools.find((t) => t.name === block.name)
-        let result
-        try {
-          result = await this.executeToolWithRepeatGuard(block, tool, context)
-        } catch (error) {
-          if (!this.config.abortSignal?.aborted) throw error
-          this.abortedPendingToolCalls.push({ id: block.id, name: block.name, input: block.input })
-          result = { result: createInterruptedToolResult(block), events: [] as SDKMessage[], toolsUsed: [] as string[] }
-        }
-        resultsById.set(block.id, result.result)
-        events.push(...result.events)
-        toolsUsed.push(...result.toolsUsed)
-        // Sticky on purpose: once the guard decides to stop, later successful
-        // tools in the same batch must not clear that decision.
-        if (result.repeatGuardStop) repeatGuardStop ??= result.repeatGuardStop
+        const aborted = await runSequentialItem(
+          block,
+          this.config.tools.find((t) => t.name === block.name),
+          (result) => resultsById.set(block.id, result),
+        )
+        if (aborted) break
       }
 
       for (const block of toolUseBlocks.filter((item) => item.name !== 'Skill')) {
@@ -1825,10 +1776,6 @@ export class QueryEngine {
     const results: Array<(ToolResult & { tool_name?: string }) | undefined> =
       new Array(toolUseBlocks.length)
 
-    // Sticky across both phases: once the guard decides to stop, later
-    // successful tools must not clear it and nothing else may execute.
-    let repeatGuardStop: { message: string; errorCode: string } | undefined
-
     // Execute concurrent tools (batched by MAX_CONCURRENCY). Read-only calls go
     // through the same repeat guard as mutations so repeated equivalent results
     // — including failures — are refused without burning real executions.
@@ -1851,7 +1798,6 @@ export class QueryEngine {
           continue
         }
         results[item.index] = blocked.result
-        events.push(...blocked.events)
         if (blocked.repeatGuardStop) {
           repeatGuardStop ??= blocked.repeatGuardStop
           guardStoppedHere = true
@@ -1885,27 +1831,12 @@ export class QueryEngine {
 
     // Execute serial tools sequentially
     for (const item of serial) {
-      if (this.config.abortSignal?.aborted) break // soft abort: skip remaining serial tools
-      if (repeatGuardStop) {
-        // The guard already decided to stop this run: pair the remaining
-        // tool_use blocks with skipped placeholders instead of executing.
-        results[item.index] = createRepeatGuardSkippedToolResult(item.block)
-        continue
-      }
-      let result
-      try {
-        result = await this.executeToolWithRepeatGuard(item.block, item.tool, context)
-      } catch (error) {
-        if (!this.config.abortSignal?.aborted) throw error
-        this.abortedPendingToolCalls.push({ id: item.block.id, name: item.block.name, input: item.block.input })
-        result = { result: createInterruptedToolResult(item.block), events: [] as SDKMessage[], toolsUsed: [] as string[] }
-      }
-      results[item.index] = result.result
-      events.push(...result.events)
-      toolsUsed.push(...result.toolsUsed)
-      // Sticky on purpose: once the guard decides to stop, later successful
-      // tools in the same batch must not clear that decision.
-      if (result.repeatGuardStop) repeatGuardStop ??= result.repeatGuardStop
+      const aborted = await runSequentialItem(
+        item.block,
+        item.tool,
+        (result) => { results[item.index] = result },
+      )
+      if (aborted) break
     }
 
     return {
@@ -1942,8 +1873,6 @@ export class QueryEngine {
     block: ToolUseBlock,
   ): {
     result: ToolResult & { tool_name?: string }
-    events: SDKMessage[]
-    toolsUsed: string[]
     repeatGuardStop?: { message: string; errorCode: string }
   } | undefined {
     const signature = toolCallSignature(block)
@@ -1975,8 +1904,6 @@ export class QueryEngine {
           },
         },
       },
-      events: [],
-      toolsUsed: [],
       ...(shouldStop ? {
         repeatGuardStop: {
           errorCode: 'repeated_tool_call',
@@ -2022,7 +1949,12 @@ export class QueryEngine {
     repeatGuardStop?: { message: string; errorCode: string }
   }> {
     const blocked = this.repeatGuardPreCheck(block)
-    if (blocked) return blocked
+    if (blocked) {
+      // A guard refusal executes nothing: no side effects, so no events and
+      // no toolsUsed — constructed here so callers can fan out uniformly
+      // instead of relying on an empty-array invariant of the pre-check.
+      return { ...blocked, events: [], toolsUsed: [] }
+    }
     const execution = await this.executeSingleTool(block, tool, context)
     this.repeatGuardPostRecord(block, execution.result)
     return execution
@@ -2052,8 +1984,7 @@ export class QueryEngine {
         context.emitEvent?.(event)
         return
       }
-      if (event.type === 'system' && (event.subtype === 'task_notification' || event.subtype === 'lsp_diagnostics')) {
-        if (event.subtype === 'lsp_diagnostics') this.pendingLspDiagnostics.push(event)
+      if (event.type === 'system' && event.subtype === 'task_notification') {
         try {
           this.config.onAsyncEvent?.(event)
         } catch {
@@ -2421,10 +2352,7 @@ export class QueryEngine {
     const systemTokens = estimateSystemPromptTokens(systemPrompt)
     const totalTokens = messageTokens + systemTokens
     const maxTokens = this.getContextWindow()
-    const toolTokens = this.config.tools.reduce(
-      (sum, tool) => sum + Math.ceil((tool.description.length + tool.name.length) / 4),
-      0,
-    )
+    const toolTokens = this.estimateToolSchemaTokens()
     const skills = this.config.skillRegistry?.getUserInvocable() ?? getUserInvocableSkills()
     const skillFrontmatter = skills.map((skill) => ({
       name: skill.name,
@@ -2435,7 +2363,7 @@ export class QueryEngine {
       .filter((tool) => !tool.name.startsWith('mcp__'))
       .map((tool) => ({
         name: tool.name,
-        tokens: Math.ceil((tool.name.length + tool.description.length) / 4),
+        tokens: estimateToolTokens(tool),
       }))
     const toolCallsByType = new Map<string, { callTokens: number; resultTokens: number }>()
     let toolCallTokens = 0
@@ -2521,7 +2449,7 @@ export class QueryEngine {
       memoryFiles: [],
       deferredBuiltinTools: (this.config.deferredTools ?? []).map((tool) => ({
         name: tool.name,
-        tokens: Math.ceil((tool.description.length + tool.name.length) / 4),
+        tokens: estimateToolTokens(tool),
         isLoaded: false,
       })),
       systemTools,

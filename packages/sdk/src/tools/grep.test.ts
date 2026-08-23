@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildGrepArgs } from "./grep.js";
+import { buildGrepArgs, buildNativeSearchOptions, EXCLUDED_DIRS } from "./grep.js";
 
 describe("buildGrepArgs", () => {
   test("maps -A/-B context flags for the GNU grep fallback", () => {
@@ -30,5 +30,55 @@ describe("buildGrepArgs", () => {
     expect(args).not.toContain("-A");
     expect(args).not.toContain("-B");
     expect(args).not.toContain("-C");
+  });
+
+  test("skips hidden files and excludes every VCS directory (#473)", () => {
+    // rg/native 通道默认跳过隐藏条目;grep 回退用 --exclude=.* 收窄点前缀
+    // 文件,EXCLUDED_DIRS 各目录必须有对应 --exclude-dir(BSD grep 的
+    // --exclude 不作用于目录)。.gitignore 尊重是已知残留,不在此通道实现。
+    const args = buildGrepArgs({ pattern: "x" }, "files_with_matches", "/tmp");
+    // 等号形式(#483):Windows spawn 的 MSYS grep 会把裸 `.*` 当 glob 按
+    // CWD 展开,argv 错位;等号拼接的 token 无文件名可匹配,原样透传。
+    expect(args).toContain("--exclude=.*");
+    for (const directory of EXCLUDED_DIRS) {
+      expect(args).toContain(`--exclude-dir=${directory}`);
+    }
+  });
+
+  test("passes user globs as equals-form tokens (#483)", () => {
+    // 用户 glob(如 *.ts)同样是裸通配,分离形式在 Windows MSYS grep 下
+    // 会被展开成真实文件名挤占 operand 位;等号形式透传。
+    const args = buildGrepArgs({ pattern: "x", glob: "*.ts" }, "files_with_matches", "/tmp");
+    expect(args).toContain("--include=*.ts");
+    expect(args).not.toContain("*.ts");
+  });
+});
+
+describe("buildNativeSearchOptions", () => {
+  test("passes hidden:false and gitignore:true to the native engine (#337)", () => {
+    // native 引擎 Rust 侧 hidden 默认 true,会把 .git/HEAD、packed-refs 当
+    // 普通文件命中;必须与 rg 回退同口径显式关掉。
+    const options = buildNativeSearchOptions({ pattern: "todo" }, "/tmp/project", "files_with_matches", 0, 250);
+    expect(options.hidden).toBe(false);
+    expect(options.gitignore).toBe(true);
+    expect(options.pattern).toBe("todo");
+    expect(options.path).toBe("/tmp/project");
+  });
+
+  test("keeps the fallback exclusion list covered by the hidden:false semantics", () => {
+    // native 通道没有独立 exclude 参数:rg/grep 回退显式排除的目录全部是
+    // 点前缀,hidden:false(跳过隐藏目录)即同等口径。若未来往清单加入非
+    // 隐藏目录,此不变量失败即为提醒——native 层需要真正的排除机制。
+    expect(EXCLUDED_DIRS).toContain(".git");
+    expect(EXCLUDED_DIRS.every((directory) => directory.startsWith("."))).toBeTrue();
+  });
+
+  test("preserves pagination and mode fields", () => {
+    const options = buildNativeSearchOptions({ pattern: "x", "-A": 2, "-B": 1 }, "/tmp", "count", 10, 50);
+    expect(options.mode).toBe("count");
+    expect(options.offset).toBe(10);
+    expect(options.max_count).toBe(50);
+    expect(options.context_after).toBe(2);
+    expect(options.context_before).toBe(1);
   });
 });

@@ -171,6 +171,36 @@ test('run.end error_completion_guard → run.failed 固定中文文案(不渲染
   }])
 })
 
+test('run.end error_completion_guard + errorCode=verification_inconclusive → 验证未确认文案(#472 来源分流)', () => {
+  const state = createLifecycleAdapterState()
+  expect(adaptLifecycleEvent(runEnd(1, { stopReason: 'error_completion_guard', isError: true, errorCode: 'verification_inconclusive' }), state)).toEqual([{
+    id: 'lifecycle:1:run.failed',
+    type: 'run.failed',
+    threadId: 't1',
+    runId: 'r1',
+    createdAt: new Date(TS + 1).toISOString(),
+    error: {
+      code: 'verification_inconclusive',
+      message: '验证结果无法确认，已由保护机制停止；当前进度已保存。',
+    },
+  }])
+})
+
+test('run.end error_completion_guard + errorCode=verification_failed_after_repair → 修复后验证失败文案(#472 来源分流)', () => {
+  const state = createLifecycleAdapterState()
+  expect(adaptLifecycleEvent(runEnd(1, { stopReason: 'error_completion_guard', isError: true, errorCode: 'verification_failed_after_repair' }), state)).toEqual([{
+    id: 'lifecycle:1:run.failed',
+    type: 'run.failed',
+    threadId: 't1',
+    runId: 'r1',
+    createdAt: new Date(TS + 1).toISOString(),
+    error: {
+      code: 'verification_failed_after_repair',
+      message: '验证在自动修复后仍未通过，已由保护机制停止；当前进度已保存。',
+    },
+  }])
+})
+
 test('tool.start 映射 tool.started:字段对齐旧路(inputPreview=input,riskLevel 省略)', () => {
   const state = createLifecycleAdapterState()
   const events = adaptLifecycleEvent(toolStart(2), state)
@@ -572,50 +602,6 @@ test('advisor.reviewed → 旧路同形:severity 白名单外丢弃,summary/mode
   expect(fallback[0]).toMatchObject({ summary: 'Advisor review completed', modelRef: 'unknown' })
   expect(Object.keys(fallback[0] as object)).not.toContain('details')
   expect(Object.keys(fallback[0] as object)).not.toContain('durationMs')
-})
-
-test('lsp.diagnostics → lsp.diagnostics.updated:字段逐字对齐;filePath/sha256 缺失丢弃', () => {
-  const state = createLifecycleAdapterState()
-  const diagnostics = {
-    servers: ['tsserver'],
-    total: 2,
-    errors: 1,
-    warnings: 1,
-    truncated: false,
-    items: [{ message: 'TS2304', range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } } }],
-  }
-  const events = adaptLifecycleEvent(envelope(1, 'run', 'event', null, {
-    type: 'lsp.diagnostics',
-    filePath: 'src/a.ts',
-    mutationVersion: 3,
-    sha256: 'abc',
-    delayed: true,
-    toolUseId: 'call-9',
-    diagnostics,
-  }), state)
-  expect(events).toEqual([{
-    id: 'lifecycle:1:lsp.diagnostics.updated',
-    type: 'lsp.diagnostics.updated',
-    threadId: 't1',
-    runId: 'r1',
-    createdAt: new Date(TS + 1).toISOString(),
-    toolUseId: 'call-9',
-    filePath: 'src/a.ts',
-    mutationVersion: 3,
-    sha256: 'abc',
-    delayed: true,
-    diagnostics,
-  }])
-  expect((events[0] as { diagnostics: unknown }).diagnostics).toBe(diagnostics)
-
-  expect(adaptLifecycleEvent(envelope(2, 'run', 'event', null, {
-    type: 'lsp.diagnostics',
-    filePath: '',
-    mutationVersion: 0,
-    sha256: 'x',
-    delayed: false,
-    diagnostics,
-  }), state)).toEqual([])
 })
 
 test('coding.report → coding.report.updated:report 同引用透传', () => {

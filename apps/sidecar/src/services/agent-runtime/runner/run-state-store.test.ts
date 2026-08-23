@@ -171,6 +171,45 @@ describe("run-state-store", () => {
     expect(after).toEqual(before);
   });
 
+  test("settleToolCall 侧车行：get 投影物化终态，countItems 排除，compact 收敛", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-run-state-store-settle-"));
+    const store = createFileBackedLumeRunStateStore(dir);
+    await store.create(makeState("run-settle", "running"));
+    await store.appendItem("run-settle", {
+      type: "tool_call", id: "tu-1", toolName: "bash", input: {}, parentAgentId: "root", status: "pending", createdAt: "2026-04-29T00:00:01.000Z"
+    });
+    await store.appendItem("run-settle", {
+      type: "tool_call", id: "tu-2", toolName: "edit", input: {}, parentAgentId: "root", status: "pending", createdAt: "2026-04-29T00:00:02.000Z"
+    });
+
+    // 侧车 append（O(1)）：get 投影物化终态回 tool_call 行
+    await store.settleToolCall("run-settle", "tu-1", "completed", "2026-04-29T00:00:03.000Z");
+    await store.settleToolCall("run-settle", "tu-2", "failed", "2026-04-29T00:00:04.000Z");
+
+    const settled = await store.get("run-settle");
+    const byId = new Map(settled?.generatedItems.map((item) => [item.type === "tool_call" ? item.id : item.id, item]));
+    expect((byId.get("tu-1") as { status?: string; endedAt?: string }).status).toBe("completed");
+    expect((byId.get("tu-1") as { endedAt?: string }).endedAt).toBe("2026-04-29T00:00:03.000Z");
+    expect((byId.get("tu-2") as { status?: string }).status).toBe("failed");
+    // 侧车行不作为独立 item 暴露
+    expect(settled?.generatedItems.every((item) => item.type !== ("tool_settled" as never))).toBe(true);
+    // 计数排除侧车行
+    expect(await store.countItems("run-settle")).toBe(2);
+
+    // 孤儿侧车行（目标 tool_call 不存在）投影时静默丢弃
+    await store.settleToolCall("run-settle", "tu-orphan", "completed", "2026-04-29T00:00:05.000Z");
+    const orphaned = await store.get("run-settle");
+    expect(orphaned?.generatedItems).toHaveLength(2);
+
+    // compact 一并物化收敛：重写后文件无侧车行且 tool_call 自带终态
+    await store.appendItem("run-settle", { type: "model_stream", id: "d1", event: { type: "stream_event" } as never, createdAt: "2026-04-29T00:00:06.000Z" });
+    await store.appendItem("run-settle", { type: "assistant_message", id: "a1", content: [{ type: "text", text: "final" }] as never, createdAt: "2026-04-29T00:00:07.000Z" });
+    await store.compactModelStreamItems("run-settle");
+    const compacted = await store.get("run-settle");
+    expect(compacted?.generatedItems.map((item) => item.type)).toEqual(["tool_call", "tool_call", "assistant_message"]);
+    expect(((compacted?.generatedItems[0] ?? {}) as { status?: string }).status).toBe("completed");
+  });
+
   test("todo 快照 save/read 往返，readLatestTodoState 优先快照", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lume-run-state-store-"));
     const store = createFileBackedLumeRunStateStore(dir);

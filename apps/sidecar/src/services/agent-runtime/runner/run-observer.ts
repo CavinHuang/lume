@@ -281,7 +281,7 @@ export class LumeRunObserver {
             item.createdAt
           );
         }
-        // T7a:已迁类(assistant/tool/todo/advisor/lsp/compaction 等)的 live 投影删除,
+        // T7a:已迁类(assistant/tool/todo/advisor/compaction 等)的 live 投影删除,
         // live 由事件总线经适配器驱动;唯一保留的 item 级 live 投影是裁定保留类
         // usage.updated(system_event name=result)。item 记录照常落盘(run state/trace 消费)。
         if (item.type === "system_event" && item.name === "result") {
@@ -369,14 +369,15 @@ export class LumeRunObserver {
     });
   }
 
-  recordTurnLimited(reason?: string): void {
+  recordTurnLimited(reason?: string, terminationReason?: "repeat_guard"): void {
     this.enqueue(async () => {
       const item: LumeRunItem = {
         type: "system_event",
         id: "turn-limited",
         name: "turn_limited",
         payload: {
-          reason
+          reason,
+          ...(terminationReason ? { terminationReason } : {})
         },
         createdAt: new Date().toISOString()
       };

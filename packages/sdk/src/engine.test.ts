@@ -470,95 +470,6 @@ describe("QueryEngine turn limits", () => {
     expect(liveEvents).toHaveLength(1)
   })
 
-  test("injects delayed LSP diagnostics into the next model request without starting a hidden turn", async () => {
-    const provider = new StaticProvider([
-      {
-        content: [
-          { type: "tool_use", id: "edit-1", name: "Edit", input: {} },
-          { type: "tool_use", id: "write-1", name: "Write", input: {} },
-        ],
-        stopReason: "tool_use",
-        usage: { input_tokens: 1, output_tokens: 1 },
-      },
-      {
-        content: [{ type: "text", text: "fixed after diagnostics" }],
-        stopReason: "end_turn",
-        usage: { input_tokens: 1, output_tokens: 1 },
-      },
-    ])
-    const asyncEvents: SDKMessage[] = []
-    const engine = new QueryEngine({
-      cwd: process.cwd(),
-      model: "test-model",
-      provider,
-      tools: [
-        {
-          name: "Edit",
-          description: "edit",
-          inputSchema: { type: "object", properties: {} },
-          async call(_input, context) {
-            setTimeout(() => {
-              context.emitEvent?.({
-                type: "system",
-                subtype: "lsp_diagnostics",
-                session_id: "session",
-                tool_use_id: "edit-1",
-                file_path: "src/example.ts",
-                mutation_version: 1,
-                sha256: "abc",
-                delayed: true,
-                diagnostics: {
-                  servers: ["typescript-language-server"],
-                  total: 1,
-                  errors: 1,
-                  warnings: 0,
-                  truncated: false,
-                  items: [{
-                    severity: 1,
-                    message: "Cannot find name 'missing'.",
-                    range: {
-                      start: { line: 2, character: 4 },
-                      end: { line: 2, character: 11 },
-                    },
-                  }],
-                },
-              })
-            }, 0)
-            return { type: "tool_result" as const, tool_use_id: "", content: "edited" }
-          },
-        },
-        {
-          name: "Write",
-          description: "write",
-          inputSchema: { type: "object", properties: {} },
-          async call() {
-            await wait(20)
-            return { type: "tool_result" as const, tool_use_id: "", content: "written" }
-          },
-        },
-      ],
-      systemPrompt: "test",
-      maxTurns: 2,
-      maxTokens: 256,
-      includePartialMessages: false,
-      canUseTool: async () => ({ behavior: "allow" }),
-      onAsyncEvent: (event) => asyncEvents.push(event),
-    })
-
-    await collectEvents(engine)
-
-    expect(provider.requests).toHaveLength(2)
-    expect(provider.requests[1]?.messages).toContainEqual(expect.objectContaining({
-      role: "runtime",
-      content: expect.stringContaining("<internal_context type=\"lsp_diagnostics\">"),
-    }))
-    expect(provider.requests[1]?.messages).toContainEqual(expect.objectContaining({
-      role: "runtime",
-      content: expect.stringContaining("Cannot find name 'missing'."),
-    }))
-    expect(asyncEvents).toHaveLength(1)
-  })
-
   test("treats a natural completion on the final allowed turn as success", async () => {
     const engine = new QueryEngine({
       cwd: process.cwd(),
@@ -1401,10 +1312,7 @@ describe("QueryEngine context controller", () => {
     });
 
     const iterator = engine.submitMessage("run");
-    expect((await iterator.next()).value).toMatchObject({
-      type: "system",
-      subtype: "session_state_changed"
-    });
+    // session_state_changed was retired (#413): init is now the first event.
     expect((await iterator.next()).value).toMatchObject({
       type: "system",
       subtype: "init"
@@ -3164,6 +3072,34 @@ describe("QueryEngine getContextUsage", () => {
 
     expect(engine.getContextUsage().maxTokens).toBe(12345)
   })
+
+  test("tool schema token estimate includes inputSchema (#389)", () => {
+    const buildEngine = (inputSchema: Record<string, unknown>) =>
+      new QueryEngine({
+        cwd: process.cwd(),
+        model: "test-model",
+        provider: new StaticProvider([]),
+        tools: [{ ...dummyTool, name: "Bash", inputSchema }],
+        systemPrompt: "test",
+        maxTurns: 1,
+        maxTokens: 100000,
+      })
+
+    const bigSchemaUsage = buildEngine({
+      type: "object",
+      properties: Object.fromEntries(
+        Array.from({ length: 40 }, (_, i) => [`property${i}`, { type: "string" }]),
+      ),
+    }).getContextUsage()
+    const smallSchemaUsage = buildEngine({ type: "object", properties: {} }).getContextUsage()
+
+    const toolsTokens = (usage: ReturnType<QueryEngine["getContextUsage"]>) =>
+      usage.gridRows?.flatMap((row) => row).find((cell) => cell.categoryName === "tools")?.tokens ?? 0
+
+    // 口径与 getDeferredToolTokenCount 一致：schema 变大必须推高估算，
+    // 不依赖 native 计数是否可用（双态稳健）。
+    expect(toolsTokens(bigSchemaUsage)).toBeGreaterThan(toolsTokens(smallSchemaUsage))
+  })
 });
 
 describe("QueryEngine max_tokens continuation (#304/#361)", () => {
@@ -3375,113 +3311,6 @@ describe("QueryEngine non-stream retry events (#360)", () => {
     expect(retries).toHaveLength(1)
     expect(retries[0]).toMatchObject({ attempt: 1, error_status: 503 })
   }, 20_000)
-})
-
-describe("QueryEngine delayed diagnostics persistence (#359)", () => {
-  test("re-injects pending diagnostics after a prompt-too-long compaction retry", async () => {
-    let calls = 0
-    const requests: CreateMessageParams[] = []
-    const provider: LLMProvider = {
-      apiType: "anthropic-messages",
-      async createMessage(params) {
-        requests.push(params)
-        calls += 1
-        if (calls === 2) {
-          const error = new Error("prompt is too long") as Error & { status: number }
-          error.status = 400
-          throw error
-        }
-        if (calls === 1) {
-          return {
-            content: [
-              { type: "tool_use", id: "edit-9", name: "Edit", input: {} },
-              { type: "tool_use", id: "settle-9", name: "Settle", input: {} },
-            ],
-            stopReason: "tool_use",
-            usage: { input_tokens: 1, output_tokens: 1 }
-          }
-        }
-        return {
-          content: [{ type: "text", text: "done" }],
-          stopReason: "end_turn",
-          usage: { input_tokens: 1, output_tokens: 1 }
-        }
-      }
-    }
-    const engine = new QueryEngine({
-      cwd: process.cwd(),
-      model: "test-model",
-      provider,
-      tools: [{
-        name: "Edit",
-        description: "edit",
-        inputSchema: { type: "object", properties: {} },
-        async call(_input, context) {
-          setTimeout(() => {
-            context.emitEvent?.({
-              type: "system",
-              subtype: "lsp_diagnostics",
-              session_id: "session",
-              tool_use_id: "edit-9",
-              file_path: "src/example.ts",
-              mutation_version: 1,
-              sha256: "abc",
-              delayed: true,
-              diagnostics: {
-                servers: ["typescript-language-server"],
-                total: 1,
-                errors: 1,
-                warnings: 0,
-                truncated: false,
-                items: [{
-                  severity: 1,
-                  message: "Cannot find name 'missing'.",
-                  range: { start: { line: 2, character: 4 }, end: { line: 2, character: 11 } }
-                }]
-              }
-            })
-          }, 0)
-          return { type: "tool_result" as const, tool_use_id: "", content: "edited" }
-        }
-      }, {
-        name: "Settle",
-        description: "settle",
-        inputSchema: { type: "object", properties: {} },
-        async call() {
-          // Give the deferred diagnostics emission room to land after Edit
-          // returned but before the next provider request.
-          await wait(30)
-          return { type: "tool_result" as const, tool_use_id: "", content: "settled" }
-        }
-      }],
-      systemPrompt: "test",
-      maxTurns: 3,
-      maxTokens: 256,
-      includePartialMessages: false,
-      canUseTool: async () => ({ behavior: "allow" }),
-      contextController: {
-        shouldAutoCompact: () => false,
-        async compactConversation({ messages }) {
-          return {
-            compactedMessages: [
-              { role: "user", content: "[Previous conversation summary]\n\nretry summary" },
-              ...messages.slice(-1)
-            ],
-            summary: "retry summary"
-          }
-        }
-      }
-    })
-
-    await expect(collectResult(engine)).resolves.toMatchObject({ subtype: "success" })
-
-    const diagnosticRuntime = (request?: { messages: unknown[] }) =>
-      JSON.stringify((request?.messages ?? []).filter((message: any) => message.role === "runtime"))
-    // Injected before the failed request…
-    expect(diagnosticRuntime(requests[1])).toContain("Cannot find name 'missing'.")
-    // …and still present on the compaction retry after it.
-    expect(diagnosticRuntime(requests[2])).toContain("Cannot find name 'missing'.")
-  })
 })
 
 describe("QueryEngine cost estimation (#352)", () => {

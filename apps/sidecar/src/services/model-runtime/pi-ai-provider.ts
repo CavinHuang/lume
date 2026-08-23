@@ -21,12 +21,12 @@ import type {
   NormalizedMessageParam,
   NormalizedResponseBlock,
 } from "@lume/agent-sdk";
+import { MAX_RETRY_AFTER_DELAY_MS, parseRetryAfterHeader } from "@lume/agent-sdk";
 
 type PiTextApi = "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai";
 
 const DEFAULT_MAX_RETRIES = 5;
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
-const MAX_RETRY_AFTER_MS = 30_000;
 
 export interface PiAiProviderOptions {
   apiType: ApiType;
@@ -80,7 +80,7 @@ export function resolvePiAiRetryDelayMs(error: unknown, retryIndex: number, rand
   const base = RETRY_DELAYS_MS[Math.min(retryIndex, RETRY_DELAYS_MS.length - 1)] ?? RETRY_DELAYS_MS.at(-1)!;
   const jittered = Math.round(base * (0.8 + random() * 0.4));
   const retryAfter = typeof (error as { retryAfterMs?: unknown } | null)?.retryAfterMs === "number"
-    ? Math.min(MAX_RETRY_AFTER_MS, Math.max(0, (error as { retryAfterMs: number }).retryAfterMs))
+    ? Math.min(MAX_RETRY_AFTER_DELAY_MS, Math.max(0, (error as { retryAfterMs: number }).retryAfterMs))
     : 0;
   return Math.max(jittered, retryAfter);
 }
@@ -106,6 +106,24 @@ function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
 
 function toPiApi(apiType: ApiType): PiTextApi {
   return apiType === "deepseek-chat-completions" ? "openai-completions" : apiType;
+}
+
+/**
+ * 模型推理能力与"本次请求是否要思考"是两件事,不得混判。
+ *
+ * pi-ai 的 openai 兼容层里,所有 thinkingFormat 分支(zai/qwen/deepseek/openrouter/
+ * responses…)都以 `model.reasoning === true` 为前提才会向请求体写入思考参数——
+ * 包括"关闭"(zai: `thinking:{type:"disabled"}`、qwen: `enable_thinking:false`、
+ * responses: `reasoning:{effort:"none"}`)。此前 disabled 时把 capability 判成
+ * false,导致所有分支被跳过、请求体一个思考参数都不带,GLM/Qwen 等服务端默认
+ * 开思考的模型照想不误(用户选"关闭"依然出 reasoning)。
+ *
+ * 能力未知(undefined)时按 true 处理:与非 disabled 请求的原行为一致
+ * (`undefined ?? true !== 'disabled'` 本来就恒为 true),且对确实不支持推理的
+ * 模型无害——各分支在无 reasoningEffort 时只会落空或写 undefined 字段。
+ */
+export function resolvePiModelReasoningCapability(supportsReasoning: boolean | undefined): boolean {
+  return supportsReasoning ?? true;
 }
 
 export function resolvePiModelInput(messages: NormalizedMessageParam[]): Array<"text" | "image"> {
@@ -288,12 +306,7 @@ function toResponse(message: AssistantMessage): CreateMessageResponse {
 }
 
 function retryAfterMs(headers: Record<string, string> | undefined): number | undefined {
-  const raw = headers?.["retry-after"] ?? headers?.["Retry-After"];
-  if (!raw) return undefined;
-  const seconds = Number(raw);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
-  const date = Date.parse(raw);
-  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+  return parseRetryAfterHeader(headers?.["retry-after"] ?? headers?.["Retry-After"]);
 }
 
 function structuredOutputTransform(api: PiTextApi, schema: Record<string, unknown> | undefined) {
@@ -353,7 +366,7 @@ export class PiAiProvider implements LLMProvider {
       api,
       provider: this.options.providerId,
       baseUrl: this.options.baseUrl,
-      reasoning: this.options.supportsReasoning ?? params.thinking?.type !== "disabled",
+      reasoning: resolvePiModelReasoningCapability(this.options.supportsReasoning),
       input: resolvePiModelInput(params.messages),
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: this.options.contextWindow ?? 128_000,
@@ -377,7 +390,7 @@ export class PiAiProvider implements LLMProvider {
           signal: params.abortSignal,
           maxTokens: params.maxTokens,
           maxRetries: 0,
-          maxRetryDelayMs: MAX_RETRY_AFTER_MS,
+          maxRetryDelayMs: MAX_RETRY_AFTER_DELAY_MS,
           sessionId: this.options.sessionId ?? params.promptCache?.routingKey,
           cacheRetention: params.promptCache?.ttl === "5m" ? "short" : "none",
           ...(params.thinking?.type === "disabled" ? {} : { reasoning: params.effort ?? "medium" }),

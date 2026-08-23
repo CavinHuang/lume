@@ -22,202 +22,6 @@
  */
 
 // --------------------------------------------------------------------------
-// High-level Agent API
-// --------------------------------------------------------------------------
-
-export { Agent, createAgent } from './agent.js'
-export { rewindCheckpoint } from './utils/file-checkpoints.js'
-export type { FileCheckpoint, FileCheckpointState, FileSnapshot } from './utils/file-checkpoints.js'
-export { QueryController } from './query-controller.js'
-export {
-  LumeCapabilityReferenceError,
-  formatLumePluginReference,
-  formatLumeSkillReference,
-  normalizeLumeCapabilityReferences,
-  parseLumeCapabilityReference,
-} from './capability-references.js'
-export type {
-  LumeCapabilityReference,
-  LumeCapabilityReferenceErrorCode,
-} from './capability-references.js'
-
-// --------------------------------------------------------------------------
-// Core Engine
-// --------------------------------------------------------------------------
-
-export { QueryEngine } from './engine.js'
-export { withRepeatGuardState, readRepeatGuardState } from './repeat-guard.js'
-export type { RepeatGuardMeta } from './repeat-guard.js'
-export { resolveShellInvocation } from './utils/shell-invocation.js'
-export { analyzeBashCommand, normalizeExecutable } from './utils/bash-command-analysis.js'
-export type { BashCommandAnalysis, BashCommandSegment, BashParseStatus } from './utils/bash-command-analysis.js'
-export {
-  buildCommandLine,
-  getProcessSandboxSupport,
-  probeProcessSandbox,
-  spawnWithProcessSandbox,
-} from './utils/process-sandbox.js'
-export type {
-  ProcessSandboxProbeInput,
-  ProcessSandboxProbeResult,
-  ProcessSandboxSupport,
-  SandboxedProcessOptions,
-} from './utils/process-sandbox.js'
-
-// --------------------------------------------------------------------------
-// LLM Provider Contract (host-injected implementations)
-// --------------------------------------------------------------------------
-
-export type {
-  ApiType,
-  LLMProvider,
-  PromptCachePolicy,
-  CreateMessageParams,
-  CreateMessageResponse,
-  CreateMessageStreamEvent,
-  NormalizedMessageParam,
-  NormalizedContentBlock,
-  NormalizedTool,
-  NormalizedResponseBlock,
-} from './providers/types.js'
-
-// --------------------------------------------------------------------------
-// Tool System (30+ tools)
-// --------------------------------------------------------------------------
-
-export {
-  // Registry
-  getAllBaseTools,
-  filterTools,
-  filterDisallowedTools,
-
-  // Helpers
-  defineTool,
-  toApiTool,
-
-  // Core file I/O & execution
-  BashTool,
-  FileReadTool,
-  FileWriteTool,
-  FileEditTool,
-  GlobTool,
-  GrepTool,
-  NotebookEditTool,
-
-  // Web
-  WebFetchTool,
-  WebSearchTool,
-  GuanlanSearchTool,
-  GuanlanReadTool,
-  GuanlanHotnewsTool,
-  GuanlanResearchTool,
-
-  // Agent & Multi-agent
-  AgentTool,
-
-  // Persistent Tasks are host-bound through createTaskTools.
-
-  // Worktree
-  EnterWorktreeTool,
-  ExitWorktreeTool,
-
-  // User interaction
-  AskUserQuestionTool,
-
-  // Discovery
-  ToolSearchTool,
-  CORE_TOOL_NAMES,
-
-  // LSP
-  LSPTool,
-  LSPApplyTool,
-
-  // Todo
-  createTodoTool,
-
-  // Skill
-  SkillTool,
-} from './tools/index.js'
-
-export {
-  ProcessOutputTool,
-  ProcessStopTool,
-  loadProcessJobs,
-  markProcessJobContinuationConsumed,
-  markProcessJobNotified,
-  updateProcessJob,
-  waitForProcessJobTerminal,
-  type ProcessJob,
-} from './tools/process-job-registry.js'
-
-// LSP protocol and client manager
-export {
-  collectLspDiagnostics,
-  encodeLspMessage,
-  getLspClient,
-  getLspClientsForFile,
-  notifyLspFileChanged,
-  notifyLspFileClosed,
-  notifyLspWatchedFiles,
-  requestLspClients,
-  resolveLspServerConfig,
-  resolveLspServerConfigsForFile,
-  setLspIdleTimeout,
-  shutdownLspClients,
-  warmupLspClients,
-} from './lsp/client.js'
-export type {
-  LspAggregatedDiagnostic,
-  LspClient,
-  LspClientState,
-  LspCreateFile,
-  LspDeleteFile,
-  LspDiagnostic,
-  LspLocation,
-  LspLocationLink,
-  LspPosition,
-  LspRange,
-  LspRenameFile,
-  LspServerCapabilities,
-  LspServerConfig,
-  LspServerStatus,
-  LspTextDocumentEdit,
-  LspTextEdit,
-  LspWatchedFileChange,
-  LspWorkspaceEdit,
-} from './lsp/client.js'
-export {
-  DEFAULT_LSP_SERVERS,
-  findLspWorkspaceRoot,
-  resolveLspExecutable,
-  supportsLspFile,
-} from './lsp/registry.js'
-export type { LspRegistryServer, LspServerRole } from './lsp/registry.js'
-export { clearLspWritethroughState } from './lsp/writethrough.js'
-
-// --------------------------------------------------------------------------
-// MCP Client
-// --------------------------------------------------------------------------
-
-export { McpClientManager } from './mcp/manager.js'
-export type {
-  McpCallResult,
-  McpClientErrorCode,
-  McpClientFactory,
-  McpClientLike,
-  McpClientServerStatus,
-  McpClientStatus,
-  McpListResourcesResult,
-  McpReadResourceResult,
-  McpToolDetail,
-  McpTransportFactory,
-  McpTransportKind,
-  NormalizedMcpServerConfig,
-} from './mcp/manager.js'
-
-// --------------------------------------------------------------------------
-// Filesystem Skills
-// --------------------------------------------------------------------------
 
 export { loadFilesystemSkills } from './skills/fs-loader.js'
 
@@ -359,7 +163,6 @@ export {
   stripImagesFromMessages,
   extractTextFromContent,
   createCompactBoundaryMessage,
-  truncateText,
 } from './utils/messages.js'
 
 // --------------------------------------------------------------------------
@@ -420,6 +223,9 @@ export {
   isRateLimitError,
   formatApiError,
   getRetryDelay,
+  computeRetryDelay,
+  parseRetryAfterHeader,
+  MAX_RETRY_AFTER_DELAY_MS,
   DEFAULT_RETRY_CONFIG,
 } from './utils/retry.js'
 export type { RetryConfig } from './utils/retry.js'
@@ -543,9 +349,11 @@ export type {
   SDKStreamlinedTextMessage,
   SDKStreamlinedToolUseSummaryMessage,
   SDKToolUseSummaryMessage,
-  SDKSessionStateChangedMessage,
   SDKLocalCommandOutputMessage,
   SDKElicitationCompleteMessage,
+  SDKContextCompactionProgressMessage,
+  SDKMemorySavedMessage,
+  SDKRunAbortedMessage,
 
   // Tool types
   ToolDefinition,

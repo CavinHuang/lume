@@ -85,6 +85,20 @@ describe("projectLifecycle", () => {
     expect(runEnd.detail).toEqual(expect.objectContaining({ stopReason: "end_turn", numTurns: 1 }))
   })
 
+  test("result.errorCode → run.end detail 透传(#472 guard stop 来源区分)", async () => {
+    const events = await run([
+      streamTextDelta("he") as any,
+      { type: "assistant", uuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "hello" }] } } as any,
+      { type: "result", subtype: "error_completion_guard", is_error: true, num_turns: 1, errorCode: "verification_inconclusive" } as any,
+    ])
+    const runEnd = events.at(-1)
+    expect(runEnd.kind).toBe("run")
+    expect(runEnd.phase).toBe("end")
+    expect(runEnd.detail.stopReason).toBe("error_completion_guard")
+    expect(runEnd.detail.isError).toBe(true)
+    expect(runEnd.detail.errorCode).toBe("verification_inconclusive")
+  })
+
   test("message.update carries folded cumulative partial", async () => {
     const events = await run([
       streamTextDelta("he") as any, streamTextDelta("llo") as any,

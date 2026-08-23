@@ -1,6 +1,6 @@
 /**
  * ThreadEventBus 第二入口领域事件的统一发布口。
- * run 级领域事件(background.task / lsp.diagnostics / coding.report /
+ * run 级领域事件(background.task / coding.report /
  * advisor.reviewed / memory.context.used / todo.state)共用同一骨架:
  * turnId:null、ts:now、kind:"run"、phase:"event",失败仅 warn 不抛。
  * 注意:lifecycle 投影 tee(run-loop 直通投影产物)与 run.end 终值补发

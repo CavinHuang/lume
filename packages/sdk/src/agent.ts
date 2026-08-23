@@ -36,6 +36,7 @@ import {
   loadSession,
   listSessions,
   forkSession as forkStoredSession,
+  sliceSessionMessages,
 } from './session.js'
 import { createHookRegistry, type HookRegistry } from './hooks.js'
 import {
@@ -96,16 +97,6 @@ function extractSummary(messages: Message[]): string | undefined {
     .map((block: any) => block.text)
     .join('\n')
     .slice(0, 500) || undefined
-}
-
-function sliceSessionMessages(
-  messages: SessionMessage[],
-  upToMessageId?: string,
-): SessionMessage[] {
-  if (!upToMessageId) return messages
-  const index = messages.findIndex((message) => message.uuid === upToMessageId)
-  if (index === -1) return messages
-  return messages.slice(0, index + 1)
 }
 
 function normalizeHistoryFromSessionMessages(
@@ -283,8 +274,14 @@ export class Agent {
   private fileSkillNames = new Set<string>()
   private fileCheckpointState: FileCheckpointState = {}
   private latestUserMessageId: string | undefined
-  private lastContextUsage: ContextUsageResult | null = null
+  private lastUsageEngine: QueryEngine | null = null
   private queuedSdkEvents: SDKMessage[] = []
+  // Generation marker for the async-event queue: advanced when a run's
+  // finally completes. Each run's onAsyncEvent closure captures the value
+  // from before its run, so a late background task_notification firing after
+  // the host abandoned iteration (or between runs) is recognized as stale and
+  // dropped instead of leaking into the next run's event stream.
+  private asyncEventEpoch = 0
   private readonly skillRegistry: SkillRegistry
 
   constructor(options: AgentOptions = {}) {
@@ -841,6 +838,9 @@ export class Agent {
       await this.persistCurrentSession(cwd, opts)
     }
 
+    // Captured before the engine exists: once this run's finally advances the
+    // epoch, closures holding the stale value are recognized as dead runs'.
+    const sdkEventEpoch = this.asyncEventEpoch
     const engine = new QueryEngine({
       cwd,
       model: opts.model || this.modelId,
@@ -891,6 +891,7 @@ export class Agent {
           opts.onAsyncEvent(event)
           return
         }
+        if (sdkEventEpoch !== this.asyncEventEpoch) return
         this.queuedSdkEvents.push(event)
       },
       onLiveEvent: opts.onLiveEvent,
@@ -921,6 +922,7 @@ export class Agent {
 
     let persistedSessionEvent: SDKMessage | null = null
     let compactionBoundarySeen = false
+    let runCompleted = false
     try {
       for await (const event of engine.submitMessage(modelFacingPrompt)) {
         if (event.type === 'assistant') {
@@ -955,7 +957,14 @@ export class Agent {
           yield queued
         }
       }
+      runCompleted = true
     } finally {
+      if (!runCompleted) {
+        // Consumer abandoned the generator mid-run (break / close): pending
+        // async events can no longer be delivered and must not leak into the
+        // next run's event stream.
+        this.queuedSdkEvents.length = 0
+      }
       // Drop any pending debounced write and wait out one already in flight:
       // the awaited persistCurrentSession below writes the same (or fresher)
       // state. Flushing here instead would launch a concurrent fire-and-forget
@@ -964,8 +973,15 @@ export class Agent {
       await persistScheduler.cancel()
       opts.abortSignal?.removeEventListener('abort', forwardAbort)
       this.history = engine.getMessages()
-      this.lastContextUsage = engine.getContextUsage()
+      // Keep only the engine reference: the full token estimation runs
+      // lazily when a host actually calls getContextUsage (#386).
+      this.lastUsageEngine = engine
       this.currentEngine = null
+      // Invalidate this run's async-event closures: anything they enqueue from
+      // here on is post-run residue (late background task_notification after
+      // the host stopped iterating) and must not survive into the next run's
+      // drain windows.
+      this.asyncEventEpoch++
       if (compactionBoundarySeen) {
         this.sessionMessages = sessionMessagesFromHistory(this.history, this.sessionMessages)
       }
@@ -975,11 +991,14 @@ export class Agent {
       persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
     }
 
+    // Drain before the final yields: once the consumer stops iterating, the
+    // queue must be empty either way — leftover async events belong to this
+    // dead run, not the next one.
+    const tailQueued = this.drainQueuedSdkEvents()
     if (persistedSessionEvent) {
       yield persistedSessionEvent
     }
-
-    for (const queued of this.drainQueuedSdkEvents()) {
+    for (const queued of tailQueued) {
       yield queued
     }
   }
@@ -1187,15 +1206,7 @@ export class Agent {
       { name: '/mcp', description: 'Inspect MCP server status' },
       { name: '/reload-plugins', description: 'Reload plugins from disk' },
     ]
-    const byName = new Map<string, SlashCommand>()
-    for (const command of builtins) {
-      byName.set(command.name, {
-        name: command.name,
-        description: command.description,
-        ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
-      })
-    }
-    return Array.from(byName.values())
+    return builtins
   }
 
   async getInitializationResult(): Promise<InitializationResult> {
@@ -1234,8 +1245,8 @@ export class Agent {
     if (this.currentEngine) {
       return this.currentEngine.getContextUsage()
     }
-    if (this.lastContextUsage) {
-      return this.lastContextUsage
+    if (this.lastUsageEngine) {
+      return this.lastUsageEngine.getContextUsage()
     }
     const init = await this.getInitializationResult()
     return {
@@ -1331,6 +1342,11 @@ export class Agent {
 
     this.unregisterFileSkills()
     this.unregisterExplicitSkills()
+    // Release the engine retained for lazy usage estimation (#386): past
+    // close, it would otherwise keep the full message history reachable for
+    // the lifetime of the Agent. getContextUsage falls back to the safe
+    // zero-value shape.
+    this.lastUsageEngine = null
   }
 }
 

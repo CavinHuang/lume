@@ -11,7 +11,7 @@
     "dist"
   ],
   "dependencies": {
-    "@lume/agent-sdk": "workspace:*"
+    "zod": "^4.3.6"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

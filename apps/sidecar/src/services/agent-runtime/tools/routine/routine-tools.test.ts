@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { ToolDefinition } from "@lume/agent-sdk";
 import { createRoutineTools } from "./create-routine-tools";
 import { readRoutine, writeRoutine } from "../../../routine/routine-store";
+import { localDateKey } from "../../../routine/routine-date";
 import { stopAutomationRunner } from "../../../automation/automation-runner-service";
 import { resetPlanningTodoStoreForTests } from "../../../planning/planning-todo-store";
 import type { DailyRoutine } from "@lume/shared";
@@ -67,7 +68,7 @@ describe("routine tools", () => {
     });
 
     test("应返回指定日期的日程", async () => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localDateKey();
       const mockRoutine: DailyRoutine = {
         id: `routine-${today}`,
         date: today,
@@ -97,7 +98,7 @@ describe("routine tools", () => {
     });
 
     test("默认应读取今天", async () => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localDateKey();
       const mockRoutine: DailyRoutine = {
         id: `routine-${today}`,
         date: today,
@@ -136,7 +137,7 @@ describe("routine tools", () => {
   // --- routine_update tests ---
   describe("routine_update", () => {
     test("应能更新日程条目的 description", async () => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localDateKey();
       const mockRoutine: DailyRoutine = {
         id: `routine-${today}`,
         date: today,
@@ -176,7 +177,7 @@ describe("routine tools", () => {
   // --- routine_regenerate tests ---
   describe("routine_regenerate", () => {
     test("应能重新生成今日日程", async () => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localDateKey();
       const mockRoutine: DailyRoutine = {
         id: `routine-${today}`,
         date: today,

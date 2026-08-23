@@ -4,6 +4,7 @@ import {
   PiAiProviderError,
   resolvePiModelInput,
   resolvePiAiRetryDelayMs,
+  resolvePiModelReasoningCapability,
   shouldTryNextPiAiRoute,
 } from "./pi-ai-provider";
 
@@ -34,6 +35,16 @@ describe("pi-ai image transport", () => {
   });
 });
 
+describe("pi-ai model reasoning capability", () => {
+  test("能力未知时恒为 true：关闭思考也必须让 pi-ai 走 thinkingFormat 分支发显式禁用参数", () => {
+    // 回归:此前 disabled 请求把 capability 判成 false,pi-ai 跳过全部分支,
+    // 请求体不带任何思考参数,GLM/Qwen 服务端默认开思考→选"关闭"依然思考
+    expect(resolvePiModelReasoningCapability(undefined)).toBe(true);
+    expect(resolvePiModelReasoningCapability(false)).toBe(false);
+    expect(resolvePiModelReasoningCapability(true)).toBe(true);
+  });
+});
+
 describe("pi-ai provider retry policy", () => {
   test("retries transient status and network failures only", () => {
     expect(isRetryablePiAiError(new PiAiProviderError("busy", { status: 429 }))).toBe(true);
@@ -44,7 +55,7 @@ describe("pi-ai provider retry policy", () => {
     expect(isRetryablePiAiError(new PiAiProviderError("invalid key", { status: 401 }))).toBe(false);
   });
 
-  test("uses 1/2/4/8/16 second backoff and caps Retry-After at 30 seconds", () => {
+  test("uses 1/2/4/8/16 second backoff and caps Retry-After at 120 seconds", () => {
     const deterministicRandom = () => 0.5;
     expect([0, 1, 2, 3, 4].map((index) =>
       resolvePiAiRetryDelayMs(new Error("network"), index, deterministicRandom)
@@ -53,7 +64,12 @@ describe("pi-ai provider retry policy", () => {
       new PiAiProviderError("busy", { retryAfterMs: 90_000 }),
       0,
       deterministicRandom,
-    )).toBe(30_000);
+    )).toBe(90_000);
+    expect(resolvePiAiRetryDelayMs(
+      new PiAiProviderError("busy", { retryAfterMs: 300_000 }),
+      0,
+      deterministicRandom,
+    )).toBe(120_000);
   });
 
   test("falls back for model-specific and credential failures but not malformed requests", () => {

@@ -31,7 +31,7 @@ import type { AgentEventBusSource } from './useAgentEventBus'
  *   而非 SDK 流,由 sidecar lume-runner 第二注入路径直发)
  * - background.task → background.task.completed(批次4,late task_notification 旁路
  *   + projector 主流双入口;streaming 副作用见 consumeBusEnvelope)
- * - todo.state/advisor.reviewed/lsp.diagnostics/coding.report → 旧路同形事件(批次5,
+ * - todo.state/advisor.reviewed/coding.report → 旧路同形事件(批次5,
  *   sidecar 第二入口双发,载荷同引用;字段对齐 run-item-events 对应构造)
  * - context.compaction 三态 → 同名三事件(批次4;trigger 真值+outcome 已由 projector
  *   透传(加固批次 detail.trigger/detail.outcome,adapter outcome 取 isError 等价),
@@ -327,25 +327,6 @@ export function adaptLifecycleEvent(
     }]
   }
 
-  // 批次5:lsp.diagnostics → 旧路 lsp.diagnostics.updated。T2 detail 字段已与旧路逐字
-  // 对齐(强类型直通);filePath/sha256 缺失丢弃——同旧路 gate(T4 注入侧同 gate,双保险)。
-  if (detail.type === 'lsp.diagnostics') {
-    if (!detail.filePath || !detail.sha256) return []
-    return [{
-      id: `lifecycle:${envelope.seq}:lsp.diagnostics.updated`,
-      type: 'lsp.diagnostics.updated' as const,
-      ...base,
-      ...(detail.toolUseId !== undefined ? { toolUseId: detail.toolUseId } : {}),
-      filePath: detail.filePath,
-      mutationVersion: detail.mutationVersion,
-      sha256: detail.sha256,
-      delayed: detail.delayed,
-      // detail.diagnostics.artifact 标注为 unknown(T4 透传 SDK 批次原引用),运行时与
-      // 旧路同构——引用透传,宽标注处 cast(同批次3 items 模式)
-      diagnostics: detail.diagnostics as Extract<LumeRuntimeEvent, { type: 'lsp.diagnostics.updated' }>['diagnostics'],
-    }]
-  }
-
   // 批次5:coding.report → 旧路 coding.report.updated。detail.report 与旧路 codingReport
   // 同引用(T1 终表判迁:run.completed/coding.report 双入口)——宽标注处 cast 透传。
   if (detail.type === 'coding.report') {
@@ -431,17 +412,19 @@ function adaptRunEnd(
     }
   }
   // 防护性终止(error_completion_guard):SDK 内部重复调用熔断与宿主自有
-  // completionGuard stop 共用该 subtype。engine 的 errors[0] 文案不进 projector
-  // detail,这里映射为固定中文文案,避免向用户渲染字面量枚举。
+  // completionGuard stop 共用该 subtype,#472 起靠 projector 透传的 errorCode
+  // 分流文案;无码(旧事件)回落 repeat-guard 文案。
   if (detail.stopReason?.includes('completion_guard')) {
+    const guardCopy = detail.errorCode === 'verification_inconclusive'
+      ? { code: 'verification_inconclusive', message: '验证结果无法确认，已由保护机制停止；当前进度已保存。' }
+      : detail.errorCode === 'verification_failed_after_repair'
+        ? { code: 'verification_failed_after_repair', message: '验证在自动修复后仍未通过，已由保护机制停止；当前进度已保存。' }
+        : { code: 'repeated_tool_call', message: '本轮检测到重复执行相同操作，已由保护机制停止；当前进度已保存。' }
     return {
       id: `lifecycle:${envelope.seq}:run.failed`,
       type: 'run.failed',
       ...base,
-      error: {
-        code: 'repeated_tool_call',
-        message: '本轮检测到重复执行相同操作，已由保护机制停止；当前进度已保存。',
-      },
+      error: guardCopy,
     }
   }
   if (detail.isError) {

@@ -104,3 +104,34 @@ describe("normalizeTablesHtml span budgets (#303)", () => {
     expect(out).not.toContain("colspan");
   });
 });
+
+describe("document-level span budget (#458)", () => {
+  // Each table expands to a legal 10,000-cell grid (single-table budget intact).
+  const smallTable = (label: string) =>
+    `<table><tr><td rowspan="100" colspan="100">${label}</td></tr></table>`;
+
+  test("many legal small tables cannot stack expansions past the document budget", () => {
+    // 25 tables fill the document budget exactly; the 26th must be skipped.
+    const tables = Array.from({ length: 26 }, (_, i) => smallTable(`t${i}`)).join("");
+    const out = normalizeTablesHtml(tables);
+    expect(out).toContain("t0");
+    expect(out).toContain("t25"); // skipped table's content is kept, not dropped
+    expect(out).toContain("[table span budget reached: 1 table(s) left unnormalized]");
+    expect(out.split('rowspan="100"').length - 1).toBe(1); // only the skipped table keeps its spans
+  }, 120_000);
+
+  test("tables exactly filling the document budget still all expand", () => {
+    const tables = Array.from({ length: 25 }, (_, i) => smallTable(`t${i}`)).join("");
+    const out = normalizeTablesHtml(tables);
+    expect(out).not.toContain("rowspan");
+    expect(out).not.toContain("colspan");
+    expect(out).not.toContain("table span budget");
+  }, 120_000);
+
+  test("a per-table over-budget table is also reported by the truncation marker", () => {
+    const cells = Array.from({ length: 30 }, (_, i) => `<td rowspan="100" colspan="100">c${i}</td>`).join("");
+    const out = normalizeTablesHtml(`<p>intro</p><table><tr>${cells}</tr></table>`);
+    expect(out).toContain('rowspan="100"');
+    expect(out).toContain("[table span budget reached: 1 table(s) left unnormalized]");
+  });
+});

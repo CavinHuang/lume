@@ -40,6 +40,8 @@ export interface RunEndDetail {
   stopReason: string | null
   isError: boolean
   numTurns: number
+  /** Guard-driven stop 的结构化码(SDK repeat-guard 'repeated_tool_call' / 宿主 verification stop),随 SDKResultMessage 透传。 */
+  errorCode?: string
   /** F3:错误终值携带的错误信息(流抛错/run 链内失败的补发终值);正常终值缺省。 */
   result?: string
   /** Migrated from the legacy SDKResultMessage when present. */
@@ -181,35 +183,6 @@ export interface AdvisorReviewedDetail {
   review: unknown
 }
 
-export interface LspDiagnosticsDetail {
-  type: 'lsp.diagnostics'
-  /** Fields aligned with the legacy LspDiagnosticsUpdatedRuntimeEvent. */
-  toolUseId?: string
-  filePath: string
-  mutationVersion: number
-  sha256: string
-  delayed: boolean
-  diagnostics: {
-    servers: string[]
-    total: number
-    errors: number
-    warnings: number
-    truncated: boolean
-    items: Array<{
-      server?: string
-      source?: string
-      severity?: 1 | 2 | 3 | 4
-      code?: string | number
-      message: string
-      range: {
-        start: { line: number; character: number }
-        end: { line: number; character: number }
-      }
-    }>
-    artifact?: unknown
-  }
-}
-
 export interface CodingReportDetail {
   type: 'coding.report'
   /** Legacy RuntimeCodingReport payload (T1 verdict: migrated; dual-entry with run.completed). */
@@ -229,7 +202,6 @@ export type SdkLifecycleDetail =
   | TodoStateDetail
   | TaskProgressDetail
   | AdvisorReviewedDetail
-  | LspDiagnosticsDetail
   | CodingReportDetail
 
 /** Result of AGENT_IPC_CHANNELS.GET_EVENTS. */

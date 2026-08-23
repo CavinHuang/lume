@@ -44,8 +44,14 @@ function normalizeCell(cell: HTMLElement): void {
 
 /** Per-cell upper bound for rowspan/colspan (HTML spec clamps similarly). */
 const MAX_SPAN = 100;
-/** Expanded-grid budget; tables beyond it skip normalization untouched. */
+/**
+ * Expanded-grid budgets; a table past either skips normalization untouched.
+ * The per-table cap bounds a single expansion's materialization; the
+ * document-level total keeps many legal small tables from stacking expansions
+ * into an unbounded sum (#458).
+ */
 const MAX_TABLE_GRID_CELLS = 250_000;
+const MAX_DOCUMENT_TABLE_CELLS = 250_000;
 
 function clampSpan(attribute: string | null): number {
   return Math.min(MAX_SPAN, Math.max(1, Number.parseInt(attribute ?? "1", 10) || 1));
@@ -56,7 +62,7 @@ function clampSpan(attribute: string | null): number {
  * expansion would blow past the cell budget (hostile span attributes must not
  * materialize millions of grid slots).
  */
-function buildTableGrid(rows: HTMLElement[]): { grid: Array<Array<HTMLElement | undefined>>; primary: Set<string> } | null {
+function buildTableGrid(rows: HTMLElement[]): { grid: Array<Array<HTMLElement | undefined>>; primary: Set<string>; cells: number } | null {
   const grid: Array<Array<HTMLElement | undefined>> = [];
   const primary = new Set<string>();
   let placedCells = 0;
@@ -79,7 +85,7 @@ function buildTableGrid(rows: HTMLElement[]): { grid: Array<Array<HTMLElement | 
       colIndex += colSpan;
     }
   }
-  return { grid, primary };
+  return { grid, primary, cells: placedCells };
 }
 
 /**
@@ -91,13 +97,27 @@ export function normalizeTablesHtml(html: string, url = "https://lume.invalid/")
   const dom = new JSDOM(`<body>${html}</body>`, { url });
   const doc = dom.window.document;
 
+  // Document-level budget (#458): per-table caps alone let any number of legal
+  // tables stack expansions without bound. Once the shared total is exhausted,
+  // remaining tables are left untouched and the truncation is marked in the
+  // output instead of silently dropped.
+  let documentCells = 0;
+  let unnormalizedTables = 0;
   for (const table of Array.from(doc.querySelectorAll("table"))) {
     const rows = Array.from(table.querySelectorAll("tr"));
     if (rows.length === 0) continue;
+    if (documentCells >= MAX_DOCUMENT_TABLE_CELLS) {
+      unnormalizedTables++;
+      continue;
+    }
     for (const cell of Array.from(table.querySelectorAll("td,th"))) normalizeCell(cell as HTMLElement);
 
     const expanded = buildTableGrid(rows as HTMLElement[]);
-    if (!expanded) continue;
+    if (!expanded || documentCells + expanded.cells > MAX_DOCUMENT_TABLE_CELLS) {
+      unnormalizedTables++;
+      continue;
+    }
+    documentCells += expanded.cells;
     const { grid, primary } = expanded;
 
     let width = 0;
@@ -140,6 +160,12 @@ export function normalizeTablesHtml(html: string, url = "https://lume.invalid/")
       for (const row of normalizedRows) body.appendChild(row);
       table.appendChild(body);
     }
+  }
+
+  if (unnormalizedTables > 0) {
+    const marker = doc.createElement("p");
+    marker.textContent = `[table span budget reached: ${unnormalizedTables} table(s) left unnormalized]`;
+    doc.body.appendChild(marker);
   }
 
   return doc.body.innerHTML;

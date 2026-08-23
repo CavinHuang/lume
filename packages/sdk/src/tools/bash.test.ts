@@ -17,16 +17,54 @@ import {
 import { resolveShellInvocation } from "../utils/shell-invocation";
 import type { SDKMessage } from "../types";
 
+// #463:LUME_BASH_PATH 在 resolveWindowsBashPath 里优先级最高且只做形态匹配
+// （bash/zsh 结尾），指向不存在的路径也能让 resolveShellInvocation 跳过
+// where.exe 发现（逐候选 1s 超时），恒定解析为 bash 形态——分类断言因此与
+// runner 上 bash 探测快慢无关。仅影响静态分类；真正 spawn 的测试不得使用。
+function useDeterministicTestShell(): () => void {
+  const original = process.env.LUME_BASH_PATH;
+  process.env.LUME_BASH_PATH = join("C:", "lume-test-deterministic", "bash.exe");
+  return () => {
+    if (original === undefined) delete process.env.LUME_BASH_PATH;
+    else process.env.LUME_BASH_PATH = original;
+  };
+}
+
 describe("BashTool shell invocation", () => {
   test("classifies read-only shell commands dynamically for permissions and concurrency", () => {
     // simple 路径（natives 可用）才能证明单命令只读；不可用时非 simple 的
     // Bash 命令一律 fail-closed（#300），白名单加速只在 natives 可用时生效。
-    expect(BashTool.isReadOnly?.({ command: "git status" })).toBe(nativeBashAvailable);
-    expect(BashTool.isConcurrencySafe?.({ command: "git status" })).toBe(nativeBashAvailable);
-    expect(BashTool.isReadOnly?.({ command: "git commit -m change" })).toBeFalse();
-    expect(BashTool.isReadOnly?.({ command: "rg TODO src > results.txt" })).toBeFalse();
-    expect(BashTool.isReadOnly?.({ command: "powershell -Command Get-ChildItem" })).toBeTrue();
-    expect(BashTool.isReadOnly?.({ command: "powershell -Command Set-Content out.txt x" })).toBeFalse();
+    //
+    // #463:无 natives 时 "git status" 走 parse-unavailable 回退，回退按
+    // resolveShellInvocation 的解析结果选方言——Windows CI 的 where.exe
+    // bash 发现逐候选 1s 超时，runner 慢时会全部超时回退 powershell.exe，
+    // "git status" 命中 PowerShell 白名单翻转成 true。注入确定性
+    // LUME_BASH_PATH（形态匹配命中即返回，不做存在性检查）把回退 shell
+    // 钉在 bash 形态上，结论不再依赖 shell 发现快慢。
+    const restoreShellEnv = useDeterministicTestShell();
+    try {
+      expect(BashTool.isReadOnly?.({ command: "git status" })).toBe(nativeBashAvailable);
+      expect(BashTool.isConcurrencySafe?.({ command: "git status" })).toBe(nativeBashAvailable);
+      expect(BashTool.isReadOnly?.({ command: "git commit -m change" })).toBeFalse();
+      expect(BashTool.isReadOnly?.({ command: "rg TODO src > results.txt" })).toBeFalse();
+      expect(BashTool.isReadOnly?.({ command: "powershell -Command Get-ChildItem" })).toBeTrue();
+      expect(BashTool.isReadOnly?.({ command: "powershell -Command Set-Content out.txt x" })).toBeFalse();
+    } finally {
+      restoreShellEnv();
+    }
+  });
+
+  // #471:权限判定的方言检查不得触发 Windows bash 发现——发现未决读作
+  // bash fail-closed。无显式 powershell 前缀的复合命令在 bash 方言下恒拒绝,
+  // 结论不随 where.exe 探测快慢翻转(执行路径仍走 resolveShellInvocation)。
+  test("denies non-prefixed PowerShell whitelist compounds under a bash dialect (#471)", () => {
+    const restoreShellEnv = useDeterministicTestShell();
+    try {
+      expect(BashTool.isReadOnly?.({ command: "Get-ChildItem | Select-Object -First 1" })).toBeFalse();
+      expect(BashTool.isConcurrencySafe?.({ command: "Get-ChildItem | Select-Object -First 1" })).toBeFalse();
+    } finally {
+      restoreShellEnv();
+    }
   });
 
   // CI 无 natives 二进制（dist 不入库），analyzeBashCommand 走 parse-unavailable 回退：

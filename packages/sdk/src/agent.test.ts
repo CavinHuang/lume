@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createAgent, sessionMessagesFromHistory } from "./agent.js"
+import { QueryEngine } from "./engine.js"
 import { SkillTool } from "./tools/skill-tool.js"
 import type { SDKMessage, SessionMessage, ToolDefinition } from "./types.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
@@ -1517,5 +1518,129 @@ describe("Agent session message uuid realignment (#363)", () => {
     // The surviving real messages keep their own uuids.
     expect(rebuilt[1]!.uuid).toBe("a-mid")
     expect(rebuilt[2]!.uuid).toBe("u-6")
+  })
+})
+
+describe("Agent lazy context usage estimation (#386)", () => {
+  test("run completion does not estimate tokens; getContextUsage computes on demand", async () => {
+    const provider = new StaticProvider()
+    const agent = createAgent({ persistSession: false, tools: [], provider })
+    const spy = spyOn(QueryEngine.prototype, "getContextUsage")
+
+    try {
+      for await (const _event of agent.query("hello")) {
+        // drain query
+      }
+
+      // The per-run finally must not run the full-message token estimation
+      // when no host ever reads usage.
+      expect(spy).toHaveBeenCalledTimes(0)
+
+      const usage = await agent.getContextUsage()
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(usage.totalTokens).toBeGreaterThan(0)
+      expect(usage.messageBreakdown.assistantMessageTokens).toBeGreaterThan(0)
+
+      // Each on-demand read recomputes against the retained engine.
+      await agent.getContextUsage()
+      expect(spy).toHaveBeenCalledTimes(2)
+    } finally {
+      spy.mockRestore()
+      await agent.close()
+    }
+  })
+
+  test("close releases the retained usage engine; later reads stay safe", async () => {
+    const provider = new StaticProvider()
+    const agent = createAgent({ persistSession: false, tools: [], provider })
+    const spy = spyOn(QueryEngine.prototype, "getContextUsage")
+
+    try {
+      for await (const _event of agent.query("hello")) {
+        // drain query
+      }
+      expect((agent as any).lastUsageEngine).not.toBeNull()
+
+      await agent.close()
+      // The engine (holding the run's full message history) must not stay
+      // reachable through the Agent past close.
+      expect((agent as any).lastUsageEngine).toBeNull()
+
+      // Post-close reads fall back to the safe zero-value shape without
+      // triggering the retained engine's estimation.
+      const usage = await agent.getContextUsage()
+      expect(spy).toHaveBeenCalledTimes(0)
+      expect(usage.totalTokens).toBe(0)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
+describe("Agent queued async events across runs (#413)", () => {
+  const fakeAsyncEvent = () =>
+    ({ type: "system", subtype: "task_notification", session_id: "s" }) as SDKMessage
+
+  test("abandoning a run mid-stream drops pending async events", async () => {
+    const provider = new StaticProvider()
+    const agent = createAgent({ persistSession: false, tools: [], provider })
+
+    let abandoned = false
+    for await (const _event of agent.query("hello")) {
+      if (abandoned) break
+      // An async event lands in the queue while the consumer is still
+      // iterating, then the consumer abandons the generator.
+      ;(agent as any).queuedSdkEvents.push(fakeAsyncEvent())
+      abandoned = true
+    }
+
+    expect((agent as any).queuedSdkEvents).toHaveLength(0)
+    await agent.close()
+  })
+
+  test("completed runs still deliver queued async events", async () => {
+    const provider = new StaticProvider()
+    const agent = createAgent({ persistSession: false, tools: [], provider })
+
+    const seen: SDKMessage[] = []
+    let injected = false
+    for await (const event of agent.query("hello")) {
+      seen.push(event)
+      if (!injected) {
+        ;(agent as any).queuedSdkEvents.push(fakeAsyncEvent())
+        injected = true
+      }
+    }
+
+    expect(seen.some((event) => event.type === "system" && event.subtype === "task_notification")).toBe(true)
+    expect((agent as any).queuedSdkEvents).toHaveLength(0)
+    await agent.close()
+  })
+
+  test("late background notification after abandoned iteration never enters the queue", async () => {
+    const provider = new StaticProvider()
+    const agent = createAgent({ persistSession: false, tools: [], provider })
+
+    for await (const _event of agent.query("hello")) {
+      break // host abandons mid-stream
+    }
+
+    // Simulate executeSingleTool's post-tool notification path firing after
+    // the host gave up: a background task_notification delivered through the
+    // dead run's captured onAsyncEvent closure.
+    const engine = (agent as any).lastUsageEngine as QueryEngine
+    ;(engine.config.onAsyncEvent as (event: SDKMessage) => void)(fakeAsyncEvent())
+
+    // The closure belongs to a finished generation: dropped, not enqueued...
+    expect((agent as any).queuedSdkEvents).toHaveLength(0)
+
+    // ...and nothing leaks into the next run's stream either.
+    const seen: SDKMessage[] = []
+    for await (const event of agent.query("hello")) {
+      seen.push(event)
+    }
+    expect(seen.some((event) => event.type === "system" && event.subtype === "task_notification")).toBe(false)
+    expect((agent as any).queuedSdkEvents).toHaveLength(0)
+    await agent.close()
   })
 })

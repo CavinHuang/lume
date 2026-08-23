@@ -37,7 +37,6 @@ export type RuntimeEventType =
   | "context.compaction.started"
   | "context.compaction.progress"
   | "context.compaction.completed"
-  | "lsp.diagnostics.updated"
   | "advisor.reviewed"
   | "usage.updated";
 
@@ -335,13 +334,6 @@ export interface RuntimeCodingReport {
   /** Verification commands observed or selected by the runtime for this Turn. */
   verificationRecords?: CodingVerificationRecord[];
   recommendedVerificationCommands?: string[];
-  lspDiagnostics?: {
-    files: string[];
-    total: number;
-    errors: number;
-    warnings: number;
-    updatedAt: string;
-  };
   gitActions?: CodingGitAction[];
   review?: CodingReviewSummary;
 }
@@ -975,34 +967,6 @@ export interface AdvisorReviewedRuntimeEvent extends RuntimeEventBase {
   durationMs?: number;
 }
 
-export interface LspDiagnosticsUpdatedRuntimeEvent extends RuntimeEventBase {
-  type: "lsp.diagnostics.updated";
-  toolUseId?: string;
-  filePath: string;
-  mutationVersion: number;
-  sha256: string;
-  delayed: boolean;
-  diagnostics: {
-    servers: string[];
-    total: number;
-    errors: number;
-    warnings: number;
-    truncated: boolean;
-    items: Array<{
-      server?: string;
-      source?: string;
-      severity?: 1 | 2 | 3 | 4;
-      code?: string | number;
-      message: string;
-      range: {
-        start: { line: number; character: number };
-        end: { line: number; character: number };
-      };
-    }>;
-    artifact?: FileResultRef;
-  };
-}
-
 export type LumeRuntimeEvent =
   | RunStartedRuntimeEvent
   | UserMessageSubmittedRuntimeEvent
@@ -1035,6 +999,5 @@ export type LumeRuntimeEvent =
   | ContextCompactionStartedRuntimeEvent
   | ContextCompactionProgressRuntimeEvent
   | ContextCompactionCompletedRuntimeEvent
-  | LspDiagnosticsUpdatedRuntimeEvent
   | AdvisorReviewedRuntimeEvent
   | UsageUpdatedRuntimeEvent;

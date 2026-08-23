@@ -32,6 +32,10 @@ describe('findModelMeta', () => {
     expect(findModelMeta('unknown-model-xyz')).toBeUndefined()
   })
 
+  test('returns undefined for empty input instead of the first registry entry', () => {
+    expect(findModelMeta('')).toBeUndefined()
+  })
+
   test('returns pricing when available', () => {
     const meta = findModelMeta('claude-sonnet-4-20250514')
     expect(meta!.pricing).toEqual({ input: 3, output: 15 })

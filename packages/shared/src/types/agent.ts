@@ -5,13 +5,14 @@
  * 包含 Agent SDK 集成所需的事件类型、线程管理、消息持久化和 IPC 通道常量。
  */
 
-import type { SDKMessage } from "@lume/agent-sdk"
+import type { SDKMessage } from "./sdk-protocol"
+import type { FileRef, FileReferenceBinding } from "./file-ref"
 import type { LumeRuntimeEvent } from "./runtime-event"
 import type { LumeConfigThinkingLevel } from "./lume-config"
 import type { McpTransportType } from "./mcp"
 import type { PluginMarketplaceAsset } from "./plugin-market"
 import type { PlanningOperationEnvelope, PlanningTodoRefPart } from "./planning-todo"
-export type { SDKMessage } from "@lume/agent-sdk"
+export type { SDKMessage } from "./sdk-protocol"
 export type {
   CallMcpToolDiagnosticRequest,
   CallMcpToolDiagnosticResponse,
@@ -1570,101 +1571,27 @@ export interface AgentSubagentCompletionEvent {
 
 // ===== 文件浏览器 =====
 
-export type FileSource = 'project' | 'session' | 'memory' | 'legacy'
-
-/** Renderer-safe opaque file identity. Absolute paths never cross this boundary. */
-export interface FileRef {
-  source: FileSource
-  scopeId: string
-  relativePath: string
-}
-
-export type FileRefTextEncoding = 'utf-8' | 'utf-16le'
-export type FileRefLineEnding = 'lf' | 'crlf' | 'mixed' | 'none'
-
-export type FileRefReadResult =
-  | {
-      kind: 'text'
-      content: string
-      size: number
-      mtimeMs: number
-      mimeType: string
-      encoding: FileRefTextEncoding
-      bom: boolean
-      lineEnding: FileRefLineEnding
-      editable: boolean
-      truncated: false
-    }
-  | {
-      kind: 'binary' | 'too-large'
-      size: number
-      mtimeMs: number
-      mimeType: string
-      editable: false
-      truncated: true
-    }
-
-export interface WriteFileRefInput {
-  ref: FileRef
-  content: string
-  expectedMtimeMs: number
-}
-
-export type WriteFileRefResult =
-  | { outcome: 'saved'; mtimeMs: number; size: number }
-  | { outcome: 'conflict'; mtimeMs: number; size: number }
-
-export interface FileSelectionEditInput {
-  threadId: string
-  ref: FileRef
-  content: string
-  startOffset: number
-  endOffset: number
-  instruction: string
-}
-
-export interface FileSelectionEditResult {
-  replacementText: string
-}
-
-export interface WatchFileRefResult {
-  watchId: string
-}
-
-export interface FileRefChangedEvent {
-  watchId: string
-  ref: FileRef
-  change: 'changed' | 'renamed' | 'deleted'
-  mtimeMs?: number
-}
-
-/** One immutable snapshot per logical Agent reply. It never contains local absolute paths. */
-export interface FileReferenceBinding {
-  workspaceSlug?: string
-  projectRootFingerprint?: string
-  fileContextId: string
-}
+// FileRef IPC payload 契约单源在 ./file-ref（zod schema 推导，#288），此处 re-export 保持公共 API 不变。
+export type {
+  FileSource,
+  FileRef,
+  FileRefTextEncoding,
+  FileRefLineEnding,
+  FileRefReadResult,
+  WriteFileRefInput,
+  WriteFileRefResult,
+  FileSelectionEditInput,
+  FileSelectionEditResult,
+  WatchFileRefResult,
+  FileRefChangedEvent,
+  FileReferenceBinding,
+  ProjectFileRefGuard,
+  SessionFileRefGuard,
+  GuardedFileRef,
+} from "./file-ref"
 
 export type FileReferenceProtocolVersion = 1
 export const FILE_REFERENCE_PROTOCOL_VERSION: FileReferenceProtocolVersion = 1
-
-export interface ProjectFileRefGuard {
-  kind: 'project'
-  workspaceSlug: string
-  expectedProjectRootFingerprint: string
-  consumerThreadId: string
-}
-
-export interface SessionFileRefGuard {
-  kind: 'session'
-  consumerThreadId: string
-  expectedFileContextId: string
-}
-
-/** Message-authored references are intentionally distinct from ordinary file-tree FileRefs. */
-export type GuardedFileRef =
-  | { ref: FileRef & { source: 'project' }; guard: ProjectFileRefGuard; expectedKind: 'file' | 'directory' }
-  | { ref: FileRef & { source: 'session' }; guard: SessionFileRefGuard; expectedKind: 'file' | 'directory' }
 
 export type GuardedFileRefErrorCode =
   | 'NOT_FOUND'

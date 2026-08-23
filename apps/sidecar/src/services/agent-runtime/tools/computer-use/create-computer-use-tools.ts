@@ -164,7 +164,7 @@ export function createComputerUseMcpTools(input: {
         return {
           value: toolResult(
             context.toolUseId,
-            { error: error instanceof Error ? error.message : String(error) },
+            { error: describeComputerUseError(error) },
             true,
           ),
         };
@@ -369,6 +369,26 @@ function validateClickTarget(args: Record<string, unknown>): void {
   if (hasX !== hasY || hasElement === (hasX && hasY)) {
     throw new Error("click requires exactly one target: element_index or x/y");
   }
+}
+
+/**
+ * 错误消息提取：跨进程 RPC(desktop-context)回传的失败是反序列化后的素对象
+ * ({code,message} 形态，非 Error 实例)，String() 会得到 "[object Object]"，
+ * 模型与日志都无从判断真实原因。Error.message 优先；素对象取 message 字段；
+ * 其余对象 JSON 序列化保留内容。
+ */
+export function describeComputerUseError(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "object" && error !== null) {
+    const record = error as Record<string, unknown>;
+    if (typeof record.message === "string" && record.message) return record.message;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
 }
 
 async function handleWindowState(input: {

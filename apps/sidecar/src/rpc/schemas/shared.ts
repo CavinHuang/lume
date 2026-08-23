@@ -1,4 +1,5 @@
 import { idSchema, z } from "../validation";
+import { fileRefSchema as sharedFileRefSchema } from "@lume/shared";
 
 export const relativeThreadPathSchema = z
   .string()
@@ -13,13 +14,8 @@ export const relativeThreadPathSchema = z
     },
   );
 
-export const rendererFileRefSchema = z
-  .object({
-    source: z.enum(["project", "session", "memory", "legacy"]),
-    scopeId: z.string().trim().min(1),
-    relativePath: z.string(),
-  })
-  .strict();
+// FileRef 契约单源在 @lume/shared（#288），此处仅按 sidecar 历史命名 re-export。
+export const rendererFileRefSchema = sharedFileRefSchema;
 
 export const agentThreadIdInputSchema = z.object({
   threadId: idSchema,

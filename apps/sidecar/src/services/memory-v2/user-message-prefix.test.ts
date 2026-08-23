@@ -23,6 +23,7 @@ afterEach(() => {
 const recallItem: MemoryV2RecallItem = {
   id: "mem_1",
   kind: "preference",
+  semanticRole: "preference",
   scope: "global",
   status: "active",
   statement: "User prefers Chinese communication.",
@@ -68,6 +69,7 @@ describe("memory-v2 user message prefix", () => {
       ...recallItem,
       id: "workspace:daily:2026-05-20",
       kind: "state",
+      semanticRole: "state",
       scope: "workspace",
       statement: "我叫什么名字？\n叫我 mason",
       reason: "recent daily memory"

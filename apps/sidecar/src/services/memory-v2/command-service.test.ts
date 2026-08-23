@@ -45,6 +45,37 @@ describe("MemoryCommandService", () => {
     expect(createMemoryV2Store().listEntries({ workspaceSlug: "demo" })).toHaveLength(0);
   });
 
+  test("redacts secret-bearing evidence quotes in persisted frontmatter (#449)", async () => {
+    const service = new MemoryCommandService();
+    const secretQuote = "用户粘贴了 api_key=sk-secretvalue123456 并让我保存";
+    const receipt = await service.remember({
+      workspaceSlug: "demo",
+      content: "用户偏好用环境变量管理密钥",
+      evidenceRefs: [{ type: "user_message", id: "msg-1", runId: "run-1", threadId: "t1", quote: secretQuote }],
+      actor: "main_agent",
+      runId: "run-1"
+    });
+    expect(receipt.action).toBe("created");
+    const entriesDir = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: "demo" }).entriesDir;
+    const raw = readdirSync(entriesDir).map((name) => readFileSync(join(entriesDir, name), "utf-8")).join("\n");
+    expect(raw).not.toContain(secretQuote);
+    expect(raw).not.toContain("sk-secretvalue123456");
+    expect(raw).toContain("[证据原文含疑似密钥，已省略]");
+
+    // pending 路径同样落盘 evidence_refs.quote
+    service.proposePending({
+      workspaceSlug: "demo",
+      content: "另一条待确认记忆",
+      scope: "workspace",
+      reason: "低置信度",
+      evidenceRefs: [{ type: "user_message", id: "msg-2", quote: "token: ghp_abcdefghijklmnopqrstuvwxyz123456" }]
+    });
+    const pendingRaw = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: "demo" }).pendingLowConfidenceDir;
+    const pendingFiles = readdirSync(pendingRaw).map((name) => readFileSync(join(pendingRaw, name), "utf-8")).join("\n");
+    expect(pendingFiles).toContain("[证据原文含疑似密钥，已省略]");
+    expect(pendingFiles).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz123456");
+  });
+
   test("explicit correction supersedes while background conflict stays pending", async () => {
     const service = new MemoryCommandService();
     await service.remember({

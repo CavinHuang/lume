@@ -12,12 +12,17 @@ import {
   updateChannel
 } from "../services/channel/channel-manager";
 import type { RpcHandler } from "./types";
-import { asObject, asString, validateInput } from "./validation";
+import { validateInput } from "./validation";
 import {
+  channelIdParamsSchema,
   channelCreateInputSchema,
   channelDeleteParamsSchema,
   channelUpdateParamsSchema,
-  fetchModelsInputSchema
+  connectionIdParamsSchema,
+  fetchModelsInputSchema,
+  oauthAnswerParamsSchema,
+  oauthCancelParamsSchema,
+  oauthSessionIdParamsSchema
 } from "./schemas";
 import {
   answerConnectionOAuthPrompt,
@@ -41,52 +46,36 @@ export function createChannelHandlers(): Record<string, RpcHandler> {
       return { ok: true };
     },
     [CHANNEL_IPC_CHANNELS.DECRYPT_KEY]: async (params) => {
-      const payload = asObject(params);
-      const channelId = asString(payload.channelId);
-      if (!channelId) {
-        throw new Error("缺少 channelId");
-      }
-      return decryptApiKey(channelId);
+      const input = validateInput(channelIdParamsSchema, params, CHANNEL_IPC_CHANNELS.DECRYPT_KEY);
+      return decryptApiKey(input.channelId);
     },
     [CHANNEL_IPC_CHANNELS.TEST]: async (params) => {
-      const payload = asObject(params);
-      const channelId = asString(payload.channelId);
-      if (!channelId) {
-        throw new Error("缺少 channelId");
-      }
-      return testChannel(channelId);
+      const input = validateInput(channelIdParamsSchema, params, CHANNEL_IPC_CHANNELS.TEST);
+      return testChannel(input.channelId);
     },
     [CHANNEL_IPC_CHANNELS.TEST_DIRECT]: async (params) =>
       testChannelDirect(validateInput(fetchModelsInputSchema, params, CHANNEL_IPC_CHANNELS.TEST_DIRECT) as FetchModelsInput),
     [CHANNEL_IPC_CHANNELS.FETCH_MODELS]: async (params) =>
       fetchModels(validateInput(fetchModelsInputSchema, params, CHANNEL_IPC_CHANNELS.FETCH_MODELS) as FetchModelsInput),
     [CHANNEL_IPC_CHANNELS.SYNC_MODELS]: async (params) => {
-      const payload = asObject(params);
-      const channelId = asString(payload.channelId);
-      if (!channelId) throw new Error("缺少 channelId");
-      return syncChannelModels(channelId);
+      const input = validateInput(channelIdParamsSchema, params, CHANNEL_IPC_CHANNELS.SYNC_MODELS);
+      return syncChannelModels(input.channelId);
     },
     [CHANNEL_IPC_CHANNELS.OAUTH_START]: async (params) => {
-      const connectionId = asString(asObject(params).connectionId);
-      if (!connectionId) throw new Error("缺少 connectionId");
-      return startConnectionOAuthLogin(connectionId);
+      const input = validateInput(connectionIdParamsSchema, params, CHANNEL_IPC_CHANNELS.OAUTH_START);
+      return startConnectionOAuthLogin(input.connectionId);
     },
     [CHANNEL_IPC_CHANNELS.OAUTH_STATUS]: async (params) => {
-      const sessionId = asString(asObject(params).sessionId);
-      if (!sessionId) throw new Error("缺少 sessionId");
-      return getConnectionOAuthSession(sessionId);
+      const input = validateInput(oauthSessionIdParamsSchema, params, CHANNEL_IPC_CHANNELS.OAUTH_STATUS);
+      return getConnectionOAuthSession(input.sessionId);
     },
     [CHANNEL_IPC_CHANNELS.OAUTH_ANSWER]: async (params) => {
-      const payload = asObject(params);
-      const sessionId = asString(payload.sessionId);
-      const promptId = asString(payload.promptId);
-      const value = asString(payload.value);
-      if (!sessionId || !promptId) throw new Error("缺少 OAuth prompt 参数");
-      return answerConnectionOAuthPrompt(sessionId, promptId, value ?? "");
+      const input = validateInput(oauthAnswerParamsSchema, params, CHANNEL_IPC_CHANNELS.OAUTH_ANSWER);
+      return answerConnectionOAuthPrompt(input.sessionId, input.promptId, input.value ?? "");
     },
     [CHANNEL_IPC_CHANNELS.OAUTH_CANCEL]: async (params) => {
-      const sessionId = asString(asObject(params).sessionId);
-      if (sessionId) cancelConnectionOAuthLogin(sessionId);
+      const input = validateInput(oauthCancelParamsSchema, params, CHANNEL_IPC_CHANNELS.OAUTH_CANCEL);
+      if (input.sessionId) cancelConnectionOAuthLogin(input.sessionId);
       return { ok: true };
     },
   };
