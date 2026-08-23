@@ -329,6 +329,272 @@ export async function createRuntimeCoreSession(
   }
 }
 
+/**
+ * 插件运行时 + MCP 装配(#297 子项①自组合根拆出):
+ * Phase 3b 注册清单 → assembly;Phase 3d 门控 hooks;advisor Stop hook;
+ * MCP Merge-A/B(transient plugin manager + workspace 单例 merge + resource tools)。
+ * disposeWorkspace 清理在此注册进 pendingCleanup(无条件,失败也留子进程 state)。
+ */
+async function assemblePluginsAndMcpRuntime({
+  sessionDir,
+  workspaceSlug,
+  cwd,
+  modelRef,
+  provider,
+  lumeSessionId,
+  runId,
+  userMessage,
+  threadType,
+  emitAdvisorReview,
+  pendingCleanup,
+}: {
+  sessionDir: string;
+  workspaceSlug?: string;
+  cwd: string;
+  modelRef?: string;
+  provider: string;
+  lumeSessionId: string;
+  runId?: string;
+  userMessage?: string;
+  threadType?: AgentSendInput["threadType"];
+  emitAdvisorReview?: CreateRuntimeCoreSessionInput["emitAdvisorReview"];
+  pendingCleanup: Array<() => Promise<unknown> | void>;
+}) {
+  const pluginConfig = getEffectivePluginRuntimeConfig(workspaceSlug);
+  const computerUseConfig = getEffectiveLumeConfig(workspaceSlug).models
+    ?.computerUse;
+  const channelProvider = modelRef
+    ? (getRuntimeHostPorts().resolveChannelModelBinding(modelRef, "chat")?.channel.provider ??
+      provider)
+    : provider;
+  const computerUseSurface = resolveComputerUseSurface({
+    agentSurface: computerUseConfig?.agentSurface,
+    modelRef: modelRef,
+    skyModelRefs: computerUseConfig?.skyModelRefs,
+    channelProvider,
+  });
+  const pluginManager = new SidecarPluginManager();
+  const registeredPlugins = await pluginManager.listRegistered({
+    enabled: pluginConfig.enabled,
+    // Do not auto-load project-local .lume/plugins just because the Agent cwd is a real project.
+    directories: pluginConfig.directories,
+  });
+  const computerUsePlugin = registeredPlugins.find(
+    (plugin) => plugin.pluginId === "computer-use",
+  );
+  log.info("Computer Use capability selected", {
+    sessionId: lumeSessionId,
+    runId: runId,
+    computerUseSurface,
+    pluginVersion: computerUsePlugin?.version,
+    modelRef: modelRef,
+  });
+  const pluginAssembly = await assemblePluginRuntime(registeredPlugins);
+  writeSessionManifestOnce(sessionDir, registeredPlugins);
+  const surfaceSkills = filterComputerUseSkills(pluginAssembly.skills, computerUseSurface);
+
+  // Phase 3d: build agentOptions.hooks from resolved plugin hooks. Shell-command hooks
+  // are gate-aware (§8.1): checkSensitiveCapability(hook:event:matcher) before spawn.
+  const hookPermissionRuntime = new PluginPermissionRuntime({
+    stateStore: new FilePluginStateStore(DEFAULT_PLUGIN_STATE_PATH),
+  });
+  const pluginAgentHooks = buildPluginAgentHooks({
+    capabilities: pluginAssembly.hooks,
+    runtime: hookPermissionRuntime,
+    workspaceSlug: workspaceSlug,
+  });
+  const agentHooks = { ...pluginAgentHooks };
+  const advisorConfig = getEffectiveLumeConfig(workspaceSlug).models
+    ?.advisor;
+  if (
+    threadType !== "subagent" &&
+    advisorConfig?.defaultModelRef &&
+    advisorConfig.enabled !== false
+  ) {
+    agentHooks.Stop = [
+      ...(agentHooks.Stop ?? []),
+      {
+        hooks: [
+          async (hookInput: Record<string, unknown>) => {
+            try {
+              const review = await runAdvisor({
+                workspaceSlug: workspaceSlug,
+                cwd: cwd,
+                userMessage: userMessage,
+                messages: hookInput.messages,
+              });
+              if (!review) return undefined;
+              emitAdvisorReview?.(review);
+            } catch (error) {
+              log.warn("Advisor review failed", {
+                sessionId: lumeSessionId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+            return undefined;
+          },
+        ],
+      },
+    ];
+  }
+
+  // Phase MCP Merge-A/B: plugin-declared MCP servers via a TRANSIENT WorkspaceMcpManager
+  // (independent of the workspace singleton — zero pollution, §16.7 lifecycle via dispose).
+  // Merge-B: §8.1 start gate (authorizeConnect → checkSensitiveCapability, mcpServer key) +
+  // drop fixed-name management tools (includeManagementTools:false, avoids workspace collision) +
+  // stamp pluginId/capability/mcpServerId so the call gate (sensitive-gate.ts) source-binds.
+  // Stateless runtime, same state path as attempt.ts → shares approval records.
+  const pluginMcpPermissionRuntime = new PluginPermissionRuntime({
+    stateStore: new FilePluginStateStore(DEFAULT_PLUGIN_STATE_PATH),
+  });
+  const pluginMcpServerIndex = buildPluginIdIndex(pluginAssembly.mcpServers);
+  const pluginMcpManager = buildPluginMcpManager(pluginAssembly.mcpServers, {
+    permissionRuntime: pluginMcpPermissionRuntime,
+    workspaceSlug: workspaceSlug,
+    stdioCwd: cwd,
+  });
+  const workspaceMcpManager = getWorkspaceMcpManager();
+  const pluginMcpRuntime = await pluginMcpManager
+        .createRuntimeTools(PLUGIN_MCP_WORKSPACE_SLUG, {
+          includeManagementTools: false,
+          toolMetadataProvider: (serverId) => {
+            const pluginId = pluginMcpServerIndex.get(serverId);
+            if (!pluginId) return undefined;
+            return { source: "plugin", pluginId, capability: "mcp" };
+          },
+        })
+        .catch((error) => ({
+          tools: [],
+          diagnostics: [
+            {
+              pluginName: "PluginMCP",
+              severity: "warning" as const,
+              reason: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        }));
+  // createRuntimeTools 恒 resolve（内部失败也留下已 spawn 的子进程 state），失败清理须无条件注册
+  pendingCleanup.push(() =>
+    pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG),
+  );
+  const workspaceMcpRuntime = workspaceSlug
+    ? await workspaceMcpManager
+        .createRuntimeTools(workspaceSlug)
+        .catch((error) => ({
+          tools: [],
+          diagnostics: [
+            {
+              pluginName: "MCP",
+              severity: "warning" as const,
+              reason: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        }))
+    : { tools: [], diagnostics: [] };
+  // workspaceMcpManager 是进程级单例：runtime 连接跨会话复用，会话结束不做 per-session dispose
+  // （此前仅 Wiki Phase B 的 transient 沙箱 manager 需要清理，随功能移除一并消失）。
+  const pluginAwareMcpResourceTools =
+    workspaceSlug && pluginAssembly.mcpServers.length > 0
+      ? createPluginAwareMcpResourceTools({
+          workspaceSlug: workspaceSlug,
+          pluginServers: pluginAssembly.mcpServers,
+          workspaceMcpManager,
+          pluginMcpManager,
+        })
+      : [];
+  return {
+    surfaceSkills,
+    computerUseSurface,
+    pluginAssembly,
+    registeredPlugins,
+    pluginMcpManager,
+    pluginMcpRuntime,
+    workspaceMcpRuntime,
+    pluginAwareMcpResourceTools,
+    agentHooks,
+  };
+}
+
+/**
+ * Provider 路由装配(#297 子项①自组合根拆出):
+ * 主渠道连接路由 + 配置 fallbackModelRefs 的可用兜底路由。
+ */
+async function buildProviderRoutes({
+  channelId,
+  resolvedModel,
+  resolvedModelId,
+  lumeSessionId,
+  channelProvider,
+  provider,
+  apiKey,
+  workspaceSlug,
+  apiType,
+  openaiApiMode,
+}: {
+  channelId?: string;
+  resolvedModel?: RuntimeCoreResolvedModel;
+  resolvedModelId: string;
+  lumeSessionId: string;
+  channelProvider?: string;
+  provider: string;
+  apiKey: string;
+  workspaceSlug?: string;
+  apiType?: ApiType;
+  openaiApiMode?: OpenAiApiMode;
+}): Promise<PiAiProviderRoute[]> {
+  const resolvedApiType = apiType ?? resolveSdkApiType(provider, openaiApiMode);
+  const primaryChannel = channelId
+    ? getRuntimeHostPorts().getChannelById(channelId)
+    : undefined;
+  const providerRoutes: PiAiProviderRoute[] = [
+    primaryChannel
+      ? await createConnectionPiAiRoute({
+          channel: primaryChannel,
+          modelId: resolvedModel?.id ?? resolvedModelId,
+          sessionId: lumeSessionId,
+        })
+      : {
+          modelId: resolvedModel?.id ?? resolvedModelId,
+          apiType: resolvedApiType,
+          providerId: channelProvider ?? provider,
+          baseUrl: resolvedModel?.baseUrl ?? "",
+          apiKey: apiKey,
+          contextWindow: resolvedModel?.contextWindow,
+          maxTokens: resolvedModel?.maxTokens,
+          supportsReasoning: resolvedModel?.reasoning,
+          sessionId: lumeSessionId,
+        },
+  ];
+  const configuredFallbackRefs =
+    getEffectiveLumeConfig(workspaceSlug).models?.agent
+      ?.fallbackModelRefs ?? [];
+  for (const fallbackRef of configuredFallbackRefs) {
+    const binding = getRuntimeHostPorts().resolveChannelModelBinding(fallbackRef, "chat");
+    if (!binding) continue;
+    if (
+      binding.channel.id === channelId &&
+      binding.modelId === providerRoutes[0]?.modelId
+    )
+      continue;
+    try {
+      providerRoutes.push(
+        await createConnectionPiAiRoute({
+          channel: binding.channel,
+          modelId: binding.modelId,
+          sessionId: lumeSessionId,
+        }),
+      );
+    } catch (error) {
+      log.warn("skipping unavailable fallback model route", {
+        connectionId: binding.channel.id,
+        modelId: binding.modelId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return providerRoutes;
+}
+
 async function createRuntimeCoreSessionImpl(
   input: CreateRuntimeCoreSessionInput,
   pendingCleanup: Array<() => Promise<unknown> | void>,
@@ -592,148 +858,30 @@ async function createRuntimeCoreSessionImpl(
   // Phase 3b: registry → resolver → bridge. Command tools + skills come from the
   // PluginRuntimeBridge now; the SDK's loadPlugins path is no longer used (no
   // agentOptions.plugins). Plugin hooks are wired below (Phase 3d, buildPluginAgentHooks).
-  const pluginConfig = getEffectivePluginRuntimeConfig(input.workspaceSlug);
-  const computerUseConfig = getEffectiveLumeConfig(input.workspaceSlug).models
-    ?.computerUse;
-  const channelProvider = input.modelRef
-    ? (getRuntimeHostPorts().resolveChannelModelBinding(input.modelRef, "chat")?.channel.provider ??
-      input.provider)
-    : input.provider;
-  const computerUseSurface = resolveComputerUseSurface({
-    agentSurface: computerUseConfig?.agentSurface,
-    modelRef: input.modelRef,
-    skyModelRefs: computerUseConfig?.skyModelRefs,
-    channelProvider,
-  });
-  const pluginManager = new SidecarPluginManager();
-  const registeredPlugins = await pluginManager.listRegistered({
-    enabled: pluginConfig.enabled,
-    // Do not auto-load project-local .lume/plugins just because the Agent cwd is a real project.
-    directories: pluginConfig.directories,
-  });
-  const computerUsePlugin = registeredPlugins.find(
-    (plugin) => plugin.pluginId === "computer-use",
-  );
-  log.info("Computer Use capability selected", {
-    sessionId: input.lumeSessionId,
-    runId: input.runId,
+  const {
+    surfaceSkills,
     computerUseSurface,
-    pluginVersion: computerUsePlugin?.version,
+    pluginAssembly,
+    registeredPlugins,
+    pluginMcpManager,
+    pluginMcpRuntime,
+    workspaceMcpRuntime,
+    pluginAwareMcpResourceTools,
+    agentHooks,
+  } = await assemblePluginsAndMcpRuntime({
+    workspaceSlug: input.workspaceSlug,
+    cwd: input.cwd,
     modelRef: input.modelRef,
+    provider: input.provider,
+    lumeSessionId: input.lumeSessionId,
+    runId: input.runId,
+    userMessage: input.userMessage,
+    threadType: input.threadType,
+    emitAdvisorReview: input.emitAdvisorReview,
+    sessionDir,
+    pendingCleanup,
   });
-  const pluginAssembly = await assemblePluginRuntime(registeredPlugins);
-  writeSessionManifestOnce(sessionDir, registeredPlugins);
-  const surfaceSkills = filterComputerUseSkills(pluginAssembly.skills, computerUseSurface);
 
-  // Phase 3d: build agentOptions.hooks from resolved plugin hooks. Shell-command hooks
-  // are gate-aware (§8.1): checkSensitiveCapability(hook:event:matcher) before spawn.
-  const hookPermissionRuntime = new PluginPermissionRuntime({
-    stateStore: new FilePluginStateStore(DEFAULT_PLUGIN_STATE_PATH),
-  });
-  const pluginAgentHooks = buildPluginAgentHooks({
-    capabilities: pluginAssembly.hooks,
-    runtime: hookPermissionRuntime,
-    workspaceSlug: input.workspaceSlug,
-  });
-  const agentHooks = { ...pluginAgentHooks };
-  const advisorConfig = getEffectiveLumeConfig(input.workspaceSlug).models
-    ?.advisor;
-  if (
-    input.threadType !== "subagent" &&
-    advisorConfig?.defaultModelRef &&
-    advisorConfig.enabled !== false
-  ) {
-    agentHooks.Stop = [
-      ...(agentHooks.Stop ?? []),
-      {
-        hooks: [
-          async (hookInput: Record<string, unknown>) => {
-            try {
-              const review = await runAdvisor({
-                workspaceSlug: input.workspaceSlug,
-                cwd: input.cwd,
-                userMessage: input.userMessage,
-                messages: hookInput.messages,
-              });
-              if (!review) return undefined;
-              input.emitAdvisorReview?.(review);
-            } catch (error) {
-              log.warn("Advisor review failed", {
-                sessionId: input.lumeSessionId,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            }
-            return undefined;
-          },
-        ],
-      },
-    ];
-  }
-
-  // Phase MCP Merge-A/B: plugin-declared MCP servers via a TRANSIENT WorkspaceMcpManager
-  // (independent of the workspace singleton — zero pollution, §16.7 lifecycle via dispose).
-  // Merge-B: §8.1 start gate (authorizeConnect → checkSensitiveCapability, mcpServer key) +
-  // drop fixed-name management tools (includeManagementTools:false, avoids workspace collision) +
-  // stamp pluginId/capability/mcpServerId so the call gate (sensitive-gate.ts) source-binds.
-  // Stateless runtime, same state path as attempt.ts → shares approval records.
-  const pluginMcpPermissionRuntime = new PluginPermissionRuntime({
-    stateStore: new FilePluginStateStore(DEFAULT_PLUGIN_STATE_PATH),
-  });
-  const pluginMcpServerIndex = buildPluginIdIndex(pluginAssembly.mcpServers);
-  const pluginMcpManager = buildPluginMcpManager(pluginAssembly.mcpServers, {
-    permissionRuntime: pluginMcpPermissionRuntime,
-    workspaceSlug: input.workspaceSlug,
-    stdioCwd: input.cwd,
-  });
-  const workspaceMcpManager = getWorkspaceMcpManager();
-  const pluginMcpRuntime = await pluginMcpManager
-        .createRuntimeTools(PLUGIN_MCP_WORKSPACE_SLUG, {
-          includeManagementTools: false,
-          toolMetadataProvider: (serverId) => {
-            const pluginId = pluginMcpServerIndex.get(serverId);
-            if (!pluginId) return undefined;
-            return { source: "plugin", pluginId, capability: "mcp" };
-          },
-        })
-        .catch((error) => ({
-          tools: [],
-          diagnostics: [
-            {
-              pluginName: "PluginMCP",
-              severity: "warning" as const,
-              reason: error instanceof Error ? error.message : String(error),
-            },
-          ],
-        }));
-  // createRuntimeTools 恒 resolve（内部失败也留下已 spawn 的子进程 state），失败清理须无条件注册
-  pendingCleanup.push(() =>
-    pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG),
-  );
-  const workspaceMcpRuntime = input.workspaceSlug
-    ? await workspaceMcpManager
-        .createRuntimeTools(input.workspaceSlug)
-        .catch((error) => ({
-          tools: [],
-          diagnostics: [
-            {
-              pluginName: "MCP",
-              severity: "warning" as const,
-              reason: error instanceof Error ? error.message : String(error),
-            },
-          ],
-        }))
-    : { tools: [], diagnostics: [] };
-  // workspaceMcpManager 是进程级单例：runtime 连接跨会话复用，会话结束不做 per-session dispose
-  // （此前仅 Wiki Phase B 的 transient 沙箱 manager 需要清理，随功能移除一并消失）。
-  const pluginAwareMcpResourceTools =
-    input.workspaceSlug && pluginAssembly.mcpServers.length > 0
-      ? createPluginAwareMcpResourceTools({
-          workspaceSlug: input.workspaceSlug,
-          pluginServers: pluginAssembly.mcpServers,
-          workspaceMcpManager,
-          pluginMcpManager,
-        })
-      : [];
   const toolset = buildRuntimeCoreTools({
     cwd: input.cwd,
     filesRoot: input.filesRoot,
@@ -1057,57 +1205,19 @@ async function createRuntimeCoreSessionImpl(
     ...input.toolConfig,
   };
 
-  const apiType =
-    input.apiType ?? resolveSdkApiType(input.provider, input.openaiApiMode);
-  const primaryChannel = input.channelId
-    ? getRuntimeHostPorts().getChannelById(input.channelId)
-    : undefined;
-  const providerRoutes: PiAiProviderRoute[] = [
-    primaryChannel
-      ? await createConnectionPiAiRoute({
-          channel: primaryChannel,
-          modelId: input.resolvedModel?.id ?? input.resolvedModelId,
-          sessionId: input.lumeSessionId,
-        })
-      : {
-          modelId: input.resolvedModel?.id ?? input.resolvedModelId,
-          apiType,
-          providerId: input.channelProvider ?? input.provider,
-          baseUrl: input.resolvedModel?.baseUrl ?? "",
-          apiKey: input.apiKey,
-          contextWindow: input.resolvedModel?.contextWindow,
-          maxTokens: input.resolvedModel?.maxTokens,
-          supportsReasoning: input.resolvedModel?.reasoning,
-          sessionId: input.lumeSessionId,
-        },
-  ];
-  const configuredFallbackRefs =
-    getEffectiveLumeConfig(input.workspaceSlug).models?.agent
-      ?.fallbackModelRefs ?? [];
-  for (const fallbackRef of configuredFallbackRefs) {
-    const binding = getRuntimeHostPorts().resolveChannelModelBinding(fallbackRef, "chat");
-    if (!binding) continue;
-    if (
-      binding.channel.id === input.channelId &&
-      binding.modelId === providerRoutes[0]?.modelId
-    )
-      continue;
-    try {
-      providerRoutes.push(
-        await createConnectionPiAiRoute({
-          channel: binding.channel,
-          modelId: binding.modelId,
-          sessionId: input.lumeSessionId,
-        }),
-      );
-    } catch (error) {
-      log.warn("skipping unavailable fallback model route", {
-        connectionId: binding.channel.id,
-        modelId: binding.modelId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
+  const providerRoutes = await buildProviderRoutes({
+    channelId: input.channelId,
+    resolvedModel: input.resolvedModel,
+    resolvedModelId: input.resolvedModelId,
+    lumeSessionId: input.lumeSessionId,
+    channelProvider: input.channelProvider,
+    provider: input.provider,
+    apiKey: input.apiKey,
+    workspaceSlug: input.workspaceSlug,
+    apiType: input.apiType,
+    openaiApiMode: input.openaiApiMode,
+  });
+
   const agentOptions: AgentOptions = {
     provider: createRoutingPiAiProvider(providerRoutes),
     model: input.resolvedModel?.id ?? input.resolvedModelId,
