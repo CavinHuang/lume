@@ -330,7 +330,6 @@ export {
   stripImagesFromMessages,
   extractTextFromContent,
   createCompactBoundaryMessage,
-  truncateText,
 } from './utils/messages.js'
 
 // --------------------------------------------------------------------------
