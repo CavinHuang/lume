@@ -1,5 +1,5 @@
 import type { MemoryV2RecallItem } from "../memory-v2/types";
-import type { LumeRunItem } from "../agent-runtime/runner/run-items";
+import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
 import type { LumeWorkflowHookEffect } from "./hook-effects";
 import type { LumeWorkflowHookHandlerContext } from "./hook-services";
 

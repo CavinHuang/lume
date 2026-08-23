@@ -1,8 +1,8 @@
 import type { SDKMessage } from "@lume/shared";
-import type { RunContinuationState } from "../runner/run-continuation";
-import type { LumeRunState } from "../runner/run-state";
-import type { RunContinuationStore } from "../runner/run-continuation-store";
-import type { LumeRunStateStore } from "../runner/run-state-store";
+import type { RunContinuationState } from "../runtime-core/run-continuation";
+import type { LumeRunState } from "../runtime-core/run-state";
+import type { RunContinuationStore } from "../runtime-core/run-continuation-store";
+import type { LumeRunStateStore } from "../runtime-core/run-state-store";
 
 export interface ResumeRunInput {
   runId: string;

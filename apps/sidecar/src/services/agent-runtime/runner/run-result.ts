@@ -1,5 +1,5 @@
 import type { AgentRuntimeRunResult } from "./types";
-import type { LumeRunStatus } from "./run-state";
+import type { LumeRunStatus } from "../runtime-core/run-state";
 
 export interface LumeRunResult {
   status: Extract<LumeRunStatus, "completed" | "failed" | "cancelled">;

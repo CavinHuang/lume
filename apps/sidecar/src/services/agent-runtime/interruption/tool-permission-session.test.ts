@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import { createFileBackedLumeInterruptionStore } from "./interruption-store";
-import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
+import { createFileBackedRunContinuationStore } from "../runtime-core/run-continuation-store";
 import { runtimePermissionSessionStore } from "../permissions/permission-session";
 import {
   listPendingToolPermissionRequests,

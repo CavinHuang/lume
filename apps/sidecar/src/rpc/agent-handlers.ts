@@ -103,9 +103,9 @@ import {
   LumeResumeService,
   type ResumeRunResult,
 } from "../services/agent-runtime/interruption/resume-service";
-import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runner/run-continuation-store";
-import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runner/run-state-store";
-import type { LumeRunState } from "../services/agent-runtime/runner/run-state";
+import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runtime-core/run-continuation-store";
+import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runtime-core/run-state-store";
+import type { LumeRunState } from "../services/agent-runtime/runtime-core/run-state";
 import { listThreadRuntimeEvents } from "../services/agent-runtime/replay/runtime-event-history";
 import { getSubagentRunRegistry } from "../services/agent/subagents/subagent-run-registry";
 import { getSubagentCoordinator } from "../services/agent/subagents/subagent-coordinator";

@@ -36,7 +36,7 @@ describe("RuntimeEvent sidecar boundary", () => {
   test("shared and sidecar event projection boundary exposes only RuntimeEvent", () => {
     for (const file of [
       "packages/shared/src/types/agent.ts",
-      "apps/sidecar/src/services/agent-runtime/runner/run-item-events.ts"
+      "apps/sidecar/src/services/agent-runtime/runtime-core/run-item-events.ts"
     ]) {
       const content = source(file);
 

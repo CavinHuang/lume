@@ -49,7 +49,7 @@ import {
   summarizeMemoryConversationFallback,
   type MemoryConversationSummarizer
 } from "../../memory-v2/conversation-summary";
-import type { LumeRunState } from "./run-state";
+import type { LumeRunState } from "../runtime-core/run-state";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { resolveConfiguredAdditionalDirectories } from "../permissions/permission-config";
 import { getActiveBrowserBroker } from "../../browser/browser-broker-holder";
