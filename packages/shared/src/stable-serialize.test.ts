@@ -9,6 +9,15 @@ describe("stableSerialize", () => {
     expect(stableSerialize({ b: 1, a: 2, C: 3 })).toBe('{"C":3,"a":2,"b":1}');
   });
 
+  test("sorts non-ASCII and mixed-case keys by code points, not locale collation", () => {
+    // The localeCompare fork point: locale collation groups case-insensitively
+    // and reorders CJK/symbol blocks; code-unit sort keeps uppercase < lowercase
+    // and BMP < astral. This exact byte order is load-bearing.
+    expect(
+      stableSerialize({ az: 1, 中文: 2, AZ: 3, "🎉": 4, Az: 5, 键: 6, aZ: 7 }),
+    ).toBe('{"AZ":3,"Az":5,"aZ":7,"az":1,"中文":2,"键":6,"🎉":4}');
+  });
+
   test("drops undefined-valued properties but keeps null", () => {
     expect(stableSerialize({ a: undefined, b: null, c: 0, d: "" })).toBe(
       '{"b":null,"c":0,"d":""}',
