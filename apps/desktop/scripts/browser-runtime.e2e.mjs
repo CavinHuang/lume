@@ -192,6 +192,7 @@ app.whenReady().then(async () => {
   runtime = new BrowserRuntime({
     getWindow: () => win,
     configDir: () => configRoot,
+    humanizedInput: false,
     emit: event => events.push(event),
     isAgentPluginEnabled: () => true,
     initialSettings: {
@@ -277,6 +278,8 @@ app.whenReady().then(async () => {
     await call('navigate', { tabId: 'fixture-tab', url: origin + '/' })
     const navigatedUrl = await call('url', { tabId: 'fixture-tab' })
     check(navigatedUrl.startsWith(origin), 'fixture navigation failed: ' + JSON.stringify(navigatedUrl))
+    const guestUserAgent = await view.executeJavaScript('navigator.userAgent')
+    check(!guestUserAgent.includes('Electron') && guestUserAgent.includes('Chrome/'), 'guest user agent still advertises the embedded runtime: ' + guestUserAgent)
     setStage('popup-policy')
     const popupAction = await call('click', { tabId: 'fixture-tab', locator: { version: 1, steps: [{ kind: 'css', selector: '#open-popup' }] } })
     check(popupAction.effect?.kind === 'new_tab_requested', 'Agent action did not report its popup effect')
