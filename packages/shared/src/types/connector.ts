@@ -3,6 +3,7 @@
 export const CONNECTOR_IPC_CHANNELS = {
   GET_STATUS: "connector:get-status",
   SAVE_CLIENT_CONFIG: "connector:save-client-config",
+  SAVE_CREDENTIAL: "connector:save-credential",
   START_AUTH: "connector:start-auth",
   DISCONNECT: "connector:disconnect"
 } as const;
