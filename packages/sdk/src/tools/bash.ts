@@ -21,7 +21,7 @@ import { defineTool } from './types.js'
 import type { ToolContext, ToolExecutionMetadata, ToolResult } from '../types.js'
 import { bundledRipgrepDirectory } from '../utils/ripgrep.js'
 import { analyzeBashCommand } from '../utils/bash-command-analysis.js'
-import { resolveShellInvocation, shellKind } from '../utils/shell-invocation.js'
+import { hasDefinitiveShellResolution, resolveShellInvocation, shellKind } from '../utils/shell-invocation.js'
 import { spawnWithProcessSandbox, terminateProcessTree } from '../utils/process-sandbox.js'
 
 const MAX_OUTPUT_BYTES = 50 * 1024 * 1024
@@ -169,9 +169,11 @@ function isReadOnlyShellInput(input: unknown, _context?: ToolContext): boolean {
   // fallback (compound and piped forms escape any first-word whitelist), so it
   // fails closed. PowerShell keeps its conservative inspection subset — either
   // the command invokes powershell/pwsh explicitly or the resolved shell for
-  // this platform is PowerShell.
+  // this platform is definitively PowerShell. While Windows bash discovery is
+  // still unsettled the resolved dialect would be a timing artifact, so fail
+  // closed until resolution settles (#471).
   const runsPowerShell = /^\s*(?:powershell|pwsh)(?:\.exe)?(?:\s|$)/i.test(normalized)
-    || shellKind(resolveShellInvocation(normalized).command) === 'powershell'
+    || (hasDefinitiveShellResolution() && shellKind(resolveShellInvocation(normalized).command) === 'powershell')
   return runsPowerShell ? isReadOnlyPowerShell(normalized) : false
 }
 

@@ -1,6 +1,18 @@
 import { spawnSync } from 'node:child_process'
 
+// Windows bash discovery outcome: string = found, null = definitively absent,
+// undefined = not settled yet. Permission-relevant consumers must tell
+// "absent" apart from "not settled yet" so verdicts never depend on whether a
+// probe happened to race a timeout window (#471).
 let discoveredWindowsBashPath: string | null | undefined
+let indeterminateDiscoveryRounds = 0
+
+// Bound the retry loop: a permanently wedged where.exe must not tax every
+// shell resolution forever. After this many consecutive indeterminate rounds
+// we settle on "absent" (PowerShell fallback) like any other machine fact.
+const MAX_INDETERMINATE_DISCOVERY_ROUNDS = 3
+
+type SpawnSync = typeof spawnSync
 
 /**
  * Classify a resolved shell executable. Shared so every caller that builds
@@ -35,38 +47,100 @@ function withPowerShellUtf8(command: string): string {
 }
 
 function resolveWindowsBashPath(env: NodeJS.ProcessEnv): string | undefined {
-  const configured = env.LUME_BASH_PATH || env.CLAUDE_CODE_SHELL || env.SHELL
-  const configuredShell = normalizeBashPath(configured)
+  const configuredShell = configuredWindowsBash(env)
   if (configuredShell) return configuredShell
 
   // Keep callers that provide an explicit environment deterministic.
   if (env !== process.env) return undefined
+  return discoverWindowsBashPath()
+}
+
+/**
+ * Whether the shell resolution for this platform is a stable fact rather than
+ * a timing artifact. While Windows bash discovery is unsettled, the dialect
+ * resolved by {@link resolveShellInvocation} is whatever the fallback happens
+ * to be, so permission classification must fail closed instead of trusting it
+ * (#471).
+ */
+export function hasDefinitiveShellResolution(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (platform !== 'win32') return true
+  if (configuredWindowsBash(env)) return true
+  // Explicit environments resolve statically (config or fixed PowerShell
+  // fallback) without any discovery involved.
+  if (env !== process.env) return true
+  return discoveredWindowsBashPath !== undefined
+}
+
+/**
+ * @internal Test seam: run discovery with injectable probes. Production
+ * callers go through {@link resolveShellInvocation}.
+ */
+export function discoverWindowsBashPath(where: SpawnSync = spawnSync, probe: SpawnSync = spawnSync): string | undefined {
   if (discoveredWindowsBashPath !== undefined) return discoveredWindowsBashPath || undefined
 
-  const result = spawnSync('where.exe', ['bash.exe'], {
+  const result = where('where.exe', ['bash.exe'], {
     encoding: 'utf8',
-    timeout: 1_000,
+    timeout: 2_000,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'ignore'],
   })
+  // A timed-out or failed-to-launch lookup is "unknown", not "absent": leave
+  // the cache unsettled so a later call retries instead of freezing the
+  // PowerShell fallback for the rest of the process (#471).
+  if (result.error || result.status === null) {
+    indeterminateDiscoveryRounds += 1
+    if (indeterminateDiscoveryRounds >= MAX_INDETERMINATE_DISCOVERY_ROUNDS) {
+      settleDiscovery(null)
+    }
+    return undefined
+  }
   if (result.status !== 0 || typeof result.stdout !== 'string') {
-    discoveredWindowsBashPath = null
+    settleDiscovery(null)
     return undefined
   }
 
+  let sawIndeterminateProbe = false
   for (const candidate of result.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean)) {
-    const probe = spawnSync(candidate, ['--version'], {
-      timeout: 1_000,
+    const probeResult = probe(candidate, ['--version'], {
+      timeout: 3_000,
       windowsHide: true,
       stdio: 'ignore',
     })
-    if (probe.status === 0) {
-      discoveredWindowsBashPath = candidate
+    if (probeResult.status === 0) {
+      settleDiscovery(candidate)
       return candidate
     }
+    if (probeResult.error || probeResult.status === null) sawIndeterminateProbe = true
   }
-  discoveredWindowsBashPath = null
+  // Only "listed but every probe definitively failed" counts as absent; an
+  // interrupted probe round stays open for retry.
+  if (!sawIndeterminateProbe) {
+    settleDiscovery(null)
+  }
   return undefined
+}
+
+/** @internal Test seam: reset cached discovery state between cases. */
+export function resetWindowsBashDiscoveryForTests(): void {
+  discoveredWindowsBashPath = undefined
+  indeterminateDiscoveryRounds = 0
+}
+
+/** @internal Test seam: whether discovery has settled (path found or absent). */
+export function windowsBashDiscoverySettledForTests(): boolean {
+  return discoveredWindowsBashPath !== undefined
+}
+
+function settleDiscovery(outcome: string | null): void {
+  discoveredWindowsBashPath = outcome
+  indeterminateDiscoveryRounds = 0
+}
+
+function configuredWindowsBash(env: NodeJS.ProcessEnv): string | undefined {
+  return normalizeBashPath(env.LUME_BASH_PATH || env.CLAUDE_CODE_SHELL || env.SHELL)
 }
 
 function normalizeBashPath(value: string | undefined): string | undefined {
