@@ -21,6 +21,13 @@ import {
   loadCustomAgents
 } from "./agent-prompt-builder";
 import { resolveAgentDynamicContextInput } from "./agent-runtime-context";
+import {
+  decryptApiKey,
+  getChannelById,
+  isChannelConnectionUsable,
+  listChannels,
+  resolveChannelModelBinding
+} from "../channel/channel-manager";
 import { setRuntimeHostPorts } from "../agent-runtime/host-ports";
 import { runAgentRuntime, stopAgentRuntime } from "../agent-runtime/runner/attempt";
 import { registerRuntimeCoreEntry } from "../agent-runtime/runtime-core/runtime-entry";
@@ -46,6 +53,11 @@ export function installRuntimeHostPorts(): void {
     loadCustomAgents,
     buildSystemPromptAppend,
     buildDynamicContext,
-    resolveDynamicContextInput: resolveAgentDynamicContextInput
+    resolveDynamicContextInput: resolveAgentDynamicContextInput,
+    listChannels,
+    getChannelById,
+    isChannelConnectionUsable,
+    decryptApiKey,
+    resolveChannelModelBinding
   });
 }

@@ -4,8 +4,8 @@ import {
   GlobTool,
   GrepTool,
 } from "@lume/agent-sdk";
-import { resolveChannelModelBinding } from "../../channel/channel-manager";
 import { createLazyConnectionLlmProvider } from "../../model-runtime/connection-provider";
+import { getRuntimeHostPorts } from "../host-ports";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 
 export interface AdvisorRunInput {
@@ -30,7 +30,7 @@ export async function runAdvisor(input: AdvisorRunInput): Promise<AdvisorReview 
   if (!advisor) return undefined;
   const modelRef = advisor?.defaultModelRef?.trim();
   if (!modelRef || advisor.enabled === false) return undefined;
-  const binding = resolveChannelModelBinding(modelRef, "chat");
+  const binding = getRuntimeHostPorts().resolveChannelModelBinding(modelRef, "chat");
   if (!binding) return undefined;
 
   const startedAt = performance.now();
