@@ -79,10 +79,7 @@ import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-regis
 import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
 import { resolveSubagentDispatchPolicy } from "../../agent/subagents/subagent-dispatch-policy";
 import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
-import {
-  createAgentThreadWithModelRef,
-  updateAgentThreadMeta,
-} from "../../agent/agent-thread-manager";
+import { threadStore } from "../agent-thread-store-holder";
 import { getRuntimeCoreSessionDir } from "./session-store";
 import { createMainTaskTools } from "../task/task-tools";
 import { ToolRuntime, type ToolRuntimeDiagnostic } from "../tools/tool-runtime";
@@ -430,7 +427,7 @@ export function buildRuntimeCoreTools(input: {
               )
             : undefined,
           createSession: ({ subagentId, title, agentType }) => {
-            const child = createAgentThreadWithModelRef(
+            const child = threadStore().createWithModelRef(
               title,
               modelOverride.modelRef,
               modelOverride.channelId ?? input.channelId,
@@ -735,7 +732,7 @@ export function buildRuntimeCoreTools(input: {
         workspaceSlug: input.workspaceSlug,
       });
       // ★ 关键差异：创建会话栏可见的子会话 thread（带 parentThreadId）
-      const childMeta = createAgentThreadWithModelRef(
+      const childMeta = threadStore().createWithModelRef(
         typeof toolInput.thread_title === "string"
           ? toolInput.thread_title
           : typeof toolInput.description === "string"
@@ -779,7 +776,7 @@ export function buildRuntimeCoreTools(input: {
           if (run) await announceSubagentCompletion({ run });
           const newTitle = deriveDelegateTitle(childMeta.title, output);
           if (newTitle && newTitle !== childMeta.title) {
-            updateAgentThreadMeta(childMeta.id, { title: newTitle });
+            threadStore().updateMeta(childMeta.id, { title: newTitle });
           }
         },
       };

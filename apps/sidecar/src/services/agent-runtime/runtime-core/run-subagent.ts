@@ -37,10 +37,7 @@ import {
 } from "../../agent/subagents/subagent-policy";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
-import {
-  createAgentThreadWithModelRef,
-  getAgentThreadMeta,
-} from "../../agent/agent-thread-manager";
+import { threadStore } from "../agent-thread-store-holder";
 import { FileBackedTaskStore } from "../task/task-store";
 
 const DEFAULT_FOREGROUND_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
@@ -736,7 +733,7 @@ export async function runTaskLinkedSubagent(input: {
   let childThreadId: string | undefined;
   let execution: Awaited<ReturnType<typeof runSidecarSubagent>>;
   try {
-    const childMeta = createAgentThreadWithModelRef(
+    const childMeta = threadStore().createWithModelRef(
       typeof input.toolInput.description === "string"
         ? input.toolInput.description
         : "Task executor",
@@ -853,7 +850,7 @@ export function canDelegateFromThread(parentThreadId: string): {
 } {
   const parentRun =
     getSubagentRunRegistry().getLatestByChildThread(parentThreadId);
-  const parentMeta = getAgentThreadMeta(parentThreadId);
+  const parentMeta = threadStore().getMeta(parentThreadId);
   if (parentRun || parentMeta?.parentThreadId) {
     return {
       ok: false,

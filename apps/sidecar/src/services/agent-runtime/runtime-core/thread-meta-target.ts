@@ -1,13 +1,13 @@
-import { getAgentThreadMeta, tryUpdateAgentThreadMeta, updateAgentThreadMeta } from "../../agent/agent-thread-manager";
+import { threadStore, type AgentThreadMetaUpdates } from "../agent-thread-store-holder";
 import type { AgentRuntimeRunParams } from "../runner/types";
 
 export function resolvePersistedAgentThreadId(
   runtime: AgentRuntimeRunParams["runtime"]
 ): string | undefined {
-  if (runtime.deliveryThreadId && getAgentThreadMeta(runtime.deliveryThreadId)) {
+  if (runtime.deliveryThreadId && threadStore().getMeta(runtime.deliveryThreadId)) {
     return runtime.deliveryThreadId;
   }
-  if (getAgentThreadMeta(runtime.sessionId)) {
+  if (threadStore().getMeta(runtime.sessionId)) {
     return runtime.sessionId;
   }
   return undefined;
@@ -15,11 +15,11 @@ export function resolvePersistedAgentThreadId(
 
 export function updateRuntimeThreadMetaIfPresent(
   runtime: AgentRuntimeRunParams["runtime"],
-  updates: Parameters<typeof updateAgentThreadMeta>[1]
+  updates: AgentThreadMetaUpdates
 ): void {
   const targetThreadId = resolvePersistedAgentThreadId(runtime);
   if (!targetThreadId) {
     return;
   }
-  tryUpdateAgentThreadMeta(targetThreadId, updates);
+  threadStore().tryUpdateMeta(targetThreadId, updates);
 }

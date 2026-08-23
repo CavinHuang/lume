@@ -3,6 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createAgentThread } from "../../agent/agent-thread-manager";
+import { registerRealAgentThreadStore } from "../agent-thread-store-test-adapter";
+
+registerRealAgentThreadStore();
 import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createLumeRuntimeTools } from "./create-lume-tools";
 

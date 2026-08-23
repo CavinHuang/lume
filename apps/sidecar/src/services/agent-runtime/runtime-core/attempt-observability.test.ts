@@ -3,6 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentThread } from "../../agent/agent-thread-manager";
+import { registerRealAgentThreadStore } from "../agent-thread-store-test-adapter";
+
+registerRealAgentThreadStore();
 import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createChannel } from "../../channel/channel-manager";
 import { installConnectionVaultKey } from "../../channel/connection-credential-store";

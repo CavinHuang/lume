@@ -1,8 +1,4 @@
-import {
-  getAgentThreadMessages,
-  getAgentThreadMeta,
-  tryUpdateAgentThreadMeta
-} from "../../agent/agent-thread-manager";
+import { threadStore } from "../agent-thread-store-holder";
 import {
   deriveFallbackAgentTitleFromSourceText,
   resolveAgentTitleConversationText,
@@ -21,7 +17,7 @@ export function createAutoTitleJob(input: {
   generateTitle?: (sourceText: string) => Promise<string | null>;
   onTitleUpdated?: (title: string) => void;
 }): ServiceRuntimeJob | null {
-  const meta = getAgentThreadMeta(input.threadId);
+  const meta = threadStore().getMeta(input.threadId);
   if (!meta) {
     log.debug("自动标题跳过：线程不存在", { threadId: input.threadId });
     return null;
@@ -38,7 +34,7 @@ export function createAutoTitleJob(input: {
     id: `title.generate:${input.threadId}`,
     type: "title.generate",
     run: async () => {
-      const threadMessages = getAgentThreadMessages(input.threadId);
+      const threadMessages = threadStore().getMessages(input.threadId);
       const sourceText = resolveAgentTitleSourceText(threadMessages, input.fallbackUserMessage);
       const generatedTitle = input.generateTitle
         ? sanitizeGeneratedTitle(
@@ -53,7 +49,7 @@ export function createAutoTitleJob(input: {
         log.debug("自动标题跳过：未能生成可用标题", { threadId: input.threadId });
         return;
       }
-      tryUpdateAgentThreadMeta(input.threadId, { title });
+      threadStore().tryUpdateMeta(input.threadId, { title });
       log.info("自动标题更新成功（临时）", {
         threadId: input.threadId,
         title,

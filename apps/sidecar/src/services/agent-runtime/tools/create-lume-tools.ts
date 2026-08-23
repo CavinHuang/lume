@@ -25,7 +25,7 @@ import { createComputerUseVisionRouter } from "./computer-use/computer-use-visio
 import { getComputerUseSessionRegistry } from "./computer-use/computer-use-session";
 import type { ResolvedComputerUseSurface } from "./computer-use/computer-use-surface";
 import { createComputerUseRequestBridge } from "./node-repl/node-repl-computer-use-bridge";
-import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
+import { threadStore } from "../agent-thread-store-holder";
 import { createPlanningTodoTools } from "./planning/create-planning-todo-tools";
 import { createSuggestionTools } from "./suggest/create-suggestion-tools";
 import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
@@ -70,7 +70,7 @@ export interface CreateLumeRuntimeToolsOutput {
 }
 
 export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): CreateLumeRuntimeToolsOutput {
-  const threadMeta = getAgentThreadMeta(input.threadId);
+  const threadMeta = threadStore().getMeta(input.threadId);
   const writeAllowed = input.threadType !== "subagent" && input.chatType !== "group" && input.chatType !== "channel";
   const dreamProfile = threadMeta?.memoryProfile?.kind === "dream" ? threadMeta.memoryProfile : undefined;
   const enabledMemoryToolNames = [

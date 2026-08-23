@@ -7,6 +7,9 @@ import {
   isMockRuntimeModelFallbackRetryable,
   resolveMockRuntimeModelAttemptParams
 } from "../agent-runtime/attempt-test-helpers";
+import { registerRealAgentThreadStore } from "../agent-runtime/agent-thread-store-test-adapter";
+
+registerRealAgentThreadStore();
 
 const heldRunResolvers = new Map<string, () => void>();
 const runAgentRuntimeCalls: unknown[] = [];

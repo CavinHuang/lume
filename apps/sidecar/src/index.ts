@@ -27,6 +27,15 @@ import { createProcessRpcTransport, MAX_RPC_MESSAGE_BYTES } from "./rpc/process-
 import { browserRpcErrorFromPayload, classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
 import { createReverseRpcRenderClient } from "./services/agent-runtime/tools/web/reverse-rpc-render-client";
 import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/render-client-holder";
+import { registerAgentThreadStore } from "./services/agent-runtime/agent-thread-store-holder";
+import {
+  createAgentThreadWithModelRef,
+  getAgentThreadMeta,
+  getAgentThreadMessages,
+  getAgentThreadSDKMessages,
+  tryUpdateAgentThreadMeta,
+  updateAgentThreadMeta
+} from "./services/agent/agent-thread-manager";
 import { setPersistedSettingsMutationWriter } from "./services/system/settings-store";
 import { setLogDigestPolicy } from "./services/infra/log-digest";
 import type { LumeLogDigestPolicy } from "@lume/shared";
@@ -136,6 +145,16 @@ const SLOW_RPC_MS = 2_000;
 // resolves pending renders) and the agent runtime (so WebFetch can invoke it).
 const renderClient = createReverseRpcRenderClient({ sendNotification: writeNotification });
 setSidecarRenderClient(renderClient);
+// 线程存储端口装配：内核（agent-runtime）经 holder 读写线程元数据/消息，
+// 实现留在应用层——组装层在此单向注入（#289 分层切边）。
+registerAgentThreadStore({
+  getMeta: getAgentThreadMeta,
+  getMessages: getAgentThreadMessages,
+  getSdkMessages: getAgentThreadSDKMessages,
+  tryUpdateMeta: tryUpdateAgentThreadMeta,
+  updateMeta: updateAgentThreadMeta,
+  createWithModelRef: createAgentThreadWithModelRef
+});
 const externalChromeTransport = process.env.LUME_CHROME_BRIDGE_ENDPOINT && process.env.LUME_CHROME_BRIDGE_PAIRING_ID && process.env.LUME_CHROME_BRIDGE_GENERATION && process.env.LUME_CHROME_BRIDGE_HOST_PATH && process.env.LUME_CHROME_BRIDGE_HOST_SHA256
   ? new ExternalChromeTransport({
     endpoint: process.env.LUME_CHROME_BRIDGE_ENDPOINT,

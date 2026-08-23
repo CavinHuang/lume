@@ -6,7 +6,7 @@ import { createDiagnosticLogSummary, createLogger } from "../../infra/logger";
 import type { FileAccessLedger } from "./file-access-ledger";
 import type { LumeToolDescriptor } from "./tool-types";
 import { acquireWorkspaceWriterLease } from "./workspace-writer-lease";
-import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
+import { threadStore } from "../agent-thread-store-holder";
 
 export interface ToolRuntimeWrapInput {
   descriptor: LumeToolDescriptor;
@@ -289,7 +289,7 @@ async function enforceFileAccessPolicy(
   rawInput: unknown,
   toolUseId: string | undefined
 ): Promise<ToolResult | null> {
-  const dream = getAgentThreadMeta(input.threadId)?.memoryProfile?.kind === "dream";
+  const dream = threadStore().getMeta(input.threadId)?.memoryProfile?.kind === "dream";
   const name = input.descriptor.canonicalName;
   const filePath = readInputPath(rawInput);
   if (dream && (name === "grep" || name === "find" || name === "glob") && !filePath) {

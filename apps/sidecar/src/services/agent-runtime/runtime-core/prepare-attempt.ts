@@ -1,5 +1,5 @@
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
-import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
+import { threadStore } from "../agent-thread-store-holder";
 import { decryptApiKey, isChannelConnectionUsable, listChannels, resolveChannelModelBinding } from "../../channel/channel-manager";
 import { resolveAgentThreadWorkdir, type ResolvedAgentWorkdir } from "../../agent/agent-workdir-resolver";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult } from "../runner/types";
@@ -83,7 +83,7 @@ export async function prepareRuntimeCoreAttempt(
   try {
     const workdirThreadId = runtime.threadType === "subagent"
       && runtime.deliveryThreadId
-      && !getAgentThreadMeta(runtime.sessionId)
+      && !threadStore().getMeta(runtime.sessionId)
       ? runtime.deliveryThreadId
       : runtime.sessionId;
     resolvedWorkdir = resolveAgentThreadWorkdir(workdirThreadId);

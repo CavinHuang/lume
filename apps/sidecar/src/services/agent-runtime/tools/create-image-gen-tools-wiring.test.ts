@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getToolMetadata } from "./tool-metadata";
 import { createLumeRuntimeTools } from "./create-lume-tools";
+import { registerRealAgentThreadStore } from "../agent-thread-store-test-adapter";
+
+registerRealAgentThreadStore();
 
 let prevConfigDir: string | undefined;
 let tempConfigDir = "";
