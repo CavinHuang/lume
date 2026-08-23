@@ -37,7 +37,7 @@ import {
 } from "../im/im-thread-binding-store";
 import { getWorkspaceMcpManager } from "../mcp/workspace-mcp-manager";
 import { getAgentFileContextRootPath } from "../infra/config-paths";
-import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
+import { resolveAgentThreadWorkdir } from "../agent-runtime/agent-workdir-resolver";
 import { getPlanningTodoStore } from "../planning/planning-todo-store";
 import { agentLifecycleLocks } from "./agent-lifecycle-lock-manager";
 

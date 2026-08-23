@@ -1,3 +1,5 @@
+import { registerRealAgentStores } from "../agent-runtime/agent-thread-store-test-adapter";
+registerRealAgentStores();
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,7 +10,7 @@ import {
   getAgentThreadMeta,
   restoreAgentThreadFromTrash
 } from "./agent-thread-manager";
-import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
+import { resolveAgentThreadWorkdir } from "../agent-runtime/agent-workdir-resolver";
 import { removeProject } from "./agent-project-lifecycle-service";
 import { resetPlanningTodoStoreForTests } from "../planning/planning-todo-store";
 

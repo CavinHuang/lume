@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { registerRealAgentThreadStore } from "../agent-thread-store-test-adapter";
+import { registerRealAgentStores } from "../agent-thread-store-test-adapter";
 
-registerRealAgentThreadStore();
+registerRealAgentStores();
 import { getThreadEventBus } from "../events/thread-event-bus";
 import { createFileBackedLumeRunStateStore } from "../runtime-core/run-state-store";
 import type { LumeRunState } from "../runtime-core/run-state";

@@ -1,3 +1,5 @@
+import { registerRealAgentStores } from "../services/agent-runtime/agent-thread-store-test-adapter";
+registerRealAgentStores();
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -7,7 +9,7 @@ import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tra
 import { createAgentHandlers } from "./agent-handlers";
 import { createAgentWorkspace } from "../services/agent/agent-workspace-manager";
 import { createAgentThread } from "../services/agent/agent-thread-manager";
-import { resolveAgentThreadWorkdir } from "../services/agent/agent-workdir-resolver";
+import { resolveAgentThreadWorkdir } from "../services/agent-runtime/agent-workdir-resolver";
 import { getWorkspaceResourcesPath } from "../services/infra/config-paths";
 
 function createTestPlanModePhaseTracker(): PlanModePhaseTracker {

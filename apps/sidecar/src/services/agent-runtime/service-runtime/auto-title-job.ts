@@ -5,7 +5,7 @@ import {
   resolveAgentTitleSourceText,
   sanitizeGeneratedTitle,
   shouldAutoGenerateThreadTitle
-} from "../../agent/session-title-summarizer";
+} from "./session-title-summarizer";
 import { createLogger } from "../../infra/logger";
 import type { ServiceRuntimeJob } from "./service-runtime";
 

@@ -10,9 +10,9 @@ import {
   listAgentThreads,
   subscribeThreadListChanged
 } from "../../agent/agent-thread-manager";
-import { registerRealAgentThreadStore } from "../agent-thread-store-test-adapter";
+import { registerRealAgentStores } from "../agent-thread-store-test-adapter";
 
-registerRealAgentThreadStore();
+registerRealAgentStores();
 import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest

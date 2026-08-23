@@ -1,5 +1,5 @@
-import { registerRealAgentThreadStore } from "../agent-thread-store-test-adapter";
-registerRealAgentThreadStore();
+import { registerRealAgentStores } from "../agent-thread-store-test-adapter";
+registerRealAgentStores();
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

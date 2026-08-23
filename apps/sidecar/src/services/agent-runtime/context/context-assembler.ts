@@ -6,7 +6,7 @@ import {
   buildSystemPromptAppend,
   type EnabledPluginContextItem
 } from "../../agent/agent-prompt-builder";
-import { resolveAgentDynamicContextInput } from "../../agent/agent-runtime-context";
+import { resolveAgentDynamicContextInput } from "./agent-runtime-context";
 import { createLogger } from "../../infra/logger";
 import { resolveMemoryRuntimeConfig } from "../../memory-v2/policy";
 import {

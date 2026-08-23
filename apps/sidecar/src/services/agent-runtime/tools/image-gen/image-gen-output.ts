@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { toThreadRelativePath } from "../../../agent/agent-files-service";
-import { resolveAgentThreadWorkdir } from "../../../agent/agent-workdir-resolver";
+import { resolveAgentThreadWorkdir } from "../../agent-workdir-resolver";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
 import type { FileRef } from "@lume/shared";
 

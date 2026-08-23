@@ -16,7 +16,7 @@ import type {
 import YAML from "yaml";
 import { getAliceUserSkillsDir, getDefaultSkillsDir, getUserSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
-import { assertExistingDirectory } from "../agent/agent-workdir-resolver";
+import { assertExistingDirectory } from "../agent-runtime/agent-workdir-resolver";
 import { parseSkillFrontmatter } from "./skill-frontmatter";
 import { getInstalledSkillSourceMetadata, type InstalledSkillSourceMeta } from "./skills-market-metadata";
 import { createLogger } from "../infra/logger";

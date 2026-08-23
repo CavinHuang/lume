@@ -6,7 +6,7 @@ import type {
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { resolveAgentThreadWorkdir } from "../../../agent/agent-workdir-resolver";
+import { resolveAgentThreadWorkdir } from "../../agent-workdir-resolver";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
 import { createLogger } from "../../../infra/logger";
 

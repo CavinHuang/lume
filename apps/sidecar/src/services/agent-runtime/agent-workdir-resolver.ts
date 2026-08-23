@@ -23,8 +23,8 @@ import {
   getAgentWorkspacePath
 } from "../infra/config-paths";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
-import { getAgentThreadMeta } from "./agent-thread-manager";
-import { getAgentWorkspace } from "./agent-workspace-manager";
+import { threadStore } from "./agent-thread-store-holder";
+import { workspaceStore } from "./agent-workspace-store-holder";
 import { createLogger } from "../infra/logger";
 
 export interface ResolvedAgentWorkdir {
@@ -271,20 +271,20 @@ export function resolveAgentWorkdirForMeta(
 }
 
 export function resolveAgentThreadWorkdir(threadId: string): ResolvedAgentWorkdir {
-  const thread = getAgentThreadMeta(threadId);
+  const thread = threadStore().getMeta(threadId);
   if (!thread) {
     throw new Error(`Agent 线程不存在: ${threadId}`);
   }
-  const workspace = thread.workspaceId ? getAgentWorkspace(thread.workspaceId) : undefined;
+  const workspace = thread.workspaceId ? workspaceStore().get(thread.workspaceId) : undefined;
   return resolveAgentWorkdirForMeta(thread, workspace);
 }
 
 export function resolveAgentThreadLumeWorkDir(threadId: string): string {
-  const thread = getAgentThreadMeta(threadId);
+  const thread = threadStore().getMeta(threadId);
   if (!thread) {
     throw new Error(`Agent 线程不存在: ${threadId}`);
   }
-  const workspace = thread.workspaceId ? getAgentWorkspace(thread.workspaceId) : undefined;
+  const workspace = thread.workspaceId ? workspaceStore().get(thread.workspaceId) : undefined;
   return migrateLegacyThreadRoot(thread, workspace);
 }
 

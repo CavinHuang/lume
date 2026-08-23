@@ -40,7 +40,7 @@ import type {
 } from "@lume/shared";
 import { getAgentFileContextRootPath } from "../infra/config-paths";
 import { getMemoryV2ScopePaths } from "../memory-v2/paths";
-import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
+import { resolveAgentThreadWorkdir } from "../agent-runtime/agent-workdir-resolver";
 import { getAgentThreadMeta } from "./agent-thread-manager";
 import {
   getAgentWorkspace,

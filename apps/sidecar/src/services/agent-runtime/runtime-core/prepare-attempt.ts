@@ -1,7 +1,7 @@
-import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
+import { workspaceStore } from "../agent-workspace-store-holder";
 import { threadStore } from "../agent-thread-store-holder";
 import { decryptApiKey, isChannelConnectionUsable, listChannels, resolveChannelModelBinding } from "../../channel/channel-manager";
-import { resolveAgentThreadWorkdir, type ResolvedAgentWorkdir } from "../../agent/agent-workdir-resolver";
+import { resolveAgentThreadWorkdir, type ResolvedAgentWorkdir } from "../agent-workdir-resolver";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult } from "../runner/types";
 import { resolveRuntimeCoreChannelModel } from "./model";
 import { getRuntimeCoreAgentDir } from "./session-store";
@@ -55,7 +55,7 @@ export async function prepareRuntimeCoreAttempt(
   let workspaceName: string | undefined;
   let workspaceSlug: string | undefined;
   if (runtime.workspaceId) {
-    const workspace = getAgentWorkspace(runtime.workspaceId);
+    const workspace = workspaceStore().get(runtime.workspaceId);
     if (!workspace) {
       return { status: "errored", errorMessage: `项目不存在或已移除: ${runtime.workspaceId}` };
     }

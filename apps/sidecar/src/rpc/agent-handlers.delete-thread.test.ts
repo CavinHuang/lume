@@ -1,3 +1,5 @@
+import { registerRealAgentStores } from "../services/agent-runtime/agent-thread-store-test-adapter";
+registerRealAgentStores();
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,7 +15,7 @@ mock.module("../services/agent-runtime/attempt", () => ({
 
 import { createAgentHandlers } from "./agent-handlers";
 import { createAgentThread } from "../services/agent/agent-thread-manager";
-import { resolveAgentThreadWorkdir } from "../services/agent/agent-workdir-resolver";
+import { resolveAgentThreadWorkdir } from "../services/agent-runtime/agent-workdir-resolver";
 import { createAgentWorkspace } from "../services/agent/agent-workspace-manager";
 
 function createTestPlanModePhaseTracker(): PlanModePhaseTracker {

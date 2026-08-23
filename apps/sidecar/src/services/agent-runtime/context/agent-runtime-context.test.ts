@@ -1,8 +1,10 @@
+import { registerRealAgentStores } from "../agent-thread-store-test-adapter";
+registerRealAgentStores();
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createAgentThread } from "./agent-thread-manager";
+import { createAgentThread } from "../../agent/agent-thread-manager";
 import { resolveAgentDynamicContextInput } from "./agent-runtime-context";
 
 describe("agent-runtime-context", () => {

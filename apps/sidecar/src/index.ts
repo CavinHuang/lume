@@ -28,6 +28,7 @@ import { browserRpcErrorFromPayload, classifyBrowserRpcResponse } from "./rpc/br
 import { createReverseRpcRenderClient } from "./services/agent-runtime/tools/web/reverse-rpc-render-client";
 import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/render-client-holder";
 import { registerAgentThreadStore } from "./services/agent-runtime/agent-thread-store-holder";
+import { registerAgentWorkspaceStore } from "./services/agent-runtime/agent-workspace-store-holder";
 import {
   createAgentThreadWithModelRef,
   getAgentThreadMeta,
@@ -36,6 +37,7 @@ import {
   tryUpdateAgentThreadMeta,
   updateAgentThreadMeta
 } from "./services/agent/agent-thread-manager";
+import { getAgentWorkspace } from "./services/agent/agent-workspace-manager";
 import { setPersistedSettingsMutationWriter } from "./services/system/settings-store";
 import { setLogDigestPolicy } from "./services/infra/log-digest";
 import type { LumeLogDigestPolicy } from "@lume/shared";
@@ -154,6 +156,9 @@ registerAgentThreadStore({
   tryUpdateMeta: tryUpdateAgentThreadMeta,
   updateMeta: updateAgentThreadMeta,
   createWithModelRef: createAgentThreadWithModelRef
+});
+registerAgentWorkspaceStore({
+  get: getAgentWorkspace
 });
 const externalChromeTransport = process.env.LUME_CHROME_BRIDGE_ENDPOINT && process.env.LUME_CHROME_BRIDGE_PAIRING_ID && process.env.LUME_CHROME_BRIDGE_GENERATION && process.env.LUME_CHROME_BRIDGE_HOST_PATH && process.env.LUME_CHROME_BRIDGE_HOST_SHA256
   ? new ExternalChromeTransport({

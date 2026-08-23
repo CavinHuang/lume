@@ -1,3 +1,5 @@
+import { registerRealAgentStores } from "../agent-runtime/agent-thread-store-test-adapter";
+registerRealAgentStores();
 import { afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,7 +28,7 @@ import {
   listTrashedThreads
 } from "./agent-thread-manager";
 import { createAgentWorkspace } from "./agent-workspace-manager";
-import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
+import { resolveAgentThreadWorkdir } from "../agent-runtime/agent-workdir-resolver";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath

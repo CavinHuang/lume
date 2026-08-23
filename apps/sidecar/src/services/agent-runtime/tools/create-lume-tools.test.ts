@@ -1,5 +1,5 @@
-import { registerRealAgentThreadStore } from "../agent-thread-store-test-adapter";
-registerRealAgentThreadStore();
+import { registerRealAgentStores } from "../agent-thread-store-test-adapter";
+registerRealAgentStores();
 import { describe, expect, test } from "bun:test";
 import { createLumeRuntimeTools } from "./create-lume-tools";
 import { createToolDescriptorsFromDefinitions } from "./tool-source";

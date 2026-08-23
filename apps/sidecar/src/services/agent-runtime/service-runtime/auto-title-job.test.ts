@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { registerRealAgentThreadStore } from "../agent-thread-store-test-adapter";
+import { registerRealAgentStores } from "../agent-thread-store-test-adapter";
 
-registerRealAgentThreadStore();
+registerRealAgentStores();
 
 describe("createAutoTitleJob", () => {
   let previousConfigDir: string | undefined;

@@ -1,6 +1,6 @@
 import { createLogger } from "../infra/logger";
-import { buildRuntimeAttemptLogData } from "../agent/agent-log-summary";
-import { getAgentWorkspace } from "../agent/agent-workspace-manager";
+import { buildRuntimeAttemptLogData } from "./agent-log-summary";
+import { workspaceStore } from "./agent-workspace-store-holder";
 import { resolveChannelModelBinding } from "../channel/channel-manager";
 import { resolveMockAttempt } from "./runtime-core/mock-attempt";
 import type {
@@ -163,7 +163,7 @@ export function resolveRuntimeModelAttemptParams(
   params: AgentRuntimeRunParams,
 ): AgentRuntimeRunParams[] {
   const workspaceSlug = params.runtime.workspaceId
-    ? getAgentWorkspace(params.runtime.workspaceId)?.slug
+    ? workspaceStore().get(params.runtime.workspaceId)?.slug
     : undefined;
   const fallbackRefs =
     getEffectiveLumeConfig(workspaceSlug).models?.agent?.fallbackModelRefs ??

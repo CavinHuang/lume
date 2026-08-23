@@ -61,7 +61,7 @@ import { listMemorySourceFilesForScope } from "../memory-v2/source-files";
 import {
   resolveAgentThreadLumeWorkDir,
   resolveAgentThreadWorkdir,
-} from "./agent-workdir-resolver";
+} from "../agent-runtime/agent-workdir-resolver";
 import { getAgentThreadMeta } from "./agent-thread-manager";
 import { getAgentWorkspaceBySlug } from "./agent-workspace-manager";
 import {

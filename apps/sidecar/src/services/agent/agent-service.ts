@@ -60,9 +60,9 @@ import {
   AGENT_TITLE_PROMPT_FROM_SUMMARY,
   isWeakGeneratedTitle,
   sanitizeGeneratedTitle
-} from "./session-title-summarizer";
+} from "../agent-runtime/service-runtime/session-title-summarizer";
 import { getSubagentRunRegistry } from "./subagents/subagent-run-registry";
-import { buildAgentContentLogData, buildAgentSendStartLogData } from "./agent-log-summary";
+import { buildAgentContentLogData, buildAgentSendStartLogData } from "../agent-runtime/agent-log-summary";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { createAutoTitleJob } from "../agent-runtime/service-runtime/auto-title-job";

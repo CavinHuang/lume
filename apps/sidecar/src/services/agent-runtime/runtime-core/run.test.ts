@@ -1,5 +1,5 @@
-import { registerRealAgentThreadStore } from "../agent-thread-store-test-adapter";
-registerRealAgentThreadStore();
+import { registerRealAgentStores } from "../agent-thread-store-test-adapter";
+registerRealAgentStores();
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

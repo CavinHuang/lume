@@ -1,3 +1,5 @@
+import { registerRealAgentStores } from "../agent-runtime/agent-thread-store-test-adapter";
+registerRealAgentStores();
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -47,7 +49,7 @@ import {
 } from "./agent-files-service";
 import { createAgentWorkspace, relocateUnavailableAgentWorkspace } from "./agent-workspace-manager";
 import { createAgentThread } from "./agent-thread-manager";
-import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
+import { resolveAgentThreadWorkdir } from "../agent-runtime/agent-workdir-resolver";
 import { listMemorySourceFiles, memoryFileRefForPath } from "../memory-v2/source-files";
 import { getMemoryV2ScopePaths } from "../memory-v2/paths";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "../system/workspace-watcher";

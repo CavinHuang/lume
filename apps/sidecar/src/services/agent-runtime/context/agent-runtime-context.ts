@@ -1,6 +1,6 @@
 import type { AgentSendInput } from "@lume/shared";
-import { getAgentThreadMeta } from "./agent-thread-manager";
-import type { DynamicContext, EnabledPluginContextItem } from "./agent-prompt-builder";
+import { threadStore } from "../agent-thread-store-holder";
+import type { DynamicContext, EnabledPluginContextItem } from "../../agent/agent-prompt-builder";
 
 interface ResolveAgentDynamicContextInput {
   threadId: string;
@@ -21,7 +21,7 @@ interface ResolveAgentDynamicContextInput {
 export function resolveAgentDynamicContextInput(
   input: ResolveAgentDynamicContextInput
 ): DynamicContext {
-  const threadMeta = getAgentThreadMeta(input.threadId);
+  const threadMeta = threadStore().getMeta(input.threadId);
   return {
     sessionId: input.threadId,
     sessionTitle: threadMeta?.title,
