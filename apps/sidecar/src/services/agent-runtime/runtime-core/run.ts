@@ -7,6 +7,8 @@ import {
   type AgentOptions,
   type CompletionGuardResult,
   type ApiType,
+  type AgentDefinition,
+  type SkillDefinition,
   type ContentBlockParam,
   type ToolResult,
   createTodoTool,
@@ -67,6 +69,7 @@ import {
   isBundledBrowserRuntimeAvailable,
   SidecarPluginManager,
 } from "../plugins/plugin-manager.js";
+import type { RegisteredPlugin } from "../plugins/plugin-registry.js";
 import {
   assemblePluginRuntime,
 } from "../plugins/runtime-bridge.js";
@@ -595,6 +598,177 @@ async function buildProviderRoutes({
   return providerRoutes;
 }
 
+/**
+ * 会话上下文装配(#297 子项①自组合根拆出):
+ * runtime skills 过滤 → workflow beforeAssemble hook → ContextAssembler 主装配
+ * → afterAssemble hook 与效果应用 → subagent work context 合并。
+ */
+async function assembleSessionContext({
+  input,
+  runId,
+  toolset,
+  surfaceSkills,
+  registeredPlugins,
+  pluginAssembly,
+  initialTodoState,
+  boundSubagentIdentity,
+  subagentDefinition,
+}: {
+  input: CreateRuntimeCoreSessionInput;
+  runId: string;
+  toolset: ReturnType<typeof buildRuntimeCoreTools>;
+  surfaceSkills: SkillDefinition[];
+  registeredPlugins: RegisteredPlugin[];
+  pluginAssembly: Awaited<ReturnType<typeof assemblePluginRuntime>>;
+  initialTodoState: Awaited<ReturnType<typeof readLatestTodoState>>;
+  boundSubagentIdentity: ReturnType<typeof resolveBoundSubagentIdentity>;
+  subagentDefinition: AgentDefinition | undefined;
+}) {
+  const runtimeSkills = toolset.availableToolNames.includes("mcp__browser__snapshot")
+    && !input.browserAttachments?.length
+    ? surfaceSkills.filter((skill) => skill.name !== "browser:browser")
+    : surfaceSkills;
+  const enabledPlugins = buildEnabledPluginContext(
+    registeredPlugins,
+    { ...pluginAssembly, skills: runtimeSkills },
+  );
+  const contextTokenBudget = input.resolvedModel?.contextWindow ?? 32_000;
+  const beforeContextResult = await executeWorkflowHookSafely(
+    input.workflowHooks,
+    {
+      event: "context.beforeAssemble",
+      runId,
+      threadId: input.lumeSessionId,
+      workspaceId: input.workspaceId,
+      workspaceSlug: input.workspaceSlug,
+      cwd: input.cwd,
+      permissionMode: input.permissionMode,
+      threadType: input.threadType,
+      chatType: input.chatType,
+      messageMetadata: input.messageMetadata,
+      userMessage: input.userMessage ?? "",
+      availableTools: toolset.availableToolNames,
+      tokenBudget: contextTokenBudget,
+    },
+  );
+  const workflowContext = beforeContextResult
+    ? {
+        appendContext: collectAppendContextEffects(beforeContextResult.effects),
+      }
+    : undefined;
+  const desktopContext = await resolveDesktopContextProjection(
+    input.messageMetadata,
+  );
+  const planningExecutionContext = resolvePlanningExecutionContext({
+    runId,
+    clientSubmissionId: input.planningClientSubmissionId,
+  });
+  const planningTodoContext = resolvePlanningTodoContext(
+    input,
+    planningExecutionContext,
+  );
+  const modelId = input.resolvedModel?.id ?? input.resolvedModelId;
+  const promptCache = resolvePromptCachePolicy({
+    channelProvider: input.channelProvider,
+    provider: input.provider,
+    model: modelId,
+    threadId: input.lumeSessionId,
+    baseUrl: input.resolvedModel?.baseUrl,
+  });
+  const toolSchemaFingerprint = fingerprintToolSchema(toolset.tools);
+  const toolSchemaTokens = estimateToolSchemaTokens(toolset.tools);
+
+  const contextAssembly = await new ContextAssembler().assemble({
+    threadId: input.lumeSessionId,
+    runId,
+    cwd: input.cwd,
+    lumeWorkDir: input.lumeWorkDir,
+    projectRoot: input.projectRoot,
+    modelRef: input.modelRef,
+    resolvedModelId: input.resolvedModel?.id ?? input.resolvedModelId,
+    workspaceName: input.workspaceName,
+    workspaceSlug: input.workspaceSlug,
+    threadType: input.threadType,
+    chatType: input.chatType,
+    permissionMode: input.permissionMode,
+    automationExecution: isAutomationExecution(input.messageMetadata),
+    agentSystemPrompt: boundSubagentIdentity
+      ? [
+          subagentDefinition?.prompt,
+          "You are executing one bound Subagent Task. Do not create nested subagents or change the task acceptance criteria. Before ending this run, call TaskReport with submitted, failed, or blocked status and a concise summary. TaskReport is a submission to the parent agent, never final acceptance.",
+          `Bound task: ${boundSubagentIdentity.taskId}; attempt: ${input.subagentAttempt ?? 1}.`,
+        ]
+          .filter(Boolean)
+          .join("\n\n")
+      : subagentDefinition?.prompt,
+    userMessage: input.userMessage ?? "",
+    messageAttachments: input.messageAttachments,
+    commentAttachments: input.commentAttachments,
+    browserAttachments: input.browserAttachments,
+    availableTools: toolset.availableToolNames,
+    browserRuntimeAvailable: isBundledBrowserRuntimeAvailable(),
+    browserContinuity: input.messageMetadata?.browserContinuity,
+    enabledPlugins,
+    tokenBudget: contextTokenBudget,
+    toolSchemaFingerprint,
+    toolSchemaTokens,
+    cacheStrategy: promptCache.strategy,
+    workflowContext,
+    desktopContext,
+    todoState: initialTodoState,
+    planningTodoContext,
+    trace: input.trace,
+  });
+  const afterContextResult = await executeWorkflowHookSafely(
+    input.workflowHooks,
+    {
+      event: "context.afterAssemble",
+      runId,
+      threadId: input.lumeSessionId,
+      workspaceId: input.workspaceId,
+      workspaceSlug: input.workspaceSlug,
+      cwd: input.cwd,
+      permissionMode: input.permissionMode,
+      threadType: input.threadType,
+      chatType: input.chatType,
+      messageMetadata: input.messageMetadata,
+      availableTools: toolset.availableToolNames,
+      tokenBudget: contextTokenBudget,
+      memoryContextUsedItems: contextAssembly.memoryContextUsedItems,
+      userMessageForModelLength: contextAssembly.userMessageForModel.length,
+    },
+  );
+  await applyWorkflowHookEffectsSafely(
+    input.applyWorkflowHookEffects,
+    afterContextResult,
+  );
+  const unresolvedSubagentTasks =
+    input.threadType === "subagent"
+      ? []
+      : getSubagentCoordinator()
+          .list(input.lumeSessionId)
+          .tasks.filter(
+            (task) =>
+              task.status === "open" ||
+              task.status === "running" ||
+              task.status === "awaiting_review",
+          );
+  const systemPrompt = contextAssembly.systemPrompt;
+  const runtimeContext = [
+    contextAssembly.runtimeContext,
+    buildSubagentWorkContext(unresolvedSubagentTasks),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  return {
+    runtimeSkills,
+    contextAssembly,
+    systemPrompt,
+    runtimeContext,
+    promptCache,
+  };
+}
+
 async function createRuntimeCoreSessionImpl(
   input: CreateRuntimeCoreSessionInput,
   pendingCleanup: Array<() => Promise<unknown> | void>,
@@ -932,142 +1106,23 @@ async function createRuntimeCoreSessionImpl(
       ...(pluginMcpRuntime.diagnostics ?? []),
     ],
   });
-  const runtimeSkills = toolset.availableToolNames.includes("mcp__browser__snapshot")
-    && !input.browserAttachments?.length
-    ? surfaceSkills.filter((skill) => skill.name !== "browser:browser")
-    : surfaceSkills;
-  const enabledPlugins = buildEnabledPluginContext(
-    registeredPlugins,
-    { ...pluginAssembly, skills: runtimeSkills },
-  );
-  const contextTokenBudget = input.resolvedModel?.contextWindow ?? 32_000;
-  const beforeContextResult = await executeWorkflowHookSafely(
-    input.workflowHooks,
-    {
-      event: "context.beforeAssemble",
-      runId,
-      threadId: input.lumeSessionId,
-      workspaceId: input.workspaceId,
-      workspaceSlug: input.workspaceSlug,
-      cwd: input.cwd,
-      permissionMode: input.permissionMode,
-      threadType: input.threadType,
-      chatType: input.chatType,
-      messageMetadata: input.messageMetadata,
-      userMessage: input.userMessage ?? "",
-      availableTools: toolset.availableToolNames,
-      tokenBudget: contextTokenBudget,
-    },
-  );
-  const workflowContext = beforeContextResult
-    ? {
-        appendContext: collectAppendContextEffects(beforeContextResult.effects),
-      }
-    : undefined;
-  const desktopContext = await resolveDesktopContextProjection(
-    input.messageMetadata,
-  );
-  const planningExecutionContext = resolvePlanningExecutionContext({
-    runId,
-    clientSubmissionId: input.planningClientSubmissionId,
-  });
-  const planningTodoContext = resolvePlanningTodoContext(
+  const {
+    runtimeSkills,
+    contextAssembly,
+    systemPrompt,
+    runtimeContext,
+    promptCache,
+  } = await assembleSessionContext({
     input,
-    planningExecutionContext,
-  );
-  const modelId = input.resolvedModel?.id ?? input.resolvedModelId;
-  const promptCache = resolvePromptCachePolicy({
-    channelProvider: input.channelProvider,
-    provider: input.provider,
-    model: modelId,
-    threadId: input.lumeSessionId,
-    baseUrl: input.resolvedModel?.baseUrl,
-  });
-  const toolSchemaFingerprint = fingerprintToolSchema(toolset.tools);
-  const toolSchemaTokens = estimateToolSchemaTokens(toolset.tools);
-
-  const contextAssembly = await new ContextAssembler().assemble({
-    threadId: input.lumeSessionId,
     runId,
-    cwd: input.cwd,
-    lumeWorkDir: input.lumeWorkDir,
-    projectRoot: input.projectRoot,
-    modelRef: input.modelRef,
-    resolvedModelId: input.resolvedModel?.id ?? input.resolvedModelId,
-    workspaceName: input.workspaceName,
-    workspaceSlug: input.workspaceSlug,
-    threadType: input.threadType,
-    chatType: input.chatType,
-    permissionMode: input.permissionMode,
-    automationExecution: isAutomationExecution(input.messageMetadata),
-    agentSystemPrompt: boundSubagentIdentity
-      ? [
-          subagentDefinition?.prompt,
-          "You are executing one bound Subagent Task. Do not create nested subagents or change the task acceptance criteria. Before ending this run, call TaskReport with submitted, failed, or blocked status and a concise summary. TaskReport is a submission to the parent agent, never final acceptance.",
-          `Bound task: ${boundSubagentIdentity.taskId}; attempt: ${input.subagentAttempt ?? 1}.`,
-        ]
-          .filter(Boolean)
-          .join("\n\n")
-      : subagentDefinition?.prompt,
-    userMessage: input.userMessage ?? "",
-    messageAttachments: input.messageAttachments,
-    commentAttachments: input.commentAttachments,
-    browserAttachments: input.browserAttachments,
-    availableTools: toolset.availableToolNames,
-    browserRuntimeAvailable: isBundledBrowserRuntimeAvailable(),
-    browserContinuity: input.messageMetadata?.browserContinuity,
-    enabledPlugins,
-    tokenBudget: contextTokenBudget,
-    toolSchemaFingerprint,
-    toolSchemaTokens,
-    cacheStrategy: promptCache.strategy,
-    workflowContext,
-    desktopContext,
-    todoState: initialTodoState,
-    planningTodoContext,
-    trace: input.trace,
+    toolset,
+    surfaceSkills,
+    registeredPlugins,
+    pluginAssembly,
+    initialTodoState,
+    boundSubagentIdentity,
+    subagentDefinition,
   });
-  const afterContextResult = await executeWorkflowHookSafely(
-    input.workflowHooks,
-    {
-      event: "context.afterAssemble",
-      runId,
-      threadId: input.lumeSessionId,
-      workspaceId: input.workspaceId,
-      workspaceSlug: input.workspaceSlug,
-      cwd: input.cwd,
-      permissionMode: input.permissionMode,
-      threadType: input.threadType,
-      chatType: input.chatType,
-      messageMetadata: input.messageMetadata,
-      availableTools: toolset.availableToolNames,
-      tokenBudget: contextTokenBudget,
-      memoryContextUsedItems: contextAssembly.memoryContextUsedItems,
-      userMessageForModelLength: contextAssembly.userMessageForModel.length,
-    },
-  );
-  await applyWorkflowHookEffectsSafely(
-    input.applyWorkflowHookEffects,
-    afterContextResult,
-  );
-  const unresolvedSubagentTasks =
-    input.threadType === "subagent"
-      ? []
-      : getSubagentCoordinator()
-          .list(input.lumeSessionId)
-          .tasks.filter(
-            (task) =>
-              task.status === "open" ||
-              task.status === "running" ||
-              task.status === "awaiting_review",
-          );
-  const systemPrompt = contextAssembly.systemPrompt;
-  const runtimeContext = [
-    contextAssembly.runtimeContext,
-    buildSubagentWorkContext(unresolvedSubagentTasks),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
   const context = sessionManager.buildSessionContext();
   const existingCompletionGuard = boundSubagentIdentity
     ? () =>
