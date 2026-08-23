@@ -1,13 +1,16 @@
 import type { Channel } from "@lume/shared";
 
+// 模型引用语法(requested 含 "/" 的 provider/model 形式、trim/lowercase 匹配)在
+// channel/model-selection.ts 另有 parseModelRef/normalizeProviderId 一套;改引用
+// 语义时两处需同步(#504 知识分裂注记)。
+
 function normalizeLookupKey(value?: string): string {
   return (value ?? "").trim().toLowerCase();
 }
 
 /** 渠道默认模型解析(纯函数,自 channel/model-selection 下移,#289 分层切边)。 */
-export function resolveChannelDefaultModelId(channel: Pick<Channel, "models">): string | null {
-  const channelWithDefault = channel as Pick<Channel, "models" | "defaultModelId">;
-  const configuredDefault = channelWithDefault.defaultModelId?.trim();
+export function resolveChannelDefaultModelId(channel: Pick<Channel, "models" | "defaultModelId">): string | null {
+  const configuredDefault = channel.defaultModelId?.trim();
   if (configuredDefault && channel.models.some((model) => model.id === configuredDefault && model.enabled)) {
     return configuredDefault;
   }

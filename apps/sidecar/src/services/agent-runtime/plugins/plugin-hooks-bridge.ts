@@ -79,24 +79,31 @@ function spawnShellHook(
       const stdout = Buffer.concat(chunks).toString("utf-8").trim();
       const stderr = Buffer.concat(stderrChunks).toString("utf-8").trim();
       const renderedOutput = [stdout, stderr].filter(Boolean).join("\n").trim();
-      try {
-        resolve(stdout ? (JSON.parse(stdout) as HookOutput) : undefined);
-      } catch {
-        if (stdout.startsWith("'") && stdout.endsWith("'")) {
-          try {
-            resolve(JSON.parse(stdout.slice(1, -1)) as HookOutput);
-            return;
-          } catch {
+      if (stdout) {
+        try {
+          resolve(JSON.parse(stdout) as HookOutput);
+          return;
+        } catch {
+          if (stdout.startsWith("'") && stdout.endsWith("'")) {
             try {
-              resolve(JSON.parse(stdout.slice(1, -1).replace(/\\"/g, '"')) as HookOutput);
+              resolve(JSON.parse(stdout.slice(1, -1)) as HookOutput);
               return;
             } catch {
-              // Fall through to the original non-JSON representation.
+              try {
+                resolve(JSON.parse(stdout.slice(1, -1).replace(/\\"/g, '"')) as HookOutput);
+                return;
+              } catch {
+                // Fall through to the original non-JSON representation.
+              }
             }
           }
+          // Non-JSON stdout: render combined output as a plain message (#498).
+          resolve({ message: renderedOutput });
+          return;
         }
-        resolve(renderedOutput ? { message: renderedOutput } : undefined);
       }
+      // Empty stdout: stderr (if any) is the hook's only output; both empty → no output.
+      resolve(renderedOutput ? { message: renderedOutput } : undefined);
     });
     proc.on("error", () => {
       if (signal) signal.removeEventListener("abort", onAbort);
