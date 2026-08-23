@@ -28,6 +28,7 @@
     "smoke:restart-restore": "bun scripts/smoke-restart-restore.mjs"
   },
   "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
     "@earendil-works/pi-ai": "0.83.0",
     "@huggingface/transformers": "^3.8.1",
     "@larksuiteoapi/node-sdk": "^1.72.0",
