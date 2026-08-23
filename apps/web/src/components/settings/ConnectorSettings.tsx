@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { toast } from 'sonner'
-import { ExternalLink, Loader2, Mail, RefreshCw } from 'lucide-react'
+import { ChevronDown, ExternalLink, Loader2, Mail, RefreshCw } from 'lucide-react'
+import { ConnectorBrandIcon } from './connector-brand-icon'
 import type { ConnectorSetupField, ConnectorSetupWithStatus } from '@lume/shared'
 import {
   disconnectConnector,
@@ -45,6 +46,7 @@ export function ConnectorSettings() {
   const [setups, setSetups] = React.useState<ConnectorSetupWithStatus[]>([])
   const [loadError, setLoadError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(true)
+  const [collapsed, setCollapsed] = React.useState(false)
 
   const refresh = React.useCallback(() => {
     setLoading(true)
@@ -65,8 +67,13 @@ export function ConnectorSettings() {
 
   return (
     <section className="lume-panel">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3 text-left"
+        onClick={() => setCollapsed((prev) => !prev)}
+      >
         <div className="flex min-w-0 items-center gap-2.5">
+          <ChevronDown className={`size-4 shrink-0 text-[var(--text-3)] transition-transform ${collapsed ? '-rotate-90' : ''}`} />
           <div className="flex size-8 items-center justify-center rounded-[8px] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--brand)]">
             <Mail size={16} />
           </div>
@@ -77,12 +84,24 @@ export function ConnectorSettings() {
             </p>
           </div>
         </div>
-        <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
-          {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-          刷新
-        </Button>
-      </div>
+        <span
+          className="shrink-0"
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.stopPropagation()
+              refresh()
+            }
+          }}
+        >
+          <Button variant="outline" size="sm" onClick={() => !loading && refresh()} disabled={loading}>
+            {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            刷新
+          </Button>
+        </span>
+      </button>
 
+      {!collapsed && (
       <div className="p-4">
         <div className="space-y-2">
           {loading ? (
@@ -99,6 +118,7 @@ export function ConnectorSettings() {
           ))}
         </div>
       </div>
+      )}
     </section>
   )
 }
@@ -179,6 +199,7 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
     <div className="lume-subpanel p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
+          <ConnectorBrandIcon service={setup.service} size={16} className="shrink-0" />
           <span className="text-[13px] font-semibold text-[var(--text-1)]">{status.displayName}</span>
           {status.accountLabel && status.connected ? (
             <span className="truncate text-[12px] text-[var(--text-3)]">{status.accountLabel}</span>

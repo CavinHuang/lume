@@ -2,6 +2,7 @@ import * as React from 'react'
 import { useAtomValue } from 'jotai'
 import { toast } from 'sonner'
 import {
+  ChevronDown,
   KeyRound,
   Loader2,
   MessageCircle,
@@ -9,6 +10,7 @@ import {
   Plus,
   QrCode,
   RefreshCw,
+  Send,
   Square,
   Trash2,
 } from 'lucide-react'
@@ -57,6 +59,20 @@ import {
   type ImAccountDraft,
   type ImStatusTone,
 } from './im-settings-state'
+import { ConnectorBrandIcon } from './connector-brand-icon'
+
+/** IM provider → 品牌图标 service key(arcticons/simple-icons 抽取集);飞书暂无来源用纸飞机占位。 */
+const IM_PROVIDER_ICON_SERVICE: Partial<Record<ImProvider, string>> = {
+  weixin: 'weixin',
+  dingtalk: 'dingtalk',
+  wecom: 'wecom',
+}
+
+function ProviderBrandIcon({ provider, size = 16 }: { provider: ImProvider; size?: number }) {
+  const service = IM_PROVIDER_ICON_SERVICE[provider]
+  if (!service) return <Send size={size} className="shrink-0 text-[var(--text-2)]" />
+  return <ConnectorBrandIcon service={service} size={size} className="shrink-0" />
+}
 
 const toneClassName: Record<ImStatusTone, string> = {
   neutral: 'border-[var(--border)] text-[var(--text-2)]',
@@ -91,6 +107,7 @@ export function ImSettings() {
     new Map(workspaces.map((workspace) => [workspace.id, workspace.name]))
   ), [workspaces])
 
+  const [collapsed, setCollapsed] = React.useState(false)
   const [accounts, setAccounts] = React.useState<ImAccount[]>([])
   const [draft, setDraft] = React.useState<ImAccountDraft>(() => createImAccountDraft(defaultWorkspaceId))
   const [loading, setLoading] = React.useState(true)
@@ -372,7 +389,12 @@ export function ImSettings() {
   return (
     <section className="lume-panel">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2.5">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+          onClick={() => setCollapsed((prev) => !prev)}
+        >
+          <ChevronDown className={`size-4 shrink-0 text-[var(--text-3)] transition-transform ${collapsed ? '-rotate-90' : ''}`} />
           <div className="flex size-8 items-center justify-center rounded-[8px] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--brand)]">
             <MessageCircle size={16} />
           </div>
@@ -380,7 +402,7 @@ export function ImSettings() {
             <h3 className="text-[14px] font-semibold text-[var(--text-1)]">IM 通道</h3>
             <p className="text-[12px] text-[var(--text-3)]">{accounts.length} 个账号</p>
           </div>
-        </div>
+        </button>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => handleAddDialogOpenChange(true)}>
             <Plus />
@@ -393,6 +415,7 @@ export function ImSettings() {
         </div>
       </div>
 
+      {!collapsed && (
       <div className="p-4">
         <div className="space-y-2">
           {loading ? (
@@ -409,6 +432,7 @@ export function ImSettings() {
               key={account.id}
               account={account}
               workspaceName={workspaceNameForAccount(account)}
+              provider={account.provider}
               busy={busyId === account.id}
               onToggleEnabled={handleToggleEnabled}
               onStart={handleStart}
@@ -418,6 +442,7 @@ export function ImSettings() {
           ))}
         </div>
       </div>
+      )}
 
       <div className="border-t border-[var(--border)] p-4">
         <div className="mb-2 flex items-baseline gap-2">
@@ -646,6 +671,7 @@ export function ImSettings() {
 function AccountRow({
   account,
   workspaceName,
+  provider,
   busy,
   onToggleEnabled,
   onStart,
@@ -654,6 +680,7 @@ function AccountRow({
 }: {
   account: ImAccount
   workspaceName?: string
+  provider: ImProvider
   busy: boolean
   onToggleEnabled: (account: ImAccount, enabled: boolean) => void
   onStart: (account: ImAccount) => void
@@ -664,6 +691,7 @@ function AccountRow({
   const accountMeta = [account.uin || account.id, workspaceName].filter(Boolean).join(' · ')
   return (
     <div className="lume-subpanel flex flex-wrap items-center gap-3 px-3 py-2.5">
+      <ProviderBrandIcon provider={provider} size={16} />
       <div className="min-w-[160px] flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[13px] font-medium text-[var(--text-1)]">{account.label}</span>
