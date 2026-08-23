@@ -164,6 +164,8 @@
     ]
   },
   "dependencies": {
-    "@lume/shared": "workspace:*"
+    "@lume/shared": "workspace:*",
+    "@types/ws": "^8.18.1",
+    "ws": "^8.21.3"
   }
 }

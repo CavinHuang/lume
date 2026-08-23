@@ -15,6 +15,7 @@ import {
   session,
   shell,
   utilityProcess,
+  webContents,
 } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { execFileSync } from 'node:child_process'
@@ -74,6 +75,16 @@ import {
   writeLauncherConfigAt,
 } from './desktop-core'
 import { clampIslandHeight, createIslandWindow } from './agent-island-window'
+import {
+  cancelAllVoiceAsrSessions,
+  cancelVoiceAsrSession,
+  sendVoiceAsrAudio,
+  startVoiceAsrSession,
+  stopVoiceAsrSession,
+  testVoiceAsrConnection,
+} from './voice-asr-service'
+import { readVoiceDictationSettings, updateVoiceDictationSettings } from './voice-dictation-settings-service'
+import type { VoiceDictationSettingsUpdate } from '@lume/shared'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -1151,7 +1162,13 @@ export function attachWebContentsSecurity(win, { allowNavigation }) {
     pluginAssets.revokeOwner(ownerWebContentsId)
   })
 
-  win.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
+  win.webContents.session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    // 语音听写需要麦克风采集；仅放行纯音频请求，其余（含摄像头）一律拒绝。
+    if (permission === 'media') {
+      const mediaTypes = (details as Electron.MediaAccessPermissionRequest | undefined)?.mediaTypes
+      callback(!mediaTypes || !mediaTypes.includes('video'))
+      return
+    }
     callback(false)
   })
 }
@@ -1626,6 +1643,17 @@ const STAGED_ATTACHMENT_SIDECAR_METHODS = new Set([
   'agent:save-files-to-workspace-root',
 ])
 
+/** 把 ASR 会话事件回发给发起录音的窗口；窗口已销毁时静默丢弃。 */
+function sendVoiceDictationEvent(ownerWebContentsId: number | undefined, channel: string, payload: unknown): void {
+  if (ownerWebContentsId === undefined) return
+  try {
+    const contents = webContents.fromId(ownerWebContentsId)
+    if (contents && !contents.isDestroyed()) contents.send(`lume:event:${channel}`, payload)
+  } catch {
+    // 会话中途窗口关闭属正常路径，忽略。
+  }
+}
+
 async function dispatchCommand(command, payload: Record<string, any> = {}, context: { ownerWebContentsId?: number } = {}) {
   switch (command) {
     case 'connection_vault_status': {
@@ -1782,6 +1810,41 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       return sidecarHost.call('healthcheck', null)
     case 'agent_island_intent': {
       await agentIslandService?.handleIntent(payload as AgentIslandIntent)
+      return null
+    }
+    case 'voice_dictation_get_settings':
+      requireMainWindowSender(context, 'voice_dictation_get_settings')
+      return readVoiceDictationSettings(getSettingsBroker())
+    case 'voice_dictation_update_settings':
+      requireMainWindowSender(context, 'voice_dictation_update_settings')
+      return updateVoiceDictationSettings(getSettingsBroker(), payload as VoiceDictationSettingsUpdate)
+    case 'voice_dictation_test_connection':
+      requireMainWindowSender(context, 'voice_dictation_test_connection')
+      return testVoiceAsrConnection(readVoiceDictationSettings(getSettingsBroker()))
+    case 'voice_dictation_start': {
+      const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (!sessionId) throw new Error('session_id_required')
+      await startVoiceAsrSession(sessionId, readVoiceDictationSettings(getSettingsBroker()), {
+        onState: (event) => sendVoiceDictationEvent(context.ownerWebContentsId, 'voice-dictation:state', event),
+        onTranscript: (event) => sendVoiceDictationEvent(context.ownerWebContentsId, 'voice-dictation:transcript', event),
+      })
+      return null
+    }
+    case 'voice_dictation_audio_chunk': {
+      const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (payload.data instanceof ArrayBuffer && sessionId) {
+        sendVoiceAsrAudio(sessionId, payload.data)
+      }
+      return null
+    }
+    case 'voice_dictation_stop': {
+      const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (sessionId) await stopVoiceAsrSession(sessionId)
+      return null
+    }
+    case 'voice_dictation_cancel': {
+      const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (sessionId) await cancelVoiceAsrSession(sessionId)
       return null
     }
     case 'sidecar_call': {
@@ -3269,6 +3332,7 @@ app.on('before-quit', () => {
   agentIslandService?.destroy()
   agentIslandService = null
   stopAgentIslandSurface()
+  cancelAllVoiceAsrSessions()
 })
 
 app.on('window-all-closed', () => {
