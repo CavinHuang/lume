@@ -45,7 +45,7 @@ import { BrowserReferenceGrantStore } from "./browser-reference-grants"
 import { BrowserAnnotationManager } from "./browser-annotation-manager"
 import { buildBrowserSemanticTree, type BrowserSemanticLine, type BrowserSemanticRef } from "./browser-semantic-snapshot"
 import { normalizeBrowserAgentScriptResult, prepareBrowserAgentScript, type BrowserAgentScriptResult } from "./browser-agent-script"
-import { dispatchBrowserClick, dispatchBrowserKey, dispatchBrowserText, focusBrowserPoint, type BrowserCdpCommandSender } from "./browser-cdp-input"
+import { dispatchBrowserClick, dispatchBrowserKey, dispatchBrowserText, focusBrowserPoint, moveBrowserPointer, type BrowserCdpCommandSender, type BrowserCdpPoint } from "./browser-cdp-input"
 import { BrowserActionQueue } from "./browser-action-queue"
 import { BrowserInputLedger } from "./browser-input-ledger"
 import { detectBrowserActionEffect, type BrowserActionEffect, type BrowserActionEffectSnapshot } from "./browser-action-effect"
@@ -61,6 +61,8 @@ type BrowserRuntimeOptions = {
   journalEncryption?: { available: boolean; encrypt: (value: string) => Buffer; decrypt?: (value: Buffer) => string }
   credentialStorage: { isEncryptionAvailable(): boolean; encryptString(value: string): Buffer; decryptString(value: Buffer): string }
   authPreloadPath?: string
+  // 输入自然性（指针轨迹/按键驻留/逐字输入/滚轮分帧），默认开启；集成测试传 false 走直通注入
+  humanizedInput?: boolean
   onInternalError?: (details: { method: string; actor: BrowserRequestContext["actor"]; tabId?: string; message: string }) => void
 }
 
@@ -71,6 +73,7 @@ type BrowserTab = BrowserTabDescriptor & {
   inputSequence: number
   agentDispatching?: boolean
   lastUserActivationAt?: number
+  lastAgentPointer?: BrowserCdpPoint
   dialogOpen?: boolean
   dialogInfo?: { id: string; type: "alert" | "beforeunload" | "confirm" | "prompt"; message?: string; defaultValue?: string }
   recentAgentContext?: { browserSessionId: string; browserTurnId: string; expiresAt: number }
@@ -234,6 +237,7 @@ export class BrowserRuntime {
   private backendGeneration = 1
   private readonly journal: BrowserOperationJournal
   private readonly audit: BrowserAuditLog
+  private readonly humanizedInput: boolean
   private readonly downloadQuota = new AgentDownloadQuota()
   private readonly downloadHistory: BrowserDownloadHistory
   private readonly browsingHistory: BrowserHistoryStore
@@ -301,6 +305,7 @@ export class BrowserRuntime {
   }
 
   constructor(private readonly options: BrowserRuntimeOptions) {
+    this.humanizedInput = options.humanizedInput !== false
     this.settings = { ...DEFAULT_BROWSER_SETTINGS, ...(options.initialSettings ?? {}) }
     if (this.settings.annotationScreenshots === "ask") this.settings.annotationScreenshots = "necessary"
     this.journal = new BrowserOperationJournal(options.configDir, options.journalEncryption)
@@ -446,6 +451,10 @@ export class BrowserRuntime {
     tab.guestState = "attaching"
     tab.lifecycle = tab.visible ? "active" : "background"
     contents.setZoomFactor(tab.zoomFactor ?? 1)
+    // 规范化为标准 Chrome UA（去除嵌入运行时标记），版本与内核保持一致；
+    // webContents 级覆盖 navigator.userAgent，session 级兜底后续请求头与弹窗
+    contents.setUserAgent(browserUserAgent())
+    contents.session.setUserAgent(browserUserAgent())
     this.installPolicies(tab, shouldInstallAgentSessionPolicy(tab.partition), shouldInstallAdvancedCdpPolicy(tab.partition))
     contents.once("destroyed", () => this.markGuestGone(tab, contents))
     contents.once("dom-ready", () => {
@@ -923,7 +932,12 @@ export class BrowserRuntime {
           status: "prepared",
           timestamp: Date.now(),
         })
-        if (context.actor === "agent") tab.agentDispatching = true
+        if (context.actor === "agent") {
+          // 用户刚操作过页面时让行：降低混合事件流密度，也避免抢夺用户焦点
+          const activeAt = tab.lastUserActivationAt
+          if (this.humanizedInput && activeAt !== undefined && Date.now() - activeAt < 2_000) await delay(250 + Math.random() * 450)
+          tab.agentDispatching = true
+        }
         try {
           const result = await this.dispatchAction(tab, method, params, context)
           if (context.actor === "agent" && tab.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
@@ -997,7 +1011,7 @@ export class BrowserRuntime {
     if (method === "dom:type") {
       const text = String(params.text ?? "")
       if (text.length > 100_000) throw browserError("invalid_browser_request")
-      await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), text, { platform: process.platform, replace: false }))
+      await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), text, { platform: process.platform, replace: false, natural: this.humanizedInput }))
       return {}
     }
     if (method === "dom:keypress") {
@@ -1359,6 +1373,7 @@ export class BrowserRuntime {
     })
     wc.on("did-create-window", (popup) => {
       popup.setMenuBarVisibility(false)
+      popup.webContents.setUserAgent(browserUserAgent())
       popup.webContents.setWindowOpenHandler(() => ({ action: "deny" }))
       popup.webContents.on("will-navigate", (event, url) => {
         if (!isAllowedNavigation(url, agent, this.settings, tab.approvedPrivateOrigins)) event.preventDefault()
@@ -1874,7 +1889,7 @@ export class BrowserRuntime {
     if (method === "typeActive") {
       const text = String(params.text ?? "")
       if (text.length > 100_000) throw browserError("invalid_browser_request")
-      await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), text, { platform: process.platform, replace: false }))
+      await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), text, { platform: process.platform, replace: false, natural: this.humanizedInput }))
       return { ok: true }
     }
     if (method === "pressActive") { await this.dispatchKey(tab, String(params.key ?? "Enter")); return { ok: true } }
@@ -1903,7 +1918,7 @@ export class BrowserRuntime {
             ? String(await this.executeLocatorQuery(tab, params, "editableValue"))
             : undefined
           await this.dispatchMouse(tab, "click", target)
-          await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), text, { platform: process.platform, replace: method === "fill" }))
+          await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), text, { platform: process.platform, replace: method === "fill", natural: this.humanizedInput, speed: method === "fill" ? "fill" : "type" }))
           if (verifyByLocator) {
             const observed = String(await this.executeLocatorQuery(tab, params, "editableValue"))
             const expected = method === "fill" ? text : `${before ?? ""}${text}`
@@ -1912,7 +1927,7 @@ export class BrowserRuntime {
         } else if (method === "press") {
           await withDebugger(browserContents(tab), async (debuggerRef) => {
             await focusBrowserPoint(debuggerRef, target)
-            await dispatchBrowserKey(this.expectedAgentInputSender(tab, debuggerRef), String(params.key ?? "Enter"))
+            await dispatchBrowserKey(this.expectedAgentInputSender(tab, debuggerRef), String(params.key ?? "Enter"), { natural: this.humanizedInput })
           })
         } else if (method === "select") {
           if (!isBrowserLocator(params.locator)) throw browserError("invalid_browser_request")
@@ -2100,7 +2115,7 @@ export class BrowserRuntime {
           const target = targets.get(field.id)
           if (value === undefined || !target) continue
           await this.dispatchMouse(tab, "click", target)
-          await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), value, { platform: process.platform, replace: true }))
+          await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), value, { platform: process.platform, replace: true, natural: this.humanizedInput, speed: "fill" }))
         }
         const submit = auth.request.submit
         if (submit?.kind === "click") {
@@ -2112,7 +2127,7 @@ export class BrowserRuntime {
           if (!target) throw browserError("stale_target")
           await withDebugger(browserContents(tab), async (debuggerRef) => {
             await focusBrowserPoint(debuggerRef, target)
-            await dispatchBrowserKey(this.expectedAgentInputSender(tab, debuggerRef), "Enter")
+            await dispatchBrowserKey(this.expectedAgentInputSender(tab, debuggerRef), "Enter", { natural: this.humanizedInput })
           })
         }
       } finally {
@@ -2164,7 +2179,7 @@ export class BrowserRuntime {
     try {
       await this.dispatchMouse(tab, "click", target)
       if (tab.generation !== generation) throw browserError("stale_target")
-      await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), value, { platform: process.platform, replace: true }))
+      await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserText(this.expectedAgentInputSender(tab, debuggerRef), value, { platform: process.platform, replace: true, natural: this.humanizedInput, speed: "fill" }))
     } finally { tab.agentDispatching = false }
   }
 
@@ -2551,21 +2566,23 @@ export class BrowserRuntime {
     const x = boundedNumber(params.x, 0, 100_000)
     const y = boundedNumber(params.y, 0, 100_000)
     this.showAgentCursor(tab, x, y, method === "click" || method === "doubleClick")
+    const from = tab.lastAgentPointer
     await withDebugger(browserContents(tab), async (debuggerRef) => {
       const sender = this.expectedAgentInputSender(tab, debuggerRef)
       if (method === "click" || method === "doubleClick") {
-        await dispatchBrowserClick(sender, { x, y }, method === "doubleClick" ? 2 : 1)
+        await dispatchBrowserClick(sender, { x, y }, method === "doubleClick" ? 2 : 1, { natural: this.humanizedInput, from })
       } else {
-        await sender.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y })
+        await moveBrowserPointer(sender, { x, y }, { natural: this.humanizedInput, from })
       }
     })
+    tab.lastAgentPointer = { x, y }
   }
 
   private async dispatchKey(tab: BrowserTab, key: string, modifiers: string[] = []): Promise<void> {
     const normalizedModifiers = modifiers.flatMap((modifier) => ({ CTRL: "Control", META: "Meta", ALT: "Alt", SHIFT: "Shift" })[modifier.toUpperCase()] ?? [])
     const keySpec = [...normalizedModifiers, key].join("+")
     if (!keySpec || keySpec.length > 128) throw browserError("invalid_browser_request")
-    await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserKey(this.expectedAgentInputSender(tab, debuggerRef), keySpec))
+    await withDebugger(browserContents(tab), (debuggerRef) => dispatchBrowserKey(this.expectedAgentInputSender(tab, debuggerRef), keySpec, { natural: this.humanizedInput }))
   }
 
   private async queryLocator(tab: BrowserTab, operation: string, params: Record<string, unknown>): Promise<unknown> {
@@ -2887,9 +2904,17 @@ export class BrowserRuntime {
 
   private async dispatchScroll(tab: BrowserTab, target: ResolvedBrowserTarget, params: Record<string, unknown>): Promise<void> {
     await this.dispatchMouse(tab, "hover", target)
-    await withDebugger(browserContents(tab), (debuggerRef) => this.expectedAgentInputSender(tab, debuggerRef).sendCommand("Input.dispatchMouseEvent", {
-      type: "mouseWheel", x: target.x, y: target.y, deltaX: boundedNumber(params.deltaX, -10000, 10000), deltaY: boundedNumber(params.deltaY ?? params.y, -10000, 10000),
-    }))
+    const deltaX = boundedNumber(params.deltaX, -10000, 10000)
+    const deltaY = boundedNumber(params.deltaY ?? params.y, -10000, 10000)
+    // 滚轮分帧：单次大 delta 是典型注入特征，拆为多帧变速滚动（差分分配保证总量精确）
+    const frames = this.humanizedInput ? wheelFrames(deltaX, deltaY) : [{ deltaX, deltaY, delayMs: 0 }]
+    await withDebugger(browserContents(tab), async (debuggerRef) => {
+      const sender = this.expectedAgentInputSender(tab, debuggerRef)
+      for (let index = 0; index < frames.length; index += 1) {
+        if (index > 0) await delay(frames[index].delayMs)
+        await sender.sendCommand("Input.dispatchMouseEvent", { type: "mouseWheel", x: target.x, y: target.y, deltaX: frames[index].deltaX, deltaY: frames[index].deltaY })
+      }
+    })
   }
 
   private async dispatchDrag(tab: BrowserTab, target: ResolvedBrowserTarget, params: Record<string, unknown>): Promise<void> {
@@ -4347,6 +4372,7 @@ function publicTab(tab: BrowserTab): BrowserTabDescriptor {
     recentAgentContext: _recentAgentContext,
     agentDispatching: _agentDispatching,
     lastUserActivationAt: _lastUserActivationAt,
+    lastAgentPointer: _lastAgentPointer,
     dialogOpen: _dialogOpen,
     dialogInfo: _dialogInfo,
     surfaceBounds: _surfaceBounds,
@@ -4674,6 +4700,33 @@ function boundedNumber(value: unknown, min: number, max: number): number {
 }
 
 function delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)) }
+
+// 把一次滚动拆为 ≤110px 的变速帧；帧 delta 用差分分配，总量与单次注入完全一致
+function wheelFrames(deltaX: number, deltaY: number): { deltaX: number; deltaY: number; delayMs: number }[] {
+  const magnitude = Math.max(Math.abs(deltaX), Math.abs(deltaY))
+  const count = Math.max(1, Math.min(12, Math.ceil(magnitude / 110)))
+  if (count === 1) return [{ deltaX, deltaY, delayMs: 0 }]
+  const frames: { deltaX: number; deltaY: number; delayMs: number }[] = []
+  for (let index = 1; index <= count; index += 1) {
+    frames.push({
+      deltaX: (deltaX * index) / count - (deltaX * (index - 1)) / count,
+      deltaY: (deltaY * index) / count - (deltaY * (index - 1)) / count,
+      delayMs: 28 + Math.random() * 42,
+    })
+  }
+  return frames
+}
+
+// 标准形态 Chrome UA：版本跟随内核 major，去除嵌入运行时自述标记
+function browserUserAgent(): string {
+  const chromeMajor = (process.versions.chrome ?? "126").split(".")[0]
+  const platform = process.platform === "darwin"
+    ? "Macintosh; Intel Mac OS X 10_15_7"
+    : process.platform === "win32"
+      ? "Windows NT 10.0; Win64; x64"
+      : "X11; Linux x86_64"
+  return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeMajor}.0.0.0 Safari/537.36`
+}
 function escapeRegExp(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") }
 
 function normalizePageAssetSource(value: unknown): BrowserPageAsset["sources"][number] | undefined {
