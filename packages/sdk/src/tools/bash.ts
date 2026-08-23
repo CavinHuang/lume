@@ -21,7 +21,7 @@ import { defineTool } from './types.js'
 import type { ToolContext, ToolExecutionMetadata, ToolResult } from '../types.js'
 import { bundledRipgrepDirectory } from '../utils/ripgrep.js'
 import { analyzeBashCommand } from '../utils/bash-command-analysis.js'
-import { resolveShellInvocation, shellKind } from '../utils/shell-invocation.js'
+import { resolveShellInvocation, shellKind, shellKindWithoutDiscovery } from '../utils/shell-invocation.js'
 import { spawnWithProcessSandbox, terminateProcessTree } from '../utils/process-sandbox.js'
 
 const MAX_OUTPUT_BYTES = 50 * 1024 * 1024
@@ -168,10 +168,12 @@ function isReadOnlyShellInput(input: unknown, _context?: ToolContext): boolean {
   // Non-provable syntax falls back per dialect (#300): Bash has no safe
   // fallback (compound and piped forms escape any first-word whitelist), so it
   // fails closed. PowerShell keeps its conservative inspection subset — either
-  // the command invokes powershell/pwsh explicitly or the resolved shell for
-  // this platform is PowerShell.
+  // the command invokes powershell/pwsh explicitly or the shell for this
+  // platform is PowerShell. The dialect check never triggers Windows bash
+  // discovery (#471): an unsettled probe reads as bash, so the decision is
+  // stable instead of drifting with the discovery timeout window.
   const runsPowerShell = /^\s*(?:powershell|pwsh)(?:\.exe)?(?:\s|$)/i.test(normalized)
-    || shellKind(resolveShellInvocation(normalized).command) === 'powershell'
+    || shellKindWithoutDiscovery() === 'powershell'
   return runsPowerShell ? isReadOnlyPowerShell(normalized) : false
 }
 

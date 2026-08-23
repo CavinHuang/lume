@@ -10,6 +10,25 @@ export function shellKind(shellCommand: string): 'bash' | 'powershell' {
   return /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(shellCommand) ? 'powershell' : 'bash'
 }
 
+/**
+ * Shell dialect without triggering Windows bash discovery (#471): permission
+ * decisions must not depend on whether a 1s spawnSync probe settles in time.
+ * Unsettled discovery reads as bash so callers fail closed; execution keeps
+ * using resolveShellInvocation, which performs discovery once and caches it.
+ */
+export function shellKindWithoutDiscovery(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): 'bash' | 'powershell' {
+  if (platform !== 'win32') return 'bash'
+  const configured = normalizeBashPath(env.LUME_BASH_PATH || env.CLAUDE_CODE_SHELL || env.SHELL)
+  if (configured) return 'bash'
+  // Explicit environment mirrors resolveShellInvocation's PowerShell fallback.
+  if (env !== process.env) return 'powershell'
+  if (discoveredWindowsBashPath !== undefined) return discoveredWindowsBashPath ? 'bash' : 'powershell'
+  return 'bash'
+}
+
 export function resolveShellInvocation(
   command: string,
   platform: NodeJS.Platform = process.platform,
