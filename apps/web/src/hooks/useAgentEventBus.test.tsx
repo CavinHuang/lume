@@ -270,7 +270,7 @@ describe('useAgentEventBus', () => {
     t.cleanup()
   })
 
-  test('push 出现空洞（seq 5 > 本地最大 3+1）触发无 afterSeq 全量重拉并归并', async () => {
+  test('push 出现空洞（seq 5 > 本地最大 3+1）：先单调投递，再无 afterSeq 全量对账回填缺失', async () => {
     scriptPull(
       [envelope('t1', 1), envelope('t1', 2), envelope('t1', 3)],
       [envelope('t1', 1), envelope('t1', 2), envelope('t1', 3), envelope('t1', 4), envelope('t1', 5)],
@@ -281,7 +281,24 @@ describe('useAgentEventBus', () => {
     await act(async () => { await flush() })
     expect(getAgentEventsMock.mock.calls).toHaveLength(2)
     expect(getAgentEventsMock.mock.calls[1]).toEqual(['t1'])
-    expect(t.received.map(({ e }) => e.seq)).toEqual([1, 2, 3, 4, 5])
+    // 空洞事件立即投递（渲染不冻结）；对账结果经 seq 去重只回填缺失的 4
+    expect(t.received.map(({ e }) => e.seq)).toEqual([1, 2, 3, 5, 4])
+    await t.unmount()
+    t.cleanup()
+  })
+
+  test('折叠空洞回归(#总线 seq 稀疏)：快照 seq 不连续时必须全部投递，不得冻结在连续前缀', async () => {
+    // 总线两级折叠(16ms 微批/500ms 持久)使同 key 只保留最新累计态——
+    // 快照天然带洞（4~18 被折叠）。旧实现按连续性门控会永远停在 seq 3。
+    scriptPull([
+      envelope('t1', 1), envelope('t1', 2), envelope('t1', 3),
+      envelope('t1', 19), envelope('t1', 28), envelope('t1', 45),
+      envelope('t1', 46), envelope('t1', 47), envelope('t1', 48),
+    ])
+    const t = await mount()
+    await t.rerender('t1')
+    expect(t.received.map(({ e }) => e.seq)).toEqual([1, 2, 3, 19, 28, 45, 46, 47, 48])
+    expect(getAgentEventsMock).toHaveBeenCalledTimes(1) // 快照是全量真相，无需对账
     await t.unmount()
     t.cleanup()
   })
@@ -302,40 +319,42 @@ describe('useAgentEventBus', () => {
     t.cleanup()
   })
 
-  test('来源标注:初始拉取为 snapshot,推送与空洞重拉为 push', async () => {
+  test('来源标注:初始拉取为 snapshot,push 空洞立即投递为 push,对账回填为 snapshot', async () => {
     scriptPull(
       [envelope('t1', 1), envelope('t1', 2), envelope('t1', 3)],
       [envelope('t1', 1), envelope('t1', 2), envelope('t1', 3), envelope('t1', 4), envelope('t1', 5)],
     )
     const t = await mount()
     await t.rerender('t1')
-    push(envelope('t1', 5)) // 空洞(5 > 3+1)触发全量重拉
+    push(envelope('t1', 5)) // 空洞(5 > 3+1)：先投递，再触发对账
     await act(async () => { await flush() })
     expect(t.received.map(({ e, source }) => [e.seq, source])).toEqual([
       [1, 'snapshot'], [2, 'snapshot'], [3, 'snapshot'],
-      [4, 'push'], [5, 'push'],
+      [5, 'push'], [4, 'snapshot'],
     ])
     await t.unmount()
     t.cleanup()
   })
 
-  test('重载竞态:push 先于首拉回包不触发 refetchAll,回包按 snapshot 语义吸收', async () => {
+  test('首拉在飞时 push 空洞：立即投递不冻结，对账结果经 seq 去重只补缺失', async () => {
     let resolvePull!: (events: SdkEventEnvelope[]) => void
     getAgentEventsMock.mockImplementation(() => new Promise((res) => {
       resolvePull = (events) => res({ threadId: '', events })
     }))
     const t = await mount()
     await t.rerender('t1')
-    expect(getAgentEventsMock).toHaveBeenCalledTimes(1) // 首拉在飞(deferred 未回)
-    push(envelope('t1', 5)) // 5 > 0+1 判空洞 → 只进 pending,不触发 refetch
+    expect(getAgentEventsMock).toHaveBeenCalledTimes(1) // 首拉在飞
+    push(envelope('t1', 5)) // 空洞(5 > 0+1)：立即投递 + 触发对账（第二次调用）
+    await act(async () => { await flush() })
+    expect(getAgentEventsMock).toHaveBeenCalledTimes(2)
+    expect(t.received.map(({ e, source }) => [e.seq, source])).toEqual([[5, 'push']])
+    // 对账回包：seq 去重后只补缺失的 1~4，且按 snapshot 语义（不置 streaming）
     await act(async () => {
       resolvePull([envelope('t1', 1), envelope('t1', 2), envelope('t1', 3), envelope('t1', 4), envelope('t1', 5)])
       await flush()
     })
-    // 不触发全量 refetch(否则历史全按 push 入队+置 streaming,吞掉 snapshot 语义)
-    expect(getAgentEventsMock).toHaveBeenCalledTimes(1)
     expect(t.received.map(({ e, source }) => [e.seq, source])).toEqual([
-      [1, 'snapshot'], [2, 'snapshot'], [3, 'snapshot'], [4, 'snapshot'], [5, 'snapshot'],
+      [5, 'push'], [1, 'snapshot'], [2, 'snapshot'], [3, 'snapshot'], [4, 'snapshot'],
     ])
     await t.unmount()
     t.cleanup()
