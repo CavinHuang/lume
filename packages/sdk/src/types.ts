@@ -56,7 +56,6 @@ export type {
   SDKMessage,
   SDKPartialMessage,
   SDKPermissionDenial,
-  SDKPostTurnSummaryMessage,
   SDKPromptSuggestionMessage,
   SDKRateLimitEvent,
   SDKRateLimitInfo,
@@ -463,7 +462,6 @@ export interface InitializationResult {
 export interface ContextUsageCategory {
   name: string
   tokens: number
-  color: string
   isDeferred?: boolean
 }
 
@@ -473,14 +471,6 @@ export interface ContextUsageResult {
   maxTokens: number
   rawMaxTokens: number
   percentage: number
-  gridRows?: Array<Array<{
-    color: string
-    isFilled: boolean
-    categoryName: string
-    tokens: number
-    percentage: number
-    squareFullness: number
-  }>>
   model: string
   memoryFiles: Array<{ path: string; type: string; tokens: number }>
   deferredBuiltinTools?: Array<{ name: string; tokens: number; isLoaded: boolean }>

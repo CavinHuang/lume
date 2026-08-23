@@ -1193,15 +1193,14 @@ export class Agent {
     const init = await this.getInitializationResult()
     return {
       categories: [
-        { name: 'messages', tokens: 0, color: 'blue' },
-        { name: 'system', tokens: 0, color: 'green' },
-        { name: 'tools', tokens: 0, color: 'orange' },
+        { name: 'messages', tokens: 0 },
+        { name: 'system', tokens: 0 },
+        { name: 'tools', tokens: 0 },
       ],
       totalTokens: 0,
       maxTokens: getContextWindowSize(this.modelId),
       rawMaxTokens: getContextWindowSize(this.modelId),
       percentage: 0,
-      gridRows: [],
       model: this.modelId,
       memoryFiles: [],
       deferredBuiltinTools: [],
