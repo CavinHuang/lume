@@ -6,6 +6,7 @@ import type {
   ProviderExecutors,
   ResolvedCredential,
 } from "./core/types";
+import type { ConnectorSetup } from "@lume/shared";
 import { executeAction } from "./core/execution";
 import { requestAuthorizationCodeToken, requestRefreshToken } from "./oauth/oauth-token";
 import { providerFetch } from "./providers/provider-runtime";
@@ -43,6 +44,36 @@ export function getConnector(service: string): ConnectorProvider {
 
 export function listConnectors(): string[] {
   return [...providers.keys()];
+}
+
+/** 从 definition 提取配置向导:表单字段与注册指引,web 按此渲染。 */
+export function getConnectorSetup(service: string): ConnectorSetup {
+  const provider = getConnector(service);
+  const { definition } = provider;
+  const oauth2 = definition.auth.find((auth): auth is OAuth2AuthDefinition => auth.type === "oauth2");
+  if (oauth2) {
+    return {
+      service,
+      displayName: definition.displayName,
+      authKind: "oauth2",
+      fields: [],
+      clientSetup: oauth2.clientSetup
+        ? { docsUrl: oauth2.clientSetup.docsUrl, steps: [...oauth2.clientSetup.steps] }
+        : undefined,
+    };
+  }
+  const custom = definition.auth.find((auth) => auth.type === "custom_credential");
+  const fields =
+    custom?.type === "custom_credential"
+      ? custom.fields.map((field) => ({
+        key: field.key,
+        label: field.label,
+        inputType: field.inputType === "password" ? ("password" as const) : ("text" as const),
+        placeholder: field.placeholder,
+        description: field.description,
+      }))
+      : [];
+  return { service, displayName: definition.displayName, authKind: "custom", fields };
 }
 
 export class ConnectorError extends Error {

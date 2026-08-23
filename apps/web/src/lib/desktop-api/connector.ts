@@ -1,6 +1,9 @@
 import { CONNECTOR_IPC_CHANNELS } from '@lume/shared'
-import type { ConnectorStatus } from '@lume/shared'
+import type { ConnectorSetupWithStatus, ConnectorStatus } from '@lume/shared'
 import { sidecarCall } from './system'
+
+export const getConnectorSetups = () =>
+  sidecarCall<ConnectorSetupWithStatus[]>(CONNECTOR_IPC_CHANNELS.GET_SETUP, {})
 
 export const getConnectorStatus = (service: string) =>
   sidecarCall<ConnectorStatus>(CONNECTOR_IPC_CHANNELS.GET_STATUS, { service })

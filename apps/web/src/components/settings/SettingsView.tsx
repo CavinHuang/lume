@@ -11,8 +11,7 @@ import { GeneralSettings } from './GeneralSettings'
 import { AppearanceSettings } from './AppearanceSettings'
 import { AgentSettings } from './AgentSettings'
 import { AgentsSettings } from './AgentsSettings'
-import { GmailSettings } from './GmailSettings'
-import { QqMailSettings } from './QqMailSettings'
+import { ConnectorSettings } from './ConnectorSettings'
 import { McpSettings } from './McpSettings'
 import { ImSettings } from './ImSettings'
 import { PermissionSettings } from './PermissionSettings'
@@ -116,8 +115,7 @@ export function SettingsView() {
           )}
           {tab === 'integrations' && (
             <>
-              <GmailSettings />
-              <QqMailSettings />
+              <ConnectorSettings />
               <McpSettings />
             </>
           )}

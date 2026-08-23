@@ -3,8 +3,10 @@ import type { ConnectorStatus } from "@lume/shared";
 import {
   disconnectConnector,
   getConnector,
-  hasAnyConnectorCredential,
   getConnectorConnectedAccountLabel,
+  getConnectorSetup,
+  hasAnyConnectorCredential,
+  listConnectors,
   saveConnectorCustomCredential,
   startConnectorAuthorization,
 } from "../services/connectors/service";
@@ -57,6 +59,13 @@ function parseService(params: unknown, channel: string): string {
 export function createConnectorHandlers(): Record<string, RpcHandler> {
   return {
     [CONNECTOR_IPC_CHANNELS.GET_STATUS]: async (params) => buildStatus(parseService(params, CONNECTOR_IPC_CHANNELS.GET_STATUS)),
+
+    [CONNECTOR_IPC_CHANNELS.GET_SETUP]: async () =>
+      listConnectors().map((service) => ({
+        ...getConnectorSetup(service),
+        ...buildStatus(service),
+        service,
+      })),
 
     [CONNECTOR_IPC_CHANNELS.SAVE_CLIENT_CONFIG]: async (params) => {
       const { service, clientId, clientSecret } = validateInput(

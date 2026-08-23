@@ -6,6 +6,7 @@ import {
   ConnectorError,
   executeConnectorAction,
   getConnector,
+  getConnectorSetup,
   listConnectors,
   saveConnectorCustomCredential,
   startConnectorAuthorization,
@@ -37,6 +38,19 @@ describe("connector service", () => {
   test("qq_mail 已注册且为授权码型", () => {
     expect(listConnectors()).toContain("qq_mail");
     expect(getConnector("qq_mail").definition.authTypes).toEqual(["custom_credential"]);
+  });
+
+  test("配置向导按 auth 类型下发:gmail 带 clientSetup 步骤,qq_mail 带字段表", () => {
+    const gmail = getConnectorSetup("gmail");
+    expect(gmail.authKind).toBe("oauth2");
+    expect(gmail.clientSetup?.steps.length).toBeGreaterThan(3);
+    expect(gmail.fields).toEqual([]);
+
+    const qq = getConnectorSetup("qq_mail");
+    expect(qq.authKind).toBe("custom");
+    expect(qq.clientSetup).toBeUndefined();
+    expect(qq.fields.map((field) => field.key)).toEqual(["email", "authorizationCode"]);
+    expect(qq.fields.find((field) => field.key === "authorizationCode")?.inputType).toBe("password");
   });
 
   test("授权码凭证格式非法时保存被拒(不触网)", async () => {
