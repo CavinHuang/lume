@@ -15,7 +15,7 @@ import { basename, dirname, join } from 'path'
  */
 export async function writeFileAtomic(
   filePath: string,
-  content: Uint8Array,
+  content: string | Uint8Array,
   assertAllowed?: (resolvedPath: string) => string | null,
 ): Promise<void> {
   let targetPath = filePath
