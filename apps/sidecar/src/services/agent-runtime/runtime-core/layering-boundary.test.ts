@@ -14,7 +14,11 @@ const runtimeRoot = join(
   repositoryRoot,
   "apps/sidecar/src/services/agent-runtime",
 );
-const appLayerRoot = join(repositoryRoot, "apps/sidecar/src/services/agent");
+/** harness 禁止值依赖的平级服务目录(逐域扩展,#297 跟进)。 */
+const forbiddenServiceRoots = [
+  join(repositoryRoot, "apps/sidecar/src/services/agent"),
+  join(repositoryRoot, "apps/sidecar/src/services/channel"),
+];
 const runnerRoot = join(runtimeRoot, "runner");
 
 function listTsFiles(dir: string): string[] {
@@ -65,7 +69,7 @@ function resolveImportFromFile(fromFile: string, spec: string): string | null {
 }
 
 describe("分层方向守卫(#289)", () => {
-  test("agent-runtime 非测试文件不得对 services/agent 做值导入(仅放行 import type)", () => {
+  test("agent-runtime 非测试文件不得对禁域服务做值导入(仅放行 import type)", () => {
     const violations: string[] = [];
     for (const file of listTsFiles(runtimeRoot)) {
       const rel = relative(runtimeRoot, file);
@@ -73,11 +77,13 @@ describe("分层方向守卫(#289)", () => {
       for (const clause of parseImports(readFileSync(file, "utf-8"))) {
         const target = resolveImportFromFile(file, clause.spec);
         if (!target) continue;
-        const intoAppLayer =
-          target === appLayerRoot ||
-          target.startsWith(appLayerRoot + "\\") ||
-          target.startsWith(appLayerRoot + "/");
-        if (intoAppLayer && clause.hasValueSpecifiers && !clause.isDynamic) {
+        const intoForbidden = forbiddenServiceRoots.some(
+          (root) =>
+            target === root ||
+            target.startsWith(root + "\\") ||
+            target.startsWith(root + "/"),
+        );
+        if (intoForbidden && clause.hasValueSpecifiers && !clause.isDynamic) {
           violations.push(`${rel}: "${clause.spec}"`);
         }
       }

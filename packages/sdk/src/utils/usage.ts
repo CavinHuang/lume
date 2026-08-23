@@ -1,14 +1,10 @@
 import type {
-  AgentProgressUsage,
   ContextUsageSnapshot,
   NormalizedProviderUsage,
   UsageIdentity,
 } from '../types.js'
 import type { NormalizedMessageParam } from '../providers/types.js'
 import { estimateMessagesTokens } from './tokens.js'
-
-const DEFAULT_RESERVED_OUTPUT_TOKENS = 20_000
-const MAX_RESERVED_OUTPUT_TOKENS = 20_000
 
 export interface NormalizeProviderUsageOptions {
   inputIncludesCache?: boolean
@@ -99,51 +95,6 @@ export function normalizeProviderUsage(
     cacheReadInputTokens,
     cacheCreationInputTokens,
     totalTokens: inputTokens + outputTokens + cachedTokens,
-  }
-}
-
-export function getCachedTokens(usage: Pick<NormalizedProviderUsage, 'cacheReadInputTokens' | 'cacheCreationInputTokens'>): number {
-  return usage.cacheReadInputTokens + usage.cacheCreationInputTokens
-}
-
-export function calculateAutoCompactThreshold(
-  contextWindow: number,
-  maxOutputTokens: number = DEFAULT_RESERVED_OUTPUT_TOKENS,
-): number {
-  const windowTokens = tokenValue(contextWindow)
-  const reservedOutputTokens = Math.min(tokenValue(maxOutputTokens), MAX_RESERVED_OUTPUT_TOKENS)
-  const effectiveContextWindow = Math.max(0, windowTokens - reservedOutputTokens)
-  const bufferTokens = windowTokens >= 800_000
-    ? 50_000
-    : windowTokens >= 400_000
-      ? 30_000
-      : 13_000
-  return Math.max(0, effectiveContextWindow - bufferTokens)
-}
-
-export function createAgentProgressTracker() {
-  let inputTokens = 0
-  let cacheReadInputTokens = 0
-  let cacheCreationInputTokens = 0
-  let outputTokens = 0
-
-  return {
-    update(usage: NormalizedProviderUsage): AgentProgressUsage {
-      inputTokens = usage.inputTokens
-      cacheReadInputTokens = usage.cacheReadInputTokens
-      cacheCreationInputTokens = usage.cacheCreationInputTokens
-      outputTokens += usage.outputTokens
-      return this.snapshot()
-    },
-    snapshot(): AgentProgressUsage {
-      return {
-        inputTokens,
-        outputTokens,
-        cacheReadInputTokens,
-        cacheCreationInputTokens,
-        totalTokens: inputTokens + outputTokens + cacheReadInputTokens + cacheCreationInputTokens,
-      }
-    },
   }
 }
 

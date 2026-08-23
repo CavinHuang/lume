@@ -164,36 +164,3 @@ export function isPromptTooLongError(err: any): boolean {
   }
   return false
 }
-
-/**
- * Check if error is an auth error.
- */
-export function isAuthError(err: any): boolean {
-  return err?.status === 401 || err?.status === 403
-}
-
-/**
- * Check if error is a rate limit error.
- */
-export function isRateLimitError(err: any): boolean {
-  return err?.status === 429
-}
-
-/**
- * Format an API error for display.
- */
-export function formatApiError(err: any): string {
-  if (isAuthError(err)) {
-    return 'Authentication failed. Check the credentials configured on your LLM provider.'
-  }
-  if (isRateLimitError(err)) {
-    return 'Rate limit exceeded. Please retry after a short wait.'
-  }
-  if (err?.status === 529) {
-    return 'API overloaded. Please retry later.'
-  }
-  if (isPromptTooLongError(err)) {
-    return 'Prompt too long. Auto-compacting conversation...'
-  }
-  return `API error: ${err.message || err}`
-}

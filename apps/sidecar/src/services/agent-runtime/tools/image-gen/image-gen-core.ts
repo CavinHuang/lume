@@ -1,6 +1,5 @@
 import type { Channel, ProviderType } from "@lume/shared";
 import { getRuntimeHostPorts } from "../../host-ports";
-import { decryptApiKey, resolveChannelModelBinding } from "../../../channel/channel-manager";
 import { getEffectiveLumeConfig } from "../../../system/lume-config-service";
 import { createLogger } from "../../../infra/logger";
 import { callImageHttp } from "./image-gen-http";
@@ -45,10 +44,10 @@ export interface ImageGenDeps {
 
 const defaultDeps: ImageGenDeps = {
   resolveBinding: (modelRef) => {
-    const binding = resolveChannelModelBinding(modelRef);
+    const binding = getRuntimeHostPorts().resolveChannelModelBinding(modelRef);
     return binding ? { channel: binding.channel, modelId: binding.modelId } : null;
   },
-  decryptKey: decryptApiKey,
+  decryptKey: (...args) => getRuntimeHostPorts().decryptApiKey(...args),
   callHttp: callImageHttp,
   readModelRefs: (ws) =>
     getEffectiveLumeConfig(ws).models?.imageGeneration?.priorityModelRefs ?? [],

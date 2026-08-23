@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "@lume/agent-sdk";
-import { resolveChannelModelBinding } from "../../../channel/channel-manager";
+import { getRuntimeHostPorts } from "../../host-ports";
 import { getEffectiveLumeConfig } from "../../../system/lume-config-service";
 import { createSdkJsonResultTool } from "../sdk-tool-result";
 import { generateImage } from "./image-gen-core";
@@ -69,7 +69,7 @@ reference_image and mask_image accept a threadPath (relative to the current thre
         const config = getEffectiveLumeConfig(input.workspaceSlug);
         const refs = config.models?.imageGeneration?.priorityModelRefs ?? [];
         const models = refs.map((modelRef, index) => {
-          const binding = resolveChannelModelBinding(modelRef);
+          const binding = getRuntimeHostPorts().resolveChannelModelBinding(modelRef);
           if (!binding) {
             return { modelRef, provider: null, modelId: null, available: false, reason: "渠道未配置或未启用", priority: index + 1 };
           }

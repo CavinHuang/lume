@@ -1,5 +1,12 @@
 import type { Channel, LumeConfigAgentDefaultStrategy, ProviderType } from "@lume/shared";
 
+// 纯函数簇已下移 runtime-core/model-candidates(#289 分层切边);此处 re-export 维持既有 import 路径。
+export {
+  resolveChannelDefaultModelId,
+  resolveRequestedModelIdForChannel,
+  resolveModelCandidatesForChannel
+} from "../agent-runtime/runtime-core/model-candidates";
+
 export interface ModelRef {
   provider: string;
   model: string;
@@ -153,10 +160,6 @@ export function resolveChannelModelSelection(input: {
   };
 }
 
-function normalizeLookupKey(value?: string): string {
-  return (value ?? "").trim().toLowerCase();
-}
-
 function normalizeOptionalValue(value?: string): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
@@ -213,73 +216,3 @@ export function resolveAgentDefaultStrategy(input: {
   };
 }
 
-export function resolveChannelDefaultModelId(channel: Pick<Channel, "models">): string | null {
-  const channelWithDefault = channel as Pick<Channel, "models" | "defaultModelId">;
-  const configuredDefault = channelWithDefault.defaultModelId?.trim();
-  if (configuredDefault && channel.models.some((model) => model.id === configuredDefault && model.enabled)) {
-    return configuredDefault;
-  }
-  const enabled = channel.models.find((model) => model.enabled && model.id.trim().length > 0);
-  if (enabled) {
-    return enabled.id;
-  }
-  const first = channel.models.find((model) => model.id.trim().length > 0);
-  return first?.id ?? null;
-}
-
-export function resolveRequestedModelIdForChannel(
-  channel: Pick<Channel, "models">,
-  requestedModelId?: string
-): string | null {
-  const requested = requestedModelId?.trim();
-  if (!requested) {
-    return resolveChannelDefaultModelId(channel);
-  }
-
-  const exactMatch = channel.models.find((model) => model.id === requested);
-  if (exactMatch) {
-    return exactMatch.enabled ? requested : resolveChannelDefaultModelId(channel);
-  }
-
-  const requestedKey = normalizeLookupKey(requested);
-  if (!requested.includes("/")) {
-    const aliasMatch = channel.models.find((model) => {
-      return (
-        normalizeLookupKey(model.alias) === requestedKey ||
-        normalizeLookupKey(model.name) === requestedKey ||
-        normalizeLookupKey(model.id) === requestedKey
-      );
-    });
-    if (aliasMatch) {
-      return aliasMatch.enabled ? aliasMatch.id : resolveChannelDefaultModelId(channel);
-    }
-  }
-
-  return requested;
-}
-
-export function resolveModelCandidatesForChannel(
-  channel: Pick<Channel, "models" | "defaultModelId" | "fallbackModelIds">,
-  requestedModelId?: string
-): string[] {
-  const candidates: string[] = [];
-  const push = (value?: string | null): void => {
-    const normalized = value?.trim();
-    if (!normalized) return;
-    if (!candidates.includes(normalized)) {
-      candidates.push(normalized);
-    }
-  };
-
-  push(resolveRequestedModelIdForChannel(channel, requestedModelId));
-  push(resolveChannelDefaultModelId(channel));
-  for (const fallback of channel.fallbackModelIds ?? []) {
-    push(resolveRequestedModelIdForChannel(channel, fallback));
-  }
-  for (const model of channel.models) {
-    if (model.enabled) {
-      push(model.id);
-    }
-  }
-  return candidates;
-}

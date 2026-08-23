@@ -14,8 +14,6 @@ import type {
   PermissionMode,
   Query as QueryHandle,
   QueryResult,
-  ReloadPluginsResult,
-  RewindFilesResult,
   SDKMessage,
   SDKUserMessage,
   SessionMessage,
@@ -32,7 +30,6 @@ import {
   getAllBaseTools,
 } from './tools/index.js'
 import { applyOverrides, createToolRegistry } from './tools/registry.js'
-import { registerAgents } from './tools/agent-tool.js'
 import {
   saveSession,
   loadSession,
@@ -55,14 +52,12 @@ import {
   type LoadedSettingsSource,
 } from './utils/settings.js'
 import { QueryController } from './query-controller.js'
-import { loadPlugins, type LoadedPlugin } from './plugins/loader.js'
 import { loadFilesystemSkills } from './skills/fs-loader.js'
 import type { FileCheckpoint, FileCheckpointState } from './utils/file-checkpoints.js'
-import { rewindCheckpoint } from './utils/file-checkpoints.js'
 import { getContextWindowSize } from './utils/tokens.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { createExecuteTool, createToolSearchTool, isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
-import { buildResumeContinuations, detectDanglingToolUses, INTERRUPTED_TOOL_PLACEHOLDER } from './interrupt-recovery.js'
+import { detectDanglingToolUses, INTERRUPTED_TOOL_PLACEHOLDER } from './interrupt-recovery.js'
 
 type QueryInput = string | ContentBlockParam[] | SDKUserMessage
 
@@ -273,8 +268,6 @@ export class Agent {
   private runLocked = false
   private hookRegistry: HookRegistry
   private loadedSettings: LoadedSettingsSource[] = []
-  private loadedPlugins: LoadedPlugin[] = []
-  private pluginSkillNames = new Set<string>()
   private explicitSkillNames = new Set<string>()
   private fileSkillNames = new Set<string>()
   private fileCheckpointState: FileCheckpointState = {}
@@ -303,12 +296,8 @@ export class Agent {
     this.setupDone.catch(() => {})
   }
 
-  private readEnv(key: string): string | undefined {
-    return process.env[key] || undefined
-  }
-
   private refreshResolvedConfig(): void {
-    this.modelId = this.cfg.model ?? this.readEnv('CODEANY_MODEL') ?? 'claude-sonnet-4-6'
+    this.modelId = this.cfg.model ?? 'claude-sonnet-4-6'
     this.provider = this.cfg.provider ?? unconfiguredProvider()
     if (this.cfg.sessionId) {
       this.sid = this.cfg.sessionId
@@ -334,39 +323,6 @@ export class Agent {
             })
           }
         }
-      }
-    }
-
-    for (const plugin of this.loadedPlugins) {
-      if (!plugin.hooks) continue
-      const hookCount = Object.values(plugin.hooks).reduce((sum, defs) => sum + defs.length, 0)
-      console.debug(`[plugin:agent] registering hooks for "${plugin.name}"`, {
-        events: Object.keys(plugin.hooks),
-        totalHooks: hookCount,
-      });
-      this.hookRegistry.registerFromConfig(plugin.hooks)
-    }
-  }
-
-  private unregisterPluginSkills(): void {
-    for (const name of this.pluginSkillNames) {
-      this.skillRegistry.unregister(name)
-    }
-    this.pluginSkillNames.clear()
-  }
-
-  private registerPluginSkills(): void {
-    this.unregisterPluginSkills()
-    for (const plugin of this.loadedPlugins) {
-      if (plugin.lume?.hooksOnly) continue
-      const skills = plugin.skills || []
-      console.debug(`[plugin:agent] registering skills for "${plugin.name}"`, {
-        count: skills.length,
-        names: skills.map((s) => s.name),
-      });
-      for (const skill of skills) {
-        this.skillRegistry.register(skill)
-        this.pluginSkillNames.add(skill.name)
       }
     }
   }
@@ -406,23 +362,7 @@ export class Agent {
     }
   }
 
-  private getPluginAgents(): Record<string, NonNullable<AgentOptions['agents']>[string]> {
-    const merged: Record<string, NonNullable<AgentOptions['agents']>[string]> = {}
-    for (const plugin of this.loadedPlugins) {
-      Object.assign(merged, plugin.agents || {})
-    }
-    return merged
-  }
-
-  private getPluginTools(): ToolDefinition[] {
-    return this.loadedPlugins.flatMap((plugin) => {
-      if (plugin.lume?.hooksOnly) return []
-      return plugin.tools || []
-    })
-  }
-
   private buildBaseToolPool(options: AgentOptions = this.cfg): ToolDefinition[] {
-    const pluginTools = this.getPluginTools()
     const bindSkillRegistry = (tool: ToolDefinition) => tool.name === 'Skill'
       ? createSkillTool(this.skillRegistry)
       : tool
@@ -431,11 +371,11 @@ export class Agent {
     let pool: ToolDefinition[]
 
     if (!raw || (typeof raw === 'object' && !Array.isArray(raw) && 'type' in raw)) {
-      pool = [...baseTools, ...pluginTools]
+      pool = [...baseTools]
     } else if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'string') {
-      pool = filterTools([...baseTools, ...pluginTools], raw as string[])
+      pool = filterTools([...baseTools], raw as string[])
     } else {
-      pool = [...(raw as ToolDefinition[]).map(bindSkillRegistry), ...pluginTools]
+      pool = [...(raw as ToolDefinition[]).map(bindSkillRegistry)]
     }
 
     return filterTools(pool, undefined, options.disallowedTools)
@@ -575,21 +515,14 @@ export class Agent {
   }
 
   /**
-   * Reload state derived from cfg.cwd: resolved provider config, plugins,
-   * skills, commands, agents, and MCP connections. Runs from setup() and again
-   * after setCwd(). Must not rebuild cfg (runtime mutations like setModel or
-   * setPermissionMode live there) nor re-run the session resume/fork branch.
+   * Reload state derived from cfg.cwd: resolved provider config and skills.
+   * Runs from setup() and again after setCwd(). Must not rebuild cfg
+   * (runtime mutations like setModel or setPermissionMode live there) nor
+   * re-run the session resume/fork branch.
    */
   private async refreshCwdDependentState(): Promise<void> {
     const cwd = this.cfg.cwd || process.cwd()
     this.refreshResolvedConfig()
-    this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins, this.cfg.pluginRoots)
-    console.debug(`[plugin:agent] plugins loaded`, {
-      count: this.loadedPlugins.length,
-      names: this.loadedPlugins.map((p) => p.name),
-      hooksOnly: this.loadedPlugins.filter((p) => p.lume?.hooksOnly).map((p) => p.name),
-    });
-    this.registerPluginSkills()
     await this.registerFilesystemSkills({
       cwd,
       roots: this.cfg.skillsDirectories,
@@ -597,14 +530,6 @@ export class Agent {
     })
     this.registerExplicitSkills()
     this.resetHookRegistry()
-
-    const mergedAgents = {
-      ...this.getPluginAgents(),
-      ...(this.cfg.agents || {}),
-    }
-    if (Object.keys(mergedAgents).length > 0) {
-      registerAgents(mergedAgents)
-    }
   }
 
   private getEffectiveOptions(overrides?: Partial<AgentOptions>): AgentOptions {
@@ -933,7 +858,6 @@ export class Agent {
       includePartialMessages: opts.includePartialMessages ?? false,
       abortSignal: this.abortCtrl.signal,
       agents: {
-        ...this.getPluginAgents(),
         ...(opts.agents || {}),
       },
       hookRegistry: this.hookRegistry,
@@ -947,11 +871,6 @@ export class Agent {
       initialization: {
         slashCommands: this.getInitializationCommands().map((command) => command.name),
         skills: this.skillRegistry.getUserInvocable().map((skill) => skill.name),
-        plugins: this.loadedPlugins.map((plugin) => ({
-          name: plugin.name,
-          path: plugin.path,
-          source: plugin.source,
-        })),
         outputStyle: opts.outputStyle || 'text',
         claudeCodeVersion: 'open-agent-sdk/0.2.0',
         apiKeySource: 'configured',
@@ -1105,22 +1024,7 @@ export class Agent {
       }
     }.bind(this)
 
-    return new QueryController(
-      {
-        interrupt: () => this.interrupt(),
-        setPermissionMode: (mode) => this.setPermissionMode(mode),
-        setModel: (model) => this.setModel(model),
-        setMaxThinkingTokens: (tokens) => this.setMaxThinkingTokens(tokens),
-        setCwd: (cwd) => this.setCwd(cwd),
-        getInitializationResult: () => this.getInitializationResult(),
-        getContextUsage: () => this.getContextUsage(),
-        reloadPlugins: () => this.reloadPlugins(),
-        rewindFiles: (userMessageId, dryRun) => this.rewindFiles(userMessageId, dryRun),
-        stopTask: (taskId) => this.stopTask(taskId),
-      },
-      runner,
-      initialInput,
-    )
+    return new QueryController(runner, initialInput)
   }
 
   query(
@@ -1196,53 +1100,6 @@ export class Agent {
     return true
   }
 
-  /**
-   * Resume an interrupted run from the persisted dangling tool boundary.
-   * Read-only / concurrency-safe tools replay once; everything else
-   * (including unknown tools) gets an interrupted placeholder — never
-   * auto-replay a mutation whose actual effect is unknown.
-   */
-  async *resumeInterruptedRun(overrides?: Partial<AgentOptions>): AsyncGenerator<SDKMessage, void> {
-    // currentEngine (not abortCtrl, which is never cleared after a run) is
-    // the accurate in-flight marker: set before the loop, cleared in finally.
-    if (this.currentEngine) throw new Error('agent is running')
-    // Await setup before detecting: this.history is loaded from the session
-    // file inside setup(), so an early detect sees [] and silently no-ops.
-    await this.setupDone
-    const dangling = detectDanglingToolUses(this.history)
-    if (dangling.length === 0) return
-    const opts = this.getEffectiveOptions(overrides)
-    const { tools } = this.getRunTools(opts, overrides)
-    const continuations = buildResumeContinuations(dangling, {
-      isReadOnly: (name) => {
-        const tool = tools.find((t) => t.name === name)
-        if (!tool) return false
-        return tool.isReadOnly?.() === true || tool.isConcurrencySafe?.() === true
-      },
-    })
-    yield* this.runSinglePrompt('', { ...overrides, toolContinuations: continuations })
-  }
-
-  /**
-   * Discard an interrupted run: fill dangling tool_use with error results so
-   * the session lands in a clean state without another model request.
-   */
-  async discardInterruptedRun(cwd: string): Promise<void> {
-    await this.setupDone
-    const dangling = detectDanglingToolUses(this.history)
-    if (dangling.length === 0) return
-    this.history.push({
-      role: 'user',
-      content: dangling.map((use) => ({
-        type: 'tool_result' as const,
-        tool_use_id: use.id,
-        content: 'Error: run discarded by user',
-        is_error: true,
-      })),
-    })
-    await this.persistCurrentSession(cwd, this.getEffectiveOptions())
-  }
-
   async setModel(model?: string): Promise<void> {
     if (model) {
       this.cfg.model = model
@@ -1283,11 +1140,6 @@ export class Agent {
     return this.provider.apiType
   }
 
-  async stopTask(taskId: string): Promise<void> {
-    const { getProcessJob } = await import('./tools/process-job-registry.js')
-    getProcessJob(taskId)?.stop?.()
-  }
-
   private getInitializationCommands(): SlashCommand[] {
     const builtins: SlashCommand[] = [
       { name: '/clear', description: 'Clear the current conversation context' },
@@ -1313,7 +1165,6 @@ export class Agent {
     return {
       commands,
       agents: Object.entries({
-        ...this.getPluginAgents(),
         ...(this.cfg.agents || {}),
       }).map(([name, agent]) => ({
         name,
@@ -1328,11 +1179,6 @@ export class Agent {
       },
       slash_commands: commands.map((command) => command.name),
       skills: this.skillRegistry.getUserInvocable().map((skill) => skill.name),
-      plugins: this.loadedPlugins.map((plugin) => ({
-        name: plugin.name,
-        path: plugin.path,
-        source: plugin.source,
-      })),
     }
   }
 
@@ -1347,15 +1193,14 @@ export class Agent {
     const init = await this.getInitializationResult()
     return {
       categories: [
-        { name: 'messages', tokens: 0, color: 'blue' },
-        { name: 'system', tokens: 0, color: 'green' },
-        { name: 'tools', tokens: 0, color: 'orange' },
+        { name: 'messages', tokens: 0 },
+        { name: 'system', tokens: 0 },
+        { name: 'tools', tokens: 0 },
       ],
       totalTokens: 0,
       maxTokens: getContextWindowSize(this.modelId),
       rawMaxTokens: getContextWindowSize(this.modelId),
       percentage: 0,
-      gridRows: [],
       model: this.modelId,
       memoryFiles: [],
       deferredBuiltinTools: [],
@@ -1395,61 +1240,6 @@ export class Agent {
     }
   }
 
-  async reloadPlugins(): Promise<ReloadPluginsResult> {
-    await this.setupDone
-
-    this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins, this.cfg.pluginRoots)
-    this.registerPluginSkills()
-    await this.registerFilesystemSkills({
-      cwd: this.cfg.cwd || process.cwd(),
-      roots: this.cfg.skillsDirectories,
-      shouldLoadSkill: this.cfg.shouldLoadFilesystemSkill,
-    })
-    this.registerExplicitSkills()
-    this.resetHookRegistry()
-    await this.rebuildToolPool()
-
-    const mergedAgents = {
-      ...this.getPluginAgents(),
-      ...(this.cfg.agents || {}),
-    }
-    if (Object.keys(mergedAgents).length > 0) {
-      registerAgents(mergedAgents)
-    }
-
-    return {
-      commands: (await this.getInitializationResult()).commands,
-      agents: Object.entries(mergedAgents).map(([name, agent]) => ({
-        name,
-        description: agent.description,
-      })),
-      plugins: this.loadedPlugins.map((plugin) => ({
-        name: plugin.name,
-        path: plugin.path,
-        source: plugin.source,
-      })),
-    }
-  }
-
-  async rewindFiles(
-    userMessageId: string,
-    dryRun = false,
-  ): Promise<RewindFilesResult> {
-    await this.setupDone
-    const checkpoint = this.fileCheckpointState[userMessageId]
-    const result = await rewindCheckpoint(checkpoint, dryRun)
-    if (!dryRun && result.canRewind) {
-      await saveSession(this.sid, this.history, {
-        cwd: this.cfg.cwd || process.cwd(),
-        model: this.modelId,
-        summary: extractSummary(this.messageLog),
-        sessionMessages: this.sessionMessages,
-        checkpoints: this.fileCheckpointState,
-      })
-    }
-    return result
-  }
-
   /** Return the checkpoint captured for the most recently submitted user message. */
   getLatestFileCheckpoint(): FileCheckpoint | undefined {
     return this.latestUserMessageId ? this.fileCheckpointState[this.latestUserMessageId] : undefined
@@ -1474,7 +1264,6 @@ export class Agent {
 
     this.unregisterFileSkills()
     this.unregisterExplicitSkills()
-    this.unregisterPluginSkills()
     // Release the engine retained for lazy usage estimation (#386): past
     // close, it would otherwise keep the full message history reachable for
     // the lifetime of the Agent. getContextUsage falls back to the safe
@@ -1485,18 +1274,4 @@ export class Agent {
 
 export function createAgent(options: AgentOptions = {}): Agent {
   return new Agent(options)
-}
-
-export function query(params: {
-  prompt: QueryInput | AsyncIterable<QueryInput>
-  options?: AgentOptions
-}): QueryHandle {
-  const ephemeral = createAgent(params.options)
-  return (ephemeral as any).buildQueryHandle(
-    params.prompt,
-    undefined,
-    async () => {
-      await ephemeral.close()
-    },
-  ) as QueryHandle
 }

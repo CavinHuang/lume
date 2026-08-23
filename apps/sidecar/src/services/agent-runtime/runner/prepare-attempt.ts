@@ -1,4 +1,3 @@
-import { decryptApiKey, isChannelConnectionUsable, listChannels, resolveChannelModelBinding } from "../../channel/channel-manager";
 import type { ResolvedAgentWorkdir } from "../host-ports";
 import { getRuntimeHostPorts } from "../host-ports";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult } from "../runtime-core/types";
@@ -31,9 +30,9 @@ export async function prepareRuntimeCoreAttempt(
   params: AgentRuntimeRunParams
 ): Promise<PreparedRuntimeCoreAttempt | AgentRuntimeRunResult> {
   const { runtime } = params;
-  const boundModel = resolveChannelModelBinding(runtime.modelRef ?? "", "chat", runtime.channelId);
-  const channel = boundModel?.channel ?? listChannels().find((item) => (
-    item.id === runtime.channelId && isChannelConnectionUsable(item)
+  const boundModel = getRuntimeHostPorts().resolveChannelModelBinding(runtime.modelRef ?? "", "chat", runtime.channelId);
+  const channel = boundModel?.channel ?? getRuntimeHostPorts().listChannels().find((item) => (
+    item.id === runtime.channelId && getRuntimeHostPorts().isChannelConnectionUsable(item)
   ));
   if (!channel) {
     return { status: "errored", errorMessage: "runtime-core 未找到可用渠道。" };
@@ -46,7 +45,7 @@ export async function prepareRuntimeCoreAttempt(
 
   let apiKey = "";
   try {
-    apiKey = decryptApiKey(channel.id);
+    apiKey = getRuntimeHostPorts().decryptApiKey(channel.id);
   } catch {
     return { status: "errored", errorMessage: "runtime-core 解密 API Key 失败。" };
   }

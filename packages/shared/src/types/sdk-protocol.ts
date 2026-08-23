@@ -66,7 +66,6 @@ export type SDKMessage =
   | SDKTaskProgressMessage
   | SDKPromptSuggestionMessage
   | SDKApiRetryMessage
-  | SDKPostTurnSummaryMessage
   | SDKStreamlinedTextMessage
   | SDKStreamlinedToolUseSummaryMessage
   | SDKToolUseSummaryMessage
@@ -147,7 +146,6 @@ export interface SDKResultMessage {
   usageRecords?: SDKUsageRecord[]
   billingUsage?: BillingUsageSummary
   contextUsage?: ContextUsageSnapshot
-  progressUsage?: AgentProgressUsage
   permission_denials?: SDKPermissionDenial[]
   structured_output?: unknown
   errors?: string[]
@@ -551,22 +549,6 @@ export interface SDKPermissionDenial {
   tool_input: Record<string, unknown>
 }
 
-export interface SDKPostTurnSummaryMessage {
-  type: 'system'
-  subtype: 'post_turn_summary'
-  summarizes_uuid: string
-  status_category: 'blocked' | 'waiting' | 'completed' | 'review_ready' | 'failed'
-  status_detail: string
-  is_noteworthy: boolean
-  title: string
-  description: string
-  recent_action: string
-  needs_action: string
-  artifact_urls: string[]
-  uuid?: string
-  session_id: string
-}
-
 export interface SDKStreamlinedTextMessage {
   type: 'streamlined_text'
   text: string
@@ -667,8 +649,6 @@ export interface BillingUsageSummary {
   records: BillingUsageRecord[]
   totalCostUSD: number
 }
-
-export interface AgentProgressUsage extends NormalizedProviderUsage {}
 
 export interface TokenUsage {
   input_tokens: number
