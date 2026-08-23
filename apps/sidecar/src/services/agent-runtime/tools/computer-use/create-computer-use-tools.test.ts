@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createComputerUseMcpTools } from "./create-computer-use-tools";
+import { createComputerUseMcpTools, describeComputerUseError } from "./create-computer-use-tools";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -622,5 +622,19 @@ describe("createComputerUseMcpTools Window2 v3", () => {
     expect((result as any).is_error).toBeTrue();
     expect(jsonResult(result).error).toContain("user_takeover_required");
     expect(calls).toEqual(["desktop_context.preflight_action"]);
+  });
+});
+
+describe("describeComputerUseError", () => {
+  test("素对象取 message 字段，不再产出 [object Object]", () => {
+    // 回归：跨进程 RPC 回传 {code,message} 素对象（非 Error 实例），
+    // 此前 String() 得到 "[object Object]"，真实失败原因丢失
+    expect(describeComputerUseError({ code: "stale_target", message: "target window closed" })).toBe("target window closed");
+  });
+
+  test("Error 实例取 message；无 message 对象 JSON 序列化保留内容", () => {
+    expect(describeComputerUseError(new Error("boom"))).toBe("boom");
+    expect(describeComputerUseError({ code: 7, reason: "denied" })).toBe('{"code":7,"reason":"denied"}');
+    expect(describeComputerUseError("plain string")).toBe("plain string");
   });
 });

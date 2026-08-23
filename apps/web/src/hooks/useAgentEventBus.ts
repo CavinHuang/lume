@@ -2,7 +2,7 @@ import { getAgentEvents, onAgentEvents } from '@/lib/desktop-api/agent'
 import { useEffect, useRef } from 'react'
 import type { SdkEventEnvelope } from '@lume/shared'
 
-/** snapshot = 首次挂载/线程切回的初始拉取回放;push = 实时推送与空洞补拉。 */
+/** snapshot = 首次挂载/线程切回的初始拉取回放;push = 实时推送与补拉对账。 */
 export type AgentEventBusSource = 'snapshot' | 'push'
 
 export interface UseAgentEventBusOptions {
@@ -14,9 +14,16 @@ export interface UseAgentEventBusOptions {
  * Consume the sidecar lifecycle event bus for one thread.
  *
  * On mount: pull a snapshot via getAgentEvents (with afterSeq when this thread
- * was seen before), then subscribe to pushes. Push events are delivered in seq
- * order only — duplicates are dropped and a gap triggers a full refetch whose
- * result is merged back through the same seq-deduping deliver path.
+ * was seen before), then subscribe to pushes.
+ *
+ * The bus coalesces streaming updates on two levels (16ms micro-batch and 500ms
+ * persist coalescing): only the latest cumulative partial per key survives, so
+ * envelope seq numbers are sparse BY DESIGN — a coalesced-away seq never appears
+ * in snapshots or pushes. Seq continuity therefore cannot signal a lost event:
+ * delivery is monotonic-accept (render immediately), and a push-side gap only
+ * triggers one background full refetch to backfill genuinely lost events via
+ * seq dedup. Re-entering the thread (fresh snapshot) remains the final safety
+ * net for loss.
  *
  * The hook does not write any atom; where events land is up to the consumer.
  */
@@ -32,36 +39,29 @@ export function useAgentEventBus(threadId: string, options: UseAgentEventBusOpti
   useEffect(() => {
     if (!enabled) return
     const maxSeqByThread = maxSeqByThreadRef.current
-    let localMax = maxSeqByThread[threadId] ?? 0
+    // 去重用已投递集合而非单一水位：push 空洞事件先到会把水位推高，
+    // 对账回填的更低 seq 会被水位误判为已投递而丢失。
+    const delivered = new Set<number>()
+    let maxSeq = maxSeqByThread[threadId] ?? 0
     let disposed = false
     let unlisten: (() => void) | null = null
     let refetching = false
-    // Push events that arrived ahead of their predecessors and are not covered
-    // by the refetch result yet; replayed after every refetch.
-    let pending: SdkEventEnvelope[] = []
-    // 首次快照拉取是否已回包。在飞时 push 出现空洞只进 pending 不触发
-    // refetchAll:此时全量 refetch 会把全部历史按 push 入队+置 streaming,
-    // 吞掉 snapshot 语义(重载竞态,与旧路双份注入复发)。在飞的 pull 全量
-    // 必然覆盖空洞,pending 由其后的 seq 去重吸收。
-    let pulled = false
 
-    const deliver = (e: SdkEventEnvelope, source: AgentEventBusSource, fromPending = false) => {
-      if (e.seq <= localMax) return // already delivered (pull/push overlap)
-      if (e.seq > localMax + 1) {
-        if (!fromPending) {
-          pending.push(e)
-          if (pulled) void refetchAll()
-        }
-        return
-      }
-      localMax = e.seq
-      maxSeqByThread[threadId] = e.seq
+    const deliver = (e: SdkEventEnvelope, source: AgentEventBusSource) => {
+      if (delivered.has(e.seq)) return // already delivered (pull/push overlap)
+      const gap = e.seq > maxSeq + 1
+      delivered.add(e.seq)
+      maxSeq = Math.max(maxSeq, e.seq)
+      maxSeqByThread[threadId] = maxSeq
       onEventRef.current(e, source)
+      // 仅 push 空洞触发对账：折叠产生的空洞快照里同样没有，补拉无害（seq 去重）；
+      // 真丢的推送事件由此回填。snapshot 本身就是全量真相，无需对账。
+      if (gap && source === 'push') void refetchAll()
     }
 
-    const deliverSorted = (events: SdkEventEnvelope[], source: AgentEventBusSource, fromPending = false) => {
+    const deliverSorted = (events: SdkEventEnvelope[], source: AgentEventBusSource) => {
       const sorted = [...events].sort((a, b) => a.seq - b.seq)
-      for (const e of sorted) deliver(e, source, fromPending)
+      for (const e of sorted) deliver(e, source)
     }
 
     const refetchAll = async () => {
@@ -70,9 +70,9 @@ export function useAgentEventBus(threadId: string, options: UseAgentEventBusOpti
       try {
         const result = await getAgentEvents(threadId)
         if (disposed) return
-        deliverSorted(result.events, 'push')
-        deliverSorted(pending, 'push', true)
-        pending = pending.filter((e) => e.seq > localMax)
+        // 对账结果按 snapshot 语义投递：只回填缺失事件（seq 去重吸收其余），
+        // 不把历史事件按 push 语义置 streaming。
+        deliverSorted(result.events, 'snapshot')
       } catch (error) {
         console.error(`[useAgentEventBus] full refetch failed: ${threadId}`, error)
       } finally {
@@ -83,17 +83,9 @@ export function useAgentEventBus(threadId: string, options: UseAgentEventBusOpti
     const pull = async () => {
       try {
         const result = await getAgentEvents(threadId, maxSeqByThread[threadId])
-        if (disposed) return
-        pulled = true
-        deliverSorted(result.events, 'snapshot')
-        // pull 期间到达的 push(未触发 refetch)在此吸收:seq 去重后按 push 语义补投
-        deliverSorted(pending, 'push', true)
-        pending = pending.filter((e) => e.seq > localMax)
+        if (!disposed) deliverSorted(result.events, 'snapshot')
       } catch (error) {
         console.error(`[useAgentEventBus] snapshot pull failed: ${threadId}`, error)
-        // 失败也要置位：pulled 恒 false 会让后续 push 的 seq 空洞不触发
-        // refetchAll，事件堆在 pending 永不投递，对话冻结到重进线程（#409）
-        pulled = true
       }
     }
     void pull()
