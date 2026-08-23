@@ -1,5 +1,5 @@
-import { resolveChannelModelBinding } from "../../channel/channel-manager";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
+import { getRuntimeHostPorts } from "../host-ports";
 
 export function resolveMockRuntimeModelAttemptParams<T extends {
   runtime?: {
@@ -13,7 +13,7 @@ export function resolveMockRuntimeModelAttemptParams<T extends {
   const attempts: T[] = [params];
   for (const modelRef of refs) {
     if (modelRef === params.runtime?.modelRef) continue;
-    const binding = resolveChannelModelBinding(modelRef, "chat");
+    const binding = getRuntimeHostPorts().resolveChannelModelBinding(modelRef, "chat");
     if (!binding) continue;
     attempts.push({
       ...params,
