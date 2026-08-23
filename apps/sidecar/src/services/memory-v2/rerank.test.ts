@@ -5,6 +5,7 @@ import type { MemoryV2RecallItem } from "./types";
 const items: MemoryV2RecallItem[] = [{
   id: "a",
   kind: "decision",
+  semanticRole: "decision",
   scope: "workspace",
   status: "active",
   statement: "Memory architecture uses lexical fallback.",
@@ -15,6 +16,7 @@ const items: MemoryV2RecallItem[] = [{
 }, {
   id: "b",
   kind: "decision",
+  semanticRole: "decision",
   scope: "workspace",
   status: "active",
   statement: "Memory architecture uses semantic reranking.",
