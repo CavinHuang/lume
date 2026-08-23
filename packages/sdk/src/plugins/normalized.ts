@@ -1,7 +1,6 @@
 import { adaptCodexPlugin } from "./codex-adapter.js";
 import {
-  inferDefaults,
-  parseManifest,
+  validateManifest,
   validatePluginPath,
   type PluginMarketplaceManifest,
   type PluginPermissions,
@@ -132,7 +131,7 @@ function normalizeLumeManifest(
   raw: Record<string, unknown>,
   format: "lume" | "codex",
 ): NormalizedPlugin {
-  const manifest = inferDefaults(parseManifest(raw));
+  const manifest = validateManifest(raw);
   const diagnostics: PluginDiagnostic[] = [];
   collectUnsupportedFields(raw, diagnostics, manifest.name, manifest.version);
   const commandTools = normalizeCommandTools(raw.commandTools ?? [], diagnostics, manifest.name, manifest.version);

@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { fileRefSchema as sharedFileRefSchema } from '@lume/shared'
+import { rendererFileRefSchema } from './schemas/shared'
 import { fileRefInputSchema, fileSelectionEditInputSchema, guardedFileRefInputSchema } from './schemas'
 
 const projectRef = { source: 'project' as const, scopeId: 'demo', relativePath: 'src/app.ts' }
@@ -10,6 +12,11 @@ const projectGuard = {
 }
 
 describe('message file reference schemas', () => {
+  test('rendererFileRefSchema is the @lume/shared single-source schema (#288)', () => {
+    // 钉死单源：若有人把 re-export 改回本地手写副本，此断言立即失败
+    expect(rendererFileRefSchema).toBe(sharedFileRefSchema)
+  })
+
   test('guarded endpoints fail closed when the mandatory guard is missing or malformed', () => {
     expect(guardedFileRefInputSchema.safeParse({ guardedRef: { ref: projectRef } }).success).toBe(false)
     expect(guardedFileRefInputSchema.safeParse({ guardedRef: { ref: projectRef, guard: { ...projectGuard, expectedProjectRootFingerprint: 'short' } } }).success).toBe(false)

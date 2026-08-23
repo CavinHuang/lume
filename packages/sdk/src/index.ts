@@ -330,7 +330,6 @@ export {
   stripImagesFromMessages,
   extractTextFromContent,
   createCompactBoundaryMessage,
-  truncateText,
 } from './utils/messages.js'
 
 // --------------------------------------------------------------------------
@@ -524,6 +523,9 @@ export type {
   SDKToolUseSummaryMessage,
   SDKLocalCommandOutputMessage,
   SDKElicitationCompleteMessage,
+  SDKContextCompactionProgressMessage,
+  SDKMemorySavedMessage,
+  SDKRunAbortedMessage,
 
   // Tool types
   ToolDefinition,

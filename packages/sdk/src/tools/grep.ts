@@ -303,6 +303,11 @@ export function buildGrepArgs(input: any, outputMode: SearchMode, searchPath: st
   const ctx = input['-C'] ?? input.context
   if (ctx) args.push('-C', String(ctx))
   if (input.glob) args.push('--include', input.glob)
+  // rg/native 通道默认跳过隐藏条目(#473):--exclude='.*' 让 grep 回退同样
+  // 跳过点前缀文件(GNU grep 连同名目录一起跳过,BSD grep 只作用于文件,故
+  // EXCLUDED_DIRS 六个点前缀目录仍由下方 --exclude-dir 显式兜底)。.gitignore
+  // 尊重不做:grep 无原生支持,自实现解析超出本通道范围。
+  args.push('--exclude', '.*')
   for (const directory of EXCLUDED_DIRS) args.push('--exclude-dir', directory)
   args.push('--', input.pattern, searchPath)
   return args

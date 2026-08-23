@@ -339,12 +339,3 @@ export function createCompactBoundaryMessage(): { role: string; content: string 
     content: '[Previous context has been summarized above. Continuing conversation.]',
   }
 }
-
-/**
- * Truncate text to max length with ellipsis.
- */
-export function truncateText(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text
-  const half = Math.floor(maxLength / 2)
-  return text.slice(0, half) + '\n...(truncated)...\n' + text.slice(-half)
-}

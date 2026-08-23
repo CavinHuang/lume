@@ -4,6 +4,7 @@
  * Summarizes older history while retaining recent messages verbatim.
  */
 
+import type { CompactionFailureReason } from '@lume/shared'
 import type { LLMProvider, NormalizedMessageParam } from '../providers/types.js'
 import type {
   AgentContextCompactionTrigger,
@@ -112,14 +113,9 @@ const REQUIRED_TURN_PREFIX_HEADINGS = [
   '## Context for Suffix',
 ]
 
-export type CompactionFailureReason =
-  | 'provider_error'
-  | 'aborted'
-  | 'max_tokens'
-  | 'empty_summary'
-  | 'invalid_structure'
-  | 'repetitive_summary'
-  | 'not_smaller'
+// Single-sourced in @lume/shared (src/types/sdk-protocol.ts); re-exported for
+// existing `import('./utils/compact.js').CompactionFailureReason` consumers.
+export type { CompactionFailureReason }
 
 export interface AutoCompactState {
   compacted: boolean

@@ -193,6 +193,8 @@
   font-family: var(--reading-serif);
   font-size: var(--lume-chat-font-size);
   line-height: 1.9;
+  /* 长文阅读字距：中文 serif/sans 在密排下都需要轻微 tracking(#75) */
+  letter-spacing: 0.012em;
   max-width: 600px;
   overflow-wrap: anywhere;
 }
@@ -594,7 +596,9 @@
   color-scheme: light;
   --lume-chat-font-size: 15px;
   --lume-chat-measure: 680px;
-  --reading-serif: Georgia, 'Songti SC', 'Noto Serif CJK SC', 'Source Han Serif SC', STSong, SimSun, serif;
+  /* 中文 serif 缺字时落到自托管 MiSans 而非系统 SimSun：宋体点阵在
+     Windows 小字号下渲染发虚拥挤(#75)；macOS 仍优先 Songti 真 serif。 */
+  --reading-serif: Georgia, 'Songti SC', 'Noto Serif CJK SC', 'Source Han Serif SC', STSong, 'MiSans Variable', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --lume-bg-app: oklch(0.982 0.006 248);
   --lume-bg-rail: oklch(0.962 0.007 248);
   --lume-bg-panel: oklch(0.996 0.003 248);
