@@ -92,6 +92,9 @@ const sqlJsDirnamePattern = /^  var __dirname = ".*node_modules.*sql\.js.*dist",
 // bundle 里其 package.json 不会随包发布，路径必解析失败 → 已有 try/catch 兜底返回 'unknown'。
 // 把绝对路径替换成 "."，避免可重定位性自检报错；版本号降级为 'unknown' 无功能影响。
 const larkSdkDirnamePattern = /^  var __dirname = ".*node_modules.*larksuiteoapi.*node-sdk.*lib";\r?\n/m;
+// thread-stream(pino 传递依赖)以绝对路径定位自身 worker.js;sidecar 不使用 pino transport,
+// 与 Lark SDK 同款降级:__dirname 置 "." 保证 bundle 可重定位。
+const threadStreamDirnamePattern = /^  var __dirname = ".*node_modules.*thread-stream";\r?\n/m;
 const transformersDirnamePattern = /, __dirname = "[^"]*node_modules[^\"]*transformers[^\"]*dist", __webpack_modules__/;
 const jsdomStylePath = resolve(jsdomLibDir, "jsdom", "browser", "default-stylesheet.css");
 const jsdomStyle = readFileSync(jsdomStylePath, "utf8");
@@ -131,6 +134,14 @@ bundleSrc = bundleSrc.replace(
   larkSdkDirnamePattern,
   '  var __dirname = ".";',
 );
+if (!threadStreamDirnamePattern.test(bundleSrc)) {
+  console.error("[sidecar-bundle] main: thread-stream __dirname pattern not found");
+  process.exit(1);
+}
+bundleSrc = bundleSrc.replace(
+  threadStreamDirnamePattern,
+  '  var __dirname = ".";',
+);
 if (!transformersDirnamePattern.test(localOnnxWorkerSrc)) {
   console.error("[sidecar-bundle] local ONNX worker: transformers __dirname pattern not found");
   process.exit(1);
@@ -139,6 +150,10 @@ localOnnxWorkerSrc = localOnnxWorkerSrc.replace(
   transformersDirnamePattern,
   ', __dirname = ".", __webpack_modules__',
 );
+// 兜底:其余来自 node_modules 的单行 __dirname(pino 等传递依赖)统一降级为 ".",
+// 避免每新增一个带固化路径的依赖就要补一个专用 pattern;未执行到的分支无行为差异。
+const genericNodeModulesDirnamePattern = /^  var __dirname = "[^"]*node_modules[^"]*";\r?\n/gm;
+bundleSrc = bundleSrc.replace(genericNodeModulesDirnamePattern, '  var __dirname = ".";\n');
 writeFileSync(OUT_FILE, bundleSrc);
 writeFileSync(XHR_WORKER_OUT_FILE, xhrWorkerSrc);
 writeFileSync(LOCAL_ONNX_WORKER_OUT_FILE, localOnnxWorkerSrc);
