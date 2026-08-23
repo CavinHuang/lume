@@ -1,6 +1,5 @@
 import { createLogger } from "../../infra/logger";
 import { getRuntimeHostPorts } from "../host-ports";
-import { resolveChannelModelBinding } from "../../channel/channel-manager";
 import { resolveMockAttempt } from "./mock-attempt";
 import type {
   AgentRuntimeRunParams,
@@ -174,7 +173,7 @@ export function resolveRuntimeModelAttemptParams(
   ];
   for (const modelRef of refs) {
     if (modelRef === params.runtime.modelRef) continue;
-    const binding = resolveChannelModelBinding(modelRef, "chat");
+    const binding = getRuntimeHostPorts().resolveChannelModelBinding(modelRef, "chat");
     if (!binding) continue;
     attempts.push({
       ...params,

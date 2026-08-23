@@ -11,11 +11,13 @@ import {
   normalizeProviderId,
   parseModelRef,
   resolveAgentDefaultStrategy,
+  resolveChannelModelSelection
+} from "./model-selection";
+import {
   resolveModelCandidatesForChannel,
   resolveChannelDefaultModelId,
-  resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
-} from "./model-selection";
+} from "../agent-runtime/runtime-core/model-candidates";
 import { installConnectionVaultKey } from "./connection-credential-store";
 
 const capturedRuntimeCalls: Array<{

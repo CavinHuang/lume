@@ -52,10 +52,8 @@ import { createLogger, sanitizeBaseUrlForLog, writeLogRecord } from "../infra/lo
 import { getSessionStateManager } from "../agent-runtime/runner/session-state-manager";
 import { submitAskUserQuestionAnswers as submitRuntimeAskUserQuestionAnswers } from "../agent-runtime/interruption/ask-user-question-session";
 import { submitToolPermissionDecision } from "../agent-runtime/interruption/tool-permission-session";
-import {
-  resolveAgentDefaultStrategy,
-  resolveRequestedModelIdForChannel
-} from "../channel/model-selection";
+import { resolveAgentDefaultStrategy } from "../channel/model-selection";
+import { resolveRequestedModelIdForChannel } from "../agent-runtime/runtime-core/model-candidates";
 import {
   AGENT_TITLE_PROMPT_FROM_SUMMARY,
   isWeakGeneratedTitle,

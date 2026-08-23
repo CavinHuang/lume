@@ -15,6 +15,7 @@ const runtimeRoot = join(
   "apps/sidecar/src/services/agent-runtime",
 );
 const appLayerRoot = join(repositoryRoot, "apps/sidecar/src/services/agent");
+const channelLayerRoot = join(repositoryRoot, "apps/sidecar/src/services/channel");
 const runnerRoot = join(runtimeRoot, "runner");
 
 function listTsFiles(dir: string): string[] {
@@ -98,6 +99,26 @@ describe("分层方向守卫(#289)", () => {
           target === runnerRoot || target.startsWith(runnerRoot);
         if (intoRunner) {
           violations.push(`${rel}: "${clause.spec}"${clause.isDynamic ? " (dynamic)" : ""}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  test("agent-runtime 非测试文件不得对 services/channel 做值导入(仅放行 import type)", () => {
+    const violations: string[] = [];
+    for (const file of listTsFiles(runtimeRoot)) {
+      const rel = relative(runtimeRoot, file);
+      if (/\.test\.ts$|\.bench\.ts$/.test(rel)) continue;
+      for (const clause of parseImports(readFileSync(file, "utf-8"))) {
+        const target = resolveImportFromFile(file, clause.spec);
+        if (!target) continue;
+        const intoChannelLayer =
+          target === channelLayerRoot ||
+          target.startsWith(channelLayerRoot + "\\") ||
+          target.startsWith(channelLayerRoot + "/");
+        if (intoChannelLayer && clause.hasValueSpecifiers && !clause.isDynamic) {
+          violations.push(`${rel}: "${clause.spec}"`);
         }
       }
     }

@@ -9,7 +9,7 @@
  * (runtime-core/layering-boundary.test.ts)只放行该形式。
  */
 import type { AgentDefinition } from "@lume/agent-sdk";
-import type { AgentMessage, AgentThreadMeta, AgentWorkspace, SDKMessage } from "@lume/shared";
+import type { AgentMessage, AgentThreadMeta, AgentWorkspace, Channel, ProviderApiFamily, SDKMessage } from "@lume/shared";
 import type {
   AgentThreadMetaUpdates,
   CreateAgentThreadOptions,
@@ -62,6 +62,15 @@ export interface RuntimeHostPorts {
   buildSystemPromptAppend(ctx: SystemPromptContext): string;
   buildDynamicContext(ctx: DynamicContext): string;
   resolveDynamicContextInput(input: ResolveAgentDynamicContextInput): DynamicContext;
+  listChannels(): Channel[];
+  getChannelById(id: string): Channel | undefined;
+  isChannelConnectionUsable(channel: Channel): boolean;
+  decryptApiKey(channelId: string): string;
+  resolveChannelModelBinding(
+    modelRef: string,
+    capability?: "chat" | "embedding",
+    preferredConnectionId?: string
+  ): { channel: Channel; modelId: string; family: ProviderApiFamily } | null;
 }
 
 let hostPorts: RuntimeHostPorts | null = null;
