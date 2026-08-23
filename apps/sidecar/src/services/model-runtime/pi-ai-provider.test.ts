@@ -4,6 +4,7 @@ import {
   PiAiProviderError,
   resolvePiModelInput,
   resolvePiAiRetryDelayMs,
+  resolvePiModelReasoningCapability,
   shouldTryNextPiAiRoute,
 } from "./pi-ai-provider";
 
@@ -31,6 +32,16 @@ describe("pi-ai image transport", () => {
 
   test("keeps text-only requests text-only", () => {
     expect(resolvePiModelInput([{ role: "user", content: "hello" }])).toEqual(["text"]);
+  });
+});
+
+describe("pi-ai model reasoning capability", () => {
+  test("能力未知时恒为 true：关闭思考也必须让 pi-ai 走 thinkingFormat 分支发显式禁用参数", () => {
+    // 回归:此前 disabled 请求把 capability 判成 false,pi-ai 跳过全部分支,
+    // 请求体不带任何思考参数,GLM/Qwen 服务端默认开思考→选"关闭"依然思考
+    expect(resolvePiModelReasoningCapability(undefined)).toBe(true);
+    expect(resolvePiModelReasoningCapability(false)).toBe(false);
+    expect(resolvePiModelReasoningCapability(true)).toBe(true);
   });
 });
 
