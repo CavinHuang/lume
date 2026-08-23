@@ -16,7 +16,6 @@ function loadSet(prefix) {
 /** 目标:连接器 service → 图标来源集合与名称。 */
 const WANTED = [
   { key: "gmail", set: "logos", name: "google-gmail" },
-  { key: "qq_mail", set: "fa6-brands", name: "qq" },
   { key: "weixin", set: "simple-icons", name: "wechat" },
 ];
 
@@ -34,8 +33,9 @@ for (const item of WANTED) {
   out.push(`  ${item.key}: { body: ${JSON.stringify(icon.body)}, viewBox: "0 0 ${width} ${height}" },`);
 }
 
-/** iconify 无官方彩色版收录的品牌(官方标志矢量,几何取自社区渠道图标描摹),从仓库内资产读取。 */
+/** iconify 无官方版收录的品牌,从仓库内资产读取:矢量描摹(飞书/钉钉/企微)或官方位图内嵌(QQ 邮箱现行彩环标无公开矢量)。 */
 const MANUAL_ASSETS = [
+  { key: "qq_mail", asset: "qq_mail.svg" },
   { key: "feishu", asset: "feishu.svg" },
   { key: "dingtalk", asset: "dingtalk.svg" },
   { key: "wecom", asset: "wecom.svg" },
@@ -45,7 +45,7 @@ function loadManualAsset(file) {
   const raw = readFileSync(resolve(REPO_ROOT, "scripts", "assets", file), "utf8");
   const viewBox = raw.match(/viewBox="([^"]+)"/)?.[1];
   const inner = raw.replace(/^[\s\S]*?<svg[^>]*>/, "").replace(/<\/svg>[\s\S]*$/, "").trim().replace(/\s+/g, " ");
-  if (!viewBox || !inner.startsWith("<path")) throw new Error(`bad manual asset: ${file}`);
+  if (!viewBox || !(inner.startsWith("<path") || inner.startsWith("<image"))) throw new Error(`bad manual asset: ${file}`);
   return { body: inner, viewBox };
 }
 
@@ -55,7 +55,7 @@ for (const item of MANUAL_ASSETS) {
 }
 
 const content = `// 由 scripts/extract-connector-brand-icons.mjs 生成;勿手改,重跑脚本再生成。
-// 来源:@iconify-json/{logos,fa6-brands,simple-icons}(devDependencies)与 scripts/assets/(手工品牌资产:飞书/钉钉/企微官方标)。
+// 来源:@iconify-json/{logos,simple-icons}(devDependencies)与 scripts/assets/(手工品牌资产:飞书/钉钉/企微矢量描摹 + QQ 邮箱官方 favicon 内嵌)。
 export interface ConnectorBrandIcon {
   /** SVG 内部元素(iconify body)。 */
   body: string;
