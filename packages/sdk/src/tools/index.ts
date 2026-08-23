@@ -7,7 +7,6 @@
 
 import type { ToolDefinition } from '../types.js'
 import { matchesAnyToolPattern } from '../utils/tool-approval.js'
-import { createToolRegistry } from './registry.js'
 
 // File I/O
 import { BashTool } from './bash.js'
@@ -173,16 +172,6 @@ export {
   // Skill
   SkillTool,
   createSkillTool,
-}
-
-export function splitDeferredTools(tools: ToolDefinition[]): {
-  core: ToolDefinition[]
-  deferred: ToolDefinition[]
-} {
-  const registry = createToolRegistry();
-  registry.global.register(tools);
-  registry.preset("default").setCore([...CORE_TOOL_NAMES]);
-  return registry.agent("adapter").view().split();
 }
 
 // Re-export helpers

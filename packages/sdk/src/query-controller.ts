@@ -6,18 +6,6 @@ import type {
 } from './types.js'
 
 type QueryInput = string | ContentBlockParam[] | SDKUserMessage
-type QueryControllerMethods = {
-  interrupt: Query['interrupt']
-  setPermissionMode: Query['setPermissionMode']
-  setModel: Query['setModel']
-  setMaxThinkingTokens: Query['setMaxThinkingTokens']
-  setCwd: Query['setCwd']
-  getInitializationResult: Query['getInitializationResult']
-  getContextUsage: Query['getContextUsage']
-  reloadPlugins: Query['reloadPlugins']
-  rewindFiles: Query['rewindFiles']
-  stopTask: Query['stopTask']
-}
 
 function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {
   return !!value && typeof (value as AsyncIterable<T>)[Symbol.asyncIterator] === 'function'
@@ -96,7 +84,6 @@ export class QueryController implements Query {
   private readonly stream: AsyncGenerator<SDKMessage>
 
   constructor(
-    private readonly methods: QueryControllerMethods,
     runner: (inputs: AsyncIterable<QueryInput>) => AsyncGenerator<SDKMessage>,
     initialInput?: QueryInput | AsyncIterable<QueryInput>,
   ) {
@@ -134,48 +121,5 @@ export class QueryController implements Query {
     }
 
     this.queue.push(input)
-  }
-
-  async interrupt(): Promise<void> {
-    await this.methods.interrupt()
-  }
-
-  async setPermissionMode(mode: Parameters<Query['setPermissionMode']>[0]): Promise<void> {
-    await this.methods.setPermissionMode(mode)
-  }
-
-  async setModel(model?: string): Promise<void> {
-    await this.methods.setModel(model)
-  }
-
-  async setMaxThinkingTokens(maxThinkingTokens: number | null): Promise<void> {
-    await this.methods.setMaxThinkingTokens(maxThinkingTokens)
-  }
-
-  async setCwd(cwd: string): Promise<void> {
-    await this.methods.setCwd(cwd)
-  }
-
-  async getInitializationResult(): ReturnType<Query['getInitializationResult']> {
-    return this.methods.getInitializationResult()
-  }
-
-  async getContextUsage(): ReturnType<Query['getContextUsage']> {
-    return this.methods.getContextUsage()
-  }
-
-  async reloadPlugins(): ReturnType<Query['reloadPlugins']> {
-    return this.methods.reloadPlugins()
-  }
-
-  async rewindFiles(
-    userMessageId: string,
-    dryRun?: boolean,
-  ): ReturnType<Query['rewindFiles']> {
-    return this.methods.rewindFiles(userMessageId, dryRun)
-  }
-
-  async stopTask(taskId: string): Promise<void> {
-    await this.methods.stopTask(taskId)
   }
 }

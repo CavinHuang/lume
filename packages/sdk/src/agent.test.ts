@@ -5,10 +5,22 @@ import { join } from "node:path"
 import { createAgent, sessionMessagesFromHistory } from "./agent.js"
 import { QueryEngine } from "./engine.js"
 import { SkillTool } from "./tools/skill-tool.js"
-import type { SDKMessage, ToolDefinition } from "./types.js"
+import type { SDKMessage, SessionMessage, ToolDefinition } from "./types.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
-import { forkSession, getSessionMessages, saveSession } from "./session.js"
+import { forkSession, loadSession, saveSession } from "./session.js"
 import { clearSkills, getSkill } from "./skills/registry.js"
+
+/** Local stand-in for the removed getSessionMessages(): read the persisted event transcript. */
+async function readSessionMessages(
+  sessionId: string,
+  opts: { includeSystemMessages?: boolean } = {},
+): Promise<SessionMessage[]> {
+  const data = await loadSession(sessionId)
+  const messages = data?.sessionMessages ?? []
+  return opts.includeSystemMessages
+    ? messages
+    : messages.filter((message) => message.role !== "system" && message.role !== "runtime")
+}
 
 function tool(name: string): ToolDefinition {
   return {
@@ -1148,7 +1160,7 @@ describe("Agent session persistence", () => {
       // drain query
     }
 
-    const messages = await getSessionMessages(sessionId, { dir: tempDir })
+    const messages = await readSessionMessages(sessionId)
     expect(messages).toContainEqual(expect.objectContaining({
       role: "user",
       content: [{
@@ -1197,15 +1209,15 @@ describe("Agent session persistence", () => {
       { role: "runtime", content: "current runtime" },
       { role: "user", content: "hello" },
     ])
-    expect((await getSessionMessages(sessionId, { dir: tempDir })).some((message) => message.role === "runtime")).toBe(false)
-    expect((await getSessionMessages(sessionId, { dir: tempDir, includeSystemMessages: true }))).toContainEqual(
+    expect((await readSessionMessages(sessionId)).some((message) => message.role === "runtime")).toBe(false)
+    expect((await readSessionMessages(sessionId, { includeSystemMessages: true }))).toContainEqual(
       expect.objectContaining({ role: "runtime", content: "current runtime" }),
     )
     await agent.close()
 
     const forkedSessionId = `runtime-context-fork-${crypto.randomUUID()}`
     await forkSession(sessionId, forkedSessionId)
-    expect(await getSessionMessages(forkedSessionId, { dir: tempDir, includeSystemMessages: true })).toContainEqual(
+    expect(await readSessionMessages(forkedSessionId, { includeSystemMessages: true })).toContainEqual(
       expect.objectContaining({ role: "runtime", content: "current runtime" }),
     )
 
@@ -1252,7 +1264,7 @@ describe("Agent session persistence", () => {
       }
     }
 
-    const messages = await getSessionMessages(sessionId, { dir: tempDir })
+    const messages = await readSessionMessages(sessionId)
     expect(messages.some((message) =>
       message.role === "user" && JSON.stringify(message.content).includes("original task")
     )).toBe(true)
@@ -1302,7 +1314,7 @@ describe("Agent session persistence", () => {
       checkpoints: {},
     })
 
-    const persisted = JSON.stringify(await getSessionMessages(sessionId, { dir: tempDir }))
+    const persisted = JSON.stringify(await readSessionMessages(sessionId))
     expect(persisted).not.toContain("iVBORw0KGgo=")
     expect(persisted).toContain("shot-1")
     expect(persisted).toContain("image omitted from persisted transcript")
@@ -1317,7 +1329,7 @@ describe("Agent session persistence", () => {
     const provider: LLMProvider = {
       apiType: "anthropic-messages",
       async createMessage() {
-        const messages = await getSessionMessages(sessionId, { dir: tempDir })
+        const messages = await readSessionMessages(sessionId)
         sawUserMessageBeforeProviderResponse = messages.some((message) =>
           message.role === "user" && JSON.stringify(message.content).includes("crash durable task")
         )

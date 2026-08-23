@@ -138,13 +138,3 @@ export class FileStateCache {
     return clone
   }
 }
-
-/**
- * Create a file state cache with default limits.
- */
-export function createFileStateCache(
-  maxEntries: number = 100,
-  maxSizeBytes: number = 25 * 1024 * 1024,
-): FileStateCache {
-  return new FileStateCache(maxEntries, maxSizeBytes)
-}

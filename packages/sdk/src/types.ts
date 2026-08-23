@@ -26,7 +26,6 @@ export type {
   AgentContextCompactionMetadata,
   AgentContextCompactionStage,
   AgentContextCompactionTrigger,
-  AgentProgressUsage,
   BillingUsageRecord,
   BillingUsageSummary,
   CompactionFailureReason,
@@ -553,31 +552,10 @@ export interface RewindFilesResult {
   deletions?: number
 }
 
-export interface ReloadPluginsResult {
-  commands: SlashCommand[]
-  agents: Array<{ name: string; description: string }>
-  plugins: Array<{ name: string; path: string; source?: string }>
-}
-
 export interface ListSessionsOptions {
   dir?: string
   limit?: number
   offset?: number
-}
-
-export interface GetSessionMessagesOptions {
-  dir?: string
-  limit?: number
-  offset?: number
-  includeSystemMessages?: boolean
-}
-
-export interface GetSessionInfoOptions {
-  dir?: string
-}
-
-export interface SessionMutationOptions {
-  dir?: string
 }
 
 export interface ForkSessionOptions {
@@ -607,16 +585,6 @@ export interface Query {
       | SDKUserMessage
       | AsyncIterable<string | ContentBlockParam[] | SDKUserMessage>,
   ): Promise<void>
-  interrupt(): Promise<void>
-  setPermissionMode(mode: PermissionMode): Promise<void>
-  setModel(model?: string): Promise<void>
-  setMaxThinkingTokens(maxThinkingTokens: number | null): Promise<void>
-  setCwd(cwd: string): Promise<void>
-  getInitializationResult(): Promise<InitializationResult>
-  getContextUsage(): Promise<ContextUsageResult>
-  reloadPlugins(): Promise<ReloadPluginsResult>
-  rewindFiles(userMessageId: string, dryRun?: boolean): Promise<RewindFilesResult>
-  stopTask(taskId: string): Promise<void>
 }
 
 export interface AgentOptions {

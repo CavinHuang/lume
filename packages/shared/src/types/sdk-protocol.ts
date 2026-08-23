@@ -147,7 +147,6 @@ export interface SDKResultMessage {
   usageRecords?: SDKUsageRecord[]
   billingUsage?: BillingUsageSummary
   contextUsage?: ContextUsageSnapshot
-  progressUsage?: AgentProgressUsage
   permission_denials?: SDKPermissionDenial[]
   structured_output?: unknown
   errors?: string[]
@@ -667,8 +666,6 @@ export interface BillingUsageSummary {
   records: BillingUsageRecord[]
   totalCostUSD: number
 }
-
-export interface AgentProgressUsage extends NormalizedProviderUsage {}
 
 export interface TokenUsage {
   input_tokens: number

@@ -1,53 +1,11 @@
 /**
  * Message Utilities
  *
- * Message creation factories, normalization for API,
- * synthetic placeholders, and content processing.
+ * Message normalization for API, synthetic placeholders,
+ * and content processing.
  */
 
-import type { UserMessage, AssistantMessage, TokenUsage } from '../types.js'
 import { readFile } from 'node:fs/promises'
-
-/**
- * Create a user message.
- */
-export function createUserMessage(
-  content: string | any[],
-  options?: {
-    uuid?: string
-    isMeta?: boolean
-    toolUseResult?: unknown
-  },
-): UserMessage {
-  return {
-    type: 'user',
-    message: {
-      role: 'user',
-      content,
-    },
-    uuid: options?.uuid || crypto.randomUUID(),
-    timestamp: new Date().toISOString(),
-  }
-}
-
-/**
- * Create an assistant message.
- */
-export function createAssistantMessage(
-  content: any[],
-  usage?: TokenUsage,
-): AssistantMessage {
-  return {
-    type: 'assistant',
-    message: {
-      role: 'assistant',
-      content,
-    },
-    uuid: crypto.randomUUID(),
-    timestamp: new Date().toISOString(),
-    usage,
-  }
-}
 
 /**
  * Normalize messages for the LLM API.
@@ -314,28 +272,4 @@ function stripImagesFromValue(value: any): any {
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [key, stripImagesFromValue(item)]),
   )
-}
-
-/**
- * Extract text from message content blocks.
- */
-export function extractTextFromContent(
-  content: any[] | string,
-): string {
-  if (typeof content === 'string') return content
-
-  return content
-    .filter((b: any) => b.type === 'text')
-    .map((b: any) => b.text)
-    .join('')
-}
-
-/**
- * Create a system message for compact boundary.
- */
-export function createCompactBoundaryMessage(): { role: string; content: string } {
-  return {
-    role: 'user',
-    content: '[Previous context has been summarized above. Continuing conversation.]',
-  }
 }
