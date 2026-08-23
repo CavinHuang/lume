@@ -14,7 +14,7 @@ import {
   resolveSubagentModelOverride,
   runForegroundSubagentWithTimeout
 } from "./run-subagent";
-import { resolvePromptCachePolicy } from "./run-tools";
+import { resolvePromptCachePolicy } from "./request-policy";
 import { runRuntimeCoreAttempt } from "../runner/attempt";
 import { prepareRuntimeCoreAttempt } from "../runner/prepare-attempt";
 import { getRuntimeCoreSessionDir } from "./session-store";

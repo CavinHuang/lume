@@ -110,19 +110,24 @@ import { createFileBackedRunContinuationStore } from "./run-continuation-store";
 import { persistAbortContinuation } from "../interruption/abort-continuation";
 import { classifyToolKind } from "../interruption/approval-service";
 import {
-  applyWorkflowHookEffectsSafely,
-  buildEnabledPluginContext,
   buildRuntimeCoreTools,
-  createRuntimeSkillFilter,
-  estimateToolSchemaTokens,
-  executeWorkflowHookSafely,
-  fingerprintToolSchema,
   isAutomationExecution,
-  resolvePlanningTodoContext,
-  resolvePromptCachePolicy,
-  resolveSdkApiType,
-  resolveSkillDirectories,
 } from "./run-tools";
+import {
+  fingerprintToolSchema,
+  estimateToolSchemaTokens,
+} from "./tool-schema-metrics";
+import {
+  createRuntimeSkillFilter,
+  resolveSkillDirectories,
+} from "./skill-filter";
+import {
+  executeWorkflowHookSafely,
+  applyWorkflowHookEffectsSafely,
+} from "./workflow-hook-safety";
+import { resolvePlanningTodoContext } from "./planning-todo-context";
+import { buildEnabledPluginContext } from "./plugin-enabled-context";
+import { resolvePromptCachePolicy, resolveSdkApiType } from "./request-policy";
 import {
   createBoundSubagentTaskReportTool,
   getResolvedAgentTools,
@@ -155,45 +160,68 @@ interface RuntimeCoreResolvedModel {
   reasoning?: boolean;
 }
 
-export interface CreateRuntimeCoreSessionInput {
+/**
+ * 组合根入参(#297 分面分组):52 个扁平字段按领域切为六个命名分面,
+ * 以交集组合——构造方仍传扁平字面量,契约按分面阅读。
+ */
+
+/** 运行身份:线程归属与执行形态。 */
+export interface SessionIdentityInput {
   lumeSessionId: string;
+  runId?: string;
+  threadType?: AgentSendInput["threadType"];
+  chatType?: AgentSendInput["chatType"];
+  permissionMode?: AgentSendInput["permissionMode"];
+  subagentType?: string;
+  subagentRunId?: string;
+  subagentId?: string;
+  subagentTaskId?: string;
+  subagentAttempt?: number;
+  planningClientSubmissionId?: string;
+}
+
+/** 工作区与文件路径解析面。 */
+export interface WorkspacePathsInput {
   cwd: string;
+  agentDir: string;
   lumeWorkDir?: string;
   filesRoot?: string;
   plansRoot?: string;
   artifactsRoot?: string;
   projectRoot?: string;
   additionalDirectories?: string[];
-  fileContextId?: string;
-  fileReferenceBinding?: FileReferenceBinding;
-  agentDir: string;
-  userMessage?: string;
-  messageParts?: AgentSendInput["messageParts"];
-  provider: string;
-  channelProvider?: string;
-  openaiApiMode?: OpenAiApiMode;
-  apiType?: ApiType;
-  modelRef?: string;
-  resolvedModelId: string;
-  resolvedModel?: RuntimeCoreResolvedModel;
-  apiKey: string;
   workspaceId?: string;
   workspaceName?: string;
   workspaceSlug?: string;
+  fileContextId?: string;
+  fileReferenceBinding?: FileReferenceBinding;
+}
+
+/** 模型与渠道解析面(凭据经 host-ports 解密)。 */
+export interface ModelChannelInput {
+  provider: string;
+  resolvedModelId: string;
+  apiKey: string;
+  channelProvider?: string;
   channelId?: string;
-  threadType?: AgentSendInput["threadType"];
-  subagentType?: string;
-  subagentRunId?: string;
-  subagentId?: string;
-  subagentTaskId?: string;
-  subagentAttempt?: number;
-  chatType?: AgentSendInput["chatType"];
-  permissionMode?: AgentSendInput["permissionMode"];
+  openaiApiMode?: OpenAiApiMode;
+  apiType?: ApiType;
+  modelRef?: string;
+  resolvedModel?: RuntimeCoreResolvedModel;
+}
+
+/** 用户消息与其附件载荷。 */
+export interface MessageInputFields {
+  userMessage?: string;
+  messageParts?: AgentSendInput["messageParts"];
   messageAttachments?: AgentSendInput["messageAttachments"];
   commentAttachments?: AgentSendInput["commentAttachments"];
   browserAttachments?: AgentSendInput["browserAttachments"];
   messageMetadata?: Record<string, unknown>;
-  planningClientSubmissionId?: string;
+}
+
+/** 事件出口:SDK/live 事件与各类交互请求的上抛通道。 */
+export interface RuntimeEmitters {
   emitSdkMessage?: (message: SDKMessage) => void;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   persistCodingReport?: (report: RuntimeCodingReport) => void;
@@ -209,7 +237,10 @@ export interface CreateRuntimeCoreSessionInput {
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
-  runId?: string;
+}
+
+/** 执行控制开关:hook/追踪/中止等横切控制。 */
+export interface RuntimeControlFlags {
   workflowHooks?: LumeWorkflowHookRuntimeLike;
   applyWorkflowHookEffects?: (
     result: LumeWorkflowHookExecutionResult,
@@ -218,6 +249,13 @@ export interface CreateRuntimeCoreSessionInput {
   toolConfig?: Record<string, unknown>;
   abortSignal?: AbortSignal;
 }
+
+export type CreateRuntimeCoreSessionInput = SessionIdentityInput &
+  WorkspacePathsInput &
+  ModelChannelInput &
+  MessageInputFields &
+  RuntimeEmitters &
+  RuntimeControlFlags;
 
 export interface RuntimeCoreSessionLike {
   sessionId: string;
