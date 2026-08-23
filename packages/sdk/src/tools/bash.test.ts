@@ -54,6 +54,19 @@ describe("BashTool shell invocation", () => {
     }
   });
 
+  // #471:权限判定的方言检查不得触发 Windows bash 发现——发现未决读作
+  // bash fail-closed。无显式 powershell 前缀的复合命令在 bash 方言下恒拒绝,
+  // 结论不随 where.exe 探测快慢翻转(执行路径仍走 resolveShellInvocation)。
+  test("denies non-prefixed PowerShell whitelist compounds under a bash dialect (#471)", () => {
+    const restoreShellEnv = useDeterministicTestShell();
+    try {
+      expect(BashTool.isReadOnly?.({ command: "Get-ChildItem | Select-Object -First 1" })).toBeFalse();
+      expect(BashTool.isConcurrencySafe?.({ command: "Get-ChildItem | Select-Object -First 1" })).toBeFalse();
+    } finally {
+      restoreShellEnv();
+    }
+  });
+
   // CI 无 natives 二进制（dist 不入库），analyzeBashCommand 走 parse-unavailable 回退：
   // 白名单加速只在 native 解析可用时生效；回退路径对 find/sed/sort 一律 fail-closed（见下一测试）。
   const nativeBashAvailable = analyzeBashCommand("echo probe").status !== "parse-unavailable";
