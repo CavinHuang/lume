@@ -8,11 +8,12 @@ import { defineTool } from './types.js'
 import { ensurePathAllowed, resolveInputPath } from '../utils/pathing.js'
 import { resolveRipgrepInvocation } from '../utils/ripgrep.js'
 import { isNativeAvailable, nativeGrep } from '@lume/natives'
+import type { NativeGrepOptions } from '@lume/natives'
 
 const SEARCH_LIMIT = 250
 const SEARCH_TIMEOUT_MS = 30_000
 const MAX_COLUMNS = 500
-const EXCLUDED_DIRS = ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl']
+export const EXCLUDED_DIRS = ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl']
 
 type SearchMode = 'content' | 'files_with_matches' | 'count'
 
@@ -229,19 +230,31 @@ function isCommandNotFound(error?: Error): boolean {
 }
 
 async function runNativeSearch(input: any, searchPath: string, outputMode: SearchMode, offset: number, headLimit: number): Promise<{ data: string; _meta?: Record<string, unknown> } | undefined> {
+  const result = await nativeGrep(buildNativeSearchOptions(input, searchPath, outputMode, offset, headLimit))
+  return result && !result.error
+    ? formatNativeResult(input.pattern, searchPath, outputMode, offset, headLimit, result, 'native')
+    : undefined
+}
+
+export function buildNativeSearchOptions(input: any, searchPath: string, outputMode: SearchMode, offset: number, headLimit: number): NativeGrepOptions {
   const context = input['-C'] ?? input.context
   const mode = outputMode === 'files_with_matches'
     ? 'filesWithMatches' as const
     : outputMode === 'count'
       ? 'count' as const
       : 'content' as const
-  const result = await nativeGrep({
+  return {
     pattern: input.pattern,
     path: searchPath,
     glob: input.glob,
     type: input.type,
     ignore_case: input['-i'] ?? false,
     multiline: input.multiline ?? false,
+    // native 引擎默认搜隐藏文件(Rust 侧 unwrap_or(true)),会把 .git/HEAD、
+    // packed-refs 当普通文件命中,count/total 虚高且分页错位(#337)。rg 回退
+    // 默认跳过隐藏并显式排除 EXCLUDED_DIRS——这些目录全部点前缀,native 通道
+    // 无独立 exclude 参数,hidden:false 即同等口径。
+    hidden: false,
     context,
     context_before: input['-B'],
     context_after: input['-A'],
@@ -252,10 +265,7 @@ async function runNativeSearch(input: any, searchPath: string, outputMode: Searc
     cache: true,
     gitignore: true,
     timeout_ms: SEARCH_TIMEOUT_MS,
-  })
-  return result && !result.error
-    ? formatNativeResult(input.pattern, searchPath, outputMode, offset, headLimit, result, 'native')
-    : undefined
+  }
 }
 
 function buildRgArgs(input: any, outputMode: SearchMode, searchPath: string): string[] {
