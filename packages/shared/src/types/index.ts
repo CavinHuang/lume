@@ -18,6 +18,7 @@ export * from "./reading";
 export * from "./workspace-bootstrap";
 export * from "./heartbeat";
 export * from "./automation";
+export * from "./voice-dictation";
 export * from "./github-release";
 export * from "./general-settings";
 export * from "./ui-state";
