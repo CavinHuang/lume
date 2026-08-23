@@ -5,13 +5,13 @@
  * 包含 Agent SDK 集成所需的事件类型、线程管理、消息持久化和 IPC 通道常量。
  */
 
-import type { SDKMessage } from "@lume/agent-sdk"
+import type { SDKMessage } from "./sdk-protocol"
 import type { LumeRuntimeEvent } from "./runtime-event"
 import type { LumeConfigThinkingLevel } from "./lume-config"
 import type { McpTransportType } from "./mcp"
 import type { PluginMarketplaceAsset } from "./plugin-market"
 import type { PlanningOperationEnvelope, PlanningTodoRefPart } from "./planning-todo"
-export type { SDKMessage } from "@lume/agent-sdk"
+export type { SDKMessage } from "./sdk-protocol"
 export type {
   CallMcpToolDiagnosticRequest,
   CallMcpToolDiagnosticResponse,

@@ -161,9 +161,6 @@
     "packages/shared": {
       "name": "@lume/shared",
       "version": "0.1.0",
-      "dependencies": {
-        "@lume/agent-sdk": "workspace:*",
-      },
     },
     "packages/ui": {
       "name": "@lume/ui",
