@@ -8,17 +8,71 @@ interface Props {
   lang: Lang;
 }
 const { lang } = Astro.props;
+const langPrefix = lang === 'zh' ? '' : '/en';
+const downloadHref = withBase(`${langPrefix}/download`);
+
+// 与 packages/shared/src/types/agent-roles.ts 的内置角色一一对应；role/desc 文案走 i18n
+const members = [
+  { id: 'explorer', displayName: '陆寻', name: 'Lucas Lu', avatar: 'explorer.jpg' },
+  { id: 'planner', displayName: '沈策', name: 'Sera Shen', avatar: 'planner.jpg' },
+  { id: 'code-reviewer', displayName: '审岳', name: 'Yue Shen', avatar: 'code-reviewer.jpg' },
+  { id: 'researcher', displayName: '顾砚', name: 'Milo Gu', avatar: 'researcher.jpg' },
+  { id: 'translator', displayName: '许澄', name: 'Clara Xu', avatar: 'translator.jpg' },
+  { id: 'writer', displayName: '江岚', name: 'Rowan Jiang', avatar: 'writer.jpg' },
+  { id: 'voice', displayName: '宋澈', name: 'Momo Song', avatar: 'voice.jpg' },
+  { id: 'designer', displayName: '林澄', name: 'Lin Lin', avatar: 'designer.jpg' },
+  { id: 'artist', displayName: '白洛', name: 'Bai Bai', avatar: 'artist.jpg' },
+  { id: 'analyst', displayName: '唐栩', name: 'Tang Xu', avatar: 'analyst.jpg' },
+  { id: 'quant', displayName: '纪衡', name: 'Ji Heng', avatar: 'quant.jpg' },
+  { id: 'novelist', displayName: '温序', name: 'Wen Xu', avatar: 'novelist.jpg' },
+  { id: 'docsmith', displayName: '阮知', name: 'Ruan Zhi', avatar: 'docsmith.jpg' },
+  { id: 'developer', displayName: '祁远', name: 'Qi Yuan', avatar: 'developer.jpg' },
+] as const;
 
 const features = [
-  { key: 'local', icon: 'drive' },
-  { key: 'memory', icon: 'memory' },
-  { key: 'personas', icon: 'users' },
-  { key: 'skills', icon: 'blocks' },
-  { key: 'tools', icon: 'terminal' },
-  { key: 'automation', icon: 'clock' },
-  { key: 'im', icon: 'chat' },
-  { key: 'models', icon: 'cpu' },
+  { key: 'memory', icon: 'memory', span: 'lg:col-span-2' },
+  { key: 'personas', icon: 'users', span: '' },
+  { key: 'skills', icon: 'blocks', span: '' },
+  { key: 'tools', icon: 'terminal', span: '' },
+  { key: 'automation', icon: 'clock', span: '' },
+  { key: 'im', icon: 'chat', span: '' },
+  { key: 'models', icon: 'cpu', span: '' },
 ] as const;
+
+// ~/.lume/ 真实顶层布局（注释按语言输出）
+const tree =
+  lang === 'zh'
+    ? `~/.lume/
+├── memory/            # 持久记忆，Markdown 真源
+├── skills/            # SKILL.md 技能包，热加载
+├── automation/        # cron 定时与每日日程
+├── agent-workspaces/  # 角色工作区与产物
+└── lume.yaml          # 一份可读的配置`
+    : `~/.lume/
+├── memory/            # persistent memory, Markdown as truth
+├── skills/            # SKILL.md packs, hot-reloaded
+├── automation/        # cron jobs and daily schedules
+├── agent-workspaces/  # persona workspaces and artifacts
+└── lume.yaml          # one readable config file`;
+
+const modelProviders = [
+  'OpenAI',
+  'Anthropic',
+  'Gemini',
+  'DeepSeek',
+  'Qwen',
+  'Kimi',
+  'GLM',
+  'Doubao',
+  'Ollama',
+  'LM Studio',
+  'OpenRouter',
+] as const;
+
+const sdkComment =
+  lang === 'zh'
+    ? '// 流式事件：assistant 文本 / 工具调用 / result 统计'
+    : '// streamed events: assistant text / tool calls / result stats';
 ---
 
 <Base title={t(lang, 'hero.title')} description={t(lang, 'hero.subtitle')}>
@@ -41,9 +95,10 @@ const features = [
         {t(lang, 'hero.title')}
       </h1>
       <p class="mx-auto mt-5 max-w-xl text-body-lg text-fg-muted">{t(lang, 'hero.subtitle')}</p>
+
       <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
         <a
-          href={withBase(`${lang === 'zh' ? '' : '/en'}/download`)}
+          href={downloadHref}
           class="rounded-xl bg-accent px-5 py-2.5 text-body-lg font-medium text-accent-fg shadow-(--shadow-card) transition-colors hover:bg-accent-strong"
         >
           {t(lang, 'hero.ctaDownload')}
@@ -58,8 +113,29 @@ const features = [
         </a>
       </div>
 
+      <p class="mt-4 text-ui text-fg-faint">{t(lang, 'hero.meta')}</p>
+
+      <!-- 角色集群条：点击进入团队介绍 -->
+      <a href="#team" class="group mt-10 inline-flex flex-col items-center gap-3">
+        <div class="flex -space-x-3">
+          {members.map((member) => (
+            <img
+              src={withBase(`/agents/${member.avatar}`)}
+              alt={member.displayName}
+              width="256"
+              height="256"
+              loading="lazy"
+              class="avatar-chip h-10 w-10 rounded-full border-2 border-bg object-cover sm:h-11 sm:w-11"
+            />
+          ))}
+        </div>
+        <span class="text-micro text-fg-muted transition-colors group-hover:text-fg">
+          {t(lang, 'hero.teamHint')} ↓
+        </span>
+      </a>
+
       <div
-        class="relative mx-auto mt-14 max-w-4xl rounded-2xl border border-border bg-surface p-2 shadow-(--shadow-card)"
+        class="relative mx-auto mt-12 max-w-4xl rounded-2xl border border-border bg-surface p-2 shadow-(--shadow-card)"
       >
         <img
           src={withBase('/screenshot.png')}
@@ -82,15 +158,50 @@ const features = [
     </div>
   </section>
 
-  <!-- 核心特性 -->
+  <!-- 核心特性（bento）-->
   <section id="features" class="scroll-mt-16">
     <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-20">
       <h2 class="text-center text-headline font-semibold tracking-tight text-fg">
         {t(lang, 'features.title')}
       </h2>
       <div class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <!-- 本地优先：大卡，带真实目录树 -->
+        <div
+          class="rounded-2xl border border-border bg-surface p-6 transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-(--shadow-card) sm:col-span-2 lg:col-span-2 lg:row-span-2"
+        >
+          <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-soft text-accent">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="h-5 w-5"
+              aria-hidden="true"
+            >
+              <rect x="3" y="4" width="18" height="7" rx="2"></rect>
+              <rect x="3" y="13" width="18" height="7" rx="2"></rect>
+              <path d="M7 7.5h.01M7 16.5h.01"></path>
+            </svg>
+          </div>
+          <h3 class="mt-4 text-title font-semibold text-fg">
+            {t(lang, 'features.local.title')}
+          </h3>
+          <p class="mt-1.5 text-ui leading-relaxed text-fg-muted">
+            {t(lang, 'features.local.desc')}
+          </p>
+          <pre
+            class="mt-5 overflow-x-auto rounded-xl border border-border bg-(--code-bg) px-4 py-3.5 text-caption leading-relaxed text-fg-muted"><code>{tree}</code></pre>
+        </div>
+
         {features.map((feature) => (
-          <div class="rounded-2xl border border-border bg-surface p-5 transition-colors hover:border-border-strong">
+          <div
+            class:list={[
+              'rounded-2xl border border-border bg-surface p-5 transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-(--shadow-card)',
+              feature.span,
+            ]}
+          >
             <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-soft text-accent">
               <svg
                 viewBox="0 0 24 24"
@@ -102,13 +213,6 @@ const features = [
                 class="h-5 w-5"
                 aria-hidden="true"
               >
-                {feature.icon === 'drive' && (
-                  <>
-                    <rect x="3" y="4" width="18" height="7" rx="2"></rect>
-                    <rect x="3" y="13" width="18" height="7" rx="2"></rect>
-                    <path d="M7 7.5h.01M7 16.5h.01"></path>
-                  </>
-                )}
                 {feature.icon === 'memory' && (
                   <>
                     <ellipse cx="12" cy="6" rx="8" ry="3"></ellipse>
@@ -171,15 +275,103 @@ const features = [
     </div>
   </section>
 
-  <!-- Agent SDK -->
+  <!-- 头像 marquee：通向团队区的过渡带 -->
+  <section aria-hidden="true" class="marquee-mask overflow-hidden border-y border-border bg-bg-subtle py-6">
+    <div class="animate-marquee flex w-max gap-5 pr-5">
+      {[...members, ...members].map((member) => (
+        <img
+          src={withBase(`/agents/${member.avatar}`)}
+          alt=""
+          width="256"
+          height="256"
+          loading="lazy"
+          class="h-14 w-14 rounded-full border border-border object-cover"
+        />
+      ))}
+    </div>
+  </section>
+
+  <!-- 角色团队 -->
+  <section id="team" class="scroll-mt-16">
+    <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-20">
+      <div class="mx-auto max-w-2xl text-center">
+        <h2 class="text-headline font-semibold tracking-tight text-fg">{t(lang, 'team.title')}</h2>
+        <p class="mt-4 text-body leading-loose text-fg-muted">{t(lang, 'team.desc')}</p>
+      </div>
+
+      <div class="relative mx-auto mt-10 max-w-4xl overflow-hidden rounded-2xl border border-border shadow-(--shadow-card)">
+        <img
+          src={withBase('/agents/agents-team.jpg')}
+          alt={t(lang, 'team.photoAlt')}
+          width="1280"
+          height="720"
+          loading="lazy"
+          class="w-full"
+        />
+      </div>
+
+      <div class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {members.map((member) => (
+          <div class="rounded-2xl border border-border bg-surface p-5 transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-(--shadow-card)">
+            <img
+              src={withBase(`/agents/${member.avatar}`)}
+              alt={member.displayName}
+              width="256"
+              height="256"
+              loading="lazy"
+              class="aspect-square w-full rounded-xl border border-border object-cover"
+            />
+            <div class="mt-4 flex items-baseline justify-between gap-2">
+              <h3 class="text-body-lg font-semibold text-fg">{member.displayName}</h3>
+              <span class="shrink-0 text-micro text-fg-faint">{member.name}</span>
+            </div>
+            <span class="mt-2 inline-block rounded-full bg-accent-soft px-2.5 py-0.5 text-micro font-medium text-accent">
+              {t(lang, `team.${member.id}.role` as UiKey)}
+            </span>
+            <p class="mt-2.5 text-ui leading-relaxed text-fg-muted">
+              {t(lang, `team.${member.id}.desc` as UiKey)}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- 模型生态 -->
   <section class="border-y border-border bg-bg-subtle">
+    <div class="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-20">
+      <h2 class="text-headline font-semibold tracking-tight text-fg">{t(lang, 'models.title')}</h2>
+      <p class="mx-auto mt-4 max-w-xl text-body leading-loose text-fg-muted">
+        {t(lang, 'models.desc')}
+      </p>
+      <ul class="mt-8 flex flex-wrap items-center justify-center gap-2.5">
+        {modelProviders.map((provider) => (
+          <li
+            class="rounded-full border border-border bg-surface px-4 py-1.5 text-ui font-medium text-fg-muted transition-colors hover:border-border-strong hover:text-fg"
+          >
+            {provider}
+          </li>
+        ))}
+      </ul>
+    </div>
+  </section>
+
+  <!-- Agent SDK -->
+  <section>
     <div class="mx-auto grid max-w-6xl items-center gap-10 px-4 py-16 sm:px-6 sm:py-20 lg:grid-cols-2">
       <div>
         <h2 class="text-headline font-semibold tracking-tight text-fg">{t(lang, 'sdk.title')}</h2>
         <p class="mt-4 text-body leading-loose text-fg-muted">{t(lang, 'sdk.desc')}</p>
       </div>
-      <pre
-        class="overflow-x-auto rounded-2xl border border-border bg-surface p-5 text-caption leading-relaxed text-fg-muted shadow-(--shadow-card)"><code>{`import { createAgent } from '@lume/agent-sdk'
+      <div class="overflow-hidden rounded-2xl border border-border bg-surface shadow-(--shadow-card)">
+        <div class="flex items-center gap-1.5 border-b border-border bg-bg-subtle px-4 py-2.5">
+          <span class="h-2.5 w-2.5 rounded-full bg-border-strong"></span>
+          <span class="h-2.5 w-2.5 rounded-full bg-border-strong"></span>
+          <span class="h-2.5 w-2.5 rounded-full bg-accent"></span>
+          <span class="ml-2 text-micro text-fg-faint">agent.ts</span>
+        </div>
+        <pre
+          class="overflow-x-auto p-5 text-caption leading-relaxed text-fg-muted"><code>{`import { createAgent } from '@lume/agent-sdk'
 
 const agent = createAgent({
   model: 'claude-sonnet-4-6',
@@ -187,22 +379,38 @@ const agent = createAgent({
 })
 
 for await (const event of agent.query('Read package.json and summarize the project.')) {
-  // 流式事件：assistant 文本 / 工具调用 / result 统计
+  ${sdkComment}
 }`}</code></pre>
+      </div>
     </div>
   </section>
 
   <!-- 底部 CTA -->
-  <section>
-    <div class="mx-auto max-w-6xl px-4 py-16 text-center sm:px-6 sm:py-20">
+  <section class="relative overflow-hidden border-t border-border">
+    <div
+      class="pointer-events-none absolute inset-0"
+      aria-hidden="true"
+      style={`background:
+        radial-gradient(500px 260px at 50% 110%, var(--glow-1), transparent 70%);`}
+    >
+    </div>
+    <div class="relative mx-auto max-w-6xl px-4 py-16 text-center sm:px-6 sm:py-24">
       <h2 class="text-headline font-semibold tracking-tight text-fg">{t(lang, 'cta.title')}</h2>
       <p class="mt-3 text-body-lg text-fg-muted">{t(lang, 'cta.desc')}</p>
-      <a
-        href={withBase(`${lang === 'zh' ? '' : '/en'}/download`)}
-        class="mt-7 inline-block rounded-xl bg-accent px-6 py-3 text-body-lg font-medium text-accent-fg shadow-(--shadow-card) transition-colors hover:bg-accent-strong"
-      >
-        {t(lang, 'cta.button')}
-      </a>
+      <div class="mt-7 flex flex-wrap items-center justify-center gap-3">
+        <a
+          href={downloadHref}
+          class="rounded-xl bg-accent px-6 py-3 text-body-lg font-medium text-accent-fg shadow-(--shadow-card) transition-colors hover:bg-accent-strong"
+        >
+          {t(lang, 'cta.button')}
+        </a>
+        <a
+          href="#team"
+          class="rounded-xl border border-border bg-surface px-6 py-3 text-body-lg font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
+        >
+          {t(lang, 'team.title')}
+        </a>
+      </div>
     </div>
   </section>
 </Base>

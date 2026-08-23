@@ -22,7 +22,6 @@ describe("QueryController input streaming", () => {
     };
 
     const controller = new QueryController(
-      {} as any,
       runner,
       source(),
     );
@@ -50,7 +49,7 @@ describe("QueryController input streaming", () => {
       yield { type: "system", subtype: "done" };
     };
 
-    const controller = new QueryController({} as any, runner, "hello");
+    const controller = new QueryController(runner, "hello");
     const events: Array<Record<string, unknown>> = [];
     for await (const event of controller) {
       events.push(event as Record<string, unknown>);
