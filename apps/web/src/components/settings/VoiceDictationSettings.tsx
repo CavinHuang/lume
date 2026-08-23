@@ -4,7 +4,7 @@
 
 import { invoke } from '@/lib/desktop-runtime/core'
 import * as React from 'react'
-import { Loader2, Mic } from 'lucide-react'
+import { ExternalLink, Loader2, Mic } from 'lucide-react'
 import { toast } from 'sonner'
 import type {
   VoiceDictationSettings,
@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input'
 const LANGUAGE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: '', label: '自动检测' },
   { value: 'zh-CN', label: '中文（普通话）' },
+  { value: 'yue-CN', label: '粤语' },
   { value: 'en-US', label: '英语（美国）' },
   { value: 'ja-JP', label: '日语' },
   { value: 'ko-KR', label: '韩语' },
@@ -160,12 +161,21 @@ export function VoiceDictationSettings() {
         </SettingsRow>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <Button variant="outline" type="button" disabled={testing || saving} onClick={() => void handleTest()}>
           {testing ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
           测试连接
         </Button>
         {saving ? <span className="text-xs text-[var(--text-3)]">正在保存…</span> : null}
+        <Button
+          variant="ghost"
+          type="button"
+          className="h-8 px-2 text-xs text-[var(--text-3)]"
+          onClick={() => void invoke('open_external', { url: 'https://console.volcengine.com/speech/service/' })}
+        >
+          前往控制台获取凭证
+          <ExternalLink size={12} className="ml-1" />
+        </Button>
         <span className="text-xs text-[var(--text-3)]">文本框失焦后自动保存；修改在下次听写会话生效</span>
       </div>
     </div>
