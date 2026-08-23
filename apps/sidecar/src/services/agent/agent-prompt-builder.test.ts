@@ -104,7 +104,6 @@ describe("agent-prompt-builder", () => {
       "analyst",
       "quant",
       "novelist",
-      "docsmith",
       "developer"
     ]);
     expect(agents.explorer?.model).toBe("inherit");

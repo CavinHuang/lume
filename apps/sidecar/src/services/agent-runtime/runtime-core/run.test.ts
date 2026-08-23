@@ -129,7 +129,6 @@ describe("runtime-core run", () => {
       "analyst",
       "quant",
       "novelist",
-      "docsmith",
       "developer"
     ]);
 

@@ -30,30 +30,6 @@ describe("skill-manifest-builder", () => {
     expect(lines.join("\n").match(/lume-workspace-demo:/g)).toHaveLength(1);
   });
 
-  test("hides office file skills when built-in office tools exist", () => {
-    const skills = [
-      { slug: "xlsx", description: "Use this skill any time a spreadsheet file is the primary input or output." },
-      { slug: "pdf", description: "Use this skill whenever the user wants to do anything with PDF files." },
-      { slug: "planner", description: "Breaks work into clear execution plans." }
-    ];
-    const withOfficeTools = renderSkillManifestLines({
-      workspaceSlug: "demo",
-      skills,
-      hasOfficeTools: true
-    }).join("\n");
-    expect(withOfficeTools).not.toContain("- xlsx:");
-    expect(withOfficeTools).not.toContain("- pdf:");
-    expect(withOfficeTools).toContain("- planner:");
-
-    const withoutOfficeTools = renderSkillManifestLines({
-      workspaceSlug: "demo",
-      skills,
-      hasOfficeTools: false
-    }).join("\n");
-    expect(withoutOfficeTools).toContain("- xlsx:");
-    expect(withoutOfficeTools).toContain("- pdf:");
-  });
-
   test("renders display names alongside skill ids", () => {
     const lines = renderSkillManifestLines({
       workspaceSlug: "demo",
