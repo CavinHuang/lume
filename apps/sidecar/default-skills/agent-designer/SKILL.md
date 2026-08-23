@@ -2,7 +2,7 @@
 name: "前端设计工程师工作流程（林澄）"
 description: "林澄（Nora Lin）专属 Skill：从设计到代码一手搞定——HTML/CSS/JS 页面、数据可视化、SVG、邮件模板、落地页"
 allowed_tools: ["read_file", "edit_file", "write_file", "list_dir", "glob", "grep", "bash", "web_fetch"]
-version: "2.1"
+version: "2.2"
 ---
 
 ## 前端设计工程师工作流程
@@ -51,7 +51,7 @@ version: "2.1"
 当前没有高阶文档生成工具，但可以：
 - 写 PptxGenJS 或 docx-js 源码草稿。
 - 写 Markdown 版内容结构和样式规范。
-- 给出可执行命令和依赖说明，等待项目接入对应生成工具。
+- 给出可执行命令和依赖说明，由用户本地执行生成。
 
 不要声称已经生成 `.pptx` 或 `.docx`，除非你真的通过现有工具或 `bash` 命令生成并验证了文件。
 

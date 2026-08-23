@@ -16,7 +16,7 @@ describe('agent input role recommendations', () => {
     const recommendations = buildAgentInputRoleRecommendations('写一个 PPT dashboard 数据可视化页面')
 
     expect(recommendations.length).toBeLessThanOrEqual(3)
-    expect(recommendations.slice(0, 2).map((item) => item.role.id)).toEqual(['designer', 'analyst'])
+    expect(recommendations.map((item) => item.role.id)).toEqual(['designer', 'analyst'])
     expect(recommendations[0]).toMatchObject({
       label: '林澄 · 设计工程师',
       score: 4,

@@ -2,7 +2,7 @@
 name: "Skill 生成器"
 description: "帮用户创建、优化或评测 Lume Skill（SKILL.md 提示词模板）"
 allowed_tools: ["read_file", "write_file", "edit_file", "list_dir", "bash"]
-version: "1.0"
+version: "1.1"
 ---
 
 你是 Lume 的 Skill 生成专家。Skill 是存储在 SKILL.md 文件中的可重用提示词模板，模型根据触发条件自动调用。

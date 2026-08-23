@@ -31,7 +31,7 @@ Each Skill is a `SKILL.md` prompt template with hot reloading — edits take eff
 
 ## Toolset
 
-The full toolset available to agents: file system (Read / Write / Edit / Glob / Grep), Bash (timeout control + background execution), Office documents (create/edit docx / pptx / xlsx / pdf plus OOXML repair), web search & fetch, and image generation.
+The full toolset available to agents: file system (Read / Write / Edit / Glob / Grep), Bash (timeout control + background execution), web search & fetch, and image generation.
 
 ## Automation & IM
 
