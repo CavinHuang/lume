@@ -33,20 +33,24 @@ describe("buildGrepArgs", () => {
   });
 
   test("skips hidden files and excludes every VCS directory (#473)", () => {
-    // rg/native 通道默认跳过隐藏条目;grep 回退用 --exclude='.*' 收窄点前缀
+    // rg/native 通道默认跳过隐藏条目;grep 回退用 --exclude=.* 收窄点前缀
     // 文件,EXCLUDED_DIRS 各目录必须有对应 --exclude-dir(BSD grep 的
     // --exclude 不作用于目录)。.gitignore 尊重是已知残留,不在此通道实现。
     const args = buildGrepArgs({ pattern: "x" }, "files_with_matches", "/tmp");
-    const excludeIndex = args.indexOf("--exclude");
-    expect(excludeIndex).toBeGreaterThanOrEqual(0);
-    expect(args[excludeIndex + 1]).toBe(".*");
+    // 等号形式(#483):Windows spawn 的 MSYS grep 会把裸 `.*` 当 glob 按
+    // CWD 展开,argv 错位;等号拼接的 token 无文件名可匹配,原样透传。
+    expect(args).toContain("--exclude=.*");
     for (const directory of EXCLUDED_DIRS) {
-      let covered = false;
-      for (let i = 0; i < args.length - 1; i += 1) {
-        if (args[i] === "--exclude-dir" && args[i + 1] === directory) covered = true;
-      }
-      expect(covered).toBeTrue();
+      expect(args).toContain(`--exclude-dir=${directory}`);
     }
+  });
+
+  test("passes user globs as equals-form tokens (#483)", () => {
+    // 用户 glob(如 *.ts)同样是裸通配,分离形式在 Windows MSYS grep 下
+    // 会被展开成真实文件名挤占 operand 位;等号形式透传。
+    const args = buildGrepArgs({ pattern: "x", glob: "*.ts" }, "files_with_matches", "/tmp");
+    expect(args).toContain("--include=*.ts");
+    expect(args).not.toContain("*.ts");
   });
 });
 
