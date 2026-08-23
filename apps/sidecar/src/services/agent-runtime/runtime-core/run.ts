@@ -53,9 +53,9 @@ import {
   getEffectivePluginRuntimeConfig,
 } from "../../system/lume-config-service";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
-import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
-import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
-import { buildSubagentWorkContext } from "../../agent/subagents/subagent-dispatch-policy";
+import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
+import { getSubagentCoordinator } from "../subagents/subagent-coordinator";
+import { buildSubagentWorkContext } from "../subagents/subagent-dispatch-policy";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDir,

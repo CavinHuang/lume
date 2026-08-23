@@ -107,8 +107,8 @@ import { createFileBackedRunContinuationStore } from "../services/agent-runtime/
 import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runtime-core/run-state-store";
 import type { LumeRunState } from "../services/agent-runtime/runtime-core/run-state";
 import { listThreadRuntimeEvents } from "../services/agent-runtime/replay/runtime-event-history";
-import { getSubagentRunRegistry } from "../services/agent/subagents/subagent-run-registry";
-import { getSubagentCoordinator } from "../services/agent/subagents/subagent-coordinator";
+import { getSubagentRunRegistry } from "../services/agent-runtime/subagents/subagent-run-registry";
+import { getSubagentCoordinator } from "../services/agent-runtime/subagents/subagent-coordinator";
 import { listPendingAskUserQuestionRequests } from "../services/agent-runtime/interruption/ask-user-question-session";
 import {
   listPendingDesktopActionRequests,

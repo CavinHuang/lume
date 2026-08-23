@@ -6,7 +6,7 @@ import { AGENT_IPC_CHANNELS, type AgentAskUserQuestionRequest, type AgentToolPer
 import { appendAgentThreadSDKMessages, createAgentThreadWithModelRef, getAgentThreadSDKMessages } from "../agent/agent-thread-manager";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { sendAgentMessage } from "../agent/agent-service";
-import { getSubagentCoordinator } from "../agent/subagents/subagent-coordinator";
+import { getSubagentCoordinator } from "../agent-runtime/subagents/subagent-coordinator";
 import { emitAgentNotification } from "../agent/agent-notification-service";
 import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import { MemoryCommandService, hasMemoryMutationForRun } from "./command-service";

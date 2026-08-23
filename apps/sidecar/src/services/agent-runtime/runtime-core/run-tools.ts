@@ -74,11 +74,11 @@ import {
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { createLumeRuntimeTools } from "../tools/create-lume-tools";
 import { createSdkWebTools } from "../tools/web/create-web-tools";
-import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
-import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
-import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
-import { resolveSubagentDispatchPolicy } from "../../agent/subagents/subagent-dispatch-policy";
-import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
+import { resolveSubagentSpawnPolicy } from "../subagents/subagent-policy";
+import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
+import { getSubagentCoordinator } from "../subagents/subagent-coordinator";
+import { resolveSubagentDispatchPolicy } from "../subagents/subagent-dispatch-policy";
+import { announceSubagentCompletion } from "../subagents/subagent-announce-service";
 import {
   createAgentThreadWithModelRef,
   updateAgentThreadMeta,

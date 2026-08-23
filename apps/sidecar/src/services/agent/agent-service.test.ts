@@ -335,7 +335,7 @@ mock.module("../agent-runtime/runner/attempt", () => ({
       return { status: "errored" as const, errorMessage: "network failed" };
     }
     if (userMessage === "subagent-announce-during-run") {
-      const { announceSubagentCompletion } = await import("./subagents/subagent-announce-service");
+      const { announceSubagentCompletion } = await import("../agent-runtime/subagents/subagent-announce-service");
       await announceSubagentCompletion({
         run: {
           runId: `mock-subagent-run:${threadId}`,
@@ -1709,7 +1709,7 @@ describe("stopAgent cascade (D6)", () => {
   });
 
   afterEach(async () => {
-    const { resetSubagentRunRegistryForTest } = await import("./subagents/subagent-run-registry");
+    const { resetSubagentRunRegistryForTest } = await import("../agent-runtime/subagents/subagent-run-registry");
     const { resetAgentRuntimeStatusManagerForTest } = await import("./agent-runtime-status-manager");
     const { resetAgentRuntimeKernelForTest, waitForAgentRuntimeKernelIdleForTest } = await import("./agent-service");
     await waitForAgentRuntimeKernelIdleForTest();
@@ -1730,7 +1730,7 @@ describe("stopAgent cascade (D6)", () => {
   test("中止父 thread 时级联中止运行中子会话", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { stopAgent } = await import("./agent-service");
-    const { getSubagentRunRegistry } = await import("./subagents/subagent-run-registry");
+    const { getSubagentRunRegistry } = await import("../agent-runtime/subagents/subagent-run-registry");
 
     const parent = createAgentThread("父", "channel-test");
     getSubagentRunRegistry().create({

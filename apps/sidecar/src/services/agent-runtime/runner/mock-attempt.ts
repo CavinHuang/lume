@@ -5,8 +5,8 @@ import {
 import { createLogger } from "../../infra/logger";
 import { waitForAskUserQuestionAnswers } from "../interruption/ask-user-question-session";
 import { waitForToolPermissionDecision } from "../interruption/tool-permission-session";
-import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
-import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
+import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
+import { announceSubagentCompletion } from "../subagents/subagent-announce-service";
 import { createRuntimeCoreSession } from "../runtime-core/run";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter, RunRuntimeCoreAttemptOptions } from "./types";
 import type { resolveRuntimeCoreChannelModel } from "../runtime-core/model";

@@ -34,9 +34,9 @@ import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import {
   clampSubagentPermissionMode,
   resolveSubagentSpawnPolicy,
-} from "../../agent/subagents/subagent-policy";
-import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
-import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
+} from "../subagents/subagent-policy";
+import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
+import { getSubagentCoordinator } from "../subagents/subagent-coordinator";
 import {
   createAgentThreadWithModelRef,
   getAgentThreadMeta,

@@ -61,7 +61,7 @@ import {
   isWeakGeneratedTitle,
   sanitizeGeneratedTitle
 } from "../agent-runtime/service-runtime/session-title-summarizer";
-import { getSubagentRunRegistry } from "./subagents/subagent-run-registry";
+import { getSubagentRunRegistry } from "../agent-runtime/subagents/subagent-run-registry";
 import { buildAgentContentLogData, buildAgentSendStartLogData } from "./agent-log-summary";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createConnectionLlmProvider } from "../model-runtime/connection-provider";
@@ -1747,7 +1747,7 @@ export async function stopAgent(threadId: string): Promise<boolean> {
   }
   const [runtime, subagents] = await Promise.all([
     import("../agent-runtime/runner/attempt"),
-    import("./subagents/subagent-coordinator")
+    import("../agent-runtime/subagents/subagent-coordinator")
   ]);
   const [stopped] = await Promise.all([
     Promise.all([
@@ -1760,7 +1760,7 @@ export async function stopAgent(threadId: string): Promise<boolean> {
 }
 
 export function stopAllAgents(): void {
-  void import("./subagents/subagent-coordinator")
+  void import("../agent-runtime/subagents/subagent-coordinator")
     .then((module) => module.getSubagentCoordinator().cancelAll())
     .catch(() => undefined);
   void import("../agent-runtime/runner/attempt")

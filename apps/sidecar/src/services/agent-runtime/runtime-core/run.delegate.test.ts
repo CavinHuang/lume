@@ -13,7 +13,7 @@ import {
 import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest
-} from "../../agent/subagents/subagent-run-registry";
+} from "../subagents/subagent-run-registry";
 import { buildBackgroundTaskResultsContext } from "./run-background";
 import { buildSidecarSubagentRunContext, canDelegateFromThread, deriveDelegateTitle } from "./run-subagent";
 import { buildWaitForDelegationsResult } from "./run-tools";

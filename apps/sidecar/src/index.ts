@@ -10,8 +10,8 @@ import {
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
-import { subscribeSubagentAnnounceEvent } from "./services/agent/subagents/subagent-announce-service";
-import { getSubagentCoordinator } from "./services/agent/subagents/subagent-coordinator";
+import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
+import { getSubagentCoordinator } from "./services/agent-runtime/subagents/subagent-coordinator";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import { cleanupExpiredTrash, subscribeThreadListChanged } from "./services/agent/agent-thread-manager";
 import type { JsonRpcRequest, JsonRpcResponse } from "./rpc/types";
