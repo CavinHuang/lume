@@ -161,62 +161,6 @@ function extractAssistantText(response: CreateMessageResponse): string {
     .trim()
 }
 
-function summarizeAssistantTurn(
-  response: CreateMessageResponse,
-  sessionId: string,
-): SDKMessage {
-  const text = extractAssistantText(response)
-  const toolUseBlocks = response.content.filter(
-    (block): block is ToolUseBlock => block.type === 'tool_use',
-  )
-  const assistantBlockId = toolUseBlocks[0]?.id || crypto.randomUUID()
-
-  let statusCategory: 'blocked' | 'waiting' | 'completed' | 'review_ready' | 'failed' = 'completed'
-  let statusDetail = 'Turn completed.'
-  let title = 'Completed'
-  let needsAction = 'No immediate action required.'
-
-  if (toolUseBlocks.length > 0) {
-    statusCategory = 'waiting'
-    statusDetail = `Waiting on ${toolUseBlocks.length} tool call(s).`
-    title = 'Using Tools'
-    needsAction = 'Wait for tool execution to finish.'
-  } else if (response.stopReason === 'max_tokens') {
-    statusCategory = 'waiting'
-    statusDetail = 'Response reached the token limit and may continue.'
-    title = 'Continuation Needed'
-    needsAction = 'Continue the assistant response.'
-  } else if (/review|verify|check/i.test(text)) {
-    statusCategory = 'review_ready'
-    statusDetail = 'Output is ready for user review.'
-    title = 'Ready For Review'
-    needsAction = 'Review the assistant output.'
-  }
-
-  const description = text
-    ? text.slice(0, 280)
-    : toolUseBlocks.length > 0
-      ? `Assistant invoked ${toolUseBlocks.map((block) => block.name).join(', ')}.`
-      : 'Assistant completed a turn.'
-
-  return {
-    type: 'system',
-    subtype: 'post_turn_summary',
-    summarizes_uuid: assistantBlockId,
-    status_category: statusCategory,
-    status_detail: statusDetail,
-    is_noteworthy: toolUseBlocks.length > 0 || /error|fail|review|verify/i.test(text),
-    title,
-    description,
-    recent_action: toolUseBlocks.length > 0
-      ? `Called ${toolUseBlocks.map((block) => block.name).join(', ')}`
-      : (text.slice(0, 120) || 'Generated a response.'),
-    needs_action: needsAction,
-    artifact_urls: [],
-    session_id: sessionId,
-  }
-}
-
 function createStreamlinedTextMessage(
   response: CreateMessageResponse,
   sessionId: string,
@@ -1400,7 +1344,6 @@ export class QueryEngine {
         }
       }
 
-      yield summarizeAssistantTurn(response, this.sessionId)
 
       // Handle max_output_tokens recovery
       if (response.stopReason === 'max_tokens') {
@@ -2405,46 +2348,16 @@ export class QueryEngine {
       }
     }
 
-    const gridRows = [
-      [
-        {
-          color: 'green',
-          isFilled: systemTokens > 0,
-          categoryName: 'system',
-          tokens: systemTokens,
-          percentage: maxTokens > 0 ? systemTokens / maxTokens : 0,
-          squareFullness: maxTokens > 0 ? Math.min(1, systemTokens / maxTokens) : 0,
-        },
-        {
-          color: 'blue',
-          isFilled: messageTokens > 0,
-          categoryName: 'messages',
-          tokens: messageTokens,
-          percentage: maxTokens > 0 ? messageTokens / maxTokens : 0,
-          squareFullness: maxTokens > 0 ? Math.min(1, messageTokens / maxTokens) : 0,
-        },
-        {
-          color: 'orange',
-          isFilled: toolTokens > 0,
-          categoryName: 'tools',
-          tokens: toolTokens,
-          percentage: maxTokens > 0 ? toolTokens / maxTokens : 0,
-          squareFullness: maxTokens > 0 ? Math.min(1, toolTokens / maxTokens) : 0,
-        },
-      ],
-    ]
-
     return {
       categories: [
-        { name: 'messages', tokens: messageTokens, color: 'blue' },
-        { name: 'system', tokens: systemTokens, color: 'green' },
-        { name: 'tools', tokens: toolTokens, color: 'orange' },
+        { name: 'messages', tokens: messageTokens },
+        { name: 'system', tokens: systemTokens },
+        { name: 'tools', tokens: toolTokens },
       ],
       totalTokens,
       maxTokens,
       rawMaxTokens: maxTokens,
       percentage: maxTokens > 0 ? totalTokens / maxTokens : 0,
-      gridRows,
       model: this.config.model,
       memoryFiles: [],
       deferredBuiltinTools: (this.config.deferredTools ?? []).map((tool) => ({
