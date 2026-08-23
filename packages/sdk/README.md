@@ -34,15 +34,13 @@ const agent = createAgent({ provider: myProvider, model: "claude-sonnet-4-6" });
 Requires a host-injected `provider` (see [Get started](#get-started)); omitted here for brevity.
 
 ```typescript
-import { query } from "@codeany/open-agent-sdk";
+import { createAgent } from "@codeany/open-agent-sdk";
 
-const run = query({
-  prompt: "Read package.json and tell me the project name.",
-  options: {
-    allowedTools: ["Read", "Glob"], // pre-approve these tools
-    permissionMode: "bypassPermissions",
-  },
+const agent = createAgent({
+  allowedTools: ["Read", "Glob"], // pre-approve these tools
+  permissionMode: "bypassPermissions",
 });
+const run = agent.query("Read package.json and tell me the project name.");
 
 for await (const message of run) {
   if (message.type === "assistant") {
@@ -52,7 +50,7 @@ for await (const message of run) {
   }
 }
 
-const usage = await run.getContextUsage();
+const usage = await agent.getContextUsage();
 console.log(usage.totalTokens);
 ```
 
@@ -184,20 +182,19 @@ const hooks = createHookRegistry({
 ### Subagents
 
 ```typescript
-import { query } from "@codeany/open-agent-sdk";
+import { createAgent } from "@codeany/open-agent-sdk";
 
-for await (const msg of query({
-  prompt: "Use the code-reviewer agent to review src/index.ts",
-  options: {
-    agents: {
-      "code-reviewer": {
-        description: "Expert code reviewer",
-        prompt: "Analyze code quality. Focus on security and performance.",
-        tools: ["Read", "Glob", "Grep"],
-      },
+const agent = createAgent({
+  agents: {
+    "code-reviewer": {
+      description: "Expert code reviewer",
+      prompt: "Analyze code quality. Focus on security and performance.",
+      tools: ["Read", "Glob", "Grep"],
     },
   },
-})) {
+});
+
+for await (const msg of agent.query("Use the code-reviewer agent to review src/index.ts")) {
   if (msg.type === "result") console.log("Done");
 }
 ```
@@ -205,16 +202,14 @@ for await (const msg of query({
 ### Permissions
 
 ```typescript
-import { query } from "@codeany/open-agent-sdk";
+import { createAgent } from "@codeany/open-agent-sdk";
 
 // Read-only agent — can only analyze, not modify
-for await (const msg of query({
-  prompt: "Review the code in src/ for best practices.",
-  options: {
-    allowedTools: ["Read", "Glob", "Grep"],
-    permissionMode: "dontAsk",
-  },
-})) {
+const agent = createAgent({
+  allowedTools: ["Read", "Glob", "Grep"],
+  permissionMode: "dontAsk",
+});
+for await (const msg of agent.query("Review the code in src/ for best practices.")) {
   // ...
 }
 ```
@@ -247,7 +242,7 @@ What the SDK does constrain:
 
 | Function                              | Description                                                    |
 | ------------------------------------- | -------------------------------------------------------------- |
-| `query({ prompt, options })`          | One-shot streaming query, returns a Query control object       |
+| `agent.query(prompt)`                 | One-shot streaming query, returns a Query control object       |
 | `createAgent(options)`                | Create a reusable agent with session persistence               |
 | `defineTool(config)`                  | Low-level tool definition helper                               |
 | `getAllBaseTools()`                   | Get all 35+ built-in tools                                     |
@@ -273,21 +268,18 @@ What the SDK does constrain:
 
 ### Query control methods
 
-`query({ ... })` and `agent.query(...)` return an async-iterable Query object.
+`agent.query(...)` returns an async-iterable Query object.
 
 | Method                           | Description                                           |
 | -------------------------------- | ----------------------------------------------------- |
 | `query[Symbol.asyncIterator]()`  | Stream SDK events                                     |
-| `query.streamInput(input)`       | Push additional prompt input                          |
-| `query.interrupt()`              | Interrupt the current turn                            |
-| `query.setModel(model)`          | Change model mid-session                              |
-| `query.setPermissionMode(mode)`  | Change permission mode                                |
-| `query.setMaxThinkingTokens(n)`  | Adjust thinking token budget                          |
-| `query.setCwd(cwd)`              | Change working directory                              |
-| `query.getInitializationResult()`| Get supported commands, agents, models                |
-| `query.getContextUsage()`        | Get context usage breakdown                           |
-| `query.rewindFiles(messageId)`   | Rewind file changes captured since a user message     |
-| `query.stopTask(taskId)`         | Stop a background task                                |
+| `agent.interrupt()`              | Interrupt the current turn                            |
+| `agent.setModel(model)`          | Change model mid-session                              |
+| `agent.setPermissionMode(mode)`  | Change permission mode                                |
+| `agent.setMaxThinkingTokens(n)`  | Adjust thinking token budget                          |
+| `agent.setCwd(cwd)`              | Change working directory                              |
+| `agent.getInitializationResult()`| Get supported commands, agents, models                |
+| `agent.getContextUsage()`        | Get context usage breakdown                           |
 
 ### Options
 
@@ -314,7 +306,7 @@ What the SDK does constrain:
 | `persistSession`     | `boolean`                               | `true`                 | Persist session to disk                                              |
 | `sessionId`          | `string`                                | auto                   | Explicit session ID                                                  |
 | `forkSession`        | `boolean`                               | `false`                | Fork instead of directly resuming a prior session                    |
-| `enableFileCheckpointing` | `boolean`                          | `false`                | Capture editable file snapshots for `rewindFiles()`                  |
+| `enableFileCheckpointing` | `boolean`                          | `false`                | Capture editable file snapshots (`getLatestFileCheckpoint()`)        |
 | `outputFormat`       | `{ type: 'json_schema', schema }`       | —                      | Structured output                                                    |
 | `sandbox`            | `SandboxSettings`                       | —                      | Filesystem/network sandbox                                           |
 | `settingSources`     | `SettingSource[]`                       | —                      | Load AGENT.md, project settings                                      |

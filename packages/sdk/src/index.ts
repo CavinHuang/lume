@@ -22,6 +22,134 @@
  */
 
 // --------------------------------------------------------------------------
+// High-level Agent API
+// --------------------------------------------------------------------------
+
+export { Agent, createAgent } from './agent.js'
+export { rewindCheckpoint } from './utils/file-checkpoints.js'
+export type { FileCheckpoint, FileCheckpointState, FileSnapshot } from './utils/file-checkpoints.js'
+export { QueryController } from './query-controller.js'
+export {
+  formatLumePluginReference,
+  formatLumeSkillReference,
+  normalizeLumeCapabilityReferences,
+  parseLumeCapabilityReference,
+} from './capability-references.js'
+export type {
+  LumeCapabilityReference,
+} from './capability-references.js'
+
+// --------------------------------------------------------------------------
+// Core Engine
+// --------------------------------------------------------------------------
+
+export { QueryEngine } from './engine.js'
+export { withRepeatGuardState, readRepeatGuardState } from './repeat-guard.js'
+export type { RepeatGuardMeta } from './repeat-guard.js'
+export { resolveShellInvocation } from './utils/shell-invocation.js'
+export { analyzeBashCommand, normalizeExecutable } from './utils/bash-command-analysis.js'
+export type { BashCommandAnalysis, BashCommandSegment, BashParseStatus } from './utils/bash-command-analysis.js'
+export {
+  spawnWithProcessSandbox,
+} from './utils/process-sandbox.js'
+export type {
+} from './utils/process-sandbox.js'
+
+// --------------------------------------------------------------------------
+// LLM Provider Contract (host-injected implementations)
+// --------------------------------------------------------------------------
+
+export type {
+  ApiType,
+  LLMProvider,
+  PromptCachePolicy,
+  CreateMessageParams,
+  CreateMessageResponse,
+  CreateMessageStreamEvent,
+  NormalizedMessageParam,
+  NormalizedContentBlock,
+  NormalizedTool,
+  NormalizedResponseBlock,
+} from './providers/types.js'
+
+// --------------------------------------------------------------------------
+// Tool System (30+ tools)
+// --------------------------------------------------------------------------
+
+export {
+  // Registry
+  filterTools,
+
+  // Helpers
+  defineTool,
+  toApiTool,
+
+  // Core file I/O & execution
+  BashTool,
+  FileReadTool,
+  FileWriteTool,
+  FileEditTool,
+  GlobTool,
+  GrepTool,
+  NotebookEditTool,
+
+  // Web
+  WebFetchTool,
+  WebSearchTool,
+  GuanlanSearchTool,
+  GuanlanReadTool,
+  GuanlanHotnewsTool,
+  GuanlanResearchTool,
+
+  // Agent & Multi-agent
+  AgentTool,
+
+  // Persistent Tasks are host-bound through createTaskTools.
+
+  // Worktree
+  EnterWorktreeTool,
+  ExitWorktreeTool,
+
+  // User interaction
+  AskUserQuestionTool,
+
+  // Discovery
+  ToolSearchTool,
+
+  // Todo
+  createTodoTool,
+
+  // Skill
+  SkillTool,
+} from './tools/index.js'
+
+export {
+  ProcessOutputTool,
+  ProcessStopTool,
+  loadProcessJobs,
+  markProcessJobContinuationConsumed,
+  markProcessJobNotified,
+  waitForProcessJobTerminal,
+  type ProcessJob,
+} from './tools/process-job-registry.js'
+
+// --------------------------------------------------------------------------
+// MCP Client
+// --------------------------------------------------------------------------
+
+export { McpClientManager } from './mcp/manager.js'
+export type {
+  McpCallResult,
+  McpClientServerStatus,
+  McpListResourcesResult,
+  McpReadResourceResult,
+  McpToolDetail,
+  NormalizedMcpServerConfig,
+} from './mcp/manager.js'
+
+// --------------------------------------------------------------------------
+// Skills
+// --------------------------------------------------------------------------
 
 export { loadFilesystemSkills } from './skills/fs-loader.js'
 
@@ -30,26 +158,14 @@ export { loadFilesystemSkills } from './skills/fs-loader.js'
 // --------------------------------------------------------------------------
 
 export {
-  parseManifest,
-  validateManifest,
-  inferDefaults,
-  validatePluginPath,
-  validatePluginName,
-  validateSemver,
   type LumePluginManifest,
   type PluginPermissions,
 } from './plugins/manifest.js'
 export {
-  adaptCodexPlugin,
-  CODEX_EVENT_MAP,
-} from './plugins/codex-adapter.js'
-export {
   normalizePluginManifests,
   type NormalizedPlugin,
-  type PluginManifestCapabilities,
   type PluginDiagnostic,
   type CommandToolContribution,
-  type PluginSkillContribution,
 } from './plugins/normalized.js'
 export {
   computePermissionsHash,
@@ -63,15 +179,12 @@ export {
   computeEffectiveRuntimeState,
   type SensitiveCapabilityKey,
   type SensitiveApprovalRecord,
-  type SensitiveDecision,
   type EffectiveRuntimeState,
-  type EffectiveRuntimeStateInput,
 } from './plugins/permission-gate.js'
 export {
   checkToolPermission,
   checkFilesystemPermission,
   checkNetworkPermission,
-  matchPathGlob,
   type PermissionDecision,
 } from './plugins/permissions.js'
 
@@ -80,33 +193,20 @@ export {
 // --------------------------------------------------------------------------
 
 export {
-  SkillRegistry,
-  registerSkill,
   getSkill,
-  getAllSkills,
-  getUserInvocableSkills,
-  getModelInvocableSkills,
-  hasSkill,
-  unregisterSkill,
-  clearSkills,
-  formatSkillsForPrompt,
-  initBundledSkills,
   analyzeSkillImprovement,
   applySkillImprovement,
   listSkillVersions,
-  recordSkillUsage,
   restoreSkillVersion,
 } from './skills/index.js'
 export type {
   SkillDefinition,
-  SkillContentBlock,
   SkillInvocationDescriptor,
   SkillResult,
   ApplySkillImprovementResult,
   SkillImprovementMessage,
   SkillImprovementUpdate,
   SkillModelCallInput,
-  SkillUsageInput,
   SkillVersionInfo,
 } from './skills/index.js'
 
@@ -114,11 +214,6 @@ export type {
 // Hook System
 // --------------------------------------------------------------------------
 
-export {
-  HookRegistry,
-  createHookRegistry,
-  HOOK_EVENTS,
-} from './hooks.js'
 export type {
   HookEvent,
   HookDefinition,
@@ -135,35 +230,21 @@ export type {
 export {
   saveSession,
   loadSession,
-  listSessions,
-  forkSession,
 } from './session.js'
 export type { SessionMetadata, SessionData } from './session.js'
+
 
 // --------------------------------------------------------------------------
 // Settings Utilities
 // --------------------------------------------------------------------------
 
-export {
-  loadSettingsFromSources,
-  mergeAgentOptions,
-} from './utils/settings.js'
 export type {
-  LoadedSettingsSource,
 } from './utils/settings.js'
 
 // --------------------------------------------------------------------------
 // Message Utilities
 // --------------------------------------------------------------------------
 
-export {
-  createUserMessage,
-  createAssistantMessage,
-  normalizeMessagesForAPI,
-  stripImagesFromMessages,
-  extractTextFromContent,
-  createCompactBoundaryMessage,
-} from './utils/messages.js'
 
 // --------------------------------------------------------------------------
 // Token Estimation & Cost
@@ -172,23 +253,8 @@ export {
 export {
   estimateTokens,
   estimateMessagesTokens,
-  estimateSystemPromptTokens,
-  getTokenCountFromUsage,
-  getContextWindowSize,
-  getAutoCompactThreshold,
-  estimateCost,
-  MODEL_PRICING,
-  AUTOCOMPACT_BUFFER_TOKENS,
 } from './utils/tokens.js'
 
-export {
-  normalizeProviderUsage,
-  getCachedTokens,
-  calculateAutoCompactThreshold,
-  createAgentProgressTracker,
-  createEstimatedContextUsage,
-  createContextUsageSnapshot,
-} from './utils/usage.js'
 
 // --------------------------------------------------------------------------
 // Context Compression
@@ -198,17 +264,10 @@ export {
   shouldAutoCompact,
   compactConversation,
   microCompactMessages,
-  createAutoCompactState,
-  prepareCompaction,
-  findCompactionCutPoint,
-  serializeConversation,
 } from './utils/compact.js'
 export type {
   AutoCompactState,
-  CompactConversationOptions,
-  CompactConversationResult,
   CompactionFailureReason,
-  CompactionPreparation,
 } from './utils/compact.js'
 
 // --------------------------------------------------------------------------
@@ -216,17 +275,8 @@ export type {
 // --------------------------------------------------------------------------
 
 export {
-  withRetry,
-  isRetryableError,
-  isPromptTooLongError,
-  isAuthError,
-  isRateLimitError,
-  formatApiError,
-  getRetryDelay,
-  computeRetryDelay,
   parseRetryAfterHeader,
   MAX_RETRY_AFTER_DELAY_MS,
-  DEFAULT_RETRY_CONFIG,
 } from './utils/retry.js'
 export type { RetryConfig } from './utils/retry.js'
 
@@ -234,10 +284,7 @@ export type { RetryConfig } from './utils/retry.js'
 // File State Cache
 // --------------------------------------------------------------------------
 
-export {
-  FileStateCache,
-  createFileStateCache,
-} from './utils/fileCache.js'
+export { FileStateCache } from './utils/fileCache.js'
 export type { FileState } from './utils/fileCache.js'
 
 // --------------------------------------------------------------------------
@@ -262,9 +309,6 @@ export {
   finalizeSubagentOutputFromState,
 } from './tools/subagent-output.js'
 
-export {
-  annotateSubagentStreamingEvent,
-} from './tools/agent-tool-events.js'
 
 export {
   setQuestionHandler,
@@ -272,14 +316,8 @@ export {
 } from './tools/ask-user.js'
 
 export {
-  setDeferredTools,
-  getDeferredTools,
   createToolSearchTool,
   createExecuteTool,
-  getToolSearchMode,
-  getDeferredToolTokenCount,
-  shouldEnableAutomaticToolSearch,
-  isToolSearchEnabled,
 } from './tools/tool-search.js'
 
 export type { TodoItem, TodoStatus, TodoState } from './tools/todo-tool.js'
@@ -299,9 +337,7 @@ export { extractArticleMarkdown } from './tools/html-to-markdown.js'
 export {
   fetchIdFromUrl,
   lumeFileUrl,
-  downloadAndLocalizeImages,
   type ImageMode,
-  type LocalizeResult,
 } from './tools/image-pipeline.js'
 
 // --------------------------------------------------------------------------
@@ -364,24 +400,15 @@ export type {
 
   // Permission types
   PermissionMode,
-  PermissionBehavior,
-  PermissionUpdate,
-  PermissionUpdateDestination,
-  PermissionRuleValue,
-  CanUseToolMetadata,
   CanUseToolFn,
-  CanUseToolResult,
 
   // Agent types
   AgentOptions,
   AgentContextController,
-  AgentContextCompactionBoundary,
   AgentContextCompactionMetadata,
   AgentContextCompactionTrigger,
   AgentDefinition,
   Query,
-  QueryResult,
-  ThinkingConfig,
   TokenUsage,
   ProviderCallKind,
   UsageIdentity,
@@ -389,23 +416,15 @@ export type {
   ContextUsageSnapshot,
   BillingUsageRecord,
   BillingUsageSummary,
-  AgentProgressUsage,
   ModelUsage,
   InitializationResult,
-  ContextUsageResult,
-  RewindFilesResult,
   AskUserQuestion,
   QuestionOption,
-  AskUserQuestionAnnotations,
   AskUserQuestionRequest,
   AskUserQuestionResponse,
-  ListSessionsOptions,
-  ForkSessionOptions,
-  ForkSessionResult,
   SessionMessage,
 
   // Engine types
-  QueryEngineConfig,
   CompletionGuardResult,
 
   // Content block types
@@ -414,22 +433,16 @@ export type {
 
   // Sandbox types
   SandboxSettings,
-  SandboxProcessIsolationConfig,
-  SandboxNetworkConfig,
-  SandboxFilesystemConfig,
 
   // Output format
-  OutputFormat,
 
   // Setting sources
-  SettingSource,
 
   // Model info
   ModelInfo,
 
   // Slash commands & agent info
   SlashCommand,
-  AgentInfo,
 } from './types.js'
 
 // AbortError is a class (value + type), so it must be exported separately
