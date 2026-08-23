@@ -61,9 +61,10 @@ import {
 } from './im-settings-state'
 import { ConnectorBrandIcon } from './connector-brand-icon'
 
-/** IM provider → 品牌图标 service key(arcticons/simple-icons 抽取集);飞书暂无来源用纸飞机占位。 */
+/** IM provider → 品牌图标 service key(arcticons/simple-icons 抽取集 + scripts/assets 手工资产)。 */
 const IM_PROVIDER_ICON_SERVICE: Partial<Record<ImProvider, string>> = {
   weixin: 'weixin',
+  feishu: 'feishu',
   dingtalk: 'dingtalk',
   wecom: 'wecom',
 }

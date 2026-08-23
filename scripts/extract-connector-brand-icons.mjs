@@ -36,8 +36,26 @@ for (const item of WANTED) {
   out.push(`  ${item.key}: { body: ${JSON.stringify(icon.body)}, viewBox: "0 0 ${width} ${height}" },`);
 }
 
+/** iconify 无收录的品牌(官方标志矢量),从仓库内资产读取;飞书官方三色标,几何描摹自社区渠道图标。 */
+const MANUAL_ASSETS = [
+  { key: "feishu", asset: "feishu.svg" },
+];
+
+function loadManualAsset(file) {
+  const raw = readFileSync(resolve(REPO_ROOT, "scripts", "assets", file), "utf8");
+  const viewBox = raw.match(/viewBox="([^"]+)"/)?.[1];
+  const inner = raw.replace(/^[\s\S]*?<svg[^>]*>/, "").replace(/<\/svg>[\s\S]*$/, "").trim().replace(/\s+/g, " ");
+  if (!viewBox || !inner.startsWith("<path")) throw new Error(`bad manual asset: ${file}`);
+  return { body: inner, viewBox };
+}
+
+for (const item of MANUAL_ASSETS) {
+  const { body, viewBox } = loadManualAsset(item.asset);
+  out.push(`  ${item.key}: { body: ${JSON.stringify(body)}, viewBox: "${viewBox}" },`);
+}
+
 const content = `// 由 scripts/extract-connector-brand-icons.mjs 生成;勿手改,重跑脚本再生成。
-// 来源:@iconify-json/{logos,fa6-brands,simple-icons,arcticons}(devDependencies)。
+// 来源:@iconify-json/{logos,fa6-brands,simple-icons,arcticons}(devDependencies)与 scripts/assets/(手工品牌资产,飞书官方标)。
 export interface ConnectorBrandIcon {
   /** SVG 内部元素(iconify body)。 */
   body: string;
