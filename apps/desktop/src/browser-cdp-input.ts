@@ -7,6 +7,16 @@ export interface BrowserCdpPoint {
   y: number
 }
 
+// 输入自然性：为注入事件补齐人类节奏（指针轨迹、按键驻留、逐字输入），
+// 避免与用户共同操作同一页面时，混合事件流触发站点行为风控误伤。
+// natural=true 启用；缺省为确定性直通注入，由 runtime 统一开关。
+export type BrowserInputNaturalnessOptions = {
+  natural?: boolean
+  from?: BrowserCdpPoint
+  speed?: "type" | "fill"
+  sleep?: (milliseconds: number) => Promise<void>
+}
+
 type KeyDefinition = {
   code: string
   key: string
@@ -23,13 +33,81 @@ const MODIFIERS = {
 
 type ModifierName = keyof typeof MODIFIERS
 
+const defaultSleep = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
+
+const rand = (min: number, max: number) => min + Math.random() * (max - min)
+
+// 从目标附近的随机偏移出发，避免每次动作都从同一个虚拟原点起手
+function driftNear(point: BrowserCdpPoint): BrowserCdpPoint {
+  return { x: Math.max(0, point.x + rand(-180, 180)), y: Math.max(0, point.y + rand(-140, 140)) }
+}
+
+// 三次贝塞尔轨迹：控制点沿法线方向随机弯曲，easeOut 采样使起步快、临近目标减速，
+// 坐标叠加亚像素抖动（CDP dispatchMouseEvent 接受浮点坐标）
+export function pointerPath(from: BrowserCdpPoint, to: BrowserCdpPoint): { points: BrowserCdpPoint[]; stepMs: number[] } {
+  const distance = Math.hypot(to.x - from.x, to.y - from.y)
+  if (distance < 3) return { points: [], stepMs: [] }
+  const steps = Math.max(6, Math.min(22, Math.round(distance / 45)))
+  const normalX = -(to.y - from.y) / distance
+  const normalY = (to.x - from.x) / distance
+  const bow1 = rand(-0.16, 0.16) * distance
+  const bow2 = rand(-0.16, 0.16) * distance
+  const control1 = { x: from.x + (to.x - from.x) * 0.3 + normalX * bow1, y: from.y + (to.y - from.y) * 0.3 + normalY * bow1 }
+  const control2 = { x: from.x + (to.x - from.x) * 0.72 + normalX * bow2, y: from.y + (to.y - from.y) * 0.72 + normalY * bow2 }
+  const totalMs = Math.max(120, Math.min(520, distance * 2))
+  const points: BrowserCdpPoint[] = []
+  const stepMs: number[] = []
+  for (let index = 1; index <= steps; index += 1) {
+    const t = 1 - (1 - index / steps) ** 2
+    const u = 1 - t
+    points.push({
+      x: u * u * u * from.x + 3 * u * u * t * control1.x + 3 * u * t * t * control2.x + t * t * t * to.x + rand(-0.35, 0.35),
+      y: u * u * u * from.y + 3 * u * u * t * control1.y + 3 * u * t * t * control2.y + t * t * t * to.y + rand(-0.35, 0.35),
+    })
+    stepMs.push((totalMs / steps) * rand(0.75, 1.25))
+  }
+  return { points, stepMs }
+}
+
+async function walkPath(sender: BrowserCdpCommandSender, path: { points: BrowserCdpPoint[]; stepMs: number[] }, sleep: (milliseconds: number) => Promise<void>): Promise<void> {
+  for (let index = 0; index < path.points.length; index += 1) {
+    await sleep(path.stepMs[index])
+    await sender.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: path.points[index].x, y: path.points[index].y })
+  }
+}
+
 export async function dispatchBrowserClick(
   sender: BrowserCdpCommandSender,
   point: BrowserCdpPoint,
   clickCount = 1,
+  options: BrowserInputNaturalnessOptions = {},
 ): Promise<void> {
-  await sender.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y })
+  const sleep = options.sleep ?? defaultSleep
+  if (options.natural !== true) {
+    await sender.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y })
+    for (let count = 1; count <= clickCount; count += 1) {
+      await sender.sendCommand("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: point.x,
+        y: point.y,
+        button: "left",
+        buttons: 1,
+        clickCount: count,
+      })
+      await sender.sendCommand("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: point.x,
+        y: point.y,
+        button: "left",
+        buttons: 0,
+        clickCount: count,
+      })
+    }
+    return
+  }
+  await walkPath(sender, pointerPath(options.from ?? driftNear(point), point), sleep)
   for (let count = 1; count <= clickCount; count += 1) {
+    if (count > 1) await sleep(rand(60, 140))
     await sender.sendCommand("Input.dispatchMouseEvent", {
       type: "mousePressed",
       x: point.x,
@@ -38,6 +116,7 @@ export async function dispatchBrowserClick(
       buttons: 1,
       clickCount: count,
     })
+    await sleep(rand(38, 95))
     await sender.sendCommand("Input.dispatchMouseEvent", {
       type: "mouseReleased",
       x: point.x,
@@ -47,6 +126,18 @@ export async function dispatchBrowserClick(
       clickCount: count,
     })
   }
+}
+
+export async function moveBrowserPointer(
+  sender: BrowserCdpCommandSender,
+  point: BrowserCdpPoint,
+  options: BrowserInputNaturalnessOptions = {},
+): Promise<void> {
+  if (options.natural !== true) {
+    await sender.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y })
+    return
+  }
+  await walkPath(sender, pointerPath(options.from ?? driftNear(point), point), options.sleep ?? defaultSleep)
 }
 
 export async function focusBrowserPoint(sender: BrowserCdpCommandSender, point: BrowserCdpPoint): Promise<void> {
@@ -89,17 +180,55 @@ export async function focusBrowserPoint(sender: BrowserCdpCommandSender, point: 
 export async function dispatchBrowserText(
   sender: BrowserCdpCommandSender,
   text: string,
-  options: { platform: NodeJS.Platform; replace: boolean },
+  options: { platform: NodeJS.Platform; replace: boolean } & BrowserInputNaturalnessOptions,
 ): Promise<void> {
   if (options.replace) {
-    await dispatchBrowserKey(sender, `${options.platform === "darwin" ? "Meta" : "Control"}+A`)
-    await dispatchBrowserKey(sender, "Backspace")
+    await dispatchBrowserKey(sender, `${options.platform === "darwin" ? "Meta" : "Control"}+A`, options)
+    await dispatchBrowserKey(sender, "Backspace", options)
   }
-  if (text) await sender.sendCommand("Input.insertText", { text })
+  if (!text) return
+  if (options.natural !== true) {
+    await sender.sendCommand("Input.insertText", { text })
+    return
+  }
+  const sleep = options.sleep ?? defaultSleep
+  const fast = options.speed === "fill"
+  let minimum = fast ? 16 : 48
+  let maximum = fast ? 52 : 145
+  if ([...text].length > 64) {
+    minimum *= 0.6
+    maximum *= 0.6
+  }
+  let charactersUntilPause = 6 + Math.floor(rand(0, 9))
+  for (const character of text) {
+    const definition = keyDefinition(character, false)
+    const typedText = definition.text
+    await sender.sendCommand("Input.dispatchKeyEvent", {
+      type: typedText ? "keyDown" : "rawKeyDown",
+      key: definition.key,
+      code: definition.code,
+      ...(typedText ? { text: typedText, unmodifiedText: typedText } : {}),
+      windowsVirtualKeyCode: definition.virtualKeyCode,
+    })
+    await sleep(rand(minimum, maximum))
+    await sender.sendCommand("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: definition.key,
+      code: definition.code,
+      windowsVirtualKeyCode: definition.virtualKeyCode,
+    })
+    charactersUntilPause -= 1
+    if (charactersUntilPause <= 0) {
+      // 打字过程中的短暂停顿（换行思考、扫视屏幕）
+      await sleep(fast ? rand(90, 220) : rand(180, 420))
+      charactersUntilPause = 6 + Math.floor(rand(0, 9))
+    }
+  }
 }
 
-export async function dispatchBrowserKey(sender: BrowserCdpCommandSender, keySpec: string): Promise<void> {
+export async function dispatchBrowserKey(sender: BrowserCdpCommandSender, keySpec: string, options: BrowserInputNaturalnessOptions = {}): Promise<void> {
   const parsed = parseKeySpec(keySpec)
+  const holdKey = options.natural === true ? () => (options.sleep ?? defaultSleep)(rand(45, 120)) : undefined
   let activeModifiers = 0
   for (const modifier of parsed.modifiers) {
     const definition = MODIFIERS[modifier]
@@ -122,6 +251,7 @@ export async function dispatchBrowserKey(sender: BrowserCdpCommandSender, keySpe
     modifiers: activeModifiers,
     windowsVirtualKeyCode: parsed.key.virtualKeyCode,
   })
+  await holdKey?.()
   await sender.sendCommand("Input.dispatchKeyEvent", {
     type: "keyUp",
     key: parsed.key.key,
