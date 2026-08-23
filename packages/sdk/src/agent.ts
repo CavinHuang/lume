@@ -1496,6 +1496,11 @@ export class Agent {
     this.unregisterFileSkills()
     this.unregisterExplicitSkills()
     this.unregisterPluginSkills()
+    // Release the engine retained for lazy usage estimation (#386): past
+    // close, it would otherwise keep the full message history reachable for
+    // the lifetime of the Agent. getContextUsage falls back to the safe
+    // zero-value shape.
+    this.lastUsageEngine = null
   }
 }
 

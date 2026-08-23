@@ -1537,6 +1537,32 @@ describe("Agent lazy context usage estimation (#386)", () => {
       await agent.close()
     }
   })
+
+  test("close releases the retained usage engine; later reads stay safe", async () => {
+    const provider = new StaticProvider()
+    const agent = createAgent({ persistSession: false, tools: [], provider })
+    const spy = spyOn(QueryEngine.prototype, "getContextUsage")
+
+    try {
+      for await (const _event of agent.query("hello")) {
+        // drain query
+      }
+      expect((agent as any).lastUsageEngine).not.toBeNull()
+
+      await agent.close()
+      // The engine (holding the run's full message history) must not stay
+      // reachable through the Agent past close.
+      expect((agent as any).lastUsageEngine).toBeNull()
+
+      // Post-close reads fall back to the safe zero-value shape without
+      // triggering the retained engine's estimation.
+      const usage = await agent.getContextUsage()
+      expect(spy).toHaveBeenCalledTimes(0)
+      expect(usage.totalTokens).toBe(0)
+    } finally {
+      spy.mockRestore()
+    }
+  })
 })
 
 describe("Agent queued async events across runs (#413)", () => {
