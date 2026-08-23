@@ -14,7 +14,6 @@ import type {
   PermissionMode,
   Query as QueryHandle,
   QueryResult,
-  RewindFilesResult,
   SDKMessage,
   SDKUserMessage,
   SessionMessage,
@@ -55,11 +54,10 @@ import {
 import { QueryController } from './query-controller.js'
 import { loadFilesystemSkills } from './skills/fs-loader.js'
 import type { FileCheckpoint, FileCheckpointState } from './utils/file-checkpoints.js'
-import { rewindCheckpoint } from './utils/file-checkpoints.js'
 import { getContextWindowSize } from './utils/tokens.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { createExecuteTool, createToolSearchTool, isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
-import { buildResumeContinuations, detectDanglingToolUses, INTERRUPTED_TOOL_PLACEHOLDER } from './interrupt-recovery.js'
+import { detectDanglingToolUses, INTERRUPTED_TOOL_PLACEHOLDER } from './interrupt-recovery.js'
 
 type QueryInput = string | ContentBlockParam[] | SDKUserMessage
 
@@ -298,12 +296,8 @@ export class Agent {
     this.setupDone.catch(() => {})
   }
 
-  private readEnv(key: string): string | undefined {
-    return process.env[key] || undefined
-  }
-
   private refreshResolvedConfig(): void {
-    this.modelId = this.cfg.model ?? this.readEnv('CODEANY_MODEL') ?? 'claude-sonnet-4-6'
+    this.modelId = this.cfg.model ?? 'claude-sonnet-4-6'
     this.provider = this.cfg.provider ?? unconfiguredProvider()
     if (this.cfg.sessionId) {
       this.sid = this.cfg.sessionId
@@ -1106,53 +1100,6 @@ export class Agent {
     return true
   }
 
-  /**
-   * Resume an interrupted run from the persisted dangling tool boundary.
-   * Read-only / concurrency-safe tools replay once; everything else
-   * (including unknown tools) gets an interrupted placeholder — never
-   * auto-replay a mutation whose actual effect is unknown.
-   */
-  async *resumeInterruptedRun(overrides?: Partial<AgentOptions>): AsyncGenerator<SDKMessage, void> {
-    // currentEngine (not abortCtrl, which is never cleared after a run) is
-    // the accurate in-flight marker: set before the loop, cleared in finally.
-    if (this.currentEngine) throw new Error('agent is running')
-    // Await setup before detecting: this.history is loaded from the session
-    // file inside setup(), so an early detect sees [] and silently no-ops.
-    await this.setupDone
-    const dangling = detectDanglingToolUses(this.history)
-    if (dangling.length === 0) return
-    const opts = this.getEffectiveOptions(overrides)
-    const { tools } = this.getRunTools(opts, overrides)
-    const continuations = buildResumeContinuations(dangling, {
-      isReadOnly: (name) => {
-        const tool = tools.find((t) => t.name === name)
-        if (!tool) return false
-        return tool.isReadOnly?.() === true || tool.isConcurrencySafe?.() === true
-      },
-    })
-    yield* this.runSinglePrompt('', { ...overrides, toolContinuations: continuations })
-  }
-
-  /**
-   * Discard an interrupted run: fill dangling tool_use with error results so
-   * the session lands in a clean state without another model request.
-   */
-  async discardInterruptedRun(cwd: string): Promise<void> {
-    await this.setupDone
-    const dangling = detectDanglingToolUses(this.history)
-    if (dangling.length === 0) return
-    this.history.push({
-      role: 'user',
-      content: dangling.map((use) => ({
-        type: 'tool_result' as const,
-        tool_use_id: use.id,
-        content: 'Error: run discarded by user',
-        is_error: true,
-      })),
-    })
-    await this.persistCurrentSession(cwd, this.getEffectiveOptions())
-  }
-
   async setModel(model?: string): Promise<void> {
     if (model) {
       this.cfg.model = model
@@ -1191,11 +1138,6 @@ export class Agent {
   /** Resolved API type of the active (host-injected or fallback) provider config. */
   getApiType(): ApiType {
     return this.provider.apiType
-  }
-
-  async stopTask(taskId: string): Promise<void> {
-    const { getProcessJob } = await import('./tools/process-job-registry.js')
-    getProcessJob(taskId)?.stop?.()
   }
 
   private getInitializationCommands(): SlashCommand[] {
@@ -1297,25 +1239,6 @@ export class Agent {
       isAutoCompactEnabled: true,
       apiUsage: null,
     }
-  }
-
-  async rewindFiles(
-    userMessageId: string,
-    dryRun = false,
-  ): Promise<RewindFilesResult> {
-    await this.setupDone
-    const checkpoint = this.fileCheckpointState[userMessageId]
-    const result = await rewindCheckpoint(checkpoint, dryRun)
-    if (!dryRun && result.canRewind) {
-      await saveSession(this.sid, this.history, {
-        cwd: this.cfg.cwd || process.cwd(),
-        model: this.modelId,
-        summary: extractSummary(this.messageLog),
-        sessionMessages: this.sessionMessages,
-        checkpoints: this.fileCheckpointState,
-      })
-    }
-    return result
   }
 
   /** Return the checkpoint captured for the most recently submitted user message. */
