@@ -53,12 +53,6 @@ const READING_TOOL_NAMES = [
   "weread_similar"
 ] as const;
 
-const OFFICE_TOOL_NAMES = [
-  "office_validate",
-  "office_unpack",
-  "office_pack"
-] as const;
-
 const TOOL_GROUPS: Record<string, string[]> = {
   "group:fs": ["read", "write", "edit"],
   "group:runtime": ["bash"],
@@ -71,7 +65,6 @@ const TOOL_GROUPS: Record<string, string[]> = {
   "group:automation": [...AUTOMATION_TOOL_NAMES],
   "group:im": ["send_im_message"],
   "group:evolution": ["personalize_ui"],
-  "group:office": [...OFFICE_TOOL_NAMES],
   "group:reading": [...READING_TOOL_NAMES]
 };
 

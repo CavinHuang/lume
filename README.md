@@ -29,7 +29,7 @@ Lume 运行在你自己的电脑上。记忆、对话、项目上下文、技能
 - **持久记忆** — 三层作用域（global / workspace / thread）× 六种类型（fact / preference / decision / lesson / episode / milestone），新对话中自然召回；矛盾记忆并存，由你决定取舍，绝不静默覆盖。
 - **角色团队** — 11 位有独立风格与专长的角色（开发者、作家、分析师、调研员、画师、设计师……），主线程理解任务后分发给最合适的人。
 - **27+ Skills** — 每个 Skill 是一个 `SKILL.md` 提示词模板，支持热加载，修改即生效；配合自我进化机制，越用越准。
-- **完整工具集** — 文件系统（Read / Write / Edit / Glob / Grep）、Bash（超时 + 后台）、Office 文档（docx / pptx / xlsx / pdf 创建编辑 + OOXML 修复）、Web 搜索与抓取、图片生成、标准 MCP 客户端。
+- **完整工具集** — 文件系统（Read / Write / Edit / Glob / Grep）、Bash（超时 + 后台）、、Web 搜索与抓取、图片生成、标准 MCP 客户端。
 - **自动化** — cron 定时任务、每日日程，到点自动执行并把结果推送到指定渠道。
 - **IM 与阅读** — 微信接入（消息自动绑定工作区线程）；微信读书书架/划线同步 + 两阶段智能笔记管线。
 - **多模型** — OpenAI 兼容接口接入 OpenAI / Anthropic / Gemini / DeepSeek / GLM / 通义 / 豆包 / Moonshot 等，可按任务分配不同模型。

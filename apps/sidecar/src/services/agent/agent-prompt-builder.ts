@@ -16,10 +16,8 @@ import {
 } from "./prompt/sections/static-policy-sections";
 import {
   buildBrowserFirstSection,
-  buildOfficeToolsSection,
   buildPlanModeSection,
-  buildUncertaintySection,
-  hasOfficeToolSet
+  buildUncertaintySection
 } from "./prompt/sections/interaction-policy-sections";
 import { buildToolingSection } from "./prompt/sections/tooling-section";
 import { buildTodoSection } from "./prompt/sections/todo-section";
@@ -375,11 +373,6 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
     sections.push(browserFirstSection);
   }
 
-  const officeToolsSection = buildOfficeToolsSection(availableTools);
-  if (officeToolsSection) {
-    sections.push(officeToolsSection);
-  }
-
   sections.push(...buildMemorySections({
     availableTools,
     citationsMode: ctx.memoryCitationsMode
@@ -487,8 +480,7 @@ export function buildDynamicContext(ctx: DynamicContext): string {
     if (skills.length > 0) {
       lines.push(...renderSkillManifestLines({
         workspaceSlug: ctx.workspaceSlug,
-        skills,
-        hasOfficeTools: hasOfficeToolSet(new Set((ctx.availableTools ?? []).map((item) => canonicalizeAgentToolName(item))))
+        skills
       }));
 
       if (skills.some((s) => s.slug === "skill-creator")) {
