@@ -302,6 +302,8 @@ function keyDefinition(value: string, shifted: boolean): KeyDefinition {
     ArrowUp: { key: "ArrowUp", code: "ArrowUp", virtualKeyCode: 38 },
   }
   if (aliases[value]) return aliases[value]!
+  // 逐字符注入多行文本时，换行符按回车合成（CDP 文本输入的标准换行形态）
+  if (value === "\n") return { key: "Enter", code: "Enter", text: "\r", virtualKeyCode: 13 }
   if (/^[a-z]$/i.test(value)) {
     const upper = value.toUpperCase()
     const key = shifted ? upper : value.toLowerCase()

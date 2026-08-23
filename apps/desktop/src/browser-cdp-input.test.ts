@@ -179,6 +179,21 @@ describe("browser CDP input", () => {
     expect(keys.filter((entry) => entry[1] === "o" || entry[1] === "k")).toHaveLength(4)
   })
 
+  test("natural text maps newlines to Enter key events", async () => {
+    const sender = recorder()
+
+    await dispatchBrowserText(sender, "a\nb", { platform: "win32", replace: false, natural: true, sleep: numberRecorder().step })
+
+    expect(sender.calls.filter((call) => call.method === "Input.dispatchKeyEvent").map((call) => [call.params.type, call.params.key, call.params.text])).toEqual([
+      ["keyDown", "a", "a"],
+      ["keyUp", "a", undefined],
+      ["keyDown", "Enter", "\r"],
+      ["keyUp", "Enter", undefined],
+      ["keyDown", "b", "b"],
+      ["keyUp", "b", undefined],
+    ])
+  })
+
   test("natural key holds the key down briefly between keyDown and keyUp", async () => {
     const sender = recorder()
     const sleeps = numberRecorder()
