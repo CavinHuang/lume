@@ -44,7 +44,7 @@ describe("pi-ai provider retry policy", () => {
     expect(isRetryablePiAiError(new PiAiProviderError("invalid key", { status: 401 }))).toBe(false);
   });
 
-  test("uses 1/2/4/8/16 second backoff and caps Retry-After at 30 seconds", () => {
+  test("uses 1/2/4/8/16 second backoff and caps Retry-After at 120 seconds", () => {
     const deterministicRandom = () => 0.5;
     expect([0, 1, 2, 3, 4].map((index) =>
       resolvePiAiRetryDelayMs(new Error("network"), index, deterministicRandom)
@@ -53,7 +53,12 @@ describe("pi-ai provider retry policy", () => {
       new PiAiProviderError("busy", { retryAfterMs: 90_000 }),
       0,
       deterministicRandom,
-    )).toBe(30_000);
+    )).toBe(90_000);
+    expect(resolvePiAiRetryDelayMs(
+      new PiAiProviderError("busy", { retryAfterMs: 300_000 }),
+      0,
+      deterministicRandom,
+    )).toBe(120_000);
   });
 
   test("falls back for model-specific and credential failures but not malformed requests", () => {

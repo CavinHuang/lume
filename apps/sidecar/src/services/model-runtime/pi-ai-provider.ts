@@ -21,13 +21,12 @@ import type {
   NormalizedMessageParam,
   NormalizedResponseBlock,
 } from "@lume/agent-sdk";
-import { parseRetryAfterHeader } from "@lume/agent-sdk";
+import { MAX_RETRY_AFTER_DELAY_MS, parseRetryAfterHeader } from "@lume/agent-sdk";
 
 type PiTextApi = "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai";
 
 const DEFAULT_MAX_RETRIES = 5;
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
-const MAX_RETRY_AFTER_MS = 30_000;
 
 export interface PiAiProviderOptions {
   apiType: ApiType;
@@ -81,7 +80,7 @@ export function resolvePiAiRetryDelayMs(error: unknown, retryIndex: number, rand
   const base = RETRY_DELAYS_MS[Math.min(retryIndex, RETRY_DELAYS_MS.length - 1)] ?? RETRY_DELAYS_MS.at(-1)!;
   const jittered = Math.round(base * (0.8 + random() * 0.4));
   const retryAfter = typeof (error as { retryAfterMs?: unknown } | null)?.retryAfterMs === "number"
-    ? Math.min(MAX_RETRY_AFTER_MS, Math.max(0, (error as { retryAfterMs: number }).retryAfterMs))
+    ? Math.min(MAX_RETRY_AFTER_DELAY_MS, Math.max(0, (error as { retryAfterMs: number }).retryAfterMs))
     : 0;
   return Math.max(jittered, retryAfter);
 }
@@ -373,7 +372,7 @@ export class PiAiProvider implements LLMProvider {
           signal: params.abortSignal,
           maxTokens: params.maxTokens,
           maxRetries: 0,
-          maxRetryDelayMs: MAX_RETRY_AFTER_MS,
+          maxRetryDelayMs: MAX_RETRY_AFTER_DELAY_MS,
           sessionId: this.options.sessionId ?? params.promptCache?.routingKey,
           cacheRetention: params.promptCache?.ttl === "5m" ? "short" : "none",
           ...(params.thinking?.type === "disabled" ? {} : { reasoning: params.effort ?? "medium" }),
