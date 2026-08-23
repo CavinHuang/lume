@@ -282,7 +282,7 @@ export function BrowserShell({
         setAnnotationMode(true)
       }
       if (event.method === 'browser:tab-changed') acceptDescriptor(event.params as unknown as BrowserTabDescriptor)
-      if (event.method === 'browser:agent-dispatching') {
+      if (event.method === 'browser:agent-dispatching' && event.params.tabId === tabId) {
         if (agentIdleTimerRef.current !== null) {
           clearTimeout(agentIdleTimerRef.current)
           agentIdleTimerRef.current = null
@@ -371,6 +371,8 @@ export function BrowserShell({
         clearTimeout(agentIdleTimerRef.current)
         agentIdleTimerRef.current = null
       }
+      // 切换标签页后指示器不跨页残留
+      setAgentControlling(false)
       if (established) {
         if (descriptorRef.current.guestState === 'ready') {
           void browserRuntime<{ x: number; y: number }>({ method: 'scroll:get', params: { tabId } })
