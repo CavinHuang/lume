@@ -11,10 +11,14 @@ import { requestAuthorizationCodeToken, requestRefreshToken } from "./oauth/oaut
 import { providerFetch } from "./providers/provider-runtime";
 import { credentialValidators as gmailValidators, executors as gmailExecutors } from "./providers/gmail/executors";
 import { provider as gmailProviderDefinition } from "./providers/gmail/definition";
+import { credentialValidators as qqMailValidators, executors as qqMailExecutors } from "./providers/qq_mail/executors";
+import { provider as qqMailProviderDefinition } from "./providers/qq_mail/definition";
 import {
   deleteConnectorCredential,
   getConnectorClientConfig,
+  getConnectorCustomValues,
   getConnectorOAuthCredential,
+  setConnectorCustomValues,
   setConnectorOAuthCredential,
 } from "./credential-store";
 
@@ -243,6 +247,62 @@ async function validateAndStoreCredential(service: string, credential: ResolvedC
 
 const TOKEN_REFRESH_LEEWAY_MS = 60_000;
 
+/**
+ * 保存授权码型凭证(QQ 邮箱等):跑 provider 的连接测试后落盘。
+ * 验证失败抛 ConnectorError,由调用方决定提示。
+ */
+export async function saveConnectorCustomCredential(service: string, values: Record<string, string>): Promise<void> {
+  const provider = getConnector(service);
+  const validator = provider.validators?.customCredential;
+  let profile: { accountId: string; displayName: string; grantedScopes: string[] } = {
+    accountId: "custom",
+    displayName: values.email ?? "Custom Credential",
+    grantedScopes: [],
+  };
+  if (validator) {
+    const result = await validator({ values }, { fetcher: providerFetch });
+    if (result?.profile) {
+      profile = {
+        accountId: result.profile.accountId ?? profile.accountId,
+        displayName: result.profile.displayName ?? profile.displayName,
+        grantedScopes: result.profile.grantedScopes ?? [],
+      };
+    }
+  }
+  setConnectorCustomValues(service, values);
+}
+
+/** 统一解析当前凭证:OAuth 型带过期刷新,授权码型直读。未连接抛错。 */
+export async function getConnectorResolvedCredential(service: string): Promise<ResolvedCredential> {
+  const provider = getConnector(service);
+  const supportsOauth = provider.definition.authTypes.includes("oauth2");
+  if (supportsOauth) return getConnectorOAuthCredentialFresh(service);
+
+  const customValues = getConnectorCustomValues(service);
+  if (customValues) {
+    return { authType: "custom_credential", values: customValues, profile: readCustomProfile(service), metadata: {} };
+  }
+  throw new ConnectorError("connector_not_connected", `${service} 尚未连接`);
+}
+
+function readCustomProfile(service: string): { accountId: string; displayName: string; grantedScopes: string[] } {
+  const values = getConnectorCustomValues(service);
+  return { accountId: values?.email ?? "custom", displayName: values?.email ?? "Custom Credential", grantedScopes: [] };
+}
+
+/** 已连接账号展示标识(OAuth 取 profile,授权码取邮箱);未连接返回 undefined。 */
+export function getConnectorConnectedAccountLabel(service: string): string | undefined {
+  const oauth = getConnectorOAuthCredential(service);
+  if (oauth) return oauth.profile?.displayName;
+  const custom = getConnectorCustomValues(service);
+  if (custom) return custom.email;
+  return undefined;
+}
+
+export function hasAnyConnectorCredential(service: string): boolean {
+  return getConnectorOAuthCredential(service) !== undefined || getConnectorCustomValues(service) !== undefined;
+}
+
 export async function getConnectorOAuthCredentialFresh(service: string): Promise<ResolvedCredential & { authType: "oauth2" }> {
   const credential = getConnectorOAuthCredential(service);
   if (!credential) throw new ConnectorError("connector_not_connected", `${service} 尚未连接`);
@@ -320,7 +380,7 @@ export async function executeConnectorAction(
   const context = {
     getCredential: async () => {
       try {
-        return await getConnectorOAuthCredentialFresh(service);
+        return await getConnectorResolvedCredential(service);
       } catch (error) {
         if (error instanceof ConnectorError && error.code === "connector_not_connected") return undefined;
         throw error;
@@ -344,4 +404,10 @@ registerConnector({
   definition: gmailProviderDefinition,
   executors: gmailExecutors,
   validators: gmailValidators,
+});
+
+registerConnector({
+  definition: qqMailProviderDefinition,
+  executors: qqMailExecutors,
+  validators: qqMailValidators,
 });

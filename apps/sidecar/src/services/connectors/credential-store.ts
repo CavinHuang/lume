@@ -22,6 +22,8 @@ export interface ConnectorOAuthClientConfig {
 export interface ConnectorCredentialRecord {
   clientConfig?: ConnectorOAuthClientConfig;
   oauth?: ResolvedCredential & { authType: "oauth2" };
+  /** 授权码型凭证(QQ 邮箱等):字段表由 provider definition 声明。 */
+  customValues?: Record<string, string>;
 }
 
 interface ConnectorCredentialFile {
@@ -90,6 +92,14 @@ export function setConnectorOAuthCredential(
   credential: ResolvedCredential & { authType: "oauth2" },
 ): void {
   withRecord(service, (record) => ({ ...record, oauth: credential }));
+}
+
+export function getConnectorCustomValues(service: string): Record<string, string> | undefined {
+  return readRecord(service).customValues;
+}
+
+export function setConnectorCustomValues(service: string, values: Record<string, string>): void {
+  withRecord(service, (record) => ({ ...record, customValues: values }));
 }
 
 export function deleteConnectorCredential(service: string): void {

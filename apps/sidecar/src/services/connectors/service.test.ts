@@ -7,6 +7,7 @@ import {
   executeConnectorAction,
   getConnector,
   listConnectors,
+  saveConnectorCustomCredential,
   startConnectorAuthorization,
 } from "./service";
 import { installConnectionVaultKey } from "../channel/connection-credential-store";
@@ -31,6 +32,18 @@ describe("connector service", () => {
   test("gmail 已随模块加载注册", () => {
     expect(listConnectors()).toContain("gmail");
     expect(getConnector("gmail").definition.service).toBe("gmail");
+  });
+
+  test("qq_mail 已注册且为授权码型", () => {
+    expect(listConnectors()).toContain("qq_mail");
+    expect(getConnector("qq_mail").definition.authTypes).toEqual(["custom_credential"]);
+  });
+
+  test("授权码凭证格式非法时保存被拒(不触网)", async () => {
+    await expect(
+      saveConnectorCustomCredential("qq_mail", { email: "not-an-email", authorizationCode: "123" }),
+    ).rejects.toBeDefined();
+    // 正确格式但验证器必然失败的输入在无网络环境下同样被拒;此处只锁格式守卫
   });
 
   test("未配置 OAuth client 时发起授权被拒", () => {

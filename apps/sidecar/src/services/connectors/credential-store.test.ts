@@ -5,8 +5,10 @@ import { tmpdir } from "node:os";
 import {
   deleteConnectorCredential,
   getConnectorClientConfig,
+  getConnectorCustomValues,
   getConnectorOAuthCredential,
   setConnectorClientConfig,
+  setConnectorCustomValues,
   setConnectorOAuthCredential,
 } from "./credential-store";
 import { installConnectionVaultKey } from "../channel/connection-credential-store";
@@ -68,6 +70,14 @@ describe("connector credential store", () => {
     expect(getConnectorClientConfig("gmail")).toBeUndefined();
     // 删除后文件仍存在但无残留明文
     expect(existsSync(getConnectorCredentialsPath())).toBe(true);
+  });
+
+  test("授权码型凭证(customValues)往返且落盘为密文", () => {
+    setConnectorCustomValues("qq_mail", { email: "user@qq.com", authorizationCode: "abcd".repeat(4) });
+    const raw = readFileSync(getConnectorCredentialsPath(), "utf8");
+    expect(raw).not.toContain("abcd");
+    expect(getConnectorCustomValues("qq_mail")?.email).toBe("user@qq.com");
+    expect(getConnectorOAuthCredential("qq_mail")).toBeUndefined();
   });
 
   test("vault 未解锁时读取视为未配置而非崩溃", () => {
