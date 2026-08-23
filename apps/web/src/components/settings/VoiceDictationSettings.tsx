@@ -166,6 +166,7 @@ export function VoiceDictationSettings() {
           测试连接
         </Button>
         {saving ? <span className="text-xs text-[var(--text-3)]">正在保存…</span> : null}
+        <span className="text-xs text-[var(--text-3)]">文本框失焦后自动保存；修改在下次听写会话生效</span>
       </div>
     </div>
   )

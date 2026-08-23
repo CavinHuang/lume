@@ -2,7 +2,7 @@ import { listChannels } from '@/lib/desktop-api/channel'
 import { getEffectiveLumeConfig, updateAgentFollowUpQueueMode, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { useEditor, EditorContent } from '@tiptap/react'
 import { cn } from '@/lib/utils'
-import { Send, Square, FileText, Plus, LoaderCircle, MessageSquareText, MonitorOff, Globe, X, Mic } from 'lucide-react'
+import { Send, Square, FileText, Plus, LoaderCircle, MessageSquareText, MonitorOff, Globe, X, Mic, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
@@ -29,7 +29,7 @@ import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFa
 import { isEmptyDraft, prependHistory, removeDraft, sanitizeDraftJSON, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 import { buildQuotedSelectionBlock } from '@/lib/quoted-selection'
 import { QuotedSelectionChip } from './QuotedSelectionChip'
-import { useVoiceDictation } from '@/components/voice-dictation/use-voice-dictation'
+import { useVoiceDictation, formatVoiceElapsed } from '@/components/voice-dictation/use-voice-dictation'
 import { debounce } from 'throttle-debounce'
 import {
   AGENT_IPC_CHANNELS,
@@ -767,7 +767,29 @@ export function AgentInput({
     const prefix = previousCharacter && !/\s/u.test(previousCharacter) ? ' ' : ''
     editor.chain().focus().insertContent(`${prefix}${text}`).run()
   }, [editor])
-  const voiceDictation = useVoiceDictation({ onCommit: handleVoiceDictationCommit })
+  const handleOpenVoiceDictationSettings = useCallback(() => {
+    const next = resolveOpenDesktopAssistantSettingsState(tabs, 'voice-input')
+    setTabs(next.tabs)
+    setSettingsInitialTab(next.settingsInitialTab)
+    setActiveTabId(next.activeTabId)
+  }, [setActiveTabId, setSettingsInitialTab, setTabs, tabs])
+  const voiceDictation = useVoiceDictation({
+    onCommit: handleVoiceDictationCommit,
+    onOpenSettings: handleOpenVoiceDictationSettings,
+  })
+
+  // 录音期间 Esc 取消本次听写（capture 拦截，避免编辑器/弹层先消费按键）。
+  useEffect(() => {
+    if (!voiceDictation.isActive) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      voiceDictation.cancel()
+    }
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [voiceDictation])
 
   // 草稿恢复：threadId 变化或 editor 就绪时，把存盘草稿填回编辑器
   useEffect(() => {
@@ -1664,6 +1686,9 @@ export function AgentInput({
                           : 'bg-[var(--lume-text-secondary)]',
                       )}
                     />
+                    <span className="shrink-0 font-mono text-xs tabular-nums text-[var(--lume-text-secondary)]">
+                      {formatVoiceElapsed(voiceDictation.elapsedSeconds)}
+                    </span>
                     <div className="h-3 w-16 shrink-0 overflow-hidden rounded-full bg-[color:color-mix(in_oklab,var(--lume-text-secondary)_18%,transparent)]">
                       <div
                         className="h-full rounded-full bg-[var(--lume-danger)] transition-[width] duration-100"
@@ -1671,8 +1696,13 @@ export function AgentInput({
                       />
                     </div>
                     <div className="min-w-0 flex-1 truncate text-xs text-[var(--lume-text-secondary)]">
-                      {voiceDictation.transcript || (voiceDictation.status === 'connecting' ? '正在连接语音识别…' : voiceDictation.status === 'stopping' ? '正在整理转写…' : '正在听写，再次点击麦克风结束')}
+                      {voiceDictation.transcript || (voiceDictation.status === 'connecting' ? '正在连接语音识别…' : voiceDictation.status === 'stopping' ? '正在整理转写…' : '正在听写，Esc 取消')}
                     </div>
+                    {voiceDictation.status !== 'stopping' && (
+                      <Button variant="ghost" type="button" className="h-6 px-1.5 text-xs" onClick={() => void voiceDictation.stop()} title="结束并插入（Enter 不适用，点此或再点麦克风）">
+                        <Check size={13} />
+                      </Button>
+                    )}
                     <Button variant="ghost" type="button" className="h-6 px-2 text-xs" onClick={voiceDictation.cancel}>
                       取消
                     </Button>

@@ -40,6 +40,15 @@ const MAX_QUEUED_CHUNKS = 60
 interface UseVoiceDictationOptions {
   /** 输出方式为 lume-input 时，最终文本经此回调追加到输入框草稿。 */
   onCommit: (text: string) => void
+  /** 凭证未配置时 toast 的跳转动作（打开设置页）。 */
+  onOpenSettings?: () => void
+}
+
+/** 录音已进行的秒数（mm:ss 展示用）。 */
+export function formatVoiceElapsed(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
 function getMicrophoneErrorMessage(error: unknown): string {
@@ -49,10 +58,11 @@ function getMicrophoneErrorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '无法启动麦克风'
 }
 
-export function useVoiceDictation({ onCommit }: UseVoiceDictationOptions) {
+export function useVoiceDictation({ onCommit, onOpenSettings }: UseVoiceDictationOptions) {
   const [status, setStatus] = React.useState<VoiceDictationHookStatus>('idle')
   const [transcript, setTranscript] = React.useState('')
   const [volume, setVolume] = React.useState(0)
+  const [elapsedSeconds, setElapsedSeconds] = React.useState(0)
 
   const statusRef = React.useRef<VoiceDictationHookStatus>('idle')
   const setStatusTracked = React.useCallback((next: VoiceDictationHookStatus) => {
@@ -79,6 +89,15 @@ export function useVoiceDictation({ onCommit }: UseVoiceDictationOptions) {
   const commitTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const onCommitRef = React.useRef(onCommit)
   onCommitRef.current = onCommit
+  const onOpenSettingsRef = React.useRef(onOpenSettings)
+  onOpenSettingsRef.current = onOpenSettings
+
+  // 录音计时：会话活跃期间每秒递增，归位随 settleIdle。
+  React.useEffect(() => {
+    if (status !== 'connecting' && status !== 'recording') return
+    const timer = setInterval(() => setElapsedSeconds((current) => current + 1), 1000)
+    return () => clearInterval(timer)
+  }, [status])
 
   const cleanupAudio = React.useCallback(() => {
     processorRef.current?.disconnect()
@@ -109,6 +128,7 @@ export function useVoiceDictation({ onCommit }: UseVoiceDictationOptions) {
     mergeStateRef.current = createEmptyTranscriptMergeState()
     setTranscript('')
     transcriptRef.current = ''
+    setElapsedSeconds(0)
     setStatusTracked('idle')
   }, [cleanupAudio, invalidateSession, setStatusTracked])
 
@@ -116,7 +136,10 @@ export function useVoiceDictation({ onCommit }: UseVoiceDictationOptions) {
     const finalText = text.trim()
     const mode = settingsRef.current?.outputMode ?? 'lume-input'
     settleIdle()
-    if (!finalText) return
+    if (!finalText) {
+      toast.info('未识别到语音内容')
+      return
+    }
     if (mode === 'clipboard') {
       invoke('write_clipboard_text', { text: finalText })
         .then(() => toast.success('听写结果已复制到剪贴板'))
@@ -255,9 +278,11 @@ export function useVoiceDictation({ onCommit }: UseVoiceDictationOptions) {
     }
   }, [sendAudioChunk, setStatusTracked])
 
-  /** 启动失败统一出口：toast + 清理 + 回 idle。 */
-  const failStart = React.useCallback((message: string): void => {
-    toast.error(message)
+  /** 启动失败统一出口：toast + 清理 + 回 idle；凭证缺失时附带设置页跳转。 */
+  const failStart = React.useCallback((message: string, options?: { missingCredentials?: boolean }): void => {
+    toast.error(message, options?.missingCredentials && onOpenSettingsRef.current
+      ? { action: { label: '去配置', onClick: onOpenSettingsRef.current } }
+      : undefined)
     settleIdle()
   }, [settleIdle])
 
@@ -282,7 +307,7 @@ export function useVoiceDictation({ onCommit }: UseVoiceDictationOptions) {
     if (!shouldProceed()) return
     settingsRef.current = settings
     if (!settings.appId || !settings.accessToken || !settings.resourceId) {
-      failStart('请先在 设置 → 语音输入 中完成配置')
+      failStart('语音输入尚未配置，请先填写识别服务凭证', { missingCredentials: true })
       return
     }
 
@@ -396,6 +421,7 @@ export function useVoiceDictation({ onCommit }: UseVoiceDictationOptions) {
     status,
     transcript,
     volume,
+    elapsedSeconds,
     isActive: status === 'connecting' || status === 'recording' || status === 'stopping',
     start: startRecording,
     stop: stopRecording,
