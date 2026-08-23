@@ -810,18 +810,24 @@ export async function sendAgentMessage(
   }
 }
 
-async function runSendAgentMessage(
-  input: AgentSendInput,
-  emit: AgentStreamEmitter,
-  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal } = {}
-): Promise<void> {
-  const { threadId, userMessage } = input;
-  const completeIfAborted = () => {
-    if (!options.abortSignal?.aborted) return false;
-    emit.onComplete();
-    return true;
-  };
-  if (completeIfAborted()) return;
+/** #297 子项②:sendAgentMessage 准备段——归一化/能力投影/模型选择/元数据合并/用户消息落盘/前置校验。 */
+type PrepareAgentSendOutcome = PreparedAgentSend | null;
+
+async function prepareAgentSendStage({
+  input,
+  emit,
+  options,
+  threadId,
+  userMessage,
+  completeIfAborted
+}: {
+  input: AgentSendInput;
+  emit: AgentStreamEmitter;
+  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal };
+  threadId: string;
+  userMessage: string;
+  completeIfAborted: () => boolean;
+}): Promise<PrepareAgentSendOutcome> {
   const messageHistoryBeforeSend = getAgentThreadMessages(threadId);
   const assistantTurnCountBeforeSend = messageHistoryBeforeSend.filter((item) => item.role === "assistant").length;
   const threadMeta = getAgentThreadMeta(threadId);
@@ -834,7 +840,7 @@ async function runSendAgentMessage(
   registerPlanningTodoReferences(input.trustedPlanningClientSubmissionId, normalizedUserMessage.parts);
   const isManualCompactCommand = input.messageMetadata?.manualCommand === "compact";
   let modelFacingUserMessage = await resolveModelFacingUserMessage(threadId, normalizedUserMessage.modelMessage);
-  if (completeIfAborted()) return;
+  if (completeIfAborted()) return null;
   if (!isManualCompactCommand && normalizedUserMessage.modelMessage.trim() === "/compact") {
     modelFacingUserMessage = `The user entered the literal text /compact without selecting the compact action. Respond to it as ordinary text.`;
   }
@@ -844,7 +850,7 @@ async function runSendAgentMessage(
     references: normalizedUserMessage.capabilityReferences,
     modelMessage: normalizedUserMessage.modelMessage,
   });
-  if (completeIfAborted()) return;
+  if (completeIfAborted()) return null;
   const expectedFingerprints = input.messageMetadata?.capabilityFingerprints;
   if (
     Array.isArray(expectedFingerprints)
@@ -900,7 +906,6 @@ async function runSendAgentMessage(
   void options.allowResumeRetry;
   let activeTurnId: string | null = null;
   let activeTurnStartedAt: string | null = null;
-  const persistedSdkMessages: SDKMessage[] = [];
   let userSdkMessage: SDKMessage | null = null;
 
   const browserContinuity = await getActiveBrowserBroker()?.getThreadAgentContinuity(threadId).catch(() => undefined);
@@ -1051,8 +1056,6 @@ async function runSendAgentMessage(
     });
   }
   runtimeStatusManager.markStreaming(threadId);
-  let runtimeCompleted = false;
-  let visibleAssistantMessageId: string | undefined;
 
   if (!resolvedChannelId || !resolvedModelId) {
     const msg = "Agent Runtime 缺少 channelId/modelId。";
@@ -1073,8 +1076,101 @@ async function runSendAgentMessage(
       ...correlation,
       data: { channelId: resolvedChannelId, modelId: resolvedModelId }
     });
-    return;
+    return null;
   }
+
+    return {
+      threadMeta,
+      effectiveWorkspaceId,
+      effectiveWorkspace,
+      normalizedUserMessage,
+      modelFacingUserMessage,
+      isManualCompactCommand,
+      effectiveLumeConfig,
+      boundModel,
+      resolvedChannelId,
+      resolvedModelId,
+      canonicalModelRef,
+      shouldTryAutoTitle,
+      runtimeMessageMetadata,
+      activeTurnId,
+      activeTurnStartedAt,
+      sendStartTime,
+      correlation,
+      sessionStateManager,
+      runtimeStatusManager
+    };
+}
+
+interface PreparedAgentSend {
+  threadMeta: ReturnType<typeof getAgentThreadMeta>;
+  effectiveWorkspaceId?: string;
+  effectiveWorkspace?: ReturnType<typeof getAgentWorkspace>;
+  normalizedUserMessage: ReturnType<typeof normalizeAgentUserMessage>;
+  modelFacingUserMessage: string;
+  isManualCompactCommand: boolean;
+  effectiveLumeConfig: ReturnType<typeof getEffectiveLumeConfig>;
+  boundModel: NonNullable<ReturnType<typeof resolveChannelModelBinding>> | null | undefined;
+  resolvedChannelId: string;
+  resolvedModelId: string;
+  canonicalModelRef?: string;
+  shouldTryAutoTitle: boolean;
+  runtimeMessageMetadata: Record<string, unknown>;
+  activeTurnId: string | null;
+  activeTurnStartedAt: string | null;
+  sendStartTime: number;
+  correlation: {
+    traceId?: string;
+    submissionId?: string;
+    threadId: string;
+    origin?: string;
+  };
+  sessionStateManager: ReturnType<typeof getSessionStateManager>;
+  runtimeStatusManager: ReturnType<typeof getAgentRuntimeStatusManager>;
+}
+
+async function runSendAgentMessage(
+  input: AgentSendInput,
+  emit: AgentStreamEmitter,
+  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal } = {}
+): Promise<void> {
+  const { threadId, userMessage } = input;
+  const completeIfAborted = () => {
+    if (!options.abortSignal?.aborted) return false;
+    emit.onComplete();
+    return true;
+  };
+  if (completeIfAborted()) return;
+  const prepared = await prepareAgentSendStage({
+    input,
+    emit,
+    options,
+    threadId,
+    userMessage,
+    completeIfAborted
+  });
+  if (prepared === null) return;
+  const {
+    resolvedChannelId,
+    resolvedModelId,
+    canonicalModelRef,
+    modelFacingUserMessage,
+    runtimeMessageMetadata,
+    activeTurnId,
+    activeTurnStartedAt,
+    shouldTryAutoTitle,
+    sendStartTime,
+    correlation,
+    effectiveLumeConfig,
+    boundModel,
+    effectiveWorkspaceId,
+    sessionStateManager,
+    runtimeStatusManager
+  } = prepared;
+  const persistedSdkMessages: SDKMessage[] = [];
+  let runtimeCompleted = false;
+  let visibleAssistantMessageId: string | undefined;
+
   const { runAgentRuntime } = await import("../agent-runtime/runner/attempt");
   if (completeIfAborted()) return;
   const fileReferenceBinding = createFileReferenceBinding(threadId);
