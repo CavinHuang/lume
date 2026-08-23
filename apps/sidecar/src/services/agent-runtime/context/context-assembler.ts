@@ -1,12 +1,8 @@
 import type { AgentBrowserAttachment, AgentBrowserDesignChangeAttachment, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentSendInput, PlanningTodo } from "@lume/shared";
 import { estimateTokens, type ContentBlockParam, type TodoState } from "@lume/agent-sdk";
 import { createHash } from "node:crypto";
-import {
-  buildDynamicContext,
-  buildSystemPromptAppend,
-  type EnabledPluginContextItem
-} from "../../agent/agent-prompt-builder";
-import { resolveAgentDynamicContextInput } from "../../agent/agent-runtime-context";
+import { getRuntimeHostPorts } from "../host-ports";
+import type { EnabledPluginContextItem } from "../host-ports";
 import { createLogger } from "../../infra/logger";
 import { resolveMemoryRuntimeConfig } from "../../memory-v2/policy";
 import {
@@ -128,7 +124,7 @@ export class ContextAssembler {
     contextSpanId?: string
   ): Promise<ContextAssemblyResult> {
     const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
-    const systemPromptAppend = buildSystemPromptAppend({
+    const systemPromptAppend = getRuntimeHostPorts().buildSystemPromptAppend({
       workspaceSlug: input.workspaceSlug,
       sessionId: input.threadId,
       sessionType: input.threadType,
@@ -140,8 +136,8 @@ export class ContextAssembler {
     }).trim();
     const agentSystemPrompt = input.agentSystemPrompt?.trim();
 
-    const dynamicContext = buildDynamicContext(
-      resolveAgentDynamicContextInput({
+    const dynamicContext = getRuntimeHostPorts().buildDynamicContext(
+      getRuntimeHostPorts().resolveDynamicContextInput({
         threadId: input.threadId,
         userMessage: input.userMessage,
         workspaceName: input.workspaceName,

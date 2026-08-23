@@ -4,7 +4,7 @@ import {
   isAgentRuntimeSessionActive,
   releaseRuntimeActivityPlaceholder,
   stopAgentRuntime,
-} from "./attempt";
+} from "../runner/attempt";
 
 describe("runtime activity placeholder (#396)", () => {
   test("占位标记即刻可见，stop 后保留在位并记录中止信号，release 才回收", async () => {

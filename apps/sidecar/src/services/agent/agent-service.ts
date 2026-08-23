@@ -60,8 +60,8 @@ import {
   AGENT_TITLE_PROMPT_FROM_SUMMARY,
   isWeakGeneratedTitle,
   sanitizeGeneratedTitle
-} from "./session-title-summarizer";
-import { getSubagentRunRegistry } from "./subagents/subagent-run-registry";
+} from "../agent-runtime/service-runtime/session-title-summarizer";
+import { getSubagentRunRegistry } from "../agent-runtime/subagents/subagent-run-registry";
 import { buildAgentContentLogData, buildAgentSendStartLogData } from "./agent-log-summary";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createConnectionLlmProvider } from "../model-runtime/connection-provider";
@@ -70,11 +70,11 @@ import { getServiceRuntime } from "../agent-runtime/service-runtime/service-runt
 import { AgentRuntimeKernel, AgentRuntimeKernelQueueConflictError, type AgentRuntimeKernelDispatchResult, type AgentRuntimeKernelQueuedDispatch } from "../agent-runtime/kernel/agent-runtime-kernel";
 import { runGuidanceStore } from "../agent-runtime/guidance/run-guidance-store";
 import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../agent-runtime/runtime-core/session-store";
-import { isAgentRuntimeSessionActive } from "../agent-runtime/runtime-core/attempt";
+import { isAgentRuntimeSessionActive } from "../agent-runtime/runner/attempt";
 import { createCodingTurnRecord } from "../agent-runtime/runtime-core/coding-turn-store";
-import { createFileBackedLumeRunStateStore } from "../agent-runtime/runner/run-state-store";
-import type { LumeRunItem } from "../agent-runtime/runner/run-items";
-import type { LumeRunState } from "../agent-runtime/runner/run-state";
+import { createFileBackedLumeRunStateStore } from "../agent-runtime/runtime-core/run-state-store";
+import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
+import type { LumeRunState } from "../agent-runtime/runtime-core/run-state";
 import { emitAgentNotification, emitDiagnosticContent } from "./agent-notification-service";
 import { createFileReferenceBinding } from "./agent-files-service";
 import { getActiveBrowserBroker } from "../browser/browser-broker-holder";
@@ -1075,7 +1075,7 @@ async function runSendAgentMessage(
     });
     return;
   }
-  const { runAgentRuntime } = await import("../agent-runtime/runtime-core/attempt");
+  const { runAgentRuntime } = await import("../agent-runtime/runner/attempt");
   if (completeIfAborted()) return;
   const fileReferenceBinding = createFileReferenceBinding(threadId);
   const configThinkingLevel = effectiveLumeConfig.agent?.thinkingLevel;
@@ -1449,7 +1449,7 @@ export function appendAgentMessage(
     }
     if (isSessionActive && input.followUpQueueMode === "interrupt") {
       // fire-and-forget 中止当前 turn;当前 turn 收尾后,新 dispatch(下方)会在 FIFO 中被 startNextQueued 派发
-      void import("../agent-runtime/runtime-core/attempt")
+      void import("../agent-runtime/runner/attempt")
         .then((module) => module.stopAgentRuntime(input.threadId))
         .catch(() => undefined);
     }
@@ -1746,8 +1746,8 @@ export async function stopAgent(threadId: string): Promise<boolean> {
     registry.update(child.runId, { status: "aborted" });
   }
   const [runtime, subagents] = await Promise.all([
-    import("../agent-runtime/runtime-core/attempt"),
-    import("./subagents/subagent-coordinator")
+    import("../agent-runtime/runner/attempt"),
+    import("../agent-runtime/subagents/subagent-coordinator")
   ]);
   const [stopped] = await Promise.all([
     Promise.all([
@@ -1760,10 +1760,10 @@ export async function stopAgent(threadId: string): Promise<boolean> {
 }
 
 export function stopAllAgents(): void {
-  void import("./subagents/subagent-coordinator")
+  void import("../agent-runtime/subagents/subagent-coordinator")
     .then((module) => module.getSubagentCoordinator().cancelAll())
     .catch(() => undefined);
-  void import("../agent-runtime/runtime-core/attempt")
+  void import("../agent-runtime/runner/attempt")
     .then((module) => module.stopAllAgentRuntimeSessions())
     .catch(() => undefined);
 }

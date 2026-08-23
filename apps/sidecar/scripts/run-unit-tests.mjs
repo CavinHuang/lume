@@ -42,7 +42,9 @@ async function worker() {
     // (planning.sqlite 等共享 SQLite "database is locked"——CI 实证)。
     // 目录放 os.tmpdir():仓库内曾误提交过整批测试残留(含 sqlite 二进制)。
     const proc = Bun.spawn({
-      cmd: ["bun", "test", file],
+      // --preload 注入 RuntimeHostPorts(#289):agent-runtime 不再静态引用
+      // 应用层,测试经此拿到真实现;路径相对 repositoryRoot(cwd)。
+      cmd: ["bun", "test", "--preload", "./apps/sidecar/scripts/host-ports-test-preload.ts", file],
       cwd: repositoryRoot,
       stdout: "pipe",
       stderr: "pipe",

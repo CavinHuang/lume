@@ -10,8 +10,8 @@ import {
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
-import { subscribeSubagentAnnounceEvent } from "./services/agent/subagents/subagent-announce-service";
-import { getSubagentCoordinator } from "./services/agent/subagents/subagent-coordinator";
+import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
+import { getSubagentCoordinator } from "./services/agent-runtime/subagents/subagent-coordinator";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import { cleanupExpiredTrash, subscribeThreadListChanged } from "./services/agent/agent-thread-manager";
 import type { JsonRpcRequest, JsonRpcResponse } from "./rpc/types";
@@ -41,6 +41,10 @@ import { reconcilePlanningStartOperations } from "./services/planning/planning-s
 import { closePlanningCalendarStore } from "./services/planning/planning-calendar-store";
 import { startPlanningReminderScheduler, stopPlanningReminderScheduler } from "./services/planning/planning-reminder-scheduler";
 import { getNodeReplRuntimeRegistry } from "./services/agent-runtime/tools/node-repl/node-repl-runtime-registry";
+import { installRuntimeHostPorts } from "./services/agent/agent-runtime-ports-binding";
+
+// 组合根最先注入 agent-runtime 的宿主端口(#289):任何 RPC/服务调用之前。
+installRuntimeHostPorts();
 
 const rpcTransport = createProcessRpcTransport(
   process.env.LUME_SIDECAR_TRANSPORT === "stdio" ? { parentPort: null } : undefined,

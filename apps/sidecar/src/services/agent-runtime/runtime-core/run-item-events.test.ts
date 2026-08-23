@@ -4,7 +4,7 @@ import {
   projectRunItemToRuntimeEvents,
   projectRunStateToRuntimeEvents
 } from "./run-item-events";
-import type { LumeRunState } from "./run-state";
+import type { LumeRunState } from "../runtime-core/run-state";
 import { getAgentFileContextArtifactsPath } from "../../infra/config-paths";
 
 function baseRun(overrides: Partial<LumeRunState> = {}): LumeRunState {

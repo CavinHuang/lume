@@ -1,5 +1,5 @@
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
-import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runtime-core/attempt";
+import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runner/attempt";
 import { getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
 import { resolveAgentThreadWorkdir } from "../services/agent/agent-workdir-resolver";
 import {

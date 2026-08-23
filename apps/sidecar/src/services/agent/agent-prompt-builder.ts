@@ -221,7 +221,7 @@ export function loadCustomAgents(workspaceSlug?: string): Record<string, AgentDe
 
 export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
 
-interface SystemPromptContext {
+export interface SystemPromptContext {
   workspaceSlug?: string;
   sessionId: string;
   sessionType?: ThreadType;

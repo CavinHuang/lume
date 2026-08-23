@@ -1,10 +1,9 @@
-import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
-import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
 import { decryptApiKey, isChannelConnectionUsable, listChannels, resolveChannelModelBinding } from "../../channel/channel-manager";
-import { resolveAgentThreadWorkdir, type ResolvedAgentWorkdir } from "../../agent/agent-workdir-resolver";
-import type { AgentRuntimeRunParams, AgentRuntimeRunResult } from "../runner/types";
-import { resolveRuntimeCoreChannelModel } from "./model";
-import { getRuntimeCoreAgentDir } from "./session-store";
+import type { ResolvedAgentWorkdir } from "../host-ports";
+import { getRuntimeHostPorts } from "../host-ports";
+import type { AgentRuntimeRunParams, AgentRuntimeRunResult } from "../runtime-core/types";
+import { resolveRuntimeCoreChannelModel } from "../runtime-core/model";
+import { getRuntimeCoreAgentDir } from "../runtime-core/session-store";
 import type { OpenAiApiMode } from "@lume/shared";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import type { ApiType } from "@lume/agent-sdk";
@@ -55,7 +54,7 @@ export async function prepareRuntimeCoreAttempt(
   let workspaceName: string | undefined;
   let workspaceSlug: string | undefined;
   if (runtime.workspaceId) {
-    const workspace = getAgentWorkspace(runtime.workspaceId);
+    const workspace = getRuntimeHostPorts().getWorkspace(runtime.workspaceId);
     if (!workspace) {
       return { status: "errored", errorMessage: `项目不存在或已移除: ${runtime.workspaceId}` };
     }
@@ -83,10 +82,10 @@ export async function prepareRuntimeCoreAttempt(
   try {
     const workdirThreadId = runtime.threadType === "subagent"
       && runtime.deliveryThreadId
-      && !getAgentThreadMeta(runtime.sessionId)
+      && !getRuntimeHostPorts().getThreadMeta(runtime.sessionId)
       ? runtime.deliveryThreadId
       : runtime.sessionId;
-    resolvedWorkdir = resolveAgentThreadWorkdir(workdirThreadId);
+    resolvedWorkdir = getRuntimeHostPorts().resolveThreadWorkdir(workdirThreadId);
     agentCwd = resolvedWorkdir.agentCwd;
   } catch (error) {
     return {

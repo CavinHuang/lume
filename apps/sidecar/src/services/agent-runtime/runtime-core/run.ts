@@ -30,10 +30,7 @@ import type {
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import {
-  buildBuiltinAgents,
-  loadCustomAgents,
-} from "../../agent/agent-prompt-builder";
+import { getRuntimeHostPorts } from "../host-ports";
 import { createLogger } from "../../infra/logger";
 import {
   createRoutingPiAiProvider,
@@ -53,9 +50,9 @@ import {
   getEffectivePluginRuntimeConfig,
 } from "../../system/lume-config-service";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
-import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
-import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
-import { buildSubagentWorkContext } from "../../agent/subagents/subagent-dispatch-policy";
+import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
+import { getSubagentCoordinator } from "../subagents/subagent-coordinator";
+import { buildSubagentWorkContext } from "../subagents/subagent-dispatch-policy";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDir,
@@ -109,8 +106,8 @@ import {
   cloneTodoState,
   getTodoCompletionBlocker,
   readLatestTodoState,
-} from "../runner/todo-state";
-import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
+} from "./todo-state";
+import { createFileBackedRunContinuationStore } from "./run-continuation-store";
 import { persistAbortContinuation } from "../interruption/abort-continuation";
 import { classifyToolKind } from "../interruption/approval-service";
 import {
@@ -590,8 +587,8 @@ async function createRuntimeCoreSessionImpl(
     input.agentDir,
   );
   const agents = {
-    ...buildBuiltinAgents(),
-    ...loadCustomAgents(input.workspaceSlug),
+    ...getRuntimeHostPorts().buildBuiltinAgents(),
+    ...getRuntimeHostPorts().loadCustomAgents(input.workspaceSlug),
   };
   const subagentDefinition = input.subagentType
     ? agents[input.subagentType]

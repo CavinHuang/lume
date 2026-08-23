@@ -1,9 +1,9 @@
-import type { Api, KnownProvider, Model } from "../runner/model-types";
+import type { Api, KnownProvider, Model } from "./model-types";
 import { findModelMeta } from "@lume/shared";
 import { resolveModelCandidatesForChannel } from "../../channel/model-selection";
-import { adaptModelCapabilities, resolveAgentThinkingLevel } from "../runner/model-capabilities";
-import { prioritizeProvidersForBaseUrl, shouldApplyChannelBaseUrl } from "../runner/provider-routing";
-import { resolveRuntimeProviderCandidates } from "../runner/provider-resolution";
+import { adaptModelCapabilities, resolveAgentThinkingLevel } from "./model-capabilities";
+import { prioritizeProvidersForBaseUrl, shouldApplyChannelBaseUrl } from "./provider-routing";
+import { resolveRuntimeProviderCandidates } from "./provider-resolution";
 
 export interface ResolvedPiChannelModel {
   provider: KnownProvider;

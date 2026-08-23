@@ -255,7 +255,7 @@ async function waitForMockSessionActive(threadId: string): Promise<void> {
   throw new Error(`mock runtime session never became active: ${threadId}`);
 }
 
-mock.module("../agent-runtime/runtime-core/attempt", () => ({
+mock.module("../agent-runtime/runner/attempt", () => ({
   runAgentRuntime: async (
     params: unknown,
     emit: {
@@ -335,7 +335,7 @@ mock.module("../agent-runtime/runtime-core/attempt", () => ({
       return { status: "errored" as const, errorMessage: "network failed" };
     }
     if (userMessage === "subagent-announce-during-run") {
-      const { announceSubagentCompletion } = await import("./subagents/subagent-announce-service");
+      const { announceSubagentCompletion } = await import("../agent-runtime/subagents/subagent-announce-service");
       await announceSubagentCompletion({
         run: {
           runId: `mock-subagent-run:${threadId}`,
@@ -910,7 +910,7 @@ describe("agent-service", () => {
     const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");
     const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
-    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runner/run-state-store");
+    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runtime-core/run-state-store");
     const thread = createAgentThread("turn limited continue", "channel-test");
     const sessionDir = getRuntimeCoreSessionDir(thread.id);
     await createFileBackedLumeRunStateStore(sessionDir).create({
@@ -987,7 +987,7 @@ describe("agent-service", () => {
     const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");
     const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
-    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runner/run-state-store");
+    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runtime-core/run-state-store");
     const thread = createAgentThread("repeat guard continue", "channel-test");
     const sessionDir = getRuntimeCoreSessionDir(thread.id);
     await createFileBackedLumeRunStateStore(sessionDir).create({
@@ -1110,7 +1110,7 @@ describe("agent-service", () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");
     const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
-    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runner/run-state-store");
+    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runtime-core/run-state-store");
     const thread = createAgentThread("stale running continue", "channel-test");
     const sessionDir = getRuntimeCoreSessionDir(thread.id);
     await createFileBackedLumeRunStateStore(sessionDir).create({
@@ -1709,7 +1709,7 @@ describe("stopAgent cascade (D6)", () => {
   });
 
   afterEach(async () => {
-    const { resetSubagentRunRegistryForTest } = await import("./subagents/subagent-run-registry");
+    const { resetSubagentRunRegistryForTest } = await import("../agent-runtime/subagents/subagent-run-registry");
     const { resetAgentRuntimeStatusManagerForTest } = await import("./agent-runtime-status-manager");
     const { resetAgentRuntimeKernelForTest, waitForAgentRuntimeKernelIdleForTest } = await import("./agent-service");
     await waitForAgentRuntimeKernelIdleForTest();
@@ -1730,7 +1730,7 @@ describe("stopAgent cascade (D6)", () => {
   test("中止父 thread 时级联中止运行中子会话", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { stopAgent } = await import("./agent-service");
-    const { getSubagentRunRegistry } = await import("./subagents/subagent-run-registry");
+    const { getSubagentRunRegistry } = await import("../agent-runtime/subagents/subagent-run-registry");
 
     const parent = createAgentThread("父", "channel-test");
     getSubagentRunRegistry().create({

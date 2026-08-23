@@ -61,7 +61,7 @@ const log = createLogger("agent-thread-manager");
 
 type FileContextMode = "newRoot" | "inherit" | "fork";
 
-interface CreateAgentThreadOptions {
+export interface CreateAgentThreadOptions {
   fileContextMode?: FileContextMode;
   fileContextId?: string;
   memoryProfile?: AgentThreadMeta["memoryProfile"];
@@ -489,7 +489,7 @@ export function appendAgentTranscriptMessage(
   }
 }
 
-type AgentThreadMetaUpdates = Partial<
+export type AgentThreadMetaUpdates = Partial<
   Pick<
     AgentThreadMeta,
     "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "fileContextId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource" | "status" | "trashedAt"

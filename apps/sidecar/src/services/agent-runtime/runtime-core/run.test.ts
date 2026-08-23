@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AskUserQuestionTool } from "@lume/agent-sdk";
 import type { ToolContext, ToolDefinition } from "@lume/agent-sdk";
-import type { Model } from "../runner/model-types";
-import type { LumeRunState } from "../runner/run-state";
-import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
+import type { Model } from "./model-types";
+import type { LumeRunState } from "./run-state";
+import { createFileBackedLumeRunStateStore } from "./run-state-store";
 import { createRuntimeCoreSession, type CreateRuntimeCoreSessionInput } from "./run";
 import {
   buildSidecarSubagentExecutionInput,
@@ -15,15 +15,15 @@ import {
   runForegroundSubagentWithTimeout
 } from "./run-subagent";
 import { resolvePromptCachePolicy } from "./run-tools";
-import { runRuntimeCoreAttempt } from "./attempt";
-import { prepareRuntimeCoreAttempt } from "./prepare-attempt";
+import { runRuntimeCoreAttempt } from "../runner/attempt";
+import { prepareRuntimeCoreAttempt } from "../runner/prepare-attempt";
 import { getRuntimeCoreSessionDir } from "./session-store";
 import { getAgentSessionWorkspacePath, getAgentWorkspacePath, getAliceUserSkillsDir, getDefaultSkillsDir } from "../../infra/config-paths";
 import { createAgentThread } from "../../agent/agent-thread-manager";
 import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
-import { getSubagentCoordinator, resetSubagentCoordinatorForTest } from "../../agent/subagents/subagent-coordinator";
-import { getSubagentRunRegistry, resetSubagentRunRegistryForTest } from "../../agent/subagents/subagent-run-registry";
-import { resetSubagentWorkStoreForTest } from "../../agent/subagents/subagent-work-store";
+import { getSubagentCoordinator, resetSubagentCoordinatorForTest } from "../subagents/subagent-coordinator";
+import { getSubagentRunRegistry, resetSubagentRunRegistryForTest } from "../subagents/subagent-run-registry";
+import { resetSubagentWorkStoreForTest } from "../subagents/subagent-work-store";
 import { createChannel } from "../../channel/channel-manager";
 import { installConnectionVaultKey } from "../../channel/connection-credential-store";
 import { updateLumeConfigSection } from "../../system/lume-config-service";

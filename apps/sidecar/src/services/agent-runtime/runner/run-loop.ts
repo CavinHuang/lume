@@ -4,11 +4,11 @@ import {
   appendSdkMessage,
   createAgentStreamAccumulatorState,
   hasRenderableAssistantOutput
-} from "../../agent/agent-stream-accumulator";
+} from "./agent-stream-accumulator";
 import { createLogger } from "../../infra/logger";
 import { getThreadEventBus } from "../events/thread-event-bus";
 import { publishRunDomainEvent } from "../events/bus-bridge";
-import type { AgentRuntimeEmitter } from "./types";
+import type { AgentRuntimeEmitter } from "../runtime-core/types";
 import type { LumeRunObserver } from "./run-observer";
 
 const log = createLogger("run-loop");
