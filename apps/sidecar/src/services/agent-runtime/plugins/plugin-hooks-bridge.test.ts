@@ -139,9 +139,9 @@ describe("buildPluginAgentHooks — real spawner integration", () => {
           pluginId: "acme",
           hooks: {
             Stop: [{
-              command: process.platform === "win32"
-                ? "Write-Output 'plain text'"
-                : "printf 'plain text'"
+              // echo 在 bash/PowerShell/cmd 下均输出纯文本(非 JSON);
+              // 不按平台切换命令——win32 机器装了 Git Bash 时会走 bash(#498)。
+              command: "echo plain text"
             }]
           }
         },
