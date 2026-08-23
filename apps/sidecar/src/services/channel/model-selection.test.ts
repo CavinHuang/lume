@@ -1,3 +1,5 @@
+import { registerRealAgentThreadStore } from "../agent-runtime/agent-thread-store-test-adapter";
+registerRealAgentThreadStore();
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";

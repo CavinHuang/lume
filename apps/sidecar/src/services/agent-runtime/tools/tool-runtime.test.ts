@@ -1,3 +1,5 @@
+import { registerRealAgentThreadStore } from "../agent-thread-store-test-adapter";
+registerRealAgentThreadStore();
 import { describe, expect, test } from "bun:test";
 import { createExecuteTool, createToolSearchTool, type ToolContext, type ToolDefinition } from "@lume/agent-sdk";
 import type { LumeGuardrailRunner } from "../guardrails/guardrail-runner";
