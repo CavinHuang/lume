@@ -694,6 +694,8 @@ export interface AgentOptions {
   sessionId?: string
   /** Host Run identity for durable tool recovery. */
   runId?: string
+  /** Subagent delegation identity for usage attribution. */
+  subagentRunId?: string
   /** Host-owned exact tool continuations restored after a cold start. */
   toolContinuations?: PersistedToolContinuation[]
   /** Enable file checkpointing (for rewindFiles) */
@@ -798,6 +800,8 @@ export interface QueryEngineConfig {
   sessionId?: string
   /** Host Run identity for durable tool recovery. */
   runId?: string
+  /** Subagent delegation identity for usage attribution. */
+  subagentRunId?: string
   /** Execute or inject persisted tool calls before the next model request. */
   toolContinuations?: PersistedToolContinuation[]
   permissionMode?: PermissionMode

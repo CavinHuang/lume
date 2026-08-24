@@ -233,6 +233,11 @@ describe("runtime-core run", () => {
     expect(parent.session.getActiveToolNames()).not.toContain("Agent");
     expect(parent.session.getActiveToolNames()).not.toContain("FinishAgentTask");
     expect(parent.session.getActiveToolNames()).not.toContain("RetireSubagent");
+    // 并发标记钉住(#642):flag 与文案曾反复横跳,override 本体必须有护栏
+    const delegateTool = parent.tools.find((tool) => tool.name === "Delegate");
+    const waitTool = parent.tools.find((tool) => tool.name === "WaitForDelegations");
+    expect(delegateTool?.isConcurrencySafe?.()).toBe(true);
+    expect(waitTool?.isConcurrencySafe?.()).toBe(false);
     await parent.session.dispose();
 
     const child = await createRuntimeCoreSession(createHookRuntimeSessionInput({

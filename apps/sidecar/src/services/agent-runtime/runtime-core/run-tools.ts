@@ -79,6 +79,7 @@ import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
 import { getRuntimeCoreEntry } from "./runtime-entry";
 import { announceSubagentCompletion } from "../subagents/subagent-announce-service";
 import { getRuntimeHostPorts } from "../host-ports";
+import { createLogger } from "../../infra/logger";
 import { getRuntimeCoreSessionDir } from "./session-store";
 import { createMainTaskTools } from "../task/task-tools";
 import { ToolRuntime, type ToolRuntimeDiagnostic } from "../tools/tool-runtime";
@@ -96,6 +97,8 @@ import type { LumeToolDescriptor } from "../tools/tool-types";
 import { type LumeWorkflowHookExecutionResult } from "../../workflow-hooks/hook-effects";
 import type { LumeWorkflowHookRuntimeLike } from "../../workflow-hooks/hook-runtime";
 import type { LumeWorkflowHookEvent } from "../../workflow-hooks/hook-events";
+
+const delegationLog = createLogger("delegation");
 
 interface RuntimeCoreToolset {
   tools: ToolDefinition[];
@@ -586,7 +589,7 @@ export function buildRuntimeCoreTools(input: {
               });
             } catch (error) {
               // 收尾失败(announce/persist 等)不得把已写入的终态覆盖为 errored
-              console.error("[delegate] onSubagentEnd failed:", error);
+              delegationLog.warn("delegate onSubagentEnd failed", { error: error instanceof Error ? error.message : String(error) });
             }
             // ★ resolve 信号量，唤醒等待方
             getSubagentRunRegistry().resolveDelegationCompletion(
@@ -656,7 +659,7 @@ export function buildRuntimeCoreTools(input: {
               error: execution.error,
             });
           } catch (error) {
-            console.error("[delegate] onSubagentEnd failed:", error);
+            delegationLog.warn("delegate onSubagentEnd failed", { error: error instanceof Error ? error.message : String(error) });
           }
           return execution.result;
         } finally {
