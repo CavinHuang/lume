@@ -357,6 +357,9 @@ function writeMainLog(level, context, event, message, extra = {}) {
   })
 }
 
+// 宿主上报级别的白名单校验（与 sidecar hostLogLevel 对称）：fatal 映射 error，未知回落 info。
+const HOST_LOG_LEVELS = new Set(['trace', 'debug', 'info', 'warn', 'error'])
+
 const QUIET_IPC_COMMANDS = new Set<string>([
   // 日志类命令走 lume:invoke 分发而非独立 handle，必须静默避免埋点自喂。
   'write_web_log',
@@ -3351,13 +3354,16 @@ async function startDesktopHost(): Promise<DesktopHostState> {
     desktopHostSupervisor = createDesktopHostSupervisor({
       binaryPath,
       log: logDesktopStartup,
-      logEvent: ({ level, context, event, message, data }) => writeMainLog(
-        level === 'fatal' ? 'error' : level ?? 'info',
-        context ?? 'desktop.host',
-        event ?? 'host.log',
-        message ?? '',
-        { source: 'desktop-host', ...(data ? { data } : {}) },
-      ),
+      logEvent: ({ level, context, event, message, data }) => {
+        const resolvedLevel = level === 'fatal' ? 'error' : level && HOST_LOG_LEVELS.has(level) ? level : 'info'
+        writeMainLog(
+          resolvedLevel,
+          context ?? 'desktop.host',
+          event ?? 'host.log',
+          message ?? '',
+          { source: 'desktop-host', ...(data ? { data } : {}) },
+        )
+      },
     })
     const state = await desktopHostSupervisor.start()
     logDesktopStartup(state.available ? 'desktop host started' : ('reason' in state ? state.reason : 'desktop host unavailable'))

@@ -23,8 +23,9 @@ async fn main() {
 async fn run() -> Result<()> {
     let cli = match Cli::parse() {
         Ok(cli) => cli,
-        Err(_) => {
-            logging::emit_log("warn", "repl.lifecycle", "args.invalid", "node_repl argument parsing failed", None);
+        Err(error) => {
+            logging::emit_log("warn", "repl.lifecycle", "args.invalid",
+                &format!("node_repl argument parsing failed: {error}"), None);
             std::process::exit(2);
         }
     };

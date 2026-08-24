@@ -253,6 +253,8 @@ function armAckTimeout(batch: LumeLogBatch, attempts: number): ReturnType<typeof
   }, ACK_TIMEOUT_MS);
 }
 
+// batchWriter 回调不得同步调用 acknowledgeLogBatch——inFlight 尚未赋值会导致 ack 早退、
+// stale inFlight 阻塞后续 flush；生产 ack 经 RPC 异步到达不受影响。
 function trySendBatch(): void {
   if (flushTimer) {
     clearTimeout(flushTimer);
