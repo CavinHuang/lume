@@ -1,4 +1,5 @@
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
+import type { Stats } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { createLogger } from "../../../infra/logger";
@@ -21,7 +22,9 @@ export interface ProjectInstructions {
 
 /**
  * 过检后的可信读取源：信任裁决与内容读取之间以身份快照（dev/ino）衔接，
- * 读取端用单句柄 fstat 复核，封闭两段调用间的 TOCTOU 窗口。
+ * 读取端用单句柄 fstat 复核。封闭 symlink/hardlink 形态的 TOCTOU；inode 复用型
+ * 文件系统（Linux overlayfs/ext4）上 regular-file 同名替换可绕过 dev/ino 判等，
+ * 残余风险与威胁模型边界见 readTrustedContent 注释。
  */
 export interface ProjectInstructionSource {
   /** 命中候选的词法路径（探测链内，展示/日志用） */
@@ -36,7 +39,18 @@ export interface ProjectInstructionSource {
 interface ProbeOptions {
   /** 向上探测的家目录边界；默认 os.homedir()。测试注入用。 */
   homeDir?: string;
+  /**
+   * 可注入 stat 探测缝：读取句柄身份复核的读数来源，默认真实 fs 的 fstatSync。
+   * 存在动机：Linux（overlayfs/ext4 等）删旧建新会立刻复用刚释放的 inode 号，
+   * 测试无法靠真实 fs 确定性制造「句柄身份 ≠ 快照」，只能注入伪造读数驱动。
+   */
+  fstat?: (fd: number) => Stats;
 }
+
+// POSIX 以 O_NOFOLLOW 打底：过检后候选/realPath 被整体换入 symlink 时 open 直接
+// ELOOP 失败，不进入 dev/ino 判别环节；Windows 无该常量（libuv open 会跟随
+// reparse point），symlink 形态退回由 fstat 身份复核覆盖。
+const OPEN_FLAGS = process.platform === "win32" ? "r" : constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
 
 /** 用户主目录的容器目录名：其直接子目录视作用户主目录层（POSIX /home、macOS/Windows Users）。 */
 const HOME_CONTAINER_NAMES = new Set(["home", "Users"]);
@@ -163,22 +177,32 @@ export function truncateProjectInstructions(
  * 经单句柄原子化读取可信源：open(realPath) 后先 fstat 按 fd 复核 regular file、
  * nlink 与过检时的 dev/ino 身份，全部一致才从同一 fd 读内容。
  *
- * 封闭「过检后候选被换入 symlink」的 TOCTOU：换入的 symlink 即使被 open 跟随，
- * fd 指向的也是外部 inode，fstat 身份必与快照失配 → 拒绝；open 与 fstat 之间、
- * fstat 与 read 之间的进一步替换均不影响已钉住的 inode（readFileSync(fd) 从句柄读，
- * 不再按路径解引用）。每条消息 assemble 都会重试一次加载，此窗口可被长期竞速，
- * 故必须原子化而不能依赖窗口足够窄。导出供测试做注入式竞态探针。
+ * 封闭「过检后候选被换入 symlink」的 TOCTOU：POSIX 上 O_NOFOLLOW 使 open 对
+ * final-component symlink 直接 ELOOP（不依赖 inode 判别）；Windows 上换入的
+ * symlink 即使被 open 跟随，fd 指向的也是外部 inode，fstat 身份必与快照失配 →
+ * 拒绝。open 与 fstat 之间、fstat 与 read 之间的进一步替换均不影响已钉住的
+ * inode（readFileSync(fd) 从句柄读，不再按路径解引用）。每条消息 assemble 都会
+ * 重试一次加载，此窗口可被长期竞速，故必须原子化而不能依赖窗口足够窄。
+ *
+ * 已知边界（如实声明，不假装封死）：身份复核以 dev/ino 判等，而 Linux 的
+ * overlayfs/ext4 等会在删旧建新时立刻复用刚释放的 inode 号——攻击者过检后
+ * rm+重建同名 regular file 时，新文件可能携带与快照完全相同的 dev/ino，复核
+ * 无法区分、替换内容将被放行。故本收口的威胁模型是「封闭 symlink/hardlink
+ * 形态 + 显著抬高 regular-file 替换的攻击成本」，不承诺在 inode 复用型文件
+ * 系统上封闭同名原地换内容窗口（Windows NTFS fileid 跨删建持久，实际封闭）；
+ * 即便被换入，内容仍经 trust="untrusted" 包装进入 system 角色，信任边界不破。
+ * options.fstat 为测试注入缝（见 ProbeOptions）。
  */
-export function readTrustedContent(source: ProjectInstructionSource): string | null {
+export function readTrustedContent(source: ProjectInstructionSource, options: Pick<ProbeOptions, "fstat"> = {}): string | null {
   let fd: number;
   try {
-    fd = openSync(source.realPath, "r");
+    fd = openSync(source.realPath, OPEN_FLAGS);
   } catch (error) {
     log.warn("failed to open project instructions file", { path: source.realPath, error });
     return null;
   }
   try {
-    const st = fstatSync(fd);
+    const st = options.fstat ? options.fstat(fd) : fstatSync(fd);
     if (!st.isFile() || (st.nlink ?? 1) > 1 || st.dev !== source.dev || st.ino !== source.ino) {
       log.warn("project instructions identity mismatch after open, rejecting", { path: source.realPath });
       return null;

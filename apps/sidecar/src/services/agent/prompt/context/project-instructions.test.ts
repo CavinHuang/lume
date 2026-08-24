@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import type { Stats } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -239,28 +240,40 @@ describe("project-instructions", () => {
     }
   });
 
-  test("TOCTOU 收口：过检后文件被换入 symlink/替换 inode，单句柄 fstat 身份复核拒绝读取", () => {
+  test("TOCTOU 收口：open 后身份复核一致放行/失配拒绝（注入驱动），symlink 换入真实 fs 拒绝", () => {
     const proj = join(root, "proj");
     mkdirSync(proj, { recursive: true });
     const file = join(proj, "CLAUDE.md");
     writeFileSync(file, "# vetted content", "utf-8");
     const source = findProjectInstructionsFile(proj, { homeDir: root });
     expect(source?.path).toBe(file);
+    // 真实 fs 冒烟：快照与句柄同源，读出过检内容
     expect(readTrustedContent(source!)).toBe("# vetted content");
 
-    // 注入式模拟「过检后、读取前」窗口（无竞速要求）：删旧建新换掉 inode，
-    // 陈旧身份快照经句柄复核必失配 → 拒绝读取替换后的内容
-    rmSync(file);
-    writeFileSync(file, "# swapped inode", "utf-8");
-    expect(readTrustedContent(source!)).toBeNull();
+    // 注入式驱动身份复核两形态（确定性，不赌真实 inode 分配行为——Linux
+    // overlayfs/ext4 删旧建新会立刻复用刚释放的 inode 号，真实 rm+重建在 CI 上
+    // 可能拿到与快照相同的 dev/ino，无法稳定制造失配）
+    const probeWith = (over: { isFile?: boolean; nlink?: number; dev?: number; ino?: number }) =>
+      readTrustedContent(source!, {
+        fstat: () =>
+          ({
+            isFile: () => over.isFile ?? true,
+            nlink: over.nlink ?? 1,
+            dev: over.dev ?? source!.dev,
+            ino: over.ino ?? source!.ino
+          }) as unknown as Stats
+      });
+    // 一致形态：放行过检内容
+    expect(probeWith({})).toBe("# vetted content");
+    // 失配形态：句柄指向异 dev/ino（换入异文件/symlink 跟随）、非 regular file、hardlink → 全部拒绝
+    expect(probeWith({ ino: source!.ino + 1 })).toBeNull();
+    expect(probeWith({ dev: source!.dev + 1 })).toBeNull();
+    expect(probeWith({ isFile: false })).toBeNull();
+    expect(probeWith({ nlink: 2 })).toBeNull();
 
-    // 对照：重新过检拿到新身份后正常读出
-    expect(readTrustedContent(findProjectInstructionsFile(proj, { homeDir: root })!)).toBe("# swapped inode");
-
-    // 完整攻击形态（需符号链接权限）：过检时的 regular file 被换成指向
-    // 探测链外敏感文件的 symlink——open 跟随后 fstat 身份必失配，secret 不外泄。
-    // 覆盖限度：本用例确定性触发失配分支；真实竞速窗口由「读 realPath 而非候选 +
-    // fd 单句柄」的结构保证封闭，无法也不必在测试中做时序竞速。
+    // 真实 fs 结构形态（需符号链接权限）：过检后的候选被整体换入指向链外敏感文件
+    // 的 symlink。POSIX 上 O_NOFOLLOW 使 open 直接 ELOOP；Windows 无 O_NOFOLLOW，
+    // open 跟随后 fstat 身份失配——两路都拒绝，secret 不外泄。
     let canSymlink = false;
     const secretDir = mkdtempSync(join(tmpdir(), "lume-proj-instr-toc-"));
     try {
@@ -270,7 +283,6 @@ describe("project-instructions", () => {
         canSymlink = true;
       } catch {
         // Windows 无符号链接权限时跳过该子场景
-        writeFileSync(file, "# swapped inode", "utf-8");
       }
       if (canSymlink) {
         writeFileSync(join(secretDir, "secret.txt"), "top secret", "utf-8");
@@ -279,6 +291,11 @@ describe("project-instructions", () => {
     } finally {
       rmSync(secretDir, { recursive: true, force: true });
     }
+
+    // 对照：重新过检拿到新身份后正常读出（拒绝不是永久污染）
+    rmSync(file); // 先摘除可能残留的 symlink 本体，避免写入跟随悬空目标
+    writeFileSync(file, "# re-vetted", "utf-8");
+    expect(readTrustedContent(findProjectInstructionsFile(proj, { homeDir: root })!)).toBe("# re-vetted");
   });
 
   test("转义成品随指纹缓存：memo 命中时不重复执行 JSON.stringify 转义重建，指纹失效才重建", () => {
