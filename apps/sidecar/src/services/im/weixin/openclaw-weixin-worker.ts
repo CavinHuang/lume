@@ -10,6 +10,7 @@ import {
 } from "./openclaw-weixin-api";
 import type { InboundImRouteMessage } from "../im-message-router";
 import { routeInboundImMessage } from "../im-message-router";
+import { redactSensitiveText } from "../im-log-redaction";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("im-worker");
@@ -131,14 +132,14 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
             running = false;
             await updateAccount(input.account.id, {
               status: "auth_required",
-              lastError: error instanceof Error ? error.message : String(error)
+              lastError: redactSensitiveText(error instanceof Error ? error.message : String(error))
             });
             continue;
           }
           log.error("轮询处理出错", { accountId: input.account.id, error: error instanceof Error ? error.message : String(error) });
           await updateAccount(input.account.id, {
             status: "error",
-            lastError: error instanceof Error ? error.message : String(error)
+            lastError: redactSensitiveText(error instanceof Error ? error.message : String(error))
           });
         }
       }

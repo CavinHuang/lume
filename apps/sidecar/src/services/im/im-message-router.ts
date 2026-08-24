@@ -37,6 +37,7 @@ import { sendBoundImTextMessage, type SendBoundImTextMessageInput } from "./im-s
 import { resolveMediaContents } from "./im-media-resolver";
 import { createImRunCardSession, type ImRunCardSession } from "./im-run-card-session";
 import { getFeishuQuotedMessage } from "./feishu/feishu-api";
+import { redactSensitiveText } from "./im-log-redaction";
 import {
   parseImCommand,
   formatChannelListText,
@@ -358,7 +359,7 @@ function emitImDeliveryRuntimeEvent(
       ...(error ? {
         error: {
           code: "im_delivery_failed",
-          message: error
+          message: redactSensitiveText(error)
         }
       } : {})
     }
@@ -437,7 +438,7 @@ function formatToolPermissionRequestForIm(
     if (policy.groupApproval === "disabled") {
       return null;
     }
-    lines.push("群聊暂不支持通过微信审批工具权限，请在 Lume 桌面端处理。");
+    lines.push("群聊审批未启用，请在 Lume 桌面端处理，请在 Lume 桌面端处理。");
     return lines.join("\n");
   }
 
@@ -498,14 +499,14 @@ async function routeImApprovalCommand(
   if (!canBindingApproveViaIm(binding, policy)) {
     await sendBoundTextMessage({
       binding,
-      text: "当前微信会话没有权限处理审批，请在 Lume 桌面端处理。"
+      text: "当前会话没有权限处理审批，请在 Lume 桌面端处理。"
     });
     return { threadId: binding.threadId };
   }
   if (binding.peerKind === "group") {
     await sendBoundTextMessage({
       binding,
-      text: "群聊暂不支持通过微信审批工具权限，请在 Lume 桌面端处理。"
+      text: "群聊审批未启用，请在 Lume 桌面端处理，请在 Lume 桌面端处理。"
     });
     return { threadId: binding.threadId };
   }
@@ -764,7 +765,7 @@ export function createImAgentStreamEmitter(
         void deliverAssistantReplyToIm(threadId, event, emitNotification, sendBoundTextMessage, cardSession)
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
-            log.error("微信回复发送失败", { threadId, error: message });
+            log.error("IM 回复发送失败", { threadId, error: message });
             const binding = getImThreadBindingByThreadId(threadId) ?? undefined;
             emitImDeliveryRuntimeEvent(threadId, event, binding, "failed", emitNotification, message);
             writeLogRecord({
@@ -811,7 +812,7 @@ export function createImAgentStreamEmitter(
       emitNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
       void deliverToolPermissionRequestToIm(request, sendBoundTextMessage)
         .catch((error) => {
-          log.error("微信权限审批提示发送失败", { threadId, requestId: request.requestId, error: error instanceof Error ? error.message : String(error) });
+          log.error("IM 权限审批提示发送失败", { threadId, requestId: request.requestId, error: error instanceof Error ? error.message : String(error) });
         });
     }
   };

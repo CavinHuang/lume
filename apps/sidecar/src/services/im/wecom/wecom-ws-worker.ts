@@ -5,6 +5,7 @@ import type { ImRuntimeAccount } from "../im-config-manager";
 import type { InboundImRouteMessage } from "../im-message-router";
 import { routeInboundImMessage } from "../im-message-router";
 import { registerWecomClient, unregisterWecomClient } from "./wecom-client-pool";
+import { redactSensitiveText } from "../im-log-redaction";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("im-worker-wecom");
@@ -115,7 +116,7 @@ export function createWecomWsWorker(input: CreateWecomWsWorkerInput): ImWorker {
         unregisterWecomClient(input.account.id);
         void input.updateAccount?.(input.account.id, {
           status: "error",
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: redactSensitiveText(error instanceof Error ? error.message : String(error)),
         });
       }
     },

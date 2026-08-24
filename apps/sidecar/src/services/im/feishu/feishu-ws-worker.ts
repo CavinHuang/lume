@@ -6,6 +6,7 @@ import type { InboundImRouteMessage } from "../im-message-router";
 import { routeInboundImMessage } from "../im-message-router";
 import { getFeishuBotOpenId, getFeishuChatUserCount } from "./feishu-api";
 import { resolveImGroupAccess } from "../im-group-policy";
+import { redactSensitiveText } from "../im-log-redaction";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("im-worker-feishu");
@@ -202,7 +203,7 @@ export function createFeishuWsWorker(input: CreateFeishuWsWorkerInput): ImWorker
         running = false;
         void input.updateAccount?.(input.account.id, {
           status: "error",
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: redactSensitiveText(error instanceof Error ? error.message : String(error)),
         });
       });
     },

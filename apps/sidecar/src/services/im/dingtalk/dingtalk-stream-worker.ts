@@ -4,6 +4,7 @@ import type { ImWorker } from "../provider-registry";
 import type { ImRuntimeAccount } from "../im-config-manager";
 import type { InboundImRouteMessage } from "../im-message-router";
 import { routeInboundImMessage } from "../im-message-router";
+import { redactSensitiveText } from "../im-log-redaction";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("im-worker-dingtalk");
@@ -133,7 +134,7 @@ export function createDingtalkStreamWorker(input: CreateDingtalkStreamWorkerInpu
       void streamClient.connect().catch((error) => {
         log.error("DWClient 启动失败", { accountId: input.account.id, error: error instanceof Error ? error.message : String(error) });
         running = false;
-        void input.updateAccount?.(input.account.id, { status: "error", lastError: error instanceof Error ? error.message : String(error) });
+        void input.updateAccount?.(input.account.id, { status: "error", lastError: redactSensitiveText(error instanceof Error ? error.message : String(error)) });
       });
     },
     stop() {
