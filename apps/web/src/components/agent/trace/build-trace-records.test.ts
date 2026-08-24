@@ -141,6 +141,7 @@ describe('buildTraceRecords', () => {
     expect(assistant?.running).toBe(false)
     expect(assistant?.summary).toBe('完整回答')
     expect(assistant?.output).toContain('完整回答')
+    expect(assistant?.ttftMs).toBeGreaterThan(0)
   })
 
   test('run.end 产出运行汇总记录，良性 end_turn 不上摘要尾巴', () => {

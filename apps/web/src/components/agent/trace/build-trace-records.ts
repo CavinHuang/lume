@@ -40,6 +40,8 @@ export interface TraceRecord {
   /** endedAt === null 时为运行中。 */
   running: boolean
   durationMs: number | null
+  /** assistant：首字延迟（首个流式 update 距 start），无流式帧为 null。 */
+  ttftMs: number | null
   isError: boolean
   toolName?: string
   /** 详情面板：工具输入 / 用户消息原文（pretty 文本）。 */
@@ -59,6 +61,8 @@ interface MutableRecord {
   summary: string
   startedAt: number
   endedAt: number | null
+  /** assistant：首个 message.update 的 ts，用于推导 TTFT。 */
+  firstUpdateAt?: number
   isError: boolean
   toolName?: string
   input?: string
@@ -173,6 +177,7 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
       case 'message.update': {
         const openRecord = assistantKey == null ? undefined : openAssistants.get(assistantKey)
         if (!openRecord) break
+        if (openRecord.firstUpdateAt == null) openRecord.firstUpdateAt = event.ts
         const { partial } = detail as MessageUpdateDetail
         const thinking = partial.thinking.trim()
         const text = partial.text.trim()
@@ -307,10 +312,11 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
     }
   }
 
-  return records.map((record, i) => ({
+  return records.map(({ firstUpdateAt, ...record }, i) => ({
     ...record,
     index: i + 1,
     running: record.endedAt === null,
     durationMs: record.endedAt != null ? Math.max(0, record.endedAt - record.startedAt) : null,
+    ttftMs: firstUpdateAt != null ? Math.max(0, firstUpdateAt - record.startedAt) : null,
   }))
 }

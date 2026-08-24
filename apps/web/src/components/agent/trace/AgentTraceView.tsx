@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { X } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAgentEventBus } from '@/hooks/useAgentEventBus'
 import type { SdkEventEnvelope } from '@lume/shared'
@@ -8,6 +8,7 @@ import { buildTraceRecords, type TraceRecord, type TraceRecordKind } from './bui
 /**
  * Trace 视图（参考 dsh Trajectory）：turn 分组的事件账本 + 顶部时间概览条 + 行选中详情面板。
  * 数据直接消费线程事件总线快照与推送，与消息视图互不影响。
+ * 概览条支持拖拽选区间过滤账本（右键/Esc 清除）、500ms 悬停浮层、assistant span 的 TTFT/解码双色调。
  */
 
 const MAX_ENVELOPES = 8000 // ponytail: 超长线程截断最旧事件；update 折叠后 update 不再堆积，8000 条≈纯生命周期事件的量级；虚拟滚动留待实测卡顿时再加
@@ -39,51 +40,179 @@ function fmtDuration(ms: number | null): string {
   return `${Math.floor(totalSec / 60)}m${totalSec % 60}s`
 }
 
+/** 概览条上的选中区间（线程时间域内的毫秒）。 */
+export interface TraceTimeRange {
+  startMs: number
+  endMs: number
+}
+
+const HOVER_DELAY_MS = 500 // 对齐 dsh：悬停半秒才出浮层，避免扫过时闪烁
+
 function OverviewBar({
   records,
   selectedId,
   onSelect,
+  range,
+  onRangeCommit,
+  onRangeClear,
 }: {
   records: TraceRecord[]
   selectedId: string | null
   onSelect: (id: string) => void
+  range: TraceTimeRange | null
+  onRangeCommit: (range: TraceTimeRange) => void
+  onRangeClear: () => void
 }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [draft, setDraft] = useState<TraceTimeRange | null>(null)
+  const dragRef = useRef<{ startPct: number; moved: boolean } | null>(null)
+  const [hoverId, setHoverId] = useState<string | null>(null)
+  const [hoverVisible, setHoverVisible] = useState(false)
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const domainStart = records[0]?.startedAt ?? 0
   let domainEnd = records[records.length - 1]?.endedAt ?? domainStart
   for (const r of records) if (r.startedAt > domainEnd) domainEnd = r.startedAt
   const span = Math.max(1, domainEnd - domainStart)
   // 超长账本按步长抽样渲染概览段，防 DOM 规模失控；被跳过的记录仍可从账本选中
-  // （ponytail: 按 span 分桶聚合的保密度更高，实测需要时再换）
+  // （ponytail: 按 span 分桶聚合的保真度更高，实测需要时再换）
   const stride = Math.max(1, Math.ceil(records.length / 400))
+  const sampled = records.map((record, i) => ({ record, i }))
+    .filter(({ record, i }) => i % stride === 0 || record.id === selectedId)
+
+  useEffect(() => () => {
+    if (hoverTimerRef.current != null) clearTimeout(hoverTimerRef.current)
+  }, [])
+
+  const pctFromEvent = (e: React.PointerEvent): number => {
+    const rect = containerRef.current!.getBoundingClientRect()
+    return Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100))
+  }
+
+  const activeRange = draft ?? range
+  const hovered = sampled.find(({ record }) => record.id === hoverId)?.record ?? null
+  const hoverAnchorPct = hovered
+    ? (((hovered.startedAt - domainStart) / span) * 100) +
+      ((hovered.durationMs != null ? (hovered.durationMs / span) * 100 : 0.5) / 2)
+    : 0
+
   return (
     <div
+      ref={containerRef}
       role="group"
       aria-label="轨迹时间概览"
-      className="relative h-7 shrink-0 border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)]"
+      className="relative h-7 shrink-0 touch-none border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)]"
+      onPointerDown={(e) => {
+        if (e.button !== 0) return
+        const startPct = pctFromEvent(e)
+        dragRef.current = { startPct, moved: false }
+        e.currentTarget.setPointerCapture(e.pointerId)
+        setDraft({ startMs: domainStart + (startPct / 100) * span, endMs: domainStart + (startPct / 100) * span })
+      }}
+      onPointerMove={(e) => {
+        const drag = dragRef.current
+        if (!drag) return
+        const pct = pctFromEvent(e)
+        if (Math.abs(pct - drag.startPct) > 0.5) drag.moved = true
+        const a = domainStart + (Math.min(drag.startPct, pct) / 100) * span
+        const b = domainStart + (Math.max(drag.startPct, pct) / 100) * span
+        setDraft({ startMs: a, endMs: b })
+      }}
+      onPointerUp={(e) => {
+        const drag = dragRef.current
+        if (!drag) return
+        dragRef.current = null
+        e.currentTarget.releasePointerCapture(e.pointerId)
+        const committed = draft
+        setDraft(null)
+        // 位移过小视为点击（交给段自身的 onClick 选中），只有真正的拖拽才落区间
+        if (committed && drag.moved && committed.endMs - committed.startMs > span * 0.002) {
+          onRangeCommit(committed)
+        } else {
+          onRangeClear()
+        }
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        onRangeClear()
+      }}
     >
-      {records.map((record, i) => ({ record, i }))
-        .filter(({ record, i }) => i % stride === 0 || record.id === selectedId)
-        .map(({ record }) => {
-          const left = ((record.startedAt - domainStart) / span) * 100
-          const width = record.durationMs != null ? (record.durationMs / span) * 100 : 0.5
-          return (
-            <button
-              key={record.id}
-              type="button"
-              title={`#${record.index} ${KIND_META[record.kind].label} · ${fmtClock(record.startedAt)} · ${fmtDuration(record.durationMs)}`}
-              onClick={() => onSelect(record.id)}
-              className={cn(
-                'absolute top-1/2 h-2 hover:h-3 -translate-y-1/2 rounded-sm min-w-[2px] cursor-pointer',
-                KIND_META[record.kind].segment,
-                record.isError && 'bg-[var(--lume-danger)]',
-                record.running && 'animate-pulse motion-reduce:animate-none',
-                selectedId === record.id && 'ring-1 ring-[var(--lume-accent)] ring-offset-1 ring-offset-[var(--lume-bg-panel)]',
-              )}
-              // 宽度下限 0.4%：零时长记录在概览条上至少留一个可点像素带
-              style={{ left: `${left}%`, width: `${Math.max(width, 0.4)}%` }}
-            />
-          )
-        })}
+      {/* 已生效区间高亮 */}
+      {activeRange && (
+        <div
+          aria-hidden
+          className="absolute inset-y-0 bg-[var(--lume-accent)]/10 ring-1 ring-inset ring-[var(--lume-accent)]/40"
+          style={{
+            left: `${((activeRange.startMs - domainStart) / span) * 100}%`,
+            width: `${((activeRange.endMs - activeRange.startMs) / span) * 100}%`,
+          }}
+        />
+      )}
+      {sampled.map(({ record }) => {
+        const left = ((record.startedAt - domainStart) / span) * 100
+        const width = record.durationMs != null ? (record.durationMs / span) * 100 : 0.5
+        const durationPct = record.durationMs != null ? (record.durationMs / span) * 100 : 0.5
+        // assistant span 双色调：前段浅色为 TTFT（等待首字），后段实色为解码
+        const twoTone = record.kind === 'assistant' && record.ttftMs != null && durationPct > 0.8
+        const ttftFrac = twoTone ? Math.min(0.95, (record.ttftMs! / (record.durationMs ?? 1)) ) : 0
+        return (
+          <button
+            key={record.id}
+            type="button"
+            onClick={() => onSelect(record.id)}
+            onMouseEnter={() => {
+              if (hoverTimerRef.current != null) clearTimeout(hoverTimerRef.current)
+              setHoverId(record.id)
+              setHoverVisible(false)
+              hoverTimerRef.current = setTimeout(() => setHoverVisible(true), HOVER_DELAY_MS)
+            }}
+            onMouseLeave={() => {
+              if (hoverTimerRef.current != null) clearTimeout(hoverTimerRef.current)
+              setHoverId(null)
+              setHoverVisible(false)
+            }}
+            className={cn(
+              'absolute top-1/2 h-2 hover:h-3 -translate-y-1/2 rounded-sm min-w-[2px] cursor-pointer',
+              twoTone
+                ? record.isError ? 'bg-[var(--lume-danger)]/30' : 'bg-[var(--lume-accent)]/30'
+                : KIND_META[record.kind].segment,
+              record.isError && !twoTone && 'bg-[var(--lume-danger)]',
+              record.running && 'animate-pulse motion-reduce:animate-none',
+              selectedId === record.id && 'ring-1 ring-[var(--lume-accent)] ring-offset-1 ring-offset-[var(--lume-bg-panel)]',
+            )}
+            // 宽度下限 0.4%：零时长记录在概览条上至少留一个可点像素带
+            style={{ left: `${left}%`, width: `${Math.max(width, 0.4)}%` }}
+          >
+            {twoTone && (
+              <span
+                aria-hidden
+                className={cn('absolute inset-y-0 right-0 rounded-sm', record.isError ? 'bg-[var(--lume-danger)]' : 'bg-[var(--lume-accent)]')}
+                style={{ width: `${(1 - ttftFrac) * 100}%` }}
+              />
+            )}
+          </button>
+        )
+      })}
+      {/* 500ms 悬停浮层：精确时刻与耗时 */}
+      {hovered && hoverVisible && (
+        <div
+          className="pointer-events-none absolute top-full z-20 mt-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-2 py-1 text-micro text-foreground shadow-md"
+          style={{ left: `${Math.min(90, Math.max(10, hoverAnchorPct))}%` }}
+        >
+          <div className="font-medium">#{hovered.index} · {KIND_META[hovered.kind].label}{hovered.toolName ? ` · ${hovered.toolName}` : ''}</div>
+          <div className="text-[var(--lume-text-muted)]">
+            {fmtClock(hovered.startedAt)}
+            {hovered.endedAt != null ? ` – ${fmtClock(hovered.endedAt)}` : ' – 运行中'}
+            {' · '}
+            {fmtDuration(hovered.durationMs)}
+          </div>
+          {hovered.kind === 'assistant' && hovered.ttftMs != null && (
+            <div className="text-[var(--lume-text-muted)]">
+              首字 {fmtDuration(hovered.ttftMs)} · 解码 {fmtDuration(Math.max(0, (hovered.durationMs ?? 0) - hovered.ttftMs))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -108,6 +237,12 @@ function Inspector({ record, onClose }: { record: TraceRecord; onClose: () => vo
   const meta: Array<[string, string]> = [
     ['开始', fmtClock(record.startedAt)],
     ['耗时', fmtDuration(record.durationMs)],
+    ...(record.ttftMs != null
+      ? [
+          ['首字延迟', fmtDuration(record.ttftMs)] as [string, string],
+          ...(!record.running ? [['解码', fmtDuration(Math.max(0, (record.durationMs ?? 0) - record.ttftMs))] as [string, string]] : []),
+        ]
+      : []),
     ['状态', record.running ? '运行中' : record.isError ? '失败' : '完成'],
     ...(record.toolName ? [['工具', record.toolName] as [string, string]] : []),
     ...(record.numTurns != null ? [['轮数', String(record.numTurns)] as [string, string]] : []),
@@ -146,6 +281,8 @@ function Inspector({ record, onClose }: { record: TraceRecord; onClose: () => vo
 export function AgentTraceView({ threadId }: { threadId: string }) {
   const [events, setEvents] = useState<SdkEventEnvelope[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [range, setRange] = useState<TraceTimeRange | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const followTailRef = useRef(true)
 
@@ -191,16 +328,41 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
     },
   })
 
-  // 推送侧 16ms 微批高频到达：投影走低优先级渲染，避免流式期间账本全量重算卡输入
+  // 推送侧高频到达：投影走低优先级渲染，避免流式期间账本全量重算卡输入
   const deferredEvents = useDeferredValue(events)
   const records = useMemo(() => buildTraceRecords(deferredEvents), [deferredEvents])
+  const normalizedQuery = query.trim().toLowerCase()
+  const visibleRecords = useMemo(() => {
+    let list = records
+    if (range) {
+      // dsh 语义：保留区间内任意时刻处于活动状态的记录
+      list = list.filter((r) => r.startedAt <= range.endMs && (r.endedAt ?? Number.MAX_SAFE_INTEGER) >= range.startMs)
+    }
+    if (normalizedQuery) {
+      list = list.filter((r) =>
+        r.summary.toLowerCase().includes(normalizedQuery) || (r.toolName ?? '').toLowerCase().includes(normalizedQuery))
+    }
+    return list
+  }, [records, range, normalizedQuery])
   const selected = records.find((r) => r.id === selectedId) ?? null
 
   // 尾部跟随：新记录到达时贴底，用户上滚即暂停（对齐 dsh tail-follow 行为）
   useEffect(() => {
     const el = scrollRef.current
     if (el && followTailRef.current) el.scrollTop = el.scrollHeight
-  }, [records.length])
+  }, [visibleRecords.length])
+
+  // Esc 清除区间过滤与搜索
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setRange(null)
+        setQuery('')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const selectAndReveal = (id: string) => {
     setSelectedId(id)
@@ -215,7 +377,35 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {records.length > 0 && (
-        <OverviewBar records={records} selectedId={selectedId} onSelect={selectAndReveal} />
+        <>
+          <OverviewBar
+            records={records}
+            selectedId={selectedId}
+            onSelect={selectAndReveal}
+            range={range}
+            onRangeCommit={setRange}
+            onRangeClear={() => setRange(null)}
+          />
+          <div className="flex h-8 shrink-0 items-center gap-2 border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)] px-3">
+            <Search size={12} className="shrink-0 text-[var(--lume-text-muted)]" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索摘要或工具名"
+              className="h-6 min-w-0 flex-1 bg-transparent text-ui text-foreground outline-none placeholder:text-[var(--lume-text-muted)]"
+              aria-label="搜索轨迹记录"
+            />
+            {(query || range) && (
+              <button
+                type="button"
+                onClick={() => { setQuery(''); setRange(null) }}
+                className="flex shrink-0 items-center gap-1 rounded-full bg-[var(--lume-bg-elevated)] px-2 py-0.5 text-micro text-[var(--lume-text-muted)] hover:text-foreground"
+              >
+                {visibleRecords.length}/{records.length} 条 · 清除(Esc)
+              </button>
+            )}
+          </div>
+        </>
       )}
       <div className="flex min-h-0 flex-1">
         <div
@@ -231,9 +421,13 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
             <div className="flex h-full items-center justify-center text-caption text-[var(--lume-text-muted)]">
               暂无轨迹记录 — 发送一条消息后这里会显示执行轨迹
             </div>
+          ) : visibleRecords.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-caption text-[var(--lume-text-muted)]">
+              无匹配记录 — 调整搜索词或按 Esc 清除过滤
+            </div>
           ) : (
             <div className="pb-2">
-              {records.map((record) => {
+              {visibleRecords.map((record) => {
                 const showTurnHeader = record.turnNumber != null && record.turnNumber !== lastTurnNumber
                 lastTurnNumber = record.turnNumber
                 return (
