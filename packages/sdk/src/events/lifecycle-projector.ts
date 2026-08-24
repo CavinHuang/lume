@@ -38,6 +38,7 @@ import type {
   TodoStateDetail,
   TaskProgressDetail,
   AdvisorReviewedDetail,
+  ToolOutputDetail,
 } from '@lume/shared'
 import { normalizeBackgroundTaskStatus } from '@lume/shared'
 
@@ -379,6 +380,18 @@ export async function* projectLifecycle(
       }
       const detail: AdvisorReviewedDetail = { type: 'advisor.reviewed', review }
       if (typeof m.summary === 'string') detail.summary = m.summary
+      return [emit('run', 'event', null, detail)]
+    }
+    if (subtype === 'local_command_output') {
+      // Foreground tool output snapshot (Bash). Only the tool-owned form (with
+      // tool_use_id) projects; legacy unowned messages stay ignored.
+      const m = message as { tool_use_id?: unknown; content?: unknown }
+      if (typeof m.tool_use_id !== 'string' || !m.tool_use_id) return []
+      const detail: ToolOutputDetail = {
+        type: 'tool.output',
+        toolCallId: m.tool_use_id,
+        chunk: typeof m.content === 'string' ? m.content : '',
+      }
       return [emit('run', 'event', null, detail)]
     }
     return []

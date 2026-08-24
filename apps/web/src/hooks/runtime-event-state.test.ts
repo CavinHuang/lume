@@ -644,3 +644,35 @@ describe('runtime-event-state #414 同文本快速重发', () => {
     ])
   })
 })
+
+describe('runtime-event-state tool.output 快照替换', () => {
+  function toolOutput(id: string, chunk: string, createdAt: string): LumeRuntimeEvent {
+    return runtimeEvent({ id, type: 'tool.output', toolCallId: 'toolu_1', chunk, createdAt }) as LumeRuntimeEvent
+  }
+
+  test('同一稳定 id 的连续快照原地替换，数组长度恒为 1', () => {
+    let state = appendRuntimeEvent({}, toolOutput('run-1:tool-output:toolu_1', 'tail v1', '2026-05-11T00:00:01.000Z'))
+    state = appendRuntimeEvent(state, toolOutput('run-1:tool-output:toolu_1', 'tail v2', '2026-05-11T00:00:02.000Z'))
+    state = appendRuntimeEvent(state, toolOutput('run-1:tool-output:toolu_1', 'tail v3', '2026-05-11T00:00:03.000Z'))
+
+    const events = state['thread-1']?.events ?? []
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ type: 'tool.output', chunk: 'tail v3' })
+  })
+
+  test('其他事件插队后仍能命中替换（非 tail-only），不同 toolCallId 不互串', () => {
+    let state = appendRuntimeEvent({}, toolOutput('run-1:tool-output:toolu_1', 'v1', '2026-05-11T00:00:01.000Z'))
+    state = appendRuntimeEvent(state, runtimeEvent({
+      id: 'progress-1', type: 'task.progress', taskId: 'bg-1', progress: {},
+      createdAt: '2026-05-11T00:00:02.000Z',
+    }) as LumeRuntimeEvent)
+    // 第二个工具调用的快照独立成条
+    state = appendRuntimeEvent(state, toolOutput('run-1:tool-output:toolu_2', 'other v1', '2026-05-11T00:00:03.000Z'))
+    state = appendRuntimeEvent(state, toolOutput('run-1:tool-output:toolu_1', 'v2', '2026-05-11T00:00:04.000Z'))
+
+    const events = state['thread-1']?.events ?? []
+    const outputs = events.filter((e) => e.type === 'tool.output')
+    expect(outputs).toHaveLength(2)
+    expect(outputs.map((e) => (e as Extract<LumeRuntimeEvent, { type: 'tool.output' }>).chunk)).toEqual(['v2', 'other v1'])
+  })
+})
