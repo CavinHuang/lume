@@ -474,24 +474,56 @@ function validateNewName(newName: string): string {
   return trimmed;
 }
 
+/** 同步短退避（毫秒级），避免为瞬时占用直接走 O(总字节) 的同步拷贝阻塞 RPC 循环。 */
+function sleepSyncMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function movePathWithFallback(sourcePath: string, targetPath: string): void {
+  let firstErrorCode: string | undefined;
   try {
     renameSync(sourcePath, targetPath);
     return;
   } catch (error) {
-    // EXDEV=跨设备；EPERM/EBUSY=Windows 杀毒/索引器瞬时占用（#552）——统一降级 copy+delete
+    // EXDEV=跨设备；EPERM/EBUSY=Windows 杀毒/索引器瞬时占用（#552）
     const code = (error as NodeJS.ErrnoException).code;
     if (code !== "EXDEV" && code !== "EPERM" && code !== "EBUSY") {
       throw error;
+    }
+    firstErrorCode = code;
+  }
+  // 占用类错误通常毫秒~秒级释放：先短退避重试 rename，命中即免去整棵拷贝（仅 EXDEV 直接降级）
+  if (firstErrorCode !== "EXDEV") {
+    for (const delayMs of [50, 150]) {
+      sleepSyncMs(delayMs);
+      try {
+        renameSync(sourcePath, targetPath);
+        return;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "EPERM" && code !== "EBUSY") {
+          throw error;
+        }
+      }
     }
   }
   try {
     mkdirSync(dirname(targetPath), { recursive: true });
     rmSync(targetPath, { recursive: true, force: true });
-    cpSync(sourcePath, targetPath, { recursive: true });
-    rmSync(sourcePath, { recursive: true, force: true });
+    cpSync(sourcePath, targetPath, { recursive: true, preserveTimestamps: true });
+    try {
+      rmSync(sourcePath, { recursive: true, force: true });
+    } catch {
+      // 源清理失败（占用窗口恰落在拷贝完成后）不回滚：此时 target 已是完整副本，
+      // 删掉它才是数据丢失；保留双份由用户重试清理（#552 review）
+    }
   } catch (error) {
-    rmSync(targetPath, { recursive: true, force: true });
+    // 清场自身失败不得顶替原始错误
+    try {
+      rmSync(targetPath, { recursive: true, force: true });
+    } catch {
+      // 残留半截 target 可接受，优先暴露拷贝根因
+    }
     throw error;
   }
 }

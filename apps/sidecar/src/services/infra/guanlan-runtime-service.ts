@@ -327,6 +327,14 @@ export async function downloadFile(
       let currentRequest: http.ClientRequest | null = null;
       let settled = false;
       let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      // 自管空闲检测：Bun 下 request.setTimeout 在响应中期不触发（#548 核验），
+      // 以 data 事件喂狗的定时器跨运行时可靠
+      const clearIdleTimer = () => {
+        if (idleTimer !== undefined) {
+          clearTimeout(idleTimer);
+          idleTimer = undefined;
+        }
+      };
       const settleOk = () => {
         if (settled) return;
         settled = true;
@@ -349,19 +357,10 @@ export async function downloadFile(
       );
       totalTimer.unref();
 
-      // 自管空闲检测：Bun 下 request.setTimeout 在响应中期不触发（#548 核验），
-      // 以 data 事件喂狗的定时器跨运行时可靠
-      function clearIdleTimer(): void {
-        if (idleTimer !== undefined) {
-          clearTimeout(idleTimer);
-          idleTimer = undefined;
-        }
-      }
       const armIdleTimer = (target: string) => {
         clearIdleTimer();
         idleTimer = setTimeout(() => {
           settleFail(new Error(`下载失败，连接空闲超时: ${target}`));
-          currentRequest?.destroy();
         }, idleTimeoutMs);
         idleTimer.unref();
       };
@@ -378,7 +377,10 @@ export async function downloadFile(
           response.on("error", settleFail);
           const location = response.headers.location;
           if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && location) {
-            response.resume(); // 排空旧响应以释放连接，随后换绑 currentRequest 到新目标
+            // 排空旧响应以释放连接；其 error 监听换为吞错——排空期 RST 不得误杀新目标
+            response.removeListener("error", settleFail);
+            response.on("error", () => {});
+            response.resume();
             visit(new URL(location, target).toString(), redirects + 1);
             return;
           }
