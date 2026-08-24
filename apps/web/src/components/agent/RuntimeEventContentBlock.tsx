@@ -1468,6 +1468,10 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
         <span className="min-w-0 flex-1 truncate text-[var(--lume-text-muted)]">{summarizeInput(input)}</span>
         {isRunning && <AgentLoadingIndicator variant="drive" startedAt={toolCall.startedAt} className="shrink-0" />}
       </Button>
+      {isRunning && toolCall.streamedOutput ? (
+        // 运行中实时输出尾部（快照整体替换，仅增量追加；max-height + 滚动兜底）
+        <pre className="max-h-40 overflow-y-auto overscroll-contain border-t border-[var(--lume-border-subtle)] p-3 font-mono text-ui leading-[1.6] whitespace-pre-wrap break-all text-[var(--lume-text-secondary)]">{toolCall.streamedOutput}</pre>
+      ) : null}
       {shouldRenderResult && (
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain border-t border-[var(--lume-border-subtle)] p-3">

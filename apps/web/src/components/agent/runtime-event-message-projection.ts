@@ -414,6 +414,17 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     return
   }
 
+  if (event.type === 'tool.output') {
+    // 运行中工具卡的实时输出快照(Bash)。卡片缺失或已结束则忽略——迟到的快照
+    // 不复活卡片，completed/failed 的 upsert 不带 streamedOutput 即整体清除。
+    const assistant = state.currentAssistant
+    if (!assistant) return
+    const existing = assistant.toolCalls.get(event.toolCallId)
+    if (!existing || existing.status !== 'running') return
+    upsertToolCallBlock(assistant, event.toolCallId, { ...existing, streamedOutput: event.chunk })
+    return
+  }
+
   if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
     state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     if (event.type === 'run.turn_limited') {

@@ -1560,4 +1560,48 @@ describe('todo_update block 稳定性', () => {
     expect(ids).toEqual(['user-1', 'assistant:run-1'])
     expect(new Set(ids).size).toBe(ids.length)
   })
+
+  test('tool.output 快照写入运行中卡片并随 completed 整体清除', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'run.started' }),
+      event({ type: 'tool.started', toolCallId: 'tool-1', toolName: 'Bash', inputPreview: { command: 'bun test' } }),
+      event({ id: 'run-1:tool-output:tool-1', type: 'tool.output', toolCallId: 'tool-1', chunk: 'tail v1\n' }),
+      event({ id: 'run-1:tool-output:tool-1', type: 'tool.output', toolCallId: 'tool-1', chunk: 'tail v1\ntail v2\n' }),
+    ])
+
+    const assistant = messages.find((message) => message.type === 'assistant') as Extract<RuntimeMessageView, { type: 'assistant' }>
+    const block = assistant.blocks.find((candidate) => candidate.type === 'tool_call') as Extract<typeof assistant.blocks[number], { type: 'tool_call' }>
+    expect(block.toolCall.status).toBe('running')
+    expect(block.toolCall.streamedOutput).toBe('tail v1\ntail v2\n')
+
+    const finished = projectRuntimeEventMessages([
+      event({ type: 'run.started' }),
+      event({ type: 'tool.started', toolCallId: 'tool-1', toolName: 'Bash', inputPreview: { command: 'bun test' } }),
+      event({ id: 'run-1:tool-output:tool-1', type: 'tool.output', toolCallId: 'tool-1', chunk: 'tail v2\n' }),
+      event({ type: 'tool.completed', toolCallId: 'tool-1', toolName: 'Bash', resultPreview: 'all output' }),
+    ])
+    const doneAssistant = finished.find((message) => message.type === 'assistant') as Extract<RuntimeMessageView, { type: 'assistant' }>
+    const doneBlock = doneAssistant.blocks.find((candidate) => candidate.type === 'tool_call') as Extract<typeof doneAssistant.blocks[number], { type: 'tool_call' }>
+    expect(doneBlock.toolCall.status).toBe('completed')
+    expect(doneBlock.toolCall.streamedOutput).toBeUndefined()
+    expect(doneBlock.toolCall.output).toBe('all output')
+  })
+
+  test('迟到的 tool.output 不复活已结束的卡片，也不凭空建卡', () => {
+    const afterCompletion = projectRuntimeEventMessages([
+      event({ type: 'run.started' }),
+      event({ type: 'tool.started', toolCallId: 'tool-1', toolName: 'Bash', inputPreview: {} }),
+      event({ type: 'tool.completed', toolCallId: 'tool-1', toolName: 'Bash', resultPreview: 'done' }),
+      event({ id: 'run-1:tool-output:tool-1', type: 'tool.output', toolCallId: 'tool-1', chunk: 'late snapshot' }),
+    ])
+    const assistant = afterCompletion.find((message) => message.type === 'assistant') as Extract<RuntimeMessageView, { type: 'assistant' }>
+    const block = assistant.blocks.find((candidate) => candidate.type === 'tool_call') as Extract<typeof assistant.blocks[number], { type: 'tool_call' }>
+    expect(block.toolCall.streamedOutput).toBeUndefined()
+
+    // 无卡片的孤儿快照：不产生任何 assistant
+    const orphan = projectRuntimeEventMessages([
+      event({ id: 'run-1:tool-output:ghost', type: 'tool.output', toolCallId: 'ghost', chunk: 'x' }),
+    ])
+    expect(orphan.find((message) => message.type === 'assistant')).toBeUndefined()
+  })
 })
