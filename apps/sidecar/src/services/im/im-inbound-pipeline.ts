@@ -1,6 +1,7 @@
 import type { InboundImRouteMessage } from "./im-message-router";
 import { routeInboundImMessage } from "./im-message-router";
 import { hasSeenImMessage, rememberImMessage } from "./im-seen-message-store";
+import { IM_CONTROL_COMMAND_NAMES } from "./im-chat-commands";
 import { createLogger } from "../infra/logger";
 
 const log = createLogger("im-pipeline");
@@ -23,8 +24,14 @@ const log = createLogger("im-pipeline");
  * 即丢（微信 cursor 未推进的部分由重投兜底），这是防抖合并的固有权衡。
  */
 
-/** 控制面/会话命令白名单：命中即绕过静默窗口直通路由（与 im-chat-commands 的命令集保持同步） */
-const CONTROL_COMMAND_RE = /^\/(?:approve|help|h|new|stop|s|now|n|model|m)(?:@\S+)?(?:\s|$)/;
+/**
+ * 控制面/会话命令白名单：命中即绕过静默窗口直通路由。
+ * 命令名单一来源见 im-chat-commands 的 IM_CONTROL_COMMAND_NAMES。
+ */
+const CONTROL_COMMAND_RE = new RegExp(
+  `^\\/(?:${IM_CONTROL_COMMAND_NAMES.join("|")})(?:@\\S+)?(?:\\s|$)`,
+  "i"
+);
 
 export interface ImInboundPipelineOptions {
   /** 静默窗口毫秒数，窗口内连发合并 */

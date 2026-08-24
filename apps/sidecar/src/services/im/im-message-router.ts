@@ -25,7 +25,7 @@ import { getAgentWorkspace } from "../agent/agent-workspace-manager";
 import { saveFilesToAgentSession } from "../agent/agent-files-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createLogger, writeLogRecord } from "../infra/logger";
-import { getImAccount } from "./im-config-manager";
+import { getImAccount, getImRuntimeAccount } from "./im-config-manager";
 import { hasSeenImMessage, rememberImMessage } from "./im-seen-message-store";
 import {
   deleteImThreadBindingByPeer,
@@ -36,12 +36,14 @@ import {
 import { sendBoundImTextMessage, type SendBoundImTextMessageInput } from "./im-send-service";
 import { resolveMediaContents } from "./im-media-resolver";
 import { createImRunCardSession, type ImRunCardSession } from "./im-run-card-session";
+import { getFeishuQuotedMessage } from "./feishu/feishu-api";
 import {
   parseImCommand,
   formatChannelListText,
   formatImHelpText,
   formatImNowText,
   formatModelListText,
+  listEnabledChannels,
   resolveImModelSwitch,
   type ParsedImCommand
 } from "./im-chat-commands";
@@ -63,6 +65,12 @@ export interface InboundImRouteMessage {
   contents?: ImMessageContent[];
   contextToken?: string;
   messageId?: string;
+  /** 飞书长按回复场景的被引用消息 id */
+  parentMessageId?: string;
+  /** 结构化提及列表（飞书；供群准入精确匹配） */
+  mentions?: Array<{ key?: string; openId?: string; name?: string }>;
+  /** 原始文本是否含 @ 提及标记（群准入启发式线索） */
+  hasMentionMarkup?: boolean;
 }
 
 export interface ImMessageRouterDeps {
@@ -83,6 +91,10 @@ export interface ImMessageRouterDeps {
     threadId: string,
     patch: Pick<AgentThreadMeta, "channelId" | "modelRef" | "modelId" | "modelSelectionSource">
   ) => void;
+  /** 被引用消息内容解析（长按回复上下文注入）；默认仅飞书实现 */
+  resolveQuotedMessage?: (
+    message: InboundImRouteMessage
+  ) => Promise<{ senderId?: string; text: string } | null>;
 }
 
 type ImAgentStreamEmitter = {
@@ -119,6 +131,49 @@ function userMessageForMessage(message: InboundImRouteMessage): string {
     return `${message.senderId.trim()}: ${message.text}`;
   }
   return message.text;
+}
+
+/**
+ * 构造带上下文的用户消息：存在被引用消息时以 XML 块注入引用内容，
+ * 正文包进 <user_message>；无附加上下文时保持纯文本（历史行为不变）。
+ */
+export function buildImUserMessage(
+  message: InboundImRouteMessage,
+  quoted?: { senderId?: string; text: string } | null
+): string {
+  const base = userMessageForMessage(message);
+  if (!quoted?.text) {
+    return base;
+  }
+  const senderAttr = quoted.senderId ? ` sender="${quoted.senderId}"` : "";
+  return [
+    "<im_context>",
+    `<quoted_message${senderAttr}>`,
+    quoted.text,
+    "</quoted_message>",
+    "<user_message>",
+    base,
+    "</user_message>",
+    "</im_context>"
+  ].join("\n");
+}
+
+/** 飞书默认实现：按 parentMessageId 拉取被引用消息的可读文本。 */
+async function resolveFeishuQuotedMessage(
+  message: InboundImRouteMessage
+): Promise<{ senderId?: string; text: string } | null> {
+  if (message.provider !== "feishu" || !message.parentMessageId) {
+    return null;
+  }
+  const account = getImRuntimeAccount(message.accountId);
+  if (!account?.accountKey || !account.token) {
+    return null;
+  }
+  return getFeishuQuotedMessage({
+    appId: account.accountKey,
+    appSecret: account.token,
+    messageId: message.parentMessageId
+  });
 }
 
 type ParsedImApprovalCommand =
@@ -510,28 +565,46 @@ async function routeImChatCommand(
 ): Promise<{ threadId: string }> {
   const sendBoundTextMessage = deps.sendBoundTextMessage ?? sendBoundImTextMessage;
   const binding = existing ?? transientBindingForReply(message);
-  const listEnabledChannels = deps.listChannels ?? listChannels;
+  const listAllChannels = deps.listChannels ?? listChannels;
   const stopThread = deps.stopThread ?? stopAgent;
   const getThreadMeta = deps.getThreadMeta ?? getAgentThreadMeta;
   const reply = async (text: string) => {
     await sendBoundTextMessage({ binding, text });
   };
+  // 命令幂等：WS 重连/重启重投同一条命令不应重复执行（#157 同源语义）
+  const rememberCommand = () => {
+    if (message.messageId) {
+      rememberImMessage(message.provider, message.accountId, message.messageId);
+    }
+  };
 
   switch (command.type) {
     case "invalid": {
       await reply(command.message);
+      rememberCommand();
       break;
     }
     case "help": {
       await reply(formatImHelpText());
+      rememberCommand();
       break;
     }
     case "new": {
       if (!existing) {
         await reply("发送任意消息即可开始新对话。");
+        rememberCommand();
         break;
       }
-      const account = getImAccount(message.accountId);
+      // 旧线程若有进行中运行先停止：否则其回复因绑定已换而静默丢失，
+      // 且 IM 侧再也无法 /stop 它（审批请求同样悬空）
+      try {
+        await stopAgent(existing.threadId);
+      } catch (error) {
+        log.warn("/new 停止旧线程运行失败（继续重开）", {
+          threadId: existing.threadId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
       const thread = await (deps.createThread ?? ((title: string, workspaceId?: string, options?: { fileContextMode: "newRoot" }) =>
         createAgentThread(title, undefined, workspaceId, undefined, undefined, options)))(
         titleForMessage(message),
@@ -552,68 +625,96 @@ async function routeImChatCommand(
       await updateThreadSourceMeta(thread.id, message, deps);
       log.info("IM 命令开启新对话", { provider: message.provider, peerId: message.peerId, threadId: thread.id });
       await reply("已开启新对话，接下来的消息将在全新的上下文中处理。");
+      rememberCommand();
       return { threadId: thread.id };
     }
     case "stop": {
       let stopped = false;
+      let failed = false;
       try {
         stopped = await stopThread(binding.threadId);
       } catch (error) {
+        failed = true;
         log.warn("IM 命令停止任务失败", {
           threadId: binding.threadId,
           error: error instanceof Error ? error.message : String(error)
         });
       }
-      await reply(stopped ? "已停止当前正在进行的任务。" : "当前没有正在进行的任务。");
+      await reply(
+        failed
+          ? "停止失败，请稍后重试或在 Lume 桌面端处理。"
+          : stopped
+            ? "已停止当前正在进行的任务。"
+            : "当前没有正在进行的任务。"
+      );
+      rememberCommand();
       break;
     }
     case "now": {
       const meta = existing ? getThreadMeta(existing.threadId) ?? null : null;
       await reply(
         formatImNowText({
-          peerName: message.peerName,
           peerKind: message.peerKind,
           meta,
-          channels: listEnabledChannels(),
+          channels: listAllChannels(),
           ...(meta?.workspaceId ? { workspaceId: meta.workspaceId } : {})
         })
       );
+      rememberCommand();
       break;
     }
     case "model": {
-      const channels = listEnabledChannels();
+      const allChannels = listAllChannels();
+      const enabledChannels = listEnabledChannels(allChannels);
       if (command.args.length === 0) {
-        await reply(formatChannelListText(channels));
+        await reply(formatChannelListText(allChannels));
+        rememberCommand();
         break;
       }
       if (command.args.length === 1) {
         const channelIndex = Number.parseInt(command.args[0] ?? "", 10);
-        const enabled = channels.filter((channel) => channel.enabled !== false);
-        const channel = Number.isNaN(channelIndex) ? undefined : enabled[channelIndex - 1];
-        await reply(channel ? formatModelListText(channel) : formatChannelListText(channels));
+        const channel = Number.isNaN(channelIndex) ? undefined : enabledChannels[channelIndex - 1];
+        await reply(
+          channel
+            ? formatModelListText(channel)
+            : `渠道序号无效。发送 /model 查看 1-${enabledChannels.length} 号渠道。`
+        );
+        rememberCommand();
         break;
       }
       if (!existing) {
         await reply("请先发送任意消息建立会话，再使用 /model 切换模型。");
+        rememberCommand();
         break;
       }
-      const result = resolveImModelSwitch(channels, command.args);
+      const result = resolveImModelSwitch(allChannels, command.args);
       if (!result.ok) {
         await reply(result.message);
+        rememberCommand();
         break;
       }
-      (deps.updateThreadModelSelection ?? updateAgentThreadMeta)(existing.threadId, {
-        channelId: result.channelId,
-        modelRef: result.modelRef,
-        modelId: result.modelId,
-        modelSelectionSource: "thread-override"
-      });
-      log.info("IM 命令切换模型", {
-        threadId: existing.threadId,
-        channelId: result.channelId,
-        modelRef: result.modelRef
-      });
-      await reply(`已切换模型：${result.modelName}（渠道「${result.channelName}」），仅当前会话生效。`);
+      try {
+        (deps.updateThreadModelSelection ?? updateAgentThreadMeta)(existing.threadId, {
+          channelId: result.channelId,
+          modelRef: result.modelRef,
+          modelId: result.modelId,
+          modelSelectionSource: "thread-override"
+        });
+        log.info("IM 命令切换模型", {
+          threadId: existing.threadId,
+          channelId: result.channelId,
+          modelRef: result.modelRef
+        });
+        await reply(`已切换模型：${result.modelName}（渠道「${result.channelName}」），仅当前会话生效。`);
+      } catch (error) {
+        // 陈旧绑定（线程已被桌面端删除）等：明确告知而非静默失败
+        log.warn("IM 命令切换模型失败", {
+          threadId: existing.threadId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        await reply("切换失败：当前绑定的会话已不存在，发送任意消息可重新建立会话。");
+      }
+      rememberCommand();
       break;
     }
     default:
@@ -798,9 +899,14 @@ export async function routeInboundImMessage(
     mode: "turn"
   });
 
+  // 长按回复：尽力解析被引用消息注入上下文；失败降级为纯正文（不阻断路由）
+  const quoted = message.parentMessageId
+    ? await (deps.resolveQuotedMessage ?? resolveFeishuQuotedMessage)(message).catch(() => null)
+    : null;
+
   await sendMessage({
     threadId: binding.threadId,
-    userMessage: userMessageForMessage(message),
+    userMessage: buildImUserMessage(message, quoted),
     messageAttachments: mediaAttachments.length > 0 ? mediaAttachments : undefined,
     workspaceId: message.workspaceId,
     trustedPlanningClientSubmissionId: submissionId,

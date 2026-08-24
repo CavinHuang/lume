@@ -22,6 +22,16 @@ export type ParsedImCommand =
   | { type: "now" }
   | { type: "model"; args: string[] };
 
+/** 命令名单一来源（含审批命令）：管线直通白名单据此动态构建，避免双处维护漂移 */
+export const IM_CONTROL_COMMAND_NAMES = [
+  "approve",
+  "help", "h",
+  "new",
+  "stop", "s",
+  "now", "n",
+  "model", "m"
+] as const;
+
 const COMMAND_ALIASES: Record<string, ParsedImCommand["type"]> = {
   help: "help",
   h: "help",
@@ -72,7 +82,7 @@ export function formatImHelpText(): string {
   ].join("\n");
 }
 
-function listEnabledChannels(channels: Channel[]): Channel[] {
+export function listEnabledChannels(channels: Channel[]): Channel[] {
   return channels.filter((channel) => channel.enabled !== false);
 }
 
@@ -161,7 +171,6 @@ export function resolveImModelSwitch(
 }
 
 export interface ImNowInfoInput {
-  peerName?: string;
   peerKind: "dm" | "group";
   meta?: Pick<AgentThreadMeta, "title" | "channelId" | "modelRef"> | null;
   channels: Channel[];
@@ -183,14 +192,14 @@ export function formatImNowText(input: ImNowInfoInput): string {
   const channelId = input.meta?.channelId;
   const modelRef = input.meta?.modelRef;
   if (channelId || modelRef) {
-    const enabled = listEnabledChannels(input.channels);
-    const channel = enabled.find((item) => item.id === channelId);
+    const channel = channelId ? input.channels.find((item) => item.id === channelId) : undefined;
     const modelName = modelRef?.split("/").slice(1).join("/");
     let modelText = modelName ? `模型: ${modelName}` : "模型: 已配置";
     if (channel) {
-      modelText += `（渠道「${channel.name}」）`;
-    }
-    if (channelId && !channel) {
+      modelText += channel.enabled !== false
+        ? `（渠道「${channel.name}」）`
+        : `（渠道「${channel.name}」已停用）`;
+    } else if (channelId) {
       modelText += "（原渠道已删除）";
     }
     lines.push(modelText);

@@ -92,7 +92,7 @@ describe("createFeishuWsWorker", () => {
     expect(routes).toHaveLength(0);
   });
 
-  it("群聊 peerKind=group", () => {
+  it("群聊精确 @ 机器人（open_id 匹配）放行", async () => {
     const routes: unknown[] = [];
     const { client, getDispatcher } = makeFakeClient();
     const worker = createFeishuWsWorker({
@@ -101,13 +101,91 @@ describe("createFeishuWsWorker", () => {
         routes.push(m);
       },
       createClient: () => client as never,
+      getBotOpenId: async () => "ou_bot",
+      getChatUserCount: async () => 5,
     });
     worker.start();
     const handler = getDispatcher()!.handles.get("im.message.receive_v1")!;
     handler({
-      message: { chat_id: "oc_g", chat_type: "group", message_type: "text", content: JSON.stringify({ text: "<at user_id=\"ou_bot\">@Bot</at> 群消息" }) },
+      message: {
+        chat_id: "oc_g",
+        chat_type: "group",
+        message_type: "text",
+        content: JSON.stringify({ text: "@_user_1 群消息" }),
+        mentions: [{ key: "@_user_1", id: { open_id: "ou_bot" }, name: "Bot" }],
+      },
     });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(routes).toHaveLength(1);
     expect((routes[0] as { peerKind: string }).peerKind).toBe("group");
+  });
+
+  it("群聊 @ 了别人（open_id 不匹配）被拒", async () => {
+    const routes: unknown[] = [];
+    const { client, getDispatcher } = makeFakeClient();
+    const worker = createFeishuWsWorker({
+      account: makeAccount(),
+      routeMessage: async (m) => {
+        routes.push(m);
+      },
+      createClient: () => client as never,
+      getBotOpenId: async () => "ou_bot",
+      getChatUserCount: async () => 5,
+    });
+    worker.start();
+    const handler = getDispatcher()!.handles.get("im.message.receive_v1")!;
+    handler({
+      message: {
+        chat_id: "oc_g",
+        chat_type: "group",
+        message_type: "text",
+        content: JSON.stringify({ text: "@_user_9 看看这个" }),
+        mentions: [{ key: "@_user_9", id: { open_id: "ou_other" }, name: "同事" }],
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(routes).toHaveLength(0);
+  });
+
+  it("单人群免 @ 放行；机器人身份不可得退回 @ 标记启发式", async () => {
+    const routes: unknown[] = [];
+    const { client, getDispatcher } = makeFakeClient();
+    // 身份不可得（null）：单人群仍放行
+    let userCount: number | null = 1;
+    const worker = createFeishuWsWorker({
+      account: makeAccount(),
+      routeMessage: async (m) => {
+        routes.push(m);
+      },
+      createClient: () => client as never,
+      getBotOpenId: async () => null,
+      getChatUserCount: async () => userCount,
+    });
+    worker.start();
+    const handler = getDispatcher()!.handles.get("im.message.receive_v1")!;
+    handler({
+      message: {
+        chat_id: "oc_single",
+        chat_type: "group",
+        message_type: "text",
+        content: JSON.stringify({ text: "不用@也能聊" }),
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(routes).toHaveLength(1);
+
+    // 多人群 + 身份不可得 + 无 @ 标记 → 启发式拒绝
+    userCount = 5;
+    handler({
+      message: {
+        chat_id: "oc_multi",
+        chat_type: "group",
+        message_type: "text",
+        content: JSON.stringify({ text: "随便说说" }),
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(routes).toHaveLength(1);
   });
 
   it("content 非法 JSON 或仅 @ 占位符时不路由", () => {

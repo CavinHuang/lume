@@ -68,7 +68,18 @@ function fakeClient(calls: FakeApiCalls): FeishuRestClient {
         message: {
           create: async (req) => {
             calls.messageCreates.push(req);
-          }
+          },
+          get: async () => ({ code: 0 })
+        },
+        chat: {
+          get: async () => ({ code: 0 })
+        }
+      }
+    },
+    bot: {
+      v3: {
+        botInfo: {
+          get: async () => ({ code: 0 })
         }
       }
     },
@@ -224,7 +235,7 @@ describe("createFeishuCardStream", () => {
 
   test("开卡失败返回 false 且 close 后不再发送", async () => {
     const failingClient: FeishuRestClient = {
-      im: { v1: { message: { create: async () => undefined } } },
+      im: { v1: { message: { create: async () => undefined, get: async () => ({ code: 0 }) }, chat: { get: async () => ({ code: 0 }) } } }, bot: { v3: { botInfo: { get: async () => ({ code: 0 }) } } },
       cardkit: {
         v1: {
           card: {
@@ -248,7 +259,7 @@ describe("createFeishuCardStream", () => {
 
   test("业务码非 0 的 create 视为开卡失败", async () => {
     const rejectedClient: FeishuRestClient = {
-      im: { v1: { message: { create: async () => undefined } } },
+      im: { v1: { message: { create: async () => undefined, get: async () => ({ code: 0 }) }, chat: { get: async () => ({ code: 0 }) } } }, bot: { v3: { botInfo: { get: async () => ({ code: 0 }) } } },
       cardkit: {
         v1: {
           card: {

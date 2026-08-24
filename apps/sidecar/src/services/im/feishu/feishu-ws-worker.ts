@@ -4,6 +4,8 @@ import type { ImWorker } from "../provider-registry";
 import type { ImRuntimeAccount } from "../im-config-manager";
 import type { InboundImRouteMessage } from "../im-message-router";
 import { routeInboundImMessage } from "../im-message-router";
+import { getFeishuBotOpenId, getFeishuChatUserCount } from "./feishu-api";
+import { resolveImGroupAccess } from "../im-group-policy";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("im-worker-feishu");
@@ -25,6 +27,9 @@ export interface CreateFeishuWsWorkerInput {
   updateAccount?: (id: string, input: ImAccountUpdateInput) => Promise<void> | void;
   /** 测试注入伪 client;生产省略走默认 lark.WSClient 工厂。 */
   createClient?: (appId: string, appSecret: string) => FeishuWsClient;
+  /** 群准入增强注入（测试）；生产走 REST API 缓存实现 */
+  getBotOpenId?: (input: { appId: string; appSecret: string }) => Promise<string | null>;
+  getChatUserCount?: (input: { appId: string; appSecret: string; chatId: string }) => Promise<number | null>;
 }
 
 interface FeishuMessage {
@@ -33,6 +38,8 @@ interface FeishuMessage {
   message_type?: string;
   content?: string; // JSON 字符串,如 {"text":"@_user_1 hello"}
   message_id?: string;
+  parent_id?: string;
+  mentions?: Array<{ key?: string; id?: { open_id?: string }; name?: string }>;
 }
 
 interface FeishuReceiveEventData {
@@ -48,6 +55,9 @@ function stripFeishuMentions(text: string): string {
 /**
  * 解析飞书 im.message.receive_v1 事件 → 统一入站路由消息。
  * content 为 JSON 字符串 {"text":"..."};@ 占位符需清理。仅处理文本消息。
+ *
+ * 群聊准入不在 parse 内硬拒：这里只提取提及线索（mentions open_id、
+ * 是否含 @ 标记），由 worker 结合机器人身份做精确判定（#405）。
  */
 export function parseFeishuEvent(
   event: unknown,
@@ -65,10 +75,7 @@ export function parseFeishuEvent(
       rawText = "";
     }
   }
-  // 群聊 @ 门控：绑定群内任何成员的任何文本都触发完整 run 会造成回复风暴。
-  // 启发式要求消息带 @ 提及（通常即 @ 机器人）；按 open_id 精确匹配需注入
-  // 机器人自身身份，留作升级点（#405）。
-  if (message.chat_type !== "p2p" && !/<at[\s>]/.test(rawText)) return null;
+  const hasMentionMarkup = /<at[\s>]/.test(rawText);
   const text = stripFeishuMentions(rawText);
   if (!text) return null;
   return {
@@ -81,6 +88,17 @@ export function parseFeishuEvent(
     senderId: data?.sender?.sender_id?.open_id,
     text,
     messageId: message.message_id,
+    ...(message.parent_id ? { parentMessageId: message.parent_id } : {}),
+    ...(Array.isArray(message.mentions) && message.mentions.length > 0
+      ? {
+          mentions: message.mentions.map((mention) => ({
+            ...(mention.key ? { key: mention.key } : {}),
+            ...(mention.id?.open_id ? { openId: mention.id.open_id } : {}),
+            ...(mention.name ? { name: mention.name } : {})
+          }))
+        }
+      : {}),
+    hasMentionMarkup
   };
 }
 
@@ -93,10 +111,49 @@ export function createFeishuWsWorker(input: CreateFeishuWsWorkerInput): ImWorker
     input.routeMessage ?? (async (m) => {
       await routeInboundImMessage(m);
     });
+  const getBotOpenId = input.getBotOpenId ?? getFeishuBotOpenId;
+  const getChatUserCount = input.getChatUserCount ?? getFeishuChatUserCount;
   const appId = input.account.accountKey ?? "";
   const appSecret = input.account.token ?? "";
   let client: FeishuWsClient | null = null;
   let running = false;
+
+  // 机器人身份进程内缓存：失败不缓存（下条消息重试），成功后恒定
+  let botOpenIdPromise: Promise<string | null> | null = null;
+  const ensureBotOpenId = (): Promise<string | null> => {
+    if (!botOpenIdPromise) {
+      botOpenIdPromise = getBotOpenId({ appId, appSecret });
+    }
+    return botOpenIdPromise;
+  };
+
+  /**
+   * 群聊准入精确判定（#405）：open_id 匹配 @ 机器人；单人群免 @；
+   * 身份不可得退回 @ 标记启发式。
+   */
+  async function gateGroupAccess(parsed: InboundImRouteMessage): Promise<InboundImRouteMessage | null> {
+    if (parsed.peerKind !== "group") return parsed;
+    const botOpenId = await ensureBotOpenId();
+    const botMentioned =
+      botOpenId === null
+        ? null
+        : (parsed.mentions ?? []).some((mention) => mention.openId === botOpenId);
+    const chatUserCount = await getChatUserCount({ appId, appSecret, chatId: parsed.peerId });
+    const access = resolveImGroupAccess({
+      hasMentionMarkup: parsed.hasMentionMarkup ?? false,
+      botMentioned,
+      chatUserCount
+    });
+    if (!access.accepted) {
+      log.info("群消息未触发机器人，忽略", {
+        accountId: input.account.id,
+        peerId: parsed.peerId,
+        reason: access.reason
+      });
+      return null;
+    }
+    return parsed;
+  }
 
   return {
     start() {
@@ -118,7 +175,11 @@ export function createFeishuWsWorker(input: CreateFeishuWsWorkerInput): ImWorker
             const parsed = parseFeishuEvent(data, input.account);
             if (parsed) {
               log.info("收到飞书消息", { accountId: input.account.id, peerId: parsed.peerId });
-              void routeMessage(parsed).catch((error: unknown) => {
+              // 单聊无门控保持同步派发；群聊经异步精确判定后路由
+              const routed = parsed.peerKind === "dm"
+                ? routeMessage(parsed)
+                : gateGroupAccess(parsed).then((gated) => (gated ? routeMessage(gated) : undefined));
+              void routed.catch((error: unknown) => {
                 log.error("飞书入站路由失败", {
                   accountId: input.account.id,
                   error: error instanceof Error ? error.message : String(error)
