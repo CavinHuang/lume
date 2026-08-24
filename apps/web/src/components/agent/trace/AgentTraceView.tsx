@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { Search, X } from 'lucide-react'
+import { ChevronRight, Search, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAgentEventBus } from '@/hooks/useAgentEventBus'
 import type { SdkEventEnvelope } from '@lume/shared'
@@ -66,6 +66,11 @@ function OverviewBar({
   const containerRef = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState<TraceTimeRange | null>(null)
   const dragRef = useRef<{ startPct: number; moved: boolean } | null>(null)
+  // 缩放后的可视时间窗（null = 全域）。滚轮缩放以光标为锚，右键拖拽平移，双击/Esc 重置。
+  const [view, setView] = useState<TraceTimeRange | null>(null)
+  const panRef = useRef<{ anchorX: number; orig: TraceTimeRange; moved: boolean } | null>(null)
+  // 平移发生过则紧随的 contextmenu 不再视为"右键单击清除"
+  const panMovedRef = useRef(false)
   const [hoverId, setHoverId] = useState<string | null>(null)
   const [hoverVisible, setHoverVisible] = useState(false)
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -73,7 +78,58 @@ function OverviewBar({
   const domainStart = records[0]?.startedAt ?? 0
   let domainEnd = records[records.length - 1]?.endedAt ?? domainStart
   for (const r of records) if (r.startedAt > domainEnd) domainEnd = r.startedAt
-  const span = Math.max(1, domainEnd - domainStart)
+  const domain = { startMs: domainStart, endMs: domainEnd }
+  const domainRef = useRef(domain)
+  domainRef.current = domain
+  const viewStart = view?.startMs ?? domainStart
+  const viewEnd = view?.endMs ?? domainEnd
+  const span = Math.max(1, viewEnd - viewStart)
+
+  // 缩放态下的贴尾跟随：视图右缘原本贴近域尾时，新记录到达随域扩展平移视图
+  const prevDomainEndRef = useRef(domainEnd)
+  useEffect(() => {
+    const prevEnd = prevDomainEndRef.current
+    prevDomainEndRef.current = domainEnd
+    if (domainEnd <= prevEnd) return
+    setView((prev) => {
+      if (!prev || prev.endMs < prevEnd - 1) return prev
+      const shift = domainEnd - prevEnd
+      return { startMs: prev.startMs + shift, endMs: prev.endMs + shift }
+    })
+  }, [domainEnd])
+
+  // 滚轮缩放：React 的 onWheel 是被动监听，preventDefault 需原生绑定
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const rect = el.getBoundingClientRect()
+      const anchorPct = Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100))
+      setView((prev) => {
+        const { startMs: dStart, endMs: dEnd } = domainRef.current
+        const curStart = prev?.startMs ?? dStart
+        const curEnd = prev?.endMs ?? dEnd
+        const curSpan = curEnd - curStart
+        const anchorMs = curStart + (anchorPct / 100) * curSpan
+        const factor = e.deltaY < 0 ? 0.8 : 1.25
+        const nextSpan = Math.min(Math.max(curSpan * factor, 1000), dEnd - dStart)
+        let nextStart = anchorMs - (anchorPct / 100) * nextSpan
+        nextStart = Math.min(Math.max(nextStart, dStart), dEnd - nextSpan)
+        return { startMs: nextStart, endMs: nextStart + nextSpan }
+      })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setView(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
   // 超长账本按步长抽样渲染概览段，防 DOM 规模失控；被跳过的记录仍可从账本选中
   // （ponytail: 按 span 分桶聚合的保真度更高，实测需要时再换）
   const stride = Math.max(1, Math.ceil(records.length / 400))
@@ -92,7 +148,7 @@ function OverviewBar({
   const activeRange = draft ?? range
   const hovered = sampled.find(({ record }) => record.id === hoverId)?.record ?? null
   const hoverAnchorPct = hovered
-    ? (((hovered.startedAt - domainStart) / span) * 100) +
+    ? (((hovered.startedAt - viewStart) / span) * 100) +
       ((hovered.durationMs != null ? (hovered.durationMs / span) * 100 : 0.5) / 2)
     : 0
 
@@ -101,24 +157,55 @@ function OverviewBar({
       ref={containerRef}
       role="group"
       aria-label="轨迹时间概览"
-      className="relative h-7 shrink-0 touch-none border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)]"
+      className="relative h-7 shrink-0 touch-none overflow-hidden border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)]"
       onPointerDown={(e) => {
+        if (e.button === 2) {
+          // 右键按下：进入平移（仅缩放态有实际效果），拖动过则松开时不清除区间
+          panMovedRef.current = false
+          panRef.current = {
+            anchorX: e.clientX,
+            orig: view ?? { startMs: domainStart, endMs: domainEnd },
+            moved: false,
+          }
+          e.currentTarget.setPointerCapture(e.pointerId)
+          return
+        }
         if (e.button !== 0) return
         const startPct = pctFromEvent(e)
         dragRef.current = { startPct, moved: false }
         e.currentTarget.setPointerCapture(e.pointerId)
-        setDraft({ startMs: domainStart + (startPct / 100) * span, endMs: domainStart + (startPct / 100) * span })
+        setDraft({ startMs: viewStart + (startPct / 100) * span, endMs: viewStart + (startPct / 100) * span })
       }}
       onPointerMove={(e) => {
+        if (panRef.current) {
+          const pan = panRef.current
+          if (Math.abs(e.clientX - pan.anchorX) > 3) {
+            pan.moved = true
+            panMovedRef.current = true
+          }
+          const rect = containerRef.current!.getBoundingClientRect()
+          const msPerPx = (pan.orig.endMs - pan.orig.startMs) / Math.max(1, rect.width)
+          let nextStart = pan.orig.startMs - (e.clientX - pan.anchorX) * msPerPx
+          nextStart = Math.min(Math.max(nextStart, domainStart), domainEnd - (pan.orig.endMs - pan.orig.startMs))
+          setView({ startMs: nextStart, endMs: nextStart + (pan.orig.endMs - pan.orig.startMs) })
+          return
+        }
         const drag = dragRef.current
         if (!drag) return
         const pct = pctFromEvent(e)
         if (Math.abs(pct - drag.startPct) > 0.5) drag.moved = true
-        const a = domainStart + (Math.min(drag.startPct, pct) / 100) * span
-        const b = domainStart + (Math.max(drag.startPct, pct) / 100) * span
+        const a = viewStart + (Math.min(drag.startPct, pct) / 100) * span
+        const b = viewStart + (Math.max(drag.startPct, pct) / 100) * span
         setDraft({ startMs: a, endMs: b })
       }}
       onPointerUp={(e) => {
+        if (panRef.current) {
+          const wasPanClick = !panRef.current.moved
+          panRef.current = null
+          // 右键单击（未拖动）= 清除区间过滤，对齐 dsh；平移后松开不清除
+          if (wasPanClick) onRangeClear()
+          return
+        }
         const drag = dragRef.current
         if (!drag) return
         dragRef.current = null
@@ -132,24 +219,32 @@ function OverviewBar({
           onRangeClear()
         }
       }}
+      onDoubleClick={() => setView(null)}
       onContextMenu={(e) => {
         e.preventDefault()
-        onRangeClear()
+        if (!panMovedRef.current) onRangeClear()
       }}
     >
+      {view && (
+        <div className="pointer-events-none absolute right-2 top-1/2 z-10 -translate-y-1/2 rounded-full bg-[var(--lume-bg-elevated)] px-2 py-0.5 text-micro text-[var(--lume-text-muted)]">
+          已缩放 · 双击重置
+        </div>
+      )}
       {/* 已生效区间高亮 */}
       {activeRange && (
         <div
           aria-hidden
           className="absolute inset-y-0 bg-[var(--lume-accent)]/10 ring-1 ring-inset ring-[var(--lume-accent)]/40"
           style={{
-            left: `${((activeRange.startMs - domainStart) / span) * 100}%`,
+            left: `${((activeRange.startMs - viewStart) / span) * 100}%`,
             width: `${((activeRange.endMs - activeRange.startMs) / span) * 100}%`,
           }}
         />
       )}
       {sampled.map(({ record }) => {
-        const left = ((record.startedAt - domainStart) / span) * 100
+        // 完全落在可视窗外的段不渲染（缩放态）
+        if (record.startedAt > viewEnd || (record.endedAt ?? record.startedAt) < viewStart) return null
+        const left = ((record.startedAt - viewStart) / span) * 100
         const width = record.durationMs != null ? (record.durationMs / span) * 100 : 0.5
         const durationPct = record.durationMs != null ? (record.durationMs / span) * 100 : 0.5
         // assistant span 双色调：前段浅色为 TTFT（等待首字），后段实色为解码
@@ -346,6 +441,16 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
   }, [records, range, normalizedQuery])
   const selected = records.find((r) => r.id === selectedId) ?? null
 
+  // turn 分组折叠（dsh folding）：点分组头收起/展开该轮全部记录
+  const [collapsedTurns, setCollapsedTurns] = useState<Set<number>>(new Set())
+  const turnCounts = useMemo(() => {
+    const counts = new Map<number, number>()
+    for (const r of visibleRecords) {
+      if (r.turnNumber != null) counts.set(r.turnNumber, (counts.get(r.turnNumber) ?? 0) + 1)
+    }
+    return counts
+  }, [visibleRecords])
+
   // 尾部跟随：新记录到达时贴底，用户上滚即暂停（对齐 dsh tail-follow 行为）
   useEffect(() => {
     const el = scrollRef.current
@@ -430,13 +535,31 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
               {visibleRecords.map((record) => {
                 const showTurnHeader = record.turnNumber != null && record.turnNumber !== lastTurnNumber
                 lastTurnNumber = record.turnNumber
+                const collapsed = record.turnNumber != null && collapsedTurns.has(record.turnNumber)
+                if (collapsed && !showTurnHeader) return null
                 return (
                   <div key={record.id}>
                     {showTurnHeader && (
-                      <div className="border-t-2 border-[var(--lume-border-strong)] px-3 pb-1 pt-2 text-micro font-semibold uppercase tracking-wider text-[var(--lume-text-muted)]">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const turn = record.turnNumber!
+                          setCollapsedTurns((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(turn)) next.delete(turn)
+                            else next.add(turn)
+                            return next
+                          })
+                        }}
+                        aria-expanded={!collapsed}
+                        className="flex w-full items-center gap-1 border-t-2 border-[var(--lume-border-strong)] px-3 pb-1 pt-2 text-left text-micro font-semibold uppercase tracking-wider text-[var(--lume-text-muted)] hover:text-foreground"
+                      >
+                        <ChevronRight size={11} className={cn('shrink-0 transition-transform', !collapsed && 'rotate-90')} />
                         Turn {record.turnNumber}
-                      </div>
+                        {collapsed && ` · ${turnCounts.get(record.turnNumber!) ?? 0} 条已折叠`}
+                      </button>
                     )}
+                    {!collapsed && (
                     <button
                       type="button"
                       data-record-id={record.id}
@@ -472,6 +595,7 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
                         {fmtDuration(record.durationMs)}
                       </span>
                     </button>
+                    )}
                   </div>
                 )
               })}
