@@ -87,8 +87,12 @@ export const FileWriteTool = defineTool({
         // Read-before-overwrite 强制（#569）：新建文件天然豁免，已存在文件
         // 必须有读取记录，否则盲覆盖。
         if (!previousRead) {
+          // 容量区分（#655）：LRU 驱逐产生的伪未读与真未读分开表述。
+          const data = context.fileStateCache?.wasDroppedByCapacity(filePath)
+            ? `Error: The read record for ${filePath} was dropped because the session's file-state cache hit its capacity limit (long sessions drop the oldest records). Read the file again before overwriting it.`
+            : `Error: File has not been read yet: ${filePath}. Read it first before overwriting an existing file.`
           return {
-            data: `Error: File has not been read yet: ${filePath}. Read it first before overwriting an existing file.`,
+            data,
             is_error: true,
             _meta: { file: { path: filePath, conflict: 'not_read', retryable: true } },
           }
