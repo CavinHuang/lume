@@ -35,6 +35,7 @@ export class BrowserBroker {
   private readonly claimSnapshots = new Map<string, { backend: "iab" | "extension"; threadId?: string; tabId?: string; providerTabId?: string; title?: string; url?: string; generation?: number }>()
   private generation = 1
   private browserPluginEnabled = false
+  private agentBrowserUseEnabled = true
   private chromePluginEnabled = false
   private extensionBackendEnabled = false
   private extensionConnected = false
@@ -83,14 +84,16 @@ export class BrowserBroker {
     }
   }
   setPluginEnabled(enabled: boolean): void { this.setPluginState({ browserEnabled: enabled }) }
-  setPluginState(state: Partial<{ browserEnabled: boolean; chromeEnabled: boolean; extensionBackendEnabled: boolean; hostConnected: boolean }>): void {
+  setPluginState(state: Partial<{ browserEnabled: boolean; chromeEnabled: boolean; extensionBackendEnabled: boolean; hostConnected: boolean; agentBrowserUseEnabled: boolean }>): void {
     const next = {
       browserEnabled: state.browserEnabled ?? this.browserPluginEnabled,
       chromeEnabled: state.chromeEnabled ?? this.chromePluginEnabled,
       extensionBackendEnabled: state.extensionBackendEnabled ?? this.extensionBackendEnabled,
       hostConnected: state.hostConnected ?? this.extensionConnected,
+      agentBrowserUseEnabled: state.agentBrowserUseEnabled ?? this.agentBrowserUseEnabled,
     }
-    if (next.browserEnabled === this.browserPluginEnabled && next.chromeEnabled === this.chromePluginEnabled && next.extensionBackendEnabled === this.extensionBackendEnabled && next.hostConnected === this.extensionConnected) return
+    if (next.browserEnabled === this.browserPluginEnabled && next.chromeEnabled === this.chromePluginEnabled && next.extensionBackendEnabled === this.extensionBackendEnabled && next.hostConnected === this.extensionConnected && next.agentBrowserUseEnabled === this.agentBrowserUseEnabled) return
+    this.agentBrowserUseEnabled = next.agentBrowserUseEnabled
     const extensionConnectionChanged = next.hostConnected !== this.extensionConnected
     this.browserPluginEnabled = next.browserEnabled
     this.chromePluginEnabled = next.chromeEnabled
@@ -278,7 +281,9 @@ export class BrowserBroker {
     this.queues.set(queueKey, current.catch(() => undefined))
     return current.catch((error) => { throw new Error(stableBrowserErrorCode(error)) })
   }
-  listBackends(): BrowserBackendDescriptor[] { return this.browserPluginEnabled ? [this.descriptor("iab"), ...(this.extension && this.extensionBackendEnabled && this.chromePluginEnabled && this.extensionConnected ? [this.descriptor("extension")] : [])] : [] }
+  // agentBrowserUseEnabled=false(设置「允许 Browser Use」关)时返回空:isEnabled
+  // 随之 false,工具从注入池消失,不再「在列却逐次撞 browser_unavailable」(#608)
+  listBackends(): BrowserBackendDescriptor[] { return this.browserPluginEnabled && this.agentBrowserUseEnabled ? [this.descriptor("iab"), ...(this.extension && this.extensionBackendEnabled && this.chromePluginEnabled && this.extensionConnected ? [this.descriptor("extension")] : [])] : [] }
   private async listBackendsForContext(input: { threadId?: string; browserSessionId: string; browserTurnId: string }): Promise<BrowserBackendDescriptor[]> {
     if (!this.browserPluginEnabled) return []
     const runtime = await this.runtimeDescriptor(input)
