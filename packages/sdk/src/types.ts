@@ -220,6 +220,8 @@ export interface ToolContext {
   sandbox?: SandboxSettings
   toolConfig?: Record<string, unknown>
   fileStateCache?: import('./utils/fileCache.js').FileStateCache
+  /** Per-run consecutive Edit not-found failures keyed by resolved path; drives the escalating guidance (#569). */
+  editFailureCounts?: Map<string, number>
   permissionMode?: PermissionMode
   emitEvent?: (event: SDKMessage) => void
   /** Live progress channel: events are delivered to the host immediately while
@@ -805,6 +807,9 @@ export interface QueryEngineConfig {
   additionalDirectories?: string[]
   sandbox?: SandboxSettings
   toolConfig?: Record<string, unknown>
+  /** Session-owned read-state shared across runs of one Agent/thread (#569).
+   *  Engines without it fall back to a private per-run cache. */
+  fileStateCache?: import('./utils/fileCache.js').FileStateCache
   artifactsRoot?: string
   onToolExecution?: ToolContext['onToolExecution']
   onBeforeToolExecution?: ToolContext['onBeforeToolExecution']

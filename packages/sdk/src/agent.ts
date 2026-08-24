@@ -24,6 +24,7 @@ import type {
 } from './types.js'
 import { QueryEngine } from './engine.js'
 import { createPersistScheduler } from './persist-scheduler.js'
+import { FileStateCache } from './utils/fileCache.js'
 import {
   CORE_TOOL_NAMES,
   filterTools,
@@ -297,6 +298,11 @@ export class Agent {
   private explicitSkillNames = new Set<string>()
   private fileSkillNames = new Set<string>()
   private fileCheckpointState: FileCheckpointState = {}
+  /** Thread-level read-state: shared by every engine this Agent creates so the
+   *  stale-read guard survives across runs instead of resetting per user
+   *  message (#569). In-memory only — after a process restart the guard fails
+   *  closed (missing record -> guided re-Read). */
+  private fileStateCache = new FileStateCache()
   private latestUserMessageId: string | undefined
   private lastUsageEngine: QueryEngine | null = null
   private queuedSdkEvents: SDKMessage[] = []
@@ -914,6 +920,7 @@ export class Agent {
         ? `continuation:${opts.toolContinuations[0]!.toolCall.id}`
         : `command:${this.sid}:compact`),
       fileCheckpointState: this.fileCheckpointState,
+      fileStateCache: this.fileStateCache,
       enableFileCheckpointing: opts.enableFileCheckpointing === true,
       contextController: opts.contextController,
       completionGuard: opts.completionGuard,
