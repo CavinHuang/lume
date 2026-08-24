@@ -412,7 +412,8 @@ export interface GovernedToolResult {
 }
 
 export function normalizeToolResultWithPolicies(result: ToolResult, maxChars: number | undefined): GovernedToolResult {
-  const originalText = stringifyResultPayload(readResultPayload(result));
+  const payload = readResultPayload(result);
+  const originalText = stringifyResultPayload(payload);
   const originalSize = originalText.length;
   if (!maxChars || originalSize <= maxChars) {
     return {
@@ -420,6 +421,29 @@ export function normalizeToolResultWithPolicies(result: ToolResult, maxChars: nu
       originalSize,
       truncated: false,
       summary: summarizeToolOutput(originalText)
+    };
+  }
+  // 数组 content 中的 image block(base64 截图等)不参与字节计费,也不能被
+  // 字符串化截断——整体截断会把图片替换成损坏的半截 base64 文本(#600)。
+  // 只对非 image block 计费;它们超限时合并为单个截断 text block,image 原样保留。
+  if (Array.isArray(payload) && payload.some(isImageBlock)) {
+    const textPayload = payload.filter((block) => !isImageBlock(block));
+    const textJson = JSON.stringify(textPayload ?? "");
+    if (textJson.length <= maxChars) {
+      return {
+        result,
+        originalSize,
+        truncated: false,
+        summary: summarizeToolOutput(textJson)
+      };
+    }
+    const truncatedText = truncateMiddle(textJson, maxChars);
+    const governedContent = [{ type: "text", text: truncatedText }, ...payload.filter((block) => isImageBlock(block))];
+    return {
+      result: { ...result, content: governedContent } as ToolResult,
+      originalSize,
+      truncated: true,
+      summary: summarizeToolOutput(truncatedText)
     };
   }
   const truncatedText = truncateMiddle(originalText, maxChars);
@@ -430,6 +454,10 @@ export function normalizeToolResultWithPolicies(result: ToolResult, maxChars: nu
     truncated: true,
     summary: summarizeToolOutput(truncatedText)
   };
+}
+
+function isImageBlock(block: unknown): boolean {
+  return typeof block === "object" && block !== null && (block as { type?: unknown }).type === "image";
 }
 
 function readResultPayload(result: ToolResult): unknown {

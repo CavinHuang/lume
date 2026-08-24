@@ -220,8 +220,108 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     expect(calls).toBe(0);
   });
 
-  test("truncates long string output according to result policy", async () => {
+  test("preserves image blocks when truncating oversized array content (#600)", async () => {
     const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const ledger = createFileAccessLedger();
+    const pixels = "A".repeat(60_000);
+    const tool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Screenshot", {
+        name: "mcp__browser__screenshot",
+        description: "shot",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            content: [
+              { type: "text", text: JSON.stringify({ ok: true, screenshot_id: "browser-screenshot:x", annotated_refs: Array.from({ length: 200 }, (_, i) => `e${i + 1}`) }) },
+              { type: "image", source: { type: "base64", media_type: "image/jpeg", data: pixels }, _meta: { persist: false } }
+            ],
+            _meta: { repeatState: true }
+          };
+        }
+      }, {
+        resultPolicy: { maxChars: 1000 }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    const result = await tool.call({}, { cwd: root }) as { content: Array<Record<string, unknown>>; _meta?: unknown };
+    expect(Array.isArray(result.content)).toBe(true);
+    const textBlocks = result.content.filter((block) => block.type === "text") as Array<{ text: string }>;
+    const imageBlocks = result.content.filter((block) => block.type === "image");
+    expect(textBlocks).toHaveLength(1);
+    expect(textBlocks[0]!.text.length).toBeLessThanOrEqual(1200);
+    expect(textBlocks[0]!.text).toContain("...(truncated)...");
+    expect(imageBlocks).toHaveLength(1);
+    expect((imageBlocks[0] as { source?: { data?: string } }).source?.data).toBe(pixels);
+    // repeat guard 等顶层 _meta 必须原样保留
+    expect(result._meta).toEqual({ repeatState: true });
+  });
+
+  test("does not truncate array content whose non-image blocks fit the policy", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const ledger = createFileAccessLedger();
+    const pixels = "B".repeat(60_000);
+    const originalContent = [
+      { type: "text", text: "tiny metadata" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: pixels } }
+    ];
+    const tool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Screenshot", {
+        name: "mcp__browser__screenshot",
+        description: "shot",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: originalContent } as never;
+        }
+      }, {
+        resultPolicy: { maxChars: 1000 }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    const result = await tool.call({}, { cwd: root }) as { content: unknown };
+    expect(result.content).toEqual(originalContent);
+  });
+
+  test("still flattens oversized array content without image blocks", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const ledger = createFileAccessLedger();
+    const tool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("List", {
+        name: "list_things",
+        description: "list",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            content: [{ type: "text", text: "x".repeat(5000) }]
+          };
+        }
+      }, {
+        resultPolicy: { maxChars: 100 }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    const result = await tool.call({}, { cwd: root }) as { content: unknown };
+    expect(typeof result.content).toBe("string");
+    expect(String(result.content).length).toBeLessThanOrEqual(200);
+    expect(String(result.content)).toContain("...(truncated)...");
+  });
+
+  test("truncates long string output according to result policy", async () => {    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
     await mkdir(root, { recursive: true });
     const ledger = createFileAccessLedger();
     const tool = wrapToolDefinitionWithRuntimePolicies({
