@@ -10,7 +10,6 @@ import {
   type ApiType,
   type ToolContext,
   type ToolResult,
-  defineTool,
   finalizeSubagentOutputFromState,
   summarizeSubagentAssistantEvent,
   type ToolDefinition,
@@ -23,9 +22,6 @@ import type {
   AgentToolPermissionRequest,
   LumeRuntimeEvent,
   FileReferenceBinding,
-  SubagentTaskReport,
-  SubagentTask,
-  SubagentTaskFeedback,
   AgentTaskRef,
 } from "@lume/shared";
 import { join, resolve } from "node:path";
@@ -36,33 +32,12 @@ import {
   resolveSubagentSpawnPolicy,
 } from "../subagents/subagent-policy";
 import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
-import { getSubagentCoordinator } from "../subagents/subagent-coordinator";
 import { getRuntimeHostPorts } from "../host-ports";
 import { FileBackedTaskStore } from "../task/task-store";
 
 const DEFAULT_FOREGROUND_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
 export const taskExecutorStopHandlers = new Map<string, () => void>();
-interface BoundSubagentIdentity {
-  runId: string;
-  taskId: string;
-}
 
-export function resolveBoundSubagentIdentity(
-  input: Pick<
-    CreateRuntimeCoreSessionInput,
-    "threadType" | "subagentRunId" | "subagentTaskId"
-  >,
-): BoundSubagentIdentity | undefined {
-  const runId = input.subagentRunId?.trim() ?? "";
-  const taskId = input.subagentTaskId?.trim() ?? "";
-  if (Boolean(runId) !== Boolean(taskId)) {
-    throw new Error("subagentRunId 与 subagentTaskId 必须同时提供");
-  }
-  if (input.threadType !== "subagent" || !runId || !taskId) {
-    return undefined;
-  }
-  return { runId, taskId };
-}
 interface ResolvedSubagentModelOverride {
   source: "input" | "config" | "inherit";
   modelRef?: string;
@@ -214,8 +189,6 @@ export async function runSidecarSubagent(input: {
   parentToolUseId?: string;
   subagentType?: string;
   subagentId?: string;
-  subagentTaskId?: string;
-  subagentAttempt?: number;
   modelOverride: ResolvedSubagentModelOverride;
   channelId?: string;
   workspaceId?: string;
@@ -313,8 +286,6 @@ export async function runSidecarSubagent(input: {
         deliveryThreadId: input.deliveryThreadId,
         subagentRunId: input.runId,
         subagentId: input.subagentId,
-        subagentTaskId: input.subagentTaskId,
-        subagentAttempt: input.subagentAttempt,
         ...(subagentType ? { subagentType } : {}),
         ...(input.modelOverride.modelRef
           ? { modelRef: input.modelOverride.modelRef }
@@ -492,164 +463,6 @@ export function resolveForegroundSubagentTimeoutMs(): number {
   return DEFAULT_FOREGROUND_SUBAGENT_TIMEOUT_MS;
 }
 
-/** A child Run receives IDs from the coordinator; the model cannot redirect a report. */
-export function createBoundSubagentTaskReportTool(input: {
-  runId: string;
-  taskId: string;
-}): ToolDefinition {
-  return defineTool({
-    name: "TaskReport",
-    description:
-      "Submit the current subagent task result. This is a submission for main-agent review, not acceptance.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        status: { type: "string", enum: ["submitted", "failed", "blocked"] },
-        summary: { type: "string" },
-        completedWork: { type: "array", items: { type: "string" } },
-        remainingWork: { type: "array", items: { type: "string" } },
-        artifacts: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              path: { type: "string" },
-              description: { type: "string" },
-            },
-            required: ["path"],
-          },
-        },
-        verification: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              command: { type: "string" },
-              result: { type: "string" },
-              passed: { type: "boolean" },
-            },
-            required: ["result", "passed"],
-          },
-        },
-        blockers: { type: "array", items: { type: "string" } },
-      },
-      required: ["status", "summary"],
-    },
-    isReadOnly: false,
-    isConcurrencySafe: false,
-    async call(raw) {
-      const report = normalizeBoundSubagentReport(raw);
-      getSubagentCoordinator().submitReport({ runId: input.runId, report });
-      return {
-        data: {
-          ok: true,
-          taskId: input.taskId,
-          runId: input.runId,
-          status: report.status,
-        },
-      };
-    },
-  });
-}
-
-function normalizeBoundSubagentReport(raw: unknown): SubagentTaskReport {
-  const value =
-    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const status = value.status;
-  const summary = typeof value.summary === "string" ? value.summary.trim() : "";
-  if (
-    (status !== "submitted" && status !== "failed" && status !== "blocked") ||
-    !summary
-  ) {
-    throw new Error(
-      "TaskReport 需要 status(submitted|failed|blocked) 和非空 summary",
-    );
-  }
-  const strings = (name: string) =>
-    Array.isArray(value[name])
-      ? value[name]
-          .filter(
-            (item): item is string =>
-              typeof item === "string" && item.trim().length > 0,
-          )
-          .map((item) => item.trim())
-      : undefined;
-  const artifacts = Array.isArray(value.artifacts)
-    ? value.artifacts.flatMap((item) => {
-        const record =
-          item && typeof item === "object"
-            ? (item as Record<string, unknown>)
-            : {};
-        return typeof record.path === "string" && record.path.trim()
-          ? [
-              {
-                path: record.path.trim(),
-                ...(typeof record.description === "string" &&
-                record.description.trim()
-                  ? { description: record.description.trim() }
-                  : {}),
-              },
-            ]
-          : [];
-      })
-    : undefined;
-  const verification = Array.isArray(value.verification)
-    ? value.verification.flatMap((item) => {
-        const record =
-          item && typeof item === "object"
-            ? (item as Record<string, unknown>)
-            : {};
-        return typeof record.result === "string" &&
-          typeof record.passed === "boolean"
-          ? [
-              {
-                result: record.result,
-                passed: record.passed,
-                ...(typeof record.command === "string" && record.command.trim()
-                  ? { command: record.command.trim() }
-                  : {}),
-              },
-            ]
-          : [];
-      })
-    : undefined;
-  return {
-    status,
-    summary,
-    ...(strings("completedWork")?.length
-      ? { completedWork: strings("completedWork") }
-      : {}),
-    ...(strings("remainingWork")?.length
-      ? { remainingWork: strings("remainingWork") }
-      : {}),
-    ...(artifacts?.length ? { artifacts } : {}),
-    ...(verification?.length ? { verification } : {}),
-    ...(strings("blockers")?.length ? { blockers: strings("blockers") } : {}),
-  };
-}
-
-export function buildSubagentTaskInstruction(
-  task: SubagentTask,
-  feedback: SubagentTaskFeedback[],
-): string {
-  const latestFeedback = feedback.at(-1)?.instruction;
-  return [
-    "## Bound task",
-    task.objective,
-    task.acceptanceCriteria.length
-      ? `Acceptance criteria:\n${task.acceptanceCriteria.map((item) => `- ${item}`).join("\n")}`
-      : undefined,
-    task.expectedArtifacts?.length
-      ? `Expected artifacts:\n${task.expectedArtifacts.map((item) => `- ${item}`).join("\n")}`
-      : undefined,
-    latestFeedback && latestFeedback !== task.objective
-      ? `## Parent feedback for this attempt\n${latestFeedback}`
-      : undefined,
-    "Complete only this task, then submit TaskReport.",
-  ]
-    .filter((item): item is string => Boolean(item))
-    .join("\n\n");
-}
 export function parseTaskRef(
   value: unknown,
   parentThreadId: string,

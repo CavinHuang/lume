@@ -1140,21 +1140,6 @@ export const agentListSubagentRunsInputSchema = z.object({
   limit: z.number().int().min(1).max(500).optional(),
 });
 
-export const agentListSubagentWorkInputSchema = z.object({
-  parentThreadId: idSchema,
-});
-
-export const agentFinishSubagentTaskInputSchema = z.object({
-  taskId: idSchema,
-  resolution: z.enum(["accepted", "deferred", "cancelled"]),
-  reason: z.string().min(1).max(4_000),
-});
-
-export const agentRetireSubagentInputSchema = z.object({
-  subagentId: idSchema,
-  reason: z.string().min(1).max(4_000),
-});
-
 export const systemConfigUpdateInputSchema = z.object({
   path: z.string().min(1),
   value: z.unknown(),

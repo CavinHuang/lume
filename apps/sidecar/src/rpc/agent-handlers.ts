@@ -108,7 +108,6 @@ import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/run
 import type { LumeRunState } from "../services/agent-runtime/runtime-core/run-state";
 import { listThreadRuntimeEvents } from "../services/agent-runtime/replay/runtime-event-history";
 import { getSubagentRunRegistry } from "../services/agent-runtime/subagents/subagent-run-registry";
-import { getSubagentCoordinator } from "../services/agent-runtime/subagents/subagent-coordinator";
 import { listPendingAskUserQuestionRequests } from "../services/agent-runtime/interruption/ask-user-question-session";
 import {
   listPendingDesktopActionRequests,
@@ -128,13 +127,10 @@ import {
   agentAppendInputSchema,
   agentCreateThreadInputSchema,
   agentGetThreadMessageVersionsInputSchema,
-  agentFinishSubagentTaskInputSchema,
-  agentListSubagentWorkInputSchema,
   agentListSubagentRunsInputSchema,
   agentMoveThreadInputSchema,
   agentQueuedMessageInputSchema,
   agentRetryQueuedMessageInputSchema,
-  agentRetireSubagentInputSchema,
   agentRecentThreadMessagesInputSchema,
   agentReorderMessageQueueInputSchema,
   agentResumeQueueInputSchema,
@@ -732,30 +728,6 @@ export function createAgentHandlers(
         runs: sliced,
         statusSummary: runRegistry.summarizeStatuses(sliced),
       };
-    },
-    [AGENT_IPC_CHANNELS.LIST_SUBAGENT_WORK]: async (params) => {
-      const input = validateInput(
-        agentListSubagentWorkInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.LIST_SUBAGENT_WORK,
-      );
-      return getSubagentCoordinator().list(input.parentThreadId);
-    },
-    [AGENT_IPC_CHANNELS.FINISH_SUBAGENT_TASK]: async (params) => {
-      const input = validateInput(
-        agentFinishSubagentTaskInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.FINISH_SUBAGENT_TASK,
-      );
-      return getSubagentCoordinator().finishTask(input);
-    },
-    [AGENT_IPC_CHANNELS.RETIRE_SUBAGENT]: async (params) => {
-      const input = validateInput(
-        agentRetireSubagentInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.RETIRE_SUBAGENT,
-      );
-      return getSubagentCoordinator().retireSession(input);
     },
     [AGENT_IPC_CHANNELS.UPDATE_THREAD_TITLE]: async (params) => {
       const input = validateInput(
