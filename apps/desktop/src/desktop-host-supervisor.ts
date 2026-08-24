@@ -17,6 +17,14 @@ export function nextCrashState(previous: number[], now: number): { crashTimes: n
   return { crashTimes, shouldRestart: crashTimes.length < 3, delayMs: 2 ** Math.max(0, crashTimes.length - 1) * 1000 }
 }
 
+export interface DesktopHostStructuredLog {
+  level?: string
+  context?: string
+  event?: string
+  message?: string
+  data?: Record<string, unknown>
+}
+
 interface DesktopHostSupervisorOptions {
   binaryPath: string
   platform?: NodeJS.Platform
@@ -27,6 +35,7 @@ interface DesktopHostSupervisorOptions {
   tempDir?: string
   baseEnv?: NodeJS.ProcessEnv
   log?: (message: string) => void
+  logEvent?: (event: DesktopHostStructuredLog) => void
   writeTokenFile?: (path: string, token: string) => void
   removeTokenFile?: (path: string) => void
   schedule?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
@@ -66,6 +75,7 @@ export function createDesktopHostSupervisor({
   tempDir = tmpdir(),
   baseEnv = process.env,
   log = (_message: string) => undefined,
+  logEvent,
   writeTokenFile = (path, token) => writeFileSync(path, token, { encoding: 'utf8', mode: 0o600 }),
   removeTokenFile = (path) => rmSync(path, { force: true }),
   schedule = setTimeout,
@@ -110,8 +120,29 @@ export function createDesktopHostSupervisor({
     const running = spawn(config.command, config.args, config.options)
     child = running
     if (activeConnection) state = activeConnection
-    running.stdout?.on('data', (chunk) => log(`[desktop-host] ${String(chunk).trimEnd()}`))
-    running.stderr?.on('data', (chunk) => log(`[desktop-host] ${String(chunk).trimEnd()}`))
+    const LUMELOG_PREFIX = 'LUMELOG '
+    const lineBuffers: Record<'stdout' | 'stderr', string> = { stdout: '', stderr: '' }
+    const ingestChunk = (stream: 'stdout' | 'stderr', chunk: string) => {
+      lineBuffers[stream] += chunk
+      const lines = lineBuffers[stream].split('\n')
+      lineBuffers[stream] = lines.pop() ?? ''
+      for (const raw of lines) {
+        const line = raw.trimEnd()
+        if (!line) continue
+        if (!line.startsWith(LUMELOG_PREFIX)) {
+          log(`[desktop-host] ${line}`)
+          continue
+        }
+        try {
+          const parsed = JSON.parse(line.slice(LUMELOG_PREFIX.length)) as DesktopHostStructuredLog
+          logEvent?.(parsed)
+        } catch {
+          log(`[desktop-host] ${line}`)
+        }
+      }
+    }
+    running.stdout?.on('data', (chunk) => ingestChunk('stdout', String(chunk)))
+    running.stderr?.on('data', (chunk) => ingestChunk('stderr', String(chunk)))
     let spawnedAt = 0
     running.once?.('spawn', () => { spawnedAt = now() })
     running.once?.('exit', (code) => {

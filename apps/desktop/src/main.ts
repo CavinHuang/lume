@@ -3351,6 +3351,13 @@ async function startDesktopHost(): Promise<DesktopHostState> {
     desktopHostSupervisor = createDesktopHostSupervisor({
       binaryPath,
       log: logDesktopStartup,
+      logEvent: ({ level, context, event, message, data }) => writeMainLog(
+        level === 'fatal' ? 'error' : level ?? 'info',
+        context ?? 'desktop.host',
+        event ?? 'host.log',
+        message ?? '',
+        { source: 'desktop-host', ...(data ? { data } : {}) },
+      ),
     })
     const state = await desktopHostSupervisor.start()
     logDesktopStartup(state.available ? 'desktop host started' : ('reason' in state ? state.reason : 'desktop host unavailable'))
