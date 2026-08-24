@@ -28,8 +28,10 @@ import { createReverseRpcRenderClient } from "./services/agent-runtime/tools/web
 import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/render-client-holder";
 import { setPersistedSettingsMutationWriter } from "./services/system/settings-store";
 import { setLogDigestPolicy } from "./services/infra/log-digest";
+import { migrateLegacySecretCiphertexts } from "./services/system/secret-reencryption-service";
 import type { LumeLogDigestPolicy } from "@lume/shared";
 import { installPrivilegedCredential } from "./services/infra/privileged-auth";
+import { installSecretEncryptionKey } from "./services/infra/secret-crypto";
 import { installConnectionVaultKey } from "./services/channel/connection-credential-store";
 import { createBrowserBroker } from "./services/browser/browser-broker";
 import { setActiveBrowserBroker } from "./services/browser/browser-broker-holder";
@@ -254,6 +256,32 @@ async function handleRpcLine(line: string): Promise<void> {
   if (method === "system.connection-vault-key") {
     installConnectionVaultKey((payload.params as { key?: unknown } | null)?.key);
     if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    return;
+  }
+
+  if (method === "system.secret-encryption-key") {
+    // 该分支位于 generic handlers 的 try/catch 之外：畸形 key 抛错时必须回
+    // error 响应，否则 desktop 启动关键路径上的 await 要等满 45s 超时才降级
+    try {
+      installSecretEncryptionKey((payload.params as { key?: unknown } | null)?.key);
+      // #637：密钥就位后立即把存量弱种子密文升级为 v2（失败不阻断注入应答）
+      void migrateLegacySecretCiphertexts().catch((error) => {
+        writeLogRecord({
+          level: "warn",
+          context: "sidecar.secret-reencryption",
+          event: "migration.failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+      if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    } catch (error) {
+      if (payload.id !== undefined) {
+        writeResponse({
+          id: payload.id,
+          error: { code: "secret_encryption_key_invalid", message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    }
     return;
   }
 
