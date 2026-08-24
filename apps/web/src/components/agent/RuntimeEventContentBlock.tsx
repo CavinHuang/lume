@@ -1,5 +1,5 @@
 import { useAtomValue, useSetAtom } from 'jotai'
-import { memo, useEffect, useMemo, useState, type ClipboardEvent } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react'
 import { BookOpen, Check, ChevronDown, ChevronRight, Clock, Database, Edit3, History, ListChecks, ListCollapse, Loader2, MessageSquareText, Package, Quote, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
 import { parseQuotedSelectionRefs } from '@/lib/quoted-selection'
 import { ToolResultRenderer } from './tool-result-renderers'
@@ -1360,6 +1360,28 @@ const RuntimeEventThinkingBlock = memo(function RuntimeEventThinkingBlock({ text
   )
 })
 
+// 运行中实时输出尾部（快照整体替换）。默认贴底跟随最新输出，用户向上滚动后
+// 暂停跟随；横向溢出走滚动而非折行，保住终端表格/路径的对齐。
+const StreamingOutputTail = memo(function StreamingOutputTail({ content }: { content: string }) {
+  const containerRef = useRef<HTMLPreElement>(null)
+  const stickToBottom = useRef(true)
+  useEffect(() => {
+    const el = containerRef.current
+    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight
+  }, [content])
+  return (
+    <pre
+      ref={containerRef}
+      onScroll={() => {
+        const el = containerRef.current
+        if (!el) return
+        stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+      }}
+      className="max-h-40 overflow-x-auto overflow-y-auto overscroll-contain border-t border-[var(--lume-border-subtle)] p-3 font-mono text-ui leading-[1.6] whitespace-pre text-[var(--lume-text-secondary)]"
+    >{content}</pre>
+  )
+})
+
 const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
   toolCall,
   threadId,
@@ -1410,14 +1432,16 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
   return (
     <div className="w-full max-w-[460px] overflow-hidden rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] shadow-[0_1px_2px_hsl(var(--lume-shadow-panel)/0.08)]">
       <Button
-                variant="ghost"
+        variant="ghost"
         type="button"
         onClick={() => {
-          if (!isRunning) {
-            onUserResizeStart?.()
-          }
+          // 运行中无可展开内容（流式块常驻展示），点击不翻转 collapsed——
+          // 否则这个不可见状态会在完成后让结果区意外自动弹出。
+          if (isRunning) return
+          onUserResizeStart?.()
           setCollapsed((value) => !value)
         }}
+        aria-expanded={!isRunning && !collapsed}
         className="group/tool-call flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
       >
         {isRunning ? (
@@ -1469,8 +1493,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
         {isRunning && <AgentLoadingIndicator variant="drive" startedAt={toolCall.startedAt} className="shrink-0" />}
       </Button>
       {isRunning && toolCall.streamedOutput ? (
-        // 运行中实时输出尾部（快照整体替换，仅增量追加；max-height + 滚动兜底）
-        <pre className="max-h-40 overflow-y-auto overscroll-contain border-t border-[var(--lume-border-subtle)] p-3 font-mono text-ui leading-[1.6] whitespace-pre-wrap break-all text-[var(--lume-text-secondary)]">{toolCall.streamedOutput}</pre>
+        <StreamingOutputTail content={toolCall.streamedOutput} />
       ) : null}
       {shouldRenderResult && (
         <AnimatedCollapsiblePanel open={resultOpen}>

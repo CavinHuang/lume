@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BashTool, interpretShellExit, looksLikeInteractivePrompt, tailTruncate } from "./bash";
+import { BashTool, createPreviewAccumulator, interpretShellExit, looksLikeInteractivePrompt, tailTruncate } from "./bash";
 import { analyzeBashCommand } from "../utils/bash-command-analysis";
 import { clearTasks, TaskOutputTool } from "./task-tools";
 import {
@@ -545,20 +545,47 @@ describe("BashTool #381 background timeout semantics", () => {
 describe("BashTool output streaming snapshots", () => {
   test("tailTruncate keeps the tail within both bounds and reports stats", () => {
     const inBounds = tailTruncate("a\nb\nc", 5, 100);
-    expect(inBounds).toEqual({ content: "a\nb\nc", truncated: false, totalLines: 3, shownLines: 3 });
+    expect(inBounds.content).toBe("a\nb\nc");
+    expect(inBounds.truncated).toBeFalse();
+    expect(inBounds.totalLines).toBe(3);
+    expect(inBounds.shownLines).toBe(3);
 
-    const byLines = tailTruncate("l1\nl2\nl3", 2, 1000);
-    expect(byLines.content).toBe("l2\nl3");
-    expect(byLines.truncated).toBeTrue();
-    expect(byLines.totalLines).toBe(3);
+    const byLines = tailTruncate("l1\nl2\nl3\nl4", 2, 1000);
+    expect(byLines.content).toBe("l3\nl4");
+    expect(byLines.truncatedByLines).toBeTrue();
+    expect(byLines.truncatedByChars).toBeFalse();
+    expect(byLines.totalLines).toBe(4);
     expect(byLines.shownLines).toBe(2);
+
+    // A trailing newline terminates the last line instead of opening an empty one.
+    expect(tailTruncate("l1\nl2\nl3\n", 500, 1000).totalLines).toBe(3);
 
     // Char cut restarts at the next line break instead of opening mid-line.
     const byChars = tailTruncate(`${"x".repeat(300)}\nend`, 100, 100);
     expect(byChars.content).toBe("end");
+    expect(byChars.truncatedByChars).toBeTrue();
     expect(byChars.content.length).toBeLessThanOrEqual(100);
 
+    // Single giant line: no line dropped, so the footer can report characters.
+    const giantLine = tailTruncate("y".repeat(250), 100, 100);
+    expect(giantLine.truncatedByChars).toBeTrue();
+    expect(giantLine.truncatedByLines).toBeFalse();
+    expect(giantLine.totalLines).toBe(1);
+    expect(giantLine.shownChars).toBeLessThanOrEqual(100);
+    expect(giantLine.totalChars).toBe(250);
+
     expect(tailTruncate("api_key=supersecret\nplain", 10, 1000).content).not.toContain("supersecret");
+  });
+
+  test("accumulator redacts at snapshot time so chunk-split secrets stay covered", () => {
+    const acc = createPreviewAccumulator(500, 1000);
+    acc.append("Bearer sec");
+    acc.append("ret-value\nplain");
+    const snap = acc.snapshot();
+    // Whole retained window is redacted in one pass: the split secret is seen whole.
+    expect(snap.content).toContain("Bearer [redacted]");
+    expect(snap.content).toContain("plain");
+    expect(snap.content).not.toContain("secret-value");
   });
 
   test("tailTruncate never leaves a split surrogate pair at a char-cut edge", () => {
@@ -652,14 +679,40 @@ describe("BashTool output streaming snapshots", () => {
     const context = { cwd: root, sessionId: "stream-footer-test" };
     const result = await BashTool.call({ command }, context);
     expect(result.is_error).toBeFalsy();
-    const content = String(result.content);
+    // Normalize CRLF: the PowerShell branch emits \r\n line endings.
+    const content = String(result.content).replace(/\r\n/g, "\n");
     const footer = content.match(/\[Showing last (\d+) of (\d+) lines\. Full output: (.+)\]/);
     expect(footer).toBeTruthy();
     expect(Number(footer?.[2])).toBeGreaterThan(Number(footer?.[1]));
     // Tail semantics: the end of the stream survives, the head may not.
-    expect(content).toContain("\n600\n");
-    expect(content).not.toContain("stdout:\n1\n");
+    if (isPowerShellShell) {
+      expect(content).toContain("line600\n");
+      expect(content).not.toContain("stdout:\nline1\n");
+    } else {
+      expect(content).toContain("\n600\n");
+      expect(content).not.toContain("stdout:\n1\n");
+    }
   }, 20_000);
+
+  test("single final budget keeps header, stderr section, and footer on combined overflow", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-assembly-"));
+    const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
+    // ~90k chars per stream → combined body exceeds MAX_RESULT_CHARS (100k).
+    const command = isPowerShellShell
+      ? "\"x\" * 90000; [Console]::Error.WriteLine((\"y\" * 90000))"
+      : "head -c 90000 /dev/zero | tr '\\0' x; head -c 90000 /dev/zero | tr '\\0' y >&2";
+    const context = { cwd: root, sessionId: "stream-assembly-test" };
+    const result = await BashTool.call({ command }, context);
+    expect(result.is_error).toBeFalsy();
+    const content = String(result.content);
+    // Header stays outside the body budget.
+    expect(content.startsWith("Command completed successfully")).toBeTrue();
+    // The tail-first cut preserves the stderr section and the footer.
+    expect(content).toContain("stderr:");
+    expect(content).toContain("[Showing last ");
+    expect(content).toContain("Full output:");
+    expect(content.length).toBeLessThan(110_000);
+  }, 30_000);
 
   test("appends a dual-stream truncation footer when both streams overflow", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-bash-footer-dual-"));
@@ -671,7 +724,7 @@ describe("BashTool output streaming snapshots", () => {
     const result = await BashTool.call({ command }, context);
     expect(result.is_error).toBeFalsy();
     const footer = String(result.content).match(
-      /\[Showing last (\d+) of (\d+) lines \(stdout\) and (\d+) of (\d+) lines \(stderr\)\. Full output: .+\]/,
+      /\[Showing last (\d+) of (\d+) lines \(stdout\) and last (\d+) of (\d+) lines \(stderr\)\. Full output: .+\]/,
     );
     expect(footer).toBeTruthy();
     expect(Number(footer?.[2])).toBeGreaterThan(Number(footer?.[1]));

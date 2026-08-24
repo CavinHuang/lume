@@ -55,7 +55,7 @@ bash stdout/stderr chunk
 
 ### 3. 截断透明度（缺口 #2）
 
-- 新增 tail 截断 helper：行数上限（~500 行）或字节上限（沿用现有量级）双维度保尾部，替换 `boundedPreview` 的字符中段截断语义
+- 新增 tail 截断 helper：行数上限（~500 行）或字符上限（UTF-16 code units，量级沿用现有预算）双维度保尾部，替换 `boundedPreview` 的字符中段截断语义；每流预算为最终结果预算的一半，使分流 footer 先于组装级预算触发
 - 终态结果文本追加 footer（仅截断时）：`[Showing last N lines of M. Full output: <outputFile>]`
 - 流式快照纯 tail 文本，不带 footer
 - 影响面：`formatShellResult` / execution metadata preview 语义变化，既有测试断言同步更新

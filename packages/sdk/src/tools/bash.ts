@@ -28,7 +28,11 @@ const MAX_OUTPUT_BYTES = 50 * 1024 * 1024
 const MAX_RESULT_CHARS = 100_000
 const PREVIEW_CHARS = 4_000
 // Result previews keep the tail within both bounds (errors live at the end).
+// Per-stream char budget is half the final result budget so per-stream footers
+// fire before the single assembly-level budget has to cut (which cannot update
+// stream stats); the assembly budget then only absorbs label/footer overhead.
 const RESULT_MAX_LINES = 500
+const RESULT_SECTION_MAX_CHARS = 50_000
 // Live streaming snapshots ride the live channel while the command runs.
 const STREAM_SNAPSHOT_THROTTLE_MS = 150
 const STREAM_SNAPSHOT_MAX_CHARS = 16_000
@@ -428,8 +432,8 @@ async function startDirectShellTask({
   }, sandbox)
   const startedAt = Date.now()
   let outputBytes = 0
-  const stdoutAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, MAX_RESULT_CHARS)
-  const stderrAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, MAX_RESULT_CHARS)
+  const stdoutAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, RESULT_SECTION_MAX_CHARS)
+  const stderrAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, RESULT_SECTION_MAX_CHARS)
   const emitStreamSnapshot = createStreamSnapshotEmitter(context, () => combinedStreamSnapshot(stdoutAccumulator, stderrAccumulator))
   const stdoutDecoder = new StringDecoder('utf8')
   const stderrDecoder = new StringDecoder('utf8')
@@ -531,20 +535,24 @@ async function startDirectShellTask({
         startedAt,
         terminationReason,
       })
-      const output = [
-        terminationReason === 'completed'
-          ? (interpretation.semanticOutcome === 'no_matches'
-            ? 'Command completed: no matches found (exit code 1).'
-            : `Command completed successfully (exit code ${code ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
-          : `Command terminated (${terminationReason}${code !== null ? `, exit code ${code}` : ''}).`,
-        stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
-        stderrPreview ? `stderr:\n${stderrPreview}` : '',
-        spawnError ? `process error: ${spawnError}` : '',
-        truncationFooter(stdoutStats, stderrStats, outputFile),
+      const firstLine = terminationReason === 'completed'
+        ? (interpretation.semanticOutcome === 'no_matches'
+          ? 'Command completed: no matches found (exit code 1).'
+          : `Command completed successfully (exit code ${code ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
+        : `Command terminated (${terminationReason}${code !== null ? `, exit code ${code}` : ''}).`
+      const footer = truncationFooter(stdoutStats, stderrStats, outputFile)
+      const output = assembleShellResult(
+        firstLine,
+        [
+          stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
+          stderrPreview ? `stderr:\n${stderrPreview}` : '',
+          spawnError ? `process error: ${spawnError}` : '',
+          ...(footer ? [footer] : []),
+        ],
         code !== 0 && code !== null
           ? `Bash failed (${shellType}, exit code ${code}): ${interpretation.message}`
-          : '',
-      ].filter(Boolean).join('\n') || '(no output)'
+          : undefined,
+      )
       const result = { output, isError: terminationReason !== 'completed' || interpretation.isError, execution }
       completedResult = result
       completeBackgroundTask(result)
@@ -699,8 +707,8 @@ async function startDurableShellTask({
   let stderrOffset = 0
   const stdoutDecoder = new StringDecoder('utf8')
   const stderrDecoder = new StringDecoder('utf8')
-  const stdoutAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, MAX_RESULT_CHARS)
-  const stderrAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, MAX_RESULT_CHARS)
+  const stdoutAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, RESULT_SECTION_MAX_CHARS)
+  const stderrAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, RESULT_SECTION_MAX_CHARS)
   const emitStreamSnapshot = createStreamSnapshotEmitter(context, () => combinedStreamSnapshot(stdoutAccumulator, stderrAccumulator))
   let progressTimer: ReturnType<typeof setInterval> | undefined
   let stallTimer: ReturnType<typeof setInterval> | undefined
@@ -944,7 +952,8 @@ interface ShellTaskResult {
 }
 
 function toToolResult(result: ShellTaskResult): ToolResult {
-  return { type: 'tool_result', tool_use_id: '', content: boundedPreview(result.output, MAX_RESULT_CHARS), ...(result.isError ? { is_error: true } : {}), _meta: { execution: result.execution } }
+  // result.output already carries the single tail budget from assembleShellResult.
+  return { type: 'tool_result', tool_use_id: '', content: result.output, ...(result.isError ? { is_error: true } : {}), _meta: { execution: result.execution } }
 }
 
 function finishForegroundTask(task: ShellTask, result: ShellTaskResult): ToolResult {
@@ -1067,15 +1076,17 @@ function formatShellResult(
       ? 'Command completed: no matches found (exit code 1).'
       : `Command completed successfully (exit code ${execution.exitCode ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
     : `Command terminated (${execution.terminationReason}${execution.exitCode !== null && execution.exitCode !== undefined ? `, exit code ${execution.exitCode}` : ''}).`
-  return [
+  return assembleShellResult(
     firstLine,
-    stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
-    stderrPreview ? `stderr:\n${stderrPreview}` : '',
-    footer,
+    [
+      stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
+      stderrPreview ? `stderr:\n${stderrPreview}` : '',
+      ...(footer ? [footer] : []),
+    ],
     outcome !== 'succeeded' && execution.exitCode !== null && execution.exitCode !== undefined
       ? `Bash failed (${execution.shell ?? 'bash'}, exit code ${execution.exitCode}): ${interpretation.message}`
-      : '',
-  ].filter(Boolean).join('\n') || '(no output)'
+      : undefined,
+  )
 }
 
 async function readIncrementalFile(path: string, offset: number): Promise<{ chunk: Buffer; nextOffset: number }> {
@@ -1139,8 +1150,13 @@ function checkExcludedCommands(command: string, excluded: string[]): string | 'c
 interface TailTruncation {
   content: string
   truncated: boolean
+  truncatedByLines: boolean
+  truncatedByChars: boolean
   totalLines: number
   shownLines: number
+  /** Character counts in UTF-16 code units, matching the char budget semantics. */
+  totalChars: number
+  shownChars: number
 }
 
 function isLowSurrogate(code: number): boolean {
@@ -1151,72 +1167,121 @@ function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff
 }
 
+function countNewlines(text: string): number {
+  let count = 0
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) count += 1
+  return count
+}
+
+/** Lines by terminator semantics: a trailing newline terminates the last line instead of starting an empty one. */
+function countTerminatedLines(text: string): number {
+  if (!text) return 0
+  return text.endsWith('\n') ? countNewlines(text) : countNewlines(text) + 1
+}
+
+/**
+ * Shared tail-window cutter: UTF-16 slice that restarts at the next line break
+ * when one exists and never leaves a split surrogate pair at either edge.
+ * Within-budget input passes through untouched (the line restart is part of
+ * the cut, not a normalization).
+ */
+function cutTailWithinBudget(content: string, maxChars: number): string {
+  if (content.length <= maxChars) return content
+  let out = content.slice(-maxChars)
+  const newlineAt = out.indexOf('\n')
+  if (newlineAt >= 0 && newlineAt < out.length - 1) out = out.slice(newlineAt + 1)
+  if (isLowSurrogate(out.charCodeAt(0))) out = out.slice(1)
+  if (isHighSurrogate(out.charCodeAt(out.length - 1))) out = out.slice(0, -1)
+  return out
+}
+
 /**
  * Keep the tail of `text` within both bounds, whichever bites first (command
- * errors live at the end, so the tail is the useful half). Redacts first; a
- * char-boundary cut restarts at the next line break when one exists and never
- * leaves a split surrogate pair at either edge. `truncated` reflects caps that
- * actually bit — redaction can grow the text past the budget without counting
- * as truncation.
+ * errors live at the end, so the tail is the useful half). Redacts first; caps
+ * are measured in characters (UTF-16 code units). A char-boundary cut restarts
+ * at the next line break when one exists and never leaves a split surrogate
+ * pair at either edge. `truncated` reflects caps that actually bit on the raw
+ * stream — redaction growing a within-budget stream past the budget runs the
+ * guard cut without counting as truncation.
  */
 export function tailTruncate(text: string, maxLines: number, maxChars: number): TailTruncation {
   const value = redactSensitiveText(text)
-  const lines = value.split('\n')
-  const totalLines = value.length === 0 ? 0 : lines.length
+  const totalLines = countTerminatedLines(value)
   let content = value
-  let cutLines = false
-  let cutChars = false
-  if (lines.length > maxLines) {
-    content = lines.slice(-maxLines).join('\n')
-    cutLines = true
+  let truncatedByLines = false
+  let truncatedByChars = false
+  if (totalLines > maxLines) {
+    const hadTrailingNewline = value.endsWith('\n')
+    const segments = value.split('\n')
+    const realLines = hadTrailingNewline ? segments.slice(0, -1) : segments
+    content = realLines.slice(-maxLines).join('\n') + (hadTrailingNewline ? '\n' : '')
+    truncatedByLines = true
   }
   if (content.length > maxChars) {
-    // Redaction can push a within-budget stream past the char cap; the guard
-    // cut still runs (bound holds), but only a raw-stream overflow counts as
-    // actual truncation.
     const rawOverBudget = text.length > maxChars
-    content = content.slice(-maxChars)
-    const newlineAt = content.indexOf('\n')
-    if (newlineAt >= 0 && newlineAt < content.length - 1) content = content.slice(newlineAt + 1)
-    // A UTF-16 boundary cut can split a surrogate pair; drop the orphan half.
-    if (isLowSurrogate(content.charCodeAt(0))) content = content.slice(1)
-    if (isHighSurrogate(content.charCodeAt(content.length - 1))) content = content.slice(0, -1)
-    cutChars = rawOverBudget
+    content = cutTailWithinBudget(content, maxChars)
+    truncatedByChars = rawOverBudget
   }
   return {
     content,
-    truncated: cutLines || cutChars,
+    truncated: truncatedByLines || truncatedByChars,
+    truncatedByLines,
+    truncatedByChars,
     totalLines,
-    shownLines: content.length === 0 ? 0 : content.split('\n').length,
+    shownLines: countTerminatedLines(content),
+    totalChars: value.length,
+    shownChars: content.length,
   }
 }
 
 type PreviewAccumulator = ReturnType<typeof createPreviewAccumulator>
 
 /**
- * Rolling preview of one output stream: stores the bounded tail while counting
- * every line ever seen, so the truncation footer can report "last N of M".
+ * Rolling preview of one output stream. Stores the RAW bounded tail — redaction
+ * happens once over the whole retained window at snapshot() time, so a secret
+ * split across chunk boundaries is still seen (and redacted) whole;
+ * chunk-local redaction would splice around it and leak the remainder.
+ * Tracks full-stream line/char totals for the truncation footer.
  */
-function createPreviewAccumulator(maxLines: number, maxChars: number) {
+export function createPreviewAccumulator(maxLines: number, maxChars: number) {
   let kept = ''
-  let totalLines = 0
-  let dropped = false
+  let totalNewlines = 0
+  let totalChars = 0
+  let streamEndsWithNewline = false
+  let sawAnyOutput = false
+  let droppedLines = false
+  let droppedChars = false
   return {
     append(text: string): void {
       if (!text) return
-      const incoming = text.split('\n').length
-      // L(full + t) = L(full) + L(t) - 1 for nonempty parts — independent of
-      // which suffix `kept` still holds.
-      totalLines = totalLines === 0 ? incoming : totalLines + incoming - 1
-      const next = tailTruncate(`${kept}${text}`, maxLines, maxChars)
-      kept = next.content
-      dropped ||= next.truncated
+      sawAnyOutput = true
+      totalNewlines += countNewlines(text)
+      totalChars += text.length
+      streamEndsWithNewline = text.endsWith('\n')
+      let candidate = kept + text
+      const segments = candidate.split('\n')
+      if (segments.length > maxLines) {
+        candidate = segments.slice(-maxLines).join('\n')
+        droppedLines = true
+      }
+      if (candidate.length > maxChars) {
+        candidate = cutTailWithinBudget(candidate, maxChars)
+        droppedChars = true
+      }
+      kept = candidate
     },
     snapshot(): TailTruncation {
-      // Re-truncate: idempotent on content, guards redaction-driven growth,
-      // and keeps `totalLines` at the full-stream count instead of the tail's.
       const fresh = tailTruncate(kept, maxLines, maxChars)
-      return { ...fresh, truncated: dropped || fresh.truncated, totalLines }
+      return {
+        ...fresh,
+        truncated: droppedLines || droppedChars || fresh.truncated,
+        truncatedByLines: droppedLines || fresh.truncatedByLines,
+        truncatedByChars: droppedChars || fresh.truncatedByChars,
+        // Full-stream totals survive the tail windowing.
+        totalLines: sawAnyOutput ? totalNewlines + (streamEndsWithNewline ? 0 : 1) : 0,
+        totalChars,
+        shownChars: fresh.content.length,
+      }
     },
   }
 }
@@ -1226,16 +1291,35 @@ function combinedStreamSnapshot(stdout: PreviewAccumulator, stderr: PreviewAccum
   const out = stdout.snapshot().content
   const err = stderr.snapshot().content
   if (!out && !err) return ''
-  return tailTruncate(out && err ? `${out}\n${err}` : out || err, RESULT_MAX_LINES, STREAM_SNAPSHOT_MAX_CHARS).content
+  return cutTailWithinBudget(out && err ? `${out}\n${err}` : out || err, STREAM_SNAPSHOT_MAX_CHARS)
 }
 
 function truncationFooter(stdout: TailTruncation, stderr: TailTruncation, outputFile: string): string | undefined {
-  if (stdout.truncated && stderr.truncated) {
-    return `[Showing last ${stdout.shownLines} of ${stdout.totalLines} lines (stdout) and ${stderr.shownLines} of ${stderr.totalLines} lines (stderr). Full output: ${outputFile}]`
+  const describe = (stats: TailTruncation): string | undefined => {
+    if (stats.truncatedByLines) return `last ${stats.shownLines} of ${stats.totalLines} lines`
+    if (stats.truncatedByChars) return `last ${stats.shownChars} of ${stats.totalChars} characters`
+    return undefined
   }
-  const stats = stdout.truncated ? stdout : stderr.truncated ? stderr : undefined
-  if (!stats) return undefined
-  return `[Showing last ${stats.shownLines} of ${stats.totalLines} lines. Full output: ${outputFile}]`
+  const stdoutPhrase = describe(stdout)
+  const stderrPhrase = describe(stderr)
+  if (!stdoutPhrase && !stderrPhrase) return undefined
+  if (stdoutPhrase && stderrPhrase) {
+    return `[Showing ${stdoutPhrase} (stdout) and ${stderrPhrase} (stderr). Full output: ${outputFile}]`
+  }
+  return `[Showing ${stdoutPhrase ?? stderrPhrase}. Full output: ${outputFile}]`
+}
+
+/**
+ * Assemble the model-visible result with ONE tail budget over the output body:
+ * the status header and failure note stay outside the budget, so a combined
+ * overflow trims the body tail-first and can never drop the footer, the
+ * stderr section, or the header (the old per-section caps + a final
+ * middle-truncation pass could destroy all of them).
+ */
+function assembleShellResult(firstLine: string, bodySections: string[], failureNote: string | undefined): string {
+  const body = bodySections.filter(Boolean).join('\n')
+  const boundedBody = body.length > MAX_RESULT_CHARS ? cutTailWithinBudget(body, MAX_RESULT_CHARS) : body
+  return [firstLine, boundedBody, failureNote].filter(Boolean).join('\n') || '(no output)'
 }
 
 /**
