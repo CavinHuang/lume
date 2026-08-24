@@ -32,7 +32,7 @@ import {
 } from 'node:fs'
 import { once } from 'node:events'
 import { spawn } from 'node:child_process'
-import { homedir } from 'node:os'
+import { homedir, release } from 'node:os'
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -72,6 +72,7 @@ import {
   restoreMainWindow,
   shouldCaptureRememberedDesktopTarget,
   validateExternalUrl,
+  resolveMacMicrophoneSettingsDeepLink,
   validateMigrationTarget,
   validateWereadUrl,
   writeLauncherConfigAt,
@@ -1983,6 +1984,14 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     case 'voice_dictation_hide_indicator':
       getVoiceIndicatorManager().hide()
       return null
+    case 'voice_dictation_open_microphone_settings': {
+      // 隐私面板深链随系统版本不同（13+ extension / 12 旧 path），由主进程按
+      // darwin kernel 主版本路由，renderer 不感知系统差异。
+      if (process.platform !== 'darwin') return null
+      const darwinMajor = Number(release().split('.')[0])
+      await shell.openExternal(resolveMacMicrophoneSettingsDeepLink(darwinMajor))
+      return null
+    }
     case 'desktop_flash_window': {
       // 听写完成时窗口不在前台 → 任务栏闪烁提醒（Windows）/ Dock 跳动（macOS）。
       // 模块级 timer 复用：连续完成多次听写时不堆叠定时器提前熄灭上一次提醒。

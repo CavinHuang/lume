@@ -148,15 +148,14 @@ function SettingsRow({ label, hint, children }: {
   )
 }
 
-/** macOS 麦克风隐私面板深链（System Settings extension，macOS 13+）。 */
-const MIC_SETTINGS_DEEP_LINK = 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone'
-
 export function VoiceDictationSettings() {
   const [settings, setSettings] = React.useState<VoiceDictationSettings | null>(null)
   const [saving, setSaving] = React.useState(false)
   const [testing, setTesting] = React.useState(false)
   // macOS 系统级麦克风权限四态；Windows/Linux 为 unsupported，卡片整体隐藏。
   const [micPermission, setMicPermission] = React.useState<'granted' | 'denied' | 'not-determined' | null>(null)
+  /** 本进程曾被拒绝后系统侧又改为允许：界面显示已授权但需重启才能生效。 */
+  const [restartRequired, setRestartRequired] = React.useState(false)
   const [requestingMic, setRequestingMic] = React.useState(false)
   // blur 前面板被卸载（键盘切 tab/关窗）不会触发 onBlur——已输入内容经此兜底落盘。
   const pendingUpdateRef = React.useRef<VoiceDictationSettingsUpdate | null>(null)
@@ -164,7 +163,11 @@ export function VoiceDictationSettings() {
   const refreshMicPermission = React.useCallback(() => {
     return invoke<{ status: string }>('voice_dictation_check_microphone', null)
       .then((permission) => {
-        setMicPermission(permission.status === 'unsupported' ? null : permission.status as 'granted' | 'denied' | 'not-determined')
+        const status = permission.status === 'unsupported' ? null : permission.status as 'granted' | 'denied' | 'not-determined'
+        // 曾在本进程被拒过：即使系统侧改为允许，TCC 也要求重启才对本进程生效，
+        // 此时不能把状态呈现为"已可用"。
+        if (status === 'denied') setRestartRequired(true)
+        setMicPermission(status)
       })
       .catch(() => undefined)
   }, [])
@@ -250,7 +253,7 @@ export function VoiceDictationSettings() {
         <div
           className={cn(
             'rounded-xl border px-4 py-3',
-            micPermission === 'denied'
+            (micPermission === 'denied' || restartRequired)
               ? 'border-[color:color-mix(in_oklab,var(--lume-danger)_36%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,transparent)]'
               : 'border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)]',
           )}
@@ -259,34 +262,43 @@ export function VoiceDictationSettings() {
             <span
               className={cn(
                 'size-2 shrink-0 rounded-full',
-                micPermission === 'granted' && 'bg-[var(--lume-success)]',
+                micPermission === 'granted' && !restartRequired && 'bg-[var(--lume-success)]',
                 micPermission === 'denied' && 'bg-[var(--lume-danger)]',
-                micPermission === 'not-determined' && 'bg-[var(--text-3)]',
+                micPermission !== 'granted' && micPermission !== 'denied' && 'bg-[var(--text-3)]',
               )}
             />
             <span className="text-body font-medium text-[var(--text-1)]">麦克风权限</span>
             <span className="text-ui text-[var(--text-3)]">
-              {micPermission === 'granted' ? '已授权' : micPermission === 'denied' ? '已被系统拒绝' : '尚未授权'}
+              {restartRequired
+                ? '已在系统设置中允许，重启 Lume 后生效'
+                : micPermission === 'granted' ? '已授权' : micPermission === 'denied' ? '已被系统拒绝' : '尚未授权'}
             </span>
           </div>
-          {micPermission === 'denied' && (
+          {(micPermission === 'denied' || restartRequired) && (
             <div className="mt-2 space-y-2">
-              <p className="text-[13px] leading-6 text-[var(--text-2)]">
-                语音输入无法工作。请在系统设置中允许 Lume 访问麦克风——修改后需要<strong> 重启 Lume </strong>才能生效。
-              </p>
+              {micPermission === 'denied' && (
+                <p className="text-[13px] leading-6 text-[var(--text-2)]">
+                  语音输入无法工作。请在系统设置中允许 Lume 访问麦克风——修改后需要<strong> 重启 Lume </strong>才能生效。
+                </p>
+              )}
+              {micPermission !== 'denied' && (
+                <p className="text-[13px] leading-6 text-[var(--text-2)]">
+                  权限已允许，但本进程需要<strong> 重启 Lume </strong>后才能使用新的麦克风权限。
+                </p>
+              )}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                 <Button
                   variant="outline"
                   type="button"
                   onClick={() => {
-                    invoke('open_external', { url: MIC_SETTINGS_DEEP_LINK })
+                    invoke('voice_dictation_open_microphone_settings', null)
                       .catch((error: unknown) => toast.error(`打开系统设置失败: ${error instanceof Error ? error.message : '未知错误'}`))
                   }}
                 >
                   打开系统设置
                   <ExternalLink size={12} className="ml-1.5" />
                 </Button>
-                <Button variant="ghost" type="button" onClick={() => void relaunch()}>
+                <Button variant="ghost" type="button" onClick={() => void relaunch().catch((error: unknown) => toast.error(`重启失败: ${error instanceof Error ? error.message : '未知错误'}`))}>
                   重启 Lume
                 </Button>
               </div>

@@ -317,10 +317,18 @@ export function createFileStatMetadata(filePath) {
 
 // macOS 系统设置深链（语音听写的麦克风权限页）：指向系统应用本身，与任意远程
 // 内容不同风险面。按精确目标逐条放行，不放行整个自定义 scheme。
-// macOS 13+ System Settings 的隐私面板已迁移到 settings extension 深链。
-const ALLOWED_SYSTEM_DEEP_LINKS = new Set([
-  'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone',
-])
+// 隐私面板深链随系统版本不同：13+ 走 settings extension，12 走旧 preference path。
+const MACOS_MIC_SETTINGS_DEEP_LINKS = {
+  modern: 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone',
+  legacy: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
+}
+
+const ALLOWED_SYSTEM_DEEP_LINKS = new Set(Object.values(MACOS_MIC_SETTINGS_DEEP_LINKS))
+
+/** 按 macOS 主版本返回麦克风隐私页深链（darwin release 21=12，22+=13）。 */
+export function resolveMacMicrophoneSettingsDeepLink(darwinMajorRelease: number): string {
+  return darwinMajorRelease >= 22 ? MACOS_MIC_SETTINGS_DEEP_LINKS.modern : MACOS_MIC_SETTINGS_DEEP_LINKS.legacy
+}
 
 export function validateExternalUrl(url) {
   if (ALLOWED_SYSTEM_DEEP_LINKS.has(url)) return url
