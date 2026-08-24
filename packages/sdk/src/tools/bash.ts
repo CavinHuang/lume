@@ -1142,10 +1142,10 @@ interface TailTruncation {
 }
 
 /**
- * Keep the tail of `text` within both bounds, whichever bites first (pi
- * parity: command errors live at the end, so the tail is the useful half).
- * Redacts first; a char-boundary cut restarts at the next line break so
- * sections and snapshots never open mid-line.
+ * Keep the tail of `text` within both bounds, whichever bites first (command
+ * errors live at the end, so the tail is the useful half). Redacts first; a
+ * char-boundary cut restarts at the next line break so sections and snapshots
+ * never open mid-line.
  */
 export function tailTruncate(text: string, maxLines: number, maxChars: number): TailTruncation {
   const value = redactSensitiveText(text)
@@ -1211,7 +1211,7 @@ function truncationFooter(stdout: TailTruncation, stderr: TailTruncation, output
 }
 
 /**
- * Trailing-edge throttle for live output snapshots (pi parity): bursts collapse
+ * Trailing-edge throttle for live output snapshots: bursts collapse
  * into one snapshot per window; a quiet period flushes immediately. Prefers the
  * live channel and falls back to the buffered one when the host has no live
  * receiver. Events carry tool_use_id so the UI can pin them to the running card.
