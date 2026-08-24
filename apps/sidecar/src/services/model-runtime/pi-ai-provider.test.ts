@@ -3,6 +3,7 @@ import {
   isRetryablePiAiError,
   PiAiProvider,
   PiAiProviderError,
+  type PiAiProviderOptions,
   resolvePiModelInput,
   resolvePiAiRetryDelayMs,
   resolvePiModelReasoningCapability,
@@ -114,9 +115,14 @@ describe("pi-ai thinking level wiring (#561)", () => {
     })).toEqual({ reasoning: "low", thinkingBudgets: { low: 1024 } });
   });
 
-  test("disabled 与未选择思考时不携带任何思考参数", () => {
+  test("disabled 时返回空 options(pi-ai 据此向各渠发显式关闭信号)", () => {
     expect(resolveStreamThinkingOptions({ ...baseParams, thinking: { type: "disabled" } })).toEqual({});
-    expect(resolveStreamThinkingOptions(baseParams)).toEqual({});
+  });
+
+  test("thinking 缺失时保留 medium 回落(旧行为,#631 review)", () => {
+    // 直连消费方(advisor/memory-v2/suggest/vision-router 等)不设 thinking,
+    // 若翻转成 {} 会把它们从"强加 medium"变成"显式关闭",跨渠道出网形态全变
+    expect(resolveStreamThinkingOptions(baseParams)).toEqual({ reasoning: "medium" });
   });
 
   test("enabled 但无预算时保留 medium 回落(旧行为)", () => {
@@ -144,13 +150,17 @@ describe("pi-ai provider request body wiring (#561)", () => {
     return bodies;
   }
 
-  function createTestProvider(apiType: "anthropic-messages" | "openai-completions"): PiAiProvider {
+  function createTestProvider(
+    apiType: "anthropic-messages" | "openai-completions",
+    options?: Partial<Pick<PiAiProviderOptions, "thinkingLevelMap" | "compat">>,
+  ): PiAiProvider {
     return new PiAiProvider({
       apiType,
       providerId: "test",
       baseUrl: "http://127.0.0.1:9",
       apiKey: "sk-test",
       supportsReasoning: true,
+      ...options,
     });
   }
 
@@ -203,5 +213,35 @@ describe("pi-ai provider request body wiring (#561)", () => {
       createTestProvider("openai-completions").createMessage(createTestParams({ type: "enabled", budget_tokens: 4096 })),
     ).rejects.toThrow(PiAiProviderError);
     expect(bodies[0]?.reasoning_effort).toBe("medium");
+  });
+
+  test("anthropic 渠道:thinking 缺失时按旧语义发 medium 思考而非显式关闭(#631 review)", async () => {
+    const bodies = stubCapture(400);
+    await expect(
+      createTestProvider("anthropic-messages").createMessage(createTestParams()),
+    ).rejects.toThrow(PiAiProviderError);
+    // pi-ai 默认预算表 medium→8192;若回归成 {} 则出网变 thinkingEnabled:false
+    expect(bodies[0]?.thinking).toMatchObject({ type: "enabled", budget_tokens: 8192 });
+  });
+
+  test("thinkingLevelMap 到达内联 Model:有目录 map 时 xhigh 直发不折算(#561/#631 review)", async () => {
+    const bodies = stubCapture(400);
+    await expect(
+      createTestProvider("openai-completions", {
+        thinkingLevelMap: { xhigh: "xhigh", max: "xhigh" },
+      }).createMessage(createTestParams({ type: "enabled", budget_tokens: 16384 })),
+    ).rejects.toThrow(PiAiProviderError);
+    // 对照上方用例:无 map 时 clampThinkingLevel 把 xhigh 折成 high;map 背书后保留 xhigh
+    expect(bodies[0]?.reasoning_effort).toBe("xhigh");
+  });
+
+  test("compat 到达内联 Model:supportsReasoningEffort=false 抑制 reasoning_effort 注入(#631 review)", async () => {
+    const bodies = stubCapture(400);
+    await expect(
+      createTestProvider("openai-completions", {
+        compat: { supportsReasoningEffort: false },
+      }).createMessage(createTestParams({ type: "enabled", budget_tokens: 4096 })),
+    ).rejects.toThrow(PiAiProviderError);
+    expect(bodies[0]?.reasoning_effort).toBeUndefined();
   });
 });

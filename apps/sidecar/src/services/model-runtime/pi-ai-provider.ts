@@ -145,11 +145,15 @@ export interface StreamThinkingOptions {
  * 双通道下发——Anthropic/google 渠道消费预算表,openai 两渠只读 reasoning 并按
  * 模型能力自行钳制(xhigh/max 无 thinkingLevelMap 时自动折到 high)。
  * 预算键必须落在钳制后的档位上:pi-ai 的 clampReasoning 会把 xhigh/max 折成 high。
+ *
+ * thinking 缺失(未选关闭)保留旧径 reasoning:"medium":advisor/memory-v2/suggest/
+ * vision-router 等不经 engine 的直连消费方不设 thinking,若翻转成 {} 会向各渠
+ * 显式下发关闭信号,改变其出网形态(#631 review)——仅显式 disabled 返回 {}。
  */
 export function resolveStreamThinkingOptions(params: CreateMessageParams): StreamThinkingOptions {
   const thinking = params.thinking;
-  if (!thinking || thinking.type === "disabled") return {};
-  if (typeof thinking.budget_tokens !== "number" || !Number.isFinite(thinking.budget_tokens)) {
+  if (thinking?.type === "disabled") return {};
+  if (!thinking || typeof thinking.budget_tokens !== "number" || !Number.isFinite(thinking.budget_tokens)) {
     return { reasoning: params.effort ?? "medium" };
   }
   const level = resolveThinkingLevelFromBudget(thinking.budget_tokens);
