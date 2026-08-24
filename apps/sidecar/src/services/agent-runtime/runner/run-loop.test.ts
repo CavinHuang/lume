@@ -246,6 +246,47 @@ describe("tee lifecycle 接线:骨架事件 runId=Lume runId(批次5 Task 6)", (
       .toEqual(new Set(["lume-run-tee-1"]));
   });
 
+  test("#550:publish 同步 throw 不终结投影泵——后续事件(含 run.end 终值)照常交付", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "run-loop-tee-throw-"));
+    dirs.push(agentDir);
+    const threadId = "run-loop-tee-throw";
+    const sessionDir = getRuntimeCoreSessionDir(threadId, agentDir);
+    const published: SdkEventEnvelope[] = [];
+    const bus = getThreadEventBus(sessionDir);
+    bus.subscribe(threadId, (envelope) => {
+      published.push(envelope);
+    });
+
+    // 模拟 Windows AV 锁文件:首个非 update 相位的 publish 同步 throw(#550)
+    const originalPublish = bus.publish.bind(bus);
+    let sabotaged = false;
+    (bus as unknown as { publish: typeof bus.publish }).publish = (tid, rid, event) => {
+      if (!sabotaged && event.phase !== "update") {
+        sabotaged = true;
+        throw new Error("EBUSY: locked by antivirus");
+      }
+      return originalPublish(tid, rid, event);
+    };
+
+    try {
+      const result = await consumeRuntimeCoreQueryStream({
+        query: stream([{
+          type: "assistant",
+          message: { role: "assistant", content: [{ type: "text", text: "hello" }] }
+        } as SDKMessage]),
+        emit: { onSdkMessage: () => {} },
+        lifecycle: { threadId, sessionDir, runId: "lume-run-throw-1" }
+      });
+
+      // 主流照常完成;泵存活,终值 run.end 照常落盘(修复前泵被终结、无 run.end)
+      expect(result).toEqual({ status: "completed" });
+      expect(published.at(-1)?.detail).toMatchObject({ type: "run.end" });
+      expect(published.filter((envelope) => envelope.kind === "run" && envelope.phase === "end")).toHaveLength(1);
+    } finally {
+      (bus as unknown as { publish: typeof bus.publish }).publish = originalPublish;
+    }
+  });
+
   test("live 注入(#285):工具期直通事件经同一条投影链到达总线,主流不经过", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "run-loop-live-inject-"));
     dirs.push(agentDir);

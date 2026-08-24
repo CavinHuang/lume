@@ -2,7 +2,7 @@
  * CLI binary 下载管理:env 手动路径 → 缓存 → config.acquireBinary(渠道特定下载+校验+解压) → 落盘 0o755。
  * 渠道差异(钉钉两层 npm tarball / 飞书 GitHub release / 企微 registry packument)下沉到各 provider 的 acquireBinary。
  */
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CliProviderConfig } from "./providers/dingtalk";
 
@@ -25,7 +25,9 @@ export function resolveBinaryPath(
   platform: string,
   arch: string,
 ): string {
-  return join(userDataRoot, `${config.provider}-cli`, platform, arch, config.binaryName);
+  // 缓存键必须含 version：否则 CLI 升级后 existsSync 永远命中旧版缓存，
+  // 授权流程随云端 API 演进静默失效（#536）
+  return join(userDataRoot, `${config.provider}-cli`, config.version, platform, arch, config.binaryName);
 }
 
 export async function ensureBinary(
@@ -50,7 +52,10 @@ export async function ensureBinary(
   const fetchImpl = deps?.fetchTarball ?? defaultFetchTarball;
   const binary = await config.acquireBinary(platform, arch, fetchImpl);
   mkdirSync(dirname(target), { recursive: true });
-  writeFileSync(target, binary, { mode: 0o755 });
+  // tmp+rename 原子落盘：直写被中断的半截二进制会被缓存命中永久复用
+  const tmpPath = `${target}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmpPath, binary, { mode: 0o755 });
+  renameSync(tmpPath, target);
   return { path: target, downloaded: true };
 }
 

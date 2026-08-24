@@ -315,15 +315,51 @@ export function createFileStatMetadata(filePath) {
   }
 }
 
+// macOS 系统设置深链（语音听写的麦克风权限页）：指向系统应用本身，与任意远程
+// 内容不同风险面。按精确目标逐条放行，不放行整个自定义 scheme。
+// 隐私面板深链随系统版本不同：13+ 走 settings extension，12 走旧 preference path。
+const MACOS_MIC_SETTINGS_DEEP_LINKS = {
+  modern: 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone',
+  legacy: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
+}
+
+const ALLOWED_SYSTEM_DEEP_LINKS = new Set(Object.values(MACOS_MIC_SETTINGS_DEEP_LINKS))
+
+export interface VoiceMicPermissionState {
+  /** 当前 Electron 进程生命周期内是否观察过 denied（TCC 要求此后重启才生效）。 */
+  sawDeniedInProcess: boolean
+  /** 观察过 denied 且系统侧现已 granted：界面须提示“重启生效”。 */
+  restartRequired: boolean
+}
+
+/**
+ * 麦克风权限状态转移（纯函数）：状态由 main process 持有——它是进程级事实，
+ * 放在组件 state 里会随面板卸载/重挂载丢失。
+ */
+export function applyVoiceMicPermissionState(
+  previous: VoiceMicPermissionState,
+  status: 'granted' | 'denied' | 'not-determined',
+): VoiceMicPermissionState {
+  const sawDeniedInProcess = previous.sawDeniedInProcess || status === 'denied'
+  return { sawDeniedInProcess, restartRequired: sawDeniedInProcess && status === 'granted' }
+}
+
+/** 按 macOS 主版本返回麦克风隐私页深链（darwin release 21=12，22+=13）。 */
+export function resolveMacMicrophoneSettingsDeepLink(darwinMajorRelease: number): string {
+  return darwinMajorRelease >= 22 ? MACOS_MIC_SETTINGS_DEEP_LINKS.modern : MACOS_MIC_SETTINGS_DEEP_LINKS.legacy
+}
+
 export function validateExternalUrl(url) {
+  if (ALLOWED_SYSTEM_DEEP_LINKS.has(url)) return url
+
   let protocol
   try {
     protocol = new URL(url).protocol
   } catch {
-    throw new Error('only http/https/weread/obsidian urls are allowed')
+    throw new Error('only http/https/weread/obsidian/system-preferences urls are allowed')
   }
   if (!['http:', 'https:', 'weread:', 'obsidian:'].includes(protocol)) {
-    throw new Error('only http/https/weread/obsidian urls are allowed')
+    throw new Error('only http/https/weread/obsidian/system-preferences urls are allowed')
   }
   return url
 }
