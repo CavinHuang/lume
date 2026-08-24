@@ -130,6 +130,15 @@ describe("permission classifier", () => {
       riskLevel: "medium",
       shouldAsk: true
     });
+    // 换行分隔与 cmd 包裹曾与 guardrail 层一起漏判
+    await expect(classifier.classify({ toolName: "Bash", command: "Get-Date\r\ndel \\" })).resolves.toMatchObject({
+      riskLevel: "medium",
+      shouldAsk: true
+    });
+    await expect(classifier.classify({ toolName: "Bash", command: "cmd /c rd /s /q build" })).resolves.toMatchObject({
+      riskLevel: "medium",
+      shouldAsk: true
+    });
   });
 
   test("keeps benign PowerShell read commands at low risk", async () => {
@@ -146,6 +155,14 @@ describe("permission classifier", () => {
     await expect(classifier.classify({
       toolName: "Bash",
       command: "Get-ChildItem | Format-Table"
+    })).resolves.toMatchObject({
+      riskLevel: "low",
+      shouldAsk: false
+    });
+    // cmd 包裹的良性命令不因包裹前缀升级
+    await expect(classifier.classify({
+      toolName: "Bash",
+      command: "cmd /c dir build"
     })).resolves.toMatchObject({
       riskLevel: "low",
       shouldAsk: false

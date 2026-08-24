@@ -167,4 +167,68 @@ describe("runtime-tool-safety", () => {
       behavior: "allow"
     });
   });
+
+  test("treats newlines as PowerShell command separators", () => {
+    // 复核实证：换行分隔曾整体逃逸锚点，连主目录/盘根硬拒一起失效
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Get-Date\nRemove-Item -Recurse ~" })).toEqual({
+      behavior: "deny",
+      reason: "禁止删除根目录或用户主目录"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Get-Date\r\nri $env:USERPROFILE" })).toEqual({
+      behavior: "deny",
+      reason: "禁止删除根目录或用户主目录"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Get-Date\ndel \\" })).toEqual({
+      behavior: "deny",
+      reason: "禁止删除根目录或用户主目录"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Get-Date\nStop-Process -Name node" })).toMatchObject({
+      behavior: "confirm"
+    });
+  });
+
+  test.skipIf(!isNativeAvailable())("does not let delete rules swallow targets across lines", () => {
+    // 锚点纳入换行后，填充区不得跨行吞并下一行的良性参数
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Remove-Item build.txt\nGet-Content ~notes.md" })).toEqual({
+      behavior: "allow"
+    });
+  });
+
+  test("sees through cmd.exe /c and /k wrappers around dangerous verbs", () => {
+    // 复核实证：cmd 包裹的内层删除族曾在 guardrail 与分类器双层全漏
+    expect(evaluateRuntimeToolSafety("Bash", { command: "cmd /c rd /s /q D:\\" })).toEqual({
+      behavior: "deny",
+      reason: "禁止删除根目录或用户主目录"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "cmd /c del \\" })).toEqual({
+      behavior: "deny",
+      reason: "禁止删除根目录或用户主目录"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: 'cmd.exe /k "ri C:\\"' })).toEqual({
+      behavior: "deny",
+      reason: "禁止删除根目录或用户主目录"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "cmd /c rd /s /q build" })).toMatchObject({
+      behavior: "confirm"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "cmd /c del /q cache.txt" })).toMatchObject({
+      behavior: "confirm"
+    });
+  });
+
+  test.skipIf(!isNativeAvailable())("keeps benign cmd-wrapped commands untouched", () => {
+    expect(evaluateRuntimeToolSafety("Bash", { command: "cmd /c dir build" })).toEqual({
+      behavior: "allow"
+    });
+  });
+
+  test.skipIf(!isNativeAvailable())("keeps benign commands whose arguments merely contain danger-like substrings", () => {
+    // 钉住锚点语义：参数值含危险词子串但命令位良性时不升级
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Get-ChildItem ./removed-items" })).toEqual({
+      behavior: "allow"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Copy-Item './removed-items' backup" })).toEqual({
+      behavior: "allow"
+    });
+  });
 });

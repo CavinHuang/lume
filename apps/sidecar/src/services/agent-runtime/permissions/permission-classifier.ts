@@ -37,7 +37,10 @@ const MEDIUM_PATTERNS = [
   /(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)/i,
   // PowerShell 破坏性动词：Windows 无 bash 回退时与上方 POSIX 词表同档兜底，避免删除/停服等被判 low
   /\b(?:remove-item|clear-content|stop-process|stop-service|stop-computer|restart-computer|set-executionpolicy|invoke-expression|iex)\b/i,
-  /(?:^|[;&|(])\s*(?:rd|rmdir|del|erase|ri)\b/i
+  // 锚点含换行：多行脚本的换行分隔曾整体逃逸
+  /(?:^|[;&|(\r\n])\s*(?:rd|rmdir|del|erase|ri)\b/i,
+  // cmd.exe /c|/k 包裹的内层删除族（cmd /c rd /s /q 曾双层全漏）
+  /cmd(?:\.exe)?\s+\/[ck]\s*["']?\s*(?:rd|rmdir|del|erase|ri)\b/i
 ];
 
 export interface PermissionClassifier {
