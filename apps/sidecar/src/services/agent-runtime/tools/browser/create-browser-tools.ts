@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { withRepeatGuardState } from "@lume/agent-sdk"
 import type { ToolDefinition, ToolInputSchema, ToolResult } from "@lume/agent-sdk"
 import type { BrowserBackendDescriptor, BrowserTabDescriptor } from "@lume/shared"
+import { BROWSER_HANDLER_WAIT_CAP_MS } from "@lume/shared"
 import type { BrowserBroker } from "../../../browser/browser-broker"
 import { getActiveBrowserBroker } from "../../../browser/browser-broker-holder"
 import { getBrowserToolSessionRegistry, type BrowserToolSessionRegistry } from "./browser-tool-session"
@@ -406,12 +407,12 @@ function toolSchema(name: BrowserToolName): ToolInputSchema {
   if (name === "upload") return object({
     ref: refSchema(),
     files: { type: "array", minItems: 1, maxItems: 20, items: { type: "string" }, description: "Task-authorized file paths or browser-download file refs." },
-    timeout_ms: { type: "integer", minimum: 100, maximum: 30000, default: 10000 },
+    timeout_ms: { type: "integer", minimum: 100, maximum: BROWSER_HANDLER_WAIT_CAP_MS, default: 10000 },
   }, ["ref", "files"])
   if (name === "download") return object({
     ref: refSchema(),
     download_id: { type: "string", description: "Query the state of an existing download instead of clicking a new control. Provide either download_id or ref." },
-    timeout_ms: { type: "integer", minimum: 100, maximum: 30000, default: 10000 },
+    timeout_ms: { type: "integer", minimum: 100, maximum: BROWSER_HANDLER_WAIT_CAP_MS, default: 10000 },
   })
   if (name === "fill_secret") return object({
     ref: refSchema(),
@@ -725,5 +726,5 @@ function screenshotToolResult(toolUseId: string, sessionId: string, result: Reco
 
 function stringValue(value: unknown): string | undefined { return typeof value === "string" && value.trim() ? value.trim() : undefined }
 function finiteNumber(value: unknown): number { return typeof value === "number" && Number.isFinite(value) ? value : 0 }
-function boundedTimeout(value: unknown): number { return typeof value === "number" && Number.isInteger(value) ? Math.max(100, Math.min(30_000, value)) : 10_000 }
+function boundedTimeout(value: unknown): number { return typeof value === "number" && Number.isInteger(value) ? Math.max(100, Math.min(BROWSER_HANDLER_WAIT_CAP_MS, value)) : 10_000 }
 function asRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {} }

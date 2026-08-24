@@ -26,7 +26,7 @@ import {
   type BrowserViewportState,
   type BrowserWorkspaceDescriptor,
 } from '@lume/shared'
-import { BROWSER_API_REGISTRY, browserApiSupportForBackend, browserMutatingRuntimeMethods } from '@lume/shared'
+import { BROWSER_API_REGISTRY, BROWSER_HANDLER_WAIT_CAP_MS, browserApiSupportForBackend, browserMutatingRuntimeMethods } from '@lume/shared'
 import {
   selectBrowserPartition,
   shouldInstallAdvancedCdpPolicy,
@@ -962,9 +962,9 @@ export class BrowserRuntime {
       const origin = safeOrigin(tab.url)
       return origin ? this.credentials.listPasswords().filter((entry) => entry.origin === origin) : []
     }
-    if (method === "wait:download") return this.waitForDownload(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
-    if (method === "download:path") return this.downloadPath(context, String(params.downloadId ?? params.download_id ?? ""), boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
-    if (method === "wait:filechooser") return this.waitForFileChooser(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, 30_000))
+    if (method === "wait:download") return this.waitForDownload(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, BROWSER_HANDLER_WAIT_CAP_MS))
+    if (method === "download:path") return this.downloadPath(context, String(params.downloadId ?? params.download_id ?? ""), boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, BROWSER_HANDLER_WAIT_CAP_MS))
+    if (method === "wait:filechooser") return this.waitForFileChooser(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms ?? 10_000, 1, BROWSER_HANDLER_WAIT_CAP_MS))
     if (method === "pageAssets:list") return this.listPageAssets(tab, context)
     if (method === "webmcp:list") return listWebMcpTools(tab)
     if (method === "webmcp:invoke") return invokeWebMcpTool(tab, params)
@@ -1016,9 +1016,9 @@ export class BrowserRuntime {
     }
     if (method === "dialog:get") return tab.dialogInfo
     if (method.startsWith("locator:")) return this.queryLocator(tab, method.slice("locator:".length), params)
-    if (method === "wait:url") return this.waitForUrl(tab, String(params.url ?? ""), boundedNumber(params.timeoutMs ?? (params.options as Record<string, unknown> | undefined)?.timeoutMs, 0, 30_000) || 10_000)
-    if (method === "wait:load") return this.waitForLoad(tab, boundedNumber(params.timeoutMs, 0, 30_000) || 10_000)
-    if (method === "wait:timeout") { await delay(boundedNumber(params.timeoutMs, 0, 30_000)); return undefined }
+    if (method === "wait:url") return this.waitForUrl(tab, String(params.url ?? ""), boundedNumber(params.timeoutMs ?? (params.options as Record<string, unknown> | undefined)?.timeoutMs, 0, BROWSER_HANDLER_WAIT_CAP_MS) || 10_000)
+    if (method === "wait:load") return this.waitForLoad(tab, boundedNumber(params.timeoutMs, 0, BROWSER_HANDLER_WAIT_CAP_MS) || 10_000)
+    if (method === "wait:timeout") { await delay(boundedNumber(params.timeoutMs, 0, BROWSER_HANDLER_WAIT_CAP_MS)); return undefined }
     if (method === "screenshot") {
       if (params.annotated === true) {
         if (params.fullPage === true) throw browserError("invalid_browser_request")
@@ -1884,7 +1884,7 @@ export class BrowserRuntime {
       const inputSequence = tab.inputSequence
       // 显式 timeoutMs:0 = 关闭 auto-wait（boundedNumber 的 || 3_000 会吞掉 0）
       const rawAutoWait = params.timeoutMs ?? params.timeout_ms
-      const autoWaitMs = rawAutoWait === 0 ? 0 : (boundedNumber(rawAutoWait, 0, 30_000) || 3_000)
+      const autoWaitMs = rawAutoWait === 0 ? 0 : (boundedNumber(rawAutoWait, 0, BROWSER_HANDLER_WAIT_CAP_MS) || 3_000)
       const target = await this.resolveTargetWithAutoWait(tab, generation, params, autoWaitMs, context)
       if (tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
       const effectBefore = await this.captureActionEffect(tab)
@@ -1969,7 +1969,13 @@ export class BrowserRuntime {
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
       return publicTab(tab)
     }
-    await contents.loadURL(normalizeNavigableUrl(url))
+    // loadURL 本身无界,慢站会挂到分钟级并被 sidecar transport 先杀误报
+    // executed_unknown(#638);包一层上限,页面可能仍在后台继续加载,
+    // 模型收到 navigation_timeout 后应 snapshot 确认实际状态而非盲目重试。
+    await Promise.race([
+      contents.loadURL(normalizeNavigableUrl(url)),
+      new Promise<never>((_, reject) => setTimeout(() => reject(browserError("navigation_timeout")), BROWSER_HANDLER_WAIT_CAP_MS)),
+    ])
     return publicTab(tab)
   }
 
@@ -2257,7 +2263,9 @@ export class BrowserRuntime {
 
   private async waitForFileChooser(tab: BrowserTab, context: BrowserRequestContext, timeoutMs: number): Promise<{ file_chooser_id: string; is_multiple: boolean }> {
     if (context.actor !== "agent") throw browserError("action_denied")
-    await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.setInterceptFileChooserDialog", { enabled: true }))
+    // 只是翻转拦截开关,默认 30s debugger 上限会与后续 waiter 串行叠加出
+    // 理论 70s(#638);显式短超时归入安全区。
+    await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.setInterceptFileChooserDialog", { enabled: true }), 5_000)
     return new Promise((resolve, reject) => {
       const waiter: BrowserFileChooserWaiter = {
         browserSessionId: context.browserSessionId,
@@ -2494,9 +2502,17 @@ export class BrowserRuntime {
     const exported: Array<Record<string, unknown>> = []
     const failures: Array<Record<string, unknown>> = []
     let totalBytes = 0
+    // ≤100 资源 × 30s abort 串行无总预算时最坏小时级(#638);40s 后剩余
+    // 资产按 budget_exceeded 记入 failures,已导出部分照常返回。
+    const assetBudgetDeadline = startedAt + 40_000
     for (const asset of assets) {
       const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 30_000)
+      const remainingBudgetMs = assetBudgetDeadline - Date.now()
+      if (remainingBudgetMs <= 0 && exported.length + failures.length > 0) {
+        failures.push({ contentType: null, id: asset.id, name: asset.name, reason: "budget_exceeded", url: asset.url })
+        continue
+      }
+      const timer = setTimeout(() => controller.abort(), Math.min(30_000, Math.max(1_000, remainingBudgetMs)))
       try {
         if (!isAllowedNavigation(asset.url, true, this.settings, tab.approvedPrivateOrigins)) throw new Error("blocked")
         const response = await browserContents(tab).session.fetch(asset.url, { redirect: "follow", signal: controller.signal })
@@ -2701,7 +2717,7 @@ export class BrowserRuntime {
 
   private async waitForLocator(tab: BrowserTab, params: Record<string, unknown>): Promise<void> {
     const state = new Set(["attached", "detached", "visible", "hidden"]).has(String(params.state)) ? String(params.state) : "visible"
-    const timeoutMs = boundedNumber(params.timeoutMs, 0, 30_000) || 10_000
+    const timeoutMs = boundedNumber(params.timeoutMs, 0, BROWSER_HANDLER_WAIT_CAP_MS) || 10_000
     const deadline = Date.now() + timeoutMs
     while (true) {
       const count = Number(await this.executeLocatorQuery(tab, params, "count"))
@@ -3374,9 +3390,16 @@ export class BrowserRuntime {
     const urls = Array.isArray(params.urls) ? params.urls.filter((value): value is string => typeof value === "string").slice(0, 10) : []
     if (!urls.length) throw browserError("invalid_browser_request")
     const contentType = params.contentType === "html" || params.contentType === "domSnapshot" ? params.contentType : "text"
-    const timeoutMs = params.timeoutMs === undefined ? 10_000 : boundedNumber(params.timeoutMs, 1, 30_000)
+    const timeoutMs = params.timeoutMs === undefined ? 10_000 : boundedNumber(params.timeoutMs, 1, BROWSER_HANDLER_WAIT_CAP_MS)
     const results: Array<{ url: string; title: string | null; content: string | null }> = []
+    // ≤10 个 URL 各自 navigate+waitForLoad 串行,无总预算时最坏分钟级,
+    // 必被 sidecar transport 先杀(#638);超预算的剩余 URL 按失败形态返回。
+    const budgetDeadline = Date.now() + 40_000
     for (const url of urls) {
+      if (results.length && Date.now() >= budgetDeadline) {
+        results.push({ url: stripUrl(url), title: null, content: null })
+        continue
+      }
       const tabId = `background:${randomUUID()}`
       try {
         this.ensureTab(tabId, context, { ownerThreadId: context.threadId })
@@ -4443,8 +4466,11 @@ function stableBrowserErrorCode(error: unknown): BrowserErrorCode {
 }
 
 const BROWSER_ERROR_CODES = new Set<BrowserErrorCode>([
-  "incompatible_protocol", "browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "unsupported", "executed_unknown", "browser_internal_error",
+  "incompatible_protocol", "browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "unsupported", "executed_unknown", "browser_internal_error",
   "strict_locator_violation", "actionability_failed", "dialog_blocking", "user_takeover_required",
+  // desktop 内确凿抛出但此前漏列,经 stableBrowserErrorCode 塌缩成 browser_internal_error(#602 review 发现)
+  "stale_snapshot_cursor", "tab_not_found", "user_action_required", "element_not_visible", "element_disabled", "element_occluded", "element_readonly",
+  "navigation_timeout",
 ])
 
 function safeOrigin(value: string): string | undefined {
@@ -4485,7 +4511,7 @@ export async function invokeWebMcpTool(tab: BrowserTab, params: Record<string, u
   const encodedInput = JSON.stringify(params.input ?? null)
   if (encodedInput.length > 256_000) throw browserError("invalid_browser_request")
   const timeoutValue = params.timeoutMs ?? params.timeout_ms
-  const timeoutMs = timeoutValue === undefined ? 10_000 : boundedNumber(timeoutValue, 1, 30_000)
+  const timeoutMs = timeoutValue === undefined ? 10_000 : boundedNumber(timeoutValue, 1, BROWSER_HANDLER_WAIT_CAP_MS)
   const generation = tab.generation
   const script = `(() => {
     const modelContext = document.modelContext ?? window.__lumeWebMcpModelContext ?? navigator.modelContext;

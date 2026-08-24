@@ -15,6 +15,8 @@ export type BrowserInputNaturalnessOptions = {
   from?: BrowserCdpPoint
   speed?: "type" | "fill"
   sleep?: (milliseconds: number) => Promise<void>
+  /** 拟真逐字输入的字符上限,超出部分一次性 insertText;默认 240(#638 打字时限) */
+  maxNaturalChars?: number
 }
 
 type KeyDefinition = {
@@ -195,12 +197,18 @@ export async function dispatchBrowserText(
   const fast = options.speed === "fill"
   let minimum = fast ? 16 : 48
   let maximum = fast ? 52 : 145
-  if ([...text].length > 64) {
+  const characters = [...text]
+  if (characters.length > 64) {
     minimum *= 0.6
     maximum *= 0.6
   }
+  // 拟真逐字输入只保留前 maxNaturalChars 个字符:长文本全程逐字会以
+  // ~60-90ms/字线性膨胀至分钟级,被 sidecar transport 超时误报(#638);
+  // 剩余部分一次性 insertText 补完,拟真观感(防检测看行为模式)不受损。
+  const maxNaturalChars = options.maxNaturalChars ?? 240
+  const naturalCharacters = characters.slice(0, maxNaturalChars)
   let charactersUntilPause = 6 + Math.floor(rand(0, 9))
-  for (const character of text) {
+  for (const character of naturalCharacters) {
     const definition = keyDefinition(character, false)
     const typedText = definition.text
     await sender.sendCommand("Input.dispatchKeyEvent", {
@@ -223,6 +231,9 @@ export async function dispatchBrowserText(
       await sleep(fast ? rand(90, 220) : rand(180, 420))
       charactersUntilPause = 6 + Math.floor(rand(0, 9))
     }
+  }
+  if (characters.length > naturalCharacters.length) {
+    await sender.sendCommand("Input.insertText", { text: characters.slice(naturalCharacters.length).join("") })
   }
 }
 
