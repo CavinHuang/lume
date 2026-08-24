@@ -3,6 +3,9 @@ import { splitImMessage } from "../outbound-segment";
 
 const log = createLogger("im-dingtalk-api");
 
+/** 出站请求显式超时(#596)：不依赖 fetch 默认(可达分钟级),失败尽快暴露。 */
+const SEND_TIMEOUT_MS = 15_000;
+
 export interface SendDingtalkTextInput {
   text: string;
   /** 入站 event 的 sessionWebhook(72h 临时 webhook,免 access_token);缺失则无法回复。 */
@@ -31,6 +34,7 @@ export async function sendDingtalkText(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ msgtype: "text", text: { content: segment } }),
+        signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
       });
       if (!res.ok) {
         const body = await res.text().catch(() => "");

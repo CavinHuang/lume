@@ -85,7 +85,7 @@ import {
   PLUGIN_MCP_WORKSPACE_SLUG,
 } from "../plugins/plugin-mcp-bridge.js";
 import { clearRuntimeToolDescriptors } from "../tools/tool-descriptor-session";
-import { clearRuntimeFileAccessLedger } from "../tools/file-access-ledger";
+import { getThreadFileStateCache } from "../tools/thread-file-state-cache";
 import {
   createCodingRunTracker,
   type CodingVerificationReport,
@@ -1148,7 +1148,13 @@ async function createRuntimeCoreSessionImpl(
       await Promise.all([
         subagentRuns.length > 0
           ? (async () => {
+              // 总上限:长期不响应的审批/僵尸委派不得无限期挂住父 run。
+              // 超时后放行本轮收割,未完成 runs 保持 running(完成后 announce 照发,
+              // 下一轮 guard 会再次尝试收割)。
+              const waitStartedAt = Date.now();
+              const BACKGROUND_WAIT_TOTAL_LIMIT_MS = 30 * 60 * 1000;
               while (
+                Date.now() - waitStartedAt < BACKGROUND_WAIT_TOTAL_LIMIT_MS &&
                 subagentRuns.some(
                   (run) => registry.get(run.runId)?.status === "running",
                 )
@@ -1256,6 +1262,7 @@ async function createRuntimeCoreSessionImpl(
   });
 
   const agentOptions: AgentOptions = {
+    subagentRunId: input.subagentRunId,
     provider: createRoutingPiAiProvider(providerRoutes),
     model: input.resolvedModel?.id ?? input.resolvedModelId,
     contextWindow: input.resolvedModel?.contextWindow ?? 32_000,
@@ -1323,6 +1330,11 @@ async function createRuntimeCoreSessionImpl(
     }),
     persistSession: true,
     enableFileCheckpointing,
+    // 线程级共享读记录（#569）：每条消息新建的 Agent 都注入同一 cache，
+    // stale-read 防护跨消息存活。分工：cache=mtime/size/content 新鲜度；
+    // "须完整读"门控=file-access-ledger（线程删除时才清理，见
+    // thread-file-state-cache.ts 注释）。
+    fileStateCache: getThreadFileStateCache(input.lumeSessionId),
   };
 
   // Live 事件桥(#285):SDK 工具执行期直通的进度事件先落在本桥,runner 侧
@@ -1337,7 +1349,6 @@ async function createRuntimeCoreSessionImpl(
   pendingCleanup.push(() => agent.close());
   pendingCleanup.push(() => {
     clearRuntimeToolDescriptors(input.lumeSessionId);
-    clearRuntimeFileAccessLedger(input.lumeSessionId);
   });
   await agent.getInitializationResult();
   const resolvedTools = getResolvedAgentTools(agent, toolset.tools);
@@ -1379,7 +1390,8 @@ async function createRuntimeCoreSessionImpl(
         });
       }
       clearRuntimeToolDescriptors(input.lumeSessionId);
-      clearRuntimeFileAccessLedger(input.lumeSessionId);
+      // file-access-ledger 与线程级 fileStateCache 不随 run 清理（#569）：
+      // 跨消息 stale 防护依赖记录存活；清理挂点=线程删除。
     },
   };
 

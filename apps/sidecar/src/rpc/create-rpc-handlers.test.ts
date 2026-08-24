@@ -12,6 +12,30 @@ import {
 } from "@lume/shared";
 import { createRpcHandlers } from "./create-rpc-handlers";
 
+describe("createRpcHandlers browser settings gate (#608)", () => {
+  test("browser:settings 关断时向 broker 传递 browserEnabled/agentBrowserUseEnabled 门控", async () => {
+    const pluginStates: Array<Record<string, unknown>> = [];
+    const handlers = createRpcHandlers({
+      writeNotification: () => {},
+      browserBroker: {
+        setPluginState: (state: Record<string, unknown>) => pluginStates.push(state),
+      } as unknown as Parameters<typeof createRpcHandlers>["0"]["browserBroker"],
+    });
+
+    await handlers["browser:settings"]?.({ extensionBackendEnabled: true, browserEnabled: false, browserUseEnabled: false });
+
+    const last = pluginStates.at(-1);
+    expect(last).toBeDefined();
+    // 设置关闭必须压过插件可用性(browserEnabled 是 AND 门)
+    expect(last!.browserEnabled).toBe(false);
+    expect(last!.agentBrowserUseEnabled).toBe(false);
+
+    // 缺省(undefined)视为启用;browserEnabled 另受插件可用性 AND 门影响,不在此断言
+    await handlers["browser:settings"]?.({});
+    expect(pluginStates.at(-1)).toMatchObject({ agentBrowserUseEnabled: true });
+  });
+});
+
 describe("createRpcHandlers", () => {
   test("rpc:list-methods 应包含拆分后的关键 method", async () => {
     const handlers = createRpcHandlers({

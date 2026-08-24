@@ -84,6 +84,12 @@ function requestBrowserMain(request: import("@lume/shared").BrowserActionRequest
     const timeout = setTimeout(() => {
       pendingBrowserMainRequests.delete(request.requestId);
       // 请求已送达 desktop，变更型动作可能已执行——不能与"未执行"塌缩为同一错误码
+      // 确认类等待超时=用户未在时限内裁决,动作必然未执行、desktop 弹窗仍开着,
+      // 报 executed_unknown 是双重误导(#606 review)
+      if (request.method === "policy:confirm" || request.method === "tab_browser_auth_request") {
+        reject(Object.assign(new Error("confirmation timed out"), { code: "confirmation_timeout" }));
+        return;
+      }
       reject(Object.assign(new Error("browser request timed out"), { code: "executed_unknown" }));
     }, timeoutMs);
     pendingBrowserMainRequests.set(request.requestId, { resolve, reject, timeout });
@@ -409,9 +415,15 @@ async function boot(): Promise<void> {
       error: { message: error instanceof Error ? error.message : String(error) }
     });
   });
-  if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", false)) {
+  // 完成事件写入器恒注册：懒启动路径（run-now/create 等）同样依赖它把
+  // automation:run-completed 推给前端，不能随 autostart 门控一起被跳过（#647 P0-2）。
+  {
     const { setAutomationNotificationWriter } = await import("./services/automation/automation-runner-service");
     setAutomationNotificationWriter(writeNotification);
+  }
+  // 默认自启：否则 sidecar 重启后既有 enabled 任务全部静默停摆，
+  // 只能靠次日日程生成或用户恰好编辑任务才被拉起（#647 P0-1）。
+  if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", true)) {
     void startAutomationRunner().catch((error) => {
       writeLogRecord({
         level: "error",

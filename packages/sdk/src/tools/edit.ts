@@ -16,7 +16,7 @@ const assertWriteAllowed = (context: ToolContext) => (resolvedPath: string): str
 
 export const FileEditTool = defineTool({
   name: 'Edit',
-  description: 'Perform exact string replacements in files. The old_string must match exactly (including whitespace and indentation). Use replace_all to change every occurrence.',
+  description: 'Perform exact string replacements in files. The file must be read with Read before the first edit. The old_string must match exactly (including whitespace and indentation). Use replace_all to change every occurrence.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -78,11 +78,18 @@ export const FileEditTool = defineTool({
       // 部分视图完全裸奔；补上 mtime/size 底线后两种视图都有硬校验（#333）。
       const existing = await stat(filePath)
       const previousRead = context.fileStateCache?.get(filePath)
-      const changedSinceRead = previousRead && (
+      // Read-before-edit 强制（#569）：无读取记录的文件禁止盲改。
+      if (!previousRead) {
+        return {
+          data: `Error: File has not been read yet: ${filePath}. Read it first, then retry this Edit.`,
+          is_error: true,
+          _meta: { file: { path: filePath, conflict: 'not_read', retryable: true } },
+        }
+      }
+      const changedSinceRead =
         previousRead.timestamp !== existing.mtimeMs
         || (previousRead.size !== undefined && previousRead.size !== existing.size)
         || (!previousRead.isPartialView && previousRead.content !== content)
-      )
       if (changedSinceRead) {
         return {
           data: `Error: File has been modified since it was read: ${filePath}. The earlier edit may have succeeded or another process changed it. Read the file again before attempting another Edit.`,
@@ -93,7 +100,21 @@ export const FileEditTool = defineTool({
 
       const matches = findMatchingRanges(content, old_string)
       if (matches.length === 0) {
-        return { data: `Error: old_string not found in ${filePath}. Make sure it matches exactly including whitespace.`, is_error: true }
+        // 连败升级文案（#569）：同文件连续失配时把"重读再抄原文"说死，
+        // 大段替换则直接指路 Write。
+        const attempts = (context.editFailureCounts?.get(filePath) ?? 0) + 1
+        context.editFailureCounts?.set(filePath, attempts)
+        let message = attempts >= 2
+          ? `Error: old_string not found in ${filePath} (${attempts} consecutive failures). Stop guessing: Read the file again and copy old_string exactly from its current content.`
+          : `Error: old_string not found in ${filePath}. Make sure it matches exactly including whitespace, or Read the file again to refresh your view.`
+        if (old_string.split('\n').length >= 5) {
+          message += ' For replacing a large block, prefer the Write tool with the complete file content.'
+        }
+        return {
+          data: message,
+          is_error: true,
+          _meta: { file: { path: filePath, conflict: 'not_found', attempts, retryable: true } },
+        }
       }
 
       if (!replace_all) {
@@ -109,12 +130,17 @@ export const FileEditTool = defineTool({
         const lineChanges = countLineChanges(decoded.content, content)
         await writeFileAtomic(filePath, encodeTextFile(content, decoded), assertWriteAllowed(context))
         await updateFileState(context, filePath, content)
+        // 成功即清零连败计数，"consecutive" 名副其实。
+        context.editFailureCounts?.delete(filePath)
         return {
           data: {
             filePath,
             replacements: 1,
             replaceAll: false,
-            message: `File edited: ${filePath}`,
+            // 模型可见文本注明归一命中：_meta 会被 sanitize 剥除（#569）。
+            message: match.normalized
+              ? `File edited: ${filePath} (matched after normalizing curly quotes to straight quotes)`
+              : `File edited: ${filePath}`,
           },
           _meta: {
             file: {
@@ -134,12 +160,17 @@ export const FileEditTool = defineTool({
         const lineChanges = countLineChanges(decoded.content, content)
         await writeFileAtomic(filePath, encodeTextFile(content, decoded), assertWriteAllowed(context))
         await updateFileState(context, filePath, content)
+        // 成功即清零连败计数，"consecutive" 名副其实。
+        context.editFailureCounts?.delete(filePath)
+        const normalizedUsed = matches.some((match) => match.normalized)
         return {
           data: {
             filePath,
             replacements: count,
             replaceAll: true,
-            message: `File edited: ${filePath}`,
+            message: normalizedUsed
+              ? `File edited: ${filePath} (matched after normalizing curly quotes to straight quotes)`
+              : `File edited: ${filePath}`,
           },
           _meta: {
             file: {
@@ -148,7 +179,7 @@ export const FileEditTool = defineTool({
               overwritten: true,
               checkpointable: true,
               checkpointId: context.currentUserMessageId,
-              ...(matches.some((match) => match.normalized) ? { normalizedQuotes: true } : {}),
+              ...(normalizedUsed ? { normalizedQuotes: true } : {}),
               ...lineChanges,
             },
           },

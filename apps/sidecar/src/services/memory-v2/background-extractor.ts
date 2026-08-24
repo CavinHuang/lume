@@ -78,6 +78,30 @@ interface BackgroundExtractionResult {
   changedItems: number;
 }
 
+// 全局并发上限:恢复旧 coordinator permit 语义。per-thread 的 queues 只保证同线程串行,
+// 跨线程不互斥——多窗口/IM 批量会话同 turn 结束时若无此闸,隐藏 LLM 子代理会无上界拉起。
+const MAX_CONCURRENT_MEMORY_EXTRACTIONS = 4;
+let activeExtractions = 0;
+const extractionWaiters: Array<() => void> = [];
+
+async function acquireExtractionPermit(): Promise<void> {
+  if (activeExtractions < MAX_CONCURRENT_MEMORY_EXTRACTIONS) {
+    activeExtractions += 1;
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    extractionWaiters.push(() => {
+      activeExtractions += 1;
+      resolve();
+    });
+  });
+}
+
+function releaseExtractionPermit(): void {
+  activeExtractions -= 1;
+  extractionWaiters.shift()?.();
+}
+
 export function enqueueBackgroundMemoryExtraction(input: BackgroundMemoryExtractionRequest): void {
   if (!getMemoryRuntimeConfig().backgroundExtraction) return;
   if (input.threadType === "subagent" || input.chatType === "group" || input.chatType === "channel") return;
@@ -93,6 +117,7 @@ export function enqueueBackgroundMemoryExtraction(input: BackgroundMemoryExtract
 }
 
 async function runQueued(input: BackgroundMemoryExtractionRequest): Promise<void> {
+  await acquireExtractionPermit();
   try {
     const job = memoryJobService.start<BackgroundExtractionResult, BackgroundExtractionProgress>({
       kind: "turn_extract",
@@ -111,6 +136,7 @@ async function runQueued(input: BackgroundMemoryExtractionRequest): Promise<void
     });
     await memoryJobService.waitForTerminal(input.workspaceSlug, job.jobId);
   } finally {
+    releaseExtractionPermit();
     const state = queues.get(input.threadId);
     if (!state) return;
     const next = state.pending.shift();

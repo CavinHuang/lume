@@ -196,6 +196,23 @@ registerToolMetadata({
   allowedInPlanMode: true
 });
 
+// 显式注册委派工具元数据:不依赖 inferToolMetadata 名称推断的巧合默认值
+registerToolMetadata({
+  name: "Delegate",
+  category: "control",
+  riskLevel: "medium",
+  description: "委派独立子会话执行任务",
+  allowedInPlanMode: true
+});
+
+registerToolMetadata({
+  name: "WaitForDelegations",
+  category: "read",
+  riskLevel: "low",
+  description: "等待后台委派的子会话完成并收割结果",
+  allowedInPlanMode: true
+});
+
 registerToolMetadata({
   name: "memory.search",
   category: "read",
