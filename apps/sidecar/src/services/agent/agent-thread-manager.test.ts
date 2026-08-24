@@ -34,6 +34,9 @@ import {
 import { getAgentMessageVersionStorePath, readAgentMessageVersionStore } from "./agent-message-version-store";
 import { resetAgentSubmissionStoreForTests } from "./agent-submission-store";
 import { resetPlanningTodoStoreForTests } from "../planning/planning-todo-store";
+import { runtimePermissionSessionStore } from "../agent-runtime/permissions/permission-session";
+import { markToolFingerprintAllowed, markToolPermissionSessionBypassed } from "../agent-runtime/interruption/tool-permission-session";
+import { getPermissionDeniedSummary, recordPermissionDenial } from "../agent-runtime/permissions/permission-denials";
 
 describe("agent-thread-manager advanced ops", () => {
   let previousConfigDir: string | undefined;
@@ -359,6 +362,28 @@ describe("agent-thread-manager advanced ops", () => {
     deleteAgentThread(session.id);
 
     expect(existsSync(runtimeCoreSessionDir)).toBeFalse();
+  });
+
+  test("deleteAgentThread 应回收审批会话状态（#519：grants/bypassed/denials 随线程删除清理）", () => {
+    const session = createAgentThread("delete approval state");
+
+    markToolPermissionSessionBypassed(session.id);
+    markToolFingerprintAllowed(session.id, "fp-delete-approval");
+    recordPermissionDenial({
+      threadId: session.id,
+      toolName: "Bash",
+      rawInput: { command: "rm -rf /" },
+      reasonCode: "denied_by_user"
+    });
+    expect(runtimePermissionSessionStore.isBypassed(session.id)).toBeTrue();
+    expect(runtimePermissionSessionStore.isFingerprintGranted(session.id, "fp-delete-approval")).toBeTrue();
+    expect(getPermissionDeniedSummary(session.id)).toContain("已拒绝的工具操作");
+
+    deleteAgentThread(session.id);
+
+    expect(runtimePermissionSessionStore.isBypassed(session.id)).toBeFalse();
+    expect(runtimePermissionSessionStore.isFingerprintGranted(session.id, "fp-delete-approval")).toBeFalse();
+    expect(getPermissionDeniedSummary(session.id)).toBe("");
   });
 
   test("truncateAgentMessagesFrom 应直接重建裁剪后的 transcript", () => {
