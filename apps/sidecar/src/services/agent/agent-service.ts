@@ -71,6 +71,7 @@ import { AgentRuntimeKernel, AgentRuntimeKernelQueueConflictError, type AgentRun
 import { runGuidanceStore } from "../agent-runtime/guidance/run-guidance-store";
 import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../agent-runtime/runtime-core/session-store";
 import { isAgentRuntimeSessionActive } from "../agent-runtime/runner/attempt";
+import type { AgentRuntimeRunResult } from "../agent-runtime/runtime-core/types";
 import { createCodingTurnRecord } from "../agent-runtime/runtime-core/coding-turn-store";
 import { createFileBackedLumeRunStateStore } from "../agent-runtime/runtime-core/run-state-store";
 import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
@@ -129,7 +130,22 @@ const STALE_RUN_PROGRESS_HEAD_COUNT = 6;
 const STALE_RUN_PROGRESS_TAIL_COUNT = 10;
 const VISIBLE_HISTORY_CONTINUATION_TAIL_COUNT = 8;
 
-const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter>({
+let cachedAgentRuntimeKernel: AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter> | null = null;
+
+/**
+ * #297 子项②：kernel 惰性单例。模块导入不再触发实例化（构造器虽纯，
+ * 顶层 new 会把本模块变成导入即带副作用的测试串扰源，rpc 层被迫整体
+ * mock.module）；首次使用时才装配，回调闭包语义与共享实例语义不变。
+ */
+function getAgentRuntimeKernel(): AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter> {
+  if (!cachedAgentRuntimeKernel) {
+    cachedAgentRuntimeKernel = createAgentRuntimeKernel();
+  }
+  return cachedAgentRuntimeKernel;
+}
+
+function createAgentRuntimeKernel(): AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter> {
+  return new AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter>({
   validateQueued: validateQueuedAgentDispatch,
   isThreadOccupied: (threadId) => directRunThreads.has(threadId),
   execute: async (dispatch) => {
@@ -164,7 +180,8 @@ const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmi
       data: { queuedMessageId: dispatch.id, reason: error instanceof Error ? error.message : String(error) }
     });
   }
-});
+  });
+}
 
 async function validateQueuedAgentDispatch(
   dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInput, AgentStreamEmitter>
@@ -784,11 +801,11 @@ export async function dispatchAgentRun(
   emit: AgentStreamEmitter,
   options?: { priority?: "user" | "background"; appendUserMessage?: boolean }
 ): Promise<AgentRuntimeKernelDispatchResult> {
-  const result = agentRuntimeKernel.dispatch(input, emit, {
+  const result = getAgentRuntimeKernel().dispatch(input, emit, {
     ...(options?.priority ? { priority: options.priority } : {}),
     ...(options?.appendUserMessage === false ? { executeHints: { appendUserMessage: false } } : {})
   });
-  await agentRuntimeKernel.waitForThreadIdle(input.threadId);
+  await getAgentRuntimeKernel().waitForThreadIdle(input.threadId);
   return result;
 }
 
@@ -806,22 +823,229 @@ export async function sendAgentMessage(
     await runSendAgentMessage(input, emit, options);
   } finally {
     directRunThreads.delete(threadId);
-    agentRuntimeKernel.notifyThreadReleased(threadId);
+    getAgentRuntimeKernel().notifyThreadReleased(threadId);
   }
 }
 
-async function runSendAgentMessage(
-  input: AgentSendInput,
-  emit: AgentStreamEmitter,
-  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal } = {}
-): Promise<void> {
-  const { threadId, userMessage } = input;
-  const completeIfAborted = () => {
-    if (!options.abortSignal?.aborted) return false;
+/** #297 子项②:发送收尾段——transcript 落盘/assistant 版本/coding turn 记录/终态标记/auto title。 */
+async function finalizeAgentSendStage({
+  runtimeResult,
+  runtimeCompleted,
+  prepared,
+  persistedSdkMessages,
+  fileReferenceBinding,
+  input,
+  threadId,
+  userMessage,
+  emit
+}: {
+  runtimeResult: AgentRuntimeRunResult;
+  runtimeCompleted: boolean;
+  prepared: PreparedAgentSend;
+  persistedSdkMessages: SDKMessage[];
+  fileReferenceBinding: ReturnType<typeof createFileReferenceBinding>;
+  input: AgentSendInput;
+  threadId: string;
+  userMessage: string;
+  emit: AgentStreamEmitter;
+}): Promise<void> {
+  const {
+    resolvedChannelId,
+    resolvedModelId,
+    activeTurnId,
+    activeTurnStartedAt,
+    shouldTryAutoTitle,
+    sendStartTime,
+    correlation,
+    effectiveLumeConfig,
+    boundModel,
+    sessionStateManager,
+    runtimeStatusManager
+  } = prepared;
+  let visibleAssistantMessageId: string | undefined;
+  const shouldPersistRunTranscript = runtimeResult.status === "completed" || runtimeResult.status === "turn_limited";
+  if (shouldPersistRunTranscript && persistedSdkMessages.length > 0) {
+    appendAgentThreadSDKMessages(threadId, persistedSdkMessages);
+  }
+  if ((runtimeResult.status === "completed" || runtimeResult.status === "turn_limited") && activeTurnId) {
+    const latestAssistantMessage = projectAssistantMessageFromSdkMessages({
+      threadId,
+      sdkMessages: persistedSdkMessages,
+      modelId: resolvedModelId
+    }) ?? resolveLatestAssistantTranscriptMessage(threadId);
+    if (latestAssistantMessage) {
+      const visibleAssistantMessage = createAssistantMessageVersion({
+        sessionId: threadId,
+        turnId: activeTurnId,
+        message: { ...latestAssistantMessage, fileReferenceBinding, fileReferenceProtocolVersion: FILE_REFERENCE_PROTOCOL_VERSION }
+      });
+      if (visibleAssistantMessage) {
+        visibleAssistantMessageId = visibleAssistantMessage.id;
+        if (runtimeResult.codingReport?.runId) {
+          const runStore = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
+          const codingRun = await runStore.get(runtimeResult.codingReport.runId);
+          if (codingRun?.codingReport) {
+            await runStore.update(runtimeResult.codingReport.runId, {
+              codingReport: {
+                ...codingRun.codingReport,
+                assistantMessageId: visibleAssistantMessage.id
+              }
+            });
+          }
+        }
+        emit.onMessageAppended?.({
+          threadId,
+          message: visibleAssistantMessage,
+          traceId: input.traceContext?.traceId,
+          submissionId: input.traceContext?.submissionId
+        });
+        writeLogRecord({
+          level: "info",
+          kind: "trace",
+          context: "agent.persistence",
+          event: "assistant.persisted",
+          message: "assistant message persisted",
+          status: "ok",
+          ...correlation,
+          messageId: visibleAssistantMessage.id,
+          data: {
+            ...buildAgentContentLogData("assistant", visibleAssistantMessage.content),
+            modelId: resolvedModelId
+          }
+        });
+        if (input.traceContext?.traceId) {
+          emitDiagnosticContent({
+            captureType: "assistant_message",
+            threadId,
+            traceId: input.traceContext.traceId,
+            messageId: visibleAssistantMessage.id,
+            content: visibleAssistantMessage.content
+          });
+        }
+      }
+    }
+  }
+  if (
+    runtimeResult.codingReport?.turnId
+    && runtimeResult.codingReport.userMessageId
+    && (
+      runtimeResult.codingReport.workspaceChanged
+      || runtimeResult.codingReport.pendingBackground
+      || (runtimeResult.codingReport.gitActions?.length ?? 0) > 0
+    )
+  ) {
+    const report = runtimeResult.codingReport;
+    const turnId = report.turnId!;
+    await createCodingTurnRecord(getRuntimeCoreSessionDir(threadId), {
+      turnId,
+      threadId,
+      userMessageId: report.userMessageId!,
+      ...(visibleAssistantMessageId ? { assistantMessageId: visibleAssistantMessageId } : {}),
+      runIds: report.runId ? [report.runId] : [],
+      startedAt: activeTurnStartedAt ?? new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      checkpointId: report.checkpointId,
+      baselineCommit: report.baselineCommit,
+      changedFiles: report.fileChanges ?? report.changeSet?.files ?? report.changedFiles.map((path: string) => ({ path })),
+      verificationStatus: toCodingTurnVerificationStatus(report),
+      verificationRepairAttempts: report.verificationRepairAttempts ?? 0,
+      approvalRequestCount: report.approvalRequestCount ?? 0,
+      rewindState: report.rewindState ?? "unavailable",
+      phase: report.phase,
+      verificationRecords: report.verificationRecords,
+      gitActions: report.gitActions,
+      review: report.review,
+      terminationReason: report.terminationReason
+    });
+  }
+  if (runtimeCompleted && runtimeResult.status === "completed") {
+    log.info("[Agent 会话] 运行完成", {
+      threadId: threadId.slice(0, 8),
+      durationMs: Date.now() - sendStartTime,
+      persistedSdkMessageCount: persistedSdkMessages.length,
+      visibleAssistantTurnCreated: activeTurnId !== null,
+      autoTitlePending: shouldTryAutoTitle
+    });
+    writeLogRecord({
+      level: "info",
+      kind: "trace",
+      context: "agent.runtime",
+      event: "agent.execution.completed",
+      message: "agent execution completed",
+      status: "ok",
+      durationMs: Date.now() - sendStartTime,
+      ...correlation,
+      messageId: visibleAssistantMessageId,
+      data: { persistedSdkMessageCount: persistedSdkMessages.length }
+    });
+    runtimeStatusManager.markCompleted(threadId);
     emit.onComplete();
-    return true;
-  };
-  if (completeIfAborted()) return;
+  }
+  if (runtimeResult.status === "turn_limited") {
+    const repeatGuardStop = runtimeResult.terminationReason === "repeat_guard";
+    log.info(repeatGuardStop
+      ? "[Agent 会话] 运行因重复操作保护机制停止，进度已保留"
+      : "[Agent 会话] 运行达到最大回合数，等待继续执行", {
+      threadId: threadId.slice(0, 8),
+      persistedSdkMessageCount: persistedSdkMessages.length
+    });
+    runtimeStatusManager.markCompleted(threadId);
+    emit.onComplete({ reason: repeatGuardStop ? "repeat_guard" : "max_turns" });
+  }
+  if (runtimeResult.status === "aborted") {
+    log.warn("[Agent 会话] 运行中止", {
+      threadId: threadId.slice(0, 8),
+      durationMs: Date.now() - sendStartTime,
+      persistedSdkMessageCount: persistedSdkMessages.length
+    });
+  }
+  if (runtimeResult.status === "errored") {
+    log.error("[Agent 会话] 运行失败", {
+      threadId: threadId.slice(0, 8),
+      durationMs: Date.now() - sendStartTime,
+      persistedSdkMessageCount: persistedSdkMessages.length,
+      errorMessage: runtimeResult.errorMessage
+    });
+  }
+  if (runtimeResult.status === "completed" && shouldTryAutoTitle) {
+    const titleModelRef = effectiveLumeConfig.models?.title?.defaultModelRef;
+    const job = createAutoTitleJob({
+      threadId,
+      fallbackUserMessage: userMessage,
+      // 未配置专用 title 模型时回退到当前会话的渠道/模型，确保 LLM 标题生成始终可触发
+      generateTitle: (sourceText) => generateAgentTitle(
+        titleModelRef
+          ? { sourceText, modelRef: titleModelRef }
+          : { sourceText, channelId: resolvedChannelId, modelId: boundModel?.modelId ?? resolvedModelId }
+      ),
+      onTitleUpdated: (title) => {
+        emit.onTitleUpdated(title);
+      }
+    });
+    if (job) {
+      getServiceRuntime().schedule(job);
+    }
+  }
+}
+
+/** #297 子项②:sendAgentMessage 准备段——归一化/能力投影/模型选择/元数据合并/用户消息落盘/前置校验。 */
+type PrepareAgentSendOutcome = PreparedAgentSend | null;
+
+async function prepareAgentSendStage({
+  input,
+  emit,
+  options,
+  threadId,
+  userMessage,
+  completeIfAborted
+}: {
+  input: AgentSendInput;
+  emit: AgentStreamEmitter;
+  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal };
+  threadId: string;
+  userMessage: string;
+  completeIfAborted: () => boolean;
+}): Promise<PrepareAgentSendOutcome> {
   const messageHistoryBeforeSend = getAgentThreadMessages(threadId);
   const assistantTurnCountBeforeSend = messageHistoryBeforeSend.filter((item) => item.role === "assistant").length;
   const threadMeta = getAgentThreadMeta(threadId);
@@ -834,7 +1058,7 @@ async function runSendAgentMessage(
   registerPlanningTodoReferences(input.trustedPlanningClientSubmissionId, normalizedUserMessage.parts);
   const isManualCompactCommand = input.messageMetadata?.manualCommand === "compact";
   let modelFacingUserMessage = await resolveModelFacingUserMessage(threadId, normalizedUserMessage.modelMessage);
-  if (completeIfAborted()) return;
+  if (completeIfAborted()) return null;
   if (!isManualCompactCommand && normalizedUserMessage.modelMessage.trim() === "/compact") {
     modelFacingUserMessage = `The user entered the literal text /compact without selecting the compact action. Respond to it as ordinary text.`;
   }
@@ -844,7 +1068,7 @@ async function runSendAgentMessage(
     references: normalizedUserMessage.capabilityReferences,
     modelMessage: normalizedUserMessage.modelMessage,
   });
-  if (completeIfAborted()) return;
+  if (completeIfAborted()) return null;
   const expectedFingerprints = input.messageMetadata?.capabilityFingerprints;
   if (
     Array.isArray(expectedFingerprints)
@@ -900,7 +1124,6 @@ async function runSendAgentMessage(
   void options.allowResumeRetry;
   let activeTurnId: string | null = null;
   let activeTurnStartedAt: string | null = null;
-  const persistedSdkMessages: SDKMessage[] = [];
   let userSdkMessage: SDKMessage | null = null;
 
   const browserContinuity = await getActiveBrowserBroker()?.getThreadAgentContinuity(threadId).catch(() => undefined);
@@ -1051,8 +1274,6 @@ async function runSendAgentMessage(
     });
   }
   runtimeStatusManager.markStreaming(threadId);
-  let runtimeCompleted = false;
-  let visibleAssistantMessageId: string | undefined;
 
   if (!resolvedChannelId || !resolvedModelId) {
     const msg = "Agent Runtime 缺少 channelId/modelId。";
@@ -1073,8 +1294,101 @@ async function runSendAgentMessage(
       ...correlation,
       data: { channelId: resolvedChannelId, modelId: resolvedModelId }
     });
-    return;
+    return null;
   }
+
+    return {
+      threadMeta,
+      effectiveWorkspaceId,
+      effectiveWorkspace,
+      normalizedUserMessage,
+      modelFacingUserMessage,
+      isManualCompactCommand,
+      effectiveLumeConfig,
+      boundModel,
+      resolvedChannelId,
+      resolvedModelId,
+      canonicalModelRef,
+      shouldTryAutoTitle,
+      runtimeMessageMetadata,
+      activeTurnId,
+      activeTurnStartedAt,
+      sendStartTime,
+      correlation,
+      sessionStateManager,
+      runtimeStatusManager
+    };
+}
+
+interface PreparedAgentSend {
+  threadMeta: ReturnType<typeof getAgentThreadMeta>;
+  effectiveWorkspaceId?: string;
+  effectiveWorkspace?: ReturnType<typeof getAgentWorkspace>;
+  normalizedUserMessage: ReturnType<typeof normalizeAgentUserMessage>;
+  modelFacingUserMessage: string;
+  isManualCompactCommand: boolean;
+  effectiveLumeConfig: ReturnType<typeof getEffectiveLumeConfig>;
+  boundModel: NonNullable<ReturnType<typeof resolveChannelModelBinding>> | null | undefined;
+  resolvedChannelId: string;
+  resolvedModelId: string;
+  canonicalModelRef?: string;
+  shouldTryAutoTitle: boolean;
+  runtimeMessageMetadata: Record<string, unknown>;
+  activeTurnId: string | null;
+  activeTurnStartedAt: string | null;
+  sendStartTime: number;
+  correlation: {
+    traceId?: string;
+    submissionId?: string;
+    threadId: string;
+    origin?: string;
+  };
+  sessionStateManager: ReturnType<typeof getSessionStateManager>;
+  runtimeStatusManager: ReturnType<typeof getAgentRuntimeStatusManager>;
+}
+
+async function runSendAgentMessage(
+  input: AgentSendInput,
+  emit: AgentStreamEmitter,
+  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal } = {}
+): Promise<void> {
+  const { threadId, userMessage } = input;
+  const completeIfAborted = () => {
+    if (!options.abortSignal?.aborted) return false;
+    emit.onComplete();
+    return true;
+  };
+  if (completeIfAborted()) return;
+  const prepared = await prepareAgentSendStage({
+    input,
+    emit,
+    options,
+    threadId,
+    userMessage,
+    completeIfAborted
+  });
+  if (prepared === null) return;
+  const {
+    resolvedChannelId,
+    resolvedModelId,
+    canonicalModelRef,
+    modelFacingUserMessage,
+    runtimeMessageMetadata,
+    activeTurnId,
+    activeTurnStartedAt,
+    shouldTryAutoTitle,
+    sendStartTime,
+    correlation,
+    effectiveLumeConfig,
+    boundModel,
+    effectiveWorkspaceId,
+    sessionStateManager,
+    runtimeStatusManager
+  } = prepared;
+  const persistedSdkMessages: SDKMessage[] = [];
+  let runtimeCompleted = false;
+  let visibleAssistantMessageId: string | undefined;
+
   const { runAgentRuntime } = await import("../agent-runtime/runner/attempt");
   if (completeIfAborted()) return;
   const fileReferenceBinding = createFileReferenceBinding(threadId);
@@ -1170,170 +1484,17 @@ async function runSendAgentMessage(
       emit.onToolPermissionRequest(request);
     }
   });
-  const shouldPersistRunTranscript = runtimeResult.status === "completed" || runtimeResult.status === "turn_limited";
-  if (shouldPersistRunTranscript && persistedSdkMessages.length > 0) {
-    appendAgentThreadSDKMessages(threadId, persistedSdkMessages);
-  }
-  if ((runtimeResult.status === "completed" || runtimeResult.status === "turn_limited") && activeTurnId) {
-    const latestAssistantMessage = projectAssistantMessageFromSdkMessages({
-      threadId,
-      sdkMessages: persistedSdkMessages,
-      modelId: resolvedModelId
-    }) ?? resolveLatestAssistantTranscriptMessage(threadId);
-    if (latestAssistantMessage) {
-      const visibleAssistantMessage = createAssistantMessageVersion({
-        sessionId: threadId,
-        turnId: activeTurnId,
-        message: { ...latestAssistantMessage, fileReferenceBinding, fileReferenceProtocolVersion: FILE_REFERENCE_PROTOCOL_VERSION }
-      });
-      if (visibleAssistantMessage) {
-        visibleAssistantMessageId = visibleAssistantMessage.id;
-        if (runtimeResult.codingReport?.runId) {
-          const runStore = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
-          const codingRun = await runStore.get(runtimeResult.codingReport.runId);
-          if (codingRun?.codingReport) {
-            await runStore.update(runtimeResult.codingReport.runId, {
-              codingReport: {
-                ...codingRun.codingReport,
-                assistantMessageId: visibleAssistantMessage.id
-              }
-            });
-          }
-        }
-        emit.onMessageAppended?.({
-          threadId,
-          message: visibleAssistantMessage,
-          traceId: input.traceContext?.traceId,
-          submissionId: input.traceContext?.submissionId
-        });
-        writeLogRecord({
-          level: "info",
-          kind: "trace",
-          context: "agent.persistence",
-          event: "assistant.persisted",
-          message: "assistant message persisted",
-          status: "ok",
-          ...correlation,
-          messageId: visibleAssistantMessage.id,
-          data: {
-            ...buildAgentContentLogData("assistant", visibleAssistantMessage.content),
-            modelId: resolvedModelId
-          }
-        });
-        if (input.traceContext?.traceId) {
-          emitDiagnosticContent({
-            captureType: "assistant_message",
-            threadId,
-            traceId: input.traceContext.traceId,
-            messageId: visibleAssistantMessage.id,
-            content: visibleAssistantMessage.content
-          });
-        }
-      }
-    }
-  }
-  if (
-    runtimeResult.codingReport?.turnId
-    && runtimeResult.codingReport.userMessageId
-    && (
-      runtimeResult.codingReport.workspaceChanged
-      || runtimeResult.codingReport.pendingBackground
-      || (runtimeResult.codingReport.gitActions?.length ?? 0) > 0
-    )
-  ) {
-    const report = runtimeResult.codingReport;
-    const turnId = report.turnId!;
-    await createCodingTurnRecord(getRuntimeCoreSessionDir(threadId), {
-      turnId,
-      threadId,
-      userMessageId: report.userMessageId!,
-      ...(visibleAssistantMessageId ? { assistantMessageId: visibleAssistantMessageId } : {}),
-      runIds: report.runId ? [report.runId] : [],
-      startedAt: activeTurnStartedAt ?? new Date().toISOString(),
-      finishedAt: new Date().toISOString(),
-      checkpointId: report.checkpointId,
-      baselineCommit: report.baselineCommit,
-      changedFiles: report.fileChanges ?? report.changeSet?.files ?? report.changedFiles.map((path) => ({ path })),
-      verificationStatus: toCodingTurnVerificationStatus(report),
-      verificationRepairAttempts: report.verificationRepairAttempts ?? 0,
-      approvalRequestCount: report.approvalRequestCount ?? 0,
-      rewindState: report.rewindState ?? "unavailable",
-      phase: report.phase,
-      verificationRecords: report.verificationRecords,
-      gitActions: report.gitActions,
-      review: report.review,
-      terminationReason: report.terminationReason
-    });
-  }
-  if (runtimeCompleted && runtimeResult.status === "completed") {
-    log.info("[Agent 会话] 运行完成", {
-      threadId: threadId.slice(0, 8),
-      durationMs: Date.now() - sendStartTime,
-      persistedSdkMessageCount: persistedSdkMessages.length,
-      visibleAssistantTurnCreated: activeTurnId !== null,
-      autoTitlePending: shouldTryAutoTitle
-    });
-    writeLogRecord({
-      level: "info",
-      kind: "trace",
-      context: "agent.runtime",
-      event: "agent.execution.completed",
-      message: "agent execution completed",
-      status: "ok",
-      durationMs: Date.now() - sendStartTime,
-      ...correlation,
-      messageId: visibleAssistantMessageId,
-      data: { persistedSdkMessageCount: persistedSdkMessages.length }
-    });
-    runtimeStatusManager.markCompleted(threadId);
-    emit.onComplete();
-  }
-  if (runtimeResult.status === "turn_limited") {
-    const repeatGuardStop = runtimeResult.terminationReason === "repeat_guard";
-    log.info(repeatGuardStop
-      ? "[Agent 会话] 运行因重复操作保护机制停止，进度已保留"
-      : "[Agent 会话] 运行达到最大回合数，等待继续执行", {
-      threadId: threadId.slice(0, 8),
-      persistedSdkMessageCount: persistedSdkMessages.length
-    });
-    runtimeStatusManager.markCompleted(threadId);
-    emit.onComplete({ reason: repeatGuardStop ? "repeat_guard" : "max_turns" });
-  }
-  if (runtimeResult.status === "aborted") {
-    log.warn("[Agent 会话] 运行中止", {
-      threadId: threadId.slice(0, 8),
-      durationMs: Date.now() - sendStartTime,
-      persistedSdkMessageCount: persistedSdkMessages.length
-    });
-  }
-  if (runtimeResult.status === "errored") {
-    log.error("[Agent 会话] 运行失败", {
-      threadId: threadId.slice(0, 8),
-      durationMs: Date.now() - sendStartTime,
-      persistedSdkMessageCount: persistedSdkMessages.length,
-      errorMessage: runtimeResult.errorMessage
-    });
-  }
-  if (runtimeResult.status === "completed" && shouldTryAutoTitle) {
-    const titleModelRef = effectiveLumeConfig.models?.title?.defaultModelRef;
-    const job = createAutoTitleJob({
-      threadId,
-      fallbackUserMessage: userMessage,
-      // 未配置专用 title 模型时回退到当前会话的渠道/模型，确保 LLM 标题生成始终可触发
-      generateTitle: (sourceText) => generateAgentTitle(
-        titleModelRef
-          ? { sourceText, modelRef: titleModelRef }
-          : { sourceText, channelId: resolvedChannelId, modelId: boundModel?.modelId ?? resolvedModelId }
-      ),
-      onTitleUpdated: (title) => {
-        emit.onTitleUpdated(title);
-      }
-    });
-    if (job) {
-      getServiceRuntime().schedule(job);
-    }
-  }
-  return;
+  await finalizeAgentSendStage({
+    runtimeResult,
+    runtimeCompleted,
+    prepared,
+    persistedSdkMessages,
+    fileReferenceBinding,
+    input,
+    threadId,
+    userMessage,
+    emit
+  });
 }
 
 export function appendAgentMessage(
@@ -1360,13 +1521,13 @@ export function appendAgentMessage(
       data: { clientSubmissionId: receipt.clientSubmissionId, receiptStatus: receipt.status }
     });
     if (receipt.status === "queued") {
-      const queued = agentRuntimeKernel.listQueued(input.threadId)
+      const queued = getAgentRuntimeKernel().listQueued(input.threadId)
         .find((item) => item.id === receipt.queuedMessageId);
       if (queued) {
         return {
           ok: true,
           mode: "queued",
-          queuedCount: agentRuntimeKernel.listQueued(input.threadId).length,
+          queuedCount: getAgentRuntimeKernel().listQueued(input.threadId).length,
           queuedMessage: toQueuedMessage(queued)
         };
       }
@@ -1375,7 +1536,7 @@ export function appendAgentMessage(
       return {
         ok: true,
         mode: "sent",
-        queuedCount: agentRuntimeKernel.listQueued(input.threadId).length
+        queuedCount: getAgentRuntimeKernel().listQueued(input.threadId).length
       };
     }
     throw new Error(`提交 ${receipt.clientSubmissionId} 已终结：${receipt.status}`);
@@ -1435,14 +1596,14 @@ export function appendAgentMessage(
         threadId: input.threadId,
         text: input.userMessage,
         createdAt: Date.now(),
-        revision: agentRuntimeKernel.getQueueRevision(input.threadId),
+        revision: getAgentRuntimeKernel().getQueueRevision(input.threadId),
         status: "queued",
         attachmentsBrief: summarizeGuidanceAttachments(dispatchInput)
       });
       return {
         ok: true,
         mode: "queued",
-        queuedCount: agentRuntimeKernel.listQueued(input.threadId).length,
+        queuedCount: getAgentRuntimeKernel().listQueued(input.threadId).length,
         queuedMessage: undefined,
         submissionId: clientSubmissionId
       };
@@ -1453,7 +1614,7 @@ export function appendAgentMessage(
         .then((module) => module.stopAgentRuntime(input.threadId))
         .catch(() => undefined);
     }
-    const result = agentRuntimeKernel.dispatch(dispatchInput, trackedEmit, {
+    const result = getAgentRuntimeKernel().dispatch(dispatchInput, trackedEmit, {
       priority: options?.priority,
       onExecutionStarted: () => {
         options?.onExecutionStarted?.();
@@ -1477,16 +1638,16 @@ export function getAgentSubmissionReceipt(clientSubmissionId: string) {
 export function listAgentMessageQueue(threadId: string): AgentMessageQueueSnapshot {
   return {
     threadId,
-    revision: agentRuntimeKernel.getQueueRevision(threadId),
-    queuedMessages: agentRuntimeKernel.listQueued(threadId).map(toQueuedMessage),
+    revision: getAgentRuntimeKernel().getQueueRevision(threadId),
+    queuedMessages: getAgentRuntimeKernel().listQueued(threadId).map(toQueuedMessage),
     pendingGuidance: runGuidanceStore.listPending(threadId),
-    paused: agentRuntimeKernel.isPaused(threadId)
+    paused: getAgentRuntimeKernel().isPaused(threadId)
   };
 }
 
 export function reorderAgentMessageQueue(input: AgentReorderMessageQueueInput): AgentMessageQueueOperationResult {
   return runQueueOperation(input.queueOperationId, input.threadId, () => {
-    agentRuntimeKernel.reorderQueued(input.threadId, input.orderedMessageIds, input.expectedRevision);
+    getAgentRuntimeKernel().reorderQueued(input.threadId, input.orderedMessageIds, input.expectedRevision);
   });
 }
 
@@ -1496,9 +1657,9 @@ export function removeQueuedAgentMessage(input: AgentRemoveQueuedMessageInput): 
 
 export function retryQueuedAgentMessage(input: AgentRetryQueuedMessageInput): AgentMessageQueueOperationResult {
   return runQueueOperation(input.queueOperationId, input.threadId, () => {
-    const retried = agentRuntimeKernel.retryQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
+    const retried = getAgentRuntimeKernel().retryQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
     if (!retried) {
-      throw new AgentRuntimeKernelQueueConflictError(agentRuntimeKernel.getQueueRevision(input.threadId));
+      throw new AgentRuntimeKernelQueueConflictError(getAgentRuntimeKernel().getQueueRevision(input.threadId));
     }
     writeLogRecord({
       level: "info",
@@ -1515,19 +1676,19 @@ export function retryQueuedAgentMessage(input: AgentRetryQueuedMessageInput): Ag
 
 /** STOP 中断:暂停队列派发(不自动 startNextQueued)。手动 emit(pause 不改 count,不会自动推送)。 */
 export function pauseAgentQueue(threadId: string): void {
-  agentRuntimeKernel.pauseQueue(threadId);
+  getAgentRuntimeKernel().pauseQueue(threadId);
   emitAgentMessageQueueChanged(threadId);
 }
 
 /** Resume:解除暂停并派发队列首项。返回最新 snapshot。 */
 export function resumeAgentQueue(input: AgentResumeQueueInput): AgentMessageQueueOperationResult {
-  agentRuntimeKernel.resumeQueue(input.threadId);
+  getAgentRuntimeKernel().resumeQueue(input.threadId);
   emitAgentMessageQueueChanged(input.threadId);
   return { ok: true, snapshot: listAgentMessageQueue(input.threadId) };
 }
 
 function removeQueuedAgentMessageUnchecked(input: AgentRemoveQueuedMessageInput): Omit<AgentMessageQueueOperationResult, "ok" | "snapshot"> {
-  const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
+  const removed = getAgentRuntimeKernel().removeQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
   if (removed) {
     if (removed.input.clientSubmissionId) {
       getAgentSubmissionStore().transition(removed.input.clientSubmissionId, "rejected", "queue_removed");
@@ -1552,7 +1713,7 @@ function removeQueuedAgentMessageUnchecked(input: AgentRemoveQueuedMessageInput)
 export function promoteQueuedAgentMessageToGuidance(
   input: AgentPromoteQueuedMessageToGuidanceInput
 ): AgentMessageQueueOperationResult {
-  const candidate = agentRuntimeKernel.listQueued(input.threadId).find((item) => item.id === input.queuedMessageId);
+  const candidate = getAgentRuntimeKernel().listQueued(input.threadId).find((item) => item.id === input.queuedMessageId);
   if (!candidate || !candidate.input.userMessage.trim()) {
     return { ok: false, snapshot: listAgentMessageQueue(input.threadId) };
   }
@@ -1562,7 +1723,7 @@ export function promoteQueuedAgentMessageToGuidance(
 function promoteQueuedAgentMessageToGuidanceUnchecked(
   input: AgentPromoteQueuedMessageToGuidanceInput
 ): Omit<AgentMessageQueueOperationResult, "ok" | "snapshot"> {
-  const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
+  const removed = getAgentRuntimeKernel().removeQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
   const attachmentsBrief = removed ? summarizeGuidanceAttachments(removed.input) : undefined;
   const promotedGuidance = removed
     ? runGuidanceStore.addQueuedDispatch({ ...removed, ...(attachmentsBrief ? { attachmentsBrief } : {}) })
@@ -1587,10 +1748,10 @@ function promoteQueuedAgentMessageToGuidanceUnchecked(
 
 export function updateQueuedAgentMessage(input: AgentUpdateQueuedMessageInput): AgentMessageQueueOperationResult {
   return runQueueOperation(input.queueOperationId, input.threadId, () => {
-    const current = agentRuntimeKernel.listQueued(input.threadId)
+    const current = getAgentRuntimeKernel().listQueued(input.threadId)
       .find((item) => item.id === input.queuedMessageId);
     const { capabilityFingerprints: _staleFingerprints, ...messageMetadata } = current?.input.messageMetadata ?? {};
-    const updated = agentRuntimeKernel.updateQueued(input.threadId, input.queuedMessageId, input.expectedRevision, {
+    const updated = getAgentRuntimeKernel().updateQueued(input.threadId, input.queuedMessageId, input.expectedRevision, {
       userMessage: input.userMessage,
       ...(input.messageParts ? { messageParts: input.messageParts } : {}),
       ...(input.messageAttachments ? { messageAttachments: input.messageAttachments } : {}),
@@ -1599,7 +1760,7 @@ export function updateQueuedAgentMessage(input: AgentUpdateQueuedMessageInput): 
       messageMetadata
     });
     if (!updated) {
-      throw new AgentRuntimeKernelQueueConflictError(agentRuntimeKernel.getQueueRevision(input.threadId));
+      throw new AgentRuntimeKernelQueueConflictError(getAgentRuntimeKernel().getQueueRevision(input.threadId));
     }
     writeLogRecord({
       level: "info",
@@ -1615,11 +1776,11 @@ export function updateQueuedAgentMessage(input: AgentUpdateQueuedMessageInput): 
 }
 
 export async function waitForAgentRuntimeKernelIdleForTest(): Promise<void> {
-  await agentRuntimeKernel.waitForIdleForTest();
+  await getAgentRuntimeKernel().waitForIdleForTest();
 }
 
 export function resetAgentRuntimeKernelForTest(): void {
-  agentRuntimeKernel.resetForTest();
+  getAgentRuntimeKernel().resetForTest();
   runGuidanceStore.resetForTest();
   queueOperationResults.clear();
 }
@@ -1686,7 +1847,7 @@ function restoreUnconsumedGuidanceToQueue(threadId: string): void {
   if (dispatches.length === 0) {
     return;
   }
-  agentRuntimeKernel.prependQueuedDispatches(threadId, dispatches);
+  getAgentRuntimeKernel().prependQueuedDispatches(threadId, dispatches);
   emitAgentMessageQueueChanged(threadId);
 }
 
@@ -1735,7 +1896,7 @@ function toQueuedMessage(dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInp
 }
 
 export async function stopAgent(threadId: string): Promise<boolean> {
-  const dispatchStopped = agentRuntimeKernel.cancelActive(threadId);
+  const dispatchStopped = getAgentRuntimeKernel().cancelActive(threadId);
   const sessionStateManager = getSessionStateManager();
   sessionStateManager.delete(threadId);
   getAgentRuntimeStatusManager().markIdle(threadId);

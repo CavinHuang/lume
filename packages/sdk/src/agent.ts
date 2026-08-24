@@ -201,6 +201,28 @@ function isCompactionSummaryMessage(message: NormalizedMessageParam): boolean {
       block?.type === 'text' && block?._meta?.contextBlock === 'compaction')
 }
 
+/**
+ * messageLog 不再独立维护：由 sessionMessages 按出处投影重建。
+ * 仅两处 live 写入点登记 uuid（user 提交 / assistant 事件），因此
+ * compaction 摘要、continuation 注入、tool_result 载体等合成条目
+ * 天然不入日志，无需内容嗅探。
+ */
+function isLoggedAssistantContent(content: unknown): boolean {
+  return Boolean(
+    content
+    && typeof content === 'object'
+    && !Array.isArray(content)
+    && (content as { role?: unknown }).role === 'assistant',
+  )
+}
+
+function wrapAssistantLogMessage(content: unknown): Extract<Message, { type: 'assistant' }>['message'] {
+  if (isLoggedAssistantContent(content)) {
+    return content as Extract<Message, { type: 'assistant' }>['message']
+  }
+  return { role: 'assistant', content } as Extract<Message, { type: 'assistant' }>['message']
+}
+
 export function sessionMessagesFromHistory(
   messages: NormalizedMessageParam[],
   previous?: SessionMessage[],
@@ -257,9 +279,13 @@ export class Agent {
   private unregisterRuntimeTools: (() => void) | null = null
   private modelId = 'claude-sonnet-4-6'
   private provider: LLMProvider
-  private history: NormalizedMessageParam[] = []
-  private messageLog: Message[] = []
+  /** 消息日志出处集合：resume 载入的历史不计入本进程日志（保持原增量维护语义）。 */
+  private loggedMessageUuids = new Set<string>()
   private sessionMessages: SessionMessage[] = []
+  /** resume 载入时 json messages 快照：dangling tool_result 的跨轨修补源（json 写先于 jsonl，崩溃窗口内可能更新）。 */
+  private resumeStoredMessages: NormalizedMessageParam[] = []
+  /** legacy 会话标记：载入时无 sessionMessages 轨，派生源缺载入前缀。 */
+  private legacyResumeMode = false
   private setupDone: Promise<void>
   private sid: string
   private abortCtrl: AbortController | null = null
@@ -481,17 +507,11 @@ export class Agent {
       this.cfg.resumeSessionAt,
     )
 
-    const resumedHistory = resumedSessionMessages.length > 0
-      ? normalizeHistoryFromSessionMessages(resumedSessionMessages)
-      : sessionData.messages
-    this.history = restoreMissingToolResults(
-      resumedHistory,
-      sessionData.messages,
-      resumedSessionMessages,
-    )
     this.sessionMessages = resumedSessionMessages.length > 0
       ? resumedSessionMessages
       : (sessionData.sessionMessages || [])
+    this.resumeStoredMessages = sessionData.messages ?? []
+    this.legacyResumeMode = this.sessionMessages.length === 0
     this.fileCheckpointState = sessionData.checkpoints || {}
     this.sid = resumeId
   }
@@ -655,15 +675,15 @@ export class Agent {
     cwd: string,
     opts: AgentOptions,
   ): Promise<SDKMessage | null> {
-    if (opts.persistSession === false || (this.history.length === 0 && this.sessionMessages.length === 0)) {
+    if (opts.persistSession === false || this.getPersistedHistory().length === 0) {
       return null
     }
 
     try {
-      await saveSession(this.sid, this.history, {
+      await saveSession(this.sid, this.getPersistedHistory(), {
         cwd,
         model: opts.model || this.modelId,
-        summary: extractSummary(this.messageLog),
+        summary: extractSummary(this.getMessages()),
         sessionMessages: this.sessionMessages,
         checkpoints: this.fileCheckpointState,
       })
@@ -811,6 +831,9 @@ export class Agent {
     const normalizedPrompt = normalizePromptInput(prompt)
     const modelFacingPrompt = normalizedPrompt
     const isManualCompactCommand = typeof normalizedPrompt === 'string' && normalizedPrompt.trim() === '/compact'
+    // 本轮输入入轨前的哨位：seed 派生只取哨位之前的历史，本轮输入由引擎自行追加，
+    // 否则派生视图与引擎各带一份造成请求重复（#297-④ 单一历史）。
+    const preRunInputCount = this.sessionMessages.length
     const runtimeMessage = !isManualCompactCommand && opts.runtimeContext?.trim()
       ? toSessionMessage('runtime', opts.runtimeContext.trim())
       : null
@@ -823,12 +846,7 @@ export class Agent {
     if (userMessage) {
       this.latestUserMessageId = userMessage.uuid
       this.sessionMessages.push(userMessage)
-      this.messageLog.push({
-        type: 'user',
-        message: { role: 'user', content: normalizedPrompt },
-        uuid: userMessage.uuid,
-        timestamp: userMessage.timestamp,
-      })
+      this.loggedMessageUuids.add(userMessage.uuid)
       await this.persistCurrentSession(cwd, opts)
     }
 
@@ -902,7 +920,7 @@ export class Agent {
     })
     this.currentEngine = engine
 
-    for (const msg of this.history) {
+    for (const msg of this.buildRunHistory(preRunInputCount)) {
       engine.messages.push(msg)
     }
 
@@ -922,12 +940,7 @@ export class Agent {
         if (event.type === 'assistant') {
           const assistantMessage = toSessionMessage('assistant', event.message)
           this.sessionMessages.push(assistantMessage)
-          this.messageLog.push({
-            type: 'assistant',
-            message: event.message,
-            uuid: assistantMessage.uuid,
-            timestamp: assistantMessage.timestamp,
-          })
+          this.loggedMessageUuids.add(assistantMessage.uuid)
           persistScheduler.schedule()
         } else if (event.type === 'tool_result') {
           this.sessionMessages.push(toSessionMessage('user', [{
@@ -966,7 +979,7 @@ export class Agent {
       // session file.
       await persistScheduler.cancel()
       opts.abortSignal?.removeEventListener('abort', forwardAbort)
-      this.history = engine.getMessages()
+      const finalEngineMessages = engine.getMessages()
       // Keep only the engine reference: the full token estimation runs
       // lazily when a host actually calls getContextUsage (#386).
       this.lastUsageEngine = engine
@@ -976,11 +989,10 @@ export class Agent {
       // the host stopped iterating) and must not survive into the next run's
       // drain windows.
       this.asyncEventEpoch++
-      if (compactionBoundarySeen) {
-        this.sessionMessages = sessionMessagesFromHistory(this.history, this.sessionMessages)
-      }
-      if (opts.toolContinuations?.length) {
-        this.sessionMessages = sessionMessagesFromHistory(this.history, this.sessionMessages)
+      // compaction 重写与 continuation 注入只存在于引擎视图：把权威轨
+      // 对齐回引擎真值（尾配对保 uuid，#363）。
+      if (compactionBoundarySeen || opts.toolContinuations?.length) {
+        this.sessionMessages = sessionMessagesFromHistory(finalEngineMessages, this.sessionMessages)
       }
       persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
     }
@@ -1063,18 +1075,63 @@ export class Agent {
       usage: { input_tokens: collected.tokens.in, output_tokens: collected.tokens.out },
       num_turns: collected.turns,
       duration_ms: Math.round(performance.now() - t0),
-      messages: [...this.messageLog],
+      messages: [...this.getMessages()],
     }
   }
 
+  /**
+   * 单一历史(#297-④)：sessionMessages 是唯一权威轨，LLM 请求视图在每次
+   * run 前从它派生（含 dangling 修补注入），不再长驻第三份内存拷贝。
+   * fromIndex 之前的条目才进入派生视图（本轮输入由引擎自行追加）；
+   * system 事件扫描始终用全量 sms。
+   */
+  private buildRunHistory(fromIndex = 0): NormalizedMessageParam[] {
+    return restoreMissingToolResults(
+      normalizeHistoryFromSessionMessages(this.sessionMessages.slice(0, fromIndex)),
+      this.resumeStoredMessages,
+      this.sessionMessages,
+    )
+  }
+
+  /**
+   * transcript.json 的 messages 由 sessionMessages 派生（磁盘单一来源，
+   * 与 jsonl 轨同源）；legacy resume 时派生源缺载入前缀，拼接载入快照。
+   */
+  private getPersistedHistory(): NormalizedMessageParam[] {
+    const derived = normalizeHistoryFromSessionMessages(this.sessionMessages)
+    return this.legacyResumeMode
+      ? [...this.resumeStoredMessages, ...derived]
+      : derived
+  }
+
   getMessages(): Message[] {
-    return [...this.messageLog]
+    const log: Message[] = []
+    for (const message of this.sessionMessages) {
+      if (!this.loggedMessageUuids.has(message.uuid)) continue
+      if (message.role === 'assistant') {
+        log.push({
+          type: 'assistant',
+          message: wrapAssistantLogMessage(message.content),
+          uuid: message.uuid,
+          timestamp: message.timestamp,
+        })
+      } else if (message.role === 'user') {
+        log.push({
+          type: 'user',
+          message: { role: 'user', content: message.content } as Extract<Message, { type: 'user' }>['message'],
+          uuid: message.uuid,
+          timestamp: message.timestamp,
+        })
+      }
+    }
+    return log
   }
 
   clear(): void {
-    this.history = []
-    this.messageLog = []
+    this.loggedMessageUuids.clear()
     this.sessionMessages = []
+    this.resumeStoredMessages = []
+    this.legacyResumeMode = false
     this.fileCheckpointState = {}
   }
 
@@ -1084,10 +1141,11 @@ export class Agent {
 
   /**
    * Fill dangling trailing tool_use blocks with error placeholders so the
-   * session is provider-clean. Returns true when history changed.
+   * session is provider-clean. Returns true when sessionMessages changed.
+   * 只写权威轨（sessionMessages）：请求视图由 buildRunHistory 派生时自然带上。
    */
   private repairDanglingToolUses(): boolean {
-    const dangling = detectDanglingToolUses(this.history)
+    const dangling = detectDanglingToolUses(this.buildRunHistory())
     if (dangling.length === 0) return false
     const blocks = dangling.map((use) => ({
       type: 'tool_result' as const,
@@ -1095,7 +1153,6 @@ export class Agent {
       content: INTERRUPTED_TOOL_PLACEHOLDER,
       is_error: true,
     }))
-    this.history.push({ role: 'user', content: blocks })
     this.sessionMessages.push(toSessionMessage('user', blocks))
     return true
   }
@@ -1193,15 +1250,14 @@ export class Agent {
     const init = await this.getInitializationResult()
     return {
       categories: [
-        { name: 'messages', tokens: 0, color: 'blue' },
-        { name: 'system', tokens: 0, color: 'green' },
-        { name: 'tools', tokens: 0, color: 'orange' },
+        { name: 'messages', tokens: 0 },
+        { name: 'system', tokens: 0 },
+        { name: 'tools', tokens: 0 },
       ],
       totalTokens: 0,
       maxTokens: getContextWindowSize(this.modelId),
       rawMaxTokens: getContextWindowSize(this.modelId),
       percentage: 0,
-      gridRows: [],
       model: this.modelId,
       memoryFiles: [],
       deferredBuiltinTools: [],
@@ -1249,12 +1305,13 @@ export class Agent {
   async close(): Promise<void> {
     await this.setupDone.catch(() => undefined)
 
-    if (this.cfg.persistSession !== false && this.history.length > 0) {
+    const persistedHistory = this.getPersistedHistory()
+    if (this.cfg.persistSession !== false && persistedHistory.length > 0) {
       try {
-        await saveSession(this.sid, this.history, {
+        await saveSession(this.sid, persistedHistory, {
           cwd: this.cfg.cwd || process.cwd(),
           model: this.modelId,
-          summary: extractSummary(this.messageLog),
+          summary: extractSummary(this.getMessages()),
           sessionMessages: this.sessionMessages,
           checkpoints: this.fileCheckpointState,
         })

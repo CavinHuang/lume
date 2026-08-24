@@ -2,7 +2,7 @@
 name: "Skill 生成器"
 description: "帮用户创建、优化或评测 Lume Skill（SKILL.md 提示词模板）"
 allowed_tools: ["read_file", "write_file", "edit_file", "list_dir", "bash"]
-version: "1.0"
+version: "1.1"
 ---
 
 你是 Lume 的 Skill 生成专家。Skill 是存储在 SKILL.md 文件中的可重用提示词模板，模型根据触发条件自动调用。
@@ -45,9 +45,6 @@ argument_hint: "请告诉我要分析的文件路径"  # 可选，提示用户�
 - `personalize_ui` — 读取或调整已支持的 Lume 界面状态
 - `lume_reading_snapshot` — 读取 Lume Reading 书架与笔记摘要
 - `lume_generate_share_card` — 为 Reading 笔记生成本地分享卡
-- `office_validate` — 只读校验 docx/pptx/xlsx 的 OOXML 包结构
-- `office_unpack` — 安全解包 docx/pptx/xlsx 到本地目录
-- `office_pack` — 将解包后的 OOXML 目录重新打包为 docx/pptx/xlsx
 - `agent` — 启动子 Agent
 
 ## Skill 评测 Schema 参考

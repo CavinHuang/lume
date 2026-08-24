@@ -54,9 +54,13 @@ function filterDescriptorsByPolicy(
 ): LumeToolDescriptor[] {
   const allow = expandRuntimeToolPolicyEntries(policy.allow);
   const deny = expandRuntimeToolPolicyEntries(policy.deny);
+  // 全部 allow 条目都匹配不到任何已注册工具 = 存量失效配置（如技能仍引用已下线工具），
+  // 视为未设置 allow 回退默认工具集；只要有一个条目命中就维持收紧语义
+  const allowAlive = allow.length === 0
+    || tools.some((tool) => matchesAnyRuntimeToolPolicyEntry(tool.canonicalName, allow));
   return tools.filter((tool) => {
     if (matchesAnyRuntimeToolPolicyEntry(tool.canonicalName, deny)) return false;
-    if (allow.length > 0 && !matchesAnyRuntimeToolPolicyEntry(tool.canonicalName, allow)) return false;
+    if (allowAlive && allow.length > 0 && !matchesAnyRuntimeToolPolicyEntry(tool.canonicalName, allow)) return false;
     return true;
   });
 }

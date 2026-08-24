@@ -10,7 +10,6 @@ import artistImage from '@/assets/agents/artist.jpg'
 import codeReviewerImage from '@/assets/agents/code-reviewer.jpg'
 import designerImage from '@/assets/agents/designer.jpg'
 import developerImage from '@/assets/agents/developer.jpg'
-import docsmithImage from '@/assets/agents/docsmith.jpg'
 import explorerImage from '@/assets/agents/explorer.jpg'
 import novelistImage from '@/assets/agents/novelist.jpg'
 import plannerImage from '@/assets/agents/planner.jpg'
@@ -38,7 +37,6 @@ export const AGENT_ROLE_ASSETS: {
     analyst: analystImage,
     quant: quantImage,
     novelist: novelistImage,
-    docsmith: docsmithImage,
     developer: developerImage,
   },
 }

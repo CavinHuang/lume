@@ -371,7 +371,7 @@ describe("im-message-router", () => {
     });
 
     expect(submitted).toEqual([]);
-    expect(sent[0]).toContain("当前微信会话没有权限处理审批");
+    expect(sent[0]).toContain("当前会话没有权限处理审批");
   });
 
   test("uses account-level group approval policy when formatting permission prompts", async () => {

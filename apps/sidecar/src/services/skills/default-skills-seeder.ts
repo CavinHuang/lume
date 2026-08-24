@@ -10,10 +10,13 @@
  * declared version increases. Unversioned user skills are preserved.
  */
 
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { getDefaultSkillsDir } from "../infra/config-paths";
 import { createLogger } from "../infra/logger";
+
+/** 已从内置包移除的技能：种子时清理存量副本，避免继续教已下线的工具。仅限本清单，用户自建技能不受影响。 */
+export const REMOVED_BUNDLE_SKILLS = ["agent-docsmith"] as const;
 
 export type DefaultSkillsSource =
   | { kind: "archive"; path: string }
@@ -169,18 +172,27 @@ export function seedDefaultSkills(): void {
     if (source.kind === "archive") {
       extractDefaultSkillsArchive(source.path, userDir);
       log.info("default skills archive synced", { source: source.path, target: userDir });
-      return;
+    } else {
+      const entries = readdirSync(source.path, { withFileTypes: true });
+      for (const entry of entries) {
+        const sourcePath = join(source.path, entry.name);
+        const target = join(userDir, entry.name);
+        if (existsSync(target) && !isNewerBundledVersion(readSkillVersion(sourcePath), readSkillVersion(target))) continue;
+        cpSync(sourcePath, target, { recursive: true });
+        log.info("default skill synced", { skillSlug: entry.name });
+      }
     }
-
-    const entries = readdirSync(source.path, { withFileTypes: true });
-    for (const entry of entries) {
-      const sourcePath = join(source.path, entry.name);
-      const target = join(userDir, entry.name);
-      if (existsSync(target) && !isNewerBundledVersion(readSkillVersion(sourcePath), readSkillVersion(target))) continue;
-      cpSync(sourcePath, target, { recursive: true });
-      log.info("default skill synced", { skillSlug: entry.name });
-    }
+    pruneRemovedBundleSkills(userDir);
   } catch (error) {
     log.warn("default skills sync failed", { error });
+  }
+}
+
+function pruneRemovedBundleSkills(userDir: string): void {
+  for (const slug of REMOVED_BUNDLE_SKILLS) {
+    const target = join(userDir, slug);
+    if (!existsSync(target)) continue;
+    rmSync(target, { recursive: true, force: true });
+    log.info("removed bundle skill pruned", { skillSlug: slug });
   }
 }

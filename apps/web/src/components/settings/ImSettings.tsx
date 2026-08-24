@@ -670,6 +670,11 @@ function AccountRow({
           <Badge variant="outline" className={cn('rounded-[6px]', toneClassName[badge.tone])}>{badge.label}</Badge>
         </div>
         <p className="mt-1 text-[12px] text-[var(--text-3)]">{accountMeta}</p>
+        {account.lastError && (
+          <p className="mt-1 line-clamp-2 text-[12px] text-[var(--danger)]" title={account.lastError}>
+            {account.lastError}
+          </p>
+        )}
       </div>
       <Switch checked={account.enabled} onCheckedChange={(enabled) => onToggleEnabled(account, enabled)} disabled={busy} />
       <div className="flex items-center gap-1">

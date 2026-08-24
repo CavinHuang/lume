@@ -1,0 +1,4 @@
+# 手动直跑 bun test 时自动注入 RuntimeHostPorts(#289),与 run-unit-tests.mjs
+# 的 --preload 等效(installRuntimeHostPorts 幂等,双注入安全);#502。
+[test]
+preload = ["./scripts/host-ports-test-preload.ts"]
