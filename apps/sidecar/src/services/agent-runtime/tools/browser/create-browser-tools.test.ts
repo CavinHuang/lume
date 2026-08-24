@@ -401,6 +401,27 @@ describe("createBrowserMcpTools", () => {
     expect(result).toMatchObject({ ok: true, action: { ok: true }, observation: null, observation_error: "stale_target", requires_snapshot: true })
   })
 
+  test("navigation_timeout carries the observe-first hint in its message (#641)", async () => {
+    const tab = agentTab("locked-tab", "thread-1")
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string }) => {
+        if (request.method === "list_tabs") return { tabs: [tab] }
+        if (request.method === "navigate_tab_url") throw new Error("navigation_timeout")
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    const raw = await rawCall(tools, "mcp__browser__navigate", { url: "https://slow.example" })
+    const result = JSON.parse(String(raw.content))
+
+    expect(raw.is_error).toBeTrue()
+    expect(result.code).toBe("navigation_timeout")
+    expect(result.retryable).toBe(false)
+    expect(result.message).toContain("snapshot")
+  })
+
   test("stops browser mutations after a non-retryable action repeats on the same page", async () => {
     const tab = agentTab("locked-tab", "thread-1")
     let actionCalls = 0
