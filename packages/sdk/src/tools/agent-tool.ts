@@ -10,7 +10,7 @@ import type { ToolDefinition } from '../types.js'
 
 export const AgentTool: ToolDefinition = {
   name: 'Agent',
-  description: 'Launch a new agent to handle a complex, multi-step task. Each agent runs in its own context with its own tool set; the call blocks until the subagent finishes and returns its final output. Creating an independent task requires new_task=true; to continue an existing task pass task_id instead (never copy a raw user message as the prompt).',
+  description: 'Launch a new agent to handle a complex, multi-step task. Each agent runs in its own context with its own tool set. When tasks are independent, issue MULTIPLE Agent calls in a single response — they run concurrently, each returning its own final output. Creating an independent task requires new_task=true; to continue an existing task pass task_id instead (never copy a raw user message as the prompt).',
   inputSchema: {
     type: 'object',
     properties: {

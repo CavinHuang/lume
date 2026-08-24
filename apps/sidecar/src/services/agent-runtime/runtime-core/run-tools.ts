@@ -327,7 +327,9 @@ export function buildRuntimeCoreTools(input: {
     ...AgentTool,
     description:
       "Launch an independent subagent. For a persistent Task, first claim it with TaskUpdate and then pass task_ref; Task itself never creates or schedules the subagent.",
-    isConcurrencySafe: () => false,
+    // 并发安全：每次调用走独立 childThreadId/runId；coordinator mutate 全程同步段，
+    // 全局 permit(4) 与 fanout 策略继续兜底排队。
+    isConcurrencySafe: () => true,
     async call(toolInput: any, context: any) {
       const parentThreadId = context.sessionId ?? "";
       const policy = resolveSubagentSpawnPolicy({
@@ -656,7 +658,9 @@ export function buildRuntimeCoreTools(input: {
       },
       required: ["prompt", "description"],
     },
-    isConcurrencySafe: () => false,
+    // 同 sidecarAgentTool：独立 childThreadId + registry 同步 Map 操作，可并发；
+    // spawn policy 的 maxFanout(6) 兜底限流。
+    isConcurrencySafe: () => true,
     async call(toolInput: any, context: any) {
       const parentThreadId = context.sessionId ?? "";
       const policy = resolveSubagentSpawnPolicy({
