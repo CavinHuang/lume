@@ -64,6 +64,13 @@ export function summarizeValue(input: unknown, depth = 0): unknown {
   if (input == null || typeof input === 'boolean' || typeof input === 'number') return input
   if (typeof input === 'string') return clipLogPreview(input)
   if (typeof input !== 'object') return `[${typeof input}]`
+  if (input instanceof Error) {
+    return {
+      name: input.name,
+      message: clipLogPreview(input.message),
+      ...(input.stack ? { stack: clipLogPreview(input.stack) } : {}),
+    }
+  }
   if (depth >= SUMMARIZE_MAX_DEPTH) return '[MaxDepth]'
   if (Array.isArray(input)) {
     return {

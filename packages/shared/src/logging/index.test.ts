@@ -43,6 +43,18 @@ describe('summarizeValue', () => {
     expect(summarizeValue(undefined)).toBeUndefined()
     expect(summarizeValue(null)).toBeNull()
   })
+  test('Error 对象摘要为 name/message/stack', () => {
+    const err = new Error('boom')
+    const out = summarizeValue(err) as { name: string; message: string; stack?: string }
+    expect(out.name).toBe('Error')
+    expect(out.message).toBe('boom')
+    expect(typeof out.stack).toBe('string')
+  })
+  test('循环引用安全终止', () => {
+    const cyc: Record<string, unknown> = {}
+    cyc.self = cyc
+    expect(JSON.stringify(summarizeValue(cyc))).toContain('[MaxDepth]')
+  })
 })
 
 describe('常量', () => {
