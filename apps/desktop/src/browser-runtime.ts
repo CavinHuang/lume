@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto"
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme, session, shell, type IpcMainEvent } from "electron"
 import {
@@ -251,6 +251,8 @@ export class BrowserRuntime {
   private readonly actionQueue = new BrowserActionQueue()
   private readonly inputLedger = new BrowserInputLedger()
   private annotationSweepTimer: ReturnType<typeof setTimeout> | null = null
+  private downloadSweepTimer: ReturnType<typeof setTimeout> | null = null
+  private downloadSweepInterval: ReturnType<typeof setInterval> | null = null
   private annotationSweepInterval: ReturnType<typeof setInterval> | null = null
   private agentPluginEnabled = false
   private cursorOverlay: BrowserWindow | null = null
@@ -337,6 +339,15 @@ export class BrowserRuntime {
     this.annotationSweepTimer.unref?.()
     this.annotationSweepInterval = setInterval(() => this.annotations.runOrphanScreenshotSweep(), 24 * 60 * 60_000)
     this.annotationSweepInterval.unref?.()
+    // 任务下载文件孤儿 GC(#609):finalizeTabs 只清内存索引,磁盘目录
+    // downloads/<session>/<turn> 随任务数无限增长。启动延迟 + 每 24h 一次。
+    this.downloadSweepTimer = setTimeout(() => {
+      this.downloadSweepTimer = null
+      this.runOrphanDownloadSweep()
+    }, 60_000)
+    this.downloadSweepTimer.unref?.()
+    this.downloadSweepInterval = setInterval(() => this.runOrphanDownloadSweep(), 24 * 60 * 60_000)
+    this.downloadSweepInterval.unref?.()
     app.on("login", this.loginHandler)
     app.on("certificate-error", this.certificateErrorHandler)
     app.on("select-client-certificate", this.clientCertificateHandler)
@@ -4152,6 +4163,49 @@ export class BrowserRuntime {
       resumed.push(publicTab(tab))
     }
     return resumed
+  }
+
+  // 任务下载文件孤儿 GC(#609):finalizeTabs 只清内存索引,磁盘目录随任务数
+  // 无限增长。keep = 存活 downloadRefs 路径;其余 <session>/<turn> 目录 mtime
+  // 老于宽限(24h,产物体积大误删代价高)即整删。EBUSY/句柄占用静默留待下次。
+  runOrphanDownloadSweep(now = Date.now()): void {
+    if (!this.options.configDir) return
+    const root = join(this.options.configDir(), "browser", "downloads")
+    const graceMs = 24 * 60 * 60_000
+    const livePaths = new Set([...this.downloadRefs.values()].map((entry) => entry.path))
+    let sessionEntries: string[] = []
+    try {
+      sessionEntries = readdirSync(root)
+    } catch {
+      return
+    }
+    for (const session of sessionEntries) {
+      const sessionDir = join(root, session)
+      let turnEntries: string[] = []
+      try {
+        turnEntries = readdirSync(sessionDir)
+      } catch {
+        continue
+      }
+      for (const turn of turnEntries) {
+        const turnDir = join(sessionDir, turn)
+        let newestMtime = 0
+        try {
+          for (const entry of readdirSync(turnDir)) {
+            newestMtime = Math.max(newestMtime, statSync(join(turnDir, entry)).mtimeMs)
+          }
+        } catch {
+          continue
+        }
+        const stillLive = [...livePaths].some((path) => path.startsWith(turnDir))
+        if (now - newestMtime < graceMs || stillLive) continue
+        try {
+          rmSync(turnDir, { recursive: true, force: true })
+        } catch {
+          // Windows 句柄占用(#274/#281 先例):留待下次 sweep
+        }
+      }
+    }
   }
 
   private finalizeTabs(context: BrowserRequestContext, params: Record<string, unknown>): { ok: true } {
