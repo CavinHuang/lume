@@ -171,6 +171,20 @@ describe("browser CDP input", () => {
     expect(sender.calls.some((call) => call.method === "Input.insertText")).toBe(false)
   })
 
+  test("natural typing uses the production default clamp of 240 characters", async () => {
+    const sender = recorder()
+    const sleeps = numberRecorder()
+    const text = "b".repeat(250)
+
+    // 不传 maxNaturalChars:生产调用点全靠默认值,必须钉住它
+    await dispatchBrowserText(sender, text, { platform: "win32", replace: false, natural: true, sleep: sleeps.step })
+
+    const keyEvents = sender.calls.filter((call) => call.method === "Input.dispatchKeyEvent")
+    expect(keyEvents).toHaveLength(240 * 2)
+    const insert = sender.calls.find((call) => call.method === "Input.insertText")
+    expect(insert?.params.text).toBe("b".repeat(10))
+  })
+
   test("natural fill types faster than natural type", async () => {
     const typeSender = recorder()
     const fillSender = recorder()
