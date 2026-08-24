@@ -187,6 +187,10 @@ async function resolveFeishuQuotedMessage(
     appSecret: account.token,
     messageId: message.parentMessageId
   });
+  // 容量护栏：TTL 仅在读取时判断，长命进程需防条目无界累积
+  if (quotedCache.size > 200) {
+    quotedCache.clear();
+  }
   quotedCache.set(message.parentMessageId, { value, expiresAtMs: Date.now() + QUOTED_CACHE_TTL_MS });
   return value;
 }
@@ -809,22 +813,28 @@ export function createImAgentStreamEmitter(
     },
     onError: (error) => {
       log.error("Agent 消息处理失败", { threadId, error });
-      cardSession?.finish({ kind: "failed", error });
       emitRuntimeError(threadId, error, emitNotification);
-      // 非飞书渠道（或卡片通道不可用）没有失败终态载体：尽力补发文本回执，
-      // 避免「发出消息后石沉大海」。飞书走红色失败卡，不重复打扰
-      const failureBinding = getImThreadBindingByThreadId(threadId);
-      if (!cardSession && failureBinding) {
-        void sendBoundTextMessage({
-          binding: failureBinding,
-          text: `本次任务执行失败：${error.slice(0, 200)}。可重新发送消息重试，或发送 /help 查看命令。`
-        }).catch((sendError: unknown) => {
-          log.warn("IM 失败回执发送失败", {
-            threadId,
-            error: sendError instanceof Error ? sendError.message : String(sendError)
+      // 失败终态载体判定：飞书卡片可用→红色失败卡已承载；否则尽力补发文本
+      // 回执，避免「发出消息后石沉大海」
+      void (async () => {
+        let cardCoversFailure = false;
+        if (cardSession) {
+          cardSession.finish({ kind: "failed", error });
+          cardCoversFailure = await cardSession.settleOpen();
+        }
+        const failureBinding = getImThreadBindingByThreadId(threadId);
+        if (!cardCoversFailure && failureBinding) {
+          await sendBoundTextMessage({
+            binding: failureBinding,
+            text: `本次任务执行失败：${error.slice(0, 200)}。可重新发送消息重试，或发送 /help 查看命令。`
+          }).catch((sendError: unknown) => {
+            log.warn("IM 失败回执发送失败", {
+              threadId,
+              error: sendError instanceof Error ? sendError.message : String(sendError)
+            });
           });
-        });
-      }
+        }
+      })();
     },
     onTitleUpdated: (title) => {
       emitNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {

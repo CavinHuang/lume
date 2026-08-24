@@ -331,8 +331,14 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
     // 平台重投仍可处理，但主动丢弃本身不在补偿范围）
     if (state.buffer.length > MAX_BUFFER_PER_SCOPE) {
       const dropped = state.buffer.shift();
-      if (dropped?.messageId) {
-        inflightIds.delete(inflightKeyOf(dropped.provider, dropped.accountId, dropped.messageId));
+      if (dropped) {
+        if (dropped.messageId) {
+          inflightIds.delete(inflightKeyOf(dropped.provider, dropped.accountId, dropped.messageId));
+        }
+        // 被丢消息的完成信号必须落定：否则 awaiter 永久挂起、completions 泄漏
+        const droppedCompletion = completions.get(completionKeyOf(dropped));
+        completions.delete(completionKeyOf(dropped));
+        droppedCompletion?.reject(new Error("会话缓冲超限，消息被丢弃"));
       }
       log.warn("IM 会话缓冲超限，丢弃最旧消息", {
         provider: message.provider,

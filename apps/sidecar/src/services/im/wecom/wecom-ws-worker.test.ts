@@ -56,9 +56,11 @@ describe("createWecomWsWorker", () => {
     });
 
     worker.start();
-    // 断线/error 监听必须注册：SDK 重连放弃后 eventemitter3 对无监听 error 静默，
-    // 缺监听会让账号永久假活
-    expect(calls).toEqual(["on:message.text", "on:error", "on:disconnected", "connect"]);
+    // 断线/error/恢复监听必须注册：SDK 重连放弃后 eventemitter3 对无监听 error
+    // 静默——缺监听会让账号永久假活
+    expect(calls).toEqual([
+      "on:message.text", "on:error", "on:disconnected", "on:connected", "on:authenticated", "connect",
+    ]);
     expect(getWecomClient(account.id)).toBe(client as never); // 启动即入池
     const handler = getHandler();
     expect(handler).not.toBeNull();
@@ -149,5 +151,95 @@ describe("parseWecomEvent", () => {
     expect(parseWecomEvent({}, makeAccount())).toBeNull();
     expect(parseWecomEvent(null, makeAccount())).toBeNull();
     expect(parseWecomEvent({ body: { chattype: "single", from: { userid: "u" }, text: { content: "" } } }, makeAccount())).toBeNull();
+  });
+});
+
+describe("createWecomWsWorker 断线宽限", () => {
+  it("瞬断在宽限窗口内恢复：不判死、连接池保留", async () => {
+    const statusWrites: Array<Record<string, unknown>> = [];
+    const { client, getHandler } = makeFakeClient();
+    let handlers: Record<string, (data: unknown) => void> = {};
+    const wrapped = {
+      connect: client.connect,
+      disconnect: client.disconnect,
+      on: (event: string, cb: (data: unknown) => void) => {
+        handlers[event] = cb;
+      },
+    };
+    const worker = createWecomWsWorker({
+      account: makeAccount(),
+      routeMessage: async () => undefined,
+      createClient: () => wrapped as never,
+      updateAccount: (id, input) => {
+        statusWrites.push({ id, ...input });
+      },
+      disconnectGraceMs: 5_000,
+    });
+    worker.start();
+    handlers["disconnected"]?.(undefined);
+    expect(worker.isRunning()).toBe(true);
+    expect(getWecomClient(makeAccount().id)).not.toBeUndefined();
+    // SDK 自愈重连成功
+    handlers["connected"]?.(undefined);
+    expect(statusWrites).toEqual([]);
+  });
+
+  it("宽限窗口超时未恢复：判死转 error 态并出池", async () => {
+    const statusWrites: Array<Record<string, unknown>> = [];
+    const { client, getHandler } = makeFakeClient();
+    void getHandler;
+    const handlers: Record<string, (data: unknown) => void> = {};
+    const worker = createWecomWsWorker({
+      account: makeAccount(),
+      routeMessage: async () => undefined,
+      createClient: () => ({
+        connect: client.connect,
+        disconnect: client.disconnect,
+        on: (event: string, cb: (data: unknown) => void) => {
+          handlers[event] = cb;
+        },
+      }) as never,
+      updateAccount: (id, input) => {
+        statusWrites.push({ id, ...input });
+      },
+      disconnectGraceMs: 10,
+    });
+    worker.start();
+    handlers["error"]?.(new Error("kicked"));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(worker.isRunning()).toBe(false);
+    expect(getWecomClient(makeAccount().id)).toBeUndefined();
+    expect(statusWrites.at(-1)).toMatchObject({ status: "error" });
+  });
+
+  it("stop 后旧 client 迟到的断开事件不影响新会话（跨代隔离）", async () => {
+    const statusWrites: Array<Record<string, unknown>> = [];
+    let currentHandlers: Record<string, (data: unknown) => void> = {};
+    const makeWrapped = () => ({
+      connect: () => undefined,
+      disconnect: () => undefined,
+      on: (event: string, cb: (data: unknown) => void) => {
+        currentHandlers[event] = cb;
+      },
+    });
+    const worker = createWecomWsWorker({
+      account: makeAccount(),
+      routeMessage: async () => undefined,
+      createClient: () => makeWrapped() as never,
+      updateAccount: (id, input) => {
+        statusWrites.push({ id, ...input });
+      },
+      disconnectGraceMs: 10,
+    });
+    worker.start();
+    const oldHandlers = currentHandlers;
+    // 第二个会话使用全新的 handlers 表（模拟 manager 重建的新 client）
+    currentHandlers = {};
+    worker.stop();
+    worker.start();
+    oldHandlers["disconnected"]?.(undefined);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(worker.isRunning()).toBe(true);
+    expect(statusWrites).toEqual([]);
   });
 });
