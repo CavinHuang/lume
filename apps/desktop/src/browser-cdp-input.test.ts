@@ -171,7 +171,7 @@ describe("browser CDP input", () => {
     expect(sender.calls.some((call) => call.method === "Input.insertText")).toBe(false)
   })
 
-  test("natural typing uses the production default clamp of 240 characters", async () => {
+  test("natural typing uses the production default clamp of 150 characters", async () => {
     const sender = recorder()
     const sleeps = numberRecorder()
     const text = "b".repeat(250)
@@ -180,9 +180,9 @@ describe("browser CDP input", () => {
     await dispatchBrowserText(sender, text, { platform: "win32", replace: false, natural: true, sleep: sleeps.step })
 
     const keyEvents = sender.calls.filter((call) => call.method === "Input.dispatchKeyEvent")
-    expect(keyEvents).toHaveLength(240 * 2)
+    expect(keyEvents).toHaveLength(150 * 2)
     const insert = sender.calls.find((call) => call.method === "Input.insertText")
-    expect(insert?.params.text).toBe("b".repeat(10))
+    expect(insert?.params.text).toBe("b".repeat(100))
   })
 
   test("natural fill types faster than natural type", async () => {
