@@ -303,7 +303,15 @@ export class WorkspaceMcpManager {
 
     for (const serverId of state.knownServerIds) {
       if (!currentIds.has(serverId) || !currentEnabledIds.has(serverId)) {
-        await state.sdk.disconnect(serverId);
+        // #636：disconnect 失败不得让原始错误穿透脱敏链——所有公共方法的
+        // try 块都在 syncWorkspace 之后才开始，这里的抛错会绕过 mapPublicError
+        await state.sdk.disconnect(serverId).catch((error) => {
+          this.logger.warn("MCP server disconnect failed during sync", {
+            workspaceSlug,
+            serverId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
       }
     }
 
@@ -588,7 +596,10 @@ export class WorkspaceMcpManager {
   ): Promise<McpCallResult> {
     await this.syncWorkspace(workspaceSlug);
     const state = this.ensureWorkspaceState(workspaceSlug);
+    // 入口快照 entry（#636）：catch 内现读配置存在"调用在途配置被删→脱敏
+    // 空转单次"的窗口，入口读一次与在途调用严格对应
     const startedAt = Date.now();
+    const entry = this.readConfig(workspaceSlug).servers[serverId];
     this.logger.info("MCP runtime tool call started", {
       workspaceSlug,
       serverId,
