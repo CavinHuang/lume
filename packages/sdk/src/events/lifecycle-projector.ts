@@ -190,7 +190,9 @@ export async function* projectLifecycle(
     }
     const msgEndDetail: MessageEndDetail = {
       type: 'message.end',
-      message: message.message,
+      message: message.usage != null || message.costUSD != null
+        ? { ...message.message, usage: message.usage, costUSD: message.costUSD }
+        : message.message,
     }
     if (message.error) msgEndDetail.error = message.error
     out.push(emit('message', 'end', currentTurn.turnId, msgEndDetail))

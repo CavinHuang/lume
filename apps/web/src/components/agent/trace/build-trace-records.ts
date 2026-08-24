@@ -12,7 +12,7 @@
  * 注意：turnNumber 是账本内递增的「轮次序号」（第 N 个 turn.start 之后），
  * 跨多个 run 持续累加，与 SDK 的 turnId（每 run 重置）不同。
  */
-import type { SdkEventEnvelope } from '@lume/shared'
+import type { SdkEventEnvelope, NormalizedProviderUsage } from '@lume/shared'
 import type {
   ContextCompactionDetail,
   MessageEndDetail,
@@ -44,6 +44,8 @@ export interface TraceRecord {
   ttftMs: number | null
   isError: boolean
   toolName?: string
+  toolCallId?: string
+  usage?: NormalizedProviderUsage
   /** 详情面板：工具输入 / 用户消息原文（pretty 文本）。 */
   input?: string
   /** 详情面板：工具输出 / 助手完整文本。 */
@@ -65,6 +67,8 @@ interface MutableRecord {
   firstUpdateAt?: number
   isError: boolean
   toolName?: string
+  toolCallId?: string
+  usage?: NormalizedProviderUsage
   input?: string
   output?: string
   thinking?: string
@@ -199,6 +203,7 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
           openRecord.endedAt = event.ts
           openRecord.summary = firstLine(text) || '(无文本输出)'
           openRecord.output = text
+          openRecord.usage = message.usage
           if (error) openRecord.isError = true
         } else {
           // 快照起点截断在流中途时的兜底：没有 start 也给出完整行
@@ -209,6 +214,7 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
             summary: firstLine(text) || '(无文本输出)',
             startedAt: event.ts,
             output: text,
+            usage: message.usage,
             endedAt: event.ts,
             isError: Boolean(error),
           })
@@ -229,6 +235,7 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
           summary: toolInputPreview(input) ? `${toolName} ${toolInputPreview(input)}` : toolName,
           startedAt: event.ts,
           toolName,
+          toolCallId,
           input: prettyValue(input),
         })
         openTools.set(toolCallId, record)

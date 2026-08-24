@@ -1,3 +1,5 @@
+import type { NormalizedProviderUsage } from './sdk-protocol'
+
 /**
  * Lifecycle event bus types — single vocabulary shared by SDK, sidecar and web.
  * Batch 1 scope: run + turn + assistant message lifecycle.
@@ -86,7 +88,13 @@ export interface UserMessageDetail {
 
 export interface MessageEndDetail {
   type: 'message.end'
-  message: { role: 'assistant'; content: unknown[] }
+  message: {
+    role: 'assistant'
+    content: unknown[]
+    /** 本条 assistant 消息的 provider 用量（SDKAssistantMessage.usage 透传，缺省=上游未提供）。 */
+    usage?: NormalizedProviderUsage
+    costUSD?: number
+  }
   error?: string
 }
 

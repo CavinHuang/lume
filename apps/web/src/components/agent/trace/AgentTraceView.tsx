@@ -1,8 +1,10 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronRight, Search, X } from 'lucide-react'
+import { useAtomValue } from 'jotai'
+import { Bot, ChevronRight, Search, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { agentSubagentRunsFamily } from '@/atoms'
 import { useAgentEventBus } from '@/hooks/useAgentEventBus'
-import type { SdkEventEnvelope } from '@lume/shared'
+import type { SdkEventEnvelope, NormalizedProviderUsage, SubagentRunRecord } from '@lume/shared'
 import { buildTraceRecords, type TraceRecord, type TraceRecordKind } from './build-trace-records'
 
 /**
@@ -11,7 +13,7 @@ import { buildTraceRecords, type TraceRecord, type TraceRecordKind } from './bui
  * 概览条支持拖拽选区间过滤账本（右键/Esc 清除）、500ms 悬停浮层、assistant span 的 TTFT/解码双色调。
  */
 
-const MAX_ENVELOPES = 8000 // ponytail: 超长线程截断最旧事件；update 折叠后 update 不再堆积，8000 条≈纯生命周期事件的量级；虚拟滚动留待实测卡顿时再加
+const MAX_ENVELOPES = 8000 // ponytail: 超长线程截断最旧事件；update 折叠后 update 不再堆积；账本行经 content-visibility 跳过屏外布局/绘制，若实测 reconcile 仍高再换窗口化列表
 
 const FLUSH_INTERVAL_MS = 100
 
@@ -47,6 +49,27 @@ export interface TraceTimeRange {
 }
 
 const HOVER_DELAY_MS = 500 // 对齐 dsh：悬停半秒才出浮层，避免扫过时闪烁
+
+const SUBAGENT_STATUS_META: Record<string, { label: string; cls: string }> = {
+  accepted: { label: '已受理', cls: 'text-[var(--lume-text-muted)]' },
+  running: { label: '运行中', cls: 'text-[var(--lume-accent)]' },
+  completed: { label: '完成', cls: 'text-[var(--lume-success)]' },
+  errored: { label: '失败', cls: 'text-[var(--lume-danger)]' },
+  aborted: { label: '已中止', cls: 'text-[var(--lume-text-muted)]' },
+  timed_out: { label: '超时', cls: 'text-[var(--lume-warning)]' },
+}
+
+function fmtTokens(n?: number): string {
+  return n == null ? '—' : n.toLocaleString('zh-CN')
+}
+
+/** 单条用量摘要行（assistant inspector 用）。 */
+function fmtUsageSummary(usage: NormalizedProviderUsage): string {
+  const parts = [`输入 ${fmtTokens(usage.inputTokens)}`, `输出 ${fmtTokens(usage.outputTokens)}`]
+  if (usage.cacheReadInputTokens > 0) parts.push(`缓存读 ${fmtTokens(usage.cacheReadInputTokens)}`)
+  if (usage.cacheCreationInputTokens > 0) parts.push(`缓存写 ${fmtTokens(usage.cacheCreationInputTokens)}`)
+  return parts.join(' · ')
+}
 
 function OverviewBar({
   records,
@@ -328,7 +351,15 @@ function DetailSection({ title, content }: { title: string; content?: string }) 
   )
 }
 
-function Inspector({ record, onClose }: { record: TraceRecord; onClose: () => void }) {
+function Inspector({
+  record,
+  subagentRuns,
+  onClose,
+}: {
+  record: TraceRecord
+  subagentRuns?: SubagentRunRecord[]
+  onClose: () => void
+}) {
   const meta: Array<[string, string]> = [
     ['开始', fmtClock(record.startedAt)],
     ['耗时', fmtDuration(record.durationMs)],
@@ -340,6 +371,7 @@ function Inspector({ record, onClose }: { record: TraceRecord; onClose: () => vo
       : []),
     ['状态', record.running ? '运行中' : record.isError ? '失败' : '完成'],
     ...(record.toolName ? [['工具', record.toolName] as [string, string]] : []),
+    ...(record.usage ? [['Token', fmtUsageSummary(record.usage)] as [string, string]] : []),
     ...(record.numTurns != null ? [['轮数', String(record.numTurns)] as [string, string]] : []),
     ...(record.stopReason ? [['停止原因', record.stopReason] as [string, string]] : []),
   ]
@@ -369,6 +401,35 @@ function Inspector({ record, onClose }: { record: TraceRecord; onClose: () => vo
       <DetailSection title={record.kind === 'user' ? '消息原文' : '输入'} content={record.input} />
       <DetailSection title="思考" content={record.thinking} />
       <DetailSection title="输出" content={record.output} />
+      {subagentRuns && subagentRuns.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <div className="text-micro font-medium uppercase tracking-wide text-[var(--lume-text-muted)]">
+            子代理 ({subagentRuns.length})
+          </div>
+          {subagentRuns.map((run) => {
+            const status = SUBAGENT_STATUS_META[run.status]
+            return (
+              <div key={run.runId} className="flex flex-col gap-1 rounded-md border border-[var(--lume-border-subtle)] p-2">
+                <div className="flex items-center gap-1.5 text-caption">
+                  <Bot size={12} className="shrink-0 text-[var(--lume-accent-2)]" />
+                  <span className="min-w-0 flex-1 truncate text-foreground">{run.label ?? run.task}</span>
+                  <span className={cn('shrink-0 font-medium', status?.cls)}>{status?.label ?? run.status}</span>
+                </div>
+                {run.startedAt != null && (
+                  <div className="text-micro text-[var(--lume-text-muted)]">
+                    耗时 {fmtDuration(run.endedAt != null ? Math.max(0, run.endedAt - run.startedAt) : null)}
+                  </div>
+                )}
+                {run.task && run.label && (
+                  <div className="text-caption leading-relaxed text-[var(--lume-text-muted)]">{run.task}</div>
+                )}
+                <DetailSection title="子代理输出" content={run.outcome?.output} />
+                <DetailSection title="子代理错误" content={run.outcome?.error} />
+              </div>
+            )
+          })}
+        </div>
+      )}
     </aside>
   )
 }
@@ -380,6 +441,18 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
   const [range, setRange] = useState<TraceTimeRange | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const followTailRef = useRef(true)
+  // 子代理 run 由全局监听同步进 atom；按 parentToolUseId 挂到对应 Task 工具记录下（dsh 嵌套 Subtool 行）
+  const subagentRuns = useAtomValue(agentSubagentRunsFamily(threadId)) ?? []
+  const runsByParentTool = useMemo(() => {
+    const map = new Map<string, SubagentRunRecord[]>()
+    for (const run of subagentRuns) {
+      if (!run.parentToolUseId) continue
+      const list = map.get(run.parentToolUseId) ?? []
+      list.push(run)
+      map.set(run.parentToolUseId, list)
+    }
+    return map
+  }, [subagentRuns])
 
   // 总线逐条投递（快照回放是同步循环）：直接 setState 会造成 O(n²) 拷贝与流式高频 commit。
   // 缓冲后按 FLUSH_INTERVAL_MS 合并成一次 append，并折叠连续累计 update（同 runId+turnId 留最新）。
@@ -537,8 +610,9 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
                 lastTurnNumber = record.turnNumber
                 const collapsed = record.turnNumber != null && collapsedTurns.has(record.turnNumber)
                 if (collapsed && !showTurnHeader) return null
+                const childRuns = record.toolCallId ? runsByParentTool.get(record.toolCallId) : undefined
                 return (
-                  <div key={record.id}>
+                  <div key={record.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 28px' }}>
                     {showTurnHeader && (
                       <button
                         type="button"
@@ -596,13 +670,41 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
                       </span>
                     </button>
                     )}
+                    {childRuns?.map((run) => {
+                      const status = SUBAGENT_STATUS_META[run.status]
+                      return (
+                        <button
+                          key={run.runId}
+                          type="button"
+                          onClick={() => setSelectedId(record.id)}
+                          className="ml-[5.8rem] flex w-[calc(100%-5.8rem)] items-center gap-1.5 py-0.5 pr-3 text-left hover:bg-[var(--lume-bg-elevated)]"
+                        >
+                          <Bot size={11} className="shrink-0 text-[var(--lume-accent-2)]" />
+                          <span className="min-w-0 flex-1 truncate text-micro text-[var(--lume-text-muted)]">
+                            {run.label ?? run.task}
+                          </span>
+                          <span className={cn('shrink-0 text-micro font-medium', status?.cls)}>
+                            {status?.label ?? run.status}
+                          </span>
+                          <span className="shrink-0 text-micro tabular-nums text-[var(--lume-text-muted)]">
+                            {fmtDuration(run.startedAt != null && run.endedAt != null ? Math.max(0, run.endedAt - run.startedAt) : null)}
+                          </span>
+                        </button>
+                      )
+                    })}
                   </div>
                 )
               })}
             </div>
           )}
         </div>
-        {selected && <Inspector record={selected} onClose={() => setSelectedId(null)} />}
+        {selected && (
+          <Inspector
+            record={selected}
+            subagentRuns={selected.toolCallId ? runsByParentTool.get(selected.toolCallId) : undefined}
+            onClose={() => setSelectedId(null)}
+          />
+        )}
       </div>
     </div>
   )

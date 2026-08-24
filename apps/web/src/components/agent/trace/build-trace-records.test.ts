@@ -144,6 +144,31 @@ describe('buildTraceRecords', () => {
     expect(assistant?.ttftMs).toBeGreaterThan(0)
   })
 
+  test('message.end 携带 usage 时透传到 assistant 记录', () => {
+    const records = buildTraceRecords([
+      turnStart('t1'),
+      env({ kind: 'message', phase: 'start', turnId: 't1', detail: { type: 'message.start' } }),
+      env({
+        kind: 'message',
+        phase: 'end',
+        turnId: 't1',
+        detail: {
+          type: 'message.end',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'ok' }],
+            usage: { inputTokens: 1200, outputTokens: 34, cacheReadInputTokens: 500, cacheCreationInputTokens: 0, totalTokens: 1734 },
+          },
+        },
+      }),
+    ])
+    expect(records.find((r) => r.kind === 'assistant')?.usage).toMatchObject({
+      inputTokens: 1200,
+      outputTokens: 34,
+      totalTokens: 1734,
+    })
+  })
+
   test('run.end 产出运行汇总记录，良性 end_turn 不上摘要尾巴', () => {
     const records = buildTraceRecords([
       env({ kind: 'run', phase: 'start', detail: { type: 'run.start' } }),
