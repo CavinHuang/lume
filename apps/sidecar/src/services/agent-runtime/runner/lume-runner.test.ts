@@ -31,7 +31,7 @@ function createTestParams(threadId: string): AgentRuntimeRunParams {
   };
 }
 
-function createPrepared(agentDir: string) {
+function createPrepared(agentDir: string, catalogMaxTokens?: number) {
   return {
     agentCwd: agentDir,
     agentDir,
@@ -42,7 +42,8 @@ function createPrepared(agentDir: string) {
         id: "model-1",
         provider: "openai",
         maxTokens: 32768
-      }
+      },
+      ...(catalogMaxTokens === undefined ? {} : { catalogMaxTokens })
     },
     openaiApiMode: "responses",
     apiKey: "test-key"
@@ -1046,8 +1047,10 @@ describe("LumeRunner", () => {
 
     expect(result).toEqual({ status: "completed" });
     expect(queryOptions?.sandbox).toBeUndefined();
-    // #561:主链路把 resolvedModel.maxTokens 传入 query,替换 SDK 的 16384 死默认
-    expect(queryOptions?.maxTokens).toBe(32768);
+    // #561+#631 review:model.maxTokens 是 createFallbackModel 的 32768 兜底猜测,
+    // 无目录真值时不得抬进 query(自建网关 max_tokens 翻倍会 400 且不切 fallback),
+    // 保持 SDK 16384 默认
+    expect(queryOptions?.maxTokens).toBeUndefined();
     expect(events).toEqual(["sdk:assistant", "complete"]);
     expect(lifecycle).toEqual([
       "registerAbort",
@@ -1059,6 +1062,50 @@ describe("LumeRunner", () => {
       "interrupt"
     ]);
     expect(readOnlyRunState(agentDir).status).toBe("completed");
+  });
+
+  test("runRuntimeSession carries catalog-provided maxTokens into query overrides", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-catalog-max-tokens-"));
+    dirs.push(agentDir);
+    let queryOptions: { sandbox?: unknown; maxTokens?: number } | undefined;
+    const runner = await createRunner(agentDir);
+    const prepared = createPrepared(agentDir, 128_000);
+
+    await runner.runRuntimeSession({
+      params: createTestParams("thread-1"),
+      prepared,
+      runtimeSession: {
+        agent: {
+          setModel: async () => {},
+          setMaxThinkingTokens: async () => {},
+          interrupt: async () => {},
+          query: (_message: unknown, options: { sandbox?: unknown; maxTokens?: number }) => {
+            queryOptions = options;
+            return stream([{
+              type: "assistant",
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "hello" }]
+              }
+            } as SDKMessage]);
+          }
+        },
+        session: {
+          sessionId: "sdk-session-1",
+          threadId: "sdk-thread-1",
+          dispose: async () => {}
+        },
+        tools: []
+      } as any,
+      options: {
+        registerAbort: () => {},
+        unregisterAbort: () => {}
+      },
+      createCanUseTool: () => async () => ({ behavior: "allow" })
+    });
+
+    // #561:渠道配置/目录真值经 catalogMaxTokens 抬升 query 输出上限
+    expect(queryOptions?.maxTokens).toBe(128_000);
   });
 
   test("runPreparedRuntimeCoreAttempt creates runtime session with observed emitters", async () => {
