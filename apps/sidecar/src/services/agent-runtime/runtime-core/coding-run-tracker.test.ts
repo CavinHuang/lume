@@ -115,6 +115,78 @@ describe("coding run tracker", () => {
     }
   });
 
+  test("#573①: 编辑后诊断错误以 continue 消息回注", async () => {
+    let collectCalls = 0;
+    const tracker = createCodingRunTracker({
+      workspaceRoot: "/tmp/fake-root",
+      collectDiagnostics: async () => {
+        collectCalls += 1;
+        return {
+          checker: "tsc",
+          entries: [{ file: "a.ts", line: 12, code: "TS2345", message: "type mismatch" }],
+          totalErrors: 1,
+          timedOut: false,
+        };
+      },
+    });
+    tracker.observe({ toolName: "Edit", input: { file_path: "a.ts" }, result: result("edited") });
+
+    await expect(tracker.completionGuard()).resolves.toMatchObject({
+      type: "continue",
+      message: expect.stringContaining("[diagnostics] 类型检查检测到 1 个错误")
+    });
+    expect(collectCalls).toBe(1);
+
+    // 同批文件未再变动时不重复收集，落回验证提示流程
+    await expect(tracker.completionGuard()).resolves.toContain("verification needed");
+    expect(collectCalls).toBe(1);
+  });
+
+  test("#573①: 诊断轮次达上限后不再回注；验证通过后跳过诊断", async () => {
+    let collectCalls = 0;
+    const files = ["a.ts", "b.ts", "c.ts"];
+    const trackersState = { observeIndex: 0 };
+    const tracker = createCodingRunTracker({
+      workspaceRoot: "/tmp/fake-root",
+      collectDiagnostics: async () => {
+        collectCalls += 1;
+        return {
+          checker: "eslint",
+          entries: [{ file: files[trackersState.observeIndex] ?? "x.ts", line: 1, code: "no-e", message: "err" }],
+          totalErrors: 1,
+          timedOut: false,
+        };
+      },
+    });
+
+    // 三轮不同文件集：第 3 次达到 MAX_DIAGNOSTIC_ROUNDS=2 上限，collector 只被调 2 次
+    for (const file of files) {
+      tracker.observe({ toolName: "Edit", input: { file_path: file }, result: result("edited") });
+      const guard = await tracker.completionGuard();
+      trackersState.observeIndex += 1;
+      if (collectCalls < 2) {
+        expect((guard as { type?: string })?.type).toBe("continue");
+      }
+    }
+    expect(collectCalls).toBe(2);
+  });
+
+  test("#573① review: 错误与编辑文件零交集时不回注（防诱导越界修存量错误）", async () => {
+    const tracker = createCodingRunTracker({
+      workspaceRoot: "/tmp/fake-root",
+      collectDiagnostics: async () => ({
+        checker: "tsc",
+        entries: [{ file: "legacy/other.ts", line: 3, code: "TS9999", message: "存量错误" }],
+        totalErrors: 99,
+        timedOut: false,
+      }),
+    });
+    tracker.observe({ toolName: "Edit", input: { file_path: "a.ts" }, result: result("edited") });
+
+    // collector 报的全是与本次编辑无关的存量错误 → 不抢跑，落回验证提示（字符串形态）
+    await expect(tracker.completionGuard()).resolves.toContain("verification needed");
+  });
+
   test("does not treat a filtered no-match result as verification evidence", async () => {
     const tracker = createCodingRunTracker();
     tracker.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });

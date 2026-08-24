@@ -542,12 +542,18 @@ async function startDirectShellTask({
           : `Command completed successfully (exit code ${code ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
         : `Command terminated (${terminationReason}${code !== null ? `, exit code ${code}` : ''}).`
       const footer = truncationFooter(stdoutStats, stderrStats, outputFile)
+      // #573④:验证用途的大输出附失败摘要,模型不必在 10 万字符里翻失败清单
+      const verificationDigest = purpose?.toLowerCase() === 'verification'
+        && stdoutPreview.length + stderrPreview.length > FAILURE_DIGEST_MIN_CHARS
+        ? extractFailureDigest(`${stdoutPreview}\n${stderrPreview}`)
+        : []
       const output = assembleShellResult(
         firstLine,
         [
           stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
           stderrPreview ? `stderr:\n${stderrPreview}` : '',
           spawnError ? `process error: ${spawnError}` : '',
+          ...(verificationDigest.length > 0 ? [`failure digest:\n${verificationDigest.map((line) => `- ${line}`).join('\n')}`] : []),
           ...(footer ? [footer] : []),
         ],
         code !== 0 && code !== null
@@ -823,7 +829,20 @@ async function startDurableShellTask({
         const normalizedExecution = applySemanticOutcome(execution, interpretation)
         const stdoutStats = stdoutAccumulator.snapshot()
         const stderrStats = stderrAccumulator.snapshot()
-        const output = formatShellResult(normalizedExecution, stdoutStats.content, stderrStats.content, interpretation, truncationFooter(stdoutStats, stderrStats, outputFile), outputFile)
+        // #573④:同前台路径,验证用途的大输出附失败摘要
+        const verificationDigest = purpose?.toLowerCase() === 'verification'
+          && stdoutStats.content.length + stderrStats.content.length > FAILURE_DIGEST_MIN_CHARS
+          ? extractFailureDigest(`${stdoutStats.content}\n${stderrStats.content}`)
+          : []
+        const output = formatShellResult(
+          normalizedExecution,
+          stdoutStats.content,
+          stderrStats.content,
+          interpretation,
+          truncationFooter(stdoutStats, stderrStats, outputFile),
+          outputFile,
+          verificationDigest.length > 0 ? `failure digest:\n${verificationDigest.map((line) => `- ${line}`).join('\n')}` : undefined,
+        )
         const result = {
           output,
           isError: executionOutcome(normalizedExecution) !== 'succeeded',
@@ -1072,6 +1091,7 @@ function formatShellResult(
   interpretation: ReturnType<typeof interpretShellExit>,
   footer?: string,
   outputFile?: string,
+  failureDigest?: string,
 ): string {
   const outcome = executionOutcome(execution)
   const firstLine = outcome === 'succeeded'
@@ -1084,6 +1104,7 @@ function formatShellResult(
     [
       stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
       stderrPreview ? `stderr:\n${stderrPreview}` : '',
+      ...(failureDigest ? [failureDigest] : []),
       ...(footer ? [footer] : []),
     ],
     outcome !== 'succeeded' && execution.exitCode !== null && execution.exitCode !== undefined
@@ -1570,6 +1591,41 @@ function boundedPreview(value: string, maxChars = PREVIEW_CHARS): string {
   if (value.length <= maxChars) return value
   const half = Math.floor(maxChars / 2)
   return `${value.slice(0, half)}\n...(truncated)...\n${value.slice(-half)}`
+}
+
+/** #573④:超过该长度的验证输出才值得附加失败摘要 */
+const FAILURE_DIGEST_MIN_CHARS = 10_000
+/** #573④:摘要行数上限——只做路标,不替代完整输出 */
+const FAILURE_DIGEST_MAX_LINES = 20
+
+const FAILURE_LINE_PATTERNS: RegExp[] = [
+  /^\s*[✗✕×]\s/,               // vitest/jest 失败标记
+  /^\s*●\s/,                    // jest 失败块标题
+  /\bFAIL\b/,                   // jest/go test
+  /--- FAIL:/,                  // go test 子测试
+  /^error(\[\w+\])?:/i,         // cargo/rustc
+  /^(?:AssertionError|ExpectationError|CompareError):/,
+  /\b\d+ (?:failed|failing)\b/i,
+]
+
+/**
+ * #573④:从大体积验证输出中抽取失败相关行(去重、截断),作为紧凑摘要附在结果尾部。
+ * 完整输出仍按既有头尾保留策略下发,摘要是路标不是替代。
+ */
+export function extractFailureDigest(output: string, maxLines = FAILURE_DIGEST_MAX_LINES): string[] {
+  const seen = new Set<string>()
+  const digest: string[] = []
+  for (const rawLine of output.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.length > 300) continue
+    if (!FAILURE_LINE_PATTERNS.some((pattern) => pattern.test(line))) continue
+    const key = line.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    digest.push(line.slice(0, 240))
+    if (digest.length >= maxLines) break
+  }
+  return digest
 }
 
 export function redactSensitiveText(value: string): string {

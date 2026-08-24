@@ -13,6 +13,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { discoverCodingRoots, getCodingChangeSet } from "./coding-change-service";
+import { collectDiagnostics, formatDiagnosticsMessage, isDiagnosticEligibleFile, DIAGNOSTIC_DEADLINE_MS } from "./coding-diagnostics";
 import { createCodingWorkspaceMonitor } from "./coding-workspace-monitor";
 import {
   selectVerificationCommands,
@@ -27,6 +28,8 @@ const PERSIST_DEBOUNCE_MS = 50;
 const COMPLETION_CHANGESET_WAIT_MS = 750;
 /** #573:验证失败后的自动修复预算——单次对跨文件重构明显不足 */
 const MAX_VERIFICATION_REPAIR_ATTEMPTS = 3;
+/** #573①:诊断回传轮次预算——模型修完一轮后若文件未再变动则不重复收集 */
+const MAX_DIAGNOSTIC_ROUNDS = 2;
 
 export interface CodingVerificationReport {
   phase: CodingTurnPhase;
@@ -91,6 +94,8 @@ export interface CodingRunTrackerOptions {
   statePath?: string;
   turnId?: string;
   userMessageId?: string;
+  /** #573①:诊断收集器注入点（测试/宿主覆盖）；缺省用本地 tsc/eslint 探测实现 */
+  collectDiagnostics?: typeof collectDiagnostics;
 }
 
 export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
@@ -131,6 +136,10 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   const verificationRecords: CodingVerificationRecord[] = [];
   const gitActions: CodingGitAction[] = [];
   let recommendedVerificationCommands: string[] = [];
+  // #573①:本次 run 内被编辑过的可诊断文件与诊断轮次账本
+  const diagnosticEditedFiles = new Set<string>();
+  let diagnosticsRoundsUsed = 0;
+  let lastDiagnosticsFileKey = "";
 
   async function beforeToolExecution(input: {
     toolName: string;
@@ -337,6 +346,8 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
           attributedCandidates.add(path);
           workspaceMonitor.recordAttributedPath(path);
           mergeFileChangeStats(fileChangeStats, path, readFileChangeStats(input.result));
+          // #573①:登记可诊断的脚本文件,completionGuard 处统一收集
+          if (isDiagnosticEligibleFile(path)) diagnosticEditedFiles.add(path);
         }
       }
       if (verificationStatus === "verified" || verificationStatus === "not_required") verificationStatus = "unverified";
@@ -414,6 +425,47 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     }
     if (mutationObserved && options.workspaceRoot) {
       await waitForAuthoritativeRefresh(startAuthoritativeRefresh());
+    }
+    // #573①:诊断回传门——验证通过前,若本轮有脚本文件被编辑且尚未按同批文件收集过,
+    // 先把 checker 错误回注给模型(根因先于测试失败暴露)。轮次与同 key 去重防失控。
+    if (
+      mutationObserved
+      && verificationStatus !== "verified"
+      && diagnosticEditedFiles.size > 0
+      && diagnosticsRoundsUsed < MAX_DIAGNOSTIC_ROUNDS
+      // #573① review:首版只取主根；additionalRoots 内的编辑会探不到 checker 而静默跳过
+      && workspaceRoots[0]
+    ) {
+      const fileKey = [...diagnosticEditedFiles].sort().join("|");
+      if (fileKey !== lastDiagnosticsFileKey) {
+        lastDiagnosticsFileKey = fileKey;
+        const outcome = await (options.collectDiagnostics ?? collectDiagnostics)({
+          workspaceRoot: workspaceRoots[0],
+          files: [...diagnosticEditedFiles],
+          deadlineMs: DIAGNOSTIC_DEADLINE_MS,
+        }).catch(() => null);
+        // #573① review:轮次只在真正回注时消耗——零错误/超时/无 checker 不烧预算
+        if (outcome && outcome.entries.length > 0) {
+          // 交集执法点：错误与本次编辑文件零交集(全仓 checker 会报出存量错误)时不回注,
+          // 防止诱导模型越界修复仓库存量问题；此时落回下方既有验证流程
+          const normalizedEdited = [...diagnosticEditedFiles].map((file) => file.replace(/\\/g, "/").toLowerCase());
+          const hasRelevantError = outcome.entries.some((entry) => {
+            const normalizedEntry = entry.file.toLowerCase();
+            return normalizedEdited.some((edited) => normalizedEntry.endsWith(edited) || edited.endsWith(normalizedEntry));
+          });
+          if (hasRelevantError) {
+            diagnosticsRoundsUsed += 1;
+            persist();
+            const lastRoundNote = diagnosticsRoundsUsed >= MAX_DIAGNOSTIC_ROUNDS
+              ? "\n（这是最后一次自动诊断，其后请自行运行验证命令确认。）"
+              : "";
+            return {
+              type: "continue",
+              message: `${formatDiagnosticsMessage(outcome)}\n请在当前 Run 中修复以上错误后重新执行验证。${lastRoundNote}`
+            };
+          }
+        }
+      }
     }
     if (verificationNoEvidenceAttempts >= 2) {
       return {

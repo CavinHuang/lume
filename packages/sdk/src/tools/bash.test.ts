@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BashTool, createPreviewAccumulator, interpretShellExit, looksLikeInteractivePrompt, redactSensitiveText, tailTruncate } from "./bash";
+import { BashTool, createPreviewAccumulator, extractFailureDigest, interpretShellExit, looksLikeInteractivePrompt, redactSensitiveText, tailTruncate } from "./bash";
 import { analyzeBashCommand } from "../utils/bash-command-analysis";
 import { clearTasks, TaskOutputTool } from "./task-tools";
 import {
@@ -919,4 +919,39 @@ describe("BashTool output streaming snapshots", () => {
       clearInterval(keepAlive);
     }
   }, 20_000);
+});
+
+describe("#573④ extractFailureDigest", () => {
+  test("抽取多家族测试框架的失败行并去重", () => {
+    const output = [
+      "RUN v3.2.1",
+      "✗ src/a.test.ts > adds numbers",
+      "  → expected 1 to be 2",
+      "✓ src/ok.test.ts > works",
+      "● renders list › handles empty",
+      "--- FAIL: TestSub (0.00s)",
+      "error[E0308]: mismatched types",
+      "✗ src/a.test.ts > adds numbers",
+    ].join("\n");
+    const digest = extractFailureDigest(output);
+    // 重复的 ✗ 行去重后共 4 条
+    expect(digest.length).toBe(4);
+    expect(digest.some((line) => line.includes("adds numbers"))).toBe(true);
+    expect(digest.some((line) => line.includes("TestSub"))).toBe(true);
+    expect(digest.some((line) => line.includes("E0308"))).toBe(true);
+    // ✓ 通过行不进摘要
+    expect(digest.some((line) => line.includes("works"))).toBe(false);
+  });
+
+  test("行数上限与超长行过滤", () => {
+    const longLine = `x`.repeat(400);
+    const output = Array.from({ length: 40 }, (_, i) => `✗ fail ${i}`).concat([`✗ too-long ${longLine}`]).join("\n");
+    const digest = extractFailureDigest(output, 20);
+    expect(digest.length).toBe(20);
+    expect(digest.some((line) => line.startsWith("too-long"))).toBe(false);
+  });
+
+  test("正常输出返回空数组", () => {
+    expect(extractFailureDigest("all tests passed\n42 passing")).toEqual([]);
+  });
 });
