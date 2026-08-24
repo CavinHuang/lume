@@ -63,6 +63,11 @@ import { useAgentEventBus } from './useAgentEventBus'
 const lifecycleAdapterStatesByThread = new Map<string, LifecycleAdapterState>()
 const lifecycleDeliveredSeqByThread = new Map<string, number>()
 
+// 后台窗口的 rAF 被 Chromium 暂停(#676):事件批处理除 rAF 外再挂一个兜底定时器,
+// 保证最小化/遮挡期间积压事件仍在该时限内批量提交;先触发方在 flush 入口吊销另一方。
+// 隐藏页 setTimeout 受约 1s 钳制,取值与之对齐,不承诺达不到的更小时限。
+export const RUNTIME_EVENT_FALLBACK_FLUSH_MS = 1_000
+
 /** 线程删除时释放其 lifecycle 适配器基线（含 lastText/lastThinking 累计全文），防止 Map 只增不减。 */
 export function releaseThreadLifecycleState(threadId: string): void {
   lifecycleAdapterStatesByThread.delete(threadId)
@@ -118,9 +123,19 @@ export function useGlobalAgentListeners() {
 
   const pendingRuntimeEventsRef = useRef<LumeRuntimeEvent[]>([])
   const runtimeEventsRafRef = useRef<number | null>(null)
+  const runtimeEventsFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const desktopActionVisualTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flushRuntimeEvents = useCallback(() => {
-    runtimeEventsRafRef.current = null
+    // 双调度互斥(#676):任一触发方先行冲刷即吊销另一方——后台定时器先触发时
+    // 吊销仍悬挂的 rAF,前台 rAF 先触发时吊销兜底定时器,防恢复前台后重复提交。
+    if (runtimeEventsRafRef.current !== null) {
+      cancelAnimationFrame(runtimeEventsRafRef.current)
+      runtimeEventsRafRef.current = null
+    }
+    if (runtimeEventsFallbackTimerRef.current !== null) {
+      clearTimeout(runtimeEventsFallbackTimerRef.current)
+      runtimeEventsFallbackTimerRef.current = null
+    }
     const batch = pendingRuntimeEventsRef.current
     if (batch.length === 0) return
     pendingRuntimeEventsRef.current = []
@@ -128,8 +143,12 @@ export function useGlobalAgentListeners() {
   }, [setRuntimeEvents])
   const enqueueRuntimeEvent = useCallback((event: LumeRuntimeEvent) => {
     pendingRuntimeEventsRef.current.push(event)
+    // 两句柄均只在缺席时调度:冲刷窗口内的后续入队并入同一批次
     if (runtimeEventsRafRef.current === null) {
       runtimeEventsRafRef.current = requestAnimationFrame(flushRuntimeEvents)
+    }
+    if (runtimeEventsFallbackTimerRef.current === null) {
+      runtimeEventsFallbackTimerRef.current = setTimeout(flushRuntimeEvents, RUNTIME_EVENT_FALLBACK_FLUSH_MS)
     }
   }, [flushRuntimeEvents])
 
@@ -437,6 +456,10 @@ export function useGlobalAgentListeners() {
       if (runtimeEventsRafRef.current !== null) {
         cancelAnimationFrame(runtimeEventsRafRef.current)
         runtimeEventsRafRef.current = null
+      }
+      if (runtimeEventsFallbackTimerRef.current !== null) {
+        clearTimeout(runtimeEventsFallbackTimerRef.current)
+        runtimeEventsFallbackTimerRef.current = null
       }
       if (desktopActionVisualTimerRef.current) {
         clearTimeout(desktopActionVisualTimerRef.current)
