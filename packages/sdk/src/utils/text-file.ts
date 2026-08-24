@@ -67,6 +67,11 @@ export async function readTextFileRange(
 
   throwIfAborted(signal, stream)
 
+  // \u6587\u4EF6\u4EE5\u6362\u884C\u7ED3\u5C3E \u27FA \u672A\u63D0\u524D\u505C\u8BFB\u3001\u8BFB\u5230 EOF \u65F6\u7F13\u51B2\u5DF2\u7A7A\u4E14\u81F3\u5C11\u6709\u4E00\u884C\u3002
+  // \u7ED3\u679C\u5FC5\u987B\u5FE0\u5B9E\u4FDD\u7559\u884C\u5C3E\u6362\u884C\uFF0C\u5426\u5219 Read \u7F13\u5B58\u7684\u5168\u89C6\u56FE\u4E0E Edit/Write \u4FA7
+  // decodeTextFile \u7684\u78C1\u76D8\u539F\u6587\u5DEE\u4E00\u4E2A "\n"\uFF0C\u5168\u89C6\u56FE\u5185\u5BB9\u6BD4\u5BF9\u4F1A\u8BEF\u62A5 stale\uFF08#569\uFF09\u3002
+  const endsWithNewline = !truncated && buffer.length === 0 && totalLines > 0;
+
   if (buffer.length > 0) {
     consumeLine(buffer);
   }
@@ -75,7 +80,12 @@ export async function readTextFileRange(
     selectedLines[0] = selectedLines[0].slice(1);
   }
 
-  return { content: selectedLines.join("\n"), totalLines, truncated };
+  const content = selectedLines.join("\n");
+  return {
+    content: endsWithNewline && selectedLines.length > 0 ? `${content}\n` : content,
+    totalLines,
+    truncated,
+  };
 }
 
 function throwIfAborted(signal: AbortSignal | undefined, stream?: NodeJS.ReadableStream): void {
