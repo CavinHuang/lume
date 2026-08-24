@@ -812,10 +812,44 @@ export async function dispatchAgentRun(
   return result;
 }
 
+/** #566:turn_limited 自动续跑——单条用户消息最多自动接续的 run 数。 */
+const MAX_AUTO_TURN_CONTINUATIONS = 3;
+
+/** #566:自动续跑时面向模型的合成指令;恢复上下文(<runtime-recovery-state>)由既有链路注入。 */
+const AUTO_TURN_CONTINUATION_PROMPT = "The previous run reached its turn budget before finishing the task. Continue the original task from where it stopped—do not restart or repeat completed steps. If nothing remains, reply with a brief completion summary.";
+
+/**
+ * #566:续跑判定纯函数——turn_limited 且非 repeat_guard、未达上限、未中止、
+ * 无排队用户消息、调用方未限定回合预算(显式 maxTurns / automation 派发)时才自动接续。
+ */
+export function shouldAutoContinueTurnLimited(
+  result: Pick<AgentRuntimeRunResult, "status" | "terminationReason"> | undefined,
+  context: { continuationCount: number; abortSignalled: boolean; queuedCount: number; callerBoundsTurns: boolean }
+): boolean {
+  if (!result || result.status !== "turn_limited") return false;
+  if (result.terminationReason === "repeat_guard") return false;
+  if (context.continuationCount >= MAX_AUTO_TURN_CONTINUATIONS) return false;
+  if (context.abortSignalled) return false;
+  // 有排队中的用户消息时不抢跑：让用户的新指令经恢复上下文自然驱动下一轮
+  if (context.queuedCount > 0) return false;
+  // 调用方把回合预算当成本上限(显式 maxTurns 的后台作业/automation 无人值守派发)时不自动放宽:
+  // automation 触顶常伴随 pending 审批弹窗堆积,自动接续会放大跨 run 延迟执行风险(#566 review)
+  if (context.callerBoundsTurns) return false;
+  return true;
+}
+
+/** #566:单条逻辑发送的内部选项——autoContinuationCount 由续跑循环回填,供收尾段判定是否抑制终态。 */
+type AgentSendOptions = {
+  appendUserMessage?: boolean;
+  allowResumeRetry?: boolean;
+  abortSignal?: AbortSignal;
+  autoContinuationCount?: number;
+};
+
 export async function sendAgentMessage(
   input: AgentSendInput,
   emit: AgentStreamEmitter,
-  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal } = {}
+  options: AgentSendOptions = {}
 ): Promise<void> {
   const { threadId } = input;
   if (directRunThreads.has(threadId)) {
@@ -823,7 +857,39 @@ export async function sendAgentMessage(
   }
   directRunThreads.add(threadId);
   try {
-    await runSendAgentMessage(input, emit, options);
+    let outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: 0 });
+    let continuationCount = 0;
+    while (outcome?.autoContinue) {
+      continuationCount += 1;
+      log.info("[Agent 会话] 达到回合上限，自动续跑", {
+        threadId: threadId.slice(0, 8),
+        continuationCount,
+        maxContinuations: MAX_AUTO_TURN_CONTINUATIONS
+      });
+      // #566 review:合成续跑指令与原消息 messageParts 拼接必然失配(message_mismatch),
+      // 须剥离 parts;残留 capabilityFingerprints 会撞 capability_changed 校验,一并剥掉
+      const { messageParts: _staleParts, ...continuationInput } = input;
+      const { capabilityFingerprints: _staleFingerprints, ...continuationMetadata } = input.messageMetadata ?? {};
+      input = {
+        ...continuationInput,
+        userMessage: AUTO_TURN_CONTINUATION_PROMPT,
+        // hiddenFromChat 已同时抑制可见用户消息落盘与 runtime event 投影,无需再动 appendUserMessage
+        messageMetadata: { ...continuationMetadata, hiddenFromChat: true }
+      };
+      try {
+        outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: continuationCount });
+      } catch (error) {
+        // 首轮已正常收尾，续跑失败不应把整条发送标成错误;但上一轮终态已被抑制,须补发防悬挂
+        log.warn("[Agent 会话] 自动续跑失败，保留已有进度", {
+          threadId: threadId.slice(0, 8),
+          continuationCount,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        getAgentRuntimeStatusManager().markCompleted(threadId);
+        emit.onComplete();
+        break;
+      }
+    }
   } finally {
     directRunThreads.delete(threadId);
     getAgentRuntimeKernel().notifyThreadReleased(threadId);
@@ -840,7 +906,8 @@ async function finalizeAgentSendStage({
   input,
   threadId,
   userMessage,
-  emit
+  emit,
+  terminalEventsSuppressed
 }: {
   runtimeResult: AgentRuntimeRunResult;
   runtimeCompleted: boolean;
@@ -851,6 +918,8 @@ async function finalizeAgentSendStage({
   threadId: string;
   userMessage: string;
   emit: AgentStreamEmitter;
+  /** #566:turn_limited 且将自动续跑时为 true——终态事件延迟到链末统一发 */
+  terminalEventsSuppressed?: boolean;
 }): Promise<void> {
   const {
     resolvedChannelId,
@@ -988,12 +1057,16 @@ async function finalizeAgentSendStage({
     const repeatGuardStop = runtimeResult.terminationReason === "repeat_guard";
     log.info(repeatGuardStop
       ? "[Agent 会话] 运行因重复操作保护机制停止，进度已保留"
-      : "[Agent 会话] 运行达到最大回合数，等待继续执行", {
+      : terminalEventsSuppressed
+        ? "[Agent 会话] 运行达到最大回合数，自动续跑接续"
+        : "[Agent 会话] 运行达到最大回合数，等待继续执行", {
       threadId: threadId.slice(0, 8),
       persistedSdkMessageCount: persistedSdkMessages.length
     });
-    runtimeStatusManager.markCompleted(threadId);
-    emit.onComplete({ reason: repeatGuardStop ? "repeat_guard" : "max_turns" });
+    if (!terminalEventsSuppressed) {
+      runtimeStatusManager.markCompleted(threadId);
+      emit.onComplete({ reason: repeatGuardStop ? "repeat_guard" : "max_turns" });
+    }
   }
   if (runtimeResult.status === "aborted") {
     log.warn("[Agent 会话] 运行中止", {
@@ -1353,15 +1426,17 @@ interface PreparedAgentSend {
 async function runSendAgentMessage(
   input: AgentSendInput,
   emit: AgentStreamEmitter,
-  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal } = {}
-): Promise<void> {
+  options: AgentSendOptions = {}
+): Promise<{ runtimeResult: AgentRuntimeRunResult; autoContinue: boolean } | undefined> {
   const { threadId, userMessage } = input;
   const completeIfAborted = () => {
     if (!options.abortSignal?.aborted) return false;
+    // #566 review:续跑轮中止时上一轮终态已被抑制,补 markCompleted 防状态卡在 streaming
+    if ((options.autoContinuationCount ?? 0) > 0) getAgentRuntimeStatusManager().markCompleted(threadId);
     emit.onComplete();
     return true;
   };
-  if (completeIfAborted()) return;
+  if (completeIfAborted()) return undefined;
   const prepared = await prepareAgentSendStage({
     input,
     emit,
@@ -1370,7 +1445,7 @@ async function runSendAgentMessage(
     userMessage,
     completeIfAborted
   });
-  if (prepared === null) return;
+  if (prepared === null) return undefined;
   const {
     resolvedChannelId,
     resolvedModelId,
@@ -1393,7 +1468,7 @@ async function runSendAgentMessage(
   let visibleAssistantMessageId: string | undefined;
 
   const { runAgentRuntime } = await import("../agent-runtime/runner/attempt");
-  if (completeIfAborted()) return;
+  if (completeIfAborted()) return undefined;
   const fileReferenceBinding = createFileReferenceBinding(threadId);
   const configThinkingLevel = effectiveLumeConfig.agent?.thinkingLevel;
   const configPermissionMode = effectiveLumeConfig.agent?.permissionMode;
@@ -1487,6 +1562,14 @@ async function runSendAgentMessage(
       emit.onToolPermissionRequest(request);
     }
   });
+  // #566:续跑判定在收尾前定案——autoContinue 时收尾段抑制终态事件(markCompleted/onComplete),
+  // 否则 IM 卡片冻结/planning 授权拆除等挂在 onComplete 上的收尾副作用会砍断续跑链
+  const autoContinue = shouldAutoContinueTurnLimited(runtimeResult, {
+    continuationCount: options.autoContinuationCount ?? 0,
+    abortSignalled: options.abortSignal?.aborted ?? false,
+    queuedCount: getAgentRuntimeKernel().listQueued(threadId).length,
+    callerBoundsTurns: input.messageMetadata?.maxTurns !== undefined || input.messageMetadata?.automationJobId !== undefined
+  });
   await finalizeAgentSendStage({
     runtimeResult,
     runtimeCompleted,
@@ -1496,8 +1579,10 @@ async function runSendAgentMessage(
     input,
     threadId,
     userMessage,
-    emit
+    emit,
+    terminalEventsSuppressed: autoContinue
   });
+  return { runtimeResult, autoContinue };
 }
 
 export function appendAgentMessage(

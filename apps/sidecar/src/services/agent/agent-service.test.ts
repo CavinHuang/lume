@@ -10,6 +10,8 @@ import {
 
 const heldRunResolvers = new Map<string, () => void>();
 const runAgentRuntimeCalls: unknown[] = [];
+// #566:记录走「无限触顶」路径的线程,其续跑轮持续返回 turn_limited
+const autoContinueLoopThreads = new Set<string>();
 // 模拟 attempt.ts 的 activePiSessions,供 isAgentRuntimeSessionActive mock 读取
 const activeMockSessions = new Set<string>();
 
@@ -365,6 +367,24 @@ mock.module("../agent-runtime/runner/attempt", () => ({
         });
       });
       return { status: "completed" as const };
+    }
+    // #566:auto-continuation 测试分支。续跑轮的合成指令以固定前缀开头，避免与被测模块循环 import。
+    if (userMessage === "turn-limited-once") {
+      emitSuccessfulRun(emit);
+      return { status: "turn_limited" as const };
+    }
+    if (userMessage === "turn-limited-guard") {
+      emitSuccessfulRun(emit);
+      return { status: "turn_limited" as const, terminationReason: "repeat_guard" };
+    }
+    if (userMessage === "turn-limited-loop") {
+      autoContinueLoopThreads.add(threadId);
+      emitSuccessfulRun(emit);
+      return { status: "turn_limited" as const };
+    }
+    if (userMessage.includes("The previous run reached its turn budget") && autoContinueLoopThreads.has(threadId)) {
+      emitSuccessfulRun(emit);
+      return { status: "turn_limited" as const };
     }
     emitSuccessfulRun(emit);
     return { status: "completed" as const };
@@ -1057,6 +1077,139 @@ describe("agent-service", () => {
     expect(modelMessage).toContain("重复执行相同操作被保护机制停止");
     expect(modelMessage).not.toContain('reason="turn_limit"');
     expect(modelMessage.endsWith("换个方式重试")).toBeTrue();
+  });
+
+  test("#566 shouldAutoContinueTurnLimited 判定矩阵", async () => {
+    const { shouldAutoContinueTurnLimited } = await import("./agent-service");
+    const base = { abortSignalled: false, queuedCount: 0, callerBoundsTurns: false } as const;
+    const turnLimited = { status: "turn_limited", terminationReason: undefined } as const;
+    // 正常 turn_limited 且未达上限 → 续跑
+    expect(shouldAutoContinueTurnLimited(turnLimited, { ...base, continuationCount: 0 })).toBeTrue();
+    // repeat_guard 停机不续（防失控保护语义必须保留）
+    expect(shouldAutoContinueTurnLimited({ status: "turn_limited", terminationReason: "repeat_guard" }, { ...base, continuationCount: 0 })).toBeFalse();
+    // 达到续跑上限
+    expect(shouldAutoContinueTurnLimited(turnLimited, { ...base, continuationCount: 3 })).toBeFalse();
+    // 用户已中止
+    expect(shouldAutoContinueTurnLimited(turnLimited, { ...base, continuationCount: 0, abortSignalled: true })).toBeFalse();
+    // 有排队中的用户消息时不抢跑
+    expect(shouldAutoContinueTurnLimited(turnLimited, { ...base, continuationCount: 0, queuedCount: 1 })).toBeFalse();
+    // 调用方限定回合预算（显式 maxTurns / automation 派发）不自动放宽
+    expect(shouldAutoContinueTurnLimited(turnLimited, { ...base, continuationCount: 0, callerBoundsTurns: true })).toBeFalse();
+    // 非 turn_limited 终态不续
+    expect(shouldAutoContinueTurnLimited({ status: "completed", terminationReason: undefined }, { ...base, continuationCount: 0 })).toBeFalse();
+    expect(shouldAutoContinueTurnLimited(undefined, { ...base, continuationCount: 0 })).toBeFalse();
+  });
+
+  test("#566 turn_limited 自动续跑一次后正常收尾", async () => {
+    const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const thread = createAgentThread("auto continue once", "channel-test");
+    const callsBefore = runAgentRuntimeCalls.length;
+    const completeReasons: Array<string | undefined> = [];
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "turn-limited-once",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onMessageAppended: () => undefined,
+      onComplete: (payload) => completeReasons.push(payload?.reason),
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    const calls = runAgentRuntimeCalls.slice(callsBefore) as Array<{ input?: { userMessage?: string; messageMetadata?: Record<string, unknown> }; runtime?: { visibleUserMessage?: string } }>;
+    expect(calls.length).toBe(2);
+    const [firstRun, continuation] = calls;
+    expect(firstRun?.input?.userMessage).toBe("turn-limited-once");
+    // 续跑轮 prompt 可能被可见历史上下文前置，用包含断言
+    expect(continuation?.input?.userMessage ?? "").toContain("The previous run reached its turn budget");
+    // 续跑轮不落可见用户消息：线程里只有首发那条可见用户消息
+    expect(continuation?.input?.messageMetadata?.hiddenFromChat).toBe(true);
+    const visibleUserMessages = getAgentThreadMessages(thread.id).filter((message) => message.role === "user");
+    expect(visibleUserMessages.length).toBe(1);
+    expect(visibleUserMessages[0]?.content).toBe("turn-limited-once");
+    // 中间轮的终态被抑制，整条链只发一次 onComplete；续跑后正常完成走无参 completed 终态
+    expect(completeReasons.length).toBe(1);
+  });
+
+  test("#566 连续 turn_limited 在上限处停住", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const thread = createAgentThread("auto continue capped", "channel-test");
+    const callsBefore = runAgentRuntimeCalls.length;
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "turn-limited-loop",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    // 首发 1 次 + 至多 3 次自动续跑，不得无限循环
+    expect(runAgentRuntimeCalls.slice(callsBefore).length).toBe(4);
+  });
+
+  test("#566 repeat_guard 终态不触发自动续跑", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const thread = createAgentThread("auto continue guard", "channel-test");
+    const callsBefore = runAgentRuntimeCalls.length;
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "turn-limited-guard",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    expect(runAgentRuntimeCalls.slice(callsBefore).length).toBe(1);
+  });
+
+  test("#566 带 messageParts 的消息续跑时剥离 parts 与 capability 指纹", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const thread = createAgentThread("auto continue parts", "channel-test");
+    const callsBefore = runAgentRuntimeCalls.length;
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "turn-limited-once",
+      messageParts: [{ type: "text", text: "turn-limited-once" }],
+      messageMetadata: { capabilityFingerprints: ["fp-1"] },
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    } as never, {
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    // 若 parts/指纹未剥离,续跑轮会撞 message_mismatch 或 capability_changed 而中断
+    expect(runAgentRuntimeCalls.slice(callsBefore).length).toBe(2);
+    const continuation = runAgentRuntimeCalls.at(-1) as { input?: { messageMetadata?: Record<string, unknown> } };
+    expect(continuation?.input?.messageMetadata?.hiddenFromChat).toBe(true);
+    expect(continuation?.input?.messageMetadata?.capabilityFingerprints).toBeUndefined();
   });
 
   test("失败运行不应把临时 assistant 结果写回会话上下文", async () => {

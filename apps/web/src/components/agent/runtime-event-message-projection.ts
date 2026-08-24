@@ -7,7 +7,8 @@ import type {
   RuntimeToolCallView,
 } from './runtime-message-view'
 
-const TURN_LIMIT_NOTICE = '本轮已达到最大执行轮次，当前进度已保存。发送“继续”可接着执行。'
+// #566:turn_limited 后系统可能自动续跑，不再指示用户手动「继续」（自动续跑未生效时下一条用户消息同样会经恢复上下文接续）
+const TURN_LIMIT_NOTICE = '本轮已达到最大执行轮次，当前进度已保存。'
 
 export interface ProjectionState {
   messages: RuntimeMessageView[]
