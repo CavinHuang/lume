@@ -67,7 +67,9 @@ version: "1.0"
 | `dialog_blocking` | JS 对话框挡着页面 | 先 `dialog` 读取,再 `handle_dialog` 处理后继续 |
 | `element_not_visible` / `element_occluded` / `element_disabled` / `element_readonly` / `actionability_failed` / `strict_locator_violation` | 元素当前不可交互或定位不唯一 | 重新 snapshot 换可见的替代元素,或先滚动/填写前置字段;不要对同一 ref 连续硬试 |
 | `repeated_action_failure` | 同动作同 ref 在同代际连续失败 ≥2 次,已熔断 | 解除路径是成功执行一次 `navigate`/`reload`/`back`/`forward`/`open`/`switch_tab`/`handle_dialog`(换代际;用户手动导航后同样解锁);在此之前一切点击输入类动作都被拒 |
-| `action_denied` / `confirmation_unavailable` | 策略拒绝(如支付、购买)/ 用户在确认弹窗拒绝了该动作 | 均视为否决该路径:停止该意图、换方案或询问用户,不要原样或换措辞重试 |
+| `action_denied` | 策略拒绝(如支付、购买) | 停止该意图,交用户处理;不得变相绕过 |
+| `user_declined` | 用户在确认弹窗明确拒绝了该动作 | 否决该路径:停止该意图、换方案或询问用户,不要原样或换措辞重试 |
+| `confirmation_unavailable` | 确认通道异常(非用户拒绝) | 可重试一次;持续出现说明通道故障,如实告知用户 |
 | `user_action_required` | CAPTCHA/MFA/硬件密钥步骤 | 停下请用户完成该步;换措辞重试也会被拒(按元素语义识别),不要尝试 |
 | `user_takeover_required` | 协议级接管信号(当前流程下极少出现) | 停止全部浏览器动作,向用户说明并等待明确指示后再继续 |
 | `navigation_timeout` | 页面加载超上限被中断,页面可能仍在后台继续加载 | 先 `snapshot` 确认实际状态再决定;不要立即重试同一 `navigate`,持续超时改开新 tab 或如实告知用户 |

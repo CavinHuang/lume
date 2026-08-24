@@ -81,6 +81,9 @@ test("user rejection surfaces user_declined while transport anomalies stay confi
   await assert.rejects(dispatch, /confirmation_unavailable/);
   confirmResponse = {};
   await assert.rejects(dispatch, /confirmation_unavailable/);
+  // 有 token 但缺 approved 字段的畸形响应:不视为用户拒绝(#606 review 钉态)
+  confirmResponse = { token: "t" };
+  await assert.rejects(dispatch, /confirmation_unavailable/);
 });
 
 test("Agent scripts require confirmation and stay bound to the selected tab", async () => {
