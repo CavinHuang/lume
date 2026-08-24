@@ -39,6 +39,7 @@ const copy = lang === 'zh'
       heroTask1: '顾砚 · 核验信息源',
       heroTask2: '唐栩 · 梳理数据结论',
       heroTask3: '林澄 · 组织汇报结构',
+      heroArtAlt: 'Lume 与专业 Agent 团队在工作室协作',
       openSource: '开源 MIT',
       agentsCount: '13 位专业角色',
       localData: '数据留在本地',
@@ -76,6 +77,12 @@ const copy = lang === 'zh'
       toolsTitle: '一个工作台，接入整套执行能力',
       toolsDesc: '文件、终端、浏览器、搜索、图片生成、Office 文档与 MCP 服务，统一在同一条任务上下文里协作。',
       toolLabels: ['文件系统', '终端命令', '网页与搜索', '图片生成', 'MCP 服务', '消息渠道', '定时自动化', '文档处理'],
+      nightEyebrow: '离开电脑，工作也能继续',
+      nightTitle: '安静运行，按时交付',
+      nightDesc: '把周期性任务交给自动化。Lume 在本地按计划运行，调用需要的角色与工具，再把结果推送到你常用的消息渠道。',
+      nightItems: ['定时调研与日报', '跨角色并行执行', '结果主动推送'],
+      nightStatus: '下一项任务 · 今天 22:00',
+      nightArtAlt: 'Lume 在夜间本地工作台执行自动化任务',
       teamEyebrow: '不是一个万能人设',
       teamTitle: '是一支各有所长的 AI 团队',
       teamDesc: '每个角色都有清晰专长、独立工作区和做事方式。主线程负责理解你的目标，再把工作交给最适合的人。',
@@ -111,6 +118,7 @@ const copy = lang === 'zh'
       heroTask1: 'Milo · Verify sources',
       heroTask2: 'Tang · Synthesize the data',
       heroTask3: 'Lin · Shape the narrative',
+      heroArtAlt: 'Lume collaborating with a specialist agent team in a studio',
       openSource: 'MIT open source',
       agentsCount: '13 specialists',
       localData: 'Local data',
@@ -148,6 +156,12 @@ const copy = lang === 'zh'
       toolsTitle: 'One workbench, a complete execution layer',
       toolsDesc: 'Files, terminals, browsers, search, image generation, Office artifacts, and MCP services all share the same task context.',
       toolLabels: ['File system', 'Terminal', 'Web & search', 'Image generation', 'MCP services', 'Messaging', 'Automation', 'Documents'],
+      nightEyebrow: 'Work continues when you step away',
+      nightTitle: 'Quietly running. Ready on time.',
+      nightDesc: 'Hand recurring work to automations. Lume runs locally on schedule, brings in the right personas and tools, then sends the result to the channels you already use.',
+      nightItems: ['Scheduled research and reports', 'Parallel specialist execution', 'Proactive result delivery'],
+      nightStatus: 'Next task · Today at 10:00 PM',
+      nightArtAlt: 'Lume running local automations at a nighttime workstation',
       teamEyebrow: 'Not one generic persona',
       teamTitle: 'A team with distinct specialties',
       teamDesc: 'Every persona has a clear specialty, workspace, and way of working. The main thread understands your goal and hands each part to the right person.',
@@ -206,27 +220,42 @@ const resolveMembers = (ids: readonly string[]) => members.filter((member) => id
         </div>
       </div>
 
-      <div class="relative lg:-mr-24 xl:-mr-32">
-        <div class="product-stage relative rounded-[2rem] border border-white/12 bg-[#11141c] p-2.5 shadow-2xl sm:p-4">
-          <div class="flex items-center justify-between px-2 pb-3 pt-1 sm:px-3">
-            <div class="flex gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-[#ff6b63]"></span><span class="h-2.5 w-2.5 rounded-full bg-[#f7c64d]"></span><span class="h-2.5 w-2.5 rounded-full bg-[#3ccf6e]"></span></div>
-            <div class="flex items-center gap-2 text-[0.625rem] font-medium uppercase tracking-[0.18em] text-white/40"><span class="h-1.5 w-1.5 rounded-full bg-[#6cf08f]"></span>Lume workspace</div>
+      <div class="relative lg:-mr-16 xl:-mr-24">
+        <div class="hero-illustration relative isolate overflow-hidden rounded-[2rem] border border-border bg-[#e9eee6] shadow-2xl">
+          <img
+            src={withBase('/visuals/lume-hero-studio.webp')}
+            alt={copy.heroArtAlt}
+            width="2048"
+            height="1152"
+            loading="eager"
+            fetchpriority="high"
+            class="aspect-[5/4] w-full object-cover object-[68%_center] sm:aspect-[4/3] lg:aspect-[5/4]"
+          />
+          <div class="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0e1510]/28 via-transparent to-white/5" aria-hidden="true"></div>
+
+          <div class="hero-product-window absolute bottom-4 left-4 w-[76%] overflow-hidden rounded-2xl border border-white/12 bg-[#11141c] p-1.5 shadow-2xl sm:bottom-6 sm:left-6 sm:w-[62%] sm:p-2">
+            <div class="flex items-center justify-between px-2 py-1.5">
+              <div class="flex gap-1"><span class="h-1.5 w-1.5 rounded-full bg-[#ff6b63]"></span><span class="h-1.5 w-1.5 rounded-full bg-[#f7c64d]"></span><span class="h-1.5 w-1.5 rounded-full bg-[#3ccf6e]"></span></div>
+              <span class="text-[0.5rem] font-medium uppercase tracking-[0.16em] text-white/35">Lume workspace</span>
+            </div>
+            <img src={withBase('/screenshot.png')} alt={t(lang, 'hero.screenshotAlt')} width="1456" height="816" loading="eager" class="aspect-[16/9] w-full rounded-xl border border-white/8 object-cover" />
           </div>
-          <img src={withBase('/screenshot.png')} alt={t(lang, 'hero.screenshotAlt')} width="1456" height="816" loading="eager" class="aspect-[16/9] w-full rounded-[1.25rem] border border-white/10 object-cover" />
-          <div class="absolute -bottom-7 left-3 max-w-[17rem] rounded-2xl border border-white/10 bg-[#171b24]/95 p-4 text-white shadow-xl backdrop-blur sm:-left-7 sm:bottom-8">
-            <p class="text-micro uppercase tracking-[0.16em] text-white/45">Prompt</p>
-            <p class="mt-2 text-caption leading-relaxed text-white/90">“{copy.heroPrompt}”</p>
-          </div>
-          <div class="absolute -right-2 top-12 hidden w-60 rounded-2xl border border-white/10 bg-[#171b24]/95 p-4 text-white shadow-xl backdrop-blur sm:block xl:-right-7">
-            <div class="flex items-center gap-2 text-caption font-medium"><span class="status-dot"></span>{copy.heroStatus}</div>
-            <div class="mt-3 space-y-2 text-micro text-white/58">
+
+          <div class="hero-task-card absolute right-3 top-3 hidden w-56 rounded-2xl border border-white/40 bg-white/82 p-4 text-[#192019] shadow-xl backdrop-blur-xl sm:block lg:-right-3 lg:top-8">
+            <div class="flex items-center gap-2 text-caption font-semibold"><span class="status-dot"></span>{copy.heroStatus}</div>
+            <div class="mt-3 space-y-1.5 text-micro text-[#5e685f]">
               {[copy.heroTask1, copy.heroTask2, copy.heroTask3].map((task, index) => (
-                <div class="flex items-center gap-2 rounded-lg bg-white/[0.045] px-2.5 py-2"><span class={`h-1.5 w-1.5 rounded-full ${['bg-emerald-400', 'bg-violet-400', 'bg-amber-400'][index]}`}></span>{task}</div>
+                <div class="flex items-center gap-2 rounded-lg bg-[#f1f4ef] px-2.5 py-2"><span class={`h-1.5 w-1.5 rounded-full ${['bg-emerald-500', 'bg-violet-500', 'bg-amber-500'][index]}`}></span>{task}</div>
               ))}
             </div>
           </div>
+
+          <div class="absolute bottom-3 right-3 max-w-[10rem] rounded-xl border border-white/35 bg-[#111712]/78 px-3 py-2 text-white shadow-lg backdrop-blur sm:bottom-6 sm:right-6 sm:max-w-[13rem]">
+            <p class="text-[0.55rem] uppercase tracking-[0.16em] text-white/45">Prompt</p>
+            <p class="mt-1 text-micro leading-relaxed text-white/82">“{copy.heroPrompt}”</p>
+          </div>
         </div>
-        <div class="mt-12 flex items-center justify-center gap-4 sm:mt-7">
+        <div class="mt-6 flex items-center justify-center gap-4">
           <div class="flex -space-x-2.5">{members.slice(0, 7).map((member) => <img src={withBase(`/agents/${member.avatar}`)} alt="" width="256" height="256" class="h-8 w-8 rounded-full border-2 border-bg object-cover" />)}</div>
           <span class="text-caption text-fg-muted">{copy.agentsCount}</span>
         </div>
@@ -241,7 +270,7 @@ const resolveMembers = (ids: readonly string[]) => members.filter((member) => id
     </div>
   </section>
 
-  <section id="workflow" class="section-shell scroll-mt-20">
+  <section id="workflow" class="section-shell reveal-section scroll-mt-20">
     <div class="section-heading"><p class="section-eyebrow">{copy.workflowEyebrow}</p><h2>{copy.workflowTitle}</h2><p>{copy.workflowDesc}</p></div>
     <div class="mt-12 grid overflow-hidden rounded-[1.75rem] border border-border bg-surface shadow-(--shadow-card) sm:grid-cols-2 lg:grid-cols-4">
       {copy.workflows.map((item, index) => (
@@ -262,7 +291,7 @@ const resolveMembers = (ids: readonly string[]) => members.filter((member) => id
   </section>
 
   <section id="features" class="border-y border-border bg-bg-subtle scroll-mt-20">
-    <div class="section-shell">
+    <div class="section-shell reveal-section">
       <div class="section-heading"><p class="section-eyebrow">{copy.casesEyebrow}</p><h2>{copy.casesTitle}</h2><p>{copy.casesDesc}</p></div>
       <div class="mt-12 grid gap-4 lg:grid-cols-2">
         {copy.cases.map((item, index) => (
@@ -287,7 +316,7 @@ const resolveMembers = (ids: readonly string[]) => members.filter((member) => id
     </div>
   </section>
 
-  <section class="section-shell">
+  <section class="section-shell reveal-section">
     <div class="grid gap-5 lg:grid-cols-2">
       <article class="feature-panel feature-panel-dark overflow-hidden rounded-[2rem] p-7 text-white sm:p-10">
         <p class="section-eyebrow text-emerald-300">{copy.memoryEyebrow}</p>
@@ -322,8 +351,54 @@ const resolveMembers = (ids: readonly string[]) => members.filter((member) => id
     </div>
   </section>
 
+  <section id="automation" class="section-shell reveal-section scroll-mt-20">
+    <div class="automation-story relative isolate min-h-[46rem] overflow-hidden rounded-[2rem] border border-white/10 bg-[#0b1117] shadow-2xl sm:min-h-[40rem]">
+      <img
+        src={withBase('/visuals/lume-night-automation.webp')}
+        alt={copy.nightArtAlt}
+        width="2048"
+        height="1152"
+        loading="lazy"
+        class="absolute inset-0 h-full w-full object-cover object-[34%_center] sm:object-center"
+      />
+      <div class="absolute inset-0 bg-gradient-to-t from-[#08100c] via-[#08100c]/35 to-transparent sm:bg-gradient-to-r sm:from-transparent sm:via-[#08100c]/25 sm:to-[#08100c]/95" aria-hidden="true"></div>
+      <div class="relative grid min-h-[46rem] items-end p-6 sm:min-h-[40rem] sm:grid-cols-2 sm:items-center sm:p-10 lg:p-14">
+        <div class="hidden sm:block"></div>
+        <div class="max-w-xl text-white">
+          <p class="section-eyebrow text-amber-300">{copy.nightEyebrow}</p>
+          <h2 class="mt-5 text-[clamp(2.5rem,4.2vw,4rem)] font-semibold leading-[0.98] tracking-[-0.05em]">{copy.nightTitle}</h2>
+          <p class="mt-5 text-body leading-loose text-white/62">{copy.nightDesc}</p>
+          <div class="mt-7 grid gap-2.5">
+            {copy.nightItems.map((item, index) => (
+              <div class="automation-item flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-caption text-white/76 backdrop-blur">
+                <span class="flex h-6 w-6 items-center justify-center rounded-full bg-white/8 text-micro font-semibold text-amber-300">{index + 1}</span>
+                {item}
+              </div>
+            ))}
+          </div>
+          <div class="mt-6 inline-flex items-center gap-2 rounded-full border border-amber-300/20 bg-amber-300/10 px-3.5 py-2 text-micro font-semibold text-amber-200">
+            <span class="automation-pulse h-1.5 w-1.5 rounded-full bg-amber-300"></span>
+            {copy.nightStatus}
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-label={copy.teamAll} class="marquee-mask overflow-hidden border-t border-white/8 bg-fg py-5 text-bg">
+    <div class="animate-marquee flex w-max gap-3 pr-3">
+      {[...members, ...members].map((member) => (
+        <div class="flex items-center gap-3 rounded-full border border-white/10 bg-white/[0.045] py-1.5 pl-1.5 pr-4">
+          <img src={withBase(`/agents/${member.avatar}`)} alt="" width="256" height="256" loading="lazy" class="h-9 w-9 rounded-full object-cover" />
+          <span class="text-caption font-semibold text-white/86">{member.displayName}</span>
+          <span class="text-micro text-white/36">{t(lang, `team.${member.id}.role` as UiKey)}</span>
+        </div>
+      ))}
+    </div>
+  </section>
+
   <section id="team" class="overflow-hidden border-y border-border bg-fg text-bg scroll-mt-20">
-    <div class="mx-auto max-w-7xl px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
+    <div class="reveal-section mx-auto max-w-7xl px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
       <div class="grid gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-end">
         <div><p class="section-eyebrow text-emerald-300">{copy.teamEyebrow}</p><h2 class="mt-5 text-[clamp(2.5rem,5vw,5rem)] font-semibold leading-[0.98] tracking-[-0.05em]">{copy.teamTitle}</h2></div>
         <div class="lg:pb-1"><p class="max-w-2xl text-body-lg leading-loose text-bg/58">{copy.teamDesc}</p><p class="mt-4 text-caption text-bg/38">{copy.teamNote}</p></div>
@@ -340,13 +415,13 @@ const resolveMembers = (ids: readonly string[]) => members.filter((member) => id
     </div>
   </section>
 
-  <section class="section-shell overflow-hidden">
+  <section class="section-shell reveal-section overflow-hidden">
     <div class="mx-auto max-w-3xl text-center"><p class="section-eyebrow justify-center">{copy.modelsEyebrow}</p><h2 class="mt-5 text-[clamp(2.3rem,5vw,4.5rem)] font-semibold leading-[1.02] tracking-[-0.05em] text-fg">{copy.modelsTitle}</h2><p class="mx-auto mt-5 max-w-2xl text-body leading-loose text-fg-muted">{copy.modelsDesc}</p></div>
     <div class="provider-cloud relative mx-auto mt-12 max-w-5xl"><div class="flex flex-wrap justify-center gap-3">{providers.map((provider, index) => <span class:list={['provider-pill', index === 0 || index === 3 || index === 7 ? 'provider-pill-accent' : '']}>{provider}</span>)}</div></div>
   </section>
 
   <section class="border-y border-border bg-bg-subtle">
-    <div class="section-shell grid items-center gap-12 lg:grid-cols-[0.8fr_1.2fr]">
+    <div class="section-shell reveal-section grid items-center gap-12 lg:grid-cols-[0.8fr_1.2fr]">
       <div><p class="section-eyebrow">{copy.sdkEyebrow}</p><h2 class="mt-5 text-[clamp(2.3rem,5vw,4rem)] font-semibold leading-[1.02] tracking-[-0.05em] text-fg">{copy.sdkTitle}</h2><p class="mt-5 text-body leading-loose text-fg-muted">{copy.sdkDesc}</p><a href={`${docsHref}/sdk`} class="mt-7 inline-flex items-center gap-2 text-ui font-semibold text-accent hover:text-accent-strong">{copy.sdkLink}<span aria-hidden="true">→</span></a></div>
       <div class="overflow-hidden rounded-[1.75rem] border border-white/10 bg-[#10141b] shadow-2xl">
         <div class="flex items-center justify-between border-b border-white/8 px-5 py-3.5"><div class="flex gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-[#ff6b63]"></span><span class="h-2.5 w-2.5 rounded-full bg-[#f7c64d]"></span><span class="h-2.5 w-2.5 rounded-full bg-[#3ccf6e]"></span></div><span class="text-micro text-white/35">agent.ts</span></div>
@@ -366,7 +441,7 @@ const resolveMembers = (ids: readonly string[]) => members.filter((member) => id
     </div>
   </section>
 
-  <section class="section-shell">
+  <section class="section-shell reveal-section">
     <div class="grid gap-10 lg:grid-cols-[0.7fr_1.3fr]">
       <div><p class="section-eyebrow">{copy.faqEyebrow}</p><h2 class="mt-5 text-[clamp(2.2rem,4vw,3.5rem)] font-semibold leading-tight tracking-[-0.045em] text-fg">{copy.faqTitle}</h2></div>
       <div class="divide-y divide-border border-y border-border">

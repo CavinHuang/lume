@@ -21,11 +21,12 @@ const lang = getLangFromUrl(Astro.url);
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    <meta name="theme-color" content="#fbfcf8" />
     <link rel="icon" type="image/svg+xml" href={withBase('/favicon.svg')} />
     <meta name="generator" content={Astro.generator} />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
-    <meta property="og:image" content={withBase('/screenshot.png')} />
+    <meta property="og:image" content={withBase('/visuals/lume-hero-studio.webp')} />
     <!-- 首屏前定主题，避免闪白/闪黑 -->
     <script is:inline>
       (() => {
