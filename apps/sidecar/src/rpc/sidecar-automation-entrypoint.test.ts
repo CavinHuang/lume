@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { isNativeAvailable } from "@lume/natives";
 
 type RpcResponse = {
   id?: number;
@@ -191,7 +192,7 @@ function seedExpiredOnceJob(configDir: string): string {
   return jobId;
 }
 
-describe("sidecar Automation entrypoint (#647)", () => {
+describe.skipIf(!isNativeAvailable())("sidecar Automation entrypoint (#647)", () => {
   let tempConfigDir = "";
   let sidecar: SidecarClientEx | undefined;
 
@@ -216,8 +217,10 @@ describe("sidecar Automation entrypoint (#647)", () => {
 
     const notification = await sidecar.waitForNotification("automation:run-completed", 30_000);
 
-    const run = (notification.params as { run: { jobId: string; status: string } }).run;
+    const run = (notification.params as { run: { jobId: string; trigger: string; status: string } }).run;
     expect(run.jobId).toBe(jobId);
+    // trigger="schedule" 钉死事件确实来自自启排程路径而非其他触发源
+    expect(run.trigger).toBe("schedule");
     // 无模型配置下 pickExecutionChannel 快速失败：事件到达即证明排程与执行链路已接通
     expect(run.status).toBe("failed");
   }, 45_000);
@@ -227,12 +230,14 @@ describe("sidecar Automation entrypoint (#647)", () => {
     sidecar = createSidecarClient(tempConfigDir, { autostart: false });
 
     const waitPromise = sidecar.waitForNotification("automation:run-completed", 30_000);
-    // run-now 走懒启动路径；修复前 notificationWriter 未注册，此事件永不发出
-    await sidecar.call("automation:run-now", { id: jobId }).catch(() => {});
+    // run-now 走懒启动路径；修复前 notificationWriter 未注册，此事件永不发出。
+    // handler 保证 resolve（failed 也是结果），拒绝即真回归，不吞错。
+    await sidecar.call("automation:run-now", { id: jobId });
     const notification = await waitPromise;
 
-    const run = (notification.params as { run: { jobId: string; status: string } }).run;
+    const run = (notification.params as { run: { jobId: string; trigger: string; status: string } }).run;
     expect(run.jobId).toBe(jobId);
+    expect(run.trigger).toBe("manual");
     expect(run.status).toBe("failed");
   }, 60_000);
 });
