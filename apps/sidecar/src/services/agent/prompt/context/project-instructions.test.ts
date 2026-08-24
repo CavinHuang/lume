@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildProjectInstructionsSection,
   findProjectInstructionsFile,
   loadProjectInstructions,
+  readTrustedContent,
   truncateProjectInstructions
 } from "./project-instructions";
 
@@ -26,18 +27,18 @@ describe("project-instructions", () => {
   test("同层 CLAUDE.md 直接命中，祖先目录起探测可命中父层", () => {
     mkdirSync(join(root, "proj"), { recursive: true });
     writeFileSync(join(root, "proj", "CLAUDE.md"), "# proj rules", "utf-8");
-    expect(findProjectInstructionsFile(join(root, "proj"))).toBe(join(root, "proj", "CLAUDE.md"));
+    expect(findProjectInstructionsFile(join(root, "proj"))?.path).toBe(join(root, "proj", "CLAUDE.md"));
     // 子目录向上爬到 proj 层命中
     const sub = join(root, "proj", "src", "deep");
     mkdirSync(sub, { recursive: true });
-    expect(findProjectInstructionsFile(sub)).toBe(join(root, "proj", "CLAUDE.md"));
+    expect(findProjectInstructionsFile(sub)?.path).toBe(join(root, "proj", "CLAUDE.md"));
   });
 
   test("无 CLAUDE.md 时回退 AGENTS.md，同层 CLAUDE.md 优先", () => {
     writeFileSync(join(root, "AGENTS.md"), "# agents", "utf-8");
-    expect(findProjectInstructionsFile(root)).toBe(join(root, "AGENTS.md"));
+    expect(findProjectInstructionsFile(root)?.path).toBe(join(root, "AGENTS.md"));
     writeFileSync(join(root, "CLAUDE.md"), "# claude", "utf-8");
-    expect(findProjectInstructionsFile(root)).toBe(join(root, "CLAUDE.md"));
+    expect(findProjectInstructionsFile(root)?.path).toBe(join(root, "CLAUDE.md"));
   });
 
   test("就近覆盖：父子两层都有时取最近一层", () => {
@@ -45,7 +46,7 @@ describe("project-instructions", () => {
     mkdirSync(proj, { recursive: true });
     writeFileSync(join(root, "CLAUDE.md"), "# outer", "utf-8");
     writeFileSync(join(proj, "CLAUDE.md"), "# inner", "utf-8");
-    expect(findProjectInstructionsFile(proj)).toBe(join(proj, "CLAUDE.md"));
+    expect(findProjectInstructionsFile(proj)?.path).toBe(join(proj, "CLAUDE.md"));
   });
 
   test("git root 是向上边界：边界之外的同名文件不命中", () => {
@@ -56,14 +57,14 @@ describe("project-instructions", () => {
     expect(findProjectInstructionsFile(repo, { homeDir: root })).toBeNull();
     // git root 本层的候选仍然参与
     writeFileSync(join(repo, "AGENTS.md"), "# repo agents", "utf-8");
-    expect(findProjectInstructionsFile(repo, { homeDir: root })).toBe(join(repo, "AGENTS.md"));
+    expect(findProjectInstructionsFile(repo, { homeDir: root })?.path).toBe(join(repo, "AGENTS.md"));
   });
 
   test("home 目录是向上边界：home 本层可达，其上不再爬", () => {
     const nested = join(root, "a", "b");
     mkdirSync(nested, { recursive: true });
     writeFileSync(join(root, "AGENTS.md"), "# home agents", "utf-8");
-    expect(findProjectInstructionsFile(nested, { homeDir: root })).toBe(join(root, "AGENTS.md"));
+    expect(findProjectInstructionsFile(nested, { homeDir: root })?.path).toBe(join(root, "AGENTS.md"));
   });
 
   test("loadProjectInstructions 剥 front matter 且截断超限内容并带标记", () => {
@@ -177,7 +178,7 @@ describe("project-instructions", () => {
         mkdirSync(join(proj, "as-dir"));
         symlinkSync(join(proj, "as-dir"), join(proj, "CLAUDE.md"));
         writeFileSync(join(proj, "AGENTS.md"), "# fallback agents", "utf-8");
-        expect(findProjectInstructionsFile(proj, { homeDir: root })).toBe(join(proj, "AGENTS.md"));
+        expect(findProjectInstructionsFile(proj, { homeDir: root })?.path).toBe(join(proj, "AGENTS.md"));
       }
     } finally {
       rmSync(secretDir, { recursive: true, force: true });
@@ -193,7 +194,7 @@ describe("project-instructions", () => {
     // carol 的 home 层指令不得进入 bob（homeDir=bobHome）的会话
     writeFileSync(join(homes, "carol", "CLAUDE.md"), "# carol home rules", "utf-8");
 
-    expect(findProjectInstructionsFile(carolProj, { homeDir: bobHome })).toBe(join(carolProj, "CLAUDE.md"));
+    expect(findProjectInstructionsFile(carolProj, { homeDir: bobHome })?.path).toBe(join(carolProj, "CLAUDE.md"));
     rmSync(join(carolProj, "CLAUDE.md"));
     expect(findProjectInstructionsFile(carolProj, { homeDir: bobHome })).toBeNull();
 
@@ -201,7 +202,7 @@ describe("project-instructions", () => {
     const bobWork = join(bobHome, "work");
     mkdirSync(bobWork, { recursive: true });
     writeFileSync(join(bobHome, "AGENTS.md"), "# bob home agents", "utf-8");
-    expect(findProjectInstructionsFile(bobWork, { homeDir: bobHome })).toBe(join(bobHome, "AGENTS.md"));
+    expect(findProjectInstructionsFile(bobWork, { homeDir: bobHome })?.path).toBe(join(bobHome, "AGENTS.md"));
   });
 
   test("截断切在代理对中间时丢弃残缺码元，不产生孤立代理项", () => {
@@ -213,5 +214,101 @@ describe("project-instructions", () => {
     expect(Array.from(t.content).join("")).toBe(t.content);
     expect(t.content.startsWith("x")).toBeTrue();
     expect(t.content.endsWith("y")).toBeTrue();
+  });
+
+  test("hardlink 收口：仓库内 ln 链外敏感文件为候选 → 信任门拒绝（fail-closed），普通文件不受影响", () => {
+    const secretDir = mkdtempSync(join(tmpdir(), "lume-proj-instr-hl-"));
+    try {
+      const proj = join(root, "proj");
+      mkdirSync(proj, { recursive: true });
+      // fs.link 真构造硬链接：候选与链外敏感文件同一 inode，realpath 无法区分，
+      // 唯一可用判别信号是 nlink>1
+      const secret = join(secretDir, "secret.txt");
+      writeFileSync(secret, "top secret", "utf-8");
+      linkSync(secret, join(proj, "CLAUDE.md"));
+      expect(findProjectInstructionsFile(proj, { homeDir: root })).toBeNull();
+      expect(loadProjectInstructions(proj, { homeDir: root })).toBeNull();
+
+      // 对照：删掉硬链接后放普通文件，探测恢复正常（nlink 门不误伤常规文件）
+      rmSync(join(proj, "CLAUDE.md"));
+      writeFileSync(join(proj, "CLAUDE.md"), "# normal file", "utf-8");
+      const loaded = loadProjectInstructions(proj, { homeDir: root });
+      expect(loaded?.content).toBe("# normal file");
+    } finally {
+      rmSync(secretDir, { recursive: true, force: true });
+    }
+  });
+
+  test("TOCTOU 收口：过检后文件被换入 symlink/替换 inode，单句柄 fstat 身份复核拒绝读取", () => {
+    const proj = join(root, "proj");
+    mkdirSync(proj, { recursive: true });
+    const file = join(proj, "CLAUDE.md");
+    writeFileSync(file, "# vetted content", "utf-8");
+    const source = findProjectInstructionsFile(proj, { homeDir: root });
+    expect(source?.path).toBe(file);
+    expect(readTrustedContent(source!)).toBe("# vetted content");
+
+    // 注入式模拟「过检后、读取前」窗口（无竞速要求）：删旧建新换掉 inode，
+    // 陈旧身份快照经句柄复核必失配 → 拒绝读取替换后的内容
+    rmSync(file);
+    writeFileSync(file, "# swapped inode", "utf-8");
+    expect(readTrustedContent(source!)).toBeNull();
+
+    // 对照：重新过检拿到新身份后正常读出
+    expect(readTrustedContent(findProjectInstructionsFile(proj, { homeDir: root })!)).toBe("# swapped inode");
+
+    // 完整攻击形态（需符号链接权限）：过检时的 regular file 被换成指向
+    // 探测链外敏感文件的 symlink——open 跟随后 fstat 身份必失配，secret 不外泄。
+    // 覆盖限度：本用例确定性触发失配分支；真实竞速窗口由「读 realPath 而非候选 +
+    // fd 单句柄」的结构保证封闭，无法也不必在测试中做时序竞速。
+    let canSymlink = false;
+    const secretDir = mkdtempSync(join(tmpdir(), "lume-proj-instr-toc-"));
+    try {
+      try {
+        rmSync(file);
+        symlinkSync(join(secretDir, "secret.txt"), file);
+        canSymlink = true;
+      } catch {
+        // Windows 无符号链接权限时跳过该子场景
+        writeFileSync(file, "# swapped inode", "utf-8");
+      }
+      if (canSymlink) {
+        writeFileSync(join(secretDir, "secret.txt"), "top secret", "utf-8");
+        expect(readTrustedContent(source!)).toBeNull();
+      }
+    } finally {
+      rmSync(secretDir, { recursive: true, force: true });
+    }
+  });
+
+  test("转义成品随指纹缓存：memo 命中时不重复执行 JSON.stringify 转义重建，指纹失效才重建", () => {
+    const file = join(root, "CLAUDE.md");
+    writeFileSync(file, "# perf probe", "utf-8");
+    const first = buildProjectInstructionsSection(root);
+    expect(first).toContain("# perf probe");
+
+    const originalStringify = JSON.stringify;
+    let escapes = 0;
+    JSON.stringify = ((...args: Parameters<typeof JSON.stringify>) => {
+      escapes++;
+      return originalStringify(...args);
+    }) as unknown as typeof JSON.stringify;
+    try {
+      // 指纹未变 → memo 命中 → 字节级一致且零转义重建
+      const second = buildProjectInstructionsSection(root);
+      const escapesOnHit = escapes;
+      expect(second).toBe(first);
+      expect(escapesOnHit).toBe(0);
+
+      // 指纹变化 → 允许重建并产出新内容
+      const newer = new Date(Date.now() - 5_000);
+      utimesSync(file, newer, newer);
+      const third = buildProjectInstructionsSection(root);
+      const escapesOnMiss = escapes;
+      expect(third).toContain("# perf probe");
+      expect(escapesOnMiss).toBeGreaterThan(0);
+    } finally {
+      JSON.stringify = originalStringify;
+    }
   });
 });
