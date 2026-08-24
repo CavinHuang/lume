@@ -2,6 +2,7 @@ mod cli;
 mod control;
 mod host;
 mod kernel;
+mod logging;
 mod mcp;
 mod protocol;
 
@@ -14,7 +15,7 @@ use kernel::{Runtime, RuntimeOptions};
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
-        eprintln!("node_repl failed: {error:#}");
+        logging::emit_log("fatal", "repl.lifecycle", "run.failed", &format!("node_repl failed: {error:#}"), None);
         std::process::exit(1);
     }
 }
@@ -22,8 +23,8 @@ async fn main() {
 async fn run() -> Result<()> {
     let cli = match Cli::parse() {
         Ok(cli) => cli,
-        Err(error) => {
-            eprintln!("node_repl argument parsing failed: {error}");
+        Err(_) => {
+            logging::emit_log("warn", "repl.lifecycle", "args.invalid", "node_repl argument parsing failed", None);
             std::process::exit(2);
         }
     };
