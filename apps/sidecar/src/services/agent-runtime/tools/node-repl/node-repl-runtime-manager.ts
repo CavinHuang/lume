@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { delimiter, dirname, join } from "node:path";
 import { spawnWithProcessSandbox, type SandboxSettings } from "@lume/agent-sdk";
+import { writeLogRecord, type LogLevel } from "../../../infra/logger";
 import type {
   JsExecInput,
   NodeReplBrowserAuthRequest,
@@ -21,6 +22,8 @@ import {
 const DEFAULT_CALL_TIMEOUT_MS = 35_000;
 const DEFAULT_HOST_CALL_LEASE_MS = 10 * 60_000;
 const MAX_STDERR_CHARS = 16_000;
+// node_repl 宿主输出的单行结构化日志协议前缀（与 Rust logging.rs 保持一致）。
+const LUMELOG_PREFIX = "LUMELOG ";
 
 interface RuntimeControlResponse {
   type: "runtime_response";
@@ -93,6 +96,40 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
   private pending = new Map<string, PendingCall>();
   private activeExecs = new Map<string, ActiveExec>();
   private stderr = "";
+  private stderrLineBuffer = "";
+
+  // LUMELOG 行转结构化日志；其余行维持旧行为：进 this.stderr，失败诊断时可见。
+  private ingestStderrChunk(chunk: string): void {
+    this.stderrLineBuffer += chunk;
+    const lines = this.stderrLineBuffer.split("\n");
+    this.stderrLineBuffer = lines.pop() ?? "";
+    for (const raw of lines) {
+      const line = raw.trimEnd();
+      if (!line) continue;
+      if (!line.startsWith(LUMELOG_PREFIX)) {
+        this.stderr = truncate(`${this.stderr}${line}\n`, MAX_STDERR_CHARS);
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(line.slice(LUMELOG_PREFIX.length)) as {
+          level?: string;
+          context?: string;
+          event?: string;
+          message?: string;
+          data?: Record<string, unknown>;
+        };
+        writeLogRecord({
+          level: hostLogLevel(parsed.level),
+          context: parsed.context ?? "node-repl.host",
+          event: parsed.event ?? "host.log",
+          message: parsed.message ?? "",
+          ...(parsed.data ? { data: parsed.data } : {}),
+        });
+      } catch {
+        this.stderr = truncate(`${this.stderr}${line}\n`, MAX_STDERR_CHARS);
+      }
+    }
+  }
 
   constructor(private readonly options: JsonlNodeReplRuntimeClientOptions) {}
 
@@ -201,7 +238,7 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       this.handleLine(line);
     });
     child.stderr.on("data", (chunk) => {
-      this.stderr = truncate(`${this.stderr}${chunk.toString("utf8")}`, MAX_STDERR_CHARS);
+      this.ingestStderrChunk(chunk.toString("utf8"));
     });
     child.once("error", (error) => {
       if (this.child === child) this.child = null;
@@ -474,4 +511,12 @@ function callTimeoutMs(timeoutMs: number | undefined): number {
 
 function truncate(value: string, maxChars: number): string {
   return value.length > maxChars ? value.slice(-maxChars) : value;
+}
+
+// 宿主级别映射到 sidecar LogLevel：fatal 按 error 处理（Unit 5 协议约定），未知级别回落 info。
+function hostLogLevel(value: string | undefined): LogLevel {
+  if (value === "fatal") return "error";
+  return value === "trace" || value === "debug" || value === "info" || value === "warn" || value === "error"
+    ? value
+    : "info";
 }
