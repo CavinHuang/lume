@@ -101,7 +101,7 @@ export function createBrowserMcpTools(input: {
           // broker 已把 desktop 富文本摧毁为裸码,navigation_timeout 的行为
           // 指导只能在此注入:页面可能仍在后台加载,先观察再决定。
           const hint = code === "navigation_timeout"
-            ? "The page may still be loading in the background. Take a snapshot to check the actual state before deciding; do not retry navigate immediately."
+            ? "The page may still be loading in the background. Take a snapshot to check the actual state before deciding; do not retry navigate immediately. If it times out again, open a new tab or report this to the user instead of retrying."
             : undefined
           const retryable = code === "browser_unavailable" || code === "stale_target" || code === "stale_snapshot_cursor"
           const failureKey = !retryable ? actionFailureKey(name, args, session) : undefined
