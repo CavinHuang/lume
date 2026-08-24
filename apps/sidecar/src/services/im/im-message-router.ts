@@ -9,6 +9,7 @@ import {
   type AgentToolPermissionDecision,
   type AgentToolPermissionRequest,
   type AgentToolPermissionResponseInput,
+  type Channel,
   type ImMessageContent,
   type ImThreadBinding,
   type ImPeerKind,
@@ -18,8 +19,8 @@ import {
 } from "@lume/shared";
 import { randomUUID } from "node:crypto";
 import { emitAgentNotification } from "../agent/agent-notification-service";
-import { createAgentThread, updateAgentThreadMeta } from "../agent/agent-thread-manager";
-import { appendAgentMessage, submitAgentToolPermission } from "../agent/agent-service";
+import { createAgentThread, getAgentThreadMeta, updateAgentThreadMeta } from "../agent/agent-thread-manager";
+import { appendAgentMessage, stopAgent, submitAgentToolPermission } from "../agent/agent-service";
 import { getAgentWorkspace } from "../agent/agent-workspace-manager";
 import { saveFilesToAgentSession } from "../agent/agent-files-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
@@ -27,6 +28,7 @@ import { createLogger, writeLogRecord } from "../infra/logger";
 import { getImAccount } from "./im-config-manager";
 import { hasSeenImMessage, rememberImMessage } from "./im-seen-message-store";
 import {
+  deleteImThreadBindingByPeer,
   getImThreadBindingByPeer,
   getImThreadBindingByThreadId,
   upsertImThreadBinding
@@ -34,6 +36,16 @@ import {
 import { sendBoundImTextMessage, type SendBoundImTextMessageInput } from "./im-send-service";
 import { resolveMediaContents } from "./im-media-resolver";
 import { createImRunCardSession, type ImRunCardSession } from "./im-run-card-session";
+import {
+  parseImCommand,
+  formatChannelListText,
+  formatImHelpText,
+  formatImNowText,
+  formatModelListText,
+  resolveImModelSwitch,
+  type ParsedImCommand
+} from "./im-chat-commands";
+import { listChannels } from "../channel/channel-manager";
 import { issuePlanningScopeGrant, registerPlanningExecutionContext } from "../planning/planning-execution-context";
 
 const log = createLogger("im-router");
@@ -64,6 +76,13 @@ export interface ImMessageRouterDeps {
   submitToolPermission?: (input: AgentToolPermissionResponseInput) => { ok: true };
   sendBoundTextMessage?: (input: SendBoundImTextMessageInput) => Promise<{ ok: true }>;
   emitNotification?: (method: string, params: unknown) => void;
+  listChannels?: () => Channel[];
+  stopThread?: (threadId: string) => Promise<boolean>;
+  getThreadMeta?: (threadId: string) => AgentThreadMeta | undefined;
+  updateThreadModelSelection?: (
+    threadId: string,
+    patch: Pick<AgentThreadMeta, "channelId" | "modelRef" | "modelId" | "modelSelectionSource">
+  ) => void;
 }
 
 type ImAgentStreamEmitter = {
@@ -466,6 +485,160 @@ async function routeImApprovalCommand(
   return { threadId: binding.threadId };
 }
 
+/** 无绑定线程时的命令回复载体（发送只用 provider/peer 字段）。 */
+function transientBindingForReply(message: InboundImRouteMessage): ImThreadBinding {
+  const now = Date.now();
+  return {
+    key: `transient:${message.provider}:${message.accountId}:${message.peerKind}:${message.peerId}`,
+    provider: message.provider,
+    accountId: message.accountId,
+    peerKind: message.peerKind,
+    peerId: message.peerId,
+    ...(message.peerName ? { peerName: message.peerName } : {}),
+    threadId: "",
+    ...(message.contextToken ? { contextToken: message.contextToken } : {}),
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+async function routeImChatCommand(
+  message: InboundImRouteMessage,
+  command: ParsedImCommand,
+  existing: ImThreadBinding | null,
+  deps: ImMessageRouterDeps
+): Promise<{ threadId: string }> {
+  const sendBoundTextMessage = deps.sendBoundTextMessage ?? sendBoundImTextMessage;
+  const binding = existing ?? transientBindingForReply(message);
+  const listEnabledChannels = deps.listChannels ?? listChannels;
+  const stopThread = deps.stopThread ?? stopAgent;
+  const getThreadMeta = deps.getThreadMeta ?? getAgentThreadMeta;
+  const reply = async (text: string) => {
+    await sendBoundTextMessage({ binding, text });
+  };
+
+  switch (command.type) {
+    case "invalid": {
+      await reply(command.message);
+      break;
+    }
+    case "help": {
+      await reply(formatImHelpText());
+      break;
+    }
+    case "new": {
+      if (!existing) {
+        await reply("发送任意消息即可开始新对话。");
+        break;
+      }
+      const account = getImAccount(message.accountId);
+      const thread = await (deps.createThread ?? ((title: string, workspaceId?: string, options?: { fileContextMode: "newRoot" }) =>
+        createAgentThread(title, undefined, workspaceId, undefined, undefined, options)))(
+        titleForMessage(message),
+        message.workspaceId,
+        { fileContextMode: "newRoot" }
+      );
+      // upsert 对既有 key 只更新 contextToken 不换绑线程，重开会话须先解绑
+      deleteImThreadBindingByPeer(message);
+      upsertImThreadBinding({
+        provider: message.provider,
+        accountId: message.accountId,
+        peerKind: message.peerKind,
+        peerId: message.peerId,
+        peerName: message.peerName,
+        threadId: thread.id,
+        contextToken: message.contextToken
+      });
+      await updateThreadSourceMeta(thread.id, message, deps);
+      log.info("IM 命令开启新对话", { provider: message.provider, peerId: message.peerId, threadId: thread.id });
+      await reply("已开启新对话，接下来的消息将在全新的上下文中处理。");
+      return { threadId: thread.id };
+    }
+    case "stop": {
+      let stopped = false;
+      try {
+        stopped = await stopThread(binding.threadId);
+      } catch (error) {
+        log.warn("IM 命令停止任务失败", {
+          threadId: binding.threadId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+      await reply(stopped ? "已停止当前正在进行的任务。" : "当前没有正在进行的任务。");
+      break;
+    }
+    case "now": {
+      const meta = existing ? getThreadMeta(existing.threadId) ?? null : null;
+      await reply(
+        formatImNowText({
+          peerName: message.peerName,
+          peerKind: message.peerKind,
+          meta,
+          channels: listEnabledChannels(),
+          ...(meta?.workspaceId ? { workspaceId: meta.workspaceId } : {})
+        })
+      );
+      break;
+    }
+    case "model": {
+      const channels = listEnabledChannels();
+      if (command.args.length === 0) {
+        await reply(formatChannelListText(channels));
+        break;
+      }
+      if (command.args.length === 1) {
+        const channelIndex = Number.parseInt(command.args[0] ?? "", 10);
+        const enabled = channels.filter((channel) => channel.enabled !== false);
+        const channel = Number.isNaN(channelIndex) ? undefined : enabled[channelIndex - 1];
+        await reply(channel ? formatModelListText(channel) : formatChannelListText(channels));
+        break;
+      }
+      if (!existing) {
+        await reply("请先发送任意消息建立会话，再使用 /model 切换模型。");
+        break;
+      }
+      const result = resolveImModelSwitch(channels, command.args);
+      if (!result.ok) {
+        await reply(result.message);
+        break;
+      }
+      (deps.updateThreadModelSelection ?? updateAgentThreadMeta)(existing.threadId, {
+        channelId: result.channelId,
+        modelRef: result.modelRef,
+        modelId: result.modelId,
+        modelSelectionSource: "thread-override"
+      });
+      log.info("IM 命令切换模型", {
+        threadId: existing.threadId,
+        channelId: result.channelId,
+        modelRef: result.modelRef
+      });
+      await reply(`已切换模型：${result.modelName}（渠道「${result.channelName}」），仅当前会话生效。`);
+      break;
+    }
+    default:
+      break;
+  }
+  return { threadId: existing?.threadId ?? "" };
+}
+
+async function updateThreadSourceMeta(
+  threadId: string,
+  message: InboundImRouteMessage,
+  deps: ImMessageRouterDeps
+): Promise<void> {
+  const updateThreadMeta = deps.updateThreadMeta ?? (
+    deps.createThread
+      ? undefined
+      : (id: string, patch: Pick<AgentThreadMeta, "source">) => {
+          updateAgentThreadMeta(id, patch);
+        }
+  );
+  if (updateThreadMeta) {
+    await updateThreadMeta(threadId, { source: sourceForMessage(message) });
+  }
+}
+
 export function createImAgentStreamEmitter(
   threadId: string,
   options: CreateImAgentStreamEmitterOptions = {}
@@ -566,6 +739,12 @@ export async function routeInboundImMessage(
     log.info("处理审批命令", { peerId: message.peerId, requestId: approvalCommand.type === "command" ? approvalCommand.requestId : undefined });
     return routeImApprovalCommand(existing, approvalCommand, deps);
   }
+  // 会话内斜杠命令（/help /new /stop /now /model）
+  const chatCommand = parseImCommand(message.text);
+  if (chatCommand.type !== "none") {
+    log.info("处理会话命令", { provider: message.provider, peerId: message.peerId, type: chatCommand.type });
+    return routeImChatCommand(message, chatCommand, existing, deps);
+  }
   const thread = existing
     ? { id: existing.threadId }
     : await (deps.createThread ?? ((title: string, workspaceId?: string, options?: { fileContextMode: "newRoot" }) =>
@@ -585,18 +764,8 @@ export async function routeInboundImMessage(
     contextToken: message.contextToken
   });
 
-  const updateThreadMeta = deps.updateThreadMeta ?? (
-    deps.createThread
-      ? undefined
-      : (threadId: string, patch: Pick<AgentThreadMeta, "source">) => {
-          updateAgentThreadMeta(threadId, patch);
-        }
-  );
-  if (updateThreadMeta) {
-    await updateThreadMeta(binding.threadId, {
-      source: sourceForMessage(message)
-    });
-  }
+  await updateThreadSourceMeta(binding.threadId, message, deps);
+
 
   const sendMessage = deps.sendMessage ?? defaultSendMessage;
 

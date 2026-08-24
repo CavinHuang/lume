@@ -23,8 +23,8 @@ const log = createLogger("im-pipeline");
  * 即丢（微信 cursor 未推进的部分由重投兜底），这是防抖合并的固有权衡。
  */
 
-/** 已知控制面命令前缀：命中即绕过队列直通（后续会话级命令在此扩充） */
-const CONTROL_COMMAND_RE = /^\/(?:approve)(?:@\S+)?(?:\s|$)/;
+/** 控制面/会话命令白名单：命中即绕过静默窗口直通路由（与 im-chat-commands 的命令集保持同步） */
+const CONTROL_COMMAND_RE = /^\/(?:approve|help|h|new|stop|s|now|n|model|m)(?:@\S+)?(?:\s|$)/;
 
 export interface ImInboundPipelineOptions {
   /** 静默窗口毫秒数，窗口内连发合并 */
