@@ -71,12 +71,12 @@ alert/confirm/prompt 会阻塞页面:先用 `dialog` 读取内容,再用 `handle
 | `repeated_action_failure` | 同动作同 ref 在同代际连续失败 ≥2 次,已熔断 | 唯一解除路径是成功执行一次 `navigate`/`reload`/`back`/`forward`/`open`/`switch_tab`/`handle_dialog`(换代际);在此之前一切点击输入类动作都被拒 |
 | `action_denied` | 策略拒绝(如支付、购买) | 停止该意图,交用户处理;不得变相绕过 |
 | `user_action_required` | CAPTCHA/MFA/硬件密钥步骤 | 停下请用户完成该步;换措辞重试也会被拒(按元素语义识别),不要尝试 |
-| `user_takeover_required` | 用户正在手动操作该 tab | **立即停手**,等待用户明确交回控制;不得重试或转 computer-use |
+| `user_takeover_required` | 用户刚手动操作了页面,排队中的动作被作废 | 重新 `snapshot` 后重试一次(后续动作会自动让行避让用户);若再次被拒说明用户正在持续操作,停下询问而不是循环重试 |
 | `browser_unavailable` | 浏览器运行时不可用 | 可重试;确认不可用后说明能力降级,才考虑原生 computer-use |
 
 ### 红线
 
 - CAPTCHA、MFA、硬件密钥必须由用户完成;支付与购买会被直接拒绝,不要尝试或绕过。
 - 保存密码一律走 `fill_secret`(值不进上下文);禁止用 `fill` 明文填密码或让用户口述密码。
-- 返回 `user_takeover_required` 后的一切浏览器动作都禁止。
+- 用户在页面上手动操作时让行避让;用户明确要求停止时立即停止全部浏览器动作。
 - 编码/本地文件工作用 Read/Write/Edit/Grep/Bash,不要因为 browser 工具在场就用浏览器打开本地文件。
