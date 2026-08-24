@@ -273,7 +273,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
 
   function observe(input: { toolName: string; input: unknown; result: ToolResult }): void {
     const name = input.toolName.toLowerCase();
-    const isProcessOutput = name === "taskoutput" || name === "processoutput";
+    const isProcessOutput = name === "processoutput";
     const execution = getExecutionMetadata(input.result);
     const task = getTaskMetadata(input.result);
     const toolStillRunning = task?.status

@@ -68,13 +68,15 @@ export function createAutomationHandlers(): Record<string, RpcHandler> {
     },
     [AUTOMATION_IPC_CHANNELS.DELETE_JOB]: async (params) => {
       await startAutomationRunner();
-      const result = deleteAutomationJob(
-        validateInput(
-          automationDeleteInputSchema,
-          params,
-          AUTOMATION_IPC_CHANNELS.DELETE_JOB
-        ) as AutomationDeleteJobInput
-      );
+      const input = validateInput(
+        automationDeleteInputSchema,
+        params,
+        AUTOMATION_IPC_CHANNELS.DELETE_JOB
+      ) as AutomationDeleteJobInput;
+      // 同 UPDATE/TOGGLE：system 任务不可经渲染进程删除（#647 P2-23 劫持面）
+      const current = listAutomationJobs().find((job) => job.id === input.id);
+      if (current?.source === "system") throw new Error("系统自动化任务不可在界面中删除");
+      const result = deleteAutomationJob(input);
       await refreshAutomationRunnerJobs();
       return result;
     },

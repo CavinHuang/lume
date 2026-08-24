@@ -593,7 +593,6 @@ export class Agent {
       'Grep',
       'WebFetch',
       'WebSearch',
-      'TaskOutput',
       'TaskGet',
       'TaskList',
       'ToolSearch',
