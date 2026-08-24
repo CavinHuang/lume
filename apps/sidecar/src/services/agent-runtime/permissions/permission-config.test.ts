@@ -28,13 +28,13 @@ describe("permission config adapter", () => {
 
   test("resolves only explicit permission rules", () => {
     expect(resolveConfiguredPermissionRules({
-      rules: [{ id: "explicit-ask", tool: "Write", action: "ask", scope: "global" }],
+      rules: [{ id: "explicit-ask", tool: "Write", action: "ask" }],
       toolPolicy: {
         allow: ["Read"],
         deny: ["Bash"]
       }
     })).toEqual([
-      { id: "explicit-ask", tool: "Write", action: "ask", scope: "global" }
+      { id: "explicit-ask", tool: "Write", action: "ask" }
     ]);
   });
 

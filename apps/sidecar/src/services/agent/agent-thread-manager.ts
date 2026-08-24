@@ -44,6 +44,9 @@ import { readAgentMessageVersionStore, resetAgentMessageVersionStore } from "./a
 import { resolveAgentDefaultStrategy } from "../channel/model-selection";
 import { clearRuntimeFileAccessLedger } from "../agent-runtime/tools/file-access-ledger";
 import { clearThreadFileStateCache } from "../agent-runtime/tools/thread-file-state-cache";
+import { clearToolPermissionSession } from "../agent-runtime/interruption/tool-permission-session";
+import { cancelPendingAskUserQuestionBySession } from "../agent-runtime/interruption/ask-user-question-session";
+import { clearPermissionDenials } from "../agent-runtime/permissions/permission-denials";
 import { extractAssistantReasoningText, extractRenderableAssistantText } from "./content-extraction";
 import {
   createOrResumeRuntimeCoreSessionManager,
@@ -606,6 +609,11 @@ export function deleteAgentThread(id: string): void {
   // ledger=完整读门控，thread fileStateCache=mtime 新鲜度。
   clearRuntimeFileAccessLedger(id);
   clearThreadFileStateCache(id);
+  // 审批会话状态随线程删除回收（#519）：grants/bypassed/denials 三 Map 只增不减的清理入口；
+  // pending 审批与 ask-user 等待一并取消，避免悬挂至超时。
+  clearToolPermissionSession(id);
+  cancelPendingAskUserQuestionBySession(id);
+  clearPermissionDenials(id);
   try { deleteAgentThreadLocked(id); } finally { release(); }
 }
 

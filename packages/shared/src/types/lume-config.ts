@@ -178,15 +178,12 @@ export interface LumeConfigHooksSection {
 
 export type LumeConfigPermissionRuleAction = "allow" | "ask" | "deny"
 
-export type LumeConfigPermissionRuleScope = "session" | "workspace" | "global"
-
 export interface LumeConfigPermissionRule {
   id?: string
   tool: string
   commandPattern?: string
   pathPattern?: string
   action: LumeConfigPermissionRuleAction
-  scope?: LumeConfigPermissionRuleScope
 }
 
 import type { WebSearchProvider } from "./general-settings"

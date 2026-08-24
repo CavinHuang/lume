@@ -216,9 +216,6 @@ function normalizePermissionRules(value: unknown): LumeConfigPermissionRule[] {
         ? { pathPattern: item.pathPattern.trim() }
         : {}),
       action,
-      ...(item.scope === "session" || item.scope === "workspace" || item.scope === "global"
-        ? { scope: item.scope }
-        : {})
     });
   }
   return rules;
