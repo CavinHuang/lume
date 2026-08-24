@@ -1249,142 +1249,179 @@ export function tailTruncate(text: string, maxLines: number, maxChars: number): 
 type PreviewAccumulator = ReturnType<typeof createPreviewAccumulator>
 
 // ============================================================================
-// Streaming secret redactor — a char-driven FSM with EXACTLY the same match
-// semantics as redactSensitiveText (single source of truth for delimiters):
+// Streaming secret redaction — TWO chained single-pattern state machines that
+// compose into EXACTLY redactSensitiveText's two sequential replaces:
 //
-//   prefix := 'bearer' \s+ | (api[_-]?key|token|secret|password) \s* [:=] \s*
-//   value  := [^\s,;]+          (case-insensitive keywords)
+//   machineA (bearer): /(Bearer\s+)([A-Za-z0-9._~+/=-]+)/gi   → $1[redacted]
+//   machineB (kv):     ((api[_-]?key|token|secret|password)\s*[:=]\s*)([^\s,;]+) → $1[redacted]
 //
-// Every consumed char is echoed verbatim EXCEPT value chars, which are dropped;
-// the first value char writes '[redacted]' once. A pattern that fails mid-way
-// has only emitted chars the regex would have kept anyway, so FSM output is
-// byte-identical to running redactSensitiveText over the full stream — no
-// two-regex drift, no fixed safety horizon.
+// redactSensitiveText applies the bearer pass first and the kv pass to its
+// output; feeding raw chars through A→B reproduces that byte-for-byte, because
+// each machine echoes every non-matching char verbatim (so B sees precisely the
+// text pass 1 produced). Two machines — not one merged FSM — is what makes
+// nested prefixes (`token=Bearer x`) and per-pattern value charsets correct.
 //
-// State is O(1): mode + an ≤7-char staging buffer for a potential keyword +
-// small counters. Value runs are suppressed without storage, so arbitrarily
-// long tokens cost nothing (no pendingRaw, no rescan — O(n) total, O(1) mem).
+// Per-machine state is O(1): mode + ≤8-char keyword staging buffer. Value runs
+// are suppressed without storage (arbitrarily long tokens cost nothing), and
+// failed prefixes RE-FEED the offending char into the machine's own OUT state
+// so adjacent keywords (`BearerBearer`) are never swallowed.
 // ============================================================================
 
-const SECRET_KEYWORDS = ['bearer', 'api_key', 'api-key', 'apikey', 'token', 'secret', 'password'] as const
+const BEARER_VALUE_CHARS = /[A-Za-z0-9._~+/=-]/
+const KV_VALUE_TERMINATORS = /[\s,;]/
 
-function isKeywordPartial(lower: string): boolean {
-  if (!lower) return true
-  return SECRET_KEYWORDS.some((keyword) => keyword.startsWith(lower))
-}
-
-function matchedKeyword(lower: string): 'bearer' | 'kv' | undefined {
-  if (lower === 'bearer') return 'bearer'
-  if ((SECRET_KEYWORDS as readonly string[]).includes(lower)) return 'kv'
-  return undefined
-}
-
-function isValueChar(ch: string): boolean {
-  // Authoritative value charset from redactSensitiveText's key/value branch:
-  // [^\s,;]+ — anything non-whitespace/non-,/; including '@', quotes, unicode…
-  return !/[\s,;]/.test(ch)
+interface SecretMachine {
+  feed(ch: string): void
+  /** Uncommitted plain-text fragment (a possible keyword head) awaiting more input. */
+  hold(): string
 }
 
 function isWhitespaceChar(ch: string): boolean {
   return /\s/.test(ch)
 }
 
+const MAX_KEYWORD_LENGTH = 8 // 'password' — bounds the suffix-retry window
+
+function createSecretMachine(
+  sink: (chunk: string) => void,
+  kind: 'bearer' | 'kv',
+): SecretMachine {
+  const keywords = kind === 'bearer' ? ['bearer'] : ['api_key', 'api-key', 'apikey', 'token', 'secret', 'password']
+  const isValueChar = kind === 'bearer'
+    ? (ch: string) => BEARER_VALUE_CHARS.test(ch)
+    : (ch: string) => !KV_VALUE_TERMINATORS.test(ch)
+
+  let mode: 'out' | 'prefixTail' | 'inValue' = 'out'
+  let stage = ''
+  let phase: 'pre' | 'post' = 'pre' // kv only: whitespace before vs after [:=]
+  let wsSeen = 0 // bearer only
+
+  function matchedKeyword(lower: string): boolean {
+    return keywords.some((keyword) => keyword === lower)
+  }
+
+  function isKeywordPartial(lower: string): boolean {
+    if (!lower) return true
+    return keywords.some((keyword) => keyword.startsWith(lower))
+  }
+
+  function feed(ch: string): void {
+    if (mode === 'inValue') {
+      if (isValueChar(ch)) return // suppressed secret body
+      // Terminator leaves the value run and re-enters OUT staging — feed it,
+      // don't emit it (feeding routes the char exactly once).
+      mode = 'out'
+      feed(ch)
+      return
+    }
+    if (mode === 'prefixTail') {
+      if (isWhitespaceChar(ch)) {
+        if (kind === 'bearer') wsSeen += 1
+        emit(ch)
+        return
+      }
+      if (kind === 'bearer' && wsSeen === 0) {
+        // 'Bearer' without whitespace → no match here; re-read ch from OUT.
+        mode = 'out'
+        feed(ch)
+        return
+      }
+      if (kind === 'kv' && phase === 'pre') {
+        if (ch === ':' || ch === '=') {
+          phase = 'post'
+          emit(ch)
+          return
+        }
+        mode = 'out'
+        feed(ch)
+        return
+      }
+      // First value char decides: match completes or the whole attempt was
+      // plain text — either way ch routes onward without being swallowed.
+      if (isValueChar(ch)) {
+        sink('[redacted]')
+        mode = 'inValue'
+        return
+      }
+      mode = 'out'
+      feed(ch)
+      return
+    }
+    // OUT: stage a possible keyword; on an impossible candidate emit the
+    // shortest head that still leaves the longest valid keyword SUFFIX held —
+    // a later keyword may start inside the failed candidate (`apikey` failing
+    // mid-way must not blind the machine to a following `api_key=`).
+    let buf = stage + ch
+    for (;;) {
+      const lower = buf.toLowerCase()
+      if (matchedKeyword(lower)) {
+        emit(buf)
+        stage = ''
+        mode = 'prefixTail'
+        phase = 'pre'
+        wsSeen = 0
+        return
+      }
+      if (lower === '') break
+      if (isKeywordPartial(lower)) break
+      let keepFrom = -1
+      for (let s = Math.max(1, buf.length - MAX_KEYWORD_LENGTH); s < buf.length; s += 1) {
+        const suffixLower = buf.slice(s).toLowerCase()
+        if (matchedKeyword(suffixLower) || isKeywordPartial(suffixLower)) {
+          keepFrom = s
+          break
+        }
+      }
+      if (keepFrom === -1) {
+        emit(buf)
+        buf = ''
+      } else {
+        emit(buf.slice(0, keepFrom))
+        buf = buf.slice(keepFrom)
+      }
+    }
+    stage = buf
+  }
+
+  function emit(chunk: string): void {
+    sink(chunk)
+  }
+
+  return {
+    feed,
+    hold(): string {
+      return mode === 'out' ? stage : ''
+    },
+  }
+}
+
+// Memory guard for the incremental buffer: the AUTHORITATIVE char budget is
+// applied per-snapshot (after the line trim, matching the single-shot pipeline
+// order — applying it incrementally would drop chars the final line-window
+// keeps and break byte equivalence). Between snapshots the buffer is therefore
+// only bounded by lines + this slack; a stream whose last `maxLines` lines
+// exceed it gets conservatively over-trimmed (footer still tells the truth).
+// ponytail: raise the slack or page to disk if huge single lines ever matter.
+const PREVIEW_MEMORY_SLACK_CHARS = 65_536
+
 export function createPreviewAccumulator(maxLines: number, maxChars: number) {
   let kept = ''
-  // FSM state ('out' stages a potential keyword start; ≤ MAX keyword length).
-  let stage = ''
-  let mode: 'out' | 'prefixTail' | 'inValue' = 'out'
-  let prefixKind: 'bearer' | 'kv' = 'kv'
-  let prefixPhase: 'pre' | 'post' = 'pre' // kv: whitespace before vs after [:=]
-  let prefixWsSeen = 0
   let totalNewlines = 0
   let totalChars = 0
   let streamEndsWithNewline = false
   let sawAnyOutput = false
   let droppedLines = false
   let droppedChars = false
-
-  function emit(chunk: string): void {
+  // Chained machines reproduce redactSensitiveText's pass order: bearer first,
+  // kv pass consuming pass-one's output.
+  let kvFeed: (ch: string) => void = () => {}
+  const machineA = createSecretMachine((chunk) => {
+    for (const ch of chunk) kvFeed(ch)
+  }, 'bearer')
+  const machineB = createSecretMachine((chunk) => {
     kept += chunk
-  }
-
-  function enterValueOrAbort(ch: string): void {
-    if (isValueChar(ch)) {
-      emit('[redacted]')
-      mode = 'inValue'
-      return
-    }
-    // Zero-length value → regex would not match here either; plain text.
-    emit(ch)
-    mode = 'out'
-  }
-
-  function feed(ch: string): void {
-    if (mode === 'inValue') {
-      if (isValueChar(ch)) return // suppressed secret body
-      emit(ch)
-      mode = 'out'
-      return
-    }
-    if (mode === 'prefixTail') {
-      if (prefixKind === 'bearer') {
-        if (isWhitespaceChar(ch)) {
-          prefixWsSeen += 1
-          emit(ch)
-          return
-        }
-        if (prefixWsSeen === 0) {
-          // 'Bearer' not followed by whitespace → no match; ch re-read in OUT.
-          emit(ch)
-          mode = 'out'
-          return
-        }
-        enterValueOrAbort(ch)
-        return
-      }
-      // kv: \s* [:=] \s*
-      if (prefixPhase === 'pre') {
-        if (isWhitespaceChar(ch)) {
-          emit(ch)
-          return
-        }
-        if (ch === ':' || ch === '=') {
-          prefixPhase = 'post'
-          emit(ch)
-          return
-        }
-        emit(ch)
-        mode = 'out'
-        return
-      }
-      if (isWhitespaceChar(ch)) {
-        emit(ch)
-        return
-      }
-      enterValueOrAbort(ch)
-      return
-    }
-    // OUT: accumulate a possible keyword start; on impossible candidate flush
-    // leading chars until the remainder is a valid partial/full again.
-    let buf = stage + ch
-    for (;;) {
-      const lower = buf.toLowerCase()
-      const kind = matchedKeyword(lower)
-      if (kind) {
-        emit(buf)
-        stage = ''
-        mode = 'prefixTail'
-        prefixKind = kind
-        prefixPhase = 'pre'
-        prefixWsSeen = 0
-        return
-      }
-      if (isKeywordPartial(lower)) break
-      emit(buf[0]!)
-      buf = buf.slice(1)
-    }
-    stage = buf
-  }
+  }, 'kv')
+  kvFeed = machineB.feed
 
   return {
     append(text: string): void {
@@ -1393,21 +1430,24 @@ export function createPreviewAccumulator(maxLines: number, maxChars: number) {
       totalNewlines += countNewlines(text)
       totalChars += text.length
       streamEndsWithNewline = text.endsWith('\n')
-      for (const ch of text) feed(ch)
+      for (const ch of text) machineA.feed(ch)
       let candidate = kept
       const lineCapped = keepLastLines(candidate, maxLines)
       candidate = lineCapped.content
       droppedLines ||= lineCapped.dropped
-      if (candidate.length > maxChars) {
-        candidate = candidate.slice(-maxChars)
+      const memoryCap = maxChars + PREVIEW_MEMORY_SLACK_CHARS
+      if (candidate.length > memoryCap) {
+        candidate = cutTailWithinBudget(candidate, memoryCap)
         droppedChars = true
       }
       kept = candidate
     },
     snapshot(): TailTruncation {
-      // Staged partial keyword is plain text not yet committed — show it for
-      // display continuity; the authoritative decision happens on later feeds.
-      const fresh = tailTruncate(kept + stage, maxLines, maxChars)
+      // Both machines' uncommitted keyword-head fragments are plain text not
+      // yet routed — show them for display continuity. Chronological order:
+      // B holds fragments of A's *emitted* stream (older), A holds raw-tail
+      // fragments (newer).
+      const fresh = tailTruncate(kept + machineB.hold() + machineA.hold(), maxLines, maxChars)
       return {
         ...fresh,
         truncated: droppedLines || droppedChars || fresh.truncated,

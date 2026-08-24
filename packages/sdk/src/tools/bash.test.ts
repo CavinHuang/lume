@@ -542,6 +542,51 @@ describe("BashTool #381 background timeout semantics", () => {
   }, 90_000);
 });
 
+/**
+ * Grammar-rich differential fuzz: build random strings from secret-shaped
+ * atoms, feed them through the accumulator in random chunks, and require the
+ * streamed view to equal `redactSensitiveText(full)` under the same tail
+ * budgets — including cases where window cuts have removed prefixes entirely.
+ */
+function runStreamingEquivalenceFuzz(config: { iterations: number; maxLength: number; maxChars: number; maxLines: number }): void {
+  // Deterministic PRNG (seeded) so failures reproduce.
+  let seed = 0x5eed1234;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0xffffffff;
+  };
+  const atoms = [
+    "Bearer", "bearer", "BEARER", "Bearer ", "token=", "token = ", "password=",
+    "api_key=", "apikey", "secret:", " ", "\n", ",", ";", "@", "x", "Zz9",
+    "=", ":", "-", "_", ".", "/", "+", "p@ss", "tokensecret", "Bearer Bearer ",
+  ];
+  for (let iteration = 0; iteration < config.iterations; iteration += 1) {
+    let full = "";
+    while (full.length < config.maxLength && rand() > 0.05) {
+      full += atoms[Math.floor(rand() * atoms.length)];
+    }
+    if (!full) continue;
+
+    const acc = createPreviewAccumulator(config.maxLines, config.maxChars);
+    let cursor = 0;
+    while (cursor < full.length) {
+      const take = 1 + Math.floor(rand() * 12);
+      acc.append(full.slice(cursor, cursor + take));
+      cursor += take;
+    }
+    const streamed = acc.snapshot().content;
+    const expected = tailTruncate(redactSensitiveText(full), config.maxLines, config.maxChars).content;
+    if (streamed !== expected) {
+      throw new Error(
+        `FSM drift on iteration ${iteration} (seed ${seed}):` +
+        `\n input=${JSON.stringify(full)}` +
+        `\n streamed=${JSON.stringify(streamed)}` +
+        `\n expected=${JSON.stringify(expected)}`,
+      );
+    }
+  }
+}
+
 describe("BashTool output streaming snapshots", () => {
   test("tailTruncate keeps the tail within both bounds and reports stats", () => {
     const inBounds = tailTruncate("a\nb\nc", 5, 100);
@@ -636,42 +681,46 @@ describe("BashTool output streaming snapshots", () => {
     expect(snap.content).toContain("[redacted]");
   });
 
-  test("streaming redactor output is byte-identical to redactSensitiveText over random chunked input", () => {
-    // Deterministic PRNG (seeded) so failures reproduce.
-    let seed = 0x5eed1234;
-    const rand = () => {
-      seed = (seed * 1664525 + 1013904223) >>> 0;
-      return seed / 0xffffffff;
-    };
-    const alphabet = [
-      "B", "e", "a", "r", "r", " ", "t", "o", "k", "e", "n", "=", "@",
-      ";", ",", "\n", "x", "_", "-", "P", "a", "s", "w", "d", "s", ":",
-      "1", ".", "/", "+",
-    ];
-    for (let iteration = 0; iteration < 300; iteration += 1) {
-      const length = Math.floor(rand() * 60);
-      let full = "";
-      for (let i = 0; i < length; i += 1) {
-        full += alphabet[Math.floor(rand() * alphabet.length)];
-      }
-      if (!full) continue;
-
-      // Feed in random chunks through the FSM and compare with the static pass.
-      const acc = createPreviewAccumulator(500, 100_000);
-      let cursor = 0;
-      while (cursor < full.length) {
-        const take = 1 + Math.floor(rand() * 12);
-        acc.append(full.slice(cursor, cursor + take));
-        cursor += take;
-      }
-      const streamed = acc.snapshot().content;
-      const expected = redactSensitiveText(full);
-      if (streamed !== expected) {
-        throw new Error(
-          `FSM drift on iteration ${iteration}: input=${JSON.stringify(full)} streamed=${JSON.stringify(streamed)} expected=${JSON.stringify(expected)}`,
-        );
-      }
+  test("nested prefix: kv value containing Bearer masks both segments (sequential-pass semantics)", () => {
+    // Codex repro: static redaction is two sequential passes — the bearer pass
+    // masks the nested value first, then the kv pass masks 'Bearer' itself.
+    const acc = createPreviewAccumulator(500, 49_500);
+    for (const chunk of ["token=Bearer ", "nested-secret-value", "\nplain", " tail\n"]) {
+      acc.append(chunk);
     }
+    const snap = acc.snapshot();
+    expect(snap.content).toContain("token=[redacted] [redacted]");
+    expect(snap.content).not.toContain("nested-secret-value");
+  });
+
+  test("failed keyword re-feeds its char so adjacent prefixes still match", () => {
+    // Codex repro: the second Bearer's head must not be swallowed by the
+    // first attempt's failure branch.
+    const acc = createPreviewAccumulator(500, 49_500);
+    for (const chunk of ["BearerBearer ", "secretvalue", "\n"]) {
+      acc.append(chunk);
+    }
+    const snap = acc.snapshot();
+    expect(snap.content).toContain("BearerBearer [redacted]");
+    expect(snap.content).not.toContain("secretvalue");
+  });
+
+  test("bearer value charset stops at non-token chars (no over-redaction)", () => {
+    // Codex P2: '@' terminates the bearer run — only 'abc' is masked.
+    const acc = createPreviewAccumulator(500, 49_500);
+    acc.append("Bearer abc@example.com done\n");
+    const snap = acc.snapshot();
+    expect(snap.content).toContain("Bearer [redacted]@example.com done\n");
+  });
+
+  test("streaming redactor is byte-identical to static redaction across random chunked input (no window cut)", () => {
+    runStreamingEquivalenceFuzz({ iterations: 400, maxLength: 120, maxChars: 100_000, maxLines: 500 });
+  });
+
+  test("streaming equivalence holds with aggressive window cuts (small budget)", () => {
+    // Codex blind-spot: prefixes already trimmed off by window cuts must not
+    // change the visible tail vs applying static redaction to the full text.
+    runStreamingEquivalenceFuzz({ iterations: 400, maxLength: 300, maxChars: 60, maxLines: 10 });
   });
 
   test("exactly maxLines terminated lines are not truncated (no trailing-segment off-by-one)", () => {
