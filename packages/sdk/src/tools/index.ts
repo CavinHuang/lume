@@ -93,7 +93,7 @@ export const CORE_TOOL_NAMES = new Set([
   'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'NotebookEdit',
   'WebFetch', 'WebSearch', 'Agent', 'Delegate', 'WaitForDelegations',
   'AskUserQuestion', 'Skill',
-  'ProcessOutput', 'ProcessStop', 'TaskOutput', 'TaskStop', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
+  'ProcessOutput', 'ProcessStop', 'TaskStop', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
 ])
 
 /**
