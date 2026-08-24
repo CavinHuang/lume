@@ -1,4 +1,4 @@
-import { shellKindWithoutDiscovery } from "@lume/agent-sdk";
+import { shellKindConservative } from "@lume/agent-sdk";
 import { PS_DELETE_COMMAND, PS_FULL_NAME_VERBS } from "../ps-dangerous-verbs";
 import type {
   PermissionClassification,
@@ -116,7 +116,8 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
 
   const tool = input.toolName.toLowerCase();
   if (tool === "bash" || tool === "execute_command") {
-    const powershellRulesActive = (input.shellKind ?? shellKindWithoutDiscovery()) === "powershell";
+    // 缺省方言用保守读法：bash 发现未决的冷启动窗口 fail-closed，与 guardrail 正则层同口径
+    const powershellRulesActive = (input.shellKind ?? shellKindConservative()) === "powershell";
     const shellPatterns = powershellRulesActive ? [...MEDIUM_PATTERNS, ...POWERSHELL_MEDIUM_PATTERNS] : MEDIUM_PATTERNS;
     for (const pattern of shellPatterns) {
       if (pattern.test(value)) {

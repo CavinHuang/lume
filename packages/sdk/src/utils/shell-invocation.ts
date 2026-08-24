@@ -41,6 +41,28 @@ export function shellKindWithoutDiscovery(
   return 'bash'
 }
 
+/**
+ * Conservative dialect for dangerous-command vocabularies: identical to
+ * {@link shellKindWithoutDiscovery} except that, on a real win32 environment
+ * whose bash discovery has not settled yet, it reads as powershell so safety
+ * layers fail closed during cold start. Without this, the first command on a
+ * bash-less machine evaluates with the PowerShell vocabulary inactive — the
+ * exact window the vocabulary exists to cover. Machines with bash explicitly
+ * configured keep the exact reading so POSIX look-alikes (iex/ri) never
+ * regress; once discovery settles, behavior matches the exact reading again.
+ */
+export function shellKindConservative(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): 'bash' | 'powershell' {
+  const kind = shellKindWithoutDiscovery(platform, env)
+  if (kind === 'powershell' || platform !== 'win32' || env !== process.env) return kind
+  // Real win32 env read as bash: either bash is genuinely configured/present
+  // (exact reading stands) or discovery has not settled yet (fail closed).
+  if (normalizeBashPath(env.LUME_BASH_PATH || env.CLAUDE_CODE_SHELL || env.SHELL)) return 'bash'
+  return discoveredWindowsBashPath === undefined ? 'powershell' : 'bash'
+}
+
 export function resolveShellInvocation(
   command: string,
   platform: NodeJS.Platform = process.platform,

@@ -1,5 +1,5 @@
 import { canonicalizeAgentToolName } from "@lume/shared";
-import { analyzeBashCommand, shellKindWithoutDiscovery } from "@lume/agent-sdk";
+import { analyzeBashCommand, shellKindConservative } from "@lume/agent-sdk";
 import {
   PS_CLEAR_CONTENT_VERBS,
   PS_CONFIRM_COMMAND,
@@ -112,9 +112,11 @@ export function evaluateRuntimeToolSafety(toolName: string, input: unknown, cont
    * PS 词表仅在实际以 PowerShell 为执行 shell 的环境应用：POSIX bash 在场时命令是 bash
    * 语法，模型不会发 PS 动词，而 iex/ri 等真实 POSIX 命令与 PS 撞名，全平台跑词表会把
    * Elixir/Ruby 日常命令翻成强审批且「始终允许」豁免不掉。探测复用 packages/sdk 的 shell
-   * 解析顺序且不触发 Windows bash 发现：未决时读作 bash，与只读判定的稳定性取舍一致(#471)。
+   * 解析顺序且不触发 Windows bash 发现；与 #471 只读判定的差异在冷启动方向——bash 发现
+   * 未决时按保守侧读作 powershell（fail-closed），否则无 bash 机器生命周期首条命令必然
+   * 跳过词表，恰是本层要防的场景。显式配置 bash 的机器不受翻转影响。
    */
-  const powershellRulesActive = shellKindWithoutDiscovery(context.platform ?? process.platform, context.env ?? process.env) === "powershell";
+  const powershellRulesActive = shellKindConservative(context.platform ?? process.platform, context.env ?? process.env) === "powershell";
 
   for (const rule of [...HARD_DENY_BASH_RULES, ...(powershellRulesActive ? HARD_DENY_POWERSHELL_RULES : [])]) {
     if (rule.pattern.test(command)) {
