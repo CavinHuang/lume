@@ -1,5 +1,14 @@
 import { canonicalizeAgentToolName } from "@lume/shared";
 import { analyzeBashCommand, shellKindWithoutDiscovery } from "@lume/agent-sdk";
+import {
+  PS_ANCHOR,
+  PS_CLEAR_CONTENT_VERBS,
+  PS_DANGEROUS_DELETE_FLAGS,
+  PS_DELETE_COMMAND,
+  PS_DYNAMIC_EXEC_VERBS,
+  PS_FORMAT_VERBS,
+  PS_STOP_VERBS
+} from "../ps-dangerous-verbs";
 
 export type RuntimeToolSafetyDecision =
   | { behavior: "allow" }
@@ -36,34 +45,30 @@ const FORCE_CONFIRM_BASH_RULES: CommandRule[] = [
 /*
  * PowerShell 破坏性动词词表：Windows 无 POSIX bash 时回退 powershell.exe，
  * 不带显式前缀的 PS 命令会被 bash 语法树判为 simple，绕过下方结构化规则与启发式分类器，
- * 因此在正则层按原始文本先行识别。良性 Get-* / Format-Table 等命令不受影响。
+ * 因此在正则层按原始文本先行识别。动词集合与分类器共享（../ps-dangerous-verbs）。
+ * 良性 Get-* / Format-Table 等命令不受影响。
  */
-/** PS 命令位锚点：命令首、子命令/管道分隔符或换行之后（换行是多行脚本的命令分隔符，曾整体逃逸锚点） */
-const PS_ANCHOR = String.raw`(?:^|[;&|(\r\n]\s*)`;
-/** cmd.exe /c|/k 包裹前缀：内层命令按同一词表识别（cmd /c rd /s /q 曾双层全漏） */
-const CMD_WRAP_ANCHOR = String.raw`(?:^|[;&|(\r\n]\s*)cmd(?:\.exe)?\s+\/[ck]\s*["']?`;
-/** PS 删除族：Remove-Item 及其别名（rd/rmdir/del/erase/ri），含 cmd 包裹内层 */
-const PS_DELETE_ANCHOR = String.raw`(?:${PS_ANCHOR}|${CMD_WRAP_ANCHOR})(?:remove-item|rd|rmdir|del|erase|ri)\b`;
 
 const HARD_DENY_POWERSHELL_RULES: CommandRule[] = [
   {
     // 删除族指向盘符根/根路径/用户主目录裸目标；不带递归标志也拒，比 bash 侧更严；
     // 完整 UNC 根（\\server\share）不在目标命中面内。填充区不含换行，防跨行吞并下一行的良性参数
-    pattern: new RegExp(String.raw`${PS_DELETE_ANCHOR}[^\r\n;&|]*[^\S\r\n]["']?(?:[a-z]:[\\/]*|[\\/]+|~|\$home|\$env:userprofile)["']?(?=\s|$|[;&|])`, "i"),
+    pattern: new RegExp(String.raw`${PS_DELETE_COMMAND}[^\r\n;&|]*[^\S\r\n]["']?(?:[a-z]:[\\/]*|[\\/]+|~|\$home|\$env:userprofile)["']?(?=\s|$|[;&|])`, "i"),
     reason: "禁止删除根目录或用户主目录"
   }
 ];
 
 const FORCE_CONFIRM_POWERSHELL_RULES: CommandRule[] = [
   {
-    // 删除族携带任意参数标志（-Recurse/-Force 及缩写、cmd 风格 /s 等）；裸路径删除不拦，与 bash rm 口径对齐
-    pattern: new RegExp(String.raw`${PS_DELETE_ANCHOR}[^\r\n;&|]*[^\S\r\n][-\\/][a-z]`, "i"),
+    // 仅危险标志簇触发确认；命名参数(-Path/-LiteralPath 等)与 -WhatIf 干跑旗标不再触发，
+    // 保持「裸路径单文件删除不升级」口径
+    pattern: new RegExp(String.raw`${PS_DELETE_COMMAND}[^\r\n;&|]*[^\S\r\n]${PS_DANGEROUS_DELETE_FLAGS}`, "i"),
     reason: "递归强制删除文件需要用户确认"
   },
-  { pattern: new RegExp(String.raw`${PS_ANCHOR}(?:stop-process|stop-service|stop-computer|restart-computer)\b`, "i"), reason: "停止进程、服务或重启系统需要用户确认" },
-  { pattern: new RegExp(String.raw`${PS_ANCHOR}(?:set-executionpolicy|invoke-expression|iex)\b`, "i"), reason: "修改脚本执行策略或动态执行代码需要用户确认" },
-  { pattern: new RegExp(String.raw`${PS_ANCHOR}format-(?:volume|disk)\b`, "i"), reason: "格式化磁盘或卷需要用户确认" },
-  { pattern: new RegExp(String.raw`${PS_ANCHOR}clear-content\b`, "i"), reason: "清空文件内容需要用户确认" }
+  { pattern: new RegExp(`${PS_ANCHOR}${PS_STOP_VERBS}\\b`, "i"), reason: "停止进程、服务或重启系统需要用户确认" },
+  { pattern: new RegExp(`${PS_ANCHOR}${PS_DYNAMIC_EXEC_VERBS}\\b`, "i"), reason: "修改脚本执行策略或动态执行代码需要用户确认" },
+  { pattern: new RegExp(`${PS_ANCHOR}${PS_FORMAT_VERBS}\\b`, "i"), reason: "格式化磁盘或卷需要用户确认" },
+  { pattern: new RegExp(`${PS_ANCHOR}${PS_CLEAR_CONTENT_VERBS}\\b`, "i"), reason: "清空文件内容需要用户确认" }
 ];
 
 const FORCE_CONFIRM_TOOLS = new Map<string, string>([

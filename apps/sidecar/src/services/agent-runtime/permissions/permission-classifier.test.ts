@@ -131,6 +131,11 @@ describe("permission classifier", () => {
       riskLevel: "medium",
       shouldAsk: true
     });
+    // format-* 曾只进 guardrail 层（跨层漂移实例），共享词表后分类器同档兜底
+    await expect(classifier.classify({ toolName: "Bash", command: "Format-Volume -DriveLetter E", shellKind: "powershell" })).resolves.toMatchObject({
+      riskLevel: "medium",
+      shouldAsk: true
+    });
     // 换行分隔与 cmd 包裹曾与 guardrail 层一起漏判
     await expect(classifier.classify({ toolName: "Bash", command: "Get-Date\r\ndel \\", shellKind: "powershell" })).resolves.toMatchObject({
       riskLevel: "medium",

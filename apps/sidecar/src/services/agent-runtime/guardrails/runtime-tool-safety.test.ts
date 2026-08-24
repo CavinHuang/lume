@@ -270,4 +270,27 @@ describe("runtime-tool-safety", () => {
       behavior: "confirm"
     });
   });
+
+  test("escalates deletions only for the dangerous flag clusters", () => {
+    // 收窄后仅递归/强制簇与 cmd /s /q 触发确认（正则层直接命中，不依赖语法分析）
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Remove-Item -Recurse ./temp" }, POWERSHELL_SHELL)).toMatchObject({
+      behavior: "confirm"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "del /q cache.tmp" }, POWERSHELL_SHELL)).toMatchObject({
+      behavior: "confirm"
+    });
+  });
+
+  test.skipIf(!isNativeAvailable())("does not escalate named parameters or dry-run switches on deletions", () => {
+    // 复核发现 [-\\/][a-z] 连 -Path/-WhatIf 都触发，与裸路径单文件删除不升级的取舍矛盾
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Remove-Item -Path log.txt" }, POWERSHELL_SHELL)).toEqual({
+      behavior: "allow"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Remove-Item -WhatIf important.db" }, POWERSHELL_SHELL)).toEqual({
+      behavior: "allow"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "del /p draft.txt" }, POWERSHELL_SHELL)).toEqual({
+      behavior: "allow"
+    });
+  });
 });

@@ -1,4 +1,5 @@
 import { shellKindWithoutDiscovery } from "@lume/agent-sdk";
+import { PS_DELETE_COMMAND, PS_FULL_NAME_VERBS } from "../ps-dangerous-verbs";
 import type {
   PermissionClassification,
   PermissionClassifierInput,
@@ -39,13 +40,11 @@ const MEDIUM_PATTERNS = [
 ];
 
 // PowerShell 破坏性动词：Windows 无 bash 回退时与上方 POSIX 词表同档兜底，避免删除/停服等被判 low；
-// 仅在实际以 PowerShell 为执行 shell 的环境套用（POSIX bash 在场时 iex/ri 等撞名命令防误拦）
+// 词表与 guardrail 正则层共享（../ps-dangerous-verbs），仅在实际以 PowerShell 为执行 shell 的环境套用
+// （POSIX bash 在场时 iex/ri 等撞名命令防误拦）
 const POWERSHELL_MEDIUM_PATTERNS = [
-  /\b(?:remove-item|clear-content|stop-process|stop-service|stop-computer|restart-computer|set-executionpolicy|invoke-expression|iex)\b/i,
-  // 锚点含换行：多行脚本的换行分隔曾整体逃逸
-  /(?:^|[;&|(\r\n])\s*(?:rd|rmdir|del|erase|ri)\b/i,
-  // cmd.exe /c|/k 包裹的内层删除族（cmd /c rd /s /q 曾双层全漏）
-  /cmd(?:\.exe)?\s+\/[ck]\s*["']?\s*(?:rd|rmdir|del|erase|ri)\b/i
+  new RegExp(String.raw`\b${PS_FULL_NAME_VERBS}\b`, "i"),
+  new RegExp(PS_DELETE_COMMAND, "i")
 ];
 
 export interface PermissionClassifier {
