@@ -97,7 +97,7 @@ describe("ContextAssembler", () => {
     expect(result.systemPrompt).toContain("use only refs from the newest snapshot");
     expect(result.systemPrompt).toContain("dialog and handle_dialog");
     expect(result.systemPrompt).toContain("user_takeover_required");
-    expect(result.systemPrompt).toContain("never retry or switch to computer-use");
+    expect(result.systemPrompt).toContain("ask the user for explicit guidance");
     expect(result.systemPrompt).not.toContain("exact skill name browser:browser");
     expect(result.runtimeContext).not.toContain("browser.tabs.resumeHandoff()");
     expect(result.systemPrompt).not.toContain("mcp__computer_use__list_apps");

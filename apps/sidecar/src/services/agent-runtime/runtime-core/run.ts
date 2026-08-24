@@ -43,14 +43,14 @@ import {
   getWorkspaceMcpManager,
 } from "../../mcp/workspace-mcp-manager";
 import type { MemoryV2RecallItem } from "../../memory-v2/types";
+import { resolvePlanningTodoContext } from "./planning-todo-context";
+import { buildEnabledPluginContext } from "./plugin-enabled-context";
 import {
   getEffectiveLumeConfig,
   getEffectivePluginRuntimeConfig,
 } from "../../system/lume-config-service";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
 import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
-import { getSubagentCoordinator } from "../subagents/subagent-coordinator";
-import { buildSubagentWorkContext } from "../subagents/subagent-dispatch-policy";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDir,
@@ -125,13 +125,9 @@ import {
   executeWorkflowHookSafely,
   applyWorkflowHookEffectsSafely,
 } from "./workflow-hook-safety";
-import { resolvePlanningTodoContext } from "./planning-todo-context";
-import { buildEnabledPluginContext } from "./plugin-enabled-context";
 import { resolvePromptCachePolicy, resolveSdkApiType } from "./request-policy";
 import {
-  createBoundSubagentTaskReportTool,
   getResolvedAgentTools,
-  resolveBoundSubagentIdentity,
 } from "./run-subagent";
 import {
   buildBackgroundTaskResultsContext,
@@ -649,7 +645,6 @@ async function assembleSessionContext({
   registeredPlugins,
   pluginAssembly,
   initialTodoState,
-  boundSubagentIdentity,
   subagentDefinition,
 }: {
   input: CreateRuntimeCoreSessionInput;
@@ -659,7 +654,6 @@ async function assembleSessionContext({
   registeredPlugins: RegisteredPlugin[];
   pluginAssembly: Awaited<ReturnType<typeof assemblePluginRuntime>>;
   initialTodoState: Awaited<ReturnType<typeof readLatestTodoState>>;
-  boundSubagentIdentity: ReturnType<typeof resolveBoundSubagentIdentity>;
   subagentDefinition: AgentDefinition | undefined;
 }) {
   const runtimeSkills = toolset.availableToolNames.includes("mcp__browser__snapshot")
@@ -730,15 +724,7 @@ async function assembleSessionContext({
     chatType: input.chatType,
     permissionMode: input.permissionMode,
     automationExecution: isAutomationExecution(input.messageMetadata),
-    agentSystemPrompt: boundSubagentIdentity
-      ? [
-          subagentDefinition?.prompt,
-          "You are executing one bound Subagent Task. Do not create nested subagents or change the task acceptance criteria. Before ending this run, call TaskReport with submitted, failed, or blocked status and a concise summary. TaskReport is a submission to the parent agent, never final acceptance.",
-          `Bound task: ${boundSubagentIdentity.taskId}; attempt: ${input.subagentAttempt ?? 1}.`,
-        ]
-          .filter(Boolean)
-          .join("\n\n")
-      : subagentDefinition?.prompt,
+    agentSystemPrompt: subagentDefinition?.prompt,
     userMessage: input.userMessage ?? "",
     messageAttachments: input.messageAttachments,
     commentAttachments: input.commentAttachments,
@@ -780,24 +766,8 @@ async function assembleSessionContext({
     input.applyWorkflowHookEffects,
     afterContextResult,
   );
-  const unresolvedSubagentTasks =
-    input.threadType === "subagent"
-      ? []
-      : getSubagentCoordinator()
-          .list(input.lumeSessionId)
-          .tasks.filter(
-            (task) =>
-              task.status === "open" ||
-              task.status === "running" ||
-              task.status === "awaiting_review",
-          );
   const systemPrompt = contextAssembly.systemPrompt;
-  const runtimeContext = [
-    contextAssembly.runtimeContext,
-    buildSubagentWorkContext(unresolvedSubagentTasks),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  const runtimeContext = contextAssembly.runtimeContext;
   return {
     runtimeSkills,
     contextAssembly,
@@ -811,7 +781,6 @@ async function createRuntimeCoreSessionImpl(
   input: CreateRuntimeCoreSessionInput,
   pendingCleanup: Array<() => Promise<unknown> | void>,
 ): Promise<CreateRuntimeCoreSessionResult> {
-  const boundSubagentIdentity = resolveBoundSubagentIdentity(input);
   const sessionDir = getRuntimeCoreSessionDir(
     input.lumeSessionId,
     input.agentDir,
@@ -1041,9 +1010,6 @@ async function createRuntimeCoreSessionImpl(
         input.emitToolPermissionRequest?.(request);
       }
     : undefined;
-  const boundSubagentReportTool = boundSubagentIdentity
-    ? createBoundSubagentTaskReportTool(boundSubagentIdentity)
-    : undefined;
   const initialTodoState = await readLatestTodoState({
     sessionDir,
     threadId: input.lumeSessionId,
@@ -1110,7 +1076,6 @@ async function createRuntimeCoreSessionImpl(
     chatType: input.chatType,
     permissionMode: input.permissionMode,
     subagentDefinition,
-    boundSubagentReportTool,
     fileReferenceBinding: input.fileReferenceBinding,
     messageMetadata: input.messageMetadata,
     planningClientSubmissionId: input.planningClientSubmissionId,
@@ -1158,22 +1123,9 @@ async function createRuntimeCoreSessionImpl(
     registeredPlugins,
     pluginAssembly,
     initialTodoState,
-    boundSubagentIdentity,
     subagentDefinition,
   });
   const context = sessionManager.buildSessionContext();
-  const existingCompletionGuard = boundSubagentIdentity
-    ? () =>
-        getSubagentCoordinator().getRunCompletionBlocker(
-          boundSubagentIdentity.runId,
-        )
-    : input.runId
-      ? () =>
-          getSubagentCoordinator().getCompletionBlocker(
-            input.lumeSessionId,
-            input.runId!,
-          )
-      : undefined;
   const completionGuard = async (): Promise<CompletionGuardResult> => {
     const registry = getSubagentRunRegistry();
     const subagentRuns = registry
@@ -1256,17 +1208,9 @@ async function createRuntimeCoreSessionImpl(
         };
       }
     }
-    const existing = await existingCompletionGuard?.();
-    if (existing) return existing;
     const coding = await codingRunTracker.completionGuard();
     return coding ?? getTodoCompletionBlocker(currentTodoState);
   };
-  const codingCompletionEnabled = !(
-    input.subagentRunId &&
-    input.subagentTaskId &&
-    !input.runId &&
-    !boundSubagentIdentity
-  );
   const enableFileCheckpointing = input.permissionMode !== "plan";
   const additionalDirectories = [
     ...new Set(
@@ -1346,9 +1290,6 @@ async function createRuntimeCoreSessionImpl(
     resolveRuntimeTools: (tools, runtimeContext) =>
       ToolRuntime.resolveDynamicTools({
         tools,
-        requiredTools: boundSubagentReportTool
-          ? [boundSubagentReportTool]
-          : undefined,
         cwd: input.cwd,
         sessionId: input.lumeSessionId,
         threadType: runtimeContext.threadType ?? input.threadType,
@@ -1367,10 +1308,7 @@ async function createRuntimeCoreSessionImpl(
         tools,
         sessionId: input.lumeSessionId,
       }),
-    ...(codingCompletionEnabled &&
-    (input.userMessage?.trim() || existingCompletionGuard)
-      ? { completionGuard }
-      : {}),
+    ...(input.userMessage?.trim() ? { completionGuard } : {}),
     additionalDirectories:
       additionalDirectories.length > 0 ? additionalDirectories : undefined,
     contextController: createKernelContextController({

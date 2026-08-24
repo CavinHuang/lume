@@ -55,6 +55,9 @@ export type MemoryV2SearchIntent =
   | "commit"
   | "general";
 
+/** rerank 候选池相对 top-N 的放宽倍数：截断发生在 rerank 之后而非之前（#521）。 */
+const RERANK_CANDIDATE_MULTIPLIER = 3;
+
 export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<MemoryV2RecallItem[]> {
   const store = input.store ?? createMemoryV2Store();
   const query = input.query.trim();
@@ -75,7 +78,7 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
   expireEntries(loadedEntries, input.workspaceSlug);
   const entryCandidates = entryRecallCandidates(
     loadedEntries.filter((entry) => readActivation(entry.frontmatter).recall)
-      .filter((entry) => !currentMessageOverridesClaim(entry, query))
+      .filter((entry) => !currentMessageOverridesClaim(entry, query, queryPlan))
   );
   const scoredEntries = scoreRecallCandidates(entryCandidates, query, intent, queryPlan);
   const hasExactClaimMatch = scoredEntries.some((item) => isClaimMatchForQuery(item, queryPlan));
@@ -100,18 +103,25 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
     maxResults: input.maxResults ?? 5,
     hasBaseRecall: scored.length > 0
   });
+  const maxResults = input.maxResults ?? 5;
+  // 预截断放宽 N×3 给 rerank 候选池:否则 rerank 收到的就是 ≤N 条恒等置换,
+  // 连"谁进 top-N"都无法参与,LLM 调用产出近乎完全作废(#521)
   const merged = mergeRecallItems([...scored, ...semantic])
     .sort((a, b) => b.score - a.score)
-    .slice(0, input.maxResults ?? 5);
+    .slice(0, maxResults * RERANK_CANDIDATE_MULTIPLIER);
   const reranker = input.rerankItems ?? createMemoryV2Reranker({
     workspaceSlug: input.workspaceSlug,
     modelRef: runtimeConfig.retrieval.rerankModelRef
   });
-  if (!reranker) return sortClaimMatchesFirst(merged, queryPlan);
+  if (!reranker) return sortClaimMatchesFirst(merged.slice(0, maxResults), queryPlan);
   try {
-    return sortClaimMatchesFirst((await reranker(merged, query)).slice(0, input.maxResults ?? 5), queryPlan);
+    const reranked = await reranker(merged, query);
+    // 以返回序号覆写 score:下游三级比较器(claim→predicate→score)的平分组内
+    // 由此收敛到 rerank 序,而非 rerank 前的旧 score(#521)
+    const scoredByRerank = reranked.map((item, index) => ({ ...item, score: reranked.length - index }));
+    return sortClaimMatchesFirst(scoredByRerank.slice(0, maxResults), queryPlan);
   } catch {
-    return sortClaimMatchesFirst(merged, queryPlan);
+    return sortClaimMatchesFirst(merged.slice(0, maxResults), queryPlan);
   }
 }
 
@@ -307,9 +317,22 @@ function expireEntries(entries: MemoryV2Entry[], workspaceSlug?: string): void {
   }
 }
 
-function currentMessageOverridesClaim(entry: MemoryV2Entry, query: string): boolean {
+function currentMessageOverridesClaim(entry: MemoryV2Entry, query: string, queryPlan: MemoryV2QueryPlan): boolean {
   const claim = claimFromEntry(entry);
   if (!claim || !/(?:纠正|改为|改成|不是|不再|instead|actually|from now on)/i.test(query)) return false;
+  // #521:"不是/不再/actually"是日常高频词,普通疑问句即可误触。抑制需同时满足:
+  // predicate 命中计划口径(isClaimMatchForQuery 同款归一化)+ claim.subject 与
+  // 计划主体一致(跨主体保护:纠正用户名不得抑制 assistant 名字记忆)。
+  // 注意不能拿 queryPlan.querySubject 对 query 原文做字面匹配——它是 "user/self"
+  // 型 slug,自然语言永远不包含,写了等于全灭。
+  const normalizedPredicate = claim.predicate.trim().toLowerCase();
+  if (!normalizedPredicate) return false;
+  if (!queryPlan.desiredPredicates.some((planned) => planned.trim().toLowerCase() === normalizedPredicate)) {
+    return false;
+  }
+  if (queryPlan.querySubject && claim.subject.trim().toLowerCase() !== queryPlan.querySubject.trim().toLowerCase()) {
+    return false;
+  }
   return !query.toLowerCase().includes(claim.object.toLowerCase());
 }
 

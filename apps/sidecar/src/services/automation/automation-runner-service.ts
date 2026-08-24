@@ -7,7 +7,7 @@ import type {
   AutomationRunNowInput
 } from "@lume/shared";
 import { createAgentThreadWithModelRef, getAgentThreadMeta, updateAgentThreadMeta } from "../agent/agent-thread-manager";
-import { dispatchAgentRun } from "../agent/agent-service";
+import { dispatchAgentRun, onAgentInteractionResolved } from "../agent/agent-service";
 import { advanceAutomationJobSchedule, listAutomationJobs, recordAutomationJobRun, updateAutomationJob } from "./automation-manager";
 import { resolveChannelModelBinding } from "../channel/channel-manager";
 import { getAutomationRunsPath } from "../infra/config-paths";
@@ -391,6 +391,8 @@ export async function refreshAutomationRunnerJobs(): Promise<void> {
 export async function startAutomationRunner(): Promise<void> {
   if (runnerStarted) return;
   runnerStarted = true;
+  // #587:桌面端/IM 解决交互后收尾 waiting_* 任务并恢复调度
+  onAgentInteractionResolved(resumeAutomationAfterInteraction);
   recoverAutomationRuntimeStates();
   await refreshAutomationRunnerJobs();
 }
@@ -412,11 +414,17 @@ export async function runAutomationJobNow(input: AutomationRunNowInput): Promise
 }
 
 export function resumeAutomationAfterInteraction(threadId: string): void {
-  const state = recoverAutomationRuntimeStates().find((candidate) =>
-    candidate.threadId === threadId
-    && (candidate.status === "waiting_for_user" || candidate.status === "waiting_for_approval")
-    && candidate.lease
-  );
+  // #587:只读查找,不得走 recoverAutomationRuntimeStates——waiting_* 的心跳在
+  // 进入等待时就停了,超过 STALE_LEASE_MS 后破坏性恢复会把状态改写成 interrupted
+  // 并清掉 lease,通知路径(以及既有 RPC 调用点)将永远找不到可收尾的对象。
+  // 破坏性清理只属于 startAutomationRunner 的启动语义。
+  const state = listAutomationJobs()
+    .map((job) => readAutomationRuntimeState(job.id))
+    .find((candidate) =>
+      candidate?.threadId === threadId
+      && (candidate.status === "waiting_for_user" || candidate.status === "waiting_for_approval")
+      && candidate.lease
+    );
   if (!state?.lease) return;
   finishAutomationLease({
     jobId: state.jobId,

@@ -1,6 +1,6 @@
 import { atom, type Atom, type WritableAtom } from 'jotai'
 import { atomFamily, atomWithStorage, selectAtom } from 'jotai/utils'
-import type { AgentBrowserAttachment, AgentDiffCommentAttachment, AgentThreadMeta, AgentRuntimeStatus, AgentPendingInteractiveState, SubagentRunRecord, AgentListSubagentWorkResult, PlanModePhaseChangedEvent, AgentSendInput, AgentMessageQueueSnapshot } from '@lume/shared'
+import type { AgentBrowserAttachment, AgentDiffCommentAttachment, AgentThreadMeta, AgentRuntimeStatus, AgentPendingInteractiveState, SubagentRunRecord, PlanModePhaseChangedEvent, AgentSendInput, AgentMessageQueueSnapshot } from '@lume/shared'
 import type { RuntimeEventState } from '@/hooks/runtime-event-state'
 import type { DesktopActionVisualOverlayState } from '@/hooks/desktop-action-visual-state'
 import type { AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
@@ -49,8 +49,6 @@ export const agentMessageQueueAtom = atom<Record<string, AgentMessageQueueSnapsh
 export const agentSubagentRunsAtom = atom<Record<string, SubagentRunRecord[]>>({})
 export const agentSubagentRunsFamily = createThreadSliceFamily(agentSubagentRunsAtom)
 /** Persistent work-loop snapshot, keyed by parent thread. Kept separate during v1 migration. */
-export const agentSubagentWorkAtom = atom<Record<string, AgentListSubagentWorkResult>>({})
-export const agentSubagentWorkFamily = createThreadSliceFamily(agentSubagentWorkAtom)
 
 export const agentPlanModePhaseAtom = atom<Record<string, PlanModePhaseChangedEvent>>({})
 export const agentPlanModePhaseFamily = createThreadSliceFamily(agentPlanModePhaseAtom)

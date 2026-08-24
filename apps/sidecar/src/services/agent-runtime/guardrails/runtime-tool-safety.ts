@@ -1,5 +1,14 @@
 import { canonicalizeAgentToolName } from "@lume/shared";
-import { analyzeBashCommand } from "@lume/agent-sdk";
+import { analyzeBashCommand, shellKindConservative } from "@lume/agent-sdk";
+import {
+  PS_CLEAR_CONTENT_VERBS,
+  PS_CONFIRM_COMMAND,
+  PS_DANGEROUS_DELETE_FLAGS,
+  PS_DELETE_COMMAND,
+  PS_DYNAMIC_EXEC_VERBS,
+  PS_FORMAT_VERBS,
+  PS_STOP_VERBS
+} from "../ps-dangerous-verbs";
 
 export type RuntimeToolSafetyDecision =
   | { behavior: "allow" }
@@ -33,6 +42,36 @@ const FORCE_CONFIRM_BASH_RULES: CommandRule[] = [
   { pattern: /\b(?:open|xdg-open|start)\s+https?:\/\//, reason: "打开外部 URL 需要用户确认" }
 ];
 
+/*
+ * PowerShell 破坏性动词词表：Windows 无 POSIX bash 时回退 powershell.exe，
+ * 不带显式前缀的 PS 命令会被 bash 语法树判为 simple，绕过下方结构化规则与启发式分类器，
+ * 因此在正则层按原始文本先行识别。动词集合与分类器共享（../ps-dangerous-verbs）。
+ * 良性 Get-* / Format-Table 等命令不受影响。
+ */
+
+const HARD_DENY_POWERSHELL_RULES: CommandRule[] = [
+  {
+    // 删除族指向盘符根/根路径/用户主目录裸目标；不带递归标志也拒，比 bash 侧更严；
+    // 完整 UNC 根（\\server\share）不在目标命中面内。填充区不含换行，防跨行吞并下一行的良性参数
+    pattern: new RegExp(String.raw`${PS_DELETE_COMMAND}[^\r\n;&|]*[^\S\r\n]["']?(?:[a-z]:[\\/]*|[\\/]+|~|\$home|\$env:userprofile)["']?(?=\s|$|[;&|])`, "i"),
+    reason: "禁止删除根目录或用户主目录"
+  }
+];
+
+const FORCE_CONFIRM_POWERSHELL_RULES: CommandRule[] = [
+  {
+    // 仅危险标志簇触发确认；命名参数(-Path/-LiteralPath 等)与 -WhatIf 干跑旗标不再触发，
+    // 保持「裸路径单文件删除不升级」口径。锚点与删除族同源（含 cmd 包裹内层），
+    // 防止包裹识别只覆盖删除族的单侧组合缺口
+    pattern: new RegExp(String.raw`${PS_DELETE_COMMAND}[^\r\n;&|]*[^\S\r\n]${PS_DANGEROUS_DELETE_FLAGS}`, "i"),
+    reason: "递归强制删除文件需要用户确认"
+  },
+  { pattern: new RegExp(`${PS_CONFIRM_COMMAND}${PS_STOP_VERBS}\\b`, "i"), reason: "停止进程、服务或重启系统需要用户确认" },
+  { pattern: new RegExp(`${PS_CONFIRM_COMMAND}${PS_DYNAMIC_EXEC_VERBS}\\b`, "i"), reason: "修改脚本执行策略或动态执行代码需要用户确认" },
+  { pattern: new RegExp(`${PS_CONFIRM_COMMAND}${PS_FORMAT_VERBS}\\b`, "i"), reason: "格式化磁盘或卷需要用户确认" },
+  { pattern: new RegExp(`${PS_CONFIRM_COMMAND}${PS_CLEAR_CONTENT_VERBS}\\b`, "i"), reason: "清空文件内容需要用户确认" }
+];
+
 const FORCE_CONFIRM_TOOLS = new Map<string, string>([
   ["memory.promoteglobal", "提升到全局记忆会影响跨工作区记忆，需要用户确认"],
   ["memory.rejectglobalcandidate", "拒绝全局记忆候选会影响跨工作区记忆，需要用户确认"],
@@ -47,7 +86,13 @@ function getCommand(input: unknown): string {
   return typeof command === "string" ? command : "";
 }
 
-export function evaluateRuntimeToolSafety(toolName: string, input: unknown): RuntimeToolSafetyDecision {
+export interface RuntimeToolSafetyContext {
+  /** 测试注入口；缺省按真实进程平台与环境解析 */
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+}
+
+export function evaluateRuntimeToolSafety(toolName: string, input: unknown, context: RuntimeToolSafetyContext = {}): RuntimeToolSafetyDecision {
   const normalized = canonicalizeAgentToolName(toolName);
   const forceConfirmReason = FORCE_CONFIRM_TOOLS.get(normalized);
   if (forceConfirmReason) {
@@ -63,13 +108,23 @@ export function evaluateRuntimeToolSafety(toolName: string, input: unknown): Run
     return { behavior: "allow" };
   }
 
-  for (const rule of HARD_DENY_BASH_RULES) {
+  /*
+   * PS 词表仅在实际以 PowerShell 为执行 shell 的环境应用：POSIX bash 在场时命令是 bash
+   * 语法，模型不会发 PS 动词，而 iex/ri 等真实 POSIX 命令与 PS 撞名，全平台跑词表会把
+   * Elixir/Ruby 日常命令翻成强审批且「始终允许」豁免不掉。探测复用 packages/sdk 的 shell
+   * 解析顺序且不触发 Windows bash 发现；与 #471 只读判定的差异在冷启动方向——bash 发现
+   * 未决时按保守侧读作 powershell（fail-closed），否则无 bash 机器生命周期首条命令必然
+   * 跳过词表，恰是本层要防的场景。显式配置 bash 的机器不受翻转影响。
+   */
+  const powershellRulesActive = shellKindConservative(context.platform ?? process.platform, context.env ?? process.env) === "powershell";
+
+  for (const rule of [...HARD_DENY_BASH_RULES, ...(powershellRulesActive ? HARD_DENY_POWERSHELL_RULES : [])]) {
     if (rule.pattern.test(command)) {
       return { behavior: "deny", reason: rule.reason };
     }
   }
 
-  for (const rule of FORCE_CONFIRM_BASH_RULES) {
+  for (const rule of [...FORCE_CONFIRM_BASH_RULES, ...(powershellRulesActive ? FORCE_CONFIRM_POWERSHELL_RULES : [])]) {
     if (rule.pattern.test(command)) {
       return { behavior: "confirm", reason: rule.reason };
     }

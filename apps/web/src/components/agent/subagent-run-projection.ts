@@ -1,4 +1,4 @@
-import type { LumeRuntimeEvent, SubagentRun } from '@lume/shared'
+import type { LumeRuntimeEvent } from '@lume/shared'
 
 export interface SubagentRunActivitySummary {
   text?: string
@@ -8,7 +8,7 @@ export interface SubagentRunActivitySummary {
 
 export function selectSubagentRunEvents(
   events: LumeRuntimeEvent[],
-  run: Pick<SubagentRun, 'runId' | 'runtimeRunIds'>,
+  run: { runId: string; runtimeRunIds?: string[] },
 ): LumeRuntimeEvent[] {
   const runIds = new Set(run.runtimeRunIds?.length ? run.runtimeRunIds : [run.runId])
   return events.filter((event) => runIds.has(event.runId))
