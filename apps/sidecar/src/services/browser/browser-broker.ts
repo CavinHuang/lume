@@ -242,8 +242,12 @@ export class BrowserBroker {
         const confirmation = await this.main.request({
           requestId: randomUUID(), context: internalContext, method: "policy:confirm",
           params: { method: input.method, tabId, backend, category: policy.category, preview: policy.preview, bindingHash },
-        }) as { approved?: boolean; token?: string }
-        if (!confirmation.approved || typeof confirmation.token !== "string") throw new Error("confirmation_unavailable")
+        }) as { approved?: boolean; token?: string; reason?: string }
+        // #602 review:user_denied 是用户主动拒绝(action_denied),与确认通道故障(confirmation_unavailable)必须分流
+        if (!confirmation.approved) {
+          throw new Error(confirmation.reason === "user_denied" ? "action_denied" : "confirmation_unavailable")
+        }
+        if (typeof confirmation.token !== "string") throw new Error("confirmation_unavailable")
         confirmationToken = confirmation.token
         if (backend === "extension") {
           await this.main.request({ requestId: randomUUID(), context: internalContext, method: "policy:consume", params: { token: confirmationToken, bindingHash } })

@@ -21,10 +21,14 @@ export function classifyBrowserAction(method: string, params: Record<string, unk
   const actionMethod = canonicalActionMethod(method)
   if (method === "purchase") return { decision: "deny", category: "payment", preview: "支付或购买必须由用户完成" }
   if (method === "captcha") return { decision: "deny", category: "captcha", preview: "CAPTCHA 必须由用户完成", errorCode: "user_action_required" }
-  if ((method === "navigate" || method === "goto" || method === "navigate_tab_url") && isPrivateBrowserUrl(params.url)) {
+  // #602 review:navigate 与「建 tab 带 url」同属导航面,后者不设门则 agent 可借 create_tab/ensure
+  // 无提示打开任意站点(含私网地址绕过 SSRF 确认)
+  const navigationMethod = method === "navigate" || method === "goto" || method === "navigate_tab_url"
+    || ((method === "create_tab" || method === "ensure") && typeof params.url === "string" && params.url.trim().length > 0)
+  if (navigationMethod && isPrivateBrowserUrl(params.url)) {
     return { decision: "confirm", category: "authorize", preview: `打开本地或私有地址：${safeOrigin(params.url) ?? "未知地址"}` }
   }
-  if (method === "navigate" || method === "goto" || method === "navigate_tab_url") {
+  if (navigationMethod) {
     return { decision: "confirm", category: "browse", preview: `打开网站：${safeOrigin(params.url) ?? "未知地址"}` }
   }
   const explicit = EXPLICIT_CONFIRM.get(method)

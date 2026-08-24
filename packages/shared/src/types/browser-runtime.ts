@@ -325,7 +325,7 @@ export const DEFAULT_BROWSER_SETTINGS: BrowserSettings = {
   schemaVersion: 3,
   browserEnabled: true,
   browserUseEnabled: true,
-  browserApprovalMode: "neverAsk",
+  browserApprovalMode: "alwaysAsk",
   iabHistoryApprovalMode: "alwaysAsk",
   chromeHistoryApprovalMode: "alwaysAsk",
   agentCursorVisible: true,
