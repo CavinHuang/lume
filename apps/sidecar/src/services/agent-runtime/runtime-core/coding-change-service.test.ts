@@ -569,4 +569,17 @@ describe("coding-change-service", () => {
     })).rejects.toThrow("暂存区已变化");
     expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim()).toBe("1");
   }, 30_000);
+
+  test("publish state 在 binary diff 超过 stdout 水位时降级不可用而非内存暴涨（#594）", async () => {
+    const root = makeTempDir("lume-coding-publish-overflow-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'baseline';\n");
+    // 17MB > MAX_GIT_COMMAND_OUTPUT_BYTES(16MB)：base64 后 ~23MB 字符，必触发水位 kill
+    writeFileSync(join(root, "blob.bin"), Buffer.alloc(17 * 1024 * 1024, 0x61));
+    execFileSync("git", ["add", "--", "blob.bin"], { cwd: root });
+
+    const state = await getCodingRepositoryPublishState(root);
+
+    expect(state).toEqual({ available: false, reason: "无法读取当前 Git 仓库状态" });
+  }, 30_000);
 });
