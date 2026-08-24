@@ -88,7 +88,7 @@ describe("project-instructions", () => {
     expect(truncated.content.endsWith("x")).toBeTrue();
   });
 
-  test("loadProjectInstructions 以 cwd+mtimes 做缓存，mtime 未变时不重读", () => {
+  test("loadProjectInstructions 以 cwd+mtime+size+ino 指纹做缓存，指纹全同时不重读", () => {
     const file = join(root, "CLAUDE.md");
     // 用同一固定时间戳写两次保证 stat 读数一致，规避 mtime round-trip 浮点误差
     const fixedTime = new Date(Date.now() - 10_000);
@@ -97,15 +97,34 @@ describe("project-instructions", () => {
     const first = loadProjectInstructions(root, { homeDir: root });
     expect(first?.content).toBe("# v1");
 
-    // 改内容但把 mtime 拨回同值 → 缓存仍返回旧内容，证明未重读
-    writeFileSync(file, "# v2 should not be re-read", "utf-8");
+    // 等长覆写（# v1/# v2 均 4 字节）+ mtime 拨回同值 → mtime/size/ino 三要素全同，
+    // 缓存仍返回旧内容证明未重读；不等长覆写会因 size 进指纹而失效重读（见下一条用例）
+    writeFileSync(file, "# v2", "utf-8");
     utimesSync(file, fixedTime, fixedTime);
     expect(loadProjectInstructions(root, { homeDir: root })?.content).toBe("# v1");
 
     // mtime 变化 → 重读新内容
     const newer = new Date(fixedTime.getTime() + 5000);
     utimesSync(file, newer, newer);
-    expect(loadProjectInstructions(root, { homeDir: root })?.content).toBe("# v2 should not be re-read");
+    expect(loadProjectInstructions(root, { homeDir: root })?.content).toBe("# v2");
+  });
+
+  test("mtime 粗粒度碰撞：同路径删旧建新同名文件仍使缓存失效", () => {
+    const proj = join(root, "proj");
+    mkdirSync(proj, { recursive: true });
+    const file = join(proj, "CLAUDE.md");
+    writeFileSync(file, "# v1", "utf-8");
+    const fixedTime = new Date(Date.now() - 10_000);
+    utimesSync(file, fixedTime, fixedTime);
+    expect(loadProjectInstructions(proj, { homeDir: root })?.content).toBe("# v1");
+
+    // 删除后重建同名文件（新 inode），内容不同但 mtime 拨回与旧完全一致，
+    // 复现粗粒度时间戳窗口内的指纹碰撞（CI Linux 4ms 粒度实测必现）：
+    // 缓存必须凭 ino/size 差异失效并重读，不得返回删除前的旧内容
+    rmSync(file);
+    writeFileSync(file, "# v2 replaced at same mtime", "utf-8");
+    utimesSync(file, fixedTime, fixedTime);
+    expect(loadProjectInstructions(proj, { homeDir: root })?.content).toBe("# v2 replaced at same mtime");
   });
 
   test("trust 包装转义：正文含闭合标签/伪造标题无法提前逃逸出块，块后有收尾政策", () => {

@@ -140,13 +140,17 @@ function probeStamp(startDir: string, options: ProbeOptions): string {
   walkProbeChain(startDir, options.homeDir ? resolve(options.homeDir) : homedir(), (dir) => {
     for (const name of PROJECT_INSTRUCTION_FILENAMES) {
       const candidate = join(dir, name);
-      let mtime = "0";
+      let sig = "0";
       try {
-        mtime = String(statSync(candidate).mtimeMs);
+        const st = statSync(candidate);
+        // mtime 不能单独做指纹：粗粒度时间戳文件系统（Linux VFS coarse clock 约 4ms 窗口）上
+        // 同路径删旧建新同名文件时新旧 mtime 读数可完全相同，缓存将永久返回删除前的旧内容。
+        // 补 size+ino 使「同名替换」（新 inode/新长度）必然失效；不存在视为 0。
+        sig = `${st.mtimeMs}:${st.size}:${st.ino}`;
       } catch {
         // 不存在视为 0
       }
-      parts.push(`${candidate}:${mtime}`);
+      parts.push(`${candidate}:${sig}`);
     }
     return false;
   });
