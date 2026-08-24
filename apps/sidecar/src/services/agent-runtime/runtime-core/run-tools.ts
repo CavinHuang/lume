@@ -944,6 +944,7 @@ export function buildRuntimeCoreTools(input: {
         toolInput ?? {},
         parentThreadId,
         getSubagentRunRegistry(),
+        { abortSignal: context.abortSignal },
       );
     },
   };

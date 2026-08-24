@@ -40,4 +40,27 @@ describe("subagent-output", () => {
     expect(result.output).toContain("Subagent error: OpenAI API error: 400 invalid model")
     expect(result.lastAssistantMessage).toBe("Subagent error: OpenAI API error: 400 invalid model")
   })
+
+  test("finalizeSubagentOutputFromState keeps partial output when errored", () => {
+    const result = finalizeSubagentOutputFromState({
+      textOutput: "half-finished analysis with useful findings",
+      toolCalls: ["Read"],
+      lastAssistantMessage: "half-finished analysis with useful findings",
+      errorMessage: "aborted by user",
+      status: "aborted",
+    })
+
+    expect(result.output).toContain("half-finished analysis with useful findings")
+    expect(result.output).toContain("[Subagent error: aborted by user]")
+    expect(result.lastAssistantMessage).toBe("Subagent error: aborted by user")
+  })
+
+  test("finalizeSubagentOutput truncates oversized output keeping the tail", () => {
+    const longText = `${"x".repeat(31_000)}\n\nfinal conclusion`
+    const result = finalizeSubagentOutput(longText, [])
+
+    expect(result.output.length).toBeLessThan(31_000)
+    expect(result.output).toContain("final conclusion")
+    expect(result.output).toContain("truncated")
+  })
 })
