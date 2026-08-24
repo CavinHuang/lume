@@ -14,6 +14,8 @@ const MAX_PREVIEW_CHARS = 160;
 const MAX_TOOL_LINES = 20;
 /** 工具调用数超过该值时面板默认折叠 */
 const TOOLS_COLLAPSE_THRESHOLD = 3;
+/** 正文块保留上限：更早的块合并为一行省略提示，防长运行卡片体积超限 */
+const MAX_TEXT_BLOCKS = 8;
 
 interface FeishuCardElement {
   tag: string;
@@ -101,8 +103,19 @@ export function renderImRunCard(state: ImRunCardState): FeishuRunCardJson {
   const elements: FeishuCardElement[] = [];
 
   const toolBlocks = state.blocks.filter((block): block is Extract<ImRunCardBlock, { kind: "tool" }> => block.kind === "tool");
+  const textBlocks = state.blocks.filter((block): block is Extract<ImRunCardBlock, { kind: "text" }> => block.kind === "text");
+  // 超出保留数的更早正文合并为一行省略提示（update 全量重发，块数必须封顶）
+  const omittedTextCount = Math.max(0, textBlocks.length - MAX_TEXT_BLOCKS);
+  let textIndex = -1;
   for (const block of state.blocks) {
     if (block.kind === "text") {
+      textIndex += 1;
+      if (textIndex < omittedTextCount) {
+        continue;
+      }
+      if (omittedTextCount > 0 && textIndex === omittedTextCount) {
+        elements.push(markdown(`（前 ${omittedTextCount} 段回复已省略）`));
+      }
       const text = truncateMiddle(block.text.trimEnd(), MAX_TEXT_CHARS);
       if (text) elements.push(markdown(text));
     } else if (block.kind === "thinking") {

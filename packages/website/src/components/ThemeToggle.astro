@@ -6,7 +6,10 @@ const lang = getLangFromUrl(Astro.url);
 <button
   type="button"
   data-theme-toggle
+  data-label-to-light={t(lang, 'theme.toLight')}
+  data-label-to-dark={t(lang, 'theme.toDark')}
   aria-label={t(lang, 'theme.toDark')}
+  title={t(lang, 'theme.toDark')}
   class="rounded-lg p-1.5 text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg"
 >
   <!-- 太阳：暗色模式下显示（点击切回亮色） -->
@@ -40,15 +43,36 @@ const lang = getLangFromUrl(Astro.url);
 </button>
 
 <script>
-  document.addEventListener('click', (event) => {
-    const btn = (event.target as HTMLElement).closest<HTMLElement>('[data-theme-toggle]');
-    if (!btn) return;
-    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next;
+  const syncThemeUi = (theme: 'light' | 'dark') => {
+    document.querySelectorAll<HTMLButtonElement>('[data-theme-toggle]').forEach((button) => {
+      const label = theme === 'dark' ? button.dataset.labelToLight : button.dataset.labelToDark;
+      if (label) {
+        button.setAttribute('aria-label', label);
+        button.title = label;
+      }
+      button.setAttribute('aria-pressed', String(theme === 'dark'));
+    });
+    document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute(
+      'content',
+      theme === 'dark' ? '#101512' : '#f8faf7',
+    );
+  };
+
+  const applyTheme = (theme: 'light' | 'dark') => {
+    document.documentElement.dataset.theme = theme;
+    syncThemeUi(theme);
     try {
-      localStorage.setItem('theme', next);
+      localStorage.setItem('theme', theme);
     } catch {
       /* 隐私模式等场景下存不了就算了 */
     }
+  };
+
+  document.querySelectorAll<HTMLButtonElement>('[data-theme-toggle]').forEach((button) => {
+    button.addEventListener('click', () => {
+      applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+    });
   });
+
+  syncThemeUi(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
 </script>

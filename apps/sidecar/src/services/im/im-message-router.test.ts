@@ -47,6 +47,7 @@ describe("im-message-router", () => {
       text: "hello",
       contextToken: "ctx-1"
     }, {
+      getThreadMeta: () => ({} as never),
       createThread(title, workspaceId) {
         const id = `thread-${createdThreads.length + 1}`;
         createdThreads.push(`${title}:${workspaceId}`);
@@ -70,6 +71,7 @@ describe("im-message-router", () => {
       text: "again",
       contextToken: "ctx-2"
     }, {
+      getThreadMeta: () => ({} as never),
       createThread(title) {
         const id = `thread-${createdThreads.length + 1}`;
         createdThreads.push(title);
@@ -98,6 +100,7 @@ describe("im-message-router", () => {
     }]);
     expect(sent[0]).toMatchObject({
       userMessage: "hello",
+      messageAttachments: undefined,
       workspaceId: "workspace-1",
       chatType: "direct",
       threadType: "main",
@@ -110,10 +113,12 @@ describe("im-message-router", () => {
           peerKind: "dm",
           peerId: "user-1",
           peerName: "Alice",
-          contextToken: "ctx-1"
+          senderId: undefined,
+          contextToken: "ctx-1",
+          messageId: undefined
         },
         toolPolicy: {
-          deny: ["send_im_message"]
+          deny: ["send_im_message", "AskUserQuestion"]
         }
       }
     });
@@ -162,6 +167,22 @@ describe("im-message-router", () => {
   });
 
   test("routes direct Weixin /approve commands to tool permission approval instead of agent chat", async () => {
+    // 默认安全姿态：白名单为空 = 不允许 IM 审批；本用例显式配置白名单
+    updateLumeConfigSection({
+      source: "user",
+      path: "permissions.approvals",
+      value: {
+        im: {
+          enabled: true,
+          allowTextApprove: true,
+          accounts: {
+            "account-1": {
+              approverPeerIds: ["user-1"]
+            }
+          }
+        }
+      }
+    });
     upsertImThreadBinding({
       provider: "weixin",
       accountId: "account-1",
@@ -182,6 +203,7 @@ describe("im-message-router", () => {
       peerId: "user-1",
       text: "/approve perm-1 allow-once"
     }, {
+      getThreadMeta: () => ({} as never),
       sendMessage() {
         throw new Error("approval command should not enter agent chat");
       },
@@ -253,6 +275,7 @@ describe("im-message-router", () => {
         submitted.push(input);
         return { ok: true };
       },
+      getThreadMeta: () => ({} as never),
       sendBoundTextMessage(input) {
         sent.push(input.text);
         return Promise.resolve({ ok: true });
@@ -315,6 +338,7 @@ describe("im-message-router", () => {
         submitted.push(input);
         return { ok: true };
       },
+      getThreadMeta: () => ({} as never),
       sendBoundTextMessage(input) {
         sent.push(input.text);
         return Promise.resolve({ ok: true });
@@ -364,6 +388,7 @@ describe("im-message-router", () => {
         submitted.push(input);
         return { ok: true };
       },
+      getThreadMeta: () => ({} as never),
       sendBoundTextMessage(input) {
         sent.push(input.text);
         return Promise.resolve({ ok: true });
@@ -515,6 +540,21 @@ describe("im-message-router", () => {
   });
 
   test("IM stream emitter sends tool permission approval instructions to direct bound peer", async () => {
+    updateLumeConfigSection({
+      source: "user",
+      path: "permissions.approvals",
+      value: {
+        im: {
+          enabled: true,
+          allowTextApprove: true,
+          accounts: {
+            "account-1": {
+              approverPeerIds: ["user-1"]
+            }
+          }
+        }
+      }
+    });
     upsertImThreadBinding({
       provider: "weixin",
       accountId: "account-1",
@@ -629,6 +669,7 @@ describe("im-message-router", () => {
       sendMessage(input) {
         sent.push(input);
       },
+      getThreadMeta: () => ({} as never),
       sendBoundTextMessage: async () => ({ ok: true }),
     });
 
@@ -655,6 +696,7 @@ describe("im-message-router", () => {
       sendMessage(input) {
         sent.push(input);
       },
+      getThreadMeta: () => ({} as never),
       sendBoundTextMessage: async () => ({ ok: true }),
     });
 
@@ -675,6 +717,7 @@ describe("im-message-router", () => {
       sendMessage(input) {
         sent.push(input);
       },
+      getThreadMeta: () => ({} as never),
       sendBoundTextMessage: async () => ({ ok: true }),
     });
 
@@ -695,6 +738,7 @@ describe("im-message-router", () => {
     }, {
       createThread: () => ({ id: "thread-file" }),
       sendMessage(input) { sent.push(input); },
+      getThreadMeta: () => ({} as never),
       sendBoundTextMessage: async () => ({ ok: true }),
     });
 

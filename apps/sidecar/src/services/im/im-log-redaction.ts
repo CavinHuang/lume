@@ -9,6 +9,10 @@
 /** 值疑似凭证的查询参数键名 */
 const SENSITIVE_QUERY_KEYS = /(access[-_]?token|token|secret|sign(?:ature)?|key|webhook[-_]?url|corp ?id)/i;
 
+/** 键名疑似凭证的 JSON/键值对形态："appSecret":"xxx" / token: xxx */
+const SENSITIVE_KEY_VALUE =
+  /((?:["']?(?:app[_-]?secret|client[_-]?secret|secret|access[_-]?token|api[_-]?key|token)["']?\s*[:=]\s*["']?))(?:bearer\s+)?([A-Za-z0-9._~+/=-]{8,})/gi;
+
 function maskValue(value: string): string {
   if (value.length <= 6) return "***";
   return `${value.slice(0, 4)}***`;
@@ -27,6 +31,10 @@ export function redactSensitiveText(text: string): string {
   out = out.replace(
     /(authorization"?\s*[:=]\s*"?)(?:bearer\s+)?([A-Za-z0-9._~+/=-]{8,})/gi,
     (_match, prefix: string) => `${prefix}***`
+  );
+  // 凭证类键的键值对任意形态：{"appSecret":"..."} / secret=...
+  out = out.replace(SENSITIVE_KEY_VALUE, (_match, prefix: string, value: string) =>
+    value.length <= 6 ? `${prefix}***` : `${prefix}${maskValue(value)}`
   );
   return out;
 }

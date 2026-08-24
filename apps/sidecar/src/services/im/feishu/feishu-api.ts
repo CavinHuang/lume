@@ -193,7 +193,7 @@ export async function getFeishuChatUserCount(
 }
 
 export interface FeishuQuotedMessage {
-  senderOpenId?: string;
+  senderId?: string;
   /** 文本类消息的可读文本；post 富文本拼接纯文本；其他类型给类型占位说明 */
   text: string;
 }
@@ -253,7 +253,7 @@ export async function getFeishuQuotedMessage(
     const readable = parseFeishuMessageContent(item.msg_type, item.body?.content);
     if (!readable) return null;
     return {
-      ...(item.sender?.id ? { senderOpenId: item.sender.id } : {}),
+      ...(item.sender?.id ? { senderId: item.sender.id } : {}),
       text: readable
     };
   } catch (error) {

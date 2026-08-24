@@ -1704,7 +1704,7 @@ export function AgentInput({
                         || (voiceDictation.status === 'connecting' ? '正在连接语音识别…' : voiceDictation.status === 'stopping' ? '正在整理转写…' : '正在听写，Esc 取消')}
                     </div>
                     {voiceDictation.status !== 'stopping' && (
-                      <Button variant="ghost" type="button" className="h-6 px-1.5 text-ui" onClick={() => void voiceDictation.stop()} title="结束并插入（Enter 不适用，点此或再点麦克风）">
+                      <Button variant="ghost" type="button" className="h-6 px-1.5 text-ui" onClick={() => void voiceDictation.stop()} title="结束并插入">
                         <Check size={13} />
                       </Button>
                     )}

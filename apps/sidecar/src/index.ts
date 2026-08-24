@@ -9,7 +9,7 @@ import {
 } from "./services/automation/automation-runner-service";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
-import { AGENT_IPC_CHANNELS } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
 import { getSubagentCoordinator } from "./services/agent-runtime/subagents/subagent-coordinator";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
@@ -50,7 +50,10 @@ const rpcTransport = createProcessRpcTransport(
   process.env.LUME_SIDECAR_TRANSPORT === "stdio" ? { parentPort: null } : undefined,
 );
 const SETTINGS_ACK_TIMEOUT_MS = 10_000;
-const BROWSER_REQUEST_TIMEOUT_MS = 10_000;
+// 容纳 desktop 最长常规请求:handler 上限 BROWSER_HANDLER_WAIT_CAP_MS(shared
+// 单源)+ 非 guest-optional 方法先吃的 waitForGuest ≤10s + RPC 余量。desktop 的
+// navigate/打字/批量串行已各自有界(#638),browserAuth 入确认级长等待档。
+const BROWSER_REQUEST_TIMEOUT_MS = BROWSER_HANDLER_WAIT_CAP_MS + 15_000;
 const BROWSER_CONFIRMATION_TIMEOUT_MS = 5 * 60_000;
 const pendingSettingsMutations = new Map<string, {
   resolve: () => void;
@@ -74,7 +77,9 @@ function requestBrowserMain(request: import("@lume/shared").BrowserActionRequest
   if (!browserRpcSecret) return Promise.reject(new Error("browser transport unavailable"));
   return new Promise((resolve, reject) => {
     const sequence = ++browserRpcOutboundSequence;
-    const timeoutMs = request.method === "policy:confirm"
+    // policy:confirm 等用户在弹窗操作;tab_browser_auth_request(browserAuth
+    // 凭据窗)同样等用户输入,desktop 侧 expiresAt 允许至 +5min。
+    const timeoutMs = request.method === "policy:confirm" || request.method === "tab_browser_auth_request"
       ? BROWSER_CONFIRMATION_TIMEOUT_MS
       : BROWSER_REQUEST_TIMEOUT_MS;
     const timeout = setTimeout(() => {
@@ -142,6 +147,8 @@ const renderClient = createReverseRpcRenderClient({ sendNotification: writeNotif
 setSidecarRenderClient(renderClient);
 const externalChromeTransport = process.env.LUME_CHROME_BRIDGE_ENDPOINT && process.env.LUME_CHROME_BRIDGE_PAIRING_ID && process.env.LUME_CHROME_BRIDGE_GENERATION && process.env.LUME_CHROME_BRIDGE_HOST_PATH && process.env.LUME_CHROME_BRIDGE_HOST_SHA256
   ? new ExternalChromeTransport({
+    // 与内置后端同治:不传会落回默认 10s,extension 后端的 30s 等待同样被先杀误报(#603)
+    requestTimeoutMs: BROWSER_REQUEST_TIMEOUT_MS,
     endpoint: process.env.LUME_CHROME_BRIDGE_ENDPOINT,
     pairingId: process.env.LUME_CHROME_BRIDGE_PAIRING_ID,
     generation: Number(process.env.LUME_CHROME_BRIDGE_GENERATION),

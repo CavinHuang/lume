@@ -280,6 +280,17 @@ function appendOrMergeRuntimeEvent(events: LumeRuntimeEvent[], event: LumeRuntim
   ) {
     return [...events.slice(0, -1), { ...last, delta: last.delta + event.delta }]
   }
+  // tool.output 快照按稳定 id 原地替换(适配器对同一 toolCallId 恒发同 id):
+  // 事件数组每运行中 bash 恒占 1 条，2000 上限零压力；task_progress 等事件
+  // 可能插队，所以不能只看尾部，按 id 全表定位（数组 ≤2000，~7 次/秒可忽略）。
+  if (event.type === 'tool.output') {
+    const index = events.findIndex((existing) => existing.id === event.id)
+    if (index >= 0) {
+      const next = [...events]
+      next[index] = event
+      return next
+    }
+  }
   return [...events, event]
 }
 

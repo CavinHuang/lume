@@ -666,6 +666,11 @@ function extractText(content: unknown): string {
 function previewRuntimePayload(value: unknown): string {
   if (typeof value === "string") return value;
   if (value === undefined || value === null) return "";
+  // 数组 content 里的 image block(base64)不进 resultPreview:live 总线
+  // 带宽、Web 内存与 token 估算都承受不了整张截图的 JSON(#600/#630)。
+  if (Array.isArray(value) && value.some((block) => typeof block === "object" && block !== null && (block as { type?: unknown }).type === "image")) {
+    value = value.filter((block) => !(typeof block === "object" && block !== null && (block as { type?: unknown }).type === "image"));
+  }
   try {
     return JSON.stringify(value);
   } catch {

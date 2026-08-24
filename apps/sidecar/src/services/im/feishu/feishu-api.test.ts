@@ -149,7 +149,7 @@ describe("入站增强读取面", () => {
     } as never;
     const deps = { createClient: () => client };
     const textQuote = await getFeishuQuotedMessage({ appId: "a", appSecret: "s", messageId: "om_text" }, deps);
-    expect(textQuote).toEqual({ senderOpenId: "ou_1", text: "被引用的正文" });
+    expect(textQuote).toEqual({ senderId: "ou_1", text: "被引用的正文" });
     const cardQuote = await getFeishuQuotedMessage({ appId: "a", appSecret: "s", messageId: "om_card" }, deps);
     expect(cardQuote?.text).toBe("[卡片消息]");
     expect(await getFeishuQuotedMessage({ appId: "a", appSecret: "s", messageId: "missing" }, deps)).toBeNull();

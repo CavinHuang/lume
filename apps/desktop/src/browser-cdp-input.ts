@@ -15,6 +15,8 @@ export type BrowserInputNaturalnessOptions = {
   from?: BrowserCdpPoint
   speed?: "type" | "fill"
   sleep?: (milliseconds: number) => Promise<void>
+  /** 拟真逐字输入的字符上限,超出部分一次性 insertText;默认 150(#638 打字时限) */
+  maxNaturalChars?: number
 }
 
 type KeyDefinition = {
@@ -195,12 +197,20 @@ export async function dispatchBrowserText(
   const fast = options.speed === "fill"
   let minimum = fast ? 16 : 48
   let maximum = fast ? 52 : 145
-  if ([...text].length > 64) {
+  const characters = [...text]
+  if (characters.length > 64) {
     minimum *= 0.6
     maximum *= 0.6
   }
+  // 拟真逐字输入只保留前 maxNaturalChars 个字符:长文本全程逐字会以
+  // ~60-90ms/字线性膨胀至分钟级,被 sidecar transport 超时误报(#638);
+  // 剩余部分一次性 insertText 补完,拟真观感(防检测看行为模式)不受损。
+  // 150 按 type 档对抗最坏(87ms/字+420ms 停顿)≈27s 收敛,须小于外层
+  // withDebugger 整段 30s 计时。
+  const maxNaturalChars = options.maxNaturalChars ?? 150
+  const naturalCharacters = characters.slice(0, maxNaturalChars)
   let charactersUntilPause = 6 + Math.floor(rand(0, 9))
-  for (const character of text) {
+  for (const character of naturalCharacters) {
     const definition = keyDefinition(character, false)
     const typedText = definition.text
     await sender.sendCommand("Input.dispatchKeyEvent", {
@@ -223,6 +233,12 @@ export async function dispatchBrowserText(
       await sleep(fast ? rand(90, 220) : rand(180, 420))
       charactersUntilPause = 6 + Math.floor(rand(0, 9))
     }
+  }
+  if (characters.length > naturalCharacters.length) {
+    // 共同操作模式下用户拼音组合可能仍在进行:insertText 会混入组合串产出
+    // 错误终值,先清空组合(无组合时为 no-op;旧协议不支持则忽略)(#638 review)
+    await sender.sendCommand("Input.imeSetComposition", { compositionText: "", selectionStart: 0, selectionEnd: 0 }).catch(() => undefined)
+    await sender.sendCommand("Input.insertText", { text: characters.slice(naturalCharacters.length).join("") })
   }
 }
 

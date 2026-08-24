@@ -1,5 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 
+/** 无论渠道 denyList 如何配置都必须从 CLI 子进程环境中剥离的敏感键 */
+const CLI_ENV_SENSITIVE_KEYS = ["LUME_SECRET_SEED"];
+
 /**
  * 通用 IM CLI 执行器:spawn 指定 binary,统一处理 env 净化/合并、超时、stdout/stderr 收集。
  */
@@ -76,6 +79,8 @@ export function buildCliEnv(
   const finalEnv: Record<string, string | undefined> = { ...process.env };
   if (env) Object.assign(finalEnv, env);
   for (const key of denyList ?? []) delete finalEnv[key];
+  // 第三方 CLI 二进制不可信其内部行为：剥离本机密钥种子，防凭据离线还原链
+  for (const key of CLI_ENV_SENSITIVE_KEYS) delete finalEnv[key];
   return finalEnv;
 }
 
