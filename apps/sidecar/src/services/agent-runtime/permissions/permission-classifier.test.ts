@@ -105,4 +105,50 @@ describe("permission classifier", () => {
       reasonCode: "shell_read"
     });
   });
+
+  test("classifies PowerShell destructive verbs above low risk", async () => {
+    const classifier = createPermissionClassifier();
+
+    // 复核实证：这些命令曾被 POSIX 词表漏判为 low，dontAsk 下会自动放行递归删除
+    await expect(classifier.classify({
+      toolName: "Bash",
+      command: "Remove-Item -Recurse -Force ~/important"
+    })).resolves.toMatchObject({
+      riskLevel: "medium",
+      shouldAsk: true,
+      reasonCode: "shell_write_pattern"
+    });
+    await expect(classifier.classify({ toolName: "Bash", command: "rd /s /q build" })).resolves.toMatchObject({
+      riskLevel: "medium",
+      shouldAsk: true
+    });
+    await expect(classifier.classify({ toolName: "Bash", command: "Stop-Service spooler" })).resolves.toMatchObject({
+      riskLevel: "medium",
+      shouldAsk: true
+    });
+    await expect(classifier.classify({ toolName: "Bash", command: "Set-ExecutionPolicy RemoteSigned" })).resolves.toMatchObject({
+      riskLevel: "medium",
+      shouldAsk: true
+    });
+  });
+
+  test("keeps benign PowerShell read commands at low risk", async () => {
+    const classifier = createPermissionClassifier();
+
+    await expect(classifier.classify({
+      toolName: "Bash",
+      command: "Get-ChildItem -Path src"
+    })).resolves.toMatchObject({
+      riskLevel: "low",
+      shouldAsk: false,
+      reasonCode: "shell_read"
+    });
+    await expect(classifier.classify({
+      toolName: "Bash",
+      command: "Get-ChildItem | Format-Table"
+    })).resolves.toMatchObject({
+      riskLevel: "low",
+      shouldAsk: false
+    });
+  });
 });

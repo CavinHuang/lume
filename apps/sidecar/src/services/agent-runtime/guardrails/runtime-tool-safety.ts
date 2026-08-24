@@ -33,6 +33,36 @@ const FORCE_CONFIRM_BASH_RULES: CommandRule[] = [
   { pattern: /\b(?:open|xdg-open|start)\s+https?:\/\//, reason: "打开外部 URL 需要用户确认" }
 ];
 
+/*
+ * PowerShell 破坏性动词词表：Windows 无 POSIX bash 时回退 powershell.exe，
+ * 不带显式前缀的 PS 命令会被 bash 语法树判为 simple，绕过下方结构化规则与启发式分类器，
+ * 因此在正则层按原始文本先行识别。良性 Get-* / Format-Table 等命令不受影响。
+ */
+/** PS 命令位锚点：命令首、子命令/管道分隔符之后（管道段内的危险动词同样会被判 simple） */
+const PS_ANCHOR = String.raw`(?:^|[;&|(]\s*)`;
+/** PS 删除族：Remove-Item 及其别名（rd/rmdir/del/erase/ri） */
+const PS_DELETE_ANCHOR = String.raw`${PS_ANCHOR}(?:remove-item|rd|rmdir|del|erase|ri)\b`;
+
+const HARD_DENY_POWERSHELL_RULES: CommandRule[] = [
+  {
+    // 删除族指向盘符根/根路径/用户主目录裸目标（含 UNC 前导），与 bash 侧 rm -r / 与 rm -r ~ 同一口径
+    pattern: new RegExp(String.raw`${PS_DELETE_ANCHOR}[^;&|]*\s["']?(?:[a-z]:[\\/]*|[\\/]+|~|\$home|\$env:userprofile)["']?(?=\s|$|[;&|])`, "i"),
+    reason: "禁止删除根目录或用户主目录"
+  }
+];
+
+const FORCE_CONFIRM_POWERSHELL_RULES: CommandRule[] = [
+  {
+    // 删除族携带任意参数标志（-Recurse/-Force 及缩写、cmd 风格 /s 等）；裸路径删除不拦，与 bash rm 口径对齐
+    pattern: new RegExp(String.raw`${PS_DELETE_ANCHOR}[^;&|]*\s[-\\/][a-z]`, "i"),
+    reason: "递归强制删除文件需要用户确认"
+  },
+  { pattern: new RegExp(String.raw`${PS_ANCHOR}(?:stop-process|stop-service|stop-computer|restart-computer)\b`, "i"), reason: "停止进程、服务或重启系统需要用户确认" },
+  { pattern: new RegExp(String.raw`${PS_ANCHOR}(?:set-executionpolicy|invoke-expression|iex)\b`, "i"), reason: "修改脚本执行策略或动态执行代码需要用户确认" },
+  { pattern: new RegExp(String.raw`${PS_ANCHOR}format-(?:volume|disk)\b`, "i"), reason: "格式化磁盘或卷需要用户确认" },
+  { pattern: new RegExp(String.raw`${PS_ANCHOR}clear-content\b`, "i"), reason: "清空文件内容需要用户确认" }
+];
+
 const FORCE_CONFIRM_TOOLS = new Map<string, string>([
   ["memory.promoteglobal", "提升到全局记忆会影响跨工作区记忆，需要用户确认"],
   ["memory.rejectglobalcandidate", "拒绝全局记忆候选会影响跨工作区记忆，需要用户确认"],
@@ -63,13 +93,13 @@ export function evaluateRuntimeToolSafety(toolName: string, input: unknown): Run
     return { behavior: "allow" };
   }
 
-  for (const rule of HARD_DENY_BASH_RULES) {
+  for (const rule of [...HARD_DENY_BASH_RULES, ...HARD_DENY_POWERSHELL_RULES]) {
     if (rule.pattern.test(command)) {
       return { behavior: "deny", reason: rule.reason };
     }
   }
 
-  for (const rule of FORCE_CONFIRM_BASH_RULES) {
+  for (const rule of [...FORCE_CONFIRM_BASH_RULES, ...FORCE_CONFIRM_POWERSHELL_RULES]) {
     if (rule.pattern.test(command)) {
       return { behavior: "confirm", reason: rule.reason };
     }

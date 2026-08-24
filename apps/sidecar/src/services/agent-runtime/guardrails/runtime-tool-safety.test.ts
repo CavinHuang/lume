@@ -103,4 +103,68 @@ describe("runtime-tool-safety", () => {
       reason: "修改自动化任务会影响未来定时执行，需要用户确认"
     });
   });
+
+  test("hard denies PowerShell deletion targeting drive roots or home directories", () => {
+    for (const command of [
+      "Remove-Item -Recurse -Force C:\\",
+      "Remove-Item C:\\",
+      "rd /s /q D:\\",
+      "rmdir \\\\",
+      "del \\",
+      "Remove-Item ~",
+      "Remove-Item \"$HOME\"",
+      "ri $env:USERPROFILE"
+    ]) {
+      expect(evaluateRuntimeToolSafety("Bash", { command })).toEqual({
+        behavior: "deny",
+        reason: "禁止删除根目录或用户主目录"
+      });
+    }
+  });
+
+  test("requires confirmation for PowerShell dangerous verbs that parse as simple bash", () => {
+    // 复核实证：无前缀 PS 危险命令经 bash 语法树判 simple，绕过结构化规则与启发式分类器
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Remove-Item -Recurse -Force ~/important" })).toMatchObject({
+      behavior: "confirm"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Remove-Item -Force build.log" })).toMatchObject({
+      behavior: "confirm"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "rd /s /q build" })).toMatchObject({
+      behavior: "confirm"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Clear-Content app.log" })).toMatchObject({
+      behavior: "confirm"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Stop-Service spooler" })).toMatchObject({
+      behavior: "confirm"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Set-ExecutionPolicy RemoteSigned" })).toMatchObject({
+      behavior: "confirm"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Format-Volume -DriveLetter E" })).toMatchObject({
+      behavior: "confirm"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Invoke-Expression $script" })).toMatchObject({
+      behavior: "confirm"
+    });
+  });
+
+  test("requires confirmation for destructive PowerShell piped after a read cmdlet", () => {
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Get-Process node | Stop-Process" })).toMatchObject({
+      behavior: "confirm"
+    });
+  });
+
+  test.skipIf(!isNativeAvailable())("leaves benign PowerShell commands untouched", () => {
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Get-ChildItem -Path src" })).toEqual({
+      behavior: "allow"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Get-ChildItem | Format-Table" })).toEqual({
+      behavior: "allow"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Get-Content app.log | Select-String error" })).toEqual({
+      behavior: "allow"
+    });
+  });
 });

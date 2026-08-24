@@ -34,7 +34,10 @@ const MEDIUM_PATTERNS = [
   /git\s+(commit|merge|rebase|checkout)/i,
   /(?:npm|pnpm|yarn|bun)\s+(?:install|add|remove|update|upgrade|link|exec)/i,
   /(?:npx|pnpx|yarn\s+dlx|bunx|corepack)\b/i,
-  /(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)/i
+  /(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)/i,
+  // PowerShell 破坏性动词：Windows 无 bash 回退时与上方 POSIX 词表同档兜底，避免删除/停服等被判 low
+  /\b(?:remove-item|clear-content|stop-process|stop-service|stop-computer|restart-computer|set-executionpolicy|invoke-expression|iex)\b/i,
+  /(?:^|[;&|(])\s*(?:rd|rmdir|del|erase|ri)\b/i
 ];
 
 export interface PermissionClassifier {
