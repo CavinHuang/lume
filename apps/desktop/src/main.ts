@@ -358,6 +358,16 @@ function writeMainLog(level, context, event, message, extra = {}) {
 }
 
 const QUIET_IPC_COMMANDS = new Set<string>([
+  // 日志类命令走 lume:invoke 分发而非独立 handle，必须静默避免埋点自喂。
+  'write_web_log',
+  'write_web_log_batch',
+  'desktop_list_log_files',
+  'desktop_read_log_file',
+  'desktop_open_logs_dir',
+  'desktop_export_logs',
+  'desktop_delete_logs',
+  'desktop_log_live_subscribe',
+  'desktop_log_live_unsubscribe',
   // 启动后观察 dev 终端 command.completed 频率，把高频轮询命令加进来。
 ])
 const IPC_LOG_CONTEXT = 'desktop.ipc'
