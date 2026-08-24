@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSetAtom } from 'jotai'
-import { Check, ChevronRight, Pencil } from 'lucide-react'
+import { Check, ChevronRight, Mic, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { agentPendingInteractiveAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
@@ -8,6 +8,8 @@ import { AGENT_IPC_CHANNELS, type AgentAskUserQuestionRequest } from '@lume/shar
 import { removePendingAskUserQuestion } from '@/hooks/pending-interactive-state'
 import { getSubagentDisplayLabel } from './subagent-label'
 import { InteractiveOverlayFrame, shouldSubmitInteractiveOverlayOnEnter } from './InteractiveOverlayFrame'
+import { useVoiceDictation } from '@/components/voice-dictation/use-voice-dictation'
+import { VolumeBars } from '@/components/voice-dictation/VolumeBars'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -81,6 +83,18 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
     setCustomAnswer('')
     select(activeQuestion.question, answer)
   }
+  // 自定义回答支持口述：听写结果追加到输入框，与手动输入同路径提交。
+  const voiceDictation = useVoiceDictation({
+    onCommit: (text) => setCustomAnswer((current) => (current && !/\s$/u.test(current) ? `${current} ${text}` : current + text)),
+  })
+
+  // 自定义回答行（含迷你麦克风）因任何路径关闭——Esc 清空行、确认提交切题、
+  // 卡片整体隐藏——都必须终止进行中的听写：组件仍挂载但指示 UI 已消失，
+  // 不主动取消会变成"隐形录音"持续上传音频。
+  const customAnswerRowOpen = !hidden && customQuestion !== null && customQuestion === activeQuestion?.question
+  useEffect(() => {
+    if (!customAnswerRowOpen && voiceDictation.isActive) voiceDictation.cancel()
+  }, [customAnswerRowOpen, voiceDictation.cancel, voiceDictation.isActive])
 
   useEffect(() => {
     if (hidden || typeof window === 'undefined') return
@@ -146,7 +160,7 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                     )}
                   >
                     <span className={cn(
-                      'flex size-8 shrink-0 items-center justify-center rounded-full border text-[12px] font-medium tabular-nums',
+                      'flex size-8 shrink-0 items-center justify-center rounded-full border text-ui font-medium tabular-nums',
                       selected
                         ? 'border-[color:color-mix(in_oklab,var(--lume-accent)_40%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-accent)_14%,var(--lume-bg-elevated))] text-[var(--lume-text-primary)]'
                         : 'border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] text-[var(--lume-text-muted)]',
@@ -154,9 +168,9 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                       {optionIndex + 1}
                     </span>
                     <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                      <span className="shrink-0 text-[13px] font-semibold">{opt.label}</span>
+                      <span className="shrink-0 text-body font-semibold">{opt.label}</span>
                       {opt.description && opt.description !== opt.label && (
-                        <span className="min-w-0 truncate text-[12px] text-[var(--lume-text-muted)]">{opt.description}</span>
+                        <span className="min-w-0 truncate text-ui text-[var(--lume-text-muted)]">{opt.description}</span>
                       )}
                     </span>
                     {selected
@@ -182,15 +196,49 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                       }
                     }}
                     placeholder="告诉 Lume 应该如何做得不同"
-                    className="h-7 border-0 bg-transparent px-0 text-[12px] shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
+                    className="h-7 border-0 bg-transparent px-0 text-ui shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
                   />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    type="button"
+                    onClick={() => {
+                      if (voiceDictation.status === 'recording' || voiceDictation.status === 'connecting') void voiceDictation.stop()
+                      else if (voiceDictation.status !== 'stopping') void voiceDictation.start()
+                    }}
+                    title={voiceDictation.isActive ? '结束听写' : '语音输入'}
+                    aria-label={voiceDictation.isActive ? '结束听写' : '开始语音输入'}
+                    aria-pressed={voiceDictation.isActive}
+                    className={cn(
+                      'size-6 shrink-0 rounded-md',
+                      voiceDictation.isActive
+                        ? 'text-[var(--lume-danger)]'
+                        : 'text-[var(--lume-text-muted)] hover:text-[var(--lume-text-secondary)]',
+                    )}
+                  >
+                    {voiceDictation.status === 'recording' ? (
+                      <VolumeBars
+                        volumeRef={voiceDictation.volumeRef}
+                        active
+                        className="flex h-3 items-center gap-[2px]"
+                        barClassName="w-[2px] rounded-full bg-current"
+                      />
+                    ) : (
+                      <Mic size={12} className={cn(voiceDictation.isActive && 'animate-pulse motion-reduce:animate-none')} />
+                    )}
+                  </Button>
+                  {voiceDictation.transcript && voiceDictation.isActive && (
+                    <span className="max-w-32 shrink-0 truncate text-caption text-[var(--lume-text-muted)]" role="status">
+                      {voiceDictation.transcript}
+                    </span>
+                  )}
                   <Button
                     variant="ghost"
                     size="xs"
                     type="button"
                     disabled={!customAnswer.trim()}
                     onClick={submitCustomAnswer}
-                    className="text-[var(--lume-text-secondary)]"
+                    className="shrink-0 text-[var(--lume-text-secondary)]"
                   >
                     确认
                   </Button>
@@ -208,15 +256,15 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                   <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[var(--lume-border-subtle)]">
                     <Pencil size={13} />
                   </span>
-                  <span className="truncate text-[12px]">都不合适，告诉 Lume 应该如何做得不同</span>
+                  <span className="truncate text-ui">都不合适，告诉 Lume 应该如何做得不同</span>
                 </Button>
               )}
             </div>
         ) : (
-          <p className="px-1 text-[12px] text-[var(--lume-text-muted)]">暂无问题</p>
+          <p className="px-1 text-ui text-[var(--lume-text-muted)]">暂无问题</p>
         )}
         {error && (
-          <p className="px-1 pt-1 text-[11px] text-[var(--destructive)]">{error}</p>
+          <p className="px-1 pt-1 text-caption text-[var(--destructive)]">{error}</p>
         )}
       </div>
     </InteractiveOverlayFrame>
