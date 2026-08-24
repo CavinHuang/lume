@@ -1686,15 +1686,35 @@ export class PluginMarketService {
     );
     await rm(stage, { recursive: true, force: true });
     await mkdir(dirname(stage), { recursive: true });
+    // #596②：目标已存在（升级场景）时走 backup→rename→restore 协议——
+    // Windows 下 rename 撞上被运行中插件锁定的目录会抛错，先删后搬会把旧版
+    // 连同 state 记录一起丢成悬空。
+    const backup = `${target}.backup-${Date.now()}`;
+    let backedUp = false;
     try {
       if (source.type === "github") {
         await this.github.stageGitHubTarball(source, stage);
       } else if (source.type === "local" || source.type === "legacy") {
         await cp(source.path, stage, { recursive: true });
       }
-      await rm(target, { recursive: true, force: true });
+      if (existsSync(target)) {
+        await rename(target, backup);
+        backedUp = true;
+      }
       await mkdir(dirname(target), { recursive: true });
-      await rename(stage, target);
+      try {
+        await rename(stage, target);
+      } catch (error) {
+        // rename 失败（目标被锁等）：恢复旧版再向上抛
+        if (backedUp) {
+          await rename(backup, target).catch(() => undefined);
+        }
+        throw error;
+      }
+      if (backedUp) {
+        // best-effort：Windows 下旧目录文件可能仍被占用，清理失败不代表安装失败
+        await rm(backup, { recursive: true, force: true }).catch(() => undefined);
+      }
       return target;
     } catch (error) {
       await rm(stage, { recursive: true, force: true });

@@ -185,6 +185,19 @@ export function recoverAutomationRuntimeStates(): AutomationRuntimeState[] {
       writeState(interrupted);
       rmSync(join(runtimeDir(state.jobId), "lease.lock"), { force: true });
       states.push(interrupted);
+    } else if (isStaleWaitingInteraction(state)) {
+      // #587:waiting_* 无状态迁移入口且重启不恢复——live resolver 已随重启消亡,
+      // 心跳陈旧的 waiting 态若不清掉,任务永远显示"已启用"却再不会被调度
+      const interrupted: AutomationRuntimeState = {
+        ...state,
+        status: "interrupted",
+        message: "Sidecar 重启后等待中的交互已失效；请在对应线程中查看进度或手动重跑。",
+        lease: undefined,
+        updatedAt: Date.now()
+      };
+      writeState(interrupted);
+      rmSync(join(runtimeDir(state.jobId), "lease.lock"), { force: true });
+      states.push(interrupted);
     } else {
       states.push(state);
     }
@@ -195,6 +208,14 @@ export function recoverAutomationRuntimeStates(): AutomationRuntimeState[] {
 function isStaleRunningLease(state: AutomationRuntimeState | null): boolean {
   return Boolean(
     state?.status === "running"
+    && state.lease
+    && Date.now() - state.lease.heartbeatAt > STALE_LEASE_MS
+  );
+}
+
+function isStaleWaitingInteraction(state: AutomationRuntimeState | null): boolean {
+  return Boolean(
+    (state?.status === "waiting_for_user" || state?.status === "waiting_for_approval")
     && state.lease
     && Date.now() - state.lease.heartbeatAt > STALE_LEASE_MS
   );

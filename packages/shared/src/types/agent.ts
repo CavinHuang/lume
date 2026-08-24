@@ -385,6 +385,8 @@ export interface SubagentRunOutcome {
 
 export interface SubagentRunRecord {
   runId: string
+  /** 桥接:子线程 attempt 的 runtime runId(s),web 投影按此匹配事件流。 */
+  runtimeRunIds?: string[]
   parentThreadId: string
   parentRunId?: string
   rootThreadId: string
@@ -430,138 +432,6 @@ export interface AgentListSubagentRunsResult {
   count: number
   runs: SubagentRunRecord[]
   statusSummary: Record<SubagentRunStatus, number>
-}
-
-// ===== Persistent Subagent Work Loop =====
-
-/** 可复用子代理逻辑身份；物理 runtime 只在 Run 执行期间存在。 */
-export type SubagentSessionStatus = 'idle' | 'busy' | 'retired'
-export type SubagentTaskStatus = 'open' | 'running' | 'awaiting_review' | 'accepted' | 'deferred' | 'cancelled'
-export type SubagentWorkRunStatus = 'queued' | 'running' | 'completed' | 'errored' | 'cancelled' | 'timed_out'
-
-export interface SubagentSession {
-  subagentId: string
-  threadId: string
-  parentThreadId: string
-  agentType: string
-  modelRef?: string
-  title: string
-  status: SubagentSessionStatus
-  currentTaskId?: string
-  currentRunId?: string
-  lastTaskSummary?: string
-  lastResultSummary?: string
-  createdAt: number
-  lastUsedAt: number
-  retiredAt?: number
-}
-
-export interface SubagentTask {
-  taskId: string
-  subagentId: string
-  parentThreadId: string
-  /** 父 Run 用于完成屏障与同一父回合的连续返工限制。 */
-  parentRunId: string
-  objective: string
-  acceptanceCriteria: string[]
-  constraints?: string[]
-  expectedArtifacts?: string[]
-  status: SubagentTaskStatus
-  attemptCount: number
-  stalled?: boolean
-  createdAt: number
-  updatedAt: number
-  resolvedAt?: number
-}
-
-export interface SubagentTaskFeedback {
-  taskId: string
-  attempt: number
-  instruction: string
-  rejectedReasons?: string[]
-  requestedChanges?: string[]
-  createdAt: number
-}
-
-export interface SubagentTaskReport {
-  status: 'submitted' | 'failed' | 'blocked'
-  summary: string
-  completedWork?: string[]
-  remainingWork?: string[]
-  artifacts?: Array<{ path: string; description?: string }>
-  verification?: Array<{ command?: string; result: string; passed: boolean }>
-  blockers?: string[]
-}
-
-export interface SubagentRunLink {
-  parentThreadId: string
-  parentRunId: string
-  parentToolUseId: string
-  subagentId: string
-  childThreadId: string
-  taskId: string
-  runId: string
-}
-
-export interface SubagentRun {
-  runId: string
-  /** Ordered physical runtime attempts backing this logical coordinator Run. */
-  runtimeRunIds?: string[]
-  taskId: string
-  subagentId: string
-  childThreadId: string
-  parentThreadId: string
-  parentRunId: string
-  parentToolUseId: string
-  attempt: number
-  instruction: string
-  status: SubagentWorkRunStatus
-  report?: SubagentTaskReport
-  error?: string
-  createdAt: number
-  updatedAt: number
-  startedAt?: number
-  endedAt?: number
-}
-
-export interface AgentToolResult {
-  subagentId: string
-  childThreadId: string
-  taskId: string
-  runId: string
-  attempt: number
-  report: SubagentTaskReport
-}
-
-export interface AgentListSubagentWorkInput {
-  parentThreadId: string
-}
-
-export interface AgentListSubagentWorkResult {
-  sessions: SubagentSession[]
-  tasks: SubagentTask[]
-  feedback: SubagentTaskFeedback[]
-  runs: SubagentRun[]
-  links: SubagentRunLink[]
-}
-
-export interface AgentFinishSubagentTaskInput {
-  taskId: string
-  resolution: 'accepted' | 'deferred' | 'cancelled'
-  reason: string
-}
-
-export interface AgentRetireSubagentInput {
-  subagentId: string
-  reason: string
-}
-
-export interface AgentSubagentWorkChangedEvent {
-  parentThreadId: string
-  subagentId?: string
-  taskId?: string
-  runId?: string
-  updatedAt: number
 }
 
 export type AgentProxyMode = 'off' | 'system' | 'custom'
@@ -2004,14 +1874,6 @@ export const AGENT_IPC_CHANNELS = {
   SUBAGENT_COMPLETED: 'agent:subagent-completed',
   /** 查询 subagent run 状态（调试/观测） */
   LIST_SUBAGENT_RUNS: 'agent:list-subagent-runs',
-  /** 查询父会话的持久化 subagent Session/Task/Run 工作状态 */
-  LIST_SUBAGENT_WORK: 'agent:list-subagent-work',
-  /** 主 Agent 验收、延后或取消一个已提交的子代理任务 */
-  FINISH_SUBAGENT_TASK: 'agent:finish-subagent-task',
-  /** 退休一个空闲子代理 Session，保留其线程历史 */
-  RETIRE_SUBAGENT: 'agent:retire-subagent',
-  /** Session、Task 或 Run 状态变化通知 */
-  SUBAGENT_WORK_CHANGED: 'agent:subagent-work-changed',
   /** 获取当前线程 runtime status */
   GET_RUNTIME_STATUS: 'agent:get-runtime-status',
   /** AskUserQuestion 请求（sidecar -> web） */

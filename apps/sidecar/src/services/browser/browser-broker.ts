@@ -13,7 +13,12 @@ import {
   type BrowserRuntimeDescriptor,
   type BrowserTabDescriptor,
 } from "@lume/shared"
-import { BROWSER_API_REGISTRY, browserApiSupportForBackend } from "@lume/shared"
+import { BROWSER_API_REGISTRY, STABLE_BROWSER_ERROR_CODES, browserApiSupportForBackend } from "@lume/shared"
+// 单源派生自 shared;desktop 侧 fallback 值本身(browser_internal_error)与仅由
+// legacy 插件客户端抛出的 incompatible_protocol 不经本侧透传,过滤掉(#638 review)
+const SIDECAR_STABLE_BROWSER_ERROR_CODES: ReadonlySet<string> = new Set(
+  STABLE_BROWSER_ERROR_CODES.filter((code) => code !== "browser_internal_error" && code !== "incompatible_protocol"),
+)
 import { classifyBrowserAction } from "./browser-action-policy"
 import { resolveAuthorizedBrowserUploadPaths } from "../agent/agent-files-service"
 
@@ -30,6 +35,7 @@ export class BrowserBroker {
   private readonly claimSnapshots = new Map<string, { backend: "iab" | "extension"; threadId?: string; tabId?: string; providerTabId?: string; title?: string; url?: string; generation?: number }>()
   private generation = 1
   private browserPluginEnabled = false
+  private agentBrowserUseEnabled = true
   private chromePluginEnabled = false
   private extensionBackendEnabled = false
   private extensionConnected = false
@@ -78,14 +84,16 @@ export class BrowserBroker {
     }
   }
   setPluginEnabled(enabled: boolean): void { this.setPluginState({ browserEnabled: enabled }) }
-  setPluginState(state: Partial<{ browserEnabled: boolean; chromeEnabled: boolean; extensionBackendEnabled: boolean; hostConnected: boolean }>): void {
+  setPluginState(state: Partial<{ browserEnabled: boolean; chromeEnabled: boolean; extensionBackendEnabled: boolean; hostConnected: boolean; agentBrowserUseEnabled: boolean }>): void {
     const next = {
       browserEnabled: state.browserEnabled ?? this.browserPluginEnabled,
       chromeEnabled: state.chromeEnabled ?? this.chromePluginEnabled,
       extensionBackendEnabled: state.extensionBackendEnabled ?? this.extensionBackendEnabled,
       hostConnected: state.hostConnected ?? this.extensionConnected,
+      agentBrowserUseEnabled: state.agentBrowserUseEnabled ?? this.agentBrowserUseEnabled,
     }
-    if (next.browserEnabled === this.browserPluginEnabled && next.chromeEnabled === this.chromePluginEnabled && next.extensionBackendEnabled === this.extensionBackendEnabled && next.hostConnected === this.extensionConnected) return
+    if (next.browserEnabled === this.browserPluginEnabled && next.chromeEnabled === this.chromePluginEnabled && next.extensionBackendEnabled === this.extensionBackendEnabled && next.hostConnected === this.extensionConnected && next.agentBrowserUseEnabled === this.agentBrowserUseEnabled) return
+    this.agentBrowserUseEnabled = next.agentBrowserUseEnabled
     const extensionConnectionChanged = next.hostConnected !== this.extensionConnected
     this.browserPluginEnabled = next.browserEnabled
     this.chromePluginEnabled = next.chromeEnabled
@@ -242,12 +250,11 @@ export class BrowserBroker {
         const confirmation = await this.main.request({
           requestId: randomUUID(), context: internalContext, method: "policy:confirm",
           params: { method: input.method, tabId, backend, category: policy.category, preview: policy.preview, bindingHash },
-        }) as { approved?: boolean; token?: string; reason?: string }
-        // #602 review:user_denied 是用户主动拒绝(action_denied),与确认通道故障(confirmation_unavailable)必须分流
-        if (!confirmation.approved) {
-          throw new Error(confirmation.reason === "user_denied" ? "action_denied" : "confirmation_unavailable")
-        }
-        if (typeof confirmation.token !== "string") throw new Error("confirmation_unavailable")
+        }) as { approved?: boolean; token?: string }
+        // 用户明确拒绝(approved:false)与通道异常(畸形响应/缺 token)必须区分:
+        // 前者是用户否决该路径(user_declined),后者才是确认通道故障(#606)
+        if (confirmation.approved === false) throw new Error("user_declined")
+        if (confirmation.approved !== true || typeof confirmation.token !== "string") throw new Error("confirmation_unavailable")
         confirmationToken = confirmation.token
         if (backend === "extension") {
           await this.main.request({ requestId: randomUUID(), context: internalContext, method: "policy:consume", params: { token: confirmationToken, bindingHash } })
@@ -277,7 +284,9 @@ export class BrowserBroker {
     this.queues.set(queueKey, current.catch(() => undefined))
     return current.catch((error) => { throw new Error(stableBrowserErrorCode(error)) })
   }
-  listBackends(): BrowserBackendDescriptor[] { return this.browserPluginEnabled ? [this.descriptor("iab"), ...(this.extension && this.extensionBackendEnabled && this.chromePluginEnabled && this.extensionConnected ? [this.descriptor("extension")] : [])] : [] }
+  // agentBrowserUseEnabled=false(设置「允许 Browser Use」关)时返回空:isEnabled
+  // 随之 false,工具从注入池消失,不再「在列却逐次撞 browser_unavailable」(#608)
+  listBackends(): BrowserBackendDescriptor[] { return this.browserPluginEnabled && this.agentBrowserUseEnabled ? [this.descriptor("iab"), ...(this.extension && this.extensionBackendEnabled && this.chromePluginEnabled && this.extensionConnected ? [this.descriptor("extension")] : [])] : [] }
   private async listBackendsForContext(input: { threadId?: string; browserSessionId: string; browserTurnId: string }): Promise<BrowserBackendDescriptor[]> {
     if (!this.browserPluginEnabled) return []
     const runtime = await this.runtimeDescriptor(input)
@@ -436,7 +445,7 @@ function stableBrowserErrorCode(error: unknown): string {
     ? (error as { code: string }).code
     : ""
   const value = structuredCode || (error instanceof Error ? error.message : "")
-  return new Set(["browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "stale_snapshot_cursor", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "user_action_required", "strict_locator_violation", "actionability_failed", "dialog_blocking", "user_takeover_required", "element_not_visible", "element_disabled", "element_occluded", "element_readonly", "unsupported", "executed_unknown"]).has(value) ? value : "browser_internal_error"
+  return SIDECAR_STABLE_BROWSER_ERROR_CODES.has(value) ? value : "browser_internal_error"
 }
 
 function inferBackend(explicit: "iab" | "extension" | undefined, params: Record<string, unknown> | undefined): "iab" | "extension" {

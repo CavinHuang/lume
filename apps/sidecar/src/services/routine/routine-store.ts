@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync, renameSync, appendFileSync } from "node:fs"
 import type { DailyRoutine, RoutineEntryStatus, RoutineStatus, AutomationRun, AgentMessage, SDKMessage } from "@lume/shared"
 import { getRoutineSchedulePath, getRoutineRunsPath, getAutomationRunsPath, getAgentThreadMessagesPath } from "../infra/config-paths"
 import { getAgentThreadMessages, getAgentThreadSDKMessages } from "../agent/agent-thread-manager"
@@ -20,7 +20,11 @@ export function readRoutine(date: string): DailyRoutine | null {
 export function writeRoutine(routine: DailyRoutine): void {
   const path = getRoutineSchedulePath(routine.date)
   try {
-    writeFileSync(path, JSON.stringify(routine, null, 2), "utf-8")
+    // 原子写(#518)：直写被崩溃截断后 readRoutine 返回 null，runner 整日重生成
+    // 并丢失 automationJobId 绑定、index 残留孤儿 once-job
+    const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`
+    writeFileSync(tmpPath, JSON.stringify(routine, null, 2), "utf-8")
+    renameSync(tmpPath, path)
   } catch (error) {
     log.error("写入日程文件失败", { date: routine.date, error: error instanceof Error ? error.message : String(error) })
     throw error

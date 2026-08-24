@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { acknowledgeRendererDelivery, listSubagentWork, onSidecarEvent, onSuggestionsChanged, sidecarCall } from '@/lib/desktop-api'
+import { acknowledgeRendererDelivery, onSidecarEvent, onSuggestionsChanged, sidecarCall } from '@/lib/desktop-api'
 import {
   agentStreamingStatesAtom,
   agentRuntimeStatusAtom,
@@ -9,7 +9,6 @@ import {
   agentMessageQueueAtom,
   agentQueueInterruptedAtom,
   agentSubagentRunsAtom,
-  agentSubagentWorkAtom,
   agentPlanModePhaseAtom,
   agentThreadsAtom,
   agentErrorMessagesAtom,
@@ -36,7 +35,6 @@ import {
   type AgentDesktopActionRequest,
   type AgentToolPermissionRequest,
   type AgentSubagentCompletionEvent,
-  type AgentSubagentWorkChangedEvent,
   type AgentMessageQueueSnapshot,
   type AgentListSubagentRunsResult,
   type SubagentRunRecord,
@@ -99,7 +97,6 @@ export function useGlobalAgentListeners() {
   messageQueuesRef.current = messageQueues
   const setQueueInterrupted = useSetAtom(agentQueueInterruptedAtom)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
-  const setSubagentWork = useSetAtom(agentSubagentWorkAtom)
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
   const setThreads = useSetAtom(agentThreadsAtom)
   const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
@@ -412,13 +409,6 @@ export function useGlobalAgentListeners() {
           })
           break
         }
-        case AGENT_IPC_CHANNELS.SUBAGENT_WORK_CHANGED: {
-          const event = params as AgentSubagentWorkChangedEvent
-          void listSubagentWork(event.parentThreadId)
-            .then((work) => setSubagentWork((prev) => ({ ...prev, [event.parentThreadId]: work })))
-            .catch((error) => console.error('[useGlobalAgentListeners] 刷新 subagent work 失败:', error))
-          break
-        }
         case AGENT_IPC_CHANNELS.PLAN_MODE_PHASE_CHANGED: {
           const e = params as PlanModePhaseChangedEvent
           setPlanModePhase((prev) => ({ ...prev, [e.threadId]: e }))
@@ -459,5 +449,5 @@ export function useGlobalAgentListeners() {
         setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
       }
     }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setTabs, setActiveTabId, setWelcomePromptSeed, setSuggestionsVersion, setMemoryCenterVersion, enqueueRuntimeEvent])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setTabs, setActiveTabId, setWelcomePromptSeed, setSuggestionsVersion, setMemoryCenterVersion, enqueueRuntimeEvent])
 }

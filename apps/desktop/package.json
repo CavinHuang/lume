@@ -74,6 +74,10 @@
         "to": "bundled-plugins"
       },
       {
+        "from": "../../templates/workspace",
+        "to": "templates/workspace"
+      },
+      {
         "from": "resources/sidecar",
         "to": "sidecar"
       },

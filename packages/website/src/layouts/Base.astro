@@ -21,7 +21,7 @@ const lang = getLangFromUrl(Astro.url);
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
-    <meta name="theme-color" content="#fbfcf8" />
+    <meta name="theme-color" content="#f8faf7" />
     <link rel="icon" type="image/svg+xml" href={withBase('/favicon.svg')} />
     <meta name="generator" content={Astro.generator} />
     <meta property="og:title" content={title} />
@@ -38,6 +38,10 @@ const lang = getLangFromUrl(Astro.url);
           theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         }
         document.documentElement.dataset.theme = theme;
+        document.querySelector('meta[name="theme-color"]')?.setAttribute(
+          'content',
+          theme === 'dark' ? '#101512' : '#f8faf7',
+        );
       })();
     </script>
   </head>
