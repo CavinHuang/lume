@@ -6,7 +6,6 @@ import { AGENT_IPC_CHANNELS, type AgentAskUserQuestionRequest, type AgentToolPer
 import { appendAgentThreadSDKMessages, createAgentThreadWithModelRef, getAgentThreadSDKMessages } from "../agent/agent-thread-manager";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { sendAgentMessage } from "../agent/agent-service";
-import { getSubagentCoordinator } from "../agent-runtime/subagents/subagent-coordinator";
 import { emitAgentNotification } from "../agent/agent-notification-service";
 import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
 import { MemoryCommandService, hasMemoryMutationForRun } from "./command-service";
@@ -309,74 +308,41 @@ async function extractMemoryCandidatesInSubagent(
   const workspace = getAgentWorkspaceBySlug(input.workspaceSlug);
   if (!modelRef || !binding || !workspace) return undefined;
 
-  const coordinator = getSubagentCoordinator();
-  let extracted: Awaited<ReturnType<typeof extractMemoryBatchCandidatesWithLlm>> = [];
-  const coordinatorResult = await coordinator.runAgentTask({
-    parentThreadId: input.threadId,
-    parentRunId: input.runId,
-    parentToolUseId: `memory-extract:${input.runId}`,
-    prompt: [
-      "You are Lume's private memory extraction subagent.",
-      "Inspect the supplied conversation and tool evidence, use memory.search/read only when needed, and return strict JSON matching the requested extraction schema.",
-      "Never write files, call external services, run shell commands, or rely on assistant-only claims.",
-      buildBatchExtractionUserPrompt(input.sources, input.workspaceSlug, input.modelVisibleMessage, input.existingMemories)
-    ].join("\n\n"),
-    description: "Private memory extraction",
-    subagentType: "memory-extractor",
-    acceptanceCriteria: ["Every candidate cites one exact user message or tool result source."],
-    createSession: ({ title }) => {
-      const child = createAgentThreadWithModelRef(
-        title,
-        modelRef,
-        binding.channel.id,
-        workspace.id,
-        input.threadId,
-        binding.modelId,
-        { fileContextMode: "newRoot" }
-      );
-      return { threadId: child.id, modelRef };
-    },
-    execute: async ({ session, run, signal }) => {
-      const abortSignal = AbortSignal.any([signal, input.signal]);
-      const emitter = createSilentAgentEmitter();
-      await sendAgentMessage({
-        threadId: session.threadId,
-        userMessage: [
-          "This is a hidden background task. Do not address the user directly.",
-          "Return only the JSON extraction result after reviewing the evidence.",
-          buildBatchExtractionUserPrompt(input.sources, input.workspaceSlug, input.modelVisibleMessage, input.existingMemories)
-        ].join("\n\n"),
-        modelRef,
-        channelId: binding.channel.id,
-        modelId: binding.modelId,
-        workspaceId: workspace.id,
-        threadType: "subagent",
-        messageMetadata: {
-          hiddenFromChat: true,
-          memoryBackground: true,
-          maxTurns: 5,
-          toolPolicy: { allow: ["memory.search", "memory.read"] }
-        }
-      }, emitter, { abortSignal });
-      const text = extractAssistantText(getAgentThreadSDKMessages(session.threadId));
-      const parsed = parseLlmBatchExtractionResponse(text, input.sources);
-      if (!parsed) throw new Error("后台提取 Agent 未返回有效 JSON");
-      extracted = parsed;
-      getSubagentCoordinator().submitReport({
-        runId: run.runId,
-        report: { status: "submitted", summary: `Extracted ${extracted.length} memory candidates.` }
-      });
-      return { status: "completed", completionSummary: `Extracted ${extracted.length} memory candidates.` };
-    }
-  });
-  if (coordinatorResult.taskId) {
-    coordinator.finishTask({
-      taskId: coordinatorResult.taskId,
-      resolution: "accepted",
-      reason: "后台记忆提取已由 MemoryJobService 校验并提交。"
-    });
+  const child = createAgentThreadWithModelRef(
+    "Private memory extraction",
+    modelRef,
+    binding.channel.id,
+    workspace.id,
+    input.threadId,
+    binding.modelId,
+    { fileContextMode: "newRoot" }
+  );
+  {
+    const emitter = createSilentAgentEmitter();
+    await sendAgentMessage({
+      threadId: child.id,
+      userMessage: [
+        "This is a hidden background task. Do not address the user directly.",
+        "Return only the JSON extraction result after reviewing the evidence.",
+        buildBatchExtractionUserPrompt(input.sources, input.workspaceSlug, input.modelVisibleMessage, input.existingMemories)
+      ].join("\n\n"),
+      modelRef,
+      channelId: binding.channel.id,
+      modelId: binding.modelId,
+      workspaceId: workspace.id,
+      threadType: "subagent",
+      messageMetadata: {
+        hiddenFromChat: true,
+        memoryBackground: true,
+        maxTurns: 5,
+        toolPolicy: { allow: ["memory.search", "memory.read"] }
+      }
+    }, emitter, { abortSignal: input.signal });
+    const text = extractAssistantText(getAgentThreadSDKMessages(child.id));
+    const parsed = parseLlmBatchExtractionResponse(text, input.sources);
+    if (!parsed) throw new Error("后台提取 Agent 未返回有效 JSON");
+    return parsed;
   }
-  return extracted;
 }
 
 function extractAssistantText(messages: SDKMessage[]): string {
