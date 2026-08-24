@@ -1472,7 +1472,11 @@ export class QueryEngine {
         break
       }
 
-      if (response.stopReason === 'end_turn') break
+      // Terminal exit is decided solely by the tool-free branch above: a
+      // response carrying tool_use must keep looping so the model sees the
+      // results, even when a gateway reports finish_reason "stop" mapped to
+      // end_turn (#568). Runaway loops are bounded by maxTurns and the
+      // repeat guard above.
 
       if (this.config.promptSuggestions && toolsUsed.length > 0) {
         yield {

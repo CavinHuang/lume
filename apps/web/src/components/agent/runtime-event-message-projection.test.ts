@@ -1071,6 +1071,48 @@ describe('applyRuntimeEventsIncremental 与全量投影等价', () => {
     const afterCompact = applyRuntimeEventsIncremental(full.slice(0, 2), ref)
     expect(afterCompact.messages).toEqual(projectRuntimeEventMessages(full.slice(0, 2)))
   })
+
+  test('tool.output 旧槽位原地替换（非尾部）经增量路径到达视图', () => {
+    const outV1 = event({ id: 'run-1:tool-output:tool-1', type: 'tool.output', toolCallId: 'tool-1', chunk: 'v1\n', createdAt: '2026-05-11T00:00:01.000Z' })
+    const outV2 = { ...outV1, chunk: 'v1\nv2\n' }
+    const progress = event({ id: 'bg-1', type: 'task.progress', taskId: 'bg-1', progress: {}, createdAt: '2026-05-11T00:00:02.000Z' })
+
+    // 第一帧：快照在非尾部槽位，其后已有插队事件
+    const frame1 = [
+      event({ type: 'run.started' }),
+      event({ type: 'tool.started', runId: 'run-1', toolCallId: 'tool-1', toolName: 'Bash', inputPreview: {} }),
+      outV1,
+      progress,
+    ]
+    const r1 = applyRuntimeEventsIncremental(frame1, null)
+
+    // 第二帧：同长度、尾引用不变，仅中段替换——替换必须可见
+    const frame2 = [frame1[0], frame1[1], outV2, frame1[3]]
+    const r2 = applyRuntimeEventsIncremental(frame2 as LumeRuntimeEvent[], r1.ref)
+
+    const assistant = r2.messages.find((message) => message.type === 'assistant') as Extract<RuntimeMessageView, { type: 'assistant' }>
+    const block = assistant.blocks.find((candidate) => candidate.type === 'tool_call') as Extract<typeof assistant.blocks[number], { type: 'tool_call' }>
+    expect(block.toolCall.streamedOutput).toBe('v1\nv2\n')
+
+    // 与全量投影等价
+    expect(r2.messages).toEqual(projectRuntimeEventMessages(frame2 as LumeRuntimeEvent[]))
+  })
+
+  test('failed 后迟到的 tool.output 快照经增量路径不复活卡片', () => {
+    const base = [
+      event({ type: 'run.started' }),
+      event({ type: 'tool.started', runId: 'run-1', toolCallId: 'tool-1', toolName: 'Bash', inputPreview: {} }),
+      event({ type: 'tool.failed', runId: 'run-1', toolCallId: 'tool-1', toolName: 'Bash', error: { code: 'tool_error', message: 'boom' } }),
+    ]
+    const r1 = applyRuntimeEventsIncremental(base, null)
+    const late = [...base, event({ id: 'run-1:tool-output:tool-1', type: 'tool.output', toolCallId: 'tool-1', chunk: 'late', createdAt: '2026-05-11T00:00:05.000Z' })]
+    const r2 = applyRuntimeEventsIncremental(late, r1.ref)
+
+    const assistant = r2.messages.find((message) => message.type === 'assistant') as Extract<RuntimeMessageView, { type: 'assistant' }>
+    const block = assistant.blocks.find((candidate) => candidate.type === 'tool_call') as Extract<typeof assistant.blocks[number], { type: 'tool_call' }>
+    expect(block.toolCall.status).toBe('failed')
+    expect(block.toolCall.streamedOutput).toBeUndefined()
+  })
 })
 
 describe('applyRuntimeEventsIncremental 引用稳定', () => {
@@ -1559,5 +1601,49 @@ describe('todo_update block 稳定性', () => {
     const ids = messages.map((message) => message.id)
     expect(ids).toEqual(['user-1', 'assistant:run-1'])
     expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  test('tool.output 快照写入运行中卡片并随 completed 整体清除', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'run.started' }),
+      event({ type: 'tool.started', toolCallId: 'tool-1', toolName: 'Bash', inputPreview: { command: 'bun test' } }),
+      event({ id: 'run-1:tool-output:tool-1', type: 'tool.output', toolCallId: 'tool-1', chunk: 'tail v1\n' }),
+      event({ id: 'run-1:tool-output:tool-1', type: 'tool.output', toolCallId: 'tool-1', chunk: 'tail v1\ntail v2\n' }),
+    ])
+
+    const assistant = messages.find((message) => message.type === 'assistant') as Extract<RuntimeMessageView, { type: 'assistant' }>
+    const block = assistant.blocks.find((candidate) => candidate.type === 'tool_call') as Extract<typeof assistant.blocks[number], { type: 'tool_call' }>
+    expect(block.toolCall.status).toBe('running')
+    expect(block.toolCall.streamedOutput).toBe('tail v1\ntail v2\n')
+
+    const finished = projectRuntimeEventMessages([
+      event({ type: 'run.started' }),
+      event({ type: 'tool.started', toolCallId: 'tool-1', toolName: 'Bash', inputPreview: { command: 'bun test' } }),
+      event({ id: 'run-1:tool-output:tool-1', type: 'tool.output', toolCallId: 'tool-1', chunk: 'tail v2\n' }),
+      event({ type: 'tool.completed', toolCallId: 'tool-1', toolName: 'Bash', resultPreview: 'all output' }),
+    ])
+    const doneAssistant = finished.find((message) => message.type === 'assistant') as Extract<RuntimeMessageView, { type: 'assistant' }>
+    const doneBlock = doneAssistant.blocks.find((candidate) => candidate.type === 'tool_call') as Extract<typeof doneAssistant.blocks[number], { type: 'tool_call' }>
+    expect(doneBlock.toolCall.status).toBe('completed')
+    expect(doneBlock.toolCall.streamedOutput).toBeUndefined()
+    expect(doneBlock.toolCall.output).toBe('all output')
+  })
+
+  test('迟到的 tool.output 不复活已结束的卡片，也不凭空建卡', () => {
+    const afterCompletion = projectRuntimeEventMessages([
+      event({ type: 'run.started' }),
+      event({ type: 'tool.started', toolCallId: 'tool-1', toolName: 'Bash', inputPreview: {} }),
+      event({ type: 'tool.completed', toolCallId: 'tool-1', toolName: 'Bash', resultPreview: 'done' }),
+      event({ id: 'run-1:tool-output:tool-1', type: 'tool.output', toolCallId: 'tool-1', chunk: 'late snapshot' }),
+    ])
+    const assistant = afterCompletion.find((message) => message.type === 'assistant') as Extract<RuntimeMessageView, { type: 'assistant' }>
+    const block = assistant.blocks.find((candidate) => candidate.type === 'tool_call') as Extract<typeof assistant.blocks[number], { type: 'tool_call' }>
+    expect(block.toolCall.streamedOutput).toBeUndefined()
+
+    // 无卡片的孤儿快照：不产生任何 assistant
+    const orphan = projectRuntimeEventMessages([
+      event({ id: 'run-1:tool-output:ghost', type: 'tool.output', toolCallId: 'ghost', chunk: 'x' }),
+    ])
+    expect(orphan.find((message) => message.type === 'assistant')).toBeUndefined()
   })
 })

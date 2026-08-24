@@ -3352,3 +3352,139 @@ describe("QueryEngine cost estimation (#352)", () => {
   })
 })
 
+describe("QueryEngine end_turn with tool_use (#568)", () => {
+  test("keeps looping when end_turn carries tool calls so the model sees results", async () => {
+    let toolCalls = 0
+    const provider = new StaticProvider([
+      {
+        // Gateway reports finish_reason "stop" (mapped to end_turn) while
+        // still requesting a tool call.
+        content: [
+          { type: "text", text: "let me check" },
+          { type: "tool_use", id: "t-end-1", name: "Echo", input: { q: "state" } },
+        ],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+      {
+        content: [{ type: "text", text: "done after result" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Echo",
+        description: "echo",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          toolCalls += 1
+          return { type: "tool_result", tool_use_id: "", content: "executed" }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 3,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "success",
+      is_error: false
+    })
+    expect(toolCalls).toBe(1)
+
+    // The follow-up request must carry the executed tool_result back to the
+    // model instead of ending the run with it unanswered.
+    const secondRequest = provider.requests[1]
+    expect(secondRequest?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "user",
+        content: expect.arrayContaining([
+          expect.objectContaining({
+            type: "tool_result",
+            tool_use_id: "t-end-1",
+            content: "executed"
+          })
+        ])
+      })
+    ]))
+  })
+
+  test("ends the run on a tool-free end_turn response", async () => {
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        {
+          content: [{ type: "text", text: "plain answer" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      ]),
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 3,
+      maxTokens: 256,
+      includePartialMessages: false
+    })
+
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "success",
+      is_error: false
+    })
+  })
+
+  test("bounds a gateway that always answers stop with tool calls via maxTurns", async () => {
+    let calls = 0
+    const stopWithToolCall = (round: number): CreateMessageResponse => ({
+      content: [
+        { type: "text", text: `round ${round}` },
+        {
+          // Distinct inputs keep the repeat guard out of the way so this
+          // exercises the maxTurns bound specifically.
+          type: "tool_use",
+          id: `t-loop-${round}`,
+          name: "Echo",
+          input: { n: round },
+        },
+      ],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    })
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        stopWithToolCall(0),
+        stopWithToolCall(1),
+        stopWithToolCall(2),
+        stopWithToolCall(3),
+      ]),
+      tools: [{
+        name: "Echo",
+        description: "echo",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          calls += 1
+          return { type: "tool_result", tool_use_id: "", content: `result ${calls}` }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 3,
+      maxTokens: 256,
+      includePartialMessages: false
+    })
+
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "error_max_turns",
+      is_error: true
+    })
+    expect(calls).toBeLessThanOrEqual(3)
+  })
+})
+

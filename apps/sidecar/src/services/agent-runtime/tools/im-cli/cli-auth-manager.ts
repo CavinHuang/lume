@@ -110,11 +110,24 @@ export function createCliAuthManager(deps: CliAuthManagerDeps = {}): CliAuthMana
       envDenyList: config.envDenyList,
     });
     session.statusProc = statusProc;
+    // authProc 的 timeoutTimer 在其 close 时已清除；status 段必须有自己的
+    // 超时，否则 statusProc 挂起会让会话永久停在 authorizing（#536）
+    const statusTimer = setTimeout(() => {
+      try {
+        statusProc.kill("SIGKILL");
+      } catch {
+        /* 已退出 */
+      }
+      if (session.phase === "authorizing") {
+        setTerminal(session, "error", "状态确认超时");
+      }
+    }, config.authTimeoutMs);
     let statusOut = "";
     statusProc.stdout?.on("data", (c: Buffer) => {
       statusOut += c.toString();
     });
     statusProc.on("close", () => {
+      clearTimeout(statusTimer);
       if (session.phase !== "authorizing") return; // 已被取消/超时/停止置终态
       const { connected, profile } = config.parseAuthStatus(statusOut);
       if (connected) {
@@ -125,6 +138,7 @@ export function createCliAuthManager(deps: CliAuthManagerDeps = {}): CliAuthMana
       }
     });
     statusProc.on("error", () => {
+      clearTimeout(statusTimer);
       if (session.phase !== "authorizing") return;
       setTerminal(session, "error", "状态确认命令启动失败");
     });

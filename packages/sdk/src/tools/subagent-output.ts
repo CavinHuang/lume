@@ -18,6 +18,14 @@ function buildToolSummary(toolCalls: string[]): string {
   return `\n[Tools used: ${toolCalls.join(', ')}]`
 }
 
+// 子代理全文回传父级上下文前的截断上限：保留结尾（结论通常在最后）。
+const MAX_SUBAGENT_OUTPUT_CHARS = 30_000
+
+function truncateForParent(text: string): string {
+  if (text.length <= MAX_SUBAGENT_OUTPUT_CHARS) return text
+  return `[Subagent output truncated (${text.length} chars total), showing the tail]\n...\n${text.slice(-MAX_SUBAGENT_OUTPUT_CHARS)}`
+}
+
 export function summarizeSubagentAssistantEvent(
   content: Array<Record<string, unknown>>,
   previousTextOutput = '',
@@ -63,7 +71,7 @@ export function finalizeSubagentOutput(
   const normalizedText = textOutput.trim()
   if (normalizedText) {
     return {
-      output: normalizedText + buildToolSummary(toolCalls),
+      output: truncateForParent(normalizedText) + buildToolSummary(toolCalls),
       lastAssistantMessage: normalizedText.slice(-500),
     }
   }
@@ -87,6 +95,14 @@ export function finalizeSubagentOutputFromState(
   const normalizedError = state.errorMessage?.trim()
   if (normalizedError) {
     const summary = `Subagent error: ${normalizedError}`
+    const partialText = state.textOutput.trim()
+    // 失败时保留已产出的部分结果，父级不必从零重做
+    if (partialText) {
+      return {
+        output: `${truncateForParent(partialText)}\n\n[${summary}]`,
+        lastAssistantMessage: summary,
+      }
+    }
     return {
       output: summary,
       lastAssistantMessage: summary,

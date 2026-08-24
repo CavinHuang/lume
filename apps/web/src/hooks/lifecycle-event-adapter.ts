@@ -377,6 +377,21 @@ export function adaptLifecycleEvent(
     }]
   }
 
+  if (detail.type === 'tool.output') {
+    // 前台工具输出快照(Bash)。id 故意不走 envelope.seq 派生:同一 toolCallId 的
+    // 连续快照在 runtime-event-state 按此稳定 id 原地替换(事件数组恒占 1 条)。
+    // hydrate 的 mergeHydratedRuntimeEvents 对同 id 是 first-wins——当前两条来源
+    // 不会同 id 相遇(persisted 白名单不含 tool.output,live 已单槽收敛);若未来
+    // 持久层出现多份,重开线程会保留最旧快照,届时需同步调整去重方向。
+    return [{
+      id: `${envelope.runId}:tool-output:${detail.toolCallId}`,
+      type: 'tool.output',
+      ...base,
+      toolCallId: detail.toolCallId,
+      chunk: detail.chunk,
+    }]
+  }
+
   // turn.* / 未知事件(含未迁移领域事件 memory.changed 等):不产 RuntimeEvent。
   // 批次5 裁定不映射:user.message(旧路 message.user.submitted 继续驱动,projector
   // 分支留作 SDK 未来 emitter 接收端)/plan.preview(旧路休眠,无写入者)/

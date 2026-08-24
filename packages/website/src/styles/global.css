@@ -4,44 +4,50 @@
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
 :root {
-  --bg: #fbfcf8;
-  --bg-subtle: #f2f4ee;
+  --bg: #f8faf7;
+  --bg-subtle: #eef2ed;
   --surface: #ffffff;
-  --surface-hover: #eef2ea;
-  --border: #dde2d8;
-  --border-strong: #c8d0c3;
-  --fg: #121713;
-  --fg-muted: #5c675e;
-  --fg-faint: #929d94;
-  --accent: #178b49;
-  --accent-strong: #0e6d38;
+  --surface-hover: #e9efe9;
+  --border: #d6ded6;
+  --border-strong: #bcc8be;
+  --fg: #172019;
+  --fg-muted: #556259;
+  --fg-faint: #7a887f;
+  --accent: #208f50;
+  --accent-strong: #14753f;
   --accent-fg: #ffffff;
-  --accent-soft: rgb(23 139 73 / 0.09);
-  --glow-1: rgb(69 207 125 / 0.18);
-  --glow-2: rgb(151 112 255 / 0.13);
-  --shadow-card: 0 1px 2px rgb(18 23 19 / 0.04), 0 18px 55px rgb(18 23 19 / 0.065);
-  --code-bg: #f1f3ee;
+  --accent-soft: rgb(32 143 80 / 0.1);
+  --accent-secondary: #4aa77b;
+  --glow-1: rgb(74 188 119 / 0.14);
+  --glow-2: rgb(104 173 140 / 0.1);
+  --grid-line: rgb(42 67 50 / 0.055);
+  --inverse-bg: #101612;
+  --inverse-fg: #f2f6f2;
+  --shadow-card: 0 1px 2px rgb(23 32 25 / 0.04), 0 18px 50px rgb(23 32 25 / 0.07);
+  --code-bg: #eef2ed;
   color-scheme: light;
 }
 
 [data-theme='dark'] {
-  --bg: #0c100d;
-  --bg-subtle: #111612;
-  --surface: #151b17;
-  --surface-hover: #1a221c;
-  --border: #253029;
-  --border-strong: #354239;
-  --fg: #edf2ec;
-  --fg-muted: #9ba99e;
-  --fg-faint: #657169;
-  --accent: #54d981;
-  --accent-strong: #82eda4;
-  --accent-fg: #052e13;
-  --accent-soft: rgb(74 222 128 / 0.1);
-  --glow-1: rgb(34 197 94 / 0.12);
-  --glow-2: rgb(45 212 191 / 0.08);
+  --bg: #101512;
+  --bg-subtle: #161c18;
+  --surface: #1b221d;
+  --surface-hover: #222b24;
+  --border: #303b33;
+  --border-strong: #445247;
+  --fg: #f1f5f1;
+  --fg-muted: #b4beb6;
+  --fg-faint: #859188;
+  --accent: #69dc91;
+  --accent-strong: #8beaab;
+  --accent-fg: #0b2715;
+  --accent-soft: rgb(105 220 145 / 0.12);
+  --accent-secondary: #7ce3b1;
+  --glow-1: rgb(63 201 111 / 0.1);
+  --glow-2: rgb(75 180 135 / 0.07);
+  --grid-line: rgb(154 184 162 / 0.05);
   --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.35);
-  --code-bg: #12151d;
+  --code-bg: #151a17;
   color-scheme: dark;
 }
 
@@ -59,6 +65,8 @@
   --color-accent-strong: var(--accent-strong);
   --color-accent-fg: var(--accent-fg);
   --color-accent-soft: var(--accent-soft);
+  --color-inverse-bg: var(--inverse-bg);
+  --color-inverse-fg: var(--inverse-fg);
 
   --font-sans:
     system-ui, -apple-system, 'Segoe UI', 'MiSans', 'PingFang SC', 'Hiragino Sans GB',
@@ -95,7 +103,13 @@ body {
   color: var(--fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  font-kerning: normal;
   overflow-x: hidden;
+  text-rendering: optimizeLegibility;
+}
+
+html[lang='zh-CN'] body {
+  font-family: 'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'MiSans', system-ui, sans-serif;
 }
 
 ::selection {
@@ -106,7 +120,7 @@ body {
 .section-shell {
   width: min(100% - 2rem, 80rem);
   margin-inline: auto;
-  padding-block: clamp(5rem, 9vw, 8rem);
+  padding-block: clamp(4.75rem, 8vw, 6.75rem);
 }
 
 .section-heading {
@@ -116,18 +130,18 @@ body {
 .section-heading h2 {
   margin-top: 1.25rem;
   color: var(--fg);
-  font-size: clamp(2.35rem, 5vw, 4.6rem);
+  font-size: clamp(2.25rem, 4.6vw, 4.15rem);
   font-weight: 600;
-  line-height: 1.02;
-  letter-spacing: -0.052em;
+  line-height: 1.06;
+  letter-spacing: -0.042em;
 }
 
 .section-heading > p:last-child {
   max-width: 42rem;
   margin-top: 1.25rem;
   color: var(--fg-muted);
-  font-size: var(--text-body);
-  line-height: 1.85;
+  font-size: var(--text-body-lg);
+  line-height: 1.75;
 }
 
 .section-eyebrow {
@@ -135,11 +149,40 @@ body {
   align-items: center;
   gap: 0.55rem;
   color: var(--accent);
-  font-size: var(--text-micro);
+  font-size: var(--text-caption);
   font-weight: 700;
-  letter-spacing: 0.18em;
-  line-height: 1.4;
+  letter-spacing: 0.12em;
+  line-height: 1.5;
   text-transform: uppercase;
+}
+
+html[lang='zh-CN'] .section-eyebrow {
+  letter-spacing: 0.04em;
+}
+
+html[lang='zh-CN'] .landing-page :where(h1, h2) {
+  font-feature-settings: 'halt' 1;
+  letter-spacing: -0.025em;
+  line-break: strict;
+}
+
+.landing-page .text-ui {
+  font-size: 0.9375rem;
+}
+
+.landing-page .text-body {
+  font-size: 1rem;
+}
+
+.landing-hero-title {
+  font-size: clamp(2.45rem, 5vw, 4.45rem);
+  line-height: 1.03;
+  letter-spacing: -0.045em;
+}
+
+html[lang='zh-CN'] .landing-hero-title {
+  line-height: 1.07;
+  letter-spacing: -0.028em;
 }
 
 .status-dot {
@@ -147,13 +190,13 @@ body {
   height: 0.45rem;
   flex: none;
   border-radius: 999px;
-  background: #45d777;
-  box-shadow: 0 0 0 4px rgb(69 215 119 / 0.11);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
 .text-gradient {
   color: var(--accent);
-  background: linear-gradient(100deg, var(--accent) 0%, #50bfa3 48%, #8471df 100%);
+  background: linear-gradient(100deg, var(--accent) 0%, var(--accent-secondary) 100%);
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -161,8 +204,8 @@ body {
 
 .hero-grid {
   background-image:
-    linear-gradient(rgb(89 108 93 / 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(89 108 93 / 0.055) 1px, transparent 1px);
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   background-size: 44px 44px;
 }
 
@@ -516,7 +559,7 @@ body {
 .cta-panel {
   background:
     linear-gradient(120deg, rgb(255 255 255 / 0.025), transparent 42%),
-    var(--fg);
+    var(--inverse-bg);
 }
 
 .cta-orb {
@@ -531,33 +574,14 @@ body {
   transform: translateX(50%);
 }
 
-@keyframes section-reveal {
-  from {
-    opacity: 0.24;
-    transform: translateY(2.75rem) scale(0.992);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@supports (animation-timeline: view()) {
-  .reveal-section {
-    animation: section-reveal linear both;
-    animation-range: entry 5% cover 28%;
-    animation-timeline: view();
-  }
-}
-
 @media (max-width: 639px) {
   .section-shell {
     width: min(100% - 2rem, 80rem);
-    padding-block: 4.5rem;
+    padding-block: 4rem;
   }
 
   .section-heading h2 {
-    font-size: 2.35rem;
+    font-size: 2.25rem;
   }
 }
 
