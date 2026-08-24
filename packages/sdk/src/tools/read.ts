@@ -19,7 +19,8 @@ const SUMMARIZABLE_EXTENSIONS = new Set([
   '.json', '.yaml', '.yml', '.toml',
   '.sh', '.bash', '.md',
 ])
-const SUMMARIZE_THRESHOLD_LINES = 500
+// #564:无显式范围时的全文直读上限;超出部分截断并带尾部标记,summarize 参数才走 AST 折叠
+const WHOLE_READ_LINE_LIMIT = 2000
 const MAX_MULTIMODAL_BYTES = 20 * 1024 * 1024
 const DEFAULT_MAX_TEXT_BYTES = 1024 * 1024
 const DEFAULT_MAX_TEXT_TOKENS = 25_000
@@ -45,7 +46,7 @@ type ReadResult = { data: unknown; is_error?: boolean; _meta?: Record<string, un
 
 export const FileReadTool = defineTool({
   name: 'Read',
-  description: 'Read text, images, PDFs, and Jupyter notebooks from the filesystem. For code, prefer this basic tool over Node REPL or shell scripts. Text uses 0-based line offsets; use offset/limit for large files. PDF pages are 1-based ranges such as "1-3".',
+  description: 'Read text, images, PDFs, and Jupyter notebooks from the filesystem. For code, prefer this basic tool over Node REPL or shell scripts. Text uses 0-based line offsets; use offset/limit for explicit ranges. Line numbers prefixed to each line are NOT part of file content—never include them in Edit strings. Whole-file reads return raw source up to 2000 lines (beyond that: first 2000 lines plus a truncation marker); pass summarize=true to get a structure outline instead.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -60,6 +61,10 @@ export const FileReadTool = defineTool({
       limit: {
         type: 'number',
         description: 'Maximum number of lines to read',
+      },
+      summarize: {
+        type: 'boolean',
+        description: 'For large code files, return an outline with function bodies elided instead of raw source. Elided regions were not shown—re-read with offset/limit before editing them.',
       },
       pages: {
         type: 'string',
@@ -141,14 +146,15 @@ export const FileReadTool = defineTool({
         }
       }
 
+      // #564:无显式范围时全文直读至上限;AST 骨架折叠降为 summarize 显式 opt-in,
+      // 避免「模型只见骨架却要 Edit elided 区域」的必然失配
       const hasExplicitRange = input.offset !== undefined || input.limit !== undefined
       const offset = input.offset ?? 0
-      const limit = input.limit ?? (hasExplicitRange ? 2000 : SUMMARIZE_THRESHOLD_LINES)
-      if (isUnchangedRead(context.fileStateCache?.get(filePath), fileStat.mtimeMs, fileStat.size, offset, limit)) {
+      const limit = input.limit ?? (hasExplicitRange ? 2000 : WHOLE_READ_LINE_LIMIT)
+      if (isUnchangedRead(context.fileStateCache?.get(filePath), fileStat.mtimeMs, fileStat.size, offset, limit, input.summarize === true)) {
         return unchangedResult(filePath)
       }
-      const shouldReadWholeFile = !hasExplicitRange && SUMMARIZABLE_EXTENSIONS.has(ext)
-      if (!shouldReadWholeFile) {
+      if (hasExplicitRange) {
         const ranged = await readTextFileRange(filePath, offset, limit, context.abortSignal)
         const textLimitError = validateTextLimits(ranged.content, filePath, context)
         if (textLimitError) return textLimitError
@@ -202,10 +208,9 @@ export const FileReadTool = defineTool({
       const content = textFile.content
       const lines = content.length === 0 ? [] : content.split('\n')
 
-      // If user specified offset/limit, always return raw content (explicit read)
+      // #564:AST 折叠仅显式 opt-in;elided 区域模型没见过，编辑前必须补读
       if (
-        !hasExplicitRange
-        && lines.length > SUMMARIZE_THRESHOLD_LINES
+        input.summarize === true
         && isNativeAvailable()
         && SUMMARIZABLE_EXTENSIONS.has(ext)
       ) {
@@ -233,6 +238,7 @@ export const FileReadTool = defineTool({
           }
 
           const summarizedContent = keptSegments.join('\n')
+            + `\n\n[outline: function bodies were elided—re-read the specific regions with offset/limit before editing them]`
           const summaryLimitError = validateTextLimits(summarizedContent, filePath, context)
           if (summaryLimitError) return summaryLimitError
 
@@ -243,6 +249,7 @@ export const FileReadTool = defineTool({
             offset,
             limit,
             isPartialView: true,
+            summarizedView: true,
           })
 
           return {
@@ -280,16 +287,31 @@ export const FileReadTool = defineTool({
         return `${lineNum}\t${line}`
       }).join('\n')
 
+      // #564:#535 截断信号必须在 content 里可见——超限全文读在尾部带显式标记;
+      // summarize 被请求但不可用时给显式信号,避免模型反复重试死路
+      // #564 review:ranged 分支已提前 return,此处必然无显式范围
+      const truncatedWholeRead = lines.length > WHOLE_READ_LINE_LIMIT
+      const summarizeUnavailable = input.summarize === true
+      // #564 review:outline 建议只对可折叠扩展名给出,.txt/.log 等提了也是死路
+      const summarizeHint = SUMMARIZABLE_EXTENSIONS.has(ext)
+        ? ', or pass summarize:true for an outline'
+        : ''
+      const truncationFooter = `${truncatedWholeRead
+        ? `\n\n[truncated: showing lines ${offset + 1}-${offset + selectedLines.length} of ${lines.length} total. Continue with offset${summarizeHint}.]`
+        : ''}${summarizeUnavailable
+        ? `\n[summarize was requested but is unavailable for this file; showing raw lines]`
+        : ''}`
+
       return {
         data: {
           filePath,
-          content: numbered || '(empty file)',
+          content: (numbered || '(empty file)') + truncationFooter,
           offset,
           limit,
           totalLines: lines.length,
           remainingLines: Math.max(0, lines.length - offset - limit),
         },
-        _meta: { read: { offset, limit, totalLines: lines.length, partial: isPartialView, summarized: false } },
+        _meta: { read: { offset, limit, totalLines: lines.length, partial: isPartialView, summarized: false, ...(truncatedWholeRead ? { truncated: true } : {}) } },
       }
     } catch (err: any) {
       if (err?.name === 'AbortError') return { data: 'Read aborted.', is_error: true }
@@ -509,17 +531,20 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 function isUnchangedRead(
-  state: { timestamp: number; size?: number; offset?: number; limit?: number } | undefined,
+  state: { timestamp: number; size?: number; offset?: number; limit?: number; summarizedView?: boolean } | undefined,
   timestamp: number,
   size: number,
   offset: number,
   limit: number | undefined,
+  summarizedView = false,
 ): boolean {
   return !!state
     && state.timestamp === timestamp
     && (state.size === undefined || state.size === size)
     && state.offset === offset
     && state.limit === limit
+    // #564 review:同一 offset/limit 键对应 raw 与 outline 两种视图,视图不同不算 unchanged
+    && (state.summarizedView ?? false) === summarizedView
 }
 
 function unchangedResult(filePath: string): ReadResult {
@@ -543,8 +568,9 @@ function validateTextLimits(content: string, filePath: string, context: ToolCont
   const maxTokens = configuredPositiveNumber(context, 'readMaxTokens', DEFAULT_MAX_TEXT_TOKENS)
   const tokens = estimateTokens(content)
   if (tokens > maxTokens) {
+    // #564:minified/单行文件用行范围无解，补充字节级排查建议
     return {
-      data: `Error: Read output for ${filePath} is approximately ${tokens} tokens, exceeding the ${maxTokens}-token limit. Use offset and limit to read a smaller range.`,
+      data: `Error: Read output for ${filePath} is approximately ${tokens} tokens, exceeding the ${maxTokens}-token limit. Use offset and limit to read smaller line ranges; for minified or single-line files use Bash instead (e.g. 'head -c 4000 ${filePath}' or 'cut -c1-200').`,
       is_error: true,
       _meta: { read: { filePath, truncated: false, bytes, tokens, maxTokens } },
     }

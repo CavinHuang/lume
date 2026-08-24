@@ -19,6 +19,8 @@ export interface FileState {
   offset?: number
   limit?: number
   isPartialView?: boolean
+  /** #564:同一 offset/limit 键可对应 raw 与 outline 两种视图,unchanged 判定须区分 */
+  summarizedView?: boolean
 }
 
 /**

@@ -312,9 +312,8 @@ describe("file tools", () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
     const filePath = join(root, "long.txt");
-    // 600 padded lines exceed both the default 500-line window and a single
-    // stream chunk, so the ranged reader stops early with an unverified count;
-    // .txt is not summarized, so Read takes the ranged path.
+    // Padded lines exceed a single stream chunk, so the ranged reader stops
+    // early with an unverified count when given an explicit window.
     await writeFile(
       filePath,
       Array.from({ length: 600 }, (_, i) => `line-${i} ${"x".repeat(150)}`).join("\n"),
@@ -322,11 +321,69 @@ describe("file tools", () => {
     );
     const cache = new FileStateCache();
 
-    const result = await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
+    // #564:显式范围走 ranged 路径——窗口凑满提前停读时必须强制 partial 视图
+    const result = await FileReadTool.call({ file_path: filePath, offset: 0, limit: 100 }, { cwd: root, fileStateCache: cache });
 
     expect(result.is_error).toBeFalsy();
     expect(result._meta?.read).toMatchObject({ partial: true, truncated: true });
     // The stale-read guard must not mistake the window for the whole file.
+    expect(cache.get(filePath)?.isPartialView).toBe(true);
+  });
+
+  test("#564: summarize 与普通读互不短路（视图键参与 unchanged 判定）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "viewable.ts");
+    await writeFile(
+      filePath,
+      Array.from({ length: 300 }, (_, i) => `function fn${i}() {\n  return ${i}\n}`).join("\n"),
+      "utf8",
+    );
+    const cache = new FileStateCache();
+
+    const rawRead = await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
+    expect(rawRead._meta?.read).toMatchObject({ summarized: false });
+    // 缓存里是 raw 视图时,显式的 summarize 请求不得被 unchanged 短路吞掉
+    // （natives 在测试环境不可用走回退,但 unchanged 判定已按视图键区分）
+    const outlineRead = await FileReadTool.call({ file_path: filePath, summarize: true }, { cwd: root, fileStateCache: cache });
+    expect(outlineRead._meta?.read?.unchanged).toBeUndefined();
+  });
+
+  test("#564: 600 行文件无参 Read 返回全文而非骨架/截断", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "medium.ts");
+    await writeFile(
+      filePath,
+      Array.from({ length: 600 }, (_, i) => `const value${i} = ${i}`).join("\n"),
+      "utf8",
+    );
+
+    const result = await FileReadTool.call({ file_path: filePath }, { cwd: root });
+
+    expect(result.is_error).toBeFalsy();
+    expect(result._meta?.read).toMatchObject({ partial: false, summarized: false, totalLines: 600 });
+    expect(String(result.content)).toContain("value599");
+    expect(String(result.content)).not.toContain("elided");
+    expect(String(result.content)).not.toContain("[truncated");
+  });
+
+  test("#564: 超限全文读截断并带尾部标记", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "huge.txt");
+    await writeFile(
+      filePath,
+      Array.from({ length: 2500 }, (_, i) => `line-${i}`).join("\n"),
+      "utf8",
+    );
+    const cache = new FileStateCache();
+
+    const result = await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
+
+    expect(result.is_error).toBeFalsy();
+    expect(result._meta?.read).toMatchObject({ partial: true, truncated: true, totalLines: 2500 });
+    expect(String(result.content)).toContain("[truncated: showing lines 1-2000 of 2500 total");
     expect(cache.get(filePath)?.isPartialView).toBe(true);
   });
 
