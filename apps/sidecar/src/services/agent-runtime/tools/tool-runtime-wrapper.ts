@@ -426,7 +426,12 @@ export function normalizeToolResultWithPolicies(result: ToolResult, maxChars: nu
   // 数组 content 中的 image block(base64 截图等)不参与字节计费,也不能被
   // 字符串化截断——整体截断会把图片替换成损坏的半截 base64 文本(#600)。
   // 只对非 image block 计费;它们超限时合并为单个截断 text block,image 原样保留。
-  if (Array.isArray(payload) && payload.some(isImageBlock)) {
+  // 仅限 content 形态:data 形态无已知 image 生产者,维持原有整体截断行为。
+  if (
+    Array.isArray(payload)
+    && "content" in (result as Record<string, unknown>)
+    && payload.some(isImageBlock)
+  ) {
     const textPayload = payload.filter((block) => !isImageBlock(block));
     const textJson = JSON.stringify(textPayload ?? "");
     if (textJson.length <= maxChars) {
