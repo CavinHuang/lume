@@ -67,4 +67,15 @@ describe("readTextFileRange", () => {
     expect(ranged.totalLines).toBe(1)
     expect(ranged.content).toBe("")
   })
+
+  test("preserves the trailing newline when the window reaches EOF (#569)", async () => {
+    // Read 缓存的全视图要与 Edit/Write 侧磁盘原文逐字一致，行尾换行不能丢。
+    const filePath = await makeFile("eol.txt", "alpha\nbeta\n")
+
+    const ranged = await readTextFileRange(filePath, 0, 100)
+
+    expect(ranged.truncated).toBe(false)
+    expect(ranged.totalLines).toBe(2)
+    expect(ranged.content).toBe("alpha\nbeta\n")
+  })
 })

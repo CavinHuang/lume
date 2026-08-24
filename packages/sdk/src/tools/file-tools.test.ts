@@ -71,14 +71,16 @@ describe("file tools", () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
     const filePath = join(root, "file.ts");
+    const cache = new FileStateCache();
     await writeFile(filePath, Buffer.concat([
       Buffer.from([0xef, 0xbb, 0xbf]),
       Buffer.from("const before = 1;\r\n", "utf8"),
     ]));
+    await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
 
     const result = await FileEditTool.call(
       { file_path: filePath, old_string: "before", new_string: "after" },
-      { cwd: root },
+      { cwd: root, fileStateCache: cache },
     );
 
     expect(result.is_error).toBeFalsy();
@@ -92,15 +94,19 @@ describe("file tools", () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
     const filePath = join(root, "quotes.ts");
+    const cache = new FileStateCache();
     await writeFile(filePath, "const message = “hello”;\n", "utf8");
+    await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
 
     const result = await FileEditTool.call(
       { file_path: filePath, old_string: 'const message = "hello";', new_string: 'const message = "updated";' },
-      { cwd: root },
+      { cwd: root, fileStateCache: cache },
     );
 
     expect(result.is_error).toBeFalsy();
     expect(result._meta?.file).toMatchObject({ normalizedQuotes: true, replacements: 1 });
+    // 归一命中必须写进模型可见文本：_meta 会被 API 序列化剥除（#569）。
+    expect(String(result.content)).toContain("normalizing curly quotes");
     expect(await readFile(filePath, "utf8")).toBe('const message = "updated";\n');
   });
 
@@ -108,14 +114,16 @@ describe("file tools", () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
     const filePath = join(root, "file.txt");
+    const cache = new FileStateCache();
     await writeFile(filePath, Buffer.concat([
       Buffer.from([0xff, 0xfe]),
       Buffer.from("before\r\n", "utf16le"),
     ]));
+    await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
 
     const result = await FileEditTool.call(
       { file_path: filePath, old_string: "before", new_string: "after" },
-      { cwd: root },
+      { cwd: root, fileStateCache: cache },
     );
 
     expect(result.is_error).toBeFalsy();
@@ -177,6 +185,94 @@ describe("file tools", () => {
 
     expect(result.is_error).toBeFalsy();
     expect(await readFile(filePath, "utf8")).toBe("alpha\nupdated\n");
+  });
+
+  test("rejects an edit when the file was never read and recovers after one Read (#569)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "unread.txt");
+    await writeFile(filePath, "before\n", "utf8");
+
+    const blocked = await FileEditTool.call(
+      { file_path: filePath, old_string: "before", new_string: "after" },
+      { cwd: root },
+    );
+    expect(blocked.is_error).toBe(true);
+    expect(blocked.content).toContain("has not been read");
+    expect(blocked.content).toContain("Read it first");
+    expect(blocked._meta?.file).toMatchObject({ conflict: "not_read", retryable: true });
+
+    // 一次 Read 即自愈：Bash 产物流等场景按指引补读后可正常编辑。
+    const cache = new FileStateCache();
+    await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
+    const ok = await FileEditTool.call(
+      { file_path: filePath, old_string: "before", new_string: "after" },
+      { cwd: root, fileStateCache: cache },
+    );
+    expect(ok.is_error).toBeFalsy();
+    expect(await readFile(filePath, "utf8")).toBe("after\n");
+  });
+
+  test("requires reading before overwriting an existing file but exempts new files (#569)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "existing.txt");
+    await writeFile(filePath, "before\n", "utf8");
+
+    const blocked = await FileWriteTool.call({ file_path: filePath, content: "after\n" }, { cwd: root });
+    expect(blocked.is_error).toBe(true);
+    expect(blocked.content).toContain("has not been read");
+    expect(blocked._meta?.file).toMatchObject({ conflict: "not_read" });
+    expect(await readFile(filePath, "utf8")).toBe("before\n");
+
+    // 新建文件没有可读的旧状态，天然豁免。
+    const freshPath = join(root, "fresh.txt");
+    const created = await FileWriteTool.call({ file_path: freshPath, content: "new\n" }, { cwd: root });
+    expect(created.is_error).toBeFalsy();
+  });
+
+  test("escalates the not-found guidance across consecutive failures (#569)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "miss.txt");
+    const cache = new FileStateCache();
+    const failures = new Map<string, number>();
+    await writeFile(filePath, "alpha\nbeta\n", "utf8");
+    await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
+    const context = { cwd: root, fileStateCache: cache, editFailureCounts: failures };
+
+    const first = await FileEditTool.call(
+      { file_path: filePath, old_string: "missing-text", new_string: "x" },
+      context,
+    );
+    expect(first.is_error).toBe(true);
+    expect(String(first.content)).not.toContain("consecutive failures");
+
+    const second = await FileEditTool.call(
+      { file_path: filePath, old_string: "missing-text", new_string: "x" },
+      context,
+    );
+    expect(second.is_error).toBe(true);
+    expect(String(second.content)).toContain("2 consecutive failures");
+    expect(String(second.content)).toContain("Read the file again");
+    expect(second._meta?.file).toMatchObject({ conflict: "not_found", attempts: 2 });
+  });
+
+  test("suggests Write when a failing old_string spans a large block (#569)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "big.txt");
+    const cache = new FileStateCache();
+    await writeFile(filePath, Array.from({ length: 6 }, (_, i) => `line-${i}`).join("\n"), "utf8");
+    await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
+
+    const result = await FileEditTool.call(
+      { file_path: filePath, old_string: Array.from({ length: 5 }, (_, i) => `wrong-${i}`).join("\n"), new_string: "replaced" },
+      { cwd: root, fileStateCache: cache, editFailureCounts: new Map() },
+    );
+
+    expect(result.is_error).toBe(true);
+    expect(String(result.content)).toContain("prefer the Write tool");
   });
 
   test("reads only the requested line range into the tool result", async () => {
@@ -403,10 +499,12 @@ describe("file tools", () => {
   test("writes through a symlink to its target instead of replacing the link (#367)", { skip: !symlinksSupported }, async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
+    const cache = new FileStateCache();
     await writeFile(join(root, "target.txt"), "before\n", "utf8");
     await symlink(join(root, "target.txt"), join(root, "link.txt"), "file");
+    await FileReadTool.call({ file_path: join(root, "link.txt") }, { cwd: root, fileStateCache: cache });
 
-    const result = await FileWriteTool.call({ file_path: join(root, "link.txt"), content: "after\n" }, { cwd: root });
+    const result = await FileWriteTool.call({ file_path: join(root, "link.txt"), content: "after\n" }, { cwd: root, fileStateCache: cache });
 
     expect(result.is_error).toBeFalsy();
     expect(lstatSync(join(root, "link.txt")).isSymbolicLink()).toBe(true);
@@ -416,12 +514,14 @@ describe("file tools", () => {
   test("edits through a symlink while keeping the link intact (#367)", { skip: !symlinksSupported }, async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
+    const cache = new FileStateCache();
     await writeFile(join(root, "target.txt"), "alpha\nbeta\n", "utf8");
     await symlink(join(root, "target.txt"), join(root, "link.txt"), "file");
+    await FileReadTool.call({ file_path: join(root, "link.txt") }, { cwd: root, fileStateCache: cache });
 
     const result = await FileEditTool.call(
       { file_path: join(root, "link.txt"), old_string: "beta", new_string: "updated" },
-      { cwd: root },
+      { cwd: root, fileStateCache: cache },
     );
 
     expect(result.is_error).toBeFalsy();
@@ -452,10 +552,14 @@ describe("file tools", () => {
     await mkdir(join(root, "out"));
     await writeFile(join(root, "out", "secret.txt"), "keep\n", "utf8");
     await symlink(join(root, "out", "secret.txt"), join(root, "in", "link.txt"), "file");
+    const cache = new FileStateCache();
     const sandboxContext = {
       cwd: root,
+      fileStateCache: cache,
       sandbox: { enabled: true, filesystem: { allowWrite: [join(root, "in")] } },
     } as any;
+    // 沙箱 read 只受 denyRead 限制，先经 Read 建立未读防护所需的记录。
+    await FileReadTool.call({ file_path: join(root, "in", "link.txt") }, sandboxContext);
 
     const result = await FileWriteTool.call(
       { file_path: join(root, "in", "link.txt"), content: "clobber\n" },
@@ -519,9 +623,11 @@ describe("file tools", () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
     const filePath = join(root, "file.txt");
+    const cache = new FileStateCache();
     await writeFile(filePath, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("before\r\n", "utf16le")]));
+    await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
 
-    const result = await FileWriteTool.call({ file_path: filePath, content: "after\n" }, { cwd: root });
+    const result = await FileWriteTool.call({ file_path: filePath, content: "after\n" }, { cwd: root, fileStateCache: cache });
 
     expect(result.is_error).toBeFalsy();
     expect((await readFile(filePath)).subarray(0, 2)).toEqual(Buffer.from([0xff, 0xfe]));
