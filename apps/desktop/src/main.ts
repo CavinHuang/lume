@@ -2752,7 +2752,12 @@ function createSidecarHost({ onNotification }) {
           try {
             const settings = getSettingsBroker().replace(mutationId ? payload.params.settings : payload.params)
             const logging = (settings.generalSettings as { logging?: unknown } | undefined)?.logging
-            if (logging && typeof logging === 'object') getLoggingService().updateSettings(logging)
+            if (logging && typeof logging === 'object') {
+              getLoggingService().updateSettings(logging)
+              writeMainLog('info', 'logging.config', 'logging.settings_updated', 'logging settings replaced', {
+                data: summarizeValue(logging),
+              })
+            }
             // Agent 灵动岛 §5.3：设置开关"关闭后立即生效"。settings-replace 是所有设置写入
             // （含 renderer toggle → sidecar general-settings:update）的唯一汇聚点，故在此处
             // 检测 agentIsland.enabled 翻为 false 即停整个渲染面（native host + Electron 窗）；
@@ -3255,6 +3260,8 @@ app.whenReady().then(async () => {
         data: { method, actor, ...(tabId ? { tabId } : {}), message },
       })
     },
+    onWorkspaceEvent: ({ level, event, message, data }) =>
+      writeMainLog(level, 'browser.workspace', event, message, { ...(data ? { data } : {}) }),
   })
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
   if (windowBehavior?.showTray !== false) ensureTray()

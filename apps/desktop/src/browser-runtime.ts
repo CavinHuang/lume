@@ -40,7 +40,7 @@ import { BrowserNetworkGuard, isPublicAddress } from "./browser-network-guard"
 import { BrowserAuditLog } from "./browser-audit"
 import { AGENT_DOWNLOAD_LIMITS, AgentDownloadQuota, BrowserDownloadHistory, completeDownload, prepareDownload, removePartialDownload, safeDownloadFilename } from "./browser-downloads"
 import { BrowserCredentialVault } from "./browser-credentials"
-import { BrowserWorkspaceStore } from "./browser-workspace-store"
+import { BrowserWorkspaceStore, type BrowserWorkspaceLogEvent } from "./browser-workspace-store"
 import { BrowserReferenceGrantStore } from "./browser-reference-grants"
 import { BrowserAnnotationManager } from "./browser-annotation-manager"
 import { buildBrowserSemanticTree, type BrowserSemanticLine, type BrowserSemanticRef } from "./browser-semantic-snapshot"
@@ -64,6 +64,7 @@ type BrowserRuntimeOptions = {
   // 输入自然性（指针轨迹/按键驻留/逐字输入/滚轮分帧），默认开启；集成测试传 false 走直通注入
   humanizedInput?: boolean
   onInternalError?: (details: { method: string; actor: BrowserRequestContext["actor"]; tabId?: string; message: string }) => void
+  onWorkspaceEvent?: (event: BrowserWorkspaceLogEvent) => void
 }
 
 type BrowserTab = BrowserTabDescriptor & {

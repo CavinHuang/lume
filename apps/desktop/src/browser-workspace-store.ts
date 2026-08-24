@@ -16,13 +16,20 @@ type BrowserWorkspaceFile = {
   tabs: Record<string, PersistedBrowserTab>
 }
 
+export interface BrowserWorkspaceLogEvent {
+  level: 'info' | 'debug'
+  event: string
+  message: string
+  data?: Record<string, unknown>
+}
+
 const EMPTY_STATE: BrowserWorkspaceFile = { version: 9, workspaces: {}, tabs: {} }
 
 export class BrowserWorkspaceStore {
   private readonly path: string
   private state: BrowserWorkspaceFile
 
-  constructor(configDir: () => string) {
+  constructor(configDir: () => string, private readonly onEvent?: (event: BrowserWorkspaceLogEvent) => void) {
     this.path = join(configDir(), "browser", "workspaces.json")
     const restored = readState(this.path)
     this.state = restored.state
@@ -75,6 +82,15 @@ export class BrowserWorkspaceStore {
     if (tab.ownerThreadId) this.removeOpenTab(tab.ownerThreadId, tab.tabId)
     const next = { ...tab, ownerThreadId: nextOwnerThreadId }
     this.rememberTab(next, runtime)
+    // rememberTab 对不可恢复 tab 静默跳过，仅在真正落盘时上报
+    if (next.ownerThreadId && isRecoverable(tab)) {
+      this.report({
+        level: 'info',
+        event: 'browser.workspace.tab_moved',
+        message: `moved tab ${tab.tabId} to ${nextOwnerThreadId}`,
+        data: { tabId: tab.tabId, fromOwnerThreadId: tab.ownerThreadId, toOwnerThreadId: nextOwnerThreadId },
+      })
+    }
   }
 
   close(tab: BrowserTabDescriptor, runtime?: { partition?: string; handoffBrowserSessionId?: string }): void {
@@ -100,6 +116,12 @@ export class BrowserWorkspaceStore {
     this.state.tabs[tab.tabId] = sanitizeTab(tab, runtime)
     workspace.revision += 1
     this.write()
+    this.report({
+      level: 'info',
+      event: 'browser.workspace.tab_closed',
+      message: `closed tab ${tab.tabId}`,
+      data: { ownerThreadId, tabId: tab.tabId },
+    })
   }
 
   restoreClosed(ownerThreadId: string): PersistedBrowserTab | undefined {
@@ -117,6 +139,7 @@ export class BrowserWorkspaceStore {
 
   importLegacy(ownerThreadId: string, tabs: unknown, activeTabId: unknown): BrowserWorkspaceDescriptor {
     const workspace = this.ensureWorkspace(ownerThreadId)
+    let importedTabCount = 0
     for (const value of Array.isArray(tabs) ? tabs.slice(0, 50) : []) {
       if (!value || typeof value !== "object") continue
       const item = value as Record<string, unknown>
@@ -133,15 +156,30 @@ export class BrowserWorkspaceStore {
         lastOpenedAt: typeof item.lastOpenedAt === "string" ? item.lastOpenedAt : new Date().toISOString(),
       }
       workspace.orderedTabIds.push(item.id)
+      importedTabCount += 1
     }
     if (typeof activeTabId === "string" && workspace.orderedTabIds.includes(activeTabId)) workspace.activeTabId = activeTabId
     else workspace.activeTabId ??= workspace.orderedTabIds.at(-1)
     workspace.revision += 1
     this.write()
+    this.report({
+      level: 'info',
+      event: 'browser.workspace.imported',
+      message: `imported ${importedTabCount} legacy tabs`,
+      data: { ownerThreadId, importedTabCount },
+    })
     return cloneWorkspace(workspace)
   }
 
   flush(): void { this.write() }
+
+  private report(event: BrowserWorkspaceLogEvent): void {
+    try {
+      this.onEvent?.(event)
+    } catch {
+      // 观测不得影响业务。
+    }
+  }
 
   private ensureWorkspace(ownerThreadId: string): BrowserWorkspaceDescriptor {
     const id = ownerThreadId.trim().slice(0, 200)
