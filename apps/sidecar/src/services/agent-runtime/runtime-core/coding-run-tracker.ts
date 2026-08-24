@@ -794,11 +794,23 @@ function readFileChangeStats(result: ToolResult): FileChangeStats | undefined {
   };
 }
 
-/** #573:验证命令识别面——脚本名带冒号后缀(lint:fix)、非 JS 工具链(pytest/cargo/make 等)不再漏网 */
+/**
+ * #573:验证命令识别面——脚本名冒号后缀(lint:fix)、非 JS 工具链(pytest/eslint 等)不再漏网。
+ * 变更类子命令(cargo install/publish/fmt、make clean/install、mvn deploy 等)不算验证证据,
+ * 其成功输出不得翻转 verificationStatus。
+ */
 function isVerificationCommand(command: string, purpose: string): boolean {
   if (purpose.trim().toLowerCase() === "verification") return true;
-  return /(^|\s)(test|tests|typecheck|tsc|lint|build|check|verify|vitest|jest|pytest|mypy|pyright|ruff|eslint|biome|cargo|make|cmake|gradle|mvn)(\s|:|\.|$)/i.test(command)
-    || /\b(go|dotnet)\s+(test|vet|build)\b/i.test(command);
+  // 长跑 watcher/build:dev 类脚本不是验证完成信号
+  if (/[\w@/-]:(watch|dev|serve|preview)\b/i.test(command)) return false;
+  // 纯验证器(无写盘副作用)可裸 token 命中
+  if (/(^|\s)(test|tests|typecheck|tsc|lint|build|check|verify|vitest|jest|pytest|mypy|pyright|ruff|eslint|biome)(\s|:|$)/i.test(command)) return true;
+  // 变更类工具链只认验证性子命令
+  if (/\bcargo\s+(test|check|clippy)\b/i.test(command)) return true;
+  if (/\bmake\s+(test|check)\b/i.test(command)) return true;
+  if (/\b(mvn|gradle)\s+(test|check|verify)\b/i.test(command)) return true;
+  if (/\b(go|dotnet)\s+(test|vet|build)\b/i.test(command)) return true;
+  return false;
 }
 
 function isLikelyMutationCommand(input: { input: unknown }): boolean {

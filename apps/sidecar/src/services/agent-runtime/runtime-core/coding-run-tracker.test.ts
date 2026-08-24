@@ -99,6 +99,18 @@ describe("coding run tracker", () => {
     expect(tracker.getVerificationStatus()).toBe("verified");
   });
 
+  test("#573: mutating subcommands of verification toolchains are not evidence", async () => {
+    const tracker = createCodingRunTracker();
+    tracker.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
+    for (const command of ["cargo install foo", "cargo fmt", "make clean", "mvn deploy", "npm run build:watch"]) {
+      // 不带 purpose 标记,走命令识别路径
+      tracker.observe({ toolName: "Bash", input: { command }, result: result("done", false, {
+        execution: { version: 2, outcome: "succeeded", exitCode: 0, terminationReason: "completed", durationMs: 1, shell: "bash", command },
+      }) });
+      expect(tracker.getVerificationStatus()).not.toBe("verified");
+    }
+  });
+
   test("does not treat a filtered no-match result as verification evidence", async () => {
     const tracker = createCodingRunTracker();
     tracker.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
