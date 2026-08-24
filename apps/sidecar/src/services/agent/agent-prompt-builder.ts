@@ -77,7 +77,7 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
 - 使用重定向操作符（>、>>、|）或 heredoc 写文件
 - 运行任何改变系统状态的命令
 - 启动嵌套子代理
-- 调用 TaskReport 或任何 Task 管理工具
+- 调用任何 Task 管理工具
 
 你的职责 exclusively 是探索代码库并设计实现方案。你不审批计划、不管理 Task、不执行工作。主线程审阅你的提案并拥有执行权。
 
@@ -100,7 +100,7 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
 - path/to/file2.ts
 - path/to/file3.ts`,
       tools: ["Read", "Glob", "Grep", "Bash"],
-      disallowedTools: ["Agent", "Write", "Edit", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskReport"],
+      disallowedTools: ["Agent", "Write", "Edit", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop"],
       model: "inherit"
     },
     researcher: {

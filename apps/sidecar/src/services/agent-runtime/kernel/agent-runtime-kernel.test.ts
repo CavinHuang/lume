@@ -450,4 +450,59 @@ describe("AgentRuntimeKernel", () => {
     await waiting;
     expect(idle).toBe(true);
   });
+
+  // #547 回归钉:外部占用中派发入队,全局 running 为空不得提前返回——
+  // 否则 automation 把未执行的 prompt 记成 success
+  test("waitForThreadIdle 在外部占用+排队期间不提前返回(#547)", async () => {
+    let occupied = true;
+    const kernel = new AgentRuntimeKernel<TestInput, TestEmitter>({
+      isThreadOccupied: () => occupied,
+      execute: async () => undefined,
+      onDispatchError: () => undefined
+    });
+
+    const result = kernel.dispatch({ threadId: "thread-idle-guard", userMessage: "automation prompt" }, { onError: () => undefined });
+    expect(result.mode).toBe("queued");
+
+    let idle = false;
+    const waiting = kernel.waitForThreadIdle("thread-idle-guard").then(() => {
+      idle = true;
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(idle).toBe(false);
+
+    occupied = false;
+    kernel.notifyThreadReleased("thread-idle-guard");
+    await waiting;
+    expect(idle).toBe(true);
+  });
+
+  // #547 review:blocked 队首不会自愈,计入等待会让 automation 永久挂死
+  test("waitForThreadIdle 对 blocked 队列项不阻塞", async () => {
+    const kernel = new AgentRuntimeKernel<TestInput, TestEmitter>({
+      isThreadOccupied: () => true,
+      validateQueued: async () => {
+        throw new Error("capability changed");
+      },
+      execute: async () => undefined,
+      onDispatchError: () => undefined
+    });
+
+    // 占用中入队 → 释放后 startNextQueued 的 validate 抛错 → 条目 blocked 滞留
+    kernel.dispatch({ threadId: "thread-blocked", userMessage: "doomed" }, { onError: () => undefined });
+    (kernel as unknown as { options: { isThreadOccupied?: (id: string) => boolean } }).options.isThreadOccupied =
+      () => false;
+    kernel.notifyThreadReleased("thread-blocked");
+    await waitFor(() => kernel.listQueued("thread-blocked")[0]?.status === "blocked");
+
+    let idle = false;
+    const waiting = kernel.waitForThreadIdle("thread-blocked").then(() => {
+      idle = true;
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(idle).toBe(true);
+    await waiting;
+
+    kernel.removeQueued("thread-blocked", kernel.listQueued("thread-blocked")[0]!.id, kernel.getQueueRevision("thread-blocked"));
+  });
 });

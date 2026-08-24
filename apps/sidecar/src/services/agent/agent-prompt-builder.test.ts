@@ -111,7 +111,7 @@ describe("agent-prompt-builder", () => {
     expect(agents.explorer?.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
     expect(agents.explorer?.prompt).toContain("高效的代码库探索员");
     expect(agents.planner?.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
-    expect(agents.planner?.disallowedTools).toEqual(["Agent", "Write", "Edit", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskReport"]);
+    expect(agents.planner?.disallowedTools).toEqual(["Agent", "Write", "Edit", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop"]);
     expect(agents.planner?.prompt).toContain("软件架构师与规划专家");
     expect(agents.planner?.prompt).toContain("只读模式——禁止任何文件修改");
     expect(agents.planner?.prompt).toContain("实现所需关键文件");
