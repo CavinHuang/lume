@@ -3445,6 +3445,116 @@ describe("QueryEngine end_turn with tool_use (#568)", () => {
     })
   })
 
+  test("feeds denied tool results back and keeps looping when end_turn carries tool calls (#618)", async () => {
+    let executed = 0
+    const provider = new StaticProvider([
+      {
+        // 网关在 end_turn 上携带 tool_use，而 canUseTool 全量拒绝：
+        // deny 结果必须作为 tool_result 回灌让模型看到，循环继续而非终局。
+        content: [
+          { type: "text", text: "try it" },
+          { type: "tool_use", id: "t-deny-1", name: "Echo", input: { q: "state" } },
+        ],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+      {
+        content: [{ type: "text", text: "done without tools" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Echo",
+        description: "echo",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          executed += 1
+          return { type: "tool_result", tool_use_id: "", content: "should not run" }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 3,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "deny", message: "blocked by policy" })
+    })
+
+    // 第二轮模型看到 deny 结果后干净收场：循环未因 end_turn+tool_use 提前断裂
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "success",
+      is_error: false
+    })
+    expect(executed).toBe(0)
+
+    // 回灌断言：deny 结果（is_error + 拒绝文案）必须出现在下一轮请求里
+    const secondRequest = provider.requests[1]
+    expect(secondRequest?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "user",
+        content: expect.arrayContaining([
+          expect.objectContaining({
+            type: "tool_result",
+            tool_use_id: "t-deny-1",
+            is_error: true,
+          })
+        ])
+      })
+    ]))
+    const fedBack = JSON.stringify(secondRequest?.messages)
+    expect(fedBack).toContain("blocked by policy")
+  })
+
+  test("emits prompt_suggestions tool summary for an end_turn+tool_use turn (#618)", async () => {
+    // 旧语义下 end_turn+tool_use 在执行工具前就提前 break，tool_use_summary
+    // 对这类轮次不可达；删行后该分支必须照常产出。
+    const provider = new StaticProvider([
+      {
+        content: [
+          { type: "text", text: "checking" },
+          { type: "tool_use", id: "t-sugg-1", name: "Echo", input: { q: 1 } },
+        ],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Echo",
+        description: "echo",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "executed" }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 3,
+      maxTokens: 256,
+      includePartialMessages: false,
+      promptSuggestions: true
+    })
+
+    const events = await collectEvents(engine)
+    const summaries = events.filter((event) => (event as { type?: string }).type === "tool_use_summary")
+    expect(summaries).toHaveLength(1)
+    expect(summaries[0]).toMatchObject({
+      summary: "Used tools: Echo",
+      preceding_tool_use_ids: ["t-sugg-1"],
+    })
+  })
+
   test("bounds a gateway that always answers stop with tool calls via maxTurns", async () => {
     let calls = 0
     const stopWithToolCall = (round: number): CreateMessageResponse => ({

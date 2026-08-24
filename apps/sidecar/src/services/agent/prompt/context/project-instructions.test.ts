@@ -127,6 +127,25 @@ describe("project-instructions", () => {
     expect(loadProjectInstructions(proj, { homeDir: root })?.content).toBe("# v2 replaced at same mtime");
   });
 
+  test("等长同名替换：mtime/size 全同、仅 ino 不同时缓存必须失效（ino 变异自证用例）", () => {
+    // 上条用例新旧内容长度不同（4B vs 27B），size 差异单独足以失效指纹——
+    // 把指纹里的 :st.ino 删掉它照样绿（变异幸存者）。本条收窄为严格等长
+    // （"# v1"/"# v3" 均 4 字节）+ mtime 拨回同值：唯一区分组件只剩 ino，
+    // 指纹若缺 ino 此用例必红。
+    const proj = join(root, "proj");
+    mkdirSync(proj, { recursive: true });
+    const file = join(proj, "CLAUDE.md");
+    writeFileSync(file, "# v1", "utf-8");
+    const fixedTime = new Date(Date.now() - 10_000);
+    utimesSync(file, fixedTime, fixedTime);
+    expect(loadProjectInstructions(proj, { homeDir: root })?.content).toBe("# v1");
+
+    rmSync(file);
+    writeFileSync(file, "# v3", "utf-8");
+    utimesSync(file, fixedTime, fixedTime);
+    expect(loadProjectInstructions(proj, { homeDir: root })?.content).toBe("# v3");
+  });
+
   test("trust 包装转义：正文含闭合标签/伪造标题无法提前逃逸出块，块后有收尾政策", () => {
     writeFileSync(
       join(root, "CLAUDE.md"),

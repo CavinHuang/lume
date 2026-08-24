@@ -407,3 +407,14 @@ describe("task_ref 委派超时接线", () => {
     expect(body).toContain("timeoutMs: resolveForegroundSubagentTimeoutMs()");
   });
 });
+
+// ─── fileStateCache 线程级装配接线（#569/#655）───
+// SDK 层 agent.test 的跨 run 用例是手动注入模拟，防不了装配层回退：run.ts 若
+// 漏掉 fileStateCache 注入，引擎会静默退回 per-run 私有实例（read-before-edit
+// 跨消息失效），sdk+sidecar 全套件零红灯。同按源码契约钉死装配表达式本身。
+describe("fileStateCache 线程级装配接线", () => {
+  test("createAgent 的 agentOptions 必须注入 getThreadFileStateCache(lumeSessionId) 共享实例", () => {
+    const source = readFileSync(join(import.meta.dir, "run.ts"), "utf8");
+    expect(source).toContain("fileStateCache: getThreadFileStateCache(input.lumeSessionId)");
+  });
+});
