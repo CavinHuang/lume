@@ -235,6 +235,9 @@ export async function dispatchBrowserText(
     }
   }
   if (characters.length > naturalCharacters.length) {
+    // 共同操作模式下用户拼音组合可能仍在进行:insertText 会混入组合串产出
+    // 错误终值,先清空组合(无组合时为 no-op;旧协议不支持则忽略)(#638 review)
+    await sender.sendCommand("Input.imeSetComposition", { compositionText: "", selectionStart: 0, selectionEnd: 0 }).catch(() => undefined)
     await sender.sendCommand("Input.insertText", { text: characters.slice(naturalCharacters.length).join("") })
   }
 }
