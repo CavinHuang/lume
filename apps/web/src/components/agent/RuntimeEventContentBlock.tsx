@@ -1,5 +1,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { memo, useEffect, useMemo, useState, type ClipboardEvent } from 'react'
+import type { ImProvider } from '@lume/shared'
+import { IM_PROVIDER_LABELS } from '@lume/shared'
 import { BookOpen, Check, ChevronDown, ChevronRight, Clock, Database, Edit3, History, ListChecks, ListCollapse, Loader2, MessageSquareText, Package, Quote, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
 import { parseQuotedSelectionRefs } from '@/lib/quoted-selection'
 import { ToolResultRenderer } from './tool-result-renderers'
@@ -318,11 +320,12 @@ function ImDeliveryStatusLine({
 }) {
   const failed = delivery.status === 'failed'
   const pending = delivery.status === 'pending'
+  const providerLabel = IM_PROVIDER_LABELS[delivery.provider as ImProvider] ?? 'IM'
   const text = pending
-    ? '正在发送到微信'
+    ? `正在发送到${providerLabel}`
     : failed
-      ? '发送微信失败'
-      : '已发送到微信'
+      ? `发送到${providerLabel}失败`
+      : `已发送到${providerLabel}`
   return (
     <div
       className={cn(
