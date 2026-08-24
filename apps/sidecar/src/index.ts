@@ -9,7 +9,7 @@ import {
 } from "./services/automation/automation-runner-service";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
-import { AGENT_IPC_CHANNELS } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, QUIET_RPC_METHODS, summarizeValue } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
 import { getSubagentCoordinator } from "./services/agent-runtime/subagents/subagent-coordinator";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
@@ -125,15 +125,6 @@ if ((process as typeof process & { parentPort?: unknown }).parentPort) {
   }));
 }
 
-const QUIET_RPC_METHODS = new Set([
-  "healthcheck",
-  "general-settings:get",
-  "agent:list-threads",
-  "agent:list-subagent-runs",
-  "agent:get-pending-interactive",
-  "agent:list-workspaces",
-  "model-meta:get"
-]);
 const SLOW_RPC_MS = 2_000;
 // Process-wide reverse-RPC render client. Bridges WebFetch JS-render requests
 // to the desktop PageRenderer. Fed into BOTH the RPC handlers (so render:result
@@ -286,7 +277,7 @@ async function handleRpcLine(line: string): Promise<void> {
         message: `slow sidecar RPC: ${method}`,
         durationMs,
         rpcRequestId: String(payload.id),
-        data: { method }
+        data: { method, params: summarizeValue(payload.params) }
       });
     } else if (!QUIET_RPC_METHODS.has(method)) {
       writeLogRecord({
@@ -297,7 +288,7 @@ async function handleRpcLine(line: string): Promise<void> {
         status: "ok",
         durationMs,
         rpcRequestId: String(payload.id),
-        data: { method }
+        data: { method, params: summarizeValue(payload.params), result: summarizeValue(result) }
       });
     }
     writeResponse({ id: payload.id, result });
@@ -309,7 +300,7 @@ async function handleRpcLine(line: string): Promise<void> {
       message: `sidecar RPC failed: ${method}`,
       status: "error",
       rpcRequestId: String(payload.id),
-      data: { method, error }
+      data: { method, params: summarizeValue(payload.params), error }
     });
     writeResponse({
       id: payload.id,

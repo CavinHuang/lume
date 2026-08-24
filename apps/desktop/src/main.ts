@@ -142,6 +142,7 @@ import { discoverChromeProfiles, importChromeProfile, importConnectedChromeCooki
 import type { BrowserSettings } from '@lume/shared'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '@lume/shared'
 import { nativeEventToIntent, summarizeValue } from '@lume/shared'
+import { QUIET_RPC_METHODS as QUIET_SIDECAR_RPC_METHODS } from '@lume/shared'
 import type { AgentIslandIntent, NativeAgentIslandSnapshot } from '@lume/shared'
 import {
   createAsyncSingleFlight,
@@ -189,16 +190,6 @@ const SIDECAR_LOG_METHOD = 'system.log'
 const SIDECAR_LOG_BATCH_METHOD = 'system.log-batch'
 const SIDECAR_LOG_ACK_METHOD = 'system.log-ack'
 const SIDECAR_SETTINGS_REPLACE_METHOD = 'system.settings-replace'
-const QUIET_SIDECAR_RPC_METHODS = new Set([
-  'healthcheck',
-  'general-settings:get',
-  'agent:list-threads',
-  'agent:list-subagent-runs',
-  'agent:get-pending-interactive',
-  'agent:list-workspaces',
-  'channel:oauth-status',
-  'model-meta:get',
-])
 const SLOW_RPC_MS = 2_000
 const RENDERER_DELIVERY_ACK_TIMEOUT_MS = 10_000
 const UPDATE_INSTALL_HANDOFF_TIMEOUT_MS = 15_000
