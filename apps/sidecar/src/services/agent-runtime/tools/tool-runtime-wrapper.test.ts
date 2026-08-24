@@ -321,7 +321,8 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     expect(String(result.content)).toContain("...(truncated)...");
   });
 
-  test("truncates long string output according to result policy", async () => {    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+  test("truncates long string output according to result policy", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
     await mkdir(root, { recursive: true });
     const ledger = createFileAccessLedger();
     const tool = wrapToolDefinitionWithRuntimePolicies({

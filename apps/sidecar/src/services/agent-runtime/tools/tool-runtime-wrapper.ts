@@ -435,6 +435,9 @@ export function normalizeToolResultWithPolicies(result: ToolResult, maxChars: nu
     const textPayload = payload.filter((block) => !isImageBlock(block));
     const textJson = JSON.stringify(textPayload ?? "");
     if (textJson.length <= maxChars) {
+      // 注意:此处 truncated:false 但 originalSize(含 image 字节)可能超过
+      // maxChars——truncated 语义已从「结果合规」收窄为「文本部分被截断」,
+      // 勿拿 original_size 做上下文预算。
       return {
         result,
         originalSize,
