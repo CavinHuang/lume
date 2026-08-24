@@ -479,8 +479,9 @@ function movePathWithFallback(sourcePath: string, targetPath: string): void {
     renameSync(sourcePath, targetPath);
     return;
   } catch (error) {
+    // EXDEV=跨设备；EPERM/EBUSY=Windows 杀毒/索引器瞬时占用（#552）——统一降级 copy+delete
     const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "EXDEV") {
+    if (code !== "EXDEV" && code !== "EPERM" && code !== "EBUSY") {
       throw error;
     }
   }

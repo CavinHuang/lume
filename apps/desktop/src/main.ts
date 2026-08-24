@@ -93,6 +93,7 @@ import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice
 import type { VoiceDictationSettings, VoiceDictationSettingsUpdate } from '@lume/shared'
 import type { VoiceMicPermissionState } from './desktop-core'
 import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
+import { MAX_RPC_MESSAGE_BYTES } from '@lume/shared'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -3138,6 +3139,17 @@ function createSidecarHost({ onNotification }) {
       method,
       params,
     })
+
+    // 对称预检（#552）：超限消息 sidecar 会静默丢弃，本地先 reject 免得 caller 干等 45s 超时
+    if (payload.length > MAX_RPC_MESSAGE_BYTES) {
+      writeMainLog('error', 'desktop.sidecar.rpc', 'rpc.payload_too_large', `sidecar RPC payload exceeds size limit: ${method}`, {
+        status: 'error',
+        rpcRequestId: String(requestId),
+        ...correlation,
+        data: { method },
+      })
+      throw new Error(`sidecar request payload too large: ${method}`)
+    }
 
     return new Promise((resolveCall, rejectCall) => {
       const timeout = setTimeout(() => {
