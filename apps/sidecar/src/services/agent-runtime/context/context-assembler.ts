@@ -129,6 +129,7 @@ export class ContextAssembler {
       sessionId: input.threadId,
       sessionType: input.threadType,
       chatType: input.chatType,
+      agentCwd: input.cwd ?? process.cwd(),
       availableTools: input.availableTools,
       memoryCitationsMode: memoryRuntimeConfig.citationsMode,
       permissionMode: input.permissionMode,

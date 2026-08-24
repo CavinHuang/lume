@@ -9,6 +9,7 @@ import { join, basename } from "node:path";
 import { getAgentWorkspacePath, getAgentConfigDir } from "../infra/config-paths";
 import { createLogger } from "../infra/logger";
 import { renderSkillManifestLines } from "./prompt/context/skill-manifest-builder";
+import { buildProjectInstructionsSection } from "./prompt/context/project-instructions";
 import { buildMemorySections } from "./prompt/sections/memory-sections";
 import {
   CLAUDE_PLAN_MODE_SECTION,
@@ -224,6 +225,8 @@ export interface SystemPromptContext {
   sessionId: string;
   sessionType?: ThreadType;
   chatType?: "direct" | "group" | "channel";
+  /** agent 工作目录：用于向上探测项目级指令文件（CLAUDE.md/AGENTS.md） */
+  agentCwd?: string;
   availableTools?: string[];
   memoryCitationsMode?: MemoryCitationsMode;
   promptMode?: SystemPromptMode;
@@ -298,6 +301,12 @@ function buildMinimalSections(ctx: SystemPromptContext): string[] {
   lines.push("系统配置入口: ~/.lume/lume.yaml");
 
   lines.push("", buildRuntimeSection(ctx, "minimal"));
+
+  const minimalProjectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
+  if (minimalProjectInstructions) {
+    lines.push("", minimalProjectInstructions);
+  }
+
   if (ctx.automationExecution) {
     lines.push(
       "",
@@ -393,6 +402,13 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
       // 读取失败不影响主流程
       log.warn("failed to read Soul/Memory prompt components", { error });
     }
+  }
+
+  // 项目级指令文件（CLAUDE.md/AGENTS.md，就近覆盖）：低频变更，进稳定 system
+  // 前缀吃 prompt cache；无文件时不产生任何段落，prompt 保持原样
+  const projectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
+  if (projectInstructions) {
+    sections.push(projectInstructions);
   }
 
   sections.push(buildRuntimeSection(ctx, "full"));
