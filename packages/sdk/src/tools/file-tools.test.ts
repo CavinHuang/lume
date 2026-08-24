@@ -90,6 +90,25 @@ describe("file tools", () => {
     ]));
   });
 
+  test("round-trips a CR-only file through Read and Edit preserving disk bytes (#569)", async () => {
+    // CR-only 文件旧口径下 range 视图与 decode 视图永不相等，强制先读后
+    // Edit 撞 stale_read 死循环；归一后必须可编辑且磁盘字节保真。
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "classic.txt");
+    const cache = new FileStateCache();
+    await writeFile(filePath, "alpha\rbeta\r", "utf8");
+
+    await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
+    const result = await FileEditTool.call(
+      { file_path: filePath, old_string: "beta", new_string: "gamma" },
+      { cwd: root, fileStateCache: cache },
+    );
+
+    expect(result.is_error).toBeFalsy();
+    expect(await readFile(filePath, "utf8")).toBe("alpha\rgamma\r");
+  });
+
   test("matches curly quotes without forcing the model back to shell or REPL editing", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);

@@ -33,13 +33,32 @@ export async function readTextFileRange(
   let buffer = "";
   let totalLines = 0;
   let truncated = false;
+  // \u6587\u4EF6\u662F\u5426\u7ED3\u675F\u4E8E\u884C\u7EC8\u6B62\u7B26\uFF1BEOF \u6536\u5C3E\u65F6\u5B9A\u6848\uFF08\u5C3E\u884C\u65E0\u7EC8\u6B62\u7B26\u5219\u7F6E false\uFF09\u3002
+  let endsAtTerminator = false;
 
   const consumeLine = (line: string): void => {
-    const normalized = line.replace(/\r$/, "");
     if (totalLines >= offset && selectedLines.length < limit) {
-      selectedLines.push(normalized);
+      selectedLines.push(line);
     }
     totalLines += 1;
+  };
+
+  // \u884C\u7EC8\u6B62\u53E3\u5F84\u4E0E decodeTextFile \u7684 normalizeLineEndings \u4E00\u81F4\uFF1A\r\n \u4E0E\u5B64\u7ACB \r
+  // \u90FD\u7B97\u7EC8\u6B62\u7B26\u3002\u53EA\u5265 CRLF \u5C3E \r \u7684\u65E7\u53E3\u5F84\u4F1A\u8BA9 CR-only \u6587\u4EF6\u5728 range \u89C6\u56FE\u91CC
+  // \u53D8\u6210"\u6574\u6587\u4EF6\u4E00\u884C\u4E14\u5185\u5D4C \r"\uFF0C\u800C Edit \u4FA7\u89E3\u7801\u5F52\u4E00\u6210\u591A\u884C\u2014\u2014\u4E24\u89C6\u56FE\u6C38\u4E0D\u76F8\u7B49\uFF0C
+  // \u5F3A\u5236\u5148\u8BFB\u540E Edit \u5FC5\u649E stale_read \u6B7B\u5FAA\u73AF\uFF08#569 \u56DE\u5F52\u5BA1\u67E5\u5B9E\u8BC1\uFF09\u3002
+  const consumeCompleteLines = (): void => {
+    // \u7F13\u51B2\u5C3E\u90E8\u60AC\u6302\u7684 \r \u5148\u6263\u4E0B\uFF1A\u5B83\u53EF\u80FD\u4E0E\u4E0B\u4E00\u5757\u5F00\u5934\u7684 \n \u7EC4\u6210 \r\n\u3002
+    const holdback = buffer.endsWith("\r") ? 1 : 0;
+    const searchable = holdback ? buffer.slice(0, -1) : buffer;
+    const terminator = /\r\n|\r|\n/g;
+    let cursor = 0;
+    for (let match = terminator.exec(searchable); match; match = terminator.exec(searchable)) {
+      consumeLine(searchable.slice(cursor, match.index));
+      cursor = match.index + match[0].length;
+      endsAtTerminator = true;
+    }
+    buffer = searchable.slice(cursor) + (holdback ? "\r" : "");
   };
 
   for await (const chunk of stream) {
@@ -47,13 +66,7 @@ export async function readTextFileRange(
     const text = String(chunk);
     if (!text) continue;
     buffer += text;
-
-    let newlineIndex = buffer.indexOf("\n");
-    while (newlineIndex >= 0) {
-      consumeLine(buffer.slice(0, newlineIndex));
-      buffer = buffer.slice(newlineIndex + 1);
-      newlineIndex = buffer.indexOf("\n");
-    }
+    consumeCompleteLines();
 
     // The requested window is complete; stop reading so huge files are not
     // streamed to EOF just to satisfy a small offset/limit. totalLines then
@@ -67,10 +80,22 @@ export async function readTextFileRange(
 
   throwIfAborted(signal, stream)
 
-  // \u6587\u4EF6\u4EE5\u6362\u884C\u7ED3\u5C3E \u27FA \u672A\u63D0\u524D\u505C\u8BFB\u3001\u8BFB\u5230 EOF \u65F6\u7F13\u51B2\u5DF2\u7A7A\u4E14\u81F3\u5C11\u6709\u4E00\u884C\u3002
+  // EOF\uFF1A\u60AC\u6302\u7684 \r \u4E0D\u518D\u6709\u540E\u7EED \n\uFF0C\u6309\u5B64\u7ACB \r \u7EC8\u6B62\u7B26\u6536\u5C3E\u3002
+  if (!truncated && buffer.endsWith("\r")) {
+    consumeLine(buffer.slice(0, -1));
+    buffer = "";
+    endsAtTerminator = true;
+  }
+  if (buffer.length > 0) {
+    consumeLine(buffer);
+    buffer = "";
+    endsAtTerminator = false;
+  }
+
+  // \u6587\u4EF6\u4EE5\u6362\u884C\u7ED3\u5C3E \u27FA \u672A\u63D0\u524D\u505C\u8BFB\u4E14\u6700\u540E\u4E00\u884C\u4EE5\u7EC8\u6B62\u7B26\u6536\u675F\u3002
   // \u7ED3\u679C\u5FC5\u987B\u5FE0\u5B9E\u4FDD\u7559\u884C\u5C3E\u6362\u884C\uFF0C\u5426\u5219 Read \u7F13\u5B58\u7684\u5168\u89C6\u56FE\u4E0E Edit/Write \u4FA7
   // decodeTextFile \u7684\u78C1\u76D8\u539F\u6587\u5DEE\u4E00\u4E2A "\n"\uFF0C\u5168\u89C6\u56FE\u5185\u5BB9\u6BD4\u5BF9\u4F1A\u8BEF\u62A5 stale\uFF08#569\uFF09\u3002
-  const endsWithNewline = !truncated && buffer.length === 0 && totalLines > 0;
+  const endsWithNewline = !truncated && endsAtTerminator && totalLines > 0;
 
   if (buffer.length > 0) {
     consumeLine(buffer);

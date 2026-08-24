@@ -1,9 +1,9 @@
 // packages/sdk/src/utils/text-file.test.ts
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { readTextFileRange } from "./text-file.js"
+import { decodeTextFile, readTextFileRange } from "./text-file.js"
 
 const roots: string[] = []
 
@@ -75,6 +75,35 @@ describe("readTextFileRange", () => {
     const ranged = await readTextFileRange(filePath, 0, 100)
 
     expect(ranged.truncated).toBe(false)
+    expect(ranged.totalLines).toBe(2)
+    expect(ranged.content).toBe("alpha\nbeta\n")
+  })
+
+  test("range view equals decodeTextFile for every line-ending style (#569)", async () => {
+    // 归一口径必须与 Edit/Write 侧 decodeTextFile 一致：CR-only 文件旧口径
+    // 只剥行尾 \r，两视图永不相等 → 强制先读后 Edit 撞 stale_read 死循环。
+    const samples = [
+      "alpha\nbeta\n",
+      "alpha\r\nbeta\r\n",
+      "alpha\rbeta\r",
+      "alpha\rbeta",
+      "alpha\nbeta",
+      "a\r\nb\nc\rd\n",
+    ]
+    for (const raw of samples) {
+      const filePath = await makeFile("eol.txt", raw)
+      const ranged = await readTextFileRange(filePath, 0, 100)
+      const decoded = decodeTextFile(await readFile(filePath))
+      expect(ranged.truncated).toBe(false)
+      expect(ranged.content).toBe(decoded.content)
+    }
+  })
+
+  test("counts CR-only terminators as lines like the decode view (#569)", async () => {
+    const filePath = await makeFile("classic.txt", "alpha\rbeta\r")
+
+    const ranged = await readTextFileRange(filePath, 0, 100)
+
     expect(ranged.totalLines).toBe(2)
     expect(ranged.content).toBe("alpha\nbeta\n")
   })
