@@ -143,7 +143,7 @@ describe('buildTraceRecords', () => {
     expect(assistant?.output).toContain('完整回答')
   })
 
-  test('run.end 产出运行汇总记录(轮数/成本/停止原因)', () => {
+  test('run.end 产出运行汇总记录，良性 end_turn 不上摘要尾巴', () => {
     const records = buildTraceRecords([
       env({ kind: 'run', phase: 'start', detail: { type: 'run.start' } }),
       turnStart('t1'),
@@ -151,14 +151,59 @@ describe('buildTraceRecords', () => {
       env({
         kind: 'run',
         phase: 'end',
-        detail: { type: 'run.end', stopReason: 'completed', isError: false, numTurns: 3, costUSD: 0.42 },
+        detail: { type: 'run.end', stopReason: 'end_turn', isError: false, numTurns: 3, costUSD: 0.42 },
       }),
     ])
     const runEnd = records.find((r) => r.kind === 'run')
     expect(runEnd).toBeDefined()
     expect(runEnd?.numTurns).toBe(3)
-    expect(runEnd?.stopReason).toBe('completed')
+    expect(runEnd?.stopReason).toBe('end_turn')
     expect(runEnd?.isError).toBe(false)
+    expect(runEnd?.summary).toBe('运行结束 · 3 轮 · $0.4200')
+    expect(runEnd?.summary).not.toContain('end_turn')
+  })
+
+  test('异常停止原因保留在运行摘要中', () => {
+    const records = buildTraceRecords([
+      env({
+        kind: 'run',
+        phase: 'end',
+        detail: { type: 'run.end', stopReason: 'max_turns', isError: true, numTurns: 10 },
+      }),
+    ])
+    const runEnd = records.find((r) => r.kind === 'run')
+    expect(runEnd?.summary).toContain('max_turns')
+    expect(runEnd?.summary).toContain('运行失败')
+    expect(runEnd?.isError).toBe(true)
+  })
+
+  test('user 消息按真实序列(message.start(null)+user.message 成对)投影不受干扰', () => {
+    const records = buildTraceRecords([
+      env({ kind: 'message', phase: 'start', turnId: null, detail: { type: 'message.start' } }),
+      env({ detail: { type: 'user.message', content: '真实前缀' } }),
+      turnStart('u1'),
+      msgEnd('ok', 'u1'),
+    ])
+    expect(records.map((r) => r.kind)).toEqual(['user', 'assistant'])
+    expect(records[0]?.summary).toBe('真实前缀')
+  })
+
+  test('message.end 携带 error 时标记失败并传导到 run.end', () => {
+    const records = buildTraceRecords([
+      turnStart('t1'),
+      env({ kind: 'message', phase: 'start', turnId: 't1', detail: { type: 'message.start' } }),
+      env({
+        kind: 'message',
+        phase: 'end',
+        turnId: 't1',
+        detail: { type: 'message.end', message: { role: 'assistant', content: [] }, error: 'provider overloaded' },
+      }),
+      env({ kind: 'run', phase: 'end', detail: { type: 'run.end', stopReason: 'error_max_turns', isError: true, numTurns: 1 } }),
+    ])
+    const assistant = records.find((r) => r.kind === 'assistant')
+    const runEnd = records.find((r) => r.kind === 'run')
+    expect(assistant?.isError).toBe(true)
+    expect(runEnd?.isError).toBe(true)
   })
 
   test('compaction completed 产一条压缩记录，started/progress 忽略', () => {

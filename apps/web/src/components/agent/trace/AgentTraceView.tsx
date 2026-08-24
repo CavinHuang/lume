@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAgentEventBus } from '@/hooks/useAgentEventBus'
@@ -27,8 +27,9 @@ function fmtClock(ts: number): string {
 function fmtDuration(ms: number | null): string {
   if (ms == null) return '—'
   if (ms < 1000) return `${ms}ms`
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
-  return `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1000)}s`
+  const totalSec = Math.round(ms / 1000)
+  if (totalSec < 60) return `${(ms / 1000).toFixed(1)}s`
+  return `${Math.floor(totalSec / 60)}m${totalSec % 60}s`
 }
 
 function OverviewBar({
@@ -48,8 +49,9 @@ function OverviewBar({
   const span = Math.max(1, domainEnd - domainStart)
   return (
     <div
-      className="relative h-7 shrink-0 border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)]"
+      role="group"
       aria-label="轨迹时间概览"
+      className="relative h-7 shrink-0 border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)]"
     >
       {records.map((record) => {
         const left = ((record.startedAt - domainStart) / span) * 100
@@ -142,7 +144,9 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
     },
   })
 
-  const records = useMemo(() => buildTraceRecords(events), [events])
+  // 推送侧 16ms 微批高频到达：投影走低优先级渲染，避免流式期间账本全量重算卡输入
+  const deferredEvents = useDeferredValue(events)
+  const records = useMemo(() => buildTraceRecords(deferredEvents), [deferredEvents])
   const selected = records.find((r) => r.id === selectedId) ?? null
 
   // 尾部跟随：新记录到达时贴底，用户上滚即暂停（对齐 dsh tail-follow 行为）
@@ -180,7 +184,7 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
               暂无轨迹记录 — 发送一条消息后这里会显示执行轨迹
             </div>
           ) : (
-            <div role="table" aria-label="执行轨迹账本" className="pb-2">
+            <div className="pb-2">
               {records.map((record) => {
                 const showTurnHeader = record.turnNumber != null && record.turnNumber !== lastTurnNumber
                 lastTurnNumber = record.turnNumber

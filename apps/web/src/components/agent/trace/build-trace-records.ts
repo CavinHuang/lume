@@ -8,6 +8,9 @@
  * - tool：tool.start/end 按 toolCallId 配对；未配对保持运行态
  * - compaction 只取 completed 相位；run.end 产出运行汇总行
  * - 其余域事件（plan/todo/task.progress 等）v1 不入账本
+ *
+ * 注意：turnNumber 是账本内递增的「轮次序号」（第 N 个 turn.start 之后），
+ * 跨多个 run 持续累加，与 SDK 的 turnId（每 run 重置）不同。
  */
 import type { SdkEventEnvelope } from '@lume/shared'
 import type {
@@ -171,7 +174,8 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
         const thinking = partial.thinking.trim()
         const text = partial.text.trim()
         if (partial.toolUses.length > 0 && !text) {
-          openRecord.summary = partial.toolUses.map((t) => t.name).join('、')
+          // 流中 toolUse.name 恒为空（foldDelta 只折 input_json_delta），兜底防空白摘要
+          openRecord.summary = partial.toolUses.map((t) => t.name).filter(Boolean).join('、') || '工具调用中'
         } else {
           openRecord.summary = firstLine(text) || (thinking ? `（思考中）${firstLine(thinking, 120)}` : '…')
         }
@@ -186,7 +190,7 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
           openAssistants.delete(event.turnId!)
           openRecord.endedAt = event.ts
           openRecord.summary = firstLine(text) || '(无文本输出)'
-          openRecord.output = textFromContent(message.content)
+          openRecord.output = text
           if (error) openRecord.isError = true
         } else {
           // 快照起点截断在流中途时的兜底：没有 start 也给出完整行
@@ -263,6 +267,8 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
       }
       case 'run.end': {
         const end = detail as RunEndDetail
+        // 良性停止原因不上账本尾巴：成功运行发 end_turn，防御性兼容 completed
+        const benignStop = end.stopReason == null || ['end_turn', 'completed'].includes(end.stopReason)
         open({
           id: String(event.seq),
           kind: 'run',
@@ -271,7 +277,7 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
             end.isError ? '运行失败' : '运行结束',
             `${end.numTurns} 轮`,
             end.costUSD != null ? `$${end.costUSD.toFixed(4)}` : null,
-            end.stopReason && end.stopReason !== 'completed' ? end.stopReason : null,
+            !benignStop && end.stopReason ? end.stopReason : null,
           ].filter(Boolean).join(' · '),
           startedAt: runStartedAt ?? event.ts,
           endedAt: event.ts,
