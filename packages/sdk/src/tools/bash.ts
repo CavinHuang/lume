@@ -27,6 +27,11 @@ import { spawnWithProcessSandbox, terminateProcessTree } from '../utils/process-
 const MAX_OUTPUT_BYTES = 50 * 1024 * 1024
 const MAX_RESULT_CHARS = 100_000
 const PREVIEW_CHARS = 4_000
+// Result previews keep the tail within both bounds (errors live at the end).
+const RESULT_MAX_LINES = 500
+// Live streaming snapshots ride the live channel while the command runs.
+const STREAM_SNAPSHOT_THROTTLE_MS = 150
+const STREAM_SNAPSHOT_MAX_CHARS = 16_000
 const AUTO_BACKGROUND_MS = 15_000
 const PROGRESS_THRESHOLD_MS = 2_000
 const STALL_CHECK_INTERVAL_MS = 5_000
@@ -423,8 +428,9 @@ async function startDirectShellTask({
   }, sandbox)
   const startedAt = Date.now()
   let outputBytes = 0
-  let stdoutPreview = ''
-  let stderrPreview = ''
+  const stdoutAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, MAX_RESULT_CHARS)
+  const stderrAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, MAX_RESULT_CHARS)
+  const emitStreamSnapshot = createStreamSnapshotEmitter(context, () => combinedStreamSnapshot(stdoutAccumulator, stderrAccumulator))
   const stdoutDecoder = new StringDecoder('utf8')
   const stderrDecoder = new StringDecoder('utf8')
   let terminationReason: ToolExecutionMetadata['terminationReason'] = 'completed'
@@ -468,15 +474,9 @@ async function startDirectShellTask({
     if (accepted.length > 0) {
       lastOutputAt = Date.now()
       const text = (stream === 'stdout' ? stdoutDecoder : stderrDecoder).write(accepted)
-      if (stream === 'stdout') stdoutPreview = appendPreview(stdoutPreview, text)
-      else stderrPreview = appendPreview(stderrPreview, text)
+      ;(stream === 'stdout' ? stdoutAccumulator : stderrAccumulator).append(text)
       writeChain = writeChain.then(() => appendFile(outputFile, accepted))
-      context.emitEvent?.({
-        type: 'system',
-        subtype: 'local_command_output',
-        content: boundedPreview(text),
-        session_id: context.sessionId || '',
-      })
+      emitStreamSnapshot.schedule()
     }
     if (accepted.length !== chunk.length && terminationReason === 'completed') {
       terminationReason = 'output_limit'
@@ -500,18 +500,23 @@ async function startDirectShellTask({
     const finish = async (code: number | null, spawnError?: string) => {
       if (settled) return
       settled = true
+      emitStreamSnapshot.flush()
       if (timeoutTimer) clearTimeout(timeoutTimer)
       context.abortSignal?.removeEventListener('abort', abortHandler)
       if (progressTimer) clearInterval(progressTimer)
       const stdoutTail = stdoutDecoder.end()
       const stderrTail = stderrDecoder.end()
-      if (stdoutTail) stdoutPreview = appendPreview(stdoutPreview, stdoutTail)
-      if (stderrTail) stderrPreview = appendPreview(stderrPreview, stderrTail)
-      if (spawnError) stderrPreview = appendPreview(stderrPreview, spawnError)
+      if (stdoutTail) stdoutAccumulator.append(stdoutTail)
+      if (stderrTail) stderrAccumulator.append(stderrTail)
+      if (spawnError) stderrAccumulator.append(spawnError)
       await writeChain.catch(() => undefined)
       const interpretation = interpretShellExit(command, code ?? 1)
       if (terminationReason === 'completed' && code !== 0 && interpretation.isError) terminationReason = 'nonzero'
       if (spawnError) terminationReason = 'spawn_error'
+      const stdoutStats = stdoutAccumulator.snapshot()
+      const stderrStats = stderrAccumulator.snapshot()
+      const stdoutPreview = stdoutStats.content
+      const stderrPreview = stderrStats.content
       const execution = await createExecutionMetadata({
         command,
         shell: shellType,
@@ -534,6 +539,7 @@ async function startDirectShellTask({
         stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
         stderrPreview ? `stderr:\n${stderrPreview}` : '',
         spawnError ? `process error: ${spawnError}` : '',
+        truncationFooter(stdoutStats, stderrStats, outputFile),
         code !== 0 && code !== null
           ? `Bash failed (${shellType}, exit code ${code}): ${interpretation.message}`
           : '',
@@ -572,7 +578,7 @@ async function startDirectShellTask({
       let stallNotified = false
       stallTimer = setInterval(() => {
         if (stallNotified || Date.now() - lastOutputAt < STALL_THRESHOLD_MS) return
-        const tail = `${stdoutPreview}\n${stderrPreview}`.trimEnd()
+        const tail = `${stdoutAccumulator.snapshot().content}\n${stderrAccumulator.snapshot().content}`.trimEnd()
         if (!looksLikeInteractivePrompt(tail)) {
           lastOutputAt = Date.now()
           return
@@ -692,8 +698,9 @@ async function startDurableShellTask({
   let stderrOffset = 0
   const stdoutDecoder = new StringDecoder('utf8')
   const stderrDecoder = new StringDecoder('utf8')
-  let stdoutPreview = ''
-  let stderrPreview = ''
+  const stdoutAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, MAX_RESULT_CHARS)
+  const stderrAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, MAX_RESULT_CHARS)
+  const emitStreamSnapshot = createStreamSnapshotEmitter(context, () => combinedStreamSnapshot(stdoutAccumulator, stderrAccumulator))
   let progressTimer: ReturnType<typeof setInterval> | undefined
   let stallTimer: ReturnType<typeof setInterval> | undefined
   let lastOutputAt = Date.now()
@@ -726,26 +733,16 @@ async function startDurableShellTask({
       // Streamed decode keeps multibyte sequences that straddle block
       // boundaries intact (#368).
       const text = stdoutDecoder.write(stdout.chunk)
-      stdoutPreview = appendPreview(stdoutPreview, text)
-      context.emitEvent?.({
-        type: 'system',
-        subtype: 'local_command_output',
-        content: boundedPreview(text),
-        session_id: context.sessionId || '',
-      })
+      stdoutAccumulator.append(text)
+      emitStreamSnapshot.schedule()
     }
     const stderr = await readIncrementalFile(stderrFile, stderrOffset)
     stderrOffset = stderr.nextOffset
     if (stderr.chunk.length > 0) {
       lastOutputAt = Date.now()
       const text = stderrDecoder.write(stderr.chunk)
-      stderrPreview = appendPreview(stderrPreview, text)
-      context.emitEvent?.({
-        type: 'system',
-        subtype: 'local_command_output',
-        content: boundedPreview(text),
-        session_id: context.sessionId || '',
-      })
+      stderrAccumulator.append(text)
+      emitStreamSnapshot.schedule()
     }
     const combined = await readIncrementalFile(outputFile, outputOffset)
     outputOffset = combined.nextOffset
@@ -797,10 +794,11 @@ async function startDurableShellTask({
         // Drain the worker's final writes to EOF; a single bounded read can
         // lose tail output written just before the process exited.
         while (await emitNewOutput()) { /* drain until no new bytes */ }
+        emitStreamSnapshot.flush()
         const stdoutTail = stdoutDecoder.end()
         const stderrTail = stderrDecoder.end()
-        if (stdoutTail) stdoutPreview = appendPreview(stdoutPreview, stdoutTail)
-        if (stderrTail) stderrPreview = appendPreview(stderrPreview, stderrTail)
+        if (stdoutTail) stdoutAccumulator.append(stdoutTail)
+        if (stderrTail) stderrAccumulator.append(stderrTail)
         const execution = normalizePersistedExecution(
           command,
           purpose,
@@ -811,7 +809,9 @@ async function startDurableShellTask({
         )
         const interpretation = interpretShellExit(command, execution.exitCode ?? 1)
         const normalizedExecution = applySemanticOutcome(execution, interpretation)
-        const output = formatShellResult(normalizedExecution, stdoutPreview, stderrPreview, interpretation)
+        const stdoutStats = stdoutAccumulator.snapshot()
+        const stderrStats = stderrAccumulator.snapshot()
+        const output = formatShellResult(normalizedExecution, stdoutStats.content, stderrStats.content, interpretation, truncationFooter(stdoutStats, stderrStats, outputFile))
         const result = {
           output,
           isError: executionOutcome(normalizedExecution) !== 'succeeded',
@@ -872,7 +872,7 @@ async function startDurableShellTask({
       let stallNotified = false
       stallTimer = setInterval(() => {
         if (stallNotified || Date.now() - lastOutputAt < STALL_THRESHOLD_MS) return
-        const tail = `${stdoutPreview}\n${stderrPreview}`.trimEnd()
+        const tail = `${stdoutAccumulator.snapshot().content}\n${stderrAccumulator.snapshot().content}`.trimEnd()
         if (!looksLikeInteractivePrompt(tail)) return
         stallNotified = true
         context.emitEvent?.({
@@ -1057,6 +1057,7 @@ function formatShellResult(
   stdoutPreview: string,
   stderrPreview: string,
   interpretation: ReturnType<typeof interpretShellExit>,
+  footer?: string,
 ): string {
   const outcome = executionOutcome(execution)
   const firstLine = outcome === 'succeeded'
@@ -1068,6 +1069,7 @@ function formatShellResult(
     firstLine,
     stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
     stderrPreview ? `stderr:\n${stderrPreview}` : '',
+    footer,
     outcome !== 'succeeded' && execution.exitCode !== null && execution.exitCode !== undefined
       ? `Bash failed (${execution.shell ?? 'bash'}, exit code ${execution.exitCode}): ${interpretation.message}`
       : '',
@@ -1132,8 +1134,131 @@ function checkExcludedCommands(command: string, excluded: string[]): string | 'c
   return analysis.commands.map((segment) => segment.executable).find((name) => lower.has(name))
 }
 
-function appendPreview(current: string, value: string): string {
-  return boundedPreview(`${current}${value}`, MAX_RESULT_CHARS)
+interface TailTruncation {
+  content: string
+  truncated: boolean
+  totalLines: number
+  shownLines: number
+}
+
+/**
+ * Keep the tail of `text` within both bounds, whichever bites first (pi
+ * parity: command errors live at the end, so the tail is the useful half).
+ * Redacts first; a char-boundary cut restarts at the next line break so
+ * sections and snapshots never open mid-line.
+ */
+export function tailTruncate(text: string, maxLines: number, maxChars: number): TailTruncation {
+  const value = redactSensitiveText(text)
+  const lines = value.split('\n')
+  const totalLines = value.length === 0 ? 0 : lines.length
+  let kept = lines.length > maxLines ? lines.slice(-maxLines) : lines
+  let content = kept.join('\n')
+  if (content.length > maxChars) {
+    content = content.slice(-maxChars)
+    const newlineAt = content.indexOf('\n')
+    if (newlineAt >= 0 && newlineAt < content.length - 1) content = content.slice(newlineAt + 1)
+  }
+  return {
+    content,
+    truncated: content !== value,
+    totalLines,
+    shownLines: content.length === 0 ? 0 : content.split('\n').length,
+  }
+}
+
+type PreviewAccumulator = ReturnType<typeof createPreviewAccumulator>
+
+/**
+ * Rolling preview of one output stream: stores the bounded tail while counting
+ * every line ever seen, so the truncation footer can report "last N of M".
+ */
+function createPreviewAccumulator(maxLines: number, maxChars: number) {
+  let kept = ''
+  let totalLines = 0
+  let dropped = false
+  return {
+    append(text: string): void {
+      if (!text) return
+      const incoming = text.split('\n').length
+      // L(full + t) = L(full) + L(t) - 1 for nonempty parts — independent of
+      // which suffix `kept` still holds.
+      totalLines = totalLines === 0 ? incoming : totalLines + incoming - 1
+      const next = tailTruncate(`${kept}${text}`, maxLines, maxChars)
+      kept = next.content
+      dropped ||= next.truncated
+    },
+    snapshot(): TailTruncation {
+      // Re-truncate: idempotent on content, guards redaction-driven growth,
+      // and keeps `totalLines` at the full-stream count instead of the tail's.
+      const fresh = tailTruncate(kept, maxLines, maxChars)
+      return { ...fresh, truncated: dropped || fresh.truncated, totalLines }
+    },
+  }
+}
+
+/** Combined live view of both streams, bounded tighter than the result previews. */
+function combinedStreamSnapshot(stdout: PreviewAccumulator, stderr: PreviewAccumulator): string {
+  const out = stdout.snapshot().content
+  const err = stderr.snapshot().content
+  if (!out && !err) return ''
+  return tailTruncate(out && err ? `${out}\n${err}` : out || err, RESULT_MAX_LINES, STREAM_SNAPSHOT_MAX_CHARS).content
+}
+
+function truncationFooter(stdout: TailTruncation, stderr: TailTruncation, outputFile: string): string | undefined {
+  const stats = stdout.truncated ? stdout : stderr.truncated ? stderr : undefined
+  if (!stats) return undefined
+  return `[Showing last ${stats.shownLines} of ${stats.totalLines} lines. Full output: ${outputFile}]`
+}
+
+/**
+ * Trailing-edge throttle for live output snapshots (pi parity): bursts collapse
+ * into one snapshot per window; a quiet period flushes immediately. Prefers the
+ * live channel and falls back to the buffered one when the host has no live
+ * receiver. Events carry tool_use_id so the UI can pin them to the running card.
+ */
+function createStreamSnapshotEmitter(context: ToolContext, getSnapshot: () => string) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let dirty = false
+  let lastEmitAt = 0
+  const emit = () => {
+    dirty = false
+    lastEmitAt = Date.now()
+    ;(context.emitLiveEvent ?? context.emitEvent)?.({
+      type: 'system',
+      subtype: 'local_command_output',
+      content: getSnapshot(),
+      ...(context.toolUseId ? { tool_use_id: context.toolUseId } : {}),
+      session_id: context.sessionId || '',
+    })
+  }
+  return {
+    schedule(): void {
+      if (!context.emitLiveEvent && !context.emitEvent) return
+      dirty = true
+      const delay = STREAM_SNAPSHOT_THROTTLE_MS - (Date.now() - lastEmitAt)
+      if (delay <= 0) {
+        if (timer) {
+          clearTimeout(timer)
+          timer = undefined
+        }
+        emit()
+        return
+      }
+      timer ??= setTimeout(() => {
+        timer = undefined
+        emit()
+      }, delay)
+      timer.unref?.()
+    },
+    /** Emit any pending snapshot now (tool finishing); safe to call repeatedly. */
+    flush(): void {
+      if (timer) {
+        clearTimeout(timer)
+        timer = undefined
+      }
+      if (dirty) emit()
+    },
+  }
 }
 
 function boundedPreview(value: string, maxChars = PREVIEW_CHARS): string {

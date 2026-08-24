@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BashTool, interpretShellExit, looksLikeInteractivePrompt } from "./bash";
+import { BashTool, interpretShellExit, looksLikeInteractivePrompt, tailTruncate } from "./bash";
 import { analyzeBashCommand } from "../utils/bash-command-analysis";
 import { clearTasks, TaskOutputTool } from "./task-tools";
 import {
@@ -540,4 +540,101 @@ describe("BashTool #381 background timeout semantics", () => {
     const completed = await TaskOutputTool.call({ task_id: taskId, block: true, timeout: 60_000 }, context);
     expect(completed._meta?.execution).toMatchObject({ outcome: "timed_out", terminationReason: "timeout" });
   }, 90_000);
+});
+
+describe("BashTool output streaming snapshots", () => {
+  test("tailTruncate keeps the tail within both bounds and reports stats", () => {
+    const inBounds = tailTruncate("a\nb\nc", 5, 100);
+    expect(inBounds).toEqual({ content: "a\nb\nc", truncated: false, totalLines: 3, shownLines: 3 });
+
+    const byLines = tailTruncate("l1\nl2\nl3", 2, 1000);
+    expect(byLines.content).toBe("l2\nl3");
+    expect(byLines.truncated).toBeTrue();
+    expect(byLines.totalLines).toBe(3);
+    expect(byLines.shownLines).toBe(2);
+
+    // Char cut restarts at the next line break instead of opening mid-line.
+    const byChars = tailTruncate(`${"x".repeat(300)}\nend`, 100, 100);
+    expect(byChars.content).toBe("end");
+    expect(byChars.content.length).toBeLessThanOrEqual(100);
+
+    expect(tailTruncate("api_key=supersecret\nplain", 10, 1000).content).not.toContain("supersecret");
+  });
+
+  test("streams throttled snapshots with tool_use_id over the live channel", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-stream-"));
+    const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
+    const command = isPowerShellShell
+      ? "Write-Output one; Start-Sleep -Milliseconds 80; Write-Output two; Start-Sleep -Milliseconds 80; Write-Output three"
+      : "printf 'one\\n'; sleep 0.08; printf 'two\\n'; sleep 0.08; printf 'three\\n'";
+    const liveEvents: SDKMessage[] = [];
+    const bufferedEvents: SDKMessage[] = [];
+    const context = {
+      cwd: root,
+      sessionId: "stream-snapshot-test",
+      toolUseId: "toolu_stream_test",
+      emitEvent: (event: SDKMessage) => bufferedEvents.push(event),
+      emitLiveEvent: (event: SDKMessage) => liveEvents.push(event),
+    };
+    const result = await BashTool.call({ command }, context);
+    expect(result.is_error).toBeFalsy();
+
+    const snapshots = liveEvents.filter((event) =>
+      event.type === "system" && event.subtype === "local_command_output"
+    );
+    expect(snapshots.length).toBeGreaterThan(0);
+    expect(snapshots.length).toBeLessThanOrEqual(6); // throttled, not per-chunk
+    for (const snapshot of snapshots) {
+      expect(snapshot.tool_use_id).toBe("toolu_stream_test");
+    }
+    // Snapshot semantics: the last event carries the accumulated tail.
+    const lastContent = String(snapshots[snapshots.length - 1]?.content ?? "");
+    for (const marker of ["one", "two", "three"]) {
+      expect(lastContent).toContain(marker);
+    }
+    // Live channel wins: nothing duplicated onto the buffered channel.
+    expect(bufferedEvents.filter((event) =>
+      event.type === "system" && event.subtype === "local_command_output"
+    )).toHaveLength(0);
+  }, 20_000);
+
+  test("falls back to the buffered channel when no live receiver exists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-fallback-"));
+    const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
+    const command = isPowerShellShell
+      ? "Write-Output fallback-output"
+      : "printf 'fallback-output\\n'";
+    const events: SDKMessage[] = [];
+    const context = {
+      cwd: root,
+      sessionId: "stream-fallback-test",
+      toolUseId: "toolu_fallback_test",
+      emitEvent: (event: SDKMessage) => events.push(event),
+    };
+    const result = await BashTool.call({ command }, context);
+    expect(result.is_error).toBeFalsy();
+    const streamed = events.filter((event) =>
+      event.type === "system" && event.subtype === "local_command_output"
+    );
+    expect(streamed.length).toBeGreaterThan(0);
+    expect(streamed[0]?.tool_use_id).toBe("toolu_fallback_test");
+  }, 20_000);
+
+  test("appends a truncation footer with full output path to oversized results", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-footer-"));
+    const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
+    const command = isPowerShellShell
+      ? "1..600 | ForEach-Object { \"line$_\" }"
+      : "seq 1 600";
+    const context = { cwd: root, sessionId: "stream-footer-test" };
+    const result = await BashTool.call({ command }, context);
+    expect(result.is_error).toBeFalsy();
+    const content = String(result.content);
+    const footer = content.match(/\[Showing last (\d+) of (\d+) lines\. Full output: (.+)\]/);
+    expect(footer).toBeTruthy();
+    expect(Number(footer?.[2])).toBeGreaterThan(Number(footer?.[1]));
+    // Tail semantics: the end of the stream survives, the head may not.
+    expect(content).toContain("\n600\n");
+    expect(content).not.toContain("stdout:\n1\n");
+  }, 20_000);
 });
