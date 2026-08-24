@@ -197,15 +197,6 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
-  name: "TaskReport",
-  category: "control",
-  riskLevel: "low",
-  description: "写入当前任务执行结果",
-  allowedInPlanMode: false
-});
-
-// 记忆工具
-registerToolMetadata({
   name: "memory.search",
   category: "read",
   riskLevel: "low",

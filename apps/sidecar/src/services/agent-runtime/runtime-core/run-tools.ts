@@ -7,7 +7,6 @@ import {
   assertTaskRefDiscriminant,
   buildSidecarSubagentExecutionInput,
   buildSidecarSubagentRunContext,
-  buildSubagentTaskInstruction,
   canDelegateFromThread,
   deriveDelegateTitle,
   parseTaskRef,
@@ -77,8 +76,6 @@ import { createLumeRuntimeTools } from "../tools/create-lume-tools";
 import { createSdkWebTools } from "../tools/web/create-web-tools";
 import { resolveSubagentSpawnPolicy } from "../subagents/subagent-policy";
 import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
-import { getSubagentCoordinator } from "../subagents/subagent-coordinator";
-import { resolveSubagentDispatchPolicy } from "../subagents/subagent-dispatch-policy";
 import { getRuntimeCoreEntry } from "./runtime-entry";
 import { announceSubagentCompletion } from "../subagents/subagent-announce-service";
 import { getRuntimeHostPorts } from "../host-ports";
@@ -209,7 +206,6 @@ export function buildRuntimeCoreTools(input: {
   threadType?: AgentSendInput["threadType"];
   permissionMode?: AgentSendInput["permissionMode"];
   subagentDefinition?: AgentDefinition;
-  boundSubagentReportTool?: ToolDefinition;
   messageMetadata?: Record<string, unknown>;
   planningClientSubmissionId?: string;
   fileReferenceBinding?: FileReferenceBinding;
@@ -323,287 +319,7 @@ export function buildRuntimeCoreTools(input: {
       })
     : undefined;
 
-  const sidecarAgentTool: ToolDefinition = {
-    ...AgentTool,
-    description:
-      "Launch an independent subagent. For a persistent Task, first claim it with TaskUpdate and then pass task_ref; Task itself never creates or schedules the subagent.",
-    // 并发安全：每次调用走独立 childThreadId/runId；coordinator mutate 全程同步段，
-    // 全局 permit(4) 与 fanout 策略继续兜底排队。
-    isConcurrencySafe: () => true,
-    async call(toolInput: any, context: any) {
-      const parentThreadId = context.sessionId ?? "";
-      const policy = resolveSubagentSpawnPolicy({
-        parentThreadId,
-        parentPermissionMode: permissionMode,
-      });
-      if (!policy.ok) {
-        return {
-          type: "tool_result" as const,
-          tool_use_id: "",
-          content: policy.error ?? "spawn policy rejected",
-          is_error: true,
-        };
-      }
-      const modelOverride = resolveSubagentModelOverride({
-        toolInput,
-        workspaceSlug: input.workspaceSlug,
-      });
-      try {
-        if (toolInput.task_ref !== undefined) {
-          if (!mainTaskRuntime)
-            throw new Error("Task-linked Agent calls are main-agent only");
-          assertTaskRefDiscriminant(toolInput);
-          const taskRef = parseTaskRef(toolInput.task_ref, parentThreadId);
-          return await runTaskLinkedSubagent({
-            toolInput,
-            context,
-            taskStore: mainTaskRuntime.store,
-            taskRef,
-            parentThreadId,
-            modelOverride,
-            workspaceId: input.workspaceId,
-            workspaceSlug: input.workspaceSlug,
-            channelId: input.channelId,
-            chatType: input.chatType,
-            messageMetadata: input.messageMetadata,
-            fileReferenceBinding: input.fileReferenceBinding,
-            permissionMode,
-            emitRuntimeEvent: input.emitRuntimeEvent,
-            emitAskUserQuestion: input.emitAskUserQuestion,
-            emitBrowserAuthRequest: input.emitBrowserAuthRequest,
-            emitDesktopActionRequest: input.emitDesktopActionRequest,
-            emitToolPermissionRequest: input.emitToolPermissionRequest,
-          });
-        }
-        const coordinator = getSubagentCoordinator();
-        const taskId =
-          typeof toolInput.task_id === "string"
-            ? toolInput.task_id.trim()
-            : undefined;
-        const subagentId =
-          typeof toolInput.subagent_id === "string"
-            ? toolInput.subagent_id.trim()
-            : undefined;
-        const work = coordinator.list(parentThreadId);
-        const dispatch = resolveSubagentDispatchPolicy({
-          prompt: typeof toolInput.prompt === "string" ? toolInput.prompt : "",
-          taskId,
-          subagentId,
-          newTask: toolInput.new_task === true,
-          unresolvedTasks: work.tasks.filter(
-            (task) =>
-              task.status === "open" ||
-              task.status === "running" ||
-              task.status === "awaiting_review",
-          ),
-        });
-        if (!dispatch.allowed) {
-          return {
-            type: "tool_result" as const,
-            tool_use_id: "",
-            content: dispatch.message,
-            is_error: true,
-          };
-        }
-        const result = await coordinator.runAgentTask({
-          parentThreadId,
-          parentRunId: input.runId ?? parentThreadId,
-          parentToolUseId: context.toolUseId ?? crypto.randomUUID(),
-          prompt: typeof toolInput.prompt === "string" ? toolInput.prompt : "",
-          description:
-            typeof toolInput.description === "string"
-              ? toolInput.description
-              : "Subagent",
-          subagentType:
-            typeof toolInput.subagent_type === "string"
-              ? toolInput.subagent_type
-              : undefined,
-          subagentId,
-          taskId,
-          acceptanceCriteria: Array.isArray(toolInput.acceptance_criteria)
-            ? toolInput.acceptance_criteria.filter(
-                (item: unknown): item is string => typeof item === "string",
-              )
-            : undefined,
-          expectedArtifacts: Array.isArray(toolInput.expected_artifacts)
-            ? toolInput.expected_artifacts.filter(
-                (item: unknown): item is string => typeof item === "string",
-              )
-            : undefined,
-          createSession: ({ subagentId, title, agentType }) => {
-            const child = getRuntimeHostPorts().createThreadWithModelRef(
-              title,
-              modelOverride.modelRef,
-              modelOverride.channelId ?? input.channelId,
-              input.workspaceId,
-              parentThreadId,
-              modelOverride.resolvedModelId ?? context.model,
-              { fileContextMode: "inherit" },
-            );
-            return { threadId: child.id, modelRef: modelOverride.modelRef };
-          },
-          execute: async ({ run, session, task, feedback, signal }) => {
-            const stopChild = () => {
-              void Promise.resolve()
-                .then(() => getRuntimeCoreEntry().stopAgentRuntime(session.threadId))
-                .catch(() => undefined);
-            };
-            signal.addEventListener("abort", stopChild, { once: true });
-            try {
-              const execution = await runSidecarSubagent({
-                toolInput: {
-                  ...toolInput,
-                  prompt: buildSubagentTaskInstruction(task, feedback),
-                  run_in_background: undefined,
-                  isolation: undefined,
-                  subagent_run_id: run.runId,
-                },
-                context,
-                runId: run.runId,
-                childThreadId: session.threadId,
-                parentThreadId,
-                deliveryThreadId: parentThreadId,
-                parentToolUseId: context.toolUseId,
-                subagentType: session.agentType,
-                subagentId: session.subagentId,
-                subagentTaskId: task.taskId,
-                subagentAttempt: run.attempt,
-                modelOverride,
-                channelId: input.channelId,
-                workspaceId: input.workspaceId,
-                chatType: input.chatType,
-                messageMetadata: input.messageMetadata,
-                fileReferenceBinding: input.fileReferenceBinding,
-                onRuntimeEvent: (event) => {
-                  coordinator.bindRuntimeRun(run.runId, event.runId);
-                  input.emitRuntimeEvent?.(event);
-                },
-                permissionMode,
-                emitAskUserQuestion: input.emitAskUserQuestion,
-                emitBrowserAuthRequest: input.emitBrowserAuthRequest,
-                emitToolPermissionRequest: input.emitToolPermissionRequest,
-              });
-              return {
-                status:
-                  execution.status === "aborted"
-                    ? "cancelled"
-                    : execution.status,
-                error: execution.error,
-                completionSummary: execution.completionSummary,
-              };
-            } finally {
-              signal.removeEventListener("abort", stopChild);
-            }
-          },
-        });
-        return {
-          type: "tool_result" as const,
-          tool_use_id: "",
-          content: JSON.stringify(result),
-        };
-      } catch (error) {
-        return {
-          type: "tool_result" as const,
-          tool_use_id: "",
-          content: `Subagent error: ${error instanceof Error ? error.message : String(error)}`,
-          is_error: true,
-        };
-      }
-    },
-  };
-
-  const finishAgentTaskTool = defineTool({
-    name: "FinishAgentTask",
-    description:
-      "Accept, defer, or cancel a submitted Subagent task. A completed Run is not accepted until this tool is called.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        task_id: { type: "string" },
-        resolution: {
-          type: "string",
-          enum: ["accepted", "deferred", "cancelled"],
-        },
-        reason: { type: "string" },
-      },
-      required: ["task_id", "resolution", "reason"],
-    },
-    isReadOnly: false,
-    isConcurrencySafe: false,
-    async call(raw) {
-      const value =
-        raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-      const taskId =
-        typeof value.task_id === "string" ? value.task_id.trim() : "";
-      const reason =
-        typeof value.reason === "string" ? value.reason.trim() : "";
-      const resolution = value.resolution;
-      if (
-        !taskId ||
-        !reason ||
-        (resolution !== "accepted" &&
-          resolution !== "deferred" &&
-          resolution !== "cancelled")
-      )
-        throw new Error("FinishAgentTask 参数无效");
-      const task = getSubagentCoordinator().finishTask({
-        taskId,
-        resolution,
-        reason,
-      });
-      return { data: { ok: true, taskId: task.taskId, status: task.status } };
-    },
-  });
-
-  const retireSubagentTool = defineTool({
-    name: "RetireSubagent",
-    description:
-      "Retire an idle persistent Subagent Session while keeping its child-thread history available.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        subagent_id: { type: "string" },
-        reason: { type: "string" },
-      },
-      required: ["subagent_id", "reason"],
-    },
-    isReadOnly: false,
-    isConcurrencySafe: false,
-    async call(raw) {
-      const value =
-        raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-      const subagentId =
-        typeof value.subagent_id === "string" ? value.subagent_id.trim() : "";
-      const reason =
-        typeof value.reason === "string" ? value.reason.trim() : "";
-      if (!subagentId || !reason) throw new Error("RetireSubagent 参数无效");
-      const session = getSubagentCoordinator().retireSession({
-        subagentId,
-        reason,
-      });
-      return {
-        data: {
-          ok: true,
-          subagentId: session.subagentId,
-          status: session.status,
-        },
-      };
-    },
-  });
-
   const mainTaskTools = mainTaskRuntime?.tools ?? [];
-  const taskLoopTools =
-    input.threadType === "subagent"
-      ? input.boundSubagentReportTool
-        ? [input.boundSubagentReportTool, todoTool]
-        : [todoTool]
-      : [
-          ...(isMainTaskThread ? mainTaskTools : []),
-          sidecarAgentTool,
-          finishAgentTaskTool,
-          retireSubagentTool,
-          todoTool,
-        ];
 
   const delegateTool: ToolDefinition = {
     ...AgentTool,
@@ -658,7 +374,7 @@ export function buildRuntimeCoreTools(input: {
       },
       required: ["prompt", "description"],
     },
-    // 同 sidecarAgentTool：独立 childThreadId + registry 同步 Map 操作，可并发；
+    // 独立 childThreadId + registry 同步 Map 操作，可并发；
     // spawn policy 的 maxFanout(6) 兜底限流。
     isConcurrencySafe: () => true,
     async call(toolInput: any, context: any) {
@@ -952,6 +668,16 @@ export function buildRuntimeCoreTools(input: {
       );
     },
   };
+
+  const taskLoopTools =
+    input.threadType === "subagent"
+      ? [todoTool]
+      : [
+          ...(isMainTaskThread ? mainTaskTools : []),
+          delegateTool,
+          waitForDelegationsTool,
+          todoTool,
+        ];
 
   return ToolRuntime.build({
     cwd: input.cwd,
