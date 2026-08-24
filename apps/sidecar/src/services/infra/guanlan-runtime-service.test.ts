@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -162,23 +162,61 @@ describe("downloadFile 超时与清理（#548）", () => {
     const destination = join(tmpdir(), `lume-download-test-${process.pid}.bin`);
     try {
       // 先制造半截文件，验证失败后被清理
-      const { writeFileSync } = await import("node:fs");
       writeFileSync(destination, "partial");
-      const error = await downloadFile(`http://127.0.0.1:${port}/x`, destination, {
-        totalTimeoutMs: 300
-      }).catch((e: Error) => e);
-      expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toContain("总时长超过");
+      await expect(
+        downloadFile(`http://127.0.0.1:${port}/x`, destination, { totalTimeoutMs: 300 })
+      ).rejects.toThrow("总时长超过");
       expect(existsSync(destination)).toBeFalse();
     } finally {
       server.close();
     }
   });
 
+  test("响应头后传输停摆时 idle 超时生效并删除半截文件", async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-length": "1000" });
+      res.write("chunk"); // 发一段后挂起不继续写，触发空闲检测
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const { port } = server.address() as AddressInfo;
+    const destination = join(tmpdir(), `lume-download-idle-${process.pid}.bin`);
+    try {
+      await expect(
+        downloadFile(`http://127.0.0.1:${port}/x`, destination, {
+          totalTimeoutMs: 4_000,
+          idleTimeoutMs: 200
+        })
+      ).rejects.toThrow("空闲超时");
+      expect(existsSync(destination)).toBeFalse();
+    } finally {
+      server.close();
+      server.closeAllConnections();
+    }
+  });
+
+  test("传输中途 socket reset 时立即失败并删除半截文件（#548 核心通道）", async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-length": "1000" });
+      res.write("partial");
+      setTimeout(() => res.destroy(), 50); // 中途强制断开，客户端 response 流 emit error
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const { port } = server.address() as AddressInfo;
+    const destination = join(tmpdir(), `lume-download-reset-${process.pid}.bin`);
+    try {
+      await expect(
+        downloadFile(`http://127.0.0.1:${port}/x`, destination, { totalTimeoutMs: 4_000 })
+      ).rejects.toThrow();
+      expect(existsSync(destination)).toBeFalse();
+    } finally {
+      server.close();
+      server.closeAllConnections();
+    }
+  });
+
   test("连接拒绝时立即失败且不残留文件", async () => {
     const destination = join(tmpdir(), `lume-download-refused-${process.pid}.bin`);
-    const error = await downloadFile("http://127.0.0.1:1/x", destination).catch((e: Error) => e);
-    expect(error).toBeInstanceOf(Error);
+    await expect(downloadFile("http://127.0.0.1:1/x", destination)).rejects.toThrow();
     expect(existsSync(destination)).toBeFalse();
   });
 });

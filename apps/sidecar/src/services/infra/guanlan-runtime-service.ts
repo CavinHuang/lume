@@ -326,16 +326,19 @@ export async function downloadFile(
     await new Promise<void>((resolve, reject) => {
       let currentRequest: http.ClientRequest | null = null;
       let settled = false;
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
       const settleOk = () => {
         if (settled) return;
         settled = true;
         clearTimeout(totalTimer);
+        clearIdleTimer();
         resolve();
       };
       const settleFail = (error: Error) => {
         if (settled) return;
         settled = true;
         clearTimeout(totalTimer);
+        clearIdleTimer();
         currentRequest?.destroy();
         reject(error);
       };
@@ -346,17 +349,36 @@ export async function downloadFile(
       );
       totalTimer.unref();
 
+      // 自管空闲检测：Bun 下 request.setTimeout 在响应中期不触发（#548 核验），
+      // 以 data 事件喂狗的定时器跨运行时可靠
+      function clearIdleTimer(): void {
+        if (idleTimer !== undefined) {
+          clearTimeout(idleTimer);
+          idleTimer = undefined;
+        }
+      }
+      const armIdleTimer = (target: string) => {
+        clearIdleTimer();
+        idleTimer = setTimeout(() => {
+          settleFail(new Error(`下载失败，连接空闲超时: ${target}`));
+          currentRequest?.destroy();
+        }, idleTimeoutMs);
+        idleTimer.unref();
+      };
+
       const visit = (target: string, redirects: number) => {
         if (redirects > 10) {
           settleFail(new Error(`下载失败，重定向次数过多: ${url}`));
           return;
         }
+        armIdleTimer(target);
         const client = target.startsWith("https:") ? https : http;
         const request = client.get(target, (response) => {
-          currentRequest = null;
+          // 全分支统一挂 error 监听：无监听的 error 事件会计入 uncaughtException 五击止损（#548）
+          response.on("error", settleFail);
           const location = response.headers.location;
           if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && location) {
-            response.resume(); // 销毁旧响应，避免连接泄漏
+            response.resume(); // 排空旧响应以释放连接，随后换绑 currentRequest 到新目标
             visit(new URL(location, target).toString(), redirects + 1);
             return;
           }
@@ -365,16 +387,13 @@ export async function downloadFile(
             settleFail(new Error(`下载失败，HTTP ${response.statusCode}: ${target}`));
             return;
           }
+          response.on("data", () => armIdleTimer(target));
           const file = createWriteStream(destination);
-          response.on("error", settleFail); // socket reset 无监听即 uncaughtException 计击
           response.pipe(file);
           file.on("finish", () => file.close(() => settleOk()));
           file.on("error", settleFail);
         });
         currentRequest = request;
-        request.setTimeout(idleTimeoutMs, () => {
-          request.destroy(new Error(`下载失败，连接空闲超时: ${target}`));
-        });
         request.on("error", settleFail);
       };
       visit(url, 0);
