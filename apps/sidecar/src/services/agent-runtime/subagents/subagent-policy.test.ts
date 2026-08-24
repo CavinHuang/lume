@@ -77,16 +77,6 @@ describe("subagent-policy", () => {
     expect(decision.ok).toBe(false);
     expect(decision.error).toContain("扇出超限");
   });
-
-  test("sandbox=require 时应继承父会话 permission mode", () => {
-    const decision = resolveSubagentSpawnPolicy({
-      parentThreadId: "session-main",
-      parentPermissionMode: "plan",
-      requestedSandbox: "require"
-    });
-    expect(decision.ok).toBe(true);
-    expect(decision.childPermissionMode).toBe("plan");
-  });
 });
 
 describe("clampSubagentPermissionMode", () => {

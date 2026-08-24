@@ -136,6 +136,31 @@ describe("createCliAuthManager", () => {
     expect(manager.pollAuth("s6").phase).toBe("error");
   });
 
+  it("statusProc 挂起 → 状态确认超时置 error，会话不永久停在 authorizing(#536)", async () => {
+    const authProc = fakeProc();
+    const statusProc = fakeProc();
+    let n = 0;
+    const manager = createCliAuthManager({
+      spawn: asSpawn(() => (++n === 1 ? authProc : statusProc)),
+      ensureBinary: fakeEnsure,
+      sessionId: () => "s9",
+    });
+    // 300ms：给 setup 段（emit close(0) 前）留足余量，避免 CI 卡顿下 auth 段
+    // 定时器抢先触发造成假失败
+    const fastConfig = { ...dingtalkCliConfig, authTimeoutMs: 300 };
+    const startP = manager.startAuth(fastConfig, "/data", "linux", "x64");
+    await wait0();
+    authProc.stdout.emit("data", Buffer.from("https://login.dingtalk.com/oauth2/auth?x=1"));
+    await startP;
+    // authProc close(0) 清掉 auth 超时定时器并进入 status 段；statusProc 永不退出
+    authProc.emit("close", 0);
+    expect(manager.pollAuth("s9").phase).toBe("authorizing");
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    const poll = manager.pollAuth("s9");
+    expect(poll.phase).toBe("error");
+    expect(poll.error).toContain("状态确认超时");
+  }, 3000);
+
   it("pollAuth 未知 sessionKey → error", () => {
     const manager = createCliAuthManager({ sessionId: () => "x" });
     expect(manager.pollAuth("nope").phase).toBe("error");

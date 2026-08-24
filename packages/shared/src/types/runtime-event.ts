@@ -20,6 +20,7 @@ export type RuntimeEventType =
   | "tool.completed"
   | "tool.failed"
   | "tool.permission_timeout"
+  | "tool.output"
   | "desktop.action_visual"
   | "guidance.delivered"
   | "plan.preview"
@@ -162,6 +163,19 @@ export interface ToolPermissionTimeoutRuntimeEvent extends RuntimeEventBase {
   requestId: string;
   toolName: string;
   message: string;
+}
+
+/**
+ * Transient streaming snapshot of a foreground tool's accumulated output tail
+ * (Bash today). Snapshot semantics — each event carries the full bounded tail,
+ * consumers replace by stable id (`${runId}:tool-output:${toolCallId}`).
+ * Never persisted to run items; rides the live channel, falling back to the
+ * buffered channel when the host has no live receiver.
+ */
+export interface ToolOutputRuntimeEvent extends RuntimeEventBase {
+  type: "tool.output";
+  toolCallId: string;
+  chunk: string;
 }
 
 export interface DesktopActionVisualRuntimeEvent extends RuntimeEventBase {
@@ -979,6 +993,7 @@ export type LumeRuntimeEvent =
   | ToolCompletedRuntimeEvent
   | ToolFailedRuntimeEvent
   | ToolPermissionTimeoutRuntimeEvent
+  | ToolOutputRuntimeEvent
   | DesktopActionVisualRuntimeEvent
   | GuidanceDeliveredRuntimeEvent
   | ToolPermissionResolvedRuntimeEvent

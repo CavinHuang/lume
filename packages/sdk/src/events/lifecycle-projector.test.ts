@@ -514,4 +514,28 @@ describe("projectLifecycle", () => {
       review: { severity: "concern", summary: "watch out", details: "line 3", modelRef: "gpt-x", durationMs: 120 },
     })
   })
+
+  test("local_command_output with tool_use_id → run.event tool.output skeleton", async () => {
+    const events = await run([
+      { type: "system", subtype: "local_command_output", content: "build running...",
+        tool_use_id: "toolu_1" } as any,
+    ])
+    expect(events).toHaveLength(1)
+    expect(events[0].kind).toBe("run")
+    expect(events[0].phase).toBe("event")
+    expect(events[0].turnId).toBeNull()
+    expect(events[0].detail).toEqual({
+      type: "tool.output",
+      toolCallId: "toolu_1",
+      chunk: "build running...",
+    })
+  })
+
+  test("local_command_output without tool_use_id stays ignored (legacy form)", async () => {
+    const events = await run([
+      { type: "system", subtype: "local_command_output", content: "Command is still running." } as any,
+      { type: "system", subtype: "local_command_output", content: "owned", tool_use_id: "" } as any,
+    ])
+    expect(events).toHaveLength(0)
+  })
 })
