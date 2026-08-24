@@ -5,7 +5,8 @@ provider(`providers/gmail/`)迁移自 [open-connector](https://github.com/oomol-
 (Apache License, Version 2.0, Copyright OOMOL),并已按 Lume 的架构适配:
 
 - import 后缀与路径调整;移除 server/hono 依赖、slack 特例与生成的 action 名契约;
-- `provider-runtime.ts` 中未使用的 proxy/transit-file 能力暂随迁移带入,待后续裁剪。
+- 迁移后已裁剪本地未使用的 proxy/transit-file 子系统与部署级 egress 开关等能力,
+  仅保留当前 provider(gmail/qq_mail)实际消费的最小运行时面。
 
 Apache License 2.0 要求保留版权与许可声明:上游完整许可文本见本目录
 [LICENSE-Apache-2.0.txt](./LICENSE-Apache-2.0.txt);

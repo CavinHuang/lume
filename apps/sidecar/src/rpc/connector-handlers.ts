@@ -3,15 +3,13 @@ import type { ConnectorStatus } from "@lume/shared";
 import {
   disconnectConnector,
   getConnector,
-  getConnectorConnectedAccountLabel,
   getConnectorSetup,
-  hasAnyConnectorCredential,
   listConnectors,
   saveConnectorCustomCredential,
   startConnectorAuthorization,
 } from "../services/connectors/service";
 import {
-  getConnectorClientConfig,
+  getConnectorCredentialRecord,
   setConnectorClientConfig,
 } from "../services/connectors/credential-store";
 import type { RpcHandler } from "./types";
@@ -40,11 +38,14 @@ const authStates = new Map<string, ConnectorAuthState>();
 
 function buildStatus(service: string): ConnectorStatus {
   const authState = authStates.get(service);
+  // 单次读盘解密组装全部字段(GET_SETUP 对每个服务各调一次,避免逐字段重复 IO)
+  const record = getConnectorCredentialRecord(service);
+  const { oauth, customValues } = record;
   return {
     service,
-    clientConfigured: !!getConnectorClientConfig(service)?.clientId,
-    connected: hasAnyConnectorCredential(service),
-    accountLabel: getConnectorConnectedAccountLabel(service),
+    clientConfigured: !!record.clientConfig?.clientId,
+    connected: oauth !== undefined || customValues !== undefined,
+    accountLabel: oauth ? oauth.profile?.displayName : customValues?.email,
     authorizing: authState?.authorizing ?? false,
     lastError: authState?.lastError,
   };

@@ -9,11 +9,6 @@ export type JsonSchema = {
 };
 
 /**
- * Authentication models that a provider can advertise in the public catalog.
- */
-export type AuthType = "no_auth" | "api_key" | "custom_credential" | "oauth2";
-
-/**
  * A single credential field that users can configure for a provider.
  */
 export type CredentialDefinition = {
@@ -33,39 +28,8 @@ export type CredentialDefinition = {
   description?: string;
 };
 
-/**
- * OAuth app configuration field storage location.
- */
-export type OAuthClientConfigFieldLocation = "extra" | "secretExtra";
+export type AuthType = "no_auth" | "api_key" | "custom_credential" | "oauth2";
 
-/**
- * A single OAuth client config field that users can configure locally.
- */
-export type OAuthClientConfigFieldDefinition = CredentialDefinition & {
-  /** Whether the value is stored as public extra metadata or secret local data. */
-  location?: OAuthClientConfigFieldLocation;
-  /** Default local value used when the caller omits this OAuth client config field. */
-  defaultValue?: string;
-};
-
-/**
- * Instructions for registering the OAuth app this provider needs.
- *
- * The local console shows these where users paste the client id and secret,
- * because that is the moment they need them. Steps describe the provider's
- * flow in this project's own words and link to the provider's own
- * documentation; they never reproduce provider documentation or screenshots.
- */
-export type OAuthClientSetupDefinition = {
-  /** Provider page where users register the OAuth app. */
-  docsUrl?: string;
-  /** Ordered setup steps, each a single self-contained sentence of plain text. */
-  steps: string[];
-};
-
-/**
- * API key connection configuration shown by the local console.
- */
 export type ApiKeyAuthDefinition = {
   /** Auth discriminator used by catalog clients and connection routes. */
   type: "api_key";
@@ -79,9 +43,6 @@ export type ApiKeyAuthDefinition = {
   extraFields?: CredentialDefinition[];
 };
 
-/**
- * Custom credential connection configuration shown by the local console.
- */
 export type CustomCredentialAuthDefinition = {
   /** Auth discriminator used by catalog clients and connection routes. */
   type: "custom_credential";
@@ -94,6 +55,28 @@ export type CustomCredentialAuthDefinition = {
     /** Static input payload passed to the test action. */
     input: Record<string, unknown>;
   };
+};
+
+/** Provider authentication capabilities advertised in the public catalog. */
+export type ProviderAuthDefinition =
+  | { type: "no_auth" }
+  | ApiKeyAuthDefinition
+  | CustomCredentialAuthDefinition
+  | OAuth2AuthDefinition;
+
+/**
+ * OAuth app configuration field storage location.
+ */
+export type OAuthClientConfigFieldLocation = "extra" | "secretExtra";
+
+/**
+ * A single OAuth client config field that users can configure locally.
+ */
+export type OAuthClientConfigFieldDefinition = CredentialDefinition & {
+  /** Whether the value is stored as public extra metadata or secret local data. */
+  location?: OAuthClientConfigFieldLocation;
+  /** Default local value used when the caller omits this OAuth client config field. */
+  defaultValue?: string;
 };
 
 /**
@@ -167,13 +150,19 @@ export type OAuth2AuthDefinition = {
 };
 
 /**
- * Provider authentication capabilities advertised in the public catalog.
+ * Instructions for registering the OAuth app this provider needs.
+ *
+ * The local console shows these where users paste the client id and secret,
+ * because that is the moment they need them. Steps describe the provider's
+ * flow in this project's own words and link to the provider's own
+ * documentation; they never reproduce provider documentation or screenshots.
  */
-export type ProviderAuthDefinition =
-  | { type: "no_auth" }
-  | ApiKeyAuthDefinition
-  | CustomCredentialAuthDefinition
-  | OAuth2AuthDefinition;
+export type OAuthClientSetupDefinition = {
+  /** Provider page where users register the OAuth app. */
+  docsUrl?: string;
+  /** Ordered setup steps, each a single self-contained sentence of plain text. */
+  steps: string[];
+};
 
 /**
  * Public metadata and schema contract for one action.
@@ -281,14 +270,6 @@ export type ResolvedCredential =
       metadata: Record<string, unknown>;
     };
 
-export interface TransitFileUpload {
-  fileId: string;
-  downloadUrl: string;
-  sizeBytes: number;
-  name: string;
-  mimeType: string;
-}
-
 export interface TransitFileRead {
   file: File;
   sizeBytes: number;
@@ -335,6 +316,21 @@ export interface RuntimeLogger {
   warn(fields: Record<string, unknown>, message: string): void;
 }
 
+export type CredentialProfileInput = {
+  /** Provider-side account, user, bot, workspace, or token identifier. */
+  accountId?: string;
+  /** Human-readable label for local users and agents. */
+  displayName?: string;
+  /** Provider-native scopes granted to this credential, when known. */
+  grantedScopes?: string[];
+};
+
+export interface CredentialValidatorOptions {
+  fetcher: typeof fetch;
+  signal?: AbortSignal;
+  logger?: RuntimeLogger;
+}
+
 /**
  * Optional metadata returned by provider credential validation.
  */
@@ -358,12 +354,6 @@ export type CredentialValidationResult = {
   metadata?: Record<string, unknown>;
 };
 
-export interface CredentialValidatorOptions {
-  fetcher: typeof fetch;
-  signal?: AbortSignal;
-  logger?: RuntimeLogger;
-}
-
 /**
  * Stable provider account identity stored with a local credential.
  */
@@ -374,18 +364,6 @@ export type CredentialProfile = {
   displayName: string;
   /** Provider-native scopes granted to this credential, when known. */
   grantedScopes: string[];
-};
-
-/**
- * Validator-produced account identity before runtime defaults are applied.
- */
-export type CredentialProfileInput = {
-  /** Provider-side account, user, bot, workspace, or token identifier. */
-  accountId?: string;
-  /** Human-readable label for local users and agents. */
-  displayName?: string;
-  /** Provider-native scopes granted to this credential, when known. */
-  grantedScopes?: string[];
 };
 
 /**
@@ -439,40 +417,6 @@ export type ActionExecutor<TInput = unknown, TOutput = unknown> = (
   input: TInput,
   context: ExecutionContext,
 ) => Promise<ExecutionResult<TOutput>>;
-
-export interface ProxyRequestInput {
-  endpoint: string;
-  method: string;
-  query?: Record<string, unknown>;
-  headers?: Record<string, unknown>;
-  body?: unknown;
-}
-
-export interface ProxyResponse {
-  status: number;
-  headers: Record<string, string>;
-  bodyEncoding?: "base64";
-  data: unknown;
-}
-
-export type ProxyExecutionResult =
-  | {
-      ok: true;
-      response: ProxyResponse;
-    }
-  | {
-      ok: false;
-      error: {
-        code: string;
-        message: string;
-        details?: unknown;
-      };
-    };
-
-export type ProviderProxyExecutor = (
-  input: ProxyRequestInput,
-  context: ExecutionContext,
-) => Promise<ProxyExecutionResult>;
 
 /**
  * Executor map for one provider.

@@ -83,17 +83,6 @@ export const jsonSchema = {
     });
   },
 
-  looseRequiredObject(
-    description: string,
-    properties: Record<string, JsonSchema>,
-    options: { optional?: readonly string[] } = {},
-  ): JsonSchema {
-    return this.object(description, properties, {
-      optional: options.optional ?? [],
-      additionalProperties: true,
-    });
-  },
-
   array(
     itemsOrDescription: JsonSchema | string,
     optionsOrItems: ArrayOptions | JsonSchema = {},
@@ -132,23 +121,8 @@ export const jsonSchema = {
     return this.string({ ...options, minLength: 1, description });
   },
 
-  nonWhitespaceString(
-    description: string,
-    options: Omit<StringOptions, "description" | "minLength" | "pattern"> = {},
-  ): JsonSchema {
-    return this.string({ ...options, minLength: 1, pattern: "\\S", description });
-  },
-
-  unknown(description: string): JsonSchema {
-    return { description };
-  },
-
   url(description: string): JsonSchema {
     return this.string({ format: "uri", description });
-  },
-
-  email(description: string, options: Omit<StringOptions, "description" | "format"> = {}): JsonSchema {
-    return this.string({ ...options, format: "email", description });
   },
 
   nullableString(description: string, options: Omit<JsonSchemaOptions, "description"> = {}): JsonSchema {
@@ -159,28 +133,12 @@ export const jsonSchema = {
     return this.nullable(this.integer({ ...options, description }));
   },
 
-  nullableNumber(description: string, options: Omit<NumberOptions, "description"> = {}): JsonSchema {
-    return this.nullable(this.number({ ...options, description }));
-  },
-
-  nullableBoolean(description: string, options: Omit<JsonSchemaOptions, "description"> = {}): JsonSchema {
-    return this.nullable(this.boolean({ ...options, description }));
-  },
-
   dateTime(description: string): JsonSchema {
     return this.string({ format: "date-time", description });
   },
 
   date(description: string): JsonSchema {
     return this.string({ format: "date", description });
-  },
-
-  uuid(description: string): JsonSchema {
-    return this.string({ format: "uuid", description });
-  },
-
-  stringPattern(pattern: string, options: JsonSchemaOptions = {}): JsonSchema {
-    return withOptions({ type: "string", pattern }, options);
   },
 
   stringEnum(
@@ -215,25 +173,6 @@ export const jsonSchema = {
     return this.integer({ ...options, minimum: 1, description });
   },
 
-  nonNegativeInteger(description: string, options: Omit<NumberOptions, "description" | "minimum"> = {}): JsonSchema {
-    return this.integer({ ...options, minimum: 0, description });
-  },
-
-  number(
-    optionsOrDescription: NumberOptions | string = {},
-    maybeOptions: Omit<NumberOptions, "description"> = {},
-  ): JsonSchema {
-    const options =
-      typeof optionsOrDescription === "string"
-        ? { ...maybeOptions, description: optionsOrDescription }
-        : optionsOrDescription;
-    const schema: JsonSchema = { type: "number" };
-    if (options.minimum != null) schema.minimum = options.minimum;
-    if (options.maximum != null) schema.maximum = options.maximum;
-    if (options.exclusiveMinimum != null) schema.exclusiveMinimum = options.exclusiveMinimum;
-    return withOptions(schema, options);
-  },
-
   boolean(optionsOrDescription: JsonSchemaOptions | string = {}): JsonSchema {
     const options =
       typeof optionsOrDescription === "string" ? { description: optionsOrDescription } : optionsOrDescription;
@@ -244,66 +183,12 @@ export const jsonSchema = {
     return withOptions({ const: value, type: typeof value }, options);
   },
 
-  optional(schema: JsonSchema): JsonSchema {
-    const optionalSchema = { ...schema };
-    optionalSchemas.add(optionalSchema);
-    return optionalSchema;
-  },
-
-  describe(schema: JsonSchema, description: string): JsonSchema {
-    return cloneSchema(schema, { description });
-  },
-
-  withDefault(schema: JsonSchema, defaultValue: unknown): JsonSchema {
-    return cloneSchema(schema, { default: defaultValue });
-  },
-
-  /** Require at least one named property while preserving the base object schema. */
-  requireAnyProperty(schema: JsonSchema, propertyNames: readonly [string, ...string[]]): JsonSchema {
-    return cloneSchema(schema, {
-      anyOf: propertyNames.map((propertyName) => ({ required: [propertyName] })),
-    });
-  },
-
-  tuple(items: JsonSchema[], options: JsonSchemaOptions = {}): JsonSchema {
-    return withOptions(
-      {
-        type: "array",
-        prefixItems: items,
-        minItems: items.length,
-        maxItems: items.length,
-      },
-      options,
-    );
-  },
-
-  anyOf(
-    schemasOrDescription: JsonSchema[] | string,
-    optionsOrSchemas: JsonSchemaOptions | JsonSchema[] = {},
-  ): JsonSchema {
-    const schemas =
-      typeof schemasOrDescription === "string" ? (optionsOrSchemas as JsonSchema[]) : schemasOrDescription;
-    const options =
-      typeof schemasOrDescription === "string"
-        ? { description: schemasOrDescription }
-        : (optionsOrSchemas as JsonSchemaOptions);
-    return withOptions({ anyOf: schemas }, options);
-  },
-
   union(schemas: JsonSchema[], options: JsonSchemaOptions = {}): JsonSchema {
     return withOptions({ anyOf: schemas }, options);
   },
 
-  oneOf(schemas: JsonSchema[], options: JsonSchemaOptions = {}): JsonSchema {
-    return withOptions({ oneOf: schemas }, options);
-  },
-
   nullable(schema: JsonSchema): JsonSchema {
     return { anyOf: [schema, { type: "null" }] };
-  },
-
-  ref(ref: string, options: JsonSchemaOptions = {}): JsonSchema {
-    return withOptions({ $ref: ref }, options);
   },
 
   record(
@@ -317,68 +202,6 @@ export const jsonSchema = {
         ? { description: valuesOrDescription }
         : (optionsOrValues as JsonSchemaOptions);
     return withOptions({ type: "object", additionalProperties: values }, options);
-  },
-
-  looseObject(
-    propertiesOrDescription: Record<string, JsonSchema> | string = {},
-    optionsOrProperties: JsonSchemaOptions | Record<string, JsonSchema> = {},
-    maybeOptions: JsonSchemaOptions = {},
-  ): JsonSchema {
-    const properties =
-      typeof propertiesOrDescription === "string"
-        ? (optionsOrProperties as Record<string, JsonSchema>)
-        : propertiesOrDescription;
-    const resolvedOptions =
-      typeof propertiesOrDescription === "string"
-        ? {
-            ...maybeOptions,
-            description: propertiesOrDescription,
-          }
-        : (optionsOrProperties as JsonSchemaOptions);
-    return this.object(properties, { ...resolvedOptions, additionalProperties: true });
-  },
-
-  unknownObject(description: string): JsonSchema {
-    return {
-      type: "object",
-      additionalProperties: true,
-      description,
-    };
-  },
-
-  stringArray(description: string, options: Omit<ArrayOptions, "description"> = {}): JsonSchema {
-    const { itemDescription, ...arrayOptions } = options;
-    return this.array(this.string({ minLength: 1, description: itemDescription }), {
-      ...arrayOptions,
-      description,
-    });
-  },
-
-  transitFile(description = "A file previously uploaded to the local transit file API."): JsonSchema {
-    return this.object(
-      {
-        fileId: this.nonEmptyString("The transit file identifier returned by POST /api/files."),
-        name: this.nonEmptyString("Optional filename override to send to the provider."),
-        mimeType: this.nonEmptyString("Optional MIME type override to send to the provider."),
-      },
-      { optional: ["name", "mimeType"], description },
-    );
-  },
-
-  actionInput(
-    properties: Record<string, JsonSchema>,
-    required: string[] = [],
-    description: string = "Action input.",
-  ): JsonSchema {
-    return this.object(properties, { required, description });
-  },
-
-  actionOutput(
-    properties: Record<string, JsonSchema>,
-    description: string = "Action output.",
-    required: string[] = Object.keys(properties),
-  ): JsonSchema {
-    return this.object(properties, { required, description });
   },
 };
 

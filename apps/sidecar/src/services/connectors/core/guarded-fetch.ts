@@ -1,4 +1,4 @@
-import { assertPublicHttpUrl, classifyIpAddress, isEgressTrustedHost, isIpAddress, isIpv4Address } from "./request";
+import { assertPublicHttpUrl, classifyIpAddress, isIpAddress, isIpv4Address } from "./request";
 
 /**
  * Single resolved address returned by a DNS lookup, mirroring the shape of
@@ -377,10 +377,6 @@ async function assertResolvedAddressesAllowed(
   if (results.length === 0) {
     throw policy.createResolutionError(`${fieldName} could not be resolved for validation`);
   }
-  // Deployment-level trusted-host setting, resolved per request so a bootstrap that
-  // configures it after module load is honored. It may open private and
-  // VPN-mapped results, while unsafe special-use targets remain blocked.
-  const trustedHost = isEgressTrustedHost(hostname);
   for (const entry of results) {
     if (entry && typeof entry.address === "string") {
       const addressClass = classifyIpAddress(entry.address);
@@ -390,21 +386,15 @@ async function assertResolvedAddressesAllowed(
       if (addressClass === "public" || (addressClass === "private" && policy.allowPrivateNetwork)) {
         continue;
       }
-      if (trustedHost) {
-        continue;
-      }
       // Name the way out. This rejection happens before any packet leaves the
       // process, so on its own it is indistinguishable from a network failure:
-      // the caller sees a sub-100ms error with nothing pointing at DNS, at this
-      // guard, or at the fact that an operator-level opt-out exists. The
-      // resolved address is deliberately NOT included — for hosts that come from
-      // tenant input (mail credentials, self-hosted base URLs) echoing it back
-      // would turn the guard into a DNS/internal-range probe oracle, a property
-      // src/mail/imap-smtp/host-pinning.test.ts asserts.
+      // the caller sees a sub-100ms error with nothing pointing at DNS or at
+      // this guard. The resolved address is deliberately NOT included — for
+      // hosts that come from tenant input (mail credentials, self-hosted base
+      // URLs) echoing it back would turn the guard into a DNS/internal-range
+      // probe oracle.
       throw policy.createError(
-        `${fieldName} must not resolve to private or reserved IP addresses ` +
-          `(if this host is reached through a corporate VPN or split DNS, add it to ` +
-          `OOMOL_CONNECT_EGRESS_TRUSTED_HOSTS)`,
+        `${fieldName} must not resolve to private or reserved IP addresses`,
       );
     }
   }

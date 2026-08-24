@@ -108,6 +108,11 @@ function withRecord(service: string, mutate: (record: ConnectorCredentialRecord)
   });
 }
 
+/** 一次性读取整条记录:status 组装等需要多个字段的场景,免去逐字段重复读盘解密。 */
+export function getConnectorCredentialRecord(service: string): ConnectorCredentialRecord {
+  return readRecord(service);
+}
+
 export function getConnectorClientConfig(service: string): ConnectorOAuthClientConfig | undefined {
   return readRecord(service).clientConfig;
 }

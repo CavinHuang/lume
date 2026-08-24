@@ -15,7 +15,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import nodemailer from "nodemailer";
 import { resolveGuardedEgressTarget } from "../core/guarded-fetch";
-import { isIpAddress, isPrivateNetworkAccessAllowed } from "../core/request";
+import { isIpAddress } from "../core/request";
 import { mailAttachmentDownloadByteLimit, mailConnectionTimeoutMs, mailImapPort, mailSmtpPort } from "./config";
 import { MailProtocolError } from "./errors";
 import { sanitizeTempFileName } from "./temp-files";
@@ -509,7 +509,6 @@ async function pinMailHost(
     fieldName,
     createError: (message) => new MailProtocolError("blocked_host", message),
     createResolutionError: (message) => new MailProtocolError("network", message),
-    allowPrivateNetwork: isPrivateNetworkAccessAllowed(),
     lookup: deps.lookup,
   });
   if (target.addresses.length === 0) {
