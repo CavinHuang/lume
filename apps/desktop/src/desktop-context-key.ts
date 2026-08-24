@@ -1,5 +1,5 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 interface SafeStorageLike {
@@ -21,8 +21,10 @@ export function loadOrCreateDesktopContextKey({
     throw new Error('Electron safe storage is unavailable')
   }
   if (existsSync(path)) {
-    // 旧版本落盘的包裹文件可能是宽松权限，读取时回填同凭据口径（#617 review）；
-    // Windows 上 chmod 仅影响 read-only 位，no-op 无害
+    // 密钥文件不应是指向别处的链接；chmodSync 跟随 symlink，先拒绝再收权
+    // （红队 review）。旧版本落盘的包裹文件可能是宽松权限，读取时回填同凭据
+    // 口径（#617 review）；Windows 上 chmod 仅影响 read-only 位，no-op 无害
+    if (lstatSync(path).isSymbolicLink()) throw new Error('wrapped desktop context key path is a symbolic link')
     chmodSync(path, 0o600)
     const decoded = Buffer.from(safeStorage.decryptString(readFileSync(path)), 'base64')
     if (decoded.length !== 32) throw new Error('wrapped desktop context key is invalid')

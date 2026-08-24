@@ -609,14 +609,16 @@ export class WorkspaceMcpManager {
       return result;
     } catch (error) {
       // 与 callToolDiagnostic/readResource 同一口径：底层错误常内嵌 URL/凭据
-      // 片段（#403），不把原文直抛进工具结果流。服务端日志无脱敏义务，记原
-      // 始错误保住 stack/细节供排障（review 发现：只记脱敏 message 会变盲）。
-      const publicError = mapPublicError(error, this.readConfig(workspaceSlug).servers[serverId]);
+      // 片段（#403），对外与日志通道都不得带原文——sidecar 日志经 log-batch
+      // 实时推 renderer 且落盘可导出，并非纯服务端（红队 review 发现）。
+      // 排障细节用 redactMessage 后的完整 stack 保留。
+      const entry = this.readConfig(workspaceSlug).servers[serverId];
+      const publicError = mapPublicError(error, entry);
       this.logger.warn("MCP runtime tool call failed", {
         workspaceSlug,
         serverId,
         originalToolName,
-        error: error instanceof Error ? error.stack : String(error),
+        error: redactMessage(error instanceof Error ? error.stack ?? error.message : String(error), entry),
         elapsedMs: Date.now() - startedAt
       });
       throw new PublicMcpError(publicError.code, publicError.message);

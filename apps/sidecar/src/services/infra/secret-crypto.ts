@@ -39,9 +39,10 @@ function getV2Key(): Buffer | undefined {
 
 function requireV2Key(): Buffer {
   const key = getV2Key();
-  // 指引 standalone 形态的恢复路径（#617 review）：v2 密文绑定 desktop 注入
-  // 的随机密钥，裸跑 sidecar 无宿主注入时需显式提供种子或经 Lume 启动
-  if (!key) throw new Error("secret_encryption_locked: v2 secrets require the desktop-injected encryption key; launch via Lume desktop or set LUME_SECRET_SEED");
+  // 恢复指引按形态分流（红队 review）：desktop 产出的 v2 密文绑定注入的随机
+  // 密钥，设 LUME_SECRET_SEED 也过不了 GCM——env 种子只对 standalone 形态
+  // 自产自解的密文有效，文案不对其作解开存量数据的承诺
+  if (!key) throw new Error("secret_encryption_locked: this ciphertext requires the encryption key injected by Lume desktop. A standalone sidecar can only decrypt v2 records it created itself (set LUME_SECRET_SEED before first use)");
   return key;
 }
 

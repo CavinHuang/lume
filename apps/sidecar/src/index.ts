@@ -247,8 +247,19 @@ async function handleRpcLine(line: string): Promise<void> {
   }
 
   if (method === "system.secret-encryption-key") {
-    installSecretEncryptionKey((payload.params as { key?: unknown } | null)?.key);
-    if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    // 该分支位于 generic handlers 的 try/catch 之外：畸形 key 抛错时必须回
+    // error 响应，否则 desktop 启动关键路径上的 await 要等满 45s 超时才降级
+    try {
+      installSecretEncryptionKey((payload.params as { key?: unknown } | null)?.key);
+      if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    } catch (error) {
+      if (payload.id !== undefined) {
+        writeResponse({
+          id: payload.id,
+          error: { code: "secret_encryption_key_invalid", message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    }
     return;
   }
 
