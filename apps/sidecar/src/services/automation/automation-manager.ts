@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type {
   AutomationCreateJobInput,
   AutomationDeleteJobInput,
@@ -30,11 +30,30 @@ function writeJsonAtomic(path: string, payload: string): void {
   renameSync(tmpPath, path);
 }
 
+// #647 P2-22：索引损坏检疫态——备份后原文件保留在位，写操作全部阻止，
+// 防"备份后回退空表→下一次写入静默覆盖存量任务"；用户修复或删除文件即解除
+let corruptIndexQuarantined = false;
+
 function backupCorruptIndex(indexPath: string): void {
   if (!existsSync(indexPath)) return;
+  const dir = dirname(indexPath);
+  const prefix = `${basename(indexPath)}.corrupt-`;
+  const files = existsSync(dir) ? readdirSync(dir) : [];
+  const currentMtime = statSync(indexPath).mtimeMs;
+  // 同代备份（mtime 不早于当前损坏文件）已存在则跳过——防重启堆积副本；
+  // 旧代备份不抑制新一代备份，避免按"删除"指引恢复时丢失代间新建的任务
+  const hasCurrentGenBackup = files.some((name) => {
+    if (!name.startsWith(prefix)) return false;
+    try {
+      return statSync(join(dir, name)).mtimeMs >= currentMtime;
+    } catch {
+      return false;
+    }
+  });
+  if (hasCurrentGenBackup) return;
   const backupPath = `${indexPath}.corrupt-${Date.now()}`;
   try {
-    renameSync(indexPath, backupPath);
+    copyFileSync(indexPath, backupPath);
     log.warn("backed up corrupt automation index", { backupPath });
   } catch (error) {
     log.warn("failed to back up corrupt automation index", { error, backupPath });
@@ -44,6 +63,7 @@ function backupCorruptIndex(indexPath: string): void {
 function readIndex(): AutomationJobsIndex {
   const indexPath = getAutomationJobsPath();
   if (!existsSync(indexPath)) {
+    corruptIndexQuarantined = false;
     return { version: INDEX_VERSION, jobs: [] };
   }
   try {
@@ -51,15 +71,22 @@ function readIndex(): AutomationJobsIndex {
     if (!Array.isArray(parsed.jobs)) {
       throw new Error("jobs 字段缺失");
     }
+    corruptIndexQuarantined = false;
     return { version: INDEX_VERSION, jobs: parsed.jobs };
   } catch (error) {
     log.error("failed to read automation index", { error, indexPath });
     backupCorruptIndex(indexPath);
+    corruptIndexQuarantined = true;
     return { version: INDEX_VERSION, jobs: [] };
   }
 }
 
 function writeIndex(index: AutomationJobsIndex): void {
+  if (corruptIndexQuarantined) {
+    throw new Error(
+      `自动化任务索引已损坏并备份，为防覆盖存量任务已暂停写入；请修复或删除 ${getAutomationJobsPath()} 后重试`,
+    );
+  }
   const indexPath = getAutomationJobsPath();
   writeJsonAtomic(indexPath, JSON.stringify(index, null, 2));
 }

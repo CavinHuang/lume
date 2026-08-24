@@ -204,6 +204,8 @@ async function dispatchAcceptedAction(record: SuggestionRecord): Promise<void> {
         name: action.automationTitle,
         schedule: { type: "manual" },
         prompt: action.suggestedPrompt,
+        // 与 UI 表单同纪律：建议创建的任务不享受无人值守 bypass（#647 P2-23）
+        source: "manual",
       });
       return;
     }
