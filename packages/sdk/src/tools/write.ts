@@ -19,7 +19,7 @@ const assertWriteAllowed = (context: ToolContext) => (resolvedPath: string): str
 
 export const FileWriteTool = defineTool({
   name: 'Write',
-  description: 'Write complete file content. Creates the file or overwrites it while preserving an existing text file encoding and line endings. Use Edit for localized changes; stale reads and oversized writes are rejected.',
+  description: 'Write complete file content. Creates a new file, or overwrites an existing file which must be Read first, preserving its encoding and line endings. Use Edit for localized changes; stale reads and oversized writes are rejected.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -84,6 +84,15 @@ export const FileWriteTool = defineTool({
         existingEncoding = decoded
         previousContent = decoded.content
         const previousRead = context.fileStateCache?.get(filePath)
+        // Read-before-overwrite 强制（#569）：新建文件天然豁免，已存在文件
+        // 必须有读取记录，否则盲覆盖。
+        if (!previousRead) {
+          return {
+            data: `Error: File has not been read yet: ${filePath}. Read it first before overwriting an existing file.`,
+            is_error: true,
+            _meta: { file: { path: filePath, conflict: 'not_read', retryable: true } },
+          }
+        }
         const changedSinceRead = previousRead && (
           (previousRead.timestamp !== existing.mtimeMs)
           || (previousRead.size !== undefined && previousRead.size !== existing.size)
