@@ -278,7 +278,12 @@ export class BrowserBroker {
     }
     if (WAIT_COMMANDS.has(input.method)) return execute().catch((error) => { throw new Error(stableBrowserErrorCode(error)) })
     const current = previous.then(execute)
-    this.queues.set(queueKey, current.catch(() => undefined))
+    const settled = current.catch(() => undefined)
+    // 队尾 settle 后回收槽位（#615）：仅当仍是队尾才删，已被新请求替换则保留串行语义
+    void settled.finally(() => {
+      if (this.queues.get(queueKey) === settled) this.queues.delete(queueKey)
+    })
+    this.queues.set(queueKey, settled)
     return current.catch((error) => { throw new Error(stableBrowserErrorCode(error)) })
   }
   listBackends(): BrowserBackendDescriptor[] { return this.browserPluginEnabled ? [this.descriptor("iab"), ...(this.extension && this.extensionBackendEnabled && this.chromePluginEnabled && this.extensionConnected ? [this.descriptor("extension")] : [])] : [] }

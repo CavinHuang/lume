@@ -41,7 +41,20 @@ export function setAutomationNotificationWriter(writer: NotificationWriter): voi
 }
 
 function appendRun(run: AutomationRun): void {
-  appendFileSync(getAutomationRunsPath(), `${JSON.stringify(run)}\n`, "utf-8");
+  // runs.jsonl 写失败（盘满/Windows EBUSY）不得让 fire-and-forget 的 executeJob 变成
+  // unhandledRejection 断掉后续调度链（#615）：降级记日志，放弃本次 run 记录
+  try {
+    appendFileSync(getAutomationRunsPath(), `${JSON.stringify(run)}\n`, "utf-8");
+  } catch (error) {
+    writeLogRecord({
+      level: "error",
+      context: "automation.runner",
+      event: "automation.run_append_failed",
+      message: "自动化运行记录落盘失败，已跳过（不影响任务状态推进）",
+      status: "error",
+      data: { automationJobId: run.jobId, runId: run.id, error: error instanceof Error ? error.message : String(error) }
+    });
+  }
 }
 
 function clearSchedules(): void {

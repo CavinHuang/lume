@@ -155,6 +155,8 @@ class SessionStateManager {
     }
 
     if (cleaned > 0) {
+      // 清理结果必须落盘（#615）：否则磁盘文件单调累积，每次重启全量读回后原样再来
+      this.saveToDisk();
       log.info("清理过期会话状态", { count: cleaned });
     }
 
