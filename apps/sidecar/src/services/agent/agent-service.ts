@@ -1975,24 +1975,19 @@ export async function stopAgent(threadId: string): Promise<boolean> {
   for (const child of activeChildren) {
     registry.update(child.runId, { status: "aborted" });
   }
-  const [runtime, subagents] = await Promise.all([
-    import("../agent-runtime/runner/attempt"),
-    import("../agent-runtime/subagents/subagent-coordinator")
+  const [runtime] = await Promise.all([
+    import("../agent-runtime/runner/attempt")
   ]);
   const [stopped] = await Promise.all([
     Promise.all([
       runtime.stopAgentRuntime(threadId),
       ...activeChildren.map((child) => runtime.stopAgentRuntime(child.childThreadId))
-    ]),
-    subagents.getSubagentCoordinator().cancelByParentThread(threadId)
+    ])
   ]);
   return dispatchStopped || stopped.some(Boolean);
 }
 
 export function stopAllAgents(): void {
-  void import("../agent-runtime/subagents/subagent-coordinator")
-    .then((module) => module.getSubagentCoordinator().cancelAll())
-    .catch(() => undefined);
   void import("../agent-runtime/runner/attempt")
     .then((module) => module.stopAllAgentRuntimeSessions())
     .catch(() => undefined);

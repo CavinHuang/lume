@@ -88,15 +88,6 @@ describe("tool-metadata", () => {
     expect(isToolAllowedInPlanMode("AskUserQuestion")).toBeTrue();
   });
 
-  test("keeps TaskReport out of plan mode", () => {
-    expect(getToolMetadata("TaskReport")).toMatchObject({
-      category: "control",
-      riskLevel: "low",
-      allowedInPlanMode: false
-    });
-    expect(isToolAllowedInPlanMode("TaskReport")).toBeFalse();
-  });
-
   test("describes UI personalization as a local write tool", () => {
     expect(getToolMetadata("personalize_ui")).toMatchObject({
       name: "personalize_ui",
