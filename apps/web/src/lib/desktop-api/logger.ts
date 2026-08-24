@@ -98,6 +98,16 @@ export function writeWebLog(
   })
 }
 
+/** Test-only observation point for the internal fire-and-forget queue. */
+export function readRendererQueueForTest(): readonly LumeLogEventInput[] {
+  return queue
+}
+
+/** Test-only: drop all queued events so tests start from an empty queue. */
+export function clearRendererQueueForTest(): void {
+  queue = []
+}
+
 export function writeWebLogEvent(
   input: Omit<LumeLogEventInput, 'schemaVersion' | 'eventId' | 'emittedAt' | 'source'>,
 ): void {
