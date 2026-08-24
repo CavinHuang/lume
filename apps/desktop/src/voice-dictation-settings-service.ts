@@ -8,7 +8,9 @@
 import type {
   VoiceDictationSettings,
   VoiceDictationSettingsUpdate,
+  VoiceDictationSettingsUpdateResult,
 } from '@lume/shared'
+import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
 import type { SettingsBroker } from './settings/settings-broker'
 
 const DEFAULT_SETTINGS: VoiceDictationSettings = {
@@ -18,6 +20,7 @@ const DEFAULT_SETTINGS: VoiceDictationSettings = {
   language: '',
   customHotwords: '',
   outputMode: 'lume-input',
+  shortcut: VOICE_DICTATION_DEFAULT_SHORTCUT,
 }
 
 type PersistedShape = Partial<Record<keyof VoiceDictationSettings, unknown>>
@@ -44,19 +47,25 @@ export function readVoiceDictationSettings(broker: SettingsBroker): VoiceDictati
     language: coerceString(raw.language, DEFAULT_SETTINGS.language),
     customHotwords: coerceString(raw.customHotwords, DEFAULT_SETTINGS.customHotwords),
     outputMode: coerceOutputMode(raw.outputMode),
+    shortcut: coerceString(raw.shortcut, DEFAULT_SETTINGS.shortcut) || VOICE_DICTATION_DEFAULT_SHORTCUT,
   }
 }
 
 export function updateVoiceDictationSettings(
   broker: SettingsBroker,
   updates: VoiceDictationSettingsUpdate,
-): VoiceDictationSettings {
+  options?: { previousShortcut?: string },
+): VoiceDictationSettingsUpdateResult {
   const current = readVoiceDictationSettings(broker)
   const next: VoiceDictationSettings = {
     ...current,
     ...updates,
     outputMode: coerceOutputMode(updates.outputMode ?? current.outputMode),
+    shortcut: (typeof updates.shortcut === 'string' && updates.shortcut.trim())
+      ? updates.shortcut.trim()
+      : current.shortcut,
   }
   broker.mutate((prev) => ({ ...prev, voiceDictation: next }))
-  return next
+  // 快捷键变更时由调用方负责重注册；此处仅回报是否需要。
+  return { ...next, shortcutRegistered: options?.previousShortcut === undefined || next.shortcut === options.previousShortcut }
 }

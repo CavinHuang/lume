@@ -96,7 +96,7 @@ describe('parseServerMessage', () => {
   })
 
   test('buildAuthHeaders maps credentials to protocol headers', () => {
-    const headers = buildAuthHeaders({ appId: 'a', accessToken: 't', resourceId: 'r', language: '', customHotwords: '', outputMode: 'lume-input' })
+    const headers = buildAuthHeaders({ appId: 'a', accessToken: 't', resourceId: 'r', language: '', customHotwords: '', outputMode: 'lume-input', shortcut: 'Alt+V' })
     expect(headers['X-Api-App-Key']).toBe('a')
     expect(headers['X-Api-Access-Key']).toBe('t')
     expect(headers['X-Api-Resource-Id']).toBe('r')

@@ -27,9 +27,18 @@ export interface VoiceDictationSettings {
   customHotwords: string
   /** 听写结果输出方式 */
   outputMode: VoiceDictationOutputMode
+  /** 唤起听写的全局快捷键（Electron accelerator 格式） */
+  shortcut: string
 }
 
+export const VOICE_DICTATION_DEFAULT_SHORTCUT = 'Alt+V'
+
 export type VoiceDictationSettingsUpdate = Partial<VoiceDictationSettings>
+
+/** 更新设置的结果；shortcut 变更时附带重注册是否成功（失败则保持旧快捷键生效）。 */
+export interface VoiceDictationSettingsUpdateResult extends VoiceDictationSettings {
+  shortcutRegistered: boolean
+}
 
 export type VoiceDictationStatus =
   | 'idle'

@@ -9,10 +9,82 @@ import { toast } from 'sonner'
 import type {
   VoiceDictationSettings,
   VoiceDictationSettingsUpdate,
+  VoiceDictationSettingsUpdateResult,
   VoiceDictationTestResult,
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
+
+/** KeyboardEvent → Electron accelerator；无有效组合时返回 null。 */
+export function keyboardEventToAccelerator(event: React.KeyboardEvent): string | null {
+  const parts: string[] = []
+  if (event.ctrlKey) parts.push('CommandOrControl')
+  if (event.metaKey) parts.push('Super')
+  if (event.altKey) parts.push('Alt')
+  if (event.shiftKey) parts.push('Shift')
+
+  const key = event.key
+  let mainKey: string | null = null
+  if (/^F([1-9]|1[0-2])$/u.test(key)) mainKey = key
+  else if (key === ' ') mainKey = 'Space'
+  else if (/^[a-z0-9]$/iu.test(key)) mainKey = key.toUpperCase()
+  else if (/^[`\-=[\];'",.]$/u.test(key)) mainKey = key === '`' ? '`' : key
+  else if (key.startsWith('Arrow') || ['PageUp', 'PageDown', 'Home', 'End', 'Insert', 'Delete'].includes(key)) mainKey = key
+
+  if (!mainKey) return null
+  // 纯 Shift+字符会劫持普通打字，要求至少含一个非 Shift 修饰键。
+  const hasRealModifier = event.ctrlKey || event.metaKey || event.altKey
+  if (!hasRealModifier) return null
+  return [...parts, mainKey].join('+')
+}
+
+function ShortcutCaptureRow({ value, onApply }: {
+  value: string
+  onApply: (accelerator: string) => Promise<VoiceDictationSettingsUpdateResult | null>
+}) {
+  const [recording, setRecording] = React.useState(false)
+  const [applying, setApplying] = React.useState(false)
+
+  const handleKeyDown = async (event: React.KeyboardEvent) => {
+    if (!recording) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.key === 'Escape') {
+      setRecording(false)
+      return
+    }
+    const accelerator = keyboardEventToAccelerator(event)
+    if (!accelerator) return
+    setRecording(false)
+    setApplying(true)
+    try {
+      const result = await onApply(accelerator)
+      if (result && !result.shortcutRegistered) {
+        toast.error(`快捷键 ${accelerator} 注册失败，可能被其他程序占用，已保持原快捷键`)
+      }
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setRecording(true)}
+      onKeyDown={(event) => void handleKeyDown(event)}
+      onBlur={() => setRecording(false)}
+      className={cn(
+        'h-9 min-w-[140px] rounded-lg border px-3 text-left font-mono text-[13px]',
+        recording
+          ? 'border-[color:color-mix(in_oklab,var(--brand)_46%,var(--lume-border-strong))] text-[var(--brand)]'
+          : 'border-[var(--lume-border-subtle)] text-[var(--text-1)]',
+      )}
+    >
+      {recording ? '按下新的组合键…' : applying ? '应用中…' : value}
+    </button>
+  )
+}
 
 const LANGUAGE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: '', label: '自动检测' },
@@ -22,6 +94,17 @@ const LANGUAGE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'ja-JP', label: '日语' },
   { value: 'ko-KR', label: '韩语' },
 ]
+
+function ShortcutRow({ settings, onApply }: {
+  settings: VoiceDictationSettings
+  onApply: (accelerator: string) => Promise<VoiceDictationSettingsUpdateResult | null>
+}) {
+  return (
+    <SettingsRow label="全局快捷键" hint="在任意应用中唤起语音听写；需包含 Ctrl/Alt 等修饰键">
+      <ShortcutCaptureRow value={settings.shortcut} onApply={onApply} />
+    </SettingsRow>
+  )
+}
 
 function SettingsRow({ label, hint, children }: {
   label: string
@@ -60,10 +143,12 @@ export function VoiceDictationSettings() {
   const applyUpdate = React.useCallback(async (updates: VoiceDictationSettingsUpdate) => {
     setSaving(true)
     try {
-      const next = await invoke<VoiceDictationSettings>('voice_dictation_update_settings', updates)
+      const next = await invoke<VoiceDictationSettingsUpdateResult>('voice_dictation_update_settings', updates)
       setSettings(next)
+      return next
     } catch (error) {
       toast.error(`保存失败: ${error instanceof Error ? error.message : '未知错误'}`)
+      return null
     } finally {
       setSaving(false)
     }
@@ -119,7 +204,7 @@ export function VoiceDictationSettings() {
           </li>
           <li>在语音服务的应用管理中创建应用并授权该服务，拿到 APP ID 与 Access Token</li>
           <li>Resource ID 填 <code className="rounded bg-[var(--surface-3)] px-1 py-0.5 text-xs">volcengine_input_common</code>（或你开通的服务实例 ID）</li>
-          <li>对照下方逐项填写凭证，点「测试连接」，然后在输入框点麦克风或按 <kbd className="rounded border border-[var(--lume-border-subtle)] bg-[var(--surface-3)] px-1 text-xs">Alt+V</kbd> 开始听写</li>
+          <li>对照下方逐项填写凭证，点「测试连接」，然后在输入框点麦克风或按全局快捷键开始听写</li>
         </ol>
       </div>
 
@@ -170,8 +255,13 @@ export function VoiceDictationSettings() {
             className="w-full resize-y rounded-lg border border-[var(--lume-border-subtle)] bg-transparent px-2 py-1.5 text-[13px] leading-6 text-[var(--text-1)]"
           />
         </SettingsRow>
-        <SettingsRow label="结果输出" hint="「写入当前应用」：在 Lume 之外按 Alt+V 唤起听写，结束后粘贴到当时的前台应用光标处（Windows 首次使用需允许；macOS 需辅助功能权限）">
-          <div className="flex flex-wrap gap-2 pt-1">
+        {settings && (
+          <ShortcutRow
+            settings={settings}
+            onApply={(accelerator) => applyUpdate({ shortcut: accelerator })}
+          />
+        )}
+        <SettingsRow label="结果输出" hint="「写入当前应用」：在 Lume 之外按快捷键唤起听写，结束后粘贴到当时的前台应用光标处（Windows 首次使用需允许；macOS 需辅助功能权限）">          <div className="flex flex-wrap gap-2 pt-1">
             <Button
               variant={settings.outputMode === 'lume-input' ? 'secondary' : 'ghost'}
               type="button"
@@ -212,7 +302,7 @@ export function VoiceDictationSettings() {
           测试连接
         </Button>
         {saving ? <span className="text-xs text-[var(--text-3)]">正在保存…</span> : null}
-        <span className="text-xs text-[var(--text-3)]">文本框失焦后自动保存；修改在下次听写会话生效。全局快捷键 Alt+V 可随时唤起听写。</span>
+        <span className="text-xs text-[var(--text-3)]">文本框失焦后自动保存；修改在下次听写会话生效。全局快捷键可随时唤起听写。</span>
       </div>
     </div>
   )

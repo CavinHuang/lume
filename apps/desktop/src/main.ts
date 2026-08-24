@@ -88,6 +88,7 @@ import {
 import { readVoiceDictationSettings, updateVoiceDictationSettings } from './voice-dictation-settings-service'
 import { pasteTextAtCurrentCursor } from './text-insertion-service'
 import type { VoiceDictationSettingsUpdate } from '@lume/shared'
+import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -1646,6 +1647,53 @@ const STAGED_ATTACHMENT_SIDECAR_METHODS = new Set([
   'agent:save-files-to-workspace-root',
 ])
 
+// 语音听写全局快捷键：可由设置动态变更，变更时先解绑旧键再注册新键。
+let registeredVoiceDictationShortcut = ''
+
+function handleVoiceDictationShortcut(): void {
+  void (async () => {
+    try {
+      let outputMode: VoiceDictationSettingsUpdate['outputMode']
+      try {
+        outputMode = readVoiceDictationSettings(getSettingsBroker()).outputMode
+      } catch {
+        outputMode = undefined
+      }
+      const mainWinFocused = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused())
+      if (outputMode === 'system-cursor' && !mainWinFocused) {
+        sendVoiceIndicatorToggle()
+        return
+      }
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        await createMainWindow()
+      } else {
+        await showMainWindow()
+      }
+      const win = mainWindow
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('lume:event:voice-dictation:toggle')
+      }
+    } catch (error) {
+      writeMainLog('error', 'desktop.voice_dictation', 'shortcut.toggle_failed', 'voice dictation shortcut failed', { data: { error } })
+    }
+  })()
+}
+
+function registerVoiceDictationShortcut(accelerator: string): boolean {
+  const next = accelerator.trim() || VOICE_DICTATION_DEFAULT_SHORTCUT
+  if (next === registeredVoiceDictationShortcut) return true
+  try {
+    globalShortcut.unregister(registeredVoiceDictationShortcut)
+  } catch {
+    // 旧键未注册或已失效，忽略。
+  }
+  const registered = globalShortcut.register(next, handleVoiceDictationShortcut)
+  if (registered) {
+    registeredVoiceDictationShortcut = next
+  }
+  return registered
+}
+
 /** 把 ASR 会话事件回发给发起录音的窗口；窗口已销毁时静默丢弃。 */
 function sendVoiceDictationEvent(ownerWebContentsId: number | undefined, channel: string, payload: unknown): void {
   if (ownerWebContentsId === undefined) return
@@ -1897,9 +1945,22 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     case 'voice_dictation_get_settings':
       requireMainWindowSender(context, 'voice_dictation_get_settings')
       return readVoiceDictationSettings(getSettingsBroker())
-    case 'voice_dictation_update_settings':
+    case 'voice_dictation_update_settings': {
       requireMainWindowSender(context, 'voice_dictation_update_settings')
-      return updateVoiceDictationSettings(getSettingsBroker(), payload as VoiceDictationSettingsUpdate)
+      const broker = getSettingsBroker()
+      const before = readVoiceDictationSettings(broker)
+      const result = updateVoiceDictationSettings(broker, payload as VoiceDictationSettingsUpdate)
+      let shortcutRegistered = true
+      if (result.shortcut !== before.shortcut) {
+        shortcutRegistered = registerVoiceDictationShortcut(result.shortcut)
+        if (!shortcutRegistered) {
+          // 新键被占用：回滚设置中的快捷键并解绑尝试，保持旧键继续生效。
+          updateVoiceDictationSettings(broker, { shortcut: before.shortcut })
+          registerVoiceDictationShortcut(before.shortcut)
+        }
+      }
+      return { ...result, shortcut: shortcutRegistered ? result.shortcut : before.shortcut, shortcutRegistered }
+    }
     case 'voice_dictation_test_connection':
       requireMainWindowSender(context, 'voice_dictation_test_connection')
       return testVoiceAsrConnection(readVoiceDictationSettings(getSettingsBroker()))
@@ -3428,38 +3489,15 @@ app.whenReady().then(async () => {
     writeMainLog('error', 'desktop.quick_input', 'shortcut.registration_failed', 'globalShortcut Alt+L 注册失败（可能被其他程序占用）')
   }
 
-  // Alt+V 全局唤起语音听写。system-cursor 输出且主窗口不在前台时走无焦点指示条
-  // （保持当前应用焦点，录完直接粘贴到原光标）；否则前置主窗口由输入框接手。
-  const voiceDictationShortcutRegistered = globalShortcut.register('Alt+V', () => {
-    void (async () => {
-      try {
-        let outputMode: VoiceDictationSettingsUpdate['outputMode']
-        try {
-          outputMode = readVoiceDictationSettings(getSettingsBroker()).outputMode
-        } catch {
-          outputMode = undefined
-        }
-        const mainWinFocused = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused())
-        if (outputMode === 'system-cursor' && !mainWinFocused) {
-          sendVoiceIndicatorToggle()
-          return
-        }
-        if (!mainWindow || mainWindow.isDestroyed()) {
-          await createMainWindow()
-        } else {
-          await showMainWindow()
-        }
-        const win = mainWindow
-        if (win && !win.isDestroyed()) {
-          win.webContents.send('lume:event:voice-dictation:toggle')
-        }
-      } catch (error) {
-        writeMainLog('error', 'desktop.voice_dictation', 'shortcut.toggle_failed', 'voice dictation shortcut failed', { data: { error } })
-      }
-    })()
-  })
-  if (!voiceDictationShortcutRegistered) {
-    writeMainLog('error', 'desktop.voice_dictation', 'shortcut.registration_failed', 'globalShortcut Alt+V 注册失败（可能被其他程序占用）')
+  // 语音听写全局快捷键：从设置读取（默认 Alt+V），被系统或其他程序占用时记录但不中断启动。
+  let voiceDictationShortcutForStartup = VOICE_DICTATION_DEFAULT_SHORTCUT
+  try {
+    voiceDictationShortcutForStartup = readVoiceDictationSettings(getSettingsBroker()).shortcut || VOICE_DICTATION_DEFAULT_SHORTCUT
+  } catch {
+    // 设置读取失败按默认键注册。
+  }
+  if (!registerVoiceDictationShortcut(voiceDictationShortcutForStartup)) {
+    writeMainLog('error', 'desktop.voice_dictation', 'shortcut.registration_failed', `globalShortcut ${voiceDictationShortcutForStartup} 注册失败（可能被其他程序占用）`)
   }
 }).catch((error) => {
   logDesktopStartup(`startup failed: ${error.stack ?? error}`, 'app.start_failed', 'fatal')
