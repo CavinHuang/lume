@@ -205,7 +205,7 @@ export async function dispatchBrowserText(
   // 拟真逐字输入只保留前 maxNaturalChars 个字符:长文本全程逐字会以
   // ~60-90ms/字线性膨胀至分钟级,被 sidecar transport 超时误报(#638);
   // 剩余部分一次性 insertText 补完,拟真观感(防检测看行为模式)不受损。
-  // 150 按 type 档最坏(87ms/字+420ms 停顿)≈19s 收敛,须小于外层
+  // 150 按 type 档对抗最坏(87ms/字+420ms 停顿)≈27s 收敛,须小于外层
   // withDebugger 整段 30s 计时。
   const maxNaturalChars = options.maxNaturalChars ?? 150
   const naturalCharacters = characters.slice(0, maxNaturalChars)

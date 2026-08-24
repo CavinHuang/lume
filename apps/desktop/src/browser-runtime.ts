@@ -2508,18 +2508,19 @@ export class BrowserRuntime {
       && (!requestedIds.size || requestedIds.has(asset.id))
       && (!requestedKinds.size || requestedKinds.has(asset.kind)),
     ).slice(0, 100)
-    const startedAt = Date.now()
+    const startedAt = performance.now()
     const directory = join(this.options.configDir(), "browser", "assets", safePartition(context.browserSessionId), safePartition(context.browserTurnId), inventory.id)
     const exported: Array<Record<string, unknown>> = []
     const failures: Array<Record<string, unknown>> = []
     let totalBytes = 0
-    // ≤100 资源 × 30s abort 串行无总预算时最坏小时级(#638);预算 = handler
-    // 上限 + 10s 余量,超时剩余资产按 budget_exceeded 记入 failures,已导出
-    // 部分照常返回。
-    const assetBudgetDeadline = startedAt + BROWSER_HANDLER_WAIT_CAP_MS + 10_000
+    // ≤100 资源 × 30s abort 串行无总预算时最坏小时级(#638)。预算 = handler
+    // 上限:本方法不在 GUEST_OPTIONAL,前置 waitForGuest ≤10s 也须计入全局账
+    // (10+30=40 < transport 45s),故批量段自身只拿 CAP;超时剩余资产按
+    // budget_exceeded 记入 failures,已导出部分照常返回。
+    const assetBudgetDeadlineMs = BROWSER_HANDLER_WAIT_CAP_MS
     for (const asset of assets) {
       const controller = new AbortController()
-      const remainingBudgetMs = assetBudgetDeadline - Date.now()
+      const remainingBudgetMs = assetBudgetDeadlineMs - (performance.now() - startedAt)
       if (remainingBudgetMs <= 0 && exported.length + failures.length > 0) {
         failures.push({ contentType: null, id: asset.id, name: asset.name, reason: "budget_exceeded", url: asset.url })
         continue
@@ -3406,11 +3407,12 @@ export class BrowserRuntime {
     const results: Array<{ url: string; title: string | null; content: string | null; skipped?: boolean }> = []
     // ≤10 个 URL 各自 navigate+waitForLoad 串行,无总预算时最坏分钟级,
     // 会被 sidecar transport 先杀(#638);超预算的剩余 URL 按失败形态返回。
-    // 预算用 performance.now()(单调,免疫 NTP 回拨/睡眠唤醒);navigate/
-    // waitForLoad/pageContent 三段全部挂钩剩余预算且每段前重算,连续慢站
-    // 不会叠加破 transport。
+    // 预算用 performance.now()(单调,免疫 NTP 回拨/睡眠唤醒);本方法不在
+    // GUEST_OPTIONAL,前置 waitForGuest ≤10s 也须计入全局账(guest+批量 =
+    // 10+CAP=40 < transport 45s),故批量段自身只拿 CAP;navigate/waitForLoad/
+    // pageContent 三段全部挂钩剩余预算且每段前重算,连续慢站不叠加破线。
     const budgetStart = performance.now()
-    const budgetDeadlineMs = BROWSER_HANDLER_WAIT_CAP_MS + 10_000
+    const budgetDeadlineMs = BROWSER_HANDLER_WAIT_CAP_MS
     for (const url of urls) {
       let remainingBudgetMs = budgetDeadlineMs - (performance.now() - budgetStart)
       // 剩余不足最小可用预算即跳过,与各段兜底下限一致,避免白走一轮 navigate
