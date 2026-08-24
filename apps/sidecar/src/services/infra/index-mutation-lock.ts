@@ -4,8 +4,12 @@ import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
 const DEFAULT_STALE_MS = 30_000;
-const DEFAULT_TIMEOUT_MS = 5_000;
+// fail-fast 而非长忙等：忙等会冻结整个 sidecar 主线程（RPC/agent 流全部停摆），
+// 且跨进程争用只在接管重叠的极窄窗口出现；超时错误作为可重试错误上抛，
+// 由用户驱动操作的重试或 workdir-resolver 的 catch 降级兜底（#526）
+const DEFAULT_TIMEOUT_MS = 300;
 const localLocks = new Set<string>();
+const waitSignal = new Int32Array(new SharedArrayBuffer(4));
 
 interface LockPayload {
   pid: number;
@@ -16,7 +20,7 @@ interface LockPayload {
 function sleepSync(ms: number): void {
   const end = Date.now() + ms;
   while (Date.now() < end) {
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(50, end - Date.now()));
+    Atomics.wait(waitSignal, 0, 0, Math.min(50, end - Date.now()));
   }
 }
 
@@ -36,19 +40,30 @@ function readLockPayload(lockPath: string): LockPayload | null {
   return null;
 }
 
+function isProcessAlive(pid: number | undefined): boolean | undefined {
+  if (typeof pid !== "number" || !Number.isFinite(pid) || pid <= 0) return undefined;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM 表示目标进程存在但无权发信号——仍视为存活
+    return (error as NodeJS.ErrnoException | undefined)?.code === "EPERM" ? true : false;
+  }
+}
+
 function isStale(lockPath: string, staleMs: number): { stale: boolean; payload: LockPayload | null } {
   try {
     const stat = statSync(lockPath);
     const payload = readLockPayload(lockPath);
-    if (Date.now() - stat.mtimeMs > staleMs) return { stale: true, payload };
-    const pid = payload?.pid;
-    if (typeof pid !== "number" || !Number.isFinite(pid) || pid <= 0) return { stale: false, payload };
-    try {
-      process.kill(pid, 0);
-      return { stale: false, payload };
-    } catch {
+    // mtime 过期不能单独判死：合法长持锁（如 workdir 迁移秒级 cpSync）会被
+    // 另一进程偷走造成双持锁；必须以持有者 pid 存活为准（#526）
+    if (Date.now() - stat.mtimeMs > staleMs) {
+      const alive = isProcessAlive(payload?.pid);
+      if (alive === true) return { stale: false, payload };
       return { stale: true, payload };
     }
+    if (payload && isProcessAlive(payload.pid) === false) return { stale: true, payload };
+    return { stale: false, payload };
   } catch {
     return { stale: true, payload: null };
   }
