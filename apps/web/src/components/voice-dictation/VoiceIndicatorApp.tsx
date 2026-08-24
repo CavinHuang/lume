@@ -38,12 +38,15 @@ function VoiceIndicatorSurface() {
     }
   }, [voice.status, voice.start, voice.stop])
 
-  // 会话结束后自动隐藏窗口（首次显示前不触发）。
+  // 会话结束后自动隐藏窗口（首次显示前不触发）；有结果/错误通知时停留片刻供阅读。
   React.useEffect(() => {
-    if (hasStartedRef.current && !voice.isActive) {
+    if (!hasStartedRef.current || voice.isActive) return
+    const delay = voice.notice ? 2600 : 0
+    const timer = setTimeout(() => {
       invoke('voice_dictation_hide_indicator', null).catch(() => {})
-    }
-  }, [voice.isActive])
+    }, delay)
+    return () => clearTimeout(timer)
+  }, [voice.isActive, voice.notice])
 
   return (
     <div className="flex h-screen w-screen items-center justify-center overflow-hidden bg-transparent">
@@ -63,8 +66,15 @@ function VoiceIndicatorSurface() {
           className="flex h-3.5 shrink-0 items-center gap-[2px]"
           barClassName="w-[3px] rounded-full bg-[var(--lume-danger)] transition-[height] duration-100"
         />
-        <div className="min-w-0 flex-1 truncate text-ui text-[var(--lume-text-secondary)]">
-          {voice.transcript || (voice.status === 'connecting' ? '正在连接语音识别…' : voice.status === 'stopping' ? '正在写入光标位置…' : '正在听写，再按 Alt+V 结束')}
+        <div
+          className={cn(
+            'min-w-0 flex-1 truncate text-ui',
+            voice.notice?.tone === 'error' ? 'text-[var(--lume-danger)]' : 'text-[var(--lume-text-secondary)]',
+          )}
+        >
+          {voice.notice?.text
+            || voice.transcript
+            || (voice.status === 'connecting' ? '正在连接语音识别…' : voice.status === 'stopping' ? '正在整理转写…' : '正在听写，再按快捷键结束')}
         </div>
         <button
           type="button"

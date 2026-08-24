@@ -30,6 +30,12 @@ import {
 
 export type VoiceDictationHookStatus = 'idle' | 'connecting' | 'recording' | 'stopping' | 'error'
 
+/** 面向无焦点指示条的结果/错误通知（内嵌入口以 toast 为准，可忽略此通道）。 */
+export interface VoiceDictationNotice {
+  text: string
+  tone: 'info' | 'error'
+}
+
 // 停止后等服务端最终结果的兜底时限；超时则用当前累积文本提交。
 const STOP_COMMIT_TIMEOUT_MS = 1400
 // 收到 isFinal 转写后延迟片刻再提交，吸收紧随其后的修正事件。
@@ -91,6 +97,7 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
   // 重渲整个输入框子树。UI 侧用 VolumeBars 组件经 rAF 读 ref 直写 DOM。
   const volumeRef = React.useRef(0)
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0)
+  const [notice, setNotice] = React.useState<VoiceDictationNotice | null>(null)
 
   const statusRef = React.useRef<VoiceDictationHookStatus>('idle')
   const setStatusTracked = React.useCallback((next: VoiceDictationHookStatus) => {
@@ -167,29 +174,39 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
   const commitText = React.useCallback((text: string) => {
     const finalText = text.trim()
     const mode = settingsRef.current?.outputMode ?? 'lume-input'
-    // 窗口不在前台时任务栏/Dock 提醒听写已完成。
-    if (typeof document !== 'undefined' && !document.hasFocus()) {
+    // 窗口不在前台时任务栏/Dock 提醒听写已完成（cursor 模式结果已就地呈现，不闪）。
+    if (mode !== 'system-cursor' && typeof document !== 'undefined' && !document.hasFocus()) {
       void invoke('desktop_flash_window', null).catch(() => {})
     }
     settleIdle()
     if (!finalText) {
+      setNotice({ text: '未识别到语音内容', tone: 'info' })
       toast.info('未识别到语音内容')
       return
     }
     if (mode === 'clipboard') {
       invoke('write_clipboard_text', { text: finalText })
-        .then(() => toast.success('听写结果已复制到剪贴板'))
-        .catch((error: unknown) => toast.error(`写入剪贴板失败: ${error instanceof Error ? error.message : '未知错误'}`))
+        .then(() => {
+          toast.success('听写结果已复制到剪贴板')
+          setNotice({ text: '已复制到剪贴板，去粘贴吧', tone: 'info' })
+        })
+        .catch((error: unknown) => {
+          toast.error(`写入剪贴板失败: ${error instanceof Error ? error.message : '未知错误'}`)
+          setNotice({ text: '写入剪贴板失败', tone: 'error' })
+        })
       return
     }
     if (mode === 'system-cursor') {
       // 写入唤起时前台应用的光标处；自动粘贴失败时主进程已把文本保留在剪贴板。
       invoke<{ success: boolean; message: string }>('voice_dictation_commit_cursor', { text: finalText })
         .then((result) => {
-          if (result.success) toast.success(result.message)
-          else toast.warning(result.message)
+          setNotice({ text: result.message, tone: result.success ? 'info' : 'error' })
         })
-        .catch((error: unknown) => toast.error(`写入光标失败: ${error instanceof Error ? error.message : '未知错误'}`))
+        .catch((error: unknown) => {
+          const message = `写入光标失败: ${error instanceof Error ? error.message : '未知错误'}`
+          toast.error(message)
+          setNotice({ text: message, tone: 'error' })
+        })
       return
     }
     onCommitRef.current(finalText)
@@ -329,6 +346,8 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
     toast.error(message, options?.missingCredentials && onOpenSettingsRef.current
       ? { action: { label: '去配置', onClick: onOpenSettingsRef.current } }
       : undefined)
+    // 无焦点指示条场景 toast 不可见，同步写入 notice 供其展示。
+    setNotice({ text: message, tone: 'error' })
     settleIdle()
   }, [settleIdle])
 
@@ -339,6 +358,7 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
     }
     activeSessionOwner = instanceTokenRef.current
     activeSessionCancel = () => cancelRecordingRef.current?.()
+    setNotice(null)
     stoppingRef.current = false
     asrReadyRef.current = false
     queuedAudioRef.current = []
@@ -518,10 +538,11 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
     status,
     transcript,
     elapsedSeconds,
+    notice,
     volumeRef,
     isActive: status === 'connecting' || status === 'recording' || status === 'stopping',
     start: startRecording,
     stop: stopRecording,
     cancel: cancelRecording,
-  }), [status, transcript, elapsedSeconds, startRecording, stopRecording, cancelRecording])
+  }), [status, transcript, elapsedSeconds, notice, startRecording, stopRecording, cancelRecording])
 }

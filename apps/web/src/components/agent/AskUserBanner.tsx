@@ -88,6 +88,12 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
     onCommit: (text) => setCustomAnswer((current) => (current && !/\s$/u.test(current) ? `${current} ${text}` : current + text)),
   })
 
+  // 卡片被忽略（Esc/隐藏）时终止进行中的听写：组件仍挂载但已无可见反馈，
+  // 不主动取消会变成"隐形录音"持续上传音频。
+  useEffect(() => {
+    if (hidden && voiceDictation.isActive) voiceDictation.cancel()
+  }, [hidden, voiceDictation.cancel, voiceDictation.isActive])
+
   useEffect(() => {
     if (hidden || typeof window === 'undefined') return
     const onKeyDown = (event: KeyboardEvent) => {

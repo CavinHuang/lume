@@ -1661,7 +1661,8 @@ function handleVoiceDictationShortcut(): void {
         outputMode = undefined
       }
       const mainWinFocused = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused())
-      if (outputMode === 'system-cursor' && !mainWinFocused) {
+      // 非输入框模式且 Lume 不在前台：走无焦点指示条，不打断当前应用工作流。
+      if ((outputMode === 'system-cursor' || outputMode === 'clipboard') && !mainWinFocused) {
         getVoiceIndicatorManager().sendToggle()
         return
       }
