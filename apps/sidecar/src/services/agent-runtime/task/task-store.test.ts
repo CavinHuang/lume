@@ -278,4 +278,109 @@ describe("FileBackedTaskStore", () => {
       await expect(store.create({ subject: "Should not steal" }, context())).rejects.toThrow("Task lock timeout");
     });
   }, 15_000);
+
+  test("被未完成依赖阻塞的 Task 不得直通 completed(#647 P2-1)", async () => {
+    await withStore(async (store) => {
+      const blocker = await store.create({ subject: "Blocker" }, context());
+      const blocked = await store.create({ subject: "Blocked" }, context());
+      await store.update({ taskId: blocker.task.id, addBlocks: [blocked.task.id] }, context());
+      const blockedNow = (await store.get(blocked.task.id, context()))!;
+
+      await expect(
+        store.update({ taskId: blocked.task.id, status: "completed", expectedRevision: blockedNow.revision }, context()),
+      ).rejects.toThrow("blocked by unfinished dependencies");
+
+      const blockerNow = (await store.get(blocker.task.id, context()))!;
+      await store.update({ taskId: blocker.task.id, status: "completed", expectedRevision: blockerNow.revision }, context());
+      const current = await store.get(blocked.task.id, context());
+      await expect(
+        store.update({ taskId: blocked.task.id, status: "completed", expectedRevision: current!.revision }, context()),
+      ).resolves.toBeTruthy();
+    });
+  });
+
+  test("同一次 update 内认领门控按变更后依赖判定(#647 P2-4)", async () => {
+    await withStore(async (store) => {
+      const target = await store.create({ subject: "Target" }, context());
+      const other = await store.create({ subject: "Other" }, context());
+
+      // 旧顺序（先 claim 后加阻塞）会产出“进行中却被阻塞”的矛盾态；现在必须被拦
+      await expect(
+        store.update({
+          taskId: target.task.id,
+          status: "in_progress",
+          addBlockedBy: [other.task.id],
+          expectedRevision: target.revision,
+        }, context()),
+      ).rejects.toThrow("blocked by unfinished dependencies");
+      // 事务整体未生效：状态与依赖都保持原样
+      const after = await store.get(target.task.id, context());
+      expect(after?.task.status).toBe("pending");
+      expect(after?.task.blockedBy).toEqual([]);
+    });
+  });
+
+  test("移除阻塞后同调用即可认领（P2-4 正向路径）", async () => {
+    await withStore(async (store) => {
+      const blocker = await store.create({ subject: "Blocker" }, context());
+      const target = await store.create({ subject: "Target" }, context());
+      await store.update({ taskId: blocker.task.id, addBlocks: [target.task.id] }, context());
+
+      // 同一次调用解除阻塞并认领：门控按变更后的依赖判定，应放行
+      const blockerNow = (await store.get(blocker.task.id, context()))!;
+      await store.update({ taskId: blocker.task.id, status: "completed", expectedRevision: blockerNow.revision }, context());
+      const targetNow = (await store.get(target.task.id, context()))!;
+      const claimed = await store.update({
+        taskId: target.task.id,
+        status: "in_progress",
+        removeBlockedBy: [blocker.task.id],
+        expectedRevision: targetNow.revision,
+      }, context());
+      expect(claimed.task.status).toBe("in_progress");
+      expect(claimed.claimToken).toBeString();
+    });
+  });
+
+  test("类型不符的字段更新显式报错而非静默忽略(#647 P2-3)", async () => {
+    await withStore(async (store) => {
+      const created = await store.create({ subject: "Typed" }, context());
+      await expect(
+        store.update({ taskId: created.task.id, subject: 123 as unknown as string, expectedRevision: created.revision }, context()),
+      ).rejects.toThrow("subject must be a string");
+      await expect(
+        store.update({ taskId: created.task.id, description: { bad: true } as unknown as string, expectedRevision: created.revision }, context()),
+      ).rejects.toThrow("description must be a string");
+    });
+  });
+
+  test("completed 唯一出口是 reopen 到 pending，其余覆写仍被拒(#647 P2-6)", async () => {
+    await withStore(async (store) => {
+      const created = await store.create({ subject: "Reopenable" }, context());
+      const completed = await store.update({ taskId: created.task.id, status: "completed", expectedRevision: created.revision }, context());
+      expect(completed.task.status).toBe("completed");
+
+      await expect(
+        store.update({ taskId: created.task.id, status: "in_progress", expectedRevision: completed.revision }, context()),
+      ).rejects.toThrow("Completed Tasks cannot be overwritten");
+
+      const reopened = await store.update({ taskId: created.task.id, status: "pending", expectedRevision: completed.revision }, context());
+      expect(reopened.task.status).toBe("pending");
+      expect(reopened.task.owner).toBeUndefined();
+
+      const reclaimed = await store.update({ taskId: created.task.id, status: "in_progress", expectedRevision: reopened.revision }, context());
+      expect(reclaimed.claimToken).toBeString();
+    });
+  });
+
+  test("claim metadata 不再携带零消费方的 lease 字段(#647 P2-5)", async () => {
+    await withStore(async (store, sessionDir) => {
+      const created = await store.create({ subject: "Leaseless" }, context());
+      await store.update({ taskId: created.task.id, status: "in_progress", expectedRevision: created.revision }, context());
+      const raw = JSON.parse(await readFile(join(sessionDir, "tasks", "thread-1", `${created.task.id}.json`), "utf8")) as {
+        metadata: { _lume: { claim?: Record<string, unknown> } };
+      };
+      expect(raw.metadata._lume.claim?.token).toBeString();
+      expect(raw.metadata._lume.claim?.lease).toBeUndefined();
+    });
+  });
 });
