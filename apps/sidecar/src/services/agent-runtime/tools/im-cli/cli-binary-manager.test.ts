@@ -31,6 +31,11 @@ describe("resolveBinaryPath", () => {
     expect(p).toContain("arm64");
     expect(p).toContain("dws");
   });
+
+  it("缓存路径含 version 段(#536)", () => {
+    const p = resolveBinaryPath(dingtalkCliConfig, "/userdata", "darwin", "arm64");
+    expect(p).toContain(dingtalkCliConfig.version);
+  });
 });
 
 describe("manualBinaryEnvName", () => {
@@ -96,5 +101,28 @@ describe("ensureBinary", () => {
     await expect(ensureBinary(config, r, "darwin", "arm64")).rejects.toThrow("下载失败");
     const target = resolveBinaryPath(config, r, "darwin", "arm64");
     expect(existsSync(target)).toBe(false);
+  });
+
+  it("版本升级 → 旧版本缓存不命中，重新下载新版本(#536)", async () => {
+    let calls = 0;
+    const v1 = makeMockConfig(async () => {
+      calls += 1;
+      return Buffer.from("V1");
+    });
+    const r = freshRoot();
+    await ensureBinary(v1, r, "darwin", "arm64");
+
+    const v2: CliProviderConfig = {
+      ...makeMockConfig(async () => {
+        calls += 1;
+        return Buffer.from("V2");
+      }),
+      version: "1.0.1",
+    };
+    const resV2 = await ensureBinary(v2, r, "darwin", "arm64");
+
+    expect(resV2.downloaded).toBe(true);
+    expect(readFileSync(resV2.path, "utf-8")).toBe("V2");
+    expect(calls).toBe(2);
   });
 });

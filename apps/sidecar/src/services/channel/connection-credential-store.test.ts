@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -64,5 +64,20 @@ describe("connection credential store", () => {
 
     deleteConnectionOAuthCredential("connection-1");
     expect(getConnectionOAuthCredential("connection-1")).toBeUndefined();
+  });
+
+  // #518: 凭证文件损坏不能打崩消息派发——备份现场后重建空库，且写路径恢复自愈
+  test("corrupt credentials file is backed up and rebuilt instead of throwing", () => {
+    const path = join(directory, "connection-credentials.json");
+    writeFileSync(path, '{"version":1,"credentials":{"conn-1":{"api', "utf8");
+
+    expect(getConnectionApiKey("conn-1")).toBe("");
+
+    const backups = readdirSync(directory).filter((name) => name.includes(".corrupt-"));
+    expect(backups).toHaveLength(1);
+
+    // 重建后写入路径正常工作
+    setConnectionApiKey("conn-2", "sk-after-recovery");
+    expect(getConnectionApiKey("conn-2")).toBe("sk-after-recovery");
   });
 });
