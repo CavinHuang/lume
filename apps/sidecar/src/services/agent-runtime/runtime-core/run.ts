@@ -47,6 +47,7 @@ import {
   getEffectiveLumeConfig,
   getEffectivePluginRuntimeConfig,
 } from "../../system/lume-config-service";
+import { resolveConfiguredPrivateWriteRoots } from "../permissions/permission-config";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
 import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
 import { getSubagentCoordinator } from "../subagents/subagent-coordinator";
@@ -1268,9 +1269,21 @@ async function createRuntimeCoreSessionImpl(
     !boundSubagentIdentity
   );
   const enableFileCheckpointing = input.permissionMode !== "plan";
+  // SDK 工具入口的 containment 根集（#546）必须与 guardrail 的
+  // privateWriteRoots 白名单同源，否则 skills/plugins 等已授权写根会被新加的
+  // 无条件复核误拒。
   const additionalDirectories = [
     ...new Set(
       [
+        ...resolveConfiguredPrivateWriteRoots({
+          agentCwd: input.cwd,
+          lumeWorkDir: input.lumeWorkDir,
+          filesRoot: input.filesRoot,
+          plansRoot: input.plansRoot,
+          artifactsRoot: input.artifactsRoot,
+          workspaceSlug: input.workspaceSlug,
+          configuredRoots: getEffectiveLumeConfig(input.workspaceSlug).permissions?.privateWriteRoots,
+        }),
         ...(input.additionalDirectories ?? []),
         input.lumeWorkDir,
         input.artifactsRoot,

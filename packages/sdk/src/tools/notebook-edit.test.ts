@@ -77,7 +77,7 @@ describe("NotebookEditTool insert anchoring", () => {
     const deletePath = await makeNotebookFile(["a", "b"]);
     const deleted = await NotebookEditTool.call(
       { notebook_path: deletePath, cell_id: "a", new_source: "", edit_mode: "delete" },
-      { cwd: roots[0]! },
+      { cwd: roots[1]! },
     );
     expect(deleted.is_error).toBeFalsy();
     const deletedNotebook = JSON.parse(await readFile(deletePath, "utf-8"));
