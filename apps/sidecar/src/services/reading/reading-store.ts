@@ -547,7 +547,10 @@ const SEARCH_SOURCE_TIMEOUT_MS = 8_000;
 export async function searchReadingBooks(query: string, limit = 10): Promise<ReadingSearchResult[]> {
   const apiKey = getReadingWereadApiKey();
   if (apiKey) {
-    const result = await new BookDataService({ wereadApiKey: apiKey }).searchWeread(query, limit);
+    // #596：apiKey 分支与公共分支同口径包超时，避免 weread 慢调用挂住搜索
+    const result = await withSearchTimeout(
+      new BookDataService({ wereadApiKey: apiKey }).searchWeread(query, limit), { ok: true, data: [] }
+    );
     return result.ok ? result.data : [];
   }
   return withSearchTimeout(
