@@ -262,7 +262,3 @@ export function createTaskTools(input: {
 }
 
 export type TaskToolName = 'TaskCreate' | 'TaskUpdate' | 'TaskList' | 'TaskGet' | 'TaskStop'
-
-// Kept only for source compatibility with older SDK tests/callers. These
-// aliases address ephemeral process jobs, never persistent Task items.
-export { ProcessOutputTool as TaskOutputTool, clearProcessJobs as clearTasks } from './process-job-registry.js'
