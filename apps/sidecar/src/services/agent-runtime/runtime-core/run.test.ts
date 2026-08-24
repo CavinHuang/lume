@@ -11,6 +11,7 @@ import { createRuntimeCoreSession, type CreateRuntimeCoreSessionInput } from "./
 import {
   buildSidecarSubagentExecutionInput,
   buildSidecarSubagentRunContext,
+  resolveForegroundSubagentTimeoutMs,
   resolveSubagentModelOverride,
   runForegroundSubagentWithTimeout
 } from "./run-subagent";
@@ -1828,6 +1829,22 @@ describe("runtime-core run", () => {
       is_error: true
     });
     expect(result.result.content).toContain("timed out");
+  });
+
+  test("LUME_SUBAGENT_FOREGROUND_TIMEOUT_MS 三态解析：缺省回默认 / \"0\" 关闭 / 非法值回默认", () => {
+    const key = "LUME_SUBAGENT_FOREGROUND_TIMEOUT_MS";
+    const prev = process.env[key];
+    try {
+      delete process.env[key];
+      expect(resolveForegroundSubagentTimeoutMs()).toBe(600_000);
+      process.env[key] = "0";
+      expect(resolveForegroundSubagentTimeoutMs()).toBe(0);
+      process.env[key] = "not-a-number";
+      expect(resolveForegroundSubagentTimeoutMs()).toBe(600_000);
+    } finally {
+      if (prev === undefined) delete process.env[key];
+      else process.env[key] = prev;
+    }
   });
 
   test("未审批的插件 command tool 触发 sensitive gate ask（§8.1/§14.2 Phase 4A ask→ask）", async () => {
