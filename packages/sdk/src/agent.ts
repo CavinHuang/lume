@@ -300,9 +300,13 @@ export class Agent {
   private fileCheckpointState: FileCheckpointState = {}
   /** Thread-level read-state: shared by every engine this Agent creates so the
    *  stale-read guard survives across runs instead of resetting per user
-   *  message (#569). In-memory only — after a process restart the guard fails
-   *  closed (missing record -> guided re-Read). */
-  private fileStateCache = new FileStateCache()
+   *  message (#569). Hosts may inject a per-thread instance via
+   *  AgentOptions.fileStateCache when they build one Agent per message; without
+   *  injection each Agent gets a private cache. 分工：本 cache 只做 mtime/size/
+   *  content 新鲜度判定；"须完整读"的产品级门控由宿主侧 ledger 层负责。
+   *  In-memory only — after a process restart the guard fails closed (missing
+   *  record -> guided re-Read). */
+  private fileStateCache: FileStateCache
   private latestUserMessageId: string | undefined
   private lastUsageEngine: QueryEngine | null = null
   private queuedSdkEvents: SDKMessage[] = []
@@ -317,6 +321,7 @@ export class Agent {
   constructor(options: AgentOptions = {}) {
     this.baseOptions = { ...options }
     this.cfg = { ...options }
+    this.fileStateCache = options.fileStateCache ?? new FileStateCache()
     this.sid = this.cfg.sessionId ?? crypto.randomUUID()
     this.provider = unconfiguredProvider()
     this.hookRegistry = createHookRegistry()
