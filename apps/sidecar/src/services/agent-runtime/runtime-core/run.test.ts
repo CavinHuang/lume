@@ -422,7 +422,7 @@ describe("runtime-core run", () => {
     for (const toolName of ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "NotebookEdit", "ProcessOutput", "ProcessStop"]) {
       expect(toolNames).toContain(toolName);
     }
-    for (const toolName of ["WebSearch", "WebFetch", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]) {
+    for (const toolName of ["WebSearch", "WebFetch", "Delegate", "WaitForDelegations", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]) {
       expect(toolNames).toContain(toolName);
     }
 
