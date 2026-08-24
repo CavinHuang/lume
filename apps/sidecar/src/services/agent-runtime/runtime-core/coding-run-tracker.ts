@@ -25,6 +25,8 @@ const MAX_RESTORED_STATE_BYTES = 1024 * 1024;
 const MAX_PERSISTED_CANDIDATES = 2_000;
 const PERSIST_DEBOUNCE_MS = 50;
 const COMPLETION_CHANGESET_WAIT_MS = 750;
+/** #573:验证失败后的自动修复预算——单次对跨文件重构明显不足 */
+const MAX_VERIFICATION_REPAIR_ATTEMPTS = 3;
 
 export interface CodingVerificationReport {
   phase: CodingTurnPhase;
@@ -422,18 +424,19 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     }
     if (!mutationObserved || verificationStatus === "verified" || verificationStatus === "not_required") return undefined;
     if (verificationStatus === "failed") {
-      if (verificationRepairAttempts >= 1) {
+      // #573:单次自修对跨文件重构远远不够,放宽为多次并告知剩余预算
+      if (verificationRepairAttempts >= MAX_VERIFICATION_REPAIR_ATTEMPTS) {
         return {
           type: "stop",
           errorCode: "verification_failed_after_repair",
-          message: `验证在一次自动修复后仍失败，已停止继续消耗 token。${verificationMessage || "请查看失败日志后手动继续。"}`
+          message: `验证在 ${MAX_VERIFICATION_REPAIR_ATTEMPTS} 次自动修复后仍失败，已停止继续消耗 token。${verificationMessage || "请查看失败日志后手动继续。"}`
         };
       }
       verificationRepairAttempts += 1;
       persist();
       return {
         type: "continue",
-        message: `[verification failed] ${(verificationMessage || "上一次验证失败").slice(0, 800)}。请在当前 Run 中修复问题并重新执行验证；最多自动修复一次。`
+        message: `[verification failed] ${(verificationMessage || "上一次验证失败").slice(0, 800)}。请在当前 Run 中修复问题并重新执行验证；还可自动修复 ${MAX_VERIFICATION_REPAIR_ATTEMPTS - verificationRepairAttempts + 1} 次。`
       };
     }
     if (promptedWithoutEvidence) return undefined;
@@ -791,9 +794,11 @@ function readFileChangeStats(result: ToolResult): FileChangeStats | undefined {
   };
 }
 
+/** #573:验证命令识别面——脚本名带冒号后缀(lint:fix)、非 JS 工具链(pytest/cargo/make 等)不再漏网 */
 function isVerificationCommand(command: string, purpose: string): boolean {
   if (purpose.trim().toLowerCase() === "verification") return true;
-  return /(^|\s)(test|tests|typecheck|tsc|lint|build|check|verify|vitest|jest)(\s|$)/i.test(command);
+  return /(^|\s)(test|tests|typecheck|tsc|lint|build|check|verify|vitest|jest|pytest|mypy|pyright|ruff|eslint|biome|cargo|make|cmake|gradle|mvn)(\s|:|\.|$)/i.test(command)
+    || /\b(go|dotnet)\s+(test|vet|build)\b/i.test(command);
 }
 
 function isLikelyMutationCommand(input: { input: unknown }): boolean {

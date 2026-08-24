@@ -73,17 +73,30 @@ describe("coding run tracker", () => {
     expect(tracker.getVerificationStatus()).toBe("failed");
   });
 
-  test("stops after one automatic verification repair", async () => {
+  test("#573: allows multiple verification repairs before stopping", async () => {
     const tracker = createCodingRunTracker();
     tracker.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
     tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: verificationResult("failed test", "failed") });
-    await tracker.completionGuard();
-    tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: verificationResult("failed again", "failed") });
+    // 第 1-3 次失败都给 continue 自修机会（预算 MAX_VERIFICATION_REPAIR_ATTEMPTS=3）
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await expect(tracker.completionGuard()).resolves.toMatchObject({
+        type: "continue",
+        message: expect.stringContaining("verification failed")
+      });
+      tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: verificationResult(`failed again ${attempt}`, "failed") });
+    }
     await expect(tracker.completionGuard()).resolves.toMatchObject({
       type: "stop",
       errorCode: "verification_failed_after_repair",
-      message: expect.stringContaining("停止继续消耗 token")
+      message: expect.stringContaining("3 次自动修复后仍失败")
     });
+  });
+
+  test("#573: recognizes non-JS toolchain and colon-suffixed scripts as verification", async () => {
+    const tracker = createCodingRunTracker();
+    tracker.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
+    tracker.observe({ toolName: "Bash", input: { command: "cargo check --manifest-path Cargo.toml" }, result: verificationResult("ok", "succeeded") });
+    expect(tracker.getVerificationStatus()).toBe("verified");
   });
 
   test("does not treat a filtered no-match result as verification evidence", async () => {
