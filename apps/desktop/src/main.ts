@@ -141,7 +141,7 @@ import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { discoverChromeProfiles, importChromeProfile, importConnectedChromeCookies, type ImportedCookie } from './browser-import'
 import type { BrowserSettings } from '@lume/shared'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '@lume/shared'
-import { nativeEventToIntent } from '@lume/shared'
+import { nativeEventToIntent, summarizeValue } from '@lume/shared'
 import type { AgentIslandIntent, NativeAgentIslandSnapshot } from '@lume/shared'
 import {
   createAsyncSingleFlight,
@@ -364,6 +364,35 @@ function writeMainLog(level, context, event, message, extra = {}) {
     message,
     ...extra,
   })
+}
+
+const QUIET_IPC_COMMANDS = new Set<string>([
+  // 启动后观察 dev 终端 command.completed 频率，把高频轮询命令加进来。
+])
+const IPC_LOG_CONTEXT = 'desktop.ipc'
+
+async function logIpcCommand<T>(name: string, args: unknown, run: () => Promise<T> | T): Promise<T> {
+  if (QUIET_IPC_COMMANDS.has(name)) return await run()
+  const startedAt = performance.now()
+  try {
+    const result = await run()
+    writeMainLog('debug', IPC_LOG_CONTEXT, 'command.completed', `ipc completed: ${name}`, {
+      durationMs: Math.round(performance.now() - startedAt),
+      data: { command: name, args: summarizeValue(args), result: summarizeValue(result) },
+    })
+    return result
+  } catch (error) {
+    writeMainLog('warn', IPC_LOG_CONTEXT, 'command.failed', `ipc failed: ${name}`, {
+      durationMs: Math.round(performance.now() - startedAt),
+      data: { command: name, args: summarizeValue(args) },
+      ...(error instanceof Error ? { error } : {}),
+    })
+    throw error
+  }
+}
+
+function handleLogged(channel: string, handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown): void {
+  ipcMain.handle(channel, (event, ...args) => logIpcCommand(channel, args[0], () => handler(event, ...args)))
 }
 
 function writeRateLimitedTrayWarning(event, message, ownerWebContentsId, data = {}) {
@@ -3042,9 +3071,14 @@ ipcMain.handle('lume:invoke', async (event, command, payload) => {
       pluginAssets.revokeOwner(ownerWebContentsId)
     })
   }
-  return dispatchCommand(validateRendererInvokeCommand(command), payload, { ownerWebContentsId })
+  const commandName = validateRendererInvokeCommand(command)
+  return logIpcCommand(
+    commandName,
+    payload,
+    () => dispatchCommand(commandName, payload, { ownerWebContentsId }),
+  )
 })
-ipcMain.handle('lume:window-control', async (event, op) => {
+handleLogged('lume:window-control', async (event, op) => {
   // 操作 sender 对应的受信任窗口（主窗口或快速输入子窗口）。
   // 子窗口 close 会命中 createQuickInputWindow 的 close 拦截 → hide（除非退出中）。
   const target = [mainWindow, quickInputWindow].find(
@@ -3068,7 +3102,7 @@ ipcMain.handle('lume:window-control', async (event, op) => {
       throw new Error(`unsupported window-control op: ${String(op)}`)
   }
 })
-ipcMain.handle('lume:relaunch', async (event) => {
+handleLogged('lume:relaunch', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   setImmediate(() => {
     app.relaunch()
@@ -3076,7 +3110,7 @@ ipcMain.handle('lume:relaunch', async (event) => {
   })
   return null
 })
-ipcMain.handle('lume:update:check', async (event) => {
+handleLogged('lume:update:check', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   autoUpdater.autoDownload = false
@@ -3084,7 +3118,7 @@ ipcMain.handle('lume:update:check', async (event) => {
   const result = await autoUpdater.checkForUpdates()
   return createUpdateInfo(result?.updateInfo, app.getVersion())
 })
-ipcMain.handle('lume:update:download', async (event) => {
+handleLogged('lume:update:download', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   const sender = event.sender
@@ -3126,14 +3160,14 @@ ipcMain.handle('lume:update:download', async (event) => {
     }).catch(onError)
   })
 })
-ipcMain.handle('lume:update:download-asset', async (event, payload) => {
+handleLogged('lume:update:download-asset', async (event, payload) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   if (!payload || typeof payload.url !== 'string') throw new Error('缺少更新安装包地址')
   await downloadMacUpdateAsset(payload.url, event.sender)
   return null
 })
-ipcMain.handle('lume:update:install', async (event) => {
+handleLogged('lume:update:install', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   if (pendingMacUpdatePath) {
@@ -3175,7 +3209,7 @@ ipcMain.handle('lume:update:install', async (event) => {
   })
 })
 
-ipcMain.handle('lume:app:signature', async (event) => {
+handleLogged('lume:app:signature', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   const macSignatureStable = await detectMacSignatureStable({
     platform: process.platform,
