@@ -84,6 +84,7 @@ describe("im 会话命令路由", () => {
     const sent: string[] = [];
     let createdThreads = 0;
     await routeInboundImMessage(msg({ text: "/help" }), {
+      getThreadMeta: () => ({} as never),
       sendBoundTextMessage: async (input) => {
         sent.push(input.text);
         return { ok: true };
@@ -102,6 +103,7 @@ describe("im 会话命令路由", () => {
     const sent: string[] = [];
     const stoppedIds: string[] = [];
     await routeInboundImMessage(msg({ text: "/stop" }), {
+      getThreadMeta: () => ({} as never),
       sendBoundTextMessage: async (input) => {
         sent.push(input.text);
         return { ok: true };
@@ -120,6 +122,7 @@ describe("im 会话命令路由", () => {
     const sent: string[] = [];
     const updates: Array<{ threadId: string; patch: Record<string, unknown> }> = [];
     await routeInboundImMessage(msg({ text: "/model 1 2" }), {
+      getThreadMeta: () => ({} as never),
       sendBoundTextMessage: async (input) => {
         sent.push(input.text);
         return { ok: true };
@@ -149,6 +152,7 @@ describe("im 会话命令路由", () => {
     let createdTitle = "";
     const stoppedIds: string[] = [];
     await routeInboundImMessage(msg({ text: "/new", peerName: "张三" }), {
+      getThreadMeta: () => ({} as never),
       sendBoundTextMessage: async (input) => {
         sent.push(input.text);
         return { ok: true };
@@ -175,6 +179,7 @@ describe("im 会话命令路由", () => {
     const sent: string[] = [];
     const first = msg({ text: "/stop", messageId: "cmd-m1" });
     await routeInboundImMessage(first, {
+      getThreadMeta: () => ({} as never),
       sendBoundTextMessage: async (input) => {
         sent.push(input.text);
         return { ok: true };
@@ -183,6 +188,7 @@ describe("im 会话命令路由", () => {
     });
     // 重投同一命令消息：命中持久去重，直接跳过（不重复回复）
     await routeInboundImMessage({ ...first, text: "/stop" }, {
+      getThreadMeta: () => ({} as never),
       sendBoundTextMessage: async (input) => {
         sent.push(input.text);
         return { ok: true };
@@ -195,6 +201,7 @@ describe("im 会话命令路由", () => {
     bind("thread-z");
     const sentInputs: unknown[] = [];
     await routeInboundImMessage(msg({ text: "/etc/hosts 是什么" }), {
+      getThreadMeta: () => ({} as never),
       sendBoundTextMessage: async (input) => {
         sentInputs.push(input);
         return { ok: true };
