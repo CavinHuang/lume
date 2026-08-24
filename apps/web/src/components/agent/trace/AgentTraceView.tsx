@@ -10,7 +10,14 @@ import { buildTraceRecords, type TraceRecord, type TraceRecordKind } from './bui
  * 数据直接消费线程事件总线快照与推送，与消息视图互不影响。
  */
 
-const MAX_ENVELOPES = 8000 // ponytail: 超长线程截断最旧事件；虚拟滚动留待实测卡顿时再加
+const MAX_ENVELOPES = 8000 // ponytail: 超长线程截断最旧事件；update 折叠后 update 不再堆积，8000 条≈纯生命周期事件的量级；虚拟滚动留待实测卡顿时再加
+
+const FLUSH_INTERVAL_MS = 100
+
+/** 累计语义的流式帧：同 runId+turnId 的相邻 update 只需保留最新一条。 */
+function isCumulativeUpdate(event: SdkEventEnvelope): boolean {
+  return event.kind === 'message' && event.phase === 'update'
+}
 
 const KIND_META: Record<TraceRecordKind, { label: string; badge: string; segment: string }> = {
   user: { label: '用户', badge: 'text-[var(--lume-text-muted)]', segment: 'bg-[var(--lume-text-muted)]/50' },
@@ -42,48 +49,56 @@ function OverviewBar({
   onSelect: (id: string) => void
 }) {
   const domainStart = records[0]?.startedAt ?? 0
-  const domainEnd = Math.max(
-    records[records.length - 1]?.endedAt ?? domainStart,
-    ...records.map((r) => r.startedAt),
-  )
+  let domainEnd = records[records.length - 1]?.endedAt ?? domainStart
+  for (const r of records) if (r.startedAt > domainEnd) domainEnd = r.startedAt
   const span = Math.max(1, domainEnd - domainStart)
+  // 超长账本按步长抽样渲染概览段，防 DOM 规模失控；被跳过的记录仍可从账本选中
+  // （ponytail: 按 span 分桶聚合的保密度更高，实测需要时再换）
+  const stride = Math.max(1, Math.ceil(records.length / 400))
   return (
     <div
       role="group"
       aria-label="轨迹时间概览"
       className="relative h-7 shrink-0 border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)]"
     >
-      {records.map((record) => {
-        const left = ((record.startedAt - domainStart) / span) * 100
-        const width = record.durationMs != null ? (record.durationMs / span) * 100 : 0.5
-        return (
-          <button
-            key={record.id}
-            type="button"
-            title={`#${record.index} ${KIND_META[record.kind].label} · ${fmtClock(record.startedAt)} · ${fmtDuration(record.durationMs)}`}
-            onClick={() => onSelect(record.id)}
-            className={cn(
-              'absolute top-1/2 h-2 -translate-y-1/2 rounded-sm min-w-[2px] cursor-pointer',
-              KIND_META[record.kind].segment,
-              record.isError && 'bg-[var(--lume-danger)]',
-              record.running && 'animate-pulse',
-              selectedId === record.id && 'ring-1 ring-[var(--lume-accent)] ring-offset-1',
-            )}
-            style={{ left: `${left}%`, width: `${Math.max(width, 0.4)}%` }}
-          />
-        )
-      })}
+      {records.map((record, i) => ({ record, i }))
+        .filter(({ record, i }) => i % stride === 0 || record.id === selectedId)
+        .map(({ record }) => {
+          const left = ((record.startedAt - domainStart) / span) * 100
+          const width = record.durationMs != null ? (record.durationMs / span) * 100 : 0.5
+          return (
+            <button
+              key={record.id}
+              type="button"
+              title={`#${record.index} ${KIND_META[record.kind].label} · ${fmtClock(record.startedAt)} · ${fmtDuration(record.durationMs)}`}
+              onClick={() => onSelect(record.id)}
+              className={cn(
+                'absolute top-1/2 h-2 hover:h-3 -translate-y-1/2 rounded-sm min-w-[2px] cursor-pointer',
+                KIND_META[record.kind].segment,
+                record.isError && 'bg-[var(--lume-danger)]',
+                record.running && 'animate-pulse motion-reduce:animate-none',
+                selectedId === record.id && 'ring-1 ring-[var(--lume-accent)] ring-offset-1 ring-offset-[var(--lume-bg-panel)]',
+              )}
+              // 宽度下限 0.4%：零时长记录在概览条上至少留一个可点像素带
+              style={{ left: `${left}%`, width: `${Math.max(width, 0.4)}%` }}
+            />
+          )
+        })}
     </div>
   )
 }
 
+const MAX_DETAIL_CHARS = 20_000
+
 function DetailSection({ title, content }: { title: string; content?: string }) {
   if (!content?.trim()) return null
+  // 大输出（工具结果可达 MB 级）截断后再进 DOM：max-h 只是视觉裁剪，text node 全量参与布局
+  const truncated = content.length > MAX_DETAIL_CHARS
   return (
     <div className="flex min-h-0 flex-col gap-1">
       <div className="text-micro font-medium uppercase tracking-wide text-[var(--lume-text-muted)]">{title}</div>
       <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-2 text-caption leading-relaxed text-foreground">
-        {content}
+        {truncated ? `${content.slice(0, MAX_DETAIL_CHARS)}\n…（已截断）` : content}
       </pre>
     </div>
   )
@@ -99,7 +114,7 @@ function Inspector({ record, onClose }: { record: TraceRecord; onClose: () => vo
     ...(record.stopReason ? [['停止原因', record.stopReason] as [string, string]] : []),
   ]
   return (
-    <aside className="flex w-[360px] shrink-0 flex-col gap-3 overflow-y-auto border-l border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)] p-3">
+    <aside className="flex w-[360px] max-w-[45%] shrink-0 flex-col gap-3 overflow-y-auto border-l border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)] p-3">
       <div className="flex items-center justify-between">
         <span className="text-ui font-medium text-foreground">
           #{record.index} · {KIND_META[record.kind].label}
@@ -134,13 +149,45 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const followTailRef = useRef(true)
 
+  // 总线逐条投递（快照回放是同步循环）：直接 setState 会造成 O(n²) 拷贝与流式高频 commit。
+  // 缓冲后按 FLUSH_INTERVAL_MS 合并成一次 append，并折叠连续累计 update（同 runId+turnId 留最新）。
+  const pendingRef = useRef<SdkEventEnvelope[]>([])
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (flushTimerRef.current != null) clearTimeout(flushTimerRef.current)
+  }, [])
+
   useAgentEventBus(threadId, {
     enabled: true,
     onEvent: (event) => {
-      setEvents((prev) => {
-        const next = prev.length >= MAX_ENVELOPES ? prev.slice(prev.length - MAX_ENVELOPES + 1) : prev
-        return [...next, event]
-      })
+      pendingRef.current.push(event)
+      if (flushTimerRef.current == null) {
+        flushTimerRef.current = setTimeout(() => {
+          flushTimerRef.current = null
+          const batch = pendingRef.current
+          pendingRef.current = []
+          if (batch.length === 0) return
+          setEvents((prev) => {
+            let next = prev.concat(batch)
+            let write = 0
+            for (let read = 0; read < next.length; read++) {
+              const current = next[read]
+              const tail = write > 0 ? next[write - 1] : undefined
+              if (
+                tail && isCumulativeUpdate(tail) && isCumulativeUpdate(current)
+                && tail.runId === current.runId && tail.turnId === current.turnId
+              ) {
+                next[write - 1] = current // 折叠：累计 partial 只留最新
+              } else {
+                next[write++] = current
+              }
+            }
+            next = next.slice(0, write)
+            return next.length > MAX_ENVELOPES ? next.slice(next.length - MAX_ENVELOPES) : next
+          })
+        }, FLUSH_INTERVAL_MS)
+      }
     },
   })
 
@@ -175,6 +222,7 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
           ref={scrollRef}
           onScroll={(e) => {
             const el = e.currentTarget
+            // 距底不足一行行高（约 48px）视为贴底，恢复尾部跟随
             followTailRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
           }}
           className="min-w-0 flex-1 overflow-y-auto"
@@ -214,7 +262,7 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
                       </span>
                       <span className="flex min-w-0 items-center gap-1.5">
                         {record.running && (
-                          <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-[var(--lume-accent)]" />
+                          <span className="size-1.5 shrink-0 animate-pulse motion-reduce:animate-none rounded-full bg-[var(--lume-accent)]" />
                         )}
                         <span
                           className={cn(

@@ -236,4 +236,52 @@ describe('buildTraceRecords', () => {
     expect(records.map((r) => r.index)).toEqual(records.map((_, i) => i + 1))
     expect(new Set(records.map((r) => r.id)).size).toBe(records.length)
   })
+
+  test('run.end 收口中止 run 残留的在途记录(不再永久 running)', () => {
+    const events = [
+      turnStart('t1'),
+      env({ kind: 'message', phase: 'start', turnId: 't1', detail: { type: 'message.start' } }),
+      toolStart('c1', 'Bash', { command: 'sleep 999' }),
+    ]
+    // 用户主动停止：没有 message.end / tool.end，直接 run.end（最后创建保证 seq 在后）
+    const [runEnd] = [...events, env({
+      kind: 'run',
+      phase: 'end',
+      detail: { type: 'run.end', stopReason: 'aborted', isError: false, numTurns: 1 },
+    })].slice(-1)
+    const records = buildTraceRecords([...events, runEnd])
+    for (const record of records.filter((r) => r.kind !== 'run')) {
+      expect(record.running).toBe(false)
+      expect(record.endedAt).toBe(runEnd.ts)
+    }
+  })
+
+  test('orphan tool.end(缺起始事件)产出兜底行并透传错误标记', () => {
+    const records = buildTraceRecords([
+      turnStart('t1'),
+      toolEnd('c1', 'Write', '写入失败', true),
+    ])
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({
+      kind: 'tool',
+      isError: true,
+      running: false,
+      output: '写入失败',
+    })
+    expect(records[0]?.summary).toContain('缺失起始事件')
+  })
+
+  test('流式 update 仅含 toolUses 且 name 为空时摘要兜底「工具调用中」', () => {
+    const records = buildTraceRecords([
+      turnStart('t1'),
+      env({ kind: 'message', phase: 'start', turnId: 't1', detail: { type: 'message.start' } }),
+      env({
+        kind: 'message',
+        phase: 'update',
+        turnId: 't1',
+        detail: { type: 'message.update', delta: null, partial: { text: '', thinking: '', toolUses: [{ id: 'x', name: '', partialJson: '{"cmd"' }] } },
+      }),
+    ])
+    expect(records.find((r) => r.kind === 'assistant')?.summary).toBe('工具调用中')
+  })
 })

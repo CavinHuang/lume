@@ -81,6 +81,7 @@ function textFromContent(content: UserMessageDetail['content']): string {
     .join('\n')
 }
 
+/** 压平为单行（全部空白折叠为空格）并截断到 max 字符；名字沿用"首行"语义。 */
 function firstLine(text: string, max = 240): string {
   const line = text.trim().replace(/\s+/g, ' ')
   return line.length > max ? `${line.slice(0, max)}…` : line
@@ -126,6 +127,8 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
 
   for (const event of sorted) {
     const detail = event.detail as SdkEventEnvelope['detail'] & { type?: string }
+    // turnId 每 run 重置（turn-N），跨 run 会撞键，键必须带 runId
+    const assistantKey = event.turnId == null ? null : `${event.runId}:${event.turnId}`
     switch (detail?.type) {
       case 'run.start': {
         runStartedAt = event.ts
@@ -150,12 +153,12 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
         break
       }
       case 'message.start': {
-        if (event.turnId == null) break // user 消息前置的 message.start，由 user.message 分支处理
-        // 同 turnId 的旧开记录先收口（防御异常序列）
-        const stale = openAssistants.get(event.turnId)
+        if (assistantKey == null) break // user 消息前置的 message.start，由 user.message 分支处理
+        // 同键的旧开记录先收口（防御异常序列）
+        const stale = openAssistants.get(assistantKey)
         if (stale) {
           stale.endedAt = event.ts
-          openAssistants.delete(event.turnId)
+          openAssistants.delete(assistantKey)
         }
         const record = open({
           id: String(event.seq),
@@ -164,11 +167,11 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
           summary: '…',
           startedAt: event.ts,
         })
-        openAssistants.set(event.turnId, record)
+        openAssistants.set(assistantKey, record)
         break
       }
       case 'message.update': {
-        const openRecord = event.turnId == null ? undefined : openAssistants.get(event.turnId)
+        const openRecord = assistantKey == null ? undefined : openAssistants.get(assistantKey)
         if (!openRecord) break
         const { partial } = detail as MessageUpdateDetail
         const thinking = partial.thinking.trim()
@@ -184,10 +187,10 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
       }
       case 'message.end': {
         const { message, error } = detail as MessageEndDetail
-        const openRecord = event.turnId == null ? undefined : openAssistants.get(event.turnId)
+        const openRecord = assistantKey == null ? undefined : openAssistants.get(assistantKey)
         const text = textFromContent(message.content)
         if (openRecord) {
-          openAssistants.delete(event.turnId!)
+          if (assistantKey != null) openAssistants.delete(assistantKey)
           openRecord.endedAt = event.ts
           openRecord.summary = firstLine(text) || '(无文本输出)'
           openRecord.output = text
@@ -267,6 +270,16 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
       }
       case 'run.end': {
         const end = detail as RunEndDetail
+        // 中止/报错的 run 不会给在途 assistant/tool 补发 end 事件：统一在 run 边界收口，
+        // 否则残留记录永远 running（重放 jsonl 也一样）
+        for (const [key, record] of openAssistants) {
+          record.endedAt = event.ts
+          openAssistants.delete(key)
+        }
+        for (const [id, record] of openTools) {
+          record.endedAt = event.ts
+          openTools.delete(id)
+        }
         // 良性停止原因不上账本尾巴：成功运行发 end_turn，防御性兼容 completed
         const benignStop = end.stopReason == null || ['end_turn', 'completed'].includes(end.stopReason)
         open({
@@ -275,7 +288,7 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
           turnNumber: null,
           summary: [
             end.isError ? '运行失败' : '运行结束',
-            `${end.numTurns} 轮`,
+            `${end.numTurns ?? 0} 轮`,
             end.costUSD != null ? `$${end.costUSD.toFixed(4)}` : null,
             !benignStop && end.stopReason ? end.stopReason : null,
           ].filter(Boolean).join(' · '),
