@@ -40,7 +40,7 @@ import { PlanPreviewCard, SmoothText } from './message-blocks/markdown'
 import { collectAssistantSources } from './source-references'
 import { AssistantMessageFooter, CopyMessageButton, formatMessageTime } from './message-blocks/assistant-footer'
 import { MinimalProcessGroup, ToolExecutionDetails, riskLevelClassName, riskLevelLabel } from './message-blocks/minimal-process'
-import { asRecord, asString, memoryMutationError, memoryMutationLabel, parseToolCallOutput, summarizeInput } from './message-blocks/tool-summary'
+import { asRecord, asString, displayToolName, memoryMutationError, memoryMutationLabel, parseToolCallOutput, summarizeInput } from './message-blocks/tool-summary'
 
 export type { CopyFeedbackState }
 export { getAssistantCopyText, getCopyTextWithoutAfterglow, showTemporaryCopiedFeedback }
@@ -1455,7 +1455,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
           />
         </span>
       )}
-      <span className="font-semibold text-[var(--lume-text-primary)]">{toolCall.toolName}</span>
+      <span className="font-semibold text-[var(--lume-text-primary)]">{displayToolName(toolCall.toolName)}</span>
       {toolCall.riskLevel && (
         <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', riskLevelClassName(toolCall.riskLevel))}>
           {riskLevelLabel(toolCall.riskLevel)}
@@ -1479,7 +1479,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
           {formatDurationLabel(toolCall.durationMs)}
         </span>
       )}
-      <span className="min-w-0 flex-1 truncate text-[var(--lume-text-muted)]">{summarizeInput(input)}</span>
+      <span className="min-w-0 flex-1 truncate text-[var(--lume-text-muted)]">{summarizeInput(input, toolCall.toolName)}</span>
       {isRunning && <AgentLoadingIndicator variant="drive" startedAt={toolCall.startedAt} className="shrink-0" />}
     </>
   )
