@@ -429,7 +429,7 @@ export function normalizeToolResultWithPolicies(result: ToolResult, maxChars: nu
   // 仅限 content 形态:data 形态无已知 image 生产者,维持原有整体截断行为。
   if (
     Array.isArray(payload)
-    && "content" in (result as Record<string, unknown>)
+    && "content" in (result as unknown as Record<string, unknown>)
     && payload.some(isImageBlock)
   ) {
     const textPayload = payload.filter((block) => !isImageBlock(block));

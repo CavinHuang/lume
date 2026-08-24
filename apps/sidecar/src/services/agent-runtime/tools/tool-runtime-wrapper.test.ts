@@ -250,7 +250,7 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
       fileLedger: ledger
     });
 
-    const result = await tool.call({}, { cwd: root }) as { content: Array<Record<string, unknown>>; _meta?: unknown };
+    const result = await tool.call({}, { cwd: root }) as { content: Array<Record<string, unknown>>; _meta?: Record<string, unknown> };
     expect(Array.isArray(result.content)).toBe(true);
     const textBlocks = result.content.filter((block) => block.type === "text") as Array<{ text: string }>;
     const imageBlocks = result.content.filter((block) => block.type === "image");
@@ -291,6 +291,69 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
 
     const result = await tool.call({}, { cwd: root }) as { content: unknown };
     expect(result.content).toEqual(originalContent);
+  });
+
+  test("does not truncate an array containing only image blocks (#638 review pinning)", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const ledger = createFileAccessLedger();
+    const pixels = "C".repeat(50_000);
+    const tool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Screenshot", {
+        name: "mcp__browser__screenshot",
+        description: "shot",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: pixels } }]
+          } as never;
+        }
+      }, {
+        resultPolicy: { maxChars: 1000 }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    const result = await tool.call({}, { cwd: root }) as { content: Array<Record<string, unknown>> };
+    // 纯 image 数组无文本可截:整体原样保留,不得因总字节超限而毁图
+    expect(result.content).toHaveLength(1);
+    expect((result.content[0] as { source?: { data?: string } }).source?.data).toBe(pixels);
+  });
+
+  test("data-form array with image blocks keeps the legacy flatten behavior (no content field written)", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const ledger = createFileAccessLedger();
+    const tool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Legacy", {
+        name: "legacy_data_tool",
+        description: "data form",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return {
+            data: [
+              { type: "text", text: "y".repeat(5000) },
+              { type: "image", source: { type: "base64", media_type: "image/png", data: "Z".repeat(60_000) } }
+            ]
+          } as never;
+        }
+      }, {
+        resultPolicy: { maxChars: 100 }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    const result = await tool.call({}, { cwd: root }) as { data?: unknown; content?: unknown };
+    // 豁免仅限 content 形态:data 形态维持旧的整体字符串化截断,且不新写 content 字段
+    expect(typeof result.data).toBe("string");
+    expect(String(result.data)).toContain("...(truncated)...");
+    expect("content" in (result as Record<string, unknown>)).toBe(false);
   });
 
   test("still flattens oversized array content without image blocks", async () => {
