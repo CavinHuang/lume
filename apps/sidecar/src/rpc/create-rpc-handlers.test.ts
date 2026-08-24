@@ -19,7 +19,7 @@ describe("createRpcHandlers browser settings gate (#608)", () => {
       writeNotification: () => {},
       browserBroker: {
         setPluginState: (state: Record<string, unknown>) => pluginStates.push(state),
-      },
+      } as unknown as Parameters<typeof createRpcHandlers>["0"]["browserBroker"],
     });
 
     await handlers["browser:settings"]?.({ extensionBackendEnabled: true, browserEnabled: false, browserUseEnabled: false });
