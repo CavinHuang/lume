@@ -723,6 +723,18 @@ export function getAgentIslandUrl(opts: {
   return `${opts.devServerUrl}/?view=agent-island`
 }
 
+/** 构建语音听写指示条窗口加载 URL，带 ?view=voice-indicator。 */
+export function getVoiceIndicatorUrl(opts: {
+  appIsPackaged: boolean
+  appProtocolOrigin: string
+  devServerUrl: string
+}): string {
+  if (opts.appIsPackaged) {
+    return `${opts.appProtocolOrigin}/index.html?view=voice-indicator`
+  }
+  return `${opts.devServerUrl}/?view=voice-indicator`
+}
+
 export type TrayMenuAction = 'show-window' | 'hide-window' | 'quick-input' | 'new-thread' | 'open-thread' | 'open-settings' | 'check-update' | 'quit'
 
 export interface RecentTrayThread {
