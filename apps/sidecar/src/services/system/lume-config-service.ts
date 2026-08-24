@@ -822,16 +822,19 @@ function writeYamlAtomic(path: string, payload: string): void {
 
 // lume.yaml 读取缓存：getEffectiveLumeConfig 调用面 48 处且多数在 run 热路径，
 // 每次全量读盘 + YAML.parse/stringify。以 path 为键（getLumeConfigYamlPath 实时读
-// LUME_CONFIG_DIR，测试同进程切目录时仅 mtime+size 可能跨目录同值串缓存）；键在
-// 写盘之后采样（normalize 写盘会改 mtime，读前采样则永久 miss）。
+// LUME_CONFIG_DIR，测试同进程切目录时仅指纹可能跨目录同值串缓存）；键在写盘之后
+// 采样（normalize 写盘会改 mtime，读前采样则永久 miss）。指纹为 mtime+size+ino
+// 三要素：跨进程写盘走 tmp+rename（每次新 inode），仅靠 mtime+size 兜底时，粗粒度
+// 时间戳文件系统（Linux jiffy 粒度）上同 tick 的两连写可被误判未变——被遮蔽的若是
+// 最后一次写，stale 配置将伴随进程存活期（#622 配方）。
 // 返回对象是缓存共享引用：调用方不得原地修改——唯一 mutate 方 updateLumeConfigSection
 // 写盘后 refresh 覆盖，最终一致。
-const lumeConfigCache = new Map<string, { mtimeMs: number; size: number; value: LumeConfigFile }>();
+const lumeConfigCache = new Map<string, { mtimeMs: number; size: number; ino: number; value: LumeConfigFile }>();
 
 function refreshLumeConfigCache(path: string, value: LumeConfigFile): void {
   try {
     const stats = statSync(path);
-    lumeConfigCache.set(path, { mtimeMs: stats.mtimeMs, size: stats.size, value });
+    lumeConfigCache.set(path, { mtimeMs: stats.mtimeMs, size: stats.size, ino: stats.ino, value });
   } catch {
     lumeConfigCache.delete(path);
   }
@@ -850,7 +853,7 @@ function readOrCreateLumeConfig(): LumeConfigFile {
     const cached = lumeConfigCache.get(path);
     if (cached) {
       const stats = statSync(path);
-      if (cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+      if (cached.mtimeMs === stats.mtimeMs && cached.size === stats.size && cached.ino === stats.ino) {
         return cached.value;
       }
     }

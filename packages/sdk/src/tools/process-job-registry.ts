@@ -20,7 +20,7 @@ export type ProcessJobStatus = 'running' | 'completed' | 'failed' | 'stopped' | 
 const IDENTITY_CACHE_TTL_MS = 5_000
 const HYDRATE_THROTTLE_MS = 500
 const identityCache = new Map<number, { identity: string | undefined; at: number }>()
-const persistedJobCache = new Map<string, { mtimeMs: number; parsed: ProcessJob }>()
+const persistedJobCache = new Map<string, { mtimeMs: number; size: number; ino: number; parsed: ProcessJob }>()
 let lastHydrateAt = 0
 let lastHydrateRoot = ''
 let lastHydrateResult: ProcessJob[] = []
@@ -432,14 +432,20 @@ function refreshProcessJob(id: string): void {
 
 function readPersistedJob(statePath: string): ProcessJob | undefined {
   try {
-    // mtime short-circuit: repeated hydrates of an unchanged state.json skip
-    // read+parse entirely (#241); stat is far cheaper than the full read.
-    const mtimeMs = statSync(statePath).mtimeMs
+    // Fingerprint short-circuit: repeated hydrates of an unchanged state.json
+    // skip read+parse entirely (#241); stat is far cheaper than the full read.
+    // Writers persist via tmp+rename (fresh inode per write), so mtime alone
+    // cannot be trusted on coarse-clock filesystems (Linux jiffy granularity,
+    // #622): a running→terminal rewrite inside one tick would keep reading as
+    // "running" for the process lifetime. size+ino closes that window.
+    const st = statSync(statePath)
     const cached = persistedJobCache.get(statePath)
-    if (cached && cached.mtimeMs === mtimeMs) return cached.parsed
+    if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size && cached.ino === st.ino) {
+      return cached.parsed
+    }
     const parsed = JSON.parse(readFileSync(statePath, 'utf8')) as ProcessJob
     if (parsed.version !== 2 || typeof parsed.id !== 'string' || typeof parsed.status !== 'string') return undefined
-    persistedJobCache.set(statePath, { mtimeMs, parsed })
+    persistedJobCache.set(statePath, { mtimeMs: st.mtimeMs, size: st.size, ino: st.ino, parsed })
     return parsed
   } catch {
     return undefined

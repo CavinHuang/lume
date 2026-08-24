@@ -88,8 +88,13 @@ export const FileEditTool = defineTool({
       const previousRead = context.fileStateCache?.get(filePath)
       // Read-before-edit 强制（#569）：无读取记录的文件禁止盲改。
       if (!previousRead) {
+        // 容量区分（#655 终局 review·并发方向发现 A）：长会话 LRU 驱逐会
+        // 产生「明明读过却报未读」的伪错误；区分文案让模型自愈路径更短。
+        const data = context.fileStateCache?.wasDroppedByCapacity(filePath)
+          ? `Error: The read record for ${filePath} was dropped because the session's file-state cache hit its capacity limit (long sessions drop the oldest records). Read the file again, then retry this Edit.`
+          : `Error: File has not been read yet: ${filePath}. Read it first, then retry this Edit.`
         return {
-          data: `Error: File has not been read yet: ${filePath}. Read it first, then retry this Edit.`,
+          data,
           is_error: true,
           _meta: { file: { path: filePath, conflict: 'not_read', retryable: true } },
         }

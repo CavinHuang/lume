@@ -156,7 +156,7 @@ export function createTaskTools(input: {
 
   const taskUpdate: ToolDefinition = {
     name: 'TaskUpdate',
-    description: 'Update a persistent task, claim it, complete it, or add/remove dependencies.',
+    description: 'Update a persistent task, claim it, complete it, reopen it to pending, or add/remove dependencies. Status changes are fenced: pass expectedRevision from your last read, plus claimToken while the task is in_progress. A blocked task cannot be claimed or completed until its blockers complete. A completed task can only transition back to pending (reopen).',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
