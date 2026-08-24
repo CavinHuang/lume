@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 import type { ToolDefinition } from "@lume/agent-sdk";
+import { readRepeatGuardState, withRepeatGuardState } from "@lume/agent-sdk";
 import { createFileAccessLedger } from "./file-access-ledger";
 import { wrapToolDefinitionWithRuntimePolicies } from "./tool-runtime-wrapper";
 import type { LumeToolDescriptor, LumeToolMetadata } from "./tool-types";
@@ -231,15 +232,15 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
         description: "shot",
         inputSchema: { type: "object", properties: {} },
         async call() {
-          return {
+          // 用真实 repeat guard 契约构造,与 create-browser-tools 的 screenshotToolResult 同构
+          return withRepeatGuardState({
             type: "tool_result",
             tool_use_id: "",
             content: [
               { type: "text", text: JSON.stringify({ ok: true, screenshot_id: "browser-screenshot:x", annotated_refs: Array.from({ length: 200 }, (_, i) => `e${i + 1}`) }) },
               { type: "image", source: { type: "base64", media_type: "image/jpeg", data: pixels }, _meta: { persist: false } }
-            ],
-            _meta: { repeatState: true }
-          };
+            ]
+          }, { ok: true, tool: "screenshot" });
         }
       }, {
         resultPolicy: { maxChars: 1000 }
@@ -254,12 +255,13 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     const textBlocks = result.content.filter((block) => block.type === "text") as Array<{ text: string }>;
     const imageBlocks = result.content.filter((block) => block.type === "image");
     expect(textBlocks).toHaveLength(1);
-    expect(textBlocks[0]!.text.length).toBeLessThanOrEqual(1200);
+    // truncateMiddle 在 maxChars=1000 时恒返回恰好 1000 字符
+    expect(textBlocks[0]!.text.length).toBe(1000);
     expect(textBlocks[0]!.text).toContain("...(truncated)...");
     expect(imageBlocks).toHaveLength(1);
     expect((imageBlocks[0] as { source?: { data?: string } }).source?.data).toBe(pixels);
-    // repeat guard 等顶层 _meta 必须原样保留
-    expect(result._meta).toEqual({ repeatState: true });
+    // repeat guard 的真实读取路径必须穿透 wrapper 原样保留
+    expect(readRepeatGuardState(result)).toEqual({ ok: true, tool: "screenshot" });
   });
 
   test("does not truncate array content whose non-image blocks fit the policy", async () => {
