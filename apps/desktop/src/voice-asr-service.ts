@@ -67,6 +67,8 @@ interface ServerPayload {
 export interface ParsedServerMessage {
   text: string
   isFinal: boolean
+  /** 服务端错误帧：text 是错误说明，必须走状态通道而非当作听写文本。 */
+  isError?: boolean
 }
 
 export interface VoiceAsrEventHandlers {
@@ -262,7 +264,7 @@ export function parseServerMessage(data: Buffer): ParsedServerMessage | null {
     const size = data.readUInt32BE(offset)
     offset += 4
     const message = data.subarray(offset, offset + size).toString('utf-8')
-    return { text: `ASR 错误 ${code}: ${message}`, isFinal: true }
+    return { text: `语音识别服务错误 ${code}: ${message}`, isFinal: true, isError: true }
   }
 
   if (messageType !== MESSAGE_TYPE_FULL_SERVER_RESPONSE || data.length < offset + 4) {
@@ -376,9 +378,13 @@ export async function startVoiceAsrSession(
     ws.on('message', (message: unknown) => {
       try {
         const parsed = parseServerMessage(toBuffer(message))
-        if (parsed) {
-          handlers.onTranscript({ sessionId, text: parsed.text, isFinal: parsed.isFinal })
+        if (!parsed) return
+        if (parsed.isError) {
+          // 配额/鉴权/协议错误走状态通道，绝不能混进听写文本被提交。
+          handlers.onState({ sessionId, status: 'error', message: parsed.text })
+          return
         }
+        handlers.onTranscript({ sessionId, text: parsed.text, isFinal: parsed.isFinal })
       } catch (error) {
         // 单帧损坏不代表会话失效：丢弃该帧继续收流，
         // 上报会话级 error 会让状态与仍在推送的转写数据流脱节。
@@ -389,27 +395,30 @@ export async function startVoiceAsrSession(
     ws.once('close', () => {
       clearTimeout(timer)
       active.closed = true
-      removeIfCurrent()
-      // 未结算的 promise 必须了结（即使本连接已被同 id 重开顶替）。
+      // 仅当仍是 Map 中的当前会话才删除并广播——被同 id 重开顶替的旧连接
+      // 静默退场，避免污染新会话状态机；正常关闭必须下发 asr_session_ended，
+      // 否则 renderer 的自动续录永远不会触发。
+      const isCurrent = activeSessions.get(sessionId) === active
+      if (isCurrent) removeIfCurrent()
+      // 未结算的 promise 必须了结（即使本连接已被顶替）。
       if (!settled) {
         settled = true
         reject(new Error('连接语音识别服务在建立前已关闭'))
       }
-      // 服务端静音超时会主动关会话；renderer 收到后可重开新会话续录。
-      // 已被同 id 新会话顶替时不广播，避免旧连接污染新会话状态机。
-      if (activeSessions.get(sessionId) !== active) return
+      if (!isCurrent) return
       handlers.onState({ sessionId, status: 'idle', message: 'asr_session_ended' })
     })
 
     ws.once('error', (error: Error) => {
       clearTimeout(timer)
       active.closed = true
-      removeIfCurrent()
+      const isCurrent = activeSessions.get(sessionId) === active
+      if (isCurrent) removeIfCurrent()
       if (!settled) {
         settled = true
         reject(error)
       }
-      if (activeSessions.get(sessionId) !== active) return
+      if (!isCurrent) return
       handlers.onState({ sessionId, status: 'error', message: error.message })
     })
   })

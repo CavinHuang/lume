@@ -1686,7 +1686,7 @@ export function AgentInput({
                       className={cn(
                         'size-2 shrink-0 rounded-full',
                         voiceDictation.status === 'recording'
-                          ? 'animate-pulse bg-[var(--lume-danger)]'
+                          ? 'animate-pulse bg-[var(--lume-danger)] motion-reduce:animate-none'
                           : 'bg-[var(--lume-text-secondary)]',
                       )}
                     />

@@ -252,6 +252,7 @@ export function VoiceDictationSettings() {
             value={settings.appId}
             onChange={(event) => editLocally({ appId: event.target.value })}
             onBlur={() => void applyUpdate()}
+            aria-label="APP ID"
             placeholder="服务商控制台的 APP ID"
           />
         </SettingsRow>
@@ -261,6 +262,7 @@ export function VoiceDictationSettings() {
             value={settings.accessToken}
             onChange={(event) => editLocally({ accessToken: event.target.value })}
             onBlur={() => void applyUpdate()}
+            aria-label="Access Token"
             placeholder="访问凭证"
           />
         </SettingsRow>
@@ -277,7 +279,7 @@ export function VoiceDictationSettings() {
             value={settings.language || 'auto'}
             onValueChange={(value) => void applyUpdate({ language: value === 'auto' ? '' : value ?? '' })}
           >
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="w-full" aria-label="识别语言">
               <SelectValue placeholder="自动检测" />
             </SelectTrigger>
             <SelectContent>
@@ -293,6 +295,7 @@ export function VoiceDictationSettings() {
             onChange={(event) => editLocally({ customHotwords: event.target.value })}
             onBlur={() => void applyUpdate()}
             rows={3}
+            aria-label="自定义热词"
             placeholder={'产品名\n人名\n术语'}
             className="w-full resize-y rounded-lg border border-[var(--lume-border-subtle)] bg-transparent px-2 py-1.5 text-body leading-6 text-[var(--text-1)]"
           />
@@ -306,6 +309,7 @@ export function VoiceDictationSettings() {
         <SettingsRow label="结果输出" hint="「写入当前应用」：在 Lume 之外按快捷键唤起听写，结束后粘贴到当时的前台应用光标处（Windows 首次使用需允许；macOS 需辅助功能权限）">          <div className="flex flex-wrap gap-2 pt-1">
             <Button
               variant={settings.outputMode === 'lume-input' ? 'secondary' : 'ghost'}
+              aria-pressed={settings.outputMode === 'lume-input'}
               type="button"
               className="h-8 px-3 text-body"
               onClick={() => void applyUpdate({ outputMode: 'lume-input' })}
@@ -314,6 +318,7 @@ export function VoiceDictationSettings() {
             </Button>
             <Button
               variant={settings.outputMode === 'system-cursor' ? 'secondary' : 'ghost'}
+              aria-pressed={settings.outputMode === 'system-cursor'}
               type="button"
               className="h-8 px-3 text-body"
               onClick={() => void applyUpdate({ outputMode: 'system-cursor' })}
@@ -322,6 +327,7 @@ export function VoiceDictationSettings() {
             </Button>
             <Button
               variant={settings.outputMode === 'clipboard' ? 'secondary' : 'ghost'}
+              aria-pressed={settings.outputMode === 'clipboard'}
               type="button"
               className="h-8 px-3 text-body"
               onClick={() => void applyUpdate({ outputMode: 'clipboard' })}

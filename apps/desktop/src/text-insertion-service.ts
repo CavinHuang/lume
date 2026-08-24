@@ -244,14 +244,6 @@ public static class LumeKeyboardPaste
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
-    [DllImport("user32.dll")]
-    private static extern uint GetClipboardSequenceNumber();
-
-    public static uint GetSequence()
-    {
-        return GetClipboardSequenceNumber();
-    }
-
     public static void Paste()
     {
         INPUT[] inputs = new INPUT[4];
@@ -280,14 +272,10 @@ public static class LumeKeyboardPaste
 "@
 
 Add-Type -TypeDefinition $signature
-
-# 高完整性级别（管理员权限）前台窗口会静默拦截非提升进程的 SendInput 且返回
-# 值仍是"成功"——用剪贴板序列号验证粘贴确实发生，未发生则报错走失败分支。
-$before = [LumeKeyboardPaste]::GetSequence()
 [LumeKeyboardPaste]::Paste()
-Start-Sleep -Milliseconds 400
-$after = [LumeKeyboardPaste]::GetSequence()
-if ($after -eq $before) {
-    throw "paste did not reach target window (input may have been blocked)"
-}
 `
+
+// 已知限制：前台是高完整性级别（管理员权限）窗口时，UIPI 会静默拦截非提升
+// 进程的 SendInput 且返回值仍为"成功"——无法可靠探测。曾尝试用剪贴板序列号
+// 验证，但目标应用读取剪贴板粘贴不会递增序列号（只有内容变更才递增），必然
+// 误判正常粘贴为失败，已撤销。此场景退化为：文本保留在剪贴板可手动粘贴。

@@ -80,6 +80,8 @@ describe('parseServerMessage', () => {
     const frame = buildServerErrorFrame(45000001, 'invalid auth')
     const parsed = parseServerMessage(frame)
     expect(parsed?.isFinal).toBe(true)
+    // 错误帧必须走状态通道：调用方据 isError 区分，绝不混入听写文本。
+    expect(parsed?.isError).toBe(true)
     expect(parsed?.text).toContain('45000001')
     expect(parsed?.text).toContain('invalid auth')
   })

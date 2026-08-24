@@ -64,11 +64,11 @@ function VoiceIndicatorSurface() {
 
   return (
     <div className="flex h-screen w-screen items-center justify-center overflow-hidden bg-transparent">
-      <div className="lume-panel flex w-[364px] animate-in fade-in slide-in-from-bottom-2 items-center gap-2.5 rounded-2xl px-3 py-2 shadow-[0_18px_42px_-24px_hsl(var(--lume-shadow-panel)/0.7)] duration-250">
+      <div className="lume-panel flex w-[364px] animate-in fade-in slide-in-from-bottom-2 items-center motion-reduce:animate-none gap-2.5 rounded-2xl px-3 py-2 shadow-[0_18px_42px_-24px_hsl(var(--lume-shadow-panel)/0.7)] duration-250">
         <span
           className={cn(
             'size-2 shrink-0 rounded-full',
-            voice.status === 'recording' ? 'animate-pulse bg-[var(--lume-danger)]' : 'bg-[var(--lume-text-muted)]',
+            voice.status === 'recording' ? 'animate-pulse bg-[var(--lume-danger)] motion-reduce:animate-none' : 'bg-[var(--lume-text-muted)]',
           )}
         />
         <span className="shrink-0 font-mono text-ui tabular-nums text-[var(--lume-text-secondary)]">

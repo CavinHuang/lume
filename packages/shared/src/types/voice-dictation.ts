@@ -31,7 +31,8 @@ export interface VoiceDictationSettings {
   shortcut: string
 }
 
-export const VOICE_DICTATION_DEFAULT_SHORTCUT = 'Alt+V'
+/** 默认全局快捷键：双修饰（Ctrl/⌘+Alt+V），单修饰 Alt+V 会劫持常见应用菜单。 */
+export const VOICE_DICTATION_DEFAULT_SHORTCUT = 'CommandOrControl+Alt+V'
 
 export type VoiceDictationSettingsUpdate = Partial<VoiceDictationSettings>
 
