@@ -146,6 +146,31 @@ describe("browser CDP input", () => {
     expect(sleeps.values.every((value) => value >= 40 && value <= 160)).toBe(true)
   })
 
+  test("natural typing beyond maxNaturalChars finishes remainder via insertText (#638)", async () => {
+    const sender = recorder()
+    const sleeps = numberRecorder()
+    const text = "a".repeat(30)
+
+    await dispatchBrowserText(sender, text, { platform: "win32", replace: false, natural: true, sleep: sleeps.step, maxNaturalChars: 10 })
+
+    const keyEvents = sender.calls.filter((call) => call.method === "Input.dispatchKeyEvent")
+    // 前 10 个字符逐字拟真(各一次 keyDown + keyUp)
+    expect(keyEvents).toHaveLength(20)
+    const insert = sender.calls.find((call) => call.method === "Input.insertText")
+    expect(insert?.params.text).toBe("a".repeat(20))
+    // 10 个字符驻留 + 至多一次周期性停顿(停顿阈值为 6+rand(0..9))
+    expect(sleeps.values.length).toBeGreaterThanOrEqual(10)
+    expect(sleeps.values.length).toBeLessThanOrEqual(11)
+  })
+
+  test("natural typing at or below maxNaturalChars never falls back to insertText", async () => {
+    const sender = recorder()
+
+    await dispatchBrowserText(sender, "abc", { platform: "win32", replace: false, natural: true, sleep: () => Promise.resolve(), maxNaturalChars: 3 })
+
+    expect(sender.calls.some((call) => call.method === "Input.insertText")).toBe(false)
+  })
+
   test("natural fill types faster than natural type", async () => {
     const typeSender = recorder()
     const fillSender = recorder()

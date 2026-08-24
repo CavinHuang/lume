@@ -11,7 +11,16 @@ export type BrowserErrorCode =
   | "tab_not_found" | "tab_generation_changed" | "confirmation_unavailable" | "reference_grant_expired"
   | "action_denied" | "user_action_required" | "strict_locator_violation" | "actionability_failed" | "dialog_blocking" | "user_takeover_required"
   | "element_not_visible" | "element_disabled" | "element_occluded" | "element_readonly"
-  | "unsupported" | "executed_unknown" | "browser_internal_error";
+  | "unsupported" | "executed_unknown" | "browser_internal_error"
+  | "navigation_timeout";
+
+/**
+ * desktop 侧单段等待类操作的统一上限(wait:* 与 autoWait 的 boundedNumber、
+ * 工具 schema timeout_ms maximum、sidecar clamp 多处必须同源,防 #603 类
+ * transport 先杀错配复发)。sidecar 传输超时须在此基础上另加 guest 等待
+ * (≤10s)与 RPC 余量。
+ */
+export const BROWSER_HANDLER_WAIT_CAP_MS = 30_000;
 
 export interface BrowserProtocolHandshake {
   protocolVersion: number;

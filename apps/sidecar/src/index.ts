@@ -9,7 +9,7 @@ import {
 } from "./services/automation/automation-runner-service";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
-import { AGENT_IPC_CHANNELS } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
 import { getSubagentCoordinator } from "./services/agent-runtime/subagents/subagent-coordinator";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
@@ -50,13 +50,10 @@ const rpcTransport = createProcessRpcTransport(
   process.env.LUME_SIDECAR_TRANSPORT === "stdio" ? { parentPort: null } : undefined,
 );
 const SETTINGS_ACK_TIMEOUT_MS = 10_000;
-// 必须容纳 desktop 侧最长的常规请求耗时:各 wait/snapshot/autoWait 方法自身
-// 上限 30s(browser-runtime.ts boundedNumber),非 guest-optional 方法还可能
-// 先吃最多 10s waitForGuest → 40s 类越界(#603 对齐表)。45s = 30+10+RPC 余量。
-// 已知仍会超时误报 executed_unknown 的残余(navigate 无界 loadURL、humanized
-// 打字长文本、loadBackgroundContent/pageAssets 批量串行、browserAuth 长等待):
-// navigate/批量见 follow-up;browserAuth 已入下方确认级长等待档。
-const BROWSER_REQUEST_TIMEOUT_MS = 45_000;
+// 容纳 desktop 最长常规请求:handler 上限 BROWSER_HANDLER_WAIT_CAP_MS(shared
+// 单源)+ 非 guest-optional 方法先吃的 waitForGuest ≤10s + RPC 余量。desktop 的
+// navigate/打字/批量串行已各自有界(#638),browserAuth 入确认级长等待档。
+const BROWSER_REQUEST_TIMEOUT_MS = BROWSER_HANDLER_WAIT_CAP_MS + 15_000;
 const BROWSER_CONFIRMATION_TIMEOUT_MS = 5 * 60_000;
 const pendingSettingsMutations = new Map<string, {
   resolve: () => void;
