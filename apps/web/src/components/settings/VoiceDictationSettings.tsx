@@ -274,12 +274,12 @@ export function VoiceDictationSettings() {
           {(micPermission === 'denied' || restartRequired) && (
             <div className="mt-2 space-y-2">
               {micPermission === 'denied' && (
-                <p className="text-[13px] leading-6 text-[var(--text-2)]">
+                <p className="text-body leading-6 text-[var(--text-2)]">
                   语音输入无法工作。请在系统设置中允许 Lume 访问麦克风——修改后需要<strong> 重启 Lume </strong>才能生效。
                 </p>
               )}
               {micPermission !== 'denied' && (
-                <p className="text-[13px] leading-6 text-[var(--text-2)]">
+                <p className="text-body leading-6 text-[var(--text-2)]">
                   权限已允许，但本进程需要<strong> 重启 Lume </strong>后才能使用新的麦克风权限。
                 </p>
               )}
@@ -303,7 +303,7 @@ export function VoiceDictationSettings() {
           )}
           {micPermission === 'not-determined' && (
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-              <p className="min-w-0 flex-1 text-[13px] leading-6 text-[var(--text-2)]">
+              <p className="min-w-0 flex-1 text-body leading-6 text-[var(--text-2)]">
                 授权后即可在任意入口使用语音输入。
               </p>
               <Button
