@@ -64,7 +64,7 @@ function VoiceIndicatorSurface() {
 
   return (
     <div className="flex h-screen w-screen items-center justify-center overflow-hidden bg-transparent">
-      <div className="lume-panel flex w-[364px] items-center gap-2.5 rounded-2xl px-3 py-2 shadow-[0_18px_42px_-24px_hsl(var(--lume-shadow-panel)/0.7)]">
+      <div className="lume-panel flex w-[364px] animate-in fade-in slide-in-from-bottom-2 items-center gap-2.5 rounded-2xl px-3 py-2 shadow-[0_18px_42px_-24px_hsl(var(--lume-shadow-panel)/0.7)] duration-250">
         <span
           className={cn(
             'size-2 shrink-0 rounded-full',
@@ -87,7 +87,7 @@ function VoiceIndicatorSurface() {
           )}
         >
           {voice.notice?.text
-            || voice.transcript
+            || (voice.transcript.length > 36 ? `…${voice.transcript.slice(-36)}` : voice.transcript)
             || (voice.status === 'connecting' ? '正在连接语音识别…' : voice.status === 'stopping' ? '正在整理转写…' : '正在听写，再按快捷键结束')}
         </div>
         <button

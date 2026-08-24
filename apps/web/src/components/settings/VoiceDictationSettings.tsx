@@ -14,6 +14,7 @@ import type {
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
 /** KeyboardEvent → Electron accelerator；无有效组合时返回 null。 */
@@ -89,7 +90,7 @@ function ShortcutCaptureRow({ value, onApply }: {
             : 'border-[var(--lume-border-subtle)] text-[var(--text-1)]',
         )}
       >
-        {recording ? '按下新的组合键…' : applying ? '应用中…' : value}
+        {recording ? '按下新的组合键…' : applying ? '应用中…' : formatAcceleratorForDisplay(value)}
       </button>
       {hint ? <div className="mt-1 text-caption text-[var(--lume-warning)]">{hint}</div> : null}
     </div>
@@ -114,6 +115,16 @@ function ShortcutRow({ settings, onApply }: {
       <ShortcutCaptureRow value={settings.shortcut} onApply={onApply} />
     </SettingsRow>
   )
+}
+
+/** accelerator → 人类可读展示（mac 用 ⌘/⌥ 符号，win 用 Ctrl/Alt）。 */
+export function formatAcceleratorForDisplay(accelerator: string): string {
+  const isMac = typeof document !== 'undefined' && document.documentElement.classList.contains('darwin')
+  return accelerator
+    .replace(/CommandOrControl/g, isMac ? '⌘' : 'Ctrl')
+    .replace(/Super/g, isMac ? '⌘' : 'Win')
+    .replace(/Alt/g, isMac ? '⌥' : 'Alt')
+    .replace(/Shift/g, isMac ? '⇧' : 'Shift')
 }
 
 function SettingsRow({ label, hint, children }: {
@@ -262,15 +273,19 @@ export function VoiceDictationSettings() {
           />
         </SettingsRow>
         <SettingsRow label="识别语言">
-          <select
-            value={settings.language}
-            onChange={(event) => void applyUpdate({ language: event.target.value })}
-            className="h-9 w-full rounded-lg border border-[var(--lume-border-subtle)] bg-transparent px-2 text-body text-[var(--text-1)]"
+          <Select
+            value={settings.language || 'auto'}
+            onValueChange={(value) => void applyUpdate({ language: value === 'auto' ? '' : value ?? '' })}
           >
-            {LANGUAGE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="自动检测" />
+            </SelectTrigger>
+            <SelectContent>
+              {LANGUAGE_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value || 'auto'}>{option.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </SettingsRow>
         <SettingsRow label="自定义热词" hint="按行或逗号分隔，最多 100 个；提升专有名词识别率">
           <textarea

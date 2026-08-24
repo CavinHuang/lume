@@ -139,9 +139,9 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
   const systemCursorOutputRef = React.useRef(systemCursorOutput)
   systemCursorOutputRef.current = systemCursorOutput
 
-  // 录音计时：会话活跃期间每秒递增，归位随 settleIdle。
+  // 录音计时：仅从真正开始收音起累计（connecting 的握手等待不计入）。
   React.useEffect(() => {
-    if (status !== 'connecting' && status !== 'recording') return
+    if (status !== 'recording') return
     const timer = setInterval(() => setElapsedSeconds((current) => current + 1), 1000)
     return () => clearInterval(timer)
   }, [status])

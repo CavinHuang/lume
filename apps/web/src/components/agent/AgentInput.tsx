@@ -1681,7 +1681,7 @@ export function AgentInput({
             editorSlot={
               <>
                 {voiceDictation.isActive && (
-                  <div className="mb-2 flex items-center gap-2.5 rounded-lg bg-[var(--lume-accent-soft)] px-2.5 py-1.5">
+                  <div className="mb-2 flex animate-in fade-in slide-in-from-top-1 items-center gap-2.5 rounded-lg bg-[var(--lume-accent-soft)] px-2.5 py-1.5 duration-200">
                     <span
                       className={cn(
                         'size-2 shrink-0 rounded-full',
@@ -1700,7 +1700,8 @@ export function AgentInput({
                       barClassName="w-[3px] rounded-full bg-[var(--lume-danger)] transition-[height] duration-100"
                     />
                     <div role="status" className="min-w-0 flex-1 truncate text-ui text-[var(--lume-text-secondary)]">
-                      {voiceDictation.transcript || (voiceDictation.status === 'connecting' ? '正在连接语音识别…' : voiceDictation.status === 'stopping' ? '正在整理转写…' : '正在听写，Esc 取消')}
+                      {(voiceDictation.transcript.length > 48 ? `…${voiceDictation.transcript.slice(-48)}` : voiceDictation.transcript)
+                        || (voiceDictation.status === 'connecting' ? '正在连接语音识别…' : voiceDictation.status === 'stopping' ? '正在整理转写…' : '正在听写，Esc 取消')}
                     </div>
                     {voiceDictation.status !== 'stopping' && (
                       <Button variant="ghost" type="button" className="h-6 px-1.5 text-ui" onClick={() => void voiceDictation.stop()} title="结束并插入（Enter 不适用，点此或再点麦克风）">
