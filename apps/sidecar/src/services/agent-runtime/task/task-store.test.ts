@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFileBackedTaskStore } from "./task-store";
@@ -161,4 +162,120 @@ describe("FileBackedTaskStore", () => {
       expect(next.task.id).toBe("2");
     });
   });
+
+  test("journal 只记 events 截断点，恢复按截断点回滚(#647 P1-7)", async () => {
+    await withStore(async (store, sessionDir) => {
+      const listDir = join(sessionDir, "tasks", "thread-1");
+      const journalPath = join(listDir, ".journal.jsonl");
+      const eventsPath = join(listDir, ".events.jsonl");
+
+      await store.create({ subject: "A" }, context());
+      const journal = await readFile(journalPath, "utf8");
+      // prepare 行不得嵌入 events 全史（O(n²) 膨胀根因）
+      expect(journal).not.toContain('"task.mutated"');
+      // 结构断言：events 条目为 contents:null + 数值型 truncateTo（生产写入值受校验）
+      const prepareLine = journal.split(/\r?\n/).find((line) => line.includes('"prepare"'));
+      const eventsEntry = (JSON.parse(prepareLine!) as {
+        files: Array<{ path: string; contents: string | null; truncateTo?: number }>;
+      }).files.find((file) => file.path === eventsPath);
+      expect(eventsEntry).toMatchObject({ contents: null });
+      expect(typeof eventsEntry!.truncateTo).toBe("number");
+
+      // 模拟崩溃：一笔未 commit 的 prepare + 事务后追加的两条伪事件
+      const eventsSizeBefore = (await stat(eventsPath)).size;
+      await appendFile(journalPath, `${JSON.stringify({
+        phase: "prepare",
+        transactionId: "txn-crash",
+        files: [{ path: eventsPath, contents: null, truncateTo: eventsSizeBefore }],
+      })}\n`);
+      await appendFile(eventsPath, `${JSON.stringify({ type: "task.mutated", fake: 1 })}\n`);
+      await appendFile(eventsPath, `${JSON.stringify({ type: "task.mutated", fake: 2 })}\n`);
+
+      // 下一次 mutation 先走 recoverJournal：伪事件应被截断回滚，
+      // 且合法事件（create A 的 sequence 1）必须完好——防过度回滚/清空
+      await store.create({ subject: "B" }, context());
+      const events = await readFile(eventsPath, "utf8");
+      expect(events).toContain("\"sequence\":1");
+      expect(events).not.toContain("\"fake\":1");
+      expect(events).not.toContain("\"fake\":2");
+    });
+  });
+
+  test("旧格式全量快照行（无 truncateTo）恢复语义不变(#647 P1-7 兼容)", async () => {
+    await withStore(async (store, sessionDir) => {
+      const listDir = join(sessionDir, "tasks", "thread-1");
+      const journalPath = join(listDir, ".journal.jsonl");
+      const eventsPath = join(listDir, ".events.jsonl");
+
+      await store.create({ subject: "Legacy" }, context());
+      const snapshot = await readFile(eventsPath, "utf8");
+      // 手植旧格式 pending prepare：contents 记录事件全史快照，随后追加垃圾尾
+      await appendFile(journalPath, `${JSON.stringify({
+        phase: "prepare",
+        transactionId: "txn-legacy",
+        files: [{ path: eventsPath, contents: snapshot }],
+      })}\n`);
+      await appendFile(eventsPath, "garbage-tail\n");
+
+      await store.create({ subject: "After legacy recovery" }, context());
+      const after = await readFile(eventsPath, "utf8");
+      expect(after.startsWith(snapshot)).toBe(true);
+      expect(after).not.toContain("garbage-tail");
+    });
+  });
+
+  test("journal 超阈值后在下一轮 recovery 压实(#647 P1-7)", async () => {
+    await withStore(async (store, sessionDir) => {
+      const journalPath = join(sessionDir, "tasks", "thread-1", ".journal.jsonl");
+      await mkdir(join(sessionDir, "tasks", "thread-1"), { recursive: true });
+      // 256KB+ 已解决（commit 配对）的历史行
+      const filler = JSON.stringify({ phase: "commit", transactionId: `t-${Date.now()}-pad`, pad: "x".repeat(128) });
+      const lines = Array.from({ length: 2200 }, (_, i) => JSON.stringify({ phase: "commit", transactionId: `pad-${i}`, blob: "y".repeat(128) }));
+      await writeFile(journalPath, [...lines, filler].join("\n") + "\n");
+      expect((await stat(journalPath)).size).toBeGreaterThan(256 * 1024);
+
+      const created = await store.create({ subject: "Compact trigger" }, context());
+
+      const sizeAfter = (await stat(journalPath)).size;
+      expect(sizeAfter).toBeLessThan(4 * 1024);
+      // 压实后 store 功能不受影响
+      expect((await store.get(created.task.id, context()))?.task.subject).toBe("Compact trigger");
+    });
+  });
+
+  test("持有进程存活但心跳废弃超时的锁被强制接管(#647 P1-8)", async () => {
+    await withStore(async (store, sessionDir) => {
+      const lockPath = join(sessionDir, "tasks", "thread-1", ".lock");
+      await mkdir(join(sessionDir, "tasks", "thread-1"), { recursive: true });
+      // pid 是当前存活进程：旧规则（进程死+心跳超时双条件）永不判陈旧 → 全表写操作 5s 超时
+      await writeFile(lockPath, JSON.stringify({ pid: process.pid, token: "ghost", heartbeatAt: Date.now() - 400_000 }));
+
+      const created = await store.create({ subject: "After ghost lock" }, context());
+      expect(created.task.subject).toBe("After ghost lock");
+    });
+  });
+
+  test("半截/损坏锁文件在 mtime 老化后被自愈(#647 P1-8)", async () => {
+    await withStore(async (store, sessionDir) => {
+      const lockPath = join(sessionDir, "tasks", "thread-1", ".lock");
+      await mkdir(join(sessionDir, "tasks", "thread-1"), { recursive: true });
+      await writeFile(lockPath, "{corrupt-half-written");
+      const backdated = new Date(Date.now() - 60_000);
+      utimesSync(lockPath, backdated, backdated);
+
+      const created = await store.create({ subject: "After corrupt lock" }, context());
+      expect(created.task.subject).toBe("After corrupt lock");
+    });
+  });
+
+  test("新鲜锁不被误偷（安全半边）", async () => {
+    await withStore(async (store, sessionDir) => {
+      const lockPath = join(sessionDir, "tasks", "thread-1", ".lock");
+      await mkdir(join(sessionDir, "tasks", "thread-1"), { recursive: true });
+      await writeFile(lockPath, JSON.stringify({ pid: process.pid, token: "live-holder", heartbeatAt: Date.now() }));
+
+      // 心跳新鲜且进程存活：必须保持互斥，等满 acquisition 超时
+      await expect(store.create({ subject: "Should not steal" }, context())).rejects.toThrow("Task lock timeout");
+    });
+  }, 15_000);
 });
