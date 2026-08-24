@@ -36,6 +36,15 @@ export async function sendDingtalkText(
         const body = await res.text().catch(() => "");
         return { ok: false, error: `钉钉回复 HTTP ${res.status}: ${body}` };
       }
+      // 钉钉 webhook 业务错误惯例是 HTTP 200 + errcode≠0（如 token 过期 310000），
+      // 不检查会把失败当成功，回复静默丢失且桌面端收到假 sent
+      const payload = (await res.json().catch(() => null)) as { errcode?: number; errmsg?: string } | null;
+      if (payload && typeof payload.errcode === "number" && payload.errcode !== 0) {
+        return {
+          ok: false,
+          error: `钉钉回复被拒(errcode ${payload.errcode})${payload.errmsg ? `: ${payload.errmsg}` : ""}`,
+        };
+      }
     }
     return { ok: true };
   } catch (error) {

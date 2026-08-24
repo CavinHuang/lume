@@ -93,6 +93,24 @@ export function rememberImMessage(provider: string, accountId: string, messageId
   }
 }
 
+/** 批量标记已见：一次落盘（管线批量结算用，避免逐条全量写放大）。 */
+export function rememberImMessages(
+  items: Array<{ provider: string; accountId: string; messageId: string }>
+): void {
+  const valid = items.filter((item) => item.messageId);
+  if (valid.length === 0) return;
+  try {
+    const entries = loadEntries();
+    const now = Date.now();
+    for (const item of valid) {
+      entries.set(buildImSeenMessageKey(item.provider, item.accountId, item.messageId), now);
+    }
+    persist(entries);
+  } catch (error) {
+    log.warn("failed to remember im messages", { count: valid.length, error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 /** 测试辅助：清空内存缓存。 */
 export function resetImSeenMessageCacheForTest(): void {
   cache = null;
