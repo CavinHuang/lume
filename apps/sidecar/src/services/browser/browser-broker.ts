@@ -248,10 +248,10 @@ export class BrowserBroker {
           requestId: randomUUID(), context: internalContext, method: "policy:confirm",
           params: { method: input.method, tabId, backend, category: policy.category, preview: policy.preview, bindingHash },
         }) as { approved?: boolean; token?: string }
-        // 用户明确拒绝(approved:false)与通道异常(缺 token/响应缺失)必须区分:
+        // 用户明确拒绝(approved:false)与通道异常(畸形响应/缺 token)必须区分:
         // 前者是用户否决该路径(user_declined),后者才是确认通道故障(#606)
         if (confirmation.approved === false) throw new Error("user_declined")
-        if (typeof confirmation.token !== "string") throw new Error("confirmation_unavailable")
+        if (confirmation.approved !== true || typeof confirmation.token !== "string") throw new Error("confirmation_unavailable")
         confirmationToken = confirmation.token
         if (backend === "extension") {
           await this.main.request({ requestId: randomUUID(), context: internalContext, method: "policy:consume", params: { token: confirmationToken, bindingHash } })
