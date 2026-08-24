@@ -109,6 +109,112 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     });
   });
 
+  test("#314:ranged 早停读（缺 remainingLines + truncated 标记）不算全文读", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const filePath = join(root, "big.txt");
+    await writeFile(filePath, "before", "utf-8");
+    const ledger = createFileAccessLedger();
+    const readTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Read", {
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            // #314 形制：早停时省略 remainingLines，partial/truncated 只在 _meta
+            content: JSON.stringify({ offset: 0, limit: 100, totalLines: 600 }),
+            _meta: { read: { offset: 0, limit: 100, totalLines: 600, partial: true, truncated: true, summarized: false } }
+          };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+    const writeTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Write", {
+        name: "Write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "written" };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    await readTool.call({ file_path: filePath }, { cwd: root });
+
+    // 部分视图不得解锁既有文件覆写（且命中更精确的部分读守卫文案）
+    await expect(writeTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      is_error: true,
+      content: "该文件只被部分读取，请完整读取后再写入。"
+    });
+  });
+
+  test("#314 同族:unchanged 短路结果不重录，不把部分视图升级成全文读", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const filePath = join(root, "big.txt");
+    await writeFile(filePath, "before", "utf-8");
+    const ledger = createFileAccessLedger();
+    let readCount = 0;
+    const readTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Read", {
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          readCount += 1;
+          if (readCount === 1) {
+            // 首次：ranged 部分读
+            return {
+              type: "tool_result",
+              tool_use_id: "",
+              content: JSON.stringify({ offset: 0, limit: 100, totalLines: 600 }),
+              _meta: { read: { offset: 0, limit: 100, totalLines: 600, partial: true, truncated: true, summarized: false } }
+            };
+          }
+          // 第二次相同范围：SDK 层 unchanged 短路形制
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            content: `File unchanged since it was last read: ${filePath}`,
+            _meta: { read: { filePath, unchanged: true } }
+          };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+    const writeTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Write", {
+        name: "Write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "written" };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    await readTool.call({ file_path: filePath }, { cwd: root });
+    await readTool.call({ file_path: filePath }, { cwd: root });
+
+    await expect(writeTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      is_error: true
+    });
+  });
+
   test("allows creating new files without a prior read", async () => {
     const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
     await mkdir(root, { recursive: true });
