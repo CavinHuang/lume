@@ -15,6 +15,7 @@ import type {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
@@ -310,38 +311,23 @@ export function VoiceDictationSettings() {
             onApply={(accelerator) => applyUpdate({ shortcut: accelerator })}
           />
         )}
-        <SettingsRow label="结果输出" hint="「写入当前应用」：在 Lume 之外按快捷键唤起听写，结束后粘贴到当时的前台应用光标处（Windows 首次使用需允许；macOS 需辅助功能权限）">          <div role="radiogroup" aria-label="结果输出方式" className="flex flex-wrap gap-2 pt-1">
-            <Button
-              variant={settings.outputMode === 'lume-input' ? 'secondary' : 'ghost'}
-              role="radio"
-              aria-checked={settings.outputMode === 'lume-input'}
-              type="button"
-              className="h-8 px-3 text-body"
-              onClick={() => void applyUpdate({ outputMode: 'lume-input' })}
-            >
+        <SettingsRow label="结果输出" hint="「写入当前应用」：在 Lume 之外按快捷键唤起听写，结束后粘贴到当时的前台应用光标处（Windows 首次使用需允许；macOS 需辅助功能权限）">
+          <ToggleGroup
+            value={settings.outputMode}
+            onValueChange={(value) => void applyUpdate({ outputMode: value as VoiceDictationSettings['outputMode'] })}
+            aria-label="结果输出方式"
+            className="flex flex-wrap gap-2 pt-1"
+          >
+            <ToggleGroupItem value="lume-input" className="h-8 px-3 text-body">
               追加到输入框
-            </Button>
-            <Button
-              variant={settings.outputMode === 'system-cursor' ? 'secondary' : 'ghost'}
-              role="radio"
-              aria-checked={settings.outputMode === 'system-cursor'}
-              type="button"
-              className="h-8 px-3 text-body"
-              onClick={() => void applyUpdate({ outputMode: 'system-cursor' })}
-            >
+            </ToggleGroupItem>
+            <ToggleGroupItem value="system-cursor" className="h-8 px-3 text-body">
               写入当前应用
-            </Button>
-            <Button
-              variant={settings.outputMode === 'clipboard' ? 'secondary' : 'ghost'}
-              role="radio"
-              aria-checked={settings.outputMode === 'clipboard'}
-              type="button"
-              className="h-8 px-3 text-body"
-              onClick={() => void applyUpdate({ outputMode: 'clipboard' })}
-            >
+            </ToggleGroupItem>
+            <ToggleGroupItem value="clipboard" className="h-8 px-3 text-body">
               复制到剪贴板
-            </Button>
-          </div>
+            </ToggleGroupItem>
+          </ToggleGroup>
         </SettingsRow>
       </div>
 
