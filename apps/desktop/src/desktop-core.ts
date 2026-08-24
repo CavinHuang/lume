@@ -325,6 +325,25 @@ const MACOS_MIC_SETTINGS_DEEP_LINKS = {
 
 const ALLOWED_SYSTEM_DEEP_LINKS = new Set(Object.values(MACOS_MIC_SETTINGS_DEEP_LINKS))
 
+export interface VoiceMicPermissionState {
+  /** 当前 Electron 进程生命周期内是否观察过 denied（TCC 要求此后重启才生效）。 */
+  sawDeniedInProcess: boolean
+  /** 观察过 denied 且系统侧现已 granted：界面须提示“重启生效”。 */
+  restartRequired: boolean
+}
+
+/**
+ * 麦克风权限状态转移（纯函数）：状态由 main process 持有——它是进程级事实，
+ * 放在组件 state 里会随面板卸载/重挂载丢失。
+ */
+export function applyVoiceMicPermissionState(
+  previous: VoiceMicPermissionState,
+  status: 'granted' | 'denied' | 'not-determined',
+): VoiceMicPermissionState {
+  const sawDeniedInProcess = previous.sawDeniedInProcess || status === 'denied'
+  return { sawDeniedInProcess, restartRequired: sawDeniedInProcess && status === 'granted' }
+}
+
 /** 按 macOS 主版本返回麦克风隐私页深链（darwin release 21=12，22+=13）。 */
 export function resolveMacMicrophoneSettingsDeepLink(darwinMajorRelease: number): string {
   return darwinMajorRelease >= 22 ? MACOS_MIC_SETTINGS_DEEP_LINKS.modern : MACOS_MIC_SETTINGS_DEEP_LINKS.legacy

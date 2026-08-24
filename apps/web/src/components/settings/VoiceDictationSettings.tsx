@@ -161,13 +161,10 @@ export function VoiceDictationSettings() {
   const pendingUpdateRef = React.useRef<VoiceDictationSettingsUpdate | null>(null)
 
   const refreshMicPermission = React.useCallback(() => {
-    return invoke<{ status: string }>('voice_dictation_check_microphone', null)
+    return invoke<{ status: string; restartRequired?: boolean }>('voice_dictation_check_microphone', null)
       .then((permission) => {
-        const status = permission.status === 'unsupported' ? null : permission.status as 'granted' | 'denied' | 'not-determined'
-        // 曾在本进程被拒过：即使系统侧改为允许，TCC 也要求重启才对本进程生效，
-        // 此时不能把状态呈现为"已可用"。
-        if (status === 'denied') setRestartRequired(true)
-        setMicPermission(status)
+        setMicPermission(permission.status === 'unsupported' ? null : permission.status as 'granted' | 'denied' | 'not-determined')
+        setRestartRequired(permission.restartRequired === true)
       })
       .catch(() => undefined)
   }, [])
