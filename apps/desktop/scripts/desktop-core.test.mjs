@@ -220,10 +220,14 @@ test('external URLs are restricted to web and WeRead links', () => {
   assert.equal(validateExternalUrl('http://example.com/path'), 'http://example.com/path')
   assert.equal(validateExternalUrl('weread://reading?bId=123'), 'weread://reading?bId=123')
   assert.equal(validateExternalUrl('obsidian://open?path=C%3A%5Cwiki'), 'obsidian://open?path=C%3A%5Cwiki')
+  // 系统设置深链按精确目标放行（正确 scheme 是 x-apple.systempreferences:，无点）。
   assert.equal(
-    validateExternalUrl('x-apple.system.preferences:com.apple.preference.security?Privacy_Microphone'),
-    'x-apple.system.preferences:com.apple.preference.security?Privacy_Microphone',
+    validateExternalUrl('x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone'),
+    'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone',
   )
+  // 拼写错误的 scheme 与同 scheme 的其他面板一律拒绝。
+  assert.throws(() => validateExternalUrl('x-apple.system.preferences:com.apple.preference.security?Privacy_Microphone'))
+  assert.throws(() => validateExternalUrl('x-apple.systempreferences:com.apple.preference.bluetooth'))
   assert.throws(() => validateExternalUrl('file:///tmp/secret'), /only http\/https\/weread\/obsidian\/system-preferences urls are allowed/)
   assert.throws(() => validateExternalUrl('javascript:alert(1)'), /only http\/https\/weread\/obsidian\/system-preferences urls are allowed/)
 })

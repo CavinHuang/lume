@@ -315,18 +315,23 @@ export function createFileStatMetadata(filePath) {
   }
 }
 
-// macOS 系统设置深链（如语音听写的麦克风权限页）：指向系统应用本身，与任意
-// 远程内容不同风险面，单独列入白名单。
-const MACOS_SYSTEM_PREFERENCES_SCHEME = 'x-apple.system.preferences:'
+// macOS 系统设置深链（语音听写的麦克风权限页）：指向系统应用本身，与任意远程
+// 内容不同风险面。按精确目标逐条放行，不放行整个自定义 scheme。
+// macOS 13+ System Settings 的隐私面板已迁移到 settings extension 深链。
+const ALLOWED_SYSTEM_DEEP_LINKS = new Set([
+  'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone',
+])
 
 export function validateExternalUrl(url) {
+  if (ALLOWED_SYSTEM_DEEP_LINKS.has(url)) return url
+
   let protocol
   try {
     protocol = new URL(url).protocol
   } catch {
     throw new Error('only http/https/weread/obsidian/system-preferences urls are allowed')
   }
-  if (![...['http:', 'https:', 'weread:', 'obsidian:'], MACOS_SYSTEM_PREFERENCES_SCHEME].includes(protocol)) {
+  if (!['http:', 'https:', 'weread:', 'obsidian:'].includes(protocol)) {
     throw new Error('only http/https/weread/obsidian/system-preferences urls are allowed')
   }
   return url

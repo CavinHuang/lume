@@ -3,6 +3,7 @@
  */
 
 import { invoke } from '@/lib/desktop-runtime/core'
+import { relaunch } from '@/lib/desktop-runtime/process'
 import * as React from 'react'
 import { ExternalLink, Loader2, Mic } from 'lucide-react'
 import { toast } from 'sonner'
@@ -147,6 +148,9 @@ function SettingsRow({ label, hint, children }: {
   )
 }
 
+/** macOS 麦克风隐私面板深链（System Settings extension，macOS 13+）。 */
+const MIC_SETTINGS_DEEP_LINK = 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone'
+
 export function VoiceDictationSettings() {
   const [settings, setSettings] = React.useState<VoiceDictationSettings | null>(null)
   const [saving, setSaving] = React.useState(false)
@@ -251,7 +255,7 @@ export function VoiceDictationSettings() {
               : 'border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)]',
           )}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2" role="status">
             <span
               className={cn(
                 'size-2 shrink-0 rounded-full',
@@ -266,18 +270,26 @@ export function VoiceDictationSettings() {
             </span>
           </div>
           {micPermission === 'denied' && (
-            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-              <p className="min-w-0 flex-1 text-[13px] leading-6 text-[var(--text-2)]">
-                语音输入无法工作。请允许 Lume 访问麦克风后重试。
+            <div className="mt-2 space-y-2">
+              <p className="text-[13px] leading-6 text-[var(--text-2)]">
+                语音输入无法工作。请在系统设置中允许 Lume 访问麦克风——修改后需要<strong> 重启 Lume </strong>才能生效。
               </p>
-              <Button
-                variant="outline"
-                type="button"
-                onClick={() => void invoke('open_external', { url: 'x-apple.system.preferences:com.apple.preference.security?Privacy_Microphone' })}
-              >
-                打开系统设置
-                <ExternalLink size={12} className="ml-1.5" />
-              </Button>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={() => {
+                    invoke('open_external', { url: MIC_SETTINGS_DEEP_LINK })
+                      .catch((error: unknown) => toast.error(`打开系统设置失败: ${error instanceof Error ? error.message : '未知错误'}`))
+                  }}
+                >
+                  打开系统设置
+                  <ExternalLink size={12} className="ml-1.5" />
+                </Button>
+                <Button variant="ghost" type="button" onClick={() => void relaunch()}>
+                  重启 Lume
+                </Button>
+              </div>
             </div>
           )}
           {micPermission === 'not-determined' && (
@@ -289,10 +301,16 @@ export function VoiceDictationSettings() {
                 variant="outline"
                 type="button"
                 disabled={requestingMic}
+                aria-busy={requestingMic}
                 onClick={() => void handleRequestMicPermission()}
               >
-                {requestingMic ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
-                授权麦克风
+                {requestingMic ? (
+                  <>
+                    <Loader2 className="mr-1.5 size-3.5 animate-spin motion-reduce:animate-none" />
+                    正在请求…
+                  </>
+                ) : null}
+                {requestingMic ? '' : '授权麦克风'}
               </Button>
             </div>
           )}
