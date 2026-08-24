@@ -116,6 +116,10 @@ function terminal(state: ImRunCardState, status: Exclude<ImRunCardStatus, "runni
 
 /** 消费一条运行时事件，返回新状态（无变化时返回原引用）。 */
 export function reduceImRunCardEvent(state: ImRunCardState, event: LumeRuntimeEvent, nowMs: number = Date.now()): ImRunCardState {
+  // 终态冻结：卡片完成后不再接受任何事件（含迟到的 delta/工具帧）
+  if (state.status !== "running") {
+    return state;
+  }
   switch (event.type) {
     case "assistant.delta":
       return appendDelta(state, "text", event.messageId, event.delta);

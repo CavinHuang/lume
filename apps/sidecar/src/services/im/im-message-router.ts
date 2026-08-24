@@ -33,6 +33,7 @@ import {
 } from "./im-thread-binding-store";
 import { sendBoundImTextMessage, type SendBoundImTextMessageInput } from "./im-send-service";
 import { resolveMediaContents } from "./im-media-resolver";
+import { createImRunCardSession, type ImRunCardSession } from "./im-run-card-session";
 import { issuePlanningScopeGrant, registerPlanningExecutionContext } from "../planning/planning-execution-context";
 
 const log = createLogger("im-router");
@@ -179,11 +180,20 @@ async function deliverAssistantReplyToIm(
   threadId: string,
   event: AgentMessageAppendedEvent,
   emitNotification: (method: string, params: unknown) => void,
-  sendBoundTextMessage: (input: SendBoundImTextMessageInput) => Promise<{ ok: true }>
+  sendBoundTextMessage: (input: SendBoundImTextMessageInput) => Promise<{ ok: true }>,
+  cardSession?: ImRunCardSession | null
 ): Promise<void> {
   const text = event.message.content.trim();
   if (!text) {
     return;
+  }
+  // 流式卡片通道可用时回复内容已由卡片承载，跳过整段文本投递避免重复
+  if (cardSession) {
+    const useCard = await cardSession.settleOpen();
+    if (useCard) {
+      log.info("助手回复经流式卡片承载，跳过文本投递", { threadId, textLength: text.length });
+      return;
+    }
   }
   const binding = getImThreadBindingByThreadId(threadId);
   if (!binding) {
@@ -462,9 +472,12 @@ export function createImAgentStreamEmitter(
 ): ImAgentStreamEmitter {
   const emitNotification = options.emitNotification ?? emitAgentNotification;
   const sendBoundTextMessage = options.sendBoundTextMessage ?? sendBoundImTextMessage;
+  // 飞书渠道启用流式卡片会话；其余渠道为 null 走原文本投递
+  const cardSession = createImRunCardSession(threadId);
 
   return {
     onRuntimeEvent: (event) => {
+      cardSession?.handleEvent(event);
       emitNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
         threadId,
         event
@@ -474,7 +487,7 @@ export function createImAgentStreamEmitter(
       emitNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
       emitUserSubmittedRuntimeEvent(threadId, event, emitNotification);
       if (event.message.role === "assistant" && event.message.content.trim()) {
-        void deliverAssistantReplyToIm(threadId, event, emitNotification, sendBoundTextMessage)
+        void deliverAssistantReplyToIm(threadId, event, emitNotification, sendBoundTextMessage, cardSession)
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
             log.error("微信回复发送失败", { threadId, error: message });
@@ -497,9 +510,15 @@ export function createImAgentStreamEmitter(
           });
       }
     },
-    onComplete: () => undefined,
+    onComplete: (payload) => {
+      // 卡片终态：达到轮次上限/重复护栏单独标注，其余按完成
+      cardSession?.finish({
+        kind: payload?.reason === "max_turns" || payload?.reason === "repeat_guard" ? "turn_limited" : "completed"
+      });
+    },
     onError: (error) => {
       log.error("Agent 消息处理失败", { threadId, error });
+      cardSession?.finish({ kind: "failed", error });
       emitRuntimeError(threadId, error, emitNotification);
     },
     onTitleUpdated: (title) => {

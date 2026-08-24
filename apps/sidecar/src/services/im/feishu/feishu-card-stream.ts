@@ -151,10 +151,16 @@ export function createFeishuCardStream(options: FeishuCardStreamOptions): Feishu
     },
     apply: (event) => {
       if (closed) return;
+      const previous = state;
       state = reduceImRunCardEvent(state, event);
       if (!cardId) {
         // open 未完成：先标脏，open 成功后统一补发
         dirty = true;
+        return;
+      }
+      const becameTerminal = state.status !== "running" && previous.status === "running";
+      // 无变化（含终态后的迟到事件被 reducer 冻结）不触发推送
+      if (!becameTerminal && state === previous) {
         return;
       }
       void requestFlush(state.status !== "running");
