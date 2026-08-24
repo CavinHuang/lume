@@ -608,14 +608,17 @@ export class WorkspaceMcpManager {
       });
       return result;
     } catch (error) {
+      // 与 callToolDiagnostic/readResource 同一口径：底层错误常内嵌 URL/凭据
+      // 片段（#403），不把原文直抛进工具结果流。
+      const publicError = mapPublicError(error, this.readConfig(workspaceSlug).servers[serverId]);
       this.logger.warn("MCP runtime tool call failed", {
         workspaceSlug,
         serverId,
         originalToolName,
-        error: error instanceof Error ? error.message : String(error),
+        error: publicError.message,
         elapsedMs: Date.now() - startedAt
       });
-      throw error;
+      throw new PublicMcpError(publicError.code, publicError.message);
     }
   }
 
