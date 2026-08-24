@@ -622,8 +622,8 @@ export class WorkspaceMcpManager {
       // 与 callToolDiagnostic/readResource 同一口径：底层错误常内嵌 URL/凭据
       // 片段（#403），对外与日志通道都不得带原文——sidecar 日志经 log-batch
       // 实时推 renderer 且落盘可导出，并非纯服务端（红队 review 发现）。
-      // 排障细节用 redactMessage 后的完整 stack 保留。
-      const entry = this.readConfig(workspaceSlug).servers[serverId];
+      // 排障细节用 redactMessage 后的完整 stack 保留；entry 用入口快照，
+      // 不在 catch 内现读（在途配置被删时现读会拿到 undefined 使脱敏空转）。
       const publicError = mapPublicError(error, entry);
       this.logger.warn("MCP runtime tool call failed", {
         workspaceSlug,

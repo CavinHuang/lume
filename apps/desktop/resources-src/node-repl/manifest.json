@@ -47,6 +47,6 @@
     "runtime/cell-source.js": "a724c88ecce135ba6e806315cb51c8615b9d76e505ceeebc06c3df7d7c8149aa",
     "runtime/diagnostics.js": "12232df995fb308dd2c598a923e96bd5b6794d6161b0b7aea0cf4927b3176a8e",
     "runtime/kernel-process.js": "cbe7dedaa6551255802dbf8f3514c2979aab2b751541a277309effc3746eddba",
-    "runtime/worker.js": "887fe9bc89a3e65dec3525f5d9a7f4ae635e76c2ed69ba77fa0cb3d6084800c6"
+    "runtime/worker.js": "317b396047259a8dbaaea6dc69f8d1d7fe66d2aeaee85b7e8c293d7e78969f7d"
   }
 }
