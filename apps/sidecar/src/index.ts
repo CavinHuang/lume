@@ -50,7 +50,10 @@ const rpcTransport = createProcessRpcTransport(
   process.env.LUME_SIDECAR_TRANSPORT === "stdio" ? { parentPort: null } : undefined,
 );
 const SETTINGS_ACK_TIMEOUT_MS = 10_000;
-const BROWSER_REQUEST_TIMEOUT_MS = 10_000;
+// 必须大于 desktop 侧最长的等待上限(wait:download/wait:url/wait:filechooser
+// 均 30s,browser-runtime.ts boundedNumber 上限),否则 >10s 的合法等待会被
+// transport 先杀误报 executed_unknown(#603)。30s 上限 + RPC 往返余量。
+const BROWSER_REQUEST_TIMEOUT_MS = 35_000;
 const BROWSER_CONFIRMATION_TIMEOUT_MS = 5 * 60_000;
 const pendingSettingsMutations = new Map<string, {
   resolve: () => void;
