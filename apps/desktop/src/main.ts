@@ -376,16 +376,18 @@ const QUIET_IPC_COMMANDS = new Set<string>([
 const IPC_LOG_CONTEXT = 'desktop.ipc'
 
 async function logIpcCommand<T>(name: string, args: unknown, run: () => Promise<T> | T): Promise<T> {
-  if (QUIET_IPC_COMMANDS.has(name)) return await run()
+  const quiet = QUIET_IPC_COMMANDS.has(name)
   const startedAt = performance.now()
   try {
     const result = await run()
+    if (quiet) return result
     writeMainLog('debug', IPC_LOG_CONTEXT, 'command.completed', `ipc completed: ${name}`, {
       durationMs: Math.round(performance.now() - startedAt),
       data: { command: name, args: summarizeValue(args), result: summarizeValue(result) },
     })
     return result
   } catch (error) {
+    // 失败永远记录，quiet 只豁免成功路径（writeMainLog 直写不经 ipcMain，无自喂风险）。
     writeMainLog('warn', IPC_LOG_CONTEXT, 'command.failed', `ipc failed: ${name}`, {
       durationMs: Math.round(performance.now() - startedAt),
       data: { command: name, args: summarizeValue(args) },
