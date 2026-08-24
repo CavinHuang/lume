@@ -29,6 +29,9 @@ export function createToolDescriptorsFromDefinitions(
         definition,
         metadata: {
           description: baseMetadata.description,
+          // 与 sdk 分支对称（review）：定义体显式 isReadOnly 同样生效；无声明
+          // 时维持原状不引入推断（plugin 仍可经 runtimeMetadata 覆盖）
+          ...(definitionIsReadOnly !== undefined ? { isReadOnly: definitionIsReadOnly } : {}),
           ...runtimeMetadata
         }
       };

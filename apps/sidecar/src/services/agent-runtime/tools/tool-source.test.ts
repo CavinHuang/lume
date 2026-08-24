@@ -146,4 +146,19 @@ describe("createToolDescriptorsFromDefinitions", () => {
       requiresApprovalByDefault: false
     });
   });
+
+  test("mcp/plugin descriptors honor definition-level isReadOnly (symmetry with sdk branch)", () => {
+    // review 发现：sdk 分支尊重定义体声明，mcp/plugin 分支此前忽略——补齐对称。
+    // 无声明时维持原状（不引入推断），runtimeMetadata 仍可覆盖。
+    // （断言落在 descriptor 原始 metadata 上：ToolRegistry 注册时会补
+    // defaultMetadataForSource 默认值，isReadOnly 在那里永远非 undefined。）
+    const declared = { ...makeTool("PluginEcho"), isReadOnly: false } as unknown as ToolDefinition;
+    const undeclared = makeTool("PluginEcho");
+
+    const declaredReadOnly = createToolDescriptorsFromDefinitions([declared], "plugin")[0]?.metadata?.isReadOnly;
+    expect(declaredReadOnly).toBe(false);
+
+    const undeclaredReadOnly = createToolDescriptorsFromDefinitions([undeclared], "plugin")[0]?.metadata?.isReadOnly;
+    expect(undeclaredReadOnly).toBeUndefined();
+  });
 });
