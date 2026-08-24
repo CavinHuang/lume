@@ -385,6 +385,8 @@ export interface SubagentRunOutcome {
 
 export interface SubagentRunRecord {
   runId: string
+  /** 桥接:子线程 attempt 的 runtime runId(s),web 投影按此匹配事件流。 */
+  runtimeRunIds?: string[]
   parentThreadId: string
   parentRunId?: string
   rootThreadId: string

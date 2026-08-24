@@ -1,4 +1,5 @@
 import type { FileReferenceBinding, FileReferenceProtocolVersion, LumeRuntimeEvent, RuntimeCodingReport } from '@lume/shared'
+import { isDelegationToolName } from './subagent-run-projection'
 import type {
   RuntimeAssistantBlock,
   RuntimeAssistantMessageView,
@@ -388,7 +389,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       ...(event.execution ? { execution: event.execution } : {}),
       ...(event.resultRef ? { resultRef: event.resultRef } : {}),
       ...(existing?.subagentRunId ? { subagentRunId: existing.subagentRunId } : {}),
-      ...(existing?.toolName === 'Agent' || event.toolName === 'Agent'
+      ...(isDelegationToolName(existing?.toolName ?? '') || isDelegationToolName(event.toolName ?? '')
         ? { subagentStatus: isError ? 'errored' as const : 'completed' as const }
         : existing?.subagentStatus ? { subagentStatus: existing.subagentStatus } : {}),
     }

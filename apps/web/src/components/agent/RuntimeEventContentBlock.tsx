@@ -17,6 +17,7 @@ import { agentSend, getThreadMessageVersions, revokeFilePreviewScope } from '@/l
 import { MessageFileReferenceBindingProvider } from './thread-file-env'
 import { getAgentRole, validatePlanningTodoRefPart, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentUserMessagePart, type FileRef } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
+import { isDelegationToolName } from './subagent-run-projection'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 import { toast } from 'sonner'
 import { AgentAttachmentGrid, isImageAttachment } from './AgentAttachmentGrid'
@@ -1400,7 +1401,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
   const isRunning = toolCall.status === 'running'
   const input = asRecord(toolCall.input)
 
-  if (toolCall.toolName === 'Agent') {
+  if (isDelegationToolName(toolCall.toolName)) {
     return (
       <SubagentInlinePanel
         threadId={threadId}

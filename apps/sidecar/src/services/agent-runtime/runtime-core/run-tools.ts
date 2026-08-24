@@ -543,7 +543,17 @@ export function buildRuntimeCoreTools(input: {
           chatType: input.chatType,
           messageMetadata: input.messageMetadata,
           fileReferenceBinding: input.fileReferenceBinding,
-          onRuntimeEvent: input.emitRuntimeEvent,
+          onRuntimeEvent: (event) => {
+            // 桥接 registry runId ↔ 子线程 attempt runId,web 投影按此匹配事件流
+            if (event.runId) {
+              try {
+                getSubagentRunRegistry().bindRuntimeRun(subagentRun.runId, event.runId);
+              } catch {
+                // bind 失败不阻断事件流
+              }
+            }
+            input.emitRuntimeEvent?.(event);
+          },
           permissionMode,
           emitAskUserQuestion: input.emitAskUserQuestion,
           emitBrowserAuthRequest: input.emitBrowserAuthRequest,
@@ -558,29 +568,42 @@ export function buildRuntimeCoreTools(input: {
             .then(() => getRuntimeCoreEntry().stopAgentRuntime(childMeta.id))
             .catch(() => undefined);
         };
+        if (input.abortSignal?.aborted) {
+          // abort 竞窗:signal 已中止时 listener 永不触发,直接停掉刚 spawn 的子代理
+          stopBackgroundSubagent();
+        }
         input.abortSignal?.addEventListener("abort", stopBackgroundSubagent, {
           once: true,
         });
         void executeSubagent()
           .then(async (execution) => {
-            await enrichedContext.onSubagentEnd?.({
-              runId: subagentRun.runId,
-              status: execution.status,
-              output: execution.output,
-              error: execution.error,
-            });
+            try {
+              await enrichedContext.onSubagentEnd?.({
+                runId: subagentRun.runId,
+                status: execution.status,
+                output: execution.output,
+                error: execution.error,
+              });
+            } catch (error) {
+              // 收尾失败(announce/persist 等)不得把已写入的终态覆盖为 errored
+              console.error("[delegate] onSubagentEnd failed:", error);
+            }
             // ★ resolve 信号量，唤醒等待方
             getSubagentRunRegistry().resolveDelegationCompletion(
               subagentRun.runId,
             );
           })
           .catch(async (err: any) => {
-            getSubagentRunRegistry().update(subagentRun.runId, {
-              status: "errored",
-              outcome: { error: err?.message ?? String(err) },
-            });
-            const run = getSubagentRunRegistry().get(subagentRun.runId);
-            if (run) await announceSubagentCompletion({ run });
+            const existing = getSubagentRunRegistry().get(subagentRun.runId);
+            // 已有终态(then 内部分完成)时不覆盖,避免 completed→errored 翻转
+            if (!existing || !["completed", "errored", "aborted", "timed_out", "canceled"].includes(existing.status)) {
+              getSubagentRunRegistry().update(subagentRun.runId, {
+                status: "errored",
+                outcome: { error: err?.message ?? String(err) },
+              });
+              const run = getSubagentRunRegistry().get(subagentRun.runId);
+              if (run) await announceSubagentCompletion({ run });
+            }
             // ★ 出错时也要 resolve，避免等待方永久挂起
             getSubagentRunRegistry().resolveDelegationCompletion(
               subagentRun.runId,
@@ -603,26 +626,53 @@ export function buildRuntimeCoreTools(input: {
         };
       }
       try {
-        const execution = await runForegroundSubagentWithTimeout({
-          execution: executeSubagent(),
-          childThreadId: childMeta.id,
-          timeoutMs: resolveForegroundSubagentTimeoutMs(),
-          stopSubagent: async (threadId: string) => {
-            return getRuntimeCoreEntry().stopAgentRuntime(threadId);
-          },
+        // 前台 run 也注册 completion:同批并发的 WaitForDelegations 不至于为它白等满 timeout
+        getSubagentRunRegistry().createDelegationCompletion(subagentRun.runId);
+        const stopForegroundSubagent = () => {
+          void Promise.resolve()
+            .then(() => getRuntimeCoreEntry().stopAgentRuntime(childMeta.id))
+            .catch(() => undefined);
+        };
+        if (input.abortSignal?.aborted) {
+          stopForegroundSubagent();
+        }
+        input.abortSignal?.addEventListener("abort", stopForegroundSubagent, {
+          once: true,
         });
-        await enrichedContext.onSubagentEnd?.({
-          runId: subagentRun.runId,
-          status: execution.status,
-          output: execution.output,
-          error: execution.error,
-        });
-        return execution.result;
+        try {
+          const execution = await runForegroundSubagentWithTimeout({
+            execution: executeSubagent(),
+            childThreadId: childMeta.id,
+            timeoutMs: resolveForegroundSubagentTimeoutMs(),
+            stopSubagent: async (threadId: string) => {
+              return getRuntimeCoreEntry().stopAgentRuntime(threadId);
+            },
+          });
+          try {
+            await enrichedContext.onSubagentEnd?.({
+              runId: subagentRun.runId,
+              status: execution.status,
+              output: execution.output,
+              error: execution.error,
+            });
+          } catch (error) {
+            console.error("[delegate] onSubagentEnd failed:", error);
+          }
+          return execution.result;
+        } finally {
+          input.abortSignal?.removeEventListener("abort", stopForegroundSubagent);
+          getSubagentRunRegistry().resolveDelegationCompletion(
+            subagentRun.runId,
+          );
+        }
       } catch (err: any) {
-        getSubagentRunRegistry().update(subagentRun.runId, {
-          status: "errored",
-          outcome: { error: err?.message ?? String(err) },
-        });
+        const existing = getSubagentRunRegistry().get(subagentRun.runId);
+        if (!existing || !["completed", "errored", "aborted", "timed_out", "canceled"].includes(existing.status)) {
+          getSubagentRunRegistry().update(subagentRun.runId, {
+            status: "errored",
+            outcome: { error: err?.message ?? String(err) },
+          });
+        }
         throw err;
       }
     },

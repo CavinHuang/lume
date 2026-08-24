@@ -18,6 +18,8 @@ export interface SubagentRunOutcome {
 
 export interface SubagentRun {
   runId: string;
+  /** 桥接:该委派实际子线程 attempt 的 runtime runId(s),web 投影按此匹配事件流。 */
+  runtimeRunIds?: string[];
   parentThreadId: string;
   parentRunId?: string;
   rootThreadId: string;
