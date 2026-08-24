@@ -114,4 +114,13 @@ describe('createDesktopHostSupervisor', () => {
     ])
     expect(h.logs).toEqual(['[desktop-host] plain after'])
   })
+
+  test('非对象的 LUMELOG 载荷（null/数组）回退文本路径而不抛异常', async () => {
+    const h = createHarness()
+    await h.supervisor.start()
+    // JSON.parse("null") 返回 null——解构会在 data handler 里抛未捕获异常击穿主进程。
+    h.children[0]!.stderr.emit('data', Buffer.from('LUMELOG null\nLUMELOG [1,2]\n'))
+    expect(h.events).toEqual([])
+    expect(h.logs).toEqual(['[desktop-host] LUMELOG null', '[desktop-host] LUMELOG [1,2]'])
+  })
 })

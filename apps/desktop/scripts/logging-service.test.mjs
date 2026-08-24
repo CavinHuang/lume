@@ -267,3 +267,43 @@ test('dev builds default console level to trace until overridden', async () => {
     await rmRetry(configDir)
   }
 })
+
+// pretty 格式须在行尾携带 data/error 摘要——参数/结果可见性是埋点的核心价值（评审 H1）。
+test('pretty terminal lines include a clipped data summary', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-pretty-'))
+  const chunks = []
+  const terminal = { write: (text) => { chunks.push(text); return true } }
+  const service = new LoggingService({ configDir, terminal, now: () => new Date() })
+  service.updateSettings({ consoleLevel: 'trace' })
+  try {
+    service.emit({
+      level: 'debug', source: 'main', context: 'desktop.ipc', event: 'command.completed',
+      message: 'ipc completed: demo', durationMs: 12,
+      data: { command: 'demo', result: { ok: 1 } },
+    })
+    const line = chunks.join('')
+    assert.ok(line.includes('command.completed'))
+    assert.ok(line.includes('"durationMs":12'))
+    assert.ok(line.includes('"result":{"ok":1}'))
+  } finally {
+    await service.close()
+    await rmRetry(configDir)
+  }
+})
+
+// settings-replace 的全量快照回填不得把 dev trace 静默打回 info（评审 H2）。
+test('updateSettings keeps dev trace when incoming value equals the default', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-devhot-'))
+  const terminal = { write: () => true }
+  const service = new LoggingService({ configDir, isDev: true, terminal, now: () => new Date() })
+  try {
+    assert.equal(service.getSettings().consoleLevel, 'trace')
+    service.updateSettings({ consoleLevel: 'info' })
+    assert.equal(service.getSettings().consoleLevel, 'trace')
+    service.updateSettings({ consoleLevel: 'warn' })
+    assert.equal(service.getSettings().consoleLevel, 'warn')
+  } finally {
+    await service.close()
+    await rmRetry(configDir)
+  }
+})

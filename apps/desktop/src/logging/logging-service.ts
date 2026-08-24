@@ -212,10 +212,26 @@ function shortId(value: string | undefined): string | undefined {
   return value ? value.slice(0, 8) : undefined
 }
 
+// pretty 格式默认不带 data——而参数/结果摘要恰是埋点的核心价值，行尾追加裁剪摘要保证终端可读。
+function prettyDetails(event: LumeLogEventV2): string {
+  const parts: Record<string, unknown> = {}
+  if (event.status) parts.status = event.status
+  if (Number.isFinite(event.durationMs)) parts.durationMs = event.durationMs
+  if (event.data) parts.data = event.data
+  if (event.error?.message) parts.error = event.error.message
+  if (Object.keys(parts).length === 0) return ''
+  try {
+    return ` ${clipLogPreview(JSON.stringify(parts))}`
+  } catch {
+    return ''
+  }
+}
+
 export class LoggingService {
   readonly logsDir: string
 
   private readonly now: () => Date
+  private readonly isDev: boolean
   private readonly terminal: Pick<NodeJS.WriteStream, 'write'>
   private settings: LumeLoggingSettings
   private seq = 0
@@ -236,12 +252,9 @@ export class LoggingService {
 
   constructor(options: LoggingServiceOptions) {
     this.logsDir = join(options.configDir, 'logs')
+    this.isDev = options.isDev ?? false
     this.settings = { ...LUME_LOGGING_DEFAULTS, ...options.settings }
-    // Dev 默认放开控制台到 trace：显式 env 或用户持久化的非默认值优先。
-    // 持久化值等于全局默认(info)时视为"未自定义"，同样放行 dev trace。
-    if (options.isDev && !process.env.LUME_LOG_CONSOLE_LEVEL && this.settings.consoleLevel === LUME_LOGGING_DEFAULTS.consoleLevel) {
-      this.settings.consoleLevel = 'trace'
-    }
+    this.applyDevConsoleDefault()
     const legacyLevel = process.env.LUME_LOG_LEVEL
     if (isLevel(legacyLevel)) {
       if (!process.env.LUME_LOG_CONSOLE_LEVEL) this.settings.consoleLevel = legacyLevel
@@ -266,6 +279,16 @@ export class LoggingService {
 
   updateSettings(settings: Partial<LumeLoggingSettings>): void {
     this.settings = { ...this.settings, ...settings }
+    this.applyDevConsoleDefault()
+  }
+
+  // Dev 默认放开控制台到 trace：显式 env 或用户持久化的非默认值优先。
+  // 持久化值等于全局默认(info)时视为"未自定义"，同样放行 dev trace——
+  // settings-replace 的全量快照回填也走这里，否则任意设置写入都会把 dev 静默打回 info。
+  private applyDevConsoleDefault(): void {
+    if (this.isDev && !process.env.LUME_LOG_CONSOLE_LEVEL && this.settings.consoleLevel === LUME_LOGGING_DEFAULTS.consoleLevel) {
+      this.settings.consoleLevel = 'trace'
+    }
   }
 
   getSettings(): Readonly<LumeLoggingSettings> {
@@ -686,7 +709,7 @@ export class LoggingService {
     const format = process.env.LUME_LOG_FORMAT === 'json' ? 'json' : this.settings.format
     this.terminal.write(format === 'json'
       ? `${JSON.stringify(event)}\n`
-      : `${event.observedAt} ${event.level.toUpperCase()} ${event.context} ${event.event}${ids ? ` ${ids}` : ''} ${event.message}\n`)
+      : `${event.observedAt} ${event.level.toUpperCase()} ${event.context} ${event.event}${ids ? ` ${ids}` : ''} ${event.message}${prettyDetails(event)}\n`)
   }
 
   private writeEmergency(message: string, error: unknown): void {

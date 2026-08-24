@@ -371,9 +371,24 @@ const QUIET_IPC_COMMANDS = new Set<string>([
   'desktop_delete_logs',
   'desktop_log_live_subscribe',
   'desktop_log_live_unsubscribe',
+  // 敏感内容通道：参数/结果摘要会把正文带进日志，超出内容键预览的授权范围。
+  'desktop_diagnostic_decrypt',
+  'read_clipboard_text',
+  'write_clipboard_text',
+  'save_text_file_dialog',
+  'save_binary_file_dialog',
   // 启动后观察 dev 终端 command.completed 频率，把高频轮询命令加进来。
 ])
 const IPC_LOG_CONTEXT = 'desktop.ipc'
+
+// 埋点自身的故障绝不能改变 IPC 调用的成功/错误语义。
+function safeLogIpcEvent(emit: () => void): void {
+  try {
+    emit()
+  } catch {
+    // ignore：日志设施不可用时静默降级。
+  }
+}
 
 async function logIpcCommand<T>(name: string, args: unknown, run: () => Promise<T> | T): Promise<T> {
   const quiet = QUIET_IPC_COMMANDS.has(name)
@@ -381,18 +396,18 @@ async function logIpcCommand<T>(name: string, args: unknown, run: () => Promise<
   try {
     const result = await run()
     if (quiet) return result
-    writeMainLog('debug', IPC_LOG_CONTEXT, 'command.completed', `ipc completed: ${name}`, {
+    safeLogIpcEvent(() => writeMainLog('debug', IPC_LOG_CONTEXT, 'command.completed', `ipc completed: ${name}`, {
       durationMs: Math.round(performance.now() - startedAt),
       data: { command: name, args: summarizeValue(args), result: summarizeValue(result) },
-    })
+    }))
     return result
   } catch (error) {
     // 失败永远记录，quiet 只豁免成功路径（writeMainLog 直写不经 ipcMain，无自喂风险）。
-    writeMainLog('warn', IPC_LOG_CONTEXT, 'command.failed', `ipc failed: ${name}`, {
+    safeLogIpcEvent(() => writeMainLog('warn', IPC_LOG_CONTEXT, 'command.failed', `ipc failed: ${name}`, {
       durationMs: Math.round(performance.now() - startedAt),
       data: { command: name, args: summarizeValue(args) },
       ...(error instanceof Error ? { error } : {}),
-    })
+    }))
     throw error
   }
 }

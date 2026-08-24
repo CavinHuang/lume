@@ -134,8 +134,11 @@ export function createDesktopHostSupervisor({
           continue
         }
         try {
-          const parsed = JSON.parse(line.slice(LUMELOG_PREFIX.length)) as DesktopHostStructuredLog
-          logEvent?.(parsed)
+          // JSON.parse("null") 返回 null——非对象结果必须回退文本路径，否则下游解构会在
+          // stdout/stderr data handler 里抛未捕获异常击穿主进程。
+          const parsed: unknown = JSON.parse(line.slice(LUMELOG_PREFIX.length))
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object')
+          logEvent?.(parsed as DesktopHostStructuredLog)
         } catch {
           log(`[desktop-host] ${line}`)
         }
