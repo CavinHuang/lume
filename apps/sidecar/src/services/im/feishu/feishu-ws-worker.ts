@@ -76,7 +76,8 @@ export function parseFeishuEvent(
       rawText = "";
     }
   }
-  const hasMentionMarkup = /<at[\s>]/.test(rawText);
+  // text 消息的提及为 @_user_N 占位符；<at> 标记仅出现在 post 富文本（已拒），保留兼容
+  const hasMentionMarkup = /@_user_\d+|<at[\s>]/.test(rawText);
   const text = stripFeishuMentions(rawText);
   if (!text) return null;
   return {
@@ -123,14 +124,23 @@ export function createFeishuWsWorker(input: CreateFeishuWsWorkerInput): ImWorker
   let botOpenIdPromise: Promise<string | null> | null = null;
   const ensureBotOpenId = (): Promise<string | null> => {
     if (!botOpenIdPromise) {
-      botOpenIdPromise = getBotOpenId({ appId, appSecret });
+      botOpenIdPromise = getBotOpenId({ appId, appSecret }).then(
+        (id) => {
+          if (id === null) botOpenIdPromise = null;
+          return id;
+        },
+        () => {
+          botOpenIdPromise = null;
+          return null;
+        }
+      );
     }
     return botOpenIdPromise;
   };
 
   /**
    * 群聊准入精确判定（#405）：open_id 匹配 @ 机器人；单人群免 @；
-   * 身份不可得退回 @ 标记启发式。
+   * 身份不可得退回提及标记启发式。
    */
   async function gateGroupAccess(parsed: InboundImRouteMessage): Promise<InboundImRouteMessage | null> {
     if (parsed.peerKind !== "group") return parsed;
@@ -139,6 +149,10 @@ export function createFeishuWsWorker(input: CreateFeishuWsWorkerInput): ImWorker
       botOpenId === null
         ? null
         : (parsed.mentions ?? []).some((mention) => mention.openId === botOpenId);
+    if (botMentioned === true) {
+      // 已确定触发，无需再查群信息
+      return parsed;
+    }
     const chatUserCount = await getChatUserCount({ appId, appSecret, chatId: parsed.peerId });
     const access = resolveImGroupAccess({
       hasMentionMarkup: parsed.hasMentionMarkup ?? false,

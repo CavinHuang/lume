@@ -146,11 +146,13 @@ export function buildImUserMessage(
   if (!quoted?.text) {
     return base;
   }
+  // 引用内容来自其他用户，中和 XML 结构标签防止逃逸引用块伪造正文
+  const safeText = quoted.text.replace(/<(\/?(?:quoted_message|user_message|im_context))/gi, "[$1");
   const senderAttr = quoted.senderId ? ` sender="${quoted.senderId}"` : "";
   return [
     "<im_context>",
     `<quoted_message${senderAttr}>`,
-    quoted.text,
+    safeText,
     "</quoted_message>",
     "<user_message>",
     base,
@@ -599,7 +601,7 @@ async function routeImChatCommand(
       // 旧线程若有进行中运行先停止：否则其回复因绑定已换而静默丢失，
       // 且 IM 侧再也无法 /stop 它（审批请求同样悬空）
       try {
-        await stopAgent(existing.threadId);
+        await stopThread(existing.threadId);
       } catch (error) {
         log.warn("/new 停止旧线程运行失败（继续重开）", {
           threadId: existing.threadId,

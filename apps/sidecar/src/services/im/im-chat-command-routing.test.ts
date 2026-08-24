@@ -6,6 +6,7 @@ import type { Channel, ImThreadBinding } from "@lume/shared";
 import { routeInboundImMessage, type InboundImRouteMessage } from "./im-message-router";
 import { createImAccount } from "./im-config-manager";
 import { getImThreadBindingByPeer, upsertImThreadBinding } from "./im-thread-binding-store";
+import { resetImSeenMessageCacheForTest } from "./im-seen-message-store";
 
 let testAccountId = "";
 
@@ -44,6 +45,7 @@ describe("im 会话命令路由", () => {
     prevConfigDir = process.env.LUME_CONFIG_DIR;
     tempConfigDir = mkdtempSync(join(tmpdir(), "lume-im-cmd-test-"));
     process.env.LUME_CONFIG_DIR = tempConfigDir;
+    resetImSeenMessageCacheForTest();
     const account = await createImAccount({
       provider: "feishu",
       label: "飞书测试",
@@ -145,6 +147,7 @@ describe("im 会话命令路由", () => {
     bind("thread-old");
     const sent: string[] = [];
     let createdTitle = "";
+    const stoppedIds: string[] = [];
     await routeInboundImMessage(msg({ text: "/new", peerName: "张三" }), {
       sendBoundTextMessage: async (input) => {
         sent.push(input.text);
@@ -154,11 +157,38 @@ describe("im 会话命令路由", () => {
         createdTitle = title;
         return { id: "thread-new" };
       },
+      stopThread: async (threadId) => {
+        stoppedIds.push(threadId);
+        return false;
+      },
       updateThreadMeta: () => undefined
     });
     expect(createdTitle).toContain("张三");
     expect(getImThreadBindingByPeer(msg())?.threadId).toBe("thread-new");
     expect(sent[0]).toContain("新对话");
+    // 换绑前停止旧线程进行中运行，防孤儿运行与悬空审批
+    expect(stoppedIds).toEqual(["thread-old"]);
+  });
+
+  test("命令成功后标记已见：同 messageId 重投不再执行", async () => {
+    bind("thread-idem");
+    const sent: string[] = [];
+    const first = msg({ text: "/stop", messageId: "cmd-m1" });
+    await routeInboundImMessage(first, {
+      sendBoundTextMessage: async (input) => {
+        sent.push(input.text);
+        return { ok: true };
+      },
+      stopThread: async () => true
+    });
+    // 重投同一命令消息：命中持久去重，直接跳过（不重复回复）
+    await routeInboundImMessage({ ...first, text: "/stop" }, {
+      sendBoundTextMessage: async (input) => {
+        sent.push(input.text);
+        return { ok: true };
+      }
+    });
+    expect(sent).toHaveLength(1);
   });
 
   test("普通消息不受命令白名单影响照常进入 agent 路由", async () => {
