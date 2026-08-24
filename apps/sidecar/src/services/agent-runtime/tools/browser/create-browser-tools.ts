@@ -98,6 +98,11 @@ export function createBrowserMcpTools(input: {
           const code = browserErrorCode(error)
           if (code === "stale_target" || code === "stale_snapshot_cursor" || code === "tab_not_found" || code === "user_takeover_required") session.snapshot = undefined
           const message = error instanceof Error && error.message && error.message !== code ? error.message.slice(0, 4_000) : code
+          // broker 已把 desktop 富文本摧毁为裸码,navigation_timeout 的行为
+          // 指导只能在此注入:页面可能仍在后台加载,先观察再决定。
+          const hint = code === "navigation_timeout"
+            ? "The page may still be loading in the background. Take a snapshot to check the actual state before deciding; do not retry navigate immediately."
+            : undefined
           const retryable = code === "browser_unavailable" || code === "stale_target" || code === "stale_snapshot_cursor"
           const failureKey = !retryable ? actionFailureKey(name, args, session) : undefined
           if (failureKey) {
@@ -122,7 +127,7 @@ export function createBrowserMcpTools(input: {
             operation_id: operationId,
             active_tab_id: session.activeTabId ?? null,
             code,
-            message,
+            message: hint ? `${message}. ${hint}` : message,
             retryable,
           }, true, { ok: false, tool: name, code, message })
         }

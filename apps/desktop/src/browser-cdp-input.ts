@@ -15,7 +15,7 @@ export type BrowserInputNaturalnessOptions = {
   from?: BrowserCdpPoint
   speed?: "type" | "fill"
   sleep?: (milliseconds: number) => Promise<void>
-  /** 拟真逐字输入的字符上限,超出部分一次性 insertText;默认 240(#638 打字时限) */
+  /** 拟真逐字输入的字符上限,超出部分一次性 insertText;默认 150(#638 打字时限) */
   maxNaturalChars?: number
 }
 

@@ -507,6 +507,9 @@ export class BrowserRuntime {
     }
     this.options.emit({ method: "browser:tab-error", params: { tabId: tab.tabId, code: "browser_internal_error", recoverable: true, ...details } })
     this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+    // 崩溃不清 waiter 时,timer 回调内 browserContents(tab) 会因 webContents
+    // 已置 null 同步 throw(在 .catch 挂上之前),变 uncaughtException + RPC 永挂(#638 review)
+    this.clearTabWaiters(tab.tabId)
   }
 
   private recoverGuest(tab: BrowserTab): BrowserTabDescriptor {
@@ -1949,7 +1952,7 @@ export class BrowserRuntime {
     throw browserError("unsupported")
   }
 
-  private async navigate(tab: BrowserTab, url: string, context: BrowserRequestContext, privateOriginApproved = false): Promise<BrowserTabDescriptor> {
+  private async navigate(tab: BrowserTab, url: string, context: BrowserRequestContext, privateOriginApproved = false, timeoutMs = BROWSER_HANDLER_WAIT_CAP_MS): Promise<BrowserTabDescriptor> {
     if (privateOriginApproved && isPrivateUrl(url)) {
       const origin = safeOrigin(url)
       if (origin) (tab.approvedPrivateOrigins ??= new Set()).add(origin)
@@ -1977,7 +1980,7 @@ export class BrowserRuntime {
       await Promise.race([
         contents.loadURL(normalizeNavigableUrl(url)),
         new Promise<never>((_, reject) => {
-          navigationTimer = setTimeout(() => reject(browserError("navigation_timeout")), BROWSER_HANDLER_WAIT_CAP_MS)
+          navigationTimer = setTimeout(() => reject(browserError("navigation_timeout")), timeoutMs)
         }),
       ])
     } finally {
@@ -3403,27 +3406,31 @@ export class BrowserRuntime {
     const results: Array<{ url: string; title: string | null; content: string | null; skipped?: boolean }> = []
     // ≤10 个 URL 各自 navigate+waitForLoad 串行,无总预算时最坏分钟级,
     // 会被 sidecar transport 先杀(#638);超预算的剩余 URL 按失败形态返回。
-    // 残余:navigate(≤30s)+waitForLoad(≤30s)串行的首 URL 理论最坏 ~59s,
-    // waitForLoad 上限挂钩剩余预算收窄到 ≤40s+单次 navigate。
-    const budgetDeadline = Date.now() + 40_000
+    // 预算用 performance.now()(单调,免疫 NTP 回拨/睡眠唤醒);navigate/
+    // waitForLoad/pageContent 三段全部挂钩剩余预算且每段前重算,连续慢站
+    // 不会叠加破 transport。
+    const budgetStart = performance.now()
+    const budgetDeadlineMs = BROWSER_HANDLER_WAIT_CAP_MS + 10_000
     for (const url of urls) {
-      const remainingBudgetMs = budgetDeadline - Date.now()
-      if (results.length && remainingBudgetMs <= 0) {
+      let remainingBudgetMs = budgetDeadlineMs - (performance.now() - budgetStart)
+      // 剩余不足最小可用预算即跳过,与各段兜底下限一致,避免白走一轮 navigate
+      if (results.length && remainingBudgetMs < 2_000) {
         results.push({ url: stripUrl(url), title: null, content: null, skipped: true })
         continue
       }
-      const effectiveTimeoutMs = Math.max(1_000, Math.min(timeoutMs, remainingBudgetMs))
       const tabId = `background:${randomUUID()}`
       try {
         this.ensureTab(tabId, context, { ownerThreadId: context.threadId })
         const tab = this.requireTab(tabId, context)
-        await this.navigate(tab, url, context)
-        await this.waitForLoad(tab, effectiveTimeoutMs)
+        await this.navigate(tab, url, context, false, Math.min(timeoutMs, remainingBudgetMs))
+        // navigate 自身最多吃满 cap,navigate 后必须重算剩余再分给后续段
+        remainingBudgetMs = budgetDeadlineMs - (performance.now() - budgetStart)
+        await this.waitForLoad(tab, Math.max(1_000, Math.min(timeoutMs, remainingBudgetMs)))
         // pageContent 底层 executeJavaScriptInIsolatedWorld 无界(预存),
         // 按剩余预算包裹防病态单页击穿 transport(#638 review)。
-        const remainingForContent = Math.max(1_000, budgetDeadline - Date.now())
+        const remainingForContent = Math.max(1_000, budgetDeadlineMs - (performance.now() - budgetStart))
         const content = contentType === "domSnapshot"
-          ? JSON.stringify(await browserPromiseTimeout(this.snapshot(tab), Math.min(effectiveTimeoutMs, remainingForContent)))
+          ? JSON.stringify(await browserPromiseTimeout(this.snapshot(tab), remainingForContent))
           : await browserPromiseTimeout(this.pageContent(tab, { format: contentType }), remainingForContent)
         results.push({
           url: tab.url,
@@ -3432,7 +3439,7 @@ export class BrowserRuntime {
           content: typeof content === "string" ? content : contentType === "html" ? content.html ?? null : content.text,
         })
       } catch {
-        results.push({ url: stripUrl(url), title: null, content: null })
+        results.push({ url: stripUrl(url), title: null, content: null, skipped: false })
       } finally {
         if (this.tabs.has(tabId)) this.closeTab(tabId, context)
       }
