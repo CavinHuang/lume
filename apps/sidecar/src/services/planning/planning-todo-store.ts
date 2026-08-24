@@ -104,12 +104,17 @@ export class PlanningTodoStore {
     if (!title) throw new Error("Todo 标题不能为空");
     validatePlanningTodoDueFields(input);
     const normalizedTitle = normalizePlanningTodoTitle(title);
-    const existing = this.#db.prepare(`SELECT * FROM planning_todo WHERE normalized_title = ? AND status = 'open' AND deleted_at IS NULL AND (workspace_id = ? OR (workspace_id IS NULL AND ? IS NULL)) LIMIT 1`).get(normalizedTitle, input.workspaceId ?? null, input.workspaceId ?? null) as unknown as TodoRow | undefined;
-    if (existing) return { schemaVersion: 1, operation: "create", todo: rowToTodo(existing), deduplicated: true };
     const now = this.#now();
     const id = randomUUID();
     this.#db.exec("BEGIN IMMEDIATE");
     try {
+      // 去重判定移入事务内：并发同名创建在 BEGIN IMMEDIATE 串行化下走去重返回，
+      // 而非第二个事务撞裸 SQLITE UNIQUE 约束（#647 P2-17）
+      const existing = this.#db.prepare(`SELECT * FROM planning_todo WHERE normalized_title = ? AND status = 'open' AND deleted_at IS NULL AND (workspace_id = ? OR (workspace_id IS NULL AND ? IS NULL)) LIMIT 1`).get(normalizedTitle, input.workspaceId ?? null, input.workspaceId ?? null) as unknown as TodoRow | undefined;
+      if (existing) {
+        this.#db.exec("COMMIT");
+        return { schemaVersion: 1, operation: "create", todo: rowToTodo(existing), deduplicated: true };
+      }
       this.#db.prepare(`INSERT INTO planning_todo (id,title,normalized_title,description,status,priority,workspace_id,due_date,due_at,due_timezone,revision,created_at,updated_at,completed_at,deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,NULL,NULL)`).run(id, title, normalizedTitle, input.description?.trim() || null, "open", input.priority ?? "none", input.workspaceId ?? null, input.dueDate ?? null, input.dueAt ?? null, input.dueTimezone ?? null, now, now);
       this.#syncDueReminder(id, input.dueAt, now);
       const eventSeq = this.#event(id, "created", now, { after: this.get(id) });
@@ -197,10 +202,16 @@ export class PlanningTodoStore {
         }
         const deletedAt = mode === "deleteLumeData" ? now : null;
         this.#db.prepare("UPDATE planning_todo SET title=?, normalized_title=?, workspace_id=NULL, deleted_at=?, revision=revision+1, updated_at=? WHERE id=?").run(title, normalized, deletedAt, now, row.id);
+        // deleteLumeData 软删后 pending 提醒成为 targetSummary 永不可见的僵尸行，
+        // 与单条 delete 同语义收口（#647 P2-15）
+        if (mode === "deleteLumeData") {
+          this.#db.prepare("UPDATE planning_reminder SET status='completed',updated_at=? WHERE target_type='todo' AND target_id=? AND status='pending'").run(now, row.id);
+        }
         eventSeqs.set(row.id, this.#event(row.id, mode === "keepHistory" ? "moved_project" : "project_deleted", now, { before: row, originalTitle: row.title, afterWorkspaceId: null, deletedAt }));
       }
       this.#db.exec("COMMIT");
-      for (const row of rows) this.#publish({ eventSeq: eventSeqs.get(row.id) ?? 0, todoId: row.id, operation: mode === "keepHistory" ? "moved_project" : "project_deleted", updatedAt: now });
+      // deleteLumeData 收口了提醒状态，发布需带 reminders 标签驱动 rail/日历重拉（#647 P2-15）
+      for (const row of rows) this.#publish({ eventSeq: eventSeqs.get(row.id) ?? 0, todoId: row.id, operation: mode === "keepHistory" ? "moved_project" : "project_deleted", resources: ["todos", "reminders"], updatedAt: now });
       return { count: rows.length, conflicts };
     } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
   }
@@ -281,7 +292,7 @@ export class PlanningTodoStore {
     const operation = this.getOperation(input.operationId);
     if (!operation || (operation.kind !== "start" && operation.kind !== "continue")) return false;
     if (operation.clientSubmissionId !== input.clientSubmissionId || operation.threadId !== input.threadId || (input.todoId !== undefined && operation.todoId !== input.todoId)) return false;
-    const rows = this.#db.prepare("SELECT payload_json FROM planning_todo_event WHERE operation_id IS NOT NULL AND operation IN ('start','continue') ORDER BY seq DESC").all() as Array<{ payload_json: string }>;
+    const rows = this.#db.prepare("SELECT payload_json FROM planning_todo_event WHERE operation_id = ? AND operation IN ('start','continue') ORDER BY seq DESC").all(input.operationId) as Array<{ payload_json: string }>;
     return rows.some((row) => {
       try {
         const envelope = (JSON.parse(row.payload_json) as { envelope?: PlanningOperationEnvelope }).envelope;
@@ -380,6 +391,8 @@ function migrate(db: Db): void {
     } else {
       createSchema(db);
     }
+    // #647 P2-14：isTrustedPrimarySubmission/getOperation 按 operation_id 直查的支撑索引（幂等创建）
+    db.exec("CREATE INDEX IF NOT EXISTS planning_todo_event_operation ON planning_todo_event(operation_id, seq)");
     db.exec("COMMIT");
   } catch (error) {
     try { db.exec("ROLLBACK"); } catch { /* preserve the migration error */ }

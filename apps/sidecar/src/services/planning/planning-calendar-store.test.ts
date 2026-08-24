@@ -231,4 +231,40 @@ describe("PlanningCalendarStore", () => {
       // 复活需额外记账，属有意取舍（见 planning-todo-store.ts #mutate 注释）
       expect(pendingAfterRestore.map((item) => item.origin)).toEqual(["todo_due_at"]);
     }));
+
+  test("removeWorkspace keepHistory 不动提醒（P2-15 负向半边）", () =>
+    withStores((todos, calendar) => {
+      const workspaceId = "33333333-3333-4333-8333-333333333333";
+      const todo = todos.create({
+        title: "保留历史任务",
+        dueAt: 1_800_000_400_000,
+        dueTimezone: "Asia/Shanghai",
+        workspaceId,
+      }).todo!;
+
+      todos.removeWorkspace(workspaceId, "keepHistory");
+
+      const reminders = calendar.listReminders("todo", todo.id);
+      expect(reminders.some((item) => item.status === "pending" && item.origin === "todo_due_at")).toBe(true);
+    }));
+
+  test("removeWorkspace deleteLumeData 收口 pending 提醒，不留僵尸行(#647 P2-15)", () =>
+    withStores((todos, calendar) => {
+      const workspaceId = "22222222-2222-4222-8222-222222222222";
+      const todo = todos.create({
+        title: "项目任务",
+        dueAt: 1_800_000_400_000,
+        dueTimezone: "Asia/Shanghai",
+        workspaceId,
+      }).todo!;
+      expect(
+        calendar.listReminders("todo", todo.id).some((item) => item.status === "pending"),
+      ).toBe(true);
+
+      todos.removeWorkspace(workspaceId, "deleteLumeData");
+
+      const reminders = calendar.listReminders("todo", todo.id);
+      expect(reminders.length).toBeGreaterThan(0);
+      expect(reminders.every((item) => item.status !== "pending")).toBe(true);
+    }));
 });
