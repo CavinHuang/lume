@@ -55,6 +55,14 @@ describe('summarizeValue', () => {
     cyc.self = cyc
     expect(JSON.stringify(summarizeValue(cyc))).toContain('[MaxDepth]')
   })
+  test('TypedArray 输出骨架摘要而非键物化', () => {
+    expect(summarizeValue(new Uint8Array(256 * 1024))).toEqual({ type: 'Uint8Array', byteLength: 262144 })
+  })
+  test('Buffer 与普通对象混合回归', () => {
+    const out = summarizeValue({ chunk: Buffer.from('hello'), name: 'a' }) as Record<string, unknown>
+    expect(out.chunk).toEqual({ type: 'Buffer', byteLength: 5 })
+    expect(out.name).toBe('a')
+  })
 })
 
 describe('常量', () => {

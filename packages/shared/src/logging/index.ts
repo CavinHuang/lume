@@ -71,6 +71,12 @@ export function summarizeValue(input: unknown, depth = 0): unknown {
       ...(input.stack ? { stack: clipLogPreview(input.stack) } : {}),
     }
   }
+  if (input instanceof ArrayBuffer || ArrayBuffer.isView(input)) {
+    return {
+      type: input.constructor?.name ?? 'TypedArray',
+      byteLength: (input as { byteLength: number }).byteLength,
+    }
+  }
   if (depth >= SUMMARIZE_MAX_DEPTH) return '[MaxDepth]'
   if (Array.isArray(input)) {
     return {
@@ -79,7 +85,12 @@ export function summarizeValue(input: unknown, depth = 0): unknown {
     }
   }
   const out: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(input as Record<string, unknown>).slice(0, SUMMARIZE_MAX_KEYS)) {
+  let keyCount = 0
+  for (const key in input as Record<string, unknown>) {
+    if (!Object.prototype.hasOwnProperty.call(input, key)) continue
+    if (keyCount >= SUMMARIZE_MAX_KEYS) break
+    keyCount += 1
+    const value = (input as Record<string, unknown>)[key]
     const classified = classifyLogKey(key)
     if (classified === 'redact') {
       out[key] = '[redacted]'
