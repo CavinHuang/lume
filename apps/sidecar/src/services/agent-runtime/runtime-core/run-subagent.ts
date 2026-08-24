@@ -404,6 +404,7 @@ export async function runForegroundSubagentWithTimeout(input: {
   status: "completed" | "errored" | "aborted" | "timed_out";
   output?: string;
   error?: string;
+  completionSummary?: string;
 }> {
   if (input.timeoutMs <= 0) {
     return input.execution;
@@ -419,8 +420,10 @@ export async function runForegroundSubagentWithTimeout(input: {
   }>((resolve) => {
     timeoutId = setTimeout(async () => {
       timedOut = true;
-      await input.stopSubagent(input.childThreadId).catch(() => false);
-      const error = `Subagent timed out after ${input.timeoutMs}ms and was cancelled.`;
+      const stopped = await input.stopSubagent(input.childThreadId).catch(() => false);
+      // 取消未确认时必须如实披露：子会话可能仍在运行，调用方据此提示用户
+      const cancelNote = stopped ? "" : " Automatic cancellation was not confirmed; the child session may still be running.";
+      const error = `Subagent timed out after ${input.timeoutMs}ms and was cancelled.${cancelNote}`;
       resolve({
         status: "timed_out",
         output: error,
@@ -565,30 +568,39 @@ export async function runTaskLinkedSubagent(input: {
     });
     const forwardedInput = { ...input.toolInput };
     delete forwardedInput.task_ref;
-    execution = await runSidecarSubagent({
-      toolInput: forwardedInput,
-      context: input.context,
-      runId: executorRef,
+    // task_ref 子代理与前台委派同纪律，受同一 wall-clock 上限保护（#647 P1-3）：
+    // 超时取消后 status="timed_out" 走下方 acknowledge(terminal) + 回退 pending
+    // 的既有失败链路，主 run 不会因子代理死循环/网络挂起而永久阻塞。
+    execution = await runForegroundSubagentWithTimeout({
+      execution: runSidecarSubagent({
+        toolInput: forwardedInput,
+        context: input.context,
+        runId: executorRef,
+        childThreadId: childMeta.id,
+        parentThreadId: input.parentThreadId,
+        deliveryThreadId: input.parentThreadId,
+        parentToolUseId: input.context.toolUseId,
+        subagentType:
+          typeof input.toolInput.subagent_type === "string"
+            ? input.toolInput.subagent_type
+            : undefined,
+        modelOverride: input.modelOverride,
+        channelId: input.channelId,
+        workspaceId: input.workspaceId,
+        chatType: input.chatType,
+        messageMetadata: input.messageMetadata,
+        fileReferenceBinding: input.fileReferenceBinding,
+        onRuntimeEvent: input.emitRuntimeEvent,
+        permissionMode: input.permissionMode,
+        emitAskUserQuestion: input.emitAskUserQuestion,
+        emitBrowserAuthRequest: input.emitBrowserAuthRequest,
+        emitDesktopActionRequest: input.emitDesktopActionRequest,
+        emitToolPermissionRequest: input.emitToolPermissionRequest,
+      }),
       childThreadId: childMeta.id,
-      parentThreadId: input.parentThreadId,
-      deliveryThreadId: input.parentThreadId,
-      parentToolUseId: input.context.toolUseId,
-      subagentType:
-        typeof input.toolInput.subagent_type === "string"
-          ? input.toolInput.subagent_type
-          : undefined,
-      modelOverride: input.modelOverride,
-      channelId: input.channelId,
-      workspaceId: input.workspaceId,
-      chatType: input.chatType,
-      messageMetadata: input.messageMetadata,
-      fileReferenceBinding: input.fileReferenceBinding,
-      onRuntimeEvent: input.emitRuntimeEvent,
-      permissionMode: input.permissionMode,
-      emitAskUserQuestion: input.emitAskUserQuestion,
-      emitBrowserAuthRequest: input.emitBrowserAuthRequest,
-      emitDesktopActionRequest: input.emitDesktopActionRequest,
-      emitToolPermissionRequest: input.emitToolPermissionRequest,
+      timeoutMs: resolveForegroundSubagentTimeoutMs(),
+      stopSubagent: async (threadId: string) =>
+        getRuntimeCoreEntry().stopAgentRuntime(threadId),
     });
   } catch (error) {
     execution = {
