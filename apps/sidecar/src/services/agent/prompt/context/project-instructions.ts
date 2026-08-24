@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import type { Stats } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { createLogger } from "../../../infra/logger";
@@ -22,6 +23,13 @@ export interface ProjectInstructions {
 interface ProbeOptions {
   /** 向上探测的家目录边界；默认 os.homedir()。测试注入用。 */
   homeDir?: string;
+  /**
+   * 可注入 stat 探测缝：指纹采样的读数来源，默认真实 fs 的 statSync。
+   * 存在动机：Linux（overlayfs/ext4 等）删旧建新会立刻复用刚释放的 inode 号，
+   * 「等长同名替换仅 ino 不同」这类指纹形态无法靠真实 fs 确定性制造，
+   * 测试注入伪造读数驱动，不赌真实 inode 分配行为。
+   */
+  stat?: (path: string) => Stats;
 }
 
 /** 用户主目录的容器目录名：其直接子目录视作用户主目录层（POSIX /home、macOS/Windows Users）。 */
@@ -142,7 +150,7 @@ function probeStamp(startDir: string, options: ProbeOptions): string {
       const candidate = join(dir, name);
       let sig = "0";
       try {
-        const st = statSync(candidate);
+        const st = options.stat ? options.stat(candidate) : statSync(candidate);
         // mtime 不能单独做指纹：粗粒度时间戳文件系统（Linux VFS coarse clock 约 4ms 窗口）上
         // 同路径删旧建新同名文件时新旧 mtime 读数可完全相同，缓存将永久返回删除前的旧内容。
         // 补 size+ino 使「同名替换」（新 inode/新长度）必然失效；不存在视为 0。
