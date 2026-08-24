@@ -835,8 +835,11 @@ class ModuleLoader {
         }
         if (specifier.startsWith("node:") || isBuiltin(specifier) || builtinModules.includes(specifier)) {
             const normalized = specifier.startsWith("node:") ? specifier : `node:${specifier}`;
-            if (normalized === "node:process")
-                throw new Error(`Importing module "${specifier}" is not allowed in node_repl`);
+            // Single choke point for every import path (dynamic import, static
+            // link, nested untrusted imports all funnel through resolve()).
+            if (!isTrustedReferrer(referrerIdentifier) && !ALLOWED_BUILTIN_MODULES.has(normalized)) {
+                throw new Error(`Importing module "${specifier}" is not allowed in node_repl cells. Allowed builtin modules: ${[...ALLOWED_BUILTIN_MODULES].map((name) => name.replace(/^node:/, "")).join(", ")}`);
+            }
             return { kind: "builtin", specifier: normalized };
         }
         if (isPathSpecifier(specifier))
@@ -926,6 +929,28 @@ function resolvedCacheId(resolved) {
     if (resolved.kind === "package")
         return `package:${resolved.path}`;
     return resolved.path;
+}
+// Builtin import allowlist for untrusted cell code: pure computation modules
+// only. This closes the direct import path to host-privileged builtins (fs,
+// child_process, vm, worker_threads, http, ...) — it is one layer of defense,
+// not a full sandbox boundary: host-realm globals injected into the context
+// (e.g. Buffer) still expose cross-realm escapes.
+// Trusted referrers (bundled browser/computer-use clients) keep full builtin
+// access; their own bootstrap imports node:fs/promises.
+const ALLOWED_BUILTIN_MODULES = new Set([
+    "node:assert", "node:assert/strict", "node:buffer", "node:crypto",
+    "node:events", "node:path", "node:path/posix", "node:path/win32",
+    "node:punycode", "node:querystring", "node:string_decoder",
+    "node:timers", "node:timers/promises", "node:url", "node:util",
+    "node:zlib",
+]);
+function isTrustedReferrer(referrerIdentifier) {
+    if (options.trustAllImportedCode)
+        return true;
+    if (typeof referrerIdentifier !== "string" || !path.isAbsolute(referrerIdentifier))
+        return false;
+    const candidate = canonicalPath(referrerIdentifier);
+    return trustedCodePaths.some((directory) => isSameOrWithin(candidate, directory));
 }
 function isPathSpecifier(specifier) {
     if (specifier.startsWith("./") || specifier.startsWith("../") || specifier.startsWith(".\\") || specifier.startsWith("..\\"))

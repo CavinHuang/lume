@@ -5,14 +5,17 @@
 import { readFile, stat } from 'fs/promises'
 import { defineTool } from './types.js'
 import type { ToolContext } from '../types.js'
-import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
+import { ensurePathAllowed, ensureWriteContained, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 import { countLineChanges } from '../utils/line-change-stats.js'
 import { withFileMutationLock } from '../utils/file-mutation-lock.js'
 import { writeFileAtomic } from '../utils/fs-atomic.js'
 
+// writeFileAtomic 检出 symlink 后的写入瞬间复检：containment 不以沙箱启用为
+// 前提（#546），sandbox 启用时再叠加 deny/allow 规则
 const assertWriteAllowed = (context: ToolContext) => (resolvedPath: string): string | null =>
-  ensurePathAllowed(resolvedPath, 'write', context.sandbox, context.additionalDirectories)
+  ensureWriteContained(resolvedPath, context.cwd, context.additionalDirectories)
+  ?? ensurePathAllowed(resolvedPath, 'write', context.sandbox, context.additionalDirectories)
 
 export const FileEditTool = defineTool({
   name: 'Edit',
@@ -56,6 +59,11 @@ export const FileEditTool = defineTool({
     if (unsafePathReason) return { data: `Error: ${unsafePathReason}`, is_error: true }
     const filePath = await resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
     const { old_string, new_string, replace_all } = input
+    // containment 复核不以沙箱启用为前提（#546）：junction/symlink 可穿越词法边界
+    const containmentError = ensureWriteContained(filePath, context.cwd, context.additionalDirectories)
+    if (containmentError) {
+      return { data: containmentError, is_error: true }
+    }
     const sandboxError = ensurePathAllowed(
       filePath,
       'write',
