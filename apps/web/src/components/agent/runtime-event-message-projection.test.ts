@@ -353,15 +353,15 @@ describe('runtime-event-message-projection', () => {
       {
         id: 'assistant:run-1',
         type: 'assistant',
-        text: '本轮已达到最大执行轮次，当前进度已保存。发送“继续”可接着执行。',
+        text: '本轮已达到最大执行轮次，当前进度已保存。',
         thinking: '',
         blocks: [{
           type: 'text',
           id: 'text:0',
-          text: '本轮已达到最大执行轮次，当前进度已保存。发送“继续”可接着执行。',
+          text: '本轮已达到最大执行轮次，当前进度已保存。',
         }],
         status: 'completed',
-        tokenCount: 8,
+        tokenCount: 5,
         toolCalls: [],
       },
     ])
