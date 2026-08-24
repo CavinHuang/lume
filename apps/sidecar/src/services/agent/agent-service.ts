@@ -522,6 +522,9 @@ export async function submitAskUserQuestionAnswers(
     if (handledByRuntime.handledBy === "live") {
       getAgentRuntimeStatusManager().markStreaming(input.threadId);
     }
+    // #587:非 live 处理意味着 run 不在内存中(checkpoint/automation waiting_*),
+    // 通知 automation 层收尾;live 场景查询无 waiting 态,幂等无害
+    notifyAgentInteractionResolved(input.threadId);
     return { ok: true, ...handledByRuntime };
   }
   if (input.canceled) {
@@ -534,10 +537,31 @@ export async function submitAskUserQuestionAnswers(
   throw new Error("未找到待确认的 AskUserQuestion 请求");
 }
 
+// #587:交互在桌面端/IM 被解决后通知 automation 层收尾 waiting_* 状态。
+// 监听注册制避免 services/agent 反向依赖 services/automation。
+type InteractionResolvedListener = (threadId: string) => void;
+const interactionResolvedListeners = new Set<InteractionResolvedListener>();
+
+export function onAgentInteractionResolved(listener: InteractionResolvedListener): () => void {
+  interactionResolvedListeners.add(listener);
+  return () => interactionResolvedListeners.delete(listener);
+}
+
+function notifyAgentInteractionResolved(threadId: string): void {
+  for (const listener of interactionResolvedListeners) {
+    try {
+      listener(threadId);
+    } catch {
+      // 单个监听器失败不影响应答主流程
+    }
+  }
+}
+
 export function submitAgentToolPermission(input: AgentToolPermissionResponseInput): { ok: true } {
   const handled = submitToolPermissionDecision(input);
   if (handled) {
     getAgentRuntimeStatusManager().markStreaming(input.threadId);
+    notifyAgentInteractionResolved(input.threadId);
     return { ok: true };
   }
   throw new Error("未找到待确认的工具权限请求");
@@ -1534,6 +1558,23 @@ export function appendAgentMessage(
           queuedMessage: toQueuedMessage(queued)
         };
       }
+      // #517:steer/promote 路径的消息不在 kernel 队列的 queuedMessageId 下——
+      // guidance 条目按 dispatch 的 clientSubmissionId 找回;未被消费而 drain 回
+      // kernel 队列的条目按输入的 clientSubmissionId 兜底。否则同 id 重试会掉进
+      // 下方"已终结"throw。
+      const pendingGuidance = runGuidanceStore.findPendingBySubmissionId(input.threadId, input.clientSubmissionId);
+      const drainedBack = pendingGuidance
+        ? undefined
+        : getAgentRuntimeKernel().listQueued(input.threadId)
+          .find((item) => (item.input as AgentSendInput | undefined)?.clientSubmissionId === input.clientSubmissionId);
+      if (pendingGuidance || drainedBack) {
+        return {
+          ok: true,
+          mode: "queued",
+          queuedCount: getAgentRuntimeKernel().listQueued(input.threadId).length,
+          queuedMessage: undefined
+        };
+      }
     }
     if (["accepted", "started", "completed"].includes(receipt.status)) {
       return {
@@ -1606,11 +1647,20 @@ export function appendAgentMessage(
         status: "queued",
         attachmentsBrief: summarizeGuidanceAttachments(dispatchInput)
       });
-      return {
+      const steerResult: AgentThreadMessageDispatchResult = {
         ok: true,
         mode: "queued",
         queuedCount: getAgentRuntimeKernel().listQueued(input.threadId).length,
-        queuedMessage: undefined,
+        queuedMessage: undefined
+      };
+      // #517:steer 曾绕过 submission 状态机——receipt 卡 preparing、无 outbox
+      // 落盘(重启丢内容),同 id 重试命中"已终结:preparing"throw。accept 把
+      // receipt 推进 queued 并写 outbox,与 kernel queue 路径同口径。
+      if (clientSubmissionId) {
+        submissionStore!.accept(clientSubmissionId, steerResult, dispatchInput);
+      }
+      return {
+        ...steerResult,
         submissionId: clientSubmissionId
       };
     }
@@ -1735,6 +1785,19 @@ function promoteQueuedAgentMessageToGuidanceUnchecked(
     ? runGuidanceStore.addQueuedDispatch({ ...removed, ...(attachmentsBrief ? { attachmentsBrief } : {}) })
     : undefined;
   if (removed) {
+    // #517:同步对齐 receipt——kernel 条目已移入 guidance,残留的 queuedMessageId
+    // 会让同 id 重试命中"已终结"throw;重写为无 queuedMessageId 的 queued 态。
+    // receipt 主键是 clientSubmissionId(与 traceContext.submissionId 在 web 端
+    // 是两个独立 UUID),必须用前者定位。
+    const submissionId = removed.input.clientSubmissionId;
+    if (submissionId && promotedGuidance) {
+      getAgentSubmissionStore().accept(submissionId, {
+        ok: true,
+        mode: "queued",
+        queuedCount: getAgentRuntimeKernel().listQueued(removed.input.threadId).length,
+        queuedMessage: undefined
+      }, removed.input);
+    }
     writeLogRecord({
       level: "info",
       kind: "trace",

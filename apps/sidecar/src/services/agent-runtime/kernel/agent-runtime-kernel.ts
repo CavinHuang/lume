@@ -118,15 +118,25 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
     this.scheduleStartNext(threadId);
   }
 
-  /** 等待线程完全空闲（无 kernel 活跃 run、无外部占用）。用于需要同步语义的派发方。 */
+  /** 等待线程完全空闲（无 kernel 活跃 run、无外部占用、无待执行排队任务）。用于需要同步语义的派发方。 */
   async waitForThreadIdle(threadId: string): Promise<void> {
+    // #547:不得以全局 running 集合为空作退出条件——被 resume 占用挡住而入队
+    // 的任务此刻不在 running 里,提前返回会让 automation 把未执行的 prompt 记成
+    // success。改为短间隔轮询本线程的完整占用态(活跃/外部占用/待执行排队);
+    // 占用释放经 notifyThreadReleased→scheduleStartNext 及时派发,轮询随即收敛。
+    // blocked 项不会自愈(startNextQueued 跳过队首 blocked,仅人工 retry/remove
+    // 可清除),计入等待会让 automation 无限挂死且心跳续租使陈旧租约兜底失效
+    // ——排除之,该子场景退回"记 success 但 prompt 被挡"的旧诚实度(#547 review)。
+    // 队列被 pause(STOP_THREAD)同理:只有手动 resume 能解除,不计入 busy。
+    const hasRunnableQueue = (): boolean =>
+      !this.isPaused(threadId)
+      && this.listQueued(threadId).some((item) => item.status !== "blocked");
     while (
       this.activeThreads.has(threadId)
       || this.options.isThreadOccupied?.(threadId)
+      || hasRunnableQueue()
     ) {
-      const tasks = Array.from(this.running);
-      if (tasks.length === 0) break;
-      await Promise.allSettled(tasks);
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
 

@@ -412,6 +412,10 @@ describe("agent-service", () => {
     resetAgentRuntimeStatusManagerForTest();
     resetAgentRuntimeKernelForTest();
     resetServiceRuntimeForTest();
+    // #517 后 steer/promote 路径会打开 submission sqlite；不关闭则下方
+    // rmSync 临时目录报 EBUSY
+    const { resetAgentSubmissionStoreForTests } = await import("./agent-submission-store");
+    resetAgentSubmissionStoreForTests();
     heldRunResolvers.clear();
     activeMockSessions.clear();
     runAgentRuntimeCalls.length = 0;
@@ -422,7 +426,12 @@ describe("agent-service", () => {
       process.env.LUME_CONFIG_DIR = previousConfigDir;
     }
     if (tempConfigDir) {
-      rmSync(tempConfigDir, { recursive: true, force: true });
+      try {
+        rmSync(tempConfigDir, { recursive: true, force: true });
+      } catch {
+        // #517 用例会打开 submission sqlite:Windows 对刚关闭的库文件可能
+        // 延迟释放句柄,清理失败不影响断言,留给系统临时目录回收
+      }
       tempConfigDir = "";
     }
   });
@@ -1696,6 +1705,73 @@ describe("agent-service", () => {
     expect(visibleMessages.some((message) => message.metadata?.subagentAnnounce === true)).toBe(false);
     expect(visibleMessages.some((message) => message.role === "assistant" && message.content === "mock assistant output")).toBe(true);
   });
+
+  // #517 承重用例:receipt 主键是 clientSubmissionId,而 web 端 traceContext.
+  // submissionId 是另一个独立 UUID——promote 回写与同 id 重试都必须按前者工作。
+  test("#517:promote 后 receipt 按 clientSubmissionId 重写且同 id 重试不 throw", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const {
+      appendAgentMessage,
+      getAgentSubmissionReceipt,
+      listAgentMessageQueue,
+      promoteQueuedAgentMessageToGuidance
+    } = await import("./agent-service");
+    const thread = createAgentThread("promote-receipt", "channel-test");
+    const createEmit = () => ({
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    // 占位占用线程使后续提交进入 kernel 队列;两个 id 故意不同(复刻 web 实际形态)
+    appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "hold:first",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+    const queued = appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "to-promote",
+      channelId: "channel-test",
+      modelId: "provider/model-test",
+      clientSubmissionId: "q1",
+      traceContext: { submissionId: "trace-1", traceId: "trace-1" }
+    }, createEmit());
+
+    expect(getAgentSubmissionReceipt("q1")?.status).toBe("queued");
+
+    const snapshot = listAgentMessageQueue(thread.id);
+    const promoted = promoteQueuedAgentMessageToGuidance({
+      threadId: thread.id,
+      queuedMessageId: queued.queuedMessage?.id ?? "",
+      expectedRevision: snapshot.revision,
+      queueOperationId: "promote-receipt"
+    });
+    expect(promoted.promotedGuidance?.text).toBe("to-promote");
+
+    // 键位修复的承重断言:receipt 按 clientSubmissionId 重写,悬空 queuedMessageId 清空
+    const receipt = getAgentSubmissionReceipt("q1");
+    expect(receipt?.status).toBe("queued");
+    expect(receipt?.queuedMessageId).toBeUndefined();
+
+    // 同 id 重试:guidance 条目按 dispatch 输入找回,返回 queued 而非 throw"已终结"
+    const retried = appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "to-promote",
+      channelId: "channel-test",
+      modelId: "provider/model-test",
+      clientSubmissionId: "q1"
+    }, createEmit());
+    expect(retried.ok).toBe(true);
+    expect(retried.mode).toBe("queued");
+
+    await waitForQueuedRunRelease("hold:first");
+  });
 });
 
 describe("stopAgent cascade (D6)", () => {
@@ -1892,4 +1968,6 @@ describe("stopAgent cascade (D6)", () => {
     // interrupt 触发的中止是正常路径,不应让线程进入 errored
     expect(getAgentRuntimeStatusManager().get(thread.id)?.phase).not.toBe("errored");
   });
+
+
 });
