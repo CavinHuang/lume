@@ -1478,11 +1478,12 @@ export class QueryEngine {
         break
       }
 
-      // Terminal exit is decided solely by the tool-free branch above: a
-      // response carrying tool_use must keep looping so the model sees the
-      // results, even when a gateway reports finish_reason "stop" mapped to
-      // end_turn (#568). Runaway loops are bounded by maxTurns and the
-      // repeat guard above.
+      // Terminal exit for a stopReason-carrying response is decided by the
+      // tool-free branch above or the repeat-guard stop just before this
+      // comment: a response carrying tool_use must keep looping so the model
+      // sees the results, even when a gateway reports finish_reason "stop"
+      // mapped to end_turn (#568). Runaway loops are bounded by maxTurns and
+      // the repeat guard above.
 
       if (this.config.promptSuggestions && toolsUsed.length > 0) {
         yield {

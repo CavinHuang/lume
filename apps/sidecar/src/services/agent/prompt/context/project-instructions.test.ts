@@ -129,6 +129,36 @@ describe("project-instructions", () => {
     expect(loadProjectInstructions(proj, { homeDir: root })?.content).toBe("# v2 replaced at same mtime");
   });
 
+  test("等长同名替换：mtime/size 全同、仅 ino 不同时缓存必须失效（注入式 ino 变异自证用例）", () => {
+    // 上条用例新旧内容长度不同（4B vs 27B），size 差异单独足以失效指纹——
+    // 把指纹里的 :st.ino 删掉它照样绿（变异幸存者）。本条经 stat 注入缝收窄为
+    // 「mtime/size 读数全同、仅 ino 不同」：唯一区分组件只剩 ino，指纹若缺
+    // ino 组件此用例必红。注入驱动而非真实 rm+重建：Linux overlayfs/ext4
+    // 删旧建新会立刻复用刚释放的 inode 号，新旧三要素可能全同（Ubuntu CI 实测
+    // 必现），真实文件系统无法确定性制造该形态。
+    const proj = join(root, "proj");
+    mkdirSync(proj, { recursive: true });
+    const file = join(proj, "CLAUDE.md");
+    let generation = 0;
+    const pinnedMs = new Date(Date.now() - 10_000).getTime();
+    // 只伪造命中候选的读数；其余候选按不存在处理（probeStamp 对 stat 抛错视为 0）
+    const injectedStat = (path: string) => {
+      if (path !== file) throw new Error("ENOENT");
+      return { mtimeMs: pinnedMs, size: 4, ino: generation === 0 ? 111 : 222 } as unknown as Stats;
+    };
+
+    writeFileSync(file, "# v1", "utf-8");
+    expect(loadProjectInstructions(proj, { homeDir: root, stat: injectedStat })?.content).toBe("# v1");
+
+    // 同代重复加载：注入读数全同 → 命中缓存不重读（证明失效非偶然）
+    expect(loadProjectInstructions(proj, { homeDir: root, stat: injectedStat })?.content).toBe("# v1");
+
+    // 换代：mtime/size 读数不变、仅 ino 变 → 缓存必须失效并重读出磁盘新内容
+    generation = 1;
+    writeFileSync(file, "# v3", "utf-8");
+    expect(loadProjectInstructions(proj, { homeDir: root, stat: injectedStat })?.content).toBe("# v3");
+  });
+
   test("trust 包装转义：正文含闭合标签/伪造标题无法提前逃逸出块，块后有收尾政策", () => {
     writeFileSync(
       join(root, "CLAUDE.md"),
@@ -266,7 +296,10 @@ describe("project-instructions", () => {
     // 一致形态：放行过检内容
     expect(probeWith({})).toBe("# vetted content");
     // 失配形态：句柄指向异 dev/ino（换入异文件/symlink 跟随）、非 regular file、hardlink → 全部拒绝
-    expect(probeWith({ ino: source!.ino + 1 })).toBeNull();
+    // 注意：NTFS 的 ino 是 64 位大数，超 Number.MAX_SAFE_INTEGER 后 +1 不改变浮点值，
+    // 必须用确定性的异值而非算术增量。
+    const foreignIno = source!.ino === 987654 ? 987655 : 987654;
+    expect(probeWith({ ino: foreignIno })).toBeNull();
     expect(probeWith({ dev: source!.dev + 1 })).toBeNull();
     expect(probeWith({ isFile: false })).toBeNull();
     expect(probeWith({ nlink: 2 })).toBeNull();
