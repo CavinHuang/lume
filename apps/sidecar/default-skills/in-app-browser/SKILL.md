@@ -72,6 +72,7 @@ alert/confirm/prompt 会阻塞页面:先用 `dialog` 读取内容,再用 `handle
 | `action_denied` | 策略拒绝(如支付、购买) | 停止该意图,交用户处理;不得变相绕过 |
 | `user_action_required` | CAPTCHA/MFA/硬件密钥步骤 | 停下请用户完成该步;换措辞重试也会被拒(按元素语义识别),不要尝试 |
 | `user_takeover_required` | agent 动作因用户正在操作页面而被拒 | 重新 `snapshot` 后重试一次(动作会让行避让用户);若持续出现说明用户仍在操作,停下询问而不是循环重试 |
+| `navigation_timeout` | 页面加载超上限被中断,页面可能仍在后台继续加载 | 先 `snapshot` 确认实际状态再决定;不要立即重试同一 `navigate`,持续超时改开新 tab 或如实告知用户 |
 | `browser_unavailable` | 浏览器运行时不可用 | 可重试;确认不可用后说明能力降级,才考虑原生 computer-use |
 
 ### 红线
