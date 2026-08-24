@@ -112,32 +112,47 @@ describe("permission classifier", () => {
     // 复核实证：这些命令曾被 POSIX 词表漏判为 low，dontAsk 下会自动放行递归删除
     await expect(classifier.classify({
       toolName: "Bash",
-      command: "Remove-Item -Recurse -Force ~/important"
+      command: "Remove-Item -Recurse -Force ~/important",
+      shellKind: "powershell"
     })).resolves.toMatchObject({
       riskLevel: "medium",
       shouldAsk: true,
       reasonCode: "shell_write_pattern"
     });
-    await expect(classifier.classify({ toolName: "Bash", command: "rd /s /q build" })).resolves.toMatchObject({
+    await expect(classifier.classify({ toolName: "Bash", command: "rd /s /q build", shellKind: "powershell" })).resolves.toMatchObject({
       riskLevel: "medium",
       shouldAsk: true
     });
-    await expect(classifier.classify({ toolName: "Bash", command: "Stop-Service spooler" })).resolves.toMatchObject({
+    await expect(classifier.classify({ toolName: "Bash", command: "Stop-Service spooler", shellKind: "powershell" })).resolves.toMatchObject({
       riskLevel: "medium",
       shouldAsk: true
     });
-    await expect(classifier.classify({ toolName: "Bash", command: "Set-ExecutionPolicy RemoteSigned" })).resolves.toMatchObject({
+    await expect(classifier.classify({ toolName: "Bash", command: "Set-ExecutionPolicy RemoteSigned", shellKind: "powershell" })).resolves.toMatchObject({
       riskLevel: "medium",
       shouldAsk: true
     });
     // 换行分隔与 cmd 包裹曾与 guardrail 层一起漏判
-    await expect(classifier.classify({ toolName: "Bash", command: "Get-Date\r\ndel \\" })).resolves.toMatchObject({
+    await expect(classifier.classify({ toolName: "Bash", command: "Get-Date\r\ndel \\", shellKind: "powershell" })).resolves.toMatchObject({
       riskLevel: "medium",
       shouldAsk: true
     });
-    await expect(classifier.classify({ toolName: "Bash", command: "cmd /c rd /s /q build" })).resolves.toMatchObject({
+    await expect(classifier.classify({ toolName: "Bash", command: "cmd /c rd /s /q build", shellKind: "powershell" })).resolves.toMatchObject({
       riskLevel: "medium",
       shouldAsk: true
+    });
+  });
+
+  test("skips PowerShell vocabulary for POSIX bash shells", async () => {
+    const classifier = createPermissionClassifier();
+
+    // 撞名真实 POSIX 命令（Elixir iex / Ruby ri）不应被 PS 词表翻成弹审
+    await expect(classifier.classify({ toolName: "Bash", command: "iex -S mix phx.server", shellKind: "bash" })).resolves.toMatchObject({
+      riskLevel: "low",
+      shouldAsk: false
+    });
+    await expect(classifier.classify({ toolName: "Bash", command: "ri -T String", shellKind: "bash" })).resolves.toMatchObject({
+      riskLevel: "low",
+      shouldAsk: false
     });
   });
 

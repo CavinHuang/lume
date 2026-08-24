@@ -1,5 +1,5 @@
 import { canonicalizeAgentToolName } from "@lume/shared";
-import { analyzeBashCommand } from "@lume/agent-sdk";
+import { analyzeBashCommand, shellKindWithoutDiscovery } from "@lume/agent-sdk";
 
 export type RuntimeToolSafetyDecision =
   | { behavior: "allow" }
@@ -80,7 +80,13 @@ function getCommand(input: unknown): string {
   return typeof command === "string" ? command : "";
 }
 
-export function evaluateRuntimeToolSafety(toolName: string, input: unknown): RuntimeToolSafetyDecision {
+export interface RuntimeToolSafetyContext {
+  /** 测试注入口；缺省按真实进程平台与环境解析 */
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+}
+
+export function evaluateRuntimeToolSafety(toolName: string, input: unknown, context: RuntimeToolSafetyContext = {}): RuntimeToolSafetyDecision {
   const normalized = canonicalizeAgentToolName(toolName);
   const forceConfirmReason = FORCE_CONFIRM_TOOLS.get(normalized);
   if (forceConfirmReason) {
@@ -96,13 +102,21 @@ export function evaluateRuntimeToolSafety(toolName: string, input: unknown): Run
     return { behavior: "allow" };
   }
 
-  for (const rule of [...HARD_DENY_BASH_RULES, ...HARD_DENY_POWERSHELL_RULES]) {
+  /*
+   * PS 词表仅在实际以 PowerShell 为执行 shell 的环境应用：POSIX bash 在场时命令是 bash
+   * 语法，模型不会发 PS 动词，而 iex/ri 等真实 POSIX 命令与 PS 撞名，全平台跑词表会把
+   * Elixir/Ruby 日常命令翻成强审批且「始终允许」豁免不掉。探测复用 packages/sdk 的 shell
+   * 解析顺序且不触发 Windows bash 发现：未决时读作 bash，与只读判定的稳定性取舍一致(#471)。
+   */
+  const powershellRulesActive = shellKindWithoutDiscovery(context.platform ?? process.platform, context.env ?? process.env) === "powershell";
+
+  for (const rule of [...HARD_DENY_BASH_RULES, ...(powershellRulesActive ? HARD_DENY_POWERSHELL_RULES : [])]) {
     if (rule.pattern.test(command)) {
       return { behavior: "deny", reason: rule.reason };
     }
   }
 
-  for (const rule of [...FORCE_CONFIRM_BASH_RULES, ...FORCE_CONFIRM_POWERSHELL_RULES]) {
+  for (const rule of [...FORCE_CONFIRM_BASH_RULES, ...(powershellRulesActive ? FORCE_CONFIRM_POWERSHELL_RULES : [])]) {
     if (rule.pattern.test(command)) {
       return { behavior: "confirm", reason: rule.reason };
     }

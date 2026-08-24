@@ -1,3 +1,4 @@
+import { shellKindWithoutDiscovery } from "@lume/agent-sdk";
 import type {
   PermissionClassification,
   PermissionClassifierInput,
@@ -34,8 +35,12 @@ const MEDIUM_PATTERNS = [
   /git\s+(commit|merge|rebase|checkout)/i,
   /(?:npm|pnpm|yarn|bun)\s+(?:install|add|remove|update|upgrade|link|exec)/i,
   /(?:npx|pnpx|yarn\s+dlx|bunx|corepack)\b/i,
-  /(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)/i,
-  // PowerShell 破坏性动词：Windows 无 bash 回退时与上方 POSIX 词表同档兜底，避免删除/停服等被判 low
+  /(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)/i
+];
+
+// PowerShell 破坏性动词：Windows 无 bash 回退时与上方 POSIX 词表同档兜底，避免删除/停服等被判 low；
+// 仅在实际以 PowerShell 为执行 shell 的环境套用（POSIX bash 在场时 iex/ri 等撞名命令防误拦）
+const POWERSHELL_MEDIUM_PATTERNS = [
   /\b(?:remove-item|clear-content|stop-process|stop-service|stop-computer|restart-computer|set-executionpolicy|invoke-expression|iex)\b/i,
   // 锚点含换行：多行脚本的换行分隔曾整体逃逸
   /(?:^|[;&|(\r\n])\s*(?:rd|rmdir|del|erase|ri)\b/i,
@@ -112,7 +117,9 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
 
   const tool = input.toolName.toLowerCase();
   if (tool === "bash" || tool === "execute_command") {
-    for (const pattern of MEDIUM_PATTERNS) {
+    const powershellRulesActive = (input.shellKind ?? shellKindWithoutDiscovery()) === "powershell";
+    const shellPatterns = powershellRulesActive ? [...MEDIUM_PATTERNS, ...POWERSHELL_MEDIUM_PATTERNS] : MEDIUM_PATTERNS;
+    for (const pattern of shellPatterns) {
       if (pattern.test(value)) {
         return {
           riskLevel: "medium",

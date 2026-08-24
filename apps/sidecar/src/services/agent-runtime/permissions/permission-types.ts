@@ -69,6 +69,8 @@ export interface PermissionClassifierInput {
   path?: string;
   source?: LumeToolSource;
   description?: string;
+  /** 实际执行 shell 方言：POSIX bash 在场时不套用 PowerShell 词表（iex/ri 等撞名命令防误拦） */
+  shellKind?: "bash" | "powershell";
 }
 
 export type PermissionClassifierLlm = (prompt: string) => Promise<string>;
