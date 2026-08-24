@@ -25,7 +25,7 @@ import type {
   LumeLogSource,
   LumeLoggingSettings,
 } from '@lume/shared'
-import { LUME_LOGGING_DEFAULTS, LUME_LOG_SCHEMA_VERSION } from '@lume/shared'
+import { LUME_LOGGING_DEFAULTS, LUME_LOG_SCHEMA_VERSION, classifyLogKey, clipLogPreview } from '@lume/shared'
 
 const LEVEL_ORDER: Record<LumeLogLevel, number> = {
   trace: 0,
@@ -76,23 +76,6 @@ const TERMINAL_INFO_EVENTS = new Set([
   'logging.started',
 ])
 
-const SENSITIVE_KEYS = [
-  'token',
-  'secret',
-  'password',
-  'apikey',
-  'authorization',
-  'cookie',
-  'setcookie',
-  'accesstoken',
-  'refreshtoken',
-  'grant',
-]
-const SENSITIVE_PAYLOAD_KEYS = new Set([
-  'body', 'prompt', 'systemprompt', 'rawrequest', 'rawresponse', 'requestbody', 'responsebody',
-  'content', 'html', 'markdown', 'input', 'output',
-])
-
 type LiveListener = (events: LumeLogEventV2[]) => void
 
 export interface LoggingServiceOptions {
@@ -105,15 +88,6 @@ export interface LoggingServiceOptions {
 interface NormalizeState {
   seen: WeakSet<object>
   keys: number
-}
-
-function normalizedKey(key: string): string {
-  return key.toLowerCase().replace(/[-_\s]/g, '')
-}
-
-function isSensitiveKey(key: string): boolean {
-  const value = normalizedKey(key)
-  return SENSITIVE_PAYLOAD_KEYS.has(value) || SENSITIVE_KEYS.some((candidate) => value.includes(candidate))
 }
 
 function normalizeString(value: string): string {
@@ -152,14 +126,18 @@ export function normalizeLogValue(
   for (const key of Object.keys(descriptors).slice(0, MAX_DATA_KEYS)) {
     state.keys += 1
     if (state.keys > MAX_DATA_KEYS) break
-    if (isSensitiveKey(key)) {
+    const classified = classifyLogKey(key)
+    if (classified === 'redact') {
       output[key] = '[redacted]'
       continue
     }
     const descriptor = descriptors[key]
-    output[key] = descriptor && 'value' in descriptor
+    const resolved = descriptor && 'value' in descriptor
       ? normalizeLogValue(descriptor.value, depth + 1, state)
       : '[Accessor]'
+    output[key] = classified === 'preview' && typeof resolved === 'string'
+      ? clipLogPreview(resolved)
+      : resolved
   }
   return output
 }

@@ -10,7 +10,7 @@ import type {
   LumeLogStatus,
   LumeLogError,
 } from "@lume/shared";
-import { LUME_LOG_SCHEMA_VERSION } from "@lume/shared";
+import { LUME_LOG_SCHEMA_VERSION, classifyLogKey, clipLogPreview } from "@lume/shared";
 
 export type LogLevel = LumeLogLevel;
 type LogBatchNotificationWriter = (batch: LumeLogBatch) => void;
@@ -33,14 +33,6 @@ const MAX_DEPTH = 6;
 const MAX_KEYS = 100;
 const MAX_ARRAY_ITEMS = 100;
 const MAX_STRING_CHARS = 8_192;
-const SENSITIVE_KEYS = [
-  "token", "secret", "password", "apikey", "authorization", "cookie", "setcookie",
-  "accesstoken", "refreshtoken", "grant",
-];
-const SENSITIVE_PAYLOAD_KEYS = new Set([
-  "body", "prompt", "systemprompt", "rawrequest", "rawresponse", "requestbody", "responsebody",
-  "content", "html", "markdown", "input", "output"
-]);
 
 const configuredLevel = (process.env.LUME_LOG_FILE_LEVEL ?? process.env.LUME_LOG_LEVEL ?? "info") as LogLevel;
 const MIN_LEVEL = configuredLevel in LEVEL_ORDER ? configuredLevel : "info";
@@ -54,15 +46,6 @@ let droppedCount = 0;
 let droppedLevels = new Set<LogLevel>();
 let droppedFirstAt = "";
 let droppedLastAt = "";
-
-function normalizeKey(key: string): string {
-  return key.toLowerCase().replace(/[-_\s]/g, "");
-}
-
-function isSensitiveKey(key: string): boolean {
-  const value = normalizeKey(key);
-  return SENSITIVE_PAYLOAD_KEYS.has(value) || SENSITIVE_KEYS.some((candidate) => value.includes(candidate));
-}
 
 function truncateString(value: string): string {
   return value.length > MAX_STRING_CHARS
@@ -98,14 +81,18 @@ function normalizeValue(
   for (const key of Object.keys(descriptors).slice(0, MAX_KEYS)) {
     state.keys += 1;
     if (state.keys > MAX_KEYS) break;
-    if (isSensitiveKey(key)) {
+    const classified = classifyLogKey(key);
+    if (classified === "redact") {
       output[key] = "[redacted]";
       continue;
     }
     const descriptor = descriptors[key];
-    output[key] = descriptor && "value" in descriptor
+    const resolved = descriptor && "value" in descriptor
       ? normalizeValue(descriptor.value, depth + 1, state)
       : "[Accessor]";
+    output[key] = classified === "preview" && typeof resolved === "string"
+      ? clipLogPreview(resolved)
+      : resolved;
   }
   return output;
 }

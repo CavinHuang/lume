@@ -39,7 +39,7 @@ test('normalizes cyclic and sensitive data without invoking getters', () => {
   })
   assert.equal(getterCalled, false)
   assert.deepEqual(normalizeLogValue({ body: 'raw provider body', contentPreview: 'safe preview' }), {
-    body: '[redacted]',
+    body: 'raw provider body',
     contentPreview: 'safe preview',
   })
 })
@@ -217,6 +217,32 @@ test('default consoleLevel still hides debug events in the terminal', async () =
   try {
     service.emit({ level: 'debug', source: 'main', context: 'test', event: 'test.debug2', message: 'm' })
     assert.doesNotMatch(terminal.join(''), /DEBUG/)
+  } finally {
+    await service.close()
+    await rmRetry(configDir)
+  }
+})
+
+// 内容键输出截断预览而非全遮蔽；凭据键维持 [redacted]。
+test('content keys are previewed instead of redacted', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-preview-'))
+  const service = new LoggingService({
+    configDir,
+    terminal: { write: () => true },
+    settings: { fileLevel: 'info' },
+  })
+  try {
+    const event = service.emit({
+      level: 'info',
+      source: 'main',
+      context: 'test',
+      event: 'preview.case',
+      message: 'x',
+      data: { prompt: 'z'.repeat(500), apiKey: 'sk-live' },
+    })
+    assert.equal(event.data.apiKey, '[redacted]')
+    assert.ok(event.data.prompt.startsWith('z'.repeat(200)))
+    assert.ok(event.data.prompt.endsWith('…(+300)'))
   } finally {
     await service.close()
     await rmRetry(configDir)

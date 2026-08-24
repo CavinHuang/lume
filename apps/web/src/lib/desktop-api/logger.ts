@@ -7,6 +7,7 @@
  */
 
 import { LUME_LOG_SCHEMA_VERSION, type LumeLogBatch, type LumeLogEventInput } from '@lume/shared'
+import { classifyLogKey, clipLogPreview } from '@lume/shared'
 import { invoke } from '@/lib/desktop-runtime/core'
 
 type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
@@ -37,18 +38,18 @@ function normalizeValue(
   const output: Record<string, unknown> = {}
   const descriptors = Object.getOwnPropertyDescriptors(input)
   for (const key of Object.keys(descriptors).slice(0, 100)) {
-    const normalizedKey = key.toLowerCase().replace(/[-_\s]/g, '')
-    if (
-      ['body', 'prompt', 'systemprompt', 'rawrequest', 'rawresponse', 'requestbody', 'responsebody', 'content', 'html', 'markdown', 'input', 'output'].includes(normalizedKey)
-      || ['token', 'secret', 'password', 'apikey', 'authorization', 'cookie'].some((part) => normalizedKey.includes(part))
-    ) {
+    const classified = classifyLogKey(key)
+    if (classified === 'redact') {
       output[key] = '[redacted]'
       continue
     }
     const descriptor = descriptors[key]
-    output[key] = descriptor && 'value' in descriptor
+    const resolved = descriptor && 'value' in descriptor
       ? normalizeValue(descriptor.value, depth + 1, seen)
       : '[Accessor]'
+    output[key] = classified === 'preview' && typeof resolved === 'string'
+      ? clipLogPreview(resolved)
+      : resolved
   }
   return output
 }
