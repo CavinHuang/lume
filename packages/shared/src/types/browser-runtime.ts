@@ -12,7 +12,9 @@ export type BrowserErrorCode =
   | "action_denied" | "user_action_required" | "strict_locator_violation" | "actionability_failed" | "dialog_blocking" | "user_takeover_required"
   | "element_not_visible" | "element_disabled" | "element_occluded" | "element_readonly"
   | "unsupported" | "executed_unknown" | "browser_internal_error"
-  | "navigation_timeout";
+  | "navigation_timeout"
+  /** 用户在确认弹窗明确拒绝(approved:false)——语义为否决该路径,非通道故障(#606) */
+  | "user_declined";
 
 /**
  * 可跨进程稳定透传的错误码全集(desktop 抛出点 + 协议契约)。desktop 错误码
@@ -26,6 +28,7 @@ export const STABLE_BROWSER_ERROR_CODES: readonly BrowserErrorCode[] = [
   "user_action_required", "strict_locator_violation", "actionability_failed", "dialog_blocking",
   "user_takeover_required", "element_not_visible", "element_disabled", "element_occluded",
   "element_readonly", "unsupported", "executed_unknown", "browser_internal_error", "navigation_timeout",
+  "user_declined",
 ];
 
 /**
