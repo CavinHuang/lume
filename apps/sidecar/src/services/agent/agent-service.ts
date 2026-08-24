@@ -50,6 +50,7 @@ import { getAgentRuntimeStatusManager } from "./agent-runtime-status-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";
 import { createLogger, sanitizeBaseUrlForLog, writeLogRecord } from "../infra/logger";
 import { getSessionStateManager } from "../agent-runtime/runner/session-state-manager";
+import { ensureAgentEventsBridge } from "../agent-runtime/events/agent-events-bridge";
 import { submitAskUserQuestionAnswers as submitRuntimeAskUserQuestionAnswers } from "../agent-runtime/interruption/ask-user-question-session";
 import { submitToolPermissionDecision } from "../agent-runtime/interruption/tool-permission-session";
 import {
@@ -801,6 +802,8 @@ export async function dispatchAgentRun(
   emit: AgentStreamEmitter,
   options?: { priority?: "user" | "background"; appendUserMessage?: boolean }
 ): Promise<AgentRuntimeKernelDispatchResult> {
+  // automation 等直调方不经 appendAgentMessage,同样需要事件桥(#549)
+  ensureAgentEventsBridge(input.threadId);
   const result = getAgentRuntimeKernel().dispatch(input, emit, {
     ...(options?.priority ? { priority: options.priority } : {}),
     ...(options?.appendUserMessage === false ? { executeHints: { appendUserMessage: false } } : {})
@@ -1560,6 +1563,9 @@ export function appendAgentMessage(
     threadId: input.threadId,
     origin: traceContext.origin
   });
+  // #549:桌面端实时流经 agent:events 桥推送,IM/规划等非 RPC 入口同样建桥,
+  // 否则 run 照常落盘但用户盯着屏幕时零推送、streaming 态永不翻转
+  ensureAgentEventsBridge(input.threadId);
   const clientSubmissionId = input.clientSubmissionId;
   const trackedEmit: AgentStreamEmitter = clientSubmissionId
     ? {
