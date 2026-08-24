@@ -86,11 +86,10 @@ export const FileEditTool = defineTool({
           _meta: { file: { path: filePath, conflict: 'not_read', retryable: true } },
         }
       }
-      const changedSinceRead = previousRead && (
+      const changedSinceRead =
         previousRead.timestamp !== existing.mtimeMs
         || (previousRead.size !== undefined && previousRead.size !== existing.size)
         || (!previousRead.isPartialView && previousRead.content !== content)
-      )
       if (changedSinceRead) {
         return {
           data: `Error: File has been modified since it was read: ${filePath}. The earlier edit may have succeeded or another process changed it. Read the file again before attempting another Edit.`,
@@ -131,6 +130,8 @@ export const FileEditTool = defineTool({
         const lineChanges = countLineChanges(decoded.content, content)
         await writeFileAtomic(filePath, encodeTextFile(content, decoded), assertWriteAllowed(context))
         await updateFileState(context, filePath, content)
+        // 成功即清零连败计数，"consecutive" 名副其实。
+        context.editFailureCounts?.delete(filePath)
         return {
           data: {
             filePath,
@@ -159,6 +160,8 @@ export const FileEditTool = defineTool({
         const lineChanges = countLineChanges(decoded.content, content)
         await writeFileAtomic(filePath, encodeTextFile(content, decoded), assertWriteAllowed(context))
         await updateFileState(context, filePath, content)
+        // 成功即清零连败计数，"consecutive" 名副其实。
+        context.editFailureCounts?.delete(filePath)
         const normalizedUsed = matches.some((match) => match.normalized)
         return {
           data: {

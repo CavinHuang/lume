@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { QueryEngine } from "./engine.js"
@@ -3562,6 +3562,101 @@ describe("QueryEngine session file-state (#569)", () => {
       const guardedResult = guardedEvents.find((event) => event.type === "tool_result")
       expect(guardedResult?.result?.is_error).toBe(true)
       expect(guardedResult?.result?.content).toContain("has not been read")
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("one batch of [Read, Edit] keeps partition order so the Edit sees the fresh read", async () => {
+    // 分区不变量：Read 落并发桶且 allSettled 先于串行桶执行，同回合批量
+    // [Read, Edit] 不得因并行化静默退化成 not_read。
+    const root = mkdtempSync(join(tmpdir(), "lume-engine-filestate-"))
+    const filePath = join(root, "note.txt")
+    writeFileSync(filePath, "alpha\n", "utf8")
+    try {
+      const events = await collectEvents(new QueryEngine({
+        cwd: root,
+        model: "test-model",
+        provider: new StaticProvider([
+          {
+            content: [
+              { type: "tool_use", id: "r1", name: "Read", input: { file_path: filePath } },
+              { type: "tool_use", id: "e1", name: "Edit", input: { file_path: filePath, old_string: "alpha", new_string: "beta" } },
+            ],
+            stopReason: "tool_use",
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+          {
+            content: [{ type: "text", text: "done" }],
+            stopReason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        ]),
+        tools: [FileReadTool, FileEditTool],
+        systemPrompt: "test",
+        maxTurns: 2,
+        maxTokens: 256,
+      })) as Array<{ type: string; result?: { is_error: boolean; tool_name?: string } }>
+      const results = events.filter((event) => event.type === "tool_result")
+      expect(results.map((event) => event.result?.tool_name)).toEqual(["Read", "Edit"])
+      for (const event of results) expect(event.result?.is_error).toBe(false)
+      expect(readFileSync(filePath, "utf8")).toBe("beta\n")
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("external modification between shared-cache runs trips stale_read and keeps disk intact", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-engine-filestate-"))
+    const filePath = join(root, "note.txt")
+    writeFileSync(filePath, "alpha\n", "utf8")
+    try {
+      const cache = new FileStateCache()
+      const makeRun = (responses: CreateMessageResponse[]) => new QueryEngine({
+        cwd: root,
+        model: "test-model",
+        provider: new StaticProvider(responses),
+        tools: [FileReadTool, FileEditTool],
+        systemPrompt: "test",
+        maxTurns: 2,
+        maxTokens: 256,
+        fileStateCache: cache,
+      })
+
+      await collectEvents(makeRun([
+        {
+          content: [{ type: "tool_use", id: "r1", name: "Read", input: { file_path: filePath } }],
+          stopReason: "tool_use",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+        {
+          content: [{ type: "text", text: "read done" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      ]))
+
+      // Run 间隙外部进程改写；强制 mtime 前移避免同毫秒抖动。
+      writeFileSync(filePath, "tampered\n", "utf8")
+      const stats = statSync(filePath)
+      utimesSync(filePath, stats.atime, new Date(stats.mtimeMs + 5000))
+
+      const editEvents = await collectEvents(makeRun([
+        {
+          content: [{ type: "tool_use", id: "e1", name: "Edit", input: { file_path: filePath, old_string: "tampered", new_string: "hacked" } }],
+          stopReason: "tool_use",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+        {
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      ])) as Array<{ type: string; result?: { is_error: boolean; content?: string }; _meta?: { file?: { conflict?: string } } }>
+      const editResult = editEvents.find((event) => event.type === "tool_result")
+      expect(editResult?.result?.is_error).toBe(true)
+      expect(editResult?.result?.content).toContain("has been modified since it was read")
+      expect(readFileSync(filePath, "utf8")).toBe("tampered\n")
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
