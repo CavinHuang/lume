@@ -1148,7 +1148,13 @@ async function createRuntimeCoreSessionImpl(
       await Promise.all([
         subagentRuns.length > 0
           ? (async () => {
+              // 总上限:长期不响应的审批/僵尸委派不得无限期挂住父 run。
+              // 超时后放行本轮收割,未完成 runs 保持 running(完成后 announce 照发,
+              // 下一轮 guard 会再次尝试收割)。
+              const waitStartedAt = Date.now();
+              const BACKGROUND_WAIT_TOTAL_LIMIT_MS = 30 * 60 * 1000;
               while (
+                Date.now() - waitStartedAt < BACKGROUND_WAIT_TOTAL_LIMIT_MS &&
                 subagentRuns.some(
                   (run) => registry.get(run.runId)?.status === "running",
                 )
@@ -1256,6 +1262,7 @@ async function createRuntimeCoreSessionImpl(
   });
 
   const agentOptions: AgentOptions = {
+    subagentRunId: input.subagentRunId,
     provider: createRoutingPiAiProvider(providerRoutes),
     model: input.resolvedModel?.id ?? input.resolvedModelId,
     contextWindow: input.resolvedModel?.contextWindow ?? 32_000,

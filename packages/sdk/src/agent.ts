@@ -892,6 +892,7 @@ export class Agent {
       hookRegistry: this.hookRegistry,
       sessionId: this.sid,
       runId: opts.runId,
+      subagentRunId: opts.subagentRunId,
       toolContinuations: opts.toolContinuations,
       permissionMode: opts.permissionMode,
       promptSuggestions: opts.promptSuggestions,
