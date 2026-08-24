@@ -311,6 +311,7 @@ function getLoggingService() {
     const logging = (persisted.generalSettings as { logging?: unknown } | undefined)?.logging
     loggingService = new LoggingService({
       configDir: resolveConfigDir(),
+      isDev: !app.isPackaged,
       ...(logging && typeof logging === 'object' ? { settings: logging } : {}),
     })
   }
@@ -2514,6 +2515,9 @@ function createSidecarHost({ onNotification }) {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       LUME_CONFIG_DIR: configDir,
+      // sidecar 源头门槛决定 debug/trace 是否进入传输；落盘仍由主进程 fileLevel 把关。
+      LUME_LOG_FILE_LEVEL: process.env.LUME_LOG_FILE_LEVEL
+        ?? (!app.isPackaged ? 'trace' : loggingService?.getSettings().fileLevel ?? 'info'),
       // session manifest 版本清单消费(#256):sidecar 写 manifest.json 时读取
       LUME_APP_VERSION: app.getVersion(),
       LUME_DEFAULT_SKILLS_AUTOSTART: 'true',

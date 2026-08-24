@@ -81,6 +81,8 @@ type LiveListener = (events: LumeLogEventV2[]) => void
 export interface LoggingServiceOptions {
   configDir: string
   settings?: Partial<LumeLoggingSettings>
+  /** Dev build (not packaged): console defaults to trace unless env/persisted override. */
+  isDev?: boolean
   terminal?: Pick<NodeJS.WriteStream, 'write'>
   now?: () => Date
 }
@@ -235,6 +237,11 @@ export class LoggingService {
   constructor(options: LoggingServiceOptions) {
     this.logsDir = join(options.configDir, 'logs')
     this.settings = { ...LUME_LOGGING_DEFAULTS, ...options.settings }
+    // Dev 默认放开控制台到 trace：显式 env 或用户持久化的非默认值优先。
+    // 持久化值等于全局默认(info)时视为"未自定义"，同样放行 dev trace。
+    if (options.isDev && !process.env.LUME_LOG_CONSOLE_LEVEL && this.settings.consoleLevel === LUME_LOGGING_DEFAULTS.consoleLevel) {
+      this.settings.consoleLevel = 'trace'
+    }
     const legacyLevel = process.env.LUME_LOG_LEVEL
     if (isLevel(legacyLevel)) {
       if (!process.env.LUME_LOG_CONSOLE_LEVEL) this.settings.consoleLevel = legacyLevel
@@ -259,6 +266,10 @@ export class LoggingService {
 
   updateSettings(settings: Partial<LumeLoggingSettings>): void {
     this.settings = { ...this.settings, ...settings }
+  }
+
+  getSettings(): Readonly<LumeLoggingSettings> {
+    return this.settings
   }
 
   subscribe(listener: LiveListener): () => void {

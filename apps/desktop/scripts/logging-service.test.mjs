@@ -248,3 +248,22 @@ test('content keys are previewed instead of redacted', async () => {
     await rmRetry(configDir)
   }
 })
+
+// dev 构建默认放开控制台到 trace；env 或持久化覆盖优先。
+test('dev builds default console level to trace until overridden', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-devtrace-'))
+  const terminal = { write: () => true }
+  const dev = new LoggingService({ configDir, isDev: true, terminal, now: () => new Date() })
+  const prod = new LoggingService({ configDir, terminal, now: () => new Date() })
+  const custom = new LoggingService({ configDir, isDev: true, settings: { consoleLevel: 'warn' }, terminal, now: () => new Date() })
+  try {
+    assert.equal(dev.getSettings().consoleLevel, 'trace')
+    assert.equal(prod.getSettings().consoleLevel, 'info')
+    assert.equal(custom.getSettings().consoleLevel, 'warn')
+  } finally {
+    await dev.close()
+    await prod.close()
+    await custom.close()
+    await rmRetry(configDir)
+  }
+})
