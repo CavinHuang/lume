@@ -24,6 +24,7 @@ import type {
 } from './types.js'
 import { QueryEngine } from './engine.js'
 import { createPersistScheduler } from './persist-scheduler.js'
+import { FileStateCache } from './utils/fileCache.js'
 import {
   CORE_TOOL_NAMES,
   filterTools,
@@ -297,6 +298,15 @@ export class Agent {
   private explicitSkillNames = new Set<string>()
   private fileSkillNames = new Set<string>()
   private fileCheckpointState: FileCheckpointState = {}
+  /** Thread-level read-state: shared by every engine this Agent creates so the
+   *  stale-read guard survives across runs instead of resetting per user
+   *  message (#569). Hosts may inject a per-thread instance via
+   *  AgentOptions.fileStateCache when they build one Agent per message; without
+   *  injection each Agent gets a private cache. 分工：本 cache 只做 mtime/size/
+   *  content 新鲜度判定；"须完整读"的产品级门控由宿主侧 ledger 层负责。
+   *  In-memory only — after a process restart the guard fails closed (missing
+   *  record -> guided re-Read). */
+  private fileStateCache: FileStateCache
   private latestUserMessageId: string | undefined
   private lastUsageEngine: QueryEngine | null = null
   private queuedSdkEvents: SDKMessage[] = []
@@ -311,6 +321,7 @@ export class Agent {
   constructor(options: AgentOptions = {}) {
     this.baseOptions = { ...options }
     this.cfg = { ...options }
+    this.fileStateCache = options.fileStateCache ?? new FileStateCache()
     this.sid = this.cfg.sessionId ?? crypto.randomUUID()
     this.provider = unconfiguredProvider()
     this.hookRegistry = createHookRegistry()
@@ -914,6 +925,7 @@ export class Agent {
         ? `continuation:${opts.toolContinuations[0]!.toolCall.id}`
         : `command:${this.sid}:compact`),
       fileCheckpointState: this.fileCheckpointState,
+      fileStateCache: this.fileStateCache,
       enableFileCheckpointing: opts.enableFileCheckpointing === true,
       contextController: opts.contextController,
       completionGuard: opts.completionGuard,

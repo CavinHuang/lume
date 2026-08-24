@@ -48,6 +48,17 @@ export class RunGuidanceStore {
     return (this.pendingByThread.get(threadId) ?? []).map((record) => record.guidance);
   }
 
+  /** #517:按提交 id 查 pending 记录——promote 条目的 guidance.id 是 kernel
+   * 随机 UUID 与 clientSubmissionId 无关，必须查 dispatch.input。 */
+  findPendingBySubmissionId(threadId: string, submissionId: string | undefined): AgentPendingGuidance | undefined {
+    if (!submissionId) return undefined;
+    const pending = this.pendingByThread.get(threadId) ?? [];
+    return pending.find((record) => {
+      const input = (record.dispatch as { input?: { clientSubmissionId?: unknown } | null } | null)?.input;
+      return input?.clientSubmissionId === submissionId;
+    })?.guidance;
+  }
+
   consumePendingGuidance(threadId: string): ConsumedRunGuidance | null {
     const pending = this.pendingByThread.get(threadId) ?? [];
     if (pending.length === 0) {
@@ -73,6 +84,11 @@ export class RunGuidanceStore {
     }
     this.pendingByThread.delete(threadId);
     return pending.map((record) => record.dispatch as TDispatch);
+  }
+
+  /** 线程硬删除路径清理内存态，防止 Map 只增不减（#517）。 */
+  discardThread(threadId: string): void {
+    this.pendingByThread.delete(threadId);
   }
 
   resetForTest(): void {
