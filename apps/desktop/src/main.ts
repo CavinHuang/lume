@@ -321,6 +321,8 @@ let settingsBroker: SettingsBroker | null = null
 let diagnosticContentStore: DiagnosticContentStore | null = null
 let sidecarLogDigestPolicy: LumeLogDigestPolicy | null = null
 let connectionVaultKey: Buffer | null = null
+// sidecar 崩溃惰性重启时经 SIDECAR_READY 补发，避免重启后加密静默回退弱种子(#617)
+let secretEncryptionKey: Buffer | null = null
 const pendingRendererDeliveries = new Map()
 const rendererLogSubscriptions = new Map()
 
@@ -2924,6 +2926,18 @@ function createSidecarHost({ onNotification }) {
               })
             }
           }
+          if (secretEncryptionKey) {
+            try {
+              runningChild.postMessage(JSON.stringify({
+                method: 'system.secret-encryption-key',
+                params: { key: secretEncryptionKey.toString('base64') },
+              }))
+            } catch (error) {
+              writeMainLog('warn', 'desktop.sidecar.security', 'secret_key.delivery_failed', 'failed to reinstall secret encryption key in sidecar', {
+                data: { error },
+              })
+            }
+          }
           logDesktopStartup('sidecar reported system.ready', 'sidecar.ready')
           settleStart()
           return
@@ -3476,6 +3490,7 @@ app.whenReady().then(async () => {
   desktopHostState = await startDesktopHost()
   await sidecarHost.start()
   await unlockConnectionVaultStore()
+  await installSecretEncryptionKeyInSidecar()
   await sidecarHost.notifyBrowserSettings?.(browserRuntime.getSettings())
   logDesktopStartup('sidecar ready', 'sidecar.ready')
   pageRenderer = new PageRenderer()
@@ -3611,6 +3626,27 @@ async function unlockDesktopContextStore() {
 
 function getConnectionVaultKeyPath(): string {
   return join(resolveConfigDir(), 'connection-vault-key.json')
+}
+
+// 应用级随机密钥（safeStorage 包裹落盘，仅原机可解）：注入后 sidecar 的
+// encryptSecret 脱离可推导的 USERNAME/HOME 种子(#617)。safeStorage 不可用
+// （如无 keyring 的 Linux）时跳过，sidecar 自动退回 legacy 行为。
+async function installSecretEncryptionKeyInSidecar(): Promise<void> {
+  let key: Buffer | null = null
+  try {
+    key = loadOrCreateDesktopContextKey({
+      path: join(resolveConfigDir(), 'secret-encryption-key.bin'),
+      safeStorage,
+    })
+    await sidecarHost.call('system.secret-encryption-key', { key: key.toString('base64') })
+    secretEncryptionKey?.fill(0)
+    secretEncryptionKey = Buffer.from(key)
+    logDesktopStartup('secret encryption key installed')
+  } catch (error) {
+    logDesktopStartup(`secret encryption unavailable: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    key?.fill(0)
+  }
 }
 
 async function installConnectionVaultKeyInSidecar(key: Buffer): Promise<void> {

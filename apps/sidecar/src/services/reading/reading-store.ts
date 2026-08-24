@@ -488,6 +488,21 @@ export function setReadingNoteShareCard(noteId: string, shareCardPath: string): 
 }
 
 
+/**
+ * #637：把存量 legacy 弱种子 weread apiKey 密文一次性升级为 v2。返回迁移条数。
+ */
+export function reencryptWereadApiKeyWithInstalledKey(): number {
+  const stored = readSettings();
+  const value = stored?.encryptedWereadApiKey;
+  if (!value || value.startsWith("enc:v2:")) return 0;
+  writeSettings({
+    ...normalizeReadingSettings(readSettings()),
+    encryptedWereadApiKey: encryptSecret(decryptSecret(value)),
+    updatedAt: Date.now()
+  });
+  return 1;
+}
+
 export function getReadingSettings(): ReadingSettings {
   initReadingStorage();
   return normalizeReadingSettings(readSettings());

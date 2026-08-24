@@ -88,6 +88,16 @@ describe("tool-metadata", () => {
     expect(isToolAllowedInPlanMode("AskUserQuestion")).toBeTrue();
   });
 
+  test("treats automation_template as a write tool and keeps automation_list plan-safe", () => {
+    // create 会创建真实定时 agent run，整工具取最保守值对齐 automation_set
+    expect(getToolMetadata("automation_template")).toMatchObject({
+      category: "write",
+      riskLevel: "high",
+      allowedInPlanMode: false
+    });
+    expect(isToolAllowedInPlanMode("automation_list")).toBeTrue();
+  });
+
   test("describes UI personalization as a local write tool", () => {
     expect(getToolMetadata("personalize_ui")).toMatchObject({
       name: "personalize_ui",

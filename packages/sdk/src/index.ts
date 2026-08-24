@@ -331,7 +331,7 @@ export * from './tools/render-client.js'
 // WebFetch internals (enhanced WebFetch assembly in sidecar needs these)
 export { runWebFetch, type WebFetchInput, type WebFetchDeps } from './tools/web-fetch.js'
 export { sdkFetch } from './tools/web-request.js'
-export { isFakeIpRange, isPublicIpAddress } from './utils/pathing.js'
+export { canonicalizePath, ensureWriteContained, isFakeIpRange, isPublicIpAddress } from './utils/pathing.js'
 export type { FetchImpl } from './tools/web-fetch-http.js'
 export { extractArticleMarkdown } from './tools/html-to-markdown.js'
 export {
