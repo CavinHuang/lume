@@ -1,8 +1,24 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createAutomationJob } from "./automation-manager";
+
+/**
+ * dispatchAgentRun stub：本文件钉的是"运行记录写入/调度隔离"行为，不是
+ * LLM 派发集成。真实派发在测试环境会走完整 attempt 链（无模型配置时挂起），
+ * waitForThreadIdle 改为真实等待后(#547)必须 stub 掉才能保持确定性。
+ * mock.module 是 process-global 的：spread 真实模块仅覆写一个函数，缩小对
+ * 同进程后续测试文件的串扰面（同 cross-job-skip 先例的隔离惯例）。
+ */
+const agentServiceActual = await import("../agent/agent-service");
+mock.module("../agent/agent-service", () => ({
+  ...agentServiceActual,
+  dispatchAgentRun: async () => {
+    throw new Error("model unavailable (test stub)");
+  }
+}));
+
+const { createAutomationJob } = await import("./automation-manager");
 import {
   listAutomationRuns,
   refreshAutomationRunnerJobs,

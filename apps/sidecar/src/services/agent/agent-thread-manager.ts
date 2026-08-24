@@ -33,6 +33,7 @@ import {
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
 import { getAgentSubmissionStore } from "./agent-submission-store";
+import { runGuidanceStore } from "../agent-runtime/guidance/run-guidance-store";
 import { getPlanningTodoStore } from "../planning/planning-todo-store";
 import { agentLifecycleLocks } from "./agent-lifecycle-lock-manager";
 import {
@@ -695,6 +696,8 @@ function deleteAgentThreadLocked(id: string): void {
   }
 
   getAgentSubmissionStore().deleteThread(id);
+  // #517:guidance 是纯内存态,线程硬删除时同步清理防 Map 只增不减
+  runGuidanceStore.discardThread(id);
   if (cleanupPending) {
     planningStore.advanceOperation(operationId, { phase: "cleanup_pending", status: "partial", recoverable: true, threadId: id, error: "thread file cleanup pending" });
   } else {
