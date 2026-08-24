@@ -181,9 +181,11 @@ describe("LumeRunObserver tool_call 终态与 usage 口径 (#256)", () => {
     await observer.flush();
 
     const state = await observer.getRunState();
-    const shot = (state?.generatedItems ?? []).find((item) => item.type === "tool_result" && item.toolCallId === "tu-shot") as { output?: unknown };
-    // 文本元数据保留,base64 被剥离
-    expect(JSON.stringify(shot?.output)).toContain('{"ok":true}');
+    const shot = (state?.generatedItems ?? []).find((item) => item.type === "tool_result" && item.toolCallId === "tu-shot") as { output?: Array<Record<string, unknown>> };
+    // 文本元数据保留,image 块被剥离
+    const blocks = Array.isArray(shot?.output) ? shot!.output! : [];
+    expect(blocks).toHaveLength(1);
+    expect((blocks[0] as { text?: string }).text).toBe('{"ok":true}');
     expect(JSON.stringify(shot?.output)).not.toContain(pixels);
   });
 
