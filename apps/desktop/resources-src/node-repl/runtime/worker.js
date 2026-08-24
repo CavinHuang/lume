@@ -750,6 +750,9 @@ class ModuleLoader {
     }
     async dynamicImport(specifier, referrerIdentifier, referrerTrusted) {
         const resolved = this.resolve(specifier, referrerIdentifier);
+        // #634 已知边界：bare package 经 importNative 在宿主 realm 执行（npm 包
+        // 的 CJS 依赖树无法进 ESM module 图），vm 隔离对包导入面不生效——
+        // 完整收编需 CJS shim 或换隔离原语，见 issue #634 跟进。
         if (resolved.kind !== "file")
             return this.importNative(resolved);
         const trusted = referrerTrusted || await isTrustedFile(resolved.path);
