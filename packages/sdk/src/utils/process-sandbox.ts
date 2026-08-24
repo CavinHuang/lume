@@ -40,6 +40,8 @@ export function terminateProcessTree(
       stdio: 'ignore',
       windowsHide: true,
     })
+    // Without a listener a spawn error surfaces as an uncaughtException in the sidecar (see #548).
+    taskkill.once('error', () => {})
     taskkill.unref()
     return
   }

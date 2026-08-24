@@ -307,34 +307,82 @@ function getPythonStandaloneArchiveName(): string | null {
   return `cpython-${PYTHON_VERSION}+${PYTHON_BUILD_DATE}-${arch}-${platform}-install_only_stripped.tar.gz`;
 }
 
-async function downloadFile(url: string, destination: string): Promise<void> {
+const DOWNLOAD_TOTAL_TIMEOUT_MS = 120_000;
+const DOWNLOAD_IDLE_TIMEOUT_MS = 30_000;
+
+/**
+ * #548：原实现无任何超时、response 流无 error 监听（socket reset 即踩中
+ * uncaughtException 五击止损）、重定向未销毁旧响应、失败残留半截文件。
+ */
+export async function downloadFile(
+  url: string,
+  destination: string,
+  options: { totalTimeoutMs?: number; idleTimeoutMs?: number } = {}
+): Promise<void> {
+  const totalTimeoutMs = options.totalTimeoutMs ?? DOWNLOAD_TOTAL_TIMEOUT_MS;
+  const idleTimeoutMs = options.idleTimeoutMs ?? DOWNLOAD_IDLE_TIMEOUT_MS;
   await mkdir(dirname(destination), { recursive: true });
-  return new Promise((resolve, reject) => {
-    const visit = (target: string, redirects: number) => {
-      if (redirects > 10) {
-        reject(new Error(`下载失败，重定向次数过多: ${url}`));
-        return;
-      }
-      const client = target.startsWith("https:") ? https : http;
-      const request = client.get(target, (response) => {
-        const location = response.headers.location;
-        if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && location) {
-          visit(new URL(location, target).toString(), redirects + 1);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let currentRequest: http.ClientRequest | null = null;
+      let settled = false;
+      const settleOk = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(totalTimer);
+        resolve();
+      };
+      const settleFail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(totalTimer);
+        currentRequest?.destroy();
+        reject(error);
+      };
+      // 服务端停摆式下载会让 TEST_SEARCH_BACKEND RPC 永久悬挂，总时长兜底必配
+      const totalTimer = setTimeout(
+        () => settleFail(new Error(`下载失败，总时长超过 ${totalTimeoutMs}ms: ${url}`)),
+        totalTimeoutMs
+      );
+      totalTimer.unref();
+
+      const visit = (target: string, redirects: number) => {
+        if (redirects > 10) {
+          settleFail(new Error(`下载失败，重定向次数过多: ${url}`));
           return;
         }
-        if (response.statusCode !== 200) {
-          reject(new Error(`下载失败，HTTP ${response.statusCode}: ${target}`));
-          return;
-        }
-        const file = createWriteStream(destination);
-        response.pipe(file);
-        file.on("finish", () => file.close(() => resolve()));
-        file.on("error", reject);
-      });
-      request.on("error", reject);
-    };
-    visit(url, 0);
-  });
+        const client = target.startsWith("https:") ? https : http;
+        const request = client.get(target, (response) => {
+          currentRequest = null;
+          const location = response.headers.location;
+          if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && location) {
+            response.resume(); // 销毁旧响应，避免连接泄漏
+            visit(new URL(location, target).toString(), redirects + 1);
+            return;
+          }
+          if (response.statusCode !== 200) {
+            response.resume();
+            settleFail(new Error(`下载失败，HTTP ${response.statusCode}: ${target}`));
+            return;
+          }
+          const file = createWriteStream(destination);
+          response.on("error", settleFail); // socket reset 无监听即 uncaughtException 计击
+          response.pipe(file);
+          file.on("finish", () => file.close(() => settleOk()));
+          file.on("error", settleFail);
+        });
+        currentRequest = request;
+        request.setTimeout(idleTimeoutMs, () => {
+          request.destroy(new Error(`下载失败，连接空闲超时: ${target}`));
+        });
+        request.on("error", settleFail);
+      };
+      visit(url, 0);
+    });
+  } catch (error) {
+    await rm(destination, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 function parseJson(output: string): unknown {

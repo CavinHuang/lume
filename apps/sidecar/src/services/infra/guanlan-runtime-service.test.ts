@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   createGuanlanRuntime,
+  downloadFile,
   parseGuanlanSearchOutput,
   type GuanlanCommandRunner
 } from "./guanlan-runtime-service";
@@ -143,5 +149,36 @@ describe("guanlan-runtime-service", () => {
 
     expect(results[0]?.url).toBe("https://example.com");
     expect(calls.some((call) => call.includes("-m guanlan search 测试 --profile china --limit 10 --json"))).toBeTrue();
+  });
+});
+
+describe("downloadFile 超时与清理（#548）", () => {
+  test("服务端停摆时按总时长超时并删除半截文件", async () => {
+    const server = createServer(() => {
+      // 故意不响应，模拟服务端停摆式下载
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const { port } = server.address() as AddressInfo;
+    const destination = join(tmpdir(), `lume-download-test-${process.pid}.bin`);
+    try {
+      // 先制造半截文件，验证失败后被清理
+      const { writeFileSync } = await import("node:fs");
+      writeFileSync(destination, "partial");
+      const error = await downloadFile(`http://127.0.0.1:${port}/x`, destination, {
+        totalTimeoutMs: 300
+      }).catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("总时长超过");
+      expect(existsSync(destination)).toBeFalse();
+    } finally {
+      server.close();
+    }
+  });
+
+  test("连接拒绝时立即失败且不残留文件", async () => {
+    const destination = join(tmpdir(), `lume-download-refused-${process.pid}.bin`);
+    const error = await downloadFile("http://127.0.0.1:1/x", destination).catch((e: Error) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(existsSync(destination)).toBeFalse();
   });
 });

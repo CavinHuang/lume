@@ -1096,6 +1096,8 @@ function spawnDetached(command: string, args: string[]): void {
     detached: true,
     stdio: "ignore",
   });
+  // 无 error 监听会踩中 sidecar uncaughtException 五击止损通道（#548）
+  child.once("error", () => {});
   child.unref();
 }
 

@@ -51,24 +51,30 @@ interface SystemHandlersContext {
   getMethodNames: () => string[];
 }
 
-function spawnDetached(command: string, args: string[]): void {
-  const child = spawn(command, args, {
-    detached: true,
-    stdio: "ignore"
+/** detached spawn 无 error 监听会踩中 sidecar uncaughtException 五击止损（#548），必须挂 once("error")。 */
+function spawnDetached(command: string, args: string[]): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: "ignore"
+    });
+    child.once("error", (error) => {
+      log.warn("spawnDetached 失败", { command, error: error.message });
+      resolve(false);
+    });
+    child.once("spawn", () => resolve(true));
+    child.unref();
   });
-  child.unref();
 }
 
-function openInSystem(path: string): void {
+async function openInSystem(path: string): Promise<boolean> {
   if (process.platform === "win32") {
-    spawnDetached("explorer.exe", [path]);
-    return;
+    return spawnDetached("explorer.exe", [path]);
   }
   if (process.platform === "darwin") {
-    spawnDetached("open", [path]);
-    return;
+    return spawnDetached("open", [path]);
   }
-  spawnDetached("xdg-open", [path]);
+  return spawnDetached("xdg-open", [path]);
 }
 
 async function runNetworkDiagnostic(): Promise<NetworkDiagnosticResult> {
@@ -166,8 +172,8 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
       sourcePath: getLumeConfigYamlPath()
     }),
     [LUME_CONFIG_IPC_CHANNELS.OPEN_SOURCE_FILE]: async () => {
-      openInSystem(getLumeConfigYamlPath());
-      return { ok: true };
+      const opened = await openInSystem(getLumeConfigYamlPath());
+      return { ok: opened };
     },
     [SYSTEM_CONFIG_IPC_CHANNELS.GET_EFFECTIVE]: async (params) => {
       const input = validateInput(
