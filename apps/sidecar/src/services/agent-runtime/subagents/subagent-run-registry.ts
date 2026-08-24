@@ -52,6 +52,7 @@ const STALE_SUBAGENT_ERROR = "Sidecar 进程重启，之前的进程内 subagent
 function cloneRun(run: SubagentRun): SubagentRun {
   return {
     ...run,
+    ...(run.runtimeRunIds ? { runtimeRunIds: [...run.runtimeRunIds] } : {}),
     outcome: run.outcome ? { ...run.outcome } : undefined
   };
 }
@@ -264,6 +265,24 @@ class SubagentRunRegistry {
 
   summarizeStatuses(runs: SubagentRun[]): Record<SubagentRunStatus, number> {
     return buildRunStatusSummary(runs);
+  }
+
+  /**
+   * 桥接 registry runId 与子线程 attempt 的 runtime runId(web 投影依赖)。
+   * 已存在时 no-op 不写盘;高频事件下仅首次产生一次 persist。
+   */
+  bindRuntimeRun(runId: string, runtimeRunId: string): SubagentRun | null {
+    this.ensureLoaded();
+    const normalized = runtimeRunId.trim();
+    if (!normalized) return this.runs.get(runId) ? cloneRun(this.runs.get(runId)!) : null;
+    const existing = this.runs.get(runId);
+    if (!existing) return null;
+    const ids = existing.runtimeRunIds ?? [];
+    if (ids.includes(normalized)) return cloneRun(existing);
+    const next: SubagentRun = { ...existing, runtimeRunIds: [...ids, normalized], updatedAt: Date.now() };
+    this.runs.set(runId, next);
+    this.persist();
+    return cloneRun(next);
   }
 
   update(runId: string, patch: UpdateSubagentRunInput): SubagentRun | null {
@@ -490,6 +509,9 @@ function normalizeRun(raw: unknown): SubagentRun | null {
   return {
     runId,
     parentThreadId,
+    ...(Array.isArray(record.runtimeRunIds)
+      ? { runtimeRunIds: record.runtimeRunIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0) }
+      : {}),
     parentRunId: parentRunId && parentRunId.length > 0 ? parentRunId : undefined,
     rootThreadId: rootThreadId || parentThreadId,
     depth,

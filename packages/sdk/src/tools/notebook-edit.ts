@@ -72,7 +72,7 @@ function inferLanguage(notebook: any): string {
 
 export const NotebookEditTool = defineTool({
   name: 'NotebookEdit',
-  description: 'Edit Jupyter notebook cells using notebook_path, cell_id, new_source, and edit_mode.',
+  description: 'Edit Jupyter notebook cells using notebook_path, cell_id, new_source, and edit_mode. The notebook must be read with Read before the first edit.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -147,7 +147,15 @@ export const NotebookEditTool = defineTool({
       const decoded = decodeTextFile(await readFile(notebookPath))
       const originalFile = decoded.content
       const previousRead = context.fileStateCache?.get(notebookPath)
-      if (previousRead && !previousRead.isPartialView && previousRead.content !== originalFile) {
+      // Read-before-edit 强制（#569）：未读过的 notebook 禁止盲改。
+      if (!previousRead) {
+        return {
+          data: `Error: Notebook has not been read yet: ${notebookPath}. Read it first, then retry this edit.`,
+          is_error: true,
+          _meta: { file: { path: notebookPath, conflict: 'not_read', retryable: true } },
+        }
+      }
+      if (!previousRead.isPartialView && previousRead.content !== originalFile) {
         return {
           data: 'Error: Notebook has been modified since it was read. Read it again before attempting to edit it.',
           is_error: true,

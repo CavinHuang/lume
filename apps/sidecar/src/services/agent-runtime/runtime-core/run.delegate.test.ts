@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -387,5 +387,23 @@ describe("ThreadListChanged notification", () => {
       unsub1();
       unsub2();
     }
+  });
+});
+
+// ─── task_ref 委派超时接线（#647 P1-3）───
+// runSidecarSubagent 是模块内直调，行为级 mock 代价过高（见上 S2 注释）；
+// 按仓内源码契约测试先例（layering-boundary / logging-source-contract）钉死
+// “task_ref 执行必须经 runForegroundSubagentWithTimeout 包装”这一不变量，
+// 防止未来改回直调时 #647 P1-3 无声复活。
+describe("task_ref 委派超时接线", () => {
+  test("runTaskLinkedSubagent 必须经 runForegroundSubagentWithTimeout 且超时来自共享 resolver", () => {
+    const source = readFileSync(join(import.meta.dir, "run-subagent.ts"), "utf8");
+    const fnStart = source.indexOf("export async function runTaskLinkedSubagent");
+    expect(fnStart).toBeGreaterThanOrEqual(0);
+    const rest = source.slice(fnStart);
+    const nextExport = rest.indexOf("\nexport ", 1);
+    const body = nextExport === -1 ? rest : rest.slice(0, nextExport);
+    expect(body).toContain("runForegroundSubagentWithTimeout({");
+    expect(body).toContain("timeoutMs: resolveForegroundSubagentTimeoutMs()");
   });
 });

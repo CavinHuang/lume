@@ -42,6 +42,8 @@ import {
 } from "./agent-message-versioning-service";
 import { readAgentMessageVersionStore, resetAgentMessageVersionStore } from "./agent-message-version-store";
 import { resolveAgentDefaultStrategy } from "../channel/model-selection";
+import { clearRuntimeFileAccessLedger } from "../agent-runtime/tools/file-access-ledger";
+import { clearThreadFileStateCache } from "../agent-runtime/tools/thread-file-state-cache";
 import { extractAssistantReasoningText, extractRenderableAssistantText } from "./content-extraction";
 import {
   createOrResumeRuntimeCoreSessionManager,
@@ -600,6 +602,10 @@ export function deleteAgentThread(id: string): void {
   void import("../agent-runtime/tools/node-repl/node-repl-runtime-registry")
     .then((module) => module.getNodeReplRuntimeRegistry().shutdown(id))
     .catch(() => undefined);
+  // 跨消息 stale 防护的两层读记录随线程删除回收（#569）：
+  // ledger=完整读门控，thread fileStateCache=mtime 新鲜度。
+  clearRuntimeFileAccessLedger(id);
+  clearThreadFileStateCache(id);
   try { deleteAgentThreadLocked(id); } finally { release(); }
 }
 

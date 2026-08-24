@@ -6,6 +6,11 @@ export interface SubagentRunActivitySummary {
   error?: string
 }
 
+/** 委派工具名:含 coordinator 时代的 'Agent'(历史回放)与现行 'Delegate'。 */
+export function isDelegationToolName(toolName: string): boolean {
+  return toolName === 'Agent' || toolName === 'Delegate'
+}
+
 export function selectSubagentRunEvents(
   events: LumeRuntimeEvent[],
   run: { runId: string; runtimeRunIds?: string[] },

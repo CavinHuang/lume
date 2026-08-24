@@ -3191,7 +3191,16 @@ function createSidecarHost({ onNotification }) {
 
   async function notifyBrowserSettings(settings) {
     await start()
-    child.postMessage(JSON.stringify({ method: 'browser:settings', params: { extensionBackendEnabled: settings?.extensionBackendEnabled === true } }))
+    // browserEnabled/browserUseEnabled 直达 sidecar 驱动工具 isEnabled 门控(#608);
+    // 缺省(undefined)视为启用,与 DEFAULT_BROWSER_SETTINGS 一致
+    child.postMessage(JSON.stringify({
+      method: 'browser:settings',
+      params: {
+        extensionBackendEnabled: settings?.extensionBackendEnabled === true,
+        browserEnabled: settings?.browserEnabled !== false,
+        browserUseEnabled: settings?.browserUseEnabled !== false,
+      },
+    }))
   }
 
   async function stop() {
