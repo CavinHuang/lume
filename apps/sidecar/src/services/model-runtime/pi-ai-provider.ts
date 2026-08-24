@@ -8,6 +8,9 @@ import type {
   Model,
   ProviderStreams,
   StopReason,
+  ThinkingBudgets,
+  ThinkingLevel,
+  ThinkingLevelMap,
   Tool,
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
@@ -22,6 +25,7 @@ import type {
   NormalizedResponseBlock,
 } from "@lume/agent-sdk";
 import { MAX_RETRY_AFTER_DELAY_MS, parseRetryAfterHeader } from "@lume/agent-sdk";
+import { resolveThinkingLevelFromBudget } from "../agent-runtime/runner/thinking-level";
 
 type PiTextApi = "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai";
 
@@ -37,6 +41,10 @@ export interface PiAiProviderOptions {
   contextWindow?: number;
   maxTokens?: number;
   supportsReasoning?: boolean;
+  /** 目录模型的档位映射原样透传(#561):null 标记不支持档、xhigh 映射等,缺失时 pi-ai 走各渠默认。 */
+  thinkingLevelMap?: ThinkingLevelMap;
+  /** 目录模型 compat 原样透传(如 anthropic 渠道 forceAdaptiveThinking);pi-ai 按字段与 baseUrl 自动探测合并,未设字段不受影响。 */
+  compat?: unknown;
   sessionId?: string;
 }
 
@@ -124,6 +132,31 @@ function toPiApi(apiType: ApiType): PiTextApi {
  */
 export function resolvePiModelReasoningCapability(supportsReasoning: boolean | undefined): boolean {
   return supportsReasoning ?? true;
+}
+
+export interface StreamThinkingOptions {
+  reasoning?: ThinkingLevel;
+  thinkingBudgets?: ThinkingBudgets;
+}
+
+/**
+ * 思考档位接线(#561):此前非 disabled 一律发 reasoning:"medium",engine 传来的
+ * budget_tokens 在此处整链丢弃。现由预算反查档位后以 reasoning+thinkingBudgets
+ * 双通道下发——Anthropic/google 渠道消费预算表,openai 两渠只读 reasoning 并按
+ * 模型能力自行钳制(xhigh/max 无 thinkingLevelMap 时自动折到 high)。
+ * 预算键必须落在钳制后的档位上:pi-ai 的 clampReasoning 会把 xhigh/max 折成 high。
+ */
+export function resolveStreamThinkingOptions(params: CreateMessageParams): StreamThinkingOptions {
+  const thinking = params.thinking;
+  if (!thinking || thinking.type === "disabled") return {};
+  if (typeof thinking.budget_tokens !== "number" || !Number.isFinite(thinking.budget_tokens)) {
+    return { reasoning: params.effort ?? "medium" };
+  }
+  const level = resolveThinkingLevelFromBudget(thinking.budget_tokens);
+  return {
+    reasoning: level,
+    thinkingBudgets: { [level === "xhigh" ? "high" : level]: thinking.budget_tokens },
+  };
 }
 
 export function resolvePiModelInput(messages: NormalizedMessageParam[]): Array<"text" | "image"> {
@@ -371,6 +404,8 @@ export class PiAiProvider implements LLMProvider {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: this.options.contextWindow ?? 128_000,
       maxTokens: this.options.maxTokens ?? params.maxTokens,
+      ...(this.options.thinkingLevelMap ? { thinkingLevelMap: this.options.thinkingLevelMap } : {}),
+      ...(this.options.compat ? { compat: this.options.compat as Model<PiTextApi>["compat"] } : {}),
     };
     const context: Context = {
       systemPrompt: params.system,
@@ -393,7 +428,7 @@ export class PiAiProvider implements LLMProvider {
           maxRetryDelayMs: MAX_RETRY_AFTER_DELAY_MS,
           sessionId: this.options.sessionId ?? params.promptCache?.routingKey,
           cacheRetention: params.promptCache?.ttl === "5m" ? "short" : "none",
-          ...(params.thinking?.type === "disabled" ? {} : { reasoning: params.effort ?? "medium" }),
+          ...resolveStreamThinkingOptions(params),
           onPayload: structuredOutputTransform(api, params.outputFormat?.schema ?? params.jsonSchema),
           onResponse(response) {
             responseStatus = response.status;

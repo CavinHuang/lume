@@ -90,6 +90,8 @@ export async function createConnectionPiAiRoute(input: {
     contextWindow: configuredModel?.contextWindow ?? catalogModel?.contextWindow,
     maxTokens: configuredModel?.maxOutputTokens ?? catalogModel?.maxTokens,
     supportsReasoning: configuredModel?.capabilities?.reasoning ?? catalogModel?.reasoning,
+    thinkingLevelMap: catalogModel?.thinkingLevelMap,
+    compat: catalogModel?.compat,
     sessionId: input.sessionId,
   };
 }

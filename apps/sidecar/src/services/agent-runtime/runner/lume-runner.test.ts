@@ -40,7 +40,8 @@ function createPrepared(agentDir: string) {
       resolvedModelId: "model-1",
       model: {
         id: "model-1",
-        provider: "openai"
+        provider: "openai",
+        maxTokens: 32768
       }
     },
     openaiApiMode: "responses",
@@ -988,7 +989,7 @@ describe("LumeRunner", () => {
     const runner = await createRunner(agentDir, events);
     const lifecycle: string[] = [];
     let registeredAbort: (() => Promise<void>) | undefined;
-    let queryOptions: { sandbox?: unknown } | undefined;
+    let queryOptions: { sandbox?: unknown; maxTokens?: number } | undefined;
     getBrowserToolSessionRegistry().getOrCreate("thread-1");
     setActiveBrowserBroker({
       dispatch: async (request: { method: string; browserSessionId?: string }) => {
@@ -1011,7 +1012,7 @@ describe("LumeRunner", () => {
           interrupt: async () => {
             lifecycle.push("interrupt");
           },
-          query: (_message: unknown, options: { sandbox?: unknown }) => {
+          query: (_message: unknown, options: { sandbox?: unknown; maxTokens?: number }) => {
             queryOptions = options;
             return stream([{
               type: "assistant",
@@ -1045,6 +1046,8 @@ describe("LumeRunner", () => {
 
     expect(result).toEqual({ status: "completed" });
     expect(queryOptions?.sandbox).toBeUndefined();
+    // #561:主链路把 resolvedModel.maxTokens 传入 query,替换 SDK 的 16384 死默认
+    expect(queryOptions?.maxTokens).toBe(32768);
     expect(events).toEqual(["sdk:assistant", "complete"]);
     expect(lifecycle).toEqual([
       "registerAbort",

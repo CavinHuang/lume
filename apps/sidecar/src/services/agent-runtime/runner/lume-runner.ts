@@ -348,6 +348,8 @@ export class LumeRunner {
         canUseTool,
         permissionMode: normalizeRuntimeCoreQueryPermissionMode(input.permissionMode),
         includePartialMessages: true,
+        // 主链路 maxTokens 接线(#561):此前 opts.maxTokens 恒空,SDK 兜底 16384 死默认生效
+        maxTokens: prepared.modelResolution.model.maxTokens,
         // usageIdentity.runId 用真实 Lume runId(此前回落 sessionId=threadId,无法按 run 聚合)
         runId: this.observer.getRunId(),
         ...(runtime.abortSignal ? { abortSignal: runtime.abortSignal } : {}),
