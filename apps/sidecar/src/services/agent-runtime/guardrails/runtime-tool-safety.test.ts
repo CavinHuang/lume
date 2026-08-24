@@ -220,8 +220,52 @@ describe("runtime-tool-safety", () => {
     });
   });
 
+  test("sees through cmd wrapper variants that escaped both layers", () => {
+    // 复核实证：嵌套包裹、/c 前旗标、引号可执行名曾绕过包裹锚点双层全漏
+    for (const command of [
+      "cmd /c cmd /c rd /s /q D:\\",
+      "cmd /s /c del \\",
+      '"cmd" /c ri ~'
+    ]) {
+      expect(evaluateRuntimeToolSafety("Bash", { command }, POWERSHELL_SHELL)).toEqual({
+        behavior: "deny",
+        reason: "禁止删除根目录或用户主目录"
+      });
+    }
+    for (const command of [
+      "cmd /c cmd /c rd /s /q build",
+      "cmd /s /c rd /s /q build",
+      '"cmd" /c rd /s /q build',
+      "cmd/c rd /s /q cache"
+    ]) {
+      expect(evaluateRuntimeToolSafety("Bash", { command }, POWERSHELL_SHELL)).toMatchObject({
+        behavior: "confirm"
+      });
+    }
+  });
+
+  test("sees through cmd wrappers for every PowerShell confirm group", () => {
+    // 复核实证：包裹识别曾只并入删除族，其余四组经 cmd /c 漏 guardrail 层
+    expect(evaluateRuntimeToolSafety("Bash", { command: "cmd /s /c stop-computer" }, POWERSHELL_SHELL)).toMatchObject({
+      behavior: "confirm"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "cmd /c set-executionpolicy remotesigned" }, POWERSHELL_SHELL)).toMatchObject({
+      behavior: "confirm"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "cmd /c format-volume E:" }, POWERSHELL_SHELL)).toMatchObject({
+      behavior: "confirm"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "cmd /c clear-content app.log" }, POWERSHELL_SHELL)).toMatchObject({
+      behavior: "confirm"
+    });
+  });
+
   test.skipIf(!isNativeAvailable())("keeps benign cmd-wrapped commands untouched", () => {
     expect(evaluateRuntimeToolSafety("Bash", { command: "cmd /c dir build" }, POWERSHELL_SHELL)).toEqual({
+      behavior: "allow"
+    });
+    // 嵌套包裹不得把更深层内容误判为危险动词命令位
+    expect(evaluateRuntimeToolSafety("Bash", { command: "cmd /c cmd /c echo ok" }, POWERSHELL_SHELL)).toEqual({
       behavior: "allow"
     });
   });

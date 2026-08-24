@@ -1,8 +1,8 @@
 import { canonicalizeAgentToolName } from "@lume/shared";
 import { analyzeBashCommand, shellKindWithoutDiscovery } from "@lume/agent-sdk";
 import {
-  PS_ANCHOR,
   PS_CLEAR_CONTENT_VERBS,
+  PS_CONFIRM_COMMAND,
   PS_DANGEROUS_DELETE_FLAGS,
   PS_DELETE_COMMAND,
   PS_DYNAMIC_EXEC_VERBS,
@@ -61,14 +61,15 @@ const HARD_DENY_POWERSHELL_RULES: CommandRule[] = [
 const FORCE_CONFIRM_POWERSHELL_RULES: CommandRule[] = [
   {
     // 仅危险标志簇触发确认；命名参数(-Path/-LiteralPath 等)与 -WhatIf 干跑旗标不再触发，
-    // 保持「裸路径单文件删除不升级」口径
+    // 保持「裸路径单文件删除不升级」口径。锚点与删除族同源（含 cmd 包裹内层），
+    // 防止包裹识别只覆盖删除族的单侧组合缺口
     pattern: new RegExp(String.raw`${PS_DELETE_COMMAND}[^\r\n;&|]*[^\S\r\n]${PS_DANGEROUS_DELETE_FLAGS}`, "i"),
     reason: "递归强制删除文件需要用户确认"
   },
-  { pattern: new RegExp(`${PS_ANCHOR}${PS_STOP_VERBS}\\b`, "i"), reason: "停止进程、服务或重启系统需要用户确认" },
-  { pattern: new RegExp(`${PS_ANCHOR}${PS_DYNAMIC_EXEC_VERBS}\\b`, "i"), reason: "修改脚本执行策略或动态执行代码需要用户确认" },
-  { pattern: new RegExp(`${PS_ANCHOR}${PS_FORMAT_VERBS}\\b`, "i"), reason: "格式化磁盘或卷需要用户确认" },
-  { pattern: new RegExp(`${PS_ANCHOR}${PS_CLEAR_CONTENT_VERBS}\\b`, "i"), reason: "清空文件内容需要用户确认" }
+  { pattern: new RegExp(`${PS_CONFIRM_COMMAND}${PS_STOP_VERBS}\\b`, "i"), reason: "停止进程、服务或重启系统需要用户确认" },
+  { pattern: new RegExp(`${PS_CONFIRM_COMMAND}${PS_DYNAMIC_EXEC_VERBS}\\b`, "i"), reason: "修改脚本执行策略或动态执行代码需要用户确认" },
+  { pattern: new RegExp(`${PS_CONFIRM_COMMAND}${PS_FORMAT_VERBS}\\b`, "i"), reason: "格式化磁盘或卷需要用户确认" },
+  { pattern: new RegExp(`${PS_CONFIRM_COMMAND}${PS_CLEAR_CONTENT_VERBS}\\b`, "i"), reason: "清空文件内容需要用户确认" }
 ];
 
 const FORCE_CONFIRM_TOOLS = new Map<string, string>([

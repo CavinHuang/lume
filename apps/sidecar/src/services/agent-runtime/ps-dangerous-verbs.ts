@@ -8,8 +8,15 @@
 /** PS 命令位锚点：命令首、子命令/管道分隔符或换行之后（换行是多行脚本的命令分隔符） */
 export const PS_ANCHOR = String.raw`(?:^|[;&|(\r\n]\s*)`;
 
-/** cmd.exe /c|/k 包裹前缀：内层命令按同一词表识别 */
-export const CMD_WRAP_ANCHOR = String.raw`(?:^|[;&|(\r\n]\s*)cmd(?:\.exe)?\s+\/[ck]\s*["']?`;
+/*
+ * cmd.exe /c|/k 包裹前缀：内层命令按同一词表识别。容忍引号包裹的可执行名（"cmd"）、
+ * /c|/k 前的任意开关与重复（cmd /s /c、合并旗标、无空格 cmd/c），外层 + 使多层嵌套
+ * 包裹（cmd /c cmd /c …）整体可匹配。首段仍须经 PS_ANCHOR 定位到真实命令边界。
+ */
+export const CMD_WRAP_ANCHOR = String.raw`${PS_ANCHOR}(?:"?cmd(?:\.exe)?"?\s*(?:\/[^\s"]+\s+)*\/[ck]\s*["']?\s*)+`;
+
+/** 确认组共用锚点：命令位或 cmd 包裹内层（与删除族同源，防止包裹识别只覆盖单侧规则组） */
+export const PS_CONFIRM_COMMAND = String.raw`(?:${PS_ANCHOR}|${CMD_WRAP_ANCHOR})`;
 
 /** PS 删除族在命令位的完整锚点：Remove-Item 及别名（rd/rmdir/del/erase/ri），含 cmd 包裹内层 */
 export const PS_DELETE_COMMAND = String.raw`(?:${PS_ANCHOR}|${CMD_WRAP_ANCHOR})(?:remove-item|rd|rmdir|del|erase|ri)\b`;
@@ -38,11 +45,20 @@ export const PS_DANGEROUS_PROBES: string[] = [
   "rd /s /q build",
   "cmd /c rd /s /q build",
   "cmd /c del /q cache.txt",
+  // cmd 包裹变体：嵌套包裹、/c 前旗标、引号可执行名（曾双层全漏）
+  "cmd /c cmd /c rd /s /q build",
+  "cmd /s /c del \\",
+  '"cmd" /c ri ~',
   "Get-Date\ndel \\",
   "Get-Date\r\nRemove-Item ~",
   "Stop-Process -Name node",
   "Set-ExecutionPolicy RemoteSigned",
   "Invoke-Expression $script",
   "Format-Volume -DriveLetter E",
-  "Clear-Content app.log"
+  "Clear-Content app.log",
+  // 各确认组的 cmd 包裹形态（包裹识别曾只并入删除族）
+  "cmd /s /c stop-computer",
+  "cmd /c set-executionpolicy remotesigned",
+  "cmd /c format-volume E:",
+  "cmd /c clear-content app.log"
 ];
