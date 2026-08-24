@@ -32,7 +32,7 @@ import {
 } from 'node:fs'
 import { once } from 'node:events'
 import { spawn } from 'node:child_process'
-import { homedir } from 'node:os'
+import { homedir, release } from 'node:os'
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -72,6 +72,8 @@ import {
   restoreMainWindow,
   shouldCaptureRememberedDesktopTarget,
   validateExternalUrl,
+  applyVoiceMicPermissionState,
+  resolveMacMicrophoneSettingsDeepLink,
   validateMigrationTarget,
   validateWereadUrl,
   writeLauncherConfigAt,
@@ -89,6 +91,7 @@ import { planVoiceShortcutSync, readVoiceDictationSettings, updateVoiceDictation
 import { pasteTextAtCurrentCursor } from './text-insertion-service'
 import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice-dictation-window'
 import type { VoiceDictationSettings, VoiceDictationSettingsUpdate } from '@lume/shared'
+import type { VoiceMicPermissionState } from './desktop-core'
 import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
 import {
   AttachmentStageRegistry,
@@ -1721,6 +1724,7 @@ function sendVoiceDictationEvent(ownerWebContentsId: number | undefined, channel
 
 // 语音听写指示条管理（窗口创建/安全闸/生命周期在 voice-dictation-window.ts）。
 let voiceFlashTimer: ReturnType<typeof setTimeout> | null = null
+let voiceMicPermissionState: VoiceMicPermissionState = { sawDeniedInProcess: false, restartRequired: false }
 let voiceIndicatorManager: VoiceIndicatorManager | null = null
 
 function getVoiceIndicatorManager(): VoiceIndicatorManager {
@@ -1968,7 +1972,10 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       if (process.platform !== 'darwin') return { status: 'unsupported', platform: process.platform }
       const raw = systemPreferences.getMediaAccessStatus('microphone')
       const status = raw === 'granted' || raw === 'denied' || raw === 'not-determined' ? raw : 'denied'
-      return { status, platform: process.platform }
+      // restartRequired 是进程生命周期事实：曾 denied 后系统侧改允许，需重启才
+      // 对本进程生效——由 main 持有，组件卸载重挂不丢。
+      voiceMicPermissionState = applyVoiceMicPermissionState(voiceMicPermissionState, status)
+      return { status, restartRequired: voiceMicPermissionState.restartRequired, platform: process.platform }
     }
     case 'voice_dictation_request_microphone': {
       if (process.platform !== 'darwin') return { status: 'unsupported', platform: process.platform }
@@ -1983,6 +1990,14 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     case 'voice_dictation_hide_indicator':
       getVoiceIndicatorManager().hide()
       return null
+    case 'voice_dictation_open_microphone_settings': {
+      // 隐私面板深链随系统版本不同（13+ extension / 12 旧 path），由主进程按
+      // darwin kernel 主版本路由，renderer 不感知系统差异。
+      if (process.platform !== 'darwin') return null
+      const darwinMajor = Number(release().split('.')[0])
+      await shell.openExternal(resolveMacMicrophoneSettingsDeepLink(darwinMajor))
+      return null
+    }
     case 'desktop_flash_window': {
       // 听写完成时窗口不在前台 → 任务栏闪烁提醒（Windows）/ Dock 跳动（macOS）。
       // 模块级 timer 复用：连续完成多次听写时不堆叠定时器提前熄灭上一次提醒。

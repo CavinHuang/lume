@@ -27,6 +27,16 @@ import { spawnWithProcessSandbox, terminateProcessTree } from '../utils/process-
 const MAX_OUTPUT_BYTES = 50 * 1024 * 1024
 const MAX_RESULT_CHARS = 100_000
 const PREVIEW_CHARS = 4_000
+// Result previews keep the tail within both bounds (errors live at the end).
+// Per-stream char budget sits under half the final result budget by enough
+// margin that two full sections plus their labels/footers still fit the
+// assembler's structural budget — the assembly-level trim then only fires as a
+// pathological backstop (where it appends its own truncation footer).
+const RESULT_MAX_LINES = 500
+const RESULT_SECTION_MAX_CHARS = 49_500
+// Live streaming snapshots ride the live channel while the command runs.
+const STREAM_SNAPSHOT_THROTTLE_MS = 150
+const STREAM_SNAPSHOT_MAX_CHARS = 16_000
 const AUTO_BACKGROUND_MS = 15_000
 const PROGRESS_THRESHOLD_MS = 2_000
 const STALL_CHECK_INTERVAL_MS = 5_000
@@ -423,8 +433,9 @@ async function startDirectShellTask({
   }, sandbox)
   const startedAt = Date.now()
   let outputBytes = 0
-  let stdoutPreview = ''
-  let stderrPreview = ''
+  const stdoutAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, RESULT_SECTION_MAX_CHARS)
+  const stderrAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, RESULT_SECTION_MAX_CHARS)
+  const emitStreamSnapshot = createStreamSnapshotEmitter(context, () => combinedStreamSnapshot(stdoutAccumulator, stderrAccumulator))
   const stdoutDecoder = new StringDecoder('utf8')
   const stderrDecoder = new StringDecoder('utf8')
   let terminationReason: ToolExecutionMetadata['terminationReason'] = 'completed'
@@ -468,15 +479,9 @@ async function startDirectShellTask({
     if (accepted.length > 0) {
       lastOutputAt = Date.now()
       const text = (stream === 'stdout' ? stdoutDecoder : stderrDecoder).write(accepted)
-      if (stream === 'stdout') stdoutPreview = appendPreview(stdoutPreview, text)
-      else stderrPreview = appendPreview(stderrPreview, text)
+      ;(stream === 'stdout' ? stdoutAccumulator : stderrAccumulator).append(text)
       writeChain = writeChain.then(() => appendFile(outputFile, accepted))
-      context.emitEvent?.({
-        type: 'system',
-        subtype: 'local_command_output',
-        content: boundedPreview(text),
-        session_id: context.sessionId || '',
-      })
+      emitStreamSnapshot.schedule()
     }
     if (accepted.length !== chunk.length && terminationReason === 'completed') {
       terminationReason = 'output_limit'
@@ -505,13 +510,19 @@ async function startDirectShellTask({
       if (progressTimer) clearInterval(progressTimer)
       const stdoutTail = stdoutDecoder.end()
       const stderrTail = stderrDecoder.end()
-      if (stdoutTail) stdoutPreview = appendPreview(stdoutPreview, stdoutTail)
-      if (stderrTail) stderrPreview = appendPreview(stderrPreview, stderrTail)
-      if (spawnError) stderrPreview = appendPreview(stderrPreview, spawnError)
+      if (stdoutTail) stdoutAccumulator.append(stdoutTail)
+      if (stderrTail) stderrAccumulator.append(stderrTail)
+      if (spawnError) stderrAccumulator.append(spawnError)
+      // Flush after the decoder tails land so the last snapshot is complete.
+      emitStreamSnapshot.flush()
       await writeChain.catch(() => undefined)
       const interpretation = interpretShellExit(command, code ?? 1)
       if (terminationReason === 'completed' && code !== 0 && interpretation.isError) terminationReason = 'nonzero'
       if (spawnError) terminationReason = 'spawn_error'
+      const stdoutStats = stdoutAccumulator.snapshot()
+      const stderrStats = stderrAccumulator.snapshot()
+      const stdoutPreview = stdoutStats.content
+      const stderrPreview = stderrStats.content
       const execution = await createExecutionMetadata({
         command,
         shell: shellType,
@@ -525,19 +536,25 @@ async function startDirectShellTask({
         startedAt,
         terminationReason,
       })
-      const output = [
-        terminationReason === 'completed'
-          ? (interpretation.semanticOutcome === 'no_matches'
-            ? 'Command completed: no matches found (exit code 1).'
-            : `Command completed successfully (exit code ${code ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
-          : `Command terminated (${terminationReason}${code !== null ? `, exit code ${code}` : ''}).`,
-        stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
-        stderrPreview ? `stderr:\n${stderrPreview}` : '',
-        spawnError ? `process error: ${spawnError}` : '',
+      const firstLine = terminationReason === 'completed'
+        ? (interpretation.semanticOutcome === 'no_matches'
+          ? 'Command completed: no matches found (exit code 1).'
+          : `Command completed successfully (exit code ${code ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
+        : `Command terminated (${terminationReason}${code !== null ? `, exit code ${code}` : ''}).`
+      const footer = truncationFooter(stdoutStats, stderrStats, outputFile)
+      const output = assembleShellResult(
+        firstLine,
+        [
+          stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
+          stderrPreview ? `stderr:\n${stderrPreview}` : '',
+          spawnError ? `process error: ${spawnError}` : '',
+          ...(footer ? [footer] : []),
+        ],
         code !== 0 && code !== null
           ? `Bash failed (${shellType}, exit code ${code}): ${interpretation.message}`
-          : '',
-      ].filter(Boolean).join('\n') || '(no output)'
+          : undefined,
+        { outputFile, footer },
+      )
       const result = { output, isError: terminationReason !== 'completed' || interpretation.isError, execution }
       completedResult = result
       completeBackgroundTask(result)
@@ -572,7 +589,7 @@ async function startDirectShellTask({
       let stallNotified = false
       stallTimer = setInterval(() => {
         if (stallNotified || Date.now() - lastOutputAt < STALL_THRESHOLD_MS) return
-        const tail = `${stdoutPreview}\n${stderrPreview}`.trimEnd()
+        const tail = `${stdoutAccumulator.snapshot().content}\n${stderrAccumulator.snapshot().content}`.trimEnd()
         if (!looksLikeInteractivePrompt(tail)) {
           lastOutputAt = Date.now()
           return
@@ -692,8 +709,9 @@ async function startDurableShellTask({
   let stderrOffset = 0
   const stdoutDecoder = new StringDecoder('utf8')
   const stderrDecoder = new StringDecoder('utf8')
-  let stdoutPreview = ''
-  let stderrPreview = ''
+  const stdoutAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, RESULT_SECTION_MAX_CHARS)
+  const stderrAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, RESULT_SECTION_MAX_CHARS)
+  const emitStreamSnapshot = createStreamSnapshotEmitter(context, () => combinedStreamSnapshot(stdoutAccumulator, stderrAccumulator))
   let progressTimer: ReturnType<typeof setInterval> | undefined
   let stallTimer: ReturnType<typeof setInterval> | undefined
   let lastOutputAt = Date.now()
@@ -726,26 +744,16 @@ async function startDurableShellTask({
       // Streamed decode keeps multibyte sequences that straddle block
       // boundaries intact (#368).
       const text = stdoutDecoder.write(stdout.chunk)
-      stdoutPreview = appendPreview(stdoutPreview, text)
-      context.emitEvent?.({
-        type: 'system',
-        subtype: 'local_command_output',
-        content: boundedPreview(text),
-        session_id: context.sessionId || '',
-      })
+      stdoutAccumulator.append(text)
+      emitStreamSnapshot.schedule()
     }
     const stderr = await readIncrementalFile(stderrFile, stderrOffset)
     stderrOffset = stderr.nextOffset
     if (stderr.chunk.length > 0) {
       lastOutputAt = Date.now()
       const text = stderrDecoder.write(stderr.chunk)
-      stderrPreview = appendPreview(stderrPreview, text)
-      context.emitEvent?.({
-        type: 'system',
-        subtype: 'local_command_output',
-        content: boundedPreview(text),
-        session_id: context.sessionId || '',
-      })
+      stderrAccumulator.append(text)
+      emitStreamSnapshot.schedule()
     }
     const combined = await readIncrementalFile(outputFile, outputOffset)
     outputOffset = combined.nextOffset
@@ -799,8 +807,10 @@ async function startDurableShellTask({
         while (await emitNewOutput()) { /* drain until no new bytes */ }
         const stdoutTail = stdoutDecoder.end()
         const stderrTail = stderrDecoder.end()
-        if (stdoutTail) stdoutPreview = appendPreview(stdoutPreview, stdoutTail)
-        if (stderrTail) stderrPreview = appendPreview(stderrPreview, stderrTail)
+        if (stdoutTail) stdoutAccumulator.append(stdoutTail)
+        if (stderrTail) stderrAccumulator.append(stderrTail)
+        // Flush after the decoder tails land so the last snapshot is complete.
+        emitStreamSnapshot.flush()
         const execution = normalizePersistedExecution(
           command,
           purpose,
@@ -811,7 +821,9 @@ async function startDurableShellTask({
         )
         const interpretation = interpretShellExit(command, execution.exitCode ?? 1)
         const normalizedExecution = applySemanticOutcome(execution, interpretation)
-        const output = formatShellResult(normalizedExecution, stdoutPreview, stderrPreview, interpretation)
+        const stdoutStats = stdoutAccumulator.snapshot()
+        const stderrStats = stderrAccumulator.snapshot()
+        const output = formatShellResult(normalizedExecution, stdoutStats.content, stderrStats.content, interpretation, truncationFooter(stdoutStats, stderrStats, outputFile), outputFile)
         const result = {
           output,
           isError: executionOutcome(normalizedExecution) !== 'succeeded',
@@ -872,7 +884,7 @@ async function startDurableShellTask({
       let stallNotified = false
       stallTimer = setInterval(() => {
         if (stallNotified || Date.now() - lastOutputAt < STALL_THRESHOLD_MS) return
-        const tail = `${stdoutPreview}\n${stderrPreview}`.trimEnd()
+        const tail = `${stdoutAccumulator.snapshot().content}\n${stderrAccumulator.snapshot().content}`.trimEnd()
         if (!looksLikeInteractivePrompt(tail)) return
         stallNotified = true
         context.emitEvent?.({
@@ -942,7 +954,8 @@ interface ShellTaskResult {
 }
 
 function toToolResult(result: ShellTaskResult): ToolResult {
-  return { type: 'tool_result', tool_use_id: '', content: boundedPreview(result.output, MAX_RESULT_CHARS), ...(result.isError ? { is_error: true } : {}), _meta: { execution: result.execution } }
+  // result.output already carries the single tail budget from assembleShellResult.
+  return { type: 'tool_result', tool_use_id: '', content: result.output, ...(result.isError ? { is_error: true } : {}), _meta: { execution: result.execution } }
 }
 
 function finishForegroundTask(task: ShellTask, result: ShellTaskResult): ToolResult {
@@ -1057,6 +1070,8 @@ function formatShellResult(
   stdoutPreview: string,
   stderrPreview: string,
   interpretation: ReturnType<typeof interpretShellExit>,
+  footer?: string,
+  outputFile?: string,
 ): string {
   const outcome = executionOutcome(execution)
   const firstLine = outcome === 'succeeded'
@@ -1064,14 +1079,18 @@ function formatShellResult(
       ? 'Command completed: no matches found (exit code 1).'
       : `Command completed successfully (exit code ${execution.exitCode ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
     : `Command terminated (${execution.terminationReason}${execution.exitCode !== null && execution.exitCode !== undefined ? `, exit code ${execution.exitCode}` : ''}).`
-  return [
+  return assembleShellResult(
     firstLine,
-    stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
-    stderrPreview ? `stderr:\n${stderrPreview}` : '',
+    [
+      stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
+      stderrPreview ? `stderr:\n${stderrPreview}` : '',
+      ...(footer ? [footer] : []),
+    ],
     outcome !== 'succeeded' && execution.exitCode !== null && execution.exitCode !== undefined
       ? `Bash failed (${execution.shell ?? 'bash'}, exit code ${execution.exitCode}): ${interpretation.message}`
-      : '',
-  ].filter(Boolean).join('\n') || '(no output)'
+      : undefined,
+    { outputFile, footer },
+  )
 }
 
 async function readIncrementalFile(path: string, offset: number): Promise<{ chunk: Buffer; nextOffset: number }> {
@@ -1132,8 +1151,418 @@ function checkExcludedCommands(command: string, excluded: string[]): string | 'c
   return analysis.commands.map((segment) => segment.executable).find((name) => lower.has(name))
 }
 
-function appendPreview(current: string, value: string): string {
-  return boundedPreview(`${current}${value}`, MAX_RESULT_CHARS)
+interface TailTruncation {
+  content: string
+  truncated: boolean
+  truncatedByLines: boolean
+  truncatedByChars: boolean
+  totalLines: number
+  shownLines: number
+  /** Character counts in UTF-16 code units, matching the char budget semantics. */
+  totalChars: number
+  shownChars: number
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff
+}
+
+function countNewlines(text: string): number {
+  let count = 0
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) count += 1
+  return count
+}
+
+/** Lines by terminator semantics: a trailing newline terminates the last line instead of starting an empty one. */
+function countTerminatedLines(text: string): number {
+  if (!text) return 0
+  return text.endsWith('\n') ? countNewlines(text) : countNewlines(text) + 1
+}
+
+/** Keep only the last `maxLines` terminated lines (shared: tailTruncate + raw accumulator window). */
+function keepLastLines(text: string, maxLines: number): { content: string; dropped: boolean } {
+  if (countTerminatedLines(text) <= maxLines) return { content: text, dropped: false }
+  const hadTrailingNewline = text.endsWith('\n')
+  const segments = text.split('\n')
+  const realLines = hadTrailingNewline ? segments.slice(0, -1) : segments
+  return {
+    content: realLines.slice(-maxLines).join('\n') + (hadTrailingNewline ? '\n' : ''),
+    dropped: true,
+  }
+}
+
+/**
+ * Shared tail-window cutter: UTF-16 slice that restarts at the next line break
+ * when one exists and never leaves a split surrogate pair at either edge.
+ * Within-budget input passes through untouched (the line restart is part of
+ * the cut, not a normalization).
+ */
+function cutTailWithinBudget(content: string, maxChars: number): string {
+  if (content.length <= maxChars) return content
+  let out = content.slice(-maxChars)
+  const newlineAt = out.indexOf('\n')
+  if (newlineAt >= 0 && newlineAt < out.length - 1) out = out.slice(newlineAt + 1)
+  if (isLowSurrogate(out.charCodeAt(0))) out = out.slice(1)
+  if (isHighSurrogate(out.charCodeAt(out.length - 1))) out = out.slice(0, -1)
+  return out
+}
+
+/**
+ * Keep the tail of `text` within both bounds, whichever bites first (command
+ * errors live at the end, so the tail is the useful half). Redacts first; caps
+ * are measured in characters (UTF-16 code units). A char-boundary cut restarts
+ * at the next line break when one exists and never leaves a split surrogate
+ * pair at either edge. `truncated` reflects caps that actually bit on the raw
+ * stream — redaction growing a within-budget stream past the budget runs the
+ * guard cut without counting as truncation.
+ */
+export function tailTruncate(text: string, maxLines: number, maxChars: number): TailTruncation {
+  const value = redactSensitiveText(text)
+  const totalLines = countTerminatedLines(value)
+  let content = value
+  let truncatedByLines = false
+  let truncatedByChars = false
+  const lineCapped = keepLastLines(value, maxLines)
+  content = lineCapped.content
+  truncatedByLines = lineCapped.dropped
+  if (content.length > maxChars) {
+    const rawOverBudget = text.length > maxChars
+    content = cutTailWithinBudget(content, maxChars)
+    truncatedByChars = rawOverBudget
+  }
+  return {
+    content,
+    truncated: truncatedByLines || truncatedByChars,
+    truncatedByLines,
+    truncatedByChars,
+    totalLines,
+    shownLines: countTerminatedLines(content),
+    totalChars: value.length,
+    shownChars: content.length,
+  }
+}
+
+type PreviewAccumulator = ReturnType<typeof createPreviewAccumulator>
+
+// ============================================================================
+// Streaming secret redaction — TWO chained single-pattern state machines that
+// compose into EXACTLY redactSensitiveText's two sequential replaces:
+//
+//   machineA (bearer): /(Bearer\s+)([A-Za-z0-9._~+/=-]+)/gi   → $1[redacted]
+//   machineB (kv):     ((api[_-]?key|token|secret|password)\s*[:=]\s*)([^\s,;]+) → $1[redacted]
+//
+// redactSensitiveText applies the bearer pass first and the kv pass to its
+// output; feeding raw chars through A→B reproduces that byte-for-byte, because
+// each machine echoes every non-matching char verbatim (so B sees precisely the
+// text pass 1 produced). Two machines — not one merged FSM — is what makes
+// nested prefixes (`token=Bearer x`) and per-pattern value charsets correct.
+//
+// Per-machine state is O(1): mode + ≤8-char keyword staging buffer. Value runs
+// are suppressed without storage (arbitrarily long tokens cost nothing), and
+// failed prefixes RE-FEED the offending char into the machine's own OUT state
+// so adjacent keywords (`BearerBearer`) are never swallowed.
+// ============================================================================
+
+const BEARER_VALUE_CHARS = /[A-Za-z0-9._~+/=-]/
+const KV_VALUE_TERMINATORS = /[\s,;]/
+
+interface SecretMachine {
+  feed(ch: string): void
+  /** Uncommitted plain-text fragment (a possible keyword head) awaiting more input. */
+  hold(): string
+}
+
+function isWhitespaceChar(ch: string): boolean {
+  return /\s/.test(ch)
+}
+
+const MAX_KEYWORD_LENGTH = 8 // 'password' — bounds the suffix-retry window
+
+function createSecretMachine(
+  sink: (chunk: string) => void,
+  kind: 'bearer' | 'kv',
+): SecretMachine {
+  const keywords = kind === 'bearer' ? ['bearer'] : ['api_key', 'api-key', 'apikey', 'token', 'secret', 'password']
+  const isValueChar = kind === 'bearer'
+    ? (ch: string) => BEARER_VALUE_CHARS.test(ch)
+    : (ch: string) => !KV_VALUE_TERMINATORS.test(ch)
+
+  let mode: 'out' | 'prefixTail' | 'inValue' = 'out'
+  let stage = ''
+  let phase: 'pre' | 'post' = 'pre' // kv only: whitespace before vs after [:=]
+  let wsSeen = 0 // bearer only
+
+  function matchedKeyword(lower: string): boolean {
+    return keywords.some((keyword) => keyword === lower)
+  }
+
+  function isKeywordPartial(lower: string): boolean {
+    if (!lower) return true
+    return keywords.some((keyword) => keyword.startsWith(lower))
+  }
+
+  function feed(ch: string): void {
+    if (mode === 'inValue') {
+      if (isValueChar(ch)) return // suppressed secret body
+      // Terminator leaves the value run and re-enters OUT staging — feed it,
+      // don't emit it (feeding routes the char exactly once).
+      mode = 'out'
+      feed(ch)
+      return
+    }
+    if (mode === 'prefixTail') {
+      if (isWhitespaceChar(ch)) {
+        if (kind === 'bearer') wsSeen += 1
+        emit(ch)
+        return
+      }
+      if (kind === 'bearer' && wsSeen === 0) {
+        // 'Bearer' without whitespace → no match here; re-read ch from OUT.
+        mode = 'out'
+        feed(ch)
+        return
+      }
+      if (kind === 'kv' && phase === 'pre') {
+        if (ch === ':' || ch === '=') {
+          phase = 'post'
+          emit(ch)
+          return
+        }
+        mode = 'out'
+        feed(ch)
+        return
+      }
+      // First value char decides: match completes or the whole attempt was
+      // plain text — either way ch routes onward without being swallowed.
+      if (isValueChar(ch)) {
+        sink('[redacted]')
+        mode = 'inValue'
+        return
+      }
+      mode = 'out'
+      feed(ch)
+      return
+    }
+    // OUT: stage a possible keyword; on an impossible candidate emit the
+    // shortest head that still leaves the longest valid keyword SUFFIX held —
+    // a later keyword may start inside the failed candidate (`apikey` failing
+    // mid-way must not blind the machine to a following `api_key=`).
+    let buf = stage + ch
+    for (;;) {
+      const lower = buf.toLowerCase()
+      if (matchedKeyword(lower)) {
+        emit(buf)
+        stage = ''
+        mode = 'prefixTail'
+        phase = 'pre'
+        wsSeen = 0
+        return
+      }
+      if (lower === '') break
+      if (isKeywordPartial(lower)) break
+      let keepFrom = -1
+      for (let s = Math.max(1, buf.length - MAX_KEYWORD_LENGTH); s < buf.length; s += 1) {
+        const suffixLower = buf.slice(s).toLowerCase()
+        if (matchedKeyword(suffixLower) || isKeywordPartial(suffixLower)) {
+          keepFrom = s
+          break
+        }
+      }
+      if (keepFrom === -1) {
+        emit(buf)
+        buf = ''
+      } else {
+        emit(buf.slice(0, keepFrom))
+        buf = buf.slice(keepFrom)
+      }
+    }
+    stage = buf
+  }
+
+  function emit(chunk: string): void {
+    sink(chunk)
+  }
+
+  return {
+    feed,
+    hold(): string {
+      return mode === 'out' ? stage : ''
+    },
+  }
+}
+
+// Memory guard for the incremental buffer: the AUTHORITATIVE char budget is
+// applied per-snapshot (after the line trim, matching the single-shot pipeline
+// order — applying it incrementally would drop chars the final line-window
+// keeps and break byte equivalence). Between snapshots the buffer is therefore
+// only bounded by lines + this slack; a stream whose last `maxLines` lines
+// exceed it gets conservatively over-trimmed (footer still tells the truth).
+// ponytail: raise the slack or page to disk if huge single lines ever matter.
+const PREVIEW_MEMORY_SLACK_CHARS = 65_536
+
+export function createPreviewAccumulator(maxLines: number, maxChars: number) {
+  let kept = ''
+  let totalNewlines = 0
+  let totalChars = 0
+  let streamEndsWithNewline = false
+  let sawAnyOutput = false
+  let droppedLines = false
+  let droppedChars = false
+  // Chained machines reproduce redactSensitiveText's pass order: bearer first,
+  // kv pass consuming pass-one's output.
+  let kvFeed: (ch: string) => void = () => {}
+  const machineA = createSecretMachine((chunk) => {
+    for (const ch of chunk) kvFeed(ch)
+  }, 'bearer')
+  const machineB = createSecretMachine((chunk) => {
+    kept += chunk
+  }, 'kv')
+  kvFeed = machineB.feed
+
+  return {
+    append(text: string): void {
+      if (!text) return
+      sawAnyOutput = true
+      totalNewlines += countNewlines(text)
+      totalChars += text.length
+      streamEndsWithNewline = text.endsWith('\n')
+      for (const ch of text) machineA.feed(ch)
+      let candidate = kept
+      const lineCapped = keepLastLines(candidate, maxLines)
+      candidate = lineCapped.content
+      droppedLines ||= lineCapped.dropped
+      const memoryCap = maxChars + PREVIEW_MEMORY_SLACK_CHARS
+      if (candidate.length > memoryCap) {
+        candidate = cutTailWithinBudget(candidate, memoryCap)
+        droppedChars = true
+      }
+      kept = candidate
+    },
+    snapshot(): TailTruncation {
+      // Both machines' uncommitted keyword-head fragments are plain text not
+      // yet routed — show them for display continuity. Chronological order:
+      // B holds fragments of A's *emitted* stream (older), A holds raw-tail
+      // fragments (newer).
+      const fresh = tailTruncate(kept + machineB.hold() + machineA.hold(), maxLines, maxChars)
+      return {
+        ...fresh,
+        truncated: droppedLines || droppedChars || fresh.truncated,
+        truncatedByLines: droppedLines || fresh.truncatedByLines,
+        truncatedByChars: droppedChars || fresh.truncatedByChars,
+        // Full-stream totals survive the tail windowing.
+        totalLines: sawAnyOutput ? totalNewlines + (streamEndsWithNewline ? 0 : 1) : 0,
+        totalChars,
+        shownChars: fresh.content.length,
+      }
+    },
+  }
+}
+
+/** Combined live view of both streams, bounded tighter than the result previews. */
+function combinedStreamSnapshot(stdout: PreviewAccumulator, stderr: PreviewAccumulator): string {
+  const out = stdout.snapshot().content
+  const err = stderr.snapshot().content
+  if (!out && !err) return ''
+  return cutTailWithinBudget(out && err ? `${out}\n${err}` : out || err, STREAM_SNAPSHOT_MAX_CHARS)
+}
+
+function truncationFooter(stdout: TailTruncation, stderr: TailTruncation, outputFile: string): string | undefined {
+  const describe = (stats: TailTruncation): string | undefined => {
+    if (stats.truncatedByLines) return `last ${stats.shownLines} of ${stats.totalLines} lines`
+    if (stats.truncatedByChars) return `last ${stats.shownChars} of ${stats.totalChars} characters`
+    return undefined
+  }
+  const stdoutPhrase = describe(stdout)
+  const stderrPhrase = describe(stderr)
+  if (!stdoutPhrase && !stderrPhrase) return undefined
+  if (stdoutPhrase && stderrPhrase) {
+    return `[Showing ${stdoutPhrase} (stdout) and ${stderrPhrase} (stderr). Full output: ${outputFile}]`
+  }
+  return `[Showing ${stdoutPhrase ?? stderrPhrase}. Full output: ${outputFile}]`
+}
+
+/**
+ * Assemble the model-visible result with ONE structural tail budget over the
+ * output body: header/failure-note space is reserved up front, and when the
+ * body still overflows the trim announces itself — either via the caller's
+ * per-stream footer (already part of the body tail) or a fallback footer naming
+ * the full-output file. A cut can therefore never happen silently.
+ */
+function assembleShellResult(
+  firstLine: string,
+  bodySections: string[],
+  failureNote: string | undefined,
+  truncationInfo?: { outputFile?: string; footer?: string },
+): string {
+  const body = bodySections.filter(Boolean).join('\n')
+  const budget = MAX_RESULT_CHARS - firstLine.length - (failureNote?.length ?? 0) - 96 /* footer/labels reserve */
+  if (body.length <= budget) {
+    return [firstLine, body, failureNote].filter(Boolean).join('\n') || '(no output)'
+  }
+  const boundedBody = cutTailWithinBudget(body, Math.max(0, budget))
+  if (truncationInfo?.footer) {
+    // Per-stream footer already rides the body tail and survived the cut.
+    return [firstLine, boundedBody, failureNote].filter(Boolean).join('\n')
+  }
+  const fallbackFooter = truncationInfo?.outputFile
+    ? `[Output truncated to fit the result budget. Full output: ${truncationInfo.outputFile}]`
+    : '[Output truncated to fit the result budget.]'
+  return [firstLine, boundedBody, fallbackFooter, failureNote].filter(Boolean).join('\n')
+}
+
+/**
+ * Trailing-edge throttle for live output snapshots: bursts collapse
+ * into one snapshot per window; a quiet period flushes immediately. Prefers the
+ * live channel and falls back to the buffered one when the host has no live
+ * receiver. Events carry tool_use_id so the UI can pin them to the running card.
+ */
+function createStreamSnapshotEmitter(context: ToolContext, getSnapshot: () => string) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let dirty = false
+  let lastEmitAt = 0
+  const emit = () => {
+    dirty = false
+    lastEmitAt = Date.now()
+    ;(context.emitLiveEvent ?? context.emitEvent)?.({
+      type: 'system',
+      subtype: 'local_command_output',
+      content: getSnapshot(),
+      ...(context.toolUseId ? { tool_use_id: context.toolUseId } : {}),
+      session_id: context.sessionId || '',
+    })
+  }
+  return {
+    schedule(): void {
+      if (!context.emitLiveEvent && !context.emitEvent) return
+      dirty = true
+      const delay = STREAM_SNAPSHOT_THROTTLE_MS - (Date.now() - lastEmitAt)
+      if (delay <= 0) {
+        if (timer) {
+          clearTimeout(timer)
+          timer = undefined
+        }
+        emit()
+        return
+      }
+      timer ??= setTimeout(() => {
+        timer = undefined
+        emit()
+      }, delay)
+      timer.unref?.()
+    },
+    /** Emit any pending snapshot now (tool finishing); safe to call repeatedly. */
+    flush(): void {
+      if (timer) {
+        clearTimeout(timer)
+        timer = undefined
+      }
+      if (dirty) emit()
+    },
+  }
 }
 
 function boundedPreview(value: string, maxChars = PREVIEW_CHARS): string {
@@ -1143,7 +1572,7 @@ function boundedPreview(value: string, maxChars = PREVIEW_CHARS): string {
   return `${value.slice(0, half)}\n...(truncated)...\n${value.slice(-half)}`
 }
 
-function redactSensitiveText(value: string): string {
+export function redactSensitiveText(value: string): string {
   return value
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[redacted]')
     .replace(/((?:api[_-]?key|token|secret|password)\s*[:=]\s*)[^\s,;]+/gi, '$1[redacted]')

@@ -575,6 +575,8 @@ export interface SDKLocalCommandOutputMessage {
   type: 'system'
   subtype: 'local_command_output'
   content: string
+  /** Owning tool call when emitted during foreground tool execution; absent for legacy/other sources. */
+  tool_use_id?: string
   uuid?: string
   session_id: string
 }

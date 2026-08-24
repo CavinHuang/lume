@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -16,8 +16,10 @@ import {
   addReadingBook,
   createReadingNote,
   getReadingSnapshot,
+  getReadingNote,
   hideReadingNote,
   initReadingStorage,
+  listReadingBooks,
   listReadingNotes,
   reviseReadingNote,
   syncReadingWereadShelf
@@ -390,6 +392,63 @@ describe("reading-store", () => {
       currentThought: "Lume 想把它和自己最近的等待感连起来。",
       nextPlan: "继续看身体经验如何变成关系经验。"
     });
+  });
+
+  // #592: 书架文件损坏必须先备份现场再回退空库——否则下一次写入会把整个
+  // 书架物理覆盖为「空库+新书」，不可逆
+  test("corrupt library file is backed up before falling back to an empty library", () => {
+    initReadingStorage();
+    addReadingBook({ title: "幸存的书" });
+    // 先触发一次快照让 .bootstrapped 标记落盘：否则损坏回退空库后 bootstrap
+    // 会重新种入 starter 书，断言与播种语义冲突
+    getReadingSnapshot();
+
+    writeFileSync(getReadingLibraryPath(), "{ broken json", "utf8");
+    const snapshot = getReadingSnapshot();
+
+    expect(snapshot.books).toHaveLength(0);
+    const backups = readdirSync(getReadingDir()).filter((name) => name.includes(".corrupt-"));
+    expect(backups).toHaveLength(1);
+    // 备份保留损坏原文，供人工恢复
+    expect(readFileSync(join(getReadingDir(), backups[0]!), "utf8")).toBe("{ broken json");
+    // 自愈闭环：损坏现场移走后写路径正常工作，新写入不含损坏内容。
+    // （snapshot 过程中 initReadingStorage 会重建缺失的 library.json 空壳，
+    // 因此不能断言文件不存在）
+    addReadingBook({ title: "新书" });
+    expect(listReadingBooks().map((item) => item.title)).toEqual(["新书"]);
+  });
+
+  // 结构漂移（合法 JSON 但 books 非数组）同样触发备份（#592）
+  test("structurally drifted library file is also backed up, not silently emptied", () => {
+    initReadingStorage();
+    addReadingBook({ title: "书" });
+    getReadingSnapshot();
+
+    writeFileSync(getReadingLibraryPath(), JSON.stringify({ version: 1, books: 5 }), "utf8");
+    const snapshot = getReadingSnapshot();
+
+    expect(snapshot.books).toHaveLength(0);
+    const backups = readdirSync(getReadingDir()).filter((name) => name.includes(".corrupt-"));
+    expect(backups).toHaveLength(1);
+  });
+
+  // #597: 单条读取直读文件；损坏的笔记文件不拖垮单条查询
+  test("getReadingNote reads a single note by id without a directory scan", () => {
+    initReadingStorage();
+    const book = addReadingBook({ title: "书" });
+    const note = createReadingNote({
+      bookId: book.id,
+      title: "直读",
+      body: "内容"
+    });
+
+    expect(getReadingNote(note.id)?.id).toBe(note.id);
+    expect(getReadingNote("no-such-note")).toBeNull();
+    // 非法 id（白名单外）安全返回 null 而非抛错
+    expect(getReadingNote("../escape")).toBeNull();
+    // 损坏的笔记文件：单条查询降级为 null 而非抛错（与列表路径同分诊）
+    writeFileSync(join(getReadingNotesDir(), "broken.md"), "---\ntitle: 残骸\n", "utf8");
+    expect(getReadingNote("broken")).toBeNull();
   });
 
 });

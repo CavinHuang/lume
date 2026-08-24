@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LumeRuntimeEvent, SDKMessage } from "@lume/shared";
@@ -11,6 +11,62 @@ afterEach(() => {
   for (const directory of directories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+describe("LumeRunObserver persist 标记 (#551)", () => {
+  test("persist:false 的截图块不落盘,文本块保留;全 ephemeral 时回退 output 占位", async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), "lume-run-observer-ephemeral-"));
+    directories.push(sessionDir);
+    const observer = await LumeRunObserver.create({
+      sessionDir,
+      threadId: "thread-1",
+      userMessage: "hello",
+      model: { provider: "openai", modelId: "gpt-test" },
+    });
+
+    observer.recordSdkMessage({
+      type: "tool_result",
+      result: {
+        tool_use_id: "tool-1",
+        tool_name: "browser",
+        content: [
+          { type: "text", text: "screenshot saved" },
+          { type: "image", data: "QkFTRTY0", mimeType: "image/png", _meta: { persist: false, ephemeral: "trusted_runtime" } }
+        ],
+        output: "占位文本",
+        is_error: false
+      }
+    } as SDKMessage);
+    // 全部内容块均带 ephemeral 标记 → 回退 result.output 占位
+    observer.recordSdkMessage({
+      type: "tool_result",
+      result: {
+        tool_use_id: "tool-2",
+        tool_name: "computer",
+        content: [{ type: "image", data: "U2hvdA==", mimeType: "image/png", _meta: { persist: false } }],
+        output: "screenshot placeholder",
+        is_error: false
+      }
+    } as SDKMessage);
+    await observer.flush();
+
+    // 从 items.jsonl 落盘内容断言（items 经 stateStore appendItem 写入 runs/ 目录）
+    const runsDir = join(sessionDir, "runs");
+    const lines: string[] = [];
+    for (const file of readdirSync(runsDir)) {
+      if (file.endsWith(".items.jsonl")) {
+        lines.push(...readFileSync(join(runsDir, file), "utf8").split("\n").filter(Boolean));
+      }
+    }
+    const outputs = lines
+      .map((line) => JSON.parse(line) as { type?: string; output?: unknown })
+      .filter((item) => item.type === "tool_result")
+      .map((item) => item.output);
+    expect(outputs).toHaveLength(2);
+    expect(JSON.stringify(outputs[0])).toContain("screenshot saved");
+    expect(JSON.stringify(outputs[0])).not.toContain("QkFTRTY0");
+    expect(outputs[1]).toBe("screenshot placeholder");
+  });
 });
 
 describe("LumeRunObserver retry events", () => {

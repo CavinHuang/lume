@@ -434,7 +434,9 @@ export function resetSubagentRunRegistryForTest(): void {
 // ─── Run store persistence (migrated from subagent-run-store.ts) ───
 
 const storeLog = createLogger("subagent-run-store");
-const STORE_FILE = "subagent-runs.json";
+// 必须与 SubagentWorkStore 的 subagent-runs.json 分文件：两者 schema 不兼容
+// （v1 runs-only vs v2 sessions/tasks/feedback），共写同一路径会互相覆盖。
+const STORE_FILE = "delegation-runs.json";
 
 function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf-8"));

@@ -1,7 +1,9 @@
 import { useMemo, useState, useRef, useLayoutEffect } from 'react'
 import { useAtomValue } from 'jotai'
-import { Loader2, ChevronDown, Bot } from 'lucide-react'
+import { Loader2, ChevronDown, Bot, Square } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { sidecarCall } from '@/lib/desktop-api'
+import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { agentRuntimeEventsFamily, agentSubagentRunsFamily, agentSubagentWorkFamily } from '@/atoms'
 import { useElapsedTime, formatElapsed } from '@/hooks/useElapsedTime'
 import { getAgentRole, type SubagentRunStatus, type SubagentTaskReport } from '@lume/shared'
@@ -62,6 +64,34 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
   const runActivity = useMemo(() => summarizeSubagentRunActivity(runEvents), [runEvents])
   const taskRecord = workRun ? work?.tasks.find((item) => item.taskId === workRun.taskId) : undefined
 
+  const childThreadId = workRun?.childThreadId ?? runRecord?.childThreadId
+  const [stopping, setStopping] = useState(false)
+  // 子线程事件流最后一条 usage.updated 的 billing.records 是全量快照，按当前 run 过滤求和
+  const usageTotalTokens = useMemo(() => {
+    if (!runId) return undefined
+    for (let index = childEvents.length - 1; index >= 0; index -= 1) {
+      const event = childEvents[index]
+      if (event?.type !== 'usage.updated') continue
+      let total = 0
+      for (const record of event.billing?.records ?? []) {
+        if (record.subagentRunId && record.subagentRunId !== runId) continue
+        total += (record.inputTokens ?? 0) + (record.outputTokens ?? 0)
+      }
+      return total > 0 ? total : undefined
+    }
+    return undefined
+  }, [childEvents, runId])
+  const handleStopSubagent = async () => {
+    if (!childThreadId || stopping) return
+    onUserResizeStart?.()
+    setStopping(true)
+    try {
+      await sidecarCall(AGENT_IPC_CHANNELS.STOP_THREAD, { threadId: childThreadId })
+    } finally {
+      setStopping(false)
+    }
+  }
+
   useLayoutEffect(() => {
     const container = expandedContentRef.current
     if (!expanded || !expandedContentMounted || !container || !shouldAutoScrollRef.current) return
@@ -82,6 +112,7 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
   const effectiveStartedAt = startedAt ?? workRun?.startedAt ?? workRun?.createdAt ?? runRecord?.startedAt ?? runRecord?.createdAt
 
   const isRunning = effectiveStatus === 'running' || effectiveStatus === 'accepted'
+  const isQueued = effectiveStatus === 'queued'
   const isDone = effectiveStatus === 'completed'
   const hasStatusError = effectiveStatus === 'errored' || effectiveStatus === 'timed_out' || effectiveStatus === 'aborted' || effectiveStatus === 'cancelled'
   const hasOutcomeError = !!runRecord?.outcome?.error || !!workRun?.error || !!runActivity.error
@@ -122,6 +153,7 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
         agentType={roleDisplay.runtimeId}
         isRunning={isRunning}
         isPending={isPending}
+        isQueued={isQueued}
         isDone={isDone}
         isError={isError}
         elapsed={elapsed}
@@ -137,8 +169,21 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
           </p>
         </div>
       )}
+      {!expanded && !isPending && !isRunning && isQueued && (
+        <div className="px-3 pb-2">
+          <p className="text-caption text-muted-foreground/60 flex items-center gap-1.5">
+            <Loader2 size={10} className="animate-spin text-blue-500" />
+            排队等待中...
+          </p>
+        </div>
+      )}
       {!expanded && !isPending && isRunning && (
-        <SubagentRunningPreview output={collapsedOutput} latestToolName={runActivity.toolName} />
+        <SubagentRunningPreview
+          output={collapsedOutput}
+          latestToolName={runActivity.toolName}
+          onStop={handleStopSubagent}
+          stopping={stopping}
+        />
       )}
       {!expanded && !isPending && isDone && (
         <SubagentCompletedPreview output={collapsedOutput} />
@@ -164,8 +209,11 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
               taskStatus={taskRecord?.status}
               error={isError ? errorMessage : undefined}
               messages={runMessages}
-              childThreadId={workRun?.childThreadId}
+              childThreadId={childThreadId}
               report={workRun?.report}
+              usageTotalTokens={usageTotalTokens}
+              onStop={handleStopSubagent}
+              stopping={stopping}
               onUserResizeStart={onUserResizeStart}
             />
           </div>
@@ -176,12 +224,13 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
 }
 
 export function SubagentHeader({
-  label, agentType, isRunning, isPending, isDone, isError, elapsed, expanded, avatarSrc, onClick,
+  label, agentType, isRunning, isPending, isQueued, isDone, isError, elapsed, expanded, avatarSrc, onClick,
 }: {
   label: string
   agentType: string
   isRunning: boolean
   isPending: boolean
+  isQueued?: boolean
   isDone: boolean
   isError: boolean
   elapsed: number
@@ -214,12 +263,12 @@ export function SubagentHeader({
       </span>
       <span className={cn(
         'text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0',
-        (isRunning || isPending) && 'bg-blue-500/15 text-blue-500',
+        (isRunning || isPending || isQueued) && 'bg-blue-500/15 text-blue-500',
         isDone && 'bg-green-500/15 text-green-500',
         isError && 'bg-destructive/15 text-destructive',
-        !isRunning && !isDone && !isError && 'bg-muted text-muted-foreground',
+        !isRunning && !isPending && !isQueued && !isDone && !isError && 'bg-muted text-muted-foreground',
       )}>
-        {isRunning ? '运行中' : isDone ? '完成' : isError ? '错误' : '等待'}
+        {isRunning ? '运行中' : isQueued ? '排队中' : isDone ? '完成' : isError ? '错误' : '等待'}
       </span>
       <span className="text-[10px] text-muted-foreground/60 flex-shrink-0">{formatElapsed(elapsed)}</span>
     </Button>
@@ -231,14 +280,37 @@ export function resolveSubagentHeaderAvatarSrc(agentType: string): string | unde
   return role ? AGENT_ROLE_ASSETS.roles[role.id] : undefined
 }
 
-function SubagentRunningPreview({ output, latestToolName }: { output?: string; latestToolName?: string }) {
+function SubagentRunningPreview({ output, latestToolName, onStop, stopping }: {
+  output?: string
+  latestToolName?: string
+  onStop?: () => void
+  stopping?: boolean
+}) {
   return (
-    <div className="px-3 pb-2">
-      <p className="text-[12px] text-foreground/60 flex items-center gap-1.5">
+    <div className="px-3 pb-2 flex items-center gap-2">
+      <p className="text-[12px] text-foreground/60 flex items-center gap-1.5 flex-1 min-w-0">
         <Loader2 size={10} className="animate-spin text-blue-500 flex-shrink-0" />
         <span className="line-clamp-2">{output ? getSubagentCollapsedPreviewText(output) : latestToolName ? `正在使用 ${latestToolName}...` : 'Subagent 正在执行...'}</span>
       </p>
+      {onStop && <SubagentStopButton onStop={onStop} stopping={stopping} />}
     </div>
+  )
+}
+
+function SubagentStopButton({ onStop, stopping }: { onStop: () => void; stopping?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation()
+        onStop()
+      }}
+      disabled={stopping}
+      className="inline-flex flex-shrink-0 items-center gap-1 rounded-md border border-border/50 px-1.5 py-0.5 text-caption text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+    >
+      <Square size={8} strokeWidth={3} />
+      {stopping ? '停止中...' : '停止'}
+    </button>
   )
 }
 
@@ -266,7 +338,7 @@ function SubagentErrorPreview({ error }: { error?: string }) {
 }
 
 function SubagentExpandedContent({
-  depth, isRunning, agentType, roleBadges, task, prompt, attempt, taskStatus, error, messages, childThreadId, report, onUserResizeStart,
+  depth, isRunning, agentType, roleBadges, task, prompt, attempt, taskStatus, error, messages, childThreadId, report, usageTotalTokens, onStop, stopping, onUserResizeStart,
 }: {
   depth: number
   isRunning: boolean
@@ -280,6 +352,9 @@ function SubagentExpandedContent({
   messages: RuntimeMessageView[]
   childThreadId?: string
   report?: SubagentTaskReport
+  usageTotalTokens?: number
+  onStop?: () => void
+  stopping?: boolean
   onUserResizeStart?: () => void
 }) {
   let latestUserMessageIndex = -1
@@ -323,6 +398,9 @@ function SubagentExpandedContent({
               {taskStatus ? <span>任务状态: {taskStatus}</span> : null}
             </p>
           )}
+          {usageTotalTokens !== undefined && (
+            <p className="text-caption text-foreground/45">Token: {formatTokenCount(usageTotalTokens)}</p>
+          )}
           {prompt && prompt !== task && (
             <p className="text-[11px] text-foreground/40 leading-relaxed line-clamp-3">
               <span className="text-foreground/30">提示: </span>{prompt}
@@ -364,6 +442,7 @@ function SubagentExpandedContent({
           <div className="flex items-center gap-1.5 pt-1">
             <Loader2 size={10} className="animate-spin text-blue-500" />
             <span className="text-[11px] text-blue-500/80">运行中...</span>
+            {onStop && <SubagentStopButton onStop={onStop} stopping={stopping} />}
           </div>
         )}
       </div>
@@ -379,4 +458,8 @@ function getSubagentCollapsedPreviewText(output: string): string {
     .replace(/\s+/g, ' ')
     .trim()
   return plain || '结果已完成'
+}
+
+function formatTokenCount(tokens: number): string {
+  return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens)
 }
