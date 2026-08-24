@@ -315,7 +315,7 @@ export class BrowserRuntime {
     this.browsingHistory = new BrowserHistoryStore(options.configDir)
     this.extensions = new BrowserExtensionStore(options.configDir)
     this.credentials = new BrowserCredentialVault(options.configDir, options.credentialStorage)
-    this.workspaces = new BrowserWorkspaceStore(options.configDir)
+    this.workspaces = new BrowserWorkspaceStore(options.configDir, options.onWorkspaceEvent)
     nativeTheme.on("updated", this.onThemeUpdated)
     this.annotations = new BrowserAnnotationManager({
       configDir: options.configDir,

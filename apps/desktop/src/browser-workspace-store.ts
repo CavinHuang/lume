@@ -82,7 +82,7 @@ export class BrowserWorkspaceStore {
     if (tab.ownerThreadId) this.removeOpenTab(tab.ownerThreadId, tab.tabId)
     const next = { ...tab, ownerThreadId: nextOwnerThreadId }
     this.rememberTab(next, runtime)
-    // rememberTab 对不可恢复 tab 静默跳过，仅在真正落盘时上报
+    // rememberTab 对不可恢复 tab 会静默跳过，isRecoverable 守卫保证只在真正落盘后上报
     if (next.ownerThreadId && isRecoverable(tab)) {
       this.report({
         level: 'info',
