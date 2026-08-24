@@ -15,7 +15,6 @@ function resolveEnvInt(name: string, fallback: number, min = 1, max = 100): numb
 export interface SubagentSpawnPolicyInput {
   parentThreadId: string;
   parentPermissionMode?: AgentSendInput["permissionMode"];
-  requestedSandbox?: "inherit" | "require";
 }
 
 type SubagentPermissionMode = NonNullable<AgentSendInput["permissionMode"]>;
@@ -87,8 +86,7 @@ export function resolveSubagentSpawnPolicy(input: SubagentSpawnPolicyInput): Sub
     };
   }
 
-  const sandbox = input.requestedSandbox === "require" ? "require" : "inherit";
-  const childPermissionMode = sandbox === "require" ? input.parentPermissionMode : input.parentPermissionMode;
+  const childPermissionMode = input.parentPermissionMode;
 
   return {
     ok: true,
