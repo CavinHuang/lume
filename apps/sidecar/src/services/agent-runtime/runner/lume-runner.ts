@@ -280,15 +280,20 @@ export class LumeRunner {
       this.observer.recordTurnLimited(resultWithCoding.errorMessage, resultWithCoding.terminationReason);
       await this.observer.flush();
       // T7a:run.turn_limited 已迁事件总线(run.end{stopReason:'max_turns'}),旧路 emit 删除
+      // #550:投影泵被单次 publish 同步 throw 终结时终值未交付——补发防永久卡
+      // streaming;形状对齐 projector 正常交付(error_max_turns/isError:true)
+      await this.publishRunEndIfMissing("error_max_turns", resultWithCoding.errorMessage);
       return this.finalizeResult(resultWithCoding);
     }
     if (resultWithCoding.status !== "completed") {
       // T7a:run.failed 已迁事件总线(run.end{isError}),旧路 emit 删除
       // F3:空流/引擎早夭(无 result 消息)时 projector 未开 run,总线无终值——补发
-      await this.publishRunEndErrorIfMissing(resultWithCoding.errorMessage ?? "Agent SDK 执行失败");
+      await this.publishRunEndIfMissing("error", resultWithCoding.errorMessage ?? "Agent SDK 执行失败");
       await this.observer.flush();
       return this.finalizeResult(resultWithCoding);
     }
+    // #550:同上,completed 正常返回前校验终值已交付
+    await this.publishRunEndIfMissing("end_turn");
     return resultWithCoding;
   }
 
@@ -348,6 +353,13 @@ export class LumeRunner {
         canUseTool,
         permissionMode: normalizeRuntimeCoreQueryPermissionMode(input.permissionMode),
         includePartialMessages: true,
+        // 主链路 maxTokens 接线(#561):仅当渠道配置/内置目录真实提供输出上限时抬升。
+        // modelResolution.model.maxTokens 是 createFallbackModel 的 32768 兜底猜测而非目录真值,
+        // 直接透传会让无目录条目的自建网关出网 max_tokens 从 16384 翻倍,上游拒绝即 400
+        // 且 shouldTryNextPiAiRoute 对 400 不切 fallback——无真值时保持 SDK 16384 默认(#631 review)。
+        ...(prepared.modelResolution.catalogMaxTokens === undefined
+          ? {}
+          : { maxTokens: prepared.modelResolution.catalogMaxTokens }),
         // usageIdentity.runId 用真实 Lume runId(此前回落 sessionId=threadId,无法按 run 聚合)
         runId: this.observer.getRunId(),
         ...(runtime.abortSignal ? { abortSignal: runtime.abortSignal } : {}),
@@ -671,18 +683,20 @@ export class LumeRunner {
     await this.fireRunAfterFailure(errorMessage);
     // F3:查询流未启动(或未交付终值)的失败,投影链不拥有终值——补发 run.end{error};
     // 流已交付终值则跳过,避免同一 run 双终值。
-    await this.publishRunEndErrorIfMissing(errorMessage);
+    await this.publishRunEndIfMissing("error", errorMessage);
     await this.observer.flush();
     this.emit.onError(errorMessage);
     return this.finalizeResult({ status: "errored", errorMessage });
   }
 
   /**
-   * F3:run 链内失败的总线终值补发(仅当投影链未交付 run.end 时)。
+   * F3/#550:run 链内的总线终值补发(仅当投影链未交付 run.end 时)。
    * 与 projector 互斥靠执行序保证:tee 的 finally 先 await pump 排空投影
    * (终值已落盘、互斥标记已置位),异常才向主流传播到 LumeRunner catch。
+   * #550 泛化到 completed/turn_limited:泵被单次 publish 同步 throw 终结后
+   * 主流照常完成,但 web 端只有收到 run.end 才清 streaming 态。
    */
-  private async publishRunEndErrorIfMissing(errorMessage: string): Promise<void> {
+  private async publishRunEndIfMissing(stopReason: "error" | "error_max_turns" | "end_turn", errorMessage?: string): Promise<void> {
     if (this.busRunEndEmitted) return;
     this.busRunEndEmitted = true;
     const threadId = this.observer.getThreadId();
@@ -697,14 +711,14 @@ export class LumeRunner {
           phase: "end",
           detail: {
             type: "run.end",
-            stopReason: "error",
-            isError: true,
+            stopReason,
+            isError: stopReason !== "end_turn",
             numTurns: 0,
-            result: errorMessage
+            ...(errorMessage !== undefined ? { result: errorMessage } : {})
           }
         });
     } catch (error) {
-      log.warn("run.end 错误终值补发失败", {
+      log.warn("run.end 终值补发失败", {
         threadId,
         runId,
         error: error instanceof Error ? error.message : String(error)

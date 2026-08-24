@@ -1,7 +1,10 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getConnectionCredentialsPath } from "../infra/config-paths";
+import { createLogger } from "../infra/logger";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
+
+const log = createLogger("connection-credential-store");
 import type { OAuthCredential } from "@earendil-works/pi-ai";
 
 interface ConnectionCredentialRecord {
@@ -56,11 +59,34 @@ function decrypt(value: string): string {
 function readStore(): ConnectionCredentialFile {
   const path = getConnectionCredentialsPath();
   if (!existsSync(path)) return { version: 1, credentials: {} };
-  const value = JSON.parse(readFileSync(path, "utf8")) as Partial<ConnectionCredentialFile>;
-  return {
-    version: 1,
-    credentials: value.credentials && typeof value.credentials === "object" ? value.credentials : {},
-  };
+  // 瞬态 IO 读错误（AV/备份进程持锁）不等于文件损坏：不触碰文件直接返回空库，
+  // 防止把好文件"备份后清空"（#518，对齐 im-config-manager 的三分范式）
+  let contents: string;
+  try {
+    contents = readFileSync(path, "utf8");
+  } catch (error) {
+    log.error("failed to read connection credentials file", { path, error: error instanceof Error ? error.message : String(error) });
+    return { version: 1, credentials: {} };
+  }
+  try {
+    const value = JSON.parse(contents) as Partial<ConnectionCredentialFile>;
+    return {
+      version: 1,
+      credentials: value.credentials && typeof value.credentials === "object" ? value.credentials : {},
+    };
+  } catch (error) {
+    // 凭证文件损坏时备份现场后重建而非抛出：hasConnectionApiKey 在每条消息
+    // 派发的必经路径上，裸 parse 抛错会打崩全部消息发送且所有写路径同样先
+    // readStore、永不自愈（#518）
+    const backupPath = `${path}.corrupt-${Date.now()}`;
+    try {
+      renameSync(path, backupPath);
+      log.warn("connection credentials file was corrupt; backed up and rebuilt", { backupPath });
+    } catch (renameError) {
+      log.warn("failed to back up corrupt connection credentials file; rebuilding in place", { backupPath, error: renameError instanceof Error ? renameError.message : String(renameError) });
+    }
+    return { version: 1, credentials: {} };
+  }
 }
 
 function writeStore(value: ConnectionCredentialFile): void {

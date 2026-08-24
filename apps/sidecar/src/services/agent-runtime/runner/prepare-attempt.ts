@@ -6,7 +6,7 @@ import { getRuntimeCoreAgentDir } from "../runtime-core/session-store";
 import type { OpenAiApiMode } from "@lume/shared";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import type { ApiType } from "@lume/agent-sdk";
-import { resolveConfiguredConnectionApiType } from "../../model-runtime/connection-provider";
+import { resolveConfiguredConnectionApiType, resolveConnectionModelMaxTokens } from "../../model-runtime/connection-provider";
 
 export interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
@@ -19,7 +19,10 @@ export interface PreparedRuntimeCoreAttempt {
   agentDir: string;
   workspaceName?: string;
   workspaceSlug?: string;
-  modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
+  modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>> & {
+    /** 渠道配置或内置目录真实提供的输出上限(#561);缺省=仅 createFallbackModel 兜底猜测,接线时不得抬高请求。 */
+    catalogMaxTokens?: number;
+  };
   openaiApiMode?: OpenAiApiMode;
   apiType: ApiType;
   channelProvider: string;
@@ -75,6 +78,12 @@ export async function prepareRuntimeCoreAttempt(
       errorMessage: `runtime-core 未找到模型: ${runtime.modelRef ?? `${channel.provider}/${runtime.resolvedModelId}`}`
     };
   }
+  // 区分目录真值与 model.maxTokens 的 32768 兜底猜测:createFallbackModel 不读目录,
+  // 猜测值不得进 query 接线(#631 review);真值缺失时主链路维持 SDK 16384 默认。
+  const catalogMaxTokens = resolveConnectionModelMaxTokens(
+    channel,
+    boundModel?.modelId ?? runtime.resolvedModelId,
+  );
 
   let agentCwd = process.cwd();
   let resolvedWorkdir: ResolvedAgentWorkdir;
@@ -104,7 +113,7 @@ export async function prepareRuntimeCoreAttempt(
     agentDir: getRuntimeCoreAgentDir(),
     workspaceName,
     workspaceSlug,
-    modelResolution,
+    modelResolution: { ...modelResolution, catalogMaxTokens },
     openaiApiMode: channel.openaiApiMode,
     apiType: resolveConfiguredConnectionApiType(channel, boundModel?.modelId ?? runtime.resolvedModelId),
     channelProvider: channel.provider,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { applyResolvedThinkingLevel } from "./thinking-level";
+import { applyResolvedThinkingLevel, resolveThinkingLevelFromBudget } from "./thinking-level";
 
 describe("thinking-level", () => {
   test("applies runtime thinking token budgets to agent", async () => {
@@ -28,5 +28,16 @@ describe("thinking-level", () => {
     }, "auto");
 
     expect(calls).toEqual([]);
+  });
+
+  test("resolves thinking level from engine budget tokens (#561)", () => {
+    expect(resolveThinkingLevelFromBudget(16384)).toBe("xhigh");
+    expect(resolveThinkingLevelFromBudget(8192)).toBe("high");
+    expect(resolveThinkingLevelFromBudget(4096)).toBe("medium");
+    expect(resolveThinkingLevelFromBudget(1024)).toBe("low");
+    // 表外预算取不超过它的最近档位
+    expect(resolveThinkingLevelFromBudget(20000)).toBe("xhigh");
+    expect(resolveThinkingLevelFromBudget(6000)).toBe("medium");
+    expect(resolveThinkingLevelFromBudget(1)).toBe("low");
   });
 });

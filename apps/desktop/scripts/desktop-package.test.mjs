@@ -103,6 +103,11 @@ test('macOS release uses Developer ID when configured and otherwise falls back t
   assert.equal(pkg.build.mac?.hardenedRuntime, true)
   assert.equal(pkg.build.mac?.entitlements, 'assets/entitlements.mac.plist')
   assert.equal(pkg.build.mac?.entitlementsInherit, 'assets/entitlements.mac.plist')
+  // askForMediaAccess('microphone') 依赖打包产物 Info.plist 的用途声明。
+  assert.match(
+    String(pkg.build.mac?.extendInfo?.NSMicrophoneUsageDescription ?? ''),
+    /麦克风/,
+  )
   assert.equal(pkg.build.afterPack, 'scripts/after-pack.cjs')
   assert.equal(existsSync(afterPackPath), true)
   const afterPack = readFileSync(afterPackPath, 'utf8')
