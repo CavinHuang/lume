@@ -68,6 +68,21 @@ function defaultCreateClient(appId: string, appSecret: string): FeishuRestClient
   return new lark.Client({ appId, appSecret }) as unknown as FeishuRestClient;
 }
 
+const SEND_TIMEOUT_MS = 15_000;
+
+/** #596:lark Client 无超时参数(仅 httpInstance 可注入),SDK 默认可达分钟级——
+ * 在调用层包显式超时,失败尽快暴露给出站链路。注意这是"放弃等待"而非真取消,
+ * 底层 HTTP 请求仍会跑完。 */
+async function withSendTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`飞书请求超时(${SEND_TIMEOUT_MS / 1000}s)`)), SEND_TIMEOUT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 function getFeishuClient(appId: string, appSecret: string): FeishuRestClient {
   // 缓存键含 secret：用户轮换 App Secret 后旧 client 的 tenant_access_token
   // 获取会持续失败直至进程重启（#405）
@@ -104,14 +119,14 @@ export async function sendFeishuText(
   try {
     const client = getClient(input.appId, input.appSecret);
     for (const segment of splitImMessage(input.text, { maxChars: 4000 })) {
-      await client.im.v1.message.create({
+      await withSendTimeout(client.im.v1.message.create({
         params: { receive_id_type: "chat_id" },
         data: {
           receive_id: input.peerId,
           msg_type: "text",
           content: JSON.stringify({ text: segment }),
         },
-      });
+      }));
     }
     return { ok: true };
   } catch (error) {
