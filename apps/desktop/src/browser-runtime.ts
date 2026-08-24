@@ -26,7 +26,7 @@ import {
   type BrowserViewportState,
   type BrowserWorkspaceDescriptor,
 } from '@lume/shared'
-import { BROWSER_API_REGISTRY, BROWSER_HANDLER_WAIT_CAP_MS, browserApiSupportForBackend, browserMutatingRuntimeMethods } from '@lume/shared'
+import { BROWSER_API_REGISTRY, BROWSER_HANDLER_WAIT_CAP_MS, STABLE_BROWSER_ERROR_CODES, browserApiSupportForBackend, browserMutatingRuntimeMethods } from '@lume/shared'
 import {
   selectBrowserPartition,
   shouldInstallAdvancedCdpPolicy,
@@ -4491,13 +4491,8 @@ function stableBrowserErrorCode(error: unknown): BrowserErrorCode {
   return typeof code === "string" && BROWSER_ERROR_CODES.has(code as BrowserErrorCode) ? code as BrowserErrorCode : "browser_internal_error"
 }
 
-const BROWSER_ERROR_CODES = new Set<BrowserErrorCode>([
-  "incompatible_protocol", "browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "unsupported", "executed_unknown", "browser_internal_error",
-  "strict_locator_violation", "actionability_failed", "dialog_blocking", "user_takeover_required",
-  // desktop 内确凿抛出但此前漏列,经 stableBrowserErrorCode 塌缩成 browser_internal_error(#602 review 发现)
-  "stale_snapshot_cursor", "tab_not_found", "user_action_required", "element_not_visible", "element_disabled", "element_occluded", "element_readonly",
-  "navigation_timeout",
-])
+// 单源派生自 shared(曾因双份手维护漏列 element 族等码,#602/#638 review)
+const BROWSER_ERROR_CODES = new Set<BrowserErrorCode>(STABLE_BROWSER_ERROR_CODES)
 
 function safeOrigin(value: string): string | undefined {
   try { return new URL(value).origin } catch { return undefined }
