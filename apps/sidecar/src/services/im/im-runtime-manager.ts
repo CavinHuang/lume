@@ -6,7 +6,7 @@ import {
   type ImRuntimeAccount
 } from "./im-config-manager";
 import { getImProvider, type ImWorker } from "./provider-registry";
-import { routeInboundImMessage } from "./im-message-router";
+import { imInboundPipeline } from "./im-inbound-pipeline";
 import { createLogger } from "../infra/logger";
 
 const log = createLogger("im-runtime");
@@ -53,11 +53,10 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
   const createWorkerFn = input.createWorker ?? ((account: ImRuntimeAccount) => {
     const def = getImProvider(account.provider);
     return def.createWorker(account, {
-      // routeInboundImMessage 返回 Promise<{threadId}>,updateAccountFn 可能返回 ImAccount;
-      // deps 契约为 Promise<void>(worker 不消费返回值)。async 包装保留 await 顺序语义
-      // (微信长轮询 worker await routeMessage 确保串行),钉钉事件 worker 则 void 丢弃。
-      routeMessage: async (m) => {
-        await routeInboundImMessage(m);
+      // 入站统一走整形管线（防抖合并 + 并发协调），worker 不消费路由返回值。
+      routeMessage: (m) => {
+        imInboundPipeline.enqueue(m);
+        return Promise.resolve();
       },
       updateAccount: (id, input) => {
         // utilityProcess 下 unhandledRejection=throw，回写失败不能崩进程（如账号已被删除）
