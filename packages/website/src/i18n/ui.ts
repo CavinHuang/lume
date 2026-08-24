@@ -7,6 +7,7 @@ export type Lang = keyof typeof languages;
 
 export const ui = {
   zh: {
+    'nav.workflow': '工作方式',
     'nav.features': '功能',
     'nav.team': '团队',
     'nav.docs': '文档',
@@ -122,6 +123,7 @@ export const ui = {
     'lang.switch': '切换语言',
   },
   en: {
+    'nav.workflow': 'How it works',
     'nav.features': 'Features',
     'nav.team': 'Team',
     'nav.docs': 'Docs',
@@ -246,7 +248,7 @@ export function t(lang: Lang, key: UiKey): string {
 
 /** 从 URL 推断当前语言：默认 zh（无前缀），/en/ 前缀为 en */
 export function getLangFromUrl(url: URL): Lang {
-  return url.pathname === '/en' || url.pathname.startsWith('/en/') ? 'en' : 'zh';
+  return /(^|\/)en(?:\/|$)/.test(url.pathname) ? 'en' : 'zh';
 }
 
 /** 当前路径的语言镜像：/foo ↔ /en/foo */
