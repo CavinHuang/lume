@@ -759,7 +759,9 @@ function mapSdkMessageToRunItems(
       id,
       toolCallId: message.result.tool_use_id,
       toolName: message.result.tool_name,
-      output: message.result.content ?? message.result.output,
+      // output 是 engine 消毒后的占位串(image 已替换);content 优先会把
+      // base64 图片全量写进 items.jsonl(#630),只在缺 output 时兜底。
+      output: message.result.output ?? message.result.content,
       isError: message.result.is_error === true,
       ...((message.result._meta?.execution && typeof message.result._meta.execution === "object")
         ? { execution: message.result._meta.execution as Record<string, unknown> }

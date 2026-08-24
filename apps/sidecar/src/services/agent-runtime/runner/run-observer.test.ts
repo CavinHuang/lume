@@ -89,6 +89,45 @@ describe("LumeRunObserver tool_call 终态与 usage 口径 (#256)", () => {
     expect((byId.get("tu-err") as { status?: string }).status).toBe("failed");
   });
 
+  test("tool_result item 落盘取消毒 output 占位,base64 content 不进 items.jsonl (#600/#630)", async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), "lume-run-observer-output-"));
+    directories.push(sessionDir);
+    const observer = await LumeRunObserver.create({
+      sessionDir,
+      threadId: "thread-1",
+      userMessage: "hello",
+      model: { provider: "openai", modelId: "gpt-test" },
+    });
+
+    const pixels = "A".repeat(50_000);
+    observer.recordSdkMessage({
+      type: "assistant",
+      session_id: "thread-1",
+      message: {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "tu-shot", name: "mcp__browser__screenshot", input: {} }],
+      },
+    } as unknown as SDKMessage);
+    observer.recordSdkMessage({
+      type: "tool_result",
+      session_id: "thread-1",
+      result: {
+        tool_use_id: "tu-shot",
+        tool_name: "mcp__browser__screenshot",
+        output: "[Image: image/jpeg]",
+        content: [
+          { type: "text", text: '{"ok":true}' },
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: pixels } },
+        ],
+      },
+    } as unknown as SDKMessage);
+    await observer.flush();
+
+    const state = await observer.getRunState();
+    const shot = (state?.generatedItems ?? []).find((item) => item.type === "tool_result" && item.toolCallId === "tu-shot") as { output?: unknown };
+    expect(shot?.output).toBe("[Image: image/jpeg]");
+  });
+
   test("usage.totalTokens 取计费累计而非最新上下文快照", async () => {
     const sessionDir = mkdtempSync(join(tmpdir(), "lume-run-observer-usage-"));
     directories.push(sessionDir);
