@@ -11,16 +11,28 @@ const log = createLogger("im-pipeline");
  * 两层语义：
  * 1. ScopedQueue —— 同一会话(peer)在静默窗口内的连发消息合并为一个批量消息，
  *   只触发一次 agent 运行；运行期间新消息只累积不打断，结束后重新进入静默窗口。
- * 2. RunCoordinator —— 同一会话严格串行，全局并发上限防止多会话同时打满 runtime。
+ * 2. RunCoordinator —— 同一会话严格串行，全局并发上限防止多会话同时打满 runtime；
+ *   单次路由超时（watchdog）防止挂死运行占满全局槽位。
  *
- * 斜杠命令（/ 开头）不排队，直接透传路由器（审批等控制面操作不能被长运行阻塞）。
+ * 斜杠命令白名单（当前 /approve）不排队直通路由：控制面操作不能被长运行阻塞，
+ * 也不参与去重（路由器自带幂等）。
+ *
+ * enqueue 返回的 Promise 在该消息所在批量路由落定后 resolve/reject：
+ * 微信长轮询 worker await 它保持「失败不推 cursor → 下轮重投」的 at-least-once
+ * 语义；WS 三渠道 worker void 掉即可。注意防抖窗口内的消息驻留内存，进程崩溃
+ * 即丢（微信 cursor 未推进的部分由重投兜底），这是防抖合并的固有权衡。
  */
+
+/** 已知控制面命令前缀：命中即绕过队列直通（后续会话级命令在此扩充） */
+const CONTROL_COMMAND_RE = /^\/(?:approve)(?:@\S+)?(?:\s|$)/;
 
 export interface ImInboundPipelineOptions {
   /** 静默窗口毫秒数，窗口内连发合并 */
   quietWindowMs?: number;
   /** 全局并发运行上限 */
   maxConcurrentRuns?: number;
+  /** 单次路由超时毫秒数；超时按失败处理释放槽位（底层运行不中断） */
+  runTimeoutMs?: number;
   /** 路由函数（默认真实路由器，测试注入） */
   routeMessage?: (message: InboundImRouteMessage) => Promise<{ threadId: string }>;
   /** 已见判定注入（默认真实 store，测试注入） */
@@ -39,11 +51,31 @@ interface ScopeState {
   timer?: unknown;
 }
 
+interface CompletionDeferred {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}
+
 function scopeKeyOf(message: InboundImRouteMessage): string {
   return `${message.provider}:${message.accountId}:${message.peerKind}:${message.peerId}`;
 }
 
-/** 批量合并：文本空行拼接、媒体内容拼接、标量字段取最后一条非空值。 */
+function createDeferred(): CompletionDeferred {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/**
+ * 批量合并：文本空行拼接、媒体内容拼接、标量字段取最后一条非空值。
+ * 群聊且批内含多个发送者时逐段带发送者前缀并清空 merged.senderId，
+ * 避免下游统一前缀把整段文本归到最后一个发送者名下。
+ */
 export function mergeImMessageBatch(batch: InboundImRouteMessage[]): InboundImRouteMessage {
   const head = batch[0];
   if (!head) {
@@ -63,6 +95,18 @@ export function mergeImMessageBatch(batch: InboundImRouteMessage[]): InboundImRo
     }
     return undefined;
   };
+  const senderIds = new Set(
+    batch.map((m) => m.senderId?.trim() ?? "").filter(Boolean)
+  );
+  const multiSender = head.peerKind === "group" && senderIds.size > 1;
+  const text = batch
+    .map((m) => {
+      const trimmed = m.text.trim();
+      if (!trimmed) return "";
+      return multiSender && m.senderId?.trim() ? `${m.senderId.trim()}: ${trimmed}` : trimmed;
+    })
+    .filter(Boolean)
+    .join("\n\n");
   return {
     provider: head.provider,
     accountId: head.accountId,
@@ -71,8 +115,8 @@ export function mergeImMessageBatch(batch: InboundImRouteMessage[]): InboundImRo
     peerKind: head.peerKind,
     peerId: head.peerId,
     peerName: lastOf((m) => m.peerName),
-    senderId: lastOf((m) => m.senderId),
-    text: batch.map((m) => m.text.trim()).filter(Boolean).join("\n\n"),
+    senderId: multiSender ? undefined : lastOf((m) => m.senderId),
+    text,
     contents: batch.some((m) => m.contents?.length)
       ? batch.flatMap((m) => m.contents ?? [])
       : undefined,
@@ -82,14 +126,18 @@ export function mergeImMessageBatch(batch: InboundImRouteMessage[]): InboundImRo
 }
 
 export interface ImInboundPipeline {
-  enqueue: (message: InboundImRouteMessage) => void;
-  /** 测试与命令直通辅助：丢弃指定会话当前累积的普通消息（如 /new 等会话级命令执行时调用） */
-  discardPending: (message: Pick<InboundImRouteMessage, "provider" | "accountId" | "peerKind" | "peerId">) => number;
+  /**
+   * 入队一条入站消息。返回的 Promise 在该消息所属批量路由成功后 resolve、
+   * 失败/超时后 reject（重复 messageId 的调用共享同一 Promise）。
+   * 不关心结果的调用方（WS worker）可 void 掉。
+   */
+  enqueue: (message: InboundImRouteMessage) => Promise<void>;
 }
 
 export function createImInboundPipeline(options: ImInboundPipelineOptions = {}): ImInboundPipeline {
   const quietWindowMs = options.quietWindowMs ?? 600;
   const maxConcurrentRuns = options.maxConcurrentRuns ?? 3;
+  const runTimeoutMs = options.runTimeoutMs ?? 10 * 60 * 1000;
   const routeMessage = options.routeMessage ?? routeInboundImMessage;
   const hasSeen = options.hasSeen ?? hasSeenImMessage;
   const remember = options.remember ?? rememberImMessage;
@@ -97,10 +145,16 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
   const clearTimer = options.clearTimer ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
 
   const scopes = new Map<string, ScopeState>();
-  // 在途消息 id：入队即标记（覆盖静默窗口内的同窗重复），成功后转持久 store，失败回滚允许重投重试
+  // 在途消息 id：入队即标记（覆盖静默窗口内的同窗重复投递），成功后转持久 store，
+  // 失败回滚允许平台重投重试（与路由器“成功后才标记”一致）
   const inflightIds = new Set<string>();
   const inflightKeyOf = (provider: string, accountId: string, messageId: string) =>
     `${provider}:${accountId}:${messageId}`;
+  // 每条入队消息的完成信号（微信渠道 await 以驱动 cursor 语义）；key 为在途 id key 或消息对象本身
+  const completions = new Map<string | InboundImRouteMessage, CompletionDeferred>();
+
+  const completionKeyOf = (message: InboundImRouteMessage): string | InboundImRouteMessage =>
+    message.messageId ? inflightKeyOf(message.provider, message.accountId, message.messageId) : message;
 
   let activeRuns = 0;
   // 全局 FIFO 等待队列：释放槽位时唤醒最早等待的会话
@@ -134,6 +188,16 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
     }, quietWindowMs);
   };
 
+  const settleBatch = (batch: InboundImRouteMessage[], error?: unknown) => {
+    for (const item of batch) {
+      const key = inflightKeyOf(item.provider, item.accountId, item.messageId ?? "");
+      completions.get(key)?.[error ? "reject" : "resolve"](error);
+      completions.delete(key);
+      completions.get(item)?.[error ? "reject" : "resolve"](error);
+      completions.delete(item);
+    }
+  };
+
   const flushScope = async (state: ScopeState) => {
     if (state.blocked || state.timer !== undefined || state.buffer.length === 0) {
       return;
@@ -144,20 +208,37 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
     let release: (() => void) | undefined;
     try {
       release = await acquireSlot();
-      await routeMessage(merged);
+      await new Promise<{ threadId: string }>((resolve, reject) => {
+        const watchdog =
+          runTimeoutMs > 0
+            ? setTimer(() => reject(new Error(`IM 入站路由超时(${runTimeoutMs}ms)，释放槽位`)), runTimeoutMs)
+            : undefined;
+        routeMessage(merged).then(
+          (value) => {
+            if (watchdog !== undefined) clearTimer(watchdog);
+            resolve(value);
+          },
+          (error: unknown) => {
+            if (watchdog !== undefined) clearTimer(watchdog);
+            reject(error);
+          }
+        );
+      });
       for (const item of batch) {
         if (item.messageId) {
           remember(item.provider, item.accountId, item.messageId);
           inflightIds.delete(inflightKeyOf(item.provider, item.accountId, item.messageId));
         }
       }
+      settleBatch(batch);
     } catch (error) {
-      // 不标记已见且回滚在途标记：平台重投后可在下个窗口重试（与路由器“成功后才标记”一致）
+      // 不标记已见且回滚在途标记：平台重投后可在下个窗口重试
       for (const item of batch) {
         if (item.messageId) {
           inflightIds.delete(inflightKeyOf(item.provider, item.accountId, item.messageId));
         }
       }
+      settleBatch(batch, error);
       log.error("IM 入站批量路由失败", {
         provider: merged.provider,
         accountId: merged.accountId,
@@ -185,54 +266,47 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
     return state;
   };
 
-  return {
-    enqueue: (message) => {
-      // 斜杠命令是控制面操作（审批、后续会话命令），不能被静默窗口或运行中的批量阻塞
-      if (message.text.trim().startsWith("/")) {
-        void routeMessage(message).catch((error: unknown) => {
-          log.error("IM 命令直通路由失败", {
-            provider: message.provider,
-            peerId: message.peerId,
-            error: error instanceof Error ? error.message : String(error)
-          });
-        });
-        return;
-      }
-      if (
-        message.messageId &&
-        (inflightIds.has(inflightKeyOf(message.provider, message.accountId, message.messageId)) ||
-          hasSeen(message.provider, message.accountId, message.messageId))
-      ) {
-        log.info("重复消息，跳过入队", {
+  const enqueue = (message: InboundImRouteMessage): Promise<void> => {
+    // 斜杠控制面命令直通：不被静默窗口/运行阻塞，也不参与管线去重（路由器自带幂等）
+    if (CONTROL_COMMAND_RE.test(message.text.trim())) {
+      return routeMessage(message).catch((error: unknown) => {
+        log.error("IM 命令直通路由失败", {
           provider: message.provider,
-          accountId: message.accountId,
-          messageId: message.messageId
+          peerId: message.peerId,
+          error: error instanceof Error ? error.message : String(error)
         });
-        return;
-      }
-      const state = scopeStateOf(message);
-      state.buffer.push(message);
-      if (message.messageId) {
-        inflightIds.add(inflightKeyOf(message.provider, message.accountId, message.messageId));
-      }
-      if (!state.blocked) {
-        armQuietWindow(state);
-      }
-    },
-    discardPending: (message) => {
-      const state = scopes.get(
-        `${message.provider}:${message.accountId}:${message.peerKind}:${message.peerId}`
-      );
-      if (!state) return 0;
-      const dropped = state.buffer.length;
-      state.buffer.length = 0;
-      if (state.timer !== undefined) {
-        clearTimer(state.timer);
-        state.timer = undefined;
-      }
-      return dropped;
+        throw error;
+      }).then(() => undefined);
     }
+    const existingKey =
+      message.messageId ? inflightKeyOf(message.provider, message.accountId, message.messageId) : undefined;
+    if (
+      existingKey &&
+      (inflightIds.has(existingKey) || hasSeen(message.provider, message.accountId, message.messageId!))
+    ) {
+      log.info("重复消息，跳过入队", {
+        provider: message.provider,
+        accountId: message.accountId,
+        messageId: message.messageId
+      });
+      const existing = completions.get(existingKey);
+      if (existing) return existing.promise;
+      return Promise.resolve();
+    }
+    const deferred = createDeferred();
+    completions.set(completionKeyOf(message), deferred);
+    const state = scopeStateOf(message);
+    state.buffer.push(message);
+    if (existingKey) {
+      inflightIds.add(existingKey);
+    }
+    if (!state.blocked) {
+      armQuietWindow(state);
+    }
+    return deferred.promise;
   };
+
+  return { enqueue };
 }
 
 /** 进程级单例：runtime manager 将 worker 的 routeMessage 指向这里 */

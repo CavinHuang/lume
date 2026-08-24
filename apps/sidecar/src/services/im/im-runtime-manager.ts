@@ -53,11 +53,10 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
   const createWorkerFn = input.createWorker ?? ((account: ImRuntimeAccount) => {
     const def = getImProvider(account.provider);
     return def.createWorker(account, {
-      // 入站统一走整形管线（防抖合并 + 并发协调），worker 不消费路由返回值。
-      routeMessage: (m) => {
-        imInboundPipeline.enqueue(m);
-        return Promise.resolve();
-      },
+      // 入站统一走整形管线（防抖合并 + 并发协调）。enqueue 的 Promise 在批量路由
+      // 落定后 settle：微信长轮询 worker await 它保持「失败不推 cursor」的重投语义，
+      // WS 三渠道 worker void 掉但必须自带 .catch（见各 worker 调用点）。
+      routeMessage: (m) => imInboundPipeline.enqueue(m),
       updateAccount: (id, input) => {
         // utilityProcess 下 unhandledRejection=throw，回写失败不能崩进程（如账号已被删除）
         void Promise.resolve(updateAccountFn(id, input)).catch((error: unknown) => {

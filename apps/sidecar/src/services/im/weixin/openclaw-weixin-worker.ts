@@ -24,7 +24,7 @@ export interface OpenClawWeixinWorker {
 export interface CreateOpenClawWeixinWorkerInput {
   account: ImRuntimeAccount;
   api?: OpenClawWeixinApi;
-  routeMessage?: (message: InboundImRouteMessage) => Promise<void> | void;
+  routeMessage?: (message: InboundImRouteMessage) => Promise<void>;
   updateAccount?: (id: string, input: ImAccountUpdateInput) => Promise<void> | void;
   pollIntervalMs?: number;
 }
@@ -50,7 +50,10 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
     token: input.account.token,
     uin: input.account.uin
   });
-  const routeMessage = input.routeMessage ?? routeInboundImMessage;
+  const routeMessage: (message: InboundImRouteMessage) => Promise<void> =
+    input.routeMessage ?? (async (m) => {
+      await routeInboundImMessage(m);
+    });
   const updateAccount = input.updateAccount ?? (() => undefined);
   const pollIntervalMs = input.pollIntervalMs ?? 1000;
   let running = false;

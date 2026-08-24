@@ -11,7 +11,7 @@ const log = createLogger("im-worker-wecom");
 
 export interface CreateWecomWsWorkerInput {
   account: ImRuntimeAccount;
-  routeMessage?: (message: InboundImRouteMessage) => Promise<void> | void;
+  routeMessage?: (message: InboundImRouteMessage) => Promise<void>;
   updateAccount?: (id: string, input: ImAccountUpdateInput) => Promise<void> | void;
   /** 测试注入伪 client;生产省略走默认 WSClient 工厂。 */
   createClient?: (botId: string, secret: string) => WSClient;
@@ -60,7 +60,10 @@ function defaultCreateClient(botId: string, secret: string): WSClient {
 }
 
 export function createWecomWsWorker(input: CreateWecomWsWorkerInput): ImWorker {
-  const routeMessage = input.routeMessage ?? routeInboundImMessage;
+  const routeMessage: (message: InboundImRouteMessage) => Promise<void> =
+    input.routeMessage ?? (async (m) => {
+      await routeInboundImMessage(m);
+    });
   const botId = input.account.accountKey ?? "";
   const secret = input.account.token ?? "";
   let client: WSClient | null = null;
@@ -87,7 +90,12 @@ export function createWecomWsWorker(input: CreateWecomWsWorkerInput): ImWorker {
           const parsed = parseWecomEvent(data, input.account);
           if (parsed) {
             log.info("收到企微消息", { accountId: input.account.id, peerId: parsed.peerId });
-            void routeMessage(parsed);
+            void routeMessage(parsed).catch((error: unknown) => {
+              log.error("企微入站路由失败", {
+                accountId: input.account.id,
+                error: error instanceof Error ? error.message : String(error)
+              });
+            });
           }
         } catch (error) {
           log.error("处理企微事件出错", {

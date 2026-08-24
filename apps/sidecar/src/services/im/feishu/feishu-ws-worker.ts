@@ -21,7 +21,7 @@ export interface FeishuWsClient {
 
 export interface CreateFeishuWsWorkerInput {
   account: ImRuntimeAccount;
-  routeMessage?: (message: InboundImRouteMessage) => Promise<void> | void;
+  routeMessage?: (message: InboundImRouteMessage) => Promise<void>;
   updateAccount?: (id: string, input: ImAccountUpdateInput) => Promise<void> | void;
   /** 测试注入伪 client;生产省略走默认 lark.WSClient 工厂。 */
   createClient?: (appId: string, appSecret: string) => FeishuWsClient;
@@ -89,7 +89,10 @@ function defaultCreateClient(appId: string, appSecret: string): FeishuWsClient {
 }
 
 export function createFeishuWsWorker(input: CreateFeishuWsWorkerInput): ImWorker {
-  const routeMessage = input.routeMessage ?? routeInboundImMessage;
+  const routeMessage: (message: InboundImRouteMessage) => Promise<void> =
+    input.routeMessage ?? (async (m) => {
+      await routeInboundImMessage(m);
+    });
   const appId = input.account.accountKey ?? "";
   const appSecret = input.account.token ?? "";
   let client: FeishuWsClient | null = null;
@@ -115,7 +118,12 @@ export function createFeishuWsWorker(input: CreateFeishuWsWorkerInput): ImWorker
             const parsed = parseFeishuEvent(data, input.account);
             if (parsed) {
               log.info("收到飞书消息", { accountId: input.account.id, peerId: parsed.peerId });
-              void routeMessage(parsed);
+              void routeMessage(parsed).catch((error: unknown) => {
+                log.error("飞书入站路由失败", {
+                  accountId: input.account.id,
+                  error: error instanceof Error ? error.message : String(error)
+                });
+              });
             }
           } catch (error) {
             log.error("处理飞书事件出错", {
