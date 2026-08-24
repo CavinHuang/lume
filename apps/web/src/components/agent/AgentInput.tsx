@@ -1681,7 +1681,7 @@ export function AgentInput({
             editorSlot={
               <>
                 {voiceDictation.isActive && (
-                  <div className="mb-2 flex animate-in fade-in slide-in-from-top-1 items-center gap-2.5 rounded-lg bg-[var(--lume-accent-soft)] px-2.5 py-1.5 duration-200">
+                  <div className="mb-2 flex animate-in fade-in slide-in-from-top-1 items-center gap-2.5 rounded-lg bg-[var(--lume-accent-soft)] px-2.5 py-1.5 duration-200 motion-reduce:animate-none">
                     <span
                       className={cn(
                         'size-2 shrink-0 rounded-full',
@@ -2011,7 +2011,7 @@ export function AgentInput({
                       ? 'border-[color:color-mix(in_oklab,var(--lume-danger)_42%,var(--lume-border-strong))] bg-[color:color-mix(in_oklab,var(--lume-danger)_10%,var(--lume-bg-elevated))] text-[var(--lume-danger)]'
                       : 'border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_72%,transparent)] text-[var(--lume-text-secondary)] hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-text-primary)]',
                   )}
-                  title={voiceDictation.isActive ? '结束听写（Alt+V）' : '语音输入（Alt+V）'}
+                  title={voiceDictation.isActive ? '结束听写' : '语音输入'}
                   aria-label={voiceDictation.isActive ? '结束听写' : '开始语音输入'}
                   aria-pressed={voiceDictation.isActive}
                   type="button"

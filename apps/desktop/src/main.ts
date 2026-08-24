@@ -85,7 +85,7 @@ import {
   stopVoiceAsrSession,
   testVoiceAsrConnection,
 } from './voice-asr-service'
-import { readVoiceDictationSettings, updateVoiceDictationSettings } from './voice-dictation-settings-service'
+import { planVoiceShortcutSync, readVoiceDictationSettings, updateVoiceDictationSettings } from './voice-dictation-settings-service'
 import { pasteTextAtCurrentCursor } from './text-insertion-service'
 import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice-dictation-window'
 import type { VoiceDictationSettings, VoiceDictationSettingsUpdate } from '@lume/shared'
@@ -1708,26 +1708,6 @@ function registerVoiceDictationShortcut(accelerator: string): boolean {
   return registered
 }
 
-/**
- * 按配置同步全局快捷键：凭证齐全才占用系统级按键——未启用语音功能的用户
- * 不应被劫持 Alt+V/菜单组合键；配置被清空时解绑。
- */
-function syncVoiceDictationShortcut(settings: VoiceDictationSettings): void {
-  const configured = Boolean(settings.appId && settings.accessToken && settings.resourceId)
-  if (!configured) {
-    if (registeredVoiceDictationShortcut) {
-      try {
-        globalShortcut.unregister(registeredVoiceDictationShortcut)
-      } catch {
-        // 未注册或已失效，忽略。
-      }
-      registeredVoiceDictationShortcut = ''
-    }
-    return
-  }
-  registerVoiceDictationShortcut(settings.shortcut)
-}
-
 /** 把 ASR 会话事件回发给发起录音的窗口；窗口已销毁时静默丢弃。 */
 function sendVoiceDictationEvent(ownerWebContentsId: number | undefined, channel: string, payload: unknown): void {
   if (ownerWebContentsId === undefined) return
@@ -1929,21 +1909,30 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       requireMainWindowSender(context, 'voice_dictation_update_settings')
       const broker = getSettingsBroker()
       const before = readVoiceDictationSettings(broker)
-      const result = updateVoiceDictationSettings(broker, payload as VoiceDictationSettingsUpdate)
+      let result = updateVoiceDictationSettings(broker, payload as VoiceDictationSettingsUpdate)
+      const plan = planVoiceShortcutSync({
+        credentialsComplete: Boolean(result.appId && result.accessToken && result.resourceId),
+        desiredShortcut: result.shortcut,
+        currentRegisteredShortcut: registeredVoiceDictationShortcut,
+      })
       let shortcutRegistered = true
-      const wasRegistered = registeredVoiceDictationShortcut !== ''
-      syncVoiceDictationShortcut(result)
-      if (registeredVoiceDictationShortcut === '' && wasRegistered) {
-        // 凭证被清空 → 已按设计解绑，不算失败。
-        shortcutRegistered = true
-      } else if (registeredVoiceDictationShortcut !== result.shortcut) {
-        // 配置齐全但新键被占用：回滚设置中的快捷键，保持旧键继续生效。
-        shortcutRegistered = false
-        updateVoiceDictationSettings(broker, { shortcut: before.shortcut })
-        registerVoiceDictationShortcut(before.shortcut)
-        result.shortcut = before.shortcut
+      if (plan.action === 'unregister') {
+        try {
+          globalShortcut.unregister(registeredVoiceDictationShortcut)
+        } catch {
+          // 未注册或已失效，忽略。
+        }
+        registeredVoiceDictationShortcut = ''
+      } else if (plan.action === 'register') {
+        shortcutRegistered = registerVoiceDictationShortcut(plan.shortcut)
+        if (!shortcutRegistered) {
+          // 新键被占用：回滚设置与注册到旧键（旧键此前可用）。
+          updateVoiceDictationSettings(broker, { shortcut: before.shortcut })
+          registerVoiceDictationShortcut(before.shortcut)
+          result = { ...result, shortcut: before.shortcut }
+        }
       }
-      return { ...result, shortcut: result.shortcut, shortcutRegistered }
+      return { ...result, shortcutRegistered }
     }
     case 'voice_dictation_test_connection':
       return testVoiceAsrConnection(readVoiceDictationSettings(getSettingsBroker()))
@@ -3478,10 +3467,14 @@ app.whenReady().then(async () => {
 
   // 语音听写全局快捷键：仅在凭证配置齐全时注册（未启用不占用系统按键）。
   try {
-    syncVoiceDictationShortcut(readVoiceDictationSettings(getSettingsBroker()))
-    if (registeredVoiceDictationShortcut === '') {
-      // 配置齐全但注册失败（被占用等），记录但不中断启动。sync 内部已尝试默认键。
-      writeMainLog('warn', 'desktop.voice_dictation', 'shortcut.registration_failed', 'voice dictation shortcut not registered')
+    const voiceSettings = readVoiceDictationSettings(getSettingsBroker())
+    const plan = planVoiceShortcutSync({
+      credentialsComplete: Boolean(voiceSettings.appId && voiceSettings.accessToken && voiceSettings.resourceId),
+      desiredShortcut: voiceSettings.shortcut,
+      currentRegisteredShortcut: registeredVoiceDictationShortcut,
+    })
+    if (plan.action === 'register' && !registerVoiceDictationShortcut(plan.shortcut)) {
+      writeMainLog('warn', 'desktop.voice_dictation', 'shortcut.registration_failed', `globalShortcut ${plan.shortcut} 注册失败（可能被其他程序占用）`)
     }
   } catch {
     // 设置读取失败：保持未注册，配置完成后的首次更新会再同步。

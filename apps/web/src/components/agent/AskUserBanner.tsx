@@ -224,7 +224,7 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                         barClassName="w-[2px] rounded-full bg-current"
                       />
                     ) : (
-                      <Mic size={12} className={cn(voiceDictation.isActive && 'animate-pulse')} />
+                      <Mic size={12} className={cn(voiceDictation.isActive && 'animate-pulse motion-reduce:animate-none')} />
                     )}
                   </Button>
                   {voiceDictation.transcript && voiceDictation.isActive && (

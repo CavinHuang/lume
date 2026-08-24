@@ -50,6 +50,34 @@ export function readVoiceDictationSettings(broker: SettingsBroker): VoiceDictati
   }
 }
 
+/** 快捷键同步决策：副作用（globalShortcut/broker 写）由调用方按 action 执行。 */
+export type VoiceShortcutSyncPlan =
+  | { action: 'keep'; shortcut: string }
+  | { action: 'unregister' }
+  | { action: 'register'; shortcut: string }
+
+/**
+ * 全局快捷键同步的三态决策（纯函数，单测钉死转移表）：
+ * - 凭证不齐全：不应占用系统按键——有残留则解绑，否则保持；
+ * - 齐全且已注册同键：保持；
+ * - 齐全且键不同/未注册：注册目标键。
+ */
+export function planVoiceShortcutSync(params: {
+  credentialsComplete: boolean
+  desiredShortcut: string
+  currentRegisteredShortcut: string
+}): VoiceShortcutSyncPlan {
+  if (!params.credentialsComplete) {
+    return params.currentRegisteredShortcut
+      ? { action: 'unregister' }
+      : { action: 'keep', shortcut: params.desiredShortcut }
+  }
+  if (params.currentRegisteredShortcut === params.desiredShortcut) {
+    return { action: 'keep', shortcut: params.desiredShortcut }
+  }
+  return { action: 'register', shortcut: params.desiredShortcut }
+}
+
 export function updateVoiceDictationSettings(
   broker: SettingsBroker,
   updates: VoiceDictationSettingsUpdate,

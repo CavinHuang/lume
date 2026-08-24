@@ -14,6 +14,7 @@ import type {
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
@@ -78,20 +79,22 @@ function ShortcutCaptureRow({ value, onApply }: {
 
   return (
     <div className="min-w-0">
-      <button
+      <Button
         type="button"
+        variant="ghost"
         onClick={() => { setHint(null); setRecording(true) }}
         onKeyDown={(event) => void handleKeyDown(event)}
         onBlur={() => { setRecording(false); setHint(null) }}
+        aria-label={`全局快捷键，当前为 ${formatAcceleratorForDisplay(value)}，点击后按下新的组合键`}
         className={cn(
-          'h-9 min-w-[140px] rounded-lg border px-3 text-left font-mono text-body',
+          'h-9 min-w-[140px] justify-start rounded-lg border px-3 text-left font-mono text-body',
           recording
             ? 'border-[color:color-mix(in_oklab,var(--brand)_46%,var(--lume-border-strong))] text-[var(--brand)]'
             : 'border-[var(--lume-border-subtle)] text-[var(--text-1)]',
         )}
       >
         {recording ? '按下新的组合键…' : applying ? '应用中…' : formatAcceleratorForDisplay(value)}
-      </button>
+      </Button>
       {hint ? <div className="mt-1 text-caption text-[var(--lume-warning)]">{hint}</div> : null}
     </div>
   )
@@ -271,6 +274,7 @@ export function VoiceDictationSettings() {
             value={settings.resourceId}
             onChange={(event) => editLocally({ resourceId: event.target.value })}
             onBlur={() => void applyUpdate()}
+            aria-label="Resource ID"
             placeholder="例如 volcengine_input_common"
           />
         </SettingsRow>
@@ -290,14 +294,14 @@ export function VoiceDictationSettings() {
           </Select>
         </SettingsRow>
         <SettingsRow label="自定义热词" hint="按行或逗号分隔，最多 100 个；提升专有名词识别率">
-          <textarea
+          <Textarea
             value={settings.customHotwords}
             onChange={(event) => editLocally({ customHotwords: event.target.value })}
             onBlur={() => void applyUpdate()}
             rows={3}
             aria-label="自定义热词"
             placeholder={'产品名\n人名\n术语'}
-            className="w-full resize-y rounded-lg border border-[var(--lume-border-subtle)] bg-transparent px-2 py-1.5 text-body leading-6 text-[var(--text-1)]"
+            className="w-full resize-y rounded-lg border-[var(--lume-border-subtle)] bg-transparent px-2 py-1.5 text-body leading-6 text-[var(--text-1)]"
           />
         </SettingsRow>
         {settings && (
@@ -306,10 +310,11 @@ export function VoiceDictationSettings() {
             onApply={(accelerator) => applyUpdate({ shortcut: accelerator })}
           />
         )}
-        <SettingsRow label="结果输出" hint="「写入当前应用」：在 Lume 之外按快捷键唤起听写，结束后粘贴到当时的前台应用光标处（Windows 首次使用需允许；macOS 需辅助功能权限）">          <div className="flex flex-wrap gap-2 pt-1">
+        <SettingsRow label="结果输出" hint="「写入当前应用」：在 Lume 之外按快捷键唤起听写，结束后粘贴到当时的前台应用光标处（Windows 首次使用需允许；macOS 需辅助功能权限）">          <div role="radiogroup" aria-label="结果输出方式" className="flex flex-wrap gap-2 pt-1">
             <Button
               variant={settings.outputMode === 'lume-input' ? 'secondary' : 'ghost'}
-              aria-pressed={settings.outputMode === 'lume-input'}
+              role="radio"
+              aria-checked={settings.outputMode === 'lume-input'}
               type="button"
               className="h-8 px-3 text-body"
               onClick={() => void applyUpdate({ outputMode: 'lume-input' })}
@@ -318,7 +323,8 @@ export function VoiceDictationSettings() {
             </Button>
             <Button
               variant={settings.outputMode === 'system-cursor' ? 'secondary' : 'ghost'}
-              aria-pressed={settings.outputMode === 'system-cursor'}
+              role="radio"
+              aria-checked={settings.outputMode === 'system-cursor'}
               type="button"
               className="h-8 px-3 text-body"
               onClick={() => void applyUpdate({ outputMode: 'system-cursor' })}
@@ -327,7 +333,8 @@ export function VoiceDictationSettings() {
             </Button>
             <Button
               variant={settings.outputMode === 'clipboard' ? 'secondary' : 'ghost'}
-              aria-pressed={settings.outputMode === 'clipboard'}
+              role="radio"
+              aria-checked={settings.outputMode === 'clipboard'}
               type="button"
               className="h-8 px-3 text-body"
               onClick={() => void applyUpdate({ outputMode: 'clipboard' })}
