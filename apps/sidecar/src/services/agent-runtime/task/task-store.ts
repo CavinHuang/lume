@@ -334,9 +334,10 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
     return this.mutate("update", context, (tasks, now) => {
       const task = tasks.get(taskId);
       if (!task) throw new Error(`Task not found: ${taskId}`);
-      if (task.status === "completed") throw new Error("Completed Tasks cannot be overwritten");
       const requestedStatus = mutationInput.status as TaskStatus | undefined;
       if (requestedStatus && !["pending", "in_progress", "completed"].includes(requestedStatus)) throw new Error("Invalid Task status");
+      // completed 准终态，唯一出口是 reopen 到 pending（#647 P2-6）
+      if (task.status === "completed" && requestedStatus !== "pending") throw new Error("Completed Tasks cannot be overwritten");
       const ownerChange = Object.prototype.hasOwnProperty.call(mutationInput, "owner");
       const sensitive = requestedStatus === "in_progress" || requestedStatus === "completed" || requestedStatus === "pending" || ownerChange;
       this.assertFence(task, mutationInput, sensitive);
@@ -347,17 +348,45 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
         item.revision += 1;
         changed.set(item.id, item);
       };
+      // 类型不符的字段显式报错而非静默忽略——拼错字段名的更新必须失败可见（#647 P2-3）
+      for (const key of ["subject", "description", "activeForm"] as const) {
+        if (Object.prototype.hasOwnProperty.call(mutationInput, key) && typeof mutationInput[key] !== "string") {
+          throw new Error(`Task ${key} must be a string`);
+        }
+      }
+      // 依赖变更先行：认领/完成的门控按本次调用后的依赖关系判定，
+      // 消除"同一次 update 内先 claim 后加阻塞"产出的矛盾态（#647 P2-4）
+      this.applyDependencies(tasks, task, mutationInput, updateTask);
       if (typeof mutationInput.subject === "string") task.subject = requireText(mutationInput.subject, "subject");
       if (typeof mutationInput.description === "string") task.description = mutationInput.description;
       if (typeof mutationInput.activeForm === "string") task.activeForm = mutationInput.activeForm;
       if (requestedStatus === "in_progress") this.claim(task, context, mutationInput);
       if (requestedStatus === "completed") {
         if (this.executorBinding(task)) throw new Error("Task cannot be completed while its executor is active");
+        // 与 claim 同门控：被未完成依赖阻塞的 Task 不得直通 completed（#647 P2-1）
+        if (task.blockedBy.some((id) => tasks.get(id)?.status !== "completed")) {
+          throw new Error("Task is blocked by unfinished dependencies");
+        }
         task.status = "completed";
         task.owner = context.actorId;
         this.clearExecutorBinding(task);
       }
-      if (requestedStatus === "pending") this.releaseClaim(task, mutationInput, "reset");
+      if (requestedStatus === "pending") {
+        if (task.status === "completed") {
+          // reopen（#647 P2-6）：completed 的唯一出口。完成路径不清 _lume.claim（预存），
+          // 这里镜像 releaseClaim 归档清理，避免过期 claimToken 经 publicTask 持续暴露
+          const lume = serviceMetadata(task);
+          const staleClaim = lume.claim as Record<string, unknown> | undefined;
+          lume.claimGeneration = Number(lume.claimGeneration ?? 0) + 1;
+          lume.previousClaim = staleClaim ? { ...staleClaim, releasedAt: now, releaseReason: "reopened" } : undefined;
+          delete lume.claim;
+          task.metadata = { ...metadataObject(task.metadata), _lume: lume };
+          delete task.owner;
+          task.status = "pending";
+        } else {
+          this.releaseClaim(task, mutationInput, "reset");
+        }
+      }
       if (ownerChange) {
         if (mutationInput.owner !== null && mutationInput.owner !== context.actorId) throw new Error("owner must be derived from the current main actor");
         if (mutationInput.owner === null) this.releaseClaim(task, mutationInput, "owner cleared");
@@ -365,7 +394,6 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       }
 
       this.applyMetadataPatch(task, mutationInput.metadata);
-      this.applyDependencies(tasks, task, mutationInput, updateTask);
       updateTask(task);
       return { changed: [...changed.values()], task, message: `Task updated: ${task.id}` };
     });
@@ -599,7 +627,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       ...metadataObject(task.metadata),
       _lume: {
         ...lume,
-        claim: { actor: context.actorId, parentRun: context.runId, token, claimedAt: new Date().toISOString(), lease: "active" },
+        claim: { actor: context.actorId, parentRun: context.runId, token, claimedAt: new Date().toISOString() },
         claimGeneration: Number(lume.claimGeneration ?? 0) + 1,
         attempts: Number(lume.attempts ?? 0) + 1,
       },
