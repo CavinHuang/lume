@@ -1,6 +1,6 @@
 import type { InboundImRouteMessage } from "./im-message-router";
 import { routeInboundImMessage } from "./im-message-router";
-import { hasSeenImMessage, rememberImMessage } from "./im-seen-message-store";
+import { hasSeenImMessage, rememberImMessage, rememberImMessages } from "./im-seen-message-store";
 import { IM_CONTROL_COMMAND_NAMES } from "./im-chat-commands";
 import { createLogger } from "../infra/logger";
 
@@ -33,6 +33,9 @@ const CONTROL_COMMAND_RE = new RegExp(
   "i"
 );
 
+/** 单会话缓冲条数上限：阻塞期刷屏的内存护栏 */
+const MAX_BUFFER_PER_SCOPE = 200;
+
 export interface ImInboundPipelineOptions {
   /** 静默窗口毫秒数，窗口内连发合并 */
   quietWindowMs?: number;
@@ -46,6 +49,8 @@ export interface ImInboundPipelineOptions {
   hasSeen?: (provider: InboundImRouteMessage["provider"], accountId: string, messageId: string) => boolean;
   /** 已见标记注入（默认真实 store，测试注入） */
   remember?: (provider: InboundImRouteMessage["provider"], accountId: string, messageId: string) => void;
+  /** 批量已见标记注入（默认真实 store 批量接口，一次落盘） */
+  rememberMany?: (items: Array<{ provider: InboundImRouteMessage["provider"]; accountId: string; messageId: string }>) => void;
   /** 定时器注入（测试用） */
   setTimer?: (callback: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -128,6 +133,8 @@ export function mergeImMessageBatch(batch: InboundImRouteMessage[]): InboundImRo
       ? batch.flatMap((m) => m.contents ?? [])
       : undefined,
     contextToken: lastOf((m) => m.contextToken),
+    // 引用上下文取最后一条的 parent（接力回复场景以最新引用为准）
+    parentMessageId: lastOf((m) => m.parentMessageId),
     messageId: undefined
   };
 }
@@ -148,6 +155,12 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
   const routeMessage = options.routeMessage ?? routeInboundImMessage;
   const hasSeen = options.hasSeen ?? hasSeenImMessage;
   const remember = options.remember ?? rememberImMessage;
+  // 批量结算：优先批量接口（一次落盘）；仅注入单条 remember 时退化为循环（测试兼容）
+  const rememberMany = options.rememberMany
+    ?? (options.remember
+      ? (items: Array<{ provider: InboundImRouteMessage["provider"]; accountId: string; messageId: string }>) =>
+        items.forEach((item) => remember(item.provider, item.accountId, item.messageId))
+      : rememberImMessages);
   const setTimer = options.setTimer ?? ((callback: () => void, ms: number) => setTimeout(callback, ms));
   const clearTimer = options.clearTimer ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
 
@@ -233,10 +246,15 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
       });
       for (const item of batch) {
         if (item.messageId) {
-          remember(item.provider, item.accountId, item.messageId);
           inflightIds.delete(inflightKeyOf(item.provider, item.accountId, item.messageId));
         }
       }
+      // 批量标记已见：一次落盘，避免逐条全量重写 seen-store
+      rememberMany(
+        batch
+          .filter((item) => item.messageId)
+          .map((item) => ({ provider: item.provider, accountId: item.accountId, messageId: item.messageId! }))
+      );
       settleBatch(batch);
     } catch (error) {
       // 不标记已见且回滚在途标记：平台重投后可在下个窗口重试
@@ -257,9 +275,12 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
       release?.();
       state.blocked = false;
     }
-    // 运行期间到达的消息重新进入静默窗口，而不是立即再触发一次运行
+    // 运行期间到达的消息重新进入静默窗口，而不是立即再触发一次运行；
+    // 空闲 scope 释放条目，避免历史会话在进程生命周期内缓慢累积
     if (state.buffer.length > 0) {
       armQuietWindow(state);
+    } else if (state.timer === undefined) {
+      scopes.delete(scopeKeyOf(merged));
     }
   };
 
@@ -274,16 +295,18 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
   };
 
   const enqueue = (message: InboundImRouteMessage): Promise<void> => {
-    // 斜杠控制面命令直通：不被静默窗口/运行阻塞，也不参与管线去重（路由器自带幂等）
+    // 斜杠控制面命令直通：不被静默窗口/运行阻塞，也不参与管线去重（路由器自带幂等）。
+    // 失败只记日志不 reject：命令（如 /approve 回执）发送失败不应作为毒丸消息
+    // 阻塞微信渠道的 cursor 推进，否则整个账号的后续消息被卡死在队头
     if (CONTROL_COMMAND_RE.test(message.text.trim())) {
-      return routeMessage(message).catch((error: unknown) => {
+      void routeMessage(message).catch((error: unknown) => {
         log.error("IM 命令直通路由失败", {
           provider: message.provider,
           peerId: message.peerId,
           error: error instanceof Error ? error.message : String(error)
         });
-        throw error;
-      }).then(() => undefined);
+      });
+      return Promise.resolve();
     }
     const existingKey =
       message.messageId ? inflightKeyOf(message.provider, message.accountId, message.messageId) : undefined;
@@ -304,6 +327,19 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
     completions.set(completionKeyOf(message), deferred);
     const state = scopeStateOf(message);
     state.buffer.push(message);
+    // 缓冲软上限：阻塞期刷屏防内存无界累积（丢最旧并告警；被丢消息未 remember，
+    // 平台重投仍可处理，但主动丢弃本身不在补偿范围）
+    if (state.buffer.length > MAX_BUFFER_PER_SCOPE) {
+      const dropped = state.buffer.shift();
+      if (dropped?.messageId) {
+        inflightIds.delete(inflightKeyOf(dropped.provider, dropped.accountId, dropped.messageId));
+      }
+      log.warn("IM 会话缓冲超限，丢弃最旧消息", {
+        provider: message.provider,
+        peerId: message.peerId,
+        limit: MAX_BUFFER_PER_SCOPE
+      });
+    }
     if (existingKey) {
       inflightIds.add(existingKey);
     }

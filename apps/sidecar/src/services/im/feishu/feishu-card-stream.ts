@@ -31,6 +31,8 @@ export interface FeishuCardStreamOptions {
   client?: FeishuRestClient;
   setTimer?: (callback: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
+  /** 终态强刷失败（回复内容只在卡上、用户看不到）时通知调用方文本兜底，每次运行至多一次 */
+  onTerminalFlushFailed?: () => void;
 }
 
 export interface FeishuCardStream {
@@ -39,6 +41,8 @@ export interface FeishuCardStream {
   apply(event: LumeRuntimeEvent): void;
   /** 当前状态（测试观察用） */
   readonly state: ImRunCardState;
+  /** 卡片通道是否已降级（连续多轮推送失败）：true 时调用方应回退文本投递 */
+  readonly degraded: boolean;
   close(): void;
 }
 
@@ -71,6 +75,10 @@ export function createFeishuCardStream(options: FeishuCardStreamOptions): Feishu
   let sending = false;
   let dirty = false;
   let timer: unknown;
+  // 连续整轮推送失败次数：达到阈值判定通道降级，调用方应回退文本投递
+  let consecutiveUpdateFailures = 0;
+  const DEGRADED_FAILURE_THRESHOLD = 3;
+  let terminalFallbackNotified = false;
 
   const withTimeout = <T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
     return new Promise<T>((resolve, reject) => {
@@ -132,13 +140,18 @@ export function createFeishuCardStream(options: FeishuCardStreamOptions): Feishu
   const sendCurrent = (): Promise<boolean> => {
     if (!cardId || closed) return Promise.resolve(false);
     sending = true;
-    return pushCurrent().finally(() => {
-      sending = false;
-      // 发送期间有新状态落地：运行中回到节流队列，终态立即补发
-      if (dirty && !closed && cardId) {
-        void requestFlush(state.status !== "running");
-      }
-    });
+    return pushCurrent()
+      .then((ok) => {
+        consecutiveUpdateFailures = ok ? 0 : consecutiveUpdateFailures + 1;
+        return ok;
+      })
+      .finally(() => {
+        sending = false;
+        // 发送期间有新状态落地：运行中回到节流队列，终态立即补发
+        if (dirty && !closed && cardId) {
+          void requestFlush(state.status !== "running");
+        }
+      });
   };
 
   const requestFlush = (immediate: boolean): Promise<void> => {
@@ -163,6 +176,11 @@ export function createFeishuCardStream(options: FeishuCardStreamOptions): Feishu
     return sendCurrent().then((ok) => {
       if (!ok && state.status !== "running") {
         log.error("终态卡片刷新失败，卡片可能停留在处理中状态", { chatId: options.chatId });
+        // 终态刷不出 = 回复内容只在卡上、用户永远看不到：通知调用方文本兜底
+        if (!terminalFallbackNotified) {
+          terminalFallbackNotified = true;
+          options.onTerminalFlushFailed?.();
+        }
       }
     });
   };
@@ -170,12 +188,16 @@ export function createFeishuCardStream(options: FeishuCardStreamOptions): Feishu
   return {
     open: async (): Promise<boolean> => {
       try {
-        const created = await client.cardkit.v1.card.create({
-          data: {
-            type: "card_doc",
-            data: JSON.stringify(renderImRunCard(state))
-          }
-        });
+        const created = await withTimeout(
+          client.cardkit.v1.card.create({
+            data: {
+              type: "card_doc",
+              data: JSON.stringify(renderImRunCard(state))
+            }
+          }),
+          UPDATE_TIMEOUT_MS,
+          "卡片创建"
+        );
         const businessError = isBusinessError(created);
         if (businessError) {
           log.warn("创建流式卡片被拒，回退文本回复", { chatId: options.chatId, error: businessError });
@@ -186,14 +208,18 @@ export function createFeishuCardStream(options: FeishuCardStreamOptions): Feishu
           log.warn("创建卡片未返回 card_id，放弃卡片通道");
           return false;
         }
-        await client.im.v1.message.create({
-          params: { receive_id_type: "chat_id" },
-          data: {
-            receive_id: options.chatId,
-            msg_type: "interactive",
-            content: JSON.stringify({ type: "card", data: { card_id: cardId } })
-          }
-        });
+        await withTimeout(
+          client.im.v1.message.create({
+            params: { receive_id_type: "chat_id" },
+            data: {
+              receive_id: options.chatId,
+              msg_type: "interactive",
+              content: JSON.stringify({ type: "card", data: { card_id: cardId } })
+            }
+          }),
+          UPDATE_TIMEOUT_MS,
+          "卡片消息发送"
+        );
       } catch (error) {
         log.warn("创建流式卡片失败，回退文本回复", {
           chatId: options.chatId,
@@ -225,6 +251,9 @@ export function createFeishuCardStream(options: FeishuCardStreamOptions): Feishu
     },
     get state() {
       return state;
+    },
+    get degraded() {
+      return consecutiveUpdateFailures >= DEGRADED_FAILURE_THRESHOLD;
     },
     close: () => {
       closed = true;

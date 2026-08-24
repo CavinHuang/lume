@@ -19,9 +19,9 @@ const makeAccount = (id = "wc1"): ImRuntimeAccount =>
 
 function makeFakeClient(calls?: string[]): {
   client: { connect(): void; disconnect(): void; on(event: string, cb: (data: unknown) => void): void };
-  getHandler: () => ((data: unknown) => void) | null;
+  getHandler: (event?: string) => ((data: unknown) => void) | null;
 } {
-  let handler: ((data: unknown) => void) | null = null;
+  const handlers = new Map<string, (data: unknown) => void>();
   const client = {
     connect() {
       calls?.push("connect");
@@ -31,10 +31,10 @@ function makeFakeClient(calls?: string[]): {
     },
     on(event: string, cb: (data: unknown) => void) {
       calls?.push(`on:${event}`);
-      handler = cb;
+      handlers.set(event, cb);
     },
   };
-  return { client, getHandler: () => handler };
+  return { client, getHandler: (event = "message.text") => handlers.get(event) ?? null };
 }
 
 beforeEach(() => {
@@ -56,7 +56,9 @@ describe("createWecomWsWorker", () => {
     });
 
     worker.start();
-    expect(calls).toEqual(["on:message.text", "connect"]);
+    // 断线/error 监听必须注册：SDK 重连放弃后 eventemitter3 对无监听 error 静默，
+    // 缺监听会让账号永久假活
+    expect(calls).toEqual(["on:message.text", "on:error", "on:disconnected", "connect"]);
     expect(getWecomClient(account.id)).toBe(client as never); // 启动即入池
     const handler = getHandler();
     expect(handler).not.toBeNull();

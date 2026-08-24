@@ -1,6 +1,7 @@
 import type { LumeRuntimeEvent } from "@lume/shared";
 import { getImThreadBindingByThreadId } from "./im-thread-binding-store";
 import { getImRuntimeAccount } from "./im-config-manager";
+import { sendBoundImTextMessage } from "./im-send-service";
 import { createFeishuCardStream, type FeishuCardStream } from "./feishu/feishu-card-stream";
 import { createLogger } from "../infra/logger";
 
@@ -40,6 +41,8 @@ export interface ImRunCardSession {
    * 调用方应回退纯文本投递。
    */
   settleOpen: () => Promise<boolean>;
+  /** 卡片通道已降级（持续推送失败）：调用方应放弃互斥、回退文本投递 */
+  isDegraded: () => boolean;
 }
 
 function finishEventOf(status: ImRunCardFinishStatus): LumeRuntimeEvent {
@@ -112,7 +115,22 @@ function createImRunCardSessionInternal(threadId: string): ImRunCardSession | nu
   const stream: FeishuCardStream = createFeishuCardStream({
     appId,
     appSecret,
-    chatId: binding.peerId
+    chatId: binding.peerId,
+    // 终态刷不出时回复内容只在卡上：兜底补发最终文本，回复不丢失
+    onTerminalFlushFailed: () => {
+      const finalText = stream.state.blocks
+        .filter((block) => block.kind === "text")
+        .map((block) => block.text)
+        .join("\n\n")
+        .trim();
+      if (!finalText) return;
+      sendBoundImTextMessage({ binding, text: finalText }).catch((error: unknown) => {
+        log.error("卡片终态兜底文本发送失败", {
+          threadId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }
   });
 
   let opening: Promise<boolean> | null = null;
@@ -155,6 +173,7 @@ function createImRunCardSessionInternal(threadId: string): ImRunCardSession | nu
       stream.apply(finishEventOf(status));
     },
     isEnabled: () => true,
+    isDegraded: () => stream.degraded,
     settleOpen: () => {
       // open 理论不 reject（内部已捕获）；兜底按失败处理走文本回退
       return (opening?.catch(() => false) ?? Promise.resolve(false)) as Promise<boolean>;

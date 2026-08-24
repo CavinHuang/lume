@@ -21,6 +21,7 @@ function fakeSession(options: { openOk: boolean; events: unknown[]; finished: un
       options.finished.push(status);
     },
     isEnabled: () => true,
+    isDegraded: () => false,
     settleOpen: () => Promise.resolve(options.openOk)
   };
 }

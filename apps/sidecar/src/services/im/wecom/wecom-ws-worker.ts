@@ -105,6 +105,26 @@ export function createWecomWsWorker(input: CreateWecomWsWorkerInput): ImWorker {
           });
         }
       });
+      // SDK 重连预算耗尽/认证被拒时 emit "error"/"disconnected" 且 eventemitter3
+      // 对无监听的 error 不抛异常——不挂监听会永久假活：running 仍 true、UI 显示
+      // 运行中、入站永不再来。此处统一收敛为可见的 error 态
+      const handleConnectionLost = (reason: unknown, status: "error" | "auth_required") => {
+        if (!running) return;
+        running = false;
+        unregisterWecomClient(input.account.id);
+        const messageText = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "连接已断开";
+        log.error("企微长连接断开", { accountId: input.account.id, reason: messageText });
+        void input.updateAccount?.(input.account.id, {
+          status,
+          lastError: redactSensitiveText(messageText),
+        });
+      };
+      wsClient.on("error", (error: unknown) => {
+        handleConnectionLost(error, "error");
+      });
+      wsClient.on("disconnected", () => {
+        handleConnectionLost(undefined, "error");
+      });
       try {
         wsClient.connect();
       } catch (error) {
