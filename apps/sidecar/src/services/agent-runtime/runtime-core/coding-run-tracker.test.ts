@@ -81,7 +81,7 @@ describe("coding run tracker", () => {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       await expect(tracker.completionGuard()).resolves.toMatchObject({
         type: "continue",
-        message: expect.stringContaining("verification failed")
+        message: expect.stringContaining(`第 ${attempt}/3 次自动修复机会`)
       });
       tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: verificationResult(`failed again ${attempt}`, "failed") });
     }
@@ -97,6 +97,10 @@ describe("coding run tracker", () => {
     tracker.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
     tracker.observe({ toolName: "Bash", input: { command: "cargo check --manifest-path Cargo.toml" }, result: verificationResult("ok", "succeeded") });
     expect(tracker.getVerificationStatus()).toBe("verified");
+    const tracker2 = createCodingRunTracker();
+    tracker2.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
+    tracker2.observe({ toolName: "Bash", input: { command: "bun run lint:fix" }, result: verificationResult("ok", "succeeded") });
+    expect(tracker2.getVerificationStatus()).toBe("verified");
   });
 
   test("#573: mutating subcommands of verification toolchains are not evidence", async () => {

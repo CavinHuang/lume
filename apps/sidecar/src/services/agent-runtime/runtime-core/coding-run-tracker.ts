@@ -436,7 +436,8 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       persist();
       return {
         type: "continue",
-        message: `[verification failed] ${(verificationMessage || "上一次验证失败").slice(0, 800)}。请在当前 Run 中修复问题并重新执行验证；还可自动修复 ${MAX_VERIFICATION_REPAIR_ATTEMPTS - verificationRepairAttempts + 1} 次。`
+        // #573 review:明确「含本轮」的计数语义,避免模型把剩余余量多算一次
+        message: `[verification failed] ${(verificationMessage || "上一次验证失败").slice(0, 800)}。请在当前 Run 中先定位根因再修复并重新执行验证；本轮是第 ${verificationRepairAttempts}/${MAX_VERIFICATION_REPAIR_ATTEMPTS} 次自动修复机会。`
       };
     }
     if (promptedWithoutEvidence) return undefined;
