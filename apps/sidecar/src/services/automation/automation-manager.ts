@@ -11,11 +11,18 @@ import type {
   AutomationJobProvenance
 } from "@lume/shared";
 import { getAutomationJobsPath, getConfigDir } from "../infra/config-paths";
+import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { getNextAutomationRunAt, validateAutomationSchedule } from "./automation-schedule";
 import { createLogger } from "../infra/logger";
 
 const INDEX_VERSION = 1;
 const log = createLogger("automation-manager");
+
+// #518:与全仓其他 index 型 store 对齐的纵深防御锁——单线程同步 RMW 下进程内
+// 不竞争,防的是接管重叠窗的双写者互相覆盖
+function automationIndexLockPath(): string {
+  return `${getAutomationJobsPath()}.lock`;
+}
 
 function writeJsonAtomic(path: string, payload: string): void {
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
@@ -103,129 +110,141 @@ export function listAutomationJobs(): AutomationJob[] {
 }
 
 export function createAutomationJob(input: AutomationCreateJobInput): AutomationJob {
-  const index = readIndex();
-  validateAutomationSchedule(input.schedule);
-  const now = Date.now();
-  const enabled = input.enabled ?? true;
-  const job: AutomationJob = {
-    id: randomUUID(),
-    name: normalizeName(input.name),
-    enabled,
-    workspaceId: input.workspaceId?.trim() || undefined,
-    threadId: input.threadId?.trim() || undefined,
-    schedule: input.schedule,
-    scheduleAnchorAt: now,
-    ...(input.triggerModes ? { triggerModes: input.triggerModes } : {}),
-    ...(input.source ? { source: input.source } : {}),
-    ...(input.systemAction ? { systemAction: input.systemAction } : {}),
-    ...(input.description ? { description: input.description.trim() } : {}),
-    ...(input.defaultModel ? { defaultModel: input.defaultModel.trim() } : {}),
-    ...(input.toolResourceIds ? { toolResourceIds: input.toolResourceIds } : {}),
-    prompt: normalizePrompt(input.prompt),
-    nextRunAt: enabled ? getNextAutomationRunAt(input.schedule, now, now) : null,
-    createdAt: now,
-    updatedAt: now
-  };
-  index.jobs.push(job);
-  writeIndex(index);
-  return job;
+  return withIndexMutationLock(automationIndexLockPath(), () => {
+    const index = readIndex();
+    validateAutomationSchedule(input.schedule);
+    const now = Date.now();
+    const enabled = input.enabled ?? true;
+    const job: AutomationJob = {
+      id: randomUUID(),
+      name: normalizeName(input.name),
+      enabled,
+      workspaceId: input.workspaceId?.trim() || undefined,
+      threadId: input.threadId?.trim() || undefined,
+      schedule: input.schedule,
+      scheduleAnchorAt: now,
+      ...(input.triggerModes ? { triggerModes: input.triggerModes } : {}),
+      ...(input.source ? { source: input.source } : {}),
+      ...(input.systemAction ? { systemAction: input.systemAction } : {}),
+      ...(input.description ? { description: input.description.trim() } : {}),
+      ...(input.defaultModel ? { defaultModel: input.defaultModel.trim() } : {}),
+      ...(input.toolResourceIds ? { toolResourceIds: input.toolResourceIds } : {}),
+      prompt: normalizePrompt(input.prompt),
+      nextRunAt: enabled ? getNextAutomationRunAt(input.schedule, now, now) : null,
+      createdAt: now,
+      updatedAt: now
+    };
+    index.jobs.push(job);
+    writeIndex(index);
+    return job;
+  });
 }
 
 /** Internal-only provenance write; public automation schemas never accept this field. */
 export function setAutomationJobProvenance(jobId: string, provenance: AutomationJobProvenance): AutomationJob {
-  const index = readIndex();
-  const target = index.jobs.find((job) => job.id === jobId);
-  if (!target) throw new Error(`自动化任务不存在: ${jobId}`);
-  if (target.provenance && JSON.stringify(target.provenance) !== JSON.stringify(provenance)) throw new Error("automation provenance is immutable");
-  const updated = { ...target, provenance, updatedAt: Date.now() };
-  index.jobs = index.jobs.map((job) => job.id === jobId ? updated : job);
-  writeIndex(index);
-  return updated;
+  return withIndexMutationLock(automationIndexLockPath(), () => {
+      const index = readIndex();
+      const target = index.jobs.find((job) => job.id === jobId);
+      if (!target) throw new Error(`自动化任务不存在: ${jobId}`);
+      if (target.provenance && JSON.stringify(target.provenance) !== JSON.stringify(provenance)) throw new Error("automation provenance is immutable");
+      const updated = { ...target, provenance, updatedAt: Date.now() };
+      index.jobs = index.jobs.map((job) => job.id === jobId ? updated : job);
+      writeIndex(index);
+      return updated;
+  });
 }
 
 export function updateAutomationJob(input: AutomationUpdateJobInput): AutomationJob {
-  const index = readIndex();
-  const targetIndex = index.jobs.findIndex((item) => item.id === input.id);
-  if (targetIndex < 0) {
-    throw new Error(`自动化任务不存在: ${input.id}`);
-  }
-  const existing = index.jobs[targetIndex] as AutomationJob;
-  if (input.schedule) {
-    validateAutomationSchedule(input.schedule);
-  }
-  const schedule = input.schedule ?? existing.schedule;
-  const enabled = input.enabled ?? existing.enabled;
-  const updatedAt = Date.now();
-  const shouldRecomputeNextRun = input.schedule !== undefined
-    || input.enabled !== undefined
-    || existing.nextRunAt === undefined;
-  const updated: AutomationJob = {
-    ...existing,
-    ...(input.name !== undefined ? { name: normalizeName(input.name) } : {}),
-    enabled,
-    ...(input.disabledReason !== undefined ? { disabledReason: input.disabledReason.trim() || undefined } : {}),
-    ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId.trim() || undefined } : {}),
-    ...(input.threadId !== undefined ? { threadId: input.threadId.trim() || undefined } : {}),
-    schedule,
-    scheduleAnchorAt: input.schedule !== undefined ? updatedAt : (existing.scheduleAnchorAt ?? existing.createdAt),
-    ...(input.triggerModes !== undefined ? { triggerModes: input.triggerModes } : {}),
-    ...(input.source !== undefined ? { source: input.source } : {}),
-    ...(input.systemAction !== undefined ? { systemAction: input.systemAction } : {}),
-    ...(input.description !== undefined ? { description: input.description.trim() || undefined } : {}),
-    ...(input.defaultModel !== undefined ? { defaultModel: input.defaultModel.trim() || undefined } : {}),
-    ...(input.toolResourceIds !== undefined ? { toolResourceIds: input.toolResourceIds } : {}),
-    ...(input.prompt !== undefined ? { prompt: normalizePrompt(input.prompt) } : {}),
-    ...(shouldRecomputeNextRun ? { nextRunAt: enabled ? getNextAutomationRunAt(schedule, updatedAt, input.schedule !== undefined ? updatedAt : (existing.scheduleAnchorAt ?? existing.createdAt)) : null } : {}),
-    updatedAt
-  };
-  index.jobs[targetIndex] = updated;
-  writeIndex(index);
-  return updated;
+  return withIndexMutationLock(automationIndexLockPath(), () => {
+    const index = readIndex();
+    const targetIndex = index.jobs.findIndex((item) => item.id === input.id);
+    if (targetIndex < 0) {
+      throw new Error(`自动化任务不存在: ${input.id}`);
+    }
+    const existing = index.jobs[targetIndex] as AutomationJob;
+    if (input.schedule) {
+      validateAutomationSchedule(input.schedule);
+    }
+    const schedule = input.schedule ?? existing.schedule;
+    const enabled = input.enabled ?? existing.enabled;
+    const updatedAt = Date.now();
+    const shouldRecomputeNextRun = input.schedule !== undefined
+      || input.enabled !== undefined
+      || existing.nextRunAt === undefined;
+    const updated: AutomationJob = {
+      ...existing,
+      ...(input.name !== undefined ? { name: normalizeName(input.name) } : {}),
+      enabled,
+      ...(input.disabledReason !== undefined ? { disabledReason: input.disabledReason.trim() || undefined } : {}),
+      ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId.trim() || undefined } : {}),
+      ...(input.threadId !== undefined ? { threadId: input.threadId.trim() || undefined } : {}),
+      schedule,
+      scheduleAnchorAt: input.schedule !== undefined ? updatedAt : (existing.scheduleAnchorAt ?? existing.createdAt),
+      ...(input.triggerModes !== undefined ? { triggerModes: input.triggerModes } : {}),
+      ...(input.source !== undefined ? { source: input.source } : {}),
+      ...(input.systemAction !== undefined ? { systemAction: input.systemAction } : {}),
+      ...(input.description !== undefined ? { description: input.description.trim() || undefined } : {}),
+      ...(input.defaultModel !== undefined ? { defaultModel: input.defaultModel.trim() || undefined } : {}),
+      ...(input.toolResourceIds !== undefined ? { toolResourceIds: input.toolResourceIds } : {}),
+      ...(input.prompt !== undefined ? { prompt: normalizePrompt(input.prompt) } : {}),
+      ...(shouldRecomputeNextRun ? { nextRunAt: enabled ? getNextAutomationRunAt(schedule, updatedAt, input.schedule !== undefined ? updatedAt : (existing.scheduleAnchorAt ?? existing.createdAt)) : null } : {}),
+      updatedAt
+    };
+    index.jobs[targetIndex] = updated;
+    writeIndex(index);
+    return updated;
+  });
 }
 
 export function deleteAutomationJob(input: AutomationDeleteJobInput): { ok: true } {
-  const index = readIndex();
-  const next = index.jobs.filter((item) => item.id !== input.id);
-  if (next.length === index.jobs.length) {
-    throw new Error(`自动化任务不存在: ${input.id}`);
-  }
-  writeIndex({ ...index, jobs: next });
-  return { ok: true };
+  return withIndexMutationLock(automationIndexLockPath(), () => {
+    const index = readIndex();
+    const next = index.jobs.filter((item) => item.id !== input.id);
+    if (next.length === index.jobs.length) {
+      throw new Error(`自动化任务不存在: ${input.id}`);
+    }
+    writeIndex({ ...index, jobs: next });
+    return { ok: true };
+  });
 }
 
 export function recordAutomationJobRun(input: { id: string; startedAt: number }): AutomationJob {
-  const index = readIndex();
-  const targetIndex = index.jobs.findIndex((item) => item.id === input.id);
-  if (targetIndex < 0) {
-    throw new Error(`自动化任务不存在: ${input.id}`);
-  }
-  const existing = index.jobs[targetIndex] as AutomationJob;
-  const updated: AutomationJob = {
-    ...existing,
-    lastRunAt: input.startedAt,
-    nextRunAt: existing.enabled ? getNextAutomationRunAt(existing.schedule, input.startedAt, existing.scheduleAnchorAt ?? existing.createdAt) : null,
-    updatedAt: Date.now()
-  };
-  index.jobs[targetIndex] = updated;
-  writeIndex(index);
-  return updated;
+  return withIndexMutationLock(automationIndexLockPath(), () => {
+    const index = readIndex();
+    const targetIndex = index.jobs.findIndex((item) => item.id === input.id);
+    if (targetIndex < 0) {
+      throw new Error(`自动化任务不存在: ${input.id}`);
+    }
+    const existing = index.jobs[targetIndex] as AutomationJob;
+    const updated: AutomationJob = {
+      ...existing,
+      lastRunAt: input.startedAt,
+      nextRunAt: existing.enabled ? getNextAutomationRunAt(existing.schedule, input.startedAt, existing.scheduleAnchorAt ?? existing.createdAt) : null,
+      updatedAt: Date.now()
+    };
+    index.jobs[targetIndex] = updated;
+    writeIndex(index);
+    return updated;
+  });
 }
 
 export function advanceAutomationJobSchedule(input: { id: string; fromAt: number }): AutomationJob {
-  const index = readIndex();
-  const targetIndex = index.jobs.findIndex((item) => item.id === input.id);
-  if (targetIndex < 0) throw new Error(`自动化任务不存在: ${input.id}`);
-  const existing = index.jobs[targetIndex] as AutomationJob;
-  const updated: AutomationJob = {
-    ...existing,
-    nextRunAt: existing.enabled
-      ? getNextAutomationRunAt(existing.schedule, input.fromAt, existing.scheduleAnchorAt ?? existing.createdAt)
-      : null,
-    updatedAt: Date.now()
-  };
-  index.jobs[targetIndex] = updated;
-  writeIndex(index);
-  return updated;
+  return withIndexMutationLock(automationIndexLockPath(), () => {
+    const index = readIndex();
+    const targetIndex = index.jobs.findIndex((item) => item.id === input.id);
+    if (targetIndex < 0) throw new Error(`自动化任务不存在: ${input.id}`);
+    const existing = index.jobs[targetIndex] as AutomationJob;
+    const updated: AutomationJob = {
+      ...existing,
+      nextRunAt: existing.enabled
+        ? getNextAutomationRunAt(existing.schedule, input.fromAt, existing.scheduleAnchorAt ?? existing.createdAt)
+        : null,
+      updatedAt: Date.now()
+    };
+    index.jobs[targetIndex] = updated;
+    writeIndex(index);
+    return updated;
+  });
 }
 
 export function listAutomationJobsReferencingProject(input: {
@@ -244,28 +263,30 @@ export function disableAutomationJobsReferencingProject(input: {
   threadIds?: Set<string>;
   reason: string;
 }): AutomationJob[] {
-  const threadIds = input.threadIds ?? new Set<string>();
-  const index = readIndex();
-  const now = Date.now();
-  let changed = false;
-  const updatedJobs = index.jobs.map((job) => {
-    const affected = job.workspaceId === input.workspaceId
-      || (typeof job.threadId === "string" && threadIds.has(job.threadId));
-    if (!affected) return job;
-    changed = true;
-    return {
-      ...job,
-      enabled: false,
-      disabledReason: input.reason,
-      nextRunAt: null,
-      updatedAt: now
-    } satisfies AutomationJob;
+  return withIndexMutationLock(automationIndexLockPath(), () => {
+      const threadIds = input.threadIds ?? new Set<string>();
+      const index = readIndex();
+      const now = Date.now();
+      let changed = false;
+      const updatedJobs = index.jobs.map((job) => {
+        const affected = job.workspaceId === input.workspaceId
+          || (typeof job.threadId === "string" && threadIds.has(job.threadId));
+        if (!affected) return job;
+        changed = true;
+        return {
+          ...job,
+          enabled: false,
+          disabledReason: input.reason,
+          nextRunAt: null,
+          updatedAt: now
+        } satisfies AutomationJob;
+      });
+      if (changed) {
+        writeIndex({ ...index, jobs: updatedJobs });
+      }
+      return updatedJobs.filter((job) =>
+        job.workspaceId === input.workspaceId
+          || (typeof job.threadId === "string" && threadIds.has(job.threadId))
+      );
   });
-  if (changed) {
-    writeIndex({ ...index, jobs: updatedJobs });
-  }
-  return updatedJobs.filter((job) =>
-    job.workspaceId === input.workspaceId
-    || (typeof job.threadId === "string" && threadIds.has(job.threadId))
-  );
 }
