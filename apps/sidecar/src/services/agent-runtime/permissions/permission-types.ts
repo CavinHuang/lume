@@ -71,6 +71,9 @@ export interface PermissionClassifierInput {
   description?: string;
   /** 实际执行 shell 方言：POSIX bash 在场时不套用 PowerShell 词表（iex/ri 等撞名命令防误拦） */
   shellKind?: "bash" | "powershell";
+  /** 测试注入口：shellKind 缺省时方言解析的平台与环境依据；缺省按真实进程解析（与 RuntimeToolSafetyContext 同形） */
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
 }
 
 export type PermissionClassifierLlm = (prompt: string) => Promise<string>;

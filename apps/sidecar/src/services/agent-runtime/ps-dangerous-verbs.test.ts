@@ -63,15 +63,18 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
     for (const [key] of saved) delete process.env[key];
     try {
       resetWindowsBashDiscoveryForTests();
-      // env 缺省走真实 process.env，才能命中「真实环境 + 未决」分支
+      // env 缺省走真实 process.env，才能命中「真实环境 + 未决」分支；platform 显式钉死，
+      // 方言解析不随宿主平台漂移（Ubuntu CI 上分类器无参缺省曾读作 linux→bash 使词表关闭）
       const coldStart: RuntimeToolSafetyContext = { platform: "win32" };
       const firstCommand = { toolName: "Bash" as const, command: "Remove-Item -Recurse ~" };
+      // 分类器与 guardrail 同口径注入 win32（分类器内部转小写，大小写无关）
+      const classifyColdStart = { ...firstCommand, toolName: "bash", platform: "win32" as const };
 
       expect(evaluateRuntimeToolSafety(firstCommand.toolName, { command: firstCommand.command }, coldStart)).toEqual({
         behavior: "deny",
         reason: "禁止删除根目录或用户主目录"
       });
-      const classification = classifyHeuristic(firstCommand);
+      const classification = classifyHeuristic(classifyColdStart);
       expect(classification.riskLevel).not.toBe("low");
       expect(classification.shouldAsk).toBe(true);
 
@@ -80,12 +83,38 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
       expect(
         evaluateRuntimeToolSafety(firstCommand.toolName, { command: firstCommand.command }, coldStart).behavior
       ).not.toBe("deny");
-      expect(classifyHeuristic(firstCommand).riskLevel).toBe("low");
+      expect(classifyHeuristic(classifyColdStart).riskLevel).toBe("low");
     } finally {
       for (const [key, value] of saved) {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
       }
+      resetWindowsBashDiscoveryForTests();
+    }
+  });
+
+  test("non-win32 hosts keep the exact bash reading while Windows discovery is unsettled", () => {
+    // 钉住非 win32 未决态既定语义：保守翻转只服务 win32 无 bash 机器的冷启动窗口。
+    // 非 win32 宿主上 resolveShellInvocation 恒以 bash -c 执行，where.exe 发现也只在
+    // win32 运行，「未决」并非真实状态；词表跨平台套用会把 POSIX 撞名命令（iex/ri）
+    // 翻成弹审。Linux 装 pwsh 的场景外层解释器仍是 bash，显式 pwsh 前缀由
+    // parse-unavailable 短路兜底（见 runtime-tool-safety POSIX 用例），不依赖本门控；
+    // 若未来产品化「非 Windows 配置 pwsh 为执行 shell」，应走显式配置输入而非平台推断。
+    // guardrail 断言只钉词表门控本身：无 natives 环境（Ubuntu CI 同款）会落到
+    // parse-unavailable 通用确认，与方言无关，故不硬编码 allow。
+    resetWindowsBashDiscoveryForTests();
+    try {
+      const command = "Remove-Item -Recurse ~";
+      const decision = evaluateRuntimeToolSafety("Bash", { command }, { platform: "linux" });
+      expect(decision.behavior).not.toBe("deny");
+      expect(
+        decision.behavior === "confirm" &&
+          decision.reason !== "命令包含无法安全解析的 Shell 或 PowerShell 语法，需要一次性确认"
+      ).toBe(false);
+      const classification = classifyHeuristic({ toolName: "bash", command, platform: "linux" });
+      expect(classification.riskLevel).toBe("low");
+      expect(classification.shouldAsk).toBe(false);
+    } finally {
       resetWindowsBashDiscoveryForTests();
     }
   });

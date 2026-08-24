@@ -116,8 +116,10 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
 
   const tool = input.toolName.toLowerCase();
   if (tool === "bash" || tool === "execute_command") {
-    // 缺省方言用保守读法：bash 发现未决的冷启动窗口 fail-closed，与 guardrail 正则层同口径
-    const powershellRulesActive = (input.shellKind ?? shellKindConservative()) === "powershell";
+    // 缺省方言用保守读法：bash 发现未决的冷启动窗口 fail-closed，与 guardrail 正则层同口径；
+    // 平台/环境走可注入通道，方言门控不得绑死宿主进程平台（与 RuntimeToolSafetyContext 同形）
+    const powershellRulesActive =
+      (input.shellKind ?? shellKindConservative(input.platform ?? process.platform, input.env ?? process.env)) === "powershell";
     const shellPatterns = powershellRulesActive ? [...MEDIUM_PATTERNS, ...POWERSHELL_MEDIUM_PATTERNS] : MEDIUM_PATTERNS;
     for (const pattern of shellPatterns) {
       if (pattern.test(value)) {
