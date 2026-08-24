@@ -561,6 +561,29 @@ describe("BashTool output streaming snapshots", () => {
     expect(tailTruncate("api_key=supersecret\nplain", 10, 1000).content).not.toContain("supersecret");
   });
 
+  test("tailTruncate never leaves a split surrogate pair at a char-cut edge", () => {
+    // 10 emoji (20 UTF-16 units) + "end": slice(-21) opens inside the first
+    // emoji; the orphan low surrogate must be dropped, not emitted.
+    const cut = tailTruncate(`${"🎉".repeat(10)}end`, 1000, 21);
+    expect(cut.content.charCodeAt(0)).not.toBe(0xdf89);
+    expect(cut.content.endsWith("end")).toBeTrue();
+
+    // Trailing edge: window ending between the halves drops the lone high.
+    const tailCut = tailTruncate(`end${"🎉".repeat(10)}`, 1000, 21);
+    const last = tailCut.content.charCodeAt(tailCut.content.length - 1);
+    expect(last).not.toBe(0xd83c);
+  });
+
+  test("tailTruncate does not flag truncation when only redaction grew the text", () => {
+    // Raw stream fits the budget; redacting the short secret pushes the string
+    // past maxChars. No cap actually bit → not truncated.
+    const text = `${"x".repeat(90)} token=a`;
+    expect(text.length).toBeLessThan(100);
+    const result = tailTruncate(text, 500, 100);
+    expect(result.truncated).toBeFalse();
+    expect(result.content).toContain("[redacted]");
+  });
+
   test("streams throttled snapshots with tool_use_id over the live channel", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-bash-stream-"));
     const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
@@ -636,5 +659,62 @@ describe("BashTool output streaming snapshots", () => {
     // Tail semantics: the end of the stream survives, the head may not.
     expect(content).toContain("\n600\n");
     expect(content).not.toContain("stdout:\n1\n");
+  }, 20_000);
+
+  test("appends a dual-stream truncation footer when both streams overflow", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-footer-dual-"));
+    const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
+    const command = isPowerShellShell
+      ? "1..600 | ForEach-Object { $_ }; 1..600 | ForEach-Object { [Console]::Error.WriteLine(\"e$_\") }"
+      : "seq 1 600; seq 1 600 >&2";
+    const context = { cwd: root, sessionId: "stream-footer-dual-test" };
+    const result = await BashTool.call({ command }, context);
+    expect(result.is_error).toBeFalsy();
+    const footer = String(result.content).match(
+      /\[Showing last (\d+) of (\d+) lines \(stdout\) and (\d+) of (\d+) lines \(stderr\)\. Full output: .+\]/,
+    );
+    expect(footer).toBeTruthy();
+    expect(Number(footer?.[2])).toBeGreaterThan(Number(footer?.[1]));
+    expect(Number(footer?.[4])).toBeGreaterThan(Number(footer?.[3]));
+  }, 20_000);
+
+  test("streams snapshots on the durable path too (artifactsRoot present)", async () => {
+    // bun 调度器怪癖：进程仅剩 unref 句柄时 unref 定时器会被整体饿死（生产
+    // node 侧恒有活跃句柄，#368 后台路径亦不依赖该调度）。durable 前台的
+    // delay 竞速依赖定时器触发，挂一个非 unref 心跳兜住。
+    const keepAlive = setInterval(() => {}, 1_000);
+    try {
+      const root = await mkdtemp(join(tmpdir(), "lume-bash-stream-durable-"));
+      const artifactsRoot = join(root, "artifacts");
+      const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
+      const command = isPowerShellShell
+        ? "Write-Output durable-one; Start-Sleep -Milliseconds 80; Write-Output durable-two"
+        : "printf 'durable-one\\n'; sleep 0.08; printf 'durable-two\\n'";
+      const liveEvents: SDKMessage[] = [];
+      const context = {
+        cwd: root,
+        sessionId: "session-durable-stream",
+        artifactsRoot,
+        toolUseId: "toolu_durable_test",
+        emitEvent: () => {},
+        emitLiveEvent: (event: SDKMessage) => liveEvents.push(event),
+      };
+      const result = await BashTool.call({ command }, context);
+      expect(result.is_error).toBeFalsy();
+      const snapshots = liveEvents.filter((event) =>
+        event.type === "system" && event.subtype === "local_command_output"
+      );
+      expect(snapshots.length).toBeGreaterThan(0);
+      for (const snapshot of snapshots) {
+        expect(snapshot.tool_use_id).toBe("toolu_durable_test");
+      }
+      const lastContent = String(snapshots[snapshots.length - 1]?.content ?? "");
+      expect(lastContent).toContain("durable-one");
+      expect(lastContent).toContain("durable-two");
+      // 终态结果仍带 stdout 段（此处未截断则无 footer，仅钉 tail 内容存活）
+      expect(String(result.content)).toContain("stdout:");
+    } finally {
+      clearInterval(keepAlive);
+    }
   }, 20_000);
 });

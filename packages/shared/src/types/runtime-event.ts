@@ -169,7 +169,8 @@ export interface ToolPermissionTimeoutRuntimeEvent extends RuntimeEventBase {
  * Transient streaming snapshot of a foreground tool's accumulated output tail
  * (Bash today). Snapshot semantics — each event carries the full bounded tail,
  * consumers replace by stable id (`${runId}:tool-output:${toolCallId}`).
- * Never persisted to run items; live channel only.
+ * Never persisted to run items; rides the live channel, falling back to the
+ * buffered channel when the host has no live receiver.
  */
 export interface ToolOutputRuntimeEvent extends RuntimeEventBase {
   type: "tool.output";

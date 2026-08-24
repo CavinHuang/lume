@@ -500,7 +500,6 @@ async function startDirectShellTask({
     const finish = async (code: number | null, spawnError?: string) => {
       if (settled) return
       settled = true
-      emitStreamSnapshot.flush()
       if (timeoutTimer) clearTimeout(timeoutTimer)
       context.abortSignal?.removeEventListener('abort', abortHandler)
       if (progressTimer) clearInterval(progressTimer)
@@ -509,6 +508,8 @@ async function startDirectShellTask({
       if (stdoutTail) stdoutAccumulator.append(stdoutTail)
       if (stderrTail) stderrAccumulator.append(stderrTail)
       if (spawnError) stderrAccumulator.append(spawnError)
+      // Flush after the decoder tails land so the last snapshot is complete.
+      emitStreamSnapshot.flush()
       await writeChain.catch(() => undefined)
       const interpretation = interpretShellExit(command, code ?? 1)
       if (terminationReason === 'completed' && code !== 0 && interpretation.isError) terminationReason = 'nonzero'
@@ -794,11 +795,12 @@ async function startDurableShellTask({
         // Drain the worker's final writes to EOF; a single bounded read can
         // lose tail output written just before the process exited.
         while (await emitNewOutput()) { /* drain until no new bytes */ }
-        emitStreamSnapshot.flush()
         const stdoutTail = stdoutDecoder.end()
         const stderrTail = stderrDecoder.end()
         if (stdoutTail) stdoutAccumulator.append(stdoutTail)
         if (stderrTail) stderrAccumulator.append(stderrTail)
+        // Flush after the decoder tails land so the last snapshot is complete.
+        emitStreamSnapshot.flush()
         const execution = normalizePersistedExecution(
           command,
           purpose,
@@ -1141,26 +1143,49 @@ interface TailTruncation {
   shownLines: number
 }
 
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff
+}
+
 /**
  * Keep the tail of `text` within both bounds, whichever bites first (command
  * errors live at the end, so the tail is the useful half). Redacts first; a
- * char-boundary cut restarts at the next line break so sections and snapshots
- * never open mid-line.
+ * char-boundary cut restarts at the next line break when one exists and never
+ * leaves a split surrogate pair at either edge. `truncated` reflects caps that
+ * actually bit — redaction can grow the text past the budget without counting
+ * as truncation.
  */
 export function tailTruncate(text: string, maxLines: number, maxChars: number): TailTruncation {
   const value = redactSensitiveText(text)
   const lines = value.split('\n')
   const totalLines = value.length === 0 ? 0 : lines.length
-  let kept = lines.length > maxLines ? lines.slice(-maxLines) : lines
-  let content = kept.join('\n')
+  let content = value
+  let cutLines = false
+  let cutChars = false
+  if (lines.length > maxLines) {
+    content = lines.slice(-maxLines).join('\n')
+    cutLines = true
+  }
   if (content.length > maxChars) {
+    // Redaction can push a within-budget stream past the char cap; the guard
+    // cut still runs (bound holds), but only a raw-stream overflow counts as
+    // actual truncation.
+    const rawOverBudget = text.length > maxChars
     content = content.slice(-maxChars)
     const newlineAt = content.indexOf('\n')
     if (newlineAt >= 0 && newlineAt < content.length - 1) content = content.slice(newlineAt + 1)
+    // A UTF-16 boundary cut can split a surrogate pair; drop the orphan half.
+    if (isLowSurrogate(content.charCodeAt(0))) content = content.slice(1)
+    if (isHighSurrogate(content.charCodeAt(content.length - 1))) content = content.slice(0, -1)
+    cutChars = rawOverBudget
   }
   return {
     content,
-    truncated: content !== value,
+    truncated: cutLines || cutChars,
     totalLines,
     shownLines: content.length === 0 ? 0 : content.split('\n').length,
   }
@@ -1205,6 +1230,9 @@ function combinedStreamSnapshot(stdout: PreviewAccumulator, stderr: PreviewAccum
 }
 
 function truncationFooter(stdout: TailTruncation, stderr: TailTruncation, outputFile: string): string | undefined {
+  if (stdout.truncated && stderr.truncated) {
+    return `[Showing last ${stdout.shownLines} of ${stdout.totalLines} lines (stdout) and ${stderr.shownLines} of ${stderr.totalLines} lines (stderr). Full output: ${outputFile}]`
+  }
   const stats = stdout.truncated ? stdout : stderr.truncated ? stderr : undefined
   if (!stats) return undefined
   return `[Showing last ${stats.shownLines} of ${stats.totalLines} lines. Full output: ${outputFile}]`
