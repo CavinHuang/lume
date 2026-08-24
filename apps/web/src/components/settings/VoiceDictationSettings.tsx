@@ -45,6 +45,7 @@ function ShortcutCaptureRow({ value, onApply }: {
 }) {
   const [recording, setRecording] = React.useState(false)
   const [applying, setApplying] = React.useState(false)
+  const [hint, setHint] = React.useState<string | null>(null)
 
   const handleKeyDown = async (event: React.KeyboardEvent) => {
     if (!recording) return
@@ -52,11 +53,17 @@ function ShortcutCaptureRow({ value, onApply }: {
     event.stopPropagation()
     if (event.key === 'Escape') {
       setRecording(false)
+      setHint(null)
       return
     }
     const accelerator = keyboardEventToAccelerator(event)
-    if (!accelerator) return
+    if (!accelerator) {
+      // 无效按键不再静默吞掉——明确告知支持范围，避免用户以为录制坏了。
+      setHint('不支持该按键，请使用字母/数字/F1-F12/方向键等搭配 Ctrl 或 Alt')
+      return
+    }
     setRecording(false)
+    setHint(null)
     setApplying(true)
     try {
       const result = await onApply(accelerator)
@@ -69,20 +76,23 @@ function ShortcutCaptureRow({ value, onApply }: {
   }
 
   return (
-    <button
-      type="button"
-      onClick={() => setRecording(true)}
-      onKeyDown={(event) => void handleKeyDown(event)}
-      onBlur={() => setRecording(false)}
-      className={cn(
-        'h-9 min-w-[140px] rounded-lg border px-3 text-left font-mono text-body',
-        recording
-          ? 'border-[color:color-mix(in_oklab,var(--brand)_46%,var(--lume-border-strong))] text-[var(--brand)]'
-          : 'border-[var(--lume-border-subtle)] text-[var(--text-1)]',
-      )}
-    >
-      {recording ? '按下新的组合键…' : applying ? '应用中…' : value}
-    </button>
+    <div className="min-w-0">
+      <button
+        type="button"
+        onClick={() => { setHint(null); setRecording(true) }}
+        onKeyDown={(event) => void handleKeyDown(event)}
+        onBlur={() => { setRecording(false); setHint(null) }}
+        className={cn(
+          'h-9 min-w-[140px] rounded-lg border px-3 text-left font-mono text-body',
+          recording
+            ? 'border-[color:color-mix(in_oklab,var(--brand)_46%,var(--lume-border-strong))] text-[var(--brand)]'
+            : 'border-[var(--lume-border-subtle)] text-[var(--text-1)]',
+        )}
+      >
+        {recording ? '按下新的组合键…' : applying ? '应用中…' : value}
+      </button>
+      {hint ? <div className="mt-1 text-caption text-[var(--lume-warning)]">{hint}</div> : null}
+    </div>
   )
 }
 
@@ -127,6 +137,8 @@ export function VoiceDictationSettings() {
   const [saving, setSaving] = React.useState(false)
   const [testing, setTesting] = React.useState(false)
   const [micDenied, setMicDenied] = React.useState(false)
+  // blur 前面板被卸载（键盘切 tab/关窗）不会触发 onBlur——已输入内容经此兜底落盘。
+  const pendingUpdateRef = React.useRef<VoiceDictationSettingsUpdate | null>(null)
 
   React.useEffect(() => {
     invoke<VoiceDictationSettings>('voice_dictation_get_settings', null)
@@ -136,14 +148,29 @@ export function VoiceDictationSettings() {
     invoke<{ status: string }>('voice_dictation_check_microphone', null)
       .then((permission) => setMicDenied(permission.status === 'denied'))
       .catch(() => undefined)
+    return () => {
+      if (pendingUpdateRef.current) {
+        invoke('voice_dictation_update_settings', pendingUpdateRef.current).catch(() => {})
+        pendingUpdateRef.current = null
+      }
+    }
   }, [])
 
   const credentialsComplete = Boolean(settings && settings.appId && settings.accessToken && settings.resourceId)
 
-  const applyUpdate = React.useCallback(async (updates: VoiceDictationSettingsUpdate) => {
+  /** 本地编辑立即上屏并登记未保存变更；onBlur 时与显式保存共用 flush。 */
+  const editLocally = React.useCallback((updates: VoiceDictationSettingsUpdate) => {
+    pendingUpdateRef.current = { ...pendingUpdateRef.current, ...updates }
+    setSettings((current) => (current ? { ...current, ...updates } : current))
+  }, [])
+
+  const applyUpdate = React.useCallback(async (updates?: VoiceDictationSettingsUpdate) => {
+    const payload = { ...pendingUpdateRef.current, ...updates }
+    pendingUpdateRef.current = null
+    if (Object.keys(payload).length === 0) return null
     setSaving(true)
     try {
-      const next = await invoke<VoiceDictationSettingsUpdateResult>('voice_dictation_update_settings', updates)
+      const next = await invoke<VoiceDictationSettingsUpdateResult>('voice_dictation_update_settings', payload)
       setSettings(next)
       return next
     } catch (error) {
@@ -212,8 +239,8 @@ export function VoiceDictationSettings() {
         <SettingsRow label="APP ID">
           <Input
             value={settings.appId}
-            onChange={(event) => setSettings({ ...settings, appId: event.target.value })}
-            onBlur={() => void applyUpdate({ appId: settings.appId })}
+            onChange={(event) => editLocally({ appId: event.target.value })}
+            onBlur={() => void applyUpdate()}
             placeholder="服务商控制台的 APP ID"
           />
         </SettingsRow>
@@ -221,16 +248,16 @@ export function VoiceDictationSettings() {
           <Input
             type="password"
             value={settings.accessToken}
-            onChange={(event) => setSettings({ ...settings, accessToken: event.target.value })}
-            onBlur={() => void applyUpdate({ accessToken: settings.accessToken })}
+            onChange={(event) => editLocally({ accessToken: event.target.value })}
+            onBlur={() => void applyUpdate()}
             placeholder="访问凭证"
           />
         </SettingsRow>
         <SettingsRow label="Resource ID">
           <Input
             value={settings.resourceId}
-            onChange={(event) => setSettings({ ...settings, resourceId: event.target.value })}
-            onBlur={() => void applyUpdate({ resourceId: settings.resourceId })}
+            onChange={(event) => editLocally({ resourceId: event.target.value })}
+            onBlur={() => void applyUpdate()}
             placeholder="例如 volcengine_input_common"
           />
         </SettingsRow>
@@ -248,8 +275,8 @@ export function VoiceDictationSettings() {
         <SettingsRow label="自定义热词" hint="按行或逗号分隔，最多 100 个；提升专有名词识别率">
           <textarea
             value={settings.customHotwords}
-            onChange={(event) => setSettings({ ...settings, customHotwords: event.target.value })}
-            onBlur={() => void applyUpdate({ customHotwords: settings.customHotwords })}
+            onChange={(event) => editLocally({ customHotwords: event.target.value })}
+            onBlur={() => void applyUpdate()}
             rows={3}
             placeholder={'产品名\n人名\n术语'}
             className="w-full resize-y rounded-lg border border-[var(--lume-border-subtle)] bg-transparent px-2 py-1.5 text-body leading-6 text-[var(--text-1)]"

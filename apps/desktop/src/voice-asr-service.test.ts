@@ -90,9 +90,52 @@ describe('parseServerMessage', () => {
   })
 
   test('returns null for truncated or non-response frames', () => {
-    expect(parseServerMessage(Buffer.from([0x10]))).toBeNull()
+    expect(parseServerMessage(Buffer.from([0x11]))).toBeNull()
     const audioAck = buildServerFrame({ messageType: 0b1011, payload: jsonPayload({}) })
     expect(parseServerMessage(audioAck)).toBeNull()
+  })
+
+  test('error frame with sequence flag reads code past the 4-byte sequence', () => {
+    const header = Buffer.from([0x11, 0xf1, 0x00, 0x00]) // flags=0b0001 → hasSequence
+    const seq = Buffer.alloc(4)
+    const code = Buffer.alloc(4)
+    code.writeUInt32BE(45000001)
+    const message = Buffer.from('denied', 'utf-8')
+    const size = Buffer.alloc(4)
+    size.writeUInt32BE(message.length)
+    const frame = Buffer.concat([header, seq, code, size, message])
+    const parsed = parseServerMessage(frame)
+    expect(parsed?.isFinal).toBe(true)
+    expect(parsed?.text).toContain('denied')
+  })
+
+  test('extended header (headerSize=2) offsets payload reads by 8 bytes', () => {
+    const header = Buffer.from([0x12, 0x90, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00]) // headerSize=2
+    const payload = jsonPayload({ result: { text: 'ext' } })
+    const size = Buffer.alloc(4)
+    size.writeUInt32BE(payload.length)
+    const frame = Buffer.concat([header, size, payload])
+    expect(parseServerMessage(frame)?.text).toBe('ext')
+  })
+
+  test('non-JSON serialization returns null instead of throwing', () => {
+    const frame = buildServerFrame({ serialization: 0b0000, compression: 0, payload: Buffer.from('plain text') })
+    expect(parseServerMessage(frame)).toBeNull()
+  })
+
+  test('top-level text takes precedence over result candidates', () => {
+    const frame = buildServerFrame({
+      payload: jsonPayload({ text: '顶层文本', result: [{ text: '候选' }] }),
+    })
+    expect(parseServerMessage(frame)?.text).toBe('顶层文本')
+  })
+
+  test('payload size larger than actual bytes does not crash (clamped, dropped)', () => {
+    const header = Buffer.from([0x11, 0x90, 0x11, 0x00])
+    const size = Buffer.alloc(4)
+    size.writeUInt32BE(1 << 20)
+    const frame = Buffer.concat([header, size, Buffer.from([0x1f, 0x00])])
+    expect(() => parseServerMessage(frame)).not.toThrow()
   })
 
   test('buildAuthHeaders maps credentials to protocol headers', () => {

@@ -410,7 +410,8 @@ function requireMainWindowSender(context, command) {
 
 /** 当前受信任的渲染窗口集合：mainWindow 总在列；quickInputWindow / islandWindow 存在时纳入。 */
 function getTrustedWindows() {
-  return [mainWindow, quickInputWindow, islandWindow].filter(
+  const indicatorWin = voiceIndicatorManager?.getWindow()
+  return [mainWindow, quickInputWindow, islandWindow, indicatorWin].filter(
     (w): w is BrowserWindow => !!w && !w.isDestroyed(),
   )
 }
@@ -1167,11 +1168,18 @@ export function attachWebContentsSecurity(win, { allowNavigation }) {
     pluginAssets.revokeOwner(ownerWebContentsId)
   })
 
-  win.webContents.session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
-    // 语音听写需要麦克风采集；仅放行纯音频请求，其余（含摄像头）一律拒绝。
+  win.webContents.session.setPermissionRequestHandler((requestingWebContents, permission, callback, details) => {
+    // 语音听写需要麦克风采集。该 handler 作用于整个共享 session，必须把放行
+    // 收敛到受信窗口——否则渲染任意远程网页的窗口（页面抓取/阅读窗）会静默
+    // 获得麦克风。仅纯音频放行，摄像头与其余权限一律拒绝（fail-closed）。
     if (permission === 'media') {
+      const trusted = getTrustedWindows().some((trustedWin) => trustedWin.webContents === requestingWebContents)
+      if (!trusted) {
+        callback(false)
+        return
+      }
       const mediaTypes = (details as Electron.MediaAccessPermissionRequest | undefined)?.mediaTypes
-      callback(!mediaTypes || !mediaTypes.includes('video'))
+      callback(Array.isArray(mediaTypes) && !mediaTypes.includes('video'))
       return
     }
     callback(false)
@@ -1692,6 +1700,10 @@ function registerVoiceDictationShortcut(accelerator: string): boolean {
   const registered = globalShortcut.register(next, handleVoiceDictationShortcut)
   if (registered) {
     registeredVoiceDictationShortcut = next
+  } else {
+    // 新键被占用：标志置空以解除与已解绑旧键的虚假一致，
+    // 否则回滚注册会命中早退分支，旧键静默死亡直到重启。
+    registeredVoiceDictationShortcut = ''
   }
   return registered
 }
@@ -1708,6 +1720,7 @@ function sendVoiceDictationEvent(ownerWebContentsId: number | undefined, channel
 }
 
 // 语音听写指示条管理（窗口创建/安全闸/生命周期在 voice-dictation-window.ts）。
+let voiceFlashTimer: ReturnType<typeof setTimeout> | null = null
 let voiceIndicatorManager: VoiceIndicatorManager | null = null
 
 function getVoiceIndicatorManager(): VoiceIndicatorManager {
@@ -1921,7 +1934,8 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     }
     case 'voice_dictation_audio_chunk': {
       const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
-      if (payload.data instanceof ArrayBuffer && sessionId) {
+      // 正常 chunk ~6.4KB（200ms@16kHz PCM16）；上限是受信 renderer 被攻破后的防御纵深。
+      if (payload.data instanceof ArrayBuffer && sessionId && payload.data.byteLength <= 256 * 1024) {
         sendVoiceAsrAudio(sessionId, payload.data)
       }
       return null
@@ -1958,10 +1972,13 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       return null
     case 'desktop_flash_window': {
       // 听写完成时窗口不在前台 → 任务栏闪烁提醒（Windows）/ Dock 跳动（macOS）。
+      // 模块级 timer 复用：连续完成多次听写时不堆叠定时器提前熄灭上一次提醒。
       const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
       if (!win || win.isFocused()) return null
       win.flashFrame(true)
-      setTimeout(() => {
+      if (voiceFlashTimer) clearTimeout(voiceFlashTimer)
+      voiceFlashTimer = setTimeout(() => {
+        voiceFlashTimer = null
         try {
           if (!win.isDestroyed()) win.flashFrame(false)
         } catch {

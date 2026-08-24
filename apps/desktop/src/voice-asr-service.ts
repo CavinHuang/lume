@@ -43,6 +43,8 @@ const HOTWORD_SEPARATOR_PATTERN = /[\n,，、;；]+/u
 // 发送 last 帧后等服务端回最终结果的收尾宽限。
 const CLOSE_AFTER_STOP_MS = 800
 const CONNECT_TIMEOUT_MS = 10_000
+// 并发会话上限：每条会话都持用户凭证连 ASR 端点，防异常调用方烧配额。
+const MAX_ACTIVE_SESSIONS = 4
 
 interface ServerUtterance {
   text?: string
@@ -269,12 +271,17 @@ export function parseServerMessage(data: Buffer): ParsedServerMessage | null {
 
   const payloadSize = data.readUInt32BE(offset)
   offset += 4
-  const payload = data.subarray(offset, offset + payloadSize)
-  const decoded = compression === COMPRESSION_GZIP ? gunzipSync(payload) : payload
-
-  if (serialization !== SERIALIZATION_JSON) return null
-  const parsed = JSON.parse(decoded.toString('utf-8')) as unknown
-  return parseServerPayload(parsed, flags === FLAG_SERVER_LAST_SEQUENCE)
+  // 解析函数契约：任何畸形帧（截断/坏 gzip/坏 JSON）都返回 null 而非抛错，
+  // 由 message handler 统一丢弃该帧继续收流。
+  try {
+    const payload = data.subarray(offset, offset + payloadSize)
+    const decoded = compression === COMPRESSION_GZIP ? gunzipSync(payload) : payload
+    if (serialization !== SERIALIZATION_JSON) return null
+    const parsed = JSON.parse(decoded.toString('utf-8')) as unknown
+    return parseServerPayload(parsed, flags === FLAG_SERVER_LAST_SEQUENCE)
+  } catch {
+    return null
+  }
 }
 
 /** 测试 ASR 连接，仅验证 WebSocket 握手与鉴权 Header。 */
@@ -325,6 +332,9 @@ export async function startVoiceAsrSession(
   handlers: VoiceAsrEventHandlers,
 ): Promise<void> {
   requireValidCredentials(settings)
+  if (activeSessions.size >= MAX_ACTIVE_SESSIONS) {
+    throw new Error('语音识别并发会话已达上限，请稍后再试')
+  }
   await cancelVoiceAsrSession(sessionId)
 
   handlers.onState({ sessionId, status: 'connecting', message: '正在连接语音识别...' })
@@ -341,9 +351,15 @@ export async function startVoiceAsrSession(
       reject(error)
     }
 
+    // 同 sessionId 重开时（cancel 的 terminate 异步派发 close），旧连接的
+    // close/error 回调晚于新会话 set 入 Map——必须身份校验，否则会误删新会话。
+    const removeIfCurrent = (): void => {
+      if (activeSessions.get(sessionId) === active) activeSessions.delete(sessionId)
+    }
+
     const timer = setTimeout(() => {
       active.closed = true
-      activeSessions.delete(sessionId)
+      removeIfCurrent()
       ws.terminate()
       fail(new Error('连接语音识别服务超时'))
     }, CONNECT_TIMEOUT_MS)
@@ -364,32 +380,37 @@ export async function startVoiceAsrSession(
           handlers.onTranscript({ sessionId, text: parsed.text, isFinal: parsed.isFinal })
         }
       } catch (error) {
-        handlers.onState({
-          sessionId,
-          status: 'error',
-          message: `解析识别响应失败: ${error instanceof Error ? error.message : '未知错误'}`,
-        })
+        // 单帧损坏不代表会话失效：丢弃该帧继续收流，
+        // 上报会话级 error 会让状态与仍在推送的转写数据流脱节。
+        console.warn('[voice-asr] dropped malformed frame:', error instanceof Error ? error.message : error)
       }
     })
 
     ws.once('close', () => {
       clearTimeout(timer)
       active.closed = true
-      activeSessions.delete(sessionId)
-      // 服务端静音超时会主动关会话；renderer 收到后可重开新会话续录。
-      handlers.onState({ sessionId, status: 'idle', message: 'asr_session_ended' })
+      removeIfCurrent()
+      // 未结算的 promise 必须了结（即使本连接已被同 id 重开顶替）。
       if (!settled) {
         settled = true
         reject(new Error('连接语音识别服务在建立前已关闭'))
       }
+      // 服务端静音超时会主动关会话；renderer 收到后可重开新会话续录。
+      // 已被同 id 新会话顶替时不广播，避免旧连接污染新会话状态机。
+      if (activeSessions.get(sessionId) !== active) return
+      handlers.onState({ sessionId, status: 'idle', message: 'asr_session_ended' })
     })
 
     ws.once('error', (error: Error) => {
       clearTimeout(timer)
       active.closed = true
-      activeSessions.delete(sessionId)
+      removeIfCurrent()
+      if (!settled) {
+        settled = true
+        reject(error)
+      }
+      if (activeSessions.get(sessionId) !== active) return
       handlers.onState({ sessionId, status: 'error', message: error.message })
-      fail(error)
     })
   })
 }

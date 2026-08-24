@@ -55,6 +55,14 @@ interface UseVoiceDictationOptions {
   onOpenSettings?: () => void
   /** 是否响应 Alt+V 全局快捷键切换；多入口并存时只让主输入框响应。 */
   respondsToGlobalToggle?: boolean
+  /**
+   * 宿主是否真的输出到系统光标（仅无焦点指示条为 true）。Lume 内嵌入口即使
+   * 设置选了 system-cursor 也必须退化为 onCommit——模拟粘贴会落进录音期间的
+   * 任意焦点元素，只有指示条唤起时的前台应用光标才是确定目标。
+   */
+  systemCursorOutput?: boolean
+  /** 开始前门控（如编辑排队消息时禁止开新听写）；返回 false 时静默忽略。 */
+  canStart?: () => boolean
 }
 
 /** 录音已进行的秒数（mm:ss 展示用）。 */
@@ -88,9 +96,11 @@ function getMicrophoneErrorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '无法启动麦克风'
 }
 
-export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalToggle = false }: UseVoiceDictationOptions) {
+export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalToggle = false, systemCursorOutput = false, canStart }: UseVoiceDictationOptions) {
   const instanceTokenRef = React.useRef(Symbol('voice-dictation-instance'))
   const cancelRecordingRef = React.useRef<(() => void) | null>(null)
+  const canStartRef = React.useRef(canStart)
+  canStartRef.current = canStart
   const [status, setStatus] = React.useState<VoiceDictationHookStatus>('idle')
   const [transcript, setTranscript] = React.useState('')
   // 音量走 ref 而非 state：onaudioprocess ~85ms 一次，若进 state 会以 ~12Hz
@@ -126,6 +136,8 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
   onCommitRef.current = onCommit
   const onOpenSettingsRef = React.useRef(onOpenSettings)
   onOpenSettingsRef.current = onOpenSettings
+  const systemCursorOutputRef = React.useRef(systemCursorOutput)
+  systemCursorOutputRef.current = systemCursorOutput
 
   // 录音计时：会话活跃期间每秒递增，归位随 settleIdle。
   React.useEffect(() => {
@@ -196,7 +208,7 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
         })
       return
     }
-    if (mode === 'system-cursor') {
+    if (mode === 'system-cursor' && systemCursorOutputRef.current) {
       // 写入唤起时前台应用的光标处；自动粘贴失败时主进程已把文本保留在剪贴板。
       invoke<{ success: boolean; message: string }>('voice_dictation_commit_cursor', { text: finalText })
         .then((result) => {
@@ -352,6 +364,7 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
   }, [settleIdle])
 
   const startRecording = React.useCallback(async (): Promise<void> => {
+    if (canStartRef.current && !canStartRef.current()) return
     // 单会话互斥：其他入口（问询卡等）正在听写时先取消，再开本实例的会话。
     if (activeSessionOwner !== instanceTokenRef.current && activeSessionCancel) {
       activeSessionCancel()
@@ -506,7 +519,7 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
         void stopRecording()
         return
       }
-      if (current === 'idle') {
+      if (current === 'idle' && (!canStartRef.current || canStartRef.current())) {
         void startRecording()
       }
     })

@@ -24,6 +24,8 @@ export interface VoiceIndicatorManager {
   /** 唤起/切换听写：新建窗口时等 renderer 监听器装好再派发，并去重连按。 */
   sendToggle(): void
   hide(): void
+  /** 供 main 把窗口纳入受信 sender 集合（lume:invoke 的 validateIpcSender）。 */
+  getWindow(): BrowserWindow | null
 }
 
 const INDICATOR_WIDTH = 380
@@ -77,27 +79,40 @@ export function createVoiceIndicatorManager(deps: VoiceIndicatorWindowDeps): Voi
     return next
   }
 
+  const repositionToCursorDisplay = (target: BrowserWindow): void => {
+    // 复用窗口跨显示器唤起时重新贴靠光标所在屏底部。
+    if (target.isDestroyed()) return
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+    const workArea = display.workArea
+    target.setPosition(
+      workArea.x + Math.round((workArea.width - INDICATOR_WIDTH) / 2),
+      workArea.y + workArea.height - INDICATOR_HEIGHT - 48,
+    )
+  }
+
   return {
     sendToggle(): void {
       const current = ensure()
-      const send = (): void => {
-        pendingToggle = false
+      const show = (): void => {
         if (current.isDestroyed()) return
+        repositionToCursorDisplay(current)
         current.showInactive()
         current.webContents.send('lume:event:voice-dictation:indicator-toggle')
       }
       if (current.webContents.isLoading()) {
-        // 加载中的连按只登记一次，避免多个 once 叠加导致双 toggle。
         if (pendingToggle) return
         pendingToggle = true
-        current.webContents.once('did-finish-load', () => setTimeout(send, READY_SEND_BUFFER_MS))
+        current.webContents.once('did-finish-load', () => setTimeout(show, READY_SEND_BUFFER_MS))
       } else {
-        send()
+        show()
       }
     },
     hide(): void {
       pendingToggle = false
       if (win && !win.isDestroyed()) win.hide()
+    },
+    getWindow(): BrowserWindow | null {
+      return win && !win.isDestroyed() ? win : null
     },
   }
 }

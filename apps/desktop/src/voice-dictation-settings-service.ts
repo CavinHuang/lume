@@ -8,7 +8,6 @@
 import type {
   VoiceDictationSettings,
   VoiceDictationSettingsUpdate,
-  VoiceDictationSettingsUpdateResult,
 } from '@lume/shared'
 import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
 import type { SettingsBroker } from './settings/settings-broker'
@@ -54,18 +53,21 @@ export function readVoiceDictationSettings(broker: SettingsBroker): VoiceDictati
 export function updateVoiceDictationSettings(
   broker: SettingsBroker,
   updates: VoiceDictationSettingsUpdate,
-  options?: { previousShortcut?: string },
-): VoiceDictationSettingsUpdateResult {
+): VoiceDictationSettings {
   const current = readVoiceDictationSettings(broker)
+  // IPC payload 不经校验直接展开会把非 string 脏值落盘，下次读取被 coerce
+  // 静默清空（凭证无声丢失）——逐字段类型收敛后再合并。
   const next: VoiceDictationSettings = {
-    ...current,
-    ...updates,
+    appId: coerceString(updates.appId, current.appId),
+    accessToken: coerceString(updates.accessToken, current.accessToken),
+    resourceId: coerceString(updates.resourceId, current.resourceId),
+    language: coerceString(updates.language, current.language),
+    customHotwords: coerceString(updates.customHotwords, current.customHotwords),
     outputMode: coerceOutputMode(updates.outputMode ?? current.outputMode),
     shortcut: (typeof updates.shortcut === 'string' && updates.shortcut.trim())
       ? updates.shortcut.trim()
       : current.shortcut,
   }
   broker.mutate((prev) => ({ ...prev, voiceDictation: next }))
-  // 快捷键变更时由调用方负责重注册；此处仅回报是否需要。
-  return { ...next, shortcutRegistered: options?.previousShortcut === undefined || next.shortcut === options.previousShortcut }
+  return next
 }

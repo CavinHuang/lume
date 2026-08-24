@@ -88,11 +88,13 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
     onCommit: (text) => setCustomAnswer((current) => (current && !/\s$/u.test(current) ? `${current} ${text}` : current + text)),
   })
 
-  // 卡片被忽略（Esc/隐藏）时终止进行中的听写：组件仍挂载但已无可见反馈，
+  // 自定义回答行（含迷你麦克风）因任何路径关闭——Esc 清空行、确认提交切题、
+  // 卡片整体隐藏——都必须终止进行中的听写：组件仍挂载但指示 UI 已消失，
   // 不主动取消会变成"隐形录音"持续上传音频。
+  const customAnswerRowOpen = !hidden && customQuestion !== null && customQuestion === activeQuestion?.question
   useEffect(() => {
-    if (hidden && voiceDictation.isActive) voiceDictation.cancel()
-  }, [hidden, voiceDictation.cancel, voiceDictation.isActive])
+    if (!customAnswerRowOpen && voiceDictation.isActive) voiceDictation.cancel()
+  }, [customAnswerRowOpen, voiceDictation.cancel, voiceDictation.isActive])
 
   useEffect(() => {
     if (hidden || typeof window === 'undefined') return
@@ -205,6 +207,8 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                       else if (voiceDictation.status !== 'stopping') void voiceDictation.start()
                     }}
                     title={voiceDictation.isActive ? '结束听写' : '语音输入'}
+                    aria-label={voiceDictation.isActive ? '结束听写' : '开始语音输入'}
+                    aria-pressed={voiceDictation.isActive}
                     className={cn(
                       'size-6 shrink-0 rounded-md',
                       voiceDictation.isActive

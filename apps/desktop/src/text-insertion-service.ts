@@ -130,17 +130,16 @@ function restoreClipboardSnapshot(snapshot: ClipboardSnapshot): void {
 function restoreClipboardBuffers(buffers: ClipboardBufferSnapshot[]): boolean {
   if (buffers.length === 0) return false
 
+  // Windows 上每次独立的剪贴板写入都是完整 Empty/Set 序列，逐格式写回会互相
+  // 清空——只能保住一种：挑最大的 buffer 单次写入，其余格式放弃。
+  const largest = buffers.reduce((a, b) => (b.buffer.length > a.buffer.length ? b : a))
   clipboard.clear()
-  let restored = false
-  for (const item of buffers) {
-    try {
-      clipboard.writeBuffer(item.format, item.buffer)
-      restored = true
-    } catch {
-      // 写回失败时继续尝试其他格式，最后还有结构化格式兜底。
-    }
+  try {
+    clipboard.writeBuffer(largest.format, largest.buffer)
+    return true
+  } catch {
+    return false
   }
-  return restored
 }
 
 async function triggerSystemPaste(): Promise<void> {
@@ -245,6 +244,14 @@ public static class LumeKeyboardPaste
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
+    [DllImport("user32.dll")]
+    private static extern uint GetClipboardSequenceNumber();
+
+    public static uint GetSequence()
+    {
+        return GetClipboardSequenceNumber();
+    }
+
     public static void Paste()
     {
         INPUT[] inputs = new INPUT[4];
@@ -273,5 +280,14 @@ public static class LumeKeyboardPaste
 "@
 
 Add-Type -TypeDefinition $signature
+
+# 高完整性级别（管理员权限）前台窗口会静默拦截非提升进程的 SendInput 且返回
+# 值仍是"成功"——用剪贴板序列号验证粘贴确实发生，未发生则报错走失败分支。
+$before = [LumeKeyboardPaste]::GetSequence()
 [LumeKeyboardPaste]::Paste()
+Start-Sleep -Milliseconds 400
+$after = [LumeKeyboardPaste]::GetSequence()
+if ($after -eq $before) {
+    throw "paste did not reach target window (input may have been blocked)"
+}
 `

@@ -760,13 +760,14 @@ export function AgentInput({
   }, [editor])
   cancelQueueEditRef.current = () => finishQueueEdit(true)
 
-  // 语音听写：最终文本追加到编辑器当前光标处（与文件引用注入同一模式）。
+  // 语音听写：最终文本追加到编辑器当前光标处。必须以纯文本节点插入——
+  // insertContent 的字符串参数会走 HTML 解析，转写中的 <div>/<3 等片段会被吞掉。
   const handleVoiceDictationCommit = useCallback((text: string) => {
     if (!editor) return
     const position = editor.state.selection.from
     const previousCharacter = editor.state.doc.textBetween(Math.max(0, position - 1), position)
     const prefix = previousCharacter && !/\s/u.test(previousCharacter) ? ' ' : ''
-    editor.chain().focus().insertContent(`${prefix}${text}`).run()
+    editor.chain().focus().insertContent({ type: 'text', text: `${prefix}${text}` }).run()
   }, [editor])
   const handleOpenVoiceDictationSettings = useCallback(() => {
     const next = resolveOpenDesktopAssistantSettingsState(tabs, 'voice-input')
@@ -778,6 +779,7 @@ export function AgentInput({
     onCommit: handleVoiceDictationCommit,
     onOpenSettings: handleOpenVoiceDictationSettings,
     respondsToGlobalToggle: true,
+    canStart: () => !editingQueuedMessageRef.current,
   })
 
   // 录音期间 Esc 取消本次听写（capture 拦截，避免编辑器/弹层先消费按键）。
@@ -1688,7 +1690,7 @@ export function AgentInput({
                           : 'bg-[var(--lume-text-secondary)]',
                       )}
                     />
-                    <span className="shrink-0 font-mono text-xs tabular-nums text-[var(--lume-text-secondary)]">
+                    <span className="shrink-0 font-mono text-ui tabular-nums text-[var(--lume-text-secondary)]">
                       {formatVoiceElapsed(voiceDictation.elapsedSeconds)}
                     </span>
                     <VolumeBars
@@ -1697,15 +1699,15 @@ export function AgentInput({
                       className="flex h-3.5 shrink-0 items-center gap-[2px]"
                       barClassName="w-[3px] rounded-full bg-[var(--lume-danger)] transition-[height] duration-100"
                     />
-                    <div className="min-w-0 flex-1 truncate text-xs text-[var(--lume-text-secondary)]">
+                    <div role="status" className="min-w-0 flex-1 truncate text-ui text-[var(--lume-text-secondary)]">
                       {voiceDictation.transcript || (voiceDictation.status === 'connecting' ? '正在连接语音识别…' : voiceDictation.status === 'stopping' ? '正在整理转写…' : '正在听写，Esc 取消')}
                     </div>
                     {voiceDictation.status !== 'stopping' && (
-                      <Button variant="ghost" type="button" className="h-6 px-1.5 text-xs" onClick={() => void voiceDictation.stop()} title="结束并插入（Enter 不适用，点此或再点麦克风）">
+                      <Button variant="ghost" type="button" className="h-6 px-1.5 text-ui" onClick={() => void voiceDictation.stop()} title="结束并插入（Enter 不适用，点此或再点麦克风）">
                         <Check size={13} />
                       </Button>
                     )}
-                    <Button variant="ghost" type="button" className="h-6 px-2 text-xs" onClick={voiceDictation.cancel}>
+                    <Button variant="ghost" type="button" className="h-6 px-2 text-ui" onClick={voiceDictation.cancel}>
                       取消
                     </Button>
                   </div>
@@ -2009,6 +2011,8 @@ export function AgentInput({
                       : 'border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_72%,transparent)] text-[var(--lume-text-secondary)] hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-text-primary)]',
                   )}
                   title={voiceDictation.isActive ? '结束听写（Alt+V）' : '语音输入（Alt+V）'}
+                  aria-label={voiceDictation.isActive ? '结束听写' : '开始语音输入'}
+                  aria-pressed={voiceDictation.isActive}
                   type="button"
                 >
                   {voiceDictation.status === 'connecting' || voiceDictation.status === 'stopping' ? (
