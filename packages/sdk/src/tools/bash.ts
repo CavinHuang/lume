@@ -28,11 +28,12 @@ const MAX_OUTPUT_BYTES = 50 * 1024 * 1024
 const MAX_RESULT_CHARS = 100_000
 const PREVIEW_CHARS = 4_000
 // Result previews keep the tail within both bounds (errors live at the end).
-// Per-stream char budget is half the final result budget so per-stream footers
-// fire before the single assembly-level budget has to cut (which cannot update
-// stream stats); the assembly budget then only absorbs label/footer overhead.
+// Per-stream char budget sits under half the final result budget by enough
+// margin that two full sections plus their labels/footers still fit the
+// assembler's structural budget — the assembly-level trim then only fires as a
+// pathological backstop (where it appends its own truncation footer).
 const RESULT_MAX_LINES = 500
-const RESULT_SECTION_MAX_CHARS = 50_000
+const RESULT_SECTION_MAX_CHARS = 49_500
 // Live streaming snapshots ride the live channel while the command runs.
 const STREAM_SNAPSHOT_THROTTLE_MS = 150
 const STREAM_SNAPSHOT_MAX_CHARS = 16_000
@@ -552,6 +553,7 @@ async function startDirectShellTask({
         code !== 0 && code !== null
           ? `Bash failed (${shellType}, exit code ${code}): ${interpretation.message}`
           : undefined,
+        { outputFile, footer },
       )
       const result = { output, isError: terminationReason !== 'completed' || interpretation.isError, execution }
       completedResult = result
@@ -821,7 +823,7 @@ async function startDurableShellTask({
         const normalizedExecution = applySemanticOutcome(execution, interpretation)
         const stdoutStats = stdoutAccumulator.snapshot()
         const stderrStats = stderrAccumulator.snapshot()
-        const output = formatShellResult(normalizedExecution, stdoutStats.content, stderrStats.content, interpretation, truncationFooter(stdoutStats, stderrStats, outputFile))
+        const output = formatShellResult(normalizedExecution, stdoutStats.content, stderrStats.content, interpretation, truncationFooter(stdoutStats, stderrStats, outputFile), outputFile)
         const result = {
           output,
           isError: executionOutcome(normalizedExecution) !== 'succeeded',
@@ -1069,6 +1071,7 @@ function formatShellResult(
   stderrPreview: string,
   interpretation: ReturnType<typeof interpretShellExit>,
   footer?: string,
+  outputFile?: string,
 ): string {
   const outcome = executionOutcome(execution)
   const firstLine = outcome === 'succeeded'
@@ -1086,6 +1089,7 @@ function formatShellResult(
     outcome !== 'succeeded' && execution.exitCode !== null && execution.exitCode !== undefined
       ? `Bash failed (${execution.shell ?? 'bash'}, exit code ${execution.exitCode}): ${interpretation.message}`
       : undefined,
+    { outputFile, footer },
   )
 }
 
@@ -1179,6 +1183,31 @@ function countTerminatedLines(text: string): number {
   return text.endsWith('\n') ? countNewlines(text) : countNewlines(text) + 1
 }
 
+/** Keep only the last `maxLines` terminated lines (shared: tailTruncate + raw accumulator window). */
+function keepLastLines(text: string, maxLines: number): { content: string; dropped: boolean } {
+  if (countTerminatedLines(text) <= maxLines) return { content: text, dropped: false }
+  const hadTrailingNewline = text.endsWith('\n')
+  const segments = text.split('\n')
+  const realLines = hadTrailingNewline ? segments.slice(0, -1) : segments
+  return {
+    content: realLines.slice(-maxLines).join('\n') + (hadTrailingNewline ? '\n' : ''),
+    dropped: true,
+  }
+}
+
+/**
+ * Raw-window slack over the display budgets. The accumulator stores raw text up
+ * to budget+slack; snapshot() redacts the WHOLE raw window first and only then
+ * trims to the display budgets — post-redaction trimming can never expose an
+ * unmatched secret suffix, because anything the redactor would match inside the
+ * final window was already seen together with its full pattern prefix. Ceiling:
+ * a secret longer than the slack straddling the raw cut edge stays a
+ * theoretical gap (ponytail: raise the slack or move to a stateful streaming
+ * redactor if that ever matters).
+ */
+const RAW_WINDOW_SLACK_CHARS = 512
+const RAW_WINDOW_SLACK_LINES = 8
+
 /**
  * Shared tail-window cutter: UTF-16 slice that restarts at the next line break
  * when one exists and never leaves a split surrogate pair at either edge.
@@ -1210,13 +1239,9 @@ export function tailTruncate(text: string, maxLines: number, maxChars: number): 
   let content = value
   let truncatedByLines = false
   let truncatedByChars = false
-  if (totalLines > maxLines) {
-    const hadTrailingNewline = value.endsWith('\n')
-    const segments = value.split('\n')
-    const realLines = hadTrailingNewline ? segments.slice(0, -1) : segments
-    content = realLines.slice(-maxLines).join('\n') + (hadTrailingNewline ? '\n' : '')
-    truncatedByLines = true
-  }
+  const lineCapped = keepLastLines(value, maxLines)
+  content = lineCapped.content
+  truncatedByLines = lineCapped.dropped
   if (content.length > maxChars) {
     const rawOverBudget = text.length > maxChars
     content = cutTailWithinBudget(content, maxChars)
@@ -1237,11 +1262,12 @@ export function tailTruncate(text: string, maxLines: number, maxChars: number): 
 type PreviewAccumulator = ReturnType<typeof createPreviewAccumulator>
 
 /**
- * Rolling preview of one output stream. Stores the RAW bounded tail — redaction
- * happens once over the whole retained window at snapshot() time, so a secret
- * split across chunk boundaries is still seen (and redacted) whole;
- * chunk-local redaction would splice around it and leak the remainder.
- * Tracks full-stream line/char totals for the truncation footer.
+ * Rolling preview of one output stream. Stores the RAW bounded tail (display
+ * budgets + slack, see RAW_WINDOW_SLACK_CHARS) — redaction happens once over
+ * the whole retained window at snapshot() time, BEFORE the authoritative trim,
+ * so a secret split across chunk boundaries or sitting at the raw window's cut
+ * edge is still seen (and redacted) whole; post-redaction trimming can only
+ * ever split already-masked text. Tracks full-stream line/char totals.
  */
 export function createPreviewAccumulator(maxLines: number, maxChars: number) {
   let kept = ''
@@ -1259,13 +1285,12 @@ export function createPreviewAccumulator(maxLines: number, maxChars: number) {
       totalChars += text.length
       streamEndsWithNewline = text.endsWith('\n')
       let candidate = kept + text
-      const segments = candidate.split('\n')
-      if (segments.length > maxLines) {
-        candidate = segments.slice(-maxLines).join('\n')
-        droppedLines = true
-      }
-      if (candidate.length > maxChars) {
-        candidate = cutTailWithinBudget(candidate, maxChars)
+      const lineCapped = keepLastLines(candidate, maxLines + RAW_WINDOW_SLACK_LINES)
+      candidate = lineCapped.content
+      droppedLines ||= lineCapped.dropped
+      const rawCharCap = maxChars + RAW_WINDOW_SLACK_CHARS
+      if (candidate.length > rawCharCap) {
+        candidate = candidate.slice(-rawCharCap)
         droppedChars = true
       }
       kept = candidate
@@ -1310,16 +1335,32 @@ function truncationFooter(stdout: TailTruncation, stderr: TailTruncation, output
 }
 
 /**
- * Assemble the model-visible result with ONE tail budget over the output body:
- * the status header and failure note stay outside the budget, so a combined
- * overflow trims the body tail-first and can never drop the footer, the
- * stderr section, or the header (the old per-section caps + a final
- * middle-truncation pass could destroy all of them).
+ * Assemble the model-visible result with ONE structural tail budget over the
+ * output body: header/failure-note space is reserved up front, and when the
+ * body still overflows the trim announces itself — either via the caller's
+ * per-stream footer (already part of the body tail) or a fallback footer naming
+ * the full-output file. A cut can therefore never happen silently.
  */
-function assembleShellResult(firstLine: string, bodySections: string[], failureNote: string | undefined): string {
+function assembleShellResult(
+  firstLine: string,
+  bodySections: string[],
+  failureNote: string | undefined,
+  truncationInfo?: { outputFile?: string; footer?: string },
+): string {
   const body = bodySections.filter(Boolean).join('\n')
-  const boundedBody = body.length > MAX_RESULT_CHARS ? cutTailWithinBudget(body, MAX_RESULT_CHARS) : body
-  return [firstLine, boundedBody, failureNote].filter(Boolean).join('\n') || '(no output)'
+  const budget = MAX_RESULT_CHARS - firstLine.length - (failureNote?.length ?? 0) - 96 /* footer/labels reserve */
+  if (body.length <= budget) {
+    return [firstLine, body, failureNote].filter(Boolean).join('\n') || '(no output)'
+  }
+  const boundedBody = cutTailWithinBudget(body, Math.max(0, budget))
+  if (truncationInfo?.footer) {
+    // Per-stream footer already rides the body tail and survived the cut.
+    return [firstLine, boundedBody, failureNote].filter(Boolean).join('\n')
+  }
+  const fallbackFooter = truncationInfo?.outputFile
+    ? `[Output truncated to fit the result budget. Full output: ${truncationInfo.outputFile}]`
+    : '[Output truncated to fit the result budget.]'
+  return [firstLine, boundedBody, fallbackFooter, failureNote].filter(Boolean).join('\n')
 }
 
 /**

@@ -588,6 +588,31 @@ describe("BashTool output streaming snapshots", () => {
     expect(snap.content).not.toContain("secret-value");
   });
 
+  test("raw window slack keeps cut-edge secrets matchable before the final trim", () => {
+    // Single giant line (~51k chars) whose secret straddles where the raw
+    // window's left edge lands: the slack keeps `Bearer` inside the redaction
+    // pass that runs BEFORE the display-budget trim.
+    const acc = createPreviewAccumulator(500, 49_500);
+    acc.append(`${"A".repeat(49_000)} Bearer secret-value ${"B".repeat(2_000)}\n`);
+    const snap = acc.snapshot();
+    expect(snap.truncatedByChars).toBeTrue();
+    expect(snap.content).toContain("[redacted]");
+    expect(snap.content).not.toContain("secret-value");
+  });
+
+  test("exactly maxLines terminated lines are not truncated (no trailing-segment off-by-one)", () => {
+    const fiveHundred = `${Array.from({ length: 500 }, (_, i) => `l${i + 1}`).join("\n")}\n`;
+    const trimmed = tailTruncate(fiveHundred, 500, 200_000);
+    expect(trimmed.truncated).toBeFalse();
+    expect(trimmed.totalLines).toBe(500);
+    expect(trimmed.shownLines).toBe(500);
+    expect(trimmed.content.startsWith("l1\n")).toBeTrue();
+
+    const acc = createPreviewAccumulator(500, 200_000);
+    acc.append(fiveHundred);
+    expect(acc.snapshot().truncated).toBeFalse();
+  });
+
   test("tailTruncate never leaves a split surrogate pair at a char-cut edge", () => {
     // 10 emoji (20 UTF-16 units) + "end": slice(-21) opens inside the first
     // emoji; the orphan low surrogate must be dropped, not emitted.
@@ -694,20 +719,21 @@ describe("BashTool output streaming snapshots", () => {
     }
   }, 20_000);
 
-  test("single final budget keeps header, stderr section, and footer on combined overflow", async () => {
+  test("assembly overflow near section boundaries keeps both labels and a footer", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-bash-assembly-"));
     const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
-    // ~90k chars per stream → combined body exceeds MAX_RESULT_CHARS (100k).
+    // ~49.8k chars per stream: just above the per-section budget (49.5k), so
+    // both streams truncate with their own footers and labels intact — no
+    // silent assembly-level cut without truncation metadata (Codex repro shape).
     const command = isPowerShellShell
-      ? "\"x\" * 90000; [Console]::Error.WriteLine((\"y\" * 90000))"
-      : "head -c 90000 /dev/zero | tr '\\0' x; head -c 90000 /dev/zero | tr '\\0' y >&2";
+      ? "\"x\" * 49800; [Console]::Error.WriteLine((\"y\" * 49800))"
+      : "head -c 49800 /dev/zero | tr '\\0' x; head -c 49800 /dev/zero | tr '\\0' y >&2";
     const context = { cwd: root, sessionId: "stream-assembly-test" };
     const result = await BashTool.call({ command }, context);
     expect(result.is_error).toBeFalsy();
     const content = String(result.content);
-    // Header stays outside the body budget.
     expect(content.startsWith("Command completed successfully")).toBeTrue();
-    // The tail-first cut preserves the stderr section and the footer.
+    expect(content).toContain("stdout:");
     expect(content).toContain("stderr:");
     expect(content).toContain("[Showing last ");
     expect(content).toContain("Full output:");
