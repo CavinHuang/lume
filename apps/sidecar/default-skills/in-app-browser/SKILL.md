@@ -43,19 +43,16 @@ version: "1.0"
 
 `navigate` 与提交、发送、删除、授权、上传、填入凭据(`fill_secret`)、`run_script` 类动作**可能**弹出 Lume 用户确认(取决于动作语义,以工具返回为准;`open` 新开 tab 与下载等待本身不弹),确认在工具调用内同步等待用户裁决。**用户拒绝表示否决该路径**,换方案而不是换个说法重试同一动作。
 
-### 上传与下载
+### 上传、下载与对话框
 
-- `upload`:传 ref + 文件数组(≤20 个,本地路径或此前下载返回的 file ref),工具自己等文件选择器,不要拆成脚本模拟。
-- `download`:点下载控件并等待完成;超时未完返回 `in_progress` + `download_id`,之后只传 `download_id` 轮询。完成后返回任务级 file ref。
+- `upload`:传 ref + 文件数组(本地路径或此前下载返回的 file ref),工具自己等文件选择器,不要拆成脚本模拟。
+- `download`:点下载控件并等待;超时未完按返回的 `download_id` 轮询,完成后返回任务级 file ref。
+- alert/confirm/prompt 阻塞页面时的处理见错误码表 `dialog_blocking` 行。
 
 ### 保存的密码
 
 - `list_secrets`:列出当前站点 origin 可用的凭据元数据。
 - `fill_secret`:按 secret_id 填入密码,**明文不会进入模型上下文**。禁止让用户口述密码或用 `fill` 明文填密码。
-
-### JS 对话框
-
-alert/confirm/prompt 会阻塞页面:先用 `dialog` 读取内容,再用 `handle_dialog` 接受(`accept=true`)或关闭,可带 `prompt_text`。
 
 ### run_script(兜底)
 
