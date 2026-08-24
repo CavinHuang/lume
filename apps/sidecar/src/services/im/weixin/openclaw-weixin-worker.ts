@@ -10,6 +10,7 @@ import {
 } from "./openclaw-weixin-api";
 import type { InboundImRouteMessage } from "../im-message-router";
 import { routeInboundImMessage } from "../im-message-router";
+import { redactSensitiveText } from "../im-log-redaction";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("im-worker");
@@ -24,7 +25,7 @@ export interface OpenClawWeixinWorker {
 export interface CreateOpenClawWeixinWorkerInput {
   account: ImRuntimeAccount;
   api?: OpenClawWeixinApi;
-  routeMessage?: (message: InboundImRouteMessage) => Promise<void> | void;
+  routeMessage?: (message: InboundImRouteMessage) => Promise<void>;
   updateAccount?: (id: string, input: ImAccountUpdateInput) => Promise<void> | void;
   pollIntervalMs?: number;
 }
@@ -50,7 +51,10 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
     token: input.account.token,
     uin: input.account.uin
   });
-  const routeMessage = input.routeMessage ?? routeInboundImMessage;
+  const routeMessage: (message: InboundImRouteMessage) => Promise<void> =
+    input.routeMessage ?? (async (m) => {
+      await routeInboundImMessage(m);
+    });
   const updateAccount = input.updateAccount ?? (() => undefined);
   const pollIntervalMs = input.pollIntervalMs ?? 1000;
   let running = false;
@@ -128,14 +132,14 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
             running = false;
             await updateAccount(input.account.id, {
               status: "auth_required",
-              lastError: error instanceof Error ? error.message : String(error)
+              lastError: redactSensitiveText(error instanceof Error ? error.message : String(error))
             });
             continue;
           }
           log.error("轮询处理出错", { accountId: input.account.id, error: error instanceof Error ? error.message : String(error) });
           await updateAccount(input.account.id, {
             status: "error",
-            lastError: error instanceof Error ? error.message : String(error)
+            lastError: redactSensitiveText(error instanceof Error ? error.message : String(error))
           });
         }
       }

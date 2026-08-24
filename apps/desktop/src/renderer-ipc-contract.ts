@@ -72,6 +72,18 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'connection_vault_verify',
   'connection_vault_reveal_key',
   'agent_island_intent',
+  'voice_dictation_get_settings',
+  'voice_dictation_update_settings',
+  'voice_dictation_test_connection',
+  'voice_dictation_start',
+  'voice_dictation_audio_chunk',
+  'voice_dictation_stop',
+  'voice_dictation_cancel',
+  'voice_dictation_check_microphone',
+  'voice_dictation_request_microphone',
+  'voice_dictation_commit_cursor',
+  'voice_dictation_hide_indicator',
+  'desktop_flash_window',
 ])
 
 export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
@@ -83,6 +95,10 @@ export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   'logs:live',
   'browser:event',
   'agent:island:state',
+  'voice-dictation:state',
+  'voice-dictation:transcript',
+  'voice-dictation:toggle',
+  'voice-dictation:indicator-toggle',
 ])
 
 export function validateRendererInvokeCommand(command) {

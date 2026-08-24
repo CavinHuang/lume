@@ -14,7 +14,9 @@ import {
   screen,
   session,
   shell,
+  systemPreferences,
   utilityProcess,
+  webContents,
 } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { execFileSync } from 'node:child_process'
@@ -58,6 +60,7 @@ import {
   ensureFile,
   exportZip,
   getQuickInputUrl,
+  getVoiceIndicatorUrl,
   parseJsonFile,
   readWindowBehaviorFromConfigDir,
   normalizeWindowBehavior,
@@ -74,6 +77,19 @@ import {
   writeLauncherConfigAt,
 } from './desktop-core'
 import { clampIslandHeight, createIslandWindow } from './agent-island-window'
+import {
+  cancelAllVoiceAsrSessions,
+  cancelVoiceAsrSession,
+  sendVoiceAsrAudio,
+  startVoiceAsrSession,
+  stopVoiceAsrSession,
+  testVoiceAsrConnection,
+} from './voice-asr-service'
+import { planVoiceShortcutSync, readVoiceDictationSettings, updateVoiceDictationSettings } from './voice-dictation-settings-service'
+import { pasteTextAtCurrentCursor } from './text-insertion-service'
+import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice-dictation-window'
+import type { VoiceDictationSettings, VoiceDictationSettingsUpdate } from '@lume/shared'
+import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -394,7 +410,8 @@ function requireMainWindowSender(context, command) {
 
 /** 当前受信任的渲染窗口集合：mainWindow 总在列；quickInputWindow / islandWindow 存在时纳入。 */
 function getTrustedWindows() {
-  return [mainWindow, quickInputWindow, islandWindow].filter(
+  const indicatorWin = voiceIndicatorManager?.getWindow()
+  return [mainWindow, quickInputWindow, islandWindow, indicatorWin].filter(
     (w): w is BrowserWindow => !!w && !w.isDestroyed(),
   )
 }
@@ -1151,7 +1168,20 @@ export function attachWebContentsSecurity(win, { allowNavigation }) {
     pluginAssets.revokeOwner(ownerWebContentsId)
   })
 
-  win.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
+  win.webContents.session.setPermissionRequestHandler((requestingWebContents, permission, callback, details) => {
+    // 语音听写需要麦克风采集。该 handler 作用于整个共享 session，必须把放行
+    // 收敛到受信窗口——否则渲染任意远程网页的窗口（页面抓取/阅读窗）会静默
+    // 获得麦克风。仅纯音频放行，摄像头与其余权限一律拒绝（fail-closed）。
+    if (permission === 'media') {
+      const trusted = getTrustedWindows().some((trustedWin) => trustedWin.webContents === requestingWebContents)
+      if (!trusted) {
+        callback(false)
+        return
+      }
+      const mediaTypes = (details as Electron.MediaAccessPermissionRequest | undefined)?.mediaTypes
+      callback(Array.isArray(mediaTypes) && !mediaTypes.includes('video'))
+      return
+    }
     callback(false)
   })
 }
@@ -1626,6 +1656,93 @@ const STAGED_ATTACHMENT_SIDECAR_METHODS = new Set([
   'agent:save-files-to-workspace-root',
 ])
 
+// 语音听写全局快捷键：可由设置动态变更，变更时先解绑旧键再注册新键。
+let registeredVoiceDictationShortcut = ''
+
+function handleVoiceDictationShortcut(): void {
+  void (async () => {
+    try {
+      let outputMode: VoiceDictationSettingsUpdate['outputMode']
+      try {
+        outputMode = readVoiceDictationSettings(getSettingsBroker()).outputMode
+      } catch {
+        outputMode = undefined
+      }
+      const mainWinFocused = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused())
+      // 非输入框模式且 Lume 不在前台：走无焦点指示条，不打断当前应用工作流。
+      if ((outputMode === 'system-cursor' || outputMode === 'clipboard') && !mainWinFocused) {
+        getVoiceIndicatorManager().sendToggle()
+        return
+      }
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        await createMainWindow()
+      } else {
+        await showMainWindow()
+      }
+      const win = mainWindow
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('lume:event:voice-dictation:toggle')
+      }
+    } catch (error) {
+      writeMainLog('error', 'desktop.voice_dictation', 'shortcut.toggle_failed', 'voice dictation shortcut failed', { data: { error } })
+    }
+  })()
+}
+
+function registerVoiceDictationShortcut(accelerator: string): boolean {
+  const next = accelerator.trim() || VOICE_DICTATION_DEFAULT_SHORTCUT
+  if (next === registeredVoiceDictationShortcut) return true
+  try {
+    globalShortcut.unregister(registeredVoiceDictationShortcut)
+  } catch {
+    // 旧键未注册或已失效，忽略。
+  }
+  const registered = globalShortcut.register(next, handleVoiceDictationShortcut)
+  if (registered) {
+    registeredVoiceDictationShortcut = next
+  } else {
+    // 新键被占用：标志置空以解除与已解绑旧键的虚假一致，
+    // 否则回滚注册会命中早退分支，旧键静默死亡直到重启。
+    registeredVoiceDictationShortcut = ''
+  }
+  return registered
+}
+
+/** 把 ASR 会话事件回发给发起录音的窗口；窗口已销毁时静默丢弃。 */
+function sendVoiceDictationEvent(ownerWebContentsId: number | undefined, channel: string, payload: unknown): void {
+  if (ownerWebContentsId === undefined) return
+  try {
+    const contents = webContents.fromId(ownerWebContentsId)
+    if (contents && !contents.isDestroyed()) contents.send(`lume:event:${channel}`, payload)
+  } catch {
+    // 会话中途窗口关闭属正常路径，忽略。
+  }
+}
+
+// 语音听写指示条管理（窗口创建/安全闸/生命周期在 voice-dictation-window.ts）。
+let voiceFlashTimer: ReturnType<typeof setTimeout> | null = null
+let voiceIndicatorManager: VoiceIndicatorManager | null = null
+
+function getVoiceIndicatorManager(): VoiceIndicatorManager {
+  if (!voiceIndicatorManager) {
+    voiceIndicatorManager = createVoiceIndicatorManager({
+      appIsPackaged: app.isPackaged,
+      appProtocolOrigin: APP_PROTOCOL_ORIGIN,
+      devServerUrl: getDevServerUrl(),
+      desktopRoot: DESKTOP_ROOT,
+      attachSecurity: (indicatorWin) => attachWebContentsSecurity(indicatorWin, {
+        allowNavigation: (url) => isAllowedMainFrameNavigation(url, {
+          appIsPackaged: app.isPackaged,
+          appProtocolOrigin: APP_PROTOCOL_ORIGIN,
+          devServerUrl: getDevServerUrl(),
+          webEntryPath: getWebEntryPath(),
+        }),
+      }),
+    })
+  }
+  return voiceIndicatorManager
+}
+
 async function dispatchCommand(command, payload: Record<string, any> = {}, context: { ownerWebContentsId?: number } = {}) {
   switch (command) {
     case 'connection_vault_status': {
@@ -1782,6 +1899,105 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       return sidecarHost.call('healthcheck', null)
     case 'agent_island_intent': {
       await agentIslandService?.handleIntent(payload as AgentIslandIntent)
+      return null
+    }
+    case 'voice_dictation_get_settings':
+      // 无焦点指示条也会读取（免焦点模式唯一入口），不加主窗 sender 限制；
+      // lume:invoke 入口的 validateIpcSender 已挡住非受信窗口。
+      return readVoiceDictationSettings(getSettingsBroker())
+    case 'voice_dictation_update_settings': {
+      requireMainWindowSender(context, 'voice_dictation_update_settings')
+      const broker = getSettingsBroker()
+      const before = readVoiceDictationSettings(broker)
+      let result = updateVoiceDictationSettings(broker, payload as VoiceDictationSettingsUpdate)
+      const plan = planVoiceShortcutSync({
+        credentialsComplete: Boolean(result.appId && result.accessToken && result.resourceId),
+        desiredShortcut: result.shortcut,
+        currentRegisteredShortcut: registeredVoiceDictationShortcut,
+      })
+      let shortcutRegistered = true
+      if (plan.action === 'unregister') {
+        try {
+          globalShortcut.unregister(registeredVoiceDictationShortcut)
+        } catch {
+          // 未注册或已失效，忽略。
+        }
+        registeredVoiceDictationShortcut = ''
+      } else if (plan.action === 'register') {
+        shortcutRegistered = registerVoiceDictationShortcut(plan.shortcut)
+        if (!shortcutRegistered) {
+          // 新键被占用：回滚设置与注册到旧键（旧键此前可用）。
+          updateVoiceDictationSettings(broker, { shortcut: before.shortcut })
+          registerVoiceDictationShortcut(before.shortcut)
+          result = { ...result, shortcut: before.shortcut }
+        }
+      }
+      return { ...result, shortcutRegistered }
+    }
+    case 'voice_dictation_test_connection':
+      return testVoiceAsrConnection(readVoiceDictationSettings(getSettingsBroker()))
+    case 'voice_dictation_start': {
+      const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (!sessionId) throw new Error('session_id_required')
+      await startVoiceAsrSession(sessionId, readVoiceDictationSettings(getSettingsBroker()), {
+        onState: (event) => sendVoiceDictationEvent(context.ownerWebContentsId, 'voice-dictation:state', event),
+        onTranscript: (event) => sendVoiceDictationEvent(context.ownerWebContentsId, 'voice-dictation:transcript', event),
+      })
+      return null
+    }
+    case 'voice_dictation_audio_chunk': {
+      const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      // 正常 chunk ~6.4KB（200ms@16kHz PCM16）；上限是受信 renderer 被攻破后的防御纵深。
+      if (payload.data instanceof ArrayBuffer && sessionId && payload.data.byteLength <= 256 * 1024) {
+        sendVoiceAsrAudio(sessionId, payload.data)
+      }
+      return null
+    }
+    case 'voice_dictation_stop': {
+      const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (sessionId) await stopVoiceAsrSession(sessionId)
+      return null
+    }
+    case 'voice_dictation_cancel': {
+      const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (sessionId) await cancelVoiceAsrSession(sessionId)
+      return null
+    }
+    case 'voice_dictation_check_microphone': {
+      // macOS 有系统级 TCC 权限可查；Windows/Linux 返回 unsupported，由 getUserMedia 触发授权。
+      if (process.platform !== 'darwin') return { status: 'unsupported', platform: process.platform }
+      const raw = systemPreferences.getMediaAccessStatus('microphone')
+      const status = raw === 'granted' || raw === 'denied' || raw === 'not-determined' ? raw : 'denied'
+      return { status, platform: process.platform }
+    }
+    case 'voice_dictation_request_microphone': {
+      if (process.platform !== 'darwin') return { status: 'unsupported', platform: process.platform }
+      const granted = await systemPreferences.askForMediaAccess('microphone')
+      return { status: granted ? 'granted' : 'denied', platform: process.platform }
+    }
+    case 'voice_dictation_commit_cursor': {
+      const text = typeof payload.text === 'string' ? payload.text : ''
+      if (!text) return { success: false, mode: 'clipboard', message: '没有可提交的听写文本' }
+      return pasteTextAtCurrentCursor(text)
+    }
+    case 'voice_dictation_hide_indicator':
+      getVoiceIndicatorManager().hide()
+      return null
+    case 'desktop_flash_window': {
+      // 听写完成时窗口不在前台 → 任务栏闪烁提醒（Windows）/ Dock 跳动（macOS）。
+      // 模块级 timer 复用：连续完成多次听写时不堆叠定时器提前熄灭上一次提醒。
+      const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+      if (!win || win.isFocused()) return null
+      win.flashFrame(true)
+      if (voiceFlashTimer) clearTimeout(voiceFlashTimer)
+      voiceFlashTimer = setTimeout(() => {
+        voiceFlashTimer = null
+        try {
+          if (!win.isDestroyed()) win.flashFrame(false)
+        } catch {
+          // 窗口销毁竞态，忽略。
+        }
+      }, 3000)
       return null
     }
     case 'sidecar_call': {
@@ -3248,6 +3464,21 @@ app.whenReady().then(async () => {
   if (!quickInputShortcutRegistered) {
     writeMainLog('error', 'desktop.quick_input', 'shortcut.registration_failed', 'globalShortcut Alt+L 注册失败（可能被其他程序占用）')
   }
+
+  // 语音听写全局快捷键：仅在凭证配置齐全时注册（未启用不占用系统按键）。
+  try {
+    const voiceSettings = readVoiceDictationSettings(getSettingsBroker())
+    const plan = planVoiceShortcutSync({
+      credentialsComplete: Boolean(voiceSettings.appId && voiceSettings.accessToken && voiceSettings.resourceId),
+      desiredShortcut: voiceSettings.shortcut,
+      currentRegisteredShortcut: registeredVoiceDictationShortcut,
+    })
+    if (plan.action === 'register' && !registerVoiceDictationShortcut(plan.shortcut)) {
+      writeMainLog('warn', 'desktop.voice_dictation', 'shortcut.registration_failed', `globalShortcut ${plan.shortcut} 注册失败（可能被其他程序占用）`)
+    }
+  } catch {
+    // 设置读取失败：保持未注册，配置完成后的首次更新会再同步。
+  }
 }).catch((error) => {
   logDesktopStartup(`startup failed: ${error.stack ?? error}`, 'app.start_failed', 'fatal')
   app.exit(1)
@@ -3269,6 +3500,7 @@ app.on('before-quit', () => {
   agentIslandService?.destroy()
   agentIslandService = null
   stopAgentIslandSurface()
+  cancelAllVoiceAsrSessions()
 })
 
 app.on('window-all-closed', () => {
