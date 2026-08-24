@@ -26,7 +26,8 @@ import {
   type BrowserViewportState,
   type BrowserWorkspaceDescriptor,
 } from '@lume/shared'
-import { BROWSER_API_REGISTRY, BROWSER_HANDLER_WAIT_CAP_MS, STABLE_BROWSER_ERROR_CODES, browserApiSupportForBackend, browserMutatingRuntimeMethods } from '@lume/shared'
+import { BROWSER_API_REGISTRY, BROWSER_HANDLER_WAIT_CAP_MS, STABLE_BROWSER_ERROR_CODES, browserApiSupportForBackend, browserMutatingRuntimeMethods } from "@lume/shared"
+import { sweepOrphanDownloads } from "./browser-download-sweep"
 import {
   selectBrowserPartition,
   shouldInstallAdvancedCdpPolicy,
@@ -251,6 +252,8 @@ export class BrowserRuntime {
   private readonly actionQueue = new BrowserActionQueue()
   private readonly inputLedger = new BrowserInputLedger()
   private annotationSweepTimer: ReturnType<typeof setTimeout> | null = null
+  private downloadSweepTimer: ReturnType<typeof setTimeout> | null = null
+  private downloadSweepInterval: ReturnType<typeof setInterval> | null = null
   private annotationSweepInterval: ReturnType<typeof setInterval> | null = null
   private agentPluginEnabled = false
   private cursorOverlay: BrowserWindow | null = null
@@ -337,6 +340,15 @@ export class BrowserRuntime {
     this.annotationSweepTimer.unref?.()
     this.annotationSweepInterval = setInterval(() => this.annotations.runOrphanScreenshotSweep(), 24 * 60 * 60_000)
     this.annotationSweepInterval.unref?.()
+    // 任务下载文件孤儿 GC(#609):finalizeTabs 只清内存索引,磁盘目录
+    // downloads/<session>/<turn> 随任务数无限增长。启动延迟 + 每 24h 一次。
+    this.downloadSweepTimer = setTimeout(() => {
+      this.downloadSweepTimer = null
+      this.runOrphanDownloadSweep()
+    }, 60_000)
+    this.downloadSweepTimer.unref?.()
+    this.downloadSweepInterval = setInterval(() => this.runOrphanDownloadSweep(), 24 * 60 * 60_000)
+    this.downloadSweepInterval.unref?.()
     app.on("login", this.loginHandler)
     app.on("certificate-error", this.certificateErrorHandler)
     app.on("select-client-certificate", this.clientCertificateHandler)
@@ -1200,6 +1212,8 @@ export class BrowserRuntime {
   destroy(): void {
     if (this.annotationSweepTimer) { clearTimeout(this.annotationSweepTimer); this.annotationSweepTimer = null }
     if (this.annotationSweepInterval) { clearInterval(this.annotationSweepInterval); this.annotationSweepInterval = null }
+    if (this.downloadSweepTimer) { clearTimeout(this.downloadSweepTimer); this.downloadSweepTimer = null }
+    if (this.downloadSweepInterval) { clearInterval(this.downloadSweepInterval); this.downloadSweepInterval = null }
     this.annotations.destroy()
     this.hideAgentCursor()
     if (this.cursorOverlay && !this.cursorOverlay.isDestroyed()) this.cursorOverlay.close()
@@ -4152,6 +4166,17 @@ export class BrowserRuntime {
       resumed.push(publicTab(tab))
     }
     return resumed
+  }
+
+  // 任务下载文件孤儿 GC(#609):finalizeTabs 只清内存索引,磁盘目录随任务数
+  // 无限增长。删除谓词抽在 browser-download-sweep.ts(独立可测),此处仅薄包装。
+  runOrphanDownloadSweep(now = Date.now()): void {
+    if (!this.options.configDir) return
+    sweepOrphanDownloads(
+      join(this.options.configDir(), "browser", "downloads"),
+      [...this.downloadRefs.values()].map(({ browserSessionId, browserTurnId }) => ({ browserSessionId, browserTurnId })),
+      now,
+    )
   }
 
   private finalizeTabs(context: BrowserRequestContext, params: Record<string, unknown>): { ok: true } {
