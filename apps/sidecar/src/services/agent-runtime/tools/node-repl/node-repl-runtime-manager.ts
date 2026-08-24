@@ -98,6 +98,13 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
   private stderr = "";
   private stderrLineBuffer = "";
 
+  // 每次 spawn 新一代宿主时调用：旧代残留的半行 LUMELOG 若拼进新一代输出，
+  // 最坏会被解析成新进程的结构化日志（错源归属），并污染退出诊断消息。
+  private resetStderrBuffers(): void {
+    this.stderr = "";
+    this.stderrLineBuffer = "";
+  }
+
   // LUMELOG 行转结构化日志；其余行维持旧行为：进 this.stderr，失败诊断时可见。
   private ingestStderrChunk(chunk: string): void {
     this.stderrLineBuffer += chunk;
@@ -111,7 +118,11 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
         continue;
       }
       try {
-        const parsed = JSON.parse(line.slice(LUMELOG_PREFIX.length)) as {
+        // JSON.parse("null") 返回 null——非对象结果必须回退诊断缓冲，避免在 stderr
+        // data handler 里抛未捕获异常击穿 sidecar。
+        const parsed: unknown = JSON.parse(line.slice(LUMELOG_PREFIX.length));
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
+        const host = parsed as {
           level?: string;
           context?: string;
           event?: string;
@@ -119,11 +130,11 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
           data?: Record<string, unknown>;
         };
         writeLogRecord({
-          level: hostLogLevel(parsed.level),
-          context: parsed.context ?? "node-repl.host",
-          event: parsed.event ?? "host.log",
-          message: parsed.message ?? "",
-          ...(parsed.data ? { data: parsed.data } : {}),
+          level: hostLogLevel(host.level),
+          context: host.context ?? "node-repl.host",
+          event: host.event ?? "host.log",
+          message: host.message ?? "",
+          ...(host.data ? { data: host.data } : {}),
         });
       } catch {
         this.stderr = truncate(`${this.stderr}${line}\n`, MAX_STDERR_CHARS);
@@ -228,6 +239,9 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       stdio: ["pipe", "pipe", "pipe"]
     }, extendNodeReplSandbox(this.options));
     this.child = child;
+    // 新一代进程必须从空缓冲开始：旧宿主崩溃残留的半行 LUMELOG 会与新宿主输出拼接，
+    // 最坏拼成合法 JSON 被记成新进程的结构化日志（错源归属），并污染退出诊断消息。
+    this.resetStderrBuffers();
 
     if (!child.stdin || !child.stdout || !child.stderr) {
       child.kill();

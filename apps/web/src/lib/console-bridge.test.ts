@@ -48,6 +48,15 @@ describe('console bridge', () => {
     expect(String(last?.data?.stack)).toContain('Error: with-stack')
   })
 
+  test('对象参数经键分类脱敏后再进 message（评审 H6）', () => {
+    installConsoleBridge()
+    console.error('fail', { password: 'hunter2', ok: 1 })
+    const last = readRendererQueueForTest().at(-1)
+    expect(String(last?.message)).toContain('"ok":1')
+    expect(String(last?.message)).not.toContain('hunter2')
+    expect(String(last?.message)).toContain('[redacted]')
+  })
+
   test('resetConsoleBridgeForTest 还原原始 console（不再入队）', () => {
     installConsoleBridge()
     resetConsoleBridgeForTest()

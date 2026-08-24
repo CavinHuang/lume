@@ -6,6 +6,7 @@
  * Note: failures surfaced here may also be reported by global-error-toast
  * (different context, complementary info — double reporting is expected).
  */
+import { summarizeValue } from '@lume/shared'
 import { writeWebLogEvent } from '@/lib/desktop-api/logger'
 
 const DEFAULT_WINDOW_MS = 60_000
@@ -24,7 +25,9 @@ function formatValue(value: unknown): string {
   if (typeof value === 'string') return value
   if (value instanceof Error) return value.stack ?? `${value.name}: ${value.message}`
   try {
-    return JSON.stringify(value) ?? String(value)
+    // 对象参数必须过键分类再序列化：裸 JSON.stringify 会把嵌套凭据原样写进 message，
+    // 而 normalizer 只处理 data 字段，message 是绕过脱敏的旁路。
+    return JSON.stringify(summarizeValue(value)) ?? String(value)
   } catch {
     return String(value)
   }

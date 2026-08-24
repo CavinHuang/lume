@@ -130,3 +130,36 @@ describe("JsonlNodeReplRuntimeClient stderr LUMELOG ingestion", () => {
     }
   });
 });
+
+// 评审 H3/H4b：非对象载荷回退诊断缓冲；跨代残留缓冲不得污染新一代解析。
+describe("JsonlNodeReplRuntimeClient stderr robustness", () => {
+  test("non-object LUMELOG payloads fall back to diagnostics", () => {
+    const ingester = createStderrIngester();
+    const capture = captureLogEvents();
+    try {
+      ingester.ingestStderrChunk('LUMELOG null\nLUMELOG [1,2]\nplain\n');
+      capture.cleanup();
+      expect(capture.events).toEqual([]);
+      expect(ingester.stderr).toBe("LUMELOG null\nLUMELOG [1,2]\nplain\n");
+    } finally {
+      setLogBatchNotificationWriter(null);
+    }
+  });
+
+  test("stale partial line is discarded on generation reset and cannot corrupt the next host", () => {
+    const ingester = createStderrIngester();
+    const capture = captureLogEvents();
+    try {
+      ingester.ingestStderrChunk('LUMELOG {"level":"warn","context":"old.gen"');
+      const reset = ingester as unknown as { resetStderrBuffers(): void };
+      reset.resetStderrBuffers();
+      ingester.ingestStderrChunk('LUMELOG {"level":"info","context":"new.gen","event":"e","message":"m"}\n');
+      capture.cleanup();
+      expect(capture.events).toContainEqual(expect.objectContaining({ context: "new.gen", event: "e" }));
+      expect(JSON.stringify(capture.events)).not.toContain("old.gen");
+      expect(ingester.stderr).toBe("");
+    } finally {
+      setLogBatchNotificationWriter(null);
+    }
+  });
+});
