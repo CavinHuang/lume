@@ -36,8 +36,6 @@
     "@lume/natives": "workspace:*",
     "@lume/shared": "workspace:*",
     "@sinclair/typebox": "^0.34.41",
-    "@types/mailparser": "^3.4.6",
-    "@types/nodemailer": "^8.0.1",
     "@wecom/aibot-node-sdk": "^1.0.7",
     "css-tree": "^3.2.1",
     "dingtalk-stream": "^2.1.6-beta.1",
@@ -48,5 +46,9 @@
     "undici": "^7.16.0",
     "yaml": "^2.8.1",
     "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.6",
+    "@types/nodemailer": "^8.0.1"
   }
 }

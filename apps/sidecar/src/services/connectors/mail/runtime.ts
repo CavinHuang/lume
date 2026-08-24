@@ -24,7 +24,10 @@ import {
 } from "../providers/provider-runtime";
 import { mailConnectionTimeoutMs, mailImapPort, mailMessageFetchByteLimit, mailSmtpPort } from "./config";
 import { MailProtocolError } from "./errors";
-import { sanitizeTempFileName } from "./temp-files";
+import { sanitizeTempFileName, sweepOrphanTempDirectories } from "./temp-files";
+
+// crash/SIGKILL 会跳过 try/finally 清理:sidecar 启动加载本模块时清扫一次孤儿目录
+sweepOrphanTempDirectories();
 
 const defaultFolder = "INBOX";
 const defaultLimit = 20;
@@ -104,12 +107,18 @@ export interface MailProviderRuntime {
 export function createMailProviderRuntime(config: MailRuntimeConfig): MailProviderRuntime {
   let protocolPromise: Promise<MailProtocol> | undefined;
   const loadProtocol = (): Promise<MailProtocol> => {
-    protocolPromise ??= import("./protocol").then(({ createMailProtocol }) =>
-      createMailProtocol({
-        displayName: config.displayName,
-        attachmentFallbackPrefix: config.attachmentFallbackPrefix,
-        enforceHostNetworkPolicy: config.enforceHostNetworkPolicy,
-      }),
+    // 失败后清空缓存:一次性瞬时加载失败(打包缺块等)不应固化为永久故障
+    protocolPromise ??= import("./protocol").then(
+      ({ createMailProtocol }) =>
+        createMailProtocol({
+          displayName: config.displayName,
+          attachmentFallbackPrefix: config.attachmentFallbackPrefix,
+          enforceHostNetworkPolicy: config.enforceHostNetworkPolicy,
+        }),
+      (error: unknown) => {
+        protocolPromise = undefined;
+        throw error;
+      },
     );
     return protocolPromise;
   };

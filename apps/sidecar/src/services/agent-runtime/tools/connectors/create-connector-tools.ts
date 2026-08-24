@@ -27,7 +27,8 @@ const GMAIL_READ_ONLY = new Set([
 
 const MAIL_READ_ONLY = new Set(["list_folders", "search_emails", "get_email", "get_folder_status"]);
 
-const CONNECTOR_TOOL_CONFIGS: readonly ConnectorToolConfig[] = [
+/** 导出仅供不变式测试(readOnly 映射不得包含变更类动作)。 */
+export const CONNECTOR_TOOL_CONFIGS: readonly ConnectorToolConfig[] = [
   {
     service: "gmail",
     enabledActions: [
@@ -64,6 +65,26 @@ function isConnected(service: string): () => boolean {
   };
 }
 
+type ExecutionError = NonNullable<
+  Awaited<ReturnType<typeof executeConnectorAction>>["error"]
+>;
+
+/**
+ * Surface code + field-level details to the model so it can self-correct:
+ * `invalid_input` carries JSON Schema OutputUnits that name the exact property
+ * and violation, which a bare message string throws away.
+ */
+function describeExecutionError(service: string, actionName: string, error: ExecutionError): string {
+  const head = `${service}.${actionName} failed (${error.code}): ${error.message}`;
+  const details = Array.isArray(error.details)
+    ? (error.details as Array<{ instancePath?: string; keyword?: string; message?: string }>)
+        .map((unit) => `${unit.instancePath || "(input)"} ${unit.keyword ?? ""} ${unit.message ?? ""}`.trim())
+        .filter(Boolean)
+        .join("; ")
+    : "";
+  return details ? `${head}\nInput issues: ${details}` : head;
+}
+
 function toolsForService(config: ConnectorToolConfig): ToolDefinition[] {
   let actions;
   try {
@@ -85,7 +106,11 @@ function toolsForService(config: ConnectorToolConfig): ToolDefinition[] {
         async call(input) {
           const result = await executeConnectorAction(config.service, action.name, input ?? {});
           if (!result.ok) {
-            throw new Error(result.error?.message ?? `${config.service}.${action.name} 执行失败`);
+            throw new Error(
+              result.error
+                ? describeExecutionError(config.service, action.name, result.error)
+                : `${config.service}.${action.name} 执行失败`,
+            );
           }
           return result.output;
         },

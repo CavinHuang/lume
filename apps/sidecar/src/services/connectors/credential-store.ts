@@ -36,40 +36,73 @@ function emptyFile(): ConnectorCredentialFile {
   return { version: 1, credentials: {} };
 }
 
+/**
+ * 上一次 readStore 是否遇到无法解析的文件。读取侧降级为空(保 UI 可用),
+ * 写入侧据此拒绝覆盖——否则一次成功的小写入会把整个密文集合覆盖成单条记录,
+ * 其余服务的凭证被静默抹掉。
+ */
+let storeUnreadable = false;
+
 function readStore(): ConnectorCredentialFile {
   const path = getConnectorCredentialsPath();
-  if (!existsSync(path)) return emptyFile();
+  if (!existsSync(path)) {
+    storeUnreadable = false;
+    return emptyFile();
+  }
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<ConnectorCredentialFile>;
-    if (!parsed.credentials || typeof parsed.credentials !== "object") return emptyFile();
+    if (!parsed.credentials || typeof parsed.credentials !== "object") throw new Error("shape_invalid");
+    storeUnreadable = false;
     return { version: 1, credentials: parsed.credentials };
-  } catch {
+  } catch (error) {
+    storeUnreadable = true;
+    console.error(
+      "[connectors] connector-credentials.json 无法解析,vault 内容按未配置展示;写入将被拒绝以免覆盖现存凭证:",
+      error,
+    );
     return emptyFile();
   }
 }
 
 function writeStore(file: ConnectorCredentialFile): void {
+  if (storeUnreadable) {
+    throw new Error("connector_credentials_unreadable_refuse_overwrite");
+  }
   const path = getConnectorCredentialsPath();
   const tmp = `${path}.tmp`;
-  writeFileSync(tmp, JSON.stringify(file), "utf8");
+  writeFileSync(tmp, JSON.stringify(file), { encoding: "utf8", mode: 0o600, flag: "wx" });
   renameSync(tmp, path);
 }
 
-function readRecord(service: string): ConnectorCredentialRecord {
-  const raw = readStore().credentials[service];
+/** 密文不可解(vault key 轮换/记录损坏)时返回 undefined;调用方决定降级或拒写。 */
+function decodeRecord(service: string, raw: string | undefined): ConnectorCredentialRecord | undefined {
   if (!raw) return {};
   try {
     return JSON.parse(decrypt(raw)) as ConnectorCredentialRecord;
-  } catch {
-    // vault key 轮换或记录损坏时视为未配置,不抛错阻断启动
-    return {};
+  } catch (error) {
+    console.warn(
+      `[connectors] 服务 "${service}" 的凭证记录不可解(vault key 轮换或记录损坏),暂按未连接处理`,
+      error,
+    );
+    return undefined;
   }
+}
+
+function readRecord(service: string): ConnectorCredentialRecord {
+  // vault key 轮换或记录损坏时视为未配置,不抛错阻断启动
+  return decodeRecord(service, readStore().credentials[service]) ?? {};
 }
 
 function withRecord(service: string, mutate: (record: ConnectorCredentialRecord) => ConnectorCredentialRecord): void {
   withIndexMutationLock(`${getConnectorCredentialsPath()}.lock`, () => {
     const file = readStore();
-    const next = mutate(readRecord(service));
+    const decoded = decodeRecord(service, file.credentials[service]);
+    if (decoded === undefined) {
+      // 该条密文仍存在但解不开:盲写会把残留的 clientConfig 一并抹掉;
+      // 显式断开(deleteConnectorCredential)后可重新配置
+      throw new Error(`connector_credential_record_unreadable: ${service}(请先断开该服务再重新配置)`);
+    }
+    const next = mutate(decoded);
     file.credentials[service] = encrypt(JSON.stringify(next));
     writeStore(file);
   });

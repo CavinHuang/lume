@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createHash, randomBytes } from "node:crypto";
 import type {
   CredentialValidators,
   OAuth2AuthDefinition,
@@ -93,6 +94,8 @@ export class ConnectorError extends Error {
 interface PendingAuthorization {
   service: string;
   state: string;
+  /** PKCE S256 verifier:授权 URL 带 challenge,token 兑换带 verifier。 */
+  codeVerifier: string;
   server: Server;
   resolve: (credential: ResolvedCredential & { authType: "oauth2" }) => void;
   reject: (error: Error) => void;
@@ -120,13 +123,13 @@ export interface ConnectorAuthorizationFlow {
  * Google 对 desktop 类 OAuth client 允许 127.0.0.1 任意端口回调,无需在控制台登记。
  */
 export function startConnectorAuthorization(service: string): ConnectorAuthorizationFlow {
-  const existing = pendingAuthorizations.get(service);
-  if (existing) stopPendingAuthorization(service, new ConnectorError("oauth_flow_superseded", "已发起新的授权"));
-
+  // 配置校验先于作废旧流:否则配置缺失时旧授权被无谓打断,新流又建不起来
   const config = getConnectorClientConfig(service);
   if (!config?.clientId || !config.clientSecret) {
     throw new ConnectorError("oauth_client_config_required", `请先配置 ${service} 的 OAuth client_id 与 client_secret`);
   }
+  const existing = pendingAuthorizations.get(service);
+  if (existing) stopPendingAuthorization(service, new ConnectorError("oauth_flow_superseded", "已发起新的授权"));
   const auth = requireOAuthAuth(service);
 
   let resolveUrl!: (url: string) => void;
@@ -153,15 +156,21 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
       const port = typeof address === "object" && address ? address.port : 0;
       const redirectUri = `http://127.0.0.1:${port}/callback`;
       const state = crypto.randomUUID();
+      // PKCE S256(RFC 7636):同机进程即便截获 state/授权码,没有 verifier 也换不到 token
+      const codeVerifier = randomBytes(48).toString("base64url");
+      const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
       pendingAuthorizations.set(service, {
         service,
         state,
+        codeVerifier,
         server,
         resolve: (credential) => finish(() => resolve(credential)),
         reject: (error) => finish(() => reject(error)),
         timer,
       });
-      resolveUrl(buildAuthorizationUrl(service, auth, config.clientId, redirectUri, state));
+      resolveUrl(
+        buildAuthorizationUrl(service, auth, config.clientId, redirectUri, state, codeChallenge),
+      );
     });
   });
 
@@ -176,16 +185,27 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
   }
   const url = new URL(req.url ?? "/", `http://127.0.0.1`);
   const respondPage = (ok: boolean, message: string) => {
+    // error_description 等来自回调查询串,反射进 HTML 前必须转义
+    const text = `${ok ? "✅" : "❌"} ${message
+      .split("&")
+      .join("&amp;")
+      .split("<")
+      .join("&lt;")
+      .split(">")
+      .join("&gt;")
+      .split('"')
+      .join("&quot;")}`;
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(
-      `<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;display:grid;place-items:center;height:90vh"><p>${
-        ok ? "✅" : "❌"
-      } ${message}</p></body>`,
+      `<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;display:grid;place-items:center;height:90vh"><p>${text}</p></body>`,
     );
   };
 
   try {
     if (url.searchParams.get("state") !== pending.state) {
-      throw new ConnectorError("invalid_oauth_state", "OAuth state 不匹配或已过期");
+      // 杂散请求(浏览器预取/刷新、端口扫描)只对该请求回错误页;
+      // reject 整个 pending 流程会让随后到达的真回调扑空
+      respondPage(false, "OAuth state 不匹配或已过期。若非误开此页,请回到 Lume 重新发起授权。");
+      return;
     }
     const code = url.searchParams.get("code");
     if (!code) {
@@ -201,6 +221,7 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
       clientId: config.clientId,
       clientSecret: config.clientSecret,
       redirectUri: `http://127.0.0.1:${(pending.server.address() as { port: number }).port}/callback`,
+      extraFields: { code_verifier: pending.codeVerifier },
       tokenEndpointAuthMethod: auth.tokenEndpointAuthMethod,
       tokenRequestFormat: auth.tokenRequestFormat,
       responseEnvelope: auth.tokenResponseEnvelope,
@@ -225,6 +246,7 @@ function buildAuthorizationUrl(
   clientId: string,
   redirectUri: string,
   state: string,
+  codeChallenge: string,
 ): string {
   const url = new URL(auth.authorizationUrl);
   for (const [key, value] of Object.entries(auth.authorizationParams ?? {})) {
@@ -234,6 +256,8 @@ function buildAuthorizationUrl(
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("state", state);
+  url.searchParams.set("code_challenge", codeChallenge);
+  url.searchParams.set("code_challenge_method", "S256");
   const scopes = configRequestedScopes(service, auth);
   if (scopes.length > 0) {
     url.searchParams.set("scope", scopes.join(auth.scopeSeparator ?? " "));
@@ -245,7 +269,11 @@ function configRequestedScopes(service: string, auth: OAuth2AuthDefinition): str
   const configured = getConnectorClientConfig(service)?.requestedScopes;
   if (configured && configured.length > 0) {
     const allowed = new Set(auth.scopes);
-    return configured.filter((scope: string) => allowed.has(scope));
+    const filtered = configured.filter((scope: string) => allowed.has(scope));
+    if (filtered.length > 0) return filtered;
+    // 配置与允许集零交集时回退默认全量:否则发出无 scope 的授权 URL,
+    // 拿到的 token 缺业务权限,要到调用阶段才报错
+    console.warn(`[connectors] ${service} requestedScopes 与允许集零交集,回退 provider 默认 scopes`);
   }
   return auth.scopes;
 }
@@ -334,14 +362,32 @@ export function hasAnyConnectorCredential(service: string): boolean {
   return getConnectorOAuthCredential(service) !== undefined || getConnectorCustomValues(service) !== undefined;
 }
 
+/** 进行中的 token 刷新,按 service 单飞:并发命中过期共享同一次刷新,防轮换型 provider 的 refresh token 互踩作废。 */
+const inFlightRefreshes = new Map<string, Promise<ResolvedCredential & { authType: "oauth2" }>>();
+
 export async function getConnectorOAuthCredentialFresh(service: string): Promise<ResolvedCredential & { authType: "oauth2" }> {
   const credential = getConnectorOAuthCredential(service);
   if (!credential) throw new ConnectorError("connector_not_connected", `${service} 尚未连接`);
   if (!isExpiredSoon(credential)) return credential;
 
-  const refreshed = await refreshConnectorCredential(service, credential);
-  setConnectorOAuthCredential(service, refreshed);
-  return refreshed;
+  let inFlight = inFlightRefreshes.get(service);
+  if (!inFlight) {
+    inFlight = refreshConnectorCredential(service, credential)
+      .then((refreshed) => {
+        // 仅当存储中仍是发起刷新的那条记录时才落盘:期间若用户断开重连,
+        // 盲写会把新授权的凭证覆盖回旧的
+        const current = getConnectorOAuthCredential(service);
+        if (current?.refreshToken === credential.refreshToken && current?.expiresAt === credential.expiresAt) {
+          setConnectorOAuthCredential(service, refreshed);
+        }
+        return refreshed;
+      })
+      .finally(() => {
+        inFlightRefreshes.delete(service);
+      });
+    inFlightRefreshes.set(service, inFlight);
+  }
+  return inFlight;
 }
 
 function isExpiredSoon(credential: ResolvedCredential & { authType: "oauth2" }): boolean {

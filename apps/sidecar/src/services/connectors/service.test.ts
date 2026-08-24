@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   ConnectorError,
+  disconnectConnector,
   executeConnectorAction,
   getConnector,
   getConnectorSetup,
@@ -11,6 +12,7 @@ import {
   saveConnectorCustomCredential,
   startConnectorAuthorization,
 } from "./service";
+import { deleteConnectorCredential, setConnectorClientConfig } from "./credential-store";
 import { installConnectionVaultKey } from "../channel/connection-credential-store";
 
 describe("connector service", () => {
@@ -25,6 +27,8 @@ describe("connector service", () => {
   });
 
   afterEach(() => {
+    // 取消可能遗留的 pending 授权流(server/timer),并清掉本目录内的凭证
+    disconnectConnector("gmail");
     if (previousConfigDir === undefined) delete process.env.LUME_CONFIG_DIR;
     else process.env.LUME_CONFIG_DIR = previousConfigDir;
     rmSync(directory, { recursive: true, force: true });
@@ -80,5 +84,94 @@ describe("connector service", () => {
     // getCredential 返回 undefined → requireOAuthCredential 报执行错误信封
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBeDefined();
+  });
+
+  test("授权 URL 携带 PKCE S256 参数", async () => {
+    setConnectorClientConfig("gmail", {
+      service: "gmail",
+      clientId: "cid",
+      clientSecret: "csecret",
+      extra: {},
+      secretExtra: {},
+    });
+    const flow = startConnectorAuthorization("gmail");
+    flow.done.catch(() => {}); // 防提前断言失败时的 unhandled rejection
+    const url = new URL(await flow.authorizationUrl);
+
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    expect((url.searchParams.get("code_challenge") ?? "").length).toBeGreaterThanOrEqual(43);
+    const redirectUri = new URL(url.searchParams.get("redirect_uri") ?? "http://127.0.0.1:0/callback");
+    expect(redirectUri.hostname).toBe("127.0.0.1");
+    expect(redirectUri.port.length).toBeGreaterThan(0); // loopback 随机端口
+
+    // 结束 pending 流程,释放 server 与 timer(下一次发起会顶替旧流)
+    startConnectorAuthorization("gmail");
+    await expect(flow.done).rejects.toBeDefined();
+  });
+
+  test("杂散请求(state 不匹配)不杀死进行中的授权流", async () => {
+    setConnectorClientConfig("gmail", {
+      service: "gmail",
+      clientId: "cid",
+      clientSecret: "csecret",
+      extra: {},
+      secretExtra: {},
+    });
+    const flow = startConnectorAuthorization("gmail");
+    flow.done.catch(() => {}); // 防提前断言失败时的 unhandled rejection
+    const url = new URL(await flow.authorizationUrl);
+    const state = url.searchParams.get("state");
+    const loopback = new URL(url.searchParams.get("redirect_uri") ?? "http://127.0.0.1:0/callback");
+
+    // 杂散请求:浏览器预取/刷新、端口扫描等——只回错误页,流程必须存活
+    const stray = await fetch(`${loopback.origin}/callback?state=wrong&code=x`);
+    expect(stray.status).toBe(200);
+
+    // 真回调(state 匹配)仍被处理:用户在 Google 页面点拒绝 → oauth_denied
+    await fetch(`${loopback.origin}/callback?state=${state}&error=access_denied`);
+    try {
+      await flow.done;
+      throw new Error("expected flow.done to reject");
+    } catch (error) {
+      // 杂散请求若曾杀死流程,这里会是 invalid_oauth_state 而非 oauth_denied
+      expect((error as ConnectorError).code).toBe("oauth_denied");
+    }
+  });
+
+  test("配置缺失时二次发起不破坏既有 pending 流程", async () => {
+    setConnectorClientConfig("gmail", {
+      service: "gmail",
+      clientId: "cid",
+      clientSecret: "csecret",
+      extra: {},
+      secretExtra: {},
+    });
+    const first = startConnectorAuthorization("gmail");
+    const firstUrl = new URL(await first.authorizationUrl);
+
+    deleteConnectorCredential("gmail");
+    // 配置被清空后再发起:应抛配置错误,且不得作废第一个仍在进行的流
+    expect(() => startConnectorAuthorization("gmail")).toThrow(/client_id/);
+
+    const stillPending = await Promise.race([
+      first.done.then(
+        () => "settled",
+        (error) => `rejected:${(error as ConnectorError).code}`,
+      ),
+      new Promise((resolve) => setTimeout(() => resolve("still-pending"), 80)),
+    ]);
+    expect(stillPending).toBe("still-pending");
+
+    // 清理:顶掉旧流,释放 server 与 timer;杂散 state 校验顺带确认端口仍监听
+    void fetch(`http://127.0.0.1:${firstUrl.port}/callback?state=x`);
+    setConnectorClientConfig("gmail", {
+      service: "gmail",
+      clientId: "cid",
+      clientSecret: "csecret",
+      extra: {},
+      secretExtra: {},
+    });
+    startConnectorAuthorization("gmail");
+    await expect(first.done).rejects.toBeDefined();
   });
 });

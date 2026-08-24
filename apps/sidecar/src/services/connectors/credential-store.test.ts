@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -91,5 +91,58 @@ describe("connector credential store", () => {
     // 换一把 key 模拟轮换:解密失败应降级为空记录
     installConnectionVaultKey(Buffer.alloc(32, 9).toString("base64"));
     expect(getConnectorClientConfig("gmail")).toBeUndefined();
+  });
+
+  test("落盘文件权限收紧为 0600", () => {
+    setConnectorCustomValues("qq_mail", { email: "user@qq.com", authorizationCode: "abcd".repeat(4) });
+    const mode = statSync(getConnectorCredentialsPath()).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  test("文件损坏时读取降级且写入被拒,不静默清空现存凭证", () => {
+    setConnectorClientConfig("gmail", {
+      service: "gmail",
+      clientId: "id",
+      clientSecret: "s",
+      extra: {},
+      secretExtra: {},
+    });
+    // 模拟磁盘/中断导致的半截文件
+    writeFileSync(getConnectorCredentialsPath(), '{"version":1,"cred', "utf8");
+
+    expect(getConnectorClientConfig("gmail")).toBeUndefined(); // 读降级,UI 不崩
+    expect(() =>
+      setConnectorCustomValues("qq_mail", { email: "u@qq.com", authorizationCode: "abcd".repeat(4) }),
+    ).toThrow(); // 拒绝把残缺集合覆盖成单条记录
+  });
+
+  test("记录密文不可解(vault key 轮换)时该条写入被拒,显式删除后可重建", () => {
+    setConnectorClientConfig("gmail", {
+      service: "gmail",
+      clientId: "id",
+      clientSecret: "s",
+      extra: {},
+      secretExtra: {},
+    });
+    installConnectionVaultKey(Buffer.alloc(32, 11).toString("base64")); // 轮换
+
+    expect(() => setConnectorOAuthCredential("gmail", {
+      authType: "oauth2",
+      accessToken: "a",
+      tokenType: "Bearer",
+      profile: { accountId: "x", displayName: "x", grantedScopes: [] },
+      metadata: {},
+    })).toThrow(/unreadable/); // 盲写会抹掉残留 clientConfig,必须显式断开
+
+    deleteConnectorCredential("gmail"); // 断开路径畅通,可重新配置
+    expect(getConnectorClientConfig("gmail")).toBeUndefined();
+    setConnectorOAuthCredential("gmail", {
+      authType: "oauth2",
+      accessToken: "fresh",
+      tokenType: "Bearer",
+      profile: { accountId: "x", displayName: "x", grantedScopes: [] },
+      metadata: {},
+    });
+    expect(getConnectorOAuthCredential("gmail")?.accessToken).toBe("fresh");
   });
 });

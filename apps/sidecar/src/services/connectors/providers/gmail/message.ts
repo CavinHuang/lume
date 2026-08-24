@@ -354,7 +354,11 @@ function joinAddresses(addresses: string[]) {
 }
 
 function headerLine(name: string, value?: string) {
-  return value ? `${name}: ${value}` : "";
+  // Strip CR/LF so hostile tool input (e.g. a prompt-injected recipient or
+  // subject) cannot smuggle extra MIME headers — Bcc, Subject, etc. — into the
+  // raw message sent to the Gmail API.
+  const sanitized = value?.replace(/\r\n?|\n/g, " ");
+  return sanitized ? `${name}: ${sanitized}` : "";
 }
 
 function optionalAddressList(value: unknown): string[] {
