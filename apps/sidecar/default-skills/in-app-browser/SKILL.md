@@ -24,10 +24,11 @@ version: "1.0"
 ### 观察与交互循环
 
 1. **`snapshot`**:把页面读成紧凑的可访问性树。交互节点带 `[ref=e12]` 形式的标记。
-   - 大页面用 `next_cursor` 翻页继续读;`interactive_only=true` 只看可交互节点;`scope_ref="@e12"` 只看某子树。
+   - 大页面用 `next_cursor` 翻页继续读(截断时结果自带翻页提示);已知目标子树时 `scope_ref="@e12"` 只读该子树,否则优先翻页;`interactive_only=true` 只看可交互节点。
 2. **行动**:把最新 snapshot 的 ref 传给动作工具,ref 写 `@e12`(带 @)或不带均可:
    - 点击类:`click` / `double_click` / `hover`
-   - 输入类:`fill`(整体替换)/ `type`(追加)/ `press`(按键,如 Enter、Control+A)/ `select`(下拉选项 value)/ `check`(勾选状态)
+   - 输入类:`fill`(整体替换)/ `type`(追加)/ `press`(按键,如 Enter、Control+A)/ `select`/ `check`(勾选状态)
+     - `select` 的 value 是 `<option>` 的 value 属性,**不是 snapshot 里看到的显示文本**;快照拿不到 value 时用 `run_script` 枚举 option 再选
    - `scroll`:锚点 ref 必填(取页面上任一元素的 ref,通常为目标区域或根元素),`delta_y` 正值向下滚
    - 元素不可见/被遮挡/禁用时不要盲试坐标;重新 snapshot 找替代元素或先滚动到可见
 3. **每次动作自动返回新 snapshot**。只使用最新一次 snapshot 的 ref;旧 ref 一律失效。
@@ -40,7 +41,7 @@ version: "1.0"
 
 ### 确认门
 
-导航(`navigate`/`open`)与提交、发送、删除、授权、上传、下载、`run_script` 类动作会弹出 Lume 用户确认。等待确认即可;**用户拒绝表示否决该路径**,换方案而不是换个说法重试同一动作。
+`navigate` 与提交、发送、删除、授权、上传、填入凭据(`fill_secret`)、`run_script` 类动作**可能**弹出 Lume 用户确认(取决于动作语义,以工具返回为准;`open` 新开 tab 与下载等待本身不弹),确认在工具调用内同步等待用户裁决。**用户拒绝表示否决该路径**,换方案而不是换个说法重试同一动作。
 
 ### 上传与下载
 
@@ -64,14 +65,14 @@ alert/confirm/prompt 会阻塞页面:先用 `dialog` 读取内容,再用 `handle
 
 | 错误码 | 含义 | 处理 |
 |--------|------|------|
-| `stale_target` / `stale_snapshot_cursor` | 页面已导航,snapshot 过期 | 重新 `snapshot`,用新 ref 重试 |
+| `stale_target` / `stale_snapshot_cursor` | 页面已导航或用户刚手动操作过页面,旧 snapshot 失效(正常避让) | 重新 `snapshot`,用新 ref 重试 |
 | `tab_not_found` | 锁定 tab 已不存在 | `list_tabs` 后 `open` 或 `switch_tab` |
 | `dialog_blocking` | JS 对话框挡着页面 | 先 `dialog` 读取,再 `handle_dialog` 处理后继续 |
-| `element_not_visible` / `element_occluded` / `element_disabled` / `element_readonly` / `actionability_failed` | 元素当前不可交互 | 重新 snapshot 换可见的替代元素,或先滚动/填写前置字段;不要对同一 ref 连续硬试 |
-| `repeated_action_failure` | 同动作同 ref 在同代际连续失败 ≥2 次,已熔断 | 唯一解除路径是成功执行一次 `navigate`/`reload`/`back`/`forward`/`open`/`switch_tab`/`handle_dialog`(换代际);在此之前一切点击输入类动作都被拒 |
-| `action_denied` | 策略拒绝(如支付、购买) | 停止该意图,交用户处理;不得变相绕过 |
+| `element_not_visible` / `element_occluded` / `element_disabled` / `element_readonly` / `actionability_failed` / `strict_locator_violation` | 元素当前不可交互或定位不唯一 | 重新 snapshot 换可见的替代元素,或先滚动/填写前置字段;不要对同一 ref 连续硬试 |
+| `repeated_action_failure` | 同动作同 ref 在同代际连续失败 ≥2 次,已熔断 | 解除路径是成功执行一次 `navigate`/`reload`/`back`/`forward`/`open`/`switch_tab`/`handle_dialog`(换代际;用户手动导航后同样解锁);在此之前一切点击输入类动作都被拒 |
+| `action_denied` / `confirmation_unavailable` | 策略拒绝(如支付、购买)/ 用户在确认弹窗拒绝了该动作 | 均视为否决该路径:停止该意图、换方案或询问用户,不要原样或换措辞重试 |
 | `user_action_required` | CAPTCHA/MFA/硬件密钥步骤 | 停下请用户完成该步;换措辞重试也会被拒(按元素语义识别),不要尝试 |
-| `user_takeover_required` | agent 动作因用户正在操作页面而被拒 | 重新 `snapshot` 后重试一次(动作会让行避让用户);若持续出现说明用户仍在操作,停下询问而不是循环重试 |
+| `user_takeover_required` | 协议级接管信号(当前流程下极少出现) | 停止全部浏览器动作,向用户说明并等待明确指示后再继续 |
 | `navigation_timeout` | 页面加载超上限被中断,页面可能仍在后台继续加载 | 先 `snapshot` 确认实际状态再决定;不要立即重试同一 `navigate`,持续超时改开新 tab 或如实告知用户 |
 | `browser_unavailable` | 浏览器运行时不可用 | 可重试;确认不可用后说明能力降级,才考虑原生 computer-use |
 

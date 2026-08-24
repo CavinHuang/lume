@@ -99,6 +99,8 @@ describe("default skills inventory", () => {
     expect(content).toContain("`fill_secret`");
     expect(content).toContain("user_takeover_required");
     expect(content).toContain("repeated_action_failure");
+    expect(content).toContain("navigation_timeout");
+    expect(content).toContain("confirmation_unavailable");
     expect(content).toContain("dialog_blocking");
     expect(content).toContain("`action_denied`");
     expect(content).not.toContain("密码提交必须由用户完成");
