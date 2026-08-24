@@ -149,8 +149,12 @@ export const NotebookEditTool = defineTool({
       const previousRead = context.fileStateCache?.get(notebookPath)
       // Read-before-edit 强制（#569）：未读过的 notebook 禁止盲改。
       if (!previousRead) {
+        // 容量区分（#655）：LRU 驱逐产生的伪未读与真未读分开表述。
+        const data = context.fileStateCache?.wasDroppedByCapacity(notebookPath)
+          ? `Error: The read record for ${notebookPath} was dropped because the session's file-state cache hit its capacity limit (long sessions drop the oldest records). Read the notebook again, then retry this edit.`
+          : `Error: Notebook has not been read yet: ${notebookPath}. Read it first, then retry this edit.`
         return {
-          data: `Error: Notebook has not been read yet: ${notebookPath}. Read it first, then retry this edit.`,
+          data,
           is_error: true,
           _meta: { file: { path: notebookPath, conflict: 'not_read', retryable: true } },
         }
