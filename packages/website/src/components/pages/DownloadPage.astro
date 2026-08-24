@@ -1,95 +1,177 @@
 ---
 import Base from '../../layouts/Base.astro';
-import { RELEASES_URL, VERSION, downloads } from '../../lib/site';
+import { RELEASES_URL, VERSION, downloads, withBase } from '../../lib/site';
 import { t, type Lang } from '../../i18n/ui';
 
 interface Props {
   lang: Lang;
 }
+
 const { lang } = Astro.props;
+
+const copy = lang === 'zh'
+  ? {
+      eyebrow: '把 Lume 放进你的工作现场',
+      title: '下载之后，数据与能力都在你手上',
+      desc: '适用于 Windows 与 macOS。连接你自己的模型，保留本地记忆，几分钟内开始第一项任务。',
+      heroAlt: 'Lume 与专业 Agent 团队在工作室协作',
+      free: '免费下载',
+      local: '本地优先',
+      license: 'MIT 开源',
+      current: '当前版本',
+      choose: '选择你的系统',
+      chooseDesc: '安装包直接来自 GitHub Releases。Lume 不捆绑模型订阅，你可以连接自己的 API 或本地模型。',
+      recommended: '推荐',
+      comingSoon: '即将支持',
+      macDesc: 'macOS 12 及以上',
+      linuxDesc: '桌面安装包正在准备中',
+      stepsEyebrow: '三步开始',
+      stepsTitle: '从安装到第一次交付',
+      steps: [
+        { title: '安装桌面应用', desc: '下载与你系统匹配的安装包，按向导完成安装。' },
+        { title: '连接一个模型', desc: '使用自己的 API Key，或接入 Ollama、LM Studio 等本地模型。' },
+        { title: '交代真实任务', desc: '选择工作区，说清目标，Lume 会读取上下文并开始推进。' },
+      ],
+      notesEyebrow: '安装说明',
+      privacyTitle: '从第一天起就是本地优先',
+      privacyDesc: '记忆、技能、自动化与工作区配置默认保存在 ~/.lume/。文件是可读格式，备份和迁移都由你决定。',
+      releasesTitle: '需要旧版本或校验安装包？',
+      releasesDesc: '所有历史版本、文件列表与发布说明都保留在 GitHub Releases。',
+      releasesButton: '查看全部版本',
+    }
+  : {
+      eyebrow: 'Bring Lume into your workspace',
+      title: 'Download it. Keep the data and the capability in your hands.',
+      desc: 'Available for Windows and macOS. Connect your own model, keep local memory, and start your first real task in minutes.',
+      heroAlt: 'Lume collaborating with a specialist agent team in a studio',
+      free: 'Free download',
+      local: 'Local first',
+      license: 'MIT open source',
+      current: 'Current release',
+      choose: 'Choose your system',
+      chooseDesc: 'Installers come directly from GitHub Releases. Lume does not bundle a model subscription — use your own API or a local model.',
+      recommended: 'Recommended',
+      comingSoon: 'Coming soon',
+      macDesc: 'macOS 12 or later',
+      linuxDesc: 'Desktop packages are in preparation',
+      stepsEyebrow: 'Start in three steps',
+      stepsTitle: 'From install to first delivery',
+      steps: [
+        { title: 'Install the desktop app', desc: 'Download the installer for your system and follow the setup flow.' },
+        { title: 'Connect a model', desc: 'Use your own API key or connect a local model through Ollama or LM Studio.' },
+        { title: 'Give it real work', desc: 'Choose a workspace, explain the goal, and Lume starts from the actual context.' },
+      ],
+      notesEyebrow: 'Installation notes',
+      privacyTitle: 'Local first from day one',
+      privacyDesc: 'Memory, skills, automations, and workspace configuration live under ~/.lume/ by default. Readable files keep backup and migration under your control.',
+      releasesTitle: 'Need an older build or file verification?',
+      releasesDesc: 'Every previous version, file list, and release note remains available on GitHub Releases.',
+      releasesButton: 'Browse all releases',
+    };
 ---
 
 <Base title={t(lang, 'download.title')} description={t(lang, 'download.desc')}>
-  <section class="mx-auto max-w-6xl px-4 py-14 sm:px-6 sm:py-20">
-    <div class="text-center">
-      <h1 class="text-display font-bold tracking-tight text-fg">{t(lang, 'download.title')}</h1>
-      <p class="mt-4 text-body-lg text-fg-muted">{t(lang, 'download.desc')}</p>
-    </div>
-
-    <div class="mx-auto mt-12 grid max-w-4xl gap-4 md:grid-cols-3">
-      <!-- Windows -->
-      <div class="flex flex-col rounded-2xl border border-border bg-surface p-6 text-center shadow-(--shadow-card)">
-        <h2 class="text-title font-semibold text-fg">{t(lang, 'download.windows')}</h2>
-        <p class="mt-1.5 text-caption text-fg-muted">{t(lang, 'download.windowsDesc')}</p>
-        <a
-          href={downloads.windows.url}
-          class="mt-6 inline-block rounded-xl bg-accent px-5 py-2.5 text-body-lg font-medium text-accent-fg transition-colors hover:bg-accent-strong"
-        >
-          {t(lang, 'hero.ctaDownload')}
-        </a>
-        <p class="mt-3 truncate text-micro text-fg-faint" title={downloads.windows.file}>
-          {downloads.windows.file}
-        </p>
-      </div>
-
-      <!-- macOS -->
-      <div class="flex flex-col rounded-2xl border border-border bg-surface p-6 text-center shadow-(--shadow-card)">
-        <h2 class="text-title font-semibold text-fg">{t(lang, 'download.macos')}</h2>
-        <p class="mt-1.5 text-caption text-fg-muted">&nbsp;</p>
-        <div class="mt-6 flex flex-col gap-2.5">
-          <a
-            href={downloads.macAppleSilicon.url}
-            class="rounded-xl bg-accent px-5 py-2.5 text-body-lg font-medium text-accent-fg transition-colors hover:bg-accent-strong"
-          >
-            {t(lang, 'download.macAppleSilicon')}
-          </a>
-          <a
-            href={downloads.macIntel.url}
-            class="rounded-xl border border-border px-5 py-2.5 text-body-lg font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
-          >
-            {t(lang, 'download.macIntel')}
-          </a>
+  <section class="subpage-hero overflow-hidden border-b border-border">
+    <div class="mx-auto grid min-h-[38rem] max-w-7xl items-center gap-10 px-4 py-14 sm:px-6 lg:grid-cols-[0.8fr_1.2fr] lg:px-8 lg:py-20">
+      <div class="relative z-10 max-w-2xl">
+        <p class="section-eyebrow"><span class="status-dot"></span>{copy.eyebrow}</p>
+        <h1 class="mt-6 text-[clamp(2.8rem,5.5vw,5.4rem)] font-semibold leading-[0.98] tracking-[-0.055em] text-fg">{copy.title}</h1>
+        <p class="mt-6 max-w-xl text-body-lg leading-loose text-fg-muted">{copy.desc}</p>
+        <div class="mt-8 flex flex-wrap gap-2.5 text-caption font-semibold">
+          {[copy.free, copy.local, copy.license].map((item) => <span class="rounded-full border border-border bg-surface/80 px-3.5 py-2 text-fg-muted backdrop-blur">{item}</span>)}
         </div>
-        <p class="mt-3 truncate text-micro text-fg-faint" title={downloads.macAppleSilicon.file}>
-          Lume-{VERSION}-*.dmg
-        </p>
       </div>
-
-      <!-- Linux -->
-      <div class="flex flex-col rounded-2xl border border-dashed border-border bg-bg-subtle p-6 text-center">
-        <h2 class="text-title font-semibold text-fg">{t(lang, 'download.linux')}</h2>
-        <p class="mt-1.5 text-caption text-fg-muted">&nbsp;</p>
-        <p class="mt-6 rounded-xl border border-border bg-surface px-5 py-2.5 text-body-lg text-fg-muted">
-          {t(lang, 'download.linuxSoon')}
-        </p>
-        <a
-          href={RELEASES_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="mt-3 text-ui text-accent hover:text-accent-strong"
-        >
-          GitHub Releases →
-        </a>
+      <div class="relative lg:-mr-20">
+        <div class="subpage-art relative overflow-hidden rounded-[2rem] border border-border bg-surface shadow-2xl">
+          <img src={withBase('/visuals/lume-hero-studio.webp')} alt={copy.heroAlt} width="2048" height="1152" loading="eager" class="aspect-[4/3] w-full object-cover object-[70%_center]" />
+          <div class="absolute inset-0 bg-gradient-to-t from-[#0b120d]/35 via-transparent to-transparent" aria-hidden="true"></div>
+          <div class="absolute bottom-5 left-5 right-5 flex items-center justify-between rounded-2xl border border-white/25 bg-[#101611]/76 px-4 py-3 text-white shadow-xl backdrop-blur-xl">
+            <div><p class="text-micro uppercase tracking-[0.17em] text-white/45">{copy.current}</p><p class="mt-0.5 text-title font-semibold">Lume v{VERSION}</p></div>
+            <span class="rounded-full bg-emerald-300/12 px-3 py-1.5 text-micro font-semibold text-emerald-200">Windows · macOS</span>
+          </div>
+        </div>
       </div>
     </div>
+  </section>
 
-    <!-- 安装说明 -->
-    <div class="mx-auto mt-12 max-w-4xl rounded-2xl border border-border bg-surface p-6">
-      <h2 class="text-title font-semibold text-fg">{t(lang, 'download.installTitle')}</h2>
-      <ul class="mt-4 space-y-2.5 text-body leading-relaxed text-fg-muted">
-        <li><strong class="font-semibold text-fg">{t(lang, 'download.windows')}：</strong>{t(lang, 'download.windowsInstall')}</li>
-        <li><strong class="font-semibold text-fg">{t(lang, 'download.macos')}：</strong>{t(lang, 'download.macInstall')}</li>
-      </ul>
-      <p class="mt-5">
-        <a
-          href={RELEASES_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="text-ui text-accent hover:text-accent-strong"
-        >
-          {t(lang, 'download.allReleases')}
-        </a>
-      </p>
+  <section class="section-shell reveal-section">
+    <div class="section-heading">
+      <p class="section-eyebrow">{copy.choose}</p>
+      <h2>{t(lang, 'download.title')}</h2>
+      <p>{copy.chooseDesc}</p>
+    </div>
+
+    <div class="mt-12 grid gap-4 lg:grid-cols-3">
+      <article class="download-card group relative flex min-h-[25rem] flex-col overflow-hidden rounded-[1.75rem] border border-border bg-surface p-7 shadow-(--shadow-card)">
+        <div class="flex items-start justify-between gap-4">
+          <div class="platform-icon bg-[#e9f2ff] text-[#3274c8]"><svg viewBox="0 0 24 24" fill="currentColor" class="h-7 w-7"><path d="M3 5.2 10.5 4v7.2H3V5.2Zm8.5-1.35L21 2.5v8.7h-9.5V3.85ZM3 12.2h7.5V20L3 18.8v-6.6Zm8.5 0H21v9.3l-9.5-1.35V12.2Z"></path></svg></div>
+          <span class="rounded-full bg-accent-soft px-3 py-1 text-micro font-semibold text-accent">{copy.recommended}</span>
+        </div>
+        <h3 class="mt-8 text-headline font-semibold tracking-tight text-fg">{t(lang, 'download.windows')}</h3>
+        <p class="mt-2 text-ui text-fg-muted">{t(lang, 'download.windowsDesc')}</p>
+        <div class="mt-auto pt-8">
+          <a href={downloads.windows.url} class="button-primary w-full">{t(lang, 'hero.ctaDownload')}<span aria-hidden="true">↓</span></a>
+          <p class="mt-3 truncate text-center text-micro text-fg-faint" title={downloads.windows.file}>{downloads.windows.file}</p>
+        </div>
+      </article>
+
+      <article class="download-card group relative flex min-h-[25rem] flex-col overflow-hidden rounded-[1.75rem] border border-border bg-surface p-7 shadow-(--shadow-card)">
+        <div class="platform-icon bg-[#f1f1f2] text-[#202124]"><svg viewBox="0 0 24 24" fill="currentColor" class="h-7 w-7"><path d="M17.05 12.54c.02 3.1 2.72 4.13 2.75 4.15-.02.08-.43 1.47-1.42 2.91-.85 1.24-1.74 2.48-3.14 2.51-1.37.03-1.81-.81-3.38-.81-1.57 0-2.06.78-3.36.84-1.35.05-2.38-1.35-3.24-2.59-1.76-2.54-3.1-7.18-1.3-10.31A5.02 5.02 0 0 1 8.2 6.66c1.32-.03 2.57.89 3.38.89.81 0 2.32-1.1 3.91-.94.67.03 2.54.27 3.74 2.03-.1.06-2.23 1.3-2.18 3.9ZM14.45 4.93c.71-.86 1.19-2.06 1.06-3.25-1.02.04-2.26.68-3 1.54-.66.76-1.24 1.98-1.09 3.15 1.14.09 2.31-.58 3.03-1.44Z"></path></svg></div>
+        <h3 class="mt-8 text-headline font-semibold tracking-tight text-fg">{t(lang, 'download.macos')}</h3>
+        <p class="mt-2 text-ui text-fg-muted">{copy.macDesc}</p>
+        <div class="mt-auto grid gap-2.5 pt-8">
+          <a href={downloads.macAppleSilicon.url} class="button-primary w-full">{t(lang, 'download.macAppleSilicon')}<span aria-hidden="true">↓</span></a>
+          <a href={downloads.macIntel.url} class="button-secondary w-full">{t(lang, 'download.macIntel')}</a>
+          <p class="mt-1 truncate text-center text-micro text-fg-faint" title={downloads.macAppleSilicon.file}>Lume-{VERSION}-*.dmg</p>
+        </div>
+      </article>
+
+      <article class="download-card flex min-h-[25rem] flex-col rounded-[1.75rem] border border-dashed border-border bg-bg-subtle p-7">
+        <div class="flex items-start justify-between gap-4">
+          <div class="platform-icon bg-[#fff0d9] text-[#ad6e18]"><svg viewBox="0 0 24 24" fill="none" class="h-7 w-7"><path d="M8 9.5c0-3.2 1.7-5.5 4-5.5s4 2.3 4 5.5c0 1.1-.2 2.1-.55 2.95 1.65 1 2.55 2.55 2.55 4.55 0 1.1-.9 2-2 2H8c-1.1 0-2-.9-2-2 0-2 .9-3.55 2.55-4.55A7.5 7.5 0 0 1 8 9.5Z" stroke="currentColor" stroke-width="1.7"></path><path d="M9.5 10.5h.01M14.5 10.5h.01M10 14c1.3.7 2.7.7 4 0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path></svg></div>
+          <span class="rounded-full border border-border bg-surface px-3 py-1 text-micro font-semibold text-fg-muted">{copy.comingSoon}</span>
+        </div>
+        <h3 class="mt-8 text-headline font-semibold tracking-tight text-fg">{t(lang, 'download.linux')}</h3>
+        <p class="mt-2 text-ui text-fg-muted">{copy.linuxDesc}</p>
+        <div class="mt-auto pt-8">
+          <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" class="button-secondary w-full">GitHub Releases<span aria-hidden="true">→</span></a>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="border-y border-border bg-bg-subtle">
+    <div class="section-shell reveal-section">
+      <div class="section-heading"><p class="section-eyebrow">{copy.stepsEyebrow}</p><h2>{copy.stepsTitle}</h2></div>
+      <div class="mt-12 grid gap-4 md:grid-cols-3">
+        {copy.steps.map((step, index) => (
+          <article class="rounded-2xl border border-border bg-surface p-6">
+            <span class="flex h-9 w-9 items-center justify-center rounded-full bg-fg text-caption font-semibold text-bg">{index + 1}</span>
+            <h3 class="mt-6 text-title font-semibold text-fg">{step.title}</h3>
+            <p class="mt-2 text-ui leading-loose text-fg-muted">{step.desc}</p>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="section-shell reveal-section">
+    <div class="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
+      <article class="rounded-[1.75rem] border border-border bg-surface p-7 sm:p-9">
+        <p class="section-eyebrow">{copy.notesEyebrow}</p>
+        <h2 class="mt-4 text-headline font-semibold tracking-tight text-fg">{t(lang, 'download.installTitle')}</h2>
+        <div class="mt-6 grid gap-5 text-ui leading-loose text-fg-muted sm:grid-cols-2">
+          <div><strong class="font-semibold text-fg">{t(lang, 'download.windows')}</strong><p class="mt-1">{t(lang, 'download.windowsInstall')}</p></div>
+          <div><strong class="font-semibold text-fg">{t(lang, 'download.macos')}</strong><p class="mt-1">{t(lang, 'download.macInstall')}</p></div>
+        </div>
+        <div class="mt-7 rounded-2xl bg-accent-soft p-5"><h3 class="text-body-lg font-semibold text-fg">{copy.privacyTitle}</h3><p class="mt-2 text-ui leading-loose text-fg-muted">{copy.privacyDesc}</p></div>
+      </article>
+      <article class="rounded-[1.75rem] bg-fg p-7 text-bg sm:p-9">
+        <p class="section-eyebrow text-emerald-300">GitHub Releases</p>
+        <h2 class="mt-4 text-headline font-semibold tracking-tight">{copy.releasesTitle}</h2>
+        <p class="mt-3 text-ui leading-loose text-bg/58">{copy.releasesDesc}</p>
+        <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" class="button-on-dark mt-8">{copy.releasesButton}<span aria-hidden="true">→</span></a>
+      </article>
     </div>
   </section>
 </Base>

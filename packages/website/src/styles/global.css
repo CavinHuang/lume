@@ -427,6 +427,92 @@ body {
   display: none;
 }
 
+.subpage-hero {
+  background:
+    radial-gradient(36rem 28rem at 8% 12%, var(--glow-1), transparent 72%),
+    radial-gradient(32rem 24rem at 92% 88%, var(--glow-2), transparent 72%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+    var(--bg);
+  background-size: auto, auto, 4rem 4rem, 4rem 4rem, auto;
+}
+
+.subpage-art::after {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: inherit;
+  content: '';
+  pointer-events: none;
+}
+
+.subpage-art > img {
+  transition: transform 700ms cubic-bezier(0.2, 0.75, 0.2, 1);
+}
+
+.subpage-art:hover > img {
+  transform: scale(1.025);
+}
+
+.platform-icon {
+  display: inline-flex;
+  width: 3.25rem;
+  height: 3.25rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: var(--bg-subtle);
+  color: var(--fg);
+}
+
+.download-card,
+.docs-index-card,
+.doc-pagination-card,
+.release-card {
+  transition:
+    transform 220ms ease,
+    border-color 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.download-card:hover,
+.docs-index-card:hover,
+.doc-pagination-card:hover,
+.release-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--border-strong);
+  box-shadow: 0 22px 55px rgb(18 23 19 / 0.09);
+}
+
+.docs-article .prose {
+  font-size: var(--text-body-lg);
+}
+
+.release-timeline {
+  position: relative;
+}
+
+.release-timeline::before {
+  position: absolute;
+  top: 2rem;
+  bottom: 2rem;
+  left: 0.82rem;
+  width: 1px;
+  background: linear-gradient(var(--accent), var(--border) 14rem, var(--border));
+  content: '';
+}
+
+.release-card .prose > h1:first-child {
+  display: none;
+}
+
+@media (min-width: 640px) {
+  .release-timeline::before {
+    left: 1.08rem;
+  }
+}
+
 .cta-panel {
   background:
     linear-gradient(120deg, rgb(255 255 255 / 0.025), transparent 42%),
@@ -495,6 +581,14 @@ body {
   .memory-row,
   .provider-pill {
     animation: none;
+    transition: none;
+  }
+
+  .subpage-art > img,
+  .download-card,
+  .docs-index-card,
+  .doc-pagination-card,
+  .release-card {
     transition: none;
   }
 

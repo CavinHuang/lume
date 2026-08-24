@@ -1,7 +1,7 @@
 ---
 import { getCollection, render } from 'astro:content';
 import Base from '../../layouts/Base.astro';
-import { REPO_URL } from '../../lib/site';
+import { REPO_URL, withBase } from '../../lib/site';
 import { t, type Lang } from '../../i18n/ui';
 
 interface Props {
@@ -18,36 +18,113 @@ const rendered = await Promise.all(
     Content: (await render(entry)).Content,
   })),
 );
+const latest = entries[0];
+const copy = lang === 'zh'
+  ? {
+      eyebrow: '产品更新',
+      title: '每一次更新，\n都让协作更自然。',
+      intro: '从浏览器协作、长期任务到本地记忆，沿着时间线了解 Lume 如何持续变得更完整。',
+      releases: '个公开版本',
+      latest: '当前版本',
+      recent: '最近发布',
+      history: '完整更新记录',
+      historyDesc: '功能、体验与稳定性改进，都在这里留下清晰的版本轨迹。',
+      viewRelease: '在 GitHub 查看此版本',
+      follow: '关注下一次发布',
+      followDesc: '在 GitHub 获取安装包、完整变更和后续版本通知。',
+      allReleases: '浏览 GitHub Releases',
+    }
+  : {
+      eyebrow: 'Product updates',
+      title: 'Every release makes\ncollaboration feel natural.',
+      intro: 'Follow how Lume evolves across browser collaboration, long-running tasks, and private local memory.',
+      releases: 'public releases',
+      latest: 'Current release',
+      recent: 'Recent releases',
+      history: 'Complete release history',
+      historyDesc: 'A clear timeline of features, experience improvements, and reliability work.',
+      viewRelease: 'View this release on GitHub',
+      follow: 'Follow the next release',
+      followDesc: 'Get installers, full notes, and future release notifications on GitHub.',
+      allReleases: 'Browse GitHub Releases',
+    };
+const dateFormatter = new Intl.DateTimeFormat(lang === 'zh' ? 'zh-CN' : 'en-US', {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+});
 ---
 
 <Base title={t(lang, 'changelog.title')} description={t(lang, 'changelog.desc')}>
-  <section class="mx-auto max-w-3xl px-4 py-14 sm:px-6 sm:py-20">
-    <h1 class="text-display font-bold tracking-tight text-fg">{t(lang, 'changelog.title')}</h1>
-    <p class="mt-4 text-body-lg text-fg-muted">{t(lang, 'changelog.desc')}</p>
+  <section class="subpage-hero overflow-hidden border-b border-border">
+    <div class="section-shell grid items-center gap-12 lg:grid-cols-[0.92fr_1.08fr] lg:gap-16">
+      <div class="max-w-2xl">
+        <p class="section-eyebrow"><span class="status-dot"></span>{copy.eyebrow}</p>
+        <h1 class="mt-6 whitespace-pre-line text-[clamp(3rem,6vw,5.8rem)] font-semibold leading-[0.98] tracking-[-0.06em] text-fg">{copy.title}</h1>
+        <p class="mt-7 max-w-xl text-body-lg leading-relaxed text-fg-muted">{copy.intro}</p>
+        <div class="mt-9 flex flex-wrap gap-3">
+          <span class="rounded-full border border-border bg-surface px-4 py-2 text-ui font-medium text-fg">{entries.length} {copy.releases}</span>
+          {latest && <span class="rounded-full border border-accent/20 bg-accent-soft px-4 py-2 text-ui font-medium text-accent">{copy.latest} · {latest.data.version}</span>}
+        </div>
+      </div>
 
-    <div class="mt-12 space-y-10">
-      {rendered.map(({ entry, Content }) => (
-        <article id={entry.data.version} class="scroll-mt-20 rounded-2xl border border-border bg-surface p-6 shadow-(--shadow-card)">
-          <header class="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 class="text-title font-semibold text-fg">
-              <a
-                href={`${REPO_URL}/releases/tag/${entry.data.version}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                class="hover:text-accent"
-              >
-                {entry.data.title}
+      <div class="subpage-art relative min-h-[26rem] overflow-hidden rounded-[2rem] border border-border bg-[#111612] shadow-2xl">
+        <img src={withBase('/visuals/lume-night-automation.webp')} alt="" class="absolute inset-0 h-full w-full object-cover opacity-85" />
+        <div class="absolute inset-0 bg-gradient-to-t from-[#0d130f] via-transparent to-transparent"></div>
+        <div class="absolute inset-x-5 bottom-5 rounded-[1.35rem] border border-white/10 bg-black/45 p-5 text-white backdrop-blur-xl sm:inset-x-7 sm:bottom-7 sm:p-6">
+          <p class="text-caption font-semibold uppercase tracking-[0.18em] text-white/55">{copy.recent}</p>
+          <div class="mt-4 flex flex-wrap gap-2">
+            {entries.slice(0, 3).map((entry, index) => (
+              <a href={`#${entry.data.version}`} class:list={['rounded-full border px-3 py-1.5 text-ui font-medium transition', index === 0 ? 'border-accent bg-accent text-white' : 'border-white/15 bg-white/5 text-white/75 hover:bg-white/10 hover:text-white']}>
+                {entry.data.version}
               </a>
-            </h2>
-            <time datetime={entry.data.date.toISOString().slice(0, 10)} class="text-caption text-fg-faint">
-              {entry.data.date.toISOString().slice(0, 10)}
-            </time>
-          </header>
-          <div class="prose mt-4">
-            <Content />
+            ))}
           </div>
-        </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section-shell">
+    <div class="section-heading max-w-3xl">
+      <p class="section-eyebrow"><span class="status-dot"></span>{copy.history}</p>
+      <h2 class="mt-5 text-headline font-semibold tracking-tight text-fg">{copy.history}</h2>
+      <p class="mt-4 text-body-lg text-fg-muted">{copy.historyDesc}</p>
+    </div>
+
+    <div class="release-timeline mt-14 space-y-8">
+      {rendered.map(({ entry, Content }, index) => (
+        <div class="relative pl-10 sm:pl-16">
+          <span class:list={['release-marker absolute left-0 top-7 z-10 flex h-7 w-7 items-center justify-center rounded-full border text-[0.65rem] font-bold sm:h-9 sm:w-9', index === 0 ? 'border-accent bg-accent text-white' : 'border-border bg-bg text-fg-faint']}>
+            {String(index + 1).padStart(2, '0')}
+          </span>
+          <article id={entry.data.version} class="release-card scroll-mt-24 rounded-[1.75rem] border border-border bg-surface p-6 shadow-(--shadow-card) sm:p-9">
+            <header class="flex flex-col gap-5 border-b border-border pb-6 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p class="text-caption font-semibold uppercase tracking-[0.16em] text-accent">Release</p>
+                <h3 class="mt-2 text-title font-semibold tracking-tight text-fg">{entry.data.title}</h3>
+              </div>
+              <div class="flex items-center gap-3 sm:flex-col sm:items-end sm:gap-1">
+                <time datetime={entry.data.date.toISOString().slice(0, 10)} class="text-ui font-medium text-fg-muted">{dateFormatter.format(entry.data.date)}</time>
+                <a href={`${REPO_URL}/releases/tag/${entry.data.version}`} target="_blank" rel="noopener noreferrer" class="text-caption font-medium text-accent hover:underline">{copy.viewRelease} ↗</a>
+              </div>
+            </header>
+            <div class="prose mt-7 max-w-none">
+              <Content />
+            </div>
+          </article>
+        </div>
       ))}
+    </div>
+
+    <div class="cta-panel relative mt-16 overflow-hidden rounded-[2rem] px-7 py-10 text-center text-white sm:px-12 sm:py-14">
+      <div class="cta-orb"></div>
+      <div class="relative mx-auto max-w-2xl">
+        <p class="text-caption font-semibold uppercase tracking-[0.18em] text-white/55">GitHub</p>
+        <h2 class="mt-4 text-headline font-semibold tracking-tight">{copy.follow}</h2>
+        <p class="mx-auto mt-4 max-w-xl text-body-lg text-white/65">{copy.followDesc}</p>
+        <a href={`${REPO_URL}/releases`} target="_blank" rel="noopener noreferrer" class="button-on-dark mt-8">{copy.allReleases} ↗</a>
+      </div>
     </div>
   </section>
 </Base>
