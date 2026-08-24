@@ -23,6 +23,7 @@ import { buildToolingSection } from "./prompt/sections/tooling-section";
 import { buildTodoSection } from "./prompt/sections/todo-section";
 import { buildRuntimeSection as renderRuntimeSection } from "./prompt/sections/runtime-section";
 import { buildWorkspaceContextSection } from "./prompt/sections/workspace-context-section";
+import { buildProjectInstructionsSection } from "./prompt/sections/project-instructions-section";
 import {
   buildAutomationSection,
   buildConversationStyleSection,
@@ -221,6 +222,8 @@ export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "
 
 export interface SystemPromptContext {
   workspaceSlug?: string;
+  /** #563:项目级指令文件(CLAUDE.md/AGENTS.md)的探测起点 */
+  agentCwd?: string;
   sessionId: string;
   sessionType?: ThreadType;
   chatType?: "direct" | "group" | "channel";
@@ -392,6 +395,18 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
     } catch (error) {
       // 读取失败不影响主流程
       log.warn("failed to read Soul/Memory prompt components", { error });
+    }
+  }
+
+  // #563:项目级指令文件(CLAUDE.md/AGENTS.md)——从 agentCwd 向上探测注入,读取失败不影响主流程
+  if (ctx.agentCwd) {
+    try {
+      const projectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
+      if (projectInstructions.trim()) {
+        sections.push(projectInstructions);
+      }
+    } catch (error) {
+      log.warn("failed to read project instruction files", { error });
     }
   }
 
