@@ -377,9 +377,12 @@ export async function downloadFile(
           response.on("error", settleFail);
           const location = response.headers.location;
           if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && location) {
-            // 排空旧响应以释放连接；其 error 监听换为吞错——排空期 RST 不得误杀新目标
+            // 排空旧响应以释放连接；response/request 的 error 监听一并换为吞错——
+            // 排空期 RST 不得经 settleFail 误杀新目标
             response.removeListener("error", settleFail);
             response.on("error", () => {});
+            request.removeListener("error", settleFail);
+            request.on("error", () => {});
             response.resume();
             visit(new URL(location, target).toString(), redirects + 1);
             return;

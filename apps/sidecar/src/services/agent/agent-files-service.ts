@@ -36,6 +36,7 @@ import {
 } from "node:path";
 import { lstat, readdir, stat } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
+import { createLogger } from "../infra/logger";
 import type {
   AttachWorkspaceResourceToThreadInput,
   AttachWorkspaceResourceToThreadResult,
@@ -57,6 +58,8 @@ import {
   getAgentWorkspacesDir,
 } from "../infra/config-paths";
 import { getMemoryV2ScopePaths } from "../memory-v2/paths";
+
+const log = createLogger("agent-files-service");
 import { listMemorySourceFilesForScope } from "../memory-v2/source-files";
 import {
   resolveAgentThreadLumeWorkDir,
@@ -513,9 +516,15 @@ function movePathWithFallback(sourcePath: string, targetPath: string): void {
     cpSync(sourcePath, targetPath, { recursive: true, preserveTimestamps: true });
     try {
       rmSync(sourcePath, { recursive: true, force: true });
-    } catch {
+    } catch (error) {
       // 源清理失败（占用窗口恰落在拷贝完成后）不回滚：此时 target 已是完整副本，
-      // 删掉它才是数据丢失；保留双份由用户重试清理（#552 review）
+      // 删掉它才是数据丢失；保留双份由用户重试清理。必须留痕——RPC 仍返回 ok，
+      // 不记日志则旧路径"复活"的源副本无从解释（#552 review round4）
+      log.warn("移动降级拷贝后源清理失败，已保留完整目标副本与残留源", {
+        sourcePath,
+        targetPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   } catch (error) {
     // 清场自身失败不得顶替原始错误
