@@ -75,7 +75,7 @@ function ShortcutCaptureRow({ value, onApply }: {
       onKeyDown={(event) => void handleKeyDown(event)}
       onBlur={() => setRecording(false)}
       className={cn(
-        'h-9 min-w-[140px] rounded-lg border px-3 text-left font-mono text-[13px]',
+        'h-9 min-w-[140px] rounded-lg border px-3 text-left font-mono text-body',
         recording
           ? 'border-[color:color-mix(in_oklab,var(--brand)_46%,var(--lume-border-strong))] text-[var(--brand)]'
           : 'border-[var(--lume-border-subtle)] text-[var(--text-1)]',
@@ -114,8 +114,8 @@ function SettingsRow({ label, hint, children }: {
   return (
     <div className="grid grid-cols-[140px_minmax(0,1fr)] items-start gap-3 py-2">
       <div className="pt-1.5">
-        <div className="text-[13px] font-medium text-[var(--text-1)]">{label}</div>
-        {hint ? <div className="mt-0.5 text-xs leading-5 text-[var(--text-3)]">{hint}</div> : null}
+        <div className="text-body font-medium text-[var(--text-1)]">{label}</div>
+        {hint ? <div className="mt-0.5 text-ui leading-5 text-[var(--text-3)]">{hint}</div> : null}
       </div>
       <div className="min-w-0">{children}</div>
     </div>
@@ -177,19 +177,19 @@ export function VoiceDictationSettings() {
   return (
     <div className="max-w-[720px] space-y-4">
       {micDenied && (
-        <div className="rounded-xl border border-[color:color-mix(in_oklab,var(--lume-danger)_36%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,transparent)] px-4 py-3 text-[13px] leading-6 text-[var(--text-1)]">
+        <div className="rounded-xl border border-[color:color-mix(in_oklab,var(--lume-danger)_36%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,transparent)] px-4 py-3 text-body leading-6 text-[var(--text-1)]">
           系统已拒绝 Lume 访问麦克风。请打开「系统设置 → 隐私与安全性 → 麦克风」允许 Lume 后重试。
         </div>
       )}
       <div className="space-y-2.5 rounded-xl border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)] px-4 py-3">
         <div className="flex items-center gap-2">
           <Mic size={15} className="shrink-0 text-[var(--text-2)]" />
-          <span className="text-[13px] font-medium text-[var(--text-1)]">识别服务</span>
-          <span className="rounded-md bg-[color:color-mix(in_oklab,var(--brand)_12%,transparent)] px-1.5 py-0.5 text-xs text-[var(--brand)]">
+          <span className="text-body font-medium text-[var(--text-1)]">识别服务</span>
+          <span className="rounded-md bg-[color:color-mix(in_oklab,var(--brand)_12%,transparent)] px-1.5 py-0.5 text-ui text-[var(--brand)]">
             字节跳动火山引擎 · 流式语音识别大模型
           </span>
         </div>
-        <ol className="list-decimal space-y-1 pl-5 text-[13px] leading-6 text-[var(--text-2)]">
+        <ol className="list-decimal space-y-1 pl-5 text-body leading-6 text-[var(--text-2)]">
           <li>
             前往
             <button
@@ -203,7 +203,7 @@ export function VoiceDictationSettings() {
             开通「流式语音识别大模型」服务（有免费试用额度）
           </li>
           <li>在语音服务的应用管理中创建应用并授权该服务，拿到 APP ID 与 Access Token</li>
-          <li>Resource ID 填 <code className="rounded bg-[var(--surface-3)] px-1 py-0.5 text-xs">volcengine_input_common</code>（或你开通的服务实例 ID）</li>
+          <li>Resource ID 填 <code className="rounded bg-[var(--surface-3)] px-1 py-0.5 text-ui">volcengine_input_common</code>（或你开通的服务实例 ID）</li>
           <li>对照下方逐项填写凭证，点「测试连接」，然后在输入框点麦克风或按全局快捷键开始听写</li>
         </ol>
       </div>
@@ -238,7 +238,7 @@ export function VoiceDictationSettings() {
           <select
             value={settings.language}
             onChange={(event) => void applyUpdate({ language: event.target.value })}
-            className="h-9 w-full rounded-lg border border-[var(--lume-border-subtle)] bg-transparent px-2 text-[13px] text-[var(--text-1)]"
+            className="h-9 w-full rounded-lg border border-[var(--lume-border-subtle)] bg-transparent px-2 text-body text-[var(--text-1)]"
           >
             {LANGUAGE_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
@@ -252,7 +252,7 @@ export function VoiceDictationSettings() {
             onBlur={() => void applyUpdate({ customHotwords: settings.customHotwords })}
             rows={3}
             placeholder={'产品名\n人名\n术语'}
-            className="w-full resize-y rounded-lg border border-[var(--lume-border-subtle)] bg-transparent px-2 py-1.5 text-[13px] leading-6 text-[var(--text-1)]"
+            className="w-full resize-y rounded-lg border border-[var(--lume-border-subtle)] bg-transparent px-2 py-1.5 text-body leading-6 text-[var(--text-1)]"
           />
         </SettingsRow>
         {settings && (
@@ -265,7 +265,7 @@ export function VoiceDictationSettings() {
             <Button
               variant={settings.outputMode === 'lume-input' ? 'secondary' : 'ghost'}
               type="button"
-              className="h-8 px-3 text-[13px]"
+              className="h-8 px-3 text-body"
               onClick={() => void applyUpdate({ outputMode: 'lume-input' })}
             >
               追加到输入框
@@ -273,7 +273,7 @@ export function VoiceDictationSettings() {
             <Button
               variant={settings.outputMode === 'system-cursor' ? 'secondary' : 'ghost'}
               type="button"
-              className="h-8 px-3 text-[13px]"
+              className="h-8 px-3 text-body"
               onClick={() => void applyUpdate({ outputMode: 'system-cursor' })}
             >
               写入当前应用
@@ -281,7 +281,7 @@ export function VoiceDictationSettings() {
             <Button
               variant={settings.outputMode === 'clipboard' ? 'secondary' : 'ghost'}
               type="button"
-              className="h-8 px-3 text-[13px]"
+              className="h-8 px-3 text-body"
               onClick={() => void applyUpdate({ outputMode: 'clipboard' })}
             >
               复制到剪贴板
@@ -301,8 +301,8 @@ export function VoiceDictationSettings() {
           {testing ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
           测试连接
         </Button>
-        {saving ? <span className="text-xs text-[var(--text-3)]">正在保存…</span> : null}
-        <span className="text-xs text-[var(--text-3)]">文本框失焦后自动保存；修改在下次听写会话生效。全局快捷键可随时唤起听写。</span>
+        {saving ? <span className="text-ui text-[var(--text-3)]">正在保存…</span> : null}
+        <span className="text-ui text-[var(--text-3)]">文本框失焦后自动保存；修改在下次听写会话生效。全局快捷键可随时唤起听写。</span>
       </div>
     </div>
   )

@@ -87,6 +87,7 @@ import {
 } from './voice-asr-service'
 import { readVoiceDictationSettings, updateVoiceDictationSettings } from './voice-dictation-settings-service'
 import { pasteTextAtCurrentCursor } from './text-insertion-service'
+import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice-dictation-window'
 import type { VoiceDictationSettingsUpdate } from '@lume/shared'
 import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
 import {
@@ -1661,7 +1662,7 @@ function handleVoiceDictationShortcut(): void {
       }
       const mainWinFocused = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused())
       if (outputMode === 'system-cursor' && !mainWinFocused) {
-        sendVoiceIndicatorToggle()
+        getVoiceIndicatorManager().sendToggle()
         return
       }
       if (!mainWindow || mainWindow.isDestroyed()) {
@@ -1705,83 +1706,27 @@ function sendVoiceDictationEvent(ownerWebContentsId: number | undefined, channel
   }
 }
 
-// 语音听写指示条：system-cursor 模式下从外部应用 Alt+V 唤起，无焦点悬浮显示听写状态。
-let voiceIndicatorWindow: BrowserWindow | null = null
-let voiceIndicatorPendingToggle = false
+// 语音听写指示条管理（窗口创建/安全闸/生命周期在 voice-dictation-window.ts）。
+let voiceIndicatorManager: VoiceIndicatorManager | null = null
 
-function ensureVoiceIndicatorWindow(): BrowserWindow {
-  if (voiceIndicatorWindow && !voiceIndicatorWindow.isDestroyed()) return voiceIndicatorWindow
-  const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-  const width = 380
-  const height = 84
-  const workArea = cursorDisplay.workArea
-  const win = new BrowserWindow({
-    width,
-    height,
-    x: workArea.x + Math.round((workArea.width - width) / 2),
-    y: workArea.y + workArea.height - height - 48,
-    show: false,
-    frame: false,
-    transparent: true,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    alwaysOnTop: true,
-    focusable: false,
-    hasShadow: false,
-    backgroundColor: '#00000000',
-    webPreferences: createSecureWebPreferences({
-      preload: resolve(DESKTOP_ROOT, 'dist', 'preload', 'preload.cjs'),
-    }),
-  })
-  win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'pop-up-menu' : 'screen-saver')
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  attachWebContentsSecurity(win, {
-    allowNavigation: (url) => isAllowedMainFrameNavigation(url, {
+function getVoiceIndicatorManager(): VoiceIndicatorManager {
+  if (!voiceIndicatorManager) {
+    voiceIndicatorManager = createVoiceIndicatorManager({
       appIsPackaged: app.isPackaged,
       appProtocolOrigin: APP_PROTOCOL_ORIGIN,
       devServerUrl: getDevServerUrl(),
-      webEntryPath: getWebEntryPath(),
-    }),
-  })
-  win.on('closed', () => {
-    if (voiceIndicatorWindow === win) voiceIndicatorWindow = null
-  })
-  void win.loadURL(getVoiceIndicatorUrl({
-    appIsPackaged: app.isPackaged,
-    appProtocolOrigin: APP_PROTOCOL_ORIGIN,
-    devServerUrl: getDevServerUrl(),
-  }))
-  voiceIndicatorWindow = win
-  return win
-}
-
-function hideVoiceIndicatorWindow(): void {
-  voiceIndicatorPendingToggle = false
-  if (voiceIndicatorWindow && !voiceIndicatorWindow.isDestroyed()) {
-    voiceIndicatorWindow.hide()
+      desktopRoot: DESKTOP_ROOT,
+      attachSecurity: (indicatorWin) => attachWebContentsSecurity(indicatorWin, {
+        allowNavigation: (url) => isAllowedMainFrameNavigation(url, {
+          appIsPackaged: app.isPackaged,
+          appProtocolOrigin: APP_PROTOCOL_ORIGIN,
+          devServerUrl: getDevServerUrl(),
+          webEntryPath: getWebEntryPath(),
+        }),
+      }),
+    })
   }
-}
-
-/** 指示条 toggle 派发：新建窗口需等 renderer 监听器装好（did-finish-load + 缓冲），并去重连按。 */
-function sendVoiceIndicatorToggle(): void {
-  const win = ensureVoiceIndicatorWindow()
-  const send = (): void => {
-    voiceIndicatorPendingToggle = false
-    if (win.isDestroyed()) return
-    win.showInactive()
-    win.webContents.send('lume:event:voice-dictation:indicator-toggle')
-  }
-  if (win.webContents.isLoading()) {
-    if (voiceIndicatorPendingToggle) return
-    voiceIndicatorPendingToggle = true
-    win.webContents.once('did-finish-load', () => setTimeout(send, 120))
-  } else {
-    send()
-  }
+  return voiceIndicatorManager
 }
 
 async function dispatchCommand(command, payload: Record<string, any> = {}, context: { ownerWebContentsId?: number } = {}) {
@@ -2008,7 +1953,7 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       return pasteTextAtCurrentCursor(text)
     }
     case 'voice_dictation_hide_indicator':
-      hideVoiceIndicatorWindow()
+      getVoiceIndicatorManager().hide()
       return null
     case 'desktop_flash_window': {
       // 听写完成时窗口不在前台 → 任务栏闪烁提醒（Windows）/ Dock 跳动（macOS）。

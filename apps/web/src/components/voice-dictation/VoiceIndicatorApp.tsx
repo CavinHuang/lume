@@ -12,6 +12,7 @@ import { Toaster } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useVoiceDictation, formatVoiceElapsed } from './use-voice-dictation'
+import { VolumeBars } from './VolumeBars'
 
 function VoiceIndicatorSurface() {
   const hasStartedRef = React.useRef(false)
@@ -35,7 +36,7 @@ function VoiceIndicatorSurface() {
       cancelled = true
       unlisten.then((fn) => fn())
     }
-  }, [voice])
+  }, [voice.status, voice.start, voice.stop])
 
   // 会话结束后自动隐藏窗口（首次显示前不触发）。
   React.useEffect(() => {
@@ -53,25 +54,22 @@ function VoiceIndicatorSurface() {
             voice.status === 'recording' ? 'animate-pulse bg-[var(--lume-danger)]' : 'bg-[var(--lume-text-muted)]',
           )}
         />
-        <span className="shrink-0 font-mono text-xs tabular-nums text-[var(--lume-text-secondary)]">
+        <span className="shrink-0 font-mono text-ui tabular-nums text-[var(--lume-text-secondary)]">
           {formatVoiceElapsed(voice.elapsedSeconds)}
         </span>
-        <div className="flex h-3.5 shrink-0 items-center gap-[2px]" aria-hidden>
-          {[0.6, 1, 0.75, 0.9].map((scale, index) => (
-            <span
-              key={index}
-              className="w-[3px] rounded-full bg-[var(--lume-danger)] transition-[height] duration-100"
-              style={{ height: `${Math.max(3, Math.round(voice.volume * scale * 14))}px` }}
-            />
-          ))}
-        </div>
-        <div className="min-w-0 flex-1 truncate text-xs text-[var(--lume-text-secondary)]">
+        <VolumeBars
+          volumeRef={voice.volumeRef}
+          active={voice.status === 'recording'}
+          className="flex h-3.5 shrink-0 items-center gap-[2px]"
+          barClassName="w-[3px] rounded-full bg-[var(--lume-danger)] transition-[height] duration-100"
+        />
+        <div className="min-w-0 flex-1 truncate text-ui text-[var(--lume-text-secondary)]">
           {voice.transcript || (voice.status === 'connecting' ? '正在连接语音识别…' : voice.status === 'stopping' ? '正在写入光标位置…' : '正在听写，再按 Alt+V 结束')}
         </div>
         <button
           type="button"
           onClick={voice.cancel}
-          className="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--lume-text-muted)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--lume-text-secondary)]"
+          className="shrink-0 rounded-md px-1.5 py-0.5 text-caption text-[var(--lume-text-muted)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--lume-text-secondary)]"
         >
           放弃
         </button>

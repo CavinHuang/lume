@@ -87,7 +87,9 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
   const cancelRecordingRef = React.useRef<(() => void) | null>(null)
   const [status, setStatus] = React.useState<VoiceDictationHookStatus>('idle')
   const [transcript, setTranscript] = React.useState('')
-  const [volume, setVolume] = React.useState(0)
+  // 音量走 ref 而非 state：onaudioprocess ~85ms 一次，若进 state 会以 ~12Hz
+  // 重渲整个输入框子树。UI 侧用 VolumeBars 组件经 rAF 读 ref 直写 DOM。
+  const volumeRef = React.useRef(0)
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0)
 
   const statusRef = React.useRef<VoiceDictationHookStatus>('idle')
@@ -140,7 +142,7 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
     sessionIdRef.current = null
     discardRef.current = true
     attemptRef.current += 1
-    setVolume(0)
+    volumeRef.current = 0
   }, [])
 
   /** 归零所有会话状态回到 idle。 */
@@ -293,7 +295,7 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
 
       let peak = 0
       for (let i = 0; i < input.length; i += 1) peak = Math.max(peak, Math.abs(input[i] ?? 0))
-      setVolume(Math.min(1, peak * 4))
+      volumeRef.current = Math.min(1, peak * 4)
 
       const pcm = floatTo16BitPcm(input, audioContext.sampleRate)
       pendingAudioRef.current.push(pcm)
@@ -510,14 +512,16 @@ export function useVoiceDictation({ onCommit, onOpenSettings, respondsToGlobalTo
     }
   }, [cleanupAudio, failStart, invalidateSession, scheduleCommit, startAsrSession, startRecording, stopRecording])
 
-  return {
+  // 返回对象 memo 化：消费方（Esc/toggle 监听等）把它放进 effect deps 时，
+  // 引用稳定才不会每次渲染退订重订 IPC 订阅。
+  return React.useMemo(() => ({
     status,
     transcript,
-    volume,
     elapsedSeconds,
+    volumeRef,
     isActive: status === 'connecting' || status === 'recording' || status === 'stopping',
     start: startRecording,
     stop: stopRecording,
     cancel: cancelRecording,
-  }
+  }), [status, transcript, elapsedSeconds, startRecording, stopRecording, cancelRecording])
 }

@@ -9,6 +9,7 @@ import { removePendingAskUserQuestion } from '@/hooks/pending-interactive-state'
 import { getSubagentDisplayLabel } from './subagent-label'
 import { InteractiveOverlayFrame, shouldSubmitInteractiveOverlayOnEnter } from './InteractiveOverlayFrame'
 import { useVoiceDictation } from '@/components/voice-dictation/use-voice-dictation'
+import { VolumeBars } from '@/components/voice-dictation/VolumeBars'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -151,7 +152,7 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                     )}
                   >
                     <span className={cn(
-                      'flex size-8 shrink-0 items-center justify-center rounded-full border text-[12px] font-medium tabular-nums',
+                      'flex size-8 shrink-0 items-center justify-center rounded-full border text-ui font-medium tabular-nums',
                       selected
                         ? 'border-[color:color-mix(in_oklab,var(--lume-accent)_40%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-accent)_14%,var(--lume-bg-elevated))] text-[var(--lume-text-primary)]'
                         : 'border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] text-[var(--lume-text-muted)]',
@@ -159,9 +160,9 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                       {optionIndex + 1}
                     </span>
                     <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                      <span className="shrink-0 text-[13px] font-semibold">{opt.label}</span>
+                      <span className="shrink-0 text-body font-semibold">{opt.label}</span>
                       {opt.description && opt.description !== opt.label && (
-                        <span className="min-w-0 truncate text-[12px] text-[var(--lume-text-muted)]">{opt.description}</span>
+                        <span className="min-w-0 truncate text-ui text-[var(--lume-text-muted)]">{opt.description}</span>
                       )}
                     </span>
                     {selected
@@ -187,7 +188,7 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                       }
                     }}
                     placeholder="告诉 Lume 应该如何做得不同"
-                    className="h-7 border-0 bg-transparent px-0 text-[12px] shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
+                    className="h-7 border-0 bg-transparent px-0 text-ui shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
                   />
                   <Button
                     variant="ghost"
@@ -206,21 +207,18 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                     )}
                   >
                     {voiceDictation.status === 'recording' ? (
-                      <span className="flex h-3 items-center gap-[2px]" aria-hidden>
-                        {[0.6, 1, 0.75].map((scale, index) => (
-                          <span
-                            key={index}
-                            className="w-[2px] rounded-full bg-current transition-[height] duration-100"
-                            style={{ height: `${Math.max(3, Math.round(voiceDictation.volume * scale * 12))}px` }}
-                          />
-                        ))}
-                      </span>
+                      <VolumeBars
+                        volumeRef={voiceDictation.volumeRef}
+                        active
+                        className="flex h-3 items-center gap-[2px]"
+                        barClassName="w-[2px] rounded-full bg-current"
+                      />
                     ) : (
                       <Mic size={12} className={cn(voiceDictation.isActive && 'animate-pulse')} />
                     )}
                   </Button>
                   {voiceDictation.transcript && voiceDictation.isActive && (
-                    <span className="max-w-32 shrink-0 truncate text-[11px] text-[var(--lume-text-muted)]" role="status">
+                    <span className="max-w-32 shrink-0 truncate text-caption text-[var(--lume-text-muted)]" role="status">
                       {voiceDictation.transcript}
                     </span>
                   )}
@@ -248,15 +246,15 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                   <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[var(--lume-border-subtle)]">
                     <Pencil size={13} />
                   </span>
-                  <span className="truncate text-[12px]">都不合适，告诉 Lume 应该如何做得不同</span>
+                  <span className="truncate text-ui">都不合适，告诉 Lume 应该如何做得不同</span>
                 </Button>
               )}
             </div>
         ) : (
-          <p className="px-1 text-[12px] text-[var(--lume-text-muted)]">暂无问题</p>
+          <p className="px-1 text-ui text-[var(--lume-text-muted)]">暂无问题</p>
         )}
         {error && (
-          <p className="px-1 pt-1 text-[11px] text-[var(--destructive)]">{error}</p>
+          <p className="px-1 pt-1 text-caption text-[var(--destructive)]">{error}</p>
         )}
       </div>
     </InteractiveOverlayFrame>

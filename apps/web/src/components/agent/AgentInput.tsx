@@ -30,6 +30,7 @@ import { isEmptyDraft, prependHistory, removeDraft, sanitizeDraftJSON, upsertDra
 import { buildQuotedSelectionBlock } from '@/lib/quoted-selection'
 import { QuotedSelectionChip } from './QuotedSelectionChip'
 import { useVoiceDictation, formatVoiceElapsed } from '@/components/voice-dictation/use-voice-dictation'
+import { VolumeBars } from '@/components/voice-dictation/VolumeBars'
 import { debounce } from 'throttle-debounce'
 import {
   AGENT_IPC_CHANNELS,
@@ -790,7 +791,7 @@ export function AgentInput({
     }
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [voiceDictation])
+  }, [voiceDictation.isActive, voiceDictation.cancel])
 
   // 草稿恢复：threadId 变化或 editor 就绪时，把存盘草稿填回编辑器
   useEffect(() => {
@@ -1690,15 +1691,12 @@ export function AgentInput({
                     <span className="shrink-0 font-mono text-xs tabular-nums text-[var(--lume-text-secondary)]">
                       {formatVoiceElapsed(voiceDictation.elapsedSeconds)}
                     </span>
-                    <div className="flex h-3.5 shrink-0 items-center gap-[2px]" aria-hidden>
-                      {[0.6, 1, 0.75, 0.9].map((scale, index) => (
-                        <span
-                          key={index}
-                          className="w-[3px] rounded-full bg-[var(--lume-danger)] transition-[height] duration-100"
-                          style={{ height: `${Math.max(3, Math.round(voiceDictation.volume * scale * 14))}px` }}
-                        />
-                      ))}
-                    </div>
+                    <VolumeBars
+                      volumeRef={voiceDictation.volumeRef}
+                      active={voiceDictation.status === 'recording'}
+                      className="flex h-3.5 shrink-0 items-center gap-[2px]"
+                      barClassName="w-[3px] rounded-full bg-[var(--lume-danger)] transition-[height] duration-100"
+                    />
                     <div className="min-w-0 flex-1 truncate text-xs text-[var(--lume-text-secondary)]">
                       {voiceDictation.transcript || (voiceDictation.status === 'connecting' ? '正在连接语音识别…' : voiceDictation.status === 'stopping' ? '正在整理转写…' : '正在听写，Esc 取消')}
                     </div>
@@ -2016,15 +2014,12 @@ export function AgentInput({
                   {voiceDictation.status === 'connecting' || voiceDictation.status === 'stopping' ? (
                     <LoaderCircle size={12} className="animate-spin" />
                   ) : voiceDictation.status === 'recording' ? (
-                    <span className="flex h-3 items-center gap-[2px]" aria-hidden>
-                      {[0.6, 1, 0.75, 0.9].map((scale, index) => (
-                        <span
-                          key={index}
-                          className="w-[2px] rounded-full bg-current transition-[height] duration-100"
-                          style={{ height: `${Math.max(3, Math.round(voiceDictation.volume * scale * 12))}px` }}
-                        />
-                      ))}
-                    </span>
+                    <VolumeBars
+                      volumeRef={voiceDictation.volumeRef}
+                      active
+                      className="flex h-3 items-center gap-[2px]"
+                      barClassName="w-[2px] rounded-full bg-current"
+                    />
                   ) : (
                     <Mic size={13} />
                   )}
