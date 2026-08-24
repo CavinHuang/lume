@@ -46,13 +46,12 @@ interface ProbeOptions {
    * 测试注入伪造读数驱动，不赌真实 inode 分配行为。
    */
   stat?: (path: string) => Stats;
-
+  /**
    * 可注入 stat 探测缝：读取句柄身份复核的读数来源，默认真实 fs 的 fstatSync。
    * 存在动机：Linux（overlayfs/ext4 等）删旧建新会立刻复用刚释放的 inode 号，
    * 测试无法靠真实 fs 确定性制造「句柄身份 ≠ 快照」，只能注入伪造读数驱动。
    */
   fstat?: (fd: number) => Stats;
-
 }
 
 // POSIX 以 O_NOFOLLOW 打底：过检后候选/realPath 被整体换入 symlink 时 open 直接

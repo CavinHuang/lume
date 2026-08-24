@@ -296,7 +296,10 @@ describe("project-instructions", () => {
     // 一致形态：放行过检内容
     expect(probeWith({})).toBe("# vetted content");
     // 失配形态：句柄指向异 dev/ino（换入异文件/symlink 跟随）、非 regular file、hardlink → 全部拒绝
-    expect(probeWith({ ino: source!.ino + 1 })).toBeNull();
+    // 注意：NTFS 的 ino 是 64 位大数，超 Number.MAX_SAFE_INTEGER 后 +1 不改变浮点值，
+    // 必须用确定性的异值而非算术增量。
+    const foreignIno = source!.ino === 987654 ? 987655 : 987654;
+    expect(probeWith({ ino: foreignIno })).toBeNull();
     expect(probeWith({ dev: source!.dev + 1 })).toBeNull();
     expect(probeWith({ isFile: false })).toBeNull();
     expect(probeWith({ nlink: 2 })).toBeNull();
