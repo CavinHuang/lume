@@ -5,6 +5,7 @@ import {
   resetWindowsBashDiscoveryForTests,
   resolveShellInvocation,
   shellKind,
+  shellKindConservative,
   shellKindWithoutDiscovery,
   windowsBashDiscoverySettledForTests,
 } from "./shell-invocation";
@@ -33,6 +34,17 @@ describe("shellKindWithoutDiscovery (#471)", () => {
       const resolved = resolveShellInvocation("echo hi", "win32", env);
       expect(shellKind(resolved.command)).toBe(shellKindWithoutDiscovery("win32", env));
     }
+  });
+});
+
+describe("shellKindConservative (cold-start fail-closed)", () => {
+  test("matches the exact reading outside the unsettled-discovery window", () => {
+    // 显式环境是确定性的，保守读法必须与精确读法完全一致
+    expect(shellKindConservative("darwin", {})).toBe("bash");
+    expect(shellKindConservative("linux", {})).toBe("bash");
+    expect(shellKindConservative("win32", {})).toBe("powershell");
+    expect(shellKindConservative("win32", { LUME_BASH_PATH: "C:\\Program Files\\Git\\bin\\bash.exe" })).toBe("bash");
+    expect(shellKindConservative("win32", { SHELL: "/usr/bin/bash" })).toBe("bash");
   });
 });
 

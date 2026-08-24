@@ -84,6 +84,12 @@ function requestBrowserMain(request: import("@lume/shared").BrowserActionRequest
     const timeout = setTimeout(() => {
       pendingBrowserMainRequests.delete(request.requestId);
       // 请求已送达 desktop，变更型动作可能已执行——不能与"未执行"塌缩为同一错误码
+      // 确认类等待超时=用户未在时限内裁决,动作必然未执行、desktop 弹窗仍开着,
+      // 报 executed_unknown 是双重误导(#606 review)
+      if (request.method === "policy:confirm" || request.method === "tab_browser_auth_request") {
+        reject(Object.assign(new Error("confirmation timed out"), { code: "confirmation_timeout" }));
+        return;
+      }
       reject(Object.assign(new Error("browser request timed out"), { code: "executed_unknown" }));
     }, timeoutMs);
     pendingBrowserMainRequests.set(request.requestId, { resolve, reject, timeout });
