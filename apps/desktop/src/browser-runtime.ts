@@ -1972,10 +1972,17 @@ export class BrowserRuntime {
     // loadURL 本身无界,慢站会挂到分钟级并被 sidecar transport 先杀误报
     // executed_unknown(#638);包一层上限,页面可能仍在后台继续加载,
     // 模型收到 navigation_timeout 后应 snapshot 确认实际状态而非盲目重试。
-    await Promise.race([
-      contents.loadURL(normalizeNavigableUrl(url)),
-      new Promise<never>((_, reject) => setTimeout(() => reject(browserError("navigation_timeout")), BROWSER_HANDLER_WAIT_CAP_MS)),
-    ])
+    let navigationTimer: NodeJS.Timeout | undefined
+    try {
+      await Promise.race([
+        contents.loadURL(normalizeNavigableUrl(url)),
+        new Promise<never>((_, reject) => {
+          navigationTimer = setTimeout(() => reject(browserError("navigation_timeout")), BROWSER_HANDLER_WAIT_CAP_MS)
+        }),
+      ])
+    } finally {
+      clearTimeout(navigationTimer)
+    }
     return publicTab(tab)
   }
 
@@ -3393,19 +3400,23 @@ export class BrowserRuntime {
     const timeoutMs = params.timeoutMs === undefined ? 10_000 : boundedNumber(params.timeoutMs, 1, BROWSER_HANDLER_WAIT_CAP_MS)
     const results: Array<{ url: string; title: string | null; content: string | null }> = []
     // ≤10 个 URL 各自 navigate+waitForLoad 串行,无总预算时最坏分钟级,
-    // 必被 sidecar transport 先杀(#638);超预算的剩余 URL 按失败形态返回。
+    // 会被 sidecar transport 先杀(#638);超预算的剩余 URL 按失败形态返回。
+    // 残余:navigate(≤30s)+waitForLoad(≤30s)串行的首 URL 理论最坏 ~59s,
+    // waitForLoad 上限挂钩剩余预算收窄到 ≤40s+单次 navigate。
     const budgetDeadline = Date.now() + 40_000
     for (const url of urls) {
-      if (results.length && Date.now() >= budgetDeadline) {
+      const remainingBudgetMs = budgetDeadline - Date.now()
+      if (results.length && remainingBudgetMs <= 0) {
         results.push({ url: stripUrl(url), title: null, content: null })
         continue
       }
+      const effectiveTimeoutMs = Math.max(1_000, Math.min(timeoutMs, remainingBudgetMs))
       const tabId = `background:${randomUUID()}`
       try {
         this.ensureTab(tabId, context, { ownerThreadId: context.threadId })
         const tab = this.requireTab(tabId, context)
         await this.navigate(tab, url, context)
-        await this.waitForLoad(tab, timeoutMs)
+        await this.waitForLoad(tab, effectiveTimeoutMs)
         const content = contentType === "domSnapshot"
           ? JSON.stringify(await this.snapshot(tab))
           : await this.pageContent(tab, { format: contentType })
