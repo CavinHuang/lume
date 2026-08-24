@@ -353,6 +353,13 @@ export class LumeRunner {
         canUseTool,
         permissionMode: normalizeRuntimeCoreQueryPermissionMode(input.permissionMode),
         includePartialMessages: true,
+        // 主链路 maxTokens 接线(#561):仅当渠道配置/内置目录真实提供输出上限时抬升。
+        // modelResolution.model.maxTokens 是 createFallbackModel 的 32768 兜底猜测而非目录真值,
+        // 直接透传会让无目录条目的自建网关出网 max_tokens 从 16384 翻倍,上游拒绝即 400
+        // 且 shouldTryNextPiAiRoute 对 400 不切 fallback——无真值时保持 SDK 16384 默认(#631 review)。
+        ...(prepared.modelResolution.catalogMaxTokens === undefined
+          ? {}
+          : { maxTokens: prepared.modelResolution.catalogMaxTokens }),
         // usageIdentity.runId 用真实 Lume runId(此前回落 sessionId=threadId,无法按 run 聚合)
         runId: this.observer.getRunId(),
         ...(runtime.abortSignal ? { abortSignal: runtime.abortSignal } : {}),
