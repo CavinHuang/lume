@@ -31,7 +31,7 @@ const members = [
 const copy = lang === 'zh'
   ? {
       eyebrow: '运行在你电脑上的 AI 工作团队',
-      heroTitleBefore: '把一句需求，变成',
+      heroTitleBefore: '把一句需求变成',
       heroTitleAccent: '真正完成的工作',
       heroDesc: 'Lume 不只回答问题。它理解你的工作现场，调用本地工具，记住长期偏好，并让一支专业 Agent 团队把任务推进到可交付。',
       heroPrompt: '帮我调研这个赛道，整理成一份能直接汇报的方案。',
@@ -47,7 +47,7 @@ const copy = lang === 'zh'
       stripLead: '不是更聪明的聊天框',
       stripTitle: '是会理解、会分工、会动手的工作台。',
       workflowEyebrow: '一次任务，完整闭环',
-      workflowTitle: '你说目标，Lume 负责把过程跑完',
+      workflowTitle: '从目标到交付都由 Lume 推进',
       workflowDesc: '从理解上下文到交付成果，每一步都可见、可暂停、可继续。',
       workflows: [
         { step: '01', title: '理解现场', desc: '读取当前项目、文件与历史记忆，先弄清你真正要解决的问题。', label: '上下文已对齐' },
@@ -56,7 +56,7 @@ const copy = lang === 'zh'
         { step: '04', title: '交付可用成果', desc: '汇总结论与产物，留下可继续推进的线程，而不是一次性答案。', label: '结果落到本地' },
       ],
       casesEyebrow: '从想法到成品',
-      casesTitle: '工作、创作、研究，都能从这里开始',
+      casesTitle: '工作创作与研究都从这里开始',
       casesDesc: '你不需要先学会写复杂提示词。把真实需求说出来，Lume 会自己找到下一步。',
       cases: [
         { tag: '调研', title: '把零散资料变成可靠结论', desc: '跨来源搜索、事实核验、提炼分歧，最后交付带来源的结构化报告。', prompt: '比较 5 个竞品，告诉我真正的机会在哪里。', people: ['researcher', 'analyst'] },
@@ -70,15 +70,15 @@ const copy = lang === 'zh'
       memoryItems: ['偏好：汇报先说结论，再给依据', '约束：这个项目统一使用 Bun', '进行中：官网重设计，等待移动端复核'],
       memoryQuote: '不用每次从头解释。Lume 知道你在做什么，也知道你希望怎么做。',
       localEyebrow: 'Local-first by design',
-      localTitle: '你的工作，不必先上传给别人',
+      localTitle: '你的工作不必先上传给别人',
       localDesc: '记忆、会话、技能、自动化和角色工作区都保存在 ~/.lume/。Markdown 与 YAML 是真源，普通工具就能打开。',
       localPoints: ['可读：没有私有数据格式锁定', '可控：敏感操作由你确认', '可迁移：复制目录即可备份与搬家'],
       toolsEyebrow: '真正能动手',
-      toolsTitle: '一个工作台，接入整套执行能力',
+      toolsTitle: '一个工作台接入整套执行能力',
       toolsDesc: '文件、终端、浏览器、搜索、图片生成、Office 文档与 MCP 服务，统一在同一条任务上下文里协作。',
       toolLabels: ['文件系统', '终端命令', '网页与搜索', '图片生成', 'MCP 服务', '消息渠道', '定时自动化', '文档处理'],
       nightEyebrow: '离开电脑，工作也能继续',
-      nightTitle: '安静运行，按时交付',
+      nightTitle: '安静运行也能按时交付',
       nightDesc: '把周期性任务交给自动化。Lume 在本地按计划运行，调用需要的角色与工具，再把结果推送到你常用的消息渠道。',
       nightItems: ['定时调研与日报', '跨角色并行执行', '结果主动推送'],
       nightStatus: '下一项任务 · 今天 22:00',
@@ -89,14 +89,14 @@ const copy = lang === 'zh'
       teamAll: '13 位角色，随叫随到',
       teamNote: '角色不是装饰：它们拥有不同的系统提示、工具偏好与任务边界。',
       modelsEyebrow: '模型选择权在你',
-      modelsTitle: '一个界面，连接你信任的模型',
+      modelsTitle: '一个界面连接你信任的模型',
       modelsDesc: '兼容主流服务商与本地模型。按任务给不同角色分配模型，在成本、速度与效果之间自由选择。',
       sdkEyebrow: '也为开发者准备',
       sdkTitle: '把同一套 Agent 引擎放进你的产品',
       sdkDesc: 'Lume 的核心循环以独立 SDK 提供。无需依赖本地 CLI，就能在服务端、Docker、Serverless 或 CI 中运行。',
       sdkLink: '阅读 SDK 文档',
       faqEyebrow: '常见问题',
-      faqTitle: '开始之前，你可能还想知道',
+      faqTitle: '开始之前你可能还想知道',
       faqs: [
         { q: 'Lume 和普通 AI 聊天工具有什么不同？', a: '普通聊天工具更擅长一次性问答。Lume 面向持续工作：它能读写本地文件、调用工具、保存长期记忆，并把复杂任务交给多个专业角色推进。' },
         { q: '我的数据会保存在哪里？', a: '核心数据保存在你电脑的 ~/.lume/ 目录。记忆以 Markdown 为真源，配置使用可读格式，方便查看、备份和迁移。' },
@@ -193,13 +193,14 @@ const resolveMembers = (ids: readonly string[]) => members.filter((member) => id
 ---
 
 <Base title={t(lang, 'hero.title')} description={t(lang, 'hero.subtitle')}>
+  <div class="landing-page">
   <section class="hero-grid relative isolate overflow-hidden border-b border-border/70">
     <div class="hero-orb hero-orb-one" aria-hidden="true"></div>
     <div class="hero-orb hero-orb-two" aria-hidden="true"></div>
     <div class="relative mx-auto grid min-h-[calc(100svh-3.5rem)] max-w-7xl items-center gap-12 px-4 py-16 sm:px-6 sm:py-20 lg:grid-cols-[0.95fr_1.05fr] lg:px-8 lg:py-24">
       <div class="relative z-10 max-w-2xl">
         <div class="section-eyebrow"><span class="status-dot"></span>{copy.eyebrow}</div>
-        <h1 class="mt-6 text-[2.55rem] font-semibold leading-[0.98] tracking-[-0.055em] text-fg sm:text-[clamp(3rem,5vw,4.65rem)]">
+        <h1 class="landing-hero-title mt-6 font-semibold text-fg">
           <span class={lang === 'zh' ? 'sm:whitespace-nowrap' : undefined}>{copy.heroTitleBefore}</span><br /><span class="text-gradient">{copy.heroTitleAccent}</span>
         </h1>
         <p class="mt-7 max-w-xl text-body-lg leading-loose text-fg-muted sm:text-title sm:leading-relaxed">{copy.heroDesc}</p>
@@ -263,9 +264,9 @@ const resolveMembers = (ids: readonly string[]) => members.filter((member) => id
     </div>
   </section>
 
-  <section class="border-b border-border bg-fg text-bg">
+  <section class="border-b border-white/8 bg-inverse-bg text-inverse-fg">
     <div class="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-7 sm:flex-row sm:items-baseline sm:justify-between sm:px-6 lg:px-8">
-      <p class="text-micro font-semibold uppercase tracking-[0.2em] text-bg/45">{copy.stripLead}</p>
+      <p class="text-micro font-semibold uppercase tracking-[0.14em] text-inverse-fg/52">{copy.stripLead}</p>
       <p class="text-title font-medium tracking-tight sm:text-headline">{copy.stripTitle}</p>
     </div>
   </section>
@@ -385,7 +386,7 @@ const resolveMembers = (ids: readonly string[]) => members.filter((member) => id
     </div>
   </section>
 
-  <section aria-label={copy.teamAll} class="marquee-mask overflow-hidden border-t border-white/8 bg-fg py-5 text-bg">
+  <section aria-label={copy.teamAll} class="marquee-mask overflow-hidden border-t border-white/8 bg-inverse-bg py-5 text-inverse-fg">
     <div class="animate-marquee flex w-max gap-3 pr-3">
       {[...members, ...members].map((member) => (
         <div class="flex items-center gap-3 rounded-full border border-white/10 bg-white/[0.045] py-1.5 pl-1.5 pr-4">
@@ -397,11 +398,11 @@ const resolveMembers = (ids: readonly string[]) => members.filter((member) => id
     </div>
   </section>
 
-  <section id="team" class="overflow-hidden border-y border-border bg-fg text-bg scroll-mt-20">
+  <section id="team" class="overflow-hidden border-y border-white/8 bg-inverse-bg text-inverse-fg scroll-mt-20">
     <div class="reveal-section mx-auto max-w-7xl px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
       <div class="grid gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-end">
         <div><p class="section-eyebrow text-emerald-300">{copy.teamEyebrow}</p><h2 class="mt-5 text-[clamp(2.5rem,5vw,5rem)] font-semibold leading-[0.98] tracking-[-0.05em]">{copy.teamTitle}</h2></div>
-        <div class="lg:pb-1"><p class="max-w-2xl text-body-lg leading-loose text-bg/58">{copy.teamDesc}</p><p class="mt-4 text-caption text-bg/38">{copy.teamNote}</p></div>
+        <div class="lg:pb-1"><p class="max-w-2xl text-body-lg leading-loose text-inverse-fg/68">{copy.teamDesc}</p><p class="mt-4 text-caption text-inverse-fg/48">{copy.teamNote}</p></div>
       </div>
       <div class="mt-14 grid auto-rows-[12rem] grid-cols-2 gap-3 sm:auto-rows-[15rem] sm:grid-cols-4 lg:auto-rows-[18rem] lg:grid-cols-6">
         {members.map((member, index) => (
@@ -411,7 +412,7 @@ const resolveMembers = (ids: readonly string[]) => members.filter((member) => id
           </article>
         ))}
       </div>
-      <div class="mt-7 flex items-center justify-between gap-4 border-t border-bg/10 pt-7"><p class="text-body-lg font-medium">{copy.teamAll}</p><div class="flex -space-x-2">{members.slice(-5).map((member) => <img src={withBase(`/agents/${member.avatar}`)} alt="" width="256" height="256" loading="lazy" class="h-8 w-8 rounded-full border-2 border-fg object-cover" />)}</div></div>
+      <div class="mt-7 flex items-center justify-between gap-4 border-t border-white/10 pt-7"><p class="text-body-lg font-medium">{copy.teamAll}</p><div class="flex -space-x-2">{members.slice(-5).map((member) => <img src={withBase(`/agents/${member.avatar}`)} alt="" width="256" height="256" loading="lazy" class="h-8 w-8 rounded-full border-2 border-inverse-bg object-cover" />)}</div></div>
     </div>
   </section>
 
@@ -451,9 +452,10 @@ const resolveMembers = (ids: readonly string[]) => members.filter((member) => id
   </section>
 
   <section class="px-4 pb-4 sm:px-6 sm:pb-6 lg:px-8">
-    <div class="cta-panel relative mx-auto max-w-7xl overflow-hidden rounded-[2rem] bg-fg px-6 py-16 text-center text-bg sm:px-12 sm:py-24">
+    <div class="cta-panel relative mx-auto max-w-7xl overflow-hidden rounded-[2rem] bg-inverse-bg px-6 py-16 text-center text-inverse-fg sm:px-12 sm:py-24">
       <div class="cta-orb" aria-hidden="true"></div>
-      <div class="relative mx-auto max-w-3xl"><p class="section-eyebrow justify-center text-emerald-300">{copy.ctaEyebrow}</p><h2 class="mt-5 text-[clamp(2.7rem,6vw,5.6rem)] font-semibold leading-[0.98] tracking-[-0.055em]">{copy.ctaTitle}</h2><p class="mx-auto mt-5 max-w-xl text-body-lg leading-relaxed text-bg/60">{copy.ctaDesc}</p><div class="mt-9 flex flex-wrap justify-center gap-3"><a href={downloadHref} class="button-primary">{t(lang, 'cta.button')}<span aria-hidden="true">→</span></a><a href={docsHref} class="button-on-dark">{copy.ctaSecondary}</a></div></div>
+      <div class="relative mx-auto max-w-3xl"><p class="section-eyebrow justify-center text-emerald-300">{copy.ctaEyebrow}</p><h2 class="mt-5 text-[clamp(2.7rem,6vw,5.6rem)] font-semibold leading-[0.98] tracking-[-0.055em]">{copy.ctaTitle}</h2><p class="mx-auto mt-5 max-w-xl text-body-lg leading-relaxed text-inverse-fg/65">{copy.ctaDesc}</p><div class="mt-9 flex flex-wrap justify-center gap-3"><a href={downloadHref} class="button-primary">{t(lang, 'cta.button')}<span aria-hidden="true">→</span></a><a href={docsHref} class="button-on-dark">{copy.ctaSecondary}</a></div></div>
     </div>
   </section>
+  </div>
 </Base>
