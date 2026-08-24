@@ -71,7 +71,7 @@ alert/confirm/prompt 会阻塞页面:先用 `dialog` 读取内容,再用 `handle
 | `repeated_action_failure` | 同动作同 ref 在同代际连续失败 ≥2 次,已熔断 | 唯一解除路径是成功执行一次 `navigate`/`reload`/`back`/`forward`/`open`/`switch_tab`/`handle_dialog`(换代际);在此之前一切点击输入类动作都被拒 |
 | `action_denied` | 策略拒绝(如支付、购买) | 停止该意图,交用户处理;不得变相绕过 |
 | `user_action_required` | CAPTCHA/MFA/硬件密钥步骤 | 停下请用户完成该步;换措辞重试也会被拒(按元素语义识别),不要尝试 |
-| `user_takeover_required` | 用户刚手动操作了页面,排队中的动作被作废 | 重新 `snapshot` 后重试一次(后续动作会自动让行避让用户);若再次被拒说明用户正在持续操作,停下询问而不是循环重试 |
+| `user_takeover_required` | agent 动作因用户正在操作页面而被拒 | 重新 `snapshot` 后重试一次(动作会让行避让用户);若持续出现说明用户仍在操作,停下询问而不是循环重试 |
 | `browser_unavailable` | 浏览器运行时不可用 | 可重试;确认不可用后说明能力降级,才考虑原生 computer-use |
 
 ### 红线
