@@ -2271,7 +2271,8 @@ export class BrowserRuntime {
   private async waitForFileChooser(tab: BrowserTab, context: BrowserRequestContext, timeoutMs: number): Promise<{ file_chooser_id: string; is_multiple: boolean }> {
     if (context.actor !== "agent") throw browserError("action_denied")
     // 只是翻转拦截开关,默认 30s debugger 上限会与后续 waiter 串行叠加出
-    // 理论 70s(#638);显式短超时归入安全区。
+    // 理论 70s(#638);显式短超时归入安全区。总账边界:guest ≤10s + 本开关
+    // 5s + waiter ≤30s = 45s 恰为 transport 上限,三者同时拉满概率趋零。
     await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.setInterceptFileChooserDialog", { enabled: true }), 5_000)
     return new Promise((resolve, reject) => {
       const waiter: BrowserFileChooserWaiter = {
@@ -2509,9 +2510,10 @@ export class BrowserRuntime {
     const exported: Array<Record<string, unknown>> = []
     const failures: Array<Record<string, unknown>> = []
     let totalBytes = 0
-    // ≤100 资源 × 30s abort 串行无总预算时最坏小时级(#638);40s 后剩余
-    // 资产按 budget_exceeded 记入 failures,已导出部分照常返回。
-    const assetBudgetDeadline = startedAt + 40_000
+    // ≤100 资源 × 30s abort 串行无总预算时最坏小时级(#638);预算 = handler
+    // 上限 + 10s 余量,超时剩余资产按 budget_exceeded 记入 failures,已导出
+    // 部分照常返回。
+    const assetBudgetDeadline = startedAt + BROWSER_HANDLER_WAIT_CAP_MS + 10_000
     for (const asset of assets) {
       const controller = new AbortController()
       const remainingBudgetMs = assetBudgetDeadline - Date.now()
@@ -2519,7 +2521,7 @@ export class BrowserRuntime {
         failures.push({ contentType: null, id: asset.id, name: asset.name, reason: "budget_exceeded", url: asset.url })
         continue
       }
-      const timer = setTimeout(() => controller.abort(), Math.min(30_000, Math.max(1_000, remainingBudgetMs)))
+      const timer = setTimeout(() => controller.abort(), Math.min(BROWSER_HANDLER_WAIT_CAP_MS, Math.max(1_000, remainingBudgetMs)))
       try {
         if (!isAllowedNavigation(asset.url, true, this.settings, tab.approvedPrivateOrigins)) throw new Error("blocked")
         const response = await browserContents(tab).session.fetch(asset.url, { redirect: "follow", signal: controller.signal })
@@ -3392,13 +3394,13 @@ export class BrowserRuntime {
     return { path: prepared.finalPath }
   }
 
-  private async loadBackgroundContent(context: BrowserRequestContext, params: Record<string, unknown>): Promise<{ results: Array<{ url: string; title: string | null; content: string | null }> }> {
+  private async loadBackgroundContent(context: BrowserRequestContext, params: Record<string, unknown>): Promise<{ results: Array<{ url: string; title: string | null; content: string | null; skipped?: boolean }> }> {
     if (context.actor !== "agent") throw browserError("action_denied")
     const urls = Array.isArray(params.urls) ? params.urls.filter((value): value is string => typeof value === "string").slice(0, 10) : []
     if (!urls.length) throw browserError("invalid_browser_request")
     const contentType = params.contentType === "html" || params.contentType === "domSnapshot" ? params.contentType : "text"
     const timeoutMs = params.timeoutMs === undefined ? 10_000 : boundedNumber(params.timeoutMs, 1, BROWSER_HANDLER_WAIT_CAP_MS)
-    const results: Array<{ url: string; title: string | null; content: string | null }> = []
+    const results: Array<{ url: string; title: string | null; content: string | null; skipped?: boolean }> = []
     // ≤10 个 URL 各自 navigate+waitForLoad 串行,无总预算时最坏分钟级,
     // 会被 sidecar transport 先杀(#638);超预算的剩余 URL 按失败形态返回。
     // 残余:navigate(≤30s)+waitForLoad(≤30s)串行的首 URL 理论最坏 ~59s,
@@ -3407,7 +3409,7 @@ export class BrowserRuntime {
     for (const url of urls) {
       const remainingBudgetMs = budgetDeadline - Date.now()
       if (results.length && remainingBudgetMs <= 0) {
-        results.push({ url: stripUrl(url), title: null, content: null })
+        results.push({ url: stripUrl(url), title: null, content: null, skipped: true })
         continue
       }
       const effectiveTimeoutMs = Math.max(1_000, Math.min(timeoutMs, remainingBudgetMs))
@@ -3417,12 +3419,16 @@ export class BrowserRuntime {
         const tab = this.requireTab(tabId, context)
         await this.navigate(tab, url, context)
         await this.waitForLoad(tab, effectiveTimeoutMs)
+        // pageContent 底层 executeJavaScriptInIsolatedWorld 无界(预存),
+        // 按剩余预算包裹防病态单页击穿 transport(#638 review)。
+        const remainingForContent = Math.max(1_000, budgetDeadline - Date.now())
         const content = contentType === "domSnapshot"
-          ? JSON.stringify(await this.snapshot(tab))
-          : await this.pageContent(tab, { format: contentType })
+          ? JSON.stringify(await browserPromiseTimeout(this.snapshot(tab), Math.min(effectiveTimeoutMs, remainingForContent)))
+          : await browserPromiseTimeout(this.pageContent(tab, { format: contentType }), remainingForContent)
         results.push({
           url: tab.url,
           title: tab.title || null,
+          skipped: false,
           content: typeof content === "string" ? content : contentType === "html" ? content.html ?? null : content.text,
         })
       } catch {
