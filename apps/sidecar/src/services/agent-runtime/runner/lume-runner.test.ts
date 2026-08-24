@@ -1184,4 +1184,89 @@ describe("LumeRunner", () => {
     expect(runEnds).toHaveLength(1);
     expect((runEnds[0]!.detail as { stopReason: string }).stopReason).toBe("error");
   });
+
+  // #550:终值 append 自身同步 throw(AV 锁文件)时,置位不再提前、completed
+  // 返回前的补发必须兜住——否则 run 成功线程却永久卡 streaming
+  test("#550:终值 append throw 后 completed 补发 run.end{end_turn} 恰一次", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-550-end-turn-"));
+    dirs.push(agentDir);
+    const runner = await createRunner(agentDir, []);
+    const bus = getThreadEventBus(getRuntimeCoreSessionDir("thread-1", agentDir));
+    const realPublish = bus.publish.bind(bus);
+    let failTerminalOnce = true;
+    (bus as unknown as { publish: typeof realPublish }).publish = (threadId, runId, event) => {
+      if (failTerminalOnce && (event.detail as { type?: string }).type === "run.end") {
+        failTerminalOnce = false; // 只打 projector 终值一枪,补发放行
+        throw new Error("EAGAIN: av lock on terminal append");
+      }
+      return realPublish(threadId, runId, event);
+    };
+
+    async function* completedStream(): AsyncIterable<SDKMessage> {
+      yield {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "hello" }] }
+      } as SDKMessage;
+      yield {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        num_turns: 2,
+        result: "ok"
+      } as SDKMessage;
+    }
+
+    const result = await runner.runQueryStream(completedStream());
+
+    expect(result).toEqual({ status: "completed" });
+    const runEnds = await readBusRunEnds(agentDir, "thread-1");
+    expect(runEnds).toHaveLength(1);
+    // numTurns:0 是补发指纹(projector 终值带真实 numTurns)
+    expect(runEnds[0]!.detail).toMatchObject({
+      type: "run.end",
+      stopReason: "end_turn",
+      isError: false,
+      numTurns: 0
+    });
+  });
+
+  // #550 S1:turn_limited 分支的补发同样要兜住(T7a 后它是 web 清 streaming 的唯一信号)
+  test("#550:终值 append throw 后 turn_limited 补发 run.end 恰一次", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-550-max-turns-"));
+    dirs.push(agentDir);
+    const runner = await createRunner(agentDir, []);
+    const bus = getThreadEventBus(getRuntimeCoreSessionDir("thread-1", agentDir));
+    const realPublish = bus.publish.bind(bus);
+    let failTerminalOnce = true;
+    (bus as unknown as { publish: typeof realPublish }).publish = (threadId, runId, event) => {
+      if (failTerminalOnce && (event.detail as { type?: string }).type === "run.end") {
+        failTerminalOnce = false;
+        throw new Error("EAGAIN: av lock on terminal append");
+      }
+      return realPublish(threadId, runId, event);
+    };
+
+    async function* maxTurnsStream(): AsyncIterable<SDKMessage> {
+      yield {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "partial" }] }
+      } as SDKMessage;
+      yield {
+        type: "result",
+        subtype: "error_max_turns",
+        is_error: true,
+        num_turns: 3
+      } as unknown as SDKMessage;
+    }
+
+    const result = await runner.runQueryStream(maxTurnsStream());
+
+    expect(result.status).toBe("turn_limited");
+    const runEnds = await readBusRunEnds(agentDir, "thread-1");
+    expect(runEnds).toHaveLength(1);
+    expect(runEnds[0]!.detail).toMatchObject({
+      type: "run.end",
+      isError: true
+    });
+  });
 });
