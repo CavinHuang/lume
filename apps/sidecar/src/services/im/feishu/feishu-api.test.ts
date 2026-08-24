@@ -15,8 +15,8 @@ function makeFakeClient(captured: unknown[]): FeishuRestClient {
     cardkit: {
       v1: {
         card: {
-          create: async () => ({ data: { card_id: "card_fake" } }),
-          update: async () => ({}),
+          create: async () => ({ code: 0, data: { card_id: "card_fake" } }),
+          update: async () => ({ code: 0 }),
         },
       },
     },
@@ -53,7 +53,7 @@ describe("sendFeishuText", () => {
       {
         createClient: () => ({
           im: { v1: { message: { create: async () => Promise.reject(new Error("boom")) } } },
-          cardkit: { v1: { card: { create: async () => ({}), update: async () => ({}) } } },
+          cardkit: { v1: { card: { create: async () => ({ code: 0 }), update: async () => ({ code: 0 }) } } },
         }),
       },
     );

@@ -156,8 +156,8 @@ function createImRunCardSessionInternal(threadId: string): ImRunCardSession | nu
     },
     isEnabled: () => true,
     settleOpen: () => {
-      if (opening) return opening;
-      return Promise.resolve(false);
+      // open 理论不 reject（内部已捕获）；兜底按失败处理走文本回退
+      return (opening?.catch(() => false) ?? Promise.resolve(false)) as Promise<boolean>;
     }
   };
 }
