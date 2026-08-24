@@ -1196,19 +1196,6 @@ function keepLastLines(text: string, maxLines: number): { content: string; dropp
 }
 
 /**
- * Raw-window slack over the display budgets. The accumulator stores raw text up
- * to budget+slack; snapshot() redacts the WHOLE raw window first and only then
- * trims to the display budgets — post-redaction trimming can never expose an
- * unmatched secret suffix, because anything the redactor would match inside the
- * final window was already seen together with its full pattern prefix. Ceiling:
- * a secret longer than the slack straddling the raw cut edge stays a
- * theoretical gap (ponytail: raise the slack or move to a stateful streaming
- * redactor if that ever matters).
- */
-const RAW_WINDOW_SLACK_CHARS = 512
-const RAW_WINDOW_SLACK_LINES = 8
-
-/**
  * Shared tail-window cutter: UTF-16 slice that restarts at the next line break
  * when one exists and never leaves a split surrogate pair at either edge.
  * Within-budget input passes through untouched (the line restart is part of
@@ -1261,16 +1248,80 @@ export function tailTruncate(text: string, maxLines: number, maxChars: number): 
 
 type PreviewAccumulator = ReturnType<typeof createPreviewAccumulator>
 
+// Secret shape shared with redactSensitiveText's patterns: a literal-ish prefix
+// (Bearer / key=value) followed by an unbounded token run. The token run is the
+// streaming hazard — it may grow across arbitrarily many chunks before its
+// terminator arrives.
+const SECRET_STREAM_PATTERN = /(Bearer\s+|(?:api[_-]?key|token|secret|password)\s*[:=]\s*)([A-Za-z0-9._~+/=-]+)/gi
+const SECRET_TOKEN_CHARS = /[A-Za-z0-9._~+/=-]/
+// Trailing chars held back between chunks so a pattern PREFIX straddling the
+// chunk edge is rescanned whole next round ('Bearer', 'api_', 'password='…).
+const MAX_PREFIX_HOLD = 24
+
 /**
- * Rolling preview of one output stream. Stores the RAW bounded tail (display
- * budgets + slack, see RAW_WINDOW_SLACK_CHARS) — redaction happens once over
- * the whole retained window at snapshot() time, BEFORE the authoritative trim,
- * so a secret split across chunk boundaries or sitting at the raw window's cut
- * edge is still seen (and redacted) whole; post-redaction trimming can only
- * ever split already-masked text. Tracks full-stream line/char totals.
+ * Streaming redactor for one chunk against the previous hold-back: returns the
+ * portion that is provably safe to finalize (every match inside it is complete
+ * AND terminated by a non-token char) plus the tail that must be rescanned
+ * with the next chunk — either an unterminated token run still growing, or the
+ * small suffix that could be the head of a pattern (never the interior of an
+ * already-complete match: that would let raw secret bytes slip through).
+ *
+ * Unlike window+slack schemes this has no fixed safety horizon: a token of ANY
+ * length is held in `pending` until its terminator shows up, then redacted
+ * wherever it finally lands.
+ */
+function splitRedactable(buffer: string): { safe: string; pending: string } {
+  SECRET_STREAM_PATTERN.lastIndex = 0
+  let m: RegExpExecArray | null
+  let unterminatedFrom = -1
+  let lastTerminatedStart = buffer.length
+  let lastTerminatedEnd = 0
+  while ((m = SECRET_STREAM_PATTERN.exec(buffer))) {
+    const end = m.index + m[0].length
+    if (end < buffer.length && !SECRET_TOKEN_CHARS.test(buffer[end]!)) {
+      lastTerminatedStart = m.index
+      lastTerminatedEnd = end
+      continue
+    }
+    // Unterminated: the token run touches the buffer end and may keep growing.
+    unterminatedFrom = m.index
+    break
+  }
+  let holdFrom: number
+  if (unterminatedFrom >= 0) {
+    holdFrom = unterminatedFrom
+  } else {
+    holdFrom = Math.max(0, buffer.length - MAX_PREFIX_HOLD)
+    if (lastTerminatedEnd > holdFrom) {
+      // The hold boundary would cut through a complete match — hold it whole
+      // instead (rescanned/emitted with the next chunk or the final flush).
+      holdFrom = lastTerminatedStart
+    }
+  }
+  let safe = ''
+  let cursor = 0
+  SECRET_STREAM_PATTERN.lastIndex = 0
+  while ((m = SECRET_STREAM_PATTERN.exec(buffer))) {
+    const end = m.index + m[0].length
+    if (end > holdFrom || m.index >= holdFrom) break
+    safe += buffer.slice(cursor, m.index) + m[1] + '[redacted]'
+    cursor = end
+  }
+  safe += buffer.slice(cursor, holdFrom)
+  return { safe, pending: buffer.slice(holdFrom) }
+}
+
+/**
+ * Rolling preview of one output stream. Text flows through a stateful
+ * streaming redactor (see splitRedactable): secrets are redacted as soon as
+ * they are provably complete — regardless of length or where later window cuts
+ * land — so no window-edge can splice around them. The finalized (redacted)
+ * tail is bounded to the display budgets; caps therefore only ever trim
+ * already-masked text. Tracks full-stream line/char totals for the footer.
  */
 export function createPreviewAccumulator(maxLines: number, maxChars: number) {
   let kept = ''
+  let pendingRaw = ''
   let totalNewlines = 0
   let totalChars = 0
   let streamEndsWithNewline = false
@@ -1284,19 +1335,22 @@ export function createPreviewAccumulator(maxLines: number, maxChars: number) {
       totalNewlines += countNewlines(text)
       totalChars += text.length
       streamEndsWithNewline = text.endsWith('\n')
-      let candidate = kept + text
-      const lineCapped = keepLastLines(candidate, maxLines + RAW_WINDOW_SLACK_LINES)
+      const { safe, pending } = splitRedactable(pendingRaw + text)
+      pendingRaw = pending
+      let candidate = kept + safe
+      const lineCapped = keepLastLines(candidate, maxLines)
       candidate = lineCapped.content
       droppedLines ||= lineCapped.dropped
-      const rawCharCap = maxChars + RAW_WINDOW_SLACK_CHARS
-      if (candidate.length > rawCharCap) {
-        candidate = candidate.slice(-rawCharCap)
+      if (candidate.length > maxChars) {
+        candidate = candidate.slice(-maxChars)
         droppedChars = true
       }
       kept = candidate
     },
     snapshot(): TailTruncation {
-      const fresh = tailTruncate(kept, maxLines, maxChars)
+      // Pending raw text joins the view redacted-at-end-of-available-data; the
+      // authoritative copy stays pending until its terminator arrives.
+      const fresh = tailTruncate(kept + redactSensitiveText(pendingRaw), maxLines, maxChars)
       return {
         ...fresh,
         truncated: droppedLines || droppedChars || fresh.truncated,

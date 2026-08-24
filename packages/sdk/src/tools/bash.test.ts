@@ -600,6 +600,21 @@ describe("BashTool output streaming snapshots", () => {
     expect(snap.content).not.toContain("secret-value");
   });
 
+  test("streaming redactor holds tokens longer than any fixed slack until termination", () => {
+    // Codex repro shape: a 2_400-char Bearer token (longer than any reasonable
+    // fixed slack) whose value arrives across chunk boundaries while the raw
+    // window's left edge moves past the `Bearer` prefix. The stateful redactor
+    // holds the run until its terminator, so no suffix can slip through.
+    const token = "tokensegment".repeat(200);
+    const acc = createPreviewAccumulator(500, 49_500);
+    acc.append(`${"A".repeat(49_000)}Bearer ${token}`);
+    acc.append(` trailing\nplain line\n`);
+    const snap = acc.snapshot();
+    expect(snap.content).toContain("[redacted]");
+    expect(snap.content).not.toContain("tokensegment");
+    expect(snap.content).toContain("plain line");
+  });
+
   test("exactly maxLines terminated lines are not truncated (no trailing-segment off-by-one)", () => {
     const fiveHundred = `${Array.from({ length: 500 }, (_, i) => `l${i + 1}`).join("\n")}\n`;
     const trimmed = tailTruncate(fiveHundred, 500, 200_000);
