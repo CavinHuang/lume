@@ -48,15 +48,6 @@ export function clipLogPreview(text: string): string {
     : text
 }
 
-function safeJson(value: unknown): string {
-  try {
-    const text = JSON.stringify(value)
-    return text ?? String(value)
-  } catch {
-    return String(value)
-  }
-}
-
 const SUMMARIZE_MAX_DEPTH = 2
 const SUMMARIZE_MAX_KEYS = 30
 
@@ -96,10 +87,7 @@ export function summarizeValue(input: unknown, depth = 0): unknown {
       out[key] = '[redacted]'
       continue
     }
-    if (classified === 'preview' && typeof value !== 'string') {
-      out[key] = clipLogPreview(safeJson(value))
-      continue
-    }
+    // 内容键的对象值必须走递归分类：任何在此处直接 JSON 序列化的捷径都会让嵌套凭据绕过脱敏。
     out[key] = summarizeValue(value, depth + 1)
   }
   return out

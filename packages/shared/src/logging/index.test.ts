@@ -27,6 +27,25 @@ describe('summarizeValue', () => {
     expect((out.prompt as string).length).toBeLessThan(long.length)
     expect(out.prompt).not.toBe('[redacted]')
   })
+  test('内容键的对象值递归分类，嵌套凭据不泄漏', () => {
+    const out = summarizeValue({
+      prompt: { apiKey: 'sk-secret', note: 'hello', nested: { password: 'p' } },
+    }) as { prompt: { apiKey: string; note: string; nested: unknown } }
+    // 第一层字段照常分类；更深层被深度帽截断（凭据同样不可达）。
+    expect(out.prompt.apiKey).toBe('[redacted]')
+    expect(out.prompt.note).toBe('hello')
+    expect(out.prompt.nested).toBe('[MaxDepth]')
+    expect(JSON.stringify(out)).not.toContain('sk-secret')
+    expect(JSON.stringify(out)).not.toContain('"p"')
+  })
+  test('内容键的数组值逐项分类而非 JSON 原样序列化', () => {
+    const out = summarizeValue({ body: [{ token: 't' }, 'plain'] }) as { body: { length: number; items: unknown[] } }
+    expect(out.body.length).toBe(2)
+    // 数组元素位于深度 2 → 骨架化，凭据不可达；标量项仍可见。
+    expect(out.body.items[0]).toBe('[MaxDepth]')
+    expect(out.body.items[1]).toBe('plain')
+    expect(JSON.stringify(out)).not.toContain('"t"')
+  })
   test('普通标量保留、嵌套对象限深、数组给骨架', () => {
     const out = summarizeValue({ id: 7, ok: true, nested: { deep: { deeper: 1 } }, list: [1, 2, 3] }) as Record<string, unknown>
     expect(out.id).toBe(7)
