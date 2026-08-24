@@ -315,15 +315,19 @@ export function createFileStatMetadata(filePath) {
   }
 }
 
+// macOS 系统设置深链（如语音听写的麦克风权限页）：指向系统应用本身，与任意
+// 远程内容不同风险面，单独列入白名单。
+const MACOS_SYSTEM_PREFERENCES_SCHEME = 'x-apple.system.preferences:'
+
 export function validateExternalUrl(url) {
   let protocol
   try {
     protocol = new URL(url).protocol
   } catch {
-    throw new Error('only http/https/weread/obsidian urls are allowed')
+    throw new Error('only http/https/weread/obsidian/system-preferences urls are allowed')
   }
-  if (!['http:', 'https:', 'weread:', 'obsidian:'].includes(protocol)) {
-    throw new Error('only http/https/weread/obsidian urls are allowed')
+  if (![...['http:', 'https:', 'weread:', 'obsidian:'], MACOS_SYSTEM_PREFERENCES_SCHEME].includes(protocol)) {
+    throw new Error('only http/https/weread/obsidian/system-preferences urls are allowed')
   }
   return url
 }
