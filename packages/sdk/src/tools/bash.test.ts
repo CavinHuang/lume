@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BashTool, interpretShellExit, looksLikeInteractivePrompt } from "./bash";
+import { BashTool, createPreviewAccumulator, interpretShellExit, looksLikeInteractivePrompt, redactSensitiveText, tailTruncate } from "./bash";
 import { analyzeBashCommand } from "../utils/bash-command-analysis";
 import { clearTasks, TaskOutputTool } from "./task-tools";
 import {
@@ -540,4 +540,383 @@ describe("BashTool #381 background timeout semantics", () => {
     const completed = await TaskOutputTool.call({ task_id: taskId, block: true, timeout: 60_000 }, context);
     expect(completed._meta?.execution).toMatchObject({ outcome: "timed_out", terminationReason: "timeout" });
   }, 90_000);
+});
+
+/**
+ * Grammar-rich differential fuzz: build random strings from secret-shaped
+ * atoms, feed them through the accumulator in random chunks, and require the
+ * streamed view to equal `redactSensitiveText(full)` under the same tail
+ * budgets — including cases where window cuts have removed prefixes entirely.
+ */
+function runStreamingEquivalenceFuzz(config: { iterations: number; maxLength: number; maxChars: number; maxLines: number }): void {
+  // Deterministic PRNG (seeded) so failures reproduce.
+  let seed = 0x5eed1234;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0xffffffff;
+  };
+  const atoms = [
+    "Bearer", "bearer", "BEARER", "Bearer ", "token=", "token = ", "password=",
+    "api_key=", "apikey", "secret:", " ", "\n", ",", ";", "@", "x", "Zz9",
+    "=", ":", "-", "_", ".", "/", "+", "p@ss", "tokensecret", "Bearer Bearer ",
+  ];
+  for (let iteration = 0; iteration < config.iterations; iteration += 1) {
+    let full = "";
+    while (full.length < config.maxLength && rand() > 0.05) {
+      full += atoms[Math.floor(rand() * atoms.length)];
+    }
+    if (!full) continue;
+
+    const acc = createPreviewAccumulator(config.maxLines, config.maxChars);
+    let cursor = 0;
+    while (cursor < full.length) {
+      const take = 1 + Math.floor(rand() * 12);
+      acc.append(full.slice(cursor, cursor + take));
+      cursor += take;
+    }
+    const streamed = acc.snapshot().content;
+    const expected = tailTruncate(redactSensitiveText(full), config.maxLines, config.maxChars).content;
+    if (streamed !== expected) {
+      throw new Error(
+        `FSM drift on iteration ${iteration} (seed ${seed}):` +
+        `\n input=${JSON.stringify(full)}` +
+        `\n streamed=${JSON.stringify(streamed)}` +
+        `\n expected=${JSON.stringify(expected)}`,
+      );
+    }
+  }
+}
+
+describe("BashTool output streaming snapshots", () => {
+  test("tailTruncate keeps the tail within both bounds and reports stats", () => {
+    const inBounds = tailTruncate("a\nb\nc", 5, 100);
+    expect(inBounds.content).toBe("a\nb\nc");
+    expect(inBounds.truncated).toBeFalse();
+    expect(inBounds.totalLines).toBe(3);
+    expect(inBounds.shownLines).toBe(3);
+
+    const byLines = tailTruncate("l1\nl2\nl3\nl4", 2, 1000);
+    expect(byLines.content).toBe("l3\nl4");
+    expect(byLines.truncatedByLines).toBeTrue();
+    expect(byLines.truncatedByChars).toBeFalse();
+    expect(byLines.totalLines).toBe(4);
+    expect(byLines.shownLines).toBe(2);
+
+    // A trailing newline terminates the last line instead of opening an empty one.
+    expect(tailTruncate("l1\nl2\nl3\n", 500, 1000).totalLines).toBe(3);
+
+    // Char cut restarts at the next line break instead of opening mid-line.
+    const byChars = tailTruncate(`${"x".repeat(300)}\nend`, 100, 100);
+    expect(byChars.content).toBe("end");
+    expect(byChars.truncatedByChars).toBeTrue();
+    expect(byChars.content.length).toBeLessThanOrEqual(100);
+
+    // Single giant line: no line dropped, so the footer can report characters.
+    const giantLine = tailTruncate("y".repeat(250), 100, 100);
+    expect(giantLine.truncatedByChars).toBeTrue();
+    expect(giantLine.truncatedByLines).toBeFalse();
+    expect(giantLine.totalLines).toBe(1);
+    expect(giantLine.shownChars).toBeLessThanOrEqual(100);
+    expect(giantLine.totalChars).toBe(250);
+
+    expect(tailTruncate("api_key=supersecret\nplain", 10, 1000).content).not.toContain("supersecret");
+  });
+
+  test("accumulator redacts at snapshot time so chunk-split secrets stay covered", () => {
+    const acc = createPreviewAccumulator(500, 1000);
+    acc.append("Bearer sec");
+    acc.append("ret-value\nplain");
+    const snap = acc.snapshot();
+    // Whole retained window is redacted in one pass: the split secret is seen whole.
+    expect(snap.content).toContain("Bearer [redacted]");
+    expect(snap.content).toContain("plain");
+    expect(snap.content).not.toContain("secret-value");
+  });
+
+  test("raw window slack keeps cut-edge secrets matchable before the final trim", () => {
+    // Single giant line (~51k chars) whose secret straddles where the raw
+    // window's left edge lands: the slack keeps `Bearer` inside the redaction
+    // pass that runs BEFORE the display-budget trim.
+    const acc = createPreviewAccumulator(500, 49_500);
+    acc.append(`${"A".repeat(49_000)} Bearer secret-value ${"B".repeat(2_000)}\n`);
+    const snap = acc.snapshot();
+    expect(snap.truncatedByChars).toBeTrue();
+    expect(snap.content).toContain("[redacted]");
+    expect(snap.content).not.toContain("secret-value");
+  });
+
+  test("streaming redactor holds tokens longer than any fixed slack until termination", () => {
+    // Codex repro shape: a 2_400-char Bearer token (longer than any reasonable
+    // fixed slack) whose value arrives across chunk boundaries while the raw
+    // window's left edge moves past the `Bearer` prefix. The stateful redactor
+    // holds the run until its terminator, so no suffix can slip through.
+    const token = "tokensegment".repeat(200);
+    const acc = createPreviewAccumulator(500, 49_500);
+    acc.append(`${"A".repeat(49_000)}Bearer ${token}`);
+    acc.append(` trailing\nplain line\n`);
+    const snap = acc.snapshot();
+    expect(snap.content).toContain("[redacted]");
+    expect(snap.content).not.toContain("tokensegment");
+    expect(snap.content).toContain("plain line");
+  });
+
+  test("FSM matches final redaction semantics: value charset includes non-token chars", () => {
+    // Codex repro: '@' is part of the authoritative value charset [^\s,;]+ —
+    // it must NOT terminate the secret run.
+    const acc = createPreviewAccumulator(500, 49_500);
+    acc.append(`password=p@${"punctuationsecret".repeat(4000)}\nplain\n`);
+    const snap = acc.snapshot();
+    expect(snap.content).not.toContain("punctuationsecret");
+    expect(snap.content).toContain("[redacted]");
+  });
+
+  test("FSM covers unbounded whitespace inside prefixes across chunks", () => {
+    // Codex repro: `Bearer` + 40 spaces split across chunks — whitespace runs
+    // in prefixes are unbounded, so a fixed hold-back can never cover them.
+    const acc = createPreviewAccumulator(500, 49_500);
+    acc.append(`Bearer${" ".repeat(40)}`);
+    acc.append(`${"whitespacesecret".repeat(4000)}\nplain\n`);
+    const snap = acc.snapshot();
+    expect(snap.content).not.toContain("whitespacesecret");
+    expect(snap.content).toContain("[redacted]");
+  });
+
+  test("nested prefix: kv value containing Bearer masks both segments (sequential-pass semantics)", () => {
+    // Codex repro: static redaction is two sequential passes — the bearer pass
+    // masks the nested value first, then the kv pass masks 'Bearer' itself.
+    const acc = createPreviewAccumulator(500, 49_500);
+    for (const chunk of ["token=Bearer ", "nested-secret-value", "\nplain", " tail\n"]) {
+      acc.append(chunk);
+    }
+    const snap = acc.snapshot();
+    expect(snap.content).toContain("token=[redacted] [redacted]");
+    expect(snap.content).not.toContain("nested-secret-value");
+  });
+
+  test("failed keyword re-feeds its char so adjacent prefixes still match", () => {
+    // Codex repro: the second Bearer's head must not be swallowed by the
+    // first attempt's failure branch.
+    const acc = createPreviewAccumulator(500, 49_500);
+    for (const chunk of ["BearerBearer ", "secretvalue", "\n"]) {
+      acc.append(chunk);
+    }
+    const snap = acc.snapshot();
+    expect(snap.content).toContain("BearerBearer [redacted]");
+    expect(snap.content).not.toContain("secretvalue");
+  });
+
+  test("bearer value charset stops at non-token chars (no over-redaction)", () => {
+    // Codex P2: '@' terminates the bearer run — only 'abc' is masked.
+    const acc = createPreviewAccumulator(500, 49_500);
+    acc.append("Bearer abc@example.com done\n");
+    const snap = acc.snapshot();
+    expect(snap.content).toContain("Bearer [redacted]@example.com done\n");
+  });
+
+  test("streaming redactor is byte-identical to static redaction across random chunked input (no window cut)", () => {
+    runStreamingEquivalenceFuzz({ iterations: 400, maxLength: 120, maxChars: 100_000, maxLines: 500 });
+  });
+
+  test("streaming equivalence holds with aggressive window cuts (small budget)", () => {
+    // Codex blind-spot: prefixes already trimmed off by window cuts must not
+    // change the visible tail vs applying static redaction to the full text.
+    runStreamingEquivalenceFuzz({ iterations: 400, maxLength: 300, maxChars: 60, maxLines: 10 });
+  });
+
+  test("exactly maxLines terminated lines are not truncated (no trailing-segment off-by-one)", () => {
+    const fiveHundred = `${Array.from({ length: 500 }, (_, i) => `l${i + 1}`).join("\n")}\n`;
+    const trimmed = tailTruncate(fiveHundred, 500, 200_000);
+    expect(trimmed.truncated).toBeFalse();
+    expect(trimmed.totalLines).toBe(500);
+    expect(trimmed.shownLines).toBe(500);
+    expect(trimmed.content.startsWith("l1\n")).toBeTrue();
+
+    const acc = createPreviewAccumulator(500, 200_000);
+    acc.append(fiveHundred);
+    expect(acc.snapshot().truncated).toBeFalse();
+  });
+
+  test("tailTruncate never leaves a split surrogate pair at a char-cut edge", () => {
+    // 10 emoji (20 UTF-16 units) + "end": slice(-21) opens inside the first
+    // emoji; the orphan low surrogate must be dropped, not emitted.
+    const cut = tailTruncate(`${"🎉".repeat(10)}end`, 1000, 21);
+    expect(cut.content.charCodeAt(0)).not.toBe(0xdf89);
+    expect(cut.content.endsWith("end")).toBeTrue();
+
+    // Trailing edge: window ending between the halves drops the lone high.
+    const tailCut = tailTruncate(`end${"🎉".repeat(10)}`, 1000, 21);
+    const last = tailCut.content.charCodeAt(tailCut.content.length - 1);
+    expect(last).not.toBe(0xd83c);
+  });
+
+  test("tailTruncate does not flag truncation when only redaction grew the text", () => {
+    // Raw stream fits the budget; redacting the short secret pushes the string
+    // past maxChars. No cap actually bit → not truncated.
+    const text = `${"x".repeat(90)} token=a`;
+    expect(text.length).toBeLessThan(100);
+    const result = tailTruncate(text, 500, 100);
+    expect(result.truncated).toBeFalse();
+    expect(result.content).toContain("[redacted]");
+  });
+
+  test("streams throttled snapshots with tool_use_id over the live channel", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-stream-"));
+    const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
+    const command = isPowerShellShell
+      ? "Write-Output one; Start-Sleep -Milliseconds 80; Write-Output two; Start-Sleep -Milliseconds 80; Write-Output three"
+      : "printf 'one\\n'; sleep 0.08; printf 'two\\n'; sleep 0.08; printf 'three\\n'";
+    const liveEvents: SDKMessage[] = [];
+    const bufferedEvents: SDKMessage[] = [];
+    const context = {
+      cwd: root,
+      sessionId: "stream-snapshot-test",
+      toolUseId: "toolu_stream_test",
+      emitEvent: (event: SDKMessage) => bufferedEvents.push(event),
+      emitLiveEvent: (event: SDKMessage) => liveEvents.push(event),
+    };
+    const result = await BashTool.call({ command }, context);
+    expect(result.is_error).toBeFalsy();
+
+    const snapshots = liveEvents.filter((event) =>
+      event.type === "system" && event.subtype === "local_command_output"
+    );
+    expect(snapshots.length).toBeGreaterThan(0);
+    expect(snapshots.length).toBeLessThanOrEqual(6); // throttled, not per-chunk
+    for (const snapshot of snapshots) {
+      expect(snapshot.tool_use_id).toBe("toolu_stream_test");
+    }
+    // Snapshot semantics: the last event carries the accumulated tail.
+    const lastContent = String(snapshots[snapshots.length - 1]?.content ?? "");
+    for (const marker of ["one", "two", "three"]) {
+      expect(lastContent).toContain(marker);
+    }
+    // Live channel wins: nothing duplicated onto the buffered channel.
+    expect(bufferedEvents.filter((event) =>
+      event.type === "system" && event.subtype === "local_command_output"
+    )).toHaveLength(0);
+  }, 20_000);
+
+  test("falls back to the buffered channel when no live receiver exists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-fallback-"));
+    const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
+    const command = isPowerShellShell
+      ? "Write-Output fallback-output"
+      : "printf 'fallback-output\\n'";
+    const events: SDKMessage[] = [];
+    const context = {
+      cwd: root,
+      sessionId: "stream-fallback-test",
+      toolUseId: "toolu_fallback_test",
+      emitEvent: (event: SDKMessage) => events.push(event),
+    };
+    const result = await BashTool.call({ command }, context);
+    expect(result.is_error).toBeFalsy();
+    const streamed = events.filter((event) =>
+      event.type === "system" && event.subtype === "local_command_output"
+    );
+    expect(streamed.length).toBeGreaterThan(0);
+    expect(streamed[0]?.tool_use_id).toBe("toolu_fallback_test");
+  }, 20_000);
+
+  test("appends a truncation footer with full output path to oversized results", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-footer-"));
+    const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
+    const command = isPowerShellShell
+      ? "1..600 | ForEach-Object { \"line$_\" }"
+      : "seq 1 600";
+    const context = { cwd: root, sessionId: "stream-footer-test" };
+    const result = await BashTool.call({ command }, context);
+    expect(result.is_error).toBeFalsy();
+    // Normalize CRLF: the PowerShell branch emits \r\n line endings.
+    const content = String(result.content).replace(/\r\n/g, "\n");
+    const footer = content.match(/\[Showing last (\d+) of (\d+) lines\. Full output: (.+)\]/);
+    expect(footer).toBeTruthy();
+    expect(Number(footer?.[2])).toBeGreaterThan(Number(footer?.[1]));
+    // Tail semantics: the end of the stream survives, the head may not.
+    if (isPowerShellShell) {
+      expect(content).toContain("line600\n");
+      expect(content).not.toContain("stdout:\nline1\n");
+    } else {
+      expect(content).toContain("\n600\n");
+      expect(content).not.toContain("stdout:\n1\n");
+    }
+  }, 20_000);
+
+  test("assembly overflow near section boundaries keeps both labels and a footer", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-assembly-"));
+    const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
+    // ~49.8k chars per stream: just above the per-section budget (49.5k), so
+    // both streams truncate with their own footers and labels intact — no
+    // silent assembly-level cut without truncation metadata (Codex repro shape).
+    const command = isPowerShellShell
+      ? "\"x\" * 49800; [Console]::Error.WriteLine((\"y\" * 49800))"
+      : "head -c 49800 /dev/zero | tr '\\0' x; head -c 49800 /dev/zero | tr '\\0' y >&2";
+    const context = { cwd: root, sessionId: "stream-assembly-test" };
+    const result = await BashTool.call({ command }, context);
+    expect(result.is_error).toBeFalsy();
+    const content = String(result.content);
+    expect(content.startsWith("Command completed successfully")).toBeTrue();
+    expect(content).toContain("stdout:");
+    expect(content).toContain("stderr:");
+    expect(content).toContain("[Showing last ");
+    expect(content).toContain("Full output:");
+    expect(content.length).toBeLessThan(110_000);
+  }, 30_000);
+
+  test("appends a dual-stream truncation footer when both streams overflow", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-footer-dual-"));
+    const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
+    const command = isPowerShellShell
+      ? "1..600 | ForEach-Object { $_ }; 1..600 | ForEach-Object { [Console]::Error.WriteLine(\"e$_\") }"
+      : "seq 1 600; seq 1 600 >&2";
+    const context = { cwd: root, sessionId: "stream-footer-dual-test" };
+    const result = await BashTool.call({ command }, context);
+    expect(result.is_error).toBeFalsy();
+    const footer = String(result.content).match(
+      /\[Showing last (\d+) of (\d+) lines \(stdout\) and last (\d+) of (\d+) lines \(stderr\)\. Full output: .+\]/,
+    );
+    expect(footer).toBeTruthy();
+    expect(Number(footer?.[2])).toBeGreaterThan(Number(footer?.[1]));
+    expect(Number(footer?.[4])).toBeGreaterThan(Number(footer?.[3]));
+  }, 20_000);
+
+  test("streams snapshots on the durable path too (artifactsRoot present)", async () => {
+    // bun 调度器怪癖：进程仅剩 unref 句柄时 unref 定时器会被整体饿死（生产
+    // node 侧恒有活跃句柄，#368 后台路径亦不依赖该调度）。durable 前台的
+    // delay 竞速依赖定时器触发，挂一个非 unref 心跳兜住。
+    const keepAlive = setInterval(() => {}, 1_000);
+    try {
+      const root = await mkdtemp(join(tmpdir(), "lume-bash-stream-durable-"));
+      const artifactsRoot = join(root, "artifacts");
+      const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
+      const command = isPowerShellShell
+        ? "Write-Output durable-one; Start-Sleep -Milliseconds 80; Write-Output durable-two"
+        : "printf 'durable-one\\n'; sleep 0.08; printf 'durable-two\\n'";
+      const liveEvents: SDKMessage[] = [];
+      const context = {
+        cwd: root,
+        sessionId: "session-durable-stream",
+        artifactsRoot,
+        toolUseId: "toolu_durable_test",
+        emitEvent: () => {},
+        emitLiveEvent: (event: SDKMessage) => liveEvents.push(event),
+      };
+      const result = await BashTool.call({ command }, context);
+      expect(result.is_error).toBeFalsy();
+      const snapshots = liveEvents.filter((event) =>
+        event.type === "system" && event.subtype === "local_command_output"
+      );
+      expect(snapshots.length).toBeGreaterThan(0);
+      for (const snapshot of snapshots) {
+        expect(snapshot.tool_use_id).toBe("toolu_durable_test");
+      }
+      const lastContent = String(snapshots[snapshots.length - 1]?.content ?? "");
+      expect(lastContent).toContain("durable-one");
+      expect(lastContent).toContain("durable-two");
+      // 终态结果仍带 stdout 段（此处未截断则无 footer，仅钉 tail 内容存活）
+      expect(String(result.content)).toContain("stdout:");
+    } finally {
+      clearInterval(keepAlive);
+    }
+  }, 20_000);
 });

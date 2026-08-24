@@ -104,12 +104,17 @@ export function formatModelListText(channel: Channel): string {
   if (models.length === 0) {
     return `渠道「${channel.name}」暂无启用模型。`;
   }
+  const MAX_LIST_LINES = 15;
+  const shown = models.slice(0, MAX_LIST_LINES);
   const lines = [`「${channel.name}」的可用模型：`];
-  models.forEach((model, index) => {
+  shown.forEach((model, index) => {
     const marker =
       model.id === channel.defaultModelId ? "（默认）" : "";
     lines.push(`${index + 1}. ${model.name}${marker}`);
   });
+  if (models.length > shown.length) {
+    lines.push(`…… 共 ${models.length} 个模型，仅显示前 ${shown.length} 个`);
+  }
   lines.push("", "发送 /model <渠道序号> <模型序号> 切换。");
   return lines.join("\n");
 }
