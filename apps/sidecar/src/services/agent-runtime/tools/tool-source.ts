@@ -19,6 +19,9 @@ export function createToolDescriptorsFromDefinitions(
     const baseMetadata = getToolMetadata(definition.name) ?? inferToolMetadata(definition.name);
     const runtimeMetadata = readRuntimeMetadata(definition);
     const resolvedSource = readRuntimeSource(definition) ?? inferRuntimeSource(definition.name, source);
+    // 定义体的显式 isReadOnly 优先于类别推断（#537）：defineTool 会把布尔
+    // 规范化为函数形态，这里两种形态都认；动态求值失败时回退推断
+    const definitionIsReadOnly = readDeclaredReadOnly(definition);
     if (resolvedSource === "mcp" || resolvedSource === "plugin") {
       return {
         name: definition.name,
@@ -41,7 +44,7 @@ export function createToolDescriptorsFromDefinitions(
         riskLevel: baseMetadata.riskLevel,
         sideEffects: inferSideEffects(resolvedSource, baseMetadata.category),
         allowedInPlanMode: baseMetadata.allowedInPlanMode ?? false,
-        isReadOnly: baseMetadata.category === "read" || baseMetadata.category === "network",
+        isReadOnly: definitionIsReadOnly ?? (baseMetadata.category === "read" || baseMetadata.category === "network"),
         isConcurrencySafe: isConcurrencySafe(baseMetadata.category),
         requiresApprovalByDefault: baseMetadata.riskLevel !== "low",
         ...runtimeMetadata
@@ -98,6 +101,19 @@ function readRuntimeMetadataRecord(definition: ToolDefinition): Record<string, u
   return metadata && typeof metadata === "object" && !Array.isArray(metadata)
     ? metadata as Record<string, unknown>
     : undefined;
+}
+
+function readDeclaredReadOnly(definition: ToolDefinition): boolean | undefined {
+  const value = (definition as { isReadOnly?: unknown }).isReadOnly;
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "function") return undefined;
+  try {
+    // 依赖入参的动态只读函数无参求值可能得到 undefined——视为无法确定，回退推断
+    const result = (value as () => unknown)();
+    return typeof result === "boolean" ? result : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function inferRuntimeSource(toolName: string, fallback: LumeToolSource): LumeToolSource {
