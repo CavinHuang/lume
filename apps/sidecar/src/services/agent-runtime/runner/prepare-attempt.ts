@@ -85,7 +85,7 @@ export async function prepareRuntimeCoreAttempt(
     boundModel?.modelId ?? runtime.resolvedModelId,
   );
 
-  let agentCwd = process.cwd();
+  let agentCwd: string;
   let resolvedWorkdir: ResolvedAgentWorkdir;
   try {
     const workdirThreadId = runtime.threadType === "subagent"
