@@ -146,7 +146,7 @@ async function runDreamAgent(
     resolved.modelRef,
     binding.channel.id,
     workspace.id,
-    input.agentContext?.threadId,
+    input.agentContext?.threadId ?? `memory-dream:${input.jobId}`,
     binding.modelId,
     { fileContextMode: "newRoot", memoryProfile: { kind: "dream", jobId: input.jobId } }
   );

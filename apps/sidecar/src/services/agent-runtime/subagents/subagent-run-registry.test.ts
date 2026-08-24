@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   getSubagentRunRegistry,
+  getSubagentRunStorePath,
   resetSubagentRunRegistryForTest
 } from "./subagent-run-registry";
 
@@ -26,6 +27,10 @@ afterEach(() => {
 });
 
 describe("subagent-run-registry", () => {
+  test("delegation 存储必须独立成文件,不得与 SubagentWorkStore 共写(#640 P0 护栏)", () => {
+    expect(getSubagentRunStorePath().endsWith("delegation-runs.json")).toBe(true);
+  });
+
   test("应创建并更新 run 状态", () => {
     const registry = getSubagentRunRegistry();
     const runId = randomUUID();

@@ -9,6 +9,7 @@ import { SubagentInlinePanel } from '../SubagentInlinePanel'
 import type { RuntimeAssistantBlock, RuntimeToolCallView } from '../runtime-message-view'
 import type { OpenThreadFile } from '../AgentFileReference'
 import { asRecord, asString, formatToolErrorOutput, memoryMutationLabel, summarizeInput } from './tool-summary'
+import { isDelegationToolName } from '../subagent-run-projection'
 
 type MinimalProcessGroupProps = {
   blocks: RuntimeAssistantBlock[]
@@ -89,7 +90,7 @@ export const MinimalProcessGroup = memo(function MinimalProcessGroup({
     const toolCalls = blocks
       .filter((b): b is Extract<RuntimeAssistantBlock, { type: 'tool_call' }> => b.type === 'tool_call')
       .map((b) => b.toolCall)
-    const subagentCount = toolCalls.filter((tc) => tc.toolName === 'Agent').length
+    const subagentCount = toolCalls.filter((tc) => isDelegationToolName(tc.toolName)).length
     const nonAgentCount = toolCalls.length - subagentCount
     const failedCount = toolCalls.filter((tc) => tc.status === 'failed').length
     const completedCount = toolCalls.filter((tc) => tc.status === 'completed').length
@@ -97,10 +98,10 @@ export const MinimalProcessGroup = memo(function MinimalProcessGroup({
     const runningTool = toolCalls.find((tc) => tc.status === 'running') ?? null
     const todoBlock = blocks.find((b): b is Extract<RuntimeAssistantBlock, { type: 'todo_update' }> => b.type === 'todo_update')
     const nonAgentDurationMs = toolCalls
-      .filter((tc) => tc.toolName !== 'Agent')
+      .filter((tc) => !isDelegationToolName(tc.toolName))
       .reduce((sum, tc) => sum + (typeof tc.durationMs === 'number' ? tc.durationMs : 0), 0)
     const subagentDurationMs = toolCalls
-      .filter((tc) => tc.toolName === 'Agent')
+      .filter((tc) => isDelegationToolName(tc.toolName))
       .reduce((sum, tc) => sum + (typeof tc.durationMs === 'number' ? tc.durationMs : 0), 0)
     const thinkingCount = blocks.filter((b) => b.type === 'thinking').length
     return {
@@ -214,7 +215,7 @@ export const MinimalProcessGroup = memo(function MinimalProcessGroup({
                 )
               }
               if (block.type === 'tool_call') {
-                if (block.toolCall.toolName === 'Agent') {
+                if (isDelegationToolName(block.toolCall.toolName)) {
                   return (
                     <div key={block.id} className="animate-in fade-in slide-in-from-top-1 fill-mode-both duration-300 motion-reduce:animate-none">
                       <MinimalSubagentRow

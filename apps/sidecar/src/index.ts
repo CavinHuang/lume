@@ -415,9 +415,15 @@ async function boot(): Promise<void> {
       error: { message: error instanceof Error ? error.message : String(error) }
     });
   });
-  if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", false)) {
+  // 完成事件写入器恒注册：懒启动路径（run-now/create 等）同样依赖它把
+  // automation:run-completed 推给前端，不能随 autostart 门控一起被跳过（#647 P0-2）。
+  {
     const { setAutomationNotificationWriter } = await import("./services/automation/automation-runner-service");
     setAutomationNotificationWriter(writeNotification);
+  }
+  // 默认自启：否则 sidecar 重启后既有 enabled 任务全部静默停摆，
+  // 只能靠次日日程生成或用户恰好编辑任务才被拉起（#647 P0-1）。
+  if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", true)) {
     void startAutomationRunner().catch((error) => {
       writeLogRecord({
         level: "error",
