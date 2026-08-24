@@ -316,8 +316,15 @@ export class PlanningTodoStore {
     try {
       const changed = this.#db.prepare(`UPDATE planning_todo SET title=?, normalized_title=?, description=?, status=?, priority=?, workspace_id=?, due_date=?, due_at=?, due_timezone=?, revision=?, updated_at=?, completed_at=?, deleted_at=? WHERE id=? AND revision=?`).run(candidate.title, normalizePlanningTodoTitle(candidate.title), candidate.description ?? null, candidate.status, candidate.priority, candidate.workspaceId ?? null, candidate.dueDate ?? null, candidate.dueAt ?? null, candidate.dueTimezone ?? null, candidate.revision, candidate.updatedAt, candidate.completedAt ?? null, candidate.deletedAt ?? null, candidate.id, input.expectedRevision) as { changes?: number };
       if (changed.changes === 0) throw new PlanningTodoConflictError(this.get(input.todoId));
-      if (operation === "update" && before.dueAt !== candidate.dueAt) this.#syncDueReminder(candidate.id, candidate.dueAt, candidate.updatedAt);
-      if (operation === "complete" || operation === "delete") this.#db.prepare("UPDATE planning_reminder SET status='completed',updated_at=? WHERE target_type='todo' AND target_id=? AND status='pending'").run(candidate.updatedAt, candidate.id);
+      // 已完成 todo 再改期不得新造无人收口的 pending 提醒（评审发现的相邻预存洞）
+      if (operation === "update" && before.dueAt !== candidate.dueAt && candidate.status !== "completed") this.#syncDueReminder(candidate.id, candidate.dueAt, candidate.updatedAt);
+      // complete 只收口自动跟随的 due 提醒，用户手动建的提醒保留意图；
+      // delete 仍连坐全部（回收站 todo 不应再触发任何提醒），restore 不复活手动提醒
+      // （completed 状态无法区分两种收口来源，复活需额外记账——有意取舍）。
+      // reopen/restore 时由 #syncDueReminder 为 open todo 重建 due 提醒（#647 P1-5）。
+      if (operation === "complete") this.#db.prepare("UPDATE planning_reminder SET status='completed',updated_at=? WHERE target_type='todo' AND target_id=? AND status='pending' AND origin='todo_due_at'").run(candidate.updatedAt, candidate.id);
+      if (operation === "delete") this.#db.prepare("UPDATE planning_reminder SET status='completed',updated_at=? WHERE target_type='todo' AND target_id=? AND status='pending'").run(candidate.updatedAt, candidate.id);
+      if ((operation === "reopen" || operation === "restore") && candidate.dueAt !== undefined && candidate.status === "open") this.#syncDueReminder(candidate.id, candidate.dueAt, candidate.updatedAt);
       const eventSeq = this.#event(input.todoId, operation, candidate.updatedAt, { before, after: candidate });
       this.#db.exec("COMMIT");
       const todo = this.get(input.todoId);
@@ -334,9 +341,11 @@ export class PlanningTodoStore {
 
   #syncDueReminder(todoId: string, dueAt: number | undefined, now: number): void {
     const existing = this.#db.prepare("SELECT id,snoozed_until FROM planning_reminder WHERE target_type='todo' AND target_id=? AND origin='todo_due_at' AND status='pending' ORDER BY created_at LIMIT 1").get(todoId) as { id: string; snoozed_until: number | null } | undefined;
-    if (dueAt === undefined) { this.#db.prepare("DELETE FROM planning_reminder WHERE target_type='todo' AND target_id=? AND origin='todo_due_at' AND status='pending' AND snoozed_until IS NULL").run(todoId); return; }
-    if (existing?.snoozed_until === null) { this.#db.prepare("UPDATE planning_reminder SET trigger_at=?,last_notified_at=NULL,updated_at=? WHERE id=?").run(dueAt, now, existing.id); return; }
-    if (!existing) this.#db.prepare("INSERT INTO planning_reminder (id,target_type,target_id,trigger_at,status,origin,created_at,updated_at) VALUES (?,'todo',?,?,'pending','todo_due_at',?,?)").run(randomUUID(), todoId, dueAt, now, now);
+    if (dueAt === undefined) { this.#db.prepare("DELETE FROM planning_reminder WHERE target_type='todo' AND target_id=? AND origin='todo_due_at' AND status='pending'").run(todoId); return; }
+    // 已存在的自动提醒（含被 snooze 过的）跟随新 dueAt：清除推迟态，
+    // 避免旧时间弹一次 + 新时间再弹一次的双触发（#647 P1-4）
+    if (existing) { this.#db.prepare("UPDATE planning_reminder SET trigger_at=?,snoozed_until=NULL,last_notified_at=NULL,updated_at=? WHERE id=?").run(dueAt, now, existing.id); return; }
+    this.#db.prepare("INSERT INTO planning_reminder (id,target_type,target_id,trigger_at,status,origin,created_at,updated_at) VALUES (?,'todo',?,?,'pending','todo_due_at',?,?)").run(randomUUID(), todoId, dueAt, now, now);
   }
 
   #publish(event: PlanningTodoChangeEvent): void { queueMicrotask(() => this.#onChange?.(event)); }
