@@ -50,6 +50,19 @@ export interface RunContinuationState {
     processJobId?: string;
     syntheticToolResult?: unknown;
   };
+  /**
+   * #650：主槽 checkpoint 只承载最新一个后台任务；其余并存任务的续跑快照
+   * 按 processJobId 追加于此，终态回填与恢复聚合时一并消费，避免单槽互相覆盖。
+   */
+  backgroundCheckpoints?: Array<{
+    processJobId: string;
+    toolCallId: string;
+    toolName: string;
+    toolKind: RunContinuationToolKind;
+    toolCall: RunContinuationToolCall;
+    syntheticToolResult?: unknown;
+    updatedAt: string;
+  }>;
   reason?: string;
   createdAt: string;
   updatedAt: string;
