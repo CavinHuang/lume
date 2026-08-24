@@ -22,7 +22,9 @@ import type { LumeRunState, LumeRunStatus } from "../runtime-core/run-state";
 import { createFileBackedLumeRunStateStore, type LumeRunStateStore } from "../runtime-core/run-state-store";
 import { stripMemoryUserMessagePrefix } from "../../memory-v2/user-message-prefix";
 import type { LumeWorkflowTraceRecord } from "../../workflow-hooks/hook-effects";
-import { writeLogRecord } from "../../infra/logger";
+import { createLogger, writeLogRecord } from "../../infra/logger";
+
+const log = createLogger("run-observer");
 
 export interface CreateLumeRunObserverInput {
   sessionDir: string;
@@ -556,7 +558,16 @@ export class LumeRunObserver {
   }
 
   private enqueue(task: () => Promise<void>): void {
-    this.queue = this.queue.then(task, task);
+    // 失败必须留痕并保持链活：`.then(task, task)` 会把前序 rejection 静默吞掉，
+    // 磁盘满/EBUSY 时该 item 永久缺席 run state 且零日志（#551②）
+    this.queue = this.queue
+      .then(task)
+      .catch((error) => {
+        log.warn("run item 持久化失败", {
+          runId: this.state.runId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
   }
 
   private emitRuntimeEvent(
@@ -703,6 +714,23 @@ export class LumeRunObserver {
   }
 }
 
+/**
+ * 剥离带 persist:false / ephemeral 标记的内容块（#551①）：截图 base64 每张
+ * 1-5MB，落盘后被每次 get-thread-runtime-events 全量读入又过滤丢弃。全部被
+ * 剥离时返回 undefined，让调用方回退到 result.output 占位文本——含 content
+ * 为空数组的情形（旧行为落盘 [] 并丢失 output 文本，属顺带修正）。
+ */
+function stripEphemeralContent(content: unknown): unknown {
+  if (!Array.isArray(content)) return content;
+  const kept = content.filter((block) => {
+    if (!block || typeof block !== "object") return true;
+    // 口径与 SDK 消费侧(messages.ts)一致:ephemeral 是 "trusted_runtime" 字符串
+    const meta = (block as { _meta?: { persist?: unknown; ephemeral?: unknown } })._meta;
+    return !(meta && (meta.persist === false || meta.ephemeral === "trusted_runtime"));
+  });
+  return kept.length > 0 ? kept : undefined;
+}
+
 function mapSdkMessageToRunItems(
   message: SDKMessage,
   context: {
@@ -759,7 +787,9 @@ function mapSdkMessageToRunItems(
       id,
       toolCallId: message.result.tool_use_id,
       toolName: message.result.tool_name,
-      output: message.result.content ?? message.result.output,
+      // 剥离带 persist:false / ephemeral 标记的内容块（截图 base64 每张
+      // 1-5MB，落盘后被每次全量读入又过滤丢弃），保留文本块与元数据（#551①）
+      output: stripEphemeralContent(message.result.content) ?? message.result.output,
       isError: message.result.is_error === true,
       ...((message.result._meta?.execution && typeof message.result._meta.execution === "object")
         ? { execution: message.result._meta.execution as Record<string, unknown> }
@@ -790,7 +820,9 @@ function mapSdkMessageToRunItems(
       }];
     }
   }
-  if (message.type === "stream_event" || message.type === "partial_message") {
+  // legacy partial_message 与 stream_event 内容完全重叠（engine 每 delta 双
+  // yield），replay 只认 stream_event——跳过避免双倍落盘（#551③）
+  if (message.type === "stream_event") {
     return [{
       type: "model_stream",
       id,
