@@ -31,6 +31,7 @@ import { setPersistedSettingsMutationWriter } from "./services/system/settings-s
 import { setLogDigestPolicy } from "./services/infra/log-digest";
 import type { LumeLogDigestPolicy } from "@lume/shared";
 import { installPrivilegedCredential } from "./services/infra/privileged-auth";
+import { installSecretEncryptionKey } from "./services/infra/secret-crypto";
 import { installConnectionVaultKey } from "./services/channel/connection-credential-store";
 import { createBrowserBroker } from "./services/browser/browser-broker";
 import { setActiveBrowserBroker } from "./services/browser/browser-broker-holder";
@@ -241,6 +242,12 @@ async function handleRpcLine(line: string): Promise<void> {
 
   if (method === "system.connection-vault-key") {
     installConnectionVaultKey((payload.params as { key?: unknown } | null)?.key);
+    if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    return;
+  }
+
+  if (method === "system.secret-encryption-key") {
+    installSecretEncryptionKey((payload.params as { key?: unknown } | null)?.key);
     if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
     return;
   }

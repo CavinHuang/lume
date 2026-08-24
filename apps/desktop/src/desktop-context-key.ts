@@ -31,7 +31,9 @@ export function loadOrCreateDesktopContextKey({
   const wrapped = safeStorage.encryptString(key.toString('base64'))
   mkdirSync(dirname(path), { recursive: true })
   const temporary = `${path}.${process.pid}.${Date.now()}.tmp`
-  writeFileSync(temporary, wrapped)
+  // 包裹文件同凭据落盘口径收权（#617）：Linux basic_text 后端的包裹可被公开
+  // 口令还原，至少不给其他账户留读取面
+  writeFileSync(temporary, wrapped, { mode: 0o600 })
   renameSync(temporary, path)
   return key
 }
