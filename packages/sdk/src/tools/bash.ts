@@ -1248,86 +1248,144 @@ export function tailTruncate(text: string, maxLines: number, maxChars: number): 
 
 type PreviewAccumulator = ReturnType<typeof createPreviewAccumulator>
 
-// Secret shape shared with redactSensitiveText's patterns: a literal-ish prefix
-// (Bearer / key=value) followed by an unbounded token run. The token run is the
-// streaming hazard — it may grow across arbitrarily many chunks before its
-// terminator arrives.
-const SECRET_STREAM_PATTERN = /(Bearer\s+|(?:api[_-]?key|token|secret|password)\s*[:=]\s*)([A-Za-z0-9._~+/=-]+)/gi
-const SECRET_TOKEN_CHARS = /[A-Za-z0-9._~+/=-]/
-// Trailing chars held back between chunks so a pattern PREFIX straddling the
-// chunk edge is rescanned whole next round ('Bearer', 'api_', 'password='…).
-const MAX_PREFIX_HOLD = 24
+// ============================================================================
+// Streaming secret redactor — a char-driven FSM with EXACTLY the same match
+// semantics as redactSensitiveText (single source of truth for delimiters):
+//
+//   prefix := 'bearer' \s+ | (api[_-]?key|token|secret|password) \s* [:=] \s*
+//   value  := [^\s,;]+          (case-insensitive keywords)
+//
+// Every consumed char is echoed verbatim EXCEPT value chars, which are dropped;
+// the first value char writes '[redacted]' once. A pattern that fails mid-way
+// has only emitted chars the regex would have kept anyway, so FSM output is
+// byte-identical to running redactSensitiveText over the full stream — no
+// two-regex drift, no fixed safety horizon.
+//
+// State is O(1): mode + an ≤7-char staging buffer for a potential keyword +
+// small counters. Value runs are suppressed without storage, so arbitrarily
+// long tokens cost nothing (no pendingRaw, no rescan — O(n) total, O(1) mem).
+// ============================================================================
 
-/**
- * Streaming redactor for one chunk against the previous hold-back: returns the
- * portion that is provably safe to finalize (every match inside it is complete
- * AND terminated by a non-token char) plus the tail that must be rescanned
- * with the next chunk — either an unterminated token run still growing, or the
- * small suffix that could be the head of a pattern (never the interior of an
- * already-complete match: that would let raw secret bytes slip through).
- *
- * Unlike window+slack schemes this has no fixed safety horizon: a token of ANY
- * length is held in `pending` until its terminator shows up, then redacted
- * wherever it finally lands.
- */
-function splitRedactable(buffer: string): { safe: string; pending: string } {
-  SECRET_STREAM_PATTERN.lastIndex = 0
-  let m: RegExpExecArray | null
-  let unterminatedFrom = -1
-  let lastTerminatedStart = buffer.length
-  let lastTerminatedEnd = 0
-  while ((m = SECRET_STREAM_PATTERN.exec(buffer))) {
-    const end = m.index + m[0].length
-    if (end < buffer.length && !SECRET_TOKEN_CHARS.test(buffer[end]!)) {
-      lastTerminatedStart = m.index
-      lastTerminatedEnd = end
-      continue
-    }
-    // Unterminated: the token run touches the buffer end and may keep growing.
-    unterminatedFrom = m.index
-    break
-  }
-  let holdFrom: number
-  if (unterminatedFrom >= 0) {
-    holdFrom = unterminatedFrom
-  } else {
-    holdFrom = Math.max(0, buffer.length - MAX_PREFIX_HOLD)
-    if (lastTerminatedEnd > holdFrom) {
-      // The hold boundary would cut through a complete match — hold it whole
-      // instead (rescanned/emitted with the next chunk or the final flush).
-      holdFrom = lastTerminatedStart
-    }
-  }
-  let safe = ''
-  let cursor = 0
-  SECRET_STREAM_PATTERN.lastIndex = 0
-  while ((m = SECRET_STREAM_PATTERN.exec(buffer))) {
-    const end = m.index + m[0].length
-    if (end > holdFrom || m.index >= holdFrom) break
-    safe += buffer.slice(cursor, m.index) + m[1] + '[redacted]'
-    cursor = end
-  }
-  safe += buffer.slice(cursor, holdFrom)
-  return { safe, pending: buffer.slice(holdFrom) }
+const SECRET_KEYWORDS = ['bearer', 'api_key', 'api-key', 'apikey', 'token', 'secret', 'password'] as const
+
+function isKeywordPartial(lower: string): boolean {
+  if (!lower) return true
+  return SECRET_KEYWORDS.some((keyword) => keyword.startsWith(lower))
 }
 
-/**
- * Rolling preview of one output stream. Text flows through a stateful
- * streaming redactor (see splitRedactable): secrets are redacted as soon as
- * they are provably complete — regardless of length or where later window cuts
- * land — so no window-edge can splice around them. The finalized (redacted)
- * tail is bounded to the display budgets; caps therefore only ever trim
- * already-masked text. Tracks full-stream line/char totals for the footer.
- */
+function matchedKeyword(lower: string): 'bearer' | 'kv' | undefined {
+  if (lower === 'bearer') return 'bearer'
+  if ((SECRET_KEYWORDS as readonly string[]).includes(lower)) return 'kv'
+  return undefined
+}
+
+function isValueChar(ch: string): boolean {
+  // Authoritative value charset from redactSensitiveText's key/value branch:
+  // [^\s,;]+ — anything non-whitespace/non-,/; including '@', quotes, unicode…
+  return !/[\s,;]/.test(ch)
+}
+
+function isWhitespaceChar(ch: string): boolean {
+  return /\s/.test(ch)
+}
+
 export function createPreviewAccumulator(maxLines: number, maxChars: number) {
   let kept = ''
-  let pendingRaw = ''
+  // FSM state ('out' stages a potential keyword start; ≤ MAX keyword length).
+  let stage = ''
+  let mode: 'out' | 'prefixTail' | 'inValue' = 'out'
+  let prefixKind: 'bearer' | 'kv' = 'kv'
+  let prefixPhase: 'pre' | 'post' = 'pre' // kv: whitespace before vs after [:=]
+  let prefixWsSeen = 0
   let totalNewlines = 0
   let totalChars = 0
   let streamEndsWithNewline = false
   let sawAnyOutput = false
   let droppedLines = false
   let droppedChars = false
+
+  function emit(chunk: string): void {
+    kept += chunk
+  }
+
+  function enterValueOrAbort(ch: string): void {
+    if (isValueChar(ch)) {
+      emit('[redacted]')
+      mode = 'inValue'
+      return
+    }
+    // Zero-length value → regex would not match here either; plain text.
+    emit(ch)
+    mode = 'out'
+  }
+
+  function feed(ch: string): void {
+    if (mode === 'inValue') {
+      if (isValueChar(ch)) return // suppressed secret body
+      emit(ch)
+      mode = 'out'
+      return
+    }
+    if (mode === 'prefixTail') {
+      if (prefixKind === 'bearer') {
+        if (isWhitespaceChar(ch)) {
+          prefixWsSeen += 1
+          emit(ch)
+          return
+        }
+        if (prefixWsSeen === 0) {
+          // 'Bearer' not followed by whitespace → no match; ch re-read in OUT.
+          emit(ch)
+          mode = 'out'
+          return
+        }
+        enterValueOrAbort(ch)
+        return
+      }
+      // kv: \s* [:=] \s*
+      if (prefixPhase === 'pre') {
+        if (isWhitespaceChar(ch)) {
+          emit(ch)
+          return
+        }
+        if (ch === ':' || ch === '=') {
+          prefixPhase = 'post'
+          emit(ch)
+          return
+        }
+        emit(ch)
+        mode = 'out'
+        return
+      }
+      if (isWhitespaceChar(ch)) {
+        emit(ch)
+        return
+      }
+      enterValueOrAbort(ch)
+      return
+    }
+    // OUT: accumulate a possible keyword start; on impossible candidate flush
+    // leading chars until the remainder is a valid partial/full again.
+    let buf = stage + ch
+    for (;;) {
+      const lower = buf.toLowerCase()
+      const kind = matchedKeyword(lower)
+      if (kind) {
+        emit(buf)
+        stage = ''
+        mode = 'prefixTail'
+        prefixKind = kind
+        prefixPhase = 'pre'
+        prefixWsSeen = 0
+        return
+      }
+      if (isKeywordPartial(lower)) break
+      emit(buf[0]!)
+      buf = buf.slice(1)
+    }
+    stage = buf
+  }
+
   return {
     append(text: string): void {
       if (!text) return
@@ -1335,9 +1393,8 @@ export function createPreviewAccumulator(maxLines: number, maxChars: number) {
       totalNewlines += countNewlines(text)
       totalChars += text.length
       streamEndsWithNewline = text.endsWith('\n')
-      const { safe, pending } = splitRedactable(pendingRaw + text)
-      pendingRaw = pending
-      let candidate = kept + safe
+      for (const ch of text) feed(ch)
+      let candidate = kept
       const lineCapped = keepLastLines(candidate, maxLines)
       candidate = lineCapped.content
       droppedLines ||= lineCapped.dropped
@@ -1348,9 +1405,9 @@ export function createPreviewAccumulator(maxLines: number, maxChars: number) {
       kept = candidate
     },
     snapshot(): TailTruncation {
-      // Pending raw text joins the view redacted-at-end-of-available-data; the
-      // authoritative copy stays pending until its terminator arrives.
-      const fresh = tailTruncate(kept + redactSensitiveText(pendingRaw), maxLines, maxChars)
+      // Staged partial keyword is plain text not yet committed — show it for
+      // display continuity; the authoritative decision happens on later feeds.
+      const fresh = tailTruncate(kept + stage, maxLines, maxChars)
       return {
         ...fresh,
         truncated: droppedLines || droppedChars || fresh.truncated,
@@ -1475,7 +1532,7 @@ function boundedPreview(value: string, maxChars = PREVIEW_CHARS): string {
   return `${value.slice(0, half)}\n...(truncated)...\n${value.slice(-half)}`
 }
 
-function redactSensitiveText(value: string): string {
+export function redactSensitiveText(value: string): string {
   return value
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[redacted]')
     .replace(/((?:api[_-]?key|token|secret|password)\s*[:=]\s*)[^\s,;]+/gi, '$1[redacted]')

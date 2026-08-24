@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BashTool, createPreviewAccumulator, interpretShellExit, looksLikeInteractivePrompt, tailTruncate } from "./bash";
+import { BashTool, createPreviewAccumulator, interpretShellExit, looksLikeInteractivePrompt, redactSensitiveText, tailTruncate } from "./bash";
 import { analyzeBashCommand } from "../utils/bash-command-analysis";
 import { clearTasks, TaskOutputTool } from "./task-tools";
 import {
@@ -613,6 +613,65 @@ describe("BashTool output streaming snapshots", () => {
     expect(snap.content).toContain("[redacted]");
     expect(snap.content).not.toContain("tokensegment");
     expect(snap.content).toContain("plain line");
+  });
+
+  test("FSM matches final redaction semantics: value charset includes non-token chars", () => {
+    // Codex repro: '@' is part of the authoritative value charset [^\s,;]+ —
+    // it must NOT terminate the secret run.
+    const acc = createPreviewAccumulator(500, 49_500);
+    acc.append(`password=p@${"punctuationsecret".repeat(4000)}\nplain\n`);
+    const snap = acc.snapshot();
+    expect(snap.content).not.toContain("punctuationsecret");
+    expect(snap.content).toContain("[redacted]");
+  });
+
+  test("FSM covers unbounded whitespace inside prefixes across chunks", () => {
+    // Codex repro: `Bearer` + 40 spaces split across chunks — whitespace runs
+    // in prefixes are unbounded, so a fixed hold-back can never cover them.
+    const acc = createPreviewAccumulator(500, 49_500);
+    acc.append(`Bearer${" ".repeat(40)}`);
+    acc.append(`${"whitespacesecret".repeat(4000)}\nplain\n`);
+    const snap = acc.snapshot();
+    expect(snap.content).not.toContain("whitespacesecret");
+    expect(snap.content).toContain("[redacted]");
+  });
+
+  test("streaming redactor output is byte-identical to redactSensitiveText over random chunked input", () => {
+    // Deterministic PRNG (seeded) so failures reproduce.
+    let seed = 0x5eed1234;
+    const rand = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0xffffffff;
+    };
+    const alphabet = [
+      "B", "e", "a", "r", "r", " ", "t", "o", "k", "e", "n", "=", "@",
+      ";", ",", "\n", "x", "_", "-", "P", "a", "s", "w", "d", "s", ":",
+      "1", ".", "/", "+",
+    ];
+    for (let iteration = 0; iteration < 300; iteration += 1) {
+      const length = Math.floor(rand() * 60);
+      let full = "";
+      for (let i = 0; i < length; i += 1) {
+        full += alphabet[Math.floor(rand() * alphabet.length)];
+      }
+      if (!full) continue;
+
+      // Feed in random chunks through the FSM and compare with the static pass.
+      const acc = createPreviewAccumulator(500, 100_000);
+      let cursor = 0;
+      while (cursor < full.length) {
+        const take = 1 + Math.floor(rand() * 12);
+        acc.append(full.slice(cursor, cursor + take));
+        cursor += take;
+      }
+      const streamed = acc.snapshot().content;
+      const expected = redactSensitiveText(full);
+      if (streamed !== expected) {
+        throw new Error(
+          `FSM drift on iteration ${iteration}: input=${JSON.stringify(full)} streamed=${JSON.stringify(streamed)} expected=${JSON.stringify(expected)}`,
+        );
+      }
+    }
   });
 
   test("exactly maxLines terminated lines are not truncated (no trailing-segment off-by-one)", () => {
