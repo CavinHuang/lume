@@ -25,7 +25,7 @@ import type {
   NormalizedResponseBlock,
 } from "@lume/agent-sdk";
 import { MAX_RETRY_AFTER_DELAY_MS, parseRetryAfterHeader } from "@lume/agent-sdk";
-import { resolveThinkingLevelFromBudget } from "../agent-runtime/runner/thinking-level";
+import { resolveThinkingLevelFromBudget } from "./thinking-budgets";
 
 type PiTextApi = "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai";
 
