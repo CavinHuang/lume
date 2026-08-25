@@ -67,45 +67,6 @@ describe("permission classifier", () => {
     });
   });
 
-  test("uses llm classifier cache for low-risk uncertain commands", async () => {
-    let calls = 0;
-    const classifier = createPermissionClassifier({
-      llm: async () => {
-        calls++;
-        return JSON.stringify({
-          riskLevel: "medium",
-          reason: "writes generated files",
-          shouldAsk: true
-        });
-      }
-    });
-
-    await classifier.classify({ toolName: "Bash", command: "node scripts/build.js" });
-    await classifier.classify({ toolName: "Bash", command: "node scripts/build.js" });
-
-    expect(calls).toBe(1);
-  });
-
-  test("falls back to heuristic result when llm classifier times out", async () => {
-    const classifier = createPermissionClassifier({
-      timeoutMs: 1,
-      llm: () => new Promise((resolve) => setTimeout(() => resolve(JSON.stringify({
-        riskLevel: "critical",
-        reason: "late",
-        shouldAsk: true
-      })), 20))
-    });
-
-    await expect(classifier.classify({
-      toolName: "Bash",
-      command: "pwd"
-    })).resolves.toMatchObject({
-      riskLevel: "low",
-      shouldAsk: false,
-      reasonCode: "shell_read"
-    });
-  });
-
   test("classifies PowerShell destructive verbs above low risk", async () => {
     const classifier = createPermissionClassifier();
 

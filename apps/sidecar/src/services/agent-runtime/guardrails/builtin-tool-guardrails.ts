@@ -7,8 +7,6 @@ import type { RunToolInputGuardrailsInput } from "./guardrail-runner";
 export const runtimeToolSafetyGuardrail: LumeGuardrail<RunToolInputGuardrailsInput> = {
   id: "builtin.runtime-tool-safety",
   name: "Runtime tool safety",
-  scope: "tool_input",
-  mode: "blocking",
   async run(input, context) {
     const decision = evaluateRuntimeToolSafety(input.toolName, input.input);
     if (decision.behavior === "deny") {
@@ -30,8 +28,6 @@ export const runtimeToolSafetyGuardrail: LumeGuardrail<RunToolInputGuardrailsInp
 export const fileWriteBoundaryGuardrail: LumeGuardrail<RunToolInputGuardrailsInput> = {
   id: "builtin.file-write-boundary",
   name: "File write boundary",
-  scope: "tool_input",
-  mode: "blocking",
   async run(input, context) {
     const normalized = canonicalizeAgentToolName(input.toolName);
     if (!["write", "edit", "multiedit", "notebookedit"].includes(normalized)) {
@@ -58,8 +54,6 @@ export const fileWriteBoundaryGuardrail: LumeGuardrail<RunToolInputGuardrailsInp
 export const sensitiveMemoryWriteGuardrail: LumeGuardrail<RunToolInputGuardrailsInput> = {
   id: "builtin.sensitive-memory-write",
   name: "Sensitive memory write",
-  scope: "tool_input",
-  mode: "blocking",
   async run(input) {
     const normalized = canonicalizeAgentToolName(input.toolName);
     if (!normalized.startsWith("memory.") && !normalized.startsWith("memory_")) {

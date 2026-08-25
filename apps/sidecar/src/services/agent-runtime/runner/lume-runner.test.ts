@@ -455,7 +455,7 @@ describe("LumeRunner", () => {
 
     await runner.complete();
 
-    expect(seen).toEqual(["run.beforeStart", "run.afterComplete"]);
+    expect(seen).toEqual(["run.afterComplete"]);
     expect(events).toContain("runtime:workflow_hook.diagnostic");
     expect(addedCandidates).toEqual(["User prefers concise summaries."]);
     const trace = readTrace(agentDir);
@@ -556,7 +556,8 @@ describe("LumeRunner", () => {
     expect(readOnlyRunState(failedDir).status).toBe("failed");
   });
 
-  test("fires failure hook and preserves original failure", async () => {
+  test("fail no longer fires workflow hooks and preserves original failure", async () => {
+    // run.beforeStart / run.afterFailure 投机事件已删：失败路径不再触发任何 hook
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-hooks-fail-"));
     dirs.push(agentDir);
     const seen: string[] = [];
@@ -567,10 +568,6 @@ describe("LumeRunner", () => {
       workflowHooks: {
         execute: async (event: LumeWorkflowHookEvent) => {
           seen.push(event.event);
-          if (event.event === "run.afterFailure") {
-            expect(event.errorMessage).toBe("model failed");
-            return { effects: [], errors: [] };
-          }
           return { effects: [], errors: [] };
         }
       } as any
@@ -578,55 +575,8 @@ describe("LumeRunner", () => {
 
     const result = await runner.fail("model failed");
 
-    expect(seen).toEqual(["run.beforeStart", "run.afterFailure"]);
+    expect(seen).toEqual([]);
     expect(result).toEqual({ status: "errored", errorMessage: "model failed" });
-  });
-
-  test("preserves original failure when failure hook throws or returns errors", async () => {
-    for (const mode of ["throw", "errors"] as const) {
-      const agentDir = mkdtempSync(join(tmpdir(), `lume-runner-hooks-fail-${mode}-`));
-      dirs.push(agentDir);
-      const runner = await LumeRunner.create({
-        params: createTestParams("thread-1"),
-        prepared: createPrepared(agentDir),
-        emit: createRuntimeEventEmitter([]),
-        workflowHooks: {
-          execute: async (event: LumeWorkflowHookEvent) => {
-            if (event.event !== "run.afterFailure") return { effects: [], errors: [] };
-            if (mode === "throw") throw new Error("hook failed");
-            return { effects: [], errors: [{ contributionId: "failure", message: "hook failed" }] };
-          }
-        } as any
-      });
-
-      const result = await runner.fail("model failed");
-
-      expect(result).toEqual({ status: "errored", errorMessage: "model failed" });
-    }
-  });
-
-  test("finalizeError also fires failure hook without replacing the thrown error", async () => {
-    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-hooks-finalize-error-"));
-    dirs.push(agentDir);
-    const seen: string[] = [];
-    const runner = await LumeRunner.create({
-      params: createTestParams("thread-1"),
-      prepared: createPrepared(agentDir),
-      emit: createRuntimeEventEmitter([]),
-      workflowHooks: {
-        execute: async (event: LumeWorkflowHookEvent) => {
-          seen.push(event.event);
-          if (event.event === "run.afterFailure") {
-            expect(event.errorMessage).toBe("model failed");
-            throw new Error("hook failed");
-          }
-          return { effects: [], errors: [] };
-        }
-      } as any
-    });
-
-    await expect(runner.finalizeError(new Error("model failed"))).resolves.toBeUndefined();
-    expect(seen).toEqual(["run.beforeStart", "run.afterFailure"]);
   });
 
   test("does not fire production lifecycle hooks when hooks are disabled", async () => {
@@ -654,12 +604,10 @@ describe("LumeRunner", () => {
   test("passes the same production hook runtime to context and permission", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-hooks-production-"));
     dirs.push(agentDir);
-    const seen: string[] = [];
+    let contextWired = false;
+    let canUseToolWired = false;
     const workflowHooks = {
-      execute: async (event: LumeWorkflowHookEvent) => {
-        seen.push(event.event);
-        return { effects: [], errors: [] };
-      }
+      execute: async (_event: LumeWorkflowHookEvent) => ({ effects: [], errors: [] })
     } as any;
     const runner = await LumeRunner.create({
       params: createTestParams("thread-production"),
@@ -679,6 +627,7 @@ describe("LumeRunner", () => {
       createRuntimeSession: async (input) => {
         expect(input.workflowHooks).toBe(workflowHooks);
         expect(input.applyWorkflowHookEffects).toEqual(expect.any(Function));
+        contextWired = true;
         return {
           agent: {
             setModel: async () => {},
@@ -698,11 +647,14 @@ describe("LumeRunner", () => {
       },
       createCanUseTool: (_askUserSignal, workflowHooksInput) => {
         expect(workflowHooksInput).toBe(workflowHooks);
+        canUseToolWired = true;
         return async () => ({ behavior: "allow" });
       }
     });
 
-    expect(seen).toContain("run.beforeStart");
+    // run.beforeStart 投机事件已删；接线验证改为直接断言两处回调确实执行
+    expect(contextWired).toBe(true);
+    expect(canUseToolWired).toBe(true);
   });
 
   test("runQueryStream finalizes non-completed stream results", async () => {

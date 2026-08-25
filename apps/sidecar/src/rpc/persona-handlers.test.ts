@@ -7,19 +7,17 @@ import { PERSONA_IPC_CHANNELS, type PersonaGetResult } from "@lume/shared";
  */
 
 const personaMocks = {
-  readPersonaRaw: mock(
-    (_scope: "global" | "workspace", _workspaceSlug?: string): string | null => null,
-  ),
+  readPersonaRaw: mock((): string | null => null),
   parsePersonaProfile: mock((_md: string): PersonaGetResult["parsed"] => ({
     preferences: [],
     interactionRules: [],
     evolution: [],
   })),
   ensurePersona: mock(
-    (_input: { scope?: "global" | "workspace"; workspaceSlug?: string }): Promise<void> =>
-      Promise.resolve(),
+    (_input: { providerFactory?: unknown }): Promise<boolean> =>
+      Promise.resolve(true),
   ),
-  getPersonaPath: mock((_scope: "global" | "workspace", _workspaceSlug?: string): string => "/tmp/persona.md"),
+  getPersonaPath: mock((_scope: "global"): string => "/tmp/persona.md"),
 };
 
 beforeEach(() => {
@@ -58,30 +56,11 @@ describe("createPersonaHandlers", () => {
       interactionRules: [],
       evolution: [],
     });
-    const result = (await handlers[PERSONA_IPC_CHANNELS.GET]!({
-      scope: "workspace",
-      workspaceSlug: "demo",
-    })) as PersonaGetResult;
+    const result = (await handlers[PERSONA_IPC_CHANNELS.GET]!({})) as PersonaGetResult;
     expect(result.markdown).toBe(md);
     expect(result.parsed.name).toBe("小明");
-    expect(personaMocks.readPersonaRaw.mock.calls[0]).toEqual(["global"]);
+    expect(personaMocks.readPersonaRaw.mock.calls[0]).toEqual([]);
     expect(personaMocks.parsePersonaProfile.mock.calls[0]).toEqual([md]);
-  });
-
-  test("GET 仅传 workspaceSlug → 仍读取 global Persona", async () => {
-    const { createPersonaHandlers } = await import("./persona-handlers");
-    const handlers = createPersonaHandlers();
-    personaMocks.readPersonaRaw.mockReturnValueOnce(null);
-    await handlers[PERSONA_IPC_CHANNELS.GET]!({ workspaceSlug: "demo" });
-    expect(personaMocks.readPersonaRaw.mock.calls[0]).toEqual(["global"]);
-  });
-
-  test("GET 无参 → scope 默认 global、workspaceSlug undefined", async () => {
-    const { createPersonaHandlers } = await import("./persona-handlers");
-    const handlers = createPersonaHandlers();
-    personaMocks.readPersonaRaw.mockReturnValueOnce(null);
-    await handlers[PERSONA_IPC_CHANNELS.GET]!({});
-    expect(personaMocks.readPersonaRaw.mock.calls[0]).toEqual(["global", undefined]);
   });
 
   test("GET 非法 scope → throw", async () => {
@@ -101,27 +80,13 @@ describe("createPersonaHandlers", () => {
     ).rejects.toThrow(/persona:get/);
   });
 
-  
-  
-  
-  
-  test("REGENERATE 调 ensurePersona 透传 scope/workspaceSlug", async () => {
+  test("REGENERATE 调 ensurePersona（无参入参）", async () => {
     const { createPersonaHandlers } = await import("./persona-handlers");
     const handlers = createPersonaHandlers();
-    const result = await handlers[PERSONA_IPC_CHANNELS.REGENERATE]!({
-      scope: "workspace",
-      workspaceSlug: "demo",
-    });
+    const result = await handlers[PERSONA_IPC_CHANNELS.REGENERATE]!({});
     expect(result).toEqual({ ok: true });
     expect(personaMocks.ensurePersona).toHaveBeenCalledTimes(1);
-    expect(personaMocks.ensurePersona.mock.calls[0]).toEqual([{ scope: "global" }]);
-  });
-
-  test("REGENERATE 无参 → 透传 undefined（ensurePersona 内部默认 global）", async () => {
-    const { createPersonaHandlers } = await import("./persona-handlers");
-    const handlers = createPersonaHandlers();
-    await handlers[PERSONA_IPC_CHANNELS.REGENERATE]!({});
-    expect(personaMocks.ensurePersona.mock.calls[0]).toEqual([{ scope: "global" }]);
+    expect(personaMocks.ensurePersona.mock.calls[0]).toEqual([{}]);
   });
 
   test("REGENERATE 非法 scope → throw（不调 ensurePersona）", async () => {

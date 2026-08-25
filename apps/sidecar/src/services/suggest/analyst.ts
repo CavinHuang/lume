@@ -38,7 +38,6 @@ import { parsePersonaProfile, readPersonaRaw } from "../memory-v2/persona";
 import { resolveMemoryExtractionModelRefs } from "../memory-v2/extraction";
 import { listAutomationJobs } from "../automation/automation-manager";
 import { createLogger } from "../infra/logger";
-import type { MemoryV2Scope } from "../memory-v2/types";
 
 const log = createLogger("suggest-analyst");
 
@@ -207,10 +206,10 @@ export function buildAnalysisInput(opts: BuildAnalysisInputOptions = {}): string
     // fail-open：automation 段省略
   }
 
-  // 用户画像（persona）：周期 2 完成，readPersonaRaw → parsePersonaProfile → 注入 summary + preferences
+  // 用户画像（persona）：readPersonaRaw → parsePersonaProfile → 注入 summary + preferences
+  // （persona 仅 global scope，与 opts.workspaceSlug 无关）
   try {
-    const scope: MemoryV2Scope = opts.workspaceSlug ? "workspace" : "global";
-    const raw = readPersonaRaw(scope, opts.workspaceSlug);
+    const raw = readPersonaRaw();
     if (raw !== null) {
       const profile = parsePersonaProfile(raw);
       const personaLines: string[] = [];

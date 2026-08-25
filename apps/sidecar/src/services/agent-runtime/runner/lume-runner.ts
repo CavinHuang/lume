@@ -180,7 +180,6 @@ export class LumeRunner {
       workflowHooks,
       input.addMemoryCandidate ?? smartAddMemoryV2Candidate
     );
-    await runner.fireRunBeforeStart();
     return runner;
   }
 
@@ -195,7 +194,6 @@ export class LumeRunner {
   }
 
   async finalizeError(error: unknown): Promise<void> {
-    await this.fireRunAfterFailure(error instanceof Error ? error.message : String(error));
     await this.observer.finalize("failed", error instanceof Error ? error : String(error));
   }
 
@@ -680,7 +678,6 @@ export class LumeRunner {
 
   async fail(errorMessage: string): Promise<AgentRuntimeRunResult> {
     // T7a:run.failed 已迁事件总线(run.end{isError}),旧路 emit 删除
-    await this.fireRunAfterFailure(errorMessage);
     // F3:查询流未启动(或未交付终值)的失败,投影链不拥有终值——补发 run.end{error};
     // 流已交付终值则跳过,避免同一 run 双终值。
     await this.publishRunEndIfMissing("error", errorMessage);
@@ -726,14 +723,6 @@ export class LumeRunner {
     }
   }
 
-  private async fireRunBeforeStart(): Promise<void> {
-    await this.executeWorkflowHook({
-      ...this.buildHookEventBase(),
-      event: "run.beforeStart",
-      userMessage: this.observer.getUserMessage()
-    });
-  }
-
   private async fireRunAfterComplete(runState: LumeRunState | null): Promise<void> {
     await this.executeWorkflowHook({
       ...this.buildHookEventBase(),
@@ -758,15 +747,6 @@ export class LumeRunner {
       content: this.observer.getUserMessage(),
       createdAt: runState?.createdAt ?? new Date().toISOString()
     }, ...(runState?.generatedItems ?? [])];
-  }
-
-  private async fireRunAfterFailure(errorMessage: string): Promise<void> {
-    await this.executeWorkflowHook({
-      ...this.buildHookEventBase(),
-      event: "run.afterFailure",
-      userMessage: this.observer.getUserMessage(),
-      errorMessage
-    });
   }
 
   private buildHookEventBase(): Omit<LumeWorkflowHookEvent, "event"> {

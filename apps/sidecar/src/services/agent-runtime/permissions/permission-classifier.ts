@@ -2,8 +2,7 @@ import { shellKindConservative } from "@lume/agent-sdk";
 import { PS_DELETE_COMMAND, PS_FULL_NAME_VERBS } from "../ps-dangerous-verbs";
 import type {
   PermissionClassification,
-  PermissionClassifierInput,
-  PermissionClassifierLlm
+  PermissionClassifierInput
 } from "./permission-types";
 
 const CRITICAL_PATTERNS = [
@@ -51,52 +50,14 @@ export interface PermissionClassifier {
   classify(input: PermissionClassifierInput): Promise<PermissionClassification>;
 }
 
-export interface CreatePermissionClassifierOptions {
-  llm?: PermissionClassifierLlm;
-  timeoutMs?: number;
-  cacheTtlMs?: number;
-  cacheLimit?: number;
-}
-
-export function createPermissionClassifier(
-  options: CreatePermissionClassifierOptions = {}
-): PermissionClassifier {
-  const cache = new Map<string, { result: PermissionClassification; ts: number }>();
-  const timeoutMs = options.timeoutMs ?? 3_000;
-  const cacheTtlMs = options.cacheTtlMs ?? 5 * 60_000;
-  const cacheLimit = options.cacheLimit ?? 200;
-
+/**
+ * 分类器工厂：纯启发式规则分类（无 LLM 兜底层——投机 LLM 链已删）。
+ * config 的 permissions.classifier.enabled 只门控本启发式分类器是否参与决策。
+ */
+export function createPermissionClassifier(): PermissionClassifier {
   return {
     async classify(input) {
-      const heuristic = classifyHeuristic(input);
-      if (heuristic.riskLevel !== "low" || !options.llm) {
-        return heuristic;
-      }
-
-      const key = `${input.toolName}::${input.command ?? ""}::${input.path ?? ""}`;
-      const cached = cache.get(key);
-      if (cached && Date.now() - cached.ts < cacheTtlMs) {
-        return cached.result;
-      }
-
-      try {
-        const response = await Promise.race([
-          options.llm(buildClassifierPrompt(input)),
-          new Promise<string>((_, reject) => setTimeout(() => reject(new Error("timeout")), timeoutMs))
-        ]);
-        const parsed = parseLlmClassification(response);
-        if (parsed) {
-          cache.set(key, { result: parsed, ts: Date.now() });
-          if (cache.size > cacheLimit) {
-            const first = cache.keys().next().value;
-            if (first) cache.delete(first);
-          }
-          return parsed;
-        }
-      } catch {
-        return heuristic;
-      }
-      return heuristic;
+      return classifyHeuristic(input);
     }
   };
 }
@@ -191,38 +152,4 @@ function isSensitivePath(path: string): boolean {
 
 function isDependencyManifest(path: string): boolean {
   return /(^|[\\/])(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)(?:$|[\\/])/i.test(path);
-}
-
-function buildClassifierPrompt(input: PermissionClassifierInput): string {
-  return [
-    "你是一个安全审计助手。判断以下操作的风险等级。",
-    `工具: ${input.toolName}`,
-    input.description ? `描述: ${input.description}` : "",
-    input.command ? `命令: ${input.command}` : "",
-    input.path ? `路径: ${input.path}` : "",
-    "只返回 JSON: {\"riskLevel\":\"low|medium|high|critical\",\"reason\":\"原因\",\"shouldAsk\":true}"
-  ].filter(Boolean).join("\n");
-}
-
-function parseLlmClassification(response: string): PermissionClassification | null {
-  try {
-    const parsed = JSON.parse(response.trim()) as Record<string, unknown>;
-    const rawRisk = parsed.riskLevel ?? parsed.risk;
-    if (
-      rawRisk !== "low" &&
-      rawRisk !== "medium" &&
-      rawRisk !== "high" &&
-      rawRisk !== "critical"
-    ) {
-      return null;
-    }
-    return {
-      riskLevel: rawRisk,
-      reasonCode: "llm_classifier",
-      explanation: typeof parsed.reason === "string" ? parsed.reason : "LLM 风险分类",
-      shouldAsk: parsed.shouldAsk === true
-    };
-  } catch {
-    return null;
-  }
 }

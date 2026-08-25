@@ -1,21 +1,13 @@
-export type GuardrailScope =
-  | "input"
-  | "output"
-  | "tool_input"
-  | "tool_output"
-  | "memory_write"
-  | "automation";
-
-export type GuardrailBehavior =
-  | "allow"
-  | "reject"
-  | "require_approval"
-  | "transform";
+/**
+ * Guardrail 类型学：唯一在用的形态是「工具输入安全检查」——
+ * tool_input 单 scope、blocking 单模式（顺序执行，首个非 allow 即短路）、
+ * allow / reject / require_approval 三种 outcome。
+ * 多 scope / parallel / transform 的投机面已删（全仓零消费者）。
+ */
 
 export interface LumeGuardrailResult {
-  behavior: GuardrailBehavior;
+  behavior: "allow" | "reject" | "require_approval";
   reason?: string;
-  transformedValue?: unknown;
   metadata?: Record<string, unknown>;
 }
 
@@ -32,7 +24,5 @@ export interface LumeGuardrailContext {
 export interface LumeGuardrail<TInput = unknown> {
   id: string;
   name: string;
-  scope: GuardrailScope;
-  mode: "blocking" | "parallel";
   run(input: TInput, context: LumeGuardrailContext): Promise<LumeGuardrailResult>;
 }

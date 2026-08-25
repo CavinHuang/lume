@@ -22,21 +22,8 @@ import {
 import type { RpcHandler } from "./types";
 import { validateInput, z } from "./validation";
 
-const SCOPE_VALUES = ["global", "workspace"] as const;
-
-const getInputSchema = z
-  .object({
-    scope: z.enum(SCOPE_VALUES).optional(),
-    workspaceSlug: z.string().trim().min(1).optional(),
-  })
-  .strict();
-
-const regenerateInputSchema = z
-  .object({
-    scope: z.enum(SCOPE_VALUES).optional(),
-    workspaceSlug: z.string().trim().min(1).optional(),
-  })
-  .strict();
+/** persona 仅 global scope：GET/REGENERATE 均不接收 scope/workspaceSlug 参数 */
+const emptyInputSchema = z.object({}).strict();
 
 const correctionInputSchema = z.object({
   workspaceSlug: z.string().trim().min(1),
@@ -46,8 +33,8 @@ const correctionInputSchema = z.object({
 export function createPersonaHandlers(): Record<string, RpcHandler> {
   return {
     [PERSONA_IPC_CHANNELS.GET]: async (params) => {
-      validateInput(getInputSchema, params, PERSONA_IPC_CHANNELS.GET);
-      const markdown = readPersonaRaw("global");
+      validateInput(emptyInputSchema, params, PERSONA_IPC_CHANNELS.GET);
+      const markdown = readPersonaRaw();
       if (markdown === null) {
         return {
           markdown: "",
@@ -77,10 +64,8 @@ export function createPersonaHandlers(): Record<string, RpcHandler> {
       });
     },
     [PERSONA_IPC_CHANNELS.REGENERATE]: async (params) => {
-      const input = validateInput(regenerateInputSchema, params, PERSONA_IPC_CHANNELS.REGENERATE);
-      await ensurePersona({
-        scope: "global"
-      });
+      validateInput(emptyInputSchema, params, PERSONA_IPC_CHANNELS.REGENERATE);
+      await ensurePersona({});
       return { ok: true as const };
     },
   };

@@ -9,7 +9,6 @@ import { registerImProvider } from "../provider-registry";
 import { createOpenClawWeixinWorker } from "./openclaw-weixin-worker";
 import { createOpenClawWeixinApi } from "./openclaw-weixin-api";
 import { uploadMediaToWeixinCdn } from "./openclaw-weixin-cdn";
-import { createOpenClawWeixinLoginManager } from "./openclaw-weixin-login";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("im:weixin-provider");
@@ -106,7 +105,6 @@ export const weixinProvider: ImProviderDefinition = {
     }),
   sendText,
   sendMedia,
-  createLoginManager: () => createOpenClawWeixinLoginManager(),
 };
 
 // 模块加载即注册：由 im-runtime-manager.ts 顶部 import 触发，

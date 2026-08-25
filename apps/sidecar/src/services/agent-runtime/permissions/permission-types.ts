@@ -75,5 +75,3 @@ export interface PermissionClassifierInput {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
 }
-
-export type PermissionClassifierLlm = (prompt: string) => Promise<string>;
