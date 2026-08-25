@@ -144,11 +144,16 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
   const authorizationUrl = new Promise<string>((resolve) => (resolveUrl = resolve));
   const done = new Promise<ResolvedCredential & { authType: "oauth2" }>((resolve, reject) => {
     const server = createServer((req, res) => void handleOAuthCallback(req, res, service));
+    // 本流的 map 条目(set 于 listen 回调):finish 时校验身份,
+    // 防止 supersede 后旧流的收尾误删新流条目
+    let entry: PendingAuthorization | undefined;
 
     const finish = (fn: () => void) => {
       clearTimeout(timer);
       server.close();
-      pendingAuthorizations.delete(service);
+      if (entry && pendingAuthorizations.get(service) === entry) {
+        pendingAuthorizations.delete(service);
+      }
       fn();
     };
     const timer = setTimeout(() => {
@@ -167,7 +172,7 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
       // PKCE S256(RFC 7636):同机进程即便截获 state/授权码,没有 verifier 也换不到 token
       const codeVerifier = randomBytes(48).toString("base64url");
       const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
-      pendingAuthorizations.set(service, {
+      entry = {
         service,
         state,
         codeVerifier,
@@ -175,7 +180,8 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
         resolve: (credential) => finish(() => resolve(credential)),
         reject: (error) => finish(() => reject(error)),
         timer,
-      });
+      };
+      pendingAuthorizations.set(service, entry);
       resolveUrl(
         buildAuthorizationUrl(service, auth, config.clientId, redirectUri, state, codeChallenge),
       );

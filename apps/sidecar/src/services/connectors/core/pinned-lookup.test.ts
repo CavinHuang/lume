@@ -1,49 +1,47 @@
 import { describe, expect, it } from "bun:test";
 import { createPinnedLookup } from "./guarded-fetch";
 
+type LookupCallback = (error: Error | null, addresses?: Array<{ address: string; family: number }>) => void;
+
 describe("createPinnedLookup", () => {
-  it("answers from the screened set with round-robin failover", () => {
+  it("answers from the screened set with round-robin failover", async () => {
     const lookup = createPinnedLookup([
       { address: "93.184.216.34", family: 4 },
       { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
     ]);
 
     const seen: Array<{ address: string; family: number }> = [];
-    const run = (index: number) =>
+    const run = () =>
       new Promise<void>((resolve, reject) => {
-        // LookupFunction 的 callback 形制:(err, address, family)
-        (lookup as unknown as (...args: unknown[]) => void)(
-          "example.com",
-          {},
-          (error: Error | null, address?: string, family?: number) => {
-            if (error) reject(error);
-            else {
-              seen.push({ address: address!, family: family! });
-              resolve();
-            }
-          },
-        );
-        void index;
+        // undici 7 connect.lookup 期望 all:true 数组形制回调
+        const callback: LookupCallback = (error, answers) => {
+          if (error) reject(error);
+          else {
+            seen.push(answers![0]!);
+            resolve();
+          }
+        };
+        (lookup as unknown as (...args: unknown[]) => void)("example.com", {}, callback);
       });
 
-    return Promise.all([run(0), run(1), run(2)]).then(() => {
-      expect(seen.map((entry) => entry.address)).toEqual([
-        "93.184.216.34",
-        "2606:2800:220:1:248:1893:25c8:1946",
-        "93.184.216.34",
-      ]);
-      expect(seen[2]!.family).toBe(4);
-    });
+    await Promise.all([run(), run(), run()]);
+    expect(seen.map((entry) => entry.address)).toEqual([
+      "93.184.216.34",
+      "2606:2800:220:1:248:1893:25c8:1946",
+      "93.184.216.34",
+    ]);
+    expect(seen[0]!.family).toBe(4);
+    expect(seen[1]!.family).toBe(6);
   });
 
-  it("fails closed on an empty screened set", () => {
+  it("fails closed on an empty screened set", async () => {
     const lookup = createPinnedLookup([]);
-    return new Promise<void>((resolve, reject) => {
-      (lookup as unknown as (...args: unknown[]) => void)("example.com", {}, (error: Error | null) => {
+    await new Promise<void>((resolve) => {
+      const callback: LookupCallback = (error) => {
         expect(error?.message).toContain("no screened addresses");
         resolve();
-        void reject;
-      });
+      };
+      (lookup as unknown as (...args: unknown[]) => void)("example.com", {}, callback);
     });
   });
 });

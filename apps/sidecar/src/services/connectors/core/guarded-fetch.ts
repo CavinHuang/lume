@@ -357,19 +357,21 @@ export async function resolveGuardedEgressTarget(
 /**
  * Build a `dns.LookupFunction` that answers from a pre-screened address set
  * instead of re-resolving — closing the check-to-connection rebinding window.
- * Addresses round-robin so multi-A hosts still fail over across attempts.
+ * Callback uses the `all: true` array shape (undici 7 expects it; the single
+ * address form fails with ERR_INVALID_IP_ADDRESS). Addresses rotate so
+ * multi-A hosts still fail over across attempts.
  */
 export function createPinnedLookup(addresses: ResolvedAddress[]): LookupFunction {
   let index = 0;
   return (_hostname, _options, callback) => {
     if (addresses.length === 0) {
-      // 类型上 callback 需要地址位;真实路径不会走到(空集在 guard 层已 fail-closed)
-      callback(Object.assign(new Error("no screened addresses available for pinned connection"), { code: "EAI_FAIL" }), "");
+      // 真实路径不会走到(空集在 guard 层已 fail-closed);带 errno 码供 net 层归类
+      callback(Object.assign(new Error("no screened addresses available for pinned connection"), { code: "EAI_FAIL" }), []);
       return;
     }
     const answer = addresses[index % addresses.length]!;
     index += 1;
-    callback(null, answer.address, answer.family === 6 ? 6 : 4);
+    callback(null, [{ address: answer.address, family: answer.family === 6 ? 6 : 4 }]);
   };
 }
 
