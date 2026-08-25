@@ -1,5 +1,6 @@
 import {
   compactConversation,
+  compactToolResultContent,
   estimateMessagesTokens,
   estimateTokens,
   type AutoCompactState,
@@ -122,7 +123,15 @@ export function microCompactKernelMessages<T extends KernelMessage>(
     return {
       ...message,
       content: message.content.map((block) => {
-        if (!isRecord(block) || block.type !== "tool_result") return block;
+        if (!isRecord(block) || block.type !== "tool_result") {
+          return block;
+        }
+        // 数组形态（computer-use/browser screenshot 等大 base64 载荷）此前原样
+        // 放行、直进每次请求（#567 第 4 项 / #633）；复用 SDK 微压缩同款语义：
+        // 文本块截断、超预算 image/document 降级占位，小图保留（#364）。
+        if (Array.isArray(block.content)) {
+          return { ...block, content: compactToolResultContent(block.content, maxToolResultChars) };
+        }
         if (typeof block.content === "string") {
           if (block.content.length <= maxToolResultChars) {
             return block;
@@ -133,57 +142,10 @@ export function microCompactKernelMessages<T extends KernelMessage>(
             content: `${block.content.slice(0, half)}\n...(truncated by Lume context controller)...\n${block.content.slice(-half)}`
           };
         }
-        // #633：数组形 tool_result（如 browser screenshot 的 image block）此前
-        // 无界直通 provider、每轮全量重发。与 SDK 默认实现语义对齐：超预算媒体
-        // 块 shed 成占位文本，小图保留以免视觉能力回退。
-        if (Array.isArray(block.content)) {
-          const compacted = compactKernelToolResultContent(block.content, maxToolResultChars);
-          return compacted === block.content ? block : { ...block, content: compacted };
-        }
         return block;
       })
     };
   });
-}
-
-function compactKernelToolResultContent(blocks: unknown[], maxToolResultChars: number): unknown[] {
-  let changed = false;
-  const next = blocks.map((item) => {
-    if (
-      isRecord(item)
-      && item.type === "text"
-      && typeof item.text === "string"
-      && item.text.length > maxToolResultChars
-    ) {
-      changed = true;
-      const half = Math.floor(maxToolResultChars / 2);
-      return {
-        ...item,
-        text: `${item.text.slice(0, half)}\n...(truncated by Lume context controller)...\n${item.text.slice(-half)}`
-      };
-    }
-    if (isRecord(item) && (item.type === "image" || item.type === "document")) {
-      const originalChars = jsonCharLength(item);
-      if (originalChars > maxToolResultChars) {
-        changed = true;
-        return {
-          type: "text",
-          text: `[${String(item.type)} omitted by Lume context controller: original ${String(item.type)} was ${originalChars} chars]`
-        };
-      }
-      return item;
-    }
-    return item;
-  });
-  return changed ? next : blocks;
-}
-
-function jsonCharLength(value: unknown): number {
-  try {
-    return JSON.stringify(value)?.length ?? 0;
-  } catch {
-    return 0;
-  }
 }
 
 export function createKernelContextController(input: KernelContextControllerInput): AgentContextController {

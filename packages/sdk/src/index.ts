@@ -252,6 +252,7 @@ export type {
 // --------------------------------------------------------------------------
 
 export {
+  DEFAULT_CONTEXT_WINDOW,
   estimateTokens,
   estimateMessagesTokens,
 } from './utils/tokens.js'
@@ -265,6 +266,7 @@ export {
   shouldAutoCompact,
   compactConversation,
   microCompactMessages,
+  compactToolResultContent,
 } from './utils/compact.js'
 export type {
   AutoCompactState,

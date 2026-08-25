@@ -139,6 +139,10 @@ export const FileWriteTool = defineTool({
           overwritten,
           lines,
           bytes,
+          // ±行直接进 data（renderer 只能读到 content 反序列化结果，_meta 在
+          // run-observer/live 总线两处被剥，#572 review 四向实证）
+          linesAdded: lineChanges.linesAdded,
+          linesRemoved: lineChanges.linesRemoved,
           message: `File written: ${filePath} (${lines} lines, ${bytes} bytes)`,
         },
         _meta: {

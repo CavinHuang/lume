@@ -87,9 +87,10 @@ describe("Kernel context controller", () => {
     const result = (compacted[0]?.content as typeof blocks)[0]?.content as unknown[];
 
     expect(result).toHaveLength(2);
+    // 占位文案来自 SDK compactToolResultContent 的 micro-compaction 语义
     expect(result?.[0]).toEqual({
       type: "text",
-      text: expect.stringContaining("[image omitted by Lume context controller")
+      text: expect.stringContaining("omitted by micro-compaction")
     });
     // 小图必须原样到达模型，否则视觉能力回退（#364 语义）
     expect(result?.[1]).toBe(smallImage);
@@ -106,7 +107,8 @@ describe("Kernel context controller", () => {
     const compacted = microCompactKernelMessages(messages, { maxToolResultChars: 40 });
     const inner = (compacted[0]?.content as typeof blocks)[0]?.content as { text: string }[];
 
-    expect(inner[0]?.text).toContain("...(truncated by Lume context controller)...");
+    // 数组内 text 块截断文案来自 SDK compactToolResultContent
+    expect(inner[0]?.text).toContain("...(truncated)...");
     expect((inner[0]?.text ?? "").length).toBeLessThan(120);
   });
 
@@ -232,5 +234,30 @@ describe("Kernel context controller", () => {
         tail_uuid: "msg-tail"
       }
     });
+  });
+});
+
+describe("microCompactKernelMessages array-form tool_result (#567 item 4)", () => {
+  test("oversized image blocks degrade to placeholders, small ones survive", () => {
+    const big = "x".repeat(60_000);
+    const messages = [{
+      role: "user" as const,
+      content: [{
+        type: "tool_result",
+        tool_use_id: "t1",
+        content: [
+          { type: "image", source: { type: "base64", data: big } },
+          { type: "image", source: { type: "base64", data: "aGk=" } },
+          { type: "text", text: big }
+        ]
+      }]
+    }];
+    const out = microCompactKernelMessages(messages as any);
+    const blocks = (out[0]!.content as any[])[0]!.content as any[];
+    expect(blocks[0]!.type).toBe("text");
+    expect(blocks[0]!.text).toContain("image omitted by micro-compaction");
+    // 小图必须原样到达模型（#364）
+    expect(blocks[1]!.type).toBe("image");
+    expect((blocks[2]!.text as string).length).toBeLessThan(big.length);
   });
 });

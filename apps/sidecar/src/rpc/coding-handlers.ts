@@ -20,18 +20,25 @@ import {
   getCodingDiffMediaFromCheckpoint,
   getCodingFileDiffFromCheckpoint,
   getCodingRunRoots,
+  revertCodingFileFromCheckpoint,
+  revertCodingRun,
 } from "../services/agent-runtime/runtime-core/coding-run-checkpoint-service";
 import {
   codingChangeSetInputSchema,
   codingDiffActionInputSchema,
   codingDiffMediaInputSchema,
   codingFileInputSchema,
+  codingRunFileRevertInputSchema,
+  codingRunRevertInputSchema,
   codingRepositoryInputSchema,
   codingRepositoryPublishActionInputSchema,
   codingReviewSearchInputSchema,
 } from "./schemas";
 import type { RpcHandler } from "./types";
 import { validateInput } from "./validation";
+import { createLogger } from "../services/infra/logger";
+
+const log = createLogger("coding-handlers");
 
 export function createCodingHandlers(): Record<string, RpcHandler> {
   return {
@@ -293,6 +300,47 @@ export function createCodingHandlers(): Record<string, RpcHandler> {
       });
       return applyCodingRepositoryPublishAction(workdir.agentCwd, input, {
         roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
+    [AGENT_IPC_CHANNELS.REVERT_CODING_RUN]: async (params) => {
+      const input = validateInput(
+        codingRunRevertInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.REVERT_CODING_RUN,
+      );
+      if (isAgentRuntimeSessionActive(input.threadId)) {
+        throw new Error("Coding Run 尚未结束，无法撤销文件改动");
+      }
+      const result = await revertCodingRun({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+        // 审计留痕：RPC 响应因 renderer 崩溃丢失时仍有「改了哪些文件」记录（#572 review）
+        onFileRestored: (path) => {
+          log.info(`revert restored ${path}`);
+        },
+      });
+      // TOCTOU 收口：还原耗时期间用户开新 Run 会与本结果交错写同批文件，
+      // 复查并告警（最小替代 in-flight 注册表，#572 review P2）
+      if (isAgentRuntimeSessionActive(input.threadId)) {
+        log.warn("revert completed while a new coding session became active; new-run writes may have been overwritten by restored snapshots", { threadId: input.threadId, runId: input.runId });
+      }
+      return result;
+    },
+    [AGENT_IPC_CHANNELS.REVERT_CODING_FILE]: async (params) => {
+      const input = validateInput(
+        codingRunFileRevertInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.REVERT_CODING_FILE,
+      );
+      if (isAgentRuntimeSessionActive(input.threadId)) {
+        throw new Error("Coding Run 尚未结束，无法撤销文件改动");
+      }
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      return revertCodingFileFromCheckpoint({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+        path: input.path,
+        rootId: input.rootId ?? workdir.agentCwd,
       });
     },
   };

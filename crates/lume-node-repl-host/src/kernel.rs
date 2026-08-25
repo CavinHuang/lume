@@ -1127,6 +1127,10 @@ async fn spawn_kernel(options: &RuntimeOptions) -> Result<KernelSession> {
 /// realm 逃逸直达 process.env）。只放行系统必需项、代理、untrusted allowlist
 /// 声明项与经 NODE_REPL_EXTRA_ENV_ALLOWLIST 显式扩展的条目。
 const KERNEL_ENV_BASELINE_ALLOW: &[&str] = &[
+    // 桌面生产以 Electron 可执行文件充当 node 运行时（LUME_NODE_REPL_ELECTRON
+    // → nodePath），依赖 sidecar 注入的该变量进入 node 模式——缺失则 kernel 以
+    // GUI 模式启动、JSONL 握手必超时。
+    "ELECTRON_RUN_AS_NODE",
     "PATH",
     "HOME",
     "USERPROFILE",
