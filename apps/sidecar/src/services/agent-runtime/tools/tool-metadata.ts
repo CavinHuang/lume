@@ -156,7 +156,7 @@ registerToolMetadata({
   name: "MultiEdit",
   category: "write",
   riskLevel: "medium",
-  description: "批量编辑多个文件"
+  description: "单文件多处精确替换"
 });
 
 registerToolMetadata({
