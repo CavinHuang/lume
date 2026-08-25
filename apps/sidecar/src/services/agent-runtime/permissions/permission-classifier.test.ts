@@ -237,6 +237,10 @@ describe("permission classifier", () => {
     await classifier.classify({ ...input, shellKind: "powershell" });
 
     expect(calls).toBe(2);
+
+    // 反向钉死：同方言同值仍命中缓存（键纳入方言不得使缓存失效）
+    await classifier.classify({ ...input, shellKind: "bash" });
+    expect(calls).toBe(2);
   });
 
   test("uses a neutral explanation for whitelisted-out low-risk commands (#707)", async () => {
@@ -245,5 +249,13 @@ describe("permission classifier", () => {
     // 该文案经引擎 approval 透传直达审批卡，不得陈述「无风险」与「请确认」自相矛盾
     const result = await classifier.classify({ toolName: "Bash", command: "node script.js" });
     expect(result.explanation).toBe("Shell 命令不在自动放行范围内，需要用户确认");
+  });
+
+  test("uses a neutral explanation for the metadata_low fallback (#707)", async () => {
+    const classifier = createPermissionClassifier();
+
+    // skill 等词表外工具走此 fallback，default 档审批卡同样不得出现矛盾归因
+    const result = await classifier.classify({ toolName: "SomeSkillTool" });
+    expect(result.explanation).toBe("该操作不在自动放行范围内，需要用户确认");
   });
 });

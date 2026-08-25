@@ -12,7 +12,8 @@ import {
   PS_DANGEROUS_PROBES,
   PS_DYNAMIC_EXEC_VERBS,
   PS_FORMAT_VERBS,
-  PS_STOP_VERBS
+  PS_STOP_VERBS,
+  hasPowerShellContentSignal
 } from "./ps-dangerous-verbs";
 
 // 与 runtime-tool-safety.test 同款确定性方言上下文（win32 + 显式空 env → powershell）
@@ -109,6 +110,26 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
     }
   });
 
+  test("probes carrying the content signal escalate on bash-configured Windows (#707)", () => {
+    // 信号通道接入既有探针防漂移体系：凡构成信号的探针在 win32+bash（方言读 bash、
+    // 词表曾整层休眠）上下文两层都必须升级；无信号探针把「短别名无标志不构成信号」
+    // 的刻意让步钉成被测试记录的决策（含 cmd 包裹内裸单文件删除等形态）
+    const bashWin: RuntimeToolSafetyContext = {
+      platform: "win32",
+      env: { LUME_BASH_PATH: "C:\\Program Files\\Git\\bin\\bash.exe" }
+    };
+    for (const command of PS_DANGEROUS_PROBES) {
+      if (!hasPowerShellContentSignal(command)) {
+        expect(hasPowerShellContentSignal(command)).toBe(false);
+        continue;
+      }
+      expect(evaluateRuntimeToolSafety("Bash", { command }, bashWin).behavior).toBe("confirm");
+      const classification = classifyHeuristic({ toolName: "bash", command, shellKind: "bash", platform: "win32" });
+      expect(classification.riskLevel).not.toBe("low");
+      expect(classification.shouldAsk).toBe(true);
+    }
+  });
+
   test("content signal reactivates the vocabulary on bash-configured Windows hosts (#707)", () => {
     // win32 + 显式配置 bash：方言读作 bash、词表曾整层休眠，Remove-Item -Recurse -Force
     // 在 dontAsk 判 low 静默放行（guardrail 侧同样漏拦）。文本呈强 PS 形态时按 PS 规则评估。
@@ -121,9 +142,14 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
     ).toBe("confirm");
     expect(evaluateRuntimeToolSafety("Bash", { command: "rd /s /q build" }, bashWin).behavior).toBe("confirm");
 
-    // 短别名单独出现不构成信号：iex 不进 PS 词表（无 natives 时 parse-unavailable
-    // 会兜底 confirm，与词表无关，故只钉不 deny）
-    expect(evaluateRuntimeToolSafety("Bash", { command: "iex -S mix phx.server" }, bashWin).behavior).not.toBe("deny");
+    // 短别名单独出现不构成信号：iex 不进 PS 词表。confirm 来源区分（防 iex 未来被误加进
+    // 信号词表后「动态执行」确认规则命中仍绿）：只允许 parse-unavailable 兜底 confirm
+    const iexDecision = evaluateRuntimeToolSafety("Bash", { command: "iex -S mix phx.server" }, bashWin);
+    expect(iexDecision.behavior).not.toBe("deny");
+    expect(
+      iexDecision.behavior === "confirm" &&
+        iexDecision.reason === "修改脚本执行策略或动态执行代码需要用户确认"
+    ).toBe(false);
 
     // 非 win32 宿主不消费信号（与下方既定语义测试同口径）
     expect(evaluateRuntimeToolSafety("Bash", { command: "Remove-Item -Recurse -Force build" }, { platform: "linux" }).behavior).not.toBe("deny");

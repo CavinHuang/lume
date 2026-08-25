@@ -74,8 +74,10 @@ export function createPermissionClassifier(
       }
 
       // 缓存键纳入方言（#707）：启发式词表选择依赖 shellKind，TTL 内方言读法漂移时
-      // 同一命令文本不得跨方言共享 LLM 结果
-      const key = `${input.toolName}::${input.shellKind ?? ""}::${input.command ?? ""}::${input.path ?? ""}`;
+      // 同一命令文本不得跨方言共享 LLM 结果。JSON 序列化作键：分隔符拼接在 command/path
+      // 含 "::" 时存在跨条目歧义碰撞。生产引擎缺省不传 shellKind（段为 null），注入通道
+      // （测试/未来方言上下文接线）生效。
+      const key = JSON.stringify([input.toolName, input.shellKind ?? null, input.command ?? "", input.path ?? ""]);
       const cached = cache.get(key);
       if (cached && Date.now() - cached.ts < cacheTtlMs) {
         return cached.result;
@@ -184,7 +186,9 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
   return {
     riskLevel: "low",
     reasonCode: "metadata_low",
-    explanation: "未命中高风险模式",
+    // 中性理由（#707 同源）：该文案经引擎 approval 透传直达审批卡（skill 等工具
+    // 未命中词表时走此 fallback），不得陈述「无风险」与「请确认」自相矛盾
+    explanation: "该操作不在自动放行范围内，需要用户确认",
     shouldAsk: false
   };
 }

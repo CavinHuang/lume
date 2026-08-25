@@ -33,22 +33,32 @@ export const PS_FORMAT_VERBS = String.raw`(?:format-volume|format-disk)`;
 /** 清空文件内容动词 */
 export const PS_CLEAR_CONTENT_VERBS = String.raw`(?:clear-content)`;
 
-/** 删除族危险标志：-Recurse/-Force 及其最小缩写（-re/-fo）、cmd 风格 /s /q；命名参数与 -WhatIf 干跑旗标不触发 */
-export const PS_DANGEROUS_DELETE_FLAGS = String.raw`(?:-{1,2}re(?:curse)?\b|-{1,2}fo(?:rce)?\b|\/[sq]\b)`;
+/** 删除族危险标志：-Recurse/-Force 及其缩写（-r/-re/-fo）、cmd 风格 /s /q；
+ *  命名参数与 -WhatIf 干跑旗标不触发。-f 不入短缩写：ri -f 是真实 Ruby docs 用法，
+ *  ri 在删除族词表内，「删除族×标志」组合会误拦 */
+export const PS_DANGEROUS_DELETE_FLAGS = String.raw`(?:-{1,2}r(?:ecurse)?\b|-{1,2}fo(?:rce)?\b|\/[sq]\b)`;
 
-/** 分类器全名词表（无锚点、\b 边界即可命中）；短别名由 PS_DELETE_COMMAND 锚定兜底，防 npm ri 之类子命令误判 */
-export const PS_FULL_NAME_VERBS = String.raw`(?:remove-item|clear-content|stop-process|stop-service|stop-computer|restart-computer|set-executionpolicy|invoke-expression|iex|format-volume|format-disk)`;
+/** 无歧义全名动词基础清单：连字符 Verb-Noun 形态为 PS 独有，POSIX 无撞名读法。
+ *  单一事实来源——分类器全名词表与内容信号均由此派生，新增动词只改这里 */
+const PS_UNAMBIGUOUS_FULL_NAME_VERBS = String.raw`(?:remove-item|clear-content|stop-process|stop-service|stop-computer|restart-computer|set-executionpolicy|invoke-expression|format-volume|format-disk)`;
+
+/** 分类器全名词表（无锚点、\b 边界即可命中）＝无歧义基础 + iex；短别名由 PS_DELETE_COMMAND 锚定兜底，防 npm ri 之类子命令误判 */
+export const PS_FULL_NAME_VERBS = `${PS_UNAMBIGUOUS_FULL_NAME_VERBS}|iex`;
 
 /*
  * 内容信号（#707）：win32 装 POSIX bash 的机器上方言读作 bash，词表按方言门控整层休眠，
  * Remove-Item -Recurse -Force 一类命令会漏判为 low。命令文本自身呈现强 PS 形态时应无视
  * 方言激活词表。信号只收两类无 POSIX 撞名读法的形态：
- * - 全名 Verb-Noun 动词（连字符形态为 PS 独有）；刻意不含短别名 iex（Elixir REPL）等
+ * - 无歧义全名动词（派生自基础清单）；刻意不含短别名 iex（Elixir REPL）等
  * - 「删除族动词 + 危险标志」组合（rd /s /q 等；POSIX 下该参数形态不是合法读法）
  * 与方言门控的初衷一致：iex/ri 单独出现不构成信号。
+ *
+ * 口径差异（守卫 vs 分类器）：guardrail 以原始文本匹配（锚点含换行），分类器收到的
+ * 是经 permission-rules normalizeWhitespace 折行的文本——heredoc 等多行形态在分类器
+ * 侧丢失换行锚点、信号可能转 false，由 gateway 合并语义（守卫层原文复核优先）兜底。
  */
 export const PS_CONTENT_SIGNAL = new RegExp(
-  String.raw`\b(?:remove-item|clear-content|stop-process|stop-service|stop-computer|restart-computer|set-executionpolicy|invoke-expression|format-volume|format-disk)\b|${PS_DELETE_COMMAND}[^\r\n;&|]*[^\S\r\n]${PS_DANGEROUS_DELETE_FLAGS}`,
+  String.raw`\b${PS_UNAMBIGUOUS_FULL_NAME_VERBS}\b|${PS_DELETE_COMMAND}[^\r\n;&|]*[^\S\r\n]${PS_DANGEROUS_DELETE_FLAGS}`,
   "i"
 );
 
@@ -60,6 +70,7 @@ export function hasPowerShellContentSignal(command: string): boolean {
 /** 跨层一致性探针：覆盖每个词表组与每种锚定形态的代表性命令，两层都必须命中 */
 export const PS_DANGEROUS_PROBES: string[] = [
   "Remove-Item -Force build.log",
+  "Remove-Item -r build",
   "rd /s /q build",
   "cmd /c rd /s /q build",
   "cmd /c del /q cache.txt",

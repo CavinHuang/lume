@@ -159,6 +159,7 @@ export function PermissionSettings() {
       const nextConfig = await updatePermissionClassifierEnabled(value, selectedWorkspaceSlug)
       setConfig(nextConfig)
       setDraft(buildPermissionSettingsDraft(nextConfig))
+      toast.success(`风险分类器设置已保存到 ${scopeLabel}`)
     } catch (error) {
       console.error('[PermissionSettings] save classifier FAILED:', error)
       toast.error('保存风险分类器设置失败')
@@ -263,13 +264,13 @@ export function PermissionSettings() {
 
       <SettingsCard
         title="风险分类器"
-        description="「少询问」依据内置窄正则词表判定低风险并自动放行；「默认」档没有自动放行，两档差异完全由这张词表决定。"
+        description="「少询问」依据内置窄正则词表判定低风险并自动放行，「默认」档不做词表驱动的放行——两档审批差异由这张词表决定。"
       >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="text-body font-medium text-[var(--text-1)]">启发式风险分类</div>
             <p className="mt-1 text-ui leading-5 text-[var(--text-3)]">
-              关闭后不再有任何词表自动放行，白名单外操作全部逐条确认；硬性危险拦截与只读免审不受影响。
+              关闭后不再有任何词表自动放行，白名单外命令逐条确认；工具声明的低风险豁免与可证只读免审不受影响。
             </p>
           </div>
           <Switch
