@@ -12,6 +12,7 @@ import type {
 } from '../types.js'
 import {
   estimateMessagesTokens,
+  estimateTokens,
   getContextWindowSize,
 } from './tokens.js'
 import {
@@ -24,6 +25,18 @@ const DEFAULT_RESERVE_TOKENS = 16_384
 const MAX_RESERVE_TOKENS = 20_000
 const DEFAULT_KEEP_RECENT_TOKENS = 20_000
 const TOOL_RESULT_MAX_CHARS = 2_000
+
+/**
+ * 熔断阈值：proactive(auto)压缩与 prompt_too_long 恢复各自计数、共享同一
+ * 断路值。原三处字面量 3 提常量（#709 第 7 项）。
+ */
+export const COMPACTION_BREAKER_THRESHOLD = 3
+
+/**
+ * 摘要请求输入预算的安全边际（system prompt + 指令段 + 估算误差），
+ * 从模型窗口中扣除后再给序列化文本定上限。
+ */
+const SUMMARY_INPUT_SAFETY_MARGIN_TOKENS = 4_096
 
 const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.
 
@@ -181,7 +194,7 @@ export function shouldAutoCompact(
     maxOutputTokens?: number
   } = {},
 ): boolean {
-  if (state.consecutiveFailures >= 3) return false
+  if (state.consecutiveFailures >= COMPACTION_BREAKER_THRESHOLD) return false
 
   const contextUsage = options.contextUsage ?? createEstimatedContextUsage({
     messageTokens: estimateMessagesTokens(stripImagesFromMessages(messages)),
@@ -459,6 +472,21 @@ function validateSummary(text: string, requiredHeadings: string[]): CompactionFa
   return undefined
 }
 
+/**
+ * 摘要输入上限裁切（#709 第 6 项）：序列化文本无界时，小窗模型的摘要请求自身
+ * 超窗必败、×3 烧完熔断。按模型窗口给输入定预算，超限保头（目标）保尾（近期
+ * 进展）截中。治本是给模型显式配置真实 contextWindow。
+ */
+export function truncateSerializedConversation(text: string, inputBudgetTokens: number): string {
+  const textTokens = estimateTokens(text)
+  if (textTokens <= inputBudgetTokens) return text
+  const charsPerToken = text.length / Math.max(1, textTokens)
+  const maxChars = Math.floor(inputBudgetTokens * charsPerToken)
+  const headChars = Math.floor(maxChars * 0.4)
+  const tailChars = Math.max(0, maxChars - headChars)
+  return `${text.slice(0, headChars)}\n\n[... ${text.length - maxChars} characters truncated ...]\n\n${text.slice(-tailChars)}`
+}
+
 async function generateSummary(
   provider: LLMProvider,
   model: string,
@@ -470,7 +498,11 @@ async function generateSummary(
     abortSignal?: AbortSignal
   },
 ): Promise<SummaryCallResult> {
-  const conversationText = serializeConversation(messages)
+  const inputBudgetTokens = Math.max(
+    2_048,
+    getContextWindowSize(model) - maxTokens - SUMMARY_INPUT_SAFETY_MARGIN_TOKENS,
+  )
+  const conversationText = truncateSerializedConversation(serializeConversation(messages), inputBudgetTokens)
   let prompt = `<conversation>\n${conversationText}\n</conversation>\n\n`
   if (options.previousSummary) {
     prompt += `<previous-summary>\n${options.previousSummary}\n</previous-summary>\n\n`
@@ -553,7 +585,9 @@ function failureResult(
       // Recovery-path compaction (prompt_too_long) keeps its own breaker on the
       // engine (promptTooLongRecoveryFailures): letting its failures burn the
       // proactive counter disabled overflow self-rescue after 3 unrelated
-      // proactive failures (#567 item 2).
+      // proactive failures (#567 item 2). manual 触发失败烧共享熔断是有意的
+      // （#709 第 7 项语义确认）：manual 与 auto 走同一摘要链路，连续失败即链路
+      // 坏，auto 继续尝试只会重复烧钱；manual 成功会清零重新武装 auto。
       consecutiveFailures:
         trigger === 'prompt_too_long' ? state.consecutiveFailures : state.consecutiveFailures + 1,
     },

@@ -268,6 +268,7 @@ export {
   compactConversation,
   microCompactMessages,
   compactToolResultContent,
+  COMPACTION_BREAKER_THRESHOLD,
 } from './utils/compact.js'
 export type {
   AutoCompactState,

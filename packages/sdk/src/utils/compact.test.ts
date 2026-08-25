@@ -6,6 +6,7 @@ import {
   prepareCompaction,
   serializeConversation,
   shouldAutoCompact,
+  truncateSerializedConversation,
 } from "./compact.js";
 
 const VALID_SUMMARY = `## Goal
@@ -286,6 +287,26 @@ describe("context compaction", () => {
       String(request.messages[0].content).includes("PREFIX of a turn"));
     expect(prefixRequest).toBeDefined();
     expect(prefixRequest.messages[0].content).not.toContain(MARKER);
+  });
+});
+
+describe("truncateSerializedConversation (#709 item 6)", () => {
+  test("keeps text within budget untouched", () => {
+    const text = "[User]: hello world";
+    expect(truncateSerializedConversation(text, 10_000)).toBe(text);
+  });
+
+  test("truncates middle while preserving head and tail when over budget", () => {
+    // ASCII ≈4 chars/token：8_000 字符 ≈ 2_000 tokens，预算 1_000 tokens 必触发
+    const head = `[User]: ${"a".repeat(3_900)}`;
+    const tail = `[Assistant]: ${"z".repeat(3_900)}`;
+    const text = `${head}\n\n${tail}`;
+    const truncated = truncateSerializedConversation(text, 1_000);
+    expect(truncated.length).toBeLessThan(text.length);
+    expect(truncated).toContain("[... ");
+    expect(truncated).toContain(" characters truncated ...]");
+    expect(truncated.startsWith(`[User]: aaa`)).toBe(true);
+    expect(truncated.endsWith("zzz")).toBe(true);
   });
 });
 

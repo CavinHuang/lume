@@ -56,6 +56,7 @@ import {
   compactConversation as defaultCompactConversation,
   microCompactMessages as defaultMicroCompactMessages,
   createAutoCompactState,
+  COMPACTION_BREAKER_THRESHOLD,
   type AutoCompactState,
 } from './utils/compact.js'
 import {
@@ -1271,7 +1272,7 @@ export class QueryEngine {
         // failures (reset to 0 on success) instead of the one-shot `compacted`
         // flag: a tool loop can outgrow the window a second time, and repeated
         // failures trip the breaker on their own.
-        if (isPromptTooLongError(err) && this.promptTooLongRecoveryFailures < 3) {
+        if (isPromptTooLongError(err) && this.promptTooLongRecoveryFailures < COMPACTION_BREAKER_THRESHOLD) {
           try {
             const compacted = yield* this.runCompaction('prompt_too_long', protectedMessageIndex)
             if (compacted) {
@@ -1287,6 +1288,12 @@ export class QueryEngine {
           }
         }
 
+        // 最终错误附恢复尝试上下文（#709 第 5 项）：裸 provider 错误会让人误以为
+        // 重试即可，实际自动压缩已到天花板。
+        const errorMessage = err?.message || 'Unknown provider error'
+        const finalMessage = isPromptTooLongError(err) && this.promptTooLongRecoveryFailures > 0
+          ? `${errorMessage} (auto-compaction recovery attempted ${this.promptTooLongRecoveryFailures} time(s) without success)`
+          : errorMessage
         yield {
           type: 'result',
           subtype: 'error_during_execution',
@@ -1294,7 +1301,7 @@ export class QueryEngine {
           ...this.createResultUsageFields(),
           num_turns: this.turnCount,
           cost: this.totalCost,
-          errors: [err?.message || 'Unknown provider error'],
+          errors: [finalMessage],
         }
         return
       }
