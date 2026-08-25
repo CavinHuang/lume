@@ -88,6 +88,11 @@ describe("CORE_TOOL_NAMES preset", () => {
     expect(CORE_TOOL_NAMES.has("Bash")).toBe(true);
     expect(CORE_TOOL_NAMES.has("WebFetch")).toBe(true);
   });
+
+  test("委派工具必须在 core 集内,防止落入 ToolSearch 延迟池(#651 follow-up)", () => {
+    expect(CORE_TOOL_NAMES.has("Delegate")).toBe(true);
+    expect(CORE_TOOL_NAMES.has("WaitForDelegations")).toBe(true);
+  });
 });
 
 describe("applyOverrides", () => {

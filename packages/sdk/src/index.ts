@@ -46,7 +46,7 @@ export type {
 export { QueryEngine } from './engine.js'
 export { withRepeatGuardState, readRepeatGuardState } from './repeat-guard.js'
 export type { RepeatGuardMeta } from './repeat-guard.js'
-export { resolveShellInvocation } from './utils/shell-invocation.js'
+export { resolveShellInvocation, shellKindWithoutDiscovery, shellKindConservative, resetWindowsBashDiscoveryForTests } from './utils/shell-invocation.js'
 export { analyzeBashCommand, normalizeExecutable } from './utils/bash-command-analysis.js'
 export type { BashCommandAnalysis, BashCommandSegment, BashParseStatus } from './utils/bash-command-analysis.js'
 export {
@@ -331,7 +331,7 @@ export * from './tools/render-client.js'
 // WebFetch internals (enhanced WebFetch assembly in sidecar needs these)
 export { runWebFetch, type WebFetchInput, type WebFetchDeps } from './tools/web-fetch.js'
 export { sdkFetch } from './tools/web-request.js'
-export { isFakeIpRange, isPublicIpAddress } from './utils/pathing.js'
+export { canonicalizePath, ensureWriteContained, isFakeIpRange, isPublicIpAddress } from './utils/pathing.js'
 export type { FetchImpl } from './tools/web-fetch-http.js'
 export { extractArticleMarkdown } from './tools/html-to-markdown.js'
 export {

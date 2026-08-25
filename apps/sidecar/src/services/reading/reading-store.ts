@@ -474,8 +474,10 @@ export function hideReadingNote(id: string): ReadingNote {
 
 
 export function getReadingNote(id: string): ReadingNoteSummary | null {
-  return listReadingNotes({ includeHidden: true, includeDeleted: true })
-    .find((note) => note.id === id) ?? null;
+  const note = readNoteById(id);
+  if (!note) return null;
+  const book = listReadingBooks().find((item) => item.id === note.bookId);
+  return { ...note, book };
 }
 
 export function setReadingNoteShareCard(noteId: string, shareCardPath: string): ReadingNote {
@@ -485,6 +487,21 @@ export function setReadingNoteShareCard(noteId: string, shareCardPath: string): 
   return updated;
 }
 
+
+/**
+ * #637：把存量 legacy 弱种子 weread apiKey 密文一次性升级为 v2。返回迁移条数。
+ */
+export function reencryptWereadApiKeyWithInstalledKey(): number {
+  const stored = readSettings();
+  const value = stored?.encryptedWereadApiKey;
+  if (!value || value.startsWith("enc:v2:")) return 0;
+  writeSettings({
+    ...normalizeReadingSettings(readSettings()),
+    encryptedWereadApiKey: encryptSecret(decryptSecret(value)),
+    updatedAt: Date.now()
+  });
+  return 1;
+}
 
 export function getReadingSettings(): ReadingSettings {
   initReadingStorage();
@@ -545,7 +562,10 @@ const SEARCH_SOURCE_TIMEOUT_MS = 8_000;
 export async function searchReadingBooks(query: string, limit = 10): Promise<ReadingSearchResult[]> {
   const apiKey = getReadingWereadApiKey();
   if (apiKey) {
-    const result = await new BookDataService({ wereadApiKey: apiKey }).searchWeread(query, limit);
+    // #596：apiKey 分支与公共分支同口径包超时，避免 weread 慢调用挂住搜索
+    const result = await withSearchTimeout(
+      new BookDataService({ wereadApiKey: apiKey }).searchWeread(query, limit), { ok: true, data: [] }
+    );
     return result.ok ? result.data : [];
   }
   return withSearchTimeout(
@@ -560,20 +580,40 @@ function withSearchTimeout<T>(promise: Promise<T>, fallback: T): Promise<T> {
   ]);
 }
 
+function backupCorruptLibrary(libraryPath: string): void {
+  if (!existsSync(libraryPath)) return;
+  const backupPath = `${libraryPath}.corrupt-${Date.now()}`;
+  try {
+    renameSync(libraryPath, backupPath);
+    log.warn("书架文件损坏，已备份现场后重建空库", { backupPath });
+  } catch (error) {
+    log.warn("备份损坏书架文件失败", { backupPath, error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 function readLibrary(): ReadingLibraryIndex {
   initBaseDirs();
-  if (!existsSync(getReadingLibraryPath())) {
+  const libraryPath = getReadingLibraryPath();
+  if (!existsSync(libraryPath)) {
     return createEmptyLibrary();
   }
   try {
     const contents = readFileSync(getReadingLibraryPath(), "utf-8").replace(/^\uFEFF/, "");
     const parsed = JSON.parse(contents) as Partial<ReadingLibraryIndex>;
+    // \u7ED3\u6784\u6F02\u79FB\uFF08\u5408\u6CD5 JSON \u4F46 books \u975E\u6570\u7EC4\uFF09\u4E0E\u89E3\u6790\u5931\u8D25\u540C\u8D23\uFF1A\u9759\u9ED8\u56DE\u9000\u7A7A\u5E93\u4F1A\u8BA9
+    // \u4E0B\u4E00\u6B21\u5199\u5165\u7269\u7406\u8986\u76D6\u6574\u4E2A\u4E66\u67B6\uFF0C\u5FC5\u987B\u540C\u6837\u8D70\u5907\u4EFD\uFF08#592\uFF09
+    if (!Array.isArray(parsed.books)) {
+      throw new Error("books \u5B57\u6BB5\u7F3A\u5931\u6216\u975E\u6570\u7EC4");
+    }
     return {
       version: LIBRARY_VERSION,
-      books: Array.isArray(parsed.books) ? parsed.books.map((book) => normalizeReadingBook(book)) : []
+      books: parsed.books.map((book) => normalizeReadingBook(book))
     };
   } catch (error) {
+    // 解析失败必须先把损坏文件改名保留：直接回退空库的话，下一次写入会把
+    // 损坏前的整个书架物理覆盖为「空库+新书」，不可逆（#592）
     log.warn("读取书架文件失败", { error: error instanceof Error ? error.message : String(error) });
+    backupCorruptLibrary(libraryPath);
     return createEmptyLibrary();
   }
 }
@@ -628,8 +668,25 @@ function readVisibleNotes(): ReadingNote[] {
   return readAllNotes().filter((note) => !note.hidden && !note.deleted);
 }
 
+function readNoteById(id: string): ReadingNote | null {
+  // id 即文件名且有白名单校验，单文件直读即可，无需全目录扫描（#597）
+  let path: string;
+  try {
+    path = getNotePath(id);
+  } catch {
+    return null;
+  }
+  try {
+    return parseReadingNoteMarkdown(readFileSync(path, "utf-8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return null;
+    log.warn("读取笔记文件失败", { id, error: error instanceof Error ? error.message : String(error) });
+    return null;
+  }
+}
+
 function getRequiredNote(id: string): ReadingNote {
-  const note = readAllNotes().find((item) => item.id === id);
+  const note = readNoteById(id);
   if (!note) {
     throw new Error(`读书笔记不存在: ${id}`);
   }
@@ -638,7 +695,9 @@ function getRequiredNote(id: string): ReadingNote {
 
 function writeNote(note: ReadingNote): void {
   initBaseDirs();
-  writeFileSync(getNotePath(note.id), serializeReadingNoteMarkdown(note), "utf-8");
+  // 原子写：直写被崩溃截断的笔记会在重启后从列表静默消失且被下次同名写入
+  // 覆盖残骸（#597）
+  writeJsonAtomic(getNotePath(note.id), serializeReadingNoteMarkdown(note));
 }
 
 function getNotePath(id: string): string {

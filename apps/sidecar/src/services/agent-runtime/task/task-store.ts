@@ -7,6 +7,8 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
+  truncateSync,
   writeFileSync,
   renameSync,
 } from "node:fs";
@@ -23,6 +25,13 @@ import type {
 
 const LOCK_TIMEOUT_MS = 5_000;
 const LOCK_STALE_MS = 30_000;
+// 持有进程仍存活但心跳超此时限：锁只覆盖单次同步 mutation（毫秒级），
+// 心跳落后到这个量级只能是 PID 复用或持有者已挂死，强制自愈（#647 P1-8）。
+// 后果边界：被抢者复活续写时，fn 前挂起由 revision CAS 拦截；fn 中段挂起为
+// last-wins 丢更新——需 >5min 外部停摆才可达，毫秒级临界区下视为不可达。
+const LOCK_ABANDONED_MS = 300_000;
+// journal 全量压实的阈值：超过即视为历史行纯噪声，重置为空（#647 P1-7）
+const JOURNAL_COMPACT_BYTES = 256 * 1024;
 const CLAIM_FENCE_TIMEOUT_MS = 30_000;
 const MAX_METADATA_BYTES = 64 * 1024;
 
@@ -41,7 +50,7 @@ interface StoredTask extends Task {
 interface JournalEntry {
   phase: "prepare" | "commit";
   transactionId: string;
-  files?: Array<{ path: string; contents: string | null }>;
+  files?: Array<{ path: string; contents: string | null; truncateTo?: number }>;
 }
 
 export interface TaskStoreNotification {
@@ -81,17 +90,30 @@ function readLock(path: string): LockPayload | null {
       return { pid: value.pid, token: value.token, heartbeatAt: value.heartbeatAt };
     }
   } catch {
-    // A malformed lock is not removed while its process is still alive.
+    // Malformed locks are handled by the mtime-age staleness channel in acquireLock.
   }
   return null;
 }
 
-function processAlive(pid: number): boolean {
+function lockFileAgeMs(path: string): number {
+  try {
+    return Date.now() - statSync(path).mtimeMs;
+  } catch (error) {
+    // 仅 ENOENT（文件已消失）按无限老处理，rm(force) 对不存在文件是无操作；
+    // 其他错误按未知处理返回 0 走保守等待
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return Number.POSITIVE_INFINITY;
+    return 0;
+  }
+}
+
+function processAlive(pid: number): boolean | undefined {
+  if (!Number.isFinite(pid) || pid <= 0) return undefined;
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // EPERM 表示目标进程存在但无权发信号——仍视为存活（对齐 index-mutation-lock）
+    return (error as NodeJS.ErrnoException | undefined)?.code === "EPERM" ? true : false;
   }
 }
 
@@ -109,15 +131,36 @@ function acquireLock(path: string): LockPayload {
       }
       return payload;
     } catch {
+      // 超时检查前置：任何路径（含下方陈旧分支的 rm 持续失败热旋）都保证 5s 内干净抛出
+      if (Date.now() - startedAt > LOCK_TIMEOUT_MS) throw new Error(`Task lock timeout: ${path}`);
       const current = readLock(path);
+      // 陈旧判定三通道（#647 P1-8）：持有进程已死+心跳超时（原规则）、
+      // 持有进程存活但心跳落后到废弃时限（PID 复用/挂死自愈）、
+      // 锁文件损坏不可解析且 mtime 已老化（半截写入自愈）。
+      const heartbeatAge = current ? Date.now() - current.heartbeatAt : Number.POSITIVE_INFINITY;
       const stale = current
-        ? !processAlive(current.pid) && Date.now() - current.heartbeatAt > LOCK_STALE_MS
-        : false;
-      if (stale) {
-        try { rmSync(path, { force: true }); } catch { /* another writer won the race */ }
+        ? (processAlive(current.pid) === false && heartbeatAge > LOCK_STALE_MS)
+          || heartbeatAge > LOCK_ABANDONED_MS
+        : lockFileAgeMs(path) > LOCK_STALE_MS;
+      if (!stale) {
+        sleepSync(25);
         continue;
       }
-      if (Date.now() - startedAt > LOCK_TIMEOUT_MS) throw new Error(`Task lock timeout: ${path}`);
+      // rm 前身份复核：观测到的锁已被他人接管/替换则放弃破坏，避免误删新鲜锁
+      if (current) {
+        const latest = readLock(path);
+        if (!latest || latest.token !== current.token) {
+          sleepSync(25);
+          continue;
+        }
+      } else {
+        // 损坏通道：若文件此刻已变得可解析（他人重建），同样放弃本轮
+        if (readLock(path)) {
+          sleepSync(25);
+          continue;
+        }
+      }
+      try { rmSync(path, { force: true }); } catch { /* another writer won the race */ }
       sleepSync(25);
     }
   }
@@ -291,9 +334,10 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
     return this.mutate("update", context, (tasks, now) => {
       const task = tasks.get(taskId);
       if (!task) throw new Error(`Task not found: ${taskId}`);
-      if (task.status === "completed") throw new Error("Completed Tasks cannot be overwritten");
       const requestedStatus = mutationInput.status as TaskStatus | undefined;
       if (requestedStatus && !["pending", "in_progress", "completed"].includes(requestedStatus)) throw new Error("Invalid Task status");
+      // completed 准终态，唯一出口是 reopen 到 pending（#647 P2-6）
+      if (task.status === "completed" && requestedStatus !== "pending") throw new Error("Completed Tasks cannot be overwritten");
       const ownerChange = Object.prototype.hasOwnProperty.call(mutationInput, "owner");
       const sensitive = requestedStatus === "in_progress" || requestedStatus === "completed" || requestedStatus === "pending" || ownerChange;
       this.assertFence(task, mutationInput, sensitive);
@@ -304,17 +348,45 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
         item.revision += 1;
         changed.set(item.id, item);
       };
+      // 类型不符的字段显式报错而非静默忽略——拼错字段名的更新必须失败可见（#647 P2-3）
+      for (const key of ["subject", "description", "activeForm"] as const) {
+        if (Object.prototype.hasOwnProperty.call(mutationInput, key) && typeof mutationInput[key] !== "string") {
+          throw new Error(`Task ${key} must be a string`);
+        }
+      }
+      // 依赖变更先行：认领/完成的门控按本次调用后的依赖关系判定，
+      // 消除"同一次 update 内先 claim 后加阻塞"产出的矛盾态（#647 P2-4）
+      this.applyDependencies(tasks, task, mutationInput, updateTask);
       if (typeof mutationInput.subject === "string") task.subject = requireText(mutationInput.subject, "subject");
       if (typeof mutationInput.description === "string") task.description = mutationInput.description;
       if (typeof mutationInput.activeForm === "string") task.activeForm = mutationInput.activeForm;
       if (requestedStatus === "in_progress") this.claim(task, context, mutationInput);
       if (requestedStatus === "completed") {
         if (this.executorBinding(task)) throw new Error("Task cannot be completed while its executor is active");
+        // 与 claim 同门控：被未完成依赖阻塞的 Task 不得直通 completed（#647 P2-1）
+        if (task.blockedBy.some((id) => tasks.get(id)?.status !== "completed")) {
+          throw new Error("Task is blocked by unfinished dependencies");
+        }
         task.status = "completed";
         task.owner = context.actorId;
         this.clearExecutorBinding(task);
       }
-      if (requestedStatus === "pending") this.releaseClaim(task, mutationInput, "reset");
+      if (requestedStatus === "pending") {
+        if (task.status === "completed") {
+          // reopen（#647 P2-6）：completed 的唯一出口。完成路径不清 _lume.claim（预存），
+          // 这里镜像 releaseClaim 归档清理，避免过期 claimToken 经 publicTask 持续暴露
+          const lume = serviceMetadata(task);
+          const staleClaim = lume.claim as Record<string, unknown> | undefined;
+          lume.claimGeneration = Number(lume.claimGeneration ?? 0) + 1;
+          lume.previousClaim = staleClaim ? { ...staleClaim, releasedAt: now, releaseReason: "reopened" } : undefined;
+          delete lume.claim;
+          task.metadata = { ...metadataObject(task.metadata), _lume: lume };
+          delete task.owner;
+          task.status = "pending";
+        } else {
+          this.releaseClaim(task, mutationInput, "reset");
+        }
+      }
       if (ownerChange) {
         if (mutationInput.owner !== null && mutationInput.owner !== context.actorId) throw new Error("owner must be derived from the current main actor");
         if (mutationInput.owner === null) this.releaseClaim(task, mutationInput, "owner cleared");
@@ -322,7 +394,6 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       }
 
       this.applyMetadataPatch(task, mutationInput.metadata);
-      this.applyDependencies(tasks, task, mutationInput, updateTask);
       updateTask(task);
       return { changed: [...changed.values()], task, message: `Task updated: ${task.id}` };
     });
@@ -457,9 +528,25 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       );
       before.set(this.highwatermarkPath, this.readFile(this.highwatermarkPath));
       before.set(this.eventSequencePath, this.readFile(this.eventSequencePath));
-      before.set(this.eventsPath, this.readFile(this.eventsPath));
+      // #647 P1-7：events.jsonl 只记回滚截断点，不再整文件嵌入 prepare 行
+      // （此前每笔事务的 journal 增量 ≈ 事件全史体积，磁盘 O(n²) 膨胀根因）。
+      let eventsTruncateTo = 0;
+      try {
+        eventsTruncateTo = statSync(this.eventsPath).size;
+      } catch (error) {
+        // 仅 ENOENT 表示"尚无事件文件"可默认 0；其他错误不得静默取 0——
+        // 那会让崩溃恢复清空整份事件审计史（评审 must-fix）
+        if ((error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") throw error;
+      }
       const transactionId = randomUUID();
-      this.appendJournal({ phase: "prepare", transactionId, files: [...before].map(([path, contents]) => ({ path, contents })) });
+      this.appendJournal({
+        phase: "prepare",
+        transactionId,
+        files: [
+          ...[...before].map(([path, contents]) => ({ path, contents })),
+          { path: this.eventsPath, contents: null, truncateTo: eventsTruncateTo },
+        ],
+      });
       for (const task of result.changed) writeAtomic(this.pathFor(task.id), JSON.stringify(task, null, 2));
       for (const taskId of result.removed ?? []) rmSync(this.pathFor(taskId), { force: true });
       writeAtomic(this.highwatermarkPath, String(nextTaskIdHighwatermark));
@@ -540,7 +627,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       ...metadataObject(task.metadata),
       _lume: {
         ...lume,
-        claim: { actor: context.actorId, parentRun: context.runId, token, claimedAt: new Date().toISOString(), lease: "active" },
+        claim: { actor: context.actorId, parentRun: context.runId, token, claimedAt: new Date().toISOString() },
         claimGeneration: Number(lume.claimGeneration ?? 0) + 1,
         attempts: Number(lume.attempts ?? 0) + 1,
       },
@@ -697,10 +784,26 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
     }
     for (const entry of pending.values()) {
       for (const file of entry.files ?? []) {
+        if (file.truncateTo !== undefined) {
+          try {
+            truncateSync(file.path, file.truncateTo);
+          } catch (error) {
+            // 仅 ENOENT 可忽略；其余失败必须上抛保持 pending 待重试（与兄弟分支
+            // 的 writeAtomic/rmSync 错误契约一致），否则事务被标记已解决而幽灵
+            // 事件永留日志（评审 should-fix）
+            if ((error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") throw error;
+          }
+          continue;
+        }
         if (file.contents === null) rmSync(file.path, { force: true });
         else writeAtomic(file.path, file.contents);
       }
       this.appendJournal({ phase: "commit", transactionId: entry.transactionId });
+    }
+    // 走到此处所有历史事务均已解决，旧行即纯噪声：超阈值压实，
+    // 防锁内全量解析随 journal 历史线性恶化（#647 P1-7）
+    if (Buffer.byteLength(contents) > JOURNAL_COMPACT_BYTES) {
+      try { writeAtomic(this.journalPath, ""); } catch { /* 下轮再试 */ }
     }
   }
 

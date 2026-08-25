@@ -15,7 +15,6 @@ import { resolveChannelModelBinding } from "../channel/channel-manager";
 import { createAgentThreadWithModelRef, getAgentThreadSDKMessages } from "../agent/agent-thread-manager";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { sendAgentMessage } from "../agent/agent-service";
-import { getSubagentCoordinator } from "../agent-runtime/subagents/subagent-coordinator";
 import { claimFromEntry, claimKey, normalizeMemoryV2Claim } from "./claim";
 import { MemoryCommandService } from "./command-service";
 import { areMemoryStatementsSimilar } from "./dedupe";
@@ -141,38 +140,20 @@ async function runDreamAgent(
   const workspace = getAgentWorkspaceBySlug(input.workspaceSlug);
   if (!binding || !workspace) throw new Error("记忆整理无法解析工作区模型");
   const prompt = buildDreamPrompt(input, entries, evidence);
-  const coordinator = getSubagentCoordinator();
   let plan: MemoryDreamProposal[] = [];
-  const parentThreadId = input.agentContext?.threadId ?? `memory-dream:${input.jobId}`;
-  const parentRunId = input.agentContext?.runId ?? input.jobId;
-  const result = await coordinator.runAgentTask({
-    parentThreadId,
-    parentRunId,
-    parentToolUseId: `memory-dream:${input.jobId}`,
-    prompt,
-    description: "Private evidence-driven memory Dream",
-    subagentType: "memory-organizer",
-    acceptanceCriteria: [
-      "Every proposal cites evidence from this Dream job.",
-      "Assistant text is never the sole evidence for a durable memory.",
-      "No project or memory files are modified by the child agent."
-    ],
-    createSession: ({ title }) => {
-      const child = createAgentThreadWithModelRef(
-        title,
-        resolved.modelRef,
-        binding.channel.id,
-        workspace.id,
-        input.agentContext?.threadId,
-        binding.modelId,
-        { fileContextMode: "newRoot", memoryProfile: { kind: "dream", jobId: input.jobId } }
-      );
-      return { threadId: child.id, modelRef: resolved.modelRef! };
-    },
-    execute: async ({ session, run, signal }) => {
-      const abortSignal = input.signal ? AbortSignal.any([signal, input.signal]) : signal;
-      await sendAgentMessage({
-        threadId: session.threadId,
+  const child = createAgentThreadWithModelRef(
+    "Private evidence-driven memory Dream",
+    resolved.modelRef,
+    binding.channel.id,
+    workspace.id,
+    input.agentContext?.threadId ?? `memory-dream:${input.jobId}`,
+    binding.modelId,
+    { fileContextMode: "newRoot", memoryProfile: { kind: "dream", jobId: input.jobId } }
+  );
+  {
+    const abortSignal = input.signal;
+    await sendAgentMessage({
+        threadId: child.id,
         userMessage: prompt,
         modelRef: resolved.modelRef!,
         channelId: binding.channel.id,
@@ -189,20 +170,9 @@ async function runDreamAgent(
           }
         }
       }, silentEmitter(), { abortSignal });
-      input.signal?.throwIfAborted();
-      plan = parseDreamPlan(extractAssistantText(getAgentThreadSDKMessages(session.threadId)));
-      coordinator.submitReport({
-        runId: run.runId,
-        report: { status: "submitted", summary: `Reviewed ${entries.length} memories and proposed ${plan.length} Dream actions.` }
-      });
-      return { status: "completed", completionSummary: `Proposed ${plan.length} Dream actions.` };
-    }
-  });
-  if (result.taskId) coordinator.finishTask({
-    taskId: result.taskId,
-    resolution: "accepted",
-    reason: "Dream 方案已交由 MemoryCommandService 校验。"
-  });
+    input.signal?.throwIfAborted();
+    plan = parseDreamPlan(extractAssistantText(getAgentThreadSDKMessages(child.id)));
+  }
   return plan;
 }
 

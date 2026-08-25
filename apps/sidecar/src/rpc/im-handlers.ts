@@ -50,12 +50,21 @@ export function createImHandlers(input: CreateImHandlersInput = {}): Record<stri
 
   return {
     [IM_IPC_CHANNELS.LIST_ACCOUNTS]: async () => listImAccounts(),
-    [IM_IPC_CHANNELS.CREATE_ACCOUNT]: async (params) =>
-      createImAccount(validateInput(
+    [IM_IPC_CHANNELS.CREATE_ACCOUNT]: async (params) => {
+      const account = await createImAccount(validateInput(
         imAccountCreateInputSchema,
         params,
         IM_IPC_CHANNELS.CREATE_ACCOUNT
-      ) as ImAccountCreateInput),
+      ) as ImAccountCreateInput);
+      // 启用的账号创建即启动通道（对齐微信扫码 connected 后自动 start 的闭环），
+      // 否则用户保存凭据后通道并未运行，IM 侧收不到任何消息
+      if (account.enabled) {
+        void runtimeManager.startAccount(account.id).catch(() => {
+          // 启动失败已由 runtime manager 回写 status/lastError，设置页可见
+        });
+      }
+      return account;
+    },
     [IM_IPC_CHANNELS.UPDATE_ACCOUNT]: async (params) => {
       const payload = validateInput(
         imAccountUpdateInputSchema,

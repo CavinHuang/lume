@@ -112,6 +112,9 @@ export async function triggerRoutineEntry(entryId: string): Promise<DailyRoutine
   // Reset status so syncRoutineStatus picks up the new job
   entry.status = "pending"
 
+  // 与 scheduleRoutineEntries 同纪律：runner 未启动时 refresh 是 no-op，
+  // 手动触发会静默挂起（#647 P0-1 同型的懒启动缺口）
+  await startAutomationRunner()
   await refreshAutomationRunnerJobs()
   writeRoutine(routine)
   return routine

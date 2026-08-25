@@ -38,7 +38,8 @@ export interface ImSendResult {
 }
 
 export interface ImCreateWorkerDeps {
-  routeMessage?: (message: InboundImRouteMessage) => Promise<void> | void;
+  // routeMessage 失败会 reject：调用方要么 await（微信 cursor 语义）要么 .catch（WS 渠道）
+  routeMessage?: (message: InboundImRouteMessage) => Promise<void>;
   updateAccount?: (id: string, input: ImAccountUpdateInput) => Promise<void> | void;
 }
 

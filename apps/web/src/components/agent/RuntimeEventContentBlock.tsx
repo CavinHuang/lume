@@ -1,5 +1,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
-import { memo, useEffect, useMemo, useState, type ClipboardEvent } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react'
+import type { ImProvider } from '@lume/shared'
+import { IM_PROVIDER_LABELS } from '@lume/shared'
 import { BookOpen, Check, ChevronDown, ChevronRight, Clock, Database, Edit3, History, ListChecks, ListCollapse, Loader2, MessageSquareText, Package, Quote, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
 import { parseQuotedSelectionRefs } from '@/lib/quoted-selection'
 import { ToolResultRenderer } from './tool-result-renderers'
@@ -15,6 +17,7 @@ import { agentSend, getThreadMessageVersions, revokeFilePreviewScope } from '@/l
 import { MessageFileReferenceBindingProvider } from './thread-file-env'
 import { getAgentRole, validatePlanningTodoRefPart, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentUserMessagePart, type FileRef } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
+import { isDelegationToolName } from './subagent-run-projection'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 import { toast } from 'sonner'
 import { AgentAttachmentGrid, isImageAttachment } from './AgentAttachmentGrid'
@@ -318,11 +321,12 @@ function ImDeliveryStatusLine({
 }) {
   const failed = delivery.status === 'failed'
   const pending = delivery.status === 'pending'
+  const providerLabel = IM_PROVIDER_LABELS[delivery.provider as ImProvider] ?? 'IM'
   const text = pending
-    ? '正在发送到微信'
+    ? `正在发送到${providerLabel}`
     : failed
-      ? '发送微信失败'
-      : '已发送到微信'
+      ? `发送到${providerLabel}失败`
+      : `已发送到${providerLabel}`
   return (
     <div
       className={cn(
@@ -1360,6 +1364,28 @@ const RuntimeEventThinkingBlock = memo(function RuntimeEventThinkingBlock({ text
   )
 })
 
+// 运行中实时输出尾部（快照整体替换）。默认贴底跟随最新输出，用户向上滚动后
+// 暂停跟随；横向溢出走滚动而非折行，保住终端表格/路径的对齐。
+const StreamingOutputTail = memo(function StreamingOutputTail({ content }: { content: string }) {
+  const containerRef = useRef<HTMLPreElement>(null)
+  const stickToBottom = useRef(true)
+  useEffect(() => {
+    const el = containerRef.current
+    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight
+  }, [content])
+  return (
+    <pre
+      ref={containerRef}
+      onScroll={() => {
+        const el = containerRef.current
+        if (!el) return
+        stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+      }}
+      className="max-h-40 overflow-x-auto overflow-y-auto overscroll-contain border-t border-[var(--lume-border-subtle)] p-3 font-mono text-ui leading-[1.6] whitespace-pre text-[var(--lume-text-secondary)]"
+    >{content}</pre>
+  )
+})
+
 const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
   toolCall,
   threadId,
@@ -1375,7 +1401,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
   const isRunning = toolCall.status === 'running'
   const input = asRecord(toolCall.input)
 
-  if (toolCall.toolName === 'Agent') {
+  if (isDelegationToolName(toolCall.toolName)) {
     return (
       <SubagentInlinePanel
         threadId={threadId}
@@ -1407,67 +1433,84 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
     }
   }
 
+  const headerContent = (
+    <>
+      {isRunning ? (
+        <Icon size={15} className="shrink-0 text-[var(--lume-text-muted)]" />
+      ) : (
+        /* 图标↔箭头渐变：hover 或展开时图标淡出、箭头淡入（右向=可展开，下向=已展开） */
+        <span className="relative flex size-4 shrink-0 items-center justify-center text-[var(--lume-text-muted)]">
+          <Icon
+            size={15}
+            className={cn(
+              'transition-opacity duration-100 group-hover/tool-call:opacity-0 motion-reduce:transition-none',
+              !collapsed && 'opacity-0',
+            )}
+          />
+          <ChevronDown
+            size={13}
+            className={cn(
+              'absolute transition-[opacity,transform] duration-150 group-hover/tool-call:opacity-100 motion-reduce:transition-none',
+              collapsed ? 'opacity-0 -rotate-90' : 'opacity-100',
+            )}
+          />
+        </span>
+      )}
+      <span className="font-semibold text-[var(--lume-text-primary)]">{toolCall.toolName}</span>
+      {toolCall.riskLevel && (
+        <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', riskLevelClassName(toolCall.riskLevel))}>
+          {riskLevelLabel(toolCall.riskLevel)}
+        </span>
+      )}
+      {getToolPermissionTitleBadgeText(toolCall) && (
+        <span className="rounded-full bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,transparent)] px-2 py-0.5 text-[12px] font-semibold text-[var(--lume-warning)]">
+          {getToolPermissionTitleBadgeText(toolCall)}
+        </span>
+      )}
+      <span className={cn(
+        'rounded-full px-2 py-0.5 text-[12px] font-semibold',
+        toolCall.status === 'failed'
+          ? 'bg-destructive/10 text-destructive'
+          : 'bg-[var(--lume-accent-soft)] text-[var(--lume-accent)]',
+      )}>
+        {isRunning ? (toolCall.toolName === 'memory.remember' ? '正在记住…' : toolCall.toolName === 'memory.forget' ? '正在遗忘…' : '执行中') : toolCall.status === 'failed' ? '失败' : '已完成'}
+      </span>
+      {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
+        <span className="tabular-nums text-[11px] font-medium text-[var(--lume-text-muted)]">
+          {formatDurationLabel(toolCall.durationMs)}
+        </span>
+      )}
+      <span className="min-w-0 flex-1 truncate text-[var(--lume-text-muted)]">{summarizeInput(input)}</span>
+      {isRunning && <AgentLoadingIndicator variant="drive" startedAt={toolCall.startedAt} className="shrink-0" />}
+    </>
+  )
+
   return (
     <div className="w-full max-w-[460px] overflow-hidden rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] shadow-[0_1px_2px_hsl(var(--lume-shadow-panel)/0.08)]">
-      <Button
-                variant="ghost"
-        type="button"
-        onClick={() => {
-          if (!isRunning) {
+      {isRunning ? (
+        // 运行中为非交互 header：无 disclosure 语义（流式块常驻展示），避免
+        // 「可点击却无反馈」与 aria-expanded 和可见内容矛盾的 a11y 问题；
+        // 完成后才切换为真正的 disclosure button。
+        <div className="flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[var(--lume-text-secondary)]">
+          {headerContent}
+        </div>
+      ) : (
+        <Button
+          variant="ghost"
+          type="button"
+          onClick={() => {
             onUserResizeStart?.()
-          }
-          setCollapsed((value) => !value)
-        }}
-        className="group/tool-call flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
-      >
-        {isRunning ? (
-          <Icon size={15} className="shrink-0 text-[var(--lume-text-muted)]" />
-        ) : (
-          /* 图标↔箭头渐变：hover 或展开时图标淡出、箭头淡入（右向=可展开，下向=已展开） */
-          <span className="relative flex size-4 shrink-0 items-center justify-center text-[var(--lume-text-muted)]">
-            <Icon
-              size={15}
-              className={cn(
-                'transition-opacity duration-100 group-hover/tool-call:opacity-0 motion-reduce:transition-none',
-                !collapsed && 'opacity-0',
-              )}
-            />
-            <ChevronDown
-              size={13}
-              className={cn(
-                'absolute transition-[opacity,transform] duration-150 group-hover/tool-call:opacity-100 motion-reduce:transition-none',
-                collapsed ? 'opacity-0 -rotate-90' : 'opacity-100',
-              )}
-            />
-          </span>
-        )}
-        <span className="font-semibold text-[var(--lume-text-primary)]">{toolCall.toolName}</span>
-        {toolCall.riskLevel && (
-          <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', riskLevelClassName(toolCall.riskLevel))}>
-            {riskLevelLabel(toolCall.riskLevel)}
-          </span>
-        )}
-        {getToolPermissionTitleBadgeText(toolCall) && (
-          <span className="rounded-full bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,transparent)] px-2 py-0.5 text-[12px] font-semibold text-[var(--lume-warning)]">
-            {getToolPermissionTitleBadgeText(toolCall)}
-          </span>
-        )}
-        <span className={cn(
-          'rounded-full px-2 py-0.5 text-[12px] font-semibold',
-          toolCall.status === 'failed'
-            ? 'bg-destructive/10 text-destructive'
-            : 'bg-[var(--lume-accent-soft)] text-[var(--lume-accent)]',
-        )}>
-          {isRunning ? (toolCall.toolName === 'memory.remember' ? '正在记住…' : toolCall.toolName === 'memory.forget' ? '正在遗忘…' : '执行中') : toolCall.status === 'failed' ? '失败' : '已完成'}
-        </span>
-        {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
-          <span className="tabular-nums text-[11px] font-medium text-[var(--lume-text-muted)]">
-            {formatDurationLabel(toolCall.durationMs)}
-          </span>
-        )}
-        <span className="min-w-0 flex-1 truncate text-[var(--lume-text-muted)]">{summarizeInput(input)}</span>
-        {isRunning && <AgentLoadingIndicator variant="drive" startedAt={toolCall.startedAt} className="shrink-0" />}
-      </Button>
+            setCollapsed((value) => !value)
+          }}
+          aria-expanded={!collapsed}
+          className="group/tool-call flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
+        >
+          {headerContent}
+        </Button>
+      )}
+      {isRunning && toolCall.streamedOutput ? (
+        <StreamingOutputTail content={toolCall.streamedOutput} />
+      ) : null}
       {shouldRenderResult && (
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain border-t border-[var(--lume-border-subtle)] p-3">

@@ -9,9 +9,8 @@ import {
 } from "./services/automation/automation-runner-service";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
-import { AGENT_IPC_CHANNELS } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
-import { getSubagentCoordinator } from "./services/agent-runtime/subagents/subagent-coordinator";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import { cleanupExpiredTrash, subscribeThreadListChanged } from "./services/agent/agent-thread-manager";
 import type { JsonRpcRequest, JsonRpcResponse } from "./rpc/types";
@@ -24,13 +23,15 @@ import {
 } from "./services/infra/logger";
 import { assertSidecarNativeRuntime } from "./services/infra/native-runtime";
 import { createProcessRpcTransport, MAX_RPC_MESSAGE_BYTES } from "./rpc/process-transport";
-import { browserRpcErrorFromPayload, classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
+import { browserRpcErrorFromPayload, classifyBrowserRequestTimeout, classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
 import { createReverseRpcRenderClient } from "./services/agent-runtime/tools/web/reverse-rpc-render-client";
 import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/render-client-holder";
 import { setPersistedSettingsMutationWriter } from "./services/system/settings-store";
 import { setLogDigestPolicy } from "./services/infra/log-digest";
+import { migrateLegacySecretCiphertexts } from "./services/system/secret-reencryption-service";
 import type { LumeLogDigestPolicy } from "@lume/shared";
 import { installPrivilegedCredential } from "./services/infra/privileged-auth";
+import { installSecretEncryptionKey } from "./services/infra/secret-crypto";
 import { installConnectionVaultKey } from "./services/channel/connection-credential-store";
 import { createBrowserBroker } from "./services/browser/browser-broker";
 import { setActiveBrowserBroker } from "./services/browser/browser-broker-holder";
@@ -50,7 +51,10 @@ const rpcTransport = createProcessRpcTransport(
   process.env.LUME_SIDECAR_TRANSPORT === "stdio" ? { parentPort: null } : undefined,
 );
 const SETTINGS_ACK_TIMEOUT_MS = 10_000;
-const BROWSER_REQUEST_TIMEOUT_MS = 10_000;
+// 容纳 desktop 最长常规请求:handler 上限 BROWSER_HANDLER_WAIT_CAP_MS(shared
+// 单源)+ 非 guest-optional 方法先吃的 waitForGuest ≤10s + RPC 余量。desktop 的
+// navigate/打字/批量串行已各自有界(#638),browserAuth 入确认级长等待档。
+const BROWSER_REQUEST_TIMEOUT_MS = BROWSER_HANDLER_WAIT_CAP_MS + 15_000;
 const BROWSER_CONFIRMATION_TIMEOUT_MS = 5 * 60_000;
 const pendingSettingsMutations = new Map<string, {
   resolve: () => void;
@@ -74,13 +78,21 @@ function requestBrowserMain(request: import("@lume/shared").BrowserActionRequest
   if (!browserRpcSecret) return Promise.reject(new Error("browser transport unavailable"));
   return new Promise((resolve, reject) => {
     const sequence = ++browserRpcOutboundSequence;
-    const timeoutMs = request.method === "policy:confirm"
+    // policy:confirm 等用户在弹窗操作;tab_browser_auth_request(browserAuth
+    // 凭据窗)同样等用户输入,desktop 侧 expiresAt 允许至 +5min。
+    // 超时错误码与等待时长同源于 classifyBrowserRequestTimeout：确认类报
+    // confirmation_timeout（动作必然未执行），其余报 executed_unknown（可能
+    // 已执行）——两类不能塌缩（#659/#606）。
+    const timeoutCode = classifyBrowserRequestTimeout(request.method);
+    const timeoutMs = timeoutCode === "confirmation_timeout"
       ? BROWSER_CONFIRMATION_TIMEOUT_MS
       : BROWSER_REQUEST_TIMEOUT_MS;
     const timeout = setTimeout(() => {
       pendingBrowserMainRequests.delete(request.requestId);
-      // 请求已送达 desktop，变更型动作可能已执行——不能与"未执行"塌缩为同一错误码
-      reject(Object.assign(new Error("browser request timed out"), { code: "executed_unknown" }));
+      reject(Object.assign(
+        new Error(timeoutCode === "confirmation_timeout" ? "confirmation timed out" : "browser request timed out"),
+        { code: timeoutCode },
+      ));
     }, timeoutMs);
     pendingBrowserMainRequests.set(request.requestId, { resolve, reject, timeout });
     rpcTransport.send(JSON.stringify({
@@ -142,6 +154,8 @@ const renderClient = createReverseRpcRenderClient({ sendNotification: writeNotif
 setSidecarRenderClient(renderClient);
 const externalChromeTransport = process.env.LUME_CHROME_BRIDGE_ENDPOINT && process.env.LUME_CHROME_BRIDGE_PAIRING_ID && process.env.LUME_CHROME_BRIDGE_GENERATION && process.env.LUME_CHROME_BRIDGE_HOST_PATH && process.env.LUME_CHROME_BRIDGE_HOST_SHA256
   ? new ExternalChromeTransport({
+    // 与内置后端同治:不传会落回默认 10s,extension 后端的 30s 等待同样被先杀误报(#603)
+    requestTimeoutMs: BROWSER_REQUEST_TIMEOUT_MS,
     endpoint: process.env.LUME_CHROME_BRIDGE_ENDPOINT,
     pairingId: process.env.LUME_CHROME_BRIDGE_PAIRING_ID,
     generation: Number(process.env.LUME_CHROME_BRIDGE_GENERATION),
@@ -242,6 +256,32 @@ async function handleRpcLine(line: string): Promise<void> {
   if (method === "system.connection-vault-key") {
     installConnectionVaultKey((payload.params as { key?: unknown } | null)?.key);
     if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    return;
+  }
+
+  if (method === "system.secret-encryption-key") {
+    // 该分支位于 generic handlers 的 try/catch 之外：畸形 key 抛错时必须回
+    // error 响应，否则 desktop 启动关键路径上的 await 要等满 45s 超时才降级
+    try {
+      installSecretEncryptionKey((payload.params as { key?: unknown } | null)?.key);
+      // #637：密钥就位后立即把存量弱种子密文升级为 v2（失败不阻断注入应答）
+      void migrateLegacySecretCiphertexts().catch((error) => {
+        writeLogRecord({
+          level: "warn",
+          context: "sidecar.secret-reencryption",
+          event: "migration.failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+      if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    } catch (error) {
+      if (payload.id !== undefined) {
+        writeResponse({
+          id: payload.id,
+          error: { code: "secret_encryption_key_invalid", message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    }
     return;
   }
 
@@ -403,9 +443,15 @@ async function boot(): Promise<void> {
       error: { message: error instanceof Error ? error.message : String(error) }
     });
   });
-  if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", false)) {
+  // 完成事件写入器恒注册：懒启动路径（run-now/create 等）同样依赖它把
+  // automation:run-completed 推给前端，不能随 autostart 门控一起被跳过（#647 P0-2）。
+  {
     const { setAutomationNotificationWriter } = await import("./services/automation/automation-runner-service");
     setAutomationNotificationWriter(writeNotification);
+  }
+  // 默认自启：否则 sidecar 重启后既有 enabled 任务全部静默停摆，
+  // 只能靠次日日程生成或用户恰好编辑任务才被拉起（#647 P0-1）。
+  if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", true)) {
     void startAutomationRunner().catch((error) => {
       writeLogRecord({
         level: "error",
@@ -477,9 +523,6 @@ async function boot(): Promise<void> {
   const unsubscribeSubagentAnnounce = subscribeSubagentAnnounceEvent((event) => {
     writeNotification(AGENT_IPC_CHANNELS.SUBAGENT_COMPLETED, event);
   });
-  const unsubscribeSubagentWork = getSubagentCoordinator().subscribe((event) => {
-    writeNotification(AGENT_IPC_CHANNELS.SUBAGENT_WORK_CHANGED, event);
-  });
   const unsubscribeThreadListChanged = subscribeThreadListChanged(() => {
     writeNotification(AGENT_IPC_CHANNELS.THREAD_LIST_CHANGED, null);
   });
@@ -488,7 +531,6 @@ async function boot(): Promise<void> {
     if (stopping) return stopping;
     stopping = (async () => {
     unsubscribeSubagentAnnounce();
-    unsubscribeSubagentWork();
     unsubscribeThreadListChanged();
     stopBackgroundProcessRecovery();
     stopWorkspaceWatcher();

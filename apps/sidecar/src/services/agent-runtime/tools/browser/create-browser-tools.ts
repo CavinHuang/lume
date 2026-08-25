@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { withRepeatGuardState } from "@lume/agent-sdk"
 import type { ToolDefinition, ToolInputSchema, ToolResult } from "@lume/agent-sdk"
 import type { BrowserBackendDescriptor, BrowserTabDescriptor } from "@lume/shared"
+import { BROWSER_HANDLER_WAIT_CAP_MS } from "@lume/shared"
 import type { BrowserBroker } from "../../../browser/browser-broker"
 import { getActiveBrowserBroker } from "../../../browser/browser-broker-holder"
 import { getBrowserToolSessionRegistry, type BrowserToolSessionRegistry } from "./browser-tool-session"
@@ -97,6 +98,11 @@ export function createBrowserMcpTools(input: {
           const code = browserErrorCode(error)
           if (code === "stale_target" || code === "stale_snapshot_cursor" || code === "tab_not_found" || code === "user_takeover_required") session.snapshot = undefined
           const message = error instanceof Error && error.message && error.message !== code ? error.message.slice(0, 4_000) : code
+          // broker 已把 desktop 富文本摧毁为裸码,navigation_timeout 的行为
+          // 指导只能在此注入:页面可能仍在后台加载,先观察再决定。
+          const hint = code === "navigation_timeout"
+            ? "The page may still be loading in the background. Take a snapshot to check the actual state before deciding; do not retry navigate immediately. If it times out again, open a new tab or report this to the user instead of retrying."
+            : undefined
           const retryable = code === "browser_unavailable" || code === "stale_target" || code === "stale_snapshot_cursor"
           const failureKey = !retryable ? actionFailureKey(name, args, session) : undefined
           if (failureKey) {
@@ -121,7 +127,7 @@ export function createBrowserMcpTools(input: {
             operation_id: operationId,
             active_tab_id: session.activeTabId ?? null,
             code,
-            message,
+            message: hint ? `${message}. ${hint}` : message,
             retryable,
           }, true, { ok: false, tool: name, code, message })
         }
@@ -406,12 +412,12 @@ function toolSchema(name: BrowserToolName): ToolInputSchema {
   if (name === "upload") return object({
     ref: refSchema(),
     files: { type: "array", minItems: 1, maxItems: 20, items: { type: "string" }, description: "Task-authorized file paths or browser-download file refs." },
-    timeout_ms: { type: "integer", minimum: 100, maximum: 30000, default: 10000 },
+    timeout_ms: { type: "integer", minimum: 100, maximum: BROWSER_HANDLER_WAIT_CAP_MS, default: 10000 },
   }, ["ref", "files"])
   if (name === "download") return object({
     ref: refSchema(),
     download_id: { type: "string", description: "Query the state of an existing download instead of clicking a new control. Provide either download_id or ref." },
-    timeout_ms: { type: "integer", minimum: 100, maximum: 30000, default: 10000 },
+    timeout_ms: { type: "integer", minimum: 100, maximum: BROWSER_HANDLER_WAIT_CAP_MS, default: 10000 },
   })
   if (name === "fill_secret") return object({
     ref: refSchema(),
@@ -725,5 +731,5 @@ function screenshotToolResult(toolUseId: string, sessionId: string, result: Reco
 
 function stringValue(value: unknown): string | undefined { return typeof value === "string" && value.trim() ? value.trim() : undefined }
 function finiteNumber(value: unknown): number { return typeof value === "number" && Number.isFinite(value) ? value : 0 }
-function boundedTimeout(value: unknown): number { return typeof value === "number" && Number.isInteger(value) ? Math.max(100, Math.min(30_000, value)) : 10_000 }
+function boundedTimeout(value: unknown): number { return typeof value === "number" && Number.isInteger(value) ? Math.max(100, Math.min(BROWSER_HANDLER_WAIT_CAP_MS, value)) : 10_000 }
 function asRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {} }

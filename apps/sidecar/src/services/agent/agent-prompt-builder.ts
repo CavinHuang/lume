@@ -9,6 +9,7 @@ import { join, basename } from "node:path";
 import { getAgentWorkspacePath, getAgentConfigDir } from "../infra/config-paths";
 import { createLogger } from "../infra/logger";
 import { renderSkillManifestLines } from "./prompt/context/skill-manifest-builder";
+import { buildProjectInstructionsSection } from "./prompt/context/project-instructions";
 import { buildMemorySections } from "./prompt/sections/memory-sections";
 import {
   CLAUDE_PLAN_MODE_SECTION,
@@ -76,7 +77,7 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
 - 使用重定向操作符（>、>>、|）或 heredoc 写文件
 - 运行任何改变系统状态的命令
 - 启动嵌套子代理
-- 调用 TaskReport 或任何 Task 管理工具
+- 调用任何 Task 管理工具
 
 你的职责 exclusively 是探索代码库并设计实现方案。你不审批计划、不管理 Task、不执行工作。主线程审阅你的提案并拥有执行权。
 
@@ -99,7 +100,7 @@ export function buildBuiltinAgents(): Record<string, AgentDefinition> {
 - path/to/file2.ts
 - path/to/file3.ts`,
       tools: ["Read", "Glob", "Grep", "Bash"],
-      disallowedTools: ["Agent", "Write", "Edit", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskReport"],
+      disallowedTools: ["Agent", "Write", "Edit", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop"],
       model: "inherit"
     },
     researcher: {
@@ -224,6 +225,8 @@ export interface SystemPromptContext {
   sessionId: string;
   sessionType?: ThreadType;
   chatType?: "direct" | "group" | "channel";
+  /** agent 工作目录：用于向上探测项目级指令文件（CLAUDE.md/AGENTS.md） */
+  agentCwd?: string;
   availableTools?: string[];
   memoryCitationsMode?: MemoryCitationsMode;
   promptMode?: SystemPromptMode;
@@ -298,6 +301,12 @@ function buildMinimalSections(ctx: SystemPromptContext): string[] {
   lines.push("系统配置入口: ~/.lume/lume.yaml");
 
   lines.push("", buildRuntimeSection(ctx, "minimal"));
+
+  const minimalProjectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
+  if (minimalProjectInstructions) {
+    lines.push("", minimalProjectInstructions);
+  }
+
   if (ctx.automationExecution) {
     lines.push(
       "",
@@ -393,6 +402,13 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
       // 读取失败不影响主流程
       log.warn("failed to read Soul/Memory prompt components", { error });
     }
+  }
+
+  // 项目级指令文件（CLAUDE.md/AGENTS.md，就近覆盖）：低频变更，进稳定 system
+  // 前缀吃 prompt cache；无文件时不产生任何段落，prompt 保持原样
+  const projectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
+  if (projectInstructions) {
+    sections.push(projectInstructions);
   }
 
   sections.push(buildRuntimeSection(ctx, "full"));

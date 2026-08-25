@@ -197,6 +197,17 @@ export interface CodingReportDetail {
   report: unknown
 }
 
+/**
+ * Streaming snapshot of a foreground tool's accumulated output tail (Bash
+ * today). Not a delta: each event carries the full bounded tail, consumers
+ * replace idempotently. Transient — never persisted to run items.
+ */
+export interface ToolOutputDetail {
+  type: 'tool.output'
+  toolCallId: string
+  chunk: string
+}
+
 export type SdkLifecycleDetail =
   | RunStartDetail | RunEndDetail
   | TurnStartDetail | TurnEndDetail
@@ -211,6 +222,7 @@ export type SdkLifecycleDetail =
   | TaskProgressDetail
   | AdvisorReviewedDetail
   | CodingReportDetail
+  | ToolOutputDetail
 
 /** Result of AGENT_IPC_CHANNELS.GET_EVENTS. */
 export interface AgentEventsResult {

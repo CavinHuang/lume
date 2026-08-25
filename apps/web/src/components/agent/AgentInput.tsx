@@ -2,7 +2,7 @@ import { listChannels } from '@/lib/desktop-api/channel'
 import { getEffectiveLumeConfig, updateAgentFollowUpQueueMode, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { useEditor, EditorContent } from '@tiptap/react'
 import { cn } from '@/lib/utils'
-import { Send, Square, FileText, Plus, LoaderCircle, MessageSquareText, MonitorOff, Globe, X } from 'lucide-react'
+import { Send, Square, FileText, Plus, LoaderCircle, MessageSquareText, MonitorOff, Globe, X, Mic, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
@@ -29,6 +29,8 @@ import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFa
 import { isEmptyDraft, prependHistory, removeDraft, sanitizeDraftJSON, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 import { buildQuotedSelectionBlock } from '@/lib/quoted-selection'
 import { QuotedSelectionChip } from './QuotedSelectionChip'
+import { useVoiceDictation, formatVoiceElapsed } from '@/components/voice-dictation/use-voice-dictation'
+import { VolumeBars } from '@/components/voice-dictation/VolumeBars'
 import { debounce } from 'throttle-debounce'
 import {
   AGENT_IPC_CHANNELS,
@@ -757,6 +759,41 @@ export function AgentInput({
     queueMicrotask(() => editor.commands.focus('end'))
   }, [editor])
   cancelQueueEditRef.current = () => finishQueueEdit(true)
+
+  // 语音听写：最终文本追加到编辑器当前光标处。必须以纯文本节点插入——
+  // insertContent 的字符串参数会走 HTML 解析，转写中的 <div>/<3 等片段会被吞掉。
+  const handleVoiceDictationCommit = useCallback((text: string) => {
+    if (!editor) return
+    const position = editor.state.selection.from
+    const previousCharacter = editor.state.doc.textBetween(Math.max(0, position - 1), position)
+    const prefix = previousCharacter && !/\s/u.test(previousCharacter) ? ' ' : ''
+    editor.chain().focus().insertContent({ type: 'text', text: `${prefix}${text}` }).run()
+  }, [editor])
+  const handleOpenVoiceDictationSettings = useCallback(() => {
+    const next = resolveOpenDesktopAssistantSettingsState(tabs, 'voice-input')
+    setTabs(next.tabs)
+    setSettingsInitialTab(next.settingsInitialTab)
+    setActiveTabId(next.activeTabId)
+  }, [setActiveTabId, setSettingsInitialTab, setTabs, tabs])
+  const voiceDictation = useVoiceDictation({
+    onCommit: handleVoiceDictationCommit,
+    onOpenSettings: handleOpenVoiceDictationSettings,
+    respondsToGlobalToggle: true,
+    canStart: () => !editingQueuedMessageRef.current,
+  })
+
+  // 录音期间 Esc 取消本次听写（capture 拦截，避免编辑器/弹层先消费按键）。
+  useEffect(() => {
+    if (!voiceDictation.isActive) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      voiceDictation.cancel()
+    }
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [voiceDictation.isActive, voiceDictation.cancel])
 
   // 草稿恢复：threadId 变化或 editor 就绪时，把存盘草稿填回编辑器
   useEffect(() => {
@@ -1643,6 +1680,39 @@ export function AgentInput({
             className="rounded-[1.45rem]"
             editorSlot={
               <>
+                {voiceDictation.isActive && (
+                  <div className="mb-2 flex animate-in fade-in slide-in-from-top-1 items-center gap-2.5 rounded-lg bg-[var(--lume-accent-soft)] px-2.5 py-1.5 duration-200 motion-reduce:animate-none">
+                    <span
+                      className={cn(
+                        'size-2 shrink-0 rounded-full',
+                        voiceDictation.status === 'recording'
+                          ? 'animate-pulse bg-[var(--lume-danger)] motion-reduce:animate-none'
+                          : 'bg-[var(--lume-text-secondary)]',
+                      )}
+                    />
+                    <span className="shrink-0 font-mono text-ui tabular-nums text-[var(--lume-text-secondary)]">
+                      {formatVoiceElapsed(voiceDictation.elapsedSeconds)}
+                    </span>
+                    <VolumeBars
+                      volumeRef={voiceDictation.volumeRef}
+                      active={voiceDictation.status === 'recording'}
+                      className="flex h-3.5 shrink-0 items-center gap-[2px]"
+                      barClassName="w-[3px] rounded-full bg-[var(--lume-danger)] transition-[height] duration-100"
+                    />
+                    <div role="status" className="min-w-0 flex-1 truncate text-ui text-[var(--lume-text-secondary)]">
+                      {(voiceDictation.transcript.length > 48 ? `…${voiceDictation.transcript.slice(-48)}` : voiceDictation.transcript)
+                        || (voiceDictation.status === 'connecting' ? '正在连接语音识别…' : voiceDictation.status === 'stopping' ? '正在整理转写…' : '正在听写，Esc 取消')}
+                    </div>
+                    {voiceDictation.status !== 'stopping' && (
+                      <Button variant="ghost" type="button" className="h-6 px-1.5 text-ui" onClick={() => void voiceDictation.stop()} title="结束并插入">
+                        <Check size={13} />
+                      </Button>
+                    )}
+                    <Button variant="ghost" type="button" className="h-6 px-2 text-ui" onClick={voiceDictation.cancel}>
+                      取消
+                    </Button>
+                  </div>
+                )}
                 {editingQueuedMessage ? (
                   <div className="mb-2 flex items-center justify-between rounded-lg bg-[var(--lume-accent-soft)] px-2.5 py-1.5 text-xs text-[var(--lume-text-secondary)]">
                     <span>正在编辑排队消息</span>
@@ -1927,6 +1997,38 @@ export function AgentInput({
                     </>
                   )}
                 </div>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    if (voiceDictation.status === 'recording' || voiceDictation.status === 'connecting') void voiceDictation.stop()
+                    else if (voiceDictation.status === 'stopping') return
+                    else void voiceDictation.start()
+                  }}
+                  disabled={Boolean(editingQueuedMessage)}
+                  className={cn(
+                    'inline-flex size-8 items-center justify-center rounded-lg border transition-colors duration-150 ease-out',
+                    voiceDictation.isActive
+                      ? 'border-[color:color-mix(in_oklab,var(--lume-danger)_42%,var(--lume-border-strong))] bg-[color:color-mix(in_oklab,var(--lume-danger)_10%,var(--lume-bg-elevated))] text-[var(--lume-danger)]'
+                      : 'border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_72%,transparent)] text-[var(--lume-text-secondary)] hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-text-primary)]',
+                  )}
+                  title={voiceDictation.isActive ? '结束听写' : '语音输入'}
+                  aria-label={voiceDictation.isActive ? '结束听写' : '开始语音输入'}
+                  aria-pressed={voiceDictation.isActive}
+                  type="button"
+                >
+                  {voiceDictation.status === 'connecting' || voiceDictation.status === 'stopping' ? (
+                    <LoaderCircle size={12} className="animate-spin" />
+                  ) : voiceDictation.status === 'recording' ? (
+                    <VolumeBars
+                      volumeRef={voiceDictation.volumeRef}
+                      active
+                      className="flex h-3 items-center gap-[2px]"
+                      barClassName="w-[2px] rounded-full bg-current"
+                    />
+                  ) : (
+                    <Mic size={13} />
+                  )}
+                </Button>
                 <fieldset disabled={Boolean(editingQueuedMessage)} className="contents">
                   <ModelPicker threadId={threadId} />
                   <PermissionModePicker value={permissionMode} onChange={handlePermissionModeChange} />

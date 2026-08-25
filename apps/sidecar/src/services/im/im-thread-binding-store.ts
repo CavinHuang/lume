@@ -130,6 +130,16 @@ export function upsertImThreadBinding(input: UpsertImThreadBindingInput): ImThre
   });
 }
 
+/** 按 peer 精确删除绑定（如 IM /new 命令重开会话时先解除旧线程绑定）。 */
+export function deleteImThreadBindingByPeer(ref: ImPeerRef): void {
+  mutateConfig((config) => {
+    const key = createImBindingKey(ref);
+    const next = config.bindings.filter((binding) => binding.key !== key);
+    if (next.length === config.bindings.length) return;
+    writeConfigUnlocked({ ...config, bindings: next });
+  });
+}
+
 export function deleteImThreadBindingsForAccount(accountId: string): void {
   mutateConfig((config) => {
     const nextBindings = config.bindings.filter((binding) => binding.accountId !== accountId);

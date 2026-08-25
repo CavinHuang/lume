@@ -10,7 +10,11 @@ import {
   installConnectionVaultKey,
   setConnectionOAuthCredential,
 } from "../channel/connection-credential-store";
-import { createConnectionPiAiRoute, createLazyConnectionLlmProvider } from "./connection-provider";
+import {
+  createConnectionPiAiRoute,
+  createLazyConnectionLlmProvider,
+  resolveConnectionModelMaxTokens,
+} from "./connection-provider";
 
 describe("connection provider", () => {
   let previousConfigDir: string | undefined;
@@ -345,5 +349,59 @@ describe("connection provider", () => {
       connectionId: channel.id,
       modelId: "model-1",
     }).apiType).toBe("anthropic-messages");
+  });
+
+  test("passes catalog thinkingLevelMap and compat through to the route (#561/#631 review)", async () => {
+    const channel = createChannel({
+      name: "Anthropic",
+      provider: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      apiKey: "sk-test",
+      models: [{ id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", enabled: true }],
+      enabled: true,
+    });
+
+    await expect(createConnectionPiAiRoute({ channel, modelId: "claude-sonnet-4-6" })).resolves.toMatchObject({
+      thinkingLevelMap: { max: "max" },
+      compat: { forceAdaptiveThinking: true },
+      maxTokens: 128_000,
+    });
+  });
+
+  test("non-catalog models carry no fabricated thinking metadata (#631 review)", async () => {
+    const channel = createChannel({
+      name: "Custom Gateway",
+      provider: "custom",
+      providerId: "custom-gateway",
+      protocol: "openai-completions",
+      baseUrl: "https://gateway.example.com/v1",
+      apiKey: "sk-test",
+      models: [{ id: "self-hosted-x", name: "Self Hosted", enabled: true }],
+      enabled: true,
+    });
+
+    const route = await createConnectionPiAiRoute({ channel, modelId: "self-hosted-x" });
+    expect(route.thinkingLevelMap).toBeUndefined();
+    expect(route.compat).toBeUndefined();
+  });
+
+  test("resolveConnectionModelMaxTokens prefers channel config over catalog (#631 review)", () => {
+    const channel = createChannel({
+      name: "Anthropic",
+      provider: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      apiKey: "sk-test",
+      models: [
+        { id: "claude-sonnet-4-6", name: "Catalog", enabled: true },
+        { id: "capped-model", name: "Capped", enabled: true, maxOutputTokens: 8_000 },
+        { id: "unknown-model", name: "Unknown", enabled: true },
+      ],
+      enabled: true,
+    });
+
+    // 目录真值 / 用户配置优先 / 双缺返回 undefined(调用方维持默认,不得用兜底猜测)
+    expect(resolveConnectionModelMaxTokens(channel, "claude-sonnet-4-6")).toBe(128_000);
+    expect(resolveConnectionModelMaxTokens(channel, "capped-model")).toBe(8_000);
+    expect(resolveConnectionModelMaxTokens(channel, "unknown-model")).toBeUndefined();
   });
 });

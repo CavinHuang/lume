@@ -90,6 +90,8 @@ export async function createConnectionPiAiRoute(input: {
     contextWindow: configuredModel?.contextWindow ?? catalogModel?.contextWindow,
     maxTokens: configuredModel?.maxOutputTokens ?? catalogModel?.maxTokens,
     supportsReasoning: configuredModel?.capabilities?.reasoning ?? catalogModel?.reasoning,
+    thinkingLevelMap: catalogModel?.thinkingLevelMap,
+    compat: catalogModel?.compat,
     sessionId: input.sessionId,
   };
 }
@@ -100,6 +102,16 @@ export function resolveConfiguredConnectionApiType(channel: Channel, modelId: st
     channel.models.find((model) => model.id === modelId)?.protocol,
     findConnectionCatalogModel(channel, modelId)?.api,
   );
+}
+
+/**
+ * 渠道配置或内置目录真实提供的输出上限(#561);两者皆缺时返回 undefined——
+ * 调用方不得以兜底猜测抬高请求(自建网关 max_tokens 翻倍会触发上游 400 且不切 fallback,#631 review)。
+ */
+export function resolveConnectionModelMaxTokens(channel: Channel, modelId: string): number | undefined {
+  const configuredModel = channel.models.find((item) => item.id === modelId);
+  if (configuredModel?.maxOutputTokens !== undefined) return configuredModel.maxOutputTokens;
+  return findConnectionCatalogModel(channel, stripMatchingConnectionProviderPrefix(channel, modelId))?.maxTokens;
 }
 
 function findConnectionCatalogModel(channel: Channel, modelId: string, oauthProviderId?: string) {

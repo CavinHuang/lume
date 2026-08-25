@@ -1,17 +1,17 @@
 ---
 import Base from '../../layouts/Base.astro';
-import { REPO_URL } from '../../lib/site';
 import { t, type Lang, type UiKey } from '../../i18n/ui';
-import { withBase } from '../../lib/site';
+import { REPO_URL, withBase } from '../../lib/site';
 
 interface Props {
   lang: Lang;
 }
+
 const { lang } = Astro.props;
 const langPrefix = lang === 'zh' ? '' : '/en';
 const downloadHref = withBase(`${langPrefix}/download`);
+const docsHref = withBase(`${langPrefix}/docs`);
 
-// 与 packages/shared/src/types/agent-roles.ts 的内置角色一一对应；role/desc 文案走 i18n
 const members = [
   { id: 'explorer', displayName: '陆寻', name: 'Lucas Lu', avatar: 'explorer.jpg' },
   { id: 'planner', displayName: '沈策', name: 'Sera Shen', avatar: 'planner.jpg' },
@@ -28,388 +28,434 @@ const members = [
   { id: 'developer', displayName: '祁远', name: 'Qi Yuan', avatar: 'developer.jpg' },
 ] as const;
 
-const features = [
-  { key: 'memory', icon: 'memory', span: 'lg:col-span-2' },
-  { key: 'personas', icon: 'users', span: '' },
-  { key: 'skills', icon: 'blocks', span: '' },
-  { key: 'tools', icon: 'terminal', span: '' },
-  { key: 'automation', icon: 'clock', span: '' },
-  { key: 'im', icon: 'chat', span: '' },
-  { key: 'models', icon: 'cpu', span: '' },
-] as const;
+const copy = lang === 'zh'
+  ? {
+      eyebrow: '运行在你电脑上的 AI 工作团队',
+      heroTitleBefore: '把一句需求变成',
+      heroTitleAccent: '真正完成的工作',
+      heroDesc: 'Lume 不只回答问题。它理解你的工作现场，调用本地工具，记住长期偏好，并让一支专业 Agent 团队把任务推进到可交付。',
+      heroPrompt: '帮我调研这个赛道，整理成一份能直接汇报的方案。',
+      heroStatus: '3 位 Agent 正在并行推进',
+      heroTask1: '顾砚 · 核验信息源',
+      heroTask2: '唐栩 · 梳理数据结论',
+      heroTask3: '林澄 · 组织汇报结构',
+      heroArtAlt: 'Lume 与专业 Agent 团队在工作室协作',
+      openSource: '开源 MIT',
+      agentsCount: '13 位专业角色',
+      localData: '数据留在本地',
+      modelChoice: '模型自由选择',
+      stripLead: '不是更聪明的聊天框',
+      stripTitle: '是会理解、会分工、会动手的工作台。',
+      workflowEyebrow: '一次任务，完整闭环',
+      workflowTitle: '从目标到交付都由 Lume 推进',
+      workflowDesc: '从理解上下文到交付成果，每一步都可见、可暂停、可继续。',
+      workflows: [
+        { step: '01', title: '理解现场', desc: '读取当前项目、文件与历史记忆，先弄清你真正要解决的问题。', label: '上下文已对齐' },
+        { step: '02', title: '拆解与分工', desc: '把复杂目标拆成清晰子任务，交给更合适的角色并行处理。', label: '计划可随时调整' },
+        { step: '03', title: '调用工具执行', desc: '搜索资料、处理文件、运行命令、生成图片，不停留在建议层面。', label: '过程实时可见' },
+        { step: '04', title: '交付可用成果', desc: '汇总结论与产物，留下可继续推进的线程，而不是一次性答案。', label: '结果落到本地' },
+      ],
+      casesEyebrow: '从想法到成品',
+      casesTitle: '工作创作与研究都从这里开始',
+      casesDesc: '你不需要先学会写复杂提示词。把真实需求说出来，Lume 会自己找到下一步。',
+      cases: [
+        { tag: '调研', title: '把零散资料变成可靠结论', desc: '跨来源搜索、事实核验、提炼分歧，最后交付带来源的结构化报告。', prompt: '比较 5 个竞品，告诉我真正的机会在哪里。', people: ['researcher', 'analyst'] },
+        { tag: '开发', title: '在真实代码库里推进改动', desc: '先理解约束，再定位文件、修改代码、运行验证，保留完整上下文。', prompt: '修好这个问题，别影响现有登录流程。', people: ['explorer', 'developer', 'code-reviewer'] },
+        { tag: '内容', title: '从空白页到能交付的表达', desc: '调研、写作、翻译、配图各有分工，把一个模糊想法变成完整内容。', prompt: '把访谈整理成一篇有观点的中文长文。', people: ['writer', 'translator', 'artist'] },
+        { tag: '日常', title: '让重复工作按时自己发生', desc: '设置日程和自动化，通过消息渠道接收结果，离开电脑也能继续推进。', prompt: '每周一汇总项目进展，并把风险发给我。', people: ['planner', 'analyst'] },
+      ],
+      memoryEyebrow: '持续在场的上下文',
+      memoryTitle: '它记住的不只是聊天记录',
+      memoryDesc: '项目背景、表达偏好、关键决定与未完成事项，都能在下一次任务里自然接上。记忆是本地可读文件，你可以查看、编辑、备份或带走。',
+      memoryItems: ['偏好：汇报先说结论，再给依据', '约束：这个项目统一使用 Bun', '进行中：官网重设计，等待移动端复核'],
+      memoryQuote: '不用每次从头解释。Lume 知道你在做什么，也知道你希望怎么做。',
+      localEyebrow: 'Local-first by design',
+      localTitle: '你的工作不必先上传给别人',
+      localDesc: '记忆、会话、技能、自动化和角色工作区都保存在 ~/.lume/。Markdown 与 YAML 是真源，普通工具就能打开。',
+      localPoints: ['可读：没有私有数据格式锁定', '可控：敏感操作由你确认', '可迁移：复制目录即可备份与搬家'],
+      toolsEyebrow: '真正能动手',
+      toolsTitle: '一个工作台接入整套执行能力',
+      toolsDesc: '文件、终端、浏览器、搜索、图片生成、Office 文档与 MCP 服务，统一在同一条任务上下文里协作。',
+      toolLabels: ['文件系统', '终端命令', '网页与搜索', '图片生成', 'MCP 服务', '消息渠道', '定时自动化', '文档处理'],
+      nightEyebrow: '离开电脑，工作也能继续',
+      nightTitle: '安静运行也能按时交付',
+      nightDesc: '把周期性任务交给自动化。Lume 在本地按计划运行，调用需要的角色与工具，再把结果推送到你常用的消息渠道。',
+      nightItems: ['定时调研与日报', '跨角色并行执行', '结果主动推送'],
+      nightStatus: '下一项任务 · 今天 22:00',
+      nightArtAlt: 'Lume 在夜间本地工作台执行自动化任务',
+      teamEyebrow: '不是一个万能人设',
+      teamTitle: '是一支各有所长的 AI 团队',
+      teamDesc: '每个角色都有清晰专长、独立工作区和做事方式。主线程负责理解你的目标，再把工作交给最适合的人。',
+      teamAll: '13 位角色，随叫随到',
+      teamNote: '角色不是装饰：它们拥有不同的系统提示、工具偏好与任务边界。',
+      modelsEyebrow: '模型选择权在你',
+      modelsTitle: '一个界面连接你信任的模型',
+      modelsDesc: '兼容主流服务商与本地模型。按任务给不同角色分配模型，在成本、速度与效果之间自由选择。',
+      sdkEyebrow: '也为开发者准备',
+      sdkTitle: '把同一套 Agent 引擎放进你的产品',
+      sdkDesc: 'Lume 的核心循环以独立 SDK 提供。无需依赖本地 CLI，就能在服务端、Docker、Serverless 或 CI 中运行。',
+      sdkLink: '阅读 SDK 文档',
+      faqEyebrow: '常见问题',
+      faqTitle: '开始之前你可能还想知道',
+      faqs: [
+        { q: 'Lume 和普通 AI 聊天工具有什么不同？', a: '普通聊天工具更擅长一次性问答。Lume 面向持续工作：它能读写本地文件、调用工具、保存长期记忆，并把复杂任务交给多个专业角色推进。' },
+        { q: '我的数据会保存在哪里？', a: '核心数据保存在你电脑的 ~/.lume/ 目录。记忆以 Markdown 为真源，配置使用可读格式，方便查看、备份和迁移。' },
+        { q: '我可以使用自己的 API Key 或本地模型吗？', a: '可以。Lume 支持 OpenAI 兼容接口，可连接多家模型服务，也支持 Ollama、LM Studio 等本地模型方案。' },
+        { q: 'Lume 是免费的吗？', a: 'Lume 本身基于 MIT 协议开源并可免费下载。你所连接的第三方模型服务，可能按各自规则产生费用。' },
+      ],
+      ctaEyebrow: '让 AI 真正进入工作现场',
+      ctaTitle: '把下一件事交给 Lume',
+      ctaDesc: '本地优先、免费开源。下载后，几分钟就能开始。',
+      ctaSecondary: '先看看文档',
+    }
+  : {
+      eyebrow: 'An AI work team that runs on your computer',
+      heroTitleBefore: 'Turn one request into',
+      heroTitleAccent: 'work that is actually done',
+      heroDesc: 'Lume goes beyond answers. It understands your workspace, uses local tools, remembers long-term preferences, and sends a specialist agent team to deliver usable results.',
+      heroPrompt: 'Research this market and turn the findings into a presentation-ready brief.',
+      heroStatus: '3 agents are working in parallel',
+      heroTask1: 'Milo · Verify sources',
+      heroTask2: 'Tang · Synthesize the data',
+      heroTask3: 'Lin · Shape the narrative',
+      heroArtAlt: 'Lume collaborating with a specialist agent team in a studio',
+      openSource: 'MIT open source',
+      agentsCount: '13 specialists',
+      localData: 'Local data',
+      modelChoice: 'Your choice of model',
+      stripLead: 'Not a smarter chat box.',
+      stripTitle: 'A workbench that understands, delegates, and acts.',
+      workflowEyebrow: 'One task, end to end',
+      workflowTitle: 'You set the goal. Lume runs the process.',
+      workflowDesc: 'From context to delivery, every step stays visible, pausable, and resumable.',
+      workflows: [
+        { step: '01', title: 'Understand the workspace', desc: 'Read the project, files, and relevant memories before deciding what the task really needs.', label: 'Context aligned' },
+        { step: '02', title: 'Plan and delegate', desc: 'Break a complex goal into clear pieces and assign each one to the best-fit specialist.', label: 'Plan stays editable' },
+        { step: '03', title: 'Use tools and act', desc: 'Search, edit files, run commands, and generate images instead of stopping at advice.', label: 'Progress stays visible' },
+        { step: '04', title: 'Deliver usable work', desc: 'Return conclusions and artifacts in a thread you can keep moving forward.', label: 'Results saved locally' },
+      ],
+      casesEyebrow: 'From idea to artifact',
+      casesTitle: 'Work, create, and research from one place',
+      casesDesc: 'No elaborate prompt craft required. Describe the real need and Lume finds the next step.',
+      cases: [
+        { tag: 'Research', title: 'Turn scattered sources into a reliable point of view', desc: 'Search across sources, verify claims, map disagreements, and deliver a cited brief.', prompt: 'Compare five competitors and show me where the real opportunity is.', people: ['researcher', 'analyst'] },
+        { tag: 'Build', title: 'Move real work forward inside a codebase', desc: 'Understand constraints, locate files, edit code, and verify the result with full context intact.', prompt: 'Fix this issue without changing the existing sign-in flow.', people: ['explorer', 'developer', 'code-reviewer'] },
+        { tag: 'Create', title: 'Go from a blank page to something worth sharing', desc: 'Research, writing, translation, and visuals work together to shape a complete piece.', prompt: 'Turn these interviews into an opinionated long-form article.', people: ['writer', 'translator', 'artist'] },
+        { tag: 'Automate', title: 'Let recurring work happen on schedule', desc: 'Create routines and automations, then receive the output in your messaging channel.', prompt: 'Every Monday, summarize progress and send me the top risks.', people: ['planner', 'analyst'] },
+      ],
+      memoryEyebrow: 'Context that stays',
+      memoryTitle: 'It remembers more than chat history',
+      memoryDesc: 'Project context, writing preferences, key decisions, and unfinished work carry into the next task. Memory is stored as readable local files you can inspect, edit, back up, or move.',
+      memoryItems: ['Preference: lead with the conclusion', 'Constraint: this project uses Bun', 'In progress: website redesign, mobile review pending'],
+      memoryQuote: 'No more starting from zero. Lume knows what you are doing and how you like to work.',
+      localEyebrow: 'Local-first by design',
+      localTitle: 'Your work does not need to be uploaded first',
+      localDesc: 'Memories, threads, skills, automations, and agent workspaces live under ~/.lume/. Markdown and YAML remain the source of truth.',
+      localPoints: ['Readable: no proprietary data lock-in', 'Controlled: you approve sensitive actions', 'Portable: copy one folder to back up or move'],
+      toolsEyebrow: 'Built to act',
+      toolsTitle: 'One workbench, a complete execution layer',
+      toolsDesc: 'Files, terminals, browsers, search, image generation, Office artifacts, and MCP services all share the same task context.',
+      toolLabels: ['File system', 'Terminal', 'Web & search', 'Image generation', 'MCP services', 'Messaging', 'Automation', 'Documents'],
+      nightEyebrow: 'Work continues when you step away',
+      nightTitle: 'Quietly running. Ready on time.',
+      nightDesc: 'Hand recurring work to automations. Lume runs locally on schedule, brings in the right personas and tools, then sends the result to the channels you already use.',
+      nightItems: ['Scheduled research and reports', 'Parallel specialist execution', 'Proactive result delivery'],
+      nightStatus: 'Next task · Today at 10:00 PM',
+      nightArtAlt: 'Lume running local automations at a nighttime workstation',
+      teamEyebrow: 'Not one generic persona',
+      teamTitle: 'A team with distinct specialties',
+      teamDesc: 'Every persona has a clear specialty, workspace, and way of working. The main thread understands your goal and hands each part to the right person.',
+      teamAll: '13 specialists, ready when needed',
+      teamNote: 'Personas are functional: each has its own system prompt, tool preferences, and task boundaries.',
+      modelsEyebrow: 'Keep your model choice',
+      modelsTitle: 'One interface, the models you trust',
+      modelsDesc: 'Connect leading providers and local models. Assign models by task and balance quality, speed, and cost on your terms.',
+      sdkEyebrow: 'Made for builders too',
+      sdkTitle: 'Put the same agent engine inside your product',
+      sdkDesc: 'Lume ships its core loop as a standalone SDK. Run it in a server, Docker, serverless, or CI without a local CLI dependency.',
+      sdkLink: 'Read the SDK docs',
+      faqEyebrow: 'FAQ',
+      faqTitle: 'A few things to know before you start',
+      faqs: [
+        { q: 'How is Lume different from a normal AI chat app?', a: 'Chat apps optimize for one-off answers. Lume is built for ongoing work: it can use local files and tools, keep durable memory, and delegate complex tasks across specialist personas.' },
+        { q: 'Where is my data stored?', a: 'Core data lives in the ~/.lume/ folder on your computer. Memory uses Markdown as its source of truth, with readable configuration formats for easy backup and migration.' },
+        { q: 'Can I use my own API key or a local model?', a: 'Yes. Lume supports OpenAI-compatible endpoints, a range of hosted providers, and local options such as Ollama and LM Studio.' },
+        { q: 'Is Lume free?', a: 'Lume is free to download and open source under the MIT license. Third-party model providers may charge according to their own pricing.' },
+      ],
+      ctaEyebrow: 'Bring AI into the actual workspace',
+      ctaTitle: 'Give the next task to Lume',
+      ctaDesc: 'Local first, free, and open source. Get started in minutes.',
+      ctaSecondary: 'Explore the docs',
+    };
 
-// ~/.lume/ 真实顶层布局（注释按语言输出）
-const tree =
-  lang === 'zh'
-    ? `~/.lume/
-├── memory/            # 持久记忆，Markdown 真源
-├── skills/            # SKILL.md 技能包，热加载
-├── automation/        # cron 定时与每日日程
-├── agent-workspaces/  # 角色工作区与产物
-└── lume.yaml          # 一份可读的配置`
-    : `~/.lume/
-├── memory/            # persistent memory, Markdown as truth
-├── skills/            # SKILL.md packs, hot-reloaded
-├── automation/        # cron jobs and daily schedules
-├── agent-workspaces/  # persona workspaces and artifacts
-└── lume.yaml          # one readable config file`;
-
-const modelProviders = [
-  'OpenAI',
-  'Anthropic',
-  'Gemini',
-  'DeepSeek',
-  'Qwen',
-  'Kimi',
-  'GLM',
-  'Doubao',
-  'Ollama',
-  'LM Studio',
-  'OpenRouter',
-] as const;
-
-const sdkComment =
-  lang === 'zh'
-    ? '// 流式事件：assistant 文本 / 工具调用 / result 统计'
-    : '// streamed events: assistant text / tool calls / result stats';
+const providers = ['OpenAI', 'Anthropic', 'Gemini', 'DeepSeek', 'Qwen', 'Kimi', 'GLM', 'Doubao', 'OpenRouter', 'Ollama', 'LM Studio'];
+const resolveMembers = (ids: readonly string[]) => members.filter((member) => ids.includes(member.id));
 ---
 
 <Base title={t(lang, 'hero.title')} description={t(lang, 'hero.subtitle')}>
-  <!-- Hero -->
-  <section class="relative overflow-hidden">
-    <div
-      class="pointer-events-none absolute inset-0"
-      aria-hidden="true"
-      style={`background:
-        radial-gradient(600px 320px at 20% -10%, var(--glow-1), transparent 70%),
-        radial-gradient(700px 360px at 85% 0%, var(--glow-2), transparent 70%);`}
-    >
-    </div>
-    <div class="relative mx-auto max-w-6xl px-4 pt-16 pb-12 text-center sm:px-6 sm:pt-24">
-      <p class="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-micro font-medium text-fg-muted">
-        <span class="h-1.5 w-1.5 rounded-full bg-accent"></span>
-        {t(lang, 'hero.badge')}
-      </p>
-      <h1 class="mx-auto mt-5 max-w-3xl text-display font-bold tracking-tight text-fg sm:text-display-lg">
-        {t(lang, 'hero.title')}
-      </h1>
-      <p class="mx-auto mt-5 max-w-xl text-body-lg text-fg-muted">{t(lang, 'hero.subtitle')}</p>
-
-      <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
-        <a
-          href={downloadHref}
-          class="rounded-xl bg-accent px-5 py-2.5 text-body-lg font-medium text-accent-fg shadow-(--shadow-card) transition-colors hover:bg-accent-strong"
-        >
-          {t(lang, 'hero.ctaDownload')}
-        </a>
-        <a
-          href={REPO_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="rounded-xl border border-border bg-surface px-5 py-2.5 text-body-lg font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
-        >
-          {t(lang, 'hero.ctaGithub')}
-        </a>
-      </div>
-
-      <p class="mt-4 text-ui text-fg-faint">{t(lang, 'hero.meta')}</p>
-
-      <!-- 角色集群条：点击进入团队介绍 -->
-      <a href="#team" class="group mt-10 inline-flex flex-col items-center gap-3">
-        <div class="flex -space-x-3">
-          {members.map((member) => (
-            <img
-              src={withBase(`/agents/${member.avatar}`)}
-              alt={member.displayName}
-              width="256"
-              height="256"
-              loading="lazy"
-              class="avatar-chip h-10 w-10 rounded-full border-2 border-bg object-cover sm:h-11 sm:w-11"
-            />
+  <div class="landing-page">
+  <section class="hero-grid relative isolate overflow-hidden border-b border-border/70">
+    <div class="hero-orb hero-orb-one" aria-hidden="true"></div>
+    <div class="hero-orb hero-orb-two" aria-hidden="true"></div>
+    <div class="relative mx-auto grid min-h-[calc(100svh-3.5rem)] max-w-7xl items-center gap-12 px-4 py-16 sm:px-6 sm:py-20 lg:grid-cols-[0.95fr_1.05fr] lg:px-8 lg:py-24">
+      <div class="relative z-10 max-w-2xl">
+        <div class="section-eyebrow"><span class="status-dot"></span>{copy.eyebrow}</div>
+        <h1 class="landing-hero-title mt-6 font-semibold text-fg">
+          <span class={lang === 'zh' ? 'sm:whitespace-nowrap' : undefined}>{copy.heroTitleBefore}</span><br /><span class="text-gradient">{copy.heroTitleAccent}</span>
+        </h1>
+        <p class="mt-7 max-w-xl text-body-lg leading-loose text-fg-muted sm:text-title sm:leading-relaxed">{copy.heroDesc}</p>
+        <div class="mt-9 flex flex-wrap items-center gap-3">
+          <a href={downloadHref} class="button-primary group">
+            {t(lang, 'hero.ctaDownload')}
+            <svg viewBox="0 0 20 20" fill="none" class="h-4 w-4 transition-transform group-hover:translate-x-0.5" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </a>
+          <a href={REPO_URL} target="_blank" rel="noopener noreferrer" class="button-secondary">
+            <svg viewBox="0 0 16 16" fill="currentColor" class="h-4 w-4" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.7 7.7 0 0 1 8 3.58c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg>
+            {t(lang, 'hero.ctaGithub')}
+          </a>
+        </div>
+        <div class="mt-9 flex flex-wrap gap-x-6 gap-y-3 text-caption font-medium text-fg-muted">
+          {[copy.openSource, copy.localData, copy.modelChoice].map((item) => (
+            <span class="flex items-center gap-2"><svg viewBox="0 0 16 16" fill="none" class="h-4 w-4 text-accent" aria-hidden="true"><path d="m3.5 8.5 2.7 2.7 6.3-6.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>{item}</span>
           ))}
         </div>
-        <span class="text-micro text-fg-muted transition-colors group-hover:text-fg">
-          {t(lang, 'hero.teamHint')} ↓
-        </span>
-      </a>
-
-      <div
-        class="relative mx-auto mt-12 max-w-4xl rounded-2xl border border-border bg-surface p-2 shadow-(--shadow-card)"
-      >
-        <img
-          src={withBase('/screenshot.png')}
-          alt={t(lang, 'hero.screenshotAlt')}
-          width="1456"
-          height="816"
-          loading="eager"
-          class="w-full rounded-xl border border-border"
-        />
       </div>
-    </div>
-  </section>
 
-  <!-- 为什么是 Lume -->
-  <section class="border-y border-border bg-bg-subtle">
-    <div class="mx-auto max-w-3xl px-4 py-16 sm:px-6 sm:py-20">
-      <h2 class="text-headline font-semibold tracking-tight text-fg">{t(lang, 'why.title')}</h2>
-      <p class="mt-5 text-body leading-loose text-fg-muted">{t(lang, 'why.para1')}</p>
-      <p class="mt-4 text-body leading-loose text-fg-muted">{t(lang, 'why.para2')}</p>
-    </div>
-  </section>
+      <div class="relative lg:-mr-16 xl:-mr-24">
+        <div class="hero-illustration relative isolate overflow-hidden rounded-[2rem] border border-border bg-[#e9eee6] shadow-2xl">
+          <img
+            src={withBase('/visuals/lume-hero-studio.webp')}
+            alt={copy.heroArtAlt}
+            width="2048"
+            height="1152"
+            loading="eager"
+            fetchpriority="high"
+            class="aspect-[5/4] w-full object-cover object-[68%_center] sm:aspect-[4/3] lg:aspect-[5/4]"
+          />
+          <div class="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0e1510]/28 via-transparent to-white/5" aria-hidden="true"></div>
 
-  <!-- 核心特性（bento）-->
-  <section id="features" class="scroll-mt-16">
-    <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-20">
-      <h2 class="text-center text-headline font-semibold tracking-tight text-fg">
-        {t(lang, 'features.title')}
-      </h2>
-      <div class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <!-- 本地优先：大卡，带真实目录树 -->
-        <div
-          class="rounded-2xl border border-border bg-surface p-6 transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-(--shadow-card) sm:col-span-2 lg:col-span-2 lg:row-span-2"
-        >
-          <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-soft text-accent">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="h-5 w-5"
-              aria-hidden="true"
-            >
-              <rect x="3" y="4" width="18" height="7" rx="2"></rect>
-              <rect x="3" y="13" width="18" height="7" rx="2"></rect>
-              <path d="M7 7.5h.01M7 16.5h.01"></path>
-            </svg>
-          </div>
-          <h3 class="mt-4 text-title font-semibold text-fg">
-            {t(lang, 'features.local.title')}
-          </h3>
-          <p class="mt-1.5 text-ui leading-relaxed text-fg-muted">
-            {t(lang, 'features.local.desc')}
-          </p>
-          <pre
-            class="mt-5 overflow-x-auto rounded-xl border border-border bg-(--code-bg) px-4 py-3.5 text-caption leading-relaxed text-fg-muted"><code>{tree}</code></pre>
-        </div>
-
-        {features.map((feature) => (
-          <div
-            class:list={[
-              'rounded-2xl border border-border bg-surface p-5 transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-(--shadow-card)',
-              feature.span,
-            ]}
-          >
-            <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-soft text-accent">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="h-5 w-5"
-                aria-hidden="true"
-              >
-                {feature.icon === 'memory' && (
-                  <>
-                    <ellipse cx="12" cy="6" rx="8" ry="3"></ellipse>
-                    <path d="M4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6"></path>
-                    <path d="M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"></path>
-                  </>
-                )}
-                {feature.icon === 'users' && (
-                  <>
-                    <circle cx="9" cy="8" r="3.25"></circle>
-                    <path d="M3.5 19c0-3 2.5-4.75 5.5-4.75S14.5 16 14.5 19"></path>
-                    <path d="M15.5 5.4a3.25 3.25 0 0 1 0 5.2M17.5 14.4c1.8.7 3 2.2 3 4.6"></path>
-                  </>
-                )}
-                {feature.icon === 'blocks' && (
-                  <>
-                    <rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect>
-                    <rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect>
-                    <rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect>
-                    <path d="M17 13.5v7M13.5 17h7"></path>
-                  </>
-                )}
-                {feature.icon === 'terminal' && (
-                  <>
-                    <rect x="3" y="4" width="18" height="16" rx="2"></rect>
-                    <path d="m7 9 3 3-3 3M12.5 15H17"></path>
-                  </>
-                )}
-                {feature.icon === 'clock' && (
-                  <>
-                    <circle cx="12" cy="12" r="8.5"></circle>
-                    <path d="M12 7.5V12l3 2"></path>
-                  </>
-                )}
-                {feature.icon === 'chat' && (
-                  <>
-                    <path
-                      d="M21 11.75c0 4-4.03 7.25-9 7.25-1.06 0-2.08-.15-3.02-.43L4 20l1.28-3.42C4.05 15.35 3 13.65 3 11.75 3 7.74 7.03 4.5 12 4.5s9 3.24 9 7.25Z"
-                    ></path>
-                  </>
-                )}
-                {feature.icon === 'cpu' && (
-                  <>
-                    <rect x="6" y="6" width="12" height="12" rx="2"></rect>
-                    <rect x="10" y="10" width="4" height="4"></rect>
-                    <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"></path>
-                  </>
-                )}
-              </svg>
+          <div class="hero-product-window absolute bottom-4 left-4 w-[76%] overflow-hidden rounded-2xl border border-white/12 bg-[#11141c] p-1.5 shadow-2xl sm:bottom-6 sm:left-6 sm:w-[62%] sm:p-2">
+            <div class="flex items-center justify-between px-2 py-1.5">
+              <div class="flex gap-1"><span class="h-1.5 w-1.5 rounded-full bg-[#ff6b63]"></span><span class="h-1.5 w-1.5 rounded-full bg-[#f7c64d]"></span><span class="h-1.5 w-1.5 rounded-full bg-[#3ccf6e]"></span></div>
+              <span class="text-[0.5rem] font-medium uppercase tracking-[0.16em] text-white/35">Lume workspace</span>
             </div>
-            <h3 class="mt-4 text-body-lg font-semibold text-fg">
-              {t(lang, `features.${feature.key}.title` as UiKey)}
-            </h3>
-            <p class="mt-1.5 text-ui leading-relaxed text-fg-muted">
-              {t(lang, `features.${feature.key}.desc` as UiKey)}
-            </p>
+            <img src={withBase('/screenshot.png')} alt={t(lang, 'hero.screenshotAlt')} width="1456" height="816" loading="eager" class="aspect-[16/9] w-full rounded-xl border border-white/8 object-cover" />
           </div>
-        ))}
+
+          <div class="hero-task-card absolute right-3 top-3 hidden w-56 rounded-2xl border border-white/40 bg-white/82 p-4 text-[#192019] shadow-xl backdrop-blur-xl sm:block lg:-right-3 lg:top-8">
+            <div class="flex items-center gap-2 text-caption font-semibold"><span class="status-dot"></span>{copy.heroStatus}</div>
+            <div class="mt-3 space-y-1.5 text-micro text-[#5e685f]">
+              {[copy.heroTask1, copy.heroTask2, copy.heroTask3].map((task, index) => (
+                <div class="flex items-center gap-2 rounded-lg bg-[#f1f4ef] px-2.5 py-2"><span class={`h-1.5 w-1.5 rounded-full ${['bg-emerald-500', 'bg-violet-500', 'bg-amber-500'][index]}`}></span>{task}</div>
+              ))}
+            </div>
+          </div>
+
+          <div class="absolute bottom-3 right-3 max-w-[10rem] rounded-xl border border-white/35 bg-[#111712]/78 px-3 py-2 text-white shadow-lg backdrop-blur sm:bottom-6 sm:right-6 sm:max-w-[13rem]">
+            <p class="text-[0.55rem] uppercase tracking-[0.16em] text-white/45">Prompt</p>
+            <p class="mt-1 text-micro leading-relaxed text-white/82">“{copy.heroPrompt}”</p>
+          </div>
+        </div>
+        <div class="mt-6 flex items-center justify-center gap-4">
+          <div class="flex -space-x-2.5">{members.slice(0, 7).map((member) => <img src={withBase(`/agents/${member.avatar}`)} alt="" width="256" height="256" class="h-8 w-8 rounded-full border-2 border-bg object-cover" />)}</div>
+          <span class="text-caption text-fg-muted">{copy.agentsCount}</span>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- 头像 marquee：通向团队区的过渡带 -->
-  <section aria-hidden="true" class="marquee-mask overflow-hidden border-y border-border bg-bg-subtle py-6">
-    <div class="animate-marquee flex w-max gap-5 pr-5">
-      {[...members, ...members].map((member) => (
-        <img
-          src={withBase(`/agents/${member.avatar}`)}
-          alt=""
-          width="256"
-          height="256"
-          loading="lazy"
-          class="h-14 w-14 rounded-full border border-border object-cover"
-        />
+  <section class="border-b border-white/8 bg-inverse-bg text-inverse-fg">
+    <div class="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-7 sm:flex-row sm:items-baseline sm:justify-between sm:px-6 lg:px-8">
+      <p class="text-micro font-semibold uppercase tracking-[0.14em] text-inverse-fg/52">{copy.stripLead}</p>
+      <p class="text-title font-medium tracking-tight sm:text-headline">{copy.stripTitle}</p>
+    </div>
+  </section>
+
+  <section id="workflow" class="section-shell reveal-section scroll-mt-20">
+    <div class="section-heading"><p class="section-eyebrow">{copy.workflowEyebrow}</p><h2>{copy.workflowTitle}</h2><p>{copy.workflowDesc}</p></div>
+    <div class="mt-12 grid overflow-hidden rounded-[1.75rem] border border-border bg-surface shadow-(--shadow-card) sm:grid-cols-2 lg:grid-cols-4">
+      {copy.workflows.map((item, index) => (
+        <article class:list={['group relative min-h-72 p-6 sm:p-7', index > 0 && 'border-t border-border sm:border-t-0 sm:border-l', index === 2 && 'sm:border-l-0 lg:border-l']}>
+          <span class="text-micro font-semibold tracking-[0.18em] text-accent">{item.step}</span>
+          <div class="mt-12 flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-bg-subtle text-fg transition-colors group-hover:border-accent/40 group-hover:bg-accent-soft group-hover:text-accent">
+            {index === 0 && <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.7"></circle><path d="m16 16 4 4M8.5 11h5M11 8.5v5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path></svg>}
+            {index === 1 && <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5"><path d="M5 5.5h5v5H5zM14 13.5h5v5h-5zM16.5 5v5M5 16h5M10 8h6.5v5.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>}
+            {index === 2 && <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5"><path d="M8.5 7 4 12l4.5 5M15.5 7l4.5 5-4.5 5M14 4l-4 16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>}
+            {index === 3 && <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5"><path d="M5 12.5 10 17l9-10M5 5h7M5 19h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>}
+          </div>
+          <h3 class="mt-5 text-title font-semibold text-fg">{item.title}</h3>
+          <p class="mt-2 text-ui leading-relaxed text-fg-muted">{item.desc}</p>
+          <span class="absolute bottom-6 left-6 rounded-full bg-bg-subtle px-3 py-1 text-micro font-medium text-fg-muted sm:left-7">{item.label}</span>
+        </article>
       ))}
     </div>
   </section>
 
-  <!-- 角色团队 -->
-  <section id="team" class="scroll-mt-16">
-    <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-20">
-      <div class="mx-auto max-w-2xl text-center">
-        <h2 class="text-headline font-semibold tracking-tight text-fg">{t(lang, 'team.title')}</h2>
-        <p class="mt-4 text-body leading-loose text-fg-muted">{t(lang, 'team.desc')}</p>
-      </div>
-
-      <div class="relative mx-auto mt-10 max-w-4xl overflow-hidden rounded-2xl border border-border shadow-(--shadow-card)">
-        <img
-          src={withBase('/agents/agents-team.jpg')}
-          alt={t(lang, 'team.photoAlt')}
-          width="1280"
-          height="720"
-          loading="lazy"
-          class="w-full"
-        />
-      </div>
-
-      <div class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {members.map((member) => (
-          <div class="rounded-2xl border border-border bg-surface p-5 transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-(--shadow-card)">
-            <img
-              src={withBase(`/agents/${member.avatar}`)}
-              alt={member.displayName}
-              width="256"
-              height="256"
-              loading="lazy"
-              class="aspect-square w-full rounded-xl border border-border object-cover"
-            />
-            <div class="mt-4 flex items-baseline justify-between gap-2">
-              <h3 class="text-body-lg font-semibold text-fg">{member.displayName}</h3>
-              <span class="shrink-0 text-micro text-fg-faint">{member.name}</span>
+  <section id="features" class="border-y border-border bg-bg-subtle scroll-mt-20">
+    <div class="section-shell reveal-section">
+      <div class="section-heading"><p class="section-eyebrow">{copy.casesEyebrow}</p><h2>{copy.casesTitle}</h2><p>{copy.casesDesc}</p></div>
+      <div class="mt-12 grid gap-4 lg:grid-cols-2">
+        {copy.cases.map((item, index) => (
+          <article class:list={['case-card group overflow-hidden rounded-[1.75rem] border border-border bg-surface p-6 sm:p-8', index === 0 && 'lg:col-span-2']}>
+            <div class:list={['grid gap-8', index === 0 && 'lg:grid-cols-[1fr_0.95fr] lg:items-end']}>
+              <div>
+                <span class="inline-flex rounded-full bg-accent-soft px-3 py-1 text-micro font-semibold text-accent">{item.tag}</span>
+                <h3 class:list={['mt-5 max-w-xl font-semibold tracking-tight text-fg', index === 0 ? 'text-headline sm:text-[2rem]' : 'text-title sm:text-headline']}>{item.title}</h3>
+                <p class="mt-3 max-w-xl text-ui leading-loose text-fg-muted sm:text-body">{item.desc}</p>
+              </div>
+              <div class="rounded-2xl border border-border bg-bg-subtle p-4 sm:p-5">
+                <div class="flex items-start gap-3"><span class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-fg text-micro font-semibold text-bg">L</span><p class="text-ui leading-relaxed text-fg">“{item.prompt}”</p></div>
+                <div class="mt-5 flex items-center justify-between border-t border-border pt-4">
+                  <div class="flex -space-x-2">{resolveMembers(item.people).map((member) => <img src={withBase(`/agents/${member.avatar}`)} alt={member.displayName} width="256" height="256" loading="lazy" class="h-9 w-9 rounded-full border-2 border-bg-subtle object-cover" />)}</div>
+                  <div class="flex items-center gap-2 text-micro font-medium text-fg-muted"><span class="status-dot"></span>{copy.heroStatus}</div>
+                </div>
+              </div>
             </div>
-            <span class="mt-2 inline-block rounded-full bg-accent-soft px-2.5 py-0.5 text-micro font-medium text-accent">
-              {t(lang, `team.${member.id}.role` as UiKey)}
-            </span>
-            <p class="mt-2.5 text-ui leading-relaxed text-fg-muted">
-              {t(lang, `team.${member.id}.desc` as UiKey)}
-            </p>
-          </div>
+          </article>
         ))}
       </div>
     </div>
   </section>
 
-  <!-- 模型生态 -->
-  <section class="border-y border-border bg-bg-subtle">
-    <div class="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-20">
-      <h2 class="text-headline font-semibold tracking-tight text-fg">{t(lang, 'models.title')}</h2>
-      <p class="mx-auto mt-4 max-w-xl text-body leading-loose text-fg-muted">
-        {t(lang, 'models.desc')}
-      </p>
-      <ul class="mt-8 flex flex-wrap items-center justify-center gap-2.5">
-        {modelProviders.map((provider) => (
-          <li
-            class="rounded-full border border-border bg-surface px-4 py-1.5 text-ui font-medium text-fg-muted transition-colors hover:border-border-strong hover:text-fg"
-          >
-            {provider}
-          </li>
-        ))}
-      </ul>
-    </div>
-  </section>
-
-  <!-- Agent SDK -->
-  <section>
-    <div class="mx-auto grid max-w-6xl items-center gap-10 px-4 py-16 sm:px-6 sm:py-20 lg:grid-cols-2">
-      <div>
-        <h2 class="text-headline font-semibold tracking-tight text-fg">{t(lang, 'sdk.title')}</h2>
-        <p class="mt-4 text-body leading-loose text-fg-muted">{t(lang, 'sdk.desc')}</p>
-      </div>
-      <div class="overflow-hidden rounded-2xl border border-border bg-surface shadow-(--shadow-card)">
-        <div class="flex items-center gap-1.5 border-b border-border bg-bg-subtle px-4 py-2.5">
-          <span class="h-2.5 w-2.5 rounded-full bg-border-strong"></span>
-          <span class="h-2.5 w-2.5 rounded-full bg-border-strong"></span>
-          <span class="h-2.5 w-2.5 rounded-full bg-accent"></span>
-          <span class="ml-2 text-micro text-fg-faint">agent.ts</span>
+  <section class="section-shell reveal-section">
+    <div class="grid gap-5 lg:grid-cols-2">
+      <article class="feature-panel feature-panel-dark overflow-hidden rounded-[2rem] p-7 text-white sm:p-10">
+        <p class="section-eyebrow text-emerald-300">{copy.memoryEyebrow}</p>
+        <h2 class="mt-4 max-w-lg text-[clamp(2rem,4vw,3.4rem)] font-semibold leading-[1.02] tracking-[-0.045em]">{copy.memoryTitle}</h2>
+        <p class="mt-5 max-w-xl text-body leading-loose text-white/62">{copy.memoryDesc}</p>
+        <div class="mt-9 space-y-2.5">
+          {copy.memoryItems.map((item, index) => <div class="memory-row flex items-center gap-3 rounded-xl border border-white/8 bg-white/[0.045] px-4 py-3 text-caption text-white/74"><span class={`h-2 w-2 rounded-full ${['bg-emerald-400', 'bg-violet-400', 'bg-amber-400'][index]}`}></span>{item}</div>)}
         </div>
-        <pre
-          class="overflow-x-auto p-5 text-caption leading-relaxed text-fg-muted"><code>{`import { createAgent } from '@lume/agent-sdk'
+        <blockquote class="mt-7 border-l-2 border-emerald-400 pl-4 text-ui italic leading-relaxed text-white/54">“{copy.memoryQuote}”</blockquote>
+      </article>
 
-const agent = createAgent({
-  model: 'claude-sonnet-4-6',
-  maxTurns: 10,
-})
-
-for await (const event of agent.query('Read package.json and summarize the project.')) {
-  ${sdkComment}
-}`}</code></pre>
+      <div class="grid gap-5">
+        <article class="feature-panel rounded-[2rem] border border-border bg-surface p-7 sm:p-9">
+          <p class="section-eyebrow">{copy.localEyebrow}</p>
+          <h2 class="mt-4 text-[clamp(1.8rem,3vw,2.6rem)] font-semibold leading-tight tracking-[-0.04em] text-fg">{copy.localTitle}</h2>
+          <p class="mt-4 text-ui leading-loose text-fg-muted">{copy.localDesc}</p>
+          <pre class="mt-6 overflow-x-auto rounded-2xl border border-border bg-[#10141b] p-5 text-caption leading-relaxed text-[#aab6c8]"><code><span class="text-emerald-400">~/.lume/</span>
+├── memory/           <span class="text-[#687487]"># Markdown</span>
+├── skills/           <span class="text-[#687487]"># SKILL.md</span>
+├── automation/       <span class="text-[#687487]"># cron</span>
+├── agent-workspaces/
+└── lume.yaml</code></pre>
+          <ul class="mt-6 grid gap-2 text-caption text-fg-muted sm:grid-cols-3">{copy.localPoints.map((point) => <li class="rounded-xl bg-bg-subtle px-3 py-2.5">{point}</li>)}</ul>
+        </article>
+        <article class="feature-panel overflow-hidden rounded-[2rem] border border-border bg-surface p-7 sm:p-9">
+          <div class="grid gap-7 sm:grid-cols-[1fr_0.9fr] sm:items-center">
+            <div><p class="section-eyebrow">{copy.toolsEyebrow}</p><h2 class="mt-4 text-[clamp(1.8rem,3vw,2.6rem)] font-semibold leading-tight tracking-[-0.04em] text-fg">{copy.toolsTitle}</h2><p class="mt-4 text-ui leading-loose text-fg-muted">{copy.toolsDesc}</p></div>
+            <div class="flex flex-wrap gap-2 sm:justify-end">{copy.toolLabels.map((tool, index) => <span class:list={['rounded-xl border px-3 py-2 text-caption font-medium', index % 3 === 0 ? 'border-accent/25 bg-accent-soft text-accent' : 'border-border bg-bg-subtle text-fg-muted']}>{tool}</span>)}</div>
+          </div>
+        </article>
       </div>
     </div>
   </section>
 
-  <!-- 底部 CTA -->
-  <section class="relative overflow-hidden border-t border-border">
-    <div
-      class="pointer-events-none absolute inset-0"
-      aria-hidden="true"
-      style={`background:
-        radial-gradient(500px 260px at 50% 110%, var(--glow-1), transparent 70%);`}
-    >
-    </div>
-    <div class="relative mx-auto max-w-6xl px-4 py-16 text-center sm:px-6 sm:py-24">
-      <h2 class="text-headline font-semibold tracking-tight text-fg">{t(lang, 'cta.title')}</h2>
-      <p class="mt-3 text-body-lg text-fg-muted">{t(lang, 'cta.desc')}</p>
-      <div class="mt-7 flex flex-wrap items-center justify-center gap-3">
-        <a
-          href={downloadHref}
-          class="rounded-xl bg-accent px-6 py-3 text-body-lg font-medium text-accent-fg shadow-(--shadow-card) transition-colors hover:bg-accent-strong"
-        >
-          {t(lang, 'cta.button')}
-        </a>
-        <a
-          href="#team"
-          class="rounded-xl border border-border bg-surface px-6 py-3 text-body-lg font-medium text-fg transition-colors hover:border-border-strong hover:bg-surface-hover"
-        >
-          {t(lang, 'team.title')}
-        </a>
+  <section id="automation" class="section-shell reveal-section scroll-mt-20">
+    <div class="automation-story relative isolate min-h-[46rem] overflow-hidden rounded-[2rem] border border-white/10 bg-[#0b1117] shadow-2xl sm:min-h-[40rem]">
+      <img
+        src={withBase('/visuals/lume-night-automation.webp')}
+        alt={copy.nightArtAlt}
+        width="2048"
+        height="1152"
+        loading="lazy"
+        class="absolute inset-0 h-full w-full object-cover object-[34%_center] sm:object-center"
+      />
+      <div class="absolute inset-0 bg-gradient-to-t from-[#08100c] via-[#08100c]/35 to-transparent sm:bg-gradient-to-r sm:from-transparent sm:via-[#08100c]/25 sm:to-[#08100c]/95" aria-hidden="true"></div>
+      <div class="relative grid min-h-[46rem] items-end p-6 sm:min-h-[40rem] sm:grid-cols-2 sm:items-center sm:p-10 lg:p-14">
+        <div class="hidden sm:block"></div>
+        <div class="max-w-xl text-white">
+          <p class="section-eyebrow text-amber-300">{copy.nightEyebrow}</p>
+          <h2 class="mt-5 text-[clamp(2.5rem,4.2vw,4rem)] font-semibold leading-[0.98] tracking-[-0.05em]">{copy.nightTitle}</h2>
+          <p class="mt-5 text-body leading-loose text-white/62">{copy.nightDesc}</p>
+          <div class="mt-7 grid gap-2.5">
+            {copy.nightItems.map((item, index) => (
+              <div class="automation-item flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-caption text-white/76 backdrop-blur">
+                <span class="flex h-6 w-6 items-center justify-center rounded-full bg-white/8 text-micro font-semibold text-amber-300">{index + 1}</span>
+                {item}
+              </div>
+            ))}
+          </div>
+          <div class="mt-6 inline-flex items-center gap-2 rounded-full border border-amber-300/20 bg-amber-300/10 px-3.5 py-2 text-micro font-semibold text-amber-200">
+            <span class="automation-pulse h-1.5 w-1.5 rounded-full bg-amber-300"></span>
+            {copy.nightStatus}
+          </div>
+        </div>
       </div>
     </div>
   </section>
+
+  <section aria-label={copy.teamAll} class="marquee-mask overflow-hidden border-t border-white/8 bg-inverse-bg py-5 text-inverse-fg">
+    <div class="animate-marquee flex w-max gap-3 pr-3">
+      {[...members, ...members].map((member) => (
+        <div class="flex items-center gap-3 rounded-full border border-white/10 bg-white/[0.045] py-1.5 pl-1.5 pr-4">
+          <img src={withBase(`/agents/${member.avatar}`)} alt="" width="256" height="256" loading="lazy" class="h-9 w-9 rounded-full object-cover" />
+          <span class="text-caption font-semibold text-white/86">{member.displayName}</span>
+          <span class="text-micro text-white/36">{t(lang, `team.${member.id}.role` as UiKey)}</span>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <section id="team" class="overflow-hidden border-y border-white/8 bg-inverse-bg text-inverse-fg scroll-mt-20">
+    <div class="reveal-section mx-auto max-w-7xl px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
+      <div class="grid gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-end">
+        <div><p class="section-eyebrow text-emerald-300">{copy.teamEyebrow}</p><h2 class="mt-5 text-[clamp(2.5rem,5vw,5rem)] font-semibold leading-[0.98] tracking-[-0.05em]">{copy.teamTitle}</h2></div>
+        <div class="lg:pb-1"><p class="max-w-2xl text-body-lg leading-loose text-inverse-fg/68">{copy.teamDesc}</p><p class="mt-4 text-caption text-inverse-fg/48">{copy.teamNote}</p></div>
+      </div>
+      <div class="mt-14 grid auto-rows-[12rem] grid-cols-2 gap-3 sm:auto-rows-[15rem] sm:grid-cols-4 lg:auto-rows-[18rem] lg:grid-cols-6">
+        {members.map((member, index) => (
+          <article class:list={['agent-card group relative overflow-hidden rounded-2xl bg-[#1c211f]', index === 0 && 'col-span-2 row-span-2 sm:col-span-2', index === 3 && 'sm:col-span-2', index === 8 && 'lg:col-span-2']}>
+            <img src={withBase(`/agents/${member.avatar}`)} alt={member.displayName} width="256" height="256" loading="lazy" class="h-full w-full object-cover transition duration-500 group-hover:scale-[1.035]" />
+            <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/35 to-transparent p-4 pt-12"><div class="flex items-end justify-between gap-3"><div><h3 class="text-body font-semibold text-white">{member.displayName}</h3><p class="mt-0.5 text-micro text-white/55">{t(lang, `team.${member.id}.role` as UiKey)}</p></div>{index === 0 && <span class="hidden rounded-full border border-white/20 bg-black/20 px-2.5 py-1 text-micro text-white/65 sm:inline">{member.name}</span>}</div></div>
+          </article>
+        ))}
+      </div>
+      <div class="mt-7 flex items-center justify-between gap-4 border-t border-white/10 pt-7"><p class="text-body-lg font-medium">{copy.teamAll}</p><div class="flex -space-x-2">{members.slice(-5).map((member) => <img src={withBase(`/agents/${member.avatar}`)} alt="" width="256" height="256" loading="lazy" class="h-8 w-8 rounded-full border-2 border-inverse-bg object-cover" />)}</div></div>
+    </div>
+  </section>
+
+  <section class="section-shell reveal-section overflow-hidden">
+    <div class="mx-auto max-w-3xl text-center"><p class="section-eyebrow justify-center">{copy.modelsEyebrow}</p><h2 class="mt-5 text-[clamp(2.3rem,5vw,4.5rem)] font-semibold leading-[1.02] tracking-[-0.05em] text-fg">{copy.modelsTitle}</h2><p class="mx-auto mt-5 max-w-2xl text-body leading-loose text-fg-muted">{copy.modelsDesc}</p></div>
+    <div class="provider-cloud relative mx-auto mt-12 max-w-5xl"><div class="flex flex-wrap justify-center gap-3">{providers.map((provider, index) => <span class:list={['provider-pill', index === 0 || index === 3 || index === 7 ? 'provider-pill-accent' : '']}>{provider}</span>)}</div></div>
+  </section>
+
+  <section class="border-y border-border bg-bg-subtle">
+    <div class="section-shell reveal-section grid items-center gap-12 lg:grid-cols-[0.8fr_1.2fr]">
+      <div><p class="section-eyebrow">{copy.sdkEyebrow}</p><h2 class="mt-5 text-[clamp(2.3rem,5vw,4rem)] font-semibold leading-[1.02] tracking-[-0.05em] text-fg">{copy.sdkTitle}</h2><p class="mt-5 text-body leading-loose text-fg-muted">{copy.sdkDesc}</p><a href={`${docsHref}/sdk`} class="mt-7 inline-flex items-center gap-2 text-ui font-semibold text-accent hover:text-accent-strong">{copy.sdkLink}<span aria-hidden="true">→</span></a></div>
+      <div class="overflow-hidden rounded-[1.75rem] border border-white/10 bg-[#10141b] shadow-2xl">
+        <div class="flex items-center justify-between border-b border-white/8 px-5 py-3.5"><div class="flex gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-[#ff6b63]"></span><span class="h-2.5 w-2.5 rounded-full bg-[#f7c64d]"></span><span class="h-2.5 w-2.5 rounded-full bg-[#3ccf6e]"></span></div><span class="text-micro text-white/35">agent.ts</span></div>
+        <pre class="overflow-x-auto p-6 text-caption leading-[1.9] text-[#aab6c8] sm:p-8"><code><span class="text-violet-300">import</span> &#123; createAgent &#125; <span class="text-violet-300">from</span> <span class="text-emerald-300">'@lume/agent-sdk'</span>
+
+<span class="text-violet-300">const</span> agent = createAgent(&#123;
+  model: <span class="text-emerald-300">'claude-sonnet-4-6'</span>,
+  maxTurns: <span class="text-amber-300">10</span>,
+&#125;)
+
+<span class="text-violet-300">for await</span> (<span class="text-violet-300">const</span> event <span class="text-violet-300">of</span> agent.query(
+  <span class="text-emerald-300">'Read the project and ship the change.'</span>
+)) &#123;
+  console.log(event)
+&#125;</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="section-shell reveal-section">
+    <div class="grid gap-10 lg:grid-cols-[0.7fr_1.3fr]">
+      <div><p class="section-eyebrow">{copy.faqEyebrow}</p><h2 class="mt-5 text-[clamp(2.2rem,4vw,3.5rem)] font-semibold leading-tight tracking-[-0.045em] text-fg">{copy.faqTitle}</h2></div>
+      <div class="divide-y divide-border border-y border-border">
+        {copy.faqs.map((item, index) => <details class="faq-item group" open={index === 0}><summary class="flex cursor-pointer list-none items-center justify-between gap-5 py-6 text-body-lg font-semibold text-fg">{item.q}<span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border text-fg-muted transition group-open:rotate-45 group-open:border-accent/35 group-open:bg-accent-soft group-open:text-accent">+</span></summary><p class="max-w-2xl pb-6 pr-10 text-ui leading-loose text-fg-muted">{item.a}</p></details>)}
+      </div>
+    </div>
+  </section>
+
+  <section class="px-4 pb-4 sm:px-6 sm:pb-6 lg:px-8">
+    <div class="cta-panel relative mx-auto max-w-7xl overflow-hidden rounded-[2rem] bg-inverse-bg px-6 py-16 text-center text-inverse-fg sm:px-12 sm:py-24">
+      <div class="cta-orb" aria-hidden="true"></div>
+      <div class="relative mx-auto max-w-3xl"><p class="section-eyebrow justify-center text-emerald-300">{copy.ctaEyebrow}</p><h2 class="mt-5 text-[clamp(2.7rem,6vw,5.6rem)] font-semibold leading-[0.98] tracking-[-0.055em]">{copy.ctaTitle}</h2><p class="mx-auto mt-5 max-w-xl text-body-lg leading-relaxed text-inverse-fg/65">{copy.ctaDesc}</p><div class="mt-9 flex flex-wrap justify-center gap-3"><a href={downloadHref} class="button-primary">{t(lang, 'cta.button')}<span aria-hidden="true">→</span></a><a href={docsHref} class="button-on-dark">{copy.ctaSecondary}</a></div></div>
+    </div>
+  </section>
+  </div>
 </Base>

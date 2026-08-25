@@ -67,6 +67,25 @@ test("broker obtains and binds one-time confirmation for consequential actions",
   await assert.rejects(() => broker.dispatch({ method: "click", params: { semanticIntent: "Pay now" }, browserSessionId: "s", browserTurnId: "t" }), /action_denied/);
 });
 
+test("user rejection surfaces user_declined while transport anomalies stay confirmation_unavailable (#606)", async () => {
+  let confirmResponse: Record<string, unknown> = { approved: false };
+  const broker = new BrowserBroker({ request: async () => confirmResponse });
+  broker.setPluginState({ browserEnabled: true });
+  const dispatch = () => broker.dispatch({ method: "submitForm", params: { tabId: "tab-1", locator: { version: 1, steps: [{ kind: "css", selector: "button" }] }, semanticIntent: "提交表单" }, tabId: "tab-1", browserSessionId: "s", browserTurnId: "t" });
+
+  // 用户明确拒绝 → user_declined(非通道故障)
+  await assert.rejects(dispatch, /user_declined/);
+
+  // 缺 token/响应缺失 → confirmation_unavailable(通道异常语义保留)
+  confirmResponse = { approved: true };
+  await assert.rejects(dispatch, /confirmation_unavailable/);
+  confirmResponse = {};
+  await assert.rejects(dispatch, /confirmation_unavailable/);
+  // 有 token 但缺 approved 字段的畸形响应:不视为用户拒绝(#606 review 钉态)
+  confirmResponse = { token: "t" };
+  await assert.rejects(dispatch, /confirmation_unavailable/);
+});
+
 test("Agent scripts require confirmation and stay bound to the selected tab", async () => {
   const calls: any[] = []
   const broker = new BrowserBroker({ request: async (request) => {

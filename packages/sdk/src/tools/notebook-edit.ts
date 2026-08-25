@@ -13,7 +13,7 @@ import { readFile, stat } from 'fs/promises'
 import { resolve } from 'path'
 import { defineTool } from './types.js'
 import { writeFileAtomic } from '../utils/fs-atomic.js'
-import { ensurePathAllowed, getUnsafeFilePathReason } from '../utils/pathing.js'
+import { ensurePathAllowed, ensureWriteContained, getUnsafeFilePathReason } from '../utils/pathing.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 
 type NotebookCell = {
@@ -72,7 +72,7 @@ function inferLanguage(notebook: any): string {
 
 export const NotebookEditTool = defineTool({
   name: 'NotebookEdit',
-  description: 'Edit Jupyter notebook cells using notebook_path, cell_id, new_source, and edit_mode.',
+  description: 'Edit Jupyter notebook cells using notebook_path, cell_id, new_source, and edit_mode. The notebook must be read with Read before the first edit.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -139,6 +139,11 @@ export const NotebookEditTool = defineTool({
     if (sandboxError) {
       return { data: sandboxError, is_error: true }
     }
+    // containment 复核不以沙箱启用为前提（#546）：junction/symlink 可穿越词法边界
+    const containmentError = ensureWriteContained(notebookPath, context.cwd, context.additionalDirectories)
+    if (containmentError) {
+      return { data: containmentError, is_error: true }
+    }
 
     try {
       if (!notebookPath.toLowerCase().endsWith('.ipynb')) {
@@ -147,7 +152,19 @@ export const NotebookEditTool = defineTool({
       const decoded = decodeTextFile(await readFile(notebookPath))
       const originalFile = decoded.content
       const previousRead = context.fileStateCache?.get(notebookPath)
-      if (previousRead && !previousRead.isPartialView && previousRead.content !== originalFile) {
+      // Read-before-edit 强制（#569）：未读过的 notebook 禁止盲改。
+      if (!previousRead) {
+        // 容量区分（#655）：LRU 驱逐产生的伪未读与真未读分开表述。
+        const data = context.fileStateCache?.wasDroppedByCapacity(notebookPath)
+          ? `Error: The read record for ${notebookPath} was dropped because the session's file-state cache hit its capacity limit (long sessions drop the oldest records). Read the notebook again, then retry this edit.`
+          : `Error: Notebook has not been read yet: ${notebookPath}. Read it first, then retry this edit.`
+        return {
+          data,
+          is_error: true,
+          _meta: { file: { path: notebookPath, conflict: 'not_read', retryable: true } },
+        }
+      }
+      if (!previousRead.isPartialView && previousRead.content !== originalFile) {
         return {
           data: 'Error: Notebook has been modified since it was read. Read it again before attempting to edit it.',
           is_error: true,
@@ -212,7 +229,9 @@ export const NotebookEditTool = defineTool({
       ensureCellIds(cells)
       const targetCell = cells[targetIndex]
       let updatedFile = JSON.stringify(notebook, null, 1)
-      await writeFileAtomic(notebookPath, encodeTextFile(updatedFile, decoded))
+      // 写入瞬间 symlink 复检与 write/edit 同口径（#546）
+      await writeFileAtomic(notebookPath, encodeTextFile(updatedFile, decoded), (resolvedPath) =>
+        ensureWriteContained(resolvedPath, context.cwd, context.additionalDirectories))
       const updatedStat = await stat(notebookPath)
       context.fileStateCache?.set(notebookPath, {
         content: updatedFile,

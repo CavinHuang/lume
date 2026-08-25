@@ -365,15 +365,20 @@ export class QueryEngine {
     tool_use_id: string
     tool_input: Record<string, unknown>
   }> = []
-  private fileStateCache = new FileStateCache()
+  private fileStateCache: FileStateCache
   private workingDirectory: string
   /** Tool calls skipped or interrupted by an abort during the current run. */
   private abortedPendingToolCalls: Array<{ id: string; name: string; input: unknown }> = []
   private repeatedToolCalls = new Map<string, RepeatedToolCallState>()
   private blockedRepeatAttempts = 0
+  /** Consecutive Edit not-found failures per file within this run (#569). */
+  private editFailureCounts = new Map<string, number>()
 
   constructor(config: QueryEngineConfig) {
     this.config = config
+    // Session-level read-state survives across runs when the Agent shares its
+    // cache; standalone engines keep a private per-run one (#569).
+    this.fileStateCache = config.fileStateCache ?? new FileStateCache()
     // Rebind generated discovery tools to the engine's live deferred list:
     // the agent passes a filtered copy, so promotion must be engine-local.
     if (this.config.deferredTools && this.config.deferredTools.length > 0) {
@@ -455,6 +460,7 @@ export class QueryEngine {
       // runId 用真实 run 标识(config.runId 由 Agent.run opts 透传);
       // 缺省回落 sessionId——此前恒用 sessionId 导致 usageIdentity 无法按 run 聚合
       runId: this.config.runId ?? this.sessionId,
+      ...(this.config.subagentRunId ? { subagentRunId: this.config.subagentRunId } : {}),
       responseId: crypto.randomUUID(),
       ...options,
     }
@@ -1472,7 +1478,12 @@ export class QueryEngine {
         break
       }
 
-      if (response.stopReason === 'end_turn') break
+      // Terminal exit for a stopReason-carrying response is decided by the
+      // tool-free branch above or the repeat-guard stop just before this
+      // comment: a response carrying tool_use must keep looping so the model
+      // sees the results, even when a gateway reports finish_reason "stop"
+      // mapped to end_turn (#568). Runaway loops are bounded by maxTurns and
+      // the repeat guard above.
 
       if (this.config.promptSuggestions && toolsUsed.length > 0) {
         yield {
@@ -1612,6 +1623,7 @@ export class QueryEngine {
       sandbox: this.config.sandbox,
       toolConfig: this.config.toolConfig,
       fileStateCache: this.fileStateCache,
+      editFailureCounts: this.editFailureCounts,
       artifactsRoot: this.config.artifactsRoot,
       onToolExecution: this.config.onToolExecution,
       onBeforeToolExecution: this.config.onBeforeToolExecution,

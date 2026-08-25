@@ -97,7 +97,9 @@ async function rerankWithLlm(input: {
   if (input.items.length <= 1) return input.items;
   const response = await input.provider.createMessage({
     model: input.model,
-    maxTokens: 500,
+    // 输出是全部候选 id 的 JSON 回显:上限必须随候选池规模缩放(#521 候选池
+    // 放宽后 48 条 × 每条 ~25 token 会击穿固定 500 导致恒等回退)
+    maxTokens: Math.max(500, input.items.length * 80),
     system: [
       "Rank memory candidates for relevance to the user query.",
       "Return strict JSON only: {\"ids\":[\"candidate-id\", ...]}.",
