@@ -111,6 +111,17 @@ function browserRpcMac(direction: "sidecar->main" | "main->sidecar", sequence: n
     .digest("base64url");
 }
 
+// #611：desktop 死亡/通道断开时批量 reject in-flight 请求——否则全部干等到超时后
+// 误报 executed_unknown（「可能已执行」，而实际包根本没送达）。断连是明确的
+// browser_unavailable（可重试），与业务错误分离。
+rpcTransport.onClose(() => {
+  for (const [requestId, pending] of [...pendingBrowserMainRequests]) {
+    pendingBrowserMainRequests.delete(requestId);
+    clearTimeout(pending.timeout);
+    pending.reject(Object.assign(new Error("browser transport disconnected"), { code: "browser_unavailable" }));
+  }
+});
+
 function verifyBrowserRpcMac(direction: "sidecar->main" | "main->sidecar", sequence: number, id: string, body: unknown, mac: unknown): boolean {
   if (typeof mac !== "string" || !browserRpcSecret) return false;
   const expected = Buffer.from(browserRpcMac(direction, sequence, id, body));
