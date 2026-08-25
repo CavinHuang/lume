@@ -56,4 +56,46 @@ describe("shell read-only proof — security vectors (#684 review)", () => {
     expect(isReadOnlyPowerShell("git show --ext-diff HEAD")).toBeFalse();
     expect(isReadOnlyPowerShell("git show HEAD")).toBeTrue();
   });
+
+  test("env assignment prefixes fail closed at the entry (round-2 H1 P0)", () => {
+    // tree-sitter 把 variable_assignment 整体剥离出 argv：`GIT_EXTERNAL_DIFF=… git log -p`
+    // 在白名单眼里只剩 `git log -p`——入口正则双态确定，不依赖语法树
+    const vectors = [
+      "GIT_EXTERNAL_DIFF=calc git log -p",
+      "RIPGREP_CONFIG_PATH=/tmp/x.cfg rg pattern .",
+      "FOO=bar git status",
+      "A=1 B=2 cat /etc/passwd"
+    ];
+    for (const command of vectors) {
+      expect(isReadOnlyShellInput({ command })).toBeFalse();
+    }
+  });
+
+  test("PowerShell quote-splicing cannot hide git write flags from the text-layer check (round-2 H2)", () => {
+    // PS 参数模式把 `--out'put'=x` 拼回单 token 再交给 git；去引号二次断言封口，
+    // 纯文本层路径，无产物环境与本地双态确定
+    const vectors = [
+      "powershell -NoProfile -NonInteractive -Command git log --out'put'=pwned.txt",
+      'pwsh -NoProfile -Command git log --out"put=pwned.txt"',
+      "powershell -Command git show --ex't-diff'"
+    ];
+    for (const command of vectors) {
+      expect(isReadOnlyShellInput({ command })).toBeFalse();
+    }
+    expect(isReadOnlyPowerShell("git log --out'put'=x.txt")).toBeFalse();
+  });
+
+  test.skipIf(!isNativeAvailable())("sed short clusters containing i are rejected wherever the letter sits (round-2 H3)", () => {
+    const vectors = [
+      "sed -ni.p 's/a/X/' t.txt",
+      "sed -nip 's/a/X/' t.txt",
+      "echo hi; sed -ni.p 's/a/X/' f.txt",
+      "sed '-i.bak' 's/a/X/' t.txt"
+    ];
+    for (const command of vectors) {
+      expect(isReadOnlyShellInput({ command })).toBeFalse();
+    }
+    // 对照：不含 i 的良性短簇仍放行
+    expect(isReadOnlyShellInput({ command: "sed -n '10p' file.txt" })).toBeTrue();
+  });
 });

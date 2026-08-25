@@ -8,6 +8,10 @@ import { shellKindWithoutDiscovery } from './shell-invocation.js'
  * command provably unable to mutate state needs neither the classifier nor an
  * explicit allow rule.
  */
+/** env 赋值前缀：`GIT_EXTERNAL_DIFF=… git log -p` 的 assignment 节点会被语法树整体剥离，
+ *  argv 层对运行时必然生效的 env 载荷结构性全盲（#684 二轮 P0），入口即 fail-closed。 */
+const ENV_ASSIGNMENT_PREFIX = /^[A-Za-z_][A-Za-z0-9_]*=\S/
+
 export function isReadOnlyShellInput(input: unknown, _context?: unknown): boolean {
   if (!input || typeof input !== 'object') return false
   const command = (input as Record<string, unknown>).command
@@ -17,6 +21,7 @@ export function isReadOnlyShellInput(input: unknown, _context?: unknown): boolea
   // These constructs can execute arbitrary code or write through the shell,
   // even when the visible command starts with a read-looking executable.
   if (/[>`]|>>|\$\(|`/.test(normalized)) return false
+  if (ENV_ASSIGNMENT_PREFIX.test(normalized)) return false
 
   const analysis = analyzeBashCommand(normalized)
   if (analysis.status === 'simple') {
@@ -25,9 +30,9 @@ export function isReadOnlyShellInput(input: unknown, _context?: unknown): boolea
       && !analysis.hasRedirection
   }
 
-  // Non-provable syntax falls back per dialect (#300): Bash has no safe
-  // fallback (compound and piped forms escape any first-word whitelist), so it
-  // fails closed. PowerShell keeps its conservative inspection subset — either
+  // Syntax the parser cannot prove simple fails closed per dialect (#300) —
+  // pipelines/chains that DO parse as simple are proven segment-by-segment via
+  // every() above. PowerShell keeps its conservative inspection subset — either
   // the command invokes powershell/pwsh explicitly or the shell for this
   // platform is PowerShell. The dialect check never triggers Windows bash
   // discovery (#471): an unsettled probe reads as bash, so the decision is
@@ -47,9 +52,15 @@ const READ_ONLY_EXECUTABLES = new Set([
   'rg', 'sed', 'sort', 'tail', 'type', 'uniq', 'wc', 'where', 'which',
 ])
 
+const GIT_READ_SUBCOMMANDS = new Set(['branch', 'diff', 'log', 'show', 'status'])
+
 /** git 输出/外驱参数：--output 写任意路径文件；--ext-diff 执行仓库配置的外部命令（#300，#684 review 扩到 log/show）。 */
 const GIT_WRITE_OR_EXEC_FLAGS = (arg: string): boolean =>
   arg === '--output' || arg.startsWith('--output=') || arg === '--ext-diff'
+
+/** PS 文本层同口径负向断言；对去引号文本复检——PS 参数模式会把 `--out'put'=x` 拼回
+ *  单 token `--output=x` 再交给 git，原始文本断言对此失明（#684 二轮 P1）。 */
+const GIT_PS_WRITE_FLAGS = /\s--(?:ext-diff|output)(?:=|\s|$)/i
 
 function isReadOnlySegment(executable: string, args: string[]): boolean {
   if (!READ_ONLY_EXECUTABLES.has(executable)) return false
@@ -57,7 +68,7 @@ function isReadOnlySegment(executable: string, args: string[]): boolean {
     const subcommandIndex = args.findIndex((arg) => !arg.startsWith('-'))
     if (subcommandIndex < 0) return false
     const subcommand = args[subcommandIndex]!
-    if (!new Set(['branch', 'diff', 'log', 'show', 'status']).has(subcommand)) return false
+    if (!GIT_READ_SUBCOMMANDS.has(subcommand)) return false
     const rest = args.slice(subcommandIndex + 1)
     if (subcommand === 'branch') {
       // Only listing forms are reads: an operand names a branch to create,
@@ -73,7 +84,7 @@ function isReadOnlySegment(executable: string, args: string[]): boolean {
       // textconv 类配置驱动执行外部命令。已知残余（如实声明）：仓库 .gitattributes/
       // gitconfig 的 textconv 在普通 -p 展示时也会执行 repo 配置的命令字符串，
       // 该通道属「仓库内容即不可信输入」威胁模型的一部分，静态白名单无法区分，
-      // 见 #571 follow-up。
+      // 见 #685（威胁模型裁定现场）。
       return !rest.some(GIT_WRITE_OR_EXEC_FLAGS)
     }
     return true
@@ -107,7 +118,10 @@ function isReadOnlySegment(executable: string, args: string[]): boolean {
 const SED_SAFE_LONG_FLAGS = new Set(['--posix', '--null-data', '--separate', '--binary-mode'])
 
 function isReadOnlySedArgs(args: string[]): boolean {
-  if (args.some((arg) => /^(-i|--in-place)/.test(arg))) return false
+  // getopt 语义下短簇内任意位置的 i 都激活 in-place（`-ni.p` 的 i 以 .p 为备份
+  // 后缀；`-nip` 直接就地改写）——簇内含 i 一律拒（sed 无其他含 i 旗标，无误杀
+  // 面，#684 二轮 P1）；--in-place[=suffix] 全拼同拒。
+  if (args.some((arg) => /^(?:-(?!-)[^\s]*i|--in-place(?:=[^\s]*)?$)/.test(arg))) return false
   // GNU getopt_long 接受无歧义缩写（--fi ≡ --file、--exp ≡ --expression），
   // 解析器只认全拼会漏检——任何不在已知安全集合内的长选项一律 fail-closed
   // （#684 review P1 实证：sed --fi=sc.sed 可经脚本文件任意写/RCE）。
@@ -283,6 +297,7 @@ export function isReadOnlyPowerShell(command: string): boolean {
   // common forms never take mutation targets survive here; branch/diff move
   // to the parsed path only (#300). git log/show 的输出/外驱旗标与 bash 树路径
   // 同口径拒绝（--output 写文件、--ext-diff 执行仓库配置命令，#684 review）。
-  const GIT_WRITE_FLAGS = /\s--(?:ext-diff|output)(?:=|\s|$)/i;
-  return !GIT_WRITE_FLAGS.test(normalized) && /^(?:Get-(?:ChildItem|Content|Location|Item|ItemProperty|Process|Service|Command|Date|Help|Member|Variable|Acl|FileHash|AuthenticodeSignature|ComputerInfo)|Select-String|Where-Object|Test-Path|Resolve-Path|Measure-Object|Sort-Object|Format-(?:Table|List)|Write-Output|Write-Host|git\s+(?:status|log|show)\b|(?:ls|dir|type|cat|pwd|where|findstr)\b)/i.test(normalized)
+  return !GIT_PS_WRITE_FLAGS.test(normalized)
+    && !GIT_PS_WRITE_FLAGS.test(normalized.replace(/["']/g, ''))
+    && /^(?:Get-(?:ChildItem|Content|Location|Item|ItemProperty|Process|Service|Command|Date|Help|Member|Variable|Acl|FileHash|AuthenticodeSignature|ComputerInfo)|Select-String|Where-Object|Test-Path|Resolve-Path|Measure-Object|Sort-Object|Format-(?:Table|List)|Write-Output|Write-Host|git\s+(?:status|log|show)\b|(?:ls|dir|type|cat|pwd|where|findstr)\b)/i.test(normalized);
 }
