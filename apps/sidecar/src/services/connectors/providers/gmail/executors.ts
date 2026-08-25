@@ -384,7 +384,7 @@ async function replyToThread(
       cc: recipients.cc,
       bcc: recipients.bcc,
       subject: replyHeaders.subject,
-      body: trimmedString(input.messageBody) || trimmedString(input.body),
+      body: trimmedString(input.body) || trimmedString(input.messageBody),
       isHtml: input.isHtml === true,
       inReplyTo: replyHeaders.inReplyTo,
       references: replyHeaders.references,

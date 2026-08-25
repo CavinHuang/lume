@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { encodeMimeMessage, normalizeGmailMessage, type GmailMessageResource } from "./message";
+import { encodeMimeMessage, normalizeGmailMessage, resolveReplyHeaders, type GmailMessageResource } from "./message";
 
 function decodeRaw(input: Parameters<typeof encodeMimeMessage>[0]): string {
   return Buffer.from(encodeMimeMessage(input), "base64url").toString("utf8");
@@ -83,5 +83,33 @@ describe("normalizeGmailMessage payload size guard", () => {
 
     const small = normalizeGmailMessage({ ...baseResource, raw: "small" });
     expect(small.raw).toBe("small");
+  });
+});
+
+describe("resolveReplyHeaders thread chain", () => {
+  it("accumulates References per RFC 5322 and pins In-Reply-To to parent Message-ID", () => {
+    const headers = resolveReplyHeaders({
+      id: "gmsg1",
+      threadId: "t1",
+      payload: {
+        headers: [
+          { name: "References", value: "<a@x> <b@x>" },
+          { name: "Message-ID", value: "<c@x>" },
+        ],
+      },
+    });
+    expect(headers.references).toBe("<a@x> <b@x> <c@x>");
+    expect(headers.inReplyTo).toBe("<c@x>");
+  });
+
+  it("omits bare Gmail id fallback when Message-ID missing (grouping via send threadId)", () => {
+    const headers = resolveReplyHeaders({
+      id: "gmsg2",
+      threadId: "t2",
+      payload: { headers: [{ name: "References", value: "<a@x>" }] },
+    });
+    // 父有 References 无 Message-ID:references 保留父链,inReplyTo 为空(不发非法裸 id 头)
+    expect(headers.references).toBe("<a@x>");
+    expect(headers.inReplyTo).toBe("");
   });
 });

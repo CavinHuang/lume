@@ -64,6 +64,8 @@ export function ConnectorSettings() {
       .catch((error) => {
         if (refreshGeneration.current !== generation) return
         setLoadError(error instanceof Error ? error.message : String(error))
+        // stale-while-revalidate 下有旧列表时错误框不再渲染,必须给显式反馈
+        toast.error(`连接器刷新失败:${error instanceof Error ? error.message : String(error)}`)
       })
       .finally(() => {
         if (refreshGeneration.current === generation) setLoading(false)
@@ -80,6 +82,7 @@ export function ConnectorSettings() {
         <button
           type="button"
           className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+          aria-expanded={!collapsed}
           onClick={() => setCollapsed((prev) => !prev)}
         >
           <ChevronDown className={`size-4 shrink-0 text-[var(--text-3)] transition-transform ${collapsed ? '-rotate-90' : ''}`} />

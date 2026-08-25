@@ -5,21 +5,14 @@ import type { LookupFunction, Socket, TcpNetConnectOpts } from "node:net";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
 import { connect as connectSocket } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import nodemailer from "nodemailer";
 import { createLogger } from "../../infra/logger";
 import { resolveGuardedEgressTarget } from "../core/guarded-fetch";
 import { isIpAddress } from "../core/request";
 import { mailConnectionTimeoutMs, mailImapPort, mailSmtpPort } from "./config";
 import { MailProtocolError } from "./errors";
-import { sanitizeTempFileName } from "./temp-files";
 
 const logger = createLogger("connectors.mail.protocol");
 

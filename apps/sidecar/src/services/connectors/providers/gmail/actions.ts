@@ -170,12 +170,12 @@ const pageFields = (extra: Record<string, JsonSchema> = {}): Record<string, Json
 
 const recipientFields = (): Record<string, JsonSchema> => ({
   recipientEmail: s.string({ description: "Primary recipient email address." }),
-  to: s.string({ description: "Primary recipient email address." }),
+  to: s.string({ minLength: 1, description: "Primary recipient email address." }),
   extraRecipients: s.array(s.string(), { description: "Additional To recipients." }),
   cc: s.union([s.string(), s.array(s.string())], { description: "Cc recipients." }),
   bcc: s.union([s.string(), s.array(s.string())], { description: "Bcc recipients." }),
   subject: s.string({ description: "Email subject line." }),
-  body: s.string({ description: "Email body content." }),
+  body: s.string({ minLength: 1, description: "Email body content." }),
   messageBody: s.string({ description: "Reply or draft body content." }),
   isHtml: s.boolean({ description: "Whether the body is HTML." }),
   fromEmail: s.string({ description: "Verified Gmail send-as alias." }),
@@ -330,7 +330,8 @@ export const gmailActions: ActionDefinition[] = [
   }),
   action({
     name: "create_email_draft",
-    description: "Create a Gmail draft with recipients, subject, body, and optional threading.",
+    // 有意零 required:草稿允许半成品(先起稿后补收件人),与 send/reply 的收紧不同
+    description: "Create a Gmail draft with recipients, subject, body, and optional threading. Fields are all optional — drafts may be saved incomplete.",
     requiredScopes: gmailComposeScopes,
     properties: { ...recipientFields(), threadId },
     outputSchema: s.object({ draftId, messageId, threadId }, { required: ["draftId"], description: "Created draft." }),
@@ -339,7 +340,12 @@ export const gmailActions: ActionDefinition[] = [
     name: "list_drafts",
     description: "List Gmail drafts with pagination.",
     requiredScopes: gmailComposeScopes,
-    properties: pageFields({ verbose: s.boolean({ description: "Hydrate each draft." }) }),
+    properties: pageFields({
+      verbose: s.boolean({
+        description:
+          "Hydrate each draft. Non-verbose rows carry only id/threadId; metadata fields are blank placeholders, not empty drafts.",
+      }),
+    }),
     outputSchema: s.object(
       { drafts: s.array(draft), nextPageToken: s.nullable(pageToken) },
       { required: ["drafts"], description: "Draft list result." },

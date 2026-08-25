@@ -72,9 +72,11 @@ type ExecutionError = NonNullable<
  */
 function describeExecutionError(service: string, actionName: string, error: ExecutionError): string {
   const head = `${service}.${actionName} failed (${error.code}): ${error.message}`;
+  // @cfworker/json-schema 的 OutputUnit 形制:{ keyword, instanceLocation, error }——
+  // 字段名与违规原因在 instanceLocation/error 里(没有 instancePath/message)
   const details = Array.isArray(error.details)
-    ? (error.details as Array<{ instancePath?: string; keyword?: string; message?: string }>)
-        .map((unit) => `${unit.instancePath || "(input)"} ${unit.keyword ?? ""} ${unit.message ?? ""}`.trim())
+    ? (error.details as Array<{ instanceLocation?: string; keyword?: string; error?: string }>)
+        .map((unit) => `${unit.instanceLocation || "(input)"} ${unit.keyword ?? ""}: ${unit.error ?? ""}`.trim())
         .filter(Boolean)
         .join("; ")
     : "";
