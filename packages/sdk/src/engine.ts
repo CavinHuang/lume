@@ -357,6 +357,9 @@ export class QueryEngine {
   private totalCost = 0
   private turnCount = 0
   private compactState: AutoCompactState
+  // Recovery-path breaker, independent of the proactive compaction counter:
+  // unrelated proactive failures must not disable overflow self-rescue (#567 item 2).
+  private promptTooLongRecoveryFailures = 0
   private sessionId: string
   private apiTimeMs = 0
   private hookRegistry?: HookRegistry
@@ -1268,15 +1271,18 @@ export class QueryEngine {
         // failures (reset to 0 on success) instead of the one-shot `compacted`
         // flag: a tool loop can outgrow the window a second time, and repeated
         // failures trip the breaker on their own.
-        if (isPromptTooLongError(err) && this.compactState.consecutiveFailures < 3) {
+        if (isPromptTooLongError(err) && this.promptTooLongRecoveryFailures < 3) {
           try {
             const compacted = yield* this.runCompaction('prompt_too_long', protectedMessageIndex)
             if (compacted) {
+              this.promptTooLongRecoveryFailures = 0
               turnsRemaining++ // Retry this turn
               this.turnCount--
               continue
             }
+            this.promptTooLongRecoveryFailures++
           } catch {
+            this.promptTooLongRecoveryFailures++
             // Preserve the original provider error when compaction itself fails.
           }
         }
@@ -1478,11 +1484,12 @@ export class QueryEngine {
         break
       }
 
-      // Terminal exit is decided solely by the tool-free branch above: a
-      // response carrying tool_use must keep looping so the model sees the
-      // results, even when a gateway reports finish_reason "stop" mapped to
-      // end_turn (#568). Runaway loops are bounded by maxTurns and the
-      // repeat guard above.
+      // Terminal exit for a stopReason-carrying response is decided by the
+      // tool-free branch above or the repeat-guard stop just before this
+      // comment: a response carrying tool_use must keep looping so the model
+      // sees the results, even when a gateway reports finish_reason "stop"
+      // mapped to end_turn (#568). Runaway loops are bounded by maxTurns and
+      // the repeat guard above.
 
       if (this.config.promptSuggestions && toolsUsed.length > 0) {
         yield {

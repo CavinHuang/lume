@@ -49,6 +49,7 @@ export type { RepeatGuardMeta } from './repeat-guard.js'
 export { resolveShellInvocation, shellKindWithoutDiscovery, shellKindConservative, resetWindowsBashDiscoveryForTests } from './utils/shell-invocation.js'
 export { analyzeBashCommand, normalizeExecutable } from './utils/bash-command-analysis.js'
 export type { BashCommandAnalysis, BashCommandSegment, BashParseStatus } from './utils/bash-command-analysis.js'
+export { isReadOnlyShellInput, isReadOnlyPowerShell } from './utils/shell-read-only.js'
 export {
   spawnWithProcessSandbox,
 } from './utils/process-sandbox.js'
@@ -251,6 +252,7 @@ export type {
 // --------------------------------------------------------------------------
 
 export {
+  DEFAULT_CONTEXT_WINDOW,
   estimateTokens,
   estimateMessagesTokens,
 } from './utils/tokens.js'
@@ -264,6 +266,7 @@ export {
   shouldAutoCompact,
   compactConversation,
   microCompactMessages,
+  compactToolResultContent,
 } from './utils/compact.js'
 export type {
   AutoCompactState,
@@ -331,7 +334,7 @@ export * from './tools/render-client.js'
 // WebFetch internals (enhanced WebFetch assembly in sidecar needs these)
 export { runWebFetch, type WebFetchInput, type WebFetchDeps } from './tools/web-fetch.js'
 export { sdkFetch } from './tools/web-request.js'
-export { isFakeIpRange, isPublicIpAddress } from './utils/pathing.js'
+export { canonicalizePath, ensureWriteContained, isFakeIpRange, isPublicIpAddress } from './utils/pathing.js'
 export type { FetchImpl } from './tools/web-fetch-http.js'
 export { extractArticleMarkdown } from './tools/html-to-markdown.js'
 export {

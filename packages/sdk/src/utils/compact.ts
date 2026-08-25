@@ -540,6 +540,7 @@ function failureResult(
   state: AutoCompactState,
   failureReason: CompactionFailureReason,
   usage?: NormalizedProviderUsage,
+  trigger?: AgentContextCompactionTrigger,
 ): CompactConversationResult {
   return {
     compacted: false,
@@ -549,7 +550,12 @@ function failureResult(
     usage,
     state: {
       ...state,
-      consecutiveFailures: state.consecutiveFailures + 1,
+      // Recovery-path compaction (prompt_too_long) keeps its own breaker on the
+      // engine (promptTooLongRecoveryFailures): letting its failures burn the
+      // proactive counter disabled overflow self-rescue after 3 unrelated
+      // proactive failures (#567 item 2).
+      consecutiveFailures:
+        trigger === 'prompt_too_long' ? state.consecutiveFailures : state.consecutiveFailures + 1,
     },
   }
 }
@@ -562,7 +568,7 @@ export async function compactConversation(
   options: CompactConversationOptions = {},
 ): Promise<CompactConversationResult> {
   const preparation = prepareCompaction(messages, options)
-  if (!preparation) return failureResult(messages, state, 'not_smaller')
+  if (!preparation) return failureResult(messages, state, 'not_smaller', undefined, options.trigger)
 
   const reserveTokens = Math.min(
     Math.max(1, options.reserveTokens ?? DEFAULT_RESERVE_TOKENS),
@@ -605,7 +611,7 @@ export async function compactConversation(
       usage = historyUsage ? combineUsage(historyUsage, turnPrefix.usage) : turnPrefix.usage
     } else {
       if (preparation.messagesToSummarize.length === 0) {
-        return failureResult(messages, state, 'not_smaller')
+        return failureResult(messages, state, 'not_smaller', undefined, options.trigger)
       }
       const result = await generateSummary(
         provider,
@@ -649,7 +655,7 @@ export async function compactConversation(
       options.trigger !== 'manual'
       && estimateMessagesTokens(compactedMessages) >= preparation.tokensBefore
     ) {
-      return failureResult(messages, state, 'not_smaller', usage)
+      return failureResult(messages, state, 'not_smaller', usage, options.trigger)
     }
 
     return {
@@ -671,7 +677,7 @@ export async function compactConversation(
       : isCompactionFailureReason(error?.compactionReason)
         ? error.compactionReason
         : 'provider_error'
-    return failureResult(messages, state, failureReason, error?.usage)
+    return failureResult(messages, state, failureReason, error?.usage, options.trigger)
   }
 }
 
@@ -721,7 +727,7 @@ export function microCompactMessages(
   })
 }
 
-function compactToolResultContent(blocks: any[], maxToolResultChars: number): any[] {
+export function compactToolResultContent(blocks: any[], maxToolResultChars: number): any[] {
   let changed = false
   const next = blocks.map((item: any) => {
     if (item?.type === 'text' && typeof item.text === 'string' && item.text.length > maxToolResultChars) {

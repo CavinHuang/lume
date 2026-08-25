@@ -1934,6 +1934,10 @@ export const AGENT_IPC_CHANNELS = {
   GET_CODING_REPOSITORY_PUBLISH_STATE: 'agent:get-coding-repository-publish-state',
   /** 提交已暂存内容或推送当前分支 */
   APPLY_CODING_REPOSITORY_PUBLISH_ACTION: 'agent:apply-coding-repository-publish-action',
+  /** 按快照还原单次 Coding Run 写过的文件（指纹冲突/已提交边界拒绝覆盖） */
+  REVERT_CODING_RUN: 'agent:revert-coding-run',
+  /** 按快照还原单个 Coding 文件到 Run 前内容 */
+  REVERT_CODING_FILE: 'agent:revert-coding-file',
   /** 将 session/memory/legacy 条目复制晋升到项目根（源保留，同名报错） */
   PROMOTE_FILE_REF_TO_PROJECT: 'agent:promote-file-ref-to-project',
   /** 列出作用域已引用附加的外部目录 */

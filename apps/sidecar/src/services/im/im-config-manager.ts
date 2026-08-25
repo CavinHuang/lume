@@ -148,6 +148,22 @@ export function getImAccount(id: string): ImAccount | null {
   return account ? toPublicAccount(account) : null;
 }
 
+/**
+ * #637：把存量 legacy 弱种子密文一次性升级为注入密钥的 v2 密文。
+ * 返回迁移条数；v2 条目跳过。持锁执行，与并发写互斥。
+ */
+export function reencryptImTokensWithInstalledKey(): number {
+  return mutateConfig((config) => {
+    let migrated = 0;
+    for (const account of config.accounts) {
+      if (!account.encryptedToken || account.encryptedToken.startsWith("enc:v2:")) continue;
+      account.encryptedToken = encryptSecret(decryptSecret(account.encryptedToken));
+      migrated += 1;
+    }
+    if (migrated > 0) writeConfigUnlocked(config);
+    return migrated;
+  });
+}
 export function getImRuntimeAccount(id: string): ImRuntimeAccount {
   const config = readConfig();
   const account = findStoredAccount(config, id);

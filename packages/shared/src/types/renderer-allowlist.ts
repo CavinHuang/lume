@@ -17,6 +17,7 @@ import { CHANNEL_IPC_CHANNELS } from "./channel"
 import { DESKTOP_CONTEXT_IPC_CHANNELS } from "./computer-use"
 import { GENERAL_SETTINGS_IPC_CHANNELS } from "./general-settings"
 import { GITHUB_RELEASE_IPC_CHANNELS } from "./github-release"
+import { CONNECTOR_IPC_CHANNELS } from "./connector"
 import { IM_IPC_CHANNELS } from "./im"
 import { LUME_CONFIG_IPC_CHANNELS } from "./lume-config"
 import { MEMORY_IPC_CHANNELS } from "./memory"
@@ -37,6 +38,7 @@ const PUBLIC_CHANNEL_SOURCES = [
   AGENT_IPC_CHANNELS,
   AUTOMATION_IPC_CHANNELS,
   CHANNEL_IPC_CHANNELS,
+  CONNECTOR_IPC_CHANNELS,
   DESKTOP_CONTEXT_IPC_CHANNELS,
   GENERAL_SETTINGS_IPC_CHANNELS,
   GITHUB_RELEASE_IPC_CHANNELS,

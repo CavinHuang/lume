@@ -57,7 +57,6 @@ export const TASK_MANAGEMENT_DENY_SET = new Set([
   "TaskList",
   "TaskGet",
   "TaskStop",
-  "TaskOutput",
   "ProcessOutput",
   "ProcessStop",
 ]);

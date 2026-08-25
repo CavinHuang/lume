@@ -32,7 +32,15 @@ interface UpdateLumeConfigSectionInput {
   summary?: string;
 }
 
-const CONFIG_VERSION = 1;
+const CONFIG_VERSION = 2;
+/**
+ * v2 迁移（#571 第 1 项）：v1 的规范化器把 classifier.enabled:false 无条件写进
+ * 每份落盘配置，且该开关从未在设置 UI 露出——存量文件里的 false 全部是默认值
+ * 写穿，不是用户选择。升级后一次性翻转为新默认（启用），并把 version 推到 2；
+ * 此后用户显式改回 false 不再被触碰。workspace overlay 不参与迁移。
+ * 约束：CONFIG_VERSION 必须 ≥ 所有迁移门版本（后续升代时同步本注释）。
+ */
+const CLASSIFIER_DEFAULT_MIGRATION_VERSION = 2;
 const log = createLogger("lume-config");
 const OFFICIAL_PLUGIN_MARKET_SOURCE: LumeConfigPluginMarketSourceRef = {
   id: "official",
@@ -80,7 +88,7 @@ function createDefaultLumeConfig(): LumeConfigFile {
       },
       rules: [],
       classifier: {
-        enabled: false
+        enabled: true
       },
       privateWriteRoots: [],
       approvals: createDefaultPermissionApprovals()
@@ -651,6 +659,28 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
   return next;
 }
 
+/**
+ * v2 一次性迁移：仅当磁盘文件版本早于 CLASSIFIER_DEFAULT_MIGRATION_VERSION 且
+ * 顶层 classifier.enabled 落着 false（v1 规范化器写穿的默认值）时翻转为 true。
+ * 只作用于顶层文件段；workspace overlay 是显式配置，不参与。
+ */
+function migrateClassifierDefault(
+  permissions: NonNullable<LumeConfigSectionSet["permissions"]>,
+  rawFile: unknown
+): NonNullable<LumeConfigSectionSet["permissions"]> {
+  const rawVersion = isPlainObject(rawFile) && typeof rawFile.version === "number" ? rawFile.version : 0;
+  if (rawVersion >= CLASSIFIER_DEFAULT_MIGRATION_VERSION) return permissions;
+  if (permissions.classifier?.enabled !== false) return permissions;
+  log.info("migrating legacy classifier.enabled=false to new default (enabled)");
+  appendAuditEntry({
+    at: new Date().toISOString(),
+    source: "system",
+    path: "permissions.classifier.enabled",
+    summary: "v2 迁移：存量默认值 false 翻转为新默认 true（#571）"
+  });
+  return { ...permissions, classifier: { ...permissions.classifier, enabled: true } };
+}
+
 function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
   const fallback = createDefaultLumeConfig();
   const fallbackToolPolicy = fallback.permissions?.toolPolicy ?? { allow: [], deny: [] };
@@ -765,7 +795,7 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
     memory: { ...fallback.memory, ...base.memory },
     skills: { ...fallback.skills, ...base.skills },
     plugins,
-    permissions: {
+    permissions: migrateClassifierDefault({
       ...fallback.permissions,
       ...base.permissions,
       toolPolicy: {
@@ -779,7 +809,7 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
       },
       privateWriteRoots: base.permissions?.privateWriteRoots ?? fallback.permissions?.privateWriteRoots ?? [],
       approvals: mergePermissionApprovals(fallback.permissions?.approvals, base.permissions?.approvals)
-    },
+    }, input),
     hooks: {
       internal: {
         ...DEFAULT_INTERNAL_HOOKS,
@@ -822,16 +852,19 @@ function writeYamlAtomic(path: string, payload: string): void {
 
 // lume.yaml 读取缓存：getEffectiveLumeConfig 调用面 48 处且多数在 run 热路径，
 // 每次全量读盘 + YAML.parse/stringify。以 path 为键（getLumeConfigYamlPath 实时读
-// LUME_CONFIG_DIR，测试同进程切目录时仅 mtime+size 可能跨目录同值串缓存）；键在
-// 写盘之后采样（normalize 写盘会改 mtime，读前采样则永久 miss）。
+// LUME_CONFIG_DIR，测试同进程切目录时仅指纹可能跨目录同值串缓存）；键在写盘之后
+// 采样（normalize 写盘会改 mtime，读前采样则永久 miss）。指纹为 mtime+size+ino
+// 三要素：跨进程写盘走 tmp+rename（每次新 inode），仅靠 mtime+size 兜底时，粗粒度
+// 时间戳文件系统（Linux jiffy 粒度）上同 tick 的两连写可被误判未变——被遮蔽的若是
+// 最后一次写，stale 配置将伴随进程存活期（#622 配方）。
 // 返回对象是缓存共享引用：调用方不得原地修改——唯一 mutate 方 updateLumeConfigSection
 // 写盘后 refresh 覆盖，最终一致。
-const lumeConfigCache = new Map<string, { mtimeMs: number; size: number; value: LumeConfigFile }>();
+const lumeConfigCache = new Map<string, { mtimeMs: number; size: number; ino: number; value: LumeConfigFile }>();
 
 function refreshLumeConfigCache(path: string, value: LumeConfigFile): void {
   try {
     const stats = statSync(path);
-    lumeConfigCache.set(path, { mtimeMs: stats.mtimeMs, size: stats.size, value });
+    lumeConfigCache.set(path, { mtimeMs: stats.mtimeMs, size: stats.size, ino: stats.ino, value });
   } catch {
     lumeConfigCache.delete(path);
   }
@@ -850,7 +883,7 @@ function readOrCreateLumeConfig(): LumeConfigFile {
     const cached = lumeConfigCache.get(path);
     if (cached) {
       const stats = statSync(path);
-      if (cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+      if (cached.mtimeMs === stats.mtimeMs && cached.size === stats.size && cached.ino === stats.ino) {
         return cached.value;
       }
     }

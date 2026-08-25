@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFileBackedTaskStore } from "./task-store";
@@ -159,6 +160,227 @@ describe("FileBackedTaskStore", () => {
       await restored.delete(created.task.id, context());
       const next = await restored.create({ subject: "Next" }, context());
       expect(next.task.id).toBe("2");
+    });
+  });
+
+  test("journal 只记 events 截断点，恢复按截断点回滚(#647 P1-7)", async () => {
+    await withStore(async (store, sessionDir) => {
+      const listDir = join(sessionDir, "tasks", "thread-1");
+      const journalPath = join(listDir, ".journal.jsonl");
+      const eventsPath = join(listDir, ".events.jsonl");
+
+      await store.create({ subject: "A" }, context());
+      const journal = await readFile(journalPath, "utf8");
+      // prepare 行不得嵌入 events 全史（O(n²) 膨胀根因）
+      expect(journal).not.toContain('"task.mutated"');
+      // 结构断言：events 条目为 contents:null + 数值型 truncateTo（生产写入值受校验）
+      const prepareLine = journal.split(/\r?\n/).find((line) => line.includes('"prepare"'));
+      const eventsEntry = (JSON.parse(prepareLine!) as {
+        files: Array<{ path: string; contents: string | null; truncateTo?: number }>;
+      }).files.find((file) => file.path === eventsPath);
+      expect(eventsEntry).toMatchObject({ contents: null });
+      expect(typeof eventsEntry!.truncateTo).toBe("number");
+
+      // 模拟崩溃：一笔未 commit 的 prepare + 事务后追加的两条伪事件
+      const eventsSizeBefore = (await stat(eventsPath)).size;
+      await appendFile(journalPath, `${JSON.stringify({
+        phase: "prepare",
+        transactionId: "txn-crash",
+        files: [{ path: eventsPath, contents: null, truncateTo: eventsSizeBefore }],
+      })}\n`);
+      await appendFile(eventsPath, `${JSON.stringify({ type: "task.mutated", fake: 1 })}\n`);
+      await appendFile(eventsPath, `${JSON.stringify({ type: "task.mutated", fake: 2 })}\n`);
+
+      // 下一次 mutation 先走 recoverJournal：伪事件应被截断回滚，
+      // 且合法事件（create A 的 sequence 1）必须完好——防过度回滚/清空
+      await store.create({ subject: "B" }, context());
+      const events = await readFile(eventsPath, "utf8");
+      expect(events).toContain("\"sequence\":1");
+      expect(events).not.toContain("\"fake\":1");
+      expect(events).not.toContain("\"fake\":2");
+    });
+  });
+
+  test("旧格式全量快照行（无 truncateTo）恢复语义不变(#647 P1-7 兼容)", async () => {
+    await withStore(async (store, sessionDir) => {
+      const listDir = join(sessionDir, "tasks", "thread-1");
+      const journalPath = join(listDir, ".journal.jsonl");
+      const eventsPath = join(listDir, ".events.jsonl");
+
+      await store.create({ subject: "Legacy" }, context());
+      const snapshot = await readFile(eventsPath, "utf8");
+      // 手植旧格式 pending prepare：contents 记录事件全史快照，随后追加垃圾尾
+      await appendFile(journalPath, `${JSON.stringify({
+        phase: "prepare",
+        transactionId: "txn-legacy",
+        files: [{ path: eventsPath, contents: snapshot }],
+      })}\n`);
+      await appendFile(eventsPath, "garbage-tail\n");
+
+      await store.create({ subject: "After legacy recovery" }, context());
+      const after = await readFile(eventsPath, "utf8");
+      expect(after.startsWith(snapshot)).toBe(true);
+      expect(after).not.toContain("garbage-tail");
+    });
+  });
+
+  test("journal 超阈值后在下一轮 recovery 压实(#647 P1-7)", async () => {
+    await withStore(async (store, sessionDir) => {
+      const journalPath = join(sessionDir, "tasks", "thread-1", ".journal.jsonl");
+      await mkdir(join(sessionDir, "tasks", "thread-1"), { recursive: true });
+      // 256KB+ 已解决（commit 配对）的历史行
+      const filler = JSON.stringify({ phase: "commit", transactionId: `t-${Date.now()}-pad`, pad: "x".repeat(128) });
+      const lines = Array.from({ length: 2200 }, (_, i) => JSON.stringify({ phase: "commit", transactionId: `pad-${i}`, blob: "y".repeat(128) }));
+      await writeFile(journalPath, [...lines, filler].join("\n") + "\n");
+      expect((await stat(journalPath)).size).toBeGreaterThan(256 * 1024);
+
+      const created = await store.create({ subject: "Compact trigger" }, context());
+
+      const sizeAfter = (await stat(journalPath)).size;
+      expect(sizeAfter).toBeLessThan(4 * 1024);
+      // 压实后 store 功能不受影响
+      expect((await store.get(created.task.id, context()))?.task.subject).toBe("Compact trigger");
+    });
+  });
+
+  test("持有进程存活但心跳废弃超时的锁被强制接管(#647 P1-8)", async () => {
+    await withStore(async (store, sessionDir) => {
+      const lockPath = join(sessionDir, "tasks", "thread-1", ".lock");
+      await mkdir(join(sessionDir, "tasks", "thread-1"), { recursive: true });
+      // pid 是当前存活进程：旧规则（进程死+心跳超时双条件）永不判陈旧 → 全表写操作 5s 超时
+      await writeFile(lockPath, JSON.stringify({ pid: process.pid, token: "ghost", heartbeatAt: Date.now() - 400_000 }));
+
+      const created = await store.create({ subject: "After ghost lock" }, context());
+      expect(created.task.subject).toBe("After ghost lock");
+    });
+  });
+
+  test("半截/损坏锁文件在 mtime 老化后被自愈(#647 P1-8)", async () => {
+    await withStore(async (store, sessionDir) => {
+      const lockPath = join(sessionDir, "tasks", "thread-1", ".lock");
+      await mkdir(join(sessionDir, "tasks", "thread-1"), { recursive: true });
+      await writeFile(lockPath, "{corrupt-half-written");
+      const backdated = new Date(Date.now() - 60_000);
+      utimesSync(lockPath, backdated, backdated);
+
+      const created = await store.create({ subject: "After corrupt lock" }, context());
+      expect(created.task.subject).toBe("After corrupt lock");
+    });
+  });
+
+  test("新鲜锁不被误偷（安全半边）", async () => {
+    await withStore(async (store, sessionDir) => {
+      const lockPath = join(sessionDir, "tasks", "thread-1", ".lock");
+      await mkdir(join(sessionDir, "tasks", "thread-1"), { recursive: true });
+      await writeFile(lockPath, JSON.stringify({ pid: process.pid, token: "live-holder", heartbeatAt: Date.now() }));
+
+      // 心跳新鲜且进程存活：必须保持互斥，等满 acquisition 超时
+      await expect(store.create({ subject: "Should not steal" }, context())).rejects.toThrow("Task lock timeout");
+    });
+  }, 15_000);
+
+  test("被未完成依赖阻塞的 Task 不得直通 completed(#647 P2-1)", async () => {
+    await withStore(async (store) => {
+      const blocker = await store.create({ subject: "Blocker" }, context());
+      const blocked = await store.create({ subject: "Blocked" }, context());
+      await store.update({ taskId: blocker.task.id, addBlocks: [blocked.task.id] }, context());
+      const blockedNow = (await store.get(blocked.task.id, context()))!;
+
+      await expect(
+        store.update({ taskId: blocked.task.id, status: "completed", expectedRevision: blockedNow.revision }, context()),
+      ).rejects.toThrow("blocked by unfinished dependencies");
+
+      const blockerNow = (await store.get(blocker.task.id, context()))!;
+      await store.update({ taskId: blocker.task.id, status: "completed", expectedRevision: blockerNow.revision }, context());
+      const current = await store.get(blocked.task.id, context());
+      await expect(
+        store.update({ taskId: blocked.task.id, status: "completed", expectedRevision: current!.revision }, context()),
+      ).resolves.toBeTruthy();
+    });
+  });
+
+  test("同一次 update 内认领门控按变更后依赖判定(#647 P2-4)", async () => {
+    await withStore(async (store) => {
+      const target = await store.create({ subject: "Target" }, context());
+      const other = await store.create({ subject: "Other" }, context());
+
+      // 旧顺序（先 claim 后加阻塞）会产出“进行中却被阻塞”的矛盾态；现在必须被拦
+      await expect(
+        store.update({
+          taskId: target.task.id,
+          status: "in_progress",
+          addBlockedBy: [other.task.id],
+          expectedRevision: target.revision,
+        }, context()),
+      ).rejects.toThrow("blocked by unfinished dependencies");
+      // 事务整体未生效：状态与依赖都保持原样
+      const after = await store.get(target.task.id, context());
+      expect(after?.task.status).toBe("pending");
+      expect(after?.task.blockedBy).toEqual([]);
+    });
+  });
+
+  test("移除阻塞后同调用即可认领（P2-4 正向路径）", async () => {
+    await withStore(async (store) => {
+      const blocker = await store.create({ subject: "Blocker" }, context());
+      const target = await store.create({ subject: "Target" }, context());
+      await store.update({ taskId: blocker.task.id, addBlocks: [target.task.id] }, context());
+
+      // 同一次调用解除阻塞并认领：门控按变更后的依赖判定，应放行
+      const blockerNow = (await store.get(blocker.task.id, context()))!;
+      await store.update({ taskId: blocker.task.id, status: "completed", expectedRevision: blockerNow.revision }, context());
+      const targetNow = (await store.get(target.task.id, context()))!;
+      const claimed = await store.update({
+        taskId: target.task.id,
+        status: "in_progress",
+        removeBlockedBy: [blocker.task.id],
+        expectedRevision: targetNow.revision,
+      }, context());
+      expect(claimed.task.status).toBe("in_progress");
+      expect(claimed.claimToken).toBeString();
+    });
+  });
+
+  test("类型不符的字段更新显式报错而非静默忽略(#647 P2-3)", async () => {
+    await withStore(async (store) => {
+      const created = await store.create({ subject: "Typed" }, context());
+      await expect(
+        store.update({ taskId: created.task.id, subject: 123 as unknown as string, expectedRevision: created.revision }, context()),
+      ).rejects.toThrow("subject must be a string");
+      await expect(
+        store.update({ taskId: created.task.id, description: { bad: true } as unknown as string, expectedRevision: created.revision }, context()),
+      ).rejects.toThrow("description must be a string");
+    });
+  });
+
+  test("completed 唯一出口是 reopen 到 pending，其余覆写仍被拒(#647 P2-6)", async () => {
+    await withStore(async (store) => {
+      const created = await store.create({ subject: "Reopenable" }, context());
+      const completed = await store.update({ taskId: created.task.id, status: "completed", expectedRevision: created.revision }, context());
+      expect(completed.task.status).toBe("completed");
+
+      await expect(
+        store.update({ taskId: created.task.id, status: "in_progress", expectedRevision: completed.revision }, context()),
+      ).rejects.toThrow("Completed Tasks cannot be overwritten");
+
+      const reopened = await store.update({ taskId: created.task.id, status: "pending", expectedRevision: completed.revision }, context());
+      expect(reopened.task.status).toBe("pending");
+      expect(reopened.task.owner).toBeUndefined();
+
+      const reclaimed = await store.update({ taskId: created.task.id, status: "in_progress", expectedRevision: reopened.revision }, context());
+      expect(reclaimed.claimToken).toBeString();
+    });
+  });
+
+  test("claim metadata 不再携带零消费方的 lease 字段(#647 P2-5)", async () => {
+    await withStore(async (store, sessionDir) => {
+      const created = await store.create({ subject: "Leaseless" }, context());
+      await store.update({ taskId: created.task.id, status: "in_progress", expectedRevision: created.revision }, context());
+      const raw = JSON.parse(await readFile(join(sessionDir, "tasks", "thread-1", `${created.task.id}.json`), "utf8")) as {
+        metadata: { _lume: { claim?: Record<string, unknown> } };
+      };
+      expect(raw.metadata._lume.claim?.token).toBeString();
+      expect(raw.metadata._lume.claim?.lease).toBeUndefined();
     });
   });
 });

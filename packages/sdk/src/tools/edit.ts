@@ -5,14 +5,17 @@
 import { readFile, stat } from 'fs/promises'
 import { defineTool } from './types.js'
 import type { ToolContext } from '../types.js'
-import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
+import { ensurePathAllowed, ensureWriteContained, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 import { countLineChanges } from '../utils/line-change-stats.js'
 import { withFileMutationLock } from '../utils/file-mutation-lock.js'
 import { writeFileAtomic } from '../utils/fs-atomic.js'
 
+// writeFileAtomic 检出 symlink 后的写入瞬间复检：containment 不以沙箱启用为
+// 前提（#546），sandbox 启用时再叠加 deny/allow 规则
 const assertWriteAllowed = (context: ToolContext) => (resolvedPath: string): string | null =>
-  ensurePathAllowed(resolvedPath, 'write', context.sandbox, context.additionalDirectories)
+  ensureWriteContained(resolvedPath, context.cwd, context.additionalDirectories)
+  ?? ensurePathAllowed(resolvedPath, 'write', context.sandbox, context.additionalDirectories)
 
 export const FileEditTool = defineTool({
   name: 'Edit',
@@ -56,6 +59,11 @@ export const FileEditTool = defineTool({
     if (unsafePathReason) return { data: `Error: ${unsafePathReason}`, is_error: true }
     const filePath = await resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
     const { old_string, new_string, replace_all } = input
+    // containment 复核不以沙箱启用为前提（#546）：junction/symlink 可穿越词法边界
+    const containmentError = ensureWriteContained(filePath, context.cwd, context.additionalDirectories)
+    if (containmentError) {
+      return { data: containmentError, is_error: true }
+    }
     const sandboxError = ensurePathAllowed(
       filePath,
       'write',
@@ -80,8 +88,13 @@ export const FileEditTool = defineTool({
       const previousRead = context.fileStateCache?.get(filePath)
       // Read-before-edit 强制（#569）：无读取记录的文件禁止盲改。
       if (!previousRead) {
+        // 容量区分（#655 终局 review·并发方向发现 A）：长会话 LRU 驱逐会
+        // 产生「明明读过却报未读」的伪错误；区分文案让模型自愈路径更短。
+        const data = context.fileStateCache?.wasDroppedByCapacity(filePath)
+          ? `Error: The read record for ${filePath} was dropped because the session's file-state cache hit its capacity limit (long sessions drop the oldest records). Read the file again, then retry this Edit.`
+          : `Error: File has not been read yet: ${filePath}. Read it first, then retry this Edit.`
         return {
-          data: `Error: File has not been read yet: ${filePath}. Read it first, then retry this Edit.`,
+          data,
           is_error: true,
           _meta: { file: { path: filePath, conflict: 'not_read', retryable: true } },
         }

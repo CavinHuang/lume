@@ -593,7 +593,6 @@ export class Agent {
       'Grep',
       'WebFetch',
       'WebSearch',
-      'TaskOutput',
       'TaskGet',
       'TaskList',
       'ToolSearch',
@@ -956,12 +955,21 @@ export class Agent {
           this.loggedMessageUuids.add(assistantMessage.uuid)
           persistScheduler.schedule()
         } else if (event.type === 'tool_result') {
+          // _meta 白名单投影（#567 第 5 项）：整包透传会把工具私有元数据带进
+          // 持久权威轨，但全丢会让 computer-use 台账跨 run 清零、provider 侧
+          // toolName 降级为 "tool"。只携带跨 run 有消费方的最小集合。
+          const projectedMeta = event.result._meta as Record<string, unknown> | undefined
+          const whitelistedMeta = projectedMeta ? {
+            ...(projectedMeta.computerUseAction !== undefined ? { computerUseAction: projectedMeta.computerUseAction } : {}),
+            ...(projectedMeta.toolName !== undefined ? { toolName: projectedMeta.toolName } : {}),
+          } : undefined
           this.sessionMessages.push(toSessionMessage('user', [{
             type: 'tool_result',
             tool_use_id: event.result.tool_use_id,
             tool_name: event.result.tool_name,
             content: event.result.content ?? event.result.output,
             is_error: event.result.is_error === true,
+            ...(whitelistedMeta && Object.keys(whitelistedMeta).length > 0 ? { _meta: whitelistedMeta } : {}),
           }]))
           persistScheduler.schedule()
         } else if (event.type === 'system') {

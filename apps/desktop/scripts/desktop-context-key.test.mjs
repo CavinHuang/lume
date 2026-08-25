@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadOrCreateDesktopContextKey } from '../src/desktop-context-key.ts'
@@ -28,6 +28,25 @@ test('wraps a generated desktop context key and reuses it across launches', () =
       randomBytes: () => { throw new Error('must reuse wrapped key') },
     })
     assert.deepEqual(second, first)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('tightens permissions of a wrapped key written by older versions (#617 review)', () => {
+  if (process.platform === 'win32') return
+  const dir = mkdtempSync(join(tmpdir(), 'lume-context-key-perm-'))
+  const path = join(dir, 'key.bin')
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (value) => Buffer.from(`wrapped:${value}`, 'utf8'),
+    decryptString: (value) => value.toString('utf8').slice('wrapped:'.length),
+  }
+  try {
+    loadOrCreateDesktopContextKey({ path, safeStorage, randomBytes: () => Buffer.alloc(32, 1) })
+    chmodSync(path, 0o644)
+    loadOrCreateDesktopContextKey({ path, safeStorage, randomBytes: () => { throw new Error('must reuse') } })
+    assert.equal(statSync(path).mode & 0o777, 0o600)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -213,7 +213,7 @@ export function resolvePersistedToolApprovalInterruption(input: {
 
 export function classifyToolKind(toolName: string): "read" | "write" | "execute" | "control" {
   const normalized = toolName.toLowerCase();
-  if (normalized === "read" || normalized === "glob" || normalized === "grep" || normalized === "processoutput" || normalized === "taskoutput") return "read";
+  if (normalized === "read" || normalized === "glob" || normalized === "grep" || normalized === "processoutput") return "read";
   if (normalized === "write" || normalized === "edit" || normalized === "notebookedit") return "write";
   if (normalized === "askuserquestion") return "control";
   return "execute";

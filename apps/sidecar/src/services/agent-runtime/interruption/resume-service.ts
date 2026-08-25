@@ -257,6 +257,19 @@ export function buildColdStartContinuationMessage(checkpoint: RunContinuationSta
   const toolName = checkpoint.checkpoint.toolName ?? "unknown tool";
   const result = checkpoint.checkpoint.syntheticToolResult;
   const toolCall = checkpoint.checkpoint.toolCall;
+
+  // #650：并存后台任务的次槽快照——每个已有终态结果的项注入一条"已完成的
+  // 后台任务"说明，让模型知晓这些任务无需重跑；仍无终态的项如实提示等待。
+  const otherLines = (checkpoint.backgroundCheckpoints ?? []).map((item) => {
+    if (item.syntheticToolResult !== undefined) {
+      return [
+        `- 后台任务 ${item.processJobId}（${item.toolName || item.toolKind}）已完成：`,
+        `  结果: ${stringifyContinuationResult(item.syntheticToolResult)}`,
+      ].join("\n");
+    }
+    return `- 后台任务 ${item.processJobId}（${item.toolName || item.toolKind}）仍在等待终态；不要重复发起同一命令，稍后通过 ProcessOutput 查询。`;
+  });
+
   if (checkpoint.version === 2 && checkpoint.status === "ready_to_execute" && toolCall) {
     return [
       "继续执行之前因人工审批暂停的任务。",
@@ -266,6 +279,7 @@ export function buildColdStartContinuationMessage(checkpoint: RunContinuationSta
       `输入哈希: ${toolCall.inputHash}`,
       "保存的原始输入:",
       stringifyContinuationResult(toolCall.input),
+      ...(otherLines.length > 0 ? ["并存后台任务状态:", ...otherLines] : []),
       "仅执行上述原工具调用一次；不要改写输入，不要先发起新的规划轮次。执行后读取实际结果并继续原始用户任务。"
     ].join("\n");
   }
@@ -276,6 +290,7 @@ export function buildColdStartContinuationMessage(checkpoint: RunContinuationSta
     checkpoint.checkpoint.toolCallId ? `工具调用 ID: ${checkpoint.checkpoint.toolCallId}` : "",
     "已解决的交互结果:",
     stringifyContinuationResult(result),
+    ...(otherLines.length > 0 ? ["并存后台任务状态:", ...otherLines] : []),
     checkpoint.version === 1 && checkpoint.checkpoint.step === "before_model_call"
       ? "注意：如果这是工具审批结果，原工具调用尚未在冷启动恢复路径中执行；如仍需要该动作，请重新发起工具调用或调整计划。"
       : "",

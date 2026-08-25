@@ -631,6 +631,8 @@ export async function revertCodingRun(input: {
 }): Promise<{
   filesChanged: string[];
   conflicts: string[];
+  /** 已提交边界文件（与 conflicts/skipped 不相交；nonRewindableFiles 为三者并集） */
+  committedPaths: string[];
   nonRewindableFiles: string[];
   status: "restored" | "conflict" | "committed_boundary";
 }> {
@@ -645,7 +647,8 @@ export async function revertCodingRun(input: {
   const paths = Object.keys(checkpoint.files)
     .filter((path) => !requestedPaths || requestedPaths.has(resolve(path)));
   if (paths.length === 0) throw new Error("当前 Coding Run 没有工作区内的文件检查点");
-  const committedPaths = paths.filter((path) => hasCommitBoundaryForPath(record, path));
+  const gitProbe = createGitProbeCache();
+  const committedPaths = paths.filter((path) => hasCommitBoundaryForPath(record, path, gitProbe));
   const rewindablePaths = paths.filter((path) => !committedPaths.includes(path));
   const alreadyRestored = await findAlreadyRestoredFiles(record, rewindablePaths);
   const conflicts = (await findFingerprintConflicts(record, rewindablePaths))
@@ -668,6 +671,10 @@ export async function revertCodingRun(input: {
   return {
     filesChanged,
     conflicts,
+    // 三桶不相交拆分（#572 review）：UI 摘要按类计数，合并并集会把同一文件
+    // 既算「外部修改跳过」又算「已提交不可回退」。nonRewindableFiles 保留并集
+    // 兼容既有消费方。
+    committedPaths,
     nonRewindableFiles: [...committedPaths, ...conflicts, ...skippedFiles],
     status: committedPaths.length > 0
       ? "committed_boundary"
@@ -763,18 +770,43 @@ async function assertNoSymlinkPathForRoots(roots: string[], path: string): Promi
   await assertNoSymlinkPath(root, path);
 }
 
-function hasCommitBoundaryForPath(record: CodingRunCheckpointRecord, path: string): boolean {
-  const gitRoot = findGitRootForPath(path);
+/**
+ * 单次 revert 的 git 探测缓存（#572 review P1）：hasCommitBoundaryForPath 对
+ * 每路径原本各跑 findGitRootForPath（2 次 spawnSync）+ rev-parse HEAD（1 次），
+ * 数百文件的 checkpoint 会以同步 spawn 冻结事件循环数秒。gitRoot 按 path→root
+ * 记忆化、HEAD 按根去重后整次 revert 每仓库只探一次。
+ */
+interface GitProbeCache {
+  gitRoots: Map<string, string | null>;
+  headByRoot: Map<string, string>;
+}
+
+function createGitProbeCache(): GitProbeCache {
+  return { gitRoots: new Map(), headByRoot: new Map() };
+}
+
+function hasCommitBoundaryForPath(record: CodingRunCheckpointRecord, path: string, probe?: GitProbeCache): boolean {
+  const cacheKey = resolve(path);
+  let gitRoot = probe?.gitRoots.get(cacheKey);
+  if (gitRoot === undefined) {
+    gitRoot = findGitRootForPath(path);
+    probe?.gitRoots.set(cacheKey, gitRoot);
+  }
   if (!gitRoot) return false;
-  const baselineCommit = record.baselineCommits?.[resolve(gitRoot)]
+  const rootKey = resolve(gitRoot);
+  const baselineCommit = record.baselineCommits?.[rootKey]
     ?? (isPathInside(gitRoot, record.cwd) ? record.baselineCommit : undefined);
   if (!baselineCommit) return false;
-  const result = spawnSync("git", ["rev-parse", "HEAD"], {
-    cwd: gitRoot,
-    encoding: "utf8",
-    windowsHide: true,
-  });
-  const currentCommit = result.status === 0 ? result.stdout.trim() : "";
+  let currentCommit = probe?.headByRoot.get(rootKey);
+  if (currentCommit === undefined) {
+    const result = spawnSync("git", ["rev-parse", "HEAD"], {
+      cwd: gitRoot,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    currentCommit = result.status === 0 ? result.stdout.trim() : "";
+    probe?.headByRoot.set(rootKey, currentCommit);
+  }
   return Boolean(currentCommit && currentCommit !== baselineCommit);
 }
 

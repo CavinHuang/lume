@@ -5,6 +5,7 @@ import { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker"
 import { createAgentHandlers } from "./agent-handlers";
 import { createAutomationHandlers } from "./automation-handlers";
 import { createChannelHandlers } from "./channel-handlers";
+import { createConnectorHandlers } from "./connector-handlers";
 import { createImHandlers } from "./im-handlers";
 import { createMemoryHandlers } from "./memory-handlers";
 import { createModelMetaHandlers } from "./model-meta-handlers";
@@ -118,6 +119,7 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     createChannelHandlers(),
     createModelMetaHandlers(),
     createImHandlers(),
+    createConnectorHandlers(),
     createMemoryHandlers(),
     createReadingHandlers({
       writeNotification: context.writeNotification

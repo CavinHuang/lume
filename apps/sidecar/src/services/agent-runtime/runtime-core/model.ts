@@ -1,4 +1,5 @@
 import type { Api, KnownProvider, Model } from "./model-types";
+import { DEFAULT_CONTEXT_WINDOW } from "@lume/agent-sdk";
 import { findModelMeta } from "@lume/shared";
 import { resolveModelCandidatesForChannel } from "./model-candidates";
 import { prioritizeProvidersForBaseUrl, shouldApplyChannelBaseUrl } from "./provider-routing";
@@ -97,7 +98,7 @@ function createFallbackModel(
     reasoning: true,
     input: vision ? ["text", "image"] : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: contextWindowOverride ?? findModelMeta(modelId)?.contextWindow ?? 200000,
+    contextWindow: contextWindowOverride ?? findModelMeta(modelId)?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     maxTokens: 32768
   };
 }

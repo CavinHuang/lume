@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isNativeAvailable } from "@lume/natives";
-import { resetWindowsBashDiscoveryForTests } from "@lume/agent-sdk";
+import { isReadOnlyPowerShell, isReadOnlyShellInput, resetWindowsBashDiscoveryForTests } from "@lume/agent-sdk";
 import { evaluateRuntimeToolSafety, type RuntimeToolSafetyContext } from "./guardrails/runtime-tool-safety";
 import { classifyHeuristic } from "./permissions/permission-classifier";
 import {
@@ -44,6 +44,17 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
       const classification = classifyHeuristic({ toolName: "bash", command, shellKind: "powershell" });
       expect(classification.riskLevel).not.toBe("low");
       expect(classification.shouldAsk).toBe(true);
+    }
+  });
+
+  test("every shared probe stays outside the SDK read-only proof (#684 三层互锁)", () => {
+    // 第三个消费方（SDK 只读证明 → 免审通道）接入防漂移体系：危险动词探针
+    // 必须同时被 isReadOnlyPowerShell / isReadOnlyShellInput 拒绝。两判定均走
+    // 纯正则/词表路径（探针不含显式前缀时 isReadOnlyShellInput 经语法树或
+    // fail-closed 回退，两态结果一致为 false），无 natives 双态确定。
+    for (const command of PS_DANGEROUS_PROBES) {
+      expect(isReadOnlyPowerShell(command)).toBeFalse();
+      expect(isReadOnlyShellInput({ command })).toBeFalse();
     }
   });
 

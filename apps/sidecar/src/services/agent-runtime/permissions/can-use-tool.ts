@@ -536,7 +536,9 @@ export function createCanUseToolHandler(
       descriptor,
       input,
       permissionMode: params.input.permissionMode,
-      classifierEnabled: config.permissions?.classifier?.enabled ?? false,
+      // 字段缺失 = 启用（#571 第 1 项）：新默认开启启发式分类；v1 存量文件的
+      // 显式 false 由 lume-config-service 的 v2 迁移一次性翻转为 true。
+      classifierEnabled: config.permissions?.classifier?.enabled ?? true,
       permissionRules,
       privateWriteRoots,
       context: {

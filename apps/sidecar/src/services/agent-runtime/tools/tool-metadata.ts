@@ -528,6 +528,25 @@ registerToolMetadata({
   allowedInPlanMode: false
 });
 
+// automation_template 是 list/create 复合动作：create 会创建真实定时 agent run
+// （对齐 automation_set 的 write/high）；元数据只能取整工具最保守值，plan 模式
+// 下的纯查看走 read 类工具（automation_list / automation_read）。
+registerToolMetadata({
+  name: "automation_template",
+  category: "write",
+  riskLevel: "high",
+  description: "查看和使用自动化任务模板（create 会创建真实定时任务）",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
+  name: "automation_list",
+  category: "read",
+  riskLevel: "low",
+  description: "搜索和筛选已有自动化任务",
+  allowedInPlanMode: true
+});
+
 // 子代理派发工具（canonicalize 后为 agent_spawn；显式注册消除对名称推断巧合的依赖）
 registerToolMetadata({
   name: "Agent",
