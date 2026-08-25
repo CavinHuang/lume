@@ -8,11 +8,13 @@ import type {
 } from '@lume/shared'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   getEffectiveLumeConfig,
   updateAgentPermissionMode,
+  updateAgentProjectInstructionsEnabled,
   updatePermissionsSection,
 } from '@/lib/desktop-api/lume-config'
 import {
@@ -41,7 +43,7 @@ const ICON_MAP: Record<PermissionModeIconKey, typeof Shield> = {
   map: Map,
 }
 
-type SavingTarget = null | 'mode' | 'rules'
+type SavingTarget = null | 'mode' | 'rules' | 'projectInstructions'
 
 const RULE_ACTION_OPTIONS: Array<{
   value: LumeConfigPermissionRuleAction
@@ -151,6 +153,21 @@ export function PermissionSettings() {
     }
   }
 
+  // #670 行为告知:项目指令(CLAUDE.md/AGENTS.md)自动注入开关,缺省开启。
+  const projectInstructionsEnabled = config?.agent?.projectInstructionsEnabled !== false
+  const handleProjectInstructionsEnabledChange = async (enabled: boolean) => {
+    setSaving('projectInstructions')
+    try {
+      const nextConfig = await updateAgentProjectInstructionsEnabled(enabled, selectedWorkspaceSlug)
+      setConfig(nextConfig)
+    } catch (error) {
+      console.error('[PermissionSettings] save project instructions FAILED:', error)
+      toast.error('保存项目指令设置失败')
+    } finally {
+      setSaving(null)
+    }
+  }
+
   const savePermissionSettings = async () => {
     if (!config || !draft) return
     setSaving('rules')
@@ -242,6 +259,23 @@ export function PermissionSettings() {
               </Button>
             )
           })}
+        </div>
+      </SettingsCard>
+
+      <SettingsCard
+        title="项目指令"
+        description="自动加载项目目录中的 CLAUDE.md / AGENTS.md 注入 Agent 系统提示（就近向上解析，单文件超 32KB 截断）。会话头部会显示当前生效的指令文件。"
+      >
+        <div className="flex items-center justify-between gap-3 py-1">
+          <div className="min-w-0">
+            <div className="text-[12.5px] font-medium text-[var(--text-1)]">项目指令自动注入</div>
+            <div className="mt-0.5 text-[11px] text-[var(--text-3)]">关闭后不读取项目指令文件</div>
+          </div>
+          <Switch
+            checked={projectInstructionsEnabled}
+            disabled={saving === 'projectInstructions'}
+            onCheckedChange={(checked) => void handleProjectInstructionsEnabledChange(checked)}
+          />
         </div>
       </SettingsCard>
 

@@ -598,6 +598,9 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
         || value.agent.thinkingLevel === "high"
         || value.agent.thinkingLevel === "max"
         ? { thinkingLevel: value.agent.thinkingLevel }
+        : {}),
+      ...(typeof value.agent.projectInstructionsEnabled === "boolean"
+        ? { projectInstructionsEnabled: value.agent.projectInstructionsEnabled }
         : {})
     };
   }

@@ -10,6 +10,7 @@ import { getAgentWorkspacePath, getAgentConfigDir } from "../infra/config-paths"
 import { createLogger } from "../infra/logger";
 import { renderSkillManifestLines } from "./prompt/context/skill-manifest-builder";
 import { buildProjectInstructionsSection } from "./prompt/context/project-instructions";
+import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { buildMemorySections } from "./prompt/sections/memory-sections";
 import {
   CLAUDE_PLAN_MODE_SECTION,
@@ -289,6 +290,11 @@ export function resolveSystemPromptMode(
   return "full";
 }
 
+/** 项目指令注入开关（agent.projectInstructionsEnabled，缺省 true）。#670 行为告知。 */
+function isProjectInstructionsEnabled(): boolean {
+  return getEffectiveLumeConfig().agent?.projectInstructionsEnabled !== false;
+}
+
 function buildMinimalSections(ctx: SystemPromptContext): string[] {
   const lines: string[] = buildToolingSection(ctx.availableTools);
 
@@ -302,9 +308,11 @@ function buildMinimalSections(ctx: SystemPromptContext): string[] {
 
   lines.push("", buildRuntimeSection(ctx, "minimal"));
 
-  const minimalProjectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
-  if (minimalProjectInstructions) {
-    lines.push("", minimalProjectInstructions);
+  if (isProjectInstructionsEnabled()) {
+    const minimalProjectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
+    if (minimalProjectInstructions) {
+      lines.push("", minimalProjectInstructions);
+    }
   }
 
   if (ctx.automationExecution) {
@@ -405,10 +413,13 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
   }
 
   // 项目级指令文件（CLAUDE.md/AGENTS.md，就近覆盖）：低频变更，进稳定 system
-  // 前缀吃 prompt cache；无文件时不产生任何段落，prompt 保持原样
-  const projectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
-  if (projectInstructions) {
-    sections.push(projectInstructions);
+  // 前缀吃 prompt cache；无文件时不产生任何段落，prompt 保持原样。
+  // 设置开关（agent.projectInstructionsEnabled，缺省 true）关闭时整体跳过注入。
+  if (isProjectInstructionsEnabled()) {
+    const projectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
+    if (projectInstructions) {
+      sections.push(projectInstructions);
+    }
   }
 
   sections.push(buildRuntimeSection(ctx, "full"));

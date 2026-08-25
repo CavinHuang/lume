@@ -64,6 +64,9 @@ import {
 } from "../services/agent/external-dirs-service";
 import { promoteFileToWorkspace } from "../services/agent/agent-file-promotion-service";
 import { requestFileSelectionEdit } from "../services/agent/file-selection-edit-service";
+import { resolveAgentThreadWorkdir } from "../services/agent/agent-workdir-resolver";
+import { loadProjectInstructions } from "../services/agent/prompt/context/project-instructions";
+import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
 import { getAgentSubmissionStore } from "../services/agent/agent-submission-store";
 import {
   attachWorkspaceResourceToThreadInputSchema,
@@ -125,6 +128,24 @@ export function createFileHandlers(
         resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
         input.threadId,
       );
+    },
+    // #670 行为告知:与 system prompt 注入同源(loadProjectInstructions memo),
+    // 开关关闭时同样视为未加载,保持查询结果与实际注入行为一致。
+    [AGENT_IPC_CHANNELS.GET_PROJECT_INSTRUCTIONS_INFO]: async (params) => {
+      const input = validateInput(
+        threadPathInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_PROJECT_INSTRUCTIONS_INFO,
+      );
+      if (getEffectiveLumeConfig().agent?.projectInstructionsEnabled === false) return null;
+      const { agentCwd } = resolveAgentThreadWorkdir(input.threadId);
+      const instructions = loadProjectInstructions(agentCwd);
+      if (!instructions) return null;
+      return {
+        path: instructions.path,
+        chars: instructions.content.length,
+        truncated: instructions.truncated,
+      };
     },
     [AGENT_IPC_CHANNELS.LIST_DIRECTORY]: async (params) => {
       const input = validateInput(

@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useAtom, useAtomValue } from 'jotai'
-import { FolderOpen, ListTodo } from 'lucide-react'
+import { FileText, FolderOpen, ListTodo } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { agentRuntimeEventsFamily, agentThreadsAtom, agentRuntimeStatusFamily, agentStreamingStatesFamily, agentWorkspacesAtom, activeTabIdAtom, tabsAtom } from '@/atoms'
 import { ThreadMoreActions } from './ThreadMoreActions'
-import { AGENT_IPC_CHANNELS, type AgentRuntimePhase, type AgentWorkspace, type AgentWorkspaceStatus } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type AgentProjectInstructionsInfo, type AgentRuntimePhase, type AgentWorkspace, type AgentWorkspaceStatus } from '@lume/shared'
 import { getPlanningTodo, onPlanningTodoChange, openFolderDialog, sidecarCall } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
 
@@ -39,6 +39,9 @@ export function AgentHeader({ threadId, readOnly, actions }: AgentHeaderProps) {
   const [workspaceStatus, setWorkspaceStatus] = useState<AgentWorkspaceStatus | null>(null)
   const [ordinaryPath, setOrdinaryPath] = useState<string | null>(null)
   const [primaryTodo, setPrimaryTodo] = useState<{ id: string; title: string; status: string } | null>(null)
+  // #670 行为告知:项目指令注入此前完全静默,头部 chip 一次性展示当前生效的
+  // CLAUDE.md/AGENTS.md(路径与截断态在 tooltip),无指令时不渲染。
+  const [instructionsInfo, setInstructionsInfo] = useState<AgentProjectInstructionsInfo | null>(null)
 
   const runtimePhase = runtimeStatus?.phase
   const phase: AgentRuntimePhase | undefined =
@@ -51,6 +54,14 @@ export function AgentHeader({ threadId, readOnly, actions }: AgentHeaderProps) {
   const toolStepCount = runtimeEvents.filter((event) => event.type === 'tool.started').length
   const isStreaming = phase === 'streaming'
   const toolName = runtimeStatus?.toolName
+
+  useEffect(() => {
+    let cancelled = false
+    void sidecarCall<AgentProjectInstructionsInfo | null>(AGENT_IPC_CHANNELS.GET_PROJECT_INSTRUCTIONS_INFO, { threadId })
+      .then((info) => { if (!cancelled) setInstructionsInfo(info ?? null) })
+      .catch(() => { if (!cancelled) setInstructionsInfo(null) })
+    return () => { cancelled = true }
+  }, [threadId])
 
   useEffect(() => {
     // 快速切换会话时旧线程的响应可能晚到，cancelled 守卫防止覆盖新线程的状态
@@ -128,6 +139,17 @@ export function AgentHeader({ threadId, readOnly, actions }: AgentHeaderProps) {
         </span>
         <ThreadMoreActions threadId={threadId} readOnly={readOnly} />
         {primaryTodo && <Button type="button" variant="secondary" onClick={openPrimaryTodo} className="h-7 max-w-[220px] justify-start gap-1.5 px-2 text-[11px]" title={primaryTodo.title}><ListTodo size={13} /><span className="truncate">{primaryTodo.title}</span></Button>}
+        {instructionsInfo && (
+          <span
+            className="flex h-7 max-w-[220px] shrink-0 items-center gap-1.5 rounded-md bg-[var(--lume-bg-elevated)] px-2 text-[11px] text-muted-foreground"
+            title={`${instructionsInfo.path}\n已注入系统提示 ${instructionsInfo.chars} 字符${instructionsInfo.truncated ? '（超出 32KB 上限已截断）' : ''}`}
+          >
+            <FileText size={13} className="shrink-0" />
+            <span className="truncate">
+              {instructionsInfo.path.split(/[\\/]/).pop()}{instructionsInfo.truncated ? ' · 已截断' : ''}
+            </span>
+          </span>
+        )}
         <Button
           type="button"
           variant="ghost"
