@@ -1,3 +1,5 @@
+import { isBuiltinBrowserToolName } from "@lume/shared";
+
 type InteractionPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
 
 export function buildUncertaintySection(permissionMode?: InteractionPermissionMode): string {
@@ -45,7 +47,10 @@ export function buildPlanModeSection(): string {
 }
 
 export function buildBrowserFirstSection(availableTools: Set<string>): string | null {
-  if (!availableTools.has("browser") || !availableTools.has("web_search")) {
+  // 池内浏览器工具实名是 mcp__browser__*（无字面量 "browser"），必须按前缀检测；
+  // 权威名单见 shared BROWSER_TOOL_NAME_PREFIX / create-browser-tools BROWSER_TOOL_NAMES
+  const hasBrowserTools = Array.from(availableTools).some(isBuiltinBrowserToolName);
+  if (!hasBrowserTools || !availableTools.has("web_search")) {
     return null;
   }
 

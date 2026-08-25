@@ -30,6 +30,7 @@ import type {
   RuntimeCodingReport,
   FileReferenceBinding,
 } from "@lume/shared";
+import { isBuiltinBrowserToolName } from "@lume/shared";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -659,7 +660,7 @@ async function assembleSessionContext({
   initialTodoState: Awaited<ReturnType<typeof readLatestTodoState>>;
   subagentDefinition: AgentDefinition | undefined;
 }) {
-  const runtimeSkills = toolset.availableToolNames.includes("mcp__browser__snapshot")
+  const runtimeSkills = toolset.availableToolNames.some(isBuiltinBrowserToolName)
     && !input.browserAttachments?.length
     ? surfaceSkills.filter((skill) => skill.name !== "browser:browser")
     : surfaceSkills;

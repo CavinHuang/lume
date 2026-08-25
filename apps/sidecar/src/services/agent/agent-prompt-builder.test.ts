@@ -194,14 +194,23 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("引用已关闭");
   });
 
-  test("同时具备 browser 与 web_search 时应注入 Browser-First 策略", () => {
+  test("同时具备内置浏览器工具与 web_search 时应注入 Browser-First 策略", () => {
+    // 生产池内浏览器工具实名是 mcp__browser__*，字面量 "browser" 从不出现在真实名单（#542）
     const prompt = buildSystemPromptAppend({
       sessionId: "session-browser-first",
-      availableTools: ["browser", "web_search"]
+      availableTools: ["mcp__browser__snapshot", "mcp__browser__click", "WebSearch"]
     });
     expect(prompt).toContain("## 浏览器优先工具策略（强制）");
     expect(prompt).toContain("必须优先使用 browser 工具");
     expect(prompt).toContain("仅在以下情况才回退 WebSearch");
+  });
+
+  test("仅字面量 browser 而无实名浏览器工具时不应注入 Browser-First 策略", () => {
+    const prompt = buildSystemPromptAppend({
+      sessionId: "session-browser-first-literal",
+      availableTools: ["browser", "web_search"]
+    });
+    expect(prompt).not.toContain("## 浏览器优先工具策略");
   });
 
   test("automationExecution=true 时应注入无交互模式约束", () => {

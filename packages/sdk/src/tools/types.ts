@@ -24,11 +24,13 @@ export function defineTool(config: {
   isReadOnly?: boolean | ((input: any, context?: ToolContext) => boolean)
   isConcurrencySafe?: boolean | ((input: any, context?: ToolContext) => boolean)
   prompt?: string | ((context: ToolContext) => Promise<string>)
+  runtimeMetadata?: Record<string, unknown>
 }): ToolDefinition {
   return {
     name: config.name,
     description: config.description,
     inputSchema: config.inputSchema,
+    ...(config.runtimeMetadata ? { runtimeMetadata: config.runtimeMetadata } : {}),
     ...(config.validateInput ? { validateInput: config.validateInput } : {}),
     ...(config.outputSchema ? { outputSchema: config.outputSchema } : {}),
     ...(config.getPath ? { getPath: config.getPath } : {}),
