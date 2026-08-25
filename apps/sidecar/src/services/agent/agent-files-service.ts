@@ -488,9 +488,11 @@ function movePathWithFallback(sourcePath: string, targetPath: string): void {
     renameSync(sourcePath, targetPath);
     return;
   } catch (error) {
-    // EXDEV=跨设备；EPERM/EBUSY=Windows 杀毒/索引器瞬时占用（#552）
+    // EXDEV=跨设备（全平台降级）；EPERM/EBUSY 仅 Windows 走占用重试+降级——
+    // POSIX 上二者多为永久语义（如 mount point rename 返回 EBUSY），降级拷贝后删源会清空挂载内容（#552 review round5）
     const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "EXDEV" && code !== "EPERM" && code !== "EBUSY") {
+    const occupancyRetry = process.platform === "win32" && (code === "EPERM" || code === "EBUSY");
+    if (code !== "EXDEV" && !occupancyRetry) {
       throw error;
     }
     firstErrorCode = code;
@@ -501,6 +503,7 @@ function movePathWithFallback(sourcePath: string, targetPath: string): void {
       sleepSyncMs(delayMs);
       try {
         renameSync(sourcePath, targetPath);
+        log.info("文件移动占用重试成功", { code: firstErrorCode, sourcePath, targetPath, retriedAfterMs: delayMs });
         return;
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
@@ -510,6 +513,7 @@ function movePathWithFallback(sourcePath: string, targetPath: string): void {
       }
     }
   }
+  log.info("文件移动降级为拷贝+删除", { code: firstErrorCode, sourcePath, targetPath });
   try {
     mkdirSync(dirname(targetPath), { recursive: true });
     rmSync(targetPath, { recursive: true, force: true });
@@ -1138,8 +1142,10 @@ function spawnDetached(command: string, args: string[]): void {
     detached: true,
     stdio: "ignore",
   });
-  // 无 error 监听会踩中 sidecar uncaughtException 五击止损通道（#548）
-  child.once("error", () => {});
+  // 无 error 监听会踩中 sidecar uncaughtException 五击止损通道（#548）；吞错但必须留痕
+  child.once("error", (error) => {
+    log.warn("spawnDetached 失败（打开文件/文件夹）", { command, args, error: error.message });
+  });
   child.unref();
 }
 

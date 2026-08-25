@@ -340,6 +340,7 @@ async function handleRpcLine(line: string): Promise<void> {
  */
 function installProcessErrorGuards(): void {
   let uncaughtCount = 0;
+  let lastUncaughtSignature = "";
   const UNCAUGHT_EXIT_THRESHOLD = 5;
   process.on("unhandledRejection", (reason) => {
     writeLogRecord({
@@ -352,15 +353,22 @@ function installProcessErrorGuards(): void {
   });
   process.on("uncaughtException", (error) => {
     uncaughtCount += 1;
+    lastUncaughtSignature = `${error.name}: ${error.message}`;
     writeLogRecord({
       level: "error",
       context: "sidecar.lifecycle",
       event: "sidecar.uncaught_exception",
       message: `uncaught exception (guarded ${uncaughtCount}/${UNCAUGHT_EXIT_THRESHOLD})`,
-      error: { message: error instanceof Error ? error.message : String(error) }
+      // stack 截断首行定位：无它则五条日志都无法还原抛出点（#548 review round5）
+      error: {
+        message: error.message,
+        stack: error.stack?.split("\n").slice(0, 6).join("\n")
+      }
     });
     if (uncaughtCount >= UNCAUGHT_EXIT_THRESHOLD) {
-      writeEmergencyLog(`sidecar exiting after ${uncaughtCount} uncaught exceptions (pid=${process.pid})`);
+      writeEmergencyLog(
+        `sidecar exiting after ${uncaughtCount} uncaught exceptions (pid=${process.pid}, last=${lastUncaughtSignature})`
+      );
       process.exit(1);
     }
   });

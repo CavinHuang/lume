@@ -108,7 +108,19 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
   const runId = randomUUID();
   const lease = tryAcquireAutomationLease({ jobId: job.id, scheduledAt, runId });
   if (!lease || runningJobs.has(job.id)) {
-    mergeLatestAutomationTrigger(job.id, scheduledAt);
+    try {
+      mergeLatestAutomationTrigger(job.id, scheduledAt);
+    } catch (error) {
+      // 盘满等写失败不得让 fire-and-forget 的 executeJob reject 断掉调度链（#615 review round5）
+      writeLogRecord({
+        level: "error",
+        context: "automation.runner",
+        event: "automation.trigger_merge_failed",
+        message: "合并待执行触发落盘失败",
+        status: "error",
+        data: { automationJobId: job.id, error: error instanceof Error ? error.message : String(error) }
+      });
+    }
     const skipped: AutomationRun = {
       id: runId,
       jobId: job.id,
@@ -125,7 +137,19 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
 
   runningJobs.add(job.id);
   const heartbeat = setInterval(() => {
-    heartbeatAutomationLease(lease, threadId);
+    // 定时器回调抛错即 uncaughtException 直通五击止损（盘满场景 5s 内必现），必须就地兜底
+    try {
+      heartbeatAutomationLease(lease, threadId);
+    } catch (error) {
+      writeLogRecord({
+        level: "error",
+        context: "automation.runner",
+        event: "automation.heartbeat_failed",
+        message: "自动化任务心跳续期失败（lease 可能被 stale 自愈回收）",
+        status: "error",
+        data: { automationJobId: job.id, error: error instanceof Error ? error.message : String(error) }
+      });
+    }
   }, 5_000);
   heartbeat.unref?.();
   let threadId: string | undefined;

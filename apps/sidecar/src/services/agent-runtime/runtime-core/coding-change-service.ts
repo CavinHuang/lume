@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { Worker } from "node:worker_threads";
+import { createLogger } from "../../infra/logger";
 import type {
   CodingBinaryDiffPayload,
   CodingBlameResult,
@@ -32,6 +33,7 @@ const MAX_REVIEW_SEARCH_OUTPUT_BYTES = 16 * 1024 * 1024;
 // 字符串版 runGitCommand（含 worker 版）的 stdout 字节水位（#594）：
 // binary diff 场景下无上限累积会内存暴涨（UTF-16 再翻倍），超限 kill 返回 null，与 runGitBuffer 同策略
 const MAX_GIT_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
+const log = createLogger("coding-change-git");
 const MAX_BLAME_CACHE_ENTRIES = 128;
 const blameCache = new Map<string, CodingBlameResult>();
 const SHOULD_ISOLATE_GIT_SPAWN = "bun" in process.versions;
@@ -41,10 +43,11 @@ const GIT_COMMAND_WORKER_SOURCE = String.raw`
 
   parentPort.on("message", ({ id, args, cwd, timeoutMs }) => {
     let settled = false;
-    const finish = (value) => {
+    // diag：异常终态原因回传主线程记日志（worker 内无 logger），正常完成不带
+    const finish = (value, diag) => {
       if (settled) return;
       settled = true;
-      parentPort.postMessage({ id, value });
+      parentPort.postMessage(diag ? { id, value, diag } : { id, value });
     };
     let child;
     try {
@@ -53,19 +56,19 @@ const GIT_COMMAND_WORKER_SOURCE = String.raw`
         stdio: ["ignore", "pipe", "ignore"],
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
       });
-    } catch {
-      finish(null);
+    } catch (error) {
+      finish(null, { reason: "spawn_error", message: String(error && error.message || error) });
       return;
     }
     child.stdout.setEncoding("utf8");
     let stdout = "";
     let stdoutBytes = 0;
     let overflowed = false;
-    // 与主线程版 MAX_GIT_COMMAND_OUTPUT_BYTES(16MB)保持一致；worker 源码为独立环境，用字面量
+    // String.raw 不影响插值求值：水位与主线程版 MAX_GIT_COMMAND_OUTPUT_BYTES 编译期同源（#594）
     child.stdout.on("data", (chunk) => {
       if (overflowed) return;
       stdoutBytes += Buffer.byteLength(chunk, "utf8");
-      if (stdoutBytes > 16 * 1024 * 1024) {
+      if (stdoutBytes > ${MAX_GIT_COMMAND_OUTPUT_BYTES}) {
         overflowed = true;
         child.kill();
         return;
@@ -74,21 +77,25 @@ const GIT_COMMAND_WORKER_SOURCE = String.raw`
     });
     const timeout = setTimeout(() => {
       child.kill();
-      finish(null);
+      finish(null, { reason: "timeout", message: "git command timed out" });
     }, timeoutMs);
-    child.on("error", () => {
+    child.on("error", (error) => {
       clearTimeout(timeout);
-      finish(null);
+      finish(null, { reason: "error_event", message: String(error && error.message || error) });
     });
     child.on("close", (code) => {
       clearTimeout(timeout);
-      finish(code === 0 && !overflowed ? stdout : null);
+      if (overflowed) {
+        finish(null, { reason: "stdout_overflow", message: "stdout exceeded size limit" });
+        return;
+      }
+      finish(code === 0 ? stdout : null);
     });
   });
 `;
 let gitCommandWorker: Worker | undefined;
 let nextGitCommandId = 1;
-const pendingGitCommands = new Map<number, (value: string | null) => void>();
+const pendingGitCommands = new Map<number, { resolve: (value: string | null) => void; args: string[]; cwd: string }>();
 
 export interface CodingFileDiff {
   kind: "text";
@@ -1794,7 +1801,7 @@ function runGitCommandInWorker(args: string[], cwd: string): Promise<string | nu
       return;
     }
     const id = nextGitCommandId++;
-    pendingGitCommands.set(id, resolveResult);
+    pendingGitCommands.set(id, { resolve: resolveResult, args, cwd });
     try {
       worker.postMessage({ id, args, cwd, timeoutMs: GIT_TIMEOUT_MS });
     } catch {
@@ -1808,16 +1815,20 @@ function getGitCommandWorker(): Worker {
   if (gitCommandWorker) return gitCommandWorker;
   const worker = new Worker(GIT_COMMAND_WORKER_SOURCE, { eval: true });
   worker.unref();
-  worker.on("message", (message: { id: number; value: string | null }) => {
-    const resolveResult = pendingGitCommands.get(message.id);
-    if (!resolveResult) return;
+  worker.on("message", (message: { id: number; value: string | null; diag?: { reason: string; message: string } }) => {
+    const pending = pendingGitCommands.get(message.id);
+    if (!pending) return;
     pendingGitCommands.delete(message.id);
-    resolveResult(message.value);
+    // 异常终态（水位/超时/spawn 失败）必须留痕，否则与 git 真实故障在日志上不可区分（#594 review round5）
+    if (message.diag) {
+      log.warn("runGitCommand 异常终态", { reason: message.diag.reason, detail: message.diag.message, gitArgs: pending.args.slice(0, 3), cwd: pending.cwd });
+    }
+    pending.resolve(message.value);
   });
   const resetWorker = () => {
     if (gitCommandWorker !== worker) return;
     gitCommandWorker = undefined;
-    for (const resolveResult of pendingGitCommands.values()) resolveResult(null);
+    for (const pending of pendingGitCommands.values()) pending.resolve(null);
     pendingGitCommands.clear();
   };
   worker.on("error", resetWorker);

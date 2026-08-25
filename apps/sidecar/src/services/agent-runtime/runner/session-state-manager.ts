@@ -58,8 +58,11 @@ class SessionStateManager {
         data[id] = state;
       }
       writeFileSync(getSessionStatesPath(), JSON.stringify(data), "utf-8");
-    } catch {
-      // 持久化失败不影响主流程
+    } catch (error) {
+      // 持久化失败不影响主流程，但必须留痕——否则"清理已落盘"的日志与磁盘事实相反（#615 review round5）
+      log.warn("会话状态落盘失败", {
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 

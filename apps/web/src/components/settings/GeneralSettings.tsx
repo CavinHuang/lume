@@ -303,7 +303,15 @@ export function GeneralSettings() {
 
         <SettingsCard title="本地数据">
           <div className="grid grid-cols-2 gap-3">
-            <QuickAction icon={FileCog} label="打开配置文件" onClick={() => void openLumeConfigSourceFile()} />
+            <QuickAction
+              icon={FileCog}
+              label="打开配置文件"
+              onClick={() =>
+                void openLumeConfigSourceFile().then((result) => {
+                  if (!result.ok) toast.error('打开配置文件失败，请检查系统是否支持该操作')
+                })
+              }
+            />
             <QuickAction
               icon={Trash2}
               label="数据管理"

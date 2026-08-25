@@ -59,30 +59,47 @@ export function tryAcquireAutomationLease(input: {
         runId: input.runId,
         scheduledAt: input.scheduledAt
       };
-      writeState({
-        version: 1,
-        jobId: input.jobId,
-        status: "running",
-        lease: {
-          id: lease.leaseId,
-          ownerId: OWNER_ID,
-          scheduledAt: input.scheduledAt,
-          runId: input.runId,
-          heartbeatAt: Date.now()
-        },
-        updatedAt: Date.now()
-      });
+      try {
+        writeState({
+          version: 1,
+          jobId: input.jobId,
+          status: "running",
+          lease: {
+            id: lease.leaseId,
+            ownerId: OWNER_ID,
+            scheduledAt: input.scheduledAt,
+            runId: input.runId,
+            heartbeatAt: Date.now()
+          },
+          updatedAt: Date.now()
+        });
+      } catch (error) {
+        // lock 已建而 state 写失败（盘满）：不回滚则孤儿 lock 使该 job 永久 skipped 且重启不自愈
+        // （#615 review round5）
+        try {
+          rmSync(lockPath, { force: true });
+        } catch {
+          /* 无能为力，只能放弃本周期 */
+        }
+        throw error;
+      }
       return lease;
     } catch {
       const state = readAutomationRuntimeState(input.jobId);
       if (!isStaleRunningLease(state)) return null;
-      writeState({
-        ...state!,
-        status: "interrupted",
-        message: "Sidecar 重启或 lease 心跳超时；未知副作用不会自动重放。",
-        lease: undefined,
-        updatedAt: Date.now()
-      });
+      try {
+        writeState({
+          ...state!,
+          status: "interrupted",
+          message: "Sidecar 重启或 lease 心跳超时；未知副作用不会自动重放。",
+          lease: undefined,
+          updatedAt: Date.now()
+        });
+      } catch {
+        // 盘满下自愈写失败：放弃本周期，不得向外抛（fire-and-forget 调用链）
+        try { rmSync(lockPath, { force: true }); } catch { /* ignore */ }
+        return null;
+      }
       try {
         rmSync(lockPath, { force: true });
       } catch {

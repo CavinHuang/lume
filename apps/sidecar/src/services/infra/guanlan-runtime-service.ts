@@ -7,6 +7,9 @@ import * as https from "node:https";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getConfigDir } from "./config-paths";
+import { createLogger } from "./logger";
+
+const log = createLogger("guanlan-runtime");
 
 const PYTHON_BUILD_DATE = "20260414";
 const PYTHON_VERSION = "3.11.15";
@@ -243,7 +246,18 @@ async function runCommand(command: string, args: string[], options: GuanlanRunOp
   });
 }
 
-async function ensureManagedPythonReady(): Promise<boolean> {
+// 单飞去重：启动自检 / agent search / TEST_SEARCH_BACKEND 可能并发进入，同一 archivePath
+// 的并发下载会互写坏档，且一方的失败清理 rm 会删掉另一方正在写的文件（#548 review round5）
+let managedPythonReadyInFlight: Promise<boolean> | null = null;
+
+function ensureManagedPythonReady(): Promise<boolean> {
+  managedPythonReadyInFlight ??= doEnsureManagedPythonReady().finally(() => {
+    managedPythonReadyInFlight = null;
+  });
+  return managedPythonReadyInFlight;
+}
+
+async function doEnsureManagedPythonReady(): Promise<boolean> {
   const runtimeRoot = join(getConfigDir(), "runtime", "python");
   if (existsSync(getManagedPythonExecutable(runtimeRoot))) {
     return true;
@@ -272,7 +286,14 @@ async function ensureManagedPythonReady(): Promise<boolean> {
     await mkdir(dirname(runtimeRoot), { recursive: true });
     await renameDirectory(extractPath, runtimeRoot);
     return existsSync(getManagedPythonExecutable(runtimeRoot));
-  } catch {
+  } catch (error) {
+    // downloadFile 的错误链（url/超时类型/HTTP 码）必须落到日志，否则 RPC 侧只剩
+    // "自动下载失败"通用文案，无法区分 GitHub 404 / 网络墙 / 磁盘满（#548 review round5）
+    log.warn("托管 Python 运行时下载/解压失败", {
+      url,
+      archivePath,
+      error: error instanceof Error ? error.message : String(error)
+    });
     return false;
   } finally {
     await rm(tempRoot, { recursive: true, force: true }).catch(() => {});
