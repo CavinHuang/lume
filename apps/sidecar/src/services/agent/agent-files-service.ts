@@ -1747,7 +1747,7 @@ export function saveFilesToAgentSession(
         ...(scope.fileContextId
           ? {
               ref: {
-                source: "session" as const,
+                source: "session",
                 scopeId: scope.fileContextId,
                 relativePath: threadPath,
               },
@@ -1858,7 +1858,7 @@ export async function saveFilesToAgentSessionStreamed(
         ...(scope.fileContextId
           ? {
               ref: {
-                source: "session" as const,
+                source: "session",
                 scopeId: scope.fileContextId,
                 relativePath: threadPath,
               },

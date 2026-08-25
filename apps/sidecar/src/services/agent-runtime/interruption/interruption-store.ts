@@ -53,8 +53,10 @@ class FileBackedLumeInterruptionStore implements LumeInterruptionStore {
   }
 
   async resolve(interruptionId: string, patch: Pick<LumeInterruption, "status" | "resolution">): Promise<void> {
+    // 终态守卫与 sync 版一致：get 与 write 之间的 await 间隙里，迟到的 cancel/submit
+    // 可并发读到 pending 并 last-writer-wins 翻转终态（round9 安全 review）
     const current = await this.get(interruptionId);
-    if (!current) return;
+    if (!current || current.status !== "pending") return;
     const now = new Date().toISOString();
     const resolved = {
       ...current,
