@@ -6,7 +6,7 @@
  * this is diagnostic-only.
  */
 
-import { LUME_LOG_SCHEMA_VERSION, classifyLogKey, clipLogPreview, normalizeLogValue, type LumeLogBatch, type LumeLogEventInput } from '@lume/shared'
+import { LUME_LOG_SCHEMA_VERSION, normalizeLogValue, type LumeLogBatch, type LumeLogEventInput } from '@lume/shared'
 import { invoke } from '@/lib/desktop-runtime/core'
 
 type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'

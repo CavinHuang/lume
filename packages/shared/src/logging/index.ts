@@ -25,6 +25,7 @@ export const CONTENT_PREVIEW_KEYS: ReadonlySet<string> = new Set([
 
 /** Union of both processes' quiet lists; failures are NEVER quiet regardless of this set. */
 export const QUIET_RPC_METHODS: ReadonlySet<string> = new Set([
+  'system.log-level',
   'healthcheck',
   'general-settings:get',
   'agent:list-threads',

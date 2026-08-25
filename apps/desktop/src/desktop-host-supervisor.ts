@@ -141,7 +141,12 @@ export function createDesktopHostSupervisor({
           log(`[desktop-host] ${line}`)
           continue
         }
-        logEvent?.(parsed as DesktopHostStructuredLog)
+        try {
+          logEvent?.(parsed as DesktopHostStructuredLog)
+        } catch {
+          // logEvent 自身故障不得在 data handler 里抛未捕获异常。
+          log(`[desktop-host] ${line}`)
+        }
       }
     }
     running.stdout?.on('data', (chunk) => ingestChunk('stdout', String(chunk)))
