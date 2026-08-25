@@ -121,3 +121,26 @@ describe("decodeMimeWords (RFC 2047 inbound display)", () => {
     expect(summarizeGmailMessage(resource).subject).toBe("会议纪要");
   });
 });
+
+describe("decodeMimeWords multi-byte continuation", () => {
+  it("joins byte-split multi-byte chars across adjacent encoded words without U+FFFD", () => {
+    // "你好世界" = 12 字节,按 7/5 字节中切成两个 B 词(主流编码器 75 字符词界的常态输出)
+    const bytes = Buffer.from("你好世界", "utf8");
+    const first = bytes.subarray(0, 7).toString("base64");
+    const second = bytes.subarray(7).toString("base64");
+    const decoded = decodeMimeWords(`=?UTF-8?B?${first}?= =?UTF-8?B?${second}?=`);
+    expect(decoded).toBe("你好世界");
+    expect(decoded).not.toContain("�");
+  });
+
+  it("falls back to raw for malformed base64 bodies instead of mojibake", () => {
+    const raw = "=?UTF-8?B?!!!not-base64!!!?=";
+    expect(decodeMimeWords(raw)).toBe(raw);
+  });
+
+  it("keeps mixed undecodable runs untouched", () => {
+    const good = Buffer.from("hi").toString("base64");
+    const mixed = `=?UTF-8?B?${good}?= =?gb2312?B?xOO6ww==?=`;
+    expect(decodeMimeWords(mixed)).toBe(mixed);
+  });
+});

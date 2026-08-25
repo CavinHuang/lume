@@ -113,6 +113,13 @@ interface PendingAuthorization {
 const pendingAuthorizations = new Map<string, PendingAuthorization>();
 const OAUTH_CALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
 
+// 测试 seam:授权流需要复现"listen 尚未回调即失败"的窗口,真实 bind 无法稳定注入。
+let httpServerFactory: typeof createServer = createServer;
+/** @internal 仅测试使用;调用方负责还原默认工厂。 */
+export function setHttpServerFactoryForTest(factory: typeof createServer): void {
+  httpServerFactory = factory;
+}
+
 function requireOAuthAuth(service: string): OAuth2AuthDefinition {
   const auth = getConnector(service).definition.auth.find((entry) => entry.type === "oauth2");
   if (!auth) throw new ConnectorError("connector_auth_unsupported", `${service} 不支持 OAuth2 授权`);
@@ -154,7 +161,7 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
     rejectUrl = reject;
   });
   const done = new Promise<ResolvedCredential & { authType: "oauth2" }>((resolve, reject) => {
-    const server = createServer((req, res) => void handleOAuthCallback(req, res, service));
+    const server = httpServerFactory((req, res) => void handleOAuthCallback(req, res, service));
 
     const finish = (fn: () => void) => {
       clearTimeout(timer);
@@ -477,8 +484,10 @@ export async function refreshConnectorCredential(
 export function disconnectConnector(service: string): void {
   const pending = pendingAuthorizations.get(service);
   if (pending) stopPendingAuthorization(service, new ConnectorError("oauth_flow_cancelled", "授权已取消"));
-  // 使在途的授权码保存失配:连接测试期间断开,旧请求不得把凭证写回
-  saveEpochs.delete(service);
+  // 使在途的授权码保存失配:连接测试期间断开,旧请求不得把凭证写回。
+  // 必须 bump 而非 delete:归零复用会让断开后的新一轮保存与在途旧保存撞号,
+  // 守卫双双失效(旧保存落盘复活)
+  saveEpochs.set(service, (saveEpochs.get(service) ?? 0) + 1);
   // 断开 ≠ 忘记配置:清凭证但保留用户手填的 OAuth client_id/secret,
   // 否则 Gmail 重连要重新翻 GCP Console 抄一遍
   clearConnectorCredentialData(service);
