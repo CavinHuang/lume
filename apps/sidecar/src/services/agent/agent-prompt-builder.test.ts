@@ -201,7 +201,10 @@ describe("agent-prompt-builder", () => {
       availableTools: ["mcp__browser__snapshot", "mcp__browser__click", "WebSearch"]
     });
     expect(prompt).toContain("## 浏览器优先工具策略（强制）");
-    expect(prompt).toContain("必须优先使用 browser 工具");
+    // 教学节正文只引用池内真实存在的工具实名（#711 review：不得指挥模型调用不存在的工具）
+    expect(prompt).toContain("mcp__browser__list_tabs");
+    expect(prompt).not.toContain("browser status");
+    expect(prompt).not.toContain("relay_status");
     expect(prompt).toContain("仅在以下情况才回退 WebSearch");
   });
 
