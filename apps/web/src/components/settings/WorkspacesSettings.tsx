@@ -625,14 +625,15 @@ function WorkspaceFilesPanel({ workspace }: { workspace: AgentWorkspace }) {
     const fallbackName = selectedPath.split('/').filter(Boolean).pop() ?? selectedPath
     const newName = window.prompt('重命名为', fallbackName)?.trim()
     if (!newName || newName === fallbackName) return
-    await sidecarCall(AGENT_IPC_CHANNELS.RENAME_WORKSPACE_ROOT_FILE, {
+    const result = await sidecarCall<{ ok: true; path: string; warning?: string }>(AGENT_IPC_CHANNELS.RENAME_WORKSPACE_ROOT_FILE, {
       workspaceSlug: workspace.slug,
       path: selectedPath,
       newName,
     })
+    if (result.warning) toast.warning(result.warning)
     setSelectedPath('')
     setPreview(null)
-    toast.success('已重命名')
+    if (!result.warning) toast.success('已重命名')
   })
 
   const handleMove = () => runFileAction('move', async () => {
