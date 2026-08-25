@@ -18,14 +18,14 @@ describe("create-lume-tools", () => {
     const result = createLumeRuntimeTools(baseInput());
 
     expect(result.customTools.map((tool) => tool.name)).toContain("send_im_message");
-    expect(result.availableToolNames).toContain("send_im_message");
+    expect(result.customTools.map((t) => t.name)).toContain("send_im_message");
   });
 
   test("includes the suggestion_analyze builtin tool for runtime threads", () => {
     const result = createLumeRuntimeTools(baseInput());
 
     expect(result.customTools.map((tool) => tool.name)).toContain("suggestion_analyze");
-    expect(result.availableToolNames).toContain("suggestion_analyze");
+    expect(result.customTools.map((t) => t.name)).toContain("suggestion_analyze");
   });
 
   test("includes Alice-style WeRead reading workflow tools", () => {
@@ -34,8 +34,8 @@ describe("create-lume-tools", () => {
 
     expect(toolNames).toContain("weread_generate_note");
     expect(toolNames).toContain("weread_export_all_notes");
-    expect(result.availableToolNames).toContain("weread_generate_note");
-    expect(result.availableToolNames).toContain("weread_export_all_notes");
+    expect(result.customTools.map((t) => t.name)).toContain("weread_generate_note");
+    expect(result.customTools.map((t) => t.name)).toContain("weread_export_all_notes");
   });
 
   test("registers Browser and Computer Use tools independently of message wording", () => {
@@ -45,7 +45,7 @@ describe("create-lume-tools", () => {
     expect(toolNames).toContain("mcp__node_repl__js");
     expect(toolNames).toContain("mcp__node_repl__js_reset");
     expect(toolNames).toContain("mcp__node_repl__js_add_node_module_dir");
-    expect(result.availableToolNames).toContain("mcp__node_repl__js");
+    expect(result.customTools.map((t) => t.name)).toContain("mcp__node_repl__js");
     expect(toolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeTrue();
     expect(toolNames).not.toContain("js");
     expect(toolNames).toContain("mcp__browser__list_tabs");
@@ -97,7 +97,7 @@ describe("create-lume-tools", () => {
       originalUserInstruction: "修复浏览器页面的弹窗层级问题"
     });
     const toolNames = result.customTools.map((tool) => tool.name);
-    expect(result.availableToolNames).toContain("automation_read");
+    expect(result.customTools.map((t) => t.name)).toContain("automation_read");
     expect(toolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeTrue();
     expect(toolNames.some((name) => name.startsWith("mcp__node_repl__"))).toBeTrue();
   });
@@ -110,7 +110,7 @@ describe("create-lume-tools", () => {
     expect(toolNames).not.toContain("mcp__node_repl__js_reset");
     expect(toolNames).not.toContain("mcp__node_repl__js_add_node_module_dir");
     expect(toolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeFalse();
-    expect(result.availableToolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeFalse();
+    expect(result.customTools.some((tool) => tool.name.startsWith("mcp__computer_use__"))).toBeFalse();
   });
 
 });

@@ -31,13 +31,6 @@ import { createSuggestionTools } from "./suggest/create-suggestion-tools";
 import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
 import { createBrowserMcpTools } from "./browser/create-browser-tools";
 
-const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep", "ls"];
-const AUTOMATION_TOOL_NAMES = [
-  "automation_read",
-  "automation_set",
-  "automation_query"
-];
-
 export interface CreateLumeRuntimeToolsInput {
   threadId: string;
   runId?: string;
@@ -66,7 +59,6 @@ export interface CreateLumeRuntimeToolsInput {
 
 export interface CreateLumeRuntimeToolsOutput {
   customTools: ToolDefinition[];
-  availableToolNames: string[];
 }
 
 export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): CreateLumeRuntimeToolsOutput {
@@ -92,11 +84,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ? createDreamEvidenceTools({ workspaceSlug: input.workspaceSlug, jobId: dreamProfile.jobId })
     : [];
   if (dreamProfile) {
-    const customTools = [...memoryTools, ...dreamEvidenceTools];
-    return {
-      customTools,
-      availableToolNames: ["Read", "Glob", "Grep", "ls", ...customTools.map((tool) => tool.name)]
-    };
+    return { customTools: [...memoryTools, ...dreamEvidenceTools] };
   }
   const cronTools = createSdkCronTools({
     workspaceId: input.workspaceId,
@@ -193,14 +181,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...planningTodoTools,
     ...computerUseTools,
   ];
-  const customToolNames = customTools.map((tool) => tool.name);
 
-  return {
-    customTools,
-    availableToolNames: [
-      ...BASE_RUNTIME_TOOL_NAMES,
-      ...AUTOMATION_TOOL_NAMES,
-      ...customToolNames
-    ]
-  };
+  // 注入池归属由 ToolRuntime.build 重算；此处只产出自定义工具本身
+  return { customTools };
 }
