@@ -2,9 +2,11 @@
 import { getRuntimeSkills, getWorkspaceMcpConfig } from "./agent-workspace-manager";
 import type { MemoryCitationsMode } from "../memory-v2/policy";
 import { BUILTIN_AGENT_ROLES, canonicalizeAgentToolName } from "@lume/shared";
+import { shellKindWithoutDiscovery } from "@lume/agent-sdk";
 import type { AgentDefinition } from "@lume/agent-sdk";
 import type { SessionType as ThreadType } from "@lume/shared";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import os from "node:os";
 import { join, basename } from "node:path";
 import { getAgentWorkspacePath, getAgentConfigDir } from "../infra/config-paths";
 import { createLogger } from "../infra/logger";
@@ -516,6 +518,13 @@ export function buildDynamicContext(ctx: DynamicContext): string {
 
   if (ctx.agentCwd) {
     sections.push(`<working_directory>${ctx.agentCwd}</working_directory>`);
+    // 环境探测段（#574）：平台/Shell/git/包管理器各一行。按 cwd 做 TTL 缓存，
+    // 避免每回合重建 dynamic context 时重复探测；git 中途 init 的陈旧窗口
+    // 由短 TTL 自愈。
+    const envLines = getEnvironmentProbe(ctx.agentCwd);
+    if (envLines.length > 0) {
+      sections.push(`<environment>\n${envLines.join("\n")}\n</environment>`);
+    }
   }
   if (ctx.lumeWorkDir && ctx.lumeWorkDir !== ctx.agentCwd) {
     sections.push(`<lume_working_directory>${ctx.lumeWorkDir}</lume_working_directory>`);
@@ -542,6 +551,42 @@ export function buildDynamicContext(ctx: DynamicContext): string {
   }
 
   return sections.join("\n\n");
+}
+
+// ─── 环境探测（#574）───────────────────────────────────────────────
+
+const ENV_PROBE_TTL_MS = 5 * 60 * 1000;
+const envProbeCache = new Map<string, { at: number; lines: string[] }>();
+
+function getEnvironmentProbe(cwd: string): string[] {
+  const cached = envProbeCache.get(cwd);
+  if (cached && Date.now() - cached.at < ENV_PROBE_TTL_MS) return cached.lines;
+  const lines: string[] = [];
+  try {
+    lines.push(`平台/系统: ${process.platform} / ${os.type()} ${os.release()}`);
+    lines.push(`Shell 方言: ${shellKindWithoutDiscovery() === "bash" ? "POSIX bash" : "PowerShell"}`);
+    if (existsSync(join(cwd, ".git"))) lines.push("Git: 工作目录在 git 仓库内");
+    const packageManager = detectPackageManagerMarker(join(cwd));
+    if (packageManager) lines.push(`包管理器: ${packageManager}`);
+  } catch {
+    // 探测失败不阻塞 prompt 构建：environment 段是增强信息不是契约
+  }
+  envProbeCache.set(cwd, { at: Date.now(), lines });
+  return lines;
+}
+
+const PACKAGE_MANAGER_MARKERS: Array<[file: string, name: string]> = [
+  ["bun.lockb", "bun"],
+  ["bun.lock", "bun"],
+  ["pnpm-lock.yaml", "pnpm"],
+  ["yarn.lock", "yarn"],
+  ["package-lock.json", "npm"],
+  ["Cargo.lock", "cargo"],
+  ["go.mod", "go"],
+];
+
+function detectPackageManagerMarker(dir: string): string | undefined {
+  return PACKAGE_MANAGER_MARKERS.find(([file]) => existsSync(join(dir, file)))?.[1];
 }
 
 function compactPromptText(text?: string, maxLength = 120): string {

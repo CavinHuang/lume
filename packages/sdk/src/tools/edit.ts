@@ -19,7 +19,7 @@ const assertWriteAllowed = (context: ToolContext) => (resolvedPath: string): str
 
 export const FileEditTool = defineTool({
   name: 'Edit',
-  description: 'Perform exact string replacements in files. The file must be read with Read before the first edit. The old_string must match exactly (including whitespace and indentation). Use replace_all to change every occurrence.',
+  description: 'Perform exact string replacements in files. The file must be read with Read before the first edit. The old_string must match exactly (including whitespace and indentation). Use replace_all to change every occurrence. If a replacement fails, re-read the file and fix the change within the same run instead of abandoning or working around it.',
   inputSchema: {
     type: 'object',
     properties: {
