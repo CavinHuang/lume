@@ -4,10 +4,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AGENT_IPC_CHANNELS, buildConnectionModelRef } from "@lume/shared";
 import {
-  isMockRuntimeModelFallbackRetryable,
-  resolveMockRuntimeModelAttemptParams
-} from "../agent-runtime/runtime-core/attempt-test-helpers";
-import {
   normalizeProviderId,
   parseModelRef,
   resolveAgentDefaultStrategy,
@@ -37,8 +33,8 @@ mock.module("../agent-runtime/runner/attempt", () => ({
     emit.onComplete();
     return { status: "completed" as const };
   },
-  isRuntimeModelFallbackRetryable: isMockRuntimeModelFallbackRetryable,
-  resolveRuntimeModelAttemptParams: resolveMockRuntimeModelAttemptParams,
+  isRuntimeModelFallbackRetryable: () => false,
+  resolveRuntimeModelAttemptParams: (params: unknown) => [params],
   stopAgentRuntime: () => undefined,
   isAgentRuntimeSessionActive: () => false
 }));

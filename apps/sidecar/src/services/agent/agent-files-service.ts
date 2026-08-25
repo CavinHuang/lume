@@ -2251,6 +2251,4 @@ export function attachWorkspaceResourceToThread(
   return { ok: true, path: targetPath };
 }
 
-export const saveFilesToAgentThread = saveFilesToAgentSession;
 export const saveFilesToAgentThreadStreamed = saveFilesToAgentSessionStreamed;
-export const copyFolderToThread = copyFolderToSession;

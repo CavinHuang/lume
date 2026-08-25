@@ -148,12 +148,6 @@ export function getImAccount(id: string): ImAccount | null {
   return account ? toPublicAccount(account) : null;
 }
 
-export function listImAccountSecrets(): string[] {
-  return readConfig().accounts
-    .map((account) => account.encryptedToken ? decryptSecret(account.encryptedToken) : undefined)
-    .filter((token): token is string => Boolean(token));
-}
-
 export function getImRuntimeAccount(id: string): ImRuntimeAccount {
   const config = readConfig();
   const account = findStoredAccount(config, id);

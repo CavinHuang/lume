@@ -94,7 +94,7 @@ Provide exactly one of image_url or file_path. You may optionally include a capt
       inputSchema: {
         type: "object",
         properties: {
-          image_url: { type: "string", description: "URL of an image to download and send via WeChat." },
+          image_url: { type: "string", description: "URL of an image to download and send via IM." },
           file_path: { type: "string", description: "Local file path to send as attachment." },
           caption: { type: "string", description: "Optional caption text to send before the media." },
         },

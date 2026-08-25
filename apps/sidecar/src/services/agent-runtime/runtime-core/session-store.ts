@@ -92,7 +92,6 @@ export interface RuntimeCoreSessionManager {
   getSessionId(): string;
   getSessionDir(): string;
   getSessionFile(): string | undefined;
-  getEntries(): RuntimeCoreEntry[];
   appendModelChange(provider: string, modelId: string): void;
   appendThinkingLevelChange(level: string): void;
   appendMessage(message: RuntimeCoreAppendMessageInput): string;
@@ -369,10 +368,6 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
   getSessionFile(): string | undefined {
     const path = getTranscriptJsonlPath(this.sessionDir);
     return existsSync(path) ? path : undefined;
-  }
-
-  getEntries(): RuntimeCoreEntry[] {
-    return readState(this.sessionDir).entries;
   }
 
   appendModelChange(provider: string, modelId: string): void {

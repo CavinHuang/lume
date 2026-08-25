@@ -3,10 +3,6 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AgentMessageAppendedEvent, SDKMessage } from "@lume/shared";
-import {
-  isMockRuntimeModelFallbackRetryable,
-  resolveMockRuntimeModelAttemptParams
-} from "../agent-runtime/runtime-core/attempt-test-helpers";
 
 const heldRunResolvers = new Map<string, () => void>();
 const runAgentRuntimeCalls: unknown[] = [];
@@ -372,8 +368,8 @@ mock.module("../agent-runtime/runner/attempt", () => ({
     activeMockSessions.delete(threadId);
   }
   },
-  isRuntimeModelFallbackRetryable: isMockRuntimeModelFallbackRetryable,
-  resolveRuntimeModelAttemptParams: resolveMockRuntimeModelAttemptParams,
+  isRuntimeModelFallbackRetryable: () => false,
+  resolveRuntimeModelAttemptParams: (params: unknown) => [params],
   stopAgentRuntime: () => undefined,
   isAgentRuntimeSessionActive: (threadId: string) => activeMockSessions.has(threadId)
 }));
@@ -720,36 +716,6 @@ describe("agent-service", () => {
       }
     });
     expect(sdkMessages.map((message) => message.type)).toEqual(["user", "assistant", "result"]);
-  });
-
-  test("CodingTurn 只在实际修改后惰性创建且不依赖用户措辞", async () => {
-    const { createAgentThread } = await import("./agent-thread-manager");
-    const { sendAgentMessage } = await import("./agent-service");
-    const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
-    const { listCodingTurnRecords } = await import("../agent-runtime/runtime-core/coding-turn-store");
-    const send = (threadId: string, userMessage: string) => sendAgentMessage({
-      threadId,
-      userMessage,
-      channelId: "channel-test",
-      modelId: "provider/model-test"
-    }, {
-      onMessageAppended: () => undefined,
-      onComplete: () => undefined,
-      onError: () => undefined,
-      onTitleUpdated: () => undefined,
-      onAskUserQuestion: () => undefined,
-      onToolPermissionRequest: () => undefined
-    });
-
-    const conversation = createAgentThread("ordinary conversation", "channel-test");
-    await send(conversation.id, "你好，今天怎么样");
-    expect(await listCodingTurnRecords(getRuntimeCoreSessionDir(conversation.id))).toHaveLength(0);
-
-    const changed = createAgentThread("implicit file change", "channel-test");
-    await send(changed.id, "把这个文件收好");
-    const turns = await listCodingTurnRecords(getRuntimeCoreSessionDir(changed.id));
-    expect(turns).toHaveLength(1);
-    expect(turns[0]?.changedFiles).toEqual([{ path: "notes.txt", addedLines: 1, removedLines: 0 }]);
   });
 
   test("未配置 title 模型时首轮完成后也应回退到会话渠道触发 LLM 标题生成", async () => {

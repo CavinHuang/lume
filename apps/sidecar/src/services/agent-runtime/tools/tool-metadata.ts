@@ -153,13 +153,6 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
-  name: "MultiEdit",
-  category: "write",
-  riskLevel: "medium",
-  description: "批量编辑多个文件"
-});
-
-registerToolMetadata({
   name: "bash",
   category: "execute",
   riskLevel: "high",
@@ -308,14 +301,6 @@ registerToolMetadata({
 
 // 自动化定时工具
 registerToolMetadata({
-  name: "cron_read",
-  category: "read",
-  riskLevel: "low",
-  description: "读取定时任务配置",
-  allowedInPlanMode: true
-});
-
-registerToolMetadata({
   name: "automation_read",
   category: "read",
   riskLevel: "low",
@@ -324,27 +309,11 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
-  name: "cron_set",
-  category: "write",
-  riskLevel: "medium",
-  description: "设置定时任务（创建/更新/删除/启停）",
-  allowedInPlanMode: false
-});
-
-registerToolMetadata({
   name: "automation_set",
   category: "write",
   riskLevel: "high",
   description: "设置自动化任务（创建/更新/删除/启停/立即执行）",
   allowedInPlanMode: false
-});
-
-registerToolMetadata({
-  name: "cron_query",
-  category: "read",
-  riskLevel: "low",
-  description: "查询定时任务运行记录",
-  allowedInPlanMode: true
 });
 
 registerToolMetadata({
@@ -559,12 +528,13 @@ registerToolMetadata({
   allowedInPlanMode: false
 });
 
-// Task 工具（启动子 Agent）
+// 子代理派发工具（canonicalize 后为 agent_spawn；显式注册消除对名称推断巧合的依赖）
 registerToolMetadata({
-  name: "Task",
+  name: "Agent",
   category: "execute",
   riskLevel: "medium",
-  description: "启动子任务"
+  description: "派发子代理执行委派任务",
+  allowedInPlanMode: false
 });
 
 // Skill 工具
@@ -573,14 +543,6 @@ registerToolMetadata({
   category: "control",
   riskLevel: "low",
   description: "执行技能"
-});
-
-// MCP 工具
-registerToolMetadata({
-  name: "MCPSearch",
-  category: "control",
-  riskLevel: "low",
-  description: "搜索 MCP 工具"
 });
 
 // 图像生成工具

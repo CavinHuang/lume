@@ -251,13 +251,6 @@ export class LumeResumeService {
       };
     }
   }
-
-  async resumeRunWithoutCheckpoint(): Promise<ResumeRunResult> {
-    return {
-      status: "not_resumable",
-      error: "完整 cold-start resume 需要 RunContinuationState；当前 run 没有 checkpoint。"
-    };
-  }
 }
 
 export function buildColdStartContinuationMessage(checkpoint: RunContinuationState): string {

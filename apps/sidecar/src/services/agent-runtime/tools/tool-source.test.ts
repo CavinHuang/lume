@@ -72,6 +72,20 @@ describe("createToolDescriptorsFromDefinitions", () => {
     });
   });
 
+  test("keeps subagent dispatch tool (Agent) approval-required by default", () => {
+    expect(createToolDescriptorsFromDefinitions([makeTool("Agent")], "sdk")).toEqual([
+      expect.objectContaining({
+        name: "Agent",
+        metadata: expect.objectContaining({
+          category: "execute",
+          riskLevel: "medium",
+          allowedInPlanMode: false,
+          requiresApprovalByDefault: true
+        })
+      })
+    ]);
+  });
+
   test("infers Lume memory and automation tools as product-owned sources", () => {
     const registry = new ToolRegistry();
     registry.registerMany(createToolDescriptorsFromDefinitions([

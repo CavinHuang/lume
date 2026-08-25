@@ -24,7 +24,6 @@ const TOOL_NAME_ALIASES: Record<string, string> = {
 };
 
 const AUTOMATION_TOOL_NAMES = [
-  "cron_set",
   "automation_set"
 ] as const;
 
@@ -159,23 +158,6 @@ export function resolveEffectiveToolPolicies(input: ResolveEffectiveToolPolicyIn
     policies.push(metadataPolicy);
   }
   return policies;
-}
-
-export function applyRuntimeToolPolicies<T extends { name: string }>(
-  tools: T[],
-  input: ResolveEffectiveToolPolicyInput
-): T[] {
-  let filtered = tools;
-  for (const policy of resolveEffectiveToolPolicies(input)) {
-    const allow = expandRuntimeToolPolicyEntries(policy.allow);
-    const deny = expandRuntimeToolPolicyEntries(policy.deny);
-    filtered = filtered.filter((tool) => {
-      if (matchesAnyRuntimeToolPolicyEntry(tool.name, deny)) return false;
-      if (allow.length > 0 && !matchesAnyRuntimeToolPolicyEntry(tool.name, allow)) return false;
-      return true;
-    });
-  }
-  return filtered;
 }
 
 export function resolveEnabledMemoryToolNames(policy?: MemoryToolPolicy): string[] {

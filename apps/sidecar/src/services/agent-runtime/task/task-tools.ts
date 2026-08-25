@@ -1,4 +1,4 @@
-import { createTaskTools, type TaskToolName, type ToolDefinition } from "@lume/agent-sdk";
+import { createTaskTools, type ToolDefinition } from "@lume/agent-sdk";
 import type { LumeRuntimeEvent } from "@lume/shared";
 import { createFileBackedTaskStore, type TaskStoreNotification } from "./task-store";
 
@@ -47,11 +47,3 @@ function emitTaskProgress(input: {
     createdAt: new Date().toISOString(),
   });
 }
-
-export const MAIN_TASK_TOOL_NAMES: ReadonlySet<TaskToolName> = new Set([
-  "TaskCreate",
-  "TaskUpdate",
-  "TaskList",
-  "TaskGet",
-  "TaskStop",
-]);

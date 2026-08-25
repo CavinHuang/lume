@@ -287,7 +287,3 @@ export function resolveAgentThreadLumeWorkDir(threadId: string): string {
   const workspace = thread.workspaceId ? getAgentWorkspace(thread.workspaceId) : undefined;
   return migrateLegacyThreadRoot(thread, workspace);
 }
-
-export function resolveLegacyWorkspaceDirForMetadata(workspaceSlug: string): string {
-  return getAgentWorkspacePath(workspaceSlug);
-}

@@ -94,19 +94,3 @@ export function extractAssistantReasoningText(content: unknown): string {
   }
   return parts.join("\n\n");
 }
-
-export function summarizeAssistantContent(content: unknown): string {
-  if (typeof content === "string") {
-    return "string";
-  }
-  if (!Array.isArray(content)) {
-    return typeof content;
-  }
-  return content.map((item) => {
-    if (!item || typeof item !== "object") {
-      return typeof item;
-    }
-    const record = item as { type?: unknown };
-    return typeof record.type === "string" ? record.type : "object";
-  }).join(",");
-}

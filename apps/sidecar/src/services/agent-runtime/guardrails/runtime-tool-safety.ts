@@ -75,8 +75,7 @@ const FORCE_CONFIRM_POWERSHELL_RULES: CommandRule[] = [
 const FORCE_CONFIRM_TOOLS = new Map<string, string>([
   ["memory.promoteglobal", "提升到全局记忆会影响跨工作区记忆，需要用户确认"],
   ["memory.rejectglobalcandidate", "拒绝全局记忆候选会影响跨工作区记忆，需要用户确认"],
-  ["automation_set", "修改自动化任务会影响未来定时执行，需要用户确认"],
-  ["cron_set", "修改自动化任务会影响未来定时执行，需要用户确认"]
+  ["automation_set", "修改自动化任务会影响未来定时执行，需要用户确认"]
 ]);
 
 function getCommand(input: unknown): string {

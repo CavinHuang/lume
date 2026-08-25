@@ -713,10 +713,6 @@ function deleteAgentThreadLocked(id: string): void {
   log.info("deleted agent thread", { threadId: removed.id });
 }
 
-export function listAgentThreadsForWorkspace(workspaceId: string): AgentThreadMeta[] {
-  return readIndex().threads.filter((thread) => thread.workspaceId === workspaceId);
-}
-
 export function invalidateAgentThreadRuntimeState(threadId: string): void {
   const messages = getAgentThreadMessages(threadId);
   const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(threadId);
@@ -921,8 +917,6 @@ export async function clearAgentThreadMessages(threadId: string): Promise<{ ok: 
   log.info("cleared thread messages", { threadId, count: messages.length });
   return { ok: true, cleared: messages.length };
 }
-
-export const truncateAgentThreadMessagesFrom = truncateAgentMessagesFrom;
 
 /**
  * 从指定消息处分叉线程：创建新线程，复制截断后的消息

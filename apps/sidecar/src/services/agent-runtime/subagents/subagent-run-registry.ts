@@ -230,31 +230,6 @@ class SubagentRunRegistry {
       .map(cloneRun);
   }
 
-  listDescendants(runId: string): SubagentRun[] {
-    this.ensureLoaded();
-    const childrenByParent = new Map<string, SubagentRun[]>();
-    for (const run of this.runs.values()) {
-      if (!run.parentRunId) continue;
-      const bucket = childrenByParent.get(run.parentRunId) ?? [];
-      bucket.push(run);
-      childrenByParent.set(run.parentRunId, bucket);
-    }
-    const queue = [runId];
-    const visited = new Set<string>();
-    const descendants: SubagentRun[] = [];
-    while (queue.length > 0) {
-      const current = queue.shift();
-      if (!current || visited.has(current)) continue;
-      visited.add(current);
-      const children = childrenByParent.get(current) ?? [];
-      for (const child of children) {
-        descendants.push(cloneRun(child));
-        queue.push(child.runId);
-      }
-    }
-    return descendants.sort((a, b) => a.createdAt - b.createdAt);
-  }
-
   listAll(limit = 200): SubagentRun[] {
     this.ensureLoaded();
     return Array.from(this.runs.values())

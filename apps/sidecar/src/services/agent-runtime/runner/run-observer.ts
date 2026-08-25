@@ -10,7 +10,6 @@ import type {
   SDKMessage
 } from "@lume/shared";
 import { FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
-import type { LumeInterruption } from "../interruption/interruption";
 import type { ContextAssemblyInput } from "../context/context-assembler";
 import { TraceRecorder, type TraceRecorderEvent } from "../trace/trace-recorder";
 import { redactTracePayload, summarizeTraceOutput } from "../trace/trace-redaction";
@@ -387,37 +386,6 @@ export class LumeRunObserver {
     });
   }
 
-  recordInterruption(interruption: LumeInterruption): void {
-    this.enqueue(async () => {
-      const stored = await this.stateStore.get(this.state.runId);
-      if (!stored) return;
-      const pendingInterruptions = [
-        ...stored.pendingInterruptions.filter((item) => item.id !== interruption.id),
-        interruption
-      ].filter((item) => item.status === "pending");
-      await this.stateStore.update(this.state.runId, {
-        status: interruption.type === "ask_user" ? "waiting_for_user" : "waiting_for_approval",
-        currentStep: {
-          id: randomUUID(),
-          type: interruption.type === "ask_user" ? "tool_approval" : "tool_approval",
-          status: "running",
-          startedAt: new Date().toISOString(),
-          input: interruption
-        },
-        pendingInterruptions
-      });
-      await this.traceRecorder.startSpan({
-        traceId: this.state.traceId,
-        type: "approval",
-        name: interruption.type,
-        input: interruption.payload,
-        metadata: {
-          interruptionId: interruption.id,
-          source: interruption.source
-        }
-      });
-    });
-  }
 
   getContextAssemblyTrace(): NonNullable<ContextAssemblyInput["trace"]> {
     return {
