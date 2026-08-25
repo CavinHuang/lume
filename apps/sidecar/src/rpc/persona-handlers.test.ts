@@ -10,9 +10,6 @@ const personaMocks = {
   readPersonaRaw: mock(
     (_scope: "global" | "workspace", _workspaceSlug?: string): string | null => null,
   ),
-  writePersona: mock(
-    (_scope: "global" | "workspace", _workspaceSlug: string | undefined, _markdown: string): void => undefined,
-  ),
   parsePersonaProfile: mock((_md: string): PersonaGetResult["parsed"] => ({
     preferences: [],
     interactionRules: [],
@@ -104,44 +101,10 @@ describe("createPersonaHandlers", () => {
     ).rejects.toThrow(/persona:get/);
   });
 
-  test("UPDATE 拒绝直接修改派生 persona Markdown", async () => {
-    const { createPersonaHandlers } = await import("./persona-handlers");
-    const handlers = createPersonaHandlers();
-    await expect(handlers[PERSONA_IPC_CHANNELS.UPDATE]!({
-      scope: "workspace",
-      workspaceSlug: "demo",
-      markdown: "# 新画像",
-    })).rejects.toThrow("派生视图");
-    expect(personaMocks.writePersona).toHaveBeenCalledTimes(0);
-  });
-
-  test("UPDATE 空 markdown → throw", async () => {
-    const { createPersonaHandlers } = await import("./persona-handlers");
-    const handlers = createPersonaHandlers();
-    await expect(
-      handlers[PERSONA_IPC_CHANNELS.UPDATE]!({ markdown: "" }),
-    ).rejects.toThrow(/persona:update/);
-    expect(personaMocks.writePersona).not.toHaveBeenCalled();
-  });
-
-  test("UPDATE 缺 markdown 字段 → throw", async () => {
-    const { createPersonaHandlers } = await import("./persona-handlers");
-    const handlers = createPersonaHandlers();
-    await expect(
-      handlers[PERSONA_IPC_CHANNELS.UPDATE]!({ scope: "global" }),
-    ).rejects.toThrow(/persona:update/);
-    expect(personaMocks.writePersona).not.toHaveBeenCalled();
-  });
-
-  test("UPDATE 非字符串 markdown → throw", async () => {
-    const { createPersonaHandlers } = await import("./persona-handlers");
-    const handlers = createPersonaHandlers();
-    await expect(
-      handlers[PERSONA_IPC_CHANNELS.UPDATE]!({ markdown: 123 }),
-    ).rejects.toThrow(/persona:update/);
-    expect(personaMocks.writePersona).not.toHaveBeenCalled();
-  });
-
+  
+  
+  
+  
   test("REGENERATE 调 ensurePersona 透传 scope/workspaceSlug", async () => {
     const { createPersonaHandlers } = await import("./persona-handlers");
     const handlers = createPersonaHandlers();

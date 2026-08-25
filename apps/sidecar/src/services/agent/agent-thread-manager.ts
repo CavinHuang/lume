@@ -572,25 +572,6 @@ export function toggleAgentThreadPin(id: string): AgentThreadMeta {
   return updateAgentThreadMeta(id, { pinned: !meta.pinned });
 }
 
-export function moveAgentThreadToWorkspace(id: string, workspaceId: string): AgentThreadMeta {
-  const targetWorkspace = getAgentWorkspace(workspaceId);
-  if (!targetWorkspace) {
-    throw new Error(`目标工作区不存在: ${workspaceId}`);
-  }
-  ensureWorkspaceAgentAssets(targetWorkspace.slug, targetWorkspace.name);
-  const currentMeta = getAgentThreadMeta(id);
-  if (!currentMeta) {
-    throw new Error(`Agent 线程不存在: ${id}`);
-  }
-  ensureLumeFileContext(currentMeta.fileContextId ?? currentMeta.id);
-
-  return updateAgentThreadMeta(id, {
-    workspaceId: workspaceId,
-    sdkThreadId: undefined,
-    runtimeThreadId: undefined
-  });
-}
-
 export function deleteAgentThread(id: string): void {
   const threadBeforeDelete = getAgentThreadMeta(id);
   const workspaceLock = `workspace:${threadBeforeDelete?.workspaceId ?? "<unassigned>"}`;
@@ -876,19 +857,6 @@ export function emptyTrash(): string[] {
   return toDelete.map((thread) => thread.id);
 }
 
-export function truncateAgentMessagesFrom(threadId: string, messageId: string): AgentMessage[] {
-  const messages = getAgentThreadMessages(threadId);
-  const targetIndex = messages.findIndex((msg) => msg.id === messageId);
-  if (targetIndex === -1) {
-    return messages;
-  }
-
-  const kept = messages.slice(0, targetIndex);
-  replaceAgentThreadTranscript(threadId, kept);
-  return kept;
-}
-
-/** 保留目标消息及其之前的消息，用于 Coding Turn 完整回退。 */
 export function truncateAgentMessagesAfter(threadId: string, messageId: string): {
   messages: AgentMessage[];
   removed: number;

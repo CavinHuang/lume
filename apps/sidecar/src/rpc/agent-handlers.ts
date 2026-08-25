@@ -1,4 +1,4 @@
-import { AGENT_IPC_CHANNELS, type BootstrapFileType } from "@lume/shared";
+import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import { randomUUID } from "node:crypto";
 import type {
   AgentPendingInteractiveState,
@@ -18,7 +18,6 @@ import {
   getRecentAgentThreadMessages,
   listAllAgentThreads,
   listAgentThreads,
-  moveAgentThreadToWorkspace,
   toggleAgentThreadPin,
   updateAgentThreadMeta,
   archiveAgentThread,
@@ -119,17 +118,11 @@ import {
   getAgentProxyStatus,
   saveAgentProxySettings,
 } from "../services/system/proxy-settings-manager";
-import {
-  readBootstrapFile,
-  writeBootstrapFile,
-} from "../services/system/workspace-bootstrap-service";
 import { resumeAutomationAfterInteraction } from "../services/automation/automation-runner-service";
 import {
-  agentAppendInputSchema,
   agentCreateThreadInputSchema,
   agentGetThreadMessageVersionsInputSchema,
   agentListSubagentRunsInputSchema,
-  agentMoveThreadInputSchema,
   agentQueuedMessageInputSchema,
   agentRetryQueuedMessageInputSchema,
   agentRecentThreadMessagesInputSchema,
@@ -149,8 +142,6 @@ import {
   mcpStatusInputSchema,
   mcpTestServerInputSchema,
   proxySettingsInputSchema,
-  readBootstrapFileInputSchema,
-  writeBootstrapFileInputSchema,
   submitAskUserQuestionInputSchema,
   submitDesktopActionInputSchema,
   submitToolPermissionInputSchema,
@@ -164,7 +155,7 @@ import {
   workspaceUpdateInputSchema,
 } from "./schemas";
 import type { NotificationWriter, RpcHandler } from "./types";
-import { asObject, asString, validateInput } from "./validation";
+import { asObject, validateInput } from "./validation";
 import { trimSdkMessagesForTransport } from "./message-payload-trim";
 import { createAgentNotificationEmitter } from "../services/agent/agent-notification-service";
 import { createCodingHandlers } from "./coding-handlers";
@@ -774,15 +765,6 @@ export function createAgentHandlers(
       );
       return toggleAgentThreadPin(input.threadId);
     },
-    [AGENT_IPC_CHANNELS.MOVE_THREAD]: async (params) => {
-      const input = validateInput(
-        agentMoveThreadInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.MOVE_THREAD,
-      );
-      await assertThreadNotRunningAfterGrace(input.threadId, "移动");
-      return moveAgentThreadToWorkspace(input.threadId, input.workspaceId);
-    },
     [AGENT_IPC_CHANNELS.DELETE_THREAD]: async (params) => {
       const input = validateInput(
         agentThreadIdInputSchema,
@@ -1171,32 +1153,6 @@ export function createAgentHandlers(
       return result;
     },
     "agent:ensure-default-workspace": async () => ensureDefaultWorkspace(),
-    "agent:read-bootstrap-file": async (params) => {
-      const input = validateInput(
-        readBootstrapFileInputSchema,
-        params,
-        "agent:read-bootstrap-file",
-      );
-      return {
-        content: readBootstrapFile(
-          input.workspaceSlug,
-          input.fileType as BootstrapFileType,
-        ),
-      };
-    },
-    "agent:write-bootstrap-file": async (params) => {
-      const input = validateInput(
-        writeBootstrapFileInputSchema,
-        params,
-        "agent:write-bootstrap-file",
-      );
-      writeBootstrapFile(
-        input.workspaceSlug,
-        input.fileType as BootstrapFileType,
-        input.content,
-      );
-      return { ok: true };
-    },
     [AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]: async (params) => {
       const trustedSurface =
         params &&
@@ -1359,26 +1315,6 @@ export function createAgentHandlers(
       trustedPlanningSendEnvelopes.add(trustedParams);
       return handlers[AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]!(trustedParams);
     },
-    [AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE]: async (params) => {
-      const input = validateInput(
-        agentAppendInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE,
-      ) as AgentSendInput;
-      const preparedInput = await prepareAgentDispatchInput(input);
-      return appendAgentMessageForContext(
-        preparedInput,
-        createAgentStreamEmitter(preparedInput.threadId, {
-          workspaceSlug: resolveWorkspaceSlugForThread(
-            preparedInput.threadId,
-            preparedInput.workspaceId,
-          ),
-        }),
-        {
-          onExecutionStarted: createExecutionStartCallback(preparedInput),
-        },
-      );
-    },
     [AGENT_IPC_CHANNELS.LIST_MESSAGE_QUEUE]: async (params) => {
       const input = validateInput(
         agentThreadIdInputSchema,
@@ -1466,29 +1402,6 @@ export function createAgentHandlers(
       );
       return promoteQueuedAgentMessageToGuidance(input);
     },
-    [AGENT_IPC_CHANNELS.WRITE_LOG]: async (params) => {
-      const payload = asObject(params);
-      const level = asString(payload.level) || "info";
-      const contextName = asString(payload.context) || "web";
-      const message = asString(payload.message);
-      const threadId = asString(payload.threadId);
-      const data = payload.data as Record<string, unknown> | undefined;
-
-      if (!message) {
-        return { ok: false };
-      }
-
-      const log = createLogger(contextName, threadId);
-      const logMethod = level as
-        "trace" | "debug" | "info" | "warn" | "error" | "fatal";
-      if (typeof log[logMethod] === "function") {
-        log[logMethod](message, data);
-      } else {
-        log.info(message, data);
-      }
-      return { ok: true };
-    },
-    [AGENT_IPC_CHANNELS.GET_LOGS_DIR]: async () => ({ path: "" }),
     [AGENT_IPC_CHANNELS.GET_WORKSPACE_ROOT_PATH]: async (params) => {
       const input = validateInput(
         workspaceSlugInputSchema,

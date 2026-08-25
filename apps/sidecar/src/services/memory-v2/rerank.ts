@@ -1,4 +1,5 @@
 import { type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { resolveProviderApiType } from "../model-runtime/provider-api-type";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { resolveChatProvider } from "./chat-provider";
@@ -79,7 +80,7 @@ function createRerankAttempt(
   return {
     provider: createProviderInput
       ? createProviderInput({
-        apiType: binding ? resolveRerankApiType(binding.channel.provider) : "openai-completions",
+        apiType: binding ? resolveProviderApiType({ provider: binding.channel.provider }) : "openai-completions",
         apiKey: binding ? decryptApiKey(binding.channel.id) : "",
         baseURL: binding?.channel.baseUrl
       })
@@ -143,9 +144,3 @@ function parseIds(text: string): string[] {
   }
 }
 
-function resolveRerankApiType(provider: string): ApiType {
-  const normalized = provider.trim().toLowerCase();
-  if (normalized === "anthropic" || normalized === "anthropic-compatible") return "anthropic-messages";
-  if (normalized === "deepseek") return "deepseek-chat-completions";
-  return "openai-completions";
-}

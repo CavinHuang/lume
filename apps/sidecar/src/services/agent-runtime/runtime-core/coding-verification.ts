@@ -1,3 +1,4 @@
+import { isPathInside } from "./path-containment";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 
@@ -37,7 +38,7 @@ export function selectVerificationCommands(input: {
 
   for (const changedFile of changedFiles) {
     let current = existsSync(changedFile) ? dirname(changedFile) : dirname(changedFile);
-    while (isWithinWorkspace(workspaceRoot, current)) {
+    while (isPathInside(workspaceRoot, current)) {
       if (existsSync(resolve(current, "package.json"))) packageRoots.add(current);
       if (current === workspaceRoot) break;
       const parent = dirname(current);
@@ -110,11 +111,6 @@ export function selectVerificationCommandsForWorkspaces(
     }
   }
   return selected;
-}
-
-function isWithinWorkspace(workspaceRoot: string, candidate: string): boolean {
-  const path = relative(workspaceRoot, candidate);
-  return path === "" || (!path.startsWith(".." + "/") && !path.startsWith(".." + "\\") && path !== "..");
 }
 
 function readManifest(path: string): PackageManifest & { packageManager?: string } | undefined {
@@ -218,7 +214,7 @@ function findProjectRoots(workspaceRoot: string, changedFiles: string[], markers
   const roots = new Set<string>();
   for (const changedFile of changedFiles) {
     let current = dirname(resolve(workspaceRoot, changedFile));
-    while (isWithinWorkspace(workspaceRoot, current)) {
+    while (isPathInside(workspaceRoot, current)) {
       if (markers.some((marker) => existsSync(join(current, marker)))) {
         roots.add(current);
         break;
@@ -237,7 +233,7 @@ function findDotnetProjectRoots(workspaceRoot: string, changedFiles: string[]): 
   const roots = new Set<string>();
   for (const changedFile of changedFiles) {
     let current = dirname(resolve(workspaceRoot, changedFile));
-    while (isWithinWorkspace(workspaceRoot, current)) {
+    while (isPathInside(workspaceRoot, current)) {
       if (findDotnetProject(current)) {
         roots.add(current);
         break;

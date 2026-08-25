@@ -15,13 +15,6 @@ export const getPersona = (workspaceSlug?: string) =>
     workspaceSlug ? { workspaceSlug } : {},
   )
 
-/** 直接覆写 persona markdown（用户手动编辑） */
-export const updatePersona = (input: {
-  workspaceSlug?: string
-  markdown: string
-}) =>
-  call<{ ok: true }>(PERSONA_IPC_CHANNELS.UPDATE, input)
-
 export const correctPersona = (input: PersonaCorrectionInput) =>
   call(PERSONA_IPC_CHANNELS.CORRECT, input)
 

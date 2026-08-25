@@ -12,17 +12,7 @@ import {
   getAttachmentMeta,
   upsertAttachmentMeta
 } from "./agent-attachment-meta-service";
-
-function isWithin(basePath: string, targetPath: string): boolean {
-  const base = resolve(basePath);
-  const target = resolve(targetPath);
-  if (process.platform === "win32") {
-    const b = base.toLowerCase();
-    const t = target.toLowerCase();
-    return t === b || t.startsWith(`${b}\\`);
-  }
-  return target === base || target.startsWith(`${base}/`);
-}
+import { isWithin } from "./agent-file-paths";
 
 function resolveConflictPath(targetPath: string): string {
   const ext = extname(targetPath);

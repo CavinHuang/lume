@@ -17,8 +17,3 @@ export interface UpdateUiStateInput {
   agentSidePanelOpenByThreadId?: Record<string, boolean>
   agentDraftByThreadId?: Record<string, string>
 }
-
-export const UI_STATE_IPC_CHANNELS = {
-  GET: "ui-state:get",
-  UPDATE: "ui-state:update"
-} as const

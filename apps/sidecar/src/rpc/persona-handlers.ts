@@ -31,14 +31,6 @@ const getInputSchema = z
   })
   .strict();
 
-const updateInputSchema = z
-  .object({
-    scope: z.enum(SCOPE_VALUES).optional(),
-    workspaceSlug: z.string().trim().min(1).optional(),
-    markdown: z.string().min(1),
-  })
-  .strict();
-
 const regenerateInputSchema = z
   .object({
     scope: z.enum(SCOPE_VALUES).optional(),
@@ -69,10 +61,6 @@ export function createPersonaHandlers(): Record<string, RpcHandler> {
         parsed: parsePersonaProfile(markdown),
         updatedAt,
       } satisfies PersonaGetResult;
-    },
-    [PERSONA_IPC_CHANNELS.UPDATE]: async (params) => {
-      validateInput(updateInputSchema, params, PERSONA_IPC_CHANNELS.UPDATE);
-      throw new Error("Persona 是派生视图，请使用 persona:correct 修正底层记忆");
     },
     [PERSONA_IPC_CHANNELS.CORRECT]: async (params) => {
       const input = validateInput(correctionInputSchema, params, PERSONA_IPC_CHANNELS.CORRECT);

@@ -7,12 +7,10 @@ import {
   type InstallSkillMarketItemToWorkspaceInput,
 } from "@lume/shared";
 import { SidecarPluginManager } from "../services/agent-runtime/plugins/plugin-manager.js";
-import { readPluginAuditEntries } from "../services/agent-runtime/plugins/plugin-audit-store.js";
 import { getEffectivePluginRuntimeConfig } from "../services/system/lume-config-service";
 import { createDefaultPluginMarketService } from "../services/plugins/plugin-market-service";
 import { createDefaultPluginBridgeService } from "../services/plugins/plugin-bridge-service";
 import { assertPrivilegedCredential } from "../services/infra/privileged-auth";
-import { getPluginAuditPath } from "../services/infra/config-paths";
 import { createLogger } from "../services/infra/logger";
 import {
   getGitHubSkillReview,
@@ -24,7 +22,6 @@ import {
 } from "../services/skills/skills-market-service";
 import {
   checkBridgeStatusInputSchema,
-  getPluginAuditLogInputSchema,
   githubSkillReviewInputSchema,
   importLocalSkillDirectoryInputSchema,
   installGitHubSkillInputSchema,
@@ -86,14 +83,6 @@ export function createPluginHandlers(
   deps: PluginHandlersDeps,
 ): Record<string, RpcHandler> {
   return {
-    [AGENT_IPC_CHANNELS.LIST_PLUGINS]: async () => {
-      const result = await buildAgentPluginList();
-      log.info("LIST_PLUGINS request", {
-        count: result.plugins.length,
-        names: result.plugins.map((p) => p.name),
-      });
-      return result;
-    },
     [AGENT_IPC_CHANNELS.RELOAD_PLUGINS]: async () => {
       const result = await buildAgentPluginList();
       log.info("RELOAD_PLUGINS request", {
@@ -103,24 +92,6 @@ export function createPluginHandlers(
       // 通知 client 刷新能力 UI。下一次 agent attempt 自动读到新磁盘状态（无状态、按尝试加载）。
       deps.writeNotification(AGENT_IPC_CHANNELS.CAPABILITIES_CHANGED, {});
       return result;
-    },
-    [AGENT_IPC_CHANNELS.GET_PLUGIN_AUDIT_LOG]: async (params) => {
-      const input = validateInput(
-        getPluginAuditLogInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.GET_PLUGIN_AUDIT_LOG,
-      );
-      const events = await readPluginAuditEntries(getPluginAuditPath(), {
-        pluginId: input.pluginId,
-        ...(input.workspaceSlug ? { workspaceSlug: input.workspaceSlug } : {}),
-        ...(input.limit ? { limit: input.limit } : {}),
-      });
-      log.info("GET_PLUGIN_AUDIT_LOG request", {
-        pluginId: input.pluginId,
-        workspaceSlug: input.workspaceSlug,
-        count: events.length,
-      });
-      return { events };
     },
     [AGENT_IPC_CHANNELS.GET_MARKET_CATALOG]: async (params) => {
       const input = validateInput(

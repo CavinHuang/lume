@@ -329,8 +329,6 @@ export const DESKTOP_CONTEXT_IPC_CHANNELS = {
   CAPTURE_WINDOW: "desktop-context:capture-window",
   REQUEST_PERMISSIONS: "desktop-context:request-permissions",
   LIST_APPS: "desktop-context:list-apps",
-  GET_CURRENT: "desktop-context:get-current",
-  SEARCH: "desktop-context:search",
   GET_SETTINGS: "desktop-context:get-settings",
   UPDATE_SETTINGS: "desktop-context:update-settings",
   GET_STATUS: "desktop-context:get-status",

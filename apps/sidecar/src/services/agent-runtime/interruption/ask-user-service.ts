@@ -2,8 +2,8 @@ import type {
   AgentAskUserQuestionQuestion,
   AgentAskUserQuestionRequest
 } from "@lume/shared";
-import { createHash } from "node:crypto";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
+import { stableHashPayload } from "../../infra/payload-hash";
 import type { LumeInterruption } from "./interruption";
 import { listPendingRuntimeCoreInterruptionRecords } from "./interruption-pending";
 import {
@@ -61,7 +61,7 @@ export async function persistAskUserInterruption(request: AgentAskUserQuestionRe
           id: request.toolUseId,
           name: "AskUserQuestion",
           input: { questions: request.questions },
-          inputHash: hashAskUserInput(request.questions),
+          inputHash: stableHashPayload(request.questions),
           kind: "control"
         }
       },
@@ -71,10 +71,6 @@ export async function persistAskUserInterruption(request: AgentAskUserQuestionRe
     });
   }
   return interruption;
-}
-
-function hashAskUserInput(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
 }
 
 export async function resolveAskUserInterruption(input: {

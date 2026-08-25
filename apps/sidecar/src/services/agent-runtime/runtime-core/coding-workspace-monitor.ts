@@ -1,5 +1,6 @@
+import { isPathInside } from "./path-containment";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { Worker } from "node:worker_threads";
 
 const ATTRIBUTION_GRACE_MS = 120;
@@ -281,7 +282,3 @@ function relativePathSegments(path: string): string[] {
   return path.split(/[\\/]+/).filter(Boolean);
 }
 
-function isPathInside(root: string, candidate: string): boolean {
-  const relativePath = relative(resolve(root), resolve(candidate));
-  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
-}

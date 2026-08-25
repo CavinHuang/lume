@@ -156,35 +156,21 @@ async function run() {
     });
     assert(typeof thread?.id === "string", "thread create failed");
 
-    const updatedState = await sidecar.call("ui-state:update", {
-      activeView: "settings",
-      currentAgentThreadId: thread.id,
-      currentAgentWorkspaceId: workspace.id,
-      promptSidebarOpen: true,
-      agentSidePanelOpenByThreadId: {
-        [thread.id]: false
-      },
-      agentDraftByThreadId: {
-        [thread.id]: "restore agent draft"
-      }
+    // #528：ui-state:get/update RPC 已删除（生产零引用），改用同文件存储的活入口
+    // general-settings:update/get 验证持久化设置跨进程重启还原，保持 smoke 意图不变。
+    const updatedSettings = await sidecar.call("general-settings:update", {
+      themeMode: "dark",
+      agentMessageDisplayMode: "verbose"
     });
-    assert(updatedState?.currentAgentThreadId === thread.id, "ui-state write failed for thread");
-    assert(updatedState?.currentAgentWorkspaceId === workspace.id, "ui-state write failed for workspace");
-    assert(updatedState?.activeView === "settings", "ui-state write failed for activeView");
-    assert(updatedState?.promptSidebarOpen === true, "ui-state write failed for promptSidebarOpen");
-    assert(updatedState?.agentSidePanelOpenByThreadId?.[thread.id] === false, "ui-state write failed for side panel");
-    assert(updatedState?.agentDraftByThreadId?.[thread.id] === "restore agent draft", "ui-state write failed for agent draft");
+    assert(updatedSettings?.themeMode === "dark", "general-settings write failed for themeMode");
+    assert(updatedSettings?.agentMessageDisplayMode === "verbose", "general-settings write failed for display mode");
 
     await sidecar.close();
     sidecar = createSidecarProcess(configHome);
 
-    const restoredState = await sidecar.call("ui-state:get");
-    assert(restoredState?.activeView === "settings", "ui-state activeView not restored");
-    assert(restoredState?.currentAgentThreadId === thread.id, "ui-state thread not restored");
-    assert(restoredState?.currentAgentWorkspaceId === workspace.id, "ui-state workspace not restored");
-    assert(restoredState?.promptSidebarOpen === true, "ui-state promptSidebarOpen not restored");
-    assert(restoredState?.agentSidePanelOpenByThreadId?.[thread.id] === false, "ui-state side panel not restored");
-    assert(restoredState?.agentDraftByThreadId?.[thread.id] === "restore agent draft", "ui-state agent draft not restored");
+    const restoredSettings = await sidecar.call("general-settings:get");
+    assert(restoredSettings?.themeMode === "dark", "themeMode not restored after restart");
+    assert(restoredSettings?.agentMessageDisplayMode === "verbose", "agentMessageDisplayMode not restored after restart");
 
     const threads = await sidecar.call("agent:list-threads");
     assert(

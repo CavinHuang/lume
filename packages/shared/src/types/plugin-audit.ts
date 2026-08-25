@@ -32,13 +32,3 @@ export interface PluginAuditEvent {
   summary: string;
   metadata?: Record<string, unknown>;
 }
-
-export interface GetPluginAuditLogInput {
-  pluginId: string;
-  workspaceSlug?: string;
-  limit?: number;
-}
-
-export interface GetPluginAuditLogResult {
-  events: PluginAuditEvent[];
-}

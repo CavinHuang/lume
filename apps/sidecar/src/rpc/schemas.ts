@@ -377,8 +377,6 @@ export const agentSendInputSchema = z
     });
   });
 
-export const agentAppendInputSchema = agentSendInputSchema;
-
 export const trustedAgentSendInputSchema = z
   .object({
     input: agentSendInputSchema,
@@ -808,21 +806,6 @@ const memorySourceSchema = z.enum([
   "manual",
 ]);
 
-export const memorySearchInputSchema = z.object({
-  workspaceSlug: idSchema,
-  query: z.string().min(1),
-  maxResults: z.number().int().min(1).max(50).optional(),
-  minScore: z.number().min(0).max(1).optional(),
-  scopes: z.array(memoryScopeSchema).optional(),
-  kinds: z.array(memoryKindSchema).optional(),
-  sources: z.array(memorySourceSchema).optional(),
-  includeGlobal: z.boolean().optional(),
-  includeRecent: z.boolean().optional(),
-  includeLongTerm: z.boolean().optional(),
-  includeWorkspaceBrief: z.boolean().optional(),
-  includeSessions: z.boolean().optional(),
-});
-
 export const memoryReadToolInputSchema = z.object({
   workspaceSlug: idSchema,
   id: z.string().optional(),
@@ -1118,11 +1101,6 @@ export const agentUpdateThreadModelSelectionInputSchema = z.object({
   modelId: z.string().nullable().optional(),
 });
 
-export const agentMoveThreadInputSchema = z.object({
-  threadId: idSchema,
-  workspaceId: idSchema,
-});
-
 export const agentListSubagentRunsInputSchema = z.object({
   ownerThreadId: z.string().min(1).optional(),
   runId: z.string().min(1).optional(),
@@ -1138,11 +1116,6 @@ export const agentListSubagentRunsInputSchema = z.object({
     ])
     .optional(),
   limit: z.number().int().min(1).max(500).optional(),
-});
-
-export const systemConfigUpdateInputSchema = z.object({
-  path: z.string().min(1),
-  value: z.unknown(),
 });
 
 const nonEmptyTrimmedStringSchema = z.string().trim().min(1);
@@ -1526,29 +1499,6 @@ export const threadRunEventsInputSchema = z.object({
   threadId: idSchema,
 });
 
-const bootstrapFileTypeSchema = z.enum([
-  "SOUL",
-  "USER",
-  "IDENTITY",
-  "AGENTS",
-  "TOOLS",
-  "HEARTBEAT",
-  "MEMORY",
-  "BOOTSTRAP",
-]);
-
-export const readBootstrapFileInputSchema = z.object({
-  workspaceSlug: idSchema,
-  fileType: bootstrapFileTypeSchema,
-});
-
-export const writeBootstrapFileInputSchema = z.object({
-  workspaceSlug: idSchema,
-  fileType: bootstrapFileTypeSchema,
-  // 引导文件是文本（CLAUDE.md/AGENTS.md 等），10MB 对齐 fileSelectionEdit 限额足够
-  content: z.string().max(10 * 1024 * 1024)
-});
-
 export const proxySettingsInputSchema = z.object({
   version: z.literal(1),
   enabled: z.boolean(),
@@ -1624,19 +1574,6 @@ export const automationRunNowInputSchema = z.object({
 
 export const automationToggleInputSchema = z.object({
   id: idSchema,
-});
-
-export const githubReleaseByTagInputSchema = z.object({
-  tag: z.string().min(1),
-});
-
-export const updateUiStateInputSchema = z.object({
-  activeView: z.enum(["conversations", "settings"]).optional(),
-  currentAgentThreadId: z.string().nullable().optional(),
-  currentAgentWorkspaceId: z.string().nullable().optional(),
-  promptSidebarOpen: z.boolean().optional(),
-  agentSidePanelOpenByThreadId: z.record(z.string(), z.boolean()).optional(),
-  agentDraftByThreadId: z.record(z.string(), z.string()).optional(),
 });
 
 const customThemePaletteColorsSchema = z.object({

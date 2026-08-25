@@ -2,8 +2,8 @@ import type {
   AgentToolPermissionDecision,
   AgentToolPermissionRequest
 } from "@lume/shared";
-import { createHash } from "node:crypto";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
+import { stableHashPayload } from "../../infra/payload-hash";
 import type { LumeInterruption } from "./interruption";
 import { listPendingRuntimeCoreInterruptionRecords } from "./interruption-pending";
 import {
@@ -63,7 +63,7 @@ export async function persistToolApprovalInterruption(request: AgentToolPermissi
           id: request.toolUseId,
           name: request.toolName,
           input: request.input,
-          inputHash: hashToolInput(request.input),
+          inputHash: stableHashPayload(request.input),
           kind: classifyToolKind(request.toolName)
         }
       },
@@ -109,7 +109,7 @@ export async function resolveToolApprovalInterruption(input: {
           id: payload.toolUseId,
           name: payload.toolName,
           input: payload.input,
-          inputHash: hashToolInput(payload.input),
+          inputHash: stableHashPayload(payload.input),
           kind: classifyToolKind(payload.toolName)
         },
         syntheticToolResult: {
@@ -186,7 +186,7 @@ export function resolvePersistedToolApprovalInterruption(input: {
           id: payload.toolUseId,
           name: payload.toolName,
           input: payload.input,
-          inputHash: hashToolInput(payload.input),
+          inputHash: stableHashPayload(payload.input),
           kind: classifyToolKind(payload.toolName)
         },
         syntheticToolResult: {
@@ -209,10 +209,6 @@ export function resolvePersistedToolApprovalInterruption(input: {
     });
   }
   return resolved;
-}
-
-export function hashToolInput(input: unknown): string {
-  return createHash("sha256").update(JSON.stringify(input ?? null)).digest("hex");
 }
 
 export function classifyToolKind(toolName: string): "read" | "write" | "execute" | "control" {

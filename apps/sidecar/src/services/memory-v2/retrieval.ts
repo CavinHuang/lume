@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getMemoryV2ScopePaths } from "./paths";
+import { isConversationHistory, mergeRecallItems } from "./recall-items";
 import { createMemoryV2Store, readActivation, type MemoryV2Store } from "./markdown-store";
 import {
   LOCAL_ONNX_MEMORY_EMBEDDING_MODEL_REF,
@@ -368,7 +369,7 @@ function scoreRecallItem(
   const itemTokens = tokenize(`${item.statement} ${item.path}`);
   const lexical = itemTokens.reduce((score, token) => score + (queryTokens.has(token) ? 1 : 0), 0);
   const semanticScore = semanticIntentBoost(item, intent);
-  const historyScore = queryPlan.includeConversationHistory && isConversationHistoryRecallItem(item) ? 3 : 0;
+  const historyScore = queryPlan.includeConversationHistory && isConversationHistory(item) ? 3 : 0;
   const kindScore = roleIntentBoost(item.semanticRole, intent);
   if (claimScore === 0 && lexical === 0 && semanticScore === 0 && historyScore === 0 && kindScore === 0 && !item.pinned) return 0;
   const pathScore = [...queryTokens].some((token) => item.path.toLowerCase().includes(token)) ? 1.5 : 0;
@@ -376,13 +377,6 @@ function scoreRecallItem(
   const scopeScore = item.scope === "workspace" ? 1 : 0.5;
   const stalePenalty = item.status === "suspected_stale" ? -3 : 0;
   return claimScore + lexical + semanticScore + historyScore + pathScore + pinnedScore + scopeScore + kindScore + stalePenalty;
-}
-
-function isConversationHistoryRecallItem(item: MemoryV2RecallItem): boolean {
-  return item.reason === "recent daily memory"
-    || item.reason === "recent run memory"
-    || item.id.includes(":daily:")
-    || item.id.includes(":run:");
 }
 
 // identity/constraint 继承 fact 分值：legacyKindForRole 曾把它们压缩成 fact，
@@ -489,13 +483,4 @@ async function maybeSemanticRecall(input: {
 function isLocalOnnxReadyForInlineSemantic(): boolean {
   const status = getLocalOnnxMemoryEmbeddingStatus().status;
   return status === "ready" || status === "cached";
-}
-
-function mergeRecallItems(items: MemoryV2RecallItem[]): MemoryV2RecallItem[] {
-  const byId = new Map<string, MemoryV2RecallItem>();
-  for (const item of items) {
-    const existing = byId.get(item.id);
-    if (!existing || item.score > existing.score) byId.set(item.id, item);
-  }
-  return [...byId.values()];
 }

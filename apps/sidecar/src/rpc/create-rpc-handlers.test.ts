@@ -58,7 +58,6 @@ describe("createRpcHandlers", () => {
       AGENT_IPC_CHANNELS.REORDER_MESSAGE_QUEUE,
       AGENT_IPC_CHANNELS.REMOVE_QUEUED_MESSAGE,
       AGENT_IPC_CHANNELS.PROMOTE_QUEUED_MESSAGE_TO_GUIDANCE,
-      MEMORY_IPC_CHANNELS.SEARCH,
       MEMORY_IPC_CHANNELS.SETTINGS_SNAPSHOT,
       MEMORY_IPC_CHANNELS.ORGANIZE_HISTORY,
       MEMORY_IPC_CHANNELS.GET_INGEST_JOB,
@@ -102,20 +101,5 @@ describe("createRpcHandlers", () => {
     expect(typeof result.native.available).toBe("boolean");
     expect(Array.isArray(result.native.capabilities)).toBeTrue();
     expect("binaryPath" in result.native).toBeFalse();
-  });
-
-  test("renderer-facing log path methods must not expose local filesystem paths", async () => {
-    const handlers = createRpcHandlers({
-      writeNotification: () => {}
-    });
-    const getLogsDirHandler = handlers[AGENT_IPC_CHANNELS.GET_LOGS_DIR];
-    expect(getLogsDirHandler).toBeDefined();
-    if (!getLogsDirHandler) {
-      throw new Error("缺少 agent:get-logs-dir handler");
-    }
-
-    const result = await getLogsDirHandler(undefined) as { path: string };
-
-    expect(result).toEqual({ path: "" });
   });
 });

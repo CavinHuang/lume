@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SDKMessage } from "@lume/agent-sdk";
-import { AGENT_IPC_CHANNELS, type AgentAskUserQuestionRequest, type AgentToolPermissionRequest, type LumeRuntimeEvent, type MemoryEvidenceRef } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, type LumeRuntimeEvent, type MemoryEvidenceRef } from "@lume/shared";
 import { appendAgentThreadSDKMessages, createAgentThreadWithModelRef, getAgentThreadSDKMessages } from "../agent/agent-thread-manager";
+import { createSilentAgentEmitter, extractAssistantText } from "./sdk-thread-utils";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { sendAgentMessage } from "../agent/agent-service";
 import { emitAgentNotification } from "../agent/agent-notification-service";
@@ -369,34 +370,6 @@ async function extractMemoryCandidatesInSubagent(
     if (!parsed) throw new Error("后台提取 Agent 未返回有效 JSON");
     return parsed;
   }
-}
-
-function extractAssistantText(messages: SDKMessage[]): string {
-  const chunks: string[] = [];
-  for (const message of messages) {
-    if (message.type === "assistant") {
-      const content = (message.message as { content?: unknown } | undefined)?.content;
-      if (Array.isArray(content)) {
-        chunks.push(...content.flatMap((block) => {
-          if (!block || typeof block !== "object") return [];
-          const text = (block as { type?: unknown; text?: unknown }).text;
-          return typeof text === "string" ? [text] : [];
-        }));
-      }
-    }
-    if (message.type === "result" && typeof message.result === "string") chunks.push(message.result);
-  }
-  return chunks.join("\n").trim();
-}
-
-function createSilentAgentEmitter() {
-  return {
-    onComplete: () => undefined,
-    onError: () => undefined,
-    onTitleUpdated: () => undefined,
-    onAskUserQuestion: (_request: AgentAskUserQuestionRequest) => undefined,
-    onToolPermissionRequest: (_request: AgentToolPermissionRequest) => undefined
-  };
 }
 
 function extractionSources(items: LumeRunItem[]): Array<{ sourceId: string; role: "user" | "assistant" | "tool_result"; text: string }> {

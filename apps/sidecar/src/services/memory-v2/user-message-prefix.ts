@@ -1,4 +1,5 @@
 import { searchMemoryV2 } from "./retrieval";
+import { isConversationHistory, mergeRecallItems } from "./recall-items";
 import { parsePersonaProfile, readPersonaRaw } from "./persona";
 import { isProfileRecallItem } from "./profile";
 import {
@@ -219,13 +220,6 @@ function isUserProfileClaimItem(item: MemoryV2RecallItem): boolean {
     );
 }
 
-function isConversationHistory(item: MemoryV2RecallItem): boolean {
-  return item.reason === "recent daily memory"
-    || item.reason === "recent run memory"
-    || item.id.includes(":daily:")
-    || item.id.includes(":run:");
-}
-
 function summarizeConversationHistory(value: string): string {
   const records = value
     .split(/\n+/)
@@ -269,13 +263,4 @@ function safeJsonParse(value: string): Record<string, unknown> | undefined {
 function singleLine(value: string): string {
   const compact = value.replace(/\s+/g, " ").trim();
   return compact.length <= 240 ? compact : `${compact.slice(0, 237)}...`;
-}
-
-function mergeRecallItems(items: MemoryV2RecallItem[]): MemoryV2RecallItem[] {
-  const byId = new Map<string, MemoryV2RecallItem>();
-  for (const item of items) {
-    const existing = byId.get(item.id);
-    if (!existing || item.score > existing.score) byId.set(item.id, item);
-  }
-  return [...byId.values()];
 }

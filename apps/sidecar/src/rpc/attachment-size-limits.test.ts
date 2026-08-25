@@ -4,7 +4,6 @@ import {
   memoryRememberToolInputSchema,
   saveFilesToThreadInputSchema,
   saveFilesToWorkspaceInputSchema,
-  writeBootstrapFileInputSchema
 } from "./schemas";
 
 const THREAD_INPUT_BASE = { workspaceSlug: "ws", threadId: "t1" };
@@ -64,16 +63,7 @@ describe("附件与超大字段限额（#154）", () => {
     expect(result.success).toBeTrue();
   });
 
-  test("writeBootstrapFile content 超 10MB 拒绝", () => {
-    const fileType = "CLAUDE" as const;
-    const result = writeBootstrapFileInputSchema.safeParse({
-      workspaceSlug: "ws",
-      fileType,
-      content: "a".repeat(10 * 1024 * 1024 + 1)
-    });
-    expect(result.success).toBeFalse();
-  });
-
+  
   test("memoryRemember content 超 2MB 拒绝", () => {
     const result = memoryRememberToolInputSchema.safeParse({
       workspaceSlug: "ws",

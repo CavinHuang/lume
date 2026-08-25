@@ -14,8 +14,6 @@ interface DesktopContextRpcService {
   captureWindow(input: { windowId?: string; userInitiated?: boolean }): Promise<unknown>;
   requestPermissions(): Promise<unknown>;
   listApps(): Promise<unknown>;
-  currentContext(input?: { snapshotId?: string; includeScreenshot?: boolean; refresh?: boolean }): Promise<unknown>;
-  searchContext(input: { query?: string; limit?: number }): Promise<unknown>;
   getSettings(): DesktopAssistantSettings;
   updateSettings(settings: DesktopAssistantSettings): DesktopAssistantSettings | void;
   getStatus(): Promise<unknown>;
@@ -57,21 +55,6 @@ export function createDesktopContextHandlers(service: DesktopContextRpcService):
     },
     [DESKTOP_CONTEXT_IPC_CHANNELS.REQUEST_PERMISSIONS]: async () => service.requestPermissions(),
     [DESKTOP_CONTEXT_IPC_CHANNELS.LIST_APPS]: async () => service.listApps(),
-    [DESKTOP_CONTEXT_IPC_CHANNELS.GET_CURRENT]: async (params) => {
-      const input = readRecord(params);
-      return service.currentContext({
-        ...(typeof input.snapshotId === "string" ? { snapshotId: input.snapshotId } : {}),
-        ...(input.includeScreenshot === true ? { includeScreenshot: true } : {}),
-        ...(input.refresh === true ? { refresh: true } : {}),
-      });
-    },
-    [DESKTOP_CONTEXT_IPC_CHANNELS.SEARCH]: async (params) => {
-      const input = readRecord(params);
-      return service.searchContext({
-        ...(typeof input.query === "string" ? { query: input.query } : {}),
-        ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
-      });
-    },
     [DESKTOP_CONTEXT_IPC_CHANNELS.GET_SETTINGS]: async () => service.getSettings(),
     [DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_SETTINGS]: async (params) => {
       return service.updateSettings(readRecord(params) as unknown as DesktopAssistantSettings);

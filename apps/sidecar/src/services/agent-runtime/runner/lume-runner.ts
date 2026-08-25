@@ -1,5 +1,4 @@
 import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn, type FileCheckpoint } from "@lume/agent-sdk";
-import { createHash } from "node:crypto";
 import type { AdvisorReviewedDetail, LumeConfigHooksInternalSection, SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter, RunRuntimeCoreAttemptOptions } from "../runtime-core/types";
@@ -21,6 +20,7 @@ import {
 import { getThreadEventBus } from "../events/thread-event-bus";
 import { publishRunDomainEvent } from "../events/bus-bridge";
 import { createLogger } from "../../infra/logger";
+import { stableHashPayload } from "../../infra/payload-hash";
 import { LumeRunObserver } from "./run-observer";
 import { fromAgentRuntimeRunResult } from "./run-result";
 import { applyResolvedThinkingLevel } from "./thinking-level";
@@ -846,7 +846,7 @@ function createContinuationPermissionHandler(
   if (typeof call.id !== "string" || typeof call.name !== "string" || typeof call.inputHash !== "string") return base;
   let consumed = false;
   return async (tool, input, metadata) => {
-    const inputHash = createHash("sha256").update(JSON.stringify(input ?? null)).digest("hex");
+    const inputHash = stableHashPayload(input);
     if (
       !consumed
       && metadata?.toolUseId === call.id

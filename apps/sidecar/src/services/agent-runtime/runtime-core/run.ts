@@ -29,11 +29,11 @@ import type {
   RuntimeCodingReport,
   FileReferenceBinding,
 } from "@lume/shared";
-import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getRuntimeHostPorts } from "../host-ports";
 import { createLogger } from "../../infra/logger";
+import { stableHashPayload } from "../../infra/payload-hash";
 import {
   createRoutingPiAiProvider,
   type PiAiProviderRoute,
@@ -879,9 +879,7 @@ async function createRuntimeCoreSessionImpl(
               id: toolUseId,
               name: toolName,
               input: toolInput.input,
-              inputHash: createHash("sha256")
-                .update(JSON.stringify(toolInput.input ?? null))
-                .digest("hex"),
+              inputHash: stableHashPayload(toolInput.input),
               kind: toolKind,
             },
           },
@@ -1440,9 +1438,7 @@ function resolvePersistedToolContinuation(
   const call = toolCall as Record<string, unknown>;
   if (typeof call.id !== "string" || typeof call.name !== "string")
     return undefined;
-  const inputHash = createHash("sha256")
-    .update(JSON.stringify(call.input ?? null))
-    .digest("hex");
+  const inputHash = stableHashPayload(call.input);
   if (typeof call.inputHash === "string" && call.inputHash !== inputHash) {
     throw new Error("cold-start continuation 的工具输入指纹不匹配");
   }

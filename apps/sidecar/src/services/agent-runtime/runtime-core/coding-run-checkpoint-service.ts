@@ -1,3 +1,4 @@
+import { isPathInside } from "./path-containment";
 import { lstat, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { readFileSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -60,11 +61,6 @@ export interface CodingFileFingerprint {
 function checkpointFileName(runId: string): string {
   const safeRunId = runId.replace(/[^a-zA-Z0-9_-]/g, "_");
   return `${CHECKPOINT_FILE_PREFIX}${safeRunId}.json`;
-}
-
-function isPathInside(root: string, candidate: string): boolean {
-  const relativePath = relative(resolve(root), resolve(candidate));
-  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
 function restrictCheckpointToRoots(roots: string[], checkpoint: FileCheckpoint): FileCheckpoint {

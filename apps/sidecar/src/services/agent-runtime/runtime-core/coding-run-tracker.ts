@@ -1,3 +1,4 @@
+import { isPathInside } from "./path-containment";
 import {
   type CompletionGuardResult,
   type SDKMessage,
@@ -887,11 +888,6 @@ async function withDeadline<T>(promise: Promise<T>, timeoutMs: number): Promise<
   ]);
   if (timer) clearTimeout(timer);
   return result.settled ? result.value : undefined;
-}
-
-function isPathInside(root: string, candidate: string): boolean {
-  const relativePath = relative(resolve(root), resolve(candidate));
-  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
 function stringifyResult(result: ToolResult): string {

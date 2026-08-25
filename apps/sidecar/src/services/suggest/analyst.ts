@@ -28,6 +28,7 @@
  */
 
 import { type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { resolveProviderApiType } from "../model-runtime/provider-api-type";
 import type { SuggestionCandidate, SuggestionKind } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
@@ -461,18 +462,9 @@ function createAnalysisProvider(input: {
   }
   return input.createProvider!({
     apiType: input.binding
-      ? resolveAnalysisApiType(input.binding.channel.provider)
+      ? resolveProviderApiType({ provider: input.binding.channel.provider })
       : "openai-completions",
     apiKey: input.binding ? decryptApiKey(input.binding.channel.id) : "",
     baseURL: input.binding?.channel.baseUrl,
   });
-}
-
-function resolveAnalysisApiType(provider: string): ApiType {
-  const normalized = provider.trim().toLowerCase();
-  if (normalized === "anthropic" || normalized === "anthropic-compatible") {
-    return "anthropic-messages";
-  }
-  if (normalized === "deepseek") return "deepseek-chat-completions";
-  return "openai-completions";
 }

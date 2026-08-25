@@ -1,4 +1,5 @@
 import { type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { resolveProviderApiType } from "../model-runtime/provider-api-type";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import {
   MEMORY_CLAIM_IDENTITY,
@@ -57,7 +58,7 @@ function createQueryPlannerAttempt(
   return {
     provider: createProviderInput
       ? createProviderInput({
-        apiType: binding ? resolveQueryPlannerApiType(binding.channel.provider) : "openai-completions",
+        apiType: binding ? resolveProviderApiType({ provider: binding.channel.provider }) : "openai-completions",
         apiKey: binding ? decryptApiKey(binding.channel.id) : "",
         baseURL: binding?.channel.baseUrl
       })
@@ -141,11 +142,4 @@ function parseQueryPlan(text: string): MemoryV2QueryPlan | undefined {
   } catch {
     return undefined;
   }
-}
-
-function resolveQueryPlannerApiType(provider: string): ApiType {
-  const normalized = provider.trim().toLowerCase();
-  if (normalized === "anthropic" || normalized === "anthropic-compatible") return "anthropic-messages";
-  if (normalized === "deepseek") return "deepseek-chat-completions";
-  return "openai-completions";
 }

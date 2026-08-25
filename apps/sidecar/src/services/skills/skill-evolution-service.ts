@@ -16,6 +16,7 @@ import {
 } from "@lume/agent-sdk";
 import type { AgentMessage, SkillStorageScope } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
+import { resolveProviderApiType } from "../model-runtime/provider-api-type";
 import { getAliceUserSkillsDir, getUserSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { resolveChatProvider } from "../memory-v2/chat-provider";
@@ -282,7 +283,9 @@ export function createWorkspaceSkillImprovementModelCall(
 
   const provider = input.createProvider
     ? input.createProvider({
-      apiType: binding ? resolveSkillApiType(binding) : "openai-completions",
+      apiType: binding
+        ? resolveProviderApiType({ family: binding.family, provider: binding.channel.provider })
+        : "openai-completions",
       apiKey: binding ? (input.decryptApiKey ?? decryptApiKey)(binding.channel.id) : "",
       baseURL: binding?.channel.baseUrl
     })
@@ -529,14 +532,6 @@ function resolveSkillImprovementModelRef(input: {
 
 function defaultResolveBinding(modelRef: string): SkillModelBinding | null {
   return resolveChannelModelBinding(modelRef, "chat");
-}
-
-function resolveSkillApiType(binding: SkillModelBinding): ApiType {
-  if (binding.channel.provider === "deepseek") return "deepseek-chat-completions";
-  if (binding.family === "anthropic" || binding.channel.provider === "anthropic" || binding.channel.provider === "anthropic-compatible") {
-    return "anthropic-messages";
-  }
-  return "openai-completions";
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {

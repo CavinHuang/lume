@@ -1,4 +1,5 @@
 import { type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { resolveProviderApiType } from "../model-runtime/provider-api-type";
 import { stripAfterglowLines } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
@@ -77,7 +78,7 @@ function createConversationSummaryAttempt(
   return {
     provider: createProviderInput
       ? createProviderInput({
-        apiType: binding ? resolveConversationSummaryApiType(binding.channel.provider) : "openai-completions",
+        apiType: binding ? resolveProviderApiType({ provider: binding.channel.provider }) : "openai-completions",
         apiKey: binding ? decryptApiKey(binding.channel.id) : "",
         baseURL: binding?.channel.baseUrl
       })
@@ -167,11 +168,4 @@ export function compactMemorySummaryText(value: string, maxLength = 260): string
   const compact = stripAfterglowLines(value).replace(/\s+/g, " ").trim();
   if (compact.length <= maxLength) return compact;
   return `${compact.slice(0, maxLength - 3)}...`;
-}
-
-function resolveConversationSummaryApiType(provider: string): ApiType {
-  const normalized = provider.trim().toLowerCase();
-  if (normalized === "anthropic" || normalized === "anthropic-compatible") return "anthropic-messages";
-  if (normalized === "deepseek") return "deepseek-chat-completions";
-  return "openai-completions";
 }

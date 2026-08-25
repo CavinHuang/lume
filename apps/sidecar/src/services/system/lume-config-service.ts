@@ -883,7 +883,9 @@ function ensureWorkspaceSection(
   return file.workspaces[workspaceSlug];
 }
 
-function assignPath(root: Record<string, unknown>, path: string, value: unknown): void {
+/** 配置点分路径赋值原语(#531 收敛 system-config-service 同型拷贝)；
+ *  拒绝空段与 __proto__/prototype/constructor 原型污染段。 */
+export function assignPath(root: Record<string, unknown>, path: string, value: unknown): void {
   const segments = path
     .split(".")
     .map((item) => item.trim())

@@ -564,7 +564,7 @@ export async function getCodingFileDiff(
         removedLines: 0,
         beforeAvailable: false,
         afterAvailable: true,
-        actions: workspaceSnapshotActions(),
+        actions: snapshotActions(),
         fingerprint: fileFingerprint(root, safePath),
       });
     }
@@ -576,7 +576,7 @@ export async function getCodingFileDiff(
         patch: "",
         addedLines: 0,
         removedLines: 0,
-        actions: workspaceSnapshotActions(),
+        actions: snapshotActions(),
         fingerprint: fileFingerprint(root, safePath),
       });
     }
@@ -589,7 +589,7 @@ export async function getCodingFileDiff(
         patch: "",
         addedLines: 0,
         removedLines: 0,
-        actions: workspaceSnapshotActions(),
+        actions: snapshotActions(),
         fingerprint: fileFingerprint(root, safePath),
       });
     }
@@ -603,7 +603,7 @@ export async function getCodingFileDiff(
       lines,
       addedLines: countLines(newContent),
       removedLines: 0,
-      actions: workspaceSnapshotActions(),
+      actions: snapshotActions(),
     });
   }
   const safePath = normalizeSafePath(gitRoot, filePath);
@@ -1304,16 +1304,6 @@ async function getGitFileFingerprint(gitRoot: string, path: string): Promise<str
 }
 
 function snapshotActions(): CodingDiffActions {
-  return {
-    isGit: false,
-    staged: false,
-    unstaged: true,
-    canStage: false,
-    canUnstage: false,
-  };
-}
-
-function workspaceSnapshotActions(): CodingDiffActions {
   return {
     isGit: false,
     staged: false,
