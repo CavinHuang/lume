@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { initialImRunCardState, reduceImRunCardEvent } from "./feishu-card-state";
+import { initialImRunCardState, reduceImRunCardEvent, type ImRunCardState } from "./feishu-card-state";
+import { renderImRunCard } from "./feishu-card-renderer";
 import type { LumeRuntimeEvent } from "@lume/shared";
 
 function baseEvent(partial: Partial<LumeRuntimeEvent> & { type: LumeRuntimeEvent["type"] }): LumeRuntimeEvent {
@@ -82,5 +83,26 @@ describe("reduceImRunCardEvent", () => {
   test("无关事件返回原引用", () => {
     const state = initialImRunCardState(1000);
     expect(reduceImRunCardEvent(state, baseEvent({ type: "im.delivery" }))).toBe(state);
+  });
+
+  test("压缩中间态：started 置位 / completed 复位，幂等（#709 第 4 项）", () => {
+    let state = initialImRunCardState(1000);
+    state = reduceImRunCardEvent(state, baseEvent({ type: "context.compaction.started", trigger: "prompt_too_long" }));
+    expect(state.compacting).toBe(true);
+    const again = reduceImRunCardEvent(state, baseEvent({ type: "context.compaction.started" }));
+    expect(again).toBe(state);
+    state = reduceImRunCardEvent(state, baseEvent({ type: "context.compaction.completed" }));
+    expect(state.compacting).toBe(false);
+  });
+});
+
+describe("renderImRunCard 压缩中间态标题（#709 第 4 项）", () => {
+  test("compacting 且 running 时头部显示「正在压缩上下文」", () => {
+    const state: ImRunCardState = { status: "running", blocks: [], startedAtMs: 1000, compacting: true };
+    const card = renderImRunCard(state);
+    expect(card.header.title.content).toBe("正在压缩上下文");
+    // 非压缩运行保持原标题
+    const idle = renderImRunCard({ status: "running", blocks: [], startedAtMs: 1000 });
+    expect(idle.header.title.content).toBe("正在处理");
   });
 });

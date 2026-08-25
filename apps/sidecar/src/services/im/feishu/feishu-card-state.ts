@@ -31,6 +31,8 @@ export interface ImRunCardState {
   startedAtMs: number;
   endedAtMs?: number;
   error?: string;
+  /** 恢复压缩进行中（#709 第 4 项）：卡片头部显示「正在压缩上下文」中间态 */
+  compacting?: boolean;
 }
 
 export function initialImRunCardState(startedAtMs: number): ImRunCardState {
@@ -142,6 +144,10 @@ export function reduceImRunCardEvent(state: ImRunCardState, event: LumeRuntimeEv
         status: "failed",
         ...(event.error?.message ? { error: event.error.message } : {})
       });
+    case "context.compaction.started":
+      return state.compacting ? state : { ...state, compacting: true };
+    case "context.compaction.completed":
+      return state.compacting ? { ...state, compacting: false } : state;
     case "run.completed":
       return terminal(state, "completed", nowMs);
     case "run.failed":
