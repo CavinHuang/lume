@@ -8,8 +8,6 @@ export interface LineChangeStats {
 /**
  * Counts the changed middle section. File tools make one replacement at a time,
  * so common prefix/suffix keeps the summary useful without a full diff engine.
- */
-/**
  * 口径注（#572）：公共前后缀裁剪法，非 LCS——中段整块改动按全增全删计，
  * 重写场景数值偏高于 git 统计；changeSet（git 权威）缺失时仅作兜底展示。
  */

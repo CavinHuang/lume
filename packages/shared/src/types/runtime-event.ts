@@ -587,6 +587,21 @@ export interface CodingSectionDiffActionInput extends CodingDiffActionBase {
 
 export type CodingDiffActionInput = CodingFileDiffActionInput | CodingSectionDiffActionInput
 
+/** 快照还原（REVERT_CODING_RUN）入参 */
+export interface CodingRunRevertInput {
+  threadId: string
+  runId: string
+}
+
+/** 快照还原结果：三桶不相交，nonRewindableFiles 为 committed/conflicts/skipped 并集（兼容保留） */
+export interface CodingRunRevertResult {
+  status: "restored" | "conflict" | "committed_boundary"
+  filesChanged: string[]
+  conflicts: string[]
+  committedPaths: string[]
+  nonRewindableFiles: string[]
+}
+
 export interface CodingDiffActionResult {
   ok: true
   diff?: CodingDiffPayload

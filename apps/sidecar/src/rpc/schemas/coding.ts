@@ -152,3 +152,10 @@ export const codingRunRevertInputSchema = z.object({
   threadId: idSchema,
   runId: idSchema,
 });
+
+export const codingRunFileRevertInputSchema = z.object({
+  threadId: idSchema,
+  runId: idSchema,
+  path: z.string().trim().min(1),
+  rootId: idSchema.optional(),
+});
