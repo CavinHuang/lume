@@ -40,14 +40,14 @@ export function isConnectionVaultUnlocked(): boolean {
   return vaultKey?.length === 32;
 }
 
-function encrypt(value: string): string {
+export function encrypt(value: string): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", requireVaultKey(), iv);
   const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
   return `vault:v1:${Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString("base64")}`;
 }
 
-function decrypt(value: string): string {
+export function decrypt(value: string): string {
   if (!value.startsWith("vault:v1:")) throw new Error("connection_vault_record_invalid");
   const payload = Buffer.from(value.slice("vault:v1:".length), "base64");
   if (payload.length < 29) throw new Error("connection_vault_record_invalid");

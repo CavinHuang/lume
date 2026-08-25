@@ -1,0 +1,464 @@
+/**
+ * Query parameter values accepted by provider HTTP helpers.
+ */
+export interface BoundedResponseBytesOptions {
+  maxBytes: number;
+  fieldName: string;
+  createError: (message: string) => Error;
+}
+
+/**
+ * Read a response body into memory while enforcing a byte limit.
+ */
+export async function readBoundedResponseBytes(
+  response: Response,
+  options: BoundedResponseBytesOptions,
+): Promise<Uint8Array> {
+  const contentLength = parseContentLength(response.headers.get("content-length"));
+  if (contentLength !== undefined) {
+    assertMaxBytes(contentLength, options);
+  }
+
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    assertMaxBytes(bytes.byteLength, options);
+    return bytes;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      totalBytes += value.byteLength;
+      if (totalBytes > options.maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw options.createError(`${options.fieldName} exceeds ${options.maxBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+// Egress targets are classified into three tiers for the SSRF guard:
+//
+//   - "reserved" (localHostnames, cloudMetadataHostnames, localHostnameSuffixes,
+//     reservedIpv4Cidrs, reservedIpv6Cidrs): loopback, link-local, cloud-metadata,
+//     multicast, and other unsafe special-use ranges. ALWAYS blocked — they are
+//     the classic SSRF escalation targets ("don't let the deployment attack
+//     itself").
+//   - "VPN-mapped" (vpnMappedIpv4Cidrs): benchmark address space used by some
+//     zero-trust VPNs to tunnel public SaaS traffic. Blocked unconditionally in
+//     this runtime (the upstream deployment-level trusted-host opt-in was
+//     removed with the migration).
+//   - "private" (privateHostnameSuffixes, privateIpv4Cidrs, privateIpv6Cidrs):
+//     RFC 1918 / CGNAT / IPv6 ULA LAN ranges and private hostname suffixes.
+//     Reachable only via the per-call `allowPrivateNetwork` opt-in on
+//     assertPublicHttpUrl/guarded fetch; reserved targets stay blocked either way.
+
+// Always blocked: names that resolve to loopback, regardless of any opt-in.
+const localHostnames = new Set(["localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"]);
+// Always blocked: cloud instance-metadata endpoints (prime SSRF escalation targets).
+const cloudMetadataHostnames = new Set([
+  "instance-data.ec2.internal",
+  "metadata",
+  "metadata.google.internal",
+  "metadata.goog",
+]);
+// Always blocked: .localhost (RFC 6761 loopback) and the localhost.localdomain alias.
+const localHostnameSuffixes = [".localhost", ".localdomain"];
+// Flag-gated: private hostname suffixes with mixed standards status — .local (mDNS special-use,
+// RFC 6762), .internal (ICANN 2024 private-use reservation), .home/.lan (convention only).
+// Reachable only with the private-network opt-in.
+const privateHostnameSuffixes = [".local", ".internal", ".home", ".lan"];
+// Flag-gated: RFC 1918 private-use (10/8, 172.16/12, 192.168/16) + RFC 6598 CGNAT (100.64/10).
+const privateIpv4Cidrs: Array<[number, number]> = [
+  [ipv4ToNumber("10.0.0.0"), 8],
+  [ipv4ToNumber("100.64.0.0"), 10],
+  [ipv4ToNumber("172.16.0.0"), 12],
+  [ipv4ToNumber("192.168.0.0"), 16],
+];
+// Always blocked (opt-in never unblocks these): this-network (0/8), loopback (127/8),
+// link-local incl. the 169.254.169.254 metadata host (169.254/16), IANA protocol/documentation
+// blocks, multicast (224/4), and future-use (240/4). 100.100.100.200/32 is the Alibaba
+// Cloud metadata endpoint — it sits inside CGNAT (100.64/10) but is pinned here so it stays
+// blocked even after opting into private networks.
+const reservedIpv4Cidrs: Array<[number, number]> = [
+  [ipv4ToNumber("0.0.0.0"), 8],
+  [ipv4ToNumber("100.100.100.200"), 32],
+  [ipv4ToNumber("127.0.0.0"), 8],
+  [ipv4ToNumber("169.254.0.0"), 16],
+  [ipv4ToNumber("192.0.0.0"), 24],
+  [ipv4ToNumber("192.0.2.0"), 24],
+  [ipv4ToNumber("198.51.100.0"), 24],
+  [ipv4ToNumber("203.0.113.0"), 24],
+  [ipv4ToNumber("224.0.0.0"), 4],
+  [ipv4ToNumber("240.0.0.0"), 4],
+];
+// Trusted-host only: RFC 2544 benchmark space used by aTrust/EasyConnect-class VPNs to map
+// public SaaS hostnames into locally routed addresses.
+const vpnMappedIpv4Cidrs: Array<[number, number]> = [[ipv4ToNumber("198.18.0.0"), 15]];
+// Always blocked: unspecified/loopback (::, ::1), link-local (fe80::/10), AWS IMDSv2 IPv6
+// (fd00:ec2::254), multicast (ff00::/8), plus discard, documentation, benchmark, and other
+// special-purpose IPv6 ranges (RFC 6890 registry).
+const reservedIpv6Cidrs: Array<[Uint8Array, number]> = [
+  [ipv6ToBytes("::"), 128],
+  [ipv6ToBytes("::1"), 128],
+  [ipv6ToBytes("100::"), 64],
+  [ipv6ToBytes("100:0:0:1::"), 64],
+  [ipv6ToBytes("64:ff9b:1::"), 48],
+  [ipv6ToBytes("2001:2::"), 48],
+  [ipv6ToBytes("2001:db8::"), 32],
+  [ipv6ToBytes("3fff::"), 20],
+  [ipv6ToBytes("5f00::"), 16],
+  [ipv6ToBytes("fd00:ec2::254"), 128],
+  [ipv6ToBytes("fe80::"), 10],
+  [ipv6ToBytes("ff00::"), 8],
+];
+// Flag-gated: IPv6 ULA (fc00::/7, RFC 4193) and deprecated site-local (fec0::/10, RFC 3879).
+// Only reached via the resolved-address path — assertPublicHttpUrl rejects every literal IPv6 URL.
+const privateIpv6Cidrs: Array<[Uint8Array, number]> = [
+  [ipv6ToBytes("fc00::"), 7],
+  [ipv6ToBytes("fec0::"), 10],
+];
+/** IPv6 ranges that embed an IPv4 address checked against the IPv4 policy: [prefix, bits, v4 byte offset]. */
+const ipv4EmbeddedIpv6Cidrs: Array<[Uint8Array, number, number]> = [
+  [ipv6ToBytes("::ffff:0:0"), 96, 12],
+  [ipv6ToBytes("64:ff9b::"), 96, 12],
+  [ipv6ToBytes("2002::"), 16, 2],
+];
+
+export interface PublicHttpUrlOptions {
+  fieldName: string;
+  createError: (message: string) => Error;
+  /** Allow RFC 1918, shared-address-space, and private hostname targets while retaining reserved-target guards. */
+  allowPrivateNetwork?: boolean;
+}
+
+/**
+ * Parse a user-supplied URL and reject unsafe network targets.
+ *
+ * This is a local runtime SSRF guard for provider actions that fetch remote
+ * user-supplied content before uploading it to an upstream provider. Callers
+ * may explicitly allow private networks for trusted self-hosted services, but
+ * loopback, link-local, reserved, multicast, and IPv6 targets remain blocked.
+ */
+export function assertPublicHttpUrl(value: string, options: PublicHttpUrlOptions): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw options.createError(`${options.fieldName} must be a valid URL`);
+  }
+
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw options.createError(`${options.fieldName} must use http or https`);
+  }
+
+  const hostname = normalizeHostname(url.hostname);
+  if (cloudMetadataHostnames.has(hostname)) {
+    throw options.createError(`${options.fieldName} must not target cloud metadata hosts`);
+  }
+  if (localHostnames.has(hostname) || localHostnameSuffixes.some((suffix) => hostname.endsWith(suffix))) {
+    throw options.createError(`${options.fieldName} must not target local hosts`);
+  }
+  if (!options.allowPrivateNetwork && privateHostnameSuffixes.some((suffix) => hostname.endsWith(suffix))) {
+    throw options.createError(`${options.fieldName} must not target local hosts`);
+  }
+
+  const ipv4 = parseIpv4(hostname);
+  if (ipv4 !== undefined && isAddressClassBlocked(classifyIpv4(ipv4), options.allowPrivateNetwork === true)) {
+    throw options.createError(`${options.fieldName} must not target private or reserved IP addresses`);
+  }
+
+  if (hostname.includes(":")) {
+    throw options.createError(`${options.fieldName} must not target IPv6 addresses`);
+  }
+
+  if (hostname !== url.hostname) {
+    url.hostname = hostname;
+  }
+  return url;
+}
+
+export type IpAddressClass = "public" | "private" | "vpn-mapped" | "always-blocked";
+
+/**
+ * Classify one resolved IPv4 or IPv6 address for the shared egress policy.
+ *
+ * IPv6 ranges that embed an IPv4 address (v4-mapped, NAT64, 6to4, Teredo)
+ * inherit the embedded IPv4 classification. Unparseable input fails closed.
+ */
+export function classifyIpAddress(address: string): IpAddressClass {
+  const ipv4 = parseIpv4(address);
+  if (ipv4 !== undefined) {
+    return classifyIpv4(ipv4);
+  }
+
+  const ipv6 = parseIpv6(address);
+  if (ipv6 === undefined) {
+    return "always-blocked";
+  }
+  if (reservedIpv6Cidrs.some(([network, bits]) => ipv6InCidr(ipv6, network, bits))) {
+    return "always-blocked";
+  }
+  if (privateIpv6Cidrs.some(([network, bits]) => ipv6InCidr(ipv6, network, bits))) {
+    return "private";
+  }
+  for (const [network, bits, offset] of ipv4EmbeddedIpv6Cidrs) {
+    if (ipv6InCidr(ipv6, network, bits)) {
+      return classifyIpv4(readIpv4At(ipv6, offset));
+    }
+  }
+  const teredo = classifyTeredoIpv6(ipv6);
+  if (teredo !== undefined) {
+    return teredo;
+  }
+  return "public";
+}
+
+/**
+ * Return whether a resolved IP address is blocked by the default egress policy.
+ *
+ * This complements {@link assertPublicHttpUrl}: the URL guard validates literal
+ * hostnames before a request, while this check validates the addresses a
+ * hostname actually resolves to. Private addresses may be enabled explicitly;
+ * VPN-mapped and always-blocked ranges remain closed here.
+ */
+export function isBlockedIpAddress(address: string, allowPrivateNetwork = false): boolean {
+  return isAddressClassBlocked(classifyIpAddress(address), allowPrivateNetwork);
+}
+
+/**
+ * Whether a hostname is a canonical dotted-decimal IPv4 literal (each octet
+ * 0-255), matching exactly what {@link assertPublicHttpUrl} validates as a
+ * literal IPv4. Callers use this to decide a hostname is already an
+ * address-validated literal and does not need DNS resolution — it must not
+ * over-match looser numeric forms (octal, out-of-range) that resolvers would
+ * still interpret as an address.
+ */
+export function isIpv4Address(hostname: string): boolean {
+  return parseIpv4(hostname) !== undefined;
+}
+
+/**
+ * Whether a string parses as an IPv4 or IPv6 address literal. Callers use this
+ * to tell real addresses apart from other strings a resolver may hand back, so
+ * {@link isBlockedIpAddress}'s "unparseable is blocked" rule only ever judges
+ * values that were meant to be addresses.
+ */
+export function isIpAddress(value: string): boolean {
+  return parseIpv4(value) !== undefined || parseIpv6(value) !== undefined;
+}
+
+function readIpv4At(bytes: Uint8Array, offset: number): number {
+  return ((bytes[offset]! << 24) | (bytes[offset + 1]! << 16) | (bytes[offset + 2]! << 8) | bytes[offset + 3]!) >>> 0;
+}
+
+/**
+ * Teredo (RFC 4380, `2001:0000::/32`) embeds a server IPv4 and an obfuscated
+ * client IPv4 (last 32 bits XOR `0xffffffff`). Classify as the stricter of the
+ * two so a crafted Teredo address cannot hide IMDS or RFC 1918 behind a public
+ * 6-in-4 prefix.
+ */
+function classifyTeredoIpv6(ipv6: Uint8Array): IpAddressClass | undefined {
+  if (ipv6[0] !== 0x20 || ipv6[1] !== 0x01 || ipv6[2] !== 0x00 || ipv6[3] !== 0x00) {
+    return undefined;
+  }
+  return stricterIpAddressClass(classifyIpv4(readIpv4At(ipv6, 4)), classifyIpv4(readIpv4At(ipv6, 12) ^ 0xffffffff));
+}
+
+function stricterIpAddressClass(left: IpAddressClass, right: IpAddressClass): IpAddressClass {
+  const rank: Record<IpAddressClass, number> = {
+    public: 0,
+    private: 1,
+    "vpn-mapped": 2,
+    "always-blocked": 3,
+  };
+  return rank[left] >= rank[right] ? left : right;
+}
+
+function classifyIpv4(value: number): IpAddressClass {
+  if (reservedIpv4Cidrs.some(([network, bits]) => ipv4InCidr(value, network, bits))) {
+    return "always-blocked";
+  }
+  if (vpnMappedIpv4Cidrs.some(([network, bits]) => ipv4InCidr(value, network, bits))) {
+    return "vpn-mapped";
+  }
+  if (privateIpv4Cidrs.some(([network, bits]) => ipv4InCidr(value, network, bits))) {
+    return "private";
+  }
+  return "public";
+}
+
+function isAddressClassBlocked(addressClass: IpAddressClass, allowPrivateNetwork: boolean): boolean {
+  return (
+    addressClass === "always-blocked" ||
+    addressClass === "vpn-mapped" ||
+    (!allowPrivateNetwork && addressClass === "private")
+  );
+}
+
+function normalizeHostname(value: string): string {
+  let hostname = value.toLowerCase();
+  while (hostname.endsWith(".")) {
+    hostname = hostname.slice(0, -1);
+  }
+  return hostname;
+}
+
+function parseIpv4(hostname: string): number | undefined {
+  const parts = hostname.split(".");
+  if (parts.length !== 4) {
+    return undefined;
+  }
+
+  let value = 0;
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) {
+      return undefined;
+    }
+    const octet = Number(part);
+    if (!Number.isInteger(octet) || octet < 0 || octet > 255) {
+      return undefined;
+    }
+    value = (value << 8) + octet;
+  }
+
+  return value >>> 0;
+}
+
+function parseIpv6(value: string): Uint8Array | undefined {
+  let input = value.toLowerCase();
+  const zoneIndex = input.indexOf("%");
+  if (zoneIndex !== -1) {
+    input = input.slice(0, zoneIndex);
+  }
+  if (input.startsWith("[") && input.endsWith("]")) {
+    input = input.slice(1, -1);
+  }
+  if (!input.includes(":")) {
+    return undefined;
+  }
+
+  let head = input;
+  let tail = "";
+  const compressedIndex = input.indexOf("::");
+  if (compressedIndex !== -1) {
+    if (input.includes("::", compressedIndex + 1)) {
+      return undefined;
+    }
+    head = input.slice(0, compressedIndex);
+    tail = input.slice(compressedIndex + 2);
+  }
+
+  const headWords = parseIpv6Words(head);
+  const tailWords = parseIpv6Words(tail);
+  if (headWords === undefined || tailWords === undefined) {
+    return undefined;
+  }
+  const missing = 8 - headWords.length - tailWords.length;
+  if (compressedIndex === -1 ? headWords.length !== 8 : missing < 1) {
+    return undefined;
+  }
+
+  const words =
+    compressedIndex === -1 ? headWords : [...headWords, ...new Array<number>(missing).fill(0), ...tailWords];
+  const bytes = new Uint8Array(16);
+  for (const [index, word] of words.entries()) {
+    bytes[index * 2] = word >>> 8;
+    bytes[index * 2 + 1] = word & 0xff;
+  }
+  return bytes;
+}
+
+function parseIpv6Words(value: string): number[] | undefined {
+  if (value === "") {
+    return [];
+  }
+
+  const words: number[] = [];
+  const parts = value.split(":");
+  for (const [index, part] of parts.entries()) {
+    if (part.includes(".")) {
+      if (index !== parts.length - 1) {
+        return undefined;
+      }
+      const ipv4 = parseIpv4(part);
+      if (ipv4 === undefined) {
+        return undefined;
+      }
+      words.push(ipv4 >>> 16, ipv4 & 0xffff);
+      continue;
+    }
+    if (!/^[0-9a-f]{1,4}$/u.test(part)) {
+      return undefined;
+    }
+    words.push(Number.parseInt(part, 16));
+  }
+  return words;
+}
+
+function ipv6ToBytes(value: string): Uint8Array {
+  const parsed = parseIpv6(value);
+  if (parsed === undefined) {
+    throw new Error(`invalid IPv6 CIDR base: ${value}`);
+  }
+  return parsed;
+}
+
+function ipv6InCidr(value: Uint8Array, network: Uint8Array, bits: number): boolean {
+  const fullBytes = Math.floor(bits / 8);
+  for (let index = 0; index < fullBytes; index++) {
+    if (value[index] !== network[index]) {
+      return false;
+    }
+  }
+  const remainderBits = bits % 8;
+  if (remainderBits === 0) {
+    return true;
+  }
+  const mask = (0xff << (8 - remainderBits)) & 0xff;
+  return (value[fullBytes]! & mask) === (network[fullBytes]! & mask);
+}
+
+function parseContentLength(value: string | null): number | undefined {
+  if (!value || !/^\d+$/.test(value)) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+function assertMaxBytes(byteLength: number, options: BoundedResponseBytesOptions): void {
+  if (byteLength > options.maxBytes) {
+    throw options.createError(`${options.fieldName} exceeds ${options.maxBytes} bytes`);
+  }
+}
+
+function ipv4ToNumber(value: string): number {
+  const parsed = parseIpv4(value);
+  if (parsed === undefined) {
+    throw new Error(`invalid IPv4 CIDR base: ${value}`);
+  }
+  return parsed;
+}
+
+function ipv4InCidr(value: number, network: number, bits: number): boolean {
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+  return (value & mask) === (network & mask);
+}
