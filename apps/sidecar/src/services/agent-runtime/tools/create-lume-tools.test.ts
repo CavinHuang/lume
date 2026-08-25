@@ -1,8 +1,21 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createLumeRuntimeTools } from "./create-lume-tools";
 import { createToolDescriptorsFromDefinitions } from "./tool-source";
 import { ToolRegistry } from "./tool-registry";
 import { ToolResolver } from "./tool-resolver";
+
+/** 造一个最小 bundled browser 插件目录，满足 isBundledBrowserRuntimeAvailable 门控（#539） */
+function withBundledBrowserEnv(): string {
+  const root = mkdtempSync(join(tmpdir(), "lume-bundled-plugins-"));
+  mkdirSync(join(root, "browser", ".lume-plugin"), { recursive: true });
+  mkdirSync(join(root, "browser", "scripts"), { recursive: true });
+  writeFileSync(join(root, "browser", ".lume-plugin", "plugin.json"), "{}");
+  writeFileSync(join(root, "browser", "scripts", "browser-client.mjs"), "");
+  return root;
+}
 
 function baseInput() {
   return {
@@ -39,8 +52,11 @@ describe("create-lume-tools", () => {
   });
 
   test("registers Browser and Computer Use tools independently of message wording", () => {
-    const result = createLumeRuntimeTools({ ...baseInput(), workspaceSlug: "workspace-1" });
-    const toolNames = result.customTools.map((tool) => tool.name);
+    const prevBundledDir = process.env.LUME_BUNDLED_PLUGINS_DIR;
+    process.env.LUME_BUNDLED_PLUGINS_DIR = withBundledBrowserEnv();
+    try {
+      const result = createLumeRuntimeTools({ ...baseInput(), workspaceSlug: "workspace-1" });
+      const toolNames = result.customTools.map((tool) => tool.name);
 
     expect(toolNames).toContain("mcp__node_repl__js");
     expect(toolNames).toContain("mcp__node_repl__js_reset");
@@ -71,6 +87,29 @@ describe("create-lume-tools", () => {
     expect(toolNames).toContain("mcp__browser__dialog");
     expect(toolNames).toContain("mcp__browser__handle_dialog");
     expect(toolNames).toContain("mcp__browser__run_script");
+    } finally {
+      if (prevBundledDir === undefined) {
+        delete process.env.LUME_BUNDLED_PLUGINS_DIR;
+      } else {
+        process.env.LUME_BUNDLED_PLUGINS_DIR = prevBundledDir;
+      }
+    }
+  });
+
+  test("无 bundled 浏览器运行时时不注入 browser 工具族（#539）", () => {
+    const prevBundledDir = process.env.LUME_BUNDLED_PLUGINS_DIR;
+    delete process.env.LUME_BUNDLED_PLUGINS_DIR;
+    try {
+      const result = createLumeRuntimeTools({ ...baseInput(), workspaceSlug: "workspace-1" });
+      const toolNames = result.customTools.map((tool) => tool.name);
+      expect(toolNames.some((name) => name.startsWith("mcp__browser__"))).toBeFalse();
+    } finally {
+      if (prevBundledDir === undefined) {
+        delete process.env.LUME_BUNDLED_PLUGINS_DIR;
+      } else {
+        process.env.LUME_BUNDLED_PLUGINS_DIR = prevBundledDir;
+      }
+    }
   });
 
   test("does not expose task-owned Browser tools to subagents", () => {

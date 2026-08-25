@@ -1283,7 +1283,6 @@ const lumeConfigWebSearchSchema = z
     strategy: z.enum(["priority", "joint"]).optional(),
     providers: z
       .object({
-        guanlan: lumeConfigWebSearchProviderSchema.optional(),
         exa: lumeConfigWebSearchProviderSchema.optional(),
         pipellm: lumeConfigWebSearchProviderSchema.optional(),
         zhipu: lumeConfigWebSearchProviderSchema.optional(),

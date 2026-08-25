@@ -30,18 +30,6 @@ export function canonicalizeAgentToolName(toolName: string): string {
     case "webfetch":
     case "web_fetch":
       return "web_fetch";
-    case "guanlansearch":
-    case "guanlan_search":
-      return "guanlan_search";
-    case "guanlanread":
-    case "guanlan_read":
-      return "guanlan_read";
-    case "guanlanhotnews":
-    case "guanlan_hotnews":
-      return "guanlan_hotnews";
-    case "guanlanresearch":
-    case "guanlan_research":
-      return "guanlan_research";
     case "agent":
     case "agent_spawn":
       return "agent_spawn";

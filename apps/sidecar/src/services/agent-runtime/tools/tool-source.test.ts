@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ToolDefinition } from "@lume/agent-sdk";
 import { createToolDescriptorsFromDefinitions } from "./tool-source";
 import { ToolRegistry } from "./tool-registry";
+import type { LumeToolSource } from "./tool-types";
 
 function makeTool(name: string): ToolDefinition {
   return {
@@ -166,7 +167,7 @@ describe("createToolDescriptorsFromDefinitions", () => {
     // 来源退化防线：SDK rebuild 把完整 toolset 以单一 "sdk" 组重喂时，
     // 无盖章工具的来源靠前缀启发还原。新增前缀必须在此显式登记，
     // 否则新工具会静默获得错误权限默认值（mcp/plugin=高摩擦 vs sdk=低）。
-    const pinnedPrefixes: Array<[string, string]> = [
+    const pinnedPrefixes: Array<[string, LumeToolSource]> = [
       ["mcp__", "mcp"],
       ["memory.", "memory"],
       ["memory_", "memory"],

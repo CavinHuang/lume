@@ -148,18 +148,18 @@ describe("search tools", () => {
 describe("ToolSearch promotion", () => {
   test("activates matched tools when the hook is present", async () => {
     const activated: string[][] = [];
-    const tool = createToolSearchTool(() => [makeFakeTool("GuanlanSearch")]);
-    const result = await tool.call({ query: "guanlan" }, {
+    const tool = createToolSearchTool(() => [makeFakeTool("DeepSearch")]);
+    const result = await tool.call({ query: "deep" }, {
       activateTools: (names) => { activated.push(names); return names; },
     } as any);
 
-    expect(activated).toEqual([["GuanlanSearch"]]);
+    expect(activated).toEqual([["DeepSearch"]]);
     expect(result.content).toContain("call them directly");
   });
 
   test("falls back to ExecuteTool guidance without the hook", async () => {
-    const tool = createToolSearchTool(() => [makeFakeTool("GuanlanSearch")]);
-    const result = await tool.call({ query: "guanlan" }, {} as any);
+    const tool = createToolSearchTool(() => [makeFakeTool("DeepSearch")]);
+    const result = await tool.call({ query: "deep" }, {} as any);
 
     expect(result.content).toContain("ExecuteTool");
   });

@@ -29,6 +29,7 @@ import { createComputerUseRequestBridge } from "./node-repl/node-repl-computer-u
 import { createPlanningTodoTools } from "./planning/create-planning-todo-tools";
 import { createSuggestionTools } from "./suggest/create-suggestion-tools";
 import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
+import { isBundledBrowserRuntimeAvailable } from "../plugins/plugin-manager";
 import { createBrowserMcpTools } from "./browser/create-browser-tools";
 
 export interface CreateLumeRuntimeToolsInput {
@@ -159,7 +160,9 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const computerUseTools = computerUseSurface === "mcp"
     ? allComputerUseTools
     : [];
-  const browserTools = input.threadType === "subagent"
+  // 无 bundled 浏览器运行时的安装（CI/精简包）整族不注入，25 个 schema 不再
+  // 常驻 core 池白占 ~2100 token/请求；环境存在时常驻保 prompt-cache 稳定（#539）
+  const browserTools = input.threadType === "subagent" || !isBundledBrowserRuntimeAvailable()
     ? []
     : createBrowserMcpTools({ threadId: input.threadId });
   const customTools = [
