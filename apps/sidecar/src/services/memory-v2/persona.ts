@@ -4,7 +4,6 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
-  rmSync,
   writeFileSync
 } from "node:fs";
 import { dirname } from "node:path";
@@ -37,10 +36,6 @@ export function writePersona(
 ): boolean {
   const path = getPersonaPath(scope, workspaceSlug);
   return writePersonaAtomic(path, markdown);
-}
-
-export function deletePersona(scope: MemoryV2Scope, workspaceSlug?: string): void {
-  rmSync(getPersonaPath(scope, workspaceSlug), { force: true });
 }
 
 /**

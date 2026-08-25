@@ -36,6 +36,3 @@ export function assertPrivilegedCredential(value: unknown): void {
   gate.assert(value);
 }
 
-export function privilegedCredentialReady(): boolean {
-  return gate.ready();
-}

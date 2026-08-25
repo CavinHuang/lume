@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   buildPersonaFromRules,
-  deletePersona,
   ensurePersona,
   generatePersona,
   getPersonaPath,
@@ -67,13 +66,6 @@ describe("persona store", () => {
 
   test("readPersonaRaw 不存在返回 null", () => {
     expect(readPersonaRaw("global")).toBeNull();
-  });
-
-  test("deletePersona 幂等", () => {
-    writePersona("global", undefined, "x");
-    deletePersona("global");
-    expect(readPersonaRaw("global")).toBeNull();
-    expect(() => deletePersona("global")).not.toThrow();
   });
 
   test("workspace scope 独立于 global", () => {

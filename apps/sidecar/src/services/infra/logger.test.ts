@@ -4,7 +4,6 @@ import {
   createDiagnosticLogSummary,
   acknowledgeLogBatch,
   flushLogTransport,
-  getCurrentLogFileName,
   redactDiagnosticLogData,
   sanitizeBaseUrlForLog,
   setLogBatchNotificationWriter,
@@ -46,11 +45,6 @@ describe("logger diagnostic helpers", () => {
     expect(summary).toContain("[redacted]");
     expect(summary.length).toBeLessThanOrEqual(135);
     expect(summary).toContain("(truncated)");
-  });
-
-  test("uses the shared daily log file name while main owns persistence", () => {
-    expect(getCurrentLogFileName(new Date("2026-05-29T08:00:00.000Z"))).toBe("lume-2026-05-29.ndjson");
-    expect(loggerModule.shouldWriteLogFile()).toBe(false);
   });
 
   test("keeps the full base URL path while removing credentials, query, fragment, and token-like segments", () => {

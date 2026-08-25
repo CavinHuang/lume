@@ -68,14 +68,6 @@ export function extractAssistantPreferredNameCandidate(input: {
   };
 }
 
-export function isProfileEntry(entry: MemoryV2Entry): boolean {
-  if (claimFromEntry(entry)?.predicate === MEMORY_CLAIM_PREFERRED_NAME) return true;
-  return isProfileMemory({
-    tags: entry.frontmatter.tags,
-    statement: entry.statement
-  });
-}
-
 export function isProfileRecallItem(item: MemoryV2RecallItem): boolean {
   if (item.reason === "profile memory") return true;
   // 与旧 kind 判定等价：kind∈{preference,fact} ⟺ role∉{decision,lesson,state}
@@ -92,24 +84,6 @@ export function isPreferredNameMemory(input: {
   if (inferMemoryV2Claim(input)?.predicate === MEMORY_CLAIM_PREFERRED_NAME) return true;
   const tags = new Set((input.tags ?? []).map((tag) => tag.trim().toLowerCase()));
   return tags.has("preferred-name") || PREFERRED_NAME_RE.test(input.statement);
-}
-
-export function memoryEntryToRecallItem(entry: MemoryV2Entry, reason = "profile memory"): MemoryV2RecallItem {
-  return {
-    id: entry.frontmatter.id,
-    kind: entry.frontmatter.kind,
-    semanticRole: entry.frontmatter.semantic_role,
-    scope: entry.frontmatter.scope,
-    status: entry.frontmatter.status === "suspected_stale" ? "suspected_stale" : "active",
-    statement: entry.statement,
-    path: entry.path,
-    citation: entry.path,
-    reason,
-    score: 100,
-    pinned: entry.frontmatter.pinned,
-    tags: entry.frontmatter.tags,
-    claim: claimFromEntry(entry)
-  };
 }
 
 function isProfileMemory(input: {
