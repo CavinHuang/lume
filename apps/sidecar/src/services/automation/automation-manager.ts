@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { copyFileSync, existsSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type {
   AutomationCreateJobInput,
@@ -39,24 +39,35 @@ function backupCorruptIndex(indexPath: string): void {
   const dir = dirname(indexPath);
   const prefix = `${basename(indexPath)}.corrupt-`;
   const files = existsSync(dir) ? readdirSync(dir) : [];
-  const currentMtime = statSync(indexPath).mtimeMs;
-  // 同代备份（mtime 不早于当前损坏文件）已存在则跳过——防重启堆积副本；
-  // 旧代备份不抑制新一代备份，避免按"删除"指引恢复时丢失代间新建的任务
-  const hasCurrentGenBackup = files.some((name) => {
-    if (!name.startsWith(prefix)) return false;
-    try {
-      return statSync(join(dir, name)).mtimeMs >= currentMtime;
-    } catch {
-      return false;
-    }
-  });
-  if (hasCurrentGenBackup) return;
+  // 同内容备份已存在则跳过——防重启堆积副本；内容不同（用户按"删除"指引
+  // 恢复后又损坏）视为新一代必备份，避免丢失代间新建的任务。
+  // 不用 mtime 判代：快速连续损坏时新旧文件 mtimeMs 会落进同一毫秒，
+  // Linux CI 上实测误判同代漏备份（#647 P2-22 follow-up）。
+  const currentFingerprint = contentFingerprint(indexPath);
+  const hasSameContentBackup = currentFingerprint !== null
+    && files.some((name) => {
+      if (!name.startsWith(prefix)) return false;
+      try {
+        return contentFingerprint(join(dir, name)) === currentFingerprint;
+      } catch {
+        return false;
+      }
+    });
+  if (hasSameContentBackup) return;
   const backupPath = `${indexPath}.corrupt-${Date.now()}`;
   try {
     copyFileSync(indexPath, backupPath);
     log.warn("backed up corrupt automation index", { backupPath });
   } catch (error) {
     log.warn("failed to back up corrupt automation index", { error, backupPath });
+  }
+}
+
+function contentFingerprint(filePath: string): string | null {
+  try {
+    return createHash("sha256").update(readFileSync(filePath)).digest("hex").slice(0, 16);
+  } catch {
+    return null;
   }
 }
 
