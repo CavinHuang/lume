@@ -90,6 +90,33 @@ function pickExecutionChannel(job: AutomationJob): { channelId: string; modelId:
   };
 }
 
+/**
+ * run 收尾状态判定（纯函数，便于单测各分支）。#649 review P1-1:触顶检测挂
+ * onComplete 的 reason——T7a 后 sidecar 生产不再构造 run.turn_limited 事件
+ * （已迁事件总线 run.end{stopReason:'max_turns'}），onRuntimeEvent 检测在生产中
+ * 永不为真。触顶即停的无人值守任务必须如实记 failed，否则 desktop 通知面
+ * （只对 failed/waiting_* 弹）对半途而废的任务永不提醒。
+ */
+export function resolveAutomationRunOutcome(input: {
+  runtimeError: string | null;
+  waitingForUser: boolean;
+  waitingForApproval: boolean;
+  turnLimitedStopped: boolean;
+  threadId: string;
+}): { status: AutomationRun["status"]; message: string } {
+  if (input.runtimeError) throw new Error(input.runtimeError);
+  if (input.waitingForUser) {
+    return { status: "waiting_for_user", message: `任务暂停：需要用户处理交互或浏览器凭证，线程: ${input.threadId}` };
+  }
+  if (input.waitingForApproval) {
+    return { status: "waiting_for_approval", message: `任务暂停：等待工具权限确认，线程: ${input.threadId}` };
+  }
+  if (input.turnLimitedStopped) {
+    return { status: "failed", message: `任务达到回合上限未完成，线程: ${input.threadId}` };
+  }
+  return { status: "success", message: `任务执行完成，线程: ${input.threadId}` };
+}
+
 async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", scheduledAt = Date.now()): Promise<AutomationRun> {
   const startedAt = Date.now();
   const runId = randomUUID();
@@ -202,12 +229,14 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
         }
       },
       {
-        onComplete: () => {},
+        // #649 review P1-1:触顶检测挂 onComplete 的 reason——T7a 后 sidecar 生产不再
+        // 构造 run.turn_limited 事件(已迁事件总线 run.end{stopReason:'max_turns'}),
+        // onRuntimeEvent 检测在生产中永不为真
+        onComplete: (payload) => {
+          if (payload?.reason === "max_turns") turnLimitedStopped = true;
+        },
         onError: (error) => {
           runtimeError = error;
-        },
-        onRuntimeEvent: (event) => {
-          if ((event as { type?: string }).type === "run.turn_limited") turnLimitedStopped = true;
         },
         onTitleUpdated: () => {},
         onAskUserQuestion: () => {
@@ -227,15 +256,9 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
       throw new Error(runtimeError);
     }
 
-    if (waitingForUser) {
-      runStatus = "waiting_for_user";
-      runMessage = `任务暂停：需要用户处理交互或浏览器凭证，线程: ${threadId}`;
-    } else if (waitingForApproval) {
-      runStatus = "waiting_for_approval";
-      runMessage = `任务暂停：等待工具权限确认，线程: ${threadId}`;
-    } else {
-      runMessage = `任务执行完成，线程: ${threadId}`;
-    }
+    const outcome = resolveAutomationRunOutcome({ runtimeError, waitingForUser, waitingForApproval, turnLimitedStopped, threadId });
+    runStatus = outcome.status;
+    runMessage = outcome.message;
   } catch (error) {
     runStatus = "failed";
     runMessage = error instanceof Error ? error.message : String(error);
