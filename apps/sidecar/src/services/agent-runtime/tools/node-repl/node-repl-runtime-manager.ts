@@ -108,6 +108,10 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
   // LUMELOG 行转结构化日志；其余行维持旧行为：进 this.stderr，失败诊断时可见。
   private ingestStderrChunk(chunk: string): void {
     this.stderrLineBuffer += chunk;
+    // 无换行洪水的兜底：与 supervisor 同款，超限保留末尾 64KB。
+    if (this.stderrLineBuffer.length > 1024 * 1024) {
+      this.stderrLineBuffer = this.stderrLineBuffer.slice(-64 * 1024);
+    }
     const lines = this.stderrLineBuffer.split("\n");
     this.stderrLineBuffer = lines.pop() ?? "";
     for (const raw of lines) {
@@ -118,8 +122,8 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
         continue;
       }
       try {
-        // JSON.parse("null") 返回 null——非对象结果必须回退诊断缓冲，避免在 stderr
-        // data handler 里抛未捕获异常击穿 sidecar。
+        // JSON.parse("null") 返回 null；数组/字符串载荷则会产出垃圾结构化事件——
+        // 非对象结果一律回退诊断缓冲。
         const parsed: unknown = JSON.parse(line.slice(LUMELOG_PREFIX.length));
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
         const host = parsed as {
@@ -260,6 +264,8 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
     });
     child.once("exit", (code, signal) => {
       if (this.child === child) this.child = null;
+      // 冲刷残尾：宿主死在半行输出时，退出诊断前先处理缓冲里的最后一行。
+      this.ingestStderrChunk("\n");
       this.rejectAll(new Error(`node_repl runtime exited: code=${code ?? "null"} signal=${signal ?? "null"}${this.stderr ? `\n${this.stderr}` : ""}`));
     });
   }

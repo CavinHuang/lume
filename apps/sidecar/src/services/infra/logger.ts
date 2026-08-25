@@ -73,6 +73,10 @@ function normalizeValue(
   if (!input || typeof input !== "object") return truncateString(String(input));
   if (state.seen.has(input)) return "[Circular]";
   state.seen.add(input);
+  // TypedArray/DataView/Buffer 输出骨架：否则 getOwnPropertyDescriptors 会物化数十万键。
+  if (input instanceof ArrayBuffer || ArrayBuffer.isView(input)) {
+    return { type: input.constructor?.name ?? "TypedArray", byteLength: (input as { byteLength: number }).byteLength };
+  }
   if (Array.isArray(input)) {
     return input.slice(0, MAX_ARRAY_ITEMS).map((item) => normalizeValue(item, depth + 1, state));
   }

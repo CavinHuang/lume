@@ -34,6 +34,10 @@ function normalizeValue(
   if (!input || typeof input !== 'object') return String(input)
   if (seen.has(input)) return '[Circular]'
   seen.add(input)
+  // TypedArray/DataView/Buffer 输出骨架：否则 getOwnPropertyDescriptors 会物化数十万键。
+  if (input instanceof ArrayBuffer || ArrayBuffer.isView(input)) {
+    return { type: input.constructor?.name ?? 'TypedArray', byteLength: (input as { byteLength: number }).byteLength }
+  }
   if (Array.isArray(input)) return input.slice(0, 100).map((item) => normalizeValue(item, depth + 1, seen))
   const output: Record<string, unknown> = {}
   const descriptors = Object.getOwnPropertyDescriptors(input)

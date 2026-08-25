@@ -121,9 +121,14 @@ export function createDesktopHostSupervisor({
     child = running
     if (activeConnection) state = activeConnection
     const LUMELOG_PREFIX = 'LUMELOG '
+    // 无换行洪水的兜底：缓冲超限保留末尾 64KB，防止 O(n²) 重扫与内存无界。
+    const MAX_LINE_BUFFER_CHARS = 1024 * 1024
     const lineBuffers: Record<'stdout' | 'stderr', string> = { stdout: '', stderr: '' }
     const ingestChunk = (stream: 'stdout' | 'stderr', chunk: string) => {
       lineBuffers[stream] += chunk
+      if (lineBuffers[stream].length > MAX_LINE_BUFFER_CHARS) {
+        lineBuffers[stream] = lineBuffers[stream].slice(-64 * 1024)
+      }
       const lines = lineBuffers[stream].split('\n')
       lineBuffers[stream] = lines.pop() ?? ''
       for (const raw of lines) {
@@ -150,6 +155,9 @@ export function createDesktopHostSupervisor({
     running.once?.('spawn', () => { spawnedAt = now() })
     running.once?.('exit', (code) => {
       if (stopped || child !== running) return
+      // 冲刷残尾：宿主死在半行输出时，退出前把缓冲里最后一行处理掉。
+      ingestChunk('stdout', '\n')
+      ingestChunk('stderr', '\n')
       log(`[desktop-host] exited with code ${code}`)
       scheduleRestart(`desktop host exited with code ${code}; restarting`, spawnedAt)
     })

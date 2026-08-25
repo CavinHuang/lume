@@ -119,6 +119,11 @@ export function normalizeLogValue(
   if (state.seen.has(value)) return '[Circular]'
   state.seen.add(value)
 
+  // TypedArray/DataView/Buffer 输出骨架：否则 getOwnPropertyDescriptors 会物化数十万键。
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+    return { type: value.constructor?.name ?? 'TypedArray', byteLength: (value as { byteLength: number }).byteLength }
+  }
+
   if (Array.isArray(value)) {
     return value.slice(0, MAX_ARRAY_ITEMS).map((item) => normalizeLogValue(item, depth + 1, state))
   }
@@ -511,6 +516,22 @@ export class LoggingService {
 
   private accept(input: LumeLogEventInput, expectedSource: LumeLogSource): LumeLogEventV2 | null {
     if (!input || input.source !== expectedSource || !isSource(input.source) || !isLevel(input.level)) return null
+    // 级别早退门：既不落盘也不上终端的事件，不做归一化/序列化/去重登记等任何重活。
+    // 判定必须与下方 fileLevel 门 + writeTerminal 的可见性语义完全一致。
+    const isTraceKind = input.kind === 'trace'
+    const configuredFileLevel = process.env.LUME_LOG_FILE_LEVEL
+    const fileThreshold = isLevel(configuredFileLevel) ? configuredFileLevel : this.settings.fileLevel
+    const fileVisible = process.env.LUME_LOG_FILE !== 'false'
+      && (isTraceKind || LEVEL_ORDER[input.level] >= LEVEL_ORDER[fileThreshold])
+    const terminalConfigured = process.env.LUME_LOG_CONSOLE_LEVEL
+    const terminalThreshold = isLevel(terminalConfigured) ? terminalConfigured : this.settings.consoleLevel
+    const terminalVerbose = terminalThreshold === 'trace' || terminalThreshold === 'debug'
+    const eventName = typeof input.event === 'string' ? input.event : ''
+    const terminalVisible = process.env.LUME_LOG_CONSOLE !== 'false'
+      && (LEVEL_ORDER[input.level] >= LEVEL_ORDER.warn
+        || (input.level === 'info' && TERMINAL_INFO_EVENTS.has(eventName))
+        || (terminalVerbose && LEVEL_ORDER[input.level] >= LEVEL_ORDER[terminalThreshold]))
+    if (!fileVisible && !terminalVisible) return null
     const now = this.now()
     const eventId = validId(input.eventId) ?? randomUUID()
     if (this.recentEventIds.has(eventId)) return null
@@ -553,10 +574,7 @@ export class LoggingService {
 
     this.rememberEventId(eventId)
     this.writeTerminal(normalized)
-    const configuredFileLevel = process.env.LUME_LOG_FILE_LEVEL
-    const fileThreshold = isLevel(configuredFileLevel) ? configuredFileLevel : this.settings.fileLevel
-    if (process.env.LUME_LOG_FILE !== 'false'
-      && (normalized.kind === 'trace' || LEVEL_ORDER[normalized.level] >= LEVEL_ORDER[fileThreshold])) {
+    if (fileVisible) {
       this.enqueue(normalized)
     }
     return normalized
