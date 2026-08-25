@@ -62,7 +62,7 @@ function createQueryPlannerAttempt(
         apiKey: binding ? decryptApiKey(binding.channel.id) : "",
         baseURL: binding?.channel.baseUrl
       })
-      : resolveChatProvider(modelRef),
+      : resolveChatProvider(modelRef).provider,
     model: binding?.modelId ?? modelRef.split("/").at(-1) ?? modelRef
   };
 }

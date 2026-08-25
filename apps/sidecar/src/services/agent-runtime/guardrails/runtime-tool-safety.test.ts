@@ -356,4 +356,11 @@ describe("runtime-tool-safety", () => {
       behavior: "allow"
     });
   });
+
+  test("automation_set 保持强制确认（cron_set 退役后防回归绊线：若重新引入别名工具须同步恢复 confirm 条目）", () => {
+    expect(evaluateRuntimeToolSafety("automation_set", {})).toEqual({
+      behavior: "confirm",
+      reason: "修改自动化任务会影响未来定时执行，需要用户确认"
+    });
+  });
 });

@@ -87,9 +87,7 @@ describe("agent-handlers file operations", () => {
     rmSync(configDir, { recursive: true, force: true });
   });
 
-  
-  
-    test("LIST_PROJECT_DIRECTORY 只读列出绑定项目目录内容", async () => {
+  test("LIST_PROJECT_DIRECTORY 只读列出绑定项目目录内容", async () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-project-files-"));
     process.env.LUME_CONFIG_DIR = configDir;
 
@@ -151,5 +149,4 @@ describe("agent-handlers file operations", () => {
     rmSync(configDir, { recursive: true, force: true });
   });
 
-  
-  });
+});

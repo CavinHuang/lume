@@ -115,9 +115,7 @@ describe("agent-thread-manager advanced ops", () => {
     expect(existsSync(join(resolved.lumeWorkDir, ".migration-v1.json"))).toBeTrue();
     expect(existsSync(legacyRoot)).toBeFalse();
   });
-  
-  
-  
+
   test("JSONL 缺失时应回退到 runtime-core transcript 消息", () => {
     const session = createAgentThread("runtime-core fallback");
     const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), session.id);
@@ -307,7 +305,6 @@ describe("agent-thread-manager advanced ops", () => {
     expect(existsSync(runtimeCoreSessionDir)).toBeFalse();
   });
 
-  
   test("forkAgentThread 应同时重建 raw SDK transcript", () => {
     const session = createAgentThread("fork sdk transcript");
     appendAgentThreadSDKMessages(session.id, [

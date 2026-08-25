@@ -7,11 +7,9 @@ import {
   writeFileSync
 } from "node:fs";
 import { dirname } from "node:path";
-import type { LLMProvider } from "@lume/agent-sdk";
 import type { PersonaProfile } from "@lume/shared";
-import { resolveChannelModelBinding } from "../channel/channel-manager";
 import { createLogger } from "../infra/logger";
-import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
+import { resolveChatProvider } from "./chat-provider";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { MEMORY_CLAIM_PREFERRED_NAME, claimFromEntry } from "./claim";
 import { resolveMemoryExtractionModelRefs } from "./extraction";
@@ -313,21 +311,14 @@ function createDefaultPersonaProviderFactory(): PersonaProviderFactory {
   };
 }
 
-/** 单模型调用：解析 binding → 创建 provider → createMessage → 拼接文本 */
+/** 单模型调用：解析 provider 与模型 id（#582② 共享 resolveChatProvider）→ createMessage → 拼接文本 */
 async function callPersonaLlmWithModel(input: {
   modelRef: string;
   userPrompt: string;
 }): Promise<string> {
-  const binding = resolveChannelModelBinding(input.modelRef, "chat");
-  if (!binding) {
-    throw new Error(`[generatePersona] 无法解析模型绑定: ${input.modelRef}`);
-  }
-  const provider: LLMProvider = createLazyConnectionLlmProvider({
-    connectionId: binding.channel.id,
-    modelId: binding.modelId
-  });
+  const { provider, modelId } = resolveChatProvider(input.modelRef);
   const response = await provider.createMessage({
-    model: binding.modelId,
+    model: modelId,
     maxTokens: PERSONA_MAX_TOKENS,
     system: PERSONA_SYSTEM_PROMPT,
     messages: [{ role: "user", content: input.userPrompt }],

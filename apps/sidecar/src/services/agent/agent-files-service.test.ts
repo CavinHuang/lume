@@ -397,7 +397,7 @@ describe("agent-files-service file ops", () => {
     expect(() => moveAuthorizedFileRef(parent, child)).toThrow("自身");
     expect(existsSync(join(workdir.filesRoot, "parent", "child"))).toBeTrue();
   });
-  
+
   test("应通过 threads/<threadId> 新目录结构解析 workspace slug", () => {
     createTempConfigDir();
     const workspaceSlug = "workspace-thread-root";
@@ -443,11 +443,6 @@ describe("agent-files-service file ops", () => {
     expect(existsSync(legacyDir)).toBeFalse();
   });
 
-  
-  
-  
-  
-  
   test("线程附件路径 helper 应转换线程内路径并拒绝越界或缺失文件", () => {
     createTempConfigDir();
     const workspaceSlug = "workspace-attachment-paths";
@@ -710,12 +705,7 @@ describe("agent-files-service file ops", () => {
     expect(entry?.externalAttachment).toBeUndefined();
   });
 
-  
-  
-  
-  
-  
-  });
+});
 
 describe("promoteFileRefToProject", () => {
   test("session 文件复制到项目根且源保留", () => {

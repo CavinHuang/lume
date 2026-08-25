@@ -1,13 +1,11 @@
-import type { MemoryV2Candidate, MemoryV2Entry, MemoryV2RecallItem } from "./types";
+import type { MemoryV2Candidate, MemoryV2RecallItem } from "./types";
 import {
   MEMORY_CLAIM_PREFERRED_NAME,
   MEMORY_CLAIM_SUBJECT_ASSISTANT,
   MEMORY_CLAIM_SUBJECT_USER,
-  claimFromEntry,
   inferMemoryV2Claim
 } from "./claim";
 
-const PROFILE_TAGS = new Set(["profile", "identity", "preferred-name"]);
 const PREFERRED_NAME_RE = /preferred[-_\s]?name|nickname|被称呼|称呼|叫我|喊我|我的名字|我叫|user wants to be called/i;
 const WORKSPACE_SCOPE_RE = /(?:这个|当前)?(?:工作区|项目)|workspace|project/i;
 
@@ -84,15 +82,6 @@ export function isPreferredNameMemory(input: {
   if (inferMemoryV2Claim(input)?.predicate === MEMORY_CLAIM_PREFERRED_NAME) return true;
   const tags = new Set((input.tags ?? []).map((tag) => tag.trim().toLowerCase()));
   return tags.has("preferred-name") || PREFERRED_NAME_RE.test(input.statement);
-}
-
-function isProfileMemory(input: {
-  tags?: string[];
-  statement: string;
-}): boolean {
-  const tags = new Set((input.tags ?? []).map((tag) => tag.trim().toLowerCase()));
-  if ([...PROFILE_TAGS].some((tag) => tags.has(tag))) return true;
-  return PREFERRED_NAME_RE.test(input.statement);
 }
 
 function extractAssistantPreferredName(text: string): string | undefined {

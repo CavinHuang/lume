@@ -223,15 +223,6 @@ export function readGuardedFileRef(
   return result;
 }
 
-export function listGuardedFileRefDirectory(
-  guarded: GuardedFileRef,
-): FileEntry[] {
-  const resolved = resolveGuardedFileRef(guarded);
-  if (!statSync(resolved.absolutePath).isDirectory())
-    throw new GuardedFileRefError("KIND_MISMATCH", "目标不是目录");
-  return listResolvedDirectory(resolved);
-}
-
 export function normalizeAuthorizedRelativePath(input: string): string {
   if (
     input.includes("\0") ||

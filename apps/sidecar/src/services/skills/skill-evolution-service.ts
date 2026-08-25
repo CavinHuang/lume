@@ -289,7 +289,9 @@ export function createWorkspaceSkillImprovementModelCall(
       apiKey: binding ? (input.decryptApiKey ?? decryptApiKey)(binding.channel.id) : "",
       baseURL: binding?.channel.baseUrl
     })
-    : resolveChatProvider(modelRef);
+    // 注入的 input.resolveBinding 在此分支不生效：resolveChatProvider 固定走真实渠道解析
+    // （生产路径无影响，RPC 层不注入 resolver）
+    : resolveChatProvider(modelRef).provider;
   const model = binding?.modelId ?? modelRef.split("/").at(-1) ?? modelRef;
 
   return {

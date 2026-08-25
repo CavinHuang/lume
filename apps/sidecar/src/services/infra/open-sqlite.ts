@@ -18,7 +18,7 @@ interface BunSqliteDatabase {
   close(): void;
 }
 
-/** Opens a SQLite database on Bun (bun:sqlite) and Node (node:sqlite) behind one structural surface. */
+/** 打开 SQLite 数据库（#582①）：Bun 走 bun:sqlite，Node 走 node:sqlite，收敛到同一结构面 */
 export function openSqlite(path: string): SqliteDatabase {
   const runtimeRequire = createRequire(import.meta.url);
   if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {

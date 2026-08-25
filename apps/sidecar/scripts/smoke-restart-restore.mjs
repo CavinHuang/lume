@@ -134,7 +134,10 @@ async function run() {
     );
 
     const initialLumeConfig = await sidecar.call(LUME_CONFIG_GET_EFFECTIVE, { workspaceSlug: workspace.slug });
-    assert(typeof initialLumeConfig?.version === "number", "lume-config:get-effective unavailable");
+    assert(
+      Number.isFinite(initialLumeConfig?.version) && initialLumeConfig.version >= 1,
+      "lume-config:get-effective unavailable"
+    );
     assert(
       typeof initialLumeConfig?.sourcePath === "string"
       && normalizePathForAssert(initialLumeConfig.sourcePath).endsWith("/.lume/lume.yaml"),

@@ -368,8 +368,6 @@ mock.module("../agent-runtime/runner/attempt", () => ({
     activeMockSessions.delete(threadId);
   }
   },
-  isRuntimeModelFallbackRetryable: () => false,
-  resolveRuntimeModelAttemptParams: (params: unknown) => [params],
   stopAgentRuntime: () => undefined,
   isAgentRuntimeSessionActive: (threadId: string) => activeMockSessions.has(threadId)
 }));

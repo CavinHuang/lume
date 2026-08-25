@@ -32,8 +32,6 @@ mock.module("../agent-runtime/runner/attempt", () => ({
     emit.onComplete();
     return { status: "completed" as const };
   },
-  isRuntimeModelFallbackRetryable: () => false,
-  resolveRuntimeModelAttemptParams: (params: unknown) => [params],
   stopAgentRuntime: () => undefined,
   isAgentRuntimeSessionActive: () => false
 }));

@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 /**
  * 路径包含判定原语(#531 收敛)：coding-workspace-monitor /
@@ -10,5 +10,8 @@ import { isAbsolute, relative, resolve } from "node:path";
  */
 export function isPathInside(root: string, candidate: string): boolean {
   const relativePath = relative(resolve(root), resolve(candidate));
-  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+  // 逃逸判定按首段精确比较：`startsWith("..")` 会把 root 内恰以 ".." 开头的
+  // 目录名（如 "..foo"）误判为工作区外（coding-verification 原弱版语义）
+  const firstSegment = relativePath.split(sep)[0];
+  return relativePath === "" || (firstSegment !== ".." && !isAbsolute(relativePath));
 }

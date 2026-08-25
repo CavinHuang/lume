@@ -1731,7 +1731,6 @@ export const AGENT_IPC_CHANNELS = {
   /** 列出回收站线程 */
   LIST_TRASHED_THREADS: 'agent:list-trashed-threads',
   /** 清空回收站（永久删除全部已 trash 线程） */
-  /** 清空回收站（永久删除全部已 trash 线程） */
   EMPTY_TRASH: 'agent:empty-trash',
   // 工作区管理
   /** 获取工作区列表 */

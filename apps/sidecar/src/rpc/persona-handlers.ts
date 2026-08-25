@@ -4,7 +4,7 @@
  * 模式参考 suggestion-handlers / model-meta-handlers：
  * - 每个 channel 用 `validateInput` 校验入参，失败 throw（→ reject → toast）
  * - get 只读 global persona Markdown + 解析为结构化字段；null → 空响应
- * - update 拒绝直接改派生文件；correct 写底层记忆
+ * - correct 写底层记忆（显式纠正，不直接改派生文件）
  * - regenerate 强制触发 ensurePersona（忽略节流，fail-open）
  *
  * ensurePersona 自身 fail-open（不抛错），但 handlers 仍保持「入参非法即 throw」

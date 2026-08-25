@@ -1,4 +1,4 @@
-import type { LumeConfigAgentDefaultStrategy, ProviderType } from "@lume/shared";
+import type { LumeConfigAgentDefaultStrategy } from "@lume/shared";
 
 // 纯函数簇已下移 runtime-core/model-candidates(#289 分层切边);此处 re-export 维持既有 import 路径。
 export {
@@ -51,47 +51,6 @@ export function parseModelRef(raw: string, defaultProvider: string): ModelRef | 
     return null;
   }
   return { provider, model };
-}
-
-
-
-
-
-function coerceKnownProvider(provider: string): ProviderType {
-  return ([
-    "anthropic",
-    "anthropic-compatible",
-    "openai",
-    "openai-codex",
-    "github-copilot",
-    "xai",
-    "jina",
-    "siliconflow",
-    "openrouter",
-    "deepseek",
-    "google",
-    "zai",
-    "zai-coding-plan",
-    "moonshot",
-    "minimax",
-    "minimax-cn",
-    "doubao",
-    "qwen",
-    "qwen-portal",
-    "kimi-coding",
-    "ollama",
-    "lmstudio",
-    "opencode",
-    "custom",
-    "aliyun-coding-plan",
-    "volcengine-coding-plan",
-    "minimax-token-plan",
-    "xiaomi-token-plan",
-    "stepfun",
-    "stepfun-coding-plan",
-  ] as const).includes(provider as ProviderType)
-    ? (provider as ProviderType)
-    : "custom";
 }
 
 function normalizeOptionalValue(value?: string): string | undefined {
@@ -149,4 +108,3 @@ export function resolveAgentDefaultStrategy(input: {
     fallbackModelRefs: []
   };
 }
-

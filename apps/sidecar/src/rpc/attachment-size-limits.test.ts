@@ -63,7 +63,6 @@ describe("附件与超大字段限额（#154）", () => {
     expect(result.success).toBeTrue();
   });
 
-  
   test("memoryRemember content 超 2MB 拒绝", () => {
     const result = memoryRememberToolInputSchema.safeParse({
       workspaceSlug: "ws",

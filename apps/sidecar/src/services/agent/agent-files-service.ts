@@ -18,7 +18,6 @@ import {
   rmSync,
   statSync,
   watch,
-  type FSWatcher,
   writeFileSync,
 } from "node:fs";
 import { spawn } from "node:child_process";
@@ -37,9 +36,6 @@ import {
 import { lstat, readdir, stat } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import type {
-  AttachWorkspaceResourceToThreadInput,
-  AttachWorkspaceResourceToThreadResult,
-  AgentCopyFolderInput,
   AgentSaveFilesInput,
   AgentSavedFile,
   ExternalAttachmentMeta,
@@ -47,7 +43,6 @@ import type {
   FileRef,
   FileRefChangedEvent,
   FileSearchResult,
-  WorkspaceCopyFolderInput,
   WorkspaceSaveFilesInput,
 } from "@lume/shared";
 import { AGENT_ATTACHMENT_LIMITS } from "@lume/shared";
@@ -67,8 +62,6 @@ import { getAgentWorkspaceBySlug } from "./agent-workspace-manager";
 import {
   assertAttachmentMetadataHealthy,
   deleteAttachmentMeta,
-  getAttachmentMeta,
-  moveAttachmentMeta,
   readThreadAttachmentMeta,
   readWorkspaceAttachmentMeta,
   upsertAttachmentMeta,
@@ -85,15 +78,12 @@ import {
   enrichEntryWithFileRef,
   fileWatchGroups,
   fileWatchKeysById,
-  markAuthorizedFileRefSelfWrite,
   normalizeAuthorizedRelativePath,
   readFileRefDocument,
   resolveAuthorizedFileRef,
   resolveFileRefRoot,
   selfWrites,
-  GuardedFileRefError,
   type FileRefNotificationEmitter,
-  type FileWatchGroup,
 } from "./agent-file-ref";
 
 export * from "./agent-file-ref";

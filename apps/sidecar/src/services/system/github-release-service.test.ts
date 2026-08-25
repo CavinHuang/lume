@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { getLatestGitHubRelease } from "./github-release-service";
 
 function makeRelease(input: Partial<{
@@ -28,6 +28,11 @@ function makeRelease(input: Partial<{
 describe("github-release-service", () => {
   const previousFetch = globalThis.fetch;
 
+  afterEach(() => {
+    // 断言失败时也要还原 fetch，避免 mock 泄漏到后续用例
+    globalThis.fetch = previousFetch;
+  });
+
   test("getLatestGitHubRelease 应返回对应 release", async () => {
     globalThis.fetch = (async () =>
       new Response(JSON.stringify(makeRelease({ id: 100, tag_name: "v3.0.0" })), {
@@ -37,13 +42,11 @@ describe("github-release-service", () => {
 
     const latest = await getLatestGitHubRelease();
     expect(latest?.tag_name).toBe("v3.0.0");
-    globalThis.fetch = previousFetch;
   });
 
   test("getLatestGitHubRelease 网络失败时返回 null（fail-open）", async () => {
     globalThis.fetch = (async () => new Response("not found", { status: 404 })) as unknown as typeof fetch;
     const latest = await getLatestGitHubRelease();
     expect(latest).toBeNull();
-    globalThis.fetch = previousFetch;
   });
 });

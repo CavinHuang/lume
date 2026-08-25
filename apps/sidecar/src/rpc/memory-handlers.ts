@@ -13,11 +13,7 @@ import {
   type MemoryStartOrganizeJobResult,
   type MemoryUpdateEntryInput
 } from "@lume/shared";
-import {
-  readMemoryTool,
-  rememberMemoryTool,
-  searchMemoryTool
-} from "../services/memory-v2/tools";
+import { readMemoryTool, rememberMemoryTool } from "../services/memory-v2/tools";
 import {
   getMemoryV2DiagnosticsSnapshot,
   getMemoryV2SettingsSnapshot
