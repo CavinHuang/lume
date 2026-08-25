@@ -156,6 +156,11 @@ export async function withRetry<T>(
  * Check if an error is a "prompt too long" error.
  */
 export function isPromptTooLongError(err: any): boolean {
+  const message = String(err?.error?.error?.message || err?.error?.message || err?.message || '')
+  // An HTML body means a gateway/proxy error page, not a provider API error:
+  // it carries no token semantics and recovery would just burn three summary
+  // calls before the breaker trips (#709 item 3). Applies to 400 and 413 alike.
+  if (/<html/i.test(message)) return false
   // 413 is unambiguous. For 400, structured OpenAI-style codes take priority and
   // the message match stays a fallback — OpenAI-compat gateways rephrase the
   // Anthropic wording freely (#567 item 1).
@@ -163,6 +168,5 @@ export function isPromptTooLongError(err: any): boolean {
   if (err?.status !== 400) return false
   const code = String(err?.error?.error?.code || err?.error?.code || '')
   if (code.includes('context_length_exceeded')) return true
-  const message = err?.error?.error?.message || err?.error?.message || err?.message || ''
-  return /context[ _-]?length|maximum context|prompt( is|'s)? too (long|large)|input (is )?too long|request.{0,16}too large/i.test(String(message))
+  return /context[ _-]?length|maximum context|prompt( is|'s)? too (long|large)|input (is )?too long|request.{0,16}too large|exceeds the maximum number of tokens|must have less than \d+ tokens/i.test(message)
 }

@@ -139,4 +139,26 @@ describe("isPromptTooLongError widened recognition (#567 item 1)", () => {
     expect(isPromptTooLongError({ status: 400, message: "invalid api key" })).toBe(false);
     expect(isPromptTooLongError({ status: 500, message: "context length" })).toBe(false);
   });
+
+  test("Gemini and TGI overflow wordings are recognized (#709 item 3)", () => {
+    expect(isPromptTooLongError({
+      status: 400,
+      message: "The input token count (123456) exceeds the maximum number of tokens allowed (100000)."
+    })).toBe(true);
+    expect(isPromptTooLongError({
+      status: 400,
+      message: "Input validation error: `inputs` must have less than 4096 tokens"
+    })).toBe(true);
+  });
+
+  test("413 gateway HTML body-limit pages do not enter recovery (#709 item 3)", () => {
+    expect(isPromptTooLongError({
+      status: 413,
+      message: "<html>\r\n<head><title>413 Request Entity Too Large</title></head>\r\n</html>"
+    })).toBe(false);
+    expect(isPromptTooLongError({
+      status: 400,
+      message: "<html><body>Bad Request</body></html>"
+    })).toBe(false);
+  });
 });
