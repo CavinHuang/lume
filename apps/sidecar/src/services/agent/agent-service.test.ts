@@ -1257,6 +1257,40 @@ describe("agent-service", () => {
     expect(continuation?.input?.messageMetadata?.capabilityFingerprints).toBeUndefined();
   });
 
+  test("#649 P1-2: 续跑轮经 visibleUserMessage 落盘原始任务，下一轮恢复上下文可解析", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const thread = createAgentThread("auto continue original task", "channel-test");
+    const callsBefore = runAgentRuntimeCalls.length;
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "turn-limited-loop",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    // 首发 1 次 + 至多 3 次自动续跑
+    const calls = runAgentRuntimeCalls.slice(callsBefore) as Array<{ input?: { userMessage?: string }; runtime?: { visibleUserMessage?: string } }>;
+    expect(calls.length).toBe(4);
+    // 首轮 run state 记录用户原文
+    expect(calls[0]?.runtime?.visibleUserMessage).toBe("turn-limited-loop");
+    // 续跑轮 input.userMessage 是裸合成指令（经 resolveModelFacingUserMessage 拼接后含恢复上下文）,
+    // 但 run state 记录口径必须落原始任务——否则该轮再触顶/stale 恢复时
+    // extractOriginalTaskText 无锚可解,真实任务跨轮遗忘(#649 review P1-2)
+    for (const call of calls.slice(1)) {
+      expect(call.input?.userMessage).toContain("达到了回合上限");
+      expect(call.runtime?.visibleUserMessage).toBe("turn-limited-loop");
+    }
+  });
+
   test("#566 韧性: stale-run 恢复从合成续跑叠加体中还原原始任务", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");

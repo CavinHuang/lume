@@ -890,6 +890,10 @@ type AgentSendOptions = {
   abortSignal?: AbortSignal;
   autoContinuationCount?: number;
   maxContinuations?: number;
+  /** #649 review P1-2:续跑轮的真实原始任务文本——续跑轮 input.userMessage 是裸合成指令,
+   * 不显式携带则下一轮 extractOriginalTaskText 无锚可解,真实任务跨轮遗忘。
+   * 经 runtime.visibleUserMessage 落进 run state 供后续轮/stale 恢复解析。 */
+  continuationOriginalTask?: string;
 };
 
 export async function sendAgentMessage(
@@ -905,6 +909,9 @@ export async function sendAgentMessage(
   try {
     // 配置只解析一次贯穿全链（review 建议级：外层日志与 gate 判定不得各 resolve 各的）
     const resolvedMaxContinuations = resolveMaxAutoTurnContinuations();
+    // #649 review P1-2:首轮提取一次原始任务贯穿全链——续跑轮 input.userMessage 是裸合成
+    // 指令,不显式携带则下一轮恢复上下文把合成指令本身当「原始任务」
+    const continuationOriginalTask = extractOriginalTaskText(input.userMessage);
     let outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: 0, maxContinuations: resolvedMaxContinuations });
     let continuationCount = 0;
     while (outcome?.autoContinue) {
@@ -925,7 +932,7 @@ export async function sendAgentMessage(
         messageMetadata: { ...continuationMetadata, hiddenFromChat: true }
       };
       try {
-        outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: continuationCount, maxContinuations: resolvedMaxContinuations });
+        outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: continuationCount, maxContinuations: resolvedMaxContinuations, continuationOriginalTask });
       } catch (error) {
         // 首轮已正常收尾，续跑失败不应把整条发送标成错误;但上一轮终态已被抑制,须补发防悬挂
         log.warn("[Agent 会话] 自动续跑失败，保留已有进度", {
@@ -1537,7 +1544,8 @@ async function runSendAgentMessage(
     },
     runtime: {
       sessionId: threadId,
-      visibleUserMessage: userMessage,
+      // #649 review P1-2:续跑轮落盘原始任务而非裸合成指令,供下一轮恢复上下文解析
+      ...(options.continuationOriginalTask ? { visibleUserMessage: options.continuationOriginalTask } : { visibleUserMessage: userMessage }),
       modelRef: canonicalModelRef,
       channelId: resolvedChannelId,
       resolvedModelId,
