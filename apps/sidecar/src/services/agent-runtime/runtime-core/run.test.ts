@@ -195,8 +195,9 @@ describe("runtime-core run", () => {
       const deferredTools = (result.agent as unknown as { deferredToolPool: ToolDefinition[] }).deferredToolPool;
       expect(deferredTools.length).toBeGreaterThan(0);
       expect(resolveRuntimeDescriptor(deferredTools[0]!)).toBeDefined();
-      expect(descriptorOf(result, "ToolSearch")).toMatchObject({ name: "ToolSearch", source: "sdk" });
-      expect(descriptorOf(result, "ExecuteTool")).toMatchObject({ name: "ExecuteTool", source: "sdk" });
+      // 生成工具工厂 metadata 不带 canonicalName——兜底重算路径必须可用（#711 review）
+      expect(descriptorOf(result, "ToolSearch")).toMatchObject({ name: "ToolSearch", source: "sdk", canonicalName: "toolsearch" });
+      expect(descriptorOf(result, "ExecuteTool")).toMatchObject({ name: "ExecuteTool", source: "sdk", canonicalName: "executetool" });
     } finally {
       await result?.session.dispose();
       if (previousToolSearch === undefined) {

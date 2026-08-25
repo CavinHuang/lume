@@ -33,20 +33,53 @@ import type { LumeToolDescriptor, LumeToolSource } from "../tools/tool-types";
 // 双载体合一（#541）：descriptor 元数据随工具定义的 runtimeMetadata 携带
 // （wrapper 盖章或工厂自带，如 ToolSearch/ExecuteTool），canUseTool 拿到的
 // 就是该 definition，直接按形取回，旁路 session Map 已删。
+const KNOWN_TOOL_SOURCES = new Set([
+  "sdk", "lume", "memory", "automation", "plan", "task", "mcp", "skill", "plugin",
+]);
+
 export function resolveRuntimeDescriptor(tool: ToolDefinition): LumeToolDescriptor | undefined {
   const meta = (tool as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata;
   if (!meta || typeof meta !== "object") return undefined;
+  // 净化对齐注册期 readRuntimeMetadata 的信任级别：source 枚举校验、
+  // 权限关键字段类型白名单（#711 review 防御深度）
+  const rawCategory = typeof meta.category === "string" ? meta.category : undefined;
+  const rawCapability = typeof meta.capability === "string" ? meta.capability : undefined;
+  const rawRiskLevel = typeof meta.riskLevel === "string" ? meta.riskLevel : undefined;
+  const rawSideEffects = typeof meta.sideEffects === "string" ? meta.sideEffects : undefined;
   return {
     name: tool.name,
     canonicalName:
       typeof meta.canonicalName === "string" && meta.canonicalName
         ? meta.canonicalName
         : canonicalizeAgentToolName(tool.name),
-    source: (typeof meta.source === "string" ? meta.source : "sdk") as LumeToolSource,
+    source: (typeof meta.source === "string" && KNOWN_TOOL_SOURCES.has(meta.source)
+      ? meta.source
+      : "sdk") as LumeToolSource,
     definition: tool,
-    // 盖章数据本就是 descriptor.metadata 的原样展开，直接按形取回
-    metadata: meta as unknown as LumeToolDescriptor["metadata"],
+    metadata: {
+      ...(typeof meta.title === "string" ? { title: meta.title } : {}),
+      ...(typeof meta.description === "string" ? { description: meta.description } : {}),
+      category: rawCategory as LumeToolDescriptor["metadata"]["category"],
+      capability: rawCapability as LumeToolDescriptor["metadata"]["capability"],
+      riskLevel: rawRiskLevel as LumeToolDescriptor["metadata"]["riskLevel"],
+      sideEffects: rawSideEffects as LumeToolDescriptor["metadata"]["sideEffects"],
+      allowedInPlanMode: meta.allowedInPlanMode === true,
+      isReadOnly: meta.isReadOnly === true,
+      isConcurrencySafe: meta.isConcurrencySafe !== false,
+      ...(meta.requiresWorkspace === true ? { requiresWorkspace: true } : {}),
+      ...(meta.requiresNetwork === true ? { requiresNetwork: true } : {}),
+      ...(meta.requiresApprovalByDefault !== undefined
+        ? { requiresApprovalByDefault: meta.requiresApprovalByDefault === true }
+        : {}),
+      ...(isRecord(meta.payloadPolicy) ? { payloadPolicy: meta.payloadPolicy as LumeToolDescriptor["metadata"]["payloadPolicy"] } : {}),
+      ...(isRecord(meta.resultPolicy) ? { resultPolicy: meta.resultPolicy as LumeToolDescriptor["metadata"]["resultPolicy"] } : {}),
+      ...(isRecord(meta.executionPolicy) ? { executionPolicy: meta.executionPolicy as LumeToolDescriptor["metadata"]["executionPolicy"] } : {}),
+    },
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 import { type PreparedRuntimeCoreAttempt } from "../runner/prepare-attempt";
 import { persistToolApprovalInterruption } from "../interruption/approval-service";
@@ -324,7 +357,8 @@ export function createCanUseToolHandler(
         rawInput: input,
         reasonCode: "descriptor_missing",
       });
-      log.debug("[Agent 工具] 完成", {
+      // 升 warn：单载体化后正常生产路径不应触达——出现即说明有新注入通道绕过了 ToolRuntime 盖章
+      log.warn("[Agent 工具] descriptor 缺失（疑似未盖章的注入通道）", {
         toolName,
         threadId: params.runtime.sessionId.slice(0, 8),
         durationMs: Date.now() - toolStartTime,

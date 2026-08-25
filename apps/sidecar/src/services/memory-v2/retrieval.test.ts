@@ -632,6 +632,60 @@ describe("searchMemoryV2", () => {
     expect(results.some((item) => item.statement === active.statement)).toBe(true);
     expect(results.some((item) => item.statement === suppressed.statement)).toBe(false);
   });
+
+  test("minScore filters results on every return path (#538)", async () => {
+    await smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "decision",
+        targetScope: "workspace",
+        statement: "Memory V2 minScore gating keeps low-relevance recall out.",
+        confidence: "high",
+        tags: ["architecture"]
+      }
+    });
+
+    const baseline = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "memory architecture design",
+      maxResults: 5,
+      semantic: "off",
+      rerankItems: async (items) => items
+    });
+    const topScore = baseline[0]?.score ?? 0;
+
+    // 高门槛滤空（无 reranker 路径）
+    const filtered = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "memory architecture design",
+      maxResults: 5,
+      semantic: "off",
+      rerankItems: async (items) => items,
+      minScore: topScore + 1,
+    });
+    expect(filtered).toEqual([]);
+
+    // reranker 抛错路径下过滤仍生效
+    const fallback = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "memory architecture design",
+      maxResults: 5,
+      semantic: "off",
+      rerankItems: async () => { throw new Error("rerank down"); },
+      minScore: topScore + 1,
+    });
+    expect(fallback).toEqual([]);
+
+    // 缺省不过滤
+    const unfiltered = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "memory architecture design",
+      maxResults: 5,
+      semantic: "off",
+      rerankItems: async (items) => items,
+    });
+    expect(unfiltered.length).toBeGreaterThan(0);
+  });
 });
 
 describe("overrides 门控与 rerank 序 (#521)", () => {

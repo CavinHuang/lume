@@ -88,7 +88,6 @@ export {
   // Core file I/O & execution
   BashTool,
   FileReadTool,
-  isFullReadText,
   FileWriteTool,
   FileEditTool,
   MultiEditTool,

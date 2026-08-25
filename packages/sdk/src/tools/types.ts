@@ -24,13 +24,19 @@ export function defineTool(config: {
   isReadOnly?: boolean | ((input: any, context?: ToolContext) => boolean)
   isConcurrencySafe?: boolean | ((input: any, context?: ToolContext) => boolean)
   prompt?: string | ((context: ToolContext) => Promise<string>)
+  /**
+   * 工具自带的运行时元数据（注入池归属 requiredDuringSkillScope 等可由工具
+   * 自声明）。审批豁免键 delegatesPermission 由宿主 wrapper 盖章写入，
+   * defineTool 通道一律剥离——第三方不得经此跳过 canUseTool（#711 review）。
+   */
   runtimeMetadata?: Record<string, unknown>
 }): ToolDefinition {
+  const { delegatesPermission: _strippedDelegatesPermission, ...declaredRuntimeMetadata } = config.runtimeMetadata ?? {}
   return {
     name: config.name,
     description: config.description,
     inputSchema: config.inputSchema,
-    ...(config.runtimeMetadata ? { runtimeMetadata: config.runtimeMetadata } : {}),
+    ...(config.runtimeMetadata ? { runtimeMetadata: declaredRuntimeMetadata } : {}),
     ...(config.validateInput ? { validateInput: config.validateInput } : {}),
     ...(config.outputSchema ? { outputSchema: config.outputSchema } : {}),
     ...(config.getPath ? { getPath: config.getPath } : {}),

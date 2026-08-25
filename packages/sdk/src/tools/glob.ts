@@ -6,7 +6,7 @@ import { defineTool } from './types.js'
 import { ensurePathAllowed, resolveInputPath } from '../utils/pathing.js'
 import { isNativeAvailable, nativeGlob } from '@lume/natives'
 import { stat } from 'fs/promises'
-import { join } from 'path'
+import { isAbsolute, join } from 'path'
 
 export const GlobTool = defineTool({
   name: 'Glob',
@@ -107,10 +107,15 @@ export const GlobTool = defineTool({
         }
         // 与 native 对齐：mtime 排序是描述承诺的行为（#538）。
         // 截断时排序已无意义（非全量），保持收集序。
+        // stat 上限 200：natives 缺失环境下全量 stat 是可感知的 IO 风暴；
+        // ponytail ceiling——超出部分保持收集序，如需精确排序改 native 侧
         if (!truncated && matches.length > 1) {
-          const paired = await Promise.all(matches.map(async (entry) => ({
+          const head = matches.slice(0, 200)
+          const paired = await Promise.all(head.map(async (entry) => ({
             entry,
-            mtime: await stat(join(searchDir, entry)).then((item) => item.mtimeMs).catch(() => 0),
+            mtime: await stat(isAbsolute(entry) ? entry : join(searchDir, entry))
+              .then((item) => item.mtimeMs)
+              .catch(() => 0),
           })))
           paired.sort((left, right) => right.mtime - left.mtime)
           for (let i = 0; i < paired.length; i++) matches[i] = paired[i]!.entry

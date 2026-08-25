@@ -170,6 +170,7 @@ export class ComputerUseActionLedger {
     for (const entry of removable) {
       if (excess <= 0) break;
       this.#entries.delete(entry.actionId);
+      this.#forgetPrivateVerificationState(entry.actionId);
       excess--;
     }
   }
@@ -188,7 +189,10 @@ export class ComputerUseActionLedger {
         const entry = JSON.parse(line) as DesktopActionLedgerEntry;
         if (entry.threadId === this.#threadId && typeof entry.actionId === "string") {
           this.#entries.set(entry.actionId, entry);
+          // 同一 actionId 的终态行必须出集：重放是乱序追加流，后写终态覆盖前态；
+          // 漏删会让 observeWindow 对历史条目重复 verify 触发非法转换 throw（#711 review）
           if (entry.phase === "dispatched" || entry.phase === "observed") this.#activeIds.add(entry.actionId);
+          else this.#activeIds.delete(entry.actionId);
         }
       }
       this.#prune();

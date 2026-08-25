@@ -10,7 +10,7 @@ import { matchesAnyToolPattern } from '../utils/tool-approval.js'
 
 // File I/O
 import { BashTool } from './bash.js'
-import { FileReadTool, isFullReadText } from './read.js'
+import { FileReadTool } from './read.js'
 import { FileWriteTool } from './write.js'
 import { FileEditTool } from './edit.js'
 import { MultiEditTool } from './multi-edit.js'
@@ -166,4 +166,3 @@ export {
 
 // Re-export helpers
 export { defineTool, toApiTool } from './types.js'
-export { isFullReadText } from './read.js'

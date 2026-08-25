@@ -191,9 +191,13 @@ async function startDirectShellTask({
   const shellType = shellKind(shell.command)
   const sandbox = withBundledRipgrepSandbox(context.sandbox)
   const detached = process.platform !== 'win32'
+  // 与 durable 后台路径对称：剔除 ELECTRON_RUN_AS_NODE，前台命令启动 Electron
+  // 不再退化为纯 node（#538）
+  const childEnv = { ...process.env }
+  delete childEnv.ELECTRON_RUN_AS_NODE
   const proc = spawnWithProcessSandbox(shell.command, shell.args, {
     cwd: context.cwd,
-    env: { ...process.env },
+    env: childEnv,
     timeoutMs,
     detached,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -571,7 +575,13 @@ async function startDurableShellTask({
       void (async () => {
         await emitNewOutput()
         const latest = getProcessJob(job.id)
-        if (!latest || latest.status === 'running') return
+        if (!latest) {
+          // 任务记录被清（如 registry 清理）：视作终态收尾，否则定时器与监听器泄漏至进程结束
+          clearInterval(poll)
+          context.abortSignal?.removeEventListener('abort', stop)
+          return
+        }
+        if (latest.status === 'running') return
         clearInterval(poll)
         // 与 direct 路径对称：任务终态后摘除 run-abort 监听器，避免每次调用泄漏一个闭包（#538）
         context.abortSignal?.removeEventListener('abort', stop)
