@@ -91,9 +91,9 @@ export function summarizeGmailMessage(resource: GmailMessageResource): GmailMess
     messageId: resource.id,
     threadId: resource.threadId,
     labelIds: resource.labelIds ?? [],
-    subject: readHeader(headers, "Subject"),
-    sender: readHeader(headers, "From"),
-    to: readHeader(headers, "To"),
+    subject: decodeMimeWords(readHeader(headers, "Subject")),
+    sender: decodeMimeWords(readHeader(headers, "From")),
+    to: decodeMimeWords(readHeader(headers, "To")),
     messageTimestamp: toMessageTimestamp(resource.internalDate, readHeader(headers, "Date")),
   };
 }
@@ -138,6 +138,38 @@ export function normalizeGmailMessage(resource: GmailMessageResource): Normalize
 
 export function readHeader(headers: GmailMessageHeader[], name: string): string {
   return headers.find((header) => header.name.toLowerCase() === name.toLowerCase())?.value ?? "";
+}
+
+const ENCODED_WORD = /=\?([^?\s]+)\?([bBqQ])\?([^?]*)\?=/g;
+
+/**
+ * RFC 2047 encoded-word 解码(仅收件方向展示):Gmail API 返回的 headers 是 MIME
+ * 源码原值,中文主题形如 =?UTF-8?B?...?= 对模型不可读。仅解 UTF-8/ASCII 系,
+ * 其余 charset 原样保留;发送侧编码见 encodeSubject(回复引用原样回填即合法)。
+ */
+export function decodeMimeWords(value: string): string {
+  if (!value.includes("=?")) {
+    return value;
+  }
+  return value
+    // 相邻编码词间的空白按 RFC 2047 不属于内容
+    .replace(/\?=\s+=\?/g, "?==?")
+    .replace(ENCODED_WORD, (match, charset: string, encoding: string, text: string) => {
+      const normalized = charset.toLowerCase();
+      if (normalized !== "utf-8" && normalized !== "utf8" && normalized !== "us-ascii") {
+        return match;
+      }
+      try {
+        if (encoding === "B" || encoding === "b") {
+          return Buffer.from(text, "base64").toString("utf8");
+        }
+        // Q 编码:_ 即空格,=XX 为 hex 转义
+        const qp = text.replace(/_/g, " ").replace(/=([0-9A-Fa-f]{2})/g, "%$1");
+        return decodeURIComponent(qp);
+      } catch {
+        return match;
+      }
+    });
 }
 
 export function resolveReplyHeaders(resource: GmailMessageResource): {

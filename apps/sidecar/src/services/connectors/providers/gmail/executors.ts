@@ -967,15 +967,28 @@ function normalizeThread(thread: GmailThreadResource) {
   };
 }
 
-async function hydrateInBatches<T, TResult>(
+async function hydrateInBatches<T, TResult extends T>(
   items: T[],
   hydrate: (item: T) => Promise<TResult>,
   batchSize = detailHydrationBatchSize,
-) {
+): Promise<TResult[]> {
   const hydrated: TResult[] = [];
   for (let index = 0; index < items.length; index += batchSize) {
     const batch = items.slice(index, index + batchSize);
-    hydrated.push(...(await Promise.all(batch.map((item) => hydrate(item)))));
+    // 单条水合失败(最常见:list→get 竞态窗口内消息已被删)只把该条降级回
+    // list 自带的轻量骨架(与完整 resource 同型,仅缺 body/parts),不让一条
+    // 坏消息击穿整页结果
+    hydrated.push(
+      ...(await Promise.all(
+        batch.map(async (item) => {
+          try {
+            return await hydrate(item);
+          } catch {
+            return item as TResult;
+          }
+        }),
+      )),
+    );
   }
   return hydrated;
 }

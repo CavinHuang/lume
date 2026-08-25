@@ -1,5 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { encodeMimeMessage, normalizeGmailMessage, type GmailMessageResource } from "./message";
+import {
+  decodeMimeWords,
+  encodeMimeMessage,
+  normalizeGmailMessage,
+  summarizeGmailMessage,
+  type GmailMessageResource,
+} from "./message";
 
 function decodeRaw(input: Parameters<typeof encodeMimeMessage>[0]): string {
   return Buffer.from(encodeMimeMessage(input), "base64url").toString("utf8");
@@ -83,5 +89,35 @@ describe("normalizeGmailMessage payload size guard", () => {
 
     const small = normalizeGmailMessage({ ...baseResource, raw: "small" });
     expect(small.raw).toBe("small");
+  });
+});
+
+describe("decodeMimeWords (RFC 2047 inbound display)", () => {
+  it("decodes UTF-8 B and Q encoded words", () => {
+    const b = Buffer.from("你好,世界").toString("base64");
+    expect(decodeMimeWords(`=?UTF-8?B?${b}?=`)).toBe("你好,世界");
+    // Q 编码:_ 即空格,=XX hex
+    expect(decodeMimeWords("=?utf-8?Q?Hello_=E4=BD=A0=E5=A5=BD?= there")).toBe("Hello 你好 there");
+  });
+
+  it("folds whitespace between adjacent encoded words", () => {
+    const part = Buffer.from("世界").toString("base64");
+    expect(decodeMimeWords(`Re: =?UTF-8?B?${part}?= =?UTF-8?B?${part}?=`)).toBe("Re: 世界世界");
+  });
+
+  it("keeps non-UTF-8 charsets and plain text untouched", () => {
+    const raw = "=?gb2312?B?xOO6ww==?= plain";
+    expect(decodeMimeWords(raw)).toBe(raw);
+    expect(decodeMimeWords("no encoding here")).toBe("no encoding here");
+  });
+
+  it("summarizeGmailMessage decodes subject for display while reply headers stay raw", () => {
+    const encodedSubject = `=?UTF-8?B?${Buffer.from("会议纪要").toString("base64")}?=`;
+    const resource: GmailMessageResource = {
+      id: "m1",
+      threadId: "t1",
+      payload: { headers: [{ name: "Subject", value: encodedSubject }] },
+    };
+    expect(summarizeGmailMessage(resource).subject).toBe("会议纪要");
   });
 });
