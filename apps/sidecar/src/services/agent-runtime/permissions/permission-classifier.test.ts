@@ -136,6 +136,16 @@ describe("permission classifier", () => {
       riskLevel: "medium",
       shouldAsk: true
     });
+    // iex 分支词边界钉（清单派生重构回归）：全名形态命中 medium；长单词尾部 iex
+    // （maxiex）不得因前词边界丢失而误命中
+    await expect(classifier.classify({ toolName: "Bash", command: "iex $script", shellKind: "powershell" })).resolves.toMatchObject({
+      riskLevel: "medium",
+      shouldAsk: true
+    });
+    await expect(classifier.classify({ toolName: "Bash", command: "cat maxiex.log", shellKind: "powershell" })).resolves.toMatchObject({
+      riskLevel: "low",
+      shouldAsk: false
+    });
     // 换行分隔与 cmd 包裹曾与 guardrail 层一起漏判
     await expect(classifier.classify({ toolName: "Bash", command: "Get-Date\r\ndel \\", shellKind: "powershell" })).resolves.toMatchObject({
       riskLevel: "medium",

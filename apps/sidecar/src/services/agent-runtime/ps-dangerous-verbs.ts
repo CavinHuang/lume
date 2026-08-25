@@ -42,8 +42,10 @@ export const PS_DANGEROUS_DELETE_FLAGS = String.raw`(?:-{1,2}r(?:ecurse)?\b|-{1,
  *  单一事实来源——分类器全名词表与内容信号均由此派生，新增动词只改这里 */
 const PS_UNAMBIGUOUS_FULL_NAME_VERBS = String.raw`(?:remove-item|clear-content|stop-process|stop-service|stop-computer|restart-computer|set-executionpolicy|invoke-expression|format-volume|format-disk)`;
 
-/** 分类器全名词表（无锚点、\b 边界即可命中）＝无歧义基础 + iex；短别名由 PS_DELETE_COMMAND 锚定兜底，防 npm ri 之类子命令误判 */
-export const PS_FULL_NAME_VERBS = `${PS_UNAMBIGUOUS_FULL_NAME_VERBS}|iex`;
+/** 分类器全名词表（无锚点、\b 边界即可命中）＝无歧义基础 + iex；短别名由 PS_DELETE_COMMAND 锚定兜底，
+ *  防 npm ri 之类子命令误判。自包含 (?:) 组：消费端正则按 `\b${...}\b` 插值，裸拼接会让
+ *  iex 分支丢失前词边界（maxiex 之类尾部误命中） */
+export const PS_FULL_NAME_VERBS = String.raw`(?:${PS_UNAMBIGUOUS_FULL_NAME_VERBS}|iex)`;
 
 /*
  * 内容信号（#707）：win32 装 POSIX bash 的机器上方言读作 bash，词表按方言门控整层休眠，
