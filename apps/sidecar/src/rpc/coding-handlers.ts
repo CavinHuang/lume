@@ -20,12 +20,15 @@ import {
   getCodingDiffMediaFromCheckpoint,
   getCodingFileDiffFromCheckpoint,
   getCodingRunRoots,
+  revertCodingFileFromCheckpoint,
+  revertCodingRun,
 } from "../services/agent-runtime/runtime-core/coding-run-checkpoint-service";
 import {
   codingChangeSetInputSchema,
   codingDiffActionInputSchema,
   codingDiffMediaInputSchema,
   codingFileInputSchema,
+  codingRunRevertInputSchema,
   codingRepositoryInputSchema,
   codingRepositoryPublishActionInputSchema,
   codingReviewSearchInputSchema,
@@ -293,6 +296,38 @@ export function createCodingHandlers(): Record<string, RpcHandler> {
       });
       return applyCodingRepositoryPublishAction(workdir.agentCwd, input, {
         roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
+    [AGENT_IPC_CHANNELS.REVERT_CODING_RUN]: async (params) => {
+      const input = validateInput(
+        codingRunRevertInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.REVERT_CODING_RUN,
+      );
+      if (isAgentRuntimeSessionActive(input.threadId)) {
+        throw new Error("Coding Run 尚未结束，无法撤销文件改动");
+      }
+      return revertCodingRun({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+    },
+    [AGENT_IPC_CHANNELS.REVERT_CODING_FILE]: async (params) => {
+      const input = validateInput(
+        codingFileInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.REVERT_CODING_FILE,
+      );
+      if (isAgentRuntimeSessionActive(input.threadId)) {
+        throw new Error("Coding Run 尚未结束，无法撤销文件改动");
+      }
+      if (!input.runId) {
+        throw new Error("单文件撤销需要绑定当前 Coding Run 的检查点");
+      }
+      return revertCodingFileFromCheckpoint({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+        path: input.path,
       });
     },
   };

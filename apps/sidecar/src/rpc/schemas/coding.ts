@@ -147,3 +147,8 @@ export const codingRepositoryPublishActionInputSchema = z.discriminatedUnion(
     }),
   ],
 );
+
+export const codingRunRevertInputSchema = z.object({
+  threadId: idSchema,
+  runId: idSchema,
+});

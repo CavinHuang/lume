@@ -258,6 +258,8 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
   const [treeQuery, setTreeQuery] = useState('')
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set())
   const [activeDiffPath, setActiveDiffPath] = useState(selectedChangeKey(state))
+  const [revertBusy, setRevertBusy] = useState(false)
+  const [revertNotice, setRevertNotice] = useState<string | null>(null)
   const [publishDialogOpen, setPublishDialogOpen] = useState(false)
   const [publishState, setPublishState] = useState<CodingRepositoryPublishState | null>(null)
   const [publishBusy, setPublishBusy] = useState(false)
@@ -740,6 +742,28 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
     }
   }
 
+  const revertRunChanges = async () => {
+    if (!state.runId || revertBusy) return
+    if (!window.confirm('将本次 Run 写过的文件还原到改动前快照？已提交的文件与外部修改过的文件不会被覆盖。')) return
+    setRevertBusy(true)
+    setRevertNotice(null)
+    try {
+      const result = await sidecarCall<{ status: string; filesChanged: string[]; conflicts: string[]; nonRewindableFiles: string[] }>(
+        AGENT_IPC_CHANNELS.REVERT_CODING_RUN,
+        { threadId, runId: state.runId },
+      )
+      const parts = [`已还原 ${result.filesChanged.length} 个文件`]
+      if (result.conflicts.length > 0) parts.push(`${result.conflicts.length} 个因 Run 后被外部修改而跳过`)
+      if (result.nonRewindableFiles.length > 0) parts.push(`${result.nonRewindableFiles.length} 个已提交不可回退`)
+      setRevertNotice(parts.join('；'))
+      refreshDiffs()
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : '无法撤销本次改动')
+    } finally {
+      setRevertBusy(false)
+    }
+  }
+
   const loadWorkspaceDiffs = async (): Promise<CodingDiffPayload[]> => {
     const queue = visibleChanges.map((change, index) => ({ change, index }))
     const payloads = new Array<CodingDiffPayload>(visibleChanges.length)
@@ -1134,6 +1158,18 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
             >
               {fileTreeOpen ? <FolderOpen /> : <Folder />}
             </Button>
+            {state.runId && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mr-1 h-7 gap-1 border-[var(--lume-border-strong)] bg-transparent px-2.5 text-[12px] text-[var(--lume-text-primary)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]"
+                title="按快照还原本次 Run 的文件改动"
+                disabled={revertBusy}
+                onClick={() => void revertRunChanges()}
+              >
+                <span>{revertBusy ? '还原中…' : '撤销本次改动'}</span>
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
@@ -1147,6 +1183,9 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
             >
               <span>提交或推送</span><ChevronDown className="size-3.5" />
             </Button>
+            {revertNotice && (
+              <span className="ml-2 truncate text-[12px] text-[var(--lume-text-muted)]" title={revertNotice}>{revertNotice}</span>
+            )}
           </div>
         </div>
       </header>
