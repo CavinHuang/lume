@@ -177,19 +177,20 @@ describe("PermissionEngine", () => {
       reasonCode: "readonly_shell"
     });
 
-    // 用户显式 ask 的意图优先于内容证明
+    // 用户显式 ask 的意图优先于内容证明。用 PS 前缀命令：其只读证明走纯正则
+    // （不依赖 natives 语法树），无产物环境与本地双态确定
     const engine = new PermissionEngine({
-      rules: [{ id: "ask-cat", scope: "workspace", tool: "Bash", commandPattern: "^cat\\b", action: "ask" }]
+      rules: [{ id: "ask-ps", scope: "workspace", tool: "Bash", commandPattern: "^powershell -Command Get-Process$", action: "ask" }]
     });
     await expect(engine.decide({
       descriptor: bash,
-      input: { command: "cat secrets.md" },
+      input: { command: "powershell -Command Get-Process" },
       mode: "default",
       context: { threadId: "thread-1", cwd: "/tmp/project" }
     })).resolves.toMatchObject({
       status: "approval_required",
       reasonCode: "rule_ask",
-      matchedRuleId: "ask-cat"
+      matchedRuleId: "ask-ps"
     });
   });
 
