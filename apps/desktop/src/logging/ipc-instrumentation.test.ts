@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { instrumentIpcCommand, SLOW_IPC_MS, type IpcCommandEvent } from './ipc-instrumentation'
+import { instrumentIpcCommand, SLOW_IPC_MS, type IpcCommandEvent, type IpcInstrumentDeps } from './ipc-instrumentation'
 
 function harness(quietNames: string[] = []) {
   const events: IpcCommandEvent[] = []
-  const deps = {
+  const deps: IpcInstrumentDeps = {
     isQuiet: (name: string) => quietNames.includes(name),
-    emit: (event: IpcCommandEvent) => events.push(event),
+    emit: (event) => { events.push(event) },
   }
   return { events, deps }
 }
@@ -59,10 +59,14 @@ describe('instrumentIpcCommand', () => {
     expect(events[0]!.event).toBe('command.failed')
   })
 
-  test(`耗时 >= ${SLOW_IPC_MS}ms 的成功命令升为 warn 落生产文件`, async () => {
+  test(`耗时 >= ${SLOW_IPC_MS}ms 的成功命令升为 warn 落生产文件（注入时钟）`, async () => {
+    let clock = 0
     const { events, deps } = harness()
-    await instrumentIpcCommand(deps, 'slow', {}, () => new Promise((r) => setTimeout(r, 5)))
-    // 用注入时钟不可行时退化为阈值断言：本例耗时 < 阈值，应为 debug
-    expect(events[0]!.level).toBe('debug')
+    deps.now = () => clock
+    const slow = instrumentIpcCommand(deps, 'slow', {}, () => new Promise((r) => setTimeout(r, 1)))
+    clock = SLOW_IPC_MS + 5
+    await slow
+    expect(events[0]!.level).toBe('warn')
+    expect(events[0]!.durationMs).toBe(SLOW_IPC_MS + 5)
   })
 })

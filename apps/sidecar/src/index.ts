@@ -9,7 +9,7 @@ import {
 } from "./services/automation/automation-runner-service";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
-import { AGENT_IPC_CHANNELS, QUIET_RPC_METHODS, extractCorrelationIds, summarizeValue } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, QUIET_RPC_METHODS, extractCorrelationIds, normalizeHostLevel, summarizeValue } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
 import { getSubagentCoordinator } from "./services/agent-runtime/subagents/subagent-coordinator";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
@@ -20,8 +20,8 @@ import {
   flushLogTransport,
   setLogBatchNotificationWriter,
   writeEmergencyLog,
-  writeLogRecord
-} from "./services/infra/logger";
+  writeLogRecord,
+  setLogFileLevel,} from "./services/infra/logger";
 import { assertSidecarNativeRuntime } from "./services/infra/native-runtime";
 import { createProcessRpcTransport, MAX_RPC_MESSAGE_BYTES } from "./rpc/process-transport";
 import { browserRpcErrorFromPayload, classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
@@ -250,6 +250,13 @@ async function handleRpcLine(line: string): Promise<void> {
 
   if (method === "browser:settings" && payload.id === undefined) {
     await handlers[method]?.(payload.params);
+    return;
+  }
+
+  if (method === "system.log-level") {
+    // main 在 logging 设置热更时下发；无效级别静默忽略（保持当前门槛）。
+    setLogFileLevel((payload.params as { level?: unknown } | null)?.level);
+    if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
     return;
   }
 

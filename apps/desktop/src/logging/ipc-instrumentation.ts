@@ -10,6 +10,8 @@ export interface IpcInstrumentDeps {
   isQuiet: (name: string) => boolean
   /** 调用方负责兜底自身异常——埋点故障不得影响 IPC 语义。 */
   emit: (event: IpcCommandEvent) => void
+  /** 可注入时钟（单测模拟慢命令）；缺省 performance.now。 */
+  now?: () => number
 }
 
 export interface IpcCommandEvent {
@@ -33,12 +35,13 @@ export async function instrumentIpcCommand<T>(
   args: unknown,
   run: () => Promise<T> | T,
 ): Promise<T> {
+  const now = deps.now ?? (() => performance.now())
   const quiet = deps.isQuiet(name)
-  const startedAt = performance.now()
+  const startedAt = now()
   try {
     const result = await run()
     if (quiet) return result
-    const durationMs = Math.round(performance.now() - startedAt)
+    const durationMs = Math.round(now() - startedAt)
     deps.emit({
       level: durationMs >= SLOW_IPC_MS ? 'warn' : 'debug',
       event: 'command.completed',
@@ -57,7 +60,7 @@ export async function instrumentIpcCommand<T>(
       event: 'command.failed',
       name,
       message: `ipc failed: ${name}`,
-      durationMs: Math.round(performance.now() - startedAt),
+      durationMs: Math.round(now() - startedAt),
       args,
       correlation: extractCorrelationIds(args),
       ...(error instanceof Error ? { error } : {}),

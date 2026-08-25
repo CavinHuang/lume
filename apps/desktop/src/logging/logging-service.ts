@@ -25,7 +25,7 @@ import type {
   LumeLogSource,
   LumeLoggingSettings,
 } from '@lume/shared'
-import { LUME_LOGGING_DEFAULTS, LUME_LOG_SCHEMA_VERSION, classifyLogKey, clipLogPreview } from '@lume/shared'
+import { LUME_LOGGING_DEFAULTS, LUME_LOG_SCHEMA_VERSION, classifyLogKey, clipLogPreview, isLumeLogSource, normalizeLogValue } from '@lume/shared'
 
 const LEVEL_ORDER: Record<LumeLogLevel, number> = {
   trace: 0,
@@ -41,9 +41,6 @@ const MAX_BATCH_BYTES = 512 * 1024
 const MAX_QUEUE_EVENTS = 5_000
 const MAX_RECENT_EVENT_IDS = 10_000
 const FLUSH_INTERVAL_MS = 50
-const MAX_DATA_DEPTH = 6
-const MAX_DATA_KEYS = 100
-const MAX_ARRAY_ITEMS = 100
 const MAX_STRING_CHARS = 8_192
 const MAX_EVENT_BYTES = 64 * 1024
 
@@ -87,67 +84,14 @@ export interface LoggingServiceOptions {
   now?: () => Date
 }
 
-interface NormalizeState {
-  seen: WeakSet<object>
-  keys: number
-}
-
 function normalizeString(value: string): string {
   return value.length > MAX_STRING_CHARS
     ? `${value.slice(0, MAX_STRING_CHARS)}…[truncated]`
     : value
 }
 
-export function normalizeLogValue(
-  value: unknown,
-  depth = 0,
-  state: NormalizeState = { seen: new WeakSet<object>(), keys: 0 },
-): unknown {
-  if (value == null || typeof value === 'boolean' || typeof value === 'number') return value
-  if (typeof value === 'string') return normalizeString(value)
-  if (typeof value === 'bigint') return value.toString()
-  if (typeof value === 'symbol' || typeof value === 'function') return `[${typeof value}]`
-  if (value instanceof Error) {
-    return {
-      name: normalizeString(value.name),
-      message: normalizeString(value.message),
-      ...(value.stack ? { stack: normalizeString(value.stack) } : {}),
-    }
-  }
-  if (depth >= MAX_DATA_DEPTH) return '[MaxDepth]'
-  if (!value || typeof value !== 'object') return normalizeString(String(value))
-  if (state.seen.has(value)) return '[Circular]'
-  state.seen.add(value)
-
-  // TypedArray/DataView/Buffer 输出骨架：否则 getOwnPropertyDescriptors 会物化数十万键。
-  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
-    return { type: value.constructor?.name ?? 'TypedArray', byteLength: (value as { byteLength: number }).byteLength }
-  }
-
-  if (Array.isArray(value)) {
-    return value.slice(0, MAX_ARRAY_ITEMS).map((item) => normalizeLogValue(item, depth + 1, state))
-  }
-
-  const output: Record<string, unknown> = {}
-  const descriptors = Object.getOwnPropertyDescriptors(value)
-  for (const key of Object.keys(descriptors).slice(0, MAX_DATA_KEYS)) {
-    state.keys += 1
-    if (state.keys > MAX_DATA_KEYS) break
-    const classified = classifyLogKey(key)
-    if (classified === 'redact') {
-      output[key] = '[redacted]'
-      continue
-    }
-    const descriptor = descriptors[key]
-    const resolved = descriptor && 'value' in descriptor
-      ? normalizeLogValue(descriptor.value, depth + 1, state)
-      : '[Accessor]'
-    output[key] = classified === 'preview' && typeof resolved === 'string'
-      ? clipLogPreview(resolved)
-      : resolved
-  }
-  return output
-}
+// normalizeLogValue 已收敛到 @lume/shared（三端同一份遍历骨架），此处 re-export 保持既有导入路径。
+export { normalizeLogValue };
 
 function safeRecord(value: unknown): Record<string, unknown> | undefined {
   if (value == null) return undefined
@@ -177,13 +121,8 @@ function isLevel(value: unknown): value is LumeLogLevel {
   return typeof value === 'string' && value in LEVEL_ORDER
 }
 
-function isSource(value: unknown): value is LumeLogSource {
-  return value === 'main'
-    || value === 'sidecar'
-    || value === 'renderer'
-    || value === 'desktop-host'
-    || value === 'node-repl'
-}
+// 派生自 shared 的 LUME_LOG_SOURCES 单一来源，新增 source 时类型系统会同步。
+const isSource = isLumeLogSource
 
 function validName(value: unknown, fallback: string): string {
   if (typeof value !== 'string') return fallback

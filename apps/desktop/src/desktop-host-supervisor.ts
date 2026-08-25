@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { posix } from 'node:path'
 import { spawn as spawnProcess } from 'node:child_process'
 import { createDesktopHostSpawnConfig, createDesktopHostTokenFilePath } from './sidecar-process'
+import { parseLumeLogLine } from '@lume/shared'
 
 export type DesktopHostState =
   | { available: true; endpoint: string; token: string }
@@ -120,7 +121,6 @@ export function createDesktopHostSupervisor({
     const running = spawn(config.command, config.args, config.options)
     child = running
     if (activeConnection) state = activeConnection
-    const LUMELOG_PREFIX = 'LUMELOG '
     // 无换行洪水的兜底：缓冲超限保留末尾 64KB，防止 O(n²) 重扫与内存无界。
     const MAX_LINE_BUFFER_CHARS = 1024 * 1024
     const lineBuffers: Record<'stdout' | 'stderr', string> = { stdout: '', stderr: '' }
@@ -134,19 +134,14 @@ export function createDesktopHostSupervisor({
       for (const raw of lines) {
         const line = raw.trimEnd()
         if (!line) continue
-        if (!line.startsWith(LUMELOG_PREFIX)) {
+        // parseLumeLogLine：非前缀/坏 JSON/非对象载荷返回 null → 回退文本路径，
+        // 避免 null 解构在 data handler 里抛未捕获异常击穿主进程。
+        const parsed = parseLumeLogLine(line)
+        if (!parsed) {
           log(`[desktop-host] ${line}`)
           continue
         }
-        try {
-          // JSON.parse("null") 返回 null——非对象结果必须回退文本路径，否则下游解构会在
-          // stdout/stderr data handler 里抛未捕获异常击穿主进程。
-          const parsed: unknown = JSON.parse(line.slice(LUMELOG_PREFIX.length))
-          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object')
-          logEvent?.(parsed as DesktopHostStructuredLog)
-        } catch {
-          log(`[desktop-host] ${line}`)
-        }
+        logEvent?.(parsed as DesktopHostStructuredLog)
       }
     }
     running.stdout?.on('data', (chunk) => ingestChunk('stdout', String(chunk)))

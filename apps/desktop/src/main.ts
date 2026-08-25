@@ -142,7 +142,7 @@ import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { discoverChromeProfiles, importChromeProfile, importConnectedChromeCookies, type ImportedCookie } from './browser-import'
 import type { BrowserSettings } from '@lume/shared'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '@lume/shared'
-import { nativeEventToIntent, summarizeValue } from '@lume/shared'
+import { nativeEventToIntent, summarizeValue, normalizeHostLevel } from '@lume/shared'
 import { QUIET_RPC_METHODS as QUIET_SIDECAR_RPC_METHODS } from '@lume/shared'
 import type { AgentIslandIntent, NativeAgentIslandSnapshot } from '@lume/shared'
 import {
@@ -191,6 +191,7 @@ const SIDECAR_LOG_METHOD = 'system.log'
 const SIDECAR_LOG_BATCH_METHOD = 'system.log-batch'
 const SIDECAR_LOG_ACK_METHOD = 'system.log-ack'
 const SIDECAR_SETTINGS_REPLACE_METHOD = 'system.settings-replace'
+const SIDECAR_LOG_LEVEL_METHOD = 'system.log-level'
 const SLOW_RPC_MS = 2_000
 const RENDERER_DELIVERY_ACK_TIMEOUT_MS = 10_000
 const UPDATE_INSTALL_HANDOFF_TIMEOUT_MS = 15_000
@@ -357,9 +358,6 @@ function writeMainLog(level, context, event, message, extra = {}) {
     ...extra,
   })
 }
-
-// 宿主上报级别的白名单校验（与 sidecar hostLogLevel 对称）：fatal 映射 error，未知回落 info。
-const HOST_LOG_LEVELS = new Set(['trace', 'debug', 'info', 'warn', 'error'])
 
 const QUIET_IPC_COMMANDS = new Set<string>([
   // 日志类命令走 lume:invoke 分发而非独立 handle，必须静默避免埋点自喂。
@@ -2774,9 +2772,19 @@ function createSidecarHost({ onNotification }) {
               const changedKeys = Object.keys(incoming)
                 .filter((key) => JSON.stringify(incoming[key]) !== JSON.stringify((before as unknown as Record<string, unknown>)[key]))
               getLoggingService().updateSettings(logging)
-              writeMainLog('info', 'logging.config', 'logging.settings_updated', 'logging settings replaced', {
-                data: { ...(changedKeys.length > 0 ? { changedKeys } : {}), settings: summarizeValue(logging) },
-              })
+              // 文件级别运行时下发给 sidecar（其门槛在 spawn 时冻结，热更原不生效）。
+              const sidecarFileLevel = process.env.LUME_LOG_FILE_LEVEL
+                ?? (!app.isPackaged ? 'trace' : (logging as { fileLevel?: string }).fileLevel)
+              if (typeof sidecarFileLevel === 'string') {
+                void sidecarHost.call(SIDECAR_LOG_LEVEL_METHOD, { level: sidecarFileLevel }).catch(() => {
+                  // sidecar 未就绪/调用失败不阻塞设置流程；下次设置变更会再次下发。
+                })
+              }
+              if (changedKeys.length > 0) {
+                writeMainLog('info', 'logging.config', 'logging.settings_updated', 'logging settings replaced', {
+                  data: { changedKeys, settings: summarizeValue(logging) },
+                })
+              }
             }
             // Agent 灵动岛 §5.3：设置开关"关闭后立即生效"。settings-replace 是所有设置写入
             // （含 renderer toggle → sidecar general-settings:update）的唯一汇聚点，故在此处
@@ -3372,7 +3380,7 @@ async function startDesktopHost(): Promise<DesktopHostState> {
       binaryPath,
       log: logDesktopStartup,
       logEvent: ({ level, context, event, message, data }) => {
-        const resolvedLevel = level === 'fatal' ? 'error' : level && HOST_LOG_LEVELS.has(level) ? level : 'info'
+        const resolvedLevel = normalizeHostLevel(level)
         writeMainLog(
           resolvedLevel,
           context ?? 'desktop.host',

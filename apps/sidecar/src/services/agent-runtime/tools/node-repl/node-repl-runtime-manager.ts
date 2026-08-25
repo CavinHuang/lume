@@ -3,7 +3,8 @@ import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { delimiter, dirname, join } from "node:path";
 import { spawnWithProcessSandbox, type SandboxSettings } from "@lume/agent-sdk";
-import { writeLogRecord, type LogLevel } from "../../../infra/logger";
+import { normalizeHostLevel, parseLumeLogLine } from "@lume/shared";
+import { writeLogRecord } from "../../../infra/logger";
 import type {
   JsExecInput,
   NodeReplBrowserAuthRequest,
@@ -22,8 +23,6 @@ import {
 const DEFAULT_CALL_TIMEOUT_MS = 35_000;
 const DEFAULT_HOST_CALL_LEASE_MS = 10 * 60_000;
 const MAX_STDERR_CHARS = 16_000;
-// node_repl 宿主输出的单行结构化日志协议前缀（与 Rust logging.rs 保持一致）。
-const LUMELOG_PREFIX = "LUMELOG ";
 
 interface RuntimeControlResponse {
   type: "runtime_response";
@@ -117,32 +116,26 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
     for (const raw of lines) {
       const line = raw.trimEnd();
       if (!line) continue;
-      if (!line.startsWith(LUMELOG_PREFIX)) {
+      const parsed = parseLumeLogLine(line);
+      if (!parsed) {
+        // 非前缀/坏 JSON/非对象载荷一律回退诊断缓冲。
         this.stderr = truncate(`${this.stderr}${line}\n`, MAX_STDERR_CHARS);
         continue;
       }
-      try {
-        // JSON.parse("null") 返回 null；数组/字符串载荷则会产出垃圾结构化事件——
-        // 非对象结果一律回退诊断缓冲。
-        const parsed: unknown = JSON.parse(line.slice(LUMELOG_PREFIX.length));
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
-        const host = parsed as {
-          level?: string;
-          context?: string;
-          event?: string;
-          message?: string;
-          data?: Record<string, unknown>;
-        };
-        writeLogRecord({
-          level: hostLogLevel(host.level),
-          context: host.context ?? "node-repl.host",
-          event: host.event ?? "host.log",
-          message: host.message ?? "",
-          ...(host.data ? { data: host.data } : {}),
-        });
-      } catch {
-        this.stderr = truncate(`${this.stderr}${line}\n`, MAX_STDERR_CHARS);
-      }
+      const host = parsed as {
+        level?: string;
+        context?: string;
+        event?: string;
+        message?: string;
+        data?: Record<string, unknown>;
+      };
+      writeLogRecord({
+        level: normalizeHostLevel(host.level),
+        context: host.context ?? "node-repl.host",
+        event: host.event ?? "host.log",
+        message: host.message ?? "",
+        ...(host.data ? { data: host.data } : {}),
+      });
     }
   }
 
@@ -533,10 +526,3 @@ function truncate(value: string, maxChars: number): string {
   return value.length > maxChars ? value.slice(-maxChars) : value;
 }
 
-// 宿主级别映射到 sidecar LogLevel：fatal 按 error 处理（Unit 5 协议约定），未知级别回落 info。
-function hostLogLevel(value: string | undefined): LogLevel {
-  if (value === "fatal") return "error";
-  return value === "trace" || value === "debug" || value === "info" || value === "warn" || value === "error"
-    ? value
-    : "info";
-}

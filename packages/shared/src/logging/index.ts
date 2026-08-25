@@ -7,6 +7,8 @@
  *   "key action params/results" stay observable without leaking full bodies.
  */
 
+import { LUME_LOG_LEVELS, LUME_LOG_SOURCES, type LumeLogLevel, type LumeLogSource } from "../types/logging";
+
 export const LOG_PREVIEW_MAX_CHARS = 200
 
 /** Substring fragments; a key whose normalized form CONTAINS any fragment is fully redacted. */
@@ -129,4 +131,106 @@ export function summarizeValue(input: unknown, depth = 0): unknown {
     out[key] = summarizeValue(value, depth + 1)
   }
   return out
+}
+
+// ── 跨进程复用的日志工具（第二波评审收敛项）──────────────────────────────
+
+export function isLumeLogSource(value: unknown): value is LumeLogSource {
+  return typeof value === "string" && (LUME_LOG_SOURCES as readonly string[]).includes(value);
+}
+
+/** 宿主上报级别归一：fatal 映射 error，白名单外回落 info。main 与 sidecar 共用同一策略。 */
+export function normalizeHostLevel(level: unknown): LumeLogLevel {
+  if (level === "fatal") return "error";
+  return typeof level === "string" && level !== "fatal" && (LUME_LOG_LEVELS as readonly string[]).includes(level)
+    ? (level as LumeLogLevel)
+    : "info";
+}
+
+export const LUMELOG_PREFIX = "LUMELOG ";
+
+/**
+ * 解析宿主输出的单行结构化日志；非前缀/坏 JSON/非对象载荷一律返回 null，
+ * 由调用方决定回退路径。supervisor 与 node-repl runtime-manager 共用。
+ */
+export function parseLumeLogLine(line: string): Record<string, unknown> | null {
+  if (!line.startsWith(LUMELOG_PREFIX)) return null;
+  try {
+    const parsed: unknown = JSON.parse(line.slice(LUMELOG_PREFIX.length));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+const MAX_NORMALIZE_DEPTH = 6;
+const MAX_NORMALIZE_KEYS = 100;
+const MAX_NORMALIZE_ARRAY_ITEMS = 100;
+const MAX_NORMALIZE_STRING_CHARS = 8_192;
+
+export interface LogNormalizeState {
+  seen: WeakSet<object>;
+  keys: number;
+}
+
+function normalizeClip(text: string): string {
+  return text.length > MAX_NORMALIZE_STRING_CHARS
+    ? `${text.slice(0, MAX_NORMALIZE_STRING_CHARS)}…[truncated]`
+    : text;
+}
+
+/**
+ * 权威的日志数据规整器：三端（main/sidecar/renderer）共用同一份遍历骨架与上限
+ * （深 6 / 键 100 / 数组 100 / 字符串 8K），杜绝拷贝间漂移。
+ */
+export function normalizeLogValue(
+  value: unknown,
+  depth = 0,
+  state: LogNormalizeState = { seen: new WeakSet<object>(), keys: 0 },
+): unknown {
+  if (value == null || typeof value === "boolean" || typeof value === "number") return value;
+  if (typeof value === "string") return normalizeClip(value);
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "symbol" || typeof value === "function") return `[${typeof value}]`;
+  if (value instanceof Error) {
+    return {
+      name: normalizeClip(value.name),
+      message: normalizeClip(value.message),
+      ...(value.stack ? { stack: normalizeClip(value.stack) } : {}),
+    };
+  }
+  if (depth >= MAX_NORMALIZE_DEPTH) return "[MaxDepth]";
+  if (!value || typeof value !== "object") return normalizeClip(String(value));
+  if (state.seen.has(value)) return "[Circular]";
+  state.seen.add(value);
+
+  // TypedArray/DataView/Buffer 输出骨架：否则 getOwnPropertyDescriptors 会物化数十万键。
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+    return { type: value.constructor?.name ?? "TypedArray", byteLength: (value as { byteLength: number }).byteLength };
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, MAX_NORMALIZE_ARRAY_ITEMS).map((item) => normalizeLogValue(item, depth + 1, state));
+  }
+
+  const output: Record<string, unknown> = {};
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const key of Object.keys(descriptors).slice(0, MAX_NORMALIZE_KEYS)) {
+    state.keys += 1;
+    if (state.keys > MAX_NORMALIZE_KEYS) break;
+    const classified = classifyLogKey(key);
+    if (classified === "redact") {
+      output[key] = "[redacted]";
+      continue;
+    }
+    const descriptor = descriptors[key];
+    const resolved = descriptor && "value" in descriptor
+      ? normalizeLogValue(descriptor.value, depth + 1, state)
+      : "[Accessor]";
+    output[key] = classified === "preview" && typeof resolved === "string"
+      ? clipLogPreview(resolved)
+      : resolved;
+  }
+  return output;
 }

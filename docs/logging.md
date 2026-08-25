@@ -67,6 +67,7 @@ quiet 名单有两处：RPC 侧 `QUIET_RPC_METHODS`（packages/shared 单一来�
 2. 选级别（按 §4：状态变更 info，高频 debug）。
 3. data 用 `summarizeValue(payload)` 或显式挑选的字段；自查敏感键（§5）。
 4. 主进程：`writeMainLog(level, context, event, message, { data })`——它不是导出符号；main.ts 之外的模块用**回调注入**接进来（参照 BrowserWorkspaceStore 的 onEvent → main.ts 接线模式）。sidecar：`writeLogRecord(...)`；renderer：`writeWebLogEvent(...)`；Rust 宿主：`emit_log(...)`（见 §7）。
+   第 5 参是整包透传的 extra（支持 kind/status/durationMs/traceId/runId/error 等 schema 字段）——链路类事件把这些放顶层，别塞进 data。
 5. 若是高频命令，评估加入 `QUIET_RPC_METHODS` / `QUIET_IPC_COMMANDS`。
 
 注意：主进程经 `lume:invoke` 分发的命令已由 `logIpcCommand` 自动记录 completed/failed，**无需重复埋点**；只有需要领域细节（如关联 ID）时才补显式事件。
@@ -96,6 +97,8 @@ dev 构建（非打包运行）控制台默认 **trace**——启动 `bun run de
 | `LUME_LOG_FILE_LEVEL=debug` | 放开落盘级别 |
 | `LUME_LOG_FORMAT=json` | 终端整行 JSON |
 | `LUME_LOG_CONSOLE=false` | 关闭终端输出 |
+
+pretty 行尾带 ≤200 字符 JSON 摘要（status/durationMs/data/error），关联前缀仅显示 trace=/run=/rpc=——threadId/submissionId 需切 `LUME_LOG_FORMAT=json` 或查文件。
 
 生产排查：应用内 设置 → 日志（过滤级别/来源/关键字/traceId、实时订阅、导出），或直接看 `~/.lume/logs/lume-*.ndjson`（按天轮转，保留 14 天 / 总量 500MB 上限）。
 

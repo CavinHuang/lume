@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { REDACT_KEY_PARTS, CONTENT_PREVIEW_KEYS, LOG_PREVIEW_MAX_CHARS, QUIET_RPC_METHODS, clipLogPreview, summarizeValue, extractCorrelationIds } from './index'
+import { REDACT_KEY_PARTS, CONTENT_PREVIEW_KEYS, LOG_PREVIEW_MAX_CHARS, QUIET_RPC_METHODS, clipLogPreview, summarizeValue, extractCorrelationIds, isLumeLogSource, normalizeHostLevel, parseLumeLogLine, normalizeLogValue } from './index'
 
 describe('clipLogPreview', () => {
   test('短字符串原样返回', () => {
@@ -119,5 +119,36 @@ describe('extractCorrelationIds', () => {
     expect(extractCorrelationIds({ a: { b: { threadId: 'deep-1' } } })).toEqual({})
     expect(extractCorrelationIds([1, 2])).toEqual({})
     expect(extractCorrelationIds('text')).toEqual({})
+  })
+})
+
+describe('跨进程工具（第二波收敛）', () => {
+  test('isLumeLogSource 派生自 LUME_LOG_SOURCES', () => {
+    expect(isLumeLogSource('main')).toBe(true)
+    expect(isLumeLogSource('node-repl')).toBe(true)
+    expect(isLumeLogSource('nope')).toBe(false)
+    expect(isLumeLogSource(42)).toBe(false)
+  })
+  test('normalizeHostLevel：fatal→error、白名单直通、未知回落 info', () => {
+    expect(normalizeHostLevel('fatal')).toBe('error')
+    expect(normalizeHostLevel('warn')).toBe('warn')
+    expect(normalizeHostLevel('trace')).toBe('trace')
+    expect(normalizeHostLevel('bogus')).toBe('info')
+    expect(normalizeHostLevel(undefined)).toBe('info')
+  })
+  test('parseLumeLogLine：合法/坏 JSON/null/数组/非前缀', () => {
+    expect(parseLumeLogLine('LUMELOG {"level":"warn","event":"e"}')).toEqual({ level: 'warn', event: 'e' })
+    expect(parseLumeLogLine('LUMELOG not-json')).toBeNull()
+    expect(parseLumeLogLine('LUMELOG null')).toBeNull()
+    expect(parseLumeLogLine('LUMELOG [1]')).toBeNull()
+    expect(parseLumeLogLine('plain text')).toBeNull()
+  })
+  test('normalizeLogValue：凭据遮蔽、TypedArray 骨架、循环引用、深度帽', () => {
+    const out = normalizeLogValue({ apiKey: 'sk-x', chunk: new Uint8Array(8), body: 'ok' }) as Record<string, unknown>
+    expect(out.apiKey).toBe('[redacted]')
+    expect(out.chunk).toEqual({ type: 'Uint8Array', byteLength: 8 })
+    const cyc: Record<string, unknown> = {}
+    cyc.self = cyc
+    expect(JSON.stringify(normalizeLogValue(cyc))).toContain('[Circular]')
   })
 })
