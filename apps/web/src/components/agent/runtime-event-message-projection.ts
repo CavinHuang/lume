@@ -28,7 +28,7 @@ export interface ProjectionState {
    * run.started 随后到达（期间无用户消息），剥掉该提示尾缀，避免给用户假信号。
    * 用户消息插入则保留提示（手动继续场景提示仍然成立）。
    */
-  pendingTurnLimitNotice?: { messageId: string; noticeLength: number } | null
+  pendingTurnLimitNotice?: { messageId: string } | null
 }
 
 /**
@@ -443,7 +443,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       // #566:记录提示尾缀，若同链 run.started 随后到达则剥掉（自动续跑不给用户假信号）
       const lastBlock = state.currentAssistant.blocks.at(-1)
       state.pendingTurnLimitNotice = lastBlock?.type === 'text'
-        ? { messageId: state.currentAssistant.id, noticeLength: TURN_LIMIT_NOTICE.length }
+        ? { messageId: state.currentAssistant.id }
         : null
     }
     if (event.type === 'run.completed') {
@@ -812,7 +812,8 @@ function retractPendingTurnLimitNotice(state: ProjectionState): void {
   const last = message.blocks[lastBlockIndex]
   if (last?.type !== 'text' || !last.text.endsWith(TURN_LIMIT_NOTICE)) return
   // 块 id 按索引派生，不删块防 id 漂移；提示独占时留空文本块（渲染无痕）
-  const strippedBlockText = last.text.slice(0, -pending.noticeLength)
+  // noticeLength 与下方 message.text 切片同源取 TURN_LIMIT_NOTICE.length，防单边漂移
+  const strippedBlockText = last.text.slice(0, -TURN_LIMIT_NOTICE.length)
   const strippedMessageText = message.text.endsWith(TURN_LIMIT_NOTICE)
     ? message.text.slice(0, -TURN_LIMIT_NOTICE.length)
     : message.text

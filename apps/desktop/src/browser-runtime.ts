@@ -4297,7 +4297,7 @@ export class BrowserRuntime {
         actor: context.actor ?? "agent",
         ...(context.threadId ? { threadId: context.threadId } : {}),
         browserSessionId: context.browserSessionId ?? "",
-        backend: "iab",
+        backend,
         generation: this.backendGeneration,
         action: `policy:confirm:${category}`,
         decision: "deny",

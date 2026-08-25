@@ -127,7 +127,7 @@ export const MinimalProcessGroup = memo(function MinimalProcessGroup({
     summaryUnits.push(
       <span key="run" className="inline-flex items-center gap-1">
         <span className="size-1.5 animate-pulse rounded-full bg-[var(--lume-accent)]" />
-        {derived.todoActiveForm ?? `正在执行 ${derived.runningTool.toolName}`}
+        {derived.todoActiveForm ?? `正在执行 ${displayToolName(derived.runningTool.toolName)}`}
       </span>,
     )
     summaryUnits.push(

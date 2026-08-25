@@ -9,9 +9,8 @@ import { getBrowserToolSessionRegistry, type BrowserToolSessionRegistry } from "
 
 export const BROWSER_MCP_SERVER_ID = "browser"
 const WRAPPER_PREFIX = `mcp__${BROWSER_MCP_SERVER_ID}__`
-// #601 维护性 review:工具名唯一真源在 @lume/shared（LUME_BROWSER_TOOL_NAMES），
-// 此处仅别名导出——新增工具时 shared 一处登记，web 映射哨兵测试自动盯住
-export { LUME_BROWSER_TOOL_NAMES as BROWSER_TOOL_NAMES } from "@lume/shared"
+// #601 维护性 review:工具名唯一真源在 @lume/shared（LUME_BROWSER_TOOL_NAMES）——
+// 新增工具时 shared 一处登记，web 映射哨兵测试自动盯住
 import { LUME_BROWSER_TOOL_NAMES as BROWSER_TOOL_NAMES } from "@lume/shared"
 export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number]
 
