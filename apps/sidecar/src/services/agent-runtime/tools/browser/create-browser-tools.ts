@@ -70,16 +70,16 @@ export function createBrowserMcpTools(input: {
       async call(rawArgs, context) {
         const operationId = context.toolUseId || randomUUID()
         const args = asRecord(rawArgs)
-        if (isActionTool(name) && session.blockedActionLoop) {
+        if ((isActionTool(name) || session.blockedActionLoop?.tool === name) && session.blockedActionLoop) {
           const blocked = session.blockedActionLoop
           return toolResult(operationId, {
             ok: false,
             operation_id: operationId,
             active_tab_id: session.activeTabId ?? null,
             code: "repeated_action_failure",
-            message: `Browser actions stopped after ${blocked.tool} repeatedly failed with ${blocked.code} on @${blocked.ref}. Do not retry browser actions until the page navigates or the user intervenes.`,
+            message: `Browser actions stopped after ${blocked.tool} repeatedly failed with ${blocked.code}${blocked.ref ? ` on @${blocked.ref}` : ""}. Do not retry browser actions until the page navigates or the user intervenes.`,
             retryable: false,
-          }, true, { ok: false, tool: name, code: "repeated_action_failure", blocked_by: blocked.tool, ref: blocked.ref })
+          }, true, { ok: false, tool: name, code: "repeated_action_failure", blocked_by: blocked.tool, ...(blocked.ref ? { ref: blocked.ref } : {}) })
         }
         try {
           const broker = resolveBroker()
@@ -112,12 +112,14 @@ export function createBrowserMcpTools(input: {
               code,
               key: failureKey,
             }
-            if (current.attempts >= 2 && session.snapshot) {
+            if (current.attempts >= 2) {
+              // #661：非 ref 工具（run_script/upload/download/fill_secret）无 snapshot 也可置位，
+              // generation 取 0——任何后续真实快照都会因代际不符解锁，与既有解除路径一致。
               session.blockedActionLoop = {
                 code,
-                generation: session.snapshot.generation,
-                ref: String(args.ref).replace(/^@/, ""),
-                tabId: session.snapshot.tabId,
+                generation: session.snapshot?.generation ?? 0,
+                ...(typeof args.ref === "string" ? { ref: args.ref.replace(/^@/, "") } : {}),
+                tabId: session.snapshot?.tabId ?? session.activeTabId ?? "",
                 tool: name,
               }
             }
@@ -703,7 +705,14 @@ function actionFailureKey(
 ): string | undefined {
   const ref = isActionTool(name) ? stringValue(args.ref)?.replace(/^@/, "") : undefined
   const snapshot = session.snapshot
-  return ref && snapshot ? JSON.stringify([name, ref, snapshot.tabId, snapshot.generation]) : undefined
+  if (ref && snapshot) return JSON.stringify([name, ref, snapshot.tabId, snapshot.generation])
+  // #661：非输入类工具（run_script/upload/download/fill_secret 等）无 ref 键可计，
+  // 按 [tool, tabId] 累计连拒/连败，≥2 同样熔断，防止确认真窗被无限重弹。
+  if (!ref) {
+    const tabId = snapshot?.tabId ?? session.activeTabId
+    return tabId ? JSON.stringify([name, null, tabId, snapshot?.generation ?? 0]) : undefined
+  }
+  return undefined
 }
 
 function clearActionFailures(session: ReturnType<BrowserToolSessionRegistry["getOrCreate"]>): void {

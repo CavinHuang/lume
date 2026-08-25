@@ -455,6 +455,32 @@ describe("createBrowserMcpTools", () => {
     expect(firstSnapshot._meta?.repeatGuard.state).not.toHaveProperty("snapshot_id")
   })
 
+  test("circuit-breaks ref-less confirm tools after repeated user declines (#661)", async () => {
+    const tab = agentTab("locked-tab", "thread-1")
+    let scriptCalls = 0
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string }) => {
+        if (request.method === "list_tabs") return { tabs: [tab] }
+        if (request.method === "browser_run_script") {
+          scriptCalls += 1
+          throw Object.assign(new Error("user_declined"), { code: "user_declined" })
+        }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    await rawCall(tools, "mcp__browser__run_script", { script: "return 1" })
+    await rawCall(tools, "mcp__browser__run_script", { script: "return 1" })
+    const blocked = await rawCall(tools, "mcp__browser__run_script", { script: "return 1" })
+    const blockedResult = JSON.parse(String(blocked.content))
+
+    // 连拒两次后第三次不再触达 broker（无真窗可弹）
+    expect(scriptCalls).toBe(2)
+    expect(blockedResult).toMatchObject({ ok: false, code: "repeated_action_failure", retryable: false })
+  })
+
   test("returns script exceptions as structured tool errors", async () => {
     const tab = agentTab("locked-tab", "thread-1")
     const broker = {
