@@ -1122,7 +1122,86 @@ async fn spawn_kernel(options: &RuntimeOptions) -> Result<KernelSession> {
     })
 }
 
+/// #634：kernel 进程环境白名单。kernel-process 若继承宿主全量环境，任何 vm
+/// 边界失守都会把宿主侧注入的全部密钥暴露给 cell 代码（Buffer.constructor
+/// realm 逃逸直达 process.env）。只放行系统必需项、代理、untrusted allowlist
+/// 声明项与经 NODE_REPL_EXTRA_ENV_ALLOWLIST 显式扩展的条目。
+const KERNEL_ENV_BASELINE_ALLOW: &[&str] = &[
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "all_proxy",
+];
+
+#[cfg(target_os = "windows")]
+const KERNEL_ENV_WINDOWS_BASELINE_ALLOW: &[&str] = &[
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "COMSPEC",
+    "PATHEXT",
+    "WINDIR",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMFILES",
+    "PROGRAMW6432",
+    "COMMONPROGRAMFILES",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    "USERNAME",
+    "USERDOMAIN",
+    "COMPUTERNAME",
+];
+
+fn collect_kernel_env_entries(untrusted_allowlist: &[String]) -> Vec<(String, std::ffi::OsString)> {
+    let mut names: Vec<String> = KERNEL_ENV_BASELINE_ALLOW
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    #[cfg(target_os = "windows")]
+    names.extend(
+        KERNEL_ENV_WINDOWS_BASELINE_ALLOW
+            .iter()
+            .map(|name| (*name).to_string()),
+    );
+    // untrusted allowlist 声明的业务变量必须穿透到 kernel，worker 才能按同一
+    // 份白名单挑出 untrustedEnv；allowlist 即授权，天然安全。
+    names.extend(untrusted_allowlist.iter().cloned());
+    names.extend(split_loose(env::var("NODE_REPL_EXTRA_ENV_ALLOWLIST").ok()));
+    let mut seen = std::collections::HashSet::new();
+    let mut entries = Vec::new();
+    for name in names {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        if let Some(value) = env::var_os(&name) {
+            entries.push((name, value));
+        }
+    }
+    entries
+}
+
 fn configure_kernel_env(command: &mut Command, options: &RuntimeOptions) -> Result<()> {
+    // #634：kernel-process 若继承宿主全量环境，任何 vm 边界失守都会把宿主侧
+    // 注入的全部密钥暴露给 cell 代码（Buffer.constructor realm 逃逸直达
+    // process.env）。改为显式白名单（见 collect_kernel_env_entries），其余一律
+    // 不传。
+    command.env_clear();
+    for (name, value) in collect_kernel_env_entries(&options.untrusted_env_allowlist) {
+        command.env(name.as_str(), value);
+    }
     for name in [
         "LUME_CUA_RUNTIME_MANIFEST",
         "NODE_REPL_ACTIVE_EXEC_REGISTRY_DIR",
@@ -1373,7 +1452,38 @@ fn tail(value: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_version_tuple, split_hashes, tail};
+    use super::{collect_kernel_env_entries, parse_version_tuple, split_hashes, tail};
+
+    #[test]
+    fn kernel_env_allowlist_only_passes_declared_entries() {
+        // 测试进程必有 PATH；断言基线穿透。
+        let entries = collect_kernel_env_entries(&[]);
+        let names: Vec<&str> = entries.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(names.contains(&"PATH"), "baseline PATH must pass through");
+        // 未声明的变量（宿主 env 里存在与否不定）绝不出现在结果中——
+        // 结果集合必须等于「基线 ∪ allowlist ∪ extra」与进程 env 的交集。
+        let declared = vec!["PATH".to_string(), "NODE_REPL_TEST_MISSING_VAR".to_string()];
+        let entries = collect_kernel_env_entries(&declared);
+        let names: Vec<&str> = entries.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(names.contains(&"PATH"));
+        // allowlist 声明但进程中不存在的条目被静默跳过，不产生空值注入
+        assert!(!names.contains(&"NODE_REPL_TEST_MISSING_VAR"));
+    }
+
+    #[test]
+    fn kernel_env_extra_allowlist_extends_pass_through() {
+        // NODE_REPL_EXTRA_ENV_ALLOWLIST 引用必然存在的 PATH 验证扩展口穿透，
+        // 避免 set_var 污染并行测试进程。
+        let guard = super::env::var("NODE_REPL_EXTRA_ENV_ALLOWLIST").ok();
+        unsafe { super::env::set_var("NODE_REPL_EXTRA_ENV_ALLOWLIST", "HOME") };
+        let entries = collect_kernel_env_entries(&[]);
+        let names: Vec<&str> = entries.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(names.contains(&"HOME"));
+        match guard {
+            Some(value) => unsafe { super::env::set_var("NODE_REPL_EXTRA_ENV_ALLOWLIST", value) },
+            None => unsafe { super::env::remove_var("NODE_REPL_EXTRA_ENV_ALLOWLIST") },
+        }
+    }
 
     #[test]
     fn parses_semver_and_prerelease_versions() {

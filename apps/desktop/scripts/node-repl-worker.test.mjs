@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -66,4 +67,45 @@ test('builtin import gate rejects host-privileged builtins and allows the pure-c
   // 子路径不在显式枚举内：即使本体（util）在白名单，未列出的 subpath 也拒绝
   const subpathDenied = await runCell('await import("node:util/types")')
   assert.equal(subpathDenied.ok, false)
+})
+
+// #634：trusted 集覆盖工作目录会让 cell 虚拟 referrer（cwd 下 .node_repl_cell_*.mjs）
+// 整体落入 trusted 判定，使 builtin 白名单失效。kernel-process 必须剔除并告警。
+test('kernel-process drops trusted-code-path entries that cover the working directory (#634)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lume-node-repl-kernel-'))
+  const child = spawn(process.execPath, [
+    resolve(dirname(fileURLToPath(import.meta.url)), '..', 'resources-src', 'node-repl', 'runtime', 'kernel-process.js'),
+    '--session-id', 'kernel-trust-test',
+    '--working-dir', dir,
+  ], {
+    env: { ...process.env, NODE_REPL_TRUSTED_CODE_PATHS: dir },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  let stderr = ''
+  let stdout = ''
+  child.stderr.on('data', (chunk) => { stderr += String(chunk) })
+  child.stdout.on('data', (chunk) => { stdout += String(chunk) })
+  try {
+    await new Promise((resolvePromise, rejectPromise) => {
+      const guard = setTimeout(() => {
+        child.kill()
+        rejectPromise(new Error(`kernel-process did not become ready; stdout=${stdout.slice(0, 400)}`))
+      }, 30_000)
+      const poll = setInterval(() => {
+        if (stdout.includes('privileged_bridge_handshake')) {
+          clearTimeout(guard)
+          clearInterval(poll)
+          resolvePromise()
+        }
+      }, 50)
+    })
+  } finally {
+    if (child.exitCode === null) {
+      child.kill()
+      // Windows：进程未退出前目录句柄仍被占用，rmSync 会 EPERM
+      await new Promise((resolvePromise) => child.once('exit', resolvePromise))
+    }
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3 })
+  }
+  assert.match(stderr, /dropping NODE_REPL_TRUSTED_CODE_PATHS entry/)
 })

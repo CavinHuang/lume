@@ -15,7 +15,15 @@ const bootstrap = (() => {
 const config = parseKernelConfig(process.env.LUME_CUA_KERNEL_CONFIG);
 const bridgeToken = crypto.randomUUID();
 const moduleDirs = splitPathList(process.env.NODE_REPL_NODE_MODULE_DIRS);
-const trustedCodePaths = splitPathList(process.env.NODE_REPL_TRUSTED_CODE_PATHS);
+// #634：trusted 集若覆盖工作目录，cell 的虚拟 referrer（cwd 下
+// .node_repl_cell_*.mjs）将整体落入 trusted 判定，使 builtin 白名单与
+// file 模块信任分流失效——剔除覆盖 cwd 的条目并告警。
+const trustedCodePaths = splitPathList(process.env.NODE_REPL_TRUSTED_CODE_PATHS).filter((entry) => {
+    const coversCwd = bootstrap.workingDir === entry || bootstrap.workingDir.startsWith(entry + path.sep);
+    if (coversCwd)
+        console.error(`node_repl: dropping NODE_REPL_TRUSTED_CODE_PATHS entry "${entry}" because it covers the working directory`);
+    return !coversCwd;
+});
 const trustedSourceHashes = parseHashes(process.env.NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S);
 const untrustedEnvAllowlist = splitCommaList(process.env.NODE_REPL_UNTRUSTED_ENV_ALLOWLIST);
 const env = Object.fromEntries(Object.entries(process.env).filter((entry) => entry[0] !== "LUME_CUA_KERNEL_CONFIG" && typeof entry[1] === "string"));
