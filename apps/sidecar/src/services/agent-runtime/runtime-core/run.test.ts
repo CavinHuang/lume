@@ -1749,8 +1749,7 @@ describe("runtime-core run", () => {
     const background = buildSidecarSubagentExecutionInput({
       forwardedToolInput: {
         prompt: "后台执行",
-        run_in_background: true,
-        isolation: "remote"
+        run_in_background: true
       },
       modelOverride: { source: "inherit" },
       runInBackground: true
@@ -1766,7 +1765,6 @@ describe("runtime-core run", () => {
     });
 
     expect(background.run_in_background).toBe(true);
-    expect(background.isolation).toBeUndefined();
     expect(foreground.run_in_background).toBe(false);
   });
 

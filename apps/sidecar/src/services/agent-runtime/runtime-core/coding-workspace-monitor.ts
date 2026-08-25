@@ -8,7 +8,7 @@ const SETTLE_TIMEOUT_MS = 400;
 const WATCHER_READY_TIMEOUT_MS = 10_000;
 const MAX_CANDIDATE_PATHS = 10_000;
 
-const MUTATION_WINDOW_TOOLS = new Set(["bash", "write", "edit", "notebookedit"]);
+const MUTATION_WINDOW_TOOLS = new Set(["bash", "write", "edit", "multiedit", "notebookedit"]);
 
 export type CodingWorkspaceMonitorReadiness = "ready" | "degraded";
 const ISOLATED_WATCHER_SOURCE = String.raw`
