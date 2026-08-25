@@ -50,6 +50,21 @@ test("browser policy hands payment and CAPTCHA back to the user", () => {
   assert.equal(classifyBrowserAction("click", { description: "完成 CAPTCHA" }).decision, "deny")
 })
 
+test("browser policy confirms batch background navigation (#649 review P1-4)", () => {
+  // tabs:content 批量后台导航同属导航面,零确认静默浏览违背 alwaysAsk 出厂承诺
+  const batch = classifyBrowserAction("tabs_content", { urls: ["https://a.example.com", "https://b.example.com", "https://c.example.com", "https://d.example.com"] })
+  assert.equal(batch.decision, "confirm")
+  assert.equal(batch.category, "browse")
+  assert.match(batch.preview ?? "", /批量打开网站（共 4 个）：/)
+  // 私网混入 → authorize 档
+  const privateBatch = classifyBrowserAction("tabs_content", { urls: ["https://a.example.com", "http://127.0.0.1:9222/json"] })
+  assert.equal(privateBatch.decision, "confirm")
+  assert.equal(privateBatch.category, "authorize")
+  assert.match(privateBatch.preview ?? "", /批量读取本地或私有地址（共 2 个）/)
+  // 无 urls 不设门(该请求本身会被 desktop 以 invalid_browser_request 拒绝)
+  assert.equal(classifyBrowserAction("tabs_content", {}).decision, "allow")
+})
+
 test("browser policy returns user_action_required for captcha and MFA gates", () => {
   assert.equal(classifyBrowserAction("captcha").errorCode, "user_action_required")
   assert.equal(classifyBrowserAction("click", { description: "完成 CAPTCHA" }).errorCode, "user_action_required")

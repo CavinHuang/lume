@@ -44,6 +44,23 @@ export function classifyBrowserAction(method: string, params: Record<string, unk
   if (navigationMethod) {
     return { decision: "confirm", category: "browse", preview: `打开网站：${safeOrigin(navigationUrl) ?? "未知地址"}` }
   }
+  // #649 review P1-4:tabs:content 批量后台导航同属导航面——registry policy "none"
+  // 不入门则 agent 可经 js 沙箱零确认静默浏览任意站点并取回正文,
+  // 「每次导航前确认」的出厂承诺对其失守。整批一次确认;私网方向另有
+  // BrowserNetworkGuard 第二层兜底,此处按 authorize 档提示。
+  if (runtimeMethod === "tabs:content" || method === "tabs_content") {
+    const urls = Array.isArray(params.urls)
+      ? params.urls.filter((value): value is string => typeof value === "string" && value.trim().length > 0).slice(0, 10)
+      : []
+    if (urls.length > 0) {
+      const origins = [...new Set(urls.map((url) => safeOrigin(url)).filter((origin): origin is string => origin !== undefined))]
+      const previewOrigins = origins.slice(0, 3).join("、")
+      if (urls.some((url) => isPrivateBrowserUrl(url))) {
+        return { decision: "confirm", category: "authorize", preview: `批量读取本地或私有地址（共 ${urls.length} 个）：${previewOrigins}` }
+      }
+      return { decision: "confirm", category: "browse", preview: `批量打开网站（共 ${urls.length} 个）：${previewOrigins}${origins.length > 3 ? " 等" : ""}` }
+    }
+  }
   const explicit = EXPLICIT_CONFIRM.get(method)
   if (explicit) return { decision: "confirm", category: explicit, preview: preview(method, params) }
   const registeredPolicy = browserApiPolicyForRuntimeMethod(runtimeMethod)
