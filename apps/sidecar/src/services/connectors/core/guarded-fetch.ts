@@ -1,3 +1,4 @@
+import type { LookupFunction } from "node:net";
 import { assertPublicHttpUrl, classifyIpAddress, isIpAddress, isIpv4Address } from "./request";
 
 /**
@@ -179,12 +180,16 @@ export function createGuardedFetch(options: GuardedFetchOptions = {}): typeof fe
   const additionalSensitiveHeaders = new Set(options.additionalSensitiveHeaders?.map((name) => name.toLowerCase()));
   const guardedFetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const transport = baseFetch ?? globalThis.fetch;
+    // Node(undici)下可构造 pinned dispatcher;Bun/无 undici 时为 null,仅保留预解析校验
+    const pinnedDispatcherFactory = options.skipDnsValidation ? null : await loadPinnedDispatcherFactory();
     const fetchTransport = async (
       transportInput: RequestInfo | URL,
       transportInit?: RequestInit,
+      pin?: { dispatcher?: unknown },
     ): Promise<Response> => {
+      const mergedInit = pin?.dispatcher ? ({ ...transportInit, ...pin } as RequestInit) : transportInit;
       try {
-        return await transport(transportInput, transportInit);
+        return await transport(transportInput, mergedInit);
       } catch (error) {
         throw options.mapTransportError?.(error) ?? error;
       }
@@ -198,11 +203,14 @@ export function createGuardedFetch(options: GuardedFetchOptions = {}): typeof fe
       : options.lookup === undefined
         ? await resolveDefaultLookup()
         : options.lookup;
-    const guardHop = (value: string, fieldName: string): Promise<URL> =>
-      assertGuardedEgressUrl(value, { fieldName, createError, allowPrivateNetwork, lookup });
+    const guardHop = async (value: string, fieldName: string): Promise<GuardedEgressTarget> => {
+      const target = await resolveGuardedEgressTarget(value, { fieldName, createError, allowPrivateNetwork, lookup });
+      return target;
+    };
 
     const request = input instanceof Request ? input : undefined;
-    let url = await guardHop(request?.url ?? (input instanceof URL ? input.href : String(input)), "request URL");
+    let hop = await guardHop(request?.url ?? (input instanceof URL ? input.href : String(input)), "request URL");
+    let url = hop.url;
 
     const redirectMode = init?.redirect ?? request?.redirect ?? "follow";
     if (redirectMode !== "follow") {
@@ -214,11 +222,17 @@ export function createGuardedFetch(options: GuardedFetchOptions = {}): typeof fe
     let body: BodyInit | null | undefined = init?.body !== undefined ? init.body : request?.body;
 
     for (let redirects = 0; ; redirects++) {
+      // 每跳用该跳 screened 地址集构造 pinned dispatcher:连接层不再二次 DNS,
+      // check-to-connection 的 rebinding 窗口闭合(Bun fetch 不支持 dispatcher 时为 no-op)
+      const dispatcher = pinnedDispatcherFactory && !options.skipDnsValidation
+        ? pinnedDispatcherFactory(hop.addresses)
+        : undefined;
+      const pinInit = { dispatcher } as Partial<Parameters<typeof fetchTransport>[1]>;
       const response =
         redirects === 0
           ? request
-            ? await fetchTransport(new Request(request, { ...init, redirect: "manual" }))
-            : await fetchTransport(url.toString(), { ...init, redirect: "manual" })
+            ? await fetchTransport(new Request(request, { ...init, redirect: "manual" }), pinInit)
+            : await fetchTransport(url.toString(), { ...init, redirect: "manual", ...pinInit })
           : await fetchTransport(url.toString(), {
               ...init,
               method,
@@ -229,6 +243,7 @@ export function createGuardedFetch(options: GuardedFetchOptions = {}): typeof fe
               body: body ?? undefined,
               redirect: "manual",
               signal: init?.signal ?? request?.signal ?? null,
+              ...pinInit,
             });
 
       if (!redirectStatuses.has(response.status)) {
@@ -250,6 +265,7 @@ export function createGuardedFetch(options: GuardedFetchOptions = {}): typeof fe
         throw createError("redirect location must be a valid URL");
       }
       const guardedNext = await guardHop(nextUrl.toString(), "redirect location");
+      hop = guardedNext;
 
       if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === "POST")) {
         if (method !== "GET" && method !== "HEAD") {
@@ -262,14 +278,14 @@ export function createGuardedFetch(options: GuardedFetchOptions = {}): typeof fe
       } else if (body !== undefined && body !== null && !isReplayableBody(body)) {
         throw createError("redirect cannot be followed because the request body is not replayable");
       }
-      if (guardedNext.origin !== url.origin) {
+      if (guardedNext.url.origin !== url.origin) {
         for (const name of [...headers.keys()]) {
           if (crossOriginCredentialHeaders.has(name) || additionalSensitiveHeaders.has(name)) {
             headers.delete(name);
           }
         }
       }
-      url = guardedNext;
+      url = guardedNext.url;
     }
   }) as typeof fetch;
 
@@ -336,6 +352,52 @@ export async function resolveGuardedEgressTarget(
     lookup,
   });
   return { url, addresses };
+}
+
+/**
+ * Build a `dns.LookupFunction` that answers from a pre-screened address set
+ * instead of re-resolving — closing the check-to-connection rebinding window.
+ * Addresses round-robin so multi-A hosts still fail over across attempts.
+ */
+export function createPinnedLookup(addresses: ResolvedAddress[]): LookupFunction {
+  let index = 0;
+  return (_hostname, _options, callback) => {
+    if (addresses.length === 0) {
+      // 类型上 callback 需要地址位;真实路径不会走到(空集在 guard 层已 fail-closed)
+      callback(Object.assign(new Error("no screened addresses available for pinned connection"), { code: "EAI_FAIL" }), "");
+      return;
+    }
+    const answer = addresses[index % addresses.length]!;
+    index += 1;
+    callback(null, answer.address, answer.family === 6 ? 6 : 4);
+  };
+}
+
+interface PinnedDispatcherModule {
+  Agent: new (options: unknown) => unknown;
+}
+
+let undiciModulePromise: Promise<PinnedDispatcherModule | null> | undefined;
+
+/**
+ * Transport-level connection pinning for the fetch path. Node ships undici's
+ * fetch and honors an `undici` package dispatcher via the non-standard
+ * `dispatcher` init field; Bun's fetch does not, so there we return null and
+ * keep the pre-resolution check as the only DNS gate (test environments do not
+ * exercise real transports).
+ */
+async function loadPinnedDispatcherFactory(): Promise<
+  ((addresses: ResolvedAddress[]) => unknown) | null
+> {
+  if (typeof Bun !== "undefined") return null;
+  if (!undiciModulePromise) {
+    undiciModulePromise = import("undici")
+      .then((module): PinnedDispatcherModule => ({ Agent: module.Agent as new (options: unknown) => unknown }))
+      .catch(() => null);
+  }
+  const module = await undiciModulePromise;
+  if (!module) return null;
+  return (addresses: ResolvedAddress[]) => new module.Agent({ connect: { lookup: createPinnedLookup(addresses) } });
 }
 
 interface ResolvedAddressPolicy {

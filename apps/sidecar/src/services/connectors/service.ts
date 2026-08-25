@@ -104,6 +104,10 @@ interface PendingAuthorization {
   resolve: (credential: ResolvedCredential & { authType: "oauth2" }) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  /** 兑换进行中:同 state 的重复回调不得二次兑换(code 重用会触发授权服务器撤销)。 */
+  exchanging?: boolean;
+  /** disconnect/supersede 时若兑换已在途,置位阻止其完成后落盘。 */
+  cancelled?: boolean;
 }
 
 const pendingAuthorizations = new Map<string, PendingAuthorization>();
@@ -218,10 +222,14 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
       const reason = url.searchParams.get("error_description") ?? url.searchParams.get("error") ?? "未返回授权码";
       throw new ConnectorError("oauth_denied", `授权被取消: ${reason}`);
     }
-    // 兑换前先摘除 pending:await 窗口内同 state 的重复回调会二次兑换同一 code,
-    // RFC 6749 §4.1.2 下授权服务器会把 code 重用视为攻击并撤销已发凭证,
-    // 合法流反而被作废。摘除后重复回调落入下方 state 不匹配分支。
-    pendingAuthorizations.delete(service);
+    // 兑换期保留条目仅置 exchanging:同 state 的重复回调在此分支被挡下(code 重用
+    // 会触发 RFC 6749 §4.1.2 的凭证撤销);条目不删,disconnect 才能标记取消在途兑换
+    if (pending.exchanging) {
+      logger.debug("connector oauth callback during exchange (stray request)", { service });
+      respondPage(false, "该授权码正在兑换中,请勿重复打开回调链接。");
+      return;
+    }
+    pending.exchanging = true;
     const config = getConnectorClientConfig(service);
     const auth = requireOAuthAuth(service);
     if (!config) throw new ConnectorError("oauth_client_config_required", "OAuth client 配置丢失");
@@ -240,6 +248,10 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
       createError: (message) => new ConnectorError("oauth_token_exchange_failed", message),
     });
 
+    // 兑换在途时用户断开连接:凭证不得落盘,否则「已断开」状态下复活连接
+    if (pending.cancelled) {
+      throw new ConnectorError("oauth_flow_cancelled", "授权已取消,未保存凭证");
+    }
     await validateAndStoreCredential(service, credential);
     logger.info("connector oauth flow completed", { service });
     pending.resolve(credential);
@@ -466,6 +478,8 @@ export function disconnectConnector(service: string): void {
 function stopPendingAuthorization(service: string, error: Error): void {
   const pending = pendingAuthorizations.get(service);
   if (!pending) return;
+  // 兑换在途时条目仍在 map:标记取消,让兑换完成后拒绝落盘
+  pending.cancelled = true;
   clearTimeout(pending.timer);
   pending.server.close();
   pendingAuthorizations.delete(service);
