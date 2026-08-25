@@ -13,7 +13,8 @@ export interface DecodedTextFile {
 export interface TextFileRange {
   content: string;
   totalLines: number;
-  /** true = 窗口凑满提前停读；totalLines 只是已观察行数的下界，不是文件总行数。 */
+  /** true = 窗口凑满且确认其后仍有内容；totalLines 只是已观察行数的下界，不是文件总行数。
+   *  false = 精确读毕（含「凑满后确认 EOF」的全覆盖窗口），totalLines 可信。 */
   truncated: boolean;
 }
 
@@ -68,11 +69,29 @@ export async function readTextFileRange(
     buffer += text;
     consumeCompleteLines();
 
-    // The requested window is complete; stop reading so huge files are not
-    // streamed to EOF just to satisfy a small offset/limit. totalLines then
-    // only lower-bounds the file; truncated tells callers it is not exact (#314).
+    // The requested window is complete; avoid streaming a huge file to EOF just
+    // to satisfy a small offset/limit (#314). But an immediate "truncated" also
+    // mislabels the common "limit === totalLines" case, which would leave large
+    // files with no read that ever unlocks Write/Edit (#649 review P1-5).
+    // Compromise: keep scanning for at most a few extra chunks — a new line
+    // confirms more content (truncated), natural EOF confirms exact full coverage.
     if (limit > 0 && selectedLines.length >= limit) {
-      truncated = true;
+      // Lines beyond the window may already have been counted within the same
+      // chunk (the fill check runs after the whole chunk is consumed).
+      const observedAtFill = totalLines;
+      let sawMoreLines = observedAtFill - offset > limit;
+      let gaveUpScanning = false;
+      let extraChunks = 0;
+      for await (const extra of stream) {
+        if (++extraChunks > 8) { gaveUpScanning = true; break; }
+        throwIfAborted(signal, stream);
+        const extraText = String(extra);
+        if (!extraText) continue;
+        buffer += extraText;
+        consumeCompleteLines();
+        if (totalLines > observedAtFill) { sawMoreLines = true; break; }
+      }
+      truncated = sawMoreLines || gaveUpScanning;
       stream.destroy();
       break;
     }

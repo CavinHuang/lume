@@ -453,7 +453,9 @@ describe("file tools", () => {
     expect(result.is_error).toBeFalsy();
     // "alpha\nbeta\n" is exactly two lines; the old range reader counted three
     // and made Read claim a remaining line that does not exist.
-    expect(result._meta?.read).toMatchObject({ totalLines: 2, partial: true });
+    // #649 review P1-5:窗口未截断且覆盖全部行 = 全文读（partial:false），
+    // 否则小文件的显式全读也永远无法解锁写入。
+    expect(result._meta?.read).toMatchObject({ totalLines: 2, partial: false });
     expect(String(result.content)).toContain("beta");
   });
 
@@ -554,6 +556,29 @@ describe("file tools", () => {
     expect(result._meta?.read).toMatchObject({ partial: true, truncated: true, totalLines: 2500 });
     expect(String(result.content)).toContain("[truncated: showing lines 1-2000 of 2500 total");
     expect(cache.get(filePath)?.isPartialView).toBe(true);
+  });
+
+  test("#649 review P1-5: 超限大文件的显式全覆盖读判全文，解锁 Write/Edit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "big.txt");
+    await writeFile(
+      filePath,
+      Array.from({ length: 2500 }, (_, i) => `line-${i}`).join("\n"),
+      "utf8",
+    );
+    const cache = new FileStateCache();
+
+    // 无参读被截断 → partial（上面的用例）；显式 offset=0 limit=2500 全覆盖 → full。
+    // 否则该文件不存在任何解锁写入的读法，守卫补救指令不可满足。
+    const result = await FileReadTool.call({ file_path: filePath, offset: 0, limit: 2500 }, { cwd: root, fileStateCache: cache });
+
+    expect(result.is_error).toBeFalsy();
+    // truncated 键只在真截断时存在（条件展开）
+    expect(result._meta?.read).toMatchObject({ partial: false, totalLines: 2500 });
+    expect(result._meta?.read?.truncated).toBeUndefined();
+    expect(cache.get(filePath)?.isPartialView).toBe(false);
+    expect(String(result.content)).toContain("line-2499");
   });
 
   test("rejects known binary files instead of decoding them as text", async () => {

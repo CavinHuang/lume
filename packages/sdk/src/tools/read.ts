@@ -162,7 +162,11 @@ export const FileReadTool = defineTool({
         if (textLimitError) return textLimitError
         // truncated 时窗口凑满提前停读，totalLines 只是下界：
         // 强制 partial 视图，且不谎报精确的 remainingLines（#314）。
-        const isPartialView = hasExplicitRange || offset > 0 || ranged.truncated
+        // #649 review P1-5:offset=0 且未截断且窗口覆盖全部行 = 全文读——否则超
+        // WHOLE_READ_LINE_LIMIT 的文件不存在任何解锁 Write/Edit 的读法，
+        // 守卫「请完整读取后再写入」成为不可满足指令。
+        const isFullCoverageRead = !ranged.truncated && ranged.totalLines <= offset + limit
+        const isPartialView = !isFullCoverageRead
         context.fileStateCache?.set(filePath, {
           content: ranged.content,
           timestamp: fileStat.mtimeMs,
