@@ -177,3 +177,32 @@ describe("connector service", () => {
     await expect(first.done).rejects.toBeDefined();
   });
 });
+
+test("断开/顶替后 authorizationUrl 与 done 一同终结,START_AUTH 不悬挂", async () => {
+  setConnectorClientConfig("gmail", {
+    service: "gmail",
+    clientId: "cid",
+    clientSecret: "csecret",
+    extra: {},
+    secretExtra: {},
+  });
+  const flow = startConnectorAuthorization("gmail");
+  flow.done.catch(() => {});
+  const urlOrError = await Promise.race([
+    flow.authorizationUrl.then(
+      () => "resolved" as const,
+      () => "rejected" as const,
+    ),
+    new Promise<"stuck">((resolve) => setTimeout(() => resolve("stuck"), 1500)),
+  ]);
+  expect(urlOrError).not.toBe("stuck");
+
+  // listen 已产出的流被断开:url promise 已 settle(resolved);若断开发生在
+  // listen 前,reject 通路也必须触发——两种情况下 await 都不得永久悬挂
+  disconnectConnector("gmail");
+  const settledAfterDisconnect = await Promise.race([
+    flow.authorizationUrl.catch(() => "settled").then(() => "settled" as const),
+    new Promise<"stuck">((resolve) => setTimeout(() => resolve("stuck"), 1500)),
+  ]);
+  expect(settledAfterDisconnect).toBe("settled");
+});
