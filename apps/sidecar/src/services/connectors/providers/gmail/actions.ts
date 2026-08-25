@@ -13,7 +13,8 @@ import {
 
 const service = "gmail";
 
-const userId = s.string({ description: "Gmail user ID. Omit to use the connected mailbox." });
+// 执行器恒以 "me"(已连接邮箱)调用:enum 收紧让契约诚实,LLM 传其他值本地即拒
+const userId = s.stringEnum(["me"], { description: "Gmail user ID. Omit to use the connected mailbox." });
 const query = s.string({ description: "Gmail search query." });
 const pageToken = s.string({ description: "Opaque pagination token returned by Gmail." });
 const maxResults = s.integer({
@@ -463,7 +464,7 @@ export const gmailActions: ActionDefinition[] = [
     name: "move_to_trash",
     description: "Move a Gmail message to trash.",
     requiredScopes: gmailModifyScopes,
-    properties: withUser({ messageId, ...labelMutation() }),
+    properties: withUser({ messageId }),
     required: ["messageId"],
     outputSchema: message,
   }),
@@ -471,7 +472,7 @@ export const gmailActions: ActionDefinition[] = [
     name: "untrash_message",
     description: "Restore a previously trashed Gmail message.",
     requiredScopes: gmailModifyScopes,
-    properties: withUser({ messageId, ...labelMutation() }),
+    properties: withUser({ messageId }),
     required: ["messageId"],
     outputSchema: message,
   }),
@@ -487,7 +488,7 @@ export const gmailActions: ActionDefinition[] = [
     name: "move_thread_to_trash",
     description: "Move an entire Gmail thread to trash.",
     requiredScopes: gmailModifyScopes,
-    properties: withUser({ threadId, ...labelMutation() }),
+    properties: withUser({ threadId }),
     required: ["threadId"],
     outputSchema: thread,
   }),
@@ -495,7 +496,7 @@ export const gmailActions: ActionDefinition[] = [
     name: "untrash_thread",
     description: "Restore a previously trashed Gmail thread.",
     requiredScopes: gmailModifyScopes,
-    properties: withUser({ threadId, ...labelMutation() }),
+    properties: withUser({ threadId }),
     required: ["threadId"],
     outputSchema: thread,
   }),
@@ -586,8 +587,9 @@ export const gmailActions: ActionDefinition[] = [
       responseBodyHtml: s.string(),
       restrictToContacts: s.boolean(),
       restrictToDomain: s.boolean(),
-      startTime: s.string(),
-      endTime: s.string(),
+      // Gmail API 的 VacationSettings 时间为 int64 epoch 毫秒
+      startTime: s.integer({ description: "Epoch milliseconds (int64 per Gmail API)." }),
+      endTime: s.integer({ description: "Epoch milliseconds (int64 per Gmail API)." }),
     }),
     outputSchema: gmailObject,
   }),

@@ -1,6 +1,7 @@
 import { CONNECTOR_IPC_CHANNELS } from "@lume/shared";
 import type { ConnectorStatus } from "@lume/shared";
 import {
+  ConnectorError,
   disconnectConnector,
   getConnector,
   getConnectorSetup,
@@ -93,6 +94,12 @@ export function createConnectorHandlers(): Record<string, RpcHandler> {
         params,
         CONNECTOR_IPC_CHANNELS.SAVE_CREDENTIAL,
       ) as { service: string; values: Record<string, string> };
+      // 授权码型凭证仅对 custom_credential 服务有意义;OAuth 型服务收到任意 values
+      // 若照单全收会写入 customValues 使 buildStatus 显示假 connected。
+      // 判定走 definition.auth 与 requireOAuthAuth 同源,避免依赖人工同步的 authTypes 快列表
+      if (!getConnector(service).definition.auth.some((auth) => auth.type === "custom_credential")) {
+        throw new ConnectorError("connector_auth_unsupported", `${service} 使用 OAuth 授权,无授权码凭证可保存`);
+      }
       // saveConnectorCustomCredential 内部跑连接测试,失败抛 ConnectorError 给 UI
       await saveConnectorCustomCredential(service, values);
       authStates.delete(service);
