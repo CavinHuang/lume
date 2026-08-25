@@ -38,6 +38,7 @@ const CONFIG_VERSION = 2;
  * 每份落盘配置，且该开关从未在设置 UI 露出——存量文件里的 false 全部是默认值
  * 写穿，不是用户选择。升级后一次性翻转为新默认（启用），并把 version 推到 2；
  * 此后用户显式改回 false 不再被触碰。workspace overlay 不参与迁移。
+ * 约束：CONFIG_VERSION 必须 ≥ 所有迁移门版本（后续升代时同步本注释）。
  */
 const CLASSIFIER_DEFAULT_MIGRATION_VERSION = 2;
 const log = createLogger("lume-config");
@@ -671,6 +672,12 @@ function migrateClassifierDefault(
   if (rawVersion >= CLASSIFIER_DEFAULT_MIGRATION_VERSION) return permissions;
   if (permissions.classifier?.enabled !== false) return permissions;
   log.info("migrating legacy classifier.enabled=false to new default (enabled)");
+  appendAuditEntry({
+    at: new Date().toISOString(),
+    source: "system",
+    path: "permissions.classifier.enabled",
+    summary: "v2 迁移：存量默认值 false 翻转为新默认 true（#571）"
+  });
   return { ...permissions, classifier: { ...permissions.classifier, enabled: true } };
 }
 

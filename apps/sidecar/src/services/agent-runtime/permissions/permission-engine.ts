@@ -116,8 +116,11 @@ export class PermissionEngine {
      * 内容证明免审通道（#571 第 2 项）：shell 输入经静态分析证明只读时无需任何
      * 审批——这是内容层面的证明，独立于分类器开关（classifierEnabled 只门控
      * 启发式风险判断），也不依赖 dontAsk 模式。规则表先于本分支：用户显式
-     * ask/deny 的意图优先级更高。守卫层（runtime-tool-safety）在引擎之后仍会
-     * 复核危险动词，纵深不因本通道收窄。
+     * ask/deny 的意图优先级更高。守卫层（runtime-tool-safety）在引擎之后复核，
+     * 覆盖 rm/git push/PS 危险动词等结构化形态；静态白名单无法证明的写原语
+     * （如仓库 textconv 配置类通道）不在其拦截面内，残余风险见 shell-read-only.ts。
+     * 命名注：readonly_shell 与启发式分类器的 shell_read 判定无关联——前者是
+     * 内容证明，后者是风险评级。
      */
     if (input.descriptor.canonicalName === "bash" && this.isShellInputReadOnly(input.input)) {
       return allow("readonly_shell", "命令经静态分析判定为只读，自动放行", "low", input);

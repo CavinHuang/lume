@@ -224,7 +224,11 @@ export interface LumeConfigSectionSet {
 }
 
 export interface LumeConfigFile extends LumeConfigSectionSet {
-  /** 配置 schema 代际：v2 起 classifier.enabled 出厂默认翻转（#571），迁移逻辑按代际一次性执行 */
+  /**
+   * 配置 schema 代际。v2 起 classifier.enabled 出厂默认翻转（#571），迁移按代际
+   * 一次性执行；磁盘上读取到的历史文件可能携带更旧值，故运行时以 number 承接，
+   * 写入侧恒为当前 CONFIG_VERSION。
+   */
   version: number
   workspaces?: Record<string, LumeConfigSectionSet>
 }

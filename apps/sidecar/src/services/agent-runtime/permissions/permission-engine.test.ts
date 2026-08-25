@@ -177,6 +177,34 @@ describe("PermissionEngine", () => {
       reasonCode: "readonly_shell"
     });
 
+    // 内容证明独立于分类器开关：即使 classifierEnabled:false，只读证明仍先于
+    // metadata 审批门（CI 无产物态下本条是该主张唯一活跃钉子，#684 review P1）
+    await expect(allowAll.decide({
+      descriptor: bash,
+      input: { command: "anything-nonstandard" },
+      mode: "default",
+      classifierEnabled: false,
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({
+      status: "allow",
+      reasonCode: "readonly_shell"
+    });
+
+    // 非 bash 工具不进免审通道，即便输入形状带 command 且证明为真
+    // （钉住 canonicalName 判断，防变异幸存）
+    const nonBash = descriptor("ExecuteTool", {
+      category: "execute",
+      capability: "shell",
+      riskLevel: "high",
+      sideEffects: "process"
+    });
+    await expect(allowAll.decide({
+      descriptor: nonBash,
+      input: { command: "anything-nonstandard" },
+      mode: "default",
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.not.toMatchObject({ status: "allow", reasonCode: "readonly_shell" });
+
     // 用户显式 ask 的意图优先于内容证明。用 PS 前缀命令：其只读证明走纯正则
     // （不依赖 natives 语法树），无产物环境与本地双态确定
     const engine = new PermissionEngine({

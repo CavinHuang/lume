@@ -37,10 +37,19 @@ export function isReadOnlyShellInput(input: unknown, _context?: unknown): boolea
   return runsPowerShell ? isReadOnlyPowerShell(normalized) : false
 }
 
+/*
+ * 双语义消费警示（#684 review）：本表同时服务 BashTool 并发分区与 PermissionEngine
+ * 免审通道——扩表即同时放大两者，任何新增成员必须在两种语义下均可证不变异，
+ * 且需排查其全部参数面（rg --pre、sort --compress-program 均为前车之鉴）。
+ */
 const READ_ONLY_EXECUTABLES = new Set([
   'cat', 'cut', 'dir', 'echo', 'find', 'findstr', 'git', 'grep', 'head', 'less', 'ls', 'pwd',
   'rg', 'sed', 'sort', 'tail', 'type', 'uniq', 'wc', 'where', 'which',
 ])
+
+/** git 输出/外驱参数：--output 写任意路径文件；--ext-diff 执行仓库配置的外部命令（#300，#684 review 扩到 log/show）。 */
+const GIT_WRITE_OR_EXEC_FLAGS = (arg: string): boolean =>
+  arg === '--output' || arg.startsWith('--output=') || arg === '--ext-diff'
 
 function isReadOnlySegment(executable: string, args: string[]): boolean {
   if (!READ_ONLY_EXECUTABLES.has(executable)) return false
@@ -59,20 +68,30 @@ function isReadOnlySegment(executable: string, args: string[]): boolean {
         || /^--(?:delete|move|copy|set-upstream(?:-to)?|edit-description|track)\b/.test(arg)
       ))
     }
-    if (subcommand === 'diff') {
-      // --output writes the diff to a file; --ext-diff executes a
-      // repo-config-controlled external diff command (#300).
-      return !rest.some((arg) => arg === '--output' || arg.startsWith('--output=') || arg === '--ext-diff')
+    if (subcommand === 'diff' || subcommand === 'log' || subcommand === 'show') {
+      // log/show 与 diff 共享输出/外驱参数面：--output 写文件、--ext-diff 与
+      // textconv 类配置驱动执行外部命令。已知残余（如实声明）：仓库 .gitattributes/
+      // gitconfig 的 textconv 在普通 -p 展示时也会执行 repo 配置的命令字符串，
+      // 该通道属「仓库内容即不可信输入」威胁模型的一部分，静态白名单无法区分，
+      // 见 #571 follow-up。
+      return !rest.some(GIT_WRITE_OR_EXEC_FLAGS)
     }
     return true
   }
   // These whitelist members have argument forms that mutate or execute;
   // reject them so they cannot race Edit/Write as "read-only" work.
   if (executable === 'find') return !args.some((arg) => /^-(?:delete|exec|execdir|ok|okdir|fls|fprint)/.test(arg))
+  if (executable === 'rg') {
+    // --pre/--pre-glob run an arbitrary command per searched file (#684 review P0).
+    return !args.some((arg) => /^--pre(?:-glob)?(?:=|$)/.test(arg))
+  }
   if (executable === 'sed') return isReadOnlySedArgs(args)
   if (executable === 'sort') return !args.some((arg) => (
     arg === '--output'
     || arg.startsWith('--output=')
+    // --compress-program executes the named program on every temp-file spill,
+    // and with "sh" interprets input lines as a script (#684 review P1).
+    || arg.startsWith('--compress-program')
     // No other short sort flag is "o", so any short cluster containing it is -o.
     // grep -o is unrelated: grep arguments are never checked here.
     || (arg.startsWith('-') && !arg.startsWith('--') && arg.includes('o'))
@@ -84,8 +103,23 @@ function isReadOnlySegment(executable: string, args: string[]): boolean {
   return true
 }
 
+/** sed 无副作用的长选项全集；--expression/--file 由下方解析器单独处置。 */
+const SED_SAFE_LONG_FLAGS = new Set(['--posix', '--null-data', '--separate', '--binary-mode'])
+
 function isReadOnlySedArgs(args: string[]): boolean {
   if (args.some((arg) => /^(-i|--in-place)/.test(arg))) return false
+  // GNU getopt_long 接受无歧义缩写（--fi ≡ --file、--exp ≡ --expression），
+  // 解析器只认全拼会漏检——任何不在已知安全集合内的长选项一律 fail-closed
+  // （#684 review P1 实证：sed --fi=sc.sed 可经脚本文件任意写/RCE）。
+  let sawSeparator = false
+  for (const arg of args) {
+    if (arg === '--') { sawSeparator = true; continue }
+    if (sawSeparator || !arg.startsWith('--')) continue
+    const eq = arg.indexOf('=')
+    const name = eq === -1 ? arg : arg.slice(0, eq)
+    if (name === '--expression' || name === '--file') continue
+    if (!SED_SAFE_LONG_FLAGS.has(arg)) return false
+  }
   const { scripts, readsScriptFile } = sedScriptParts(args)
   // Fail closed (#453): a -f/--file script body lives in a file this static
   // check never sees (it can carry `w FILE` or GNU `e CMD`), and a `$` in a
@@ -238,13 +272,17 @@ export function isReadOnlyPowerShell(command: string): boolean {
     .replace(/^\s*(?:powershell|pwsh)(?:\.exe)?\s+(?:-NoLogo\s+|-NoProfile\s+|-NonInteractive\s+)*-Command\s+/i, '')
     .trim()
   // Reject pipeline (`|`), chaining/call (`&`), the ForEach-Object alias `%`,
-  // script-block braces, and line breaks so piped or nested payloads cannot
-  // ride behind a whitelisted first word (#300).
-  if (!normalized || /[>`]|>>|\$\(|[;&|%{}\r\n]|\b(?:Set|Remove|Copy|Move|New|Add|Clear|Out|Start|Stop|Invoke|Install|Update)-[A-Za-z]+\b/i.test(normalized)) {
+  // script-block braces, parentheses (PS evaluates a parameter-position `(...)`
+  // as a nested pipeline: `Get-Content ([Type]::Method())` would execute .NET
+  // code with zero cmdlet verbs to scan — #684 review P0), and line breaks so
+  // piped or nested payloads cannot ride behind a whitelisted first word (#300).
+  if (!normalized || /[>`]|>>|\$\(|[;&|%{}()\r\n]|\b(?:Set|Remove|Copy|Move|New|Add|Clear|Out|Start|Stop|Invoke|Install|Update)-[A-Za-z]+\b/i.test(normalized)) {
     return false
   }
   // Unparsed strings cannot be arg-checked, so only git subcommands whose
   // common forms never take mutation targets survive here; branch/diff move
-  // to the parsed path only (#300).
-  return /^(?:Get-(?:ChildItem|Content|Location|Item|ItemProperty|Process|Service|Command|Date|Help|Member|Variable|Acl|FileHash|AuthenticodeSignature|ComputerInfo)|Select-String|Where-Object|Test-Path|Resolve-Path|Measure-Object|Sort-Object|Format-(?:Table|List)|Write-Output|Write-Host|git\s+(?:status|log|show)\b|(?:ls|dir|type|cat|pwd|where|findstr)\b)/i.test(normalized)
+  // to the parsed path only (#300). git log/show 的输出/外驱旗标与 bash 树路径
+  // 同口径拒绝（--output 写文件、--ext-diff 执行仓库配置命令，#684 review）。
+  const GIT_WRITE_FLAGS = /\s--(?:ext-diff|output)(?:=|\s|$)/i;
+  return !GIT_WRITE_FLAGS.test(normalized) && /^(?:Get-(?:ChildItem|Content|Location|Item|ItemProperty|Process|Service|Command|Date|Help|Member|Variable|Acl|FileHash|AuthenticodeSignature|ComputerInfo)|Select-String|Where-Object|Test-Path|Resolve-Path|Measure-Object|Sort-Object|Format-(?:Table|List)|Write-Output|Write-Host|git\s+(?:status|log|show)\b|(?:ls|dir|type|cat|pwd|where|findstr)\b)/i.test(normalized)
 }
