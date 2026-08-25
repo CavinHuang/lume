@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type {
   AutomationCreateJobInput,
@@ -39,13 +39,20 @@ function backupCorruptIndex(indexPath: string): void {
   const dir = dirname(indexPath);
   const prefix = `${basename(indexPath)}.corrupt-`;
   const files = existsSync(dir) ? readdirSync(dir) : [];
-  const currentMtime = statSync(indexPath).mtimeMs;
-  // 同代备份（mtime 不早于当前损坏文件）已存在则跳过——防重启堆积副本；
-  // 旧代备份不抑制新一代备份，避免按"删除"指引恢复时丢失代间新建的任务
+  let currentContent: string;
+  try {
+    currentContent = readFileSync(indexPath, "utf-8");
+  } catch {
+    return;
+  }
+  // #686：同代备份（内容与当前损坏文件相同）已存在则跳过——防重启堆积副本；
+  // 判代用内容比对而非 mtime：CI 文件系统 mtime 粒度可达 4ms，同毫秒落盘的
+  // 旧备份会被误判为当前代而抑制新备份。旧代备份不抑制新一代备份，避免按
+  // "删除"指引恢复时丢失代间新建的任务
   const hasCurrentGenBackup = files.some((name) => {
     if (!name.startsWith(prefix)) return false;
     try {
-      return statSync(join(dir, name)).mtimeMs >= currentMtime;
+      return readFileSync(join(dir, name), "utf-8") === currentContent;
     } catch {
       return false;
     }
