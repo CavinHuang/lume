@@ -351,8 +351,10 @@ function installProcessErrorGuards(): void {
       error: { message: reason instanceof Error ? reason.message : String(reason) }
     });
   });
-  process.on("uncaughtException", (error) => {
+  process.on("uncaughtException", (thrown) => {
     uncaughtCount += 1;
+    // 运行时透传任意 throw 值（throw null/字符串），守卫内部再抛会击穿止损器本身
+    const error = thrown instanceof Error ? thrown : new Error(String(thrown));
     lastUncaughtSignature = `${error.name}: ${error.message}`;
     writeLogRecord({
       level: "error",
