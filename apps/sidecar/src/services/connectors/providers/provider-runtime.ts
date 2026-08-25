@@ -99,6 +99,21 @@ export class ProviderRequestError extends Error {
  * Map provider runtime failures to the standard action execution result.
  */
 function toProviderExecutionError(error: unknown, fallbackMessage: string): ExecutionResult {
+  // ConnectorError(凭证缺失/刷新失败等)直通稳定 code:「请重新授权」类问题
+  // 不能塌缩成 internal_error,否则调用方无法自纠
+  if (
+    error instanceof Error &&
+    error.name === "ConnectorError" &&
+    typeof (error as { code?: unknown }).code === "string"
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: (error as unknown as { code: string }).code,
+        message: error.message,
+      },
+    };
+  }
   if (error instanceof ProviderRequestError) {
     return {
       ok: false,

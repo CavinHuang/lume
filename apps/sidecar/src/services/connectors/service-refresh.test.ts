@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 let refreshCalls = 0;
+/** 置为非 null 时下一次刷新抛该错误(测失败清槽路径)。 */
+let injectRefreshError: Error | null = null;
 
 // 单文件 mock:service.ts 是 oauth-token 的唯一消费者,替换后刷新走本地桩
 mock.module("./oauth/oauth-token", () => ({
@@ -12,6 +14,11 @@ mock.module("./oauth/oauth-token", () => ({
   },
   requestRefreshToken: async () => {
     refreshCalls += 1;
+    if (injectRefreshError) {
+      const error = injectRefreshError;
+      injectRefreshError = null;
+      throw error;
+    }
     await new Promise((resolve) => setTimeout(resolve, 20));
     return {
       authType: "oauth2" as const,
@@ -100,5 +107,25 @@ describe("oauth credential refresh single-flight", () => {
     const refreshed = await getConnectorOAuthCredentialFresh("gmail");
     expect(refreshCalls).toBe(2);
     expect(refreshed.accessToken).toBe("refreshed-access-2");
+  });
+
+  test("刷新失败后槽位被清除:下一次调用重新发起而非复用同一 rejection", async () => {
+    setConnectorOAuthCredential("gmail", {
+      authType: "oauth2",
+      accessToken: "stale-access-fail",
+      tokenType: "Bearer",
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      refreshToken: "rt-fail",
+      profile: { accountId: "acct", displayName: "Tester", grantedScopes: [] },
+      metadata: {},
+    });
+
+    injectRefreshError = new Error("provider temporarily unavailable");
+    await expect(getConnectorOAuthCredentialFresh("gmail")).rejects.toThrow("temporarily unavailable");
+
+    // 失败若未清槽,这里会复用同一个 rejection 且 refreshCalls 不再增长
+    const retry = await getConnectorOAuthCredentialFresh("gmail");
+    expect(refreshCalls).toBeGreaterThanOrEqual(2);
+    expect(retry.accessToken).toContain("refreshed-access");
   });
 });

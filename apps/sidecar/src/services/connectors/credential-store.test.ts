@@ -116,6 +116,50 @@ describe("connector credential store", () => {
     ).toThrow(); // 拒绝把残缺集合覆盖成单条记录
   });
 
+  test("文件级损坏时断开即删除坏文件,重连路径畅通", () => {
+    setConnectorClientConfig("gmail", {
+      service: "gmail",
+      clientId: "id",
+      clientSecret: "s",
+      extra: {},
+      secretExtra: {},
+    });
+    writeFileSync(getConnectorCredentialsPath(), '{"version":1,"cred', "utf8");
+
+    // 损坏状态下写入被拒(保护仍在)
+    expect(() =>
+      setConnectorCustomValues("qq_mail", { email: "u@qq.com", authorizationCode: "abcd".repeat(4) }),
+    ).toThrow();
+
+    // 用户按指引断开:应删除损坏文件本身,而非静默 no-op
+    deleteConnectorCredential("gmail");
+    expect(getConnectorClientConfig("gmail")).toBeUndefined();
+
+    // 重连路径畅通
+    setConnectorClientConfig("gmail", {
+      service: "gmail",
+      clientId: "id2",
+      clientSecret: "s2",
+      extra: {},
+      secretExtra: {},
+    });
+    expect(getConnectorClientConfig("gmail")?.clientId).toBe("id2");
+  });
+
+  test("陈留 .tmp 不阻塞后续写入(wx 自愈)", () => {
+    // 模拟上次写后 rename 前进程中断留下的残留 tmp
+    writeFileSync(`${getConnectorCredentialsPath()}.tmp`, "stale", { encoding: "utf8", mode: 0o600, flag: "wx" });
+
+    setConnectorClientConfig("gmail", {
+      service: "gmail",
+      clientId: "id",
+      clientSecret: "s",
+      extra: {},
+      secretExtra: {},
+    });
+    expect(getConnectorClientConfig("gmail")?.clientId).toBe("id");
+  });
+
   test("记录密文不可解(vault key 轮换)时该条写入被拒,显式删除后可重建", () => {
     setConnectorClientConfig("gmail", {
       service: "gmail",

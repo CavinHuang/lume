@@ -35,6 +35,8 @@ interface ConnectorAuthState {
   lastError?: string;
 }
 const authStates = new Map<string, ConnectorAuthState>();
+/** 每服务授权流代际:完成回调写入 authStates 前校验自己仍是当前流。 */
+const authGenerations = new Map<string, number>();
 
 function buildStatus(service: string): ConnectorStatus {
   const authState = authStates.get(service);
@@ -99,23 +101,31 @@ export function createConnectorHandlers(): Record<string, RpcHandler> {
 
     [CONNECTOR_IPC_CHANNELS.START_AUTH]: async (params) => {
       const service = parseService(params, CONNECTOR_IPC_CHANNELS.START_AUTH);
+      // 代际号:supersede/disconnect 会 reject 旧流,旧流的完成回调晚于新流写入时
+      // 必须作废,否则旧流把新流的 authorizing 覆盖成"异常"甚至整条删除
+      const generation = (authGenerations.get(service) ?? 0) + 1;
+      authGenerations.set(service, generation);
+      const isCurrent = () => authGenerations.get(service) === generation;
       const flow = startConnectorAuthorization(service);
       authStates.set(service, { authorizing: true });
       void flow.done
         .then(() => {
+          if (!isCurrent()) return;
           authStates.set(service, { authorizing: false });
         })
         .catch((error: unknown) => {
+          if (!isCurrent()) return;
           authStates.set(service, {
             authorizing: false,
             lastError: error instanceof Error ? error.message : String(error),
           });
         })
         .finally(() => {
+          if (!isCurrent()) return;
           // 保留 lastError 供 UI 展示;下次 START_AUTH 会覆盖
           setTimeout(() => {
             const state = authStates.get(service);
-            if (state && !state.authorizing) authStates.delete(service);
+            if (state && !state.authorizing && isCurrent()) authStates.delete(service);
           }, 60_000);
         });
       return { authorizationUrl: await flow.authorizationUrl, status: buildStatus(service) };
@@ -123,6 +133,8 @@ export function createConnectorHandlers(): Record<string, RpcHandler> {
 
     [CONNECTOR_IPC_CHANNELS.DISCONNECT]: async (params) => {
       const service = parseService(params, CONNECTOR_IPC_CHANNELS.DISCONNECT);
+      // 递增代际作废在途回调:被拒流的 .catch 不得复活刚删除的错误态
+      authGenerations.set(service, (authGenerations.get(service) ?? 0) + 1);
       disconnectConnector(service);
       authStates.delete(service);
       return buildStatus(service);

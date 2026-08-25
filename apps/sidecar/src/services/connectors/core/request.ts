@@ -58,21 +58,19 @@ export async function readBoundedResponseBytes(
 //
 //   - "reserved" (localHostnames, cloudMetadataHostnames, localHostnameSuffixes,
 //     reservedIpv4Cidrs, reservedIpv6Cidrs): loopback, link-local, cloud-metadata,
-//     multicast, and other unsafe special-use ranges. ALWAYS blocked — the
-//     private-network opt-in never unblocks these, because they are the classic
-//     SSRF escalation targets ("don't let the deployment attack itself").
+//     multicast, and other unsafe special-use ranges. ALWAYS blocked — they are
+//     the classic SSRF escalation targets ("don't let the deployment attack
+//     itself").
 //   - "VPN-mapped" (vpnMappedIpv4Cidrs): benchmark address space used by some
-//     zero-trust VPNs to tunnel public SaaS traffic. Blocked by default, but a
-//     deployment may allow it for explicitly trusted hostnames.
+//     zero-trust VPNs to tunnel public SaaS traffic. Blocked unconditionally in
+//     this runtime (the upstream deployment-level trusted-host opt-in was
+//     removed with the migration).
 //   - "private" (privateHostnameSuffixes, privateIpv4Cidrs, privateIpv6Cidrs):
 //     RFC 1918 / CGNAT / IPv6 ULA LAN ranges and private hostname suffixes.
-//     Blocked by default, but reachable once a self-hosted deployment opts in via
-//     OOMOL_CONNECT_ALLOW_PRIVATE_NETWORK (see isPrivateNetworkAccessAllowed).
-//
-// So the flag toggles LAN/private-network reachability only; loopback and
-// link-local/metadata stay blocked in both states.
+//     Reachable only via the per-call `allowPrivateNetwork` opt-in on
+//     assertPublicHttpUrl/guarded fetch; reserved targets stay blocked either way.
 
-// Always blocked: names that resolve to loopback, regardless of the flag.
+// Always blocked: names that resolve to loopback, regardless of any opt-in.
 const localHostnames = new Set(["localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"]);
 // Always blocked: cloud instance-metadata endpoints (prime SSRF escalation targets).
 const cloudMetadataHostnames = new Set([

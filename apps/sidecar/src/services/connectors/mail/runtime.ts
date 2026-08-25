@@ -22,7 +22,13 @@ import {
   ProviderRequestError,
   requireCustomCredential,
 } from "../providers/provider-runtime";
-import { mailConnectionTimeoutMs, mailImapPort, mailMessageFetchByteLimit, mailSmtpPort } from "./config";
+import {
+  mailConnectionTimeoutMs,
+  mailImapPort,
+  mailMessageFetchByteLimit,
+  mailSmtpPort,
+  mailValidationTotalBudgetMs,
+} from "./config";
 import { MailProtocolError } from "./errors";
 import { sanitizeTempFileName, sweepOrphanTempDirectories } from "./temp-files";
 
@@ -167,12 +173,27 @@ async function validateMailCredential(
 
   const protocol = await loadProtocol();
   try {
-    await validateMailPhase(config, "imap", credential.imapHost, mailImapPort, logger, () =>
-      protocol.validateImapCredential(credential),
-    );
-    await validateMailPhase(config, "smtp", credential.smtpHost, credential.smtpPort ?? mailSmtpPort, logger, () =>
-      protocol.validateSmtpCredential(credential),
-    );
+    // 两阶段共享一个总预算:单阶段超时各自生效,但顺序累加可能突破 RPC 层
+    // 统一上限造成状态分裂;总预算先到即按 timeout 失败,不落盘
+    const phases = (async () => {
+      await validateMailPhase(config, "imap", credential.imapHost, mailImapPort, logger, () =>
+        protocol.validateImapCredential(credential),
+      );
+      await validateMailPhase(config, "smtp", credential.smtpHost, credential.smtpPort ?? mailSmtpPort, logger, () =>
+        protocol.validateSmtpCredential(credential),
+      );
+    })();
+    // 总预算先到时底层验证仍在自行收尾:吞掉迟到的 rejection 防 unhandledRejection
+    phases.catch(() => {});
+    await Promise.race([
+      phases,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new MailProtocolError("timeout", `${config.displayName} connection test budget exceeded`)),
+          mailValidationTotalBudgetMs,
+        ),
+      ),
+    ]);
   } catch (error) {
     throw mapProtocolError(error, "connect", config);
   }

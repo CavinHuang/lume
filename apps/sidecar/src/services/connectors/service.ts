@@ -16,6 +16,7 @@ import { provider as gmailProviderDefinition } from "./providers/gmail/definitio
 import { credentialValidators as qqMailValidators, executors as qqMailExecutors } from "./providers/qq_mail/executors";
 import { provider as qqMailProviderDefinition } from "./providers/qq_mail/definition";
 import {
+  clearConnectorCredentialData,
   deleteConnectorCredential,
   getConnectorClientConfig,
   getConnectorCustomValues,
@@ -23,6 +24,15 @@ import {
   setConnectorCustomValues,
   setConnectorOAuthCredential,
 } from "./credential-store";
+import { createLogger } from "../infra/logger";
+
+const logger = createLogger("connectors");
+/** RuntimeLogger 形状适配:仓内 Logger 为 (msg, data),core/types 的 RuntimeLogger 为 (fields, msg)。 */
+const runtimeLogger = {
+  error: (fields: Record<string, unknown>, message: string) => logger.error(message, fields),
+  info: (fields: Record<string, unknown>, message: string) => logger.info(message, fields),
+  warn: (fields: Record<string, unknown>, message: string) => logger.warn(message, fields),
+};
 
 /** 一个已注册连接器 = 目录契约 + 执行器 + 凭证验证器。 */
 export interface ConnectorProvider {
@@ -77,15 +87,9 @@ export function getConnectorSetup(service: string): ConnectorSetup {
   return { service, displayName: definition.displayName, authKind: "custom", fields };
 }
 
-export class ConnectorError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "ConnectorError";
-  }
-}
+import { ConnectorError } from "./core/errors";
+
+export { ConnectorError };
 
 // ---------------------------------------------------------------------------
 // OAuth 授权流:临时 loopback 监听 + 两段式 state
@@ -171,6 +175,7 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
       resolveUrl(
         buildAuthorizationUrl(service, auth, config.clientId, redirectUri, state, codeChallenge),
       );
+      logger.info("connector oauth flow started", { service, port });
     });
   });
 
@@ -204,6 +209,7 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
     if (url.searchParams.get("state") !== pending.state) {
       // 杂散请求(浏览器预取/刷新、端口扫描)只对该请求回错误页;
       // reject 整个 pending 流程会让随后到达的真回调扑空
+      logger.debug("connector oauth callback state mismatch (stray request)", { service });
       respondPage(false, "OAuth state 不匹配或已过期。若非误开此页,请回到 Lume 重新发起授权。");
       return;
     }
@@ -231,10 +237,15 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
     });
 
     await validateAndStoreCredential(service, credential);
+    logger.info("connector oauth flow completed", { service });
     pending.resolve(credential);
     respondPage(true, "授权成功,可以关闭此页面回到 Lume。");
   } catch (error) {
     const connectorError = error instanceof ConnectorError ? error : new ConnectorError("oauth_flow_failed", String(error));
+    logger.warn("connector oauth callback rejected", {
+      service,
+      code: connectorError.code,
+    });
     pending.reject(connectorError);
     respondPage(false, connectorError.message);
   }
@@ -283,7 +294,7 @@ async function validateAndStoreCredential(service: string, credential: ResolvedC
   const provider = getConnector(service);
   let stored = credential;
   try {
-    const validated = await provider.validators?.oauth2?.(credential, { fetcher: providerFetch });
+    const validated = await provider.validators?.oauth2?.(credential, { fetcher: providerFetch, logger: runtimeLogger });
     if (validated?.profile) {
       stored = {
         ...credential,
@@ -294,8 +305,9 @@ async function validateAndStoreCredential(service: string, credential: ResolvedC
         },
       };
     }
-  } catch {
-    // 验证失败不阻断授权:token 本身已兑换成功
+  } catch (error) {
+    // 验证失败不阻断授权:token 本身已兑换成功;但 profile 会落默认值,留痕供排查
+    logger.warn("connector oauth2 validator failed", { service, error: error instanceof Error ? error.message : String(error) });
   }
   setConnectorOAuthCredential(service, stored);
 }
@@ -319,7 +331,7 @@ export async function saveConnectorCustomCredential(service: string, values: Rec
     grantedScopes: [],
   };
   if (validator) {
-    const result = await validator({ values }, { fetcher: providerFetch });
+    const result = await validator({ values }, { fetcher: providerFetch, logger: runtimeLogger });
     if (result?.profile) {
       profile = {
         accountId: result.profile.accountId ?? profile.accountId,
@@ -349,15 +361,6 @@ function readCustomProfile(service: string): { accountId: string; displayName: s
   return { accountId: values?.email ?? "custom", displayName: values?.email ?? "Custom Credential", grantedScopes: [] };
 }
 
-/** 已连接账号展示标识(OAuth 取 profile,授权码取邮箱);未连接返回 undefined。 */
-export function getConnectorConnectedAccountLabel(service: string): string | undefined {
-  const oauth = getConnectorOAuthCredential(service);
-  if (oauth) return oauth.profile?.displayName;
-  const custom = getConnectorCustomValues(service);
-  if (custom) return custom.email;
-  return undefined;
-}
-
 export function hasAnyConnectorCredential(service: string): boolean {
   return getConnectorOAuthCredential(service) !== undefined || getConnectorCustomValues(service) !== undefined;
 }
@@ -372,6 +375,7 @@ export async function getConnectorOAuthCredentialFresh(service: string): Promise
 
   let inFlight = inFlightRefreshes.get(service);
   if (!inFlight) {
+    logger.debug("connector oauth token refresh started", { service });
     inFlight = refreshConnectorCredential(service, credential)
       .then((refreshed) => {
         // 仅当存储中仍是发起刷新的那条记录时才落盘:期间若用户断开重连,
@@ -379,6 +383,11 @@ export async function getConnectorOAuthCredentialFresh(service: string): Promise
         const current = getConnectorOAuthCredential(service);
         if (current?.refreshToken === credential.refreshToken && current?.expiresAt === credential.expiresAt) {
           setConnectorOAuthCredential(service, refreshed);
+          logger.debug("connector oauth token refreshed", { service });
+        } else {
+          // 新 token 不落盘:本次调用仍可用,但下次过期会再刷一次——
+          // 若频繁出现说明存储被并发改写,需人工介入
+          logger.warn("connector oauth token refreshed but store changed; skip persist", { service });
         }
         return refreshed;
       })
@@ -428,7 +437,9 @@ export async function refreshConnectorCredential(
 export function disconnectConnector(service: string): void {
   const pending = pendingAuthorizations.get(service);
   if (pending) stopPendingAuthorization(service, new ConnectorError("oauth_flow_cancelled", "授权已取消"));
-  deleteConnectorCredential(service);
+  // 断开 ≠ 忘记配置:清凭证但保留用户手填的 OAuth client_id/secret,
+  // 否则 Gmail 重连要重新翻 GCP Console 抄一遍
+  clearConnectorCredentialData(service);
 }
 
 function stopPendingAuthorization(service: string, error: Error): void {

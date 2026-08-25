@@ -134,17 +134,22 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
   }, [setup])
 
   // 浏览器授权进行中轮询状态
+  const wasAuthorizing = React.useRef(false)
   React.useEffect(() => {
     if (setup.authKind !== 'oauth2' || !status.authorizing) return
+    wasAuthorizing.current = true
     const timer = setInterval(() => {
       void getConnectorStatus(setup.service)
-        .then((next) =>
-          setStatus((prev) => ({ ...prev, connected: next.connected, authorizing: next.authorizing, lastError: next.lastError })),
-        )
+        .then((next) => {
+          setStatus((prev) => ({ ...prev, connected: next.connected, authorizing: next.authorizing, lastError: next.lastError }))
+          // 授权完成的瞬间拉全量(含 accountLabel),不等用户手动刷新
+          if (wasAuthorizing.current && !next.authorizing && next.connected) onChanged()
+          if (!next.authorizing) wasAuthorizing.current = false
+        })
         .catch(() => {})
     }, 2000)
     return () => clearInterval(timer)
-  }, [setup.authKind, setup.service, status.authorizing])
+  }, [setup.authKind, setup.service, status.authorizing, onChanged])
 
   const formFields: ConnectorSetupField[] =
     setup.authKind === 'oauth2'
@@ -166,11 +171,9 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
         setStatus((prev) => ({ ...prev, authorizing: true, lastError: undefined }))
       } else {
         // custom 型:保存即触发服务端连接测试,失败直接抛错
-        try {
-          await saveConnectorCredential({ service: setup.service, values: trimmed })
-        } finally {
-          setValues({})
-        }
+        await saveConnectorCredential({ service: setup.service, values: trimmed })
+        // 仅成功后清空:失败保留输入,授权码不必重新抄写
+        setValues({})
       }
       onChanged()
     } catch (error) {
@@ -259,7 +262,12 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
             </div>
           ))}
           <div>
-            <Button size="sm" disabled={busy || !formComplete} onClick={() => void handleSave()}>
+            <Button
+              size="sm"
+              // 授权进行中禁止再次提交:二次发起会顶替当前流,旧授权页成死胡同
+              disabled={busy || !formComplete || status.authorizing}
+              onClick={() => void handleSave()}
+            >
               {busy ? <Loader2 className="size-4 animate-spin" /> : null}
               {setup.authKind === 'oauth2' ? '保存并发起授权' : '连接并验证'}
             </Button>

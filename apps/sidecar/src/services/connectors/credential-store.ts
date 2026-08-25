@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { getConnectorCredentialsPath } from "../infra/config-paths";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { decrypt, encrypt } from "../channel/connection-credential-store";
@@ -70,8 +70,19 @@ function writeStore(file: ConnectorCredentialFile): void {
   }
   const path = getConnectorCredentialsPath();
   const tmp = `${path}.tmp`;
-  writeFileSync(tmp, JSON.stringify(file), { encoding: "utf8", mode: 0o600, flag: "wx" });
-  renameSync(tmp, path);
+  try {
+    writeFileSync(tmp, JSON.stringify(file), { encoding: "utf8", mode: 0o600, flag: "wx" });
+    renameSync(tmp, path);
+  } catch (error) {
+    // wx 撞上陈留 tmp(上次写后 rename 前进程中断):锁内独占,tmp 必然是死物,清掉重试一次
+    if ((error as NodeJS.ErrnoException)?.code === "EEXIST") {
+      rmSync(tmp, { force: true });
+      writeFileSync(tmp, JSON.stringify(file), { encoding: "utf8", mode: 0o600, flag: "wx" });
+      renameSync(tmp, path);
+      return;
+    }
+    throw error;
+  }
 }
 
 /** 密文不可解(vault key 轮换/记录损坏)时返回 undefined;调用方决定降级或拒写。 */
@@ -140,8 +151,38 @@ export function setConnectorCustomValues(service: string, values: Record<string,
   withRecord(service, (record) => ({ ...record, customValues: values }));
 }
 
+/** 仅清凭证数据(oauth/customValues),保留用户手填的 OAuth client 配置。 */
+export function clearConnectorCredentialData(service: string): void {
+  withIndexMutationLock(`${getConnectorCredentialsPath()}.lock`, () => {
+    if (storeUnreadable) {
+      // 文件级损坏:内容已不可读,删坏文件即恢复(否则断开重连路径死循环)
+      rmSync(getConnectorCredentialsPath(), { force: true });
+      storeUnreadable = false;
+      return;
+    }
+    const file = readStore();
+    const decoded = decodeRecord(service, file.credentials[service]);
+    if (decoded === undefined) {
+      // 密文不可解:整条丢弃
+      delete file.credentials[service];
+    } else if (decoded.clientConfig) {
+      file.credentials[service] = encrypt(JSON.stringify({ clientConfig: decoded.clientConfig }));
+    } else {
+      delete file.credentials[service];
+    }
+    writeStore(file);
+  });
+}
+
 export function deleteConnectorCredential(service: string): void {
   withIndexMutationLock(`${getConnectorCredentialsPath()}.lock`, () => {
+    // 文件级损坏:内容已不可读,删除损坏文件即恢复——否则"先断开再重连"
+    // 的自救路径会在这里静默 no-op,用户永远卡在写入被拒
+    if (storeUnreadable) {
+      rmSync(getConnectorCredentialsPath(), { force: true });
+      storeUnreadable = false;
+      return;
+    }
     const file = readStore();
     if (!(service in file.credentials)) return;
     delete file.credentials[service];
