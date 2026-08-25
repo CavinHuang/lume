@@ -89,12 +89,17 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
       expect(classification.riskLevel).not.toBe("low");
       expect(classification.shouldAsk).toBe(true);
 
-      // 显式配置 bash 后即使仍未决也回到精确读法：不再硬拒，分类器回落 POSIX 口径
+      // 显式配置 bash 后即使仍未决也回到精确读法：不再硬拒。Remove-Item 属无歧义
+      // PS 危险动词，win32 上经内容信号保持确认档（#707 修复本体）；撞名命令
+      // （iex/Elixir）不构成信号，维持 POSIX 口径判 low
       process.env.LUME_BASH_PATH = "C:\\Program Files\\Git\\bin\\bash.exe";
       expect(
         evaluateRuntimeToolSafety(firstCommand.toolName, { command: firstCommand.command }, coldStart).behavior
       ).not.toBe("deny");
-      expect(classifyHeuristic(classifyColdStart).riskLevel).toBe("low");
+      const classificationExplicitBash = classifyHeuristic(classifyColdStart);
+      expect(classificationExplicitBash.riskLevel).toBe("medium");
+      expect(classificationExplicitBash.shouldAsk).toBe(true);
+      expect(classifyHeuristic({ ...classifyColdStart, command: "iex -S mix phx.server" }).riskLevel).toBe("low");
     } finally {
       for (const [key, value] of saved) {
         if (value === undefined) delete process.env[key];
@@ -102,6 +107,26 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
       }
       resetWindowsBashDiscoveryForTests();
     }
+  });
+
+  test("content signal reactivates the vocabulary on bash-configured Windows hosts (#707)", () => {
+    // win32 + 显式配置 bash：方言读作 bash、词表曾整层休眠，Remove-Item -Recurse -Force
+    // 在 dontAsk 判 low 静默放行（guardrail 侧同样漏拦）。文本呈强 PS 形态时按 PS 规则评估。
+    const bashWin: RuntimeToolSafetyContext = {
+      platform: "win32",
+      env: { LUME_BASH_PATH: "C:\\Program Files\\Git\\bin\\bash.exe" }
+    };
+    expect(
+      evaluateRuntimeToolSafety("Bash", { command: "Remove-Item -Recurse -Force build" }, bashWin).behavior
+    ).toBe("confirm");
+    expect(evaluateRuntimeToolSafety("Bash", { command: "rd /s /q build" }, bashWin).behavior).toBe("confirm");
+
+    // 短别名单独出现不构成信号：iex 不进 PS 词表（无 natives 时 parse-unavailable
+    // 会兜底 confirm，与词表无关，故只钉不 deny）
+    expect(evaluateRuntimeToolSafety("Bash", { command: "iex -S mix phx.server" }, bashWin).behavior).not.toBe("deny");
+
+    // 非 win32 宿主不消费信号（与下方既定语义测试同口径）
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Remove-Item -Recurse -Force build" }, { platform: "linux" }).behavior).not.toBe("deny");
   });
 
   test("non-win32 hosts keep the exact bash reading while Windows discovery is unsettled", () => {

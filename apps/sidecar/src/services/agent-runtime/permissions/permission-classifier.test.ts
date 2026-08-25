@@ -188,4 +188,62 @@ describe("permission classifier", () => {
       shouldAsk: false
     });
   });
+
+  test("content signal reactivates PowerShell vocabulary on bash-configured Windows (#707)", async () => {
+    const classifier = createPermissionClassifier();
+
+    // win32 装 POSIX bash：方言读作 bash、词表曾整层休眠，Remove-Item -Recurse -Force 判 low 免审
+    await expect(classifier.classify({
+      toolName: "Bash",
+      command: "Remove-Item -Recurse -Force build",
+      shellKind: "bash",
+      platform: "win32"
+    })).resolves.toMatchObject({ riskLevel: "medium", shouldAsk: true });
+    await expect(classifier.classify({
+      toolName: "Bash",
+      command: "rd /s /q build",
+      shellKind: "bash",
+      platform: "win32"
+    })).resolves.toMatchObject({ riskLevel: "medium", shouldAsk: true });
+
+    // 短别名单独出现不构成信号：POSIX 撞名防误拦口径在 win32 同样保持
+    await expect(classifier.classify({
+      toolName: "Bash",
+      command: "iex -S mix phx.server",
+      shellKind: "bash",
+      platform: "win32"
+    })).resolves.toMatchObject({ riskLevel: "low", shouldAsk: false });
+
+    // 非 win32 宿主不消费信号（既定精确 bash 读法不翻转）
+    await expect(classifier.classify({
+      toolName: "Bash",
+      command: "Remove-Item -Recurse -Force build",
+      shellKind: "bash",
+      platform: "linux"
+    })).resolves.toMatchObject({ riskLevel: "low", shouldAsk: false });
+  });
+
+  test("llm cache key separates shell dialects (#707)", async () => {
+    let calls = 0;
+    const classifier = createPermissionClassifier({
+      llm: async () => {
+        calls++;
+        return JSON.stringify({ riskLevel: "low", reason: "ok", shouldAsk: false });
+      }
+    });
+
+    const input = { toolName: "Bash", command: "node scripts/build.js" };
+    await classifier.classify({ ...input, shellKind: "bash" });
+    await classifier.classify({ ...input, shellKind: "powershell" });
+
+    expect(calls).toBe(2);
+  });
+
+  test("uses a neutral explanation for whitelisted-out low-risk commands (#707)", async () => {
+    const classifier = createPermissionClassifier();
+
+    // 该文案经引擎 approval 透传直达审批卡，不得陈述「无风险」与「请确认」自相矛盾
+    const result = await classifier.classify({ toolName: "Bash", command: "node script.js" });
+    expect(result.explanation).toBe("Shell 命令不在自动放行范围内，需要用户确认");
+  });
 });

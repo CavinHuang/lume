@@ -169,6 +169,15 @@ export const updatePermissionsSection = (value: LumeConfigPermissionsSection, wo
     summary: 'update permission settings',
   })
 
+export const updatePermissionClassifierEnabled = (value: boolean, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'permissions.classifier.enabled',
+    value,
+    summary: 'update permission classifier switch',
+  })
+
 export const updateSkillsConfig = (value: LumeConfigSkillsSection, workspaceSlug?: string) =>
   sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
     source: 'user',

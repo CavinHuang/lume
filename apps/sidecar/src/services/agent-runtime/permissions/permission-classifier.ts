@@ -1,5 +1,5 @@
 import { shellKindConservative } from "@lume/agent-sdk";
-import { PS_DELETE_COMMAND, PS_FULL_NAME_VERBS } from "../ps-dangerous-verbs";
+import { PS_DELETE_COMMAND, PS_FULL_NAME_VERBS, hasPowerShellContentSignal } from "../ps-dangerous-verbs";
 import type {
   PermissionClassification,
   PermissionClassifierInput,
@@ -73,7 +73,9 @@ export function createPermissionClassifier(
         return heuristic;
       }
 
-      const key = `${input.toolName}::${input.command ?? ""}::${input.path ?? ""}`;
+      // 缓存键纳入方言（#707）：启发式词表选择依赖 shellKind，TTL 内方言读法漂移时
+      // 同一命令文本不得跨方言共享 LLM 结果
+      const key = `${input.toolName}::${input.shellKind ?? ""}::${input.command ?? ""}::${input.path ?? ""}`;
       const cached = cache.get(key);
       if (cached && Date.now() - cached.ts < cacheTtlMs) {
         return cached.result;
@@ -117,9 +119,13 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
   const tool = input.toolName.toLowerCase();
   if (tool === "bash" || tool === "execute_command") {
     // 缺省方言用保守读法：bash 发现未决的冷启动窗口 fail-closed，与 guardrail 正则层同口径；
-    // 平台/环境走可注入通道，方言门控不得绑死宿主进程平台（与 RuntimeToolSafetyContext 同形）
+    // 平台/环境走可注入通道，方言门控不得绑死宿主进程平台（与 RuntimeToolSafetyContext 同形）。
+    // win32 叠加内容信号通道（#707）：装 POSIX bash 的 Windows 机上方言读作 bash、词表休眠，
+    // 文本呈强 PS 形态时无视方言激活；非 win32 不消费（与 guardrail 层同口径）
+    const platform = input.platform ?? process.platform;
     const powershellRulesActive =
-      (input.shellKind ?? shellKindConservative(input.platform ?? process.platform, input.env ?? process.env)) === "powershell";
+      (input.shellKind ?? shellKindConservative(platform, input.env ?? process.env)) === "powershell" ||
+      (platform === "win32" && hasPowerShellContentSignal(input.command ?? input.path ?? ""));
     const shellPatterns = powershellRulesActive ? [...MEDIUM_PATTERNS, ...POWERSHELL_MEDIUM_PATTERNS] : MEDIUM_PATTERNS;
     for (const pattern of shellPatterns) {
       if (pattern.test(value)) {
@@ -134,7 +140,9 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
     return {
       riskLevel: "low",
       reasonCode: "shell_read",
-      explanation: "Shell 命令未命中写入或高危模式",
+      // 中性理由（#707）：该文案经引擎 approval 透传直达审批卡，若陈述「无风险」
+      // 会与「请确认」同屏自相矛盾——只陈述结论，不替系统背书安全性
+      explanation: "Shell 命令不在自动放行范围内，需要用户确认",
       shouldAsk: false
     };
   }
