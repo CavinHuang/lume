@@ -74,7 +74,8 @@ describe("im-handlers", () => {
 
     await handlers[IM_IPC_CHANNELS.START_ACCOUNT]?.({ id });
     await handlers[IM_IPC_CHANNELS.STOP_ACCOUNT]?.({ id });
-    expect(calls).toEqual([`start:${id}`, `stop:${id}`]);
+    // CREATE_ACCOUNT 对启用账号自动启动通道（创建即闭环），故序列含两次 start
+    expect(calls).toEqual([`start:${id}`, `start:${id}`, `stop:${id}`]);
 
     await handlers[IM_IPC_CHANNELS.DELETE_ACCOUNT]?.({ id });
     expect(await handlers[IM_IPC_CHANNELS.LIST_ACCOUNTS]?.({})).toEqual([]);

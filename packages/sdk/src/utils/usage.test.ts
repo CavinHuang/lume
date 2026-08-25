@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { NormalizedMessageParam } from "../providers/types.js"
 import {
-  calculateAutoCompactThreshold,
-  createAgentProgressTracker,
   createContextUsageSnapshot,
   createEstimatedContextUsage,
   normalizeProviderUsage,
@@ -87,34 +85,6 @@ describe("provider usage normalization", () => {
       cacheReadInputTokens: 40,
       cacheCreationInputTokens: 0,
       totalTokens: 160,
-    })
-  })
-})
-
-describe("auto-compaction threshold", () => {
-  test("reserves output tokens before applying the small-window buffer", () => {
-    expect(calculateAutoCompactThreshold(200_000, 16_384)).toBe(170_616)
-  })
-
-  test("uses larger buffers for large context windows", () => {
-    expect(calculateAutoCompactThreshold(500_000)).toBe(450_000)
-    expect(calculateAutoCompactThreshold(1_000_000, 8_192)).toBe(941_808)
-  })
-})
-
-describe("agent progress usage", () => {
-  test("keeps the latest input and cumulative output across progress updates", () => {
-    const tracker = createAgentProgressTracker()
-
-    tracker.update(normalizeProviderUsage({ input_tokens: 100, output_tokens: 10 }))
-    tracker.update(normalizeProviderUsage({ input_tokens: 150, output_tokens: 5 }))
-
-    expect(tracker.snapshot()).toEqual({
-      inputTokens: 150,
-      outputTokens: 15,
-      cacheReadInputTokens: 0,
-      cacheCreationInputTokens: 0,
-      totalTokens: 165,
     })
   })
 })

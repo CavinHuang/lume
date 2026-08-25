@@ -4,6 +4,7 @@ import type { ImWorker } from "../provider-registry";
 import type { ImRuntimeAccount } from "../im-config-manager";
 import type { InboundImRouteMessage } from "../im-message-router";
 import { routeInboundImMessage } from "../im-message-router";
+import { redactSensitiveText } from "../im-log-redaction";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("im-worker-dingtalk");
@@ -22,7 +23,7 @@ export interface DingtalkStreamClient {
 
 export interface CreateDingtalkStreamWorkerInput {
   account: ImRuntimeAccount;
-  routeMessage?: (message: InboundImRouteMessage) => Promise<void> | void;
+  routeMessage?: (message: InboundImRouteMessage) => Promise<void>;
   updateAccount?: (id: string, input: ImAccountUpdateInput) => Promise<void> | void;
   /** 测试注入伪 client;生产省略走默认 DWClient 工厂。 */
   createClient?: (clientId: string, clientSecret: string) => DingtalkStreamClient;
@@ -92,7 +93,10 @@ function defaultCreateClient(clientId: string, clientSecret: string): DingtalkSt
 }
 
 export function createDingtalkStreamWorker(input: CreateDingtalkStreamWorkerInput): ImWorker {
-  const routeMessage = input.routeMessage ?? routeInboundImMessage;
+  const routeMessage: (message: InboundImRouteMessage) => Promise<void> =
+    input.routeMessage ?? (async (m) => {
+      await routeInboundImMessage(m);
+    });
   const clientId = input.account.accountKey ?? "";
   const clientSecret = input.account.token ?? "";
   let client: DingtalkStreamClient | null = null;
@@ -115,7 +119,12 @@ export function createDingtalkStreamWorker(input: CreateDingtalkStreamWorkerInpu
           const parsed = parseDingtalkEvent(event, input.account);
           if (parsed) {
             log.info("收到钉钉消息", { accountId: input.account.id, peerId: parsed.peerId });
-            void routeMessage(parsed);
+            void routeMessage(parsed).catch((error: unknown) => {
+              log.error("钉钉入站路由失败", {
+                accountId: input.account.id,
+                error: error instanceof Error ? error.message : String(error)
+              });
+            });
           }
         } catch (error) {
           log.error("处理钉钉事件出错", { accountId: input.account.id, error: error instanceof Error ? error.message : String(error) });
@@ -125,7 +134,7 @@ export function createDingtalkStreamWorker(input: CreateDingtalkStreamWorkerInpu
       void streamClient.connect().catch((error) => {
         log.error("DWClient 启动失败", { accountId: input.account.id, error: error instanceof Error ? error.message : String(error) });
         running = false;
-        void input.updateAccount?.(input.account.id, { status: "error", lastError: error instanceof Error ? error.message : String(error) });
+        void input.updateAccount?.(input.account.id, { status: "error", lastError: redactSensitiveText(error instanceof Error ? error.message : String(error)) });
       });
     },
     stop() {

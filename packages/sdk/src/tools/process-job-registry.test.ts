@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -34,6 +34,54 @@ describe("process job registry liveness", () => {
     const [job] = loadProcessJobs(root);
 
     expect(job).toMatchObject({ id: "task_stale_heartbeat", status: "running" });
+  });
+
+  test("a same-tick tmp+rename rewrite (running→terminal) must not be served stale from the persisted cache (#622 recipe)", () => {
+    // state.json 由 tmp+rename 原子重写（每次新 inode）。粗粒度时间戳文件系统
+    // （Linux jiffy 粒度）上 running→终态两连写可落进同一 tick，仅 mtime 判等
+    // 的缓存会永久把任务读成 running。复现：两份等长 payload + mtime 钉回同值
+    // （running/stopped 均 7 字节，size 也无从区分），只有 ino 差异可判失效。
+    clearProcessJobs();
+    const jobsRoot = mkdtempSync(join(tmpdir(), "lume-pj-sametick-"));
+    const jobDir = join(jobsRoot, "task_sametick");
+    const statePath = join(jobDir, "state.json");
+    try {
+      const pinnedTime = new Date(Date.now() - 10_000);
+      const writeAtomic = (status: string, updatedAt: number) => {
+        const payload = JSON.stringify({
+          version: 2,
+          id: "task_sametick",
+          subject: "same tick",
+          status,
+          updatedAt,
+          workerPid: process.pid,
+        });
+        mkdirSync(jobDir, { recursive: true });
+        const temporary = `${statePath}.tmp`;
+        writeFileSync(temporary, payload, "utf8");
+        renameSync(temporary, statePath);
+        utimesSync(statePath, pinnedTime, pinnedTime);
+      };
+
+      writeAtomic("running", 1_000);
+      const [first] = loadProcessJobs(jobsRoot);
+      expect(first).toMatchObject({ id: "task_sametick", status: "running" });
+
+      // 同长度终态重写 + 新 inode + mtime 拨回：缓存必须凭 ino 失效并重读
+      writeAtomic("stopped", 2_000);
+      // 越过 HYDRATE_THROTTLE_MS 扫描节流，强制真正走 readPersistedJob
+      const realNow = Date.now;
+      try {
+        Date.now = () => realNow() + 10_000;
+        const [second] = loadProcessJobs(jobsRoot);
+        expect(second).toMatchObject({ id: "task_sametick", status: "stopped" });
+      } finally {
+        Date.now = realNow;
+      }
+    } finally {
+      clearProcessJobs();
+      rmSync(jobsRoot, { recursive: true, force: true });
+    }
   });
 });
 

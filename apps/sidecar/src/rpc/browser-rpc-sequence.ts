@@ -31,3 +31,18 @@ export function browserRpcErrorFromPayload(error: { code?: unknown; message?: un
   const message = typeof error?.message === "string" && error.message ? error.message : code;
   return new BrowserRpcError(code, message);
 }
+
+/**
+ * 出站浏览器请求超时后的错误分类（#659）。
+ *
+ * policy:confirm / tab_browser_auth_request 等的是用户在 desktop 弹窗裁决：
+ * 超时=用户未在时限内响应，动作必然未执行、弹窗仍开着。其余方法的请求已送达
+ * desktop，变更型动作可能已执行——两类不能塌缩成同一错误码，否则对模型是
+ * 双重误导（#606 review）：确认类误报"结果未知"诱导重试叠出第二个弹窗，
+ * 变更类误报"未执行"诱导重复执行。
+ */
+export function classifyBrowserRequestTimeout(method: string): "confirmation_timeout" | "executed_unknown" {
+  return method === "policy:confirm" || method === "tab_browser_auth_request"
+    ? "confirmation_timeout"
+    : "executed_unknown";
+}

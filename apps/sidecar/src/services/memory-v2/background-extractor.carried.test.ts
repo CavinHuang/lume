@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { LumeRunItem } from "../agent-runtime/runner/run-items";
+import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
 import { MemoryCommandService } from "./command-service";
 import { getMemoryConfigPath } from "../infra/config-paths";
 import { getMemoryV2ScopePaths } from "./paths";

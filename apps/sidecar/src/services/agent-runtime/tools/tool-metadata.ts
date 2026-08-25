@@ -196,15 +196,23 @@ registerToolMetadata({
   allowedInPlanMode: true
 });
 
+// 显式注册委派工具元数据:不依赖 inferToolMetadata 名称推断的巧合默认值
 registerToolMetadata({
-  name: "TaskReport",
+  name: "Delegate",
   category: "control",
-  riskLevel: "low",
-  description: "写入当前任务执行结果",
-  allowedInPlanMode: false
+  riskLevel: "medium",
+  description: "委派独立子会话执行任务",
+  allowedInPlanMode: true
 });
 
-// 记忆工具
+registerToolMetadata({
+  name: "WaitForDelegations",
+  category: "read",
+  riskLevel: "low",
+  description: "等待后台委派的子会话完成并收割结果",
+  allowedInPlanMode: true
+});
+
 registerToolMetadata({
   name: "memory.search",
   category: "read",
@@ -455,71 +463,6 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
-  name: "office_validate",
-  category: "read",
-  riskLevel: "low",
-  description: "只读校验 Office OOXML 文档结构",
-  allowedInPlanMode: true
-});
-
-registerToolMetadata({
-  name: "office_unpack",
-  category: "write",
-  riskLevel: "medium",
-  description: "安全解包 Office OOXML 文档到本地目录",
-  allowedInPlanMode: false
-});
-
-registerToolMetadata({
-  name: "office_pack",
-  category: "write",
-  riskLevel: "medium",
-  description: "将解包目录重新打包为 Office OOXML 文档",
-  allowedInPlanMode: false
-});
-
-// office 其余工具：spawn 进程/写文档产物，显式注册避免被 inferToolMetadata 按名称关键词
-// 误推断为 read/low（office_convert/office_clean 等不含任何关键词，曾整批免审批+Plan 放行）
-registerToolMetadata({
-  name: "office_convert",
-  category: "execute",
-  riskLevel: "medium",
-  description: "调用 LibreOffice 无头转换 Office 文档格式（spawn soffice 并写产物）",
-  allowedInPlanMode: false
-});
-
-for (const [name, description] of [
-  ["office_clean", "产出剔除冗余元素的文档副本"],
-  ["docx_create", "生成 docx 文档"],
-  ["pptx_create", "生成 pptx 演示文稿"],
-  ["xlsx_create", "生成 xlsx 表格"],
-  ["pdf_create", "生成 pdf 文档"],
-  ["docx_comment", "向 docx 插入批注"],
-  ["pptx_add_slide", "向 pptx 追加幻灯片"],
-  ["xlsx_recalc", "重算 xlsx 公式"],
-  ["pdf_tools", "PDF 合并/拆分/旋转/水印/加密/提取图片"],
-  ["office_extract_style", "提取文档设计样式并写 yaml 产物"],
-  ["office_thumbnail", "渲染文档页缩略图"],
-  ["office_accept_changes", "产出接受全部修订的文档副本"]
-] as const) {
-  registerToolMetadata({
-    name,
-    category: "write",
-    riskLevel: "medium",
-    description,
-    allowedInPlanMode: false
-  });
-}
-
-registerToolMetadata({
-  name: "info_extract",
-  category: "read",
-  riskLevel: "low",
-  description: "从文档提取结构化信息（纯分析，无产物落盘）",
-  allowedInPlanMode: true
-});
-
-registerToolMetadata({
   name: "weread_generate_note",
   category: "write",
   riskLevel: "medium",
@@ -614,6 +557,25 @@ registerToolMetadata({
   riskLevel: "low",
   description: "管理任务列表",
   allowedInPlanMode: false
+});
+
+// automation_template 是 list/create 复合动作：create 会创建真实定时 agent run
+// （对齐 automation_set 的 write/high）；元数据只能取整工具最保守值，plan 模式
+// 下的纯查看走 read 类工具（automation_list / automation_read）。
+registerToolMetadata({
+  name: "automation_template",
+  category: "write",
+  riskLevel: "high",
+  description: "查看和使用自动化任务模板（create 会创建真实定时任务）",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
+  name: "automation_list",
+  category: "read",
+  riskLevel: "low",
+  description: "搜索和筛选已有自动化任务",
+  allowedInPlanMode: true
 });
 
 // Task 工具（启动子 Agent）

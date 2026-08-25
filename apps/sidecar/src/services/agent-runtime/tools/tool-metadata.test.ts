@@ -88,13 +88,14 @@ describe("tool-metadata", () => {
     expect(isToolAllowedInPlanMode("AskUserQuestion")).toBeTrue();
   });
 
-  test("keeps TaskReport out of plan mode", () => {
-    expect(getToolMetadata("TaskReport")).toMatchObject({
-      category: "control",
-      riskLevel: "low",
+  test("treats automation_template as a write tool and keeps automation_list plan-safe", () => {
+    // create 会创建真实定时 agent run，整工具取最保守值对齐 automation_set
+    expect(getToolMetadata("automation_template")).toMatchObject({
+      category: "write",
+      riskLevel: "high",
       allowedInPlanMode: false
     });
-    expect(isToolAllowedInPlanMode("TaskReport")).toBeFalse();
+    expect(isToolAllowedInPlanMode("automation_list")).toBeTrue();
   });
 
   test("describes UI personalization as a local write tool", () => {
@@ -103,61 +104,6 @@ describe("tool-metadata", () => {
       category: "write",
       riskLevel: "medium",
       allowedInPlanMode: false
-    });
-  });
-
-  test("classifies Office validation as a low-risk read tool", () => {
-    expect(getToolMetadata("office_validate")).toMatchObject({
-      name: "office_validate",
-      category: "read",
-      riskLevel: "low",
-      allowedInPlanMode: true
-    });
-    expect(getToolMetadata("office_unpack")).toMatchObject({
-      name: "office_unpack",
-      category: "write",
-      riskLevel: "medium",
-      allowedInPlanMode: false
-    });
-    expect(getToolMetadata("office_pack")).toMatchObject({
-      name: "office_pack",
-      category: "write",
-      riskLevel: "medium",
-      allowedInPlanMode: false
-    });
-  });
-
-  test("classifies remaining office tools explicitly (名称推断漏网收口)", () => {
-    expect(getToolMetadata("office_convert")).toMatchObject({
-      category: "execute",
-      riskLevel: "medium",
-      allowedInPlanMode: false
-    });
-    for (const name of [
-      "office_clean",
-      "docx_create",
-      "pptx_create",
-      "xlsx_create",
-      "pdf_create",
-      "docx_comment",
-      "pptx_add_slide",
-      "xlsx_recalc",
-      "pdf_tools",
-      "office_extract_style",
-      "office_thumbnail",
-      "office_accept_changes"
-    ]) {
-      expect(getToolMetadata(name)).toMatchObject({
-        category: "write",
-        riskLevel: "medium",
-        allowedInPlanMode: false
-      });
-      expect(isToolAllowedInPlanMode(name)).toBeFalse();
-    }
-    expect(getToolMetadata("info_extract")).toMatchObject({
-      category: "read",
-      riskLevel: "low",
-      allowedInPlanMode: true
     });
   });
 

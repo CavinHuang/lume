@@ -23,6 +23,7 @@ import { VersionUpdateSettings } from './VersionUpdateSettings'
 import { DataManagementSettings } from './DataManagementSettings'
 import { LogSettings } from './LogSettings'
 import { WebSearchSettings } from './WebSearchSettings'
+import { VoiceDictationSettings } from './VoiceDictationSettings'
 import { ArchiveSettings } from './ArchiveSettings'
 import { SkillsSettings } from './SkillsSettings'
 import { BrowserSettings } from './BrowserSettings'
@@ -121,6 +122,7 @@ export function SettingsView() {
             </div>
           )}
           {tab === 'web-search' && <WebSearchSettings />}
+          {tab === 'voice-input' && <VoiceDictationSettings />}
           {tab === 'updates' && <VersionUpdateSettings />}
           {tab === 'data' && <DataManagementSettings />}
           {tab === 'logs' && <LogSettings />}

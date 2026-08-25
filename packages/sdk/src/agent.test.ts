@@ -1,14 +1,29 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createAgent, sessionMessagesFromHistory } from "./agent.js"
+import { FileEditTool } from "./tools/edit.js"
+import { FileReadTool } from "./tools/read.js"
+import { FileStateCache } from "./utils/fileCache.js"
 import { QueryEngine } from "./engine.js"
 import { SkillTool } from "./tools/skill-tool.js"
-import type { SDKMessage, ToolDefinition } from "./types.js"
+import type { SDKMessage, SessionMessage, ToolDefinition } from "./types.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
-import { forkSession, getSessionMessages, saveSession } from "./session.js"
+import { forkSession, loadSession, saveSession } from "./session.js"
 import { clearSkills, getSkill } from "./skills/registry.js"
+
+/** Local stand-in for the removed getSessionMessages(): read the persisted event transcript. */
+async function readSessionMessages(
+  sessionId: string,
+  opts: { includeSystemMessages?: boolean } = {},
+): Promise<SessionMessage[]> {
+  const data = await loadSession(sessionId)
+  const messages = data?.sessionMessages ?? []
+  return opts.includeSystemMessages
+    ? messages
+    : messages.filter((message) => message.role !== "system" && message.role !== "runtime")
+}
 
 function tool(name: string): ToolDefinition {
   return {
@@ -1148,7 +1163,7 @@ describe("Agent session persistence", () => {
       // drain query
     }
 
-    const messages = await getSessionMessages(sessionId, { dir: tempDir })
+    const messages = await readSessionMessages(sessionId)
     expect(messages).toContainEqual(expect.objectContaining({
       role: "user",
       content: [{
@@ -1197,15 +1212,15 @@ describe("Agent session persistence", () => {
       { role: "runtime", content: "current runtime" },
       { role: "user", content: "hello" },
     ])
-    expect((await getSessionMessages(sessionId, { dir: tempDir })).some((message) => message.role === "runtime")).toBe(false)
-    expect((await getSessionMessages(sessionId, { dir: tempDir, includeSystemMessages: true }))).toContainEqual(
+    expect((await readSessionMessages(sessionId)).some((message) => message.role === "runtime")).toBe(false)
+    expect((await readSessionMessages(sessionId, { includeSystemMessages: true }))).toContainEqual(
       expect.objectContaining({ role: "runtime", content: "current runtime" }),
     )
     await agent.close()
 
     const forkedSessionId = `runtime-context-fork-${crypto.randomUUID()}`
     await forkSession(sessionId, forkedSessionId)
-    expect(await getSessionMessages(forkedSessionId, { dir: tempDir, includeSystemMessages: true })).toContainEqual(
+    expect(await readSessionMessages(forkedSessionId, { includeSystemMessages: true })).toContainEqual(
       expect.objectContaining({ role: "runtime", content: "current runtime" }),
     )
 
@@ -1252,7 +1267,7 @@ describe("Agent session persistence", () => {
       }
     }
 
-    const messages = await getSessionMessages(sessionId, { dir: tempDir })
+    const messages = await readSessionMessages(sessionId)
     expect(messages.some((message) =>
       message.role === "user" && JSON.stringify(message.content).includes("original task")
     )).toBe(true)
@@ -1302,7 +1317,7 @@ describe("Agent session persistence", () => {
       checkpoints: {},
     })
 
-    const persisted = JSON.stringify(await getSessionMessages(sessionId, { dir: tempDir }))
+    const persisted = JSON.stringify(await readSessionMessages(sessionId))
     expect(persisted).not.toContain("iVBORw0KGgo=")
     expect(persisted).toContain("shot-1")
     expect(persisted).toContain("image omitted from persisted transcript")
@@ -1317,7 +1332,7 @@ describe("Agent session persistence", () => {
     const provider: LLMProvider = {
       apiType: "anthropic-messages",
       async createMessage() {
-        const messages = await getSessionMessages(sessionId, { dir: tempDir })
+        const messages = await readSessionMessages(sessionId)
         sawUserMessageBeforeProviderResponse = messages.some((message) =>
           message.role === "user" && JSON.stringify(message.content).includes("crash durable task")
         )
@@ -1630,5 +1645,121 @@ describe("Agent queued async events across runs (#413)", () => {
     expect(seen.some((event) => event.type === "system" && event.subtype === "task_notification")).toBe(false)
     expect((agent as any).queuedSdkEvents).toHaveLength(0)
     await agent.close()
+  })
+})
+
+describe("Agent cross-run file-state sharing (#569)", () => {
+  class QueueProvider implements LLMProvider {
+    readonly apiType = "anthropic-messages" as const
+    private index = 0
+
+    constructor(private readonly responses: CreateMessageResponse[]) {}
+
+    async createMessage(_params: CreateMessageParams): Promise<CreateMessageResponse> {
+      const response = this.responses[this.index]
+      this.index += 1
+      if (!response) throw new Error("unexpected provider call")
+      return response
+    }
+  }
+
+  const toolUse = (id: string, name: string, input: Record<string, unknown>): CreateMessageResponse => ({
+    content: [{ type: "tool_use", id, name, input }],
+    stopReason: "tool_use",
+    usage: { input_tokens: 1, output_tokens: 1 },
+  })
+  const endTurn = (): CreateMessageResponse => ({
+    content: [{ type: "text", text: "done" }],
+    stopReason: "end_turn",
+    usage: { input_tokens: 1, output_tokens: 1 },
+  })
+
+  async function drain(agent: ReturnType<typeof createAgent>): Promise<SDKMessage[]> {
+    const events: SDKMessage[] = []
+    for await (const event of agent.query("run")) events.push(event)
+    return events
+  }
+
+  const firstToolResult = (events: SDKMessage[]) =>
+    events.find((event) => event.type === "tool_result") as
+      | { type: string; result?: { is_error: boolean; content?: unknown } }
+      | undefined
+
+  // 产品宿主形态：每条用户消息新建 Agent 实例，线程级 cache 注入每个实例。
+  test("read in message one lets a fresh Agent edit in message two", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-agent-filestate-"))
+    tempDirs.push(root)
+    const filePath = join(root, "note.txt")
+    writeFileSync(filePath, "alpha\n", "utf8")
+    const sharedCache = new FileStateCache()
+
+    // 消息 1：Read 建立读记录。
+    const first = createAgent({
+      cwd: root,
+      persistSession: false,
+      tools: [FileReadTool],
+      provider: new QueueProvider([toolUse("r1", "Read", { file_path: filePath }), endTurn()]),
+      fileStateCache: sharedCache,
+    })
+    const readResult = firstToolResult(await drain(first))
+    expect(readResult?.result?.is_error).toBe(false)
+
+    // 消息 2：全新 Agent，直接 Edit——跨消息不重读即可编辑（#569 主诉闭环）。
+    const second = createAgent({
+      cwd: root,
+      persistSession: false,
+      tools: [FileEditTool],
+      provider: new QueueProvider([
+        toolUse("e1", "Edit", { file_path: filePath, old_string: "alpha", new_string: "beta" }),
+        endTurn(),
+      ]),
+      fileStateCache: sharedCache,
+    })
+    const editResult = firstToolResult(await drain(second))
+    expect(editResult?.result?.is_error).toBe(false)
+    expect(readFileSync(filePath, "utf8")).toBe("beta\n")
+
+    await first.close()
+    await second.close()
+  })
+
+  test("external modification between messages trips the stale guard across Agents", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-agent-filestate-"))
+    tempDirs.push(root)
+    const filePath = join(root, "note.txt")
+    writeFileSync(filePath, "alpha\n", "utf8")
+    const sharedCache = new FileStateCache()
+
+    const first = createAgent({
+      cwd: root,
+      persistSession: false,
+      tools: [FileReadTool],
+      provider: new QueueProvider([toolUse("r1", "Read", { file_path: filePath }), endTurn()]),
+      fileStateCache: sharedCache,
+    })
+    await drain(first)
+
+    // 消息间隙外部进程改写文件；强制 mtime 前移避免同毫秒抖动。
+    writeFileSync(filePath, "tampered\n", "utf8")
+    const stats = statSync(filePath)
+    utimesSync(filePath, stats.atime, new Date(stats.mtimeMs + 5000))
+
+    const second = createAgent({
+      cwd: root,
+      persistSession: false,
+      tools: [FileEditTool],
+      provider: new QueueProvider([
+        toolUse("e1", "Edit", { file_path: filePath, old_string: "tampered", new_string: "hacked" }),
+        endTurn(),
+      ]),
+      fileStateCache: sharedCache,
+    })
+    const editResult = firstToolResult(await drain(second))
+    expect(editResult?.result?.is_error).toBe(true)
+    expect(String(editResult?.result?.content)).toContain("has been modified since it was read")
+    expect(readFileSync(filePath, "utf8")).toBe("tampered\n")
+
+    await first.close()
+    await second.close()
   })
 })

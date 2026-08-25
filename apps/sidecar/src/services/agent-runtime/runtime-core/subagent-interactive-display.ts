@@ -1,4 +1,4 @@
-import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
+import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
 
 function normalizeLabel(value: unknown): string | undefined {
   if (typeof value !== "string") {

@@ -154,14 +154,67 @@ describe("automation-manager", () => {
     expect(listed[0]?.systemAction).toBe("routine");
   });
 
-  test("索引损坏时应自动备份并回退空列表", () => {
+  test("索引损坏时备份副本并检疫写入，修复后解除(#647 P2-22)", () => {
     const indexPath = getAutomationJobsPath();
     writeFileSync(indexPath, "{broken-json", "utf-8");
-    const jobs = listAutomationJobs();
-    expect(jobs).toEqual([]);
-    expect(existsSync(indexPath)).toBeFalse();
+
+    // 读降级为空表，但损坏文件保留在位 + 备份副本生成
+    expect(listAutomationJobs()).toEqual([]);
+    expect(existsSync(indexPath)).toBeTrue();
     const automationDir = join(tempConfigDir, "automation");
     const files = existsSync(automationDir) ? readdirSync(automationDir) : [];
     expect(files.some((name) => name.startsWith("jobs.json.corrupt-"))).toBeTrue();
+
+    // 检疫期内写操作被阻止（防静默覆盖存量任务），且读路径不受影响
+    expect(() =>
+      createAutomationJob({ name: "被检疫", schedule: { type: "manual" }, prompt: "x" }),
+    ).toThrow("已暂停写入");
+    expect(listAutomationJobs()).toEqual([]);
+
+    // 用户删除损坏文件 = 显式放弃，恢复写入；备份副本必须留存（唯一数据副本）
+    rmSync(indexPath, { force: true });
+    const created = createAutomationJob({ name: "重新开始", schedule: { type: "manual" }, prompt: "x" });
+    expect(created.name).toBe("重新开始");
+    const filesAfter = existsSync(automationDir) ? readdirSync(automationDir) : [];
+    expect(filesAfter.some((name) => name.startsWith("jobs.json.corrupt-"))).toBeTrue();
+  });
+
+  test("新一代损坏获得独立备份，同代不重复堆积(#647 P2-22)", () => {
+    const indexPath = getAutomationJobsPath();
+    const automationDir = join(tempConfigDir, "automation");
+    const corruptBackups = () =>
+      (existsSync(automationDir) ? readdirSync(automationDir) : []).filter((name) => name.startsWith("jobs.json.corrupt-"));
+
+    // 第一代损坏 → 一份备份
+    writeFileSync(indexPath, "{gen-1", "utf-8");
+    listAutomationJobs();
+    expect(corruptBackups().length).toBe(1);
+
+    // 用户修复 → 检疫解除 → 新建任务（代间数据）
+    rmSync(indexPath, { force: true });
+    createAutomationJob({ name: "代间任务", schedule: { type: "manual" }, prompt: "x" });
+
+    // 第二代损坏：旧代备份不得抑制新一代备份
+    writeFileSync(indexPath, "{gen-2", "utf-8");
+    listAutomationJobs();
+    expect(corruptBackups().length).toBe(2);
+
+    // 同代重复读不再堆积
+    listAutomationJobs();
+    listAutomationJobs();
+    expect(corruptBackups().length).toBe(2);
+  });
+
+  test("索引完好时检疫态自动解除(#647 P2-22)", () => {
+    const indexPath = getAutomationJobsPath();
+    writeFileSync(indexPath, "{broken-json", "utf-8");
+    listAutomationJobs(); // 进入检疫
+
+    // 用户手工把文件修好 → 下一次读成功即解除检疫
+    writeFileSync(indexPath, JSON.stringify({ version: 1, jobs: [] }), "utf-8");
+    expect(listAutomationJobs()).toEqual([]);
+
+    const created = createAutomationJob({ name: "恢复写入", schedule: { type: "manual" }, prompt: "x" });
+    expect(created.name).toBe("恢复写入");
   });
 });

@@ -61,6 +61,7 @@ describe("core workflow hooks", () => {
           items: [{
             id: "mem-1",
             kind: "preference",
+            semanticRole: "preference",
             scope: "global",
             status: "active",
             statement: "hello",
@@ -164,6 +165,7 @@ describe("core workflow hooks", () => {
       memoryContextUsedItems: [{
         id: "mem-1",
         kind: "preference",
+        semanticRole: "preference",
         scope: "global",
         status: "active",
         statement: "hello",

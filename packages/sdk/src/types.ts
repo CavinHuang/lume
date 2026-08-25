@@ -26,7 +26,6 @@ export type {
   AgentContextCompactionMetadata,
   AgentContextCompactionStage,
   AgentContextCompactionTrigger,
-  AgentProgressUsage,
   BillingUsageRecord,
   BillingUsageSummary,
   CompactionFailureReason,
@@ -57,7 +56,6 @@ export type {
   SDKMessage,
   SDKPartialMessage,
   SDKPermissionDenial,
-  SDKPostTurnSummaryMessage,
   SDKPromptSuggestionMessage,
   SDKRateLimitEvent,
   SDKRateLimitInfo,
@@ -222,6 +220,8 @@ export interface ToolContext {
   sandbox?: SandboxSettings
   toolConfig?: Record<string, unknown>
   fileStateCache?: import('./utils/fileCache.js').FileStateCache
+  /** Per-run consecutive Edit not-found failures keyed by resolved path; drives the escalating guidance (#569). */
+  editFailureCounts?: Map<string, number>
   permissionMode?: PermissionMode
   emitEvent?: (event: SDKMessage) => void
   /** Live progress channel: events are delivered to the host immediately while
@@ -464,7 +464,6 @@ export interface InitializationResult {
 export interface ContextUsageCategory {
   name: string
   tokens: number
-  color: string
   isDeferred?: boolean
 }
 
@@ -474,14 +473,6 @@ export interface ContextUsageResult {
   maxTokens: number
   rawMaxTokens: number
   percentage: number
-  gridRows?: Array<Array<{
-    color: string
-    isFilled: boolean
-    categoryName: string
-    tokens: number
-    percentage: number
-    squareFullness: number
-  }>>
   model: string
   memoryFiles: Array<{ path: string; type: string; tokens: number }>
   deferredBuiltinTools?: Array<{ name: string; tokens: number; isLoaded: boolean }>
@@ -553,31 +544,10 @@ export interface RewindFilesResult {
   deletions?: number
 }
 
-export interface ReloadPluginsResult {
-  commands: SlashCommand[]
-  agents: Array<{ name: string; description: string }>
-  plugins: Array<{ name: string; path: string; source?: string }>
-}
-
 export interface ListSessionsOptions {
   dir?: string
   limit?: number
   offset?: number
-}
-
-export interface GetSessionMessagesOptions {
-  dir?: string
-  limit?: number
-  offset?: number
-  includeSystemMessages?: boolean
-}
-
-export interface GetSessionInfoOptions {
-  dir?: string
-}
-
-export interface SessionMutationOptions {
-  dir?: string
 }
 
 export interface ForkSessionOptions {
@@ -607,16 +577,6 @@ export interface Query {
       | SDKUserMessage
       | AsyncIterable<string | ContentBlockParam[] | SDKUserMessage>,
   ): Promise<void>
-  interrupt(): Promise<void>
-  setPermissionMode(mode: PermissionMode): Promise<void>
-  setModel(model?: string): Promise<void>
-  setMaxThinkingTokens(maxThinkingTokens: number | null): Promise<void>
-  setCwd(cwd: string): Promise<void>
-  getInitializationResult(): Promise<InitializationResult>
-  getContextUsage(): Promise<ContextUsageResult>
-  reloadPlugins(): Promise<ReloadPluginsResult>
-  rewindFiles(userMessageId: string, dryRun?: boolean): Promise<RewindFilesResult>
-  stopTask(taskId: string): Promise<void>
 }
 
 export interface AgentOptions {
@@ -736,10 +696,17 @@ export interface AgentOptions {
   sessionId?: string
   /** Host Run identity for durable tool recovery. */
   runId?: string
+  /** Subagent delegation identity for usage attribution. */
+  subagentRunId?: string
   /** Host-owned exact tool continuations restored after a cold start. */
   toolContinuations?: PersistedToolContinuation[]
   /** Enable file checkpointing (for rewindFiles) */
   enableFileCheckpointing?: boolean
+  /** Session-owned read-state shared by every engine this Agent creates (#569).
+   *  Hosts that build one Agent per user message pass the same instance for all
+   *  Agents of a thread so stale-read protection survives message boundaries.
+   *  Omit to give each Agent a private cache (per-thread isolation). */
+  fileStateCache?: import('./utils/fileCache.js').FileStateCache
   /** Sandbox configuration */
   sandbox?: SandboxSettings
   /** Load settings from filesystem */
@@ -840,6 +807,8 @@ export interface QueryEngineConfig {
   sessionId?: string
   /** Host Run identity for durable tool recovery. */
   runId?: string
+  /** Subagent delegation identity for usage attribution. */
+  subagentRunId?: string
   /** Execute or inject persisted tool calls before the next model request. */
   toolContinuations?: PersistedToolContinuation[]
   permissionMode?: PermissionMode
@@ -847,6 +816,9 @@ export interface QueryEngineConfig {
   additionalDirectories?: string[]
   sandbox?: SandboxSettings
   toolConfig?: Record<string, unknown>
+  /** Session-owned read-state shared across runs of one Agent/thread (#569).
+   *  Engines without it fall back to a private per-run cache. */
+  fileStateCache?: import('./utils/fileCache.js').FileStateCache
   artifactsRoot?: string
   onToolExecution?: ToolContext['onToolExecution']
   onBeforeToolExecution?: ToolContext['onBeforeToolExecution']

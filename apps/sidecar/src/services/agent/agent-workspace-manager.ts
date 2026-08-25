@@ -32,7 +32,7 @@ import {
   getWorkspaceSkillsDir
 } from "../infra/config-paths";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
-import { seedDefaultSkills } from "../skills/default-skills-seeder";
+import { REMOVED_BUNDLE_SKILLS, seedDefaultSkills } from "../skills/default-skills-seeder";
 import { ensureBootstrapFiles } from "../system/workspace-bootstrap-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createLogger } from "../infra/logger";
@@ -225,9 +225,19 @@ function copyDefaultSkills(workspaceSlug: string): void {
     if (copiedCount > 0) {
       log.info("default skills copied to workspace", { workspaceSlug, copiedCount });
     }
+    pruneRemovedBundleSkills(targetDir);
   } catch (error) {
     log.warn("default skills copy skipped", { workspaceSlug, error });
     // default-skills 不存在或复制失败时跳过
+  }
+}
+
+function pruneRemovedBundleSkills(targetDir: string): void {
+  for (const slug of REMOVED_BUNDLE_SKILLS) {
+    const target = join(targetDir, slug);
+    if (!existsSync(target)) continue;
+    rmSync(target, { recursive: true, force: true });
+    log.info("removed bundle skill pruned from workspace", { skillSlug: slug });
   }
 }
 

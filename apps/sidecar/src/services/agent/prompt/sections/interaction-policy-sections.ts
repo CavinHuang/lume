@@ -59,24 +59,3 @@ export function buildBrowserFirstSection(availableTools: Set<string>): string | 
    - 已确认 browser/relay 当前不可用，且重试后仍失败
 4. 回退到 WebSearch 时，必须在回复中明确说明回退原因（例如：relay 未连接 / 浏览器线程不可用）。`;
 }
-
-export function hasOfficeToolSet(availableTools: Set<string>): boolean {
-  return availableTools.has("xlsx_create")
-    || availableTools.has("office_unpack")
-    || availableTools.has("office_convert")
-    || availableTools.has("info_extract");
-}
-
-export function buildOfficeToolsSection(availableTools: Set<string>): string | null {
-  if (!hasOfficeToolSet(availableTools)) return null;
-
-  // 具体工具的路由教学由各工具 schema description 承载（xlsx_create/office_unpack 等均自足），
-  // 此段只声明意图层规则与回退条件
-  const officeToolNames = ["xlsx_create", "office_unpack", "docx_create", "pptx_create", "pdf_create", "office_convert", "info_extract", "office_validate"]
-    .filter((name) => availableTools.has(name));
-
-  return `## Office 文档处理策略（强制）
-
-当用户上传或提及 Office 文档（xlsx、docx、pptx、pdf）时，必须优先使用内置的 Office 工具（${officeToolNames.join("、")}），不要通过 bash 执行 Python 代码来处理文档。
-仅在 Office 工具明确不可用（被工具策略禁用）或需要 openpyxl/docx 不支持的特殊库（如 pandas 复杂数据分析）时才回退 bash + Python。`;
-}

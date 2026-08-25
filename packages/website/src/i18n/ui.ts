@@ -7,7 +7,9 @@ export type Lang = keyof typeof languages;
 
 export const ui = {
   zh: {
+    'nav.workflow': '工作方式',
     'nav.features': '功能',
+    'nav.team': '团队',
     'nav.docs': '文档',
     'nav.changelog': '更新日志',
     'nav.download': '下载',
@@ -19,6 +21,42 @@ export const ui = {
     'hero.ctaDownload': '下载 Lume',
     'hero.ctaGithub': 'GitHub',
     'hero.screenshotAlt': 'Lume 主界面截图',
+    'hero.meta': 'Windows · macOS · 免费 · 开源 MIT',
+    'hero.teamHint': '你的 AI 团队，整装待发',
+
+    'team.title': '一支有性格的 AI 团队',
+    'team.desc':
+      '13 位角色各有所长。主线程理解任务后，把工作分发给最合适的人——他们不是模板，每个人都有自己的名字、语气和做事方式。',
+    'team.photoAlt': 'Lume 角色团队合影',
+    'team.explorer.role': '探索员',
+    'team.explorer.desc': '代码库探索、文件检索、上下文收集和结构梳理。',
+    'team.planner.role': '规划师',
+    'team.planner.desc': '只读实现规划、架构权衡、关键文件识别和执行步骤设计。',
+    'team.code-reviewer.role': '代码审查员',
+    'team.code-reviewer.desc': '代码审查、回归风险识别、边界条件检查和实现质量复核。',
+    'team.researcher.role': '调研员',
+    'team.researcher.desc': '搜索、调研、事实核查和本地资料梳理。',
+    'team.translator.role': '翻译官',
+    'team.translator.desc': '多语言翻译、本地化和语境校准。',
+    'team.writer.role': '作家',
+    'team.writer.desc': '长文写作、品牌文案、文章结构和报告表达。',
+    'team.voice.role': '配音师',
+    'team.voice.desc': 'TTS 脚本、播客文案、朗读节奏和口播改写。',
+    'team.designer.role': '设计工程师',
+    'team.designer.desc': '前端设计、页面实现、可视化、PPT/Word 版式和交互原型。',
+    'team.artist.role': '画师',
+    'team.artist.desc': 'AI 图像生成、插画方向、视觉概念和提示词工程。',
+    'team.analyst.role': '分析师',
+    'team.analyst.desc': '数据分析、统计建模、表格处理和图表解释。',
+    'team.quant.role': '量化交易分析师',
+    'team.quant.desc': '市场数据、技术指标、量化策略和金融资讯分析。',
+    'team.novelist.role': '小说家',
+    'team.novelist.desc': '长篇小说、世界观、大纲、章节续写和伏笔管理。',
+    'team.developer.role': '开发者',
+    'team.developer.desc': '全栈开发、脚本自动化、调试、重构和代码审查。',
+
+    'models.title': '接你想用的模型',
+    'models.desc': '通过 OpenAI 兼容接口接入主流大模型，还能按任务给不同角色分配不同模型。',
 
     'why.title': '为什么是 Lume',
     'why.para1':
@@ -32,11 +70,11 @@ export const ui = {
     'features.memory.title': '持久记忆',
     'features.memory.desc': '三层作用域 × 六种类型，新对话中自然召回；矛盾记忆并存，取舍由你。',
     'features.personas.title': '角色团队',
-    'features.personas.desc': '11 位有独立风格与专长的角色，主线程理解任务后分发给最合适的人。',
+    'features.personas.desc': '13 位有独立风格与专长的角色，主线程理解任务后分发给最合适的人。',
     'features.skills.title': 'Skills 与 MCP',
     'features.skills.desc': 'SKILL.md 热加载的技能体系 + 标准 MCP 客户端，能力无限扩展。',
     'features.tools.title': '完整工具集',
-    'features.tools.desc': '文件系统、Bash、Office 文档、Web 搜索与抓取、图片生成。',
+    'features.tools.desc': '文件系统、Bash、Web 搜索与抓取、图片生成。',
     'features.automation.title': '自动化',
     'features.automation.desc': 'cron 定时任务与每日日程，到点自动执行并把结果推送到指定渠道。',
     'features.im.title': 'IM 渠道',
@@ -85,7 +123,9 @@ export const ui = {
     'lang.switch': '切换语言',
   },
   en: {
+    'nav.workflow': 'How it works',
     'nav.features': 'Features',
+    'nav.team': 'Team',
     'nav.docs': 'Docs',
     'nav.changelog': 'Changelog',
     'nav.download': 'Download',
@@ -97,6 +137,42 @@ export const ui = {
     'hero.ctaDownload': 'Download Lume',
     'hero.ctaGithub': 'GitHub',
     'hero.screenshotAlt': 'Lume app screenshot',
+    'hero.meta': 'Windows · macOS · Free · Open source (MIT)',
+    'hero.teamHint': 'Your AI team, ready to go',
+
+    'team.title': 'A Team with Personality',
+    'team.desc':
+      'Fourteen specialists, each with a name, a voice and their own way of working. The main thread understands the task first, then hands it to the best fit — they are not templates.',
+    'team.photoAlt': 'The Lume agent team',
+    'team.explorer.role': 'Explorer',
+    'team.explorer.desc': 'Codebase exploration, file lookup, context gathering and structure mapping.',
+    'team.planner.role': 'Planner',
+    'team.planner.desc': 'Read-only implementation planning, architecture trade-offs, key-file identification and step design.',
+    'team.code-reviewer.role': 'Code Reviewer',
+    'team.code-reviewer.desc': 'Code review, regression risk, boundary conditions and implementation quality.',
+    'team.researcher.role': 'Researcher',
+    'team.researcher.desc': 'Web search, investigation, fact-checking and local material analysis.',
+    'team.translator.role': 'Translator',
+    'team.translator.desc': 'Multilingual translation, localization and tone calibration.',
+    'team.writer.role': 'Writer',
+    'team.writer.desc': 'Long-form writing, brand copy, article structure and report expression.',
+    'team.voice.role': 'Voice Artist',
+    'team.voice.desc': 'TTS scripts, podcast copy, reading rhythm and spoken-word rewrites.',
+    'team.designer.role': 'Design Engineer',
+    'team.designer.desc': 'Frontend design, page implementation, visualization, PPT/Word layout and prototypes.',
+    'team.artist.role': 'Illustrator',
+    'team.artist.desc': 'AI image generation, illustration direction, visual concepts and prompt engineering.',
+    'team.analyst.role': 'Data Analyst',
+    'team.analyst.desc': 'Data analysis, statistical modeling, spreadsheet processing and chart interpretation.',
+    'team.quant.role': 'Quant Analyst',
+    'team.quant.desc': 'Market data, technical indicators, quant strategies and financial news analysis.',
+    'team.novelist.role': 'Novelist',
+    'team.novelist.desc': 'Long fiction, worldbuilding, outlines, chapter continuation and foreshadowing.',
+    'team.developer.role': 'Developer',
+    'team.developer.desc': 'Full-stack development, scripting, debugging, refactoring and code review.',
+
+    'models.title': 'Bring Your Own Model',
+    'models.desc': 'Connect mainstream models through an OpenAI-compatible API — and assign different models to different tasks.',
 
     'why.title': 'Why Lume',
     'why.para1':
@@ -110,11 +186,11 @@ export const ui = {
     'features.memory.title': 'Persistent Memory',
     'features.memory.desc': 'Three scopes × six types, recalled naturally in new conversations; contradictions coexist — you decide.',
     'features.personas.title': 'Persona Team',
-    'features.personas.desc': '11 characters with distinct styles and specialties; the main thread routes each task to the best fit.',
+    'features.personas.desc': '13 characters with distinct styles and specialties; the main thread routes each task to the best fit.',
     'features.skills.title': 'Skills & MCP',
     'features.skills.desc': 'Hot-reloading SKILL.md skill system plus a standard MCP client — extend it endlessly.',
     'features.tools.title': 'Full Toolset',
-    'features.tools.desc': 'File system, Bash, Office documents, web search & fetch, image generation.',
+    'features.tools.desc': 'File system, Bash, web search & fetch, image generation.',
     'features.automation.title': 'Automation',
     'features.automation.desc': 'Cron jobs and daily schedules run on time and push results to your channels.',
     'features.im.title': 'IM Channels',
@@ -172,7 +248,7 @@ export function t(lang: Lang, key: UiKey): string {
 
 /** 从 URL 推断当前语言：默认 zh（无前缀），/en/ 前缀为 en */
 export function getLangFromUrl(url: URL): Lang {
-  return url.pathname === '/en' || url.pathname.startsWith('/en/') ? 'en' : 'zh';
+  return /(^|\/)en(?:\/|$)/.test(url.pathname) ? 'en' : 'zh';
 }
 
 /** 当前路径的语言镜像：/foo ↔ /en/foo */

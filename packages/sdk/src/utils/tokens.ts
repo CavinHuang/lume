@@ -139,23 +139,6 @@ export function estimateSystemPromptTokens(systemPrompt: string): number {
 }
 
 /**
- * Count tokens from API usage response.
- */
-export function getTokenCountFromUsage(usage: {
-  input_tokens: number
-  output_tokens: number
-  cache_creation_input_tokens?: number
-  cache_read_input_tokens?: number
-}): number {
-  return (
-    usage.input_tokens +
-    usage.output_tokens +
-    (usage.cache_creation_input_tokens || 0) +
-    (usage.cache_read_input_tokens || 0)
-  )
-}
-
-/**
  * Get the context window size for a model.
  */
 export function getContextWindowSize(model: string): number {
@@ -186,18 +169,6 @@ export function getContextWindowSize(model: string): number {
 
   // Default
   return 200_000
-}
-
-/**
- * Auto-compact buffer: trigger compaction when within this many tokens of the limit.
- */
-export const AUTOCOMPACT_BUFFER_TOKENS = 13_000
-
-/**
- * Get the auto-compact threshold for a model.
- */
-export function getAutoCompactThreshold(model: string): number {
-  return getContextWindowSize(model) - AUTOCOMPACT_BUFFER_TOKENS
 }
 
 /**

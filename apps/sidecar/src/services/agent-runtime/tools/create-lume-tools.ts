@@ -1,4 +1,5 @@
 import type { SDKMessage, ToolDefinition } from "@lume/agent-sdk";
+import { getRuntimeHostPorts } from "../host-ports";
 import type { AgentAskUserQuestionRequest, AgentBrowserAuthRequest, AgentDesktopActionRequest, AgentToolPermissionRequest, DesktopActionVisualRuntimeEvent } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import type { MemoryToolPolicy } from "../../memory-v2/policy";
@@ -17,7 +18,6 @@ import { getImCliBaseDir } from "../../infra/config-paths";
 import { resolveEnabledMemoryToolNames } from "./tool-policy-matcher";
 import { createSdkReadingTools } from "./reading/create-reading-tools";
 import { createPersonalizeUiTool } from "./ui/create-personalize-ui-tool";
-import { createSdkOfficeTools } from "./office/create-office-tools";
 import { createRoutineTools } from "./routine/create-routine-tools";
 import { createImageGenTools } from "./image-gen/create-image-gen-tools";
 import { createNodeReplMcpTools } from "./node-repl/create-node-repl-tools";
@@ -26,7 +26,6 @@ import { createComputerUseVisionRouter } from "./computer-use/computer-use-visio
 import { getComputerUseSessionRegistry } from "./computer-use/computer-use-session";
 import type { ResolvedComputerUseSurface } from "./computer-use/computer-use-surface";
 import { createComputerUseRequestBridge } from "./node-repl/node-repl-computer-use-bridge";
-import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
 import { createPlanningTodoTools } from "./planning/create-planning-todo-tools";
 import { createSuggestionTools } from "./suggest/create-suggestion-tools";
 import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
@@ -71,7 +70,7 @@ export interface CreateLumeRuntimeToolsOutput {
 }
 
 export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): CreateLumeRuntimeToolsOutput {
-  const threadMeta = getAgentThreadMeta(input.threadId);
+  const threadMeta = getRuntimeHostPorts().getThreadMeta(input.threadId);
   const writeAllowed = input.threadType !== "subagent" && input.chatType !== "group" && input.chatType !== "channel";
   const dreamProfile = threadMeta?.memoryProfile?.kind === "dream" ? threadMeta.memoryProfile : undefined;
   const enabledMemoryToolNames = [
@@ -122,7 +121,6 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   ];
   const readingTools = createSdkReadingTools();
   const uiTools = [createPersonalizeUiTool({ threadId: input.threadId })];
-  const officeTools = createSdkOfficeTools();
   const routineTools = createRoutineTools({
     workspaceId: input.workspaceId,
   });
@@ -187,7 +185,6 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...createSdkConnectorTools(),
     ...readingTools,
     ...uiTools,
-    ...officeTools,
     ...routineTools,
     ...suggestionTools,
     ...imageGenTools,

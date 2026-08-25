@@ -33,6 +33,7 @@ import {
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
 import { getAgentSubmissionStore } from "./agent-submission-store";
+import { runGuidanceStore } from "../agent-runtime/guidance/run-guidance-store";
 import { getPlanningTodoStore } from "../planning/planning-todo-store";
 import { agentLifecycleLocks } from "./agent-lifecycle-lock-manager";
 import {
@@ -41,6 +42,8 @@ import {
 } from "./agent-message-versioning-service";
 import { readAgentMessageVersionStore, resetAgentMessageVersionStore } from "./agent-message-version-store";
 import { resolveAgentDefaultStrategy } from "../channel/model-selection";
+import { clearRuntimeFileAccessLedger } from "../agent-runtime/tools/file-access-ledger";
+import { clearThreadFileStateCache } from "../agent-runtime/tools/thread-file-state-cache";
 import { extractAssistantReasoningText, extractRenderableAssistantText } from "./content-extraction";
 import {
   createOrResumeRuntimeCoreSessionManager,
@@ -61,7 +64,7 @@ const log = createLogger("agent-thread-manager");
 
 type FileContextMode = "newRoot" | "inherit" | "fork";
 
-interface CreateAgentThreadOptions {
+export interface CreateAgentThreadOptions {
   fileContextMode?: FileContextMode;
   fileContextId?: string;
   memoryProfile?: AgentThreadMeta["memoryProfile"];
@@ -489,7 +492,7 @@ export function appendAgentTranscriptMessage(
   }
 }
 
-type AgentThreadMetaUpdates = Partial<
+export type AgentThreadMetaUpdates = Partial<
   Pick<
     AgentThreadMeta,
     "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "fileContextId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource" | "status" | "trashedAt"
@@ -599,6 +602,10 @@ export function deleteAgentThread(id: string): void {
   void import("../agent-runtime/tools/node-repl/node-repl-runtime-registry")
     .then((module) => module.getNodeReplRuntimeRegistry().shutdown(id))
     .catch(() => undefined);
+  // 跨消息 stale 防护的两层读记录随线程删除回收（#569）：
+  // ledger=完整读门控，thread fileStateCache=mtime 新鲜度。
+  clearRuntimeFileAccessLedger(id);
+  clearThreadFileStateCache(id);
   try { deleteAgentThreadLocked(id); } finally { release(); }
 }
 
@@ -695,6 +702,8 @@ function deleteAgentThreadLocked(id: string): void {
   }
 
   getAgentSubmissionStore().deleteThread(id);
+  // #517:guidance 是纯内存态,线程硬删除时同步清理防 Map 只增不减
+  runGuidanceStore.discardThread(id);
   if (cleanupPending) {
     planningStore.advanceOperation(operationId, { phase: "cleanup_pending", status: "partial", recoverable: true, threadId: id, error: "thread file cleanup pending" });
   } else {

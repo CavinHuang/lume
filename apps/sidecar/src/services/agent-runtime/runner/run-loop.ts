@@ -4,11 +4,11 @@ import {
   appendSdkMessage,
   createAgentStreamAccumulatorState,
   hasRenderableAssistantOutput
-} from "../../agent/agent-stream-accumulator";
+} from "./agent-stream-accumulator";
 import { createLogger } from "../../infra/logger";
 import { getThreadEventBus } from "../events/thread-event-bus";
 import { publishRunDomainEvent } from "../events/bus-bridge";
-import type { AgentRuntimeEmitter } from "./types";
+import type { AgentRuntimeEmitter } from "../runtime-core/types";
 import type { LumeRunObserver } from "./run-observer";
 
 const log = createLogger("run-loop");
@@ -81,21 +81,34 @@ async function* teeLifecycleProjection(
   const pump = (async () => {
     try {
       for await (const event of projectLifecycle(projected, { runId: target.runId })) {
-        // F3 互斥标记:见到 run.end 即通知调用方终值已由投影链交付
-        if (event.kind === "run" && event.phase === "end") target.onRunEnd?.();
         // 前提钉死(#257 后语义):bus.publish 对非 update 相位同步落盘后 resolve;对 update
         // 相位 resolve 即已入持久折叠缓冲(≤500ms 窗口,且任何非 update 相位先冲盘)。投影链
         // 终点必发 run.end(非 update),tee finally 的 await pump 排空即 run 边界全部落盘。
         // 若改为真异步 fs,fire-and-forget 的 publish 会让 await pump 不再等落盘——改前必须
         // 同步改造 tee(pump 内 await publish)。
-        // 用 .catch 而非同步 try/catch:后者对异步 reject 无效,.catch 兼容两种时序。
-        void bus.publish(target.threadId, (event as SdkLifecycleEvent<SdkLifecycleDetail>).runId, event)
-          .catch((error) => {
-            log.warn("lifecycle 事件 publish 失败", {
-              threadId: target.threadId,
-              error: error instanceof Error ? error.message : String(error)
+        // publish 在 seq 分配后同步落盘,Windows AV 锁文件/磁盘满会同步 throw——
+        // .catch 挂不上同步段,必须 try/catch 包住,否则单次失败终结整个泵、
+        // 后续事件(含 run.end 终值)全部不投影,线程永久卡 streaming(#550)
+        let enqueued = false;
+        try {
+          void bus.publish(target.threadId, (event as SdkLifecycleEvent<SdkLifecycleDetail>).runId, event)
+            .catch((error) => {
+              log.warn("lifecycle 事件 publish 失败", {
+                threadId: target.threadId,
+                error: error instanceof Error ? error.message : String(error)
+              });
             });
+          enqueued = true;
+        } catch (error) {
+          log.warn("lifecycle 事件 publish 同步失败", {
+            threadId: target.threadId,
+            error: error instanceof Error ? error.message : String(error)
           });
+        }
+        // F3 互斥标记:终值事件成功入队才通知调用方"已由投影链交付"。置位必须在
+        // publish 之后——若终值 append 自身 throw 时标记已置位,LumeRunner 的
+        // 补发会被跳过,#550 症状经此缝隙复现(端到端实证)
+        if (enqueued && event.kind === "run" && event.phase === "end") target.onRunEnd?.();
       }
     } catch (error) {
       log.warn("lifecycle 投影失败", {

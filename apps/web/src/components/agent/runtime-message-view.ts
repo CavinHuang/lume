@@ -8,6 +8,8 @@ export interface RuntimeToolCallView {
   status: 'running' | 'completed' | 'failed'
   output?: unknown
   isError?: boolean
+  /** Live output tail while the tool is running (Bash streaming snapshots); cleared on completion. */
+  streamedOutput?: string
   permissionState?: 'timeout'
   subagentRunId?: string
   subagentStatus?: 'running' | 'completed' | 'errored'

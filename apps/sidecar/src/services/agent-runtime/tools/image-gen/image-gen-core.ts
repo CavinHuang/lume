@@ -1,7 +1,6 @@
 import type { Channel, ProviderType } from "@lume/shared";
-import { decryptApiKey, resolveChannelModelBinding } from "../../../channel/channel-manager";
+import { getRuntimeHostPorts } from "../../host-ports";
 import { getEffectiveLumeConfig } from "../../../system/lume-config-service";
-import { resolveThreadAttachmentPath } from "../../../agent/agent-files-service";
 import { createLogger } from "../../../infra/logger";
 import { callImageHttp } from "./image-gen-http";
 import { saveImageOutput } from "./image-gen-output";
@@ -45,14 +44,14 @@ export interface ImageGenDeps {
 
 const defaultDeps: ImageGenDeps = {
   resolveBinding: (modelRef) => {
-    const binding = resolveChannelModelBinding(modelRef);
+    const binding = getRuntimeHostPorts().resolveChannelModelBinding(modelRef);
     return binding ? { channel: binding.channel, modelId: binding.modelId } : null;
   },
-  decryptKey: decryptApiKey,
+  decryptKey: (...args) => getRuntimeHostPorts().decryptApiKey(...args),
   callHttp: callImageHttp,
   readModelRefs: (ws) =>
     getEffectiveLumeConfig(ws).models?.imageGeneration?.priorityModelRefs ?? [],
-  resolveRef: resolveThreadAttachmentPath,
+  resolveRef: (...args) => getRuntimeHostPorts().resolveThreadAttachmentPath(...args),
   saveOutput: saveImageOutput,
 };
 

@@ -14,7 +14,6 @@ import {
   agentRuntimeStatusAtom,
   agentStreamingStatesAtom,
   agentSubagentRunsAtom,
-  agentSubagentWorkAtom,
   agentThreadPermissionModesAtom,
   queuedAttachmentPreviewUrlAtom,
 } from '@/atoms'
@@ -49,7 +48,6 @@ export function useReleaseThreadState() {
   const setMessageQueues = useSetAtom(agentMessageQueueAtom)
   const setQueueInterrupted = useSetAtom(agentQueueInterruptedAtom)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
-  const setSubagentWork = useSetAtom(agentSubagentWorkAtom)
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
   const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
   const setThreadPermissionModes = useSetAtom(agentThreadPermissionModesAtom)
@@ -66,7 +64,6 @@ export function useReleaseThreadState() {
       setPendingInteractive((prev) => removeKey(prev, threadId))
       setQueueInterrupted((prev) => removeKey(prev, threadId))
       setSubagentRuns((prev) => removeKey(prev, threadId))
-      setSubagentWork((prev) => removeKey(prev, threadId))
       setPlanModePhase((prev) => removeKey(prev, threadId))
       setErrorMessages((prev) => removeKey(prev, threadId))
       setThreadPermissionModes((prev) => removeKey(prev, threadId))
@@ -103,7 +100,7 @@ export function useReleaseThreadState() {
     [
       setDraftState, setHistoryState, setRuntimeEvents, setStreamingStates, setRuntimeStatus,
       setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns,
-      setSubagentWork, setPlanModePhase, setErrorMessages, setThreadPermissionModes,
+      setPlanModePhase, setErrorMessages, setThreadPermissionModes,
       setDiffCommentDrafts, setBrowserAttachments, setQueuedAttachmentPreviewUrls,
     ],
   )

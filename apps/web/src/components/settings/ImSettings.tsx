@@ -301,7 +301,11 @@ export function ImSettings() {
         ...current,
         [provider]: { phase: 'authorizing', sessionKey: started.sessionKey, polling: false },
       }))
-      toast.success('授权页面已在浏览器打开，请在系统浏览器完成登录')
+      toast.success(
+        provider === 'dingtalk'
+          ? '授权页面已在浏览器打开。如需管理员审批，可能需要等待最多 16 分钟，完成后此页面会自动变为已授权'
+          : '授权页面已在浏览器打开，请在系统浏览器完成登录（约 5 分钟内有效）'
+      )
     } catch (error) {
       console.error('[IM 设置] 启动 CLI 授权失败:', error)
       toast.error('启动授权失败')
@@ -374,6 +378,9 @@ export function ImSettings() {
   }
 
   const handleDelete = async (account: ImAccount) => {
+    if (!confirm(
+      `移除「${account.label}」将停止该通道，并解除其所有 IM 会话与对话的绑定（对话记录保留）。此操作不可撤销。`
+    )) return
     setBusyId(account.id)
     try {
       await deleteImAccount(account.id)
@@ -449,7 +456,7 @@ export function ImSettings() {
       <div className="border-t border-[var(--border)] p-4">
         <div className="mb-2 flex items-baseline gap-2">
           <p className="text-[13px] font-semibold text-[var(--text-1)]">企业 CLI 能力</p>
-          <p className="text-[12px] text-[var(--text-3)]">通过官方 CLI 完成 OAuth 授权（provider 级）</p>
+          <p className="text-[12px] text-[var(--text-3)]">授权后 Agent 可使用官方 CLI 操作该渠道（发消息、查日历、读文档等）。授权为渠道级，一次即可</p>
         </div>
         <div className="space-y-2">
           {CLI_PROVIDERS.map((provider) => {
@@ -463,6 +470,9 @@ export function ImSettings() {
                   <span className="text-[13px] font-medium text-[var(--text-1)]">{IM_PROVIDER_LABELS[provider]}</span>
                   <Badge variant="outline" className={cn('rounded-[6px]', toneClassName[badge.tone])}>{badge.label}</Badge>
                   {session?.profile && <span className="truncate text-[12px] text-[var(--text-3)]">{session.profile}</span>}
+                  {session?.error && (
+                    <span className="truncate text-[12px] text-[var(--danger)]" title={session.error}>{session.error}</span>
+                  )}
                 </div>
                 <Button
                   variant="outline"
@@ -702,6 +712,11 @@ function AccountRow({
           <Badge variant="outline" className={cn('rounded-[6px]', toneClassName[badge.tone])}>{badge.label}</Badge>
         </div>
         <p className="mt-1 text-[12px] text-[var(--text-3)]">{accountMeta}</p>
+        {account.lastError && (
+          <p className="mt-1 line-clamp-2 text-[12px] text-[var(--danger)]" title={account.lastError}>
+            {account.lastError}
+          </p>
+        )}
       </div>
       <Switch checked={account.enabled} onCheckedChange={(enabled) => onToggleEnabled(account, enabled)} disabled={busy} />
       <div className="flex items-center gap-1">

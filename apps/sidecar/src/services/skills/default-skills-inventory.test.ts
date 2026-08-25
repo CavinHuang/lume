@@ -88,22 +88,23 @@ describe("default skills inventory", () => {
     expect(content).toContain("delete_theme");
   });
 
-  test("docsmith can use the real Office package tools while guarding unavailable Office tools", () => {
-    const { content, meta } = readDefaultSkill("agent-docsmith");
+  test("bundles an auto-invocable in-app-browser skill scoped to mcp browser tools", () => {
+    const { content, meta } = readDefaultSkill("in-app-browser");
 
-    expect(meta.allowedTools).toContain("office_validate");
-    expect(meta.allowedTools).toContain("office_unpack");
-    expect(meta.allowedTools).toContain("office_pack");
-    expect(content).toContain("当前 Lume 已接入 `office_validate`、`office_unpack` 和 `office_pack`");
-    expect(content).not.toContain("尚未接入 `office_pack`");
-    expect(content).not.toContain("尚未接入 `office_unpack`");
-  });
-
-  test("designer role does not describe the real Office validator as unavailable", () => {
-    const { content } = readDefaultSkill("agent-designer");
-
-    expect(content).toContain("office_validate");
-    expect(content).not.toContain("office_unpack`、`office_pack`、`office_validate");
+    expect(meta.slug).toBe("in-app-browser");
+    expect(meta.name).toBe("In-App 浏览器操作");
+    expect(meta.disableModelInvocation).toBeFalsy();
+    expect(meta.allowedTools).toEqual(["mcp__browser__*"]);
+    expect(content).toContain("[ref=e12]");
+    expect(content).toContain("`fill_secret`");
+    expect(content).toContain("user_takeover_required");
+    expect(content).toContain("repeated_action_failure");
+    expect(content).toContain("navigation_timeout");
+    expect(content).toContain("confirmation_unavailable");
+    expect(content).toContain("dialog_blocking");
+    expect(content).toContain("`action_denied`");
+    expect(content).not.toContain("密码提交必须由用户完成");
+    expect(content).not.toContain("browser:browser");
   });
 
   test("skill-creator teaches Alice-compatible storage paths", () => {
@@ -118,9 +119,6 @@ describe("default skills inventory", () => {
   test("skill-creator lists specialized runtime-backed tools for allowed_tools", () => {
     const { content } = readDefaultSkill("skill-creator");
 
-    expect(content).toContain("`office_validate`");
-    expect(content).toContain("`office_unpack`");
-    expect(content).toContain("`office_pack`");
     expect(content).toContain("`personalize_ui`");
     expect(content).toContain("`lume_reading_snapshot`");
     expect(content).toContain("`lume_generate_share_card`");
@@ -154,6 +152,7 @@ const ALICE_COMPATIBLE_GENERAL_SKILLS = [
   "code-review",
   "explain-code",
   "image-gen",
+  "in-app-browser",
   "skill-creator",
   "system-info",
   "ui-stylist"
@@ -170,9 +169,7 @@ const RUNTIME_BACKED_SKILL_TOOLS = new Set([
   "list_image_models",
   "lume_generate_share_card",
   "lume_reading_snapshot",
-  "office_pack",
-  "office_unpack",
-  "office_validate",
+  "mcp__browser__*",
   "personalize_ui",
   "read_file",
   "web_fetch",

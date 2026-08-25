@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
+import { getRuntimeHostPorts } from "../host-ports";
 import type { AgentMessageAttachmentInput } from "@lume/shared";
 import type { ContentBlockParam } from "@lume/agent-sdk";
-import { resolveThreadAttachmentPath } from "../../agent/agent-files-service";
 
 export type RuntimeUserMessageInput = string | ContentBlockParam[];
 
@@ -68,7 +68,7 @@ function readAttachmentBase64(input: {
   threadPath: string;
 }): string | null {
   try {
-    const path = resolveThreadAttachmentPath(input.workspaceSlug, input.threadId, input.threadPath);
+    const path = getRuntimeHostPorts().resolveThreadAttachmentPath(input.workspaceSlug, input.threadId, input.threadPath);
     return readFileSync(path).toString("base64");
   } catch {
     return null;

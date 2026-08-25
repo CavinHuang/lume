@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   ScrollText,
   Users,
+  Mic,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -35,6 +36,7 @@ export type SettingsViewTab =
   | 'integrations'
   | 'im-integrations'
   | 'web-search'
+  | 'voice-input'
   | 'updates'
   | 'data'
   | 'logs'
@@ -61,6 +63,7 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { id: 'integrations', label: 'MCP', icon: Puzzle },
   { id: 'im-integrations', label: '集成', icon: MessageCircle },
   { id: 'web-search', label: '网络搜索', icon: Search },
+  { id: 'voice-input', label: '语音输入', icon: Mic },
   { id: 'data', label: '数据管理', icon: HardDrive },
   { id: 'logs', label: '应用日志', icon: ScrollText },
   { id: 'archive', label: '归档', icon: Archive },
@@ -82,6 +85,7 @@ export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
   integrations: 'MCP',
   'im-integrations': '集成',
   'web-search': '网络搜索',
+  'voice-input': '语音输入',
   updates: '版本与更新',
   data: '数据管理',
   logs: '应用日志',
@@ -104,6 +108,7 @@ export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
   integrations: '管理 MCP 服务发现与连接状态',
   'im-integrations': '管理 IM 平台与邮箱连接器',
   'web-search': '配置网络搜索后端、API Key 和搜索策略',
+  'voice-input': '配置语音输入的识别服务凭证、语言与结果输出方式',
   updates: '管理 Lume 的版本检查、下载与安装体验',
   data: '查看存储用量、安全清理与全量数据导出',
   logs: '查看应用、Agent、工具调用、MCP 与 Skill 加载运行日志',

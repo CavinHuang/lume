@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ToolDefinition } from "../types";
 import { applyOverrides, createToolRegistry } from "./registry.js";
-import { splitDeferredTools, CORE_TOOL_NAMES } from "./index.js";
+import { CORE_TOOL_NAMES } from "./index.js";
 
 function tool(name: string): ToolDefinition {
   return {
@@ -83,18 +83,15 @@ describe("tool registry", () => {
   });
 });
 
-describe("splitDeferredTools adapter", () => {
-  test("splits by CORE_TOOL_NAMES and requiredDuringSkillScope", () => {
-    const skillTool = tool("SubscribePolling");
-    skillTool.runtimeMetadata = { requiredDuringSkillScope: true } as never;
-    const { core, deferred } = splitDeferredTools([tool("Bash"), tool("GuanlanSearch"), skillTool, tool("ToolSearch")]);
-    expect(core.map((t) => t.name)).toEqual(["Bash", "SubscribePolling"]);
-    expect(deferred.map((t) => t.name)).toEqual(["GuanlanSearch"]);
-  });
-
+describe("CORE_TOOL_NAMES preset", () => {
   test("CORE_TOOL_NAMES stays the default preset core set", () => {
     expect(CORE_TOOL_NAMES.has("Bash")).toBe(true);
     expect(CORE_TOOL_NAMES.has("WebFetch")).toBe(true);
+  });
+
+  test("委派工具必须在 core 集内,防止落入 ToolSearch 延迟池(#651 follow-up)", () => {
+    expect(CORE_TOOL_NAMES.has("Delegate")).toBe(true);
+    expect(CORE_TOOL_NAMES.has("WaitForDelegations")).toBe(true);
   });
 });
 

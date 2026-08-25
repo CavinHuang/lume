@@ -1,4 +1,5 @@
 import { access, readFile, realpath, stat } from "node:fs/promises";
+import { getRuntimeHostPorts } from "../host-ports";
 import { createHash } from "node:crypto";
 import { relative, resolve } from "node:path";
 import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
@@ -6,7 +7,6 @@ import { createDiagnosticLogSummary, createLogger } from "../../infra/logger";
 import type { FileAccessLedger } from "./file-access-ledger";
 import type { LumeToolDescriptor } from "./tool-types";
 import { acquireWorkspaceWriterLease } from "./workspace-writer-lease";
-import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
 
 export interface ToolRuntimeWrapInput {
   descriptor: LumeToolDescriptor;
@@ -289,7 +289,7 @@ async function enforceFileAccessPolicy(
   rawInput: unknown,
   toolUseId: string | undefined
 ): Promise<ToolResult | null> {
-  const dream = getAgentThreadMeta(input.threadId)?.memoryProfile?.kind === "dream";
+  const dream = getRuntimeHostPorts().getThreadMeta(input.threadId)?.memoryProfile?.kind === "dream";
   const name = input.descriptor.canonicalName;
   const filePath = readInputPath(rawInput);
   if (dream && (name === "grep" || name === "find" || name === "glob") && !filePath) {
@@ -412,7 +412,8 @@ export interface GovernedToolResult {
 }
 
 export function normalizeToolResultWithPolicies(result: ToolResult, maxChars: number | undefined): GovernedToolResult {
-  const originalText = stringifyResultPayload(readResultPayload(result));
+  const payload = readResultPayload(result);
+  const originalText = stringifyResultPayload(payload);
   const originalSize = originalText.length;
   if (!maxChars || originalSize <= maxChars) {
     return {
@@ -420,6 +421,37 @@ export function normalizeToolResultWithPolicies(result: ToolResult, maxChars: nu
       originalSize,
       truncated: false,
       summary: summarizeToolOutput(originalText)
+    };
+  }
+  // 数组 content 中的 image block(base64 截图等)不参与字节计费,也不能被
+  // 字符串化截断——整体截断会把图片替换成损坏的半截 base64 文本(#600)。
+  // 只对非 image block 计费;它们超限时合并为单个截断 text block,image 原样保留。
+  // 仅限 content 形态:data 形态无已知 image 生产者,维持原有整体截断行为。
+  if (
+    Array.isArray(payload)
+    && "content" in (result as unknown as Record<string, unknown>)
+    && payload.some(isImageBlock)
+  ) {
+    const textPayload = payload.filter((block) => !isImageBlock(block));
+    const textJson = JSON.stringify(textPayload ?? "");
+    if (textJson.length <= maxChars) {
+      // 注意:此处 truncated:false 但 originalSize(含 image 字节)可能超过
+      // maxChars——truncated 语义已从「结果合规」收窄为「文本部分被截断」,
+      // 勿拿 original_size 做上下文预算。
+      return {
+        result,
+        originalSize,
+        truncated: false,
+        summary: summarizeToolOutput(textJson)
+      };
+    }
+    const truncatedText = truncateMiddle(textJson, maxChars);
+    const governedContent = [{ type: "text", text: truncatedText }, ...payload.filter((block) => isImageBlock(block))];
+    return {
+      result: { ...result, content: governedContent } as ToolResult,
+      originalSize,
+      truncated: true,
+      summary: summarizeToolOutput(truncatedText)
     };
   }
   const truncatedText = truncateMiddle(originalText, maxChars);
@@ -430,6 +462,10 @@ export function normalizeToolResultWithPolicies(result: ToolResult, maxChars: nu
     truncated: true,
     summary: summarizeToolOutput(truncatedText)
   };
+}
+
+function isImageBlock(block: unknown): boolean {
+  return typeof block === "object" && block !== null && (block as { type?: unknown }).type === "image";
 }
 
 function readResultPayload(result: ToolResult): unknown {

@@ -4,26 +4,25 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AskUserQuestionTool } from "@lume/agent-sdk";
 import type { ToolContext, ToolDefinition } from "@lume/agent-sdk";
-import type { Model } from "../runner/model-types";
-import type { LumeRunState } from "../runner/run-state";
-import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
+import type { Model } from "./model-types";
+import type { LumeRunState } from "./run-state";
+import { createFileBackedLumeRunStateStore } from "./run-state-store";
 import { createRuntimeCoreSession, type CreateRuntimeCoreSessionInput } from "./run";
 import {
   buildSidecarSubagentExecutionInput,
   buildSidecarSubagentRunContext,
+  resolveForegroundSubagentTimeoutMs,
   resolveSubagentModelOverride,
   runForegroundSubagentWithTimeout
 } from "./run-subagent";
-import { resolvePromptCachePolicy } from "./run-tools";
-import { runRuntimeCoreAttempt } from "./attempt";
-import { prepareRuntimeCoreAttempt } from "./prepare-attempt";
+import { resolvePromptCachePolicy } from "./request-policy";
+import { runRuntimeCoreAttempt } from "../runner/attempt";
+import { prepareRuntimeCoreAttempt } from "../runner/prepare-attempt";
 import { getRuntimeCoreSessionDir } from "./session-store";
 import { getAgentSessionWorkspacePath, getAgentWorkspacePath, getAliceUserSkillsDir, getDefaultSkillsDir } from "../../infra/config-paths";
 import { createAgentThread } from "../../agent/agent-thread-manager";
 import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
-import { getSubagentCoordinator, resetSubagentCoordinatorForTest } from "../../agent/subagents/subagent-coordinator";
-import { getSubagentRunRegistry, resetSubagentRunRegistryForTest } from "../../agent/subagents/subagent-run-registry";
-import { resetSubagentWorkStoreForTest } from "../../agent/subagents/subagent-work-store";
+import { getSubagentRunRegistry, resetSubagentRunRegistryForTest } from "../subagents/subagent-run-registry";
 import { createChannel } from "../../channel/channel-manager";
 import { installConnectionVaultKey } from "../../channel/connection-credential-store";
 import { updateLumeConfigSection } from "../../system/lume-config-service";
@@ -74,9 +73,7 @@ describe("runtime-core run", () => {
 
   afterEach(() => {
     setWorkspaceMcpManagerForTesting(null);
-    resetSubagentCoordinatorForTest();
     resetSubagentRunRegistryForTest();
-    resetSubagentWorkStoreForTest();
     if (prevConfigDir === undefined) {
       delete process.env.LUME_CONFIG_DIR;
     } else {
@@ -129,7 +126,6 @@ describe("runtime-core run", () => {
       "analyst",
       "quant",
       "novelist",
-      "docsmith",
       "developer"
     ]);
 
@@ -231,175 +227,29 @@ describe("runtime-core run", () => {
     }
   });
 
-  test("新运行时只暴露持久化 Agent 任务工具，子会话不能继续派生", async () => {
+  test("主线程暴露 Delegate 委派工具，子会话不能继续派生", async () => {
     const parent = await createRuntimeCoreSession(createHookRuntimeSessionInput({ permissionMode: "default", runId: "parent-run" }));
-    expect(parent.session.getActiveToolNames()).toContain("Agent");
-    expect(availableToolNames(parent)).toContain("FinishAgentTask");
-    expect(availableToolNames(parent)).toContain("RetireSubagent");
-    expect(parent.session.getActiveToolNames()).not.toContain("Delegate");
-    expect(parent.session.getActiveToolNames()).not.toContain("WaitForDelegations");
+    expect(parent.session.getActiveToolNames()).toContain("Delegate");
+    expect(parent.session.getActiveToolNames()).toContain("WaitForDelegations");
+    expect(parent.session.getActiveToolNames()).not.toContain("Agent");
+    expect(parent.session.getActiveToolNames()).not.toContain("FinishAgentTask");
+    expect(parent.session.getActiveToolNames()).not.toContain("RetireSubagent");
+    // 并发标记钉住(#642):flag 与文案曾反复横跳,override 本体必须有护栏
+    const delegateTool = parent.tools.find((tool) => tool.name === "Delegate");
+    const waitTool = parent.tools.find((tool) => tool.name === "WaitForDelegations");
+    expect(delegateTool?.isConcurrencySafe?.()).toBe(true);
+    expect(waitTool?.isConcurrencySafe?.()).toBe(false);
     await parent.session.dispose();
 
     const child = await createRuntimeCoreSession(createHookRuntimeSessionInput({
-      lumeSessionId: "subagent-session", threadType: "subagent", subagentType: "explorer", subagentRunId: "run-1", subagentTaskId: "task-1", subagentId: "explorer-01", subagentAttempt: 1
+      lumeSessionId: "subagent-session", threadType: "subagent", subagentType: "explorer", subagentRunId: "run-1", subagentId: "explorer-01"
     }));
-    expect(child.session.getActiveToolNames()).toContain("TaskReport");
-    const taskReport = child.tools.find((tool) => tool.name === "TaskReport");
-    expect(taskReport).toBeDefined();
-    expect(taskReport?.isReadOnly?.()).toBe(false);
-    expect(taskReport?.isConcurrencySafe?.()).toBe(false);
-    expect((taskReport as { runtimeMetadata?: { isReadOnly?: boolean; isConcurrencySafe?: boolean } })?.runtimeMetadata).toMatchObject({
-      isReadOnly: false,
-      isConcurrencySafe: false
-    });
-    const taskReportDescriptor = getRuntimeToolDescriptor("subagent-session", "TaskReport");
-    expect(taskReportDescriptor).toBeDefined();
-    expect(taskReportDescriptor?.metadata.isReadOnly).toBe(false);
-    expect(taskReportDescriptor?.metadata.isConcurrencySafe).toBe(false);
+    expect(child.session.getActiveToolNames()).not.toContain("Delegate");
     expect(child.session.getActiveToolNames()).not.toContain("Agent");
-    expect(child.session.getActiveToolNames()).not.toContain("FinishAgentTask");
     for (const taskTool of ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskOutput", "ProcessOutput", "ProcessStop"]) {
       expect(child.session.getActiveToolNames()).not.toContain(taskTool);
     }
-    expect(typeof (child.agent as any).baseOptions.completionGuard).toBe("function");
     await child.session.dispose();
-  });
-
-  test("绑定 Subagent 身份要求 runId 与 taskId 同时提供", async () => {
-    await expect(createRuntimeCoreSession(createHookRuntimeSessionInput({
-      threadType: "subagent",
-      subagentRunId: "run-1"
-    }))).rejects.toThrow("subagentRunId 与 subagentTaskId 必须同时提供");
-
-    await expect(createRuntimeCoreSession(createHookRuntimeSessionInput({
-      threadType: "subagent",
-      subagentTaskId: "task-1"
-    }))).rejects.toThrow("subagentRunId 与 subagentTaskId 必须同时提供");
-
-    await expect(createRuntimeCoreSession(createHookRuntimeSessionInput({
-      threadType: "subagent",
-      subagentRunId: "   ",
-      subagentTaskId: "task-1"
-    }))).rejects.toThrow("subagentRunId 与 subagentTaskId 必须同时提供");
-  });
-
-  test("绑定 Subagent 身份会 trim runId 与 taskId", async () => {
-    const coordinator = getSubagentCoordinator();
-    const originalSubmitReport = coordinator.submitReport;
-    let submittedRunId: string | undefined;
-    (coordinator as any).submitReport = ({ runId }: { runId: string }) => {
-      submittedRunId = runId;
-      return {};
-    };
-
-    let result: Awaited<ReturnType<typeof createRuntimeCoreSession>> | undefined;
-    try {
-      result = await createRuntimeCoreSession(createHookRuntimeSessionInput({
-        lumeSessionId: "trimmed-subagent-session",
-        threadType: "subagent",
-        subagentRunId: "  run-1  ",
-        subagentTaskId: "  task-1  "
-      }));
-      const taskReport = result.tools.find((tool) => tool.name === "TaskReport");
-      expect(taskReport).toBeDefined();
-
-      const toolResult = await taskReport!.call({
-        status: "submitted",
-        summary: "done"
-      }, {} as any);
-
-      expect(submittedRunId).toBe("run-1");
-      expect(JSON.parse(String(toolResult.content))).toEqual({
-        ok: true,
-        taskId: "task-1",
-        runId: "run-1",
-        status: "submitted"
-      });
-    } finally {
-      (coordinator as any).submitReport = originalSubmitReport;
-      await result?.session.dispose();
-    }
-  });
-
-  test("绑定 TaskReport 会写入真实 coordinator Run 并解除完成守卫", async () => {
-    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-bound-report-config-"));
-    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-bound-report-"));
-    const agentDir = join(cwd, ".runtime-core-test");
-    const parentThreadId = "bound-report-parent";
-    mkdirSync(agentDir, { recursive: true });
-    process.env.LUME_CONFIG_DIR = configDir;
-    resetSubagentCoordinatorForTest();
-    resetSubagentWorkStoreForTest();
-
-    try {
-      const coordinator = getSubagentCoordinator();
-      const result = await coordinator.runAgentTask({
-        parentThreadId,
-        parentRunId: "bound-report-parent-run",
-        parentToolUseId: "bound-report-tool-use",
-        prompt: "inspect the implementation",
-        description: "Inspect implementation",
-        subagentType: "explorer",
-        createSession: ({ subagentId }) => ({ threadId: `bound-report-child-${subagentId}` }),
-        execute: async ({ run, task, session }) => {
-          const child = await createRuntimeCoreSession({
-            lumeSessionId: session.threadId,
-            cwd,
-            agentDir,
-            provider: "anthropic",
-            resolvedModelId: "claude-sonnet-4-5",
-            apiKey: "test-key",
-            permissionMode: "plan",
-            threadType: "subagent",
-            subagentType: "explorer",
-            subagentRunId: run.runId,
-            subagentTaskId: task.taskId,
-            subagentId: session.subagentId,
-            subagentAttempt: run.attempt
-          });
-
-          try {
-            const completionGuard = (child.agent as any).baseOptions.completionGuard as () => Promise<string | undefined>;
-            expect(await completionGuard()).toContain("TaskReport");
-
-            const taskReport = child.tools.find((tool) => tool.name === "TaskReport");
-            expect(taskReport).toBeDefined();
-            const context: ToolContext = { cwd, sessionId: session.threadId, permissionMode: "plan" };
-            await taskReport!.call({ status: "submitted", summary: "bound report" }, context);
-
-            expect(await completionGuard()).toBeUndefined();
-          } finally {
-            await child.session.dispose();
-          }
-
-          return { status: "completed" };
-        }
-      });
-
-      expect(result.report).toMatchObject({ status: "submitted", summary: "bound report" });
-      expect(coordinator.list(parentThreadId).runs).toEqual([
-        expect.objectContaining({
-          status: "completed",
-          report: { status: "submitted", summary: "bound report" }
-        })
-      ]);
-    } finally {
-      rmSync(configDir, { recursive: true, force: true });
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
-  test("非 subagent 携带成对 IDs 不启用 bound tool 或 completion guard", async () => {
-    const result = await createRuntimeCoreSession(createHookRuntimeSessionInput({
-      threadType: "main",
-      subagentRunId: "run-1",
-      subagentTaskId: "task-1"
-    }));
-
-    expect(result.session.getActiveToolNames()).not.toContain("TaskReport");
-    expect((result.agent as any).baseOptions.completionGuard).toBeUndefined();
-    expect(result.systemPrompt).not.toContain("executing one bound Subagent Task");
-    await result.session.dispose();
   });
 
   test("executes context hooks around context assembly", async () => {
@@ -578,7 +428,7 @@ describe("runtime-core run", () => {
     for (const toolName of ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "NotebookEdit", "ProcessOutput", "ProcessStop"]) {
       expect(toolNames).toContain(toolName);
     }
-    for (const toolName of ["WebSearch", "WebFetch", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]) {
+    for (const toolName of ["WebSearch", "WebFetch", "Delegate", "WaitForDelegations", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]) {
       expect(toolNames).toContain(toolName);
     }
 
@@ -1984,6 +1834,22 @@ describe("runtime-core run", () => {
       is_error: true
     });
     expect(result.result.content).toContain("timed out");
+  });
+
+  test("LUME_SUBAGENT_FOREGROUND_TIMEOUT_MS 三态解析：缺省回默认 / \"0\" 关闭 / 非法值回默认", () => {
+    const key = "LUME_SUBAGENT_FOREGROUND_TIMEOUT_MS";
+    const prev = process.env[key];
+    try {
+      delete process.env[key];
+      expect(resolveForegroundSubagentTimeoutMs()).toBe(600_000);
+      process.env[key] = "0";
+      expect(resolveForegroundSubagentTimeoutMs()).toBe(0);
+      process.env[key] = "not-a-number";
+      expect(resolveForegroundSubagentTimeoutMs()).toBe(600_000);
+    } finally {
+      if (prev === undefined) delete process.env[key];
+      else process.env[key] = prev;
+    }
   });
 
   test("未审批的插件 command tool 触发 sensitive gate ask（§8.1/§14.2 Phase 4A ask→ask）", async () => {

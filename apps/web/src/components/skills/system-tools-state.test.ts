@@ -9,7 +9,7 @@ import {
 
 describe('system-tools-state', () => {
   test('builds rows from tool policy deny groups', () => {
-    const rows = buildSystemToolRows(['group:runtime', 'group:data', 'group:reading', 'group:office'])
+    const rows = buildSystemToolRows(['group:runtime', 'group:data', 'group:reading'])
 
     expect(rows.find((row) => row.id === 'shell')).toMatchObject({
       enabled: false,
@@ -37,14 +37,6 @@ describe('system-tools-state', () => {
       enabled: false,
       locked: false,
       policyEntry: 'group:reading',
-    })
-    expect(rows.find((row) => row.id === 'office')).toMatchObject({
-      label: 'Office 文档',
-      description: 'Office/PDF 文档结构校验、解包与打包',
-      count: 17,
-      enabled: false,
-      locked: false,
-      policyEntry: 'group:office',
     })
   })
 

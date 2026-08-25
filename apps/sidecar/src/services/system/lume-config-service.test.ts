@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -74,6 +74,37 @@ describe("lume-config-service", () => {
     // 内容未变的重复读取不应再次写盘，否则会持续触发 workspace-watcher 的
     // lume-config:changed 事件，造成 get-effective ↔ 文件监听的无限回环
     expect(statSync(path).mtimeMs).toBe(before);
+  });
+
+  test("同 tick 原子重写（等长内容+新 inode+mtime 钉回）必须使缓存失效重读", () => {
+    // 跨进程写盘走 tmp+rename（每次新 inode）。粗粒度时间戳文件系统（Linux
+    // jiffy 粒度，#622 同类）上仅 mtime+size 判等时，同 tick 的两连写会被误判
+    // 未变——被遮蔽的若是最后一次写，stale 配置伴随进程存活期。指纹补 ino 后
+    // 必然失效重读。
+    const path = getLumeConfigYamlPath();
+    const pinnedTime = new Date(Date.now() - 10_000);
+    getEffectiveLumeConfig("default"); // 首建：写盘的是未规范化的默认模板
+    utimesSync(path, pinnedTime, pinnedTime);
+    getEffectiveLumeConfig("default"); // 强制 miss → 惰性规范化重写在此发生并刷新采样
+    utimesSync(path, pinnedTime, pinnedTime);
+    getEffectiveLumeConfig("default"); // 再 miss 一次：此时内容已是不动点，仅以钉住的 mtime 重采样
+    // 至此缓存指纹 = {pinned, size, ino@磁盘}，后续唯一可控差异只剩 ino
+
+    const raw = readFileSync(path, "utf-8");
+    // 等长替换保证 size 无从区分；选 embedding.defaultModelRef（规范化仅 trim、
+    // 不做官方源回写），观测面走 getEffectiveLumeConfig
+    expect(raw.includes("bge-small-zh-v1.5")).toBeTrue();
+    const modified = raw.replace(
+      "local-onnx/Xenova/bge-small-zh-v1.5",
+      "local-onnx/Xenova/bge-small-zh-v1.6"
+    );
+    const tempPath = `${path}.test-tmp`;
+    writeFileSync(tempPath, modified, "utf-8");
+    renameSync(tempPath, path);
+    utimesSync(path, pinnedTime, pinnedTime);
+
+    expect(getEffectiveLumeConfig("default").models?.embedding?.defaultModelRef)
+      .toBe("local-onnx/Xenova/bge-small-zh-v1.6");
   });
 
   test("应默认启用内部 workflow hooks", () => {

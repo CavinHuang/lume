@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
-import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
-import type { LumeRunState } from "../runner/run-state";
-import type { RunContinuationState } from "../runner/run-continuation";
+import { createFileBackedRunContinuationStore } from "../runtime-core/run-continuation-store";
+import { createFileBackedLumeRunStateStore } from "../runtime-core/run-state-store";
+import type { LumeRunState } from "../runtime-core/run-state";
+import type { RunContinuationState } from "../runtime-core/run-continuation";
 import { LumeResumeService } from "./resume-service";
 
 function makeRunState(input?: Partial<LumeRunState>): LumeRunState {

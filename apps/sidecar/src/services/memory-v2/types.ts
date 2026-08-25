@@ -225,7 +225,9 @@ export interface MemoryV2SmartAddResult {
 
 export interface MemoryV2RecallItem {
   id: string;
+  /** @deprecated Derived from semantic_role on write; kept for external contract compatibility. */
   kind: MemoryV2Kind;
+  semanticRole: MemoryV2SemanticRole;
   scope: MemoryV2Scope;
   status: "active" | "suspected_stale";
   statement: string;

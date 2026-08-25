@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { PlanningReminderRail } from '@/components/todo/PlanningReminderRail'
 import { ConnectionVaultSetupDialog } from '@/components/security/ConnectionVaultSetupDialog'
 import { AgentIslandApp } from '@/components/agent-island/AgentIslandApp'
+import { VoiceIndicatorApp } from '@/components/voice-dictation/VoiceIndicatorApp'
 function AppInner() {
   useGlobalAgentListeners()
   useReadingListeners()
@@ -50,6 +51,11 @@ export function App() {
     typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).get('view') === 'agent-island'
   if (isAgentIsland) return <AgentIslandApp />
+
+  const isVoiceIndicator =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('view') === 'voice-indicator'
+  if (isVoiceIndicator) return <VoiceIndicatorApp />
 
   const [ready, setReady] = useState(false)
   const [bootDone, setBootDone] = useState(false)

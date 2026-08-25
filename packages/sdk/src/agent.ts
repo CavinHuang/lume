@@ -14,8 +14,6 @@ import type {
   PermissionMode,
   Query as QueryHandle,
   QueryResult,
-  ReloadPluginsResult,
-  RewindFilesResult,
   SDKMessage,
   SDKUserMessage,
   SessionMessage,
@@ -26,13 +24,13 @@ import type {
 } from './types.js'
 import { QueryEngine } from './engine.js'
 import { createPersistScheduler } from './persist-scheduler.js'
+import { FileStateCache } from './utils/fileCache.js'
 import {
   CORE_TOOL_NAMES,
   filterTools,
   getAllBaseTools,
 } from './tools/index.js'
 import { applyOverrides, createToolRegistry } from './tools/registry.js'
-import { registerAgents } from './tools/agent-tool.js'
 import {
   saveSession,
   loadSession,
@@ -55,14 +53,12 @@ import {
   type LoadedSettingsSource,
 } from './utils/settings.js'
 import { QueryController } from './query-controller.js'
-import { loadPlugins, type LoadedPlugin } from './plugins/loader.js'
 import { loadFilesystemSkills } from './skills/fs-loader.js'
 import type { FileCheckpoint, FileCheckpointState } from './utils/file-checkpoints.js'
-import { rewindCheckpoint } from './utils/file-checkpoints.js'
 import { getContextWindowSize } from './utils/tokens.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { createExecuteTool, createToolSearchTool, isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
-import { buildResumeContinuations, detectDanglingToolUses, INTERRUPTED_TOOL_PLACEHOLDER } from './interrupt-recovery.js'
+import { detectDanglingToolUses, INTERRUPTED_TOOL_PLACEHOLDER } from './interrupt-recovery.js'
 
 type QueryInput = string | ContentBlockParam[] | SDKUserMessage
 
@@ -206,6 +202,28 @@ function isCompactionSummaryMessage(message: NormalizedMessageParam): boolean {
       block?.type === 'text' && block?._meta?.contextBlock === 'compaction')
 }
 
+/**
+ * messageLog 不再独立维护：由 sessionMessages 按出处投影重建。
+ * 仅两处 live 写入点登记 uuid（user 提交 / assistant 事件），因此
+ * compaction 摘要、continuation 注入、tool_result 载体等合成条目
+ * 天然不入日志，无需内容嗅探。
+ */
+function isLoggedAssistantContent(content: unknown): boolean {
+  return Boolean(
+    content
+    && typeof content === 'object'
+    && !Array.isArray(content)
+    && (content as { role?: unknown }).role === 'assistant',
+  )
+}
+
+function wrapAssistantLogMessage(content: unknown): Extract<Message, { type: 'assistant' }>['message'] {
+  if (isLoggedAssistantContent(content)) {
+    return content as Extract<Message, { type: 'assistant' }>['message']
+  }
+  return { role: 'assistant', content } as Extract<Message, { type: 'assistant' }>['message']
+}
+
 export function sessionMessagesFromHistory(
   messages: NormalizedMessageParam[],
   previous?: SessionMessage[],
@@ -262,9 +280,13 @@ export class Agent {
   private unregisterRuntimeTools: (() => void) | null = null
   private modelId = 'claude-sonnet-4-6'
   private provider: LLMProvider
-  private history: NormalizedMessageParam[] = []
-  private messageLog: Message[] = []
+  /** 消息日志出处集合：resume 载入的历史不计入本进程日志（保持原增量维护语义）。 */
+  private loggedMessageUuids = new Set<string>()
   private sessionMessages: SessionMessage[] = []
+  /** resume 载入时 json messages 快照：dangling tool_result 的跨轨修补源（json 写先于 jsonl，崩溃窗口内可能更新）。 */
+  private resumeStoredMessages: NormalizedMessageParam[] = []
+  /** legacy 会话标记：载入时无 sessionMessages 轨，派生源缺载入前缀。 */
+  private legacyResumeMode = false
   private setupDone: Promise<void>
   private sid: string
   private abortCtrl: AbortController | null = null
@@ -273,11 +295,18 @@ export class Agent {
   private runLocked = false
   private hookRegistry: HookRegistry
   private loadedSettings: LoadedSettingsSource[] = []
-  private loadedPlugins: LoadedPlugin[] = []
-  private pluginSkillNames = new Set<string>()
   private explicitSkillNames = new Set<string>()
   private fileSkillNames = new Set<string>()
   private fileCheckpointState: FileCheckpointState = {}
+  /** Thread-level read-state: shared by every engine this Agent creates so the
+   *  stale-read guard survives across runs instead of resetting per user
+   *  message (#569). Hosts may inject a per-thread instance via
+   *  AgentOptions.fileStateCache when they build one Agent per message; without
+   *  injection each Agent gets a private cache. 分工：本 cache 只做 mtime/size/
+   *  content 新鲜度判定；"须完整读"的产品级门控由宿主侧 ledger 层负责。
+   *  In-memory only — after a process restart the guard fails closed (missing
+   *  record -> guided re-Read). */
+  private fileStateCache: FileStateCache
   private latestUserMessageId: string | undefined
   private lastUsageEngine: QueryEngine | null = null
   private queuedSdkEvents: SDKMessage[] = []
@@ -292,6 +321,7 @@ export class Agent {
   constructor(options: AgentOptions = {}) {
     this.baseOptions = { ...options }
     this.cfg = { ...options }
+    this.fileStateCache = options.fileStateCache ?? new FileStateCache()
     this.sid = this.cfg.sessionId ?? crypto.randomUUID()
     this.provider = unconfiguredProvider()
     this.hookRegistry = createHookRegistry()
@@ -303,12 +333,8 @@ export class Agent {
     this.setupDone.catch(() => {})
   }
 
-  private readEnv(key: string): string | undefined {
-    return process.env[key] || undefined
-  }
-
   private refreshResolvedConfig(): void {
-    this.modelId = this.cfg.model ?? this.readEnv('CODEANY_MODEL') ?? 'claude-sonnet-4-6'
+    this.modelId = this.cfg.model ?? 'claude-sonnet-4-6'
     this.provider = this.cfg.provider ?? unconfiguredProvider()
     if (this.cfg.sessionId) {
       this.sid = this.cfg.sessionId
@@ -334,39 +360,6 @@ export class Agent {
             })
           }
         }
-      }
-    }
-
-    for (const plugin of this.loadedPlugins) {
-      if (!plugin.hooks) continue
-      const hookCount = Object.values(plugin.hooks).reduce((sum, defs) => sum + defs.length, 0)
-      console.debug(`[plugin:agent] registering hooks for "${plugin.name}"`, {
-        events: Object.keys(plugin.hooks),
-        totalHooks: hookCount,
-      });
-      this.hookRegistry.registerFromConfig(plugin.hooks)
-    }
-  }
-
-  private unregisterPluginSkills(): void {
-    for (const name of this.pluginSkillNames) {
-      this.skillRegistry.unregister(name)
-    }
-    this.pluginSkillNames.clear()
-  }
-
-  private registerPluginSkills(): void {
-    this.unregisterPluginSkills()
-    for (const plugin of this.loadedPlugins) {
-      if (plugin.lume?.hooksOnly) continue
-      const skills = plugin.skills || []
-      console.debug(`[plugin:agent] registering skills for "${plugin.name}"`, {
-        count: skills.length,
-        names: skills.map((s) => s.name),
-      });
-      for (const skill of skills) {
-        this.skillRegistry.register(skill)
-        this.pluginSkillNames.add(skill.name)
       }
     }
   }
@@ -406,23 +399,7 @@ export class Agent {
     }
   }
 
-  private getPluginAgents(): Record<string, NonNullable<AgentOptions['agents']>[string]> {
-    const merged: Record<string, NonNullable<AgentOptions['agents']>[string]> = {}
-    for (const plugin of this.loadedPlugins) {
-      Object.assign(merged, plugin.agents || {})
-    }
-    return merged
-  }
-
-  private getPluginTools(): ToolDefinition[] {
-    return this.loadedPlugins.flatMap((plugin) => {
-      if (plugin.lume?.hooksOnly) return []
-      return plugin.tools || []
-    })
-  }
-
   private buildBaseToolPool(options: AgentOptions = this.cfg): ToolDefinition[] {
-    const pluginTools = this.getPluginTools()
     const bindSkillRegistry = (tool: ToolDefinition) => tool.name === 'Skill'
       ? createSkillTool(this.skillRegistry)
       : tool
@@ -431,11 +408,11 @@ export class Agent {
     let pool: ToolDefinition[]
 
     if (!raw || (typeof raw === 'object' && !Array.isArray(raw) && 'type' in raw)) {
-      pool = [...baseTools, ...pluginTools]
+      pool = [...baseTools]
     } else if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'string') {
-      pool = filterTools([...baseTools, ...pluginTools], raw as string[])
+      pool = filterTools([...baseTools], raw as string[])
     } else {
-      pool = [...(raw as ToolDefinition[]).map(bindSkillRegistry), ...pluginTools]
+      pool = [...(raw as ToolDefinition[]).map(bindSkillRegistry)]
     }
 
     return filterTools(pool, undefined, options.disallowedTools)
@@ -541,17 +518,11 @@ export class Agent {
       this.cfg.resumeSessionAt,
     )
 
-    const resumedHistory = resumedSessionMessages.length > 0
-      ? normalizeHistoryFromSessionMessages(resumedSessionMessages)
-      : sessionData.messages
-    this.history = restoreMissingToolResults(
-      resumedHistory,
-      sessionData.messages,
-      resumedSessionMessages,
-    )
     this.sessionMessages = resumedSessionMessages.length > 0
       ? resumedSessionMessages
       : (sessionData.sessionMessages || [])
+    this.resumeStoredMessages = sessionData.messages ?? []
+    this.legacyResumeMode = this.sessionMessages.length === 0
     this.fileCheckpointState = sessionData.checkpoints || {}
     this.sid = resumeId
   }
@@ -575,21 +546,14 @@ export class Agent {
   }
 
   /**
-   * Reload state derived from cfg.cwd: resolved provider config, plugins,
-   * skills, commands, agents, and MCP connections. Runs from setup() and again
-   * after setCwd(). Must not rebuild cfg (runtime mutations like setModel or
-   * setPermissionMode live there) nor re-run the session resume/fork branch.
+   * Reload state derived from cfg.cwd: resolved provider config and skills.
+   * Runs from setup() and again after setCwd(). Must not rebuild cfg
+   * (runtime mutations like setModel or setPermissionMode live there) nor
+   * re-run the session resume/fork branch.
    */
   private async refreshCwdDependentState(): Promise<void> {
     const cwd = this.cfg.cwd || process.cwd()
     this.refreshResolvedConfig()
-    this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins, this.cfg.pluginRoots)
-    console.debug(`[plugin:agent] plugins loaded`, {
-      count: this.loadedPlugins.length,
-      names: this.loadedPlugins.map((p) => p.name),
-      hooksOnly: this.loadedPlugins.filter((p) => p.lume?.hooksOnly).map((p) => p.name),
-    });
-    this.registerPluginSkills()
     await this.registerFilesystemSkills({
       cwd,
       roots: this.cfg.skillsDirectories,
@@ -597,14 +561,6 @@ export class Agent {
     })
     this.registerExplicitSkills()
     this.resetHookRegistry()
-
-    const mergedAgents = {
-      ...this.getPluginAgents(),
-      ...(this.cfg.agents || {}),
-    }
-    if (Object.keys(mergedAgents).length > 0) {
-      registerAgents(mergedAgents)
-    }
   }
 
   private getEffectiveOptions(overrides?: Partial<AgentOptions>): AgentOptions {
@@ -637,7 +593,6 @@ export class Agent {
       'Grep',
       'WebFetch',
       'WebSearch',
-      'TaskOutput',
       'TaskGet',
       'TaskList',
       'ToolSearch',
@@ -730,15 +685,15 @@ export class Agent {
     cwd: string,
     opts: AgentOptions,
   ): Promise<SDKMessage | null> {
-    if (opts.persistSession === false || (this.history.length === 0 && this.sessionMessages.length === 0)) {
+    if (opts.persistSession === false || this.getPersistedHistory().length === 0) {
       return null
     }
 
     try {
-      await saveSession(this.sid, this.history, {
+      await saveSession(this.sid, this.getPersistedHistory(), {
         cwd,
         model: opts.model || this.modelId,
-        summary: extractSummary(this.messageLog),
+        summary: extractSummary(this.getMessages()),
         sessionMessages: this.sessionMessages,
         checkpoints: this.fileCheckpointState,
       })
@@ -886,6 +841,9 @@ export class Agent {
     const normalizedPrompt = normalizePromptInput(prompt)
     const modelFacingPrompt = normalizedPrompt
     const isManualCompactCommand = typeof normalizedPrompt === 'string' && normalizedPrompt.trim() === '/compact'
+    // 本轮输入入轨前的哨位：seed 派生只取哨位之前的历史，本轮输入由引擎自行追加，
+    // 否则派生视图与引擎各带一份造成请求重复（#297-④ 单一历史）。
+    const preRunInputCount = this.sessionMessages.length
     const runtimeMessage = !isManualCompactCommand && opts.runtimeContext?.trim()
       ? toSessionMessage('runtime', opts.runtimeContext.trim())
       : null
@@ -898,12 +856,7 @@ export class Agent {
     if (userMessage) {
       this.latestUserMessageId = userMessage.uuid
       this.sessionMessages.push(userMessage)
-      this.messageLog.push({
-        type: 'user',
-        message: { role: 'user', content: normalizedPrompt },
-        uuid: userMessage.uuid,
-        timestamp: userMessage.timestamp,
-      })
+      this.loggedMessageUuids.add(userMessage.uuid)
       await this.persistCurrentSession(cwd, opts)
     }
 
@@ -933,12 +886,12 @@ export class Agent {
       includePartialMessages: opts.includePartialMessages ?? false,
       abortSignal: this.abortCtrl.signal,
       agents: {
-        ...this.getPluginAgents(),
         ...(opts.agents || {}),
       },
       hookRegistry: this.hookRegistry,
       sessionId: this.sid,
       runId: opts.runId,
+      subagentRunId: opts.subagentRunId,
       toolContinuations: opts.toolContinuations,
       permissionMode: opts.permissionMode,
       promptSuggestions: opts.promptSuggestions,
@@ -947,11 +900,6 @@ export class Agent {
       initialization: {
         slashCommands: this.getInitializationCommands().map((command) => command.name),
         skills: this.skillRegistry.getUserInvocable().map((skill) => skill.name),
-        plugins: this.loadedPlugins.map((plugin) => ({
-          name: plugin.name,
-          path: plugin.path,
-          source: plugin.source,
-        })),
         outputStyle: opts.outputStyle || 'text',
         claudeCodeVersion: 'open-agent-sdk/0.2.0',
         apiKeySource: 'configured',
@@ -977,13 +925,14 @@ export class Agent {
         ? `continuation:${opts.toolContinuations[0]!.toolCall.id}`
         : `command:${this.sid}:compact`),
       fileCheckpointState: this.fileCheckpointState,
+      fileStateCache: this.fileStateCache,
       enableFileCheckpointing: opts.enableFileCheckpointing === true,
       contextController: opts.contextController,
       completionGuard: opts.completionGuard,
     })
     this.currentEngine = engine
 
-    for (const msg of this.history) {
+    for (const msg of this.buildRunHistory(preRunInputCount)) {
       engine.messages.push(msg)
     }
 
@@ -1003,12 +952,7 @@ export class Agent {
         if (event.type === 'assistant') {
           const assistantMessage = toSessionMessage('assistant', event.message)
           this.sessionMessages.push(assistantMessage)
-          this.messageLog.push({
-            type: 'assistant',
-            message: event.message,
-            uuid: assistantMessage.uuid,
-            timestamp: assistantMessage.timestamp,
-          })
+          this.loggedMessageUuids.add(assistantMessage.uuid)
           persistScheduler.schedule()
         } else if (event.type === 'tool_result') {
           this.sessionMessages.push(toSessionMessage('user', [{
@@ -1047,7 +991,7 @@ export class Agent {
       // session file.
       await persistScheduler.cancel()
       opts.abortSignal?.removeEventListener('abort', forwardAbort)
-      this.history = engine.getMessages()
+      const finalEngineMessages = engine.getMessages()
       // Keep only the engine reference: the full token estimation runs
       // lazily when a host actually calls getContextUsage (#386).
       this.lastUsageEngine = engine
@@ -1057,11 +1001,10 @@ export class Agent {
       // the host stopped iterating) and must not survive into the next run's
       // drain windows.
       this.asyncEventEpoch++
-      if (compactionBoundarySeen) {
-        this.sessionMessages = sessionMessagesFromHistory(this.history, this.sessionMessages)
-      }
-      if (opts.toolContinuations?.length) {
-        this.sessionMessages = sessionMessagesFromHistory(this.history, this.sessionMessages)
+      // compaction 重写与 continuation 注入只存在于引擎视图：把权威轨
+      // 对齐回引擎真值（尾配对保 uuid，#363）。
+      if (compactionBoundarySeen || opts.toolContinuations?.length) {
+        this.sessionMessages = sessionMessagesFromHistory(finalEngineMessages, this.sessionMessages)
       }
       persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
     }
@@ -1105,22 +1048,7 @@ export class Agent {
       }
     }.bind(this)
 
-    return new QueryController(
-      {
-        interrupt: () => this.interrupt(),
-        setPermissionMode: (mode) => this.setPermissionMode(mode),
-        setModel: (model) => this.setModel(model),
-        setMaxThinkingTokens: (tokens) => this.setMaxThinkingTokens(tokens),
-        setCwd: (cwd) => this.setCwd(cwd),
-        getInitializationResult: () => this.getInitializationResult(),
-        getContextUsage: () => this.getContextUsage(),
-        reloadPlugins: () => this.reloadPlugins(),
-        rewindFiles: (userMessageId, dryRun) => this.rewindFiles(userMessageId, dryRun),
-        stopTask: (taskId) => this.stopTask(taskId),
-      },
-      runner,
-      initialInput,
-    )
+    return new QueryController(runner, initialInput)
   }
 
   query(
@@ -1159,18 +1087,63 @@ export class Agent {
       usage: { input_tokens: collected.tokens.in, output_tokens: collected.tokens.out },
       num_turns: collected.turns,
       duration_ms: Math.round(performance.now() - t0),
-      messages: [...this.messageLog],
+      messages: [...this.getMessages()],
     }
   }
 
+  /**
+   * 单一历史(#297-④)：sessionMessages 是唯一权威轨，LLM 请求视图在每次
+   * run 前从它派生（含 dangling 修补注入），不再长驻第三份内存拷贝。
+   * fromIndex 之前的条目才进入派生视图（本轮输入由引擎自行追加）；
+   * system 事件扫描始终用全量 sms。
+   */
+  private buildRunHistory(fromIndex = 0): NormalizedMessageParam[] {
+    return restoreMissingToolResults(
+      normalizeHistoryFromSessionMessages(this.sessionMessages.slice(0, fromIndex)),
+      this.resumeStoredMessages,
+      this.sessionMessages,
+    )
+  }
+
+  /**
+   * transcript.json 的 messages 由 sessionMessages 派生（磁盘单一来源，
+   * 与 jsonl 轨同源）；legacy resume 时派生源缺载入前缀，拼接载入快照。
+   */
+  private getPersistedHistory(): NormalizedMessageParam[] {
+    const derived = normalizeHistoryFromSessionMessages(this.sessionMessages)
+    return this.legacyResumeMode
+      ? [...this.resumeStoredMessages, ...derived]
+      : derived
+  }
+
   getMessages(): Message[] {
-    return [...this.messageLog]
+    const log: Message[] = []
+    for (const message of this.sessionMessages) {
+      if (!this.loggedMessageUuids.has(message.uuid)) continue
+      if (message.role === 'assistant') {
+        log.push({
+          type: 'assistant',
+          message: wrapAssistantLogMessage(message.content),
+          uuid: message.uuid,
+          timestamp: message.timestamp,
+        })
+      } else if (message.role === 'user') {
+        log.push({
+          type: 'user',
+          message: { role: 'user', content: message.content } as Extract<Message, { type: 'user' }>['message'],
+          uuid: message.uuid,
+          timestamp: message.timestamp,
+        })
+      }
+    }
+    return log
   }
 
   clear(): void {
-    this.history = []
-    this.messageLog = []
+    this.loggedMessageUuids.clear()
     this.sessionMessages = []
+    this.resumeStoredMessages = []
+    this.legacyResumeMode = false
     this.fileCheckpointState = {}
   }
 
@@ -1180,10 +1153,11 @@ export class Agent {
 
   /**
    * Fill dangling trailing tool_use blocks with error placeholders so the
-   * session is provider-clean. Returns true when history changed.
+   * session is provider-clean. Returns true when sessionMessages changed.
+   * 只写权威轨（sessionMessages）：请求视图由 buildRunHistory 派生时自然带上。
    */
   private repairDanglingToolUses(): boolean {
-    const dangling = detectDanglingToolUses(this.history)
+    const dangling = detectDanglingToolUses(this.buildRunHistory())
     if (dangling.length === 0) return false
     const blocks = dangling.map((use) => ({
       type: 'tool_result' as const,
@@ -1191,56 +1165,8 @@ export class Agent {
       content: INTERRUPTED_TOOL_PLACEHOLDER,
       is_error: true,
     }))
-    this.history.push({ role: 'user', content: blocks })
     this.sessionMessages.push(toSessionMessage('user', blocks))
     return true
-  }
-
-  /**
-   * Resume an interrupted run from the persisted dangling tool boundary.
-   * Read-only / concurrency-safe tools replay once; everything else
-   * (including unknown tools) gets an interrupted placeholder — never
-   * auto-replay a mutation whose actual effect is unknown.
-   */
-  async *resumeInterruptedRun(overrides?: Partial<AgentOptions>): AsyncGenerator<SDKMessage, void> {
-    // currentEngine (not abortCtrl, which is never cleared after a run) is
-    // the accurate in-flight marker: set before the loop, cleared in finally.
-    if (this.currentEngine) throw new Error('agent is running')
-    // Await setup before detecting: this.history is loaded from the session
-    // file inside setup(), so an early detect sees [] and silently no-ops.
-    await this.setupDone
-    const dangling = detectDanglingToolUses(this.history)
-    if (dangling.length === 0) return
-    const opts = this.getEffectiveOptions(overrides)
-    const { tools } = this.getRunTools(opts, overrides)
-    const continuations = buildResumeContinuations(dangling, {
-      isReadOnly: (name) => {
-        const tool = tools.find((t) => t.name === name)
-        if (!tool) return false
-        return tool.isReadOnly?.() === true || tool.isConcurrencySafe?.() === true
-      },
-    })
-    yield* this.runSinglePrompt('', { ...overrides, toolContinuations: continuations })
-  }
-
-  /**
-   * Discard an interrupted run: fill dangling tool_use with error results so
-   * the session lands in a clean state without another model request.
-   */
-  async discardInterruptedRun(cwd: string): Promise<void> {
-    await this.setupDone
-    const dangling = detectDanglingToolUses(this.history)
-    if (dangling.length === 0) return
-    this.history.push({
-      role: 'user',
-      content: dangling.map((use) => ({
-        type: 'tool_result' as const,
-        tool_use_id: use.id,
-        content: 'Error: run discarded by user',
-        is_error: true,
-      })),
-    })
-    await this.persistCurrentSession(cwd, this.getEffectiveOptions())
   }
 
   async setModel(model?: string): Promise<void> {
@@ -1283,11 +1209,6 @@ export class Agent {
     return this.provider.apiType
   }
 
-  async stopTask(taskId: string): Promise<void> {
-    const { getProcessJob } = await import('./tools/process-job-registry.js')
-    getProcessJob(taskId)?.stop?.()
-  }
-
   private getInitializationCommands(): SlashCommand[] {
     const builtins: SlashCommand[] = [
       { name: '/clear', description: 'Clear the current conversation context' },
@@ -1313,7 +1234,6 @@ export class Agent {
     return {
       commands,
       agents: Object.entries({
-        ...this.getPluginAgents(),
         ...(this.cfg.agents || {}),
       }).map(([name, agent]) => ({
         name,
@@ -1328,11 +1248,6 @@ export class Agent {
       },
       slash_commands: commands.map((command) => command.name),
       skills: this.skillRegistry.getUserInvocable().map((skill) => skill.name),
-      plugins: this.loadedPlugins.map((plugin) => ({
-        name: plugin.name,
-        path: plugin.path,
-        source: plugin.source,
-      })),
     }
   }
 
@@ -1347,15 +1262,14 @@ export class Agent {
     const init = await this.getInitializationResult()
     return {
       categories: [
-        { name: 'messages', tokens: 0, color: 'blue' },
-        { name: 'system', tokens: 0, color: 'green' },
-        { name: 'tools', tokens: 0, color: 'orange' },
+        { name: 'messages', tokens: 0 },
+        { name: 'system', tokens: 0 },
+        { name: 'tools', tokens: 0 },
       ],
       totalTokens: 0,
       maxTokens: getContextWindowSize(this.modelId),
       rawMaxTokens: getContextWindowSize(this.modelId),
       percentage: 0,
-      gridRows: [],
       model: this.modelId,
       memoryFiles: [],
       deferredBuiltinTools: [],
@@ -1395,61 +1309,6 @@ export class Agent {
     }
   }
 
-  async reloadPlugins(): Promise<ReloadPluginsResult> {
-    await this.setupDone
-
-    this.loadedPlugins = await loadPlugins(this.cfg.cwd || process.cwd(), this.cfg.plugins, this.cfg.pluginRoots)
-    this.registerPluginSkills()
-    await this.registerFilesystemSkills({
-      cwd: this.cfg.cwd || process.cwd(),
-      roots: this.cfg.skillsDirectories,
-      shouldLoadSkill: this.cfg.shouldLoadFilesystemSkill,
-    })
-    this.registerExplicitSkills()
-    this.resetHookRegistry()
-    await this.rebuildToolPool()
-
-    const mergedAgents = {
-      ...this.getPluginAgents(),
-      ...(this.cfg.agents || {}),
-    }
-    if (Object.keys(mergedAgents).length > 0) {
-      registerAgents(mergedAgents)
-    }
-
-    return {
-      commands: (await this.getInitializationResult()).commands,
-      agents: Object.entries(mergedAgents).map(([name, agent]) => ({
-        name,
-        description: agent.description,
-      })),
-      plugins: this.loadedPlugins.map((plugin) => ({
-        name: plugin.name,
-        path: plugin.path,
-        source: plugin.source,
-      })),
-    }
-  }
-
-  async rewindFiles(
-    userMessageId: string,
-    dryRun = false,
-  ): Promise<RewindFilesResult> {
-    await this.setupDone
-    const checkpoint = this.fileCheckpointState[userMessageId]
-    const result = await rewindCheckpoint(checkpoint, dryRun)
-    if (!dryRun && result.canRewind) {
-      await saveSession(this.sid, this.history, {
-        cwd: this.cfg.cwd || process.cwd(),
-        model: this.modelId,
-        summary: extractSummary(this.messageLog),
-        sessionMessages: this.sessionMessages,
-        checkpoints: this.fileCheckpointState,
-      })
-    }
-    return result
-  }
-
   /** Return the checkpoint captured for the most recently submitted user message. */
   getLatestFileCheckpoint(): FileCheckpoint | undefined {
     return this.latestUserMessageId ? this.fileCheckpointState[this.latestUserMessageId] : undefined
@@ -1458,12 +1317,13 @@ export class Agent {
   async close(): Promise<void> {
     await this.setupDone.catch(() => undefined)
 
-    if (this.cfg.persistSession !== false && this.history.length > 0) {
+    const persistedHistory = this.getPersistedHistory()
+    if (this.cfg.persistSession !== false && persistedHistory.length > 0) {
       try {
-        await saveSession(this.sid, this.history, {
+        await saveSession(this.sid, persistedHistory, {
           cwd: this.cfg.cwd || process.cwd(),
           model: this.modelId,
-          summary: extractSummary(this.messageLog),
+          summary: extractSummary(this.getMessages()),
           sessionMessages: this.sessionMessages,
           checkpoints: this.fileCheckpointState,
         })
@@ -1474,7 +1334,6 @@ export class Agent {
 
     this.unregisterFileSkills()
     this.unregisterExplicitSkills()
-    this.unregisterPluginSkills()
     // Release the engine retained for lazy usage estimation (#386): past
     // close, it would otherwise keep the full message history reachable for
     // the lifetime of the Agent. getContextUsage falls back to the safe
@@ -1485,18 +1344,4 @@ export class Agent {
 
 export function createAgent(options: AgentOptions = {}): Agent {
   return new Agent(options)
-}
-
-export function query(params: {
-  prompt: QueryInput | AsyncIterable<QueryInput>
-  options?: AgentOptions
-}): QueryHandle {
-  const ephemeral = createAgent(params.options)
-  return (ephemeral as any).buildQueryHandle(
-    params.prompt,
-    undefined,
-    async () => {
-      await ephemeral.close()
-    },
-  ) as QueryHandle
 }

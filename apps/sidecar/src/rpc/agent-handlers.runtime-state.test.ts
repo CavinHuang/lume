@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
-import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runner/run-continuation-store";
-import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runner/run-state-store";
+import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runtime-core/run-continuation-store";
+import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runtime-core/run-state-store";
 import { getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
 import { resetPlanningTodoStoreForTests } from "../services/planning/planning-todo-store";
 

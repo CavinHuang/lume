@@ -15,11 +15,8 @@ import type {
 import type {
   ForkSessionOptions,
   ForkSessionResult,
-  GetSessionInfoOptions,
-  GetSessionMessagesOptions,
   ListSessionsOptions,
   SessionMessage,
-  SessionMutationOptions,
 } from './types.js'
 
 export interface SessionMetadata {
@@ -382,112 +379,4 @@ export function sliceSessionMessages(
   const index = messages.findIndex((message) => message.uuid === upToMessageId)
   if (index === -1) return messages
   return messages.slice(0, index + 1)
-}
-
-function mapNormalizedToSessionMessages(
-  messages: NormalizedMessageParam[],
-): SessionMessage[] {
-  return messages.map((message, index) => ({
-    uuid: `legacy-${index + 1}`,
-    role: message.role,
-    timestamp: new Date(0).toISOString(),
-    content: message.content,
-  }))
-}
-
-export async function getSessionMessages(
-  sessionId: string,
-  options: GetSessionMessagesOptions = {},
-): Promise<SessionMessage[]> {
-  const data = await loadSession(sessionId)
-  if (!data) return []
-  if (!matchesDir(data.metadata, options.dir)) return []
-
-  const messages = data.sessionMessages?.length
-    ? data.sessionMessages
-    : mapNormalizedToSessionMessages(data.messages)
-  const filtered = options.includeSystemMessages
-    ? messages
-    : messages.filter((message) => message.role !== 'system' && message.role !== 'runtime')
-  const offset = options.offset || 0
-  const limit = options.limit ?? filtered.length
-  return filtered.slice(offset, offset + limit)
-}
-
-export async function appendToSession(
-  sessionId: string,
-  message: NormalizedMessageParam,
-): Promise<void> {
-  const data = await loadSession(sessionId)
-  if (!data) return
-
-  data.messages.push(message)
-  data.metadata.updatedAt = new Date().toISOString()
-  data.metadata.messageCount = data.messages.length
-
-  await saveSession(sessionId, data.messages, {
-    ...data.metadata,
-    sessionMessages: data.sessionMessages,
-    checkpoints: data.checkpoints,
-  })
-}
-
-export async function deleteSession(sessionId: string): Promise<boolean> {
-  let deleted = false
-  try {
-    for (const root of getSessionDirCandidates()) {
-      await rm(join(root, sessionId), { recursive: true, force: true })
-      deleted = true
-    }
-  } catch {
-    // Ignore removal failures for individual roots.
-  }
-  return deleted
-}
-
-export async function getSessionInfo(
-  sessionId: string,
-  options: GetSessionInfoOptions = {},
-): Promise<SessionMetadata | null> {
-  const data = await loadSession(sessionId)
-  if (!data?.metadata) return null
-  return matchesDir(data.metadata, options.dir) ? data.metadata : null
-}
-
-export async function renameSession(
-  sessionId: string,
-  title: string,
-  options: SessionMutationOptions = {},
-): Promise<void> {
-  const data = await loadSession(sessionId)
-  if (!data) return
-  if (!matchesDir(data.metadata, options.dir)) return
-
-  data.metadata.summary = title
-  data.metadata.updatedAt = new Date().toISOString()
-
-  await saveSession(sessionId, data.messages, {
-    ...data.metadata,
-    sessionMessages: data.sessionMessages,
-    checkpoints: data.checkpoints,
-  })
-}
-
-export async function tagSession(
-  sessionId: string,
-  tag: string | null,
-  options: SessionMutationOptions = {},
-): Promise<void> {
-  const data = await loadSession(sessionId)
-  if (!data) return
-  if (!matchesDir(data.metadata, options.dir)) return
-
-  data.metadata.tag = tag
-  data.metadata.updatedAt = new Date().toISOString()
-
-  await saveSession(sessionId, data.messages, {
-    ...data.metadata,
-    sessionMessages: data.sessionMessages,
-    checkpoints: data.checkpoints,
-  })
 }

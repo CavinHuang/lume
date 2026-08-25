@@ -22,6 +22,7 @@ function makeCandidate(id: string, statement: string, path: string): MemoryV2Rec
   return {
     id,
     kind: "fact",
+    semanticRole: "fact",
     scope: "global",
     status: "active",
     statement,

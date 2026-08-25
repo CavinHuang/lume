@@ -1,15 +1,12 @@
-export type ResolvedThinkingLevel = "auto" | "high" | "medium" | "low" | "xhigh" | "off";
+import { THINKING_TOKEN_BUDGETS, type ThinkingBudgetLevel } from "../../model-runtime/thinking-budgets";
+
+export type ResolvedThinkingLevel = "auto" | ThinkingBudgetLevel | "off";
 
 export interface ThinkingLevelAgent {
   setMaxThinkingTokens(value: number | null): Promise<void>;
 }
 
-const THINKING_TOKEN_BUDGETS: Record<Exclude<ResolvedThinkingLevel, "auto" | "off">, number> = {
-  high: 8_192,
-  medium: 4_096,
-  low: 1_024,
-  xhigh: 16_384
-};
+export { THINKING_TOKEN_BUDGETS, resolveThinkingLevelFromBudget } from "../../model-runtime/thinking-budgets";
 
 export async function applyResolvedThinkingLevel(
   agent: ThinkingLevelAgent,

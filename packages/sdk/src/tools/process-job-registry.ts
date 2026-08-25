@@ -20,7 +20,7 @@ export type ProcessJobStatus = 'running' | 'completed' | 'failed' | 'stopped' | 
 const IDENTITY_CACHE_TTL_MS = 5_000
 const HYDRATE_THROTTLE_MS = 500
 const identityCache = new Map<number, { identity: string | undefined; at: number }>()
-const persistedJobCache = new Map<string, { mtimeMs: number; parsed: ProcessJob }>()
+const persistedJobCache = new Map<string, { mtimeMs: number; size: number; ino: number; parsed: ProcessJob }>()
 let lastHydrateAt = 0
 let lastHydrateRoot = ''
 let lastHydrateResult: ProcessJob[] = []
@@ -268,6 +268,12 @@ export const ProcessStopTool: ToolDefinition = defineTool({
     hydrateContextProcessJobs(context.artifactsRoot)
     const job = getProcessJob(id)
     if (!job) return { type: 'tool_result', tool_use_id: '', content: `Process job not found: ${id}`, is_error: true }
+    // #647 P2-10：跨会话隔离——job 归属线程与当前会话不一致时拒绝停止，
+    // 防 IM 多渠道共享 sidecar 时停掉他线任务。fail-open 仅保护无引擎
+    // sessionId 的独立 SDK 调用方（生产持久化恒带 threadId），非存量兼容。
+    if (job.threadId && context.sessionId && job.threadId !== context.sessionId) {
+      return { type: 'tool_result', tool_use_id: '', content: `Process job ${job.id} belongs to another session`, is_error: true }
+    }
     if (job.status !== 'running') {
       return { type: 'tool_result', tool_use_id: '', content: `Process job is already ${job.status}: ${job.id}`, _meta: { task: { id: job.id, status: job.status, kind: job.taskType || 'process' } } }
     }
@@ -313,6 +319,12 @@ export const ProcessOutputTool: ToolDefinition = defineTool({
     hydrateContextProcessJobs(context.artifactsRoot)
     let job = getProcessJob(id)
     if (!job) return { data: `Process job not found: ${id}`, is_error: true }
+    // #647 P2-10：跨会话隔离——job 归属线程与当前会话不一致时拒绝读取，
+    // 防 IM 多渠道共享 sidecar 时越权读取他线任务输出。fail-open 仅保护无引擎
+    // sessionId 的独立 SDK 调用方（生产持久化恒带 threadId），非存量兼容。
+    if (job.threadId && context.sessionId && job.threadId !== context.sessionId) {
+      return { data: `Process job ${job.id} belongs to another session`, is_error: true }
+    }
     const block = input.block !== false
     const timeout = Math.min(Math.max(Number(input.timeout ?? 30_000), 0), 600_000)
     let abortedWhileBlocking = false
@@ -360,9 +372,6 @@ export const ProcessOutputTool: ToolDefinition = defineTool({
     }
   },
 })
-
-/** Compatibility aliases for SDK callers that used the pre-redesign helpers. */
-export const TaskOutputTool = ProcessOutputTool
 
 async function readJobOutput(job: ProcessJob, offset: number, limit: number): Promise<{ text: string; size: number; nextOffset: number; truncated: boolean }> {
   if (!job.outputFile) {
@@ -432,14 +441,20 @@ function refreshProcessJob(id: string): void {
 
 function readPersistedJob(statePath: string): ProcessJob | undefined {
   try {
-    // mtime short-circuit: repeated hydrates of an unchanged state.json skip
-    // read+parse entirely (#241); stat is far cheaper than the full read.
-    const mtimeMs = statSync(statePath).mtimeMs
+    // Fingerprint short-circuit: repeated hydrates of an unchanged state.json
+    // skip read+parse entirely (#241); stat is far cheaper than the full read.
+    // Writers persist via tmp+rename (fresh inode per write), so mtime alone
+    // cannot be trusted on coarse-clock filesystems (Linux jiffy granularity,
+    // #622): a running→terminal rewrite inside one tick would keep reading as
+    // "running" for the process lifetime. size+ino closes that window.
+    const st = statSync(statePath)
     const cached = persistedJobCache.get(statePath)
-    if (cached && cached.mtimeMs === mtimeMs) return cached.parsed
+    if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size && cached.ino === st.ino) {
+      return cached.parsed
+    }
     const parsed = JSON.parse(readFileSync(statePath, 'utf8')) as ProcessJob
     if (parsed.version !== 2 || typeof parsed.id !== 'string' || typeof parsed.status !== 'string') return undefined
-    persistedJobCache.set(statePath, { mtimeMs, parsed })
+    persistedJobCache.set(statePath, { mtimeMs: st.mtimeMs, size: st.size, ino: st.ino, parsed })
     return parsed
   } catch {
     return undefined

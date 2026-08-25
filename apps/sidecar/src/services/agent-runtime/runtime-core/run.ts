@@ -7,6 +7,8 @@ import {
   type AgentOptions,
   type CompletionGuardResult,
   type ApiType,
+  type AgentDefinition,
+  type SkillDefinition,
   type ContentBlockParam,
   type ToolResult,
   createTodoTool,
@@ -30,10 +32,7 @@ import type {
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import {
-  buildBuiltinAgents,
-  loadCustomAgents,
-} from "../../agent/agent-prompt-builder";
+import { getRuntimeHostPorts } from "../host-ports";
 import { createLogger } from "../../infra/logger";
 import {
   createRoutingPiAiProvider,
@@ -44,18 +43,15 @@ import {
   getWorkspaceMcpManager,
 } from "../../mcp/workspace-mcp-manager";
 import type { MemoryV2RecallItem } from "../../memory-v2/types";
-import {
-  getChannelById,
-  resolveChannelModelBinding,
-} from "../../channel/channel-manager";
+import { resolvePlanningTodoContext } from "./planning-todo-context";
+import { buildEnabledPluginContext } from "./plugin-enabled-context";
 import {
   getEffectiveLumeConfig,
   getEffectivePluginRuntimeConfig,
 } from "../../system/lume-config-service";
+import { resolveConfiguredPrivateWriteRoots } from "../permissions/permission-config";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
-import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
-import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
-import { buildSubagentWorkContext } from "../../agent/subagents/subagent-dispatch-policy";
+import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDir,
@@ -74,6 +70,7 @@ import {
   isBundledBrowserRuntimeAvailable,
   SidecarPluginManager,
 } from "../plugins/plugin-manager.js";
+import type { RegisteredPlugin } from "../plugins/plugin-registry.js";
 import {
   assemblePluginRuntime,
 } from "../plugins/runtime-bridge.js";
@@ -89,7 +86,7 @@ import {
   PLUGIN_MCP_WORKSPACE_SLUG,
 } from "../plugins/plugin-mcp-bridge.js";
 import { clearRuntimeToolDescriptors } from "../tools/tool-descriptor-session";
-import { clearRuntimeFileAccessLedger } from "../tools/file-access-ledger";
+import { getThreadFileStateCache } from "../tools/thread-file-state-cache";
 import {
   createCodingRunTracker,
   type CodingVerificationReport,
@@ -109,28 +106,30 @@ import {
   cloneTodoState,
   getTodoCompletionBlocker,
   readLatestTodoState,
-} from "../runner/todo-state";
-import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
+} from "./todo-state";
+import { createFileBackedRunContinuationStore } from "./run-continuation-store";
+import type { RunContinuationState } from "./run-continuation";
 import { persistAbortContinuation } from "../interruption/abort-continuation";
 import { classifyToolKind } from "../interruption/approval-service";
 import {
-  applyWorkflowHookEffectsSafely,
-  buildEnabledPluginContext,
   buildRuntimeCoreTools,
-  createRuntimeSkillFilter,
-  estimateToolSchemaTokens,
-  executeWorkflowHookSafely,
-  fingerprintToolSchema,
   isAutomationExecution,
-  resolvePlanningTodoContext,
-  resolvePromptCachePolicy,
-  resolveSdkApiType,
-  resolveSkillDirectories,
 } from "./run-tools";
 import {
-  createBoundSubagentTaskReportTool,
+  fingerprintToolSchema,
+  estimateToolSchemaTokens,
+} from "./tool-schema-metrics";
+import {
+  createRuntimeSkillFilter,
+  resolveSkillDirectories,
+} from "./skill-filter";
+import {
+  executeWorkflowHookSafely,
+  applyWorkflowHookEffectsSafely,
+} from "./workflow-hook-safety";
+import { resolvePromptCachePolicy, resolveSdkApiType } from "./request-policy";
+import {
   getResolvedAgentTools,
-  resolveBoundSubagentIdentity,
 } from "./run-subagent";
 import {
   buildBackgroundTaskResultsContext,
@@ -159,45 +158,68 @@ interface RuntimeCoreResolvedModel {
   reasoning?: boolean;
 }
 
-export interface CreateRuntimeCoreSessionInput {
+/**
+ * 组合根入参(#297 分面分组):52 个扁平字段按领域切为六个命名分面,
+ * 以交集组合——构造方仍传扁平字面量,契约按分面阅读。
+ */
+
+/** 运行身份:线程归属与执行形态。 */
+export interface SessionIdentityInput {
   lumeSessionId: string;
+  runId?: string;
+  threadType?: AgentSendInput["threadType"];
+  chatType?: AgentSendInput["chatType"];
+  permissionMode?: AgentSendInput["permissionMode"];
+  subagentType?: string;
+  subagentRunId?: string;
+  subagentId?: string;
+  subagentTaskId?: string;
+  subagentAttempt?: number;
+  planningClientSubmissionId?: string;
+}
+
+/** 工作区与文件路径解析面。 */
+export interface WorkspacePathsInput {
   cwd: string;
+  agentDir: string;
   lumeWorkDir?: string;
   filesRoot?: string;
   plansRoot?: string;
   artifactsRoot?: string;
   projectRoot?: string;
   additionalDirectories?: string[];
-  fileContextId?: string;
-  fileReferenceBinding?: FileReferenceBinding;
-  agentDir: string;
-  userMessage?: string;
-  messageParts?: AgentSendInput["messageParts"];
-  provider: string;
-  channelProvider?: string;
-  openaiApiMode?: OpenAiApiMode;
-  apiType?: ApiType;
-  modelRef?: string;
-  resolvedModelId: string;
-  resolvedModel?: RuntimeCoreResolvedModel;
-  apiKey: string;
   workspaceId?: string;
   workspaceName?: string;
   workspaceSlug?: string;
+  fileContextId?: string;
+  fileReferenceBinding?: FileReferenceBinding;
+}
+
+/** 模型与渠道解析面(凭据经 host-ports 解密)。 */
+export interface ModelChannelInput {
+  provider: string;
+  resolvedModelId: string;
+  apiKey: string;
+  channelProvider?: string;
   channelId?: string;
-  threadType?: AgentSendInput["threadType"];
-  subagentType?: string;
-  subagentRunId?: string;
-  subagentId?: string;
-  subagentTaskId?: string;
-  subagentAttempt?: number;
-  chatType?: AgentSendInput["chatType"];
-  permissionMode?: AgentSendInput["permissionMode"];
+  openaiApiMode?: OpenAiApiMode;
+  apiType?: ApiType;
+  modelRef?: string;
+  resolvedModel?: RuntimeCoreResolvedModel;
+}
+
+/** 用户消息与其附件载荷。 */
+export interface MessageInputFields {
+  userMessage?: string;
+  messageParts?: AgentSendInput["messageParts"];
   messageAttachments?: AgentSendInput["messageAttachments"];
   commentAttachments?: AgentSendInput["commentAttachments"];
   browserAttachments?: AgentSendInput["browserAttachments"];
   messageMetadata?: Record<string, unknown>;
-  planningClientSubmissionId?: string;
+}
+
+/** 事件出口:SDK/live 事件与各类交互请求的上抛通道。 */
+export interface RuntimeEmitters {
   emitSdkMessage?: (message: SDKMessage) => void;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   persistCodingReport?: (report: RuntimeCodingReport) => void;
@@ -213,7 +235,10 @@ export interface CreateRuntimeCoreSessionInput {
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
-  runId?: string;
+}
+
+/** 执行控制开关:hook/追踪/中止等横切控制。 */
+export interface RuntimeControlFlags {
   workflowHooks?: LumeWorkflowHookRuntimeLike;
   applyWorkflowHookEffects?: (
     result: LumeWorkflowHookExecutionResult,
@@ -222,6 +247,13 @@ export interface CreateRuntimeCoreSessionInput {
   toolConfig?: Record<string, unknown>;
   abortSignal?: AbortSignal;
 }
+
+export type CreateRuntimeCoreSessionInput = SessionIdentityInput &
+  WorkspacePathsInput &
+  ModelChannelInput &
+  MessageInputFields &
+  RuntimeEmitters &
+  RuntimeControlFlags;
 
 export interface RuntimeCoreSessionLike {
   sessionId: string;
@@ -336,11 +368,421 @@ export async function createRuntimeCoreSession(
   }
 }
 
+/**
+ * 插件运行时 + MCP 装配(#297 子项①自组合根拆出):
+ * Phase 3b 注册清单 → assembly;Phase 3d 门控 hooks;advisor Stop hook;
+ * MCP Merge-A/B(transient plugin manager + workspace 单例 merge + resource tools)。
+ * disposeWorkspace 清理在此注册进 pendingCleanup(无条件,失败也留子进程 state)。
+ */
+async function assemblePluginsAndMcpRuntime({
+  sessionDir,
+  workspaceSlug,
+  cwd,
+  modelRef,
+  provider,
+  lumeSessionId,
+  runId,
+  userMessage,
+  threadType,
+  emitAdvisorReview,
+  pendingCleanup,
+}: {
+  sessionDir: string;
+  workspaceSlug?: string;
+  cwd: string;
+  modelRef?: string;
+  provider: string;
+  lumeSessionId: string;
+  runId?: string;
+  userMessage?: string;
+  threadType?: AgentSendInput["threadType"];
+  emitAdvisorReview?: CreateRuntimeCoreSessionInput["emitAdvisorReview"];
+  pendingCleanup: Array<() => Promise<unknown> | void>;
+}) {
+  const pluginConfig = getEffectivePluginRuntimeConfig(workspaceSlug);
+  const computerUseConfig = getEffectiveLumeConfig(workspaceSlug).models
+    ?.computerUse;
+  const channelProvider = modelRef
+    ? (getRuntimeHostPorts().resolveChannelModelBinding(modelRef, "chat")?.channel.provider ??
+      provider)
+    : provider;
+  const computerUseSurface = resolveComputerUseSurface({
+    agentSurface: computerUseConfig?.agentSurface,
+    modelRef: modelRef,
+    skyModelRefs: computerUseConfig?.skyModelRefs,
+    channelProvider,
+  });
+  const pluginManager = new SidecarPluginManager();
+  const registeredPlugins = await pluginManager.listRegistered({
+    enabled: pluginConfig.enabled,
+    // Do not auto-load project-local .lume/plugins just because the Agent cwd is a real project.
+    directories: pluginConfig.directories,
+  });
+  const computerUsePlugin = registeredPlugins.find(
+    (plugin) => plugin.pluginId === "computer-use",
+  );
+  log.info("Computer Use capability selected", {
+    sessionId: lumeSessionId,
+    runId: runId,
+    computerUseSurface,
+    pluginVersion: computerUsePlugin?.version,
+    modelRef: modelRef,
+  });
+  const pluginAssembly = await assemblePluginRuntime(registeredPlugins);
+  writeSessionManifestOnce(sessionDir, registeredPlugins);
+  const surfaceSkills = filterComputerUseSkills(pluginAssembly.skills, computerUseSurface);
+
+  // Phase 3d: build agentOptions.hooks from resolved plugin hooks. Shell-command hooks
+  // are gate-aware (§8.1): checkSensitiveCapability(hook:event:matcher) before spawn.
+  const hookPermissionRuntime = new PluginPermissionRuntime({
+    stateStore: new FilePluginStateStore(DEFAULT_PLUGIN_STATE_PATH),
+  });
+  const pluginAgentHooks = buildPluginAgentHooks({
+    capabilities: pluginAssembly.hooks,
+    runtime: hookPermissionRuntime,
+    workspaceSlug: workspaceSlug,
+  });
+  const agentHooks = { ...pluginAgentHooks };
+  const advisorConfig = getEffectiveLumeConfig(workspaceSlug).models
+    ?.advisor;
+  if (
+    threadType !== "subagent" &&
+    advisorConfig?.defaultModelRef &&
+    advisorConfig.enabled !== false
+  ) {
+    agentHooks.Stop = [
+      ...(agentHooks.Stop ?? []),
+      {
+        hooks: [
+          async (hookInput: Record<string, unknown>) => {
+            try {
+              const review = await runAdvisor({
+                workspaceSlug: workspaceSlug,
+                cwd: cwd,
+                userMessage: userMessage,
+                messages: hookInput.messages,
+              });
+              if (!review) return undefined;
+              emitAdvisorReview?.(review);
+            } catch (error) {
+              log.warn("Advisor review failed", {
+                sessionId: lumeSessionId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+            return undefined;
+          },
+        ],
+      },
+    ];
+  }
+
+  // Phase MCP Merge-A/B: plugin-declared MCP servers via a TRANSIENT WorkspaceMcpManager
+  // (independent of the workspace singleton — zero pollution, §16.7 lifecycle via dispose).
+  // Merge-B: §8.1 start gate (authorizeConnect → checkSensitiveCapability, mcpServer key) +
+  // drop fixed-name management tools (includeManagementTools:false, avoids workspace collision) +
+  // stamp pluginId/capability/mcpServerId so the call gate (sensitive-gate.ts) source-binds.
+  // Stateless runtime, same state path as attempt.ts → shares approval records.
+  const pluginMcpPermissionRuntime = new PluginPermissionRuntime({
+    stateStore: new FilePluginStateStore(DEFAULT_PLUGIN_STATE_PATH),
+  });
+  const pluginMcpServerIndex = buildPluginIdIndex(pluginAssembly.mcpServers);
+  const pluginMcpManager = buildPluginMcpManager(pluginAssembly.mcpServers, {
+    permissionRuntime: pluginMcpPermissionRuntime,
+    workspaceSlug: workspaceSlug,
+    stdioCwd: cwd,
+  });
+  const workspaceMcpManager = getWorkspaceMcpManager();
+  const pluginMcpRuntime = await pluginMcpManager
+        .createRuntimeTools(PLUGIN_MCP_WORKSPACE_SLUG, {
+          includeManagementTools: false,
+          toolMetadataProvider: (serverId) => {
+            const pluginId = pluginMcpServerIndex.get(serverId);
+            if (!pluginId) return undefined;
+            return { source: "plugin", pluginId, capability: "mcp" };
+          },
+        })
+        .catch((error) => ({
+          tools: [],
+          diagnostics: [
+            {
+              pluginName: "PluginMCP",
+              severity: "warning" as const,
+              reason: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        }));
+  // createRuntimeTools 恒 resolve（内部失败也留下已 spawn 的子进程 state），失败清理须无条件注册
+  pendingCleanup.push(() =>
+    pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG),
+  );
+  const workspaceMcpRuntime = workspaceSlug
+    ? await workspaceMcpManager
+        .createRuntimeTools(workspaceSlug)
+        .catch((error) => ({
+          tools: [],
+          diagnostics: [
+            {
+              pluginName: "MCP",
+              severity: "warning" as const,
+              reason: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        }))
+    : { tools: [], diagnostics: [] };
+  // workspaceMcpManager 是进程级单例：runtime 连接跨会话复用，会话结束不做 per-session dispose
+  // （此前仅 Wiki Phase B 的 transient 沙箱 manager 需要清理，随功能移除一并消失）。
+  const pluginAwareMcpResourceTools =
+    workspaceSlug && pluginAssembly.mcpServers.length > 0
+      ? createPluginAwareMcpResourceTools({
+          workspaceSlug: workspaceSlug,
+          pluginServers: pluginAssembly.mcpServers,
+          workspaceMcpManager,
+          pluginMcpManager,
+        })
+      : [];
+  return {
+    surfaceSkills,
+    computerUseSurface,
+    pluginAssembly,
+    registeredPlugins,
+    pluginMcpManager,
+    pluginMcpRuntime,
+    workspaceMcpRuntime,
+    pluginAwareMcpResourceTools,
+    agentHooks,
+  };
+}
+
+/**
+ * Provider 路由装配(#297 子项①自组合根拆出):
+ * 主渠道连接路由 + 配置 fallbackModelRefs 的可用兜底路由。
+ */
+async function buildProviderRoutes({
+  channelId,
+  resolvedModel,
+  resolvedModelId,
+  lumeSessionId,
+  channelProvider,
+  provider,
+  apiKey,
+  workspaceSlug,
+  apiType,
+  openaiApiMode,
+}: {
+  channelId?: string;
+  resolvedModel?: RuntimeCoreResolvedModel;
+  resolvedModelId: string;
+  lumeSessionId: string;
+  channelProvider?: string;
+  provider: string;
+  apiKey: string;
+  workspaceSlug?: string;
+  apiType?: ApiType;
+  openaiApiMode?: OpenAiApiMode;
+}): Promise<PiAiProviderRoute[]> {
+  const resolvedApiType = apiType ?? resolveSdkApiType(provider, openaiApiMode);
+  const primaryChannel = channelId
+    ? getRuntimeHostPorts().getChannelById(channelId)
+    : undefined;
+  const providerRoutes: PiAiProviderRoute[] = [
+    primaryChannel
+      ? await createConnectionPiAiRoute({
+          channel: primaryChannel,
+          modelId: resolvedModel?.id ?? resolvedModelId,
+          sessionId: lumeSessionId,
+        })
+      : {
+          modelId: resolvedModel?.id ?? resolvedModelId,
+          apiType: resolvedApiType,
+          providerId: channelProvider ?? provider,
+          baseUrl: resolvedModel?.baseUrl ?? "",
+          apiKey: apiKey,
+          contextWindow: resolvedModel?.contextWindow,
+          maxTokens: resolvedModel?.maxTokens,
+          supportsReasoning: resolvedModel?.reasoning,
+          sessionId: lumeSessionId,
+        },
+  ];
+  const configuredFallbackRefs =
+    getEffectiveLumeConfig(workspaceSlug).models?.agent
+      ?.fallbackModelRefs ?? [];
+  for (const fallbackRef of configuredFallbackRefs) {
+    const binding = getRuntimeHostPorts().resolveChannelModelBinding(fallbackRef, "chat");
+    if (!binding) continue;
+    if (
+      binding.channel.id === channelId &&
+      binding.modelId === providerRoutes[0]?.modelId
+    )
+      continue;
+    try {
+      providerRoutes.push(
+        await createConnectionPiAiRoute({
+          channel: binding.channel,
+          modelId: binding.modelId,
+          sessionId: lumeSessionId,
+        }),
+      );
+    } catch (error) {
+      log.warn("skipping unavailable fallback model route", {
+        connectionId: binding.channel.id,
+        modelId: binding.modelId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return providerRoutes;
+}
+
+/**
+ * 会话上下文装配(#297 子项①自组合根拆出):
+ * runtime skills 过滤 → workflow beforeAssemble hook → ContextAssembler 主装配
+ * → afterAssemble hook 与效果应用 → subagent work context 合并。
+ */
+async function assembleSessionContext({
+  input,
+  runId,
+  toolset,
+  surfaceSkills,
+  registeredPlugins,
+  pluginAssembly,
+  initialTodoState,
+  subagentDefinition,
+}: {
+  input: CreateRuntimeCoreSessionInput;
+  runId: string;
+  toolset: ReturnType<typeof buildRuntimeCoreTools>;
+  surfaceSkills: SkillDefinition[];
+  registeredPlugins: RegisteredPlugin[];
+  pluginAssembly: Awaited<ReturnType<typeof assemblePluginRuntime>>;
+  initialTodoState: Awaited<ReturnType<typeof readLatestTodoState>>;
+  subagentDefinition: AgentDefinition | undefined;
+}) {
+  const runtimeSkills = toolset.availableToolNames.includes("mcp__browser__snapshot")
+    && !input.browserAttachments?.length
+    ? surfaceSkills.filter((skill) => skill.name !== "browser:browser")
+    : surfaceSkills;
+  const enabledPlugins = buildEnabledPluginContext(
+    registeredPlugins,
+    { ...pluginAssembly, skills: runtimeSkills },
+  );
+  const contextTokenBudget = input.resolvedModel?.contextWindow ?? 32_000;
+  const beforeContextResult = await executeWorkflowHookSafely(
+    input.workflowHooks,
+    {
+      event: "context.beforeAssemble",
+      runId,
+      threadId: input.lumeSessionId,
+      workspaceId: input.workspaceId,
+      workspaceSlug: input.workspaceSlug,
+      cwd: input.cwd,
+      permissionMode: input.permissionMode,
+      threadType: input.threadType,
+      chatType: input.chatType,
+      messageMetadata: input.messageMetadata,
+      userMessage: input.userMessage ?? "",
+      availableTools: toolset.availableToolNames,
+      tokenBudget: contextTokenBudget,
+    },
+  );
+  const workflowContext = beforeContextResult
+    ? {
+        appendContext: collectAppendContextEffects(beforeContextResult.effects),
+      }
+    : undefined;
+  const desktopContext = await resolveDesktopContextProjection(
+    input.messageMetadata,
+  );
+  const planningExecutionContext = resolvePlanningExecutionContext({
+    runId,
+    clientSubmissionId: input.planningClientSubmissionId,
+  });
+  const planningTodoContext = resolvePlanningTodoContext(
+    input,
+    planningExecutionContext,
+  );
+  const modelId = input.resolvedModel?.id ?? input.resolvedModelId;
+  const promptCache = resolvePromptCachePolicy({
+    channelProvider: input.channelProvider,
+    provider: input.provider,
+    model: modelId,
+    threadId: input.lumeSessionId,
+    baseUrl: input.resolvedModel?.baseUrl,
+  });
+  const toolSchemaFingerprint = fingerprintToolSchema(toolset.tools);
+  const toolSchemaTokens = estimateToolSchemaTokens(toolset.tools);
+
+  const contextAssembly = await new ContextAssembler().assemble({
+    threadId: input.lumeSessionId,
+    runId,
+    cwd: input.cwd,
+    lumeWorkDir: input.lumeWorkDir,
+    projectRoot: input.projectRoot,
+    modelRef: input.modelRef,
+    resolvedModelId: input.resolvedModel?.id ?? input.resolvedModelId,
+    workspaceName: input.workspaceName,
+    workspaceSlug: input.workspaceSlug,
+    threadType: input.threadType,
+    chatType: input.chatType,
+    permissionMode: input.permissionMode,
+    automationExecution: isAutomationExecution(input.messageMetadata),
+    agentSystemPrompt: subagentDefinition?.prompt,
+    userMessage: input.userMessage ?? "",
+    messageAttachments: input.messageAttachments,
+    commentAttachments: input.commentAttachments,
+    browserAttachments: input.browserAttachments,
+    availableTools: toolset.availableToolNames,
+    browserRuntimeAvailable: isBundledBrowserRuntimeAvailable(),
+    browserContinuity: input.messageMetadata?.browserContinuity,
+    enabledPlugins,
+    tokenBudget: contextTokenBudget,
+    toolSchemaFingerprint,
+    toolSchemaTokens,
+    cacheStrategy: promptCache.strategy,
+    workflowContext,
+    desktopContext,
+    todoState: initialTodoState,
+    planningTodoContext,
+    trace: input.trace,
+  });
+  const afterContextResult = await executeWorkflowHookSafely(
+    input.workflowHooks,
+    {
+      event: "context.afterAssemble",
+      runId,
+      threadId: input.lumeSessionId,
+      workspaceId: input.workspaceId,
+      workspaceSlug: input.workspaceSlug,
+      cwd: input.cwd,
+      permissionMode: input.permissionMode,
+      threadType: input.threadType,
+      chatType: input.chatType,
+      messageMetadata: input.messageMetadata,
+      availableTools: toolset.availableToolNames,
+      tokenBudget: contextTokenBudget,
+      memoryContextUsedItems: contextAssembly.memoryContextUsedItems,
+      userMessageForModelLength: contextAssembly.userMessageForModel.length,
+    },
+  );
+  await applyWorkflowHookEffectsSafely(
+    input.applyWorkflowHookEffects,
+    afterContextResult,
+  );
+  const systemPrompt = contextAssembly.systemPrompt;
+  const runtimeContext = contextAssembly.runtimeContext;
+  return {
+    runtimeSkills,
+    contextAssembly,
+    systemPrompt,
+    runtimeContext,
+    promptCache,
+  };
+}
+
 async function createRuntimeCoreSessionImpl(
   input: CreateRuntimeCoreSessionInput,
   pendingCleanup: Array<() => Promise<unknown> | void>,
 ): Promise<CreateRuntimeCoreSessionResult> {
-  const boundSubagentIdentity = resolveBoundSubagentIdentity(input);
   const sessionDir = getRuntimeCoreSessionDir(
     input.lumeSessionId,
     input.agentDir,
@@ -423,13 +865,11 @@ async function createRuntimeCoreSessionImpl(
         toolName.toLowerCase() === "processoutput" ? "read" : "execute";
       const toolUseId = toolInput.result.tool_use_id || task.id;
       const now = new Date().toISOString();
-      void createFileBackedRunContinuationStore(sessionDir)
-        .upsert({
-          version: 2,
-          runId: input.runId,
-          threadId: input.lumeSessionId,
-          status: "waiting_background",
-          checkpoint: {
+      const store = createFileBackedRunContinuationStore(sessionDir);
+      void store
+        .get(input.runId)
+        .then((existing) => {
+          const checkpoint: NonNullable<RunContinuationState["checkpoint"]> = {
             step: "waiting_for_tool_result",
             toolCallId: toolUseId,
             toolName,
@@ -444,10 +884,49 @@ async function createRuntimeCoreSessionImpl(
                 .digest("hex"),
               kind: toolKind,
             },
-          },
-          reason: "后台命令已持久化，恢复时重新附着而不重复执行。",
-          createdAt: now,
-          updatedAt: now,
+          };
+          // #650：主槽已有另一个在等后台任务时，旧快照降级进 backgroundCheckpoints
+          // 数组保留（按 processJobId 去重更新），不再被本任务覆盖。
+          const priorOther =
+            existing?.version === 2 &&
+            existing.checkpoint.processJobId &&
+            existing.checkpoint.processJobId !== task.id
+              ? [existing.checkpoint]
+              : [];
+          const carriedOthers = existing?.version === 2 ? existing.backgroundCheckpoints ?? [] : [];
+          const mergedOthers = [
+            ...carriedOthers.filter(
+              (item) =>
+                item.processJobId !== task.id &&
+                !priorOther.some((p) => p.processJobId === item.processJobId),
+            ),
+            ...priorOther.map((p) => ({
+              processJobId: p.processJobId!,
+              toolCallId: p.toolCallId ?? "",
+              toolName: p.toolName ?? "",
+              toolKind: p.toolKind ?? ("execute" as const),
+              toolCall: p.toolCall ?? {
+                id: p.toolCallId ?? "",
+                name: p.toolName ?? "",
+                input: null,
+                inputHash: "",
+                kind: p.toolKind ?? ("execute" as const),
+              },
+              syntheticToolResult: p.syntheticToolResult,
+              updatedAt: now,
+            })),
+          ];
+          return store.upsert({
+            version: 2,
+            runId: input.runId!,
+            threadId: input.lumeSessionId,
+            status: "waiting_background",
+            checkpoint,
+            ...(mergedOthers.length > 0 ? { backgroundCheckpoints: mergedOthers } : {}),
+            reason: "后台命令已持久化，恢复时重新附着而不重复执行。",
+            createdAt: existing?.createdAt ?? now,
+            updatedAt: now,
+          });
         })
         .catch((error) => {
           // fire-and-forget 持久化失败（AV 锁/磁盘满等）只降级恢复能力，不允许变成未处理拒绝崩进程
@@ -473,33 +952,47 @@ async function createRuntimeCoreSessionImpl(
       void continuationStore
         .get(input.runId)
         .then((continuation) => {
-          if (
-            !continuation ||
-            continuation.version !== 2 ||
-            continuation.checkpoint.processJobId !== event.task_id
-          )
-            return;
-          return continuationStore.update(input.runId!, {
-            status: "ready_to_resume",
-            checkpoint: {
-              ...continuation.checkpoint,
-              step: "after_tool_result",
-              syntheticToolResult: {
-                type: "tool_result",
-                tool_use_id:
-                  event.tool_use_id ?? continuation.checkpoint.toolCallId ?? "",
-                content: event.message ?? event.summary ?? "",
-                ...(event.status === "failed" ||
-                event.status === "stopped" ||
-                event.status === "interrupted"
-                  ? { is_error: true }
-                  : {}),
-                ...(event.execution
-                  ? { _meta: { execution: event.execution } }
-                  : {}),
+          if (!continuation || continuation.version !== 2) return;
+          const synthetic = {
+            type: "tool_result",
+            tool_use_id:
+              event.tool_use_id ?? continuation.checkpoint.toolCallId ?? "",
+            content: event.message ?? event.summary ?? "",
+            ...(event.status === "failed" ||
+            event.status === "stopped" ||
+            event.status === "interrupted"
+              ? { is_error: true }
+              : {}),
+            ...(event.execution
+              ? { _meta: { execution: event.execution } }
+              : {}),
+          };
+          // 主槽命中（最新后台任务）
+          if (continuation.checkpoint.processJobId === event.task_id) {
+            return continuationStore.update(input.runId!, {
+              status: "ready_to_resume",
+              checkpoint: {
+                ...continuation.checkpoint,
+                step: "after_tool_result",
+                syntheticToolResult: synthetic,
               },
-            },
-            reason: `后台命令已进入终态：${event.status}。`,
+              reason: `后台命令已进入终态：${event.status}。`,
+            });
+          }
+          // #650：次槽命中——把 syntheticToolResult 回填进对应数组项
+          const others = continuation.backgroundCheckpoints ?? [];
+          const hitIndex = others.findIndex(
+            (item) => item.processJobId === event.task_id,
+          );
+          if (hitIndex < 0) return;
+          const nextOthers = others.map((item, index) =>
+            index === hitIndex
+              ? { ...item, syntheticToolResult: synthetic, updatedAt: new Date().toISOString() }
+              : item,
+          );
+          return continuationStore.update(input.runId!, {
+            backgroundCheckpoints: nextOthers,
+            updatedAt: new Date().toISOString(),
           });
         })
         .catch((error) => {
@@ -570,9 +1063,6 @@ async function createRuntimeCoreSessionImpl(
         input.emitToolPermissionRequest?.(request);
       }
     : undefined;
-  const boundSubagentReportTool = boundSubagentIdentity
-    ? createBoundSubagentTaskReportTool(boundSubagentIdentity)
-    : undefined;
   const initialTodoState = await readLatestTodoState({
     sessionDir,
     threadId: input.lumeSessionId,
@@ -590,8 +1080,8 @@ async function createRuntimeCoreSessionImpl(
     input.agentDir,
   );
   const agents = {
-    ...buildBuiltinAgents(),
-    ...loadCustomAgents(input.workspaceSlug),
+    ...getRuntimeHostPorts().buildBuiltinAgents(),
+    ...getRuntimeHostPorts().loadCustomAgents(input.workspaceSlug),
   };
   const subagentDefinition = input.subagentType
     ? agents[input.subagentType]
@@ -599,148 +1089,30 @@ async function createRuntimeCoreSessionImpl(
   // Phase 3b: registry → resolver → bridge. Command tools + skills come from the
   // PluginRuntimeBridge now; the SDK's loadPlugins path is no longer used (no
   // agentOptions.plugins). Plugin hooks are wired below (Phase 3d, buildPluginAgentHooks).
-  const pluginConfig = getEffectivePluginRuntimeConfig(input.workspaceSlug);
-  const computerUseConfig = getEffectiveLumeConfig(input.workspaceSlug).models
-    ?.computerUse;
-  const channelProvider = input.modelRef
-    ? (resolveChannelModelBinding(input.modelRef, "chat")?.channel.provider ??
-      input.provider)
-    : input.provider;
-  const computerUseSurface = resolveComputerUseSurface({
-    agentSurface: computerUseConfig?.agentSurface,
-    modelRef: input.modelRef,
-    skyModelRefs: computerUseConfig?.skyModelRefs,
-    channelProvider,
-  });
-  const pluginManager = new SidecarPluginManager();
-  const registeredPlugins = await pluginManager.listRegistered({
-    enabled: pluginConfig.enabled,
-    // Do not auto-load project-local .lume/plugins just because the Agent cwd is a real project.
-    directories: pluginConfig.directories,
-  });
-  const computerUsePlugin = registeredPlugins.find(
-    (plugin) => plugin.pluginId === "computer-use",
-  );
-  log.info("Computer Use capability selected", {
-    sessionId: input.lumeSessionId,
-    runId: input.runId,
+  const {
+    surfaceSkills,
     computerUseSurface,
-    pluginVersion: computerUsePlugin?.version,
+    pluginAssembly,
+    registeredPlugins,
+    pluginMcpManager,
+    pluginMcpRuntime,
+    workspaceMcpRuntime,
+    pluginAwareMcpResourceTools,
+    agentHooks,
+  } = await assemblePluginsAndMcpRuntime({
+    workspaceSlug: input.workspaceSlug,
+    cwd: input.cwd,
     modelRef: input.modelRef,
+    provider: input.provider,
+    lumeSessionId: input.lumeSessionId,
+    runId: input.runId,
+    userMessage: input.userMessage,
+    threadType: input.threadType,
+    emitAdvisorReview: input.emitAdvisorReview,
+    sessionDir,
+    pendingCleanup,
   });
-  const pluginAssembly = await assemblePluginRuntime(registeredPlugins);
-  writeSessionManifestOnce(sessionDir, registeredPlugins);
-  const surfaceSkills = filterComputerUseSkills(pluginAssembly.skills, computerUseSurface);
 
-  // Phase 3d: build agentOptions.hooks from resolved plugin hooks. Shell-command hooks
-  // are gate-aware (§8.1): checkSensitiveCapability(hook:event:matcher) before spawn.
-  const hookPermissionRuntime = new PluginPermissionRuntime({
-    stateStore: new FilePluginStateStore(DEFAULT_PLUGIN_STATE_PATH),
-  });
-  const pluginAgentHooks = buildPluginAgentHooks({
-    capabilities: pluginAssembly.hooks,
-    runtime: hookPermissionRuntime,
-    workspaceSlug: input.workspaceSlug,
-  });
-  const agentHooks = { ...pluginAgentHooks };
-  const advisorConfig = getEffectiveLumeConfig(input.workspaceSlug).models
-    ?.advisor;
-  if (
-    input.threadType !== "subagent" &&
-    advisorConfig?.defaultModelRef &&
-    advisorConfig.enabled !== false
-  ) {
-    agentHooks.Stop = [
-      ...(agentHooks.Stop ?? []),
-      {
-        hooks: [
-          async (hookInput: Record<string, unknown>) => {
-            try {
-              const review = await runAdvisor({
-                workspaceSlug: input.workspaceSlug,
-                cwd: input.cwd,
-                userMessage: input.userMessage,
-                messages: hookInput.messages,
-              });
-              if (!review) return undefined;
-              input.emitAdvisorReview?.(review);
-            } catch (error) {
-              log.warn("Advisor review failed", {
-                sessionId: input.lumeSessionId,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            }
-            return undefined;
-          },
-        ],
-      },
-    ];
-  }
-
-  // Phase MCP Merge-A/B: plugin-declared MCP servers via a TRANSIENT WorkspaceMcpManager
-  // (independent of the workspace singleton — zero pollution, §16.7 lifecycle via dispose).
-  // Merge-B: §8.1 start gate (authorizeConnect → checkSensitiveCapability, mcpServer key) +
-  // drop fixed-name management tools (includeManagementTools:false, avoids workspace collision) +
-  // stamp pluginId/capability/mcpServerId so the call gate (sensitive-gate.ts) source-binds.
-  // Stateless runtime, same state path as attempt.ts → shares approval records.
-  const pluginMcpPermissionRuntime = new PluginPermissionRuntime({
-    stateStore: new FilePluginStateStore(DEFAULT_PLUGIN_STATE_PATH),
-  });
-  const pluginMcpServerIndex = buildPluginIdIndex(pluginAssembly.mcpServers);
-  const pluginMcpManager = buildPluginMcpManager(pluginAssembly.mcpServers, {
-    permissionRuntime: pluginMcpPermissionRuntime,
-    workspaceSlug: input.workspaceSlug,
-    stdioCwd: input.cwd,
-  });
-  const workspaceMcpManager = getWorkspaceMcpManager();
-  const pluginMcpRuntime = await pluginMcpManager
-        .createRuntimeTools(PLUGIN_MCP_WORKSPACE_SLUG, {
-          includeManagementTools: false,
-          toolMetadataProvider: (serverId) => {
-            const pluginId = pluginMcpServerIndex.get(serverId);
-            if (!pluginId) return undefined;
-            return { source: "plugin", pluginId, capability: "mcp" };
-          },
-        })
-        .catch((error) => ({
-          tools: [],
-          diagnostics: [
-            {
-              pluginName: "PluginMCP",
-              severity: "warning" as const,
-              reason: error instanceof Error ? error.message : String(error),
-            },
-          ],
-        }));
-  // createRuntimeTools 恒 resolve（内部失败也留下已 spawn 的子进程 state），失败清理须无条件注册
-  pendingCleanup.push(() =>
-    pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG),
-  );
-  const workspaceMcpRuntime = input.workspaceSlug
-    ? await workspaceMcpManager
-        .createRuntimeTools(input.workspaceSlug)
-        .catch((error) => ({
-          tools: [],
-          diagnostics: [
-            {
-              pluginName: "MCP",
-              severity: "warning" as const,
-              reason: error instanceof Error ? error.message : String(error),
-            },
-          ],
-        }))
-    : { tools: [], diagnostics: [] };
-  // workspaceMcpManager 是进程级单例：runtime 连接跨会话复用，会话结束不做 per-session dispose
-  // （此前仅 Wiki Phase B 的 transient 沙箱 manager 需要清理，随功能移除一并消失）。
-  const pluginAwareMcpResourceTools =
-    input.workspaceSlug && pluginAssembly.mcpServers.length > 0
-      ? createPluginAwareMcpResourceTools({
-          workspaceSlug: input.workspaceSlug,
-          pluginServers: pluginAssembly.mcpServers,
-          workspaceMcpManager,
-          pluginMcpManager,
-        })
-      : [];
   const toolset = buildRuntimeCoreTools({
     cwd: input.cwd,
     filesRoot: input.filesRoot,
@@ -757,7 +1129,6 @@ async function createRuntimeCoreSessionImpl(
     chatType: input.chatType,
     permissionMode: input.permissionMode,
     subagentDefinition,
-    boundSubagentReportTool,
     fileReferenceBinding: input.fileReferenceBinding,
     messageMetadata: input.messageMetadata,
     planningClientSubmissionId: input.planningClientSubmissionId,
@@ -791,155 +1162,23 @@ async function createRuntimeCoreSessionImpl(
       ...(pluginMcpRuntime.diagnostics ?? []),
     ],
   });
-  const runtimeSkills = toolset.availableToolNames.includes("mcp__browser__snapshot")
-    && !input.browserAttachments?.length
-    ? surfaceSkills.filter((skill) => skill.name !== "browser:browser")
-    : surfaceSkills;
-  const enabledPlugins = buildEnabledPluginContext(
-    registeredPlugins,
-    { ...pluginAssembly, skills: runtimeSkills },
-  );
-  const contextTokenBudget = input.resolvedModel?.contextWindow ?? 32_000;
-  const beforeContextResult = await executeWorkflowHookSafely(
-    input.workflowHooks,
-    {
-      event: "context.beforeAssemble",
-      runId,
-      threadId: input.lumeSessionId,
-      workspaceId: input.workspaceId,
-      workspaceSlug: input.workspaceSlug,
-      cwd: input.cwd,
-      permissionMode: input.permissionMode,
-      threadType: input.threadType,
-      chatType: input.chatType,
-      messageMetadata: input.messageMetadata,
-      userMessage: input.userMessage ?? "",
-      availableTools: toolset.availableToolNames,
-      tokenBudget: contextTokenBudget,
-    },
-  );
-  const workflowContext = beforeContextResult
-    ? {
-        appendContext: collectAppendContextEffects(beforeContextResult.effects),
-      }
-    : undefined;
-  const desktopContext = await resolveDesktopContextProjection(
-    input.messageMetadata,
-  );
-  const planningExecutionContext = resolvePlanningExecutionContext({
-    runId,
-    clientSubmissionId: input.planningClientSubmissionId,
-  });
-  const planningTodoContext = resolvePlanningTodoContext(
+  const {
+    runtimeSkills,
+    contextAssembly,
+    systemPrompt,
+    runtimeContext,
+    promptCache,
+  } = await assembleSessionContext({
     input,
-    planningExecutionContext,
-  );
-  const modelId = input.resolvedModel?.id ?? input.resolvedModelId;
-  const promptCache = resolvePromptCachePolicy({
-    channelProvider: input.channelProvider,
-    provider: input.provider,
-    model: modelId,
-    threadId: input.lumeSessionId,
-    baseUrl: input.resolvedModel?.baseUrl,
-  });
-  const toolSchemaFingerprint = fingerprintToolSchema(toolset.tools);
-  const toolSchemaTokens = estimateToolSchemaTokens(toolset.tools);
-
-  const contextAssembly = await new ContextAssembler().assemble({
-    threadId: input.lumeSessionId,
     runId,
-    cwd: input.cwd,
-    lumeWorkDir: input.lumeWorkDir,
-    projectRoot: input.projectRoot,
-    modelRef: input.modelRef,
-    resolvedModelId: input.resolvedModel?.id ?? input.resolvedModelId,
-    workspaceName: input.workspaceName,
-    workspaceSlug: input.workspaceSlug,
-    threadType: input.threadType,
-    chatType: input.chatType,
-    permissionMode: input.permissionMode,
-    automationExecution: isAutomationExecution(input.messageMetadata),
-    agentSystemPrompt: boundSubagentIdentity
-      ? [
-          subagentDefinition?.prompt,
-          "You are executing one bound Subagent Task. Do not create nested subagents or change the task acceptance criteria. Before ending this run, call TaskReport with submitted, failed, or blocked status and a concise summary. TaskReport is a submission to the parent agent, never final acceptance.",
-          `Bound task: ${boundSubagentIdentity.taskId}; attempt: ${input.subagentAttempt ?? 1}.`,
-        ]
-          .filter(Boolean)
-          .join("\n\n")
-      : subagentDefinition?.prompt,
-    userMessage: input.userMessage ?? "",
-    messageAttachments: input.messageAttachments,
-    commentAttachments: input.commentAttachments,
-    browserAttachments: input.browserAttachments,
-    availableTools: toolset.availableToolNames,
-    browserRuntimeAvailable: isBundledBrowserRuntimeAvailable(),
-    browserContinuity: input.messageMetadata?.browserContinuity,
-    enabledPlugins,
-    tokenBudget: contextTokenBudget,
-    toolSchemaFingerprint,
-    toolSchemaTokens,
-    cacheStrategy: promptCache.strategy,
-    workflowContext,
-    desktopContext,
-    todoState: initialTodoState,
-    planningTodoContext,
-    trace: input.trace,
+    toolset,
+    surfaceSkills,
+    registeredPlugins,
+    pluginAssembly,
+    initialTodoState,
+    subagentDefinition,
   });
-  const afterContextResult = await executeWorkflowHookSafely(
-    input.workflowHooks,
-    {
-      event: "context.afterAssemble",
-      runId,
-      threadId: input.lumeSessionId,
-      workspaceId: input.workspaceId,
-      workspaceSlug: input.workspaceSlug,
-      cwd: input.cwd,
-      permissionMode: input.permissionMode,
-      threadType: input.threadType,
-      chatType: input.chatType,
-      messageMetadata: input.messageMetadata,
-      availableTools: toolset.availableToolNames,
-      tokenBudget: contextTokenBudget,
-      memoryContextUsedItems: contextAssembly.memoryContextUsedItems,
-      userMessageForModelLength: contextAssembly.userMessageForModel.length,
-    },
-  );
-  await applyWorkflowHookEffectsSafely(
-    input.applyWorkflowHookEffects,
-    afterContextResult,
-  );
-  const unresolvedSubagentTasks =
-    input.threadType === "subagent"
-      ? []
-      : getSubagentCoordinator()
-          .list(input.lumeSessionId)
-          .tasks.filter(
-            (task) =>
-              task.status === "open" ||
-              task.status === "running" ||
-              task.status === "awaiting_review",
-          );
-  const systemPrompt = contextAssembly.systemPrompt;
-  const runtimeContext = [
-    contextAssembly.runtimeContext,
-    buildSubagentWorkContext(unresolvedSubagentTasks),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
   const context = sessionManager.buildSessionContext();
-  const existingCompletionGuard = boundSubagentIdentity
-    ? () =>
-        getSubagentCoordinator().getRunCompletionBlocker(
-          boundSubagentIdentity.runId,
-        )
-    : input.runId
-      ? () =>
-          getSubagentCoordinator().getCompletionBlocker(
-            input.lumeSessionId,
-            input.runId!,
-          )
-      : undefined;
   const completionGuard = async (): Promise<CompletionGuardResult> => {
     const registry = getSubagentRunRegistry();
     const subagentRuns = registry
@@ -962,7 +1201,13 @@ async function createRuntimeCoreSessionImpl(
       await Promise.all([
         subagentRuns.length > 0
           ? (async () => {
+              // 总上限:长期不响应的审批/僵尸委派不得无限期挂住父 run。
+              // 超时后放行本轮收割,未完成 runs 保持 running(完成后 announce 照发,
+              // 下一轮 guard 会再次尝试收割)。
+              const waitStartedAt = Date.now();
+              const BACKGROUND_WAIT_TOTAL_LIMIT_MS = 30 * 60 * 1000;
               while (
+                Date.now() - waitStartedAt < BACKGROUND_WAIT_TOTAL_LIMIT_MS &&
                 subagentRuns.some(
                   (run) => registry.get(run.runId)?.status === "running",
                 )
@@ -1022,21 +1267,25 @@ async function createRuntimeCoreSessionImpl(
         };
       }
     }
-    const existing = await existingCompletionGuard?.();
-    if (existing) return existing;
     const coding = await codingRunTracker.completionGuard();
     return coding ?? getTodoCompletionBlocker(currentTodoState);
   };
-  const codingCompletionEnabled = !(
-    input.subagentRunId &&
-    input.subagentTaskId &&
-    !input.runId &&
-    !boundSubagentIdentity
-  );
   const enableFileCheckpointing = input.permissionMode !== "plan";
+  // SDK 工具入口的 containment 根集（#546）必须与 guardrail 的
+  // privateWriteRoots 白名单同源，否则 skills/plugins 等已授权写根会被新加的
+  // 无条件复核误拒。
   const additionalDirectories = [
     ...new Set(
       [
+        ...resolveConfiguredPrivateWriteRoots({
+          agentCwd: input.cwd,
+          lumeWorkDir: input.lumeWorkDir,
+          filesRoot: input.filesRoot,
+          plansRoot: input.plansRoot,
+          artifactsRoot: input.artifactsRoot,
+          workspaceSlug: input.workspaceSlug,
+          configuredRoots: getEffectiveLumeConfig(input.workspaceSlug).permissions?.privateWriteRoots,
+        }),
         ...(input.additionalDirectories ?? []),
         input.lumeWorkDir,
         input.artifactsRoot,
@@ -1064,58 +1313,21 @@ async function createRuntimeCoreSessionImpl(
     ...input.toolConfig,
   };
 
-  const apiType =
-    input.apiType ?? resolveSdkApiType(input.provider, input.openaiApiMode);
-  const primaryChannel = input.channelId
-    ? getChannelById(input.channelId)
-    : undefined;
-  const providerRoutes: PiAiProviderRoute[] = [
-    primaryChannel
-      ? await createConnectionPiAiRoute({
-          channel: primaryChannel,
-          modelId: input.resolvedModel?.id ?? input.resolvedModelId,
-          sessionId: input.lumeSessionId,
-        })
-      : {
-          modelId: input.resolvedModel?.id ?? input.resolvedModelId,
-          apiType,
-          providerId: input.channelProvider ?? input.provider,
-          baseUrl: input.resolvedModel?.baseUrl ?? "",
-          apiKey: input.apiKey,
-          contextWindow: input.resolvedModel?.contextWindow,
-          maxTokens: input.resolvedModel?.maxTokens,
-          supportsReasoning: input.resolvedModel?.reasoning,
-          sessionId: input.lumeSessionId,
-        },
-  ];
-  const configuredFallbackRefs =
-    getEffectiveLumeConfig(input.workspaceSlug).models?.agent
-      ?.fallbackModelRefs ?? [];
-  for (const fallbackRef of configuredFallbackRefs) {
-    const binding = resolveChannelModelBinding(fallbackRef, "chat");
-    if (!binding) continue;
-    if (
-      binding.channel.id === input.channelId &&
-      binding.modelId === providerRoutes[0]?.modelId
-    )
-      continue;
-    try {
-      providerRoutes.push(
-        await createConnectionPiAiRoute({
-          channel: binding.channel,
-          modelId: binding.modelId,
-          sessionId: input.lumeSessionId,
-        }),
-      );
-    } catch (error) {
-      log.warn("skipping unavailable fallback model route", {
-        connectionId: binding.channel.id,
-        modelId: binding.modelId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
+  const providerRoutes = await buildProviderRoutes({
+    channelId: input.channelId,
+    resolvedModel: input.resolvedModel,
+    resolvedModelId: input.resolvedModelId,
+    lumeSessionId: input.lumeSessionId,
+    channelProvider: input.channelProvider,
+    provider: input.provider,
+    apiKey: input.apiKey,
+    workspaceSlug: input.workspaceSlug,
+    apiType: input.apiType,
+    openaiApiMode: input.openaiApiMode,
+  });
+
   const agentOptions: AgentOptions = {
+    subagentRunId: input.subagentRunId,
     provider: createRoutingPiAiProvider(providerRoutes),
     model: input.resolvedModel?.id ?? input.resolvedModelId,
     contextWindow: input.resolvedModel?.contextWindow ?? 32_000,
@@ -1150,9 +1362,6 @@ async function createRuntimeCoreSessionImpl(
     resolveRuntimeTools: (tools, runtimeContext) =>
       ToolRuntime.resolveDynamicTools({
         tools,
-        requiredTools: boundSubagentReportTool
-          ? [boundSubagentReportTool]
-          : undefined,
         cwd: input.cwd,
         sessionId: input.lumeSessionId,
         threadType: runtimeContext.threadType ?? input.threadType,
@@ -1171,10 +1380,7 @@ async function createRuntimeCoreSessionImpl(
         tools,
         sessionId: input.lumeSessionId,
       }),
-    ...(codingCompletionEnabled &&
-    (input.userMessage?.trim() || existingCompletionGuard)
-      ? { completionGuard }
-      : {}),
+    ...(input.userMessage?.trim() ? { completionGuard } : {}),
     additionalDirectories:
       additionalDirectories.length > 0 ? additionalDirectories : undefined,
     contextController: createKernelContextController({
@@ -1189,6 +1395,11 @@ async function createRuntimeCoreSessionImpl(
     }),
     persistSession: true,
     enableFileCheckpointing,
+    // 线程级共享读记录（#569）：每条消息新建的 Agent 都注入同一 cache，
+    // stale-read 防护跨消息存活。分工：cache=mtime/size/content 新鲜度；
+    // "须完整读"门控=file-access-ledger（线程删除时才清理，见
+    // thread-file-state-cache.ts 注释）。
+    fileStateCache: getThreadFileStateCache(input.lumeSessionId),
   };
 
   // Live 事件桥(#285):SDK 工具执行期直通的进度事件先落在本桥,runner 侧
@@ -1203,7 +1414,6 @@ async function createRuntimeCoreSessionImpl(
   pendingCleanup.push(() => agent.close());
   pendingCleanup.push(() => {
     clearRuntimeToolDescriptors(input.lumeSessionId);
-    clearRuntimeFileAccessLedger(input.lumeSessionId);
   });
   await agent.getInitializationResult();
   const resolvedTools = getResolvedAgentTools(agent, toolset.tools);
@@ -1245,7 +1455,8 @@ async function createRuntimeCoreSessionImpl(
         });
       }
       clearRuntimeToolDescriptors(input.lumeSessionId);
-      clearRuntimeFileAccessLedger(input.lumeSessionId);
+      // file-access-ledger 与线程级 fileStateCache 不随 run 清理（#569）：
+      // 跨消息 stale 防护依赖记录存活；清理挂点=线程删除。
     },
   };
 

@@ -4,8 +4,8 @@ import { planningTodoUri } from "@lume/shared";
 import { appendAgentMessage } from "../agent/agent-service";
 import { createAgentNotificationEmitter } from "../agent/agent-notification-service";
 import { getAgentSubmissionStore } from "../agent/agent-submission-store";
-import { createAgentThreadWithModelRef, deleteAgentThread, getAgentThreadMessages } from "../agent/agent-thread-manager";
-import { isAgentRuntimeSessionActive } from "../agent-runtime/runtime-core/attempt";
+import { createAgentThreadWithModelRef, deleteAgentThread, getAgentThreadMessages, getAgentThreadMeta } from "../agent/agent-thread-manager";
+import { isAgentRuntimeSessionActive } from "../agent-runtime/runner/attempt";
 import { issuePlanningScopeGrant, registerPlanningExecutionContext } from "./planning-execution-context";
 import { getPlanningTodoStore } from "./planning-todo-store";
 
@@ -26,6 +26,11 @@ export function startPlanningTodo(input: PlanningTodoStartInput, mode: "start" |
   if (operation.status === "completed" || operation.status === "partial" || operation.status === "reconciling") {
     const existingThreadId = operation.threadId;
     if (existingThreadId) return { schemaVersion: 1, operation, threadId: existingThreadId, todo: store.get(todo.id, false) };
+  }
+  // 补偿终态（#647 P1-6）：空线程已删且无回执，同 key 重试不得复活幽灵 threadId，
+  // 如实返回补偿后的 envelope 由调用方感知失败。
+  if (operation.status === "compensated") {
+    return { schemaVersion: 1, operation, todo: store.get(todo.id, false) };
   }
 
   const linked = store.listPrimaryThreads(todo.id);
@@ -117,7 +122,23 @@ export function reconcilePlanningStartOperations(): void {
     const threadId = operation.threadId;
     const clientSubmissionId = operation.clientSubmissionId;
     const receipt = submissions.get(clientSubmissionId);
-    if (!receipt || receipt.threadId !== threadId) continue;
+    if (!receipt || receipt.threadId !== threadId) {
+      // #647 P1-6：thread_created/compensating 相位且无任何 submission 回执，说明
+      // 消息从未被接受——护栏（会话不活跃且线程零消息）全过才删空线程。先删后推进：
+      // 删除失败时不落任何终态，相位保持原处供下次 boot 重试，避免断头终态使
+      // recoverable=true 沦为空头承诺、孤儿线程永久滞留。
+      if (operation.phase === "thread_created" || operation.phase === "compensating") {
+        try {
+          if (!isAgentRuntimeSessionActive(threadId) && getAgentThreadMessages(threadId).length === 0) {
+            // meta 已缺失＝线程已被删除（用户手删或上轮已清）：直接收敛，不对幽灵线程重复 delete
+            if (getAgentThreadMeta(threadId)) deleteAgentThread(threadId);
+            operation = store.advanceOperation(operation.operationId, { phase: "compensating", status: "running", recoverable: true, threadId });
+            store.advanceOperation(operation.operationId, { phase: "reconciled", status: "compensated", compensation: "completed", recoverable: false, threadId });
+          }
+        } catch { /* 保持当前相位等待下次 boot 重试 */ }
+      }
+      continue;
+    }
     try {
       if (accepted.has(receipt.status)) {
         if (phaseOrder.indexOf(operation.phase) < phaseOrder.indexOf("submission_accepted")) {

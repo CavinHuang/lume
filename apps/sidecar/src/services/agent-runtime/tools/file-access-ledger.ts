@@ -1,4 +1,12 @@
 import { readFile, stat } from "node:fs/promises";
+
+/**
+ * 产品级"写入前须完整读取"门控（#333/#569）：partial 读不计数、mtime+hash
+ * 判新鲜，在 tool-runtime-wrapper 里先于 SDK 工具执行拦截。
+ * 分工：本层只管"须完整读"；mtime/size/content 新鲜度由注入各 Agent 的线程级
+ * FileStateCache（thread-file-state-cache.ts）负责。记录随线程删除清理
+ * （agent-thread-manager），不随单条消息的 run 结束清空——否则跨消息防护失效。
+ */
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 

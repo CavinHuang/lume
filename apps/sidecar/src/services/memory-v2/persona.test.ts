@@ -23,6 +23,8 @@ const mkEntry = (
     frontmatter: {
       id: "e1",
       kind: "preference",
+      // 与 markdown-store 落盘回填一致：缺省时 semantic_role 从 kind 同名派生
+      semantic_role: over.kind ?? "preference",
       scope: "global",
       status: "active",
       created: "t",

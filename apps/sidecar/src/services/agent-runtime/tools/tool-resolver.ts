@@ -21,8 +21,9 @@ export class ToolResolver {
       tools = tools.filter((tool) => tool.metadata.allowedInPlanMode);
     }
     const metadataPolicy = resolveMetadataToolPolicy(input.messageMetadata);
+    const failClosed = input.messageMetadata?.memoryBackground === true;
     if (metadataPolicy) {
-      tools = filterDescriptorsByPolicy(tools, metadataPolicy);
+      tools = filterDescriptorsByPolicy(tools, metadataPolicy, { failClosedOnDeadAllow: failClosed });
     }
     for (const policy of input.policies ?? []) {
       tools = filterDescriptorsByPolicy(tools, policy);
@@ -50,13 +51,23 @@ function resolveMetadataToolPolicy(messageMetadata?: Record<string, unknown>): A
 
 function filterDescriptorsByPolicy(
   tools: LumeToolDescriptor[],
-  policy: AgentToolPolicy
+  policy: AgentToolPolicy,
+  options?: { failClosedOnDeadAllow?: boolean }
 ): LumeToolDescriptor[] {
   const allow = expandRuntimeToolPolicyEntries(policy.allow);
   const deny = expandRuntimeToolPolicyEntries(policy.deny);
+  // 全部 allow 条目都匹配不到任何已注册工具 = 存量失效配置（如技能仍引用已下线工具），
+  // 视为未设置 allow 回退默认工具集；只要有一个条目命中就维持收紧语义。
+  // 但隐藏后台代理（memoryBackground）是安全收口点：白名单失效时必须 fail-closed 给空面，
+  // 绝不能让无人监督的后台代理静默获得全量工具集。
+  const allowAlive = allow.length === 0
+    || tools.some((tool) => matchesAnyRuntimeToolPolicyEntry(tool.canonicalName, allow));
+  if (allow.length > 0 && !allowAlive && options?.failClosedOnDeadAllow) {
+    return [];
+  }
   return tools.filter((tool) => {
     if (matchesAnyRuntimeToolPolicyEntry(tool.canonicalName, deny)) return false;
-    if (allow.length > 0 && !matchesAnyRuntimeToolPolicyEntry(tool.canonicalName, allow)) return false;
+    if (allowAlive && allow.length > 0 && !matchesAnyRuntimeToolPolicyEntry(tool.canonicalName, allow)) return false;
     return true;
   });
 }

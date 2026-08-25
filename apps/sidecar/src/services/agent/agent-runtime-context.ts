@@ -2,7 +2,7 @@ import type { AgentSendInput } from "@lume/shared";
 import { getAgentThreadMeta } from "./agent-thread-manager";
 import type { DynamicContext, EnabledPluginContextItem } from "./agent-prompt-builder";
 
-interface ResolveAgentDynamicContextInput {
+export interface ResolveAgentDynamicContextInput {
   threadId: string;
   userMessage?: string;
   workspaceName?: string;

@@ -96,7 +96,7 @@ export async function suggestNearbyPaths(filePath: string, limit = 3): Promise<s
  * 原样拼回；悬空 symlink 的 existsSync 为 false 但链接本体仍按其目标解析，
  * 否则"经 symlink 写入尚不存在的外部目标"会绕过沙箱比对（#336）。
  */
-function canonicalizePath(input: string): string {
+export function canonicalizePath(input: string): string {
   let current = resolve(input)
   const tailSegments: string[] = []
   // 链跳上限防 symlink 环；超限按词法兜底（宁可漏判不挂死）
@@ -172,6 +172,25 @@ export function ensurePathAllowed(
   }
 
   return null
+}
+
+/**
+ * 写入 containment 复核，不以 sandbox.enabled 为前提（#546）：SDK 沙箱在
+ * Lume 中恒未启用，ensurePathAllowed 首行即短路；junction/symlink 可穿越
+ * 纯词法边界写到 workspace 外。canonicalize 后必须仍在 cwd ∪ additional
+ * 目录内。sandbox 启用时的 deny/allow 规则仍由 ensurePathAllowed 叠加；
+ * 若宿主配置 allowWrite 到 containment 根集之外，以本函数为准（取严）。
+ */
+export function ensureWriteContained(
+  path: string,
+  cwd: string,
+  additionalDirectories: string[] = [],
+): string | null {
+  const canonical = canonicalizePath(path)
+  const allowed = [cwd, ...additionalDirectories].some(
+    (root) => isPathWithinRoot(canonical, canonicalizePath(root)),
+  )
+  return allowed ? null : `Write denied: ${path} resolves outside the workspace (configure permissions.privateWriteRoots to allow this directory)`
 }
 
 export function getHostnameFromUrl(url: string): string | null {

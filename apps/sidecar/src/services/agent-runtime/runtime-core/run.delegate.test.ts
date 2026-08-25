@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -13,10 +13,10 @@ import {
 import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest
-} from "../../agent/subagents/subagent-run-registry";
+} from "../subagents/subagent-run-registry";
 import { buildBackgroundTaskResultsContext } from "./run-background";
 import { buildSidecarSubagentRunContext, canDelegateFromThread, deriveDelegateTitle } from "./run-subagent";
-import { buildWaitForDelegationsResult } from "./run-tools";
+import { buildWaitForDelegationsResult } from "./delegation-result";
 
 describe("DelegateTool child thread", () => {
   let prevConfigDir: string | undefined;
@@ -387,5 +387,34 @@ describe("ThreadListChanged notification", () => {
       unsub1();
       unsub2();
     }
+  });
+});
+
+// ─── task_ref 委派超时接线（#647 P1-3）───
+// runSidecarSubagent 是模块内直调，行为级 mock 代价过高（见上 S2 注释）；
+// 按仓内源码契约测试先例（layering-boundary / logging-source-contract）钉死
+// “task_ref 执行必须经 runForegroundSubagentWithTimeout 包装”这一不变量，
+// 防止未来改回直调时 #647 P1-3 无声复活。
+describe("task_ref 委派超时接线", () => {
+  test("runTaskLinkedSubagent 必须经 runForegroundSubagentWithTimeout 且超时来自共享 resolver", () => {
+    const source = readFileSync(join(import.meta.dir, "run-subagent.ts"), "utf8");
+    const fnStart = source.indexOf("export async function runTaskLinkedSubagent");
+    expect(fnStart).toBeGreaterThanOrEqual(0);
+    const rest = source.slice(fnStart);
+    const nextExport = rest.indexOf("\nexport ", 1);
+    const body = nextExport === -1 ? rest : rest.slice(0, nextExport);
+    expect(body).toContain("runForegroundSubagentWithTimeout({");
+    expect(body).toContain("timeoutMs: resolveForegroundSubagentTimeoutMs()");
+  });
+});
+
+// ─── fileStateCache 线程级装配接线（#569/#655）───
+// SDK 层 agent.test 的跨 run 用例是手动注入模拟，防不了装配层回退：run.ts 若
+// 漏掉 fileStateCache 注入，引擎会静默退回 per-run 私有实例（read-before-edit
+// 跨消息失效），sdk+sidecar 全套件零红灯。同按源码契约钉死装配表达式本身。
+describe("fileStateCache 线程级装配接线", () => {
+  test("createAgent 的 agentOptions 必须注入 getThreadFileStateCache(lumeSessionId) 共享实例", () => {
+    const source = readFileSync(join(import.meta.dir, "run.ts"), "utf8");
+    expect(source).toContain("fileStateCache: getThreadFileStateCache(input.lumeSessionId)");
   });
 });

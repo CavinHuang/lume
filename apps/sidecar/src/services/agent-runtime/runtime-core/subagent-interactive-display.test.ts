@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getSubagentRunRegistry, resetSubagentRunRegistryForTest } from "../../agent/subagents/subagent-run-registry";
+import { getSubagentRunRegistry, resetSubagentRunRegistryForTest } from "../subagents/subagent-run-registry";
 import { resolveSubagentInteractiveLabel } from "./subagent-interactive-display";
 
 describe("resolveSubagentInteractiveLabel", () => {

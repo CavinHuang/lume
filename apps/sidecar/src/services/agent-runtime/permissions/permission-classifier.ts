@@ -1,3 +1,5 @@
+import { shellKindConservative } from "@lume/agent-sdk";
+import { PS_DELETE_COMMAND, PS_FULL_NAME_VERBS } from "../ps-dangerous-verbs";
 import type {
   PermissionClassification,
   PermissionClassifierInput,
@@ -35,6 +37,14 @@ const MEDIUM_PATTERNS = [
   /(?:npm|pnpm|yarn|bun)\s+(?:install|add|remove|update|upgrade|link|exec)/i,
   /(?:npx|pnpx|yarn\s+dlx|bunx|corepack)\b/i,
   /(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)/i
+];
+
+// PowerShell 破坏性动词：Windows 无 bash 回退时与上方 POSIX 词表同档兜底，避免删除/停服等被判 low；
+// 词表与 guardrail 正则层共享（../ps-dangerous-verbs），仅在实际以 PowerShell 为执行 shell 的环境套用
+// （POSIX bash 在场时 iex/ri 等撞名命令防误拦）
+const POWERSHELL_MEDIUM_PATTERNS = [
+  new RegExp(String.raw`\b${PS_FULL_NAME_VERBS}\b`, "i"),
+  new RegExp(PS_DELETE_COMMAND, "i")
 ];
 
 export interface PermissionClassifier {
@@ -106,7 +116,12 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
 
   const tool = input.toolName.toLowerCase();
   if (tool === "bash" || tool === "execute_command") {
-    for (const pattern of MEDIUM_PATTERNS) {
+    // 缺省方言用保守读法：bash 发现未决的冷启动窗口 fail-closed，与 guardrail 正则层同口径；
+    // 平台/环境走可注入通道，方言门控不得绑死宿主进程平台（与 RuntimeToolSafetyContext 同形）
+    const powershellRulesActive =
+      (input.shellKind ?? shellKindConservative(input.platform ?? process.platform, input.env ?? process.env)) === "powershell";
+    const shellPatterns = powershellRulesActive ? [...MEDIUM_PATTERNS, ...POWERSHELL_MEDIUM_PATTERNS] : MEDIUM_PATTERNS;
+    for (const pattern of shellPatterns) {
       if (pattern.test(value)) {
         return {
           riskLevel: "medium",

@@ -166,8 +166,9 @@ export const FileReadTool = defineTool({
         return {
           data: {
             filePath,
+            // 行尾换行已忠实入缓存（#569），显示前去掉以免多出幽灵空行。
             content: ranged.content
-              ? ranged.content.split('\n').map((line, i) => `${offset + i + 1}\t${line}`).join('\n')
+              ? ranged.content.replace(/\n$/, '').split('\n').map((line, i) => `${offset + i + 1}\t${line}`).join('\n')
               : '(empty file)',
             offset,
             limit,

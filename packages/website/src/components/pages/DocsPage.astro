@@ -8,95 +8,169 @@ interface Props {
   lang: Lang;
   entry?: CollectionEntry<'docs'>;
 }
-const { lang, entry } = Astro.props;
 
+const { lang, entry } = Astro.props;
 const base = lang === 'zh' ? '' : '/en';
 const all = (await getCollection('docs', (e) => e.data.lang === lang)).sort(
   (a, b) => a.data.order - b.data.order || a.id.localeCompare(b.id),
 );
 
-// 互译：同 slug 的另一语言版本存在才显示切换链接
-const slug = entry?.id.slice(3); // 去掉 "zh/" / "en/" 前缀
+const docHref = (doc: CollectionEntry<'docs'>) => withBase(`${base}/docs/${doc.id.slice(3)}`);
+const currentIndex = entry ? all.findIndex((doc) => doc.id === entry.id) : -1;
+const previous = currentIndex > 0 ? all[currentIndex - 1] : undefined;
+const next = currentIndex >= 0 && currentIndex < all.length - 1 ? all[currentIndex + 1] : undefined;
+
+const slug = entry?.id.slice(3);
 let translated: string | undefined;
 if (entry) {
   const otherLang = lang === 'zh' ? 'en' : 'zh';
-  const found = (await getCollection('docs')).find(
-    (e) => e.id === `${otherLang}/${slug}`,
-  );
-  translated = found
-    ? withBase(counterpartPath(stripBase(Astro.url.pathname)))
-    : undefined;
+  const found = (await getCollection('docs')).find((e) => e.id === `${otherLang}/${slug}`);
+  translated = found ? withBase(counterpartPath(stripBase(Astro.url.pathname))) : undefined;
 }
 
 const Content = entry ? (await render(entry)).Content : undefined;
+const copy = lang === 'zh'
+  ? {
+      eyebrow: 'Lume 使用手册',
+      indexTitle: '从第一次启动，到构建自己的 Agent 工作流',
+      indexDesc: '按顺序阅读，也可以直接跳到需要的章节。每份文档都围绕真实操作与本地配置展开。',
+      heroAlt: 'Lume 团队协作工作室',
+      chapters: '章节',
+      minutes: '约 5 分钟阅读',
+      onThisPage: '文档导航',
+      previous: '上一篇',
+      next: '下一篇',
+      language: '阅读其他语言版本',
+      helpTitle: '没有找到答案？',
+      helpDesc: '前往 GitHub Issues 描述你的使用场景，或查看 FAQ 中的常见配置问题。',
+      helpButton: '打开 GitHub Issues',
+    }
+  : {
+      eyebrow: 'The Lume handbook',
+      indexTitle: 'From first launch to your own agent workflow',
+      indexDesc: 'Read in order or jump straight to the chapter you need. Every page focuses on real operations and readable local configuration.',
+      heroAlt: 'The Lume team collaborating in a studio',
+      chapters: 'Chapters',
+      minutes: 'About 5 min read',
+      onThisPage: 'Documentation',
+      previous: 'Previous',
+      next: 'Next',
+      language: 'Read in another language',
+      helpTitle: 'Still looking for an answer?',
+      helpDesc: 'Describe your use case in GitHub Issues, or check the FAQ for common configuration questions.',
+      helpButton: 'Open GitHub Issues',
+    };
 ---
 
 <Base title={entry ? entry.data.title : t(lang, 'docs.title')} description={entry?.data.description ?? t(lang, 'docs.desc')}>
-  <div class="mx-auto flex max-w-6xl flex-col gap-10 px-4 py-12 sm:px-6 lg:flex-row">
-    <!-- 侧边目录 -->
-    <aside class="lg:w-56 lg:shrink-0">
-      <nav class="lg:sticky lg:top-20" aria-label={t(lang, 'docs.index')}>
-        <p class="text-ui font-semibold text-fg">{t(lang, 'docs.index')}</p>
-        <ul class="mt-3 space-y-1 border-l border-border text-ui">
-          {all.map((doc) => (
-            <li>
-              <a
-                href={withBase(`${base}/docs/${doc.id.slice(3)}`)}
-                aria-current={doc.id === entry?.id ? 'page' : undefined}
-                class:list={[
-                  '-ml-px block border-l-2 py-1 pl-3 transition-colors',
-                  doc.id === entry?.id
-                    ? 'border-accent font-medium text-accent'
-                    : 'border-transparent text-fg-muted hover:border-border-strong hover:text-fg',
-                ]}
-              >
-                {doc.data.title}
-              </a>
-            </li>
-          ))}
-        </ul>
-      </nav>
-    </aside>
-
-    <!-- 正文 / 目录页 -->
-    <div class="min-w-0 flex-1">
-      {entry && Content ? (
-        <>
-          <article class="prose max-w-3xl">
-            <Content />
-          </article>
-          <p class="mt-10 border-t border-border pt-5 text-ui">
-            <a
-              href={translated
-                ? translated
-                : withBase(`${lang === 'zh' ? '/en' : ''}/docs/`)}
-              class="text-accent hover:text-accent-strong"
-            >
-              {translated ? languages[lang === 'zh' ? 'en' : 'zh'] : t(lang, 'docs.backToDocs')}
-            </a>
-          </p>
-        </>
-      ) : (
-        <div class="max-w-3xl">
-          <h1 class="text-display font-bold tracking-tight text-fg">{t(lang, 'docs.title')}</h1>
-          <p class="mt-4 text-body-lg text-fg-muted">{t(lang, 'docs.desc')}</p>
-          <ul class="mt-8 space-y-3">
-            {all.map((doc) => (
-              <li class="rounded-xl border border-border bg-surface p-4 transition-colors hover:border-border-strong">
-                <a
-                  href={withBase(`${base}/docs/${doc.id.slice(3)}`)}
-                  class="text-body-lg font-medium text-fg hover:text-accent"
-                >
-                  {doc.data.title}
-                </a>
-                {doc.data.description && (
-                  <p class="mt-1 text-ui text-fg-muted">{doc.data.description}</p>
-                )}
-              </li>
-            ))}
-          </ul>
+  {entry && Content ? (
+    <>
+      <section class="docs-detail-hero border-b border-border bg-bg-subtle">
+        <div class="mx-auto max-w-7xl px-4 py-12 sm:px-6 sm:py-16 lg:px-8">
+          <div class="flex flex-wrap items-center gap-2 text-micro font-semibold uppercase tracking-[0.16em] text-fg-faint">
+            <a href={withBase(`${base}/docs/`)} class="transition-colors hover:text-accent">{t(lang, 'docs.title')}</a>
+            <span>/</span>
+            <span class="text-accent">{String(currentIndex + 1).padStart(2, '0')}</span>
+          </div>
+          <h1 class="mt-5 max-w-4xl text-[clamp(2.7rem,5vw,4.8rem)] font-semibold leading-[1.02] tracking-[-0.05em] text-fg">{entry.data.title}</h1>
+          {entry.data.description && <p class="mt-5 max-w-2xl text-body-lg leading-loose text-fg-muted">{entry.data.description}</p>}
+          <div class="mt-6 flex flex-wrap gap-2 text-micro font-medium text-fg-muted"><span class="rounded-full border border-border bg-surface px-3 py-1.5">{copy.minutes}</span><span class="rounded-full border border-border bg-surface px-3 py-1.5">Markdown</span><span class="rounded-full border border-border bg-surface px-3 py-1.5">Local-first</span></div>
         </div>
-      )}
-    </div>
-  </div>
+      </section>
+
+      <div class="mx-auto grid max-w-7xl gap-8 px-4 py-10 sm:px-6 lg:grid-cols-[17rem_minmax(0,1fr)] lg:px-8 lg:py-14">
+        <aside>
+          <nav class="rounded-2xl border border-border bg-surface p-5 lg:sticky lg:top-24" aria-label={copy.onThisPage}>
+            <div class="flex items-center justify-between"><p class="text-ui font-semibold text-fg">{copy.onThisPage}</p><span class="rounded-full bg-bg-subtle px-2 py-0.5 text-micro text-fg-faint">{all.length}</span></div>
+            <ul class="mt-4 space-y-1.5">
+              {all.map((doc, index) => (
+                <li>
+                  <a
+                    href={docHref(doc)}
+                    aria-current={doc.id === entry.id ? 'page' : undefined}
+                    class:list={[
+                      'group flex items-start gap-3 rounded-xl px-3 py-2.5 text-ui transition-colors',
+                      doc.id === entry.id ? 'bg-accent-soft font-semibold text-accent' : 'text-fg-muted hover:bg-bg-subtle hover:text-fg',
+                    ]}
+                  >
+                    <span class:list={['mt-0.5 text-micro', doc.id === entry.id ? 'text-accent' : 'text-fg-faint']}>{String(index + 1).padStart(2, '0')}</span>
+                    <span>{doc.data.title}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        </aside>
+
+        <div class="min-w-0">
+          <article class="docs-article rounded-[1.75rem] border border-border bg-surface px-6 py-8 shadow-(--shadow-card) sm:px-10 sm:py-10 lg:px-14">
+            <div class="prose max-w-none"><Content /></div>
+          </article>
+
+          <div class="mt-5 grid gap-3 sm:grid-cols-2">
+            {previous ? (
+              <a href={docHref(previous)} class="doc-pagination-card group rounded-2xl border border-border bg-surface p-5">
+                <span class="text-micro font-semibold uppercase tracking-[0.14em] text-fg-faint">← {copy.previous}</span>
+                <p class="mt-2 text-body-lg font-semibold text-fg transition-colors group-hover:text-accent">{previous.data.title}</p>
+              </a>
+            ) : <div></div>}
+            {next && (
+              <a href={docHref(next)} class="doc-pagination-card group rounded-2xl border border-border bg-surface p-5 text-right">
+                <span class="text-micro font-semibold uppercase tracking-[0.14em] text-fg-faint">{copy.next} →</span>
+                <p class="mt-2 text-body-lg font-semibold text-fg transition-colors group-hover:text-accent">{next.data.title}</p>
+              </a>
+            )}
+          </div>
+
+          <div class="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-bg-subtle px-5 py-4 text-ui">
+            <span class="text-fg-muted">{copy.language}</span>
+            <a href={translated ?? withBase(`${lang === 'zh' ? '/en' : ''}/docs/`)} class="font-semibold text-accent hover:text-accent-strong">{translated ? languages[lang === 'zh' ? 'en' : 'zh'] : t(lang, 'docs.backToDocs')} →</a>
+          </div>
+        </div>
+      </div>
+    </>
+  ) : (
+    <>
+      <section class="subpage-hero overflow-hidden border-b border-border">
+        <div class="mx-auto grid min-h-[34rem] max-w-7xl items-center gap-10 px-4 py-14 sm:px-6 lg:grid-cols-[0.85fr_1.15fr] lg:px-8 lg:py-20">
+          <div class="relative z-10 max-w-2xl">
+            <p class="section-eyebrow"><span class="status-dot"></span>{copy.eyebrow}</p>
+            <h1 class="mt-6 text-[clamp(2.8rem,5.5vw,5.2rem)] font-semibold leading-[0.98] tracking-[-0.055em] text-fg">{copy.indexTitle}</h1>
+            <p class="mt-6 max-w-xl text-body-lg leading-loose text-fg-muted">{copy.indexDesc}</p>
+            <div class="mt-7 inline-flex items-center gap-3 rounded-full border border-border bg-surface/85 px-4 py-2 text-caption font-semibold text-fg-muted backdrop-blur"><span class="text-accent">{all.length}</span>{copy.chapters}</div>
+          </div>
+          <div class="relative lg:-mr-20">
+            <div class="subpage-art relative overflow-hidden rounded-[2rem] border border-border shadow-2xl">
+              <img src={withBase('/visuals/lume-hero-studio.webp')} alt={copy.heroAlt} width="2048" height="1152" loading="eager" class="aspect-[16/10] w-full object-cover object-[68%_center]" />
+              <div class="absolute inset-0 bg-gradient-to-t from-[#0c140e]/58 via-transparent to-transparent"></div>
+              <div class="absolute inset-x-5 bottom-5 grid grid-cols-3 gap-2">
+                {all.slice(0, 3).map((doc, index) => <div class="rounded-xl border border-white/20 bg-[#111712]/68 p-3 text-white backdrop-blur"><p class="text-micro text-white/42">0{index + 1}</p><p class="mt-1 truncate text-caption font-semibold">{doc.data.title}</p></div>)}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-shell reveal-section">
+        <div class="section-heading"><p class="section-eyebrow">{copy.chapters}</p><h2>{t(lang, 'docs.title')}</h2><p>{t(lang, 'docs.desc')}</p></div>
+        <div class="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {all.map((doc, index) => (
+            <a href={docHref(doc)} class:list={['docs-index-card group relative min-h-64 overflow-hidden rounded-[1.75rem] border border-border bg-surface p-6', index === 0 && 'sm:col-span-2']}>
+              <div class="flex items-start justify-between"><span class="text-micro font-semibold tracking-[0.18em] text-accent">{String(index + 1).padStart(2, '0')}</span><span class="flex h-8 w-8 items-center justify-center rounded-full border border-border text-fg-muted transition group-hover:border-accent/30 group-hover:bg-accent-soft group-hover:text-accent">→</span></div>
+              <h2 class="mt-12 max-w-md text-title font-semibold tracking-tight text-fg sm:text-headline">{doc.data.title}</h2>
+              {doc.data.description && <p class="mt-3 max-w-lg text-ui leading-loose text-fg-muted">{doc.data.description}</p>}
+              <span class="absolute bottom-5 left-6 text-micro text-fg-faint">{copy.minutes}</span>
+            </a>
+          ))}
+        </div>
+      </section>
+
+      <section class="px-4 pb-5 sm:px-6 lg:px-8">
+        <div class="mx-auto flex max-w-7xl flex-col gap-5 rounded-[1.75rem] bg-fg p-7 text-bg sm:flex-row sm:items-center sm:justify-between sm:p-9">
+          <div><h2 class="text-headline font-semibold">{copy.helpTitle}</h2><p class="mt-2 max-w-2xl text-ui leading-loose text-bg/55">{copy.helpDesc}</p></div>
+          <a href="https://github.com/CavinHuang/lume/issues" target="_blank" rel="noopener noreferrer" class="button-on-dark shrink-0">{copy.helpButton}<span aria-hidden="true">→</span></a>
+        </div>
+      </section>
+    </>
+  )}
 </Base>

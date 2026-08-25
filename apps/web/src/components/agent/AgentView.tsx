@@ -12,6 +12,7 @@ import {
 } from '@/atoms'
 import { AgentHeader } from './AgentHeader'
 import { AgentMessages } from './AgentMessages'
+import { AgentTraceView } from './trace/AgentTraceView'
 import { AgentInput, type PendingMessageAttachment } from './AgentInput'
 import { PermissionBanner } from './PermissionBanner'
 import { AskUserBanner } from './AskUserBanner'
@@ -219,6 +220,9 @@ export function AgentView({
   }, [dispatchRightPanel, reopenRightPanel, rightPanelBinding, threadId, workspaceSlug])
 
   const [imagePreviewAttachment, setImagePreviewAttachment] = useState<ThreadImageLightboxAttachment | null>(null)
+
+  // 主列视图：对话 / 执行轨迹（Trace）
+  const [mainView, setMainView] = useState<'chat' | 'trace'>('chat')
   const openThreadImagePreview = useCallback((attachment: AgentMessageAttachmentInput) => {
     // 图片附件走全屏 lightbox 预览，而非右侧文件面板（见 #16）
     setImagePreviewAttachment({ threadPath: attachment.threadPath, filename: attachment.filename, fileRef: attachment.fileRef })
@@ -278,19 +282,44 @@ export function AgentView({
     }
   }, [addPendingAttachments, threadId, readOnly])
 
+  const viewToggle = (
+    <div className="flex items-center rounded-md border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-0.5">
+      {([['chat', '对话'], ['trace', '轨迹']] as const).map(([value, label]) => (
+        <button
+          key={value}
+          type="button"
+          onClick={() => setMainView(value)}
+          aria-pressed={mainView === value}
+          className={cn(
+            'rounded px-2 py-0.5 text-caption transition-colors',
+            mainView === value
+              ? 'bg-[var(--lume-bg-panel)] font-medium text-[var(--lume-text-primary)] shadow-sm'
+              : 'text-[var(--lume-text-muted)] hover:text-foreground',
+          )}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1">
       {/* 主列 */}
       <ThreadFileEnvProvider value={{ threadId, workspaceSlug, fileContextId: rightPanelBinding.fileContextId }}>
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          <AgentHeader threadId={threadId} readOnly={readOnly} />
-          <AgentMessages
-            threadId={threadId}
-            streaming={streamingState === 'streaming'}
-            onOpenThreadFile={openThreadFilePreview}
-            onOpenThreadImage={openThreadImagePreview}
-            onOpenMemorySource={openMemoryFilePreview}
-          />
+          <AgentHeader threadId={threadId} readOnly={readOnly} actions={viewToggle} />
+          {mainView === 'chat' ? (
+            <AgentMessages
+              threadId={threadId}
+              streaming={streamingState === 'streaming'}
+              onOpenThreadFile={openThreadFilePreview}
+              onOpenThreadImage={openThreadImagePreview}
+              onOpenMemorySource={openMemoryFilePreview}
+            />
+          ) : (
+            <AgentTraceView key={threadId} threadId={threadId} />
+          )}
           {streamingState === 'errored' && <ErrorBanner threadId={threadId} />}
           {!readOnly && (
             <div className="relative">

@@ -1,7 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
+import { getRuntimeHostPorts } from "../../host-ports";
 import { join } from "node:path";
-import { toThreadRelativePath } from "../../../agent/agent-files-service";
-import { resolveAgentThreadWorkdir } from "../../../agent/agent-workdir-resolver";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
 import type { FileRef } from "@lume/shared";
 
@@ -58,10 +57,10 @@ export async function saveImageOutput(input: ImageOutputInput): Promise<ImageOut
   }
 
   writeFileSync(absPath, buffer);
-  const threadPath = toThreadRelativePath(input.workspaceSlug, input.threadId, absPath);
+  const threadPath = getRuntimeHostPorts().toThreadRelativePath(input.workspaceSlug, input.threadId, absPath);
   let fileRef: FileRef | undefined;
   try {
-    fileRef = { source: "session", scopeId: resolveAgentThreadWorkdir(input.threadId).fileContextId, relativePath: threadPath };
+    fileRef = { source: "session", scopeId: getRuntimeHostPorts().resolveThreadWorkdir(input.threadId).fileContextId, relativePath: threadPath };
   } catch {
     // Legacy/headless callers retain threadPath and use authorized conversion on demand.
   }
@@ -77,7 +76,7 @@ export async function saveImageOutput(input: ImageOutputInput): Promise<ImageOut
 
 function resolveFilesRoot(workspaceSlug: string | undefined, threadId: string): string {
   try {
-    return resolveAgentThreadWorkdir(threadId).filesRoot;
+    return getRuntimeHostPorts().resolveThreadWorkdir(threadId).filesRoot;
   } catch {
     if (!workspaceSlug) {
       throw new Error("无法解析普通会话文件目录");

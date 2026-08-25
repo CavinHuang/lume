@@ -24,9 +24,9 @@ import {
 } from "./claim";
 import type {
   MemoryV2Entry,
-  MemoryV2Kind,
   MemoryV2RecallItem,
-  MemoryV2Scope
+  MemoryV2Scope,
+  MemoryV2SemanticRole
 } from "./types";
 import { MemoryCommandService } from "./command-service";
 
@@ -55,6 +55,9 @@ export type MemoryV2SearchIntent =
   | "commit"
   | "general";
 
+/** rerank 候选池相对 top-N 的放宽倍数：截断发生在 rerank 之后而非之前（#521）。 */
+const RERANK_CANDIDATE_MULTIPLIER = 3;
+
 export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<MemoryV2RecallItem[]> {
   const store = input.store ?? createMemoryV2Store();
   const query = input.query.trim();
@@ -75,7 +78,7 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
   expireEntries(loadedEntries, input.workspaceSlug);
   const entryCandidates = entryRecallCandidates(
     loadedEntries.filter((entry) => readActivation(entry.frontmatter).recall)
-      .filter((entry) => !currentMessageOverridesClaim(entry, query))
+      .filter((entry) => !currentMessageOverridesClaim(entry, query, queryPlan))
   );
   const scoredEntries = scoreRecallCandidates(entryCandidates, query, intent, queryPlan);
   const hasExactClaimMatch = scoredEntries.some((item) => isClaimMatchForQuery(item, queryPlan));
@@ -100,18 +103,25 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
     maxResults: input.maxResults ?? 5,
     hasBaseRecall: scored.length > 0
   });
+  const maxResults = input.maxResults ?? 5;
+  // 预截断放宽 N×3 给 rerank 候选池:否则 rerank 收到的就是 ≤N 条恒等置换,
+  // 连"谁进 top-N"都无法参与,LLM 调用产出近乎完全作废(#521)
   const merged = mergeRecallItems([...scored, ...semantic])
     .sort((a, b) => b.score - a.score)
-    .slice(0, input.maxResults ?? 5);
+    .slice(0, maxResults * RERANK_CANDIDATE_MULTIPLIER);
   const reranker = input.rerankItems ?? createMemoryV2Reranker({
     workspaceSlug: input.workspaceSlug,
     modelRef: runtimeConfig.retrieval.rerankModelRef
   });
-  if (!reranker) return sortClaimMatchesFirst(merged, queryPlan);
+  if (!reranker) return sortClaimMatchesFirst(merged.slice(0, maxResults), queryPlan);
   try {
-    return sortClaimMatchesFirst((await reranker(merged, query)).slice(0, input.maxResults ?? 5), queryPlan);
+    const reranked = await reranker(merged, query);
+    // 以返回序号覆写 score:下游三级比较器(claim→predicate→score)的平分组内
+    // 由此收敛到 rerank 序,而非 rerank 前的旧 score(#521)
+    const scoredByRerank = reranked.map((item, index) => ({ ...item, score: reranked.length - index }));
+    return sortClaimMatchesFirst(scoredByRerank.slice(0, maxResults), queryPlan);
   } catch {
-    return sortClaimMatchesFirst(merged, queryPlan);
+    return sortClaimMatchesFirst(merged.slice(0, maxResults), queryPlan);
   }
 }
 
@@ -172,6 +182,7 @@ function entryRecallCandidates(entries: MemoryV2Entry[]): MemoryV2RecallItem[] {
   return entries.map((entry) => ({
     id: entry.frontmatter.id,
     kind: entry.frontmatter.kind,
+    semanticRole: entry.frontmatter.semantic_role,
     scope: entry.frontmatter.scope,
     status: entry.frontmatter.status === "suspected_stale" ? "suspected_stale" : "active",
     statement: entry.statement,
@@ -200,6 +211,7 @@ function markdownRecallCandidates(input: {
         items.push({
           id: `${scope}:MEMORY.md`,
           kind: "state",
+          semanticRole: "state",
           scope,
           status: "active",
           statement: text,
@@ -218,6 +230,7 @@ function markdownRecallCandidates(input: {
         items.push({
           id: `${scope}:daily:${path}`,
           kind: "state",
+          semanticRole: "state",
           scope,
           status: "active",
           statement: text,
@@ -234,6 +247,7 @@ function markdownRecallCandidates(input: {
           items.push({
             id: `${scope}:run:${path}`,
             kind: "state",
+            semanticRole: "state",
             scope,
             status: "active",
             statement: text,
@@ -250,6 +264,7 @@ function markdownRecallCandidates(input: {
       if (text) items.push({
         id: "workspace:brief",
         kind: "state",
+        semanticRole: "state",
         scope,
         status: "active",
         statement: text,
@@ -267,6 +282,7 @@ function markdownRecallCandidates(input: {
         if (text) items.push({
           id: `workspace:capsule:${capsule}`,
           kind: "state",
+          semanticRole: "state",
           scope,
           status: "active",
           statement: text,
@@ -301,9 +317,22 @@ function expireEntries(entries: MemoryV2Entry[], workspaceSlug?: string): void {
   }
 }
 
-function currentMessageOverridesClaim(entry: MemoryV2Entry, query: string): boolean {
+function currentMessageOverridesClaim(entry: MemoryV2Entry, query: string, queryPlan: MemoryV2QueryPlan): boolean {
   const claim = claimFromEntry(entry);
   if (!claim || !/(?:纠正|改为|改成|不是|不再|instead|actually|from now on)/i.test(query)) return false;
+  // #521:"不是/不再/actually"是日常高频词,普通疑问句即可误触。抑制需同时满足:
+  // predicate 命中计划口径(isClaimMatchForQuery 同款归一化)+ claim.subject 与
+  // 计划主体一致(跨主体保护:纠正用户名不得抑制 assistant 名字记忆)。
+  // 注意不能拿 queryPlan.querySubject 对 query 原文做字面匹配——它是 "user/self"
+  // 型 slug,自然语言永远不包含,写了等于全灭。
+  const normalizedPredicate = claim.predicate.trim().toLowerCase();
+  if (!normalizedPredicate) return false;
+  if (!queryPlan.desiredPredicates.some((planned) => planned.trim().toLowerCase() === normalizedPredicate)) {
+    return false;
+  }
+  if (queryPlan.querySubject && claim.subject.trim().toLowerCase() !== queryPlan.querySubject.trim().toLowerCase()) {
+    return false;
+  }
   return !query.toLowerCase().includes(claim.object.toLowerCase());
 }
 
@@ -340,7 +369,7 @@ function scoreRecallItem(
   const lexical = itemTokens.reduce((score, token) => score + (queryTokens.has(token) ? 1 : 0), 0);
   const semanticScore = semanticIntentBoost(item, intent);
   const historyScore = queryPlan.includeConversationHistory && isConversationHistoryRecallItem(item) ? 3 : 0;
-  const kindScore = kindIntentBoost(item.kind, intent);
+  const kindScore = roleIntentBoost(item.semanticRole, intent);
   if (claimScore === 0 && lexical === 0 && semanticScore === 0 && historyScore === 0 && kindScore === 0 && !item.pinned) return 0;
   const pathScore = [...queryTokens].some((token) => item.path.toLowerCase().includes(token)) ? 1.5 : 0;
   const pinnedScore = item.pinned ? 2 : 0;
@@ -356,17 +385,19 @@ function isConversationHistoryRecallItem(item: MemoryV2RecallItem): boolean {
     || item.id.includes(":run:");
 }
 
-function kindIntentBoost(kind: MemoryV2Kind, intent: MemoryV2SearchIntent): number {
-  const boosts: Record<MemoryV2SearchIntent, Partial<Record<MemoryV2Kind, number>>> = {
-    architecture: { decision: 3, fact: 2, lesson: 2 },
+// identity/constraint 继承 fact 分值：legacyKindForRole 曾把它们压缩成 fact，
+// 保持存量排序语义不变；按 role 细分调分待评测度量（#298）后再做。
+function roleIntentBoost(role: MemoryV2SemanticRole, intent: MemoryV2SearchIntent): number {
+  const boosts: Record<MemoryV2SearchIntent, Partial<Record<MemoryV2SemanticRole, number>>> = {
+    architecture: { decision: 3, fact: 2, lesson: 2, identity: 2, constraint: 2 },
     continue_task: { state: 3, decision: 1 },
-    identity: { preference: 3, fact: 2 },
+    identity: { preference: 3, fact: 2, identity: 2, constraint: 2 },
     preference: { preference: 3 },
-    debug: { lesson: 3, fact: 1 },
-    commit: { preference: 2, fact: 1, state: 1 },
+    debug: { lesson: 3, fact: 1, identity: 1, constraint: 1 },
+    commit: { preference: 2, fact: 1, state: 1, identity: 1, constraint: 1 },
     general: {}
   };
-  return boosts[intent][kind] ?? 0;
+  return boosts[intent][role] ?? 0;
 }
 
 function semanticIntentBoost(item: MemoryV2RecallItem, intent: MemoryV2SearchIntent): number {
@@ -374,7 +405,9 @@ function semanticIntentBoost(item: MemoryV2RecallItem, intent: MemoryV2SearchInt
   const text = `${item.statement} ${(item.path ?? "")}`.toLowerCase();
   const nameLikeMemory = /preferred[-_\s]?name|nickname|call me|called|my name|user name|名字|称呼|叫我|叫作|叫做/.test(text);
   if (!nameLikeMemory) return 0;
-  return item.kind === "preference" || item.kind === "fact" ? 5 : 2;
+  // 与旧 kind 判定等价：kind∈{preference,fact} ⟺ role∉{decision,lesson,state}
+  // （identity/constraint 的 kind 曾被压缩成 fact）
+  return item.semanticRole === "decision" || item.semanticRole === "lesson" || item.semanticRole === "state" ? 2 : 5;
 }
 
 function recentDailyFiles(dir: string, maxDays: number): string[] {

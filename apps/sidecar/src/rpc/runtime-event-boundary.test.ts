@@ -23,7 +23,7 @@ describe("RuntimeEvent sidecar boundary", () => {
 
   test("runtime runner path no longer exposes onRunEvent callbacks", () => {
     for (const file of [
-      "apps/sidecar/src/services/agent-runtime/runner/types.ts",
+      "apps/sidecar/src/services/agent-runtime/runtime-core/types.ts",
       "apps/sidecar/src/services/agent-runtime/runner/run-loop.ts",
       "apps/sidecar/src/services/agent-runtime/runner/run-observer.ts",
       "apps/sidecar/src/services/agent-runtime/runner/lume-runner.ts",
@@ -36,7 +36,7 @@ describe("RuntimeEvent sidecar boundary", () => {
   test("shared and sidecar event projection boundary exposes only RuntimeEvent", () => {
     for (const file of [
       "packages/shared/src/types/agent.ts",
-      "apps/sidecar/src/services/agent-runtime/runner/run-item-events.ts"
+      "apps/sidecar/src/services/agent-runtime/runtime-core/run-item-events.ts"
     ]) {
       const content = source(file);
 

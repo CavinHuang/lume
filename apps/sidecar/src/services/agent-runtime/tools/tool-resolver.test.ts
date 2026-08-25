@@ -86,6 +86,32 @@ describe("ToolResolver", () => {
     }).map((item) => item.name)).toEqual(["Read", "WebSearch", "WebFetch"]);
   });
 
+  test("treats an allow list whose every entry matches no registered tool as unset (存量失效配置 fail-open)", () => {
+    const registry = new ToolRegistry();
+    registry.registerMany([
+      tool({ name: "Read", category: "read", allowedInPlanMode: true, isReadOnly: true }),
+      tool({ name: "Bash", category: "execute", allowedInPlanMode: false, isReadOnly: false })
+    ]);
+    const resolver = new ToolResolver(registry);
+
+    expect(resolver.resolve({
+      policies: [{ allow: ["office_validate", "office_unpack"] }]
+    }).map((item) => item.name)).toEqual(["Read", "Bash"]);
+  });
+
+  test("keeps allow restriction when at least one entry matches a registered tool", () => {
+    const registry = new ToolRegistry();
+    registry.registerMany([
+      tool({ name: "Read", category: "read", allowedInPlanMode: true, isReadOnly: true }),
+      tool({ name: "Bash", category: "execute", allowedInPlanMode: false, isReadOnly: false })
+    ]);
+    const resolver = new ToolResolver(registry);
+
+    expect(resolver.resolve({
+      policies: [{ allow: ["Read", "office_validate"] }]
+    }).map((item) => item.name)).toEqual(["Read"]);
+  });
+
   test("keeps web and data-query policy groups independent", () => {
     const registry = new ToolRegistry();
     registry.registerMany([
@@ -129,21 +155,6 @@ describe("ToolResolver", () => {
 
     expect(resolver.resolve({
       policies: [{ deny: ["group:evolution"] }]
-    }).map((item) => item.name)).toEqual(["Read"]);
-  });
-
-  test("office group controls Office document tools", () => {
-    const registry = new ToolRegistry();
-    registry.registerMany([
-      tool({ name: "office_validate", category: "read", allowedInPlanMode: true, isReadOnly: true }),
-      tool({ name: "office_unpack", category: "write", allowedInPlanMode: false, isReadOnly: false }),
-      tool({ name: "office_pack", category: "write", allowedInPlanMode: false, isReadOnly: false }),
-      tool({ name: "Read", category: "read", allowedInPlanMode: true, isReadOnly: true })
-    ]);
-    const resolver = new ToolResolver(registry);
-
-    expect(resolver.resolve({
-      policies: [{ deny: ["group:office"] }]
     }).map((item) => item.name)).toEqual(["Read"]);
   });
 });

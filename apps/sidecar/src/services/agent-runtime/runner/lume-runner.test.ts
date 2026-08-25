@@ -3,12 +3,12 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKMessage } from "@lume/shared";
-import type { AgentRuntimeRunParams, AgentRuntimeEmitter } from "./types";
+import type { AgentRuntimeRunParams, AgentRuntimeEmitter } from "../runtime-core/types";
 import type { LumeWorkflowHookEvent } from "../../workflow-hooks/hook-events";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import { getThreadEventBus } from "../events/thread-event-bus";
 import { LumeRunner, resolveRuntimeCoreMaxTurns } from "./lume-runner";
-import type { LumeRunState } from "./run-state";
+import type { LumeRunState } from "../runtime-core/run-state";
 import { createMemoryV2Store } from "../../memory-v2/markdown-store";
 import { getMemoryV2ScopePaths } from "../../memory-v2/paths";
 import { setActiveBrowserBroker } from "../../browser/browser-broker-holder";
@@ -31,7 +31,7 @@ function createTestParams(threadId: string): AgentRuntimeRunParams {
   };
 }
 
-function createPrepared(agentDir: string) {
+function createPrepared(agentDir: string, catalogMaxTokens?: number) {
   return {
     agentCwd: agentDir,
     agentDir,
@@ -40,8 +40,10 @@ function createPrepared(agentDir: string) {
       resolvedModelId: "model-1",
       model: {
         id: "model-1",
-        provider: "openai"
-      }
+        provider: "openai",
+        maxTokens: 32768
+      },
+      ...(catalogMaxTokens === undefined ? {} : { catalogMaxTokens })
     },
     openaiApiMode: "responses",
     apiKey: "test-key"
@@ -988,7 +990,7 @@ describe("LumeRunner", () => {
     const runner = await createRunner(agentDir, events);
     const lifecycle: string[] = [];
     let registeredAbort: (() => Promise<void>) | undefined;
-    let queryOptions: { sandbox?: unknown } | undefined;
+    let queryOptions: { sandbox?: unknown; maxTokens?: number } | undefined;
     getBrowserToolSessionRegistry().getOrCreate("thread-1");
     setActiveBrowserBroker({
       dispatch: async (request: { method: string; browserSessionId?: string }) => {
@@ -1011,7 +1013,7 @@ describe("LumeRunner", () => {
           interrupt: async () => {
             lifecycle.push("interrupt");
           },
-          query: (_message: unknown, options: { sandbox?: unknown }) => {
+          query: (_message: unknown, options: { sandbox?: unknown; maxTokens?: number }) => {
             queryOptions = options;
             return stream([{
               type: "assistant",
@@ -1045,6 +1047,10 @@ describe("LumeRunner", () => {
 
     expect(result).toEqual({ status: "completed" });
     expect(queryOptions?.sandbox).toBeUndefined();
+    // #561+#631 review:model.maxTokens 是 createFallbackModel 的 32768 兜底猜测,
+    // 无目录真值时不得抬进 query(自建网关 max_tokens 翻倍会 400 且不切 fallback),
+    // 保持 SDK 16384 默认
+    expect(queryOptions?.maxTokens).toBeUndefined();
     expect(events).toEqual(["sdk:assistant", "complete"]);
     expect(lifecycle).toEqual([
       "registerAbort",
@@ -1056,6 +1062,50 @@ describe("LumeRunner", () => {
       "interrupt"
     ]);
     expect(readOnlyRunState(agentDir).status).toBe("completed");
+  });
+
+  test("runRuntimeSession carries catalog-provided maxTokens into query overrides", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-catalog-max-tokens-"));
+    dirs.push(agentDir);
+    let queryOptions: { sandbox?: unknown; maxTokens?: number } | undefined;
+    const runner = await createRunner(agentDir);
+    const prepared = createPrepared(agentDir, 128_000);
+
+    await runner.runRuntimeSession({
+      params: createTestParams("thread-1"),
+      prepared,
+      runtimeSession: {
+        agent: {
+          setModel: async () => {},
+          setMaxThinkingTokens: async () => {},
+          interrupt: async () => {},
+          query: (_message: unknown, options: { sandbox?: unknown; maxTokens?: number }) => {
+            queryOptions = options;
+            return stream([{
+              type: "assistant",
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "hello" }]
+              }
+            } as SDKMessage]);
+          }
+        },
+        session: {
+          sessionId: "sdk-session-1",
+          threadId: "sdk-thread-1",
+          dispose: async () => {}
+        },
+        tools: []
+      } as any,
+      options: {
+        registerAbort: () => {},
+        unregisterAbort: () => {}
+      },
+      createCanUseTool: () => async () => ({ behavior: "allow" })
+    });
+
+    // #561:渠道配置/目录真值经 catalogMaxTokens 抬升 query 输出上限
+    expect(queryOptions?.maxTokens).toBe(128_000);
   });
 
   test("runPreparedRuntimeCoreAttempt creates runtime session with observed emitters", async () => {
@@ -1183,5 +1233,90 @@ describe("LumeRunner", () => {
     const runEnds = await readBusRunEnds(agentDir, "thread-1");
     expect(runEnds).toHaveLength(1);
     expect((runEnds[0]!.detail as { stopReason: string }).stopReason).toBe("error");
+  });
+
+  // #550:终值 append 自身同步 throw(AV 锁文件)时,置位不再提前、completed
+  // 返回前的补发必须兜住——否则 run 成功线程却永久卡 streaming
+  test("#550:终值 append throw 后 completed 补发 run.end{end_turn} 恰一次", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-550-end-turn-"));
+    dirs.push(agentDir);
+    const runner = await createRunner(agentDir, []);
+    const bus = getThreadEventBus(getRuntimeCoreSessionDir("thread-1", agentDir));
+    const realPublish = bus.publish.bind(bus);
+    let failTerminalOnce = true;
+    (bus as unknown as { publish: typeof realPublish }).publish = (threadId, runId, event) => {
+      if (failTerminalOnce && (event.detail as { type?: string }).type === "run.end") {
+        failTerminalOnce = false; // 只打 projector 终值一枪,补发放行
+        throw new Error("EAGAIN: av lock on terminal append");
+      }
+      return realPublish(threadId, runId, event);
+    };
+
+    async function* completedStream(): AsyncIterable<SDKMessage> {
+      yield {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "hello" }] }
+      } as SDKMessage;
+      yield {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        num_turns: 2,
+        result: "ok"
+      } as SDKMessage;
+    }
+
+    const result = await runner.runQueryStream(completedStream());
+
+    expect(result).toEqual({ status: "completed" });
+    const runEnds = await readBusRunEnds(agentDir, "thread-1");
+    expect(runEnds).toHaveLength(1);
+    // numTurns:0 是补发指纹(projector 终值带真实 numTurns)
+    expect(runEnds[0]!.detail).toMatchObject({
+      type: "run.end",
+      stopReason: "end_turn",
+      isError: false,
+      numTurns: 0
+    });
+  });
+
+  // #550 S1:turn_limited 分支的补发同样要兜住(T7a 后它是 web 清 streaming 的唯一信号)
+  test("#550:终值 append throw 后 turn_limited 补发 run.end 恰一次", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-550-max-turns-"));
+    dirs.push(agentDir);
+    const runner = await createRunner(agentDir, []);
+    const bus = getThreadEventBus(getRuntimeCoreSessionDir("thread-1", agentDir));
+    const realPublish = bus.publish.bind(bus);
+    let failTerminalOnce = true;
+    (bus as unknown as { publish: typeof realPublish }).publish = (threadId, runId, event) => {
+      if (failTerminalOnce && (event.detail as { type?: string }).type === "run.end") {
+        failTerminalOnce = false;
+        throw new Error("EAGAIN: av lock on terminal append");
+      }
+      return realPublish(threadId, runId, event);
+    };
+
+    async function* maxTurnsStream(): AsyncIterable<SDKMessage> {
+      yield {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "partial" }] }
+      } as SDKMessage;
+      yield {
+        type: "result",
+        subtype: "error_max_turns",
+        is_error: true,
+        num_turns: 3
+      } as unknown as SDKMessage;
+    }
+
+    const result = await runner.runQueryStream(maxTurnsStream());
+
+    expect(result.status).toBe("turn_limited");
+    const runEnds = await readBusRunEnds(agentDir, "thread-1");
+    expect(runEnds).toHaveLength(1);
+    expect(runEnds[0]!.detail).toMatchObject({
+      type: "run.end",
+      isError: true
+    });
   });
 });

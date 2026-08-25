@@ -5,16 +5,19 @@ import type { ImRuntimeAccount } from "../im-config-manager";
 import type { InboundImRouteMessage } from "../im-message-router";
 import { routeInboundImMessage } from "../im-message-router";
 import { registerWecomClient, unregisterWecomClient } from "./wecom-client-pool";
+import { redactSensitiveText } from "../im-log-redaction";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("im-worker-wecom");
 
 export interface CreateWecomWsWorkerInput {
   account: ImRuntimeAccount;
-  routeMessage?: (message: InboundImRouteMessage) => Promise<void> | void;
+  routeMessage?: (message: InboundImRouteMessage) => Promise<void>;
   updateAccount?: (id: string, input: ImAccountUpdateInput) => Promise<void> | void;
   /** 测试注入伪 client;生产省略走默认 WSClient 工厂。 */
   createClient?: (botId: string, secret: string) => WSClient;
+  /** 断线判死宽限毫秒数（默认 60s，SDK 重连预算内自愈则恢复） */
+  disconnectGraceMs?: number;
 }
 
 interface WecomTextBody {
@@ -60,11 +63,17 @@ function defaultCreateClient(botId: string, secret: string): WSClient {
 }
 
 export function createWecomWsWorker(input: CreateWecomWsWorkerInput): ImWorker {
-  const routeMessage = input.routeMessage ?? routeInboundImMessage;
+  const routeMessage: (message: InboundImRouteMessage) => Promise<void> =
+    input.routeMessage ?? (async (m) => {
+      await routeInboundImMessage(m);
+    });
   const botId = input.account.accountKey ?? "";
   const secret = input.account.token ?? "";
+  const disconnectGraceMs = input.disconnectGraceMs ?? 60_000;
   let client: WSClient | null = null;
   let running = false;
+  // 代际令牌：stop→start 快速切换后，旧 client 迟到的异步事件不得影响新会话
+  let generation = 0;
 
   return {
     start() {
@@ -78,6 +87,43 @@ export function createWecomWsWorker(input: CreateWecomWsWorkerInput): ImWorker {
         return;
       }
       running = true;
+      generation += 1;
+      const gen = generation;
+      let deathTimer: unknown;
+      let degraded = false;
+
+      const clearDeathTimer = () => {
+        if (deathTimer !== undefined) {
+          clearTimeout(deathTimer as ReturnType<typeof setTimeout>);
+          deathTimer = undefined;
+        }
+      };
+      // 断线宽限窗口：disconnected/error 在瞬断时也会发（SDK 会自动重连），
+      // 不能见断即判死；窗口内 connected/authenticated 到来则恢复，超窗判死
+      const markConnectionLost = () => {
+        if (gen !== generation || !running || deathTimer !== undefined) return;
+        degraded = true;
+        deathTimer = setTimeout(() => {
+          deathTimer = undefined;
+          if (gen !== generation || !running) return;
+          running = false;
+          unregisterWecomClient(input.account.id);
+          log.error("企微长连接断开且未恢复，账号转入 error 态", { accountId: input.account.id });
+          void input.updateAccount?.(input.account.id, {
+            status: "error",
+            lastError: "长连接断开且重连未恢复",
+          });
+        }, disconnectGraceMs);
+      };
+      const markConnectionAlive = () => {
+        if (gen !== generation || !running) return;
+        clearDeathTimer();
+        if (degraded) {
+          degraded = false;
+          log.info("企微长连接已恢复", { accountId: input.account.id });
+        }
+      };
+
       const wsClient = (input.createClient ?? defaultCreateClient)(botId, secret);
       client = wsClient;
       // 企微出站复用入站长连,启动时把 wsClient 注册进连接池供 sendText 使用
@@ -87,7 +133,12 @@ export function createWecomWsWorker(input: CreateWecomWsWorkerInput): ImWorker {
           const parsed = parseWecomEvent(data, input.account);
           if (parsed) {
             log.info("收到企微消息", { accountId: input.account.id, peerId: parsed.peerId });
-            void routeMessage(parsed);
+            void routeMessage(parsed).catch((error: unknown) => {
+              log.error("企微入站路由失败", {
+                accountId: input.account.id,
+                error: error instanceof Error ? error.message : String(error)
+              });
+            });
           }
         } catch (error) {
           log.error("处理企微事件出错", {
@@ -96,6 +147,12 @@ export function createWecomWsWorker(input: CreateWecomWsWorkerInput): ImWorker {
           });
         }
       });
+      // eventemitter3 对无监听的 "error" 不抛异常——不挂监听会永久假活：
+      // running 仍 true、UI 显示运行中、入站永不再来
+      wsClient.on("error", () => markConnectionLost());
+      wsClient.on("disconnected", () => markConnectionLost());
+      wsClient.on("connected", () => markConnectionAlive());
+      wsClient.on("authenticated", () => markConnectionAlive());
       try {
         wsClient.connect();
       } catch (error) {
@@ -107,11 +164,13 @@ export function createWecomWsWorker(input: CreateWecomWsWorkerInput): ImWorker {
         unregisterWecomClient(input.account.id);
         void input.updateAccount?.(input.account.id, {
           status: "error",
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: redactSensitiveText(error instanceof Error ? error.message : String(error)),
         });
       }
     },
     stop() {
+      // 代际递增使旧 client 迟到的异步事件（断开/错误回调）失效
+      generation += 1;
       running = false;
       client?.disconnect();
       unregisterWecomClient(input.account.id);

@@ -10,6 +10,7 @@ import {
 } from "./openclaw-weixin-api";
 import type { InboundImRouteMessage } from "../im-message-router";
 import { routeInboundImMessage } from "../im-message-router";
+import { redactSensitiveText } from "../im-log-redaction";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("im-worker");
@@ -24,7 +25,7 @@ export interface OpenClawWeixinWorker {
 export interface CreateOpenClawWeixinWorkerInput {
   account: ImRuntimeAccount;
   api?: OpenClawWeixinApi;
-  routeMessage?: (message: InboundImRouteMessage) => Promise<void> | void;
+  routeMessage?: (message: InboundImRouteMessage) => Promise<void>;
   updateAccount?: (id: string, input: ImAccountUpdateInput) => Promise<void> | void;
   pollIntervalMs?: number;
 }
@@ -50,12 +51,20 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
     token: input.account.token,
     uin: input.account.uin
   });
-  const routeMessage = input.routeMessage ?? routeInboundImMessage;
+  const routeMessage: (message: InboundImRouteMessage) => Promise<void> =
+    input.routeMessage ?? (async (m) => {
+      await routeInboundImMessage(m);
+    });
   const updateAccount = input.updateAccount ?? (() => undefined);
   const pollIntervalMs = input.pollIntervalMs ?? 1000;
   let running = false;
   let abortController: AbortController | null = null;
   let cursor = input.account.cursor;
+  // 已持久化镜像：与本地值比较判断是否需要写盘。input.account 是启动时的冻结快照
+  // （status 恒为 "starting"），对着它比较会恒真 → 每秒一次全量配置写盘（#405）
+  let persistedCursor = input.account.cursor;
+  let persistedContextToken = input.account.contextToken;
+  let runningStatusPersisted = false;
   const seenMessageIds = new Set<string>();
   const seenMessageOrder: string[] = [];
 
@@ -101,12 +110,14 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
       rememberMessage(update.messageId);
     }
     cursor = batch.cursor ?? cursor;
-    // 仅状态实际变化时回写：每轮询周期无条件写盘 ≈ 每账号 1 次/秒的
-    // tmp+rename 磨损，且与其它持锁变更竞争（#405）
+    // 仅与本地已持久化镜像比较，实际变化才回写：每轮询周期无条件写盘 ≈ 每账号
+    // 1 次/秒的 tmp+rename 磨损，且与其它持锁变更竞争（#405）
     const nextContextToken = lastContextToken(batch.updates);
-    const contextTokenChanged = nextContextToken !== undefined && nextContextToken !== input.account.contextToken;
-    const cursorChanged = cursor !== undefined && cursor !== input.account.cursor;
-    const needsStatusWrite = input.account.status !== "running" || Boolean(input.account.lastError);
+    const effectiveContextToken = nextContextToken ?? persistedContextToken;
+    const contextTokenChanged =
+      nextContextToken !== undefined && nextContextToken !== persistedContextToken;
+    const cursorChanged = cursor !== undefined && cursor !== persistedCursor;
+    const needsStatusWrite = !runningStatusPersisted;
     if (needsStatusWrite || cursorChanged || contextTokenChanged) {
       await updateAccount(input.account.id, {
         status: "running",
@@ -114,6 +125,9 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
         ...(contextTokenChanged ? { contextToken: nextContextToken } : {}),
         lastError: null
       });
+      runningStatusPersisted = true;
+      persistedCursor = cursor;
+      persistedContextToken = effectiveContextToken;
     }
   }
 
@@ -128,14 +142,14 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
             running = false;
             await updateAccount(input.account.id, {
               status: "auth_required",
-              lastError: error instanceof Error ? error.message : String(error)
+              lastError: redactSensitiveText(error instanceof Error ? error.message : String(error))
             });
             continue;
           }
           log.error("轮询处理出错", { accountId: input.account.id, error: error instanceof Error ? error.message : String(error) });
           await updateAccount(input.account.id, {
             status: "error",
-            lastError: error instanceof Error ? error.message : String(error)
+            lastError: redactSensitiveText(error instanceof Error ? error.message : String(error))
           });
         }
       }

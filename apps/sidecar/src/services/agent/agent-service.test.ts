@@ -255,7 +255,7 @@ async function waitForMockSessionActive(threadId: string): Promise<void> {
   throw new Error(`mock runtime session never became active: ${threadId}`);
 }
 
-mock.module("../agent-runtime/runtime-core/attempt", () => ({
+mock.module("../agent-runtime/runner/attempt", () => ({
   runAgentRuntime: async (
     params: unknown,
     emit: {
@@ -335,7 +335,7 @@ mock.module("../agent-runtime/runtime-core/attempt", () => ({
       return { status: "errored" as const, errorMessage: "network failed" };
     }
     if (userMessage === "subagent-announce-during-run") {
-      const { announceSubagentCompletion } = await import("./subagents/subagent-announce-service");
+      const { announceSubagentCompletion } = await import("../agent-runtime/subagents/subagent-announce-service");
       await announceSubagentCompletion({
         run: {
           runId: `mock-subagent-run:${threadId}`,
@@ -412,6 +412,10 @@ describe("agent-service", () => {
     resetAgentRuntimeStatusManagerForTest();
     resetAgentRuntimeKernelForTest();
     resetServiceRuntimeForTest();
+    // #517 后 steer/promote 路径会打开 submission sqlite；不关闭则下方
+    // rmSync 临时目录报 EBUSY
+    const { resetAgentSubmissionStoreForTests } = await import("./agent-submission-store");
+    resetAgentSubmissionStoreForTests();
     heldRunResolvers.clear();
     activeMockSessions.clear();
     runAgentRuntimeCalls.length = 0;
@@ -422,7 +426,12 @@ describe("agent-service", () => {
       process.env.LUME_CONFIG_DIR = previousConfigDir;
     }
     if (tempConfigDir) {
-      rmSync(tempConfigDir, { recursive: true, force: true });
+      try {
+        rmSync(tempConfigDir, { recursive: true, force: true });
+      } catch {
+        // #517 用例会打开 submission sqlite:Windows 对刚关闭的库文件可能
+        // 延迟释放句柄,清理失败不影响断言,留给系统临时目录回收
+      }
       tempConfigDir = "";
     }
   });
@@ -910,7 +919,7 @@ describe("agent-service", () => {
     const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");
     const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
-    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runner/run-state-store");
+    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runtime-core/run-state-store");
     const thread = createAgentThread("turn limited continue", "channel-test");
     const sessionDir = getRuntimeCoreSessionDir(thread.id);
     await createFileBackedLumeRunStateStore(sessionDir).create({
@@ -987,7 +996,7 @@ describe("agent-service", () => {
     const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");
     const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
-    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runner/run-state-store");
+    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runtime-core/run-state-store");
     const thread = createAgentThread("repeat guard continue", "channel-test");
     const sessionDir = getRuntimeCoreSessionDir(thread.id);
     await createFileBackedLumeRunStateStore(sessionDir).create({
@@ -1110,7 +1119,7 @@ describe("agent-service", () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");
     const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
-    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runner/run-state-store");
+    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runtime-core/run-state-store");
     const thread = createAgentThread("stale running continue", "channel-test");
     const sessionDir = getRuntimeCoreSessionDir(thread.id);
     await createFileBackedLumeRunStateStore(sessionDir).create({
@@ -1696,6 +1705,73 @@ describe("agent-service", () => {
     expect(visibleMessages.some((message) => message.metadata?.subagentAnnounce === true)).toBe(false);
     expect(visibleMessages.some((message) => message.role === "assistant" && message.content === "mock assistant output")).toBe(true);
   });
+
+  // #517 承重用例:receipt 主键是 clientSubmissionId,而 web 端 traceContext.
+  // submissionId 是另一个独立 UUID——promote 回写与同 id 重试都必须按前者工作。
+  test("#517:promote 后 receipt 按 clientSubmissionId 重写且同 id 重试不 throw", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const {
+      appendAgentMessage,
+      getAgentSubmissionReceipt,
+      listAgentMessageQueue,
+      promoteQueuedAgentMessageToGuidance
+    } = await import("./agent-service");
+    const thread = createAgentThread("promote-receipt", "channel-test");
+    const createEmit = () => ({
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    // 占位占用线程使后续提交进入 kernel 队列;两个 id 故意不同(复刻 web 实际形态)
+    appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "hold:first",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+    const queued = appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "to-promote",
+      channelId: "channel-test",
+      modelId: "provider/model-test",
+      clientSubmissionId: "q1",
+      traceContext: { submissionId: "trace-1", traceId: "trace-1" }
+    }, createEmit());
+
+    expect(getAgentSubmissionReceipt("q1")?.status).toBe("queued");
+
+    const snapshot = listAgentMessageQueue(thread.id);
+    const promoted = promoteQueuedAgentMessageToGuidance({
+      threadId: thread.id,
+      queuedMessageId: queued.queuedMessage?.id ?? "",
+      expectedRevision: snapshot.revision,
+      queueOperationId: "promote-receipt"
+    });
+    expect(promoted.promotedGuidance?.text).toBe("to-promote");
+
+    // 键位修复的承重断言:receipt 按 clientSubmissionId 重写,悬空 queuedMessageId 清空
+    const receipt = getAgentSubmissionReceipt("q1");
+    expect(receipt?.status).toBe("queued");
+    expect(receipt?.queuedMessageId).toBeUndefined();
+
+    // 同 id 重试:guidance 条目按 dispatch 输入找回,返回 queued 而非 throw"已终结"
+    const retried = appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "to-promote",
+      channelId: "channel-test",
+      modelId: "provider/model-test",
+      clientSubmissionId: "q1"
+    }, createEmit());
+    expect(retried.ok).toBe(true);
+    expect(retried.mode).toBe("queued");
+
+    await waitForQueuedRunRelease("hold:first");
+  });
 });
 
 describe("stopAgent cascade (D6)", () => {
@@ -1709,7 +1785,7 @@ describe("stopAgent cascade (D6)", () => {
   });
 
   afterEach(async () => {
-    const { resetSubagentRunRegistryForTest } = await import("./subagents/subagent-run-registry");
+    const { resetSubagentRunRegistryForTest } = await import("../agent-runtime/subagents/subagent-run-registry");
     const { resetAgentRuntimeStatusManagerForTest } = await import("./agent-runtime-status-manager");
     const { resetAgentRuntimeKernelForTest, waitForAgentRuntimeKernelIdleForTest } = await import("./agent-service");
     await waitForAgentRuntimeKernelIdleForTest();
@@ -1730,7 +1806,7 @@ describe("stopAgent cascade (D6)", () => {
   test("中止父 thread 时级联中止运行中子会话", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const { stopAgent } = await import("./agent-service");
-    const { getSubagentRunRegistry } = await import("./subagents/subagent-run-registry");
+    const { getSubagentRunRegistry } = await import("../agent-runtime/subagents/subagent-run-registry");
 
     const parent = createAgentThread("父", "channel-test");
     getSubagentRunRegistry().create({
@@ -1892,4 +1968,6 @@ describe("stopAgent cascade (D6)", () => {
     // interrupt 触发的中止是正常路径,不应让线程进入 errored
     expect(getAgentRuntimeStatusManager().get(thread.id)?.phase).not.toBe("errored");
   });
+
+
 });

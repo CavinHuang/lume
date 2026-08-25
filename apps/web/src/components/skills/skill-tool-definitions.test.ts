@@ -21,9 +21,6 @@ describe('skill-tool-definitions', () => {
       'personalize_ui',
       'lume_reading_snapshot',
       'lume_generate_share_card',
-      'office_validate',
-      'office_unpack',
-      'office_pack',
       'agent_spawn',
     ])
     expect(options.every((option) => Boolean(option.systemGroupId))).toBe(true)
@@ -38,11 +35,6 @@ describe('skill-tool-definitions', () => {
     expect(getSystemToolDefinitionValues('reading')).toEqual([
       'lume_reading_snapshot',
       'lume_generate_share_card',
-    ])
-    expect(getSystemToolDefinitionValues('office')).toEqual([
-      'office_validate',
-      'office_unpack',
-      'office_pack',
     ])
   })
 

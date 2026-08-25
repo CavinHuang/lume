@@ -19,6 +19,7 @@ describe('SettingsView metadata', () => {
       'integrations',
       'im-integrations',
       'web-search',
+      'voice-input',
       'data',
       'logs',
       'archive',

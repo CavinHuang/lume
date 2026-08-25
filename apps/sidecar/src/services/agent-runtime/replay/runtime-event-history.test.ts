@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getThreadEventBus } from "../events/thread-event-bus";
-import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
-import type { LumeRunState } from "../runner/run-state";
+import { createFileBackedLumeRunStateStore } from "../runtime-core/run-state-store";
+import type { LumeRunState } from "../runtime-core/run-state";
 import { listThreadRuntimeEvents, projectRunStateToReplayEvents } from "./runtime-event-history";
 
 describe("runtime event history", () => {

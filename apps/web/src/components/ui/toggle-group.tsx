@@ -17,12 +17,13 @@ function ToggleGroup({
   onValueChange,
   className,
   children,
+  ...props
 }: {
   value: string
   onValueChange: (value: string) => void
   className?: string
   children: React.ReactNode
-}) {
+} & Pick<React.AriaAttributes, "aria-label" | "aria-labelledby">) {
   return (
     <ToggleGroupPrimitive
       value={[value]}
@@ -32,6 +33,7 @@ function ToggleGroup({
         }
       }}
       className={cn("inline-flex flex-wrap items-center gap-1", className)}
+      {...props}
     >
       {children}
     </ToggleGroupPrimitive>
