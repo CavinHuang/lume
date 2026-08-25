@@ -1006,22 +1006,33 @@ describe('#566 自动续跑边界提示收回', () => {
     ]
     let ref: ProjectionRef | null = null
     let messages: RuntimeMessageView[] = []
+    let boundaryNoticeRef: RuntimeMessageView | undefined
     for (let i = 1; i <= events.length; i++) {
       const result = applyRuntimeEventsIncremental(events.slice(0, i), ref)
       ref = result.ref
       messages = result.messages
       if (i === 4) {
-        // 边界帧：提示先出现（用户短暂看到「已达上限」）
-        expect(messages.some((message) => message.type === 'assistant' && message.text?.includes(TURN_LIMIT_NOTICE_TEXT))).toBeTrue()
+        // 边界帧：提示先出现（用户短暂看到「已达上限」），并留存该帧消息对象引用
+        const notice = messages.find((message) => message.type === 'assistant' && message.text?.includes(TURN_LIMIT_NOTICE_TEXT))
+        expect(notice).toBeDefined()
+        boundaryNoticeRef = notice
+      }
+      if (i === 5) {
+        // 收回帧：提示已剥除（用户不再看到「已达上限」）
+        expect(messages.some((message) => message.type === 'assistant' && message.text?.includes(TURN_LIMIT_NOTICE_TEXT))).toBeFalse()
       }
     }
+    // M2 克隆契约：收回必须以「新对象替换」发布，不得原地 mutate 已 flush 的旧帧对象——
+    // stabilize 引用比较命中同引用即短路复用，原地改对 UI 永不可见
+    //（review 变异实证：改回原地 mutate 时全套测试仍绿）。钉死旧帧对象不被改。
+    expect(boundaryNoticeRef?.text).toContain(TURN_LIMIT_NOTICE_TEXT)
     // 终态收敛后，任何 assistant 视图都不得残留「已达上限」提示
     expect(messages.some((message) => message.type === 'assistant' && message.text?.includes(TURN_LIMIT_NOTICE_TEXT))).toBeFalse()
     const r1Views = messages.filter((message) => message.type === 'assistant' && message.text?.includes('干了一半'))
-    if (r1Views.length > 0) {
-      // 若中间轮视图仍保留（未被终态 reconcile 合并），剥后缀必须恰好还原为正文
-      expect(r1Views.at(-1)?.text).not.toContain('…')
-    }
+    // 中间轮视图必须保留（reconcile 合并语义）——不用 if 包裹让实现改动静默跳过断言；
+    // 剥后缀须恰好还原为正文（部分剥离残留元语句也红）
+    expect(r1Views.length).toBeGreaterThan(0)
+    expect(r1Views.at(-1)?.text).toBe('干了一半')
     const finalAssistant = messages.find((message) => message.id === 'assistant:r2')
     expect(finalAssistant?.text).toContain('干完另一半')
   })

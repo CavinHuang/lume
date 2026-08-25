@@ -93,4 +93,38 @@ describe("coding diagnostics", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("#649 review P1-7: spawn 三坑端到端钉死——lib/tsc.js 直连、ELECTRON_RUN_AS_NODE=1、--pretty false", async () => {
+    // 三坑的共同点：fixture 自造环境测不出。这里让探针 checker 把**运行时真实环境**
+    // 回显到 stderr（异常退出路径会带 stderrTail），任何一坑回归都直接红：
+    //  - 只造 lib/tsc.js（官方布局）→ 探测/解析必须命中它而非 bin shim；
+    //  - 删掉 env 注入 → asNode=false；
+    //  - 删掉 --pretty false → prettyInArgv=false。
+    const root = mkdtempSync(join(tmpdir(), "lume-diag-spawn-"));
+    try {
+      mkdirSync(join(root, "node_modules", "typescript", "lib"), { recursive: true });
+      writeFileSync(
+        join(root, "node_modules", "typescript", "lib", "tsc.js"),
+        [
+          "process.stderr.write('PROBE:' + JSON.stringify({",
+          "  asNode: process.env.ELECTRON_RUN_AS_NODE === '1',",
+          "  prettyInArgv: process.argv.includes('--pretty'),",
+          "}));",
+          "process.exit(1);",
+        ].join("\n"),
+      );
+      writeFileSync(join(root, "tsconfig.json"), "{}");
+
+      const outcome = await collectDiagnostics({ workspaceRoot: root, files: ["src/a.ts"], deadlineMs: 15_000 });
+      // 非 null 即证明探测走通了 lib/tsc.js 直连入口
+      expect(outcome).not.toBeNull();
+      const probeMatch = /PROBE:(\{.*\})/.exec(outcome?.stderrTail ?? "");
+      expect(probeMatch).not.toBeNull();
+      const probe = JSON.parse(probeMatch![1]) as { asNode: boolean; prettyInArgv: boolean };
+      expect(probe.asNode).toBe(true);
+      expect(probe.prettyInArgv).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

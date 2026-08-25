@@ -818,7 +818,6 @@ function retractPendingTurnLimitNotice(state: ProjectionState): void {
     : message.text
   const clonedBlocks = [...message.blocks]
   clonedBlocks[lastBlockIndex] = { ...last, text: strippedBlockText }
-  if (message.type !== 'assistant') return
   // tokenCount 同步扣掉提示的估算值（~5 token），保持口径诚实
   const noticeTokens = estimateTextTokens(TURN_LIMIT_NOTICE)
   state.messages[index] = {
