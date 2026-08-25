@@ -72,4 +72,19 @@ describe('Read partial-view signals (#535)', () => {
       await rm(dir, { recursive: true, force: true })
     }
   })
+
+  test('continuation read reaching EOF from non-zero offset stays partial (#711 review)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'lume-read-marker-'))
+    try {
+      // 分段续读最后一跳：只看了尾部片段，缓存与账本都不得标全量，
+      // 否则后续 Edit 以片段比对全文必误报 modified
+      const filePath = await makeFile(dir, 'cont.vue', 300)
+      const result = await FileReadTool.call({ file_path: filePath, offset: 250, limit: 1000 }, { cwd: dir } as never)
+      expect(readMeta(result).partial).toBe(true)
+      const content = (result as { content?: unknown }).content
+      expect(String(content)).toContain('[showing lines 251-300')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })

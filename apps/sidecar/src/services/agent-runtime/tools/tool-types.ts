@@ -1,15 +1,19 @@
 import type { ToolDefinition } from "@lume/agent-sdk";
 
-export type LumeToolSource =
-  | "sdk"
-  | "lume"
-  | "memory"
-  | "automation"
-  | "plan"
-  | "task"
-  | "mcp"
-  | "skill"
-  | "plugin";
+/** 工具来源枚举的运行时值清单：校验/枚举场景统一从此派生，防双写漂移（#711 review） */
+export const LUME_TOOL_SOURCES = [
+  "sdk",
+  "lume",
+  "memory",
+  "automation",
+  "plan",
+  "task",
+  "mcp",
+  "skill",
+  "plugin",
+] as const;
+
+export type LumeToolSource = (typeof LUME_TOOL_SOURCES)[number];
 
 export type LumeToolCategory = "read" | "write" | "execute" | "control" | "network";
 

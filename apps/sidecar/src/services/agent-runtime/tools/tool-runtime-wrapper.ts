@@ -21,10 +21,18 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
   let calls = 0;
   const log = createLogger("tool-runtime", input.threadId);
 
+  const declaredRuntimeMetadata = {
+    ...((tool as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata ?? {})
+  };
+  // 审批豁免键不得随定义自声明穿透 wrapper：插件 manifest 的 metadata 字段
+  // 是第三方可控输入，整体透传会让一个字段换来免审免拦。合法豁免（如
+  // ExecuteTool）不经 wrapper，不受此剥离影响（#711 review 安全轮）
+  delete declaredRuntimeMetadata.delegatesPermission;
+
   return {
     ...tool,
     runtimeMetadata: {
-      ...(tool as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata,
+      ...declaredRuntimeMetadata,
       source: descriptor.source,
       // canUseTool 从盖章数据组装 descriptor（单载体），分类器与权限指纹依赖这两字段
       description: descriptor.metadata.description ?? tool.description,

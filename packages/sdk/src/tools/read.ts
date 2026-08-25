@@ -320,7 +320,9 @@ export const FileReadTool = defineTool({
 
       // Default: return raw content with line numbers
       const selectedLines = lines.slice(offset, offset + limit)
-      const isPartialView = offset > 0 || offset + limit < lines.length || hasExplicitRange
+      // #711 review 对抗轮：非零 offset 续读到尾只是片段，缓存与账本都保持 partial；
+      // 此路径无显式范围（ranged 已提前 return），offset>0 即天然 partial
+      const isPartialView = offset > 0 || offset + limit < lines.length
       const textLimitError = validateTextLimits(selectedLines.join('\n'), filePath, context)
       if (textLimitError) return textLimitError
 

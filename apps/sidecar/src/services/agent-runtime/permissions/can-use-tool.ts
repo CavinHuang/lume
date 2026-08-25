@@ -28,14 +28,12 @@ import { builtinToolInputGuardrails } from "../guardrails/builtin-tool-guardrail
 import { LumeGuardrailRunner } from "../guardrails/guardrail-runner";
 import { ToolExecutionGateway } from "../tools/tool-execution-gateway";
 import { canonicalizeAgentToolName } from "@lume/shared";
-import type { LumeToolDescriptor, LumeToolSource } from "../tools/tool-types";
+import { LUME_TOOL_SOURCES, type LumeToolDescriptor, type LumeToolSource } from "../tools/tool-types";
 
 // 双载体合一（#541）：descriptor 元数据随工具定义的 runtimeMetadata 携带
 // （wrapper 盖章或工厂自带，如 ToolSearch/ExecuteTool），canUseTool 拿到的
 // 就是该 definition，直接按形取回，旁路 session Map 已删。
-const KNOWN_TOOL_SOURCES = new Set([
-  "sdk", "lume", "memory", "automation", "plan", "task", "mcp", "skill", "plugin",
-]);
+const KNOWN_TOOL_SOURCES = new Set<string>(LUME_TOOL_SOURCES);
 
 export function resolveRuntimeDescriptor(tool: ToolDefinition): LumeToolDescriptor | undefined {
   const meta = (tool as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata;
