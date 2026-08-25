@@ -387,7 +387,8 @@ function extractOriginalTaskText(userMessage: string): string {
 function buildTurnLimitedRecoveryContext(run: LumeRunState): string {
   return [
     '<runtime-recovery-state reason="turn_limit">',
-    `原始任务：${compactRuntimeText(run.input.userMessage, 800)}`,
+    // #566 韧性 review:上一轮可能是自动续跑轮——原始任务须从叠加体中还原，防跨轮遗忘
+    `原始任务：${extractOriginalTaskText(run.input.userMessage)}`,
     "上次运行达到了轮次上限。该状态仅供参考；以当前用户消息为准。",
     "</runtime-recovery-state>"
   ].join("\n\n");
@@ -396,7 +397,7 @@ function buildTurnLimitedRecoveryContext(run: LumeRunState): string {
 function buildRepeatGuardRecoveryContext(run: LumeRunState): string {
   return [
     '<runtime-recovery-state reason="repeat_guard">',
-    `原始任务：${compactRuntimeText(run.input.userMessage, 800)}`,
+    `原始任务：${extractOriginalTaskText(run.input.userMessage)}`,
     "上次运行因重复执行相同操作被保护机制停止，建议调整指令以避免重复操作。该状态仅供参考；以当前用户消息为准。",
     "</runtime-recovery-state>"
   ].join("\n\n");
@@ -848,8 +849,16 @@ export async function dispatchAgentRun(
   return result;
 }
 
-/** #566:turn_limited 自动续跑——单条用户消息最多自动接续的 run 数。 */
-const MAX_AUTO_TURN_CONTINUATIONS = 3;
+/** #566:turn_limited 自动续跑——单条用户消息默认最多自动接续的 run 数(lume-config agent.maxAutoTurnContinuations 可调,0=关闭)。 */
+const DEFAULT_MAX_AUTO_TURN_CONTINUATIONS = 3;
+/** 配置上限护栏:防止配置笔误把无人值守成本放大到失控 */
+const HARD_MAX_AUTO_TURN_CONTINUATIONS = 10;
+
+function resolveMaxAutoTurnContinuations(): number {
+  const configured = getEffectiveLumeConfig().agent?.maxAutoTurnContinuations;
+  if (typeof configured !== "number" || !Number.isFinite(configured)) return DEFAULT_MAX_AUTO_TURN_CONTINUATIONS;
+  return Math.max(0, Math.min(Math.floor(configured), HARD_MAX_AUTO_TURN_CONTINUATIONS));
+}
 
 /** #566:自动续跑时面向模型的合成指令(中文对齐兄弟机制 runtime-recovery-state);恢复上下文由既有链路注入。 */
 const AUTO_TURN_CONTINUATION_PROMPT = "上一轮运行在完成任务前达到了回合上限。请从上次停止处继续完成原始任务——不要从头重来，也不要重复已完成的步骤。若已无剩余工作，简要总结完成情况即可。";
@@ -860,11 +869,11 @@ const AUTO_TURN_CONTINUATION_PROMPT = "上一轮运行在完成任务前达到�
  */
 export function shouldAutoContinueTurnLimited(
   result: Pick<AgentRuntimeRunResult, "status" | "terminationReason"> | undefined,
-  context: { continuationCount: number; abortSignalled: boolean; queuedCount: number; callerBoundsTurns: boolean }
+  context: { continuationCount: number; abortSignalled: boolean; queuedCount: number; callerBoundsTurns: boolean; maxContinuations: number }
 ): boolean {
   if (!result || result.status !== "turn_limited") return false;
   if (result.terminationReason === "repeat_guard") return false;
-  if (context.continuationCount >= MAX_AUTO_TURN_CONTINUATIONS) return false;
+  if (context.continuationCount >= context.maxContinuations) return false;
   if (context.abortSignalled) return false;
   // 有排队中的用户消息时不抢跑：让用户的新指令经恢复上下文自然驱动下一轮
   if (context.queuedCount > 0) return false;
@@ -893,6 +902,7 @@ export async function sendAgentMessage(
   }
   directRunThreads.add(threadId);
   try {
+    const maxContinuations = resolveMaxAutoTurnContinuations();
     let outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: 0 });
     let continuationCount = 0;
     while (outcome?.autoContinue) {
@@ -900,7 +910,7 @@ export async function sendAgentMessage(
       log.info("[Agent 会话] 达到回合上限，自动续跑", {
         threadId: threadId.slice(0, 8),
         continuationCount,
-        maxContinuations: MAX_AUTO_TURN_CONTINUATIONS
+        maxContinuations
       });
       // #566 review:合成续跑指令与原消息 messageParts 拼接必然失配(message_mismatch),
       // 须剥离 parts;残留 capabilityFingerprints 会撞 capability_changed 校验,一并剥掉
@@ -1605,7 +1615,8 @@ async function runSendAgentMessage(
     continuationCount: options.autoContinuationCount ?? 0,
     abortSignalled: options.abortSignal?.aborted ?? false,
     queuedCount,
-    callerBoundsTurns: input.messageMetadata?.maxTurns !== undefined || input.messageMetadata?.automationJobId !== undefined
+    callerBoundsTurns: input.messageMetadata?.maxTurns !== undefined || input.messageMetadata?.automationJobId !== undefined,
+    maxContinuations: resolveMaxAutoTurnContinuations()
   };
   const autoContinue = shouldAutoContinueTurnLimited(runtimeResult, autoContinueDecision);
   // #566 可观测性 review F1:四种否决分支(上限/repeat_guard/中止/排队/调用方限定)必须可区分

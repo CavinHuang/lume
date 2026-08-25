@@ -1090,7 +1090,7 @@ describe("agent-service", () => {
 
   test("#566 shouldAutoContinueTurnLimited 判定矩阵", async () => {
     const { shouldAutoContinueTurnLimited } = await import("./agent-service");
-    const base = { abortSignalled: false, queuedCount: 0, callerBoundsTurns: false } as const;
+    const base = { abortSignalled: false, queuedCount: 0, callerBoundsTurns: false, maxContinuations: 3 } as const;
     const turnLimited = { status: "turn_limited", terminationReason: undefined } as const;
     // 正常 turn_limited 且未达上限 → 续跑
     expect(shouldAutoContinueTurnLimited(turnLimited, { ...base, continuationCount: 0 })).toBeTrue();

@@ -44,6 +44,8 @@ export interface LumeConfigAgentSection {
   permissionMode?: LumeConfigPermissionMode
   thinkingLevel?: LumeConfigThinkingLevel
   followUpQueueMode?: AgentFollowUpMode
+  /** #566:turn_limited 自动续跑轮数上限（默认 3；0 = 关闭自动续跑） */
+  maxAutoTurnContinuations?: number
 }
 
 export interface LumeConfigSkillsSection {

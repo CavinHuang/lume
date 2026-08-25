@@ -514,6 +514,7 @@ const sidecarHost = createSidecarHost({
     }
     showDesktopProposalNotification(method, params)
     showPlanningReminderNotification(method, params)
+    showAutomationRunNotification(method, params)
     showDesktopActionHud(method, params)
     // Agent 灵动岛 service（Task 7）：先于 renderer 转发处理 sidecar 通知，
     // 确保即便主窗口隐藏也能触发 intent 刷新。
@@ -663,6 +664,27 @@ function showPlanningReminderNotification(method, params) {
     } catch (error) {
       writeMainLog('error', 'desktop.notification', 'planning_reminder.show_failed', 'planning reminder notification failed', { data: { error } })
     }
+  }
+}
+
+// #566 端到端 review A2:automation 停摆/失败必须有主动通知面——无人值守场景用户
+// 不会盯着管理页；success 保持静默不打扰，failed/waiting 才是「需要人介入」的信号。
+function showAutomationRunNotification(method, params) {
+  if (method !== 'automation:run-completed' || !params || typeof params !== 'object') return
+  const run = params.run
+  if (!run || (run.status !== 'failed' && run.status !== 'waiting_for_user' && run.status !== 'waiting_for_approval')) return
+  if (!Notification.isSupported()) return
+  try {
+    const title = run.status === 'failed' ? `自动化任务未完成：${params.jobName ?? '未命名任务'}` : `自动化任务等待处理：${params.jobName ?? '未命名任务'}`
+    const desktopNotification = new Notification({
+      title,
+      body: typeof run.message === 'string' && run.message.trim() ? run.message : '请打开自动化页面查看详情。',
+      silent: true,
+    })
+    desktopNotification.on('click', () => { void showMainWindow() })
+    desktopNotification.show()
+  } catch (error) {
+    writeMainLog('error', 'desktop.notification', 'automation_run.show_failed', 'automation run notification failed', { data: { error } })
   }
 }
 

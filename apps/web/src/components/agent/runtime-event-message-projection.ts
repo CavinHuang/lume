@@ -23,6 +23,12 @@ export interface ProjectionState {
   compactionMessageByRun: Map<string, string>
   fileReferenceBinding?: FileReferenceBinding
   fileReferenceProtocolVersion?: FileReferenceProtocolVersion
+  /**
+   * #566:待收回的「已达上限」提示——turn_limited 后系统可能自动续跑；若同一链的
+   * run.started 随后到达（期间无用户消息），剥掉该提示尾缀，避免给用户假信号。
+   * 用户消息插入则保留提示（手动继续场景提示仍然成立）。
+   */
+  pendingTurnLimitNotice?: { messageId: string; noticeLength: number } | null
 }
 
 /**
@@ -69,11 +75,13 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   // 因位于通用早退之前,各自保留最小防线(见分支内注释)。
 
   if (event.type === 'run.started') {
+    retractPendingTurnLimitNotice(state)
     state.terminalClosed = false
     return
   }
 
   if (event.type === 'message.user.submitted') {
+    state.pendingTurnLimitNotice = null
     flushAssistant(state.messages, state.currentAssistant)
     messages.push({
       id: event.messageId ?? `user:${event.createdAt}`,
@@ -432,6 +440,11 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     if (event.type === 'run.turn_limited') {
       appendAssistantTextBlock(state.currentAssistant, TURN_LIMIT_NOTICE)
       recomputeAssistantContent(state.currentAssistant)
+      // #566:记录提示尾缀，若同链 run.started 随后到达则剥掉（自动续跑不给用户假信号）
+      const lastBlock = state.currentAssistant.blocks.at(-1)
+      state.pendingTurnLimitNotice = lastBlock?.type === 'text'
+        ? { messageId: state.currentAssistant.id, noticeLength: TURN_LIMIT_NOTICE.length }
+        : null
     }
     if (event.type === 'run.completed') {
       state.currentAssistant.messageId = event.finalMessageId
@@ -783,6 +796,22 @@ function flushAssistant(
 ): void {
   const snapshot = snapshotAssistant(assistant)
   if (snapshot) messages.push(snapshot)
+}
+
+/** #566:自动续跑链的下一 run 开始——剥掉上一边界的「已达上限」提示尾缀 */
+function retractPendingTurnLimitNotice(state: ProjectionState): void {
+  const pending = state.pendingTurnLimitNotice
+  state.pendingTurnLimitNotice = null
+  if (!pending) return
+  const message = state.messages.find((item) => item.id === pending.messageId)
+  if (!message || message.type !== 'assistant') return
+  const last = message.blocks.at(-1)
+  if (last?.type !== 'text' || !last.text.endsWith(TURN_LIMIT_NOTICE)) return
+  // 块 id 按索引派生，不删块防 id 漂移；提示独占时留空文本块（渲染无痕）
+  last.text = last.text.slice(0, -pending.noticeLength)
+  if (message.text.endsWith(TURN_LIMIT_NOTICE)) {
+    message.text = message.text.slice(0, -TURN_LIMIT_NOTICE.length)
+  }
 }
 
 /**
