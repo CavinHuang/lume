@@ -1257,6 +1257,71 @@ describe("agent-service", () => {
     expect(continuation?.input?.messageMetadata?.capabilityFingerprints).toBeUndefined();
   });
 
+  test("#566 韧性: stale-run 恢复从合成续跑叠加体中还原原始任务", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const { getRuntimeCoreSessionDir } = await import("../agent-runtime/runtime-core/session-store");
+    const { createFileBackedLumeRunStateStore } = await import("../agent-runtime/runtime-core/run-state-store");
+    const thread = createAgentThread("stale polluted recovery", "channel-test");
+    const sessionDir = getRuntimeCoreSessionDir(thread.id);
+    // 进程在自动续跑第 2 轮中途被 kill 的落盘形态：恢复包装 + 合成指令叠加
+    const pollutedUserMessage = [
+      '<runtime-recovery-state reason="turn_limit">',
+      "原始任务：修复登录超时",
+      "上次运行状态：completed",
+      "该状态仅供参考；以当前用户消息为准。",
+      "</runtime-recovery-state>",
+      "",
+      "上一轮运行在完成任务前达到了回合上限。请从上次停止处继续完成原始任务——不要从头重来，也不要重复已完成的步骤。若已无剩余工作，简要总结完成情况即可。"
+    ].join("\n");
+    await createFileBackedLumeRunStateStore(sessionDir).create({
+      version: 1,
+      runId: "run-stale-polluted",
+      threadId: thread.id,
+      rootAgentId: "runtime-core",
+      currentAgentId: "runtime-core",
+      status: "running",
+      currentStep: {
+        id: "step-model",
+        type: "model_call",
+        status: "running",
+        startedAt: "2026-08-25T00:00:00.000Z"
+      },
+      input: {
+        userMessage: pollutedUserMessage,
+        permissionMode: "default"
+      },
+      generatedItems: [],
+      pendingInterruptions: [],
+      approvals: { alwaysAllowedTools: [] },
+      traceId: "trace-1",
+      model: { provider: "provider", modelId: "model-test" },
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      createdAt: "2026-08-25T00:00:00.000Z",
+      updatedAt: "2026-08-25T00:01:00.000Z"
+    });
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "接着弄",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    const modelMessage = (runAgentRuntimeCalls.at(-1) as { input?: { userMessage?: string } })?.input?.userMessage ?? "";
+    // 恢复上下文展示的是最初真实任务，而非「包装+合成指令」叠加体
+    expect(modelMessage).toContain("原始任务：修复登录超时");
+    expect(modelMessage).not.toContain("达到了回合上限");
+    expect(modelMessage).not.toContain('<runtime-recovery-state reason="turn_limit">');
+  });
+
   test("失败运行不应把临时 assistant 结果写回会话上下文", async () => {
     const { createAgentThread, getAgentThreadMessages, getAgentThreadSDKMessages } = await import("./agent-thread-manager");
     const { sendAgentMessage } = await import("./agent-service");

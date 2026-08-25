@@ -363,13 +363,25 @@ async function resolveModelFacingUserMessage(threadId: string, userMessage: stri
 function buildStaleRunRecoveryContext(run: LumeRunState): string {
   return [
     '<runtime-recovery-state reason="interrupted">',
-    `原始任务：${compactRuntimeText(run.input.userMessage, 800)}`,
+    `原始任务：${extractOriginalTaskText(run.input.userMessage)}`,
     `上次运行状态：${run.status}${run.currentStep?.type ? ` / ${run.currentStep.type}` : ""}`,
     "上次运行已完成的关键记录：",
     summarizeStaleRunProgress(run.generatedItems),
     "该状态仅供参考；以当前用户消息为准。",
     "</runtime-recovery-state>"
   ].filter((part) => part.trim().length > 0).join("\n\n");
+}
+
+/**
+ * #566 韧性 review F2:自动续跑轮的 run.input.userMessage 是「恢复包装+合成指令」的
+ * 叠加体,进程中断后 stale-run 恢复会把这坨整体当「原始任务」展示且逐轮套娃。
+ * 这里从恢复包装内部抠出最初的真实任务文本;无包装(正常消息)时原样返回。
+ * 正则锚定 <runtime-recovery-state 开标签——用户正文里字面出现「原始任务：」不会误截。
+ */
+function extractOriginalTaskText(userMessage: string): string {
+  const match = /<runtime-recovery-state[^>]*>[\s\S]*?原始任务：([\s\S]*?)(?:\n上次运行状态|\n该状态仅供参考|<\/runtime-recovery-state>|$)/.exec(userMessage);
+  const extracted = match?.[1]?.trim();
+  return compactRuntimeText(extracted && extracted.length > 0 ? extracted : userMessage, 800);
 }
 
 function buildTurnLimitedRecoveryContext(run: LumeRunState): string {

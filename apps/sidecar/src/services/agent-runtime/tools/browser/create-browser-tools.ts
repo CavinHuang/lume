@@ -100,9 +100,13 @@ export function createBrowserMcpTools(input: {
           const message = error instanceof Error && error.message && error.message !== code ? error.message.slice(0, 4_000) : code
           // broker 已把 desktop 富文本摧毁为裸码,navigation_timeout 的行为
           // 指导只能在此注入:页面可能仍在后台加载,先观察再决定。
+          // user_declined 同理(#601 端到端 review B1):用户否决不随参数/ref 变化,
+          // 不给指引模型会「换个姿势重试」再次弹窗骚扰。
           const hint = code === "navigation_timeout"
             ? "The page may still be loading in the background. Take a snapshot to check the actual state before deciding; do not retry navigate immediately. If it times out again, open a new tab or report this to the user instead of retrying."
-            : undefined
+            : code === "user_declined"
+              ? "The user explicitly declined this action in the confirmation dialog. Do NOT retry it with different parameters, selectors, or refs—the refusal is about the action itself, not its formulation. Ask the user how they would like to proceed."
+              : undefined
           const retryable = code === "browser_unavailable" || code === "stale_target" || code === "stale_snapshot_cursor"
           const failureKey = !retryable ? actionFailureKey(name, args, session) : undefined
           if (failureKey) {

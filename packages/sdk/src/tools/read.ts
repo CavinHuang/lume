@@ -147,10 +147,12 @@ export const FileReadTool = defineTool({
       }
 
       // #564:无显式范围时全文直读至上限;AST 骨架折叠降为 summarize 显式 opt-in,
-      // 避免「模型只见骨架却要 Edit elided 区域」的必然失配
+      // 避免「模型只见骨架却要 Edit elided 区域」的必然失配。
+      // 行预算可由宿主按任务类型调(readMaxLines,token 经济学 review 旋钮排序第一)
+      const wholeReadLimit = configuredPositiveNumber(context, 'readMaxLines', WHOLE_READ_LINE_LIMIT)
       const hasExplicitRange = input.offset !== undefined || input.limit !== undefined
       const offset = input.offset ?? 0
-      const limit = input.limit ?? (hasExplicitRange ? 2000 : WHOLE_READ_LINE_LIMIT)
+      const limit = input.limit ?? (hasExplicitRange ? 2000 : wholeReadLimit)
       if (isUnchangedRead(context.fileStateCache?.get(filePath), fileStat.mtimeMs, fileStat.size, offset, limit, input.summarize === true)) {
         return unchangedResult(filePath)
       }
@@ -291,7 +293,7 @@ export const FileReadTool = defineTool({
       // #564:#535 截断信号必须在 content 里可见——超限全文读在尾部带显式标记;
       // summarize 被请求但不可用时给显式信号,避免模型反复重试死路
       // #564 review:ranged 分支已提前 return,此处必然无显式范围
-      const truncatedWholeRead = lines.length > WHOLE_READ_LINE_LIMIT
+      const truncatedWholeRead = lines.length > wholeReadLimit
       const summarizeUnavailable = input.summarize === true
       // #564 review:outline 建议只对可折叠扩展名给出,.txt/.log 等提了也是死路
       const summarizeHint = SUMMARIZABLE_EXTENSIONS.has(ext)
@@ -446,7 +448,8 @@ async function readPdf(
     }
     return {
       data: { content },
-      _meta: { read: { kind: 'pdf', filePath, size: bytes.byteLength, totalPages, pages: selectedPages.map((page) => page + 1), multimodal: true } },
+      // #564 follow-up:按页子集读是部分视图，口径与文本路径对齐（否则台账误记全文读）
+      _meta: { read: { kind: 'pdf', filePath, size: bytes.byteLength, totalPages, pages: selectedPages.map((page) => page + 1), partial: selectedPages.length < totalPages, multimodal: true } },
     }
   } finally {
     // mupdf documents/pages/pixmaps live in a WASM heap; destroy or every Read

@@ -517,6 +517,26 @@ describe("file tools", () => {
     expect(String(result.content)).not.toContain("[truncated");
   });
 
+  test("#564: readMaxLines 宿主旋钮可收窄全文直读预算", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "knob.txt");
+    await writeFile(
+      filePath,
+      Array.from({ length: 20 }, (_, i) => `line-${i}`).join("\n"),
+      "utf8",
+    );
+
+    const result = await FileReadTool.call(
+      { file_path: filePath },
+      { cwd: root, fileStateCache: new FileStateCache(), toolConfig: { readMaxLines: 5 } },
+    );
+
+    expect(result.is_error).toBeFalsy();
+    expect(result._meta?.read).toMatchObject({ partial: true, truncated: true, limit: 5 });
+    expect(String(result.content)).toContain("[truncated: showing lines 1-5 of 20 total");
+  });
+
   test("#564: 超限全文读截断并带尾部标记", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
