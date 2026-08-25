@@ -112,4 +112,21 @@ describe("resolveReplyHeaders thread chain", () => {
     expect(headers.references).toBe("<a@x>");
     expect(headers.inReplyTo).toBe("");
   });
+
+  it("first-level reply: parent with only Message-ID seeds both headers", () => {
+    const headers = resolveReplyHeaders({
+      id: "gmsg3",
+      threadId: "t3",
+      payload: { headers: [{ name: "Message-ID", value: "<c@x>" }] },
+    });
+    // 最常见真实形态:首层回复 references 与 inReplyTo 同为父 Message-ID
+    expect(headers.references).toBe("<c@x>");
+    expect(headers.inReplyTo).toBe("<c@x>");
+  });
+
+  it("API-created draft without any ids yields empty headers", () => {
+    const headers = resolveReplyHeaders({ id: "gmsg4", threadId: "t4", payload: { headers: [] } });
+    expect(headers.references).toBe("");
+    expect(headers.inReplyTo).toBe("");
+  });
 });

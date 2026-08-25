@@ -43,11 +43,14 @@ function buildStatus(service: string): ConnectorStatus {
   // 单次读盘解密组装全部字段(GET_SETUP 对每个服务各调一次,避免逐字段重复 IO)
   const record = getConnectorCredentialRecord(service);
   const { oauth, customValues } = record;
+  // oauth2 型服务的 customValues 不算连接(与 hasAnyConnectorCredential 同口径:
+  // 存量毒数据不得让 UI 显示已连接)
+  const supportsCustomOnly = !getConnector(service).definition.authTypes.includes("oauth2");
   return {
     service,
     clientConfigured: !!record.clientConfig?.clientId,
-    connected: oauth !== undefined || customValues !== undefined,
-    accountLabel: oauth ? oauth.profile?.displayName : customValues?.email,
+    connected: oauth !== undefined || (supportsCustomOnly && customValues !== undefined),
+    accountLabel: oauth ? oauth.profile?.displayName : supportsCustomOnly ? customValues?.email : undefined,
     authorizing: authState?.authorizing ?? false,
     lastError: authState?.lastError,
   };

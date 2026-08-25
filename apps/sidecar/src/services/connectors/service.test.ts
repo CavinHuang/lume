@@ -8,6 +8,7 @@ import {
   executeConnectorAction,
   getConnector,
   getConnectorSetup,
+  hasAnyConnectorCredential,
   listConnectors,
   saveConnectorCustomCredential,
   startConnectorAuthorization,
@@ -62,6 +63,17 @@ describe("connector service", () => {
       saveConnectorCustomCredential("qq_mail", { email: "not-an-email", authorizationCode: "123" }),
     ).rejects.toBeDefined();
     // 正确格式但验证器必然失败的输入在无网络环境下同样被拒;此处只锁格式守卫
+  });
+
+  test("oauth2 型 provider 拒绝直存授权码凭证(防假已连接态)", async () => {
+    try {
+      await saveConnectorCustomCredential("gmail", { email: "x@gmail.com" });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as ConnectorError).code).toBe("connector_auth_unsupported");
+    }
+    // 守卫先于任何状态变更:customValues 未被写入
+    expect(hasAnyConnectorCredential("gmail")).toBe(false);
   });
 
   test("未配置 OAuth client 时发起授权被拒", () => {

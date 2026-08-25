@@ -99,6 +99,10 @@ export class ProviderRequestError extends Error {
  * Map provider runtime failures to the standard action execution result.
  */
 function toProviderExecutionError(error: unknown, fallbackMessage: string): ExecutionResult {
+  // 用户中断 run 的 AbortError 不能塌缩成 internal_error——模型会把中止误读为 provider 故障
+  if (error instanceof Error && error.name === "AbortError") {
+    return { ok: false, error: { code: "cancelled", message: "Request cancelled." } };
+  }
   // ConnectorError(凭证缺失/刷新失败等)直通稳定 code:「请重新授权」类问题
   // 不能塌缩成 internal_error,否则调用方无法自纠
   if (

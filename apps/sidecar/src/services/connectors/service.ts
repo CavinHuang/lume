@@ -336,8 +336,9 @@ function timingSafeStateEqual(received: string, expected: string): boolean {
 export async function saveConnectorCustomCredential(service: string, values: Record<string, string>): Promise<void> {
   const provider = getConnector(service);
   // oauth2 型 provider 的凭证只能经授权流写入:直存 customValues 会造出
-  // 「UI 已连接、运行时 getConnectorResolvedCredential 走 oauth 分支抛错」的假态
-  if (provider.definition.authTypes.includes("oauth2") && !provider.validators?.customCredential) {
+  // 「UI 已连接、运行时 getConnectorResolvedCredential oauth 优先解析必抛错」的假态。
+  // 不看 validators 是否有 customCredential——混合型下 oauth 优先的 resolver 同样到不了 custom 分支
+  if (provider.definition.authTypes.includes("oauth2")) {
     throw new ConnectorError("connector_auth_unsupported", `${service} 使用 OAuth 授权,请在设置中完成浏览器授权`);
   }
   const validator = provider.validators?.customCredential;
@@ -378,7 +379,11 @@ function readCustomProfile(service: string): { accountId: string; displayName: s
 }
 
 export function hasAnyConnectorCredential(service: string): boolean {
-  return getConnectorOAuthCredential(service) !== undefined || getConnectorCustomValues(service) !== undefined;
+  if (getConnectorOAuthCredential(service) !== undefined) return true;
+  // oauth2 型服务的 customValues 不是合法凭证(SAVE_CREDENTIAL 已拒新增;存量毒数据
+  // 来自防线之前的直发 RPC),计入会造出「已连接」假态——运行时 oauth 优先解析必抛错
+  if (getConnector(service).definition.authTypes.includes("oauth2")) return false;
+  return getConnectorCustomValues(service) !== undefined;
 }
 
 /** 进行中的 token 刷新,按 service 单飞:并发命中过期共享同一次刷新,防轮换型 provider 的 refresh token 互踩作废。 */

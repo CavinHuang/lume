@@ -83,6 +83,7 @@ export function ConnectorSettings() {
           type="button"
           className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
           aria-expanded={!collapsed}
+          aria-controls="connector-settings-body"
           onClick={() => setCollapsed((prev) => !prev)}
         >
           <ChevronDown className={`size-4 shrink-0 text-[var(--text-3)] transition-transform ${collapsed ? '-rotate-90' : ''}`} />
@@ -105,7 +106,7 @@ export function ConnectorSettings() {
       </div>
 
       {!collapsed && (
-      <div className="p-4">
+      <div id="connector-settings-body" className="p-4">
         <div className="space-y-2">
           {setups.length === 0 && loading ? (
             <div className="flex h-28 items-center justify-center text-body text-[var(--text-3)]">
@@ -156,6 +157,7 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
           pollFailures += 1
           if (pollFailures === 5) {
             clearInterval(timer)
+            setStatus((prev) => ({ ...prev, authorizing: false, lastError: '状态轮询失败,请重试或重新发起授权' }))
             toast.error(`授权状态轮询失败:${error instanceof Error ? error.message : String(error)}`)
           }
         })

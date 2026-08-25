@@ -50,6 +50,7 @@ describe("oauth callback replay guard", () => {
     directory = mkdtempSync(join(tmpdir(), "lume-oauth-replay-"));
     process.env.LUME_CONFIG_DIR = directory;
     installConnectionVaultKey(Buffer.alloc(32, 5).toString("base64"));
+    exchangeCalls.length = 0;
     setConnectorClientConfig("gmail", {
       service: "gmail",
       clientId: "cid",
