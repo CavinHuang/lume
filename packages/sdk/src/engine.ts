@@ -357,6 +357,9 @@ export class QueryEngine {
   private totalCost = 0
   private turnCount = 0
   private compactState: AutoCompactState
+  // Recovery-path breaker, independent of the proactive compaction counter:
+  // unrelated proactive failures must not disable overflow self-rescue (#567 item 2).
+  private promptTooLongRecoveryFailures = 0
   private sessionId: string
   private apiTimeMs = 0
   private hookRegistry?: HookRegistry
@@ -1268,15 +1271,18 @@ export class QueryEngine {
         // failures (reset to 0 on success) instead of the one-shot `compacted`
         // flag: a tool loop can outgrow the window a second time, and repeated
         // failures trip the breaker on their own.
-        if (isPromptTooLongError(err) && this.compactState.consecutiveFailures < 3) {
+        if (isPromptTooLongError(err) && this.promptTooLongRecoveryFailures < 3) {
           try {
             const compacted = yield* this.runCompaction('prompt_too_long', protectedMessageIndex)
             if (compacted) {
+              this.promptTooLongRecoveryFailures = 0
               turnsRemaining++ // Retry this turn
               this.turnCount--
               continue
             }
+            this.promptTooLongRecoveryFailures++
           } catch {
+            this.promptTooLongRecoveryFailures++
             // Preserve the original provider error when compaction itself fails.
           }
         }

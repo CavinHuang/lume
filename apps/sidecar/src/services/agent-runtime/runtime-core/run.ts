@@ -11,6 +11,7 @@ import {
   type SkillDefinition,
   type ContentBlockParam,
   type ToolResult,
+  DEFAULT_CONTEXT_WINDOW,
   createTodoTool,
   type ToolDefinition,
   type PersistedToolContinuation,
@@ -666,7 +667,7 @@ async function assembleSessionContext({
     registeredPlugins,
     { ...pluginAssembly, skills: runtimeSkills },
   );
-  const contextTokenBudget = input.resolvedModel?.contextWindow ?? 32_000;
+  const contextTokenBudget = input.resolvedModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
   const beforeContextResult = await executeWorkflowHookSafely(
     input.workflowHooks,
     {
@@ -1330,7 +1331,7 @@ async function createRuntimeCoreSessionImpl(
     subagentRunId: input.subagentRunId,
     provider: createRoutingPiAiProvider(providerRoutes),
     model: input.resolvedModel?.id ?? input.resolvedModelId,
-    contextWindow: input.resolvedModel?.contextWindow ?? 32_000,
+    contextWindow: input.resolvedModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     cwd: input.cwd,
     threadType: input.threadType,
     artifactsRoot: input.artifactsRoot,
@@ -1386,7 +1387,7 @@ async function createRuntimeCoreSessionImpl(
     contextController: createKernelContextController({
       threadId: input.lumeSessionId,
       model: input.resolvedModel?.id ?? input.resolvedModelId,
-      contextWindow: input.resolvedModel?.contextWindow ?? 32_000,
+      contextWindow: input.resolvedModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       maxOutputTokens: input.resolvedModel?.maxTokens,
       systemPrompt,
       memoryContext: contextAssembly.memoryContext,
