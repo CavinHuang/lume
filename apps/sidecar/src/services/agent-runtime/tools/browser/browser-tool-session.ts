@@ -3,7 +3,8 @@ export interface BrowserToolSession {
   blockedActionLoop?: {
     code: string
     generation: number
-    ref: string
+    /** 非 ref 工具（run_script/upload/download/fill_secret）的熔断无 ref（#661） */
+    ref?: string
     tabId: string
     tool: string
   }
