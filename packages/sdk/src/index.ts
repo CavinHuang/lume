@@ -49,6 +49,7 @@ export type { RepeatGuardMeta } from './repeat-guard.js'
 export { resolveShellInvocation, shellKindWithoutDiscovery, shellKindConservative, resetWindowsBashDiscoveryForTests } from './utils/shell-invocation.js'
 export { analyzeBashCommand, normalizeExecutable } from './utils/bash-command-analysis.js'
 export type { BashCommandAnalysis, BashCommandSegment, BashParseStatus } from './utils/bash-command-analysis.js'
+export { isReadOnlyShellInput, isReadOnlyPowerShell } from './utils/shell-read-only.js'
 export {
   spawnWithProcessSandbox,
 } from './utils/process-sandbox.js'

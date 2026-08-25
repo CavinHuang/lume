@@ -1,3 +1,4 @@
+import { isReadOnlyShellInput } from "@lume/agent-sdk";
 import type { LumeToolRiskLevel } from "../tools/tool-types";
 import { createPermissionClassifier, type PermissionClassifier } from "./permission-classifier";
 import {
@@ -19,17 +20,24 @@ export interface PermissionEngineOptions {
   classifier?: PermissionClassifier;
   session?: PermissionSessionStore;
   rules?: PermissionRule[];
+  /**
+   * 可注入只读判定缝：shell 输入是否经静态分析证明只读，默认 SDK 的
+   * isReadOnlyShellInput。测试注入确定性读数用（ProbeOptions 惯例）。
+   */
+  isShellInputReadOnly?: (input: unknown) => boolean;
 }
 
 export class PermissionEngine {
   private readonly classifier: PermissionClassifier;
   private readonly session: PermissionSessionStore;
   private readonly rules: PermissionRule[];
+  private readonly isShellInputReadOnly: (input: unknown) => boolean;
 
   constructor(options: PermissionEngineOptions = {}) {
     this.classifier = options.classifier ?? createPermissionClassifier();
     this.session = options.session ?? runtimePermissionSessionStore;
     this.rules = options.rules ?? [];
+    this.isShellInputReadOnly = options.isShellInputReadOnly ?? ((input) => isReadOnlyShellInput(input));
   }
 
   async decide(input: PermissionDecisionInput): Promise<PermissionDecision> {
@@ -102,6 +110,20 @@ export class PermissionEngine {
       input.descriptor.metadata.riskLevel === "low"
     ) {
       return allow("metadata_low", "工具 metadata 声明低风险且默认无需审批", "low", input);
+    }
+
+    /*
+     * 内容证明免审通道（#571 第 2 项）：shell 输入经静态分析证明只读时无需任何
+     * 审批——这是内容层面的证明，独立于分类器开关（classifierEnabled 只门控
+     * 启发式风险判断），也不依赖 dontAsk 模式。规则表先于本分支：用户显式
+     * ask/deny 的意图优先级更高。守卫层（runtime-tool-safety）在引擎之后复核，
+     * 覆盖 rm/git push/PS 危险动词等结构化形态；静态白名单无法证明的写原语
+     * （如仓库 textconv 配置类通道）不在其拦截面内，残余风险见 shell-read-only.ts。
+     * 命名注：readonly_shell 与启发式分类器的 shell_read 判定无关联——前者是
+     * 内容证明，后者是风险评级。
+     */
+    if (input.descriptor.canonicalName === "bash" && this.isShellInputReadOnly(input.input)) {
+      return allow("readonly_shell", "命令经静态分析判定为只读，自动放行", "low", input);
     }
 
     if (input.classifierEnabled === false) {
