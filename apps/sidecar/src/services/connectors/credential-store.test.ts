@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { platform } from "node:os";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -93,7 +94,9 @@ describe("connector credential store", () => {
     expect(getConnectorClientConfig("gmail")).toBeUndefined();
   });
 
-  test("落盘文件权限收紧为 0600", () => {
+  // win32 忽略 POSIX mode 位(实际保护靠 %USERPROFILE% NTFS ACL),断言只在 POSIX 平台有意义
+  const skipWindows = platform() === "win32" ? test.skip : test;
+  skipWindows("落盘文件权限收紧为 0600", () => {
     setConnectorCustomValues("qq_mail", { email: "user@qq.com", authorizationCode: "abcd".repeat(4) });
     const mode = statSync(getConnectorCredentialsPath()).mode & 0o777;
     expect(mode).toBe(0o600);
