@@ -30,7 +30,8 @@ function summarizeInput(input: unknown, toolName?: string): string {
 /** #601:内置浏览器工具的统一前缀 */
 export const BROWSER_TOOL_PREFIX = 'mcp__browser__'
 
-const BROWSER_TOOL_LABELS: Record<string, string> = {
+/** #601 维护性 review:与 @lume/shared LUME_BROWSER_TOOL_NAMES 一一对应（哨兵测试盯住） */
+export const BROWSER_TOOL_LABELS: Record<string, string> = {
   open: '新建标签页', list_tabs: '列出标签页', switch_tab: '切换标签页',
   navigate: '打开网页', back: '网页后退', forward: '网页前进', reload: '刷新页面',
   snapshot: '读取页面快照', screenshot: '截取页面截图',

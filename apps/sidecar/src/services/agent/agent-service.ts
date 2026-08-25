@@ -849,7 +849,7 @@ export async function dispatchAgentRun(
   return result;
 }
 
-/** #566:turn_limited 自动续跑——单条用户消息默认最多自动接续的 run 数(lume-config agent.maxAutoTurnContinuations 可调,0=关闭)。 */
+/** #566:turn_limited 自动续跑——单条用户消息默认最多自动续跑的 run 数(lume-config agent.maxAutoTurnContinuations 可调,0=关闭)。 */
 const DEFAULT_MAX_AUTO_TURN_CONTINUATIONS = 3;
 /** 配置上限护栏:防止配置笔误把无人值守成本放大到失控 */
 const HARD_MAX_AUTO_TURN_CONTINUATIONS = 10;
@@ -865,7 +865,7 @@ const AUTO_TURN_CONTINUATION_PROMPT = "上一轮运行在完成任务前达到�
 
 /**
  * #566:续跑判定纯函数——turn_limited 且非 repeat_guard、未达上限、未中止、
- * 无排队用户消息、调用方未限定回合预算(显式 maxTurns / automation 派发)时才自动接续。
+ * 无排队用户消息、调用方未限定回合预算(显式 maxTurns / automation 派发)时才自动续跑。
  */
 export function shouldAutoContinueTurnLimited(
   result: Pick<AgentRuntimeRunResult, "status" | "terminationReason"> | undefined,
@@ -878,7 +878,7 @@ export function shouldAutoContinueTurnLimited(
   // 有排队中的用户消息时不抢跑：让用户的新指令经恢复上下文自然驱动下一轮
   if (context.queuedCount > 0) return false;
   // 调用方把回合预算当成本上限(显式 maxTurns 的后台作业/automation 无人值守派发)时不自动放宽:
-  // automation 触顶常伴随 pending 审批弹窗堆积,自动接续会放大跨 run 延迟执行风险(#566 review)
+  // automation 触顶常伴随 pending 审批弹窗堆积,自动续跑会放大跨 run 延迟执行风险(#566 review)
   if (context.callerBoundsTurns) return false;
   return true;
 }
@@ -1611,7 +1611,11 @@ async function runSendAgentMessage(
     }
   });
   // #566:续跑判定在收尾前定案——autoContinue 时收尾段抑制终态事件(markCompleted/onComplete),
-  // 否则 IM 卡片冻结/planning 授权拆除等挂在 onComplete 上的收尾副作用会砍断续跑链
+  // 否则 IM 卡片冻结/planning 授权拆除等挂在 onComplete 上的收尾副作用会砍断续跑链。
+  // ⚠️ 终态补发不变量（三处协同，改其一必查其余）：①本函数下方 finalize 的
+  // terminalEventsSuppressed 抑制点；②sendAgentMessage 循环 catch 的补发；
+  // ③completeIfAborted 的续跑轮 markCompleted——任何新增早退路径若发生在抑制之后,
+  // 必须补发终态,否则线程永久卡 streaming/IM 卡片永久运行中。
   const queuedCount = getAgentRuntimeKernel().listQueued(threadId).length;
   const autoContinueDecision = {
     continuationCount: options.autoContinuationCount ?? 0,

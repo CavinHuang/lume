@@ -384,6 +384,8 @@ function isFullReadResult(result: ToolResult): boolean {
   if (typeof data.remainingLines === "number") {
     return (data.offset === undefined || data.offset === 0) && data.remainingLines <= 0;
   }
+  // 默认 true 服务「无 _meta.read 的旧形制/plugin/MCP read」——它们无法自证部分视图；
+  // 若未来再收窄判定，先想清楚这一默认值放宽的是谁（#314 三次补丁教训）
   return true;
 }
 
