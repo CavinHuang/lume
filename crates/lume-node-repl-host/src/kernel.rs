@@ -1202,6 +1202,8 @@ fn configure_kernel_env(command: &mut Command, options: &RuntimeOptions) -> Resu
     for (name, value) in collect_kernel_env_entries(&options.untrusted_env_allowlist) {
         command.env(name.as_str(), value);
     }
+    // env_clear 后本循环对宿主继承值已是 no-op，但保留它兜底：若 allowlist 或
+    // 扩展口声明了下列控制变量名，回填值会被剥除，由下方显式设置统一接管。
     for name in [
         "LUME_CUA_RUNTIME_MANIFEST",
         "NODE_REPL_ACTIVE_EXEC_REGISTRY_DIR",

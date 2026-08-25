@@ -78,7 +78,12 @@ test('kernel-process drops trusted-code-path entries that cover the working dire
     '--session-id', 'kernel-trust-test',
     '--working-dir', dir,
   ], {
-    env: { ...process.env, NODE_REPL_TRUSTED_CODE_PATHS: dir },
+    // 敌意形态同时覆盖两条归一路径：尾部 separator（根条目 resolve 后保留，
+    // 否则 startsWith 双分隔符恒假漏判）与 Windows 大小写不敏感
+    env: {
+      ...process.env,
+      NODE_REPL_TRUSTED_CODE_PATHS: process.platform === 'win32' ? `${dir.toUpperCase()}\\` : `${dir}/`,
+    },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   let stderr = ''
