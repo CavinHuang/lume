@@ -129,6 +129,11 @@ export function createFileBackedLumeInterruptionStore(sessionDir: string): LumeI
   return new FileBackedLumeInterruptionStore(sessionDir);
 }
 
+/**
+ * 同步解析 interruption 为终态。
+ * 返回 true 仅当记录存在且处于 pending（成功完成 pending→终态迁移）；
+ * 记录不存在或已是 approved/rejected 终态时返回 false——false 语义含"已解决"，调用方据此跳过 continuation 写入。
+ */
 export function resolveFileBackedInterruptionSync(
   sessionDir: string,
   interruptionId: string,

@@ -656,8 +656,11 @@ test("per-tab queue slot is reclaimed after settle and kept while a newer reques
   const queues = (broker as unknown as { queues: Map<string, Promise<unknown>> }).queues;
   const first = broker.dispatch({ method: "list", browserSessionId: "s", browserTurnId: "t", params: { tabId: "tab-9" } }) as Promise<unknown>;
   const second = broker.dispatch({ method: "list", browserSessionId: "s", browserTurnId: "t", params: { tabId: "tab-9" } }) as Promise<unknown>;
-  assert.equal(queues.size >= 1, true);
-  await Promise.all([first, second]);
+  assert.equal(queues.size, 1);
+  // 钉死保留语义：首个 settle 后第二个仍在链上，槽位不得被误删（否则串行语义断裂）
+  await first;
+  assert.equal(queues.size, 1);
+  await second;
   // 微任务排空后：队尾已 settle 且无新请求 → 槽位应被回收
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(queues.size, 0);

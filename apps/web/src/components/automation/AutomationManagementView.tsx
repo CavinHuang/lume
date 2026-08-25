@@ -1085,7 +1085,7 @@ function AutomationJobDetail({
                       <span className="min-w-0 flex-1 truncate text-[14px] text-[var(--text-1)]">
                         {run.jobName}
                         {run.persistenceLost && (
-                          <span className="ml-2 shrink-0 text-[12px] text-[var(--text-3)]">（未保存到磁盘）</span>
+                          <span className="ml-2 shrink-0 text-ui text-[var(--text-3)]">（未保存到磁盘）</span>
                         )}
                       </span>
                       <span className="shrink-0 text-[14px] text-[var(--text-3)]">{formatShortTime(run.startedAt)}</span>

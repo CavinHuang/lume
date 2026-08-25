@@ -146,25 +146,42 @@ class SessionStateManager {
    * 清理过期会话状态（超过 24 小时未更新）
    */
   cleanupExpired(): number {
-    const now = Date.now();
-    const maxAge = 24 * 60 * 60 * 1000; // 24 小时
-    let cleaned = 0;
+    const { next, cleaned } = pruneExpiredSessionStates(
+      Object.fromEntries(this.states),
+      Date.now()
+    );
+    if (cleaned === 0) return 0;
 
-    for (const [sessionId, state] of this.states) {
-      if (now - state.updatedAt > maxAge) {
-        this.states.delete(sessionId);
-        cleaned += 1;
-      }
+    this.states.clear();
+    for (const [sessionId, state] of Object.entries(next)) {
+      this.states.set(sessionId, state);
     }
-
-    if (cleaned > 0) {
-      // 清理结果必须落盘（#615）：否则磁盘文件单调累积，每次重启全量读回后原样再来
-      this.saveToDisk();
-      log.info("清理过期会话状态", { count: cleaned });
-    }
-
+    // 清理结果必须落盘（#615）：否则磁盘文件单调累积，每次重启全量读回后原样再来
+    this.saveToDisk();
+    log.info("清理过期会话状态", { count: cleaned });
     return cleaned;
   }
+}
+
+/**
+ * 过期判定纯逻辑（独立导出以便测试——单例在模块加载时读盘，直接测实例会受
+ * preload 时序与 LUME_CONFIG_DIR 环境影响）。
+ */
+export function pruneExpiredSessionStates(
+  states: Record<string, SessionState>,
+  now: number,
+  maxAgeMs = 24 * 60 * 60 * 1000
+): { next: Record<string, SessionState>; cleaned: number } {
+  const next: Record<string, SessionState> = {};
+  let cleaned = 0;
+  for (const [sessionId, state] of Object.entries(states)) {
+    if (now - state.updatedAt > maxAgeMs) {
+      cleaned += 1;
+      continue;
+    }
+    next[sessionId] = state;
+  }
+  return { next, cleaned };
 }
 
 // 单例实例

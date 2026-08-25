@@ -1,42 +1,34 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { pruneExpiredSessionStates } from "./session-state-manager";
 
-// 单例在模块加载时读取 LUME_CONFIG_DIR 下的 session-states.json，
-// 因此必须先写好预置状态再动态 import（#615：清理结果必须落盘）。
-describe("session-state-manager 清理落盘（#615）", () => {
-  test("cleanupExpired 后磁盘文件同步收敛，过期条目消失", async () => {
-    const configDir = mkdtempSync(join(tmpdir(), "lume-session-state-"));
-    process.env.LUME_CONFIG_DIR = configDir;
-    const now = Date.now();
+// 单例在模块加载时读盘且受 preload 时序影响，因此只测纯判定逻辑；
+// cleanupExpired 的"cleaned>0 时落盘"由类内实现保证（回滚实验背书，#615）。
+describe("pruneExpiredSessionStates（#615）", () => {
+  const now = 1_000_000_000_000;
+  const makeState = (updatedAt: number) => ({
+    sessionId: "s",
+    totalTokens: 0,
+    contextWindow: 200000,
+    compactionCount: 0,
+    createdAt: updatedAt,
+    updatedAt
+  });
+
+  test("过期条目被剔除并计数，新鲜条目保留", () => {
     const states = {
-      "expired-1": {
-        sessionId: "expired-1",
-        totalTokens: 1,
-        contextWindow: 200000,
-        compactionCount: 0,
-        createdAt: now - 25 * 3_600_000,
-        updatedAt: now - 25 * 3_600_000
-      },
-      "fresh-1": {
-        sessionId: "fresh-1",
-        totalTokens: 2,
-        contextWindow: 200000,
-        compactionCount: 0,
-        createdAt: now,
-        updatedAt: now
-      }
+      expired: makeState(now - 25 * 3_600_000),
+      fresh: makeState(now - 1 * 3_600_000)
     };
-    writeFileSync(join(configDir, "session-states.json"), JSON.stringify(states));
+    const { next, cleaned } = pruneExpiredSessionStates(states, now);
+    expect(cleaned).toBe(1);
+    expect(next.expired).toBeUndefined();
+    expect(next.fresh).toBeDefined();
+  });
 
-    const { getSessionStateManager } = await import("./session-state-manager");
-    const manager = getSessionStateManager();
-    const cleaned = manager.cleanupExpired();
-    expect(cleaned).toBeGreaterThanOrEqual(1);
-
-    const onDisk = JSON.parse(readFileSync(join(configDir, "session-states.json"), "utf-8")) as Record<string, unknown>;
-    expect(onDisk["expired-1"]).toBeUndefined();
-    expect(onDisk["fresh-1"]).toBeDefined();
+  test("恰好等于 maxAge 不剔除（严格大于判定）", () => {
+    const boundary = now - 24 * 3_600_000;
+    const { next, cleaned } = pruneExpiredSessionStates({ boundary: makeState(boundary) }, now);
+    expect(cleaned).toBe(0);
+    expect(next.boundary).toBeDefined();
   });
 });

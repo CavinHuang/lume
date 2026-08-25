@@ -15,6 +15,7 @@ import { getEffectiveSystemConfig } from "../system/system-config-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { getNextAutomationRunAt } from "./automation-schedule";
 import { writeLogRecord } from "../infra/logger";
+import { getLostAutomationRuns, recordLostAutomationRun } from "./automation-lost-runs";
 import { issuePlanningScopeGrant, registerPlanningExecutionContext } from "../planning/planning-execution-context";
 import { readRoutine } from "../routine/routine-store";
 import {
@@ -40,19 +41,13 @@ export function setAutomationNotificationWriter(writer: NotificationWriter): voi
   notificationWriter = writer;
 }
 
-// 落盘失败的 run 在内存中保留影子记录（上限 50 条）：历史区可见"确实跑过但未保存"，
-// 避免用户面对"任务明明跑了但历史没有"的静默缺口（#615 UX review round7）
-const lostRuns: AutomationRun[] = [];
-const MAX_LOST_RUNS = 50;
-
 function appendRun(run: AutomationRun): void {
   // runs.jsonl 写失败（盘满/Windows EBUSY）不得让 fire-and-forget 的 executeJob 变成
   // unhandledRejection 断掉后续调度链（#615）：降级记日志，放弃本次 run 记录
   try {
     appendFileSync(getAutomationRunsPath(), `${JSON.stringify(run)}\n`, "utf-8");
   } catch (error) {
-    lostRuns.push({ ...run, persistenceLost: true });
-    if (lostRuns.length > MAX_LOST_RUNS) lostRuns.shift();
+    recordLostAutomationRun(run);
     writeLogRecord({
       level: "error",
       context: "automation.runner",
@@ -531,7 +526,7 @@ function parseRunLine(line: string): AutomationRun | null {
 
 export function listAutomationRuns(input: AutomationListRunsInput = {}): AutomationRun[] {
   const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
-  const runs: AutomationRun[] = [...lostRuns];
+  const runs: AutomationRun[] = [...getLostAutomationRuns()];
   const path = getAutomationRunsPath();
   if (existsSync(path)) {
     const lines = readFileSync(path, "utf-8").split("\n");
