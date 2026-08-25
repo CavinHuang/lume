@@ -289,3 +289,12 @@ for (const [pkg, reqs] of reqsByPkg) {
   cpSync(pkgRoot, dest, { recursive: true });
   console.error(`[sidecar-bundle] copied ${pkg} (${externalRoot ? "resolved runtime dependency" : chosen}) -> resources/sidecar/node_modules/${pkg}`);
 }
+
+// (c) connectors 的 Apache-2.0 归属文件随分发包走:迁移代码编译进 index.mjs 构成再分发,
+//     §4(a)/(d) 要求许可文本副本与 NOTICE 随衍生作品分发——只留在源码仓不满足安装包场景
+for (const legal of ["LICENSE-Apache-2.0.txt", "NOTICE.md"]) {
+  const src = resolve(REPO_ROOT, "apps", "sidecar", "src", "services", "connectors", legal);
+  if (!existsSync(src)) { console.error(`[sidecar-bundle] warn: missing ${legal}`); continue; }
+  copyFileSync(src, resolve(OUT_DIR, legal));
+  console.error(`[sidecar-bundle] copied connectors/${legal} -> resources/sidecar/${legal}`);
+}
