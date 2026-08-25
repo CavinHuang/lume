@@ -649,6 +649,14 @@ async function observeAfterMutation(
   dispatch: (broker: BrowserToolBroker, method: string, params?: Record<string, unknown>) => Promise<unknown>,
   session: ReturnType<BrowserToolSessionRegistry["getOrCreate"]>,
 ): Promise<Record<string, unknown>> {
+  // #604：desktop 已确认无可检测变化（含 domRevision 未动）时页面未变，上次快照的 refs 仍然
+  // 有效（generation 未变），跳过全量 AX 重扫与 400 行观察倾倒；导航类 effect 恒为字符串标签不受影响。
+  // effect 形态兼容对象（desktop 检测结果 {kind}）与字符串（navigate 分支的既成事实标签）。
+  const effect = asRecord(asRecord(action).click ?? action).effect
+  const effectKind = typeof effect === "string" ? effect : asRecord(effect).kind
+  if (session.snapshot && session.snapshot.tabId === tabId && effectKind === "no_detectable_change") {
+    return { active_tab_id: tabId, action, observation_unchanged: true }
+  }
   try {
     const observation = await dispatch(broker, "browser_snapshot", { tabId, interactive_only: true, limit: 400 })
     rememberSnapshot(session, observation)

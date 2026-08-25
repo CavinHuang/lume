@@ -519,6 +519,34 @@ describe("createBrowserMcpTools", () => {
     // 接管后旧 ref 不可用：缓存快照已清，重试必须先重新观察
     expect(JSON.parse(String(afterTakeover.content)).code).toBe("stale_target")
   })
+
+  test("skips the post-action rescan when desktop reports no_detectable_change (#604)", async () => {
+    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
+    const tab = agentTab("locked-tab", "thread-1")
+    let snapshotNumber = 0
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
+        calls.push(request)
+        if (request.method === "list_tabs") return { tabs: [tab] }
+        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
+        if (request.method === "playwright_locator_hover") return { ok: true, effect: { kind: "no_detectable_change" } }
+        if (request.method === "playwright_locator_click") return { ok: true, effect: { kind: "dom_changed" } }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    await call(tools, "mcp__browser__snapshot", {})
+    const unchanged = await call(tools, "mcp__browser__hover", { ref: "@e1" })
+    const changed = await call(tools, "mcp__browser__click", { ref: "@e1" })
+
+    // hover 无可检测变化：不重扫，旧 refs 保持有效；click 有变化：正常全量观察
+    expect(calls.filter((request) => request.method === "browser_snapshot")).toHaveLength(2)
+    expect(unchanged.observation_unchanged).toBe(true)
+    expect(unchanged.observation).toBeUndefined()
+    expect(changed.observation.snapshot_id).toBe("snap-2")
+  })
 })
 
 async function call(tools: ReturnType<typeof createBrowserMcpTools>, name: string, args: Record<string, unknown>): Promise<any> {
