@@ -343,24 +343,6 @@ export function autoPickNextBook(): ReadingBook | null {
   return null;
 }
 
-export function setReadingBookLocalCover(bookId: string, localCoverPath: string): ReadingBook {
-  initReadingStorage();
-  const library = readLibrary();
-  const index = library.books.findIndex((book) => book.id === bookId);
-  if (index < 0) {
-    throw new Error(`读书书籍不存在: ${bookId}`);
-  }
-  const existing = library.books[index] as ReadingBook;
-  const updated = normalizeReadingBook({
-    ...existing,
-    localCoverPath,
-    updatedAt: Date.now()
-  });
-  library.books[index] = updated;
-  writeLibrary(library);
-  return updated;
-}
-
 
 export function listReadingNotes(input: ReadingListNotesInput = {}): ReadingNoteSummary[] {
   initReadingStorage();

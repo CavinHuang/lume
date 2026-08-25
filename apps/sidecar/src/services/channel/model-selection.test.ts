@@ -9,7 +9,6 @@ import {
   resolveAgentDefaultStrategy,
   resolveModelCandidatesForChannel,
   resolveChannelDefaultModelId,
-  resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
 } from "./model-selection";
 import { installConnectionVaultKey } from "./connection-credential-store";
@@ -89,58 +88,6 @@ describe("model-selection", () => {
       provider: "zai",
       model: "glm-5"
     });
-  });
-
-  test("openrouter baseUrl 应强制走 openai 适配器", () => {
-    const resolved = resolveChannelModelSelection({
-      channelProvider: "openrouter",
-      baseUrl: "https://openrouter.ai/api/v1",
-      modelId: "anthropic/claude-sonnet-4-5"
-    });
-    expect(resolved.adapterProvider).toBe("openai");
-    expect(resolved.resolvedModelId).toBe("claude-sonnet-4-5");
-    expect(resolved.modelRef).toBe("anthropic/claude-sonnet-4-5");
-  });
-
-  test("zai 模型在 bigmodel baseUrl 下应走 openai 兼容适配器", () => {
-    const resolved = resolveChannelModelSelection({
-      channelProvider: "anthropic",
-      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-      modelId: "zai/glm-5"
-    });
-    expect(resolved.adapterProvider).toBe("openai");
-    expect(resolved.resolvedModelId).toBe("glm-5");
-  });
-
-  test("bigmodel anthropic endpoint 应走 anthropic 适配器", () => {
-    const resolved = resolveChannelModelSelection({
-      channelProvider: "anthropic",
-      baseUrl: "https://open.bigmodel.cn/api/anthropic",
-      modelId: "glm-4.7"
-    });
-    expect(resolved.adapterProvider).toBe("anthropic");
-    expect(resolved.resolvedModelId).toBe("glm-4.7");
-  });
-
-  test("anthropic-compatible provider 应走 anthropic 适配器", () => {
-    const resolved = resolveChannelModelSelection({
-      channelProvider: "anthropic-compatible",
-      baseUrl: "https://api.anthropic.com",
-      modelId: "claude-sonnet-4-5"
-    });
-    expect(resolved.adapterProvider).toBe("anthropic");
-    expect(resolved.modelRef).toBe("anthropic-compatible/claude-sonnet-4-5");
-  });
-
-  test("deepseek provider 应保留独立适配器而不是折叠为 openai", () => {
-    const resolved = resolveChannelModelSelection({
-      channelProvider: "deepseek",
-      baseUrl: "https://api.deepseek.com/v1",
-      modelId: "deepseek-chat"
-    });
-    expect(resolved.adapterProvider).toBe("deepseek");
-    expect(resolved.resolvedModelId).toBe("deepseek-chat");
-    expect(resolved.modelRef).toBe("deepseek/deepseek-chat");
   });
 
   test("resolveRequestedModelIdForChannel 应支持 alias/name/default", () => {

@@ -11,7 +11,7 @@ import {
   type MemoryV2QueryPlan
 } from "./claim";
 import { resolveMemoryRerankModelRefs } from "./rerank";
-import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
+import { resolveChatProvider } from "./chat-provider";
 
 export type MemoryV2PlanQuery = (query: string) => Promise<MemoryV2QueryPlan | undefined>;
 
@@ -61,7 +61,7 @@ function createQueryPlannerAttempt(
         apiKey: binding ? decryptApiKey(binding.channel.id) : "",
         baseURL: binding?.channel.baseUrl
       })
-      : createLazyConnectionLlmProvider({ connectionId: binding!.channel.id, modelId: binding!.modelId }),
+      : resolveChatProvider(modelRef),
     model: binding?.modelId ?? modelRef.split("/").at(-1) ?? modelRef
   };
 }

@@ -5,7 +5,7 @@ import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
 import type { LumeRunState } from "../agent-runtime/runtime-core/run-state";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { resolveMemoryExtractionModelRefs } from "./extraction";
-import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
+import { resolveChatProvider } from "./chat-provider";
 
 export interface MemoryConversationSummaryInput {
   workspaceSlug?: string;
@@ -81,7 +81,7 @@ function createConversationSummaryAttempt(
         apiKey: binding ? decryptApiKey(binding.channel.id) : "",
         baseURL: binding?.channel.baseUrl
       })
-      : createLazyConnectionLlmProvider({ connectionId: binding!.channel.id, modelId: binding!.modelId }),
+      : resolveChatProvider(modelRef),
     model: binding?.modelId ?? modelRef.split("/").at(-1) ?? modelRef
   };
 }

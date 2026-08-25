@@ -17,7 +17,6 @@ import {
   recordReadingBookProgress
 } from "./reading-store";
 import { buildDeepReadingNoteInput, buildSeedReadingNoteInput } from "./reading-prompts";
-import { validateReadingQuoteEvidence } from "./quote-evidence";
 import { generateReadingNoteDraft } from "./reading-note-generator";
 import {
   createReadingNoteGeneratorLlm,
@@ -47,10 +46,6 @@ export interface ReadingNoteGenerationContext {
   manualSource?: string;
 }
 
-export interface RunReadingTaskOptions {
-  generateNote?: (context: ReadingNoteGenerationContext) => Partial<ReadingNoteInput> | null | undefined;
-}
-
 export interface RunReadingTaskAsyncOptions {
   generateNote?: (context: ReadingNoteGenerationContext) => Promise<Partial<ReadingNoteInput> | null | undefined> | Partial<ReadingNoteInput> | null | undefined;
   collectUserContext?: (input: { book: ReadingBook; input: ReadingRunTaskInput }) => Promise<ReadingUserReadingContext> | ReadingUserReadingContext;
@@ -64,30 +59,6 @@ interface PreparedReadingTask {
   book: ReadingBook;
   depth: "seed" | "deep";
   completedAt: number;
-}
-
-export function runReadingTask(input: ReadingRunTaskInput = {}, options: RunReadingTaskOptions = {}): ReadingTaskResult {
-  const prepared = prepareReadingTask(input);
-  if ("result" in prepared) {
-    log.info("读书任务跳过", { status: prepared.result.status, message: prepared.result.message });
-    return prepared.result;
-  }
-  log.info("开始同步读书任务", { bookId: prepared.book.id, title: prepared.book.title, depth: prepared.depth });
-  try {
-    const fallbackInput = buildFallbackNoteInput(prepared);
-    const generatedInput = options.generateNote?.(buildGenerationContext(prepared, input, fallbackInput)) ?? {};
-    const result = createTaskNote(prepared, fallbackInput, generatedInput);
-    log.info("同步读书任务完成", { status: result.status, bookId: result.bookId, noteId: result.noteId });
-    return result;
-  } catch (error) {
-    log.error("同步读书任务失败", { bookId: prepared.book.id, error: error instanceof Error ? error.message : String(error) });
-    return {
-      status: "failed",
-      bookId: prepared.book.id,
-      message: error instanceof Error ? error.message : String(error),
-      completedAt: prepared.completedAt
-    };
-  }
 }
 
 export async function runReadingTaskAsync(input: ReadingRunTaskInput = {}, options: RunReadingTaskAsyncOptions = {}): Promise<ReadingTaskResult> {
@@ -213,14 +184,6 @@ function resolveReadingContextTools(
   };
 }
 
-export function isReadingNoteSkeletonValid(note: ReadingNote | null | undefined): boolean {
-  if (!note) return false;
-  if (!note.id || !note.bookId || !note.title.trim()) return false;
-  if (!note.summary.trim() || !note.body.trim()) return false;
-  if (!note.tags.length) return false;
-  if (note.depth === "deep" && !note.nextPlan?.trim()) return false;
-  return validateReadingQuoteEvidence(note.evidence).ok;
-}
 
 function prepareReadingTask(input: ReadingRunTaskInput): PreparedReadingTask | { result: ReadingTaskResult } {
   const completedAt = Date.now();

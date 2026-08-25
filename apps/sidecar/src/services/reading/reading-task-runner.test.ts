@@ -3,11 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addReadingBook, createReadingNote, listReadingBooks, listReadingNotes, updateReadingSettings } from "./reading-store";
-import {
-  isReadingNoteSkeletonValid,
-  runReadingTask,
-  runReadingTaskAsync
-} from "./reading-task-runner";
+import { runReadingTaskAsync } from "./reading-task-runner";
 
 describe("reading-task-runner", () => {
   let prevConfigDir: string | undefined;
@@ -31,8 +27,8 @@ describe("reading-task-runner", () => {
     }
   });
 
-  test("bootstraps a starter book when a reading task starts from an empty library", () => {
-    const result = runReadingTask({ trigger: "manual", depth: "seed" });
+  test("bootstraps a starter book when a reading task starts from an empty library", async () => {
+    const result = await runReadingTaskAsync({ trigger: "manual", depth: "seed" }, { generateNote: () => ({}) });
 
     expect(result).toMatchObject({
       status: "completed",
@@ -52,10 +48,9 @@ describe("reading-task-runner", () => {
       depth: "seed",
       excerpt: "词以境界为最上。有境界则自成高格，自有名句。"
     });
-    expect(isReadingNoteSkeletonValid(note!)).toBeTrue();
   });
 
-  test("creates a seed note from saved source evidence", () => {
+  test("creates a seed note from saved source evidence", async () => {
     const book = addReadingBook({
       title: "我在北京送快递",
       author: "胡安焉",
@@ -68,7 +63,7 @@ describe("reading-task-runner", () => {
       progressPercent: 54
     });
 
-    const result = runReadingTask({ trigger: "manual", bookId: book.id, depth: "seed" });
+    const result = await runReadingTaskAsync({ trigger: "manual", bookId: book.id, depth: "seed" }, { generateNote: () => ({}) });
     expect(result).toMatchObject({
       status: "completed",
       bookId: book.id
@@ -80,10 +75,9 @@ describe("reading-task-runner", () => {
       excerpt: "把自己看作一个普通人，过普通人的生活。"
     });
     expect(note?.evidence[0]?.quote).toBe("把自己看作一个普通人，过普通人的生活。");
-    expect(isReadingNoteSkeletonValid(note!)).toBeTrue();
   });
 
-  test("does not store duplicate manual notes for the same book and content", () => {
+  test("does not store duplicate manual notes for the same book and content", async () => {
     const book = addReadingBook({
       title: "人间词话",
       author: "王国维",
@@ -96,9 +90,9 @@ describe("reading-task-runner", () => {
     });
 
     const input = { trigger: "manual" as const, bookId: book.id, depth: "seed" as const };
-    const first = runReadingTask(input);
-    const second = runReadingTask(input);
-    const third = runReadingTask(input);
+    const first = await runReadingTaskAsync(input, { generateNote: () => ({}) });
+    const second = await runReadingTaskAsync(input, { generateNote: () => ({}) });
+    const third = await runReadingTaskAsync(input, { generateNote: () => ({}) });
 
     expect(first.status).toBe("completed");
     expect(second).toMatchObject({
@@ -150,7 +144,7 @@ describe("reading-task-runner", () => {
     });
   });
 
-  test("creates a bounded deep note with nextPlan and respects weekly limit", () => {
+  test("creates a bounded deep note with nextPlan and respects weekly limit", async () => {
     updateReadingSettings({ maxDeepNotesPerWeek: 1 });
     const book = addReadingBook({
       title: "置身事内",
@@ -164,21 +158,19 @@ describe("reading-task-runner", () => {
       progressPercent: 32
     });
 
-    const first = runReadingTask({ trigger: "manual", bookId: book.id, depth: "deep" });
+    const first = await runReadingTaskAsync({ trigger: "manual", bookId: book.id, depth: "deep" }, { generateNote: () => ({}) });
     expect(first.status).toBe("completed");
     const note = listReadingNotes({ includeHidden: true })[0];
     expect(note?.depth).toBe("deep");
     expect(note?.body.length).toBeGreaterThan(0);
     expect(note?.nextPlan).toContain("继续读");
-    expect(isReadingNoteSkeletonValid(note!)).toBeTrue();
-
-    expect(runReadingTask({ trigger: "manual", bookId: book.id, depth: "deep" })).toMatchObject({
+    await expect(runReadingTaskAsync({ trigger: "manual", bookId: book.id, depth: "deep" }, { generateNote: () => ({}) })).resolves.toMatchObject({
       status: "skipped",
       message: "本周深度读书笔记已达上限"
     });
   });
 
-  test("passes collaborative user reading context into the note generator", () => {
+  test("passes collaborative user reading context into the note generator", async () => {
     const book = addReadingBook({
       title: "我在北京送快递",
       author: "胡安焉",
@@ -192,7 +184,7 @@ describe("reading-task-runner", () => {
     });
 
     const seen: unknown[] = [];
-    const result = runReadingTask({
+    const result = await runReadingTaskAsync({
       trigger: "conversation",
       bookId: book.id,
       depth: "deep",
@@ -340,7 +332,7 @@ describe("reading-task-runner", () => {
     expect(listReadingNotes({ includeHidden: true })).toEqual([]);
   });
 
-  test("passes previous note quote, tags, self context and next plan into generation context", () => {
+  test("passes previous note quote, tags, self context and next plan into generation context", async () => {
     const book = addReadingBook({
       title: "我在北京送快递",
       author: "胡安焉",
@@ -375,7 +367,7 @@ describe("reading-task-runner", () => {
     });
 
     const seenSummaries: string[][] = [];
-    const result = runReadingTask({
+    const result = await runReadingTaskAsync({
       trigger: "manual",
       bookId: book.id,
       depth: "seed"

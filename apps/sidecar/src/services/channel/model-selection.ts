@@ -53,33 +53,9 @@ export function parseModelRef(raw: string, defaultProvider: string): ModelRef | 
   return { provider, model };
 }
 
-type ProviderApiFamily = "anthropic" | "google" | "openai";
 
-function resolveProviderApiFamilyFromBaseUrl(baseUrl: string): ProviderApiFamily | null {
-  const normalizedBaseUrl = baseUrl.trim().toLowerCase();
-  if (!normalizedBaseUrl) return null;
-  if (normalizedBaseUrl.includes("/anthropic")) return "anthropic";
-  if (normalizedBaseUrl.includes("api.anthropic.com")) return "anthropic";
-  if (normalizedBaseUrl.includes("generativelanguage.googleapis.com")) return "google";
-  return "openai";
-}
 
-function resolveProviderApiFamilyFromId(provider: string): ProviderApiFamily {
-  if (provider === "anthropic" || provider === "anthropic-compatible") return "anthropic";
-  if (provider === "google" || provider === "gemini") return "google";
-  return "openai";
-}
 
-function resolveAdapterProviderByFamily(family: ProviderApiFamily): ProviderType {
-  if (family === "anthropic") return "anthropic";
-  if (family === "google") return "google";
-  return "openai";
-}
-
-function resolveOpenAICompatibleAdapterProvider(provider: string): ProviderType {
-  const knownProvider = coerceKnownProvider(provider);
-  return knownProvider === "deepseek" ? "deepseek" : "openai";
-}
 
 function coerceKnownProvider(provider: string): ProviderType {
   return ([
@@ -116,48 +92,6 @@ function coerceKnownProvider(provider: string): ProviderType {
   ] as const).includes(provider as ProviderType)
     ? (provider as ProviderType)
     : "custom";
-}
-
-export function resolveChannelModelSelection(input: {
-  channelProvider: ProviderType;
-  baseUrl: string;
-  modelId: string;
-  apiFamily?: string;
-  openaiApiMode?: 'chat-completions' | 'responses';
-  channelProviderId?: string;
-}): {
-  adapterProvider: ProviderType;
-  resolvedModelId: string;
-  modelRef: string;
-  openaiApiMode?: 'chat-completions' | 'responses';
-} {
-  const effectiveProvider = input.channelProviderId ?? input.channelProvider;
-  const parsed = parseModelRef(input.modelId, effectiveProvider);
-  if (!parsed) {
-    return {
-      adapterProvider: input.channelProvider,
-      resolvedModelId: input.modelId,
-      modelRef: `${effectiveProvider}/${input.modelId}`
-    };
-  }
-
-  const baseUrlFamily = resolveProviderApiFamilyFromBaseUrl(input.baseUrl);
-  const providerFamily = input.channelProvider === "custom" && input.apiFamily
-    ? input.apiFamily as ProviderApiFamily
-    : resolveProviderApiFamilyFromId(parsed.provider);
-  const resolvedFamily = input.channelProvider === "custom" && input.apiFamily
-    ? input.apiFamily as ProviderApiFamily
-    : (baseUrlFamily ?? providerFamily);
-  const adapterProvider = resolvedFamily === "openai"
-    ? resolveOpenAICompatibleAdapterProvider(parsed.provider)
-    : resolveAdapterProviderByFamily(resolvedFamily);
-
-  return {
-    adapterProvider,
-    resolvedModelId: parsed.model,
-    modelRef: `${parsed.provider}/${parsed.model}`,
-    openaiApiMode: input.openaiApiMode,
-  };
 }
 
 function normalizeOptionalValue(value?: string): string | undefined {
