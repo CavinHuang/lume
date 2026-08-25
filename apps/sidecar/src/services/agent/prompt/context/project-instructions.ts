@@ -59,24 +59,40 @@ interface ProbeOptions {
 // reparse point），symlink 形态退回由 fstat 身份复核覆盖。
 const OPEN_FLAGS = process.platform === "win32" ? "r" : constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
 
-/** 用户主目录的容器目录名：其直接子目录视作用户主目录层（POSIX /home、macOS/Windows Users）。 */
-const HOME_CONTAINER_NAMES = new Set(["home", "Users"]);
+/**
+ * 用户主目录容器的候选目录名：惯用名（POSIX /home、macOS/Windows Users）并上
+ * 从实际 home 推导的容器名（域策略重定向 D:\Profiles、UNC \\srv\homes 等，见
+ * getHomeContainerName）。只用惯用名会在自定义容器下漏判他人层（fail-open，
+ * 窄场景跨用户读入残留）；只靠推导则保不住「home 不在标准容器、爬升途经别家
+ * 字面容器」的路径。取并集；误杀方向（字面同名普通目录被跳过）保持保守不扩检。
+ */
+const HOME_CONTAINER_NAMES = new Set(["home", "users"]);
+
+/** 实际 home 的容器目录名（小写折叠后）；home 恰在根下时为空串。 */
+function getHomeContainerName(home: string): string {
+  const container = basename(dirname(resolve(home)));
+  return FOLD_CASE ? container.toLowerCase() : container;
+}
 
 /**
  * dir 是否为「他人」的用户主目录层（如多用户主机上的 /home/<carol>）。
  * 运行用户 cwd 不在其下时，该层的文件既可能是跨用户注入源，也会把他人文件内容
  * 送进外部 API（数据侧信道），爬升不得读入。
  */
-function isForeignHomeDir(dir: string, home: string): boolean {
-  return dir !== home && HOME_CONTAINER_NAMES.has(basename(dirname(dir)));
+function isForeignHomeDir(dir: string, home: string, homeContainerName: string): boolean {
+  if (dir === home) return false;
+  const parentName = basename(dirname(dir));
+  const folded = FOLD_CASE ? parentName.toLowerCase() : parentName;
+  return folded !== "" && (HOME_CONTAINER_NAMES.has(folded) || folded === homeContainerName);
 }
 
 /** 共享爬升器：探测与指纹两条循环走完全相同的层序列，保证 memo 指纹与命中判定一致。 */
 function walkProbeChain(startDir: string, home: string, visit: (dir: string) => boolean): void {
   let dir = resolve(startDir);
+  const homeContainerName = getHomeContainerName(home);
   for (;;) {
     // 他人主目录层连候选都不探测（visit 与指纹一并跳过）
-    const foreignHome = isForeignHomeDir(dir, home);
+    const foreignHome = isForeignHomeDir(dir, home, homeContainerName);
     if (!foreignHome && visit(dir)) return;
     if (existsSync(join(dir, ".git")) || dir === home || foreignHome) return;
     const parent = dirname(dir);
@@ -261,22 +277,36 @@ interface MemoEntry {
 }
 const memo = new Map<string, MemoEntry>();
 
-/** 指纹未变直接复用条目（含 section 成品）；变了则整条重建，旧 section 随之作废。 */
+// 每个 agent cwd 一条，量级随工作区数增长；上限兜底防长驻进程只增不减。
+// 超限 FIFO 淘汰最旧条目——低频路径，被淘汰者下次 assemble 原价重建即可。
+const MEMO_MAX_ENTRIES = 256;
+
+/**
+ * 指纹未变直接复用条目（含 section 成品）；变了则整条重建，旧 section 随之作废。
+ *
+ * 负结果区分两种来源（#663）：候选链上确实没有指令文件 → 指纹稳定的持久事实，
+ * 正常入缓存；找到了文件但 readTrustedContent 失败（Windows EBUSY、身份复核
+ * 抖动等瞬态 IO 错误）→ 不入缓存，下次 assemble 重试——否则指纹未变会让这次
+ * 读失败永久驻留，项目指令静默缺失直到文件被修改。
+ */
 function refreshMemo(key: string, options: ProbeOptions = {}): MemoEntry {
   const stamp = probeStamp(key, options);
   const cached = memo.get(key);
   if (cached && cached.stamp === stamp) return cached;
 
   const found = findProjectInstructionsFile(key, options);
-  let result: ProjectInstructions | null = null;
+  const entry: MemoEntry = { stamp, result: null };
   if (found) {
-    const content = readTrustedContent(found);
-    if (content) {
-      result = { path: found.path, ...truncateProjectInstructions(content) };
-    }
+    const content = readTrustedContent(found, options);
+    // 瞬态读失败：返回临时条目但不落 memo，保留下次重试通道
+    if (!content) return entry;
+    entry.result = { path: found.path, ...truncateProjectInstructions(content) };
   }
-  const entry: MemoEntry = { stamp, result };
   memo.set(key, entry);
+  if (memo.size > MEMO_MAX_ENTRIES) {
+    const oldest = memo.keys().next().value;
+    if (oldest !== undefined) memo.delete(oldest);
+  }
   return entry;
 }
 
