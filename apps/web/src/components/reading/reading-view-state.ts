@@ -773,7 +773,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasPoetryNotes(snapshot: ReadingLibrarySnapshot): boolean {
   return snapshot.notes.some((note) =>
-    note.evidence.some((item) => item.sourceKind === 'poetry')
+    // poetry 书源已删(#529)，此处仅为历史笔记数据兜底
+    note.evidence.some((item) => (item.sourceKind as string) === 'poetry')
     || note.book?.title.includes('诗')
   )
 }
@@ -794,8 +795,6 @@ function safeFilenameSegment(value: string): string {
 function getSourceLabel(source: ReadingSourceKind): string {
   switch (source) {
     case 'weread': return '微信读书'
-    case 'gutenberg': return 'Gutenberg'
-    case 'poetry': return '诗词'
     default: return source
   }
 }

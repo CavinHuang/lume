@@ -1,4 +1,5 @@
-export type ReadingSourceKind = "weread" | "gutenberg" | "poetry" | "manual" | "generated";
+// gutenberg/poetry 书源客户端已删(#529, commit 5a32fab2)；如需恢复从该提交^ 取回并同步以下各处契约
+export type ReadingSourceKind = "weread" | "manual" | "generated";
 export type ReadingBookTrack = "lume" | "co_read" | "recommended";
 export type ReadingBookStatus = "queued" | "reading" | "finished" | "paused";
 export type ReadingNoteDepth = "seed" | "deep";
@@ -353,7 +354,7 @@ export const WEREAD_IPC_CHANNELS = {
   GET_PUBLIC_REVIEWS: "weread:getPublicReviews"
 } as const;
 
-const SOURCE_KINDS = new Set<ReadingSourceKind>(["weread", "gutenberg", "poetry", "manual", "generated"]);
+const SOURCE_KINDS = new Set<ReadingSourceKind>(["weread", "manual", "generated"]);
 const BOOK_TRACKS = new Set<ReadingBookTrack>(["lume", "co_read", "recommended"]);
 const BOOK_STATUSES = new Set<ReadingBookStatus>(["queued", "reading", "finished", "paused"]);
 const CADENCES = new Set<ReadingCadence>(["off", "weekly", "few_times_weekly", "manual"]);

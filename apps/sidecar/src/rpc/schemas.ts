@@ -626,8 +626,6 @@ export const cliAuthSessionInputSchema = z.object({
 
 const readingSourceKindSchema = z.enum([
   "weread",
-  "gutenberg",
-  "poetry",
   "manual",
   "generated",
 ]);
