@@ -148,6 +148,8 @@ describe("connector service", () => {
     });
     const first = startConnectorAuthorization("gmail");
     const firstUrl = new URL(await first.authorizationUrl);
+    // 回调地址须从 redirect_uri 取:授权页是 https,其 .port 恒为空串
+    const firstLoopback = new URL(firstUrl.searchParams.get("redirect_uri") ?? "http://127.0.0.1:0/callback");
 
     deleteConnectorCredential("gmail");
     // 配置被清空后再发起:应抛配置错误,且不得作废第一个仍在进行的流
@@ -162,8 +164,8 @@ describe("connector service", () => {
     ]);
     expect(stillPending).toBe("still-pending");
 
-    // 清理:顶掉旧流,释放 server 与 timer;杂散 state 校验顺带确认端口仍监听
-    void fetch(`http://127.0.0.1:${firstUrl.port}/callback?state=x`);
+    // 清理:顶掉旧流,释放 server 与 timer;杂散请求打到真实监听端口只回错误页
+    await fetch(`${firstLoopback.origin}/callback?state=x`).catch(() => {});
     setConnectorClientConfig("gmail", {
       service: "gmail",
       clientId: "cid",
