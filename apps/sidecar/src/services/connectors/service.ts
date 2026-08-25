@@ -284,7 +284,7 @@ function configRequestedScopes(service: string, auth: OAuth2AuthDefinition): str
     if (filtered.length > 0) return filtered;
     // 配置与允许集零交集时回退默认全量:否则发出无 scope 的授权 URL,
     // 拿到的 token 缺业务权限,要到调用阶段才报错
-    console.warn(`[connectors] ${service} requestedScopes 与允许集零交集,回退 provider 默认 scopes`);
+    logger.warn("requestedScopes 与允许集零交集,回退 provider 默认 scopes", { service });
   }
   return auth.scopes;
 }

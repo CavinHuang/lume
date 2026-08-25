@@ -2,7 +2,10 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "nod
 import { getConnectorCredentialsPath } from "../infra/config-paths";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { decrypt, encrypt } from "../channel/connection-credential-store";
+import { createLogger } from "../infra/logger";
 import type { ResolvedCredential } from "./core/types";
+
+const logger = createLogger("connectors.vault");
 
 /** 用户自带的 OAuth app 配置(迁移自 open-connector oauth-client-config-service 的最小子集)。 */
 export interface ConnectorOAuthClientConfig {
@@ -56,9 +59,9 @@ function readStore(): ConnectorCredentialFile {
     return { version: 1, credentials: parsed.credentials };
   } catch (error) {
     storeUnreadable = true;
-    console.error(
-      "[connectors] connector-credentials.json 无法解析,vault 内容按未配置展示;写入将被拒绝以免覆盖现存凭证:",
-      error,
+    logger.error(
+      "connector-credentials.json 无法解析,vault 内容按未配置展示;写入将被拒绝以免覆盖现存凭证",
+      { error: error instanceof Error ? error.message : String(error) },
     );
     return emptyFile();
   }
@@ -91,10 +94,10 @@ function decodeRecord(service: string, raw: string | undefined): ConnectorCreden
   try {
     return JSON.parse(decrypt(raw)) as ConnectorCredentialRecord;
   } catch (error) {
-    console.warn(
-      `[connectors] 服务 "${service}" 的凭证记录不可解(vault key 轮换或记录损坏),暂按未连接处理`,
-      error,
-    );
+    logger.warn("凭证记录不可解(vault key 轮换或记录损坏),暂按未连接处理", {
+      service,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return undefined;
   }
 }
