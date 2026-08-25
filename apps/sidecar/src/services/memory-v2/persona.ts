@@ -9,10 +9,10 @@ import {
 import { dirname } from "node:path";
 import type { PersonaProfile } from "@lume/shared";
 import { createLogger } from "../infra/logger";
-import { resolveChatProvider } from "./chat-provider";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { MEMORY_CLAIM_PREFERRED_NAME, claimFromEntry } from "./claim";
 import { resolveMemoryExtractionModelRefs } from "./extraction";
+import { resolveChatProvider } from "./chat-provider";
 import { listEntries, readActivation } from "./markdown-store";
 import { getPersonaPath } from "./paths";
 import type { MemoryV2Entry } from "./types";

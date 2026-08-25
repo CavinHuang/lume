@@ -21,6 +21,6 @@ describe("isPathInside", () => {
 
   test("真正的 .. 逃逸判外部", () => {
     expect(isPathInside("/ws", "/ws/../escape")).toBeFalse();
-    expect(isPathInside("/ws", "..")).toBeFalse();
+    expect(isPathInside("/ws", "/")).toBeFalse();
   });
 });

@@ -75,7 +75,10 @@ const FORCE_CONFIRM_POWERSHELL_RULES: CommandRule[] = [
 const FORCE_CONFIRM_TOOLS = new Map<string, string>([
   ["memory.promoteglobal", "提升到全局记忆会影响跨工作区记忆，需要用户确认"],
   ["memory.rejectglobalcandidate", "拒绝全局记忆候选会影响跨工作区记忆，需要用户确认"],
-  ["automation_set", "修改自动化任务会影响未来定时执行，需要用户确认"]
+  ["automation_set", "修改自动化任务会影响未来定时执行，需要用户确认"],
+  // cron_set 已退役（#530），保留死键 fail-closed：canonicalize 不做该映射，
+  // 若未来有人以旧名重新注册别名工具而漏配 confirm 条目，强制确认会静默失效
+  ["cron_set", "修改自动化任务会影响未来定时执行，需要用户确认"]
 ]);
 
 function getCommand(input: unknown): string {

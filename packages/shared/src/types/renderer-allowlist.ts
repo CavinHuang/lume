@@ -74,8 +74,8 @@ export const SHARED_RENDERER_SIDECAR_METHODS: ReadonlySet<string> = new Set(
  * - browser:* —— BROWSER_IPC_CHANNELS 走桌面专属入口，被派生规则排除的四个只读 method；
  * - lume-config:changed —— CHANGED 通知 key 被派生规则排除，但 renderer 经 sidecar_call 订阅；
  * - healthcheck —— runtime IPC_CHANNELS 之外的裸方法。
- * （F5 清理：agent:revert-coding-file / revert-coding-run / rewind-coding-turn
- * 三个死条目已删——批次5 T7b 评审核实全仓无 handler。）
+ * （F5 清理曾删除 agent:revert-coding-file / revert-coding-run / rewind-coding-turn
+ * 死条目；其后快照还原功能(#572)为前两者接入了真实 handler，经 sidecar_call 正常放行。）
  */
 export const LOCAL_RENDERER_SIDECAR_METHODS: readonly string[] = [
   "browser:backends",
