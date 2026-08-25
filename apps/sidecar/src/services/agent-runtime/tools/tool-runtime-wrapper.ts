@@ -2,7 +2,7 @@ import { access, readFile, realpath, stat } from "node:fs/promises";
 import { getRuntimeHostPorts } from "../host-ports";
 import { createHash } from "node:crypto";
 import { relative, resolve } from "node:path";
-import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
+import { isFullReadText, type ToolDefinition, type ToolResult } from "@lume/agent-sdk";
 import { createDiagnosticLogSummary, createLogger } from "../../infra/logger";
 import type { FileAccessLedger } from "./file-access-ledger";
 import type { LumeToolDescriptor } from "./tool-types";
@@ -348,7 +348,7 @@ async function recordFileRead(
     mtimeMs: fileStat.mtimeMs,
     contentHash,
     fullRead,
-    readRange: getReadRange(result)
+    ...(getReadRange(rawInput, result) ? { readRange: getReadRange(rawInput, result) } : {})
   });
 }
 
@@ -374,49 +374,34 @@ function readInputPath(input: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
+// Read 完整读判定：_meta.read 结构化字段优先（partial/truncated/summarized，
+// #314 与 #535 同源），文本截断标记兜底服务「无 _meta.read 的旧形制/plugin/MCP
+// read」——它们无法自证部分视图；若未来再收窄判定，先想清楚这一默认值放宽的是谁
 function isFullReadResult(result: ToolResult): boolean {
-  const data = parseObjectContent(result.content);
-  if (data.summarized === true) return false;
-  // #314:ranged 窗口凑满提前停读时不给 remainingLines（totalLines 只是下界），
-  // 此时绝非全文读——partial/truncated 标记优先于「缺 remainingLines 即全文」的默认
   const readMeta = result._meta?.read;
   if (readMeta && typeof readMeta === "object") {
     const meta = readMeta as Record<string, unknown>;
-    if (meta.partial === true || meta.truncated === true) return false;
+    if (meta.partial === true || meta.truncated === true || meta.summarized === true) return false;
   }
-  if (typeof data.remainingLines === "number") {
-    return (data.offset === undefined || data.offset === 0) && data.remainingLines <= 0;
-  }
-  // 默认 true 服务「无 _meta.read 的旧形制/plugin/MCP read」——它们无法自证部分视图；
-  // 若未来再收窄判定，先想清楚这一默认值放宽的是谁（#314 三次补丁教训）
-  return true;
+  return isFullReadText(result.content);
 }
 
-function getReadRange(result: ToolResult): { offset: number; limit: number; totalLines?: number } | undefined {
-  const data = parseObjectContent(result.content);
-  if (typeof data.offset !== "number" || typeof data.limit !== "number") return undefined;
+function getReadRange(
+  rawInput: unknown,
+  result: ToolResult
+): { offset: number; limit?: number; totalLines?: number } | undefined {
+  if (!rawInput || typeof rawInput !== "object") return undefined;
+  const record = rawInput as Record<string, unknown>;
+  const offset = typeof record.offset === "number" ? record.offset : undefined;
+  const limit = typeof record.limit === "number" ? record.limit : undefined;
+  if (offset === undefined && limit === undefined) return undefined;
+  const meta = result._meta as { read?: { totalLines?: unknown } } | undefined;
+  const totalLines = meta?.read?.totalLines;
   return {
-    offset: data.offset,
-    limit: data.limit,
-    ...(typeof data.totalLines === "number" ? { totalLines: data.totalLines } : {})
+    offset: offset ?? 0,
+    ...(limit !== undefined ? { limit } : {}),
+    ...(typeof totalLines === "number" ? { totalLines } : {})
   };
-}
-
-function parseObjectContent(content: ToolResult["content"]): Record<string, unknown> {
-  if (content && typeof content === "object" && !Array.isArray(content)) {
-    return content as Record<string, unknown>;
-  }
-  if (typeof content === "string") {
-    try {
-      const parsed = JSON.parse(content);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : {};
-    } catch {
-      return {};
-    }
-  }
-  return {};
 }
 
 export interface GovernedToolResult {

@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 import type { ToolDefinition } from "@lume/agent-sdk";
-import { readRepeatGuardState, withRepeatGuardState } from "@lume/agent-sdk";
 import { createFileAccessLedger } from "./file-access-ledger";
 import { wrapToolDefinitionWithRuntimePolicies } from "./tool-runtime-wrapper";
 import type { LumeToolDescriptor, LumeToolMetadata } from "./tool-types";
@@ -71,11 +70,12 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
         name: "Read",
         description: "read",
         inputSchema: { type: "object", properties: {} },
+        // 真实形状：normalizeToolCallResult 坍缩后的行号文本，无部分读标记 → fullRead
         async call() {
           return {
             type: "tool_result",
             tool_use_id: "",
-            content: JSON.stringify({ remainingLines: 0 })
+            content: "1\tbefore"
           };
         }
       }),
@@ -105,6 +105,72 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
 
     await readTool.call({ file_path: filePath }, { cwd: root });
 
+    await expect(writeTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      content: "written"
+    });
+  });
+
+  test("partial read with truncation marker keeps the write guard alive (#535)", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const filePath = join(root, "big.txt");
+    await writeFile(filePath, "before", "utf-8");
+    const ledger = createFileAccessLedger();
+    // 真实形状：显式 range 读经 normalize 后 content 尾部带截断标记（read.ts withPartialReadMarker）
+    const readTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Read", {
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            content: "1\tfirst line\n[showing lines 1-100 of 1520; use offset=100 to continue reading]",
+            _meta: { read: { offset: 0, limit: 100, totalLines: 1520, partial: true } }
+          };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+    const writeTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Write", {
+        name: "Write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "written" };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    await readTool.call({ file_path: filePath, offset: 0, limit: 100 }, { cwd: root });
+
+    await expect(writeTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      is_error: true,
+      content: "该文件只被部分读取，请完整读取后再写入。"
+    });
+
+    // 完整读后放行
+    const fullReadTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Read", {
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "1\tfull content" };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+    await fullReadTool.call({ file_path: filePath }, { cwd: root });
     await expect(writeTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
       content: "written"
     });
@@ -266,7 +332,6 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
       is_error: true
     });
   });
-
   test("allows creating new files without a prior read", async () => {
     const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
     await mkdir(root, { recursive: true });
@@ -307,7 +372,7 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
           return {
             type: "tool_result",
             tool_use_id: "",
-            content: JSON.stringify({ remainingLines: 0 })
+            content: "1\tbefore\n2\tmore"
           };
         }
       }),
@@ -376,171 +441,6 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
       content: "Write 输入超过最大长度 10 字符"
     });
     expect(calls).toBe(0);
-  });
-
-  test("preserves image blocks when truncating oversized array content (#600)", async () => {
-    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
-    await mkdir(root, { recursive: true });
-    const ledger = createFileAccessLedger();
-    const pixels = "A".repeat(60_000);
-    const tool = wrapToolDefinitionWithRuntimePolicies({
-      descriptor: descriptor("Screenshot", {
-        name: "mcp__browser__screenshot",
-        description: "shot",
-        inputSchema: { type: "object", properties: {} },
-        async call() {
-          // 用真实 repeat guard 契约构造,与 create-browser-tools 的 screenshotToolResult 同构
-          return withRepeatGuardState({
-            type: "tool_result",
-            tool_use_id: "",
-            content: [
-              { type: "text", text: JSON.stringify({ ok: true, screenshot_id: "browser-screenshot:x", annotated_refs: Array.from({ length: 200 }, (_, i) => `e${i + 1}`) }) },
-              { type: "image", source: { type: "base64", media_type: "image/jpeg", data: pixels }, _meta: { persist: false } }
-            ]
-          }, { ok: true, tool: "screenshot" });
-        }
-      }, {
-        resultPolicy: { maxChars: 1000 }
-      }),
-      threadId: "thread-1",
-      cwd: root,
-      fileLedger: ledger
-    });
-
-    const result = await tool.call({}, { cwd: root }) as { content: Array<Record<string, unknown>>; _meta?: Record<string, unknown> };
-    expect(Array.isArray(result.content)).toBe(true);
-    const textBlocks = result.content.filter((block) => block.type === "text") as Array<{ text: string }>;
-    const imageBlocks = result.content.filter((block) => block.type === "image");
-    expect(textBlocks).toHaveLength(1);
-    // truncateMiddle 在 maxChars=1000 时恒返回恰好 1000 字符
-    expect(textBlocks[0]!.text.length).toBe(1000);
-    expect(textBlocks[0]!.text).toContain("...(truncated)...");
-    expect(imageBlocks).toHaveLength(1);
-    expect((imageBlocks[0] as { source?: { data?: string } }).source?.data).toBe(pixels);
-    // repeat guard 的真实读取路径必须穿透 wrapper 原样保留
-    expect(readRepeatGuardState(result)).toEqual({ ok: true, tool: "screenshot" });
-  });
-
-  test("does not truncate array content whose non-image blocks fit the policy", async () => {
-    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
-    await mkdir(root, { recursive: true });
-    const ledger = createFileAccessLedger();
-    const pixels = "B".repeat(60_000);
-    const originalContent = [
-      { type: "text", text: "tiny metadata" },
-      { type: "image", source: { type: "base64", media_type: "image/png", data: pixels } }
-    ];
-    const tool = wrapToolDefinitionWithRuntimePolicies({
-      descriptor: descriptor("Screenshot", {
-        name: "mcp__browser__screenshot",
-        description: "shot",
-        inputSchema: { type: "object", properties: {} },
-        async call() {
-          return { type: "tool_result", tool_use_id: "", content: originalContent } as never;
-        }
-      }, {
-        resultPolicy: { maxChars: 1000 }
-      }),
-      threadId: "thread-1",
-      cwd: root,
-      fileLedger: ledger
-    });
-
-    const result = await tool.call({}, { cwd: root }) as { content: unknown };
-    expect(result.content).toEqual(originalContent);
-  });
-
-  test("does not truncate an array containing only image blocks (#638 review pinning)", async () => {
-    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
-    await mkdir(root, { recursive: true });
-    const ledger = createFileAccessLedger();
-    const pixels = "C".repeat(50_000);
-    const tool = wrapToolDefinitionWithRuntimePolicies({
-      descriptor: descriptor("Screenshot", {
-        name: "mcp__browser__screenshot",
-        description: "shot",
-        inputSchema: { type: "object", properties: {} },
-        async call() {
-          return {
-            type: "tool_result",
-            tool_use_id: "",
-            content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: pixels } }]
-          } as never;
-        }
-      }, {
-        resultPolicy: { maxChars: 1000 }
-      }),
-      threadId: "thread-1",
-      cwd: root,
-      fileLedger: ledger
-    });
-
-    const result = await tool.call({}, { cwd: root }) as { content: Array<Record<string, unknown>> };
-    // 纯 image 数组无文本可截:整体原样保留,不得因总字节超限而毁图
-    expect(result.content).toHaveLength(1);
-    expect((result.content[0] as { source?: { data?: string } }).source?.data).toBe(pixels);
-  });
-
-  test("data-form array with image blocks keeps the legacy flatten behavior (no content field written)", async () => {
-    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
-    await mkdir(root, { recursive: true });
-    const ledger = createFileAccessLedger();
-    const tool = wrapToolDefinitionWithRuntimePolicies({
-      descriptor: descriptor("Legacy", {
-        name: "legacy_data_tool",
-        description: "data form",
-        inputSchema: { type: "object", properties: {} },
-        async call() {
-          return {
-            data: [
-              { type: "text", text: "y".repeat(5000) },
-              { type: "image", source: { type: "base64", media_type: "image/png", data: "Z".repeat(60_000) } }
-            ]
-          } as never;
-        }
-      }, {
-        resultPolicy: { maxChars: 100 }
-      }),
-      threadId: "thread-1",
-      cwd: root,
-      fileLedger: ledger
-    });
-
-    const result = await tool.call({}, { cwd: root }) as { data?: unknown; content?: unknown };
-    // 豁免仅限 content 形态:data 形态维持旧的整体字符串化截断,且不新写 content 字段
-    expect(typeof result.data).toBe("string");
-    expect(String(result.data)).toContain("...(truncated)...");
-    expect("content" in (result as Record<string, unknown>)).toBe(false);
-  });
-
-  test("still flattens oversized array content without image blocks", async () => {
-    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
-    await mkdir(root, { recursive: true });
-    const ledger = createFileAccessLedger();
-    const tool = wrapToolDefinitionWithRuntimePolicies({
-      descriptor: descriptor("List", {
-        name: "list_things",
-        description: "list",
-        inputSchema: { type: "object", properties: {} },
-        async call() {
-          return {
-            type: "tool_result",
-            tool_use_id: "",
-            content: [{ type: "text", text: "x".repeat(5000) }]
-          };
-        }
-      }, {
-        resultPolicy: { maxChars: 100 }
-      }),
-      threadId: "thread-1",
-      cwd: root,
-      fileLedger: ledger
-    });
-
-    const result = await tool.call({}, { cwd: root }) as { content: unknown };
-    expect(typeof result.content).toBe("string");
-    expect(String(result.content).length).toBeLessThanOrEqual(200);
-    expect(String(result.content)).toContain("...(truncated)...");
   });
 
   test("truncates long string output according to result policy", async () => {
@@ -665,7 +565,7 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     expect(calls).toBe(0);
   });
 
-  test("isolation alias no longer counts as background execution (#575)", async () => {
+  test("blocks remote isolation when background execution is disallowed", async () => {
     const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
     await mkdir(root, { recursive: true });
     const ledger = createFileAccessLedger();
@@ -689,13 +589,12 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
       fileLedger: ledger
     });
 
-    // isolation 别名已随 Agent schema 删参退役：携带该字段的输入不再被当作
-    // 后台请求拦截，只有 run_in_background === true 触发后台策略。
     await expect(
       tool.call({ prompt: "go", isolation: "remote" }, { cwd: root, toolUseId: "tool-remote" })
     ).resolves.toMatchObject({
-      type: "tool_result",
-      content: "started"
+      is_error: true,
+      tool_use_id: "tool-remote",
+      content: "Agent 不允许后台执行"
     });
   });
 

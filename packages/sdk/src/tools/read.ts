@@ -44,6 +44,34 @@ const BINARY_EXTENSIONS = new Set([
 ])
 type ReadResult = { data: unknown; is_error?: boolean; _meta?: Record<string, unknown> }
 
+// ---- 部分读截断信号（#535）----
+// Read 结果的结构化字段会被 normalizeToolCallResult 坍缩为纯文本 content，
+// 截断信号必须随 content 文本本身传递：模型侧可见，sidecar 账本按此判定完整/部分读。
+
+/** 给部分视图 content 尾部追加截断标记；空视图（无行）不标 */
+export function withPartialReadMarker(
+  content: string,
+  range: { offset: number; shownLines: number; totalLines?: number; totalIsLowerBound?: boolean },
+): string {
+  if (range.shownLines <= 0) return content
+  const start = range.offset + 1
+  const end = range.offset + range.shownLines
+  const total = range.totalLines === undefined ? '' : ` of ${range.totalLines}${range.totalIsLowerBound ? '+' : ''}`
+  return `${content}\n[showing lines ${start}-${end}${total}; use offset=${end} to continue reading]`
+}
+
+export function withSummarizedViewMarker(content: string, totalLines?: number): string {
+  const total = typeof totalLines === 'number' ? ` of ${totalLines} lines` : ''
+  return `${content}\n[summarized view${total}: structural outline only; read specific ranges with offset/limit for the full text]`
+}
+
+/** 是否为无任何部分视图/摘要标记的完整读结果 */
+export function isFullReadText(content: unknown): boolean {
+  if (typeof content !== 'string') return true
+  return !content.includes('\n[showing lines ') && !content.includes('\n[summarized view')
+}
+
+
 export const FileReadTool = defineTool({
   name: 'Read',
   description: 'Read text, images, PDFs, and Jupyter notebooks from the filesystem. For code, prefer this basic tool over Node REPL or shell scripts. Text uses 0-based line offsets; use offset/limit for explicit ranges. Line numbers prefixed to each line are NOT part of file content—never include them in Edit strings. Whole-file reads return raw source up to 2000 lines (beyond that: first 2000 lines plus a truncation marker); pass summarize=true to get a structure outline instead.',
@@ -165,7 +193,15 @@ export const FileReadTool = defineTool({
         // #649 review P1-5:offset=0 且未截断且窗口覆盖全部行 = 全文读——否则超
         // WHOLE_READ_LINE_LIMIT 的文件不存在任何解锁 Write/Edit 的读法，
         // 守卫「请完整读取后再写入」成为不可满足指令。
-        const isFullCoverageRead = !ranged.truncated && ranged.totalLines <= offset + limit
+        // 零行视图（越界 offset / limit=0）与非零 offset 续读到尾都不得视作全文：
+        // 前者什么都没读到，后者只看了片段——缓存与账本都必须保持 partial，
+        // 否则 Edit 用片段比对磁盘全文必失配（#711 review 对抗轮实证）。
+        const shownLines = ranged.content
+          ? ranged.content.replace(/\n$/, '').split('\n').length
+          : 0
+        const zeroRowView = shownLines === 0 && ranged.totalLines > 0
+        const isFullCoverageRead = offset === 0 && !ranged.truncated && shownLines > 0
+          && ranged.totalLines <= offset + shownLines
         const isPartialView = !isFullCoverageRead
         context.fileStateCache?.set(filePath, {
           content: ranged.content,
@@ -175,13 +211,22 @@ export const FileReadTool = defineTool({
           limit,
           isPartialView,
         })
+        const numberedContent = ranged.content
+          ? ranged.content.split('\n').map((line, i) => `${offset + i + 1}\t${line}`).join('\n')
+          : (zeroRowView
+              ? `(no lines at offset ${offset}; file has ${ranged.totalLines} lines)`
+              : '(empty file)')
         return {
           data: {
             filePath,
-            // 行尾换行已忠实入缓存（#569），显示前去掉以免多出幽灵空行。
-            content: ranged.content
-              ? ranged.content.replace(/\n$/, '').split('\n').map((line, i) => `${offset + i + 1}\t${line}`).join('\n')
-              : '(empty file)',
+            content: isPartialView
+              ? withPartialReadMarker(numberedContent, {
+                  offset,
+                  shownLines,
+                  totalLines: ranged.totalLines,
+                  totalIsLowerBound: ranged.truncated,
+                })
+              : numberedContent,
             offset,
             limit,
             totalLines: ranged.totalLines,
@@ -262,7 +307,7 @@ export const FileReadTool = defineTool({
           return {
             data: {
               filePath,
-              content: summarizedContent,
+              content: withSummarizedViewMarker(summarizedContent, lines.length),
               totalLines: lines.length,
               summarized: true,
               keptLines,
@@ -293,6 +338,7 @@ export const FileReadTool = defineTool({
         const lineNum = offset + i + 1
         return `${lineNum}\t${line}`
       }).join('\n')
+      const numberedContent = numbered || '(empty file)'
 
       // #564:#535 截断信号必须在 content 里可见——超限全文读在尾部带显式标记;
       // summarize 被请求但不可用时给显式信号,避免模型反复重试死路
@@ -312,7 +358,9 @@ export const FileReadTool = defineTool({
       return {
         data: {
           filePath,
-          content: (numbered || '(empty file)') + truncationFooter,
+          // main 侧 truncationFooter 已承担截断标记；withPartialReadMarker 仅
+          // 用于 ranged 路径（该路径无 footer 机制）
+          content: (numberedContent || '(empty file)') + truncationFooter,
           offset,
           limit,
           totalLines: lines.length,

@@ -23,7 +23,7 @@ export interface FileReadRecordInput {
   mtimeMs: number;
   contentHash?: string;
   fullRead: boolean;
-  readRange?: { offset: number; limit: number; totalLines?: number };
+  readRange?: { offset: number; limit?: number; totalLines?: number };
 }
 
 export interface FileWriteCheckInput {
@@ -42,7 +42,7 @@ interface FileReadRecord {
   mtimeMs: number;
   contentHash?: string;
   fullRead: boolean;
-  readRange?: { offset: number; limit: number; totalLines?: number };
+  readRange?: { offset: number; limit?: number; totalLines?: number };
 }
 
 export function createFileAccessLedger(): FileAccessLedger {
