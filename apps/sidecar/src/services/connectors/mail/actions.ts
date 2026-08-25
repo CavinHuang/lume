@@ -9,7 +9,6 @@ export type MailActionName =
   | "list_folders"
   | "search_emails"
   | "get_email"
-  | "download_attachment"
   | "mark_email_read"
   | "mark_email_unread"
   | "move_email"
@@ -74,14 +73,6 @@ export function createMailActions<const TService extends string>(
     outgoingAttachmentSchema,
     { minItems: 1, maxItems: 10 },
   );
-
-  const transitFileSchema = s.requiredObject("A file uploaded to local transit file storage.", {
-    fileId: nonEmptyStringSchema("The local transit file identifier."),
-    downloadUrl: s.url("The local transit URL for downloading the file."),
-    name: nonEmptyStringSchema("The file name used in transit storage."),
-    mimeType: nonEmptyStringSchema("The file MIME type."),
-    sizeBytes: s.integer("The stored file size in bytes.", { minimum: 0 }),
-  });
 
   const messageSummarySchema = s.requiredObject(mailText("A lightweight Mail Service message summary."), {
     uid: uidSchema,
@@ -211,28 +202,6 @@ export function createMailActions<const TService extends string>(
     }),
   });
 
-  const downloadAttachmentAction: ProviderActionDefinition<"download_attachment"> = defineProviderAction(service, {
-    name: "download_attachment",
-    description: mailText("Download one Mail Service attachment by IMAP body part identifier."),
-    requiredScopes: [],
-    inputSchema: s.object(
-      mailText("The input payload for downloading one Mail Service attachment."),
-      {
-        folder: folderSchema,
-        uid: uidSchema,
-        attachmentId: attachmentIdSchema,
-      },
-      { optional: ["folder"] },
-    ),
-    outputSchema: s.requiredObject(mailText("The response returned when downloading one Mail Service attachment."), {
-      folder: nonEmptyStringSchema("The IMAP folder path that contained the message."),
-      uid: uidSchema,
-      attachmentId: attachmentIdSchema,
-      size: nullableIntegerSchema("The attachment size in bytes when available."),
-      file: transitFileSchema,
-    }),
-  });
-
   const markEmailReadAction: ProviderActionDefinition<"mark_email_read"> = defineProviderAction(service, {
     name: "mark_email_read",
     description: mailText("Mark one Mail Service message as read."),
@@ -294,7 +263,9 @@ export function createMailActions<const TService extends string>(
 
   const deleteEmailAction: ProviderActionDefinition<"delete_email"> = defineProviderAction(service, {
     name: "delete_email",
-    description: mailText("Delete one Mail Service message from a folder."),
+    description: mailText(
+      "Permanently delete one Mail Service message from a folder (IMAP \\Deleted + EXPUNGE — the message does NOT go to a trash folder and cannot be recovered).",
+    ),
     requiredScopes: [],
     inputSchema: s.object(
       mailText("The input payload for deleting one Mail Service email."),
@@ -394,7 +365,6 @@ export function createMailActions<const TService extends string>(
     listFoldersAction,
     searchEmailsAction,
     getEmailAction,
-    downloadAttachmentAction,
     markEmailReadAction,
     markEmailUnreadAction,
     moveEmailAction,

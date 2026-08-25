@@ -13,7 +13,10 @@ import {
 
 const service = "gmail";
 
-const userId = s.string({ description: "Gmail user ID. Omit to use the connected mailbox." });
+const userId = s.string({
+  description:
+    "Gmail user ID. Only the connected mailbox is supported; other values are ignored and 'me' is used.",
+});
 const query = s.string({ description: "Gmail search query." });
 const pageToken = s.string({ description: "Opaque pagination token returned by Gmail." });
 const maxResults = s.integer({
@@ -293,6 +296,7 @@ export const gmailActions: ActionDefinition[] = [
     description: "Send an email from the connected Gmail account.",
     requiredScopes: gmailSendScopes,
     properties: recipientFields(),
+    required: ["to", "body"],
     outputSchema: s.object({ messageId }, { required: ["messageId"], description: "Sent message result." }),
   }),
   action({
@@ -308,7 +312,7 @@ export const gmailActions: ActionDefinition[] = [
     description: "Reply to an existing Gmail thread while preserving Gmail threading.",
     requiredScopes: gmailSendScopes,
     properties: { threadId, ...recipientFields() },
-    required: ["threadId"],
+    required: ["threadId", "body"],
     outputSchema: s.object({ messageId, threadId }, { required: ["messageId"], description: "Thread reply result." }),
   }),
   action({

@@ -12,8 +12,6 @@ interface ConnectorToolConfig {
   /** 注入的动作名;缺省注入全部。 */
   enabledActions?: readonly string[];
   readOnlyActions: ReadonlySet<string>;
-  /** 排除的动作(如依赖 transitFiles 的附件下载)。 */
-  excludedActions?: readonly string[];
 }
 
 const GMAIL_READ_ONLY = new Set([
@@ -49,8 +47,6 @@ export const CONNECTOR_TOOL_CONFIGS: readonly ConnectorToolConfig[] = [
   },
   {
     service: "qq_mail",
-    // download_attachment 依赖 transit 文件存储,首版不暴露
-    excludedActions: ["download_attachment"],
     readOnlyActions: MAIL_READ_ONLY,
   },
 ];
@@ -86,6 +82,12 @@ function describeExecutionError(service: string, actionName: string, error: Exec
 }
 
 function toolsForService(config: ConnectorToolConfig): ToolDefinition[] {
+  // 未连接时整组不注入:isEnabled 只拦执行不拦 prompt,未配置用户会白背
+  // 全套 schema 预算。工具集每 run 经 createLumeRuntimeTools 重建,连接
+  // 建立后下一个 run 自然生效,无需重启。
+  if (!isConnected(config.service)()) {
+    return [];
+  }
   let actions;
   try {
     actions = getConnector(config.service).definition.actions;
@@ -93,7 +95,7 @@ function toolsForService(config: ConnectorToolConfig): ToolDefinition[] {
     return [];
   }
   const enabled =
-    config.enabledActions ?? actions.map((action) => action.name).filter((name) => !config.excludedActions?.includes(name));
+    config.enabledActions ?? actions.map((action) => action.name);
   return actions
     .filter((action) => enabled.includes(action.name))
     .map((action) => ({

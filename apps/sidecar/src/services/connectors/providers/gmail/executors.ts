@@ -487,8 +487,15 @@ async function listDrafts(input: Record<string, unknown>, userId: string, access
     drafts: drafts.map((draft) => ({
       id: draft.id,
       message: {
+        // 非 verbose 时 Gmail drafts.list 不返回消息详情,这些字段以空值占位——
+        // outputSchema 的 required 七字段必须满足,否则按 schema 解析的依赖方会炸
         messageId: draft.message?.id ?? "",
         threadId: draft.message?.threadId ?? "",
+        labelIds: [],
+        subject: "",
+        sender: "",
+        to: "",
+        messageTimestamp: "",
       },
     })),
     nextPageToken: payload.nextPageToken ?? null,

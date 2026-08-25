@@ -1,7 +1,6 @@
 export const mailImapPort: number = 993;
 export const mailSmtpPort: number = 465;
 export const mailMessageFetchByteLimit: number = 5 * 1024 * 1024;
-export const mailAttachmentDownloadByteLimit: number = 25 * 1024 * 1024;
 export const mailConnectionTimeoutMs: number = 30_000;
 /**
  * 凭证验证(IMAP+SMTP 两阶段顺序)的总预算。desktop 对所有 sidecar RPC 统一

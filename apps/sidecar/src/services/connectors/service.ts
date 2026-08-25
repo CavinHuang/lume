@@ -218,6 +218,10 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
       const reason = url.searchParams.get("error_description") ?? url.searchParams.get("error") ?? "未返回授权码";
       throw new ConnectorError("oauth_denied", `授权被取消: ${reason}`);
     }
+    // 兑换前先摘除 pending:await 窗口内同 state 的重复回调会二次兑换同一 code,
+    // RFC 6749 §4.1.2 下授权服务器会把 code 重用视为攻击并撤销已发凭证,
+    // 合法流反而被作废。摘除后重复回调落入下方 state 不匹配分支。
+    pendingAuthorizations.delete(service);
     const config = getConnectorClientConfig(service);
     const auth = requireOAuthAuth(service);
     if (!config) throw new ConnectorError("oauth_client_config_required", "OAuth client 配置丢失");
