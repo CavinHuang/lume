@@ -1,5 +1,5 @@
 import { canonicalizeAgentToolName } from "@lume/shared";
-import { analyzeBashCommand, shellKindConservative } from "@lume/agent-sdk";
+import { analyzeBashCommand, isReadOnlyPowerShell, shellKindConservative } from "@lume/agent-sdk";
 import {
   PS_CLEAR_CONTENT_VERBS,
   PS_CONFIRM_COMMAND,
@@ -132,6 +132,19 @@ export function evaluateRuntimeToolSafety(toolName: string, input: unknown, cont
 
   const analysis = analyzeBashCommand(command);
   if (analysis.status !== "simple") {
+    /*
+     * PS 方言收口（#571 第 3 项）：PowerShell 命令（显式前缀或 PS 默认 shell 的机器）
+     * 无法被 bash 语法树解析，此前一律 confirm 且该 confirm 不持久化——即使同一命令
+     * 已「始终允许」，这里也会把它翻回审批（gateway 合并语义），构成 Windows 上的
+     * 恒久双闸。现改为：保守只读子集内的命令放行（内容证明，与引擎免审通道同源），
+     * 其余不可解析形态维持 fail-closed 确认。非 PS 方言路径不变。
+     */
+    const psDialect =
+      powershellRulesActive ||
+      /^\s*(?:powershell|pwsh)(?:\.exe)?(?:\s|$)/i.test(command);
+    if (psDialect && isReadOnlyPowerShell(command)) {
+      return { behavior: "allow" };
+    }
     return { behavior: "confirm", reason: "命令包含无法安全解析的 Shell 或 PowerShell 语法，需要一次性确认" };
   }
 

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isNativeAvailable } from "@lume/natives";
 import type { LumeToolDescriptor, LumeToolMetadata } from "../tools/tool-types";
 import { createPermissionSessionStore } from "./permission-session";
 import { PermissionEngine } from "./permission-engine";
@@ -77,8 +78,9 @@ describe("PermissionEngine", () => {
     });
   });
 
-  test("acceptEdits allows filesystem edits but still asks for shell execution", async () => {
-    const engine = new PermissionEngine();
+  test("acceptEdits allows filesystem edits and provably read-only shell, still asks mutating shell", async () => {
+    // 注入缝驱动：分支位次语义与平台/natives 可用性无关
+    const engine = new PermissionEngine({ isShellInputReadOnly: (input) => (input as { command?: string })?.command === "echo hi" });
 
     await expect(engine.decide({
       descriptor: write,
@@ -90,19 +92,112 @@ describe("PermissionEngine", () => {
       reasonCode: "mode_accept_edits"
     });
 
+    // 只读证明命令在 acceptEdits 下同样免审（#571 免审通道）
     await expect(engine.decide({
       descriptor: bash,
       input: { command: "echo hi" },
       mode: "acceptEdits",
       context: { threadId: "thread-1", cwd: "/tmp/project" }
     })).resolves.toMatchObject({
-      status: "approval_required",
-      reasonCode: "risk_requires_approval"
+      status: "allow",
+      reasonCode: "readonly_shell"
+    });
+
+    await expect(engine.decide({
+      descriptor: bash,
+      input: { command: "rm -rf ./build" },
+      mode: "acceptEdits",
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({
+      status: "approval_required"
     });
   });
 
-  test("dontAsk allows low-risk commands but still asks for dangerous commands", async () => {
+  test("default mode auto-allows provably read-only shell commands (#571 免审通道)", async () => {
+    const engine = new PermissionEngine({ isShellInputReadOnly: () => true });
+
+    await expect(engine.decide({
+      descriptor: bash,
+      input: { command: "cat README.md" },
+      mode: "default",
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({
+      status: "allow",
+      reasonCode: "readonly_shell",
+      riskLevel: "low"
+    });
+
+    // 非 bash 工具不受该通道影响
+    await expect(engine.decide({
+      descriptor: write,
+      input: { file_path: "note.txt" },
+      mode: "default",
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({
+      status: "approval_required"
+    });
+  });
+
+  test.skipIf(!isNativeAvailable())("readonly wiring uses the real SDK static analysis end to end", async () => {
+    // 真实判定链依赖 natives 语法树；CI 无 natives 构建时由注入缝用例覆盖分支逻辑，
+    // 本用例只在产物在场时钉住端到端接线（双态口径，同 guardrails 测试）
     const engine = new PermissionEngine();
+
+    await expect(engine.decide({
+      descriptor: bash,
+      input: { command: "cat README.md" },
+      mode: "default",
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({
+      status: "allow",
+      reasonCode: "readonly_shell"
+    });
+
+    // 显式 PS 前缀的保守只读子集（纯正则，不依赖语法树）同样命中
+    await expect(engine.decide({
+      descriptor: bash,
+      input: { command: "powershell -Command Get-Process" },
+      mode: "default",
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({
+      status: "allow",
+      reasonCode: "readonly_shell"
+    });
+  });
+
+  test("readonly channel is driven by injected proof seam and respects explicit ask rules", async () => {
+    const allowAll = new PermissionEngine({ isShellInputReadOnly: () => true });
+    await expect(allowAll.decide({
+      descriptor: bash,
+      input: { command: "anything-nonstandard" },
+      mode: "default",
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({
+      status: "allow",
+      reasonCode: "readonly_shell"
+    });
+
+    // 用户显式 ask 的意图优先于内容证明
+    const engine = new PermissionEngine({
+      rules: [{ id: "ask-cat", scope: "workspace", tool: "Bash", commandPattern: "^cat\\b", action: "ask" }]
+    });
+    await expect(engine.decide({
+      descriptor: bash,
+      input: { command: "cat secrets.md" },
+      mode: "default",
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({
+      status: "approval_required",
+      reasonCode: "rule_ask",
+      matchedRuleId: "ask-cat"
+    });
+  });
+
+  test("dontAsk allows classifier-judged low-risk commands but still asks for dangerous commands", async () => {
+    const engine = new PermissionEngine({
+      // 关闭只读通道以钉死分类器路径本身（pwd 现已被内容证明提前放行）
+      isShellInputReadOnly: () => false
+    });
 
     await expect(engine.decide({
       descriptor: bash,
@@ -129,6 +224,7 @@ describe("PermissionEngine", () => {
   test("classifier can be disabled so metadata remains the approval source", async () => {
     let classifierCalls = 0;
     const engine = new PermissionEngine({
+      isShellInputReadOnly: () => false,
       classifier: {
         async classify() {
           classifierCalls += 1;
@@ -144,7 +240,7 @@ describe("PermissionEngine", () => {
 
     await expect(engine.decide({
       descriptor: bash,
-      input: { command: "pwd" },
+      input: { command: "node script.js" },
       mode: "dontAsk",
       classifierEnabled: false,
       context: { threadId: "thread-1", cwd: "/tmp/project" }
@@ -154,6 +250,21 @@ describe("PermissionEngine", () => {
       riskLevel: "high"
     });
     expect(classifierCalls).toBe(0);
+  });
+
+  test.skipIf(!isNativeAvailable())("content proof bypasses the classifier switch gate", async () => {
+    // 可证只读的命令即使关闭分类器也免审（#571）；真实判定链依赖 natives，双态口径
+    const proofEngine = new PermissionEngine();
+    await expect(proofEngine.decide({
+      descriptor: bash,
+      input: { command: "git status" },
+      mode: "dontAsk",
+      classifierEnabled: false,
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({
+      status: "allow",
+      reasonCode: "readonly_shell"
+    });
   });
 
   test("bypassPermissions allows approval checks without suppressing structured reason", async () => {
@@ -250,6 +361,34 @@ describe("PermissionEngine", () => {
     await expect(engine.decide({
       descriptor: bash,
       input: { command: "echo $(rg prompt src)" },
+      mode: "default",
+      classifierEnabled: false,
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({ status: "approval_required" });
+  });
+
+  test("PS 方言命令无法被语法树解析，但保守只读子集内允许精确指纹豁免（#571 第 3 项连带）", async () => {
+    const engine = new PermissionEngine({
+      rules: [{ id: "allow-ps-get", scope: "workspace", tool: "Bash", commandPattern: "^powershell -Command Get-Process$", action: "allow" }]
+    });
+
+    // 显式前缀 + 白名单动词：候选集放行，精确指纹命中
+    await expect(engine.decide({
+      descriptor: bash,
+      input: { command: "powershell -Command Get-Process" },
+      mode: "default",
+      classifierEnabled: false,
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({
+      status: "allow",
+      reasonCode: "rule_allow",
+      matchedRuleId: "allow-ps-get"
+    });
+
+    // 非白名单形态仍不得获得持久豁免
+    await expect(engine.decide({
+      descriptor: bash,
+      input: { command: "powershell -Command Stop-Process -Name node" },
       mode: "default",
       classifierEnabled: false,
       context: { threadId: "thread-1", cwd: "/tmp/project" }

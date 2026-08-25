@@ -224,12 +224,13 @@ export interface LumeConfigSectionSet {
 }
 
 export interface LumeConfigFile extends LumeConfigSectionSet {
-  version: 1
+  /** 配置 schema 代际：v2 起 classifier.enabled 出厂默认翻转（#571），迁移逻辑按代际一次性执行 */
+  version: number
   workspaces?: Record<string, LumeConfigSectionSet>
 }
 
 export interface LumeEffectiveConfig extends LumeConfigSectionSet {
-  version: 1
+  version: number
   workspaceSlug?: string
   sourcePath: string
 }
