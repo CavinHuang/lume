@@ -410,6 +410,7 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
     },
     async markSeen(credential, folder, uid) {
       await withMailbox(config, deps, credential, folder, false, async (client) => {
+        await requireMessageExists(client, uid);
         const updated = await client.messageFlagsAdd([uid], ["\\Seen"], { uid: true });
         if (!updated) {
           throw new MailProtocolError("uid_not_found", "Mail message UID does not exist in the selected folder.");
@@ -418,6 +419,7 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
     },
     async markUnseen(credential, folder, uid) {
       await withMailbox(config, deps, credential, folder, false, async (client) => {
+        await requireMessageExists(client, uid);
         const updated = await client.messageFlagsRemove([uid], ["\\Seen"], { uid: true });
         if (!updated) {
           throw new MailProtocolError("uid_not_found", "Mail message UID does not exist in the selected folder.");
@@ -426,6 +428,7 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
     },
     async moveMessage(credential, folder, uid, targetFolder) {
       await withMailbox(config, deps, credential, folder, false, async (client) => {
+        await requireMessageExists(client, uid);
         const moved = await moveMessageToFolder(client, uid, targetFolder);
         if (!moved) {
           throw new MailProtocolError("uid_not_found", "Mail message UID does not exist in the selected folder.");
@@ -434,6 +437,7 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
     },
     async deleteMessage(credential, folder, uid) {
       await withMailbox(config, deps, credential, folder, false, async (client) => {
+        await requireMessageExists(client, uid);
         const deleted = await client.messageDelete([uid], { uid: true });
         if (!deleted) {
           throw new MailProtocolError("uid_not_found", "Mail message UID does not exist in the selected folder.");
@@ -475,6 +479,18 @@ async function downloadAttachmentPart(client: RuntimeImapClient, uid: number, at
       throw new MailProtocolError("uid_not_found", "Mail message UID does not exist in the selected folder.");
     }
     throw error;
+  }
+}
+
+/**
+ * 变更类动作的存在性前置探测。imapflow 的 store/expunge/move 收到服务器 OK 即返回
+ * true,而 RFC 3501 的 UID STORE/EXPUNGE/MOVE 对不存在的 UID 静默成功——不能靠
+ * 它们的返回值判 existence,否则过期 UID 会虚报"已读/已删除/已移动"。
+ */
+async function requireMessageExists(client: RuntimeImapClient, uid: number): Promise<void> {
+  const found = await client.fetchOne(uid, { uid: true }, { uid: true });
+  if (!found) {
+    throw new MailProtocolError("uid_not_found", "Mail message UID does not exist in the selected folder.");
   }
 }
 
