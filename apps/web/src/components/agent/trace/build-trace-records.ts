@@ -91,6 +91,7 @@ function textFromContent(content: UserMessageDetail['content']): string {
 
 /** 压平为单行（全部空白折叠为空格）并截断到 max 字符；名字沿用"首行"语义。 */
 function firstLine(text: string, max = 240): string {
+
   const line = text.trim().replace(/\s+/g, ' ')
   return line.length > max ? `${line.slice(0, max)}…` : line
 }
@@ -118,6 +119,13 @@ function toolInputPreview(input: unknown): string {
   return firstLine(prettyValue(input).replace(/\s+/g, ' '))
 }
 
+/** 详情面板存储用全文截断：超大 MCP 返回不许在投影层全量驻留与反复重算。 */
+const MAX_INPUT_CHARS = 65_536
+
+function truncateStored(text: string): string {
+  return text.length > MAX_INPUT_CHARS ? `${text.slice(0, MAX_INPUT_CHARS)}\n…（已截断）` : text
+}
+
 export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRecord[] {
   const sorted = [...events].sort((a, b) => a.seq - b.seq)
 
@@ -135,6 +143,15 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
 
   for (const event of sorted) {
     const detail = event.detail as SdkEventEnvelope['detail'] & { type?: string }
+    // 单个坏事件（旧版本异构 jsonl 行 / 字段错位）只跳过自身，不许毒死整条时间线
+    try {
+      applyEvent(event, detail)
+    } catch (error) {
+      console.warn('[trace] 跳过无法解析的事件 seq=' + event.seq, error)
+    }
+  }
+
+  function applyEvent(event: SdkEventEnvelope, detail: { type?: string }) {
     // turnId 每 run 重置（turn-N），跨 run 会撞键，键必须带 runId
     const assistantKey = event.turnId == null ? null : `${event.runId}:${event.turnId}`
     switch (detail?.type) {
@@ -149,7 +166,7 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
           id: String(event.seq),
           kind: 'user',
           turnNumber: null,
-          summary: firstLine(text) || '(空消息)',
+          summary: firstLine(text) || '（空消息）',
           startedAt: event.ts,
           input: text,
           endedAt: event.ts,
@@ -201,7 +218,7 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
         if (openRecord) {
           if (assistantKey != null) openAssistants.delete(assistantKey)
           openRecord.endedAt = event.ts
-          openRecord.summary = firstLine(text) || '(无文本输出)'
+          openRecord.summary = firstLine(text) || '（无文本输出）'
           openRecord.output = text
           openRecord.usage = message.usage
           if (error) openRecord.isError = true
@@ -211,7 +228,7 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
             id: String(event.seq),
             kind: 'assistant',
             turnNumber: turnCounter || null,
-            summary: firstLine(text) || '(无文本输出)',
+            summary: firstLine(text) || '（无文本输出）',
             startedAt: event.ts,
             output: text,
             usage: message.usage,
@@ -236,7 +253,7 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
           startedAt: event.ts,
           toolName,
           toolCallId,
-          input: prettyValue(input),
+          input: truncateStored(prettyValue(input)),
         })
         openTools.set(toolCallId, record)
         break
@@ -300,7 +317,7 @@ export function buildTraceRecords(events: readonly SdkEventEnvelope[]): TraceRec
           turnNumber: null,
           summary: [
             end.isError ? '运行失败' : '运行结束',
-            `${end.numTurns ?? 0} 轮`,
+            `${end.numTurns ?? 0} 个 Turn`,
             end.costUSD != null ? `$${end.costUSD.toFixed(4)}` : null,
             !benignStop && end.stopReason ? end.stopReason : null,
           ].filter(Boolean).join(' · '),

@@ -185,7 +185,7 @@ describe('buildTraceRecords', () => {
     expect(runEnd?.numTurns).toBe(3)
     expect(runEnd?.stopReason).toBe('end_turn')
     expect(runEnd?.isError).toBe(false)
-    expect(runEnd?.summary).toBe('运行结束 · 3 轮 · $0.4200')
+    expect(runEnd?.summary).toBe('运行结束 · 3 个 Turn · $0.4200')
     expect(runEnd?.summary).not.toContain('end_turn')
   })
 
@@ -309,5 +309,79 @@ describe('buildTraceRecords', () => {
       }),
     ])
     expect(records.find((r) => r.kind === 'assistant')?.summary).toBe('工具调用中')
+  })
+
+  test('跨 run 同名 turnId 不撞键:第二个 run 的 assistant 独立收口', () => {
+    const records = buildTraceRecords([
+      // run 1: turn-1 开启后未 end
+      env({ kind: 'run', phase: 'start', runId: 'r1', detail: { type: 'run.start' } }),
+      env({ kind: 'turn', phase: 'start', runId: 'r1', turnId: 'turn-1', detail: { type: 'turn.start' } }),
+      env({ kind: 'message', phase: 'start', runId: 'r1', turnId: 'turn-1', detail: { type: 'message.start' } }),
+      env({
+        kind: 'message',
+        phase: 'end',
+        runId: 'r1',
+        turnId: 'turn-1',
+        detail: { type: 'message.end', message: { role: 'assistant', content: [{ type: 'text', text: '第一轮' }] } },
+      }),
+      // run 2: 复用同名 turnId(每 run 重置)
+      env({ kind: 'run', phase: 'start', runId: 'r2', detail: { type: 'run.start' } }),
+      env({ kind: 'turn', phase: 'start', runId: 'r2', turnId: 'turn-1', detail: { type: 'turn.start' } }),
+      env({ kind: 'message', phase: 'start', runId: 'r2', turnId: 'turn-1', detail: { type: 'message.start' } }),
+      env({
+        kind: 'message',
+        phase: 'end',
+        runId: 'r2',
+        turnId: 'turn-1',
+        detail: { type: 'message.end', message: { role: 'assistant', content: [{ type: 'text', text: '第二轮' }] } },
+      }),
+    ])
+    const assistants = records.filter((r) => r.kind === 'assistant')
+    expect(assistants).toHaveLength(2)
+    expect(assistants[1]?.summary).toBe('第二轮')
+    // 第二条按自己的 message.end 收口,而非被下一条 start 以其 ts 兜底截断
+    expect(assistants[1]?.running).toBe(false)
+  })
+
+  test('compaction failed 标记错误;preTokens 缺省回落兜底摘要', () => {
+    const records = buildTraceRecords([
+      env({ detail: { type: 'context.compaction', phase: 'completed', isError: true } }),
+    ])
+    expect(records[0]?.kind).toBe('compaction')
+    expect(records[0]?.isError).toBe(true)
+    expect(records[0]?.summary).toContain('上下文压缩完成')
+  })
+
+  test('content 含 tool_use 块时文本提取跳过非 text 块', () => {
+    const records = buildTraceRecords([
+      turnStart('t1'),
+      env({
+        kind: 'message',
+        phase: 'end',
+        turnId: 't1',
+        detail: {
+          type: 'message.end',
+          message: { role: 'assistant', content: [
+            { type: 'thinking', thinking: '推理' },
+            { type: 'text', text: '回答' },
+            { type: 'tool_use', id: 'x', name: 'Read', input: {} },
+          ] },
+        },
+      }),
+    ])
+    const assistant = records.find((r) => r.kind === 'assistant')
+    expect(assistant?.summary).toBe('回答')
+    expect(assistant?.output).toBe('回答')
+  })
+
+  test('单个坏事件(detail 字段错位)只跳过自身不毒化整条时间线', () => {
+    const records = buildTraceRecords([
+      userMsg('正常前'),
+      turnStart('t1'),
+      msgEnd('正常后', 't1'),
+      // message.end 但 message 为 null → 内部分理解引用抛错,应被捕获跳过
+      env({ kind: 'message', phase: 'end', turnId: 't1', detail: { type: 'message.end', message: null } }),
+    ])
+    expect(records.map((r) => r.summary)).toEqual(['正常前', '正常后'])
   })
 })

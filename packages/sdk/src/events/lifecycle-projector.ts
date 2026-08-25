@@ -190,8 +190,15 @@ export async function* projectLifecycle(
     }
     const msgEndDetail: MessageEndDetail = {
       type: 'message.end',
+      // 条件展开：usage/costUSD 缺省时不留 undefined 自有属性；turn.end 的
+      // assistantMessage 保持原引用（不含 usage）——两处不同源是已知取舍，
+      // 当前无同读两处的消费者，勿按内容对账。
       message: message.usage != null || message.costUSD != null
-        ? { ...message.message, usage: message.usage, costUSD: message.costUSD }
+        ? {
+          ...message.message,
+          ...(message.usage != null ? { usage: message.usage } : {}),
+          ...(message.costUSD !== undefined ? { costUSD: message.costUSD } : {}),
+        }
         : message.message,
     }
     if (message.error) msgEndDetail.error = message.error

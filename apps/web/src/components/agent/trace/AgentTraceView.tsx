@@ -55,9 +55,12 @@ const SUBAGENT_STATUS_META: Record<string, { label: string; cls: string }> = {
   running: { label: '运行中', cls: 'text-[var(--lume-accent)]' },
   completed: { label: '完成', cls: 'text-[var(--lume-success)]' },
   errored: { label: '失败', cls: 'text-[var(--lume-danger)]' },
-  aborted: { label: '已中止', cls: 'text-[var(--lume-text-muted)]' },
+  // 中止与排队语义不同终局，暗色下不能用同 muted 色（评审⑧）
+  aborted: { label: '已中止', cls: 'text-[var(--lume-danger)]/80' },
   timed_out: { label: '超时', cls: 'text-[var(--lume-warning)]' },
 }
+
+const EMPTY_SUBAGENT_RUNS: SubagentRunRecord[] = []
 
 function fmtTokens(n?: number): string {
   return n == null ? '—' : n.toLocaleString('zh-CN')
@@ -88,15 +91,40 @@ function OverviewBar({
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState<TraceTimeRange | null>(null)
-  const dragRef = useRef<{ startPct: number; moved: boolean } | null>(null)
+  const dragRef = useRef<{ startPct: number; pointerId: number; captured: boolean; moved: boolean } | null>(null)
   // 缩放后的可视时间窗（null = 全域）。滚轮缩放以光标为锚，右键拖拽平移，双击/Esc 重置。
   const [view, setView] = useState<TraceTimeRange | null>(null)
-  const panRef = useRef<{ anchorX: number; orig: TraceTimeRange; moved: boolean } | null>(null)
+  const panRef = useRef<{ anchorX: number; orig: TraceTimeRange; moved: boolean; pointerId: number; captured: boolean } | null>(null)
   // 平移发生过则紧随的 contextmenu 不再视为"右键单击清除"
   const panMovedRef = useRef(false)
   const [hoverId, setHoverId] = useState<string | null>(null)
   const [hoverVisible, setHoverVisible] = useState(false)
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 手势事件（wheel/平移/拖拽）最高可达触控板惯性频率：先写 ref，rAF 每帧应用一次，
+  // 避免 120Hz+ 输入直接打满 React 渲染
+  const pendingViewRef = useRef<((prev: TraceTimeRange | null) => TraceTimeRange | null) | null>(null)
+  const pendingDraftRef = useRef<TraceTimeRange | null | ((prev: TraceTimeRange | null) => TraceTimeRange | null)>(null)
+  const rafRef = useRef<number | null>(null)
+  const scheduleGestureFlush = () => {
+    if (rafRef.current != null) return
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null
+      const viewUpdate = pendingViewRef.current
+      pendingViewRef.current = null
+      if (viewUpdate) setView(viewUpdate)
+      setDraft(pendingDraftRef.current)
+      pendingDraftRef.current = null
+    })
+  }
+  useEffect(() => () => {
+    if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
+  }, [])
+
+  /** 视图与全域重合时归一化为 null，避免出现假的「已缩放」态。 */
+  const normalizeView = (next: TraceTimeRange): TraceTimeRange | null => {
+    const { startMs: dStart, endMs: dEnd } = domainRef.current
+    return next.startMs <= dStart + 1 && next.endMs >= dEnd - 1 ? null : next
+  }
 
   const domainStart = records[0]?.startedAt ?? 0
   let domainEnd = records[records.length - 1]?.endedAt ?? domainStart
@@ -129,7 +157,7 @@ function OverviewBar({
       e.preventDefault()
       const rect = el.getBoundingClientRect()
       const anchorPct = Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100))
-      setView((prev) => {
+      pendingViewRef.current = (prev) => {
         const { startMs: dStart, endMs: dEnd } = domainRef.current
         const curStart = prev?.startMs ?? dStart
         const curEnd = prev?.endMs ?? dEnd
@@ -139,33 +167,39 @@ function OverviewBar({
         const nextSpan = Math.min(Math.max(curSpan * factor, 1000), dEnd - dStart)
         let nextStart = anchorMs - (anchorPct / 100) * nextSpan
         nextStart = Math.min(Math.max(nextStart, dStart), dEnd - nextSpan)
-        return { startMs: nextStart, endMs: nextStart + nextSpan }
-      })
+        return normalizeView({ startMs: nextStart, endMs: nextStart + nextSpan })
+      }
+      scheduleGestureFlush()
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setView(null)
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      setView(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
   // 超长账本按步长抽样渲染概览段，防 DOM 规模失控；被跳过的记录仍可从账本选中
   // （ponytail: 按 span 分桶聚合的保真度更高，实测需要时再换）
-  const stride = Math.max(1, Math.ceil(records.length / 400))
-  const sampled = records.map((record, i) => ({ record, i }))
-    .filter(({ record, i }) => i % stride === 0 || record.id === selectedId)
+  const sampled = useMemo(() => {
+    const stride = Math.max(1, Math.ceil(records.length / 400))
+    return records
+      .map((record, i) => ({ record, i }))
+      .filter(({ record, i }) => i % stride === 0 || record.id === selectedId)
+  }, [records, selectedId])
 
   useEffect(() => () => {
     if (hoverTimerRef.current != null) clearTimeout(hoverTimerRef.current)
   }, [])
 
-  const pctFromEvent = (e: React.PointerEvent): number => {
+  const pctFromEvent = (clientX: number): number => {
     const rect = containerRef.current!.getBoundingClientRect()
-    return Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100))
+    return Math.min(100, Math.max(0, ((clientX - rect.left) / rect.width) * 100))
   }
 
   const activeRange = draft ?? range
@@ -180,24 +214,35 @@ function OverviewBar({
       ref={containerRef}
       role="group"
       aria-label="轨迹时间概览"
-      className="relative h-7 shrink-0 touch-none overflow-hidden border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)]"
+      className="relative h-7 shrink-0 touch-none border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)]"
       onPointerDown={(e) => {
         if (e.button === 2) {
-          // 右键按下：进入平移（仅缩放态有实际效果），拖动过则松开时不清除区间
+          // 右键按下：进入平移（仅缩放态有实际效果）；惰性捕获——移动超阈值才捕获，
+          // 未移动时让 contextmenu 正常走"单击清除"
           panMovedRef.current = false
           panRef.current = {
             anchorX: e.clientX,
             orig: view ?? { startMs: domainStart, endMs: domainEnd },
             moved: false,
+            pointerId: e.pointerId,
+            captured: false,
           }
-          e.currentTarget.setPointerCapture(e.pointerId)
           return
         }
         if (e.button !== 0) return
-        const startPct = pctFromEvent(e)
-        dragRef.current = { startPct, moved: false }
-        e.currentTarget.setPointerCapture(e.pointerId)
-        setDraft({ startMs: viewStart + (startPct / 100) * span, endMs: viewStart + (startPct / 100) * span })
+        // 左键：不立即捕获——立即捕获会把最终 click 重定向到容器，段的 onClick 永远收不到；
+        // 移动超阈值后再捕获转入拖拽选区间
+        dragRef.current = {
+          startPct: pctFromEvent(e.clientX),
+          pointerId: e.pointerId,
+          captured: false,
+          moved: false,
+        }
+        pendingDraftRef.current = {
+          startMs: viewStart + (pctFromEvent(e.clientX) / 100) * span,
+          endMs: viewStart + (pctFromEvent(e.clientX) / 100) * span,
+        }
+        scheduleGestureFlush()
       }}
       onPointerMove={(e) => {
         if (panRef.current) {
@@ -205,25 +250,41 @@ function OverviewBar({
           if (Math.abs(e.clientX - pan.anchorX) > 3) {
             pan.moved = true
             panMovedRef.current = true
+            if (!pan.captured) {
+              e.currentTarget.setPointerCapture(pan.pointerId)
+              pan.captured = true
+            }
           }
+          if (!pan.moved) return
           const rect = containerRef.current!.getBoundingClientRect()
           const msPerPx = (pan.orig.endMs - pan.orig.startMs) / Math.max(1, rect.width)
           let nextStart = pan.orig.startMs - (e.clientX - pan.anchorX) * msPerPx
           nextStart = Math.min(Math.max(nextStart, domainStart), domainEnd - (pan.orig.endMs - pan.orig.startMs))
-          setView({ startMs: nextStart, endMs: nextStart + (pan.orig.endMs - pan.orig.startMs) })
+          pendingViewRef.current = () =>
+            normalizeView({ startMs: nextStart, endMs: nextStart + (pan.orig.endMs - pan.orig.startMs) })
+          scheduleGestureFlush()
           return
         }
         const drag = dragRef.current
         if (!drag) return
-        const pct = pctFromEvent(e)
-        if (Math.abs(pct - drag.startPct) > 0.5) drag.moved = true
+        const pct = pctFromEvent(e.clientX)
+        if (Math.abs(pct - drag.startPct) > 0.5) {
+          drag.moved = true
+          if (!drag.captured) {
+            e.currentTarget.setPointerCapture(drag.pointerId)
+            drag.captured = true
+          }
+        }
+        if (!drag.moved) return
         const a = viewStart + (Math.min(drag.startPct, pct) / 100) * span
         const b = viewStart + (Math.max(drag.startPct, pct) / 100) * span
-        setDraft({ startMs: a, endMs: b })
+        pendingDraftRef.current = { startMs: a, endMs: b }
+        scheduleGestureFlush()
       }}
       onPointerUp={(e) => {
         if (panRef.current) {
           const wasPanClick = !panRef.current.moved
+          if (panRef.current.captured) e.currentTarget.releasePointerCapture(e.pointerId)
           panRef.current = null
           // 右键单击（未拖动）= 清除区间过滤，对齐 dsh；平移后松开不清除
           if (wasPanClick) onRangeClear()
@@ -232,15 +293,22 @@ function OverviewBar({
         const drag = dragRef.current
         if (!drag) return
         dragRef.current = null
-        e.currentTarget.releasePointerCapture(e.pointerId)
+        if (drag.captured) e.currentTarget.releasePointerCapture(e.pointerId)
         const committed = draft
+        pendingDraftRef.current = null
         setDraft(null)
-        // 位移过小视为点击（交给段自身的 onClick 选中），只有真正的拖拽才落区间
+        // 真拖拽才落区间；位移过小视为点击——交给段自身的 onClick 选中，不清除已有过滤
         if (committed && drag.moved && committed.endMs - committed.startMs > span * 0.002) {
           onRangeCommit(committed)
-        } else {
-          onRangeClear()
         }
+      }}
+      onPointerCancel={() => {
+        // 触摸/系统抢占中断手势：清残留状态，防止幽灵选区
+        dragRef.current = null
+        panRef.current = null
+        panMovedRef.current = false
+        pendingDraftRef.current = null
+        setDraft(null)
       }}
       onDoubleClick={() => setView(null)}
       onContextMenu={(e) => {
@@ -248,74 +316,84 @@ function OverviewBar({
         if (!panMovedRef.current) onRangeClear()
       }}
     >
+      {/* 段渲染层：独立裁剪（缩放态段可能越出容器），不影响向下伸出的浮层 */}
+      <div className="absolute inset-0 overflow-hidden">
+        {/* 已生效区间高亮 */}
+        {activeRange && (
+          <div
+            aria-hidden
+            className="absolute inset-y-0 bg-[var(--lume-accent)]/10 ring-1 ring-inset ring-[var(--lume-accent)]/40"
+            style={{
+              left: `${((activeRange.startMs - viewStart) / span) * 100}%`,
+              width: `${((activeRange.endMs - activeRange.startMs) / span) * 100}%`,
+            }}
+          />
+        )}
+        {sampled.map(({ record }) => {
+          // 完全落在可视窗外的段不渲染（缩放态）
+          if (record.startedAt > viewEnd || (record.endedAt ?? record.startedAt) < viewStart) return null
+          const left = ((record.startedAt - viewStart) / span) * 100
+          const width = record.durationMs != null ? (record.durationMs / span) * 100 : 0.5
+          const durationPct = record.durationMs != null ? (record.durationMs / span) * 100 : 0.5
+          // assistant span 双色调：前段浅色为 TTFT（等待首字），后段实色为解码
+          const twoTone = record.kind === 'assistant' && record.ttftMs != null && durationPct > 0.8
+          const ttftFrac = twoTone ? Math.min(0.95, (record.ttftMs! / (record.durationMs ?? 1)) ) : 0
+          return (
+            <button
+              key={record.id}
+              type="button"
+              aria-label={`概览采样 #${record.index} ${KIND_META[record.kind].label}${record.toolName ? ` ${record.toolName}` : ''} ${fmtClock(record.startedAt)} 耗时${fmtDuration(record.durationMs)}`}
+              title={`#${record.index} ${KIND_META[record.kind].label} · ${fmtClock(record.startedAt)} · ${fmtDuration(record.durationMs)}`}
+              onClick={() => onSelect(record.id)}
+              onMouseEnter={() => {
+                if (hoverTimerRef.current != null) clearTimeout(hoverTimerRef.current)
+                setHoverId(record.id)
+                setHoverVisible(false)
+                hoverTimerRef.current = setTimeout(() => setHoverVisible(true), HOVER_DELAY_MS)
+              }}
+              onMouseLeave={() => {
+                if (hoverTimerRef.current != null) clearTimeout(hoverTimerRef.current)
+                setHoverId(null)
+                setHoverVisible(false)
+              }}
+              className={cn(
+                'absolute top-1/2 h-2 hover:h-3 -translate-y-1/2 rounded-sm min-w-[2px] cursor-pointer',
+                twoTone
+                  ? record.isError ? 'bg-[var(--lume-danger)]/50' : 'bg-[var(--lume-accent)]/50'
+                  : KIND_META[record.kind].segment,
+                record.isError && !twoTone && 'bg-[var(--lume-danger)]',
+                record.running && 'animate-pulse motion-reduce:animate-none',
+                selectedId === record.id && 'ring-1 ring-[var(--lume-accent)] ring-offset-1 ring-offset-[var(--lume-bg-panel)]',
+              )}
+              // 宽度下限 0.4%：零时长记录在概览条上至少留一个可点像素带
+              style={{ left: `${left}%`, width: `${Math.max(width, 0.4)}%` }}
+            >
+              {twoTone && (
+                <span
+                  aria-hidden
+                  className={cn('absolute inset-y-0 right-0 rounded-sm', record.isError ? 'bg-[var(--lume-danger)]' : 'bg-[var(--lume-accent)]')}
+                  style={{ width: `${(1 - ttftFrac) * 100}%` }}
+                />
+              )}
+            </button>
+          )
+        })}
+      </div>
+      {/* 缩放态显式重置（键盘可达；双击/Esc 亦可） */}
       {view && (
-        <div className="pointer-events-none absolute right-2 top-1/2 z-10 -translate-y-1/2 rounded-full bg-[var(--lume-bg-elevated)] px-2 py-0.5 text-micro text-[var(--lume-text-muted)]">
-          已缩放 · 双击重置
-        </div>
+        <button
+          type="button"
+          onClick={() => setView(null)}
+          className="absolute right-2 top-1/2 z-20 -translate-y-1/2 rounded-full border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-2 py-0.5 text-micro text-[var(--lume-text-muted)] hover:text-foreground"
+        >
+          已缩放 · 重置
+        </button>
       )}
-      {/* 已生效区间高亮 */}
-      {activeRange && (
-        <div
-          aria-hidden
-          className="absolute inset-y-0 bg-[var(--lume-accent)]/10 ring-1 ring-inset ring-[var(--lume-accent)]/40"
-          style={{
-            left: `${((activeRange.startMs - viewStart) / span) * 100}%`,
-            width: `${((activeRange.endMs - activeRange.startMs) / span) * 100}%`,
-          }}
-        />
-      )}
-      {sampled.map(({ record }) => {
-        // 完全落在可视窗外的段不渲染（缩放态）
-        if (record.startedAt > viewEnd || (record.endedAt ?? record.startedAt) < viewStart) return null
-        const left = ((record.startedAt - viewStart) / span) * 100
-        const width = record.durationMs != null ? (record.durationMs / span) * 100 : 0.5
-        const durationPct = record.durationMs != null ? (record.durationMs / span) * 100 : 0.5
-        // assistant span 双色调：前段浅色为 TTFT（等待首字），后段实色为解码
-        const twoTone = record.kind === 'assistant' && record.ttftMs != null && durationPct > 0.8
-        const ttftFrac = twoTone ? Math.min(0.95, (record.ttftMs! / (record.durationMs ?? 1)) ) : 0
-        return (
-          <button
-            key={record.id}
-            type="button"
-            onClick={() => onSelect(record.id)}
-            onMouseEnter={() => {
-              if (hoverTimerRef.current != null) clearTimeout(hoverTimerRef.current)
-              setHoverId(record.id)
-              setHoverVisible(false)
-              hoverTimerRef.current = setTimeout(() => setHoverVisible(true), HOVER_DELAY_MS)
-            }}
-            onMouseLeave={() => {
-              if (hoverTimerRef.current != null) clearTimeout(hoverTimerRef.current)
-              setHoverId(null)
-              setHoverVisible(false)
-            }}
-            className={cn(
-              'absolute top-1/2 h-2 hover:h-3 -translate-y-1/2 rounded-sm min-w-[2px] cursor-pointer',
-              twoTone
-                ? record.isError ? 'bg-[var(--lume-danger)]/30' : 'bg-[var(--lume-accent)]/30'
-                : KIND_META[record.kind].segment,
-              record.isError && !twoTone && 'bg-[var(--lume-danger)]',
-              record.running && 'animate-pulse motion-reduce:animate-none',
-              selectedId === record.id && 'ring-1 ring-[var(--lume-accent)] ring-offset-1 ring-offset-[var(--lume-bg-panel)]',
-            )}
-            // 宽度下限 0.4%：零时长记录在概览条上至少留一个可点像素带
-            style={{ left: `${left}%`, width: `${Math.max(width, 0.4)}%` }}
-          >
-            {twoTone && (
-              <span
-                aria-hidden
-                className={cn('absolute inset-y-0 right-0 rounded-sm', record.isError ? 'bg-[var(--lume-danger)]' : 'bg-[var(--lume-accent)]')}
-                style={{ width: `${(1 - ttftFrac) * 100}%` }}
-              />
-            )}
-          </button>
-        )
-      })}
-      {/* 500ms 悬停浮层：精确时刻与耗时 */}
+      {/* 500ms 悬停浮层：精确时刻与耗时（在裁剪层之外，top-full 才可见） */}
       {hovered && hoverVisible && (
         <div
           className="pointer-events-none absolute top-full z-20 mt-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-2 py-1 text-micro text-foreground shadow-md"
-          style={{ left: `${Math.min(90, Math.max(10, hoverAnchorPct))}%` }}
+          style={{ left: `${Math.min(85, Math.max(15, hoverAnchorPct))}%` }}
         >
           <div className="font-medium">#{hovered.index} · {KIND_META[hovered.kind].label}{hovered.toolName ? ` · ${hovered.toolName}` : ''}</div>
           <div className="text-[var(--lume-text-muted)]">
@@ -326,7 +404,7 @@ function OverviewBar({
           </div>
           {hovered.kind === 'assistant' && hovered.ttftMs != null && (
             <div className="text-[var(--lume-text-muted)]">
-              首字 {fmtDuration(hovered.ttftMs)} · 解码 {fmtDuration(Math.max(0, (hovered.durationMs ?? 0) - hovered.ttftMs))}
+              首字延迟 {fmtDuration(hovered.ttftMs)} · 解码 {fmtDuration(Math.max(0, (hovered.durationMs ?? 0) - hovered.ttftMs))}
             </div>
           )}
         </div>
@@ -372,7 +450,7 @@ function Inspector({
     ['状态', record.running ? '运行中' : record.isError ? '失败' : '完成'],
     ...(record.toolName ? [['工具', record.toolName] as [string, string]] : []),
     ...(record.usage ? [['Token', fmtUsageSummary(record.usage)] as [string, string]] : []),
-    ...(record.numTurns != null ? [['轮数', String(record.numTurns)] as [string, string]] : []),
+    ...(record.numTurns != null ? [['Turn', String(record.numTurns)] as [string, string]] : []),
     ...(record.stopReason ? [['停止原因', record.stopReason] as [string, string]] : []),
   ]
   return (
@@ -442,7 +520,7 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const followTailRef = useRef(true)
   // 子代理 run 由全局监听同步进 atom；按 parentToolUseId 挂到对应 Task 工具记录下（dsh 嵌套 Subtool 行）
-  const subagentRuns = useAtomValue(agentSubagentRunsFamily(threadId)) ?? []
+  const subagentRuns = useAtomValue(agentSubagentRunsFamily(threadId)) ?? EMPTY_SUBAGENT_RUNS
   const runsByParentTool = useMemo(() => {
     const map = new Map<string, SubagentRunRecord[]>()
     for (const run of subagentRuns) {
@@ -524,19 +602,25 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
     return counts
   }, [visibleRecords])
 
-  // 尾部跟随：新记录到达时贴底，用户上滚即暂停（对齐 dsh tail-follow 行为）
+  // 尾部跟随：内容高度变化（新增记录/流式增高/过滤收缩）时贴底；用户上滚即暂停。
+  // 用 ResizeObserver 而非 records.length——折叠 update 只增高末行时 length 不变。
   useEffect(() => {
-    const el = scrollRef.current
-    if (el && followTailRef.current) el.scrollTop = el.scrollHeight
-  }, [visibleRecords.length])
+    const scroller = scrollRef.current
+    const content = scroller?.firstElementChild
+    if (!scroller || !content || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => {
+      if (followTailRef.current) scroller.scrollTop = scroller.scrollHeight
+    })
+    ro.observe(content)
+    return () => ro.disconnect()
+  }, [])
 
-  // Esc 清除区间过滤与搜索
+  // Esc 清除区间过滤与搜索（defaultPrevented 守卫：不抢上层组件的 Esc 语义）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setRange(null)
-        setQuery('')
-      }
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      setRange(null)
+      setQuery('')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -570,7 +654,7 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="搜索摘要或工具名"
-              className="h-6 min-w-0 flex-1 bg-transparent text-ui text-foreground outline-none placeholder:text-[var(--lume-text-muted)]"
+              className="h-6 min-w-0 flex-1 rounded bg-transparent text-ui text-foreground outline-none placeholder:text-[var(--lume-text-muted)] focus-visible:ring-1 focus-visible:ring-[var(--lume-focus-ring)]"
               aria-label="搜索轨迹记录"
             />
             {(query || range) && (
@@ -612,7 +696,7 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
                 if (collapsed && !showTurnHeader) return null
                 const childRuns = record.toolCallId ? runsByParentTool.get(record.toolCallId) : undefined
                 return (
-                  <div key={record.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 28px' }}>
+                  <div key={record.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                     {showTurnHeader && (
                       <button
                         type="button"
@@ -677,7 +761,8 @@ export function AgentTraceView({ threadId }: { threadId: string }) {
                           key={run.runId}
                           type="button"
                           onClick={() => setSelectedId(record.id)}
-                          className="ml-[5.8rem] flex w-[calc(100%-5.8rem)] items-center gap-1.5 py-0.5 pr-3 text-left hover:bg-[var(--lume-bg-elevated)]"
+                          aria-label={`${record.summary} 的子代理：${run.label ?? run.task}，${status?.label ?? run.status}`}
+                          className="ml-[7.55rem] flex w-[calc(100%-7.55rem)] items-center gap-1.5 py-1 pr-3 text-left hover:bg-[var(--lume-bg-elevated)]"
                         >
                           <Bot size={11} className="shrink-0 text-[var(--lume-accent-2)]" />
                           <span className="min-w-0 flex-1 truncate text-micro text-[var(--lume-text-muted)]">
