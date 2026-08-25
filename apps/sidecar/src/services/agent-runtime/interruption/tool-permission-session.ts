@@ -82,7 +82,13 @@ export function waitForToolPermissionDecision(
   } = {}
 ): Promise<AgentToolPermissionDecision | null> {
   return new Promise((resolve) => {
+    let settled = false;
+    // 幂等守卫：submit 持 pending 引用调用 done，若 cancel/abort 的 done(null) 同步段
+    // （Map.delete）先行完成，submit 会对同一条持久化记录再次 resolveToolApprovalInterruption，
+    // 把已取消的请求翻转为 approved（round4 安全 review）。任何一方先行即终结本等待。
     const done = async (decision: AgentToolPermissionDecision | null): Promise<void> => {
+      if (settled) return;
+      settled = true;
       const pending = pendingToolPermissionResolvers.get(request.requestId);
       if (pending?.timeout) {
         clearTimeout(pending.timeout);

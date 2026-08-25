@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { createWriteStream } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import * as http from "node:http";
@@ -276,6 +277,7 @@ async function doEnsureManagedPythonReady(): Promise<boolean> {
     await rm(tempRoot, { recursive: true, force: true });
     await mkdir(extractPath, { recursive: true });
     await downloadFile(url, archivePath);
+    verifyPythonArchiveChecksum(archivePath, archiveName);
     const extract = await runCommand("tar", ["-xzf", archivePath, "-C", extractPath, "--strip-components", "1"], {
       timeoutMs: 120_000
     });
@@ -326,6 +328,25 @@ function getPythonStandaloneArchiveName(): string | null {
   const platform = platformMap[process.platform];
   if (!platform) return null;
   return `cpython-${PYTHON_VERSION}+${PYTHON_BUILD_DATE}-${arch}-${platform}-install_only_stripped.tar.gz`;
+}
+
+// 官方 SHA256SUMS（release 20260414）钉死值：解压后即被执行的 Python 运行时，必须校验（供应链防护）
+const PYTHON_ARCHIVE_SHA256: Record<string, string> = {
+  "cpython-3.11.15+20260414-aarch64-apple-darwin-install_only_stripped.tar.gz": "7089d127a9933d860b3e4ae704234c664d2713825f27c0c6b89dd399adabbdf6",
+  "cpython-3.11.15+20260414-x86_64-apple-darwin-install_only_stripped.tar.gz": "7a7891dae2d45cd03e9a029db87923e913a0e9ed77fe03173c5c462ccedae594",
+  "cpython-3.11.15+20260414-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz": "e244df64d3f281d2cf33f492499a33a1cf5d872936ffc402ece48b833819c2a7",
+  "cpython-3.11.15+20260414-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz": "b702a19b26cbd007abf9ccbaa45dfdff99e9dbd646d89c9f3c9bb7b501aea44f",
+  "cpython-3.11.15+20260414-aarch64-pc-windows-msvc-install_only_stripped.tar.gz": "58935db7141168da14bbaee6a1d0db80448bc092d8f132cb899c533156e02bba",
+  "cpython-3.11.15+20260414-x86_64-pc-windows-msvc-install_only_stripped.tar.gz": "71ffdf290e0483f0881e02518ecb9cedb449807856ae7dc76aa630e5acd00919"
+};
+
+function verifyPythonArchiveChecksum(archivePath: string, archiveName: string): void {
+  const expected = PYTHON_ARCHIVE_SHA256[archiveName];
+  if (!expected) return; // 未收录的平台跳过（与旧行为一致），不阻断安装
+  const actual = createHash("sha256").update(readFileSync(archivePath)).digest("hex");
+  if (actual !== expected) {
+    throw new Error(`下载的 Python 运行时 SHA256 校验失败，已放弃安装`);
+  }
 }
 
 const DOWNLOAD_TOTAL_TIMEOUT_MS = 120_000;
@@ -398,6 +419,15 @@ export async function downloadFile(
           response.on("error", settleFail);
           const location = response.headers.location;
           if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && location) {
+            // 重定向白名单（round1 安全 review）：仅允许 GitHub 发布链路的目标，
+            // 收窄"服务端控制 location 重定向至任意地址"的 SSRF 面
+            const next = new URL(location, target);
+            const hostAllowed = next.hostname === "github.com" || next.hostname.endsWith(".githubusercontent.com");
+            if (next.protocol !== "https:" || !hostAllowed) {
+              response.resume();
+              settleFail(new Error(`下载失败，拒绝重定向至非预期地址: ${next.toString()}`));
+              return;
+            }
             // 排空旧响应以释放连接；response/request 的 error 监听一并换为吞错——
             // 排空期 RST 不得经 settleFail 误杀新目标
             response.removeListener("error", settleFail);
@@ -405,7 +435,7 @@ export async function downloadFile(
             request.removeListener("error", settleFail);
             request.on("error", () => {});
             response.resume();
-            visit(new URL(location, target).toString(), redirects + 1);
+            visit(next.toString(), redirects + 1);
             return;
           }
           if (response.statusCode !== 200) {

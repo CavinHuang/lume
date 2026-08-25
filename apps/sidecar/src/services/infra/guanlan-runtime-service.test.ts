@@ -219,4 +219,23 @@ describe("downloadFile 超时与清理（#548）", () => {
     await expect(downloadFile("http://127.0.0.1:1/x", destination)).rejects.toThrow();
     expect(existsSync(destination)).toBeFalse();
   });
+
+  test("重定向到白名单外地址时拒绝（SSRF 加固）", async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(302, { location: "http://10.255.255.1/evil" });
+      res.end();
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const { port } = server.address() as AddressInfo;
+    const destination = join(tmpdir(), `lume-download-redirect-${process.pid}.bin`);
+    try {
+      await expect(
+        downloadFile(`http://127.0.0.1:${port}/x`, destination, { totalTimeoutMs: 4_000 })
+      ).rejects.toThrow("拒绝重定向至非预期地址");
+      expect(existsSync(destination)).toBeFalse();
+    } finally {
+      server.close();
+      server.closeAllConnections();
+    }
+  });
 });

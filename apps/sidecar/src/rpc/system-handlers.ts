@@ -172,6 +172,8 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
       sourcePath: getLumeConfigYamlPath()
     }),
     [LUME_CONFIG_IPC_CHANNELS.OPEN_SOURCE_FILE]: async () => {
+      // ok 语义 = 系统打开器 spawn 成功（"拉起"），不等于文件窗口已打开：
+      // macOS open 对异常路径也可能 spawn 成功后非零退出（#548 UX review round7）
       const opened = await openInSystem(getLumeConfigYamlPath());
       return { ok: opened };
     },

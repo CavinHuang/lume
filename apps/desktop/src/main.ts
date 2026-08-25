@@ -204,6 +204,12 @@ export const FILE_PROTOCOL = 'lume-file'
 const APP_PROTOCOL_HOST = 'app'
 const APP_PROTOCOL_ORIGIN = `${APP_PROTOCOL}://${APP_PROTOCOL_HOST}`
 const HEALTHCHECK_TIMEOUT_MS = 45_000
+// 长等待档位：首装搜索后端 = Python 下载 120s + 解压 + pip 安装 120s（#552 动线3），
+// 通用 45s 上限必然假失败。仅白名单方法使用，不影响常规 RPC 的故障感知速度。
+const LONG_RPC_TIMEOUT_MS = 300_000
+const LONG_RPC_METHODS = new Set([
+  'general-settings:test-search-backend',
+])
 const SIDECAR_READY_METHOD = 'system.ready'
 const SIDECAR_LOG_METHOD = 'system.log'
 const SIDECAR_LOG_BATCH_METHOD = 'system.log-batch'
@@ -3153,17 +3159,18 @@ function createSidecarHost({ onNotification }) {
     }
 
     return new Promise((resolveCall, rejectCall) => {
+      const timeoutMs = LONG_RPC_METHODS.has(method) ? LONG_RPC_TIMEOUT_MS : HEALTHCHECK_TIMEOUT_MS
       const timeout = setTimeout(() => {
         pending.delete(requestId)
         writeMainLog('error', 'desktop.sidecar.rpc', 'rpc.timeout', `sidecar RPC timed out: ${method}`, {
           status: 'error',
-          durationMs: HEALTHCHECK_TIMEOUT_MS,
+          durationMs: timeoutMs,
           rpcRequestId: String(requestId),
           ...correlation,
           data: { method },
         })
         rejectCall(new Error(`sidecar request timed out: ${method}`))
-      }, HEALTHCHECK_TIMEOUT_MS)
+      }, timeoutMs)
 
       pending.set(requestId, {
         resolve: resolveCall,

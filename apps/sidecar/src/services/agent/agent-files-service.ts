@@ -361,7 +361,7 @@ export function renameAuthorizedFileRef(
 export function moveAuthorizedFileRef(
   ref: FileRef,
   targetDirectory: FileRef,
-): { ok: true; ref: FileRef } {
+): { ok: true; ref: FileRef; warning?: string } {
   assertWritableFileRef(ref);
   assertWritableFileRef(targetDirectory);
   if (ref.scopeId !== targetDirectory.scopeId)
@@ -379,13 +379,14 @@ export function moveAuthorizedFileRef(
   }
   const target = join(directory.absolutePath, basename(source.absolutePath));
   if (existsSync(target)) throw new Error("目标路径已存在同名文件");
-  movePathWithFallback(source.absolutePath, target);
+  const moveWarning = movePathWithFallback(source.absolutePath, target);
   return {
-    ok: true,
+    ok: true as const,
     ref: {
       ...ref,
       relativePath: relative(source.rootPath, target).split(sep).join("/"),
     },
+    ...(moveWarning ? { warning: moveWarning } : {}),
   };
 }
 
@@ -478,8 +479,13 @@ function validateNewName(newName: string): string {
 }
 
 /** 同步短退避（毫秒级），避免为瞬时占用直接走 O(总字节) 的同步拷贝阻塞 RPC 循环。 */
-function sleepSyncMs(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function sleepSync(ms: number): void {
+  // Node 主线程允许 Atomics.wait；环境异常时退化为不等（占用重试退化为直接降级拷贝）。
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    // ignore
+  }
 }
 
 // 移动/重命名最终失败会直达前端 toast，常见 errno 翻译成可行动的中文（#552 UX review round7）
@@ -501,15 +507,19 @@ function translateMoveError(error: unknown): Error {
   return new Error(hint);
 }
 
-function movePathWithFallback(sourcePath: string, targetPath: string): void {
+/**
+ * 返回 undefined=干净完成；有值=移动成功但源副本清理失败（Windows 占用窗口），
+ * 调用方必须把它透传到 RPC 结果供前端提示，否则用户会看到旧路径文件"复活"（#552 UX review round7）。
+ */
+function movePathWithFallback(sourcePath: string, targetPath: string): string | undefined {
   try {
-    movePathWithFallbackInner(sourcePath, targetPath);
+    return movePathWithFallbackInner(sourcePath, targetPath);
   } catch (error) {
     throw translateMoveError(error);
   }
 }
 
-function movePathWithFallbackInner(sourcePath: string, targetPath: string): void {
+function movePathWithFallbackInner(sourcePath: string, targetPath: string): string | undefined {
   let firstErrorCode: string | undefined;
   try {
     renameSync(sourcePath, targetPath);
@@ -527,7 +537,7 @@ function movePathWithFallbackInner(sourcePath: string, targetPath: string): void
   // 占用类错误通常毫秒~秒级释放：先短退避重试 rename，命中即免去整棵拷贝（仅 EXDEV 直接降级）
   if (firstErrorCode !== "EXDEV") {
     for (const delayMs of [50, 150]) {
-      sleepSyncMs(delayMs);
+      sleepSync(delayMs);
       try {
         renameSync(sourcePath, targetPath);
         log.info("文件移动占用重试成功", { code: firstErrorCode, sourcePath, targetPath, retriedAfterMs: delayMs });
@@ -551,11 +561,13 @@ function movePathWithFallbackInner(sourcePath: string, targetPath: string): void
       // 源清理失败（占用窗口恰落在拷贝完成后）不回滚：此时 target 已是完整副本，
       // 删掉它才是数据丢失；保留双份由用户重试清理。必须留痕——RPC 仍返回 ok，
       // 不记日志则旧路径"复活"的源副本无从解释（#552 review round4）
+      const detail = error instanceof Error ? error.message : String(error);
       log.warn("移动降级拷贝后源清理失败，已保留完整目标副本与残留源", {
         sourcePath,
         targetPath,
-        error: error instanceof Error ? error.message : String(error),
+        error: detail,
       });
+      return `移动已完成，但旧位置文件因被占用未能清理（${detail}），请稍后手动删除`;
     }
   } catch (error) {
     // 清场自身失败不得顶替原始错误
@@ -566,6 +578,7 @@ function movePathWithFallbackInner(sourcePath: string, targetPath: string): void
     }
     throw error;
   }
+  return undefined;
 }
 
 export function getAgentSessionPath(
@@ -726,7 +739,7 @@ export function exportLegacyResourceToProject(
   workspaceSlug: string,
   targetPath: string,
   conflict: "error",
-): { ok: true; path: string } {
+): { ok: true; path: string; warning?: string } {
   if (conflict !== "error") {
     throw new Error("旧版资源导出必须显式使用不覆盖策略");
   }
@@ -772,7 +785,7 @@ export function exportLegacyResourceToProject(
 export function promoteFileRefToProject(
   ref: FileRef,
   workspaceSlug: string,
-): { ok: true; path: string } {
+): { ok: true; path: string; warning?: string } {
   if (ref.source === "project") throw new Error("项目文件无需晋升");
   const rootPath = resolveFileRefRoot(ref);
   const lexicalSource = resolveSafePathWithin(
@@ -925,7 +938,7 @@ export function renameAgentFile(
   sessionId: string,
   targetPath: string,
   newName: string,
-): { ok: true; path: string } {
+): { ok: true; path: string; warning?: string } {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   const rootPath = resolveSessionDir(workspaceSlug, sessionId);
   if (resolve(resolved) === resolve(rootPath)) {
@@ -945,20 +958,22 @@ export function renameAgentFile(
   assertAttachmentMetadataHealthy(
     getThreadAttachmentScope(workspaceSlug, sessionId),
   );
-  movePathWithFallback(resolved, nextPath);
+  const moveWarning = movePathWithFallback(resolved, nextPath);
   moveAttachmentMeta(
     getThreadAttachmentScope(workspaceSlug, sessionId),
     resolved,
     nextPath,
   );
-  return { ok: true, path: nextPath };
+  return moveWarning
+    ? { ok: true as const, path: nextPath, warning: moveWarning }
+    : { ok: true as const, path: nextPath };
 }
 
 export function renameWorkspaceFile(
   workspaceSlug: string,
   targetPath: string,
   newName: string,
-): { ok: true; path: string } {
+): { ok: true; path: string; warning?: string } {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
   const resolved = resolveSafePath(
     resourcesDir,
@@ -980,20 +995,22 @@ export function renameWorkspaceFile(
     throw new Error("目标名称已存在");
   }
   assertAttachmentMetadataHealthy(getWorkspaceAttachmentScope(workspaceSlug));
-  movePathWithFallback(resolved, nextPath);
+  const moveWarning = movePathWithFallback(resolved, nextPath);
   moveAttachmentMeta(
     getWorkspaceAttachmentScope(workspaceSlug),
     resolved,
     nextPath,
   );
-  return { ok: true, path: nextPath };
+  return moveWarning
+    ? { ok: true as const, path: nextPath, warning: moveWarning }
+    : { ok: true as const, path: nextPath };
 }
 
 export function renameWorkspaceRootFile(
   workspaceSlug: string,
   targetPath: string,
   newName: string,
-): { ok: true; path: string } {
+): { ok: true; path: string; warning?: string } {
   const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
   const resolved = resolveSafePath(
     workspaceRoot,
@@ -1014,8 +1031,10 @@ export function renameWorkspaceRootFile(
   if (existsSync(nextPath)) {
     throw new Error("目标名称已存在");
   }
-  movePathWithFallback(resolved, nextPath);
-  return { ok: true, path: nextPath };
+  const moveWarning = movePathWithFallback(resolved, nextPath);
+  return moveWarning
+    ? { ok: true as const, path: nextPath, warning: moveWarning }
+    : { ok: true as const, path: nextPath };
 }
 
 export function moveAgentFile(
@@ -1023,7 +1042,7 @@ export function moveAgentFile(
   sessionId: string,
   targetPath: string,
   targetDir: string,
-): { ok: true; path: string } {
+): { ok: true; path: string; warning?: string } {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   const rootPath = resolveSessionDir(workspaceSlug, sessionId);
   const resolvedTargetDir = resolveSafeTarget(
@@ -1059,20 +1078,22 @@ export function moveAgentFile(
   assertAttachmentMetadataHealthy(
     getThreadAttachmentScope(workspaceSlug, sessionId),
   );
-  movePathWithFallback(resolved, nextPath);
+  const moveWarning = movePathWithFallback(resolved, nextPath);
   moveAttachmentMeta(
     getThreadAttachmentScope(workspaceSlug, sessionId),
     resolved,
     nextPath,
   );
-  return { ok: true, path: nextPath };
+  return moveWarning
+    ? { ok: true as const, path: nextPath, warning: moveWarning }
+    : { ok: true as const, path: nextPath };
 }
 
 export function moveWorkspaceFile(
   workspaceSlug: string,
   targetPath: string,
   targetDir: string,
-): { ok: true; path: string } {
+): { ok: true; path: string; warning?: string } {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
   const resolved = resolveSafePath(
     resourcesDir,
@@ -1110,20 +1131,22 @@ export function moveWorkspaceFile(
   }
 
   assertAttachmentMetadataHealthy(getWorkspaceAttachmentScope(workspaceSlug));
-  movePathWithFallback(resolved, nextPath);
+  const moveWarning = movePathWithFallback(resolved, nextPath);
   moveAttachmentMeta(
     getWorkspaceAttachmentScope(workspaceSlug),
     resolved,
     nextPath,
   );
-  return { ok: true, path: nextPath };
+  return moveWarning
+    ? { ok: true as const, path: nextPath, warning: moveWarning }
+    : { ok: true as const, path: nextPath };
 }
 
 export function moveWorkspaceRootFile(
   workspaceSlug: string,
   targetPath: string,
   targetDir: string,
-): { ok: true; path: string } {
+): { ok: true; path: string; warning?: string } {
   const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
   const resolved = resolveSafePath(
     workspaceRoot,
@@ -1160,8 +1183,10 @@ export function moveWorkspaceRootFile(
     throw new Error("目标路径已存在同名文件");
   }
 
-  movePathWithFallback(resolved, nextPath);
-  return { ok: true, path: nextPath };
+  const moveWarning = movePathWithFallback(resolved, nextPath);
+  return moveWarning
+    ? { ok: true as const, path: nextPath, warning: moveWarning }
+    : { ok: true as const, path: nextPath };
 }
 
 function spawnDetached(command: string, args: string[]): void {
