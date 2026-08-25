@@ -602,8 +602,10 @@ function removeSourceAfterCopy(sourcePath: string): void {
 }
 
 function clearReadOnlyRecursive(root: string): void {
-  const stat = statSync(root, { throwIfNoEntry: false });
-  if (!stat) return;
+  // lstat 不跟随链接：junction/symlink 指向源树之外（全局 store、用户目录）时
+  // chmod 会越出授权范围，成环还会无界递归——链接条目直接跳过（rmSync 本身也不跟随）
+  const stat = lstatSync(root, { throwIfNoEntry: false });
+  if (!stat || stat.isSymbolicLink()) return;
   if (stat.isDirectory()) {
     for (const entry of readdirSync(root)) {
       clearReadOnlyRecursive(join(root, entry));
