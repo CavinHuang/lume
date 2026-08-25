@@ -32,7 +32,10 @@ export function classifyBrowserAction(method: string, params: Record<string, unk
       : undefined;
     return typeof nested === "string" && nested.trim().length > 0 ? nested : undefined;
   })();
-  const navigationUrl = typeof params.url === "string" && params.url.trim().length > 0 ? params.url : nestedOptionsUrl;
+  // #649 review P1-3:取序必须与 broker normalizeBrowserCommand 一致(options.url ?? params.url),
+  // 否则双键携带不同 URL 时弹窗确认的目标 ≠ 实际导航的目标(同意失真)
+  const navigationUrl = nestedOptionsUrl
+    ?? (typeof params.url === "string" && params.url.trim().length > 0 ? params.url : undefined);
   const navigationMethod = method === "navigate" || method === "goto" || method === "navigate_tab_url"
     || ((method === "create_tab" || method === "ensure") && navigationUrl !== undefined)
   if (navigationMethod && isPrivateBrowserUrl(navigationUrl)) {
