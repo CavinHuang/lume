@@ -3,6 +3,7 @@ import {
   DEFAULT_RETRY_CONFIG,
   MAX_RETRY_AFTER_DELAY_MS,
   computeRetryDelay,
+  isPromptTooLongError,
   parseRetryAfterHeader,
   withRetry,
 } from "./retry.js";
@@ -110,5 +111,32 @@ describe("computeRetryDelay (#351)", () => {
     const delay = computeRetryDelay(new Error("plain"), 0, config);
     expect(delay).toBeGreaterThanOrEqual(0);
     expect(delay).toBeLessThanOrEqual(config.maxDelayMs);
+  });
+});
+
+describe("isPromptTooLongError widened recognition (#567 item 1)", () => {
+  test("413 is unambiguous", () => {
+    expect(isPromptTooLongError({ status: 413, message: "Payload Too Large" })).toBe(true);
+  });
+
+  test("structured OpenAI-style code wins over wording", () => {
+    expect(isPromptTooLongError({ status: 400, error: { error: { code: "context_length_exceeded" } } })).toBe(true);
+  });
+
+  test("gateway-rephrased messages are recognized", () => {
+    for (const message of [
+      "maximum context length of 32768 tokens exceeded",
+      "This model's maximum context length is 8192 tokens",
+      "input is too long for the requested model",
+      "prompt is too long: 250000 tokens > 200000 maximum",
+      "Request too large for the target model"
+    ]) {
+      expect(isPromptTooLongError({ status: 400, message })).toBe(true);
+    }
+  });
+
+  test("unrelated 400s stay false", () => {
+    expect(isPromptTooLongError({ status: 400, message: "invalid api key" })).toBe(false);
+    expect(isPromptTooLongError({ status: 500, message: "context length" })).toBe(false);
   });
 });

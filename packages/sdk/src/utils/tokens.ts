@@ -141,6 +141,10 @@ export function estimateSystemPromptTokens(systemPrompt: string): number {
 /**
  * Get the context window size for a model.
  */
+/** 单一回落的上下文窗口缺省值（#567 第 3 项）：目录缺失时引擎阈值/provider 元数据/
+ *  kernel 控制器全部以此对齐，禁止各层私设回落。 */
+export const DEFAULT_CONTEXT_WINDOW = 200_000
+
 export function getContextWindowSize(model: string): number {
   // Anthropic model context windows
   if (model.includes('opus-4') && model.includes('1m')) return 1_000_000
@@ -168,7 +172,7 @@ export function getContextWindowSize(model: string): number {
   if (meta?.contextWindow && meta.contextWindow > 0) return meta.contextWindow
 
   // Default
-  return 200_000
+  return DEFAULT_CONTEXT_WINDOW
 }
 
 /**

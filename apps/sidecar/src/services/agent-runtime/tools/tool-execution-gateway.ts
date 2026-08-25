@@ -59,6 +59,18 @@ export class ToolExecutionGateway {
   }
 
   async authorize(input: ToolExecutionGatewayInput): Promise<ToolExecutionAuthorization> {
+    /*
+     * 一条 bash 命令从输入到执行的完整判定链（权威地图，各站点带指针）：
+     * ① plan 早退 → ② 用户规则表(allow/deny/ask 先到先得) → ③ bypass/session 指纹 →
+     * ④ privateWriteRoots / acceptEdits / metadata_low → ⑤ readonly_shell 内容证明 →
+     * ⑥ classifierEnabled 门 + 启发式分类 —— 以上全部在 PermissionEngine.decide
+     *   （../permissions/permission-engine.ts）。
+     * ⑦ 出引擎后本方法先跑 deny 直通，再无条件跑守卫层复核
+     *   （../guardrails/runtime-tool-safety.ts：硬拒/确认/放行三态），
+     *   合并语义：deny > 守卫 confirm > 引擎 allow——confirm 会翻回已 allow 的
+     *   决策（含 session_allow），且该 confirm 不持久化，故「始终允许」只对
+     *   引擎层决策有效；bypass 类模式豁免 confirm 但豁免不了硬拒。
+     */
     const permissionDecision = await this.permissionRuntime.authorize({
       descriptor: input.descriptor,
       input: input.input,
@@ -108,13 +120,19 @@ export class ToolExecutionGateway {
     const bypassesConfirmation = input.permissionMode === "bypassPermissions"
       || permissionDecision.reasonCode === "session_bypass";
     if (inputSafety.behavior === "require_approval" && !bypassesConfirmation) {
+      /*
+       * 守卫层翻回的审批不携带 grantSuggestion（#684 二轮 F2）：「始终允许」的
+       * 会话指纹只约束引擎决策（session_allow），gateway 在引擎判定之后仍会
+       * 无条件复核守卫——授予指纹后同一命令下次照样弹卡，按钮是空头支票。
+       * canAllowAlways 由 hasGrantSuggestion 推导，置空即隐藏该按钮；
+       * 「本线程内自动执行」逃生通道不受影响。
+       */
       return {
         status: "approval_required",
         reason: inputSafety.reason ?? permissionDecision.explanation,
         risk: toToolPermissionRisk(permissionDecision.riskLevel),
         reasonCode: "guardrail_approval",
         ...(permissionDecision.classification ? { classification: permissionDecision.classification } : {}),
-        ...(permissionDecision.grantSuggestion ? { grantSuggestion: permissionDecision.grantSuggestion } : {}),
         ...(permissionDecision.matchedRuleId ? { matchedRuleId: permissionDecision.matchedRuleId } : {})
       };
     }
