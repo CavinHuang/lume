@@ -22,7 +22,7 @@ import {
 } from "@lume/shared";
 import { getConfigDir, getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
 import { ensureGuanlanReady } from "../infra/guanlan-runtime-service";
-import { createLogger } from "../infra/logger";
+import { createLogger, writeLogRecord } from "../infra/logger";
 
 interface UpdateLumeConfigSectionInput {
   source: LumeConfigAuditSource;
@@ -505,7 +505,17 @@ function syncGuanlanEnv(enabled: boolean): void {
           process.env.LUME_GUANLAN_PYTHON = status.pythonPath;
         }
       })
-      .catch(() => {});
+      .catch((error) => {
+        // 预热失败必须留痕：PythonRuntimeChecksumError 的专属指引若在此被吞，
+        // 用户只会在主动测试搜索时二次暴露且无因果线索（round10 错误路径 review）
+        writeLogRecord({
+          level: "warn",
+          context: "lume-config",
+          event: "guanlan_prewarm_failed",
+          message: "启动预热 guanlan 运行时失败",
+          data: { error: error instanceof Error ? error.message : String(error) }
+        });
+      });
   }
 }
 
