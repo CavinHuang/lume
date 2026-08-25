@@ -9,11 +9,13 @@
 export const PS_ANCHOR = String.raw`(?:^|[;&|(\r\n]\s*)`;
 
 /*
- * cmd.exe /c|/k 包裹前缀：内层命令按同一词表识别。容忍引号包裹的可执行名（"cmd"）、
- * /c|/k 前的任意开关与重复（cmd /s /c、合并旗标、无空格 cmd/c），外层 + 使多层嵌套
- * 包裹（cmd /c cmd /c …）整体可匹配。首段仍须经 PS_ANCHOR 定位到真实命令边界。
+ * cmd.exe /c|/k 包裹前缀：内层命令按同一词表识别。可执行名段接受裸名（cmd）、
+ * 引号包裹（"cmd"）与路径式 token（C:\Windows\System32\cmd.exe、.\cmd.exe——#648：
+ * 此前只认裸名导致路径式三层静默放行）；/c|/k 前的任意开关与重复（cmd /s /c、
+ * 合并旗标、无空格 cmd/c），外层 + 使多层嵌套包裹（cmd /c cmd /c …）整体可匹配。
+ * 首段仍须经 PS_ANCHOR 定位到真实命令边界。
  */
-export const CMD_WRAP_ANCHOR = String.raw`${PS_ANCHOR}(?:"?cmd(?:\.exe)?"?\s*(?:\/[^\s"]+\s+)*\/[ck]\s*["']?\s*)+`;
+export const CMD_WRAP_ANCHOR = String.raw`${PS_ANCHOR}(?:(?:"[^"\r\n]*cmd(?:\.exe)?"|'[^'\r\n]*cmd(?:\.exe)?'|[^\s;&|("'\r\n]*cmd(?:\.exe)?)\s*(?:\/[^\s"]+\s+)*\/[ck]\s*["']?\s*)+`;
 
 /** 确认组共用锚点：命令位或 cmd 包裹内层（与删除族同源，防止包裹识别只覆盖单侧规则组） */
 export const PS_CONFIRM_COMMAND = String.raw`(?:${PS_ANCHOR}|${CMD_WRAP_ANCHOR})`;
@@ -49,6 +51,9 @@ export const PS_DANGEROUS_PROBES: string[] = [
   "cmd /c cmd /c rd /s /q build",
   "cmd /s /c del \\",
   '"cmd" /c ri ~',
+  // #648 路径式可执行名（曾绕过全部三层）
+  "C:\\Windows\\System32\\cmd.exe /c rd /s /q build",
+  ".\\cmd.exe /c del /q cache.txt",
   "Get-Date\ndel \\",
   "Get-Date\r\nRemove-Item ~",
   "Stop-Process -Name node",
