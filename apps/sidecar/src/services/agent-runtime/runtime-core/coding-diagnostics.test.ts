@@ -32,6 +32,16 @@ describe("coding diagnostics", () => {
       writeFileSync(join(root, "node_modules", "typescript", "lib", "tsc.js"), "//");
       writeFileSync(join(root, "tsconfig.json"), "{}");
       expect(detectDiagnosticsChecker(root)).toBe("tsc");
+      // 非官方布局兼容：bin/tsc.js 也接受
+      const root2 = mkdtempSync(join(tmpdir(), "lume-diag-"));
+      try {
+        mkdirSync(join(root2, "node_modules", "typescript", "bin"), { recursive: true });
+        writeFileSync(join(root2, "node_modules", "typescript", "bin", "tsc.js"), "//");
+        writeFileSync(join(root2, "tsconfig.json"), "{}");
+        expect(detectDiagnosticsChecker(root2)).toBe("tsc");
+      } finally {
+        rmSync(root2, { recursive: true, force: true });
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -70,7 +80,7 @@ describe("coding diagnostics", () => {
       totalErrors: 15,
       timedOut: false,
     });
-    expect(message).toContain("[diagnostics] 类型检查检测到 15 个错误（编辑过的文件优先展示）");
+    expect(message).toContain("[diagnostics] 类型检查发现 15 个错误（编辑过的文件优先展示）");
     expect(message).toContain("src/a.ts:12 [TS2345] type mismatch");
     expect(message).toContain("其余 14 个错误未展开");
   });
