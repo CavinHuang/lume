@@ -839,8 +839,8 @@ export async function dispatchAgentRun(
 /** #566:turn_limited 自动续跑——单条用户消息最多自动接续的 run 数。 */
 const MAX_AUTO_TURN_CONTINUATIONS = 3;
 
-/** #566:自动续跑时面向模型的合成指令;恢复上下文(<runtime-recovery-state>)由既有链路注入。 */
-const AUTO_TURN_CONTINUATION_PROMPT = "The previous run reached its turn budget before finishing the task. Continue the original task from where it stopped—do not restart or repeat completed steps. If nothing remains, reply with a brief completion summary.";
+/** #566:自动续跑时面向模型的合成指令(中文对齐兄弟机制 runtime-recovery-state);恢复上下文由既有链路注入。 */
+const AUTO_TURN_CONTINUATION_PROMPT = "上一轮运行在完成任务前达到了回合上限。请从上次停止处继续完成原始任务——不要从头重来，也不要重复已完成的步骤。若已无剩余工作，简要总结完成情况即可。";
 
 /**
  * #566:续跑判定纯函数——turn_limited 且非 repeat_guard、未达上限、未中止、
@@ -1588,12 +1588,31 @@ async function runSendAgentMessage(
   });
   // #566:续跑判定在收尾前定案——autoContinue 时收尾段抑制终态事件(markCompleted/onComplete),
   // 否则 IM 卡片冻结/planning 授权拆除等挂在 onComplete 上的收尾副作用会砍断续跑链
-  const autoContinue = shouldAutoContinueTurnLimited(runtimeResult, {
+  const queuedCount = getAgentRuntimeKernel().listQueued(threadId).length;
+  const autoContinueDecision = {
     continuationCount: options.autoContinuationCount ?? 0,
     abortSignalled: options.abortSignal?.aborted ?? false,
-    queuedCount: getAgentRuntimeKernel().listQueued(threadId).length,
+    queuedCount,
     callerBoundsTurns: input.messageMetadata?.maxTurns !== undefined || input.messageMetadata?.automationJobId !== undefined
-  });
+  };
+  const autoContinue = shouldAutoContinueTurnLimited(runtimeResult, autoContinueDecision);
+  // #566 可观测性 review F1:四种否决分支(上限/repeat_guard/中止/排队/调用方限定)必须可区分
+  if (runtimeResult.status === "turn_limited" && !autoContinue) {
+    log.info("[Agent 会话] 达到回合上限，未自动续跑", {
+      threadId: threadId.slice(0, 8),
+      ...autoContinueDecision,
+      terminationReason: runtimeResult.terminationReason
+    });
+    writeLogRecord({
+      level: "info",
+      kind: "trace",
+      context: "agent.runtime",
+      event: "agent.execution.turn_limited",
+      message: "run reached max turns without auto continuation",
+      status: "ok",
+      data: { ...autoContinueDecision, terminationReason: runtimeResult.terminationReason }
+    });
+  }
   await finalizeAgentSendStage({
     runtimeResult,
     runtimeCompleted,

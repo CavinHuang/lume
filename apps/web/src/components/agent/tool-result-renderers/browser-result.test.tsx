@@ -11,8 +11,9 @@ describe('#601 BrowserResult 真实形制渲染', () => {
     ])
     const markup = renderToStaticMarkup(<BrowserResult input={{}} result={placeholderArray} />)
     expect(markup).toContain('已生成')
-    expect(markup).toContain('shot-abcdef1')
-    expect(markup).toContain('image/png')
+    expect(markup).toContain('PNG')
+    // 内部 id 片段不外露（真实 id 前缀恒为 browser-scre，展示零信息量）
+    expect(markup).not.toContain('browser-scre')
     expect(markup).not.toContain('[Image:')
     expect(markup).not.toContain('<pre')
   })

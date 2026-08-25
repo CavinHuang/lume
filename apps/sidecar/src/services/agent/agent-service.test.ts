@@ -382,7 +382,7 @@ mock.module("../agent-runtime/runner/attempt", () => ({
       emitSuccessfulRun(emit);
       return { status: "turn_limited" as const };
     }
-    if (userMessage.includes("The previous run reached its turn budget") && autoContinueLoopThreads.has(threadId)) {
+    if (userMessage.includes("达到了回合上限") && autoContinueLoopThreads.has(threadId)) {
       emitSuccessfulRun(emit);
       return { status: "turn_limited" as const };
     }
@@ -1134,15 +1134,16 @@ describe("agent-service", () => {
     expect(calls.length).toBe(2);
     const [firstRun, continuation] = calls;
     expect(firstRun?.input?.userMessage).toBe("turn-limited-once");
-    // 续跑轮 prompt 可能被可见历史上下文前置，用包含断言
-    expect(continuation?.input?.userMessage ?? "").toContain("The previous run reached its turn budget");
+    // 续跑轮 prompt 可能被可见历史上下文前置，用包含断言（中文指令对齐兄弟机制）
+    expect(continuation?.input?.userMessage ?? "").toContain("达到了回合上限");
     // 续跑轮不落可见用户消息：线程里只有首发那条可见用户消息
     expect(continuation?.input?.messageMetadata?.hiddenFromChat).toBe(true);
     const visibleUserMessages = getAgentThreadMessages(thread.id).filter((message) => message.role === "user");
     expect(visibleUserMessages.length).toBe(1);
     expect(visibleUserMessages[0]?.content).toBe("turn-limited-once");
     // 中间轮的终态被抑制，整条链只发一次 onComplete；续跑后正常完成走无参 completed 终态
-    expect(completeReasons.length).toBe(1);
+    // （测试有效性 review F1：载荷必须钉死——若末轮误带 max_turns，IM 卡会错标终态）
+    expect(completeReasons).toEqual([undefined]);
   });
 
   test("#566 连续 turn_limited 在上限处停住", async () => {
@@ -1150,6 +1151,7 @@ describe("agent-service", () => {
     const { sendAgentMessage } = await import("./agent-service");
     const thread = createAgentThread("auto continue capped", "channel-test");
     const callsBefore = runAgentRuntimeCalls.length;
+    const completeReasons: Array<string | undefined> = [];
 
     await sendAgentMessage({
       threadId: thread.id,
@@ -1158,7 +1160,7 @@ describe("agent-service", () => {
       modelId: "provider/model-test"
     }, {
       onMessageAppended: () => undefined,
-      onComplete: () => undefined,
+      onComplete: (payload) => completeReasons.push(payload?.reason),
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
@@ -1167,6 +1169,8 @@ describe("agent-service", () => {
 
     // 首发 1 次 + 至多 3 次自动续跑，不得无限循环
     expect(runAgentRuntimeCalls.slice(callsBefore).length).toBe(4);
+    // 链末唯一终态且必须带 max_turns 载荷（测试有效性 review F1：漏发/错标都不可放过）
+    expect(completeReasons).toEqual(["max_turns"]);
   });
 
   test("#566 repeat_guard 终态不触发自动续跑", async () => {
@@ -1174,6 +1178,7 @@ describe("agent-service", () => {
     const { sendAgentMessage } = await import("./agent-service");
     const thread = createAgentThread("auto continue guard", "channel-test");
     const callsBefore = runAgentRuntimeCalls.length;
+    const completeReasons: Array<string | undefined> = [];
 
     await sendAgentMessage({
       threadId: thread.id,
@@ -1182,7 +1187,7 @@ describe("agent-service", () => {
       modelId: "provider/model-test"
     }, {
       onMessageAppended: () => undefined,
-      onComplete: () => undefined,
+      onComplete: (payload) => completeReasons.push(payload?.reason),
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
@@ -1190,6 +1195,37 @@ describe("agent-service", () => {
     });
 
     expect(runAgentRuntimeCalls.slice(callsBefore).length).toBe(1);
+    // repeat_guard 是防失控保护，载荷必须如实携带（测试有效性 review F1）
+    expect(completeReasons).toEqual(["repeat_guard"]);
+  });
+
+  test("#566 调用方限定回合预算（maxTurns/automationJobId）时不自动续跑", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+
+    for (const messageMetadata of [
+      { maxTurns: 5 },
+      { automationJobId: "job-e2e" },
+    ]) {
+      const thread = createAgentThread(`bounded ${messageMetadata.maxTurns ?? messageMetadata.automationJobId}`, "channel-test");
+      const callsBefore = runAgentRuntimeCalls.length;
+      await sendAgentMessage({
+        threadId: thread.id,
+        userMessage: "turn-limited-once",
+        channelId: "channel-test",
+        modelId: "provider/model-test",
+        messageMetadata
+      } as never, {
+        onMessageAppended: () => undefined,
+        onComplete: () => undefined,
+        onError: () => undefined,
+        onTitleUpdated: () => undefined,
+        onAskUserQuestion: () => undefined,
+        onToolPermissionRequest: () => undefined
+      });
+      // 生产推导式（callerBoundsTurns）钉死：有界调用方触顶即停
+      expect(runAgentRuntimeCalls.slice(callsBefore).length).toBe(1);
+    }
   });
 
   test("#566 带 messageParts 的消息续跑时剥离 parts 与 capability 指纹", async () => {

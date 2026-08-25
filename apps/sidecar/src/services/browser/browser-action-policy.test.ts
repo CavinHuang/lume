@@ -32,6 +32,14 @@ test("browser policy hands payment and CAPTCHA back to the user", () => {
   assert.deepEqual(classifyBrowserAction("browser_fill_secret", {}, "secretFill"), { decision: "confirm", category: "credential", preview: "browser_fill_secret: 执行受保护的浏览器动作" })
   assert.equal(classifyBrowserAction("navigate_tab_url", { url: "http://127.0.0.1:3000" }).decision, "confirm")
   assert.deepEqual(classifyBrowserAction("navigate_tab_url", { url: "https://example.com" }), { decision: "confirm", category: "browse", preview: "打开网站：https://example.com" })
+  // #602 十视角 review:内置 open 工具以 {options:{url}} 嵌套形制派发 create_tab，门必须打中主路径
+  assert.equal(classifyBrowserAction("create_tab", { options: { url: "https://example.com" } }).decision, "confirm")
+  assert.equal(classifyBrowserAction("ensure", { options: { url: "https://example.com" } }).decision, "confirm")
+  const privateNested = classifyBrowserAction("create_tab", { options: { url: "http://169.254.169.254/latest/meta-data" } })
+  assert.equal(privateNested.decision, "confirm")
+  assert.equal(privateNested.category, "authorize")
+  // 无 url 的建 tab 不入导航门
+  assert.equal(classifyBrowserAction("create_tab", {}).decision, "allow")
   assert.equal(classifyBrowserAction("click", { semanticIntent: "Pay now" }).decision, "deny")
   assert.equal(classifyBrowserAction("click", { description: "完成 CAPTCHA" }).decision, "deny")
 })

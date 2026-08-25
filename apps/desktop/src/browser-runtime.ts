@@ -4274,7 +4274,7 @@ export class BrowserRuntime {
     })
   }
 
-  private async confirmBrowserAction(context: BrowserRequestContext, params: Record<string, unknown>): Promise<{ approved: boolean; token?: string; reason?: string }> {
+  private async confirmBrowserAction(context: BrowserRequestContext, params: Record<string, unknown>): Promise<{ approved: boolean; token?: string }> {
     if (!context.capability?.startsWith("browser-broker-policy-v1:")) throw browserError("action_denied")
     const bindingHash = String(params.bindingHash ?? "")
     if (!/^[A-Za-z0-9_-]{32,128}$/.test(bindingHash)) throw browserError("invalid_browser_request")
@@ -4289,8 +4289,23 @@ export class BrowserRuntime {
     const win = this.options.getWindow()
     if (!win || win.isDestroyed()) throw browserError("confirmation_unavailable")
     const result = await dialog.showMessageBox(win, { type: "warning", buttons: ["允许一次", "取消"], defaultId: 1, cancelId: 1, title: "确认浏览器操作", message: preview, detail: `类别：${BROWSER_ACTION_CATEGORY_LABELS[category] ?? category}。批准仅对当前标签页的这一次操作有效。` })
-    // #602 review:用户主动取消必须与「确认通道不可用」区分,否则模型把拒绝当瞬态故障重试,弹窗循环骚扰
-    if (result.response !== 0) return { approved: false, reason: "user_denied" }
+    if (result.response !== 0) {
+      // 可观测性 review F5/F6:「取消」必须以 deny 进审计并与动作类别关联——
+      // 否则 ndjson 里「允许」与「取消」同貌,且无法关联到具体浏览器动作
+      this.audit.record({
+        correlationId: randomUUID(),
+        actor: context.actor ?? "agent",
+        ...(context.threadId ? { threadId: context.threadId } : {}),
+        browserSessionId: context.browserSessionId ?? "",
+        backend: "iab",
+        generation: this.backendGeneration,
+        action: `policy:confirm:${category}`,
+        decision: "deny",
+        status: "failed",
+        errorCode: "user_declined",
+      })
+      return { approved: false }
+    }
     return this.issuePolicyToken(bindingHash)
   }
 

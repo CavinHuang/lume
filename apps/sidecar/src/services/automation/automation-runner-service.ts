@@ -125,6 +125,9 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
   };
   let runStatus: AutomationRun["status"] = "success";
   let runMessage = "任务执行完成";
+  // #566 端到端 review:automation 通道不自动续跑(callerBoundsTurns 门)，触顶即停。
+  // 必须如实记为 failed——「任务执行完成」会掩盖半途而废的无人值守任务。
+  let turnLimitedStopped = false;
 
   try {
     const { channelId, modelId, modelRef } = pickExecutionChannel(job);
@@ -202,6 +205,9 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
         onComplete: () => {},
         onError: (error) => {
           runtimeError = error;
+        },
+        onRuntimeEvent: (event) => {
+          if ((event as { type?: string }).type === "run.turn_limited") turnLimitedStopped = true;
         },
         onTitleUpdated: () => {},
         onAskUserQuestion: () => {

@@ -22,14 +22,24 @@ export function classifyBrowserAction(method: string, params: Record<string, unk
   if (method === "purchase") return { decision: "deny", category: "payment", preview: "支付或购买必须由用户完成" }
   if (method === "captcha") return { decision: "deny", category: "captcha", preview: "CAPTCHA 必须由用户完成", errorCode: "user_action_required" }
   // #602 review:navigate 与「建 tab 带 url」同属导航面,后者不设门则 agent 可借 create_tab/ensure
-  // 无提示打开任意站点(含私网地址绕过 SSRF 确认)
+  // 无提示打开任意站点(含私网地址绕过 SSRF 确认)。注意 classify 收到的是归一化前的 raw params:
+  // 内置 open 工具以 {options:{url}} 嵌套形制派发 create_tab(十视角 review 实证),
+  // 必须两处都解,否则门对主路径永远打不中。
+  const nestedOptionsUrl = (() => {
+    const options = params.options;
+    const nested = options && typeof options === "object" && !Array.isArray(options)
+      ? (options as Record<string, unknown>).url
+      : undefined;
+    return typeof nested === "string" && nested.trim().length > 0 ? nested : undefined;
+  })();
+  const navigationUrl = typeof params.url === "string" && params.url.trim().length > 0 ? params.url : nestedOptionsUrl;
   const navigationMethod = method === "navigate" || method === "goto" || method === "navigate_tab_url"
-    || ((method === "create_tab" || method === "ensure") && typeof params.url === "string" && params.url.trim().length > 0)
-  if (navigationMethod && isPrivateBrowserUrl(params.url)) {
-    return { decision: "confirm", category: "authorize", preview: `打开本地或私有地址：${safeOrigin(params.url) ?? "未知地址"}` }
+    || ((method === "create_tab" || method === "ensure") && navigationUrl !== undefined)
+  if (navigationMethod && isPrivateBrowserUrl(navigationUrl)) {
+    return { decision: "confirm", category: "authorize", preview: `打开本地或私有地址：${safeOrigin(navigationUrl) ?? "未知地址"}` }
   }
   if (navigationMethod) {
-    return { decision: "confirm", category: "browse", preview: `打开网站：${safeOrigin(params.url) ?? "未知地址"}` }
+    return { decision: "confirm", category: "browse", preview: `打开网站：${safeOrigin(navigationUrl) ?? "未知地址"}` }
   }
   const explicit = EXPLICIT_CONFIRM.get(method)
   if (explicit) return { decision: "confirm", category: explicit, preview: preview(method, params) }

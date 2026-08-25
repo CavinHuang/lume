@@ -44,9 +44,9 @@ const BROWSER_TOOL_LABELS: Record<string, string> = {
 
 /** #601:去掉 mcp__browser__ 前缀并映射为中文动作名 */
 export function displayToolName(name: string): string {
-  const match = new RegExp(`^${BROWSER_TOOL_PREFIX}(.+)$`).exec(name)
-  if (!match) return name
-  return `浏览器 · ${BROWSER_TOOL_LABELS[match[1]] ?? match[1]}`
+  if (!name.startsWith(BROWSER_TOOL_PREFIX)) return name
+  const action = name.slice(BROWSER_TOOL_PREFIX.length)
+  return `浏览器 · ${BROWSER_TOOL_LABELS[action] ?? action}`
 }
 
 function compactValue(value: unknown): string {

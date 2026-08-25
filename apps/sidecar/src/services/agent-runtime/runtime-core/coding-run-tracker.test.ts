@@ -85,6 +85,11 @@ describe("coding run tracker", () => {
       });
       tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: verificationResult(`failed again ${attempt}`, "failed") });
     }
+    // 上限耗尽后的收场必须是显式 stop，不得静默放行未验证 run（测试有效性 review F3）
+    await expect(tracker.completionGuard()).resolves.toMatchObject({
+      type: "stop",
+      errorCode: "verification_failed_after_repair"
+    });
     await expect(tracker.completionGuard()).resolves.toMatchObject({
       type: "stop",
       errorCode: "verification_failed_after_repair",
@@ -133,7 +138,7 @@ describe("coding run tracker", () => {
 
     await expect(tracker.completionGuard()).resolves.toMatchObject({
       type: "continue",
-      message: expect.stringContaining("[diagnostics] 类型检查检测到 1 个错误")
+      message: expect.stringContaining("[diagnostics] 类型检查发现 1 个错误")
     });
     expect(collectCalls).toBe(1);
 

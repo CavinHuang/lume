@@ -1615,14 +1615,17 @@ const FAILURE_LINE_PATTERNS: RegExp[] = [
 export function extractFailureDigest(output: string, maxLines = FAILURE_DIGEST_MAX_LINES): string[] {
   const seen = new Set<string>()
   const digest: string[] = []
+  // 威胁建模 review F3:剥 ANSI CSI/OSC 序列——终端控制串不得进模型上下文
+  const ansiPattern = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*(?:\x07|\x1b\\)/g
   for (const rawLine of output.split(/\r?\n/)) {
-    const line = rawLine.trim()
+    const line = rawLine.replace(ansiPattern, "").trim()
     if (!line || line.length > 300) continue
     if (!FAILURE_LINE_PATTERNS.some((pattern) => pattern.test(line))) continue
     const key = line.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)
-    digest.push(line.slice(0, 240))
+    // 截断显式标记（文案 review F4）：半句会被模型当完整错误信息
+    digest.push(line.length > 240 ? `${line.slice(0, 237)}...` : line)
     if (digest.length >= maxLines) break
   }
   return digest
