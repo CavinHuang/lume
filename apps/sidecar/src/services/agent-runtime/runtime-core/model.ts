@@ -1,7 +1,6 @@
 import type { Api, KnownProvider, Model } from "./model-types";
 import { findModelMeta } from "@lume/shared";
 import { resolveModelCandidatesForChannel } from "./model-candidates";
-import { adaptModelCapabilities, resolveAgentThinkingLevel } from "./model-capabilities";
 import { prioritizeProvidersForBaseUrl, shouldApplyChannelBaseUrl } from "./provider-routing";
 import { resolveRuntimeProviderCandidates } from "./provider-resolution";
 
@@ -47,32 +46,9 @@ export function resolvePiChannelModel(params: {
     }
   }
 
-  const firstModelId = candidateModelIds[0]?.trim();
-  if (!firstModelId) {
-    return null;
-  }
-  const { modelId, candidates } = resolveRuntimeProviderCandidates({
-    channelProvider: params.channelProvider,
-    modelId: stripMatchingChannelProviderPrefix(firstModelId, params.channelProvider),
-    baseUrl: params.baseUrl,
-    modelIdIsOpaque: true,
-  });
-  const fallbackProvider = candidates[0];
-  if (!fallbackProvider) {
-    return null;
-  }
-  return {
-    provider: fallbackProvider,
-    resolvedModelId: modelId,
-    model: createFallbackModel(
-      fallbackProvider,
-      modelId,
-      shouldApplyChannelBaseUrl(fallbackProvider, params.baseUrl) ? params.baseUrl : undefined,
-      params.channel.models.find((item) => item.id === firstModelId || item.alias === firstModelId)?.capabilities?.vision
-        ?? findModelMeta(modelId)?.capabilities.vision,
-      resolveContextWindowOverride(params, fallbackProvider, modelId)
-    )
-  };
+  // resolveRuntimeProviderCandidates 恒含 "openai" 兜底候选，上方循环首轮必命中；
+  // 走到这里只可能是无任何候选模型 id。
+  return null;
 }
 
 function stripMatchingChannelProviderPrefix(modelId: string, channelProvider?: string): string {
@@ -118,7 +94,7 @@ function createFallbackModel(
     provider,
     api,
     baseUrl: normalizedBaseUrl,
-    reasoning: supportsReasoning(provider, normalizedBaseUrl),
+    reasoning: true,
     input: vision ? ["text", "image"] : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: contextWindowOverride ?? findModelMeta(modelId)?.contextWindow ?? 200000,
@@ -144,17 +120,4 @@ function resolveFallbackBaseUrl(provider: KnownProvider): string {
     default:
       return "https://api.openai.com/v1";
   }
-}
-
-function supportsReasoning(provider: KnownProvider, baseUrl?: string): boolean {
-  if (provider !== "anthropic") {
-    return true;
-  }
-  return resolveAgentThinkingLevel({
-    id: "tmp",
-    name: "tmp",
-    provider,
-    api: "anthropic-messages",
-    reasoning: true
-  } as Model<Api>, baseUrl) !== undefined;
 }

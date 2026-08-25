@@ -1397,7 +1397,6 @@ async function createRuntimeCoreSessionImpl(
 
   const userMessageForModel = buildRuntimeUserMessageInput({
     userMessage: contextAssembly.userMessageForModel,
-    contentBlocks: contextAssembly.userMessageContentBlocks,
     attachments: input.messageAttachments,
     workspaceSlug: input.workspaceSlug,
     threadId: input.lumeSessionId,

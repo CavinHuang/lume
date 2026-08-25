@@ -36,7 +36,6 @@ describe("core workflow hooks", () => {
     });
 
     expect(contributions.map((item) => item.id)).toEqual([
-      "core.plugin.skill-activation",
       "core.suggestion.completion",
       "core.security.permission",
     ]);

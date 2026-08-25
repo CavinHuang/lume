@@ -233,7 +233,6 @@ describe("ContextAssembler", () => {
 
     expect(result.userMessageForModel).toContain("snap-image");
     expect(result.userMessageForModel).not.toContain("iVBORw0KGgo=");
-    expect(result.userMessageContentBlocks).toBeUndefined();
   });
 
   const originalConfigDir = process.env.LUME_CONFIG_DIR;

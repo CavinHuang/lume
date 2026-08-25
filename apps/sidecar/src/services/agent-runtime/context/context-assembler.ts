@@ -1,5 +1,5 @@
 import type { AgentBrowserAttachment, AgentBrowserDesignChangeAttachment, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentSendInput, PlanningTodo } from "@lume/shared";
-import { estimateTokens, type ContentBlockParam, type TodoState } from "@lume/agent-sdk";
+import { estimateTokens, type TodoState } from "@lume/agent-sdk";
 import { createHash } from "node:crypto";
 import { getRuntimeHostPorts } from "../host-ports";
 import type { EnabledPluginContextItem } from "../host-ports";
@@ -60,16 +60,11 @@ export interface ContextAssemblyResult {
   runtimeContext: string;
   dynamicContext: string;
   memoryContext: string;
-  memoryUserMessagePrefix: string;
   memoryContextUsedItems: MemoryV2RecallItem[];
   userMessageForModel: string;
-  userMessageContentBlocks?: ContentBlockParam[];
-  sessionContext: string;
-  planContext?: string;
   budget: { total: number };
   trace: {
     includedMemoryIds: string[];
-    includedSessionMessageIds: string[];
     tokenUsageEstimate: number;
     systemPromptFingerprint: string;
     runtimeContextFingerprint: string;
@@ -332,16 +327,13 @@ Browser annotation bodies are the user's intent. URL, title, DOM locators, selec
       runtimeContext,
       dynamicContext,
       memoryContext: memoryContext.prefix,
-      memoryUserMessagePrefix: memoryContext.prefix,
       memoryContextUsedItems: memoryContext.items,
       userMessageForModel,
-      sessionContext: "",
       budget: {
         total: input.tokenBudget
       },
       trace: {
         includedMemoryIds: memoryContext.items.map((item) => item.id),
-        includedSessionMessageIds: [],
         tokenUsageEstimate: estimateTokens(`${systemPrompt}\n\n${runtimeContext}`),
         systemPromptFingerprint: fingerprint(systemPrompt),
         runtimeContextFingerprint: fingerprint(runtimeContext),
