@@ -9,7 +9,7 @@ import type {
 } from './runtime-message-view'
 
 // #566:turn_limited 后系统可能自动续跑，不再指示用户手动「继续」（自动续跑未生效时下一条用户消息同样会经恢复上下文接续）
-const TURN_LIMIT_NOTICE = '本轮已达到最大执行轮次，当前进度已保存。'
+export const TURN_LIMIT_NOTICE = '本轮已达到最大执行轮次，当前进度已保存。'
 
 export interface ProjectionState {
   messages: RuntimeMessageView[]
@@ -798,19 +798,36 @@ function flushAssistant(
   if (snapshot) messages.push(snapshot)
 }
 
-/** #566:自动续跑链的下一 run 开始——剥掉上一边界的「已达上限」提示尾缀 */
+/** #566:自动续跑链的下一 run 开始——剥掉上一边界的「已达上限」提示尾缀。
+ * 必须**克隆替换**消息与尾块对象（review M2）：stabilizeRuntimeMessages 按引用
+ * 复用缓存视图，原地 mutate 在跨帧增量/live 路径上对 UI 不可见。 */
 function retractPendingTurnLimitNotice(state: ProjectionState): void {
   const pending = state.pendingTurnLimitNotice
   state.pendingTurnLimitNotice = null
   if (!pending) return
-  const message = state.messages.find((item) => item.id === pending.messageId)
+  const index = state.messages.findIndex((item) => item.id === pending.messageId)
+  const message = state.messages[index]
   if (!message || message.type !== 'assistant') return
-  const last = message.blocks.at(-1)
+  const lastBlockIndex = message.blocks.length - 1
+  const last = message.blocks[lastBlockIndex]
   if (last?.type !== 'text' || !last.text.endsWith(TURN_LIMIT_NOTICE)) return
   // 块 id 按索引派生，不删块防 id 漂移；提示独占时留空文本块（渲染无痕）
-  last.text = last.text.slice(0, -pending.noticeLength)
-  if (message.text.endsWith(TURN_LIMIT_NOTICE)) {
-    message.text = message.text.slice(0, -TURN_LIMIT_NOTICE.length)
+  const strippedBlockText = last.text.slice(0, -pending.noticeLength)
+  const strippedMessageText = message.text.endsWith(TURN_LIMIT_NOTICE)
+    ? message.text.slice(0, -TURN_LIMIT_NOTICE.length)
+    : message.text
+  const clonedBlocks = [...message.blocks]
+  clonedBlocks[lastBlockIndex] = { ...last, text: strippedBlockText }
+  if (message.type !== 'assistant') return
+  // tokenCount 同步扣掉提示的估算值（~5 token），保持口径诚实
+  const noticeTokens = estimateTextTokens(TURN_LIMIT_NOTICE)
+  state.messages[index] = {
+    ...message,
+    text: strippedMessageText,
+    blocks: clonedBlocks,
+    ...(typeof message.tokenCount === 'number'
+      ? { tokenCount: Math.max(0, message.tokenCount - noticeTokens) }
+      : {}),
   }
 }
 

@@ -590,6 +590,11 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
         || value.agent.thinkingLevel === "high"
         || value.agent.thinkingLevel === "max"
         ? { thinkingLevel: value.agent.thinkingLevel }
+        : {}),
+      ...(typeof value.agent.maxAutoTurnContinuations === "number"
+        && Number.isFinite(value.agent.maxAutoTurnContinuations)
+        && value.agent.maxAutoTurnContinuations >= 0
+        ? { maxAutoTurnContinuations: Math.min(Math.floor(value.agent.maxAutoTurnContinuations), 10) }
         : {})
     };
   }

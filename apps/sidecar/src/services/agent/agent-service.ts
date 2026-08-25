@@ -883,12 +883,13 @@ export function shouldAutoContinueTurnLimited(
   return true;
 }
 
-/** #566:单条逻辑发送的内部选项——autoContinuationCount 由续跑循环回填,供收尾段判定是否抑制终态。 */
+/** #566:单条逻辑发送的内部选项——autoContinuationCount/maxContinuations 由续跑循环回填,供收尾段判定与轮次上限。 */
 type AgentSendOptions = {
   appendUserMessage?: boolean;
   allowResumeRetry?: boolean;
   abortSignal?: AbortSignal;
   autoContinuationCount?: number;
+  maxContinuations?: number;
 };
 
 export async function sendAgentMessage(
@@ -902,15 +903,16 @@ export async function sendAgentMessage(
   }
   directRunThreads.add(threadId);
   try {
-    const maxContinuations = resolveMaxAutoTurnContinuations();
-    let outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: 0 });
+    // 配置只解析一次贯穿全链（review 建议级：外层日志与 gate 判定不得各 resolve 各的）
+    const resolvedMaxContinuations = resolveMaxAutoTurnContinuations();
+    let outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: 0, maxContinuations: resolvedMaxContinuations });
     let continuationCount = 0;
     while (outcome?.autoContinue) {
       continuationCount += 1;
       log.info("[Agent 会话] 达到回合上限，自动续跑", {
         threadId: threadId.slice(0, 8),
         continuationCount,
-        maxContinuations
+        maxContinuations: resolvedMaxContinuations
       });
       // #566 review:合成续跑指令与原消息 messageParts 拼接必然失配(message_mismatch),
       // 须剥离 parts;残留 capabilityFingerprints 会撞 capability_changed 校验,一并剥掉
@@ -923,7 +925,7 @@ export async function sendAgentMessage(
         messageMetadata: { ...continuationMetadata, hiddenFromChat: true }
       };
       try {
-        outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: continuationCount });
+        outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: continuationCount, maxContinuations: resolvedMaxContinuations });
       } catch (error) {
         // 首轮已正常收尾，续跑失败不应把整条发送标成错误;但上一轮终态已被抑制,须补发防悬挂
         log.warn("[Agent 会话] 自动续跑失败，保留已有进度", {
@@ -1616,7 +1618,7 @@ async function runSendAgentMessage(
     abortSignalled: options.abortSignal?.aborted ?? false,
     queuedCount,
     callerBoundsTurns: input.messageMetadata?.maxTurns !== undefined || input.messageMetadata?.automationJobId !== undefined,
-    maxContinuations: resolveMaxAutoTurnContinuations()
+    maxContinuations: options.maxContinuations ?? resolveMaxAutoTurnContinuations()
   };
   const autoContinue = shouldAutoContinueTurnLimited(runtimeResult, autoContinueDecision);
   // #566 可观测性 review F1:四种否决分支(上限/repeat_guard/中止/排队/调用方限定)必须可区分

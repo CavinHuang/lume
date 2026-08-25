@@ -136,6 +136,23 @@ describe("lume-config-service", () => {
     });
   });
 
+  test("#573① review M1: agent.maxAutoTurnContinuations 经 normalize 存活且越界值被钳制", () => {
+    updateLumeConfigSection({
+      source: "user",
+      path: "agent",
+      value: { maxAutoTurnContinuations: 5, permissionMode: "dontAsk" },
+    });
+    const effective = getEffectiveLumeConfig("default").agent;
+    expect(effective?.maxAutoTurnContinuations).toBe(5);
+    expect(effective?.permissionMode).toBe("dontAsk");
+
+    // 越界钳到硬上限 10；非有限数值回落默认（字段被剥）
+    updateLumeConfigSection({ source: "user", path: "agent", value: { maxAutoTurnContinuations: 99 } });
+    expect(getEffectiveLumeConfig("default").agent?.maxAutoTurnContinuations).toBe(10);
+    updateLumeConfigSection({ source: "user", path: "agent", value: { maxAutoTurnContinuations: Number.NaN } });
+    expect(getEffectiveLumeConfig("default").agent?.maxAutoTurnContinuations).toBeUndefined();
+  });
+
   test("应识别 guanlan 搜索后端并同步启用顺序到环境变量", () => {
     const prevProviders = process.env.LUME_WEB_SEARCH_PROVIDERS;
     const prevGuanlanEnabled = process.env.LUME_GUANLAN_ENABLED;
