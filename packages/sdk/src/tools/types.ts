@@ -26,8 +26,9 @@ export function defineTool(config: {
   prompt?: string | ((context: ToolContext) => Promise<string>)
   /**
    * 工具自带的运行时元数据（注入池归属 requiredDuringSkillScope 等可由工具
-   * 自声明）。审批豁免键 delegatesPermission 由宿主 wrapper 盖章写入，
-   * defineTool 通道一律剥离——第三方不得经此跳过 canUseTool（#711 review）。
+   * 自声明）。审批豁免键 delegatesPermission 在此与宿主 wrapper 两处都会被
+   * 剥离（合法豁免载体是 ExecuteTool 等不经 wrapper 的内部工厂），
+   * 第三方不得经任何通道自declare 跳过 canUseTool（#711 review）。
    */
   runtimeMetadata?: Record<string, unknown>
 }): ToolDefinition {

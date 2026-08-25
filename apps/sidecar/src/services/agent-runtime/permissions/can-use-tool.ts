@@ -28,6 +28,7 @@ import { builtinToolInputGuardrails } from "../guardrails/builtin-tool-guardrail
 import { LumeGuardrailRunner } from "../guardrails/guardrail-runner";
 import { ToolExecutionGateway } from "../tools/tool-execution-gateway";
 import { canonicalizeAgentToolName } from "@lume/shared";
+import { isCapability, isCategory, isRiskLevel, isSideEffects } from "../tools/tool-source";
 import { LUME_TOOL_SOURCES, type LumeToolDescriptor, type LumeToolSource } from "../tools/tool-types";
 
 // 双载体合一（#541）：descriptor 元数据随工具定义的 runtimeMetadata 携带
@@ -38,12 +39,19 @@ const KNOWN_TOOL_SOURCES = new Set<string>(LUME_TOOL_SOURCES);
 export function resolveRuntimeDescriptor(tool: ToolDefinition): LumeToolDescriptor | undefined {
   const meta = (tool as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata;
   if (!meta || typeof meta !== "object") return undefined;
-  // 净化对齐注册期 readRuntimeMetadata 的信任级别：source 枚举校验、
-  // 权限关键字段类型白名单（#711 review 防御深度）
-  const rawCategory = typeof meta.category === "string" ? meta.category : undefined;
-  const rawCapability = typeof meta.capability === "string" ? meta.capability : undefined;
-  const rawRiskLevel = typeof meta.riskLevel === "string" ? meta.riskLevel : undefined;
-  const rawSideEffects = typeof meta.sideEffects === "string" ? meta.sideEffects : undefined;
+  // 净化对齐注册期 readRuntimeMetadata 的信任级别：source/字段值域枚举校验
+  // （复用 tool-source 同一套守卫，#711 review 第四轮消除双写漂移）。
+  // 四个必填维度任一缺失/非法 → 整体 fail-closed 返回 undefined：
+  // 生产路径全经 wrapper 盖章恒全字段；残缺定义走 descriptor_missing deny，
+  // 不产出类型撒谎的半残 descriptor（#711 review 类型轮）
+  if (!isCategory(meta.category) || !isCapability(meta.capability)
+    || !isRiskLevel(meta.riskLevel) || !isSideEffects(meta.sideEffects)) {
+    return undefined;
+  }
+  const rawCategory = meta.category as LumeToolDescriptor["metadata"]["category"];
+  const rawCapability = meta.capability as LumeToolDescriptor["metadata"]["capability"];
+  const rawRiskLevel = meta.riskLevel as LumeToolDescriptor["metadata"]["riskLevel"];
+  const rawSideEffects = meta.sideEffects as LumeToolDescriptor["metadata"]["sideEffects"];
   return {
     name: tool.name,
     canonicalName:

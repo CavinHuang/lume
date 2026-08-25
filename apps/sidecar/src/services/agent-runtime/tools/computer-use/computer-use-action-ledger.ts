@@ -173,6 +173,9 @@ export class ComputerUseActionLedger {
       this.#forgetPrivateVerificationState(entry.actionId);
       excess--;
     }
+    if (excess < this.#entries.size - MAX_LEDGER_ENTRIES) {
+      this.#log.info("action ledger pruned", { pruned: this.#entries.size - MAX_LEDGER_ENTRIES - excess, remaining: this.#entries.size });
+    }
   }
 
   #append(entry: DesktopActionLedgerEntry): void {
@@ -195,8 +198,7 @@ export class ComputerUseActionLedger {
           else this.#activeIds.delete(entry.actionId);
         }
       }
-      this.#prune();
-    } catch {
+      this.#prune();    } catch {
       this.#log.warn("ignored unreadable action ledger", { path: this.#path });
     }
   }

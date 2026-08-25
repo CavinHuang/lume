@@ -3,7 +3,8 @@ import {
   getToolMetadata,
   inferToolMetadata
 } from "./tool-metadata";
-import type {
+import {
+  LUME_TOOL_SOURCES,
   LumeToolCapability,
   LumeToolDescriptorInput,
   LumeToolMetadata,
@@ -83,18 +84,9 @@ function readRuntimeMetadata(definition: ToolDefinition): Partial<LumeToolMetada
 
 function readRuntimeSource(definition: ToolDefinition): LumeToolSource | undefined {
   const source = readRuntimeMetadataRecord(definition)?.source;
-  if (
-    source === "sdk" ||
-    source === "lume" ||
-    source === "memory" ||
-    source === "automation" ||
-    source === "plan" ||
-    source === "task" ||
-    source === "mcp" ||
-    source === "skill" ||
-    source === "plugin"
-  ) {
-    return source;
+  // 单一源判定（#711 review 第四轮）：枚举增值只改 LUME_TOOL_SOURCES 一处
+  if (typeof source === "string" && (LUME_TOOL_SOURCES as readonly string[]).includes(source)) {
+    return source as LumeToolSource;
   }
   return undefined;
 }
@@ -163,11 +155,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function isCategory(value: unknown): value is LumeToolMetadata["category"] {
+export function isCategory(value: unknown): value is LumeToolMetadata["category"] {
   return value === "read" || value === "write" || value === "execute" || value === "control" || value === "network";
 }
 
-function isCapability(value: unknown): value is LumeToolCapability {
+export function isCapability(value: unknown): value is LumeToolCapability {
   return value === "filesystem" ||
     value === "shell" ||
     value === "web" ||
@@ -181,11 +173,11 @@ function isCapability(value: unknown): value is LumeToolCapability {
     value === "external";
 }
 
-function isRiskLevel(value: unknown): value is LumeToolMetadata["riskLevel"] {
+export function isRiskLevel(value: unknown): value is LumeToolMetadata["riskLevel"] {
   return value === "low" || value === "medium" || value === "high";
 }
 
-function isSideEffects(value: unknown): value is LumeToolSideEffects {
+export function isSideEffects(value: unknown): value is LumeToolSideEffects {
   return value === "none" ||
     value === "local_read" ||
     value === "local_write" ||

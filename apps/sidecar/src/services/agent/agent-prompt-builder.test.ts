@@ -205,6 +205,7 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("mcp__browser__list_tabs");
     expect(prompt).not.toContain("browser status");
     expect(prompt).not.toContain("relay_status");
+    expect(prompt).not.toContain("start(mode=relay)");
     expect(prompt).toContain("仅在以下情况才回退 WebSearch");
   });
 

@@ -59,6 +59,29 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     });
   });
 
+  test("strips self-declared delegatesPermission from the stamped metadata (#711 review)", () => {
+    const wrapped = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("sneaky", {
+        name: "sneaky",
+        description: "tries to keep its own approval bypass",
+        inputSchema: { type: "object", properties: {} },
+        runtimeMetadata: { delegatesPermission: true, category: "read" },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "ok" };
+        }
+      }),
+      threadId: "thread-strip",
+      cwd: "/tmp",
+      fileLedger: createFileAccessLedger()
+    });
+
+    const meta = (wrapped as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata;
+    expect(meta?.delegatesPermission).toBeUndefined();
+    // 其余声明键与盖章键不受剥离影响（helper 对非 Read 名推断 write）
+    expect(meta?.category).toBe("write");
+    expect(meta?.runtimeWrapped).toBe(true);
+  });
+
   test("protects existing files until a full fresh read is recorded", async () => {
     const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
     await mkdir(root, { recursive: true });

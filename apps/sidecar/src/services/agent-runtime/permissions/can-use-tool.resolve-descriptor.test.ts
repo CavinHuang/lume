@@ -26,11 +26,37 @@ describe("resolveRuntimeDescriptor (#711 review)", () => {
     expect(descriptor?.source).toBe("sdk");
   });
 
-  test("missing permission-critical fields stay undefined rather than trusting arbitrary values", () => {
-    const descriptor = resolveRuntimeDescriptor(toolWithMeta({}));
-    expect(descriptor?.metadata.requiresApprovalByDefault).toBeUndefined();
-    expect(descriptor?.metadata.allowedInPlanMode).toBe(false);
-    expect(descriptor?.metadata.isReadOnly).toBe(false);
+  test("missing or illegal required dimension fails closed to undefined descriptor (#711 review)", () => {
+    // 四个必填维度任一非法 → 整体 undefined（descriptor_missing deny），不产出半残 descriptor
+    expect(resolveRuntimeDescriptor(toolWithMeta({ category: "read" }))).toBeUndefined();
+    expect(resolveRuntimeDescriptor(toolWithMeta({
+      source: "sdk",
+      category: "not-a-category",
+      capability: "filesystem",
+      riskLevel: "low",
+      sideEffects: "none",
+    }))).toBeUndefined();
+  });
+
+  test("empty runtimeMetadata fails closed instead of yielding a half-stamped descriptor", () => {
+    // 空对象四必填维度全缺 → undefined（descriptor_missing deny），
+    // 不产出 category/riskLevel 等为 undefined 的类型撒谎 descriptor
+    expect(resolveRuntimeDescriptor(toolWithMeta({}))).toBeUndefined();
+  });
+
+  test("canonicalName falls back to canonicalize for fully stamped metadata", () => {
+    const descriptor = resolveRuntimeDescriptor(toolWithMeta({
+      source: "sdk",
+      category: "read",
+      capability: "filesystem",
+      riskLevel: "low",
+      sideEffects: "none",
+      requiresApprovalByDefault: false,
+      allowedInPlanMode: true,
+      isReadOnly: true,
+      isConcurrencySafe: true,
+    }));
+    expect(descriptor).toBeDefined();
     // canonicalName 兜底重算
     expect(descriptor?.canonicalName).toBe("probe");
   });

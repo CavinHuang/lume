@@ -576,9 +576,11 @@ async function startDurableShellTask({
         await emitNewOutput()
         const latest = getProcessJob(job.id)
         if (!latest) {
-          // 任务记录被清（如 registry 清理）：视作终态收尾，否则定时器与监听器泄漏至进程结束
+          // 任务记录被清（如 registry 清理）：视作终态收尾，否则定时器与监听器泄漏至
+          // 进程结束，且后台写租约无人释放会永久占死该工作区的写互斥（#711 review）
           clearInterval(poll)
           context.abortSignal?.removeEventListener('abort', stop)
+          context.onBackgroundTaskCompleted?.()
           return
         }
         if (latest.status === 'running') return
