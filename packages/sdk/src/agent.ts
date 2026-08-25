@@ -56,6 +56,7 @@ import { QueryController } from './query-controller.js'
 import { loadFilesystemSkills } from './skills/fs-loader.js'
 import type { FileCheckpoint, FileCheckpointState } from './utils/file-checkpoints.js'
 import { getContextWindowSize } from './utils/tokens.js'
+import { projectPersistedToolResultMeta } from './utils/messages.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { createExecuteTool, createToolSearchTool, isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
 import { detectDanglingToolUses, INTERRUPTED_TOOL_PLACEHOLDER } from './interrupt-recovery.js'
@@ -228,6 +229,9 @@ export function sessionMessagesFromHistory(
   messages: NormalizedMessageParam[],
   previous?: SessionMessage[],
 ): SessionMessage[] {
+  // 重建路径同样必须过 _meta 白名单（#709 第 1 项）：引擎侧 tool_result 携带
+  // 全量 _meta，若照落持久轨，live 路径建立的最小集合不变量即被旁路。
+  const sanitized = messages.map((message) => sanitizeRebuiltToolResultMeta(message))
   // Realign with the previous list so rebuilt messages keep their original
   // uuids — fileCheckpointState is keyed by user-message uuid, and fresh
   // uuids here would orphan every checkpoint (#363). Alignment pairs each
@@ -261,12 +265,27 @@ export function sessionMessagesFromHistory(
       )
     }
   }
-  return messages.map((message, index) =>
+  return sanitized.map((message, index) =>
     toSessionMessage(
       message.role as SessionMessage['role'],
       message.content,
       uuidByIndex.get(index),
     ))
+}
+
+function sanitizeRebuiltToolResultMeta(message: NormalizedMessageParam): NormalizedMessageParam {
+  if (!Array.isArray(message.content)) return message
+  if (!message.content.some((block: any) => block?.type === 'tool_result')) return message
+  return {
+    ...message,
+    content: message.content.map((block: any) => {
+      if (block?.type !== 'tool_result') return block
+      const projected = projectPersistedToolResultMeta(block._meta)
+      if (projected) return { ...block, _meta: projected }
+      const { _meta: _dropped, ...rest } = block
+      return rest
+    }),
+  } as NormalizedMessageParam
 }
 
 export class Agent {
@@ -958,18 +977,14 @@ export class Agent {
           // _meta 白名单投影（#567 第 5 项）：整包透传会把工具私有元数据带进
           // 持久权威轨，但全丢会让 computer-use 台账跨 run 清零、provider 侧
           // toolName 降级为 "tool"。只携带跨 run 有消费方的最小集合。
-          const projectedMeta = event.result._meta as Record<string, unknown> | undefined
-          const whitelistedMeta = projectedMeta ? {
-            ...(projectedMeta.computerUseAction !== undefined ? { computerUseAction: projectedMeta.computerUseAction } : {}),
-            ...(projectedMeta.toolName !== undefined ? { toolName: projectedMeta.toolName } : {}),
-          } : undefined
+          const whitelistedMeta = projectPersistedToolResultMeta(event.result._meta)
           this.sessionMessages.push(toSessionMessage('user', [{
             type: 'tool_result',
             tool_use_id: event.result.tool_use_id,
             tool_name: event.result.tool_name,
             content: event.result.content ?? event.result.output,
             is_error: event.result.is_error === true,
-            ...(whitelistedMeta && Object.keys(whitelistedMeta).length > 0 ? { _meta: whitelistedMeta } : {}),
+            ...(whitelistedMeta ? { _meta: whitelistedMeta } : {}),
           }]))
           persistScheduler.schedule()
         } else if (event.type === 'system') {

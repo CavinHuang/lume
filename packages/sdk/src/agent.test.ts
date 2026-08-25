@@ -1522,6 +1522,52 @@ describe("Agent session message uuid realignment (#363)", () => {
     expect(rebuilt[1]!.uuid).toBe("a-mid")
     expect(rebuilt[2]!.uuid).toBe("u-6")
   })
+
+  test("rebuild path applies the same _meta whitelist as the live push path (#709 item 1)", () => {
+    const history = [
+      { role: "user", content: "question" },
+      {
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: "call-1",
+          content: "{}",
+          _meta: {
+            computerUseAction: { actionId: "action-1", action: "click", phase: "verified", window: { id: 3, app: "IDE" }, screenshotId: "s1" },
+            toolName: "mcp__cu__click",
+            error: { code: "permission_denied", retryable: false },
+          },
+        }],
+      },
+    ] as any[]
+
+    const rebuilt = sessionMessagesFromHistory(history)
+
+    const toolResult = (rebuilt[1]!.content as any[])[0]!
+    // 白名单最小集合成立：非法/私有字段（error 等）不落持久轨，
+    // 台账事实被投影为校验后的形状（screenshotId 剥离）。
+    expect(toolResult._meta).toEqual({
+      computerUseAction: { actionId: "action-1", action: "click", phase: "verified", window: { id: 3, app: "IDE" } },
+      toolName: "mcp__cu__click",
+    })
+  })
+
+  test("rebuild path drops _meta entirely when nothing survives the whitelist (#709 item 1)", () => {
+    const history = [
+      {
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: "call-1",
+          content: "ok",
+          _meta: { error: { code: "invalid_input", retryable: true }, ephemeral: "trusted_runtime" },
+        }],
+      },
+    ] as any[]
+
+    const rebuilt = sessionMessagesFromHistory(history)
+    expect((rebuilt[0]!.content as any)[0]._meta).toBeUndefined()
+  })
 })
 
 describe("Agent lazy context usage estimation (#386)", () => {

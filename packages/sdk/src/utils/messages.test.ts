@@ -5,6 +5,8 @@ import {
   collectInternalContextBlocks,
   stripInternalContextBlocks,
   renderComputerUseActionFacts,
+  normalizeComputerUseActionFact,
+  projectPersistedToolResultMeta,
 } from "./messages.js";
 
 describe("ephemeral image references", () => {
@@ -101,5 +103,56 @@ describe("ephemeral image references", () => {
     const facts = renderComputerUseActionFacts(messages);
     expect(facts).toContain("action-1: click on 微信#42; phase=observed; not verified complete");
     expect(facts).toContain("action-2: type_text on 微信#42; phase=verified; verified complete");
+  });
+
+  test("drops facts with unknown phase or missing identity (#709 item 2)", () => {
+    expect(normalizeComputerUseActionFact({ actionId: "a", action: "click", phase: "garbage" })).toBeNull();
+    expect(normalizeComputerUseActionFact({ actionId: "a", phase: "verified" })).toBeNull();
+    expect(normalizeComputerUseActionFact({ action: "click", phase: "verified" })).toBeNull();
+    const messages = [{ role: "user", content: [{
+      type: "tool_result",
+      tool_use_id: "x",
+      content: "{}",
+      _meta: { computerUseAction: { actionId: "action-1", action: "click", phase: "not-a-phase", window: { app: "App" } } },
+    }] }];
+    expect(renderComputerUseActionFacts(messages)).toBe("");
+  });
+
+  test("caps oversized string fields and drops unknown fields (#709 item 2)", () => {
+    const fact = normalizeComputerUseActionFact({
+      actionId: "a".repeat(200),
+      action: "click",
+      phase: "verified",
+      window: { id: 1, app: "W".repeat(200) },
+      screenshotId: "shot-9",
+      failureReason: "whatever",
+    });
+    expect(fact).toEqual({
+      actionId: "a".repeat(64),
+      action: "click",
+      phase: "verified",
+      window: { id: 1, app: "W".repeat(80) },
+    });
+  });
+});
+
+describe("projectPersistedToolResultMeta (#709 items 1+2)", () => {
+  test("keeps only validated computerUseAction and string toolName", () => {
+    const meta = projectPersistedToolResultMeta({
+      computerUseAction: { actionId: "action-1", action: "click", phase: "verified", window: { id: 7, app: "IDE" }, screenshotId: "s1" },
+      toolName: "mcp__cu__click",
+      error: { code: "permission_denied", retryable: false },
+      ephemeral: "trusted_runtime",
+    });
+    expect(meta).toEqual({
+      computerUseAction: { actionId: "action-1", action: "click", phase: "verified", window: { id: 7, app: "IDE" } },
+      toolName: "mcp__cu__click",
+    });
+  });
+
+  test("returns undefined for empty/invalid meta", () => {
+    expect(projectPersistedToolResultMeta(undefined)).toBeUndefined();
+    expect(projectPersistedToolResultMeta({})).toBeUndefined();
+    expect(projectPersistedToolResultMeta({ computerUseAction: { phase: "bogus" } })).toBeUndefined();
   });
 });
