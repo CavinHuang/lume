@@ -278,8 +278,9 @@ async function handleRpcLine(line: string): Promise<void> {
         event: "rpc.slow",
         message: `slow sidecar RPC: ${method}`,
         durationMs,
-        rpcRequestId: String(payload.id),
+        // correlation 在前：信封的真实请求 ID 不被 params 内的同名字段遮蔽。
         ...correlation,
+        rpcRequestId: String(payload.id),
         data: { method, params: summarizeValue(payload.params) }
       });
     } else if (!QUIET_RPC_METHODS.has(method)) {
@@ -290,8 +291,8 @@ async function handleRpcLine(line: string): Promise<void> {
         message: `sidecar RPC completed: ${method}`,
         status: "ok",
         durationMs,
-        rpcRequestId: String(payload.id),
         ...correlation,
+        rpcRequestId: String(payload.id),
         data: { method, params: summarizeValue(payload.params), result: summarizeValue(result) }
       });
     }
@@ -303,8 +304,8 @@ async function handleRpcLine(line: string): Promise<void> {
       event: "rpc.failed",
       message: `sidecar RPC failed: ${method}`,
       status: "error",
-      rpcRequestId: String(payload.id),
       ...correlation,
+      rpcRequestId: String(payload.id),
       data: { method, params: summarizeValue(payload.params), error }
     });
     writeResponse({
