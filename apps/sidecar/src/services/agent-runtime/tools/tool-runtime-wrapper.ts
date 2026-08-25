@@ -310,7 +310,7 @@ async function enforceFileAccessPolicy(
   }
   if (!(await exists(canonical))) return null;
 
-  if (name !== "write" && name !== "edit" && name !== "notebookedit") return null;
+  if (name !== "write" && name !== "edit" && name !== "multiedit" && name !== "notebookedit") return null;
 
   const check = await input.fileLedger.assertCanOverwrite({
     threadId: input.threadId,
@@ -359,6 +359,7 @@ function getExecutionTerminationReason(result: ToolResult | undefined): string |
 function isMutationTool(canonicalName: string): boolean {
   return canonicalName === "write"
     || canonicalName === "edit"
+    || canonicalName === "multiedit"
     || canonicalName === "notebookedit"
     || canonicalName === "bash";
 }

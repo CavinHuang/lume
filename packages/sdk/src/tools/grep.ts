@@ -245,10 +245,28 @@ function formatSearchEntries(entries: string[], breNote = ''): string {
  * 本意的字面 `( ) |` 反转成语义，误伤面更大），只让模型知道方言存在。
  */
 export function usesNonBreSyntax(pattern: string): boolean {
-  return /\(\?/.test(pattern)
-    || /\\[dD]/.test(pattern)
-    || /\\[pP]\{/.test(pattern)
-    || /(^|[^\\])\|/.test(pattern)
+  if (/\(\?/.test(pattern)) return true
+  if (/\\[dD]/.test(pattern)) return true
+  if (/\\[pP]\{/.test(pattern)) return true
+  // 裸交替 |：跳过转义与字符类内部（[|] 是合法 BRE 字面检索，#720 review）
+  let inCharacterClass = false
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i]!
+    if (ch === '\\') {
+      i += 1
+      continue
+    }
+    if (ch === '[') {
+      inCharacterClass = true
+      continue
+    }
+    if (ch === ']' && inCharacterClass) {
+      inCharacterClass = false
+      continue
+    }
+    if (ch === '|' && !inCharacterClass) return true
+  }
+  return false
 }
 
 function buildBreDialectNote(): string {

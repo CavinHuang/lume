@@ -93,6 +93,10 @@ describe("CORE_TOOL_NAMES preset", () => {
     expect(CORE_TOOL_NAMES.has("Delegate")).toBe(true);
     expect(CORE_TOOL_NAMES.has("WaitForDelegations")).toBe(true);
   });
+
+  test("MultiEdit 必须在 core 集内,防止被延迟加载隐藏造成声明落差(#720 review)", () => {
+    expect(CORE_TOOL_NAMES.has("MultiEdit")).toBe(true);
+  });
 });
 
 describe("applyOverrides", () => {

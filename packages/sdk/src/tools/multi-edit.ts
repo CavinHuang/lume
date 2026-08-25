@@ -110,10 +110,18 @@ export const MultiEditTool = defineTool({
       for (const [index, hunk] of hunks.entries()) {
         const matches = findMatchingRanges(content, hunk.old_string)
         if (matches.length === 0) {
+          // 连败升级文案与 Edit 同口径（#720 review）：第二次起把"重读再抄"说死，
+          // 大段替换指路 Write。
           const attempts = (context.editFailureCounts?.get(filePath) ?? 0) + 1
           context.editFailureCounts?.set(filePath, attempts)
+          let message = attempts >= 2
+            ? `Error: edits[${index}]: old_string not found in ${filePath} (${attempts} consecutive failures). Stop guessing: Read the file again and copy each old_string exactly from its current content.`
+            : `Error: edits[${index}]: old_string not found in ${filePath}. Nothing was written — the file still has its original content. Read the file again and copy each old_string exactly from its current content.`
+          if (hunk.old_string.split('\n').length >= 5) {
+            message += ' For replacing a large block, prefer the Write tool with the complete file content.'
+          }
           return {
-            data: `Error: edits[${index}]: old_string not found in ${filePath}. Nothing was written — the file still has its original content. Read the file again and copy each old_string exactly from its current content.`,
+            data: message,
             is_error: true,
             _meta: { file: { path: filePath, conflict: 'not_found', failedEditIndex: index, attempts, retryable: true } },
           }
@@ -130,7 +138,9 @@ export const MultiEditTool = defineTool({
         }
         content = replaceRanges(content, ranges, hunk.new_string)
         perHunkReplacements.push(ranges.length)
-        normalizations.push(...ranges.map((match) => match.normalized))
+        // 逐个 push 而非 spread：replace_all 命中数无上界，超大数组会触发
+        // 展开参数上限（#720 review）
+        for (const match of ranges) normalizations.push(match.normalized)
       }
 
       const totalReplacements = perHunkReplacements.reduce((sum, count) => sum + count, 0)

@@ -1,5 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { buildGrepArgs, buildNativeSearchOptions, EXCLUDED_DIRS } from "./grep.js";
+import { buildGrepArgs, buildNativeSearchOptions, EXCLUDED_DIRS, usesNonBreSyntax } from "./grep.js";
+
+describe("usesNonBreSyntax", () => {
+  test("detects ERE/PCRE constructs", () => {
+    expect(usesNonBreSyntax("a|b")).toBe(true);
+    expect(usesNonBreSyntax("(?:x)")).toBe(true);
+    expect(usesNonBreSyntax("(?<=y)z")).toBe(true);
+    expect(usesNonBreSyntax("\\d+")).toBe(true);
+    expect(usesNonBreSyntax("\\p{L}")).toBe(true);
+  });
+
+  test("ignores alternation inside character classes and plain literals (#720 review)", () => {
+    expect(usesNonBreSyntax("[|]")).toBe(false);
+    expect(usesNonBreSyntax("C\\+\\+|literal-noop")).toBe(true);
+    expect(usesNonBreSyntax("plain text")).toBe(false);
+    expect(usesNonBreSyntax("foo\\.bar")).toBe(false);
+  });
+});
 
 describe("buildGrepArgs", () => {
   test("maps -A/-B context flags for the GNU grep fallback", () => {

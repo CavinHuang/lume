@@ -87,6 +87,7 @@ describe("MultiEdit", () => {
 
     expect(result.is_error).toBe(true);
     expect(String(result.content ?? result.data)).toContain("appears 2 times");
+    expect((result._meta as any)?.file?.failedEditIndex).toBe(0);
     expect(await readFile(filePath, "utf8")).toBe("dup\nmiddle\ndup\n");
   });
 

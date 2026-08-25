@@ -279,7 +279,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     const toolStillRunning = task?.status
       ? task.status === "running"
       : execution?.terminationReason === "running";
-    if (["bash", "write", "edit", "notebookedit"].includes(name)) {
+    if (["bash", "write", "edit", "multiedit", "notebookedit"].includes(name)) {
       workspaceMonitor.finishTool(name, task?.id, name === "bash" && toolStillRunning);
     }
     if (isProcessOutput && !toolStillRunning) {
@@ -327,7 +327,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       }
     }
     const bashMutation = name === "bash" && isLikelyMutationCommand(input);
-    if ((["write", "edit", "notebookedit"].includes(name) || bashMutation) && input.result.is_error !== true) {
+    if ((["write", "edit", "multiedit", "notebookedit"].includes(name) || bashMutation) && input.result.is_error !== true) {
       mutationObserved = true;
       if (name !== "bash") {
         const path = readMutationPath(input.input, input.result, options.workspaceRoot, workspaceRoots);

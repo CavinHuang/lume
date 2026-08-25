@@ -7,7 +7,7 @@ import type { AgentDefinition } from "@lume/agent-sdk";
 import type { SessionType as ThreadType } from "@lume/shared";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import os from "node:os";
-import { join, basename } from "node:path";
+import { dirname, join, basename } from "node:path";
 import { getAgentWorkspacePath, getAgentConfigDir } from "../infra/config-paths";
 import { createLogger } from "../infra/logger";
 import { renderSkillManifestLines } from "./prompt/context/skill-manifest-builder";
@@ -564,8 +564,14 @@ function getEnvironmentProbe(cwd: string): string[] {
   const lines: string[] = [];
   try {
     lines.push(`平台/系统: ${process.platform} / ${os.type()} ${os.release()}`);
-    lines.push(`Shell 方言: ${shellKindWithoutDiscovery() === "bash" ? "POSIX bash" : "PowerShell"}`);
-    if (existsSync(join(cwd, ".git"))) lines.push("Git: 工作目录在 git 仓库内");
+    // win32 的 bash 发现未决期 fail-closed 读作 bash（权限口径），此处是
+    // 教学信息，措辞必须对冲回退事实，避免与 Bash description 矛盾（#720 review）
+    const shellKind = shellKindWithoutDiscovery();
+    const shellLabel = process.platform === "win32"
+      ? (shellKind === "powershell" ? "PowerShell" : "POSIX bash（若本机未配置 bash，命令实际经 PowerShell 执行）")
+      : "POSIX bash";
+    lines.push(`Shell 方言: ${shellLabel}`);
+    if (isInsideGitRepo(cwd)) lines.push("Git: 工作目录在 git 仓库内");
     const packageManager = detectPackageManagerMarker(join(cwd));
     if (packageManager) lines.push(`包管理器: ${packageManager}`);
   } catch {
@@ -587,6 +593,18 @@ const PACKAGE_MANAGER_MARKERS: Array<[file: string, name: string]> = [
 
 function detectPackageManagerMarker(dir: string): string | undefined {
   return PACKAGE_MANAGER_MARKERS.find(([file]) => existsSync(join(dir, file)))?.[1];
+}
+
+/** git 探测上溯父目录：monorepo 子目录场景 cwd 本层没有 .git（#720 review） */
+function isInsideGitRepo(startDir: string): boolean {
+  let current = startDir;
+  for (let depth = 0; depth < 16; depth += 1) {
+    if (existsSync(join(current, ".git"))) return true;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return false;
 }
 
 function compactPromptText(text?: string, maxLength = 120): string {
