@@ -98,21 +98,41 @@ export function summarizeGmailMessage(resource: GmailMessageResource): GmailMess
   };
 }
 
+/**
+ * 工具输出的体积护栏:normalize 结果直通 LLM 上下文,一封带大附件的邮件其
+ * payload 内联 base64 与整封 raw 就有数 MB,批量 fetch(maxResults≤500)会撑爆上下文。
+ * 解码文本进 messageText(截断),附件元数据进 attachmentList,body.data/raw 纯属冗余。
+ */
+const MAX_MESSAGE_TEXT_CHARS = 20_000;
+const MAX_RAW_CHARS = 20_000;
+
+function stripInlineBase64(part: GmailMessagePart): GmailMessagePart {
+  return {
+    ...part,
+    body: part.body ? { ...part.body, data: undefined } : undefined,
+    parts: part.parts?.map((child) => stripInlineBase64(child)),
+  };
+}
+
 export function normalizeGmailMessage(resource: GmailMessageResource): NormalizedGmailMessage {
   const payload = resource.payload ?? null;
   const summary = summarizeGmailMessage(resource);
-  const messageText = extractBodyContent(payload).body;
+  const fullBodyText = extractBodyContent(payload).body;
+  const messageText =
+    fullBodyText.length > MAX_MESSAGE_TEXT_CHARS
+      ? `${fullBodyText.slice(0, MAX_MESSAGE_TEXT_CHARS)}…[truncated, total ${fullBodyText.length} chars]`
+      : fullBodyText;
 
   return {
     ...summary,
     preview: {
       subject: summary.subject,
-      body: resource.snippet ?? messageText.slice(0, 200),
+      body: resource.snippet ?? fullBodyText.slice(0, 200),
     },
-    payload,
+    payload: payload ? stripInlineBase64(payload) : null,
     messageText,
     attachmentList: collectAttachments(payload),
-    ...(resource.raw ? { raw: resource.raw } : {}),
+    ...(resource.raw && resource.raw.length <= MAX_RAW_CHARS ? { raw: resource.raw } : {}),
   };
 }
 
