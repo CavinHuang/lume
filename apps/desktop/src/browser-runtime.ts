@@ -940,7 +940,8 @@ export class BrowserRuntime {
           const activeAt = tab.lastUserActivationAt
           if (this.humanizedInput && activeAt !== undefined && Date.now() - activeAt < 2_000) await delay(250 + Math.random() * 450)
           tab.agentDispatching = true
-          this.options.emit({ method: "browser:agent-dispatching", params: { tabId: tab.tabId, active: true } })
+          // url 供浏览器面板外的全局感知条显示当前操作站点(#607)
+          this.options.emit({ method: "browser:agent-dispatching", params: { tabId: tab.tabId, url: tab.url, active: true } })
         }
         try {
           const result = await this.dispatchAction(tab, method, params, context)
@@ -968,7 +969,7 @@ export class BrowserRuntime {
         } finally {
           if (context.actor === "agent") {
             tab.agentDispatching = false
-            this.options.emit({ method: "browser:agent-dispatching", params: { tabId: tab.tabId, active: false } })
+            this.options.emit({ method: "browser:agent-dispatching", params: { tabId: tab.tabId, url: tab.url, active: false } })
             this.inputLedger.clear(tab.tabId)
           }
         }
