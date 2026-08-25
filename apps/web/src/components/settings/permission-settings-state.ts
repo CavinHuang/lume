@@ -30,18 +30,6 @@ export interface PermissionSettingsDraft {
   rules: PermissionRuleDraft[]
 }
 
-export const PERMISSION_MODE_OPTIONS: Array<{
-  value: LumeConfigPermissionMode
-  label: string
-  description: string
-}> = [
-  { value: 'default', label: '默认模式', description: '风险工具执行前需要确认。' },
-  { value: 'plan', label: 'Plan 模式', description: '只允许分析和规划，禁止工具执行。' },
-  { value: 'acceptEdits', label: '接受编辑', description: '文件读写自动放行，命令仍需确认。' },
-  { value: 'dontAsk', label: '少打扰模式（推荐）', description: '危险命令自动拒绝，安全操作自动放行。' },
-  { value: 'bypassPermissions', label: '完全自动', description: '确认类操作自动放行，硬危险操作仍会拦截。' },
-]
-
 export function buildPermissionScopeOptions(workspaces: AgentWorkspace[]): PermissionScopeOption[] {
   return [
     {

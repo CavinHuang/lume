@@ -1351,10 +1351,12 @@ async function createRuntimeCoreSessionImpl(
       : {}),
     ...(Object.keys(agentHooks).length > 0 ? { hooks: agentHooks } : {}),
     agents,
-    permissionMode:
-      input.permissionMode === "bypassPermissions"
-        ? "bypassPermissions"
-        : "default",
+    // 真值透传（#571 第 4 项）：此前除 bypassPermissions 外一律折叠成 default，
+    // 使 acceptEdits/dontAsk 在 Agent cfg 层失真。查询级 override（lume-runner）
+    // 一直传真值，故行为面未变；此处修的是 cfg 谎言，防未来消费方踩假值。
+    // 未设模式时归一 default：SDK init 消息的兜底是 || 'bypassPermissions'，
+    // undefined 直达会被误报成完全自动（#684 review）。
+    permissionMode: input.permissionMode ?? "default",
     includePartialMessages: true,
     skillsDirectories: resolveSkillDirectories(input.cwd, input.workspaceSlug),
     shouldLoadFilesystemSkill: createRuntimeSkillFilter(input.workspaceSlug),
