@@ -136,6 +136,10 @@ export function resolveFileBackedInterruptionSync(
   const path = join(interruptionsDir, `${safeFileSegment(interruptionId)}.json`);
   const current = readInterruption(path);
   if (!current) return false;
+  // 终态守卫：已 approved/rejected 的记录不得再次翻转（last-writer-wins 会把已取消的
+  // 审批改成 approved 并触发 run continuation——round8 正确性 review 竞态另一半）。
+  // 写盘失败残留的 pending 记录仍可被正常 resolve，不受影响。
+  if (current.status !== "pending") return false;
   const now = new Date().toISOString();
   writeTextAtomic(path, JSON.stringify({
     ...current,

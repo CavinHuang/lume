@@ -28,7 +28,7 @@ interface ProviderMeta {
 const GUANLAN_PROVIDER: ProviderMeta = {
   id: 'guanlan',
   label: '观澜 / Guanlan',
-  description: '基于第三方开源项目「观澜 Guanlan」，Alice 启动时自动安装，无需配置。',
+  description: '基于第三方开源项目「观澜 Guanlan」，无需配置。首次测试需自动下载运行环境（约数十 MB，最长数分钟），请耐心等待。',
   needsApiKey: false,
   link: 'https://github.com/shenyangs/Guanlan',
   linkLabel: 'github.com/shenyangs/Guanlan →',

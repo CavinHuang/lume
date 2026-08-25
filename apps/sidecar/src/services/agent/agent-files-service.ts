@@ -17,6 +17,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  chmodSync,
   watch,
   type FSWatcher,
   writeFileSync,
@@ -381,7 +382,7 @@ export function moveAuthorizedFileRef(
   if (existsSync(target)) throw new Error("目标路径已存在同名文件");
   const moveWarning = movePathWithFallback(source.absolutePath, target);
   return {
-    ok: true as const,
+    ok: true,
     ref: {
       ...ref,
       relativePath: relative(source.rootPath, target).split(sep).join("/"),
@@ -556,11 +557,10 @@ function movePathWithFallbackInner(sourcePath: string, targetPath: string): stri
     rmSync(targetPath, { recursive: true, force: true });
     cpSync(sourcePath, targetPath, { recursive: true, preserveTimestamps: true });
     try {
-      rmSync(sourcePath, { recursive: true, force: true });
+      removeSourceAfterCopy(sourcePath);
     } catch (error) {
-      // 源清理失败（占用窗口恰落在拷贝完成后）不回滚：此时 target 已是完整副本，
-      // 删掉它才是数据丢失；保留双份由用户重试清理。必须留痕——RPC 仍返回 ok，
-      // 不记日志则旧路径"复活"的源副本无从解释（#552 review round4）
+      // 源清理失败不回滚：此时 target 已是完整副本，删掉它才是数据丢失；保留双份由用户重试清理。
+      // 必须留痕并透传 warning——RPC 仍返回 ok，不提示则旧路径"复活"的源副本无从解释（#552 review round4）
       const detail = error instanceof Error ? error.message : String(error);
       log.warn("移动降级拷贝后源清理失败，已保留完整目标副本与残留源", {
         sourcePath,
@@ -579,6 +579,41 @@ function movePathWithFallbackInner(sourcePath: string, targetPath: string): stri
     throw error;
   }
   return undefined;
+}
+
+/**
+ * 拷贝完成后的源清理。Windows/Electron 的 rmSync 不清 FILE_ATTRIBUTE_READONLY
+ * （.git/objects、npm 包内文件普遍只读，force 只压 ENOENT），失败时先递归清只读属性再重试一次。
+ */
+function removeSourceAfterCopy(sourcePath: string): void {
+  try {
+    rmSync(sourcePath, { recursive: true, force: true });
+    return;
+  } catch (firstError) {
+    if (process.platform !== "win32") throw firstError;
+    try {
+      clearReadOnlyRecursive(sourcePath);
+      rmSync(sourcePath, { recursive: true, force: true });
+      log.info("源清理经只读属性清除后成功", { sourcePath });
+    } catch {
+      throw firstError; // 重试仍失败：保留原始错误（占用/权限），由调用方走 warning 路径
+    }
+  }
+}
+
+function clearReadOnlyRecursive(root: string): void {
+  const stat = statSync(root, { throwIfNoEntry: false });
+  if (!stat) return;
+  if (stat.isDirectory()) {
+    for (const entry of readdirSync(root)) {
+      clearReadOnlyRecursive(join(root, entry));
+    }
+  }
+  try {
+    chmodSync(root, stat.isDirectory() ? 0o777 : 0o666);
+  } catch {
+    // 单个条目清属性失败不阻断整体重试
+  }
 }
 
 export function getAgentSessionPath(
@@ -964,9 +999,7 @@ export function renameAgentFile(
     resolved,
     nextPath,
   );
-  return moveWarning
-    ? { ok: true as const, path: nextPath, warning: moveWarning }
-    : { ok: true as const, path: nextPath };
+  return { ok: true, path: nextPath, ...(moveWarning ? { warning: moveWarning } : {}) };
 }
 
 export function renameWorkspaceFile(
@@ -1001,9 +1034,7 @@ export function renameWorkspaceFile(
     resolved,
     nextPath,
   );
-  return moveWarning
-    ? { ok: true as const, path: nextPath, warning: moveWarning }
-    : { ok: true as const, path: nextPath };
+  return { ok: true, path: nextPath, ...(moveWarning ? { warning: moveWarning } : {}) };
 }
 
 export function renameWorkspaceRootFile(
@@ -1032,9 +1063,7 @@ export function renameWorkspaceRootFile(
     throw new Error("目标名称已存在");
   }
   const moveWarning = movePathWithFallback(resolved, nextPath);
-  return moveWarning
-    ? { ok: true as const, path: nextPath, warning: moveWarning }
-    : { ok: true as const, path: nextPath };
+  return { ok: true, path: nextPath, ...(moveWarning ? { warning: moveWarning } : {}) };
 }
 
 export function moveAgentFile(
@@ -1084,9 +1113,7 @@ export function moveAgentFile(
     resolved,
     nextPath,
   );
-  return moveWarning
-    ? { ok: true as const, path: nextPath, warning: moveWarning }
-    : { ok: true as const, path: nextPath };
+  return { ok: true, path: nextPath, ...(moveWarning ? { warning: moveWarning } : {}) };
 }
 
 export function moveWorkspaceFile(
@@ -1137,9 +1164,7 @@ export function moveWorkspaceFile(
     resolved,
     nextPath,
   );
-  return moveWarning
-    ? { ok: true as const, path: nextPath, warning: moveWarning }
-    : { ok: true as const, path: nextPath };
+  return { ok: true, path: nextPath, ...(moveWarning ? { warning: moveWarning } : {}) };
 }
 
 export function moveWorkspaceRootFile(
@@ -1184,9 +1209,7 @@ export function moveWorkspaceRootFile(
   }
 
   const moveWarning = movePathWithFallback(resolved, nextPath);
-  return moveWarning
-    ? { ok: true as const, path: nextPath, warning: moveWarning }
-    : { ok: true as const, path: nextPath };
+  return { ok: true, path: nextPath, ...(moveWarning ? { warning: moveWarning } : {}) };
 }
 
 function spawnDetached(command: string, args: string[]): void {

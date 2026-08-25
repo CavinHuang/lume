@@ -1073,11 +1073,17 @@ function AutomationJobDetail({
                       }`}
                     >
                       <span className={`size-2 shrink-0 rounded-full ${
-                        run.status === 'success' ? 'bg-emerald-500'
+                        run.persistenceLost ? 'bg-zinc-400'
+                          : run.status === 'success' ? 'bg-emerald-500'
                           : run.status === 'failed' ? 'bg-red-500'
                             : 'bg-amber-500'
                       }`} />
-                      <span className="min-w-0 flex-1 truncate text-[14px] text-[var(--text-1)]">{run.jobName}</span>
+                      <span className="min-w-0 flex-1 truncate text-[14px] text-[var(--text-1)]">
+                        {run.jobName}
+                        {run.persistenceLost && (
+                          <span className="ml-2 text-[12px] text-[var(--text-3)]" title="运行确实发生，但记录写入磁盘失败（磁盘满或被占用），重启后此条将消失">（记录未能保存到磁盘）</span>
+                        )}
+                      </span>
                       <span className="shrink-0 text-[14px] text-[var(--text-3)]">{formatShortTime(run.startedAt)}</span>
                       <span className="shrink-0 text-[14px] text-[var(--text-3)]">{formatDuration(run.startedAt, run.finishedAt)}</span>
                     </div>
