@@ -141,15 +141,24 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
   React.useEffect(() => {
     if (setup.authKind !== 'oauth2' || !status.authorizing) return
     wasAuthorizing.current = true
+    let pollFailures = 0
     const timer = setInterval(() => {
       void getConnectorStatus(setup.service)
         .then((next) => {
+          pollFailures = 0
           setStatus((prev) => ({ ...prev, connected: next.connected, authorizing: next.authorizing, lastError: next.lastError }))
           // 授权完成的瞬间拉全量(含 accountLabel),不等用户手动刷新
           if (wasAuthorizing.current && !next.authorizing && next.connected) onChanged()
           if (!next.authorizing) wasAuthorizing.current = false
         })
-        .catch(() => {})
+        .catch((error) => {
+          // 连续失败超阈值停轮询并告知:silent catch 会让徽章停在「授权中…」直到服务端超时
+          pollFailures += 1
+          if (pollFailures === 5) {
+            clearInterval(timer)
+            toast.error(`授权状态轮询失败:${error instanceof Error ? error.message : String(error)}`)
+          }
+        })
     }, 2000)
     return () => clearInterval(timer)
   }, [setup.authKind, setup.service, status.authorizing, onChanged])

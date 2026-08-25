@@ -107,8 +107,9 @@ function toolsForService(config: ConnectorToolConfig): ToolDefinition[] {
         inputSchema: action.inputSchema as unknown as ToolInputSchema,
         isReadOnly: config.readOnlyActions.has(action.name),
         isConcurrencySafe: config.readOnlyActions.has(action.name),
-        async call(input) {
-          const result = await executeConnectorAction(config.service, action.name, input ?? {});
+        async call(input, context) {
+          // 中断 run 时取消在途 HTTP:副作用型动作(发送/修改)不应在用户中止后继续外发
+          const result = await executeConnectorAction(config.service, action.name, input ?? {}, context.abortSignal);
           if (!result.ok) {
             throw new Error(
               result.error

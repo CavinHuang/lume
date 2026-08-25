@@ -999,17 +999,20 @@ function isNetworkError(code: string | null) {
 function isFolderMissingError(error: unknown) {
   // imapflow 对命令 NO/BAD 一律 new Error("Command failed"),服务器响应码只落在
   // serverResponseCode、原文落在 response——读 .code/.message 永远匹配不上。
+  // 响应码权威:命中即判定;文本匹配仅在响应码缺失时兜底(避免文件夹名本身
+  // 含敏感短语时被其他失败原因误命中)。
   const record = toRecord(error);
   const code = (
     readString(record?.serverResponseCode) ?? readString(record?.code) ?? ""
   ).toUpperCase();
+  if (code === "NONEXISTENT" || code === "NOTFOUND") return true;
+  if (code) return false;
   const text = [
     error instanceof Error ? error.message.toLowerCase() : "",
     readString(record?.response)?.toLowerCase() ?? "",
   ].join(" ");
   return (
-    code === "NONEXISTENT" ||
-    code === "NOTFOUND" ||
+    text.includes("[nonexistent]") ||
     text.includes("not found") ||
     text.includes("does not exist") ||
     text.includes("nonexistent")

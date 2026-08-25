@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type {
   CredentialValidators,
   OAuth2AuthDefinition,
@@ -206,7 +206,7 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
   };
 
   try {
-    if (url.searchParams.get("state") !== pending.state) {
+    if (!timingSafeStateEqual(url.searchParams.get("state") ?? "", pending.state)) {
       // 杂散请求(浏览器预取/刷新、端口扫描)只对该请求回错误页;
       // reject 整个 pending 流程会让随后到达的真回调扑空
       logger.debug("connector oauth callback state mismatch (stray request)", { service });
@@ -322,12 +322,24 @@ async function validateAndStoreCredential(service: string, credential: ResolvedC
 
 const TOKEN_REFRESH_LEEWAY_MS = 60_000;
 
+/** 恒时 state 比较(timingSafeEqual 要求等长,长度不齐直接判不等)。 */
+function timingSafeStateEqual(received: string, expected: string): boolean {
+  const a = Buffer.from(received, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 /**
  * 保存授权码型凭证(QQ 邮箱等):跑 provider 的连接测试后落盘。
  * 验证失败抛 ConnectorError,由调用方决定提示。
  */
 export async function saveConnectorCustomCredential(service: string, values: Record<string, string>): Promise<void> {
   const provider = getConnector(service);
+  // oauth2 型 provider 的凭证只能经授权流写入:直存 customValues 会造出
+  // 「UI 已连接、运行时 getConnectorResolvedCredential 走 oauth 分支抛错」的假态
+  if (provider.definition.authTypes.includes("oauth2") && !provider.validators?.customCredential) {
+    throw new ConnectorError("connector_auth_unsupported", `${service} 使用 OAuth 授权,请在设置中完成浏览器授权`);
+  }
   const validator = provider.validators?.customCredential;
   let profile: { accountId: string; displayName: string; grantedScopes: string[] } = {
     accountId: "custom",
@@ -463,6 +475,7 @@ export async function executeConnectorAction(
   service: string,
   actionName: string,
   input: unknown,
+  signal?: AbortSignal,
 ): Promise<{ ok: boolean; output?: unknown; error?: { code: string; message: string; details?: unknown } }> {
   const provider = getConnector(service);
   const action = provider.definition.actions.find((entry) => entry.name === actionName);
@@ -478,7 +491,7 @@ export async function executeConnectorAction(
         throw error;
       }
     },
-    signal: undefined,
+    signal,
   };
   return executeAction(
     action,

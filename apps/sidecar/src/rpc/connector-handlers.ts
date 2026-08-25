@@ -96,6 +96,8 @@ export function createConnectorHandlers(): Record<string, RpcHandler> {
       // saveConnectorCustomCredential 内部跑连接测试,失败抛 ConnectorError 给 UI
       await saveConnectorCustomCredential(service, values);
       authStates.delete(service);
+      // 在途 OAuth 流的完成回调不得复活刚清理的状态(与 DISCONNECT 同款代际作废)
+      authGenerations.set(service, (authGenerations.get(service) ?? 0) + 1);
       return buildStatus(service);
     },
 
