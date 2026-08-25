@@ -188,9 +188,10 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
         modelRef,
         channelId,
         modelId,
-        // 模型自建 job（source=manual）不带无人值守 bypass：permissionMode 缺省
-        // 时由 agent-service 回落用户配置，会话内注入不再能沉淀永久免审批通道（#394）。
-        ...(job.source === "manual" ? {} : { permissionMode: "bypassPermissions" as const }),
+        // 无人值守 bypass 仅授予 sidecar 内部调用方直写的 system 任务（routine 等，
+        // #394）；manual 与缺省 source 一律回落用户权限配置——缺省视为 manual 的
+        // fail-closed 口径同时堵住 suggest 等未显式写 source 的内部创建面（#647 P2-23）。
+        ...(job.source === "system" ? { permissionMode: "bypassPermissions" as const } : {}),
         traceContext,
         messageMetadata: {
           automationJobId: job.id,

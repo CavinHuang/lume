@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useAtom, useAtomValue } from 'jotai'
 import { FolderOpen, ListTodo } from 'lucide-react'
 import { toast } from 'sonner'
@@ -13,6 +13,8 @@ import { Button } from '@/components/ui/button'
 interface AgentHeaderProps {
   threadId: string
   readOnly?: boolean
+  /** 头部右侧的操作区（如 视图切换）。 */
+  actions?: ReactNode
 }
 
 const PHASE_STYLE: Record<AgentRuntimePhase, { label: string; dot: string; text: string }> = {
@@ -25,7 +27,7 @@ const PHASE_STYLE: Record<AgentRuntimePhase, { label: string; dot: string; text:
   errored: { label: '出错', dot: 'bg-[var(--lume-danger)]', text: 'text-[var(--lume-danger)]' },
 }
 
-export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
+export function AgentHeader({ threadId, readOnly, actions }: AgentHeaderProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const [workspaces, setWorkspaces] = useAtom(agentWorkspacesAtom)
   const [tabs, setTabs] = useAtom(tabsAtom)
@@ -156,6 +158,7 @@ export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
           </span>
         )}
       </div>
+      {actions && <div className="flex shrink-0 items-center gap-1">{actions}</div>}
     </div>
   )
 }

@@ -49,6 +49,7 @@ import {
   getEffectiveLumeConfig,
   getEffectivePluginRuntimeConfig,
 } from "../../system/lume-config-service";
+import { resolveConfiguredPrivateWriteRoots } from "../permissions/permission-config";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
 import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
 import {
@@ -107,6 +108,7 @@ import {
   readLatestTodoState,
 } from "./todo-state";
 import { createFileBackedRunContinuationStore } from "./run-continuation-store";
+import type { RunContinuationState } from "./run-continuation";
 import { persistAbortContinuation } from "../interruption/abort-continuation";
 import { classifyToolKind } from "../interruption/approval-service";
 import {
@@ -863,13 +865,11 @@ async function createRuntimeCoreSessionImpl(
         toolName.toLowerCase() === "processoutput" ? "read" : "execute";
       const toolUseId = toolInput.result.tool_use_id || task.id;
       const now = new Date().toISOString();
-      void createFileBackedRunContinuationStore(sessionDir)
-        .upsert({
-          version: 2,
-          runId: input.runId,
-          threadId: input.lumeSessionId,
-          status: "waiting_background",
-          checkpoint: {
+      const store = createFileBackedRunContinuationStore(sessionDir);
+      void store
+        .get(input.runId)
+        .then((existing) => {
+          const checkpoint: NonNullable<RunContinuationState["checkpoint"]> = {
             step: "waiting_for_tool_result",
             toolCallId: toolUseId,
             toolName,
@@ -884,10 +884,49 @@ async function createRuntimeCoreSessionImpl(
                 .digest("hex"),
               kind: toolKind,
             },
-          },
-          reason: "后台命令已持久化，恢复时重新附着而不重复执行。",
-          createdAt: now,
-          updatedAt: now,
+          };
+          // #650：主槽已有另一个在等后台任务时，旧快照降级进 backgroundCheckpoints
+          // 数组保留（按 processJobId 去重更新），不再被本任务覆盖。
+          const priorOther =
+            existing?.version === 2 &&
+            existing.checkpoint.processJobId &&
+            existing.checkpoint.processJobId !== task.id
+              ? [existing.checkpoint]
+              : [];
+          const carriedOthers = existing?.version === 2 ? existing.backgroundCheckpoints ?? [] : [];
+          const mergedOthers = [
+            ...carriedOthers.filter(
+              (item) =>
+                item.processJobId !== task.id &&
+                !priorOther.some((p) => p.processJobId === item.processJobId),
+            ),
+            ...priorOther.map((p) => ({
+              processJobId: p.processJobId!,
+              toolCallId: p.toolCallId ?? "",
+              toolName: p.toolName ?? "",
+              toolKind: p.toolKind ?? ("execute" as const),
+              toolCall: p.toolCall ?? {
+                id: p.toolCallId ?? "",
+                name: p.toolName ?? "",
+                input: null,
+                inputHash: "",
+                kind: p.toolKind ?? ("execute" as const),
+              },
+              syntheticToolResult: p.syntheticToolResult,
+              updatedAt: now,
+            })),
+          ];
+          return store.upsert({
+            version: 2,
+            runId: input.runId!,
+            threadId: input.lumeSessionId,
+            status: "waiting_background",
+            checkpoint,
+            ...(mergedOthers.length > 0 ? { backgroundCheckpoints: mergedOthers } : {}),
+            reason: "后台命令已持久化，恢复时重新附着而不重复执行。",
+            createdAt: existing?.createdAt ?? now,
+            updatedAt: now,
+          });
         })
         .catch((error) => {
           // fire-and-forget 持久化失败（AV 锁/磁盘满等）只降级恢复能力，不允许变成未处理拒绝崩进程
@@ -913,33 +952,47 @@ async function createRuntimeCoreSessionImpl(
       void continuationStore
         .get(input.runId)
         .then((continuation) => {
-          if (
-            !continuation ||
-            continuation.version !== 2 ||
-            continuation.checkpoint.processJobId !== event.task_id
-          )
-            return;
-          return continuationStore.update(input.runId!, {
-            status: "ready_to_resume",
-            checkpoint: {
-              ...continuation.checkpoint,
-              step: "after_tool_result",
-              syntheticToolResult: {
-                type: "tool_result",
-                tool_use_id:
-                  event.tool_use_id ?? continuation.checkpoint.toolCallId ?? "",
-                content: event.message ?? event.summary ?? "",
-                ...(event.status === "failed" ||
-                event.status === "stopped" ||
-                event.status === "interrupted"
-                  ? { is_error: true }
-                  : {}),
-                ...(event.execution
-                  ? { _meta: { execution: event.execution } }
-                  : {}),
+          if (!continuation || continuation.version !== 2) return;
+          const synthetic = {
+            type: "tool_result",
+            tool_use_id:
+              event.tool_use_id ?? continuation.checkpoint.toolCallId ?? "",
+            content: event.message ?? event.summary ?? "",
+            ...(event.status === "failed" ||
+            event.status === "stopped" ||
+            event.status === "interrupted"
+              ? { is_error: true }
+              : {}),
+            ...(event.execution
+              ? { _meta: { execution: event.execution } }
+              : {}),
+          };
+          // 主槽命中（最新后台任务）
+          if (continuation.checkpoint.processJobId === event.task_id) {
+            return continuationStore.update(input.runId!, {
+              status: "ready_to_resume",
+              checkpoint: {
+                ...continuation.checkpoint,
+                step: "after_tool_result",
+                syntheticToolResult: synthetic,
               },
-            },
-            reason: `后台命令已进入终态：${event.status}。`,
+              reason: `后台命令已进入终态：${event.status}。`,
+            });
+          }
+          // #650：次槽命中——把 syntheticToolResult 回填进对应数组项
+          const others = continuation.backgroundCheckpoints ?? [];
+          const hitIndex = others.findIndex(
+            (item) => item.processJobId === event.task_id,
+          );
+          if (hitIndex < 0) return;
+          const nextOthers = others.map((item, index) =>
+            index === hitIndex
+              ? { ...item, syntheticToolResult: synthetic, updatedAt: new Date().toISOString() }
+              : item,
+          );
+          return continuationStore.update(input.runId!, {
+            backgroundCheckpoints: nextOthers,
+            updatedAt: new Date().toISOString(),
           });
         })
         .catch((error) => {
@@ -1218,9 +1271,21 @@ async function createRuntimeCoreSessionImpl(
     return coding ?? getTodoCompletionBlocker(currentTodoState);
   };
   const enableFileCheckpointing = input.permissionMode !== "plan";
+  // SDK 工具入口的 containment 根集（#546）必须与 guardrail 的
+  // privateWriteRoots 白名单同源，否则 skills/plugins 等已授权写根会被新加的
+  // 无条件复核误拒。
   const additionalDirectories = [
     ...new Set(
       [
+        ...resolveConfiguredPrivateWriteRoots({
+          agentCwd: input.cwd,
+          lumeWorkDir: input.lumeWorkDir,
+          filesRoot: input.filesRoot,
+          plansRoot: input.plansRoot,
+          artifactsRoot: input.artifactsRoot,
+          workspaceSlug: input.workspaceSlug,
+          configuredRoots: getEffectiveLumeConfig(input.workspaceSlug).permissions?.privateWriteRoots,
+        }),
         ...(input.additionalDirectories ?? []),
         input.lumeWorkDir,
         input.artifactsRoot,

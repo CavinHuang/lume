@@ -1,4 +1,5 @@
 import test from 'node:test'
+import crypto from 'node:crypto'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -452,4 +453,21 @@ test('desktop dev builds desktop-host resources before launching Electron', () =
   assert.match(script, /build-desktop-host-resources\.mjs/)
   assertContainsBefore(script, 'spawnSync("node", [buildDesktopHostResourcesScript]', 'spawn(electronBin')
   assert.match(script, /LUME_COMPUTER_USE_BUNDLE_VARIANT:\s*["']dev["']/)
+})
+
+test('node-repl manifest hashes match the bundled resource files (#639 review)', () => {
+  // manifest 哈希与资源文件靠人工同步；漂移会让生产侧按哈希拒载。CI 在此
+  // 兜底：任何 resources-src/node-repl 下的文件改动都必须同步 manifest。
+  const { createHash } = crypto
+  const baseDir = resolve(DESKTOP_ROOT, 'resources-src', 'node-repl')
+  const manifest = JSON.parse(readFileSync(resolve(baseDir, 'manifest.json'), 'utf8'))
+  const entries = Object.entries(manifest.files ?? {})
+
+  assert.ok(entries.length > 0, 'manifest.files must not be empty')
+  for (const [relativePath, expected] of entries) {
+    const actual = createHash('sha256')
+      .update(readFileSync(resolve(baseDir, relativePath)))
+      .digest('hex')
+    assert.equal(actual, expected, `manifest hash drift for ${relativePath}`)
+  }
 })

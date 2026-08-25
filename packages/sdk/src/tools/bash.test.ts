@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BashTool, createPreviewAccumulator, extractFailureDigest, interpretShellExit, looksLikeInteractivePrompt, redactSensitiveText, tailTruncate } from "./bash";
 import { analyzeBashCommand } from "../utils/bash-command-analysis";
-import { clearTasks, TaskOutputTool } from "./task-tools";
+import { clearProcessJobs, ProcessOutputTool } from "./process-job-registry";
 import {
   createProcessJobRecord,
   getProcessJob,
@@ -275,8 +275,8 @@ describe("BashTool shell invocation", () => {
     expect(result._meta?.execution).toMatchObject({ version: 2, outcome: "failed" });
   });
 
-  test("returns a running result and exposes terminal metadata through TaskOutput", async () => {
-    clearTasks();
+  test("returns a running result and exposes terminal metadata through ProcessOutput", async () => {
+    clearProcessJobs();
     const root = await mkdtemp(join(tmpdir(), "lume-bash-background-"));
     const command = /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(resolveShellInvocation("").command)
       ? "Start-Sleep -Milliseconds 500; Write-Output background"
@@ -295,11 +295,11 @@ describe("BashTool shell invocation", () => {
     expect(started.content).toContain("Output is being written to:");
     expect(started._meta?.execution).toMatchObject({ terminationReason: "running" });
 
-    const completed = await TaskOutputTool.call({ task_id: taskId, block: true, timeout: 10_000 }, context);
+    const completed = await ProcessOutputTool.call({ task_id: taskId, block: true, timeout: 10_000 }, context);
     expect(completed.content).toContain("background");
     expect(completed._meta?.execution).toMatchObject({ terminationReason: "completed", command });
 
-    const incremental = await TaskOutputTool.call({ task_id: taskId, block: false, offset: 0, limit: 4 }, context);
+    const incremental = await ProcessOutputTool.call({ task_id: taskId, block: false, offset: 0, limit: 4 }, context);
     expect(incremental.content).toContain("back");
     expect(incremental._meta?.task).toMatchObject({ outputOffset: 0, nextOffset: 4, truncated: true });
     expect(events.filter((event) =>
@@ -317,7 +317,7 @@ describe("BashTool shell invocation", () => {
   }, 15_000);
 
   test("keeps multibyte characters intact across durable output block boundaries (#368)", async () => {
-    clearTasks();
+    clearProcessJobs();
     const root = await mkdtemp(join(tmpdir(), "lume-bash-utf8-blocks-"));
     const isPowerShellShell = /^(?:powershell|pwsh)/i.test(resolveShellInvocation("").command);
     // 70_000 CJK characters = 210KB of UTF-8, so every 64KB incremental read
@@ -336,7 +336,7 @@ describe("BashTool shell invocation", () => {
     const taskId = String(started.content).match(/task_\d+/)?.[0];
     expect(taskId).toBeTruthy();
 
-    const completed = await TaskOutputTool.call({ task_id: taskId, block: true, timeout: 25_000 }, context);
+    const completed = await ProcessOutputTool.call({ task_id: taskId, block: true, timeout: 25_000 }, context);
     expect(completed.is_error).toBeFalsy();
     expect(completed.content).not.toContain("\uFFFD");
 
@@ -374,7 +374,7 @@ describe("BashTool shell invocation", () => {
   });
 
   test("does not emit a duplicate terminal notification after ProcessStop", async () => {
-    clearTasks();
+    clearProcessJobs();
     const root = await mkdtemp(join(tmpdir(), "lume-bash-stop-"));
     const command = process.platform === "win32"
       ? "Start-Sleep -Seconds 5; Write-Output should-not-complete"
@@ -409,7 +409,7 @@ describe("BashTool shell invocation", () => {
   }, 15_000);
 
   test("reattaches a durable background command after the in-memory registry is cleared", async () => {
-    clearTasks();
+    clearProcessJobs();
     const root = await mkdtemp(join(tmpdir(), "lume-bash-recovery-"));
     const command = /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(resolveShellInvocation("").command)
       ? "Start-Sleep -Milliseconds 300; Write-Output recovered"
@@ -423,14 +423,14 @@ describe("BashTool shell invocation", () => {
     const taskId = String(started.content).match(/task_\d+/)?.[0];
     expect(taskId).toBeTruthy();
 
-    clearTasks();
-    const recovered = await TaskOutputTool.call({ task_id: taskId, block: true, timeout: 10_000 }, context);
+    clearProcessJobs();
+    const recovered = await ProcessOutputTool.call({ task_id: taskId, block: true, timeout: 10_000 }, context);
     expect(recovered.content).toContain("recovered");
     expect(recovered._meta?.execution).toMatchObject({ version: 2, outcome: "succeeded" });
   }, 15_000);
 
   test("does not reattach a reused worker PID with a different process identity", async () => {
-    clearTasks();
+    clearProcessJobs();
     const root = await mkdtemp(join(tmpdir(), "lume-bash-identity-"));
     const jobDir = join(root, "task_identity");
     createProcessJobRecord({
@@ -444,7 +444,7 @@ describe("BashTool shell invocation", () => {
       heartbeatAt: Date.now(),
     });
 
-    clearTasks();
+    clearProcessJobs();
     const [recovered] = loadProcessJobs(root);
 
     expect(recovered).toMatchObject({
@@ -459,16 +459,16 @@ describe("BashTool shell invocation", () => {
     });
   }, 15_000);
 
-  test("keeps UTF-8 intact when TaskOutput resumes inside a multibyte character", async () => {
-    clearTasks();
+  test("keeps UTF-8 intact when ProcessOutput resumes inside a multibyte character", async () => {
+    clearProcessJobs();
     const job = createProcessJobRecord({ subject: "utf8", status: "completed", output: "甲乙丙" });
-    const result = await TaskOutputTool.call({ task_id: job.id, block: false, offset: 1, limit: 4 }, { cwd: tmpdir() });
+    const result = await ProcessOutputTool.call({ task_id: job.id, block: false, offset: 1, limit: 4 }, { cwd: tmpdir() });
     expect(result.content).toContain("乙");
     expect(result.content).not.toContain("�");
   });
 
   test("returns a concrete diagnostic when the background output file is unavailable", async () => {
-    clearTasks();
+    clearProcessJobs();
     const missingFile = join(tmpdir(), `missing-background-${crypto.randomUUID()}.log`);
     const job = createProcessJobRecord({
       subject: "missing output",
@@ -477,7 +477,7 @@ describe("BashTool shell invocation", () => {
       output: "last captured output",
     });
 
-    const result = await TaskOutputTool.call({ task_id: job.id, block: false }, { cwd: tmpdir() });
+    const result = await ProcessOutputTool.call({ task_id: job.id, block: false }, { cwd: tmpdir() });
 
     expect(result.content).toContain("Unable to read background output file");
     expect(result.content).toContain("missing-background-");
@@ -485,7 +485,7 @@ describe("BashTool shell invocation", () => {
   });
 
   test("wakes host-side waiters when a background process reaches a terminal state", async () => {
-    clearTasks();
+    clearProcessJobs();
     const job = createProcessJobRecord({ subject: "waiter", status: "running" });
     const waiting = waitForProcessJobTerminal(job.id, 5_000);
 
@@ -495,7 +495,7 @@ describe("BashTool shell invocation", () => {
   });
 
   test("returns the running state when a host-side wait reaches its timeout", async () => {
-    clearTasks();
+    clearProcessJobs();
     const job = createProcessJobRecord({ subject: "slow", status: "running" });
 
     await expect(waitForProcessJobTerminal(job.id, 10)).resolves.toMatchObject({
@@ -505,7 +505,7 @@ describe("BashTool shell invocation", () => {
   });
 
   test("cancels a host-side wait immediately", async () => {
-    clearTasks();
+    clearProcessJobs();
     const job = createProcessJobRecord({ subject: "cancel wait", status: "running" });
     const controller = new AbortController();
     const waiting = waitForProcessJobTerminal(job.id, 5_000, controller.signal);
@@ -518,7 +518,7 @@ describe("BashTool shell invocation", () => {
 
 describe("BashTool #381 background timeout semantics", () => {
   test("explicit timeout still terminates a background command", async () => {
-    clearTasks();
+    clearProcessJobs();
     const root = await mkdtemp(join(tmpdir(), "lume-bash-bg-timeout-"));
     // 按实际解析的 shell 选命令(本机 Windows 可能配置了 POSIX bash,平台判断不可靠)
     const command = /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(resolveShellInvocation("").command)
@@ -537,7 +537,7 @@ describe("BashTool #381 background timeout semantics", () => {
     const taskId = String(started.content).match(/task_\d+/)?.[0];
     expect(taskId).toBeTruthy();
 
-    const completed = await TaskOutputTool.call({ task_id: taskId, block: true, timeout: 60_000 }, context);
+    const completed = await ProcessOutputTool.call({ task_id: taskId, block: true, timeout: 60_000 }, context);
     expect(completed._meta?.execution).toMatchObject({ outcome: "timed_out", terminationReason: "timeout" });
   }, 90_000);
 });

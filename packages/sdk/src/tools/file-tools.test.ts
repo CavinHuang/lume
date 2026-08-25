@@ -232,6 +232,40 @@ describe("file tools", () => {
     expect(await readFile(filePath, "utf8")).toBe("after\n");
   });
 
+  test("tells a capacity-dropped record apart from a never-read file (#655)", async () => {
+    // 长会话 LRU 驱逐会产生「明明读过却报未读」的伪错误；容量丢弃与
+    // 真未读必须分开表述，模型才能走最短自愈路径（直接重读）。
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const droppedPath = join(root, "dropped.txt");
+    const freshPath = join(root, "fresh.txt");
+    const neverPath = join(root, "never.txt");
+    await writeFile(droppedPath, "alpha\n", "utf8");
+    await writeFile(freshPath, "beta\n", "utf8");
+    await writeFile(neverPath, "gamma\n", "utf8");
+    // maxEntries=1：读第二个文件即把第一个的记录挤出。
+    const cache = new FileStateCache(1, 10_000_000);
+    await FileReadTool.call({ file_path: droppedPath }, { cwd: root, fileStateCache: cache });
+    await FileReadTool.call({ file_path: freshPath }, { cwd: root, fileStateCache: cache });
+
+    const droppedEdit = await FileEditTool.call(
+      { file_path: droppedPath, old_string: "alpha", new_string: "delta" },
+      { cwd: root, fileStateCache: cache },
+    );
+    expect(droppedEdit.is_error).toBe(true);
+    expect(String(droppedEdit.content)).toContain("capacity limit");
+    expect(String(droppedEdit.content)).toContain("Read the file again");
+    expect(droppedEdit._meta?.file).toMatchObject({ conflict: "not_read", retryable: true });
+
+    const neverEdit = await FileEditTool.call(
+      { file_path: neverPath, old_string: "gamma", new_string: "omega" },
+      { cwd: root, fileStateCache: cache },
+    );
+    expect(neverEdit.is_error).toBe(true);
+    expect(String(neverEdit.content)).toContain("has not been read yet");
+    expect(String(neverEdit.content)).not.toContain("capacity limit");
+  });
+
   test("requires reading before overwriting an existing file but exempts new files (#569)", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
