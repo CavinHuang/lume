@@ -26,7 +26,7 @@ import { getSubagentRunRegistry, resetSubagentRunRegistryForTest } from "../suba
 import { createChannel } from "../../channel/channel-manager";
 import { installConnectionVaultKey } from "../../channel/connection-credential-store";
 import { updateLumeConfigSection } from "../../system/lume-config-service";
-import { getRuntimeToolDescriptor } from "../tools/tool-descriptor-session";
+import { resolveRuntimeDescriptor } from "../permissions/can-use-tool";
 import { evaluatePluginSensitiveGate } from "../plugins/sensitive-gate.js";
 import { PluginPermissionRuntime } from "../plugins/permission-runtime.js";
 import { FilePluginStateStore } from "../plugins/plugin-state-store.js";
@@ -37,11 +37,21 @@ import {
 
 function availableTools(result: Awaited<ReturnType<typeof createRuntimeCoreSession>>): ToolDefinition[] {
   const deferred = (result.agent as unknown as { deferredToolPool?: ToolDefinition[] }).deferredToolPool ?? [];
-  return [...result.tools, ...deferred];
+  const pool = (result.agent as unknown as { toolPool?: ToolDefinition[] }).toolPool ?? [];
+  return [...result.tools, ...deferred, ...pool];
 }
 
 function availableToolNames(result: Awaited<ReturnType<typeof createRuntimeCoreSession>>): string[] {
   return availableTools(result).map((tool) => tool.name);
+}
+
+// 双载体合一（#541）：descriptor 直接从工具定义组装；查不到定义即无 descriptor
+function descriptorOf(
+  result: Awaited<ReturnType<typeof createRuntimeCoreSession>>,
+  name: string,
+): ReturnType<typeof resolveRuntimeDescriptor> {
+  const tool = availableTools(result).find((item) => item.name === name);
+  return tool ? resolveRuntimeDescriptor(tool) : undefined;
 }
 
 describe("runtime-core run", () => {
@@ -184,9 +194,9 @@ describe("runtime-core run", () => {
 
       const deferredTools = (result.agent as unknown as { deferredToolPool: ToolDefinition[] }).deferredToolPool;
       expect(deferredTools.length).toBeGreaterThan(0);
-      expect(getRuntimeToolDescriptor(sessionId, deferredTools[0]!.name)).toBeDefined();
-      expect(getRuntimeToolDescriptor(sessionId, "ToolSearch")).toBeDefined();
-      expect(getRuntimeToolDescriptor(sessionId, "ExecuteTool")).toBeDefined();
+      expect(resolveRuntimeDescriptor(deferredTools[0]!)).toBeDefined();
+      expect(descriptorOf(result, "ToolSearch")).toMatchObject({ name: "ToolSearch", source: "sdk" });
+      expect(descriptorOf(result, "ExecuteTool")).toMatchObject({ name: "ExecuteTool", source: "sdk" });
     } finally {
       await result?.session.dispose();
       if (previousToolSearch === undefined) {
@@ -247,6 +257,19 @@ describe("runtime-core run", () => {
       lumeSessionId: "subagent-session", threadType: "subagent", subagentType: "explorer", subagentRunId: "run-1", subagentId: "explorer-01"
     }));
     expect(child.session.getActiveToolNames()).not.toContain("Delegate");
+    expect(child.session.getActiveToolNames()).toContain("TaskReport");
+    const taskReport = child.tools.find((tool) => tool.name === "TaskReport");
+    expect(taskReport).toBeDefined();
+    expect(taskReport?.isReadOnly?.()).toBe(false);
+    expect(taskReport?.isConcurrencySafe?.()).toBe(false);
+    expect((taskReport as { runtimeMetadata?: { isReadOnly?: boolean; isConcurrencySafe?: boolean } })?.runtimeMetadata).toMatchObject({
+      isReadOnly: false,
+      isConcurrencySafe: false
+    });
+    const taskReportDescriptor = taskReport ? resolveRuntimeDescriptor(taskReport) : undefined;
+    expect(taskReportDescriptor).toBeDefined();
+    expect(taskReportDescriptor?.metadata.isReadOnly).toBe(false);
+    expect(taskReportDescriptor?.metadata.isConcurrencySafe).toBe(false);
     expect(child.session.getActiveToolNames()).not.toContain("Agent");
     for (const taskTool of ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskOutput", "ProcessOutput", "ProcessStop"]) {
       expect(child.session.getActiveToolNames()).not.toContain(taskTool);
@@ -599,7 +622,7 @@ describe("runtime-core run", () => {
         permissionMode: "acceptEdits"
       });
 
-      expect(getRuntimeToolDescriptor("memory-source-session", "memory.search")).toMatchObject({
+      expect(descriptorOf(result, "memory.search")).toMatchObject({
         source: "memory",
         metadata: {
           capability: "memory",
@@ -661,7 +684,13 @@ describe("runtime-core run", () => {
       apiKey: "test-key",
       permissionMode: "acceptEdits"
     });
-    expect(interactive.tools.some((tool) => tool === AskUserQuestionTool)).toBeTrue();
+    // 双载体合一（#541）后 AskUserQuestion 与其他工具一样包 wrapper，
+    // descriptor 随 runtimeMetadata 携带——不再要求定义对象引用恒等
+    const askTool = interactive.tools.find((tool) => tool.name === AskUserQuestionTool.name);
+    expect(askTool).toBeDefined();
+    expect((askTool as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata).toMatchObject({
+      runtimeWrapped: true
+    });
     interactive.session.dispose();
 
     const automation = await createRuntimeCoreSession({
@@ -735,7 +764,7 @@ describe("runtime-core run", () => {
     });
 
     expect(availableToolNames(result)).toContain("demo_echo");
-    expect(getRuntimeToolDescriptor("plugin-session", "demo_echo")).toMatchObject({
+    expect(descriptorOf(result, "demo_echo")).toMatchObject({
       canonicalName: "demo_echo",
       source: "plugin",
       metadata: {
@@ -855,8 +884,8 @@ describe("runtime-core run", () => {
       permissionMode: "acceptEdits",
       userMessage: "修复一个小的类型错误"
     });
-    expect(getRuntimeToolDescriptor("ordinary-worktree-session", "EnterWorktree")).toBeDefined();
-    expect(getRuntimeToolDescriptor("ordinary-worktree-session", "ExitWorktree")).toBeDefined();
+    expect(descriptorOf(ordinary, "EnterWorktree")).toBeDefined();
+    expect(descriptorOf(ordinary, "ExitWorktree")).toBeDefined();
     await ordinary.session.dispose();
 
     const plan = await createRuntimeCoreSession({
@@ -869,8 +898,8 @@ describe("runtime-core run", () => {
       permissionMode: "plan",
       userMessage: "请规划一个隔离 worktree"
     });
-    expect(getRuntimeToolDescriptor("plan-worktree-session", "EnterWorktree")).toBeUndefined();
-    expect(getRuntimeToolDescriptor("plan-worktree-session", "ExitWorktree")).toBeUndefined();
+    expect(descriptorOf(plan, "EnterWorktree")).toBeUndefined();
+    expect(descriptorOf(plan, "ExitWorktree")).toBeUndefined();
     await plan.session.dispose();
   });
 
@@ -1909,7 +1938,7 @@ describe("runtime-core run", () => {
     const runtime = new PluginPermissionRuntime({
       stateStore: new FilePluginStateStore(join(cwd, ".lume", "plugins-state.json")),
     });
-    const descriptor = getRuntimeToolDescriptor("plugin-gate-session", "demo_echo");
+    const descriptor = descriptorOf(result, "demo_echo");
     expect(descriptor).toBeDefined();
     const gate = await evaluatePluginSensitiveGate({
       descriptor: descriptor!,

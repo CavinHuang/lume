@@ -161,4 +161,23 @@ describe("createToolDescriptorsFromDefinitions", () => {
     const undeclaredReadOnly = createToolDescriptorsFromDefinitions([undeclared], "plugin")[0]?.metadata?.isReadOnly;
     expect(undeclaredReadOnly).toBeUndefined();
   });
+
+  test("source prefix heuristics: pinned full set (#541)", () => {
+    // 来源退化防线：SDK rebuild 把完整 toolset 以单一 "sdk" 组重喂时，
+    // 无盖章工具的来源靠前缀启发还原。新增前缀必须在此显式登记，
+    // 否则新工具会静默获得错误权限默认值（mcp/plugin=高摩擦 vs sdk=低）。
+    const pinnedPrefixes: Array<[string, string]> = [
+      ["mcp__", "mcp"],
+      ["memory.", "memory"],
+      ["memory_", "memory"],
+      ["automation_", "automation"],
+      ["cron_", "automation"]
+    ];
+    for (const [prefix, expected] of pinnedPrefixes) {
+      const descriptors = createToolDescriptorsFromDefinitions([makeTool(`${prefix}probe`)], "sdk");
+      expect(descriptors[0]?.source).toBe(expected);
+    }
+    // 不带任何已登记前缀的名字回落到组标签本身（sdk）
+    expect(createToolDescriptorsFromDefinitions([makeTool("plain_tool")], "sdk")[0]?.source).toBe("sdk");
+  });
 });

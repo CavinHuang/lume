@@ -9,10 +9,6 @@ import { getRuntimeFileAccessLedger } from "./file-access-ledger";
 import { wrapToolDefinitionWithRuntimePolicies } from "./tool-runtime-wrapper";
 import { createLogger } from "../../infra/logger";
 import {
-  appendRuntimeToolDescriptors,
-  setRuntimeToolDescriptors
-} from "./tool-descriptor-session";
-import {
   resolveEffectiveToolPolicies,
   type ResolveEffectiveToolPolicyInput
 } from "./tool-policy-matcher";
@@ -71,7 +67,6 @@ export class ToolRuntime {
       threadId: input.sessionId,
       cwd: input.cwd
     });
-    setRuntimeToolDescriptors(input.sessionId, descriptors);
 
     return {
       tools,
@@ -125,7 +120,6 @@ export class ToolRuntime {
       const residual = resolvedDescriptors.filter((descriptor) => TASK_MANAGEMENT_DENY_SET.has(descriptor.name));
       if (residual.length > 0) throw new Error(`Subagent task-management deny set violated: ${residual.map((item) => item.name).join(", ")}`);
     }
-    setRuntimeToolDescriptors(input.sessionId, resolvedDescriptors);
     return materializeRuntimeTools({
       descriptors: resolvedDescriptors,
       threadId: input.sessionId,
@@ -137,15 +131,6 @@ export class ToolRuntime {
         requiredDuringSkillScope: true
       }
     } : tool);
-  }
-
-  static registerGeneratedTools(input: {
-    tools: ToolDefinition[];
-    sessionId: string;
-  }): void {
-    const registry = new ToolRegistry();
-    registry.registerMany(createToolDescriptorsFromDefinitions(input.tools, "sdk"));
-    appendRuntimeToolDescriptors(input.sessionId, registry.list());
   }
 }
 
@@ -185,8 +170,9 @@ function materializeRuntimeTools(input: {
   cwd: string;
 }): ToolDefinition[] {
   return input.descriptors.map((descriptor) => {
+    // 已盖章的定义直接复用；其余统一包 wrapper——包括 AskUserQuestion，
+    // 单载体化后它同样需要 runtimeMetadata 供 canUseTool 组装 descriptor（#541）
     const runtimeTool =
-      descriptor.canonicalName === "askuserquestion" ||
       (descriptor.definition as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata?.runtimeWrapped === true
         ? descriptor.definition
         : wrapToolDefinitionWithRuntimePolicies({

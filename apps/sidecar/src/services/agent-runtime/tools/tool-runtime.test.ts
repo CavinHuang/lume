@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { createExecuteTool, createToolSearchTool, type ToolContext, type ToolDefinition } from "@lume/agent-sdk";
 import type { LumeGuardrailRunner } from "../guardrails/guardrail-runner";
-import { getRuntimeToolDescriptor } from "./tool-descriptor-session";
+import type { LumeToolDescriptor, LumeToolMetadata } from "./tool-types";
 import { ToolExecutionGateway } from "./tool-execution-gateway";
 import { ToolRuntime } from "./tool-runtime";
+
+// 双载体合一（#541）：descriptor 元数据随 wrapped definition 的 runtimeMetadata 携带
+function stampedMetadata(tool: ToolDefinition): Record<string, unknown> {
+  return (tool as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata ?? {};
+}
 
 function makeTool(name: string): ToolDefinition {
   return {
@@ -49,8 +54,14 @@ describe("ToolRuntime", () => {
     });
 
     expect(tools.map((tool) => tool.name)).toEqual(["Read", "TaskReport"]);
-    const taskReportDescriptor = getRuntimeToolDescriptor(sessionId, "TaskReport");
-    expect(taskReportDescriptor?.metadata.allowedInPlanMode).toBe(true);
+    const taskReportDescriptor: LumeToolDescriptor = {
+      name: "TaskReport",
+      canonicalName: "taskreport",
+      source: "task",
+      definition: tools[1]!,
+      metadata: stampedMetadata(tools[1]!) as unknown as LumeToolMetadata
+    };
+    expect(taskReportDescriptor.metadata.allowedInPlanMode).toBe(true);
     const gateway = new ToolExecutionGateway({
       guardrails: {
         async runToolInputGuardrails() {
@@ -60,7 +71,7 @@ describe("ToolRuntime", () => {
     });
     await expect(gateway.authorize({
       toolName: "TaskReport",
-      descriptor: taskReportDescriptor!,
+      descriptor: taskReportDescriptor,
       input: { status: "submitted", summary: "done" },
       permissionMode: "plan",
       context: { threadId: sessionId, cwd: "/tmp" }
@@ -101,35 +112,38 @@ describe("ToolRuntime", () => {
     expect((tools[0] as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata).toMatchObject({
       runtimeWrapped: true
     });
-    expect(getRuntimeToolDescriptor(sessionId, "TaskReport")?.definition).toBe(boundTaskReport);
     const context: ToolContext = { cwd: "/tmp", toolUseId: "task-report-collision" };
     await expect(tools[0]!.call({}, context)).resolves.toMatchObject({
       content: "bound"
     });
   });
 
-  test("appends SDK-generated descriptors without dropping deferred tool descriptors", () => {
-    const sessionId = `tool-runtime-generated-${crypto.randomUUID()}`;
-    ToolRuntime.resolveDynamicTools({
-      tools: [makeTool("Read"), makeTool("custom_search")],
+  test("generated ToolSearch/ExecuteTool carry self-contained runtimeMetadata for canUseTool (#541)", () => {
+    // 双载体合一后旁路注册已删：生成工具的定义自带盖章数据，canUseTool 直接取回
+    for (const tool of [createToolSearchTool(() => []), createExecuteTool(() => [])]) {
+      const meta = stampedMetadata(tool);
+      expect(meta).toMatchObject({
+        source: "sdk",
+        allowedInPlanMode: true,
+        requiresApprovalByDefault: false
+      });
+    }
+  });
+
+  test("AskUserQuestion is wrapped like any other tool so its descriptor rides on the definition (#541)", () => {
+    const result = ToolRuntime.build({
       cwd: "/tmp",
-      sessionId,
-      policyInput: {}
+      sessionId: `tool-runtime-askuser-${crypto.randomUUID()}`,
+      policyInput: {},
+      groups: [{
+        source: "sdk",
+        tools: [makeTool("AskUserQuestion")]
+      }]
     });
 
-    ToolRuntime.registerGeneratedTools({
-      tools: [createToolSearchTool(() => []), createExecuteTool(() => [])],
-      sessionId
-    });
-
-    expect(getRuntimeToolDescriptor(sessionId, "custom_search")).toBeDefined();
-    expect(getRuntimeToolDescriptor(sessionId, "ToolSearch")).toMatchObject({
-      name: "ToolSearch",
-      metadata: { allowedInPlanMode: true, requiresApprovalByDefault: false }
-    });
-    expect(getRuntimeToolDescriptor(sessionId, "ExecuteTool")).toMatchObject({
-      name: "ExecuteTool",
-      metadata: { allowedInPlanMode: true, requiresApprovalByDefault: false }
+    expect(stampedMetadata(result.tools[0]!)).toMatchObject({
+      runtimeWrapped: true,
+      canonicalName: "askuserquestion"
     });
   });
 });

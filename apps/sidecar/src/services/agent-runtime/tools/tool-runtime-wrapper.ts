@@ -26,6 +26,9 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
     runtimeMetadata: {
       ...(tool as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata,
       source: descriptor.source,
+      // canUseTool 从盖章数据组装 descriptor（单载体），分类器与权限指纹依赖这两字段
+      description: descriptor.metadata.description ?? tool.description,
+      canonicalName: descriptor.canonicalName,
       category: descriptor.metadata.category,
       capability: descriptor.metadata.capability,
       riskLevel: descriptor.metadata.riskLevel,

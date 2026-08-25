@@ -3,7 +3,7 @@
  * 插件敏感能力审批 / AskUserQuestion 会话 / workflow hook / subagent 策略 /
  * 自动化暂停五段权限逻辑与工具输入 guardrail 网关。
  */
-import { isHardDeniedTool, type CanUseToolFn } from "@lume/agent-sdk";
+import { isHardDeniedTool, type CanUseToolFn, type ToolDefinition } from "@lume/agent-sdk";
 import { randomUUID } from "node:crypto";
 import type { AgentToolPermissionRequest } from "@lume/shared";
 import type { PluginPermissions, SensitiveCapabilityKey } from "@lume/agent-sdk";
@@ -27,7 +27,27 @@ import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 import { builtinToolInputGuardrails } from "../guardrails/builtin-tool-guardrails";
 import { LumeGuardrailRunner } from "../guardrails/guardrail-runner";
 import { ToolExecutionGateway } from "../tools/tool-execution-gateway";
-import { getRuntimeToolDescriptor } from "../tools/tool-descriptor-session";
+import { canonicalizeAgentToolName } from "@lume/shared";
+import type { LumeToolDescriptor, LumeToolSource } from "../tools/tool-types";
+
+// 双载体合一（#541）：descriptor 元数据随工具定义的 runtimeMetadata 携带
+// （wrapper 盖章或工厂自带，如 ToolSearch/ExecuteTool），canUseTool 拿到的
+// 就是该 definition，直接按形取回，旁路 session Map 已删。
+export function resolveRuntimeDescriptor(tool: ToolDefinition): LumeToolDescriptor | undefined {
+  const meta = (tool as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata;
+  if (!meta || typeof meta !== "object") return undefined;
+  return {
+    name: tool.name,
+    canonicalName:
+      typeof meta.canonicalName === "string" && meta.canonicalName
+        ? meta.canonicalName
+        : canonicalizeAgentToolName(tool.name),
+    source: (typeof meta.source === "string" ? meta.source : "sdk") as LumeToolSource,
+    definition: tool,
+    // 盖章数据本就是 descriptor.metadata 的原样展开，直接按形取回
+    metadata: meta as unknown as LumeToolDescriptor["metadata"],
+  };
+}
 import { type PreparedRuntimeCoreAttempt } from "../runner/prepare-attempt";
 import { persistToolApprovalInterruption } from "../interruption/approval-service";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
@@ -296,10 +316,7 @@ export function createCanUseToolHandler(
         message: buildPendingGuidanceToolMessage(pendingGuidance),
       };
     }
-    const descriptor = getRuntimeToolDescriptor(
-      params.runtime.sessionId,
-      toolName,
-    );
+    const descriptor = resolveRuntimeDescriptor(tool);
     if (!descriptor) {
       recordPermissionDenial({
         threadId: params.runtime.sessionId,
@@ -875,7 +892,7 @@ export function createCanUseToolHandler(
     });
     recordPermissionDenial({
       threadId: params.runtime.sessionId,
-      descriptor: getRuntimeToolDescriptor(params.runtime.sessionId, toolName),
+      descriptor,
       toolName,
       rawInput: input,
       reasonCode: permissionTimedOut ? "approval_timeout" : "user_denied",
