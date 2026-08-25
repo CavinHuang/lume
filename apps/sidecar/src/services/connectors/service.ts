@@ -274,7 +274,14 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
       respondPage(false, "授权已失效(流程已终止),请回到 Lume 重新发起。");
       return;
     }
-    await validateAndStoreCredential(service, credential);
+    const stored = await validateAndStoreCredential(service, credential, pending);
+    if (!stored) {
+      // validator 是兑换后的又一个异步边界,断开会摘除 map 条目但无法取消本函数:
+      // 落盘前复检失配即弃。与上方守卫同构——done 已被断开 reject,不再触碰流程 promise
+      logger.warn("connector oauth flow cancelled during validation; skip persist", { service });
+      respondPage(false, "授权已失效(流程已终止),请回到 Lume 重新发起。");
+      return;
+    }
     logger.info("connector oauth flow completed", { service });
     pending.resolve(credential);
     respondPage(true, "授权成功,可以关闭此页面回到 Lume。");
@@ -327,8 +334,12 @@ function configRequestedScopes(service: string, auth: OAuth2AuthDefinition): str
   return auth.scopes;
 }
 
-/** 跑凭证验证器补全 profile(邮箱等),落盘 vault。 */
-async function validateAndStoreCredential(service: string, credential: ResolvedCredential & { authType: "oauth2" }): Promise<void> {
+/** 跑凭证验证器补全 profile(邮箱等),落盘 vault。返回 false 表示流已被断开/顶替,未落盘。 */
+async function validateAndStoreCredential(
+  service: string,
+  credential: ResolvedCredential & { authType: "oauth2" },
+  pending: PendingAuthorization,
+): Promise<boolean> {
   const provider = getConnector(service);
   let stored = credential;
   try {
@@ -347,7 +358,13 @@ async function validateAndStoreCredential(service: string, credential: ResolvedC
     // 验证失败不阻断授权:token 本身已兑换成功;但 profile 会落默认值,留痕供排查
     logger.warn("connector oauth2 validator failed", { service, error: error instanceof Error ? error.message : String(error) });
   }
+  // validator await 期间流可能已被断开/顶替:此处是最后一次落盘闸门,复检失配即弃,
+  // 否则断开后的盲写会让 connected 复活(#689)。复检到写盘之间纯同步,无插入窗口。
+  if (pendingAuthorizations.get(service) !== pending) {
+    return false;
+  }
   setConnectorOAuthCredential(service, stored);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
