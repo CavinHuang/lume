@@ -1607,25 +1607,6 @@ export interface ExternalDirEntryItem {
   modifiedAt?: string
 }
 
-/** Agent 复制文件夹到 thread 的输入 */
-export interface AgentCopyFolderInput {
-  sourcePath: string
-  workspaceSlug: string
-  threadId: string
-}
-
-/** 工作区复制外部文件夹输入 */
-export interface WorkspaceCopyFolderInput {
-  sourcePath: string
-  workspaceSlug: string
-}
-
-/** 工作区复制外部文件夹结果 */
-export interface WorkspaceCopyFolderResult {
-  ok: true
-  files: AgentSavedFile[]
-}
-
 export interface PromoteFileToWorkspaceInput {
   workspaceSlug: string
   threadId: string
@@ -1638,33 +1619,9 @@ export interface PromoteFileToWorkspaceResult {
   path: string
 }
 
-export interface WorkspaceFilePathInput {
-  workspaceSlug: string
-  path: string
-}
-
-export interface WorkspaceRenameFileInput extends WorkspaceFilePathInput {
-  newName: string
-}
-
-export interface WorkspaceMoveFileInput extends WorkspaceFilePathInput {
-  targetDir: string
-}
-
 export interface WorkspaceSaveFilesInput {
   workspaceSlug: string
   files: Array<{ filename: string; data?: string; sourcePath?: string }>
-}
-
-export interface AttachWorkspaceResourceToThreadInput {
-  workspaceSlug: string
-  threadId: string
-  sourcePath: string
-}
-
-export interface AttachWorkspaceResourceToThreadResult {
-  ok: true
-  path: string
 }
 
 // ===== IPC 通道常量 =====

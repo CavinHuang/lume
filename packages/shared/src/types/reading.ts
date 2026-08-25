@@ -1,4 +1,5 @@
-// gutenberg/poetry 书源客户端已删(#529, commit 5a32fab2)；如需恢复从该提交^ 取回并同步以下各处契约
+// gutenberg/poetry 书源客户端已删(#529, commit 5a32fab2)；如需恢复从该提交^ 取回并同步以下各处契约。
+// 注意：存量 gutenberg/poetry 书籍首次加载时 source.kind 会被 normalizeReadingSourceRef 归一为 "manual" 并写盘固化（书名/作者/笔记/进度无损）。
 export type ReadingSourceKind = "weread" | "manual" | "generated";
 export type ReadingBookTrack = "lume" | "co_read" | "recommended";
 export type ReadingBookStatus = "queued" | "reading" | "finished" | "paused";
