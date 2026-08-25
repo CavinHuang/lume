@@ -82,6 +82,7 @@ LUMELOG {"level":"warn","context":"host.pipe","event":"client.disconnected","mes
 - desktop-host 的输出由 `apps/desktop/src/desktop-host-supervisor.ts` 行缓冲解析 → 结构化事件（source=`desktop-host`）；node-repl 的输出由 `node-repl-runtime-manager.ts` 解析（批协议限制下 source 保持 `sidecar`，用 context `node-repl.host` 过滤）。
 - 无前缀或解析失败的行回退纯文本路径（`[desktop-host] ...` / `.stderr` 诊断缓冲）。
 - level 允许 trace..fatal；`fatal` 在两侧都映射为 `error`。
+- **已知平台限制（macOS）**：darwin 上 desktop-host 经 `/usr/bin/open -n -W -g`（LaunchServices）拉起以保留 .app bundle 的 TCC 权限身份，宿主 stderr 不经管道转发——supervisor 收到的是 open 进程自身的 stdio。因此宿主结构化行在 Windows/Linux 全量生效，macOS 上暂收不到（此限制对本 PR 之前的文本日志同样存在）。改进方向见仓库 issue 追踪。
 
 ## 8. dev 怎么看日志
 
