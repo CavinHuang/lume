@@ -113,6 +113,7 @@ import {
 import * as trayManager from './tray-manager'
 import { PageRenderer } from './page-renderer'
 import { createDesktopHostSupervisor, type DesktopHostState } from './desktop-host-supervisor'
+import { instrumentIpcCommand } from './logging/ipc-instrumentation'
 import {
   createChromeNativeHostInstallPlan,
   writeChromeNativeHostRegistration,
@@ -391,25 +392,19 @@ function safeLogIpcEvent(emit: () => void): void {
 }
 
 async function logIpcCommand<T>(name: string, args: unknown, run: () => Promise<T> | T): Promise<T> {
-  const quiet = QUIET_IPC_COMMANDS.has(name)
-  const startedAt = performance.now()
-  try {
-    const result = await run()
-    if (quiet) return result
-    safeLogIpcEvent(() => writeMainLog('debug', IPC_LOG_CONTEXT, 'command.completed', `ipc completed: ${name}`, {
-      durationMs: Math.round(performance.now() - startedAt),
-      data: { command: name, args: summarizeValue(args), result: summarizeValue(result) },
-    }))
-    return result
-  } catch (error) {
-    // 失败永远记录，quiet 只豁免成功路径（writeMainLog 直写不经 ipcMain，无自喂风险）。
-    safeLogIpcEvent(() => writeMainLog('warn', IPC_LOG_CONTEXT, 'command.failed', `ipc failed: ${name}`, {
-      durationMs: Math.round(performance.now() - startedAt),
-      data: { command: name, args: summarizeValue(args) },
-      ...(error instanceof Error ? { error } : {}),
-    }))
-    throw error
-  }
+  return instrumentIpcCommand({
+    isQuiet: (candidate) => QUIET_IPC_COMMANDS.has(candidate),
+    emit: (e) => safeLogIpcEvent(() => writeMainLog(e.level, IPC_LOG_CONTEXT, e.event, e.message, {
+      durationMs: e.durationMs,
+      ...e.correlation,
+      data: {
+        command: e.name,
+        args: summarizeValue(e.args),
+        ...(e.result !== undefined ? { result: summarizeValue(e.result) } : {}),
+      },
+      ...(e.error ? { error: e.error } : {}),
+    })),
+  }, name, args, run)
 }
 
 function handleLogged(channel: string, handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown): void {
@@ -2773,9 +2768,14 @@ function createSidecarHost({ onNotification }) {
             const settings = getSettingsBroker().replace(mutationId ? payload.params.settings : payload.params)
             const logging = (settings.generalSettings as { logging?: unknown } | undefined)?.logging
             if (logging && typeof logging === 'object') {
+              // 全量快照回填是常态：对比生效前的值列出真正变化的键，事件才可读。
+              const before = getLoggingService().getSettings()
+              const incoming = logging as Record<string, unknown>
+              const changedKeys = Object.keys(incoming)
+                .filter((key) => JSON.stringify(incoming[key]) !== JSON.stringify((before as unknown as Record<string, unknown>)[key]))
               getLoggingService().updateSettings(logging)
               writeMainLog('info', 'logging.config', 'logging.settings_updated', 'logging settings replaced', {
-                data: summarizeValue(logging),
+                data: { ...(changedKeys.length > 0 ? { changedKeys } : {}), settings: summarizeValue(logging) },
               })
             }
             // Agent 灵动岛 §5.3：设置开关"关闭后立即生效"。settings-replace 是所有设置写入

@@ -18,7 +18,7 @@ export const REDACT_KEY_PARTS: readonly string[] = [
 /** Normalized key EXACTLY in this set → truncated preview instead of full redaction. */
 export const CONTENT_PREVIEW_KEYS: ReadonlySet<string> = new Set([
   'body', 'prompt', 'systemprompt', 'rawrequest', 'rawresponse', 'requestbody', 'responsebody',
-  'content', 'html', 'markdown', 'input', 'output',
+  'content', 'contents', 'html', 'markdown', 'input', 'output',
 ])
 
 /** Union of both processes' quiet lists; failures are NEVER quiet regardless of this set. */
@@ -50,6 +50,44 @@ export function clipLogPreview(text: string): string {
 
 const SUMMARIZE_MAX_DEPTH = 2
 const SUMMARIZE_MAX_KEYS = 30
+
+/** 关联 ID 键 → 事件顶层字段名；值须通过 validId 同款形状校验才采纳。 */
+const CORRELATION_ID_KEYS: ReadonlyArray<readonly [string, string]> = [
+  ['traceId', 'traceId'],
+  ['runId', 'runId'],
+  ['threadId', 'threadId'],
+  ['sessionId', 'threadId'],
+  ['submissionId', 'submissionId'],
+  ['messageId', 'messageId'],
+  ['rpcRequestId', 'rpcRequestId'],
+]
+
+function isValidIdShape(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9:_-]{0,127}$/.test(value)
+}
+
+/**
+ * 从载荷浅层（顶层与一层嵌套）提取已知关联 ID，供 IPC/RPC 摘要事件挂到顶层，
+ * 使工程师能从一条 command.completed 结构化跳转到同会话的 agent spine。
+ */
+export function extractCorrelationIds(payload: unknown, depth = 0): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (depth > 1 || payload == null || typeof payload !== 'object' || Array.isArray(payload)) return out
+  for (const [key, field] of CORRELATION_ID_KEYS) {
+    if (out[field]) continue
+    const candidate = (payload as Record<string, unknown>)[key]
+    if (isValidIdShape(candidate)) out[field] = candidate
+  }
+  if (depth === 0) {
+    for (const child of Object.values(payload as Record<string, unknown>)) {
+      const nested = extractCorrelationIds(child, 1)
+      for (const [field, value] of Object.entries(nested)) {
+        if (!out[field]) out[field] = value
+      }
+    }
+  }
+  return out
+}
 
 export function summarizeValue(input: unknown, depth = 0): unknown {
   if (input == null || typeof input === 'boolean' || typeof input === 'number') return input

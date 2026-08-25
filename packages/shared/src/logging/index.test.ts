@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { REDACT_KEY_PARTS, CONTENT_PREVIEW_KEYS, LOG_PREVIEW_MAX_CHARS, QUIET_RPC_METHODS, clipLogPreview, summarizeValue } from './index'
+import { REDACT_KEY_PARTS, CONTENT_PREVIEW_KEYS, LOG_PREVIEW_MAX_CHARS, QUIET_RPC_METHODS, clipLogPreview, summarizeValue, extractCorrelationIds } from './index'
 
 describe('clipLogPreview', () => {
   test('短字符串原样返回', () => {
@@ -98,5 +98,26 @@ describe('常量', () => {
   test('QUIET_RPC_METHODS 为双端并集（含 channel:oauth-status）', () => {
     expect(QUIET_RPC_METHODS.has('channel:oauth-status')).toBe(true)
     expect(QUIET_RPC_METHODS.has('healthcheck')).toBe(true)
+  })
+  test('contents 键纳入内容预览名单（评审 Minor）', () => {
+    expect(CONTENT_PREVIEW_KEYS.has('contents')).toBe(true)
+  })
+})
+
+describe('extractCorrelationIds', () => {
+  test('顶层与一层嵌套的已知 ID 提升为顶层字段', () => {
+    const out = extractCorrelationIds({ threadId: 'thread-abc', command: 'x', params: { sessionId: 'sess-1', runId: 'run-9' } })
+    expect(out).toEqual({ threadId: 'thread-abc', runId: 'run-9' })
+    // sessionId 归一化为 threadId，但显式 threadId 优先不被覆盖
+  })
+  test('非法形状（过长/空白/非字符串）不采纳', () => {
+    expect(extractCorrelationIds({ threadId: 'has space' })).toEqual({})
+    expect(extractCorrelationIds({ threadId: 42 })).toEqual({})
+    expect(extractCorrelationIds({ threadId: `${'a'.repeat(200)}` })).toEqual({})
+  })
+  test('深度超过一层不再下钻；数组与非对象直接返回空', () => {
+    expect(extractCorrelationIds({ a: { b: { threadId: 'deep-1' } } })).toEqual({})
+    expect(extractCorrelationIds([1, 2])).toEqual({})
+    expect(extractCorrelationIds('text')).toEqual({})
   })
 })

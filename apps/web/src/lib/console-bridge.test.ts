@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterAll } from 'bun:test'
-import { installConsoleBridge, resetConsoleBridgeForTest } from './console-bridge'
+import { installConsoleBridge, resetConsoleBridgeForTest, waitForDroppedSummaryForTest } from './console-bridge'
 import { readRendererQueueForTest, clearRendererQueueForTest } from './desktop-api/logger'
 
 describe('console bridge', () => {
@@ -31,9 +31,11 @@ describe('console bridge', () => {
 
   test('窗口结束时补发 console.dropped 汇总', async () => {
     installConsoleBridge({ windowMs: 30 })
+    // 确定性等待：summary 写入队列的同一调用栈内 resolve，微任务续跑必然
+    // 抢在 logger flush（宏任务定时器）把队列 splice 搬空之前。
+    const done = waitForDroppedSummaryForTest()
     for (let i = 0; i < 35; i++) console.warn(`w${i}`)
-    // 等 dropTimer(~30ms) 触发但抢在 logger flush(50ms) 搬空队列之前读取。
-    await new Promise((resolve) => setTimeout(resolve, 40))
+    await done
     const summary = readRendererQueueForTest().find(
       (e: { context: string; event: string }) => e.context === 'console.bridge' && e.event === 'console.dropped',
     )

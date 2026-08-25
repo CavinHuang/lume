@@ -9,7 +9,7 @@ import {
 } from "./services/automation/automation-runner-service";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
-import { AGENT_IPC_CHANNELS, QUIET_RPC_METHODS, summarizeValue } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, QUIET_RPC_METHODS, extractCorrelationIds, summarizeValue } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
 import { getSubagentCoordinator } from "./services/agent-runtime/subagents/subagent-coordinator";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
@@ -254,6 +254,8 @@ async function handleRpcLine(line: string): Promise<void> {
   }
 
   const handler = handlers[method];
+  // 关联 ID 提前到 try 外声明，failed 分支同样可用。
+  const correlation = extractCorrelationIds(payload.params);
   if (!handler) {
     writeResponse({
       id: payload.id,
@@ -277,6 +279,7 @@ async function handleRpcLine(line: string): Promise<void> {
         message: `slow sidecar RPC: ${method}`,
         durationMs,
         rpcRequestId: String(payload.id),
+        ...correlation,
         data: { method, params: summarizeValue(payload.params) }
       });
     } else if (!QUIET_RPC_METHODS.has(method)) {
@@ -288,6 +291,7 @@ async function handleRpcLine(line: string): Promise<void> {
         status: "ok",
         durationMs,
         rpcRequestId: String(payload.id),
+        ...correlation,
         data: { method, params: summarizeValue(payload.params), result: summarizeValue(result) }
       });
     }
@@ -300,6 +304,7 @@ async function handleRpcLine(line: string): Promise<void> {
       message: `sidecar RPC failed: ${method}`,
       status: "error",
       rpcRequestId: String(payload.id),
+      ...correlation,
       data: { method, params: summarizeValue(payload.params), error }
     });
     writeResponse({

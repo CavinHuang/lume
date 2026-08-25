@@ -96,9 +96,9 @@ test('reports tab_closed/tab_moved/imported via onEvent', () => {
     { id: 'browser:x', url: 'https://example.test/dup' },
   ], undefined)
   expect(events.map((event) => event.event)).toEqual([
-    'browser.workspace.tab_moved',
-    'browser.workspace.tab_closed',
-    'browser.workspace.imported',
+    'tab_moved',
+    'tab_closed',
+    'tabs_imported',
   ])
   expect(events[0]?.level).toBe('info')
   expect(events[0]?.data).toMatchObject({ tabId: 'tab-m', fromOwnerThreadId: 'thread-1', toOwnerThreadId: 'thread-2' })

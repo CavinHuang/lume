@@ -307,3 +307,39 @@ test('updateSettings keeps dev trace when incoming value equals the default', as
     await rmRetry(configDir)
   }
 })
+
+// dev-trace 的 env 优先级矩阵（评审 T3）：显式 env > legacy env > 持久化非默认值 > dev 默认。
+test('dev trace env precedence matrix', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-envmatrix-'))
+  const terminal = { write: () => true }
+  const prevConsole = process.env.LUME_LOG_CONSOLE_LEVEL
+  const prevLegacy = process.env.LUME_LOG_LEVEL
+  try {
+    // 显式 env 存在时，dev 不做默认提升（运行时由 env 阈值生效）。
+    process.env.LUME_LOG_CONSOLE_LEVEL = 'debug'
+    delete process.env.LUME_LOG_LEVEL
+    let service = new LoggingService({ configDir, isDev: true, terminal, now: () => new Date() })
+    assert.equal(service.getSettings().consoleLevel, 'info')
+    await service.close()
+
+    // legacy env 在构造器中晚于 dev 提升应用，会覆盖之。
+    delete process.env.LUME_LOG_CONSOLE_LEVEL
+    process.env.LUME_LOG_LEVEL = 'warn'
+    service = new LoggingService({ configDir, isDev: true, terminal, now: () => new Date() })
+    assert.equal(service.getSettings().consoleLevel, 'warn')
+    assert.equal(service.getSettings().fileLevel, 'warn')
+    await service.close()
+
+    // legacy env + 持久化非默认值并存：legacy 仍胜出（既有语义，此处钉住）。
+    process.env.LUME_LOG_LEVEL = 'warn'
+    service = new LoggingService({ configDir, isDev: true, settings: { consoleLevel: 'debug' }, terminal, now: () => new Date() })
+    assert.equal(service.getSettings().consoleLevel, 'warn')
+    await service.close()
+  } finally {
+    if (prevConsole === undefined) delete process.env.LUME_LOG_CONSOLE_LEVEL
+    else process.env.LUME_LOG_CONSOLE_LEVEL = prevConsole
+    if (prevLegacy === undefined) delete process.env.LUME_LOG_LEVEL
+    else process.env.LUME_LOG_LEVEL = prevLegacy
+    await rmRetry(configDir)
+  }
+})

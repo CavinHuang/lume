@@ -48,7 +48,19 @@ function emitDroppedSummary(): void {
       data: { dropped: droppedInWindow },
     })
     droppedInWindow = 0
+    droppedWaiter?.()
+    droppedWaiter = null
   }
+}
+
+// 测试专用：在 emitDroppedSummary 写入队列的同一调用栈内 resolve，
+// 断言以微任务续跑，必然抢在下一次宏任务（logger flush 定时器）之前。
+let droppedWaiter: (() => void) | null = null
+
+export function waitForDroppedSummaryForTest(): Promise<void> {
+  return new Promise((resolve) => {
+    droppedWaiter = resolve
+  })
 }
 
 function forward(level: 'error' | 'warn', args: unknown[]): void {
@@ -104,6 +116,7 @@ export function resetConsoleBridgeForTest(): void {
     clearTimeout(dropTimer)
     dropTimer = null
   }
+  droppedWaiter = null
   restoreError?.()
   restoreWarn?.()
   restoreError = null

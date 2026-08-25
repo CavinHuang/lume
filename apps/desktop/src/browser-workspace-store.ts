@@ -86,7 +86,7 @@ export class BrowserWorkspaceStore {
     if (next.ownerThreadId && isRecoverable(tab)) {
       this.report({
         level: 'info',
-        event: 'browser.workspace.tab_moved',
+        event: 'tab_moved',
         message: `moved tab ${tab.tabId} to ${nextOwnerThreadId}`,
         data: { tabId: tab.tabId, fromOwnerThreadId: tab.ownerThreadId, toOwnerThreadId: nextOwnerThreadId },
       })
@@ -118,7 +118,7 @@ export class BrowserWorkspaceStore {
     this.write()
     this.report({
       level: 'info',
-      event: 'browser.workspace.tab_closed',
+      event: 'tab_closed',
       message: `closed tab ${tab.tabId}`,
       data: { ownerThreadId, tabId: tab.tabId },
     })
@@ -164,7 +164,7 @@ export class BrowserWorkspaceStore {
     this.write()
     this.report({
       level: 'info',
-      event: 'browser.workspace.imported',
+      event: 'tabs_imported',
       message: `imported ${importedTabCount} legacy tabs`,
       data: { ownerThreadId, importedTabCount },
     })
