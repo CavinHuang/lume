@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
-import type { ToolDefinition } from "@lume/agent-sdk";
+import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
 import { createFileAccessLedger } from "./file-access-ledger";
 import { wrapToolDefinitionWithRuntimePolicies } from "./tool-runtime-wrapper";
 import type { LumeToolDescriptor, LumeToolMetadata } from "./tool-types";
@@ -758,5 +758,32 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     completeBackground?.();
     await writing;
     expect(writeFinished).toBe(true);
+  });
+
+  test("tool watchdog returns an error result instead of freezing the run (#538)", async () => {
+    let finish: ((value: ToolResult) => void) | undefined;
+    const tool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Slow", {
+        name: "Slow",
+        description: "hangs until released",
+        inputSchema: { type: "object", properties: {} },
+        call() {
+          return new Promise<ToolResult>((resolve) => { finish = resolve; });
+        }
+      }, {
+        executionPolicy: { toolTimeoutMs: 50 }
+      }),
+      threadId: "thread-watchdog",
+      cwd: "/tmp",
+      fileLedger: createFileAccessLedger()
+    });
+
+    const pending = tool.call({}, { cwd: "/tmp", toolUseId: "tool-slow" });
+    await expect(pending).resolves.toMatchObject({
+      is_error: true,
+      content: expect.stringContaining("已跳过等待")
+    });
+    // 底层调用随后完成时不再影响已返回的结果
+    finish?.({ type: "tool_result", tool_use_id: "", content: "late" });
   });
 });

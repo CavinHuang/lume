@@ -58,6 +58,9 @@ export interface LumeToolMetadata {
   executionPolicy?: {
     maxCallsPerTurn?: number;
     allowBackground?: boolean;
+    /** 单次调用看门狗（#538）：超时后向引擎返回 is_error 结果而非无限等待；
+     * 底层调用仍会在后台自然结束。缺省不启用。 */
+    toolTimeoutMs?: number;
   };
 }
 

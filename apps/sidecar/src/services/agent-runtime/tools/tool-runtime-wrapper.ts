@@ -45,6 +45,8 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
     async call(rawInput, context) {
       const startedAt = Date.now();
       const computerUseTool = descriptor.name.startsWith("mcp__computer_use__");
+      // 单次摘要两处复用（#539）：diagnostic 版脱敏最全（含 JWT/凭据路径检测），
+      // 日志与事件共用，不再各算一遍深克隆+stringify
       const inputSummary = computerUseTool
         ? summarizeToolInput(rawInput, true)
         : createDiagnosticLogSummary(rawInput);
@@ -127,7 +129,7 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
         risk_level: descriptor.metadata.riskLevel,
         tool_name: tool.name,
         tool_use_id: context.toolUseId ?? "",
-        input_summary: computerUseTool ? inputSummary : summarizeToolInput(rawInput),
+        input_summary: inputSummary,
         session_id: context.sessionId ?? input.threadId
       } as any);
 
@@ -135,13 +137,17 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
       const backgroundLease = lease && descriptor.canonicalName === "bash"
         ? releaseLease
         : undefined;
+      const toolTimeoutMs = descriptor.metadata.executionPolicy?.toolTimeoutMs;
       try {
-        result = await tool.call(
+        const callPromise = tool.call(
           rawInput,
           backgroundLease
             ? { ...context, onBackgroundTaskCompleted: backgroundLease }
             : context
         );
+        result = toolTimeoutMs
+          ? await raceWithToolTimeout(callPromise, toolTimeoutMs, tool.name)
+          : await callPromise;
       } catch (error) {
         log.error("tool call threw", {
           threadId: input.threadId,
@@ -195,6 +201,28 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
       return governed.result;
     }
   };
+}
+
+// 每工具看门狗（#538）：不响应 abortSignal 的挂死工具不再冻结整轮 run——
+// 超时后向引擎返回 is_error 结果，底层调用留在后台自然结束（其结果被丢弃）
+function raceWithToolTimeout(call: Promise<ToolResult>, timeoutMs: number, toolName: string): Promise<ToolResult> {
+  return new Promise<ToolResult>((resolve) => {
+    const timer = setTimeout(
+      () => resolve(errorResult(undefined, `${toolName} 执行超过 ${timeoutMs}ms 未完成，已跳过等待（调用仍在后台运行）`)),
+      timeoutMs
+    );
+    timer.unref?.();
+    call.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        resolve(errorResult(undefined, `${toolName} 执行失败：${normalizeErrorMessage(error)}`));
+      }
+    );
+  });
 }
 
 function enforceExecutionPolicy(

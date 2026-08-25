@@ -34,6 +34,8 @@ export interface MemoryV2SearchInput {
   workspaceSlug?: string;
   query: string;
   maxResults?: number;
+  /** 只返回 score ≥ minScore 的结果；schema 承诺过该字段，此前被静默丢弃（#538） */
+  minScore?: number;
   scopes?: MemoryV2Scope[];
   intent?: MemoryV2SearchIntent;
   includeRecentDaily?: boolean;
@@ -104,8 +106,10 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
     hasBaseRecall: scored.length > 0
   });
   const maxResults = input.maxResults ?? 5;
-  // 预截断放宽 N×3 给 rerank 候选池:否则 rerank 收到的就是 ≤N 条恒等置换,
-  // 连"谁进 top-N"都无法参与,LLM 调用产出近乎完全作废(#521)
+  // 预截断放宽 N×3 给 rerank 候选池(#521);minScore 阈值只能作用于此处的检索
+  // 相似度分——rerank 会把 score 覆写为序号，阈值在序号尺度上无意义(#538/#711)
+  const meetsMinScore = (items: MemoryV2RecallItem[]): MemoryV2RecallItem[] =>
+    input.minScore === undefined ? items : items.filter((item) => item.score >= input.minScore!);
   const merged = mergeRecallItems([...scored, ...semantic])
     .sort((a, b) => b.score - a.score)
     .slice(0, maxResults * RERANK_CANDIDATE_MULTIPLIER);
@@ -113,15 +117,16 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
     workspaceSlug: input.workspaceSlug,
     modelRef: runtimeConfig.retrieval.rerankModelRef
   });
-  if (!reranker) return sortClaimMatchesFirst(merged.slice(0, maxResults), queryPlan);
+  if (!reranker) return sortClaimMatchesFirst(meetsMinScore(merged).slice(0, maxResults), queryPlan);
   try {
-    const reranked = await reranker(merged, query);
+    const reranked = await reranker(meetsMinScore(merged), query);
     // 以返回序号覆写 score:下游三级比较器(claim→predicate→score)的平分组内
     // 由此收敛到 rerank 序,而非 rerank 前的旧 score(#521)
     const scoredByRerank = reranked.map((item, index) => ({ ...item, score: reranked.length - index }));
     return sortClaimMatchesFirst(scoredByRerank.slice(0, maxResults), queryPlan);
   } catch {
-    return sortClaimMatchesFirst(merged.slice(0, maxResults), queryPlan);
+    return sortClaimMatchesFirst(meetsMinScore(merged).slice(0, maxResults), queryPlan);
+>>>>>>> ee364e4ce (🛠 fix(tools): 实现层杂项缺陷合集十二项全修（#538）)
   }
 }
 

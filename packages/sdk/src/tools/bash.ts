@@ -573,6 +573,8 @@ async function startDurableShellTask({
         const latest = getProcessJob(job.id)
         if (!latest || latest.status === 'running') return
         clearInterval(poll)
+        // 与 direct 路径对称：任务终态后摘除 run-abort 监听器，避免每次调用泄漏一个闭包（#538）
+        context.abortSignal?.removeEventListener('abort', stop)
         if (settled) return
         settled = true
         // Drain the worker's final writes to EOF; a single bounded read can
