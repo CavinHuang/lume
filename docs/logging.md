@@ -27,14 +27,14 @@ Rust 宿主 eprintln!("LUMELOG {json}")
 
 - 级别 6 档：`trace < debug < info < warn < error < fatal`
 - 来源 5 种：`main | sidecar | renderer | desktop-host | node-repl`
-- kind：`log`（普通）/ `trace`（链路 spine，无视文件级别一律落盘且不被队列丢弃）
+- kind：`log`（普通）/ `trace`（链路 spine）。落盘无视文件级别；**防队列丢弃的保护以 `TRACE_SPINE_EVENTS` 事件名登记为准**（logging-service.ts），新增 spine 事件必须登记，仅标 kind 不生效
 - 关联 ID（可选）：traceId / spanId / runId / threadId / messageId / submissionId / rpcRequestId / toolCallId 等
 - 常用字段：`durationMs`、`status(started|ok|error|cancelled|unknown)`、`data`、`error{name,message,stack,…}`
 
 ## 3. 命名规则
 
 - context 用「域.子域」：`desktop.ipc`、`rpc.server`、`browser.workspace`、`logging.config`、`agent.run`。
-- event 用点分短语（名词.动词过去式/状态）：`command.completed`、`command.failed`、`tab_closed`、`settings_updated`。
+- event 用点分短语（名词.动词过去式/状态）：`command.completed`、`command.failed`、`rpc.slow`。两类既定风格并存：流程/生命周期动作用点分（`command.completed`）；UI 实体的离散动作用 snake 过去式（`tab_closed`、`tabs_imported`）。event 名不得重复 context 前缀（context 已含 `browser.workspace` 时，event 写 `tab_closed` 而非全串）。
 
 ## 4. 级别使用规则
 
@@ -43,10 +43,10 @@ Rust 宿主 eprintln!("LUMELOG {json}")
 | 状态变更的关键动作（workspace 变更、日志设置热更、宿主启停） | `info` —— 生产日志文件的可见性由它承载 |
 | 读取/高频操作、全量 IPC/RPC 往返（参数结果摘要） | `debug` —— 面向 dev 排查 |
 | 可恢复异常、降级、重试 | `warn` |
-| 操作失败（附 error 字段） | `error` |
+| 操作失败（附 error 字段） | `error`；高频入口的失败可降为 `warn` 控制噪声（如主进程 `command.failed`） |
 | 链路 spine（message.accepted / agent.run.* 等） | 任意级别 + `kind:'trace'` |
 
-quiet 名单（`QUIET_RPC_METHODS`，shared 单一来源）只豁免**成功路径**的 debug 记录；失败永远记录。新增高频命令时把方法名加进该集合即可。
+quiet 名单有两处：RPC 侧 `QUIET_RPC_METHODS`（packages/shared 单一来源）；IPC 侧 `QUIET_IPC_COMMANDS`（apps/desktop/src/main.ts 本地维护，混含防自喂的日志类命令与敏感内容通道）。两者都只豁免**成功路径**的记录；失败永远记录。新增高频命令时把名字加进对应集合即可。
 
 ## 5. 脱敏与预览
 
@@ -54,7 +54,10 @@ quiet 名单（`QUIET_RPC_METHODS`，shared 单一来源）只豁免**成功路�
 
 - **REDACT_KEY_PARTS**（子串命中，归一化后包含即命中）：token / secret / password / apikey / authorization / cookie / setcookie / accesstoken / refreshtoken / grant → 一律 `[redacted]`，永不落盘。
 - **CONTENT_PREVIEW_KEYS**（归一化后精确命中）：body / prompt / content / message 类载荷键 → 截断为前 200 字符预览（`clipLogPreview`，超长标注 `…(+N)`）。
-- 其余键照常记录（字符串 >200 同样截预览；对象限深 2、键数 30；TypedArray 输出 `{type, byteLength}` 骨架）。
+- **两层上限要分清**：
+  - `summarizeValue` 层（IPC/RPC 摘要与显式调用）：字符串 >200 截预览；对象限深 2、键数 30；数组输出 `{length, items: 前 5 项}`；TypedArray/Buffer 输出 `{type, byteLength}` 骨架。
+  - normalizer 层（各进程写入前的最终规整）：深度 6、键数 100、数组 100 项、字符串上限 8192——普通键的长字符串保留到 8K 而非 200 预览。
+- Error 对象：summarizeValue 输出 name/message/stack（stack 仅 200 字符，约前几帧）；走事件 `error` 字段时 stack 保留至 8192。
 
 新键名归类：凭据类放进 REDACT_KEY_PARTS 或确认子串已覆盖；正文类确认精确名进 CONTENT_PREVIEW_KEYS。全文诊断走加密 diagnostic-content-store，不走普通日志。
 
@@ -63,7 +66,7 @@ quiet 名单（`QUIET_RPC_METHODS`，shared 单一来源）只豁免**成功路�
 1. 选 context/event（按 §3）。
 2. 选级别（按 §4：状态变更 info，高频 debug）。
 3. data 用 `summarizeValue(payload)` 或显式挑选的字段；自查敏感键（§5）。
-4. 主进程：`writeMainLog(level, context, event, message, { data })`；sidecar：`writeLogRecord(...)`；renderer：`writeWebLogEvent(...)`；Rust 宿主：`emit_log(...)`（见 §7）。
+4. 主进程：`writeMainLog(level, context, event, message, { data })`——它不是导出符号；main.ts 之外的模块用**回调注入**接进来（参照 BrowserWorkspaceStore 的 onEvent → main.ts 接线模式）。sidecar：`writeLogRecord(...)`；renderer：`writeWebLogEvent(...)`；Rust 宿主：`emit_log(...)`（见 §7）。
 5. 若是高频命令，评估加入 `QUIET_RPC_METHODS` / `QUIET_IPC_COMMANDS`。
 
 注意：主进程经 `lume:invoke` 分发的命令已由 `logIpcCommand` 自动记录 completed/failed，**无需重复埋点**；只有需要领域细节（如关联 ID）时才补显式事件。

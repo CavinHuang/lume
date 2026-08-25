@@ -8,7 +8,13 @@
 
 **Tech Stack:** TypeScript (bun monorepo)、Electron 主进程、serde_json (Rust)。零新依赖。
 
-**对规格的两处偏差（已在探索中确认更优）：**
+**对规格的偏差台账（随实现更新）：**
+1. submission 生命周期不新增埋点——rpc/agent-handlers.ts 的 trace spine 已覆盖。
+2. node-repl 结构化事件经 sidecar 传输时 source 只能是 sidecar（batch 协议校验），以 context 'node-repl.host' 区分。
+3. G5「约 10–20 个事件点」定稿为 4 个（workspace 三事件 + logging.settings_updated）；高频 UI churn 明确不埋。
+4. CONTENT_PREVIEW_KEYS 最终清单未纳入规格示例中的 message/text（错误消息不宜截 200 字符），实际 13 键含 contents。
+
+**原两处偏差说明：**
 1. submission 生命周期不再新增埋点——`rpc/agent-handlers.ts` 的 trace spine 已覆盖（agent.queue.accepted / execution.started 等）。
 2. node-repl 的结构化事件经 sidecar 传输时 source 只能是 `sidecar`（batch 协议校验 `source === expectedSource`），用 `context: 'node-repl.host'` 区分；desktop-host 经主进程 emit 可用真实 source `desktop-host`。
 
