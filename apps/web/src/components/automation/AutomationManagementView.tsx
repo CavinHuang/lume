@@ -1063,13 +1063,17 @@ function AutomationJobDetail({
               <div className="flex flex-col gap-1">
                 {runs.slice(0, 10).map((run) => {
                   const clickable = Boolean(run.threadId)
+                  // 影子记录的说明挂整行 title：后缀可能被 truncate 裁掉，行级 tooltip 必须仍可达
+                  const rowTitle = run.persistenceLost
+                    ? '本次运行确实发生，但记录写入磁盘失败（磁盘满或被占用），重启后此条将消失'
+                    : clickable ? '查看会话回放' : '无可查看的会话'
                   return (
                     <div
                       key={run.id}
                       onClick={clickable ? () => handleOpenRunReplay(run) : undefined}
-                      title={clickable ? '查看会话回放' : '无可查看的会话'}
+                      title={rowTitle}
                       className={`flex items-center gap-2.5 rounded-[6px] px-1.5 py-1 ${
-                        clickable ? 'cursor-pointer transition-colors hover:bg-[var(--surface-2)]' : ''
+                        clickable && !run.persistenceLost ? 'cursor-pointer transition-colors hover:bg-[var(--surface-2)]' : ''
                       }`}
                     >
                       <span className={`size-2 shrink-0 rounded-full ${
@@ -1081,7 +1085,7 @@ function AutomationJobDetail({
                       <span className="min-w-0 flex-1 truncate text-[14px] text-[var(--text-1)]">
                         {run.jobName}
                         {run.persistenceLost && (
-                          <span className="ml-2 text-[12px] text-[var(--text-3)]" title="运行确实发生，但记录写入磁盘失败（磁盘满或被占用），重启后此条将消失">（记录未能保存到磁盘）</span>
+                          <span className="ml-2 shrink-0 text-[12px] text-[var(--text-3)]">（未保存到磁盘）</span>
                         )}
                       </span>
                       <span className="shrink-0 text-[14px] text-[var(--text-3)]">{formatShortTime(run.startedAt)}</span>
