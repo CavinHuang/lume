@@ -51,7 +51,9 @@ function backupCorruptIndex(indexPath: string): void {
     }
   });
   if (hasCurrentGenBackup) return;
-  const backupPath = `${indexPath}.corrupt-${Date.now()}`;
+  // 快速 runner 上两代损坏可能落在同一毫秒——Date.now() 同名会互相覆盖致代间备份丢失
+  // （Linux CI 确定性复现）。附 hrtime 尾数保证唯一。
+  const backupPath = `${indexPath}.corrupt-${Date.now()}-${process.hrtime.bigint()}`;
   try {
     copyFileSync(indexPath, backupPath);
     log.warn("backed up corrupt automation index", { backupPath });
