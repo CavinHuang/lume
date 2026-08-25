@@ -3148,7 +3148,8 @@ function createSidecarHost({ onNotification }) {
         ...correlation,
         data: { method },
       })
-      throw new Error(`sidecar request payload too large: ${method}`)
+      // 该 message 会直达渲染层 toast，用面向用户的中文并给出限额与动作
+      throw new Error(`请求内容超过大小上限（96MB），请减小附件或内容后重试`)
     }
 
     return new Promise((resolveCall, rejectCall) => {

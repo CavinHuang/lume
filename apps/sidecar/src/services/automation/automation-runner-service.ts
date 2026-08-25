@@ -348,7 +348,16 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
     const pendingScheduledAt = consumeLatestAutomationTrigger(job.id);
     if (pendingScheduledAt !== undefined) {
       const latest = listAutomationJobs().find((item) => item.id === job.id);
-      if (latest?.enabled) void executeJob(latest, "schedule", pendingScheduledAt);
+      if (latest?.enabled) void executeJob(latest, "schedule", pendingScheduledAt).catch((error) => {
+      writeLogRecord({
+        level: "error",
+        context: "automation.runner",
+        event: "automation.execute_rejected",
+        message: "自动化任务执行链异常终止",
+        status: "error",
+        data: { automationJobId: latest.id, error: error instanceof Error ? error.message : String(error) }
+      });
+    });
     }
   }
   return run;
@@ -404,9 +413,20 @@ function scheduleJobInner(job: AutomationJob): void {
       void refreshAutomationRunnerJobs();
       return;
     }
-    void executeJob(latest, "schedule", scheduledAt).then((run) => {
-      if (run.status !== "skipped") void refreshAutomationRunnerJobs();
-    });
+    void executeJob(latest, "schedule", scheduledAt)
+      .then((run) => {
+        if (run.status !== "skipped") void refreshAutomationRunnerJobs();
+      })
+      .catch((error) => {
+        writeLogRecord({
+          level: "error",
+          context: "automation.runner",
+          event: "automation.execute_rejected",
+          message: "自动化任务执行链异常终止",
+          status: "error",
+          data: { automationJobId: latest.id, error: error instanceof Error ? error.message : String(error) }
+        });
+      });
   }, delay);
   jobDisposers.set(job.id, () => clearTimeout(timer));
 }
@@ -476,7 +496,16 @@ export function resumeAutomationAfterInteraction(threadId: string): void {
   const pendingScheduledAt = consumeLatestAutomationTrigger(state.jobId);
   const latest = listAutomationJobs().find((job) => job.id === state.jobId);
   if (pendingScheduledAt !== undefined && latest?.enabled && latest.schedule.type !== "once") {
-    void executeJob(latest, "schedule", pendingScheduledAt);
+    void executeJob(latest, "schedule", pendingScheduledAt).catch((error) => {
+      writeLogRecord({
+        level: "error",
+        context: "automation.runner",
+        event: "automation.execute_rejected",
+        message: "自动化任务执行链异常终止",
+        status: "error",
+        data: { automationJobId: state.jobId, error: error instanceof Error ? error.message : String(error) }
+      });
+    });
   } else {
     void refreshAutomationRunnerJobs();
   }

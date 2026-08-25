@@ -216,7 +216,12 @@ export function useGlobalAgentListeners() {
           }
           if (
             event.type === 'tool.permission_timeout' ||
-            (event.type === 'tool.failed' && event.error.message.includes('工具权限确认超时'))
+            (event.type === 'tool.failed' && (
+              event.error.message.includes('工具权限确认超时')
+              // 线程删除触发 cancel 时 sidecar 以 deny("用户拒绝执行工具") 收口（#519），
+              // 跨线程展示的横幅同样需要摘除，否则残留至刷新
+              || event.error.message.includes('用户拒绝执行工具')
+            ))
           ) {
             const requestId = event.type === 'tool.permission_timeout' ? event.requestId : event.toolCallId
             setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, requestId))

@@ -482,7 +482,34 @@ function sleepSyncMs(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+// 移动/重命名最终失败会直达前端 toast，常见 errno 翻译成可行动的中文（#552 UX review round7）
+const MOVE_ERRNO_MESSAGES: Record<string, string> = {
+  EACCES: "没有操作权限，请检查文件权限或是否被其他程序占用",
+  EPERM: "没有操作权限，请检查文件权限或是否被其他程序占用",
+  ENOSPC: "磁盘空间不足，请清理后重试",
+  ENOENT: "文件或目录不存在，可能已被移动或删除",
+  EEXIST: "目标位置已存在同名文件",
+  EISDIR: "目标是目录，无法完成该操作",
+  ENOTDIR: "路径中包含非目录项",
+  EMFILE: "系统打开的文件过多，请稍后重试",
+};
+
+function translateMoveError(error: unknown): Error {
+  const code = (error as NodeJS.ErrnoException).code;
+  const hint = typeof code === "string" ? MOVE_ERRNO_MESSAGES[code] : undefined;
+  if (!hint) return error instanceof Error ? error : new Error(String(error));
+  return new Error(hint);
+}
+
 function movePathWithFallback(sourcePath: string, targetPath: string): void {
+  try {
+    movePathWithFallbackInner(sourcePath, targetPath);
+  } catch (error) {
+    throw translateMoveError(error);
+  }
+}
+
+function movePathWithFallbackInner(sourcePath: string, targetPath: string): void {
   let firstErrorCode: string | undefined;
   try {
     renameSync(sourcePath, targetPath);

@@ -232,6 +232,8 @@ export function WebSearchSettings() {
         apiKey: apiKey === '__saved__' ? undefined : apiKey,
       })
       setTestStatuses((current) => ({ ...current, [provider]: result.ok ? 'ok' : 'fail' }))
+      // sidecar 组装的具体失败原因（缺 Python/下载失败/HTTP 码等）必须透出，不能只剩红绿两态（#548 UX review round7）
+      if (!result.ok && result.error) toast.error(result.error, { duration: 8000 })
     } catch {
       setTestStatuses((current) => ({ ...current, [provider]: 'fail' }))
     }
@@ -243,6 +245,7 @@ export function WebSearchSettings() {
     try {
       const result = await testSearchBackend({ provider })
       setTestStatuses((current) => ({ ...current, [provider]: result.ok ? 'ok' : 'fail' }))
+      if (!result.ok && result.error) toast.error(result.error, { duration: 8000 })
     } catch {
       setTestStatuses((current) => ({ ...current, [provider]: 'fail' }))
     }

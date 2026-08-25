@@ -307,9 +307,11 @@ export function GeneralSettings() {
               icon={FileCog}
               label="打开配置文件"
               onClick={() =>
-                void openLumeConfigSourceFile().then((result) => {
-                  if (!result.ok) toast.error('打开配置文件失败，请检查系统是否支持该操作')
-                })
+                openLumeConfigSourceFile()
+                  .then((result) => {
+                    if (!result.ok) toast.error('未能调用系统打开器，请手动打开配置文件')
+                  })
+                  .catch(() => toast.error('打开配置文件失败'))
               }
             />
             <QuickAction

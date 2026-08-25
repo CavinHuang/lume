@@ -333,9 +333,11 @@ export function McpSettings() {
                 type="button"
                 variant="outline"
                 onClick={() =>
-                  void openLumeConfigSourceFile().then((result) => {
-                    if (!result.ok) toast.error('打开配置文件失败，请检查系统是否支持该操作')
-                  })
+                  openLumeConfigSourceFile()
+                    .then((result) => {
+                      if (!result.ok) toast.error('未能调用系统打开器，请手动打开配置文件')
+                    })
+                    .catch(() => toast.error('打开配置文件失败'))
                 }
                 className="lume-action-tile h-8 gap-2 px-3 text-[12px] shadow-none"
               >
