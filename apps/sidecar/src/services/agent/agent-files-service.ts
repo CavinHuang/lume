@@ -739,7 +739,7 @@ export function exportLegacyResourceToProject(
   workspaceSlug: string,
   targetPath: string,
   conflict: "error",
-): { ok: true; path: string; warning?: string } {
+): { ok: true; path: string; } {
   if (conflict !== "error") {
     throw new Error("旧版资源导出必须显式使用不覆盖策略");
   }
@@ -785,7 +785,7 @@ export function exportLegacyResourceToProject(
 export function promoteFileRefToProject(
   ref: FileRef,
   workspaceSlug: string,
-): { ok: true; path: string; warning?: string } {
+): { ok: true; path: string; } {
   if (ref.source === "project") throw new Error("项目文件无需晋升");
   const rootPath = resolveFileRefRoot(ref);
   const lexicalSource = resolveSafePathWithin(

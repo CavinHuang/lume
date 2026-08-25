@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createGuanlanRuntime,
   downloadFile,
   parseGuanlanSearchOutput,
+  verifyPythonArchiveChecksum,
+  PythonRuntimeChecksumError,
   type GuanlanCommandRunner
 } from "./guanlan-runtime-service";
 
@@ -221,21 +223,40 @@ describe("downloadFile 超时与清理（#548）", () => {
   });
 
   test("重定向到白名单外地址时拒绝（SSRF 加固）", async () => {
-    const server = createServer((_req, res) => {
-      res.writeHead(302, { location: "http://10.255.255.1/evil" });
-      res.end();
-    });
-    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
-    const { port } = server.address() as AddressInfo;
-    const destination = join(tmpdir(), `lume-download-redirect-${process.pid}.bin`);
+    for (const location of ["http://10.255.255.1/evil", "https://10.255.255.1/evil"]) {
+      const server = createServer((_req, res) => {
+        res.writeHead(302, { location });
+        res.end();
+      });
+      await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+      const { port } = server.address() as AddressInfo;
+      const destination = join(tmpdir(), `lume-download-redirect-${process.pid}.bin`);
+      try {
+        // 两例分别钉死 https-only 与 host 白名单两个拒绝条件
+        await expect(
+          downloadFile(`http://127.0.0.1:${port}/x`, destination, { totalTimeoutMs: 4_000 })
+        ).rejects.toThrow("拒绝重定向至非预期地址");
+        expect(existsSync(destination)).toBeFalse();
+      } finally {
+        server.close();
+        server.closeAllConnections();
+      }
+    }
+  });
+
+  test("SHA256 校验：内容不匹配拒绝安装，未收录平台跳过（供应链防护）", () => {
+    const knownName = "cpython-3.11.15+20260414-aarch64-apple-darwin-install_only_stripped.tar.gz";
+    const badFile = join(tmpdir(), `lume-checksum-bad-${process.pid}.bin`);
+    const skipFile = join(tmpdir(), `lume-checksum-skip-${process.pid}.bin`);
+    writeFileSync(badFile, "not-python");
+    writeFileSync(skipFile, "whatever");
     try {
-      await expect(
-        downloadFile(`http://127.0.0.1:${port}/x`, destination, { totalTimeoutMs: 4_000 })
-      ).rejects.toThrow("拒绝重定向至非预期地址");
-      expect(existsSync(destination)).toBeFalse();
+      expect(() => verifyPythonArchiveChecksum(badFile, knownName)).toThrow(PythonRuntimeChecksumError);
+      // 表外名称=未收录平台，跳过校验不抛
+      expect(() => verifyPythonArchiveChecksum(skipFile, "unknown-platform-archive.tar.gz")).not.toThrow();
     } finally {
-      server.close();
-      server.closeAllConnections();
+      rmSync(badFile, { force: true });
+      rmSync(skipFile, { force: true });
     }
   });
 });

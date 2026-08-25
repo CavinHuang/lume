@@ -97,8 +97,15 @@ export function createGuanlanRuntime(options: GuanlanRuntimeOptions = {}) {
 
   async function ensureReady(): Promise<GuanlanRuntimeStatus> {
     let pythonPath = await resolvePython();
-    if (!pythonPath && await (options.downloadPython ?? ensureManagedPythonReady)()) {
-      pythonPath = await resolvePython();
+    if (!pythonPath) {
+      try {
+        if (await (options.downloadPython ?? ensureManagedPythonReady)()) {
+          pythonPath = await resolvePython();
+        }
+      } catch (error) {
+        // 下载环节的专用错误（如 checksum 校验失败）带完整指引，直接透出（UX round8）
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
     }
     if (!pythonPath) {
       return { ok: false, error: "未找到 Python，且自动下载 Python 运行时失败。可安装 Python 3.11+ 或配置 LUME_PYTHON。" };
@@ -289,6 +296,11 @@ async function doEnsureManagedPythonReady(): Promise<boolean> {
     await renameDirectory(extractPath, runtimeRoot);
     return existsSync(getManagedPythonExecutable(runtimeRoot));
   } catch (error) {
+    if (error instanceof PythonRuntimeChecksumError) {
+      // 校验失败≠下载失败：必须带专属指引穿透到 ensureReady 的用户文案，
+      // 否则用户会归因网络抖动并重试死循环（UX round8）
+      throw error;
+    }
     // downloadFile 的错误链（url/超时类型/HTTP 码）必须落到日志，否则 RPC 侧只剩
     // "自动下载失败"通用文案，无法区分 GitHub 404 / 网络墙 / 磁盘满（#548 review round5）
     log.warn("托管 Python 运行时下载/解压失败", {
@@ -340,12 +352,21 @@ const PYTHON_ARCHIVE_SHA256: Record<string, string> = {
   "cpython-3.11.15+20260414-x86_64-pc-windows-msvc-install_only_stripped.tar.gz": "71ffdf290e0483f0881e02518ecb9cedb449807856ae7dc76aa630e5acd00919"
 };
 
-function verifyPythonArchiveChecksum(archivePath: string, archiveName: string): void {
+/** 校验失败必须穿透到 ensureReady 的用户文案——吞成"下载失败"会让用户归因网络并重试死循环（UX round8） */
+export class PythonRuntimeChecksumError extends Error {}
+
+export function verifyPythonArchiveChecksum(archivePath: string, archiveName: string): void {
   const expected = PYTHON_ARCHIVE_SHA256[archiveName];
-  if (!expected) return; // 未收录的平台跳过（与旧行为一致），不阻断安装
+  if (!expected) {
+    // 未收录的平台跳过校验不阻断安装，但必须留痕——解压产物将被执行
+    log.warn("Python 运行时归档不在 checksum 表内，跳过校验", { archiveName, archivePath });
+    return;
+  }
   const actual = createHash("sha256").update(readFileSync(archivePath)).digest("hex");
   if (actual !== expected) {
-    throw new Error(`下载的 Python 运行时 SHA256 校验失败，已放弃安装`);
+    throw new PythonRuntimeChecksumError(
+      "下载的 Python 运行时校验失败（SHA256 不匹配），已拒绝安装。请检查网络代理是否劫持下载，或手动安装 Python 3.11+ 并配置 LUME_PYTHON"
+    );
   }
 }
 
