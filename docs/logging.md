@@ -106,6 +106,14 @@ pretty 行尾带 ≤200 字符 JSON 摘要（status/durationMs/data/error），�
 
 已知预期行为：renderer 的 console.error/warn 经桥接进入统一日志（限流 30 条/分钟，溢出汇总为 `console.dropped`），与全局错误 toast 对同一失败可能各出一条事件——context 不同、信息互补，属预期。
 
+## 8.1 存量平台问题登记（非日志重设计引入）
+
+跨平台评审发现的既存事实，修复需单开 issue；此处先立档防止未来误归因：
+
+- **Windows 环境变量大小写分叉**：Node 在 win32 上 `process.env` 大小写不敏感、POSIX 敏感——`LUME_LOG_*` 之外的**小写**设置在 Windows 生效、macOS/Linux 忽略。
+- **逐 chunk UTF-8 解码无 string_decoder**：多字节字符跨 read 块边界变 U+FFFD（不含换行字节故不断行；LUMELOG 前缀为 ASCII 不受影响）。位置：desktop-host-supervisor 的 `String(chunk)` 与 node-repl 的 `chunk.toString('utf8')`。
+- **`LUME_LOG_FORMAT=pretty` 无法覆盖 settings=json**：仅 env=json 方向覆盖 settings；§8 措辞已按实际行为修正，方向不对称本身是否要修待评估。
+
 ## 9. 运行时语义注记
 
 - **文件级别热更即时生效**：主进程在 logging 设置变更时经反向 RPC `system.log-level` 把生效级别下发给运行中的 sidecar（dev 下恒 trace）；sidecar 崩溃重启时 spawn env 会重新带上当前级别。
