@@ -157,6 +157,17 @@ export type AgentThreadStatus = 'active' | 'archived' | 'trashed'
 /**
  * Agent 线程轻量索引项
  *
+/** 线程当前生效的项目指令文件信息（GET_PROJECT_INSTRUCTIONS_INFO 返回；未加载时为 null）。 */
+export interface AgentProjectInstructionsInfo {
+  /** 命中文件的词法路径（展示用） */
+  path: string
+  /** 注入正文字符数（已剥 front matter、截断后） */
+  chars: number
+  /** 是否因超出体积上限被截断 */
+  truncated: boolean
+}
+
+/**
  * 存储在 ~/.lume/agent-sessions.json 中，
  * 存储在独立 Agent 线程索引中。
  */
@@ -1936,6 +1947,8 @@ export const AGENT_IPC_CHANNELS = {
   // 文件系统操作
   /** 获取 thread 工作路径 */
   GET_THREAD_PATH: 'agent:get-thread-path',
+  /** 查询线程当前生效的项目指令文件（CLAUDE.md/AGENTS.md；未加载返回 null） */
+  GET_PROJECT_INSTRUCTIONS_INFO: 'agent:get-project-instructions-info',
   /** 列出目录内容 */
   LIST_DIRECTORY: 'agent:list-directory',
   /** 删除文件/空目录 */

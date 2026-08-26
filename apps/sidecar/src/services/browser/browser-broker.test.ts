@@ -3,6 +3,33 @@ import { test } from "node:test";
 import { BrowserBroker } from "./browser-broker";
 import { BrowserRpcError } from "../../rpc/browser-rpc-sequence";
 
+test("per-tab queue slot is reclaimed after settle (#615)", async () => {
+  const broker = new BrowserBroker({ request: async () => ({ ok: true }) });
+  broker.setPluginState({ browserEnabled: true });
+  const queues = (broker as unknown as { queues: Map<string, Promise<unknown>> }).queues;
+
+  await broker.dispatch({ method: "list", params: { tabId: "tab-reclaim" }, browserSessionId: "s", browserTurnId: "t" });
+  // settle 后 finally 微任务回收槽位;让出一个宏任务确保已执行
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal([...queues.keys()].some((key) => key.includes("tab-reclaim")), false);
+});
+
+test("serial chain keeps working across slot reclamation (#615)", async () => {
+  const broker = new BrowserBroker({ request: async () => ({ ok: true }) });
+  broker.setPluginState({ browserEnabled: true });
+  const queues = (broker as unknown as { queues: Map<string, Promise<unknown>> }).queues;
+
+  // 连发三个同 tab 请求:回收逻辑不得打断串行语义,全部按序完成
+  const results = await Promise.all([
+    broker.dispatch({ method: "list", params: { tabId: "tab-chain" }, browserSessionId: "s", browserTurnId: "t" }),
+    broker.dispatch({ method: "list", params: { tabId: "tab-chain" }, browserSessionId: "s", browserTurnId: "t" }),
+    broker.dispatch({ method: "list", params: { tabId: "tab-chain" }, browserSessionId: "s", browserTurnId: "t" }),
+  ]);
+  assert.equal(results.length, 3);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal([...queues.keys()].some((key) => key.includes("tab-chain")), false);
+});
+
 test("extension backend is absent until browser/chrome plugins, setting, and live host agree", async () => {
   const calls: unknown[] = [];
   const broker = new BrowserBroker({ request: async (request) => { calls.push(request); return { backend: "iab" }; } }, { isAvailable: () => false, request: async () => ({ backend: "extension" }) });

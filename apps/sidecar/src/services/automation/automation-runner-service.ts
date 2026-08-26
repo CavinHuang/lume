@@ -50,9 +50,27 @@ export function setAutomationNotificationWriter(writer: NotificationWriter): voi
 
 function appendRun(run: AutomationRun): void {
   const runsPath = getAutomationRunsPath();
-  appendFileSync(runsPath, `${JSON.stringify(run)}\n`, "utf-8");
-  rotateAutomationRunsIfBloated(runsPath);
+  try {
+    appendFileSync(runsPath, `${JSON.stringify(run)}\n`, "utf-8");
+    rotateAutomationRunsIfBloated(runsPath);
+  } catch (error) {
+    // #615①:runs.jsonl 写失败(盘满/EBUSY)不得让 executeJob promise reject——
+    // 三处调用方全是 void 发射无 catch,reject 即 unhandledRejection 且 then 链
+    // (refreshAutomationRunnerJobs/合并触发器)断裂。降级仅记日志。
+    writeLogRecord({
+      level: "warn",
+      kind: "trace",
+      context: "agent.delivery.automation",
+      event: "automation.run_persist_failed",
+      message: "failed to persist automation run record",
+      status: "error",
+      data: { automationJobId: run.jobId, runId: run.id, trigger: run.trigger, error: error instanceof Error ? error.message : String(error) }
+    });
+  }
 }
+
+/** #615 测试钩子:appendRun 的吞错契约需直接验证(调用方全在 executeJob 内部)。 */
+export const appendRunForTest = appendRun;
 
 // #555:automation-runs.jsonl 只追加、无轮转,三处高频列表入口(自动化页/routine
 // 执行/cron 工具)全量读盘解析的成本随文件永久恶化。软上限触发的尾部截断使文件

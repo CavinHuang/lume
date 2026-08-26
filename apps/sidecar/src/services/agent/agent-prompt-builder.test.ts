@@ -594,4 +594,39 @@ describe("agent-prompt-builder", () => {
       rmSync(base, { recursive: true, force: true });
     }
   });
+
+  test("项目指令注入开关：全局关闭生效，工作区覆盖仅作用于该工作区(#670)", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "lume-proj-instr-toggle-"));
+    try {
+      writeFileSync(join(projectDir, "CLAUDE.md"), "# Toggle Proj Marker\n", "utf-8");
+      const ctx = { sessionId: "session-instr-toggle", availableTools: [], agentCwd: projectDir };
+
+      // 缺省（未配置）→ 注入
+      expect(buildSystemPromptAppend(ctx)).toContain("# Toggle Proj Marker");
+
+      // 全局关闭 → 跳过
+      const yamlPath = join(tempConfigDir, "lume.yaml");
+      writeFileSync(yamlPath, "agent:\n  projectInstructionsEnabled: false\n", "utf-8");
+      expect(buildSystemPromptAppend(ctx)).not.toContain("# Toggle Proj Marker");
+
+      // 工作区覆盖开启（全局仍关）→ 该工作区注入，其他/无 slug 保持关闭
+      writeFileSync(
+        yamlPath,
+        [
+          "agent:",
+          "  projectInstructionsEnabled: false",
+          "workspaces:",
+          "  demo:",
+          "    agent:",
+          "      projectInstructionsEnabled: true",
+        ].join("\n"),
+        "utf-8",
+      );
+      expect(buildSystemPromptAppend({ ...ctx, workspaceSlug: "demo" })).toContain("# Toggle Proj Marker");
+      expect(buildSystemPromptAppend(ctx)).not.toContain("# Toggle Proj Marker");
+      expect(buildSystemPromptAppend({ ...ctx, workspaceSlug: "other" })).not.toContain("# Toggle Proj Marker");
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
 });

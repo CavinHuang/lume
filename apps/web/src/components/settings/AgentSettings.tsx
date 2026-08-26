@@ -679,7 +679,7 @@ function ModelActionSettings({
         <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] py-3">
           <div className="min-w-0">
             <div className="text-[13px] font-semibold leading-5 text-[var(--text-1)]">推理强度</div>
-            <div className="mt-0.5 text-[12px] leading-4 text-[var(--text-3)]">影响回复前的思考深度</div>
+            <div className="mt-0.5 text-[12px] leading-4 text-[var(--text-3)]">影响回复前的思考深度，仅作用于主对话；未配置时按「中」执行。记忆整理、建议生成等后台辅助恒按「中」，不受此档位控制</div>
           </div>
           <ThinkingLevelPicker value={thinkingLevel} onChange={onThinkingLevelChange} inline />
         </div>
