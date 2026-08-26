@@ -269,19 +269,7 @@ describe("runtime-core run", () => {
       lumeSessionId: "subagent-session", threadType: "subagent", subagentType: "explorer", subagentRunId: "run-1", subagentId: "explorer-01"
     }));
     expect(child.session.getActiveToolNames()).not.toContain("Delegate");
-    expect(child.session.getActiveToolNames()).toContain("TaskReport");
-    const taskReport = child.tools.find((tool) => tool.name === "TaskReport");
-    expect(taskReport).toBeDefined();
-    expect(taskReport?.isReadOnly?.()).toBe(false);
-    expect(taskReport?.isConcurrencySafe?.()).toBe(false);
-    expect((taskReport as { runtimeMetadata?: { isReadOnly?: boolean; isConcurrencySafe?: boolean } })?.runtimeMetadata).toMatchObject({
-      isReadOnly: false,
-      isConcurrencySafe: false
-    });
-    const taskReportDescriptor = taskReport ? resolveRuntimeDescriptor(taskReport) : undefined;
-    expect(taskReportDescriptor).toBeDefined();
-    expect(taskReportDescriptor?.metadata.isReadOnly).toBe(false);
-    expect(taskReportDescriptor?.metadata.isConcurrencySafe).toBe(false);
+    // TaskReport 已随 main #571 重构移除（旧 coordinator 路径退役）
     expect(child.session.getActiveToolNames()).not.toContain("Agent");
     for (const taskTool of ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskOutput", "ProcessOutput", "ProcessStop"]) {
       expect(child.session.getActiveToolNames()).not.toContain(taskTool);

@@ -491,6 +491,13 @@ export function syncWebSearchEnvVars(config: LumeConfigWebSearchSection): void {
   }
 }
 
+export const KNOWN_LUME_SECTION_KEYS: readonly string[] = [
+  "models", "agent", "providers", "mcp", "memory", "skills", "plugins", "permissions", "hooks", "webSearch",
+  // 顶层文件段(LumeConfigFile),normalizeLumeConfigFile 消费
+  "version", "workspaces",
+];
+const KNOWN_AGENT_KEYS = new Set(["permissionMode", "thinkingLevel", "followUpQueueMode", "maxAutoTurnContinuations"]);
+
 function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
   if (!isPlainObject(value)) {
     return {};

@@ -24,22 +24,27 @@ export function createToolDescriptorsFromDefinitions(
     // 规范化为函数形态，这里两种形态都认；动态求值失败时回退推断
     const definitionIsReadOnly = readDeclaredReadOnly(definition);
     if (resolvedSource === "mcp" || resolvedSource === "plugin") {
+      // 四必填维度兜底与 sdk 分支对称（#711 review）：单载体 + fail-closed
+      // descriptor 组装下，缺失会让全部 mcp/plugin 工具被 descriptor_missing
+      // 误 deny。但名称启发式对远端可控的 mcp/plugin 名恒倾向 read/low——
+      // 若照抄 sdk 分支会经 metadata_low 在 default+plan 双通道自动放行，
+      // 构成 fail-open 翻转。故 riskLevel 钳到 medium、allowedInPlanMode
+      // 恒 false，让 approval 路径承接；显式 runtimeMetadata 仍可覆盖。
+      const fallbackRisk: LumeToolMetadata["riskLevel"] =
+        baseMetadata.riskLevel === "low" ? "medium" : baseMetadata.riskLevel;
       return {
         name: definition.name,
         source: resolvedSource,
         definition,
         metadata: {
           description: baseMetadata.description,
-          // 四必填维度兜底与 sdk 分支对称（#711 review）：单载体 + fail-closed
-          // descriptor 组装下，缺失会让全部 mcp/plugin 工具被 descriptor_missing
-          // 误 deny。显式 runtimeMetadata 仍可覆盖各字段。
           category: baseMetadata.category,
           capability: inferCapability(definition.name, resolvedSource, baseMetadata.category),
-          riskLevel: baseMetadata.riskLevel,
+          riskLevel: fallbackRisk,
           sideEffects: inferSideEffects(resolvedSource, baseMetadata.category),
-          allowedInPlanMode: baseMetadata.allowedInPlanMode ?? false,
+          allowedInPlanMode: false,
           isConcurrencySafe: isConcurrencySafe(baseMetadata.category),
-          requiresApprovalByDefault: baseMetadata.riskLevel !== "low",
+          requiresApprovalByDefault: true,
           ...(definitionIsReadOnly !== undefined ? { isReadOnly: definitionIsReadOnly } : {}),
           ...runtimeMetadata
         }
@@ -191,5 +196,6 @@ export function isSideEffects(value: unknown): value is LumeToolSideEffects {
     value === "local_write" ||
     value === "network" ||
     value === "process" ||
-    value === "external";
+    value === "external" ||
+    value === "desktop";
 }
