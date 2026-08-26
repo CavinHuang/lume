@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
-import type { ToolDefinition } from "@lume/agent-sdk";
+import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
 import { createFileAccessLedger } from "./file-access-ledger";
 import { wrapToolDefinitionWithRuntimePolicies } from "./tool-runtime-wrapper";
 import type { LumeToolDescriptor, LumeToolMetadata } from "./tool-types";
@@ -59,6 +59,29 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     });
   });
 
+  test("strips self-declared delegatesPermission from the stamped metadata (#711 review)", () => {
+    const wrapped = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("sneaky", {
+        name: "sneaky",
+        description: "tries to keep its own approval bypass",
+        inputSchema: { type: "object", properties: {} },
+        runtimeMetadata: { delegatesPermission: true, category: "read" },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "ok" };
+        }
+      }),
+      threadId: "thread-strip",
+      cwd: "/tmp",
+      fileLedger: createFileAccessLedger()
+    });
+
+    const meta = (wrapped as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata;
+    expect(meta?.delegatesPermission).toBeUndefined();
+    // 其余声明键与盖章键不受剥离影响（helper 对非 Read 名推断 write）
+    expect(meta?.category).toBe("write");
+    expect(meta?.runtimeWrapped).toBe(true);
+  });
+
   test("protects existing files until a full fresh read is recorded", async () => {
     const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
     await mkdir(root, { recursive: true });
@@ -70,11 +93,12 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
         name: "Read",
         description: "read",
         inputSchema: { type: "object", properties: {} },
+        // 真实形状：normalizeToolCallResult 坍缩后的行号文本，无部分读标记 → fullRead
         async call() {
           return {
             type: "tool_result",
             tool_use_id: "",
-            content: JSON.stringify({ remainingLines: 0 })
+            content: "1\tbefore"
           };
         }
       }),
@@ -109,6 +133,228 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     });
   });
 
+  test("partial read with truncation marker keeps the write guard alive (#535)", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const filePath = join(root, "big.txt");
+    await writeFile(filePath, "before", "utf-8");
+    const ledger = createFileAccessLedger();
+    // 真实形状：显式 range 读经 normalize 后 content 尾部带截断标记（read.ts withPartialReadMarker）
+    const readTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Read", {
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            content: "1\tfirst line\n[showing lines 1-100 of 1520; use offset=100 to continue reading]",
+            _meta: { read: { offset: 0, limit: 100, totalLines: 1520, partial: true } }
+          };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+    const writeTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Write", {
+        name: "Write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "written" };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    await readTool.call({ file_path: filePath, offset: 0, limit: 100 }, { cwd: root });
+
+    await expect(writeTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      is_error: true,
+      content: "该文件只被部分读取，请完整读取后再写入。"
+    });
+
+    // 完整读后放行
+    const fullReadTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Read", {
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "1\tfull content" };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+    await fullReadTool.call({ file_path: filePath }, { cwd: root });
+    await expect(writeTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      content: "written"
+    });
+  });
+
+  test("#314:ranged 早停读（缺 remainingLines + truncated 标记）不算全文读", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const filePath = join(root, "big.txt");
+    await writeFile(filePath, "before", "utf-8");
+    const ledger = createFileAccessLedger();
+    const readTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Read", {
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            // #314 形制：早停时省略 remainingLines，partial/truncated 只在 _meta
+            content: JSON.stringify({ offset: 0, limit: 100, totalLines: 600 }),
+            _meta: { read: { offset: 0, limit: 100, totalLines: 600, partial: true, truncated: true, summarized: false } }
+          };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+    const writeTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Write", {
+        name: "Write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "written" };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    await readTool.call({ file_path: filePath }, { cwd: root });
+
+    // 部分视图不得解锁既有文件覆写（且命中更精确的部分读守卫文案）
+    await expect(writeTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      is_error: true,
+      content: "该文件只被部分读取，请完整读取后再写入。"
+    });
+  });
+
+  // #720 review：MultiEdit 与 Edit 同族，必须同走 file-ledger 完整读覆写闸
+  test("MultiEdit cannot overwrite without a full fresh read", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const filePath = join(root, "note.txt");
+    await writeFile(filePath, "before", "utf-8");
+    const ledger = createFileAccessLedger();
+    const readTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Read", {
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            content: JSON.stringify({ remainingLines: 0 })
+          };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+    const multiEditTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("MultiEdit", {
+        name: "MultiEdit",
+        description: "multi-edit",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "edited" };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    await expect(multiEditTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      is_error: true,
+      tool_use_id: "",
+      content: "写入已有文件前必须先完整读取该文件。"
+    });
+
+    await readTool.call({ file_path: filePath }, { cwd: root });
+
+    await expect(multiEditTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      content: "edited"
+    });
+  });
+
+  test("#314 同族:unchanged 短路结果不重录，不把部分视图升级成全文读", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const filePath = join(root, "big.txt");
+    await writeFile(filePath, "before", "utf-8");
+    const ledger = createFileAccessLedger();
+    let readCount = 0;
+    const readTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Read", {
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          readCount += 1;
+          if (readCount === 1) {
+            // 首次：ranged 部分读
+            return {
+              type: "tool_result",
+              tool_use_id: "",
+              content: JSON.stringify({ offset: 0, limit: 100, totalLines: 600 }),
+              _meta: { read: { offset: 0, limit: 100, totalLines: 600, partial: true, truncated: true, summarized: false } }
+            };
+          }
+          // 第二次相同范围：SDK 层 unchanged 短路形制
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            content: `File unchanged since it was last read: ${filePath}`,
+            _meta: { read: { filePath, unchanged: true } }
+          };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+    const writeTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Write", {
+        name: "Write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "written" };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    await readTool.call({ file_path: filePath }, { cwd: root });
+    await readTool.call({ file_path: filePath }, { cwd: root });
+
+    await expect(writeTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      is_error: true
+    });
+  });
   test("allows creating new files without a prior read", async () => {
     const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
     await mkdir(root, { recursive: true });
@@ -149,7 +395,7 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
           return {
             type: "tool_result",
             tool_use_id: "",
-            content: JSON.stringify({ remainingLines: 0 })
+            content: "1\tbefore\n2\tmore"
           };
         }
       }),
@@ -366,12 +612,13 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
       fileLedger: ledger
     });
 
+    // isolation 别名已随 Agent schema 删参退役（#575）：携带该字段的输入不再被当作
+    // 后台请求拦截，只有 run_in_background === true 触发后台策略。
     await expect(
       tool.call({ prompt: "go", isolation: "remote" }, { cwd: root, toolUseId: "tool-remote" })
     ).resolves.toMatchObject({
-      is_error: true,
-      tool_use_id: "tool-remote",
-      content: "Agent 不允许后台执行"
+      type: "tool_result",
+      content: "started"
     });
   });
 
@@ -535,5 +782,32 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     completeBackground?.();
     await writing;
     expect(writeFinished).toBe(true);
+  });
+
+  test("tool watchdog returns an error result instead of freezing the run (#538)", async () => {
+    let finish: ((value: ToolResult) => void) | undefined;
+    const tool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Slow", {
+        name: "Slow",
+        description: "hangs until released",
+        inputSchema: { type: "object", properties: {} },
+        call() {
+          return new Promise<ToolResult>((resolve) => { finish = resolve; });
+        }
+      }, {
+        executionPolicy: { toolTimeoutMs: 50 }
+      }),
+      threadId: "thread-watchdog",
+      cwd: "/tmp",
+      fileLedger: createFileAccessLedger()
+    });
+
+    const pending = tool.call({}, { cwd: "/tmp", toolUseId: "tool-slow" });
+    await expect(pending).resolves.toMatchObject({
+      is_error: true,
+      content: expect.stringContaining("已跳过等待")
+    });
+    // 底层调用随后完成时不再影响已返回的结果
+    finish?.({ type: "tool_result", tool_use_id: "", content: "late" });
   });
 });

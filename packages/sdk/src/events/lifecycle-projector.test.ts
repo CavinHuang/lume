@@ -514,4 +514,54 @@ describe("projectLifecycle", () => {
       review: { severity: "concern", summary: "watch out", details: "line 3", modelRef: "gpt-x", durationMs: 120 },
     })
   })
+
+  test("assistant.usage/costUSD 透传到 message.end detail(逐字段)", async () => {
+    const events = await run([
+      { type: "assistant", uuid: "u1", costUSD: 0.42, usage: {
+        inputTokens: 100, outputTokens: 5, cacheReadInputTokens: 50, cacheCreationInputTokens: 0, totalTokens: 155,
+      }, message: { role: "assistant", content: [{ type: "text", text: "hi" }] } } as any,
+    ])
+    const msgEnd = events.find((e) => e.detail?.type === "message.end")
+    expect(msgEnd).toBeDefined()
+    expect(msgEnd.detail.message.usage).toEqual({
+      inputTokens: 100, outputTokens: 5, cacheReadInputTokens: 50, cacheCreationInputTokens: 0, totalTokens: 155,
+    })
+    expect(msgEnd.detail.message.costUSD).toBe(0.42)
+  })
+
+  test("usage 缺省时 message.end detail.message 不带 usage/costUSD 键(防 undefined 污染)", async () => {
+    const events = await run([
+      assistantWithTool("turn-usage-absent") as any,
+      toolResult("t1") as any,
+      { type: "result", subtype: "success", num_turns: 1 } as any,
+    ])
+    const msgEnd = events.find((e) => e.detail?.type === "message.end")
+    expect(msgEnd).toBeDefined()
+    expect("usage" in msgEnd.detail.message).toBe(false)
+    expect("costUSD" in msgEnd.detail.message).toBe(false)
+  })
+
+  test("local_command_output with tool_use_id → run.event tool.output skeleton", async () => {
+    const events = await run([
+      { type: "system", subtype: "local_command_output", content: "build running...",
+        tool_use_id: "toolu_1" } as any,
+    ])
+    expect(events).toHaveLength(1)
+    expect(events[0].kind).toBe("run")
+    expect(events[0].phase).toBe("event")
+    expect(events[0].turnId).toBeNull()
+    expect(events[0].detail).toEqual({
+      type: "tool.output",
+      toolCallId: "toolu_1",
+      chunk: "build running...",
+    })
+  })
+
+  test("local_command_output without tool_use_id stays ignored (legacy form)", async () => {
+    const events = await run([
+      { type: "system", subtype: "local_command_output", content: "Command is still running." } as any,
+      { type: "system", subtype: "local_command_output", content: "owned", tool_use_id: "" } as any,
+    ])
+    expect(events).toHaveLength(0)
+  })
 })

@@ -126,6 +126,22 @@ function renderComments(comments: LemmyCommentView[]): string {
 	return renderThread(0, 0).trim();
 }
 
+/** Lemmy 实例探测：/api/v3/site 返回含 site 字段的 JSON（#538 hostname 门） */
+async function isLemmyInstance(
+	baseUrl: string,
+	timeout: number,
+	signal?: AbortSignal,
+): Promise<boolean> {
+	try {
+		const result = await loadPage(`${baseUrl}/api/v3/site`, { timeout: Math.min(timeout, 5), signal });
+		if (!result.ok) return false;
+		const data = tryParseJson<{ site?: unknown }>(result.content);
+		return Boolean(data?.site);
+	} catch {
+		return false;
+	}
+}
+
 export const handleLemmy: SpecialHandler = async (
 	url: string,
 	timeout: number,
@@ -142,6 +158,10 @@ export const handleLemmy: SpecialHandler = async (
 
 		const baseUrl = parsed.origin;
 		const fetchedAt = new Date().toISOString();
+
+		// hostname 门（#538）：任意站点都可能带 /post/<n> 路径，先确认是 Lemmy
+		// 实例再发同源 API 请求（对照 mastodon 的实例探测）
+		if (!(await isLemmyInstance(baseUrl, timeout, signal))) return null;
 
 		let postId = id;
 		if (kind === "comment") {

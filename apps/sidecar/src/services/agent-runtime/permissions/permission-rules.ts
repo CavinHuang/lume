@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve } from "node:path";
-import { analyzeBashCommand } from "@lume/agent-sdk";
+import { analyzeBashCommand, isReadOnlyShellInput } from "@lume/agent-sdk";
 import type { LumeToolDescriptor } from "../tools/tool-types";
 import { matchesRuntimeToolPolicyEntry } from "../tools/tool-policy-matcher";
 import type { PermissionRule } from "./permission-types";
@@ -67,6 +67,10 @@ function permissionCommandCandidates(toolName: string, command: string, action: 
   // An unparseable command must never acquire a persistent automatic allow.
   // Retaining raw matching for deny rules prevents syntax from bypassing a
   // user-configured prohibition while the normal permission flow asks once.
+  // Exception（#571 第 3 项连带）: PowerShell 方言命令无法被 bash 语法树解析，
+  // 但经保守只读子集证明的命令与 simple 同等可信——allow/ask 规则均可按精确
+  // 指纹匹配，否则 Windows 回退 PowerShell 后规则形同虚设。守卫层危险动词表仍兜底。
+  if (isReadOnlyShellInput({ command })) return [command];
   return action === "deny" ? [command] : [];
 }
 

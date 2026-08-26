@@ -457,7 +457,7 @@ export class LoggingService {
       for (const file of [...snapshot.files].reverse()) {
         chunks.push(`===== ${file.name} =====`, await readFile(join(this.logsDir, file.name), 'utf8'), '')
       }
-      await writeFile(path, chunks.join('\n'), 'utf8')
+      await writeFile(path, chunks.join('\n'), { encoding: 'utf8', mode: 0o600 })
       const info = await stat(path)
       return { path: '', fileName, sizeBytes: info.size }
     } finally {
@@ -626,7 +626,9 @@ export class LoggingService {
     try {
       await mkdir(this.logsDir, { recursive: true })
       await this.ensureSegment(Buffer.byteLength(lines, 'utf8'), this.now())
-      await appendFile(this.activePath, lines, 'utf8')
+      // 日志段文件收权（交叉复审建议）：日志经 live 流推 renderer 且可导出，
+      // 落盘面不给其他账户留读取；mode 仅在创建时生效，轮转新段自动继承
+      await appendFile(this.activePath, lines, { encoding: 'utf8', mode: 0o600 })
       this.activeSize += Buffer.byteLength(lines, 'utf8')
       for (const listener of this.listeners) {
         try { listener(events) } catch { /* subscriber failures cannot break the writer */ }

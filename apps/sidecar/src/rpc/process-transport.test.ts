@@ -27,4 +27,17 @@ describe("createProcessRpcTransport 行缓冲（#154 大小上限）", () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(received).toEqual([]);
   });
+
+  test("输入流关闭触发 onClose（#611 断连批量 reject 的钩子）", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const transport = createProcessRpcTransport({ input, output, parentPort: null });
+    const closed = new Promise<void>((resolve) => transport.onClose(() => resolve()));
+
+    // resume 让流进入 flowing 模式，end() 后 'end'/'close' 才会触发
+    input.resume();
+    input.end();
+    await closed;
+    input.destroy();
+  });
 });

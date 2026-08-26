@@ -10,7 +10,7 @@ import type { ToolDefinition } from '../types.js'
 
 export const AgentTool: ToolDefinition = {
   name: 'Agent',
-  description: 'Launch a new agent to handle complex, multi-step tasks. Each agent has its own context and tool set. IMPORTANT: When tasks are independent, produce MULTIPLE Agent tool_use calls in a single response — they will execute in parallel automatically. Each call waits for its subagent result.',
+  description: 'Launch a new agent to handle a complex, multi-step task. Each agent runs in its own context with its own tool set. When tasks are independent, issue MULTIPLE Agent calls in a single response — they run concurrently, each returning its own final output. Creating an independent task requires new_task=true; to continue an existing task pass task_id instead (never copy a raw user message as the prompt).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -62,26 +62,10 @@ export const AgentTool: ToolDefinition = {
         type: 'string',
         description: 'Optional model override for this agent',
       },
-      max_turns: {
-        type: 'number',
-        description: 'Optional max turn override for this agent',
-      },
-      name: {
-        type: 'string',
-        description: 'Name for the spawned agent',
-      },
-      team_name: {
-        type: 'string',
-        description: 'Optional team name used to group or label the spawned agent',
-      },
       mode: {
         type: 'string',
         enum: ['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto'],
         description: 'Permission mode for the spawned agent',
-      },
-      cwd: {
-        type: 'string',
-        description: 'Optional working directory override for the spawned agent',
       },
       run_in_background: {
         type: 'boolean',
@@ -92,10 +76,8 @@ export const AgentTool: ToolDefinition = {
         enum: ['none', 'worktree'],
         description: 'Optional execution isolation. worktree creates a temporary git worktree.',
       },
-      subagent_run_id: {
-        type: 'string',
-        description: 'Internal run id injected by the host runtime. Reused across task events and finalization.',
-      },
+      // subagent_run_id 由宿主在派发子代理时编程注入（run-subagent/run-tools 的
+      // forwardedToolInput 覆盖展开），不进 schema——内部字段不应暴露给模型（#540）
     },
     required: ['prompt', 'description'],
   },
@@ -106,7 +88,6 @@ export const AgentTool: ToolDefinition = {
     if (!input || typeof input !== 'object') return 'Input must be an object.'
     if (typeof input.prompt !== 'string' || !input.prompt.trim()) return 'prompt is required.'
     if (typeof input.description !== 'string' || !input.description.trim()) return 'description is required.'
-    if (input.isolation !== undefined && !['none', 'worktree'].includes(input.isolation)) return 'Only none and worktree isolation are supported.'
     if (input.run_in_background !== undefined && typeof input.run_in_background !== 'boolean') return 'run_in_background must be a boolean.'
   },
   async prompt() {

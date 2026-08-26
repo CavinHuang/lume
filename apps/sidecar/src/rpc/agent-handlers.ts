@@ -94,9 +94,10 @@ import {
 } from "../services/agent-runtime/runtime-core/session-store";
 import { detectSessionDanglingToolUses } from "../services/agent-runtime/runtime-core/run";
 import {
-  getThreadEventBus,
-  releaseThreadEventBus,
-} from "../services/agent-runtime/events/thread-event-bus";
+  ensureAgentEventsBridge,
+  releaseThreadEventBridge,
+  setAgentEventsBridgeWriter,
+} from "../services/agent-runtime/events/agent-events-bridge";
 import { analyzeThreadWorkspaceSkillImprovements } from "../services/skills/skill-evolution-service";
 import {
   buildColdStartContinuationMessage,
@@ -108,7 +109,6 @@ import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/run
 import type { LumeRunState } from "../services/agent-runtime/runtime-core/run-state";
 import { listThreadRuntimeEvents } from "../services/agent-runtime/replay/runtime-event-history";
 import { getSubagentRunRegistry } from "../services/agent-runtime/subagents/subagent-run-registry";
-import { getSubagentCoordinator } from "../services/agent-runtime/subagents/subagent-coordinator";
 import { listPendingAskUserQuestionRequests } from "../services/agent-runtime/interruption/ask-user-question-session";
 import {
   listPendingDesktopActionRequests,
@@ -128,13 +128,10 @@ import {
   agentAppendInputSchema,
   agentCreateThreadInputSchema,
   agentGetThreadMessageVersionsInputSchema,
-  agentFinishSubagentTaskInputSchema,
-  agentListSubagentWorkInputSchema,
   agentListSubagentRunsInputSchema,
   agentMoveThreadInputSchema,
   agentQueuedMessageInputSchema,
   agentRetryQueuedMessageInputSchema,
-  agentRetireSubagentInputSchema,
   agentRecentThreadMessagesInputSchema,
   agentReorderMessageQueueInputSchema,
   agentResumeQueueInputSchema,
@@ -219,26 +216,9 @@ export function createAgentHandlers(
   const resolveRuntimeSessionDir = (threadId: string) =>
     getRuntimeCoreSessionDir(threadId);
 
-  // agent:events 推送桥：每线程建立一次进程级订阅（去重防重复注册）。
-  // 不随单次 run 退订——覆盖排队消息/恢复等所有 run 入口，且规避
-  // run 结束瞬间 16ms 微批 update 尚未 flush 就退订的推送丢失。
-  // 线程硬删除时经 releaseThreadEventBridge 退订（恢复路径 run 入口会重新 ensure）。
-  const agentEventsBridgeUnsubs = new Map<string, () => void>();
-  const ensureAgentEventsBridge = (threadId: string): void => {
-    if (agentEventsBridgeUnsubs.has(threadId)) return;
-    const unsubscribe = getThreadEventBus(
-      resolveRuntimeSessionDir(threadId),
-    ).subscribe(threadId, (envelope) => {
-      context.writeNotification(AGENT_IPC_CHANNELS.EVENTS, envelope);
-    });
-    agentEventsBridgeUnsubs.set(threadId, unsubscribe);
-  };
-  /** 线程硬删除路径统一释放：退订事件桥 + 释放该线程的总线 state（bus 实例随之按 sessionDir 卸载）。 */
-  const releaseThreadEventBridge = (threadId: string): void => {
-    agentEventsBridgeUnsubs.get(threadId)?.();
-    agentEventsBridgeUnsubs.delete(threadId);
-    releaseThreadEventBus(resolveRuntimeSessionDir(threadId), threadId);
-  };
+  // agent:events 推送桥已下沉为进程级单源(#549)：IM 渠道/规划入口等非 RPC
+  // 的 run 入口同样建桥，桌面端实时流不再断供。RPC 层只负责注入通知通道。
+  setAgentEventsBridgeWriter((channel, payload) => context.writeNotification(channel, payload));
 
   /**
    * 运行中护栏：短宽限期等待自然收尾后仍活跃则拒绝。
@@ -732,30 +712,6 @@ export function createAgentHandlers(
         runs: sliced,
         statusSummary: runRegistry.summarizeStatuses(sliced),
       };
-    },
-    [AGENT_IPC_CHANNELS.LIST_SUBAGENT_WORK]: async (params) => {
-      const input = validateInput(
-        agentListSubagentWorkInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.LIST_SUBAGENT_WORK,
-      );
-      return getSubagentCoordinator().list(input.parentThreadId);
-    },
-    [AGENT_IPC_CHANNELS.FINISH_SUBAGENT_TASK]: async (params) => {
-      const input = validateInput(
-        agentFinishSubagentTaskInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.FINISH_SUBAGENT_TASK,
-      );
-      return getSubagentCoordinator().finishTask(input);
-    },
-    [AGENT_IPC_CHANNELS.RETIRE_SUBAGENT]: async (params) => {
-      const input = validateInput(
-        agentRetireSubagentInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.RETIRE_SUBAGENT,
-      );
-      return getSubagentCoordinator().retireSession(input);
     },
     [AGENT_IPC_CHANNELS.UPDATE_THREAD_TITLE]: async (params) => {
       const input = validateInput(

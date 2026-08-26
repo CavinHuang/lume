@@ -35,7 +35,7 @@ export function createNodeReplTools(input: {
     capability: "external",
     riskLevel: "high",
     sideEffects: "process",
-    allowedInPlanMode: true,
+    allowedInPlanMode: false,
     isReadOnly: false,
     isConcurrencySafe: false,
     requiresApprovalByDefault: false,

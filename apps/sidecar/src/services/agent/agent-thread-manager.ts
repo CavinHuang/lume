@@ -1,9 +1,13 @@
 
 import {
   appendFileSync,
+  closeSync,
   existsSync,
+  fstatSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   renameSync,
   rmSync,
   statSync,
@@ -33,6 +37,7 @@ import {
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
 import { getAgentSubmissionStore } from "./agent-submission-store";
+import { runGuidanceStore } from "../agent-runtime/guidance/run-guidance-store";
 import { getPlanningTodoStore } from "../planning/planning-todo-store";
 import { agentLifecycleLocks } from "./agent-lifecycle-lock-manager";
 import {
@@ -41,6 +46,8 @@ import {
 } from "./agent-message-versioning-service";
 import { readAgentMessageVersionStore, resetAgentMessageVersionStore } from "./agent-message-version-store";
 import { resolveAgentDefaultStrategy } from "../channel/model-selection";
+import { clearRuntimeFileAccessLedger } from "../agent-runtime/tools/file-access-ledger";
+import { clearThreadFileStateCache } from "../agent-runtime/tools/thread-file-state-cache";
 import { extractAssistantReasoningText, extractRenderableAssistantText } from "./content-extraction";
 import {
   createOrResumeRuntimeCoreSessionManager,
@@ -398,16 +405,51 @@ function toSdkAssistantTextMessage(message: AgentMessage): FlatAssistantSdkMessa
   };
 }
 
+function parseSdkMessageLines(raw: string): SDKMessage[] {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as SDKMessage);
+}
+
+/**
+ * 发送路径专用的尾部有界读取(#554):sdkMessages.jsonl append-only 只增不减,
+ * 后台任务上下文语义只依赖文件末尾,全量读解析在 TTFT 关键路径上白付 400-700ms。
+ * #554 ceiling:窗口固定 1MB;若最后一条人类消息落在窗口之外(单轮 tool_result
+ * 海量堆积),会退化为"无人类边界"语义——多注入少量更早的任务通知,slice(-8)
+ * 与 6KB 截断兜底,可接受。文件缺失/不可读返回空数组。
+ */
+export function getRecentAgentThreadSDKMessages(id: string, maxBytes = 1024 * 1024): SDKMessage[] {
+  const sdkMessagesPath = getAgentThreadMessagesPath(id);
+  if (!existsSync(sdkMessagesPath)) return [];
+  let fd: number | undefined;
+  try {
+    fd = openSync(sdkMessagesPath, "r");
+    const size = fstatSync(fd).size;
+    if (size <= maxBytes) {
+      return parseSdkMessageLines(readFileSync(fd, "utf-8"));
+    }
+    const buffer = Buffer.alloc(maxBytes);
+    readSync(fd, buffer, 0, maxBytes, size - maxBytes);
+    const raw = buffer.toString("utf-8");
+    // 窗口起点大概率落在行中间:丢弃残行,从首个完整行开始
+    const firstNewline = raw.indexOf("\n");
+    if (firstNewline < 0) return [];
+    return parseSdkMessageLines(raw.slice(firstNewline + 1));
+  } catch (error) {
+    log.error("failed to read recent SDK messages", { error, threadId: id });
+    return [];
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 export function getAgentThreadSDKMessages(id: string): SDKMessage[] {
   const sdkMessagesPath = getAgentThreadMessagesPath(id);
   if (existsSync(sdkMessagesPath)) {
     try {
-      const raw = readFileSync(sdkMessagesPath, "utf-8");
-      return raw
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as SDKMessage);
+      return parseSdkMessageLines(readFileSync(sdkMessagesPath, "utf-8"));
     } catch (error) {
       log.error("failed to read SDK messages", { error, threadId: id });
     }
@@ -599,6 +641,10 @@ export function deleteAgentThread(id: string): void {
   void import("../agent-runtime/tools/node-repl/node-repl-runtime-registry")
     .then((module) => module.getNodeReplRuntimeRegistry().shutdown(id))
     .catch(() => undefined);
+  // 跨消息 stale 防护的两层读记录随线程删除回收（#569）：
+  // ledger=完整读门控，thread fileStateCache=mtime 新鲜度。
+  clearRuntimeFileAccessLedger(id);
+  clearThreadFileStateCache(id);
   try { deleteAgentThreadLocked(id); } finally { release(); }
 }
 
@@ -695,6 +741,8 @@ function deleteAgentThreadLocked(id: string): void {
   }
 
   getAgentSubmissionStore().deleteThread(id);
+  // #517:guidance 是纯内存态,线程硬删除时同步清理防 Map 只增不减
+  runGuidanceStore.discardThread(id);
   if (cleanupPending) {
     planningStore.advanceOperation(operationId, { phase: "cleanup_pending", status: "partial", recoverable: true, threadId: id, error: "thread file cleanup pending" });
   } else {

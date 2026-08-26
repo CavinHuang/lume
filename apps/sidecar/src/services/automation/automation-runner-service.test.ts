@@ -1,17 +1,38 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createAutomationJob } from "./automation-manager";
-import {
+
+/**
+ * dispatchAgentRun stub：本文件钉的是"运行记录写入/调度隔离"行为，不是
+ * LLM 派发集成。真实派发在测试环境会走完整 attempt 链（无模型配置时挂起），
+ * waitForThreadIdle 改为真实等待后(#547)必须 stub 掉才能保持确定性。
+ * mock.module 是 process-global 的：spread 真实模块仅覆写一个函数，缩小对
+ * 同进程后续测试文件的串扰面（同 cross-job-skip 先例的隔离惯例）。
+ */
+const agentServiceActual = await import("../agent/agent-service");
+type DispatchEmit = { onComplete?: (payload?: { reason?: "max_turns" | "repeat_guard" }) => void };
+let dispatchStub: (input: unknown, emit: DispatchEmit) => Promise<unknown> = async () => {
+  throw new Error("model unavailable (test stub)");
+};
+mock.module("../agent/agent-service", () => ({
+  ...agentServiceActual,
+  dispatchAgentRun: (input: unknown, emit: DispatchEmit) => dispatchStub(input, emit)
+}));
+
+const { createAutomationJob } = await import("./automation-manager");
+// 被测模块必须等全部 mock.module 就位后再动态加载——静态 import 会被 hoist 到
+// mock 注册之前，stub 对已绑定真实引用的被测模块不生效（bun mock 时序）
+const {
   listAutomationRuns,
   refreshAutomationRunnerJobs,
   resolveAutomationModelKind,
+  resolveAutomationRunOutcome,
   runAutomationJobNow,
   scheduledJobIdsForTests,
   startAutomationRunner,
   stopAutomationRunner
-} from "./automation-runner-service";
+} = await import("./automation-runner-service");
 
 describe("resolveAutomationModelKind", () => {
   it("routine 系统动作 → routine 模型", () => {
@@ -78,6 +99,33 @@ describe("automation-runner-service", () => {
     expect(existsSync(runsPath)).toBeTrue();
     const lines = readFileSync(runsPath, "utf-8").trim().split("\n");
     expect(lines.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("正常完成的 run(onComplete 无载荷)记 success(#649 review P1-1 对照)", () => {
+    const outcome = resolveAutomationRunOutcome({
+      runtimeError: null, waitingForUser: false, waitingForApproval: false, turnLimitedStopped: false, threadId: "thread-1"
+    });
+    expect(outcome.status).toBe("success");
+    expect(outcome.message).toContain("任务执行完成");
+  });
+
+  it("触顶停止的 run 如实记 failed 而非假成功(#649 review P1-1)", () => {
+    // 检测挂 onComplete 的 reason——T7a 后 sidecar 生产不再构造 run.turn_limited 事件
+    // (onRuntimeEvent 检测在生产中永不为真);消费分支缺失时触顶 run 会照落「任务执行完成」，
+    // desktop 通知面(只对 failed/waiting_* 弹)对半途而废的无人值守任务永不提醒。
+    const outcome = resolveAutomationRunOutcome({
+      runtimeError: null, waitingForUser: false, waitingForApproval: false, turnLimitedStopped: true, threadId: "thread-1"
+    });
+    expect(outcome.status).toBe("failed");
+    expect(outcome.message).toContain("回合上限");
+  });
+
+  it("#649 round3: repeat_guard 保护停止与 max_turns 同归 failed", () => {
+    // agent-service onComplete 对两种保护性停止都发 reason(max_turns/repeat_guard),
+    // 消费侧对两者都置位 turnLimitedStopped;漏匹配任一 = P1-1 同构假成功
+    expect(resolveAutomationRunOutcome({
+      runtimeError: null, waitingForUser: false, waitingForApproval: false, turnLimitedStopped: true, threadId: "t"
+    }).status).toBe("failed");
   });
 
   it("存量坏 job 不毒化整轮刷新：好 job 正常调度，坏 job 被跳过 (#452)", async () => {

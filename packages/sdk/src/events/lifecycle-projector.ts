@@ -38,6 +38,7 @@ import type {
   TodoStateDetail,
   TaskProgressDetail,
   AdvisorReviewedDetail,
+  ToolOutputDetail,
 } from '@lume/shared'
 import { normalizeBackgroundTaskStatus } from '@lume/shared'
 
@@ -190,7 +191,16 @@ export async function* projectLifecycle(
     }
     const msgEndDetail: MessageEndDetail = {
       type: 'message.end',
-      message: message.message,
+      // 条件展开：usage/costUSD 缺省时不留 undefined 自有属性；turn.end 的
+      // assistantMessage 保持原引用（不含 usage）——两处不同源是已知取舍，
+      // 当前无同读两处的消费者，勿按内容对账。
+      message: message.usage != null || message.costUSD != null
+        ? {
+          ...message.message,
+          ...(message.usage != null ? { usage: message.usage } : {}),
+          ...(message.costUSD !== undefined ? { costUSD: message.costUSD } : {}),
+        }
+        : message.message,
     }
     if (message.error) msgEndDetail.error = message.error
     out.push(emit('message', 'end', currentTurn.turnId, msgEndDetail))
@@ -379,6 +389,18 @@ export async function* projectLifecycle(
       }
       const detail: AdvisorReviewedDetail = { type: 'advisor.reviewed', review }
       if (typeof m.summary === 'string') detail.summary = m.summary
+      return [emit('run', 'event', null, detail)]
+    }
+    if (subtype === 'local_command_output') {
+      // Foreground tool output snapshot (Bash). Only the tool-owned form (with
+      // tool_use_id) projects; legacy unowned messages stay ignored.
+      const m = message as { tool_use_id?: unknown; content?: unknown }
+      if (typeof m.tool_use_id !== 'string' || !m.tool_use_id) return []
+      const detail: ToolOutputDetail = {
+        type: 'tool.output',
+        toolCallId: m.tool_use_id,
+        chunk: typeof m.content === 'string' ? m.content : '',
+      }
       return [emit('run', 'event', null, detail)]
     }
     return []

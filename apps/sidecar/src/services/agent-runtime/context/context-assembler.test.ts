@@ -96,8 +96,9 @@ describe("ContextAssembler", () => {
     expect(result.systemPrompt).toContain("Each mutation returns a fresh snapshot");
     expect(result.systemPrompt).toContain("use only refs from the newest snapshot");
     expect(result.systemPrompt).toContain("dialog and handle_dialog");
+    // #610:接管错误码改瞬时语义——重观察重试一次,持续失败才询问(不再教死等交回)
     expect(result.systemPrompt).toContain("user_takeover_required");
-    expect(result.systemPrompt).toContain("never retry or switch to computer-use");
+    expect(result.systemPrompt).toContain("retry once");
     expect(result.systemPrompt).not.toContain("exact skill name browser:browser");
     expect(result.runtimeContext).not.toContain("browser.tabs.resumeHandoff()");
     expect(result.systemPrompt).not.toContain("mcp__computer_use__list_apps");

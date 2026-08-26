@@ -704,3 +704,24 @@ test('snapshot 纯消息回放(悬空 run 无终态)不置也不清 streaming(�
   consumeBusEnvelope(messageUpdate(2, 'partial'), 'snapshot', ctx)
   expect(ctx.streaming).toEqual({})
 })
+
+test('tool.output 快照映射为稳定 id 的 RuntimeEvent(seq 无关)', () => {
+  const state = createLifecycleAdapterState()
+  const first = adaptLifecycleEvent(envelope(10, 'run', 'event', null, {
+    type: 'tool.output',
+    toolCallId: 'call-1',
+    chunk: 'tail v1',
+  }), state)
+  const second = adaptLifecycleEvent(envelope(11, 'run', 'event', null, {
+    type: 'tool.output',
+    toolCallId: 'call-1',
+    chunk: 'tail v2',
+  }), state)
+
+  expect(first).toHaveLength(1)
+  expect(second).toHaveLength(1)
+  // 同一 toolCallId 恒发同 id，与 seq 无关——下游按 id 原地替换
+  expect(first[0]!.id).toBe('r1:tool-output:call-1')
+  expect(second[0]!.id).toBe('r1:tool-output:call-1')
+  expect(first[0]).toMatchObject({ type: 'tool.output', toolCallId: 'call-1', chunk: 'tail v1' })
+})

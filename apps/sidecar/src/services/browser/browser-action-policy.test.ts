@@ -32,8 +32,37 @@ test("browser policy hands payment and CAPTCHA back to the user", () => {
   assert.deepEqual(classifyBrowserAction("browser_fill_secret", {}, "secretFill"), { decision: "confirm", category: "credential", preview: "browser_fill_secret: 执行受保护的浏览器动作" })
   assert.equal(classifyBrowserAction("navigate_tab_url", { url: "http://127.0.0.1:3000" }).decision, "confirm")
   assert.deepEqual(classifyBrowserAction("navigate_tab_url", { url: "https://example.com" }), { decision: "confirm", category: "browse", preview: "打开网站：https://example.com" })
+  // #602 十视角 review:内置 open 工具以 {options:{url}} 嵌套形制派发 create_tab，门必须打中主路径
+  assert.equal(classifyBrowserAction("create_tab", { options: { url: "https://example.com" } }).decision, "confirm")
+  assert.equal(classifyBrowserAction("ensure", { options: { url: "https://example.com" } }).decision, "confirm")
+  const privateNested = classifyBrowserAction("create_tab", { options: { url: "http://169.254.169.254/latest/meta-data" } })
+  assert.equal(privateNested.decision, "confirm")
+  assert.equal(privateNested.category, "authorize")
+  // 无 url 的建 tab 不入导航门
+  assert.equal(classifyBrowserAction("create_tab", {}).decision, "allow")
+  // #649 review P1-3:双键冲突时取序与 broker normalize(options.url ?? params.url)一致,
+  // 门评估的 URL 必须等于实际导航的 URL,否则弹窗确认 A 实际导航 B(同意失真)
+  const dualKey = classifyBrowserAction("create_tab", { url: "https://confirmed.example.com", options: { url: "http://169.254.169.254/latest/meta-data" } })
+  assert.equal(dualKey.decision, "confirm")
+  assert.equal(dualKey.category, "authorize")
+  assert.equal(dualKey.preview, "打开本地或私有地址：http://169.254.169.254")
   assert.equal(classifyBrowserAction("click", { semanticIntent: "Pay now" }).decision, "deny")
   assert.equal(classifyBrowserAction("click", { description: "完成 CAPTCHA" }).decision, "deny")
+})
+
+test("browser policy confirms batch background navigation (#649 review P1-4)", () => {
+  // tabs:content 批量后台导航同属导航面,零确认静默浏览违背 alwaysAsk 出厂承诺
+  const batch = classifyBrowserAction("tabs_content", { urls: ["https://a.example.com", "https://b.example.com", "https://c.example.com", "https://d.example.com"] })
+  assert.equal(batch.decision, "confirm")
+  assert.equal(batch.category, "browse")
+  assert.match(batch.preview ?? "", /批量打开网站（共 4 个）：/)
+  // 私网混入 → authorize 档
+  const privateBatch = classifyBrowserAction("tabs_content", { urls: ["https://a.example.com", "http://127.0.0.1:9222/json"] })
+  assert.equal(privateBatch.decision, "confirm")
+  assert.equal(privateBatch.category, "authorize")
+  assert.match(privateBatch.preview ?? "", /批量读取本地或私有地址（共 2 个）/)
+  // 无 urls 不设门(该请求本身会被 desktop 以 invalid_browser_request 拒绝)
+  assert.equal(classifyBrowserAction("tabs_content", {}).decision, "allow")
 })
 
 test("browser policy returns user_action_required for captcha and MFA gates", () => {

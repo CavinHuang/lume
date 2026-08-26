@@ -303,7 +303,15 @@ export class WorkspaceMcpManager {
 
     for (const serverId of state.knownServerIds) {
       if (!currentIds.has(serverId) || !currentEnabledIds.has(serverId)) {
-        await state.sdk.disconnect(serverId);
+        // #636：disconnect 失败不得让原始错误穿透脱敏链——所有公共方法的
+        // try 块都在 syncWorkspace 之后才开始，这里的抛错会绕过 mapPublicError
+        await state.sdk.disconnect(serverId).catch((error) => {
+          this.logger.warn("MCP server disconnect failed during sync", {
+            workspaceSlug,
+            serverId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
       }
     }
 
@@ -531,7 +539,9 @@ export class WorkspaceMcpManager {
         reason: status.error?.message ?? `MCP server ${status.serverId} is not connected.`
       }));
 
-    const includeManagement = options.includeManagementTools ?? true;
+    // 管理三件套仅在存在启用中的 MCP 配置时注入；零配置安装不再白占工具位（#539）
+    const includeManagement = (options.includeManagementTools ?? true)
+      && statuses.some((status) => status.enabled);
 
     return {
       tools: [
@@ -588,7 +598,10 @@ export class WorkspaceMcpManager {
   ): Promise<McpCallResult> {
     await this.syncWorkspace(workspaceSlug);
     const state = this.ensureWorkspaceState(workspaceSlug);
+    // 入口快照 entry（#636）：catch 内现读配置存在"调用在途配置被删→脱敏
+    // 空转单次"的窗口，入口读一次与在途调用严格对应
     const startedAt = Date.now();
+    const entry = this.readConfig(workspaceSlug).servers[serverId];
     this.logger.info("MCP runtime tool call started", {
       workspaceSlug,
       serverId,
@@ -608,14 +621,20 @@ export class WorkspaceMcpManager {
       });
       return result;
     } catch (error) {
+      // 与 callToolDiagnostic/readResource 同一口径：底层错误常内嵌 URL/凭据
+      // 片段（#403），对外与日志通道都不得带原文——sidecar 日志经 log-batch
+      // 实时推 renderer 且落盘可导出，并非纯服务端（红队 review 发现）。
+      // 排障细节用 redactMessage 后的完整 stack 保留；entry 用入口快照，
+      // 不在 catch 内现读（在途配置被删时现读会拿到 undefined 使脱敏空转）。
+      const publicError = mapPublicError(error, entry);
       this.logger.warn("MCP runtime tool call failed", {
         workspaceSlug,
         serverId,
         originalToolName,
-        error: error instanceof Error ? error.message : String(error),
+        error: redactMessage(error instanceof Error ? error.stack ?? error.message : String(error), entry),
         elapsedMs: Date.now() - startedAt
       });
-      throw error;
+      throw new PublicMcpError(publicError.code, publicError.message);
     }
   }
 

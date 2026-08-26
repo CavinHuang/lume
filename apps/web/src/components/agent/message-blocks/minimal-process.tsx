@@ -8,7 +8,8 @@ import { ToolResultRenderer } from '../tool-result-renderers'
 import { SubagentInlinePanel } from '../SubagentInlinePanel'
 import type { RuntimeAssistantBlock, RuntimeToolCallView } from '../runtime-message-view'
 import type { OpenThreadFile } from '../AgentFileReference'
-import { asRecord, asString, formatToolErrorOutput, memoryMutationLabel, summarizeInput } from './tool-summary'
+import { asRecord, asString, displayToolName, formatToolErrorOutput, memoryMutationLabel, summarizeInput } from './tool-summary'
+import { isDelegationToolName } from '../subagent-run-projection'
 
 type MinimalProcessGroupProps = {
   blocks: RuntimeAssistantBlock[]
@@ -89,7 +90,7 @@ export const MinimalProcessGroup = memo(function MinimalProcessGroup({
     const toolCalls = blocks
       .filter((b): b is Extract<RuntimeAssistantBlock, { type: 'tool_call' }> => b.type === 'tool_call')
       .map((b) => b.toolCall)
-    const subagentCount = toolCalls.filter((tc) => tc.toolName === 'Agent').length
+    const subagentCount = toolCalls.filter((tc) => isDelegationToolName(tc.toolName)).length
     const nonAgentCount = toolCalls.length - subagentCount
     const failedCount = toolCalls.filter((tc) => tc.status === 'failed').length
     const completedCount = toolCalls.filter((tc) => tc.status === 'completed').length
@@ -97,10 +98,10 @@ export const MinimalProcessGroup = memo(function MinimalProcessGroup({
     const runningTool = toolCalls.find((tc) => tc.status === 'running') ?? null
     const todoBlock = blocks.find((b): b is Extract<RuntimeAssistantBlock, { type: 'todo_update' }> => b.type === 'todo_update')
     const nonAgentDurationMs = toolCalls
-      .filter((tc) => tc.toolName !== 'Agent')
+      .filter((tc) => !isDelegationToolName(tc.toolName))
       .reduce((sum, tc) => sum + (typeof tc.durationMs === 'number' ? tc.durationMs : 0), 0)
     const subagentDurationMs = toolCalls
-      .filter((tc) => tc.toolName === 'Agent')
+      .filter((tc) => isDelegationToolName(tc.toolName))
       .reduce((sum, tc) => sum + (typeof tc.durationMs === 'number' ? tc.durationMs : 0), 0)
     const thinkingCount = blocks.filter((b) => b.type === 'thinking').length
     return {
@@ -126,7 +127,7 @@ export const MinimalProcessGroup = memo(function MinimalProcessGroup({
     summaryUnits.push(
       <span key="run" className="inline-flex items-center gap-1">
         <span className="size-1.5 animate-pulse rounded-full bg-[var(--lume-accent)]" />
-        {derived.todoActiveForm ?? `正在执行 ${derived.runningTool.toolName}`}
+        {derived.todoActiveForm ?? `正在执行 ${displayToolName(derived.runningTool.toolName)}`}
       </span>,
     )
     summaryUnits.push(
@@ -214,7 +215,7 @@ export const MinimalProcessGroup = memo(function MinimalProcessGroup({
                 )
               }
               if (block.type === 'tool_call') {
-                if (block.toolCall.toolName === 'Agent') {
+                if (isDelegationToolName(block.toolCall.toolName)) {
                   return (
                     <div key={block.id} className="animate-in fade-in slide-in-from-top-1 fill-mode-both duration-300 motion-reduce:animate-none">
                       <MinimalSubagentRow
@@ -289,9 +290,9 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({
         className="flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60 disabled:hover:text-foreground/40"
       >
         <Icon size={12} className="shrink-0" />
-        <span className="shrink-0 font-medium">{memoryLabel ?? toolCall.toolName}</span>
+        <span className="shrink-0 font-medium">{memoryLabel ?? displayToolName(toolCall.toolName)}</span>
         {toolCall.riskLevel && <span className={cn('shrink-0', riskLevelClassName(toolCall.riskLevel))}>{riskLevelLabel(toolCall.riskLevel)}</span>}
-        <span className="min-w-0 flex-1 truncate">{summarizeInput(input)}</span>
+        <span className="min-w-0 flex-1 truncate">{summarizeInput(input, toolCall.toolName)}</span>
         {toolCall.status === 'failed' && <TriangleAlert size={11} className="shrink-0 text-destructive/70" />}
         {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
           <span className="shrink-0 tabular-nums">{formatDurationLabel(toolCall.durationMs)}</span>

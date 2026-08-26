@@ -5,6 +5,7 @@ import { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker"
 import { createAgentHandlers } from "./agent-handlers";
 import { createAutomationHandlers } from "./automation-handlers";
 import { createChannelHandlers } from "./channel-handlers";
+import { createConnectorHandlers } from "./connector-handlers";
 import { createImHandlers } from "./im-handlers";
 import { createMemoryHandlers } from "./memory-handlers";
 import { createModelMetaHandlers } from "./model-meta-handlers";
@@ -51,11 +52,15 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
 
   const handlers: Record<string, RpcHandler> = {};
   let extensionBackendEnabled = false;
+  // desktop「启用 Lume 浏览器 / 允许 Browser Use」设置经 browser:settings RPC
+  // 到达此处(缺省视为启用),驱动 broker 门控与工具 isEnabled(#608)
+  let browserEnabledFromSettings = true;
+  let agentBrowserUseEnabledFromSettings = true;
   const notifyBrowserPluginState = (): void => {
     const enabled = getEffectivePluginRuntimeConfig().enabled;
-    const browserEnabled = enabled.includes("browser") || isBundledBrowserPluginAvailable();
+    const browserEnabled = (enabled.includes("browser") || isBundledBrowserPluginAvailable()) && browserEnabledFromSettings;
     const chromeEnabled = enabled.includes("lume-chrome");
-    context.browserBroker?.setPluginState({ browserEnabled, chromeEnabled, extensionBackendEnabled });
+    context.browserBroker?.setPluginState({ browserEnabled, chromeEnabled, extensionBackendEnabled, agentBrowserUseEnabled: agentBrowserUseEnabledFromSettings });
     context.writeNotification("browser:plugin-state", { browserEnabled, chromeEnabled, extensionBackendEnabled, enabled });
   };
   notifyBrowserPluginState();
@@ -67,6 +72,7 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     createChannelHandlers(),
     createModelMetaHandlers(),
     createImHandlers(),
+    createConnectorHandlers(),
     createMemoryHandlers(),
     createReadingHandlers({
       writeNotification: context.writeNotification
@@ -93,7 +99,10 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
   if (context.browserBroker) {
     handlers["browser:settings"] = async (params) => {
       if (!params || typeof params !== "object") throw new Error("invalid browser settings");
-      extensionBackendEnabled = (params as { extensionBackendEnabled?: unknown }).extensionBackendEnabled === true;
+      const settingsParams = params as { extensionBackendEnabled?: unknown; browserEnabled?: unknown; browserUseEnabled?: unknown };
+      extensionBackendEnabled = settingsParams.extensionBackendEnabled === true;
+      browserEnabledFromSettings = settingsParams.browserEnabled !== false;
+      agentBrowserUseEnabledFromSettings = settingsParams.browserUseEnabled !== false;
       notifyBrowserPluginState();
       return { ok: true };
     };

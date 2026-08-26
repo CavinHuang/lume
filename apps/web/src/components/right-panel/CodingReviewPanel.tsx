@@ -1,9 +1,13 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { CaseSensitive, Check, ChevronDown, ChevronRight, Columns2, Copy, ExternalLink, EyeOff, FileSearch, FileText, Folder, FolderOpen, GitCommitHorizontal, Image, ListChevronsDownUp, ListChevronsUpDown, Loader2, MessageSquareText, MoreHorizontal, RefreshCw, Search, Upload, WrapText, type LucideIcon } from 'lucide-react'
+import { CaseSensitive, Check, ChevronDown, ChevronRight, Columns2, Copy, ExternalLink, EyeOff, FileSearch, FileText, Folder, FolderOpen, GitCommitHorizontal, Image, ListChevronsDownUp, ListChevronsUpDown, Loader2, MessageSquareText, MoreHorizontal, RefreshCw, Search, Undo2, Upload, WrapText, type LucideIcon } from 'lucide-react'
 import type {
   AgentDiffCommentAttachment,
   CodingDiffActionInput,
+  CodingRunRevertInput,
+  CodingRunRevertResult,
+  CodingFileRevertInput,
+  CodingFileRevertResult,
   CodingFileOpenTargets,
   CodingRepositoryPublishActionInput,
   CodingRepositoryPublishActionResult,
@@ -17,7 +21,7 @@ import type {
   RuntimeCodingChangeSet,
   RuntimeCodingFileChange,
 } from '@lume/shared'
-import { AGENT_IPC_CHANNELS } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, formatCodingFileRevertNotice, formatCodingRevertSummary } from '@lume/shared'
 import type { DiffLineAnnotation, SelectedLineRange } from '@pierre/diffs'
 import { Virtualizer } from '@pierre/diffs/react'
 import { toast } from 'sonner'
@@ -258,6 +262,9 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
   const [treeQuery, setTreeQuery] = useState('')
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set())
   const [activeDiffPath, setActiveDiffPath] = useState(selectedChangeKey(state))
+  const [revertBusy, setRevertBusy] = useState(false)
+  const [fileRevertBusyPath, setFileRevertBusyPath] = useState<string | null>(null)
+  const [revertNotice, setRevertNotice] = useState<string | null>(null)
   const [publishDialogOpen, setPublishDialogOpen] = useState(false)
   const [publishState, setPublishState] = useState<CodingRepositoryPublishState | null>(null)
   const [publishBusy, setPublishBusy] = useState(false)
@@ -711,6 +718,7 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
     setActiveDiffPath('')
     setTreeQuery('')
     setActionError(null)
+    setRevertNotice(null)
   }
 
   const applyDiffAction = async (
@@ -737,6 +745,56 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
       setActionError(cause instanceof Error ? cause.message : '无法应用 Diff 操作')
     } finally {
       setDiffActionPending(false)
+    }
+  }
+
+  const runRevertible = state.phase !== 'executing' && state.phase !== 'verifying'
+  // 行级快照撤销仅在「最新轮次」源可用：工作区源没有 Run 快照语义
+  const fileRevertible = activeSource.kind === 'last-turn' && Boolean(state.runId) && runRevertible
+
+  const revertRunChanges = async () => {
+    if (!state.runId || revertBusy || !runRevertible) return
+    if (!window.confirm('将本次 Run 写过的文件还原到改动前快照？被还原的未提交改动将被丢弃且无法找回（新建文件会被删除）；已提交与外部修改过的文件不会被覆盖。')) return
+    setRevertBusy(true)
+    setRevertNotice(null)
+    try {
+      const result = await sidecarCall<CodingRunRevertResult>(
+        AGENT_IPC_CHANNELS.REVERT_CODING_RUN,
+        { threadId, runId: state.runId } satisfies CodingRunRevertInput,
+      )
+      setRevertNotice(formatCodingRevertSummary(result))
+      toast.success(`已撤销本次 Run 的文件改动`)
+      refreshDiffs()
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : '无法撤销本次改动')
+    } finally {
+      setRevertBusy(false)
+    }
+  }
+
+  const revertFileChange = async (change: RuntimeCodingFileChange) => {
+    if (!state.runId || !fileRevertible || fileRevertBusyPath) return
+    if (!window.confirm(`将 ${change.path} 还原到本次 Run 改动前快照？未提交改动将被丢弃且无法找回；已提交与外部修改过的文件不会被覆盖。`)) return
+    const fileKey = codingReviewFileKey(change)
+    setFileRevertBusyPath(fileKey)
+    setRevertNotice(null)
+    try {
+      const result = await sidecarCall<CodingFileRevertResult>(
+        AGENT_IPC_CHANNELS.REVERT_CODING_FILE,
+        { threadId, runId: state.runId, path: change.path, rootId: change.rootId } satisfies CodingFileRevertInput,
+      )
+      const notice = formatCodingFileRevertNotice(result)
+      if (notice) {
+        setRevertNotice(notice)
+        toast.error(notice)
+      } else {
+        toast.success('已撤销该文件的改动')
+      }
+      refreshDiffs()
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : '无法撤销该文件的改动')
+    } finally {
+      setFileRevertBusyPath(null)
     }
   }
 
@@ -1134,6 +1192,18 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
             >
               {fileTreeOpen ? <FolderOpen /> : <Folder />}
             </Button>
+            {state.runId && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-1 h-7 gap-1 border-[color:color-mix(in_oklab,var(--lume-danger)_45%,transparent)] bg-transparent px-2.5 text-ui text-[var(--lume-danger)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,transparent)] hover:text-[var(--lume-danger)]"
+                title={runRevertible ? '按快照还原本次 Run 的文件改动（不可逆）' : 'Coding Run 结束后才能撤销'}
+                disabled={revertBusy || !runRevertible}
+                onClick={() => void revertRunChanges()}
+              >
+                <span>{revertBusy ? '还原中…' : '撤销本次改动'}</span>
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
@@ -1147,6 +1217,9 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
             >
               <span>提交或推送</span><ChevronDown className="size-3.5" />
             </Button>
+            {revertNotice && (
+              <span className="ml-2 truncate text-caption text-[var(--lume-text-muted)]" title={revertNotice}>{revertNotice}</span>
+            )}
           </div>
         </div>
       </header>
@@ -1192,6 +1265,8 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
                     onOpenFile={onOpenFile}
                     onMarkReviewed={() => reviewStatusAction({ type: 'mark-reviewed', threadId, path: fileKey })}
                     onMarkUnreviewed={() => reviewStatusAction({ type: 'mark-unreviewed', threadId, path: fileKey })}
+                    onRevertFile={fileRevertible ? () => void revertFileChange(change) : undefined}
+                    revertBusy={fileRevertBusyPath === fileKey}
                     onDiffAction={(action, hunkIndex) => {
                       const review = reviews[key]
                       if (review) void applyDiffAction(change, review, action, hunkIndex)
@@ -1470,7 +1545,7 @@ type ReviewAnnotation =
   | { kind: 'comment-editor' }
   | { kind: 'readonly-comment'; comment: AgentDiffCommentAttachment; pending: boolean }
 
-function InlineFileDiff({ rowRef, threadId, runId, change, review, loading, error, viewMode, wrapLines, omitFullFile, richPreviewEnabled, wordDiffsEnabled, hideWhitespace, reviewSource, unseen, onRetry, onCollapse, onToggleWrap, onOpenFile, onMarkReviewed, onMarkUnreviewed, onDiffAction }: {
+function InlineFileDiff({ rowRef, threadId, runId, change, review, loading, error, viewMode, wrapLines, omitFullFile, richPreviewEnabled, wordDiffsEnabled, hideWhitespace, reviewSource, unseen, onRetry, onCollapse, onToggleWrap, onOpenFile, onMarkReviewed, onMarkUnreviewed, onRevertFile, revertBusy, onDiffAction }: {
   rowRef: (element: HTMLDivElement | null) => void
   threadId: string
   runId?: string
@@ -1492,6 +1567,8 @@ function InlineFileDiff({ rowRef, threadId, runId, change, review, loading, erro
   onOpenFile?: (path: string) => void
   onMarkReviewed: () => void
   onMarkUnreviewed: () => void
+  onRevertFile?: () => void
+  revertBusy?: boolean
   onDiffAction: (action: CodingDiffActionInput['action'], hunkIndex?: number) => void
 }) {
   const path = change.path
@@ -1744,6 +1821,19 @@ function InlineFileDiff({ rowRef, threadId, runId, change, review, loading, erro
         {reviewAction === 'stage' && review?.actions.canStage && <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={() => onDiffAction('stage')}>Stage</Button>}
         {reviewAction === 'unstage' && review?.actions.canUnstage && <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={() => onDiffAction('unstage')}>Unstage</Button>}
         {review && <Button variant="ghost" size="icon-sm" className="pointer-events-none size-6 shrink-0 text-[var(--lume-text-muted)] opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-transparent hover:text-[var(--lume-text-primary)]" onClick={() => void copyDiff()} title="复制 Diff" aria-label="复制 Diff">{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}</Button>}
+        {onRevertFile && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            disabled={revertBusy}
+            className="pointer-events-none size-6 shrink-0 text-[var(--lume-text-muted)] opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-transparent hover:text-[var(--lume-danger)]"
+            onClick={onRevertFile}
+            title="撤销此文件的改动（按 Run 前快照还原）"
+            aria-label={`撤销 ${path} 的改动`}
+          >
+            {revertBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Undo2 className="size-3.5" />}
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"

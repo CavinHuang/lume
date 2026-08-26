@@ -10,6 +10,7 @@ import { createAutomationListTools } from "./cron/automation-list-tools";
 import { createAutomationTemplateTools } from "./cron/automation-template-tools";
 import { createSdkImTools } from "./im/create-im-tools";
 import { createSdkImCliTools } from "./im-cli/create-im-cli-tools";
+import { createSdkConnectorTools } from "./connectors/create-connector-tools";
 import { dingtalkCliConfig } from "./im-cli/providers/dingtalk";
 import { larkCliConfig } from "./im-cli/providers/feishu";
 import { wecomCliConfig } from "./im-cli/providers/wecom";
@@ -28,14 +29,8 @@ import { createComputerUseRequestBridge } from "./node-repl/node-repl-computer-u
 import { createPlanningTodoTools } from "./planning/create-planning-todo-tools";
 import { createSuggestionTools } from "./suggest/create-suggestion-tools";
 import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
+import { isBundledBrowserRuntimeAvailable } from "../plugins/plugin-manager";
 import { createBrowserMcpTools } from "./browser/create-browser-tools";
-
-const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
-const AUTOMATION_TOOL_NAMES = [
-  "automation_read",
-  "automation_set",
-  "automation_query"
-];
 
 export interface CreateLumeRuntimeToolsInput {
   threadId: string;
@@ -65,7 +60,6 @@ export interface CreateLumeRuntimeToolsInput {
 
 export interface CreateLumeRuntimeToolsOutput {
   customTools: ToolDefinition[];
-  availableToolNames: string[];
 }
 
 export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): CreateLumeRuntimeToolsOutput {
@@ -91,11 +85,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ? createDreamEvidenceTools({ workspaceSlug: input.workspaceSlug, jobId: dreamProfile.jobId })
     : [];
   if (dreamProfile) {
-    const customTools = [...memoryTools, ...dreamEvidenceTools];
-    return {
-      customTools,
-      availableToolNames: ["Read", "Glob", "Grep", "ls", ...customTools.map((tool) => tool.name)]
-    };
+    return { customTools: [...memoryTools, ...dreamEvidenceTools] };
   }
   const cronTools = createSdkCronTools({
     workspaceId: input.workspaceId,
@@ -170,7 +160,9 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const computerUseTools = computerUseSurface === "mcp"
     ? allComputerUseTools
     : [];
-  const browserTools = input.threadType === "subagent"
+  // 无 bundled 浏览器运行时的安装（CI/精简包）整族不注入，25 个 schema 不再
+  // 常驻 core 池白占 ~2100 token/请求；环境存在时常驻保 prompt-cache 稳定（#539）
+  const browserTools = input.threadType === "subagent" || !isBundledBrowserRuntimeAvailable()
     ? []
     : createBrowserMcpTools({ threadId: input.threadId });
   const customTools = [
@@ -181,6 +173,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...automationTemplateTools,
     ...imTools,
     ...imCliTools,
+    ...createSdkConnectorTools(),
     ...readingTools,
     ...uiTools,
     ...routineTools,
@@ -191,14 +184,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...planningTodoTools,
     ...computerUseTools,
   ];
-  const customToolNames = customTools.map((tool) => tool.name);
 
-  return {
-    customTools,
-    availableToolNames: [
-      ...BASE_RUNTIME_TOOL_NAMES,
-      ...AUTOMATION_TOOL_NAMES,
-      ...customToolNames
-    ]
-  };
+  // 注入池归属由 ToolRuntime.build 重算；此处只产出自定义工具本身
+  return { customTools };
 }

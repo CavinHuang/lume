@@ -35,7 +35,7 @@ The session locks one active tab. `open` creates a new Agent-owned tab and locks
 
 ## Failure and takeover handling
 
-On `stale_target`, take a new snapshot and retry with the fresh refs. On `user_action_required` (MFA, CAPTCHA, hardware keys, payment), stop and ask the user to complete the step; do not retry it. On `user_takeover_required` or `paused_by_user`, the user has taken the page — stop all browser actions, say so, and wait until the user explicitly returns control. When a tool returns `repeated_action_failure`, do not retry the same action; report what blocked it.
+On `stale_target`, take a new snapshot and retry with the fresh refs (the page may have been touched by the user — yielding is expected). On `user_action_required` (MFA, CAPTCHA, hardware keys, payment), stop and ask the user to complete the step; do not retry it. If a legacy error mentions a user takeover (`user_takeover_required` / `paused_by_user`), it only means this queued action was invalidated — re-observe with a snapshot and retry once; only stop and ask the user if it keeps failing. When a tool returns `repeated_action_failure`, do not retry the same action; report what blocked it.
 
 ## Diagnostics fallback
 

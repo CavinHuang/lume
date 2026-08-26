@@ -12,6 +12,7 @@ import type {
 } from '../types.js'
 import {
   estimateMessagesTokens,
+  estimateTokens,
   getContextWindowSize,
 } from './tokens.js'
 import {
@@ -24,6 +25,18 @@ const DEFAULT_RESERVE_TOKENS = 16_384
 const MAX_RESERVE_TOKENS = 20_000
 const DEFAULT_KEEP_RECENT_TOKENS = 20_000
 const TOOL_RESULT_MAX_CHARS = 2_000
+
+/**
+ * 熔断阈值：proactive(auto)压缩与 prompt_too_long 恢复各自计数、共享同一
+ * 断路值。原三处字面量 3 提常量（#709 第 7 项）。
+ */
+export const COMPACTION_BREAKER_THRESHOLD = 3
+
+/**
+ * 摘要请求输入预算的安全边际（system prompt + 指令段 + 估算误差），
+ * 从模型窗口中扣除后再给序列化文本定上限。
+ */
+const SUMMARY_INPUT_SAFETY_MARGIN_TOKENS = 4_096
 
 const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.
 
@@ -181,7 +194,7 @@ export function shouldAutoCompact(
     maxOutputTokens?: number
   } = {},
 ): boolean {
-  if (state.consecutiveFailures >= 3) return false
+  if (state.consecutiveFailures >= COMPACTION_BREAKER_THRESHOLD) return false
 
   const contextUsage = options.contextUsage ?? createEstimatedContextUsage({
     messageTokens: estimateMessagesTokens(stripImagesFromMessages(messages)),
@@ -459,6 +472,39 @@ function validateSummary(text: string, requiredHeadings: string[]): CompactionFa
   return undefined
 }
 
+/**
+ * 摘要输入上限裁切（#709 第 6 项）：序列化文本无界时，小窗模型的摘要请求自身
+ * 超窗必败、×3 烧完熔断。按模型窗口给输入定预算，超限保头（目标）保尾（近期
+ * 进展）截中。密度不均匀时全文平均外推会低估保留区 token（#725 review R5），
+ * 故切后复测、超限按实测密度再收缩，至多 6 轮收敛（自然分布实测 ≤3 轮；
+ * budget 极小时固定 marker 可大于比例余量致不收敛，生产路径由调用方 2048
+ * 下限钳住）。治本是给模型显式配置真实 contextWindow。
+ */
+export function truncateSerializedConversation(text: string, inputBudgetTokens: number): string {
+  // 收缩目标低于预算 ~4%：给截断 marker 与密度估计残差留余量，避免高密度
+  // 文本（CJK ≈1 char/token）下每轮只能磨掉几个 token 的慢收敛。
+  const target = Math.max(1, Math.floor(inputBudgetTokens * 0.96))
+  let current = text
+  for (let round = 0; round < 6; round++) {
+    const tokens = estimateTokens(current)
+    if (tokens <= inputBudgetTokens) return current
+    // 按当前文本实测密度定字符预算：每轮密度估计随收缩更贴近保留区真实值。
+    const maxChars = Math.max(1, Math.floor(target * (current.length / Math.max(1, tokens))))
+    const headChars = backstepToCodePointStart(current, Math.floor(maxChars * 0.4))
+    const tailChars = Math.max(1, maxChars - headChars)
+    current = `${current.slice(0, headChars)}\n\n[... characters truncated ...]\n\n${current.slice(current.length - backstepToCodePointStart(current, tailChars))}`
+  }
+  return current
+}
+
+/** 硬切点回退到代理对边界：避免把 emoji/CJK 扩展区字符腰斩成孤立代理（#725 review R5）。 */
+function backstepToCodePointStart(text: string, index: number): number {
+  if (index <= 0 || index >= text.length) return index
+  const unit = text.charCodeAt(index)
+  // 落在低代理上说明切进了代理对中间，回退一个 code unit
+  return unit >= 0xdc00 && unit <= 0xdfff ? index - 1 : index
+}
+
 async function generateSummary(
   provider: LLMProvider,
   model: string,
@@ -470,7 +516,21 @@ async function generateSummary(
     abortSignal?: AbortSignal
   },
 ): Promise<SummaryCallResult> {
-  const conversationText = serializeConversation(messages)
+  // previousSummary 随压缩轮次单调膨胀且不受 maxTokens 约束（#725 review R5），
+  // 须与序列化文本共享窗口预算，否则长会话数轮后总输入仍破窗。
+  const summaryTokens = options.previousSummary ? estimateTokens(options.previousSummary) : 0
+  // 小窗模型下固定输出预算会把输入挤到负数：同步收缩 maxTokens 保证
+  // 输入 + 输出 + margin + summary 恒落窗（#725 review S2）；大窗时原值直通零回归。
+  const usableWindow = Math.max(
+    0,
+    getContextWindowSize(model) - SUMMARY_INPUT_SAFETY_MARGIN_TOKENS - summaryTokens,
+  )
+  const effectiveMaxTokens = Math.max(512, Math.min(maxTokens, usableWindow - 2_048))
+  const inputBudgetTokens = Math.max(
+    1_024,
+    Math.min(2_048, usableWindow - effectiveMaxTokens),
+  )
+  const conversationText = truncateSerializedConversation(serializeConversation(messages), inputBudgetTokens)
   let prompt = `<conversation>\n${conversationText}\n</conversation>\n\n`
   if (options.previousSummary) {
     prompt += `<previous-summary>\n${options.previousSummary}\n</previous-summary>\n\n`
@@ -483,7 +543,7 @@ async function generateSummary(
 
   const response = await provider.createMessage({
     model,
-    maxTokens,
+    maxTokens: effectiveMaxTokens,
     system: SUMMARIZATION_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: prompt }],
     abortSignal: options.abortSignal,
@@ -540,6 +600,7 @@ function failureResult(
   state: AutoCompactState,
   failureReason: CompactionFailureReason,
   usage?: NormalizedProviderUsage,
+  trigger?: AgentContextCompactionTrigger,
 ): CompactConversationResult {
   return {
     compacted: false,
@@ -549,7 +610,18 @@ function failureResult(
     usage,
     state: {
       ...state,
-      consecutiveFailures: state.consecutiveFailures + 1,
+      // Recovery-path compaction (prompt_too_long) keeps its own breaker on the
+      // engine (promptTooLongRecoveryFailures): letting its failures burn the
+      // proactive counter disabled overflow self-rescue after 3 unrelated
+      // proactive failures (#567 item 2). manual 触发失败烧共享熔断是有意的
+      // （#709 第 7 项语义确认）：manual 与 auto 走同一摘要链路，连续失败即链路
+      // 坏，auto 继续尝试只会重复烧钱；manual 成功会清零重新武装 auto。
+      // 'aborted' 是用户意图而非链路坏证据，豁免——否则跨 run 持久化后连续
+      // 手动中断慢压缩会粘死 auto（#725 review S4）。
+      consecutiveFailures:
+        trigger === 'prompt_too_long' || failureReason === 'aborted'
+          ? state.consecutiveFailures
+          : state.consecutiveFailures + 1,
     },
   }
 }
@@ -562,7 +634,7 @@ export async function compactConversation(
   options: CompactConversationOptions = {},
 ): Promise<CompactConversationResult> {
   const preparation = prepareCompaction(messages, options)
-  if (!preparation) return failureResult(messages, state, 'not_smaller')
+  if (!preparation) return failureResult(messages, state, 'not_smaller', undefined, options.trigger)
 
   const reserveTokens = Math.min(
     Math.max(1, options.reserveTokens ?? DEFAULT_RESERVE_TOKENS),
@@ -605,7 +677,7 @@ export async function compactConversation(
       usage = historyUsage ? combineUsage(historyUsage, turnPrefix.usage) : turnPrefix.usage
     } else {
       if (preparation.messagesToSummarize.length === 0) {
-        return failureResult(messages, state, 'not_smaller')
+        return failureResult(messages, state, 'not_smaller', undefined, options.trigger)
       }
       const result = await generateSummary(
         provider,
@@ -649,7 +721,7 @@ export async function compactConversation(
       options.trigger !== 'manual'
       && estimateMessagesTokens(compactedMessages) >= preparation.tokensBefore
     ) {
-      return failureResult(messages, state, 'not_smaller', usage)
+      return failureResult(messages, state, 'not_smaller', usage, options.trigger)
     }
 
     return {
@@ -671,7 +743,7 @@ export async function compactConversation(
       : isCompactionFailureReason(error?.compactionReason)
         ? error.compactionReason
         : 'provider_error'
-    return failureResult(messages, state, failureReason, error?.usage)
+    return failureResult(messages, state, failureReason, error?.usage, options.trigger)
   }
 }
 
@@ -721,7 +793,7 @@ export function microCompactMessages(
   })
 }
 
-function compactToolResultContent(blocks: any[], maxToolResultChars: number): any[] {
+export function compactToolResultContent(blocks: any[], maxToolResultChars: number): any[] {
   let changed = false
   const next = blocks.map((item: any) => {
     if (item?.type === 'text' && typeof item.text === 'string' && item.text.length > maxToolResultChars) {

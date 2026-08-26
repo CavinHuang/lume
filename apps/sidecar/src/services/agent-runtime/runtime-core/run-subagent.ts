@@ -10,7 +10,6 @@ import {
   type ApiType,
   type ToolContext,
   type ToolResult,
-  defineTool,
   finalizeSubagentOutputFromState,
   summarizeSubagentAssistantEvent,
   type ToolDefinition,
@@ -23,9 +22,6 @@ import type {
   AgentToolPermissionRequest,
   LumeRuntimeEvent,
   FileReferenceBinding,
-  SubagentTaskReport,
-  SubagentTask,
-  SubagentTaskFeedback,
   AgentTaskRef,
 } from "@lume/shared";
 import { join, resolve } from "node:path";
@@ -36,33 +32,12 @@ import {
   resolveSubagentSpawnPolicy,
 } from "../subagents/subagent-policy";
 import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
-import { getSubagentCoordinator } from "../subagents/subagent-coordinator";
 import { getRuntimeHostPorts } from "../host-ports";
 import { FileBackedTaskStore } from "../task/task-store";
 
 const DEFAULT_FOREGROUND_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
 export const taskExecutorStopHandlers = new Map<string, () => void>();
-interface BoundSubagentIdentity {
-  runId: string;
-  taskId: string;
-}
 
-export function resolveBoundSubagentIdentity(
-  input: Pick<
-    CreateRuntimeCoreSessionInput,
-    "threadType" | "subagentRunId" | "subagentTaskId"
-  >,
-): BoundSubagentIdentity | undefined {
-  const runId = input.subagentRunId?.trim() ?? "";
-  const taskId = input.subagentTaskId?.trim() ?? "";
-  if (Boolean(runId) !== Boolean(taskId)) {
-    throw new Error("subagentRunId 与 subagentTaskId 必须同时提供");
-  }
-  if (input.threadType !== "subagent" || !runId || !taskId) {
-    return undefined;
-  }
-  return { runId, taskId };
-}
 interface ResolvedSubagentModelOverride {
   source: "input" | "config" | "inherit";
   modelRef?: string;
@@ -197,7 +172,8 @@ export function buildSidecarSubagentExecutionInput(input: {
   return {
     ...input.forwardedToolInput,
     run_in_background: input.runInBackground,
-    isolation: undefined,
+    // isolation 剥离已随 Agent schema 删参一并移除（#575）：schema 不再声明
+    // 该字段，历史剥离点只是死代码；模型幻觉出的未知字段按普通透传处理。
     ...(input.modelOverride.resolvedModelId
       ? { model: input.modelOverride.resolvedModelId }
       : {}),
@@ -214,8 +190,6 @@ export async function runSidecarSubagent(input: {
   parentToolUseId?: string;
   subagentType?: string;
   subagentId?: string;
-  subagentTaskId?: string;
-  subagentAttempt?: number;
   modelOverride: ResolvedSubagentModelOverride;
   channelId?: string;
   workspaceId?: string;
@@ -313,8 +287,6 @@ export async function runSidecarSubagent(input: {
         deliveryThreadId: input.deliveryThreadId,
         subagentRunId: input.runId,
         subagentId: input.subagentId,
-        subagentTaskId: input.subagentTaskId,
-        subagentAttempt: input.subagentAttempt,
         ...(subagentType ? { subagentType } : {}),
         ...(input.modelOverride.modelRef
           ? { modelRef: input.modelOverride.modelRef }
@@ -396,15 +368,20 @@ export async function runSidecarSubagent(input: {
     errorMessage: subagentErrorMessage,
     status: subagentStatus,
   });
-  // 钳制/归一发生时向模型声明实际生效的模式，避免其误以为拿到了更高权限而重试
-  const outputWithModeNote =
-    permissionModeAdjusted && childPermissionMode
-      ? `${finalized.output}\n\n[子代理权限模式: ${requestedPermissionMode} → ${childPermissionMode}（不得超过父线程权限）]`
-      : finalized.output;
+  // 钳制/归一发生时向模型声明实际生效的模式，避免其误以为拿到了更高权限而重试；
+  // 组装逻辑抽入 composeSidecarRunOutput 以便接线级测试（#729 review）
+  const output = composeSidecarRunOutput({
+    baseOutput: finalized.output,
+    status: subagentStatus,
+    codingReport: runtimeResult.codingReport,
+    permissionModeAdjusted,
+    requestedPermissionMode,
+    childPermissionMode,
+  });
 
   return {
     status: subagentStatus,
-    output: outputWithModeNote,
+    output,
     ...(finalized.lastAssistantMessage
       ? { completionSummary: finalized.lastAssistantMessage }
       : {}),
@@ -412,10 +389,68 @@ export async function runSidecarSubagent(input: {
     result: {
       type: "tool_result",
       tool_use_id: "",
-      content: outputWithModeNote,
+      content: output,
       ...(subagentStatus !== "completed" ? { is_error: true } : {}),
     },
   };
+}
+
+/** touched-files 回传上限：防巨型重构把父级上下文撑爆。 */
+const MAX_REPORTED_CHANGED_FILES = 20;
+
+/** 单行折断：模型可控字符串进结果注记前统一封换行/制表（#729 review 安全方向）。 */
+function sanitizeSingleLine(value: string): string {
+  return value.replace(/[\r\n\t]+/g, " ");
+}
+
+/**
+ * 结果输出组装的完整管线：权限钳制注记在前、touched-files 清单收尾。
+ * 全部键必选——可空以 `| undefined` 表达，调用点删任一实参由 typecheck
+ * TS2741 拦截（#729 终局审查：类型契约取代源码文本钉）。
+ */
+export function composeSidecarRunOutput(input: {
+  baseOutput: string;
+  status: "completed" | "errored" | "aborted" | "timed_out";
+  codingReport: { changedFiles?: string[] } | undefined;
+  permissionModeAdjusted: boolean;
+  requestedPermissionMode: string | undefined;
+  childPermissionMode: string | undefined;
+}): string {
+  const withModeNote =
+    input.permissionModeAdjusted && input.childPermissionMode
+      ? `${input.baseOutput}\n\n[子代理权限模式: ${modeLabel(input.requestedPermissionMode)} → ${modeLabel(input.childPermissionMode)}（不得超过父线程权限）]`
+      : input.baseOutput;
+  return appendSubagentChangedFiles(withModeNote, input.status, input.codingReport);
+}
+
+/** 注记内的模型可控串：单行折断 + 长度上限（#729 终局审查）。 */
+function modeLabel(value: string | undefined): string {
+  return sanitizeSingleLine(value ?? "").slice(0, 48);
+}
+
+/**
+ * 子代理变更文件清单随结果回传（#575 残余收口）：tracker 数据闭锁在子线程
+ * run 内部，经 AgentRuntimeRunResult.codingReport 既有通道带出，父级无需新
+ * 订阅链路。仅成功运行附列——失败/中止的半成品清单只会误导父级。
+ */
+export function appendSubagentChangedFiles(
+  output: string,
+  status: "completed" | "errored" | "aborted" | "timed_out",
+  report: { changedFiles?: string[] } | undefined,
+): string {
+  if (status !== "completed") return output;
+  const changedFiles = (report?.changedFiles ?? []).filter(
+    (path) => typeof path === "string" && path.trim(),
+  ).map((path) =>
+    // 换行/控制字符会折断单行清单格式甚至伪造追加行（#729 review 安全方向）
+    sanitizeSingleLine(path),
+  );
+  if (changedFiles.length === 0) return output;
+  const listed = changedFiles.slice(0, MAX_REPORTED_CHANGED_FILES);
+  const overflow = changedFiles.length > MAX_REPORTED_CHANGED_FILES
+    ? `, +${changedFiles.length - MAX_REPORTED_CHANGED_FILES} more`
+    : "";
+  return `${output}\n\n[Changed files: ${listed.join(", ")}${overflow}]`;
 }
 
 export async function runForegroundSubagentWithTimeout(input: {
@@ -433,6 +468,7 @@ export async function runForegroundSubagentWithTimeout(input: {
   status: "completed" | "errored" | "aborted" | "timed_out";
   output?: string;
   error?: string;
+  completionSummary?: string;
 }> {
   if (input.timeoutMs <= 0) {
     return input.execution;
@@ -448,8 +484,12 @@ export async function runForegroundSubagentWithTimeout(input: {
   }>((resolve) => {
     timeoutId = setTimeout(async () => {
       timedOut = true;
-      await input.stopSubagent(input.childThreadId).catch(() => false);
-      const error = `Subagent timed out after ${input.timeoutMs}ms and was cancelled.`;
+      const stopped = await input.stopSubagent(input.childThreadId).catch(() => false);
+      // 取消未确认时必须如实披露：子会话可能仍在运行，调用方据此提示用户
+      const cancelNote = stopped ? "" : " Automatic cancellation was not confirmed; the child session may still be running.";
+      // 超时文案必须指路后台模式（#575）：前台默认 10 分钟强杀，重型任务
+      // 不指路 run_in_background 会让模型反复重试同一注定超时的调用。
+      const error = `Subagent timed out after ${input.timeoutMs}ms and was cancelled.${cancelNote} For long-running work, relaunch with run_in_background: true and collect the result via WaitForDelegations instead of blocking the foreground.`;
       resolve({
         status: "timed_out",
         output: error,
@@ -492,164 +532,6 @@ export function resolveForegroundSubagentTimeoutMs(): number {
   return DEFAULT_FOREGROUND_SUBAGENT_TIMEOUT_MS;
 }
 
-/** A child Run receives IDs from the coordinator; the model cannot redirect a report. */
-export function createBoundSubagentTaskReportTool(input: {
-  runId: string;
-  taskId: string;
-}): ToolDefinition {
-  return defineTool({
-    name: "TaskReport",
-    description:
-      "Submit the current subagent task result. This is a submission for main-agent review, not acceptance.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        status: { type: "string", enum: ["submitted", "failed", "blocked"] },
-        summary: { type: "string" },
-        completedWork: { type: "array", items: { type: "string" } },
-        remainingWork: { type: "array", items: { type: "string" } },
-        artifacts: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              path: { type: "string" },
-              description: { type: "string" },
-            },
-            required: ["path"],
-          },
-        },
-        verification: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              command: { type: "string" },
-              result: { type: "string" },
-              passed: { type: "boolean" },
-            },
-            required: ["result", "passed"],
-          },
-        },
-        blockers: { type: "array", items: { type: "string" } },
-      },
-      required: ["status", "summary"],
-    },
-    isReadOnly: false,
-    isConcurrencySafe: false,
-    async call(raw) {
-      const report = normalizeBoundSubagentReport(raw);
-      getSubagentCoordinator().submitReport({ runId: input.runId, report });
-      return {
-        data: {
-          ok: true,
-          taskId: input.taskId,
-          runId: input.runId,
-          status: report.status,
-        },
-      };
-    },
-  });
-}
-
-function normalizeBoundSubagentReport(raw: unknown): SubagentTaskReport {
-  const value =
-    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const status = value.status;
-  const summary = typeof value.summary === "string" ? value.summary.trim() : "";
-  if (
-    (status !== "submitted" && status !== "failed" && status !== "blocked") ||
-    !summary
-  ) {
-    throw new Error(
-      "TaskReport 需要 status(submitted|failed|blocked) 和非空 summary",
-    );
-  }
-  const strings = (name: string) =>
-    Array.isArray(value[name])
-      ? value[name]
-          .filter(
-            (item): item is string =>
-              typeof item === "string" && item.trim().length > 0,
-          )
-          .map((item) => item.trim())
-      : undefined;
-  const artifacts = Array.isArray(value.artifacts)
-    ? value.artifacts.flatMap((item) => {
-        const record =
-          item && typeof item === "object"
-            ? (item as Record<string, unknown>)
-            : {};
-        return typeof record.path === "string" && record.path.trim()
-          ? [
-              {
-                path: record.path.trim(),
-                ...(typeof record.description === "string" &&
-                record.description.trim()
-                  ? { description: record.description.trim() }
-                  : {}),
-              },
-            ]
-          : [];
-      })
-    : undefined;
-  const verification = Array.isArray(value.verification)
-    ? value.verification.flatMap((item) => {
-        const record =
-          item && typeof item === "object"
-            ? (item as Record<string, unknown>)
-            : {};
-        return typeof record.result === "string" &&
-          typeof record.passed === "boolean"
-          ? [
-              {
-                result: record.result,
-                passed: record.passed,
-                ...(typeof record.command === "string" && record.command.trim()
-                  ? { command: record.command.trim() }
-                  : {}),
-              },
-            ]
-          : [];
-      })
-    : undefined;
-  return {
-    status,
-    summary,
-    ...(strings("completedWork")?.length
-      ? { completedWork: strings("completedWork") }
-      : {}),
-    ...(strings("remainingWork")?.length
-      ? { remainingWork: strings("remainingWork") }
-      : {}),
-    ...(artifacts?.length ? { artifacts } : {}),
-    ...(verification?.length ? { verification } : {}),
-    ...(strings("blockers")?.length ? { blockers: strings("blockers") } : {}),
-  };
-}
-
-export function buildSubagentTaskInstruction(
-  task: SubagentTask,
-  feedback: SubagentTaskFeedback[],
-): string {
-  const latestFeedback = feedback.at(-1)?.instruction;
-  return [
-    "## Bound task",
-    task.objective,
-    task.acceptanceCriteria.length
-      ? `Acceptance criteria:\n${task.acceptanceCriteria.map((item) => `- ${item}`).join("\n")}`
-      : undefined,
-    task.expectedArtifacts?.length
-      ? `Expected artifacts:\n${task.expectedArtifacts.map((item) => `- ${item}`).join("\n")}`
-      : undefined,
-    latestFeedback && latestFeedback !== task.objective
-      ? `## Parent feedback for this attempt\n${latestFeedback}`
-      : undefined,
-    "Complete only this task, then submit TaskReport.",
-  ]
-    .filter((item): item is string => Boolean(item))
-    .join("\n\n");
-}
 export function parseTaskRef(
   value: unknown,
   parentThreadId: string,
@@ -683,7 +565,6 @@ export function assertTaskRefDiscriminant(
     "expected_artifacts",
     "subagent_id",
     "team_name",
-    "isolation",
   ];
   const present = forbidden.filter((name) => toolInput[name] !== undefined);
   if (present.length > 0)
@@ -752,30 +633,39 @@ export async function runTaskLinkedSubagent(input: {
     });
     const forwardedInput = { ...input.toolInput };
     delete forwardedInput.task_ref;
-    execution = await runSidecarSubagent({
-      toolInput: forwardedInput,
-      context: input.context,
-      runId: executorRef,
+    // task_ref 子代理与前台委派同纪律，受同一 wall-clock 上限保护（#647 P1-3）：
+    // 超时取消后 status="timed_out" 走下方 acknowledge(terminal) + 回退 pending
+    // 的既有失败链路，主 run 不会因子代理死循环/网络挂起而永久阻塞。
+    execution = await runForegroundSubagentWithTimeout({
+      execution: runSidecarSubagent({
+        toolInput: forwardedInput,
+        context: input.context,
+        runId: executorRef,
+        childThreadId: childMeta.id,
+        parentThreadId: input.parentThreadId,
+        deliveryThreadId: input.parentThreadId,
+        parentToolUseId: input.context.toolUseId,
+        subagentType:
+          typeof input.toolInput.subagent_type === "string"
+            ? input.toolInput.subagent_type
+            : undefined,
+        modelOverride: input.modelOverride,
+        channelId: input.channelId,
+        workspaceId: input.workspaceId,
+        chatType: input.chatType,
+        messageMetadata: input.messageMetadata,
+        fileReferenceBinding: input.fileReferenceBinding,
+        onRuntimeEvent: input.emitRuntimeEvent,
+        permissionMode: input.permissionMode,
+        emitAskUserQuestion: input.emitAskUserQuestion,
+        emitBrowserAuthRequest: input.emitBrowserAuthRequest,
+        emitDesktopActionRequest: input.emitDesktopActionRequest,
+        emitToolPermissionRequest: input.emitToolPermissionRequest,
+      }),
       childThreadId: childMeta.id,
-      parentThreadId: input.parentThreadId,
-      deliveryThreadId: input.parentThreadId,
-      parentToolUseId: input.context.toolUseId,
-      subagentType:
-        typeof input.toolInput.subagent_type === "string"
-          ? input.toolInput.subagent_type
-          : undefined,
-      modelOverride: input.modelOverride,
-      channelId: input.channelId,
-      workspaceId: input.workspaceId,
-      chatType: input.chatType,
-      messageMetadata: input.messageMetadata,
-      fileReferenceBinding: input.fileReferenceBinding,
-      onRuntimeEvent: input.emitRuntimeEvent,
-      permissionMode: input.permissionMode,
-      emitAskUserQuestion: input.emitAskUserQuestion,
-      emitBrowserAuthRequest: input.emitBrowserAuthRequest,
-      emitDesktopActionRequest: input.emitDesktopActionRequest,
-      emitToolPermissionRequest: input.emitToolPermissionRequest,
+      timeoutMs: resolveForegroundSubagentTimeoutMs(),
+      stopSubagent: async (threadId: string) =>
+        getRuntimeCoreEntry().stopAgentRuntime(threadId),
     });
   } catch (error) {
     execution = {

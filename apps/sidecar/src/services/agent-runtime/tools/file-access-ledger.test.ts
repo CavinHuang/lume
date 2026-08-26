@@ -87,4 +87,39 @@ describe("file access ledger", () => {
       filePath
     })).resolves.toMatchObject({ ok: false, reason: "not_read" });
   });
+
+  test("#649 follow-up: 大小写不同的同一路径命中同一台账键（win32/darwin）", async () => {
+    const root = join(tmpdir(), `lume-ledger-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const filePath = join(root, "CaseSensitive.txt");
+    await writeFile(filePath, "before", "utf-8");
+    const fileStat = await stat(filePath);
+
+    const ledger = createFileAccessLedger();
+    ledger.recordRead({
+      threadId: "thread-1",
+      cwd: root.toUpperCase(),
+      filePath: filePath.toUpperCase(),
+      mtimeMs: fileStat.mtimeMs,
+      fullRead: true
+    });
+
+    // Read 用大写路径登记，Edit 用小写路径写入——归一前台账 miss 误报「必须先完整读取」。
+    // 大小写不敏感平台(win32/darwin):归一后同键,放行。
+    if (process.platform === "win32" || process.platform === "darwin") {
+      await expect(ledger.assertCanOverwrite({
+        threadId: "thread-1",
+        cwd: root.toLowerCase(),
+        filePath: filePath.toLowerCase()
+      })).resolves.toEqual({ ok: true });
+    } else {
+      // #649 round3 Linux 断言补集:大小写敏感 FS 上两路径是不同文件,
+      // 归一化若被误改为无条件 toLowerCase 会跨文件放行——必须保持 not_read
+      await expect(ledger.assertCanOverwrite({
+        threadId: "thread-1",
+        cwd: root.toLowerCase(),
+        filePath: filePath.toLowerCase()
+      })).resolves.toMatchObject({ ok: false });
+    }
+  });
 });

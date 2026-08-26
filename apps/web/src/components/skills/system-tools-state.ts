@@ -23,13 +23,11 @@ export function isToolInGroup(toolName: string, groupId: string): boolean {
     case 'file-read':
       return ['read', 'find', 'ls'].includes(toolName)
     case 'file-write':
-      return ['write', 'edit', 'notebook_edit'].includes(toolName)
+      return ['write', 'edit', 'multi-edit', 'notebook_edit'].includes(toolName)
     case 'search':
       return ['find', 'grep', 'ls'].includes(toolName)
     case 'web':
       return ['web_search', 'web_fetch'].includes(toolName)
-    case 'data':
-      return ['guanlan_search', 'guanlan_read', 'guanlan_hotnews', 'guanlan_research'].includes(toolName)
     case 'memory':
       return ['memory.search', 'memory.read', 'memory.remember', 'memory.forget'].includes(toolName)
     case 'agent':
@@ -116,14 +114,6 @@ export const SYSTEM_TOOL_GROUPS: SystemToolGroup[] = [
     count: countToolsByGroup('web'),
     locked: false,
     policyEntry: 'group:web',
-  },
-  {
-    id: 'data',
-    label: '数据查询',
-    description: '股份行情、天气预报、IP 归属地等专业数据',
-    count: countToolsByGroup('data'),
-    locked: false,
-    policyEntry: 'group:data',
   },
   {
     id: 'memory',

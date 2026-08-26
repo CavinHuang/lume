@@ -401,6 +401,27 @@ describe("createBrowserMcpTools", () => {
     expect(result).toMatchObject({ ok: true, action: { ok: true }, observation: null, observation_error: "stale_target", requires_snapshot: true })
   })
 
+  test("navigation_timeout carries the observe-first hint in its message (#641)", async () => {
+    const tab = agentTab("locked-tab", "thread-1")
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string }) => {
+        if (request.method === "list_tabs") return { tabs: [tab] }
+        if (request.method === "navigate_tab_url") throw new Error("navigation_timeout")
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    const raw = await rawCall(tools, "mcp__browser__navigate", { url: "https://slow.example" })
+    const result = JSON.parse(String(raw.content))
+
+    expect(raw.is_error).toBeTrue()
+    expect(result.code).toBe("navigation_timeout")
+    expect(result.retryable).toBe(false)
+    expect(result.message).toContain("snapshot")
+  })
+
   test("stops browser mutations after a non-retryable action repeats on the same page", async () => {
     const tab = agentTab("locked-tab", "thread-1")
     let actionCalls = 0
@@ -432,6 +453,32 @@ describe("createBrowserMcpTools", () => {
     expect(blockedResult).toMatchObject({ ok: false, code: "repeated_action_failure", retryable: false })
     expect(firstSnapshot._meta?.repeatGuard.state).toEqual(secondSnapshot._meta?.repeatGuard.state)
     expect(firstSnapshot._meta?.repeatGuard.state).not.toHaveProperty("snapshot_id")
+  })
+
+  test("circuit-breaks ref-less confirm tools after repeated user declines (#661)", async () => {
+    const tab = agentTab("locked-tab", "thread-1")
+    let scriptCalls = 0
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string }) => {
+        if (request.method === "list_tabs") return { tabs: [tab] }
+        if (request.method === "browser_run_script") {
+          scriptCalls += 1
+          throw Object.assign(new Error("user_declined"), { code: "user_declined" })
+        }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    await rawCall(tools, "mcp__browser__run_script", { script: "return 1" })
+    await rawCall(tools, "mcp__browser__run_script", { script: "return 1" })
+    const blocked = await rawCall(tools, "mcp__browser__run_script", { script: "return 1" })
+    const blockedResult = JSON.parse(String(blocked.content))
+
+    // 连拒两次后第三次不再触达 broker（无真窗可弹）
+    expect(scriptCalls).toBe(2)
+    expect(blockedResult).toMatchObject({ ok: false, code: "repeated_action_failure", retryable: false })
   })
 
   test("returns script exceptions as structured tool errors", async () => {
@@ -497,6 +544,34 @@ describe("createBrowserMcpTools", () => {
     expect(JSON.parse(String(takeover.content)).code).toBe("user_takeover_required")
     // 接管后旧 ref 不可用：缓存快照已清，重试必须先重新观察
     expect(JSON.parse(String(afterTakeover.content)).code).toBe("stale_target")
+  })
+
+  test("skips the post-action rescan when desktop reports no_detectable_change (#604)", async () => {
+    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
+    const tab = agentTab("locked-tab", "thread-1")
+    let snapshotNumber = 0
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
+        calls.push(request)
+        if (request.method === "list_tabs") return { tabs: [tab] }
+        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
+        if (request.method === "playwright_locator_hover") return { ok: true, effect: { kind: "no_detectable_change" } }
+        if (request.method === "playwright_locator_click") return { ok: true, effect: { kind: "dom_changed" } }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    await call(tools, "mcp__browser__snapshot", {})
+    const unchanged = await call(tools, "mcp__browser__hover", { ref: "@e1" })
+    const changed = await call(tools, "mcp__browser__click", { ref: "@e1" })
+
+    // hover 无可检测变化：不重扫，旧 refs 保持有效；click 有变化：正常全量观察
+    expect(calls.filter((request) => request.method === "browser_snapshot")).toHaveLength(2)
+    expect(unchanged.observation_unchanged).toBe(true)
+    expect(unchanged.observation).toBeUndefined()
+    expect(changed.observation.snapshot_id).toBe("snap-2")
   })
 })
 

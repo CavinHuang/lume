@@ -52,6 +52,7 @@ const STALE_SUBAGENT_ERROR = "Sidecar 进程重启，之前的进程内 subagent
 function cloneRun(run: SubagentRun): SubagentRun {
   return {
     ...run,
+    ...(run.runtimeRunIds ? { runtimeRunIds: [...run.runtimeRunIds] } : {}),
     outcome: run.outcome ? { ...run.outcome } : undefined
   };
 }
@@ -266,6 +267,24 @@ class SubagentRunRegistry {
     return buildRunStatusSummary(runs);
   }
 
+  /**
+   * 桥接 registry runId 与子线程 attempt 的 runtime runId(web 投影依赖)。
+   * 已存在时 no-op 不写盘;高频事件下仅首次产生一次 persist。
+   */
+  bindRuntimeRun(runId: string, runtimeRunId: string): SubagentRun | null {
+    this.ensureLoaded();
+    const normalized = runtimeRunId.trim();
+    if (!normalized) return this.runs.get(runId) ? cloneRun(this.runs.get(runId)!) : null;
+    const existing = this.runs.get(runId);
+    if (!existing) return null;
+    const ids = existing.runtimeRunIds ?? [];
+    if (ids.includes(normalized)) return cloneRun(existing);
+    const next: SubagentRun = { ...existing, runtimeRunIds: [...ids, normalized], updatedAt: Date.now() };
+    this.runs.set(runId, next);
+    this.persist();
+    return cloneRun(next);
+  }
+
   update(runId: string, patch: UpdateSubagentRunInput): SubagentRun | null {
     this.ensureLoaded();
     const existing = this.runs.get(runId);
@@ -434,7 +453,9 @@ export function resetSubagentRunRegistryForTest(): void {
 // ─── Run store persistence (migrated from subagent-run-store.ts) ───
 
 const storeLog = createLogger("subagent-run-store");
-const STORE_FILE = "subagent-runs.json";
+// 必须与 SubagentWorkStore 的 subagent-runs.json 分文件：两者 schema 不兼容
+// （v1 runs-only vs v2 sessions/tasks/feedback），共写同一路径会互相覆盖。
+const STORE_FILE = "delegation-runs.json";
 
 function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf-8"));
@@ -488,6 +509,9 @@ function normalizeRun(raw: unknown): SubagentRun | null {
   return {
     runId,
     parentThreadId,
+    ...(Array.isArray(record.runtimeRunIds)
+      ? { runtimeRunIds: record.runtimeRunIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0) }
+      : {}),
     parentRunId: parentRunId && parentRunId.length > 0 ? parentRunId : undefined,
     rootThreadId: rootThreadId || parentThreadId,
     depth,

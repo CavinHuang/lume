@@ -11,7 +11,35 @@ export type BrowserErrorCode =
   | "tab_not_found" | "tab_generation_changed" | "confirmation_unavailable" | "reference_grant_expired"
   | "action_denied" | "user_action_required" | "strict_locator_violation" | "actionability_failed" | "dialog_blocking" | "user_takeover_required"
   | "element_not_visible" | "element_disabled" | "element_occluded" | "element_readonly"
-  | "unsupported" | "executed_unknown" | "browser_internal_error";
+  | "unsupported" | "executed_unknown" | "browser_internal_error"
+  | "navigation_timeout"
+  /** 用户在确认弹窗明确拒绝(approved:false)——语义为否决该路径,非通道故障(#606) */
+  | "user_declined"
+  /** 确认弹窗等待超时(用户未裁决,desktop 侧弹窗仍在,动作未执行,#606 review) */
+  | "confirmation_timeout";
+
+/**
+ * 可跨进程稳定透传的错误码全集(desktop 抛出点 + 协议契约)。desktop 错误码
+ * 白名单与 sidecar broker 透传白名单都必须从这里派生——双份手维护曾漏列
+ * element 族五码导致塌缩成 browser_internal_error(#602/#638 review)。
+ */
+export const STABLE_BROWSER_ERROR_CODES: readonly BrowserErrorCode[] = [
+  "incompatible_protocol", "browser_unavailable", "invalid_browser_request", "invalid_url",
+  "private_origin_confirmation_required", "stale_target", "stale_snapshot_cursor", "tab_not_found",
+  "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied",
+  "user_action_required", "strict_locator_violation", "actionability_failed", "dialog_blocking",
+  "user_takeover_required", "element_not_visible", "element_disabled", "element_occluded",
+  "element_readonly", "unsupported", "executed_unknown", "browser_internal_error", "navigation_timeout",
+  "user_declined", "confirmation_timeout",
+];
+
+/**
+ * desktop 侧单段等待类操作的统一上限(wait:* 与 autoWait 的 boundedNumber、
+ * 工具 schema timeout_ms maximum、sidecar clamp 多处必须同源,防 #603 类
+ * transport 先杀错配复发)。sidecar 传输超时须在此基础上另加 guest 等待
+ * (≤10s)与 RPC 余量。
+ */
+export const BROWSER_HANDLER_WAIT_CAP_MS = 30_000;
 
 export interface BrowserProtocolHandshake {
   protocolVersion: number;
@@ -325,7 +353,7 @@ export const DEFAULT_BROWSER_SETTINGS: BrowserSettings = {
   schemaVersion: 3,
   browserEnabled: true,
   browserUseEnabled: true,
-  browserApprovalMode: "neverAsk",
+  browserApprovalMode: "alwaysAsk",
   iabHistoryApprovalMode: "alwaysAsk",
   chromeHistoryApprovalMode: "alwaysAsk",
   agentCursorVisible: true,
@@ -348,3 +376,14 @@ export const BROWSER_IPC_CHANNELS = {
   GET_SETTINGS: "browser_settings:get",
   UPDATE_SETTINGS: "browser_settings:update",
 } as const;
+
+/**
+ * #601 维护性 review:内置浏览器工具名唯一真源。sidecar 注册表与 web 展示层
+ * 映射表（tool-summary.ts BROWSER_TOOL_LABELS）都必须从这里派生——三方字符串
+ * 契约靠哨兵测试（browser-tool-names.sentinel.test.ts）钉住一致性。
+ */
+export const LUME_BROWSER_TOOL_NAMES = [
+  "list_tabs", "open", "switch_tab", "navigate", "back", "forward", "reload", "snapshot",
+  "click", "double_click", "hover", "fill", "type", "press", "select", "check", "scroll",
+  "screenshot", "upload", "download", "list_secrets", "fill_secret", "dialog", "handle_dialog", "run_script",
+] as const

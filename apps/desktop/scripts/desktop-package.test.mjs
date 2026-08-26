@@ -1,4 +1,5 @@
 import test from 'node:test'
+import crypto from 'node:crypto'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -103,6 +104,11 @@ test('macOS release uses Developer ID when configured and otherwise falls back t
   assert.equal(pkg.build.mac?.hardenedRuntime, true)
   assert.equal(pkg.build.mac?.entitlements, 'assets/entitlements.mac.plist')
   assert.equal(pkg.build.mac?.entitlementsInherit, 'assets/entitlements.mac.plist')
+  // askForMediaAccess('microphone') 依赖打包产物 Info.plist 的用途声明。
+  assert.match(
+    String(pkg.build.mac?.extendInfo?.NSMicrophoneUsageDescription ?? ''),
+    /麦克风/,
+  )
   assert.equal(pkg.build.afterPack, 'scripts/after-pack.cjs')
   assert.equal(existsSync(afterPackPath), true)
   const afterPack = readFileSync(afterPackPath, 'utf8')
@@ -448,4 +454,38 @@ test('desktop dev builds desktop-host resources before launching Electron', () =
   assert.match(script, /build-desktop-host-resources\.mjs/)
   assertContainsBefore(script, 'spawnSync("node", [buildDesktopHostResourcesScript]', 'spawn(electronBin')
   assert.match(script, /LUME_COMPUTER_USE_BUNDLE_VARIANT:\s*["']dev["']/)
+})
+
+test('node-repl contract allowlist description matches worker.js (#639 review round-4)', () => {
+  // allowlist（worker.js Set）与 contract 描述的人工枚举是另一对手工同步物；
+  // 加模块忘改描述时在此变红。
+  const workerSource = readFileSync(resolve(DESKTOP_ROOT, 'resources-src', 'node-repl', 'runtime', 'worker.js'), 'utf8')
+  const setBody = workerSource.match(/const ALLOWED_BUILTIN_MODULES = new Set\(\[([\s\S]*?)\]\);/)?.[1] ?? ''
+  const allowed = new Set([...setBody.matchAll(/"(node:[^"]+)"/g)].map((m) => m[1]))
+  assert.ok(allowed.size > 0, 'ALLOWED_BUILTIN_MODULES must exist in worker.js')
+
+  const contract = JSON.parse(readFileSync(resolve(REPO_ROOT, 'crates', 'lume-node-repl-host', 'contracts', 'node-repl-mcp-contract.json'), 'utf8'))
+  const jsDescription = contract.tools.find((tool) => tool.name === 'js').description
+  for (const specifier of allowed) {
+    const short = specifier.replace(/^node:/, '')
+    if (short.includes('/')) continue // 子路径条目在描述中单列，此处只核对主模块名
+    assert.ok(jsDescription.includes(short), `contract js description missing allowed module "${short}"`)
+  }
+})
+
+test('node-repl manifest hashes match the bundled resource files (#639 review)', () => {
+  // manifest 哈希与资源文件靠人工同步；漂移会让生产侧按哈希拒载。CI 在此
+  // 兜底：任何 resources-src/node-repl 下的文件改动都必须同步 manifest。
+  const { createHash } = crypto
+  const baseDir = resolve(DESKTOP_ROOT, 'resources-src', 'node-repl')
+  const manifest = JSON.parse(readFileSync(resolve(baseDir, 'manifest.json'), 'utf8'))
+  const entries = Object.entries(manifest.files ?? {})
+
+  assert.ok(entries.length > 0, 'manifest.files must not be empty')
+  for (const [relativePath, expected] of entries) {
+    const actual = createHash('sha256')
+      .update(readFileSync(resolve(baseDir, relativePath)))
+      .digest('hex')
+    assert.equal(actual, expected, `manifest hash drift for ${relativePath}`)
+  }
 })

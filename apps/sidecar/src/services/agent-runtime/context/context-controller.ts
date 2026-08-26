@@ -1,7 +1,9 @@
 import {
   compactConversation,
+  compactToolResultContent,
   estimateMessagesTokens,
   estimateTokens,
+  COMPACTION_BREAKER_THRESHOLD,
   type AutoCompactState,
   type AgentContextController,
   type AgentContextCompactionMetadata
@@ -122,7 +124,16 @@ export function microCompactKernelMessages<T extends KernelMessage>(
     return {
       ...message,
       content: message.content.map((block) => {
-        if (!isRecord(block) || block.type !== "tool_result" || typeof block.content !== "string") {
+        if (!isRecord(block) || block.type !== "tool_result") {
+          return block;
+        }
+        // 数组形态（computer-use 截图等大 base64 载荷）此前原样放行、直进每次
+        // 请求（#567 第 4 项）；复用 SDK 微压缩同款语义：文本块截断、超预算
+        // image/document 降级占位，小图保留（#364）。
+        if (Array.isArray(block.content)) {
+          return { ...block, content: compactToolResultContent(block.content, maxToolResultChars) };
+        }
+        if (typeof block.content !== "string") {
           return block;
         }
         if (block.content.length <= maxToolResultChars) {
@@ -203,7 +214,7 @@ function shouldKernelAutoCompact(input: {
   maxOutputTokens?: number;
   budget: ContextBudgetSnapshot;
 }): boolean {
-  if (input.state.consecutiveFailures >= 3) return false;
+  if (input.state.consecutiveFailures >= COMPACTION_BREAKER_THRESHOLD) return false;
   const reserveTokens = Math.min(
     Math.max(0, input.maxOutputTokens ?? DEFAULT_RESERVED_OUTPUT_TOKENS),
     MAX_RESERVED_OUTPUT_TOKENS

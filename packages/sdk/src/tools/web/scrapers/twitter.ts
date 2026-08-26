@@ -1,106 +1,32 @@
 // @ts-nocheck
-import type { HTMLElement } from "./compat.js";
 import { ToolAbortError } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
-import { buildResult, loadPage } from "./types.js";
-
-const NITTER_INSTANCES = [
-	"nitter.privacyredirect.com",
-	"nitter.tiekoetter.com",
-	"nitter.poast.org",
-	"nitter.woodland.cafe",
-];
 
 /**
- * Handle Twitter/X URLs via Nitter
+ * Twitter/X handler：x.com 对自动化访问全面封锁，公共 Nitter 实例也已大面积死亡。
+ * 保留显式 blocked 提示并终止 handler 链（优于落回通用抓取的必然失败），不再白打请求。
  */
 export const handleTwitter: SpecialHandler = async (
 	url: string,
-	timeout: number,
+	_timeout: number,
 	signal?: AbortSignal,
 ): Promise<RenderResult | null> => {
-	try {
-		const parsed = new URL(url);
-		if (!["twitter.com", "x.com", "www.twitter.com", "www.x.com"].includes(parsed.hostname)) {
-			return null;
-		}
-
-		const fetchedAt = new Date().toISOString();
-
-		// Try Nitter instances, sharing one budget: each instance used to get a
-		// full timeout, so an all-down fleet burned k×10s before falling back (#237)
-		const deadlineMs = Date.now() + timeout * 1000;
-		for (const instance of NITTER_INSTANCES) {
-			const remainingSec = (deadlineMs - Date.now()) / 1000;
-			if (remainingSec <= 0.5) break;
-			const nitterUrl = `https://${instance}${parsed.pathname}`;
-			const result = await loadPage(nitterUrl, { timeout: Math.min(remainingSec, 10), signal });
-
-			if (result.ok && result.content.length > 500) {
-				// Parse the Nitter HTML
-				const { parseHTML } = await import("./compat.js");
-				const doc = parseHTML(result.content).document;
-
-				// Extract tweet content
-				const tweetContent = doc.querySelector(".tweet-content")?.textContent?.trim();
-				const fullname = doc.querySelector(".fullname")?.textContent?.trim();
-				const username = doc.querySelector(".username")?.textContent?.trim();
-				const date = doc.querySelector(".tweet-date a")?.textContent?.trim();
-				const stats = doc.querySelector(".tweet-stats")?.textContent?.trim();
-
-				if (tweetContent) {
-					let md = `# Tweet by ${fullname || "Unknown"} (${username || "@?"})\n\n`;
-					if (date) md += `*${date}*\n\n`;
-					md += `${tweetContent}\n\n`;
-					if (stats) md += `---\n${stats.replace(/\s+/g, " ")}\n`;
-
-					// Check for replies/thread
-					const replies = Array.from(doc.querySelectorAll(".timeline-item .tweet-content")) as HTMLElement[];
-					if (replies.length > 1) {
-						md += `\n---\n\n## Thread/Replies\n\n`;
-						for (const reply of replies.slice(1, 10)) {
-							const replyUser = reply.parentElement?.querySelector(".username")?.textContent?.trim();
-							md += `**${replyUser || "@?"}**: ${reply.textContent?.trim()}\n\n`;
-						}
-					}
-
-					return buildResult(md, {
-						url,
-						finalUrl: nitterUrl,
-						method: "twitter-nitter",
-						fetchedAt,
-						notes: [`Via Nitter: ${instance}`],
-					});
-				}
-			}
-		}
-	} catch {
-		if (signal?.aborted) {
-			throw new ToolAbortError();
-		}
+	const parsed = new URL(url);
+	if (!["twitter.com", "x.com", "www.twitter.com", "www.x.com"].includes(parsed.hostname)) {
+		return null;
 	}
-
 	if (signal?.aborted) {
 		throw new ToolAbortError();
 	}
-
-	// X.com blocks all bots - return a helpful error instead of falling through
 	return {
 		url,
 		finalUrl: url,
 		contentType: "text/plain",
 		method: "twitter-blocked",
 		content:
-			"Twitter/X blocks automated access. Nitter instances were unavailable.\n\nTry:\n- Opening the link in a browser\n- Using a different Nitter instance manually\n- Checking if the tweet is available via an archive service",
+			"Twitter/X blocks automated access.\n\nTry:\n- Opening the link in a browser\n- Checking if the tweet is available via an archive service",
 		fetchedAt: new Date().toISOString(),
 		truncated: false,
-		notes: ["X.com blocks bots; Nitter instances unavailable"],
+		notes: ["X.com blocks bots"],
 	};
 };
-
-
-
-
-
-
-

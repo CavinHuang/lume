@@ -632,4 +632,137 @@ describe("searchMemoryV2", () => {
     expect(results.some((item) => item.statement === active.statement)).toBe(true);
     expect(results.some((item) => item.statement === suppressed.statement)).toBe(false);
   });
+
+  test("minScore filters candidates before rerank on every return path (#538)", async () => {
+    await smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "decision",
+        targetScope: "workspace",
+        statement: "Memory V2 minScore gating keeps low-relevance recall out.",
+        confidence: "high",
+        tags: ["architecture"]
+      }
+    });
+
+    // minScore 过滤发生在候选池阶段（rerank 覆写 score 为序号之前），
+    // 因此用不可能达到的巨大阈值即可钉死「阈值作用于原始检索分」语义
+    const impossible = Number.MAX_SAFE_INTEGER;
+
+    const filtered = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "memory architecture design",
+      maxResults: 5,
+      semantic: "off",
+      rerankItems: async (items) => items,
+      minScore: impossible,
+    });
+    expect(filtered).toEqual([]);
+
+    // reranker 抛错路径下过滤仍生效
+    const fallback = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "memory architecture design",
+      maxResults: 5,
+      semantic: "off",
+      rerankItems: async () => { throw new Error("rerank down"); },
+      minScore: impossible,
+    });
+    expect(fallback).toEqual([]);
+
+    // 缺省不过滤
+    const unfiltered = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "memory architecture design",
+      maxResults: 5,
+      semantic: "off",
+      rerankItems: async (items) => items,
+    });
+    expect(unfiltered.length).toBeGreaterThan(0);
+  });
+});
+
+describe("overrides 门控与 rerank 序 (#521)", () => {
+  async function seedNameClaim(statement: string, object: string): Promise<void> {
+    await smartAddMemoryV2Candidate({
+      workspaceSlug: "demo",
+      candidate: {
+        kind: "preference",
+        targetScope: "global",
+        statement,
+        confidence: "high",
+        tags: ["preferred-name"],
+        claim: {
+          subject: "user/self",
+          predicate: "preferred_name",
+          object
+        }
+      }
+    });
+  }
+
+  // 抑制的正用例:纠正语境 + predicate 命中计划 + object 已不在 query
+  test("overrides a claim whose object is absent from a corrective query(#521)", async () => {
+    await seedNameClaim("User wants to be called Alice.", "Alice");
+
+    const results = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "以后改为 Bob。我叫什么名字？",
+      maxResults: 5,
+      semantic: "off"
+    });
+
+    expect(results.some((item) => item.statement === "User wants to be called Alice.")).toBe(false);
+  });
+
+  test("keeps the claim when the planned predicates do not match it(#521)", async () => {
+    await seedNameClaim("User wants to be called Alice.", "Alice");
+
+    const results = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "实际上 instead 这个功能应该怎么配置？我叫什么名字？",
+      maxResults: 5,
+      semantic: "off",
+      // 直传 queryPlan 钉住门控本身;走 queryPlanner 时其输出会与 fallback
+      // 计划合并(并入含"名字"的宽泛谓词),属机制既有粒度局限
+      queryPlan: {
+        querySubject: "",
+        desiredPredicates: ["configuration"],
+        includeConversationHistory: false
+      }
+    });
+
+    expect(results.some((item) => item.statement === "User wants to be called Alice.")).toBe(true);
+  });
+
+  test("rerank order overrides legacy scores for final selection(#521)", async () => {
+    for (const text of [
+      "Filler memory entry zero about testing.",
+      "Filler memory entry one about testing.",
+      "Target memory entry the user explicitly cares about."
+    ]) {
+      await smartAddMemoryV2Candidate({
+        workspaceSlug: "demo",
+        candidate: {
+          kind: "preference",
+          targetScope: "global",
+          statement: text,
+          confidence: "high"
+        }
+      });
+    }
+
+    const results = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "user explicitly cares",
+      maxResults: 1,
+      semantic: "off",
+      rerankItems: async (items) => {
+        const target = items.find((item) => item.statement.includes("explicitly cares"))!;
+        return [target, ...items.filter((item) => item !== target)];
+      }
+    });
+
+    expect(results[0]?.statement).toContain("explicitly cares");
+  });
 });

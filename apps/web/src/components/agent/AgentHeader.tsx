@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useAtom, useAtomValue } from 'jotai'
 import { FolderOpen, ListTodo } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { agentRuntimeEventsFamily, agentThreadsAtom, agentRuntimeStatusFamily, agentStreamingStatesFamily, agentWorkspacesAtom, activeTabIdAtom, tabsAtom } from '@/atoms'
 import { ThreadMoreActions } from './ThreadMoreActions'
+import { displayToolName } from './message-blocks/tool-summary'
 import { AGENT_IPC_CHANNELS, type AgentRuntimePhase, type AgentWorkspace, type AgentWorkspaceStatus } from '@lume/shared'
 import { getPlanningTodo, onPlanningTodoChange, openFolderDialog, sidecarCall } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
@@ -12,6 +13,8 @@ import { Button } from '@/components/ui/button'
 interface AgentHeaderProps {
   threadId: string
   readOnly?: boolean
+  /** 头部右侧的操作区（如 视图切换）。 */
+  actions?: ReactNode
 }
 
 const PHASE_STYLE: Record<AgentRuntimePhase, { label: string; dot: string; text: string }> = {
@@ -24,7 +27,7 @@ const PHASE_STYLE: Record<AgentRuntimePhase, { label: string; dot: string; text:
   errored: { label: '出错', dot: 'bg-[var(--lume-danger)]', text: 'text-[var(--lume-danger)]' },
 }
 
-export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
+export function AgentHeader({ threadId, readOnly, actions }: AgentHeaderProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const [workspaces, setWorkspaces] = useAtom(agentWorkspacesAtom)
   const [tabs, setTabs] = useAtom(tabsAtom)
@@ -149,12 +152,13 @@ export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
           >
             <span className={cn('size-1.5 rounded-full', phaseStyle.dot)} />
             {isStreaming && toolName
-              ? `第 ${toolStepCount} 步 · ${toolName}`
+              ? `第 ${toolStepCount} 步 · ${displayToolName(toolName)}`
               : phaseStyle.label}
             {runtimeStatus?.queuedCount ? ` · 队列 ${runtimeStatus.queuedCount}` : ''}
           </span>
         )}
       </div>
+      {actions && <div className="flex shrink-0 items-center gap-1">{actions}</div>}
     </div>
   )
 }

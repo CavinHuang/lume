@@ -11,6 +11,7 @@ import { GeneralSettings } from './GeneralSettings'
 import { AppearanceSettings } from './AppearanceSettings'
 import { AgentSettings } from './AgentSettings'
 import { AgentsSettings } from './AgentsSettings'
+import { ConnectorSettings } from './ConnectorSettings'
 import { McpSettings } from './McpSettings'
 import { ImSettings } from './ImSettings'
 import { PermissionSettings } from './PermissionSettings'
@@ -22,6 +23,7 @@ import { VersionUpdateSettings } from './VersionUpdateSettings'
 import { DataManagementSettings } from './DataManagementSettings'
 import { LogSettings } from './LogSettings'
 import { WebSearchSettings } from './WebSearchSettings'
+import { VoiceDictationSettings } from './VoiceDictationSettings'
 import { ArchiveSettings } from './ArchiveSettings'
 import { SkillsSettings } from './SkillsSettings'
 import { BrowserSettings } from './BrowserSettings'
@@ -113,8 +115,14 @@ export function SettingsView() {
             />
           )}
           {tab === 'integrations' && <McpSettings />}
-          {tab === 'im-integrations' && <ImSettings />}
+          {tab === 'im-integrations' && (
+            <div className="space-y-4">
+              <ConnectorSettings />
+              <ImSettings />
+            </div>
+          )}
           {tab === 'web-search' && <WebSearchSettings />}
+          {tab === 'voice-input' && <VoiceDictationSettings />}
           {tab === 'updates' && <VersionUpdateSettings />}
           {tab === 'data' && <DataManagementSettings />}
           {tab === 'logs' && <LogSettings />}

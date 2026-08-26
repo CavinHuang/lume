@@ -195,8 +195,19 @@ export async function runAgentRuntime(
   const threadKey = params.input.threadId;
   acquireRuntimeActivityPlaceholder(threadKey);
   let result: AgentRuntimeRunResult;
+  // #520:兜底补发仅在内部从未 emit 过错误时执行——runner.fail() 链路已发过
+  // 一次,无条件补发会让忽略 fromActiveRun 标志的消费者(如 IM 通道)收到双份
+  // 失败终值
+  let errorEmitted = false;
+  const emitWithTracking: AgentRuntimeEmitter = {
+    ...emit,
+    onError: (error) => {
+      errorEmitted = true;
+      return emit.onError(error);
+    }
+  };
   try {
-    result = await runRuntimeCoreAttempt(params, emit, {
+    result = await runRuntimeCoreAttempt(params, emitWithTracking, {
       registerAbort: (sessionId, abort) => {
         // 升级占位为真实句柄；准备阶段被 stop 过的 run 在此补触发中止。
         const placeholder = activePiSessions.get(sessionId);
@@ -214,7 +225,7 @@ export async function runAgentRuntime(
     // 正常路径此条目已由 unregisterAbort 删除，此处仅回收占位形态。
     releaseRuntimeActivityPlaceholder(threadKey);
   }
-  if (result.status === "errored") {
+  if (result.status === "errored" && !errorEmitted) {
     emit.onError(
       `Agent Runtime 执行失败: ${result.errorMessage ?? "未知错误"}`,
     );

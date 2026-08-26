@@ -14,7 +14,9 @@ import {
   screen,
   session,
   shell,
+  systemPreferences,
   utilityProcess,
+  webContents,
 } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { execFileSync } from 'node:child_process'
@@ -30,7 +32,7 @@ import {
 } from 'node:fs'
 import { once } from 'node:events'
 import { spawn } from 'node:child_process'
-import { homedir } from 'node:os'
+import { homedir, release } from 'node:os'
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -58,6 +60,7 @@ import {
   ensureFile,
   exportZip,
   getQuickInputUrl,
+  getVoiceIndicatorUrl,
   parseJsonFile,
   readWindowBehaviorFromConfigDir,
   normalizeWindowBehavior,
@@ -69,11 +72,27 @@ import {
   restoreMainWindow,
   shouldCaptureRememberedDesktopTarget,
   validateExternalUrl,
+  applyVoiceMicPermissionState,
+  resolveMacMicrophoneSettingsDeepLink,
   validateMigrationTarget,
   validateWereadUrl,
   writeLauncherConfigAt,
 } from './desktop-core'
 import { clampIslandHeight, createIslandWindow } from './agent-island-window'
+import {
+  cancelAllVoiceAsrSessions,
+  cancelVoiceAsrSession,
+  sendVoiceAsrAudio,
+  startVoiceAsrSession,
+  stopVoiceAsrSession,
+  testVoiceAsrConnection,
+} from './voice-asr-service'
+import { planVoiceShortcutSync, readVoiceDictationSettings, updateVoiceDictationSettings } from './voice-dictation-settings-service'
+import { pasteTextAtCurrentCursor } from './text-insertion-service'
+import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice-dictation-window'
+import type { VoiceDictationSettings, VoiceDictationSettingsUpdate } from '@lume/shared'
+import type { VoiceMicPermissionState } from './desktop-core'
+import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -296,6 +315,8 @@ let settingsBroker: SettingsBroker | null = null
 let diagnosticContentStore: DiagnosticContentStore | null = null
 let sidecarLogDigestPolicy: LumeLogDigestPolicy | null = null
 let connectionVaultKey: Buffer | null = null
+// sidecar 崩溃惰性重启时经 SIDECAR_READY 补发，避免重启后加密静默回退弱种子(#617)
+let secretEncryptionKey: Buffer | null = null
 const pendingRendererDeliveries = new Map()
 const rendererLogSubscriptions = new Map()
 
@@ -448,7 +469,8 @@ function requireMainWindowSender(context, command) {
 
 /** 当前受信任的渲染窗口集合：mainWindow 总在列；quickInputWindow / islandWindow 存在时纳入。 */
 function getTrustedWindows() {
-  return [mainWindow, quickInputWindow, islandWindow].filter(
+  const indicatorWin = voiceIndicatorManager?.getWindow()
+  return [mainWindow, quickInputWindow, islandWindow, indicatorWin].filter(
     (w): w is BrowserWindow => !!w && !w.isDestroyed(),
   )
 }
@@ -547,6 +569,7 @@ const sidecarHost = createSidecarHost({
     }
     showDesktopProposalNotification(method, params)
     showPlanningReminderNotification(method, params)
+    showAutomationRunNotification(method, params)
     showDesktopActionHud(method, params)
     // Agent 灵动岛 service（Task 7）：先于 renderer 转发处理 sidecar 通知，
     // 确保即便主窗口隐藏也能触发 intent 刷新。
@@ -696,6 +719,39 @@ function showPlanningReminderNotification(method, params) {
     } catch (error) {
       writeMainLog('error', 'desktop.notification', 'planning_reminder.show_failed', 'planning reminder notification failed', { data: { error } })
     }
+  }
+}
+
+// #566 端到端 review A2:automation 停摆/失败必须有主动通知面——无人值守场景用户
+// 不会盯着管理页；success 保持静默不打扰，failed/waiting 才是「需要人介入」的信号。
+// #649 follow-up:同 job 冷却窗——常驻失败的定时 job 按 cron 频率会无限刷 OS 通知。
+const AUTOMATION_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000
+const automationNotifyLastAt = new Map()
+
+function showAutomationRunNotification(method, params) {
+  if (method !== 'automation:run-completed' || !params || typeof params !== 'object') return
+  const run = params.run
+  if (!run || (run.status !== 'failed' && run.status !== 'waiting_for_user' && run.status !== 'waiting_for_approval')) return
+  if (!Notification.isSupported()) return
+  const jobKey = typeof run.jobId === 'string' ? run.jobId : ''
+  const lastAt = jobKey ? automationNotifyLastAt.get(jobKey) : undefined
+  const now = Date.now()
+  if (lastAt !== undefined && now - lastAt < AUTOMATION_NOTIFY_COOLDOWN_MS) {
+    writeMainLog('info', 'desktop.notification', 'automation_run.cooldown_skip', 'automation notification suppressed by per-job cooldown', { data: { jobId: jobKey, status: run.status } })
+    return
+  }
+  if (jobKey) automationNotifyLastAt.set(jobKey, now)
+  try {
+    const title = run.status === 'failed' ? `自动化任务未完成：${params.jobName ?? '未命名任务'}` : `自动化任务等待处理：${params.jobName ?? '未命名任务'}`
+    const desktopNotification = new Notification({
+      title,
+      body: typeof run.message === 'string' && run.message.trim() ? run.message : '请打开自动化页面查看详情。',
+      silent: true,
+    })
+    desktopNotification.on('click', () => { void showMainWindow() })
+    desktopNotification.show()
+  } catch (error) {
+    writeMainLog('error', 'desktop.notification', 'automation_run.show_failed', 'automation run notification failed', { data: { error } })
   }
 }
 
@@ -1206,7 +1262,20 @@ export function attachWebContentsSecurity(win, { allowNavigation }) {
     pluginAssets.revokeOwner(ownerWebContentsId)
   })
 
-  win.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
+  win.webContents.session.setPermissionRequestHandler((requestingWebContents, permission, callback, details) => {
+    // 语音听写需要麦克风采集。该 handler 作用于整个共享 session，必须把放行
+    // 收敛到受信窗口——否则渲染任意远程网页的窗口（页面抓取/阅读窗）会静默
+    // 获得麦克风。仅纯音频放行，摄像头与其余权限一律拒绝（fail-closed）。
+    if (permission === 'media') {
+      const trusted = getTrustedWindows().some((trustedWin) => trustedWin.webContents === requestingWebContents)
+      if (!trusted) {
+        callback(false)
+        return
+      }
+      const mediaTypes = (details as Electron.MediaAccessPermissionRequest | undefined)?.mediaTypes
+      callback(Array.isArray(mediaTypes) && !mediaTypes.includes('video'))
+      return
+    }
     callback(false)
   })
 }
@@ -1681,6 +1750,94 @@ const STAGED_ATTACHMENT_SIDECAR_METHODS = new Set([
   'agent:save-files-to-workspace-root',
 ])
 
+// 语音听写全局快捷键：可由设置动态变更，变更时先解绑旧键再注册新键。
+let registeredVoiceDictationShortcut = ''
+
+function handleVoiceDictationShortcut(): void {
+  void (async () => {
+    try {
+      let outputMode: VoiceDictationSettingsUpdate['outputMode']
+      try {
+        outputMode = readVoiceDictationSettings(getSettingsBroker()).outputMode
+      } catch {
+        outputMode = undefined
+      }
+      const mainWinFocused = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused())
+      // 非输入框模式且 Lume 不在前台：走无焦点指示条，不打断当前应用工作流。
+      if ((outputMode === 'system-cursor' || outputMode === 'clipboard') && !mainWinFocused) {
+        getVoiceIndicatorManager().sendToggle()
+        return
+      }
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        await createMainWindow()
+      } else {
+        await showMainWindow()
+      }
+      const win = mainWindow
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('lume:event:voice-dictation:toggle')
+      }
+    } catch (error) {
+      writeMainLog('error', 'desktop.voice_dictation', 'shortcut.toggle_failed', 'voice dictation shortcut failed', { data: { error } })
+    }
+  })()
+}
+
+function registerVoiceDictationShortcut(accelerator: string): boolean {
+  const next = accelerator.trim() || VOICE_DICTATION_DEFAULT_SHORTCUT
+  if (next === registeredVoiceDictationShortcut) return true
+  try {
+    globalShortcut.unregister(registeredVoiceDictationShortcut)
+  } catch {
+    // 旧键未注册或已失效，忽略。
+  }
+  const registered = globalShortcut.register(next, handleVoiceDictationShortcut)
+  if (registered) {
+    registeredVoiceDictationShortcut = next
+  } else {
+    // 新键被占用：标志置空以解除与已解绑旧键的虚假一致，
+    // 否则回滚注册会命中早退分支，旧键静默死亡直到重启。
+    registeredVoiceDictationShortcut = ''
+  }
+  return registered
+}
+
+/** 把 ASR 会话事件回发给发起录音的窗口；窗口已销毁时静默丢弃。 */
+function sendVoiceDictationEvent(ownerWebContentsId: number | undefined, channel: string, payload: unknown): void {
+  if (ownerWebContentsId === undefined) return
+  try {
+    const contents = webContents.fromId(ownerWebContentsId)
+    if (contents && !contents.isDestroyed()) contents.send(`lume:event:${channel}`, payload)
+  } catch {
+    // 会话中途窗口关闭属正常路径，忽略。
+  }
+}
+
+// 语音听写指示条管理（窗口创建/安全闸/生命周期在 voice-dictation-window.ts）。
+let voiceFlashTimer: ReturnType<typeof setTimeout> | null = null
+let voiceMicPermissionState: VoiceMicPermissionState = { sawDeniedInProcess: false, restartRequired: false }
+let voiceIndicatorManager: VoiceIndicatorManager | null = null
+
+function getVoiceIndicatorManager(): VoiceIndicatorManager {
+  if (!voiceIndicatorManager) {
+    voiceIndicatorManager = createVoiceIndicatorManager({
+      appIsPackaged: app.isPackaged,
+      appProtocolOrigin: APP_PROTOCOL_ORIGIN,
+      devServerUrl: getDevServerUrl(),
+      desktopRoot: DESKTOP_ROOT,
+      attachSecurity: (indicatorWin) => attachWebContentsSecurity(indicatorWin, {
+        allowNavigation: (url) => isAllowedMainFrameNavigation(url, {
+          appIsPackaged: app.isPackaged,
+          appProtocolOrigin: APP_PROTOCOL_ORIGIN,
+          devServerUrl: getDevServerUrl(),
+          webEntryPath: getWebEntryPath(),
+        }),
+      }),
+    })
+  }
+  return voiceIndicatorManager
+}
+
 async function dispatchCommand(command, payload: Record<string, any> = {}, context: { ownerWebContentsId?: number } = {}) {
   switch (command) {
     case 'connection_vault_status': {
@@ -1837,6 +1994,116 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       return sidecarHost.call('healthcheck', null)
     case 'agent_island_intent': {
       await agentIslandService?.handleIntent(payload as AgentIslandIntent)
+      return null
+    }
+    case 'voice_dictation_get_settings':
+      // 无焦点指示条也会读取（免焦点模式唯一入口），不加主窗 sender 限制；
+      // lume:invoke 入口的 validateIpcSender 已挡住非受信窗口。
+      return readVoiceDictationSettings(getSettingsBroker())
+    case 'voice_dictation_update_settings': {
+      requireMainWindowSender(context, 'voice_dictation_update_settings')
+      const broker = getSettingsBroker()
+      const before = readVoiceDictationSettings(broker)
+      let result = updateVoiceDictationSettings(broker, payload as VoiceDictationSettingsUpdate)
+      const plan = planVoiceShortcutSync({
+        credentialsComplete: Boolean(result.appId && result.accessToken && result.resourceId),
+        desiredShortcut: result.shortcut,
+        currentRegisteredShortcut: registeredVoiceDictationShortcut,
+      })
+      let shortcutRegistered = true
+      if (plan.action === 'unregister') {
+        try {
+          globalShortcut.unregister(registeredVoiceDictationShortcut)
+        } catch {
+          // 未注册或已失效，忽略。
+        }
+        registeredVoiceDictationShortcut = ''
+      } else if (plan.action === 'register') {
+        shortcutRegistered = registerVoiceDictationShortcut(plan.shortcut)
+        if (!shortcutRegistered) {
+          // 新键被占用：回滚设置与注册到旧键（旧键此前可用）。
+          updateVoiceDictationSettings(broker, { shortcut: before.shortcut })
+          registerVoiceDictationShortcut(before.shortcut)
+          result = { ...result, shortcut: before.shortcut }
+        }
+      }
+      return { ...result, shortcutRegistered }
+    }
+    case 'voice_dictation_test_connection':
+      return testVoiceAsrConnection(readVoiceDictationSettings(getSettingsBroker()))
+    case 'voice_dictation_start': {
+      const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (!sessionId) throw new Error('session_id_required')
+      await startVoiceAsrSession(sessionId, readVoiceDictationSettings(getSettingsBroker()), {
+        onState: (event) => sendVoiceDictationEvent(context.ownerWebContentsId, 'voice-dictation:state', event),
+        onTranscript: (event) => sendVoiceDictationEvent(context.ownerWebContentsId, 'voice-dictation:transcript', event),
+      })
+      return null
+    }
+    case 'voice_dictation_audio_chunk': {
+      const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      // 正常 chunk ~6.4KB（200ms@16kHz PCM16）；上限是受信 renderer 被攻破后的防御纵深。
+      if (payload.data instanceof ArrayBuffer && sessionId && payload.data.byteLength <= 256 * 1024) {
+        sendVoiceAsrAudio(sessionId, payload.data)
+      }
+      return null
+    }
+    case 'voice_dictation_stop': {
+      const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (sessionId) await stopVoiceAsrSession(sessionId)
+      return null
+    }
+    case 'voice_dictation_cancel': {
+      const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (sessionId) await cancelVoiceAsrSession(sessionId)
+      return null
+    }
+    case 'voice_dictation_check_microphone': {
+      // macOS 有系统级 TCC 权限可查；Windows/Linux 返回 unsupported，由 getUserMedia 触发授权。
+      if (process.platform !== 'darwin') return { status: 'unsupported', platform: process.platform }
+      const raw = systemPreferences.getMediaAccessStatus('microphone')
+      const status = raw === 'granted' || raw === 'denied' || raw === 'not-determined' ? raw : 'denied'
+      // restartRequired 是进程生命周期事实：曾 denied 后系统侧改允许，需重启才
+      // 对本进程生效——由 main 持有，组件卸载重挂不丢。
+      voiceMicPermissionState = applyVoiceMicPermissionState(voiceMicPermissionState, status)
+      return { status, restartRequired: voiceMicPermissionState.restartRequired, platform: process.platform }
+    }
+    case 'voice_dictation_request_microphone': {
+      if (process.platform !== 'darwin') return { status: 'unsupported', platform: process.platform }
+      const granted = await systemPreferences.askForMediaAccess('microphone')
+      return { status: granted ? 'granted' : 'denied', platform: process.platform }
+    }
+    case 'voice_dictation_commit_cursor': {
+      const text = typeof payload.text === 'string' ? payload.text : ''
+      if (!text) return { success: false, mode: 'clipboard', message: '没有可提交的听写文本' }
+      return pasteTextAtCurrentCursor(text)
+    }
+    case 'voice_dictation_hide_indicator':
+      getVoiceIndicatorManager().hide()
+      return null
+    case 'voice_dictation_open_microphone_settings': {
+      // 隐私面板深链随系统版本不同（13+ extension / 12 旧 path），由主进程按
+      // darwin kernel 主版本路由，renderer 不感知系统差异。
+      if (process.platform !== 'darwin') return null
+      const darwinMajor = Number(release().split('.')[0])
+      await shell.openExternal(resolveMacMicrophoneSettingsDeepLink(darwinMajor))
+      return null
+    }
+    case 'desktop_flash_window': {
+      // 听写完成时窗口不在前台 → 任务栏闪烁提醒（Windows）/ Dock 跳动（macOS）。
+      // 模块级 timer 复用：连续完成多次听写时不堆叠定时器提前熄灭上一次提醒。
+      const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+      if (!win || win.isFocused()) return null
+      win.flashFrame(true)
+      if (voiceFlashTimer) clearTimeout(voiceFlashTimer)
+      voiceFlashTimer = setTimeout(() => {
+        voiceFlashTimer = null
+        try {
+          if (!win.isDestroyed()) win.flashFrame(false)
+        } catch {
+          // 窗口销毁竞态，忽略。
+        }
+      }, 3000)
       return null
     }
     case 'sidecar_call': {
@@ -2624,6 +2891,15 @@ function createSidecarHost({ onNotification }) {
       env.LUME_BUNDLED_PLUGINS_DIR = bundledPluginsDir
     }
 
+    // #523:bootstrap 模板目录随打包产物分发,dev 模式直指仓库源码目录;
+    // 不注入则 sidecar 的向上 5 级查找在打包布局下必然断链
+    const templatesDir = app.isPackaged
+      ? join(process.resourcesPath, 'templates', 'workspace')
+      : resolve(REPO_ROOT, 'templates', 'workspace')
+    if (existsSync(templatesDir)) {
+      env.LUME_TEMPLATES_DIR = templatesDir
+    }
+
     const sidecarScriptPath = getSidecarScriptPath({
       appIsPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
@@ -2760,6 +3036,25 @@ function createSidecarHost({ onNotification }) {
               })
             }
           }
+          if (secretEncryptionKey) {
+            try {
+              runningChild.postMessage(JSON.stringify({
+                method: 'system.secret-encryption-key',
+                params: { key: secretEncryptionKey.toString('base64') },
+              }))
+            } catch (error) {
+              writeMainLog('warn', 'desktop.sidecar.security', 'secret_key.delivery_failed', 'failed to reinstall secret encryption key in sidecar', {
+                data: { error },
+              })
+            }
+          } else {
+            // 首装失败（启动窗口内 sidecar 崩溃 / keyring 暂不可用）时
+            // secretEncryptionKey 为 null 且无其他恢复点——存量 v2 密文会在本
+            // session 内锁死、新密文静默降级 legacy（交叉复审 F1）。惰性重启
+            // 的 READY 是唯一恢复时机，fire-and-forget 重试安装；失败仍走
+            // install 内部 catch 记日志，等下一次 READY 再试。
+            void installSecretEncryptionKeyInSidecar()
+          }
           logDesktopStartup('sidecar reported system.ready', 'sidecar.ready')
           settleStart()
           return
@@ -2865,7 +3160,16 @@ function createSidecarHost({ onNotification }) {
           const requestSequence = payload.browserRpc?.sequence
           if (typeof requestSequence !== 'number'
             || requestSequence !== browserRpcInboundSequence + 1
-            || !verifyBrowserRpcMac('sidecar->main', requestSequence, String(payload.id), payload.params ?? null, payload.browserRpc.mac)) return
+            || !verifyBrowserRpcMac('sidecar->main', requestSequence, String(payload.id), payload.params ?? null, payload.browserRpc.mac)) {
+            // #611：畸形/失序/坏 MAC 的请求也须回一条错误响应，否则 sidecar 干等超时后
+            // 误报 executed_unknown（「可能已执行」——实际包根本没被接受）。语义归
+            // browser_unavailable（传输面故障、可重试），不含校验细节不构成 oracle；
+            // 响应 MAC 由 desktop 正常签名。
+            const sequence = ++browserRpcOutboundSequence
+            const body = { ok: false, error: 'browser_unavailable' }
+            runningChild.postMessage(JSON.stringify({ id: payload.id, error: { code: 'browser_unavailable' }, browserRpc: { sequence, mac: browserRpcMac('main->sidecar', sequence, String(payload.id), body) } }))
+            return
+          }
           browserRpcInboundSequence = requestSequence
           void dispatchCommand('browser_runtime', payload.params ?? {}, {})
             .then((result) => {
@@ -3054,7 +3358,16 @@ function createSidecarHost({ onNotification }) {
 
   async function notifyBrowserSettings(settings) {
     await start()
-    child.postMessage(JSON.stringify({ method: 'browser:settings', params: { extensionBackendEnabled: settings?.extensionBackendEnabled === true } }))
+    // browserEnabled/browserUseEnabled 直达 sidecar 驱动工具 isEnabled 门控(#608);
+    // 缺省(undefined)视为启用,与 DEFAULT_BROWSER_SETTINGS 一致
+    child.postMessage(JSON.stringify({
+      method: 'browser:settings',
+      params: {
+        extensionBackendEnabled: settings?.extensionBackendEnabled === true,
+        browserEnabled: settings?.browserEnabled !== false,
+        browserUseEnabled: settings?.browserUseEnabled !== false,
+      },
+    }))
   }
 
   async function stop() {
@@ -3344,6 +3657,7 @@ app.whenReady().then(async () => {
   desktopHostState = await startDesktopHost()
   await sidecarHost.start()
   await unlockConnectionVaultStore()
+  await installSecretEncryptionKeyInSidecar()
   await sidecarHost.notifyBrowserSettings?.(browserRuntime.getSettings())
   logDesktopStartup('sidecar ready', 'sidecar.ready')
   pageRenderer = new PageRenderer()
@@ -3364,6 +3678,21 @@ app.whenReady().then(async () => {
   })
   if (!quickInputShortcutRegistered) {
     writeMainLog('error', 'desktop.quick_input', 'shortcut.registration_failed', 'globalShortcut Alt+L 注册失败（可能被其他程序占用）')
+  }
+
+  // 语音听写全局快捷键：仅在凭证配置齐全时注册（未启用不占用系统按键）。
+  try {
+    const voiceSettings = readVoiceDictationSettings(getSettingsBroker())
+    const plan = planVoiceShortcutSync({
+      credentialsComplete: Boolean(voiceSettings.appId && voiceSettings.accessToken && voiceSettings.resourceId),
+      desiredShortcut: voiceSettings.shortcut,
+      currentRegisteredShortcut: registeredVoiceDictationShortcut,
+    })
+    if (plan.action === 'register' && !registerVoiceDictationShortcut(plan.shortcut)) {
+      writeMainLog('warn', 'desktop.voice_dictation', 'shortcut.registration_failed', `globalShortcut ${plan.shortcut} 注册失败（可能被其他程序占用）`)
+    }
+  } catch {
+    // 设置读取失败：保持未注册，配置完成后的首次更新会再同步。
   }
 }).catch((error) => {
   logDesktopStartup(`startup failed: ${error.stack ?? error}`, 'app.start_failed', 'fatal')
@@ -3386,6 +3715,7 @@ app.on('before-quit', () => {
   agentIslandService?.destroy()
   agentIslandService = null
   stopAgentIslandSurface()
+  cancelAllVoiceAsrSessions()
 })
 
 app.on('window-all-closed', () => {
@@ -3473,6 +3803,29 @@ async function unlockDesktopContextStore() {
 
 function getConnectionVaultKeyPath(): string {
   return join(resolveConfigDir(), 'connection-vault-key.json')
+}
+
+// 应用级随机密钥（safeStorage 包裹落盘，仅原机可解）：注入后 sidecar 的
+// encryptSecret 脱离可推导的 USERNAME/HOME 种子(#617)。Linux 无 keyring 时
+// Electron 退 basic_text 后端，isEncryptionAvailable 仍返回 true——照样注入，
+// 包裹文件靠 loadOrCreateDesktopContextKey 的 0600 收权兜底；真正注入失败
+// （key 文件损坏等）时 catch 跳过，sidecar 自动退回 legacy 行为。
+async function installSecretEncryptionKeyInSidecar(): Promise<void> {
+  let key: Buffer | null = null
+  try {
+    key = loadOrCreateDesktopContextKey({
+      path: join(resolveConfigDir(), 'secret-encryption-key.bin'),
+      safeStorage,
+    })
+    await sidecarHost.call('system.secret-encryption-key', { key: key.toString('base64') })
+    secretEncryptionKey?.fill(0)
+    secretEncryptionKey = Buffer.from(key)
+    logDesktopStartup('secret encryption key installed')
+  } catch (error) {
+    logDesktopStartup(`secret encryption unavailable: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    key?.fill(0)
+  }
 }
 
 async function installConnectionVaultKeyInSidecar(key: Buffer): Promise<void> {

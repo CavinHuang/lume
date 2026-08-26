@@ -21,12 +21,23 @@ import { defineTool } from './types.js'
 import type { ToolContext, ToolExecutionMetadata, ToolResult } from '../types.js'
 import { bundledRipgrepDirectory } from '../utils/ripgrep.js'
 import { analyzeBashCommand } from '../utils/bash-command-analysis.js'
-import { resolveShellInvocation, shellKind, shellKindWithoutDiscovery } from '../utils/shell-invocation.js'
+import { resolveShellInvocation, shellKind } from '../utils/shell-invocation.js'
+import { isReadOnlyShellInput } from '../utils/shell-read-only.js'
 import { spawnWithProcessSandbox, terminateProcessTree } from '../utils/process-sandbox.js'
 
 const MAX_OUTPUT_BYTES = 50 * 1024 * 1024
 const MAX_RESULT_CHARS = 100_000
 const PREVIEW_CHARS = 4_000
+// Result previews keep the tail within both bounds (errors live at the end).
+// Per-stream char budget sits under half the final result budget by enough
+// margin that two full sections plus their labels/footers still fit the
+// assembler's structural budget — the assembly-level trim then only fires as a
+// pathological backstop (where it appends its own truncation footer).
+const RESULT_MAX_LINES = 500
+const RESULT_SECTION_MAX_CHARS = 49_500
+// Live streaming snapshots ride the live channel while the command runs.
+const STREAM_SNAPSHOT_THROTTLE_MS = 150
+const STREAM_SNAPSHOT_MAX_CHARS = 16_000
 const AUTO_BACKGROUND_MS = 15_000
 const PROGRESS_THRESHOLD_MS = 2_000
 const STALL_CHECK_INTERVAL_MS = 5_000
@@ -51,7 +62,7 @@ type ShellTask = Awaited<ReturnType<typeof startShellTask>>
 
 export const BashTool = defineTool({
   name: 'Bash',
-  description: 'Execute a shell command and return its output. Commands still running after the foreground budget continue in the background and emit one terminal notification; do not poll ProcessOutput. Read the returned output file when full logs are needed. On Windows, use a configured POSIX bash when available; otherwise commands run through PowerShell. Keep each command in one shell dialect and do not mix cmd.exe, PowerShell, and POSIX syntax.',
+  description: 'Execute a shell command and return its output. Commands still running after the foreground budget continue in the background and emit one terminal notification; do not poll ProcessOutput. Read the returned output file when full logs are needed. On Windows, use a configured POSIX bash when available; otherwise commands run through PowerShell. Keep each command in one shell dialect and do not mix cmd.exe, PowerShell, and POSIX syntax. An exit code 0 with no output is a successful silent check: state that explicitly instead of searching for extra output.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -148,240 +159,6 @@ export const BashTool = defineTool({
   },
 })
 
-function isReadOnlyShellInput(input: unknown, _context?: ToolContext): boolean {
-  if (!input || typeof input !== 'object') return false
-  const command = (input as Record<string, unknown>).command
-  if (typeof command !== 'string' || !command.trim()) return false
-  const normalized = command.trim()
-
-  // These constructs can execute arbitrary code or write through the shell,
-  // even when the visible command starts with a read-looking executable.
-  if (/[>`]|>>|\$\(|`/.test(normalized)) return false
-
-  const analysis = analyzeBashCommand(normalized)
-  if (analysis.status === 'simple') {
-    return analysis.commands.length > 0
-      && analysis.commands.every((segment) => isReadOnlySegment(segment.executable, segment.argv.slice(1)))
-      && !analysis.hasRedirection
-  }
-
-  // Non-provable syntax falls back per dialect (#300): Bash has no safe
-  // fallback (compound and piped forms escape any first-word whitelist), so it
-  // fails closed. PowerShell keeps its conservative inspection subset — either
-  // the command invokes powershell/pwsh explicitly or the shell for this
-  // platform is PowerShell. The dialect check never triggers Windows bash
-  // discovery (#471): an unsettled probe reads as bash, so the decision is
-  // stable instead of drifting with the discovery timeout window.
-  const runsPowerShell = /^\s*(?:powershell|pwsh)(?:\.exe)?(?:\s|$)/i.test(normalized)
-    || shellKindWithoutDiscovery() === 'powershell'
-  return runsPowerShell ? isReadOnlyPowerShell(normalized) : false
-}
-
-const READ_ONLY_EXECUTABLES = new Set([
-  'cat', 'cut', 'dir', 'echo', 'find', 'findstr', 'git', 'grep', 'head', 'less', 'ls', 'pwd',
-  'rg', 'sed', 'sort', 'tail', 'type', 'uniq', 'wc', 'where', 'which',
-])
-
-function isReadOnlySegment(executable: string, args: string[]): boolean {
-  if (!READ_ONLY_EXECUTABLES.has(executable)) return false
-  if (executable === 'git') {
-    const subcommandIndex = args.findIndex((arg) => !arg.startsWith('-'))
-    if (subcommandIndex < 0) return false
-    const subcommand = args[subcommandIndex]!
-    if (!new Set(['branch', 'diff', 'log', 'show', 'status']).has(subcommand)) return false
-    const rest = args.slice(subcommandIndex + 1)
-    if (subcommand === 'branch') {
-      // Only listing forms are reads: an operand names a branch to create,
-      // and delete/move/copy/set-upstream flags mutate refs (#300).
-      if (rest.some((arg) => !arg.startsWith('-') && arg !== '--')) return false
-      return !rest.some((arg) => (
-        /^-[dDmMcCu]/.test(arg)
-        || /^--(?:delete|move|copy|set-upstream(?:-to)?|edit-description|track)\b/.test(arg)
-      ))
-    }
-    if (subcommand === 'diff') {
-      // --output writes the diff to a file; --ext-diff executes a
-      // repo-config-controlled external diff command (#300).
-      return !rest.some((arg) => arg === '--output' || arg.startsWith('--output=') || arg === '--ext-diff')
-    }
-    return true
-  }
-  // These whitelist members have argument forms that mutate or execute;
-  // reject them so they cannot race Edit/Write as "read-only" work.
-  if (executable === 'find') return !args.some((arg) => /^-(?:delete|exec|execdir|ok|okdir|fls|fprint)/.test(arg))
-  if (executable === 'sed') return isReadOnlySedArgs(args)
-  if (executable === 'sort') return !args.some((arg) => (
-    arg === '--output'
-    || arg.startsWith('--output=')
-    // No other short sort flag is "o", so any short cluster containing it is -o.
-    // grep -o is unrelated: grep arguments are never checked here.
-    || (arg.startsWith('-') && !arg.startsWith('--') && arg.includes('o'))
-  ))
-  if (executable === 'uniq') {
-    // uniq [INPUT [OUTPUT]] — a second operand names the output file it writes (#300).
-    return args.filter((arg) => !arg.startsWith('-') && arg !== '--').length <= 1
-  }
-  return true
-}
-
-function isReadOnlySedArgs(args: string[]): boolean {
-  if (args.some((arg) => /^(-i|--in-place)/.test(arg))) return false
-  const { scripts, readsScriptFile } = sedScriptParts(args)
-  // Fail closed (#453): a -f/--file script body lives in a file this static
-  // check never sees (it can carry `w FILE` or GNU `e CMD`), and a `$` in a
-  // script position expands at runtime into text the argv literal never showed
-  // (e.g. X='s/.*/curl evil/e' sed $X README).
-  if (readsScriptFile) return false
-  return !scripts.some((script) => script.includes('$') || sedScriptWritesFile(script))
-}
-
-/** Collect the script arguments (not the input file paths) sed will execute, plus whether any form loads the script from a file. */
-function sedScriptParts(args: string[]): { scripts: string[]; readsScriptFile: boolean } {
-  const scripts: string[] = []
-  let readsScriptFile = false
-  let pending: 'script' | 'skip' | undefined
-  let sawScript = false
-  let endOfOptions = false
-  for (const arg of args) {
-    if (pending) {
-      if (pending === 'script') scripts.push(arg)
-      pending = undefined
-      continue
-    }
-    if (!endOfOptions && arg === '--') {
-      endOfOptions = true
-      continue
-    }
-    if (!endOfOptions && arg.startsWith('--')) {
-      if (arg.startsWith('--expression=')) {
-        scripts.push(arg.slice('--expression='.length))
-        sawScript = true
-      } else if (arg === '--expression') {
-        pending = 'script'
-        sawScript = true
-      } else if (arg === '--file' || arg.startsWith('--file=')) {
-        // --file names a script file; its contents stay uninspected here and
-        // the caller fails closed (#453). The attached value needs no skip.
-        readsScriptFile = true
-        if (arg === '--file') pending = 'skip'
-      }
-      continue
-    }
-    if (!endOfOptions && arg.startsWith('-') && arg.length > 1) {
-      const cluster = arg.slice(1)
-      const flagIndex = cluster.search(/[ef]/)
-      if (flagIndex >= 0) {
-        if (cluster[flagIndex] === 'f') {
-          readsScriptFile = true
-          // A trailing f consumes the next argument as its filename.
-          if (flagIndex === cluster.length - 1) pending = 'skip'
-        } else if (flagIndex < cluster.length - 1) {
-          scripts.push(cluster.slice(flagIndex + 1))
-          sawScript = true
-        } else {
-          pending = 'script'
-          sawScript = true
-        }
-      }
-      continue
-    }
-    if (!sawScript) {
-      scripts.push(arg)
-      sawScript = true
-    }
-  }
-  return { scripts, readsScriptFile }
-}
-
-/**
- * Recognize sed script forms that write files or execute commands: a
- * standalone `w`/`W`/`e` command or the same as an `s` suffix. Only command
- * positions are inspected, so patterns, replacements, append text, and file
- * paths that merely contain those letters do not trip the check.
- */
-function sedScriptWritesFile(script: string): boolean {
-  const isDangerousCommand = (char: string | undefined) => char === 'w' || char === 'W' || char === 'e'
-  const length = script.length
-  let i = 0
-  let atCommand = true
-  while (i < length) {
-    const char = script[i]!
-    if (char === ';' || char === '\n') {
-      atCommand = true
-      i += 1
-      continue
-    }
-    if (!atCommand) {
-      i += 1
-      continue
-    }
-    if (char === ' ' || char === '\t' || char === '{' || char === '}' || char === '!') {
-      i += 1
-      continue
-    }
-    if (char === '#') {
-      while (i < length && script[i] !== '\n') i += 1
-      continue
-    }
-    // Addresses: /re/, line numbers, $, ranges, and custom \cREc delimiters.
-    if (char === '/') {
-      i += 1
-      while (i < length && script[i] !== '/') i += script[i] === '\\' ? 2 : 1
-      i += 1
-      continue
-    }
-    if (char === '\\') {
-      const delimiter = script[i + 1]
-      i += 2
-      while (i < length && script[i] !== delimiter) i += script[i] === '\\' ? 2 : 1
-      i += 1
-      continue
-    }
-    if ((char >= '0' && char <= '9') || char === '$' || char === ',') {
-      i += 1
-      continue
-    }
-    if (isDangerousCommand(char)) return true
-    if (char === 's' || char === 'y') {
-      const delimiter = script[i + 1]
-      if (!delimiter) return false
-      i += 2
-      // s has two fields (regex, replacement); y has three (src, dst, then a
-      // closing delimiter). Each field scan ends at its own delimiter.
-      for (let field = 0; field < (char === 's' ? 2 : 3); field += 1) {
-        while (i < length && script[i] !== delimiter) i += script[i] === '\\' ? 2 : 1
-        i += 1
-      }
-      while (i < length && /[a-zA-Z0-9]/.test(script[i]!)) {
-        if (isDangerousCommand(script[i])) return true
-        i += 1
-      }
-      continue
-    }
-    // Any other command consumes the rest of the line as its argument
-    // (r/w-style filenames, labels, a\i\c text).
-    atCommand = false
-    i += 1
-  }
-  return false
-}
-
-function isReadOnlyPowerShell(command: string): boolean {
-  const normalized = command
-    .replace(/^\s*(?:powershell|pwsh)(?:\.exe)?\s+(?:-NoLogo\s+|-NoProfile\s+|-NonInteractive\s+)*-Command\s+/i, '')
-    .trim()
-  // Reject pipeline (`|`), chaining/call (`&`), the ForEach-Object alias `%`,
-  // script-block braces, and line breaks so piped or nested payloads cannot
-  // ride behind a whitelisted first word (#300).
-  if (!normalized || /[>`]|>>|\$\(|[;&|%{}\r\n]|\b(?:Set|Remove|Copy|Move|New|Add|Clear|Out|Start|Stop|Invoke|Install|Update)-[A-Za-z]+\b/i.test(normalized)) {
-    return false
-  }
-  // Unparsed strings cannot be arg-checked, so only git subcommands whose
-  // common forms never take mutation targets survive here; branch/diff move
-  // to the parsed path only (#300).
-  return /^(?:Get-(?:ChildItem|Content|Location|Item|ItemProperty|Process|Service|Command|Date|Help|Member|Variable|Acl|FileHash|AuthenticodeSignature|ComputerInfo)|Select-String|Where-Object|Test-Path|Resolve-Path|Measure-Object|Sort-Object|Format-(?:Table|List)|Write-Output|Write-Host|git\s+(?:status|log|show)\b|(?:ls|dir|type|cat|pwd|where|findstr)\b)/i.test(normalized)
-}
-
 async function startShellTask(input: {
   command: string
   timeoutMs?: number
@@ -414,17 +191,22 @@ async function startDirectShellTask({
   const shellType = shellKind(shell.command)
   const sandbox = withBundledRipgrepSandbox(context.sandbox)
   const detached = process.platform !== 'win32'
+  // 与 durable 后台路径对称：剔除 ELECTRON_RUN_AS_NODE，前台命令启动 Electron
+  // 不再退化为纯 node（#538）
+  const childEnv = { ...process.env }
+  delete childEnv.ELECTRON_RUN_AS_NODE
   const proc = spawnWithProcessSandbox(shell.command, shell.args, {
     cwd: context.cwd,
-    env: { ...process.env },
+    env: childEnv,
     timeoutMs,
     detached,
     stdio: ['ignore', 'pipe', 'pipe'],
   }, sandbox)
   const startedAt = Date.now()
   let outputBytes = 0
-  let stdoutPreview = ''
-  let stderrPreview = ''
+  const stdoutAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, RESULT_SECTION_MAX_CHARS)
+  const stderrAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, RESULT_SECTION_MAX_CHARS)
+  const emitStreamSnapshot = createStreamSnapshotEmitter(context, () => combinedStreamSnapshot(stdoutAccumulator, stderrAccumulator))
   const stdoutDecoder = new StringDecoder('utf8')
   const stderrDecoder = new StringDecoder('utf8')
   let terminationReason: ToolExecutionMetadata['terminationReason'] = 'completed'
@@ -468,15 +250,9 @@ async function startDirectShellTask({
     if (accepted.length > 0) {
       lastOutputAt = Date.now()
       const text = (stream === 'stdout' ? stdoutDecoder : stderrDecoder).write(accepted)
-      if (stream === 'stdout') stdoutPreview = appendPreview(stdoutPreview, text)
-      else stderrPreview = appendPreview(stderrPreview, text)
+      ;(stream === 'stdout' ? stdoutAccumulator : stderrAccumulator).append(text)
       writeChain = writeChain.then(() => appendFile(outputFile, accepted))
-      context.emitEvent?.({
-        type: 'system',
-        subtype: 'local_command_output',
-        content: boundedPreview(text),
-        session_id: context.sessionId || '',
-      })
+      emitStreamSnapshot.schedule()
     }
     if (accepted.length !== chunk.length && terminationReason === 'completed') {
       terminationReason = 'output_limit'
@@ -505,13 +281,19 @@ async function startDirectShellTask({
       if (progressTimer) clearInterval(progressTimer)
       const stdoutTail = stdoutDecoder.end()
       const stderrTail = stderrDecoder.end()
-      if (stdoutTail) stdoutPreview = appendPreview(stdoutPreview, stdoutTail)
-      if (stderrTail) stderrPreview = appendPreview(stderrPreview, stderrTail)
-      if (spawnError) stderrPreview = appendPreview(stderrPreview, spawnError)
+      if (stdoutTail) stdoutAccumulator.append(stdoutTail)
+      if (stderrTail) stderrAccumulator.append(stderrTail)
+      if (spawnError) stderrAccumulator.append(spawnError)
+      // Flush after the decoder tails land so the last snapshot is complete.
+      emitStreamSnapshot.flush()
       await writeChain.catch(() => undefined)
       const interpretation = interpretShellExit(command, code ?? 1)
       if (terminationReason === 'completed' && code !== 0 && interpretation.isError) terminationReason = 'nonzero'
       if (spawnError) terminationReason = 'spawn_error'
+      const stdoutStats = stdoutAccumulator.snapshot()
+      const stderrStats = stderrAccumulator.snapshot()
+      const stdoutPreview = stdoutStats.content
+      const stderrPreview = stderrStats.content
       const execution = await createExecutionMetadata({
         command,
         shell: shellType,
@@ -525,19 +307,31 @@ async function startDirectShellTask({
         startedAt,
         terminationReason,
       })
-      const output = [
-        terminationReason === 'completed'
-          ? (interpretation.semanticOutcome === 'no_matches'
-            ? 'Command completed: no matches found (exit code 1).'
-            : `Command completed successfully (exit code ${code ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
-          : `Command terminated (${terminationReason}${code !== null ? `, exit code ${code}` : ''}).`,
-        stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
-        stderrPreview ? `stderr:\n${stderrPreview}` : '',
-        spawnError ? `process error: ${spawnError}` : '',
+      const firstLine = terminationReason === 'completed'
+        ? (interpretation.semanticOutcome === 'no_matches'
+          ? 'Command completed: no matches found (exit code 1).'
+          : `Command completed successfully (exit code ${code ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
+        : `Command terminated (${terminationReason}${code !== null ? `, exit code ${code}` : ''}).`
+      const footer = truncationFooter(stdoutStats, stderrStats, outputFile)
+      // #573④:验证用途的大输出附失败摘要,模型不必在 10 万字符里翻失败清单
+      const verificationDigest = purpose?.toLowerCase() === 'verification'
+        && stdoutPreview.length + stderrPreview.length > FAILURE_DIGEST_MIN_CHARS
+        ? extractFailureDigest(`${stdoutPreview}\n${stderrPreview}`)
+        : []
+      const output = assembleShellResult(
+        firstLine,
+        [
+          stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
+          stderrPreview ? `stderr:\n${stderrPreview}` : '',
+          spawnError ? `process error: ${spawnError}` : '',
+          ...(verificationDigest.length > 0 ? [`failure digest:\n${verificationDigest.map((line) => `- ${line}`).join('\n')}`] : []),
+          ...(footer ? [footer] : []),
+        ],
         code !== 0 && code !== null
           ? `Bash failed (${shellType}, exit code ${code}): ${interpretation.message}`
-          : '',
-      ].filter(Boolean).join('\n') || '(no output)'
+          : undefined,
+        { outputFile, footer },
+      )
       const result = { output, isError: terminationReason !== 'completed' || interpretation.isError, execution }
       completedResult = result
       completeBackgroundTask(result)
@@ -572,7 +366,7 @@ async function startDirectShellTask({
       let stallNotified = false
       stallTimer = setInterval(() => {
         if (stallNotified || Date.now() - lastOutputAt < STALL_THRESHOLD_MS) return
-        const tail = `${stdoutPreview}\n${stderrPreview}`.trimEnd()
+        const tail = `${stdoutAccumulator.snapshot().content}\n${stderrAccumulator.snapshot().content}`.trimEnd()
         if (!looksLikeInteractivePrompt(tail)) {
           lastOutputAt = Date.now()
           return
@@ -692,8 +486,9 @@ async function startDurableShellTask({
   let stderrOffset = 0
   const stdoutDecoder = new StringDecoder('utf8')
   const stderrDecoder = new StringDecoder('utf8')
-  let stdoutPreview = ''
-  let stderrPreview = ''
+  const stdoutAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, RESULT_SECTION_MAX_CHARS)
+  const stderrAccumulator = createPreviewAccumulator(RESULT_MAX_LINES, RESULT_SECTION_MAX_CHARS)
+  const emitStreamSnapshot = createStreamSnapshotEmitter(context, () => combinedStreamSnapshot(stdoutAccumulator, stderrAccumulator))
   let progressTimer: ReturnType<typeof setInterval> | undefined
   let stallTimer: ReturnType<typeof setInterval> | undefined
   let lastOutputAt = Date.now()
@@ -726,26 +521,16 @@ async function startDurableShellTask({
       // Streamed decode keeps multibyte sequences that straddle block
       // boundaries intact (#368).
       const text = stdoutDecoder.write(stdout.chunk)
-      stdoutPreview = appendPreview(stdoutPreview, text)
-      context.emitEvent?.({
-        type: 'system',
-        subtype: 'local_command_output',
-        content: boundedPreview(text),
-        session_id: context.sessionId || '',
-      })
+      stdoutAccumulator.append(text)
+      emitStreamSnapshot.schedule()
     }
     const stderr = await readIncrementalFile(stderrFile, stderrOffset)
     stderrOffset = stderr.nextOffset
     if (stderr.chunk.length > 0) {
       lastOutputAt = Date.now()
       const text = stderrDecoder.write(stderr.chunk)
-      stderrPreview = appendPreview(stderrPreview, text)
-      context.emitEvent?.({
-        type: 'system',
-        subtype: 'local_command_output',
-        content: boundedPreview(text),
-        session_id: context.sessionId || '',
-      })
+      stderrAccumulator.append(text)
+      emitStreamSnapshot.schedule()
     }
     const combined = await readIncrementalFile(outputFile, outputOffset)
     outputOffset = combined.nextOffset
@@ -790,8 +575,18 @@ async function startDurableShellTask({
       void (async () => {
         await emitNewOutput()
         const latest = getProcessJob(job.id)
-        if (!latest || latest.status === 'running') return
+        if (!latest) {
+          // 任务记录被清（如 registry 清理）：视作终态收尾，否则定时器与监听器泄漏至
+          // 进程结束，且后台写租约无人释放会永久占死该工作区的写互斥（#711 review）
+          clearInterval(poll)
+          context.abortSignal?.removeEventListener('abort', stop)
+          context.onBackgroundTaskCompleted?.()
+          return
+        }
+        if (latest.status === 'running') return
         clearInterval(poll)
+        // 与 direct 路径对称：任务终态后摘除 run-abort 监听器，避免每次调用泄漏一个闭包（#538）
+        context.abortSignal?.removeEventListener('abort', stop)
         if (settled) return
         settled = true
         // Drain the worker's final writes to EOF; a single bounded read can
@@ -799,8 +594,10 @@ async function startDurableShellTask({
         while (await emitNewOutput()) { /* drain until no new bytes */ }
         const stdoutTail = stdoutDecoder.end()
         const stderrTail = stderrDecoder.end()
-        if (stdoutTail) stdoutPreview = appendPreview(stdoutPreview, stdoutTail)
-        if (stderrTail) stderrPreview = appendPreview(stderrPreview, stderrTail)
+        if (stdoutTail) stdoutAccumulator.append(stdoutTail)
+        if (stderrTail) stderrAccumulator.append(stderrTail)
+        // Flush after the decoder tails land so the last snapshot is complete.
+        emitStreamSnapshot.flush()
         const execution = normalizePersistedExecution(
           command,
           purpose,
@@ -811,7 +608,22 @@ async function startDurableShellTask({
         )
         const interpretation = interpretShellExit(command, execution.exitCode ?? 1)
         const normalizedExecution = applySemanticOutcome(execution, interpretation)
-        const output = formatShellResult(normalizedExecution, stdoutPreview, stderrPreview, interpretation)
+        const stdoutStats = stdoutAccumulator.snapshot()
+        const stderrStats = stderrAccumulator.snapshot()
+        // #573④:同前台路径,验证用途的大输出附失败摘要
+        const verificationDigest = purpose?.toLowerCase() === 'verification'
+          && stdoutStats.content.length + stderrStats.content.length > FAILURE_DIGEST_MIN_CHARS
+          ? extractFailureDigest(`${stdoutStats.content}\n${stderrStats.content}`)
+          : []
+        const output = formatShellResult(
+          normalizedExecution,
+          stdoutStats.content,
+          stderrStats.content,
+          interpretation,
+          truncationFooter(stdoutStats, stderrStats, outputFile),
+          outputFile,
+          verificationDigest.length > 0 ? `failure digest:\n${verificationDigest.map((line) => `- ${line}`).join('\n')}` : undefined,
+        )
         const result = {
           output,
           isError: executionOutcome(normalizedExecution) !== 'succeeded',
@@ -872,7 +684,7 @@ async function startDurableShellTask({
       let stallNotified = false
       stallTimer = setInterval(() => {
         if (stallNotified || Date.now() - lastOutputAt < STALL_THRESHOLD_MS) return
-        const tail = `${stdoutPreview}\n${stderrPreview}`.trimEnd()
+        const tail = `${stdoutAccumulator.snapshot().content}\n${stderrAccumulator.snapshot().content}`.trimEnd()
         if (!looksLikeInteractivePrompt(tail)) return
         stallNotified = true
         context.emitEvent?.({
@@ -942,7 +754,8 @@ interface ShellTaskResult {
 }
 
 function toToolResult(result: ShellTaskResult): ToolResult {
-  return { type: 'tool_result', tool_use_id: '', content: boundedPreview(result.output, MAX_RESULT_CHARS), ...(result.isError ? { is_error: true } : {}), _meta: { execution: result.execution } }
+  // result.output already carries the single tail budget from assembleShellResult.
+  return { type: 'tool_result', tool_use_id: '', content: result.output, ...(result.isError ? { is_error: true } : {}), _meta: { execution: result.execution } }
 }
 
 function finishForegroundTask(task: ShellTask, result: ShellTaskResult): ToolResult {
@@ -1057,6 +870,9 @@ function formatShellResult(
   stdoutPreview: string,
   stderrPreview: string,
   interpretation: ReturnType<typeof interpretShellExit>,
+  footer?: string,
+  outputFile?: string,
+  failureDigest?: string,
 ): string {
   const outcome = executionOutcome(execution)
   const firstLine = outcome === 'succeeded'
@@ -1064,14 +880,19 @@ function formatShellResult(
       ? 'Command completed: no matches found (exit code 1).'
       : `Command completed successfully (exit code ${execution.exitCode ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
     : `Command terminated (${execution.terminationReason}${execution.exitCode !== null && execution.exitCode !== undefined ? `, exit code ${execution.exitCode}` : ''}).`
-  return [
+  return assembleShellResult(
     firstLine,
-    stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
-    stderrPreview ? `stderr:\n${stderrPreview}` : '',
+    [
+      stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
+      stderrPreview ? `stderr:\n${stderrPreview}` : '',
+      ...(failureDigest ? [failureDigest] : []),
+      ...(footer ? [footer] : []),
+    ],
     outcome !== 'succeeded' && execution.exitCode !== null && execution.exitCode !== undefined
       ? `Bash failed (${execution.shell ?? 'bash'}, exit code ${execution.exitCode}): ${interpretation.message}`
-      : '',
-  ].filter(Boolean).join('\n') || '(no output)'
+      : undefined,
+    { outputFile, footer },
+  )
 }
 
 async function readIncrementalFile(path: string, offset: number): Promise<{ chunk: Buffer; nextOffset: number }> {
@@ -1132,8 +953,418 @@ function checkExcludedCommands(command: string, excluded: string[]): string | 'c
   return analysis.commands.map((segment) => segment.executable).find((name) => lower.has(name))
 }
 
-function appendPreview(current: string, value: string): string {
-  return boundedPreview(`${current}${value}`, MAX_RESULT_CHARS)
+interface TailTruncation {
+  content: string
+  truncated: boolean
+  truncatedByLines: boolean
+  truncatedByChars: boolean
+  totalLines: number
+  shownLines: number
+  /** Character counts in UTF-16 code units, matching the char budget semantics. */
+  totalChars: number
+  shownChars: number
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff
+}
+
+function countNewlines(text: string): number {
+  let count = 0
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) count += 1
+  return count
+}
+
+/** Lines by terminator semantics: a trailing newline terminates the last line instead of starting an empty one. */
+function countTerminatedLines(text: string): number {
+  if (!text) return 0
+  return text.endsWith('\n') ? countNewlines(text) : countNewlines(text) + 1
+}
+
+/** Keep only the last `maxLines` terminated lines (shared: tailTruncate + raw accumulator window). */
+function keepLastLines(text: string, maxLines: number): { content: string; dropped: boolean } {
+  if (countTerminatedLines(text) <= maxLines) return { content: text, dropped: false }
+  const hadTrailingNewline = text.endsWith('\n')
+  const segments = text.split('\n')
+  const realLines = hadTrailingNewline ? segments.slice(0, -1) : segments
+  return {
+    content: realLines.slice(-maxLines).join('\n') + (hadTrailingNewline ? '\n' : ''),
+    dropped: true,
+  }
+}
+
+/**
+ * Shared tail-window cutter: UTF-16 slice that restarts at the next line break
+ * when one exists and never leaves a split surrogate pair at either edge.
+ * Within-budget input passes through untouched (the line restart is part of
+ * the cut, not a normalization).
+ */
+function cutTailWithinBudget(content: string, maxChars: number): string {
+  if (content.length <= maxChars) return content
+  let out = content.slice(-maxChars)
+  const newlineAt = out.indexOf('\n')
+  if (newlineAt >= 0 && newlineAt < out.length - 1) out = out.slice(newlineAt + 1)
+  if (isLowSurrogate(out.charCodeAt(0))) out = out.slice(1)
+  if (isHighSurrogate(out.charCodeAt(out.length - 1))) out = out.slice(0, -1)
+  return out
+}
+
+/**
+ * Keep the tail of `text` within both bounds, whichever bites first (command
+ * errors live at the end, so the tail is the useful half). Redacts first; caps
+ * are measured in characters (UTF-16 code units). A char-boundary cut restarts
+ * at the next line break when one exists and never leaves a split surrogate
+ * pair at either edge. `truncated` reflects caps that actually bit on the raw
+ * stream — redaction growing a within-budget stream past the budget runs the
+ * guard cut without counting as truncation.
+ */
+export function tailTruncate(text: string, maxLines: number, maxChars: number): TailTruncation {
+  const value = redactSensitiveText(text)
+  const totalLines = countTerminatedLines(value)
+  let content = value
+  let truncatedByLines = false
+  let truncatedByChars = false
+  const lineCapped = keepLastLines(value, maxLines)
+  content = lineCapped.content
+  truncatedByLines = lineCapped.dropped
+  if (content.length > maxChars) {
+    const rawOverBudget = text.length > maxChars
+    content = cutTailWithinBudget(content, maxChars)
+    truncatedByChars = rawOverBudget
+  }
+  return {
+    content,
+    truncated: truncatedByLines || truncatedByChars,
+    truncatedByLines,
+    truncatedByChars,
+    totalLines,
+    shownLines: countTerminatedLines(content),
+    totalChars: value.length,
+    shownChars: content.length,
+  }
+}
+
+type PreviewAccumulator = ReturnType<typeof createPreviewAccumulator>
+
+// ============================================================================
+// Streaming secret redaction — TWO chained single-pattern state machines that
+// compose into EXACTLY redactSensitiveText's two sequential replaces:
+//
+//   machineA (bearer): /(Bearer\s+)([A-Za-z0-9._~+/=-]+)/gi   → $1[redacted]
+//   machineB (kv):     ((api[_-]?key|token|secret|password)\s*[:=]\s*)([^\s,;]+) → $1[redacted]
+//
+// redactSensitiveText applies the bearer pass first and the kv pass to its
+// output; feeding raw chars through A→B reproduces that byte-for-byte, because
+// each machine echoes every non-matching char verbatim (so B sees precisely the
+// text pass 1 produced). Two machines — not one merged FSM — is what makes
+// nested prefixes (`token=Bearer x`) and per-pattern value charsets correct.
+//
+// Per-machine state is O(1): mode + ≤8-char keyword staging buffer. Value runs
+// are suppressed without storage (arbitrarily long tokens cost nothing), and
+// failed prefixes RE-FEED the offending char into the machine's own OUT state
+// so adjacent keywords (`BearerBearer`) are never swallowed.
+// ============================================================================
+
+const BEARER_VALUE_CHARS = /[A-Za-z0-9._~+/=-]/
+const KV_VALUE_TERMINATORS = /[\s,;]/
+
+interface SecretMachine {
+  feed(ch: string): void
+  /** Uncommitted plain-text fragment (a possible keyword head) awaiting more input. */
+  hold(): string
+}
+
+function isWhitespaceChar(ch: string): boolean {
+  return /\s/.test(ch)
+}
+
+const MAX_KEYWORD_LENGTH = 8 // 'password' — bounds the suffix-retry window
+
+function createSecretMachine(
+  sink: (chunk: string) => void,
+  kind: 'bearer' | 'kv',
+): SecretMachine {
+  const keywords = kind === 'bearer' ? ['bearer'] : ['api_key', 'api-key', 'apikey', 'token', 'secret', 'password']
+  const isValueChar = kind === 'bearer'
+    ? (ch: string) => BEARER_VALUE_CHARS.test(ch)
+    : (ch: string) => !KV_VALUE_TERMINATORS.test(ch)
+
+  let mode: 'out' | 'prefixTail' | 'inValue' = 'out'
+  let stage = ''
+  let phase: 'pre' | 'post' = 'pre' // kv only: whitespace before vs after [:=]
+  let wsSeen = 0 // bearer only
+
+  function matchedKeyword(lower: string): boolean {
+    return keywords.some((keyword) => keyword === lower)
+  }
+
+  function isKeywordPartial(lower: string): boolean {
+    if (!lower) return true
+    return keywords.some((keyword) => keyword.startsWith(lower))
+  }
+
+  function feed(ch: string): void {
+    if (mode === 'inValue') {
+      if (isValueChar(ch)) return // suppressed secret body
+      // Terminator leaves the value run and re-enters OUT staging — feed it,
+      // don't emit it (feeding routes the char exactly once).
+      mode = 'out'
+      feed(ch)
+      return
+    }
+    if (mode === 'prefixTail') {
+      if (isWhitespaceChar(ch)) {
+        if (kind === 'bearer') wsSeen += 1
+        emit(ch)
+        return
+      }
+      if (kind === 'bearer' && wsSeen === 0) {
+        // 'Bearer' without whitespace → no match here; re-read ch from OUT.
+        mode = 'out'
+        feed(ch)
+        return
+      }
+      if (kind === 'kv' && phase === 'pre') {
+        if (ch === ':' || ch === '=') {
+          phase = 'post'
+          emit(ch)
+          return
+        }
+        mode = 'out'
+        feed(ch)
+        return
+      }
+      // First value char decides: match completes or the whole attempt was
+      // plain text — either way ch routes onward without being swallowed.
+      if (isValueChar(ch)) {
+        sink('[redacted]')
+        mode = 'inValue'
+        return
+      }
+      mode = 'out'
+      feed(ch)
+      return
+    }
+    // OUT: stage a possible keyword; on an impossible candidate emit the
+    // shortest head that still leaves the longest valid keyword SUFFIX held —
+    // a later keyword may start inside the failed candidate (`apikey` failing
+    // mid-way must not blind the machine to a following `api_key=`).
+    let buf = stage + ch
+    for (;;) {
+      const lower = buf.toLowerCase()
+      if (matchedKeyword(lower)) {
+        emit(buf)
+        stage = ''
+        mode = 'prefixTail'
+        phase = 'pre'
+        wsSeen = 0
+        return
+      }
+      if (lower === '') break
+      if (isKeywordPartial(lower)) break
+      let keepFrom = -1
+      for (let s = Math.max(1, buf.length - MAX_KEYWORD_LENGTH); s < buf.length; s += 1) {
+        const suffixLower = buf.slice(s).toLowerCase()
+        if (matchedKeyword(suffixLower) || isKeywordPartial(suffixLower)) {
+          keepFrom = s
+          break
+        }
+      }
+      if (keepFrom === -1) {
+        emit(buf)
+        buf = ''
+      } else {
+        emit(buf.slice(0, keepFrom))
+        buf = buf.slice(keepFrom)
+      }
+    }
+    stage = buf
+  }
+
+  function emit(chunk: string): void {
+    sink(chunk)
+  }
+
+  return {
+    feed,
+    hold(): string {
+      return mode === 'out' ? stage : ''
+    },
+  }
+}
+
+// Memory guard for the incremental buffer: the AUTHORITATIVE char budget is
+// applied per-snapshot (after the line trim, matching the single-shot pipeline
+// order — applying it incrementally would drop chars the final line-window
+// keeps and break byte equivalence). Between snapshots the buffer is therefore
+// only bounded by lines + this slack; a stream whose last `maxLines` lines
+// exceed it gets conservatively over-trimmed (footer still tells the truth).
+// ponytail: raise the slack or page to disk if huge single lines ever matter.
+const PREVIEW_MEMORY_SLACK_CHARS = 65_536
+
+export function createPreviewAccumulator(maxLines: number, maxChars: number) {
+  let kept = ''
+  let totalNewlines = 0
+  let totalChars = 0
+  let streamEndsWithNewline = false
+  let sawAnyOutput = false
+  let droppedLines = false
+  let droppedChars = false
+  // Chained machines reproduce redactSensitiveText's pass order: bearer first,
+  // kv pass consuming pass-one's output.
+  let kvFeed: (ch: string) => void = () => {}
+  const machineA = createSecretMachine((chunk) => {
+    for (const ch of chunk) kvFeed(ch)
+  }, 'bearer')
+  const machineB = createSecretMachine((chunk) => {
+    kept += chunk
+  }, 'kv')
+  kvFeed = machineB.feed
+
+  return {
+    append(text: string): void {
+      if (!text) return
+      sawAnyOutput = true
+      totalNewlines += countNewlines(text)
+      totalChars += text.length
+      streamEndsWithNewline = text.endsWith('\n')
+      for (const ch of text) machineA.feed(ch)
+      let candidate = kept
+      const lineCapped = keepLastLines(candidate, maxLines)
+      candidate = lineCapped.content
+      droppedLines ||= lineCapped.dropped
+      const memoryCap = maxChars + PREVIEW_MEMORY_SLACK_CHARS
+      if (candidate.length > memoryCap) {
+        candidate = cutTailWithinBudget(candidate, memoryCap)
+        droppedChars = true
+      }
+      kept = candidate
+    },
+    snapshot(): TailTruncation {
+      // Both machines' uncommitted keyword-head fragments are plain text not
+      // yet routed — show them for display continuity. Chronological order:
+      // B holds fragments of A's *emitted* stream (older), A holds raw-tail
+      // fragments (newer).
+      const fresh = tailTruncate(kept + machineB.hold() + machineA.hold(), maxLines, maxChars)
+      return {
+        ...fresh,
+        truncated: droppedLines || droppedChars || fresh.truncated,
+        truncatedByLines: droppedLines || fresh.truncatedByLines,
+        truncatedByChars: droppedChars || fresh.truncatedByChars,
+        // Full-stream totals survive the tail windowing.
+        totalLines: sawAnyOutput ? totalNewlines + (streamEndsWithNewline ? 0 : 1) : 0,
+        totalChars,
+        shownChars: fresh.content.length,
+      }
+    },
+  }
+}
+
+/** Combined live view of both streams, bounded tighter than the result previews. */
+function combinedStreamSnapshot(stdout: PreviewAccumulator, stderr: PreviewAccumulator): string {
+  const out = stdout.snapshot().content
+  const err = stderr.snapshot().content
+  if (!out && !err) return ''
+  return cutTailWithinBudget(out && err ? `${out}\n${err}` : out || err, STREAM_SNAPSHOT_MAX_CHARS)
+}
+
+function truncationFooter(stdout: TailTruncation, stderr: TailTruncation, outputFile: string): string | undefined {
+  const describe = (stats: TailTruncation): string | undefined => {
+    if (stats.truncatedByLines) return `last ${stats.shownLines} of ${stats.totalLines} lines`
+    if (stats.truncatedByChars) return `last ${stats.shownChars} of ${stats.totalChars} characters`
+    return undefined
+  }
+  const stdoutPhrase = describe(stdout)
+  const stderrPhrase = describe(stderr)
+  if (!stdoutPhrase && !stderrPhrase) return undefined
+  if (stdoutPhrase && stderrPhrase) {
+    return `[Showing ${stdoutPhrase} (stdout) and ${stderrPhrase} (stderr). Full output: ${outputFile}]`
+  }
+  return `[Showing ${stdoutPhrase ?? stderrPhrase}. Full output: ${outputFile}]`
+}
+
+/**
+ * Assemble the model-visible result with ONE structural tail budget over the
+ * output body: header/failure-note space is reserved up front, and when the
+ * body still overflows the trim announces itself — either via the caller's
+ * per-stream footer (already part of the body tail) or a fallback footer naming
+ * the full-output file. A cut can therefore never happen silently.
+ */
+function assembleShellResult(
+  firstLine: string,
+  bodySections: string[],
+  failureNote: string | undefined,
+  truncationInfo?: { outputFile?: string; footer?: string },
+): string {
+  const body = bodySections.filter(Boolean).join('\n')
+  const budget = MAX_RESULT_CHARS - firstLine.length - (failureNote?.length ?? 0) - 96 /* footer/labels reserve */
+  if (body.length <= budget) {
+    return [firstLine, body, failureNote].filter(Boolean).join('\n') || '(no output)'
+  }
+  const boundedBody = cutTailWithinBudget(body, Math.max(0, budget))
+  if (truncationInfo?.footer) {
+    // Per-stream footer already rides the body tail and survived the cut.
+    return [firstLine, boundedBody, failureNote].filter(Boolean).join('\n')
+  }
+  const fallbackFooter = truncationInfo?.outputFile
+    ? `[Output truncated to fit the result budget. Full output: ${truncationInfo.outputFile}]`
+    : '[Output truncated to fit the result budget.]'
+  return [firstLine, boundedBody, fallbackFooter, failureNote].filter(Boolean).join('\n')
+}
+
+/**
+ * Trailing-edge throttle for live output snapshots: bursts collapse
+ * into one snapshot per window; a quiet period flushes immediately. Prefers the
+ * live channel and falls back to the buffered one when the host has no live
+ * receiver. Events carry tool_use_id so the UI can pin them to the running card.
+ */
+function createStreamSnapshotEmitter(context: ToolContext, getSnapshot: () => string) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let dirty = false
+  let lastEmitAt = 0
+  const emit = () => {
+    dirty = false
+    lastEmitAt = Date.now()
+    ;(context.emitLiveEvent ?? context.emitEvent)?.({
+      type: 'system',
+      subtype: 'local_command_output',
+      content: getSnapshot(),
+      ...(context.toolUseId ? { tool_use_id: context.toolUseId } : {}),
+      session_id: context.sessionId || '',
+    })
+  }
+  return {
+    schedule(): void {
+      if (!context.emitLiveEvent && !context.emitEvent) return
+      dirty = true
+      const delay = STREAM_SNAPSHOT_THROTTLE_MS - (Date.now() - lastEmitAt)
+      if (delay <= 0) {
+        if (timer) {
+          clearTimeout(timer)
+          timer = undefined
+        }
+        emit()
+        return
+      }
+      timer ??= setTimeout(() => {
+        timer = undefined
+        emit()
+      }, delay)
+      timer.unref?.()
+    },
+    /** Emit any pending snapshot now (tool finishing); safe to call repeatedly. */
+    flush(): void {
+      if (timer) {
+        clearTimeout(timer)
+        timer = undefined
+      }
+      if (dirty) emit()
+    },
+  }
 }
 
 function boundedPreview(value: string, maxChars = PREVIEW_CHARS): string {
@@ -1143,7 +1374,45 @@ function boundedPreview(value: string, maxChars = PREVIEW_CHARS): string {
   return `${value.slice(0, half)}\n...(truncated)...\n${value.slice(-half)}`
 }
 
-function redactSensitiveText(value: string): string {
+/** #573④:超过该长度的验证输出才值得附加失败摘要 */
+const FAILURE_DIGEST_MIN_CHARS = 10_000
+/** #573④:摘要行数上限——只做路标,不替代完整输出 */
+const FAILURE_DIGEST_MAX_LINES = 20
+
+const FAILURE_LINE_PATTERNS: RegExp[] = [
+  /^\s*[✗✕×]\s/,               // vitest/jest 失败标记
+  /^\s*●\s/,                    // jest 失败块标题
+  /\bFAIL\b/,                   // jest/go test
+  /--- FAIL:/,                  // go test 子测试
+  /^error(\[\w+\])?:/i,         // cargo/rustc
+  /^(?:AssertionError|ExpectationError|CompareError):/,
+  /\b[1-9]\d* (?:failed|failing)\b/i,  // #649 review P2:非零才抓——全绿汇总行「0 failed」不得当失败证据
+]
+
+/**
+ * #573④:从大体积验证输出中抽取失败相关行(去重、截断),作为紧凑摘要附在结果尾部。
+ * 完整输出仍按既有头尾保留策略下发,摘要是路标不是替代。
+ */
+export function extractFailureDigest(output: string, maxLines = FAILURE_DIGEST_MAX_LINES): string[] {
+  const seen = new Set<string>()
+  const digest: string[] = []
+  // 威胁建模 review F3:剥 ANSI CSI/OSC 序列——终端控制串不得进模型上下文
+  const ansiPattern = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*(?:\x07|\x1b\\)/g
+  for (const rawLine of output.split(/\r?\n/)) {
+    const line = rawLine.replace(ansiPattern, "").trim()
+    if (!line || line.length > 300) continue
+    if (!FAILURE_LINE_PATTERNS.some((pattern) => pattern.test(line))) continue
+    const key = line.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    // 截断显式标记（文案 review F4）：半句会被模型当完整错误信息
+    digest.push(line.length > 240 ? `${line.slice(0, 237)}...` : line)
+    if (digest.length >= maxLines) break
+  }
+  return digest
+}
+
+export function redactSensitiveText(value: string): string {
   return value
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[redacted]')
     .replace(/((?:api[_-]?key|token|secret|password)\s*[:=]\s*)[^\s,;]+/gi, '$1[redacted]')

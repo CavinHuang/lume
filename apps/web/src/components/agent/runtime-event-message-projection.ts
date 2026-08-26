@@ -1,4 +1,5 @@
 import type { FileReferenceBinding, FileReferenceProtocolVersion, LumeRuntimeEvent, RuntimeCodingReport } from '@lume/shared'
+import { isDelegationToolName } from './subagent-run-projection'
 import type {
   RuntimeAssistantBlock,
   RuntimeAssistantMessageView,
@@ -7,7 +8,8 @@ import type {
   RuntimeToolCallView,
 } from './runtime-message-view'
 
-const TURN_LIMIT_NOTICE = '本轮已达到最大执行轮次，当前进度已保存。发送“继续”可接着执行。'
+// #566:turn_limited 后系统可能自动续跑，不再指示用户手动「继续」（自动续跑未生效时下一条用户消息同样会经恢复上下文接续）
+export const TURN_LIMIT_NOTICE = '本轮已达到最大执行轮次，当前进度已保存。'
 
 export interface ProjectionState {
   messages: RuntimeMessageView[]
@@ -21,6 +23,12 @@ export interface ProjectionState {
   compactionMessageByRun: Map<string, string>
   fileReferenceBinding?: FileReferenceBinding
   fileReferenceProtocolVersion?: FileReferenceProtocolVersion
+  /**
+   * #566:待收回的「已达上限」提示——turn_limited 后系统可能自动续跑；若同一链的
+   * run.started 随后到达（期间无用户消息），剥掉该提示尾缀，避免给用户假信号。
+   * 用户消息插入则保留提示（手动继续场景提示仍然成立）。
+   */
+  pendingTurnLimitNotice?: { messageId: string } | null
 }
 
 /**
@@ -67,11 +75,13 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   // 因位于通用早退之前,各自保留最小防线(见分支内注释)。
 
   if (event.type === 'run.started') {
+    retractPendingTurnLimitNotice(state)
     state.terminalClosed = false
     return
   }
 
   if (event.type === 'message.user.submitted') {
+    state.pendingTurnLimitNotice = null
     flushAssistant(state.messages, state.currentAssistant)
     messages.push({
       id: event.messageId ?? `user:${event.createdAt}`,
@@ -388,7 +398,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       ...(event.execution ? { execution: event.execution } : {}),
       ...(event.resultRef ? { resultRef: event.resultRef } : {}),
       ...(existing?.subagentRunId ? { subagentRunId: existing.subagentRunId } : {}),
-      ...(existing?.toolName === 'Agent' || event.toolName === 'Agent'
+      ...(isDelegationToolName(existing?.toolName ?? '') || isDelegationToolName(event.toolName ?? '')
         ? { subagentStatus: isError ? 'errored' as const : 'completed' as const }
         : existing?.subagentStatus ? { subagentStatus: existing.subagentStatus } : {}),
     }
@@ -414,11 +424,27 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     return
   }
 
+  if (event.type === 'tool.output') {
+    // 运行中工具卡的实时输出快照(Bash)。卡片缺失或已结束则忽略——迟到的快照
+    // 不复活卡片，completed/failed 的 upsert 不带 streamedOutput 即整体清除。
+    const assistant = state.currentAssistant
+    if (!assistant) return
+    const existing = assistant.toolCalls.get(event.toolCallId)
+    if (!existing || existing.status !== 'running') return
+    upsertToolCallBlock(assistant, event.toolCallId, { ...existing, streamedOutput: event.chunk })
+    return
+  }
+
   if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
     state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     if (event.type === 'run.turn_limited') {
       appendAssistantTextBlock(state.currentAssistant, TURN_LIMIT_NOTICE)
       recomputeAssistantContent(state.currentAssistant)
+      // #566:记录提示尾缀，若同链 run.started 随后到达则剥掉（自动续跑不给用户假信号）
+      const lastBlock = state.currentAssistant.blocks.at(-1)
+      state.pendingTurnLimitNotice = lastBlock?.type === 'text'
+        ? { messageId: state.currentAssistant.id }
+        : null
     }
     if (event.type === 'run.completed') {
       state.currentAssistant.messageId = event.finalMessageId
@@ -772,6 +798,39 @@ function flushAssistant(
   if (snapshot) messages.push(snapshot)
 }
 
+/** #566:自动续跑链的下一 run 开始——剥掉上一边界的「已达上限」提示尾缀。
+ * 必须**克隆替换**消息与尾块对象（review M2）：stabilizeRuntimeMessages 按引用
+ * 复用缓存视图，原地 mutate 在跨帧增量/live 路径上对 UI 不可见。 */
+function retractPendingTurnLimitNotice(state: ProjectionState): void {
+  const pending = state.pendingTurnLimitNotice
+  state.pendingTurnLimitNotice = null
+  if (!pending) return
+  const index = state.messages.findIndex((item) => item.id === pending.messageId)
+  const message = state.messages[index]
+  if (!message || message.type !== 'assistant') return
+  const lastBlockIndex = message.blocks.length - 1
+  const last = message.blocks[lastBlockIndex]
+  if (last?.type !== 'text' || !last.text.endsWith(TURN_LIMIT_NOTICE)) return
+  // 块 id 按索引派生，不删块防 id 漂移；提示独占时留空文本块（渲染无痕）
+  // noticeLength 与下方 message.text 切片同源取 TURN_LIMIT_NOTICE.length，防单边漂移
+  const strippedBlockText = last.text.slice(0, -TURN_LIMIT_NOTICE.length)
+  const strippedMessageText = message.text.endsWith(TURN_LIMIT_NOTICE)
+    ? message.text.slice(0, -TURN_LIMIT_NOTICE.length)
+    : message.text
+  const clonedBlocks = [...message.blocks]
+  clonedBlocks[lastBlockIndex] = { ...last, text: strippedBlockText }
+  // tokenCount 同步扣掉提示的估算值（~5 token），保持口径诚实
+  const noticeTokens = estimateTextTokens(TURN_LIMIT_NOTICE)
+  state.messages[index] = {
+    ...message,
+    text: strippedMessageText,
+    blocks: clonedBlocks,
+    ...(typeof message.tokenCount === 'number'
+      ? { tokenCount: Math.max(0, message.tokenCount - noticeTokens) }
+      : {}),
+  }
+}
+
 /**
  * 构建投影的最终消息视图：历史已 flush 消息 + 当前 currentAssistant 快照。
  * 关键：不 mutate state.messages——增量场景 state 跨帧保持，每帧只在「视图」末尾附上
@@ -890,51 +949,50 @@ export interface IncrementalProjectionResult {
 }
 
 /**
- * 判断能否对 events 做增量 apply（相对 prev）。
- * 增量条件（全部满足）：
- * 1. 有 prev（非首次）——由调用方 `prev && canApplyIncrementally` 保证；
- * 2. events.length >= prev.events.length（未截断——compact/回退则 fallback）；
- * 3. events 的「最后一条旧事件」引用 === prev 的对应引用（追加语义：旧事件元素引用被复用。换线程/version 重写会改变引用 → fallback）；
- * 4. 新追加的事件中不含带 versionGroupId 的 message.user.submitted（version turn 重组需 keepLatestVersionTurns 全局重算 → 保守 fallback）。
- */
-function canApplyIncrementally(events: LumeRuntimeEvent[], prev: ProjectionRef): boolean {
-  if (events.length < prev.events.length) return false
-  if (events.length === 0) return true
-  const lastOldIndex = prev.events.length - 1
-  if (lastOldIndex >= 0 && events[lastOldIndex] !== prev.events[lastOldIndex]) return false
-  for (let i = prev.events.length; i < events.length; i++) {
-    const event = events[i]
-    if (event?.type === 'message.user.submitted' && (event as any).versionGroupId) return false
-  }
-  return true
-}
-
-/**
  * 增量投影：能增量则只 apply 新事件到 prev.state；否则 fallback 全量重投影。
  * 返回最终消息视图 + 供下一帧增量判断的 ref（ref.events 始终是原始 events，便于下次引用比较）。
+ *
+ * tool.output 快照在 runtime-event-state 按稳定 id 原地替换（可能命中任意旧槽位，
+ * 且不改变长度/尾引用），纯追加判定看不见——旧槽位扫描单独处理：仅接受
+ * tool.output→tool.output 的引用替换并重放（applyRuntimeEvent 对该类型是绝对
+ * 覆写，幂等）；其他类型的旧槽位引用变化说明数组被重写，保守 fallback。
+ * 这同时让运行中快照（~7 次/秒）走 O(变更槽位) 增量帧而非全量重投影。
  */
 export function applyRuntimeEventsIncremental(
   events: LumeRuntimeEvent[],
   prev: ProjectionRef | null,
 ): IncrementalProjectionResult {
-  if (prev && canApplyIncrementally(events, prev)) {
-    const state = prev.state
-    for (let i = prev.events.length; i < events.length; i++) {
-      applyRuntimeEvent(state, events[i]!)
+  const reprojectFully = (): IncrementalProjectionResult => {
+    const state: ProjectionState = {
+      messages: [],
+      currentAssistant: null,
+      terminalClosed: false,
+      assistantSegmentByRun: new Map(),
+      compactionMessageByRun: new Map(),
+    }
+    const kept = keepLatestVersionTurns(events)
+    for (const event of kept) {
+      applyRuntimeEvent(state, event)
     }
     return { messages: buildMessagesView(state), ref: { state, events } }
   }
-  // fallback：全量重投影
-  const state: ProjectionState = {
-    messages: [],
-    currentAssistant: null,
-    terminalClosed: false,
-    assistantSegmentByRun: new Map(),
-    compactionMessageByRun: new Map(),
+
+  if (!prev || events.length < prev.events.length) return reprojectFully()
+
+  const prevLen = prev.events.length
+  for (let i = prevLen; i < events.length; i++) {
+    const event = events[i]
+    if (event?.type === 'message.user.submitted' && (event as any).versionGroupId) return reprojectFully()
   }
-  const kept = keepLatestVersionTurns(events)
-  for (const event of kept) {
-    applyRuntimeEvent(state, event)
+
+  const state = prev.state
+  for (let i = 0; i < prevLen; i++) {
+    if (events[i] === prev.events[i]) continue
+    if (events[i]?.type !== 'tool.output') return reprojectFully()
+    applyRuntimeEvent(state, events[i]!)
+  }
+  for (let i = prevLen; i < events.length; i++) {
+    applyRuntimeEvent(state, events[i]!)
   }
   return { messages: buildMessagesView(state), ref: { state, events } }
 }

@@ -11,6 +11,7 @@ export async function buildWaitForDelegationsResult(
       mode: "all" | "any";
       minCompleted?: number;
       timeoutMs: number;
+      abortSignal?: AbortSignal;
     }): Promise<{
       status: "completed" | "timeout";
       completedCount: number;
@@ -26,6 +27,7 @@ export async function buildWaitForDelegationsResult(
       outcome?: { output?: string; error?: string };
     }>;
   },
+  options?: { abortSignal?: AbortSignal },
 ): Promise<{ type: "tool_result"; tool_use_id: string; content: string }> {
   const mode = toolInput.mode === "any" ? "any" : "all";
   const timeoutMs = Math.min(
@@ -37,6 +39,7 @@ export async function buildWaitForDelegationsResult(
     mode,
     minCompleted: toolInput.min_completed,
     timeoutMs,
+    abortSignal: options?.abortSignal,
   });
   const runs = registry.listByParentSession(parentThreadId);
   const delegations = runs.map((r) => ({

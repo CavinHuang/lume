@@ -303,6 +303,95 @@ describe("WorkspaceMcpManager", () => {
     expect(failed.error?.message).not.toContain("secret-token");
   });
 
+  test("runtime tool call failures are redacted before reaching the tool result stream", async () => {
+    const fake = createFakeSdkManager();
+    fake.status = {
+      github: {
+        serverId: "github",
+        name: "GitHub",
+        transport: "streamable_http",
+        enabled: true,
+        status: "connected",
+        tools: ["search/issues"],
+        toolDetails: [{
+          name: "mcp__github__search_issues",
+          originalName: "search/issues",
+          wrapperName: "mcp__github__search_issues",
+          description: "Search issues",
+          inputSchema: { type: "object", properties: { q: { type: "string" } } },
+          serverId: "github",
+          serverName: "GitHub"
+        }]
+      }
+    };
+    const manager = new WorkspaceMcpManager({
+      readConfig: () => createConfig({
+        github: {
+          enabled: true,
+          transport: "streamable_http",
+          url: "https://example.com/mcp",
+          headers: { Authorization: "secret-token" }
+        }
+      }),
+      sdkManagerFactory: () => fake
+    });
+
+    const result = await manager.createRuntimeTools("demo");
+    fake.callToolFailure = Object.assign(new Error("bad token secret-token"), { code: "auth_error" });
+
+    // 下游把抛错包成 is_error tool_result 直达模型上下文，脱敏必须发生在抛出之前
+    const failed = await result.tools[0]!.call({ q: "lume" }, { cwd: "/tmp", toolUseId: "mcp-1" });
+    expect((failed as { is_error?: boolean }).is_error).toBe(true);
+    const text = Array.isArray((failed as { content?: unknown }).content)
+      ? (failed as { content: Array<{ type: string; text?: string }> }).content
+        .map((block) => block.text ?? "").join("\n")
+      : String((failed as { content?: unknown }).content);
+    expect(text).not.toContain("secret-token");
+    // 正向断言：确认打码后的消息真实进入了结果流，而非整条被丢弃
+    expect(text).toContain("********");
+  });
+
+  test("runtime tool call failures redact secrets collected from server env (stdio)", async () => {
+    const fake = createFakeSdkManager();
+    fake.status = {
+      local: {
+        serverId: "local",
+        name: "Local",
+        transport: "stdio",
+        enabled: true,
+        status: "connected",
+        tools: ["search"],
+        toolDetails: [{
+          name: "mcp__local__search",
+          originalName: "search",
+          wrapperName: "mcp__local__search",
+          description: "Search",
+          inputSchema: { type: "object", properties: {} },
+          serverId: "local",
+          serverName: "Local"
+        }]
+      }
+    };
+    const manager = new WorkspaceMcpManager({
+      readConfig: () => createConfig({
+        local: {
+          enabled: true,
+          transport: "stdio",
+          command: "node",
+          env: { GITHUB_TOKEN: "env-secret-value" }
+        }
+      }),
+      sdkManagerFactory: () => fake
+    });
+
+    const result = await manager.createRuntimeTools("demo");
+    fake.callToolFailure = new Error("request failed with env-secret-value");
+
+    const failed = await result.tools[0]!.call({}, { cwd: "/tmp", toolUseId: "mcp-2" });
+    expect((failed as { is_error?: boolean }).is_error).toBe(true);
+    expect(String((failed as { content?: unknown }).content)).not.toContain("env-secret-value");
+  });
+
   test("disposeWorkspace closes and removes the SDK manager", async () => {
     const fake = createFakeSdkManager();
     const manager = new WorkspaceMcpManager({
@@ -458,6 +547,33 @@ describe("WorkspaceMcpManager", () => {
 
     expect(result.tools.map((tool) => tool.name)).toContain("mcp__github__search_issues");
     expect(result.tools.map((tool) => tool.name)).not.toContain("mcp__github__create_issue");
+  });
+
+  test("management tools are dropped when no server is enabled (#539)", async () => {
+    const fake = createFakeSdkManager();
+    fake.status = {
+      github: {
+        serverId: "github",
+        name: "GitHub",
+        transport: "stdio",
+        enabled: false,
+        status: "idle",
+        tools: [],
+        toolDetails: []
+      }
+    };
+    const manager = new WorkspaceMcpManager({
+      readConfig: () => createConfig({
+        github: { enabled: false, transport: "stdio", command: "node" }
+      }),
+      sdkManagerFactory: () => fake
+    });
+
+    const result = await manager.createRuntimeTools("demo");
+    const names = result.tools.map((tool) => tool.name);
+    expect(names).not.toContain("McpConfigTool");
+    expect(names).not.toContain("ListMcpResourcesTool");
+    expect(names).not.toContain("ReadMcpResourceTool");
   });
 
   test("createRuntimeTools includeManagementTools:false drops fixed-name tools + stamps provider metadata", async () => {

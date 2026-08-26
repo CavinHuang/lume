@@ -20,6 +20,7 @@ export type RuntimeEventType =
   | "tool.completed"
   | "tool.failed"
   | "tool.permission_timeout"
+  | "tool.output"
   | "desktop.action_visual"
   | "guidance.delivered"
   | "plan.preview"
@@ -162,6 +163,19 @@ export interface ToolPermissionTimeoutRuntimeEvent extends RuntimeEventBase {
   requestId: string;
   toolName: string;
   message: string;
+}
+
+/**
+ * Transient streaming snapshot of a foreground tool's accumulated output tail
+ * (Bash today). Snapshot semantics — each event carries the full bounded tail,
+ * consumers replace by stable id (`${runId}:tool-output:${toolCallId}`).
+ * Never persisted to run items; rides the live channel, falling back to the
+ * buffered channel when the host has no live receiver.
+ */
+export interface ToolOutputRuntimeEvent extends RuntimeEventBase {
+  type: "tool.output";
+  toolCallId: string;
+  chunk: string;
 }
 
 export interface DesktopActionVisualRuntimeEvent extends RuntimeEventBase {
@@ -573,6 +587,38 @@ export interface CodingSectionDiffActionInput extends CodingDiffActionBase {
 
 export type CodingDiffActionInput = CodingFileDiffActionInput | CodingSectionDiffActionInput
 
+/** 快照还原（REVERT_CODING_RUN）入参 */
+export interface CodingRunRevertInput {
+  threadId: string
+  runId: string
+}
+
+/** 快照还原结果：四桶不相交，nonRewindableFiles 为 committed/conflicts/skipped/failed 并集（兼容保留） */
+export interface CodingRunRevertResult {
+  status: "restored" | "conflict" | "committed_boundary"
+  filesChanged: string[]
+  conflicts: string[]
+  committedPaths: string[]
+  /** 还原时抛错的文件（#714）：逐文件容错折桶，不整批 reject */
+  failedFiles: string[]
+  nonRewindableFiles: string[]
+}
+
+/** 快照还原单文件（REVERT_CODING_FILE）入参 */
+export interface CodingFileRevertInput {
+  threadId: string
+  runId: string
+  path: string
+  rootId?: string
+}
+
+/** 单文件快照还原结果：filesChanged 与 nonRewindableFiles 互斥 */
+export interface CodingFileRevertResult {
+  status: "restored" | "conflict" | "committed_boundary"
+  filesChanged: string[]
+  nonRewindableFiles: string[]
+}
+
 export interface CodingDiffActionResult {
   ok: true
   diff?: CodingDiffPayload
@@ -628,7 +674,9 @@ export type CodingRepositoryPublishState =
       upstream?: string
       head: string
       indexHash: string
-      worktreeHash: string
+      // 工作区 patch 超 16MB 水位时缺失：仅提交已暂存内容不受影响，
+      // 包含未暂存变更会被 RPC schema 与 service 双层拦截
+      worktreeHash?: string
       stagedCount: number
       unstagedCount: number
       untrackedCount: number
@@ -979,6 +1027,7 @@ export type LumeRuntimeEvent =
   | ToolCompletedRuntimeEvent
   | ToolFailedRuntimeEvent
   | ToolPermissionTimeoutRuntimeEvent
+  | ToolOutputRuntimeEvent
   | DesktopActionVisualRuntimeEvent
   | GuidanceDeliveredRuntimeEvent
   | ToolPermissionResolvedRuntimeEvent
