@@ -2,7 +2,7 @@
  * Token Estimation & Counting
  *
  * Provides rough token estimation (character-based) and native counting when
- * available. Native counts are exact for inputs ≤32KB; larger inputs are
+ * available. Native counts are exact for inputs ≤8KB; larger inputs are
  * counted in chunks (see countTokensNativeChunked) and become close
  * approximations — consumed only by thresholds/display, never billing.
  */
@@ -51,7 +51,7 @@ export function estimateTokens(text: string): number {
  * 原生计数入口的分块保护（#736）：tiktoken 对「单 regex piece 内无换行的长
  * 游程」近 O(n²)（256KB≈30s，Read 的 1MiB 上限外推 ~10min 同步冻结）。按
  * 换行切块、单块超限再定长硬切；块内二次分量使总成本 ∝ N×LIMIT——8KB 时
- * 1MiB 单行从 10s 级降到亚秒（napi 单调用开销仅 ~1.5µs，调小近乎免费）。
+ * 1MiB 单行实测从 ~10min 冻结降到 ~2.4s（napi 单调用开销仅 ~1.5µs，调小近乎免费）。
  * 近似口径（#738 review 实测）：跨块边界丢失 BPE 合并致恒保守多计——多行
  * 散文约 +1~3%（每边界 ≤1），极端纯换行串因逐分隔符成块可放大数倍；本
  * 计数只服务阈值/展示估算，保守方向无资源越界风险。
