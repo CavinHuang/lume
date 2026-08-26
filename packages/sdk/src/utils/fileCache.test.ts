@@ -87,4 +87,42 @@ describe("FileStateCache canonical path identity", () => {
     expect(cache.get(realPath)).toBeUndefined()
     expect(cache.wasDroppedByCapacity(realPath)).toBe(false)
   })
+
+  test("clone preserves canonical identity across spellings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-filecache-clone-"))
+    const realDir = join(root, "real")
+    await mkdir(realDir)
+    const linkDir = join(root, "link")
+    await symlink(realDir, linkDir)
+    const filePath = join(linkDir, "book.txt")
+    await writeFile(filePath, "hello", "utf8")
+    const realPath = realpathSync(filePath)
+
+    const cache = new FileStateCache()
+    cache.set(filePath, { content: "hello", timestamp: 1 })
+    const clone = cache.clone()
+
+    // clone 直接复制内部 Map:键必须已是归一形态,词法/realpath 双拼写仍命中
+    expect(clone.get(realPath)).toBeDefined()
+    expect(clone.get(filePath)).toBeDefined()
+  })
+
+  test("case folding composes with symlink canonicalization", async () => {
+    // macOS/Windows 不敏感盘:toPathKey 折叠大小写,camelize 目录经 symlink
+    // 访问时两种拼写、两种大小写必须全部命中同一条目
+    const root = await mkdtemp(join(tmpdir(), "lume-filecache-case-"))
+    const camelReal = join(root, "CamelDir")
+    await mkdir(camelReal)
+    const linkPath = join(root, "linkdir")
+    await symlink(camelReal, linkPath)
+    const viaLinkLower = join(linkPath, "note.txt")
+    await writeFile(viaLinkLower, "x", "utf8")
+
+    const cache = new FileStateCache()
+    cache.set(viaLinkLower.toUpperCase(), { content: "x", timestamp: 1 })
+
+    expect(cache.get(viaLinkLower)).toBeDefined()
+    expect(cache.get(join(realpathSync(linkPath), "NOTE.txt"))).toBeDefined()
+    expect(cache.get(join(camelReal.toLowerCase(), "note.txt"))).toBeDefined()
+  })
 })
