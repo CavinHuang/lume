@@ -2,7 +2,11 @@ import type { LumeRuntimeEvent } from "@lume/shared";
 import { getImThreadBindingByThreadId } from "./im-thread-binding-store";
 import { getImRuntimeAccount } from "./im-config-manager";
 import { sendBoundImTextMessage } from "./im-send-service";
-import { createFeishuCardStream, type FeishuCardStream } from "./feishu/feishu-card-stream";
+import {
+  createFeishuCardStream,
+  type FeishuCardStream,
+  type FeishuCardStreamOptions
+} from "./feishu/feishu-card-stream";
 import { getAgentRuntimeStatusManager } from "../agent/agent-runtime-status-manager";
 import { createLogger } from "../infra/logger";
 
@@ -93,6 +97,15 @@ export function setImRunCardSessionFactoryForTest(
   sessionFactoryForTest = factory;
 }
 
+/** 测试注入钩子：替换底层卡片流（订阅链路测试用它拦截网络边界，免 mock.module 全局污染）。 */
+let streamFactoryForTest: ((options: FeishuCardStreamOptions) => FeishuCardStream) | null = null;
+
+export function setImRunCardStreamFactoryForTest(
+  factory: ((options: FeishuCardStreamOptions) => FeishuCardStream) | null
+): void {
+  streamFactoryForTest = factory;
+}
+
 export function createImRunCardSession(threadId: string): ImRunCardSession | null {
   if (sessionFactoryForTest) {
     return sessionFactoryForTest(threadId);
@@ -113,7 +126,7 @@ function createImRunCardSessionInternal(threadId: string): ImRunCardSession | nu
     return null;
   }
 
-  const stream: FeishuCardStream = createFeishuCardStream({
+  const streamOptions: FeishuCardStreamOptions = {
     appId,
     appSecret,
     chatId: binding.peerId,
@@ -132,7 +145,10 @@ function createImRunCardSessionInternal(threadId: string): ImRunCardSession | nu
         });
       });
     }
-  });
+  };
+  const stream: FeishuCardStream = streamFactoryForTest
+    ? streamFactoryForTest(streamOptions)
+    : createFeishuCardStream(streamOptions);
 
   let opening: Promise<boolean> | null = null;
   let openOutcome: boolean | null = null;

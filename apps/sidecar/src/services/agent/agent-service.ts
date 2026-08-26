@@ -167,6 +167,9 @@ function createAgentRuntimeKernel(): AgentRuntimeKernel<AgentSendInput, AgentStr
     dispatch.emit.onError(error instanceof Error ? error.message : String(error));
   },
   onQueuedBlocked: (dispatch, error) => {
+    // 校验失败的排队项永远等不到 execute：走 onError 让下游（IM 卡片 finish、
+    // 文本兜底）收尾，否则 emitter 监听随该项悬挂（#725 review S1）。
+    dispatch.emit.onError(error instanceof Error ? error.message : String(error));
     writeLogRecord({
       level: "warn",
       kind: "trace",
@@ -180,6 +183,10 @@ function createAgentRuntimeKernel(): AgentRuntimeKernel<AgentSendInput, AgentStr
       origin: dispatch.input.traceContext?.origin,
       data: { queuedMessageId: dispatch.id, reason: error instanceof Error ? error.message : String(error) }
     });
+  },
+  onQueuedRemoved: (dispatch) => {
+    // 用户移除排队项 = 主动取消：按 stopped 收尾（卡片映射 interrupted 态）
+    dispatch.emit.onComplete({ reason: "stopped" });
   }
   });
 }

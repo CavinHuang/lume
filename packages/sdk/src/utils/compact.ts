@@ -490,11 +490,19 @@ export function truncateSerializedConversation(text: string, inputBudgetTokens: 
     if (tokens <= inputBudgetTokens) return current
     // 按当前文本实测密度定字符预算：每轮密度估计随收缩更贴近保留区真实值。
     const maxChars = Math.max(1, Math.floor(target * (current.length / Math.max(1, tokens))))
-    const headChars = Math.floor(maxChars * 0.4)
+    const headChars = backstepToCodePointStart(current, Math.floor(maxChars * 0.4))
     const tailChars = Math.max(1, maxChars - headChars)
-    current = `${current.slice(0, headChars)}\n\n[... characters truncated ...]\n\n${current.slice(current.length - tailChars)}`
+    current = `${current.slice(0, headChars)}\n\n[... characters truncated ...]\n\n${current.slice(current.length - backstepToCodePointStart(current, tailChars))}`
   }
   return current
+}
+
+/** 硬切点回退到代理对边界：避免把 emoji/CJK 扩展区字符腰斩成孤立代理（#725 review R5）。 */
+function backstepToCodePointStart(text: string, index: number): number {
+  if (index <= 0 || index >= text.length) return index
+  const unit = text.charCodeAt(index)
+  // 落在低代理上说明切进了代理对中间，回退一个 code unit
+  return unit >= 0xdc00 && unit <= 0xdfff ? index - 1 : index
 }
 
 async function generateSummary(
