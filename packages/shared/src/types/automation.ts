@@ -158,6 +158,8 @@ export interface AutomationRun {
   message: string
   startedAt: number
   finishedAt: number
+  /** 运行确实发生但 runs.jsonl 落盘失败（盘满/占用）：仅内存补显，重启后消失（#615 UX review round7） */
+  persistenceLost?: boolean
 }
 
 /** 查询运行记录输入 */

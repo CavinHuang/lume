@@ -35,7 +35,8 @@ import { getAgentMessageVersionStorePath, readAgentMessageVersionStore } from ".
 import { resetAgentSubmissionStoreForTests } from "./agent-submission-store";
 import { resetPlanningTodoStoreForTests } from "../planning/planning-todo-store";
 import { runtimePermissionSessionStore } from "../agent-runtime/permissions/permission-session";
-import { recordPermissionDenial, getPermissionDeniedSummary } from "../agent-runtime/permissions/permission-denials";
+import { markToolFingerprintAllowed, markToolPermissionSessionBypassed } from "../agent-runtime/interruption/tool-permission-session";
+import { getPermissionDeniedSummary, recordPermissionDenial } from "../agent-runtime/permissions/permission-denials";
 
 describe("agent-thread-manager advanced ops", () => {
   let previousConfigDir: string | undefined;
@@ -388,6 +389,7 @@ describe("agent-thread-manager advanced ops", () => {
     deleteAgentThread(neighbor.id);
     expect(runtimePermissionSessionStore.isBypassed(neighbor.id)).toBeFalse();
   });
+
 
   test("truncateAgentMessagesFrom 应直接重建裁剪后的 transcript", () => {
     const session = createAgentThread("truncate transcript");

@@ -14,7 +14,8 @@ import { createFileBackedLumeRunStateStore } from "../runtime-core/run-state-sto
 export interface LumeInterruptionStore {
   upsert(interruption: LumeInterruption): Promise<void>;
   get(interruptionId: string): Promise<LumeInterruption | null>;
-  resolve(interruptionId: string, patch: Pick<LumeInterruption, "status" | "resolution">): Promise<void>;
+  /** 返回 true 仅当 pending→终态迁移成功；记录缺失或已终态时 false，调用方应跳过后续 continuation 写入 */
+  resolve(interruptionId: string, patch: Pick<LumeInterruption, "status" | "resolution">): Promise<boolean>;
   listByThread(threadId: string): Promise<LumeInterruption[]>;
   listPendingByThread(threadId: string): Promise<LumeInterruption[]>;
   listPending(): Promise<LumeInterruption[]>;
@@ -52,9 +53,12 @@ class FileBackedLumeInterruptionStore implements LumeInterruptionStore {
     return readInterruption(this.pathFor(interruptionId));
   }
 
-  async resolve(interruptionId: string, patch: Pick<LumeInterruption, "status" | "resolution">): Promise<void> {
+  async resolve(interruptionId: string, patch: Pick<LumeInterruption, "status" | "resolution">): Promise<boolean> {
+    // 终态守卫与 sync 版一致：get 与 write 之间的 await 间隙里，迟到的 cancel/submit
+    // 可并发读到 pending 并 last-writer-wins 翻转终态（round9 安全 review）。
+    // 返回 false 让调用方跳过 continuation 写入——否则 stale 快照会把 run 标回可执行
     const current = await this.get(interruptionId);
-    if (!current) return;
+    if (!current || current.status !== "pending") return false;
     const now = new Date().toISOString();
     const resolved = {
       ...current,
@@ -64,6 +68,7 @@ class FileBackedLumeInterruptionStore implements LumeInterruptionStore {
     };
     writeTextAtomic(this.pathFor(interruptionId), JSON.stringify(resolved, null, 2));
     await this.mirrorToRunState(resolved);
+    return true;
   }
 
   async listByThread(threadId: string): Promise<LumeInterruption[]> {
@@ -127,6 +132,11 @@ export function createFileBackedLumeInterruptionStore(sessionDir: string): LumeI
   return new FileBackedLumeInterruptionStore(sessionDir);
 }
 
+/**
+ * 同步解析 interruption 为终态。
+ * 返回 true 仅当记录存在且处于 pending（成功完成 pending→终态迁移）；
+ * 记录不存在或已是 approved/rejected 终态时返回 false——false 语义含"已解决"，调用方据此跳过 continuation 写入。
+ */
 export function resolveFileBackedInterruptionSync(
   sessionDir: string,
   interruptionId: string,
@@ -136,6 +146,10 @@ export function resolveFileBackedInterruptionSync(
   const path = join(interruptionsDir, `${safeFileSegment(interruptionId)}.json`);
   const current = readInterruption(path);
   if (!current) return false;
+  // 终态守卫：已 approved/rejected 的记录不得再次翻转（last-writer-wins 会把已取消的
+  // 审批改成 approved 并触发 run continuation——round8 正确性 review 竞态另一半）。
+  // 写盘失败残留的 pending 记录仍可被正常 resolve，不受影响。
+  if (current.status !== "pending") return false;
   const now = new Date().toISOString();
   writeTextAtomic(path, JSON.stringify({
     ...current,

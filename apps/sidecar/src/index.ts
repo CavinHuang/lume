@@ -423,7 +423,12 @@ async function handleRpcLine(line: string): Promise<void> {
  */
 function installProcessErrorGuards(): void {
   let uncaughtCount = 0;
-  const UNCAUGHT_EXIT_THRESHOLD = 5;
+  let lastUncaughtSignature = "";
+  // #548 评估结论（round14 需求回溯）：issue 提议的"同类错误去重计数"不采纳——
+// 根因是已知良性异步错误源反复触发，本次已全部封堵（spawn 监听 ×5、downloadFile 全失败路径、
+// worker diag 回传）；去重会弱化止损语义（五个不同严重错误代表系统性恶化，理应退出），
+// 且 stack+emergency 签名已让人工判断"是否同类"成为可能。若未来仍见误触发，修具体错误源而非放宽止损。
+const UNCAUGHT_EXIT_THRESHOLD = 5;
   process.on("unhandledRejection", (reason) => {
     writeLogRecord({
       level: "error",
@@ -433,17 +438,26 @@ function installProcessErrorGuards(): void {
       error: { message: reason instanceof Error ? reason.message : String(reason) }
     });
   });
-  process.on("uncaughtException", (error) => {
+  process.on("uncaughtException", (thrown) => {
     uncaughtCount += 1;
+    // 运行时透传任意 throw 值（throw null/字符串），守卫内部再抛会击穿止损器本身
+    const error = thrown instanceof Error ? thrown : new Error(String(thrown));
+    lastUncaughtSignature = `${error.name}: ${error.message}`;
     writeLogRecord({
       level: "error",
       context: "sidecar.lifecycle",
       event: "sidecar.uncaught_exception",
       message: `uncaught exception (guarded ${uncaughtCount}/${UNCAUGHT_EXIT_THRESHOLD})`,
-      error: { message: error instanceof Error ? error.message : String(error) }
+      // stack 截断首行定位：无它则五条日志都无法还原抛出点（#548 review round5）
+      error: {
+        message: error.message,
+        stack: error.stack?.split("\n").slice(0, 6).join("\n")
+      }
     });
     if (uncaughtCount >= UNCAUGHT_EXIT_THRESHOLD) {
-      writeEmergencyLog(`sidecar exiting after ${uncaughtCount} uncaught exceptions (pid=${process.pid})`);
+      writeEmergencyLog(
+        `sidecar exiting after ${uncaughtCount} uncaught exceptions (pid=${process.pid}, last=${lastUncaughtSignature})`
+      );
       process.exit(1);
     }
   });
@@ -615,16 +629,28 @@ async function boot(): Promise<void> {
     return stopping;
   };
   process.once("exit", () => { void stopWatcher(); });
-  process.once("SIGINT", async () => {
-    void getNodeReplRuntimeRegistry().shutdownAll?.();
-    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 60_000))]);
+  // 清理阶段任一同步抛错（盘满下 fs 操作真实可现）不得吞掉退出——
+  // 否则信号被完全忽略，desktop 仅等 3s 无 SIGKILL 升级，sidecar 变僵尸进程
+  const gracefulExit = async () => {
+    try {
+      void getNodeReplRuntimeRegistry().shutdownAll?.();
+      await Promise.race([
+        stopWatcher(),
+        new Promise((resolve) => setTimeout(resolve, 60_000))
+      ]);
+    } catch (error) {
+      writeLogRecord({
+        level: "error",
+        context: "sidecar.lifecycle",
+        event: "sidecar.shutdown_cleanup_failed",
+        message: "关停清理阶段异常，强制退出",
+        error: { message: error instanceof Error ? error.message : String(error) }
+      });
+    }
     process.exit(0);
-  });
-  process.once("SIGTERM", async () => {
-    void getNodeReplRuntimeRegistry().shutdownAll?.();
-    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 60_000))]);
-    process.exit(0);
-  });
+  };
+  process.once("SIGINT", gracefulExit);
+  process.once("SIGTERM", gracefulExit);
 
 }
 

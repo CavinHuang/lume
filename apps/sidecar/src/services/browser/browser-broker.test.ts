@@ -678,3 +678,21 @@ test("iab descriptor default (no runtime) still excludes webmcp from browser cap
   const browserCapabilityIds = descriptor.capabilities.browser.map((c: { id: string }) => c.id)
   assert.ok(!browserCapabilityIds.includes("webmcp"), "缺省 iab browser capabilities 不应凭空出现 webmcp")
 })
+
+test("per-tab queue slot is reclaimed after settle and kept while a newer request chains (#615)", async () => {
+  const broker = new BrowserBroker({
+    request: async () => ({ backend: "iab" }),
+  });
+  broker.setPluginState({ browserEnabled: true });
+  const queues = (broker as unknown as { queues: Map<string, Promise<unknown>> }).queues;
+  const first = broker.dispatch({ method: "list", browserSessionId: "s", browserTurnId: "t", params: { tabId: "tab-9" } });
+  const second = broker.dispatch({ method: "list", browserSessionId: "s", browserTurnId: "t", params: { tabId: "tab-9" } });
+  assert.equal(queues.size, 1);
+  // 钉死保留语义：首个 settle 后第二个仍在链上，槽位不得被误删（否则串行语义断裂）
+  await first;
+  assert.equal(queues.size, 1);
+  await second;
+  // 微任务排空后：队尾已 settle 且无新请求 → 槽位应被回收
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(queues.size, 0);
+});
