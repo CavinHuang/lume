@@ -408,7 +408,11 @@ async function handleRpcLine(line: string): Promise<void> {
 function installProcessErrorGuards(): void {
   let uncaughtCount = 0;
   let lastUncaughtSignature = "";
-  const UNCAUGHT_EXIT_THRESHOLD = 5;
+  // #548 评估结论（round14 需求回溯）：issue 提议的"同类错误去重计数"不采纳——
+// 根因是已知良性异步错误源反复触发，本次已全部封堵（spawn 监听 ×5、downloadFile 全失败路径、
+// worker diag 回传）；去重会弱化止损语义（五个不同严重错误代表系统性恶化，理应退出），
+// 且 stack+emergency 签名已让人工判断"是否同类"成为可能。若未来仍见误触发，修具体错误源而非放宽止损。
+const UNCAUGHT_EXIT_THRESHOLD = 5;
   process.on("unhandledRejection", (reason) => {
     writeLogRecord({
       level: "error",

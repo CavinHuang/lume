@@ -205,37 +205,50 @@ export function recoverAutomationRuntimeStates(): AutomationRuntimeState[] {
   const states: AutomationRuntimeState[] = [];
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const state = readAutomationRuntimeState(entry.name);
-    if (!state) continue;
-    if (isStaleRunningLease(state)) {
-      const interrupted: AutomationRuntimeState = {
-        ...state,
-        status: "interrupted",
-        message: "Sidecar 重启后未找到可恢复的活动执行；未知副作用不会自动重放。",
-        lease: undefined,
-        updatedAt: Date.now()
-      };
-      writeState(interrupted);
-      rmSync(join(runtimeDir(state.jobId), "lease.lock"), { force: true });
-      states.push(interrupted);
-    } else if (isStaleWaitingInteraction(state)) {
-      // #587:waiting_* 无状态迁移入口且重启不恢复——live resolver 已随重启消亡,
-      // 心跳陈旧的 waiting 态若不清掉,任务永远显示"已启用"却再不会被调度
-      const interrupted: AutomationRuntimeState = {
-        ...state,
-        status: "interrupted",
-        message: "Sidecar 重启后等待中的交互已失效；请在对应线程中查看进度或手动重跑。",
-        lease: undefined,
-        updatedAt: Date.now()
-      };
-      writeState(interrupted);
-      rmSync(join(runtimeDir(state.jobId), "lease.lock"), { force: true });
-      states.push(interrupted);
-    } else {
-      states.push(state);
+    // per-entry 兜底（round14 main 交互审计）：#656 自启默认 true 后本函数位于每次启动必经链上，
+    // 单个坏 state 目录（ENOSPC/EPERM）不得炸掉整轮 recover——否则全量任务零排程
+    try {
+      recoverSingleState(entry, states);
+    } catch (error) {
+      log.warn("automation state 自愈单条失败，跳过", {
+        jobId: entry.name,
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
   return states;
+}
+
+function recoverSingleState(entry: { name: string }, states: AutomationRuntimeState[]): void {
+  const state = readAutomationRuntimeState(entry.name);
+  if (!state) return;
+  if (isStaleRunningLease(state)) {
+    const interrupted: AutomationRuntimeState = {
+      ...state,
+      status: "interrupted",
+      message: "Sidecar 重启后未找到可恢复的活动执行；未知副作用不会自动重放。",
+      lease: undefined,
+      updatedAt: Date.now()
+    };
+    writeState(interrupted);
+    rmSync(join(runtimeDir(state.jobId), "lease.lock"), { force: true });
+    states.push(interrupted);
+  } else if (isStaleWaitingInteraction(state)) {
+    // #587:waiting_* 无状态迁移入口且重启不恢复——live resolver 已随重启消亡,
+    // 心跳陈旧的 waiting 态若不清掉,任务永远显示"已启用"却再不会被调度
+    const interrupted: AutomationRuntimeState = {
+      ...state,
+      status: "interrupted",
+      message: "Sidecar 重启后等待中的交互已失效；请在对应线程中查看进度或手动重跑。",
+      lease: undefined,
+      updatedAt: Date.now()
+    };
+    writeState(interrupted);
+    rmSync(join(runtimeDir(state.jobId), "lease.lock"), { force: true });
+    states.push(interrupted);
+  } else {
+    states.push(state);
+  }
 }
 
 // 注：不能用 `state is AutomationRuntimeState` 类型谓词——state 非联合类型时
