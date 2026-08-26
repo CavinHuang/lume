@@ -101,6 +101,11 @@ function stopTree(child) {
       stdio: 'ignore',
       windowsHide: true
     })
+    // 无监听的异步 'error' 会逃逸成 uncaughtException（#548 同族）；taskkill
+    // 起不来时退回对直接子进程发信号，好过无人终止
+    killer.once('error', () => {
+      try { child.kill('SIGTERM') } catch { /* 已退出 */ }
+    })
     killer.unref()
     return
   }

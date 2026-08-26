@@ -504,10 +504,16 @@ export function persistedWorkerIdentityMatches(
 export function stopPersistedWorker(job: ProcessJob): boolean {
   if (!job.workerPid || job.workerPid <= 0) return false
   if (job.workerIdentity && !isPersistedWorkerAlive(job)) return false
+  const workerPid = job.workerPid
   if (process.platform === 'win32') {
-    const child = spawn('taskkill', ['/PID', String(job.workerPid), '/T', '/F'], {
+    const child = spawn('taskkill', ['/PID', String(workerPid), '/T', '/F'], {
       stdio: 'ignore',
       windowsHide: true,
+    })
+    // 无监听的异步 'error' 会逃逸成 uncaughtException（#548 同族）；taskkill
+    // 起不来时退回单进程终止，好过目标无人终止
+    child.once('error', () => {
+      try { process.kill(workerPid, 'SIGTERM') } catch { /* 已退出 */ }
     })
     child.unref()
     return true

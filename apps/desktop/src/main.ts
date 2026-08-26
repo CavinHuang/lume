@@ -2917,6 +2917,16 @@ function createSidecarHost({ onNotification }) {
         const trimmed = typeof message === 'string' ? message.trim() : ''
         if (!trimmed) return
 
+        // #552 同面防线：sidecar→desktop 方向同样拒收超限帧，防畸形超大消息
+        // 在 JSON.parse 前打爆主进程内存（发送侧预检只护住了反向）
+        if (trimmed.length > MAX_RPC_MESSAGE_BYTES) {
+          writeMainLog('error', 'desktop.sidecar.rpc', 'rpc.inbound_too_large', 'sidecar inbound frame exceeds size limit; dropped', {
+            status: 'error',
+            data: { bytes: trimmed.length },
+          })
+          return
+        }
+
         let payload
         try {
           payload = JSON.parse(trimmed)
