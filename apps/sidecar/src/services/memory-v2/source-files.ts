@@ -53,6 +53,10 @@ export function memoryFileRefForPath(input: {
     cursor = resolve(cursor, part);
     if (lstatSync(cursor).isSymbolicLink()) return undefined;
   }
+  // 语义备案(#728 review):candidate 已 realpath 化,「scope 内 symlink → scope 内
+  // 目标」的**直接路径访问**在此放行——内容仍被锁定在 scope 内,与 listing 侧
+  // walkSourceTarget 跳过 symlink 不冲突(列表不展示、直达可读)。逐段 lstat 只拦
+  // 相对路径中间段出现的 symlink;若需收紧为全拒,删掉上面的 realpath 归一即可。
   const canonical = candidate;
   if (canonical !== root && !canonical.startsWith(`${root}${sep}`)) return undefined;
   if (!lstatSync(canonical).isFile()) return undefined;

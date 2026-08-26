@@ -307,9 +307,11 @@ describe("agent-files-service file ops", () => {
     });
     const second = watchAuthorizedFileRef(ref, () => undefined);
     writeFileSync(join(projectPath, "watch.txt"), "after", "utf-8");
+    // 文件监听事件在 CI 高负载下可能晚于 3s 到达(曾实测 flake);放宽到与
+    // 邻近 watcher 用例一致的 15s 超时,失败仍会以 timeout 断言暴露
     expect(await Promise.race([
       changed.then(() => "changed" as const),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 3_000)),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 15_000)),
     ])).toBe("changed");
     expect(unwatchAuthorizedFileRef(first.watchId)).toEqual({ ok: true });
     expect(unwatchAuthorizedFileRef(second.watchId)).toEqual({ ok: true });

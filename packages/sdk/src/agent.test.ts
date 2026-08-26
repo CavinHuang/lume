@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -84,6 +84,17 @@ const originalLumeConfigDir = process.env.LUME_CONFIG_DIR
 const originalAliceConfigDir = process.env.ALICE_CONFIG_DIR
 const originalOpenAgentSdkHome = process.env.OPEN_AGENT_SDK_HOME
 const originalToolSearch = process.env.ENABLE_TOOL_SEARCH
+
+beforeEach(() => {
+  // 全部 createAgent 用例默认隔离宿主技能/配置目录：fs-loader 运行时读 env，
+  // 未设时回落 ~/.lume/skills、~/.alice/skills——宿主真实技能会经 <available_skills>
+  // runtime 块进入 prompt，任何精确消息形状断言都会以 runtime-context 用例的
+  // 方式翻车。个别需要自定义布局的用例可在本用例内覆写。
+  const testHome = mkdtempSync(join(tmpdir(), "lume-agent-test-home-"))
+  tempDirs.push(testHome)
+  process.env.LUME_CONFIG_DIR = join(testHome, "config")
+  process.env.ALICE_CONFIG_DIR = join(testHome, "alice")
+})
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
