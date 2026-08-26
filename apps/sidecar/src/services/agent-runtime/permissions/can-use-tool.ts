@@ -84,9 +84,6 @@ export function resolveRuntimeDescriptor(tool: ToolDefinition): LumeToolDescript
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 import { type PreparedRuntimeCoreAttempt } from "../runner/prepare-attempt";
 import { persistToolApprovalInterruption } from "../interruption/approval-service";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
