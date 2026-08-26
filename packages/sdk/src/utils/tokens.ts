@@ -1,8 +1,10 @@
 /**
  * Token Estimation & Counting
  *
- * Provides rough token estimation (character-based) and
- * native exact counting when available.
+ * Provides rough token estimation (character-based) and native counting when
+ * available. Native counts are exact for inputs ≤32KB; larger inputs are
+ * counted in chunks (see countTokensNativeChunked) and become close
+ * approximations — consumed only by thresholds/display, never billing.
  */
 
 import { countStringTokens } from '@lume/natives'
@@ -26,7 +28,7 @@ export function estimateTokens(text: string): number {
   if (!text) return 0
   try {
     const nativeCount = countTokensNativeChunked(text)
-    if (nativeCount !== undefined && nativeCount > 0) return nativeCount
+    if (nativeCount > 0) return nativeCount
   } catch {
     // Keep @lume/agent-sdk usable without native binaries.
   }
@@ -49,12 +51,13 @@ export function estimateTokens(text: string): number {
  * 原生计数入口的分块保护（#736）：tiktoken 对「单 regex piece 内无换行的长
  * 游程」近 O(n²)（256KB≈30s，Read 的 1MiB 上限外推 ~10min 同步冻结）。按
  * 换行切块、单块超限再定长硬切，把单次 encode 规模压回线性安全区；短文本
- * 走直连保持逐字节精确。跨硬切边界的 BPE 合并损失使计数变为近似值——本
- * 计数只服务阈值/展示估算，~0.1% 漂移无害。加载失败返回 undefined 走 JS 回退。
+ * 走直连保持逐字节精确。跨硬切边界的 BPE 合并损失使大文本计数变为近似值——
+ * 本计数只服务阈值/展示估算，~0.1% 漂移无害。natives 包装层吞错返 0，
+ * 加载失败由调用方的 >0 守卫落回 JS 回退。
  */
 const TOKEN_NATIVE_PIECE_LIMIT = 32 * 1024
 
-function countTokensNativeChunked(text: string): number | undefined {
+function countTokensNativeChunked(text: string): number {
   if (text.length <= TOKEN_NATIVE_PIECE_LIMIT) {
     return countStringTokens(text)
   }
