@@ -97,6 +97,27 @@ describe('createRuntimeEventFlushScheduler', () => {
     expect(flushCount).toBe(0)
   })
 
+  test('flush 后可复用:持续流式多轮 schedule→fire 各自恰好 flush 一次', async () => {
+    // 钉死内部挂起状态归零:若 runFlush/cancelPending 漏掉 rafId/timerId 置空,
+    // 第二次 schedule 会因幂等守卫永久 no-op,流式 UI 在首批之后冻结(#676 故障类)
+    const fakeRaf = createFakeRaf()
+    let flushCount = 0
+    const scheduler = createRuntimeEventFlushScheduler(() => {
+      flushCount += 1
+    }, { fallbackDelayMs: 10, requestRaf: fakeRaf.requestRaf, cancelRaf: fakeRaf.cancelRaf })
+
+    for (let round = 0; round < 3; round += 1) {
+      scheduler.schedule()
+      expect(fakeRaf.pendingCount()).toBe(1)
+      fakeRaf.fireAll()
+      expect(flushCount).toBe(round + 1)
+      expect(fakeRaf.pendingCount()).toBe(0)
+    }
+
+    await Bun.sleep(30)
+    expect(flushCount).toBe(3)
+  })
+
   test('无挂起调度时 cancelPending / fireAll 为安全 no-op', async () => {
     const fakeRaf = createFakeRaf()
     let flushCount = 0
