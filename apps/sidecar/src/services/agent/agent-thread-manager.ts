@@ -42,6 +42,8 @@ import {
 } from "./agent-message-versioning-service";
 import { readAgentMessageVersionStore, resetAgentMessageVersionStore } from "./agent-message-version-store";
 import { resolveAgentDefaultStrategy } from "../channel/model-selection";
+import { clearToolPermissionSession } from "../agent-runtime/interruption/tool-permission-session";
+import { clearPermissionDenials } from "../agent-runtime/permissions/permission-denials";
 import { clearRuntimeFileAccessLedger } from "../agent-runtime/tools/file-access-ledger";
 import { clearThreadFileStateCache } from "../agent-runtime/tools/thread-file-state-cache";
 import { extractAssistantReasoningText, extractRenderableAssistantText } from "./content-extraction";
@@ -606,6 +608,10 @@ export function deleteAgentThread(id: string): void {
   // ledger=完整读门控，thread fileStateCache=mtime 新鲜度。
   clearRuntimeFileAccessLedger(id);
   clearThreadFileStateCache(id);
+  // 审批会话（含 pending resolver）与拒绝记录随线程删除回收，三 Map 只增不减（#519）。
+  // 勿挂 stopAgentRuntime：手动 STOP 不丢线程级「全部允许」是设计语义。
+  clearToolPermissionSession(id);
+  clearPermissionDenials(id);
   try { deleteAgentThreadLocked(id); } finally { release(); }
 }
 
