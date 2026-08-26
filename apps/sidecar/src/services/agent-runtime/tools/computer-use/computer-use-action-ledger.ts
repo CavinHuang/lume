@@ -5,7 +5,7 @@ import type {
 } from "@lume/shared";
 import { getRuntimeHostPorts } from "../../host-ports";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
 import { createLogger } from "../../../infra/logger";
@@ -163,6 +163,7 @@ export class ComputerUseActionLedger {
   /** 终态条目超限时淘汰最旧者：不再参与观察匹配，仅 get 查询历史会落空 */
   #prune(): void {
     if (this.#entries.size <= MAX_LEDGER_ENTRIES) return;
+    const before = this.#entries.size;
     const removable = [...this.#entries.values()]
       .filter((entry) => entry.phase === "verified" || entry.phase === "failed")
       .sort((left, right) => left.updatedAt - right.updatedAt);
@@ -173,8 +174,27 @@ export class ComputerUseActionLedger {
       this.#forgetPrivateVerificationState(entry.actionId);
       excess--;
     }
-    if (excess < this.#entries.size - MAX_LEDGER_ENTRIES) {
-      this.#log.info("action ledger pruned", { pruned: this.#entries.size - MAX_LEDGER_ENTRIES - excess, remaining: this.#entries.size });
+    const pruned = before - this.#entries.size;
+    if (pruned > 0) {
+      this.#log.info("action ledger pruned", { pruned, remaining: this.#entries.size });
+      // 磁盘同步轮转（tmp+rename 原子替换）：jsonl 只增会让 restore 重放成本
+      // 随全部历史线性增长；重写失败不阻塞（下次 prune 再试）
+      this.#rewriteFile();
+    }
+  }
+
+  #rewriteFile(): void {
+    if (!this.#path) return;
+    try {
+      const tmp = `${this.#path}.rotate-${randomUUID()}`;
+      const body = [...this.#entries.values()].map((entry) => JSON.stringify(entry)).join("\n");
+      writeFileSync(tmp, body ? `${body}\n` : "", "utf8");
+      renameSync(tmp, this.#path);
+    } catch (error) {
+      this.#log.warn("action ledger rotation failed", {
+        path: this.#path,
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 
