@@ -374,9 +374,15 @@ export async function runSidecarSubagent(input: {
       ? `${finalized.output}\n\n[子代理权限模式: ${requestedPermissionMode} → ${childPermissionMode}（不得超过父线程权限）]`
       : finalized.output;
 
+  const output = appendSubagentChangedFiles(
+    outputWithModeNote,
+    subagentStatus,
+    runtimeResult.codingReport,
+  );
+
   return {
     status: subagentStatus,
-    output: outputWithModeNote,
+    output,
     ...(finalized.lastAssistantMessage
       ? { completionSummary: finalized.lastAssistantMessage }
       : {}),
@@ -384,10 +390,35 @@ export async function runSidecarSubagent(input: {
     result: {
       type: "tool_result",
       tool_use_id: "",
-      content: outputWithModeNote,
+      content: output,
       ...(subagentStatus !== "completed" ? { is_error: true } : {}),
     },
   };
+}
+
+/** touched-files 回传上限：防巨型重构把父级上下文撑爆。 */
+const MAX_REPORTED_CHANGED_FILES = 20;
+
+/**
+ * 子代理变更文件清单随结果回传（#575 残余收口）：tracker 数据闭锁在子线程
+ * run 内部，经 AgentRuntimeRunResult.codingReport 既有通道带出，父级无需新
+ * 订阅链路。仅成功运行附列——失败/中止的半成品清单只会误导父级。
+ */
+export function appendSubagentChangedFiles(
+  output: string,
+  status: "completed" | "errored" | "aborted" | "timed_out",
+  report: { changedFiles?: string[] } | undefined,
+): string {
+  if (status !== "completed") return output;
+  const changedFiles = (report?.changedFiles ?? []).filter(
+    (path) => typeof path === "string" && path.trim(),
+  );
+  if (changedFiles.length === 0) return output;
+  const listed = changedFiles.slice(0, MAX_REPORTED_CHANGED_FILES);
+  const overflow = changedFiles.length > MAX_REPORTED_CHANGED_FILES
+    ? `, +${changedFiles.length - MAX_REPORTED_CHANGED_FILES} more`
+    : "";
+  return `${output}\n\n[Changed files: ${listed.join(", ")}${overflow}]`;
 }
 
 export async function runForegroundSubagentWithTimeout(input: {
