@@ -179,6 +179,10 @@ export function codingPublishActionDisabledReason(
     if (state.ahead <= 0) return '没有待推送的本地提交'
     return undefined
   }
+  if (options.includeUnstagedChanges && state.worktreeHash === undefined) {
+    // worktree patch 超 16MB 水位时指纹缺席（见 shared 类型 worktreeHash 注释）
+    return '工作区变更超过 16MB 补丁上限，请分次提交'
+  }
   const includedChanges = options.includeUnstagedChanges
     ? state.unstagedCount + state.untrackedCount
     : 0

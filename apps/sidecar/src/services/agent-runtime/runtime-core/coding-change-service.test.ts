@@ -650,6 +650,18 @@ describe("coding-change-service", () => {
     expect(state.canCommit).toBe(true);
     expect(state.worktreeHash).toBeUndefined();
 
+    // 包含未暂存变更时被 service 守卫显式拦截（须在 commit 前断言，否则 HEAD 已变化先命中）
+    await expect(applyCodingRepositoryPublishAction(root, {
+      threadId: "thread-test",
+      action: "commit",
+      message: "test: include unstaged",
+      expectedBranch: state.branch,
+      expectedHead: state.head,
+      expectedIndexHash: state.indexHash,
+      includeUnstagedChanges: true,
+      expectedWorktreeHash: state.worktreeHash,
+    })).rejects.toThrow("工作区变更超过 16MB");
+
     // 仅提交已 staged 内容不受 worktree 超限影响
     const result = await applyCodingRepositoryPublishAction(root, {
       threadId: "thread-test",
@@ -661,18 +673,6 @@ describe("coding-change-service", () => {
     });
     expect(result.commitHash).toBeTruthy();
     expect(execFileSync("git", ["show", "HEAD:src/index.ts"], { cwd: root, encoding: "utf8" })).toContain("'staged change'");
-
-    // 包含未暂存变更时被显式拦截（schema 层要求 expectedWorktreeHash，service 层兜底）
-    await expect(applyCodingRepositoryPublishAction(root, {
-      threadId: "thread-test",
-      action: "commit",
-      message: "test: include unstaged",
-      expectedBranch: state.branch,
-      expectedHead: state.head,
-      expectedIndexHash: state.indexHash,
-      includeUnstagedChanges: true,
-      expectedWorktreeHash: state.worktreeHash,
-    })).rejects.toThrow();
   }, 30_000);
 
   test("单文件 diff 超限时 stage/unstage 报变更过大而非没有可应用的 Diff", async () => {
