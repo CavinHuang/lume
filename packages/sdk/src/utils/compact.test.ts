@@ -62,6 +62,29 @@ function providerWithSummary(summary = VALID_SUMMARY, stopReason = "end_turn") {
 }
 
 describe("context compaction", () => {
+  test("generateSummary caps its own input on a true small-window model (#709 item 6 end-to-end)", async () => {
+    const { provider, requests } = providerWithSummary();
+    const longText = "x".repeat(40_000);
+    const messages = [
+      { role: "user", content: longText },
+      { role: "assistant", content: [{ type: "text", text: "noted" }] },
+      { role: "user", content: "y".repeat(30_000) },
+      { role: "assistant", content: [{ type: "text", text: "noted too" }] },
+      { role: "user", content: "latest request" },
+    ] as any[];
+
+    const result = await compactConversation(provider, "gpt-3.5", messages, createAutoCompactState(), {
+      keepRecentTokens: 5_000,
+    });
+
+    expect(result.compacted).toBe(true);
+    expect(requests).toHaveLength(1);
+    const promptText = String(requests[0].messages[0].content);
+    // 摘要请求自身必须落在小窗模型的输入预算内，而不是带着未裁切的全文超窗
+    expect(promptText).toContain("[... characters truncated ...]");
+    expect(estimateTokens(promptText)).toBeLessThanOrEqual(2_048 + 512);
+  });
+
   test("removes image payloads from summaries while retaining action facts", async () => {
     const { provider, requests } = providerWithSummary();
     const messages = [

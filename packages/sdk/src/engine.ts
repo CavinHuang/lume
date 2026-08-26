@@ -360,7 +360,10 @@ export class QueryEngine {
   private compactState: AutoCompactState
   // Recovery-path breaker, independent of the proactive compaction counter:
   // unrelated proactive failures must not disable overflow self-rescue (#567 item 2).
-  private promptTooLongRecoveryFailures = 0
+  // Both breakers are session-owned via config when the host threads them
+  // through (#725 review R6/R7) — per-run engines would reset them each run
+  // and the breakers could never trip.
+  private promptTooLongRecoveryFailures: number
   private sessionId: string
   private apiTimeMs = 0
   private hookRegistry?: HookRegistry
@@ -393,7 +396,8 @@ export class QueryEngine {
             : tool)
     }
     this.provider = config.provider
-    this.compactState = createAutoCompactState()
+    this.compactState = config.autoCompactState ?? createAutoCompactState()
+    this.promptTooLongRecoveryFailures = config.promptTooLongRecoveryFailures ?? 0
     this.sessionId = config.sessionId || crypto.randomUUID()
     this.hookRegistry = config.hookRegistry
     this.workingDirectory = config.cwd
@@ -2299,6 +2303,15 @@ export class QueryEngine {
    */
   getMessages(): NormalizedMessageParam[] {
     return [...this.messages]
+  }
+
+  /** Terminal breaker state for the host to thread into the next run's engine (#725 review R6/R7). */
+  getAutoCompactState(): AutoCompactState {
+    return this.compactState
+  }
+
+  getPromptTooLongRecoveryFailures(): number {
+    return this.promptTooLongRecoveryFailures
   }
 
   /**

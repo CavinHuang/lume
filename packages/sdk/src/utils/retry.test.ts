@@ -179,4 +179,15 @@ describe("isPromptTooLongError widened recognition (#567 item 1)", () => {
       error: { error: { message: "<html><body>413</body></html>" } }
     })).toBe(false);
   });
+
+  test("Gemini and TGI overflow wording variants (#725 review R4 residual)", () => {
+    expect(isPromptTooLongError({
+      status: 400,
+      message: "Unable to submit request because the input token count is 135538 but model only supports up to 131072"
+    })).toBe(true);
+    expect(isPromptTooLongError({
+      status: 400,
+      message: "Input validation error: `inputs` tokens + max_new_tokens must be <= 1024"
+    })).toBe(true);
+  });
 });

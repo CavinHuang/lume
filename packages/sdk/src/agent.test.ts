@@ -1639,6 +1639,50 @@ describe("Agent session message uuid realignment (#363)", () => {
       else process.env.ENABLE_TOOL_SEARCH = previousToolSearchMode
     }
   })
+
+  test("compaction breakers persist across runs on one Agent (#725 review R6/R7)", async () => {
+    // engine 每 run 新建：计数器不跨 run 线程化则熔断门结构性不可达。
+    // 第一次 run 恢复失败烧 1 次；第二次 run 必须带着累计值起步（N=2）。
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages" as const,
+      async createMessage() {
+        const error = new Error("prompt is too long") as Error & { status: number }
+        error.status = 400
+        throw error
+      },
+    }
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      provider,
+      contextController: {
+        shouldAutoCompact: () => false,
+        microCompactMessages: ({ messages }) => messages,
+        async compactConversation({ messages }) {
+          return {
+            compacted: false,
+            compactedMessages: messages,
+            summary: "",
+            failureReason: "max_tokens" as const,
+          }
+        },
+      } as any,
+    })
+
+    try {
+      for (const expectedAttempts of [1, 2]) {
+        let lastError = ""
+        for await (const event of agent.query(`turn ${expectedAttempts}`)) {
+          if (event.type === "result" && event.subtype === "error_during_execution") {
+            lastError = event.errors[0] ?? ""
+          }
+        }
+        expect(lastError).toContain(`auto-compaction recovery attempted ${expectedAttempts} time(s)`)
+      }
+    } finally {
+      await agent.close()
+    }
+  })
 })
 
 describe("Agent lazy context usage estimation (#386)", () => {

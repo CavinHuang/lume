@@ -56,6 +56,7 @@ import { QueryController } from './query-controller.js'
 import { loadFilesystemSkills } from './skills/fs-loader.js'
 import type { FileCheckpoint, FileCheckpointState } from './utils/file-checkpoints.js'
 import { getContextWindowSize } from './utils/tokens.js'
+import { createAutoCompactState } from './utils/compact.js'
 import { projectPersistedToolResultMeta } from './utils/messages.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { createExecuteTool, createToolSearchTool, isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
@@ -285,7 +286,7 @@ function sanitizeRebuiltToolResultMeta(message: NormalizedMessageParam): Normali
       const { _meta: _dropped, ...rest } = block
       return rest
     }),
-  } as NormalizedMessageParam
+  }
 }
 
 export class Agent {
@@ -317,6 +318,11 @@ export class Agent {
   private explicitSkillNames = new Set<string>()
   private fileSkillNames = new Set<string>()
   private fileCheckpointState: FileCheckpointState = {}
+  /** 压缩熔断器跨 run 持久状态（#725 review R6/R7）：proactive 计数与
+   *  prompt_too_long 恢复计数各自独立、共享阈值常量；随 Agent 实例存续，
+   *  每 run 传入 engine、终值回读。manual /compact 成功即清零重新武装。 */
+  private autoCompactState = createAutoCompactState()
+  private promptTooLongRecoveryFailures = 0
   /** Thread-level read-state: shared by every engine this Agent creates so the
    *  stale-read guard survives across runs instead of resetting per user
    *  message (#569). Hosts may inject a per-thread instance via
@@ -945,6 +951,10 @@ export class Agent {
         : `command:${this.sid}:compact`),
       fileCheckpointState: this.fileCheckpointState,
       fileStateCache: this.fileStateCache,
+      // 压缩熔断器跨 run 持久（#725 review R6/R7）：engine 每 run 新建，
+      // 计数器若随实例归零则熔断门结构性不可达；终值在 finally 回读。
+      autoCompactState: this.autoCompactState,
+      promptTooLongRecoveryFailures: this.promptTooLongRecoveryFailures,
       enableFileCheckpointing: opts.enableFileCheckpointing === true,
       contextController: opts.contextController,
       completionGuard: opts.completionGuard,
@@ -1030,6 +1040,9 @@ export class Agent {
       if (compactionBoundarySeen || opts.toolContinuations?.length) {
         this.sessionMessages = sessionMessagesFromHistory(finalEngineMessages, this.sessionMessages)
       }
+      // 熔断器终值回读：下一 run 的 engine 从本 Agent 的累计值起步（#725 review R6/R7）。
+      this.autoCompactState = engine.getAutoCompactState()
+      this.promptTooLongRecoveryFailures = engine.getPromptTooLongRecoveryFailures()
       persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
     }
 

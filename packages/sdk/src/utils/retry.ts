@@ -169,5 +169,5 @@ export function isPromptTooLongError(err: any): boolean {
   if (err?.status !== 400) return false
   const code = String(err?.error?.error?.code || err?.error?.code || '')
   if (code.includes('context_length_exceeded')) return true
-  return !hasHtmlBody && /context[ _-]?length|maximum context|prompt( is|'s)? too (long|large)|input (is )?too long|request.{0,16}too large|exceeds the maximum number of tokens|must have less than \d+ tokens/i.test(message)
+  return !hasHtmlBody && /context[ _-]?length|maximum context|prompt( is|'s)? too (long|large)|input (is )?too long|request.{0,16}too large|exceeds the maximum number of tokens|must have less than \d+ tokens|input token count|max_new_tokens must be/i.test(message)
 }

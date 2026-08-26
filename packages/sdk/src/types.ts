@@ -819,6 +819,14 @@ export interface QueryEngineConfig {
   /** Session-owned read-state shared across runs of one Agent/thread (#569).
    *  Engines without it fall back to a private per-run cache. */
   fileStateCache?: import('./utils/fileCache.js').FileStateCache
+  /** Session-owned compaction breaker state (#725 review R6/R7): engines created
+   *  fresh per run would otherwise reset both counters, making the breakers
+   *  structurally unreachable in engine-per-run hosts. Hosts that build one
+   *  QueryEngine per prompt should thread the same state object through and
+   *  read it back after the run (getAutoCompactState /
+   *  getPromptTooLongRecoveryFailures). Standalone engines keep per-run state. */
+  autoCompactState?: import('./utils/compact.js').AutoCompactState
+  promptTooLongRecoveryFailures?: number
   artifactsRoot?: string
   onToolExecution?: ToolContext['onToolExecution']
   onBeforeToolExecution?: ToolContext['onBeforeToolExecution']
