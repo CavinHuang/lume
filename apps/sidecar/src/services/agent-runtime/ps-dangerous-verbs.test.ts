@@ -9,10 +9,12 @@ import {
   PS_CLEAR_CONTENT_VERBS,
   PS_CONFIRM_COMMAND,
   PS_DELETE_COMMAND,
+  PS_DANGEROUS_DELETE_FLAGS,
   PS_DANGEROUS_PROBES,
   PS_DYNAMIC_EXEC_VERBS,
   PS_FORMAT_VERBS,
-  PS_STOP_VERBS
+  PS_STOP_VERBS,
+  hasPowerShellContentSignal
 } from "./ps-dangerous-verbs";
 
 // 与 runtime-tool-safety.test 同款确定性方言上下文（win32 + 显式空 env → powershell）
@@ -89,12 +91,17 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
       expect(classification.riskLevel).not.toBe("low");
       expect(classification.shouldAsk).toBe(true);
 
-      // 显式配置 bash 后即使仍未决也回到精确读法：不再硬拒，分类器回落 POSIX 口径
+      // 显式配置 bash 后即使仍未决也回到精确读法：不再硬拒。Remove-Item 属无歧义
+      // PS 危险动词，win32 上经内容信号保持确认档（#707 修复本体）；撞名命令
+      // （iex/Elixir）不构成信号，维持 POSIX 口径判 low
       process.env.LUME_BASH_PATH = "C:\\Program Files\\Git\\bin\\bash.exe";
       expect(
         evaluateRuntimeToolSafety(firstCommand.toolName, { command: firstCommand.command }, coldStart).behavior
       ).not.toBe("deny");
-      expect(classifyHeuristic(classifyColdStart).riskLevel).toBe("low");
+      const classificationExplicitBash = classifyHeuristic(classifyColdStart);
+      expect(classificationExplicitBash.riskLevel).toBe("medium");
+      expect(classificationExplicitBash.shouldAsk).toBe(true);
+      expect(classifyHeuristic({ ...classifyColdStart, command: "iex -S mix phx.server" }).riskLevel).toBe("low");
     } finally {
       for (const [key, value] of saved) {
         if (value === undefined) delete process.env[key];
@@ -102,6 +109,78 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
       }
       resetWindowsBashDiscoveryForTests();
     }
+  });
+
+  test("probes carrying the content signal escalate on bash-configured Windows (#707)", () => {
+    // 信号通道接入既有探针防漂移体系：凡构成信号的探针在 win32+bash（方言读 bash、
+    // 词表曾整层休眠）上下文两层都必须升级；无信号探针把「短别名无标志不构成信号」
+    // 的刻意让步钉成被测试记录的决策（含 cmd 包裹内裸单文件删除等形态）
+    const bashWin: RuntimeToolSafetyContext = {
+      platform: "win32",
+      env: { LUME_BASH_PATH: "C:\\Program Files\\Git\\bin\\bash.exe" }
+    };
+    // combo 形态判定与 guardrail FORCE_CONFIRM 第一条规则同源：无 natives 环境
+    // parse-unavailable 兜底也会返回 confirm，必须断言 reason 区分升级来源
+    const comboRule = new RegExp(
+      String.raw`${PS_DELETE_COMMAND}[^\r\n;&|]*[^\S\r\n]${PS_DANGEROUS_DELETE_FLAGS}`,
+      "i"
+    );
+    for (const command of PS_DANGEROUS_PROBES) {
+      if (!hasPowerShellContentSignal(command)) {
+        expect(hasPowerShellContentSignal(command)).toBe(false);
+        continue;
+      }
+      const decision = evaluateRuntimeToolSafety("Bash", { command }, bashWin);
+      if (comboRule.test(command)) {
+        // combo 形态：词表规则在语法解析前命中，confirm 与 reason 双态确定
+        // （无 natives 环境不得落 parse-unavailable 兜底，须证明升级来自词表）
+        expect(decision.behavior).toBe("confirm");
+        expect(decision.behavior === "confirm" && decision.reason).toBe("递归强制删除文件需要用户确认");
+      } else {
+        /*
+         * 非 combo 信号探针（如 Get-Date␊Remove-Item ~）：删除族无标志形态在 bash 读法机
+         * 上无确认规则（hard-deny 由真实方言独占），natives 解析成功时守卫层可 allow——
+         * 只钉不 deny；防「判 low 静默放行」由下方分类器 medium 断言兜底（#707 修复本体）。
+         * 无 natives 环境此分支落 parse-unavailable confirm，两态均通过。
+         */
+        expect(decision.behavior).not.toBe("deny");
+      }
+      const classification = classifyHeuristic({ toolName: "bash", command, shellKind: "bash", platform: "win32" });
+      expect(classification.riskLevel).not.toBe("low");
+      expect(classification.shouldAsk).toBe(true);
+    }
+  });
+
+  test("content signal reactivates the vocabulary on bash-configured Windows hosts (#707)", () => {
+    // win32 + 显式配置 bash：方言读作 bash、词表曾整层休眠，Remove-Item -Recurse -Force
+    // 在 dontAsk 判 low 静默放行（guardrail 侧同样漏拦）。文本呈强 PS 形态时按 PS 规则评估。
+    const bashWin: RuntimeToolSafetyContext = {
+      platform: "win32",
+      env: { LUME_BASH_PATH: "C:\\Program Files\\Git\\bin\\bash.exe" }
+    };
+    expect(
+      evaluateRuntimeToolSafety("Bash", { command: "Remove-Item -Recurse -Force build" }, bashWin).behavior
+    ).toBe("confirm");
+    expect(evaluateRuntimeToolSafety("Bash", { command: "rd /s /q build" }, bashWin).behavior).toBe("confirm");
+
+    // 短别名单独出现不构成信号：iex 不进 PS 词表。confirm 来源区分（防 iex 未来被误加进
+    // 信号词表后「动态执行」确认规则命中仍绿）：只允许 parse-unavailable 兜底 confirm
+    const iexDecision = evaluateRuntimeToolSafety("Bash", { command: "iex -S mix phx.server" }, bashWin);
+    expect(iexDecision.behavior).not.toBe("deny");
+    expect(
+      iexDecision.behavior === "confirm" &&
+        iexDecision.reason === "修改脚本执行策略或动态执行代码需要用户确认"
+    ).toBe(false);
+
+    // 非 win32 宿主不消费信号（与下方既定语义测试同口径）
+    expect(evaluateRuntimeToolSafety("Bash", { command: "Remove-Item -Recurse -Force build" }, { platform: "linux" }).behavior).not.toBe("deny");
+
+    // 参数/字符串位置的全名动词不构成信号（#717 follow-up）：第一支经命令位锚定，
+    // echo 回显文本不再触发 UX 摩擦弹卡；命令位形态（分号/管道/换行后）仍命中
+    expect(hasPowerShellContentSignal("echo remove-item deletes stuff")).toBe(false);
+    expect(hasPowerShellContentSignal("echo 'stop-process' >> log")).toBe(false);
+    expect(hasPowerShellContentSignal("grep -rn restart-computer src/")).toBe(false);
+    expect(hasPowerShellContentSignal("Get-Date; Remove-Item x")).toBe(true);
   });
 
   test("non-win32 hosts keep the exact bash reading while Windows discovery is unsettled", () => {

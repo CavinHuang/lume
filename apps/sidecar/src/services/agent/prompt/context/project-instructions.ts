@@ -1,4 +1,4 @@
-import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import type { Stats } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -11,6 +11,12 @@ const log = createLogger("project-instructions");
 export const PROJECT_INSTRUCTION_FILENAMES = ["CLAUDE.md", "AGENTS.md"] as const;
 
 export const MAX_PROJECT_INSTRUCTIONS_CHARS = 32 * 1024;
+/**
+ * 读入侧字节闸门（#649 review P2）:候选文件超大时只读前段——整读 500MB 的
+ * CLAUDE.md 会造成 sidecar 内存尖峰波及同进程全部会话。闸门取注入帽的数倍,
+ * UTF-8 最坏 4 字节/字符,1MB 读入足以填满 256K 字符的截断输入。
+ */
+const MAX_RAW_READ_BYTES = 1024 * 1024;
 
 export interface ProjectInstructions {
   /** 命中文件的绝对路径 */
@@ -237,7 +243,17 @@ export function readTrustedContent(source: ProjectInstructionSource, options: Pi
       log.warn("project instructions identity mismatch after open, rejecting", { path: source.realPath });
       return null;
     }
-    return stripFrontMatter(readFileSync(fd, "utf-8")).trim();
+    // 读入侧字节闸门:超限只读前段,截断交给 truncateProjectInstructions 的显式标记
+    const byteLength = Number(st.size ?? 0);
+    let content: string;
+    if (byteLength > MAX_RAW_READ_BYTES) {
+      const window = Buffer.alloc(MAX_RAW_READ_BYTES);
+      const bytesRead = readSync(fd, window, 0, window.byteLength, 0);
+      content = window.toString("utf-8", 0, bytesRead);
+    } else {
+      content = readFileSync(fd, "utf-8");
+    }
+    return stripFrontMatter(content).trim();
   } catch (error) {
     log.warn("failed to read project instructions file", { path: source.realPath, error });
     return null;

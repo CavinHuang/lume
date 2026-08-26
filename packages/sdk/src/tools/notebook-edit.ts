@@ -17,6 +17,7 @@ import {
   ensureWriteContained,
   getUnsafeFilePathReason,
   resolveInputPath,
+  writeContainmentRoots,
 } from '../utils/pathing.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 
@@ -107,7 +108,8 @@ export const NotebookEditTool = defineTool({
       cell_number: { type: 'number' },
       source: { type: 'string' },
     },
-    required: ['new_source'],
+    // new_source 不设 required：delete 模式合法地不带内容，严格 provider 会拦掉
+    // 合法 delete；运行时校验（validateInput）按模式精确把关（#538）
   },
   isReadOnly: false,
   isConcurrencySafe: false,
@@ -142,7 +144,7 @@ export const NotebookEditTool = defineTool({
       return { data: sandboxError, is_error: true }
     }
     // containment 复核不以沙箱启用为前提（#546）：junction/symlink 可穿越词法边界
-    const containmentError = ensureWriteContained(notebookPath, context.cwd, context.additionalDirectories)
+    const containmentError = ensureWriteContained(notebookPath, context.cwd, writeContainmentRoots(context))
     if (containmentError) {
       return { data: containmentError, is_error: true }
     }
@@ -247,7 +249,7 @@ export const NotebookEditTool = defineTool({
       let updatedFile = JSON.stringify(notebook, null, 1)
       // 写入瞬间 symlink 复检与 write/edit 同口径（#546）
       await writeFileAtomic(notebookPath, encodeTextFile(updatedFile, decoded), (resolvedPath) =>
-        ensureWriteContained(resolvedPath, context.cwd, context.additionalDirectories))
+        ensureWriteContained(resolvedPath, context.cwd, writeContainmentRoots(context)))
       const updatedStat = await stat(notebookPath)
       context.fileStateCache?.set(notebookPath, {
         content: updatedFile,

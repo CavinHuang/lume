@@ -143,11 +143,14 @@ export function createSkillTool(registry: SkillRegistry | SkillLookup = globalSk
         ? `${promptText}\n\nReferences and relative paths in this skill resolve against: ${skillDir}`
         : promptText
 
-      // Build result with metadata
+      // Build result with metadata.
+      // status/model 字段已删（#575）：全仓无消费者——applySkillAllowedTools
+      // 只读 allowedTools/activatedTools，fork 不会真正 spawn 子代理，
+      // model 覆写也从不生效；继续回传只会让模型误以为声明有执行力。
+      // frontmatter 的 context/model 声明保留：host 预览目录仍消费其元数据。
       const result: Record<string, unknown> = {
         success: true,
         commandName: skill.name,
-        status: skill.context === 'fork' ? 'forked' : 'inline',
         prompt: finalPrompt,
         ...(skillDir ? { skillDir } : {}),
       }
@@ -157,10 +160,6 @@ export function createSkillTool(registry: SkillRegistry | SkillLookup = globalSk
       }
       if (skill.activatedTools) {
         result.activatedTools = skill.activatedTools
-      }
-
-      if (skill.model) {
-        result.model = skill.model
       }
 
       await recordSkillUsage({

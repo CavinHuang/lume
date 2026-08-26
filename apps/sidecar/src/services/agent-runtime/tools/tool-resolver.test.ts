@@ -112,22 +112,18 @@ describe("ToolResolver", () => {
     }).map((item) => item.name)).toEqual(["Read"]);
   });
 
-  test("keeps web and data-query policy groups independent", () => {
+  test("keeps non-web tools available when the web group is denied", () => {
     const registry = new ToolRegistry();
     registry.registerMany([
       tool({ name: "web_search", category: "network", allowedInPlanMode: true, isReadOnly: true }),
       tool({ name: "web_fetch", category: "network", allowedInPlanMode: true, isReadOnly: true }),
-      tool({ name: "guanlan_search", category: "network", allowedInPlanMode: true, isReadOnly: true }),
-      tool({ name: "guanlan_research", category: "network", allowedInPlanMode: true, isReadOnly: true })
+      tool({ name: "Read", category: "read", allowedInPlanMode: true, isReadOnly: true })
     ]);
     const resolver = new ToolResolver(registry);
 
     expect(resolver.resolve({
       policies: [{ deny: ["group:web"] }]
-    }).map((item) => item.name)).toEqual(["guanlan_search", "guanlan_research"]);
-    expect(resolver.resolve({
-      policies: [{ deny: ["group:data"] }]
-    }).map((item) => item.name)).toEqual(["web_search", "web_fetch"]);
+    }).map((item) => item.name)).toEqual(["Read"]);
   });
 
   test("planning group keeps clarification tools available", () => {

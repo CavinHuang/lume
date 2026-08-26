@@ -35,19 +35,6 @@ describe("BrowserActionQueue", () => {
     await expect(second).resolves.toBe("recovered")
   })
 
-  test("cancels queued actions without replaying them after user takeover", async () => {
-    const queue = new BrowserActionQueue()
-    let releaseFirst!: () => void
-    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
-    const first = queue.run("session-1", () => firstGate)
-    const second = queue.run("session-1", async () => "must-not-run")
-
-    await Promise.resolve()
-    queue.cancel("session-1")
-    const cancelled = second.then(() => undefined, (error: Error) => error)
-    releaseFirst()
-
-    await expect(first).resolves.toBeUndefined()
-    expect((await cancelled)?.message).toBe("user_takeover_required")
-  })
+  // #610:epoch/cancel 作废机制已删——cancel 从无调用方,user_takeover_required
+  // 因此 100% 不可产出;作废需求由 stale_target/generation 在动作执行前仲裁
 })

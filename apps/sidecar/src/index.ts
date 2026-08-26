@@ -111,6 +111,17 @@ function browserRpcMac(direction: "sidecar->main" | "main->sidecar", sequence: n
     .digest("base64url");
 }
 
+// #611：desktop 死亡/通道断开时批量 reject in-flight 请求——否则全部干等到超时后
+// 误报 executed_unknown（「可能已执行」，而实际包根本没送达）。断连是明确的
+// browser_unavailable（可重试），与业务错误分离。
+rpcTransport.onClose(() => {
+  for (const [requestId, pending] of [...pendingBrowserMainRequests]) {
+    pendingBrowserMainRequests.delete(requestId);
+    clearTimeout(pending.timeout);
+    pending.reject(Object.assign(new Error("browser transport disconnected"), { code: "browser_unavailable" }));
+  }
+});
+
 function verifyBrowserRpcMac(direction: "sidecar->main" | "main->sidecar", sequence: number, id: string, body: unknown, mac: unknown): boolean {
   if (typeof mac !== "string" || !browserRpcSecret) return false;
   const expected = Buffer.from(browserRpcMac(direction, sequence, id, body));
@@ -254,8 +265,36 @@ async function handleRpcLine(line: string): Promise<void> {
   }
 
   if (method === "system.connection-vault-key") {
-    installConnectionVaultKey((payload.params as { key?: unknown } | null)?.key);
-    if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    // 与 system.secret-encryption-key 同型：畸形 key 抛错时回 error 响应，
+    // 不让 desktop 侧 await 等满超时（交叉复审发现 pre-existing 同缺陷）
+    try {
+      installConnectionVaultKey((payload.params as { key?: unknown } | null)?.key);
+      if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    } catch (error) {
+      if (payload.id !== undefined) {
+        writeResponse({
+          id: payload.id,
+          error: { code: "connection_vault_key_invalid", message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    }
+    return;
+  }
+
+  if (method === "system.secret-encryption-key") {
+    // 该分支位于 generic handlers 的 try/catch 之外：畸形 key 抛错时必须回
+    // error 响应，否则 desktop 启动关键路径上的 await 要等满 RPC 超时上限才降级
+    try {
+      installSecretEncryptionKey((payload.params as { key?: unknown } | null)?.key);
+      if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    } catch (error) {
+      if (payload.id !== undefined) {
+        writeResponse({
+          id: payload.id,
+          error: { code: "secret_encryption_key_invalid", message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    }
     return;
   }
 

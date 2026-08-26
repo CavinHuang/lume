@@ -78,8 +78,8 @@ export function ConnectorSettings() {
             <Mail size={16} />
           </div>
           <div className="min-w-0">
-            <h3 className="text-[14px] font-semibold text-[var(--text-1)]">邮箱连接器</h3>
-            <p className="text-[12px] text-[var(--text-3)]">
+            <h3 className="text-body-lg font-semibold text-[var(--text-1)]">邮箱连接器</h3>
+            <p className="text-ui text-[var(--text-3)]">
               {loadError ? '加载失败' : `${setups.filter((setup) => setup.connected).length}/${setups.length} 个已连接`}
             </p>
           </div>
@@ -105,12 +105,12 @@ export function ConnectorSettings() {
       <div className="p-4">
         <div className="space-y-2">
           {loading ? (
-            <div className="flex h-28 items-center justify-center text-[13px] text-[var(--text-3)]">
+            <div className="flex h-28 items-center justify-center text-body text-[var(--text-3)]">
               <Loader2 className="mr-2 size-4 animate-spin" />
               加载中
             </div>
           ) : loadError ? (
-            <div className="lume-subpanel border-dashed p-6 text-center text-[13px] text-[var(--lume-danger)]">
+            <div className="lume-subpanel border-dashed p-6 text-center text-body text-[var(--lume-danger)]">
               连接器加载失败:{loadError}
             </div>
           ) : setups.map((setup) => (
@@ -203,32 +203,32 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <ConnectorBrandIcon service={setup.service} size={16} className="shrink-0" />
-          <span className="text-[13px] font-semibold text-[var(--text-1)]">{status.displayName}</span>
+          <span className="text-body font-semibold text-[var(--text-1)]">{status.displayName}</span>
           {status.accountLabel && status.connected ? (
-            <span className="truncate text-[12px] text-[var(--text-3)]">{status.accountLabel}</span>
+            <span className="truncate text-ui text-[var(--text-3)]">{status.accountLabel}</span>
           ) : null}
         </div>
-        <Badge variant="outline" className={`shrink-0 text-[12px] ${statusTone[tone]}`}>{TONE_LABEL[tone]}</Badge>
+        <Badge variant="outline" className={`shrink-0 text-ui ${statusTone[tone]}`}>{TONE_LABEL[tone]}</Badge>
       </div>
 
       {/* 配置指引:OAuth 型渲染注册步骤,custom 型由字段 description 承载 */}
       {!status.connected ? (
         <>
           {status.clientSetup ? (
-            <ol className="mt-2 space-y-0.5 pl-4 text-[12px] leading-5 text-[var(--text-3)] list-decimal">
+            <ol className="mt-2 space-y-0.5 pl-4 text-ui leading-5 text-[var(--text-3)] list-decimal">
               {status.clientSetup.steps.map((step, index) => (
                 <li key={index}>{step}</li>
               ))}
             </ol>
           ) : (
             status.fields.map((field) => (
-              <p key={field.key} className="mt-1.5 text-[12px] leading-5 text-[var(--text-3)]">{field.description}</p>
+              <p key={field.key} className="mt-1.5 text-ui leading-5 text-[var(--text-3)]">{field.description}</p>
             ))
           )}
           {status.clientSetup?.docsUrl ? (
             <button
               type="button"
-              className="mt-1 inline-flex items-center gap-0.5 text-[12px] underline text-[var(--text-3)] hover:text-[var(--text-2)]"
+              className="mt-1 inline-flex items-center gap-0.5 text-ui underline text-[var(--text-3)] hover:text-[var(--text-2)]"
               onClick={() => void openExternal(status.clientSetup!.docsUrl!)}
             >
               打开配置页面 <ExternalLink className="size-3" />
@@ -238,7 +238,7 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
       ) : null}
 
       {status.lastError ? (
-        <p className="mt-2 text-[12px] text-[var(--lume-danger)]">{status.lastError}</p>
+        <p className="mt-2 text-ui text-[var(--lume-danger)]">{status.lastError}</p>
       ) : null}
 
       {status.connected ? (
@@ -251,7 +251,7 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
         <div className="mt-2.5 grid gap-2.5 max-w-md">
           {formFields.map((field) => (
             <div key={field.key} className="grid gap-1">
-              <Label htmlFor={`${setup.service}-${field.key}`} className="text-[12px]">{field.label}</Label>
+              <Label htmlFor={`${setup.service}-${field.key}`} className="text-ui">{field.label}</Label>
               <Input
                 id={`${setup.service}-${field.key}`}
                 type={field.inputType === 'password' ? 'password' : 'text'}

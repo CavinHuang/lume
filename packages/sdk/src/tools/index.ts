@@ -13,6 +13,7 @@ import { BashTool } from './bash.js'
 import { FileReadTool } from './read.js'
 import { FileWriteTool } from './write.js'
 import { FileEditTool } from './edit.js'
+import { MultiEditTool } from './multi-edit.js'
 import { GlobTool } from './glob.js'
 import { GrepTool } from './grep.js'
 import { NotebookEditTool } from './notebook-edit.js'
@@ -20,12 +21,6 @@ import { NotebookEditTool } from './notebook-edit.js'
 // Web
 import { WebFetchTool } from './web-fetch.js'
 import { WebSearchTool } from './web-search.js'
-import {
-  GuanlanHotnewsTool,
-  GuanlanReadTool,
-  GuanlanResearchTool,
-  GuanlanSearchTool,
-} from './guanlan.js'
 
 // Agent & Multi-agent
 import { AgentTool } from './agent-tool.js'
@@ -57,6 +52,7 @@ const ALL_TOOLS: ToolDefinition[] = [
   FileReadTool,
   FileWriteTool,
   FileEditTool,
+  MultiEditTool,
   GlobTool,
   GrepTool,
   NotebookEditTool,
@@ -64,10 +60,6 @@ const ALL_TOOLS: ToolDefinition[] = [
   // Web
   WebFetchTool,
   WebSearchTool,
-  GuanlanSearchTool,
-  GuanlanReadTool,
-  GuanlanHotnewsTool,
-  GuanlanResearchTool,
 
   // Agent & Multi-agent
   AgentTool,
@@ -90,7 +82,7 @@ const ALL_TOOLS: ToolDefinition[] = [
 
 /** Schemas always sent to the provider when deferred tool loading is enabled. */
 export const CORE_TOOL_NAMES = new Set([
-  'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'NotebookEdit',
+  'Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', 'NotebookEdit',
   'WebFetch', 'WebSearch', 'Agent', 'Delegate', 'WaitForDelegations',
   'AskUserQuestion', 'Skill',
   'ProcessOutput', 'ProcessStop', 'TaskStop', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
@@ -149,15 +141,12 @@ export {
   FileReadTool,
   FileWriteTool,
   FileEditTool,
+  MultiEditTool,
   GlobTool,
   GrepTool,
   NotebookEditTool,
   WebFetchTool,
   WebSearchTool,
-  GuanlanSearchTool,
-  GuanlanReadTool,
-  GuanlanHotnewsTool,
-  GuanlanResearchTool,
   // Agent
   AgentTool,
   // Persistent Tasks are host-bound; see createTaskTools.

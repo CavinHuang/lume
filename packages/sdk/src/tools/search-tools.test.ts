@@ -75,11 +75,61 @@ describe("search tools", () => {
     const meta = result._meta?.search as any;
     expect(meta.engine).toBe("rg");
     expect(meta.truncated).toBe(true);
-    const payload = JSON.parse(String(result.content));
-    expect(payload.matches).toHaveLength(5);
+    // 纯文本流（#565）：正文是换行分隔的条目，不再包 JSON envelope。
+    const lines = String(result.content).split("\n").filter(Boolean);
+    expect(lines).toHaveLength(5);
     // The search process was killed early instead of buffering all output.
-    expect(payload.total_matches).toBeLessThan(50000);
+    expect(meta.total).toBeLessThan(50000);
   });
+
+  test("Grep BRE fallback appends a dialect hint for ERE/PCRE patterns", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-grep-bre-"));
+    roots.push(root);
+    await writeFile(join(root, "pets.txt"), "cat\n dog\n", "utf8");
+
+    // 配置的 rg 不存在（ENOENT）→ 落到 POSIX BRE 的系统 grep 通道。
+    const sandbox = { ripgrep: { command: "lume-nonexistent-rg-for-test", args: [] } };
+
+    const breResult = await GrepTool.call({
+      pattern: "(cat|dog)",
+      path: root,
+    }, { cwd: root, sandbox } as any);
+    expect(breResult.is_error).toBeFalsy();
+    expect((breResult._meta?.search as any).engine).toBe("grep");
+    expect((breResult._meta?.search as any).engineDialect).toBe("bre");
+    expect(String(breResult.content)).toContain("POSIX BRE fallback grep engine");
+
+    // 无 ERE 语法的普通 pattern 在同一通道不触发方言提示。
+    const literalResult = await GrepTool.call({
+      pattern: "cat",
+      path: root,
+      output_mode: "content",
+    }, { cwd: root, sandbox } as any);
+    expect(literalResult.is_error).toBeFalsy();
+    expect((literalResult._meta?.search as any).engineDialect).toBeUndefined();
+    expect(String(literalResult.content)).not.toContain("POSIX BRE");
+  }, 20_000);
+
+  test("Grep BRE fallback truncates oversized content lines like the rg channel", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-grep-maxcols-"));
+    roots.push(root);
+    await writeFile(join(root, "wide.txt"), `${"x".repeat(2000)}needle${"y".repeat(2000)}`, "utf8");
+
+    const result = await GrepTool.call({
+      pattern: "needle",
+      path: root,
+      output_mode: "content",
+    }, {
+      cwd: root,
+      sandbox: { ripgrep: { command: "lume-nonexistent-rg-for-test", args: [] } },
+    } as any);
+
+    expect(result.is_error).toBeFalsy();
+    expect((result._meta?.search as any).engine).toBe("grep");
+    const output = String(result.content);
+    expect(output).toContain("…");
+    expect(output.length).toBeLessThan(600);
+  }, 20_000);
 
   test("Glob reports truncation instead of silently dropping matches", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-search-tools-"));
@@ -98,18 +148,18 @@ describe("search tools", () => {
 describe("ToolSearch promotion", () => {
   test("activates matched tools when the hook is present", async () => {
     const activated: string[][] = [];
-    const tool = createToolSearchTool(() => [makeFakeTool("GuanlanSearch")]);
-    const result = await tool.call({ query: "guanlan" }, {
+    const tool = createToolSearchTool(() => [makeFakeTool("DeepSearch")]);
+    const result = await tool.call({ query: "deep" }, {
       activateTools: (names) => { activated.push(names); return names; },
     } as any);
 
-    expect(activated).toEqual([["GuanlanSearch"]]);
+    expect(activated).toEqual([["DeepSearch"]]);
     expect(result.content).toContain("call them directly");
   });
 
   test("falls back to ExecuteTool guidance without the hook", async () => {
-    const tool = createToolSearchTool(() => [makeFakeTool("GuanlanSearch")]);
-    const result = await tool.call({ query: "guanlan" }, {} as any);
+    const tool = createToolSearchTool(() => [makeFakeTool("DeepSearch")]);
+    const result = await tool.call({ query: "deep" }, {} as any);
 
     expect(result.content).toContain("ExecuteTool");
   });

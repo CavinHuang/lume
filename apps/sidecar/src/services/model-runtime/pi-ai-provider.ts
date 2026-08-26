@@ -24,7 +24,7 @@ import type {
   NormalizedMessageParam,
   NormalizedResponseBlock,
 } from "@lume/agent-sdk";
-import { MAX_RETRY_AFTER_DELAY_MS, parseRetryAfterHeader } from "@lume/agent-sdk";
+import { DEFAULT_CONTEXT_WINDOW, MAX_RETRY_AFTER_DELAY_MS, parseRetryAfterHeader } from "@lume/agent-sdk";
 import { resolveThinkingLevelFromBudget } from "./thinking-budgets";
 
 type PiTextApi = "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai";
@@ -406,7 +406,7 @@ export class PiAiProvider implements LLMProvider {
       reasoning: resolvePiModelReasoningCapability(this.options.supportsReasoning),
       input: resolvePiModelInput(params.messages),
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: this.options.contextWindow ?? 128_000,
+      contextWindow: this.options.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       maxTokens: this.options.maxTokens ?? params.maxTokens,
       ...(this.options.thinkingLevelMap ? { thinkingLevelMap: this.options.thinkingLevelMap } : {}),
       ...(this.options.compat ? { compat: this.options.compat as Model<PiTextApi>["compat"] } : {}),

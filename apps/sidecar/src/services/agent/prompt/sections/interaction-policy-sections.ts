@@ -1,3 +1,5 @@
+import { isBuiltinBrowserToolName } from "@lume/shared";
+
 type InteractionPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
 
 export function buildUncertaintySection(permissionMode?: InteractionPermissionMode): string {
@@ -45,17 +47,20 @@ export function buildPlanModeSection(): string {
 }
 
 export function buildBrowserFirstSection(availableTools: Set<string>): string | null {
-  if (!availableTools.has("browser") || !availableTools.has("web_search")) {
+  // 池内浏览器工具实名是 mcp__browser__*（无字面量 "browser"），必须按前缀检测；
+  // 权威名单见 shared BROWSER_TOOL_NAME_PREFIX / create-browser-tools BROWSER_TOOL_NAMES
+  const hasBrowserTools = Array.from(availableTools).some(isBuiltinBrowserToolName);
+  if (!hasBrowserTools || !availableTools.has("web_search")) {
     return null;
   }
 
   return `## 浏览器优先工具策略（强制）
 
 当用户请求“使用我的浏览器 / 使用浏览器 profile / 在当前页面继续操作 / 继续上一步浏览器任务”时：
-1. 必须优先使用 browser 工具，不要直接改用 WebSearch。
-2. 如果 browser 执行失败，先调用 browser status 或 relay_status 判断是否连接问题，再尝试修复（如 start(mode=relay)）。
+1. 必须优先使用 mcp__browser__* 工具（从 mcp__browser__list_tabs 或 mcp__browser__snapshot 开始），不要直接改用 WebSearch。
+2. 如果 browser 工具返回 browser_unavailable，说明内置浏览器运行时未连接；确认失败后不要反复重试。
 3. 仅在以下情况才回退 WebSearch：
    - 用户明确要求“不要用浏览器，直接联网搜索”
-   - 已确认 browser/relay 当前不可用，且重试后仍失败
-4. 回退到 WebSearch 时，必须在回复中明确说明回退原因（例如：relay 未连接 / 浏览器线程不可用）。`;
+   - browser 工具不可用或持续返回 browser_unavailable
+4. 回退到 WebSearch 时，必须在回复中明确说明回退原因（例如：内置浏览器运行时不可用）。`;
 }

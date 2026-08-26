@@ -1283,7 +1283,6 @@ const lumeConfigWebSearchSchema = z
     strategy: z.enum(["priority", "joint"]).optional(),
     providers: z
       .object({
-        guanlan: lumeConfigWebSearchProviderSchema.optional(),
         exa: lumeConfigWebSearchProviderSchema.optional(),
         pipellm: lumeConfigWebSearchProviderSchema.optional(),
         zhipu: lumeConfigWebSearchProviderSchema.optional(),
@@ -1386,6 +1385,10 @@ export const lumeConfigUpdateInputSchema = z.union([
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("permissions.approvals"),
     value: lumeConfigPermissionApprovalsSchema,
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("permissions.classifier.enabled"),
+    value: z.boolean(),
   }),
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("webSearch"),
