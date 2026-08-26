@@ -54,13 +54,14 @@ const READ_ONLY_EXECUTABLES = new Set([
 
 const GIT_READ_SUBCOMMANDS = new Set(['branch', 'diff', 'log', 'show', 'status'])
 
-/** git 输出/外驱参数：--output 写任意路径文件；--ext-diff 执行仓库配置的外部命令（#300，#684 review 扩到 log/show）。 */
+/** git 输出/外驱参数：--output 写任意路径文件；--ext-diff/--textconv 执行或触发仓库配置的外部命令（#300，#684 review 扩到 log/show，#685 裁定收 --textconv）。 */
 const GIT_WRITE_OR_EXEC_FLAGS = (arg: string): boolean =>
-  arg === '--output' || arg.startsWith('--output=') || arg === '--ext-diff'
+  arg === '--output' || arg.startsWith('--output=')
+  || arg === '--ext-diff' || arg === '--textconv'
 
 /** PS 文本层同口径负向断言；对去引号文本复检——PS 参数模式会把 `--out'put'=x` 拼回
  *  单 token `--output=x` 再交给 git，原始文本断言对此失明（#684 二轮 P1）。 */
-const GIT_PS_WRITE_FLAGS = /\s--(?:ext-diff|output)(?:=|\s|$)/i
+const GIT_PS_WRITE_FLAGS = /\s--(?:ext-diff|output|textconv)(?:=|\s|$)/i
 
 function isReadOnlySegment(executable: string, args: string[]): boolean {
   if (!READ_ONLY_EXECUTABLES.has(executable)) return false
@@ -80,11 +81,16 @@ function isReadOnlySegment(executable: string, args: string[]): boolean {
       ))
     }
     if (subcommand === 'diff' || subcommand === 'log' || subcommand === 'show') {
-      // log/show 与 diff 共享输出/外驱参数面：--output 写文件、--ext-diff 与
-      // textconv 类配置驱动执行外部命令。已知残余（如实声明）：仓库 .gitattributes/
-      // gitconfig 的 textconv 在普通 -p 展示时也会执行 repo 配置的命令字符串，
-      // 该通道属「仓库内容即不可信输入」威胁模型的一部分，静态白名单无法区分，
-      // 见 #685（威胁模型裁定现场）。
+      // #685 威胁模型裁定（残余如实声明）：
+      // - textconv 命令串住在 .git/config 的 diff.<driver>.textconv——.gitattributes
+      //   只携带驱动名、不随克隆分发命令串，故触发前提是本地配置投毒（如不可信
+      //   仓库的 bootstrap 脚本先跑过 git config），而非 issue 原表述的「提交一行
+      //   attributes 即可」。
+      // - 环境变量缓解不存在：GIT_TEXTCONV 并非真实 git 变量（git(1) 文档 69 个
+      //   GIT_* 零命中），候选方案 2 落空。
+      // - 裁定接受方案 3：普通 diff/log -p 展示保持免审（剔除会重挫 #571 的降摩
+      //   擦目标，且上游同类工具同行为）；模型显式注入的 --textconv 在此 fail-closed，
+      //   `-c k=v` 注入因值形似操作数天然被子命令识别拒绝。
       return !rest.some(GIT_WRITE_OR_EXEC_FLAGS)
     }
     return true
