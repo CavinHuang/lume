@@ -103,34 +103,6 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     category: 'network',
     riskLevel: 'low',
   },
-  guanlan_search: {
-    name: 'guanlan_search',
-    label: 'Guanlan 搜索',
-    description: 'Guanlan 中文互联网搜索',
-    category: 'network',
-    riskLevel: 'low',
-  },
-  guanlan_read: {
-    name: 'guanlan_read',
-    label: 'Guanlan 阅读',
-    description: 'Guanlan 中文网页阅读',
-    category: 'network',
-    riskLevel: 'low',
-  },
-  guanlan_hotnews: {
-    name: 'guanlan_hotnews',
-    label: 'Guanlan 热榜',
-    description: 'Guanlan 中文热榜',
-    category: 'network',
-    riskLevel: 'low',
-  },
-  guanlan_research: {
-    name: 'guanlan_research',
-    label: 'Guanlan 研究',
-    description: 'Guanlan 研究证据包',
-    category: 'network',
-    riskLevel: 'low',
-  },
 
   // === Agent & 多 Agent ===
   agent_spawn: {
