@@ -129,14 +129,23 @@ describe("分层方向守卫(#289)", () => {
   });
 
   // #578 登记:应用层↔功能域双向禁入边(import type 放行,与上测同规则)。
-  // infra↔system 环已剪(proxy-config-holder 组合根注入);其余四组环的存量
-  // 越界记录在 legacyEdgeExemptions 台账——新增越界即红,逐 PR 消环时同步删
-  // 豁免;某域对清零后将其升级为硬禁入对。
+  // 四组环的存量越界记录在 legacyEdgeExemptions 台账——新增越界即红,逐 PR
+  // 消环时同步删豁免;某域对清零后将其升级为硬禁入对。
   const forbiddenBidirectionalPairs: Array<[string, string]> = [
     ["agent", "automation"],
     ["agent", "mcp"],
     ["agent", "im"],
     ["agent", "memory-v2"],
+    // review fix(#578 follow-up):im↔agent-runtime 是第五组真实环,此前因
+    // 台账的 "agent" 仅指应用层而不可见;存量两条借道边登记进豁免。
+    ["agent-runtime", "im"],
+  ];
+
+  // review fix(#581/#578 follow-up):本 PR 剪除的单向边当场登记禁入,
+  // 防止"宣称的核心成果"处于无绊线状态;两者现值均为零,登记零成本。
+  const forbiddenDirectedEdges: Array<[string, string]> = [
+    ["channel", "agent-runtime"], // #581:model-refs 下沉后 channel 不再上行 harness
+    ["infra", "system"], // #578:proxy 配置经 holder 注入后 infra 不再上行 system
   ];
 
   /** 存量豁免台账 `<相对 services 的文件路径> => <目标域>`;仅限登记时已知违规。 */
@@ -149,7 +158,13 @@ describe("分层方向守卫(#289)", () => {
     "automation/automation-runner-service.ts => agent",
     "im/im-chat-commands.ts => agent",
     "im/im-message-router.ts => agent",
+    "im/im-run-card-session.ts => agent", // 上游 #709 批次引入,待后续消环
+    "im/im-message-router.ts => agent-runtime", // 会话活性/目录/回滚查询,待端口化
+    "agent-runtime/tools/im/create-im-tools.ts => im", // IM 工具天然绑定 im 域
     "mcp/workspace-mcp-manager.ts => agent",
+    // memory-v2 两文件的通知借道边(agent-notification-service)已在 #580
+    // follow-up 直连 infra 剪除;豁免仍覆盖其深层数据访问边(agent-thread-
+    // manager/agent-service 等),待仓储端口化后整条删除。
     "memory-v2/background-extractor.ts => agent",
     "memory-v2/consolidation.ts => agent",
     "memory-v2/dream-evidence.ts => agent",
@@ -175,7 +190,10 @@ describe("分层方向守卫(#289)", () => {
         const paired = forbiddenBidirectionalPairs.some(
           ([a, b]) => (srcDomain === a && dstDomain === b) || (srcDomain === b && dstDomain === a),
         );
-        if (!paired) continue;
+        const directed = forbiddenDirectedEdges.some(
+          ([src, dst]) => srcDomain === src && dstDomain === dst,
+        );
+        if (!paired && !directed) continue;
         const edge = `${relPath} => ${dstDomain}`;
         if (!legacyEdgeExemptions.has(edge)) {
           violations.push(edge);
