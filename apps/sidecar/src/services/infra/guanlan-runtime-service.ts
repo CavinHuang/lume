@@ -407,12 +407,15 @@ export async function downloadFile(
         clearIdleTimer();
         resolve();
       };
+      let activeFile: import("node:fs").WriteStream | null = null;
       const settleFail = (error: Error) => {
         if (settled) return;
         settled = true;
         clearTimeout(totalTimer);
         clearIdleTimer();
         currentRequest?.destroy();
+        // 失败路径显式关闭写流：fd 依赖 GC 会拖住 rm 后的磁盘空间释放（round12 资源句柄 review 轻微 A）
+        activeFile?.destroy();
         reject(error);
       };
       // 服务端停摆式下载会让 TEST_SEARCH_BACKEND RPC 永久悬挂，总时长兜底必配
@@ -444,7 +447,14 @@ export async function downloadFile(
           if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && location) {
             // 重定向白名单（round1 安全 review）：仅允许 GitHub 发布链路的目标，
             // 收窄"服务端控制 location 重定向至任意地址"的 SSRF 面
-            const next = new URL(location, target);
+            // 畸形 Location 会在回调内同步抛错穿透为 uncaughtException，消耗五击预算
+            let next: URL;
+            try {
+              next = new URL(location, target);
+            } catch (error) {
+              settleFail(new Error(`下载失败，重定向地址无效: ${error instanceof Error ? error.message : String(error)}`));
+              return;
+            }
             const hostAllowed = next.hostname === "github.com" || next.hostname.endsWith(".githubusercontent.com");
             if (next.protocol !== "https:" || !hostAllowed) {
               response.resume();
@@ -468,6 +478,7 @@ export async function downloadFile(
           }
           response.on("data", () => armIdleTimer(target));
           const file = createWriteStream(destination);
+          activeFile = file;
           response.pipe(file);
           // close 回调带 err=flush 失败：文件可能不完整，不得误判成功（round10 错误路径 review 轻微项）
           file.on("finish", () => file.close((closeError) => {

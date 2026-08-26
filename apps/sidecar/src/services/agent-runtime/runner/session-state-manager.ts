@@ -199,6 +199,8 @@ export function getSessionStateManager(): SessionStateManager {
 }
 
 // 定期清理过期会话状态（每小时执行一次）
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
   sessionStateManager.cleanupExpired();
 }, 60 * 60 * 1000);
+// 不阻进程退出：sidecar 关停全走显式 process.exit，但定时器不应成为自然排空的障碍
+cleanupTimer.unref?.();
