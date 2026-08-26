@@ -3773,3 +3773,88 @@ describe("QueryEngine session file-state (#569)", () => {
   })
 })
 
+describe("QueryEngine isEnabled injection filter (#700)", () => {
+  function makeGatedTool(enabled: () => boolean) {
+    return {
+      name: "gmail_send_email",
+      description: "send email",
+      inputSchema: { type: "object" as const, properties: {} },
+      isEnabled: enabled,
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "sent" }
+      }
+    }
+  }
+
+  function makeReadTool() {
+    return {
+      name: "Read",
+      description: "read",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "read" }
+      }
+    }
+  }
+
+  function makeObservedProvider(responses: CreateMessageResponse[]) {
+    const observedTools: string[][] = []
+    const provider = new StaticProvider(responses)
+    const originalCreateMessage = provider.createMessage.bind(provider)
+    provider.createMessage = async (params) => {
+      observedTools.push((params.tools ?? []).map((tool) => tool.name).sort())
+      return originalCreateMessage(params)
+    }
+    return { provider, observedTools }
+  }
+
+  test("tools with isEnabled=false never reach the provider request", async () => {
+    const { provider, observedTools } = makeObservedProvider([
+      { content: [{ type: "text", text: "done" }], stopReason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } },
+    ])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [makeReadTool(), makeGatedTool(() => false)],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    await collectResult(engine)
+
+    // 未启用的工具不占 prompt 预算;常驻工具不受影响
+    expect(observedTools[0]).toEqual(["Read"])
+  })
+
+  test("re-evaluates isEnabled each turn: reconnecting restores injection", async () => {
+    let connected = false
+    const { provider, observedTools } = makeObservedProvider([
+      { content: [{ type: "text", text: "done" }], stopReason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } },
+      { content: [{ type: "text", text: "done again" }], stopReason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } },
+    ])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [makeReadTool(), makeGatedTool(() => connected)],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    await collectResult(engine)
+    expect(observedTools[0]).toEqual(["Read"])
+
+    // 同一会话中途连接凭证后,下一轮请求即恢复注入(每轮重新求值,不得缓存)
+    connected = true
+    await collectResult(engine)
+    expect(observedTools[1]).toEqual(["Read", "gmail_send_email"])
+  })
+})
+

@@ -64,7 +64,7 @@ export const FileReadTool = defineTool({
       },
       summarize: {
         type: 'boolean',
-        description: 'For large code files, return an outline with function bodies elided instead of raw source. Elided regions were not shown—re-read with offset/limit before editing them.',
+        description: 'For large code files, return an outline with function bodies elided instead of raw source. Elided regions were not shown—re-read with offset/limit before editing them. Mutually exclusive with offset/limit: an explicit range always wins and summarize is ignored (a note is appended to the response when that happens).',
       },
       pages: {
         type: 'string',
@@ -165,7 +165,9 @@ export const FileReadTool = defineTool({
         // #649 review P1-5:offset=0 且未截断且窗口覆盖全部行 = 全文读——否则超
         // WHOLE_READ_LINE_LIMIT 的文件不存在任何解锁 Write/Edit 的读法，
         // 守卫「请完整读取后再写入」成为不可满足指令。
-        const isFullCoverageRead = !ranged.truncated && ranged.totalLines <= offset + limit
+        // offset 必须为 0：尾窗读(offset>0 延伸到 EOF)缓存里只有尾部片段，
+        // 误标全文会让后续 Edit 走内容全等比对而永久假性 stale(十视角 round3 实证)
+        const isFullCoverageRead = offset === 0 && !ranged.truncated && ranged.totalLines <= limit
         const isPartialView = !isFullCoverageRead
         context.fileStateCache?.set(filePath, {
           content: ranged.content,
@@ -175,13 +177,18 @@ export const FileReadTool = defineTool({
           limit,
           isPartialView,
         })
+        const rangedBody = ranged.content
+          ? ranged.content.replace(/\n$/, '').split('\n').map((line, i) => `${offset + i + 1}\t${line}`).join('\n')
+          : '(empty file)'
         return {
           data: {
             filePath,
             // 行尾换行已忠实入缓存（#569），显示前去掉以免多出幽灵空行。
-            content: ranged.content
-              ? ranged.content.replace(/\n$/, '').split('\n').map((line, i) => `${offset + i + 1}\t${line}`).join('\n')
-              : '(empty file)',
+            // #649 follow-up:schema 承诺 summarize 返回大纲，与显式范围同给时范围
+            // 优先、summarize 被忽略——静默丢弃会让模型误以为拿到的是大纲，必须显式告知。
+            content: input.summarize === true
+              ? `${rangedBody}\n[注意：本次按显式范围读取，summarize 参数未生效；如需全文件大纲请仅传 summarize:true]`
+              : rangedBody,
             offset,
             limit,
             totalLines: ranged.totalLines,

@@ -97,15 +97,53 @@ describe("coding run tracker", () => {
     });
   });
 
-  test("#573: recognizes non-JS toolchain and colon-suffixed scripts as verification", async () => {
+  test("#573/#649 round3: 命令识别正向矩阵（purpose-free 走真实识别路径）", async () => {
+    // verificationResult helper 恒带 purpose:"verification" 会短路识别路径(僵尸化),
+    // 正向矩阵必须用 purpose-free execution 才真正测到 isVerificationCommand
+    const positive = [
+      "cargo check --manifest-path Cargo.toml",
+      "bun run lint:fix",
+      "npm test",
+      "npm run build",
+      "npm run test:unit",
+      "npm run check:all",
+      "npx tsc --noEmit",
+      "bunx tsc --noEmit",
+      "./gradlew test",
+      "go build ./...",
+      "node --test",
+      "pytest -q",
+    ];
+    for (const command of positive) {
+      const tracker = createCodingRunTracker();
+      tracker.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
+      tracker.observe({ toolName: "Bash", input: { command }, result: result("done", false, {
+        execution: { version: 2, outcome: "succeeded", exitCode: 0, terminationReason: "completed", durationMs: 1, shell: "bash", command },
+      }) });
+      const status = tracker.getVerificationStatus();
+      if (status !== "verified") throw new Error(`expected verified but got "${status}" for: ${command}`);
+    }
+  });
+
+  test("#649 round3: 分段判定——前段噪音+后段唯一验证证据仍构成验证", async () => {
+    // 判别性形态:不分段时首词 rm 不命中,分段后 npm run test 段命中——
+    // 主修(#649 P1-6)的核心价值就在这条,删掉分段机制此测试必须红
     const tracker = createCodingRunTracker();
     tracker.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
-    tracker.observe({ toolName: "Bash", input: { command: "cargo check --manifest-path Cargo.toml" }, result: verificationResult("ok", "succeeded") });
+    const command = "rm -rf tmp && npm run test";
+    tracker.observe({ toolName: "Bash", input: { command }, result: result("done", false, {
+      execution: { version: 2, outcome: "succeeded", exitCode: 0, terminationReason: "completed", durationMs: 1, shell: "bash", command },
+    }) });
     expect(tracker.getVerificationStatus()).toBe("verified");
+
+    // 对照:run 非白名单 script 不因分段翻案
     const tracker2 = createCodingRunTracker();
     tracker2.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
-    tracker2.observe({ toolName: "Bash", input: { command: "bun run lint:fix" }, result: verificationResult("ok", "succeeded") });
-    expect(tracker2.getVerificationStatus()).toBe("verified");
+    const deploy = "cd app && npm run deploy";
+    tracker2.observe({ toolName: "Bash", input: { command: deploy }, result: result("done", false, {
+      execution: { version: 2, outcome: "succeeded", exitCode: 0, terminationReason: "completed", durationMs: 1, shell: "bash", command: deploy },
+    }) });
+    expect(tracker2.getVerificationStatus()).not.toBe("verified");
   });
 
   test("#573: mutating subcommands of verification toolchains are not evidence", async () => {

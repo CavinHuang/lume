@@ -521,11 +521,36 @@ function syncGuanlanEnv(enabled: boolean): void {
   }
 }
 
+/**
+ * #649 follow-up round3:normalize 是白名单制,未识别键会被静默丢弃——留 warn 防无声消失。
+ * 清单必须与下方 isPlainObject(value.X) 分支及 shared LumeConfigSectionSet 十字段严格一致,
+ * 且豁免顶层文件段的 version/workspaces(它们由 normalizeLumeConfigFile 另行处理);
+ * 否则系统自己落盘的标准 lume.yaml 每次冷读都会刷误报,真错键被淹没。
+ * 测试钉死清单与类型的一致性(lume-config-service.test.ts「剥键白名单」用例)。
+ */
+export const KNOWN_LUME_SECTION_KEYS: readonly string[] = [
+  "models", "agent", "providers", "mcp", "memory", "skills", "plugins", "permissions", "hooks", "webSearch",
+  // 顶层文件段(LumeConfigFile),normalizeLumeConfigFile 消费
+  "version", "workspaces",
+];
+const KNOWN_AGENT_KEYS = new Set(["permissionMode", "thinkingLevel", "followUpQueueMode", "maxAutoTurnContinuations"]);
+
 function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
   if (!isPlainObject(value)) {
     return {};
   }
   const next: LumeConfigSectionSet = {};
+  const knownSections = new Set(KNOWN_LUME_SECTION_KEYS);
+  const droppedTopKeys = Object.keys(value).filter((key) => !knownSections.has(key));
+  const droppedAgentKeys = isPlainObject(value.agent)
+    ? Object.keys(value.agent).filter((key) => !KNOWN_AGENT_KEYS.has(key))
+    : [];
+  if (droppedTopKeys.length > 0 || droppedAgentKeys.length > 0) {
+    log.warn("lume.yaml 含未识别配置键，规范化时已移除（升级 sidecar 或修正拼写）", {
+      ...(droppedTopKeys.length > 0 ? { unknownSections: droppedTopKeys } : {}),
+      ...(droppedAgentKeys.length > 0 ? { unknownAgentKeys: droppedAgentKeys } : {})
+    });
+  }
 
   if (isPlainObject(value.models)) {
     const chat = isPlainObject(value.models.chat) ? value.models.chat : {};
