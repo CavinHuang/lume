@@ -40,6 +40,11 @@ export function terminateProcessTree(
       stdio: 'ignore',
       windowsHide: true,
     })
+    // 无监听的异步 'error' 会逃逸成 uncaughtException（#548）；taskkill 不可用时
+    // 退回对直接子进程发信号——树终止退化为单进程终止，好过无人终止
+    taskkill.once('error', () => {
+      try { child.kill(signal) } catch { /* 目标已退出 */ }
+    })
     taskkill.unref()
     return
   }

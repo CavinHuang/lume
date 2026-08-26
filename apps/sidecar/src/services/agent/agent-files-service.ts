@@ -136,6 +136,8 @@ function getThreadAttachmentScope(
   return { kind: "thread", workspaceSlug, threadId: sessionId };
 }
 
+const log = createLogger("agent-files-service");
+
 function resolveExistingProjectTarget(
   workspaceSlug: string,
   targetPath?: string,
@@ -1100,6 +1102,10 @@ function spawnDetached(command: string, args: string[]): void {
   const child = spawn(command, args, {
     detached: true,
     stdio: "ignore",
+  });
+  // 无监听的异步 'error' 会逃逸成 uncaughtException 计击五击止损通道（#548）
+  child.once("error", (error) => {
+    log.error("detached spawn 失败", { command, error: error.message });
   });
   child.unref();
 }

@@ -309,32 +309,63 @@ function getPythonStandaloneArchiveName(): string | null {
 
 async function downloadFile(url: string, destination: string): Promise<void> {
   await mkdir(dirname(destination), { recursive: true });
-  return new Promise((resolve, reject) => {
-    const visit = (target: string, redirects: number) => {
-      if (redirects > 10) {
-        reject(new Error(`下载失败，重定向次数过多: ${url}`));
-        return;
-      }
-      const client = target.startsWith("https:") ? https : http;
-      const request = client.get(target, (response) => {
-        const location = response.headers.location;
-        if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && location) {
-          visit(new URL(location, target).toString(), redirects + 1);
+  // #548：总时长定时器 + 空闲超时 + response error 监听。此前零超时且
+  // IncomingMessage 无监听——服务端停摆让 TEST_SEARCH_BACKEND 永久悬挂，
+  // socket reset 则逃逸成 uncaughtException 计击五击止损通道（姊妹函数
+  // runCommand 有完整超时+error 处理，本函数对齐同款防御）。
+  const DOWNLOAD_TOTAL_TIMEOUT_MS = 180_000;
+  const DOWNLOAD_IDLE_TIMEOUT_MS = 30_000;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let activeRequest: http.ClientRequest | null = null;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(totalTimer);
+        if (error) reject(error);
+        else resolve();
+      };
+      const totalTimer = setTimeout(() => {
+        activeRequest?.destroy(new Error(`下载总时长超时（${DOWNLOAD_TOTAL_TIMEOUT_MS / 1000}s）`));
+        finish(new Error(`下载超时: ${url}`));
+      }, DOWNLOAD_TOTAL_TIMEOUT_MS);
+      const visit = (target: string, redirects: number) => {
+        if (redirects > 10) {
+          finish(new Error(`下载失败，重定向次数过多: ${url}`));
           return;
         }
-        if (response.statusCode !== 200) {
-          reject(new Error(`下载失败，HTTP ${response.statusCode}: ${target}`));
-          return;
-        }
-        const file = createWriteStream(destination);
-        response.pipe(file);
-        file.on("finish", () => file.close(() => resolve()));
-        file.on("error", reject);
-      });
-      request.on("error", reject);
-    };
-    visit(url, 0);
-  });
+        const client = target.startsWith("https:") ? https : http;
+        const request = client.get(target, (response) => {
+          const location = response.headers.location;
+          if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && location) {
+            response.resume(); // 丢弃 3xx 响应体并销毁旧响应，再跟进下一跳
+            visit(new URL(location, target).toString(), redirects + 1);
+            return;
+          }
+          if (response.statusCode !== 200) {
+            finish(new Error(`下载失败，HTTP ${response.statusCode}: ${target}`));
+            return;
+          }
+          const file = createWriteStream(destination);
+          response.pipe(file);
+          file.on("finish", () => file.close(() => finish()));
+          file.on("error", finish);
+          response.on("error", finish);
+        });
+        activeRequest = request;
+        // 空闲超时：传输中途停滞（对端停摆/连接半开）触发 destroy → error → finish
+        request.setTimeout(DOWNLOAD_IDLE_TIMEOUT_MS, () => {
+          request.destroy(new Error(`下载停滞超过 ${DOWNLOAD_IDLE_TIMEOUT_MS / 1000}s`));
+        });
+        request.on("error", finish);
+      };
+      visit(url, 0);
+    });
+  } catch (error) {
+    await rm(destination, { force: true }).catch(() => {}); // 删半截文件防误用
+    throw error;
+  }
 }
 
 function parseJson(output: string): unknown {

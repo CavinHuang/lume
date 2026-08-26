@@ -56,6 +56,11 @@ function spawnDetached(command: string, args: string[]): void {
     detached: true,
     stdio: "ignore"
   });
+  // 无监听的异步 'error'（Linux 缺 xdg-open/瞬时 EAGAIN）会逃逸成 uncaughtException
+  // 计击五击止损通道——连点五次「打开配置文件」即杀掉整个 sidecar（#548）
+  child.once("error", (error) => {
+    log.error("detached spawn 失败", { command, error: error.message });
+  });
   child.unref();
 }
 
