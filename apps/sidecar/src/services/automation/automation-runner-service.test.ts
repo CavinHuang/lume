@@ -120,6 +120,14 @@ describe("automation-runner-service", () => {
     expect(outcome.message).toContain("回合上限");
   });
 
+  it("#649 round3: repeat_guard 保护停止与 max_turns 同归 failed", () => {
+    // agent-service onComplete 对两种保护性停止都发 reason(max_turns/repeat_guard),
+    // 消费侧对两者都置位 turnLimitedStopped;漏匹配任一 = P1-1 同构假成功
+    expect(resolveAutomationRunOutcome({
+      runtimeError: null, waitingForUser: false, waitingForApproval: false, turnLimitedStopped: true, threadId: "t"
+    }).status).toBe("failed");
+  });
+
   it("存量坏 job 不毒化整轮刷新：好 job 正常调度，坏 job 被跳过 (#452)", async () => {
     const good = createAutomationJob({
       name: "正常任务",

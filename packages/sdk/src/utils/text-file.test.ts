@@ -61,6 +61,29 @@ describe("readTextFileRange", () => {
     expect(ranged.content).toBe("alpha\nbeta\n")
   })
 
+  test("#649 round3: an unterminated trailing line beyond the window forces truncated", async () => {
+    // "alpha\nbeta\nGAMMA":窗口凑满后 EOF,buffer 还挂着未换行的 GAMMA——
+    // 它是窗口外的第 3 行,flush 计入 totalLines 却进不了 content;
+    // 若判「精确全文」则 content 缺行、契约(精确=全文)自破
+    const filePath = await makeFile("tail-line.txt", "alpha\nbeta\nGAMMA")
+
+    const ranged = await readTextFileRange(filePath, 0, 2)
+
+    expect(ranged.truncated).toBe(true)
+    expect(ranged.content).toBe("alpha\nbeta")
+  })
+
+  test("#649 round3: no trailing newline with exact fill still reports full coverage", async () => {
+    // 对照形态:"alpha\nbeta" 无尾换行,buffer 收尾即空 → 精确全文成立
+    const filePath = await makeFile("no-eol.txt", "alpha\nbeta")
+
+    const ranged = await readTextFileRange(filePath, 0, 2)
+
+    expect(ranged.truncated).toBe(false)
+    expect(ranged.totalLines).toBe(2)
+    expect(ranged.content).toBe("alpha\nbeta")
+  })
+
   test("a window that fills mid-file still reports truncated even when the fill chunk held more lines", async () => {
     // 10-line file in one chunk: the window (limit=2) fills while the same
     // chunk has already counted lines 3-10 — the extra observed lines prove
