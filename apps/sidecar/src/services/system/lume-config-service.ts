@@ -521,16 +521,27 @@ function syncGuanlanEnv(enabled: boolean): void {
   }
 }
 
+/**
+ * #649 follow-up round3:normalize 是白名单制,未识别键会被静默丢弃——留 warn 防无声消失。
+ * 清单必须与下方 isPlainObject(value.X) 分支及 shared LumeConfigSectionSet 十字段严格一致,
+ * 且豁免顶层文件段的 version/workspaces(它们由 normalizeLumeConfigFile 另行处理);
+ * 否则系统自己落盘的标准 lume.yaml 每次冷读都会刷误报,真错键被淹没。
+ * 测试钉死清单与类型的一致性(lume-config-service.test.ts「剥键白名单」用例)。
+ */
+export const KNOWN_LUME_SECTION_KEYS: readonly string[] = [
+  "models", "agent", "providers", "mcp", "memory", "skills", "plugins", "permissions", "hooks", "webSearch",
+  // 顶层文件段(LumeConfigFile),normalizeLumeConfigFile 消费
+  "version", "workspaces",
+];
+const KNOWN_AGENT_KEYS = new Set(["permissionMode", "thinkingLevel", "followUpQueueMode", "maxAutoTurnContinuations"]);
+
 function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
   if (!isPlainObject(value)) {
     return {};
   }
   const next: LumeConfigSectionSet = {};
-  // #649 follow-up:normalize 是白名单制,未识别键会被静默丢弃——至少留一条日志,
-  // 否则用户手写的字段(或新版本新增而 sidecar 未升级的字段)消失得无声无息
-  const KNOWN_SECTION_KEYS = new Set(["models", "agent", "permissions", "hooks", "browser"]);
-  const KNOWN_AGENT_KEYS = new Set(["permissionMode", "thinkingLevel", "followUpQueueMode", "maxAutoTurnContinuations"]);
-  const droppedTopKeys = Object.keys(value).filter((key) => !KNOWN_SECTION_KEYS.has(key));
+  const knownSections = new Set(KNOWN_LUME_SECTION_KEYS);
+  const droppedTopKeys = Object.keys(value).filter((key) => !knownSections.has(key));
   const droppedAgentKeys = isPlainObject(value.agent)
     ? Object.keys(value.agent).filter((key) => !KNOWN_AGENT_KEYS.has(key))
     : [];

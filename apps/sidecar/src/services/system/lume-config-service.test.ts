@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
-  type LumeConfigFile
+  type LumeConfigFile,
+  type LumeConfigSectionSet
 } from "@lume/shared";
 import YAML from "yaml";
 import { getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
-import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig, updateLumeConfigSection } from "./lume-config-service";
+import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig, KNOWN_LUME_SECTION_KEYS, updateLumeConfigSection } from "./lume-config-service";
 
 describe("lume-config-service", () => {
   let prevConfigDir: string | undefined;
@@ -803,4 +804,27 @@ describe("lume-config-service", () => {
     }
   });
 
+});
+
+describe("#649 round3: 剥键白名单与 normalize 实际处理集一致", () => {
+  test("KNOWN_LUME_SECTION_KEYS 覆盖 LumeConfigSectionSet 全部 section + 顶层 version/workspaces", () => {
+    // 与 shared LumeConfigSectionSet 十字段逐一对照——shared 新增 section 而未更新
+    // KNOWN 清单时,此处显式失败提醒同步(否则合法键被误报「未识别」刷屏)
+    const allSections: Required<Pick<LumeConfigSectionSet, keyof LumeConfigSectionSet>> = {
+      models: {}, agent: {}, providers: {}, mcp: {}, memory: {},
+      skills: {}, plugins: {}, permissions: {}, hooks: {}, webSearch: {}
+    };
+    for (const key of Object.keys(allSections)) {
+      expect(KNOWN_LUME_SECTION_KEYS).toContain(key);
+    }
+    // 顶层文件段由 normalizeLumeConfigFile 消费,同样必须豁免
+    expect(KNOWN_LUME_SECTION_KEYS).toContain("version");
+    expect(KNOWN_LUME_SECTION_KEYS).toContain("workspaces");
+    // 幽灵键守卫:清单里的每个键都必须真实存在于类型面
+    for (const key of KNOWN_LUME_SECTION_KEYS) {
+      const known = key === "version" || key === "workspaces"
+        || Object.prototype.hasOwnProperty.call(allSections, key);
+      expect(known).toBe(true);
+    }
+  });
 });
