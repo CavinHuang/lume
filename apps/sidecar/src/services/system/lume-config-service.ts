@@ -940,15 +940,15 @@ function readOrCreateLumeConfig(retried?: boolean): LumeConfigFile {
     // fs 瞬态与解析损坏区分（#706）：ENOENT 多为并发窗口/刚被并发写者换名，
     // 重试一次读最新；重试仍失败或其余错误按解析损坏回退默认并如实记日志。
     if (!retried && (error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      log.warn({ error }, "transient fs error reading lume.yaml; retrying once");
+      log.warn("transient fs error reading lume.yaml; retrying once", { error });
       try {
         if (existsSync(path)) return readOrCreateLumeConfig(true);
       } catch (retryError) {
-        log.warn({ error: retryError }, "lume.yaml retry failed; using default config");
+        log.warn("lume.yaml retry failed; using default config", { error: retryError });
         return createDefaultLumeConfig();
       }
     }
-    log.warn({ error }, "failed to parse lume.yaml; using default config");
+    log.warn("failed to parse lume.yaml; using default config", { error });
     return createDefaultLumeConfig();
   }
 }
