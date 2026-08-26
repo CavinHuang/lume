@@ -603,7 +603,7 @@ export class QueryEngine {
         contextUsage,
       })
     }
-    return shouldAutoCompact(this.messages as any[], this.config.model, this.compactState, {
+    return shouldAutoCompact(this.messages, this.config.model, this.compactState, {
       contextUsage,
       maxOutputTokens: this.config.maxTokens,
     })
@@ -655,7 +655,7 @@ export class QueryEngine {
     return defaultCompactConversation(
       this.provider,
       this.config.model,
-      this.messages as any[],
+      this.messages,
       this.compactState,
       {
         trigger,
@@ -841,7 +841,7 @@ export class QueryEngine {
         model: this.config.model,
       })
     }
-    return defaultMicroCompactMessages(messages as any[]) as NormalizedMessageParam[]
+    return defaultMicroCompactMessages(messages)
   }
 
   private async buildPermissionMetadata(
@@ -1089,9 +1089,9 @@ export class QueryEngine {
       }
 
       // Micro-compact: truncate large tool results
-      const internalContextBlocks = collectInternalContextBlocks(this.messages as any[])
-      const computerUseActionFacts = renderComputerUseActionFacts(this.messages as any[])
-      const conversationMessages = stripInternalContextBlocks(this.messages as any[])
+      const internalContextBlocks = collectInternalContextBlocks(this.messages)
+      const computerUseActionFacts = renderComputerUseActionFacts(this.messages)
+      const conversationMessages = stripInternalContextBlocks(this.messages)
       const hydratedMessages = await hydrateEphemeralImageReferences(conversationMessages)
       const apiMessages = await this.microCompactForProvider(
         normalizeMessagesForAPI(hydratedMessages) as NormalizedMessageParam[],
@@ -1306,7 +1306,7 @@ export class QueryEngine {
         return
       }
 
-      this.messages = releaseEphemeralImageReferences(this.messages as any[]) as NormalizedMessageParam[]
+      this.messages = releaseEphemeralImageReferences(this.messages)
 
       // Track API timing
       const apiEnd = performance.now()

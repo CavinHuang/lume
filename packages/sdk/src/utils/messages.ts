@@ -6,6 +6,7 @@
  */
 
 import { readFile } from 'node:fs/promises'
+import type { NormalizedMessageParam } from '../providers/types.js'
 
 /**
  * Normalize messages for the LLM API.
@@ -60,8 +61,8 @@ export async function hydrateEphemeralImageReferences(
 }
 
 export function releaseEphemeralImageReferences(
-  messages: Array<{ role: string; content: any }>,
-): Array<{ role: string; content: any }> {
+  messages: NormalizedMessageParam[],
+): NormalizedMessageParam[] {
   return messages.map((message) => ({
     ...message,
     content: releaseEphemeralValue(message.content),
@@ -69,14 +70,14 @@ export function releaseEphemeralImageReferences(
 }
 
 export function collectInternalContextBlocks(
-  messages: Array<{ role: string; content: any }>,
+  messages: NormalizedMessageParam[],
 ): string[] {
   return messages.flatMap((message) => Array.isArray(message.content)
     ? message.content.flatMap((block: any) => isInternalContextBlock(block) ? [block.text] : [])
     : [])
 }
 
-export function renderComputerUseActionFacts(messages: Array<{ role: string; content: any }>): string {
+export function renderComputerUseActionFacts(messages: NormalizedMessageParam[]): string {
   const facts = new Map<string, string>()
   const recordFact = (fact: any): void => {
     if (!fact || typeof fact.actionId !== 'string' || typeof fact.phase !== 'string') return
@@ -105,8 +106,8 @@ export function renderComputerUseActionFacts(messages: Array<{ role: string; con
 }
 
 export function stripInternalContextBlocks(
-  messages: Array<{ role: string; content: any }>,
-): Array<{ role: string; content: any }> {
+  messages: NormalizedMessageParam[],
+): NormalizedMessageParam[] {
   return messages.flatMap((message) => {
     if (!Array.isArray(message.content)) return [message]
     const content = message.content.filter((block: any) => !isInternalContextBlock(block))
